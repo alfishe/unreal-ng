@@ -60,6 +60,14 @@ size_t TTDEventLog::CursorAt(TTDMachineTime t) const
     return static_cast<size_t>(it - _events.begin());
 }
 
+bool TTDEventLog::HasCutAt(TTDMachineTime t) const
+{
+    for (size_t i = CursorAt(t); i < _events.size() && _events[i].machineTime == t; ++i)
+        if (RoleOf(_events[i]) == TTDEventRole::Cut)
+            return true;
+    return false;
+}
+
 const TTDEvent* TTDEventLog::FirstBarrierIn(TTDMachineTime from, TTDMachineTime to) const
 {
     for (size_t i = CursorAt(from); i < _events.size() && _events[i].machineTime <= to; ++i)

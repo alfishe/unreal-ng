@@ -1793,13 +1793,6 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error)>&
     if (IsRzxPlaying())
         StopRzx();
 
-    // TTD v1 (P1.6): snapshot load teleports full machine state (parent TDD §4.2).
-    // Refused while recording; otherwise drop the session before the loader runs.
-    if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadSnapshot))
-        return false;
-    if (_context && _context->pTimeTravelHooks)
-        _context->pTimeTravelHooks->OnLoad(ttd::TTDLoadKind::Snapshot, "snapshot-load");
-
     // Pause execution
     bool wasRunning = false;
     if (!IsPaused())
@@ -1826,20 +1819,52 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error)>&
     }
 
     std::string error;
-    const bool result = load(error);
+    bool result = false;
+    bool loaded = false;
+    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+    auto runLoad = [&]() {
+        loaded = true;
+        result = load(error);
+    };
+
+    // TTD (D10, the engine): a snapshot load while recording is part of the
+    // recording. The machine runs to the end of its frame and the load happens
+    // at the boundary, where the next checkpoint takes the loaded state; that
+    // boundary starts the next frame from it
+    if (ttd && ttd->QueueSnapshotLoad(runLoad))
+    {
+        Z80& z80 = *_core->GetZ80();
+        const uint32_t frameTStates = _context->emulatorState.BaseToCpuT(_context->config.frame);
+        RunTStates(z80.t < frameTStates ? frameTStates - static_cast<uint32_t>(z80.t) : 1, /*skipBreakpoints=*/true);
+        if (!loaded)
+            ttd->QueueSnapshotLoad(nullptr);   // the recording ended before the boundary: load without it
+    }
+
+    if (!loaded)
+    {
+        // v1 refuses it while recording (a snapshot teleports the whole machine,
+        // parent TDD §4.2); outside a recording the session hears of it first
+        if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadSnapshot, &error))
+        {
+            if (wasRunning)
+                Resume();
+            return false;
+        }
+        if (ttd)
+            ttd->OnLoad(ttd::TTDLoadKind::Snapshot, "snapshot-load");
+        runLoad();
+        // The loader reset the machine and replaced its state (ports, memory,
+        // registers): start the frame again from the loaded state, so devices
+        // and the video raster take their frame bases from it
+        if (result)
+            RestartFrame();
+    }
     if (!result && !error.empty())
         MLOGERROR("Snapshot load failed: %s", error.c_str());
 
     // Store snapshot path on success
     if (result)
-    {
         _context->coreState.snapshotFilePath = openedPath;
-
-        // The loader reset the machine and replaced its state (ports, memory,
-        // registers): start the frame again from the loaded state, so devices
-        // and the video raster take their frame bases from it
-        RestartFrame();
-    }
 
     // Resume execution
     if (wasRunning)

@@ -2807,12 +2807,14 @@ Worked example (CLI): `ttd start`, run 300 frames, `ttd seek 100` - the recordin
 
 | Refused while recording | Why |
 | :--- | :--- |
-| Snapshot load | Replaces the whole machine state. |
+| Snapshot load (v1 only; on the engine it is part of the recording, see below) | Replaces the whole machine state. |
 | Tape load, disk load (including disk autostart), disk create | A new medium. Insert it before starting the recording. |
 | ROM load | The recorded history relies on the current ROM. |
 | `ttd invalidate` | Stop the recording first, then discard it. |
 | Switching the General Sound card type (`gs switch_personality`, the `gs_lightweight` feature) | The history holds the current card's state, which the other card type cannot take back. |
 | Host speed 2x..16x, turbo, fast tape, turbo tape, fast disk | See the acceleration lock below. |
+
+**A snapshot load is part of the recording on the engine** (`backend: engine`, D10). While a session records, the machine first runs to the end of its current frame, then the snapshot replaces it at the frame boundary, and the checkpoint there holds the loaded state; frame numbers go on (a load outside a recording restarts them from 0). The history keeps both sides: a seek before the load shows the old program, a seek after it the loaded one, and running forward from before it takes the loaded state at that boundary. A recording paused for browsing (D8) continues with the load when the machine stands at its paused end; elsewhere it ends where it paused. Outside a recording a snapshot load keeps the history: the machine leaves it, as after a reset. A model switch through a snapshot (machine state transfer) is still refused while recording; tape, disk and ROM loads are unchanged.
 
 **Switching `timetravel` or `debugmode` off stops the recording instead (FR-17).** It is not refused: the
 recording stops cleanly first - the machine is parked, everything recorded up to that instant stays and is

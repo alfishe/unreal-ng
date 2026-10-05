@@ -366,6 +366,7 @@ bool TimeTravelController::StartRecording()
 void TimeTravelController::StopRecording()
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    _queuedSnapshotLoad = nullptr;   // a load waiting for the boundary runs without the recording
     if (_state != TTDSessionState::Recording)
     {
         // Compress whatever coverage is still accumulating, so size reporting
@@ -491,6 +492,7 @@ void TimeTravelController::EndDebuggerLiveHistory()
 void TimeTravelController::InvalidateSession(const char* reason)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    _queuedSnapshotLoad = nullptr;
     ClearFrameCache();
 
     if (_timeline.empty() && _state == TTDSessionState::Idle)
@@ -1102,8 +1104,7 @@ std::string TimeTravelController::RecordingGuard(TTDGuardedAction action) const
     switch (action)
     {
         case TTDGuardedAction::LoadSnapshot:
-            return "Cannot load a snapshot while TTD is recording: it replaces the whole machine state and would drop "
-                   "the recorded history. Stop the recording first.";
+            return {};   // part of the recording (D10, QueueSnapshotLoad); one that needs another model is SwitchModel
         case TTDGuardedAction::LoadTape:
             return "Cannot insert a tape while TTD is recording: a new medium would drop the recorded history. Insert "
                    "it before starting the recording, or stop the recording first.";
@@ -1121,6 +1122,9 @@ std::string TimeTravelController::RecordingGuard(TTDGuardedAction action) const
         case TTDGuardedAction::SwitchGsCard:
             return "Cannot switch the General Sound card type while TTD is recording: the recorded history holds "
                    "the current card's state, which the other card type cannot take back. Stop the recording first.";
+        case TTDGuardedAction::SwitchModel:
+            return "Cannot switch the machine model while TTD is recording: the recorded history belongs to this "
+                   "machine. Stop the recording first.";
         case TTDGuardedAction::CdFrontPanel:
             return "Cannot play, pause, stop or change the volume of a CD drive from outside the guest while TTD is "
                    "recording: a replay would not repeat it. Let the guest's CD player do it, or stop the recording first.";
@@ -1184,6 +1188,33 @@ void TimeTravelController::OnFrameBoundary()
         if (_enableCoverageIndex && endedFrame > 0)
             _coverageIndex.SealFrame(endedFrame - 1);
 
+        // D10: a snapshot load queued for this boundary replaces the machine
+        // here, and the checkpoint below takes the loaded state. Machine time
+        // goes on: the loader's reset zeroed the frame counter and the T-state
+        // count, which the frame table and every position follow
+        if (_queuedSnapshotLoad)
+        {
+            const std::function<void()> load = std::move(_queuedSnapshotLoad);
+            _queuedSnapshotLoad = nullptr;
+            EmulatorState& st = _context->emulatorState;
+            const uint64_t frame = st.frame_counter;
+            const uint64_t base = st.t_states;
+            load();
+            st.frame_counter = frame;
+            st.t_states = base;
+            // The frame start ran before the load (MainLoop::CompleteFrame) and the
+            // loader's reset cleared the device frame bases: take them from the
+            // loaded state, as a load outside a recording does
+            if (_context->pEmulator)
+                _context->pEmulator->RestartFrame();
+            // The cut sits at the boundary itself (the loaded CPU may stand a few T-states in)
+            TTDPendingFact cut;
+            cut.at = {frame, 0};
+            cut.ev.kind = TTDEventKind::SnapshotLoad;
+            _shadowFacts.push_back(cut);
+            _shadowRescan = true;   // the loader wrote memory behind the dirty tracker
+        }
+
         TTDCheckpoint cp;
         if (!CaptureNow(cp))
         {
@@ -1220,6 +1251,20 @@ void TimeTravelController::OnFrameBoundary()
     // A throwaway replay (ComposeDisplay, frame-cache builds) crossing the
     // session end is not execution running into unrecorded territory; it
     // must leave no auto-pause behind.
+    //
+    // D10: execution on the recorded timeline (a replay, or the machine playing
+    // the history forward) that reaches a snapshot load takes the loaded state
+    // there, as the recording did
+    if ((_state == TTDSessionState::Detached || _inReplayMode) && !_timeline.empty())
+    {
+        const uint64_t frame = _context->emulatorState.frame_counter;
+        if (CutAtFrameStart(frame))
+        {
+            const int64_t i = TimelineIndexAtOrBefore(TTDTimePoint{frame, 0});
+            if (i >= 0 && _timeline[static_cast<size_t>(i)].time.frame == frame)
+                RestoreCheckpointForReplay(_timeline[static_cast<size_t>(i)]);
+        }
+    }
     if (_state == TTDSessionState::Detached && !_timeline.empty() && !_inReplayMode)
     {
         const uint64_t sessionEnd = _timeline.back().time.frame;
@@ -1239,6 +1284,42 @@ void TimeTravelController::OnFrameBoundary()
         }
         MaybePublishAtFrameBoundary();
     }
+}
+
+bool TimeTravelController::CutAtFrameStart(uint64_t frame) const
+{
+    return _engine && _engine->IsSessionOpen() && _engine->Events().HasCutAt(GlobalT(TTDTimePoint{frame, 0}));
+}
+
+void TimeTravelController::OnLoad(TTDLoadKind kind, const char* reason)
+{
+    // D10: a snapshot outside a recording replaces the live machine only; the
+    // history stays, the machine leaves it as after a reset. A recording
+    // paused for browsing ends where it paused (its history kept)
+    if (kind == TTDLoadKind::Snapshot && _state != TTDSessionState::Recording)
+    {
+        if (_recordingPaused)
+            StopRecording();
+        OnMachineReset();
+        return;
+    }
+    InvalidateSession(reason);
+}
+
+bool TimeTravelController::QueueSnapshotLoad(std::function<void()> load)
+{
+    // A recording paused at its end goes on with the load, as with an edit (D9)
+    if (_recordingPaused && _state == TTDSessionState::Detached && CurrentPosition() == _pausedEnd)
+        ContinueRecordingAt(_pausedEnd);
+    if (!load)
+    {
+        _queuedSnapshotLoad = nullptr;   // the caller withdraws it
+        return false;
+    }
+    if (_state != TTDSessionState::Recording)
+        return false;
+    _queuedSnapshotLoad = std::move(load);
+    return true;
 }
 
 bool TimeTravelController::ConsumeAutoPauseRequest()

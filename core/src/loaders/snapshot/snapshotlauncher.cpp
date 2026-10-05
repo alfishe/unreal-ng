@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 
+#include "debugger/ttd/timetravelhooks.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -56,6 +57,13 @@ SnapshotLoadResult SnapshotLauncher::Load(const SnapshotLoadRequest& request)
             out.modelMismatch = true;
             out.message = "the file runs on " + out.requiredModel + " only (this machine is " +
                           Config::GetModelFullName(running.mem_model) + "); switch the model first";
+            return out;
+        }
+
+        // The recorded history belongs to this machine (D26): not while TTD records
+        if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::SwitchModel); !refusal.empty())
+        {
+            out.message = refusal;
             return out;
         }
 

@@ -136,7 +136,8 @@ public:
 
     /// ITimeTravelHooks: a load, a configuration change and a model transfer all end
     /// the session in v1, with the reason kept for status (Phase 5, Step 2 makes them events)
-    void OnLoad(TTDLoadKind, const char* reason) override { InvalidateSession(reason); }
+    void OnLoad(TTDLoadKind kind, const char* reason) override;
+    bool QueueSnapshotLoad(std::function<void()> load) override;
     void OnConfigurationChange(TTDConfigChangeKind, const char* reason) override { InvalidateSession(reason); }
     void OnModelTransfer(const char* reason) override { InvalidateSession(reason); }
     bool HasHistory() const override { return !_timeline.empty(); }
@@ -1558,6 +1559,9 @@ private:
     /// ResumeRecordingFrom, after its seek; called without one at a paused end
     bool ContinueRecordingAt(const TTDTimePoint& from);
     bool _recordingPaused = false;   ///< D8: the recording is paused for browsing
+    std::function<void()> _queuedSnapshotLoad;   ///< D10: runs at the next frame boundary while recording
+    /// D10: the boundary at the start of @p frame is a cut (a snapshot load): its checkpoint holds the loaded state
+    bool CutAtFrameStart(uint64_t frame) const;
     TTDTimePoint _pausedEnd{};       ///< where it paused
     /// @brief The engine checkpoint held at or before @p t, as an index into
     /// _timeline (_timeline[i] is the engine's FirstCheckpoint() + i), or -1

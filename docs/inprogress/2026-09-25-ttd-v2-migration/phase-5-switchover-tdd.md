@@ -325,6 +325,8 @@ The states (`idle`, `recording`, `detached`) keep their names (`TTDSessionStateT
 
 "Invalidate" stays: it is the explicit discard of the session (FR-24 allows explicit deletion), still refused while capturing.
 
+Snapshot load, done 2026-10-05 (D10a): the cut is applied at the frame boundary the machine runs to, so a session holds no mid-frame checkpoint; the frame counter and the T-state count go on across it (the loader's reset zeroes them). A load that needs another model is `TTDGuardedAction::SwitchModel`, refused while recording until model transfers become linked sessions (D26).
+
 #### 4.3.5 "Start" and "frame N" (D12, D13)
 
 - `Status` reports `earliest: {branch, frame, tinframe}` (the earliest kept position, D11) next to `session_start_frame`, which keeps its name and now means the same thing. Qt "Jump to start" (`ttdwidget.cpp:653-659`) and the slider minimum use it. A seek before it answers `OutOfRange` with the earliest position in the message.

@@ -293,11 +293,15 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
 - **Markers stop backward replay** by design (external inputs can't be
   un-happened); list them with `GET /ttd/markers` before wondering why a
   seek halted early.
-- **Loads wipe the session.** Snapshot load, tape load, disk load/create,
-  ROM reload and a host speed change on a stopped session drop the whole
-  history — treat snapshot+TTD as sequential experiments, not interleaved
-  ones ([load-snapshot.md](../media/load-snapshot.md)). Dump first if you
-  need the recording.
+- **A snapshot load is part of the recording** on the engine
+  (`backend: "engine"`, the default): while recording, the machine finishes
+  its frame, the snapshot loads at the boundary, and seeks before / after it
+  show the old / the loaded program; frame numbers go on. Outside a
+  recording it keeps the history. On v1 it is refused while recording and
+  drops a stopped session.
+- **Other loads wipe the session.** Tape load, disk load/create, ROM reload
+  and a host speed change on a stopped session drop the whole history (and
+  are refused while recording). Dump first if you need the recording.
 - **Reset keeps history.** A reset (or a disk autostart's quick reset)
   stops the recording and keeps what was captured; a machine sitting in
   history goes back to `idle`.

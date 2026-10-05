@@ -74,7 +74,8 @@ TEST_F(TimeTravelManager_RecordingGuard_Test, EveryGuardedActionHasAReason_While
     StartRecordingWithHistory();
     for (TTDGuardedAction action :
          {TTDGuardedAction::LoadSnapshot, TTDGuardedAction::LoadTape, TTDGuardedAction::LoadDisk,
-          TTDGuardedAction::CreateDisk, TTDGuardedAction::LoadRom, TTDGuardedAction::Invalidate})
+          TTDGuardedAction::CreateDisk, TTDGuardedAction::LoadRom, TTDGuardedAction::Invalidate,
+          TTDGuardedAction::SwitchModel})
     {
         const std::string reason = _ttd->RecordingGuard(action);
         EXPECT_NE(StringHelper::ToLower(reason).find("stop the recording first"), std::string::npos) << reason;

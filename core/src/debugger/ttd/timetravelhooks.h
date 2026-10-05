@@ -64,11 +64,13 @@ enum class TTDGuardedAction : uint8_t
     LoadRom,             ///< the code every checkpoint relies on
     Invalidate,          ///< discards the session
     SwitchGsCard,        ///< a General Sound personality switch changes the device set (FR-4)
-    CdFrontPanel         ///< a CD drive's play / pause / stop / volume from outside the guest: not in the journal
+    CdFrontPanel,        ///< a CD drive's play / pause / stop / volume from outside the guest: not in the journal
+    SwitchModel          ///< another machine model (a snapshot that needs one, a machine state transfer): D26
 };
 
-/// What replaced the machine's state or its media (OnLoad). Today every kind
-/// ends the session; Phase 5, Step 2 makes them events on the timeline (D10, D25)
+/// What replaced the machine's state or its media (OnLoad). On the engine a
+/// snapshot load is part of a recording (QueueSnapshotLoad, D10) and keeps a
+/// stopped session; every other kind still ends the session (D10, D25 to come)
 enum class TTDLoadKind : uint8_t
 {
     Snapshot,       ///< a snapshot file
@@ -132,6 +134,13 @@ public:
     // Things that happen to the machine
     /// A load replaced the machine state or a medium; @p reason names it in status
     virtual void OnLoad(TTDLoadKind kind, const char* reason) = 0;
+    /// A snapshot load while recording (D10, the engine): true when it becomes
+    /// part of the recording - @p load is queued for the next frame boundary,
+    /// where it runs and the checkpoint there takes the loaded state; the
+    /// caller then runs the machine to that boundary. False: nothing recorded
+    /// (or v1) - the caller loads at once and reports it with OnLoad. An
+    /// empty @p load withdraws a queued one
+    virtual bool QueueSnapshotLoad(std::function<void()> load) = 0;
     /// The machine's configuration changed under the session
     virtual void OnConfigurationChange(TTDConfigChangeKind kind, const char* reason) = 0;
     /// The machine state moved to another model (D26)

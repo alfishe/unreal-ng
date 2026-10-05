@@ -1020,9 +1020,9 @@ TTD methods live on the `Emulator` object (`emu.ttd_*`). Bindings: `core/automat
 
 ```python
 try:
-    emu.snapshot_load('game.sna')
+    emu.tape_load('game.tap')
 except RuntimeError as refusal:
-    print(refusal)   # Cannot load a snapshot while TTD is recording: ... Stop the recording first.
+    print(refusal)   # Cannot insert a tape while TTD is recording: ... stop the recording first.
 ```
 
 Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page`, which raises `ValueError`, and a refusal to protect a running recording, which raises `RuntimeError`.

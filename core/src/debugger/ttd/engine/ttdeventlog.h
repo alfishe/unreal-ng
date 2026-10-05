@@ -124,6 +124,8 @@ public:
     size_t CursorAt(TTDMachineTime t) const;
     /// The first barrier in (from, to], or null
     const TTDEvent* FirstBarrierIn(TTDMachineTime from, TTDMachineTime to) const;
+    /// Whether a cut (a snapshot load, D10) sits at exactly @p t
+    bool HasCutAt(TTDMachineTime t) const;
 
     static TTDApplyPoint PointOf(TTDEventKind kind);
     /// The role of @p ev. Tape control is input (the deck is part of the

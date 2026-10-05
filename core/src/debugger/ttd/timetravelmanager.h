@@ -140,6 +140,7 @@ public:
     /// ITimeTravelHooks: a load, a configuration change and a model transfer all end
     /// the session in v1, with the reason kept for status (Phase 5, Step 2 makes them events)
     void OnLoad(TTDLoadKind, const char* reason) override { InvalidateSession(reason); }
+    bool QueueSnapshotLoad(std::function<void()>) override { return false; }   // v1 refuses it while recording
     void OnConfigurationChange(TTDConfigChangeKind, const char* reason) override { InvalidateSession(reason); }
     void OnModelTransfer(const char* reason) override { InvalidateSession(reason); }
     bool HasHistory() const override { return !_timeline.empty(); }
