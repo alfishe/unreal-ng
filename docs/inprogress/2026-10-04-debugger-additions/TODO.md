@@ -1,0 +1,19 @@
+# TODO: debugger additions (E1, E6, E4, E5, F4, F5, E8, E2, D9, E7)
+
+Design: [tdd.md](tdd.md). Branch `debugger-additions` (worktree `scratch/wt-snapshot`), from master `b1353dd12`.
+Each step ends green (full build with zero warnings, core-tests) and is committed to the branch before the next
+one starts. Master only after the owner has seen the result.
+
+| Step | Work | Status |
+|---|---|---|
+| A0 | Design (this folder) | done 2026-10-04 |
+| A1 | E1 port write: core `PortWrite`, `RunAtCoherentMoment`, every surface, Qt, docs, OpenAPI, tests | open |
+| A2 | E6 TS-Conf CRAM / SFILE regions | open |
+| A3 | E4 disk sector write | open |
+| A4 | E5 NVRAM | open |
+| A5 | F4 + F5 run control: async long calls, claim checks | open |
+| A6 | E8 long-poll on `seq` | open |
+| A7 | E2 PC history (A/B benchmark) | open |
+| A8 | D9 TS-Conf paging `read_write` | open |
+| A9 | E7 label import | open |
+| A10 | Merge master, full build + tests, report to the owner | open |
