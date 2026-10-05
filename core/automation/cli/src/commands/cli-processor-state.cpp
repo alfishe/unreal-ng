@@ -537,6 +537,8 @@ void CLIProcessor::HandleStateMemoryRAM(const ClientSession& session, EmulatorCo
     auto contended = [context](uint8_t slot) {
         return (context->pCore && context->pCore->IsSlotContended(slot)) ? ", contended" : "";
     };
+    // The mapper's view: a write reaches the page (Memory::IsWindowWritable; TS-Conf W0_WE, ...)
+    auto access = [&memory](uint8_t window) { return memory.IsWindowWritable(window) ? "read/write" : "read-only"; };
 
     // Bank 0 (might be ROM)
     if (memory.IsBank0ROM())
@@ -545,21 +547,21 @@ void CLIProcessor::HandleStateMemoryRAM(const ClientSession& session, EmulatorCo
     }
     else
     {
-        ss << "Bank 0 (0x0000-0x3FFF): RAM Page " << (int)memory.GetRAMPageForBank0() << " (read/write" << contended(0)
+        ss << "Bank 0 (0x0000-0x3FFF): RAM Page " << (int)memory.GetRAMPageForBank0() << " (" << access(0) << contended(0)
            << ")" << NEWLINE;
     }
 
     // Bank 1 (always RAM)
-    ss << "Bank 1 (0x4000-0x7FFF): RAM Page " << (int)memory.GetRAMPageForBank1() << " (read/write" << contended(1) << ")"
+    ss << "Bank 1 (0x4000-0x7FFF): RAM Page " << (int)memory.GetRAMPageForBank1() << " (" << access(1) << contended(1) << ")"
        << NEWLINE;
     ss << "                        [Screen 0 location]" << NEWLINE;
 
     // Bank 2 (always RAM)
-    ss << "Bank 2 (0x8000-0xBFFF): RAM Page " << (int)memory.GetRAMPageForBank2() << " (read/write" << contended(2) << ")"
+    ss << "Bank 2 (0x8000-0xBFFF): RAM Page " << (int)memory.GetRAMPageForBank2() << " (" << access(2) << contended(2) << ")"
        << NEWLINE;
 
     // Bank 3 (always RAM, pageable on 128K)
-    ss << "Bank 3 (0xC000-0xFFFF): RAM Page " << (int)memory.GetRAMPageForBank3() << " (read/write" << contended(3) << ")"
+    ss << "Bank 3 (0xC000-0xFFFF): RAM Page " << (int)memory.GetRAMPageForBank3() << " (" << access(3) << contended(3) << ")"
        << NEWLINE;
 
     if (config.mem_model == MM_SPRINTER)
@@ -692,7 +694,7 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
     }
     else
     {
-        ss << "RAM Page " << (int)memory.GetRAMPageForBank0() << " (read/write)" << NEWLINE;
+        ss << "RAM Page " << (int)memory.GetRAMPageForBank0() << (memory.IsWindowWritable(0) ? " (read/write)" : " (read-only)") << NEWLINE;
     }
 
     if (config.mem_model != MM_SPECTRUM48 && config.mem_model != MM_SPRINTER)  // the Sprinter's #7FFD is in the PLD

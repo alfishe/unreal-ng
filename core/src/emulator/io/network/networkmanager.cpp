@@ -29,10 +29,17 @@
 NetworkManager::NetworkManager(EmulatorContext* context) : _context(context)
 {
     _traffic = std::make_unique<NetworkTrafficTap>([context]() { return VirtualNetwork::TrafficTimeOf(context); });
+    _stream = std::make_unique<TrafficStream>(*_traffic);
+}
+
+uint32_t NetworkManager::StreamListenAddress() const
+{
+    return BuildConfig(_context).ListenAddress();
 }
 
 NetworkManager::~NetworkManager()
 {
+    _stream->Stop();   // its thread reads the tap
     Unplug();
 }
 
@@ -304,6 +311,14 @@ void NetworkManager::ApplyConfiguration()
 {
     if (!_context)
         return;
+    // [NETWORK] TrafficStream: the live stream starts with the machine (automation starts / stops it later); its own
+    // thread, so it needs no machine-thread hand-over
+    const int32_t streamPort = _context->config.network.trafficStreamPort;
+    if (streamPort >= 0 && !_stream->Running())
+    {
+        std::string error;
+        _stream->Start(StreamListenAddress(), static_cast<uint16_t>(streamPort), error);
+    }
     const bool loopRunning = _context->pEmulator && _context->pEmulator->IsRunning();
     const bool onLoopThread = _context->pMainLoop && _context->pMainLoop->IsRunThread();
     if (loopRunning && !onLoopThread)

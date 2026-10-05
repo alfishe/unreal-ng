@@ -528,6 +528,39 @@ void MainLoop::OnFrameEnd()
 - Recording must capture all 10 seconds worth of frames/audio
 - Output file plays back at normal speed (10 seconds duration)
 
+## Output Profiles (1080p / 1440p / 4K)
+
+`RecordingManager::SetOutputProfile(id)` selects what the file's picture size is:
+
+| Profile | Frame | Notes |
+|---------|-------|-------|
+| `native` (default) | the picture (region, TS-Conf / Profi geometry) times `SetScaleFactor` (1-4) | nearest-neighbor upscale in the encoder |
+| `1080p` / `1440p` / `4k` | fixed 1920x1080 / 2560x1440 / 3840x2160 | the picture is scaled in `CaptureFrame` by `FrameScaler`; encoders get `scaleFactor = 1` and the fixed size |
+
+`FrameScaler` (core/recording/src/common/framescaler.*) is the algorithm of the UI window (Nearest sampling) made
+pixel-exact: the largest integer factor k that fits the frame (352x288 in 3840x2160: k = 7, 2464x2016), centered, black
+bars. A picture larger than the frame (a videowall window above 1080p) is sampled nearest with its aspect kept. Cost:
+the output buffer is reused, the bars are drawn once (only the picture rectangle is rewritten per frame), one source
+row is expanded once and the other k-1 rows of its block are a `memcpy`. A fixed frame takes H.264 / H.265 only
+(`RecordingRequest::ValidateProfile`); the picture size may change mid-recording (TS-Conf windows, a resized
+videowall) without leaving the file's size. `native` costs nothing extra.
+
+**Zero-copy.** An encoder that owns writable memory lends it (`EncoderBase::AcquireFrameTarget` / `SubmitFrameTarget`,
+`FrameTarget`), and `FrameScaler::ScaleInto` writes the finished frame - picture and bars - straight into it, with the
+caller's row stride; the 33 MB 4K frame is built once and never copied. The macOS native encoder lends a locked
+`CVPixelBuffer` of the AVAssetWriter pool (B,G,R,A: the R/B swap is done once per SOURCE pixel before the pixels are
+repeated, 100 thousand pixels instead of 8.3 million); the ffmpeg pipe encoder lends a queue slot from a buffer pool
+(the pool also ends the per-frame 33 MB allocation). Encoders that do not lend (NVENC, GIF, DSD, custom) return
+`Unsupported` and get the scaled frame through `OnVideoFrame` as before. The queue of the ffmpeg encoder is bounded by
+bytes (about 512 MiB, 15 frames at 4K), and `Stop()` waits for a backlog to drain while it shrinks, so a software 4K
+encoder that runs behind still finalizes its file.
+
+`SetEncoderAcceleration(Auto | Hardware | Software)` chooses GPU or software encoding for any profile: `Auto` keeps
+the usual order (native encoder, then ffmpeg's hardware encoders, then libx264 / libx265), `Software` forces ffmpeg
+with libx264 / libx265, `Hardware` fails the start on a machine with no GPU encoder. All surfaces (CLI, WebAPI + OpenAPI,
+MCP, Lua, Python, the Qt dialog and toolbar, the videowall) use the same names and the same checks
+(`RecordingRequest::NormalizeProfile` / `ValidateProfile` / `NormalizeAcceleration`).
+
 ## Supported Output Formats
 
 ### Video+Audio Formats

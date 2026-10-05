@@ -41,6 +41,11 @@ public:
     /// region <Frame Input>
 
     void OnVideoFrame(const FramebufferDescriptor& framebuffer, double timestampSec) override;
+    /// Zero-copy input: the producer writes the frame straight into a locked CVPixelBuffer of the adaptor's pool
+    /// (B,G,R,A) and submits it - no intermediate frame, no copy
+    FrameTargetResult AcquireFrameTarget(uint32_t width, uint32_t height, FrameTarget& target) override;
+    void SubmitFrameTarget(FrameTarget& target, double timestampSec) override;
+    void ReleaseFrameTarget(FrameTarget& target) override;
     void OnAudioSamples(const int16_t* samples, size_t sampleCount, double timestampSec) override;
 
     /// endregion </Frame Input>
@@ -68,6 +73,8 @@ public:
     std::string GetLastError() const override { return _lastError; }
 
 private:
+    /// Waits (bounded) for the writer input to take a frame; false when it is stuck or the writer failed
+    bool WaitWriterReady();
     // Internal initialization methods (implemented in .mm)
     bool initAudioConverter(const EncoderConfig& config);
     bool initAssetWriter(const std::string& filename, const EncoderConfig& config);

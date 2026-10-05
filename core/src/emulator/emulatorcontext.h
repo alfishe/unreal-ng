@@ -247,6 +247,11 @@ public:
     // checks are read from the same thread.
     bool ttdReplayActive = false;
 
+    /// A tool's access through the machine's own paths runs (a debugger's port write, PortWrite): memory and port
+    /// breakpoints do not fire on it. Set only where nothing else drives the machine (a coherent moment), so a
+    /// plain bool; checked behind the breakpoint filters, never on a path without breakpoints
+    bool toolAccessActive = false;
+
     /// A device that can replace the machine's picture (VDAC2's FT812) and so takes
     /// part in what a TTD position shows (ttddisplayparticipant.h); set by the device
     ttd::ITTDDisplayParticipant* pTtdDisplayParticipant = nullptr;
@@ -267,7 +272,8 @@ public:
         kStepWorkRzx = 1u << 3,              ///< an RZX recording plays (rzxPlayer: frame ends, fetch counting)
         kStepWorkDeviceInt = 1u << 4,        ///< a device holds /INT low (Z80::SetDeviceIntLine)
         kStepWorkEngine = 1u << 5,           ///< the machine runs on its own instruction engine (Z80::SetEngine)
-        // Next free: 1u << 6
+        kStepWorkPcHistory = 1u << 6,        ///< a debugger records the PC history (PcHistory::Arm)
+        // Next free: 1u << 7
     };
     std::atomic<uint32_t> stepWork{0};
 

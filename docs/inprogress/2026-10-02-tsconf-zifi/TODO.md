@@ -103,7 +103,8 @@ Evidence (not committed): `scratch/z5/` in the worktree - `ttd/*.ttd` per run, `
    program then ends somewhere else. Wait for a glide to finish (the demo steps do).
 7. **Not an emulator bug (2026-10-04):** in `zifi.spg` 0.733 the mouse pointer disappears under the grey strip below
    the status bar. The program limits the pointer to `0..239` (`MOUSE45`: `ld hl,240-1`) and puts that value into the
-   16 x 16 pointer sprite's Y (`mouse_proc`: `ld (mouse_spr),a`). With `T_CONFIG = #80` the sprite window is the
+   16 x 16 pointer sprite's Y (`mouse_proc`: `ld (mouse_spr),a`; `ZiFi SPG/zifi.asm` in
+   [ZiFi-ESP32-S3-Zero](https://github.com/andrewinsidelazarev/ZiFi-ESP32-S3-Zero), the same in HackerVBI's original). With `T_CONFIG = #80` the sprite window is the
    320 x 240 graphics window, so at the bottom only the sprite's first line is inside it and the other 15 lines fall
    into the border. RTL (`video_sync.v` `v_ts` / `hvtspix`, `ts_rres_ext` = T_CONFIG bit 0), the TS-Labs Unreal fork
    (`draw_ts` only between `u_brd` and `d_brd`, `tsconf.cpp` sprite row from `vid.line - u_brd + 1 - spr.y`) and the

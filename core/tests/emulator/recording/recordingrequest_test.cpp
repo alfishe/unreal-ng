@@ -84,3 +84,32 @@ TEST(RecordingRequest_Test, IsNativeCombination_H264HevcAacInMp4Mov)
     EXPECT_FALSE(RecordingRequest::IsNativeCombination("h264", "mp4", "mp3"));
     EXPECT_FALSE(RecordingRequest::IsNativeCombination("vp9", "mp4", "aac"));
 }
+
+TEST(RecordingRequest_Test, NormalizeProfile_KnownNamesAndAliases)
+{
+    EXPECT_EQ(RecordingRequest::NormalizeProfile(""), "native");
+    EXPECT_EQ(RecordingRequest::NormalizeProfile("Native"), "native");
+    EXPECT_EQ(RecordingRequest::NormalizeProfile("4K"), "4k");
+    EXPECT_EQ(RecordingRequest::NormalizeProfile("uhd"), "4k");
+    EXPECT_EQ(RecordingRequest::NormalizeProfile("2160p"), "4k");
+    EXPECT_EQ(RecordingRequest::NormalizeProfile("1080p"), "1080p");
+    EXPECT_EQ(RecordingRequest::NormalizeProfile("8k"), "");
+}
+
+TEST(RecordingRequest_Test, ValidateProfile_FixedFrameTakesH264AndH265Only)
+{
+    EXPECT_EQ(RecordingRequest::ValidateProfile("4k", "h264"), "");
+    EXPECT_EQ(RecordingRequest::ValidateProfile("4k", "hevc"), "");
+    EXPECT_EQ(RecordingRequest::ValidateProfile("native", "gif"), "");
+    EXPECT_NE(RecordingRequest::ValidateProfile("4k", "gif"), "");
+    EXPECT_NE(RecordingRequest::ValidateProfile("1080p", "vp9"), "");
+    EXPECT_NE(RecordingRequest::ValidateProfile("8k", "h264"), "");
+}
+
+TEST(RecordingRequest_Test, NormalizeAcceleration_NamesAndAliases)
+{
+    EXPECT_EQ(RecordingRequest::NormalizeAcceleration(""), "auto");
+    EXPECT_EQ(RecordingRequest::NormalizeAcceleration("GPU"), "hardware");
+    EXPECT_EQ(RecordingRequest::NormalizeAcceleration("cpu"), "software");
+    EXPECT_EQ(RecordingRequest::NormalizeAcceleration("turbo"), "");
+}

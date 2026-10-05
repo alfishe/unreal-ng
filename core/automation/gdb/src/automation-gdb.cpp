@@ -1,4 +1,6 @@
 #include "automation-gdb.h"
+
+#include <cstdlib>
 #include "gdbserver.h"
 
 AutomationGDB::AutomationGDB()
@@ -19,6 +21,15 @@ bool AutomationGDB::start()
     }
 
     _server->setAutoAttach(_autoAttach);
+    // UNREAL_GDB_PORT overrides the port, as UNREAL_WEBAPI_PORT / _CLI_ / _MCP_ / _DEZOG_ / _ZRCP_ do for theirs:
+    // several instances on one machine (parallel agents, tests) each get their own
+    if (const char* env = std::getenv("UNREAL_GDB_PORT"))
+    {
+        char* end = nullptr;
+        const long value = std::strtol(env, &end, 10);
+        if (end != env && *end == '\0' && value > 0 && value <= 0xFFFF)
+            _port = static_cast<uint16_t>(value);
+    }
     return _server->start(_port, _bindAddress);
 }
 

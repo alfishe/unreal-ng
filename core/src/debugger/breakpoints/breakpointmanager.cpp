@@ -1506,7 +1506,7 @@ void BreakpointManager::RemovePortBreakpointsByType(uint8_t ioType)
 uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address)
 {
     // TTD silent-replay suppression (parent TDD 8.2 + Appendix C): the replay re-executes known history
-    if (_context && _context->ttdReplayActive)
+    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
         return BRK_INVALID;
 
     // Stepping on from the execution breakpoint the emulator is stopped at: no hit, no count
@@ -1540,7 +1540,7 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address)
 
 uint16_t BreakpointManager::ResolvePort(int direction, uint16_t port)
 {
-    if (_context && _context->ttdReplayActive)
+    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
         return BRK_INVALID;
     if (_portHeads[direction].empty())
         return BRK_INVALID;

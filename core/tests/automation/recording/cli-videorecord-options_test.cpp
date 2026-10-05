@@ -112,3 +112,47 @@ TEST(CliVideoRecordOptions_Test, UnknownRegionIsRefused)
     EXPECT_NE(error.find("region"), std::string::npos) << error;
     EXPECT_FALSE(CliVideoRecord::ParseStart({"start", "--region"}, options, error)) << "no value";
 }
+
+TEST(CliVideoRecordOptions_Test, ProfileAndAccelerationDefaultToNativeAuto)
+{
+    CliVideoRecord::StartOptions options;
+    std::string error;
+    ASSERT_TRUE(CliVideoRecord::ParseStart({"start", "h264", "out.mp4"}, options, error)) << error;
+    EXPECT_EQ(options.profile, "native");
+    EXPECT_EQ(options.acceleration, "auto");
+    EXPECT_TRUE(CliVideoRecord::Validate(options, error)) << error;
+}
+
+TEST(CliVideoRecordOptions_Test, FourKProfileTakesH264AndH265InAnyContainer)
+{
+    for (const char* format : {"h264", "h265"})
+    {
+        CliVideoRecord::StartOptions options;
+        std::string error;
+        ASSERT_TRUE(CliVideoRecord::ParseStart({"start", format, "out.mkv", "--profile", "UHD", "--acceleration", "CPU"},
+                                               options, error))
+            << error;
+        EXPECT_EQ(options.profile, "4k");
+        EXPECT_EQ(options.acceleration, "software");
+        EXPECT_TRUE(CliVideoRecord::Validate(options, error)) << error;
+    }
+}
+
+TEST(CliVideoRecordOptions_Test, FourKProfileRefusesOtherFormats)
+{
+    CliVideoRecord::StartOptions options;
+    std::string error;
+    ASSERT_TRUE(CliVideoRecord::ParseStart({"start", "gif", "out.gif", "--profile", "4k"}, options, error)) << error;
+    EXPECT_FALSE(CliVideoRecord::Validate(options, error));
+    EXPECT_NE(error.find("h264 or h265"), std::string::npos) << error;
+}
+
+TEST(CliVideoRecordOptions_Test, UnknownProfileOrAccelerationIsRefused)
+{
+    CliVideoRecord::StartOptions options;
+    std::string error;
+    EXPECT_FALSE(CliVideoRecord::ParseStart({"start", "h264", "--profile", "8k"}, options, error));
+    EXPECT_NE(error.find("profile"), std::string::npos);
+    EXPECT_FALSE(CliVideoRecord::ParseStart({"start", "h264", "--acceleration", "turbo"}, options, error));
+    EXPECT_NE(error.find("acceleration"), std::string::npos);
+}

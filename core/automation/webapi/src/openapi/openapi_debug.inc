@@ -245,6 +245,70 @@
     paths["/api/v1/emulator/{id}/calltrace"]["get"]["responses"]["200"]["description"] = "Call trace entries";
 
     // Disassembly endpoint
+    // GET / POST /api/v1/emulator/{id}/debug/pchist - PC history with pages (debugger additions tdd §7)
+    {
+        const char* kPath = "/api/v1/emulator/{id}/debug/pchist";
+        Json::Value& get = paths[kPath]["get"];
+        get["summary"] = "PC history: the instructions the CPU started, with their window's page";
+        get["tags"].append("Debug Commands");
+        get["description"] =
+            "Newest first, at most 1024 kept: {armed, started_now, total, capacity, entries [{address, kind rom | ram | "
+            "cache, page}]}. One entry per instruction the CPU starts (an accepted interrupt is none; a prefix is part "
+            "of its instruction), the page the 16K window of its address showed at that moment. Recording costs the "
+            "emulation nothing until a debugger asks: the first read arms it (started_now: entries come from then on). "
+            "Example on TS-Conf: a CALL #C000 with RAM page #20 in window 3 adds {address 49152, kind ram, page 32}.";
+        get["parameters"][0]["name"] = "id";
+        get["parameters"][0]["in"] = "path";
+        get["parameters"][0]["required"] = true;
+        get["parameters"][0]["schema"]["type"] = "string";
+        get["parameters"][1]["name"] = "depth";
+        get["parameters"][1]["in"] = "query";
+        get["parameters"][1]["description"] = "Entries (default 32, at most 1024)";
+        get["parameters"][1]["schema"]["type"] = "integer";
+        get["responses"]["200"]["description"] = "The history";
+        get["responses"]["400"]["description"] = "Bad depth";
+        get["responses"]["503"]["description"] = "No coherent moment within 500 ms; try again";
+
+        Json::Value& post = paths[kPath]["post"];
+        post["summary"] = "Start (empty) or stop the PC history";
+        post["tags"].append("Debug Commands");
+        post["parameters"] = Json::Value(Json::arrayValue);
+        post["parameters"].append(get["parameters"][0]);
+        post["requestBody"]["required"] = true;
+        post["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        post["requestBody"]["content"]["application/json"]["schema"]["properties"]["enabled"]["type"] = "boolean";
+        post["responses"]["200"]["description"] = "{armed}";
+        post["responses"]["400"]["description"] = "Body without a boolean 'enabled'";
+    }
+
+    // GET /api/v1/emulator/{id}/debug/wait - long-poll on the snapshot's seq (debugger additions tdd §6)
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/debug/wait"]["get"];
+        op["summary"] = "Wait until something a debugger shows changes (long-poll)";
+        op["tags"].append("Debug Commands");
+        op["description"] =
+            "Answers when the debugger snapshot's seq moves past `since` - a stop (pause, breakpoint, the end of a "
+            "step), a run start or a tool edit - or after timeout_ms: {seq, changed, state, pause {reason, "
+            "breakpoint_id, address}}. `since` omitted = the current seq (wait for the next change); already behind = "
+            "an immediate answer. No server thread waits, so many clients can wait at once. For clients without "
+            "WebSocket; /api/v1/websocket pushes the same stops.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["parameters"][1]["name"] = "since";
+        op["parameters"][1]["in"] = "query";
+        op["parameters"][1]["schema"]["type"] = "integer";
+        op["parameters"][1]["description"] = "The seq the client last saw (default: the current one)";
+        op["parameters"][2]["name"] = "timeout_ms";
+        op["parameters"][2]["in"] = "query";
+        op["parameters"][2]["schema"]["type"] = "integer";
+        op["parameters"][2]["description"] = "0..60000, default 10000 (0 = answer now)";
+        op["responses"]["200"]["description"] = "{seq, changed, state: paused | running | stopped, pause}";
+        op["responses"]["400"]["description"] = "Bad since / timeout_ms";
+        op["responses"]["404"]["description"] = "No such emulator (or it was removed while waiting)";
+    }
+
     // GET /api/v1/emulator/{id}/debug/snapshot - one coherent picture for a debugger front end (D7 + E3)
     {
         Json::Value& op = paths["/api/v1/emulator/{id}/debug/snapshot"]["get"];
@@ -279,6 +343,12 @@
             "Memory windows <space>:<address>:<length> (space cpu | ram | ram5 | rom2 | cache0, length at most 65536); "
             "repeat the parameter or separate with commas; at most 8";
         p[3]["schema"]["type"] = "string";
+        p[4]["name"] = "pchist";
+        p[4]["in"] = "query";
+        p[4]["description"] =
+            "PC history entries, newest first (default 0 = none, at most 1024): the snapshot's pchist {armed, "
+            "started_now, total, capacity, entries [{address, kind, page}]}; the first request arms the history";
+        p[4]["schema"]["type"] = "integer";
         op["responses"]["200"]["description"] = "The snapshot";
         op["responses"]["400"]["description"] = "Bad parameters (the message says which)";
         op["responses"]["503"]["description"] = "No coherent moment within 500 ms; try again";

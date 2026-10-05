@@ -47,6 +47,9 @@
 #include <ctime>
 #include <functional>
 #include <string>
+#include <vector>
+
+#include "emulator/memory/devicememory.h"
 
 class Ds12887
 {
@@ -163,6 +166,10 @@ public:
     /// power-on contents when the file is missing or has the wrong size
     bool LoadNvram(const std::string& path);
     bool SaveNvram(const std::string& path) const;
+    /// The cells as the device memory region "cmos" (debugger additions tdd §4): a read is side-effect free
+    /// (PeekRegister), a write is a guest write (WriteRegister: the time registers set the clock). A chip with more
+    /// memory adds its own regions (EvoAvr: "eeprom")
+    virtual void CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>& out) { out.push_back(&_cmosRegion); }
     /// endregion </Battery-backed RAM>
 
     /// region <TTD>
@@ -236,4 +243,29 @@ protected:
 
     SessionWall _sessionWall;
     EmulatedClock _emulatedClock;
+
+private:
+    class CmosRegion final : public IDeviceMemoryRegion
+    {
+    public:
+        explicit CmosRegion(Ds12887& chip) : _chip(chip) {}
+        const char* Name() const override { return "cmos"; }
+        const char* Description() const override
+        {
+            return "CMOS clock cells as the guest addresses them: #00-#09 time and alarm, #0A-#0D registers A-D, "
+                   "#0E and up battery-backed RAM";
+        }
+        uint32_t Size() const override { return static_cast<uint32_t>(_chip.GetCellCount()); }
+        uint32_t PageSize() const override { return Size(); }
+        const char* WritePath() const override
+        {
+            return "Ds12887::WriteRegister, as a guest write: the time registers set the clock, C and D ignore it";
+        }
+        uint8_t Read(uint32_t offset) const override { return _chip.PeekRegister(static_cast<uint8_t>(offset)); }
+        void Write(uint32_t offset, uint8_t value) override { _chip.WriteRegister(static_cast<uint8_t>(offset), value); }
+
+    private:
+        Ds12887& _chip;
+    };
+    CmosRegion _cmosRegion{*this};
 };

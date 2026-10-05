@@ -29,7 +29,8 @@
     paths["/api/v1/emulator/{id}/state/paging"]["get"]["description"] =
         "Tagged paging latches + bank table (P1-2 design). Returns model, latches array (port, tags, device, "
         "gate, latch name, value, decoded bits), banks array (bank, address_range, type, page, ROM name/role/signature "
-        "when applicable), paging_locked and trdos_active flags. Same report as CLI `paging`, Lua `paging_state()`, "
+        "when applicable, contended, writable + read_write: whether a CPU write reaches the page as the mapper decides - "
+        "ROM, TS-Conf window 0 without W0_WE), paging_locked and trdos_active flags. Same report as CLI `paging`, Lua `paging_state()`, "
         "Python `paging_state()` and MCP `inspect_state` aspect `paging`. On PROFI the pDFFD latch decodes to "
         "extended_ram_bank (bits 2:0), sco, worom, cpm, scr and video_512x240 (bit 7).";
     paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["name"] = "id";

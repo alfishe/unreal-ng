@@ -280,7 +280,7 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
     {
         bank0["type"] = "RAM";
         bank0["page"] = static_cast<int>(memory.GetRAMPageForBank0());
-        bank0["read_write"] = "read/write";
+        bank0["read_write"] = memory.IsWindowWritable(0) ? "read/write" : "read-only";
     }
     banks["bank0"] = bank0;
 
@@ -288,7 +288,7 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
     bank1["address_range"] = "0x4000-0x7FFF";
     bank1["type"] = "RAM";
     bank1["page"] = static_cast<int>(memory.GetRAMPageForBank1());
-    bank1["read_write"] = "read/write";
+    bank1["read_write"] = memory.IsWindowWritable(1) ? "read/write" : "read-only";
     bank1["note"] = "Screen 0 location";
     banks["bank1"] = bank1;
 
@@ -296,14 +296,14 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
     bank2["address_range"] = "0x8000-0xBFFF";
     bank2["type"] = "RAM";
     bank2["page"] = static_cast<int>(memory.GetRAMPageForBank2());
-    bank2["read_write"] = "read/write";
+    bank2["read_write"] = memory.IsWindowWritable(2) ? "read/write" : "read-only";
     banks["bank2"] = bank2;
 
     Json::Value bank3;
     bank3["address_range"] = "0xC000-0xFFFF";
     bank3["type"] = "RAM";
     bank3["page"] = static_cast<int>(memory.GetRAMPageForBank3());
-    bank3["read_write"] = "read/write";
+    bank3["read_write"] = memory.IsWindowWritable(3) ? "read/write" : "read-only";
     banks["bank3"] = bank3;
 
     // Contended: the CPU waits for the video logic there (Core::IsSlotContended)
@@ -482,7 +482,7 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
     {
         mapping["bank0_type"] = "RAM";
         mapping["bank0_page"] = static_cast<int>(memory.GetRAMPageForBank0());
-        mapping["bank0_access"] = "read/write";
+        mapping["bank0_access"] = memory.IsWindowWritable(0) ? "read/write" : "read-only";
     }
     ret["mapping"] = mapping;
 
@@ -1568,9 +1568,15 @@ void EmulatorAPI::getStatePaging(const HttpRequestPtr& req, std::function<void(c
         banks.append(bank);
     }
 
-    // Contended: the CPU waits for the video logic there (Core::IsSlotContended)
+    // Contended: the CPU waits for the video logic there (Core::IsSlotContended). Writable: a CPU write reaches the
+    // mapped page (the mapper's view: ROM, TS-Conf W0_WE, ... - Memory::IsWindowWritable)
     for (Json::ArrayIndex slot = 0; slot < banks.size(); slot++)
+    {
         banks[slot]["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(slot));
+        const bool writable = memory.IsWindowWritable(static_cast<uint8_t>(slot));
+        banks[slot]["writable"] = writable;
+        banks[slot]["read_write"] = writable ? "read/write" : "read-only";
+    }
 
     // Sprinter: the PLD maps the windows (fast RAM, vROM, graphics, ISA): kind and physical page
     // from DeviceState::SprinterPaging, the same view every interface shows

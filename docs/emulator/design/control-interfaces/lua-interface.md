@@ -225,6 +225,10 @@ local info     = disk_info(0)  -- nil without a disk, else geometry/catalog deta
 -- Raw sector access (read-only)
 local sector = disk_read_sector(0, 0, 0, 1)      -- drive 0, cyl 0, side 0, sector 1
 local hex    = disk_read_sector_hex(0, 0, 1)      -- drive 0, track 0, sector 1
+-- Write into a sector's data field (SectorWrite: CRC recalculated, image modified, TTD tool edit). The sector
+-- number is 0-based like disk_read_sector's (ID - 1); data is a string of bytes or a table; optional offset
+ok, err = disk_write_sector(0, 0, 0, 8, "MYDISK", 245)   -- TR-DOS sector ID 9: the disk title -> true
+ok, err = disk_write_sector(1, 0, 0, 0, {0x42})          -- nil, "no disk in drive B"
 ```
 
 ### Mouse Input
@@ -405,7 +409,7 @@ j, err = sprinter_pld_journal{kinds="cnf,port_1ffd", source="live"}  -- who chan
 sprinter_pld_journal_control{enabled=true, clear=true}            -- switch / clear the PLD journal
 bios = sprinter_bios()            -- BIOS images (file, alias, crc32, present, loaded, selected, known_issues), loaded, known_issues, reload_pending, options
 r, err = sprinter_bios_select{bios="3.06", fast_start=false, reset=true}  -- the image loads at the reset (now unless reset=false)
-regs = memory_regions()           -- device memory regions: {name="vram", size=262144, pages=16, ...} on the Sprinter
+regs = memory_regions()           -- device memory regions: {name="vram", size=262144, pages=16, ...} on the Sprinter; "cram" / "sfile" (512 bytes each) on TS-Conf; "cmos" on every machine with a CMOS clock; "eeprom" (4 KiB) on ZX-Evo
 bytes, err = region_read("vram", 0x17F0, 3)     -- table of bytes; region_write("vram", 0x17F0, "0000A8") / {0,0,0xA8}
 ok, err = region_save("vram", "vram.bin")       -- region_load("vram", "vram.bin" [, offset])
 ch = video_changes(2)             -- video change log: frames[] {start, writes[] (t, line, t_in_line, pc, changes), tables}
@@ -579,6 +583,18 @@ bytes = mem_read_bytes(0, 65536)            -- the whole CPU view as one Lua str
 bytes = mem_read_bytes(0x1800, 768, "ram5") -- a page window ("ram5", "rom2", "cache0"; "ram" = all RAM pages)
 bytes, err = mem_read_bytes(0, 1, "ram9")   -- nil, "this machine has no page ram9"
 page_write_block("ram", 7, 0x1000, data)    -- Write block to RAM page 7
+
+-- A port write through the machine's decoder, like a CPU OUT (paging, TS-Conf registers, AY, border), without
+-- breakpoints or device waits, recorded by TTD as a tool edit; paused, stopped or running
+ok, err = port_out(0x13AF, 0x20)            -- TS-Conf: RAM page #20 into window 3 -> true
+
+-- PC history: the newest instructions with their window's page; the first call starts recording
+h = pc_history(16)                          -- {armed, started_now, total, capacity, entries = {{address, kind, page}, ...}}
+pc_history_arm(false)                       -- stop (true: restart empty); debug_snapshot{pchist = 16} carries it too
+
+-- Long-poll: block until the debugger snapshot's seq moves past `since` (default: now) or the timeout (ms)
+w = debug_wait(snap.seq, 5000)              -- {seq, changed, state, pause = {reason, breakpoint_id, address}}
+ok, err = port_out(0x7FFD, 256)             -- nil, "bad value '256' (0..#FF)"
 
 -- Get memory configuration
 info = memory_info()
@@ -1105,7 +1121,8 @@ emu.paging_state()                   -- tagged paging latches + bank table (P1-2
                                      --   latches = {{port, latch, tags, device?, gate?, value,
                                      --               decoded = {ram_bank=.., shadow_screen=.., ...}}},
                                      --   banks = {{bank, address_range, type, page,
-                                     --             name?, role?, signature?, contended?}} }
+                                     --             name?, role?, signature?, contended?,
+                                     --             writable}} }  -- writable: a CPU write reaches the page
                                      -- ROM bank rows carry the §5.2 identification: name = recognized
                                      -- content (SHA-256 catalog), role = the model's layout slot; a
                                      -- role/name mismatch is the one-glance wrong-ROM signal.
@@ -1166,6 +1183,10 @@ emu.video_record("start", {audio_rate = 48000})  -- pin the core rate first (num
 emu.video_record("start", {format = "h264", filename = "run.mp4", audio = "aac"})  -- with the sound
                                      -- track (audio = true means aac; video_bitrate / audio_bitrate
                                      -- in kbps). Omit audio for video only. gif + audio is refused
+emu.video_record("start", {format = "h264", filename = "run.mkv", profile = "4k", acceleration = "software"})
+                                     -- profile: "native" (default) | "1080p" | "1440p" | "4k": a fixed frame, the
+                                     -- picture scaled sharply into it (nearest, integer factor, black bars; h264 /
+                                     -- h265 only). acceleration: "auto" | "hardware" | "software"
 emu.video_record("stop")             -- also "pause" / "resume"
 emu.video_record_status()             -- recording state + live stats (frames, duration, fps,
                                      -- audio, audio_codec, audio_sample_rate, audio_duration)

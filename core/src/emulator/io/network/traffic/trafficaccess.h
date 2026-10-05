@@ -30,7 +30,8 @@ StateNode Records(EmulatorContext* context, const Query& query);
 bool Pcapng(EmulatorContext* context, const Query& query, std::vector<uint8_t>& out, std::string& error);
 
 /// `action`: "clear" (empty the ring), "start" (record into the pcapng file `path`, unbounded, until "stop"),
-/// "stop", "ring" (`ringBytes`: the ring's budget). False with `error`
+/// "stop", "ring" (`ringBytes`: the ring's budget), "stream" (the live pcapng stream on TCP port `ringBytes`, 0 = any
+/// free one; the port is in Records' `stream`), "stream-stop". False with `error`
 bool Control(EmulatorContext* context, const std::string& action, const std::string& path, uint64_t ringBytes,
              std::string& error);
 }  // namespace TrafficAccess

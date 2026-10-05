@@ -36,6 +36,7 @@ the byte-access core in
 | Bytes of a physical page, regardless of paging | `memory/page/{ram\|rom}/{n}` or `memory/{type}/{page}/{offset}` |
 | Disassemble a physical page | `disasm/page?type=&page=&offset=&count=` |
 | Device-owned memory (video RAM, ...) | `memory/regions`, `memory/region/{name}` |
+| Page something in (or set a machine register) as the program would | `ports/out` - a port write through the machine's decoder |
 
 ## MCP (preferred)
 
@@ -72,6 +73,10 @@ invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/memory/page/ram/5","que
 invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/disasm/page","query_params":{"type":"rom","page":0,"offset":0,"count":16}}
 invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/memory/write","body":{"address":"0x8000","data":[175,50,14]}}
 invoke_api {"method":"PUT","path":"/api/v1/emulator/{id}/memory/rom/protect","body":{"protected":false}}
+
+# A port write through the decoder, like the CPU's OUT (here: TS-Conf RAM page #20 into window 3)
+control_execution {"action":"port_out","port":"0x13AF","value":"0x20"}
+# -> Port 0x13AF <- 0x20 (paused)
 ```
 
 ## WebAPI
@@ -121,9 +126,23 @@ curl -s "$BASE/emulator/$EMU_ID/disasm?address=0x8000&count=12" | jq '.instructi
 curl -s "$BASE/emulator/$EMU_ID/state/memory"      | jq '{banks, paging}'
 curl -s "$BASE/emulator/$EMU_ID/state/memory/rom"  | jq '{active_rom_page, mapping}'
 curl -s "$BASE/emulator/$EMU_ID/state/paging"      | jq '.latches'
+
+# Page something in as the program would: a port write through the machine's decoder
+curl -s -X POST "$BASE/emulator/$EMU_ID/ports/out" -H 'Content-Type: application/json' \
+  -d '{"port":"0x7FFD","value":"0x13"}'        # 128K: RAM page 3 at #C000, ROM 1
+# -> {"port":"0x7FFD","value":"0x13","moment":"paused"}
 ```
 
+CLI `out #7FFD #13`, Lua `port_out(0x7FFD, 0x13)`, Python `emu.port_out(0x7FFD, 0x13)`, Qt debugger toolbar
+"Port OUT...".
+
 ### Device memory regions
+
+Memory a device owns outside RAM / ROM: the Sprinter's video RAM `vram`, the TS-Conf palette `cram` and sprite
+table `sfile` (512 bytes each, word n at offset 2n, low byte first), the CMOS clock's cells `cmos` on every machine
+with a clock (a write is a guest write: the time registers set the clock), the ZX-Evo AVR's 4 KiB `eeprom`. In the Qt
+debugger: toolbar "Device memory"
+(hex view; a typed byte goes through the same write path).
 
 ```bash
 curl -s "$BASE/emulator/$EMU_ID/memory/regions" | jq '.regions[] | {name, size_hex, page_size, pages, writable, write_path}'
@@ -177,6 +196,7 @@ writes go through the *device's own write path* (`write_path` says which).
 | Is this ROM the one I think? | `state/memory/rom` -> `bank0_rom_signature` / `bank0_rom_title` |
 | What changed between two moments? | `memory/map` twice with `view=ram`, diff `hash` per block |
 | Read the Sprinter's video RAM | `memory/regions` -> `memory/region/vram` |
+| Look at a page that is not mapped, the way the program would see it | `ports/out` with the machine's paging port (`#7FFD`, TS-Conf `#13AF`...), then `memory/{addr}` |
 
 ## Pitfalls
 
@@ -195,6 +215,12 @@ writes go through the *device's own write path* (`write_path` says which).
 - **Writes during TTD recording** (`memory/write`) insert a debugger-edit
   marker and mark the RAM page dirty, so the edit is part of the recorded
   history and seeks see it.
+- **`ports/out` is the program's own path, not a poke.** The machine's decoder handles it: every side effect of
+  a CPU OUT happens (paging, a TS-Conf DMA start, an AY register select, a floppy controller command), so write
+  only what you mean. No port or memory breakpoint fires on it, device waits are dropped (the CPU's clock does not
+  move), and a TTD recording keeps it as a debugger-edit marker. It runs paused, never started or between two
+  frames of a running machine (`moment`); `503` when another client is stepping the emulator. A port the machine
+  decodes as read-only does nothing.
 - **Argument forms differ.** `memory/{addr}` takes `len` (max 4096) and a
   decimal or `0x` address; `memory/read/{address}` takes `length` (default
   128); `memory/page` takes `offset` and `length`; regions take `offset` and

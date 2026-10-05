@@ -210,7 +210,8 @@ audiocapture result               # Peak/RMS stats per channel
 audiocapture save <path.wav>      # Export captured audio to WAV
 videorecord status                # Recording state + stats (default)
 videorecord start [format] [file] # Start recording (gif default; --fps N, --scale N,
-                                  #   --audio aac for a sound track, --video-bitrate / --audio-bitrate KBPS)
+                                  #   --audio aac for a sound track, --video-bitrate / --audio-bitrate KBPS,
+                                  #   --profile native|1080p|1440p|4k, --acceleration auto|hardware|software)
 videorecord stop / pause / resume # Control an active recording
 ```
 

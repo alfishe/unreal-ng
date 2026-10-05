@@ -28,6 +28,7 @@
 #include "encoders/dsd/dsd_encoder.h"
 #include "benchmarkfeeder.h"
 #include "multitrackdialog.h"
+#include "widgets/recordingsettings.h"
 
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -394,6 +395,42 @@ void VideoRecordingWidget::createVideoTab()
     regionLayout->addWidget(_sizeCombo);
     outputLayout->addLayout(regionLayout);
 
+    // Output profile and encoder acceleration. A fixed frame (1080p / 1440p / 4K) holds the picture scaled sharply -
+    // nearest neighbor, the largest integer factor that fits, black bars, the algorithm of the emulator window -
+    // and takes H.264 / H.265 only; the size factor above applies to the native profile
+    auto* profileLayout = new QHBoxLayout();
+    profileLayout->addWidget(new QLabel("Profile:"));
+    _profileCombo = new QComboBox();
+    _profileCombo->addItem("Native (size factor)", "native");
+    _profileCombo->addItem("1080p (1920×1080)", "1080p");
+    _profileCombo->addItem("1440p (2560×1440)", "1440p");
+    _profileCombo->addItem("4K (3840×2160)", "4k");
+    _profileCombo->setToolTip("Native: the picture at its own size times the size factor.\n"
+                              "1080p / 1440p / 4K: a fixed frame, the picture scaled sharply into it\n"
+                              "(nearest neighbor, integer factor, black bars, no blur). H.264 / H.265 only.");
+    profileLayout->addWidget(_profileCombo);
+
+    profileLayout->addWidget(new QLabel("Encoder:"));
+    _accelCombo = new QComboBox();
+    _accelCombo->addItem("Auto", 0);
+    _accelCombo->addItem("GPU (hardware)", 1);
+    _accelCombo->addItem("Software (CPU)", 2);
+    _accelCombo->setToolTip("Auto: a GPU encoder when the machine has one.\n"
+                            "GPU: hardware only, the start fails without one.\n"
+                            "Software: libx264 / libx265 through ffmpeg.");
+    profileLayout->addWidget(_accelCombo);
+    outputLayout->addLayout(profileLayout);
+
+    {
+        RecordingSettings saved;
+        saved.load();
+        const int profileIdx = _profileCombo->findData(saved.profile);
+        _profileCombo->setCurrentIndex(profileIdx >= 0 ? profileIdx : 0);
+        const int accelIdx = _accelCombo->findData(saved.acceleration);
+        _accelCombo->setCurrentIndex(accelIdx >= 0 ? accelIdx : 0);
+        _sizeCombo->setEnabled(_profileCombo->currentData().toString() == "native");
+    }
+
     // Audio settings
     auto* audioLayout = new QHBoxLayout();
     _includeAudioCheck = new QCheckBox("Include Audio");
@@ -529,6 +566,15 @@ void VideoRecordingWidget::connectSignals()
             this, [this](int) { updateRealtimeEstimate(); });
     connect(_browseButton, &QPushButton::clicked, this, &VideoRecordingWidget::onBrowseFile);
     connect(_includeAudioCheck, &QCheckBox::checkStateChanged, this, &VideoRecordingWidget::onIncludeAudioChanged);
+    connect(_profileCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { onProfileChanged(); });
+    connect(_accelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+        RecordingSettings saved;
+        saved.load();
+        saved.acceleration = _accelCombo->currentData().toInt();
+        saved.save();
+        updateRealtimeEstimate();
+    });
     connect(_multiTrackButton, &QPushButton::clicked, this, &VideoRecordingWidget::onMultiTrackConfigure);
     connect(_benchmarkButton, &QPushButton::clicked, this, &VideoRecordingWidget::onBenchmark);
 
@@ -1163,6 +1209,31 @@ void VideoRecordingWidget::updateRealtimeEstimate()
     }
 }
 
+void VideoRecordingWidget::onProfileChanged()
+{
+    const QString profile = _profileCombo->currentData().toString();
+    _sizeCombo->setEnabled(profile == "native" && !(_context && _context->pRecordingManager &&
+                                                    _context->pRecordingManager->IsRecording()));
+
+    RecordingSettings saved;
+    saved.load();
+    saved.profile = profile;
+    saved.save();
+
+    // A fixed frame takes H.264 / H.265: move off any other codec (VP9, AV1, GIF...) when the lists allow
+    if (profile != "native")
+    {
+        const QString current = _videoCodecCombo->currentText();
+        if (!current.startsWith("H.26"))
+        {
+            const int h264 = _videoCodecCombo->findText("H.264");
+            if (h264 >= 0)
+                _videoCodecCombo->setCurrentIndex(h264);
+        }
+    }
+    updateRealtimeEstimate();
+}
+
 void VideoRecordingWidget::onStartRecording()
 {
     validateContext();
@@ -1345,6 +1416,21 @@ void VideoRecordingWidget::onStartRecording()
     // Configure recording manager
     RecordingManager* rm = _context->pRecordingManager;
     rm->SetVideoEnabled(true);
+
+    // Output profile + encoder acceleration (a fixed frame takes H.264 / H.265 only)
+    const QString profileId = _profileCombo->currentData().toString();
+    if (profileId != "native" && videoCodec != "h264" && videoCodec != "h265" && videoCodec != "hevc")
+    {
+        QMessageBox::warning(this, "Profile",
+                             QString("The %1 profile takes H.264 or H.265 only. Pick one of them in the Video list "
+                                     "(any container that holds it) or switch the profile to Native.")
+                                 .arg(_profileCombo->currentText()));
+        return;
+    }
+    rm->SetOutputProfile(profileId.toStdString());
+    rm->SetEncoderAcceleration(EncoderAccelerationFromName(
+        _accelCombo->currentData().toInt() == 1 ? "hardware" :
+        _accelCombo->currentData().toInt() == 2 ? "software" : "auto"));
 
     // Capture region + output size; resolution derives from the region
     rm->SetCaptureRegion(_captureCombo->currentIndex() == 1 ? VideoCaptureRegion::MainScreen
@@ -1624,7 +1710,9 @@ void VideoRecordingWidget::updateRecordingControls()
     _includeAudioCheck->setEnabled(notRecording && audioSupported);
     _qualityCombo->setEnabled(notRecording);
     _captureCombo->setEnabled(notRecording);
-    _sizeCombo->setEnabled(notRecording);
+    _sizeCombo->setEnabled(notRecording && _profileCombo->currentData().toString() == "native");
+    _profileCombo->setEnabled(notRecording);
+    _accelCombo->setEnabled(notRecording);
     _filePathEdit->setEnabled(notRecording);
     _browseButton->setEnabled(notRecording);
     _backendGroup->setExclusive(false);

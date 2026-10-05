@@ -43,6 +43,14 @@ StateNode Records(EmulatorContext* context, const Query& query)
         return ret;
     }
     ret["tap"] = tap->Describe();
+    TrafficStream& stream = context->pCore->GetNetworkManager()->Stream();
+    StateNode s = StateNode::Object();
+    s["running"] = stream.Running();
+    s["port"] = static_cast<uint64_t>(stream.Port());
+    s["clients"] = static_cast<uint64_t>(stream.Clients());
+    if (stream.Running())
+        s["wireshark"] = "wireshark -k -i TCP@127.0.0.1:" + std::to_string(stream.Port());
+    ret["stream"] = s;
     StateNode records = StateNode::Array();
     for (const TrafficRecord& r : tap->Records(FilterOf(query)))
         records.push(NetworkTrafficTap::RecordNode(r));
@@ -65,8 +73,21 @@ bool Control(EmulatorContext* context, const std::string& action, const std::str
     NetworkTrafficTap* tap = TapOf(context, error);
     if (!tap)
         return false;
+    NetworkManager* manager = context->pCore->GetNetworkManager();
     if (action == "clear")
         tap->Clear();
+    else if (action == "stream")
+    {
+        // The live pcapng stream for Wireshark on a TCP port (`ringBytes` carries the port; 0 = any free port)
+        if (ringBytes > 65535)
+        {
+            error = "stream: port 0..65535";
+            return false;
+        }
+        return manager->Stream().Start(manager->StreamListenAddress(), static_cast<uint16_t>(ringBytes), error);
+    }
+    else if (action == "stream-stop")
+        manager->Stream().Stop();
     else if (action == "start")
     {
         if (path.empty())
@@ -89,7 +110,7 @@ bool Control(EmulatorContext* context, const std::string& action, const std::str
     }
     else
     {
-        error = "action '" + action + "': clear | start | stop | ring";
+        error = "action '" + action + "': clear | start | stop | ring | stream | stream-stop";
         return false;
     }
     return true;

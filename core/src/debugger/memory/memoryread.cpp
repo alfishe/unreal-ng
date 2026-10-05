@@ -1,6 +1,7 @@
 #include "memoryread.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 
 #include "debugger/search/memorysearch.h"
@@ -10,8 +11,7 @@
 
 namespace MemoryRead
 {
-namespace
-{
+
 bool ParseNumber(const std::string& text, uint32_t& out)
 {
     std::string digits = text;
@@ -26,7 +26,13 @@ bool ParseNumber(const std::string& text, uint32_t& out)
         digits = digits.substr(1);
         base = 16;
     }
-    if (digits.empty())
+    else if (digits.size() > 1 && (digits.back() == 'h' || digits.back() == 'H'))
+    {
+        digits.pop_back();
+        base = 16;
+    }
+    // strtoull would take a sign or blanks
+    if (digits.empty() || !std::isxdigit(static_cast<unsigned char>(digits[0])))
         return false;
     char* end = nullptr;
     const unsigned long long value = std::strtoull(digits.c_str(), &end, base);
@@ -35,7 +41,6 @@ bool ParseNumber(const std::string& text, uint32_t& out)
     out = static_cast<uint32_t>(value);
     return true;
 }
-}  // namespace
 
 Result Bytes(EmulatorContext* context, const std::string& space, uint32_t address, uint32_t length)
 {

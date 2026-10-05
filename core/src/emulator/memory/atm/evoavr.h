@@ -169,6 +169,13 @@ public:
     /// EvoAvrEeprom (compared at each capture: one write path, 4 KiB). v1 does
     /// not record it
     const uint8_t* EepromData() const { return _eeprom.data(); }
+    /// "cmos" and the 4 KiB EEPROM as the device memory region "eeprom" (plain storage: a write is a byte in it,
+    /// as the AVR firmware's EEPROM write leaves it)
+    void CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>& out) override
+    {
+        Ds12887::CollectMemoryRegions(out);
+        out.push_back(&_eepromRegion);
+    }
     void TTDRegions(std::vector<ttd::TTDDeviceRegion>& out) override;
     void TTDArmRegions(bool) override {}
     /// endregion </TTD>
@@ -182,6 +189,27 @@ protected:
     void AppendPs2Log(uint8_t byte);
 
     std::array<uint8_t, kEepromSize> _eeprom{};
+
+    class EepromRegion final : public IDeviceMemoryRegion
+    {
+    public:
+        explicit EepromRegion(std::array<uint8_t, kEepromSize>& eeprom) : _eeprom(eeprom) {}
+        const char* Name() const override { return "eeprom"; }
+        const char* Description() const override
+        {
+            return "ZX-Evo AVR EEPROM, 4 KiB, battery-backed (the guest sees 16 bytes of it at a time through the "
+                   "clock's #F0-#FF window, page in register A)";
+        }
+        uint32_t Size() const override { return static_cast<uint32_t>(kEepromSize); }
+        uint32_t PageSize() const override { return Size(); }
+        const char* WritePath() const override { return "the EEPROM byte itself (no side effect)"; }
+        uint8_t Read(uint32_t offset) const override { return _eeprom[offset % kEepromSize]; }
+        void Write(uint32_t offset, uint8_t value) override { _eeprom[offset % kEepromSize] = value; }
+
+    private:
+        std::array<uint8_t, kEepromSize>& _eeprom;
+    };
+    EepromRegion _eepromRegion{_eeprom};
     ttd::TTDRegionTracker _eepromTracker;
     uint8_t _extType = kExtFirmwareVersion;
     uint8_t _eepromPage = 0;

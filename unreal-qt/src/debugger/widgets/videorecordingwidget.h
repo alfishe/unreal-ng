@@ -46,6 +46,7 @@ private slots:
     void onStopRecording();
     void onUpdateStats();
     void onIncludeAudioChanged(int state);
+    void onProfileChanged();
     void onMultiTrackConfigure();
     void onBenchmark();
 
@@ -128,6 +129,8 @@ private:
     QComboBox* _qualityCombo = nullptr;
     QComboBox* _captureCombo = nullptr;
     QComboBox* _sizeCombo = nullptr;
+    QComboBox* _profileCombo = nullptr;  ///< native / 1080p / 1440p / 4K (fixed frame, sharp scale)
+    QComboBox* _accelCombo = nullptr;    ///< encoder acceleration: auto / GPU / software
 
     // Estimation
     QLabel* _estimateLabel = nullptr;

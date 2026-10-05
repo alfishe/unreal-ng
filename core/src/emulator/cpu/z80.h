@@ -891,6 +891,29 @@ public:
         tt += ticks;
     }
 
+    /// A tool's access to the machine outside the CPU's time (a debugger's port write): device waits added while
+    /// it lives (AddWaitStates / AddWaitTicks) are dropped - the clock and the wait observer are as before
+    class OutOfTimeScope
+    {
+    public:
+        explicit OutOfTimeScope(Z80& cpu) : _cpu(cpu), _tt(cpu.tt), _observer(cpu._waitObserver)
+        {
+            _cpu._waitObserver = nullptr;
+        }
+        ~OutOfTimeScope()
+        {
+            _cpu.tt = _tt;
+            _cpu._waitObserver = _observer;
+        }
+        OutOfTimeScope(const OutOfTimeScope&) = delete;
+        OutOfTimeScope& operator=(const OutOfTimeScope&) = delete;
+
+    private:
+        Z80& _cpu;
+        uint32_t _tt;
+        IInterruptSource* _observer;
+    };
+
 protected:
     __forceinline void IncrementCPUCyclesCounter(uint8_t cycles);  // Increment cycle counters
 

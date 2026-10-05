@@ -25,20 +25,21 @@ class DeviceMemory_Test : public SprinterFixture
 TEST_F(DeviceMemory_Test, SprinterListsItsVideoRam)
 {
     const std::vector<IDeviceMemoryRegion*> regions = DeviceMemory::Regions(_context);
-    ASSERT_EQ(regions.size(), 1u);
+    ASSERT_EQ(regions.size(), 2u) << "vram, then the CMOS clock's cmos";
     EXPECT_STREQ(regions[0]->Name(), "vram");
+    EXPECT_STREQ(regions[1]->Name(), "cmos");
     EXPECT_EQ(regions[0]->Size(), 256u * 1024u);
     EXPECT_EQ(DeviceMemory::Find(_context, "VRAM"), regions[0]) << "names are case-insensitive";
 
     const StateNode list = DeviceState::MemoryRegions(_context);
     const StateNode* items = Member(list, "regions");
     ASSERT_NE(items, nullptr);
-    ASSERT_EQ(items->items.size(), 1u);
+    ASSERT_EQ(items->items.size(), 2u);
     EXPECT_EQ(Member(items->items[0], "pages")->i, 16);
 
     std::string error;
     EXPECT_EQ(DeviceMemory::Find(_context, "gsram", &error), nullptr);
-    EXPECT_NE(error.find("regions: vram"), std::string::npos) << error;
+    EXPECT_NE(error.find("regions: vram, cmos"), std::string::npos) << error;
 }
 
 // A write goes through SprinterVideoRam::Write: the pen follows the palette bytes

@@ -755,6 +755,9 @@ struct CONFIG
 		/// router, no admin rights), 1 BRIDGE (frames on the host adapter BridgeAdapter=, network SN6)
 		uint8_t ethernetMode;
 		char bridgeAdapter[128];   ///< [NETWORK] BridgeAdapter: the host adapter for BRIDGE ("en0", "eth0", ...)
+		/// [NETWORK] TrafficStream: the live pcapng stream of the traffic tap for Wireshark (network #91 T3) - -1 off
+		/// (default), 0 on a free port, else that TCP port
+		int32_t trafficStreamPort;
 	} network;
 
 	struct

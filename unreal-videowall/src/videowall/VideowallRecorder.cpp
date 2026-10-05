@@ -40,10 +40,26 @@ bool VideowallRecorder::startRecording(const std::string& filename,
                                         uint32_t videoBitrate,
                                         uint32_t audioBitrate,
                                         uint32_t targetWidth,
-                                        uint32_t targetHeight)
+                                        uint32_t targetHeight,
+                                        const VideowallRecordingOptions& options)
 {
     if (!_recordingManager)
         return false;
+
+    _recordingManager->SetEncoderBackend(options.backend);
+    _recordingManager->SetQualityPreset(options.qualityPreset);
+    _recordingManager->SetEncoderAcceleration(options.acceleration);
+    if (!_recordingManager->SetOutputProfile(options.profile))
+    {
+        qWarning() << "VideowallRecorder: unknown output profile" << QString::fromStdString(options.profile);
+        return false;
+    }
+    if (_recordingManager->HasFixedOutput())
+    {
+        // The file is the fixed frame; the manager scales every grab into it
+        targetWidth = _recordingManager->GetOutputWidth();
+        targetHeight = _recordingManager->GetOutputHeight();
+    }
 
     uint32_t w = targetWidth;
     uint32_t h = targetHeight;
@@ -184,8 +200,9 @@ void VideowallRecorder::captureVideoFrame()
     if (img.isNull())
         return;
 
-    // Handle resolution scaling (e.g. scaling up to 4K 3840x2160 or custom resolution)
-    if (_targetWidth > 0 && _targetHeight > 0 &&
+    // A fixed profile (1080p / 1440p / 4K) is scaled sharply by the RecordingManager (nearest, integer factor, black
+    // bars): the grab goes in as it is. Only a custom size is stretched here
+    if (!_recordingManager->HasFixedOutput() && _targetWidth > 0 && _targetHeight > 0 &&
         (img.width() != static_cast<int>(_targetWidth) || img.height() != static_cast<int>(_targetHeight)))
     {
         img = img.scaled(static_cast<int>(_targetWidth), static_cast<int>(_targetHeight),

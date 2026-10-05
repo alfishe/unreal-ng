@@ -108,6 +108,27 @@ void CLIProcessor::HandleNetwork(const ClientSession& session, const std::vector
             const size_t n = std::strlen(tail);
             return s.size() > n && s.compare(s.size() - n, n, tail) == 0;
         };
+        if (args.size() > 1 && (args[1] == "stream" || args[1] == "stream-stop"))
+        {
+            // network traffic stream [port] - the live pcapng stream for Wireshark; network traffic stream-stop
+            std::string error;
+            const uint64_t port = args.size() > 2 ? std::strtoull(args[2].c_str(), nullptr, 10) : 0;
+            if (!TrafficAccess::Control(emulator->GetContext(), args[1], "", port, error))
+            {
+                session.SendResponse("network traffic " + args[1] + ": " + error + std::string(NEWLINE));
+                return;
+            }
+            TrafficAccess::Query q;
+            q.last = 1;
+            const StateNode report = TrafficAccess::Records(emulator->GetContext(), q);
+            const StateNode* s = report.find("stream");
+            if (args[1] == "stream" && s && s->find("wireshark"))
+                session.SendResponse("Streaming on port " + std::to_string(s->find("port")->i) + ": " + s->find("wireshark")->s +
+                                     std::string(NEWLINE));
+            else
+                session.SendResponse(std::string("Done") + NEWLINE);
+            return;
+        }
         if (args.size() > 1 && (args[1] == "start" || args[1] == "stop" || args[1] == "clear"))
         {
             std::string error;
@@ -206,7 +227,7 @@ void CLIProcessor::HandleNetwork(const ClientSession& session, const std::vector
     }
     if (!args.empty() && args[0] != "state" && args[0] != "show")
     {
-        session.SendResponse("Usage: network [state] | network frames [link] [file.pcap] | network frame <link> <hex> | network adapters | network traffic [adapter] [N] [file.pcapng] | network traffic start <file.pcapng> | stop | clear | network set card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off "
+        session.SendResponse("Usage: network [state] | network frames [link] [file.pcap] | network frame <link> <hex> | network adapters | network traffic [adapter] [N] [file.pcapng] | network traffic start <file.pcapng> | stop | clear | network traffic stream [port] | stream-stop | network set card=none|zxnetusb|zxwifi|atm2ioesp (a list with ',') host_access=on|off "
                              "dns_mode=host|pass hosts=name=ip,... forwards=tcp:host:guest,... remote_access=on|off (guest servers listen on 0.0.0.0, "
                              "off: 127.0.0.1 only) connect_timeout_ms=n "
                              "com_port=none|loopback|tcp:host:port|serial:device[,baud]|espnet[,baud]|at[,firmware][,baud]|modem[,guest port] (the machine's serial port; "

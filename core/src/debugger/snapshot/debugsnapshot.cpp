@@ -1,14 +1,13 @@
 #include "debugsnapshot.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cstdio>
-#include <thread>
 #include <string>
 #include <vector>
 
 #include "debugger/debugmanager.h"
 #include "debugger/memory/memoryread.h"
+#include "debugger/pchistory/pchistory.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
 #include "emulator/cpu/core.h"
@@ -197,6 +196,8 @@ std::string Validate(const Options& options)
 {
     if (options.stack > kMaxStackWords)
         return "stack: at most " + std::to_string(kMaxStackWords) + " words";
+    if (options.pchist > PcHistory::kCapacity)
+        return "pchist: at most " + std::to_string(PcHistory::kCapacity) + " entries";
     if (options.memory.size() > kMaxWindows)
         return "memory: at most " + std::to_string(kMaxWindows) + " windows";
     for (const std::string& window : options.memory)
@@ -233,17 +234,9 @@ const char* BankKind(MemoryBankModeEnum mode)
     }
 }
 
-/// Every part, read now: the caller guarantees nothing runs the machine meanwhile
-StateNode Capture(Emulator* emulator, const Options& options, const char* consistency)
+/// Why it stopped last: {reason, breakpoint_id, address}
+StateNode PauseNode(Emulator* emulator)
 {
-    EmulatorContext* context = emulator->GetContext();
-    Z80* z80 = context->pCore->GetZ80();
-    Memory* memory = context->pMemory;
-
-    StateNode node = StateNode::Object();
-    node["seq"] = emulator->DebugSeq();
-    node["cpu"] = std::string("z80");
-    node["state"] = std::string(emulator->IsPaused() ? "paused" : emulator->IsRunning() ? "running" : "stopped");
     const Emulator::DebugStop stop = emulator->LastStop();
     StateNode pause = StateNode::Object();
     pause["reason"] = std::string(StopReason(stop.reason));
@@ -252,8 +245,28 @@ StateNode Capture(Emulator* emulator, const Options& options, const char* consis
         pause["breakpoint_id"] = static_cast<int>(stop.breakpoint.breakpointId);
         pause["address"] = static_cast<int>(stop.breakpoint.address);
     }
-    node["pause"] = pause;
-    node["consistency"] = std::string(consistency);
+    return pause;
+}
+
+std::string StateName(Emulator* emulator)
+{
+    return emulator->IsPaused() ? "paused" : emulator->IsRunning() ? "running" : "stopped";
+}
+
+/// Every part, read now: the caller guarantees nothing runs the machine meanwhile. `consistency` is the caller's
+/// to fill (where it ran Capture); the key is placed here to keep the field order
+StateNode Capture(Emulator* emulator, const Options& options)
+{
+    EmulatorContext* context = emulator->GetContext();
+    Z80* z80 = context->pCore->GetZ80();
+    Memory* memory = context->pMemory;
+
+    StateNode node = StateNode::Object();
+    node["seq"] = emulator->DebugSeq();
+    node["cpu"] = std::string("z80");
+    node["state"] = StateName(emulator);
+    node["pause"] = PauseNode(emulator);
+    node["consistency"] = std::string();
     node["regs"] = Registers(context);
     Z80State previous;
     node["prev_regs"] = emulator->PreviousStopRegisters(previous) ? RegistersOf(previous) : StateNode();
@@ -267,6 +280,7 @@ StateNode Capture(Emulator* emulator, const Options& options, const char* consis
         page["start"] = static_cast<int>(window * 0x4000);
         page["kind"] = std::string(BankKind(where.mode));
         page["page"] = static_cast<int>(where.page);
+        page["writable"] = memory->IsWindowWritable(window);
         pages.push(page);
     }
     node["pages"] = pages;
@@ -296,6 +310,9 @@ StateNode Capture(Emulator* emulator, const Options& options, const char* consis
     if (const StateNode* dot = beam.find("dot_in_line"))
         time["dot"] = *dot;
     node["time"] = time;
+
+    if (options.pchist && context->pDebugManager)
+        node["pchist"] = context->pDebugManager->GetPcHistory()->ReportNow(options.pchist);
 
     if (options.disasm)
     {
@@ -346,31 +363,31 @@ Result Build(Emulator* emulator, const Options& options)
     if (!result.error.empty())
         return result;
 
-    const auto paused = [&]() {
-        return emulator->RunWhileParked([&]() { result.snapshot = Capture(emulator, options, "paused"); });
-    };
-    if (paused())
-        return result;
-    // Not started and nobody steps it: nothing can change it
-    if (!emulator->IsRunning() && !emulator->IsDirectStepping())
+    const Emulator::CoherentMoment where = emulator->RunAtCoherentMoment(
+        [&]() { result.snapshot = Capture(emulator, options); }, 500);
+    if (where != Emulator::CoherentMoment::Busy)
     {
-        result.snapshot = Capture(emulator, options, "stopped");
+        result.snapshot["consistency"] = std::string(Emulator::CoherentMomentName(where));
         return result;
-    }
-    // Running: the emulation thread takes it between two frames, without a pause
-    if (emulator->IsRunning() && !emulator->IsPaused() &&
-        emulator->RunAtFrameBoundary([&]() { result.snapshot = Capture(emulator, options, "frame"); }, 500))
-        return result;
-    // It paused meanwhile, or a direct step runs on another thread: wait for the park, briefly
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        if (paused())
-            return result;
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     result.busy = true;
     result.error = "no coherent moment within 500 ms (the emulator is stepping or changing state); try again";
     return result;
+}
+StateNode WaitAnswer(Emulator* emulator, uint64_t since)
+{
+    StateNode node = StateNode::Object();
+    const uint64_t seq = emulator->DebugSeq();
+    node["seq"] = seq;
+    node["changed"] = seq != since;
+    node["state"] = StateName(emulator);
+    node["pause"] = PauseNode(emulator);
+    return node;
+}
+
+StateNode Wait(Emulator* emulator, uint64_t since, uint32_t timeoutMs)
+{
+    emulator->WaitDebugChange(since, timeoutMs);
+    return WaitAnswer(emulator, since);
 }
 }  // namespace DebugSnapshot

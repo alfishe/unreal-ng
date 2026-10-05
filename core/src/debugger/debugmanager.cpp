@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "debugger/pchistory/pchistory.h"
 
 #include "debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -25,6 +26,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     _labels = new LabelManager(_context);
     _listing = new ListingParser(_context);
     _analyzerManager = std::make_unique<AnalyzerManager>(_context);
+    _pcHistory = std::make_unique<PcHistory>(_context);
     
     // Keyboard injection manager for automation
     _keyboardManager = new DebugKeyboardManager(_context);

@@ -495,6 +495,9 @@ The `memory` command provides unified access to emulator memory with two address
 | `memory fill <type> <page> <offset> <len> <byte>` | type + page + offset + fill params | Fill region with byte |
 | `memory info` | | Show memory configuration |
 | `find <pattern>` | Z80 pattern search | Search the Z80 address space for a byte pattern (see below) |
+| `out <port> <value>` | port write | A debugger's port write through the machine's decoder, like a CPU OUT (the WebAPI `POST /ports/out`): `out #13AF #20` maps RAM page #20 into window 3 on TS-Conf; no breakpoints, no device waits, a TTD tool edit; prints `Port #13AF <- #20 (paused)` |
+| `pchist [depth]`, `pchist on\|off` | PC history | The newest instructions with their window's page, newest first (the WebAPI `GET /debug/pchist`); the first read starts recording; `debug-snapshot --pchist N` |
+| `debug-wait [since] [--timeout ms]` | long-poll | Block until the debugger snapshot's `seq` moves past `since` (default: the current one) or the timeout passes (the WebAPI `GET /debug/wait`) |
 | `debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]...` | debugger snapshot | Registers, pages, time, code from PC, stack and memory windows read at one moment (the WebAPI `GET /debug/snapshot`) |
 
 **Page Types**: `ram` | `rom` | `cache` | `misc`
@@ -768,7 +771,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Sprinter BIOS at create (default: the config's `[ROM] SPRINTER`, shipped 3.07) | `create SPRINTER --sprinter-bios 3.04 [--fast-start 0\|1] [--accel-int-suspend 0\|1]` (also `start`) | `POST /emulator/create\|start {"model":"SPRINTER","sprinter":{"bios":"3.04"}}` | - (scripts run inside a machine: `sprinter_bios_select`) | - (`sprinter_bios_select`) | `emulator_manage` create `sprinter_bios`, `sprinter_fast_start` |
 | Sprinter ISA slot population at create (default `[ISA]`: slot 1 none, slot 2 NE2000; fixed for the instance) | `create SPRINTER --isa-slot1 <kind> --isa-slot2 <kind>` (also `start`) | `POST /emulator/create\|start {"model":"SPRINTER","sprinter":{"isa_slot1":"none","isa_slot2":"ne2000"}}` | - | - | `emulator_manage` create `sprinter_isa_slot1`, `sprinter_isa_slot2` |
 | Profi keyboard at create (`[PROFI] Keyboard=`: v5 `xt`, v3 `matrix`) and in force | `create PROFI --profi-keyboard xt\|xttable\|matrix` (also `start`); `state` (Profi keyboard), `keyboard route` (controller name) | `POST /emulator/create\|start {"model":"PROFI","profi":{"keyboard":"xttable"}}`; `GET /state/paging` `profi_keyboard`, `GET /keyboard/status` `keyboard_controller` | `paging_state().profi_keyboard`, `keyboard_controller()` | `paging_state()['profi_keyboard']`, `keyboard_controller()` | `emulator_manage` create `profi_keyboard`; `inspect_state` aspect `paging` |
-| Device memory regions (the Sprinter's 256 KB video RAM `vram`) | `memory regions` | `GET /memory/regions` | `memory_regions()` | `memory_regions()` | `invoke_api` |
+| Device memory regions (the Sprinter's 256 KB video RAM `vram`; TS-Conf palette `cram` and sprite table `sfile`, 512 bytes each, word n at offset 2n, low byte first; `cmos` - the CMOS clock's cells, a write is a guest write - on every machine with a clock; the ZX-Evo AVR `eeprom`, 4 KiB) | `memory regions` | `GET /memory/regions` | `memory_regions()` | `memory_regions()` | `invoke_api` |
 | Region read / write | `memory region read vram 0x17F0 3`, `memory region write vram 0x17F0 00 00 A8` | `GET /memory/region/vram?offset=&length=&format=hex\|data\|sparse\|binary`, `POST /memory/region/vram {offset, hex\|data}`, `/memory/page/vram/{0-15}` | `region_read(name, off, len)`, `region_write(name, off, {..}\|"hex")` | `region_read(...)` -> bytes, `region_write(...)` | `memory_region` (region, address, size); `invoke_api` POST |
 | Region save / load (files) | `memory region save\|load vram <file> [offset] [len]` | `POST /memory/region/vram {action: save\|load, path, offset, length}` | `region_save(name, path)`, `region_load(name, path)` | `region_save(...)`, `region_load(...)` | `invoke_api` POST |
 | Video change log (latches with frame T, line, PC; palette / mode table write counts) - every machine | `video changes [1\|2]` | `GET /video/changes?frames=` | `video_changes([frames])` | `video_changes(frames=2)` | `video_changes` |
@@ -1388,11 +1391,11 @@ subsystem (`RecordingManager`); requires a build with `ENABLE_RECORDING`
 
 | Command | Arguments | Description |
 | :--- | :--- | :--- |
-| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--region full\|screen] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS]` | Start recording. Default format `gif`, video only; `--region` `full` (default) records the whole frame with its border, `screen` the working picture (the file keeps the size of the working window at the start, a window that changes later is scaled into it with its aspect kept and black bars); `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
+| `videorecord start [format] [file]` | `[h264\|h265\|vp9\|gif\|rawvideo] [path] [--fps N] [--scale N] [--region full\|screen] [--audio-rate N\|auto] [--audio CODEC] [--video-bitrate KBPS] [--audio-bitrate KBPS] [--profile native\|1080p\|1440p\|4k] [--acceleration auto\|hardware\|software]` | Start recording. Default format `gif`, video only; `--region` `full` (default) records the whole frame with its border, `screen` the working picture (the file keeps the size of the working window at the start, a window that changes later is scaled into it with its aspect kept and black bars); `--audio aac` adds the sound track (see below). Default output file under the system temp directory (`.mkv` for h264/h265/vp9). |
 | `videorecord stop` | | Stop recording and finalize the file. |
 | `videorecord pause` | | Pause recording. |
 | `videorecord resume` | | Resume a paused recording. |
-| `videorecord status` | | Show recording state, output file, frames, region, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
+| `videorecord status` | | Show recording state, output file, frames, region, output profile, acceleration, video codec and the audio track (codec, rate, channels, samples and seconds recorded). |
 
 **Sound track**: `--audio CODEC` records the emulated sound with the picture (the default is video
 only). The codec must fit the file's container: `.mp4` aac/mp3/opus/flac, `.mov` aac/mp3/pcm_s16le,
@@ -1401,6 +1404,21 @@ has no audio track, so `gif` + `--audio` is refused. On macOS h264/hevc + aac in
 the native encoder; every other combination needs ffmpeg. The WebAPI (`"audio"`), MCP
 (`capture_media record_start` `audio`), Lua and Python (`audio` option) follow the same rules.
 Example: `videorecord start h264 scratch/run.mp4 --scale 2 --audio aac`.
+
+**Output profiles (1080p / 1440p / 4K)**: `--profile 4k` (WebAPI/MCP/Lua/Python `profile`) records a fixed
+3840x2160 frame (`1080p` 1920x1080, `1440p` 2560x1440; aliases `uhd` / `2160p`). The picture is scaled into it
+sharply - nearest neighbor, the largest INTEGER factor that fits (352x288 -> 7x = 2464x2016), aspect kept,
+centered, black bars: every source pixel becomes the same k x k block, nothing is blurred (the algorithm of the
+emulator window, which samples with Nearest). `native` (the default) keeps the old behavior (picture x `--scale`).
+A fixed frame takes **h264 or h265 only**, in any container (mp4/mov: native macOS encoder; mkv and the rest:
+ffmpeg); `--scale` is ignored; the default video bitrate of 4k is 35000 kbps; the other formats are refused
+(`400` on the WebAPI) with the reason. `--acceleration auto|hardware|software` (alias `gpu` / `cpu`) picks the
+encoder: `auto` a GPU encoder (VideoToolbox, NVENC, QuickSync, VA-API, AMF) when the machine has one,
+`hardware` GPU only (the start fails without one), `software` libx264 / libx265 through ffmpeg even when a GPU
+encoder exists. Both choices are reported by `videorecord status` / `GET /video/record/status`
+(`profile`, `acceleration`). The Qt app has them in the Tools > Video Recording... dialog and on the recording
+toolbar; the videowall records its wall with the same profiles. Example:
+`videorecord start h264 scratch/wall.mkv --profile 4k --acceleration software`.
 
 **Audio rate**: `--audio-rate N` (one of 44100, 48000, 88200, 96000, 176400, 192000)
 pins the core audio rate before the first sample is stamped, so the whole
@@ -1862,6 +1880,7 @@ Inspect disk drive status, disk geometry, data contents, and current operations.
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `disk sector [drv] <cyl> <side> <sec>` | | `[A-D]` `0-79` `0-1` `>=1` | Read parsed sector data:<br/>• Address Mark: cyl, head, sector, size<br/>• ID CRC and validity<br/>• Data (256 bytes, hex dump)<br/>• Data CRC and validity | ✅ WebAPI |
+| `disk write <drv> <cyl> <side> <sec> <hex> [--offset N]` | | `[A-D]` `cyl` `0-1` `ID>=1` `hex bytes` | A debugger's write into the sector's data field (the WebAPI `PUT /disk/{drive}/sector/...`): the bytes go in at `--offset` (default 0) as the WD1793 WRITE SECTOR puts them, the data CRC is recalculated, the image counts as modified, a TTD tool edit. Refused with the reason: empty drive, write-protected disk, missing track / sector, ID-only sector, past the data field. Example: `disk write A 0 0 9 4D594449534B --offset 245` renames a TR-DOS disk | ✅ |
 | `disk track [drv] <cyl> <side>` | | `[A-D]` `0-79` `0-1` | Track summary (16 sectors):<br/>• Per-sector: logical number, CRC status<br/>• Interleave table<br/>• Bad sector indicators | ✅ WebAPI |
 | `disk sysinfo [drv]` | | `[A-D]` | Parse TR-DOS system sector (T0/S9):<br/>• Disk type (80T DS/SS, 40T DS/SS)<br/>• Label, file count, free sectors<br/>• First free track/sector<br/>• Signature validity (0x10) | ✅ WebAPI |
 | `disk catalog [drv]` | `disk dir` | `[A-D]` | Show disk catalog (file list):<br/>• **TR-DOS**: name, type, length, start<br/>• **+3DOS**: CP/M directory<br/>• **ESXDOS**: FAT listing | ✅ WebAPI |
@@ -1891,6 +1910,7 @@ All endpoints scoped to emulator instance: `/api/v1/emulator/{id}/disk/...`
 | GET | `/disk/{drive}` | Drive info (geometry, filename, FDC state) |
 | GET | `/disk/{drive}/sector/{cyl}/{side}/{sec}` | Logical sector (256b + metadata) |
 | GET | `/disk/{drive}/sector/{cyl}/{side}/{sec}/raw` | Raw sector bytes (388b) |
+| PUT | `/disk/{drive}/sector/{cyl}/{side}/{sec}` | Write into the data field: `{offset, hex \| data \| base64}` (CRC recalculated, image modified, TTD tool edit) |
 | GET | `/disk/{drive}/track/{cyl}/{side}` | Track summary (16 sectors) |
 | GET | `/disk/{drive}/track/{cyl}/{side}/raw` | Raw track (6250b, base64) |
 | GET | `/disk/{drive}/image` | Whole image binary (base64) |

@@ -10,6 +10,7 @@
 #include "emulator/sound/soundmanager.h"  // AudioSourceType lives here now
 #include "common/encoder_base.h"
 #include "common/encoderconfig.h"
+#include "common/framescaler.h"
 #include "stdafx.h"
 
 /// region <Forward declarations>
@@ -75,6 +76,26 @@ enum class EncoderBackend
     FFmpeg,  ///< Force FFmpeg pipe encoder. Fail if unavailable.
     Custom   ///< Use externally provided encoder (via StartRecordingWithEncoder)
 };
+
+/// Whether the encoder may use the GPU
+enum class EncoderAcceleration
+{
+    Auto,      ///< Hardware encoder when the machine has one, software otherwise
+    Hardware,  ///< Hardware only: the start fails when there is none
+    Software   ///< Software encoder (libx264 / libx265) even when a GPU encoder exists
+};
+
+/// "auto" / "hardware" / "software" (the canonical names RecordingRequest::NormalizeAcceleration returns)
+inline const char* EncoderAccelerationName(EncoderAcceleration acceleration)
+{
+    return acceleration == EncoderAcceleration::Hardware ? "hardware" :
+           acceleration == EncoderAcceleration::Software ? "software" : "auto";
+}
+inline EncoderAcceleration EncoderAccelerationFromName(const std::string& name)
+{
+    return name == "hardware" ? EncoderAcceleration::Hardware :
+           name == "software" ? EncoderAcceleration::Software : EncoderAcceleration::Auto;
+}
 
 /// @brief Video/Audio Recording Manager - Captures emulated output for video encoding
 ///
@@ -326,6 +347,40 @@ public:
             _scaleFactor = factor < 1 ? 1 : (factor > 4 ? 4 : factor);
     }
 
+    /// Fixed output profile: "native" (the default: the picture at its own size times the scale factor) or a fixed
+    /// frame - "1080p", "1440p", "4k" (3840x2160). A fixed frame holds the picture scaled sharply (nearest, the
+    /// largest integer factor that fits, aspect kept, black bars - see FrameScaler) and takes H.264 / H.265 only.
+    /// False (nothing changed) for an unknown id or while recording
+    bool SetOutputProfile(const std::string& id);
+    const std::string& GetOutputProfile() const
+    {
+        return _outputProfile;
+    }
+    /// True when the output profile is a fixed frame (not "native")
+    bool HasFixedOutput() const
+    {
+        return _outputWidth != 0;
+    }
+    uint32_t GetOutputWidth() const
+    {
+        return _outputWidth;
+    }
+    uint32_t GetOutputHeight() const
+    {
+        return _outputHeight;
+    }
+
+    /// GPU or software encoding (see EncoderAcceleration)
+    void SetEncoderAcceleration(EncoderAcceleration acceleration)
+    {
+        if (!_isRecording)
+            _acceleration = acceleration;
+    }
+    EncoderAcceleration GetEncoderAcceleration() const
+    {
+        return _acceleration;
+    }
+
     /// Explicit ffmpeg binary path (empty = auto-detect)
     void SetFFmpegPath(const std::string& path)
     {
@@ -398,6 +453,11 @@ protected:
     // Capture region and output scaling
     VideoCaptureRegion _captureRegion = VideoCaptureRegion::FullFrame;
     uint32_t _scaleFactor = 1;
+    std::string _outputProfile = "native";  ///< Id of the output profile (RecordingProfileCollection)
+    uint32_t _outputWidth = 0;              ///< Fixed output frame (0 = native)
+    uint32_t _outputHeight = 0;
+    EncoderAcceleration _acceleration = EncoderAcceleration::Auto;
+    FrameScaler::Scaler _outputScaler;  ///< Reused per frame: the picture scaled into the fixed frame
     std::vector<uint8_t> _cropBuffer;  // Reused per-frame when cropping
     std::vector<uint8_t> _fitBuffer;  // Reused per-frame: the screen region's current window fitted into the file's size
     std::vector<uint8_t> _aspectBuffer;  // Reused per-frame: the half-height TS-Conf lines doubled
