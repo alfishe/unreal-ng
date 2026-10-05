@@ -19,10 +19,10 @@ Ground truth: the card [multisoundcard.h](../../core/src/emulator/slots/cards/mu
 
 | Part | Ports | Options (`zxbus.N.<option>`) | Mixer source |
 |:--|:--|:--|:--|
-| TurboSound FM (2 x YM2203) | `#FFFD`, `#BFFD` (control byte `#F0-#FF`) | `dip` contains `ym` | `ms_fm`, `ms_ssg` |
+| TurboSound FM (2 x YM2203) | `#FFFD`, `#BFFD` (control byte `#F0-#FF`) | `dip` contains `ym` | per chip select: `ms_ssg1` + `ms_fm1` (0, U4), `ms_ssg2` + `ms_fm2` (1, U10) |
 | SAA1099 | `#01FF` address, `#00FF` data (ignored while the OUT runs from `#0000-#3FFF`) | `dip` contains `saa` | `ms_saa` |
-| General Sound (16 MHz Z80) | `#B3`, `#BB` | `dip` contains `gs`; `gsRam` = `1m` / `2m` | `ms_dac` (with the SounDrive) |
-| SounDrive | `#0F`, `#1F`, `#4F`, `#5F` | `dip` contains `sd` | `ms_dac` |
+| General Sound (16 MHz Z80) | `#B3`, `#BB` | `dip` contains `gs`; `gsRam` = `1m` / `2m` | `ms_pcm` (with the SounDrive) |
+| SounDrive | `#0F`, `#1F`, `#4F`, `#5F` | `dip` contains `sd` | `ms_pcm` |
 | SAM2695 MIDI | YM2203 U4 register 14 bit 2 (IOA2), 31 250 baud | the bank: `[MIDI] Bank=` | `ms_midi` |
 
 `ctrlMask` = `pro` (the official firmware) or `classic` (an unofficial firmware patch, issue #11: the control byte
@@ -55,12 +55,22 @@ load_software     {"path":"testdata/sound/tsfm/tech_support.sna"}
 time_travel       {"action":"start"}
 control_execution {"action":"run_frames","frames":150}
 inspect_state     {"aspects":["audio_multisound"]}        # FM on, GS ready
-capture_media     {"action":"audio_capture","seconds":1,"source":"ms_fm"}
-#   Audio 1 s @ 44100 Hz - dominant 32.5 Hz, RMS L 0.0846 / R 0.0846
-capture_media     {"action":"audio_capture","seconds":1,"source":"ms_ssg"}
+capture_media     {"action":"audio_capture","seconds":2,"source":"ms_fm2"}   # chip select 1 (U10): the bass
+#   dominant ~2390 Hz, RMS L 0.067 (a TSFM in the socket, source fm2, at the same moment: RMS 0.067)
+capture_media     {"action":"audio_capture","seconds":2,"source":"ms_fm1"}   # chip select 0 (U4)
+#   dominant ~424 Hz, RMS L 0.0078 (TSFM fm1: 0.0078)
+capture_media     {"action":"audio_capture","seconds":2,"source":"ms_ssg1"}  # ms_ssg2: the other chip's SSG
 ```
 
-The WebAPI report has the details behind the summary line: `ym.chips[0..1].fm` is the TurboSound FM chip report
+The rows are per chip like the TurboSound FM's (`ay1` / `ay2` / `fm1` / `fm2` there): `ms_ssg1`, `ms_ssg2`, `ms_fm1`,
+`ms_fm2`, then `ms_saa`, `ms_pcm` (GS + SounDrive DACs), `ms_midi`; the HUD lights one indicator per row. The FM rows
+use the TurboSound FM's calibration, `[SOUND] TSFM_FmTrimDb` (7.4 dB shipped; the audio settings' "FM trim" drives
+both boards; the report shows `ym.fm_trim_db`): the same tune comes out at the same FM level on the card and on a TSFM.
+The card's SSG rows sit 7.6 dB lower than a TSFM's - the board's own resistor weights (SSG 24 k against FM 10 k).
+Verified 2026-10-05 on a Pentagon (live instance, the numbers above).
+
+The WebAPI report has the details behind the summary line: `ym.fm_trim_db` is the FM calibration in force,
+`ym.chips[0..1].fm` is the TurboSound FM chip report
 (`keyed_channels`, operators, envelopes), `ym.chips[0..1].ssg` the AY chip report, `logic` the CPLD latches.
 
 ## SAA1099 and MIDI: a test program

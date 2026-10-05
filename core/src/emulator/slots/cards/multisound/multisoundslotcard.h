@@ -54,6 +54,8 @@ public:
     void FrameEnd(size_t samples) override;
     void SetOutputRate(uint32_t rate) override;
     void MixerRows(std::vector<CardMixerRow>& out) const override;
+    bool SetFmTrimDb(double db) override;
+    bool FmTrimDb(double& db) const override;
     const int16_t* MixerBuffer(AudioSourceType type) const override;
     bool WantsWideMix() const override
     {

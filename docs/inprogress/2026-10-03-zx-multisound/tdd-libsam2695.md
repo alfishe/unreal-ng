@@ -365,6 +365,9 @@ and test), "GS parts and SysEx", "Pedals and portamento", "Effects and output".
 
 ### 10.8 Left for SAM-5
 
+- **Real-chip check done (owner, 2026-10-05):** the synthesizer compared by ear with recordings of real SAM2695
+  boards (YouTube): "very similar, good enough" - accepted. No official CleanWave bank exists to compare the bank
+  itself against; the items below stay as refinements, not blockers.
 - Recordings of a Dreamblaster S2 / SAM2695 board for an informative comparison - now of the effects too: the
   curves this phase had to choose (REV_TIME, chorus parameters, the GS part NRPN scales, soft pedal, portamento,
   the soft-clip knee, the EQ Q) are the first things a capture would settle.

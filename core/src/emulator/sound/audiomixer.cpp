@@ -36,8 +36,9 @@ const KeyName kKeys[] = {
     {AudioSourceType::CdAudio0, "cd0"}, {AudioSourceType::CdAudio1, "cd1"},
     {AudioSourceType::CdAudio2, "cd2"}, {AudioSourceType::CdAudio3, "cd3"},
     // ZX-MultiSound (a slot card)
-    {AudioSourceType::MultiSoundFm, "ms_fm"}, {AudioSourceType::MultiSoundSsg, "ms_ssg"},
-    {AudioSourceType::MultiSoundSaa, "ms_saa"}, {AudioSourceType::MultiSoundDac, "ms_dac"},
+    {AudioSourceType::MultiSoundSsg1, "ms_ssg1"}, {AudioSourceType::MultiSoundSsg2, "ms_ssg2"},
+    {AudioSourceType::MultiSoundFm1, "ms_fm1"},   {AudioSourceType::MultiSoundFm2, "ms_fm2"},
+    {AudioSourceType::MultiSoundSaa, "ms_saa"},   {AudioSourceType::MultiSoundPcm, "ms_pcm"},
     {AudioSourceType::MultiSoundMidi, "ms_midi"},
 };
 

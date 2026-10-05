@@ -143,6 +143,18 @@ public:
     {
         return false;
     }
+    /// YM2203 FM loudness trim in dB ([SOUND] TSFM_FmTrimDb, the audio settings' FM trim) for a card with YM2203 FM;
+    /// false: the card has none
+    virtual bool SetFmTrimDb(double db)
+    {
+        (void)db;
+        return false;
+    }
+    virtual bool FmTrimDb(double& db) const
+    {
+        (void)db;
+        return false;
+    }
     /// endregion </Frames and audio (SoundManager)>
 
     /// region <Time travel (ZX-bus slots architecture.md §8; MultiSound MS-5)>

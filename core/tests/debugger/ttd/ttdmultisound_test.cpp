@@ -301,13 +301,14 @@ void RestartCardRender(MultiSoundSlotCard& card)
     }
 }
 
-const MultiSoundRow kRows[] = { MultiSoundRow::Fm, MultiSoundRow::Ssg, MultiSoundRow::Saa, MultiSoundRow::Dac,
-                                MultiSoundRow::Midi };
+const MultiSoundRow kRows[] = { MultiSoundRow::Ssg1, MultiSoundRow::Ssg2, MultiSoundRow::Fm1, MultiSoundRow::Fm2,
+                                MultiSoundRow::Saa,  MultiSoundRow::Pcm,  MultiSoundRow::Midi };
+constexpr size_t kRowCount = std::size(kRows);
 
-/// The five rows of the last frame, one digest each
-std::array<uint64_t, 5> RowDigests(const MultiSoundSlotCard& card)
+/// The seven rows of the last frame, one digest each
+std::array<uint64_t, kRowCount> RowDigests(const MultiSoundSlotCard& card)
 {
-    std::array<uint64_t, 5> digests{};
+    std::array<uint64_t, kRowCount> digests{};
     for (size_t i = 0; i < std::size(kRows); i++)
     {
         const int16_t* row = card.Card().Row(kRows[i]);
@@ -418,7 +419,7 @@ TEST(TtdMultiSound_Test, RoundTripMidTune)
 
     constexpr int kFrames = 8;
     constexpr int kMiddle = 3;
-    std::vector<std::array<uint64_t, 5>> original;
+    std::vector<std::array<uint64_t, kRowCount>> original;
     ASSERT_TRUE(m.Ttd()->StartRecording());
     const uint64_t start = m.Ttd()->GetCheckpoint(0)->time.frame;
     RestartCardRender(*card);
@@ -448,7 +449,7 @@ TEST(TtdMultiSound_Test, RoundTripMidTune)
             if (f == kMiddle && from != kMiddle)
                 RestartCardRender(*card);
             m.Machine().RunNFrames(1);
-            const std::array<uint64_t, 5> replayed = RowDigests(*card);
+            const std::array<uint64_t, kRowCount> replayed = RowDigests(*card);
             for (size_t i = 0; i < std::size(kRows); i++)
                 EXPECT_EQ(replayed[i], original[static_cast<size_t>(f)][i]) << "frame " << f << " row " << i;
         }

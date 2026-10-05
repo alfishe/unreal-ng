@@ -321,6 +321,7 @@ StateNode MultiSound(EmulatorContext* context)
     ym["master_clock_hz"] = uint64_t(pair.config().masterClockHz);
     ym["selected_chip"] = int(report.latches.ymChip);
     ym["ratio_phase"] = report.ymRatioPhase;
+    ym["fm_trim_db"] = card.FmTrimDb();   // the TSFM board's fm_trim_db: [SOUND] TSFM_FmTrimDb, the same calibration
     StateNode chips = StateNode::Array();
     for (int c = 0; c < 2; c++)
     {
@@ -331,7 +332,7 @@ StateNode MultiSound(EmulatorContext* context)
         n["address_latch"] = int(report.ym[c].address);
         n["status"] = int(report.ym[c].status);
         n["ssg"] = AyChipReport(chip->ssg, c, master / 2.0);
-        n["fm"] = Ym2203ChipReport(*chip, c, master, 0.0);
+        n["fm"] = Ym2203ChipReport(*chip, c, master, card.FmTrimDb());
         chips.push(std::move(n));
     }
     ym["chips"] = std::move(chips);

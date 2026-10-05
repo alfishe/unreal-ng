@@ -475,3 +475,47 @@ TEST(AudioActivityIndicators_Test, NeoGSDmaAndTransfersAreHeldLikeSound)
     mc.RemoveObserver(NC_AUDIO_ACTIVITY, &dma, cb);
     mc.RemoveObserver(NC_AUDIO_ACTIVITY, &transfer, cb);
 }
+
+/// The ZX-MultiSound lights one indicator per row, like the TurboSound FM's AY / FM pair: a row active posts its own
+/// source only - chip 0's SSG lights MS AY 1 and not MS AY 2, chip 1's FM lights MS FM 2 and not MS FM 1; PCM, SAA and
+/// MIDI each their own
+TEST(AudioActivityIndicators_Test, MultiSoundRowsLightTheirOwnIndicatorPerChip)
+{
+    const unreal::UUID id = unreal::UUID::Generate();
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    const AudioSourceType rows[] = {AudioSourceType::MultiSoundSsg1, AudioSourceType::MultiSoundSsg2,
+                                    AudioSourceType::MultiSoundFm1,  AudioSourceType::MultiSoundFm2,
+                                    AudioSourceType::MultiSoundPcm,  AudioSourceType::MultiSoundSaa,
+                                    AudioSourceType::MultiSoundMidi};
+    const AudioSource sources[] = {AudioSource::MultiSoundSsg1, AudioSource::MultiSoundSsg2,
+                                   AudioSource::MultiSoundFm1,  AudioSource::MultiSoundFm2,
+                                   AudioSource::MultiSoundPcm,  AudioSource::MultiSoundSaa,
+                                   AudioSource::MultiSoundMidi};
+    std::vector<std::unique_ptr<AudioActivityOnOffCounter>> counters;
+    ObserverCallbackMethod cb = static_cast<ObserverCallbackMethod>(&AudioActivityOnOffCounter::onEvent);
+    for (AudioSource source : sources)
+    {
+        counters.push_back(std::make_unique<AudioActivityOnOffCounter>(id, source));
+        mc.AddObserver(NC_AUDIO_ACTIVITY, counters.back().get(), cb);
+    }
+
+    std::vector<AudioDeviceInfo> devices(std::size(rows));
+    for (size_t i = 0; i < std::size(rows); i++)
+        devices[i].type = rows[i];
+
+    // One row at a time, a fresh indicator set each: exactly its own source turns on
+    for (size_t active = 0; active < std::size(rows); active++)
+    {
+        for (size_t i = 0; i < devices.size(); i++)
+            devices[i].activeRecently = i == active;
+        AudioActivityIndicators indicators;
+        indicators.endFrame(id, devices, false);
+        EXPECT_TRUE(TestWait::ForExactly(counters[active]->on, 1)) << "row " << active;
+        for (size_t i = 0; i < counters.size(); i++)
+            if (i != active)
+                EXPECT_EQ(counters[i]->on.load(), i < active ? 1 : 0) << "row " << active << " lit indicator " << i;
+    }
+
+    for (auto& counter : counters)
+        mc.RemoveObserver(NC_AUDIO_ACTIVITY, counter.get(), cb);
+}

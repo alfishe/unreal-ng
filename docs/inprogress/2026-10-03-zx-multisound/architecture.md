@@ -29,7 +29,7 @@ flowchart LR
     SAA --> MIX
     DAC --> MIX
     SAM --> MIX
-    MIX --> SM["SoundManager rows:<br/>MS FM, MS SSG, MS SAA,<br/>MS DAC, MS MIDI"]
+    MIX --> SM["SoundManager rows:<br/>MS SSG 1/2, MS FM 1/2,<br/>MS SAA, MS PCM, MS MIDI"]
 ```
 
 | Piece | Kind | Location |
@@ -60,12 +60,12 @@ adapter wraps it in MS-4 ([tdd-integration.md](tdd-integration.md) §3.1). Tests
 | Time | absolute, monotonic host ticks on the card axis (`hostTickRate`, the emulator's AudioTstate rate). The YM pair runs without `rebaseFrame` (its 64-bit axes take absolute time); the GS reads the axis through `IGSHostClock` frame-relative to the last `FrameStart`, as it reads the machine's Z80 otherwise, and its DAC sink times are turned back into absolute ones by adding the frame base |
 | Control byte | `Control` action: SAA clock gate at `t`; an FM mute change is recorded with its time and `FrameEnd` renders the FM streams in parts split at those times (output-sample granularity). The `YmAddress` action that follows is the address write the control byte also is (`addressWriteOnControlByte` is this board logic) |
 | MIDI | the pair's chip 0 (U4, selected by control bit 0 = 0) SSG listener is the `MidiLine`; the pair reports pin changes at the write's host tick, which is already the card axis, so the line feeds `Synth::WriteLine` unchanged. The synthesizer is configured with `resetDelay` (the chip's 50 ms boot window) and its effects path. A missing or unreadable bank leaves it silent; `Describe` says `no bank` and why |
-| Rows | `FrameEnd`: the GS to its frame end (its own buffer stays silent), the pair synced and rendered per channel (`renderChannels`), `Saa1099::EndFrame`, `MultiSoundDacs::EndFrame`, `Synth::Run` + `Render` (a short first frame holds the last level, the backlog covers later ones), then `MultiSoundMixer::Mix` into the five rows (int16 stereo, at most `MAX_SAMPLES_PER_FRAME` frames) |
+| Rows | `FrameEnd`: the GS to its frame end (its own buffer stays silent), the pair synced and rendered per channel (`renderChannels`), `Saa1099::EndFrame`, `MultiSoundDacs::EndFrame`, `Synth::Run` + `Render` (a short first frame holds the last level, the backlog covers later ones), then `MultiSoundMixer::Mix` into the seven rows (int16 stereo, at most `MAX_SAMPLES_PER_FRAME` frames) |
 
 **As built (MS-4, 2026-10-04).** The card sits in a slot through `MultiSoundSlotCard` (`ICard`,
 [tdd-integration.md](tdd-integration.md) §3.2): `[SLOTS] zxbus.N = multisound` builds it at machine creation, its claims
 (§3, with the DIP options) go into the port decoder's claim table in its slot order and every cycle on them is
-resolved with the machine's bus arbitration (§6 "As built"); its five rows are `SoundManager` rows (§5).
+resolved with the machine's bus arbitration (§6 "As built"); its seven rows are `SoundManager` rows (§5).
 
 MS-2 open items, resolved:
 
@@ -295,12 +295,52 @@ FM`, `MS SSG`, `MS SAA`, `MS DAC` (GS + SounDrive), `MS MIDI`. The board weights
 inside the card before the rows, so the rows' unity volume equals the real board. New `AudioSourceType` values go
 before `Custom`; `AudioActivityIndicators::HUD_SOURCES` grows accordingly.
 
-**Registered (MS-4, 2026-10-04):** the five rows are `SoundManager` rows while the card is fitted (keys `ms_fm`,
-`ms_ssg`, `ms_saa`, `ms_dac`, `ms_midi`; one HUD source `MultiSound`); the master mix runs on the wide float bus with
-the limiter while the card is fitted ([tdd-integration.md](tdd-integration.md) §3.2).
+**Registered (MS-4, 2026-10-04):** the rows are `SoundManager` rows while the card is fitted; the master mix runs on
+the wide float bus with the limiter while the card is fitted ([tdd-integration.md](tdd-integration.md) §3.2).
+
+**Per chip (owner, 2026-10-05):** the YM2203 pair shows as the TurboSound FM in the AY socket shows it - per chip, not
+collapsed. Seven rows, keys and HUD indicators:
+
+| Row | Key | What | HUD indicator |
+|---|---|---|---|
+| `MS SSG 1` | `ms_ssg1` | SSG part of chip select 0 (U4, the MIDI pin chip): A left, B centre, C right | `MS AY 1` |
+| `MS SSG 2` | `ms_ssg2` | SSG part of chip select 1 (U10) | `MS AY 2` |
+| `MS FM 1` | `ms_fm1` | FM part of chip select 0, centred | `MS FM 1` |
+| `MS FM 2` | `ms_fm2` | FM part of chip select 1 | `MS FM 2` |
+| `MS SAA` | `ms_saa` | SAA1099 | `MS SAA` |
+| `MS PCM` | `ms_pcm` | the four DACs: General Sound + SounDrive (was `MS DAC` / `ms_dac`) | `MS PCM` |
+| `MS MIDI` | `ms_midi` | SAM2695 | `MS MIDI` |
+
+The old keys `ms_fm`, `ms_ssg`, `ms_dac` are gone (no aliases: a summed FM row no longer exists); every surface,
+the OpenAPI text, the recipes and Qt (the audio settings list the rows like any device, the multitrack dialog names
+them) use the new ones. Mixer settings per row (volume / mute / solo) live with the machine instance like every other
+row's; no row's mixer settings are written to an INI today.
+
+**FM calibration = the TSFM's (owner, 2026-10-05).** The FM rows' level is `0.30 x 10^(trim / 20)` with the trim read
+from the TurboSound FM's `[SOUND] TSFM_FmTrimDb` (7.4 dB in 14 shipped configs; an absent key is 0 dB on both
+boards), applied live by the audio settings' "FM trim" control, which now shows when the machine has any YM2203 FM and
+drives the TSFM and the card together (`SoundManager::setFmTrimDb` / `fmTrimDb`, `ICard::SetFmTrimDb`); the card's
+state report carries `ym.fm_trim_db` like the TSFM's `fm_trim_db`. Measured (`Ym2203PairBoardsLevel_Test`, the same
+register writes on both boards, per chip, at 7.4 dB and at 0 dB): FM row RMS card / TSFM 4060.1 / 4058.7 (+0.003 dB)
+and 1732.0 / 1730.6, the master mix of an FM-only program 4060.6 / 4057.9 (+0.006 dB).
+
+Every row's calibration and why:
+
+| Row | Calibration (1.0 = INT16_MAX) | Board weight | Level vs the TSFM | Why |
+|---|---|---|---|---|
+| MS FM 1 / 2 | 0.30 x 10^(TSFM_FmTrimDb / 20) = 0.7033 at 7.4 dB | 1.000 | equal (0.0 dB) | the YM3014B is the TSFM's; the 7.4 dB is the TSFM board measurement (an emulator calibration, shared) |
+| MS SSG 1 / 2 | 0.30 per channel (the emulator's SSG channel at volume 15, the TSFM's) | A, C 0.417; B 0.213 | -7.6 dB (A, C) | hardware: the MultiSound sums SSG A / C through 24 k and B through 47 k against the FM's 10 k (R13, R14, R16, R17 vs R18); the TSFM gives SSG and FM equal weights. Measured -7.7 dB (the TSFM's ABC pan law adds 0.06 dB) |
+| MS PCM | 2.5 V per DAC channel x 0.7033 / 1.25 V (volts against the YM3014B's +-1.25 V at the default trim) | 0.208 | - | hardware (schematic), placed against the FM in volts; the user's FM trim does not move it |
+| MS SAA | module units (unmeasured absolute level) | 0.833 | - | hardware weight; absolute SAA level unmeasured |
+| MS MIDI | module units (+-1.0) | 1.000 | - | hardware weight; absolute SAM2695 level unmeasured |
+
+The FM trim is the one calibration the user moves; the board's internal balance (SSG, PCM, SAA, MIDI against FM at the
+default trim) is the schematic's and stays. **Owner question:** the owner asked for the SSG rows to match the TSFM's
+too; that would mean overriding the card's schematic SSG weights (-7.6 dB against its FM), so it is not done - the
+SSG level relation is pinned by the test as the hardware's instead.
 
 **As built (2026-10-04):** `MultiSoundMixer` (`.../multisound/multisoundmixer.{h,cpp}`, not registered yet; MS-4 wires
-the rows). `Mix(input, output)` takes one block of every source at the output rate and writes the five rows (int16,
+the rows). `Mix(input, output)` takes one block of every source at the output rate and writes the rows (int16,
 interleaved stereo; a sixth `external` output exists for the J3 line input, which has no emulated source).
 
 | Source | Input (module convention) | Calibration (row level, 1.0 = INT16_MAX) | Weight L / R |

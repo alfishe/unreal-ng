@@ -19,15 +19,18 @@ constexpr double kPi = 3.14159265358979323846;
 struct Rows
 {
     explicit Rows(size_t frames)
-        : fm(frames * 2), ssg(frames * 2), saa(frames * 2), dac(frames * 2), midi(frames * 2), external(frames * 2)
+        : fm(frames * 2), fm2(frames * 2), ssg(frames * 2), ssg2(frames * 2), saa(frames * 2), dac(frames * 2),
+          midi(frames * 2), external(frames * 2)
     {
     }
 
     MultiSoundMixerOutput Output()
     {
         MultiSoundMixerOutput out;
-        out.fm = fm.data();
-        out.ssg = ssg.data();
+        out.fm[0] = fm.data();
+        out.fm[1] = fm2.data();
+        out.ssg[0] = ssg.data();
+        out.ssg[1] = ssg2.data();
         out.saa = saa.data();
         out.dac = dac.data();
         out.midi = midi.data();
@@ -38,13 +41,17 @@ struct Rows
     /// Every row except `except` is silent at frame i
     bool OthersSilent(const std::vector<int16_t>* except, size_t i) const
     {
-        for (const std::vector<int16_t>* row : { &fm, &ssg, &saa, &dac, &midi, &external })
+        for (const std::vector<int16_t>* row : { &fm, &fm2, &ssg, &ssg2, &saa, &dac, &midi, &external })
             if (row != except && ((*row)[i * 2] != 0 || (*row)[i * 2 + 1] != 0))
                 return false;
         return true;
     }
 
-    std::vector<int16_t> fm, ssg, saa, dac, midi, external;
+    /// The per-chip rows of chip select `chip`
+    std::vector<int16_t>& Fm(int chip) { return chip == 0 ? fm : fm2; }
+    std::vector<int16_t>& Ssg(int chip) { return chip == 0 ? ssg : ssg2; }
+
+    std::vector<int16_t> fm, fm2, ssg, ssg2, saa, dac, midi, external;   // fm, ssg: chip 0
 };
 
 MultiSoundMixer MakeMixer(bool acCoupling = false, MultiSoundRenderMode mode = MultiSoundRenderMode::HiFi)
@@ -65,7 +72,7 @@ double Gain(int16_t row, double inputLevel)
 }
 } // namespace
 
-TEST(MultiSoundMixer_Test, FmBothChipsCentreAtUnity)
+TEST(MultiSoundMixer_Test, FmEachChipOnItsOwnRowCentreAtUnity)
 {
     for (int chip = 0; chip < 2; chip++)
     {
@@ -76,13 +83,13 @@ TEST(MultiSoundMixer_Test, FmBothChipsCentreAtUnity)
         in.fm[chip] = &one;
         Rows rows(1);
         mixer.Mix(in, rows.Output());
-        EXPECT_NEAR(Gain(rows.fm[0], MultiSoundMixer::kFmFullScale), 1.000, 0.0005) << chip;
-        EXPECT_NEAR(Gain(rows.fm[1], MultiSoundMixer::kFmFullScale), 1.000, 0.0005) << chip;
-        EXPECT_TRUE(rows.OthersSilent(&rows.fm, 0));
+        EXPECT_NEAR(Gain(rows.Fm(chip)[0], MultiSoundMixer::kFmFullScale), 1.000, 0.0005) << chip;
+        EXPECT_NEAR(Gain(rows.Fm(chip)[1], MultiSoundMixer::kFmFullScale), 1.000, 0.0005) << chip;
+        EXPECT_TRUE(rows.OthersSilent(&rows.Fm(chip), 0)) << "the other chip's row stays silent";
     }
 }
 
-TEST(MultiSoundMixer_Test, SsgAbcWeightsBothChips)
+TEST(MultiSoundMixer_Test, SsgAbcWeightsEachChipOnItsOwnRow)
 {
     // A 0.417 L, B 0.213 L + R, C 0.417 R, for either chip
     const double expected[3][2] = { { 0.417, 0.0 }, { 0.213, 0.213 }, { 0.0, 0.417 } };
@@ -98,9 +105,9 @@ TEST(MultiSoundMixer_Test, SsgAbcWeightsBothChips)
             Rows rows(1);
             mixer.Mix(in, rows.Output());
             const double level = MultiSoundMixer::kSsgChannelFullScale;
-            EXPECT_NEAR(Gain(rows.ssg[0], level), expected[channel][0], 0.0015) << chip << channel;
-            EXPECT_NEAR(Gain(rows.ssg[1], level), expected[channel][1], 0.0015) << chip << channel;
-            EXPECT_TRUE(rows.OthersSilent(&rows.ssg, 0));
+            EXPECT_NEAR(Gain(rows.Ssg(chip)[0], level), expected[channel][0], 0.0015) << chip << channel;
+            EXPECT_NEAR(Gain(rows.Ssg(chip)[1], level), expected[channel][1], 0.0015) << chip << channel;
+            EXPECT_TRUE(rows.OthersSilent(&rows.Ssg(chip), 0));
         }
     }
 }
@@ -223,5 +230,27 @@ TEST(MultiSoundMixer_Test, AuthenticSaaLadder)
                 expected = hz == 1000.0 ? 0.825 : (10.0 / 12.0) / std::sqrt(2.0);
             EXPECT_NEAR(gain, expected, 0.004) << hz << " Hz, mode " << static_cast<int>(mode);
         }
+    }
+}
+
+/// The FM trim: the TurboSound FM's gain law, 0.30 x 10^(trim / 20), live; 7.4 dB (the shipped calibration) is the
+/// constructed default and kFmFullScale. The SSG and every other source do not move with it
+TEST(MultiSoundMixer_Test, FmTrimFollowsTheTsfmGainLaw)
+{
+    MultiSoundMixer mixer = MakeMixer();
+    EXPECT_DOUBLE_EQ(mixer.FmTrimDb(), kMultiSoundDefaultFmTrimDb);
+    EXPECT_NEAR(MultiSoundMixer::FmFullScale(kMultiSoundDefaultFmTrimDb), MultiSoundMixer::kFmFullScale, 1e-5);
+    for (const double trim : {7.4, 0.0, -6.0, 3.5})
+    {
+        mixer.SetFmTrimDb(trim);
+        const float one = 1.0f;
+        MultiSoundMixerInput in;
+        in.frames = 1;
+        in.fm[0] = &one;
+        in.ssg[1][0] = &one;
+        Rows rows(1);
+        mixer.Mix(in, rows.Output());
+        EXPECT_NEAR(rows.fm[0] / 32767.0, 0.30 * std::pow(10.0, trim / 20.0), 1.0 / 32767.0) << trim;
+        EXPECT_NEAR(Gain(rows.ssg2[0], MultiSoundMixer::kSsgChannelFullScale), 0.417, 0.0015) << trim;
     }
 }

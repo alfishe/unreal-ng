@@ -265,14 +265,17 @@ TEST(MultiSoundSlotCard_Test, ZxEvoCardSeesTheBoardPorts)
 
 // endregion
 
-// region <Step 3: the five mixer rows>
+// region <Step 3: the seven mixer rows>
 
 namespace
 {
 
-const AudioSourceType kMsRows[] = { AudioSourceType::MultiSoundFm, AudioSourceType::MultiSoundSsg,
-                                    AudioSourceType::MultiSoundSaa, AudioSourceType::MultiSoundDac,
+const AudioSourceType kMsRows[] = { AudioSourceType::MultiSoundSsg1, AudioSourceType::MultiSoundSsg2,
+                                    AudioSourceType::MultiSoundFm1,  AudioSourceType::MultiSoundFm2,
+                                    AudioSourceType::MultiSoundSaa,  AudioSourceType::MultiSoundPcm,
                                     AudioSourceType::MultiSoundMidi };
+const char* const kMsRowNames[] = { "MS SSG 1", "MS SSG 2", "MS FM 1", "MS FM 2", "MS SAA", "MS PCM", "MS MIDI" };
+const char* const kMsRowKeys[] = { "ms_ssg1", "ms_ssg2", "ms_fm1", "ms_fm2", "ms_saa", "ms_pcm", "ms_midi" };
 
 /// The mixer report's device for a source key; nullptr when the mixer has none
 const StateNode* MixerDevice(const StateNode& mixer, const std::string& key)
@@ -299,18 +302,17 @@ TEST(MultiSoundSlotCard_Test, MixerRowsOnlyWithTheCard)
         StagedMachine m("pentagon128k", "zxbus.1 = multisound");
         ASSERT_TRUE(m.Ok());
         SoundManager* sound = m.Context()->pSoundManager;
-        const char* names[] = { "MS FM", "MS SSG", "MS SAA", "MS DAC", "MS MIDI" };
         for (size_t i = 0; i < std::size(kMsRows); i++)
         {
             const AudioDeviceInfo* row = sound->device(kMsRows[i]);
-            ASSERT_NE(row, nullptr) << names[i];
-            EXPECT_EQ(row->name, names[i]);
+            ASSERT_NE(row, nullptr) << kMsRowNames[i];
+            EXPECT_EQ(row->name, kMsRowNames[i]);
         }
         EXPECT_TRUE(sound->wideMixEnabled());
         EXPECT_EQ(sound->deviceState(AudioSourceType::AY1_All), "shadowed by zxbus.1");
 
         const StateNode mixer = DeviceState::AudioMixer(m.Context());
-        for (const char* key : { "ms_fm", "ms_ssg", "ms_saa", "ms_dac", "ms_midi" })
+        for (const char* key : kMsRowKeys)
         {
             const StateNode* device = MixerDevice(mixer, key);
             ASSERT_NE(device, nullptr) << key;
@@ -345,8 +347,10 @@ TEST(MultiSoundSlotCard_Test, SsgToneReachesItsRow)
     }
     m.Machine().RunNFrames(3);
     SoundManager* sound = m.Context()->pSoundManager;
-    EXPECT_GT(sound->device(AudioSourceType::MultiSoundSsg)->peak, 0.01f);
-    EXPECT_LT(sound->device(AudioSourceType::MultiSoundFm)->peak, 0.001f) << "FM muted after the reset";
+    EXPECT_GT(sound->device(AudioSourceType::MultiSoundSsg1)->peak, 0.01f) << "U4 is chip select 0: MS SSG 1";
+    EXPECT_LT(sound->device(AudioSourceType::MultiSoundSsg2)->peak, 0.001f) << "U10 plays nothing";
+    EXPECT_LT(sound->device(AudioSourceType::MultiSoundFm1)->peak, 0.001f) << "FM muted after the reset";
+    EXPECT_LT(sound->device(AudioSourceType::MultiSoundFm2)->peak, 0.001f) << "FM muted after the reset";
     EXPECT_LT(sound->device(AudioSourceType::AY1_All)->peak, 0.001f) << "the shadowed board AY got no write";
 }
 
@@ -402,7 +406,9 @@ TEST(MultiSoundSlotCard_Test, ShadowedBoardAyStaysSilentOnPentagon1024AndAtm710)
         EXPECT_FALSE(board->activeRecently) << c.model << ": the shadowed board AY got the writes";
         EXPECT_LT(board->peak, 0.001f) << c.model;
         EXPECT_FALSE(sm->getActivityIndicators().held(AudioSourceType::AY1_All)) << c.model;
-        EXPECT_TRUE(sm->device(AudioSourceType::MultiSoundSsg)->activeRecently) << c.model << ": the card plays";
+        EXPECT_TRUE(sm->device(AudioSourceType::MultiSoundSsg1)->activeRecently ||
+                    sm->device(AudioSourceType::MultiSoundSsg2)->activeRecently)
+            << c.model << ": the card plays";
         EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
     }
 }
@@ -585,9 +591,14 @@ void PlayAllFiveSources(const std::string& folder, const std::string& builtInSta
     EXPECT_GE(report.midi.activeVoices, 1u);
 
     SoundManager* sound = m.Context()->pSoundManager;
-    const char* names[] = { "MS FM", "MS SSG", "MS SAA", "MS DAC", "MS MIDI" };
+    // The program plays U4 (chip select 0) only: its SSG and FM rows sound, U10's stay silent
     for (size_t i = 0; i < std::size(kMsRows); i++)
-        EXPECT_GT(sound->device(kMsRows[i])->peak, 0.005f) << folder << " " << names[i];
+    {
+        if (kMsRows[i] == AudioSourceType::MultiSoundSsg2 || kMsRows[i] == AudioSourceType::MultiSoundFm2)
+            EXPECT_LT(sound->device(kMsRows[i])->peak, 0.001f) << folder << " " << kMsRowNames[i];
+        else
+            EXPECT_GT(sound->device(kMsRows[i])->peak, 0.005f) << folder << " " << kMsRowNames[i];
+    }
 
     std::error_code ignored;
     fs::remove(bank, ignored);

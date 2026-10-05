@@ -112,6 +112,7 @@ MultiSoundCard::MultiSoundCard(EmulatorContext* context, const MultiSoundCardCon
     mixConfig.outputRate = _config.outputRate;
     mixConfig.renderMode = _config.renderMode;
     _mixer.Configure(mixConfig);
+    _mixer.SetFmTrimDb(_config.fmTrimDb);
 
     // The GS: MultiSound profile, DACs into this card's MultiSoundDacs, host time from this card's axis
     const size_t gsRamKB = _config.options.gsRam == MultiSoundGsRam::TwoMb ? 2048 : 1024;
@@ -226,6 +227,12 @@ void MultiSoundCard::SetOutputRate(uint32_t rate)
     _mixer.SetOutputRate(rate);
     _gs->setSampleRate(rate);
     _frameAccumulator = 0;
+}
+
+void MultiSoundCard::SetFmTrimDb(double db)
+{
+    _config.fmTrimDb = db;
+    _mixer.SetFmTrimDb(db);
 }
 
 void MultiSoundCard::SetRenderMode(MultiSoundRenderMode mode)
@@ -438,10 +445,13 @@ size_t MultiSoundCard::FrameEnd(uint64_t t, size_t frames)
     in.midi = _midiOut.data();
 
     MultiSoundMixerOutput out;
-    out.fm = _rows[static_cast<size_t>(MultiSoundRow::Fm)].data();
-    out.ssg = _rows[static_cast<size_t>(MultiSoundRow::Ssg)].data();
+    for (int c = 0; c < 2; c++)
+    {
+        out.fm[c] = _rows[static_cast<size_t>(c == 0 ? MultiSoundRow::Fm1 : MultiSoundRow::Fm2)].data();
+        out.ssg[c] = _rows[static_cast<size_t>(c == 0 ? MultiSoundRow::Ssg1 : MultiSoundRow::Ssg2)].data();
+    }
     out.saa = _rows[static_cast<size_t>(MultiSoundRow::Saa)].data();
-    out.dac = _rows[static_cast<size_t>(MultiSoundRow::Dac)].data();
+    out.dac = _rows[static_cast<size_t>(MultiSoundRow::Pcm)].data();
     out.midi = _rows[static_cast<size_t>(MultiSoundRow::Midi)].data();
     _mixer.Mix(in, out);
 

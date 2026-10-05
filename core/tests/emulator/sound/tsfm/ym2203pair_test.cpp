@@ -690,13 +690,13 @@ public:
     AudioSourceType FmSource(int chip) const
     {
         if (_board == Board::MultiSound)
-            return AudioSourceType::MultiSoundFm;
+            return chip == 0 ? AudioSourceType::MultiSoundFm1 : AudioSourceType::MultiSoundFm2;
         return chip == 0 ? AudioSourceType::FM1 : AudioSourceType::FM2;
     }
     AudioSourceType SsgSource(int chip) const
     {
         if (_board == Board::MultiSound)
-            return AudioSourceType::MultiSoundSsg;
+            return chip == 0 ? AudioSourceType::MultiSoundSsg1 : AudioSourceType::MultiSoundSsg2;
         return chip == 0 ? AudioSourceType::AY1_All : AudioSourceType::AY2_All;
     }
 
@@ -981,6 +981,64 @@ TEST(Ym2203PairBoardsTtd_Test, SeekAndReplayKeepTheCursorAndTheAudio)
             }
             EXPECT_GT(peak, 1000.0) << where;
             EXPECT_LT(worst, peak * 0.01) << where << ": replayed FM differs from live";
+        }
+    }
+}
+
+/// The same register writes on both boards come out at the same level: the YM2203 FM calibration is one ([SOUND]
+/// TSFM_FmTrimDb, the audio settings' FM trim drives both). Per chip, the FM row's RMS of the TSFM in the socket and of
+/// the MultiSound agree within 0.1 dB at the shipped trim and at another one, and so do the master mixes of an
+/// FM-only program; the SSG rows differ by the MultiSound board's own SSG weight. (~0.5 s: two machines per trim and
+/// chip, 0.3 s captures)
+TEST(Ym2203PairBoardsLevel_Test, FmRowsAndMasterAtTheSameLevelOnBothBoards)
+{
+    using namespace pairboards;
+    auto rms = [](const std::vector<double>& x)
+    {
+        double sum = 0.0;
+        for (double v : x)
+            sum += v * v;
+        return std::sqrt(sum / double(x.empty() ? 1 : x.size()));
+    };
+    for (const double trim : {7.4, 0.0})
+    {
+        for (const int fmChip : {0, 1})
+        {
+            double fmRms[2] = {};
+            double ssgRms[2] = {};
+            double masterRms[2] = {};
+            for (const Board board : {Board::Tsfm, Board::MultiSound})
+            {
+                const int b = board == Board::Tsfm ? 0 : 1;
+                PairMachine m(board);
+                ASSERT_TRUE(m.Init());
+                ASSERT_TRUE(m.Context()->pSoundManager->setFmTrimDb(trim));
+                double readBack = -100.0;
+                ASSERT_TRUE(m.Context()->pSoundManager->fmTrimDb(readBack));
+                EXPECT_DOUBLE_EQ(readBack, trim);
+                m.PlayTones(fmChip);
+                m.Frames(6);
+                fmRms[b] = rms(m.Capture(m.FmSource(fmChip), 0.3));
+                ssgRms[b] = rms(m.Capture(m.SsgSource(1 - fmChip), 0.3));
+                // The master with the SSG muted at the chip (volume 0): the FM alone
+                m.Out(0xFFFD, uint8_t(0xF8 | (1 - fmChip)));
+                m.Out(0xFFFD, 0x08);
+                m.Out(0xBFFD, 0x00);
+                m.Out(0xFFFD, uint8_t(0xF8 | fmChip));
+                m.Frames(4);
+                masterRms[b] = rms(m.Capture(AudioSourceType::MasterMix, 0.3));
+            }
+            const std::string where = "trim " + std::to_string(trim) + " dB, FM chip " + std::to_string(fmChip);
+            EXPECT_GT(fmRms[0], 500.0) << where;
+            EXPECT_NEAR(20.0 * std::log10(fmRms[1] / fmRms[0]), 0.0, 0.1) << where << ": FM row, card vs TSFM";
+            EXPECT_NEAR(20.0 * std::log10(masterRms[1] / masterRms[0]), 0.0, 0.1) << where << ": master, card vs TSFM";
+            // The SSG is the board's own balance, not a calibration: the MultiSound sums SSG A through 24 k against
+            // the FM's 10 k (R13 / R14 vs R18; weight 0.417 = -7.6 dB), the TSFM gives FM and SSG equal weights. Same
+            // chip-level SSG unit on both (0.30 per channel), so the card's SSG row sits the schematic's -7.6 dB below
+            // the TSFM's (the TSFM's ABC pan law adds 0.06 dB)
+            EXPECT_NEAR(20.0 * std::log10(ssgRms[1] / ssgRms[0]), 20.0 * std::log10(MultiSoundBoard::kWeightSsgSide),
+                        0.15)
+                << where << ": SSG row, card vs TSFM";
         }
     }
 }

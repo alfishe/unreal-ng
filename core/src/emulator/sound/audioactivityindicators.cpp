@@ -6,7 +6,7 @@
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 
-static_assert(static_cast<int>(AudioSource::MultiSound) + 1 == 15, "HUD_SOURCES must cover every AudioSource");
+static_assert(static_cast<int>(AudioSource::MultiSoundMidi) + 1 == 21, "HUD_SOURCES must cover every AudioSource");
 
 void AudioActivityIndicators::endFrame(const unreal::UUID& emulatorId, const std::vector<AudioDeviceInfo>& devices,
                                        bool neoGSFitted, bool neoGSDma, bool neoGSTransfer)
@@ -47,10 +47,15 @@ void AudioActivityIndicators::endFrame(const unreal::UUID& emulatorId, const std
     on[static_cast<int>(AudioSource::MoonPCM)] = held(AudioSourceType::Moonsound_PCM);
     on[static_cast<int>(AudioSource::CdAudio)] = held(AudioSourceType::CdAudio0) || held(AudioSourceType::CdAudio1) ||
                                                  held(AudioSourceType::CdAudio2) || held(AudioSourceType::CdAudio3);
-    on[static_cast<int>(AudioSource::MultiSound)] =
-        held(AudioSourceType::MultiSoundFm) || held(AudioSourceType::MultiSoundSsg) ||
-        held(AudioSourceType::MultiSoundSaa) || held(AudioSourceType::MultiSoundDac) ||
-        held(AudioSourceType::MultiSoundMidi);
+    // The ZX-MultiSound: one indicator per row (the YM2203 pair per chip, as the TSFM's 2 x AY + 2 x FM, then PCM,
+    // SAA, MIDI)
+    on[static_cast<int>(AudioSource::MultiSoundSsg1)] = held(AudioSourceType::MultiSoundSsg1);
+    on[static_cast<int>(AudioSource::MultiSoundSsg2)] = held(AudioSourceType::MultiSoundSsg2);
+    on[static_cast<int>(AudioSource::MultiSoundFm1)] = held(AudioSourceType::MultiSoundFm1);
+    on[static_cast<int>(AudioSource::MultiSoundFm2)] = held(AudioSourceType::MultiSoundFm2);
+    on[static_cast<int>(AudioSource::MultiSoundPcm)] = held(AudioSourceType::MultiSoundPcm);
+    on[static_cast<int>(AudioSource::MultiSoundSaa)] = held(AudioSourceType::MultiSoundSaa);
+    on[static_cast<int>(AudioSource::MultiSoundMidi)] = held(AudioSourceType::MultiSoundMidi);
 
     MessageCenter& mc = MessageCenter::DefaultMessageCenter();
     for (int source = 0; source < HUD_SOURCES; source++)

@@ -44,6 +44,8 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   (Dattorro-plate reverb with 8 programs, 8-program chorus, spatial, 4- / 2-band EQ, routing, soft / hard clipping,
   codec gain), dry render mode, effects state in the blob (`Fx.ReverbTailAcrossState`); 108 library tests,
   FluidSynth comparison 47 / 47 incl. effect sends, bank corpus rerun
+- [x] SAM-5 real-chip check (owner, 2026-10-05): our SAM2695 compared by ear with real-chip recordings (YouTube):
+  "very similar, good enough" - accepted. There is no official CleanWave bank to compare against
 - [ ] SAM-5 verification consolidation: Dream-board recordings (the curves chosen in tdd §10.6 first),
   `data/midi/` bank pinned, corpus + FluidSynth report as one command; owner review of tdd §10.4 / §10.6
 - [x] ML-0..2 MIDI line ([tdd-midi-line.md](tdd-midi-line.md) §2.0, §5 "As built", 2026-10-04, not committed):
@@ -154,6 +156,17 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   problem, fixed: the TSFM's sample phase after a host speed multiplier (a click at some frame boundaries back at 1x).
   Not covered: a slot-change restart and a model switch (both build or carry the card on a fresh axis start; the rule
   needs no special case), and a TTD seek across a machine reset (a reset ends the recording by design)
+- [x] Owner 2026-10-05: the rows per chip as the TSFM shows them (MS SSG 1 / 2, MS FM 1 / 2, MS SAA, MS PCM, MS MIDI;
+  keys `ms_ssg1` .. `ms_midi`), one HUD indicator per row, and the TSFM's FM calibration on the card (`[SOUND]
+  TSFM_FmTrimDb`, the audio settings' FM trim drives both boards, `ym.fm_trim_db` in the card report)
+  ([architecture.md](architecture.md) §5 with the per-row calibration table). Tests: `MultiSoundMixer_Test` (each chip on
+  its own row, `FmTrimFollowsTheTsfmGainLaw`), the card's per-chip tone tests, `MultiSoundSlotCard_Test` (rows and keys
+  only with the card, per-chip rows in the five-source program), `AudioActivityIndicators_Test.MultiSoundRowsLightTheirOwnIndicatorPerChip`,
+  `Ym2203PairBoardsLevel_Test` (FM rows and master equal to the TSFM's within 0.1 dB at 7.4 and 0 dB)
+- [ ] owner question: the SSG rows are the schematic's -7.6 dB below the TSFM's (SSG through 24 k against the FM's
+  10 k on the MultiSound, equal weights on the TSFM); kept as hardware, not matched
+- [ ] owner question: atm3 / atm450 / atm710 ship without `TSFM_FmTrimDb` (their socket holds a TurboSound): a TSFM
+  or a MultiSound fitted there runs its FM at 0 dB, 7.4 dB below the other configs
 - [ ] side note: the plain AY / TurboSound device (`SoundChip_TurboSound`) has the same sample-phase render loop as the
   TSFM and probably the same click after a host speed multiplier; not a pair board, not changed here
 - [ ] MS-7 second pass: Z-Player 5, the remaining disks of the test images README, WC MOD / TFC / ETC

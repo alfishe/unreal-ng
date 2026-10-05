@@ -674,6 +674,32 @@ void SoundManager::setDeviceSolo(AudioSourceType type, bool solo)
         d->solo = solo;
 }
 
+bool SoundManager::setFmTrimDb(double db)
+{
+    bool any = false;
+    if (_turboSound && _turboSound->hasFm())
+    {
+        _turboSound->setFmTrimDb(db);
+        any = true;
+    }
+    for (ICard* card : _slotCards)
+        any = card->SetFmTrimDb(db) || any;
+    return any;
+}
+
+bool SoundManager::fmTrimDb(double& db) const
+{
+    if (_turboSound && _turboSound->hasFm())
+    {
+        db = _turboSound->fmTrimDb();
+        return true;
+    }
+    for (const ICard* card : _slotCards)
+        if (card->FmTrimDb(db))
+            return true;
+    return false;
+}
+
 void SoundManager::setDeviceVolume(AudioSourceType type, float volume)
 {
     if (auto* d = device(type))

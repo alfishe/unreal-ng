@@ -175,7 +175,7 @@ call.
 | Recipe | What it covers |
 |:--|:--|
 | [peripherals/generalsound.md](peripherals/generalsound.md) | GS card: `gs` / `gs-lw` / `neogs` slot cards (legacy `GSType`), personality switch (a slot change, machine restart), `#B3/#BB/#33` mailbox, firmware ROMs, `/control/audio/gs`, state and port trace, capture proof |
-| [peripherals/multisound.md](peripherals/multisound.md) | ZX-MultiSound card: fit it in the slots, a TSFM tune, a SAA tone and MIDI notes from a test program, `audio_multisound` / `audio_midi` state, capture by source (`ms_fm` .. `ms_midi`), MIDI panic, the GM bank |
+| [peripherals/multisound.md](peripherals/multisound.md) | ZX-MultiSound card: fit it in the slots, a TSFM tune, a SAA tone and MIDI notes from a test program, `audio_multisound` / `audio_midi` state, capture by source (`ms_ssg1` / `ms_ssg2` / `ms_fm1` / `ms_fm2` per YM2203 chip, `ms_saa`, `ms_pcm`, `ms_midi`), MIDI panic, the GM bank |
 | [peripherals/moonsound.md](peripherals/moonsound.md) | OPL4 card: `#C4`-`#C7` FM banks, `#7E/#7F` wave regs, YRW801 ROM, per-model `MoonSound=` defaults, state and capture sources, known issues |
 | [peripherals/neogs.md](peripherals/neogs.md) | NeoGS card (`neogs` in `[SLOTS]`, shipped on the clones; not on the Sinclair, Profi or Sprinter configs): SD slot `sd.ngs`, flash save, stereo mode, personality switch, MP3 path |
 | [peripherals/audio-mixer-and-capture.md](peripherals/audio-mixer-and-capture.md) | Per-device mixer (gain, mute, solo), audio capture by source, analyzing a capture |

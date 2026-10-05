@@ -21,17 +21,20 @@ using namespace slots;
 namespace
 {
 
-/// The five rows in display order (architecture.md §5)
+/// The seven rows in display order (architecture.md §5): the YM2203 pair per chip as the TurboSound FM in the AY socket
+/// shows it (its rows read "TSFM SSG 1 / 2", "TSFM FM 1 / 2"), then the SAA, the DACs (PCM) and the MIDI synthesizer
 constexpr struct
 {
     AudioSourceType type;
     MultiSoundRow row;
     const char* name;
 } kRows[] = {
-    { AudioSourceType::MultiSoundFm, MultiSoundRow::Fm, "MS FM" },
-    { AudioSourceType::MultiSoundSsg, MultiSoundRow::Ssg, "MS SSG" },
+    { AudioSourceType::MultiSoundSsg1, MultiSoundRow::Ssg1, "MS SSG 1" },
+    { AudioSourceType::MultiSoundSsg2, MultiSoundRow::Ssg2, "MS SSG 2" },
+    { AudioSourceType::MultiSoundFm1, MultiSoundRow::Fm1, "MS FM 1" },
+    { AudioSourceType::MultiSoundFm2, MultiSoundRow::Fm2, "MS FM 2" },
     { AudioSourceType::MultiSoundSaa, MultiSoundRow::Saa, "MS SAA" },
-    { AudioSourceType::MultiSoundDac, MultiSoundRow::Dac, "MS DAC" },
+    { AudioSourceType::MultiSoundPcm, MultiSoundRow::Pcm, "MS PCM" },
     { AudioSourceType::MultiSoundMidi, MultiSoundRow::Midi, "MS MIDI" },
 };
 
@@ -66,6 +69,10 @@ MultiSoundCardConfig MultiSoundSlotCard::ConfigFrom(const CardContext& context)
     // T-states per second (turbo descaled by AudioTstate)
     config.hostTickRate = static_cast<uint32_t>(CPU_CLOCK_RATE);
     EmulatorContext* emulator = context.emulator;
+    // The YM2203 FM calibration: the TurboSound FM's [SOUND] TSFM_FmTrimDb, read and applied the same way (gain =
+    // 0.30 x 10^(trim / 20) on both boards, an absent key is 0 dB on both)
+    if (emulator != nullptr)
+        config.fmTrimDb = emulator->config.sound.tsfmFmTrimDb;
     if (emulator != nullptr && emulator->pSoundManager != nullptr)
     {
         config.outputRate = static_cast<uint32_t>(emulator->pSoundManager->getCoreRate());
@@ -198,6 +205,18 @@ void MultiSoundSlotCard::FrameEnd(size_t samples)
 void MultiSoundSlotCard::SetOutputRate(uint32_t rate)
 {
     _card.SetOutputRate(rate);
+}
+
+bool MultiSoundSlotCard::SetFmTrimDb(double db)
+{
+    _card.SetFmTrimDb(db);
+    return true;
+}
+
+bool MultiSoundSlotCard::FmTrimDb(double& db) const
+{
+    db = _card.FmTrimDb();
+    return true;
 }
 
 void MultiSoundSlotCard::MixerRows(std::vector<CardMixerRow>& out) const

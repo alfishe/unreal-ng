@@ -40,7 +40,7 @@ real software verified as a user runs it.
 | functions | `ym` -> `ay-socket` (shadowing role) + `midi`; `saa`; `gs`; `sd` -> `soundrive` |
 | ports | architecture §3 |
 | media | none (the GS has no SD slot on this card) |
-| mixer rows | `MS FM`, `MS SSG`, `MS SAA`, `MS DAC`, `MS MIDI` |
+| mixer rows | `MS SSG 1`, `MS SSG 2`, `MS FM 1`, `MS FM 2`, `MS SAA`, `MS PCM`, `MS MIDI` (per chip since 2026-10-05, [architecture.md](architecture.md) §5) |
 | ROM | `data/rom/gs105b.rom` (next to `gs104.rom` / `gs105a.rom`) (GS 1.05b, from the card repository's `rom/`; checksum in the ROM README) |
 | bank | `[MIDI] Bank=` (default `data/midi/generaluser-gs.sf2`, Q4) |
 
@@ -99,7 +99,7 @@ claim table's cycle resolution in production for slot-built cards. The adapter i
 | Time | the axis `SoundChip_Moonsound` uses: origin + `AudioTstate(z80->t)` x the host speed multiplier at `CPU_CLOCK_RATE` ticks per second (the axis of every sound device and of the mixer's sample count; turbo descaled), clamped monotonic; the origin moves by `config.frame` x the multiplier at each `FrameEnd`. **Deviation from §3.1:** `hostTickRate` is `CPU_CLOCK_RATE` (3.5 MHz) on every machine, not the machine's own T-state rate (3.5469 MHz on a 128K): the mixer turns `config.frame` T-states into `frame x rate / CPU_CLOCK_RATE` output samples on every model, so one T-state is 1 / 3.5 MHz of output on every model and the card must count on the same axis to fill the same samples; the YM pair's ratio is then 1 : 1 everywhere (architecture.md §2's 128K ratio assumed the other axis) |
 | Options | `dip` (`ym`, `saa`, `gs`, `sd`), `gsRam` (`1m` / `2m`), `ctrlMask` (`pro` / `classic`) from the slot (`OptionsFrom`); `[MIDI] Bank=` (`Config::GetMidiBank`, since 2026-10-05 outside `CONFIG`: slots tdd.md §12; resolved like a ROM path; empty = the card's default `midi/generaluser-gs.sf2`); the row rate = `SoundManager`'s core rate, followed on a rate change |
 | ROM lock | before each cycle the adapter gives the card `M1(z80->m1_pc)` (the IN / OUT instruction's opcode fetch); the claim table's `lockedOnRomFetch` reads the same address through `IClaimSignals`, so the SAA and SounDrive claims are skipped by both |
-| Rows | `MS FM`, `MS SSG`, `MS SAA`, `MS DAC`, `MS MIDI` (`AudioSourceType::MultiSound*`, mixer keys `ms_fm` .. `ms_midi`); volume / mute / solo / analyzer capture like any row; the wide float bus with the master limiter while the card is fitted; one HUD source `AudioSource::MultiSound` (Qt nudge "MultiSound", category `audio-multisound`); multitrack recording names. Rows exist only with the card |
+| Rows | `MS SSG 1`, `MS SSG 2`, `MS FM 1`, `MS FM 2`, `MS SAA`, `MS PCM`, `MS MIDI` (`AudioSourceType::MultiSound*`, mixer keys `ms_ssg1`, `ms_ssg2`, `ms_fm1`, `ms_fm2`, `ms_saa`, `ms_pcm`, `ms_midi`; per chip since 2026-10-05, before that five rows `ms_fm` / `ms_ssg` / `ms_saa` / `ms_dac` / `ms_midi`); volume / mute / solo / analyzer capture like any row; the wide float bus with the master limiter while the card is fitted; one HUD indicator per row (`AudioSource::MultiSoundSsg1` .. `MultiSoundMidi`: "MS AY 1/2", "MS FM 1/2", "MS PCM", "MS SAA", "MS MIDI", category `audio-multisound`); multitrack recording names. Rows exist only with the card |
 | Frames | `SoundManager` calls `FrameStart` at every frame start (all modes) and `FrameEnd(samplesThisFrame)` before mixing; turbo without audio `FrameEnd(0)` (the card still runs to the frame end) |
 | Bus reset | `SoundManager::reset` (machine reset) calls `BusReset`: the card's CPLD, YM pair, SAA, GS, DACs, MIDI line and SAM2695 share the ZX /RESET |
 
@@ -176,7 +176,7 @@ the card is left out there - and `SoundChip_GeneralSound_Profile_Test.MultiSound
 | MIDI panic | `MidiControl::Execute(context, "panic")` -> TTD live input `TTDInputKind::MidiPanic` (17) -> `ICard::MidiPanic` -> `sam2695::Synth::Panic(t)`: a queued event that kills every voice (All Sound Off on all parts) and leaves controllers, programs and the parser's running status; journaled while recording, replayed by a seek |
 | Library | `sam2695::Synth::Panic`, `SynthReport::ChannelView::keys` (the keys sounding, 2 x 64 bits) |
 | Surfaces | WebAPI `GET /state/audio/multisound`, `GET /state/audio/midi`, `POST /control/audio/midi` (+ OpenAPI `openapi_multisound.inc`); CLI `multisound [--full|--json]`, `midi [--json]`, `midi panic` (`cli-multisound.h`); MCP aspects `audio_multisound`, `audio_midi`, the panic through `invoke_api`; Lua `multisound_state()`, `midi_state()`, `midi_panic()`; Python `emu.multisound_state()`, `emu.midi_state()`, `emu.midi_panic()` |
-| Qt | the card's options in the slots window (DIP check boxes, gsRam, ctrlMask with the note on the unofficial `classic`); the five mixer rows (MS FM / SSG / SAA / DAC / MIDI) are SoundManager devices and show in the audio settings as every device does; Tools > MIDI Activity (parts, presets, a 16 x 128 key strip of the notes sounding, Panic); a HUD icon of its own (`multisound`) |
+| Qt | the card's options in the slots window (DIP check boxes, gsRam, ctrlMask with the note on the unofficial `classic`); the seven mixer rows (MS SSG 1 / 2, MS FM 1 / 2, MS SAA, MS PCM, MS MIDI) are SoundManager devices and show in the audio settings as every device does; the "FM trim" control shows for the card too and drives every YM2203 FM; Tools > MIDI Activity (parts, presets, a 16 x 128 key strip of the notes sounding, Panic); a HUD icon of its own (`multisound`) |
 | Recipe | [.recipe/peripherals/multisound.md](../../../.recipe/peripherals/multisound.md) (not `.recipe/sound/`: the library keeps sound cards in `peripherals/`), verified 2026-10-05 on a Pentagon: a TSFM tune (`tech_support.sna`) on the card's FM, a SAA tone (653 Hz), two MIDI notes bit-banged through YM IOA2 (C4, E4 on GeneralUser GS), each captured by its own source (`ms_fm`, `ms_saa`, `ms_midi`), the panic replayed by a TTD seek |
 
 Tests: `MultiSoundDeviceState_Test.*` (3), `CliMultiSound_Test.SummaryAndMidiText`, `McpTools_Test.InspectState_MultiSoundAndMidiAspects`,
@@ -202,7 +202,7 @@ Each run as a user would run it, TTD recording on (rolling limit), results in th
 
 Run on a freshly built `unreal-qt` of its own (WebAPI on its own ports), card created with `slots`, TTD recording
 (rolling limit) started before every program, `[MIDI] Bank` = the shipped default. Levels are RMS of the per-source
-capture (`ms_fm`, `ms_ssg`, `ms_saa`, `ms_dac`, `ms_midi`, 0..1 full scale). The images and the exact keys are in the
+capture (`ms_fm`, `ms_ssg`, `ms_saa`, `ms_dac`, `ms_midi` at the time - since 2026-10-05 per chip `ms_ssg1/2`, `ms_fm1/2`, `ms_pcm`, 0..1 full scale). The images and the exact keys are in the
 test images' README (untracked, `testdata/sound/multisound/software/README.md`).
 
 | Program | Machine | Sources heard | Checks | Result | TTD check | Notes |

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <initializer_list>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -180,6 +181,29 @@ public:
     {
         for (auto& row : collected)
             row.clear();
+    }
+
+    /// Peak-to-peak swing of one side of the sum of rows (the YM2203 rows are per chip) over the collected frames
+    double Swing(std::initializer_list<MultiSoundRow> rows, int side) const
+    {
+        std::vector<int> sum;
+        for (MultiSoundRow row : rows)
+        {
+            const std::vector<int16_t>& v = collected[static_cast<size_t>(row)];
+            sum.resize(v.size(), 0);
+            for (size_t i = 0; i < v.size(); i++)
+                sum[i] += v[i];
+        }
+        if (sum.size() < 2)
+            return 0.0;
+        int lo = INT32_MAX;
+        int hi = INT32_MIN;
+        for (size_t i = static_cast<size_t>(side); i < sum.size(); i += 2)
+        {
+            lo = std::min(lo, sum[i]);
+            hi = std::max(hi, sum[i]);
+        }
+        return static_cast<double>(hi - lo);
     }
 
     /// Peak-to-peak swing of one side of a row over the collected frames
@@ -365,12 +389,12 @@ TEST_F(MultiSoundCard_Test, WorkedExampleControlByteYmRegistersAndSaaEnable)
     rig.Reg(0x08, 0x0F);
     ProgramSaaTone(rig, 0, 0x0F);
     rig.RunFrames(4);
-    EXPECT_GT(rig.Swing(MultiSoundRow::Ssg, 0), 1000.0) << "U10 SSG A, left";
-    EXPECT_LT(rig.Swing(MultiSoundRow::Ssg, 1), 20.0) << "SSG A has no right weight";
+    EXPECT_GT(rig.Swing({MultiSoundRow::Ssg1, MultiSoundRow::Ssg2}, 0), 1000.0) << "U10 SSG A, left";
+    EXPECT_LT(rig.Swing({MultiSoundRow::Ssg1, MultiSoundRow::Ssg2}, 1), 20.0) << "SSG A has no right weight";
     EXPECT_GT(rig.Swing(MultiSoundRow::Saa, 0), 1000.0) << "SAA voice 0, left amplitude";
     EXPECT_LT(rig.Swing(MultiSoundRow::Saa, 1), 20.0);
-    EXPECT_EQ(rig.Swing(MultiSoundRow::Fm, 0), 0.0);
-    EXPECT_EQ(rig.Swing(MultiSoundRow::Dac, 0), 0.0);
+    EXPECT_EQ(rig.Swing({MultiSoundRow::Fm1, MultiSoundRow::Fm2}, 0), 0.0);
+    EXPECT_EQ(rig.Swing(MultiSoundRow::Pcm, 0), 0.0);
     EXPECT_EQ(rig.Swing(MultiSoundRow::Midi, 0), 0.0);
 }
 
@@ -387,22 +411,22 @@ TEST_F(MultiSoundCard_Test, FmIsMutedAfterResetUntilAControlByteClearsBit2)
 
     ProgramFmNote(rig);
     rig.RunFrames(2);
-    EXPECT_EQ(rig.Swing(MultiSoundRow::Fm, 0), 0.0) << "muted after reset";
+    EXPECT_EQ(rig.Swing({MultiSoundRow::Fm1, MultiSoundRow::Fm2}, 0), 0.0) << "muted after reset";
 
     rig.Out(kYmRegister, 0xF0);
     rig.RunFrames(1);
     rig.Clear();
     rig.RunFrames(2);
-    const double on = rig.Swing(MultiSoundRow::Fm, 0);
+    const double on = rig.Swing({MultiSoundRow::Fm1, MultiSoundRow::Fm2}, 0);
     EXPECT_GT(on, 5000.0) << "FM on";
-    EXPECT_NEAR(rig.Swing(MultiSoundRow::Fm, 0), rig.Swing(MultiSoundRow::Fm, 1), 1.0) << "FM is centered";
+    EXPECT_NEAR(rig.Swing({MultiSoundRow::Fm1, MultiSoundRow::Fm2}, 0), rig.Swing({MultiSoundRow::Fm1, MultiSoundRow::Fm2}, 1), 1.0) << "FM is centered";
 
     // Muted again: what is left is the coupling capacitor's discharge (3.2 Hz corner, 50 ms time constant)
     rig.Out(kYmRegister, 0xF4);
     rig.RunFrames(10);
     rig.Clear();
     rig.RunFrames(2);
-    EXPECT_LT(rig.Swing(MultiSoundRow::Fm, 0), 0.01 * on) << "muted again";
+    EXPECT_LT(rig.Swing({MultiSoundRow::Fm1, MultiSoundRow::Fm2}, 0), 0.01 * on) << "muted again";
 
     rig.Out(kYmRegister, 0xF0);
     rig.RunFrames(1);
@@ -413,7 +437,7 @@ TEST_F(MultiSoundCard_Test, FmIsMutedAfterResetUntilAControlByteClearsBit2)
     rig.RunFrames(10);
     rig.Clear();
     rig.RunFrames(2);
-    EXPECT_LT(rig.Swing(MultiSoundRow::Fm, 0), 0.01 * on);
+    EXPECT_LT(rig.Swing({MultiSoundRow::Fm1, MultiSoundRow::Fm2}, 0), 0.01 * on);
 }
 
 TEST_F(MultiSoundCard_Test, TsfmChipSwitchFfStopsTheSaaAndMutesFm)
@@ -569,8 +593,8 @@ TEST_F(MultiSoundCard_Test, RowsCarryTheBoardWeights)
         rig.RunFrames(2);
         rig.Clear();
         rig.RunFrames(3);
-        out[0] = rig.Swing(MultiSoundRow::Ssg, 0);
-        out[1] = rig.Swing(MultiSoundRow::Ssg, 1);
+        out[0] = rig.Swing({MultiSoundRow::Ssg1, MultiSoundRow::Ssg2}, 0);
+        out[1] = rig.Swing({MultiSoundRow::Ssg1, MultiSoundRow::Ssg2}, 1);
     };
     double a[2], b[2], c[2];
     measure(8, a);
@@ -608,8 +632,8 @@ TEST_F(MultiSoundCard_Test, SoundriveChannelsAreHardLeftAndRight)
         for (int i = 0; i < 200; i++)
             rig.Out(c.port, static_cast<uint8_t>((i & 8) ? 0xC0 : 0x40), 200);
         rig.RunFrames(1);
-        EXPECT_GT(rig.Swing(MultiSoundRow::Dac, c.side), 1000.0) << std::hex << c.port;
-        EXPECT_EQ(rig.Swing(MultiSoundRow::Dac, 1 - c.side), 0.0) << std::hex << c.port;
+        EXPECT_GT(rig.Swing(MultiSoundRow::Pcm, c.side), 1000.0) << std::hex << c.port;
+        EXPECT_EQ(rig.Swing(MultiSoundRow::Pcm, 1 - c.side), 0.0) << std::hex << c.port;
     }
 }
 
@@ -710,8 +734,8 @@ TEST_F(MultiSoundCard_Test, GsBootsGs105bAndPlaysASampleThroughTheSharedDacsHard
     rig.Out(kGsCommand, 0x80);
     ASSERT_TRUE(WaitGsStatus(rig, 0x01, false, 200));
     rig.RunFrames(3);
-    EXPECT_GT(rig.Swing(MultiSoundRow::Dac, 0), 500.0) << "GS channel 1 plays on the left";
-    EXPECT_LT(rig.Swing(MultiSoundRow::Dac, 1), 1.0) << "no cross-feed";
+    EXPECT_GT(rig.Swing(MultiSoundRow::Pcm, 0), 500.0) << "GS channel 1 plays on the left";
+    EXPECT_LT(rig.Swing(MultiSoundRow::Pcm, 1), 1.0) << "no cross-feed";
     EXPECT_GT(rig.Report().gs.dacFetches, 0u);
 
     // Let it end, then channel 3 (DAC 2, right)
@@ -721,8 +745,8 @@ TEST_F(MultiSoundCard_Test, GsBootsGs105bAndPlaysASampleThroughTheSharedDacsHard
     rig.Out(kGsCommand, 0x82);
     ASSERT_TRUE(WaitGsStatus(rig, 0x01, false, 200));
     rig.RunFrames(3);
-    EXPECT_GT(rig.Swing(MultiSoundRow::Dac, 1), 500.0) << "GS channel 3 plays on the right";
-    EXPECT_LT(rig.Swing(MultiSoundRow::Dac, 0), 0.1 * rig.Swing(MultiSoundRow::Dac, 1))
+    EXPECT_GT(rig.Swing(MultiSoundRow::Pcm, 1), 500.0) << "GS channel 3 plays on the right";
+    EXPECT_LT(rig.Swing(MultiSoundRow::Pcm, 0), 0.1 * rig.Swing(MultiSoundRow::Pcm, 1))
         << "the left side only drifts (the first sample has ended; its last level decays through the coupling)";
     EXPECT_EQ(rig.card.Dacs().LateEvents(), 0u);
 }
@@ -814,9 +838,11 @@ TEST_F(MultiSoundCard_Test, FmRowCarriesTheNoteOfEachChipAfterAResetAtAnyTime)
         rig.Clear();
         rig.RunFrames(8);
         const double u4 = FmNoteHz(0x100, 7);
-        EXPECT_NEAR(ToneHz(rig.collected[static_cast<size_t>(MultiSoundRow::Fm)], 0, rate), u4, u4 * 0.01)
-            << "U4 note, reset in frame " << resetFrame;
-        EXPECT_NEAR(ToneHz(rig.collected[static_cast<size_t>(MultiSoundRow::Fm)], 1, rate), u4, u4 * 0.01);
+        EXPECT_NEAR(ToneHz(rig.collected[static_cast<size_t>(MultiSoundRow::Fm1)], 0, rate), u4, u4 * 0.01)
+            << "U4 note on MS FM 1, reset in frame " << resetFrame;
+        EXPECT_NEAR(ToneHz(rig.collected[static_cast<size_t>(MultiSoundRow::Fm1)], 1, rate), u4, u4 * 0.01);
+        // U10 plays nothing (after the second reset its coupling capacitor still discharges U10's earlier note)
+        EXPECT_LT(rig.Swing(MultiSoundRow::Fm2, 0), 0.01 * rig.Swing(MultiSoundRow::Fm1, 0)) << "MS FM 2 silent";
 
         // U4 silenced (carrier TL #7F), U10 an octave lower (block 6)
         rig.Reg(0x4E, 0x7F);
@@ -828,9 +854,9 @@ TEST_F(MultiSoundCard_Test, FmRowCarriesTheNoteOfEachChipAfterAResetAtAnyTime)
         rig.Clear();
         rig.RunFrames(8);
         const double u10 = FmNoteHz(0x100, 6);
-        EXPECT_NEAR(ToneHz(rig.collected[static_cast<size_t>(MultiSoundRow::Fm)], 0, rate), u10, u10 * 0.01)
-            << "U10 note, reset in frame " << resetFrame;
-        EXPECT_NEAR(ToneHz(rig.collected[static_cast<size_t>(MultiSoundRow::Fm)], 1, rate), u10, u10 * 0.01);
+        EXPECT_NEAR(ToneHz(rig.collected[static_cast<size_t>(MultiSoundRow::Fm2)], 0, rate), u10, u10 * 0.01)
+            << "U10 note on MS FM 2, reset in frame " << resetFrame;
+        EXPECT_NEAR(ToneHz(rig.collected[static_cast<size_t>(MultiSoundRow::Fm2)], 1, rate), u10, u10 * 0.01);
         rig.Clear();
     }
 }
@@ -860,11 +886,14 @@ TEST_F(MultiSoundCard_Test, SsgRowCarriesTheToneOfEachChipAfterAResetAtAnyTime)
         rig.RunFrames(2);
         rig.Clear();
         rig.RunFrames(8);
-        const std::vector<int16_t>& ssg = rig.collected[static_cast<size_t>(MultiSoundRow::Ssg)];
-        EXPECT_NEAR(ToneHz(ssg, 0, rate), 1750000.0 / 16 / 256, 1750000.0 / 16 / 256 * 0.01)
-            << "U4 tone A, left; reset in frame " << resetFrame;
-        EXPECT_NEAR(ToneHz(ssg, 1, rate), 1750000.0 / 16 / 128, 1750000.0 / 16 / 128 * 0.01)
-            << "U10 tone C, right; reset in frame " << resetFrame;
+        const std::vector<int16_t>& ssg1 = rig.collected[static_cast<size_t>(MultiSoundRow::Ssg1)];
+        const std::vector<int16_t>& ssg2 = rig.collected[static_cast<size_t>(MultiSoundRow::Ssg2)];
+        EXPECT_NEAR(ToneHz(ssg1, 0, rate), 1750000.0 / 16 / 256, 1750000.0 / 16 / 256 * 0.01)
+            << "U4 tone A on MS SSG 1, left; reset in frame " << resetFrame;
+        EXPECT_NEAR(ToneHz(ssg2, 1, rate), 1750000.0 / 16 / 128, 1750000.0 / 16 / 128 * 0.01)
+            << "U10 tone C on MS SSG 2, right; reset in frame " << resetFrame;
+        EXPECT_LT(rig.Swing(MultiSoundRow::Ssg1, 1), 20.0) << "U4 plays A only: nothing on the right";
+        EXPECT_LT(rig.Swing(MultiSoundRow::Ssg2, 0), 20.0) << "U10 plays C only: nothing on the left";
         rig.Clear();
     }
 }
@@ -942,8 +971,8 @@ TEST_F(MultiSoundCard_Test, TfmPlayerTracePlaysThroughTheCard)
     EXPECT_NE(keyOnSeen[1], 0) << "U10 played FM notes";
     EXPECT_FALSE(rig.Report().latches.fmMuted);
     EXPECT_FALSE(rig.Report().latches.saaClock) << "#F8 / #F9 stop the SAA";
-    EXPECT_GT(rig.Swing(MultiSoundRow::Fm, 0), 5000.0);
-    EXPECT_NEAR(rig.Swing(MultiSoundRow::Fm, 0), rig.Swing(MultiSoundRow::Fm, 1), 1.0);
+    EXPECT_GT(rig.Swing({MultiSoundRow::Fm1, MultiSoundRow::Fm2}, 0), 5000.0);
+    EXPECT_NEAR(rig.Swing({MultiSoundRow::Fm1, MultiSoundRow::Fm2}, 0), rig.Swing({MultiSoundRow::Fm1, MultiSoundRow::Fm2}, 1), 1.0);
     EXPECT_EQ(rig.Swing(MultiSoundRow::Saa, 0), 0.0);
 }
 

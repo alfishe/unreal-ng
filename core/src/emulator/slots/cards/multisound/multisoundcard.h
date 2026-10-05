@@ -69,10 +69,12 @@ struct SynthReport;
 /// The five stereo rows (architecture.md §5); the board weights are applied before them
 enum class MultiSoundRow : uint8_t
 {
-    Fm = 0,     ///< MS FM: both YM2203 FM outputs
-    Ssg,        ///< MS SSG: both YM2203 SSG parts, A left, B centre, C right
+    Ssg1 = 0,   ///< MS SSG 1: the SSG part of YM2203 chip select 0 (U4), A left, B centre, C right
+    Ssg2,       ///< MS SSG 2: the SSG part of chip select 1 (U10)
+    Fm1,        ///< MS FM 1: the FM part of chip select 0 (U4), centred
+    Fm2,        ///< MS FM 2: the FM part of chip select 1 (U10)
     Saa,        ///< MS SAA
-    Dac,        ///< MS DAC: GS + SounDrive, channels 0-1 left, 2-3 right
+    Pcm,        ///< MS PCM: the four DACs (GS + SounDrive), channels 0-1 left, 2-3 right
     Midi,       ///< MS MIDI: the SAM2695
     Count
 };
@@ -93,6 +95,8 @@ struct MultiSoundCardConfig
     std::string midiBankPath = "midi/generaluser-gs.sf2";
     /// A bank object instead of the file (tests, one bank shared by several cards); overrides midiBankPath
     std::shared_ptr<const sam2695::ISoundBank> midiBank;
+    /// FM loudness trim in dB: the TurboSound FM's [SOUND] TSFM_FmTrimDb, the same calibration on both boards
+    double fmTrimDb = kMultiSoundDefaultFmTrimDb;
 };
 
 /// Everything automation surfaces show about the card (Describe is their single source)
@@ -182,6 +186,9 @@ public:
     void SetOutputRate(uint32_t rate);
     /// HiFi / Authentic (SAA PDM stream + board filters) at a frame boundary
     void SetRenderMode(MultiSoundRenderMode mode);
+    /// FM loudness trim in dB (the TurboSound FM's TSFM_FmTrimDb; the audio settings' FM trim drives both boards)
+    void SetFmTrimDb(double db);
+    double FmTrimDb() const { return _mixer.FmTrimDb(); }
 
     /// region <Bus>
     /// IORQGE for an I/O cycle at this port (direction-independent, the RTL decodes the address only)
