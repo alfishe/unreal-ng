@@ -342,10 +342,11 @@ dependent): `ym` -> `ay-socket` role (shadowing) and `midi`; `saa`; `gs`; `sound
 | ZX-Evo Baseconf / TS-Conf | BoardWins | the card detects RD / WR (`RdWr`), so it sees the board's own ports (`#FFFD`, SounDrive `#1F`); the YM2149 is taken out of its socket (Q7): the board AY device is not built, the report says `taken out of its socket for zxbus.N` (`removed: true`), and the board's decode of `#FFFD` no longer drives the read, so the card alone answers |
 
 At creation a config that leaves the AY socket unconfigured lets the card take the chip out (the physical step Q7
-describes); `ay-socket = ay` keeps the chip and the card is not fitted, with the reason. A TSFM / TS configured in the
-socket under the card is a pointless pair (refused without confirmation, as automation without the flag), so a config
-that wants the card writes no `ay-socket` line or `ay-socket = ay` on the Pentagon. The `gs` and `soundrive`
-functions clash with a GS / SounDrive card as the matrix says (first wins).
+describes). Since the slots' owner decision Q8 (2026-10-05) configured cards that conflict refuse the machine with
+every pair and its rule: `ay-socket = ay` on the ZX-Evo (the chip kept in its socket), a TSFM / TS in the socket under
+the card (a pointless pair), a GS or SounDrive card next to the card's `gs` / `sd` functions. A config that wants the
+card writes no `ay-socket` line (or `ay-socket = ay` on the Pentagon, whose AY the card shadows) and no GS / SounDrive
+card. No shipped config fits the MultiSound; tests fit it in their own configs.
 
 ## 7. TTD
 

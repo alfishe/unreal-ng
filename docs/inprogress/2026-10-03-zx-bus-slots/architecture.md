@@ -382,11 +382,12 @@ zxbus.1.dip = ym,saa,gs,sd       ; card options: zxbus.N.<option> = value
 zxbus.1.gsRam = 1M
 zxbus.1.ctrlMask = pro
 zxbus.2 = zxnetusb
-zxbus.3 = gs                     ; would clash with zxbus.1's gs: at load the first wins, zxbus.3 disabled (R-CFG-3)
+zxbus.3 = gs                     ; would clash with zxbus.1's gs: the machine is not created, the error names both (Q8)
 ```
 
 - Parsed into `SlotRequest`s in slot order through the same `Plan` (without the override), so an INI can never
-  produce a state that the API cannot.
+  produce a state that the API cannot. Entries that conflict with each other (D1, D3 / D12, D7, a chip kept in its
+  socket against Q7) refuse the machine with every pair in the reason (Q8, 2026-10-05).
 - **Legacy keys** (Q4): `[SOUND] TurboSound`, `GSType`, `MoonSound`, `CovoxFB`, `SD`, `[NETWORK] Card=` are translated
   into `[SLOTS]` entries at load with a deprecation warning; the card-specific settings sections (`[NGS]`,
   `[MOONSOUND]`, `[ROM] GS`, ...) stay as the cards' option sources until each card's migration moves them under

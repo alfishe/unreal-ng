@@ -410,9 +410,95 @@ std::string OptionValueId(const CardDef& card, const CardOptions& options, Opt k
     return {};
 }
 
+/// What a rule says, for the refusal text (Q8)
+const char* RuleMeaning(const std::string& rule)
+{
+    if (rule == "D1")
+    {
+        return "D1: one function, one card";
+    }
+    if (rule == "D3")
+    {
+        return "D3: a socket board under a card's IORQGE would be shadowed, a pointless pair";
+    }
+    if (rule == "D12")
+    {
+        return "D12: both would drive the same reads, a pointless pair";
+    }
+    if (rule == "D7")
+    {
+        return "D7: an accidental port clash";
+    }
+    return "Q7: the card needs the socketed chip out, `ay-socket = ay` keeps it in";
+}
+
+const char* RuleId(Rule rule)
+{
+    switch (rule)
+    {
+        case Rule::D3:
+            return "D3";
+        case Rule::D12:
+            return "D12";
+        default:
+            break;
+    }
+    return "D1";
+}
+
 // endregion
 
 } // namespace
+
+/// The configured entries a plan for `slot` would displace or clash with (Q8); empty when none
+std::vector<SlotManager::Conflict> SlotManager::ConflictsOf(const SlotPlan& plan, const Slot& slot,
+                                                             bool socketConfigured, const std::vector<Slot>& planned)
+{
+    std::vector<Conflict> out;
+    auto add = [&](const std::string& laterSlot, const std::string& otherSlot, const std::string& rule,
+                   const std::string& why) {
+        const std::string& other = laterSlot == slot.entry.slot ? otherSlot : laterSlot;
+        if (std::any_of(out.begin(), out.end(), [&](const Conflict& c) { return c.withSlot == other; }))
+        {
+            return;
+        }
+        Conflict conflict;
+        conflict.slot = slot.entry.slot;
+        conflict.card = slot.entry.card;
+        conflict.source = slot.source;
+        conflict.withSlot = other;
+        for (const Slot& entry : planned)
+        {
+            if (entry.entry.slot == other && !entry.entry.disabled)
+            {
+                conflict.withCard = entry.entry.card;
+                conflict.withSource = entry.source;
+            }
+        }
+        conflict.rule = rule;
+        conflict.reason = why + " (" + RuleMeaning(rule) + ")";
+        out.push_back(std::move(conflict));
+    };
+    for (const RemovedCard& removed : plan.removed)
+    {
+        add(slot.entry.slot, removed.slot, RuleId(removed.rule), removed.reason);
+    }
+    if (socketConfigured)
+    {
+        for (const RemovedFromSocket& chip : plan.removedFromSocket)
+        {
+            add(slot.entry.slot, chip.socket.empty() ? std::string(kAySocket) : chip.socket, "Q7",
+                "the " + chip.chip + " would have to leave its socket");
+        }
+    }
+    for (const DisabledCard& disabled : plan.disabled)
+    {
+        add(disabled.slot, disabled.clashSlot, "D7", disabled.reason);
+    }
+    // An entry nobody configured (an empty `withCard`) is no conflict between entries
+    out.erase(std::remove_if(out.begin(), out.end(), [](const Conflict& c) { return c.withCard.empty(); }), out.end());
+    return out;
+}
 
 // region <Result>
 
@@ -451,6 +537,22 @@ const SlotManager::Slot* SlotManager::Result::FindGroup(SlotCardGroup group) con
         }
     }
     return nullptr;
+}
+
+std::string SlotManager::Result::Refusal() const
+{
+    if (conflicts.empty())
+    {
+        return {};
+    }
+    std::string text = "the [SLOTS] cards conflict, the machine is not created (Q8):";
+    for (size_t i = 0; i < conflicts.size(); i++)
+    {
+        const Conflict& c = conflicts[i];
+        text += std::string(i == 0 ? " " : "; ") + c.slot + " = " + c.card + " and " + c.withSlot + " = " + c.withCard +
+                ": " + c.reason;
+    }
+    return text;
 }
 
 const SlotManager::BuiltIn* SlotManager::Result::FindBuiltIn(const std::string& id) const
@@ -832,6 +934,32 @@ SlotManager::Result SlotManager::Plan(const CONFIG& config, uint32_t decidedGrou
         plug.options = slot.entry.options;
         plug.adapter = request.adapter;
         SlotPlan plan = Planner().Plan(result.model, set, plug);
+
+        // Q8: configured entries in conflict refuse the machine. A plan refused without the replace flag shows with
+        // it what it would displace; an allowed plan may still disable a card for an accidental port clash
+        SlotPlan forcedView;
+        const SlotPlan* view = &plan;
+        if (!plan.allowed && !plan.hardRefusal)
+        {
+            SlotRequest withFlag = plug;
+            withFlag.replaceIfIncompatible = true;
+            forcedView = Planner().Plan(result.model, set, withFlag);
+            view = &forcedView;
+        }
+        const std::vector<Conflict> conflicts =
+            view->hardRefusal ? std::vector<Conflict>{} : ConflictsOf(*view, slot, socketConfigured, result.entries);
+        if (!conflicts.empty())
+        {
+            std::string with;
+            for (const Conflict& conflict : conflicts)
+            {
+                with += (with.empty() ? "" : ", ") + conflict.withSlot + " = " + conflict.withCard;
+            }
+            result.conflicts.insert(result.conflicts.end(), conflicts.begin(), conflicts.end());
+            disable("conflicts with " + with);
+            continue;
+        }
+
         if (!plan.allowed && !plan.hardRefusal && (request.fitOverride || !socketConfigured))
         {
             // Two confirmations a config may give without the replace flag, never a displaced card or a built-in
@@ -1029,11 +1157,11 @@ SlotManager::~SlotManager()
     ReleaseCards();
 }
 
-void SlotManager::PlanAtCreate()
+bool SlotManager::PlanAtCreate()
 {
     if (_context == nullptr)
     {
-        return;
+        return true;
     }
     _result = Plan(_context->config);
     if (ModuleLogger* logger = _context->pModuleLogger)
@@ -1049,8 +1177,18 @@ void SlotManager::PlanAtCreate()
                          line.c_str());
         }
     }
+    if (!_result.conflicts.empty())
+    {
+        if (ModuleLogger* logger = _context->pModuleLogger)
+        {
+            logger->Error(PlatformModulesEnum::MODULE_CORE, PlatformCoreSubmodulesEnum::SUBMODULE_CORE_CONFIG, "Slots: %s",
+                          _result.Refusal().c_str());
+        }
+        return false;
+    }
     Apply(_result, _context->config);
     _ttdFingerprint = TtdFingerprintFields(_result);
+    return true;
 }
 
 void SlotManager::BuildCards()

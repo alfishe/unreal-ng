@@ -120,8 +120,10 @@ way. This design does the same for every Spectrum-family machine and adds a comp
 - **R-CFG-2.** Old keys (`[SOUND]` TurboSound / TSFM / GS type, `[GS]`, `[NGS]`, MoonSound, Covox, `[NETWORK] Card=`)
   are read at load, translated into slots and logged as deprecated. Shipped configs in `data/configs` are converted
   at once. The old keys are removed after a few releases.
-- **R-CFG-3.** An INI with an incompatible set is loaded by the same plan as an automation request without the
-  override: the first card in slot order wins, the rest are disabled with reasons, and the machine starts.
+- **R-CFG-3.** An INI is planned by the same plan as an automation request without the override. Configured entries
+  that conflict with each other under the compatibility matrix refuse the creation of the machine, with every
+  conflicting pair and its rule in the reason (owner decision Q8, 2026-10-05; before: the first card won, the rest were
+  disabled). An entry the machine itself cannot take is left out with its reason and the machine starts.
 
 ### 3.6 Reports
 

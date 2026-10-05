@@ -102,6 +102,7 @@ protected:
     uint32_t _preferredRamSize = 0;
     std::function<void(CONFIG&)> _configOverride;
     std::string _customConfigPath;  // Optional custom config file path
+    std::string _initError;         // why Init() refused the configuration ("" for other failures)
 
     Config* _config = nullptr;
     Core* _core = nullptr;
@@ -294,6 +295,12 @@ public:
 
     [[nodiscard]] bool Init();
     void Release();
+    /// Why Init() refused the machine's configuration (the slot set's conflicts, ZX-bus slots Q8); "" when it did
+    /// not, or failed for another reason
+    const std::string& GetInitError() const
+    {
+        return _initError;
+    }
 
     /// A hidden member of a multi-instance machine (a ZX-Poly slave): left out
     /// of instance listings, index lookup and "most recent" selection, but

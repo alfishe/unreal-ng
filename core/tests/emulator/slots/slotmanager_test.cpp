@@ -27,6 +27,7 @@
 #include "emulator/config.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/covox.h"
@@ -202,11 +203,13 @@ TEST_P(SlotManagerShipped_Test, FitsTheDevicesOfMaster)
         Config config(emulator.GetContext());
         ASSERT_TRUE(config.LoadConfigFile(ini.string()));
         actual = DescribeConfigCards(emulator.GetContext()->config);
+        // Its slot set would create (Q8: no conflict between its entries)
+        EXPECT_EQ(SlotManager::Plan(emulator.GetContext()->config).Refusal(), "") << folder;
     }
     else
     {
         emulator.SetCustomConfigPath(ini.string());
-        ASSERT_TRUE(emulator.Init()) << folder;
+        ASSERT_TRUE(emulator.Init()) << folder << ": " << emulator.GetInitError();
         actual = DescribeFittedDevices(emulator.GetContext());
     }
     emulator.Release();
@@ -372,29 +375,88 @@ TEST(SlotManager_Test, LegacyKeysTranslated)
     EXPECT_EQ(applied->network.card, networkspec::kCardZxNetUsb);
 }
 
-TEST(SlotManager_Test, IniLoadUsesSamePlan)
+TEST(SlotManager_Test, IniConflictRefusesCreation)
 {
-    // An INI with a clash: the first card in slot order wins, the later one is disabled with the reason (no
-    // replace flag at load), and the machine still gets its cards
+    // Owner decision Q8 (2026-10-05): configured entries that conflict under the matrix refuse the machine, the
+    // reason names each conflicting pair and its rule; nothing is applied
     auto config = MakeConfig(MM_PENTAGON);
     SetSlots(*config, { { "zxbus.2", "neogs" }, { "zxbus.1", "gs" }, { "zxbus.1.ram", "512k" },
                                  { "zxbus.3", "moonsound" } });
-    const SlotManager::Result result = SlotManager::Plan(*config, kAllGroups);
+    SlotManager::Result result = SlotManager::Plan(*config, kAllGroups);
     EXPECT_TRUE(result.fromSlotsSection);
-    ASSERT_NE(Entry(result, "zxbus.1"), nullptr);
-    ASSERT_NE(Entry(result, "zxbus.2"), nullptr);
-    EXPECT_FALSE(Entry(result, "zxbus.1")->entry.disabled);
-    EXPECT_TRUE(Entry(result, "zxbus.2")->entry.disabled);
-    EXPECT_NE(Entry(result, "zxbus.2")->entry.disabledReason.find("zxbus.1"), std::string::npos)
-        << Entry(result, "zxbus.2")->entry.disabledReason;
-    EXPECT_FALSE(Entry(result, "zxbus.3")->entry.disabled);
-    EXPECT_TRUE(LogHas(result, "zxbus.2 = neogs"));
+    ASSERT_EQ(result.conflicts.size(), 1u);
+    EXPECT_EQ(result.conflicts[0].slot, "zxbus.2") << "the later entry in slot order";
+    EXPECT_EQ(result.conflicts[0].withSlot, "zxbus.1");
+    EXPECT_EQ(result.conflicts[0].withCard, "gs");
+    EXPECT_EQ(result.conflicts[0].rule, "D1");
+    const std::string refusal = result.Refusal();
+    EXPECT_NE(refusal.find("zxbus.2 = neogs and zxbus.1 = gs"), std::string::npos) << refusal;
+    EXPECT_NE(refusal.find("`gs`"), std::string::npos) << refusal;
+    EXPECT_NE(refusal.find("D1: one function, one card"), std::string::npos) << refusal;
 
+    // Every pair is listed: a third General Sound and a SounDrive pair besides
+    SetSlots(*config, { { "zxbus.1", "gs" }, { "zxbus.2", "neogs" }, { "zxbus.3", "gs-lw" }, { "zxbus.4", "soundrive" },
+                        { "zxbus.5", "soundrive" } });
+    result = SlotManager::Plan(*config, kAllGroups);
+    ASSERT_EQ(result.conflicts.size(), 3u) << result.Refusal();
+    EXPECT_EQ(result.conflicts[1].slot, "zxbus.3");
+    EXPECT_EQ(result.conflicts[2].slot, "zxbus.5");
+    EXPECT_EQ(result.conflicts[2].withSlot, "zxbus.4");
+
+    // A set without a conflict plans as before
+    SetSlots(*config, { { "zxbus.1", "gs" }, { "zxbus.2", "moonsound" }, { "zxbus.3", "soundrive" } });
+    result = SlotManager::Plan(*config, kAllGroups);
+    EXPECT_TRUE(result.conflicts.empty()) << result.Refusal();
+    EXPECT_EQ(result.Refusal(), "");
     SlotManager::Apply(result, *config, kAllGroups);
-    EXPECT_EQ(config->sound.gsTypeKind, GSTypeKind::Z80) << "the first GS card";
-    EXPECT_EQ(config->sound.gsRamKB, 512u) << "its RAM option";
+    EXPECT_EQ(config->sound.gsTypeKind, GSTypeKind::Z80);
     EXPECT_EQ(config->sound.moonsound, 1);
     EXPECT_EQ(config->sound.turboSoundKind, TurboSoundKind::Single) << "no ay-socket key: the machine's own AY";
+}
+
+TEST(SlotManager_Test, PointlessSocketPairAndKeptChipAreConflicts)
+{
+    // D3: a TurboSound FM in the Pentagon's socket under a ZX-MultiSound's IORQGE
+    auto config = MakeConfig(MM_PENTAGON);
+    SetSlots(*config, { { "ay-socket", "tsfm" }, { "zxbus.1", "multisound" } });
+    SlotManager::Result result = SlotManager::Plan(*config, kAllGroups);
+    ASSERT_EQ(result.conflicts.size(), 1u) << result.Refusal();
+    EXPECT_EQ(result.conflicts[0].withSlot, "ay-socket");
+    EXPECT_EQ(result.conflicts[0].rule, "D3");
+
+    // The Pentagon's own AY under the card is shadowed, as on the real board: no conflict
+    SetSlots(*config, { { "ay-socket", "ay" }, { "zxbus.1", "multisound" } });
+    result = SlotManager::Plan(*config, kAllGroups);
+    EXPECT_TRUE(result.conflicts.empty()) << result.Refusal();
+
+    // Q7: on the ZX-Evo the card needs the YM2149 out of its socket; without an ay-socket line it is taken out,
+    // an explicit `ay-socket = ay` keeps it in and conflicts
+    auto evo = MakeConfig(MM_ATM3);
+    SetSlots(*evo, { { "zxbus.1", "multisound" } });
+    result = SlotManager::Plan(*evo, kAllGroups);
+    EXPECT_TRUE(result.conflicts.empty()) << result.Refusal();
+    ASSERT_NE(result.FindSlot("zxbus.1"), nullptr);
+    SetSlots(*evo, { { "ay-socket", "ay" }, { "zxbus.1", "multisound" } });
+    result = SlotManager::Plan(*evo, kAllGroups);
+    ASSERT_EQ(result.conflicts.size(), 1u) << result.Refusal();
+    EXPECT_EQ(result.conflicts[0].withSlot, "ay-socket");
+    EXPECT_EQ(result.conflicts[0].rule, "Q7");
+    EXPECT_NE(result.Refusal().find("YM2149"), std::string::npos) << result.Refusal();
+}
+
+/// The refusal reaches whoever creates the machine (WebAPI 400, CLI, MCP read it): ~15 ms, the machine is refused
+/// before its sound devices are built
+TEST(SlotManager_Test, ConflictRefusalReachesTheCreateError)
+{
+    std::string error;
+    auto emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel(
+        "", "PENTAGON", LoggerLevel::LogError, &error, [](CONFIG& config) {
+            config.slotConfig = Slots({ { "zxbus.1", "neogs" }, { "zxbus.2", "gs" } });
+            SlotManager::Project(config.slotConfig, config, kAllGroups);
+        });
+    EXPECT_EQ(emulator, nullptr);
+    EXPECT_NE(error.find("zxbus.2 = gs and zxbus.1 = neogs"), std::string::npos) << error;
+    EXPECT_NE(error.find("Q8"), std::string::npos) << error;
 }
 
 TEST(SlotManager_Test, FitOverrideNeverDisplaces)
@@ -413,12 +475,15 @@ TEST(SlotManager_Test, FitOverrideNeverDisplaces)
     EXPECT_FALSE(Entry(result, "edge.1")->entry.disabled) << Entry(result, "edge.1")->entry.disabledReason;
     EXPECT_EQ(Entry(result, "edge.1")->fit, Fit::Unrealistic);
 
-    // Even with the override a second GS card is not fitted: the override never displaces the first one
+    // Even with the override a second GS card is not fitted: the override never displaces the first one, and the
+    // pair is a conflict that refuses the machine (Q8)
     config->slotConfig.entries.push_back({ "edge.2", "gs", "", "zxbus-to-sinclair-edge", true, "[SLOTS] edge.2" });
     SlotManager::Project(config->slotConfig, *config, kAllGroups);
     result = SlotManager::Plan(*config, kAllGroups);
     EXPECT_FALSE(Entry(result, "edge.1")->entry.disabled);
     EXPECT_TRUE(Entry(result, "edge.2")->entry.disabled);
+    ASSERT_EQ(result.conflicts.size(), 1u);
+    EXPECT_EQ(result.conflicts[0].withSlot, "edge.1");
 }
 
 TEST(SlotManager_Test, HardRefusalKeptEvenWithTheOverride)

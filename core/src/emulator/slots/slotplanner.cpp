@@ -440,6 +440,7 @@ private:
         removed.clashing = std::move(clashing);
         removed.replacedInSlot = replacedInSlot;
         removed.pointless = pointless;
+        removed.rule = rule;
         removed.reason = reason;
         _plan.removed.push_back(std::move(removed));
         Confirm(rule, "removes " + Quoted(entry.slot) + " " + Quoted(entry.card) + ": " + reason);

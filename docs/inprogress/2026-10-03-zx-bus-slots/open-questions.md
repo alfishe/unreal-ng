@@ -4,7 +4,7 @@
 |---|---|
 | **Date** | 2026-10-03 |
 | **For** | the ZX-bus slot design (PLAN row #82); first consumer: [ZX-MultiSound](../2026-10-03-zx-multisound/) |
-| **Order** | most important first |
+| **Order** | most important first (Q8 added 2026-10-05) |
 
 ## Q1. What happens when a card is incompatible with cards already plugged in?
 
@@ -110,3 +110,30 @@ so its writes reach both chips and a `#FFFD` read is driven by both (a bus fight
   `replaceIfIncompatible`.
 - With the override that keeps the chip, reads follow the bus's read rule and the fit is reported as `unrealistic`.
 - The TS-Conf `FREE_IORQ` FPGA build stays a possible later machine option (not in this work).
+
+## Q8. What happens when the configured cards conflict with each other?
+
+**Owner decision (2026-10-05): the machine is not created.** Until now an INI whose `[SLOTS]` entries conflicted was
+planned "first wins": the later card was left out with a log line and the machine started (R-CFG-3). A config that adds
+`zxbus.1 = multisound` to a shipped Pentagon or ZX-Evo config (TurboSound FM or TurboSound in the socket, NeoGS,
+SounDrive) then started without the MultiSound, and nothing on screen said why.
+
+- **Rule:** when two configured entries conflict under the compatibility matrix, creating the machine fails with an
+  error (HTTP 400 on the WebAPI, the same reason on every surface). The reason lists each conflicting pair, the rule
+  and what it says, for example: `the [SLOTS] cards conflict, the machine is not created (Q8): zxbus.2 = gs and
+  zxbus.1 = multisound: shares `gs` (D1: one function, one card)`.
+- **Conflicts:** a shared function (D1, matrix code **D**), a socket board a card would shadow or fight (D3 / D12,
+  **⊘**), an accidental port clash (D7, **P**), and a socketed chip kept by an explicit `ay-socket = ay` while a card
+  needs it out of its socket (Q7). This covers every card, not only the MultiSound.
+- **Q7 stays:** with no `ay-socket` line the card may take the ZX-Evo's YM2149 out of its socket. `ay-socket = ay`
+  together with the MultiSound on the ZX-Evo is now a conflict and refuses the machine. On the Pentagon the board AY
+  under the card is shadowed (matrix **S**), as on real hardware: no conflict.
+- **Not a conflict between entries:** a card the machine itself cannot take (a fixed built-in holds its function, a bus
+  signal is missing, the card is not emulated) is still left out with its reason, and the machine starts.
+- **Shipped configs:** every shipped config still creates (`SlotManagerShipped_Test`).
+
+**Owner addition (2026-10-05): the shipped configs do not fit the MultiSound.** No shipped config has a
+`zxbus.N = multisound` line. The MultiSound is fitted only in tests (test-local configs, or slot entries the test
+builds). A user who wants it writes the line into a config that has no conflicting card, for example without
+`ay-socket = tsfm` and without a NeoGS / SounDrive card.
+

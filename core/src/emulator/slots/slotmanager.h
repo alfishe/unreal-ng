@@ -4,9 +4,13 @@
 /// @brief The slot set of one emulator instance (docs/inprogress/2026-10-03-zx-bus-slots/architecture.md §5-§7):
 /// planned once when the instance is created, from the INI's [SLOTS] section or, without one, from the legacy card
 /// keys translated into slots. The same plan engine (SlotPlanner) as an automation request decides, without the
-/// replace flag: entries are taken in slot order, the first card wins and a later one that would displace it is
-/// disabled with the reason (R-CFG-3). A slot with the fit override (`<slot>.fit = unrealistic`; every translated
-/// legacy key, so an old INI keeps the devices it always had) may fit a card the bus cannot take, never displace one.
+/// replace flag, entry by entry in slot order. Configured entries that conflict with each other under the
+/// compatibility matrix (a shared function D1, a pointless socket pair D3 / D12, an accidental port clash D7, an
+/// explicit `ay-socket = ay` whose chip a card needs out of its socket, Q7) refuse the creation of the machine, with
+/// every conflicting pair and its rule in the reason (owner decision Q8, 2026-10-05; it replaces R-CFG-3's "first
+/// wins"). An entry the machine itself cannot take (a fixed built-in, a missing bus signal, a card not emulated) is
+/// still left out with the reason. A slot with the fit override (`<slot>.fit = unrealistic`; every translated legacy
+/// key, so an old INI keeps the devices it always had) may fit a card the bus cannot take, never displace one.
 ///
 /// The cards themselves are still built by their owners (SoundManager mixes the sound cards, NetworkManager keeps
 /// the virtual network): SlotManager decides which cards exist and writes that into the card fields of CONFIG they
@@ -97,6 +101,19 @@ public:
         std::string source;                 ///< where a switch came from
     };
 
+    /// Two configured entries that cannot both be fitted (Q8): `slot` is the later entry in slot order
+    struct Conflict
+    {
+        std::string slot;
+        std::string card;
+        std::string source;
+        std::string withSlot;
+        std::string withCard;
+        std::string withSource;
+        std::string rule;       ///< "D1", "D3", "D7", "D12", "Q7"
+        std::string reason;     ///< the planner's sentence and what the rule says
+    };
+
     struct Result
     {
         MEM_MODEL model{};
@@ -106,6 +123,10 @@ public:
         std::vector<BuiltIn> builtIns;
         std::vector<std::string> log;                 ///< deprecation and refusal lines (logged as warnings)
         std::vector<std::string> info;                ///< cards fitted with the fit override (logged as info)
+        std::vector<Conflict> conflicts;              ///< configured entries in conflict: the machine is not created
+
+        /// Why the machine is not created: every conflicting pair with its rule; "" when the set is creatable
+        std::string Refusal() const;
 
         /// The fitted (not disabled) cards as the plan engine's slot set
         slots::SlotSet Fitted() const;
@@ -137,8 +158,14 @@ public:
     SlotManager(const SlotManager&) = delete;
     SlotManager& operator=(const SlotManager&) = delete;
 
-    /// Create time (Core::Init, before any card exists): plans, logs and applies
-    void PlanAtCreate();
+    /// Create time (Core::Init, before any card exists): plans, logs and applies. False when the configured entries
+    /// conflict (Q8): nothing is applied, Refusal() says why
+    [[nodiscard]] bool PlanAtCreate();
+    /// Why the create-time plan refused the machine; "" when it did not
+    std::string Refusal() const
+    {
+        return _result.Refusal();
+    }
 
     /// Create time, once the sound manager and the port decoder exist: builds the cards the slots own (card.h) for
     /// the fitted slots, in slot order
@@ -212,6 +239,9 @@ public:
     // endregion </TTD>
 
 private:
+    static std::vector<Conflict> ConflictsOf(const slots::SlotPlan& plan, const Slot& slot, bool socketConfigured,
+                                             const std::vector<Slot>& planned);
+
     EmulatorContext* _context = nullptr;
     Result _result;
     std::vector<std::unique_ptr<ICard>> _cards;

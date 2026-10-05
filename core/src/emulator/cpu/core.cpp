@@ -318,8 +318,11 @@ bool Core::Init()
     if (result)
     {
         _slotManager = new SlotManager(_context);
-        _slotManager->PlanAtCreate();
         _context->pSlotManager = _slotManager;
+        // Configured cards in conflict refuse the machine (Q8): the reason stays readable (SlotManager::Refusal)
+        result = _slotManager->PlanAtCreate();
+        if (!result)
+            _initError = _slotManager->Refusal();   // kept: the failed Init releases the slot manager
     }
 
     /// endregion </Slots>

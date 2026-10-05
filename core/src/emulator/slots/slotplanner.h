@@ -138,6 +138,7 @@ struct RemovedCard
     std::vector<Function> clashing;     ///< D1: the shared functions
     bool replacedInSlot = false;        ///< the new card goes into this slot
     bool pointless = false;             ///< D3 / D12: the socket board would be shadowed or fight the new card
+    Rule rule = Rule::D1;               ///< the rule that removes it (D1, D3, D12)
     std::string reason;
 };
 

@@ -103,8 +103,9 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   its claims resolved by the claim table (CardWins shadowing on the Pentagon, RdWr on the ZX-Evo with the YM2149 out
   of its socket); five rows, HUD source, row state `shadowed by`; `MultiSoundSlotCard_Test` (a Z80 program plays FM,
   SSG, SAA, DAC and a bit-banged MIDI note on a Pentagon and a ZX-Evo)
-  - [ ] owner review: the AY socket left unconfigured gives up its socketed chip at creation (ZX-Evo), an explicit
-    `ay-socket = ay` keeps it and the card is not fitted ([architecture.md](architecture.md) §6 "As built")
+  - [x] owner decision (slots Q8, 2026-10-05): the AY socket left unconfigured gives up its socketed chip at creation
+    (ZX-Evo); an explicit `ay-socket = ay`, a TSFM in the socket or a GS / SounDrive card next to the card refuse the
+    machine with the reason ([architecture.md](architecture.md) §6 "As built"); no shipped config fits the card
   - [ ] owner review: the card's axis is `CPU_CLOCK_RATE` on every machine, not the machine's T-state rate
     ([tdd-integration.md](tdd-integration.md) §3.2 deviation)
   - [ ] the RTL asserts IORQGE on a `#BFFD` read too (no direction term), the reference data claims `#BFFD` for

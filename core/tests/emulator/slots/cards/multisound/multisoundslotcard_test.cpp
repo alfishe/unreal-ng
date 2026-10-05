@@ -178,7 +178,8 @@ TEST(MultiSoundSlotCard_Test, BuiltForItsSlotWithItsOptions)
     ASSERT_NE(m.Context()->pSoundManager->getTurboSound(), nullptr) << "the Pentagon's AY stays in its socket";
 }
 
-/// Two ZX-Evo machines (~10 ms together): Q7, the card takes the YM2149 out of its socket unless the config keeps it
+/// Two ZX-Evo machines (~10 ms together): Q7, the card takes the YM2149 out of its socket; a config that keeps it in
+/// (`ay-socket = ay`) is refused (Q8)
 TEST(MultiSoundSlotCard_Test, TakesTheZxEvoYm2149OutOfItsSocket)
 {
     {
@@ -193,19 +194,11 @@ TEST(MultiSoundSlotCard_Test, TakesTheZxEvoYm2149OutOfItsSocket)
         EXPECT_EQ(m.Context()->pSoundManager->getTurboSound(), nullptr) << "no board AY device";
     }
     {
-        // An explicit `ay-socket = ay` keeps the chip: the card would fight it, so it is not fitted
+        // An explicit `ay-socket = ay` keeps the chip the card needs out: a conflict, the machine is refused (Q8)
         StagedMachine m("atm3", "ay-socket = ay\nzxbus.1 = multisound");
-        ASSERT_TRUE(m.Ok());
-        EXPECT_EQ(m.Card(), nullptr);
-        const SlotManager::Slot* slot = nullptr;
-        for (const SlotManager::Slot& entry : m.Context()->pSlotManager->Current().entries)
-        {
-            slot = entry.entry.slot == "zxbus.1" ? &entry : slot;
-        }
-        ASSERT_NE(slot, nullptr);
-        EXPECT_TRUE(slot->entry.disabled);
-        EXPECT_NE(slot->entry.disabledReason.find("socket"), std::string::npos) << slot->entry.disabledReason;
-        EXPECT_NE(m.Context()->pSoundManager->getTurboSound(), nullptr);
+        EXPECT_FALSE(m.Ok());
+        EXPECT_NE(m.Machine().GetInitError().find("YM2149 would have to leave its socket"), std::string::npos)
+            << m.Machine().GetInitError();
     }
 }
 
@@ -589,44 +582,42 @@ TEST(MultiSoundSlotCard_Test, ZxEvoProgramPlaysAllFiveSources)
     PlayAllFiveSources("atm3", "taken out of its socket for zxbus.1");
 }
 
-/// The matrix's refusals hold for a config (first wins, the later card is not fitted): a second General Sound, a
-/// TurboSound FM in the socket the card would shadow (a pointless pair), the 128K edge without IORQGE. Four
-/// machines (~15 ms each)
-TEST(MultiSoundSlotCard_Test, MatrixRefusalsHoldAtCreation)
+/// The matrix's conflicts between configured entries refuse the machine (owner decision Q8, 2026-10-05), with each
+/// pair and its rule in the reason: a second General Sound (either order), a TurboSound FM in the socket the card
+/// would shadow (a pointless pair), the ZX-Evo YM2149 kept in its socket by an explicit `ay-socket = ay`. A card the
+/// machine cannot take (the 128K edge has no IORQGE) is no conflict: left out with the reason, the machine starts.
+/// Five machines (~15 ms each; a refused one stops before its sound devices are built)
+TEST(MultiSoundSlotCard_Test, MatrixConflictsRefuseCreation)
 {
-    auto disabled = [](StagedMachine& m, const std::string& slotId) {
-        for (const SlotManager::Slot& slot : m.Context()->pSlotManager->Current().entries)
-        {
-            if (slot.entry.slot == slotId)
-                return slot.entry.disabled;
-        }
-        return false;
+    struct Case
+    {
+        const char* folder;
+        const char* slots;
+        const char* pair;
+        const char* rule;
     };
+    const Case refused[] = {
+        { "pentagon128k", "zxbus.1 = multisound\nzxbus.2 = gs", "zxbus.2 = gs and zxbus.1 = multisound", "D1" },
+        { "pentagon128k", "zxbus.1 = gs\nzxbus.2 = multisound", "zxbus.2 = multisound and zxbus.1 = gs", "D1" },
+        { "pentagon128k", "ay-socket = tsfm\nzxbus.1 = multisound", "zxbus.1 = multisound and ay-socket = tsfm", "D3" },
+        { "atm3", "ay-socket = ay\nzxbus.1 = multisound", "zxbus.1 = multisound and ay-socket = ay", "Q7" },
+    };
+    for (const Case& c : refused)
     {
-        StagedMachine m("pentagon128k", "zxbus.1 = multisound\nzxbus.2 = gs");
-        ASSERT_TRUE(m.Ok());
-        EXPECT_NE(m.Card(), nullptr);
-        EXPECT_TRUE(disabled(m, "zxbus.2")) << "gs: the MultiSound's gs function is fitted first";
-        EXPECT_EQ(m.Context()->pSoundManager->getGeneralSound(), nullptr);
-    }
-    {
-        StagedMachine m("pentagon128k", "zxbus.1 = gs\nzxbus.2 = multisound");
-        ASSERT_TRUE(m.Ok());
-        EXPECT_EQ(m.Card("zxbus.2"), nullptr);
-        EXPECT_TRUE(disabled(m, "zxbus.2"));
-        EXPECT_NE(m.Context()->pSoundManager->getGeneralSound(), nullptr);
-    }
-    {
-        StagedMachine m("pentagon128k", "ay-socket = tsfm\nzxbus.1 = multisound");
-        ASSERT_TRUE(m.Ok());
-        EXPECT_EQ(m.Card(), nullptr) << "the TSFM it would shadow is configured: not fitted without confirmation";
-        EXPECT_TRUE(disabled(m, "zxbus.1"));
+        StagedMachine m(c.folder, c.slots);
+        EXPECT_FALSE(m.Ok()) << c.folder << ": " << c.slots;
+        const std::string error = m.Machine().GetInitError();
+        EXPECT_NE(error.find(c.pair), std::string::npos) << error;
+        EXPECT_NE(error.find(std::string("(") + c.rule + ":"), std::string::npos) << error;
     }
     {
         StagedMachine m("spectrum128", "edge.1 = multisound");
         ASSERT_TRUE(m.Ok());
         EXPECT_EQ(m.Card("edge.1"), nullptr) << "the 128K edge has no IORQGE";
-        EXPECT_TRUE(disabled(m, "edge.1"));
+        bool disabled = false;
+        for (const SlotManager::Slot& slot : m.Context()->pSlotManager->Current().entries)
+            disabled = disabled || (slot.entry.slot == "edge.1" && slot.entry.disabled);
+        EXPECT_TRUE(disabled);
     }
 }
 

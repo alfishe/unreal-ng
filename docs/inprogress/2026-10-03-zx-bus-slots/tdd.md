@@ -51,7 +51,7 @@ one to one, except as noted in §5.
 | `SlotManager_Test.AccidentalPortClashDisablesLater` | two cards with overlapping ports not covered by functions: the later one disabled, plan allowed |
 | `SlotManager_Test.DryRunChangesNothing` | `dryRun` returns the plan, state unchanged |
 | `SlotManager_Test.RefusedWhileTtdRecords` | recording: refused with the session id |
-| `SlotManager_Test.IniLoadUsesSamePlan` | an INI with a clash: first wins, later disabled, machine starts |
+| `SlotManager_Test.IniConflictRefusesCreation` | an INI with a clash: the machine is not created, the reason lists every conflicting pair and its rule (Q8; was `IniLoadUsesSamePlan`, first wins) |
 | `SlotManager_Test.LegacyKeysTranslated` | `[SOUND] GSType=NGS`, `TurboSound=FM`, `[NETWORK] Card=ZXNETUSB` -> `[SLOTS]` entries + deprecation log |
 | `SlotManager_Test.MatrixGeneratedFromDeclarations` | the generated matrix equals the reviewed table in compatibility-matrix.md §2 (the table is kept as test data) |
 
@@ -389,7 +389,7 @@ unchanged except where named):
 
 | Step | What moved | Tests |
 |---|---|---|
-| 1 | `SlotManager` (`slots/slotmanager.{h,cpp}`): the slot set of an instance, planned in `Core::Init` before any card is built, from `[SLOTS]` (`slots/slotconfig.{h,cpp}`, `CONFIG::slotConfig`) or from the legacy card fields translated into slots; entries in slot order through `SlotPlanner::Plan` without the replace flag (first wins, a later card that would displace it is disabled with the reasons); deprecation log per legacy key present in the INI; `DeviceState::Slots` (`slots/slotreport.cpp`) | `SlotManager_Test.*` (`ParsesTheSlotsSection`, `LegacyKeysTranslated`, `IniLoadUsesSamePlan`, `FitOverrideNeverDisplaces`, `HardRefusalKeptEvenWithTheOverride`, `NotEmulatedCardsAreDisabled`, `AFieldChangedAfterTheIniWins`, `ReportListsSlotsAndBuiltIns`), `SlotManagerShipped_Test.FitsTheDevicesOfMaster/*` |
+| 1 | `SlotManager` (`slots/slotmanager.{h,cpp}`): the slot set of an instance, planned in `Core::Init` before any card is built, from `[SLOTS]` (`slots/slotconfig.{h,cpp}`, `CONFIG::slotConfig`) or from the legacy card fields translated into slots; entries in slot order through `SlotPlanner::Plan` without the replace flag (first wins, a later card that would displace it is disabled with the reasons; since Q8, §11, such a conflict refuses the machine); deprecation log per legacy key present in the INI; `DeviceState::Slots` (`slots/slotreport.cpp`) | `SlotManager_Test.*` (`ParsesTheSlotsSection`, `LegacyKeysTranslated`, `IniLoadUsesSamePlan`, `FitOverrideNeverDisplaces`, `HardRefusalKeptEvenWithTheOverride`, `NotEmulatedCardsAreDisabled`, `AFieldChangedAfterTheIniWins`, `ReportListsSlotsAndBuiltIns`), `SlotManagerShipped_Test.FitsTheDevicesOfMaster/*` |
 | 2 | The AY socket's board (`ay` = Single, `ts` = the two-AY TurboSound, the legacy `AY` kind, `tsfm`, `none`); the 48K gets a **retrofitted** AY socket (R-BUS-1a: the emulator's 48K decoder routes the 128K AY decode to an AY interface and the shipped 48K config fits a TSFM there) | `SocketBoardComesFromTheSlot`; changed: `RefData_Test.CollectionIsConsistent` (a retrofitted socket has no chip of its own), `SlotPlanner_Test.MalformedRequestsRefused` (`ts` on the 48K is now planned) |
 | 3 | The General Sound personality (`gs` / `gs-lw` / `neogs`) and the card's `ram` option (`gs` 128k-512k -> `[SOUND] GSRamSize`, larger sizes clamp to 512k as before; `neogs` -> `[NGS] RamSize`); the runtime personality switch is unchanged until SL-6 | `GeneralSoundComesFromTheSlot` |
 | 4 | MoonSound; on the Profi the card is refused with the reason (`#7E` is the palette, a fixed built-in the board wins), also from a legacy `MoonSound=1` - **the one intended behavior change** (the shipped Profi config has `MoonSound=0`) | `MoonSoundComesFromTheSlot` |
@@ -613,3 +613,34 @@ files written by the engine gain the `slots.*` fingerprint fields and the slot i
 **Checks:** full build without compiler warnings; full `core-tests` green (20 shards); MinGW `-fsyntax-only -Werror`
 on every changed core translation unit; mutations (the guard always matching, the registry overwriting again) fail
 `SessionMismatchListsEveryDifference`, `SessionMismatchRefused` and `TwoInstancesOfOneModuleAreRefusedByName`.
+
+## 11. Conflicting configs refuse the machine (owner decision Q8, 2026-10-05)
+
+[open-questions.md](open-questions.md) Q8 replaces R-CFG-3's "first wins". `SlotManager::Plan` still takes the entries
+in slot order without the replace flag; for an entry whose plan is refused (not hard) it plans again with the flag to
+see what it would displace, and an allowed plan may still disable a card for an accidental port clash. Each configured
+entry it would remove (D1, D3 / D12), a socketed chip an explicit `ay-socket = ay` keeps in while the card needs it
+out (Q7) and a D7 port clash becomes a `SlotManager::Conflict` (both slots, cards, sources, the rule and the planner's
+sentence). The conflicting entry is left out (`disabled`, "conflicts with ...") so later conflicts are found too.
+
+- `Result::Refusal()` joins them: `the [SLOTS] cards conflict, the machine is not created (Q8): zxbus.2 = gs and
+  zxbus.1 = multisound: shares `gs` (D1: one function, one card); ...`.
+- `PlanAtCreate` returns false, logs it as an error and applies nothing; `Core::Init` fails and keeps the reason
+  (`Core::GetInitError`, the failed init releases the slot manager), `Emulator::Init` returns false with it
+  (`Emulator::GetInitError`) instead of throwing on the missing core, and `EmulatorManager::CreateEmulatorWithModel` /
+  `...AndRAM` hand it out as the create error (WebAPI HTTP 400 `message`, CLI, MCP).
+- Unchanged: a hard refusal (a fixed built-in, D4), a missing bus signal without the override, an unknown or not
+  emulated card leave that entry out and the machine starts; the Pentagon's own AY under a card is shadowed, no
+  conflict. Every shipped config creates; none fits the MultiSound (owner addition to Q8).
+- Planner: `RemovedCard::rule` (the rule that removes it), so the reason names D1 / D3 / D12.
+
+Tests: `SlotManager_Test.IniConflictRefusesCreation` (replaces `IniLoadUsesSamePlan`: one pair, three pairs, a
+conflict-free set), `PointlessSocketPairAndKeptChipAreConflicts` (D3 on the Pentagon, the shadowed own AY allowed, Q7
+on the ZX-Evo both ways), `ConflictRefusalReachesTheCreateError` (the reason through `EmulatorManager`),
+`FitOverrideNeverDisplaces` (the second GS card is a conflict too), `SlotManagerShipped_Test.FitsTheDevicesOfMaster`
+(the zx-diagnostics config, parsed only, plans without a refusal); `MultiSoundSlotCard_Test.MatrixConflictsRefuseCreation`
+(was `MatrixRefusalsHoldAtCreation`: `multisound` + `gs` either order, `tsfm` under the card, `ay-socket = ay` on the
+ZX-Evo refused with their rules; the 128K edge without IORQGE still starts without the card) and
+`TakesTheZxEvoYm2149OutOfItsSocket` (the explicit `ay-socket = ay` is refused). No catalog pair produces a D7 clash
+today (the matrix has no **P** cell), so that path is covered by the plan engine's own tests only.
+

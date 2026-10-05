@@ -203,7 +203,13 @@ bool Emulator::Init()
         }
         else
         {
-            MLOGERROR("Emulator::Init - CPU system core (or main peripheral devices) creation failed");
+            // A configuration the machine refuses (the slot set's conflicts, Q8) says why
+            if (_core)
+                _initError = _core->GetInitError();
+            MLOGERROR("Emulator::Init - CPU system core (or main peripheral devices) creation failed%s%s",
+                      _initError.empty() ? "" : ": ", _initError.c_str());
+            if (!_initError.empty())
+                return false;
         }
     }
 

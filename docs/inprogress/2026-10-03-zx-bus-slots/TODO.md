@@ -1,6 +1,6 @@
 # TODO - ZX-bus slots (machine -> buses -> slots -> cards)
 
-**Status:** design drafted 2026-10-03; owner decisions Q1-Q7 recorded; SL-0 research done; SL-1 (reference data + pure plan engine) committed on branch `zx-bus-slots`; SL-2 (port claim table, serving the existing full-decode observers) committed; branch merged with master (TTD v2 engine) 2026-10-04; SL-3 (rule migration) built 2026-10-04; merged with master `e378c483a` and SL-4 (cards on slots, `[SLOTS]`, shipped configs converted) committed 2026-10-04; the first slot-built card (ZX-MultiSound, MS-4) committed 2026-10-04 (`cdac570ec`..`dcaf21a18`); SL-5 (TTD) committed on branch `slots-ttd` (`29250c546`) and merged into `zx-bus-slots` 2026-10-04. PLAN row #82.
+**Status:** design drafted 2026-10-03; owner decisions Q1-Q8 recorded; SL-0 research done; SL-1 (reference data + pure plan engine) committed on branch `zx-bus-slots`; SL-2 (port claim table, serving the existing full-decode observers) committed; branch merged with master (TTD v2 engine) 2026-10-04; SL-3 (rule migration) built 2026-10-04; merged with master `e378c483a` and SL-4 (cards on slots, `[SLOTS]`, shipped configs converted) committed 2026-10-04; the first slot-built card (ZX-MultiSound, MS-4) committed 2026-10-04 (`cdac570ec`..`dcaf21a18`); SL-5 (TTD) committed on branch `slots-ttd` (`29250c546`) and merged into `zx-bus-slots` 2026-10-04. PLAN row #82.
 Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 
 ## Documents
@@ -13,7 +13,7 @@ Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 - [reference-data.md](reference-data.md): the matrix as a reference data collection in the code (`core/src/emulator/slots/refdata/`)
 - [research.md](research.md) (+ machines, cards): SL-0 findings and code inventory
 - [tdd.md](tdd.md): phases SL-0 to SL-8, tests, benchmarks
-- [open-questions.md](open-questions.md): owner decisions Q1-Q7
+- [open-questions.md](open-questions.md): owner decisions Q1-Q8
 
 ## Pause (owner decision 2026-10-04) - lifted
 
@@ -89,7 +89,9 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
 - [x] Slot-built cards for the ZX-MultiSound (MultiSound MS-4, 2026-10-04, committed on `zx-bus-slots`; [tdd.md](tdd.md) §9): `ICard` / `CardType` (`slots/card.{h,cpp}`), `SlotManager::BuildCards` /
   `ReleaseCards`, the claim table's `Read` / `Write` in production for those cards (slots 2+ of the observers' table),
   `SoundManager` rows for card rows, a socketed chip taken out at creation when the INI leaves the socket unconfigured
-  - [ ] owner review: the unconfigured-socket rule (an explicit `ay-socket = ay` keeps the chip and refuses the card)
+  - [x] owner decision Q8 (2026-10-05): configured entries in conflict refuse the machine with every pair and its rule
+    ([tdd.md](tdd.md) §11); the unconfigured-socket rule stays (Q7), an explicit `ay-socket = ay` under a card that
+    needs the chip out is such a conflict; no shipped config fits the MultiSound
   - [ ] the three role tables still stand: legacy observers and slot-built cards share `_fullDecodeClaims`, a port
     both cover resolves by whichever claims it first (none today); the single table waits for the legacy cards' moves
   - [ ] a TTD session recorded with a slot-built card does not capture it until MS-5 (no refusal yet; SL-5 put the
