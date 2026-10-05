@@ -59,8 +59,6 @@ enum class TTDGuardedAction : uint8_t
     CreateDisk,          ///< a new medium
     LoadRom,             ///< the code every checkpoint relies on
     Invalidate,          ///< discards the session
-    DisableTimeTravel,   ///< capture stops mid-session
-    DisableDebugMode,    ///< writes stop reaching the history
     SwitchGsCard,        ///< a General Sound personality switch changes the device set (FR-4)
     CdFrontPanel         ///< a CD drive's play / pause / stop / volume from outside the guest: not in the journal
 };
@@ -163,5 +161,9 @@ public:
     virtual void SetUnavailableReason(const std::string& reason) = 0;
     /// A feature flag changed (debug mode, time travel, coverage)
     virtual void UpdateFeatureCache() = 0;
+    /// FR-17: @p feature (timetravel or debugmode) is about to be switched off. A recording
+    /// stops cleanly first - the machine parked, everything up to this instant kept - and
+    /// status names the reason (last_stop_reason "feature-off:<feature>"). Not recording: nothing
+    virtual void StopForFeatureChange(const char* feature) = 0;
 };
 }  // namespace ttd

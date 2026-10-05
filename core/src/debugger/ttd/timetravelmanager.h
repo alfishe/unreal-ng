@@ -325,6 +325,11 @@ struct TTDSessionInfo
     /// when none was dropped in this run.
     std::string lastDropReason;
 
+    /// Why the last recording stopped when something other than a stop request ended
+    /// it: "feature-off:timetravel" / "feature-off:debugmode" (FR-17, the clean stop
+    /// before the feature switches off). Empty otherwise; a new recording clears it.
+    std::string lastStopReason;
+
     /// Why time travel is not available for this instance at all (for example
     /// a member of a ZX-Poly machine); empty when it is available.
     std::string unavailableReason;
@@ -596,6 +601,7 @@ public:
     /// @brief Called by FeatureManager when feature flags change.
     /// Deallocates write journal when TimeTravel feature is disabled.
     void UpdateFeatureCache() override;
+    void StopForFeatureChange(const char* feature) override;
 
     // -----------------------------------------------------------------------
     // Session configuration (v2 optimizations)
@@ -2386,6 +2392,8 @@ private:
     bool JournalCoversSession(const std::vector<TTDJournalSegment>& segments) const;
     /// See TTDSessionInfo::lastDropReason
     std::string _lastDropReason;
+    /// See TTDSessionInfo::lastStopReason
+    std::string _lastStopReason;
     std::string _unavailableReason;    // see SetUnavailableReason
     /// Position at StopRecording, to tell whether the machine ran before a live resume
     uint64_t _recordingStoppedAtT = 0;

@@ -168,6 +168,7 @@ bool TimeTravelManager::StartRecording()
 
     // Leaving the replay/browse scope for live recording: free the decode cache.
     ClearFrameCache();
+    _lastStopReason.clear();
 
     // Fresh session — clear any stale auto-pause signal from a previous
     // Detached window.
@@ -718,6 +719,17 @@ void TimeTravelManager::ReleaseRecordingLock()
     _savedHostSpeedMultiplier = 1;
 }
 
+void TimeTravelManager::StopForFeatureChange(const char* feature)
+{
+    if (!IsRecording())
+        return;
+    // StopRecording parks the machine first, so no write slips between the stop and the
+    // flag; the history and the stop position stay valid and browsable
+    StopRecording();
+    _lastStopReason = std::string("feature-off:") + (feature ? feature : "");
+    MLOGINFO("TimeTravelManager - recording stopped: %s", _lastStopReason.c_str());
+}
+
 void TimeTravelManager::UpdateFeatureCache()
 {
     FeatureManager* fm = _context ? _context->pFeatureManager : nullptr;
@@ -741,7 +753,9 @@ void TimeTravelManager::UpdateFeatureCache()
     }
 
     // When TimeTravel feature is disabled and we're not recording,
-    // deallocate the write journal to free memory (~64MB)
+    // deallocate the write journal to free memory (~64MB). A history that
+    // stays (FR-17's clean stop) loses only this accelerator: reverse queries
+    // replay a frame instead, and status reports the journal absent
     if (!ttdEnabled && _state == TTDSessionState::Idle && _writeJournal)
     {
         MLOGINFO("TimeTravelManager::UpdateFeatureCache — TTD disabled, deallocating write journal");
@@ -824,6 +838,7 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     info.portReplayValueMismatches = _portReads.ValueMismatches();
     info.portReplayDivergences = _portReads.Divergences() + _portWrites.Divergences();
     info.lastDropReason = _lastDropReason;
+    info.lastStopReason = _lastStopReason;
     info.unavailableReason = _unavailableReason;
 
     // Phase 5 codec telemetry — useful for the UI / WebAPI status surface
@@ -1137,12 +1152,6 @@ std::string TimeTravelManager::RecordingGuard(TTDGuardedAction action) const
                    "be dropped. Stop the recording first.";
         case TTDGuardedAction::Invalidate:
             return "Cannot discard the TTD session while it is recording. Stop the recording first, then discard it.";
-        case TTDGuardedAction::DisableTimeTravel:
-            return "Cannot switch the timetravel feature off while TTD is recording: capture would stop mid-session "
-                   "and the recorded history would be corrupt. Stop the recording first.";
-        case TTDGuardedAction::DisableDebugMode:
-            return "Cannot switch debug mode off while TTD is recording: memory writes would stop reaching the "
-                   "recorded history, which would then be corrupt. Stop the recording first.";
         case TTDGuardedAction::SwitchGsCard:
             return "Cannot switch the General Sound card type while TTD is recording: the recorded history holds "
                    "the current card's state, which the other card type cannot take back. Stop the recording first.";

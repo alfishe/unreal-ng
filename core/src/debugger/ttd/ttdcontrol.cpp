@@ -410,6 +410,9 @@ StateNode TTDControl::StatusBody(const TimeTravelManager* manager)
     // Why the last session with history was dropped (null when none was):
     // tells an agent why its recording is gone, e.g. a device TTD cannot follow
     ret["last_drop_reason"] = StringOrNull(info.lastDropReason);
+    // Why the last recording stopped when no stop request ended it (FR-17: a feature
+    // switched off); null otherwise
+    ret["last_stop_reason"] = StringOrNull(info.lastStopReason);
     // Why time travel is not available for this machine at all (null when it is)
     ret["unavailable_reason"] = StringOrNull(info.unavailableReason);
     AddWriteJournal(ret, *manager);

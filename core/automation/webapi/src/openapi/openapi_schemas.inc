@@ -676,6 +676,12 @@
             "What dropped the last history (e.g. snapshot-load, disk-load, rom-reload, an invalidate reason, "
             "ZX-Evo SD card activity); null until a history is dropped";
 
+    schemas["TTDStatusResponse"]["properties"]["last_stop_reason"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["last_stop_reason"]["nullable"] = true;
+    schemas["TTDStatusResponse"]["properties"]["last_stop_reason"]["description"] =
+            "What stopped the last recording when no stop request did: feature-off:timetravel or "
+            "feature-off:debugmode (FR-17, a clean stop; the history is kept). Null otherwise; cleared by a new recording";
+
     schemas["TTDStatusResponse"]["properties"]["unavailable_reason"]["type"] = "string";
     schemas["TTDStatusResponse"]["properties"]["unavailable_reason"]["nullable"] = true;
     schemas["TTDStatusResponse"]["properties"]["unavailable_reason"]["description"] =

@@ -121,6 +121,22 @@ void FeatureManager::onTtdRecordingStopped()
 /// @return true if the feature was found and updated, false if feature not found
 bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
 {
+    // FR-17: switching time travel or debug mode off stops a recording cleanly first,
+    // instead of refusing. Outside the lock: the stop parks the machine, whose thread
+    // may need it
+    if (!enabled)
+    {
+        std::string id;
+        {
+            std::lock_guard<std::recursive_mutex> lock(_mutex);
+            if (const auto* feature = findFeature(idOrAlias))
+                id = feature->id;
+        }
+        ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+        if (ttd && (id == Features::kTimeTravel || id == Features::kDebugMode) && ttd->IsRecording())
+            ttd->StopForFeatureChange(id.c_str());
+    }
+
     std::string changedId;
     {
         std::lock_guard<std::recursive_mutex> lock(_mutex);
@@ -133,8 +149,6 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
             // machine is bound to a TTD timeline (they change what the guest code does,
             // so a replay would diverge), and turbo mode while recording (a recorded run
             // must reflect real timing)
-            // ...and switching the capture flags off (timetravel, debugmode) while
-            // recording: capture would stop mid-session and corrupt the history
             const std::string refusal = refusalReason(id, enabled);
             if (!refusal.empty())
             {
@@ -303,15 +317,10 @@ std::string FeatureManager::refusalReason(const std::string& idOrAlias, bool ena
         return (ttd && gsFitted) ? ttd->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard) : std::string();
     }
 
+    // Switching timetravel or debugmode off is never refused: setFeature stops a
+    // recording cleanly first (FR-17)
     if (!enabled)
-    {
-        ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
-        if (ttd && id == Features::kTimeTravel)
-            return ttd->RecordingGuard(ttd::TTDGuardedAction::DisableTimeTravel);
-        if (ttd && id == Features::kDebugMode)
-            return ttd->RecordingGuard(ttd::TTDGuardedAction::DisableDebugMode);
         return {};
-    }
 
     if ((id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape) && isRzxPlaying())
     {

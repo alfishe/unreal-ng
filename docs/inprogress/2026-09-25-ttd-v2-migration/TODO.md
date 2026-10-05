@@ -164,6 +164,7 @@ Design: [phase-5-switchover-tdd.md](phase-5-switchover-tdd.md).
     - [x] Export clip on every automation surface (2026-10-04): CLI `ttd export-clip`, Lua / Python `ttd_export_clip`, MCP `time_travel` `export_clip` (WebAPI only before)
   - [x] 1c (2026-10-04) Qt panel, GDB, ZX-Poly group control on `TTDControl`; Sprinter port search and ZX-Poly input journaling through `ITimeTravelHooks`
   - [ ] DeZog on the engine's model (with Step 2: DebuggerLive and the edit restart go)
+  - [x] Item 3 (2026-10-04): clean stop on `timetravel` / `debugmode` off (FR-17) instead of B9's refusal; `last_stop_reason`
 - [ ] Step 2 — History never cut short: branches on resume and edit in the past, seek while recording, loads as events
 - [ ] Step 3 — Black-box setting in unreal-qt (off for automation); session file location in the UI, default `scratch/ttd/`
 - [ ] Step 4 — v1 only in the verification tools

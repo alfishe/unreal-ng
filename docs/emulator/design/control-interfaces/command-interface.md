@@ -2783,9 +2783,16 @@ Example: on a ZX-Evo a frame is 69888 T-states at 3.5 MHz, so `tinframe` runs 0.
 | Tape load, disk load (including disk autostart), disk create | A new medium. Insert it before starting the recording. |
 | ROM load | The recorded history relies on the current ROM. |
 | `ttd invalidate` | Stop the recording first, then discard it. |
-| Switching the `timetravel` or `debugmode` feature off | Capture (or the memory-write path it depends on) would stop mid-session and leave corrupt history. |
 | Switching the General Sound card type (`gs switch_personality`, the `gs_lightweight` feature) | The history holds the current card's state, which the other card type cannot take back. |
 | Host speed 2x..16x, turbo, fast tape, turbo tape, fast disk | See the acceleration lock below. |
+
+**Switching `timetravel` or `debugmode` off stops the recording instead (FR-17).** It is not refused: the
+recording stops cleanly first - the machine is parked, everything recorded up to that instant stays and is
+browsable - and then the feature switches off. The status field `last_stop_reason` says why it stopped
+(`feature-off:timetravel` or `feature-off:debugmode`; empty / `null` otherwise, cleared by the next `ttd start`).
+A later seek switches what capture needs back on, as `ttd start` does. With `timetravel` off the write
+journal's memory (about 64 MB) is released: the history stays, and "who wrote this last" queries on it replay
+a frame instead of reading the journal.
 
 How each surface reports it:
 
@@ -2813,7 +2820,7 @@ Only a recording you started (`ttd start`, the TTD panel, the API) is protected.
 | `ttd invalidate` (or WebAPI `POST /ttd/invalidate`, Lua/Python `ttd_invalidate`) | Explicit. |
 | A device TTD cannot follow | Today this is the ZX-Evo / ATM3 Z-Controller SD card. The guest program drives it, so it cannot be refused: any SD card activity while recording ends the recording (history dropped) at the next frame boundary, and `last_drop_reason` in the status says so. |
 
-The status field `last_drop_reason` names what dropped the last history (for example `snapshot-load`, `disk-load`); it is empty (WebAPI/Python: `null`/`None`) until something drops one.
+The status field `last_drop_reason` names what dropped the last history (for example `snapshot-load`, `disk-load`); it is empty (WebAPI/Python: `null`/`None`) until something drops one. `last_stop_reason` names what stopped the last recording when no stop request did (a feature switched off, see above).
 
 **Reset keeps history.** A machine reset (and the quick reset a disk autostart does) stops a running recording and **keeps** the history, so you can still browse what led up to the reset. A machine sitting in history (`detached`) goes back to `idle` with its history.
 
