@@ -679,6 +679,13 @@ void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
         FlushVideo();
     else if (reg >= TsConfReg::DmaSAl && reg <= TsConfReg::DmaNum)
         CatchUpEngine();  // the DMA runs up to the write
+    else if (reg == TsConfReg::IntMask || reg == TsConfReg::HsInt || reg == TsConfReg::VsIntL || reg == TsConfReg::VsIntH)
+    {
+        // The interrupt events up to the write happened under the old mask / position (the controller evaluates
+        // them lazily): a line end at tact 0 must not latch because the mask is set later in that tact
+        if (_context->pCore && _context->pCore->GetZ80())
+            _interrupts.CatchUpTo(_context->pCore->GetZ80()->t);
+    }
     _ts.regs[reg] = value;
 
     switch (reg)

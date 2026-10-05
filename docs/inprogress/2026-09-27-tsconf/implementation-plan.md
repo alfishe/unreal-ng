@@ -186,7 +186,7 @@ vector table entry at `I=0x80`).
 |:--|:--|
 | INT-1 | reset: one frame INT per frame, first at frame tact 1, vector 0xFF, pulse 32 T at 3.5 MHz (an `EI` at tact 33 misses it) |
 | INT-2 | `VS_INT=100, HS_INT=10` → frame INT at tact 22410; `HS_INT=224` or `VS_INT=320` → no frame INT |
-| INT-3 | `INT_MASK=0x02` → exactly 320 line INTs per frame, vector 0xFD, first at tact 223 (`224·1 − 1`) |
+| INT-3 | `INT_MASK=0x02` → exactly 320 line INTs per frame, vector 0xFD, at raster tact 224 n, the end of each line (was 224 n − 1 until the 2026-10-05 audit: one tact early) |
 | INT-4 | frame + line pending together (frame at tact 223 via `HS_INT=223`) → first ack 0xFF, second 0xFD; only the served latch clears |
 | INT-5 | mask clears pending: line INT latched while DI, write `INT_MASK=0` then 0x02 → no INT until the next event |
 | INT-6 | IM1: vector ignored, jump 0x38, highest latch cleared; IM0 with 0xFF = RST 38 |

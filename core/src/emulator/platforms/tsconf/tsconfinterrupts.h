@@ -32,7 +32,7 @@ struct ITsConfLineSource
 /// | Source    | INT_MASK bit | Vector | Event (raster tact in the 71680-tact frame) |
 /// |:--|:--|:--|:--|
 /// | Frame     | 0 (reset 1)  | 0xFF   | VS_INT * 224 + HS_INT (none when HS_INT >= 224 or VS_INT >= 320); a 32 CPU-clock pulse |
-/// | Line      | 1            | 0xFD   | 224 n - 1 on every one of the 320 lines; the VDAC2 FT812 INT_N edge on msel lines (ITsConfLineSource) |
+/// | Line      | 1            | 0xFD   | 224 n, the end of every one of the 320 lines (the last at tact 0 of the next frame); the VDAC2 FT812 INT_N edge on msel lines (ITsConfLineSource) |
 /// | DMA       | 2            | 0xFB   | DMA completion (phase 5)                                 |
 /// | Wait-port | 3            | 0xF9   | the AVR's strobe (ZiFi / enhanced RS-232 ISR not zero: RaiseWaitPort) |
 ///
@@ -93,6 +93,8 @@ public:
 
     /// Raster tact reached at frame T-state t
     uint32_t RasterAt(uint32_t t) const;
+    /// Latch the events up to frame T-state t (before a write changes the mask or the frame INT position)
+    void CatchUpTo(uint32_t t) { CatchUp(RasterAt(t)); }
 
 private:
     /// Latch the events of raster tacts [intLastRaster, raster]

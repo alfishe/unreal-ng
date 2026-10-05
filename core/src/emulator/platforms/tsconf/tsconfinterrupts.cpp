@@ -62,10 +62,12 @@ void TsConfInterrupts::CatchUp(uint32_t raster)
         }
     }
 
-    // Line: tact 224 n - 1 of every line, i.e. (tact + 1) % 224 == 0
+    // Line: the end of every line, raster tact 224 n ([V] video_sync.v:125 line_start_s = hcount 447 && c3, the
+    // last fclk of the line: int_lin is set from fclk 1792, the next line's first tact). The last line's event is
+    // tact 0 of the next frame
     if (_lineSource) [[unlikely]]
         CatchUpLineWithSource(from, raster, (mask & TsConfInt::Line) != 0);
-    else if ((mask & TsConfInt::Line) && (raster + 1) / kLineTacts > from / kLineTacts)
+    else if ((mask & TsConfInt::Line) && (from == 0 || raster / kLineTacts > (from - 1) / kLineTacts))
         _ts.intPending |= TsConfInt::Line;
 
     _ts.intLastRaster = raster + 1;
@@ -93,11 +95,12 @@ void TsConfInterrupts::CatchUpLineWithSource(uint32_t from, uint32_t raster, boo
     if (!latch)
         return;
 
-    // The line starts of the lines the source does not drive
-    for (uint32_t line = from / kLineTacts; line <= raster / kLineTacts; line++)
+    // The ends of the lines the source does not drive: line l ends at tact 224 (l + 1), the last line at tact 0 of
+    // the next frame (its msel is read as the source keeps it then)
+    for (uint32_t k = (from + kLineTacts - 1) / kLineTacts; k <= raster / kLineTacts; k++)
     {
-        const uint32_t event = line * kLineTacts + kLineTacts - 1;
-        if (event >= from && event <= raster && !_lineSource->DrivesLine(line))
+        const uint32_t line = (k + kLines - 1) % kLines;
+        if (!_lineSource->DrivesLine(line))
             _ts.intPending |= TsConfInt::Line;
     }
 }

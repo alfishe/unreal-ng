@@ -680,7 +680,7 @@ for an empty unit (#FFFF), and the transfer completes.
 | Dot clock | 7 MHz; TXT pixels 14 MHz |
 | T/line, lines, T/frame | 224, 320, 71680 (48.828 Hz, 20480 µs) |
 | Frame INT default | line 0, tact 1 |
-| Line INT | dot 447 of each line (all 320) |
+| Line INT | the strobe on dot 447 (`line_start_s`, the line's last fclk); latched from raster tact 224 n, the next line's first tact (all 320; the last line's at tact 0 of the next frame) |
 | DRAM | 448 accesses/line; urgent video > CPU > video > TM > TS > DMA > refresh |
 | Clock switch | **immediate** after the `OUT` I/O cycle (`top.v:228`; the `zclock.v:22` "at RFSH" comment is not implemented) |
 | 14 MHz external I/O (AY, VG93) | fixed stall of 8 fclk (one 3.5 MHz tact) per access ([V] `zclock.v:75-90`) — not a switch to 7 MHz |

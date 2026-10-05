@@ -68,10 +68,18 @@ TEST_F(TsConfInterrupts_Test, INT2_FramePosition)
     EXPECT_TRUE(AssertedAt(0, TsConfInterrupts::kFrameTacts).empty());
 }
 
-/// INT-3: the line INT, 320 per frame, first at tact 223
+/// INT-3: the line INT, 320 per frame, at the end of every line: raster tact 224 n ([V] video_sync.v:125
+/// line_start_s = the line's last fclk, int_lin set from the next tact; [U] line_t = 0, 224, ...). Was 224 n - 1:
+/// raster code timed to the line INT ran a tact early. The last line's event is tact 0 of the next frame
 TEST_F(TsConfInterrupts_Test, INT3_LineInterrupts)
 {
     Reg(TsConfReg::IntMask, TsConfInt::Line);
+    for (uint32_t t = 0; t < TsConfInterrupts::kFrameTacts; t += 7)  // the frame the mask was set in
+        if (Ints().IsIntAsserted(t))
+            Ints().AcknowledgeInterrupt(t);
+    _z80->tt = 0;
+    Ints().OnMachineFrameRollover(TsConfInterrupts::kFrameTacts);
+
     std::vector<uint32_t> taken;
     for (uint32_t t = 0; t < TsConfInterrupts::kFrameTacts; t++)
     {
@@ -82,9 +90,18 @@ TEST_F(TsConfInterrupts_Test, INT3_LineInterrupts)
         }
     }
     ASSERT_EQ(taken.size(), 320u);
-    EXPECT_EQ(taken.front(), 223u);
-    EXPECT_EQ(taken[1], 447u);
-    EXPECT_EQ(taken.back(), TsConfInterrupts::kFrameTacts - 1);
+    EXPECT_EQ(taken.front(), 0u) << "the previous frame's last line";
+    EXPECT_EQ(taken[1], 224u);
+    EXPECT_EQ(taken[2], 448u);
+    EXPECT_EQ(taken.back(), TsConfInterrupts::kFrameTacts - TsConfInterrupts::kLineTacts);
+}
+
+/// INT-3b: the line INT is not up during the line's last tact, only from the next line's first
+TEST_F(TsConfInterrupts_Test, INT3b_LineIntRisesAtTheNextLinesFirstTact)
+{
+    Reg(TsConfReg::IntMask, TsConfInt::Line);
+    EXPECT_FALSE(Ints().IsIntAsserted(223)) << "the last tact of line 0";
+    EXPECT_TRUE(Ints().IsIntAsserted(224));
 }
 
 /// INT-4: frame and line together: frame first, only the served source clears
@@ -103,12 +120,12 @@ TEST_F(TsConfInterrupts_Test, INT4_PriorityAndSelectiveClear)
 TEST_F(TsConfInterrupts_Test, INT5_MaskClearsPending)
 {
     Reg(TsConfReg::IntMask, TsConfInt::Line);
-    ASSERT_TRUE(Ints().IsIntAsserted(300));  // latched at 223, not acknowledged (DI)
+    ASSERT_TRUE(Ints().IsIntAsserted(300));  // latched at 224, not acknowledged (DI)
     Reg(TsConfReg::IntMask, 0x00);
     Reg(TsConfReg::IntMask, TsConfInt::Line);
     EXPECT_FALSE(Ints().IsIntAsserted(301));
-    EXPECT_FALSE(Ints().IsIntAsserted(446));
-    EXPECT_TRUE(Ints().IsIntAsserted(447));
+    EXPECT_FALSE(Ints().IsIntAsserted(447));
+    EXPECT_TRUE(Ints().IsIntAsserted(448));
 }
 
 /// INT-7: at 14 MHz the pulse is 32 CPU clocks = 8 raster tacts
@@ -143,7 +160,7 @@ TEST_F(TsConfInterrupts_Test, RolloverLatchesTheLastLineEvent)
     ASSERT_TRUE(Ints().IsIntAsserted(71600));
     Ints().AcknowledgeInterrupt(71600);
     Ints().OnMachineFrameRollover(TsConfInterrupts::kFrameTacts);
-    EXPECT_TRUE(Ints().IsIntAsserted(0)) << "the line event at tact 71679";
+    EXPECT_TRUE(Ints().IsIntAsserted(0)) << "the last line's end, tact 0 of the new frame";
 }
 
 /// INT-8 (partial, before vdos exists): the output is gated, the latch stays
@@ -405,4 +422,15 @@ TEST_F(TsConfInterrupts_Test, INT10b_AShortRestChangesNothing)
     EXPECT_TRUE(Ints().IsIntAsserted(12));
     EXPECT_TRUE(Ints().IsIntAsserted(35));
     EXPECT_FALSE(Ints().IsIntAsserted(36)) << "the pulse is still 32 clocks from clock 4";
+}
+
+/// INT-3c: an event before a mask write in the same tact happened under the old mask ([V] the latch takes
+/// int_start_lin at its clock; the OUT comes later): the line end at tact 0 is gone when the mask is set in tact 0
+TEST_F(TsConfInterrupts_Test, INT3c_TheMaskWriteSeesTheEventsBeforeIt)
+{
+    _z80->tt = 0;
+    Reg(TsConfReg::IntMask, TsConfInt::Line);
+    EXPECT_FALSE(Ints().IsIntAsserted(0)) << "the previous frame's last line ended before the write";
+    EXPECT_FALSE(Ints().IsIntAsserted(223));
+    EXPECT_TRUE(Ints().IsIntAsserted(224));
 }
