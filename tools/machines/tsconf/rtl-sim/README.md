@@ -9,6 +9,9 @@ unreal-ng tests can compare against.
 The first question it answers is what the graphics X offset register `G_X_OFFS` does in
 ZX mode and text mode: see [G_X_OFFS in ZX and TXT](#g_x_offs-in-zx-and-txt).
 
+The second is when the TSU takes the line-latched tile registers: see
+[TSU latch timing](#tsu-latch-timing).
+
 A second simulator, `tsconf-cpu-sim`, adds the CPU side (Z80 clock generator, memory
 manager, CPU cache) and measures how long the CPU waits for DRAM: see
 [CPU DRAM waits at 14 MHz](#cpu-dram-waits-at-14-mhz).
@@ -21,7 +24,7 @@ manager, CPU cache) and measures how long the CPU waits for DRAM: see
 | DRAM arbiter (video access blocks, CPU priority) | RTL `dram/arbiter.v` |
 | Whole video block: ports, mode decoder, raster sync, fetcher, renderer, output, TSU | RTL `video/video_*.v` |
 | DRAM chip | behavioral model (`tbtop.v`): the word address the arbiter presents at the start of a DRAM cycle is read from a 4 MB memory image and held on the data bus for that cycle |
-| Altera `altdpram` blocks (CRAM, TS line buffers, VGA buffer, sprite file, tile buffer) | behavioral stand-in (`altdpramstub.v`), starts zeroed |
+| Altera `altdpram` blocks (CRAM, TS line buffers, VGA buffer, sprite file, tile buffer) | behavioral stand-in (`altdpramstub.v`), starts zeroed; the testbench writes the sprite file through `sfile_we` / `zma` / `zmd` as `top.v` does |
 | CPU | one input, `cpu_req`: either idle or asking for every DRAM cycle (worst-case contention) |
 
 Not simulated: Z80, DMA, copper, VGA mode (`vga_on` = 0, TV raster), 60 Hz. The palette
@@ -43,6 +46,7 @@ port module latches them at the next line start as on the board.
 | `build.sh` | Builds the simulator with Verilator |
 | `check-rules.py` | Rebuilds every captured line from the rules below and reports differences |
 | `results/zx-gxoffs.txt`, `results/txt-gxoffs.txt` | Captured lines (format below) |
+| `results/tsu-latch.txt` | TSU latch cases: the objects of a pass and a captured line (format in [TSU latch timing](#tsu-latch-timing)) |
 | `tbcpu.v` | CPU simulation top: clock + Z80 clock (`zclock.v`) + bus decoding (`zsignals.v`) + memory manager (`zmem.v`) + arbiter + `video_top` + DRAM model |
 | `cpuharness.cpp` | CPU testbench: Z80 bus-cycle model, test programs, self-checks, result writer |
 | `results/cpu-waits.txt` | Measured CPU waits (format in [Result format](#result-format-cpu-waitstxt)) |
@@ -62,6 +66,8 @@ scratch/rtl-sim-build/tsconf-video-sim sanity                    # self-checks o
 scratch/rtl-sim-build/tsconf-video-sim all tools/machines/tsconf/rtl-sim/results
 scratch/rtl-sim-build/tsconf-video-sim line zx 4                 # print one line: zx|txt|16c|256c, G_X_OFFS
 scratch/rtl-sim-build/tsconf-video-sim line txt 12 83            # optional V_CONFIG in hex
+scratch/rtl-sim-build/tsconf-video-sim tsulatch tools/machines/tsconf/rtl-sim/results
+                                       # TSU latch cases: traces to stdout, results/tsu-latch.txt
 python3 tools/machines/tsconf/rtl-sim/check-rules.py             # rules vs captures
 
 scratch/rtl-sim-build/tsconf-cpu-sim sanity                      # CPU self-checks only
@@ -220,6 +226,91 @@ Examples (256x192, window line 9):
 | 16 | char 2, 3, 4, ... normally |
 | 256 | char 32, 33, ... normally |
 | 300 | as 12 but starting at pair 19 (`n` = 75): glyph of char 38, code byte of char 39, ... |
+
+## TSU latch timing
+
+The TSU draws TS line L during raster line L - 1: its pass starts at `ts_start` (dot
+`hpix_beg_ts - 1`, `video_sync.v:130`) and runs to the next `ts_start`. The tile registers
+`T0_G_PAGE`, `T1_G_PAGE`, `T0_X_OFFS`, `T1_X_OFFS` and `PAL_SEL` are latched at `line_start`
+(dot 447, `video_ports.v:153-165`), and the TSU reads the latched values when it hands an
+object to the renderer (`video_ts.v:162-171`, `tsr_go`). The question: does the pass cross
+`line_start`, and which latch do the objects after it see?
+
+`tsulatch` runs twelve cases. Each sets the "before" registers right after reset, writes the
+"after" registers at dot 420 of line L - 1 (after `ts_start`, before `line_start`; one
+register per 28 MHz clock), and captures one TS line (the window only: one index per dot):
+window line 20, or a bottom line (284 of 288, 196 of 200), where the tilemap prefetch has
+stopped. It records every `tsr_go` of the pass for line L and counts the TSU's DRAM cycles
+(`ts_next` and `tm_next`, at c2). With `TSU_CYCLES=1` in the environment it also prints the
+owner of each DRAM cycle at the start of every pass.
+
+Memory: graphics pages 80h..AFh hold `byte(a) = a * 7 + (a >> 8) * 13 + (a >> 17) * 101`
+for physical address `a` (T0 sheets 80h / 88h, T1 90h / 98h, sprites A0h); the tile map at
+page 30h has, in every row, layer `l` column `c` = tile `c` of sheet row `1 + l`, palette
+`c & 3`; `V_PAGE` C0h is zero, so the graphics layer is index 0 (`PAL_SEL[3:0]` stays 0).
+Sprites: S0 = `s0` sprites, S1 = `s1` sprites, 64x8 each on TS line 20, sprite `d` (counted
+over both layers) at X `23 d`, tile `(8 d & 63) | (d & 7) << 6`, palette `d & 15`; LEAP on the
+last sprite of a layer (an inactive LEAP descriptor for an empty layer) and one more
+inactive LEAP descriptor ends S2. Before: `PAL_SEL` 00h, `T0_G_PAGE` 80h, `T1_G_PAGE` 90h,
+X offsets 0; after: E0h, 88h, 98h, 13, 267.
+
+### Measured rules
+
+1. **The pass crosses `line_start`** on a busy line, and every object handed to the
+   renderer after it uses line L's latch: the tile page, the palette bank and both parts of
+   the X offset (the fine shift and the map column) change from that tile on. Sprites take
+   no latched register (their palette is in the descriptor, `SG_PAGE` is not latched).
+2. **Where.** An object is late when more than `split` TSU DRAM cycles of the pass came
+   before it (its `tsr_go` comes at c2 of the previous object's last cycle, `line_start_s`
+   at c3 of dot 447). The TSU's first cycle is `hpix_beg_ts + 1` (the cycle at dot
+   `hpix_beg_ts` is lost: the layer machine starts a cycle after `ts_start`; in TXT the video
+   takes it anyway), `hpix_beg_ts + 2` on the bottom 8 window lines, which have no tilemap
+   prefetch. `split` = the cycles from there to dot 447 that video leaves. A video block
+   decided at DRAM cycle `b` takes cycles `b + 1 ..` (with the CPU idle); blocks are decided
+   from `hpix_beg - go_offs` (ZX 18, 16C 6, 256C 4, TXT 10 dots early):
+
+   | Case | Window | Video in the span | `split` |
+   |:--|:--|--:|--:|
+   | 16C 360 / 320 / 256 | dot 88 / 108 / 140 | 89 / 79 / 63 | 270 / 260 / 244 |
+   | 256C 360 | 88 | 180 | 179 |
+   | ZX 256 | 140 | 30 | 277 |
+   | TXT 256 / 320 (240 lines) | 140 / 108 | 126 / 158 | 181 / 181 |
+   | 16C 360 / 320, no prefetch | 88 / 108 | 89 / 79 | 269 / 259 |
+
+   The whole pass gets `split` plus the cycles of line L before `hpix_beg_ts` that video
+   leaves (16C 360: 356 of 448), the CPU's cycles less.
+3. **Tiles per layer**: always `x_tiles - 1` = 33 / 41 / 46 for 256 / 320 / 360 wide
+   (`video_ts.v:177`), whatever the X offset: at an offset that is a multiple of 8 the last
+   one lies past the window and is still fetched.
+
+4. **The prefetch's extra cycle**: after the last of its 8 or 16 words the tilemap layer
+   holds the bus one more DRAM cycle (`tmap` drops two clocks after `tm_end`,
+   `video_ts.v:104-121,139`) unless video takes that cycle. The extra word lands in a ring
+   slot of a disabled layer or repeats the first word, so it only costs time: 16C 360 with
+   both layers, 17 cycles; T0 only, 8 (cycle 9 is video).
+
+unreal-ng follows these rules (`TsConfEngine::RenderTsu`, `TsConfTsu::BeginLine` /
+`FinishLine`) and `TsConfEngine_Test.TSU9_ObjectsAfterLineStartTakeTheNewLatch` compares
+its TSU line with every captured line (TXT cases: the split only; in TXT the TS layer is
+mixed in hi-res).
+
+### Result format: tsu-latch.txt
+
+Lines starting with `#` are comments. Each case is three lines:
+
+```
+case <name> vconf=<hex> tsconf=<hex> s0=<n> s1=<n> before=<PAL_SEL>,<T0_G_PAGE>,<T1_G_PAGE>,<T0_X>,<T1_X> after=... split=<n>
+go <object> <object> ...
+idx <index> <index> ...
+```
+
+- `case`: pages and `PAL_SEL` in hex, X offsets decimal. `split`: the TSU DRAM cycles counted
+  before `line_start` (when the pass ends before it, simply all of them).
+- `go`: the objects of the pass in order, `<S|T><x>:<page>:<pal>:<cycles>:<E|L>` = sprite or
+  tile, its X in the line buffer, the bitmap page and 4-bit palette it was handed, the TSU
+  DRAM cycles before it, and whether its `tsr_go` came before (E) or after (L) `line_start`.
+- `idx`: the captured window, one 8-bit palette index per dot (TXT: the first hi-res pixel
+  of each dot).
 
 ## Limits
 
