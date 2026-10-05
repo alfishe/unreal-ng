@@ -15,7 +15,7 @@ Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 - [reference-data.md](reference-data.md): the matrix as a reference data collection in the code (`core/src/emulator/slots/refdata/`)
 - [research.md](research.md) (+ machines, cards): SL-0 findings and code inventory
 - [tdd.md](tdd.md): phases SL-0 to SL-8, tests, benchmarks
-- [open-questions.md](open-questions.md): owner decisions Q1-Q10, open Q11
+- [open-questions.md](open-questions.md): owner decisions Q1-Q11
 
 ## Pause (owner decision 2026-10-04) - lifted
 
@@ -144,7 +144,8 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
   on every reply; the GS personality switch on every surface is a slot replace applied by a restart (Q10); Qt Machine >
   Slots with plan preview, confirmation, removed cards named with Undo; recipe [.recipe/machines/slots.md](../../../.recipe/machines/slots.md),
   user doc [docs/features/slots.md](../../features/slots.md); recipes and docs naming the legacy keys moved to `[SLOTS]`
-  - [ ] Q11 (open): the network card change (`network set card=`) still swaps in place; recommendation: a slot change
+  - [ ] Q11 decided 2026-10-05 (A): the network card change (`network set card=`, the Network window's card boxes)
+    becomes a slot change applied by a restart; today it still swaps in place
   - [ ] Python bindings not verified live (the build has `ENABLE_PYTHON_AUTOMATION=OFF`; `-fsyntax-only` clean)
   - [ ] side note (not SL-7): the plan of a MultiSound removal lists `ay-socket` among the lost functions although the
     board AY comes back un-shadowed

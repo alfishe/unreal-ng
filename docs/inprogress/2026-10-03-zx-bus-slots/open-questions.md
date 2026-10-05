@@ -4,7 +4,7 @@
 |---|---|
 | **Date** | 2026-10-03 |
 | **For** | the ZX-bus slot design (PLAN row #82); first consumer: [ZX-MultiSound](../2026-10-03-zx-multisound/) |
-| **Order** | most important first (Q8 added 2026-10-05; Q9, Q10 from SL-6, decided 2026-10-05) |
+| **Order** | most important first (Q8 added 2026-10-05; Q9, Q10 from SL-6, Q11 from SL-7, decided 2026-10-05) |
 
 ## Q1. What happens when a card is incompatible with cards already plugged in?
 
@@ -180,7 +180,11 @@ behaves like every other slot change.
 
 ## Q11. Does the network card change of a running machine go through the slots?
 
-**Open (raised in SL-7, 2026-10-05).**
+**Owner decision (2026-10-05): A** - a network `card` change is a slot change applied by a restart, like every
+other card change (Q6, Q10). Raised in SL-7.
+
+**Also decided (2026-10-05):** the General Sound personality restart does not carry the classic GS's `ram` option
+to the NeoGS (or back): the two cards have different option sets; the NeoGS RAM stays `[NGS] RamSize`.
 
 The network settings (`network set card=...`, WebAPI `POST /network/config {card}`, Lua / Python `network_configure`,
 the Qt Network window's ZXNETUSB / ZX-WiFi boxes) still unplug and fit the ZX-bus network cards of a running machine in
