@@ -364,9 +364,24 @@ and its limit. MCP `InspectState_PcHistoryAspect`; Qt `PcHistoryDialog_Test`.
 
 See the TODO row A7 for the measured rounds.
 
-## 8. The rest (outline; designed when reached)
+## 8. D9: which windows a CPU write reaches
+
+Verified first: `/state/paging` reported window 0 as "read/write" whenever it showed RAM, also on TS-Conf with
+`W0_WE` off (the mapper sends those writes to the trash page), and windows 1-3 carried no access field at all;
+`/state/memory`, the CLI and the snapshot hard-coded "read/write" too.
+
+The truth is the write pointer the CPU uses: `Memory::IsWindowWritable(window)` is false when the window's writes go
+to the trash page (ROM, write-protected RAM). Every report that lists windows now asks it: WebAPI `/state/paging`
+(`writable` and `read_write` on all four), `/state/memory` and `/state/memory/rom` (`read_write`, `bank0_access`),
+the snapshot's `pages[].writable`, Lua / Python `paging_state` (`writable`), CLI `paging` ("(read-only)") and
+`state memory`. MCP's `paging` aspect forwards the WebAPI report. Test: `TsConfMemory_Test.WindowWritableFollowsTheMapper`
+(ROM, RAM without and with W0_WE, windows 1-3).
+
+Noticed, not changed here: those same reports hard-code `type` RAM for windows 1-3, which is wrong on machines that
+can map ROM there (ATM Turbo); the snapshot's `pages[].kind` is right.
+
+## 9. The rest (outline; designed when reached)
 
 | Item | What | Notes |
 |---|---|---|
-| D9 | `read_write` per window in `/state/paging` for TS-Conf | verify first |
 | E7 | Label import (XAS / ALASM) | low priority |

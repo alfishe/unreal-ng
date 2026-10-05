@@ -172,3 +172,17 @@ TEST_F(TsConfMemory_Test, TIM1_NoWaitsOffDram)
     RunCode(nops);                    // fills
     EXPECT_DOUBLE_EQ(ClocksOf(_z80, [&] { RunCode(nops); }), 64 * 4.0) << "every fetch hits";
 }
+
+// The debugger's "writable" per window (Memory::IsWindowWritable, debugger additions D9): what the mapper does with a
+// CPU write - window 0 RAM is writable only with W0_WE, ROM never, windows 1-3 always
+TEST_F(TsConfMemory_Test, WindowWritableFollowsTheMapper)
+{
+    Reg(TsConfReg::MemConfig, TsConfMemConfig::W0NoMap);  // ROM in window 0
+    EXPECT_FALSE(_memory->IsWindowWritable(0));
+    Reg(TsConfReg::MemConfig, TsConfMemConfig::W0NoMap | TsConfMemConfig::W0Ram);  // RAM, W0_WE off
+    EXPECT_FALSE(_memory->IsWindowWritable(0)) << "RAM without W0_WE: writes go nowhere";
+    Reg(TsConfReg::MemConfig, TsConfMemConfig::W0NoMap | TsConfMemConfig::W0Ram | TsConfMemConfig::W0We);
+    EXPECT_TRUE(_memory->IsWindowWritable(0));
+    EXPECT_TRUE(_memory->IsWindowWritable(1));
+    EXPECT_TRUE(_memory->IsWindowWritable(3));
+}

@@ -280,6 +280,7 @@ StateNode Capture(Emulator* emulator, const Options& options)
         page["start"] = static_cast<int>(window * 0x4000);
         page["kind"] = std::string(BankKind(where.mode));
         page["page"] = static_cast<int>(where.page);
+        page["writable"] = memory->IsWindowWritable(window);
         pages.push(page);
     }
     node["pages"] = pages;

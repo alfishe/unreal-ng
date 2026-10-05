@@ -1121,7 +1121,8 @@ emu.paging_state()                   -- tagged paging latches + bank table (P1-2
                                      --   latches = {{port, latch, tags, device?, gate?, value,
                                      --               decoded = {ram_bank=.., shadow_screen=.., ...}}},
                                      --   banks = {{bank, address_range, type, page,
-                                     --             name?, role?, signature?, contended?}} }
+                                     --             name?, role?, signature?, contended?,
+                                     --             writable}} }  -- writable: a CPU write reaches the page
                                      -- ROM bank rows carry the §5.2 identification: name = recognized
                                      -- content (SHA-256 catalog), role = the model's layout slot; a
                                      -- role/name mismatch is the one-glance wrong-ROM signal.

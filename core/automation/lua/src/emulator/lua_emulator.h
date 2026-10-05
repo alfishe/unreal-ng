@@ -5115,6 +5115,8 @@ public:
                 }
                 // The CPU waits for the video logic there (Core::IsSlotContended)
                 bank["contended"] = context->pCore && context->pCore->IsSlotContended(static_cast<uint8_t>(i));
+                // A write reaches the page (the mapper's view: ROM, TS-Conf W0_WE, ...)
+                bank["writable"] = memory.IsWindowWritable(static_cast<uint8_t>(i));
                 banks.add(bank);
             }
 

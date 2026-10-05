@@ -172,7 +172,7 @@ per-step DMA updates (TDD-02 §5.4).
 | D6 | Ports | #FE full byte, #EFF7, and on other models the extended port, e.g. in `/state/paging` or a new `GET /debug/ports` | small |
 | D7 | `GET /memory/{addr}` and `/memory/read/{addr}` | `format=binary` (application/octet-stream). Allow `length=65536` | **Done 2026-10-04** ([debugger-snapshot](../2026-10-04-debugger-snapshot/tdd.md)): `format=binary` on every memory read, up to 65536; Lua / Python `mem_read_bytes` |
 | D8 | `GET /memory/find` | `mask` / wildcard bytes; other spaces (page, CMOS) | small |
-| D9 | `GET /state/paging` (TS-Conf) | Correct `read_write` per window from the TS-Conf mapper | small, verify first |
+| D9 (done 2026-10-04: [debugger-additions](../2026-10-04-debugger-additions/tdd.md) §8) | `GET /state/paging` (TS-Conf) | Correct `read_write` per window from the TS-Conf mapper | verified wrong (window 0 RAM without W0_WE was "read/write", windows 1-3 had no field); now `writable` + `read_write` from `Memory::IsWindowWritable` on every surface |
 
 ### 3.3 Transport issues
 
