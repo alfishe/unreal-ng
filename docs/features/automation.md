@@ -340,6 +340,8 @@ Interactive documentation available at `/api/swagger`
 | GET | `/api/v1/emulator/{id}/video/record/status` | Recording state and stats |
 
 #### Files & Snapshots
+Snapshot formats: [docs/file-formats/snapshots](../file-formats/snapshots/README.md).
+
 | Method | Endpoint | Description |
 |:-------|:---------|:------------|
 | POST | `/emulators/{id}/open` | Load file |
