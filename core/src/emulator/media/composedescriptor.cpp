@@ -986,6 +986,19 @@ ComposeDescriptor ComposeDescriptor::Load(const std::filesystem::path& file)
     const std::filesystem::path absolute = std::filesystem::absolute(file, ec);
     ComposeDescriptor d = Parse(text.str(), (ec ? file : absolute).parent_path(), sourceName);
     d.file = (ec ? file : absolute).lexically_normal();
+    std::filesystem::path whiteout = d.file;
+    whiteout += ".whiteout";
+    if (std::ifstream list(whiteout); list)
+    {
+        std::string line;
+        while (std::getline(list, line))
+        {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+                line.pop_back();
+            if (!line.empty() && line[0] == '/')
+                d.deleted.push_back(line);
+        }
+    }
     return d;
 }
 
@@ -1069,6 +1082,8 @@ std::string ComposeDescriptor::Normalized() const
         }
         o << "]}";
     }
+    if (!deleted.empty())
+        o << ",\"deleted\":" << JsonList(deleted);
     if (hasPartitions)
     {
         o << ",\"partitions\":[";

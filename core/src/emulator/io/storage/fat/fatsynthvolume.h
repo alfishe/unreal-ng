@@ -123,6 +123,7 @@ public:
     }
 
     const FileTree& Tree() const override { return *_tree; }
+    const SourcePool* Pool() const override { return _pool.get(); }
     SectorOwner OwnerOf(uint64_t lba) const override;
     /// Problems met while serving reads (a host file that shrank or vanished)
     const std::vector<std::string>& Warnings() const;

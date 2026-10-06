@@ -42,6 +42,9 @@ public:
     IBlockDevice& Device(uint16_t index) { return *_devices[index]; }
     size_t DeviceCount() const { return _devices.size(); }
     size_t HostFileCount() const { return _hostFiles.size(); }
+    /// A host file as the folder scan saw it (S4 conflict checks)
+    const std::filesystem::path& HostPath(uint32_t file) const { return _hostFiles[file].path; }
+    uint64_t HostSize(uint32_t file) const { return _hostFiles[file].size; }
     size_t OpenStreams() const { return _open.size(); }
 
     /// Problems met while serving reads (a host file that shrank or vanished)

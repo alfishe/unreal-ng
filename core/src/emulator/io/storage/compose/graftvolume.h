@@ -96,6 +96,7 @@ public:
     /// base image (an index built at the first call that needs it)
     SectorOwner OwnerOf(uint64_t lba) const override;
     const FileTree& Tree() const override { return *_tree; }
+    const SourcePool* Pool() const override { return _pool.get(); }
 
 private:
     GraftVolume(std::shared_ptr<const FileTree> tree, std::shared_ptr<SourcePool> pool, uint16_t baseDevice);

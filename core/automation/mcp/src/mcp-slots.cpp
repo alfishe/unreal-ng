@@ -30,7 +30,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"insert", insertOptions},
         {"eject", {"save", "export", "discard", "end_recording", "async"}},
         {"swap", insertOptions},
-        {"save", {"retarget", "compression", "compact", "fs", "size", "strategy", "force", "plan"}},
+        {"save", {"retarget", "compression", "compact", "fs", "size", "strategy", "force", "plan", "onConflict"}},
         {"export", {"compression", "parent", "compact", "fs", "size"}},
         {"discard", {"async"}},
         {"rescan", {"async"}},
@@ -39,7 +39,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"compose", {"fs", "codepage", "free"}},
         {"layers", {}},
         {"changes", {}},
-        {"flatten", {"strategy", "plan", "force", "compression", "compact", "fs", "size"}},
+        {"flatten", {"strategy", "plan", "force", "onConflict", "compression", "compact", "fs", "size"}},
     };
     return actions;
 }
@@ -222,7 +222,11 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["force"]["description"] =
         "save as delta over a delta that was written over other sources; commit although the guest's file system has "
         "lost clusters or cross-links";
-    schema["properties"]["plan"]["description"] = "save / flatten with strategy commit: report what would be written, write nothing";
+    schema["properties"]["plan"]["description"] =
+        "save / flatten with strategy commit or write-back: report what would be written, write nothing";
+    schema["properties"]["onConflict"]["description"] =
+        "write-back: refuse (default) when a host file changed since the build, or keep-both (the guest's version as "
+        "'name (guest).ext')";
     schema["properties"]["compact"]["description"] =
         "save / export of a FAT disk or card: write a re-synthesized volume (every file contiguous; fs converts, size "
         "resizes) instead of the layout as it is. .vhd targets get a fixed VHD footer";
@@ -245,7 +249,8 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "*.ucompose.yaml - several folders layered into one FAT disk - without inserting it; insert takes the "
         "descriptor like a file), layers (a composite medium's layers), changes (the guest's unsaved writes as file "
         "operations - create, modify, delete, rename, mkdir, rmdir - with the layer each touched), flatten (a composite by a "
-        "named strategy: flat <path>, delta, commit - the graft base image takes everything, journaled). Operations are synchronous (the reply "
+        "named strategy: flat <path>, delta, commit - the graft base image takes everything, journaled - or write-back - "
+        "the guest's file changes into the writable folder layers). Operations are synchronous (the reply "
         "comes when the medium is in or out; async:true returns at once). A dirty medium leaves its slot only with "
         "save:true, export:'<path>' or discard:true. The reply's 'revision' increases with every change. "
         "Options per action:" + perVerb,

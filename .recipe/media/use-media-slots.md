@@ -29,6 +29,7 @@ media {"action":"export","slot":"hd","path":"scratch/diff.chd","parent":"/mame/s
 media {"action":"export","slot":"hd","path":"scratch/disk.vhd"}                     # raw data + a fixed VHD footer
 media {"action":"export","slot":"hd","path":"scratch/flat.img","compact":true}      # FAT re-synthesized: files contiguous
 media {"action":"flatten","slot":"hd","strategy":"commit","plan":true}  # what a commit into the graft base writes
+media {"action":"flatten","slot":"sd","strategy":"write-back","plan":true}  # guest files back into writable folder layers
 media {"action":"changes","slot":"hd"}   # the guest's unsaved writes as file operations, with their layers
 media {"action":"eject","slot":"B","discard":true}
 media {"action":"info","slot":"A"}                                   # one slot: medium, access, dirty state (a CD: the disc's tracks)

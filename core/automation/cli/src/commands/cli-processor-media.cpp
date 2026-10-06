@@ -301,8 +301,10 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "                                 (insert takes the descriptor like any file)" << NEWLINE;
     out << "  layers <slot>                - a composite medium's layers" << NEWLINE;
     out << "  changes <slot>               - the guest's unsaved writes as file operations (and their layers)" << NEWLINE;
-    out << "  flatten <slot> [path] --strategy flat|delta|commit [--plan] [--force]" << NEWLINE
-        << "                               - a composite by a named strategy (commit: into the graft base image)" << NEWLINE
+    out << "  flatten <slot> [path] --strategy flat|delta|commit|write-back [--plan] [--force]" << NEWLINE
+        << "                               [--onConflict refuse|keep-both]" << NEWLINE
+        << "                               - a composite by a named strategy (commit: into the graft base image;" << NEWLINE
+        << "                                 write-back: the guest's files into the writable folder layers)" << NEWLINE
         << NEWLINE;
     out << "Slot: id (fdd.b), alias (B, b:, sd, hd), kind:index (floppy:1), tag:a+b" << NEWLINE;
     out << "A dirty medium leaves only with --save, --export <path> or --discard" << NEWLINE;

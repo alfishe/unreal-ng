@@ -30,6 +30,7 @@
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/medium.h"
 #include "emulator/media/sessiondelta.h"
+#include "emulator/media/writeback.h"
 #include "emulator/io/storage/sessionwritemap.h"
 
 namespace
@@ -625,6 +626,28 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
     std::string error;
     if (!UnionBuilder::Merge(layers, optical ? UnionBuilder::ExactKey : UnionBuilder::FatKey, *tree, &result.report, &error))
         return MediaResult::Fail(MediaError::BadRequest, error);
+    // S4: what the guest deleted from layers that are not changed by a delete (<descriptor>.whiteout)
+    for (const std::string& path : d.deleted)
+    {
+        uint32_t at = FileTree::kRoot;
+        size_t pos = 1;
+        while (at != FileTree::kNone && pos < path.size())
+        {
+            const size_t slash = path.find('/', pos);
+            const std::string part = path.substr(pos, slash == std::string::npos ? std::string::npos : slash - pos);
+            pos = slash == std::string::npos ? path.size() : slash + 1;
+            uint32_t found = FileTree::kNone;
+            for (uint32_t child : tree->Node(at).children)
+                if (UnionBuilder::FatKey(tree->Node(child).name) == UnionBuilder::FatKey(part))
+                    found = child;
+            at = found;
+        }
+        if (at != FileTree::kNone && at != FileTree::kRoot)
+        {
+            tree->Detach(at);
+            result.report.push_back(path + ": deleted by the guest (" + FileHelper::FromFsPath(d.file.filename()) + ".whiteout)");
+        }
+    }
     Count(*tree, FileTree::kRoot, info.files, info.bytes);
 
     // --- An ISO 9660 CD ---
@@ -933,6 +956,8 @@ MediaResult CompositeMediumFactory::Open(const OpenRequest& request, std::unique
     if (request.kind == MediaKind::Block && request.access == AccessMode::WriteThrough)
         return MediaResult::Fail(MediaError::KindMismatch, "a composite is never written in place: use session or readonly access");
 
+    // An S4 write-back cut short is finished before the descriptor (and its .whiteout list) is read
+    const std::string writeBackRecovered = source.inlineBody.empty() ? WriteBack::Recover(FileHelper::ToFsPath(source.path)) : std::string();
     ComposeDescriptor descriptor = source.inlineBody.empty()
                                        ? ComposeDescriptor::Load(FileHelper::ToFsPath(source.path))
                                        : ComposeDescriptor::Parse(source.inlineBody, std::filesystem::current_path(), ComposeDescriptor::kInlineName);
@@ -955,6 +980,8 @@ MediaResult CompositeMediumFactory::Open(const OpenRequest& request, std::unique
     std::unique_ptr<IBlockDevice> volume;
     auto info = std::make_shared<CompositeInfo>();
     MediaResult result = Build(descriptor, options, volume, *info);
+    if (!writeBackRecovered.empty())
+        result.report.insert(result.report.begin(), writeBackRecovered);
     if (!result.Ok())
         return result;
 

@@ -80,7 +80,7 @@ on a +3) is `unknown-slot`, never drive A.
 | `protect` | slot, `on` | the slot's write-protect switch |
 | `compose` | descriptor | build a [composite](#composite-media-several-sources-in-one-disk) (`*.ucompose.yaml`, or its JSON text) without inserting it: the layout and the report |
 | `layers` | slot | a composite's layers (and partitions) |
-| `flatten` | slot, path? | a composite by a named `strategy`: `flat` (a new image at `path`), `delta`, `commit` (everything into the graft's base image, journaled; the slot then holds that image; `plan` reports and writes nothing) |
+| `flatten` | slot, path? | a composite by a named `strategy`: `flat` (a new image at `path`), `delta`, `commit` (everything into the graft's base image, journaled; the slot then holds that image), `write-back` (the guest's file changes into the writable folder layers); `plan` reports and writes nothing |
 | `changes` | slot | the guest's unsaved writes on a disk or card with session writes as file operations: `create`, `modify`, `delete`, `rename` (a move too), `mkdir`, `rmdir`, `attributes`, each with the composite layer it touched; nothing is written |
 
 `save`, `export` and `discard` also take a detached medium's slot id.
@@ -107,7 +107,8 @@ on a +3) is `unknown-slot`, never drive A.
 | `fs`, `size` | `fat16` / `fat32`; bytes or `64MiB` | the volume's; the medium's | save, export with `compact`: convert, resize (a FAT12 floppy needs `fs`) |
 | `strategy` | `delta`, `flat`, `commit`, `write-back` | a path: `flat`; none: the descriptor's `writes.save`, else `delta` | save of a composite (`commit` and `write-back`: a later phase) |
 | `force` | bool | false | save of a composite as `delta` over a delta written over other sources; `commit` although the guest's file system has lost clusters or cross-links |
-| `plan` | bool | false | save, flatten with `strategy: commit`: what would be written, nothing written |
+| `plan` | bool | false | save, flatten with `strategy: commit` or `write-back`: what would be written, nothing written |
+| `onConflict` | `refuse`, `keep-both` | `refuse` | write-back: a host file changed since the build is a conflict; `keep-both` writes the guest's as `name (guest).ext` |
 | `on` | bool | true | protect |
 | `end_recording` | bool | false | insert, swap, eject, create: stop a TTD recording instead of refusing |
 | `async` | bool | false | insert, swap, eject, discard, rescan, create |
@@ -295,6 +296,7 @@ writes: {save: delta}                     # what `save` does without a path; del
 | **Partitions** | `partitions:` instead of `layers:` makes a partitioned disk: each entry a passthrough `{source: {image: x.img, partition: 1}}` or a composition `{fs: fat16, size: 64MiB, compose: {build: graft, layers: [...]}}`, 1 MiB aligned, more than four as logical partitions. The first source disk's MBR code is carried (the Profi BIOS runs it) and each boot sector gets its partition's start |
 | **Unsaved writes** | `media changes` lists them as file operations with their layers. `save` without a path writes them to `<descriptor>.delta` (S2) and the medium is clean; the next insert of the same descriptor restores them ("session restored"). A delta written over other sources (a host file changed since) is not applied: the report names the layer, and saving over it needs `force`. A damaged delta is renamed `*.delta.bad`. `save` with a path (or `strategy: flat`) writes one image and the slot then holds it; `export` writes one and leaves the composite as it is |
 | **Commit (S3)** | `flatten <slot> --strategy commit` writes a graft's re-encoded sectors, its grafted files and the guest's writes into the base image (raw, HDF, HDI or fixed VHD; not a CHD, and not while another slot uses it). The old sectors go to `<image>.ujournal` first; if the commit is cut short, the next open of the image puts them back. Afterwards the slot holds the base image; the descriptor is not changed |
+| **Write-back (S4)** | `flatten <slot> --strategy write-back` carries the guest's file changes into the folder layers marked `writable: true`: a file of such a layer is rewritten in place, a file of a read-only layer (an image, an ISO, a read-only folder) is copied up into the upper layer (`writes.upper`, else the topmost writable one), new files go where their directory is. A delete follows the owner layer's `onDelete`: `keep` (the default: the host file stays, the path is hidden from the next build through `<descriptor>.whiteout`), `move` (into `deletedFolder`), `delete`, or `ignore`. A host file changed since the build is a conflict (`onConflict`). The steps are journaled in `<descriptor>.writeback`, and the slot is rebuilt from the layers |
 | **Rescan** | `rescan` builds the composite again from its sources (refused while there are unsaved writes) |
 
 ### Which file system a slot takes

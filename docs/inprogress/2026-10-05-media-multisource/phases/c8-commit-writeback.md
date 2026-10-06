@@ -1,6 +1,6 @@
 # C8 — commit into the graft base (S3), write-back into folders (S4), the Qt strategy dialog
 
-**Status:** C8a built 2026-10-06 (as-built notes in §5); C8b and C8c designed. Phase C8 of [tdd.md](../tdd.md) §14; strategies S3 and S4 of
+**Status:** C8a and C8b built 2026-10-06 (as-built notes in §5, §6); C8c designed. Phase C8 of [tdd.md](../tdd.md) §14; strategies S3 and S4 of
 [flatten-strategies.md](../flatten-strategies.md) with their decision trees DT-10 to DT-14, which apply as written
 unless this document says otherwise. FR-50 to FR-54 in [goals-and-requirements.md](../goals-and-requirements.md).
 
@@ -39,11 +39,11 @@ As flatten-strategies.md S4 with DT-10 to DT-12. Specifics:
 - **Input**: the C6b change set (`ListMediumChanges`) with each change's owner layer, and the after-volume read
   with `FatVolumeReader` for the new bytes.
 - **Upper layer**: `writes.upper`, else the topmost `writable: true` folder layer.
-- **Whiteouts**: added to the upper layer's `whiteout:` list by rewriting only that layer's line range in the
-  descriptor (the one place S4 edits it; a `.bak` is kept). An inline descriptor cannot take whiteouts: a plan error.
-- **Attributes** go into the layer folder's manifest (`.unreal-folder.yaml`, `files: {name: {attrs: RH}}`).
-- **Staging**: `<layer>/.unreal-staging-<id>/`, then renames into place listed in `<layer>/.unreal-writeback.journal`
-  first; an interrupted apply is completed on the next insert of the descriptor.
+- **Whiteouts**: kept in `<descriptor>.whiteout` (one guest path per line), applied after every layer merged; the
+  descriptor itself is never rewritten. An inline descriptor cannot take write-back.
+- **Attributes** are not carried yet (a note in the plan): the folder manifest has no attribute field.
+- **Staging**: `.unreal-staging-<n>` next to each target (the same host volume), then the steps listed in
+  `<descriptor>.writeback` first; an interrupted apply is completed on the next insert of the descriptor.
 - **Rebuild**: the composite is built again from fresh snapshots and the change layer emptied.
 
 ## 4. Tests
@@ -70,3 +70,20 @@ As flatten-strategies.md S4 with DT-10 to DT-12. Specifics:
 Tests: `ComposeCommit_Test` (4: plan, commit equals the guest's view byte for byte and the base alone holds every
 file, refusals, the registry rolling back an interrupted commit), `CommitJournal_Test` (3), and the Sprinter
 acceptance test `SprinterBoot_Test.ComposeCommitBootsFromTheBase` (~3.8 s, two boots).
+
+## 6. As built: C8b
+
+| Piece | Where | Notes |
+|---|---|---|
+| Plan | `WriteBack::Plan` (`media/writeback.{h,cpp}`) | Input: `ListMediumChanges` (each change with its owner layer by name) and the descriptor read again from its file. Routing follows DT-10. A create or mkdir goes to a directory this plan makes, else the topmost writable folder layer whose host folder has the parent, else the upper layer. A modify goes to its owner when that is a writable folder, else it is copied up into the upper layer. A rename stays a host rename inside a writable owner when the target directory exists, else it becomes a create plus a delete. Attributes give a note. The upper layer is `writes.upper`, else the topmost writable folder layer. |
+| Deletes (DT-11) | `Planner::Delete` | `ignore` gives a note, and the file comes back on the next build. A read-only owner, or `keep`, gives a whiteout. On a writable owner, `delete` removes the host file and `move` moves it to `<deletedFolder>/<UTC yyyymmdd-hhmmss>/<layer>/<path>`, copy then remove across volumes. `trash` is a plan error: no host trash API yet. |
+| Conflicts (DT-12) | `Planner::Gate` | A host file the build read (its tree node is a host file of the pool) must still have the scanned size and mtime. A file the build did not see must not exist yet. Otherwise it is a conflict: a plan error by default, or with `onConflict: keep-both` the step writes `name (guest).ext` next to it. On Windows, names the host cannot store (device names, a trailing dot or space) are plan errors. |
+| Apply | `WriteBack::Apply`, `Recover` | Each new content is staged as `.unreal-staging-<n>` next to its target, carrying the guest's FAT time. Then `<descriptor>.writeback` lists every step and ends with `end`, and is synced. `Recover` performs the list: mkdirs, renames and writes (copy and remove when a rename crosses volumes), whiteouts appended to `<descriptor>.whiteout`, removes last, deepest first. Steps already done are skipped. A list without `end` is dropped, with nothing applied. `CompositeMediumFactory::Open` runs `Recover` before reading the descriptor. Staged names are service files (`.unreal-staging-*`), so a folder scan skips them. |
+| Whiteouts | `ComposeDescriptor::deleted` (from `<descriptor>.whiteout`), the factory after `UnionBuilder::Merge` | Detached from the merged tree by FAT key, with a report line; the list is part of the normalized form, so the content id follows it. A graft releases the base entries such a whiteout hides. |
+| After | `MediaManager::WriteBackComposite` | The change layer is emptied, an S2 delta that the layers now hold is removed, and the slot is rebuilt (`Rescan`). `plan: true` lists the steps and the errors and writes nothing. |
+| Surfaces | `save` / `flatten` `strategy: write-back`, option `onConflict` (refuse, keep-both) on `MediaControl`, CLI, WebAPI, MCP; Lua / Python through `MediaControl` | |
+
+Tests: `ComposeWriteBack_Test` (7): modify in place, copy-up, creates into the owning, planned and upper layers; delete
+and whiteout, the descriptor byte for byte unchanged; move, ignore, keep; a rename inside a layer and across;
+conflicts refused and kept both; a plan that writes nothing, and `trash` as an error; an interrupted apply finished on
+insert. Not done here: a partitioned composite (refused), attributes, the host trash.

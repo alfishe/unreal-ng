@@ -15,6 +15,8 @@
 
 #include "emulator/io/storage/compose/filetree.h"
 
+class SourcePool;
+
 enum class SectorRole : uint8_t
 {
     PartitionTable,  ///< LBA 0 of a volume with an MBR
@@ -51,6 +53,8 @@ public:
     virtual SectorOwner OwnerOf(uint64_t lba) const = 0;
     /// The union tree the volume was built from (T0)
     virtual const FileTree& Tree() const = 0;
+    /// The sources the tree's data names (host files as scanned: S4 conflict checks)
+    virtual const SourcePool* Pool() const { return nullptr; }
 };
 
 /// A layout seen from a window that starts `offset` sectors into it (a partition cut out of a graft over an image
@@ -61,6 +65,7 @@ public:
     OffsetLayout(const IComposedLayout* inner, uint64_t offset) : _inner(inner), _offset(offset) {}
     SectorOwner OwnerOf(uint64_t lba) const override { return _inner->OwnerOf(lba + _offset); }
     const FileTree& Tree() const override { return _inner->Tree(); }
+    const SourcePool* Pool() const override { return _inner->Pool(); }
 
 private:
     const IComposedLayout* _inner;

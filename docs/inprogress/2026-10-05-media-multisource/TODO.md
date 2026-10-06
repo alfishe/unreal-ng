@@ -34,7 +34,7 @@ PLAN.md row **#95**.
 - [x] C7 partitions (`PartitionedDisk`, passthrough and composed partitions, ACC-C4; Profi IDE slots FAT16 only)
 - [ ] C8 S3 commit, S4 write-back, Qt flatten dialog
   - [x] C8a S3: journaled commit into the graft base, recovery on open, `media flatten`
-  - [ ] C8b S4 write-back into folder layers
+  - [x] C8b S4 write-back into folder layers (attributes, host trash and partitioned disks not yet)
   - [ ] C8c Qt strategy dialog
 - [ ] C9 optional bulk `ReadSectors` (A/B gated)
 - [ ] Lazy base enumeration for grafts: walk only the base directories upper layers touch (the full walk dominates

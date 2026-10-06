@@ -155,6 +155,9 @@ struct ComposeDescriptor
     bool hasBoot = false;                   ///< a boot section is present
     ComposeBoot boot;                       ///< the boot section (D-6)
     ComposeWrites writes;
+    /// S4: paths the guest deleted, kept in `<descriptor>.whiteout` (one per line) and removed from the merged
+    /// tree after every layer merged; the user's descriptor itself is never rewritten
+    std::vector<std::string> deleted;
 
     std::filesystem::path file;             ///< empty for an inline descriptor
     std::filesystem::path baseDir;          ///< relative paths resolve against it

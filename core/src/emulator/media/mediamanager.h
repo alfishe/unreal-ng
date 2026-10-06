@@ -83,6 +83,7 @@ struct SaveOptions
     bool force = false;          ///< delta: write over a delta that was made over other sources
     bool disposition = false;    ///< set by an eject / insert disposition (D-8: commit / write-back fall back to delta)
     bool plan = false;           ///< commit / write-back: report what would be written, write nothing
+    bool keepBoth = false;       ///< write-back: a host file changed since the build gets "name (guest).ext" next to it
 };
 
 /// What a save did
@@ -281,6 +282,9 @@ private:
     /// S3: a graft composite's patches, grafted files and guest writes into its base image (DT-14)
     MediaResult CommitComposite(const std::string& slotId, Medium& medium, IMediaSlot* slot, const CompositeInfo& composite,
                                 const SaveOptions& options, SaveOutcome* outcome);
+    /// S4: the guest's file changes into the composite's writable folder layers (DT-10 to DT-12), then a rebuild
+    MediaResult WriteBackComposite(const std::string& slotId, Medium& medium, const CompositeInfo& composite,
+                                   const SaveOptions& options, SaveOutcome* outcome);
     /// Another slot (or detached medium) uses `path`: as its own file or as a layer source
     bool UsedElsewhere(const Medium& self, const std::string& path) const;
     /// S2: the change layer of a composite into its session delta file

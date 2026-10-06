@@ -6,6 +6,7 @@
 #include "emulator/media/compositemediumfactory.h"
 #include "emulator/media/sessiondelta.h"
 #include "emulator/media/mediachanges.h"
+#include "emulator/media/writeback.h"
 #include "emulator/io/storage/commitjournal.h"
 #include "emulator/io/storage/compose/graftvolume.h"
 #include "emulator/io/storage/hddimageformats.h"
@@ -1040,7 +1041,7 @@ MediaResult MediaManager::SaveBlockMedium(const std::string& slotId, Medium& med
         if (strategy == "commit")
             return CommitComposite(slotId, medium, slot, *composite, options, outcome);
         if (strategy == "write-back")
-            return MediaResult::Fail(MediaError::NotSupported, "strategy 'write-back' is not there yet (phase C8b): save as delta, commit, or flat to a path");
+            return WriteBackComposite(slotId, medium, *composite, options, outcome);
         if (strategy != "flat")
             return MediaResult::Fail(MediaError::BadRequest, "strategy '" + strategy + "': expected flat, delta, commit or write-back");
         if (options.path.empty())
@@ -1099,6 +1100,71 @@ MediaResult MediaManager::SaveDelta(const std::string& slotId, Medium& medium, c
         outcome->note = result.report.back();
     }
     Post(NC_MEDIA_SAVED, slotId, &medium, savedPath);
+    return result;
+}
+
+MediaResult MediaManager::WriteBackComposite(const std::string& slotId, Medium& medium, const CompositeInfo& composite,
+                                             const SaveOptions& options, SaveOutcome* outcome)
+{
+    if (composite.descriptor == ComposeDescriptor::kInlineName)
+        return MediaResult::Fail(MediaError::BadRequest, "an inline descriptor cannot take write-back: write it to a file");
+    const ComposeDescriptor d = ComposeDescriptor::Load(FileHelper::ToFsPath(composite.descriptor));
+    if (!d.Ok())
+        return MediaResult::Fail(MediaError::BadRequest, d.error);
+    WriteBackOptions wb;
+    wb.force = options.force;
+    wb.keepBoth = options.keepBoth;
+    WriteBackPlan plan;
+    MediaResult planned = WriteBack::Plan(medium, d, wb, plan);
+    if (!planned.Ok())
+        return planned;
+
+    MediaResult result = MediaResult::Success();
+    for (const WriteBackStep& s : plan.steps)
+    {
+        std::string line = std::string(WriteBackStep::KindName(s.kind)) + " " + s.path;
+        if (!s.layer.empty())
+            line += " [" + s.layer + "]";
+        if (!s.host.empty())
+            line += " -> " + FileHelper::FromFsPath(s.host);
+        if (s.kind == WriteBackStep::Kind::Write)
+            line += " (" + std::to_string(s.bytes) + " bytes)";
+        if (!s.detail.empty())
+            line += ": " + s.detail;
+        result.report.push_back(line);
+    }
+    for (const std::string& e : plan.errors)
+        result.report.push_back("error: " + e);
+    if (options.plan)
+    {
+        result.report.push_back(plan.errors.empty() ? "plan only: nothing was written" : "plan only: write-back would be refused");
+        return result;
+    }
+    MediaResult applied = WriteBack::Apply(medium, d, plan);
+    if (!applied.Ok())
+    {
+        applied.report.insert(applied.report.begin(), result.report.begin(), result.report.end());
+        return applied;
+    }
+    result.report.insert(result.report.end(), applied.report.begin(), applied.report.end());
+
+    // The host now holds the guest's files: build again, with an empty change layer
+    medium.Session()->Discard();
+    std::error_code ec;
+    if (!composite.delta.empty() && std::filesystem::remove(composite.delta, ec))
+        result.report.push_back(FileHelper::FromFsPath(composite.delta.filename()) + " removed: the layers hold its changes now");
+    if (outcome)
+    {
+        outcome->savedPath = composite.descriptor;
+        outcome->retargeted = false;
+        outcome->note = result.report.empty() ? std::string() : result.report.back();
+    }
+    Post(NC_MEDIA_SAVED, slotId, &medium, composite.descriptor);
+    if (auto it = _slots.find(slotId); it != _slots.end() && it->second.attached.get() == &medium)
+    {
+        const MediaResult rebuilt = Rescan(slotId);
+        result.report.push_back(rebuilt.Ok() ? "rebuilt from the layers" : "rebuild: " + rebuilt.message);
+    }
     return result;
 }
 

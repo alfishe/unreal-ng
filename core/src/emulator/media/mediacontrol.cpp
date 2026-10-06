@@ -282,7 +282,7 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"insert", kInsertOptions},
         {"swap", kInsertOptions},
         {"eject", {"save", "export", "discard", "end_recording", "async"}},
-        {"save", {"retarget", "compression", "compact", "fs", "size", "strategy", "force", "plan"}},
+        {"save", {"retarget", "compression", "compact", "fs", "size", "strategy", "force", "plan", "onConflict"}},
         {"export", {"compression", "parent", "compact", "fs", "size"}},
         {"discard", {"async"}},
         {"rescan", {"async"}},
@@ -291,7 +291,7 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"compose", {"fs", "codepage", "free"}},
         {"layers", {}},
         {"changes", {}},
-        {"flatten", {"strategy", "plan", "force", "compression", "compact", "fs", "size"}},
+        {"flatten", {"strategy", "plan", "force", "onConflict", "compression", "compact", "fs", "size"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -1053,6 +1053,13 @@ MediaReply MediaControl::Save(const MediaRequest& request)
         return Fail(MediaError::BadRequest, "force '" + force->second + "': expected true or false");
     if (auto plan = request.options.find("plan"); plan != request.options.end() && !ParseBool(plan->second, options.plan))
         return Fail(MediaError::BadRequest, "plan '" + plan->second + "': expected true or false");
+    if (auto conflict = request.options.find("onConflict"); conflict != request.options.end())
+    {
+        const std::string v = Lower(Trim(conflict->second));
+        if (v != "refuse" && v != "keep-both")
+            return Fail(MediaError::BadRequest, "onConflict '" + conflict->second + "': expected refuse or keep-both");
+        options.keepBoth = v == "keep-both";
+    }
     if (request.verb == "flatten")
     {
         // flatten names its strategy and never goes through DT-9 (that is save)
