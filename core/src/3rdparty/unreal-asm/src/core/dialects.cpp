@@ -1,6 +1,7 @@
 #include "unrealasm/dialect.h"
 
 #include "dialects/alasm/alasmfrontend.h"
+#include "dialects/tasm/tasmfrontend.h"
 #include "dialects/sjasmplus/sjasmplusbackend.h"
 #include "dialects/sjasmplus/sjasmplusfrontend.h"
 
@@ -12,6 +13,7 @@ const DialectRegistry& DialectRegistry::Builtin()
         DialectRegistry r;
         // One line per plugin (decision D-6)
         r.Add(std::make_unique<dialects::AlasmFrontend>());
+        r.Add(std::make_unique<dialects::TasmFrontend>());
         r.Add(std::make_unique<dialects::SjasmplusFrontend>());
         r.Add(std::make_unique<dialects::SjasmplusBackend>());
         return r;

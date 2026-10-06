@@ -11,7 +11,9 @@ Part of [unreal-ng](https://github.com/alfishe/unreal-ng); design: `docs/inprogr
 - A2-A4: codecs of every version of the tokenized formats: `tasm` (2.0, 3, 4.0, 4.12), `alasm` (3.8 … 5.09),
   `zxasm` (2.4 … 4.20), `storm` (1.0beta, 1.2-1.3i); hobeta and TR-DOS containers.
 - A5: dialect conversion through a neutral IR (`ir.h`, `dialect.h`): the `alasm` frontend, the `sjasmplus` frontend
-  and backend; ALASM → sjasmplus checked against ALASM's own binaries. TASM, STORM and ZX-ASM frontends come next.
+  and backend; ALASM → sjasmplus checked against ALASM's own binaries.
+- A5b: the `tasm` frontend (3 / 4.0 / 4.12); the GS 1.04 ROM sources convert and assemble to the ROM byte for byte.
+  STORM and ZX-ASM frontends come next. Corpus and emulator checks: `tools/unreal-asm/` in unreal-ng.
 
 ## Layout
 

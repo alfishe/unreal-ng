@@ -5,6 +5,7 @@
 #include <map>
 #include <set>
 
+#include "dialects/common/macros.h"
 #include "dialects/common/z80.h"
 
 namespace unrealasm::dialects
@@ -677,113 +678,6 @@ void ParseLine(const std::string& text, uint32_t number, std::set<std::string>& 
     result.program.lines.push_back(std::move(line));
 }
 
-/// A macro body gluing a parameter to a name (ax\0, TEXTURER\0MAX) or walking its parameter text (\C \N \S \P \R):
-/// no target expresses that, the calls are expanded
-bool NeedsExpansion(const std::vector<std::string>& body)
-{
-    for (const std::string& line : body)
-        for (size_t k = 0; k + 1 < line.size(); ++k)
-        {
-            if (line[k] != '\\')
-                continue;
-            const char c = line[k + 1];
-            if (c == 'C' || c == 'N' || c == 'S' || c == 'P' || c == 'R')
-                return true;
-            if (std::isdigit(static_cast<unsigned char>(c)))
-            {
-                const bool before = k > 0 && (std::isalnum(static_cast<unsigned char>(line[k - 1])) || line[k - 1] == '_');
-                const bool after = k + 2 < line.size() && (std::isalnum(static_cast<unsigned char>(line[k + 2])) || line[k + 2] == '_' ||
-                                                           line[k + 2] == '\\');
-                if (before || after)
-                    return true;
-            }
-        }
-    return false;
-}
-
-/// The parameter text of one macro call and ALASM's pointer into it (help "MACRO"): \0..\9 count comma-separated
-/// parameters from the pointer, \P returns parameter 0 and moves the pointer to parameter 1, \C is the symbol at the
-/// pointer, \N moves it one symbol, \S<char> is the text from the pointer up to <char>, \R puts the pointer back
-struct MacroArguments
-{
-    std::string text;
-    size_t pointer = 0;
-
-    /// Offset of the end of the parameter starting at `from` (a comma outside quotes, or the end)
-    size_t FieldEnd(size_t from) const
-    {
-        bool quote = false;
-        for (size_t k = from; k < text.size(); ++k)
-        {
-            if (text[k] == '"')
-                quote = !quote;
-            else if (text[k] == ',' && !quote)
-                return k;
-        }
-        return text.size();
-    }
-
-    std::string Field(size_t index) const
-    {
-        size_t start = std::min(pointer, text.size());
-        for (size_t n = 0; n < index; ++n)
-        {
-            const size_t end = FieldEnd(start);
-            if (end >= text.size())
-                return {};
-            start = end + 1;
-        }
-        return text.substr(start, FieldEnd(start) - start);
-    }
-};
-
-std::string Substitute(const std::string& line, MacroArguments& args)
-{
-    std::string out;
-    for (size_t k = 0; k < line.size(); ++k)
-    {
-        if (line[k] != '\\' || k + 1 >= line.size())
-        {
-            out.push_back(line[k]);
-            continue;
-        }
-        const char c = line[k + 1];
-        ++k;
-        if (std::isdigit(static_cast<unsigned char>(c)))
-            out += args.Field(static_cast<size_t>(c - '0'));
-        else if (c == 'P')
-        {
-            out += args.Field(0);
-            const size_t end = args.FieldEnd(std::min(args.pointer, args.text.size()));
-            args.pointer = end < args.text.size() ? end + 1 : args.text.size();
-        }
-        else if (c == 'R')
-            args.pointer = 0;
-        else if (c == 'C')
-        {
-            if (args.pointer < args.text.size())
-                out.push_back(args.text[args.pointer]);
-        }
-        else if (c == 'N')
-        {
-            if (args.pointer < args.text.size())
-                ++args.pointer;
-        }
-        else if (c == 'S' && k + 1 < line.size())
-        {
-            const char stop = line[++k];
-            const size_t from = std::min(args.pointer, args.text.size());
-            const size_t end = std::min(args.text.find(stop, from), args.text.size());
-            out += args.text.substr(from, end - from);
-        }
-        else
-        {
-            out.push_back('\\');
-            out.push_back(c);
-        }
-    }
-    return out;
-}
 }  // namespace
 
 FrontendResult AlasmFrontend::Parse(const SourceDocument& source) const

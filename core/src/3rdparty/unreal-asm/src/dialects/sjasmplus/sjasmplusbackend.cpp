@@ -64,6 +64,9 @@ const char* Symbol(Op op)
     }
 }
 
+// The DEFINE that says a displacement is active, for sources whose displacement continues across INCLUDE
+constexpr const char* kDisplacementFlag = "__UNREALASM_DISP";
+
 // Words sjasmplus reads as operators, keywords, registers or conditions whatever their case: a label with such a name
 // is renamed (ALASM keeps lower-case "iy" or "b" as labels, sjasmplus would read the register)
 const std::set<std::string> kReserved = {
@@ -73,14 +76,32 @@ const std::set<std::string> kReserved = {
     "nz", "z", "nc", "po", "pe", "p", "m",
 };
 
+/// A label sjasmplus accepts: a letter or "_" first (after one "@" or "." prefix), then letters, digits and _ . ? ! @
 bool IsValidLabel(const std::string& name)
 {
-    if (name.empty() || std::isdigit(static_cast<unsigned char>(name[0])))
+    const size_t first = !name.empty() && (name[0] == '@' || name[0] == '.') ? 1 : 0;
+    if (name.size() <= first || !(std::isalpha(static_cast<unsigned char>(name[first])) || name[first] == '_'))
         return false;
     for (const char c : name)
         if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '?' || c == '!' || c == '@'))
             return false;
     return true;
+}
+
+/// The rename of a label sjasmplus would reject or read as something else; the same in every file of a project
+std::string SafeName(const std::string& name)
+{
+    std::string renamed = "L_" + name;
+    for (char& c : renamed)
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
+            c = '_';
+    return renamed;
+}
+
+/// A macro name sjasmplus accepts (TASM 4.12 names macros HL*8)
+std::string MacroName(const std::string& name)
+{
+    return IsValidLabel(name) && name[0] != '.' && name[0] != '@' ? name : SafeName(name);
 }
 
 struct Writer
@@ -98,6 +119,7 @@ struct Writer
     int repeatCounter = 0;
     std::vector<int> repeatStack;
     bool sameDialect = false;   // the program was parsed from sjasmplus: directives kept as text are written back
+    bool displacementFlag = false;   // DISP / ENT also keep a DEFINE that says whether a displacement is active
 
     std::string Name(const std::string& name) const
     {
@@ -113,7 +135,7 @@ struct Writer
         if (found != renames.end())
             return found->second;
         // A label defined in another file of the project gets the same rename there
-        return kReserved.count(z80::Lower(name)) ? "L_" + name : name;
+        return kReserved.count(z80::Lower(name)) || !IsValidLabel(name) ? SafeName(name) : name;
     }
 
     std::string Hex(int64_t value, int digits) const
@@ -195,6 +217,13 @@ struct Writer
                     case Op::High: return "high " + Atom(e.args[0]);
                     case Op::Low: return "low " + Atom(e.args[0]);
                     case Op::Exists: return "exist " + Atom(e.args[0]);
+                    case Op::SwapBytes:
+                    {
+                        // ((x&#FF)<<8)|((x&#FFFF)>>8)
+                        const Expr low = Expr::Binary(Op::And, e.args[0], Expr::Number(0xFF, ir::NumberSpelling::Hex, 2));
+                        const Expr high = Expr::Binary(Op::And, e.args[0], Expr::Number(0xFFFF, ir::NumberSpelling::Hex, 4));
+                        return Print(Grouped(Expr::Binary(Op::Or, Expr::Binary(Op::Shl, low, Expr::Number(8)), Expr::Binary(Op::Shr, high, Expr::Number(8)))));
+                    }
                     default: return Atom(e.args[0]);
                 }
             case Expr::Kind::Binary:
@@ -320,7 +349,7 @@ struct Writer
                 bool colon = false;   // sjasmplus would split the line there
                 for (const std::string& p : s.params)
                     colon = colon || (p.find(':') != std::string::npos && p.find_first_of("\"'") == std::string::npos);
-                if (!IsValidLabel(s.mnemonic) || colon)
+                if (colon)
                 {
                     std::string text = s.mnemonic;
                     for (size_t k = 0; k < s.params.size(); ++k)
@@ -339,7 +368,7 @@ struct Writer
                 std::string args;
                 for (size_t k = 0; k < params.size(); ++k)
                     args += (k ? "," : "") + params[k];
-                return {s.mnemonic + (args.empty() ? "" : " " + args)};
+                return {MacroName(s.mnemonic) + (args.empty() ? "" : " " + args)};
             }
             case Statement::Kind::Instruction:
             {
@@ -365,6 +394,13 @@ struct Writer
             case ir::DirectiveKind::Db: return {"DB " + Operands(s.operands)};
             case ir::DirectiveKind::Dw: return {"DW " + Operands(s.operands)};
             case ir::DirectiveKind::Ds:
+                // A fill sequence given as operands (strings too, TASM) or as arguments (ALASM): DUP when longer than a byte
+                if (!s.operands.empty())
+                {
+                    if (s.operands.size() == 1 && s.operands[0].kind == Operand::Kind::Immediate)
+                        return {"DS " + Print(s.args[0]) + "," + Operands(s.operands)};
+                    return {"DUP " + Print(s.args[0]), "DB " + Operands(s.operands), "EDUP"};
+                }
                 if (s.args.size() <= 2)
                     return {"DS " + args()};
                 return {"DUP " + Print(s.args[0]), "DB " + args(1), "EDUP"};
@@ -384,7 +420,16 @@ struct Writer
                 const size_t colon = name.find(':');
                 if (colon != std::string::npos)
                     name = name.substr(colon + 1);
-                return {"INCBIN \"" + name + "\"" + (s.args.empty() ? "" : "," + args())};
+                const std::string incbin = "INCBIN \"" + name + "\"" + (s.args.empty() ? "" : "," + args());
+                if (s.params.empty() || s.params[0] != "sector-slack")
+                    return {incbin};
+                // The rest of the last sector ("<file>.slack") is written next, then the address goes back
+                const std::string slack = "INCBIN \"" + name + ".slack\"";
+                if (!displacementFlag)
+                    return {incbin, "@__UNREALASM_INCBIN_D=$", slack, "ORG __UNREALASM_INCBIN_D"};
+                return {incbin, "IFDEF " + std::string(kDisplacementFlag), "@__UNREALASM_INCBIN_D=$", "@__UNREALASM_INCBIN_P=$$$", slack, "ENT",
+                        "ORG __UNREALASM_INCBIN_P", "DISP __UNREALASM_INCBIN_D", "ELSE", "@__UNREALASM_INCBIN_D=$", slack, "ORG __UNREALASM_INCBIN_D",
+                        "ENDIF"};
             }
             case ir::DirectiveKind::If:
             {
@@ -420,8 +465,16 @@ struct Writer
                 const std::string var = "__repeat" + std::to_string(n);
                 return {"@" + var + "=(" + args() + ")!=0", "ENDW"};
             }
-            case ir::DirectiveKind::Disp: return {"DISP " + args()};
-            case ir::DirectiveKind::Ent: return {"ENT"};
+            case ir::DirectiveKind::Disp:
+                if (displacementFlag)
+                    return {"DISP " + args(), "DEFINE " + std::string(kDisplacementFlag)};
+                return {"DISP " + args()};
+            case ir::DirectiveKind::Ent:
+                if (s.text == "if-displaced")
+                    return {"IFDEF " + std::string(kDisplacementFlag), "ENT", "UNDEFINE " + std::string(kDisplacementFlag), "ENDIF"};
+                if (displacementFlag)
+                    return {"ENT", "UNDEFINE " + std::string(kDisplacementFlag)};
+                return {"ENT"};
             case ir::DirectiveKind::Display: return {"DISPLAY " + Operands(s.operands)};
             case ir::DirectiveKind::End: return {"END"};
             case ir::DirectiveKind::Main: return {"@; ALASM MAIN \"" + s.text + "\" (the project's main source)"};
@@ -444,7 +497,7 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
     result.document.dialect = "sjasmplus";
     result.document.codePage = encoding::CodePage::Cp866;   // strings are program bytes: keep the Spectrum code page
     Writer w{options, result.diagnostics, 0, {}, {}, false, false, program.expressionBits, program.unsignedArithmetic, options.macroParams, 0, {},
-             program.dialect == "sjasmplus"};
+             program.dialect == "sjasmplus", program.displacementAcrossFiles};
 
     // Global labels sjasmplus would read as operators or reject
     std::set<std::string> used;
@@ -454,10 +507,7 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
     for (const std::string& name : used)
         if (kReserved.count(z80::Lower(name)) || !IsValidLabel(name))
         {
-            std::string renamed = "L_" + name;
-            for (char& c : renamed)
-                if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_'))
-                    c = '_';
+            std::string renamed = SafeName(name);
             while (used.count(renamed))
                 renamed += "_";
             w.renames[name] = renamed;
@@ -582,6 +632,8 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
             else if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::EndMacro)
                 closeMacro = true;
         }
+        if (openMacro)
+            w.inMacro = true;   // a LOCAL block opened on the macro's own line belongs to the macro (TASM's DEFMAC)
         if (openBlock)
         {
             std::map<std::string, std::string> scope = nextBlock < blockRenames.size() ? blockRenames[nextBlock] : std::map<std::string, std::string>{};
@@ -602,7 +654,7 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
             std::string params;
             for (size_t k = 0; k < namedParams.size(); ++k)
                 params += (k ? "," : "") + namedParams[k];
-            texts.push_back("MACRO " + macroHeader + " " + params);
+            texts.push_back("MACRO " + MacroName(macroHeader) + " " + params);
             w.macroParams[macroHeader] = static_cast<int>(namedParams.size());
             result.macroParams[macroHeader] = static_cast<int>(namedParams.size());
             w.inMacro = true;
@@ -647,7 +699,7 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
             std::string params;
             for (int k = 0; k <= highest; ++k)
                 params += (k ? "," : "") + std::string("_arg") + std::to_string(k);
-            texts.push_back("MACRO " + macroHeader + (params.empty() ? "" : " " + params));
+            texts.push_back("MACRO " + MacroName(macroHeader) + (params.empty() ? "" : " " + params));
             w.macroParams[macroHeader] = highest + 1;
             result.macroParams[macroHeader] = highest + 1;
             w.inMacro = true;

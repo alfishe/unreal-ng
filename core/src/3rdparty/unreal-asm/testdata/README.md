@@ -18,5 +18,9 @@ Part of the library (decision D-14): every codec and plugin is tested on the fil
 
 | `dialects/thelink/` | The GSTUNNE4 unit of The Link (hobeta): the main source, `gsports` and `SAVEOBJ4` it includes, `torusr.p`, `dplan2r.p`, `thelinkm` it `INCBIN`s, and `TUNNELZX` / `TUNNELGS`, the objects ALASM built from it; `*.asm` = the expected sjasmplus conversion of the three sources | The Link's working disk (`testdata/machines/pentagon1024sl/TheLink.trd` in unreal-ng), extracted unchanged (file bytes up to the catalog length, rewrapped as hobeta); the `*.asm` files are written by `unreal-asm-tests` with `UNREAL_ASM_UPDATE_GOLDEN=1` and checked by hand against sjasmplus + ALASM's objects |
 
+| `dialects/gs104/` | The General Sound 1.04 ROM project (hobeta): `MAIN` and the 20 sources it includes (TASM 4.0), `STUFF`, `BPM`, `SGEN` it `INCBIN`s, and `GS.C`, the ROM TASM built (= unreal-ng's `data/rom/gs104.rom`) | `GS104SRC.TRD` in `GS104SRC.ZIP` from KLUG's BBS archive ([klug_bbs.7z](https://yadi.sk/d/N_p56RIHWU15Gw)), extracted unchanged with whole sectors (the slack after `BPM` is in the ROM). The author allows free non-commercial use and modification with the sources available. Research: `docs/inprogress/2026-10-05-unreal-asm/research-tasm-to-sjasmplus.md` |
+
+| `dialects/tasm412/` | `SIN7.$A`: TASM 4.12's SINUS example with `ORG #7000` (clear of TASM's overlay at `#8000`); `SIN7.bin`: the 256 bytes TASM 4.12 built from it | SINUS from [TASM 4.12](https://zxart.ee/releasefile/id:249305/TASM_412.ZIP); `SIN7.bin` read from the emulator's memory after TASM 4.12 assembled it in unreal-ng (`tools/unreal-asm/assemble-in-emulator.py tasm412`) |
+
 Each new codec adds its folder with files produced by the real assembler and a README section saying how they were
 made (source-formats.md §3 of the design).

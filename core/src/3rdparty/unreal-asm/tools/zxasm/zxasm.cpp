@@ -243,16 +243,23 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
                 continue;
             const size_t close = line.text.find('"', at + 8);
             const std::string wanted = line.text.substr(at + 8, close - at - 8);
-            const size_t dot = wanted.find('.');
-            const std::string name = wanted.substr(0, dot);
-            const char type = dot == std::string::npos ? 0 : wanted[dot + 1];
+            // "<file>.slack": the rest of the file's last sector (TASM's INCBIN copies whole sectors)
+            const bool slack = wanted.size() > 6 && wanted.compare(wanted.size() - 6, 6, ".slack") == 0;
+            const std::string file = slack ? wanted.substr(0, wanted.size() - 6) : wanted;
+            const size_t dot = file.find('.');
+            const std::string name = file.substr(0, dot);
+            const char type = dot == std::string::npos ? 0 : file[dot + 1];
+            // Without a type letter the code file (type C) is meant, as TASM and ALASM read it; the last match wins
+            const containers::TrdosFile* found = nullptr;
             for (const auto& file : files)
-                if (file.TrimmedName() == name && (type == 0 || file.type == type))
-                {
-                    WriteFile(args.output + "/" + wanted, file.data);
-                    if (extracted.find("|" + wanted + "|") == std::string::npos)
-                        extracted += "|" + wanted + "|";
-                }
+                if (file.TrimmedName() == name && (type == 0 || file.type == type) && !(found && type == 0 && found->type == 'C' && file.type != 'C'))
+                    found = &file;
+            if (found)
+            {
+                WriteFile(args.output + "/" + wanted, slack ? found->tail : found->data);
+                if (extracted.find("|" + wanted + "|") == std::string::npos)
+                    extracted += "|" + wanted + "|";
+            }
         }
     }
     std::cerr << converted.files.size() << " source(s) converted to " << args.output << "\n";
