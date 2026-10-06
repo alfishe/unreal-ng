@@ -232,6 +232,26 @@ void CLIProcessor::HandleMedia(const ClientSession& session, const std::vector<s
         out << "  slot " << reply.slot << NEWLINE;
         CompositeText(out, *body.find("layers"));
     }
+    else if (verb == "changes")
+    {
+        const StateNode* changes = body.find("changes");
+        out << "  slot " << reply.slot << ": " << (changes ? changes->items.size() : 0) << " change(s) in "
+            << body.find("changedSectors")->i << " changed sector(s)" << NEWLINE;
+        if (changes)
+        {
+            for (const StateNode& c : changes->items)
+            {
+                out << "  " << c.find("op")->s << " " << c.find("path")->s;
+                if (const StateNode* old = c.find("oldPath"))
+                    out << " (was " << old->s << ")";
+                if (!c.find("layer")->s.empty())
+                    out << " [" << c.find("layer")->s << "]";
+                out << NEWLINE;
+            }
+        }
+        for (const StateNode& w : body.find("warnings")->items)
+            out << "  warning: " << w.s << NEWLINE;
+    }
     else
     {
         out << "ok: " << reply.slot;
@@ -269,7 +289,9 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "  protect <slot> --on true|false - the write-protect switch" << NEWLINE;
     out << "  compose <descriptor>         - build a *.ucompose.yaml without inserting it: layout and report" << NEWLINE;
     out << "                                 (insert takes the descriptor like any file)" << NEWLINE;
-    out << "  layers <slot>                - a composite medium's layers" << NEWLINE << NEWLINE;
+    out << "  layers <slot>                - a composite medium's layers" << NEWLINE;
+    out << "  changes <slot>               - the guest's unsaved writes as file operations (and their layers)" << NEWLINE
+        << NEWLINE;
     out << "Slot: id (fdd.b), alias (B, b:, sd, hd), kind:index (floppy:1), tag:a+b" << NEWLINE;
     out << "A dirty medium leaves only with --save, --export <path> or --discard" << NEWLINE;
     out << "Options per verb:" << NEWLINE;

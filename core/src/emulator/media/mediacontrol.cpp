@@ -2,7 +2,10 @@
 
 #include "mediacontrol.h"
 
+#include "emulator/io/storage/compose/changeattributor.h"
+#include "emulator/io/storage/compose/composedlayout.h"
 #include "emulator/io/storage/fat/fatsynthvolume.h"
+#include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/media/composedescriptor.h"
 #include "emulator/media/compositemediumfactory.h"
 
@@ -246,7 +249,7 @@ const std::vector<std::string>& MediaControl::Verbs()
 {
     static const std::vector<std::string> verbs = {"list", "info", "formats", "targets", "insert", "eject", "swap",
                                                    "save", "export", "discard", "rescan", "create", "protect",
-                                                   "compose", "layers"};
+                                                   "compose", "layers", "changes"};
     return verbs;
 }
 
@@ -268,6 +271,7 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"protect", {"on"}},
         {"compose", {"fs", "codepage", "free"}},
         {"layers", {}},
+        {"changes", {}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -339,6 +343,8 @@ MediaReply MediaControl::Run(const MediaRequest& request)
         reply = Compose(request);
     else if (verb == "layers")
         reply = Layers(request);
+    else if (verb == "changes")
+        reply = Changes(request);
     else
         reply = Protect(request);
     return reply;
@@ -400,6 +406,57 @@ MediaReply MediaControl::Layers(const MediaRequest& request)
         return Fail(MediaError::NotSupported, "slot '" + reply.slot + "' does not hold a composite medium");
     reply.body["layers"] = CompositeValue(*medium->Composite());
     reply.result.report = medium->Report();
+    return reply;
+}
+
+MediaReply MediaControl::Changes(const MediaRequest& request)
+{
+    MediaReply reply;
+    reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
+    if (!reply.result.Ok())
+        return reply;
+    Medium* medium = _manager->GetMedium(reply.slot);
+    if (!medium || !medium->Block() || medium->Kind() != MediaKind::Block)
+        return Fail(MediaError::NotSupported, "slot '" + reply.slot + "' does not hold a disk or a card");
+    SessionWriteMap* session = medium->Session();
+    if (!session)
+        return Fail(MediaError::NotSupported, "slot '" + reply.slot +
+                                                  "': the guest's writes are listed for media with session writes (this one is " +
+                                                  AccessModeName(medium->Access()) + ")");
+
+    ChangeSet set;
+    std::string error;
+    bool ok = false;
+    {
+        ParkedEmulator parked(_context);
+        const auto* layout = dynamic_cast<const IComposedLayout*>(&session->Base());
+        ok = ChangeAttributor::Attribute(session->Base(), *session, session->Changes(), layout, set, &error);
+    }
+    if (!ok)
+        return Fail(MediaError::NotSupported, "slot '" + reply.slot + "': " + error);
+
+    const CompositeInfo* composite = medium->Composite();
+    StateNode changes = StateNode::Array();
+    for (const FileChange& change : set.changes)
+    {
+        StateNode c = StateNode::Object();
+        c["op"] = FileChange::OpName(change.op);
+        c["path"] = change.path;
+        if (change.op == FileChange::Op::Rename)
+            c["oldPath"] = change.oldPath;
+        std::string layer;
+        if (change.layer >= 0 && composite && static_cast<size_t>(change.layer) < composite->layers.size())
+            layer = composite->layers[static_cast<size_t>(change.layer)].name;
+        c["layer"] = layer;
+        c["sizeBefore"] = change.sizeBefore;
+        c["sizeAfter"] = change.sizeAfter;
+        changes.push(std::move(c));
+    }
+    reply.body["changes"] = std::move(changes);
+    reply.body["warnings"] = Strings(set.warnings);
+    reply.body["changedSectors"] = set.changedSectors;
+    reply.body["directoriesRead"] = static_cast<uint64_t>(set.directoriesRead);
+    reply.body["fullScan"] = set.fullScan;
     return reply;
 }
 

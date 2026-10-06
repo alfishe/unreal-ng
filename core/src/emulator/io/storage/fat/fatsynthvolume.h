@@ -32,9 +32,11 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "common/unicodehelper.h"
+#include "emulator/io/storage/compose/composedlayout.h"
 #include "emulator/io/storage/compose/extentreader.h"
 #include "emulator/io/storage/compose/filetree.h"
 #include "emulator/io/storage/iblockdevice.h"
@@ -79,7 +81,7 @@ struct FatVolumeOptions
     std::shared_ptr<const FatBootPlan> boot;   ///< D-6 boot structures; null: the builder's own (no code)
 };
 
-class FatSynthVolume : public IBlockDevice
+class FatSynthVolume : public IBlockDevice, public IComposedLayout
 {
 public:
     /// Build the volume over `tree`, whose file data `pool` serves.
@@ -120,7 +122,8 @@ public:
                static_cast<uint64_t>(_usedClusters) * _sectorsPerCluster;
     }
 
-    const FileTree& Tree() const { return *_tree; }
+    const FileTree& Tree() const override { return *_tree; }
+    SectorOwner OwnerOf(uint64_t lba) const override;
     /// Problems met while serving reads (a host file that shrank or vanished)
     const std::vector<std::string>& Warnings() const;
 
@@ -165,4 +168,6 @@ private:
 
     std::vector<std::vector<uint8_t>> _directories;  ///< [0] = root
     std::vector<Run> _runs;                          ///< sorted by firstCluster
+    std::vector<uint32_t> _directoryNodes;           ///< the tree node of each _directories entry
+    std::unordered_map<uint32_t, uint32_t> _dirClusterOfNode;  ///< directory node -> first cluster (root: 0)
 };

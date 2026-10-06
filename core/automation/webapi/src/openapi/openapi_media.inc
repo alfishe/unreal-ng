@@ -72,7 +72,7 @@
             verbs += "\n- **" + v + "**: " + (options.empty() ? "no options" : options);
         }
         Json::Value& post = paths["/api/v1/emulator/{id}/media/{slot}/{verb}"]["post"];
-        post["summary"] = "insert / swap / eject / save / export / discard / rescan / create / protect / layers";
+        post["summary"] = "insert / swap / eject / save / export / discard / rescan / create / protect / layers / changes";
         post["description"] =
             "Operations are synchronous: the reply comes when the medium is in or out of the slot (swap delay "
             "included, at most 5 s, then pending = true). async: true replies at once with pending = true. "

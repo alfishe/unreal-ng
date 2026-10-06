@@ -1,6 +1,6 @@
 # C6 — flat images (S1), change attribution, session delta (S2)
 
-**Status:** C6a built 2026-10-05 (as-built notes in §6); C6b and C6c designed. Phase C6 of [tdd.md](../tdd.md) §13 (§9, §10 there), strategies S1 and S2 of
+**Status:** C6a built 2026-10-05, C6b 2026-10-06 (as-built notes in §6, §7); C6c designed. Phase C6 of [tdd.md](../tdd.md) §13 (§9, §10 there), strategies S1 and S2 of
 [flatten-strategies.md](../flatten-strategies.md) (its decision trees DT-8, DT-9, DT-13 apply as written). Exit:
 ACC-C3 (attribution), ACC-C6, ACC-C7. The phase lands in three commits:
 
@@ -79,9 +79,9 @@ flowchart TD
 | C6a | `FlattenFlat_Test.CompactDefragmentsAndOracleAgrees` | a fragmented FAT image compacted: every file one extent, the same tree and bytes; `fs: fat32` converts |
 | C6a | `FlattenFlat_Test.SaveCompactRebasesTheMedium` | `save` with `compact`: the slot reads the new file, the change layer is empty |
 | C6a | ACC-C6 `SprinterBoot_Test.ComposeFlatImageBootsAlone` | the ACC-C3 session (graft + guest `mkdir`) exported to `.img` and `.vhd`; each boots DSS alone and shows the folder and the new directory |
-| C6b | `ProvenanceMap_Test.EveryRegionKind` / `.ForEachChangedMergeWalk` | owners per region, rebuild and graft; the walk equals per-LBA calls |
+| C6b | `ComposedLayout_Test.EveryRegionKindOfARebuild` / `.GraftOwners` / `.ForEachChangedOwnerInLbaOrder` | owners per region, rebuild and graft; the walk equals per-LBA calls |
 | C6b | `ChangeAttributor_Test.*` | create, modify, append, truncate, delete, rename, move, mkdir, rmdir: one `FileChange` each with the right layer; an ISO layer's file; lost clusters warned; untouched subtrees not read |
-| C6b | ACC-C3 `SprinterBoot_Test.ComposeDssGuestWriteAttributed` | the guest's `mkdir` and a file it writes show in `media changes` |
+| C6b | ACC-C3 `SprinterBoot_Test.ComposeDssGuestWriteAttributed` | the guest's `mkdir` (in the root and in a grafted folder) shows in `media changes` |
 | C6c | `ComposeDelta_Test.RoundTrip` / `.IdMismatchRefusedWithReason` / `.TruncatedFileRefused` | S2 |
 | C6c | ACC-C7 `ComposeAcceptance_Test.DeltaSurvivesRestart` | a new emulator, the same descriptor: the guest reads its earlier write; a changed source refuses the delta with the layer named |
 
@@ -103,3 +103,22 @@ interleave cluster by cluster and with a deleted file's data left behind; compac
 small `size`; a FAT12 floppy), `.SaveCompactRebasesTheMedium`; ACC-C6 `SprinterBoot_Test.ComposeFlatImageBootsAlone`
 (the graft session with a guest `mkdir`, exported to `.img`, `.vhd` and a compact `.img`: each boots DSS 1.62 alone
 and lists the grafted folder; ~7 s, four boots).
+
+## 7. As built: C6b
+
+| Piece | Where | Notes |
+|---|---|---|
+| `IComposedLayout`, `SectorOwner`, `SectorRole` | `compose/composedlayout.h` | Roles: partition table, boot area (the gap after the MBR), volume header, FAT, directory, file data, free. A directory or file sector names its union node, the node's layer, the byte offset in it and `dirCluster`, the first cluster of the directory that holds its entries (0: the root on every FAT type). The ChangeAttributor needs that cluster to know where to look. `ForEachChangedOwner` walks a change map in LBA order; one `OwnerOf` per changed sector costs O(log n), so no merge walk is needed. |
+| `FatSynthVolume::OwnerOf` | `fat/fatsynthvolume.cpp` | From the existing run table, plus the tree node of each synthesized directory (`_directoryNodes`) and each directory node's first cluster. |
+| `GraftVolume::OwnerOf` | `compose/graftvolume.cpp` | The builder records the clusters of every directory it walks (untouched base directories in `Walk`, touched and new ones after allocation). Grafted files come from the run table. A base file's sectors come from the union tree's extents on the base image (or its partition window): an index built at the first call that needs it. `patched` marks sectors re-encoded over the base. |
+| `ChangeAttributor::Attribute` | `compose/changeattributor.{h,cpp}` | The evidence: header sectors become warnings (FAT32's FSInfo excluded: every DOS write updates it). A FAT change enables the lost-cluster check. A directory or file sector puts its directory into the scope; a free cluster adds nothing, because the entry that names it is in a changed directory. Each directory in scope is listed before and after the writes by its first cluster, and its path comes from the `..` chain, so only its ancestors are read. Entries are compared by name, ASCII case-insensitively. A file is modified when its size or first cluster changed or its chain holds a changed sector; only the read-only, hidden and system bits count for `attributes`. A delete and a create with the same first cluster, kind and size become a `rename`, which is also how a move between directories shows. A directory that disappears expands into `rmdir` and deletes of what it held; a new one into `mkdir` and creates. A directory present on only one side is left to its parent. Lost clusters are those allocated in the first FAT (FAT16 / FAT32; FAT12 is not checked) that no changed file or directory uses; a cluster used by two changed paths is reported as cross-linked. The layer of an entry is the `OwnerOf` of its first cluster before the writes; a new file, or an empty one, has none. |
+| No layout | same | A medium that is not composite, or a composite saved and rebased onto a file, gets a full scan when any data or FAT sector changed: every directory of the medium before the writes is compared (`fullScan`), and no layers are reported. |
+| `media changes <slot>` | `MediaControl::Changes`; CLI, MCP (`changes` action), WebAPI (`POST .../media/{slot}/changes`), Lua `media_changes`, Python `media_changes` | Block media with session writes; others are refused with the reason. The reply has `changes` (op, path, oldPath for a rename, layer name, sizeBefore, sizeAfter), `warnings`, `changedSectors`, `directoriesRead` and `fullScan`. The machine is parked while the volume is read. |
+
+Tests: `ComposedLayout_Test` (3), `ChangeAttributor_Test` (7: nothing written; create / in-place modify / append /
+truncate / delete with the folder, image and ISO layers named; rename, move, mkdir, rmdir, attributes; a moved
+directory as one rename; lost clusters; the untouched subtrees not read (at most 4 listings for one write, against
+20+ for the full scan); a graft), `MediaControl_Test.CompositeInsertLayersAndRescan` (the verb), ACC-C3
+`SprinterBoot_Test.ComposeDssGuestWriteAttributed`. The guest in the unit tests is `core/tests/_helpers/fatguest.h`, a
+writer that changes a FAT volume through its sectors the way DOS does. DSS 1.62 has no internal COPY and no output
+redirection, so on the real machine the guest only makes directories, in the root and in a grafted folder.

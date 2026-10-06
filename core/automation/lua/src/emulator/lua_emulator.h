@@ -1421,6 +1421,10 @@ public:
         lua.set_function("media_layers", [mediaCall](sol::this_state s, const std::string& slot) {
             return mediaCall(s, "layers", slot, "", sol::nullopt);
         });
+        // The guest's unsaved writes as file operations, with the layer each touched
+        lua.set_function("media_changes", [mediaCall](sol::this_state s, const std::string& slot) {
+            return mediaCall(s, "changes", slot, "", sol::nullopt);
+        });
         for (const char* verb : {"insert", "swap"})
         {
             lua.set_function(std::string("media_") + verb,

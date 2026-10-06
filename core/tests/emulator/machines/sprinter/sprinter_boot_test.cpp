@@ -20,6 +20,7 @@
 #include <emulator/io/fdc/wd1793.h>
 #include <emulator/io/ide/idecontroller.h>
 #include <emulator/io/keyboard/keyboard.h>
+#include <emulator/media/mediacontrol.h>
 #include <emulator/media/mediamanager.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/sprinter/sprinteraccelerator.h>
@@ -763,6 +764,46 @@ TEST_F(SprinterBoot_Test, ComposeDssGraftedUtilFolder)
     EXPECT_TRUE(ScreenHas("Estex DSS Version 1.62.92")) << ScreenText();
     EXPECT_TRUE(ScreenHas("C:\\>cd \\util")) << "the upper SYSTEM.BAT ran\n" << ScreenText();
     EXPECT_TRUE(ScreenHas("HELLO")) << "DIR lists the grafted host file\n" << ScreenText();
+    std::remove(image.c_str());
+}
+
+// ACC-C3 (media-multisource, attribution): DSS on the graft session makes a directory in the root and one inside the
+// grafted host folder; `media changes` names both as the guest did them (new: no layer) and nothing else. DSS 1.62 has
+// no internal COPY and no output redirection, so the guest writes no file here: ChangeAttributor_Test and
+// MediaControl_Test.CompositeInsertLayersAndRescan cover files.
+// Boot-bound (BIOS POST, the slave probe, DSS from the hard disk): ~500 frames of real ROM, the turbo mode on
+TEST_F(SprinterBoot_Test, ComposeDssGuestWriteAttributed)
+{
+    const std::string image = DssHddFile("dss-attr-base.img", "ver\r\n");
+    if (image.empty())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    ScratchFolder folder("sprinter-attr");
+    folder.File("util/HELLO.TXT", "hello from the host folder");
+    folder.File("patch/SYSTEM.BAT", "mkdir c:\\acc\r\nmkdir c:\\util\\sub\r\ndir c:\\util\r\n");
+    std::string base = image;
+    std::replace(base.begin(), base.end(), '\\', '/');
+    const auto descriptor = folder.File("hd.ucompose.yaml", "version: 1\n"
+                                                            "layers:\n"
+                                                            "  - {name: dss, source: {image: '" + base + "'}}\n"
+                                                            "  - {name: util, source: {folder: util}, mount: /UTIL}\n"
+                                                            "  - {name: patch, source: {folder: patch}}\n");
+    InsertHdd(descriptor.string());
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("file(s)"); }, 1200, 5);
+    ASSERT_TRUE(ScreenHas("C:\\>mkdir c:\\util\\sub")) << ScreenText();
+
+    MediaRequest request;
+    request.verb = "changes";
+    request.selector = "ide0.master";
+    const MediaReply reply = MediaControl(_context).Execute(request);
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    std::string lines;
+    for (const StateNode& c : reply.body.find("changes")->items)
+        lines += c.find("op")->s + " " + c.find("path")->s + " [" + c.find("layer")->s + "]\n";
+    EXPECT_EQ(lines, "mkdir /ACC []\nmkdir /UTIL/SUB []\n") << lines;
+    EXPECT_FALSE(reply.body.find("fullScan")->b);
+    for (const StateNode& w : reply.body.find("warnings")->items)
+        ADD_FAILURE() << "warning: " << w.s;
+    DestroyEmulator();
     std::remove(image.c_str());
 }
 

@@ -1311,6 +1311,8 @@ namespace PythonBindings
                  "(fs, codepage, free)")
             .def("media_layers", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "layers", slot, "", py::kwargs()); },
                  py::arg("slot"), "A composite medium's layers and layout")
+            .def("media_changes", [](Emulator& self, const std::string& slot) { return MediaCallPy(self, "changes", slot, "", py::kwargs()); },
+                 py::arg("slot"), "The guest's unsaved writes as file operations, with the layer each touched")
             .def("media_insert", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "insert", slot, path, options);
                  }, py::arg("slot"), py::arg("path"), "Insert a file or a folder ('auto' picks the slot)")

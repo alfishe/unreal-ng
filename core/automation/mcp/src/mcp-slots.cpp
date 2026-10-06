@@ -38,6 +38,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"protect", {"on"}},
         {"compose", {"fs", "codepage", "free"}},
         {"layers", {}},
+        {"changes", {}},
     };
     return actions;
 }
@@ -95,6 +96,21 @@ namespace
             out << slot["id"].asString() << ": " << slot["state"].asString();
             if (slot["medium"].isObject())
                 out << " " << slot["medium"]["source"].asString() << " [" << slot["medium"]["format"].asString() << "]";
+            return out.str();
+        }
+        if (action == "changes")
+        {
+            out << reply["changes"].size() << " change(s) in " << reply["changedSectors"].asUInt64() << " changed sector(s)";
+            for (const Json::Value& c : reply["changes"])
+            {
+                out << "\n" << c["op"].asString() << " " << c["path"].asString();
+                if (c.isMember("oldPath"))
+                    out << " (was " << c["oldPath"].asString() << ")";
+                if (!c["layer"].asString().empty())
+                    out << " [" << c["layer"].asString() << "]";
+            }
+            for (const Json::Value& w : reply["warnings"])
+                out << "\nwarning: " << w.asString();
             return out.str();
         }
         if (action == "formats")
@@ -219,7 +235,8 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "formats, targets (where a file can go: what it is, the slots that take it in order, the default, or why "
         "nothing does), insert, swap, eject, save, export, discard, rescan, create, protect, compose (build a "
         "*.ucompose.yaml - several folders layered into one FAT disk - without inserting it; insert takes the "
-        "descriptor like a file), layers (a composite medium's layers). Operations are synchronous (the reply "
+        "descriptor like a file), layers (a composite medium's layers), changes (the guest's unsaved writes as file "
+        "operations - create, modify, delete, rename, mkdir, rmdir - with the layer each touched). Operations are synchronous (the reply "
         "comes when the medium is in or out; async:true returns at once). A dirty medium leaves its slot only with "
         "save:true, export:'<path>' or discard:true. The reply's 'revision' increases with every change. "
         "Options per action:" + perVerb,

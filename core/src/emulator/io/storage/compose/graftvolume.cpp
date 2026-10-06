@@ -178,6 +178,14 @@ private:
     void Chain(const std::vector<uint32_t>& clusters);
     uint32_t EndOfChain() const;
     uint8_t* PatchSector(uint64_t lba, bool loadFromBase);
+    /// Provenance: the clusters of directory `node`
+    void RecordDirectory(uint32_t node, bool isRoot, const std::vector<uint32_t>& chain)
+    {
+        const uint32_t first = isRoot || chain.empty() ? 0 : chain.front();
+        _volume._dirClusterOfNode[node] = first;
+        for (uint32_t cluster : chain)
+            _volume._dirClusters.push_back({cluster, first, node});
+    }
     uint64_t ClusterLba(uint32_t cluster) const
     {
         return _volumeStart + _reader.DataStart() + static_cast<uint64_t>(cluster - 2) * _reader.SectorsPerCluster();
@@ -244,6 +252,10 @@ bool GraftBuilder::Build(std::string* error, GraftFailure* failure)
     }
     std::sort(_volume._runs.begin(), _volume._runs.end(),
               [](const GraftVolume::Run& a, const GraftVolume::Run& b) { return a.firstCluster < b.firstCluster; });
+    for (const DirJob& job : _jobs)
+        RecordDirectory(job.node, job.isRoot, job.fixedRoot ? std::vector<uint32_t>() : job.chain);
+    std::sort(_volume._dirClusters.begin(), _volume._dirClusters.end(),
+              [](const GraftVolume::DirCluster& a, const GraftVolume::DirCluster& b) { return a.cluster < b.cluster; });
     *failure = GraftFailure::None;
     return true;
 }
@@ -339,6 +351,8 @@ bool GraftBuilder::Walk(uint32_t baseCluster, uint32_t unionDir, bool isRoot, ui
     }
 
     size_t self = SIZE_MAX;
+    if (!touched)
+        RecordDirectory(job.node, isRoot, job.chain);
     if (touched)
     {
         self = _jobs.size();
@@ -805,7 +819,8 @@ uint8_t* GraftBuilder::PatchSector(uint64_t lba, bool loadFromBase)
 // --- GraftVolume ---
 
 GraftVolume::GraftVolume(std::shared_ptr<const FileTree> tree, std::shared_ptr<SourcePool> pool, uint16_t baseDevice)
-    : _tree(std::move(tree)), _pool(std::move(pool)), _base(&_pool->Device(baseDevice)), _reader(*_pool, _tree->Extents())
+    : _tree(std::move(tree)), _pool(std::move(pool)), _base(&_pool->Device(baseDevice)), _reader(*_pool, _tree->Extents()),
+      _baseDevice(baseDevice)
 {
 }
 
@@ -849,6 +864,16 @@ std::unique_ptr<GraftVolume> GraftVolume::Build(std::shared_ptr<const FileTree> 
     volume->_dataStart = volumeStart + reader.DataStart();
     volume->_sectorsPerCluster = reader.SectorsPerCluster();
     volume->_clusterCount = reader.ClusterCount();
+    volume->_volumeStart = volumeStart;
+    volume->_fatStart = volumeStart + reader.ReservedSectors();
+    volume->_rootStart = volume->_fatStart + static_cast<uint64_t>(reader.FatCount()) * reader.FatSectors();
+    // The base files' extents name the image, or the window FatImageSource opened for an explicit partition
+    volume->_extentDevice = baseDevice;
+    if (options.partition)
+    {
+        volume->_extentDevice = pool->FindDevice(pool->DeviceKey(baseDevice) + "#partition" + std::to_string(*options.partition));
+        volume->_extentOffset = offset;
+    }
     volume->_description = std::move(description);
 
     uint64_t id = sourceIdentity;
@@ -899,6 +924,94 @@ const GraftVolume::Run* GraftVolume::FindRun(uint64_t lba, uint64_t& cluster) co
         return nullptr;
     _lastRun = static_cast<size_t>(it - _runs.begin());
     return &*it;
+}
+
+void GraftVolume::IndexBaseFiles() const
+{
+    _baseIndexed = true;
+    if (_extentDevice < 0)
+        return;
+    const std::vector<Extent>& extents = _tree->Extents();
+    for (uint32_t n = 0; n < _tree->NodeCount(); n++)
+    {
+        const TreeNode& node = _tree->Node(n);
+        if (node.isDirectory || node.layer != 0 || node.data.storage != FileData::Storage::DeviceExtents ||
+            node.data.source != static_cast<uint16_t>(_extentDevice))
+            continue;
+        for (uint32_t e = 0; e < node.data.extentCount; e++)
+        {
+            const Extent& x = extents[node.data.firstExtent + e];
+            _baseRuns.push_back({x.sourceLba + _extentOffset, x.sectors, x.fileSectorStart, n});
+        }
+    }
+    std::sort(_baseRuns.begin(), _baseRuns.end(), [](const BaseRun& a, const BaseRun& b) { return a.lba < b.lba; });
+}
+
+SectorOwner GraftVolume::OwnerOf(uint64_t lba) const
+{
+    SectorOwner owner;
+    owner.patched = std::binary_search(_patchLba.begin(), _patchLba.end(), lba);
+    if (lba < _volumeStart)
+    {
+        owner.role = lba == 0 ? SectorRole::PartitionTable : SectorRole::BootArea;
+        return owner;
+    }
+    if (lba < _fatStart)
+        owner.role = SectorRole::VolumeHeader;
+    else if (lba < _rootStart)
+        owner.role = SectorRole::Fat;
+    else if (lba < _dataStart)
+    {
+        owner.role = SectorRole::Directory;
+        owner.node = FileTree::kRoot;
+        owner.offset = (lba - _rootStart) * kSector;
+    }
+    else
+    {
+        const uint64_t cluster = (lba - _dataStart) / _sectorsPerCluster + 2;
+        uint64_t runCluster = 0;
+        const auto dir = std::lower_bound(_dirClusters.begin(), _dirClusters.end(), cluster,
+                                          [](const DirCluster& d, uint64_t c) { return d.cluster < c; });
+        if (dir != _dirClusters.end() && dir->cluster == cluster)
+        {
+            owner.role = SectorRole::Directory;
+            owner.node = dir->node;
+            // The offset counts the directory's clusters before this one
+            uint64_t before = 0;
+            for (const DirCluster& d : _dirClusters)
+                before += d.node == dir->node && d.cluster < cluster ? 1 : 0;
+            owner.offset = (before * _sectorsPerCluster + (lba - _dataStart) % _sectorsPerCluster) * kSector;
+        }
+        else if (const Run* run = FindRun(lba, runCluster))
+        {
+            owner.role = SectorRole::FileData;
+            owner.node = run->node;
+            owner.offset = ((run->fileClusterStart + (runCluster - run->firstCluster)) * _sectorsPerCluster +
+                            (lba - _dataStart) % _sectorsPerCluster) * kSector;
+        }
+        else
+        {
+            if (!_baseIndexed)
+                IndexBaseFiles();
+            auto it = std::upper_bound(_baseRuns.begin(), _baseRuns.end(), lba, [](uint64_t l, const BaseRun& r) { return l < r.lba; });
+            if (it != _baseRuns.begin() && lba < (it - 1)->lba + (it - 1)->sectors)
+            {
+                --it;
+                owner.role = SectorRole::FileData;
+                owner.node = it->node;
+                owner.offset = (it->fileSectorStart + (lba - it->lba)) * kSector;
+            }
+        }
+    }
+    if (owner.HasNode())
+    {
+        const TreeNode& node = _tree->Node(owner.node);
+        owner.layer = node.layer;
+        const uint32_t dir = owner.role == SectorRole::Directory ? owner.node : node.parent;
+        const auto it = _dirClusterOfNode.find(dir);
+        owner.dirCluster = it == _dirClusterOfNode.end() ? 0 : it->second;
+    }
+    return owner;
 }
 
 GraftSectorOrigin GraftVolume::SectorOrigin(uint64_t lba) const

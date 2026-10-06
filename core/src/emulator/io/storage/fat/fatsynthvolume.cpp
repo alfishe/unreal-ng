@@ -305,6 +305,12 @@ bool FatSynthVolume::Init(std::shared_ptr<const FileTree> tree, std::shared_ptr<
         dirCluster[plan.node] = plan.firstCluster;
 
     _directories.resize(dirs.size());
+    _directoryNodes.resize(dirs.size());
+    for (size_t d = 0; d < dirs.size(); d++)
+    {
+        _directoryNodes[d] = dirs[d].node;
+        _dirClusterOfNode[dirs[d].node] = d == 0 ? 0 : dirs[d].firstCluster;
+    }
     for (size_t d = 0; d < dirs.size(); d++)
     {
         const DirPlan& plan = dirs[d];
@@ -638,6 +644,56 @@ bool FatSynthVolume::ReadSector(uint64_t lba, uint8_t* dst)
     const uint64_t dataRel = rel - fatEnd - _rootDirSectors;
     ReadData(dataRel / _sectorsPerCluster + 2, static_cast<uint32_t>(dataRel % _sectorsPerCluster), dst);
     return true;
+}
+
+SectorOwner FatSynthVolume::OwnerOf(uint64_t lba) const
+{
+    SectorOwner owner;
+    if (lba < _volumeStart)
+    {
+        owner.role = lba == 0 ? SectorRole::PartitionTable : SectorRole::BootArea;
+        return owner;
+    }
+    const uint64_t rel = lba - _volumeStart;
+    const uint64_t fatEnd = _reservedSectors + 2ull * _fatSectors;
+    if (rel < _reservedSectors)
+        owner.role = SectorRole::VolumeHeader;
+    else if (rel < fatEnd)
+        owner.role = SectorRole::Fat;
+    else if (rel < fatEnd + _rootDirSectors)
+    {
+        owner.role = SectorRole::Directory;
+        owner.node = FileTree::kRoot;
+        owner.offset = (rel - fatEnd) * kSector;
+    }
+    else if (lba < _totalSectors)
+    {
+        const uint64_t dataRel = rel - fatEnd - _rootDirSectors;
+        const uint64_t cluster = dataRel / _sectorsPerCluster + 2;
+        if (const Run* run = FindRun(cluster))
+        {
+            owner.offset = ((cluster - run->firstCluster) * _sectorsPerCluster + dataRel % _sectorsPerCluster) * kSector;
+            if (run->isDirectory)
+            {
+                owner.role = SectorRole::Directory;
+                owner.node = _directoryNodes[run->index];
+            }
+            else
+            {
+                owner.role = SectorRole::FileData;
+                owner.node = run->index;
+            }
+        }
+    }
+    if (owner.HasNode())
+    {
+        const TreeNode& node = _tree->Node(owner.node);
+        owner.layer = node.layer;
+        const uint32_t dir = owner.role == SectorRole::Directory ? owner.node : node.parent;
+        const auto it = _dirClusterOfNode.find(dir);
+        owner.dirCluster = it == _dirClusterOfNode.end() ? 0 : it->second;
+    }
+    return owner;
 }
 
 const FatSynthVolume::Run* FatSynthVolume::FindRun(uint64_t cluster) const

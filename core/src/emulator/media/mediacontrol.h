@@ -115,6 +115,7 @@ private:
     MediaReply Protect(const MediaRequest& request);
     MediaReply Compose(const MediaRequest& request);
     MediaReply Layers(const MediaRequest& request);
+    MediaReply Changes(const MediaRequest& request);
 
     /// The slot `insert auto` picks for `path` (§3.5)
     MediaResult ChooseSlot(const std::string& path, const std::map<std::string, std::string>& options, std::string& slotId);

@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/fatguest.h"
 #include "_helpers/scratchfolder.h"
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
@@ -589,6 +590,29 @@ TEST_F(MediaControl_Test, CompositeInsertLayersAndRescan)
     ASSERT_EQ(reply.body.find("layers")->find("layers")->items.size(), 2u);
     EXPECT_EQ(reply.body.find("layers")->find("layers")->items[0].find("name")->s, "base");
 
+    // The guest writes a file: `changes` names it, with no layer (it is new); README.TXT came from `patch`
+    reply = Run(Request("changes", "sd"));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_TRUE(reply.body.find("changes")->items.empty());
+    {
+        FatGuest guest(*medium->Block());
+        ASSERT_TRUE(guest.Create("/NOTE.TXT", std::vector<uint8_t>(10, 'n')));
+        ASSERT_TRUE(guest.Poke("/README.TXT", 0, 'P'));
+    }
+    manager.ApplyPending();
+    reply = Run(Request("changes", "sd"));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    const auto& changes = reply.body.find("changes")->items;
+    ASSERT_EQ(changes.size(), 2u);
+    EXPECT_EQ(changes[0].find("op")->s, "create");
+    EXPECT_EQ(changes[0].find("path")->s, "/NOTE.TXT");
+    EXPECT_EQ(changes[0].find("layer")->s, "");
+    EXPECT_EQ(changes[1].find("op")->s, "modify");
+    EXPECT_EQ(changes[1].find("layer")->s, "patch");
+    EXPECT_FALSE(reply.body.find("fullScan")->b);
+    EXPECT_EQ(MediaControl::OptionsFor("changes"), std::vector<std::string>{});
+    Run(Request("discard", "sd"));
+
     folder.File("base/new.txt", "added on the host");
     reply = Run(Request("rescan", "sd"));
     ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
@@ -597,6 +621,7 @@ TEST_F(MediaControl_Test, CompositeInsertLayersAndRescan)
     EXPECT_TRUE(rescanned.ReadFile("/new.txt", data)) << "the new host file is on the rebuilt volume";
 
     EXPECT_EQ(Run(Request("layers", "A")).result.error, MediaError::NotSupported);
+    EXPECT_EQ(Run(Request("changes", "A")).result.error, MediaError::NotSupported) << "a floppy";
 }
 
 /// Estex DSS reads FAT12 / FAT16 only: a Sprinter hard disk builds a composite as FAT16 and refuses an explicit FAT32

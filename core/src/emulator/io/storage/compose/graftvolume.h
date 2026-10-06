@@ -14,9 +14,11 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "common/unicodehelper.h"
+#include "emulator/io/storage/compose/composedlayout.h"
 #include "emulator/io/storage/compose/extentreader.h"
 #include "emulator/io/storage/compose/filetree.h"
 #include "emulator/io/storage/fat/fatsynthvolume.h"
@@ -52,7 +54,7 @@ enum class GraftFailure : uint8_t
     Broken,       ///< the base's directories or FAT cannot be read
 };
 
-class GraftVolume : public IBlockDevice
+class GraftVolume : public IBlockDevice, public IComposedLayout
 {
 public:
     /// Graft `tree` (the union, the base being its layer 0) onto the image
@@ -80,6 +82,11 @@ public:
     uint32_t FreeClusters() const { return _freeClusters; }
     GraftSectorOrigin SectorOrigin(uint64_t lba) const;
 
+    /// Provenance (C6b). A base file's data is found from the union tree's extents on the
+    /// base image (an index built at the first call that needs it)
+    SectorOwner OwnerOf(uint64_t lba) const override;
+    const FileTree& Tree() const override { return *_tree; }
+
 private:
     GraftVolume(std::shared_ptr<const FileTree> tree, std::shared_ptr<SourcePool> pool, uint16_t baseDevice);
 
@@ -91,7 +98,25 @@ private:
         uint32_t node;              ///< the union node whose data the run holds
     };
 
+    /// A cluster of a directory (base or new), in cluster order
+    struct DirCluster
+    {
+        uint32_t cluster;
+        uint32_t firstCluster;  ///< the directory's own first cluster (the root: 0)
+        uint32_t node;          ///< the union directory node
+    };
+    /// A run of a base file's sectors on the volume's LBAs
+    struct BaseRun
+    {
+        uint64_t lba;
+        uint32_t sectors;
+        uint32_t fileSectorStart;
+        uint32_t node;
+    };
+
     friend class GraftBuilder;
+
+    void IndexBaseFiles() const;
 
     /// The grafted run holding `lba`, or nullptr (updates the last-hit index)
     const Run* FindRun(uint64_t lba, uint64_t& cluster) const;
@@ -109,6 +134,16 @@ private:
     std::vector<uint64_t> _patchLba;    ///< sorted
     std::vector<uint8_t> _patchData;    ///< 512 bytes per patched sector, in _patchLba order
     std::vector<Run> _runs;             ///< sorted by firstCluster
+    std::vector<DirCluster> _dirClusters;  ///< sorted by cluster
+    std::unordered_map<uint32_t, uint32_t> _dirClusterOfNode;  ///< directory node -> first cluster (root: 0)
+    mutable std::vector<BaseRun> _baseRuns;  ///< sorted by lba; built on demand
+    mutable bool _baseIndexed = false;
+    uint16_t _baseDevice = 0;
+    int _extentDevice = -1;             ///< the pool device the base files' extents name (the image, or its partition window)
+    uint64_t _extentOffset = 0;         ///< the LBA of that device's sector 0 on the image
+    uint64_t _volumeStart = 0;          ///< absolute LBA of the volume's boot sector
+    uint64_t _fatStart = 0;             ///< absolute LBA of the first FAT
+    uint64_t _rootStart = 0;            ///< absolute LBA after the FATs (the FAT12 / FAT16 root region)
     mutable size_t _lastRun = 0;
 
     uint64_t _contentId = 0;

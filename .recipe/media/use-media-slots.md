@@ -28,6 +28,7 @@ media {"action":"export","slot":"hd","path":"scratch/disk.chd","compression":"zs
 media {"action":"export","slot":"hd","path":"scratch/diff.chd","parent":"/mame/sp_hdd_sys.chd"}  # only the changes
 media {"action":"export","slot":"hd","path":"scratch/disk.vhd"}                     # raw data + a fixed VHD footer
 media {"action":"export","slot":"hd","path":"scratch/flat.img","compact":true}      # FAT re-synthesized: files contiguous
+media {"action":"changes","slot":"hd"}   # the guest's unsaved writes as file operations, with their layers
 media {"action":"eject","slot":"B","discard":true}
 media {"action":"info","slot":"A"}                                   # one slot: medium, access, dirty state (a CD: the disc's tracks)
 media {"action":"formats","kind":"floppy"}                           # accepted extensions per kind: floppy, tape, block, optical
@@ -38,7 +39,7 @@ media {"action":"insert","slot":"ide0.master","path":"/discs/game.iso","device":
 media {"action":"insert","slot":"ide0.master","path":"/music/album","device":"cdrom","format":"audio-cd"}  # a folder of MP3 / FLAC / WAV as an audio CD
 ```
 
-- Verbs: `list info formats targets insert eject swap save export discard rescan create protect`.
+- Verbs: `list info formats targets insert eject swap save export discard rescan create protect compose layers changes`.
 - `insert` / `swap` options: `access` (`readonly` | `session` | `writethrough`), `format` (a hint, e.g. `audio-cd`),
   `fs` (`fat16` | `fat32`), `codepage` (`cp866` | `cp1251`), `free` (bytes of room for guest writes), `wp` (insert write-protected),
   `kind`, `device`, `immediate` (skip the swap delay), plus `save` / `export` / `discard` / `end_recording` / `async`.
@@ -48,6 +49,10 @@ media {"action":"insert","slot":"ide0.master","path":"/music/album","device":"cd
   clusters gone, label / MBR / boot code carried), with `fs` (`fat16` / `fat32`: converts; a FAT12 floppy needs it)
   and `size` (bytes or `64MiB`; default: the medium's size). `save` with `compact` needs a `path`; the medium then
   reads the new file. Raw exports are sparse (zero sectors not written); a `.vhd` target gets a fixed VHD footer.
+- `changes` (block media with session writes): the guest's unsaved writes as file operations - `create`, `modify`,
+  `delete`, `rename` (also a move; `oldPath`), `mkdir`, `rmdir`, `attributes` - each with the layer of a composite it
+  touched (empty: new). `warnings` names lost clusters and changed boot sectors. Nothing is written. On a composite
+  only the directories the writes touched are read; on other media every directory is (`fullScan: true`).
 
 - `slot` takes `A`, `b:`, `fdd.b`, `sd`, `floppy:1`, `tag:sd+neogs` or (insert) `auto`.
 - Paths are read by the **emulator** process (the `media` tool does not upload; `load_software` does, and the WebAPI `insert` / `swap` also take a multipart file or a raw body with `X-Filename`).
