@@ -26,9 +26,9 @@ The corpus is part of the library (decision D-14): `core/src/3rdparty/unreal-asm
 core/src/3rdparty/unreal-asm/testdata/
 ├── README.md                 # provenance of every file: assembler + version, how it was made, source disk
 ├── probe/                    # the probe sources (every construct of each dialect), as text
-├── tasm3/ tasm4/             # files saved by TASM in the emulator + real-world files (the TRD test data found locally)
+├── tasm/                     # files saved by TASM in the emulator + real-world files (the TRD test data found locally)
 │   └── <name>.$A  <name>.expected.txt  <name>.bin (assembled)
-├── alasm4/ alasm5/           # the same (+ the inAlasm sample)
+├── alasm/                    # real files of every ALASM era (3.8 … 5.09)
 ├── storm/ zxasm/
 ├── text/                     # every code page and line end
 └── convert/                  # pairs: original, converted per backend, expected report, both binaries

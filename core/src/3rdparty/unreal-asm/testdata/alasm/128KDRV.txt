@@ -1,0 +1,20 @@
+        ORG #7000
+DRIVER
+NPAGE   LD A,4
+PAGE
+        LD BC,#7FFD
+        AND 7
+        OR 16
+        OUT (C),A
+        RET
+        DS 8
+        LD HL,#C000
+        PUSH HL
+        JR NPAGE
+        DS 6
+        JR PAGE
+        DEFB #7            ;МАСКА СТРАНИЦ
+        DEFB NPAGE+1-DRIVER;СМЕЩЕНИЕ НА ном.СТРАНИЦЫ
+        DEFB "P128
+        DEFB PAGE-DRIVER   ;СМЕЩ.НА ПЕРЕКЛЮЧ.СТРАНИЦ
+        RET

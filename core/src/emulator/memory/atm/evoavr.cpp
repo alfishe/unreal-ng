@@ -8,6 +8,7 @@
 
 #include "common/filehelper.h"
 #include "debugger/ttd/ttdserializable.h"
+#include "emulator/emulatorcontext.h"
 
 namespace
 {
@@ -439,3 +440,142 @@ void EvoAvr::SetVolatileState(uint8_t extType, uint8_t eepromPage, uint8_t flags
     _capsLed = (flags & 0x02) != 0;
     _tapeOutMode = (flags & 0x04) != 0;
 }
+
+/// region <WAIT ports>
+
+namespace
+{
+/// A Gluk access's work in AVR cycles, counted on the released firmware images (llvm-objdump / rizin disassembly):
+/// BaseConf pentevo cfgs/standalone_base_trdemu zxevo_fw.bin ("ZXEvo 4M", 07.01.2026, the kFirmwareVersion image);
+/// TS-Labs tslabs/zx-evo 07bfd3e9 pentevo/avr/current/default/zxevo_fw.bin (2026-04-01; zx.c as at 167199ba).
+/// SPI byte 20 cycles (out, 16 shift cycles at F_CPU/2, the SPIF poll, in), I2C bit 112 cycles (TWBR 48: 98.7 kHz).
+/// Research and the counts per path: reference-evo-com-port.md §3.1
+struct GlukService
+{
+    uint16_t readFull, readShort;     ///< from the main loop's flag test to the release, without gluk_get_reg
+    uint16_t writeFull, writeShort;   ///< the same for a write (no cell work before the release)
+    uint16_t afterTail;               ///< after the release, before gluk_set_reg
+    uint8_t nvramFirst;               ///< the first NVRAM cell (BaseConf 14 registers, TS 15)
+    // gluk_get_reg by cell, call to return
+    uint16_t clockBcd, clockBinary, regAB, regC, regD, regE, version, ps2Log, eeprom, nvram;
+};
+
+constexpr GlukService kBaseConfGluk = {295, 295, 281, 281, 44, 0x0E, 98, 20, 22, 38, 26, 0, 41, 62, 42, 4427};
+constexpr GlukService kTsOldGluk = {169, 169, 159, 159, 20, 0x0F, 122, 36, 34, 50, 76, 54, 39, 56, 44, 4419};
+constexpr GlukService kTsShortGluk = {151, 90, 147, 86, 14, 0x0F, 122, 36, 34, 50, 76, 54, 39, 56, 44, 4419};
+
+// gluk_set_reg after the release (both firmwares share rtc.c's structure; counted on the BaseConf image)
+constexpr uint32_t kSetSmall = 25;      ///< a register, an alarm, the extension type, an out-of-range time
+constexpr uint32_t kSetClock = 3393;    ///< a time register: BCD conversion + one rtc_write (START, 3 bytes) on I2C
+constexpr uint32_t kSetYear = 6800;     ///< the year: two rtc_writes (the second START waits for the STOP)
+constexpr uint32_t kSetNvram = 3283;    ///< an NVRAM cell: one rtc_write
+constexpr uint32_t kSetEeprom = 55;     ///< write_eeprom past its busy wait (the 8.5 ms write runs on its own)
+
+constexpr uint8_t kGlukYear = 0x09;
+
+uint8_t BcdToBinary(uint8_t value)
+{
+    return static_cast<uint8_t>((value >> 4) * 10 + (value & 0x0F));
+}
+}  // namespace
+
+void EvoAvr::SetWaitFirmware(WaitHandler handler, const EvoAvrWait::Timing& timing)
+{
+    _waitHandler = handler;
+    _wait.SetTiming(timing);
+}
+
+uint32_t EvoAvr::GlukAccessCycles(bool read, uint8_t value, uint64_t now, uint32_t baseClockHz)
+{
+    const GlukService& s = _waitHandler == WaitHandler::BaseConf ? kBaseConfGluk
+                           : _waitHandler == WaitHandler::TsOld  ? kTsOldGluk
+                                                                 : kTsShortGluk;
+    const uint8_t index = GetAddress();
+    const bool shortAddress = index >= kExtensionFirst;   // TS-Conf FPGA: {~&addr[7:4], addr[3:0]} in the status
+    const bool binary = (GetCell(kRegB) & kBBinary) != 0;
+    EvoAvrWait::Eeprom eeprom = EvoAvrWait::Eeprom::None;
+
+    if (read)
+    {
+        uint32_t cell = 0;
+        if (index >= kExtensionFirst)
+        {
+            if (_eepromMode)
+            {
+                cell = s.eeprom;
+                eeprom = EvoAvrWait::Eeprom::Read;
+            }
+            else
+                cell = _extType == kExtPs2Log ? s.ps2Log : s.version;
+        }
+        else if (index >= s.nvramFirst)
+            cell = s.nvram;   // rtc_read: START, SLA+W, cell, repeated START, SLA+R, the byte on I2C
+        else if (index <= kGlukYear)
+            cell = binary ? s.clockBinary : s.clockBcd;
+        else if (index == kRegC)
+            cell = s.regC;
+        else if (index == kRegD)
+            cell = s.regD;
+        else if (index == kRegA || index == kRegB)
+            cell = s.regAB;
+        else
+            cell = s.regE;   // TS: register E (the Win / Menu keys)
+        const uint32_t service = (shortAddress ? s.readShort : s.readFull) + cell;
+        return _wait.Access(service, s.afterTail, now, baseClockHz, eeprom);
+    }
+
+    // A write: the data reaches the AVR at the release; gluk_set_reg runs after it, delaying the main loop
+    uint32_t after = kSetSmall;
+    if (index >= kExtensionFirst)
+    {
+        if (_eepromMode)
+        {
+            after = kSetEeprom;
+            eeprom = EvoAvrWait::Eeprom::Write;
+        }
+    }
+    else if (index >= s.nvramFirst)
+        after = kSetNvram;
+    else if (index <= kGlukYear)
+    {
+        // rtc.c gluk_set_reg: a time register goes to the PCF8583 when in range; the alarms stay in the AVR
+        const uint8_t v = binary ? value : BcdToBinary(value);
+        switch (index)
+        {
+            case 0x00:   // seconds
+            case 0x02:   // minutes
+                after = v <= 59 ? kSetClock : kSetSmall;
+                break;
+            case 0x04:   // hours
+                after = v <= 23 ? kSetClock : kSetSmall;
+                break;
+            case 0x06:   // day of week [the month it is written with assumed valid]
+                after = v >= 1 && v <= 7 ? kSetClock : kSetSmall;
+                break;
+            case 0x08:   // month [the day of week assumed valid]
+                after = v >= 1 && v <= 12 ? kSetClock : kSetSmall;
+                break;
+            case 0x07:   // day of month
+                after = kSetClock;
+                break;
+            case kGlukYear:
+                after = kSetYear;
+                break;
+            default:   // the alarms
+                break;
+        }
+    }
+    const uint32_t service = shortAddress ? s.writeShort : s.writeFull;
+    return _wait.Access(service, s.afterTail + after, now, baseClockHz, eeprom);
+}
+
+void EvoAvr::HoldForGlukAccess(EmulatorContext* context, bool read, uint8_t value)
+{
+    if (!context)
+        return;
+    const uint32_t baseHz = context->emulatorState.base_z80_frequency ? context->emulatorState.base_z80_frequency
+                                                                       : 3500000;
+    _wait.HoldCpu(context, GlukAccessCycles(read, value, EvoAvrWait::BaseNow(context), baseHz));
+}
+
+/// endregion </WAIT ports>

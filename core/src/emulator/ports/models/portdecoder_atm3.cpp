@@ -5,6 +5,7 @@
 
 #include "common/modulelogger.h"
 #include "debugger/ttd/atm/ttdevofontram.h"
+#include "debugger/ttd/atm/ttdevoavrvolatile.h"
 #include "debugger/ttd/atm/ttdevomouse.h"
 #include "debugger/ttd/atm/ttdevops2.h"
 #include "debugger/ttd/atm/ttdevosdcard.h"
@@ -99,6 +100,10 @@ PortDecoder_ATM3::~PortDecoder_ATM3()
 void PortDecoder_ATM3::reset()
 {
     PortDecoder_ATM710::reset();
+
+    // The AVR keeps running through a Z80 reset, but the emulator's time base (t_states) starts again from 0: its
+    // main-loop phase and EEPROM write are re-anchored there (EvoAvrWait counts in that time base)
+    _evoAvr.Wait().Reset();
 
     // A mouse plugged in or out ([INPUT] Mouse=) re-runs the AVR's mouse reset; the
     // registers themselves outlive a Z80 reset (the AVR keeps running)
@@ -1109,7 +1114,13 @@ void PortDecoder_ATM3::DecodeF7Out(uint16_t port, uint8_t value, uint16_t pc)
     if (gluk && (port & 0x2000) == 0)
         _evoAvr.WriteAddress(value);
     if (gluk && (port & 0x4000) == 0)
+    {
+        // wait_start_gluclock = gluclock_on && !a[14] && (portf7_rd || portf7_wr) (fpga/base zports.v:754): the
+        // Z80 waits on /WAIT until the AVR answers (zwait.v:57-61), as for the COM port
+        ConfigureAvrWait();
+        _evoAvr.HoldForGlukAccess(_context, false, value);
         _evoAvr.WriteData(value);
+    }
 }
 
 /// @brief #F7 reads: only the clock data port drives the bus (zports.v:455-460);
@@ -1117,8 +1128,26 @@ void PortDecoder_ATM3::DecodeF7Out(uint16_t port, uint8_t value, uint16_t pc)
 uint8_t PortDecoder_ATM3::DecodeF7In(uint16_t port)
 {
     if (IsPort_CMOS_Data(port))
+    {
+        // The read waits for the AVR's answer (zports.v:754, wait_read on the bus :441-442)
+        ConfigureAvrWait();
+        _evoAvr.HoldForGlukAccess(_context, true, 0xFF);
         return _evoAvr.ReadData();
+    }
     return 0xFF;
+}
+
+Uart16550::AvrFirmware PortDecoder_ATM3::ConfigureAvrWait()
+{
+    // The NedoPC firmwares serve the wait ports with zx_wait_task (status, SPI #41 / #42 for the cell, #40); a
+    // TS-Labs firmware on the BaseConf FPGA picks zx_wait_task_old, the same path (main.c setup_prepare_runtime_mode)
+    const auto firmware = static_cast<Uart16550::AvrFirmware>(_context ? _context->config.atm.evo_avr : 0);
+    const bool ts = firmware == Uart16550::AvrFirmware::Ts2013 || firmware == Uart16550::AvrFirmware::Ts2016Feb ||
+                    firmware == Uart16550::AvrFirmware::Ts2016Apr;
+    const Uart16550::Params p = Uart16550::EvoAvrParams(firmware);
+    _evoAvr.SetWaitFirmware(ts ? EvoAvr::WaitHandler::TsOld : EvoAvr::WaitHandler::BaseConf,
+                            EvoAvrWait::Timing{p.avrClockHz, p.isrCycles, p.loopCycles, p.waitChecksPerLoop});
+    return firmware;
 }
 
 /// @brief Border strobe without the beeper / tape bits (#F6, #FC)
@@ -1401,6 +1430,9 @@ std::vector<ttd::PeripheralId> PortDecoder_ATM3::GetTTDModelStateIds() const
     ids.push_back(ttd::PeripheralId::EvoMouse);
     ids.push_back(ttd::PeripheralId::EvoTurboCache);
     ids.push_back(ttd::PeripheralId::EvoFontRam);
+    // The AVR's /WAIT timing (main-loop phase, EEPROM write) rides in EvoAvrVolatile; its first bytes repeat what
+    // AtmPaging carries for the ATM3 (restored after it, the same values)
+    ids.push_back(ttd::PeripheralId::EvoAvrVolatile);
     return ids;
 }
 
@@ -1416,6 +1448,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM3::CreateTTDSe
     serializers.push_back(std::make_unique<ttd::TTDEvoMouse>(const_cast<EvoAvr&>(_evoAvr).Ps2Mouse()));
     serializers.push_back(std::make_unique<ttd::TTDEvoTurboCache>(const_cast<PortDecoder_ATM3&>(*this)));
     serializers.push_back(std::make_unique<ttd::TTDEvoFontRam>(_context));
+    serializers.push_back(std::make_unique<ttd::TTDEvoAvrVolatile>(const_cast<EvoAvr&>(_evoAvr)));
     return serializers;
 }
 
@@ -1428,6 +1461,17 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM3::CreateTTDSe
 ///          128K mode (#EFF7 bit 2 = 1) `{reg[7:3], 7FFD[2:0]}`, Pentagon-1024
 ///          mode (bit 2 = 0, the reset state) `{reg[7:6], 7FFD[7:5], 7FFD[2:0]}`.
 ///          A ROM register with the bit set swaps its page LSB for the DOS signal.
+void PortDecoder_ATM3::EnterSpectrum128Paging(uint16_t pc)
+{
+    _state->evoWrProt = 0x00;
+    _state->evoInNmi = false;
+    _state->evoNmiEntry = false;
+    _state->nmiAtIntStartPending = false;
+    _state->evoTrdemu = 0;
+    _state->pEFF7 = static_cast<uint8_t>((_state->pEFF7 | ATM_EFF7_LOCKMEM) & ~ATM_EFF7_ROCACHE);
+    PortDecoder_ATM710::EnterSpectrum128Paging(pc);   // ends in updateMemoryBanks(): this class's mapping
+}
+
 void PortDecoder_ATM3::updateMemoryBanks()
 {
     if (!_memory)
@@ -1519,8 +1563,9 @@ PortDecoder::NetworkCapabilities PortDecoder_ATM3::DescribeNetwork()
 {
     NetworkCapabilities caps;
     caps.serialPort = NetworkCapabilities::SerialPort::EvoAvr;
-    const auto firmware = static_cast<Uart16550::AvrFirmware>(_context ? _context->config.atm.evo_avr : 0);
+    const Uart16550::AvrFirmware firmware = ConfigureAvrWait();
     caps.uart = Uart16550::EvoAvrParams(firmware);
+    caps.avrWait = &_evoAvr.Wait();   // #xxEF and #BFF7 share the AVR's main loop (zwait.v)
 
     // The BaseConf FPGA hands the AVR A10..A8 (SPI register #42). The TS-Labs
     // firmware from 2016-02 expects the TS-Conf FPGA's full high byte and

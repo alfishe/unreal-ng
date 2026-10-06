@@ -10,6 +10,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/atm/evoavrwait.h"
 #include "emulator/io/serial/esp/espmodule.h"
 #include "emulator/io/serial/hayesmodempeer.h"
 
@@ -68,17 +69,16 @@ uint64_t ComPort::Now() const
 
 void ComPort::AddAccessWait(uint8_t reg, bool read)
 {
-    if (!_context || !_context->pCore || !_context->pCore->GetZ80())
+    // ZX-Evo: the AVR serves the access from its main loop, the one the Gluk clock port waits on too
+    // (reference-evo-com-port.md §3); the AVR's time in the CPU's clocks at its current speed
+    if (!_avrWait || !_context || !_context->pCore || !_context->pCore->GetZ80())
         return;
-    const uint32_t cycles = _uart.AccessCycles(reg, read, Now());
-    if (!cycles)
+    const uint32_t service = _uart.ServiceCycles(reg, read);
+    if (!service)
         return;
-    // The AVR's time in the CPU's clocks at its current speed (turbo waits longer in T-states)
-    const uint64_t cpuHz = _context->emulatorState.current_z80_frequency ? _context->emulatorState.current_z80_frequency
-                                                                          : _context->emulatorState.base_z80_frequency;
-    const uint32_t avrHz = _uart.GetParams().avrClockHz;
-    const uint32_t clocks = static_cast<uint32_t>((static_cast<uint64_t>(cycles) * cpuHz + avrHz - 1) / avrHz);
-    _context->pCore->GetZ80()->AddWaitStates(clocks);
+    const uint32_t baseHz = _context->emulatorState.base_z80_frequency ? _context->emulatorState.base_z80_frequency
+                                                                        : 3500000;
+    _avrWait->HoldCpu(_context, _avrWait->Access(service, 0, Now(), baseHz));
 }
 
 void ComPort::Reset()

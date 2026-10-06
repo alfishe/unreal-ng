@@ -1,0 +1,46 @@
+        ORG #5B00,#8B00
+
+_DB 5+14*2; 5_Speccy + 14_GS
+
+        PUSH HL,BC,DE
+        CP 5:JR NC,GS
+        LD H,0,L,A,DE,TAB128:ADD HL,DE
+        LD A,(HL):LD BC,#7FFD
+        OUT (C),A
+EXIT    POP DE,BC,HL
+        OR 1:RET
+
+GS      SUB 5:PUSH AF
+        LD BC,#7FFD,A,#17
+        OUT (C),A
+
+        LD A,(GSPAGE)
+        OUT (#B3),A
+        LD A,1:CALL SC; STORE PAGE 2 GS
+
+        LD HL,#C000
+GS1     LD A,(HL):OUT (#B3),A
+        IN A,(#BB):RLCA:JR C,$-3
+        INC L:JR NZ,GS1
+        INC H:JR NZ,GS1
+
+        POP AF:LD (GSPAGE),A
+        OUT (#B3),A
+        LD A,2:CALL SC; GET PAGE FROM GS
+
+        LD HL,#C000
+GS2     IN A,(#BB):RLCA:JR NC,$-3
+        IN A,(#B3):LD (HL),A
+        INC L:JR NZ,GS2
+        INC H:JR NZ,GS2
+
+        JR EXIT
+
+GSPAGE  DB 0
+TAB128  DB #10,#11,#13,#14,#16
+
+SC      OUT (#BB),A
+WC      IN A,(#BB):RRCA:JR C,WC
+        RET
+
+

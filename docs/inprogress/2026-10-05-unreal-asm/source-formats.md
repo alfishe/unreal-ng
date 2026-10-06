@@ -4,7 +4,7 @@
 |---|---|
 | **Date** | 2026-10-05 |
 | **Status** | Draft; every layout below is a **reference to confirm** on files the real assembler saved in the emulator (golden files come from the assemblers, not from this table) |
-| **Rule** | One codec per format and sub-version, decode **and** encode (D-1); nothing vendored (D-2) |
+| **Rule** | One codec per format, decode **and** encode (D-1), covering every version of the format (D-15); nothing vendored (D-2) |
 | **Sources** | [prior-art.md](prior-art.md) (L = local, P = public references) |
 
 ## 1. Catalog
@@ -12,12 +12,10 @@
 | Codec id | Assembler / sub-version | Dialect | Detection | Known from | Confidence | Phase |
 |---|---|---|---|---|---|---|
 | `text` | any text source (code page CP866 / KOI8-R / CP1251 / ASCII / UTF-8; CR, LF, CRLF) | any (chosen or guessed) | decodes as text; code page by statistics | — | high | A1 |
-| `tasm3` | TASM 3.x | `tasm` | TR-DOS type `A`, start 39221 / 40872 (P1) | P1, L4 (heuristic), L5 data | medium | A2 |
-| `tasm4` | TASM 4.x | `tasm` | type `A`, start ≤ 4096 (P1) | L1 (owner, 2012), P1 | medium-high | A2 |
-| `alasm4` | ALASM 4.2-4.46 | `alasm` | type `H`; signature `F3 76 C7 DD FD ED B0 D9` (P1) | P1, P2, L8 | medium (P1 / P2 disagree on `#96`, `#9F`) | A3 |
-| `alasm5` | ALASM 5.0-5.09 | `alasm` | as above; version by the token table in use | P1, P5 sample | medium | A3 |
-| `storm` | STORM 1.x | `storm` | type `C` start `#C00B` / `#C003`, or type `R` start `#C00B` (P1) | P1 | medium | A4 |
-| `zxasm` | ZX-ASM 2.5 / 3.x, ZAsm 3.01 / 3.10 | `zxasm` | types `a` / `z` / `C` with P1's start rules | P3 (written spec), P1 | medium-high | A4 |
+| `tasm` | TASM 2.0 (`2.0`, text), 3.0-3.5 (`3`), 4.0 XLD / 4.4 KVA (`4.0`), 4.12 (`4.12`) | `tasm` | TR-DOS type `A` (2.0: type `C`, start 38750); version: start 39221 → 3, 40872 → 4.0, ≤ 4096 → 4.12, else from the bytes | every release's binary; [research-tasm.md](research-tasm.md) | confirmed on 127 real files | A2, A3 |
+| `alasm` | ALASM 3.8, 4.2, 4.42, 4.5, 4.44, 5.07-5.09 | `alasm` | type `H`; signature `F3 76 C7 DD FD ED B0 D9` at `+#28`; version: the newest that re-tokenizes the file exactly | ALASM 5.09's own sources (P9), every release's binary; [research-alasm.md](research-alasm.md) | confirmed on 429 real files | A3 |
+| `storm` | STORM 1.0beta (`1.0`), 1.2-1.3i (`1.3`) | `storm` | type `C` start #C00B (#C003 for 1.0beta) or `R` #C00B, the backward line walk reaching the start | STORM's own source, the FAR plugin port; [research-storm.md](research-storm.md) | confirmed on 42 real files | A4 |
+| `zxasm` | ZX-ASM 2.4-2.6 (`2`), 3.0-3.10 (`3.0`), Lite 1.07 (`lite`), ZAsm 3.15-4.20 (`3.15`) | `zxasm` | type `C` at #A135-#A1DF / #2020 (2.x) / 35151 (3.0), `z` "as" (3.01), `a` "sm" (3.10+); else from the bytes | every release's binary, za_format.txt; [research-zxasm.md](research-zxasm.md) | confirmed on 372 real files | A4 |
 | `xas` | XAS 5 / 7 | `xas` | type `X` / `x`, start bytes `AS` (P1) | none public (P4 binary) | research | A6 |
 | `masm` | MASM (Spectrum), MASM80 (Sprinter) | `masm` | type `a`, start 38667 / 38821 (P1) | none public | research | A6 |
 | `gens3` | GENS 3 / 4 compressed | `gens` | — | the Devpac manual (no byte layout) | research | A6 |
@@ -43,7 +41,7 @@ Text-only dialects (no tokenized form; reached through `text`): `sjasmplus`, `sj
 
 | Codec | Per line | Per file |
 |---|---|---|
-| tasm3 / tasm4 | blanks as run vs literal, run lengths; unknown token bytes | trailing bytes after the end marker |
+| tasm (3, 4) | blanks as run vs literal, run lengths; unknown token bytes | trailing bytes after the end marker |
 | alasm | `#FF` flags and their position; run vs literal blanks; token vs literal spelling of a keyword typed in a comment | the header (name, length field, any unused bytes) |
 | storm | the exact packing of each expression (number form, sub-expression structure) | — |
 | zxasm | per token: case bit, trailing-blank bit; run vs literal blanks | line-end style |
@@ -61,13 +59,14 @@ upper case where the assembler shows upper case).
 | R3 | Compare the file with the references' layouts; resolve conflicts (ALASM `#96`, `#9F`); find what the references do not say | `research-<codec>.md` in this folder |
 | R4 | Screen captures of the assembler showing the probe source (OCR of the emulator screen) | the expected decoded text |
 | R5 | Assemble the probe in the assembler; keep the binary | the binary oracle for dialect conversion |
+| R7 | (P2, for the [memory bridge](memory-bridge.md)) the assembler's memory management: where its source buffer, pointers, pages and label table live, per version | `research-<codec>.md` §memory |
 | R6 | Golden corpus `core/src/3rdparty/unreal-asm/testdata/<codec>/` (D-14): probe files, real-world sources (L5 data, P5 sample, disks of the collection), expected text, binaries | tests |
 
 ## 4. Format conversions planned first
 
 | From → to | Through | Expected losses |
 |---|---|---|
-| tasm3 ↔ tasm4 | `tasm` text | TASM 4-only directives into TASM 3 (refused or forced as text) |
-| alasm4 ↔ alasm5 | `alasm` text | directives new in 5.x into 4.x |
+| tasm 3 ↔ 4.0 ↔ 4.12 | `tasm` text | a keyword only one version has is written as text with a warning (4.0 `db`, 4.12 `defmac` on #97 where 3 / 4.0 have `defm`) |
+| alasm 3.8 … 5.07 | `alasm` text | the same rule (5.x `DD` = hex bytes, 3.8-4.5 `DEFM` = a string; 5.x `IF0`, 4.x `IF`) |
 | any tokenized → text | its dialect text | none in text; attributes dropped |
 | text → any tokenized | the codec's canonical form | lines with keywords the table lacks (DT-3) |

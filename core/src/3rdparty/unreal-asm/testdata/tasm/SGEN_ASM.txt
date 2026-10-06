@@ -1,0 +1,39 @@
+        ORG #8000
+        INCBIN STUFF
+
+        ORG   #A000
+        PHASE #2000
+
+        INCLUDE SGEN
+        INCLUDE SGEN1_L
+        INCLUDE SGEN2_L
+        INCLUDE SGEN3
+        INCLUDE SGEN4
+        INCLUDE SGEN5
+        INCLUDE SGEN6
+        INCLUDE SGEN7
+        INCLUDE SGEN8
+___END
+        ORG   #BE00
+        PHASE #3E00
+
+DIVTAB3 INCBIN  DIVTAB3
+
+        ORG #8000
+        UNPHASE
+        DI
+        LD A,#00
+        LD HL,#9100
+        LD DE,#9001
+        LD BC,#0000
+        EXX
+        LD DE,#0201
+        EXX
+        LD LX,#FF
+        CALL SGEN
+        LD IY,#5C3A
+        EXX
+        LD HL,#2758
+        EXX
+        EI
+        RET

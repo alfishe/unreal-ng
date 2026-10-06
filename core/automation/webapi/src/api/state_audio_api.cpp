@@ -349,8 +349,8 @@ void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& req,
             decoding["channel_a_noise_enabled"] = ((regValue & 0x08) == 0);
             decoding["channel_b_noise_enabled"] = ((regValue & 0x10) == 0);
             decoding["channel_c_noise_enabled"] = ((regValue & 0x20) == 0);
-            decoding["porta_direction"] = ((regValue & 0x40) ? "input" : "output");
-            decoding["portb_direction"] = ((regValue & 0x80) ? "input" : "output");
+            decoding["porta_direction"] = ((regValue & 0x40) ? "output" : "input");
+            decoding["portb_direction"] = ((regValue & 0x80) ? "output" : "input");
             break;
         case 8:
         case 9:
@@ -401,12 +401,12 @@ void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& req,
             break;
         case 14:  // I/O Port A
             decoding["description"] = "I/O Port A";
-            decoding["direction"] = ((registers[7] & 0x40) ? "input" : "output");
+            decoding["direction"] = ((registers[7] & 0x40) ? "output" : "input");
             decoding["value"] = (int)regValue;
             break;
         case 15:  // I/O Port B
             decoding["description"] = "I/O Port B";
-            decoding["direction"] = ((registers[7] & 0x80) ? "input" : "output");
+            decoding["direction"] = ((registers[7] & 0x80) ? "output" : "input");
             decoding["value"] = (int)regValue;
             break;
     }

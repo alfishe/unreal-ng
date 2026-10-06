@@ -1,0 +1,1517 @@
+DLNA    CALL DLN:RET NZ
+        JP GERR
+
+DLNX    LD DE,DLX0
+        LD HL,BUFDPC1
+        JR DL00
+
+; (BC) -> (BUFDPC) Z-ERROR  NZ-O'K
+
+DLN     LD DE,DL49
+        LD HL,BUFDPC; ONLY!
+DL00    LD (DLXX+1),DE
+        LD (HL),#00
+        PUSH HL
+        INC L
+        CALL DL0
+        POP HL
+        RET Z
+        DEC BC:LD A,(BC):INC BC
+        RLA:RLA:RET NC
+        SET 7,(HL)
+        RET
+
+DL0     DI
+DL1     LD A,(BC)
+        INC BC
+DL2     OR A
+        CALL M,DL8
+        CP #2F
+        JP Z,DLREM
+        LD E,A
+        AND #3F
+        JR Z,DLEND
+        CP 6
+        JR NC,DL6
+        DEC L:LD (HL),E:INC L
+        LD A,(BC)
+        INC BC
+        CP 1
+        JR Z,DLEND
+        CP #41
+        JR NZ,DL2
+DLEND   INC L
+        LD E,#20
+        JR Z,DL5
+        DEC L
+DL3     LD (HL),E
+        INC L
+        JR NZ,DL3
+DL4     XOR A
+        INC A
+        RET
+
+DL5     DEC L
+        DEC L
+        LD A,(HL)
+        CP E
+        JR Z,DL4
+DLERR   XOR A
+        RET
+
+DL6     CP 9
+        JR NC,DL13
+        CP 7
+        JR NZ,DL7
+        LD (HL),"." : INC L
+        CALL DL50
+        JR NZ,DL9
+        RET
+
+DL7     LD (HL),"_"
+        INC L
+        LD D,1
+        JR DL10
+
+DL8     CP #C0
+        JR C,DL12
+        CP #DC
+        JR NC,DL12
+        LD E,A; LABEL
+        LD A,(BC)
+        BIT 6,A
+        JR Z,DL13
+        LD A,E
+        CALL DLBL; A-FIRST
+        RET Z
+DL9     LD D,0
+DL10    LD A,(BC)
+        INC BC
+        CP 9
+        JR C,DLEND
+        CP #40
+        JR C,DL11
+        CP #49
+        JR C,DLEND
+DL11    RR D
+        JR C,DL15
+DL12    LD E,A
+DL13    LD D,#20
+        LD A,BUFDPC\256+9
+DL14    LD (HL),D
+        INC L
+        CP L
+        JR NZ,DL14
+        LD A,E
+DL15    OR A
+        CALL P,DL16
+        LD D,#6C; DB STRING
+        CP #DC
+        JR Z,DL17
+        LD D,#4E
+        CP #C0
+        JR NC,DL17
+        AND #20
+        JR Z,DL17
+        LD D,#4A
+        JR DL17
+
+DL16    CP #2F; TOKEN
+        JP Z,DLREM
+        JR C,DL18
+        LD D,#4A; LD
+        CP #40
+        JR C,DL17
+        CP #6F
+        JR C,DL18
+        CP #75
+        JR C,DL17
+        LD D,#4D; EX
+        CP #77
+        JR C,DL17
+        LD D,#5E; OUT
+        JR Z,DL17
+        LD D,#4E; JR
+        CP #7C
+        JR C,DL17
+        LD D,#50; JP
+DL17    DEC BC
+        LD A,D
+DL18    EX DE,HL
+        CP #49
+        JR NZ,DL19
+        LD A,(BC)
+        INC BC
+        ADD A,#80
+DL19    SUB 9
+        PUSH BC
+        LD L,A
+        LD H,0
+        ADD HL,HL
+        ADD HL,HL
+        LD BC,TBTK
+        ADD HL,BC
+        EX DE,HL
+        LD BC,#0420
+DL20    LD A,(DE)
+        CP C
+        JR Z,DL21
+        LD (HL),A:INC L
+        JR Z,DL28
+        INC DE
+        DJNZ DL20
+DL21    LD (HL),C :  INC L
+        POP BC
+        RET Z
+        XOR A
+        JR DL23
+
+DL22    SCF
+DL23    EX AF,AF
+        LD A,(BC)
+        INC BC
+        CP #80
+        JR NC,DL24
+        CP #2F
+        JP Z,DLREM
+        LD D,A
+        AND #3F
+        CP #2A
+        JP C,DLEND
+        CP #2F
+        LD A,D
+        JP C,DLRZD
+        SCF
+DL24    EX AF,AF
+        JR NC,DL25
+        LD (HL),"," : INC L : RET Z
+DL25    EX AF,AF
+        JR NC,DL29; ADD
+        PUSH BC
+        EX DE,HL
+        SUB 9
+        ADD A,A
+        LD L,A
+        LD H,0
+        ADD HL,HL
+        LD BC,TBTK
+        ADD HL,BC
+        EX DE,HL
+        LD BC,#0420
+DL26    LD A,(DE)
+        CP C
+        JR Z,DL27
+        INC DE
+        LD (HL),A
+        INC L
+        JR Z,DL28
+        DJNZ DL26
+DL27    POP BC
+        JR DL22
+
+DL28    POP BC
+        RET
+
+DL29    CP #C0
+        JR C,DL34; ADD
+        CP #DC
+        JR C,DL31; LABEL
+        JR Z,DL32; STRING
+        CP #E7
+        JR C,DL33; 0-9
+        LD (HL),"$" : INC L : RET Z
+        SUB #F3
+        JR Z,DL22
+        LD D,"+"
+        JR NC,DL30
+        NEG
+        LD D,"-"
+DL30    LD (HL),D : INC L : RET Z
+        CALL DL51
+DL30A   JR NZ,DL22
+        RET
+
+DL31    CALL DLBL
+        JR DL30A
+
+DL32    LD (HL),#22 : INC L : RET Z
+        CALL DL74
+        RET Z
+        LD (HL),#22
+DL32A   INC L
+        JR DL30A
+
+DL33    SUB #AD
+        LD (HL),A
+        JP DL32A
+
+DL34    LD E,A
+        BIT 5,E
+        JR Z,DL37
+        LD (HL),"(" : INC L : RET Z
+        BIT 4,E
+        JR Z,DL37
+        LD (HL),"I" : INC L : RET Z
+        LD (HL),"X"
+        BIT 3,E
+        JR Z,DL35
+        INC (HL)
+DL35    INC L : RET Z
+        LD A,E
+        AND 7
+        JR Z,DL39
+        AND 3
+        JR NZ,DL36
+        LD A,(BC)
+        INC BC
+        OR A
+        JR DL38
+
+DL36    OR #08
+        BIT 2,E
+        JR Z,DL38
+        OR #10
+        JR DL38
+
+DL37    AND #1F
+        SCF
+DL38    PUSH DE
+        LD E,10
+        CALL DL40
+        POP DE
+        RET Z
+        BIT 5,E
+        JP Z,DL22
+DL39    LD (HL),")"
+        JR DL32A
+
+DL40    LD D,A
+        JR NC,DL41
+        BIT 4,A
+        JR Z,DL45
+DL41    AND #F0
+        CP #F0
+        JR NZ,DL43
+        LD A,D
+        AND 7
+        ADD A,#0F
+        ADD A,A
+        JR DL44
+
+DL43    RRCA
+        RRCA
+        RRCA
+DL44    PUSH DE
+        LD DE,TBSIGN
+        ADD A,E
+        LD E,A
+        LD A,(DE) : INC DE
+        LD (HL),A : INC L
+        LD A,(DE)
+        POP DE
+        RET Z
+        CP #20
+        JR Z,DL45
+        LD (HL),A : INC L : RET Z
+DL45    LD A,D
+        OR #0F
+        INC A
+        JR Z,DL48
+        LD A,D
+        AND #07
+        JR NZ,DL47
+        LD (HL),"(" : INC L : RET Z
+        DEC E
+        RET Z
+        LD A,(BC)
+        INC BC
+        PUSH DE
+        SCF
+        CALL DL40
+        POP DE
+        RET Z
+        LD (HL),")" : INC L : RET Z
+        INC E
+        JR DL48
+
+DL47    PUSH DE
+DLXX    CALL DL49
+        POP DE
+        RET Z
+DL48    BIT 3,D
+        RET NZ
+        LD A,(BC)
+        INC BC
+        JR DL40
+
+DLX0    CP 3
+        JR C,DLX1
+        JP Z,DLBL0
+        INC BC
+DLX1    INC BC
+        RET
+
+DL49    CP 2
+        JR Z,DL50
+        ADD A,A
+        ADD A,A
+        ADD A,#88
+        EX DE,HL
+        LD H,TBJPOP/256
+        LD L,A
+        JP (HL)
+
+DL50    LD A,(BC); DEC BYTE
+        INC BC
+DL51    CP 10
+        JR C,DL57
+        PUSH BC
+        LD C,A
+        XOR A
+        LD D,A
+        RL C : ADC A,A
+        RL C : ADC A,A
+        RL C : ADC A,A
+        RL C : ADC A,A : DAA
+        RL C : ADC A,A : DAA
+        RL C : ADC A,A : DAA
+        RL C : ADC A,A : DAA : RL D
+        RL C : ADC A,A : DAA : RL D
+        LD E,A
+        POP BC
+        JR Z,DL54
+        LD A,D
+DL52    ADD A,#30
+        LD (HL),A : INC L : RET Z
+        LD A,E
+        AND #F0
+        JR DL55
+
+DL53    LD A,E
+DL54    AND #F0
+        JR Z,DL56
+DL55    RRCA : RRCA : RRCA : RRCA
+        ADD A,#30
+        LD (HL),A : INC L : RET Z
+DL56    LD A,E
+DL57    AND #0F
+        ADD A,#30
+        LD (HL),A
+        INC L
+        RET
+
+DL58A   EX AF,AF:JR DL51
+
+DL58    LD A,(BC); DEC WORD
+        INC BC
+        EX AF,AF
+        LD A,(BC)
+        INC BC
+        OR A:JR Z,DL58A
+        EXX
+        LD D,A
+        EX AF,AF
+        LD E,A
+        LD HL,-1000
+        ADD HL,DE
+        JR NC,DL61
+        LD HL,-10000
+        ADD HL,DE
+        JR NC,DL60
+        LD DE,-10000
+        XOR A
+DL59    ADD HL,DE
+        INC A
+        JR C,DL59
+        SBC HL,DE
+        EX DE,HL
+        ADD A,#30
+        EXX
+        LD (HL),A : INC L : RET Z
+        EXX
+DL60    EX DE,HL
+        CALL DL62
+        RRA
+        RRA
+        RRA
+        RRA
+        AND #0F
+        ADD A,#30
+        LD (HL),A : INC L : RET Z
+        LD A,D
+        AND #0F
+        JR DL52
+
+DL61    EX DE,HL
+        LD D,0
+        ADD HL,HL
+        LD A,H
+        AND 7
+        RL L : ADC A,A : DAA
+        RL L : ADC A,A : DAA
+        RL L : ADC A,A : DAA
+        RL L : ADC A,A : DAA : RL D
+        RL L : ADC A,A : DAA : RL D
+        RL L : ADC A,A : DAA : RL D
+        RL L : ADC A,A : DAA : RL D
+        EX AF,AF
+        LD A,D
+        EXX
+        EX AF,AF
+        LD E,A
+        EX AF,AF
+        JP DL52
+
+DL62    LD D,0
+        LD A,H
+        RRCA
+        RRCA
+        LD H,A
+        AND #0F
+        OR A
+        DAA
+        RL H : ADC A,A : DAA
+        RL H : ADC A,A : DAA
+        RL L : ADC A,A : DAA
+        RL L : ADC A,A : DAA : RL D
+        RL L : ADC A,A : DAA : RL D
+        RL L : ADC A,A : DAA : RL D
+        RL L : ADC A,A : DAA
+        RL L : ADC A,A : DAA
+        RL L : ADC A,A : DAA
+        RL L : ADC A,A : DAA
+        LD E,A
+        LD A,L
+        RRA : RRA : RRA : RRA
+        LD L,A
+        LD A,D
+        RL L : ADC A,A : DAA
+        RL L : ADC A,A : DAA
+        RL L : ADC A,A : DAA
+        RL L : ADC A,A : DAA
+        LD D,A
+        EX AF,AF
+        LD A,E
+        EXX
+        LD E,A
+        EX AF,AF
+        LD D,A
+        RET
+
+DL63    LD A,(BC)
+        INC BC; HEX BYTE
+DL63A   LD (HL),"#" : INC L : RET Z
+DL64    LD D,A
+        RRA
+        RRA
+        RRA
+        RRA
+        CALL DL65
+        RET Z
+        LD A,D
+DL65    AND #0F
+        CP #0A
+        JR C,DL66
+        ADD A,7
+DL66    ADD A,#30
+        LD (HL),A
+        INC L
+        RET
+
+DL67    LD (HL),"#" : INC L : RET Z
+        LD A,(BC)
+        INC BC; HEX WORD
+        LD E,A
+        LD A,(BC)
+        INC BC
+        CALL DL64
+        RET Z
+        LD A,E
+        JR DL64
+
+DL68    LD (HL),"%" : INC L : RET Z
+        LD A,(BC):INC BC
+        EX AF,AF
+        LD A,(BC):INC BC
+        OR A
+DL68A   CALL NZ,DL69
+        EX AF,AF
+DL69    LD E,8
+DL70    LD (HL),"0"
+        ADD A,A
+        JR NC,DL71
+        INC (HL)
+DL71    INC L : RET Z
+        DEC E
+        JR NZ,DL70
+        INC E
+        RET
+
+DL72    LD (HL),#22 : INC L : RET Z
+        LD A,(BC)
+        INC BC
+        LD D,A
+        LD A,(BC)
+        INC BC
+        OR A
+        JR Z,DL73
+        LD (HL),A : INC L : RET Z
+DL73    LD (HL),D : INC L : RET Z
+        LD (HL),#22 : INC L
+        RET
+
+DL74    LD A,(BC)
+        INC BC
+        OR A
+        JR Z,DL77
+        CP #20
+        JR NC,DL76
+DL75    LD (HL),#20 : INC L : RET Z
+        DEC A
+        JR NZ,DL75
+        JR DL74
+
+DL76    LD (HL),A
+        INC L
+        JR NZ,DL74
+        RET
+
+DL77    INC A
+        RET
+
+DLRZD   LD E,A
+        DEC HL
+        LD A,(HL)
+        CP #20
+        JR Z,DLR0
+        INC HL
+DLR0    LD A,E
+        CP #40
+        JR C,DLR1
+        SUB #3B
+DLR1    SUB #29
+        LD E,1
+        CP 3
+        JR C,DLR3
+        INC E
+DLR3    LD (HL),#20
+        CP E
+        JR NZ,DLR4
+        LD (HL),":"
+DLR4    INC L
+        RET Z
+        DEC A
+        JR NZ,DLR3
+        LD A,(BC)
+        INC BC
+        JP DL15
+
+DLREM   LD (HL),";" : INC L : RET Z
+        CALL DL74
+        RET Z
+        INC BC
+        JP DLEND
+
+DLBL0   LD A,(BC)
+        INC BC
+DLBL    CP #C0
+        JR C,DLL6
+        CP #DA
+        JR C,DLLB
+        JR Z,DLLA
+        LD A,"="
+        JR DLLC
+
+DLLA    LD A,#AD
+DLLB    SUB #7F
+DLLC    LD (HL),A : INC L : RET Z
+        LD DE,#3F35
+DLL1    LD A,(BC)
+        AND D
+        CP #0C
+        JR C,DLL4
+        CP #26
+        JR C,DLL2
+        ADD A,6
+DLL2    ADD A,E
+DLL3    LD (HL),A : INC L : RET Z
+DLL3A   LD A,(BC)
+        INC BC
+        RLA
+        JR NC,DLL1
+        XOR A
+        INC A
+        RET
+
+DLL4    CP #0A
+        JR C,DLL5
+        JR Z,DLL3A
+        LD A,"_"
+        JR DLL3
+
+DLL5    ADD A,#30
+        JR DLL3
+
+DLL6    OR A
+        JR Z,DLL7
+        DEC A
+        AND 7
+        ADD A,#30
+        LD (HL),"=" : INC L : RET Z
+        LD (HL),A  : INC L
+        RET
+
+DLL7    LD (HL),"$" : INC L : RET
+
+
+; (BUFED) -> (BUFPC) A-FIRST_BYTE
+; C ERR  NC O'K ; A-LEN
+
+PLN     LD DE,BUFED
+PLNDE   PUSH IX
+        LD IX,BUFPC
+        LD A,(DE):INC DE
+        PUSH AF
+        CALL PL00
+        POP BC
+        LD D,HX:LD E,LX
+        POP IX
+        RET C
+        RL B
+        RET NC
+        LD H,D:LD L,E:DEC HL
+        SET 6,(HL)
+        OR A
+        RET
+
+PL00    AND #7F
+        JR Z,PL01
+        CALL PL8A
+PL01    LD C,0
+        LD A,(DE)
+        INC DE
+        CP #20
+        JR Z,PL3; NO LABEL
+        CP ":"
+        JR Z,PL3
+        CP ";"
+        JP Z,PL18; REM
+        OR A
+        JP Z,PL24; END
+        CP "."
+        JR Z,PL1; REPEAT
+        CP "_"
+        JR NZ,PL2
+        LD A,6; NO_TAB
+        CALL PL8A
+        JR PL3
+
+; C(4) 1-БЫЛО :
+; C(5) 1-БЫЛА КОМАНДА
+; C(7) 1-ТОЛЬКО ЧТО БЫЛА КОМАНДА
+
+PL1     LD A,(DE)
+        SUB #30
+        CP #10
+        JR NC,PL2
+        LD L,0; REPEAT
+PL1A    INC DE
+        LD H,A
+        LD A,L
+        ADD A,A : RET C
+        LD C,A
+        ADD A,A : RET C
+        ADD A,A : RET C
+        ADD A,C : RET C
+        ADD A,H : RET C
+        LD L,A
+        LD A,(DE)
+        SUB #30
+        CP 10
+        JR C,PL1A
+        LD A,7:CALL PL8A
+        LD A,L:CALL PL8A
+        LD C,0
+        JR PL3
+
+PL2     DEC DE
+        CALL FTK
+        LD C,0
+        JR NC,PL5; TK
+        LD A,(DE)
+        INC DE
+        LD C,#80
+        CALL PLBL
+        RET C
+        LD C,#40
+PL3     LD B,#FF
+PL4     INC B
+        LD A,(DE)
+        INC DE
+        CP #20:JR Z,PL4
+        CP ",":JR Z,PL4
+        CP ":":JR Z,PL9
+        OR A : JP Z,PL24
+        CP ";":JP Z,PL18
+        DEC DE
+        CALL FTK
+        JR NC,PL5
+        LD A,#FF
+PL5     LD H,A
+        AND #3F
+        CP #2F
+        JR NC,PL10
+        BIT 5,C
+        CALL NZ,PL7
+        BIT 7,H
+        JR Z,PL6
+        RES 7,H
+        LD A,#49:CALL PL8A
+PL6     CALL PL62A
+        LD C,#A0
+        JR PL3
+
+PL7     LD A,B
+        OR A
+        JR Z,PL7A
+        DEC A
+PL7A    CP 5
+        JR C,PL8
+        CP 10
+        JR C,PL7B
+        LD A,9
+PL7B    ADD A,#3B
+PL8     ADD A,#2A
+PL8A    LD (IX),A : INC IX
+        RET
+
+PL9     SET 4,C
+        RES 7,C
+        JR PL4
+
+PL10    BIT 7,C; TKRG OR ADD
+        JR Z,PL11
+        LD A,H
+        CP #31
+        JR NZ,PL13
+        LD A,(IX-1)
+        CP #4E
+        JR NZ,PL12
+        LD H,#7B
+        JR PL16
+
+PL11    LD A,C
+        OR #CF
+        INC A
+        CALL Z,PL7
+        JR PL15
+
+PL12    LD A,H
+PL13    CP #75
+        LD L,#4A
+        JR C,PL14; LD
+        CP #77
+        LD L,#4D
+        JR C,PL14; EX
+        LD L,#5E
+        JR Z,PL14; OUT
+        CP #7C
+        LD L,#4E
+        JR C,PL14; JR
+        OR A
+        LD L,#50
+        CALL P,PL14; JP
+        LD A,(DE)
+;        CP #22
+;        LD L,#6C
+;        JR Z,PL14
+        CP "("
+        LD L,#4A
+        JR Z,PL14
+        LD L,#4E
+PL14    LD A,L
+        CP (IX-1)
+        JR NZ,PL15
+        DEC IX
+PL15    BIT 7,H
+        JR Z,PL16
+        CALL PL25; ADD
+        RET C
+        JR PL17
+
+PL16    CALL PL62A
+PL17    LD C,#20
+        JP PL3
+
+PL18    LD A,#2F:CALL PL8A; REM
+        LD HL,#201F
+PL19    LD A,(DE)
+        INC DE
+        OR A
+        JR Z,PL23
+        CP H
+        JR Z,PL20
+        CALL PL8A
+        JR PL19
+
+PL20    LD A,(IX-1)
+        CP L
+        JR NC,PL21
+        INC (IX-1)
+        JR PL19
+
+PL21    LD A,1:CALL PL8A
+        JR PL19
+
+PL22    DEC IX
+PL23    LD A,(IX-1)
+        CP #20
+        JR C,PL22
+        XOR A:CALL PL8A
+PL24    LD A,LX; END
+        SUB BUFPC\256
+        CALL PL8A
+        INC A
+        OR A
+        RET
+
+PL25    LD A,(DE); MAIN ADD
+        CP #22
+        JR NZ,PL31
+        LD H,D
+        LD L,E
+        LD BC,#FF22
+        PUSH IX
+        POP IY
+        LD A,#DC
+        INC HL
+        JR PL29
+
+PL26    INC HL
+PL27    CP #20
+        JR NZ,PL29
+        LD A,(IY-1)
+        CP #1F
+        JR NC,PL28
+        INC (IY-1)
+        JR PL30
+
+PL28    LD A,1
+PL29    LD (IY),A : INC IY
+PL30    INC B
+        LD A,(HL)
+        INC HL
+        OR A
+        SCF
+        RET Z
+        CP C
+        JR NZ,PL27
+        CP (HL)
+        JR Z,PL26
+        LD A,B
+        CP 3
+        JR C,PL31
+        LD (IY),0 : INC IY
+        PUSH IY
+        POP IX
+        EX DE,HL
+        OR A
+        RET
+
+PL31    PUSH IX
+        LD B,10
+        CALL PL50
+        POP HL
+        RET C
+        SCF
+        RET Z
+        PUSH DE
+        CALL PL33
+        POP DE
+        RET
+
+PL33    LD D,H : LD E,L
+        LD A,(HL)
+        INC L
+        CP #08
+        JR Z,PL43; +(...)
+        CP #0A
+        JR Z,PL36; +BYTE
+        CP #0B
+        JR Z,PL38; +LABEL
+        CP #03
+        JR Z,PL40; +LABEL+...
+PL34    LD A,(DE)
+PL35    OR #80
+        LD (DE),A
+        RET; NC
+
+PL36    LD A,(HL)
+        CP 10
+        JR NC,PL34
+        ADD A,#DD
+PL36A   LD (DE),A
+        INC E
+PL37    LD LX,E
+        OR A
+        RET
+
+PL38    LD A,(HL)
+        OR A
+        JR Z,PL41; $
+        CP #C0
+        JR C,PL34
+        CP #DC
+        JR NC,PL34
+PL39A   LD A,LX
+PL39    LDI
+        CP L
+        JR NZ,PL39
+        JR PL37
+
+PL40    LD A,(HL)
+        OR A
+        JR NZ,PL34
+        INC L
+        LD A,(HL)
+        INC L
+        CP #1A
+        JR Z,PL42; +$-BYTE
+        CP #0A
+        JR NZ,PL34
+        LD A,(HL); +$+BYTE
+        CP 13
+        JR NC,PL34
+PL41    ADD A,#F3
+        JR PL36A
+
+PL42    LD A,(HL)
+        CP 13
+        JR NC,PL34
+        LD C,A
+        LD A,#F3
+        SUB C
+        JR PL36A
+
+PL43    LD A,(HL); +(...)
+        LD C,A
+        AND #F7
+        CP 3
+        JR Z,PL45; +(+LABEL...)
+        LD A,C
+        AND #F0
+        JR Z,PL44; +(+...)
+        DEC L
+        LD (HL),#A8; +(-...)
+        RET; NC
+
+PL44    LD H,D
+        LD L,E
+        INC L
+        LD A,(HL); +(+...)
+        INC L
+        OR #A0
+        LD (DE),A
+        INC E
+        JR PL39A
+
+PL45    INC L; +(+LABEL..)
+        LD A,(HL)
+        CP #C8
+        JR NZ,PL44
+        INC L
+        LD A,(HL)
+        CP #A3; X
+        LD B,0
+        JR Z,PL46
+        CP #BD; x
+        JR Z,PL46
+        CP #A4; Y
+        LD B,8
+        JR Z,PL46
+        CP #BE; y
+        JR NZ,PL44
+PL46    LD A,B; +(+IX/IY...)
+        OR #B0
+        BIT 3,C
+        JR NZ,PL36A; (IX/IY)
+        INC L
+        LD A,(HL)
+        LD C,A
+        AND #E0
+        SCF
+        RET NZ
+        BIT 3,C
+        JR Z,PL48; (IX/IY+...+...)
+        LD A,C; (IX/IY+...)
+        AND #07
+        JR Z,PL48; (IX/IY+(...))
+        BIT 2,A
+        SCF
+        RET NZ
+        BIT 4,C; (IX/IY+BYTE)
+        JR Z,PL47
+        OR #04; (IX/IY-BYTE)
+PL47    OR B
+        OR #B0
+        LD (DE),A
+        INC E
+        INC L
+        OR #FC:INC A:JP Z,PL38
+        LD A,(HL)
+        JP PL36A
+
+PL48    LD A,B
+        OR #B4
+        LD (DE),A
+        INC E
+        JP PL39A
+
+PL50    LD A,(DE); ADD SLAVE
+        INC DE
+        CP "-"
+        LD C,#10
+        JR Z,PL51
+        LD C,0
+        CP "+"
+        JR Z,PL51
+        DEC DE
+PL51    LD (IX),C
+        INC IX
+        LD A,(DE)
+        INC DE
+        CP "("
+        JR NZ,PL52
+        DEC B
+        SCF
+        RET Z
+        PUSH IX
+        CALL PL50
+        POP HL
+        RET C
+        SCF
+        RET NZ
+        INC B
+        XOR A
+        JR PL52A
+
+PL52    PUSH IX
+        PUSH BC
+        CALL PL60; ELEMENT
+        LD A,B
+        POP BC
+        POP HL
+        RET C
+PL52A   DEC HL
+        OR (HL)
+        LD (HL),A
+PL52B   LD A,(DE)
+        INC DE
+        CP ")"
+        JR Z,PL56
+        LD C,A
+        LD A,(DE)
+        PUSH HL
+        PUSH DE
+        LD D,A
+        LD E,0
+        LD HL,TBSIGN
+PL53    LD A,(HL)
+        INC HL
+        CP C
+        LD A,(HL)
+        INC HL
+        JR NZ,PL54
+        CP #20
+        JR Z,PL55
+        CP D
+        JR Z,PL55
+PL54    INC E
+        BIT 5,E
+        JR Z,PL53
+        POP DE
+        POP HL
+        SCF
+        RET
+
+PL55    LD A,E
+        POP DE
+        POP HL
+        CP #08
+        JR C,PL58
+        CP #0C
+        INC DE
+        JR C,PL58
+        DEC DE
+        CP #0F
+        JR C,PL58
+        CP #17
+        JR C,PL59A
+        INC A; NZ
+        DEC DE
+PL56    SET 3,(HL)
+        RET
+
+PL57    SUB #0D
+PL58    RRCA:RRCA:RRCA:RRCA
+        LD C,A
+        JR PL51
+
+PL59A   SUB #0F
+        OR #F0
+        LD (IX),A
+        PUSH IX
+        POP HL
+        INC IX
+        JR PL52B
+
+PL60    CP "#"
+        JP Z,PL63
+        CP #22
+        JP Z,PL70
+        CP "%"
+        JP Z,PL73
+        CP #30
+        JP C,PL77
+        CP #3A
+        JP NC,PL77
+        SUB #30; DECIMAL
+        LD HL,0
+PL61    ADD HL,HL
+        RET C
+        LD B,H
+        LD C,L
+        ADD HL,HL
+        RET C
+        ADD HL,HL
+        RET C
+        ADD HL,BC
+        RET C
+        LD C,A
+        LD B,0
+        ADD HL,BC
+        RET C
+        LD A,(DE)
+        SUB #30
+        JR C,PL62
+        CP #0A
+        INC DE
+        JR C,PL61
+        DEC DE
+PL62    LD (IX),L : INC IX
+        LD B,2
+        LD A,H
+        OR A
+        RET Z
+        LD B,6
+PL62A   LD (IX),H : INC IX
+        RET
+
+PL63    LD HL,0; #
+        LD B,0
+PL64    LD A,(DE)
+        SUB #30
+        JR C,PL67
+        CP #0A
+        JR C,PL66
+        CP #30
+        JR C,PL65
+        SUB #20
+PL65    SUB 7
+        CP 10
+        JR C,PL67
+        CP #10
+        JR NC,PL67
+PL66    ADD HL,HL
+        RET C
+        ADD HL,HL
+        RET C
+        ADD HL,HL
+        RET C
+        ADD HL,HL
+        RET C
+        OR L
+        LD L,A
+        INC B
+        INC DE
+        JR PL64
+
+PL67    LD A,B
+        OR A
+        SCF
+        RET Z
+        LD (IX),L : INC IX
+        CP 4
+        JR NC,PL68
+        LD B,1
+        LD A,H
+        OR A
+        RET Z
+PL68    LD B,5
+        JR PL62A
+
+PL70    LD A,(DE);   "
+        INC DE
+        OR A
+        SCF
+        RET Z
+        CP #22
+        JR NZ,PL71
+        LD A,(DE)
+        INC DE
+        CP #22
+        SCF
+        RET NZ
+PL71    LD L,A
+        LD H,0
+        LD A,(DE)
+        INC DE
+        OR A
+        SCF
+        RET Z
+        CP #22
+        JR NZ,PL72
+        LD A,(DE)
+        CP #22
+        JR NZ,PL72A
+        INC DE
+PL72    LD H,L
+        LD L,A
+        LD A,(DE)
+        INC DE
+        CP #22
+        SCF
+        RET NZ
+PL72A   LD B,4
+PL72B   LD (IX),L : INC IX
+        OR A
+        JP PL62A
+
+PL73    LD HL,0; %
+        LD B,0
+PL74    LD A,(DE)
+        CP #30
+        JR Z,PL75
+        CP #31
+        JR NZ,PL76
+        SCF
+PL75    ADC HL,HL:RET C
+        INC B
+        INC DE
+        JR NC,PL74
+        RET
+
+PL76    LD A,B
+        OR A
+        LD B,7
+        JR NZ,PL72B
+        SCF:RET
+
+PL77    LD C,#00
+        CALL PLBL
+        LD B,3
+        RET
+
+FTK     PUSH BC
+        PUSH DE
+        CALL FTK8
+        JR NC,FTK7
+        LD BC,#2020
+        LD H,B
+        LD L,A
+        CALL FTK9
+        JR NC,FTK1
+        LD H,A
+        CALL FTK9
+        JR NC,FTK1
+        LD C,A
+        CALL FTK9
+        JR NC,FTK1
+        LD B,A
+        CALL FTK9
+        JR C,FTK7
+FTK1    PUSH DE
+        EX DE,HL
+        LD HL,TBTK
+        LD A,9
+FTK2    EX AF,AF
+        LD A,E : CP (HL) : INC HL
+        JR NZ,FTK3
+        LD A,D : CP (HL) : INC HL
+        JR NZ,FTK4
+        LD A,C : CP (HL) : INC HL
+        JR NZ,FTK5
+        LD A,B : CP (HL) : INC HL
+        JR NZ,FTK6
+        EX AF,AF
+        LD B,0
+        CP #41
+        JR C,FTK2A
+        CP #44
+        LD B,#2B
+        JR C,FTK2A
+        LD B,#31
+        JR Z,FTK2A
+        CP #49
+        LD B,0
+        JR NC,FTK2A
+        LD B,#F3
+FTK2A   ADD A,B
+        POP DE
+        POP BC
+        POP BC
+        OR A
+        RET
+
+FTK3    INC HL
+FTK4    INC HL
+FTK5    INC HL
+FTK6    EX AF,AF
+        INC A
+        CP #8C
+        JR NZ,FTK2
+        POP BC
+FTK7    POP DE
+        POP BC
+        SCF
+        RET
+
+FTK8    PUSH BC
+        LD B,8
+        JR FTK10
+
+FTK9    PUSH BC
+        LD B,9
+FTK10   PUSH HL
+        LD A,(DE)
+        LD HL,TBSGN1
+FTK11   CP (HL)
+        JR Z,FTK13
+        INC L
+        INC L
+        DJNZ FTK11
+        CP #61
+        JR C,FTK12
+        CP #7B
+        JR NC,FTK12
+        SUB #20
+FTK12   INC DE
+        SCF
+FTK13   POP HL
+        POP BC
+        RET
+
+; A-FIRST ; (DE)->(IX)
+; C #80 OR #00
+; C ERR NC O'K
+; DE-ADR NEXT
+; A-NDEF
+
+PLBL    CP "."
+        JR Z,PLBL2
+        CP "="
+        JR Z,PLBL3
+        CP "$"
+        JR Z,PLBL5
+        CP #60
+        JR C,PLBL1
+        SUB #20
+PLBL1   SUB #41
+        RET C
+        ADD A,#C0
+        RET C
+        CP #DA
+        JR C,PLBL10
+        SCF
+        RET
+
+PLBL2   LD A,#DA
+        JR PLBL10
+
+PLBL3   LD A,(DE)
+        SUB #30
+        JR C,PLBL4
+        CP #08
+        JR NC,PLBL4
+        BIT 7,C
+        SCF
+        RET NZ
+        INC A
+        CALL PL8A
+        INC DE
+        OR A
+        RET
+
+PLBL4   LD A,#DB
+        JR PLBL10
+
+PLBL5   BIT 7,C
+        SCF
+        RET NZ
+        XOR A:JP PL8A
+
+PLBL6   LD A,(DE)
+        CP "_"
+        JR NZ,PLBL7
+        LD A,#0B
+        JR PLBL8
+
+PLBL7   SUB #30
+        JR C,PLBL11
+        CP 10
+        JR C,PLBL8
+        SUB 5
+        CP #0C
+        JR C,PLBL11
+        CP #26
+        JR C,PLBL8
+        SUB 6
+        CP #26
+        JR C,PLBL11
+        CP #40
+        JR NC,PLBL11
+PLBL8   BIT 7,C
+        JR Z,PLBL9
+        RES 7,C
+        OR #40
+PLBL9   INC DE
+PLBL10  CALL PL8A
+        INC C
+        BIT 3,C
+        JR Z,PLBL6
+        SCF
+        RET
+
+PLBL11  LD A,C
+        AND #07
+        DEC A
+        JR NZ,PLBL13
+        BIT 7,C
+        LD A,#0A
+        JR Z,PLBL12
+        OR #40
+PLBL12  CALL PL8A
+PLBL13  SET 7,(IX-1)
+        OR A
+        RET
+
+TBTK
+_DB "ORG EQU DI  EI  EXA NOP CCF SCF "
+_DB "CPL DAA EXX RLA RRA RLCARRCAHALT"
+_DB "LDI LDD LDIRLDDRCPI CPD CPIRCPDR"
+_DB "INI IND INIRINDROUTIOUTDOTIROTDR"
+_DB "NEG RLD RRD INF RETIRETN    "
+_DB "B   C   D   E   H   L   (HL)A   "
+_DB "HX  LX  HY  LY  BC  DE  HL  SP  "
+_DB "    DEFBDEFWDEFSAF' XH  XL  YH  "
+_DB "YL      LD  INC DEC EX  JR  DJNZ"
+_DB "JP  CALLRET POP PUSHADD ADC SUB "
+_DB "SBC AND OR  XOR CP  IN  OUT BIT "
+_DB "RES SET RLC RRC RL  RR  SLA SRA "
+_DB "SLI SRL IM  RST DB  DW  DS  IX  "
+_DB "IY  (BC)(DE)I   R   AF  (SP)(C) "
+_DB "NZ  Z   NC  C   PO  PE  P   M   "
+_DB "INCLINCBREPTENDRIF  IFU IFNUIFD "
+_DB "IFNDELSEEIF ENDM"
+ETBTK
+

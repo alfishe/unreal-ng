@@ -118,15 +118,15 @@ StateNode AyChipNode(SoundChip_AY8910* chip, int index, double clockHz)
     mixer["channel_a_noise"] = (mixerValue & 0x08) == 0;
     mixer["channel_b_noise"] = (mixerValue & 0x10) == 0;
     mixer["channel_c_noise"] = (mixerValue & 0x20) == 0;
-    mixer["porta_input"] = (mixerValue & 0x40) != 0;
-    mixer["portb_input"] = (mixerValue & 0x80) != 0;
+    mixer["porta_input"] = (mixerValue & 0x40) == 0;
+    mixer["portb_input"] = (mixerValue & 0x80) == 0;
     ret["mixer"] = mixer;
 
     StateNode ports = StateNode::Object();
     ports["porta_value"] = int(regs[14]);
-    ports["porta_direction"] = (mixerValue & 0x40) ? "input" : "output";
+    ports["porta_direction"] = (mixerValue & 0x40) ? "output" : "input";
     ports["portb_value"] = int(regs[15]);
-    ports["portb_direction"] = (mixerValue & 0x80) ? "input" : "output";
+    ports["portb_direction"] = (mixerValue & 0x80) ? "output" : "input";
     ret["io_ports"] = ports;
 
     ret["sound_played_since_reset"] = false;  // not tracked

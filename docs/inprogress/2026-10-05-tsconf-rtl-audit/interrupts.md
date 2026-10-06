@@ -49,12 +49,12 @@ T-state (224 per line, 71680 per frame), "clock" = one CPU clock at the current 
 | 36 | 14 MHz external I/O stall (AY `#xxFD` with A15=1, VG93 `#1F/#3F/#5F/#7F` while DOS or VG_OPEN) | `io_stall = iorq_s && external_port && turbo_int[1]`, `stall_count <= 0` -> counts to 8 (`zclock.v:76-90`, `zports.v:344-345`): "8 tacts 28MHz"; by cycle count 9 fclk incl. the start cycle | none | `AddWaitStates(4)` = 8 fclk at 14 MHz (`portdecoder_tsconf.cpp:1329-1336`) | `TIM2_ExternalIoStallAt14MHz` (`portdecoder_tsconf_test.cpp:411`) | ng-matches-RTL, Unreal differs (8 vs 9 fclk unresolved) |
 | 37 | DOS-entry / vdos-exit stall | `dos_stall = dos_on OR vdos_off` -> `stall_count <= 4`, about 4-5 fclk clock stop at every speed (`zclock.v:75,84-85`) | none | none (`BeforeMachineM1` / `FdcAccess` add no wait, `portdecoder_tsconf.cpp:799-829,908-937`; the ATM3 decoder has the equivalent, `portdecoder_atm3.cpp:874-882`) | none | ng-matches-Unreal, RTL differs (gap) |
 | 38 | IDE port stall | `ide_stall` from `ide_req` until `ide_ready` (`zports.v:777-781`, `fpga/current/common/ide.v:72-81`: 5-state cycle, longer while DMA owns the bus), all speeds (`zclock.v:96`) | none | +1/+2/+3 T at 3.5/7/14 MHz only with `[HDD] IdeStall=1`, default 0 (`portdecoder_tsconf.cpp:1338-1345`, `core/src/emulator/platform.h:610`, `core/src/emulator/config.cpp:671`) | `IDE4_Stall` (`tsconfstorage_test.cpp:179`) | ng-matches-Unreal, RTL differs (default off) |
-| 39 | /WAIT on the Gluk clock data port `#BFF7` | `wait_start_gluclock = gluclock_on && !a[14] && (portf7_rd OR portf7_wr)` holds /WAIT until the AVR's `wait_end` (`zports.v:763`, `fpga/current/z80/zwait.v:31-43`) | none (`cmos_read()` returns at once, `Unreal/io.cpp:1413-1421`) | none (`DecodeF7In/Out` call `_evoAvr` directly, `portdecoder_tsconf.cpp:841-865`) | none | ng-matches-Unreal, RTL differs (gap) |
+| 39 | /WAIT on the Gluk clock data port `#BFF7` | `wait_start_gluclock = gluclock_on && !a[14] && (portf7_rd OR portf7_wr)` holds /WAIT until the AVR's `wait_end` (`zports.v:763`, `fpga/current/z80/zwait.v:31-43`) | none (`cmos_read()` returns at once, `Unreal/io.cpp:1413-1421`) | `EvoAvr::HoldForGlukAccess` in `DecodeF7In/Out`: ISR + main-loop phase + the Gluk service, on the AVR wait the COM port shares (`EvoAvrWait`) | `EvoAvrGlukWait_Test.TsConfDataPortWaitsForTheAvr`, `TsConfWaitsInsideVdosNotInDos`, `ACmosAccessRightAfterAComAccessSeesTheSharedPhase` (`core/tests/emulator/memory/atm/evoavrwait_test.cpp`) | **fixed 2026-10-05**: ng-matches-RTL, Unreal differs |
 | 40 | /WAIT on the COM / ZiFi port `#xxEF` | every `#xxEF` read or write waits for the AVR (`zports.v:735-736,764`, `zwait.v:45-49`) | none (`zf232.read`, `Unreal/io.cpp:1424-1425`) | AVR access cycles as `AddWaitStates` when a serial device is attached (`core/src/emulator/io/serial/comport.cpp:69-82,279,292`); without one the arm reads `#FF` with no wait (`portdecoder_tsconf.cpp:547-550`) | `ComPort_Test.EveryEvoAccessWaitsForTheAvr` (`core/tests/emulator/io/serial/comport_test.cpp:126`) | ng-matches-RTL, Unreal differs (no wait when no COM device) |
 | 41 | NMI | none: `assign nmi_n = 1'bZ`, `znmi` ports commented out (`top.v:208,422,1111-1123`) | the NMI key injects one (`main_nmi -> m_nmi`, `Unreal/emulkeys.cpp:304-309`) | `RequestNMI` / the button path pulses /NMI; TS-Conf does not override `RequestBoardNmi` (`core/src/emulator/emulator.cpp:1047-1061,1156`) | none | ng-matches-Unreal, RTL differs (low, host action) |
 
 Verdict counts (41 rows): match 21; ng-matches-RTL, Unreal differs 8 (rows 3, 6, 10, 13, 16, 34, 36, 40);
-ng-matches-Unreal, RTL differs 5 (rows 25, 37, 38, 39, 41); ng differs from both 5 (rows 7, 8, 11, 20, 31); unclear 2
+ng-matches-Unreal, RTL differs 5 (rows 25, 37, 38, 39, 41; all five since fixed); ng differs from both 5 (rows 7, 8, 11, 20, 31); unclear 2
 (rows 33, 35).
 
 ## Bugs and gaps
@@ -131,10 +131,11 @@ unreal-ng already models the same stall (`kDosEntryStallTicks`). Suggested test 
 only with `[HDD] IdeStall=1`. Covered by `IDE4_Stall` when enabled; consider defaulting it on for TS-Conf, or record
 the choice in hardware-spec §12.
 
-**Row 39 - no /WAIT on `#BFF7` (gap).** The RTL holds /WAIT on every Gluk data-port access until the AVR answers
-(`wait_start_gluclock`, `zwait.v`); this also freezes the frame pulse. unreal-ng and Unreal answer at once. Suggested
-test `CMOS3_DataPortWaitsForTheAvr`: with EFF7 bit 7 set, `In(0xBFF7)` costs the AVR's service time in clocks (as
-`ComPort::AddAccessWait` computes for `#xxEF`) and a frame pulse running across it keeps its remaining clocks.
+**Row 39 - /WAIT on `#BFF7` (fixed 2026-10-05).** The RTL holds /WAIT on every Gluk data-port access until the AVR
+answers (`wait_start_gluclock`, `zwait.v`); this also freezes the frame pulse. unreal-ng now waits there on the AVR
+model the COM port uses (one main loop, one phase: `EvoAvrWait`), with the Gluk service counted on the released TS
+firmware per cell ([reference-evo-com-port.md](../2026-09-30-nedoos-integration/reference-evo-com-port.md) §3.1); the
+wait goes through `AddWaitStates`, so the frame pulse keeps its remaining clocks (row 6). Unreal answers at once.
 
 **Row 40 - `#xxEF` waits only with a COM device attached (minor).** On hardware the AVR always answers `#xxEF` with a
 /WAIT; unreal-ng adds the wait only through `ComPort`. Without a serial device the access is free. Suggested test

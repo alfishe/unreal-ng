@@ -1,0 +1,104 @@
+        .IF     PASS
+PASS    EQU     1
+PASS2   EQU     1
+        .ENDIF
+;
+        DEFMAC  PLAYPIT
+;
+KEY     =       [#5C08]
+        .IF     KEY-"q"
+YPOS    =       YPOS-1
+        .ENDIF
+        .IF     KEY-"a"
+YPOS    =       YPOS+1
+        .ENDIF
+        .IF     KEY-"o"
+XPOS    =       XPOS-1&31
+        .ENDIF
+        .IF     KEY-"p"
+XPOS    =       XPOS+1&31
+        .ENDIF
+;
+        .IF     YPOS-#FFFF
+YPOS    =       23
+        .ENDIF
+        .IF     YPOS-24
+YPOS    =       0
+        .ENDIF
+        ORG     32*[LAST+#7001]+[LAST+#7000]+#5800
+        DEFB    ATRFREE
+HADR    =       32*YPOS+XPOS+#5800
+;
+        .IF     [HADR]-ATRSN
+GAMEOVER        =       1
+        .ENDIF
+        .IF     [HADR]-ATRFREE-128
+RABBIT          =       0
+        .ENDIF
+;
+        ORG     HADR
+        DEFB    ATRSN
+        ORG     HEAD+#7000
+        DEFB    XPOS
+        DEFB    YPOS
+HEAD    =       HEAD+2&#0FFF
+        .IF     FLAG
+LAST    =       LAST+2&#0FFF
+        .ELSE
+FLAG    =       FLAG-1
+        .ENDIF
+;
+        .IF     RABBIT
+HADR    =       256*[HEAD+LAST]+[HEAD+LAST+1]&#2FF+#5800
+        .IF     [HADR]-ATRFREE
+        ORG     HADR
+        DEFB    ATRFREE+128
+RABBIT  =       1
+FLAG    =       4
+        .ENDIF
+;
+        .IF     PASS2|GAMEOVER
+        PLAYPIT
+        .ENDIF
+        ENDMAC
+;
+ATRFREE EQU     [#5800]
+ATRSN   EQU     ATRFREE&7*8+(ATRFREE/8&7)
+;
+        ORG     #4000
+        DEFS    256,#FF
+        DEFS    2048-512,#81
+        DEFS    256,#FF
+        DEFS    256,#FF
+        DEFS    2048-512,#81
+        DEFS    256,#FF
+        DEFS    256,#FF
+        DEFS    2048-512,#81
+        DEFS    256,#FF
+        ORG     #5800
+        DEFS    768,ATRFREE
+        ORG     #7000
+        DEFS    #1000
+HEAD    EQU     4
+LAST    EQU     0
+XPOS    EQU     0
+YPOS    EQU     0
+KEY     EQU     "p"
+HADR    EQU     0
+GAMEOVER        EQU     0
+RABBIT  EQU     0
+FLAG    EQU     0
+;
+        ORG     #5C08
+        DEFB    "p"
+;
+        PLAYPIT
+;
+        .IF     GAMEOVER-1
+        DISPLAY GAMEOVER
+TOTALSCORE      EQU     HEAD-LAST&#FFF/2
+        DISPLAY TOTALSCORE
+        .ENDIF
+;
+PASS2   =       0
+

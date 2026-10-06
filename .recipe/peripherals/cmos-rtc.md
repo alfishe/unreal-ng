@@ -15,6 +15,15 @@ The Scorpion's clock lives on the SMUC board: the shipped configs have
 (a config toggle: it needs a new instance). Every other model answers
 "no CMOS clock" with the reason.
 
+On the ZX-Evo (`ATM3`, `TSL`) the AVR answers every data-port access itself, and the FPGA holds the Z80 on
+/WAIT until it does, as for the COM port `#xxEF` (one AVR main loop serves both, so the two share its time). Expect
+an `IN` / `OUT` on `#BFF7` to cost tens of microseconds (a BCD time register: about 30 us on TS-Conf, 40-60 us
+on the ATM3; a register A-D about 20 us / 30-55 us), an NVRAM cell (`#0E`-`#EF`, an I2C read of the PCF8583) over 400 us, and a write to a time register or an NVRAM
+cell to delay the next CMOS or COM access by about 0.3 ms (0.6 ms for the year); an EEPROM-window write makes the
+next EEPROM access wait out its 8.5 ms write. The address port `#DFF7` costs nothing. A port trace or a T-state
+count around a CMOS loop shows these waits; they are the hardware's
+([reference-evo-com-port.md](../../docs/inprogress/2026-09-30-nedoos-integration/reference-evo-com-port.md) §3.1).
+
 Cell map: `#00` seconds, `#02` minutes, `#04` hours, `#06` day of week
 (1 = Sunday), `#07` day, `#08` month, `#09` year, `#01/#03/#05` alarms,
 `#0A-#0D` registers A-D, `#0E` and up RAM.

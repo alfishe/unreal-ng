@@ -296,6 +296,11 @@ protected:
     // BaseConf window mapping (fpga/base_trdemu/trunk/mem/atm_pager.v): the
     // 1 MB #7FFD page bits, #EFF7 bit 3 RAM page 0 and the NMI page override
     void updateMemoryBanks() override;
+public:
+    /// The ATM710 layout plus the BaseConf's own state: #7FFD bits 5-7 are not page bits (#EFF7 bit 2 = 1), no RAM at #0000
+    /// (bit 3 = 0), no write protection, no NMI or virtual TR-DOS page
+    void EnterSpectrum128Paging(uint16_t pc) override;
+protected:
 
     void DecodeF7Out(uint16_t port, uint8_t value, uint16_t pc);
     /// Attach this decoder as the Z80 M1 hook only while it has work there
@@ -309,5 +314,7 @@ protected:
     /// Card presence and the slot's write-protect switch into AVR register C
     void UpdateSdStatus();
     uint8_t DecodeF7In(uint16_t port);
+    /// The AVR firmware's wait handler and main-loop timing from [EVO] Avr=
+    Uart16550::AvrFirmware ConfigureAvrWait();
     /// endregion </Port handlers>
 };

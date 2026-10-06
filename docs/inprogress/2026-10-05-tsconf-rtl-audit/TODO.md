@@ -31,11 +31,21 @@ first; tests that assert the current wrong value are named and change with the f
 ## Gaps (unreal-ng follows the fork, not the RTL)
 
 - ~~No 4-5 fclk stall on DOS entry / vdos exit - row 37.~~ **Fixed:** `PortDecoder_TSConf::DosStall` (4 fclk at every speed; a VG93 access that ends vdos at 14 MHz takes only this one, as `zclock.v` loads the DOS count); test TIM7.
-- No /WAIT on `#BFF7` - row 39. **Deferred, with a plan:** the Gluk wait is the same AVR round trip as the COM
-  port's (`zwait.v` `wait_status_glu` beside `wait_status_com`, one AVR main loop), whose timing model lives in
-  `Uart16550::AccessCycles`. Doing it right moves that model (the main-loop phase, the service cycles, its TTD state)
-  into the shared `EvoAvr` for both ports and both machines (TS-Conf, ATM3), then counts the Gluk service in the
-  AVR listing - not a local patch.
+- ~~No /WAIT on `#BFF7` - row 39.~~ **Fixed 2026-10-05:** one AVR wait model for both /WAIT ports, owned by the
+  board's AVR (`EvoAvrWait` in `EvoAvr`, TS-Conf and ATM3): the main-loop phase (moved out of `Uart16550`, with its TTD
+  state, now in `EvoAvrVolatile` v2 on both machines) is shared by `#xxEF` and `#BFF7`, so a CMOS access right behind a
+  COM access waits a whole pass (TS: a task). A `#BFF7` read or write waits ISR + phase + the Gluk service counted on
+  the released firmware images per cell (TS on the TS-Conf FPGA: 151 + the cell, `#F0-#FF` 90 + the cell; BaseConf:
+  295 + the cell; NVRAM cells over 4400 cycles of I2C), with the RTL's gating (`gluclock_on && !a[14]`, inside vdos
+  too); a write's I2C / EEPROM work after the release delays the next access
+  ([reference-evo-com-port.md](../2026-09-30-nedoos-integration/reference-evo-com-port.md) §3.1). BaseConf waits the
+  same (`fpga/base/z80/zports.v:754`, `zwait.v:57-61`). The COM port's numbers are unchanged. Tests
+  `EvoAvrGlukWait_Test.TsConfDataPortWaitsForTheAvr`, `TsConfWaitsInsideVdosNotInDos`, `Atm3DataPortWaitsForTheAvr`,
+  `ACmosAccessRightAfterAComAccessSeesTheSharedPhase`, `EvoAvrWait_Test.*`,
+  `TimeTravelManager_ServiceState_Test.EvoAvrWaitStateComesBackOnTsConf` / `OnAtm3`. The frame pulse freezes across
+  the wait through the existing `OnWait` path (row 6). Side finding, not changed: the TS-Conf FPGA's `wait_addr` is
+  also loaded by every `#xxEF` access (`zports.v:755-756`), so on hardware a COM access between `OUT (#DFF7)` and
+  `#BFF7` changes the cell the AVR serves; unreal-ng keeps the CMOS address apart.
 - ~~IDE stall off by default (`IdeStall=0`) - row 38.~~ **Fixed:** on by default as the RTL (`top.v:557`), owner
   decision 2026-10-05 (was D2, off); `IdeStall=0` stays as the bypass. Test IDE4.
 - ~~The NMI button works on TS-Conf, whose board never drives /NMI - row 41.~~ **Fixed:** `RequestBoardNmi` takes the press and does nothing (test `NmiButtonDoesNothing`); the debugger's direct NMI request stays.
@@ -65,6 +75,15 @@ first; tests that assert the current wrong value are named and change with the f
   cache gap above: it fills on every CPU DRAM read, as the RTL.
 - DMA device 7 (wait port, AVR) not served ([dma.md](dma.md) row 19).
 - GFXOVR and the 360-wide TSU window (T_CONFIG bit 0) on in every build, decision D1 (`hardware-spec.md` §0.1).
+
+## Found while fixing (open)
+
+- **The COM-port wait numbers** come from a sibling build's listing (scorpevo): the released BaseConf image disassembles to
+  COM write 283 AVR cycles and ISR 28 (the model: 258 / 37), and on the TS-Conf FPGA the TS firmware's COM path is
+  about 86-90 cycles + service, not the BaseConf numbers. Kept unchanged when the Gluk wait was added (the COM tests pin
+  them); re-derive from the real images (`reference-evo-com-port.md` §3.1 has the method and the addresses).
+- **TS-Conf `wait_addr` is shared:** every `#xxEF` access also loads it (`zports.v:755-756`), so a COM access between
+  `OUT (#DFF7)` and `#BFF7` changes which CMOS cell the AVR serves on the hardware; unreal-ng keeps the two apart.
 
 ## Unclear (needs an RTL simulation or a hardware test)
 

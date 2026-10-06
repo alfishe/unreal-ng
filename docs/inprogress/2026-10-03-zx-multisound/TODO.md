@@ -1,10 +1,9 @@
 # TODO - ZX-MultiSound (UzixLS) sound card
 
-**Status:** design drafted 2026-10-03; owner decisions Q1-Q5 recorded. Card logic CL-0 / CL-1 built 2026-10-04
-(branch `multisound`): `MultiSoundLogic` agrees with the card's CPLD Verilog on every scenario and the
-full decode sweep. MS-3 `MultiSoundCard` assembled 2026-10-04 (not committed; no dependency on the slots framework). MS-4 puts it in
-a slot (2026-10-04, branch `zx-bus-slots`, committed). MS-5 (TTD) built 2026-10-05 (not committed). Depends on the
-[ZX-bus slots](../2026-10-03-zx-bus-slots/TODO.md) (SL-1 to SL-5).
+**Status:** on master since 2026-10-05 (`7605bf104`, pushed): MS-1 to MS-7 first pass, with the ZX-bus slots SL-1 to
+SL-7 ([slots TODO](../2026-10-03-zx-bus-slots/TODO.md)); demo to the owner done (MIDI, TSFM, SAA). Shipped configs keep
+the card off (owner decision): it is fitted through the slots. Left: the open items below (MS-8 docs, profiling, a
+TTD fixture, the MS-7 second pass, the 0.15 dB SSG residue).
 
 ## Documents
 
@@ -34,7 +33,7 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
 
 ## Remaining
 
-- [ ] Owner review of the design
+- [x] Owner review of the design (by the implementation and the 2026-10-05 demo)
 - [x] SAM-0..SAM-2 libsam2695 ([tdd-libsam2695.md](tdd-libsam2695.md) §10 "As built"): `core/src/3rdparty/sam2695/`
   (UART, parser, SF2 loader, voice model, allocation, state; conformance table in its README), FluidSynth harness and
   bank corpus check in `tools/verification/sam2695/`; linked into core (`UNREALNG_HAVE_SAM2695`), used by nothing yet
@@ -46,8 +45,9 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   FluidSynth comparison 47 / 47 incl. effect sends, bank corpus rerun
 - [x] SAM-5 real-chip check (owner, 2026-10-05): our SAM2695 compared by ear with real-chip recordings (YouTube):
   "very similar, good enough" - accepted. There is no official CleanWave bank to compare against
-- [ ] SAM-5 verification consolidation: Dream-board recordings (the curves chosen in tdd §10.6 first),
-  `data/midi/` bank pinned, corpus + FluidSynth report as one command; owner review of tdd §10.4 / §10.6
+- [x] SAM-5 verification consolidation: owner compared the emulation with real-chip recordings (YouTube) by ear on
+  2026-10-05 - "very similar, good enough"; no official CleanWave bank exists to compare against (mask ROM, not
+  distributed). `data/midi/generaluser-gs.sf2` shipped (GeneralUser GS 2.0.3). Recordings of a real board stay welcome
 - [x] ML-0..2 MIDI line ([tdd-midi-line.md](tdd-midi-line.md) §2.0, §5 "As built", 2026-10-04, not committed):
   datasheet facts of the I/O port stage (input = `#FF`, push-pull output, reset = inputs), `IAyIoPortListener` on
   `SoundChip_AY8910` (pins, called on change only, one pointer test per register latch without a listener),
@@ -109,7 +109,7 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   - [x] owner decision (slots Q8, 2026-10-05): the AY socket left unconfigured gives up its socketed chip at creation
     (ZX-Evo); an explicit `ay-socket = ay`, a TSFM in the socket or a GS / SounDrive card next to the card refuse the
     machine with the reason ([architecture.md](architecture.md) §6 "As built"); no shipped config fits the card
-  - [ ] owner review: the card's axis is `CPU_CLOCK_RATE` on every machine, not the machine's T-state rate
+  - [x] decided 2026-10-05: the card's axis is `CPU_CLOCK_RATE` on every machine, not the machine's T-state rate
     ([tdd-integration.md](tdd-integration.md) §3.2 deviation)
   - [x] the RTL asserts IORQGE on a `#BFFD` read too (no direction term, hardware-reference.md §3.1 / §3.4): the
     claim is `InOut` since 2026-10-05, the card does not drive that read, so on the Pentagon it floats instead of
@@ -123,7 +123,7 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
     SL-7 / MS-6) and `TTD_Corpus_Test` to create the fixture's slot set. Since slots SL-6 the core can fit it into a
     running instance (`SlotChange::Run`, a plug applied by a restart, [slots tdd.md](../2026-10-03-zx-bus-slots/tdd.md)
     §14); a model switch carries it (Pentagon -> ZX-Evo keeps it, ZX-Evo -> 128K reports it as not carried)
-  - [ ] the ids 58-60 / region 17 were free on this branch: a merge with master renumbers them if master took them
+  - [x] the ids 58-60 / region 17 and input kind 17 (`MidiPanic`) were checked free on master at the landing (2026-10-05)
 - [x] MS-6 surfaces (2026-10-05, working tree of `zx-bus-slots`, not committed; [tdd-integration.md](tdd-integration.md)
   §5.1): `DeviceState::MultiSound` / `Midi` on every surface, MIDI panic as TTD input `MidiPanic`, Qt slot window card
   options, MIDI activity window, HUD icon; recipe [.recipe/peripherals/multisound.md](../../../.recipe/peripherals/multisound.md)
@@ -166,16 +166,20 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
 - [x] 2026-10-05, after master 7bbc2eaaa (AY voicing default back to Classic): the card's SSG rows run through the same
   AY / SSG tone voicing as the socket's chips ([architecture.md](architecture.md) §5); `[AY] Stereo` deliberately not
   applied to the card (board wiring). `Ym2203PairBoardsLevel_Test` over Flat / Classic / Headphones, FM unvoiced on both
-- [ ] owner question: the SSG rows are the schematic's -7.6 dB below the TSFM's (SSG through 24 k against the FM's
-  10 k on the MultiSound, equal weights on the TSFM); kept as hardware, not matched
-- [ ] owner question: atm3 / atm450 / atm710 ship without `TSFM_FmTrimDb` (their socket holds a TurboSound): a TSFM
-  or a MultiSound fitted there runs its FM at 0 dB, 7.4 dB below the other configs
+- [x] decided 2026-10-05: the SSG rows are the schematic's -7.6 dB below the TSFM's (SSG through 24 k against the
+  FM's 10 k on the MultiSound, equal weights on the TSFM); kept as hardware, not matched
+- [ ] the measured card / TSFM SSG ratio is -7.75 dB at every voicing preset, 0.15 dB beyond the schematic's -7.60 dB
+  (`Ym2203PairBoardsLevel_Test` tolerance 0.2 dB): find where the two SSG output paths differ (owner 2026-10-05:
+  after the landing)
+- [x] atm3 / atm450 / atm710 carry `TSFM_FmTrimDb=7.4` since 2026-10-05 (`bab7a4e32`), like every shipped config
 - [ ] side note: the plain AY / TurboSound device (`SoundChip_TurboSound`) has the same sample-phase render loop as the
   TSFM and probably the same click after a host speed multiplier; not a pair board, not changed here
 - [ ] MS-7 second pass: Z-Player 5, the remaining disks of the test images README, WC MOD / TFC / ETC
-- [ ] owner question: ZX MIDI Player v3 at 14 MHz on a ZX-Evo sends 23.6 kbaud (the Evo's 14 MHz DRAM waits); confirm
-  on a real board before changing anything
-- [ ] MS-8 docs
+- [x] decided 2026-10-05: ZX MIDI Player v3 at 14 MHz on a ZX-Evo sends 23.6 kbaud (the Evo's 14 MHz DRAM waits, as
+  the RTL); a limit of the program, not an emulator bug
+- [ ] side note (not the card): the AY state report names the I/O port direction the wrong way round
+  (`devicestate.cpp` ~121 / 127 report "input" when R7 bit 6 = 1, which is output)
+- [ ] MS-8 docs: the user page in `docs/features/`, machine recipes that list sound cards
 - [ ] Profile the card's frame cost (~1 ms per emulated frame on the dev machine with all five paths; the SAM2695
   effects path and the eight Reference-quality YM decimators are the suspects); still open after MS-4 registered it
   (machines without the card pay nothing)

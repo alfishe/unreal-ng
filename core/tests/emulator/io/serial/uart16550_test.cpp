@@ -9,6 +9,7 @@
 
 #include "emulator/io/serial/serialpeer.h"
 #include "emulator/io/serial/uart16550.h"
+#include "emulator/memory/atm/evoavrwait.h"
 
 namespace
 {
@@ -363,6 +364,16 @@ Uart16550 MakeAvr(Uart16550::AvrFirmware firmware, ISerialPeer* peer)
     return uart;
 }
 
+/// One access as ComPort::AddAccessWait makes it, without the CPU: the board AVR's wait (timed by the firmware the
+/// UART emulates) around the UART's service, in AVR cycles; 0 for a real 16550
+uint32_t AvrAccess(EvoAvrWait& wait, const Uart16550& u, uint8_t reg, bool read, uint64_t at)
+{
+    const Uart16550::Params& p = u.GetParams();
+    wait.SetTiming(EvoAvrWait::Timing{p.avrClockHz, p.isrCycles, p.loopCycles, p.waitChecksPerLoop});
+    const uint32_t service = u.ServiceCycles(reg, read);
+    return service ? wait.Access(service, 0, at, 3500000) : 0;
+}
+
 /// Let `chars` characters arrive one character time after another; returns the time after them
 uint64_t Receive(Uart16550& u, uint64_t from, int chars)
 {
@@ -528,9 +539,10 @@ TEST_F(Uart16550_Test, Ts2016AprPicksTheWaitUpAtTheNextTask)
     const Uart16550::Params p = Uart16550::EvoAvrParams(Uart16550::AvrFirmware::Ts2016Apr);
     EXPECT_EQ(p.waitChecksPerLoop, 8);
     Uart16550 u = MakeAvr(Uart16550::AvrFirmware::Ts2016Apr, &peer);
-    const uint32_t first = u.AccessCycles(Uart16550::kLsr, true, 1000000);
+    EvoAvrWait wait;
+    const uint32_t first = AvrAccess(wait, u, Uart16550::kLsr, true, 1000000);
     const uint64_t release = 1000000 + (static_cast<uint64_t>(first) * 3500000 + 11059199) / 11059200;
-    const uint32_t polled = u.AccessCycles(Uart16550::kLsr, true, release);
+    const uint32_t polled = AvrAccess(wait, u, Uart16550::kLsr, true, release);
     const uint32_t task = p.loopCycles / 8;
     EXPECT_LE(polled, p.isrCycles + task + p.serviceRead);
     EXPECT_GE(polled, p.isrCycles + task + p.serviceRead - 4);
@@ -541,26 +553,30 @@ TEST_F(Uart16550_Test, AvrWaitIsInterruptPlusLoopPhasePlusService)
 {
     const Uart16550::Params p = Uart16550::EvoAvrParams(Uart16550::kLatestAvr);
     Uart16550 u = MakeAvr(Uart16550::kLatestAvr, &peer);
+    EvoAvrWait wait;
     // Long after the last access: the loop is somewhere in its pass
     const uint32_t minimum = static_cast<uint32_t>(p.isrCycles) + p.serviceRead;
     const uint32_t wholePass = minimum + p.loopCycles;
-    const uint32_t first = u.AccessCycles(Uart16550::kLsr, true, 1000000);
+    const uint32_t first = AvrAccess(wait, u, Uart16550::kLsr, true, 1000000);
     EXPECT_GT(first, minimum);
     EXPECT_LE(first, wholePass);
     // Right behind the release: the loop starts its pass again, a whole pass to wait
     const uint64_t release = 1000000 + (static_cast<uint64_t>(first) * 3500000 + 11059199) / 11059200;
-    const uint32_t polled = u.AccessCycles(Uart16550::kLsr, true, release);
+    const uint32_t polled = AvrAccess(wait, u, Uart16550::kLsr, true, release);
     EXPECT_GE(polled, wholePass - 4);
     EXPECT_LE(polled, wholePass);
     // The services differ by access
     Uart16550 v = MakeAvr(Uart16550::kLatestAvr, &peer);
-    const uint32_t write = v.AccessCycles(Uart16550::kScr, false, 2000000);
+    EvoAvrWait waitV;
+    const uint32_t write = AvrAccess(waitV, v, Uart16550::kScr, false, 2000000);
     Uart16550 w = MakeAvr(Uart16550::kLatestAvr, &peer);
-    const uint32_t rbr = w.AccessCycles(Uart16550::kRbrThr, true, 2000000);
+    EvoAvrWait waitW;
+    const uint32_t rbr = AvrAccess(waitW, w, Uart16550::kRbrThr, true, 2000000);
     EXPECT_EQ(rbr - write, static_cast<uint32_t>(p.serviceRbr - p.serviceWrite)) << "same phase, different service";
 
     Uart16550 chip = Make(Uart16550::Flavor::Chip16550);
-    EXPECT_EQ(chip.AccessCycles(Uart16550::kLsr, true, now), 0u) << "a real 16550 holds nobody";
+    EvoAvrWait waitChip;
+    EXPECT_EQ(AvrAccess(waitChip, chip, Uart16550::kLsr, true, now), 0u) << "a real 16550 holds nobody";
 }
 
 /// An RS-232 loopback test plug (ComPort=PLUG): bytes come back, the UART's own RTS drives CTS and DTR drives DSR

@@ -647,8 +647,10 @@ types:
           54 Smuc (the Scorpion SMUC board, 36 bytes: u1 version 1, u1 pFFBA, u1 p7FBA, u1 x 8 IDE window registers,
           then the serial EEPROM link: u1 mode, u1 flags (bit 0 stable, 1 tx, 2 rx, 3 ack), u1 bitCount, u1 data,
           u1 addressLow, u1 addressHigh, u1 writePos, u1 sda, u1 scl, u1 x 16 writeBuffer; not the EEPROM contents),
-          55 EvoAvrVolatile (the ZX-Evo AVR's volatile registers on TS-Conf, 4 bytes: u1 version 1, u1 extType,
-          u1 eepromPage, u1 flags (bit 0 EEPROM mode, 1 Caps LED, 2 tape-out mode); the ATM3 carries them in 8),
+          55 EvoAvrVolatile (the ZX-Evo AVR's volatile state on TS-Conf and the ATM3, 20 bytes: u1 version 2,
+          u1 extType, u1 eepromPage, u1 flags (bit 0 EEPROM mode, 1 Caps LED, 2 tape-out mode), then the /WAIT
+          ports' timing shared by #xxEF and #BFF7 (EvoAvrWait): u8 AVR cycle the main loop resumed its pass, u8 AVR
+          cycle the EEPROM's last write ends; on the ATM3 the first bytes repeat what 8 carries),
           56 KeyboardMatrix (the ZX keyboard, variable size: u1 version 1, u1 x 8 matrix rows, u1 pair count,
           then (u1 ZXKeysEnum key, u1 pressed count) pairs in key order; key changes themselves are input events),
           57 RzxPlayback (an RZX recording played while TTD records, 84 bytes: u1 version 1 (0: nothing played),
