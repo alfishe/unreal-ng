@@ -567,13 +567,14 @@
         "refusal reason names both model ids, so provision a matching "
         "instance (POST /api/v1/emulator/create) and retry. After a "
         "successful load the session is idle: use /ttd/seek to position "
-        "the emulator inside the loaded timeline.";
+        "the emulator inside the loaded timeline. The path may also be a recording's folder under "
+        "~/.unreal-ng/ttd/ (or one of its segment-NNNN.ttd files): its segments are joined and loaded.";
     paths["/api/v1/emulator/{id}/ttd/load"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/load"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/load"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/ttd/load"]["post"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/ttd/load"]["post"]["requestBody"]["description"] =
-        "Input path of the .ttd file";
+        "Input path of the .ttd file, or of a recording's folder";
     paths["/api/v1/emulator/{id}/ttd/load"]["post"]["requestBody"]["required"] = true;
     paths["/api/v1/emulator/{id}/ttd/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["$ref"] = "#/components/schemas/TTDLoadRequest";

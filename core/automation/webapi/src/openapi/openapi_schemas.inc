@@ -729,8 +729,9 @@
     schemas["TTDStatusResponse"]["properties"]["recording_folder"]["description"] =
         "The folder the current session's segment files are written to as it records "
         "(~/.unreal-ng/ttd/<date-time>-<name>/, the engine in unreal-qt and the automation app); null when none. "
-        "Deleted with its session (a new session, invalidate, closing the instance); a crashed one stays for the "
-        "startup cleanup (7 days)";
+        "Deleted with its session (a new session, invalidate, closing the instance); kept after a crash and when "
+        "a black box restarts after an acceleration or a machine change (load it with /ttd/load), removed by the "
+        "startup cleanup 7 days after its process ended";
     schemas["TTDStatusResponse"]["properties"]["backend"]["type"] = "string";
     schemas["TTDStatusResponse"]["properties"]["backend"]["description"] =
         "Which implementation records on this instance: \"engine\" (the default) or \"v1\" (selected with "

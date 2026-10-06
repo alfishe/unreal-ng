@@ -82,6 +82,9 @@ acceleration lock below applies to it. Same on the other surfaces: CLI
 `emu.ttd_start(black_box=True, minutes=2)`; unreal-qt: Debug > Time Travel >
 Always Record. `GET /ttd/status` shows `black_box: true` and the folder its
 segment files go to (`recording_folder`, in unreal-qt and the automation app).
+When the black box restarts (after turbo, a host speed, a machine change)
+its previous recording stays in its folder: `POST /ttd/load {"path": "<folder>"}`
+(or any `segment-NNNN.ttd` in it) loads it.
 
 The write journal only speeds up "who wrote address X last": with it the
 answer is instant, without it the search replays one frame (a few ms, same

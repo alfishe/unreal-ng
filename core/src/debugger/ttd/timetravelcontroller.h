@@ -1769,6 +1769,14 @@ private:
     /// The shadow session's files: finished (stop, a new session) or deleted (invalidated)
     void FinishShadowFiles();
     void DiscardShadowFiles();
+    /// A black box restarting (after an acceleration, a machine change): its
+    /// finished folder stays on disk for Load, under the crashed-recordings
+    /// rule (kept while this process runs, then 7 days); an empty one goes
+    void KeepShadowFiles();
+    /// The controller's holder streams of a session file (facts, coverage,
+    /// bookmarks) as they are now. @p declareAll: coverage too when empty (a
+    /// recording's files declare the same streams in every segment)
+    std::vector<TTDHolderStream> SessionHolderStreams(bool declareAll) const;
 
 public:
     /// Frame-boundary stream 0 of the shadow engine: width u16, height u16,

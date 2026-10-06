@@ -1,9 +1,11 @@
 #include "ttdcontrol.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <optional>
 #include <type_traits>
@@ -18,11 +20,13 @@
 #include "debugger/ttd/ttdfileinfo.h"
 #include "debugger/ttd/ttdportsearch.h"
 #include "debugger/ttd/ttdprobe.h"
+#include "debugger/ttd/ttdrecordingfolders.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/mainloop.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
+#include "platform/processinfo.h"
 
 namespace ttd
 {
@@ -1601,7 +1605,42 @@ TTDReply TTDControlBackend<S>::Load(const TTDRequest& request)
     const std::string* path = Option(request, "path");
     if (!path || path->empty())
         return Fail(TTDControlError::BadRequest, "Missing 'path'");
-    std::ifstream in(FileHelper::ToFsPath(*path), std::ios::binary);
+
+    // A recording's folder (or one of its segment files): its segments joined
+    // into one file first, a temporary one, deleted after the load
+    std::string file = *path;
+    std::string joined;
+    if (const auto folder = TTDRecordingFolder::Open(*path))
+    {
+        static std::atomic<uint32_t> joins{0};
+        std::error_code ec;
+        const std::filesystem::path temp = std::filesystem::temp_directory_path(ec);
+        if (ec)
+            return Fail(TTDControlError::Internal, "no temporary folder to join the recording in: " + ec.message());
+        joined = FileHelper::FromFsPath(temp / ("unreal-ttd-join-" + std::to_string(platform::CurrentProcessId()) +
+                                                "-" + std::to_string(joins++) + ".ttd"));
+        std::string error;
+        if (!folder->SaveAs(joined, /*overwrite=*/true, error))
+        {
+            StateNode body = StateNode::Object();
+            body["ok"] = false;
+            body["error"] = error;
+            return Fail(TTDControlError::BadRequest, "Cannot join the recording " + folder->Path() + ": " + error, body);
+        }
+        file = joined;
+    }
+    struct RemoveJoined
+    {
+        const std::string& path;
+        ~RemoveJoined()
+        {
+            std::error_code ec;
+            if (!path.empty())
+                std::filesystem::remove(FileHelper::ToFsPath(path), ec);
+        }
+    } removeJoined{joined};
+
+    std::ifstream in(FileHelper::ToFsPath(file), std::ios::binary);
     if (!in.is_open())
     {
         StateNode body = StateNode::Object();

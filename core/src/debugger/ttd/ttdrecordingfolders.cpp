@@ -150,6 +150,37 @@ namespace ttd
         return nullptr;
     }
 
+    namespace
+    {
+        bool IsSegmentFileName(const std::string& name)
+        {
+            unsigned number = 0;
+            char tail[8] = {};
+            return std::sscanf(name.c_str(), "segment-%u.%7s", &number, tail) == 2 && std::string(tail) == "ttd";
+        }
+    }  // namespace
+
+    std::unique_ptr<TTDRecordingFolder> TTDRecordingFolder::Open(const std::string& path)
+    {
+        if (path.empty())
+            return nullptr;
+        std::string folder = path;
+        if (!FileHelper::IsFolder(path))
+        {
+            const fs::path file = FileHelper::ToFsPath(path);
+            if (!IsSegmentFileName(FileHelper::FromFsPath(file.filename())))
+                return nullptr;
+            folder = FileHelper::FromFsPath(file.parent_path());
+        }
+        // The owner file marks a recording's folder (kept after its process ends)
+        std::error_code ec;
+        if (!fs::is_regular_file(FileHelper::ToFsPath(FileHelper::PathCombine(folder, kRecordingOwnerFile)), ec))
+            return nullptr;
+        auto out = std::unique_ptr<TTDRecordingFolder>(new TTDRecordingFolder());
+        out->_path = folder;
+        return out;
+    }
+
     std::string TTDRecordingFolder::SegmentPath(uint32_t index) const
     {
         char name[32];
@@ -167,8 +198,7 @@ namespace ttd
         {
             const std::string name = FileHelper::FromFsPath(entry.path().filename());
             unsigned number = 0;
-            char tail[8] = {};
-            if (std::sscanf(name.c_str(), "segment-%u.%7s", &number, tail) == 2 && std::string(tail) == "ttd")
+            if (IsSegmentFileName(name) && std::sscanf(name.c_str(), "segment-%u", &number) == 1)
                 numbers.push_back(number);
         }
         std::sort(numbers.begin(), numbers.end());

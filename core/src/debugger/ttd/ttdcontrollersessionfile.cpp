@@ -75,18 +75,8 @@ constexpr const char* kV1Refused =
     "the verification tools convert v1 files)";
 }  // namespace
 
-bool TimeTravelController::SerializeSession(std::ostream& out, std::string& err)
+std::vector<TTDHolderStream> TimeTravelController::SessionHolderStreams(bool declareAll) const
 {
-    const SessionOperation op{*this, SessionOperation::Kind::Read};
-    if (_timeline.empty() || !_engine->IsSessionOpen())
-    {
-        err = "no session to save";
-        return false;
-    }
-    // While recording, the current frame's journals go in too
-    if (_state == TTDSessionState::Recording)
-        FlushToEngine();
-
     TTDSessionFacts facts;
     facts.modelId = _loadedFromFile ? _sessionModelId
                                     : static_cast<uint8_t>(_context ? _context->config.mem_model : 0);
@@ -106,14 +96,9 @@ bool TimeTravelController::SerializeSession(std::ostream& out, std::string& err)
     facts.portJournalValid = _portJournalValid;
     facts.portJournalOffReason = _portJournalOffReason;
 
-    TTDSessionSaveParams params;
-    params.createdMicros = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch())
-            .count());
-    std::random_device random;
-    for (uint8_t& b : params.uuid)
-        b = static_cast<uint8_t>(random());
-    params.holderStreams.push_back({holderstream::kFacts, "controller-facts", EncodeSessionFacts(facts)});
+    std::vector<TTDHolderStream> streams;
+    streams.push_back({holderstream::kFacts, "controller-facts", EncodeSessionFacts(facts)});
+    std::vector<uint8_t> coverageBytes;
     if (_coverageIndex.SealedFrameCount(TTDCoverageKind::Executed) > 0 ||
         _coverageIndex.SealedFrameCount(TTDCoverageKind::Written) > 0 ||
         _coverageIndex.SealedFrameCount(TTDCoverageKind::Read) > 0)
@@ -122,10 +107,35 @@ bool TimeTravelController::SerializeSession(std::ostream& out, std::string& err)
         if (_coverageIndex.Serialize(coverage))
         {
             const std::string bytes = coverage.str();
-            params.holderStreams.push_back({holderstream::kCoverage, "coverage", {bytes.begin(), bytes.end()}});
+            coverageBytes.assign(bytes.begin(), bytes.end());
         }
     }
-    params.holderStreams.push_back({holderstream::kBookmarks, "bookmarks", EncodeBookmarks(_bookmarks)});
+    if (!coverageBytes.empty() || declareAll)
+        streams.push_back({holderstream::kCoverage, "coverage", std::move(coverageBytes)});
+    streams.push_back({holderstream::kBookmarks, "bookmarks", EncodeBookmarks(_bookmarks)});
+    return streams;
+}
+
+bool TimeTravelController::SerializeSession(std::ostream& out, std::string& err)
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Read};
+    if (_timeline.empty() || !_engine->IsSessionOpen())
+    {
+        err = "no session to save";
+        return false;
+    }
+    // While recording, the current frame's journals go in too
+    if (_state == TTDSessionState::Recording)
+        FlushToEngine();
+
+    TTDSessionSaveParams params;
+    params.createdMicros = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count());
+    std::random_device random;
+    for (uint8_t& b : params.uuid)
+        b = static_cast<uint8_t>(random());
+    params.holderStreams = SessionHolderStreams(/*declareAll=*/false);
 
     OStreamSink sink(out);
     return TTDSessionFile::Save(*_engine, sink, err, params);

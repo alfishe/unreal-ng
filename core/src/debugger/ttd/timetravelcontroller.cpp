@@ -1431,6 +1431,7 @@ void TimeTravelController::OnAccelerationChanging(bool accelerating)
     if (_blackBoxSuspended && !AccelerationActive() && _state != TTDSessionState::Recording)
     {
         _blackBoxSuspended = false;
+        KeepShadowFiles();   // what led up to the acceleration stays loadable
         if (StartRecording())
             MLOGINFO("TimeTravelController: the black box records again (a new session)");
     }
@@ -1455,6 +1456,8 @@ void TimeTravelController::EndSessionForMachineChange(const char* reason)
     const bool blackBoxRecorded = _blackBox && (_state == TTDSessionState::Recording || _blackBoxSuspended);
     if (_state == TTDSessionState::Recording || _recordingPaused)
         StopRecording();   // cleanly: the machine parked, the features it switched on back off
+    if (blackBoxRecorded)
+        KeepShadowFiles();   // what led up to the change stays loadable
     InvalidateSession(reason);
     _lastStopReason = "machine-change";
     _blackBoxSuspended = false;
@@ -3867,6 +3870,10 @@ std::string TimeTravelController::ShadowRecordingFolder() const
 
 void TimeTravelController::FinishShadowFiles()
 {
+    // The facts, the coverage and the bookmarks as they are at the end: a
+    // finished recording's folder loads like a saved session
+    if (_shadowWriter && _shadowEngine)
+        _shadowWriter->SetHolderStreams(SessionHolderStreams(/*declareAll=*/true));
     if (_shadowWriter && _shadowEngine && !_shadowWriter->Finish(*_shadowEngine))
         MLOGWARNING("TimeTravelController: the shadow session's files: %s", _shadowWriter->Error().c_str());
     _shadowWriter.reset();   // the folder stays the session's until a new one starts or it is invalidated
@@ -3877,6 +3884,16 @@ void TimeTravelController::DiscardShadowFiles()
     _shadowWriter.reset();   // its thread stops; the files go with the folder
     if (_shadowFolder)
         _shadowFolder->Discard();
+    _shadowFolder.reset();
+}
+
+void TimeTravelController::KeepShadowFiles()
+{
+    FinishShadowFiles();
+    if (_shadowFolder && _shadowFolder->Segments().empty())
+        _shadowFolder->Discard();
+    else if (_shadowFolder)
+        MLOGINFO("TimeTravelController: the black box's previous recording stays in %s", _shadowFolder->Path().c_str());
     _shadowFolder.reset();
 }
 
@@ -4216,6 +4233,7 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
                 std::random_device random;
                 for (uint8_t& b : params.uuid)
                     b = static_cast<uint8_t>(random());
+                params.holderStreams = SessionHolderStreams(/*declareAll=*/true);
                 TTDRecordingFolder* folder = _shadowFolder.get();
                 _shadowWriter = std::make_unique<TTDRecordingWriter>(
                     [folder](uint32_t n) { return folder->SegmentPath(n); }, params);
