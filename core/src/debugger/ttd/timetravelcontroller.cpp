@@ -155,6 +155,7 @@ bool TimeTravelController::StartRecording()
     ClearFrameCache();
     _lastStopReason.clear();
     _recordingPaused = false;
+    _stoppedEndValid = false;
     // The machine's ROM set: the engine's configuration and restore checks compare with it
     _replayRomSignature = ComputeRomSignature();
 
@@ -415,6 +416,9 @@ void TimeTravelController::StopRecording()
     {
         const TTDTimePoint stoppedAt = CurrentPosition();
         _recordingStoppedAtT = GlobalT(stoppedAt);
+        _stoppedEnd = stoppedAt;
+        _stoppedEndValid = !_timeline.empty() && _timeline.back().time < stoppedAt &&
+                           stoppedAt.frame == _timeline.back().time.frame;
     }
     SetState(TTDSessionState::Idle);
     // The machine runs on unrecorded from here: I/O passes through
@@ -506,6 +510,7 @@ void TimeTravelController::InvalidateSession(const char* reason)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     _queuedSnapshotLoad = nullptr;
+    _stoppedEndValid = false;
     ClearFrameCache();
 
     if (_timeline.empty() && _state == TTDSessionState::Idle)
@@ -2759,8 +2764,14 @@ TTDTimePoint TimeTravelController::SessionEndPosition() const
     const SessionOperation op{*this, SessionOperation::Kind::Read};
     if (_timeline.empty())
         return TTDTimePoint{};
-    // A paused recording reaches to where it paused, inside its last frame
-    return _recordingPaused ? _pausedEnd : _timeline.back().time;
+    // A paused recording reaches to where it paused, inside its last frame;
+    // a stopped one to where it stopped
+    if (_recordingPaused)
+        return _pausedEnd;
+    if (_state != TTDSessionState::Recording && _stoppedEndValid && _timeline.back().time < _stoppedEnd &&
+        _stoppedEnd.frame == _timeline.back().time.frame)
+        return _stoppedEnd;
+    return _timeline.back().time;
 }
 
 void TimeTravelController::PauseRecordingForBrowsing()
@@ -2839,7 +2850,8 @@ bool TimeTravelController::AddBookmark(const TTDTimePoint& time, const std::stri
 
     // Same principle for a position past the session end: the bookmark can
     // never be reached, so it must never be created.
-    const TTDTimePoint end = SessionEndPosition();
+    // While recording the present is in reach (a seek there pauses the recording at it)
+    const TTDTimePoint end = _state == TTDSessionState::Recording ? CurrentPosition() : SessionEndPosition();
     if (end < time)
     {
         if (err)
