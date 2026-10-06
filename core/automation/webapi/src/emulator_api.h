@@ -128,6 +128,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::loadSnapshot, "/api/v1/emulator/{id}/snapshot/load", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::saveSnapshot, "/api/v1/emulator/{id}/snapshot/save", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::inspectSnapshot, "/api/v1/emulator/{id}/snapshot/inspect", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getSnapshotFormats, "/api/v1/emulator/{id}/snapshot/formats", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getSnapshotInfo, "/api/v1/emulator/{id}/snapshot/info", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::transferState, "/api/v1/emulator/{id}/snapshot/transfer", drogon::Post);
 
@@ -775,6 +776,9 @@ public:
     /// POST /snapshot/inspect - what loading a file would do (its image and the plan), nothing is written
     void inspectSnapshot(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                          const std::string& id) const;
+    /// GET /snapshot/formats - which formats the machine can be saved in right now, with the reason for each it cannot
+    void getSnapshotFormats(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
     void getSnapshotInfo(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void transferState(const drogon::HttpRequestPtr& req,

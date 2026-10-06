@@ -388,6 +388,8 @@ private:
     void HandleSnapshotSave(const ClientSession& session, std::shared_ptr<Emulator> emulator, 
                             const std::vector<std::string>& args);
     void HandleSnapshotInfo(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
+    /// snapshot formats - which formats this machine can be saved in right now, and why not
+    void HandleSnapshotFormats(const ClientSession& session, std::shared_ptr<Emulator> emulator);
     void HandleSnapshotInspect(const ClientSession& session, std::shared_ptr<Emulator> emulator,
                                const std::vector<std::string>& args);
 

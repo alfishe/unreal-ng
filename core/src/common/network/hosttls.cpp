@@ -2,7 +2,22 @@
 
 #if defined(UNREAL_HOST_TLS)
 
+#include <cstdio>
 #include <mutex>
+
+// The platform's trust store. Before OpenSSL: types.h undefines wincrypt's X509_NAME & co.
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <wincrypt.h>
+#elif defined(__APPLE__)
+#include <Security/Security.h>
+#endif
 
 #include <openssl/bio.h>
 #include <openssl/err.h>
@@ -17,6 +32,73 @@ std::mutex g_ctxMutex;
 SSL_CTX* g_ctx = nullptr;
 std::vector<std::string> g_extraPem;
 
+#if defined(_WIN32) || defined(__APPLE__)
+void AddDer(X509_STORE* store, const unsigned char* der, long length)
+{
+    if (X509* cert = d2i_X509(nullptr, &der, length))
+    {
+        X509_STORE_add_cert(store, cert);   // a duplicate is refused, harmless
+        X509_free(cert);
+    }
+}
+#endif
+
+/// The host's root certificates, wherever the platform keeps them: OpenSSL's default paths are those of the
+/// OpenSSL build (a release package links its own, whose OPENSSLDIR is not on the user's machine)
+void AddPlatformRoots(SSL_CTX* ctx)
+{
+#if defined(_WIN32)
+    X509_STORE* store = SSL_CTX_get_cert_store(ctx);
+    for (const wchar_t* name : { L"ROOT", L"CA" })
+    {
+        HCERTSTORE system = CertOpenSystemStoreW(0, name);
+        if (!system)
+            continue;
+        PCCERT_CONTEXT cert = nullptr;
+        while ((cert = CertEnumCertificatesInStore(system, cert)) != nullptr)
+            AddDer(store, cert->pbCertEncoded, static_cast<long>(cert->cbCertEncoded));
+        CertCloseStore(system, 0);
+    }
+#elif defined(__APPLE__)
+    X509_STORE* store = SSL_CTX_get_cert_store(ctx);
+    auto addAll = [store](CFArrayRef certs) {
+        for (CFIndex i = 0; i < CFArrayGetCount(certs); i++)
+        {
+            auto cert = static_cast<SecCertificateRef>(const_cast<void*>(CFArrayGetValueAtIndex(certs, i)));
+            if (CFDataRef der = SecCertificateCopyData(cert))
+            {
+                AddDer(store, CFDataGetBytePtr(der), static_cast<long>(CFDataGetLength(der)));
+                CFRelease(der);
+            }
+        }
+        CFRelease(certs);
+    };
+    CFArrayRef certs = nullptr;
+    if (SecTrustCopyAnchorCertificates(&certs) == errSecSuccess && certs)
+        addAll(certs);
+    // Roots an administrator or the user added (a company CA)
+    for (SecTrustSettingsDomain domain : { kSecTrustSettingsDomainAdmin, kSecTrustSettingsDomainUser })
+    {
+        certs = nullptr;
+        if (SecTrustSettingsCopyCertificates(domain, &certs) == errSecSuccess && certs)
+            addAll(certs);
+    }
+#else
+    // The distributions' bundles (an AppImage runs on all of them)
+    for (const char* file : { "/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt",
+                              "/etc/ssl/ca-bundle.pem", "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+                              "/etc/ssl/cert.pem" })
+    {
+        if (FILE* f = std::fopen(file, "rb"))
+        {
+            std::fclose(f);
+            SSL_CTX_load_verify_locations(ctx, file, nullptr);
+        }
+    }
+#endif
+    ERR_clear_error();   // a missing store or an unparsable entry is not a session error
+}
+
 SSL_CTX* Context()
 {
     std::lock_guard<std::mutex> lock(g_ctxMutex);
@@ -26,7 +108,8 @@ SSL_CTX* Context()
     if (!g_ctx)
         return nullptr;
     SSL_CTX_set_min_proto_version(g_ctx, TLS1_2_VERSION);
-    SSL_CTX_set_default_verify_paths(g_ctx);
+    SSL_CTX_set_default_verify_paths(g_ctx);   // SSL_CERT_FILE / SSL_CERT_DIR
+    AddPlatformRoots(g_ctx);
     SSL_CTX_set_verify(g_ctx, SSL_VERIFY_PEER, nullptr);
     X509_STORE* store = SSL_CTX_get_cert_store(g_ctx);
     for (const std::string& pem : g_extraPem)

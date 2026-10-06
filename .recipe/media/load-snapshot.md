@@ -171,6 +171,34 @@ Save refuses to overwrite: if the file exists the answer is HTTP 409 Conflict
 ("File already exists. Use 'force: true' to overwrite."). Add `"force": true` to
 replace it, or use a new file name per save (`checkpoint-002.sna`).
 
+A save that cannot be made is **refused with the reason** and writes nothing (HTTP 400): `message`, `reason`, a
+machine-readable `needs` and `formats` (what the machine can be saved as right now). Ask first:
+
+```bash
+curl -s "$BASE/emulator/$EMU_ID/snapshot/formats" | jq .
+# { "view_available": true, "machine": "Pentagon 512", "view": "the machine's own memory",
+#   "formats": [ {"format":"sna","available":false,"reason":"the .sna format holds 128 KB (banks 0-7) ... save as .szx","needs":"format:szx"},
+#                {"format":"z80","available":false,"reason":"the .z80 format has no Pentagon 512 / 1024 model ...","needs":"format:szx"},
+#                {"format":"szx","available":true} ] }
+```
+
+What a snapshot holds, and which machine gives it, is in the
+[snapshot formats README](../../docs/file-formats/snapshots/README.md#how-a-snapshot-is-saved): the 128K view (banks 0-7, #7FFD, CPU,
+AY). A Sprinter gives it in a ZX mode only (`needs: zx_mode` at the DSS prompt or the BIOS), in the Spectrum's bank order and named
+by its launcher mode (`P128.ZX` is a Pentagon 128 in the file); TS-Conf and the ATMs give it while their memory is laid out as a
+Spectrum 128K (`needs: mode:128k` otherwise). A Pentagon 512 / 1024 saves as `.szx` only, a Scorpion as `.z80` / `.szx`; a 48K
+`.sna` with the stack in the ROM is refused (`needs: format:z80`). The save stops the emulator first and waits until it has parked
+(`needs: pause` if it does not within a second). Nothing is converted from one file format to another.
+
+| Surface | Save | Why it was refused | Which formats |
+|:--|:--|:--|:--|
+| WebAPI | `POST /snapshot/save {"path":...,"force":...}` | `reason`, `needs`, `formats` in the 400 answer | `GET /snapshot/formats` |
+| MCP | `invoke_api` the WebAPI routes above | the same | the same |
+| CLI | `snapshot save <file> [--force]` | printed with `needs` | `snapshot formats` |
+| Lua | `snapshot_save(path)` -> bool | `snapshot_save_report()` -> `{ok, message, format, machine, reason, needs, warnings}` | `snapshot_formats()` |
+| Python | `emu.snapshot_save(path)` -> bool | `emu.snapshot_save_report()`, `unreal.snapshot_save_report(emulator_id)` | `emu.snapshot_formats()`, `unreal.snapshot_formats(emulator_id)` |
+| Qt | File > Save Snapshot | a message box with the reason | the items and the dialog's filters follow the machine; a disabled item shows the reason as its tip |
+
 Save early, save often — they are the "known good" anchors for
 [bug-hunt workflows](../articles/bug-hunt-ttd.md). Saved snapshots land on the
 emulator host's filesystem; use `scratch/` paths.

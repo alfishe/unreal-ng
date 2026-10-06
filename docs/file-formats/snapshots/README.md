@@ -36,8 +36,8 @@ in-memory loader is read as SZX.)
 | A Pentagon 512 / 1024 or Scorpion 256 snapshot | Z80 (Scorpion) or SZX |
 | A TS-Conf program started the way the SDK's shell starts it | SPG |
 
-A 48K SNA keeps the PC on the stack, so saving one overwrites two bytes below the stack pointer (see the SNA page); a 128K SNA,
-Z80 and SZX store the PC in the header.
+A 48K SNA keeps the PC on the stack, so a stack in the ROM cannot be saved (the save is refused; use Z80 or SZX); a 128K SNA,
+Z80 and SZX store the PC in the header. A Pentagon 512 / 1024 can only be saved as SZX.
 
 ## How a snapshot is loaded
 
@@ -61,6 +61,36 @@ block of the file did, warnings, the reason of a refusal) is available on every 
 window; `inspect` shows what a load would do without loading. Details and examples: the
 [snapshot recipe](../../../.recipe/media/load-snapshot.md).
 
+## How a snapshot is saved
+
+A snapshot holds what a Spectrum 128K program sees: RAM as banks 0-7 (a 48K machine: 5, 2 and 0), #7FFD, the CPU, the AY, the
+border. A save takes that **view** of the running machine, then writes the file from it; nothing is converted from one file
+format to another (a separate tool does that), and the running machine is never touched.
+
+1. **The machine stops first.** The save pauses the emulator and waits until it has actually parked; if it does not stop within a
+   second nothing is saved and the answer says so.
+2. **The view.** The Spectrum models (48K, 128K, +2, +2A, +3, Pentagon, Scorpion) are the view as they are. Machines with their
+   own memory give a view only while they run a Spectrum 128K layout, and are refused with the reason otherwise:
+
+   | Machine | The view |
+   |---------|----------|
+   | **Sprinter** | In a ZX mode, banks read through the PLD cells #F0-#F7 in the Spectrum's order, so the file restores on any other 128K machine and back on a Sprinter. The file names the machine the launcher mode made: `SP.ZX`, `SPRINTER.ZX`, `ORIGIN.ZX` a 128K, `P128.ZX`, `PENT128.ZX` a Pentagon 128, `SC256.ZX`, `SCORPION.ZX` a Scorpion (a mode without #7FFD paging a 48K). At the DSS prompt or in the BIOS there is no view (`needs: zx_mode`); the 512 KB modes have none yet |
+   | **TS-Conf**, **ATM Turbo 2+ / 3 / 4.50** | While the window map is a Spectrum 128K (ROM at #0000, RAM 5 and 2, the page #7FFD names at #C000): a snapshot load puts the machine there. In the machine's own mode there is none (`needs: mode:128k`). The file says a 128K |
+   | Profi, Kay and the other models | No view yet (`needs: capture_unsupported`) |
+
+3. **Which formats.** Asked of the machine, right now: `snapshot formats` (CLI), `GET /snapshot/formats` (WebAPI), `snapshot_formats()`
+   (Lua, Python), the Save Snapshot menu of the Qt window (items that cannot be used are disabled with the reason as their tip, and
+   the save dialog offers only the formats that work). Each format answers *yes* or *no, because ... (needs ...)*:
+
+   | Format | Refused when |
+   |--------|--------------|
+   | SNA | the machine has more than 128 KB in use (Pentagon 512 / 1024, Scorpion: use .szx, or .z80 for a Scorpion); #1FFD special paging; a 48K layout whose SP is in the ROM |
+   | Z80 | Pentagon 512 / 1024 (the format has no such model: use .szx) |
+   | SZX | the snapshot's model has no SZX machine id |
+
+   A save that no machine could read back is never written; a format that cannot hold part of the state (an SNA has no AY and
+   no #1FFD) says so in the answer's warnings.
+
 ### What a load resets
 
 A SNA or Z80 load resets the machine first (peripherals, AY, FDC, tape), then puts the file's state in. For a 48K snapshot
@@ -79,8 +109,9 @@ SZX writes the paging through each model's decoder.
   Spectrum mode (its own RAM pages 0-7 are not Spectrum banks) and refuses it at the DSS prompt.
 - **SZX:** the model it was saved on (the file's machine id names it; 16K and NTSC 48K load as a 48K, 128Ke as a 128K, +3e as a
   +3). A file for another model is refused through the automation interfaces, naming both models; the Qt window offers to
-  switch to the file's model first, as it does for SPG and RZX. Saving needs a machine id, which only the 48K, 128K, +2, +2A,
-  +3, Pentagon (128 / 512 / 1024) and Scorpion have: an ATM, ZX-Evo, Profi, TS-Conf or Sprinter state cannot be saved as SZX.
+  switch to the file's model first, as it does for SPG and RZX. Saving needs a machine id (the 48K, 128K, +2, +2A, +3,
+  Pentagon 128 / 512 / 1024 and Scorpion have one): a TS-Conf, ATM or Sprinter in a Spectrum 128K layout is saved as the 128K (or the
+  Pentagon / Scorpion its Sprinter mode names); other states are refused with the reason ([above](#how-a-snapshot-is-saved)).
 - **SPG:** TS-Conf only (the Qt window and the automation launchers switch to it first).
 - **ZXP:** a ZX-Poly machine only (four modules).
 

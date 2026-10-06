@@ -15,7 +15,7 @@ Status: proposal written 2026-10-02 (documents only, no code). Open questions Q1
 | P3 | `commit` option + `inspect` on WebAPI / OpenAPI, MCP, CLI, Lua, Python; recipe `.recipe/media/load-snapshot.md` | S-M | **done 2026-10-05** (branch `snapshot-pipeline`): `Emulator::LoadSnapshot(path, reportedPath, options)`, `InspectSnapshot`, `SnapshotLauncher` (`commit`, `report`, `Inspect`); WebAPI `snapshot/load {commit}` + `report`, `POST snapshot/inspect`, `info.report` (+ OpenAPI); MCP `load_software {commit, inspect}`; CLI `snapshot load --commit`, `snapshot inspect`, `snapshot info`; Lua `snapshot_load(path, commit)`, `snapshot_inspect`, `snapshot_report`; Python `snapshot_load(..., commit)`, `snapshot_inspect`, `snapshot_report` (module and `Emulator`); Qt shows a refusal's reason; checked live on the WebAPI, the CLI and Lua (Python is off in this build: its translation unit was syntax-checked against pybind11) |
 | P4 | Sprinter ZX commit (= Sprinter Z5): cell-table mapping, refusal outside ZX mode, T-ZX-11 / T-ZX-12 | M | **done 2026-10-05** (branch `snapshot-pipeline`): `SprinterZxSnapshot` (policy `sprinter-zx`, `Instance()` handed out by `PortDecoder_Sprinter` via `SetSnapshotPolicy`, and registered by name); `SprinterMemory::RefreshZxShadow`, `PortDecoder_Sprinter::SetPagingFromSnapshot` (the `#7FFD` latch extracted as `Latch7ffd`); the 38 SPRINTER golden rows that loaded now say `refused` (a fresh Sprinter is in no mode), the other 16 machines unchanged |
 | P5 | Fit checks and machine policies after the owner's answers: 128K on 48K (Q1), 48K on 128K (Q2), Pentagon 1024 compatibility, ATM family, TS-Conf | M | open |
-| P6 | Save path: capture → image → writer; 48K SNA writer stops touching live RAM | M | open |
+| P6 | Save path: capture → image → writer; 48K SNA writer stops touching live RAM | M | **done 2026-10-06** (branch `snapshot-p6`, see "P6 notes"): `snapshotcapture.{h,cpp}` (the machine's 128K view, `QuerySaveFormats`, `SaveSnapshotFile`), SNA / Z80 written from the image, `Emulator::SaveSnapshot` waits for the pause and keeps a `LastSaveResult`, `SnapshotSaveFormats`; reasons + formats on WebAPI (`GET snapshot/formats`, the save answer), CLI (`snapshot formats`), Lua, Python, Qt (items disabled with the reason, dialog filters follow the machine) |
 | P7 | One model-switch orchestrator for SZX / SPG / RZX; Qt uses it (Q6) | S | open |
 | P8 | TTD: a load during a recording continues the track with a full checkpoint + marker (Q5), after TTD v2 regions | S-M | open |
 | P9 | Clean-up: legacy commits read the image instead of private staging; drop the duplicated staging and the SNA dead code; SP-1 unchanged | M | **done 2026-10-05** for SNA, Z80 and SZX (branch `snapshot-p9`): the three commits read `snapshot::Image`; SPG and ZXP stay as they are (see "P9 notes"); the SNA dead code is gone (`SNAHeader`, `SNA128Header`, `_borderColor`); the golden table is unchanged (with AY now visible in it) |
@@ -156,3 +156,34 @@ review the diff, list the changed rows in the commit message.
   directly belongs with P6.
 - **Next for the plan (what P9 enables):** the `Transform` verdict of the proposal (image to image, then the legacy commit) -
   needed by the fit options the owner wants later (analyze the file, offer a machine).
+
+## P6 notes (2026-10-06)
+
+Decisions (owner): a save waits for a confirmed pause; a snapshot is the machine's **128K view** (Sprinter in a ZX mode: banks in
+the Spectrum's order through the cells #F0-#F7, the machine named by the launcher mode: `SP.ZX` / `ORIGIN.ZX` a 128K, `P128.ZX` a
+Pentagon 128, `SC256.ZX` a Scorpion; TS-Conf and the ATMs: while the live window map is a Spectrum 128K); where no view exists the
+save is refused with the reason (no file conversion in the emulator: that is a separate tool); a Pentagon 512 / 1024 saves as .szx only;
+a 48K SNA with the stack in the ROM is refused (use .z80 / .szx); the Qt menu items are disabled and the dialog filters follow the machine.
+
+What changed in what is written (`testdata/loaders/golden/save-digests.txt`, first generated on the code before P6, 102 rows: 17
+machines x 2 scenarios x 3 formats; the plain 128K family rows with a free #7FFD are unchanged):
+
+- **A 48K machine's .sna / .z80** were a 128K file (131103 bytes / a 128K model) saved from an unlocked "#7FFD = 0"; now the 48K
+  layout (49179 bytes, model 0, three pages).
+- **A locked 128K** (#7FFD bit 5) was a 48K file whatever the bank on top: a program with bank 4 at #C000 lost it. Now the 48K
+  layout needs the lock, bank 0 on top, the normal screen and no #1FFD special paging; anything else keeps all 8 banks.
+- **Scorpion, ProfScorp .sna**: refused (a .sna holds banks 0-7; the old file was a 128K SNA that dropped banks 8-15). .z80 / .szx unchanged.
+- **Pentagon 512 / 1024 .sna / .z80**: refused with `format:szx` (the old files kept 8 of 32 / 64 banks).
+- **ATM710 / ATM3 / ATM450, TS-Conf, Profi, Profi3, Sprinter**: the old writers saved the physical pages 0-7 whatever the machine was
+  doing; now the view exists only in a 128K layout (TS-Conf and the ATMs after a snapshot load, the Sprinter in a ZX mode) and
+  the file is the same as a plain 128K's; Profi has no view yet (`capture_unsupported`).
+- **The 48K .sna writer no longer writes the PC into the running machine's RAM** (two bytes under SP).
+- **AY**: a 48K machine's file carries none (it has no AY); every 128K-family file as before.
+- Machines that can be saved as SZX through a 128K view now include TS-Conf, the ATMs and the Sprinter (the file says 128K / Pentagon / Scorpion).
+
+Removed with the old writers: `LoaderSNA::determineOutputFormat / captureStateToStaging / save48kFromStaging / save128kFromStaging /
+isPageEmpty` and the Z80 equivalents (their tests with them). `DezogDebugAdapter` saves its state as a .sna: on a Pentagon 512 it now
+gets the refusal's reason instead of a junk file.
+
+Open (not in P6): Profi / Kay / Quorum views; the Sprinter 512 KB modes; ZX-Poly saves; restoring a file onto another model through the
+Qt window (P7); the debugger UI of the capture view.

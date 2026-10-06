@@ -2209,6 +2209,9 @@ DeviceState::SprinterZxBrief ZxBriefLine(EmulatorContext* context)
             }
         }
     }
+    b.modeName = name;
+    if (!b.modeName.empty() && b.modeName.back() == '?')
+        b.modeName.pop_back();
     std::vector<std::string> parts;
     const unsigned ratio = context->emulatorState.hw_turbo_ratio ? context->emulatorState.hw_turbo_ratio : 1;
     if (pld.turbo)

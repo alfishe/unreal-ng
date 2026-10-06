@@ -1,4 +1,5 @@
 #include "loader_z80.h"
+#include "loaders/snapshot/snapshotcapture.h"
 
 #include <algorithm>
 #include <iterator>
@@ -205,277 +206,146 @@ bool LoaderZ80::planSnapshot()
 
 bool LoaderZ80::save()
 {
-    bool result = false;
-
-    // Capture current emulator state to staging buffers
-    if (!captureStateToStaging())
+    // Through the pipeline's save side: the machine's 128K view, the formats the machine can be saved in, the file written
+    // from the captured image (snapshot::SaveSnapshotFile). A refusal is logged and writes nothing
+    if (!_context)
     {
-        MLOGERROR("Failed to capture emulator state for Z80 save");
+        MLOGERROR("save: Invalid emulator context");
         return false;
     }
-
-    // Determine output format based on current emulator mode
-    _memoryMode = determineOutputFormat();
-
-    // Write V3 format file
-    result = saveV3FromStaging();
-
-    // Clean up staging memory
-    freeStagingMemory();
-
-    return result;
+    const snapshot::SaveResult result = snapshot::SaveSnapshotFile(*_context, snapshot::SaveFormat::Z80, _path);
+    if (!result.ok)
+        MLOGERROR("%s", result.text.c_str());
+    return result.ok;
 }
 
-Z80MemoryMode LoaderZ80::determineOutputFormat()
+bool LoaderZ80::WriteImage(const snapshot::Image& image, std::string& error, std::vector<std::string>& warnings)
 {
-    // Check if emulator is in 128K mode by examining port 7FFD lock bit
-    // If locked and in 48K mode, use 48K format; otherwise use 128K
-    // The Scorpion's 256 KB has its own layout (16 pages, #1FFD)
-    const MEM_MODEL model = _context->config.mem_model;
-    if (model == MM_SCORP || model == MM_PROFSCORP)
-        return Z80_256K;
-
-    uint8_t port7FFD = _context->emulatorState.p7FFD;
-    bool isLocked = (port7FFD & 0x20) != 0;  // Bit 5 = lock
-
-    // Check current model - some models are always 48K
-    // For simplicity: if lock bit is set AND we're running as 48K, save as 48K
-    // Otherwise save as 128K to preserve all banks
-    if (isLocked)
+    // The layout: a 48K machine or a locked 128K with bank 0 on top is saved as a 48K program (three pages); a Scorpion's
+    // 16 pages are pages 3-18; the others have 8
+    const bool layout48 = snapshot::SavesAs48K(image);
+    const std::string& machine = image.machineHint;
+    uint8_t modelCode = Z80_MODEL3_128K;
+    if (layout48)
+        modelCode = Z80_MODEL3_48K;
+    else if (machine == "128k")
+        modelCode = Z80_MODEL3_128K;
+    else if (machine == "plus2")
+        modelCode = Z80_MODEL3_128K_2;
+    else if (machine == "plus2a")
+        modelCode = Z80_MODEL3_128K_2A;
+    else if (machine == "plus3")
+        modelCode = Z80_MODEL3_128K_3;
+    else if (machine == "pentagon128")
+        modelCode = Z80_MODEL3_P128K;
+    else if (machine == "scorpion256")
+        modelCode = Z80_MODEL3_ZS256K;
+    else
     {
-        // Check if only using 48K-visible pages
-        return Z80_48K;
-    }
-
-    return Z80_128K;
-}
-
-bool LoaderZ80::captureStateToStaging()
-{
-    if (_context == nullptr || _context->pCore == nullptr || _context->pMemory == nullptr)
-    {
+        error = "the .z80 format has no model for '" + machine + "'";
         return false;
     }
-
-    // Get current Z80 state from CPU - Z80 inherits from Z80Registers
-    Z80* z80 = _context->pCore->GetZ80();
-    if (z80 == nullptr)
+    std::vector<uint16_t> banks;
+    if (layout48)
+        banks = {5, 2, 0};
+    else
     {
-        return false;
+        const uint16_t count = machine == "scorpion256" ? 16 : 8;
+        for (uint16_t bank = 0; bank < count; bank++)
+            banks.push_back(bank);
     }
-    
-    // Copy register values directly from Z80 (which inherits Z80Registers)
-    _z80Registers.pc = z80->pc;
-    _z80Registers.sp = z80->sp;
-    _z80Registers.af = z80->af;
-    _z80Registers.bc = z80->bc;
-    _z80Registers.de = z80->de;
-    _z80Registers.hl = z80->hl;
-    _z80Registers.ix = z80->ix;
-    _z80Registers.iy = z80->iy;
-    _z80Registers.i = z80->i;
-    _z80Registers.r_low = z80->r_low;
-    _z80Registers.r_hi = z80->r_hi;
-    _z80Registers.iff1 = z80->iff1;
-    _z80Registers.iff2 = z80->iff2;
-    _z80Registers.im = z80->im;
-    _z80Registers.alt.af = z80->alt.af;
-    _z80Registers.alt.bc = z80->alt.bc;
-    _z80Registers.alt.de = z80->alt.de;
-    _z80Registers.alt.hl = z80->alt.hl;
-
-    // Capture port state
-    _port7FFD = _context->emulatorState.p7FFD;
-    _port1FFD = _context->emulatorState.p1FFD;
-    _tstatesFromInt = LoaderSZX::IntCountFromFramePosition(_context, z80->t);
-    _portFFFD = _context->emulatorState.pFFFD;
-
-    // Capture border color
-    _borderColor = _context->pScreen->GetBorderColor() & 0x07;
-
-    // Capture all RAM pages
-    Memory* memory = _context->pMemory;
-    for (int page = 0; page < MAX_RAM_PAGES; page++)
+    for (uint16_t bank : banks)
     {
-        uint8_t* srcPage = memory->RAMPageAddress(page);
-        if (srcPage != nullptr)
+        const auto it = image.banks.find(bank);
+        if (it == image.banks.end() || it->second.size() != PAGE_SIZE)
         {
-            _stagingRAMPages[page] = new uint8_t[PAGE_SIZE];
-            memcpy(_stagingRAMPages[page], srcPage, PAGE_SIZE);
+            error = "the machine state has no RAM bank " + std::to_string(bank);
+            return false;
         }
     }
 
-    _stagingLoaded = true;
-    return true;
-}
-
-bool LoaderZ80::saveV3FromStaging()
-{
-    // Open file for writing
-    FILE* outFile = FileHelper::OpenFile(_path, "wb");
-    if (outFile == nullptr)
-    {
-        MLOGERROR("Failed to open '%s' for writing", _path.c_str());
-        return false;
-    }
-
-    // Build V3 header
+    const snapshot::Cpu& cpu = image.cpu;
     Z80Header_v3 header = {};
+    header.reg_A = cpu.af >> 8;
+    header.reg_F = cpu.af & 0xFF;
+    header.reg_BC = cpu.bc;
+    header.reg_DE = cpu.de;
+    header.reg_HL = cpu.hl;
+    header.reg_SP = cpu.sp;
+    header.reg_I = cpu.i;
+    header.reg_R = cpu.r & 0x7F;   // bits 0-6; R bit 7 goes into flags bit 0 (the .z80 layout)
+    header.flags = static_cast<uint8_t>(((cpu.r & 0x80) >> 7) | ((image.border & 0x07) << 1) | 0x20);   // 0x20 = compressed
+    header.reg_DE1 = cpu.de2;
+    header.reg_BC1 = cpu.bc2;
+    header.reg_HL1 = cpu.hl2;
+    header.reg_A1 = cpu.af2 >> 8;
+    header.reg_F1 = cpu.af2 & 0xFF;
+    header.reg_IY = cpu.iy;
+    header.reg_IX = cpu.ix;
+    header.IFF1 = cpu.iff1 ? 1 : 0;
+    header.IFF2 = cpu.iff2 ? 1 : 0;
+    header.im = cpu.im & 0x03;
+    header.reg_PC = 0;   // V1: PC = 0 says v2 / v3
 
-    // V1 fields - CPU registers
-    header.reg_A = _z80Registers.a;
-    header.reg_F = _z80Registers.f;
-    header.reg_BC = _z80Registers.bc;
-    header.reg_DE = _z80Registers.de;
-    header.reg_HL = _z80Registers.hl;
-    header.reg_SP = _z80Registers.sp;
-    header.reg_I = _z80Registers.i;
-    header.reg_R = _z80Registers.r_low & 0x7F;  // bits 0-6; R bit 7 goes into flags bit 0 (the .z80 layout)
-
-    // Flags byte: bit 0 = R bit 7, bits 1-3 = border, bit 5 = compression
-    header.flags = (_z80Registers.r_hi >> 7) | ((_borderColor & 0x07) << 1) | 0x20;  // 0x20 = compressed
-
-    header.reg_DE1 = _z80Registers.alt.de;
-    header.reg_BC1 = _z80Registers.alt.bc;
-    header.reg_HL1 = _z80Registers.alt.hl;
-    header.reg_A1 = _z80Registers.alt.a;
-    header.reg_F1 = _z80Registers.alt.f;
-    header.reg_IY = _z80Registers.iy;
-    header.reg_IX = _z80Registers.ix;
-    header.IFF1 = _z80Registers.iff1 ? 1 : 0;
-    header.IFF2 = _z80Registers.iff2 ? 1 : 0;
-    header.im = _z80Registers.im & 0x03;
-
-    // V1: PC = 0 indicates v2/v3 format
-    header.reg_PC = 0;
-
-    // V2 fields
-    header.extendedHeaderLen = 54;  // V3 standard; 55 with the #1FFD byte below
-    header.newPC = _z80Registers.pc;
-    header.model = static_cast<Z80_Models_v2>(getModelCodeV3());
-    header.p7FFD = _port7FFD;
-    header.pFFFD = _portFFFD;
-    // +2A, +3 and Scorpion: byte 86 holds #1FFD (a 55-byte extended header)
-    const uint8_t modelCode = static_cast<uint8_t>(header.model);  // a v3 code in the v2-typed field
+    header.extendedHeaderLen = 54;   // V3 standard; 55 with the #1FFD byte
+    header.newPC = cpu.pc;
+    header.model = static_cast<Z80_Models_v2>(modelCode);   // a v3 code in the v2-typed field
+    header.p7FFD = image.paging.p7FFD.value_or(0);   // kept for a locked 128K that is saved as a 48K program, as it always was
     if (modelCode == Z80_MODEL3_128K_2A || modelCode == Z80_MODEL3_128K_3 || modelCode == Z80_MODEL3_ZS256K)
     {
         header.extendedHeaderLen = 55;
-        header.p1FFD = _port1FFD;
+        header.p1FFD = image.paging.p1FFD.value_or(0);
     }
 
-    // A 48K-mode snapshot of a machine that has an AY carries the AY state; byte 37 bit 2 says so, otherwise
-    // readers (this loader included) ignore the AY bytes of a 48K snapshot
-    if (_memoryMode == Z80_48K && _context->config.mem_model != MM_SPECTRUM48)
+    // A 48K program on a machine that has an AY carries the AY state; byte 37 bit 2 says so, otherwise readers (this
+    // loader included) ignore the AY bytes of a 48K snapshot
+    if (!image.ay.empty())
     {
-        header.r2 |= 0b0000'0100;
+        if (layout48)
+            header.r2 |= 0b0000'0100;
+        for (int i = 0; i < 16; i++)
+            header.ay[i] = image.ay[0].registers[i];
+        header.pFFFD = image.ay[0].selected;
     }
 
-    // AY registers - get from sound manager
-    if (_context->pSoundManager != nullptr)
-    {
-        SoundChip_AY8910* psg = _context->pSoundManager->getAYChip(0);
-        if (psg != nullptr)
-        {
-            for (int i = 0; i < 16; i++)
-            {
-                header.ay[i] = psg->readRegister(static_cast<uint8_t>(i));
-            }
-            // The selected register is the chip's own: a TurboSound decoder
-            // (Pentagon) routes #FFFD without updating emulatorState.pFFFD
-            header.pFFFD = psg->getCurrentRegisterIndex();
-        }
-    }
-
-    // V3 fields - T-state counter (optional, set to 0)
-    // The frame position, as libspectrum / Fuse encode it: a count-down within
-    // the current quarter of the frame and the quarter, both from the INT
+    // The frame position, as libspectrum / Fuse encode it: a count-down within the current quarter of the frame and the
+    // quarter, both from the INT
     const uint32_t quarter = std::max(1u, _context->config.frame / 4);
-    header.lowTCounter = static_cast<uint16_t>(quarter - (_tstatesFromInt % quarter) - 1);
-    header.highTCounter = static_cast<uint8_t>(((_tstatesFromInt / quarter) + 3) % 4);
+    const uint32_t tstates = image.framePosition.value_or(0);
+    header.lowTCounter = static_cast<uint16_t>(quarter - (tstates % quarter) - 1);
+    header.highTCounter = static_cast<uint8_t>(((tstates / quarter) + 3) % 4);
 
-    // Write header (first 30 bytes of V1)
-    fwrite(&header, sizeof(Z80Header_v1), 1, outFile);
+    std::vector<uint8_t> file;
+    auto append = [&](const void* bytes, size_t size) {
+        const uint8_t* p = static_cast<const uint8_t*>(bytes);
+        file.insert(file.end(), p, p + size);
+    };
+    append(&header, sizeof(Z80Header_v1));
+    const uint16_t extLen = header.extendedHeaderLen;
+    append(&extLen, sizeof(extLen));
+    append(&header.newPC, extLen);
 
-    // Write extended header length (2 bytes) then remaining V2/V3 header
-    uint16_t extLen = header.extendedHeaderLen;
-    fwrite(&extLen, sizeof(extLen), 1, outFile);
-    fwrite(&header.newPC, extLen, 1, outFile);
-
-    // Write memory pages
-    uint8_t compressBuffer[PAGE_SIZE + 1024];  // Extra space for worst case
-
-    if (_memoryMode == Z80_48K)
+    uint8_t compressBuffer[PAGE_SIZE + 1024];   // extra space for the worst case
+    for (uint16_t bank : banks)
     {
-        // 48K: write pages 5, 2, 0 (mapped to Z80 pages 8, 4, 5)
-        int pageMap48K[] = {8, 4, 5};    // Z80 page numbers
-        int ramMap48K[] = {5, 2, 0};     // Our RAM page numbers
-
-        for (int i = 0; i < 3; i++)
-        {
-            if (_stagingRAMPages[ramMap48K[i]] != nullptr)
-            {
-                size_t compressedSize = compressPage(_stagingRAMPages[ramMap48K[i]], PAGE_SIZE,
-                                                     compressBuffer, sizeof(compressBuffer));
-
-                MemoryBlockDescriptor desc;
-                desc.compressedSize = static_cast<uint16_t>(compressedSize);
-                desc.memoryPage = pageMap48K[i];
-
-                fwrite(&desc, sizeof(desc), 1, outFile);
-                fwrite(compressBuffer, compressedSize, 1, outFile);
-            }
-        }
-    }
-    else
-    {
-        // 128K: all 8 RAM pages (Z80 pages 3-10); Scorpion 256K: 16 (3-18)
-        const int pages = _memoryMode == Z80_256K ? 16 : 8;
-        for (int page = 0; page < pages; page++)
-        {
-            if (_stagingRAMPages[page] != nullptr)
-            {
-                size_t compressedSize = compressPage(_stagingRAMPages[page], PAGE_SIZE,
-                                                     compressBuffer, sizeof(compressBuffer));
-
-                MemoryBlockDescriptor desc;
-                desc.compressedSize = static_cast<uint16_t>(compressedSize);
-                desc.memoryPage = static_cast<uint8_t>(page + 3);  // Z80 pages: 3=RAM0, 4=RAM1, ..., 10=RAM7 (18=RAM15)
-
-                fwrite(&desc, sizeof(desc), 1, outFile);
-                fwrite(compressBuffer, compressedSize, 1, outFile);
-            }
-        }
+        std::vector<uint8_t> copy = image.banks.at(bank);
+        const size_t compressedSize = compressPage(copy.data(), PAGE_SIZE, compressBuffer, sizeof(compressBuffer));
+        MemoryBlockDescriptor desc;
+        desc.compressedSize = static_cast<uint16_t>(compressedSize);
+        // 48K: banks 5, 2, 0 are Z80 pages 8, 4, 5; 128K: Z80 pages 3-10 are banks 0-7 (Scorpion 3-18)
+        desc.memoryPage = layout48 ? (bank == 5 ? 8 : (bank == 2 ? 4 : 5)) : static_cast<uint8_t>(bank + 3);
+        append(&desc, sizeof(desc));
+        append(compressBuffer, compressedSize);
     }
 
-    fclose(outFile);
-
-    MLOGINFO("Saved Z80 v3 snapshot to '%s' (%s mode)",
-             _path.c_str(), (_memoryMode == Z80_48K) ? "48K" : (_memoryMode == Z80_256K ? "256K" : "128K"));
-
+    if (!FileHelper::SaveBufferToFile(_path, file.data(), file.size()))
+    {
+        error = "cannot write '" + _path + "'";
+        return false;
+    }
+    (void)warnings;
+    MLOGINFO("Saved Z80 v3 snapshot to '%s' (%s mode)", _path.c_str(), layout48 ? "48K" : (machine == "scorpion256" ? "256K" : "128K"));
     return true;
-}
-
-uint8_t LoaderZ80::getModelCodeV3()
-{
-    // The running model's v3 code; a 48K-mode save (the #7FFD lock set) stays 48K
-    if (_memoryMode == Z80_48K)
-        return Z80_MODEL3_48K;
-    switch (_context->config.mem_model)
-    {
-        case MM_PLUS2: return Z80_MODEL3_128K_2;
-        case MM_PLUS2A: return Z80_MODEL3_128K_2A;
-        case MM_PLUS3: return Z80_MODEL3_128K_3;
-        case MM_PENTAGON:
-            if (_context->config.ramsize > 128)
-                MLOGWARNING("Z80 save: .z80 has no Pentagon 512 / 1024 model; saved as a Pentagon 128 (pages 0-7)");
-            return Z80_MODEL3_P128K;
-        case MM_SCORP:
-        case MM_PROFSCORP: return Z80_MODEL3_ZS256K;
-        case MM_SPECTRUM128: return Z80_MODEL3_128K;
-        default:
-            MLOGWARNING("Z80 save: .z80 has no code for this model; saved as a 128K");
-            return Z80_MODEL3_128K;
-    }
 }
 
 bool LoaderZ80::validate()

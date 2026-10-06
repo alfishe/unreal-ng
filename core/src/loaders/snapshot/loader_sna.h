@@ -120,7 +120,10 @@ public:
     /// region <Methods>
 public:
     bool load();
+    /// Save the machine's snapshot view (snapshot::SaveSnapshotFile): false = refused or not writable (logged)
     bool save();
+    /// Write an image captured by snapshot::CaptureImage as a .sna; `error` says why not
+    bool WriteImage(const snapshot::Image& image, std::string& error);
 
     /// What the caller asked for (call before load(); the default lets the plan decide)
     void SetOptions(const snapshot::Options& options) { _options = options; }
@@ -148,13 +151,6 @@ protected:
     bool applySnapshotFromStaging();
     /// Image + plan step between staging and commit; false = refused (the report says why)
     bool planSnapshot();
-    
-    // Save helpers
-    SNA_MODE determineOutputFormat();
-    bool captureStateToStaging();
-    bool save48kFromStaging();
-    bool save128kFromStaging();
-    bool isPageEmpty(int pageNum);
     /// endregion </Helper methods>
 
     /// region <Debug methods>
@@ -201,12 +197,5 @@ public:
     using LoaderSNA::load128kToStaging;
     using LoaderSNA::applySnapshotFromStaging;
     using LoaderSNA::planSnapshot;
-    
-    // Save helpers
-    using LoaderSNA::determineOutputFormat;
-    using LoaderSNA::captureStateToStaging;
-    using LoaderSNA::save48kFromStaging;
-    using LoaderSNA::save128kFromStaging;
-    using LoaderSNA::isPageEmpty;
 };
 #endif // _CODE_UNDER_TEST
