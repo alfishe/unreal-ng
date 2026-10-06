@@ -300,10 +300,14 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   show the old / the loaded program; frame numbers go on. Outside a
   recording it keeps the history. On v1 it is refused while recording and
   drops a stopped session.
-- **Other loads wipe the session.** Tape load, disk load/create, ROM reload
-  and a host speed change on a stopped session drop the whole history (and
-  are refused while recording, also while a recording is paused for
-  browsing). Dump first if you need the recording.
+- **Other loads wipe the session.** Tape load, disk load/create and a host
+  speed change on a stopped session drop the whole history (and are refused
+  while recording, also while a recording is paused for browsing). Dump
+  first if you need the recording.
+- **A machine change ends the session** (the engine): a ROM load, a model
+  switch, a GS card switch or a slot change stop the recording and drop its
+  history (`last_stop_reason: "machine-change"`); a black box starts a new
+  session, an explicit recording stays off. v1 refuses them while recording.
 - **Reset keeps history.** A reset (or a disk autostart's quick reset)
   stops the recording and keeps what was captured; a machine sitting in
   history goes back to `idle`.

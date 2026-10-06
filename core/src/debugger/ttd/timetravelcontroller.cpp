@@ -1130,7 +1130,14 @@ std::string TimeTravelController::RecordingGuard(TTDGuardedAction action) const
     switch (action)
     {
         case TTDGuardedAction::LoadSnapshot:
-            return {};   // part of the recording (D10, QueueSnapshotLoad); one that needs another model is SwitchModel
+            return {};   // part of the recording (D10, QueueSnapshotLoad)
+        case TTDGuardedAction::LoadRom:
+        case TTDGuardedAction::SwitchGsCard:
+        case TTDGuardedAction::SwitchModel:
+        case TTDGuardedAction::ChangeSlots:
+            // A change of the machine itself ends the session (owner rule 2026-10-05):
+            // EndSessionForMachineChange, then a black box starts a new one
+            return {};
         case TTDGuardedAction::LoadTape:
             return "Cannot insert a tape while TTD is recording: a new medium would drop the recorded history. Insert "
                    "it before starting the recording, or stop the recording first.";
@@ -1140,20 +1147,8 @@ std::string TimeTravelController::RecordingGuard(TTDGuardedAction action) const
         case TTDGuardedAction::CreateDisk:
             return "Cannot create a disk while TTD is recording: a new medium would drop the recorded history. Create "
                    "it before starting the recording, or stop the recording first.";
-        case TTDGuardedAction::LoadRom:
-            return "Cannot load a ROM while TTD is recording: the recorded history relies on the current ROM and would "
-                   "be dropped. Stop the recording first.";
         case TTDGuardedAction::Invalidate:
             return "Cannot discard the TTD session while it is recording. Stop the recording first, then discard it.";
-        case TTDGuardedAction::SwitchGsCard:
-            return "Cannot switch the General Sound card type while TTD is recording: the recorded history holds "
-                   "the current card's state, which the other card type cannot take back. Stop the recording first.";
-        case TTDGuardedAction::SwitchModel:
-            return "Cannot switch the machine model while TTD is recording: the recorded history belongs to this "
-                   "machine. Stop the recording first.";
-        case TTDGuardedAction::ChangeSlots:
-            return "Cannot change the slot set while TTD is recording session " + RecordingSessionLabel() +
-                   ": the device set is fixed for a session. Stop the recording first.";
         case TTDGuardedAction::CdFrontPanel:
             return "Cannot play, pause, stop or change the volume of a CD drive from outside the guest while TTD is "
                    "recording: a replay would not repeat it. Let the guest's CD player do it, or stop the recording first.";
@@ -1186,6 +1181,16 @@ void TimeTravelController::OnFrameBoundary()
             InvalidateSession(reason);
             return;
         }
+    }
+
+    // A machine change ended the black box's session: the new one starts here,
+    // on the changed machine
+    if (_blackBoxRestart && _state == TTDSessionState::Idle)
+    {
+        _blackBoxRestart = false;
+        if (_blackBox && StartRecording())
+            MLOGINFO("TimeTravelController: the black box records again after a machine change (a new session)");
+        return;
     }
 
     // ------------------------------------------------------------------
@@ -1353,6 +1358,7 @@ void TimeTravelController::SetBlackBox(bool on, uint32_t minutes)
     _blackBox = on;
     _blackBoxMinutes = minutes ? minutes : 5;
     _blackBoxSuspended = false;
+    _blackBoxRestart = false;
 }
 
 bool TimeTravelController::AccelerationActive() const
@@ -1392,9 +1398,26 @@ void TimeTravelController::OnConfigurationChange(TTDConfigChangeKind kind, const
     // The black box's history was recorded at 1x and stays valid when the host
     // speed changes afterwards (the speed is pacing; OnAccelerationChanging
     // handles the recording)
-    if (kind == TTDConfigChangeKind::SpeedMultiplier && _blackBox)
+    if (kind == TTDConfigChangeKind::SpeedMultiplier)
+    {
+        if (!_blackBox)
+            InvalidateSession(reason);
         return;
+    }
+    EndSessionForMachineChange(reason);   // the ROM set, the General Sound card
+}
+
+void TimeTravelController::EndSessionForMachineChange(const char* reason)
+{
+    const bool blackBoxRecorded = _blackBox && (_state == TTDSessionState::Recording || _blackBoxSuspended);
+    if (_state == TTDSessionState::Recording || _recordingPaused)
+        StopRecording();   // cleanly: the machine parked, the features it switched on back off
     InvalidateSession(reason);
+    _lastStopReason = "machine-change";
+    _blackBoxSuspended = false;
+    _blackBoxRestart = blackBoxRecorded;
+    if (_blackBoxRestart)
+        MLOGINFO("TimeTravelController: '%s' ended the black box's session; a new one starts at the next frame", reason);
 }
 
 bool TimeTravelController::CutAtFrameStart(uint64_t frame) const

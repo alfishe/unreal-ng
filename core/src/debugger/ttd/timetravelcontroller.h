@@ -140,7 +140,7 @@ public:
     void OnLoad(TTDLoadKind kind, const char* reason) override;
     bool QueueSnapshotLoad(std::function<void()> load) override;
     void OnConfigurationChange(TTDConfigChangeKind kind, const char* reason) override;
-    void OnModelTransfer(const char* reason) override { InvalidateSession(reason); }
+    void OnModelTransfer(const char* reason) override { EndSessionForMachineChange(reason); }
     bool HasHistory() const override { return !_timeline.empty(); }
     const TTDInputJournal& InputJournal() const override { return _inputJournal; }
 
@@ -2086,6 +2086,10 @@ private:
     void ApplyBankOverrides(const TTDBankOverrides& in);
     uint32_t _blackBoxMinutes = 5;
     bool _blackBoxSuspended = false;        // stopped for an acceleration; starts again after it
+    bool _blackBoxRestart = false;          // a machine change ended it: a new session at the next frame boundary
+    /// A change of the machine itself (ROM reload, model transfer, General Sound card, slots) ends the session:
+    /// the recording stops, its history goes; a black box starts a new session on the changed machine
+    void EndSessionForMachineChange(const char* reason);
 };
 
 } // namespace ttd

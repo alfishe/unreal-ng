@@ -112,8 +112,8 @@ one call instead of a seek and a capture per frame (see
   (`recording_paused: true`; resume at the paused point continues it). On
   `backend: v1` they answer `409`: call `ttd/stop` first (history is retained).
 - Load the software **before** `ttd/start`: a tape or disk load (and disk
-  create, ROM reload) is refused while recording and wipes a stopped
-  session's history. A snapshot load on the engine is part of the recording
+  create) is refused while recording and wipes a stopped session's history;
+  a ROM reload, model switch or slot change ends the session (the engine). A snapshot load on the engine is part of the recording
   (v1 refuses it). A reset stops the recording and keeps it.
 - While recording, the host speed is held at 1x and turbo / fast tape /
   fast disk are off, so a recording plays at real speed. See
