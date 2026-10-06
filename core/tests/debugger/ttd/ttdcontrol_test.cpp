@@ -653,5 +653,33 @@ TEST_P(TTDControl_Test, TheStatusOfARunningRecordingFollowsIt)
     _emulator->Pause();
 }
 
+/// BUGS.md 2026-10-05 #1: a machine whose program never writes #FE shows the
+/// border its port latch holds, live and in a TTD-composed picture alike (a
+/// reset takes the renderer's border color from the latch)
+TEST_P(TTDControl_Test, TheBorderBeforeAnyOutToFEIsTheLatchs)
+{
+    // DI; loop: INC (HL); INC HL; JR loop - never an OUT
+    const uint8_t program[] = {0xF3, 0x34, 0x23, 0x18, 0xFC};
+    for (size_t i = 0; i < sizeof(program); ++i)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    _context->pCore->GetZ80()->pc = 0x8000;
+    _context->pCore->GetZ80()->hl = 0xC000;
+    auto borderPixel = [&]() {
+        uint32_t* buffer = nullptr;
+        size_t size = 0;
+        _context->pScreen->GetFramebufferData(&buffer, &size);
+        return buffer ? buffer[0] : 0u;
+    };
+
+    ASSERT_TRUE(Run("start").Ok());
+    const uint64_t first = _context->emulatorState.frame_counter;
+    _emulator->RunNFrames(4, /*skipBreakpoints=*/true);
+    const uint32_t live = borderPixel();
+    ASSERT_TRUE(Run("stop").Ok());
+    ASSERT_TRUE(Bool(Run("seek", {{"frame", std::to_string(first + 2)}, {"tinframe", "0"}}), "reached"));
+    EXPECT_EQ(borderPixel(), live) << "the composed border is the live one";
+    EXPECT_EQ(_context->emulatorState.border_attr, _context->emulatorState.pFE & 0x07);
+}
+
 INSTANTIATE_TEST_SUITE_P(Backends, TTDControl_Test, ::testing::Values(false, true),
                          [](const ::testing::TestParamInfo<bool>& info) { return info.param ? "Controller" : "V1"; });

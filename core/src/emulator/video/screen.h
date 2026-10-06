@@ -718,6 +718,8 @@ public:
     virtual void SetVideoMode(VideoModeEnum mode);
     virtual void SetActiveScreen(SpectrumScreenEnum screen);
     virtual void SetBorderColor(uint8_t color);
+    /// The border color at a reset: taken over without drawing anything (no beam position to flush to)
+    void ResetBorderColor(uint8_t color) { _borderColor = color & 0b0000'0111; }
 
     virtual VideoModeEnum GetVideoMode();
     virtual uint8_t GetActiveScreen();

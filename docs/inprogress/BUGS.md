@@ -9,7 +9,7 @@
 ---
 
 2026-10-05
-## 🔴 [Open] #1: Live border stays black when nothing wrote port #FE, while a TTD-composed picture fills it from #FE
+## 🟣 [Fix Proposed] #1: Live border stays black when nothing wrote port #FE, while a TTD-composed picture fills it from #FE
 * **Date Opened:** 2026-10-05
 * **Date Fixed:** -
 * **Commit ID:** -
@@ -40,6 +40,14 @@ Once the program writes `#FE` (the D13 test does `LD A,2; OUT (#FE),A`) both pic
 - Whether a live machine started normally (ROM boot) can ever hit this - the ROM writes `#FE` early, so it may be
   limited to tests and automation that skip the ROM.
 
+### Root cause and fix (2026-10-06)
+After a reset the border color lived in three places that disagreed: the port decoder's reset set the ULA latch
+`pFE` (0xFF on 128K / Profi: white; 0xF8 on Scorpion: black), `Core::Reset` set `border_attr` to 7, and the screen's
+`_borderColor` stayed 0 (black) until the first `OUT (#FE)`. The renderer draws with `_borderColor`, a TTD-composed
+picture fills from `pFE`. `Core::Reset` now takes `border_attr` and the renderer's color from the latch the decoder
+reset left (`Screen::ResetBorderColor`, no drawing), as an `OUT (#FE)` does. Test
+`TTDControl_Test.TheBorderBeforeAnyOutToFEIsTheLatchs` on both backends (mutant caught). No golden picture changed.
+
 ### Requirements / Acceptance Criteria
 - The live picture and a TTD-composed picture of the same machine state are identical, border included, whether or
   not `#FE` was ever written.
@@ -65,14 +73,29 @@ Pentagon (TSFM in the TurboSound slot), the TTD controller: run 12,345 T-states,
 20,000 T-states, note the position and the device states, `StopRecording`, `SeekTo(checkpoint 0)`, step until the
 noted position: device 4 differs.
 
+### Narrowed (2026-10-06)
+- A seek replaying from the mid-frame first checkpoint inside its frame: exact, every device
+  (`TimeTravelController_Test.ASeekFromAMidFrameFirstCheckpointIsExact`, a guard).
+- The machine running forward from it (`RunNFrames`, `RunTStates`) across frame boundaries: CPU, RAM and both YM2203
+  chips exact (`RunningFromAMidFrameFirstCheckpointKeepsTheFmChips`, a guard); only the TSFM render cursor
+  (blob byte 1222: `_renderT - _chipT`, the start of the v4 timeline tail) ends 16 master clocks - one render tick -
+  behind the live run after the first frame end.
+- Stepping instruction by instruction (`RunSingleCPUCycle`) from it: also chip 0's FM clock phase (byte 51) differs.
+  Syncing the chips to the CPU before the baseline capture (`syncTo(nowT())`) removed the byte-51 difference on that
+  path but not the cursor's, and made no difference on the batch path: not adopted.
+- From a frame-start checkpoint both paths are exact.
+- Suspects: the TSFM render progress and the mixer's sample phase at the first frame end after a mid-frame restore
+  (`TTDLoadState`: `_lastTStates`, `adoptSamplePhase`; `followSamplePhase` from 74d9b8ad5), and the single-step
+  path's per-step audio work. Audio rendering state only - the guest's program and memory replay exactly.
+
 ### Requirements / Acceptance Criteria
 - Running forward from any checkpoint, the baseline included, reproduces every device state of the live run.
 - A test for the mid-frame baseline that fails before the fix.
 
-## 🟣 [Fix Proposed] #3: A bookmark at the current position fails after `ttd stop` (and while recording)
+## 🟢 [Fixed] #3: A bookmark at the current position fails after `ttd stop` (and while recording)
 * **Date Opened:** 2026-10-05
-* **Date Fixed:** -
-* **Commit ID:** -
+* **Date Fixed:** 2026-10-06
+* **Commit ID:** ea9cd124e
 * **Found by:** the Phase 5 recipe re-run (TTD v2 migration, branch `ttd-engine`), 2026-10-05; the same on v1 and on the engine.
 
 ### Description
@@ -93,10 +116,10 @@ v1 (`UNREAL_TTD_BACKEND=v1`) keeps the old behavior.
 - A bookmark without a position works right after `stop` (the history reaches to where it stopped) and while
   recording, or the recipes say what to do instead; a test on both backends.
 
-## 🟣 [Fix Proposed] #4: `GET /ttd/status` lags the recording's head while the machine runs
+## 🟢 [Fixed] #4: `GET /ttd/status` lags the recording's head while the machine runs
 * **Date Opened:** 2026-10-05
-* **Date Fixed:** -
-* **Commit ID:** -
+* **Date Fixed:** 2026-10-06
+* **Commit ID:** 26d3a63df
 * **Found by:** the Phase 5 recipe re-run, 2026-10-05 (engine; v1 not checked).
 
 ### Description

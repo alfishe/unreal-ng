@@ -901,6 +901,13 @@ void Core::Reset(ROMModeEnum mode)
     // their own memory manager (ATM) UpdateZ80Banks() re-runs the manager
     // mapping instead of the generic ZX bank layout
     _memory->SetROMMode(_mode);
+
+    // The ULA port latch the decoder reset left is the one source of the border
+    // color: the state's border_attr and the renderer's color follow it, as an
+    // OUT (#FE) makes them. Without this a machine that never wrote #FE showed a
+    // black border while a TTD-composed picture painted pFE's (BUGS.md 2026-10-05 #1)
+    _state->border_attr = _state->pFE & 0x07;
+    _screen->ResetBorderColor(_state->border_attr);
 #ifdef ENABLE_RECORDING
     if (_recordingManager)
         _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)

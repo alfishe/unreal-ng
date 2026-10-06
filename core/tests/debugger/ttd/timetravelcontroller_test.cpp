@@ -1232,3 +1232,56 @@ TEST_F(TimeTravelController_Test, TheHistoryReachesWhereTheRecordingStopped)
     EXPECT_TRUE(seen.ram == live.ram);
     EXPECT_TRUE(seen.devices == live.devices);
 }
+
+/// BUGS.md 2026-10-05 #2 (guard): a recording started inside a frame takes its
+/// first checkpoint there; a seek replaying from it inside its frame reproduces
+/// every device
+TEST_F(TimeTravelController_Test, ASeekFromAMidFrameFirstCheckpointIsExact)
+{
+    EmulatorContext* context = _b->GetContext();
+    _b->RunTStates(12345, /*skipBreakpoints=*/true);
+    ASSERT_TRUE(_controller->StartRecording());
+    _b->RunTStates(20000, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint at = _controller->CurrentPosition();
+    const MachineState live = CaptureState(context, *_controller);
+    _b->RunNFrames(3, /*skipBreakpoints=*/true);
+    _controller->StopRecording();
+
+    ASSERT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(2)->time.frame, 0}, nullptr));
+    ASSERT_TRUE(_controller->SeekTo(at, nullptr));   // replays from the first checkpoint
+    const MachineState seen = CaptureState(context, *_controller);
+    EXPECT_EQ(std::memcmp(&seen.cpu, &live.cpu, sizeof(seen.cpu)), 0);
+    EXPECT_TRUE(seen.ram == live.ram);
+    for (const auto& [id, state] : live.devices)
+        EXPECT_TRUE(seen.devices.at(id) == state) << "device " << int(id);
+}
+
+/// BUGS.md 2026-10-05 #2 (guard): running forward from a mid-frame first
+/// checkpoint across frame boundaries keeps the two YM2203 chips' own state (the
+/// TSFM blob's bytes 50 .. 1221: latch, FM clock phase, timers, ymfm engine, SSG
+/// half) equal to the live run. The render cursor after them is the open part of #2
+TEST_F(TimeTravelController_Test, RunningFromAMidFrameFirstCheckpointKeepsTheFmChips)
+{
+    EmulatorContext* context = _b->GetContext();
+    _b->RunTStates(12345, /*skipBreakpoints=*/true);
+    ASSERT_TRUE(_controller->StartRecording());
+    _b->RunNFrames(3, /*skipBreakpoints=*/true);
+    _b->RunTStates(20000, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint at = _controller->CurrentPosition();
+    const MachineState live = CaptureState(context, *_controller);
+    _controller->StopRecording();
+
+    ASSERT_TRUE(_controller->SeekTo(_controller->GetCheckpoint(0)->time, nullptr));
+    _b->RunNFrames(3, /*skipBreakpoints=*/true);
+    _b->RunTStates(20000, /*skipBreakpoints=*/true);
+    ASSERT_EQ(_controller->CurrentPosition(), at);
+    const MachineState seen = CaptureState(context, *_controller);
+    EXPECT_EQ(std::memcmp(&seen.cpu, &live.cpu, sizeof(seen.cpu)), 0);
+    EXPECT_TRUE(seen.ram == live.ram);
+    const uint8_t tsfm = static_cast<uint8_t>(ttd::PeripheralId::TSFM);
+    ASSERT_TRUE(live.devices.count(tsfm) && seen.devices.count(tsfm));
+    const std::vector<uint8_t>& a = live.devices.at(tsfm);
+    const std::vector<uint8_t>& b = seen.devices.at(tsfm);
+    ASSERT_GE(a.size(), 1222u);
+    EXPECT_TRUE(std::equal(a.begin() + 50, a.begin() + 1222, b.begin() + 50)) << "the YM2203 chips";
+}
