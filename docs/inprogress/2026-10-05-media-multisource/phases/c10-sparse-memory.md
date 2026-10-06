@@ -117,3 +117,59 @@ images stay streamed, since every write must reach the file. The decision and th
 fastest guest read path (Sprinter IDE / SD, a few hundred sectors a second at most) spends under 1 ms a second in it,
 under 0.1 % of the time; a memory copy would save that and cost the image's size in RAM per slot. Revisit
 only if a profile of a real guest shows `RawImage::ReadSector` (C9, bulk reads, is the next place to look).
+
+## 8. Findings after landing: full disks and memory bounds
+
+Owner questions (2026-10-06): does a sparse disk lose to a flat one once the guest has filled it, and what happens
+when a disk is larger than the host's RAM?
+
+### 8.1 A blank medium is a session over an empty disk
+
+`media create` of a card or hard disk wraps the `SparseMemoryDisk` in `AccessMode::Session`
+(`MediaControl::Create`). Every guest write lands in the `SessionWriteMap` above it
+(`std::map<lba, std::array<uint8_t, 512>>`); the sparse disk itself stays empty until the medium is saved. So for a
+blank medium the cost of a full disk is the session's, not the sparse disk's.
+
+### 8.2 Full disks, measured
+
+`sparsemedia_benchmark.cpp`, a 256 MiB card with every sector written non-zero (Release, the same machine as §7;
+peak RSS of the benchmark process holding one card):
+
+| Device | Random read / sector | Rewrite / sector | Fill (256 MiB) | Peak RSS |
+|---|---|---|---|---|
+| `MemoryDisk` (flat buffer) | 53 ns | 90 ns | 192 ms | 262 MiB |
+| `SparseMemoryDisk` | 263 ns | 279 ns (a zero write: 431 ns) | 71 ms | 263 MiB |
+| `SessionWriteMap` over an empty `SparseMemoryDisk` (a blank medium) | 952 ns | 897 ns | 189 ms | 287 MiB |
+
+- **Speed.** The sparse disk is about 5x slower per sector than a flat buffer (a `std::map` lookup per sector), the
+  session about 18x. In absolute terms both stay at or under 1 µs a sector, the same as a sector read from an image
+  file (§7). A Z80 guest moves at most a few hundred to a few thousand sectors a second, so this is under 0.1 % of
+  the emulation time: not visible.
+- **Memory on a full disk.** The sparse disk holds what a flat buffer holds (+0.4 %: the chunk map). The session adds
+  about 10 % (a `std::map` node per sector).
+- **Against C6 (before C10).** A blank medium was a session over a `MemoryDisk` allocated and zeroed at create: a
+  256 MiB card cost 256 MiB at once and about 550 MiB when full. Now it costs nothing at once and about 287 MiB when
+  full. C10 is not worse for full disks; it is better for every fill level.
+- **Cheap improvement.** A flat table of chunk pointers instead of the `std::map` (2 GiB / 64 KiB = 32768 pointers,
+  256 KiB) makes the sparse disk's lookup O(1).
+
+### 8.3 Disks larger than RAM
+
+| Medium | What holds memory | Bounded |
+|---|---|---|
+| An image file (`.img`, `.hdf`, `.hdi`, `.vhd`, `.chd`), `writethrough` | nothing per sector: reads are streamed (§7), writes go to the file | yes: a 64 GB image runs in constant memory |
+| A composite (folders, images, `*.ucompose.yaml`) | the metadata: directory bytes, the run table, patched reserved sectors (`FatSynthVolume`); file contents are read from the host on demand | yes, by the tree's size |
+| A blank medium (`media create`) | the session (§8.1) | by the 2 GiB cap of `create` (about 2.3 GiB when full) |
+| **Any medium in `session` mode** (folders, CHDs, composites, blank media, an image inserted with `access: session`) | **every sector the guest wrote, until save or discard** | **no** |
+
+The last row is the gap: a session over a 64 GB CHD whose guest writes 20 GB holds about 22 GB of RAM, then swaps
+or is killed. In practice a ZX guest writes slowly (a Z80 over IDE: at most a few hundred KB/s, about an hour of
+continuous writing per GB), but a long-running machine (a BBS, a logger, a benchmark loop, a time-travel session
+replayed at turbo speed) gets there, and nothing stops it.
+
+### 8.4 Decision (owner, 2026-10-06)
+
+"No point holding more than 128 MB without flushing to disk." Follow-up phase **C10d** (session spill): a session
+keeps at most `[MEDIA] SessionMemoryLimit` (default 128 MiB) of changed sectors in memory and moves the rest to a
+spill file on disk; the reads, `Changes()`, saves and deltas see one session as before. With that, `create` can
+lift its 2 GiB cap. Design: [c10d-session-spill.md](c10d-session-spill.md).

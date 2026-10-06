@@ -18,6 +18,7 @@
 
 #include "emulator/io/storage/memorydisk.h"
 #include "emulator/io/storage/rawimage.h"
+#include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/io/storage/sparsememorydisk.h"
 #include "emulator/media/blockformats.h"
 #include "emulator/media/composedescriptor.h"
@@ -183,8 +184,75 @@ namespace
         }
         state.counters["heldMiB"] = static_cast<double>(held) / (1024 * 1024);
     }
+
+    /// A 256 MiB card written full (every sector non-zero): arg 1 SparseMemoryDisk, 0 MemoryDisk, 2 a session over an
+    /// empty SparseMemoryDisk (what a blank card from `media create` is: the guest's writes land in the session)
+    constexpr uint64_t kFullSectors = 256ull * 1024 * 2;
+
+    std::unique_ptr<IBlockDevice> FullCard(int64_t kind)
+    {
+        std::unique_ptr<IBlockDevice> card;
+        if (kind == 0)
+            card = std::make_unique<MemoryDisk>(kFullSectors);
+        else if (kind == 1)
+            card = std::make_unique<SparseMemoryDisk>(kFullSectors);
+        else
+            card = std::make_unique<SessionWriteMap>(std::make_unique<SparseMemoryDisk>(kFullSectors));
+        std::vector<uint8_t> data(512, 0x5A);
+        for (uint64_t lba = 0; lba < kFullSectors; lba++)
+        {
+            data[0] = static_cast<uint8_t>(lba | 1);
+            card->WriteSector(lba, data.data());
+        }
+        return card;
+    }
+
+    void FullCardRandRead(benchmark::State& state)
+    {
+        auto card = FullCard(state.range(0));
+        std::mt19937_64 random(99);
+        std::vector<uint64_t> lbas(4096);
+        for (uint64_t& lba : lbas)
+            lba = random() % kFullSectors;
+        uint8_t sector[512];
+        size_t i = 0;
+        for (auto _ : state)
+        {
+            card->ReadSector(lbas[i], sector);
+            benchmark::DoNotOptimize(sector[0]);
+            i = (i + 1) & 4095;
+        }
+    }
+
+    /// Rewrites of a full card: non-zero data (arg 1 of the second range) or zeros (0: the chunk is scanned for
+    /// freeing)
+    void FullCardRewrite(benchmark::State& state)
+    {
+        auto card = FullCard(state.range(0));
+        std::vector<uint8_t> data(512, state.range(1) ? 0x33 : 0);
+        std::mt19937_64 random(98);
+        std::vector<uint64_t> lbas(4096);
+        for (uint64_t& lba : lbas)
+            lba = random() % kFullSectors;
+        size_t i = 0;
+        for (auto _ : state)
+        {
+            card->WriteSector(lbas[i], data.data());
+            i = (i + 1) & 4095;
+        }
+    }
+
+    /// Filling the card: the time to write all of it (first writes allocate)
+    void FullCardFill(benchmark::State& state)
+    {
+        for (auto _ : state)
+            benchmark::DoNotOptimize(FullCard(state.range(0)).get());
+    }
 }  // namespace
 
+BENCHMARK(FullCardRandRead)->Arg(0)->Arg(1)->Arg(2);
+BENCHMARK(FullCardRewrite)->Args({0, 1})->Args({1, 1})->Args({1, 0})->Args({2, 1});
+BENCHMARK(FullCardFill)->Arg(0)->Arg(1)->Arg(2)->Unit(benchmark::kMillisecond)->Iterations(2);
 BENCHMARK(RawImageSeqRead);
 BENCHMARK(RawImageRandRead);
 BENCHMARK(MemoryImageRandRead);
