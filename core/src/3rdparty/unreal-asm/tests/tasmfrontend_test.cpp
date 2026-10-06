@@ -93,13 +93,13 @@ TEST(TasmFrontend_Test, ExpressionsRunLeftToRightWithPostfixOperators)
     EXPECT_EQ(ToSjasmplus("        LD A,1+2*3"), std::vector<std::string>{"LD A,(1+2)*3"});
     // { high byte, } low byte, ^ bytes exchanged: of the value so far (TASM 4.0 description); sjasmplus' unary
     // operators bind first, so "low TAB+1" is (low TAB)+1
-    EXPECT_EQ(ToSjasmplus("        LD H,TAB{\n        ADD A,TAB}+1\n        DW #9C40^"),
+    EXPECT_EQ(ToSjasmplus("        LD H,TAB{\n        ADD A,TAB}+1\n        DW #9C40^", "4.0"),
               (std::vector<std::string>{"LD H,high TAB", "ADD A,low TAB+1", "DW ((#9C40&#FF)<<8|(#9C40&#FFFF)>>8)"}));
     // 4.0: [ ] rotate a 16-bit word by one bit
     EXPECT_EQ(ToSjasmplus("        DW %1[", "4.0"), std::vector<std::string>{"DW (((%1&#FFFF)<<1|(%1&#FFFF)>>>(16-1))&#FFFF)"});
     // 4.12: [address] reads memory while assembling
     EXPECT_EQ(ToSjasmplus("KEY     =       [#5C08]"), (std::vector<std::string>{"DEVICE ZXSPECTRUM4096", "KEY={#5C08}"}));
-    EXPECT_EQ(ToSjasmplus("        LD A,40H\n        LD A,\"\"\"\""), (std::vector<std::string>{"LD A,#40", "LD A,'\"'"}));
+    EXPECT_EQ(ToSjasmplus("        LD A,40H\n        LD A,\"\"\"\"", "4.0"), (std::vector<std::string>{"LD A,#40", "LD A,'\"'"}));
 }
 
 TEST(TasmFrontend_Test, IfCompilesItsFirstPartWhenTheValueIsZero)
@@ -111,7 +111,7 @@ TEST(TasmFrontend_Test, IfCompilesItsFirstPartWhenTheValueIsZero)
 TEST(TasmFrontend_Test, OrgAndPhaseEndAnActivePhase)
 {
     // A file does not know whether a PHASE is active where it starts (an INCLUDE inside PHASE): that end is conditional
-    const std::vector<std::string> lines = ToSjasmplus("        ORG #8000\n        PHASE #0000\nA1      NOP\n        ORG #8030\n        PHASE #0030\n        UNPHASE\n        UNPHASE");
+    const std::vector<std::string> lines = ToSjasmplus("        ORG #8000\n        PHASE #0000\nA1      NOP\n        ORG #8030\n        PHASE #0030\n        UNPHASE\n        UNPHASE", "4.0");
     EXPECT_EQ(lines, (std::vector<std::string>{"IFDEF __UNREALASM_DISP", "ENT", "UNDEFINE __UNREALASM_DISP", "ENDIF", "ORG #8000",
                                                "DISP #0000", "DEFINE __UNREALASM_DISP", "A1      NOP", "ENT", "UNDEFINE __UNREALASM_DISP",
                                                "ORG #8030", "DISP #0030", "DEFINE __UNREALASM_DISP", "ENT", "UNDEFINE __UNREALASM_DISP"}));
@@ -120,19 +120,22 @@ TEST(TasmFrontend_Test, OrgAndPhaseEndAnActivePhase)
 TEST(TasmFrontend_Test, IncbinWritesTheRestOfTheLastSector)
 {
     // TASM's INCBIN copies whole sectors; the address moves by the file's length (the GS 1.04 ROM keeps such bytes)
-    const std::vector<std::string> lines = ToSjasmplus("TAB     INCBIN BPM");
+    const std::vector<std::string> lines = ToSjasmplus("TAB     INCBIN BPM", "4.0");
     EXPECT_EQ(lines[0], "TAB     INCBIN \"BPM\"");
     EXPECT_TRUE(Contains(lines, "INCBIN \"BPM.slack\""));
     EXPECT_TRUE(Contains(lines, "ORG __UNREALASM_INCBIN_D"));
-    EXPECT_EQ(ToSjasmplus("        INCBIN PIC,6912"), std::vector<std::string>{"INCBIN \"PIC\",0,6912"});
+    EXPECT_EQ(ToSjasmplus("        INCBIN PIC,6912", "4.0"), std::vector<std::string>{"INCBIN \"PIC\",0,6912"});
 }
 
 TEST(TasmFrontend_Test, InstructionsAndRegisterForms)
 {
-    EXPECT_EQ(ToSjasmplus("        PUSH AF,BC,DE\n        JP NV,$\n        RET V\n        INF\n        LD A,LX\n        EX AF,AF'"),
+    EXPECT_EQ(ToSjasmplus("        PUSH AF,BC,DE\n        JP NV,$\n        RET V\n        INF\n        LD A,LX\n        EX AF,AF'", "4.0"),
               (std::vector<std::string>{"PUSH AF", "PUSH BC", "PUSH DE", "JP PO,$", "RET PE", "IN F,(C)", "LD A,IXL", "EX AF,AF'"}));
     // An operand starting with "(" is memory: "0+" makes it a value (TASM 4.12 article)
     EXPECT_EQ(ToSjasmplus("        LD DE,0+((X)+1)\n        LD DE,(X)"), (std::vector<std::string>{"LD DE,0+((X)+1)", "LD DE,(X)"}));
+    // Operands without a comma (TASM keeps them as tokens); a label the source defines tells HLCOUNT from a label
+    EXPECT_EQ(ToSjasmplus("COUNT   NOP\n        LD HL#4000\n        LD C(HL)\n        LD (PTR)A\n        LD HLCOUNT\n        JR NZCOUNT", "4.0"),
+              (std::vector<std::string>{"COUNT   NOP", "LD HL,#4000", "LD C,(HL)", "LD (PTR),A", "LD HL,COUNT", "JR NZ,COUNT"}));
 }
 
 TEST(TasmFrontend_Test, MacrosLocalsAndRedefinitions)
@@ -155,6 +158,14 @@ TEST(TasmFrontend_Test, MacrosLocalsAndRedefinitions)
 TEST(TasmFrontend_Test, AnIndentedWordUsedAsALabelIsOne)
 {
     EXPECT_EQ(ToSjasmplus(" ?ASK\n        JR NZ,?ASK"), (std::vector<std::string>{"L__ASK", "JR NZ,L__ASK"}));
+    EXPECT_EQ(ToSjasmplus("        fSIZE   EQU 4"), std::vector<std::string>{"fSIZE   EQU 4"});
+}
+
+TEST(TasmFrontend_Test, KeywordsFollowTheVersion)
+{
+    // TASM 3 has no DM / INF keywords (its table ends at INCBIN): they are labels there; a keyword in column 0 is a command
+    EXPECT_EQ(ToSjasmplus("DM      NOP\n        JP DM", "3"), (std::vector<std::string>{"DM      NOP", "JP DM"}));
+    EXPECT_EQ(ToSjasmplus("DEFB    1,2", "4.0"), std::vector<std::string>{"DB 1,2"});
 }
 
 TEST(TasmFrontend_Test, GsRomConvertsWithoutLosses)
@@ -241,4 +252,16 @@ TEST(TasmFrontend_Test, SinusTableAssemblesToWhatTasm412Built)
     EXPECT_EQ(std::system(command.c_str()), 0);
     EXPECT_EQ(ReadBytes(dir / "out.bin"), ReadTestData("dialects/tasm412/SIN7.bin"));
     std::filesystem::remove_all(dir);
+}
+
+TEST(TasmFrontend_Test, TextsBitOperandsAndTypedNames)
+{
+    // """ is one quote (TASM 4.0, the GENS form); a text may run to the end of the line
+    EXPECT_EQ(ToSjasmplus("        LD A,\"\"\"\n        DB \"Hello world", "4.0"), (std::vector<std::string>{"LD A,'\"'", "DB 'Hello world'"}));
+    // BIT 3D: number and register without a comma; Z12_ is a name, not Z + 12
+    EXPECT_EQ(ToSjasmplus("        BIT 3D\n        CALL Z12_", "4.0"), (std::vector<std::string>{"BIT 3,D", "CALL Z12_"}));
+    // DM /text/: any delimiter; LOOP: is LOOP; INCLUDE names lose the blanks TR-DOS pads them with
+    EXPECT_EQ(ToSjasmplus("LOOP:   DM /\"/\n        INCLUDE PARTS ", "4.0"), (std::vector<std::string>{"LOOP    DB '\"'", "INCLUDE \"PARTS.asm\""}));
+    // @ is a character of TASM names (sjasmplus would read @VAL as VAL)
+    EXPECT_EQ(ToSjasmplus("@VAL    EQU #11\nVAL     NOP", "4.0"), (std::vector<std::string>{"L__VAL  EQU #11", "VAL     NOP"}));
 }

@@ -1,7 +1,9 @@
 #include "dialects/tasm/tasmfrontend.h"
 
+#include <algorithm>
 #include <cctype>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <set>
 
@@ -31,7 +33,24 @@ bool IsLabelChar(char c)
 struct Syntax
 {
     bool v412 = true;   ///< [address] reads memory (4.0: [ ] are postfix rotations)
+    std::string version;   ///< "3", "4.0", "4.12"; "" = any (a text file): every keyword counts
 };
+
+/// Whether a directive word exists in that TASM version (its keyword table, research-tasm.md §3): a word of another
+/// version is a label there (TASM 3 sources use DM and INF as labels)
+bool InVersion(std::string_view word, const std::string& version)
+{
+    if (version.empty())
+        return true;
+    const bool v3 = version == "2.0" || version == "3", v40 = version == "4.0", v412 = version == "4.12";
+    if (word == "DB" || word == "DM" || word == "DS" || word == "DW" || word == "INF")
+        return v40;
+    if (word == "DEFM" || word == "PHASE" || word == "UNPHASE" || word == "INCLUDE" || word == "INCBIN")
+        return v3 || v40;
+    if (word == "DEFMAC" || word == "ENDMAC" || word == "DISPLAY" || (!word.empty() && word[0] == '.'))
+        return v412;
+    return true;
+}
 
 /// Expressions: left to right without priorities ("all operations are done one after another", TASM 4.0 description)
 struct ExpressionParser
@@ -138,12 +157,11 @@ struct ExpressionParser
                 }
                 chars.push_back(t[j++]);
             }
-            if (j >= t.size())
-                throw Failure{"\" without its closing quote"};
-            i = j + 1;
+            // A text may run to the end of the line (TASM 4.0 reads """ as one quote, the GENS form)
+            i = j < t.size() ? j + 1 : j;
             int64_t value = 0;
             for (const char ch : chars)
-                value = (value << 8) | static_cast<unsigned char>(ch);
+                value = ((value << 8) | static_cast<unsigned char>(ch)) & 0xFFFF;   // a 16-bit word: the last two characters
             Expr e = Expr::Number(value, ir::NumberSpelling::Character, static_cast<int>(chars.size()));
             e.text = chars;
             return e;
@@ -259,6 +277,7 @@ struct Parser
     Syntax syntax;
     uint32_t line = 0;
     Diagnostics& diagnostics;
+    const std::set<std::string>* labels = nullptr;   // labels the source defines (column 0)
 
     Expr Parse(std::string_view text) const
     {
@@ -326,11 +345,31 @@ struct Parser
     }
 
     /// DEFB / DEFM / DEFS fill items: strings of any length (a 1-character string is a byte either way) and values
-    std::vector<Operand> DataOperands(const std::vector<std::string>& ops, bool words) const
+    std::vector<Operand> DataOperands(const std::vector<std::string>& ops, bool words, bool anyDelimiter = false) const
     {
         std::vector<Operand> out;
         for (const std::string& op : ops)
         {
+            // DEFM /text/: the first character delimits the text (the GENS form; seen as DM /"/)
+            if (anyDelimiter && op.size() >= 2 && op.front() == op.back() && std::ispunct(static_cast<unsigned char>(op.front())) &&
+                op.front() != '"' && op.front() != '(' && op.front() != '#' && op.front() != '%' && op.front() != '$' && op.front() != '-' &&
+                op.front() != '+')
+            {
+                Operand o;
+                o.kind = Operand::Kind::String;
+                o.text = op.substr(1, op.size() - 2);
+                out.push_back(std::move(o));
+                continue;
+            }
+            if (!words && op.size() >= 2 && op.front() == '"' && (op.back() != '"' || op.size() == 2) &&
+                std::count(op.begin(), op.end(), '"') == 1)
+            {
+                Operand o;   // a text running to the end of the line
+                o.kind = Operand::Kind::String;
+                o.text = op.substr(1);
+                out.push_back(std::move(o));
+                continue;
+            }
             if (!words && op.size() >= 2 && op.front() == '"' && op.back() == '"')
             {
                 std::string chars;
@@ -389,7 +428,99 @@ std::string FileName(const std::string& operand)
     std::string name = operand;
     if (name.size() >= 2 && name.front() == '"' && name.back() == '"')
         name = name.substr(1, name.size() - 2);
+    while (!name.empty() && name.back() == ' ')   // TR-DOS names are blank padded
+        name.pop_back();
     return name;
+}
+
+bool TwoOperands(const std::string& mnemonic)
+{
+    return mnemonic == "ld" || mnemonic == "add" || mnemonic == "adc" || mnemonic == "sbc" || mnemonic == "ex" || mnemonic == "in" ||
+           mnemonic == "out" || mnemonic == "bit" || mnemonic == "res" || mnemonic == "set" || mnemonic == "jp" || mnemonic == "jr" ||
+           mnemonic == "call";
+}
+
+/// TASM keeps operands as tokens: a register or condition token needs no comma after it, and some sources store none
+/// ("LD HL#4000", "LD C(HL)", "LD (PTR)A", "JR NZLOOP"). The text shows them run together: the split goes after a
+/// parenthesized first operand or after a register / condition name when the rest starts an operand (a number, a
+/// parenthesis, a register, a label the source defines)
+std::vector<std::string> SplitWithoutComma(const std::string& text, const std::string& mnemonic, const std::set<std::string>* labels)
+{
+    auto startsOperand = [&](const std::string& rest) {
+        if (rest.empty())
+            return false;
+        const char c = rest[0];
+        if (std::isdigit(static_cast<unsigned char>(c)))
+        {
+            // a number: digits (or hex digits and H) up to an operator, not the tail of a name (Z12_, Z9X)
+            size_t e = 0;
+            while (e < rest.size() && std::isxdigit(static_cast<unsigned char>(rest[e])))
+                ++e;
+            if (e < rest.size() && (rest[e] == 'H' || rest[e] == 'h'))
+                ++e;
+            return e == rest.size() || !IsLabelChar(rest[e]);
+        }
+        if (c == '#' || c == '%' || c == '(' || c == '"' || c == '$' || c == '[')
+            return true;
+        if (z80::IsRegister(z80::NormalizeRegister(z80::Lower(rest))))
+            return true;
+        size_t e = 0;
+        while (e < rest.size() && IsLabelChar(rest[e]))
+            ++e;
+        return labels && e > 0 && labels->count(rest.substr(0, e));
+    };
+    if (labels && labels->count(text))
+        return {text};
+    if (!text.empty() && text[0] == '(')
+    {
+        int depth = 0;
+        for (size_t c = 0; c < text.size(); ++c)
+        {
+            if (text[c] == '(')
+                ++depth;
+            else if (text[c] == ')' && --depth == 0)
+            {
+                const std::string rest = text.substr(c + 1);
+                if (startsOperand(rest))
+                    return {text.substr(0, c + 1), rest};
+                break;
+            }
+        }
+        return {text};
+    }
+    static const char* const kRegisters[] = {"AF'", "IXH", "IXL", "IYH", "IYL", "HL", "DE", "BC", "SP", "IX", "IY", "AF", "HX", "LX", "HY",
+                                             "LY", "XH", "XL", "YH", "YL", "A", "B", "C", "D", "E", "H", "L", "I", "R"};
+    static const char* const kConditions[] = {"NZ", "NC", "PO", "PE", "NV", "Z", "C", "P", "M", "V"};
+    const bool conditional = mnemonic == "jp" || mnemonic == "jr" || mnemonic == "call";
+    const std::string upper = z80::Upper(text);
+    auto tryNames = [&](const char* const* names, size_t count) -> std::vector<std::string> {
+        for (size_t k = 0; k < count; ++k)
+        {
+            const std::string name = names[k];
+            if (upper.size() > name.size() && upper.compare(0, name.size(), name) == 0 && startsOperand(text.substr(name.size())))
+                return {text.substr(0, name.size()), text.substr(name.size())};
+        }
+        return {};
+    };
+    std::vector<std::string> split = conditional ? tryNames(kConditions, std::size(kConditions)) : tryNames(kRegisters, std::size(kRegisters));
+    if (split.empty() && (mnemonic == "bit" || mnemonic == "res" || mnemonic == "set"))
+    {
+        // BIT 3D: a bit number, then the register
+        for (const char* name : kRegisters)
+        {
+            const std::string n = name;
+            if (upper.size() > n.size() && upper.compare(upper.size() - n.size(), n.size(), n) == 0 &&
+                std::isdigit(static_cast<unsigned char>(upper[upper.size() - n.size() - 1])))
+                return {text.substr(0, text.size() - n.size()), text.substr(text.size() - n.size())};
+        }
+        if (upper.size() > 4 && upper.back() == ')' && upper.find('(') != std::string::npos)
+        {
+            const size_t open = text.find('(');
+            if (open > 0 && std::isdigit(static_cast<unsigned char>(text[open - 1])))
+                return {text.substr(0, open), text.substr(open)};
+        }
+    }
+    return split.empty() ? std::vector<std::string>{text} : split;
 }
 
 /// The statement after the label: a directive, an instruction or a macro call
@@ -401,7 +532,7 @@ Statement ParseStatement(const std::string& word, const std::string& rest, const
     if (!macros.count(word))
         for (const Directive& d : kDirectives)
         {
-            if (upper != d.name)
+            if (upper != d.name || !InVersion(d.name, p.syntax.version))
                 continue;
             s.kind = Statement::Kind::Directive;
             s.directive = d.kind;
@@ -410,7 +541,7 @@ Statement ParseStatement(const std::string& word, const std::string& rest, const
                 case ir::DirectiveKind::Db:
                 case ir::DirectiveKind::Dw:
                 case ir::DirectiveKind::Display:
-                    s.operands = p.DataOperands(ops, d.kind == ir::DirectiveKind::Dw);
+                    s.operands = p.DataOperands(ops, d.kind == ir::DirectiveKind::Dw, upper == "DEFM" || upper == "DM");
                     break;
                 case ir::DirectiveKind::Ds:
                     // DS count[,fill...]: the fill sequence (strings too) repeats count times (TASM 4.0 description)
@@ -456,8 +587,10 @@ Statement ParseStatement(const std::string& word, const std::string& rest, const
 
     std::string mnemonic = z80::Lower(word);
     std::vector<std::string> parts = ops;
-    if (upper == "INF")
+    if (upper == "INF" && InVersion("INF", p.syntax.version))
         mnemonic = "in", parts = {"F", "(C)"};
+    else if (parts.size() == 1 && TwoOperands(mnemonic) && z80::IsMnemonic(mnemonic) && !macros.count(word))
+        parts = SplitWithoutComma(parts[0], mnemonic, p.labels);
     if (macros.count(word) || !z80::IsMnemonic(mnemonic))
     {
         s.kind = Statement::Kind::MacroCall;
@@ -503,13 +636,15 @@ void RenameLocals(Expr& e, int region)
         RenameLocals(a, region);
 }
 
-bool IsKeyword(const std::string& word, const std::set<std::string>& macros)
+bool IsKeyword(const std::string& word, const std::set<std::string>& macros, const std::string& version)
 {
     const std::string upper = z80::Upper(word);
     for (const Directive& d : kDirectives)
-        if (upper == d.name)
+        if (upper == d.name && InVersion(d.name, version))
             return true;
-    return macros.count(word) || upper == "INF" || z80::IsMnemonic(z80::Lower(word));
+    if (upper == "INF")
+        return InVersion("INF", version);
+    return macros.count(word) || z80::IsMnemonic(z80::Lower(word));
 }
 
 struct LineParser
@@ -520,6 +655,7 @@ struct LineParser
     int localRegion = 0;
     bool inMacro = false;                      // inside DEFMAC: ...labels are local to each expansion
     const std::set<std::string>* referenced = nullptr;   // names the source uses as operands
+    const std::set<std::string>* labels = nullptr;       // names defined in column 0
     int Region() const { return inMacro ? -1 : localRegion; }
     // PHASE state: an ORG or another PHASE ends an active PHASE first (sjasmplus' ORG would move only $). Where a file
     // starts it is not known (an INCLUDE inside PHASE): the end is then conditional
@@ -562,18 +698,23 @@ struct LineParser
                 c = ' ';
         while (!t.empty() && t.back() == ' ')
             t.pop_back();
-        const Parser p{syntax, number, result.diagnostics};
+        const Parser p{syntax, number, result.diagnostics, labels};
         try
         {
             size_t i = 0;
             // The label: whatever starts in column 0 (TASM's label field)
-            if (!t.empty() && t[0] != ' ')
+            size_t wordEnd = 0;
+            while (wordEnd < t.size() && t[wordEnd] != ' ' && t[wordEnd] != '=')
+                ++wordEnd;
+            // A keyword in column 0 is a command: TASM stores it as a token, never as a label
+            if (!t.empty() && t[0] != ' ' && !IsKeyword(t.substr(0, wordEnd), macros, syntax.version))
             {
-                while (i < t.size() && t[i] != ' ' && t[i] != '=')
-                    ++i;
+                i = wordEnd;
                 line.label = t.substr(0, i);
+                if (line.label.size() > 1 && line.label.back() == ':')
+                    line.label.pop_back();   // LOOP: is LOOP
             }
-            else if (referenced)
+            else if (referenced && !t.empty() && t[0] == ' ')
             {
                 // An indented word that is no command but is used as a label is one (" ?ASKYN" in ADVENTURER's FORMAIN)
                 const size_t w0 = t.find_first_not_of(' ');
@@ -583,7 +724,10 @@ struct LineParser
                 const std::string word = w0 == std::string::npos ? std::string() : t.substr(w0, w1 - w0);
                 const size_t n0 = t.find_first_not_of(' ', w1);
                 const std::string next = n0 == std::string::npos ? std::string() : t.substr(n0, t.find(' ', n0) == std::string::npos ? std::string::npos : t.find(' ', n0) - n0);
-                if (!word.empty() && !IsKeyword(word, macros) && referenced->count(word) && (next.empty() || IsKeyword(next, macros)))
+                // and so is an indented word before EQU or = ("        fSIZE   EQU 4")
+                const bool defines = z80::Upper(next) == "EQU" || next == "=" || (!next.empty() && next[0] == '=');
+                if (!word.empty() && !IsKeyword(word, macros, syntax.version) &&
+                    (defines || (referenced->count(word) && (next.empty() || IsKeyword(next, macros, syntax.version)))))
                 {
                     line.label = word;
                     i = w1;
@@ -736,6 +880,7 @@ FrontendResult TasmFrontend::Parse(const SourceDocument& source) const
     result.program.displacementAcrossFiles = true;
     Syntax syntax;
     syntax.v412 = source.subversion.empty() || source.subversion == "4.12";
+    syntax.version = source.subversion;
 
     // Macro bodies, and the ones expanded at their calls (gluing parameters or walking the parameter text)
     std::map<std::string, std::vector<std::string>> bodies;
@@ -782,9 +927,14 @@ FrontendResult TasmFrontend::Parse(const SourceDocument& source) const
             k = e;
         }
     }
+    std::set<std::string> labels;
+    for (const SourceLine& l : source.lines)
+        if (!l.text.empty() && l.text[0] != ' ' && l.text[0] != '\t' && l.text[0] != ';')
+            labels.insert(l.text.substr(0, l.text.find_first_of(" \t=;")));
     std::set<std::string> macros;
     LineParser parser{syntax, macros, result};
     parser.referenced = &referenced;
+    parser.labels = &labels;
     std::function<void(const std::string&, uint32_t, int)> emit = [&](const std::string& text, uint32_t number, int depth) {
         const size_t before = result.program.lines.size();
         parser.ParseLine(text, number);

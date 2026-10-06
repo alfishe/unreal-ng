@@ -24,7 +24,7 @@ def files(img):
         return
     for i in range(128):
         e = img[i * 16:i * 16 + 16]
-        if e[0] == 0:
+        if len(e) < 16 or e[0] == 0:   # the end of the catalog, or a truncated image
             break
         if e[0] == 1:   # deleted
             continue

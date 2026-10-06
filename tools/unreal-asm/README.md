@@ -29,12 +29,13 @@ python3 tools/unreal-asm/objcheck.py scratch/thelink TheLink.trd
 
 ```bash
 python3 tools/unreal-asm/roundtrip.py scratch/roundtrip disk1.trd disk2.scl ... --assemble
+# or the images listed in a file, one per line: --images-from scratch/images.txt
 #   images: 6  sources: 99  round-trip differences: 0
-#   assembled alone: 99  without errors: 68
+#   main sources assembled: ...  without errors: ...
 ```
 
-A source that is one part of a project (included by another) usually fails alone on labels defined in the other
-parts: assemble the project through its main file instead.
+Only main sources are assembled (a file no other file of the image includes): the parts of a project assemble
+through it.
 
 ## Example: the original assembler as the oracle
 

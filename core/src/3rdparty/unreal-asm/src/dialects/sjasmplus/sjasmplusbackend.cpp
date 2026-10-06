@@ -76,14 +76,15 @@ const std::set<std::string> kReserved = {
     "nz", "z", "nc", "po", "pe", "p", "m",
 };
 
-/// A label sjasmplus accepts: a letter or "_" first (after one "@" or "." prefix), then letters, digits and _ . ? ! @
+/// A label sjasmplus reads as written: a letter or "_" first (after a "." local prefix), then letters, digits and
+/// _ . ? !. An "@" is sjasmplus' global prefix ("@X" is X): a source's @ (TASM's @VAL, ALASM's @label) gets renamed
 bool IsValidLabel(const std::string& name)
 {
-    const size_t first = !name.empty() && (name[0] == '@' || name[0] == '.') ? 1 : 0;
+    const size_t first = !name.empty() && name[0] == '.' ? 1 : 0;
     if (name.size() <= first || !(std::isalpha(static_cast<unsigned char>(name[first])) || name[first] == '_'))
         return false;
     for (const char c : name)
-        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '?' || c == '!' || c == '@'))
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '?' || c == '!'))
             return false;
     return true;
 }
@@ -101,7 +102,7 @@ std::string SafeName(const std::string& name)
 /// A macro name sjasmplus accepts (TASM 4.12 names macros HL*8)
 std::string MacroName(const std::string& name)
 {
-    return IsValidLabel(name) && name[0] != '.' && name[0] != '@' ? name : SafeName(name);
+    return IsValidLabel(name) && name[0] != '.' ? name : SafeName(name);
 }
 
 struct Writer
@@ -120,6 +121,7 @@ struct Writer
     std::vector<int> repeatStack;
     bool sameDialect = false;   // the program was parsed from sjasmplus: directives kept as text are written back
     bool displacementFlag = false;   // DISP / ENT also keep a DEFINE that says whether a displacement is active
+    const std::set<std::string>* redefinable = nullptr;   // names some line assigns with "="
 
     std::string Name(const std::string& name) const
     {
@@ -162,7 +164,9 @@ struct Writer
                     return "'" + e.text + "'";
                 if (e.text.size() == 1)
                     return "\"'\"";
-                return std::to_string(e.value);   // several characters: the value ALASM computes (first character high)
+                if (sameDialect && e.text.find('"') == std::string::npos && e.text.find('\\') == std::string::npos)
+                    return "\"" + e.text + "\"";   // a sjasmplus source: its own constant, as written
+                return std::to_string(e.value);   // several characters: the value ALASM / TASM compute (a 16-bit word)
             default: return std::to_string(e.value);
         }
     }
@@ -389,11 +393,16 @@ struct Writer
                 if (s.args.size() > 1)
                     diagnostics.push_back({Severity::Warning, line, 0, "ORG with a page: ALASM page numbers follow its memory driver; check the page for sjasmplus' DEVICE"});
                 return {"ORG " + args()};
-            case ir::DirectiveKind::Equ: return {"EQU " + args()};
+            case ir::DirectiveKind::Equ:
+                if (redefinable && redefinable->count(label))
+                    return {"= " + args()};   // reassigned elsewhere with "=": sjasmplus keeps EQU fixed
+                return {"EQU " + args()};
             case ir::DirectiveKind::Defl: return {"= " + args()};
             case ir::DirectiveKind::Db: return {"DB " + Operands(s.operands)};
             case ir::DirectiveKind::Dw: return {"DW " + Operands(s.operands)};
             case ir::DirectiveKind::Ds:
+                if (sameDialect)
+                    return {"DS " + args()};   // sjasmplus' own DS (its fill is one value: DS 4,#AA,#55 is 4 bytes)
                 // A fill sequence given as operands (strings too, TASM) or as arguments (ALASM): DUP when longer than a byte
                 if (!s.operands.empty())
                 {
@@ -412,6 +421,8 @@ struct Writer
                     name = name.substr(colon + 1);
                 if (name.find_first_of("*?") != std::string::npos || name.empty())
                     diagnostics.push_back({Severity::Warning, line, 0, "INCLUDE with a wildcard: name the converted file"});
+                if (!s.params.empty() && s.params[0] == "verbatim")
+                    return {"INCLUDE \"" + name + "\""};
                 return {"INCLUDE \"" + name + ".asm\""};
             }
             case ir::DirectiveKind::Incbin:
@@ -425,11 +436,13 @@ struct Writer
                     return {incbin};
                 // The rest of the last sector ("<file>.slack") is written next, then the address goes back
                 const std::string slack = "INCBIN \"" + name + ".slack\"";
+                // __UNREALASM_INCBIN_P is the physical address in both branches: whoever writes the .slack file may limit
+                // its length to the end of memory (zxasm convert does)
                 if (!displacementFlag)
-                    return {incbin, "@__UNREALASM_INCBIN_D=$", slack, "ORG __UNREALASM_INCBIN_D"};
+                    return {incbin, "@__UNREALASM_INCBIN_D=$", "@__UNREALASM_INCBIN_P=$", slack, "ORG __UNREALASM_INCBIN_D"};
                 return {incbin, "IFDEF " + std::string(kDisplacementFlag), "@__UNREALASM_INCBIN_D=$", "@__UNREALASM_INCBIN_P=$$$", slack, "ENT",
-                        "ORG __UNREALASM_INCBIN_P", "DISP __UNREALASM_INCBIN_D", "ELSE", "@__UNREALASM_INCBIN_D=$", slack, "ORG __UNREALASM_INCBIN_D",
-                        "ENDIF"};
+                        "ORG __UNREALASM_INCBIN_P", "DISP __UNREALASM_INCBIN_D", "ELSE", "@__UNREALASM_INCBIN_D=$", "@__UNREALASM_INCBIN_P=$", slack,
+                        "ORG __UNREALASM_INCBIN_D", "ENDIF"};
             }
             case ir::DirectiveKind::If:
             {
@@ -475,7 +488,9 @@ struct Writer
                 if (displacementFlag)
                     return {"ENT", "UNDEFINE " + std::string(kDisplacementFlag)};
                 return {"ENT"};
-            case ir::DirectiveKind::Display: return {"DISPLAY " + Operands(s.operands)};
+            case ir::DirectiveKind::Display:
+                // a bare DISPLAY prints an empty line (ALASM); sjasmplus needs something to print
+                return {"DISPLAY " + (s.operands.empty() ? std::string("' '") : Operands(s.operands))};
             case ir::DirectiveKind::End: return {"END"};
             case ir::DirectiveKind::Main: return {"@; ALASM MAIN \"" + s.text + "\" (the project's main source)"};
             case ir::DirectiveKind::Run: return {NotConverted("RUN " + args() + " (code called while assembling)")};
@@ -498,6 +513,21 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
     result.document.codePage = encoding::CodePage::Cp866;   // strings are program bytes: keep the Spectrum code page
     Writer w{options, result.diagnostics, 0, {}, {}, false, false, program.expressionBits, program.unsignedArithmetic, options.macroParams, 0, {},
              program.dialect == "sjasmplus", program.displacementAcrossFiles};
+
+    // Macro calls may pass more arguments than the body uses (ALASM ignores the rest, sjasmplus refuses them): a macro
+    // declares as many parameters as its longest call
+    std::map<std::string, int> callArguments;
+    // Names assigned with "=" somewhere: an EQU or an address label of the same name must be redefinable too
+    std::set<std::string> redefinable;
+    for (const ir::Line& l : program.lines)
+        for (const Statement& s : l.statements)
+        {
+            if (s.kind == Statement::Kind::MacroCall)
+                callArguments[s.mnemonic] = std::max(callArguments[s.mnemonic], static_cast<int>(s.params.size()));
+            if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Defl && !l.label.empty())
+                redefinable.insert(l.label);
+        }
+    w.redefinable = &redefinable;
 
     // Global labels sjasmplus would read as operators or reject
     std::set<std::string> used;
@@ -644,6 +674,20 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
             ++nextBlock;
         }
         std::string label = l.label.empty() ? std::string() : w.Name(l.label);
+        if (w.sameDialect && !l.label.empty() && l.label.find_first_not_of("0123456789") == std::string::npos)
+            label = l.label;   // a sjasmplus temporary label (1, referred to as 1B / 1F)
+        if (!label.empty() && redefinable.count(l.label))
+        {
+            bool defines = false;
+            for (const Statement& s : l.statements)
+                defines = defines || (s.kind == Statement::Kind::Directive && (s.directive == ir::DirectiveKind::Equ || s.directive == ir::DirectiveKind::Defl));
+            if (!defines)
+            {
+                // An address label of a name reassigned with "=" elsewhere: written as name=$ (redefinable)
+                result.document.lines.push_back({label + "=$", {}});
+                label.clear();
+            }
+        }
         std::vector<std::string> namedParams;
         for (const Statement& s : l.statements)
             if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Macro)
@@ -696,6 +740,9 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
                 if (end)
                     break;
             }
+            const auto calls = callArguments.find(macroHeader);
+            if (calls != callArguments.end())
+                highest = std::max(highest, calls->second - 1);
             std::string params;
             for (int k = 0; k <= highest; ++k)
                 params += (k ? "," : "") + std::string("_arg") + std::to_string(k);

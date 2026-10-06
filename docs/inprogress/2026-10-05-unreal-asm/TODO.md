@@ -44,6 +44,8 @@ phase; master only after the owner's review.
 - [x] A5 IR, sjasmplus frontend + backend, alasm frontend (ALASM → sjasmplus) (2026-10-05, branch `unreal-asm`): IR v1 (`ir.h`), `Convert` / `ConvertProject`, `zxasm convert` (file, `--from`, whole disk with `INCBIN` files); The Link 18 / 19 objects byte-equal with ALASM's, a constructs sample byte-equal with ALASM 5.09 in the emulator, 508 / 513 sources unchanged through the sjasmplus round trip; example `convert-dialect`; testdata `dialects/` ([research-alasm-to-sjasmplus.md](research-alasm-to-sjasmplus.md))
   - [x] A5b `tasm` frontend, versions 3 / 4.0 / 4.12 (TASM → sjasmplus, D-9) (2026-10-05, branch `unreal-asm-next`): the GS 1.04 ROM sources assemble to the ROM byte for byte, TASM 4.12's SINUS equal to what TASM 4.12 built in the emulator, 99 sources unchanged through the round trip; macro expansion shared (`common/macros`); check scripts in `tools/unreal-asm/` ([research-tasm-to-sjasmplus.md](research-tasm-to-sjasmplus.md))
   - [ ] TASM 4.12 `.PAGE` / `.RUN`; its compressed HyperText manual (in `tasm.ovl`)
+  - [ ] TASM 5.x codec version: structural lines (no separators stored), its token tables per build, the editor's layout rules from the emulator ([research-tasm-to-sjasmplus.md](research-tasm-to-sjasmplus.md) §5)
+  - [ ] a frontend for the M80-style text dialect of PC cross assemblers (`*D-`, `*Z80` option lines, `NAME$` local labels)
   - [ ] `storm` and `zxasm` frontends
   - [ ] ALASM `DISPLAY` output differs from sjasmplus' (research-alasm-to-sjasmplus.md §7)
 - [ ] A6 more frontends / backends; research codecs xas, masm, gens3, zeus, ads

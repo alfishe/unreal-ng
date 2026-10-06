@@ -188,6 +188,49 @@ bool Unwrap(const Args& args, std::vector<uint8_t>& bytes, CatalogHints& hints)
     }
     return true;
 }
+/// A TR-DOS name pattern: ? is any one character, * the rest (ALASM and TASM accept them in INCBIN / INCLUDE)
+bool NameMatches(const std::string& pattern, const std::string& name)
+{
+    size_t k = 0;
+    for (; k < pattern.size(); ++k)
+    {
+        if (pattern[k] == '*')
+            return true;
+        if (k >= name.size() || (pattern[k] != '?' && pattern[k] != name[k]))
+            return false;
+    }
+    return k == name.size();
+}
+
+/// The image's file an INCBIN names: "NAME", "NAME.T" (T the type), a name holding a dot itself ("PIC.SCR"), with
+/// wildcards; without a type the code file (type C) is meant, as TASM and ALASM read it. An exact name is the first
+/// entry TR-DOS finds; a wildcard the last fitting one (ALASM help, Work)
+const containers::TrdosFile* FindBinary(const std::vector<containers::TrdosFile>& files, const std::string& spec)
+{
+    std::vector<std::pair<std::string, char>> candidates;
+    const size_t dot = spec.rfind('.');
+    if (dot != std::string::npos && dot + 2 == spec.size())
+        candidates.push_back({spec.substr(0, dot), spec[dot + 1]});
+    candidates.push_back({spec, 0});
+    for (const auto& [pattern, type] : candidates)
+    {
+        const bool wildcard = pattern.find_first_of("*?") != std::string::npos;
+        const containers::TrdosFile* found = nullptr;
+        for (const auto& file : files)
+        {
+            if (!NameMatches(pattern, file.TrimmedName()) || (type != 0 && file.type != type))
+                continue;
+            const bool better = !found || (type == 0 && file.type == 'C' && found->type != 'C') ||
+                                (wildcard && !(type == 0 && found->type == 'C' && file.type != 'C'));
+            if (better)
+                found = &file;
+        }
+        if (found)
+            return found;
+    }
+    return nullptr;
+}
+
 /// zxasm convert image.trd --to dialect -o dir
 int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const CodecRegistry& registry)
 {
@@ -214,14 +257,54 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
             continue;
         DecodeOptions options;
         options.catalog = f.Hints();
-        project.push_back({f.TrimmedName(), detected.chosen->Decode(f.data, options).document});
+        // A name saved again (another catalog entry): TR-DOS finds the first one, so it keeps the name; the later
+        // ones are written as NAME~2, NAME~3 ...
+        std::string name = f.TrimmedName();
+        int copies = 1;
+        for (const ProjectFile& earlier : project)
+            if (earlier.name == name || earlier.name.rfind(name + "~", 0) == 0)
+                ++copies;
+        if (copies > 1)
+            name += "~" + std::to_string(copies);
+        project.push_back({name, detected.chosen->Decode(f.data, options).document});
     }
     const ProjectResult converted = ConvertProject(project, args.to);
     PrintDiagnostics(converted.diagnostics);
     const ISourceCodec* target = registry.Find(args.to);
     std::string extracted;
-    for (const ProjectFile& f : converted.files)
+    for (ProjectFile f : converted.files)
     {
+        // An INCBIN with wildcards names the file it found (the converted source then assembles anywhere). A sector
+        // slack INCBIN gets its length, limited to the end of memory; an empty slack is left out
+        for (SourceLine& line : f.document.lines)
+        {
+            const size_t slackAt = line.text.find(".slack\"");
+            if (slackAt != std::string::npos && line.text.find("INCBIN \"") != std::string::npos && line.text.find(',', slackAt) == std::string::npos)
+            {
+                const size_t open = line.text.find('"');
+                const containers::TrdosFile* base = FindBinary(files, line.text.substr(open + 1, slackAt - open - 1));
+                const size_t length = base ? base->tail.size() : 0;
+                if (length == 0)
+                    line.text = "; " + line.text.substr(line.text.find_first_not_of(' ')) + " (no sector slack)";
+                else
+                    line.text += ",0,(#10000-__UNREALASM_INCBIN_P)<?" + std::to_string(length);
+            }
+        }
+        for (SourceLine& line : f.document.lines)
+        {
+            const size_t at = line.text.find("INCBIN \"");
+            if (at == std::string::npos)
+                continue;
+            const size_t close = line.text.find('"', at + 8);
+            std::string wanted = line.text.substr(at + 8, close - at - 8);
+            const bool slack = wanted.size() > 6 && wanted.compare(wanted.size() - 6, 6, ".slack") == 0;
+            if (slack)
+                wanted.resize(wanted.size() - 6);
+            if (wanted.find_first_of("*?") == std::string::npos)
+                continue;
+            if (const containers::TrdosFile* found = FindBinary(files, wanted))
+                line.text.replace(at + 8, wanted.size(), found->TrimmedName() + (found->type == 'C' ? std::string() : std::string(".") + found->type));
+        }
         std::vector<uint8_t> out;
         if (target)
             out = target->Encode(f.document, {}).bytes;
@@ -246,14 +329,7 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
             // "<file>.slack": the rest of the file's last sector (TASM's INCBIN copies whole sectors)
             const bool slack = wanted.size() > 6 && wanted.compare(wanted.size() - 6, 6, ".slack") == 0;
             const std::string file = slack ? wanted.substr(0, wanted.size() - 6) : wanted;
-            const size_t dot = file.find('.');
-            const std::string name = file.substr(0, dot);
-            const char type = dot == std::string::npos ? 0 : file[dot + 1];
-            // Without a type letter the code file (type C) is meant, as TASM and ALASM read it; the last match wins
-            const containers::TrdosFile* found = nullptr;
-            for (const auto& file : files)
-                if (file.TrimmedName() == name && (type == 0 || file.type == type) && !(found && type == 0 && found->type == 'C' && file.type != 'C'))
-                    found = &file;
+            const containers::TrdosFile* found = FindBinary(files, file);
             if (found)
             {
                 WriteFile(args.output + "/" + wanted, slack ? found->tail : found->data);

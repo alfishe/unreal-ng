@@ -49,7 +49,13 @@ tables in the binaries (research-tasm.md), and the oracles.
 | 4.12: macro parameters `\0`…`\9` or `/0`…`/9`; `\c \n \s \r` walk the parameter text like ALASM's `\C \N \S \R` | named parameters; walking or gluing macros expanded at their calls |
 | 4.12: a label defined with `EQU` may be reassigned with `=` | every definition of such a name becomes `=` |
 | 4.12: names like `HL*8`, `?ASKYN`, `@204` | renamed (`L_HL_8`, `L__ASKYN`, `L__204`) the same way in every file |
-| A label may stand indented when it is referenced (`" ?ASKYN"`) | taken as a label |
+| A label may stand indented when it is referenced (`" ?ASKYN"`) or before `EQU` | taken as a label |
+| Keywords follow the version's token table: `DB DM DS DW INF` exist in 4.0 only, `DEFM PHASE UNPHASE INCLUDE INCBIN` not in 4.12 (it has the dotted forms), `DEFMAC ENDMAC DISPLAY` and dotted directives in 4.12 only; a word another version knows is a label (TASM 3 sources name labels `DM`, `INF`) | the keyword set of the document's version |
+| A keyword in column 0 is a command: TASM stores it as a token, never as a label | command |
+| Operands kept as tokens need no comma: some sources store `LD HL#4000`, `LD C(HL)`, `LD (PTR)A`, `JR NZLOOP`, `BIT 3D` (the editor shows its own comma after an operand token) | split after a parenthesized operand or a register / condition name when the rest starts an operand (a number, a parenthesis, a register, a label the source defines) |
+| `"""` is one quote; a text may run to the end of the line; `DEFM /text/` takes any delimiter; `LOOP:` is `LOOP` | as such |
+| A character constant is a 16-bit word | its value |
+| INCLUDE / INCBIN names are blank padded TR-DOS names | trimmed |
 
 ## 3. Oracle results
 
@@ -77,3 +83,5 @@ others are parts of projects (labels from the other parts), a source whose `INCB
 | TASM 4.12's manual | it sits compressed in `tasm.ovl` (HyperText); the facts above come from the articles, the binaries and the oracles |
 | `INCBIN` slack of a file filling whole sectors | the `.slack` file is empty: sjasmplus warns, the bytes are right |
 | TASM 2.0 | the codec reads it (plain text); its dialect is TASM 3's |
+| TASM 5.x (XL Design, 1997; a "5.5 beta" exists) | its files keep the TASM framing but store the line structurally: no blanks between label, command and operands, no commas between operands or data items, label references end with a blank; the editor lays out the columns (label, command at 8, operands at 16) and inserts the commas. Its token table differs from 4.0 (#80-#F7: adds `ELSE ENDIF ENDM ENDR IF IFDEF INCSEC MACRO PRINTF REPT`, a separate condition `C`) and differs between 5.x builds; such files are recognized as TASM 4.0 today. To do: a `5.x` codec version with the editor's layout rules, learned in the emulator |
+| A file saved several times | TR-DOS keeps several catalog entries of one name and finds the first: `zxasm convert` writes that one as `NAME.asm`, the later ones as `NAME~2.asm` ...; `INCBIN` takes the first entry of an exact name, the last fitting one of a wildcard (ALASM's rule), and names with wildcards are resolved to the file found |

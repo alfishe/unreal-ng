@@ -180,9 +180,10 @@ TEST(Dialects_Test, LabelsSjasmplusWouldReadAsRegistersAreRenamed)
 }
 
 TEST(Dialects_Test, LocalBlocksGetUniqueNamesAndAtLabelsStayGlobal)
+// (@ is part of the name in ALASM; sjasmplus reads "@X" as X, so the name is renamed)
 {
     EXPECT_EQ(ToSjasmplus("        LOCAL\nloop    DJNZ loop\n@out    NOP\n        ENDL\n        LOCAL\nloop    DJNZ loop\n        ENDL\n        JP @out"),
-              (std::vector<std::string>{"loop__L1 DJNZ loop__L1", "@out    NOP", "loop__L2 DJNZ loop__L2", "JP @out"}));
+              (std::vector<std::string>{"loop__L1 DJNZ loop__L1", "L__out  NOP", "loop__L2 DJNZ loop__L2", "JP L__out"}));
     // A label defined in a block and used outside it is global (ALASM help, LOCAL)
     EXPECT_EQ(ToSjasmplus("        JP inner\n        LOCAL\ninner   NOP\n        ENDL"), (std::vector<std::string>{"JP inner", "inner   NOP"}));
 }
@@ -338,4 +339,51 @@ TEST(Dialects_Test, TheLinkUnitAssemblesToWhatAlasmBuilt)
     EXPECT_EQ(ReadBytes(dir / "zx.bin"), Hobeta("dialects/thelink/TUNNELZX.$C").data);
     EXPECT_EQ(ReadBytes(dir / "gs.bin"), Hobeta("dialects/thelink/TUNNELGS.$C").data);
     std::filesystem::remove_all(dir);
+}
+
+// --- Rules found on real sources -----------------------------------------------------------------------------------
+
+TEST(Dialects_Test, AlasmQuotesColonParametersAndOldSpellings)
+{
+    // "" inside a text is one quote (ALASM's own sources write CP """)
+    EXPECT_EQ(ToSjasmplus("        CP \"\"\""), std::vector<std::string>{"CP '\"'"});
+    // ALASM 4.4x writes macro parameters as :0 (its SAVEOBJ 2.1)
+    const std::vector<std::string> colon = ToSjasmplus("        MACRO SV\n        DB :0,:1\n        ENDM\n        SV 1,2");
+    EXPECT_NE(std::find(colon.begin(), colon.end(), "DB _arg0,_arg1"), colon.end());
+    // A word before EQU in column 0 is a label even when a later version made it a keyword
+    EXPECT_EQ(ToSjasmplus("DD      EQU 5"), std::vector<std::string>{"DD      EQU 5"});
+    // DD "text": the code older versions show as DEFM
+    EXPECT_EQ(ToSjasmplus("        DD    \"XY\""), std::vector<std::string>{"DB 'XY'"});
+    // DATA: is DATA; a character constant is a 16-bit word
+    EXPECT_EQ(ToSjasmplus("DATA:   DS 5\n        LD DE,DATA\n        LD HL,\"ABC\""), (std::vector<std::string>{"DATA    DS 5", "LD DE,DATA", "LD HL,16963"}));   // "BC" = #4243
+}
+
+TEST(Dialects_Test, SjasmplusMacroArgumentsLabelsAndAtNames)
+{
+    // A call with more arguments than the body uses (ALASM ignores the rest): the macro declares them all
+    const std::vector<std::string> extra = ToSjasmplus("        MACRO R\n        LD A,\\0\n        ENDM\n        R 1,2,3");
+    EXPECT_NE(std::find(extra.begin(), extra.end(), "MACRO R _arg0,_arg1,_arg2"), extra.end());
+    // An address label of a name reassigned with "=" elsewhere becomes redefinable
+    EXPECT_EQ(ToSjasmplus("SAVE\n        NOP\nSAVE=0"), (std::vector<std::string>{"SAVE=$", "NOP", "SAVE=0"}));
+}
+
+TEST(Dialects_Test, SjasmplusSourcesSurviveTheRoundTrip)
+{
+    // Block comments, repeat prefixes, includes with other extensions, temporary labels, DS, multi-character constants
+    const std::string text = "/* a\n"
+                             "   block */\n"
+                             "        .2 INC HL\n"
+                             "        INCLUDE \"defs.inc\"\n"
+                             "1       DJNZ 1B\n"
+                             "        DS 4,#AA,#55\n"
+                             "        DS 40,\"-=-\"";
+    const std::vector<std::string> lines = [&] {
+        const ConvertResult r = Convert(SourceDocument::FromText(text, "sjasmplus"), "sjasmplus");
+        std::vector<std::string> out;
+        for (const SourceLine& l : r.document.lines)
+            out.push_back(l.text);
+        return out;
+    }();
+    EXPECT_EQ(lines, (std::vector<std::string>{"; a", ";   block ", "        .2 INC HL", "        INCLUDE \"defs.inc\"", "1       DJNZ 1B",
+                                               "        DS 4,#AA,#55", "        DS 40,\"-=-\""}));
 }

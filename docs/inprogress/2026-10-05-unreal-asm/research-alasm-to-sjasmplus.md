@@ -60,9 +60,16 @@ in the emulator where marked.
 | `?label` is 0 when the label is defined, `#FFFF` when not | `IF exist x` / `IF !exist x`; inside an expression `((!exist x)*#FFFF)` |
 | An instruction operand starting with `(` is memory up to the matching `)`; the rest is ignored (**emulator**: `LD DE,(65536-46)*98/256` assembles as `LD DE,(#FFD2)`, the line is shown as a warning) | the same, with a warning |
 | Keywords are capitals; a lower-case `iy`, `b`, `hl` is a label | labels named like registers or conditions get `L_` (also when defined in another file) |
-| `LOCAL` / `ENDL`: labels inside are invisible outside, except `@name` (the `@` is part of the name, **emulator**: `JP shared` does not find `@shared`) and labels used outside the block | block labels get `__L<n>`; inside a macro sjasmplus' `.name`; `@name` stays (sjasmplus reads it as the global label) |
+| `LOCAL` / `ENDL`: labels inside are invisible outside, except `@name` (the `@` is part of the name, **emulator**: `JP shared` does not find `@shared`) and labels used outside the block | block labels get `__L<n>`; inside a macro sjasmplus' `.name`; `@name` is renamed (`L__name`): sjasmplus would read it as `name` |
+| `""` inside a text is one quote (`CP """` in ALASM's own sources); a text may run to the end of the line | the quote character |
+| ALASM 4.4x writes macro parameters as `:0`…`:9` (its SAVEOBJ 2.1) | read as `\0`…`\9` inside a macro |
+| The code 5.07 shows as `DD` is `DEFM` in older versions: `DD "text"` | a string |
+| A word in column 0 before `EQU` is a label even when a later version made it a keyword (`DD EQU 5`); `DATA:` is `DATA` | label |
+| A character constant is a 16-bit word: `"ABC"` is `"BC"` | its value |
+| A bare `DISPLAY` prints an empty line | `DISPLAY ' '` |
 | Macros: `\0`…`\9`; `\P` returns parameter 0 and shifts the numbering, `\R` restores it; `\C` is the symbol at the parameter pointer, `\N` moves it, `\S<c>` the text up to `<c>` (help, "MACRO") | named parameters `_arg0`…; a macro that glues a parameter to a name or uses `\P \R \C \N \S` is expanded at its calls |
-| A call may give fewer arguments than the macro uses | empty arguments added (sjasmplus needs them all) |
+| A call may give fewer arguments than the macro uses, or more | empty arguments added; the macro declares as many parameters as its longest call (sjasmplus needs them to match) |
+| A label may be reassigned with `label=expr` later | its address definition is written `label=$`, its `EQU` as `=` (sjasmplus keeps both fixed otherwise) |
 | `IF0`, `IFN`; `DUP` / `EDUP`; `REPEAT` / `UNTIL0` (`UNTIL`) | `IF`; `DUP` / `EDUP`; a `WHILE` loop with a counter |
 | `DS n,a,b`: n times the pattern `a,b` (**emulator**: 8 bytes for `DS 4,#AA,#55`) | `DUP n` / `DB a,b` / `EDUP` |
 | `INCBIN "name",size` | `INCBIN "name",0,size` |
@@ -80,6 +87,9 @@ Checked with sjasmplus 1.23.1 (documentation and probe sources):
 | An instruction operand wholly in parentheses is memory; `+(...)` is a value | a value that prints wholly parenthesized gets `+` |
 | `high`, `low`, `and`, `or`, `mod`, `exist`, register and condition names are reserved whatever their case | labels with such names are renamed |
 | `=` defines a redefinable symbol (`DEFL`) | ALASM's `label=expr` stays `label=expr` |
+| `@name` is the global label `name` | a source's own `@` (ALASM, TASM) is renamed |
+| `/* ... */` block comments, `.3 INC HL` repeats, temporary labels `1` with `1B` / `1F`, `DS n,fill` with one fill value | the sjasmplus frontend keeps them (a sjasmplus source survives the round trip with the same symbol table) |
+| `IFDEF` / `IFNDEF` see `DEFINE`s only; `$$$` (physical address) only inside `DISP` | used for the TASM `PHASE` state and `INCBIN` slack |
 
 ## 5. Oracle results
 
@@ -120,6 +130,5 @@ sources from 21 disks (the ALASM releases, Alone Coder's ACE, PT3 and CON source
 | TASM frontend | D-9 named TASM → sjasmplus as the first pair; ALASM came first because The Link gives binaries to compare with. TASM is the next frontend (A5b) |
 | Column of comments | the IR keeps no columns: comments are written from column 32 |
 | `?label` before the definition | ALASM is one pass: `?x` before `x` is defined says "not defined"; sjasmplus' `exist` sees the whole source |
-| `@name` and `name` both defined | ALASM keeps them apart, sjasmplus reads `@name` as `name` |
 | ALASM's `DISPLAY` output | ALASM 5.09 printed `#004A end:` … `#004D` for `DISPLAY "end: ",/H,$` where sjasmplus prints `end: 0x603C`; not explained yet (no effect on the code) |
 | Labels and IR | the IR node set is the union of ALASM and sjasmplus; the TASM, STORM and ZX-ASM frontends may add node kinds (D-7) |
