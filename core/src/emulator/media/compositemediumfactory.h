@@ -40,6 +40,7 @@ struct CompositeLayerInfo
     uint64_t files = 0;      ///< files the layer provided before the merge
     uint64_t bytes = 0;
     uint64_t identity = 0;   ///< the source's identity (folder snapshot)
+    bool writable = false;   ///< S4 may write into it (a folder layer with writable: true)
 };
 
 /// One partition of a partitioned composite (phase C7)

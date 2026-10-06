@@ -69,6 +69,7 @@ namespace
         value["files"] = info.files;
         value["fileBytes"] = info.bytes;
         value["sourceDevices"] = static_cast<uint64_t>(info.sourceDevices);
+        value["writesSave"] = info.writesSave;  // what `save` runs without a path (D-7): the GUI preselects it
         StateNode layers = StateNode::Array();
         for (const CompositeLayerInfo& layer : info.layers)
         {
@@ -80,6 +81,7 @@ namespace
             l["from"] = layer.from;
             l["files"] = layer.files;
             l["bytes"] = layer.bytes;
+            l["writable"] = layer.writable;
             layers.push(std::move(l));
         }
         value["layers"] = std::move(layers);

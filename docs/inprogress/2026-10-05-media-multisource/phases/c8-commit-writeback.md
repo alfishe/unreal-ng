@@ -1,6 +1,6 @@
 # C8 — commit into the graft base (S3), write-back into folders (S4), the Qt strategy dialog
 
-**Status:** C8a and C8b built 2026-10-06 (as-built notes in §5, §6); C8c designed. Phase C8 of [tdd.md](../tdd.md) §14; strategies S3 and S4 of
+**Status:** built 2026-10-06 (as-built notes in §5 to §7); C8c's Qt code awaits the owner's build on macOS / Windows / Linux. Phase C8 of [tdd.md](../tdd.md) §14; strategies S3 and S4 of
 [flatten-strategies.md](../flatten-strategies.md) with their decision trees DT-10 to DT-14, which apply as written
 unless this document says otherwise. FR-50 to FR-54 in [goals-and-requirements.md](../goals-and-requirements.md).
 
@@ -87,3 +87,14 @@ Tests: `ComposeWriteBack_Test` (7): modify in place, copy-up, creates into the o
 and whiteout, the descriptor byte for byte unchanged; move, ignore, keep; a rename inside a layer and across;
 conflicts refused and kept both; a plan that writes nothing, and `trash` as an error; an interrupted apply finished on
 insert. Not done here: a partitioned composite (refused), attributes, the host trash.
+
+## 7. As built: C8c
+
+| Piece | Where | Notes |
+|---|---|---|
+| Choices (Qt-free) | `unreal-qt/src/media/core/flattenchoice.{h,cpp}` | `FlattenOptionsFor(layers reply)`: each strategy, whether it applies and why not. `delta` needs a descriptor file. `commit` needs a graft. `write-back` needs a layer marked `writable`, a descriptor file and no partitions. `PreselectedStrategy`: `writes.save` when it applies, else `delta`, else `flat`. `FlattenRequestOptions`: the `flatten` request's options (`plan` only for commit and write-back). `IsCompositeRow`: a row whose format is `compose-*` or `graft-*`. Tested by `unreal-qt/tests/media/flattenchoice_test.cpp`, which was also built and run here outside Qt: 3 / 3. |
+| Dialog | `unreal-qt/src/media/flattendialog.{h,cpp}` | Four radio buttons: the ones that do not apply are disabled, each with its reason. A path, Browse and Compact for S1; keep-both for S4; force for S3 and S4. The guest's changes, from `media changes`, are shown on open. Preview runs the plan and shows it. Save runs the strategy; on a refusal (a conflict, lost clusters) the dialog stays open with the reason. |
+| Media panel | `MediaPanelWindow` | Save on a composite opens the dialog (the button is enabled for composites now). The unsaved-changes question of an eject or insert does the same when its Save is chosen on a composite, then runs the request as it was. A new Layers... button lists the layers, the partitions and the guest's changes. |
+| Core | `CompositeLayerInfo::writable`; `layers` / `compose` replies carry `writesSave` and each layer's `writable` | |
+
+Not built in this container (no Qt); the owner builds and checks it on the three platforms.

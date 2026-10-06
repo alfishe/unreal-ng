@@ -605,6 +605,7 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
         layerInfo.mount = layer.mount;
         layerInfo.from = layer.from;
         layerInfo.identity = sourceIdentity;
+        layerInfo.writable = layer.writable && layer.source.kind == ComposeSource::Kind::Folder;
         Count(trees[i], FileTree::kRoot, layerInfo.files, layerInfo.bytes);
         info.layers.push_back(layerInfo);
         mix(sourceIdentity);
