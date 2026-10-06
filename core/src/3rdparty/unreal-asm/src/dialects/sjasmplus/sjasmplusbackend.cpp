@@ -586,7 +586,6 @@ struct Writer
             {
                 // ZX-ASM's IFUSED X: X used and not defined so far (a library routine the program defines itself, or
                 // takes from a label file, stays out). sjasmplus' IFUSED only asks "used"; "defined so far" is the
-                // DEFINE every definition of X sets
                 // DEFINE every definition of X sets. The answer goes to a redefinable label, so one name serves every block
                 const bool negated = !s.params.empty() && s.params[0] == "not";
                 return {"@__UNREALASM_IFU=0", "@        IFUSED " + Name(s.text), "@        IFNDEF " + DefinedFlag(s.text), "@__UNREALASM_IFU=1",

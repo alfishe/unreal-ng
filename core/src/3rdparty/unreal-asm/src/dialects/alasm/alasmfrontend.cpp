@@ -678,8 +678,12 @@ void ParseLine(const std::string& text, uint32_t number, std::set<std::string>& 
             Statement s = ParseStatement(word, t.substr(j), result.diagnostics, number);
             if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Macro)
                 macros.insert(s.text);
-            // Several operand groups for one instruction: one statement each
-            const int arity = s.kind == Statement::Kind::Instruction ? z80::SplitArity(s.mnemonic) : 0;
+            // Several operand groups for one instruction: one statement each; CALL A,B / JP A,B without a condition is
+            // one jump per address (sjasmplus reads them so too)
+            const bool jumps = s.kind == Statement::Kind::Instruction &&
+                               (s.mnemonic == "call" || s.mnemonic == "jp" || s.mnemonic == "jr" || s.mnemonic == "djnz") && s.operands.size() > 1 &&
+                               s.operands[0].kind != Operand::Kind::Condition;
+            const int arity = jumps ? 1 : s.kind == Statement::Kind::Instruction ? z80::SplitArity(s.mnemonic) : 0;
             if (arity > 0 && static_cast<int>(s.operands.size()) > arity && s.operands.size() % arity == 0 &&
                 !(s.mnemonic == "ex" && s.operands.size() == 2))
             {

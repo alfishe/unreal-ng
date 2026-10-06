@@ -11,6 +11,7 @@ tools run the corpus-sized and emulator-driven checks behind them (the results a
 | `roundtrip.py` | Converts every source of a set of TRD / SCL images to sjasmplus, reads each result back through the sjasmplus frontend and backend (the text must not change), optionally assembles every file with sjasmplus; prints a summary |
 | `objcheck.py` | For a converted ALASM project: builds every object of each main source's `SAVEOBJ` table with sjasmplus and compares it with the file ALASM saved on the same disk |
 | `assemble-in-emulator.py` | Runs TASM 4.12, ALASM 5.09, STORM 1.3 or ZAsm 3.15 in an unreal-ng instance, assembles a source and saves the bytes it built (the oracle for a source with no binary on its disk) |
+| `crosscheck.py` | Converts the main sources of a set of TR-DOS images to sjasmplus and to pasmo, assembles both and compares the bytes each built |
 | `lstcheck.py` | Compares the bytes of a sjasmplus listing with a memory dump, line by line (a converted program against a running copy of it, e.g. an assembler's own source against the assembler unpacked in memory) |
 | `emulator.py` | The WebAPI client the emulator script uses (own instance, disk swap with TTD recording, keys, screenshots, memory) |
 | `zxdisk.py` | TR-DOS images: list a TRD / SCL catalog, extract a file as hobeta, add hobeta files to a TRD, SCL to TRD, a file as hobeta |
@@ -73,6 +74,17 @@ ZAsm 3.15 compiles into its own pages, so the source saves what it built: it end
 python3 tools/unreal-asm/assemble-in-emulator.py zasm315 ZASM315.trd scratch/PROG.\$a 0x8000 320 scratch/prog.bin \
     --extra scratch/inc1.\$a --url http://localhost:8095
 ```
+
+## Example: two targets against each other
+
+```bash
+export UNREAL_ASM_PASMO=<path to pasmo>
+python3 tools/unreal-asm/crosscheck.py scratch/xc disk1.trd disk2.scl ...
+#   equal: 245  no code: 5  pasmo errors: 5  skipped (sjasmplus errors or pages): 164
+```
+
+pasmo 0.5.5 writes an empty file when the code spans the whole 64K (its size wraps to 16 bits); such sources show as
+"pasmo wrote nothing" unless pasmo is built with that one line widened.
 
 ## Example: a converted program against a running copy
 

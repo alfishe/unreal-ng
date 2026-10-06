@@ -285,7 +285,8 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
     }
     const ProjectResult converted = ConvertProject(project, args.to);
     PrintDiagnostics(converted.diagnostics);
-    const ISourceCodec* target = registry.Find(args.to);
+    // A dialect without its own codec (pasmo) is a text file in the document's code page (texts are program bytes)
+    const ISourceCodec* target = registry.Find(args.to) ? registry.Find(args.to) : registry.Find("text");
     std::string extracted;
     std::map<std::string, std::string> imageNames;   // host file name -> the name in the image
     for (ProjectFile f : converted.files)
@@ -302,7 +303,7 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
                 const size_t length = base ? base->tail.size() : 0;
                 if (length == 0)
                     line.text = "; " + line.text.substr(line.text.find_first_not_of(' ')) + " (no sector slack)";
-                else
+                else if (args.to == "sjasmplus")   // sjasmplus' INCBIN takes an offset and a length; pasmo's the whole file
                     line.text += ",0,(#10000-__UNREALASM_INCBIN_P)<?" + std::to_string(length);
             }
         }
@@ -324,6 +325,32 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
             imageNames[host] = resolved;
             if (host != wanted)
                 line.text.replace(at + 8, wanted.size(), host);
+        }
+        // A target whose INCBIN takes the whole file (pasmo) marks a part as "; unreal-asm: slice offset[,length]": the
+        // part goes to its own file "name.offset-length"
+        for (SourceLine& line : f.document.lines)
+        {
+            const size_t marker = line.text.find("; unreal-asm: slice ");
+            const size_t at = line.text.find("INCBIN \"");
+            if (marker == std::string::npos || at == std::string::npos)
+                continue;
+            const size_t close = line.text.find('"', at + 8);
+            const std::string name = line.text.substr(at + 8, close - at - 8);
+            const std::string spec = line.text.substr(marker + 20);
+            const size_t offset = std::stoul(spec);
+            const containers::TrdosFile* found = FindBinary(files, name);
+            if (!found)
+                continue;
+            const size_t comma = spec.find(',');
+            const size_t length = comma == std::string::npos ? found->data.size() - std::min(offset, found->data.size()) : std::stoul(spec.substr(comma + 1));
+            const std::string part = name + "." + std::to_string(offset) + "-" + std::to_string(length);
+            std::vector<uint8_t> bytes;
+            for (size_t k = offset; k < offset + length && k < found->data.size(); ++k)
+                bytes.push_back(found->data[k]);
+            WriteFile(args.output + "/" + HostName(part), bytes);
+            line.text = line.text.substr(0, at + 8) + HostName(part) + line.text.substr(close, marker - close);
+            while (!line.text.empty() && line.text.back() == ' ')
+                line.text.pop_back();
         }
         std::vector<uint8_t> out;
         if (target)
@@ -464,7 +491,7 @@ int main(int argc, char** argv)
         PrintDiagnostics(converted.diagnostics);
         // Written with the target's text codec when there is one (sjasmplus keeps the Spectrum code page for strings)
         std::vector<uint8_t> out;
-        if (const ISourceCodec* target = registry.Find(args.to))
+        if (const ISourceCodec* target = registry.Find(args.to) ? registry.Find(args.to) : registry.Find("text"))
             out = target->Encode(converted.document, {}).bytes;
         else
         {

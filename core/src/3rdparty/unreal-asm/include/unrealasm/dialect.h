@@ -30,6 +30,9 @@ struct BackendOptions
     std::map<std::string, int> macroParams;
     /// Labels some file of the project tests with IFUSED / IFNUSED (ConvertProject fills it)
     std::set<std::string> ifUsedNames;
+    /// How often each name is defined in the files of the project (ConvertProject fills it; pasmo needs DEFL for a name
+    /// defined twice, EQU for one defined once)
+    std::map<std::string, int> definitions;
 };
 
 struct BackendResult
@@ -38,6 +41,7 @@ struct BackendResult
     Diagnostics diagnostics;
     std::map<std::string, int> macroParams;   ///< the macros this file defines
     std::set<std::string> ifUsedNames;        ///< the labels this file tests with IFUSED / IFNUSED
+    std::map<std::string, int> definitions;   ///< how often this file defines each name
 };
 
 class IFrontend
