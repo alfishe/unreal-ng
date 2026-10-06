@@ -43,5 +43,39 @@ This is simply the SNA format extended to include the extra memory banks of the 
 
 The third RAM bank saved is always the one currently paged, even if this is page 5 or 2 - in this case, the bank is actually included twice. The remaining RAM banks are saved in ascending order - e.g. if RAM bank 4 is paged in, the snapshot is made up of banks 5, 2 and 4 to start with, and banks 0, 1, 3, 6 and 7 afterwards. If RAM bank 5 is paged in, the snapshot is made up of banks 5, 2 and 5 again, followed by banks 0, 1, 3, 4, 6 and 7.
 
-***
-**Source:** [Spectrum FAQ - File Formats](https://nvg.ntnu.no/sinclair/faq/fileform.html)
+---
+
+## In Unreal-NG
+
+Snapshot overview and how loading works: [README](README.md).
+
+**Telling the two layouts apart.** By size: exactly 49179 bytes is a 48K snapshot. A file of at least 49183 bytes whose
+remainder after the first 49183 is a nonzero multiple of 16384 is a 128K snapshot: one to eight extra banks are accepted. The
+standard sizes are 131103 (five extra banks) and 147487 (six: the paged bank is 5 or 2 and is stored twice). Banks a short file does not carry are not
+written. Any other size is refused.
+
+**Loading.**
+
+- Both IFF1 and IFF2 are set from bit 2 of byte 19 (a `RETN` copies IFF2 into IFF1; libspectrum and Fuse do the same). Interrupt
+  mode is taken from bits 0-1 of byte 25, the border from the low three bits of byte 26. R is loaded whole.
+- **48K:** RAM goes to banks 5, 2 and 0. The PC is popped off the stack: the word at SP goes to PC and SP moves past it. When
+  the stack is not in the file's RAM (SP in the ROM, or at 65535) the word is read from the machine's memory at SP, as it
+  always was. The 48K BASIC ROM is selected and TR-DOS, if it was running, is ended. #7FFD is left at #10 (unlocked).
+- **128K:** the third bank goes to the bank #7FFD names, #7FFD is written through the model's port decoder and then
+  stored as it is (lock bit included), and the TR-DOS byte pages the TR-DOS ROM in. The PC comes from byte 49179.
+- The format has no AY registers, no #1FFD and no #EFF7: the AY comes out of the reset, and models with those latches get
+  their reset values (a +2A or +3 snapshot loses its special paging).
+- A PC on a `HALT` opcode starts the CPU halted.
+
+**Saving.** The 48K layout is written when #7FFD is locked, otherwise the 128K layout. The 48K saver puts the PC on the stack in
+the machine's live memory before writing (two bytes under SP are overwritten in the running machine as well as in the file);
+this is a known limitation of that saver.
+
+---
+
+## References
+
+- [World of Spectrum FAQ: file formats](https://worldofspectrum.org/faq/reference/formats.htm), section "SNA Format" (the text of this page follows it)
+- [Sinclair Wiki: SNA format](https://sinclair.wiki.zxnet.co.uk/wiki/SNA_format)
+- [libspectrum: sna.c](https://github.com/speccytools/libspectrum/blob/master/sna.c), the Fuse emulator's reader and writer
+- [zx-evo-docs: sna.txt](https://github.com/tslabs/zx-evo-docs/blob/main/Formats/sna.txt) (TS-Labs' notes on the format)
