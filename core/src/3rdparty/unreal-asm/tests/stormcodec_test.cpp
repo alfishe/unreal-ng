@@ -96,10 +96,13 @@ TEST(StormCodec_Test, LineRules)
     EXPECT_EQ(encode("        JR NZ,$-3:JR C,$+2:CP C"), (std::vector<uint8_t>{0x78, 0xF0, 0x2A, 0x4E, 0x7B, 0xF5, 0x2A, 0x5C, 0x31}));
     // (IX+d) short form, a single digit, unary minus
     EXPECT_EQ(encode("        LD A,(IX+13),B,5,DE,-33"), (std::vector<uint8_t>{0x37, 0xB2, 0x0D, 0x30, 0xE2, 0x3D, 0x9A, 0x21}));
+    // PO PE P M imply JP (STORM 1.3's binary has JP where its source shows them; its editor shows JP); CALL with one of
+    // them keeps its command byte (#51)
+    EXPECT_EQ(encode("        JP P,$:CALL M,$"), (std::vector<uint8_t>{0x7E, 0xF3, 0x2A, 0x51, 0x7F, 0xF3}));
     // A comment: every blank run is one byte
     EXPECT_EQ(encode(";in: a - x"), (std::vector<uint8_t>{0x2F, 'i', 'n', ':', 0x01, 'a', 0x01, '-', 0x01, 'x', 0x00}));
     for (const std::string text : {"        LD HL,#5FFF:LD (#5CB2),HL", "DLNA    CALL DLN:RET NZ", "        JR NZ,$-3:JR C,$+2:CP C",
-                                   "        LD A,(IX+13),B,5,DE,-33", ";in: a - x", "TBABUF  DS (HGT+1)*2"})
+                                   "        LD A,(IX+13),B,5,DE,-33", ";in: a - x", "TBABUF  DS (HGT+1)*2", "        JP P,$:CALL M,$"})
     {
         encode(text);
         EXPECT_EQ(codecs::StormCodec::DecodeLine(body), text);
@@ -136,4 +139,12 @@ TEST(StormCodec_Test, Detection)
     }
     EXPECT_LT(codec.Detect(ReadTestData("tasm/000LOAD.$A"), {}), 60);
     EXPECT_LT(codec.Detect(ReadTestData("text/source-cp866-cr.asm"), {}), 60);
+    // Zeros walk back as empty STORM lines: a screen (type C at #4000) is no STORM text
+    CatalogHints screen;
+    screen.type = 'C';
+    screen.start = 0x4000;
+    screen.length = 6912;
+    const std::vector<uint8_t> zeros(6912, 0);
+    EXPECT_LT(codec.Detect(zeros, screen), 50);
+    EXPECT_EQ(CodecRegistry::Builtin().Detect(zeros, screen).chosen, nullptr);
 }

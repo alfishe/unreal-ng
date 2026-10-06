@@ -29,6 +29,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -231,6 +232,16 @@ const containers::TrdosFile* FindBinary(const std::vector<containers::TrdosFile>
     return nullptr;
 }
 
+/// A TR-DOS name as a host file name: TR-DOS allows / \ : and the like ("SIN64/FF"), a file system and an INCBIN
+/// path do not
+std::string HostName(std::string name)
+{
+    for (char& c : name)
+        if (c == '/' || c == '\\' || c == ':' || c == '"' || c == '<' || c == '>' || c == '|')
+            c = '_';
+    return name;
+}
+
 /// zxasm convert image.trd --to dialect -o dir
 int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const CodecRegistry& registry)
 {
@@ -272,6 +283,7 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
     PrintDiagnostics(converted.diagnostics);
     const ISourceCodec* target = registry.Find(args.to);
     std::string extracted;
+    std::map<std::string, std::string> imageNames;   // host file name -> the name in the image
     for (ProjectFile f : converted.files)
     {
         // An INCBIN with wildcards names the file it found (the converted source then assembles anywhere). A sector
@@ -300,10 +312,14 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
             const bool slack = wanted.size() > 6 && wanted.compare(wanted.size() - 6, 6, ".slack") == 0;
             if (slack)
                 wanted.resize(wanted.size() - 6);
-            if (wanted.find_first_of("*?") == std::string::npos)
-                continue;
-            if (const containers::TrdosFile* found = FindBinary(files, wanted))
-                line.text.replace(at + 8, wanted.size(), found->TrimmedName() + (found->type == 'C' ? std::string() : std::string(".") + found->type));
+            std::string resolved = wanted;
+            if (wanted.find_first_of("*?") != std::string::npos)
+                if (const containers::TrdosFile* found = FindBinary(files, wanted))
+                    resolved = found->TrimmedName() + (found->type == 'C' ? std::string() : std::string(".") + found->type);
+            const std::string host = HostName(resolved);
+            imageNames[host] = resolved;
+            if (host != wanted)
+                line.text.replace(at + 8, wanted.size(), host);
         }
         std::vector<uint8_t> out;
         if (target)
@@ -328,8 +344,9 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
             const std::string wanted = line.text.substr(at + 8, close - at - 8);
             // "<file>.slack": the rest of the file's last sector (TASM's INCBIN copies whole sectors)
             const bool slack = wanted.size() > 6 && wanted.compare(wanted.size() - 6, 6, ".slack") == 0;
-            const std::string file = slack ? wanted.substr(0, wanted.size() - 6) : wanted;
-            const containers::TrdosFile* found = FindBinary(files, file);
+            const std::string host = slack ? wanted.substr(0, wanted.size() - 6) : wanted;
+            const auto inImage = imageNames.find(host);
+            const containers::TrdosFile* found = FindBinary(files, inImage != imageNames.end() ? inImage->second : host);
             if (found)
             {
                 WriteFile(args.output + "/" + wanted, slack ? found->tail : found->data);

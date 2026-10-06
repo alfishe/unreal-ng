@@ -122,6 +122,7 @@ struct Writer
     bool sameDialect = false;   // the program was parsed from sjasmplus: directives kept as text are written back
     bool displacementFlag = false;   // DISP / ENT also keep a DEFINE that says whether a displacement is active
     const std::set<std::string>* redefinable = nullptr;   // names some line assigns with "="
+    int trueValue = 0;   // what the source's comparisons give when true (ir::Program::trueValue); sjasmplus gives -1
 
     std::string Name(const std::string& name) const
     {
@@ -217,7 +218,10 @@ struct Writer
                     case Op::Negate: return "-" + Atom(e.args[0], '-');
                     case Op::Plus: return "+" + Atom(e.args[0], '+');
                     case Op::Not: return "~" + Atom(e.args[0], '~');
-                    case Op::LogicalNot: return "!" + Atom(e.args[0], '!');
+                    case Op::LogicalNot:
+                        if (trueValue == 1)
+                            return "-" + TrueIsOne(e);
+                        return "!" + Atom(e.args[0], '!');
                     case Op::High: return "high " + Atom(e.args[0]);
                     case Op::Low: return "low " + Atom(e.args[0]);
                     case Op::Exists: return "exist " + Atom(e.args[0]);
@@ -243,6 +247,30 @@ struct Writer
                                                 Expr::Binary(right ? Op::Shl : Op::ShrUnsigned, a, std::move(back)));
                     return Print(Masked16(Grouped(std::move(rotated))));
                 }
+                const bool comparison = e.op == Op::Equal || e.op == Op::NotEqual || e.op == Op::Less || e.op == Op::Greater ||
+                                        e.op == Op::LessEqual || e.op == Op::GreaterEqual;
+                if (comparison && trueValue == 1)
+                    return "-" + TrueIsOne(e);   // sjasmplus' true is -1
+                if ((comparison || e.op == Op::Mod || e.op == Op::Shr) && wordBits == 16 && unsignedWords)
+                {
+                    // 16-bit unsigned words (STORM: 0-1 is #FFFF, so #FFFF>>1 = #7FFF and 0-1>0): the operands masked
+                    // (a number or a comparison with 0 needs no mask)
+                    auto masked = [](const Expr& a) {
+                        const Expr& x = a.kind == Expr::Kind::Group ? a.args[0] : a;
+                        return x.kind == Expr::Kind::Binary && x.op == Op::And && x.args[1].kind == Expr::Kind::Number && x.args[1].value == 0xFFFF;
+                    };
+                    auto mask = [&](const Expr& a) { return a.kind == Expr::Kind::Number || masked(a) ? a : Masked16(a); };
+                    const bool zeroTest = comparison && ((e.args[1].kind == Expr::Kind::Number && e.args[1].value == 0) ||
+                                                         (e.args[0].kind == Expr::Kind::Number && e.args[0].value == 0));
+                    if (!zeroTest)
+                    {
+                        const int bits = wordBits;
+                        wordBits = 0;
+                        const std::string out = Print(Expr::Binary(e.op, mask(e.args[0]), e.op == Op::Shr ? e.args[1] : mask(e.args[1])));
+                        wordBits = bits;
+                        return out;
+                    }
+                }
                 if (e.op == Op::Div && wordBits == 16 && unsignedWords)
                 {
                     // ALASM: unsigned 16-bit division
@@ -263,6 +291,24 @@ struct Writer
             }
         }
         return "?";
+    }
+
+    /// A comparison or logical not of a source whose true is 1, printed as sjasmplus' (true -1) in parentheses
+    std::string TrueIsOne(const Expr& e)
+    {
+        // The operands keep the source's convention (1<2<3 is (1<2)<3 = 1), only this operator is sjasmplus'
+        Expr top = e;
+        for (Expr& a : top.args)
+            if (a.kind == Expr::Kind::Binary || a.kind == Expr::Kind::Unary)
+            {
+                Expr printed = Expr::Make(Expr::Kind::Raw);
+                printed.text = "(" + Print(a) + ")";
+                a = std::move(printed);
+            }
+        trueValue = 0;
+        const std::string out = Print(top);
+        trueValue = 1;
+        return "(" + out + ")";
     }
 
     static std::string Quote(const std::string& text, bool& ok)
@@ -342,6 +388,36 @@ struct Writer
         return "@; unreal-asm: not converted: " + what;   // from column 0 (the "@" mark)
     }
 
+    /// DS count,pattern... of STORM: count bytes, the pattern repeated and cut (DS 7,1,2 = DB 1,2,1,2,1,2,1)
+    std::vector<std::string> CyclicFill(const Statement& s)
+    {
+        const size_t k = s.operands.size();
+        const std::vector<Operand> all = s.operands;
+        if (s.args[0].kind == Expr::Kind::Number)
+        {
+            const int64_t count = s.args[0].value;
+            std::vector<std::string> out;
+            if (count / static_cast<int64_t>(k) > 0)
+                out = {"DUP " + std::to_string(count / static_cast<int64_t>(k)), "DB " + Operands(all), "EDUP"};
+            const size_t rest = static_cast<size_t>(count % static_cast<int64_t>(k));
+            if (rest > 0)
+                out.push_back("DB " + Operands(std::vector<Operand>(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(rest))));
+            if (out.empty())
+                out.push_back("; DS 0");
+            return out;
+        }
+        // A count known only when assembling: whole patterns, then the first bytes of one more
+        const std::string count = "(" + Print(s.args[0]) + ")";
+        std::vector<std::string> out = {"DUP " + count + "/" + std::to_string(k), "DB " + Operands(all), "EDUP"};
+        for (size_t r = 1; r < k; ++r)
+        {
+            out.push_back("IF " + count + "%" + std::to_string(k) + ">=" + std::to_string(r));
+            out.push_back("DB " + Operand_(all[r - 1]));
+            out.push_back("ENDIF");
+        }
+        return out;
+    }
+
     /// One statement; may produce several output lines (DUP fills) and needs the label for EQU / =
     std::vector<std::string> StatementText(const Statement& s, const std::string& label)
     {
@@ -404,6 +480,8 @@ struct Writer
                 if (sameDialect)
                     return {"DS " + args()};   // sjasmplus' own DS (its fill is one value: DS 4,#AA,#55 is 4 bytes)
                 // A fill sequence given as operands (strings too, TASM) or as arguments (ALASM): DUP when longer than a byte
+                if (s.operands.size() > 1 && !s.params.empty() && s.params[0] == "cyclic")
+                    return CyclicFill(s);
                 if (!s.operands.empty())
                 {
                     if (s.operands.size() == 1 && s.operands[0].kind == Operand::Kind::Immediate)
@@ -513,6 +591,7 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
     result.document.codePage = encoding::CodePage::Cp866;   // strings are program bytes: keep the Spectrum code page
     Writer w{options, result.diagnostics, 0, {}, {}, false, false, program.expressionBits, program.unsignedArithmetic, options.macroParams, 0, {},
              program.dialect == "sjasmplus", program.displacementAcrossFiles};
+    w.trueValue = program.trueValue;
 
     // Macro calls may pass more arguments than the body uses (ALASM ignores the rest, sjasmplus refuses them): a macro
     // declares as many parameters as its longest call

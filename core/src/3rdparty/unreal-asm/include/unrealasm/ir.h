@@ -87,7 +87,7 @@ enum class DirectiveKind : uint8_t
     Defl,         ///< the label = args[0], redefinable
     Db,           ///< operands: bytes and strings
     Dw,
-    Ds,           ///< args: count [, fill bytes...]
+    Ds,           ///< args: count [, fill bytes...]; operands: a fill sequence repeated count times; params "cyclic": count bytes of the sequence repeated and cut (STORM)
     Include,      ///< text: file; args: [page]
     Incbin,       ///< text: file; args: [offset [, length]]; params "sector-slack": the rest of the file's last disk sector is written after it without moving the address (TASM)
     If,           ///< args: condition (true when not zero)
@@ -151,5 +151,7 @@ struct Program
     /// The displacement (PHASE / DISP) may continue across INCLUDE: a file cannot know whether one is active where it
     /// starts (TASM). An `Ent` statement with text "if-displaced" ends one only when it is active
     bool displacementAcrossFiles = false;
+    /// What a comparison or a logical not gives when true: 0 = what the target gives, 1 (STORM), -1 (sjasmplus)
+    int trueValue = 0;
 };
 }  // namespace unrealasm::ir
