@@ -332,7 +332,9 @@ TEST_F(TimeTravelController_Test, HistoryLimitKeepsTheWindow)
     EXPECT_LE(held, 16u + 2u) << "segments of an eighth of the window";
     EXPECT_GT(engine.FirstCheckpoint(), 0u) << "the oldest segments were dropped";
     EXPECT_EQ(_controller->GetCheckpoint(0)->time.frame, engine.Checkpoint(engine.FirstCheckpoint())->position.frame);
-    EXPECT_EQ(_controller->SessionEndPosition(), _v1->SessionEndPosition());
+    // The engine's history reaches to where the recording stopped, inside v1's last frame
+    EXPECT_EQ(_controller->SessionEndPosition().frame, _v1->SessionEndPosition().frame);
+    EXPECT_FALSE(_controller->SessionEndPosition() < _v1->SessionEndPosition());
 
     const uint32_t span = static_cast<uint32_t>(_v1->FrameSpan());
     const uint64_t last = _v1->SessionEndPosition().frame;
@@ -1200,4 +1202,33 @@ TEST_F(TimeTravelController_Test, APausedRecordingIsStillGuarded)
     EXPECT_EQ(_controller->GetCheckpointCount(), kept) << "the paused recording's history stays";
     EXPECT_TRUE(_controller->GetSessionInfo().recordingPaused);
     EXPECT_TRUE(_b->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot).empty()) << "a snapshot load is an event";
+}
+
+/// BUGS.md 2026-10-05 #3: the history of a stopped recording reaches to where
+/// it stopped, inside the frame after its last checkpoint - a bookmark at the
+/// present works right after the stop and a seek there shows the machine as it
+/// stopped; while recording a bookmark at the present works too
+TEST_F(TimeTravelController_Test, TheHistoryReachesWhereTheRecordingStopped)
+{
+    EmulatorContext* context = _b->GetContext();
+    ASSERT_TRUE(_controller->StartRecording());
+    _b->RunNFrames(3, /*skipBreakpoints=*/true);
+    _b->RunTStates(20000, /*skipBreakpoints=*/true);
+    std::string err;
+    EXPECT_TRUE(_controller->AddBookmark(_controller->CurrentPosition(), "while-recording", &err)) << err;
+    _b->RunTStates(5000, /*skipBreakpoints=*/true);
+    _controller->StopRecording();
+    const ttd::TTDTimePoint stopped = _controller->CurrentPosition();
+    const MachineState live = CaptureState(context, *_controller);
+    EXPECT_EQ(_controller->SessionEndPosition(), stopped);
+
+    ASSERT_TRUE(_controller->AddBookmark(stopped, "stopped", &err)) << err;
+    ASSERT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(1)->time.frame, 0}, nullptr));
+    ttd::TTDSeekResult r;
+    ASSERT_TRUE(_controller->SeekToBookmark("stopped", &r));
+    EXPECT_EQ(_controller->CurrentPosition(), stopped);
+    const MachineState seen = CaptureState(context, *_controller);
+    EXPECT_EQ(std::memcmp(&seen.cpu, &live.cpu, sizeof(seen.cpu)), 0);
+    EXPECT_TRUE(seen.ram == live.ram);
+    EXPECT_TRUE(seen.devices == live.devices);
 }

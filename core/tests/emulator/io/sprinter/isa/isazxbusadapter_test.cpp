@@ -7,8 +7,8 @@
 // Machine-level but short: no firmware run is needed (the mailbox flip-flops answer at once); each test creates one
 // Sprinter instance.
 //
-// The shipped Sprinter config fits no GS (owner decision 2026-10-04: the adapter in slot 1 stays, empty). The tests
-// about the card fit the NeoGS behind it at creation, as a user's [SLOTS] isa.1 = neogs would.
+// The shipped Sprinter config fits the NeoGS behind the adapter ([SLOTS] isa.1 = neogs, owner decision 2026-10-06).
+// The tests about the card also select it explicitly at creation, so they do not depend on the shipped file.
 
 #include <gtest/gtest.h>
 
@@ -64,7 +64,7 @@ protected:
         });
     }
 
-    /// A Sprinter as the shipped config makes it (no GS), then @p configOverride
+    /// A Sprinter as the shipped config makes it (the NeoGS behind the adapter), then @p configOverride
     void CreateShipped(std::function<void(CONFIG&)> configOverride = nullptr)
     {
         _emulator = _manager->CreateEmulatorWithModelAndRAM("sprinter-zxbus", "SPRINTER", 4096, LoggerLevel::LogError,
@@ -87,9 +87,10 @@ protected:
     }
 };
 
-// Owner decision Q2: slot 1 = the ZX-bus adapter, slot 2 = the NE2000. Owner decision 2026-10-04: the shipped config
-// puts no GS behind the adapter. The machine has a ZX-bus only through the adapter; its bus carries no memory cycles
-TEST_F(IsaZxBusAdapter_Test, DefaultPopulation_EmptyAdapterInSlot1)
+// Owner decision Q2: slot 1 = the ZX-bus adapter, slot 2 = the NE2000. Owner decision 2026-10-06: the shipped config
+// puts the NeoGS behind the adapter. The machine has a ZX-bus only through the adapter; its bus carries no memory
+// cycles
+TEST_F(IsaZxBusAdapter_Test, DefaultPopulation_NeoGsBehindTheAdapterInSlot1)
 {
     CreateShipped();
     ASSERT_NE(_decoder->GetIsaBus().Card(0), nullptr);
@@ -97,8 +98,8 @@ TEST_F(IsaZxBusAdapter_Test, DefaultPopulation_EmptyAdapterInSlot1)
     EXPECT_TRUE(_decoder->ZxBusPresent()) << "the adapter is there";
     EXPECT_FALSE(_decoder->ZxBusMemoryCycles());
     EXPECT_EQ(_decoder->ZxBusSlot(), 0);
-    EXPECT_EQ(Gs(), nullptr) << "no GS in the shipped config";
-    EXPECT_EQ(Isa("io_read", 1, 0x0BB), 0xFF) << "nothing on its ZX-bus";
+    ASSERT_NE(Gs(), nullptr) << "the shipped config fits the NeoGS";
+    EXPECT_EQ(Gs()->implementation(), GSCardImplementation::NGS);
     ASSERT_NE(_decoder->GetIsaBus().Card(1), nullptr);
     EXPECT_STREQ(_decoder->GetIsaBus().Card(1)->Kind(), "ne2000");
     EXPECT_EQ(_context->config.sound.gsreset, 0) << "Q9: a machine reset does not pulse ISA RESET DRV";

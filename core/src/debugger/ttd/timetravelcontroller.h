@@ -2011,6 +2011,11 @@ private:
     std::string _unavailableReason;    // see SetUnavailableReason
     /// Position at StopRecording, to tell whether the machine ran before a live resume
     uint64_t _recordingStoppedAtT = 0;
+    /// Where the last recording stopped, inside the frame after its last
+    /// checkpoint: the history reaches there (StopRecording gives the engine
+    /// that frame's journals). Valid until the session changes
+    TTDTimePoint _stoppedEnd{};
+    bool _stoppedEndValid = false;
 
     // -----------------------------------------------------------------------
     // Replay-mode state (Phase 2 Item 2; parent TDD §8.2)

@@ -201,6 +201,7 @@ void TimeTravelController::CommitLoadedSession(std::unique_ptr<TimeTravelEngine>
                                                const std::vector<uint8_t>& coverage, TTDBookmarkJournal& bookmarks)
 {
     // The old session goes, with its files and its engine
+    _stoppedEndValid = false;
     ResetShadow();
     _timeline.clear();
     _blobBytes = 0;

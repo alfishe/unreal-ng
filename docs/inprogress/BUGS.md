@@ -69,7 +69,7 @@ noted position: device 4 differs.
 - Running forward from any checkpoint, the baseline included, reproduces every device state of the live run.
 - A test for the mid-frame baseline that fails before the fix.
 
-## 🔴 [Open] #3: A bookmark at the current position fails after `ttd stop` (and while recording)
+## 🟣 [Fix Proposed] #3: A bookmark at the current position fails after `ttd stop` (and while recording)
 * **Date Opened:** 2026-10-05
 * **Date Fixed:** -
 * **Commit ID:** -
@@ -81,6 +81,13 @@ machine stands inside the frame after the last checkpoint (or ahead of the histo
 409 "bookmark position (frame=1027, tInFrame=2125) is beyond the session end (frame=1027)". The recipes
 (`bug-hunt-ttd.md` Phase 1, `ttd-reverse-debugging.md` step 2, `ttd-visual-inspection.md`, `ttd-recording.md` "defaults to
 current position") expect it to work. It works after a seek, find-last or reverse-continue.
+
+### Fix (engine, 2026-10-05)
+The history of a stopped recording reaches to where it stopped (`SessionEndPosition` returns the stop point inside the
+frame after the last checkpoint; StopRecording already hands the engine that frame's journals), so a bookmark, a seek
+and a resume at the stop point work. While recording, a bookmark may sit at the present (a seek there pauses the
+recording at it). Test `TimeTravelController_Test.TheHistoryReachesWhereTheRecordingStopped` (two mutants caught).
+v1 (`UNREAL_TTD_BACKEND=v1`) keeps the old behavior.
 
 ### Requirements / Acceptance Criteria
 - A bookmark without a position works right after `stop` (the history reaches to where it stopped) and while

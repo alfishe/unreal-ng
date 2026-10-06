@@ -497,9 +497,11 @@ std::string RenderCardByCard(const Collection& collection)
         for (const CardDef* installed : cards)
         {
             // A card against another of its own kind: both at their defaults
-            const std::vector<Variant> rows = newCard == installed ? std::vector<Variant>{ Variant{} } : Variants(*newCard);
-            const std::vector<Variant> columns =
-                newCard == installed ? std::vector<Variant>{ Variant{} } : Variants(*installed);
+            // (one default-constructed Variant: no initializer_list temporary in a conditional, which
+            // gcc 16 flags as -Wdangling-pointer)
+            const bool sameCard = newCard == installed;
+            const std::vector<Variant> rows = sameCard ? std::vector<Variant>(1) : Variants(*newCard);
+            const std::vector<Variant> columns = sameCard ? std::vector<Variant>(1) : Variants(*installed);
             std::vector<std::vector<Outcome>> grid(rows.size(), std::vector<Outcome>(columns.size()));
             for (size_t r = 0; r < rows.size(); r++)
             {

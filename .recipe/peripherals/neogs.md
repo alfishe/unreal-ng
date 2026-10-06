@@ -33,9 +33,10 @@ creation (`zxbus.1 = neogs`, `zxbus.1.ram = 4m`; the legacy `[SOUND] GSType=NGS`
 still works and is translated; the table is in [generalsound.md](generalsound.md)),
 or plugged later with `slots plug zxbus.next neogs` ([slots recipe](../machines/slots.md)).
 `inspect_state {"aspects":["slots"]}` shows where it sits. The shipped clone configs
-fit the NeoGS; the 48K / 128K / +2 / +2A / +3, Profi (v5, v3) and Sprinter
-configs fit none since 2026-10-04 (owner decision: none of their buses takes
-a ZX-bus card without an adapter). The card's own settings sit in the `[NGS]` block of
+fit the NeoGS, the Sprinter behind its ISA ZX-bus adapter (`isa.1`,
+[docs/features/sprinter-slots.md](../../docs/features/sprinter-slots.md)); the 48K / 128K / +2 / +2A / +3
+and Profi (v5, v3) configs fit none since 2026-10-04 (owner decision: none of their
+buses takes a ZX-bus card without an adapter). The card's own settings sit in the `[NGS]` block of
 the same `unreal.ini`:
 
 | Key | Values (shipped first) | Meaning |
