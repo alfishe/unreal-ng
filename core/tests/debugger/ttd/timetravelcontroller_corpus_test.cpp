@@ -108,7 +108,8 @@ protected:
     {
         if (!_emulator)
             return;
-        _controller->StopRecording();
+        if (_controller)
+            _controller->StopRecording();
         _context->pTimeTravelHooks = _context->pTimeTravelManager;
         _context->ttdWriteSink = _context->pTimeTravelManager;
         _context->pTimeTravelController = nullptr;
