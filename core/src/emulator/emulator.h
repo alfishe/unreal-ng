@@ -492,6 +492,10 @@ public:
         V1
     };
     static void SetDefaultTimeTravelBackend(TimeTravelBackend backend);
+    /// Where the engine writes each recording as it records (a folder per session under it,
+    /// ttdrecordingfolders.h) for instances created from now on. The application sets
+    /// ~/.unreal-ng/ttd (ttd::RecordingsRoot); empty (the default, tests): nothing is written
+    static void SetDefaultTtdRecordingRoot(const std::string& root);
     static TimeTravelBackend DefaultTimeTravelBackend();
     bool SaveSnapshot(const std::string& path);
     /// A tape file (any TapeLoaderRegistry format) or a folder into the tape

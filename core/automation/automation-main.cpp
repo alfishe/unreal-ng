@@ -1,6 +1,8 @@
 #include <common/modulelogger.h>
 #include <emulator/emulator.h>
 #include <emulator/startupcleanup.h>
+#include "debugger/ttd/ttdrecordingfolders.h"
+#include "emulator/emulator.h"
 #include "automation.h"
 
 // Automation became a singleton (protected constructor) — use the instance
@@ -64,6 +66,8 @@ int main(int argc, char *argv[])
 
     // Housekeeping (crashed TTD recordings, ...) in the background
     StartStartupCleanup();
+    // The engine writes every recording as it records, a folder per session in ~/.unreal-ng/ttd (Phase 5, 3c)
+    Emulator::SetDefaultTtdRecordingRoot(ttd::RecordingsRoot());
 
     // Get automation singleton (created on first access)
     Automation& automation = Automation::GetInstance();

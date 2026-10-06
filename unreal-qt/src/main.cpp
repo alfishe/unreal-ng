@@ -13,6 +13,8 @@
 #include <common/filehelper.h>
 #include <common/threadhelper.h>
 #include <emulator/startupcleanup.h>
+#include "debugger/ttd/ttdrecordingfolders.h"
+#include "emulator/emulator.h"
 
 int fontID = -1;
 
@@ -109,6 +111,8 @@ int main(int argc, char *argv[])
 
     // Housekeeping (crashed TTD recordings, ...) in the background: start-up never waits for it
     StartStartupCleanup();
+    // The engine writes every recording as it records, a folder per session in ~/.unreal-ng/ttd (Phase 5, 3c)
+    Emulator::SetDefaultTtdRecordingRoot(ttd::RecordingsRoot());
 
     // Load non-system fonts before any GUI rendered
     registerFonts(app);

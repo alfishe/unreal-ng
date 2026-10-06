@@ -724,6 +724,13 @@
         "The black box is armed on this instance (the engine; started with black_box, or by unreal-qt's "
         "Debug > Time Travel > Always Record): its recordings keep the last minutes and step aside for turbo and "
         "host speed. Always false on v1";
+    schemas["TTDStatusResponse"]["properties"]["recording_folder"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["recording_folder"]["nullable"] = true;
+    schemas["TTDStatusResponse"]["properties"]["recording_folder"]["description"] =
+        "The folder the current session's segment files are written to as it records "
+        "(~/.unreal-ng/ttd/<date-time>-<name>/, the engine in unreal-qt and the automation app); null when none. "
+        "Deleted with its session (a new session, invalidate, closing the instance); a crashed one stays for the "
+        "startup cleanup (7 days)";
     schemas["TTDStatusResponse"]["properties"]["backend"]["type"] = "string";
     schemas["TTDStatusResponse"]["properties"]["backend"]["description"] =
         "Which implementation records on this instance: \"engine\" (the default) or \"v1\" (selected with "

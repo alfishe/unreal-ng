@@ -63,8 +63,10 @@ namespace ttd
 
         const std::string& Path() const { return _path; }
         std::string SegmentPath(uint32_t index) const;
-        /// The segment files that exist, in order
+        /// The segment files that exist, in order (the oldest may be gone: DropOldestSegments)
         std::vector<std::string> Segments() const;
+        /// Delete all but the newest @p keep segment files (a black box's window moved on); how many went
+        size_t DropOldestSegments(size_t keep);
 
         /// One .ttd file at @p target from the segments (they must be finished); refuses an existing
         /// target unless @p overwrite

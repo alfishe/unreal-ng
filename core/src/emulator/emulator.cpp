@@ -38,6 +38,10 @@
 #include "loaders/snapshot/szx/loaderszx.h"
 #include "loaders/tape/loader_tape.h"
 
+/// Emulator::SetDefaultTtdRecordingRoot: where the engine writes recordings for instances created from now on
+static std::mutex g_ttdRecordingRootMutex;
+static std::string g_ttdRecordingRoot;
+
 /// region <Constructors / Destructors>
 
 Emulator::Emulator(LoggerLevel level) : Emulator("", level) {}
@@ -302,6 +306,11 @@ bool Emulator::Init()
         if (DefaultTimeTravelBackend() == TimeTravelBackend::Engine)
         {
             ttd::TimeTravelController* controller = new ttd::TimeTravelController(_context);
+            {
+                std::lock_guard<std::mutex> lock(g_ttdRecordingRootMutex);
+                if (!g_ttdRecordingRoot.empty())
+                    controller->SetShadowRecordingRoot(g_ttdRecordingRoot);
+            }
             _context->pTimeTravelController = controller;
             _context->pTimeTravelHooks = controller;
             _context->ttdWriteSink = controller;
@@ -2017,6 +2026,12 @@ Emulator::TimeTravelBackend InitialTimeTravelBackend()
     return value && std::string(value) == "v1" ? Emulator::TimeTravelBackend::V1 : Emulator::TimeTravelBackend::Engine;
 }
 std::atomic<Emulator::TimeTravelBackend> g_defaultTimeTravelBackend{InitialTimeTravelBackend()};
+}
+
+void Emulator::SetDefaultTtdRecordingRoot(const std::string& root)
+{
+    std::lock_guard<std::mutex> lock(g_ttdRecordingRootMutex);
+    g_ttdRecordingRoot = root;
 }
 
 void Emulator::SetDefaultTimeTravelBackend(TimeTravelBackend backend)

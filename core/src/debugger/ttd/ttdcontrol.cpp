@@ -211,6 +211,16 @@ public:
     virtual TTDReply Execute(const std::string& verb, const TTDRequest& request) = 0;
 };
 
+/// The folder the engine writes the session into as it records (empty: none - v1, a test, nothing recorded)
+template <class S>
+std::string RecordingFolderOf(const S* manager)
+{
+    if constexpr (std::is_same<S, TimeTravelController>::value)
+        return manager ? manager->ShadowRecordingFolder() : std::string();
+    else
+        return {};
+}
+
 /// The black box is armed (the engine; D29): its recordings keep the last minutes and step aside for accelerations
 template <class S>
 bool BlackBoxOf(const S* manager)
@@ -494,6 +504,7 @@ StateNode StatusBodyOf(const S* manager)
         ret["recording_paused"] = false;
         ret["earliest"] = StateNode();
         ret["black_box"] = false;
+        ret["recording_folder"] = StateNode();
         return ret;
     }
 
@@ -527,6 +538,7 @@ StateNode StatusBodyOf(const S* manager)
     // Which implementation records on this instance (Phase 5): "engine" or "v1"
     ret["backend"] = std::is_same<S, TimeTravelController>::value ? "engine" : "v1";
     ret["black_box"] = BlackBoxOf(manager);
+    ret["recording_folder"] = StringOrNull(RecordingFolderOf(manager));
     ret["loaded_from_file"] = info.loadedFromFile;
     ret["source_path"] = info.sourcePath;
     ret["captured_at_unix_ms"] = info.capturedAtUnixMs;
