@@ -116,11 +116,21 @@ StateNode ToStateNode(const Image& image)
         cpu["halted"] = *c.halted;
     if (c.eiShadow)
         cpu["ei_shadow"] = *c.eiShadow;
+    if (c.holdIntCycles)
+        cpu["hold_int_cycles"] = static_cast<uint64_t>(*c.holdIntCycles);
+    if (c.pcOnMachineStack)
+        cpu["pc_on_machine_stack"] = true;
     n["cpu"] = cpu;
 
     if (image.framePosition)
         n["frame_position"] = static_cast<uint64_t>(*image.framePosition);
+    if (image.ayAddressLatch)
+        n["ay_address_latch"] = Hex(*image.ayAddressLatch, 2);
+    if (!image.unsupported.empty())
+        n["unsupported"] = image.unsupported;
     n["border"] = static_cast<uint64_t>(image.border);
+    if (image.portFE)
+        n["port_fe"] = Hex(*image.portFE, 2);
     if (!image.timingHint.empty())
         n["timing_hint"] = image.timingHint;
 
