@@ -40,7 +40,7 @@ bug); `ng differs from both` (an unreal-ng bug); `unclear`.
 | 9 | W0 normal mode (`!W0_MAP` = 1): page = PAGE0, ROM uses page[4:0] | `zmem.v:73,81,298` | `memory.cpp:175-177,199-201` | `TM:42,71-74` | MT `MEM1` | match |
 | 10 | W0 mapped mode (`!W0_MAP` = 0): page = `{PAGE0[7:2], ~DOS, ROM128}`, for RAM too. Groups: +0 service, +1 TR-DOS, +2 128, +3 48 | `zmem.v:73` | `memory.cpp:179-188` (uses `p7FFD & 0x10`, which a MEM_CONFIG write keeps in sync, `io.cpp:1483-1488`) | `TM:52-57` | MT `MEM3`, `MEM4`; PDT `DosTrapNeedsMappedModeAndRom128` | match |
 | 11 | W0_RAM selects RAM; W0_WE gates RAM writes | `zmem.v:67-69,80-81,121` | `memory.cpp:190-195,390-391` | `TM:59-70` | MT `MEM2`, `WindowWritableFollowsTheMapper` | match |
-| 12 | W0_WE = 1 with ROM in window 0 writes the flash chip (`romwe_n = !(memwr && w0_we)`) | `zmem.v:297`; doc `tsconf_en.md:218` | ROM bank writes go to TRASH (`memory.cpp:390-391`) | ROM bank, write dropped (`TM:71-74`) | none | ng-matches-Unreal, RTL differs |
+| 12 | W0_WE = 1 with ROM in window 0 writes the flash chip (`romwe_n = !(memwr && w0_we)`) | `zmem.v:297`; doc `tsconf_en.md:218` | ROM bank writes go to TRASH (`memory.cpp:390-391`) | **fixed 2026-10-05:** the write reaches the 29F040 model (`EvoFlash`, `TsConfMemory::UpdateModelBanks`) | `MEM6_RomWriteEnableReachesTheFlash`, `EvoFlashTsConf_Test.*` | ng-matches-RTL, Unreal differs (was: ng-matches-Unreal, RTL differs) |
 | 13 | vdos: W0 = RAM page `#FF`, writable regardless of W0_WE | `zmem.v:73,80-81` | `memory.cpp:190-194,391` | `TM:46-51` | ST `VDOS1_VirtualDriveSwap` | match |
 | 14 | Reset MEM_CONFIG = `#04` (normal mode, ROM page 0 = TS-BIOS, DOS trap off) | `zports.v:565`; doc `tsconf_en.md:209` | `tsinit()` sets `memconf = 0`, then `reset()` sets 4 only for `ResetRom=SYS`, else 0 (`tsconf.cpp:902`, `z80.cpp:113-119`) | `TS:68`, `PD:247` | PDT `RST1` | ng-matches-RTL, Unreal differs |
 | 15 | `#7FFD` decode: `!a[15] && loa == #FD && !lock48` | `zports.v:624` | `!(port & 2)` and `!(port & 0x8000)`: low byte decoded on A1 only (`io.cpp:659,671`) | `PD:331-332` | PDT `P7F6` | ng-matches-RTL, Unreal differs |
@@ -177,6 +177,12 @@ while `ApplyState()` -> `RefreshCache()` -> `CacheClear()` clears them. Fix the 
 retention: keep the tags across reset and fill while disabled. No test needed for the comment fix.
 
 ### Gap G2 (row 12): W0_WE with ROM in window 0 does not reach the flash
+
+**Fixed 2026-10-05** (not committed): the ROM is the board's 29F040 flash (`Flash29F040B` on the ROM pages, glued by
+`EvoFlash`); MEM6 below is in, with the rest of the tests and the design in
+[../2026-09-27-tsconf/tdd-evo-flash.md](../2026-09-27-tsconf/tdd-evo-flash.md). Since 2026-10-06 (owner decision)
+the flashed ROM is saved to a file of its own per machine and loaded at the next start. The text below is the finding
+as audited.
 
 The RTL asserts `romwe_n` (`zmem.v:297`; doc `tsconf_en.md:218` "for ROM the write goes to the
 flash"). Both emulators drop the write, so TS-BIOS flash updates cannot work.

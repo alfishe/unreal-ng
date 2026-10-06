@@ -9,6 +9,7 @@
 #include "emulator/io/spi/zcontrollerspi.h"
 #include "emulator/media/mediaslot.h"
 #include "emulator/memory/atm/evoavr.h"
+#include "emulator/memory/atm/evoflash.h"
 #include "emulator/memory/devicememory.h"
 #include "emulator/memory/hostbusoverlay.h"
 #include "emulator/platforms/tsconf/tsconfdma.h"
@@ -113,7 +114,11 @@ public:
     }
     bool HasMachineMouse() const override { return true; }
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
-    void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out) override { out.push_back(&_evoAvr); }
+    void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out) override
+    {
+        out.push_back(&_evoAvr);
+        out.push_back(&_flash);
+    }
 
     /// region <SD card (hardware-spec §8.1)>
     /// The card is the media manager's slot "sd.zc", as on the ZX-Evo
@@ -133,6 +138,15 @@ public:
 
     Ds12887& GetRtc() { return _evoAvr; }
     EvoAvr& GetEvoAvr() { return _evoAvr; }
+    /// The board's ROM chip as a flash: MEM_CONFIG.W0_WE with ROM in window 0 writes it ([V] zmem.v:297)
+    EvoFlash& GetFlash() { return _flash; }
+    EvoFlash* GetEvoFlash() override { return &_flash; }
+    /// The machine goes away: a flashed board stays flashed (the saved flash file)
+    void BeforeRelease() override { _flash.SaveIfUnsaved(); }
+    /// The frame ended: a flash operation that finished since takes the overlay away; a quiet change is saved
+    void OnFrameEnd() override;
+    /// The saved flash (zxevo-flash-tsconf-<hash>.rom) replaces the image's bytes
+    void OnRomLoaded(uint16_t imageBanks) override { _flash.OnRomImageLoaded(static_cast<size_t>(imageBanks) * 0x4000); }
     /// Changes when CRAM may have changed (port / FM-window writes, DMA, a state
     /// load): the screen rebuilds its palette only then. Direct writes into
     /// GetState().cram are seen by the whole-frame renders only
@@ -269,6 +283,10 @@ private:
     // contents survive Core::Reset() like the battery
     EvoAvr _evoAvr;
     bool _nvramLoaded = false;
+
+    // The ROM chip (a 29F040 flash) working on the machine's ROM pages; window 0 writes reach it while W0_WE is set
+    // (TsConfMemory tells it the write window when it maps the banks)
+    EvoFlash _flash{_context, _memory, "tsconf"};
 
     /// The "sd.zc" media slot
     class SdSlot : public IMediaSlot

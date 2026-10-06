@@ -921,3 +921,42 @@
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["responses"]["200"]["description"] = "Protection state updated";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["responses"]["404"]["description"] = "Emulator not found";
 
+    // GET/POST /api/v1/emulator/{id}/memory/rom/flash - the ZX-Evo's saved flash ROM
+    {
+        const char* flashPath = "/api/v1/emulator/{id}/memory/rom/flash";
+        paths[flashPath]["get"]["summary"] = "ZX-Evo flash ROM: the saved flash";
+        paths[flashPath]["get"]["tags"].append("Memory State");
+        paths[flashPath]["get"]["description"] =
+            "TS-Conf and ATM3 only: the ROM is the board's 29F040 flash, and what programs flash is saved to "
+            "zxevo-flash-<machine>-<SHA-256 of the ROM image>.rom in the settings folder (never to the shipped "
+            "image). Reports the file for the loaded ROM image (file, file_exists, base_rom_sha256), whether the "
+            "array came from it (loaded_from_file), unsaved changes (unsaved, changes) and files flashed over "
+            "other ROM images, which are not used (other_image_files). 400 on other machines.";
+        paths[flashPath]["get"]["parameters"][0]["name"] = "id";
+        paths[flashPath]["get"]["parameters"][0]["in"] = "path";
+        paths[flashPath]["get"]["parameters"][0]["required"] = true;
+        paths[flashPath]["get"]["parameters"][0]["schema"]["type"] = "string";
+        paths[flashPath]["get"]["responses"]["200"]["description"] = "Saved-flash status";
+        paths[flashPath]["get"]["responses"]["400"]["description"] = "The machine's ROM is not a flash";
+        paths[flashPath]["get"]["responses"]["404"]["description"] = "Emulator not found";
+
+        paths[flashPath]["post"]["summary"] = "ZX-Evo flash ROM: save now or discard the saved flash";
+        paths[flashPath]["post"]["tags"].append("Memory State");
+        paths[flashPath]["post"]["description"] =
+            "action 'save' writes the flash file now (it is also written about a second after the last program / "
+            "erase, and when the instance closes); 'discard' deletes it - the shipped ROM image comes back at the "
+            "next reset. Both run on the machine's thread; refused (409) while a TTD replay owns the machine.";
+        paths[flashPath]["post"]["parameters"][0]["name"] = "id";
+        paths[flashPath]["post"]["parameters"][0]["in"] = "path";
+        paths[flashPath]["post"]["parameters"][0]["required"] = true;
+        paths[flashPath]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[flashPath]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["action"]["type"] = "string";
+        paths[flashPath]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["action"]["enum"].append("save");
+        paths[flashPath]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["action"]["enum"].append("discard");
+        paths[flashPath]["post"]["responses"]["200"]["description"] = "Done or queued (result, flash status)";
+        paths[flashPath]["post"]["responses"]["400"]["description"] = "Bad action, or the machine's ROM is not a flash";
+        paths[flashPath]["post"]["responses"]["404"]["description"] = "Emulator not found";
+        paths[flashPath]["post"]["responses"]["409"]["description"] = "A TTD replay owns the machine";
+        paths[flashPath]["post"]["responses"]["500"]["description"] = "Failed (no ROM loaded, persistence off, file error)";
+    }
+

@@ -42,7 +42,7 @@ fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
 fulldecode 00FF/00EF slot 1
-ttd 0:77 1:64 2:34 3:21 7:20 8:89 10:216 12:137 15:39 17:57 18:48 19:38 21:18 22:1135 23:14 24:47 35:52 38:20 41:42 55:29 56:22 notRecorded 0
+ttd 0:77 1:64 2:34 3:21 7:20 8:89 10:216 12:137 15:39 17:57 18:48 19:38 21:18 22:1135 23:14 24:47 35:52 38:20 41:42 55:29 56:22 61:32 notRecorded 0
 == atm450
 model 7
 mixer [Beeper] [TS AY 1] [TS AY 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
@@ -435,6 +435,6 @@ fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
 fulldecode 00FF/00EF slot 1
-ttd 1:72 2:34 3:21 4:107 7:20 10:216 12:138 15:39 16:189 17:50 18:99 19:38 23:14 24:47 35:52 38:20 39:47 40:40 55:29 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:107 7:20 10:216 12:138 15:39 16:189 17:50 18:99 19:38 23:14 24:47 35:52 38:20 39:47 40:40 55:29 56:22 61:32 notRecorded 0
 == zx-diagnostics
 config turbosound 1 gs 4 moonsound 1 covoxFB 0 sd 1 network.card 0

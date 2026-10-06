@@ -34,6 +34,7 @@ enum ROMModeEnum : uint8_t;
 class ModuleLogger;
 class EmulatorContext;
 class EvoAvrWait;
+class EvoFlash;
 namespace snapshot
 {
 class ISnapshotCommitPolicy;
@@ -644,6 +645,13 @@ public:
     /// The frame ended (main loop, after the network pump): board devices that
     /// run on their own clock catch up (ATM Turbo 2+ keyboard controller)
     virtual void OnFrameEnd() {}
+    /// The ROM loader put a new image into the ROM pages (@p imageBanks 16 KB pages of it from the file): a board
+    /// whose ROM is a flash lays its saved flash over it (ZX-Evo: EvoFlash)
+    virtual void OnRomLoaded(uint16_t imageBanks) { (void)imageBanks; }
+    /// The board's ROM as a writable flash (ZX-Evo TS-Conf, ATM3), or null
+    virtual EvoFlash* GetEvoFlash() { return nullptr; }
+    /// Core::Release starts: memory, the CPU and every device still exist. Save what outlives the machine
+    virtual void BeforeRelease() {}
     /// The Z80 accepted an NMI (PC = #0066). Return true when the board forces
     /// a NOP onto the bus for the #0066 fetch; the Z80 then continues at #0067
     virtual bool OnNmiAccepted() { return false; }

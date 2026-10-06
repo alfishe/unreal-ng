@@ -100,7 +100,7 @@ and ignored.
 | Bit | Name | Meaning |
 |:--|:--|:--|
 | 0 | `ROM128` | copy of 7FFD bit 4: **0 = BASIC-128, 1 = BASIC-48** |
-| 1 | `W0_WE` | window 0 writable |
+| 1 | `W0_WE` | window 0 writable: RAM takes the write; with ROM in window 0 the write goes to the flash chip (below) |
 | 2 | `!W0_MAP` | **0 = mapped mode**, 1 = normal mode (page = `PAGE0` directly) |
 | 3 | `W0_RAM` | window 0 shows RAM instead of ROM |
 | 7-6 | `LCK128` | 7FFD decode mode (§2.3) |
@@ -132,6 +132,18 @@ Mapped-mode group layout — **all sources agree**, also verified in
 sys/dos/128/48.) The same 512 KB `zxevo.rom` also carries BaseConf's set in
 pages 28-31 — one image serves both TSCONF (group 0) and ATM3 (last group).
 The 64 KB `ts-bios*.rom` files contain group 0 only.
+
+**Flash writes** ([V] `zmem.v:294-298`): the ROM is a 29F040 flash (512 KB, 8 x 64 KB
+sectors). `/CSROM` = window 0 shows ROM (not `W0_RAM`, not vdos), `/OE` = the read
+strobe, `/WE` = `memwr && W0_WE`, A18..A14 = the window-0 page `[4:0]`, A13..A0 from the
+Z80. With `MEM_CONFIG = #06` (normal mode, ROM, `W0_WE`) the JEDEC commands reach the
+chip: `555/AA 2AA/55 555/A0 PA/PD` programs a byte, `.../80 .../AA .../55 SA/30` erases
+a sector, `.../90` reads the ID (AMD Am29F040B `#01 / #A4`); unlock cycles compare
+A10..A0 only. While it works every window-0 ROM read returns status (DQ7 Data#, DQ6
+toggle, DQ5 failure, DQ3 erase timer). Typical times: byte 7-10 us, sector 1 s. Flashers
+write with `#06` and leave with `#0E` (RAM in window 0). unreal-ng: `EvoFlash`
+([tdd-evo-flash.md](tdd-evo-flash.md)); the flashed ROM is saved to a file of its own per
+machine and laid over the ROM image at the next start (the shipped image is never written).
 
 **DOS switching** ([V] `zmem.v:80,87-88`):
 

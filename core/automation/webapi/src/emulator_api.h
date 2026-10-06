@@ -236,6 +236,9 @@ public:
     // ROM protection control
     ADD_METHOD_TO(EmulatorAPI::getROMProtect, "/api/v1/emulator/{id}/memory/rom/protect", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setROMProtect, "/api/v1/emulator/{id}/memory/rom/protect", drogon::Put, drogon::Post);
+    // ZX-Evo flash ROM: the saved flash (status, save now, discard)
+    ADD_METHOD_TO(EmulatorAPI::getROMFlash, "/api/v1/emulator/{id}/memory/rom/flash", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postROMFlash, "/api/v1/emulator/{id}/memory/rom/flash", drogon::Post);
     // endregion Memory State
 
     // region Screen State (implementation: api/state_screen_api.cpp)
@@ -971,6 +974,12 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
 
     void setROMProtect(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    // ZX-Evo flash ROM persistence (EvoFlash, evoflashrequest.h)
+    void getROMFlash(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void postROMFlash(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     void getStateScreen(const drogon::HttpRequestPtr& req,
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;

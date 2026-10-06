@@ -666,7 +666,14 @@ types:
           59 Sam2695 (a Dream SAM2695 synthesizer, instance <slot>.multisound.sam2695: sam2695::Synth::SaveState, magic
           "SAM2", version, the bank's SHA-256, UART, parser, queue, channels, voices; a load refuses another bank),
           60 MultiSoundGs (the ZX-MultiSound's General Sound, instance <slot>.multisound.gs: the GeneralSound (5)
-          layout with 1-2 MB RAM; the engine region MultiSoundGsRam (17)).
+          layout with 1-2 MB RAM; the engine region MultiSoundGsRam (17)),
+          61 EvoFlash (the ZX-Evo's ROM chip as a 29F040 flash, TS-Conf and ATM3, 33 bytes: u1 version 1, then the
+          chip's command state - u1 mode (0 read array, 1-2 unlock steps, 3 autoselect, 4 program set-up, 5 erase
+          set-up, 6-7 erase unlock steps, 8 sector-erase window, 9 busy, 10 failed), u1 reserved, u1 flags (bit 0
+          erasing, 1 writable, 2 contents modified, 3 AMD IDs), u1 DQ6 toggle, u1 DQ7 source byte, u1 sectors to
+          erase (bit per 64 KB sector), u1 program value, s8 erase window end, s8 busy end (base clock t-states),
+          u3 program offset, 6 reserved; the 512 KB array is the engine region EvoFlash (18), the machine's ROM
+          pages 0-31).
           ScorpionProfROM (6) byte 5 is the Turbo+ latch (scorpion_turbo; 0 in sessions recorded before it).
           Plus3Paging (13): u1 p1FFD, u1 floating-bus byte (the gate array's last contended byte), u1 flags
           (bit 0: the byte is valid; 0 in sessions recorded before it), u1 reserved.

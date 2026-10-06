@@ -526,6 +526,11 @@ bool Core::Init()
 
 void Core::Release()
 {
+    // The machine goes away: the decoder saves what must outlive it while memory and the CPU still exist (the
+    // ZX-Evo's flashed ROM)
+    if (_portDecoder)
+        _portDecoder->BeforeRelease();
+
     // Unregister itself from context
     _context->pCore = nullptr;
 

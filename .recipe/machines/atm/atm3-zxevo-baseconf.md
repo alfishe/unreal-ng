@@ -35,6 +35,13 @@ below. Common material for all ATM models (creating, ports, video modes, CP/M mo
     under the beam on `#0EBD`; the font survives a reset); bit 5 = **4:4:4
     palette** (a `#FF` write takes the low bit of each channel from A15..A8,
     `#0DBD` then reads the low bit pair instead of the high one).
+  - **`#BF` bit 1 = ROM write enable**: every window showing ROM takes writes as flash commands for the board's
+    29F040 (unless its `#xBF7` protection is on): NedoOS `evoflash.com` uses `#BF` = 3, unlocks at `#D555` /
+    `#EAAA` with window 3 on ROM pages 1 / 0, programs through window 1, then `#BF` = 1. ID `#01 / #A4`; status
+    reads (DQ6 toggle) while the chip works; saved to `zxevo-flash-atm3-<ROM image hash>.rom` in the settings
+    folder and loaded at the next start (never into the ROM file; `romflash [status|save|discard]`). Same chip model as
+    TS-Conf: [tsconf.md](../tsconf.md#flashing-the-rom-mem_configw0_we),
+    [tdd-evo-flash.md](../../../docs/inprogress/2026-09-27-tsconf/tdd-evo-flash.md).
   - **`#xBF7`** (shadow, window = A15:A14, D0): per-window **write protect**
     for the map `#7FFD` bit 4 selects; read back on `#12BD` (bit i = window i
     of map 0, bit 4+i = of map 1). Window 0 under RAM 0, the NMI page or the

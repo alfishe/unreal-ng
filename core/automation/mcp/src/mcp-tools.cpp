@@ -129,6 +129,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
                                "gs_switch_personality", "gs_dump_module", "gs_sd_insert", "gs_sd_eject", "gs_flash_save",
                                "gs_stereo_mode",
+                               "rom_flash_status", "rom_flash_save", "rom_flash_discard",
                                "slots_catalog", "slots_matrix", "slots_plug", "slots_remove", "slots_set",
                                "network_configure"})
     {
@@ -160,6 +161,10 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "refused while TTD records), 'gs_stereo_mode' (needs 'mode': 'separated' as on the board, 'gs' 50% "
         "cross-feed like the classic GS, or 'mono'; applied at the next frame); 'gs_dump_module' writes the last completed COM30..D2 module "
         "upload to a file (optional 'path', defaults to 'gs-module-dump.mod'). "
+        "ZX-Evo flash ROM (TS-Conf, ATM3; GET/POST /memory/rom/flash): 'rom_flash_status' reports the saved flash "
+        "(the file zxevo-flash-<machine>-<ROM image SHA-256>.rom in the settings folder, unsaved changes, files of "
+        "other ROM images that are not used), 'rom_flash_save' writes it now, 'rom_flash_discard' deletes it (the "
+        "shipped ROM image returns at the next reset). "
         "ZX-bus slots (the cards on the machine's buses; the slot report is inspect_state aspect 'slots'): "
         "'slots_catalog' lists every card with its options and how it fits this machine (slot, fit real / adapter / "
         "unrealistic, outcome fits / needs-replace / refused); 'slots_matrix' the compatibility tables (optional "
@@ -306,6 +311,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "Multi-instance: target identifies the machine; 'auto' reuses the single instance or creates a default 128k one. "
         "Also drives the General Sound card (gs_reset/gs_reset_card/gs_nmi/gs_send_command/gs_send_data/"
         "gs_read_status/gs_read_data/gs_switch_personality/gs_dump_module; NeoGS: gs_sd_insert/gs_sd_eject/gs_flash_save/gs_stereo_mode) "
+        "the ZX-Evo's saved flash ROM (rom_flash_status/rom_flash_save/rom_flash_discard), "
         "and the ZX-bus slots (slots_catalog/slots_matrix/slots_plug/slots_remove/slots_set; a change restarts the machine); "
         "network_configure changes the network settings (a network card change is a slot change: a restart).",
         std::move(schema),
@@ -403,6 +409,17 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 if (action == "status")
                 {
                     ForwardCall("GET", Endpoint(id), nullptr, caller, "Status of " + id, done);
+                }
+                else if (action == "rom_flash_status")
+                {
+                    ForwardCall("GET", Endpoint(id, "/memory/rom/flash"), nullptr, caller, "Saved flash of " + id, done);
+                }
+                else if (action == "rom_flash_save" || action == "rom_flash_discard")
+                {
+                    Json::Value body;
+                    body["action"] = action == "rom_flash_save" ? "save" : "discard";
+                    ForwardCall("POST", Endpoint(id, "/memory/rom/flash"), &body, caller,
+                                "Flash " + body["action"].asString() + " on " + id, done);
                 }
                 else if (action == "zxpoly_status")
                 {

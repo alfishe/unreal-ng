@@ -73,6 +73,33 @@ TEST_F(TsConfMemory_Test, MEM5_WindowsReachTheTopPage)
     EXPECT_EQ(Ram(0xFF, 0x0100), 0x12);
 }
 
+/// MEM-6 (audit gap G2, [V] zmem.v:297 `romwe_n = !(memwr && w0_we)`): with ROM in window 0 and W0_WE set, the
+/// flash program sequence (AA@555, 55@2AA, A0@555, then the byte) changes the ROM byte; with W0_WE clear the same
+/// writes are dropped. ROM page 7 is tagged #07, so programming #02 (bits can only go 1 -> 0) gives #02
+TEST_F(TsConfMemory_Test, MEM6_RomWriteEnableReachesTheFlash)
+{
+    auto program = [&](uint8_t value) {
+        Reg(TsConfReg::Page0, 0x00);
+        Poke(0x0555, 0xAA);
+        Poke(0x02AA, 0x55);
+        Poke(0x0555, 0xA0);
+        Reg(TsConfReg::Page0, 0x07);
+        Poke(0x1234, value);
+        _context->emulatorState.t_states += 100;  // 29 us: the byte program (10 us) is over
+    };
+
+    Reg(TsConfReg::MemConfig, TsConfMemConfig::W0NoMap);  // normal mode, ROM, W0_WE = 0
+    program(0x02);
+    EXPECT_EQ(Peek(0x1234), 0x07) << "W0_WE = 0: the writes do not reach the flash";
+    EXPECT_EQ(_memory->ROMBase()[7 * PAGE_SIZE + 0x1234], 0x07);
+
+    Reg(TsConfReg::MemConfig, TsConfMemConfig::W0NoMap | TsConfMemConfig::W0We);  // #06
+    program(0x02);
+    EXPECT_EQ(Peek(0x1234), 0x02) << "W0_WE = 1: the byte is programmed";
+    EXPECT_EQ(_memory->ROMBase()[7 * PAGE_SIZE + 0x1234], 0x02) << "the ROM page itself holds it";
+    EXPECT_EQ(Peek(0x1235), 0x07) << "its neighbor is untouched";
+}
+
 /// CCH-1 (hs §2.5): a hit returns the cached word even when RAM changed under
 /// it (DMA-like); a CPU write invalidates the entry
 TEST_F(TsConfMemory_Test, CCH1_HitReturnsTheCachedWord)

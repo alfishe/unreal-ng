@@ -22,6 +22,7 @@
 # All rows 2026-10-04 (ttd-engine landed on master): exported again after the merge - master's device blobs (Profi, Sprinter ISA, ZiFi) and the engine's bm2_work_device_state / bm2_work_scanned_* / bm3_device_regions rows; blob rows move by a few bytes per capture.
 # 48K/idle device blob, device state and file rows updated 2026-10-04 (zx-bus-slots, owner decision): the shipped 48K config fits no NeoGS any more - its blob (id 12) leaves every capture; nothing else moved.
 # ATM3/idle blob and file rows updated 2026-10-05 (Gluk CMOS /WAIT): the EvoAvrVolatile blob (id 55, now 20 bytes, also on the ATM3); the ERS's CMOS reads wait for the AVR.
+# ATM3/idle blob and file rows updated 2026-10-05 (ZX-Evo flash, audit gap G2): the EvoFlash blob (id 61, 33 bytes: the flash chip's command state) on every capture; nothing else moved.
 48K/idle bm2_work_compress_calls_opf 3.966667 0
 48K/idle bm2_work_compress_input_bpf 16247.466667 0
 48K/idle bm2_work_decoded_opf 0.000000 0
@@ -53,15 +54,15 @@ ATM3/idle bm2_work_compress_calls_opf 8.216667 0
 ATM3/idle bm2_work_compress_input_bpf 33655.466667 0
 ATM3/idle bm2_work_decoded_opf 0.000000 0
 ATM3/idle bm2_work_delta_base_bpf 4194304.000000 0
-ATM3/idle bm2_work_device_blobs_bpf 2396.683333 0
-ATM3/idle bm2_work_device_state_bpf 43554.000000 0
+ATM3/idle bm2_work_device_blobs_bpf 2428.683333 0
+ATM3/idle bm2_work_device_state_bpf 43587.000000 0
 ATM3/idle bm2_work_pages_visited_opf 256.000000 0
 ATM3/idle bm2_work_scanned_bpf 66628.266667 0
 ATM3/idle bm2_work_scanned_ram_bpf 0.000000 0
 ATM3/idle bm2_work_scanned_v1_lacks_bpf 0.000000 0
 ATM3/idle bm3_checkpoint_core_bpf 170.800000 0
 ATM3/idle bm3_coverage_bpf 54287.050000 25
-ATM3/idle bm3_device_blobs_bpf 2435.433333 0
+ATM3/idle bm3_device_blobs_bpf 2467.966667 0
 ATM3/idle bm3_device_regions_bpf 0.000000 0
 ATM3/idle bm3_device_regions_v1_lacks_bpf 0.000000 0
 ATM3/idle bm3_input_journal_bpf 0.000000 0
@@ -72,8 +73,8 @@ ATM3/idle bm3_total_bpf 66805.583333 25
 ATM3/idle bm3_write_journal_bpf 4849.000000 0
 ATM3/idle bm4_resident_bpf 81491.650000 25
 ATM3/idle bm4_resident_bytes 4889499.000000 25
-ATM3/idle bm7_file_bpf 8532.883333 0
-ATM3/idle bm7_file_bytes 511973.000000 0
+ATM3/idle bm7_file_bpf 8570.500000 0
+ATM3/idle bm7_file_bytes 514230.000000 0
 ATM3/idle checkpoints 61.000000 0
 ATM3/idle frames 60.000000 0
 PENTAGON/game bm2_work_compress_calls_opf 8.100000 0
