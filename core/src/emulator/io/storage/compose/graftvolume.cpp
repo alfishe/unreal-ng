@@ -865,6 +865,7 @@ std::unique_ptr<GraftVolume> GraftVolume::Build(std::shared_ptr<const FileTree> 
     volume->_sectorsPerCluster = reader.SectorsPerCluster();
     volume->_clusterCount = reader.ClusterCount();
     volume->_volumeStart = volumeStart;
+    volume->_volumeSectors = reader.VolumeSectors();
     volume->_fatStart = volumeStart + reader.ReservedSectors();
     volume->_rootStart = volume->_fatStart + static_cast<uint64_t>(reader.FatCount()) * reader.FatSectors();
     // The base files' extents name the image, or the window FatImageSource opened for an explicit partition
@@ -892,7 +893,8 @@ std::unique_ptr<GraftVolume> GraftVolume::Build(std::shared_ptr<const FileTree> 
 
 uint64_t GraftVolume::SectorCount() const
 {
-    return _base->SectorCount();
+    // A cut-down image (its BPB says more than the file holds): the volume's end, zeros past the file
+    return std::max(_base->SectorCount(), _volumeStart + _volumeSectors);
 }
 
 std::optional<BlockGeometry> GraftVolume::NativeGeometry() const
@@ -1039,6 +1041,11 @@ bool GraftVolume::ReadSector(uint64_t lba, uint8_t* dst)
         const uint64_t fileSector =
             (run->fileClusterStart + (cluster - run->firstCluster)) * _sectorsPerCluster + (lba - _dataStart) % _sectorsPerCluster;
         return _reader.ReadFileSector(_tree->Node(run->node).data, fileSector, dst);
+    }
+    if (lba >= _base->SectorCount() && lba < SectorCount())
+    {
+        std::memset(dst, 0, kSector);
+        return true;
     }
     return _base->ReadSector(lba, dst);
 }

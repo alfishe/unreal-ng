@@ -48,6 +48,14 @@ namespace
             out << " -> " << layer.find("mount")->s << "  " << layer.find("files")->i << " files, "
                 << layer.find("bytes")->i << " bytes" << NEWLINE;
         }
+        if (const StateNode* partitions = value.find("partitions"))
+        {
+            for (const StateNode& p : partitions->items)
+                out << "  partition " << std::left << std::setw(10) << p.find("name")->s << " " << p.find("kind")->s << " "
+                    << p.find("fs")->s << " type #" << std::hex << std::uppercase << std::setw(2) << std::setfill('0')
+                    << p.find("type")->i << std::dec << std::setfill(' ') << " at " << p.find("start")->i << ", "
+                    << p.find("sectors")->i << " sectors" << NEWLINE;
+        }
     }
 
     std::string MediumText(const StateNode* medium)

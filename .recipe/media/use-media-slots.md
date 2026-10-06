@@ -58,6 +58,10 @@ media {"action":"insert","slot":"ide0.master","path":"/music/album","device":"cd
   descriptor restores it ("session restored"). A delta written over other sources (a host file changed since) is not
   applied: the report names the layer, and a new `save` over it needs `force`. A damaged delta is renamed
   `*.delta.bad`. `strategy: flat` with a path writes one image instead (as `export`, then the slot holds that image).
+- A partitioned disk (`*.ucompose.yaml` with `partitions:` instead of `layers:`): each entry is a passthrough
+  `{source: {image: x.img, partition: 1}}` or a composition `{fs: fat16, size: 64MiB, compose: {build: graft,
+  layers: [...]}}`; partitions are 1 MiB aligned, more than four go logical. The first source MBR's boot code is
+  carried (the Profi BIOS runs it). `media layers` lists the partitions; `media changes` paths read `name:/PATH`.
 
 - `slot` takes `A`, `b:`, `fdd.b`, `sd`, `floppy:1`, `tag:sd+neogs` or (insert) `auto`.
 - Paths are read by the **emulator** process (the `media` tool does not upload; `load_software` does, and the WebAPI `insert` / `swap` also take a multipart file or a raw body with `X-Filename`).

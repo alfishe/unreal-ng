@@ -4,8 +4,9 @@
 /// @brief A window of another block device: sectors [first, first + count) of
 /// the base appear as sectors [0, count). A partition of a disk image read as
 /// its own volume (a FAT image layer, a passthrough partition of a composed
-/// disk). Reads and writes outside the window fail; it is writable only when
-/// the base is. Design: docs/inprogress/2026-10-05-media-multisource/phases/c3-image-sources.md.
+/// disk). Reads and writes outside the window fail; inside the window but past
+/// the base's end (a cut-down image whose partition is larger than the file)
+/// reads are zeros and writes fail. It is writable only when the base is. Design: docs/inprogress/2026-10-05-media-multisource/phases/c3-image-sources.md.
 
 #include <memory>
 

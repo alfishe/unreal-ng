@@ -159,18 +159,15 @@ TEST(CompositeMediumFactory_Test, FixedSize)
     EXPECT_EQ(tooSmall.error, MediaError::DoesNotFit) << "FAT32 needs at least 65 526 clusters";
 }
 
-TEST(CompositeMediumFactory_Test, LaterPhasesSayNotSupported)
+/// Partitions came with phase C7: an empty list is a bad descriptor, not a later phase
+TEST(CompositeMediumFactory_Test, EmptyPartitionListRefused)
 {
     Fixture f;
-    f.root.File("base/a.bin", "a");
     std::unique_ptr<IBlockDevice> volume;
     CompositeInfo info;
-    for (const char* yaml : {"version: 1\npartitions: []\n"})
-    {
-        const MediaResult r = CompositeMediumFactory::Build(f.Descriptor(yaml), {}, volume, info);
-        EXPECT_EQ(r.error, MediaError::NotSupported) << yaml << " -> " << r.message;
-        EXPECT_NE(r.message.find("phase"), std::string::npos) << r.message;
-    }
+    const MediaResult r = CompositeMediumFactory::Build(f.Descriptor("version: 1\npartitions: []\n"), {}, volume, info);
+    EXPECT_EQ(r.error, MediaError::BadRequest) << r.message;
+    EXPECT_NE(r.message.find("partitions"), std::string::npos) << r.message;
 }
 
 TEST(CompositeMediumFactory_Test, MissingFolderAndBadDescriptor)

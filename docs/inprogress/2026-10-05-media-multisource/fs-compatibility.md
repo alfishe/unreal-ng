@@ -149,7 +149,7 @@ BUGS.md #2), so a composite follows exactly the same per-slot rules as a folder 
 | Wild Commander (ZX-Evo) | — | ✓ | ✓ | — | listed as a FAT16 / FAT32 target in the IDE design ([2026-09-25-ide-hdd-design.md](../2026-09-21-profi/2026-09-25-ide-hdd-design.md) §7.4.4) |
 | TS-BIOS + Wild Commander (TS-Conf `sd.zc`) | — | ✗ | ✓ | — | the slot declares `fsCompatibility = {Fat32}` (`portdecoder_tsconf.cpp`, `TsConfMedia_Test.SdSlotIsFat32Only`); a volume from sector 0, no MBR |
 | Estex DSS (Sprinter IDE) | ✓ | ✓ | ✗ | — | DSS reads FAT12 / FAT16 only ([Sprinter hardware reference](../2026-09-28-sprinter/hardware-reference.md) §9.3: `fat_x.asm`, `DOSBOOT4.ASM:351-375`); partition types `#01 #04 #06 #0E`, extended `#05 #0F`; `#0B #0C` skipped; the boot loader reads **MBR entry 0 only**; boot code at LBA 1-3 ([sprinter-hdd recipe](../../../.recipe/media/sprinter-hdd.md)) |
-| PQ-DOS (Profi IDE) | ✓ (boot floppy) | ✓ | not evidenced | — | `testdata/machines/profi/pqdos/pqdos-hdd-small.img`: MBR entry 0 type `#06`, FAT16; `pqdos1.fdi` FAT12; no FAT32 source or image found |
+| PQ-DOS (Profi IDE) | ✓ (boot floppy) | ✓ | ✗ (ACC-C4, 2026-10-06: a FAT32 partition 2 is ignored) | — | `testdata/machines/profi/pqdos/pqdos-hdd-small.img`: MBR entry 0 type `#06`, FAT16; `pqdos1.fdi` FAT12; no FAT32 source or image found |
 | NextZXOS / esxDOS (Next, later) | ✓ | ✓ | ✓ | — | [integration-next.md](../2026-09-28-storage-manager/integration-next.md) |
 | NeoGS SD (loader, players) | — | ✓ | ✓ | — | [integration-neogs-sd.md](../2026-09-28-storage-manager/integration-neogs-sd.md) |
 
@@ -193,7 +193,7 @@ flowchart TD
 |---|---|---|
 | Sprinter `ide0.*`, `ide1.*` | no `fsCompatibility`: a FAT32 folder or composite is accepted, although DSS cannot read it and the Sprinter storage design says it must be refused | `fsCompatibility = {Fat16}` (FAT12 targets are a non-goal); `ComposeSprinter_Test.Fat32Refused` |
 | Sprinter, partitions mode | — | the DSS partition must be **entry 0**; types `#0B`/`#0C` are pointless (DSS skips them), so the validator warns; a rebuilt DSS boot volume would lose the boot code at LBA 1-3: `build: auto` picks graft for a bootable DSS base; a rebuild carries the base's reserved boot sectors (D-6), and a composite with no DSS base gets the loader from a boot layer (`boot.reserved`) |
-| Profi `ide0.*` | no `fsCompatibility` | keep FAT16 as `defaultFs`; no restriction (no evidence either way for FAT32); ACC-C4 checks FAT32 once and the result sets the descriptor |
+| Profi `ide0.*` | `{Fat16}` (since C7) | ACC-C4 (2026-10-06): PQ-DOS 2023-09 boots from a FAT16 partition and makes a directory on a composed FAT16 partition 2, but ignores a FAT32 one; the IDE slots now refuse FAT32 composites, folders and images as Sprinter's do |
 | ZX-Evo `sd.zc`, IDE; NeoGS; Next | FAT16 default, both allowed | unchanged |
 | TS-Conf `sd.zc` | `{Fat32}` | unchanged |
 

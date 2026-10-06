@@ -42,6 +42,20 @@ struct CompositeLayerInfo
     uint64_t identity = 0;   ///< the source's identity (folder snapshot)
 };
 
+/// One partition of a partitioned composite (phase C7)
+struct CompositePartitionInfo
+{
+    std::string name;
+    std::string kind;          ///< image (passthrough) | compose
+    std::string fs;            ///< fat12 | fat16 | fat32 | "" (a passthrough of another kind)
+    std::string build;         ///< compose: rebuild | graft
+    uint8_t type = 0;
+    uint64_t start = 0;
+    uint64_t sectors = 0;
+    size_t firstLayer = 0;     ///< its layers in CompositeInfo::layers
+    size_t layerCount = 0;
+};
+
 /// The facts of a built composite, kept by the medium
 struct CompositeInfo
 {
@@ -58,6 +72,7 @@ struct CompositeInfo
     uint64_t bytes = 0;
     uint32_t sourceDevices = 0;  ///< images opened for the layers (one per image and partition, shared)
     std::vector<CompositeLayerInfo> layers;
+    std::vector<CompositePartitionInfo> partitions;  ///< a partitioned composite (build "partitions")
     std::filesystem::path delta;   ///< S2: the session delta file (writes.delta, or <descriptor>.delta); empty: none
     std::string writesSave = "delta";  ///< writes.save: the strategy a save runs (DT-9)
 };
@@ -83,6 +98,10 @@ public:
     /// are set; `result.report` lists everything left out, shadowed or chosen
     static MediaResult Build(const ComposeDescriptor& descriptor, const CompositeBuildOptions& options,
                              std::unique_ptr<IBlockDevice>& volume, CompositeInfo& info);
+
+    /// The partitions variant (phase C7): a PartitionedDisk of passthrough and composed partitions
+    static MediaResult BuildPartitioned(const ComposeDescriptor& descriptor, const CompositeBuildOptions& options,
+                                        std::unique_ptr<IBlockDevice>& volume, CompositeInfo& info, MediaResult result);
 
     /// What a session delta of this composite is written over (S2, DT-13)
     static DeltaIdentity DeltaIdentityOf(const CompositeInfo& info);

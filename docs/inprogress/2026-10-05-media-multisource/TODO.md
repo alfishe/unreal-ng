@@ -31,7 +31,7 @@ PLAN.md row **#95**.
   - [x] C6a S1: sparse raw export, fixed VHD writer, `compact` on export / save, ACC-C6
   - [x] C6b provenance, `ChangeAttributor`, `media changes`, ACC-C3 attribution
   - [x] C6c S2 delta file, DT-13 restore, DT-9, ACC-C7
-- [ ] C7 partitions
+- [x] C7 partitions (`PartitionedDisk`, passthrough and composed partitions, ACC-C4; Profi IDE slots FAT16 only)
 - [ ] C8 S3 commit, S4 write-back, Qt flatten dialog
 - [ ] C9 optional bulk `ReadSectors` (A/B gated)
 - [ ] Lazy base enumeration for grafts: walk only the base directories upper layers touch (the full walk dominates

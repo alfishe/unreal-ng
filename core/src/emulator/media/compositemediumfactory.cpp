@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <array>
+#include <fstream>
+#include <iterator>
 
 #include "common/filehelper.h"
 #include "emulator/io/storage/cd/cdimage.h"
@@ -19,6 +21,7 @@
 #include "emulator/io/storage/compose/unionbuilder.h"
 #include "emulator/io/storage/fat/fatsynthvolume.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
+#include "emulator/io/storage/partitioneddisk.h"
 #include "emulator/io/storage/subrangedevice.h"
 #include "emulator/io/storage/hostfolder/foldermanifest.h"
 #include "emulator/io/storage/hddimageformats.h"
@@ -225,6 +228,203 @@ std::vector<FatType> CompositeMediumFactory::FsCandidates(std::optional<FatType>
     return candidates;
 }
 
+MediaResult CompositeMediumFactory::BuildPartitioned(const ComposeDescriptor& d, const CompositeBuildOptions& options,
+                                                     std::unique_ptr<IBlockDevice>& volume, CompositeInfo& info, MediaResult result)
+{
+    if (options.slotKind == MediaKind::Optical || d.target.kind == MediaKind::Optical)
+        return MediaResult::Fail(MediaError::BadRequest, "partitions are for disks, not CDs");
+    info.descriptor = d.file.empty() ? "(inline)" : PathText(d.file);
+    info.normalized = d.Normalized();
+    info.delta = d.writes.delta;
+    info.writesSave = d.writes.save;
+    info.build = "partitions";
+    info.fsName = "mbr";
+
+    // D-6: the MBR code of the first source disk that has one (a Z80 loader on a Profi disk), unless the
+    // descriptor's boot section names one
+    std::vector<uint8_t> mbrCode;
+    std::string mbrFrom;
+    auto carryMbr = [&](const std::filesystem::path& path, IBlockDevice& image) {
+        uint8_t s[512];
+        if (!mbrCode.empty() || !image.ReadSector(0, s) || s[510] != 0x55 || s[511] != 0xAA ||
+            std::all_of(s, s + 440, [](uint8_t b) { return b == 0; }))
+            return;
+        mbrCode.assign(s, s + 446);
+        mbrFrom = PathText(path);
+    };
+    if (d.boot.mbrCode.Set())
+    {
+        if (d.boot.mbrCode.host.empty())
+            result.report.push_back("boot.mbrCode: a partitioned disk takes a host file ({host: path}); ignored");
+        else
+        {
+            std::ifstream in(d.boot.mbrCode.host, std::ios::binary);
+            std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            if (!in.good() && !in.eof())
+                bytes.clear();
+            if (bytes.empty() || bytes.size() > 446)
+                return MediaResult::Fail(MediaError::BadRequest, "boot.mbrCode: " + PathText(d.boot.mbrCode.host) +
+                                                                     " must hold 1 to 446 bytes");
+            mbrCode = bytes;
+            mbrCode.resize(446, 0);
+            mbrFrom = PathText(d.boot.mbrCode.host);
+        }
+    }
+
+    std::vector<PartitionedDisk::Part> parts;
+    for (const ComposePartition& p : d.partitions)
+    {
+        const std::string where = "partition '" + p.name + "'";
+        PartitionedDisk::Part part;
+        part.name = p.name;
+        CompositePartitionInfo pi;
+        pi.name = p.name;
+        pi.firstLayer = info.layers.size();
+        if (p.source)
+        {
+            // Passthrough: the image's sectors as they are (a window of it for one of its partitions)
+            const std::string path = PathText(p.source->path);
+            std::string error;
+            const std::string format = FileHelper::FileExists(path) ? HddImageFormats::Probe(path, &error) : std::string();
+            std::unique_ptr<IBlockDevice> opened =
+                format.empty() ? nullptr : HddImageFormats::OpenBlock(path, format, RawImage::Access::ReadOnly, &error);
+            if (!opened)
+                return MediaResult::Fail(MediaError::UnreadableSource, where + ": " + path + ": " + (error.empty() ? "no such image" : error));
+            std::shared_ptr<IBlockDevice> image(std::move(opened));
+            if (p.source->partition)
+                carryMbr(p.source->path, *image);
+            if (p.source->partition)
+            {
+                uint8_t mbr[512];
+                const uint32_t n = *p.source->partition;
+                if (n < 1 || n > 4 || !image->ReadSector(0, mbr) || mbr[510] != 0x55 || mbr[511] != 0xAA)
+                    return MediaResult::Fail(MediaError::BadRequest, where + ": " + path + " has no MBR partition " + std::to_string(n));
+                const uint8_t* e = mbr + 446 + 16 * (n - 1);
+                const uint64_t first = e[8] | (e[9] << 8) | (e[10] << 16) | (static_cast<uint64_t>(e[11]) << 24);
+                const uint64_t count = e[12] | (e[13] << 8) | (e[14] << 16) | (static_cast<uint64_t>(e[15]) << 24);
+                if (e[4] == 0 || count == 0 || first >= image->SectorCount())
+                    return MediaResult::Fail(MediaError::BadRequest, where + ": " + path + " has no MBR partition " + std::to_string(n));
+                part.type = e[4];
+                part.sectors = count;
+                const uint64_t held = std::min(count, image->SectorCount() - first);
+                if (held < count)
+                    result.report.push_back(where + ": the image holds " + std::to_string(held) + " of its " + std::to_string(count) +
+                                            " sectors; the rest reads as zeros");
+                part.device = std::make_shared<SubRangeDevice>(image, first, count);
+            }
+            else
+            {
+                part.device = image;
+                part.sectors = image->SectorCount();
+            }
+            FatVolumeReader reader;
+            if (reader.Open(*part.device))
+            {
+                pi.fs = reader.Type() == FatReaderType::Fat32 ? "fat32" : reader.Type() == FatReaderType::Fat12 ? "fat12" : "fat16";
+                part.fatBits = reader.Type() == FatReaderType::Fat32 ? 32 : reader.Type() == FatReaderType::Fat12 ? 12 : 16;
+            }
+            else if (!part.type && !p.type)
+                return MediaResult::Fail(MediaError::BadRequest, where + ": " + path + " holds no FAT volume: name its type");
+            pi.kind = "image";
+            CompositeLayerInfo layer;
+            layer.name = p.name;
+            layer.kind = "image";
+            layer.path = path;
+            layer.identity = part.device->ContentId();
+            info.layers.push_back(layer);
+        }
+        else
+        {
+            // A composition of its own, without an MBR (the disk has one)
+            ComposeDescriptor child = *p.compose;
+            if (!child.layers.empty() && child.layers[0].source.kind == ComposeSource::Kind::Image && child.layers[0].source.partition)
+            {
+                std::string ignored;
+                const std::string path = PathText(child.layers[0].source.path);
+                const std::string format = FileHelper::FileExists(path) ? HddImageFormats::Probe(path, &ignored) : std::string();
+                if (auto bottom = format.empty() ? nullptr : HddImageFormats::OpenBlock(path, format, RawImage::Access::ReadOnly, &ignored))
+                    carryMbr(child.layers[0].source.path, *bottom);
+            }
+            if (!child.target.fixedTimeUtc)
+                child.target.fixedTimeUtc = d.target.fixedTimeUtc;
+            if (!child.target.codePage)
+                child.target.codePage = d.target.codePage;
+            child.file = d.file;
+            CompositeBuildOptions childOptions = options;
+            childOptions.mbr = false;
+            childOptions.slotKind = MediaKind::Block;
+            std::unique_ptr<IBlockDevice> built;
+            CompositeInfo childInfo;
+            const MediaResult r = Build(child, childOptions, built, childInfo);
+            for (const std::string& line : r.report)
+                result.report.push_back(where + ": " + line);
+            if (!r.Ok())
+                return MediaResult::Fail(r.error, where + ": " + r.message);
+            std::shared_ptr<IBlockDevice> device(std::move(built));
+            part.layout = dynamic_cast<const IComposedLayout*>(device.get());
+            if (const auto* graft = dynamic_cast<const GraftVolume*>(device.get()); graft && graft->VolumeStart() > 0)
+            {
+                // A graft over an image partition is in the image's coordinates: cut the volume out
+                part.sectors = graft->VolumeSectors();
+                part.layoutOffset = graft->VolumeStart();
+                part.device = std::make_shared<SubRangeDevice>(device, graft->VolumeStart(), part.sectors);
+            }
+            else
+            {
+                part.sectors = device->SectorCount();
+                part.device = device;
+            }
+            part.fatBits = childInfo.fsName == "fat32" ? 32 : childInfo.fsName == "fat12" ? 12 : 16;
+            pi.kind = "compose";
+            pi.fs = childInfo.fsName;
+            pi.build = childInfo.build;
+            for (CompositeLayerInfo layer : childInfo.layers)
+            {
+                layer.name = p.name + "/" + layer.name;
+                info.layers.push_back(std::move(layer));
+            }
+            info.files += childInfo.files;
+            info.bytes += childInfo.bytes;
+            info.sourceDevices += childInfo.sourceDevices;
+        }
+        if (p.type)
+            part.type = *p.type;
+        pi.layerCount = info.layers.size() - pi.firstLayer;
+        info.partitions.push_back(pi);
+        parts.push_back(std::move(part));
+    }
+
+    std::optional<uint64_t> total;
+    if (d.target.size)
+        total = (*d.target.size + 511) / 512;
+    std::string error;
+    auto disk = PartitionedDisk::Build(std::move(parts), total, info.descriptor, &error);
+    if (!disk)
+        return MediaResult::Fail(MediaError::DoesNotFit, error);
+    if (!mbrCode.empty())
+    {
+        disk->SetMbrCode(mbrCode);
+        result.report.push_back("boot: MBR code carried from " + mbrFrom);
+    }
+    for (size_t i = 0; i < disk->Parts().size(); i++)
+    {
+        info.partitions[i].type = disk->Parts()[i].type;
+        info.partitions[i].start = disk->Parts()[i].start;
+        info.partitions[i].sectors = disk->Parts()[i].sectors;
+    }
+    info.sectors = disk->SectorCount();
+    uint64_t id = disk->ContentId();
+    for (char c : info.normalized)
+    {
+        id ^= static_cast<uint8_t>(c);
+        id *= 0x100000001b3ULL;
+    }
+    info.contentId = id;
+    disk->SetContentId(id);
+    volume = std::move(disk);
+    return result;
+}
+
 MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const CompositeBuildOptions& options,
                                           std::unique_ptr<IBlockDevice>& volume, CompositeInfo& info)
 {
@@ -235,9 +435,9 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
     MediaResult result = MediaResult::Success();
     result.report = d.report;
 
-    // --- What this phase builds ---
+    // --- Partitions (c7-partitions.md): each one a passthrough image or a composition of its own ---
     if (d.hasPartitions)
-        return MediaResult::Fail(MediaError::NotSupported, "partitions: a later phase (C7) of the multi-source work");
+        return BuildPartitioned(d, options, volume, info, std::move(result));
 
     // --- The target's kind: an ISO 9660 CD or a FAT disk (c5-iso.md §5) ---
     const bool wantsIso = d.target.kind == MediaKind::Optical || d.target.fs == ComposeTarget::Fs::Iso9660;

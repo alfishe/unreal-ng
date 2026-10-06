@@ -2,10 +2,12 @@
 
 #include "mediacontrol.h"
 
-#include "emulator/io/storage/compose/changeattributor.h"
+#include "emulator/media/mediachanges.h"
 #include "emulator/io/storage/compose/composedlayout.h"
 #include "emulator/io/storage/fat/fatsynthvolume.h"
+#include "emulator/io/storage/partitioneddisk.h"
 #include "emulator/io/storage/sessionwritemap.h"
+#include "emulator/io/storage/subrangedevice.h"
 #include "emulator/media/composedescriptor.h"
 #include "emulator/media/compositemediumfactory.h"
 
@@ -81,6 +83,23 @@ namespace
             layers.push(std::move(l));
         }
         value["layers"] = std::move(layers);
+        if (!info.partitions.empty())
+        {
+            StateNode partitions = StateNode::Array();
+            for (const CompositePartitionInfo& p : info.partitions)
+            {
+                StateNode n = StateNode::Object();
+                n["name"] = p.name;
+                n["kind"] = p.kind;
+                n["fs"] = p.fs;
+                n["build"] = p.build;
+                n["type"] = static_cast<uint64_t>(p.type);
+                n["start"] = p.start;
+                n["sectors"] = p.sectors;
+                partitions.push(std::move(n));
+            }
+            value["partitions"] = std::move(partitions);
+        }
         return value;
     }
 
@@ -416,47 +435,34 @@ MediaReply MediaControl::Changes(const MediaRequest& request)
     if (!reply.result.Ok())
         return reply;
     Medium* medium = _manager->GetMedium(reply.slot);
-    if (!medium || !medium->Block() || medium->Kind() != MediaKind::Block)
-        return Fail(MediaError::NotSupported, "slot '" + reply.slot + "' does not hold a disk or a card");
-    SessionWriteMap* session = medium->Session();
-    if (!session)
-        return Fail(MediaError::NotSupported, "slot '" + reply.slot +
-                                                  "': the guest's writes are listed for media with session writes (this one is " +
-                                                  AccessModeName(medium->Access()) + ")");
-
-    ChangeSet set;
-    std::string error;
-    bool ok = false;
+    if (!medium)
+        return Fail(MediaError::NotSupported, "slot '" + reply.slot + "' is empty");
+    MediumChanges list;
     {
         ParkedEmulator parked(_context);
-        const auto* layout = dynamic_cast<const IComposedLayout*>(&session->Base());
-        ok = ChangeAttributor::Attribute(session->Base(), *session, session->Changes(), layout, set, &error);
+        reply.result = ListMediumChanges(*medium, list);
     }
-    if (!ok)
-        return Fail(MediaError::NotSupported, "slot '" + reply.slot + "': " + error);
+    if (!reply.result.Ok())
+        return Fail(reply.result.error, "slot '" + reply.slot + "': " + reply.result.message);
 
-    const CompositeInfo* composite = medium->Composite();
     StateNode changes = StateNode::Array();
-    for (const FileChange& change : set.changes)
+    for (const MediumChange& change : list.changes)
     {
         StateNode c = StateNode::Object();
-        c["op"] = FileChange::OpName(change.op);
+        c["op"] = change.op;
         c["path"] = change.path;
-        if (change.op == FileChange::Op::Rename)
+        if (change.op == "rename")
             c["oldPath"] = change.oldPath;
-        std::string layer;
-        if (change.layer >= 0 && composite && static_cast<size_t>(change.layer) < composite->layers.size())
-            layer = composite->layers[static_cast<size_t>(change.layer)].name;
-        c["layer"] = layer;
+        c["layer"] = change.layer;
         c["sizeBefore"] = change.sizeBefore;
         c["sizeAfter"] = change.sizeAfter;
         changes.push(std::move(c));
     }
     reply.body["changes"] = std::move(changes);
-    reply.body["warnings"] = Strings(set.warnings);
-    reply.body["changedSectors"] = set.changedSectors;
-    reply.body["directoriesRead"] = static_cast<uint64_t>(set.directoriesRead);
-    reply.body["fullScan"] = set.fullScan;
+    reply.body["warnings"] = Strings(list.warnings);
+    reply.body["changedSectors"] = list.changedSectors;
+    reply.body["directoriesRead"] = static_cast<uint64_t>(list.directoriesRead);
+    reply.body["fullScan"] = list.fullScan;
     return reply;
 }
 

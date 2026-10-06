@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -130,6 +131,17 @@ struct ComposeWrites
     std::filesystem::path delta;            ///< S2 file
 };
 
+struct ComposeDescriptor;
+
+/// One partition of a partitioned composite (phase C7): a passthrough image (partition), or a composition
+struct ComposePartition
+{
+    std::string name;                              ///< default p1, p2, ...
+    std::optional<ComposeSource> source;           ///< passthrough: an image, or one of its MBR partitions
+    std::shared_ptr<ComposeDescriptor> compose;    ///< composed: its own layers and target (no MBR)
+    std::optional<uint8_t> type;                   ///< the MBR type byte; unset: the source's, or from the file system
+};
+
 struct ComposeDescriptor
 {
     /// The source name of a descriptor given as text (no file, so no default delta file)
@@ -139,6 +151,7 @@ struct ComposeDescriptor
     ComposeTarget target;
     std::vector<ComposeLayer> layers;
     bool hasPartitions = false;             ///< partitions mode (phase C7)
+    std::vector<ComposePartition> partitions;
     bool hasBoot = false;                   ///< a boot section is present
     ComposeBoot boot;                       ///< the boot section (D-6)
     ComposeWrites writes;

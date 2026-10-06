@@ -252,6 +252,17 @@ MediaResult BlockFormats::Compact(IBlockDevice& device, const BlockWriteOptions&
     std::string error;
     if (!reader.Open(device, CodePage::Cp866, &error))
         return MediaResult::Fail(MediaError::BadRequest, "compact needs a FAT volume: " + error);
+    if (reader.VolumeStart() > 0)
+    {
+        uint8_t mbr[512];
+        int used = 0;
+        if (device.ReadSector(0, mbr))
+            for (int e = 0; e < 4; e++)
+                used += mbr[446 + 16 * e + 4] != 0 ? 1 : 0;
+        if (used > 1)
+            return MediaResult::Fail(MediaError::NotSupported, "compact re-synthesizes one FAT volume and this disk has " +
+                                                                   std::to_string(used) + " partitions: export it as it is");
+    }
     if (reader.Type() == FatReaderType::Fat12 && !options.fs)
         return MediaResult::Fail(MediaError::NotSupported,
                                  "compact writes FAT16 or FAT32 volumes and this one is FAT12: pass fs to convert it");

@@ -74,6 +74,9 @@ public:
     uint64_t ContentId() const override { return _contentId; }
 
     FatReaderType Type() const { return _type; }
+    /// Where the volume starts on the base image, and its size by its BPB (a partition of an MBR image: C7 cuts it out)
+    uint64_t VolumeStart() const { return _volumeStart; }
+    uint64_t VolumeSectors() const { return _volumeSectors; }
     /// Directories re-encoded (touched or new): tests of the build cost
     uint32_t DirectoriesEncoded() const { return _directoriesEncoded; }
     uint32_t FilesGrafted() const { return _filesGrafted; }
@@ -144,6 +147,7 @@ private:
     uint64_t _volumeStart = 0;          ///< absolute LBA of the volume's boot sector
     uint64_t _fatStart = 0;             ///< absolute LBA of the first FAT
     uint64_t _rootStart = 0;            ///< absolute LBA after the FATs (the FAT12 / FAT16 root region)
+    uint64_t _volumeSectors = 0;        ///< the volume's size by its BPB
     mutable size_t _lastRun = 0;
 
     uint64_t _contentId = 0;

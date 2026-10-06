@@ -163,7 +163,10 @@ namespace
                     Layers(child);
                 }
                 else if (key == "partitions")
+                {
                     _d.hasPartitions = true;
+                    Partitions(child);
+                }
                 else if (key == "boot")
                 {
                     _d.hasBoot = true;
@@ -273,124 +276,129 @@ namespace
                 Report("target", "expected a map");
                 return;
             }
-            ComposeTarget& t = _d.target;
             for (ryml::ConstNodeRef child : node.children())
             {
                 const std::string key = Text(child.key());
-                const std::string where = "target." + key;
-                if (key == "kind")
-                {
-                    const auto v = String(child, where);
-                    if (v && Lower(*v) == "block")
-                        t.kind = MediaKind::Block;
-                    else if (v && Lower(*v) == "optical")
-                        t.kind = MediaKind::Optical;
-                    else if (v)
-                        Report(where, "expected block or optical, got '" + *v + "'");
-                }
-                else if (key == "fs")
-                {
-                    const auto v = String(child, where);
-                    const std::string s = v ? Lower(*v) : "";
-                    if (s == "auto")
-                        t.fs = ComposeTarget::Fs::Auto;
-                    else if (s == "fat16")
-                        t.fs = ComposeTarget::Fs::Fat16;
-                    else if (s == "fat32")
-                        t.fs = ComposeTarget::Fs::Fat32;
-                    else if (s == "iso9660" || s == "iso")
-                        t.fs = ComposeTarget::Fs::Iso9660;
-                    else if (v)
-                        Report(where, "expected auto, fat16, fat32 or iso9660, got '" + *v + "'");
-                }
-                else if (key == "build")
-                {
-                    const auto v = String(child, where);
-                    const std::string s = v ? Lower(*v) : "";
-                    if (s == "auto")
-                        t.build = ComposeTarget::Build::Auto;
-                    else if (s == "rebuild")
-                        t.build = ComposeTarget::Build::Rebuild;
-                    else if (s == "graft")
-                        t.build = ComposeTarget::Build::Graft;
-                    else if (v)
-                        Report(where, "expected auto, rebuild or graft, got '" + *v + "'");
-                }
-                else if (key == "size")
-                    t.size = Size(child, where);
-                else if (key == "free")
-                    t.free = Size(child, where);
-                else if (key == "label")
-                    t.label = String(child, where);
-                else if (key == "codepage")
-                {
-                    const auto v = String(child, where);
-                    CodePage page = CodePage::Cp866;
-                    if (v && UnicodeHelper::ParseCodePage(*v, page))
-                        t.codePage = page;
-                    else if (v)
-                        Report(where, "expected cp866 or cp1251, got '" + *v + "'");
-                }
-                else if (key == "partition")
-                {
-                    const auto v = String(child, where);
-                    if (v && Lower(*v) == "mbr")
-                        t.mbr = true;
-                    else if (v && Lower(*v) == "none")
-                        t.mbr = false;
-                    else if (v)
-                        Report(where, "expected mbr or none, got '" + *v + "'");
-                }
-                else if (key == "fixedTime")
-                {
-                    const auto v = Number(child, where, 0x7FFFFFFFFFFFFFFFull);
-                    if (v)
-                        t.fixedTimeUtc = static_cast<int64_t>(*v);
-                }
-                else if (key == "onBadName")
-                {
-                    const auto v = String(child, where);
-                    if (v && (Lower(*v) == "skip" || Lower(*v) == "replace"))
-                        t.onBadName = Lower(*v);
-                    else if (v)
-                        Report(where, "expected skip or replace, got '" + *v + "'");
-                }
-                else if (key == "iso")
-                {
-                    if (!child.is_map())
-                    {
-                        Report(where, "expected a map such as {level: 1, joliet: true}");
-                        continue;
-                    }
-                    for (ryml::ConstNodeRef option : child.children())
-                    {
-                        const std::string name = Text(option.key());
-                        const std::string at = where + "." + name;
-                        if (name == "level")
-                        {
-                            const auto v = Number(option, at, 2);
-                            if (v && *v >= 1)
-                                t.isoLevel = static_cast<int>(*v);
-                            else if (v)
-                                Report(at, "expected 1 or 2");
-                        }
-                        else if (name == "joliet")
-                        {
-                            if (const auto v = Bool(option, at))
-                                t.joliet = *v;
-                        }
-                        else if (name == "relaxDepth")
-                        {
-                            if (const auto v = Bool(option, at))
-                                t.relaxDepth = *v;
-                        }
-                        else
-                            Report(at, "unknown key, ignored");
-                    }
-                }
-                else
-                    Report(where, "unknown key, ignored");
+                TargetKey(child, key, "target." + key);
             }
+        }
+
+        /// One key of the target map (also given directly in a partition's `compose`)
+        void TargetKey(ryml::ConstNodeRef child, const std::string& key, const std::string& where)
+        {
+            ComposeTarget& t = _d.target;
+            if (key == "kind")
+            {
+                const auto v = String(child, where);
+                if (v && Lower(*v) == "block")
+                    t.kind = MediaKind::Block;
+                else if (v && Lower(*v) == "optical")
+                    t.kind = MediaKind::Optical;
+                else if (v)
+                    Report(where, "expected block or optical, got '" + *v + "'");
+            }
+            else if (key == "fs")
+            {
+                const auto v = String(child, where);
+                const std::string s = v ? Lower(*v) : "";
+                if (s == "auto")
+                    t.fs = ComposeTarget::Fs::Auto;
+                else if (s == "fat16")
+                    t.fs = ComposeTarget::Fs::Fat16;
+                else if (s == "fat32")
+                    t.fs = ComposeTarget::Fs::Fat32;
+                else if (s == "iso9660" || s == "iso")
+                    t.fs = ComposeTarget::Fs::Iso9660;
+                else if (v)
+                    Report(where, "expected auto, fat16, fat32 or iso9660, got '" + *v + "'");
+            }
+            else if (key == "build")
+            {
+                const auto v = String(child, where);
+                const std::string s = v ? Lower(*v) : "";
+                if (s == "auto")
+                    t.build = ComposeTarget::Build::Auto;
+                else if (s == "rebuild")
+                    t.build = ComposeTarget::Build::Rebuild;
+                else if (s == "graft")
+                    t.build = ComposeTarget::Build::Graft;
+                else if (v)
+                    Report(where, "expected auto, rebuild or graft, got '" + *v + "'");
+            }
+            else if (key == "size")
+                t.size = Size(child, where);
+            else if (key == "free")
+                t.free = Size(child, where);
+            else if (key == "label")
+                t.label = String(child, where);
+            else if (key == "codepage")
+            {
+                const auto v = String(child, where);
+                CodePage page = CodePage::Cp866;
+                if (v && UnicodeHelper::ParseCodePage(*v, page))
+                    t.codePage = page;
+                else if (v)
+                    Report(where, "expected cp866 or cp1251, got '" + *v + "'");
+            }
+            else if (key == "partition")
+            {
+                const auto v = String(child, where);
+                if (v && Lower(*v) == "mbr")
+                    t.mbr = true;
+                else if (v && Lower(*v) == "none")
+                    t.mbr = false;
+                else if (v)
+                    Report(where, "expected mbr or none, got '" + *v + "'");
+            }
+            else if (key == "fixedTime")
+            {
+                const auto v = Number(child, where, 0x7FFFFFFFFFFFFFFFull);
+                if (v)
+                    t.fixedTimeUtc = static_cast<int64_t>(*v);
+            }
+            else if (key == "onBadName")
+            {
+                const auto v = String(child, where);
+                if (v && (Lower(*v) == "skip" || Lower(*v) == "replace"))
+                    t.onBadName = Lower(*v);
+                else if (v)
+                    Report(where, "expected skip or replace, got '" + *v + "'");
+            }
+            else if (key == "iso")
+            {
+                if (!child.is_map())
+                {
+                    Report(where, "expected a map such as {level: 1, joliet: true}");
+                    return;
+                }
+                for (ryml::ConstNodeRef option : child.children())
+                {
+                    const std::string name = Text(option.key());
+                    const std::string at = where + "." + name;
+                    if (name == "level")
+                    {
+                        const auto v = Number(option, at, 2);
+                        if (v && *v >= 1)
+                            t.isoLevel = static_cast<int>(*v);
+                        else if (v)
+                            Report(at, "expected 1 or 2");
+                    }
+                    else if (name == "joliet")
+                    {
+                        if (const auto v = Bool(option, at))
+                            t.joliet = *v;
+                    }
+                    else if (name == "relaxDepth")
+                    {
+                        if (const auto v = Bool(option, at))
+                            t.relaxDepth = *v;
+                    }
+                    else
+                        Report(at, "unknown key, ignored");
+                }
+            }
+            else
+                Report(where, "unknown key, ignored");
         }
 
         /// A boot file: "/UNION/path" (a file of the union) or {host: path}
@@ -570,6 +578,138 @@ namespace
                 _d.error = _source + ": " + where + ": a source needs folder, image or iso";
         }
 
+        void Partitions(ryml::ConstNodeRef node)
+        {
+            if (!node.is_seq() || node.num_children() == 0)
+            {
+                _d.error = _source + ": partitions: expected a list";
+                return;
+            }
+            size_t index = 0;
+            for (ryml::ConstNodeRef item : node.children())
+            {
+                index++;
+                const std::string where = "partitions[" + std::to_string(index - 1) + "]";
+                if (!item.is_map())
+                {
+                    _d.error = _source + ": " + where + ": expected a map";
+                    return;
+                }
+                ComposePartition part;
+                part.name = "p" + std::to_string(index);
+                std::optional<ComposeTarget::Fs> fs;
+                std::optional<uint64_t> size;
+                std::optional<std::string> label;
+                for (ryml::ConstNodeRef child : item.children())
+                {
+                    const std::string key = Text(child.key());
+                    const std::string at = where + "." + key;
+                    if (key == "name")
+                    {
+                        if (auto v = String(child, at))
+                            part.name = *v;
+                    }
+                    else if (key == "source")
+                    {
+                        ComposeLayer layer;
+                        Source(child, layer, at);
+                        if (layer.source.kind != ComposeSource::Kind::Image)
+                            _d.error = _source + ": " + at + ": a passthrough partition is an image";
+                        part.source = layer.source;
+                    }
+                    else if (key == "compose")
+                    {
+                        part.compose = std::make_shared<ComposeDescriptor>();
+                        ComposeDescriptor& c = *part.compose;
+                        c.version = 1;
+                        c.baseDir = _d.baseDir;
+                        Reader nested(c, _source + ": " + at);
+                        nested.Composition(child);
+                        for (const std::string& line : c.report)
+                            _d.report.push_back(line);
+                        if (!c.error.empty())
+                            _d.error = c.error;
+                    }
+                    else if (key == "fs")
+                    {
+                        const auto v = String(child, at);
+                        const std::string s = v ? Lower(*v) : "";
+                        if (s == "fat16")
+                            fs = ComposeTarget::Fs::Fat16;
+                        else if (s == "fat32")
+                            fs = ComposeTarget::Fs::Fat32;
+                        else if (s == "auto")
+                            fs = ComposeTarget::Fs::Auto;
+                        else if (v)
+                            Report(at, "expected auto, fat16 or fat32, got '" + *v + "'");
+                    }
+                    else if (key == "size")
+                        size = Size(child, at);
+                    else if (key == "label")
+                        label = String(child, at);
+                    else if (key == "type")
+                    {
+                        const auto v = Number(child, at, 255);
+                        if (v)
+                            part.type = static_cast<uint8_t>(*v);
+                    }
+                    else
+                        Report(at, "unknown key, ignored");
+                }
+                if (!_d.error.empty())
+                    return;
+                if (part.source.has_value() == (part.compose != nullptr))
+                {
+                    _d.error = _source + ": " + where + ": a partition has either a source (passthrough) or compose";
+                    return;
+                }
+                if (part.compose)
+                {
+                    ComposeTarget& t = part.compose->target;
+                    if (fs)
+                        t.fs = *fs;
+                    if (size)
+                        t.size = size;
+                    if (label)
+                        t.label = label;
+                    t.mbr = false;
+                    t.kind = MediaKind::Block;
+                }
+                else if (fs || size || label)
+                    Report(where, "fs, size and label are for composed partitions; ignored");
+                _d.partitions.push_back(std::move(part));
+            }
+        }
+
+    public:
+        /// A partition's `compose`: layers, boot, target, or target keys directly
+        void Composition(ryml::ConstNodeRef node)
+        {
+            if (!node.is_map())
+            {
+                _d.error = _source + ": expected a map with layers";
+                return;
+            }
+            for (ryml::ConstNodeRef child : node.children())
+            {
+                const std::string key = Text(child.key());
+                if (key == "layers")
+                    Layers(child);
+                else if (key == "boot")
+                {
+                    _d.hasBoot = true;
+                    Boot(child);
+                }
+                else if (key == "target")
+                    Target(child);
+                else
+                    TargetKey(child, key, key);
+            }
+            if (_d.layers.empty() && _d.error.empty())
+                _d.error = _source + ": no layers";
+        }
+
+    private:
         void Layers(ryml::ConstNodeRef node)
         {
             if (!node.is_seq())
@@ -928,6 +1068,22 @@ std::string ComposeDescriptor::Normalized() const
               << ",\"platform\":" << int(e.platform) << ",\"loadSegment\":" << e.loadSegment << ",\"sectors\":" << e.sectors << "}";
         }
         o << "]}";
+    }
+    if (hasPartitions)
+    {
+        o << ",\"partitions\":[";
+        for (size_t i = 0; i < partitions.size(); i++)
+        {
+            const ComposePartition& p = partitions[i];
+            o << (i ? "," : "") << "{\"name\":" << JsonString(p.name) << ",\"type\":" << (p.type ? std::to_string(*p.type) : "null");
+            if (p.source)
+                o << ",\"source\":{\"image\":" << JsonString(PathText(p.source->path))
+                  << ",\"partition\":" << (p.source->partition ? std::to_string(*p.source->partition) : "null") << "}";
+            if (p.compose)
+                o << ",\"compose\":" << p.compose->Normalized();
+            o << "}";
+        }
+        o << "]";
     }
     o << "}";
     return o.str();

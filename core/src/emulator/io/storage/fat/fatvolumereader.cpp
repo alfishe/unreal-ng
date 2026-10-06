@@ -103,7 +103,8 @@ bool FatVolumeReader::FindPartition(IBlockDevice& device, uint32_t number, FatPa
     partition.first = Get32(entry + 8);
     partition.count = Get32(entry + 12);
     partition.type = entry[4];
-    if (partition.first == 0 || partition.first + partition.count > device.SectorCount())
+    // A cut-down image may end inside the partition (SubRangeDevice reads zeros past it); it must start inside
+    if (partition.first == 0 || partition.first >= device.SectorCount())
         return fail("partition " + std::to_string(number) + " lies outside the disk");
     return true;
 }
@@ -187,6 +188,7 @@ bool FatVolumeReader::Open(IBlockDevice& device, CodePage page, std::string* err
     _fats = s[16];
     _rootEntries = Get16(s + 17);
     const uint32_t totalSectors = Get16(s + 19) ? Get16(s + 19) : Get32(s + 32);
+    _volumeSectors = totalSectors;
     _fatSectors = Get16(s + 22) ? Get16(s + 22) : Get32(s + 36);
     _rootDirSectors = (_rootEntries * 32 + kSector - 1) / kSector;
     if (_fatSectors == 0 || totalSectors == 0)

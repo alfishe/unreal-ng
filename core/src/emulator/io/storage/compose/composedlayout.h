@@ -53,6 +53,20 @@ public:
     virtual const FileTree& Tree() const = 0;
 };
 
+/// A layout seen from a window that starts `offset` sectors into it (a partition cut out of a graft over an image
+/// partition)
+class OffsetLayout : public IComposedLayout
+{
+public:
+    OffsetLayout(const IComposedLayout* inner, uint64_t offset) : _inner(inner), _offset(offset) {}
+    SectorOwner OwnerOf(uint64_t lba) const override { return _inner->OwnerOf(lba + _offset); }
+    const FileTree& Tree() const override { return _inner->Tree(); }
+
+private:
+    const IComposedLayout* _inner;
+    uint64_t _offset;
+};
+
 /// The owners of a change layer's sectors, in LBA order
 inline void ForEachChangedOwner(const IComposedLayout& layout,
                                 const std::map<uint64_t, std::array<uint8_t, 512>>& changes,

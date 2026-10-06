@@ -81,6 +81,8 @@ public:
     uint32_t ClusterCount() const { return _clusterCount; }
     uint32_t SectorsPerCluster() const { return _sectorsPerCluster; }
     uint64_t VolumeStart() const { return _volumeStart; }
+    /// The volume's size in sectors as its BPB says (the device may be shorter: a cut-down image)
+    uint32_t VolumeSectors() const { return _volumeSectors; }
     uint32_t ReservedSectors() const { return _reservedSectors; }
     uint32_t FatCount() const { return _fats; }
     uint32_t FatSectors() const { return _fatSectors; }
@@ -143,6 +145,7 @@ private:
     uint32_t _rootDirSectors = 0;
     uint32_t _sectorsPerCluster = 0;
     uint32_t _clusterCount = 0;
+    uint32_t _volumeSectors = 0;
     uint32_t _rootCluster = 0;
     uint32_t _fsInfoSector = 0;
     std::string _label;

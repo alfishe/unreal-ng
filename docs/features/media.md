@@ -72,12 +72,15 @@ on a +3) is `unknown-slot`, never drive A.
 | `insert` | slot or `auto`, path | a file or a folder into the slot |
 | `swap` | slot, path | eject + insert in one step |
 | `eject` | slot | take the medium out |
-| `save` | slot, path? | write the medium back into its file, or to `path` (it then stands for that file): a floppy in its format; a hard disk or card's changed sectors into a raw / HDF / HDI / VHD file, a [CHD](../file-formats/disk-images/chd.md) written again |
-| `export` | slot, path | write a copy of the medium as it is now; the medium keeps its unsaved writes. A hard disk or card goes to a raw image, or to a CHD for a `.chd` path |
+| `save` | slot, path? | write the medium back into its file, or to `path` (it then stands for that file): a floppy in its format; a hard disk or card's changed sectors into a raw / HDF / HDI / VHD file, a [CHD](../file-formats/disk-images/chd.md) written again; a [composite](#composite-media-several-sources-in-one-disk) without a path: its session delta file |
+| `export` | slot, path | write a copy of the medium as it is now; the medium keeps its unsaved writes. A hard disk or card goes to a raw image (zero sectors not written: sparse where the host can), a fixed VHD for a `.vhd` path, or a CHD for a `.chd` path |
 | `discard` | slot | drop the unsaved writes (a floppy is opened again from its file) |
 | `rescan` | slot | build a folder medium again after the host folder changed (refused while dirty) |
 | `create` | slot | a blank floppy (`format`, `cylinders`, `sides`) or card (`size`) |
 | `protect` | slot, `on` | the slot's write-protect switch |
+| `compose` | descriptor | build a [composite](#composite-media-several-sources-in-one-disk) (`*.ucompose.yaml`, or its JSON text) without inserting it: the layout and the report |
+| `layers` | slot | a composite's layers (and partitions) |
+| `changes` | slot | the guest's unsaved writes on a disk or card with session writes as file operations: `create`, `modify`, `delete`, `rename` (a move too), `mkdir`, `rmdir`, `attributes`, each with the composite layer it touched; nothing is written |
 
 `save`, `export` and `discard` also take a detached medium's slot id.
 
@@ -99,6 +102,10 @@ on a +3) is `unknown-slot`, never drive A.
 | `retarget` | bool | true | save: a disk TRD cannot hold goes to `<name>.udi` |
 | `compression` | `none`, `default` (lzma, zlib, huff, flac), or up to four of `zlib`, `lzma`, `huff`, `flac`, `zstd` | the source CHD's codecs, else `default` | save, export of a hard disk or card to a `.chd` |
 | `parent` | a CHD file | — | export to a `.chd`: a child of that CHD (only the hunks that differ are stored) |
+| `compact` | bool | false | save, export of a FAT disk or card: write the merged volume laid out again (every file contiguous, deleted data and lost clusters gone, label / MBR / boot code kept); `save` with `compact` needs a path |
+| `fs`, `size` | `fat16` / `fat32`; bytes or `64MiB` | the volume's; the medium's | save, export with `compact`: convert, resize (a FAT12 floppy needs `fs`) |
+| `strategy` | `delta`, `flat`, `commit`, `write-back` | a path: `flat`; none: the descriptor's `writes.save`, else `delta` | save of a composite (`commit` and `write-back`: a later phase) |
+| `force` | bool | false | save of a composite as `delta` over a delta written over other sources |
 | `on` | bool | true | protect |
 | `end_recording` | bool | false | insert, swap, eject, create: stop a TTD recording instead of refusing |
 | `async` | bool | false | insert, swap, eject, discard, rescan, create |
@@ -259,6 +266,51 @@ about 5 s to insert. Recipe: [cd-audio.md](../../.recipe/media/cd-audio.md#audio
 
 Time travel records through disk activity: a write is a replay barrier, and the board's state is in
 every checkpoint.
+
+## Composite media: several sources in one disk
+
+A **composite** is a disk, card or CD built from several sources at once: host folders, FAT disk images (or one of
+their partitions) and ISO images, stacked as **layers** (an upper layer's file shadows a lower one's of the same name;
+directories merge). It is described by a descriptor, `<name>.ucompose.yaml` (YAML or JSON), and goes into a slot like
+any file. The sources are only read: the guest's writes stay in the session until you save them.
+
+```yaml
+version: 1
+target: {fs: auto, free: 64MiB}          # kind block|optical, fs auto|fat16|fat32|iso9660, build auto|rebuild|graft,
+                                         # size, label, codepage, partition mbr|none, fixedTime, iso: {level, joliet}
+layers:
+  - {name: dss,   source: {image: dss.img}}                # a FAT image (or {image: x.img, partition: 1})
+  - {name: util,  source: {folder: ~/zx/util}, mount: /UTIL}
+  - {name: games, source: {iso: games.iso}, from: /GAMES, mount: /GAMES, exclude: ["*.txt"]}
+writes: {save: delta}                     # what `save` does without a path; delta: <descriptor>.delta
+```
+
+| Topic | Rule |
+|---|---|
+| **Build** | `rebuild` lays a new FAT volume out from the merged tree. `graft` keeps a FAT image layer at the bottom as it is (MBR, loaders, system files at their places) and writes the upper layers' files into its free clusters; it needs a FAT image at the bottom. `auto` (the default) grafts when the bottom layer is a FAT image that the slot reads and that has room, else rebuilds and says why |
+| **CD** | in a CD-ROM drive (or `target.kind: optical`) the layers become one ISO 9660 disc (Joliet names by default), read-only |
+| **Boot code** | the bottom image's MBR code, boot sector code and reserved sectors (the sectors between the MBR and the partition too: the DSS loader) are carried into a rebuilt volume; a bootable ISO keeps its El Torito entries. A `boot:` section names other files (`mbrCode`, `volumeCode`, `reserved`, `eltorito`) |
+| **Partitions** | `partitions:` instead of `layers:` makes a partitioned disk: each entry a passthrough `{source: {image: x.img, partition: 1}}` or a composition `{fs: fat16, size: 64MiB, compose: {build: graft, layers: [...]}}`, 1 MiB aligned, more than four as logical partitions. The first source disk's MBR code is carried (the Profi BIOS runs it) and each boot sector gets its partition's start |
+| **Unsaved writes** | `media changes` lists them as file operations with their layers. `save` without a path writes them to `<descriptor>.delta` (S2) and the medium is clean; the next insert of the same descriptor restores them ("session restored"). A delta written over other sources (a host file changed since) is not applied: the report names the layer, and saving over it needs `force`. A damaged delta is renamed `*.delta.bad`. `save` with a path (or `strategy: flat`) writes one image and the slot then holds it; `export` writes one and leaves the composite as it is |
+| **Rescan** | `rescan` builds the composite again from its sources (refused while there are unsaved writes) |
+
+### Which file system a slot takes
+
+A slot's file-system rule applies to folders, composites and images alike: a volume of another type is refused with
+the reason, never built or mounted silently. `fs: auto` picks the slot's default.
+
+| Slot | File systems | Why |
+|---|---|---|
+| Sprinter IDE hard disks (`ide0.*`, `ide1.*`) | FAT12 / FAT16 only | Estex DSS reads no FAT32 |
+| Profi IDE hard disks (`ide0.*`) | FAT12 / FAT16 only | PQ-DOS 2023-09 boots from FAT16 and ignores a FAT32 partition (checked 2026-10-06) |
+| TS-Conf SD card (`sd.zc`) | FAT32 only | TS-BIOS and Wild Commander mount FAT32 |
+| ZX-Evo SD card, the other IDE boards, NeoGS SD, ZX Next | FAT16 (default) and FAT32 | their drivers read both |
+| CD-ROM drives | ISO 9660 | a composite there is always an ISO |
+
+Where an MBR is needed and where it must not be (an IDE disk on ZX-Evo vs. an SD card on TS-Conf) is in
+[machine-boot-requirements.md](../hardware/machine-boot-requirements.md#common-pitfalls). Design and as-built notes:
+`docs/inprogress/2026-10-05-media-multisource/` (the phase documents in `phases/`); recipes:
+[.recipe/media/use-media-slots.md](../../.recipe/media/use-media-slots.md).
 
 ## Model switch
 

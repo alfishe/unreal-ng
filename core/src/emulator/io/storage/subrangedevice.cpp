@@ -2,6 +2,8 @@
 
 #include "subrangedevice.h"
 
+#include <cstring>
+
 SubRangeDevice::SubRangeDevice(std::shared_ptr<IBlockDevice> base, uint64_t first, uint64_t count)
     : _base(std::move(base)), _first(first), _count(count)
 {
@@ -20,7 +22,14 @@ SubRangeDevice::SubRangeDevice(std::shared_ptr<IBlockDevice> base, uint64_t firs
 
 bool SubRangeDevice::ReadSector(uint64_t lba, uint8_t* dst)
 {
-    return lba < _count && _base->ReadSector(_first + lba, dst);
+    if (lba >= _count)
+        return false;
+    if (_first + lba >= _base->SectorCount())
+    {
+        std::memset(dst, 0, kSectorSize);  // a cut-down image: the window goes on past the file's end
+        return true;
+    }
+    return _base->ReadSector(_first + lba, dst);
 }
 
 bool SubRangeDevice::WriteSector(uint64_t lba, const uint8_t* src)

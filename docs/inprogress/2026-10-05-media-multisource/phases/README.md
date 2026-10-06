@@ -11,8 +11,8 @@ the phase lands. The phase table is in [tdd.md](../tdd.md) §13; the tests per p
 | C3 | [c3-image-sources.md](c3-image-sources.md) | done |
 | C4 | [c4-graft.md](c4-graft.md) | done |
 | C5 | [c5-iso.md](c5-iso.md) | done (C5a ISO, C5b boot carry-over) |
-| C6 | [c6-provenance-flatten.md](c6-provenance-flatten.md) | design (C6a S1, C6b attribution, C6c S2) |
-| C7 | partitions | — |
+| C6 | [c6-provenance-flatten.md](c6-provenance-flatten.md) | done (C6a S1, C6b attribution, C6c S2) |
+| C7 | [c7-partitions.md](c7-partitions.md) | done |
 | C8 | S3 / S4, Qt flatten dialog | — |
 | C9 | bulk `ReadSectors` | — |
 | C10 | sparse and in-memory images, efficient packing on save / flatten | — (added 2026-10-05) |
