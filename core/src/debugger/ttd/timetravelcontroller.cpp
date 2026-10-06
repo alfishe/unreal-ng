@@ -986,7 +986,11 @@ TTDSessionInfo TimeTravelController::ReadSessionInfo() const
     {
         // Something drives the machine (its loop, or a control thread stepping it)
         if (emu->IsDirectStepping() || (emu->IsRunning() && !emu->IsEmulationParked()))
-            return GetPublishedSessionInfo();
+        {
+            lock.unlock();   // the machine's thread may need the control lock to reach its boundary
+            // Only a session the running machine changes is refreshed (it publishes at its boundaries then)
+            return _state.load() == TTDSessionState::Idle ? GetPublishedSessionInfo() : FreshPublishedSessionInfo();
+        }
         // Parked, but a Resume from any thread would let a recording run beside
         // the read: the snapshot the machine published as it parked is exact
         if (emu->IsRunning() && _state.load() == TTDSessionState::Recording)
@@ -1012,8 +1016,28 @@ TTDSessionInfo TimeTravelController::GetPublishedSessionInfo() const
 
 void TimeTravelController::PublishSessionInfo(const TTDSessionInfo& info) const
 {
-    std::lock_guard<std::mutex> lock(_publishedMutex);
-    _published = info;
+    {
+        std::lock_guard<std::mutex> lock(_publishedMutex);
+        _published = info;
+        _publishedAt = std::chrono::steady_clock::now();
+    }
+    _publishedCv.notify_all();
+}
+
+TTDSessionInfo TimeTravelController::FreshPublishedSessionInfo() const
+{
+    std::unique_lock<std::mutex> lock(_publishedMutex);
+    const auto stale = std::chrono::steady_clock::now() - std::chrono::milliseconds(kPublishIntervalMs);
+    if (_publishedAt < stale)
+    {
+        // The machine publishes at its next frame boundary once asked
+        const auto asked = _publishedAt;
+        _publishRequested.store(true, std::memory_order_release);
+        _publishedCv.wait_for(lock, std::chrono::milliseconds(kFreshPublishWaitMs),
+                              [&] { return _publishedAt != asked; });
+    }
+    _publishRequested.store(true, std::memory_order_release);
+    return _published;
 }
 
 void TimeTravelController::MaybePublishAtFrameBoundary()

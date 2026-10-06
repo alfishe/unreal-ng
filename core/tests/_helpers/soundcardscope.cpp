@@ -66,6 +66,9 @@ void SoundCardScope::InstallPolicy()
             config.sound.gsTypeKind = GeneralSoundFitScope::Kind();
         if (!Active(TestSound::MoonSound))
             config.sound.moonsound = 0;
+        // The shipped ts-conf config fits a ZiFi board (2026-10-05); the tests and the recorded fixtures are of the
+        // bare machine, and a test that wants the board asks for it with a network Configure
+        config.network.zifi[0] = '\0';
         if (!Active(TestSound::TurboSound))
             config.sound.turboSoundKind = TurboSoundKind::None;
     });

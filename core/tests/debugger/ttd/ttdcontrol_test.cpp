@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -15,6 +16,7 @@
 #include <vector>
 
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testwaithelper.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
@@ -629,6 +631,26 @@ TEST_P(TTDControl_Test, AFrameWithoutATStateIsItsEnd)
     EXPECT_GT(r.body.find("arrived_at")->find("tinframe")->i, 0) << "where the history ends";
     // Past the history
     EXPECT_FALSE(Bool(Run("seek", {{"frame", std::to_string(last + 5)}}), "reached"));
+}
+
+/// BUGS.md 2026-10-05 #4: the status of a running recording follows it - a
+/// snapshot older than the publish interval is refreshed before it is answered
+/// (the engine; v1 answers its last snapshot). Over the 50 ms budget (~300 ms):
+/// the machine has to run on its own thread at real speed for some frames
+TEST_P(TTDControl_Test, TheStatusOfARunningRecordingFollowsIt)
+{
+    if (!GetParam())
+        GTEST_SKIP() << "the engine's status";
+    ASSERT_TRUE(Run("start").Ok());
+    const uint64_t first = _context->emulatorState.frame_counter;
+    (void)Run("status");   // a first look publishes early in the recording
+    _emulator->StartAsync();
+    ASSERT_TRUE(TestWait::For([&] { return _context->emulatorState.frame_counter >= first + 15; },
+                              std::chrono::milliseconds(5000)));
+    const TTDReply status = Run("status");
+    const int64_t live = static_cast<int64_t>(_context->emulatorState.frame_counter);
+    EXPECT_GE(Int(status, "current_end_frame"), live - 5) << "within a few frames of the running machine";
+    _emulator->Pause();
 }
 
 INSTANTIATE_TEST_SUITE_P(Backends, TTDControl_Test, ::testing::Values(false, true),
