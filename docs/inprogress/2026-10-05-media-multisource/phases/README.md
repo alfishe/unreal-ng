@@ -1,4 +1,4 @@
-# Phases C0-C9: one document per phase
+# Phases C0-C10: one document per phase
 
 Each phase gets its design here **before** its code, and the document becomes the as-built record when
 the phase lands. The phase table is in [tdd.md](../tdd.md) §13; the tests per phase in
@@ -14,6 +14,6 @@ the phase lands. The phase table is in [tdd.md](../tdd.md) §13; the tests per p
 | C6 | [c6-provenance-flatten.md](c6-provenance-flatten.md) | done (C6a S1, C6b attribution, C6c S2) |
 | C7 | [c7-partitions.md](c7-partitions.md) | done |
 | C8 | [c8-commit-writeback.md](c8-commit-writeback.md) | done (C8c Qt: owner's build pending) |
-| C9 | bulk `ReadSectors` | — |
+| C9 | [c9-bulk-read.md](c9-bulk-read.md) | dropped after measuring: 14x cheaper at the device, about 2 % of a guest's per-sector cost |
 | C10 | [c10-sparse-memory.md](c10-sparse-memory.md) | done: C10a zero runs + sparse memory, C10b dynamic VHD; C10c measured (images stay streamed); §8 full-disk and RAM findings |
 | C10d | [c10d-session-spill.md](c10d-session-spill.md) | done: session writes bounded in RAM (128 MiB), the rest spilled to disk; streamed deltas |
