@@ -61,37 +61,6 @@ typedef struct
 
 #pragma pack (pop)      // Restore default compiler behavior for structures
 
-struct SNAHeader
-{
-    uint8_t reg_I;
-
-    uint16_t reg_HL1;
-    uint16_t reg_DE1;
-    uint16_t reg_BC1;
-    uint16_t reg_AF1;
-
-    uint16_t reg_HL;
-    uint16_t reg_DE;
-    uint16_t reg_BC;
-    uint16_t reg_IY;
-    uint16_t reg_IX;
-
-    uint8_t reg_R;
-    uint16_t reg_AF;
-    uint16_t reg_SP;
-    uint8_t intMode;
-    uint8_t borderColor;
-
-    uint8_t ramDump48k[49152];
-};
-
-struct SNA128Header : public SNAHeader
-{
-    uint16_t reg_PC;
-    uint8_t port_7FFD;  // Determines current bank in #C000 - #FFFF bank
-    uint8_t is_TRDOS;
-};
-
 /// endregion </Types>
 
 class LoaderSNA
@@ -130,7 +99,6 @@ protected:
     sna128Header _ext128Header{};
     uint8_t _memoryPages[8][PAGE_SIZE];
     bool _memoryPagesUsed[8];
-    uint8_t _borderColor = 0;
 
     // Snapshot pipeline (PLAN #84): the image built from the staging and the report of the plan step
     snapshot::Options _options;
@@ -216,6 +184,7 @@ public:
     using LoaderSNA::_fileSize;
     using LoaderSNA::_snapshotMode;
     using LoaderSNA::_stagingLoaded;
+    using LoaderSNA::_image;
 
     using LoaderSNA::_header;
     using LoaderSNA::_ext128Header;

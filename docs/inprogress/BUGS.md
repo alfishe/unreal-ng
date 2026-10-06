@@ -8,6 +8,149 @@
 
 ---
 
+2026-10-05
+## 🟢 [Fixed] #1: Live border stays black when nothing wrote port #FE, while a TTD-composed picture fills it from #FE
+* **Date Opened:** 2026-10-05
+* **Date Fixed:** 2026-10-06
+* **Commit ID:** 73e4b793a
+* **Found by:** the D13 test (`TTDControl_Test.AFrameWithoutATStateIsItsEnd`, Phase 5 of the TTD v2 migration,
+  branch `ttd-engine`), 2026-10-05.
+
+### Description
+A machine created with `new Emulator` + `Init()` whose PC is moved to a RAM program before the ROM runs (so nothing
+has written port `#FE` yet) shows a black border in the live framebuffer: border pixels are `0xFF000000` while
+`emulatorState.pFE` is `0xFF` (border color 7, white). A TTD seek to any position in the same session composes the
+picture (`TimeTravelController::ComposeDisplay`, its static base `RenderOnlyMainScreen` + `FillBorderWithColor(pFE & 7)`)
+and shows a white border (`0xFFCACACA`). The two pictures of the same machine state differ in all 52,224 border pixels
+(352x288 - 256x192).
+
+### Repro
+1. Create an emulator (`new Emulator(LoggerLevel::LogError); Init()`), Pentagon default.
+2. Write a program at `#8000` that never executes `OUT (#FE)` (e.g. `DI; LD HL,#4000; loop: INC (HL); INC HL; JR loop`),
+   set PC to `#8000`.
+3. Start TTD, run a few frames, read the framebuffer: border black.
+4. Seek to a recorded frame: border white.
+
+Once the program writes `#FE` (the D13 test does `LD A,2; OUT (#FE),A`) both pictures agree.
+
+### Open questions (triage)
+- Which one is right: the live renderer draws the border only after a `#FE` write, or the initial `pFE` value
+  (`0xFF`) is not what a power-on machine has. Real hardware: the ULA border latch is undefined / zero at power-on on
+  most models; the ROM sets it.
+- Whether a live machine started normally (ROM boot) can ever hit this - the ROM writes `#FE` early, so it may be
+  limited to tests and automation that skip the ROM.
+
+### Root cause and fix (2026-10-06)
+After a reset the border color lived in three places that disagreed: the port decoder's reset set the ULA latch
+`pFE` (0xFF on 128K / Profi: white; 0xF8 on Scorpion: black), `Core::Reset` set `border_attr` to 7, and the screen's
+`_borderColor` stayed 0 (black) until the first `OUT (#FE)`. The renderer draws with `_borderColor`, a TTD-composed
+picture fills from `pFE`. `Core::Reset` now takes `border_attr` and the renderer's color from the latch the decoder
+reset left (`Screen::ResetBorderColor`, no drawing), as an `OUT (#FE)` does. Test
+`TTDControl_Test.TheBorderBeforeAnyOutToFEIsTheLatchs` on both backends (mutant caught). No golden picture changed.
+
+### Requirements / Acceptance Criteria
+- The live picture and a TTD-composed picture of the same machine state are identical, border included, whether or
+  not `#FE` was ever written.
+- A test that reproduces the case above and fails before the fix.
+
+## 🟢 [Fixed] #2: Running forward from a session's mid-frame baseline diverges the TurboSound FM state
+* **Date Opened:** 2026-10-05
+* **Date Fixed:** 2026-10-06
+* **Commit ID:** fae373a49
+* **Found by:** the black-box fast-tape test (Phase 5, Step 3 of the TTD v2 migration, branch `ttd-engine`), 2026-10-05.
+
+### Description
+A recording that starts mid-frame takes its baseline checkpoint there. Seeking to that first checkpoint and running
+the machine forward (detached, the recorded history playing) reaches a later position with CPU and RAM equal to the
+live run but the TurboSound FM device (TTD id 4, two YM2203) different at byte 51 of its 2,008-byte state - chip 0's
+clock phase, right after the latch. Restores from frame-start checkpoints and replays from them are exact; only the
+mid-frame baseline is affected. The FM chips are synced lazily behind the CPU (`TTDSyncedTime`) and save their
+render cursor relative to the CPU's time, so a restore at a position that is not a frame start may leave the clock
+phase where the live chip did not have it.
+
+### Repro
+Pentagon (TSFM in the TurboSound slot), the TTD controller: run 12,345 T-states, `StartRecording`, run 3 frames and
+20,000 T-states, note the position and the device states, `StopRecording`, `SeekTo(checkpoint 0)`, step until the
+noted position: device 4 differs.
+
+### Narrowed (2026-10-06)
+- A seek replaying from the mid-frame first checkpoint inside its frame: exact, every device
+  (`TimeTravelController_Test.ASeekFromAMidFrameFirstCheckpointIsExact`, a guard).
+- The machine running forward from it (`RunNFrames`, `RunTStates`) across frame boundaries: CPU, RAM and both YM2203
+  chips exact (`RunningFromAMidFrameFirstCheckpointKeepsTheFmChips`, a guard); only the TSFM render cursor
+  (blob byte 1222: `_renderT - _chipT`, the start of the v4 timeline tail) ends 16 master clocks - one render tick -
+  behind the live run after the first frame end.
+- Stepping instruction by instruction (`RunSingleCPUCycle`) from it: also chip 0's FM clock phase (byte 51) differs.
+  Syncing the chips to the CPU before the baseline capture (`syncTo(nowT())`) removed the byte-51 difference on that
+  path but not the cursor's, and made no difference on the batch path: not adopted.
+- From a frame-start checkpoint both paths are exact.
+- Suspects: the TSFM render progress and the mixer's sample phase at the first frame end after a mid-frame restore
+  (`TTDLoadState`: `_lastTStates`, `adoptSamplePhase`; `followSamplePhase` from 74d9b8ad5), and the single-step
+  path's per-step audio work. Audio rendering state only - the guest's program and memory replay exactly.
+
+### Root cause and fix (2026-10-06)
+Only with SoundHQ off (the LQ render path). Setting the sound configuration (quality, core rate) arms TSFM's
+`_renderReanchor`: the render cursor re-anchors at the next frame start. The flag is consumed there, so every
+frame-start checkpoint holds it clear - but a recording started inside the frame right after such a setting captured
+it set, and the blob did not carry it: `TTDLoadState` cleared it, the restored machine skipped the re-anchor at the
+first frame end and its cursor stayed one render tick (16 master clocks) behind the live one; instruction by
+instruction the chips' FM clock phase drifted as well. The pending flag is now bit 3 of the blob's board byte (no size
+or version change; older blobs read it as clear, as before). Test
+`TimeTravelController_Test.RunningFromAMidFrameFirstCheckpointIsExact` - every device equal by frames and instruction
+by instruction (mutant caught). The 2026-10-06 narrowing above was right about the path, wrong about the suspect.
+
+### Requirements / Acceptance Criteria
+- Running forward from any checkpoint, the baseline included, reproduces every device state of the live run.
+- A test for the mid-frame baseline that fails before the fix.
+
+## 🟢 [Fixed] #3: A bookmark at the current position fails after `ttd stop` (and while recording)
+* **Date Opened:** 2026-10-05
+* **Date Fixed:** 2026-10-06
+* **Commit ID:** ea9cd124e
+* **Found by:** the Phase 5 recipe re-run (TTD v2 migration, branch `ttd-engine`), 2026-10-05; the same on v1 and on the engine.
+
+### Description
+`POST /ttd/bookmarks {"label": "symptom"}` without a position takes the current position. After `ttd/stop` the
+machine stands inside the frame after the last checkpoint (or ahead of the history while recording), so the add answers
+409 "bookmark position (frame=1027, tInFrame=2125) is beyond the session end (frame=1027)". The recipes
+(`bug-hunt-ttd.md` Phase 1, `ttd-reverse-debugging.md` step 2, `ttd-visual-inspection.md`, `ttd-recording.md` "defaults to
+current position") expect it to work. It works after a seek, find-last or reverse-continue.
+
+### Fix (engine, 2026-10-05)
+The history of a stopped recording reaches to where it stopped (`SessionEndPosition` returns the stop point inside the
+frame after the last checkpoint; StopRecording already hands the engine that frame's journals), so a bookmark, a seek
+and a resume at the stop point work. While recording, a bookmark may sit at the present (a seek there pauses the
+recording at it). Test `TimeTravelController_Test.TheHistoryReachesWhereTheRecordingStopped` (two mutants caught).
+v1 (`UNREAL_TTD_BACKEND=v1`) keeps the old behavior.
+
+### Requirements / Acceptance Criteria
+- A bookmark without a position works right after `stop` (the history reaches to where it stopped) and while
+  recording, or the recipes say what to do instead; a test on both backends.
+
+## 🟢 [Fixed] #4: `GET /ttd/status` lags the recording's head while the machine runs
+* **Date Opened:** 2026-10-05
+* **Date Fixed:** 2026-10-06
+* **Commit ID:** 26d3a63df
+* **Found by:** the Phase 5 recipe re-run, 2026-10-05 (engine; v1 not checked).
+
+### Description
+While a recording runs, `current_end_frame` / `checkpoint_count` in the status trail `position.session_end` (seen: 167 /
+309 / 1 against 308 / 408 / 30); they catch up when the machine pauses or the recording stops. The status of a
+running machine is the published snapshot (`GetPublishedSessionInfo`, refreshed on a throttle), which
+`ttd-recording.md` calls the "live head".
+
+### Root cause and fix (engine, 2026-10-06)
+The machine publishes a fresh snapshot only after an observer asked, at its next frame boundary and at most every
+100 ms; a read returned the snapshot it found, so the first status after a quiet spell was as old as that spell. Now
+`TimeTravelController::ReadSessionInfo` - the status verb on every surface - refreshes a snapshot older than the
+interval first: it asks and waits for the machine's next frame boundary (at most 250 ms; only while a session is
+recording or browsed). The Qt indicators keep the non-blocking `GetPublishedSessionInfo`. Live: status and position
+agree while recording (53 / 53, 101 / 104, 155 / 155). Test `TTDControl_Test.TheStatusOfARunningRecordingFollowsIt`
+(mutant caught). v1 unchanged.
+
+### Requirements / Acceptance Criteria
+- The status of a running recording is at most about one refresh period behind, or the docs say it is a snapshot.
+
 2026-10-04
 ## 🔴 [Open] #1: unreal-qt runs at 2x-4x speed while a TTD recording is active (recording must hold 1x)
 * **Date Opened:** 2026-10-04

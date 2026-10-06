@@ -73,7 +73,7 @@ bank's presets (`--info`) or checks a bank (`--check`); `--line` sends the bytes
   variation the bank lacks plays the capital tone); a rhythm part (channel 10 at power-up) plays bank 128 and
   falls back to kit 0; bank select does nothing on a rhythm part (datasheet p.26). A melodic program the bank
   does not have is silent.
-- The default bank is GeneralUser GS (owner decision Q3/Q4: `data/midi/generaluser-gs.sf2`, not yet tracked).
+- The default bank is GeneralUser GS (owner decision Q3/Q4: `data/midi/generaluser-gs.sf2`, tracked since 2026-10-05 with its license and README; the build ships it next to the executables).
 
 ## The voice model (SF2 2.04)
 

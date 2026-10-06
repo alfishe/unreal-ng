@@ -57,7 +57,7 @@ bool DebugKeyboardManager::IsInputOwnedByJournal() const
     // An RZX playback owns input as well (its recording answers every IN)
     if (_context && _context->rzxPlayer)
         return true;
-    return _context && _context->pTimeTravelManager && _context->pTimeTravelManager->OwnsInput();
+    return _context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->OwnsInput();
 }
 
 /// The one place every automation path changes the matrix. With TTD present the change
@@ -70,13 +70,13 @@ bool DebugKeyboardManager::ApplyPcKey(PcKey key, bool pressed)
     if (key == PcKey::None || !_keyboard || !_keyboard->WantsPcKey(key))
         return false;
 
-    if (_context && _context->pTimeTravelManager)
+    if (_context && _context->pTimeTravelHooks)
     {
         ttd::TTDInputEvent ev;
         ev.kind = ttd::TTDInputKind::PcKey;
         ev.key = static_cast<uint8_t>(key);
         ev.pressed = pressed;
-        return _context->pTimeTravelManager->SubmitLiveInput(ev);
+        return _context->pTimeTravelHooks->SubmitLiveInput(ev);
     }
 
     _keyboard->ApplyPcKey(key, pressed);
@@ -118,13 +118,13 @@ bool DebugKeyboardManager::ApplyKey(ZXKeysEnum key, bool pressed, bool derivePcK
             _lastReleaseFrame[matrixKey] = _frameIndex;
     }
 
-    if (_context && _context->pTimeTravelManager)
+    if (_context && _context->pTimeTravelHooks)
     {
         ttd::TTDInputEvent ev;
         ev.kind = ttd::TTDInputKind::Key;
         ev.key = static_cast<uint8_t>(key);
         ev.pressed = pressed;
-        return _context->pTimeTravelManager->SubmitLiveInput(ev);
+        return _context->pTimeTravelHooks->SubmitLiveInput(ev);
     }
 
     if (pressed)
@@ -255,11 +255,11 @@ void DebugKeyboardManager::ReleaseAllKeys()
     // replay reaches the same all-released matrix
     if (_keyboard)
     {
-        if (_context && _context->pTimeTravelManager)
+        if (_context && _context->pTimeTravelHooks)
         {
             ttd::TTDInputEvent ev;
             ev.kind = ttd::TTDInputKind::KeyboardReset;
-            _context->pTimeTravelManager->SubmitLiveInput(ev);
+            _context->pTimeTravelHooks->SubmitLiveInput(ev);
         }
         else
         {

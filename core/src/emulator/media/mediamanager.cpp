@@ -683,7 +683,7 @@ void MediaManager::NoteWrite(const std::string& slotId, const char* detail)
     ++it->second.writtenFrames;
     ++_writeStamp;
 
-    ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
+    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
     if (ttd && ttd->IsRecording())
     {
         std::string reason = "Media write " + slotId;
@@ -729,7 +729,7 @@ void MediaManager::GuestEject(const std::string& slotId)
     SlotState& state = it->second;
     if (!state.attached || state.ejectRequested)
         return;
-    ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
+    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
     if (ttd && ttd->IsReplayActive())
         return;
     if (state.attached->ChangedUnits() > 0)
@@ -1316,10 +1316,11 @@ bool MediaManager::CanApplyNow() const
 
 MediaResult MediaManager::CheckRecording(bool endRecording)
 {
-    ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
+    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
     if (!ttd)
         return MediaResult::Success();
-    if (ttd->IsRecording())
+    // A recording, also one paused for browsing (its guard answers while it is paused)
+    if (ttd->IsRecording() || !ttd->RecordingGuard(ttd::TTDGuardedAction::LoadDisk).empty())
     {
         if (!endRecording)
             return MediaResult::Fail(MediaError::Recording,
@@ -1328,7 +1329,7 @@ MediaResult MediaManager::CheckRecording(bool endRecording)
     }
     // A kept session was recorded with the old media: its checkpoints no
     // longer describe this machine (the rule LoadDisk follows)
-    ttd->InvalidateSession("media-change");
+    ttd->OnLoad(ttd::TTDLoadKind::Media, "media-change");
     return MediaResult::Success();
 }
 

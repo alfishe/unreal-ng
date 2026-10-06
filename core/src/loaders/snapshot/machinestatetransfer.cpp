@@ -1024,7 +1024,7 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
         return report;
     }
 
-    const std::string guard = target.RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot);
+    const std::string guard = target.RecordingGuard(ttd::TTDGuardedAction::SwitchModel);
     if (!guard.empty())
     {
         report.reason = guard;
@@ -1057,8 +1057,8 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
     if (report.ok)
     {
         // The target leaves its own history: a transfer teleports its state, like a snapshot load
-        if (targetContext->pTimeTravelManager)
-            targetContext->pTimeTravelManager->InvalidateSession("state-transfer");
+        if (targetContext->pTimeTravelHooks)
+            targetContext->pTimeTravelHooks->OnModelTransfer("state-transfer");
 
         report = Apply(*sourceContext, *targetContext, options);
         if (report.ok)
@@ -1081,6 +1081,7 @@ void MachineStateTransfer::FitSourceDevices(const CONFIG& source, CONFIG& target
     target.sound.covoxFB = source.sound.covoxFB;
     target.sound.covoxDD = source.sound.covoxDD;
     target.sound.sd = source.sound.sd;
+    target.sound.sdMode = source.sound.sdMode;
     target.moonsound = source.moonsound;
     target.ngs = source.ngs;
     target.trdos_present = source.trdos_present || target.trdos_present;

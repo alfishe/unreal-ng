@@ -157,6 +157,14 @@ void PortDecoder_Pentagon1024::Port_EFF7_Out(uint16_t port, uint8_t value, uint1
     }
 }
 
+void PortDecoder_Pentagon1024::EnterSpectrum128Paging(uint16_t pc)
+{
+    constexpr uint8_t kCompat = 0x04;   // #EFF7 bit 2: memory above 128K absent
+    const uint8_t value = static_cast<uint8_t>(_context->emulatorState.pEFF7 | kCompat);
+    DecodePortOut(0xEFF7, value, pc);
+    _context->emulatorState.pEFF7 = value;
+}
+
 /// Port #7FFD (Memory) handler override for Pentagon 1024K.
 /// Key difference from Pentagon 128: when extended memory is enabled (#EFF7 bit 2 = 0),
 /// bit 5 of #7FFD is NOT the paging lock - it's the 6th page bit (pb5/A18).

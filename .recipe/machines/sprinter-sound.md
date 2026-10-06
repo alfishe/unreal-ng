@@ -4,7 +4,8 @@ The Sprinter Sp2000 has one AY-3-8910 (1.75 MHz, ABC stereo), the beeper, and on
 the PLD drives as a plain **Covox** (port `#FB`) or as the **Covox-Blaster** (CBL): a 256-sample ring the PLD
 plays at 7.8-109 kHz, refilled by the program on an interrupt every 128 samples. This recipe plays a WAV with
 DSS's own player `WAVPLAY.EXE` from a hard disk, reads the device state and records the sound. MOD music goes to
-the General Sound / NeoGS behind the ISA ZX-bus adapter (ProPlay, `{"source":"gs"}` for its sound):
+the General Sound / NeoGS behind the ISA ZX-bus adapter, set in `[SLOTS]` (the NeoGS as shipped; ProPlay,
+`{"source":"gs"}` for its sound):
 [sprinter-isa.md](sprinter-isa.md#the-general-sound--neogs-behind-the-zx-bus-adapter-verified-2026-10-04).
 
 Ground truth: design [tdd-accel-sound-input.md](../../docs/inprogress/2026-09-28-sprinter/tdd-accel-sound-input.md)

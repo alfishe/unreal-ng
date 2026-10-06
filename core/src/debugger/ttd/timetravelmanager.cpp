@@ -35,6 +35,7 @@
 #include <ctime>
 #include "emulator/config.h"
 #include "ttdmachineperipherals.h"  // RegisterMachinePeripherals (shared with MachineStateTransfer)
+#include "emulator/slots/slotmanager.h"  // the slot-set guard on a session load
 #include "emulator/io/rtc/ds12887.h"
 #include "debugger/ttd/ttdconfigcapture.h"
 #include "emulator/media/mediamanager.h"
@@ -95,21 +96,6 @@ TTDTimePoint TimePointOf(uint64_t globalT, uint32_t frameT)
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// Public helpers
-// ---------------------------------------------------------------------------
-
-const char* TTDSessionStateToString(TTDSessionState state)
-{
-    switch (state)
-    {
-        case TTDSessionState::Idle:      return "idle";
-        case TTDSessionState::Recording: return "recording";
-        case TTDSessionState::Detached:  return "detached";
-    }
-    return "unknown";
-}
-
-// ---------------------------------------------------------------------------
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
@@ -129,6 +115,10 @@ TimeTravelManager::TimeTravelManager(EmulatorContext* context)
 
 TimeTravelManager::~TimeTravelManager()
 {
+    if (_context && _context->ttdCoverage == &_coverageIndex)
+        _context->ttdCoverage = nullptr;
+    if (_context && _context->ttdWriteSink == this)
+        _context->ttdWriteSink = nullptr;
     if (_context && _context->ttdPortReads == &_portReads)
         _context->ttdPortReads = nullptr;
     if (_context && _context->ttdPortWrites == &_portWrites)
@@ -168,6 +158,7 @@ bool TimeTravelManager::StartRecording()
 
     // Leaving the replay/browse scope for live recording: free the decode cache.
     ClearFrameCache();
+    _lastStopReason.clear();
 
     // Fresh session — clear any stale auto-pause signal from a previous
     // Detached window.
@@ -299,6 +290,8 @@ bool TimeTravelManager::StartRecording()
         _modelRamPages = 0;
         return refuse();
     }
+
+    ++_recordingNumber;   // past the last refusal: this is a new recording session
 
     // Engaged before the baseline (past the last refusal above), so the very
     // first checkpoint already holds the 1x machine; SetState below is then a no-op
@@ -598,6 +591,7 @@ void TimeTravelManager::EngageCaptureFeatures()
 void TimeTravelManager::SetState(TTDSessionState next)
 {
     _state = next;
+    SyncCoverageSink();
     if (next == TTDSessionState::Recording)
         EngageRecordingLock();
     else if (next == TTDSessionState::Idle)
@@ -718,6 +712,17 @@ void TimeTravelManager::ReleaseRecordingLock()
     _savedHostSpeedMultiplier = 1;
 }
 
+void TimeTravelManager::StopForFeatureChange(const char* feature)
+{
+    if (!IsRecording())
+        return;
+    // StopRecording parks the machine first, so no write slips between the stop and the
+    // flag; the history and the stop position stay valid and browsable
+    StopRecording();
+    _lastStopReason = std::string("feature-off:") + (feature ? feature : "");
+    MLOGINFO("TimeTravelManager - recording stopped: %s", _lastStopReason.c_str());
+}
+
 void TimeTravelManager::UpdateFeatureCache()
 {
     FeatureManager* fm = _context ? _context->pFeatureManager : nullptr;
@@ -741,7 +746,9 @@ void TimeTravelManager::UpdateFeatureCache()
     }
 
     // When TimeTravel feature is disabled and we're not recording,
-    // deallocate the write journal to free memory (~64MB)
+    // deallocate the write journal to free memory (~64MB). A history that
+    // stays (FR-17's clean stop) loses only this accelerator: reverse queries
+    // replay a frame instead, and status reports the journal absent
     if (!ttdEnabled && _state == TTDSessionState::Idle && _writeJournal)
     {
         MLOGINFO("TimeTravelManager::UpdateFeatureCache — TTD disabled, deallocating write journal");
@@ -824,6 +831,7 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
     info.portReplayValueMismatches = _portReads.ValueMismatches();
     info.portReplayDivergences = _portReads.Divergences() + _portWrites.Divergences();
     info.lastDropReason = _lastDropReason;
+    info.lastStopReason = _lastStopReason;
     info.unavailableReason = _unavailableReason;
 
     // Phase 5 codec telemetry — useful for the UI / WebAPI status surface
@@ -1137,20 +1145,30 @@ std::string TimeTravelManager::RecordingGuard(TTDGuardedAction action) const
                    "be dropped. Stop the recording first.";
         case TTDGuardedAction::Invalidate:
             return "Cannot discard the TTD session while it is recording. Stop the recording first, then discard it.";
-        case TTDGuardedAction::DisableTimeTravel:
-            return "Cannot switch the timetravel feature off while TTD is recording: capture would stop mid-session "
-                   "and the recorded history would be corrupt. Stop the recording first.";
-        case TTDGuardedAction::DisableDebugMode:
-            return "Cannot switch debug mode off while TTD is recording: memory writes would stop reaching the "
-                   "recorded history, which would then be corrupt. Stop the recording first.";
         case TTDGuardedAction::SwitchGsCard:
             return "Cannot switch the General Sound card type while TTD is recording: the recorded history holds "
                    "the current card's state, which the other card type cannot take back. Stop the recording first.";
+        case TTDGuardedAction::SwitchModel:
+            return "Cannot switch the machine model while TTD is recording: the recorded history belongs to this "
+                   "machine. Stop the recording first.";
         case TTDGuardedAction::CdFrontPanel:
             return "Cannot play, pause, stop or change the volume of a CD drive from outside the guest while TTD is "
                    "recording: a replay would not repeat it. Let the guest's CD player do it, or stop the recording first.";
+        case TTDGuardedAction::ChangeSlots:
+            return "Cannot change the slot set while TTD is recording session " + RecordingSessionLabel() +
+                   ": the device set is fixed for a session. Stop the recording first.";
     }
     return "This action is not allowed while TTD is recording. Stop the recording first.";
+}
+
+std::string TimeTravelManager::RecordingSessionLabel() const
+{
+    if (!IsRecording())
+        return {};
+    std::string label = "#" + std::to_string(_recordingNumber);
+    if (!_timeline.empty())
+        label += ", started at frame " + std::to_string(_timeline.front().time.frame);
+    return label;
 }
 
 void TimeTravelManager::RequestInvalidation(const char* reason)
@@ -2583,7 +2601,7 @@ void TimeTravelManager::BeginToolEdit()
 
 void TimeTravelManager::EndToolEdit(const char* source)
 {
-    if (!_toolEditOpen || _state != TTDSessionState::Recording)
+    if (!_toolEditOpen || _state != TTDSessionState::Recording || !source)
     {
         _toolEditOpen = false;
         return;
@@ -5048,31 +5066,6 @@ bool TimeTravelManager::SerializeSession(std::ostream& out, std::string& err) co
     return true;
 }
 
-bool TimeTravelManager::TurboSoundSessionKindMatches(
-    const std::unordered_map<uint8_t, std::vector<uint8_t>>& sessionBlobs,
-    const TTDSerializable& liveSlotDevice)
-{
-    const uint8_t legacyId = static_cast<uint8_t>(PeripheralId::TurboSound);
-    const uint8_t fmId = static_cast<uint8_t>(PeripheralId::TSFM);
-    const uint8_t liveId = static_cast<uint8_t>(liveSlotDevice.TTDPeripheralId());
-
-    const bool sessionHasLegacy = sessionBlobs.find(legacyId) != sessionBlobs.end();
-    const bool sessionHasFm = sessionBlobs.find(fmId) != sessionBlobs.end();
-
-    // No slot blob in the session: the recording machine had no slot device -
-    // nothing to mismatch against (RestoreAll's missingBlobs path covers it).
-    if (!sessionHasLegacy && !sessionHasFm)
-        return true;
-
-    // Defensive: one device occupies the slot, so a session carrying both ids
-    // cannot come from a healthy writer - refuse rather than guess which
-    // blob to trust.
-    if (sessionHasLegacy && sessionHasFm)
-        return false;
-
-    return sessionHasLegacy ? liveId == legacyId : liveId == fmId;
-}
-
 bool TimeTravelManager::DeserializeSession(std::istream& in, std::string& err)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
@@ -5428,108 +5421,23 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
     for (uint32_t i = 0; i < pageStoreCount; ++i)
         stagedStore.Release(i);
 
-    // TurboSound-slot session-kind guard (TSFM design §8.2), following the
-    // model-id check's philosophy: a session recorded with the other slot
-    // device (legacy TurboSound = blob id 0, TSFM = blob id 4) is refused,
-    // not loaded. RestoreAll would restore neither device - the live one
-    // would keep whatever state it held before the load, a silent divergence
-    // with no trail back to this decision. The baseline checkpoint's blob
-    // map speaks for the whole session: one device occupies the slot for the
-    // instance's lifetime (design §3.1 - no runtime switching).
-    if (!journalsOnly && !stagedTimeline.empty() && _context && _context->pSoundManager)
+    // Slot-set guard (ZX-bus slots SL-5; before: the TurboSound-slot and General Sound personality guards and the
+    // Sprinter's ISA population): a session recorded with other cards in the slots is refused with every
+    // difference listed, not loaded half-way - RestoreAll would restore neither card, leaving the live one's state
+    // behind silently. The baseline checkpoint names the cards of the whole session: the device set is fixed for a
+    // session (D38)
+    if (!journalsOnly && !stagedTimeline.empty() && _context)
     {
-        if (ITurboSoundDevice* slotDevice = _context->pSoundManager->getTurboSound())
-        {
-            if (!TurboSoundSessionKindMatches(stagedTimeline.front().peripheralBlobs, *slotDevice))
-            {
-                const uint8_t legacyId = static_cast<uint8_t>(PeripheralId::TurboSound);
-                const uint8_t sessionId =
-                    stagedTimeline.front().peripheralBlobs.find(legacyId) != stagedTimeline.front().peripheralBlobs.end()
-                        ? legacyId
-                        : static_cast<uint8_t>(PeripheralId::TSFM);
-                const uint8_t liveId = static_cast<uint8_t>(slotDevice->TTDPeripheralId());
-                err = "TurboSound slot mismatch: session was recorded with device id " +
-                      std::to_string(sessionId) +
-                      (sessionId == legacyId ? " (legacy TurboSound)" : " (TSFM)") +
-                      ", this instance runs device id " + std::to_string(liveId) +
-                      (liveId == legacyId ? " (legacy TurboSound)" : " (TSFM)") +
-                      " - set [SOUND] TurboSound to the recorded kind and restart";
-                return false;
-            }
-        }
-        else
-        {
-            // Empty slot (TurboSound = None) but the session carries a slot
-            // blob: the recording machine answered the AY ports, this one
-            // leaves them on the floating bus - a replay would diverge on the
-            // first AY read. Refused for the same reason as a kind mismatch.
-            const auto& blobs = stagedTimeline.front().peripheralBlobs;
-            const bool sessionHasSlot =
-                blobs.find(static_cast<uint8_t>(PeripheralId::TurboSound)) != blobs.end() ||
-                blobs.find(static_cast<uint8_t>(PeripheralId::TSFM)) != blobs.end();
-            if (sessionHasSlot)
-            {
-                err = "TurboSound slot mismatch: session was recorded with a TurboSound-slot device, "
-                      "this instance has none - set [SOUND] TurboSound to the recorded kind and restart";
-                return false;
-            }
-        }
-    }
-
-    // General Sound slot guard (neogs-tdd.md §7.4): a session recorded with one
-    // GS-slot personality (classic GS, lightweight player, NeoGS) is refused
-    // on an instance fitted with another - RestoreAll would restore neither,
-    // leaving the live card's state behind silently. The baseline checkpoint
-    // names the personality at the start of the recording; switches inside
-    // the session are replayed by UpdatePeripheral. An instance with no GS
-    // card keeps the missing-blob report (RestoreAll) rather than a refusal.
-    if (!journalsOnly && !stagedTimeline.empty() && _context && _context->pSoundManager)
-    {
-        if (GeneralSoundCard* liveGs = _context->pSoundManager->getGeneralSound())
-        {
-            static const struct
-            {
-                PeripheralId id;
-                const char* name;
-            } kGsSlot[] = {{PeripheralId::GeneralSound, "GS"},
-                           {PeripheralId::GeneralSoundLightweight, "GS lightweight"},
-                           {PeripheralId::NeoGS, "NeoGS"}};
-            const auto& blobs = stagedTimeline.front().peripheralBlobs;
-            const char* recorded = nullptr;
-            PeripheralId recordedId = PeripheralId::Count;
-            for (const auto& slot : kGsSlot)
-            {
-                // A card fitted but not recorded (the lightweight GS) is named by the header, not by a blob
-                const bool notRecorded = (notRecordedMask >> static_cast<uint8_t>(slot.id)) & 1u;
-                if (notRecorded || blobs.find(static_cast<uint8_t>(slot.id)) != blobs.end())
-                {
-                    recorded = slot.name;
-                    recordedId = slot.id;
-                    break;
-                }
-            }
-            if (recorded && recordedId != liveGs->TTDPeripheralId())
-            {
-                const char* fitted = "another card";
-                for (const auto& slot : kGsSlot)
-                {
-                    if (slot.id == liveGs->TTDPeripheralId())
-                        fitted = slot.name;
-                }
-                err = std::string("General Sound slot mismatch: recorded with ") + recorded + ", fitted: " + fitted +
-                      " - set [SOUND] GSType to the recorded card and restart";
-                return false;
-            }
-        }
-    }
-
-    // Machine slot guard (Sprinter ISA tdd §9): the model compares its fixed expansion-slot population with
-    // the baseline's blobs (the Sprinter's ISA slots, blob 33) - a recording made with another card in a slot
-    // is refused, not loaded half-way
-    if (!journalsOnly && !stagedTimeline.empty() && _context && _context->pPortDecoder)
-    {
+        const auto& blobs = stagedTimeline.front().peripheralBlobs;
         std::string why;
-        if (!_context->pPortDecoder->TtdSessionMatches(stagedTimeline.front().peripheralBlobs, why))
+        bool matches = true;
+        if (_context->pSlotManager)
+            matches = _context->pSlotManager->TtdSessionMatches(blobs, notRecordedMask, _peripherals, why);
+        else
+            matches = SlotManager::TtdSlotSetMatches({}, SlotManager::TtdDeviceSet::Of(blobs, notRecordedMask),
+                                                     SlotManager::TtdDeviceSet::Of(_peripherals), why) &&
+                      (!_context->pPortDecoder || _context->pPortDecoder->TtdSessionMatches(blobs, why));
+        if (!matches)
         {
             err = why;
             return false;
@@ -5905,6 +5813,17 @@ void TimeTravelManager::SetEnableCoverageIndex(bool enable)
     // sets it otherwise.
     if (_context && _state == TTDSessionState::Recording)
         _context->ttdCoverageActive = enable;
+    SyncCoverageSink();
+}
+
+void TimeTravelManager::SyncCoverageSink()
+{
+    if (!_context)
+        return;
+    if (_state == TTDSessionState::Recording && _enableCoverageIndex)
+        _context->ttdCoverage = &_coverageIndex;
+    else if (_context->ttdCoverage == &_coverageIndex)
+        _context->ttdCoverage = nullptr;
 }
 
 void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,

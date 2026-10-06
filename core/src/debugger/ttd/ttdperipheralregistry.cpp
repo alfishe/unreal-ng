@@ -10,12 +10,29 @@
 
 namespace ttd {
 
-void TTDPeripheralRegistry::Register(PeripheralId id, TTDSerializable* device)
+bool TTDPeripheralRegistry::Register(PeripheralId id, TTDSerializable* device, const std::string& instance)
 {
-    if (device)
+    if (!device)
+        return true;
+    const uint8_t raw = static_cast<uint8_t>(id);
+    const auto it = _devices.find(raw);
+    if (it != _devices.end() && it->second && it->second != device)
     {
-        _devices[static_cast<uint8_t>(id)] = device;
+        auto name = [](const TTDSerializable& d, const std::string& given) {
+            return given.empty() ? d.TTDDescribe().instance : given;
+        };
+        const auto held = _instances.find(raw);
+        _duplicates.push_back("two devices under id " + std::to_string(raw) + ": " +
+                              name(*it->second, held != _instances.end() ? held->second : std::string()) + " and " +
+                              name(*device, instance) + " (a checkpoint holds one state per id)");
+        return false;
     }
+    _devices[raw] = device;
+    if (instance.empty())
+        _instances.erase(raw);
+    else
+        _instances[raw] = instance;
+    return true;
 }
 
 std::vector<TTDDeviceEntry> TTDPeripheralRegistry::DeviceEntries() const
@@ -23,7 +40,12 @@ std::vector<TTDDeviceEntry> TTDPeripheralRegistry::DeviceEntries() const
     std::vector<TTDDeviceEntry> devices;
     for (const auto& [id, device] : _devices)
         if (device && device->TTDStateSize() != 0)
+        {
             devices.push_back({device->TTDDescribe(), device, nullptr});
+            const auto named = _instances.find(id);
+            if (named != _instances.end())
+                devices.back().descriptor.instance = named->second;
+        }
     for (ITTDRegionSource* source : _regionSources)
     {
         uint8_t id = 0;
@@ -43,6 +65,11 @@ std::vector<TTDDeviceEntry> TTDPeripheralRegistry::DeviceEntries() const
 
 bool TTDPeripheralRegistry::CheckDeviceTable(std::string& error) const
 {
+    if (!_duplicates.empty())
+    {
+        error = _duplicates.front();
+        return false;
+    }
     for (const auto& [id, device] : _devices)
     {
         if (!device)
@@ -75,12 +102,15 @@ bool TTDPeripheralRegistry::CheckDeviceTable(std::string& error) const
 void TTDPeripheralRegistry::Unregister(PeripheralId id)
 {
     _devices.erase(static_cast<uint8_t>(id));
+    _instances.erase(static_cast<uint8_t>(id));
     _notRecorded &= ~(uint64_t(1) << static_cast<uint8_t>(id));
 }
 
 void TTDPeripheralRegistry::Clear()
 {
     _devices.clear();
+    _instances.clear();
+    _duplicates.clear();
     _regionSources.clear();
     _notRecorded = 0;
 }
@@ -183,6 +213,35 @@ void TTDPeripheralRegistry::CaptureAll(
         }
         _lastStateTotal += currentState.size();
     }
+}
+
+void TTDPeripheralRegistry::CaptureStates(std::vector<uint8_t>& present, const std::array<bool, 256>& external) const
+{
+    present.clear();
+    _lastStateBytes.fill(0);
+    _lastStateTotal = 0;
+    for (std::vector<uint8_t>& s : _lastStates)
+        s.clear();   // keeps the capacity: no allocation per frame
+    std::vector<uint8_t> wide;   // an id past the kept range
+    for (const auto& [id, device] : _devices)
+    {
+        if (!device || device->TTDStateSize() == 0)
+            continue;
+        if (external[id])
+        {
+            present.push_back(id);
+            continue;
+        }
+        std::vector<uint8_t>& state = id < _lastStates.size() ? _lastStates[id] : wide;
+        device->TTDSaveStateTo(state);
+        if (state.empty())
+            continue;
+        present.push_back(id);
+        if (id < _lastStateBytes.size())
+            _lastStateBytes[id] = static_cast<uint32_t>(state.size());
+        _lastStateTotal += state.size();
+    }
+    std::sort(present.begin(), present.end());
 }
 
 TTDRestoreReport TTDPeripheralRegistry::RestoreAll(

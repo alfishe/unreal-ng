@@ -49,8 +49,8 @@ void FloppyDriveSlot::NoteSlotWrite(EmulatorContext* context, uint8_t drive, con
         return;
     }
     // A controller without a machine around it (unit tests): the marker alone
-    if (context->pTimeTravelManager)
-        context->pTimeTravelManager->RecordExternalEvent(ttd::TTDExternalEventKind::DiskWrite, detail);
+    if (context->pTimeTravelHooks)
+        context->pTimeTravelHooks->RecordExternalEvent(ttd::TTDExternalEventKind::DiskWrite, detail);
 }
 
 void FloppyDriveSlot::Attach(Medium& medium)

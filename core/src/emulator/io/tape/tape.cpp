@@ -38,8 +38,8 @@ void Tape::startTape()
     // No-op unless the TTD session is Recording - same guard as
     // RecordInputEvent. The CLI / WebAPI handlers pause the emulator
     // before calling startTape, so frame_counter and z80.t are stable.
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape play");
 
     _playbackFrozen = false;
@@ -53,8 +53,8 @@ void Tape::startTape()
 void Tape::stopTape()
 {
     // Phase 2 Item 6 - see startTape() for rationale.
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape stop");
 
     _tapeStarted = false;
@@ -89,8 +89,8 @@ void Tape::stopPlayback()
     // Phase 2 Item 6 - same replay fencing as stopTape(): the playback region
     // itself is wall-clock driven (nondeterministic), so a stop boundary must
     // remain a SeekTo barrier.
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape stop");
 
     // A stop never consumes a partly played block (nonstandard-loader
@@ -127,8 +127,8 @@ void Tape::pausePlayback()
 
     // Same replay fencing as stopPlayback(): a pause boundary is still a
     // wall-clock-driven playback boundary for SeekTo.
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape pause");
 
     MLOGINFO("Tape paused at block %zu, pulse %zu (no loader listening)",
@@ -168,8 +168,8 @@ void Tape::ResumePlaybackAfterPoll()
         return;
     }
 
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape play");
 
     // Same flag set as startTape(), but position and last level survive
@@ -452,11 +452,11 @@ bool Tape::SeekToBlock(size_t index)
 
     // TTD (design §11): seek is a position-changing tape-control command —
     // same invalidation class as rewind. The marker carries the target.
-    if (_context && _context->pTimeTravelManager)
+    if (_context && _context->pTimeTravelHooks)
     {
         char reason[32];
         snprintf(reason, sizeof(reason), "tape seek %zu", index);
-        _context->pTimeTravelManager->RecordExternalEvent(
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, reason);
     }
 
@@ -515,8 +515,8 @@ void Tape::ResumePlaybackFromPause()
         return;
     }
 
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape resume");
 
     // Same flags startTape() sets; position and last EAR level survive, so
@@ -559,8 +559,8 @@ void Tape::reset()
     // Phase 2 Item 6 - only record a rewind marker when reset() actually
     // changes tape state mid-session. A no-op reset (constructor, system
     // reset before any session) must not pollute the journal.
-    if (wasStarted && _context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (wasStarted && _context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape rewind");
 
 };
@@ -894,8 +894,8 @@ bool Tape::IsListeningRead(TapeReadKind kind, uint64_t clockCount)
 void Tape::ParkAtNextBlock()
 {
     // Same replay fencing as pausePlayback()
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->RecordExternalEvent(
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->RecordExternalEvent(
             ttd::TTDExternalEventKind::TapeControl, "tape park");
 
     _currentTapeBlockIndex++;

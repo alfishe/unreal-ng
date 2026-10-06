@@ -16,7 +16,10 @@
 
 Covox::Covox(EmulatorContext* context, size_t sampleRate)
     : _context(context)
-    , _fitment(context->config.sound.sd ? Fitment::Quad : Fitment::Mono)
+    , _fitment(!context->config.sound.sd           ? Fitment::Mono
+               : context->config.sound.sdMode == 1 ? (context->config.sound.covoxFB ? Fitment::Mode1Mono : Fitment::Mode1)
+               : context->config.sound.sdMode == 2 ? Fitment::Mode2
+                                                   : Fitment::Quad)
     , _sampleRate(sampleRate)
 {
     // Allocate blip_buf accumulators for stereo output
@@ -87,6 +90,16 @@ void Covox::reset()
     memset(_buffer, 0, _audioDescriptor.memoryBufferSizeInBytes);
 }
 
+void Covox::followSamplePhase(uint64_t phase)
+{
+    if (!_phaseAlignPending)
+        return;
+    _phaseAlignPending = false;
+    const double fraction = static_cast<double>(phase) / static_cast<double>(CPU_CLOCK_RATE);
+    blip_align_phase(_blipL, fraction);
+    blip_align_phase(_blipR, fraction);
+}
+
 void Covox::handleFrameStart()
 {
     _frameHadSound = false;
@@ -146,6 +159,11 @@ void Covox::handleFrameEnd(size_t expectedSamples)
     int samplesL = blip_read_samples(_blipL, &_buffer[0], samplesThisFrame, 1 /* stereo stride */);
     int samplesR = blip_read_samples(_blipR, &_buffer[1], samplesThisFrame, 1 /* stereo stride */);
 
+    // A frame longer than the base frame (host speed multiplier) rendered more than the mixer reads: the rest is the
+    // excess the mixer drops knowingly, taken out at the next frame start together with the phase (followSamplePhase)
+    if (frameDuration != config.frame)
+        _phaseAlignPending = true;
+
     // Zero-fill any shortfall (defensive)
     for (int i = samplesL; i < samplesThisFrame; i++)
         _buffer[i * 2] = 0;
@@ -196,6 +214,13 @@ namespace
                        (lowByte & Covox::PORT_MASK_MODE1) == Covox::PORT_MATCH_MODE1;
             case Covox::Fitment::Mono:
                 return lowByte == (Covox::PORT_RIGHT_B & 0xFF);
+            case Covox::Fitment::Mode1:
+                return (lowByte & Covox::PORT_MASK_MODE1) == Covox::PORT_MATCH_MODE1;
+            case Covox::Fitment::Mode2:
+                return (lowByte & Covox::PORT_MASK) == Covox::PORT_MATCH;
+            case Covox::Fitment::Mode1Mono:
+                return (lowByte & Covox::PORT_MASK_MODE1) == Covox::PORT_MATCH_MODE1 ||
+                       lowByte == (Covox::PORT_RIGHT_B & 0xFF);
         }
         return false;
     }
@@ -208,6 +233,24 @@ bool Covox::tryClaimOut(uint16_t rawPort, uint8_t value)
 
     portDeviceOutMethod(rawPort, value);
     return true;
+}
+
+std::vector<PortMaskMatch> Covox::selfDecodingClaims() const
+{
+    switch (_fitment)
+    {
+        case Fitment::Quad:
+            return { PortMaskMatch{ PORT_MASK, PORT_MATCH }, PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 } };
+        case Fitment::Mono:
+            return { PortMaskMatch{ 0x00FF, PORT_RIGHT_B & 0xFF } };
+        case Fitment::Mode1:
+            return { PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 } };
+        case Fitment::Mode2:
+            return { PortMaskMatch{ PORT_MASK, PORT_MATCH } };
+        case Fitment::Mode1Mono:
+            return { PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 }, PortMaskMatch{ 0x00FF, PORT_RIGHT_B & 0xFF } };
+    }
+    return {};
 }
 
 bool Covox::tryClaimIn(uint16_t rawPort, uint8_t& outValue)
@@ -317,6 +360,7 @@ void Covox::setSynthesisSuppressed(bool suppressed)
     {
         if (_blipL) blip_clear(_blipL);
         if (_blipR) blip_clear(_blipR);
+        _phaseAlignPending = true;  // the mixer kept counting through the gap
     }
 }
 

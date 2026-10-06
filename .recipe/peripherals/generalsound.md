@@ -1,19 +1,24 @@
 # Recipe: General Sound (GS) Card
 
 The General Sound expansion: a sample/DAC card with its own Z80
-coprocessor. The card kind is set by the `[SOUND] GSType=` config key (read
-at instance creation) and can be swapped at runtime
+coprocessor. The card is a slot card: `[SLOTS]` names it in the model's
+`unreal.ini` (`zxbus.1 = gs`, read at instance creation), automation plugs it
+with `slots plug zxbus.next gs` ([slots recipe](../machines/slots.md)), and the
+personality is swapped by a slot replace that restarts the machine
 ([personality switch](#mcp-preferred)):
 
-| `GSType` | What |
-|:--|:--|
-| `Z80` | full LLE classic card: Z80 coprocessor (unreal-z80) @ 12 MHz, ROM + RAM, DACs, interrupt |
-| `LW` (alias `LIGHT`) | lightweight in-tree mod player driven by host commands (no coprocessor) |
-| `BASS` | deprecated alias of `LW` (logs a warning; no BASS library is linked) |
-| `NGS` | NeoGS FPGA card (`SoundChip_NeoGS`): SD slot, MP3 decoder, DMA |
-| `NONE` | card absent; the default when the key is missing (an unknown value warns and falls back to `NONE`) |
+| Card (`[SLOTS]`) | Legacy `[SOUND] GSType=` | What |
+|:--|:--|:--|
+| `gs` (`ram`, `rom` options) | `Z80` | full LLE classic card: Z80 coprocessor (unreal-z80) @ 12 MHz, ROM + RAM, DACs, interrupt |
+| `gs-lw` | `LW` (alias `LIGHT`; `BASS` deprecated) | lightweight in-tree mod player driven by host commands (no coprocessor) |
+| `neogs` (`ram`) | `NGS` | NeoGS FPGA card (`SoundChip_NeoGS`): SD slot, MP3 decoder, DMA |
+| no card | `NONE` | card absent |
 
-The shipped configs under `data/configs/` all set `GSType=NGS`. Classic-card
+The legacy `GSType` key still works in an INI without `[SLOTS]`: it is
+translated into a slot card at creation (a deprecation line in the log).
+The shipped clone configs under `data/configs/` fit the NeoGS (`neogs` in `[SLOTS]`); the 48K / 128K / +2 / +2A /
++3 and Profi (v5, v3) configs fit no GS since 2026-10-04 (owner decision), a user adds one in `[SLOTS]`; the Sprinter
+fits its NeoGS behind the ISA ZX-bus adapter (`isa.1`, [docs/features/sprinter-slots.md](../../docs/features/sprinter-slots.md)). Classic-card
 firmware `[ROM] GS=` defaults to `rom/gs105a.rom` (`gs104.rom` also ships);
 `bootGS.rom` and `rom/neogs/` hold the NeoGS flash image. Other keys:
 `GSVol` (0-8192 ini scale, shipped 8000), `GSReset=1` makes a ZX reset
@@ -78,7 +83,7 @@ Drive the card with `emulator_manage` (all `gs_*` actions go to
 | `gs_nmi` | | `#33` bit-6 pulse |
 | `gs_send_command` / `gs_send_data` | `value` 0-255 (required) | `OUT #BB` / `OUT #B3` semantics |
 | `gs_read_status` / `gs_read_data` | | side-effect-free peek: `IN #BB` value (status or `#7E`) / the card-to-ZX byte (bit 7 not cleared) |
-| `gs_switch_personality` | `personality`: `z80`/`lle`, `lw`/`lightweight`, `ngs`/`neogs` | swap the card at the next frame boundary; mailbox and counters survive, a module held by the lightweight card is replayed through fresh LLE firmware |
+| `gs_switch_personality` | `personality`: `z80`/`lle`, `lw`/`lightweight`, `ngs`/`neogs`; optional `replace_if_incompatible`, `dry_run` | replace the card in the GS slot: a slot change applied by a machine restart (owner decision Q10) - a new emulator id (the reply's `restart.emulatorId`), the machine state is lost; refused while TTD records |
 | `gs_dump_module` | `path` (optional, relative, no `..`; default `gs-module-dump.mod`) | write the last completed COM30..D2 module upload; 404 if none |
 | `gs_sd_insert` / `gs_sd_eject` / `gs_flash_save` | `path` (insert: raw image) | NeoGS only; insert/eject refused while TTD records |
 | `gs_stereo_mode` | `mode`: `separated` (as on the board), `gs` (50% cross-feed), `mono` | NeoGS DAC mix, applied next frame |
@@ -107,9 +112,11 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" \
 curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" \
      -H 'Content-Type: application/json' -d '{"action":"send_command","value":243}' | jq .
 #   -> {"status":"success","action":"send_command","note":"applied at the next instruction boundary"}
-curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" \
-     -H 'Content-Type: application/json' -d '{"action":"switch_personality","personality":"lw"}' | jq .
-#   -> {"personality":"lw","current":"...","requested":true,"note":"applied at the next frame boundary"}
+# The personality: a slot replace, the machine restarts with a new id
+EMU_ID=$(curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" \
+     -H 'Content-Type: application/json' -d '{"action":"switch_personality","personality":"lw"}' \
+     | jq -r '.restart.emulatorId')
+#   reply: {"ok":true,"status":"applied","personality":"lw","previous":"lle","plan":{...},"restart":{"emulatorId":...}}
 curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" \
      -H 'Content-Type: application/json' -d '{"action":"stereo_mode","mode":"gs"}' | jq .
 
@@ -131,11 +138,14 @@ curl -s "$BASE/emulator/$EMU_ID/audio/capture/result?wav=true" \
 
 - **`reset` / `reset_card` are control actions**, not state: they go through
   `POST /control/audio/gs` (the state endpoint is read-only).
-- **`GSType` is read at creation; the runtime swap is `switch_personality`** —
-  it is refused (409) while a TTD recording runs, and takes effect at the
-  next frame boundary, so poll `GET /state/audio/gs` before asserting.
-- **GS silence on a real Sinclair model is policy, not a bug** — use a
-  clone, or `GSType=NONE` models report no card (404 / unavailable).
+- **The card is read at creation; `switch_personality` is a slot change** —
+  the machine restarts with the other card (a new emulator id: take it from
+  the reply's `restart.emulatorId`), the machine state is lost; it is refused
+  (409) while a TTD recording runs. The `gs_lightweight` feature is the only
+  in-place swap left.
+- **GS silence on a real Sinclair model is policy, not a bug** — the shipped
+  48K / 128K / +2 / +2A / +3 configs fit no GS: plug one (`slots plug edge.1 gs
+  --replace`, an `unrealistic` fit there) or use a clone.
 - **Host turbo changes the mailbox race, not the card's clock** — if a
   firmware boot fails only under turbo, suspect ZX-side polling timing
   (`#BB` status), not GS-side synthesis.

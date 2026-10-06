@@ -1354,7 +1354,8 @@ StereoMode=separated           ; separated | gs (50% cross-feed) | mono - a list
   one-line explanation (`RamSize` stays `2048`, as shipped before). Every
   shipped model fits NeoGS: `GSType=NGS` (decided 2026-09-28; before, Z80 on
   the GS-capable models and NONE elsewhere); the comment names every card
-  (NGS, Z80, LW, BASS, NONE). `Config_Test.ShippedConfigsFitNeoGS` pins it. Each inline comment holds exactly one `;`: `IniFile` strips inline
+  (NGS, Z80, LW, BASS, NONE). Superseded 2026-10-04 (owner decision): the 48K / 128K / +2 / +2A / +3, Profi and Sprinter
+  configs fit no GS; `Config_Test.ShippedConfigsFitNeoGSExceptTheMachinesShippedWithout` pins it. Each inline comment holds exactly one `;`: `IniFile` strips inline
   comments with a backward scan, so a second `;` would break the value.
   `Config_Test.ShippedConfigsCarryTheFullNeoGSSection` parses every config.
 

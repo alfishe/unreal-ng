@@ -56,6 +56,17 @@ void PortDecoder_ATM450::ApplyBootROMDefaults(ROMModeEnum mode)
         _memory->UpdateZ80Banks();
 }
 
+void PortDecoder_ATM450::EnterSpectrum128Paging([[maybe_unused]] uint16_t pc)
+{
+    // The reset starts the machine in its system ROM (CPSYS) with video mode 0 and leaves the ROM / video choice to it. A
+    // Spectrum program wants what RM_DOS sets up: ROM at #0000, the ZX screen, the 48K / 128K / DOS ROM by #7FFD
+    Port_FE_AddressLatch(ATM450_AFE_ROM | ATM450_AFE_VMODE);
+    _state->aFB = 0x00;
+    _state->pFDFD = 0x00;
+    if (_memory)
+        _memory->UpdateZ80Banks();
+}
+
 IdeAdapter::Gate PortDecoder_ATM450::IdeGate()
 {
     IdeAdapter::Gate gate = PortDecoder::IdeGate();

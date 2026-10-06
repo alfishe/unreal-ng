@@ -5,6 +5,7 @@
 #include "common/sound/aystereomode.h"
 #include "common/sound/filters/filtervoicing.h"
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
+#include "emulator/slots/slotconfig.h"
 
 #define EMUL_DEBUG
 #define TRASH_PAGE
@@ -680,6 +681,9 @@ struct CONFIG
 		AYStereoMode ayStereo = AYStereoMode::ABC;
 
 		int covoxFB, covoxDD, sd, saa1099, moonsound;
+		/// The SounDrive card's port set (ZX-bus slots `soundrive` option `mode`): 0 both (the emulator decode, the
+		/// legacy SD=1), 1 mode 1 (#0F / #1F / #4F / #5F), 2 mode 2 (#F1 / #F3 / #F9 / #FB)
+		uint8_t sdMode = 0;
 		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol;
 		int covoxFB_vol, covoxDD_vol, sd_vol, covoxProfi_vol;
 		int gs_vol, bass_vol, moonsound_vol;
@@ -869,6 +873,11 @@ struct CONFIG
 		uint8_t mix_frames;
 		uint8_t mode; // RSM_MODE
 	} rsm;
+
+    /// [SLOTS] (ZX-bus slots, architecture.md §6): the cards of the machine; SlotManager plans it at creation. Empty
+    /// without the section: the legacy card keys ([SOUND] TurboSound, GSType, MoonSound, CovoxFB, SD, [NETWORK] Card)
+    /// are translated into slots then
+    SlotConfig slotConfig;
 
     std::string romSetName;
     std::string romSet128Path;

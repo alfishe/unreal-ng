@@ -23,7 +23,7 @@ foreach(_app IN LISTS _suite_targets)
             \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/bin/${_app}\" SYMBOLIC)
     " COMPONENT Suite)
 endforeach()
-install(DIRECTORY "${DATA_PATH}/fonts" "${DATA_PATH}/rom"
+install(DIRECTORY "${DATA_PATH}/fonts" "${DATA_PATH}/rom" "${DATA_PATH}/midi"
     "${DATA_PATH}/boot" "${DATA_PATH}/configs"
     DESTINATION lib/unreal-ng COMPONENT Suite)
 install(DIRECTORY "${DATA_PATH}/testrom/" DESTINATION lib/unreal-ng/rom COMPONENT Suite)

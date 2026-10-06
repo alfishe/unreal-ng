@@ -25,7 +25,6 @@ LoaderSNA::LoaderSNA(EmulatorContext* context, const std::string& path)
     // Prevents uninitialized POD members from causing inconsistent snapshot loading
     memset(&_header, 0, sizeof(_header));
     memset(&_ext128Header, 0, sizeof(_ext128Header));
-    _borderColor = 0;
 
     // Initialize memory pages with proper size
     for (int i = 0; i < 8; i++)
@@ -135,6 +134,8 @@ snapshot::Image LoaderSNA::BuildImage() const
         }
         else
         {
+            // SP in the ROM or at the top of memory: the machine's memory at SP decides (the commit pops it)
+            cpu.pcOnMachineStack = true;
             image.warnings.push_back("the stack pointer is in the ROM: the PC cannot be read off the stack here");
         }
     }
@@ -327,6 +328,7 @@ bool LoaderSNA::is128kSnapshot() const
 bool LoaderSNA::loadToStaging()
 {
     bool result = false;
+    _image = snapshot::Image();   // staged afresh: an image built from an earlier staging is stale
 
     switch (_snapshotMode)
     {
@@ -380,8 +382,7 @@ bool LoaderSNA::load48kToStaging()
         }
         _memoryPagesUsed[0] = true;
 
-        // Only set border color and staging flag after all reads succeed
-        _borderColor = _header.border & 0b0000'0111;
+        // Only set the staging flag after all reads succeed
         _stagingLoaded = true;
         result = true;
     }
@@ -506,11 +507,10 @@ bool LoaderSNA::load128kToStaging()
             }
         }
 
-        // Only set border color and staging flag after all reads succeed
+        // Only set the staging flag after all reads succeed
         // Prevents applySnapshotFromStaging() from using partial/garbage data
         if (result)
         {
-            _borderColor = _header.border & 0b0000'0111;
             _stagingLoaded = true;
         }
     }
@@ -530,57 +530,49 @@ bool LoaderSNA::applySnapshotFromStaging()
 
     if (_stagingLoaded)
     {
+        // The commit reads the image (snapshot pipeline P9), not the staging buffers. load() has built it for the plan;
+        // a caller that stages and applies by hand has not
+        if (_image.format.empty())
+            _image = BuildImage();
+        const snapshot::Image& image = _image;
+        const snapshot::Cpu& cpu = image.cpu;
+        const bool is48 = image.memoryModel == snapshot::MemoryModel::Mem48k;
+
         // Reset Z80 and all peripherals
         core.Reset();
+        // A model whose reset leaves an extended paging on (the Pentagon 1024) goes back to the plain 128K form
+        _context->pPortDecoder->EnterSpectrum128Paging(z80.pc);
 
-        // Transfer RAM data to emulator (only pages existed in snapshot will be updated)
-        for (int pageNum = 0; pageNum < 8; pageNum++)
+        // Transfer RAM data to emulator (only the banks the snapshot has)
+        for (const auto& bank : image.banks)
         {
-            if (_memoryPagesUsed[pageNum])
-            {
-                memory.LoadRAMPageData(pageNum, _memoryPages[pageNum], PAGE_SIZE);
-
-                ramPagesLoaded++;
-            }
+            memory.LoadRAMPageData(bank.first, const_cast<uint8_t*>(bank.second.data()), PAGE_SIZE);
+            ramPagesLoaded++;
         }
 
         // Transfer registers
-        z80.alt.h = _header._h;
-        z80.alt.l = _header._l;
-        z80.alt.d = _header._d;
-        z80.alt.e = _header._e;
-        z80.alt.b = _header._b;
-        z80.alt.c = _header._c;
-        z80.alt.a = _header._a;
-        z80.alt.f = _header._f;
+        z80.af = cpu.af;
+        z80.bc = cpu.bc;
+        z80.de = cpu.de;
+        z80.hl = cpu.hl;
+        z80.alt.af = cpu.af2;
+        z80.alt.bc = cpu.bc2;
+        z80.alt.de = cpu.de2;
+        z80.alt.hl = cpu.hl2;
+        z80.ix = cpu.ix;
+        z80.iy = cpu.iy;
+        z80.sp = cpu.sp;
 
-        z80.h = _header.h;
-        z80.l = _header.l;
-        z80.d = _header.d;
-        z80.e = _header.e;
-        z80.b = _header.b;
-        z80.c = _header.c;
-        z80.a = _header.a;
-        z80.f = _header.f;
-
-        z80.xh = _header.hx;
-        z80.xl = _header.lx;
-        z80.yh = _header.hy;
-        z80.yl = _header.ly;
-
-        z80.sph = _header.hsp;
-        z80.spl = _header.lsp;
-
-        z80.i = _header.i;
-        z80.r_low = _header.r;
-        z80.r_hi = _header.r & 0x80u;
-        z80.im = _header.imod & 0x03u;
+        z80.i = cpu.i;
+        z80.r_low = cpu.r;
+        z80.r_hi = cpu.r & 0x80u;
+        z80.im = cpu.im & 0x03u;
         // Byte 19 bit 2 is IFF2. The format was born as an NMI-taken image
         // resumed by RETN, which copies IFF2 into IFF1, so both flip-flops
         // come from the one bit (libspectrum/FUSE do the same). Forcing IFF2
         // to 1 left a DI snapshot in the "inside an NMI handler" state
         // (IFF1=0, IFF2=1): its first RETN/RETI would enable interrupts
-        z80.iff2 = (_header.flag19 & 0b00000'0100u) >> 2;
+        z80.iff2 = cpu.iff2 ? 1 : 0;
         z80.iff1 = z80.iff2;
 
         // Initialize undocumented registers (not stored in SNA format)
@@ -588,7 +580,7 @@ bool LoaderSNA::applySnapshotFromStaging()
         z80.q = 0;
 
         // Set up ports
-        if (_snapshotMode == SNA_48)
+        if (is48)
         {
             // A 48K snapshot carries no TR-DOS state: end any TR-DOS session the
             // machine was in (e.g. the Pentagon boot menu), exactly as the Z80
@@ -604,21 +596,37 @@ bool LoaderSNA::applySnapshotFromStaging()
             memory.SetRAMPageToBank2(2);
             memory.SetRAMPageToBank3(0);
 
+            // The 48K BASIC, latches included (what the reset does for RM_SOS): with the shipped RESET=128 the latch still
+            // says BASIC-128, and the first bank recompute (any #7FFD write, a TR-DOS page-in) would swap the ROM under
+            // the program. Written through the decoder so models that keep the ROM bit elsewhere (TS-Conf) follow
+            memory.SetROMMode(RM_SOS);
+            const uint8_t rom48Latch = _context->emulatorState.p7FFD;
+            _context->pPortDecoder->UnlockPaging();
+            _context->pPortDecoder->DecodePortOut(0x7FFD, rom48Latch, z80.pc);
+
             // The 48K BASIC ROM, wherever the model keeps it (Memory::base_sos_rom: page 3 on the Pentagon,
             // page 1 on the 128K, the only ROM on the 48K - a fixed page 3 was empty there)
             memory.SetROM48k();
 
-            // 48k SNA files store Z80 PC on stack, so we need to pop it and load to PC
+            // 48k SNA files store Z80 PC on stack. The image has read it off the stack in the file's RAM; when the stack
+            // is elsewhere (the ROM, the top of memory) the machine's memory at SP says, as it always has.
             // Z80 is little-endian: low byte at SP, high byte at SP+1
-            uint8_t pc_low = memory.DirectReadFromZ80Memory(z80.sp++);
-            uint8_t pc_high = memory.DirectReadFromZ80Memory(z80.sp++);
-            z80.pc = (pc_high << 8) | pc_low;
+            if (cpu.pcOnMachineStack)
+            {
+                uint8_t pc_low = memory.DirectReadFromZ80Memory(z80.sp++);
+                uint8_t pc_high = memory.DirectReadFromZ80Memory(z80.sp++);
+                z80.pc = (pc_high << 8) | pc_low;
+            }
+            else
+            {
+                z80.pc = cpu.pc;
+            }
         }
-
-        if (_snapshotMode == SNA_128)
+        else
         {
             // Memory page mapped to [C000:FFFF]
-            uint8_t currentTopPage = _ext128Header.port_7FFD & 0x07u;
+            const uint8_t port7FFD = image.paging.p7FFD.value_or(0);
+            uint8_t currentTopPage = port7FFD & 0x07u;
 
             // Step 1: Unlock paging for state-independent loading
             // Ensures snapshot loads correctly even if port 7FFD was previously locked
@@ -629,7 +637,7 @@ bool LoaderSNA::applySnapshotFromStaging()
             // the 7FFD write below maps the ROM by bit 4 (bank 0 stays on the
             // DOS/SYS ROM while a session is active) and the Beta128 ports
             // leave the bus; step 5 re-activates the session for TR-DOS snapshots.
-            if (!_ext128Header.is_TRDOS)
+            if (!image.trdosPaged)
             {
                 _context->emulatorState.flags &= ~CF_TRDOS;
                 memory.UpdateZ80Banks();
@@ -640,20 +648,20 @@ bool LoaderSNA::applySnapshotFromStaging()
             memory.SetRAMPageToBank2(2);
             memory.SetRAMPageToBank3(currentTopPage);
 
-            z80.pc = _ext128Header.reg_PC;
+            z80.pc = cpu.pc;
 
             // Step 3: Set port values via decoder
-            _context->pPortDecoder->DecodePortOut(0x7FFD, _ext128Header.port_7FFD, z80.pc);
-            
+            _context->pPortDecoder->DecodePortOut(0x7FFD, port7FFD, z80.pc);
+
             // Step 4: Explicit state assignment (including lock bit if present)
-            _context->emulatorState.p7FFD = _ext128Header.port_7FFD;
+            _context->emulatorState.p7FFD = port7FFD;
 
             // Step 5: Activate TR-DOS ROM if needed
-            if (_ext128Header.is_TRDOS)
+            if (image.trdosPaged)
             {
                 // Set CF_TRDOS flag to indicate TR-DOS is active
                 _context->emulatorState.flags |= CF_TRDOS;
-                
+
                 // Activate TR-DOS ROM
                 _context->pMemory->SetROMDOS();
             }
@@ -671,7 +679,8 @@ bool LoaderSNA::applySnapshotFromStaging()
         }
 
         // Pre-fill border with color
-        screen.FillBorderWithColor(_borderColor);
+        const uint8_t borderColor = image.border & 0b0000'0111;
+        screen.FillBorderWithColor(borderColor);
 
         // Keep the machine state in step with the picture. FillBorderWithColor
         // only paints; pFE is the port latch every consumer reads back, and
@@ -680,9 +689,8 @@ bool LoaderSNA::applySnapshotFromStaging()
         // record a border the machine never had - a snapshot with a black
         // border restored as white on seek.
         EmulatorState& borderState = _context->emulatorState;
-        borderState.pFE = static_cast<uint8_t>((borderState.pFE & 0b1111'1000) |
-                                               (_borderColor & 0b0000'0111));
-        borderState.border_attr = static_cast<uint8_t>(_borderColor & 0b0000'0111);
+        borderState.pFE = static_cast<uint8_t>((borderState.pFE & 0b1111'1000) | borderColor);
+        borderState.border_attr = borderColor;
 
 
         // Trigger screen redraw to show snapshot screen immediately
@@ -843,7 +851,6 @@ bool LoaderSNA::captureStateToStaging()
     {
         _header.border = 0;  // Default border color
     }
-    _borderColor = _header.border;
     
     // Determine format
     _snapshotMode = determineOutputFormat();

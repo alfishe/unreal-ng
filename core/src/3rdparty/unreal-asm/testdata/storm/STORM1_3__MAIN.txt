@@ -1,0 +1,1038 @@
+        ORG #6F19
+        DI
+        LD HL,#5FFF:LD (#5CB2),HL
+        LD SP,HL:INC SP
+        LD HL,#3E00:PUSH HL
+        LD HL,#1303:PUSH HL
+        LD (#5C3D),SP
+        LD HL,BASIC
+        LD DE,#5D3B
+        LD BC,EBASIC-BASIC
+        LDIR
+        EX DE,HL
+        LD (#5C61),HL
+        LD (#5C63),HL
+        LD (#5C65),HL
+        DEC HL:DEC HL
+        LD (#5C59),HL
+        DEC HL
+        LD (#5C4B),HL
+        LD (IY+14),7
+        LD (IY+83),7
+        LD (IY+48),8
+        LD HL,EPROG
+        LD DE,#5C26
+        LD BC,EEPROG-EPROG
+        LDIR
+        LD A,#13:LD HL,#D200
+        LD BC,#4800:CALL CLMEM
+        LD A,#14:LD HL,#0000
+        LD BC,#0000:CALL CLMEM
+        LD A,#17:LD HL,#D000
+        LD BC,#4000:CALL CLMEM
+        LD A,#10:LD HL,#0000
+        LD BC,#0000:CALL CLMEM
+        EI:HALT:DI
+        XOR A:OUT (#FE),A
+        LD A,#10:LD HL,#5B00
+        LD BC,#6C00
+        CALL CLMEM
+
+        LD A,(#5D19);-3
+        AND 3;-2
+        LD (DRIVE),A;-3
+        CALL EXPCOLS;-3
+        JP START
+
+CLMEM   POP DE
+        LD SP,HL
+        LD L,C
+        LD H,A
+        LD A,B
+        LD BC,#7FFD:OUT (C),H
+        LD B,A
+        LD H,L
+.32     PUSH HL
+        DJNZ $-32
+        LD SP,(#5C3D)
+        EX DE,HL:JP (HL)
+
+EPROG   LD BC,#7FFD
+        LD A,#14
+        OUT (C),A
+        JP #C000
+        JR EPROG
+EEPROG
+
+BASIC   DB 0,5,#0B,0,#F9,#C0,#B0,#22
+        DB "23600",#22,#0D,#80,#0D,#80
+EBASIC
+
+        ORG #8000
+INST    LD IY,#5C3A:IM 1:EI
+        LD HL,(#5C3D):LD BC,#5FFC
+        OR A:SBC HL,BC:JR Z,INST1
+        RST 8:DB 3
+INST1   ADD HL,BC:LD SP,HL
+        HALT:DI:XOR A:OUT (#FE),A
+        LD HL,SWAP+#4000:LD DE,#5000
+        LD BC,SWAP3-SWAP
+        LDIR
+        LD HL,START
+        PUSH HL
+        LD DE,#1000
+        JP #5000
+
+RUN     LD HL,(ASTART)
+        LD A,H:OR L:RET Z
+        CALL DEINST
+        LD HL,23600:PUSH HL
+        LD HL,(ASTART)
+        JR QUIT0
+
+DEBUG   CALL DEINST
+        LD HL,#DB00
+        LD D,#17
+        JR QUIT1
+
+QUIT    CALL DEINST
+        LD HL,#FFCF:PUSH HL
+        LD HL,0:ADD HL,SP
+QUIT0   LD D,#10
+QUIT1   PUSH HL:LD E,#01
+        JP #5000
+
+DEINST  POP HL:EXX
+        LD IY,#5C3A:IM 1
+        EI:HALT:DI
+        LD SP,#5FFC
+        LD HL,SWAP:LD DE,#5000
+        LD BC,SWAP3-SWAP
+        LDIR
+        EXX:JP (HL)
+
+;D-BANK
+;E = 1 - CL_STS_SCR + CL_DCR_BANK
+
+SWAP    LD HL,0:ADD HL,SP:EXX
+        LD A,#14:LD BC,#7FFD:OUT (C),A
+        LD HL,#5800:LD DE,#5801
+        LD BC,#02FF:LD (HL),L
+        LDIR
+        LD SP,#5706
+        LD HL,#C956:PUSH HL
+        LD HL,#00C2:PUSH HL
+        LD HL,#25DD:PUSH HL
+        LD HL,#02A8
+        LD DE,#ED1A
+        LD B,#40
+SWAP1   PUSH HL:PUSH DE:DJNZ SWAP1
+        LD H,#E9:PUSH HL:INC SP
+        LD HL,#DE10:PUSH HL
+        LD HL,#D5D5
+        LD BC,#1000
+SWAP1A  PUSH HL:DJNZ SWAP1A
+        PUSH BC
+        LD HL,#11E1:PUSH HL
+        LD C,B:LD HX,B
+        LD HL,#FFFF:LD DE,#BFFF
+        CALL #5600
+        LD BC,#7FFD
+        PUSH BC
+        LD A,#13:OUT (C),A
+        LD DE,#CFFF
+        PUSH DE
+        LD HL,#7FFF
+        LD BC,#8000:LD HX,#40
+        CALL #5600
+        POP DE:POP BC
+        LD A,#17:OUT (C),A
+        LD BC,#7000:LD HX,#40
+        CALL #5600
+        EXX:RR E:EXX
+        JR NC,SWAP1B
+        LD SP,#DB00:LD B,108
+        CALL #55D9
+        LD A,BDCR
+        LD BC,#7FFD:OUT (C),A
+        LD SP,#0000:LD B,0
+        CALL #55D9
+SWAP1B  LD SP,#5000:LD B,64
+        CALL #55D9
+        LD HL,#2758
+        EXX
+        LD BC,#7FFD:OUT (C),D
+        LD SP,HL
+        DEC HL:DEC HL:DEC HL
+        EX DE,HL
+        LD HL,SWAP3-SWAP+#4FFF
+        LD BC,SWAP3-SWAP2
+        LDDR
+        INC DE:PUSH DE
+        LD HL,#5000:LD DE,#5001
+        LD BC,#0800:LD (HL),L
+        LD A,7
+        LD IY,#5C3A
+        RET
+
+SWAP2   LDIR
+        LD (HL),A
+        LD BC,#02FF
+        LDIR
+        EI
+        RET
+SWAP3
+
+GERR    LD IY,#5C3A:IM 1
+        LD A,4:OUT (#FE),A
+        LD SP,(GUSP)
+        EI
+        RST 8:DB 2
+
+;EXPAND COLORS
+EXPCOLS LD DE,CLSTORE
+        LD HL,LECOL
+        LD A,(DE)
+        AND 7;LECOL
+        LD (HL),A
+        LD A,(DE)
+        XOR (HL):INC HL;MNCOL
+.3      RRCA
+        AND 7
+        LD (HL),A:INC HL,DE
+        LD A,(DE)
+        AND #0F
+        CALL EXPCOL
+        INC HL
+        LD A,(DE)
+        AND #F0
+.4      RRCA
+EXPCOL  BIT 3,A
+        JR Z,$+4
+        XOR #48
+        LD (HL),A
+        RET
+
+;**************************************
+
+ASSEMB  DI
+        LD (ASUSP),SP
+        CALL ASM4
+        CALL INITLBL
+        XOR A:CALL ASPASS
+        JR NZ,ASM1
+        LD A,1:CALL ASPASS
+        JR NZ,ASM1
+        LD HL,(ASTART)
+        LD A,H:OR L
+        JR NZ,ASM0
+        LD H,#80:LD (ASTART),HL
+ASM0    LD IX,VAR
+        JP RETHINK
+
+ASM1    LD A,H
+        OR A
+        LD A,6
+        JR NZ,ASM2
+        LD A,2
+ASM2    LD HL,ASMES1+7
+        LD BC,ERRS
+        CALL DL49
+        LD (HL),0
+        LD HL,ASMES1
+        LD DE,(MLINE')+6
+        LD A,2:LD C,3
+        CALL PRSTRI
+ASM3A   CALL ASKEY
+ASM3    LD SP,(ASUSP)
+        CALL ASM4
+        LD IX,VAR
+        CALL CLWIND
+        JR ASM0
+
+ASM4    LD HL,#FFFF
+        LD (MINADR),HL
+        INC HL
+        LD (MAXADR),HL
+        LD (ASTART),HL
+        RET
+
+ASERR   EX AF,AF
+        LD A,(PASS):CP #FE
+        JP Z,CALC2
+        EX AF,AF
+        PUSH HL:PUSH BC:PUSH DE
+        EXX
+        PUSH HL:PUSH BC:PUSH DE
+        PUSH IX:PUSH IY
+        LD (ASCDERR),A
+        LD HL,ASSTAT:SET 6,(HL)
+        LD HL,(ERRS)
+        LD A,H:OR L
+        INC HL:LD (ERRS),HL
+        JR NZ,ASER2
+ASER1   LD (ERRSCR),A
+        LD DE,#0100
+        LD BC,(HGT')+32
+        LD A,ASMCOL
+        CALL WIND
+ASER2   LD A,(ERRSCR):CP HGT
+        JR NZ,ASER6
+        CALL ASKEY
+        JR NC,ASM3
+        XOR A
+        JR ASER1
+
+ASKEY   LD B,0
+ASER3   EI:HALT:DI
+        PUSH BC
+        CALL ASER4
+        POP BC
+        INC B
+        XOR A:IN A,(#FE)
+        CPL:AND #1F
+        JR Z,ASER3
+        LD A,#7F:IN A,(#FE):RRA
+        LD B,#FF
+ASER4   PUSH AF
+        LD HL,ASMES2
+        BIT 2,B:JR Z,ASER5
+        LD HL,ASMES2+5
+ASER5   LD DE,(MLINE')+20
+        LD A,2:LD C,1
+        CALL PRSTRI
+        POP AF
+        RET
+
+ASER6   LD BC,ASNLN
+        LD HL,BUFF32
+        LD A,6
+        PUSH HL
+        CALL DL49
+        LD (HL),":":INC HL
+        LD A,(ASSTAT)
+        AND #0F:ADD A,#30
+        LD (HL),A:INC HL
+        LD (HL),0
+        LD HL,ERRSCR
+        INC (HL)
+        LD D,(HL)
+        POP HL
+        LD E,1:LD A,E:LD C,2
+        PUSH DE
+        CALL PRSTRI
+        LD A,(ASCDERR):LD E,A
+        LD HL,ASMER1
+        CALL FINDSTR
+        POP DE:PUSH DE
+        LD E,7
+        LD A,1:LD C,6
+        CALL PRSTRI
+        POP DE
+        LD A,(INCLMD)
+        OR A:JR Z,ASERE
+        XOR A:LD (BUFFN+8),A
+        LD HL,BUFFN
+        LD E,25
+        LD A,1,C,2
+        CALL PRSTRI
+ASERE   POP IY:POP IX
+        POP DE:POP BC:POP HL
+        EXX
+        POP DE:POP BC:POP HL
+        RET
+
+ASPASS  LD (PASS),A
+        ADD A,#30:LD (ASMES0+5),A
+        LD HL,ASMES0:CALL PUTMSG
+        XOR A:LD (INCLMD),A
+        LD (ASREPT),A
+        LD H,A:LD L,A
+        LD (ASNLN),HL
+        LD (ERRS),HL
+        LD H,#80
+        LD (ASADR),HL
+        LD (ASDEST),HL
+        LD HL,BEGBTX+1
+        LD IX,ASBUFC
+        CALL ASLINE
+        LD HL,(ERRS)
+        LD A,H:OR L
+        RET
+
+WRC     LD DE,(ASDEST)
+        LD HL,(MINADR)
+        OR A:SBC HL,DE
+        JR C,WRC2
+        LD (MINADR),DE
+        LD A,D:CP #60:JR C,WRC7
+WRC2    PUSH DE
+        EX DE,HL
+        ADD HL,BC
+        LD (ASDEST),HL
+        DEC HL
+        LD A,H:OR A:JR Z,WRC7
+        EX DE,HL
+        LD HL,(MAXADR)
+        OR A:SBC HL,DE
+        JR NC,WRC3
+        LD (MAXADR),DE
+WRC3    POP DE
+        LD HL,ASBUFC
+
+;DE-ADR OF VIRTUAL MEMORY
+;HL-ADR
+;B=#00 (HL)>VIRTUAL
+;B=#80 VIRTUAL>(HL)
+;C-LEN
+
+WRC0    PUSH IX
+        LD IX,WRCTBL
+WRC4    LD A,D
+        OR A:JR Z,WRC4A
+        DEC A
+        CP (IX):JR NC,WRC6
+        LD A,(IX+1):CALL SBANKA
+WRC4A   XOR A:EX AF,AF
+        LD A,D:CP (IX)
+        JR NZ,WRC5
+        LD A,E:ADD A,C:JR NC,WRC5
+        EX AF,AF
+        LD A,E:NEG:LD C,A
+WRC5    LD A,D:ADD A,(IX+2):LD D,A
+        BIT 7,B:JR Z,WRC5A
+        RES 7,B
+        EX DE,HL:LDIR:EX DE,HL
+        SET 7,B
+        JR WRC5B
+
+WRC5A   LDIR
+WRC5B   EX AF,AF
+        LD C,A
+        LD D,(IX):INC D:LD E,B
+WRC6    INC IX:INC IX:INC IX
+        LD A,B:AND #7F:OR C
+        JR NZ,WRC4
+        POP IX
+        JR SBTXT
+
+WRC7    LD A,13:CALL ASERR
+        JP ASM3A
+
+SBDCR   PUSH AF
+        LD A,BDCR
+        JR SBTXT1
+
+SBTXT   PUSH AF
+        LD A,BTXT
+SBTXT1  CALL SBANKA
+        POP AF
+        RET
+
+SBANKA  PUSH BC
+        LD BC,#7FFD:OUT (C),A
+        POP BC
+        RET
+
+INITLBL LD BC,#7FFD
+        PUSH BC
+        LD A,ASBLBL:OUT (C),A
+        LD HL,ABLABEL*256
+        LD B,L:LD C,L
+;LOOP
+        INC L:LD (HL),C:INC HL
+        DJNZ $-3
+        LD (AELBL),HL
+        POP BC
+        LD A,ASBTXT:OUT (C),A
+        RET
+
+WRCODE  LD A,LX:OR A:RET Z
+        PUSH HL
+        PUSH DE
+        PUSH BC
+        LD C,A:LD B,0
+        LD HL,(ASADR)
+        ADD HL,BC
+        LD (ASADR),HL
+        LD A,(PASS):OR A
+        CALL NZ,WRC
+        LD LX,B
+        POP BC
+        POP DE
+        POP HL
+        RET
+
+MINCL   PUSH IX
+        LD A,(INCLMD):OR A
+        LD A,15:JR NZ,INCL1
+        CALL SELNAME
+        JR NC,INCL2
+        LD A,7
+INCL1   CALL ASERR
+        POP IX
+        RET
+
+INCL2   PUSH DE
+        LD DE,BUFFN
+        CALL FILEFL
+        POP DE
+        JR NC,INCL2A
+        CP 2:JP NZ,ASM3
+        LD A,14:JR INCL1
+
+INCL2A  POP IX
+        PUSH DE
+        LD E,(HL):INC HL
+        LD D,(HL):INC HL
+        INC HL
+        LD C,(HL):INC HL
+        LD B,(HL)
+        LD (SECTR),BC
+        LD HL,(ASNLN):PUSH HL
+        LD HL,(ASARPT):PUSH HL
+        LD A,(ASSTAT):LD L,A
+        LD A,(ASREPT):LD H,A
+        PUSH HL
+        XOR A:LD (ASREPT),A
+        LD L,A:LD H,A
+        LD (ASNLN),HL
+        LD A,#C9:LD (INCLMD),A
+        LD BC,0:CALL INCL4
+        XOR A:LD (INCLMD),A
+        POP HL
+        LD A,H:LD (ASREPT),A
+        LD A,L:LD (ASSTAT),A
+        POP HL:LD (ASARPT),HL
+        POP HL:LD (ASNLN),HL
+        POP DE:LD A,(DE)
+        CP #8C:JR Z,MINCL
+        CP #DC:JR Z,MINCL
+        RET
+
+; HL-ADDR, DE-DISK, BC-MEM
+
+INCL4   LD A,B:OR A:JR NZ,INCL9
+        LD A,C:CP #40:JR NC,INCL9
+        LD A,D:OR E:JR NZ,INCL5
+        LD A,B:OR C:JR NZ,INCL9
+        RET
+
+INCL5   PUSH DE
+        LD DE,BUF1024
+        LD A,B:OR C
+        JR Z,$+4:LDIR
+        LD HL,BUF1024+#0700
+        OR A:SBC HL,DE:LD L,0
+        POP BC:PUSH BC
+        OR A:SBC HL,BC:ADD HL,BC
+        JR NC,INCL7
+        LD B,H:LD C,L
+INCL7   POP HL
+        OR A:SBC HL,BC
+        PUSH HL
+        LD H,D:LD L,E
+        ADD HL,BC
+        PUSH HL
+        EX DE,HL
+        LD DE,(SECTR)
+        LD A,C:OR A
+        JR Z,$+3:INC B
+        PUSH IX
+        LD C,5:CALL DOS
+        JP C,ASM3
+        POP IX
+        POP HL
+        LD BC,BUF1024
+        OR A:SBC HL,BC
+        LD B,H:LD C,L
+        LD HL,BUF1024
+        POP DE
+INCL9   PUSH DE
+        PUSH BC
+        PUSH HL
+        CALL ASLINE
+        LD D,H:LD E,L
+        POP BC
+        OR A:SBC HL,BC
+        LD B,H:LD C,L
+        POP HL
+        OR A:SBC HL,BC
+        JP C,GERR
+        LD B,H:LD C,L
+        EX DE,HL
+        POP DE
+        JR INCL4
+
+MINCB   CALL SELNAME
+        JR NC,INCB2
+        LD A,7
+INCB1   CALL ASERR
+INCB1A  LD IX,ASBUFC
+        RET
+
+INCB2   LD BC,(ASDEST)
+        LD HL,(MINADR)
+        OR A:SBC HL,BC
+        JR C,INCB2B
+        LD (MINADR),BC
+INCB2B  LD A,B:CP #60
+        LD A,13:JR C,INCB1
+        PUSH DE
+        LD HL,0
+        PUSH BC
+        PUSH BC
+        OR A:SBC HL,BC
+        LD B,H:LD C,L
+        LD DE,BUFFN
+        POP HL
+        LD A,(PASS)
+        CALL VRLOAD
+        CALL SBTXT
+        POP HL
+        POP DE
+        JR C,INCB4
+        PUSH DE
+        ADD HL,BC
+        LD (ASDEST),HL
+        DEC HL
+        EX DE,HL
+        LD HL,(MAXADR)
+        OR A:SBC HL,DE
+        JR NC,INCB2A
+        LD (MAXADR),DE
+INCB2A  POP DE
+        LD HL,(ASADR)
+        ADD HL,BC
+        LD (ASADR),HL
+INCB3   LD A,(DE)
+        CP #8C:JR Z,MINCB
+        CP #DC:JR Z,MINCB
+        JR INCB1A
+
+INCB4   CP 2:JP C,ASM3
+        JR Z,INCB5
+        LD A,13:CALL ASERR
+        JP ASM3A
+
+INCB5   LD A,14:CALL ASERR
+        JR INCB3
+
+SELNAME LD HL,BUFFN
+        LD BC,#0820
+SLN1    LD (HL),C:INC L:DJNZ SLN1
+        LD (HL),"C"
+        LD L,BUFFN\256
+        LD A,(DE)
+        CP #8C:JR Z,SLN2
+        CP #DC
+        SCF:RET NZ
+SLN4    INC DE
+        LD B,9
+SLN5    LD A,(DE):INC DE
+        CP #20:JR C,SLN6
+        LD (HL),A:INC L
+SLN5A   DJNZ SLN5
+SLN5B   JP ASPA1
+
+SLN6    OR A:RET Z
+SLN7    LD (HL),#20:INC L
+        DEC A:JR Z,SLN5A
+        DJNZ SLN7
+        JR SLN5B
+
+SLN2    INC DE
+        LD A,(DE):INC DE
+        LD C,A
+        LD A,(DE):INC DE
+        OR A:JR Z,SLN3
+        LD (HL),A:INC L
+SLN3    LD (HL),C
+        OR A:RET
+
+SAVEOBJ LD HL,(MAXADR)
+        LD DE,(MINADR)
+        OR A:SBC HL,DE
+        RET C:INC HL
+        LD (SVOB1+1),HL
+        LD HL,SVOBJM
+        CALL DSINP
+        LD HL,(MINADR)
+SVOB1   LD BC,0
+        LD DE,ONAME
+        CALL VRSAVE
+        JR NC,SVOB2
+        CP 4:CALL Z,SAVE0
+SVOB2   CALL SBTXT
+        JP RETHINK
+
+;VIRTUAL SAVE
+;HL-ADDR   NC - OK
+;BC-LEN  C A=0-ERR
+;DE-NAME C A=1-BREAK
+;        C A=4-NO_SPACE
+
+VRSAVE  PUSH HL:PUSH DE:PUSH BC
+        LD A,#82;OBJ SAVE MODE
+        CALL FILEKL
+        LD HL,(CATBF+#08E1)
+        LD (SECTR),HL
+        POP BC:POP DE:POP HL
+        JR NC,VRSV0
+        CP 2:SCF:RET NZ
+VRSV0   LD A,(CATBF+#08E4)
+        CP #80:JR Z,VRSV1
+        LD A,(CATBF+#08E6)
+        OR A:JR NZ,VRSV
+        LD A,(CATBF+#08E5)
+        CP B:JR C,VRSV1
+        JR NZ,VRSV
+        LD A,C:OR A
+        JR Z,VRSV
+VRSV1   JP FLSV2A
+
+VRSV    PUSH HL:PUSH DE:PUSH BC
+        LD DE,WRITE
+        CALL RWVR
+        POP BC:POP DE:POP HL
+        RET C
+        JP FLSV4
+
+;VIRTUAL LOAD
+;DE-NAME HL-ADDR  NC  -OK, BC-LEN
+;BC-TOP SIZE     C A=0-ERR
+;A=1  LOAD         A=1-BREAK
+;A=0 CHECK LEN     A=2-NO_FILE
+;                  A=3-TOO_BIG
+
+VRLOAD  PUSH AF
+        PUSH HL:PUSH BC
+        CALL FILEFL
+        POP BC:POP DE
+        EX AF,AF:POP AF:EX AF,AF
+        RET C
+        LD A,C:CP (HL)
+        LD C,(HL):INC HL
+        LD A,B:SBC A,(HL)
+        LD A,3:RET C
+        LD B,(HL):INC HL
+        EX AF,AF
+        OR A:RET Z
+        INC HL
+        LD A,(HL):INC HL
+        LD H,(HL)
+        LD L,A
+        LD (SECTR),HL
+        EX DE,HL
+        PUSH BC
+        LD DE,READ
+        CALL RWVR
+        POP BC
+        RET
+
+;HL,ADR DE,LEN > C=ERR NC=OK
+WRITE   LD A,0;LAST SEC TAIL
+        OR A:JR Z,WR1
+        CALL WR4
+        PUSH DE
+        LD A,(WRITE+1):LD E,A
+        LD D,BUF1024/256
+        CALL RD4
+        LD (WRITE+1),A
+        PUSH HL
+        LD DE,(SECTR)
+        DEC E:BIT 7,E:JR Z,WR0
+        LD E,15:DEC D
+WR0     LD C,6
+        CALL WR3
+        POP HL:POP DE
+        RET C
+        LD A,D:OR E
+        RET Z
+WR1     LD C,6:CALL RWMC:RET C
+        LD A,E:OR A:RET Z
+        LD (WRITE+1),A
+        LD C,A
+        LD DE,BUF1024
+        CALL RD4
+        LD C,6
+WR2     LD DE,(SECTR)
+WR3     LD B,1
+        LD HL,BUF1024
+        CALL DOS
+        RET
+WR4     NEG
+        INC D:DEC D:JR NZ,WR5
+        CP E
+        JR C,$+3:LD A,E
+WR5     LD C,A:XOR A:LD B,A
+        EX DE,HL
+        SBC HL,BC
+        EX DE,HL
+        RET
+
+;HL,ADR DE,LEN > NC=OK C=ERR
+READ    LD A,0;SEC TAIL
+        OR A:JR Z,RD2
+        CALL WR4
+        PUSH DE
+        LD D,BUF1024/256
+        LD A,(READ+1):LD E,A
+        EX DE,HL
+        CALL RD4
+        LD (READ+1),A
+        EX DE,HL
+        POP DE
+RD2     LD C,5:CALL RWMC:RET C
+        LD A,E:OR A:RET Z
+        LD (READ+1),A
+        PUSH HL:PUSH DE
+        LD C,5:CALL WR2
+        POP BC:POP DE
+        RET C
+RD3     LD HL,BUF1024
+RD4     XOR A:LD B,A:LDIR
+        RET
+
+RWMC    LD A,D:OR A:RET Z
+        PUSH HL:PUSH DE
+        LD B,D:LD DE,(SECTR)
+        CALL DOS
+;В DE ОТКОРРЕКТИРОВАННОЕ ЗНАЧЕНИЕ
+;АДРЕСА-МОЖНО ВЫБРОСИТЬ PUSH/POP HL,
+;ADD H,D И ЗАМЕНИТЬ НА EX DE,HL
+;ПРИРОСТ 7 БАЙТ!
+        POP DE:POP HL
+        RET C
+        LD A,H:ADD A,D:LD H,A
+        XOR A
+        RET
+
+;READWRITE VIRT MEM
+;HL-MEMADR BC-LEN DE-R/W PROC
+RWVR    LD (RWVR1+1),DE
+        INC DE:XOR A:LD (DE),A
+RWVR0   LD (RWVR2+1),HL
+
+VACON   EX DE,HL
+        PUSH BC
+        LD HL,WRCTBL+1
+        LD A,D
+        SUB 1:JR C,VAC1
+        DEC HL
+VAC0    CP (HL):JR NC,VAC2
+VAC1    PUSH HL
+        LD H,(HL)
+        INC H:LD L,0
+        OR A:SBC HL,DE
+        LD C,L:LD B,H
+        POP HL
+        INC HL:LD A,(HL)
+        CALL SBANKA
+        INC HL:LD A,(HL)
+        ADD A,D:LD D,A
+        POP HL
+        OR A:SBC HL,BC
+        JR NC,VAC3
+        ADD HL,BC
+        LD C,L:LD B,H
+        LD HL,0
+VAC3    EX DE,HL
+;HL-ADR BC-LEN DE-TAIL
+
+        PUSH DE:PUSH BC
+        LD D,B:LD E,C
+RWVR1   CALL 0
+        POP DE:POP BC
+        JR C,RWWRE
+RWVR2   LD HL,0
+        ADD HL,DE
+        LD A,B:OR C:JR NZ,RWVR0
+RWWRE   JP SBTXT
+
+VAC2    INC HL:INC HL:INC HL
+        JR VAC0
+
+;**************************************
+
+        INCL "ED"
+        INCL "XED"
+        INCL "DPC"
+
+WRCTBL  DB #5F,#10,#00
+        DB #6F,#17,#60
+        DB #7F,#13,#50
+        DB #BF,#14,#40
+        DB #FF,#10,#00
+
+ASMES0  DB "PASS X",0
+ASMES1  DB "ERRORS XXXXX",0
+ASMES2  DB "KEY ",0,"    ",0
+
+ASMER1  DB "Label not defined",0
+        DB "Label already defined",0
+        DB "No label space",0
+        DB "Too many operands",0
+        DB "Syntax error",0
+        DB "Operand excepted",0
+        DB "Invalid operand",0
+        DB "Number too big",0
+        DB "Offset error",0
+        DB "Expression error",0
+        DB "Overflow",0
+        DB "Invalid EQU",0
+        DB "Out of memory",0
+NOFILEM DB "No file",0
+        DB "Illegal INCL",0
+
+VAR     ;WILL BE SAVED
+KEYSTAT DB 0
+PX      DB 0
+PY      DB 1
+BEGBSCR DB 0
+SYST    DB 0
+CNTINT  DB 0
+UPDOWN  DB 0
+DISK    DB #3C
+DRIVE   DB 0
+KILLMD  DB 1;0-NO   1-ALL
+SAVEMD  DB 2;2-LAST 3-ALL WITHOUT LAST
+NLINE   DW 0
+ABLINE  DW BEGBTX+1
+AELINE  DW 0
+AELBL   DW 0
+MINADR  DW #FFFF
+MAXADR  DW 0
+ASTART  DW 0
+
+;COLORS
+LECOL   DB 6;LOW EDITOR
+MNCOL   DB 5;MAIN COLOR
+HTXCOL  DB 4;HIGHLIGHTED T.C.
+NTXCOL  DB 7;NORMAL TEXT COLOR
+ECODE
+;DEFAULT=5,6,7,4=..101110 01110100=2E74
+;TESTCL  DB "@2E74";DEFAULT COLORS
+
+        ORG #7000
+        INCL "ASM"
+EASM
+
+        ORG #B900
+        INCB "FONT"
+
+;**************************************
+
+BDCR    EQU #11;BANK DCR
+BTXT    EQU #16;--- TEXT
+ASBTXT  EQU #16;--- ASM TEXT
+ASBLBL  EQU #13;LABELS
+
+;SCREEN LAYOUT
+HGT     EQU 20
+MLINE   EQU HGT+1;MESSAGE LINE#
+TLINE   EQU HGT+2;TEXTREQ LINE#
+LEADR   EQU TLINE*32+#5800
+
+;COLOR STORE
+CLSTORE EQU #5BFE
+
+;WINDOW COLORS
+ASMCOL  EQU 41
+CATCOL  EQU 41
+INSPCOL EQU %00001110
+
+KEYDEL  EQU 12;=REPDEL
+;INSPECT WINDOW POS
+INSPX   EQU 8
+INSPY   EQU HGT-9
+
+ETEXT   EQU #C000;2
+TXNAME  EQU #C002;8
+BEGBTX  EQU #C00A
+TOP     EQU #FFFC
+BUFSCR  EQU #6000
+LNSZ    EQU 30*6+2;182
+EBUFSCR EQU BUFSCR+LNSZ*HGT;4004
+BBUFS   EQU #5B00; 256
+FONT    EQU #B900; 1536
+SEGI    EQU #5E
+SEGI1   EQU SEGI+1
+UINT    EQU SEGI1*256+SEGI1+1
+
+BUFED   EQU BBUFS+#0000; 82
+BUFTRSH EQU BBUFS+#0052; 80
+BUFPC   EQU BBUFS+#00A2; 51
+BUFDPC  EQU BBUFS+#00D5; 43
+
+ASBUFC  EQU BBUFS
+
+DISKBF  EQU BUFSCR
+BUF1024 EQU DISKBF;1792
+CATBF   EQU DISKBF+#0700
+
+ABLABEL EQU #D000/256;#?0
+
+        ORG #BF00
+TBAPR   DS HGT*2
+TBABUF  DS (HGT+1)*2
+BUFF32  DS 32;USED TOGETHER
+BUFF11  DS 11;-^^^-
+BUFFN   DS 9
+BUFDPC1 EQU #BFD5; 43
+
+;TEMP VARS-THEY WILL BE KILLED
+
+PXP     DB 0
+PYP     DB 0
+PXOLD   DB 0
+PYOLD   DB 0
+ACUR    DW 0
+MCUR    DW 0
+ABUFLIN DW 0
+GUSP    DW 0
+USP     DW 0
+
+CACHEST DB 0;CLR WHEN INIT
+MBSTAT  DB 0;
+BLKB    DW 0
+BLKE    DW 0
+CALCNUM DW 0
+RAWKEY  DB 0
+
+SECTR   DB 0
+TRACK   DB 0
+LSMODE  DB 0
+NUMSEC  DB 0
+PROOF   DB 0
+LSADR   DW 0
+KLMODE  DB 0
+
+ASSTAT  DB 0
+ASREPT  DB 0
+PASS    DB 0
+ASFNON  DB 0
+ASFONV  DW 0
+ASFONE  DW 0
+AEQULBL DW 0
+ASADR   DW 0
+ASDEST  DW 0
+ASARPT  DW 0
+ERRS    DW 0
+ASNLN   DW 0
+FLUSP   DW 0
+FLUSP1  DW 0
+FLFIRST DW 0
+ERRSCR  DB 0
+ASUSP   DW 0
+LASTK   DB 0;#5C08
+REPDEL  DB 0;#5C09
+REPPER  DB 0;#5C0A
+EVAR
+
+ASCDERR EQU PROOF
+ASCRSTM EQU FLUSP
+PSTM    EQU FLUSP1
+CALCUSP EQU LSADR
+
+FREE    EQU FONT-ECODE

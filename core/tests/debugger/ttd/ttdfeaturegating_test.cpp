@@ -231,17 +231,13 @@ TEST_F(TTD_FeatureGating_Test, WriteJournalEmpty_WhenFeaturesOff)
     // the cached _feature_ttd_enabled flag gates the journal append.
     DisableTTD();
 
-    // Even if we force StartRecording (which auto-enables features),
-    // then disable features, writes through MemoryWriteDebug should not
-    // append to the journal because _feature_ttd_enabled is false.
+    // Even if we force StartRecording (which auto-enables features), then
+    // disable features: the recording stops cleanly first (FR-17), and with
+    // time travel off the journal's memory is released (nothing journaled)
     ASSERT_TRUE(_ttd->StartRecording());
     DisableTTD();
-
-    // The journal remains empty because the feature flag gates the hook.
-    // RecordMemoryWrite still works (called from the manager), but the
-    // MemoryWriteDebug hook path is blocked.
-    const size_t journalBefore = _ttd->GetWriteJournal()->Size();
-    EXPECT_EQ(journalBefore, 0u);
+    EXPECT_FALSE(_ttd->IsRecording());
+    EXPECT_TRUE(_ttd->GetWriteJournal() == nullptr || _ttd->GetWriteJournal()->Size() == 0u);
 
     _ttd->StopRecording();
 }

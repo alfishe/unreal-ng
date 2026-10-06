@@ -202,8 +202,9 @@
         "Arm/stop/clear a stereo sample capture from the sound core. start arms a target of "
         "`seconds` of emulated audio (0.01-30.0); the emulator must run to collect samples. `source` records "
         "one mixer device instead of the master mix (its own buffer, before mute / solo / volume): beeper, ay1, "
-        "ay2, fm1, fm2, covox (also the Sprinter's Covox-Blaster DAC), gs, gs_mp3, moonsound_fm, moonsound_pcm "
-        "(GET /audio/mixer lists the fitted ones); 400 for a device the machine does not have.";
+        "ay2, fm1, fm2, covox (also the Sprinter's Covox-Blaster DAC), gs, gs_mp3, moonsound_fm, moonsound_pcm, "
+        "a ZX-MultiSound's ms_ssg1, ms_ssg2, ms_fm1, ms_fm2 (its YM2203 pair per chip), ms_saa, ms_pcm (GS + SounDrive "
+        "DACs), ms_midi (GET /audio/mixer lists the fitted ones); 400 for a device the machine does not have.";
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/audio/capture"]["post"]["parameters"][0]["required"] = true;

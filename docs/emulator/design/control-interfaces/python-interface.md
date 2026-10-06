@@ -243,8 +243,13 @@ class Emulator:
         """Where host and injected keys go: 'auto' | 'matrix' | 'ps2' | 'both' (the ZX matrix, the PS/2 keyboard
         controller of a ZX-Evo / ATM Turbo 2+, both); empty = query. Returns the route in force."""
 
-    def network_configure(self, **settings) -> None:
-        """Change [NETWORK] settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass',
+    def network_configure(self, **settings) -> dict:
+        """Change [NETWORK] settings (returns the reply dict: ok, status, message, plan, restart, network; ValueError
+        with the reason when refused). A card value that changes the ZX-bus cards (zxnetusb, zxwifi) is a slot change
+        applied by a machine restart (owner decision Q11; replace=True allows removals / an unrealistic fit,
+        dry_run=True returns the plan, media='save'|'discard'); the other keys go to the restarted machine
+        (emu_get_selected(), this object then names the old one); without a card change they apply in place
+        (status 'accepted'). Keys: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass',
         hosts='name=ip,...', forwards='tcp:host:guest,...', remote_access=True|False (the host listeners of guest servers: True, default,
         = 0.0.0.0, other computers on the LAN can connect; False = 127.0.0.1 only; alone it keeps every connection; network_state()
         ['virtual_network']['listen_address'] shows it), connect_timeout_ms=n,
@@ -309,6 +314,14 @@ class Emulator:
         network_inject_frame(link, hex) (a frame towards the card at the next frame boundary;
         ValueError without a gateway / bad hex / unknown link)"""
 
+    def multisound_state(self) -> dict:
+        """ZX-MultiSound card: options, shadowed built-ins, CPLD latches, ym chips {ssg, fm} (the AY / TSFM chip
+        reports), saa, gs (the GS report), dac[4], midi summary; {'available': False, 'description': ...} without it"""
+    def midi_state(self) -> dict:
+        """Its MIDI line and SAM2695: parts[16] (program, preset, volume, pan, active_voices, keys, notes), polyphony,
+        effects, counters, bank"""
+    def midi_panic(self) -> dict:
+        """Every voice stops (applied at the next instruction boundary, a TTD live input): {'ok', 'message'}"""
     def audio_moonsound_state(self, part: str = "") -> dict:
         """MoonSound (OPL4) report: overview (part=''), the FM half (part='fm': 18 channels,
         timers, register banks) or the wavetable half (part='pcm': 24 slots with envelopes).
@@ -473,6 +486,36 @@ emu.media(verb, slot, path, **options)                   # any verb
 
 Each returns the result dict: `ok`, `error`, `message`, `slot`, `pending`, `revision`, `report`
 and the verb's fields. Errors are results (`ok: False`), not exceptions.
+
+### ZX-bus Slots
+
+Module functions (the machine is restarted by a change, so they take an `emulator_id`, default the selected machine,
+and return the reply dict) - the same verbs, options and replies as the CLI `slots`, the WebAPI `/slots`, MCP and Lua
+([command-interface.md section 14](./command-interface.md#14-zx-bus-slots), user guide
+[docs/features/slots.md](../../../features/slots.md)):
+
+```python
+import unreal
+unreal.slots_state()                      # buses, slots (card, options, adapter, fit, state), built-ins, plan log
+unreal.slots_catalog()                    # every card: options, functions, ports, media, thisMachine {slot, fit, outcome}
+unreal.slots_matrix("cards")              # the compatibility tables as markdown ("" = all)
+
+r = unreal.slots_plug("zxbus.next", "multisound", dry_run=True)          # the plan only
+r = unreal.slots_plug("zxbus.next", "multisound", replace=True, gsRam="2m", dip=["ym", "saa", "gs", "sd"])
+new_id = r["restart"]["emulatorId"]                                       # the restarted machine (selected if the old one was)
+unreal.slots_set("zxbus.1", ctrlMask="classic")                          # options merged over the current ones
+unreal.slots_remove("zxbus.1", media="discard")                           # unsaved sd.ngs writes: save | discard
+unreal.slots_gs("neogs")                                                  # the General Sound personality
+```
+
+`slots_plug(slot, card, options="", replace=False, dry_run=False, media="", adapter="", emulator_id="", **card_options)`,
+`slots_set(slot, options="", replace=False, dry_run=False, media="", emulator_id="", **card_options)`,
+`slots_remove(slot, replace=False, dry_run=False, media="", emulator_id="")`, `slots_gs(card, ...)`. The reply: `ok`,
+`status` (`applied`, `dry-run`, `refused`, `recording`, `no-machine`, `failed`, `bad-request`), `message`, and for a
+change `plan` (`removed` with each card's `undo`, `shadowed`, `lostFunctions`, `media`, `lines`, ...), `restart`
+(`restarted`, `previousEmulatorId`, `emulatorId`, `started`) and `media`. A refusal is a reply, not an exception.
+`Emulator.gs_switch_personality(name)` is the same change as `slots_gs` (a restart: the `Emulator` object then names
+the old machine; `emu_get_selected()` the new one); it raises `RuntimeError` with the reason when refused.
 
 ### Disk Operations
 
@@ -1016,13 +1059,13 @@ print(unreal.rzx_status(r["emulator_id"])["summary"])
 
 TTD methods live on the `Emulator` object (`emu.ttd_*`). Bindings: `core/automation/python/src/emulator/python_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
 
-**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording, `snapshot_load`, `tape_load`, `disk_create`, `feature_set` (switching `timetravel`/`debugmode` off), `ttd_invalidate`, `ttd_set_journal_enabled` and `gs_switch_personality` raise `RuntimeError` with the reason (`disk_load` returns `success: False` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
+**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording (`snapshot_load` only on v1: on the engine a snapshot load is part of the recording), `tape_load`, `disk_create`, `ttd_invalidate`, `ttd_set_journal_enabled` raise `RuntimeError` with the reason (on v1 also `gs_switch_personality`, and the `slots_*` functions answer `status: 'recording'`; on the engine those end the session; `disk_load` returns `success: False` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; `feature_set` switching `timetravel` / `debugmode` off stops the recording cleanly (history kept, `last_stop_reason` in `ttd_status()`); while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
 
 ```python
 try:
-    emu.snapshot_load('game.sna')
+    emu.tape_load('game.tap')
 except RuntimeError as refusal:
-    print(refusal)   # Cannot load a snapshot while TTD is recording: ... Stop the recording first.
+    print(refusal)   # Cannot insert a tape while TTD is recording: ... stop the recording first.
 ```
 
 Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page`, which raises `ValueError`, and a refusal to protect a running recording, which raises `RuntimeError`.
@@ -1033,7 +1076,8 @@ Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pa
 emu.ttd_start()                  # -> bool; keeps the ttd_set_journal_enabled choice (off by default)
 emu.ttd_start(journal=True)              # also record the write journal
 emu.ttd_set_journal_enabled(True)        # switch it at any moment, also while recording (a segment starts)
-emu.ttd_build_journal(from_frame=1200, to_frame=1500)  # build it by replay for those frames (default: all)
+emu.ttd_build_journal(from_frame=1200, to_frame=1500)  # build it by replay for those frames (default: all);
+                                                       # RuntimeError while recording
 # -> {'ok': True, 'error': None, 'cancelled': False, 'frames_built': 301, 'frames_covered': 0,
 #     'frames_refused': 0, 'records': ...}
 emu.ttd_set_history_limit(frames=3000)   # -> (frames, bytes) in force; keep the newest 3000 frames
@@ -1116,12 +1160,15 @@ orders of magnitude slower.
 **Navigation:**
 
 ```python
-emu.ttd_seek(4823)                          # frame 4823, tinframe 0
-emu.ttd_seek(frame=4823, tinframe=14982)    # (frame, tinframe)
+emu.ttd_seek(4823)                          # frame 4823's end on the engine ({4824, 0}), its start on v1
+emu.ttd_seek(frame=4823, tinframe=14982)    # (frame, tinframe); tinframe=0 is the frame's start
 # -> {'reached': True,
 #     'arrived_at': {'frame': 4823, 'tinframe': 14982},
 #     'halt_reason': 'target',              # 'target' | 'external_event' | 'out_of_range'
-#     'blocking_marker': {...}}             # only for external_event: frame, tinframe, kind, reason
+#     'blocking_marker': {...},             # only for external_event: frame, tinframe, kind, reason
+#     'state': 'detached'}
+# The machine stays paused at the target; emu.ttd_resume() records again and runs it.
+# While recording: {'reached': False, 'error': '<why>', 'state': 'recording'}
 
 emu.ttd_step_back()                         # -> bool; one frame back (same position inside the frame)
 emu.ttd_step_forward()                      # -> bool; one frame forward, inside recorded history
@@ -1157,7 +1204,8 @@ hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 
 ```python
 result = emu.ttd_find_last(addr=0x5800, access='write')
-# None if no match. On a hit:
+# None if no match; ValueError for a bad argument (an address above 0xFFFF, an unknown access);
+# while recording: {'found': False, 'error': '<why>'}. On a hit:
 # {
 #   'found': True,
 #   'frame': 4823,
@@ -1254,6 +1302,13 @@ emu.ttd_file_info('/tmp/session.ttd')
 #     'peripherals_from_header': ...}
 #    or {'ok': False, 'path': ..., 'error': '...'}
 # Provision the machine it needs first: its model, its General Sound card (machine['general_sound']).
+
+# Frames from..to as a lossless clip in a directory (final picture, plane B when zxdlss
+# is on, frame meta), one call instead of a seek and a capture per frame; not while recording
+emu.ttd_export_clip(1200, 1500, '/tmp/clip')              # -> {'ok', 'frames', 'bytes', 'planeb', 'width',
+                                                         #     'height', 'seconds', 'path'}
+emu.ttd_export_clip(1200, 1500, '/tmp/clip', chunk=250)  # 250 frames per zstd chunk (default 500)
+# failure: {'ok': False, 'error': '<why>'}; ValueError for arguments that do not parse
 ```
 
 **Coverage index queries:**

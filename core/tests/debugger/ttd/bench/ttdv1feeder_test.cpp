@@ -69,7 +69,12 @@ protected:
     {
         if (_emulator)
             EmulatorTestHelper::CleanupEmulator(_emulator);
-        _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        // The card the session was recorded with, fitted at creation: the shipped 48K / 128K / +2 / +2A / +3, Profi
+        // and Sprinter configs have no GS since 2026-10-04 (owner decision), and a switch cannot fill an empty slot
+        {
+            GeneralSoundFitScope fit(generalSound);
+            _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        }
         ASSERT_NE(_emulator, nullptr);
         EmulatorContext* context = _emulator->GetContext();
         _v1 = context->pTimeTravelManager;

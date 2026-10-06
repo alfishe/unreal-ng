@@ -104,9 +104,13 @@ enum class PeripheralId : uint8_t
     Usart8251 = 52,       // an 8251 USART (the ZX Profi v5's COM port): registers, buffers, the line, the #B3 latch (Usart8251::State)
     Saa1099 = 53,         // Philips SAA1099 (tdd-saa1099.md §5): registers, generators, LFSRs, envelopes, clock-ratio phase; carried inside its card's blob set
     Smuc = 54,            // Scorpion SMUC board: #FFBA / #7FBA latches, IDE window registers, serial EEPROM link (not its contents)
-    EvoAvrVolatile = 55,  // ZX-Evo AVR volatile registers (ext type, EEPROM window, LEDs) where the paging blob lacks them: TS-Conf
+    EvoAvrVolatile = 55,  // ZX-Evo AVR volatile state: ext type, EEPROM window, LEDs, the /WAIT ports' timing (TS-Conf, ATM3)
     KeyboardMatrix = 56,  // ZX keyboard: the 8 matrix rows and the pressed-key counts (key changes are journal events)
     RzxPlayback = 57,     // RZX playback position and counters (emulator/rzx/rzxttdstate.h); the recording is the medium
+    MultiSound = 58,      // ZX-MultiSound card (slot-built): its time base, CPLD latches, YM2203 pair, MIDI line, DACs
+    Sam2695 = 59,         // a Dream SAM2695 General MIDI synthesizer (the ZX-MultiSound's): UART, parser, channels, voices; names its bank by SHA-256
+    MultiSoundGs = 60,    // the ZX-MultiSound's General Sound (GS profile MultiSound, 1-2 MB RAM): the classic GS blob, own id next to a GS card
+    EvoFlash = 61,        // the ZX-Evo's ROM chip as a flash (TS-Conf, ATM3): its command state; the array is the engine region EvoFlash
     // Future: GS512, etc.
     Count
 };
@@ -180,7 +184,11 @@ enum class TTDDeviceType : uint16_t
     Smuc = 54,
     EvoAvrVolatile = 55,
     KeyboardMatrix = 56,
-    RzxPlayback = 57
+    RzxPlayback = 57,
+    MultiSound = 58,
+    Sam2695 = 59,
+    MultiSoundGs = 60,
+    EvoFlash = 61
 };
 static_assert(static_cast<uint16_t>(TTDDeviceType::TurboSound) == static_cast<uint16_t>(PeripheralId::TurboSound), "TTDDeviceType::TurboSound must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::BetaDisk) == static_cast<uint16_t>(PeripheralId::BetaDisk), "TTDDeviceType::BetaDisk must keep its v1 number");
@@ -240,6 +248,10 @@ static_assert(static_cast<uint16_t>(TTDDeviceType::Smuc) == static_cast<uint16_t
 static_assert(static_cast<uint16_t>(TTDDeviceType::EvoAvrVolatile) == static_cast<uint16_t>(PeripheralId::EvoAvrVolatile), "TTDDeviceType::EvoAvrVolatile must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::KeyboardMatrix) == static_cast<uint16_t>(PeripheralId::KeyboardMatrix), "TTDDeviceType::KeyboardMatrix must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::RzxPlayback) == static_cast<uint16_t>(PeripheralId::RzxPlayback), "TTDDeviceType::RzxPlayback must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::MultiSound) == static_cast<uint16_t>(PeripheralId::MultiSound), "TTDDeviceType::MultiSound must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::Sam2695) == static_cast<uint16_t>(PeripheralId::Sam2695), "TTDDeviceType::Sam2695 must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::MultiSoundGs) == static_cast<uint16_t>(PeripheralId::MultiSoundGs), "TTDDeviceType::MultiSoundGs must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::EvoFlash) == static_cast<uint16_t>(PeripheralId::EvoFlash), "TTDDeviceType::EvoFlash must keep its v1 number");
 
 /// A device in the engine's device table: its kind and its instance name
 /// ("betadisk", "betadisk.context", "zifi.uart"; lower case, dots, digits)

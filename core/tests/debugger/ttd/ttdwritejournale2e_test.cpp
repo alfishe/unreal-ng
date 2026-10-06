@@ -324,21 +324,24 @@ TEST_F(TTD_WriteJournal_E2E_Test, DebugModeToggleWhileDetached_KeepsTheJournal)
     EXPECT_FALSE(_ttd->GetWriteJournal()->IsEmpty()) << "a debug-mode toggle while detached dropped the journal";
 }
 
-/// Debug mode switched off during a recording stops the writes reaching the
-/// journal, so from then on it cannot answer.
-TEST_F(TTD_WriteJournal_E2E_Test, DebugModeOffMidRecording_SearchFindsTheLatestWrite)
+/// Debug mode switched off during a recording stops the recording first (FR-17):
+/// the history ends at the switch with a complete journal, and the search finds
+/// the latest write in it - not one from a journal that missed writes
+TEST_F(TTD_WriteJournal_E2E_Test, DebugModeOffMidRecording_StopsWithACompleteJournal)
 {
     _ttd->SetEnableWriteJournal(true);
     InstallCounterLoop(_context, 0x8000);
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(2);
     const uint64_t frameAtSwitch = _context->emulatorState.frame_counter;
-    _fm->setFeature(Features::kDebugMode, false);
-    RunFrames(3);  // the latest writes: not journaled
-    _ttd->StopRecording();
-    ASSERT_TRUE(_ttd->SeekTo(_ttd->SessionEndPosition()));
+    ASSERT_TRUE(_fm->setFeature(Features::kDebugMode, false));
+    EXPECT_FALSE(_ttd->IsRecording());
+    RunFrames(3);  // not recorded: the session ended at the switch
+    EXPECT_LE(_ttd->GetSessionInfo().currentEndFrame, frameAtSwitch);
+    EXPECT_TRUE(_ttd->GetSessionInfo().writeJournalComplete);
 
+    ASSERT_TRUE(_ttd->SeekTo(_ttd->SessionEndPosition()));
     auto hit = _ttd->FindLastAccess(CounterWriteQuery());
     ASSERT_TRUE(hit.has_value());
-    EXPECT_GT(hit->time.frame, frameAtSwitch) << "answered from a journal that missed writes";
+    EXPECT_GE(hit->time.frame + 1, _ttd->GetSessionInfo().currentEndFrame) << "the latest recorded write was missed";
 }

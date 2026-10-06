@@ -74,7 +74,28 @@ constexpr uint16_t kFrameStreamFirst = 0x0100;
 constexpr uint16_t kFrameStreamLast = 0x013F;
 /// A full copy at least every this many frames: reading one decodes at most this many differences
 constexpr uint32_t kFrameStreamFullEvery = 50;
+/// The holder's own data (TTDHolderStream): ancillary, opaque to the engine.
+/// The stream table (phase-4-session-file-tdd.md §5.3) names 8-10 coverage
+/// and 12 bookmarks; 17-0xFF are free for the holder. 0x0200-0x02FF stay
+/// reserved for branches, 0x0300-0x03FF for groups
+constexpr uint16_t kCoverage = 8;
+constexpr uint16_t kBookmarks = 12;
+constexpr uint16_t kHolderFirstFree = 17;
+inline bool IsHolderStream(uint16_t id)
+{
+    return (id >= 8 && id <= 12) || (id >= kHolderFirstFree && id <= 0x00FF);
+}
 }  // namespace sessionstream
+
+/// Data the engine's holder keeps with a session (the controller's coverage
+/// index, bookmarks, its own facts): an ancillary stream written whole with
+/// the file's last part and handed back by Load as it was
+struct TTDHolderStream
+{
+    uint16_t id = sessionstream::kHolderFirstFree;   ///< sessionstream::IsHolderStream
+    std::string name;
+    std::vector<uint8_t> bytes;
+};
 
 /// Header flags of a session file
 constexpr uint16_t kSessionConvertedFromV1 = 1;   ///< converted from a schema-1 file (D31): what v1 lacks is absent
@@ -85,6 +106,9 @@ struct TTDSessionSaveParams
     uint32_t checkpointsPerPart = 50;   ///< about a second of recording
     uint64_t createdMicros = 0;         ///< the header's creation time (tests fix it)
     std::array<uint8_t, 16> uuid{};     ///< the session's identity
+    /// Declared in the header; their bytes go with the session's last part
+    /// (a writer recording as it goes takes them at Finish: SetHolderStreams)
+    std::vector<TTDHolderStream> holderStreams;
 };
 
 struct TTDSessionLoadReport
@@ -96,6 +120,7 @@ struct TTDSessionLoadReport
     bool convertedFromV1 = false;   ///< kSessionConvertedFromV1: no fingerprint, media versions or device regions v1 lacks
     std::string stoppedAt;       ///< why the load stopped early
     std::vector<std::string> notes;   ///< the container's notes (scan, skipped streams)
+    std::map<uint16_t, std::vector<uint8_t>> holderStreams;   ///< by id, as saved (absent: none, or not reached)
 };
 
 /// How far the writer thread may fall behind (TTDSessionWriter)
@@ -139,6 +164,8 @@ public:
     /// ends at the next segment's baseline), the write journal with the
     /// session's last part, write the index, wait for the writer
     bool Finish(const TimeTravelEngine& engine, size_t end = SIZE_MAX);
+    /// The holder streams' bytes for the last part (ids declared at Begin)
+    void SetHolderStreams(std::vector<TTDHolderStream> streams) { _params.holderStreams = std::move(streams); }
 
     bool Failed() const { return _failed.load(); }
     std::string Error() const;

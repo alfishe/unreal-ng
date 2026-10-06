@@ -18,7 +18,7 @@ Status: proposal written 2026-10-02 (documents only, no code). Open questions Q1
 | P6 | Save path: capture → image → writer; 48K SNA writer stops touching live RAM | M | open |
 | P7 | One model-switch orchestrator for SZX / SPG / RZX; Qt uses it (Q6) | S | open |
 | P8 | TTD: a load during a recording continues the track with a full checkpoint + marker (Q5), after TTD v2 regions | S-M | open |
-| P9 | Clean-up: legacy commits read the image; remove duplicated staging and SNA dead code | M | open |
+| P9 | Clean-up: legacy commits read the image instead of private staging; drop the duplicated staging and the SNA dead code; SP-1 unchanged | M | **done 2026-10-05** for SNA, Z80 and SZX (branch `snapshot-p9`): the three commits read `snapshot::Image`; SPG and ZXP stay as they are (see "P9 notes"); the SNA dead code is gone (`SNAHeader`, `SNA128Header`, `_borderColor`); the golden table is unchanged (with AY now visible in it) |
 
 ## P0 findings (2026-10-05)
 
@@ -93,5 +93,66 @@ review the diff, list the changed rows in the commit message.
 - **Q2 (48K SNA vs Z80 lock) left as it is**: both run the program; a shared rule is not needed until something breaks.
 - **Idea for later (owner):** analyze the file when it is opened and offer options (switch to the machine it was made on, enter
   a Spectrum mode on the Sprinter); `image.machine_hint` and `inspect` are the inputs for it.
-- Still open in P5: Pentagon 1024 `#EFF7` compatibility bit, the ATM family's pager, TS-Conf's MemConfig (policies, not
-  decisions: they fix banks that land in the wrong place).
+- **Pentagon 1024 done (2026-10-05).** `PortDecoder::EnterSpectrum128Paging(pc)` (default: nothing) is called by the SNA and
+  Z80 commits right after the reset, before their `#7FFD`; the Pentagon 1024 sets `#EFF7` bit 2 (memory above 128K absent), so
+  `#7FFD` bit 5 is the lock again and pages are 0-7. Before: a locked 128K file mapped page 32 + n, a 48K Z80 (`#7FFD` = `#30`)
+  mapped page 32 instead of locking. SZX and the state transfer already did it. Golden: the `ports` hash of the 38 SNA / Z80
+  rows of PENTAGON1024 (`#EFF7` = `#04`); RAM and CPU hashes unchanged. The hook is the generic place for the next ones: the
+  ATM family's pager and TS-Conf's MemConfig also need "the plain 128K form" after a reset.
+- **ATM family done (2026-10-05).** `EnterSpectrum128Paging` on the ATM710, ATM3 and ATM450. The reset of an ATM710 / ATM3 leaves
+  the memory manager off (PEN = 0: every window reads the last ROM page, writes go to the trash page) and forces the TR-DOS
+  signal (~CPM = 0): a snapshot's RAM was not in the address space (`#C000` read as ROM, the HALT detection read the ROM). Now the
+  manager is on as the RM_DOS boot sets it (`aFF77` = `#4300`, `pFF77` = `#E3`: ZX video mode, INT gate), laid out as a
+  Spectrum 128K: #7FFD.4 = 0 -> ROM pair 2 (128K BASIC / system), #7FFD.4 = 1 -> pair 0 (48K BASIC / TR-DOS), RAM 5 / 2 fixed,
+  window 3 from #7FFD. The ATM3 adds the BaseConf's own: `#EFF7` bit 2 (no 1 MB paging), bit 3 clear (no RAM at #0000), no write
+  protection, no NMI / virtual TR-DOS page. The ATM450: `aFE` = ROM | ZX video mode, `aFB` = 0 (not the system ROM), `pFDFD` = 0.
+  Checked live on the WebAPI: `dizzyx.z80` and `z80full.sna` give a **byte-identical PNG** on the Pentagon, ATM710, ATM3 and
+  ATM450; `action.sna` (an animated demo) runs on all three. Golden: 38 rows of each of the three machines (`ports` hash; `misc`
+  where TR-DOS was forced on before; `cpu` in the 10 SNA files whose PC is on a HALT, which the ROM-mapped window could not see).
+  Mutation (hook off) fails `SnapshotAtm_Test` x2 and `SnapshotDefects_Test.AtmFamilyMapsTheTopWindow`.
+- **TS-Conf done (2026-10-05).** The reset leaves MEM_CONFIG in the normal mode (`W0NoMap` = 1): window 0 is ROM page 0, an
+  "unknown ROM" (the TS-BIOS image), whatever `#7FFD` says, so a 128K snapshot called the TS-BIOS where it expected BASIC (found
+  live: `Dizzy Y 2.sna`, `#7FFD` = `#00`, showed the unknown ROM instead of BASIC-128). `EnterSpectrum128Paging` writes MEM_CONFIG
+  = mapped mode + LCK128 = 128K (`#7FFD` bits 7:6 are no page bits), ROM128 as `#7FFD` bit 4 has it: window 0 is then the
+  {service, TR-DOS, 128, 48} group member the snapshot's own `#7FFD` picks. Golden: the `ports` hash of 34 TSL rows.
+- **Found while checking it, on every machine: a 48K snapshot's ROM latch disagrees with the ROM shown.** The 48K SNA commit sets
+  the 48K ROM as a bank pointer (`SetROM48k`) and never the latch; the shipped configs say `RESET=128`, so the latch says
+  BASIC-128, and the first recompute of the banks (any `#7FFD` write, a TR-DOS page-in) swapped the ROM under the program - on all
+  12 machines probed. The other tests reset to `RM_SOS`, where the latch already agrees, which hid it. The 48K SNA and 48K Z80
+  commits now call `SetROMMode(RM_SOS)` (the latches the reset itself sets, including `#1FFD` ROM bit 2 on the +2A / +3) and the SNA
+  writes the latch through the decoder (models that keep the ROM bit elsewhere, TS-Conf's MEM_CONFIG, follow). Golden: the four
+  48K SNA rows of PENTAGON512 / PENTAGON1024 (their golden machines start from a 128-ROM reset, as the app does).
+  `SnapshotRomLatch_Test` resets to `RM_128` first, like the shipped config, on 12 machines.
+- **Corrected my ATM change of the same day:** the ATM710 hook took the ROM pairs as pages 2 / 0, true for its 64 KB ROM but not
+  for the ATM3, whose ROM roles sit at pages 30 / 28 (the probe above showed the ROM jumping from page 28 to page 0 on a recompute).
+  The pairs now come from the model's own 128K / 48K ROM pages. Golden: the `ports` hash of 38 ATM3 rows.
+- P5 is complete for the machines the proposal listed (the fit check, Pentagon 1024, the ATM family, TS-Conf). Not done:
+  ZX-Poly (Q7), Spec256 (nothing in the codebase).
+
+## P9 notes (2026-10-05)
+
+- **What the commits read now.** `LoaderSNA::applySnapshotFromStaging`, `LoaderZ80::commitFromStage` and `LoaderSZX::CommitImage` take
+  the machine state - RAM banks, the paging latches, the CPU, AY 0, the border - from `snapshot::Image`, the one `Pipeline::Plan`
+  decided on. Hence a transform of the image (or a policy that rewrites it) reaches the commit: `Commit_Test` changes the image
+  between the plan and the commit for each of the three and checks the machine follows. SZX keeps the model check, the media,
+  the Beta 128, the devices and the version rules on its `Stage` (the image only DESCRIBES their payloads): `Commit(stage)` is
+  `CommitImage(BuildImage(stage), stage)`.
+- **The image learned what the commits needed:** `Cpu::pcOnMachineStack` (a 48K SNA whose stack is in the ROM or at the top of
+  memory: the image cannot read the PC, the commit pops it from the machine as it always did), `Cpu::holdIntCycles` and `q` (SZX),
+  `Image::portFE`, `Image::ayAddressLatch` (a Z80 48K stores the selected AY register without AY registers), `Image::unsupported`.
+- **A behavior change on the way, deliberate:** a SamRam / SAM Coupe Z80 and a Z80 with a ROM block used to throw an uncaught
+  `std::logic_error` from the commit, after the machine had been reset (the side finding of the proposal, section 12). The plan now
+  refuses them first (`needs: format:unsupported`, the reason names which), nothing written; `Commit_Test` pins it with synthetic
+  files and a mutation (the refusal off) fails it.
+- **A gap in P0 found and closed.** The golden machines were built without a TurboSound slot (the test runner leaves it empty), so
+  `SnapshotDigest` saw no AY chip and every `ay` hash of the first table was 0: the AY path of the commits was not covered by it.
+  The golden test now holds `SoundCardScope(TurboSound)` while it creates machines. The table was regenerated on the code BEFORE
+  this step and P9's code reproduces it row for row, AY included; no other hash moved.
+- **Not done, and why.** (1) SPG: its commit reads `LoaderSPG::Image`, the format's own parse record (blocks at physical
+  addresses, PC, SP, page 3, clock), which the neutral image carries only partly (page 3 and the clock are a text note); typed
+  fields would be needed, for a loader that is 180 lines. (2) ZXP: the plan has no hook for four-module snapshots (owner question
+  Q7). (3) The loaders still parse into their staging (`_memoryPages`, `_stagingRAMPages`, the headers) and build the image from
+  it: the unit tests exercise those internals, and the save path (P6) is built on the same buffers. A parser that fills the image
+  directly belongs with P6.
+- **Next for the plan (what P9 enables):** the `Transform` verdict of the proposal (image to image, then the legacy commit) -
+  needed by the fit options the owner wants later (analyze the file, offer a machine).

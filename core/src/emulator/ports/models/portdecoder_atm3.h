@@ -14,6 +14,7 @@
 #include "emulator/io/spi/zcontrollerspi.h"
 #include "emulator/media/mediaslot.h"
 #include "emulator/memory/atm/evoavr.h"
+#include "emulator/memory/atm/evoflash.h"
 #include "emulator/memory/atm/evofontoverlay.h"
 #include "emulator/memory/atm/evoturbooverlay.h"
 
@@ -151,7 +152,11 @@ public:
     }
     bool HasMachineMouse() const override { return true; }
     std::vector<std::unique_ptr<ttd::TTDSerializable>> CreateTTDSerializers() const override;
-    void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out) override { out.push_back(&_evoAvr); }
+    void CollectTTDRegionSources(std::vector<ttd::ITTDRegionSource*>& out) override
+    {
+        out.push_back(&_evoAvr);
+        out.push_back(&_flash);
+    }
     /// endregion </SD card>
     /// endregion </Types>
 
@@ -192,6 +197,10 @@ protected:
     // The font RAM loader (`#BF` bit 2): installed on the host bus only while the bit is set (SyncFontOverlay)
     std::unique_ptr<EvoFontOverlay> _fontOverlay;
     bool _fontOverlayInstalled = false;
+
+    // The ROM chip (a 29F040 flash) working on the machine's ROM pages: `#BF` bit 1 (romrw_en) lets writes to ROM
+    // windows without `#xBF7` write protection through (SyncFlashWindows, at every bank mapping)
+    EvoFlash _flash{_context, _memory, "atm3"};
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -210,6 +219,15 @@ public:
     /// The clock chip (tests, debug UI; every RTC machine has GetRtc())
     Ds12887& GetRtc() { return _evoAvr; }
     EvoAvr& GetEvoAvr() { return _evoAvr; }
+    /// The board's ROM chip as a flash (fpga/base/z80/zmem.v:193 romwe_n)
+    EvoFlash& GetFlash() { return _flash; }
+    EvoFlash* GetEvoFlash() override { return &_flash; }
+    /// The machine goes away: a flashed board stays flashed (the saved flash file)
+    void BeforeRelease() override { _flash.SaveIfUnsaved(); }
+    /// The keyboard controller's catch-up, then the flash: the overlay goes after an operation, a quiet change is saved
+    void OnFrameEnd() override;
+    /// The saved flash (zxevo-flash-atm3-<hash>.rom) replaces the image's bytes
+    void OnRomLoaded(uint16_t imageBanks) override { _flash.OnRomImageLoaded(static_cast<size_t>(imageBanks) * 0x4000); }
     RtcBinding GetRtcBinding() override;
 
     /// The AVR firmware's 16550 on #xxEF ([EVO] Avr=) and the ZX-Bus
@@ -280,6 +298,9 @@ protected:
     void Port_BF7_Out(uint16_t port, uint8_t value);
     /// A window of the current map the `#xBF7` write protect applies to (atm_pager.v `wrdisable`)
     bool IsWindowWriteProtected(uint8_t bank) const;
+    /// The windows whose writes reach the flash: `#BF` bit 1, a ROM window, no `#xBF7` protection
+    /// (fpga/base/z80/zmem.v:193 `romwe_n = wr_n | mreq_n | ~romrw_en | wrdisable`)
+    void SyncFlashWindows();
     void Port_BF_Out(uint16_t port, uint8_t value, uint16_t pc);
     void Port_BE_Out(uint16_t port, uint8_t value, uint16_t pc);
     void Port_BD_Out(uint16_t port, uint8_t value);
@@ -296,6 +317,11 @@ protected:
     // BaseConf window mapping (fpga/base_trdemu/trunk/mem/atm_pager.v): the
     // 1 MB #7FFD page bits, #EFF7 bit 3 RAM page 0 and the NMI page override
     void updateMemoryBanks() override;
+public:
+    /// The ATM710 layout plus the BaseConf's own state: #7FFD bits 5-7 are not page bits (#EFF7 bit 2 = 1), no RAM at #0000
+    /// (bit 3 = 0), no write protection, no NMI or virtual TR-DOS page
+    void EnterSpectrum128Paging(uint16_t pc) override;
+protected:
 
     void DecodeF7Out(uint16_t port, uint8_t value, uint16_t pc);
     /// Attach this decoder as the Z80 M1 hook only while it has work there
@@ -309,5 +335,7 @@ protected:
     /// Card presence and the slot's write-protect switch into AVR register C
     void UpdateSdStatus();
     uint8_t DecodeF7In(uint16_t port);
+    /// The AVR firmware's wait handler and main-loop timing from [EVO] Avr=
+    Uart16550::AvrFirmware ConfigureAvrWait();
     /// endregion </Port handlers>
 };

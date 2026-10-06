@@ -2,14 +2,20 @@
 
 #include <cstring>
 #include <fstream>
+#include <iterator>
 
 #include "common/filehelper.h"
 #include "emulator/config.h"
 #include "ttddumpformat.h"
 #include "ttdserializable.h"   // PeripheralId
+#include "ttdsessionfacts.h"
+#include "engine/ttdcontainer.h"
 
 namespace ttd
 {
+
+/// The schema number after "TTDD" in an engine session file (the container's)
+constexpr uint16_t kEngineFileSchema = 2;
 
 namespace
 {
@@ -158,6 +164,10 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::EvoAvrVolatile: return "evo-avr-volatile";
         case PeripheralId::KeyboardMatrix: return "keyboard-matrix";
         case PeripheralId::RzxPlayback: return "rzx-playback";
+        case PeripheralId::MultiSound: return "multisound";
+        case PeripheralId::Sam2695: return "sam2695";
+        case PeripheralId::MultiSoundGs: return "multisound-gs";
+        case PeripheralId::EvoFlash: return "evo-flash";
         case PeripheralId::Count: break;
     }
     return "id" + std::to_string(id);
@@ -220,6 +230,14 @@ bool ReadTTDFileInfo(std::istream& in, TTDFileInfo& info, std::string& err)
     }
     if (!Read(in, info.schemaVersion, "schema version", err))
         return false;
+    if (info.schemaVersion == kEngineFileSchema)
+    {
+        // A session file in the engine's format (Phase 5, C4b)
+        in.clear();
+        in.seekg(0);
+        const TTDMemorySource source(std::vector<uint8_t>(std::istreambuf_iterator<char>(in), {}));
+        return ReadEngineFileInfo(source, info, err);
+    }
     if (info.schemaVersion != dump::kSchemaVersion)
     {
         err = "unsupported .ttd schema v" + std::to_string(info.schemaVersion) + " (this build reads v" +
@@ -283,7 +301,23 @@ bool ReadTTDFileInfo(const std::string& path, TTDFileInfo& info, std::string& er
         err = "cannot open " + path;
         return false;
     }
-    if (!ReadTTDFileInfo(in, info, err))
+    // The engine's format reads its index from the file itself, not the whole file
+    uint8_t head[6] = {};
+    in.read(reinterpret_cast<char*>(head), sizeof(head));
+    const bool engineFile = in && std::memcmp(head, dump::kMagic, 4) == 0 && (head[4] | (head[5] << 8)) == kEngineFileSchema;
+    in.clear();
+    in.seekg(0);
+    if (engineFile)
+    {
+        const TTDFileSource source(path);
+        if (!source.Valid() || !ReadEngineFileInfo(source, info, err))
+        {
+            if (!source.Valid())
+                err = "cannot open " + path;
+            return false;
+        }
+    }
+    else if (!ReadTTDFileInfo(in, info, err))
         return false;
     info.path = path;
     info.fileBytes = FileHelper::GetFileSize(path);

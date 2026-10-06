@@ -36,4 +36,10 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
                                 std::vector<std::unique_ptr<TTDSerializable>>& ownedSerializers,
                                 std::string* error = nullptr);
 
+/// @brief The engine's device instance of a slot card's device, named by its slot ("zxbus.1.neogs",
+///        "ay-socket.tsfm"; ZX-bus slots SL-5): the AY socket's board, the General Sound card, the MoonSound card,
+///        from the machine's slot set (SlotManager). Empty for any other device, or a machine without a slot
+///        declaration: the device keeps its own name
+std::string SlotCardInstance(const EmulatorContext* context, const TTDSerializable* device);
+
 } // namespace ttd

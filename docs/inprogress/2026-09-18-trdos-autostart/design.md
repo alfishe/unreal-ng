@@ -165,7 +165,7 @@ API sketch:
 struct TrdosFile { std::string name; char type; uint16_t start, length; uint8_t sectors, firstSector, firstTrack; bool deleted; int autostartLine /* -1 = none */; };
 class TrdosCatalog {
  public:
-  static bool IsTrdos(const DiskImage&);               // geometry + id 0x10 at 0xE7 + sane type
+  static bool IsTrdos(const DiskImage&);               // id 0x10 at 0xE7 + sane catalog (what TR-DOS checks)
   static std::optional<TrdosCatalog> Parse(const DiskImage&);
   const std::vector<TrdosFile>& files() const;
   const TrdosFile* FindBoot() const;                   // name "boot    ", type 'B', not deleted
@@ -212,7 +212,7 @@ Injected as `boot.B` exactly as shipped: a Hobeta file (17-byte header + 27 sect
 
 Modelled on Unreal Speccy's `FDD::addboot()` + `addfile()` (`unreal-speccy/wldr_trd.cpp:169-215`, cp1251 source; same code in the ZX-Evo fork). Its checks, which we keep:
 
-1. Disk is TR-DOS: sector 9 readable, sector size 256, byte 0 of the info sector is 0, TR-DOS id `0x10` at `0xE7`, the 9 reserved bytes at `0xE9-0xF1` all spaces or all zero, disk type one of `0x16-0x19` (80/40 tracks, 1/2 sides).
+1. Disk is TR-DOS: sector 9 readable, sector size 256, byte 0 of the info sector is 0, TR-DOS id `0x10` at `0xE7`, the 9 reserved bytes at `0xE9-0xF1` all spaces or all zero, disk type one of `0x16-0x19` (80/40 tracks, 1/2 sides). **Changed 2026-10-05 (owner report: SAA10991.TRD, disk type `0x00`, boots on TR-DOS but was "not TR-DOS formatted"):** `TrdosCatalog::IsTrdos` checks what TR-DOS itself checks - the TR-DOS 5.03 / 5.04T routine at `#0405`, called by every catalog command, reads sector 9 and tests only `#E7 == #10` ("Disc Error" otherwise); `#E3` is decoded (bit 0: 40 tracks, bit 3: one side), never checked, and byte 0 is not looked at. In place of the type range the catalog must be sane: sectors 1-8 present, the first free sector and every entry's first sector inside a track (0..15). Tests: `DiskAutostart_Test.Catalog_AcceptsWhatTrdosAccepts`, `Catalog_RejectsNonTrdos` (blank, all-`#E5`, a foreign catalog), `DiskAutostart_Boot_Test.DiskTypeZero_BootRunsThroughRom`.
 2. None of the 128 directory entries starts with `"boot    B"` (9 bytes). (Deleted `boot` entries: their first byte is `0x01`, so they do not match and injection proceeds.)
 3. Free sectors (`0xE5-E6`) >= the boot file's sector count.
 4. Add the 16-byte entry at slot `file count` (14 bytes copied from the header, then first sector/track from `0xE1/0xE2`).

@@ -473,7 +473,7 @@ Fixed size, computed in the constructor. Little-endian and packed, like the othe
 
 ```
 u8   version = 1
-u8   board: chip | statusRead<<1 | fmEnabled<<2
+u8   board: chip | statusRead<<1 | fmEnabled<<2 | renderReanchor<<3 (a cursor re-anchor pending for the next frame start; set only in a capture inside a frame; 0 in older blobs)
 per chip × 2:
   u8   address
   i32  fmClockPhase

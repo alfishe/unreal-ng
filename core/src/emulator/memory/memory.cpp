@@ -334,9 +334,10 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
     // covered by the Execute path in the Z80 M1 cycle, so only data reads land
     // here. Reads have no journal, so this set is the only thing that lets a
     // reverse read-watchpoint skip frames rather than replay all of them.
-    if (!isExecution && _context->ttdCoverageActive && _context->pTimeTravelManager != nullptr)
+    if (!isExecution && _context->ttdCoverageActive && _context->ttdCoverage != nullptr)
     {
-        _context->pTimeTravelManager->RecordReadCoverage(GetPhysPageForZ80Address(addr), addr);
+        _context->ttdCoverage->Record(ttd::TTDCoverageKind::Read,
+                                      ttd::MakeCoverageKey(GetPhysPageForZ80Address(addr), addr));
     }
 
     // Phase 4 — access probe hot-path check for Read access type (§9.2).
@@ -437,10 +438,10 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
         }
 
         // Write journal (parent TDD §9.3): record for reverse-watchpoint queries
-        if (_context->pTimeTravelManager != nullptr)
+        if (_context->ttdWriteSink != nullptr)
         {
             const uint16_t m1pc = core->GetZ80()->m1_pc;
-            _context->pTimeTravelManager->RecordMemoryWrite(addr, /*oldVal=*/0, value, m1pc, physPage);
+            _context->ttdWriteSink->RecordMemoryWrite(addr, /*oldVal=*/0, value, m1pc, physPage);
         }
 
         // Access probe (parent TDD §9.2): check armed watchpoint

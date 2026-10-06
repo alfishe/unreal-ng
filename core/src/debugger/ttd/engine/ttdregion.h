@@ -35,6 +35,8 @@ enum class TTDRegionId : uint16_t
     Vdac2Inflight = 14,        ///< the coprocessor's inflate / media input (eve-emu INFLIGHT)
     EvoAvrEeprom = 15,
     SmucEeprom = 16,
+    MultiSoundGsRam = 17,      ///< the ZX-MultiSound's General Sound RAM (1-2 MB), next to a GS card's GeneralSoundRam
+    EvoFlash = 18,             ///< the ZX-Evo's 512 KB ROM chip (the machine's ROM pages 0-31), written through its flash commands
     /// The engine's own regions holding device states (Phase 2, Step 2): one
     /// per device of the table, from this value on
     DeviceStateFirst = 0x8000,

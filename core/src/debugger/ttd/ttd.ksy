@@ -151,7 +151,7 @@ types:
           gone; their network fields live in the bit-10 section, 14 Joystick - a
           Kempston joystick state write, u1 buttonMask = the state byte, 15 FrontPanelSwitch, 16 NetFrame - an
           Ethernet frame from the host LAN for the bridged gateway, its network record and bytes in the bit-10
-          section like a NetEvent's), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
+          section like a NetEvent's, 17 MidiPanic - every slot card's MIDI synthesizer stops all its voices, no fields), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
           u1 buttonMask, s1 wheelSteps, u1 value; ascending time. Bit 7 = an
           external-event section follows: u32 count, then per marker u64
           frame, u32 tInFrame, u8 kind (TTDExternalEventKind; unknown values
@@ -639,22 +639,41 @@ types:
           board's #B3 latch, reserved, u8 TX done, RX done, last clock, bytes in, bytes out, overruns; 64 bytes; only
           on the v5 board; its peer is MachineSerialPeer),
           53 Saa1099 (a Philips
-          SAA1099, 149 bytes: u1 layout version 1, 32 registers, address latch, sound enable, sync, clock gate, per tone
+          SAA1099, 157 bytes: u1 layout version 2, 32 registers, address latch, sound enable, sync, clock gate, per tone
           generator u4 clocks to transition + level + latched tone + latched octave, per noise generator u4 LFSR + u4
           divider, per envelope generator 11 bytes, u8 host time, u8 clock-ratio remainder, u8 gated and u8 ungated
-          chip clocks; layout in saa1099.cpp; only inside a card that carries the chip),
+          chip clocks, s4 left and s4 right output level (held while the clock gate is stopped); layout in
+          saa1099.cpp; only inside a card that carries the chip),
           54 Smuc (the Scorpion SMUC board, 36 bytes: u1 version 1, u1 pFFBA, u1 p7FBA, u1 x 8 IDE window registers,
           then the serial EEPROM link: u1 mode, u1 flags (bit 0 stable, 1 tx, 2 rx, 3 ack), u1 bitCount, u1 data,
           u1 addressLow, u1 addressHigh, u1 writePos, u1 sda, u1 scl, u1 x 16 writeBuffer; not the EEPROM contents),
-          55 EvoAvrVolatile (the ZX-Evo AVR's volatile registers on TS-Conf, 4 bytes: u1 version 1, u1 extType,
-          u1 eepromPage, u1 flags (bit 0 EEPROM mode, 1 Caps LED, 2 tape-out mode); the ATM3 carries them in 8),
+          55 EvoAvrVolatile (the ZX-Evo AVR's volatile state on TS-Conf and the ATM3, 20 bytes: u1 version 2,
+          u1 extType, u1 eepromPage, u1 flags (bit 0 EEPROM mode, 1 Caps LED, 2 tape-out mode), then the /WAIT
+          ports' timing shared by #xxEF and #BFF7 (EvoAvrWait): u8 AVR cycle the main loop resumed its pass, u8 AVR
+          cycle the EEPROM's last write ends; on the ATM3 the first bytes repeat what 8 carries),
           56 KeyboardMatrix (the ZX keyboard, variable size: u1 version 1, u1 x 8 matrix rows, u1 pair count,
           then (u1 ZXKeysEnum key, u1 pressed count) pairs in key order; key changes themselves are input events),
           57 RzxPlayback (an RZX recording played while TTD records, 84 bytes: u1 version 1 (0: nothing played),
           u1 player state (0 playing, 1 finished, 2 desynced, 3 stopped), u1 last IN value, u1 first desync kind,
           u8 recording fingerprint (FNV-1a over the frames and IN values), u8 frames done, u4 fetches, u4 IN position,
           u8 interrupts, u8 desyncs, u8 snapshots applied, s4 drift, s4 max drift, then the first desync: u4 block,
-          u8 frame, u4 expected, u4 actual, u2 PC, u2 port; the recording itself is not in the session).
+          u8 frame, u4 expected, u4 actual, u2 PC, u2 port; the recording itself is not in the session),
+          58 MultiSound (a ZX-MultiSound card, slot-built, instance <slot>.multisound: u1 version 1, u8 adapter
+          origin, u8 adapter last time, then the card: u1 version 1, u8 now, u8 frame base, u8 frame ticks,
+          u8 rendered-to, u8 sample accumulator, u1 FM muted, u2 FM mute changes + 256 x (u8 time, u1 muted), 11 CPLD
+          latches, 4 x (u1 DAC sample, u1 volume), u8 YM2203 pair synced time + the pair's blob, the MIDI line
+          (18 bytes), the shared DACs; layout in multisoundcard.h),
+          59 Sam2695 (a Dream SAM2695 synthesizer, instance <slot>.multisound.sam2695: sam2695::Synth::SaveState, magic
+          "SAM2", version, the bank's SHA-256, UART, parser, queue, channels, voices; a load refuses another bank),
+          60 MultiSoundGs (the ZX-MultiSound's General Sound, instance <slot>.multisound.gs: the GeneralSound (5)
+          layout with 1-2 MB RAM; the engine region MultiSoundGsRam (17)),
+          61 EvoFlash (the ZX-Evo's ROM chip as a 29F040 flash, TS-Conf and ATM3, 33 bytes: u1 version 1, then the
+          chip's command state - u1 mode (0 read array, 1-2 unlock steps, 3 autoselect, 4 program set-up, 5 erase
+          set-up, 6-7 erase unlock steps, 8 sector-erase window, 9 busy, 10 failed), u1 reserved, u1 flags (bit 0
+          erasing, 1 writable, 2 contents modified, 3 AMD IDs), u1 DQ6 toggle, u1 DQ7 source byte, u1 sectors to
+          erase (bit per 64 KB sector), u1 program value, s8 erase window end, s8 busy end (base clock t-states),
+          u3 program offset, 6 reserved; the 512 KB array is the engine region EvoFlash (18), the machine's ROM
+          pages 0-31).
           ScorpionProfROM (6) byte 5 is the Turbo+ latch (scorpion_turbo; 0 in sessions recorded before it).
           Plus3Paging (13): u1 p1FFD, u1 floating-bus byte (the gate array's last contended byte), u1 flags
           (bit 0: the byte is valid; 0 in sessions recorded before it), u1 reserved.

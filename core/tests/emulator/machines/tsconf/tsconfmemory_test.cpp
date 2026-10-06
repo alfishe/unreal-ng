@@ -3,6 +3,9 @@
 
 #include "tsconffixture.h"
 
+#include <fstream>
+#include <sstream>
+
 class TsConfMemory_Test : public TsConfFixture
 {
 };
@@ -70,6 +73,33 @@ TEST_F(TsConfMemory_Test, MEM5_WindowsReachTheTopPage)
     EXPECT_EQ(Ram(0xFF, 0x0100), 0x12);
 }
 
+/// MEM-6 (audit gap G2, [V] zmem.v:297 `romwe_n = !(memwr && w0_we)`): with ROM in window 0 and W0_WE set, the
+/// flash program sequence (AA@555, 55@2AA, A0@555, then the byte) changes the ROM byte; with W0_WE clear the same
+/// writes are dropped. ROM page 7 is tagged #07, so programming #02 (bits can only go 1 -> 0) gives #02
+TEST_F(TsConfMemory_Test, MEM6_RomWriteEnableReachesTheFlash)
+{
+    auto program = [&](uint8_t value) {
+        Reg(TsConfReg::Page0, 0x00);
+        Poke(0x0555, 0xAA);
+        Poke(0x02AA, 0x55);
+        Poke(0x0555, 0xA0);
+        Reg(TsConfReg::Page0, 0x07);
+        Poke(0x1234, value);
+        _context->emulatorState.t_states += 100;  // 29 us: the byte program (10 us) is over
+    };
+
+    Reg(TsConfReg::MemConfig, TsConfMemConfig::W0NoMap);  // normal mode, ROM, W0_WE = 0
+    program(0x02);
+    EXPECT_EQ(Peek(0x1234), 0x07) << "W0_WE = 0: the writes do not reach the flash";
+    EXPECT_EQ(_memory->ROMBase()[7 * PAGE_SIZE + 0x1234], 0x07);
+
+    Reg(TsConfReg::MemConfig, TsConfMemConfig::W0NoMap | TsConfMemConfig::W0We);  // #06
+    program(0x02);
+    EXPECT_EQ(Peek(0x1234), 0x02) << "W0_WE = 1: the byte is programmed";
+    EXPECT_EQ(_memory->ROMBase()[7 * PAGE_SIZE + 0x1234], 0x02) << "the ROM page itself holds it";
+    EXPECT_EQ(Peek(0x1235), 0x07) << "its neighbor is untouched";
+}
+
 /// CCH-1 (hs §2.5): a hit returns the cached word even when RAM changed under
 /// it (DMA-like); a CPU write invalidates the entry
 TEST_F(TsConfMemory_Test, CCH1_HitReturnsTheCachedWord)
@@ -104,10 +134,127 @@ TEST_F(TsConfMemory_Test, CCH2_SysConfigCopiesTheCacheBit)
 {
     Reg(TsConfReg::SysConfig, 0x04);
     EXPECT_EQ(_decoder->GetState().regs[TsConfReg::CacheConfig], 0x0F);
-    EXPECT_EQ(_core->GetBusOverlayCount(), 2u) << "the DRAM write counter + the invalidation snoop";
+    EXPECT_EQ(_core->GetBusOverlayCount(), 1u) << "the DRAM write overlay also invalidates: no overlay of its own";
     Reg(TsConfReg::SysConfig, 0x01);
     EXPECT_EQ(_decoder->GetState().regs[TsConfReg::CacheConfig], 0x00);
-    EXPECT_EQ(_core->GetBusOverlayCount(), 1u) << "the DRAM write counter stays";
+    EXPECT_EQ(_core->GetBusOverlayCount(), 1u) << "the DRAM write overlay stays (writes invalidate with the cache off too)";
+}
+
+namespace
+{
+    /// One case of testdata/machines/tsconf/rtl-sim/cache-retention.txt (tsconf-cpu-sim cache): the program
+    /// tokens and, per read, the byte the Z80 got and whether it took a DRAM cycle (M) or hit (H)
+    struct RtlCacheCase
+    {
+        std::string name;
+        std::vector<std::string> prog;
+        struct Read
+        {
+            uint16_t addr;
+            uint8_t got;
+            bool miss;
+        };
+        std::vector<Read> reads;
+    };
+
+    std::vector<RtlCacheCase> LoadRtlCacheCases(const std::string& path)
+    {
+        std::vector<RtlCacheCase> cases;
+        std::ifstream in(FileHelper::ToFsPath(path));
+        std::string line;
+        while (std::getline(in, line))
+        {
+            std::istringstream ls(line);
+            std::string key;
+            ls >> key;
+            if (key == "case")
+            {
+                cases.emplace_back();
+                ls >> cases.back().name;
+            }
+            else if (key == "prog" && !cases.empty())
+            {
+                std::string all, token;
+                ls >> all;
+                std::istringstream ts(all);
+                while (std::getline(ts, token, ','))
+                    cases.back().prog.push_back(token);
+            }
+            else if (key == "reads" && !cases.empty())
+            {
+                std::string r;  // aaaa=gg/mmX[!]: address, byte the Z80 got, DRAM byte, H / M
+                while (ls >> r)
+                    cases.back().reads.push_back({static_cast<uint16_t>(std::stoul(r.substr(0, 4), nullptr, 16)),
+                                                  static_cast<uint8_t>(std::stoul(r.substr(5, 2), nullptr, 16)),
+                                                  r[10] == 'M'});
+            }
+        }
+        return cases;
+    }
+}
+
+/// CCH-3 (hs §2.5, [V] zmem.v:213-266, arbiter.v:214): the cache's fill and retention replayed from the RTL
+/// (tools/machines/tsconf/rtl-sim `tsconf-cpu-sim cache`, testdata/machines/tsconf/rtl-sim/cache-retention.txt).
+/// Every CPU DRAM read fills its entry whatever CACHE_CONFIG says (cpu_strobe writes the cache RAM on every CPU
+/// read cycle); CACHE_CONFIG only decides whether a valid entry answers instead of DRAM. Nothing clears the cache:
+/// not switching it off, not a reset. A CPU write to RAM invalidates the entry it hits, cache on or off. So a
+/// word read with the cache off and then changed by DMA is answered stale once the cache is switched on.
+/// Each case starts from a fresh FPGA configuration (cache RAM zeroed: all invalid), MEM_CONFIG 04h and pages
+/// 00h, 20h..22h as in the harness; a PK token changes DRAM directly, as a DMA write does
+TEST_F(TsConfMemory_Test, CCH3_CacheFillAndRetentionMatchTheRtl)
+{
+    const std::vector<RtlCacheCase> cases =
+        LoadRtlCacheCases(TestPathHelper::GetTestDataPath("machines/tsconf/rtl-sim/cache-retention.txt"));
+    ASSERT_GE(cases.size(), 10u);
+
+    TsConfState& ts = _decoder->GetState();
+    static constexpr uint8_t kPages[4] = {0x00, 0x20, 0x21, 0x22};
+    auto mapWindows = [&] {
+        Reg(TsConfReg::MemConfig, TsConfMemConfig::W0NoMap);
+        for (uint8_t w = 0; w < 4; w++)
+            Reg(static_cast<uint8_t>(TsConfReg::Page0 + w), kPages[w]);
+    };
+    auto dram = [&](uint16_t addr) -> uint8_t& { return Ram(kPages[addr >> 14], addr & 0x3FFF); };
+
+    for (const RtlCacheCase& c : cases)
+    {
+        SCOPED_TRACE(c.name);
+        std::memset(ts.cacheTag, 0, sizeof(ts.cacheTag));  // FPGA configuration: every entry invalid
+        std::memset(ts.cacheWord, 0, sizeof(ts.cacheWord));
+        Reg(TsConfReg::CacheConfig, 0x00);
+        mapWindows();
+        for (uint32_t a = 0x8000; a <= 0xBFFF; a++)
+            dram(static_cast<uint16_t>(a)) = 0x00;
+        for (uint32_t a = 0xC000; a <= 0xFFFF; a++)
+            dram(static_cast<uint16_t>(a)) = static_cast<uint8_t>((a * 7 + 3) & 0x7F);
+
+        size_t read = 0;
+        for (const std::string& t : c.prog)
+        {
+            auto hex = [&](size_t from, size_t len) { return std::stoul(t.substr(from, len), nullptr, 16); };
+            if (t.rfind("CE.", 0) == 0)
+                Reg(TsConfReg::CacheConfig, static_cast<uint8_t>(hex(3, 1)));
+            else if (t.rfind("PK.", 0) == 0)
+                dram(static_cast<uint16_t>(hex(3, 4))) = static_cast<uint8_t>(hex(8, 2));  // a DMA write
+            else if (t.rfind("WR.", 0) == 0)
+                Poke(static_cast<uint16_t>(hex(3, 4)), static_cast<uint8_t>(hex(8, 2)));
+            else if (t == "RST1")
+                _decoder->reset();
+            else if (t == "RST0")
+                mapWindows();  // the harness keeps the pages; after a real reset the program sets them again
+            else if (t.rfind("RD.", 0) == 0)
+            {
+                ASSERT_LT(read, c.reads.size());
+                const RtlCacheCase::Read& r = c.reads[read++];
+                const uint32_t before = ts.cpuAccesses;
+                const uint8_t got = Peek(r.addr);
+                EXPECT_EQ(got, r.got) << "read #" << read << " at " << std::hex << r.addr << ": byte";
+                EXPECT_EQ(ts.cpuAccesses != before, r.miss) << "read #" << read << " at " << std::hex << r.addr
+                                                            << ": DRAM cycle (miss) or hit";
+            }
+        }
+        EXPECT_EQ(read, c.reads.size());
+    }
 }
 
 namespace

@@ -75,9 +75,10 @@ bool FeatureManager::isTtdRecordingActive() const
         return true;
     }
 
-    if (_context && _context->pTimeTravelManager)
+    // A black box records without holding acceleration (D29)
+    if (_context && _context->pTimeTravelHooks)
     {
-        if (_context->pTimeTravelManager->IsRecording())
+        if (_context->pTimeTravelHooks->IsRecording() && _context->pTimeTravelHooks->LocksAcceleration())
             return true;
     }
 
@@ -97,8 +98,8 @@ bool FeatureManager::isTtdTimelineBound() const
         return false;
     if (_context->ttdReplayActive)
         return true;
-    return _context->pTimeTravelManager &&
-           _context->pTimeTravelManager->GetState() == ttd::TTDSessionState::Detached;
+    return _context->pTimeTravelHooks &&
+           _context->pTimeTravelHooks->GetState() == ttd::TTDSessionState::Detached;
 }
 
 void FeatureManager::onTtdRecordingStarted()
@@ -121,6 +122,21 @@ void FeatureManager::onTtdRecordingStopped()
 /// @return true if the feature was found and updated, false if feature not found
 bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
 {
+    std::string requestedId;
+    {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        if (const auto* feature = findFeature(idOrAlias))
+            requestedId = feature->id;
+    }
+    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+
+    // FR-17: switching time travel or debug mode off stops a recording cleanly first,
+    // instead of refusing. Outside the lock: the stop parks the machine, whose thread
+    // may need it
+    if (!enabled && ttd && (requestedId == Features::kTimeTravel || requestedId == Features::kDebugMode) &&
+        ttd->IsRecording())
+        ttd->StopForFeatureChange(requestedId.c_str());
+
     std::string changedId;
     {
         std::lock_guard<std::recursive_mutex> lock(_mutex);
@@ -133,8 +149,6 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
             // machine is bound to a TTD timeline (they change what the guest code does,
             // so a replay would diverge), and turbo mode while recording (a recorded run
             // must reflect real timing)
-            // ...and switching the capture flags off (timetravel, debugmode) while
-            // recording: capture would stop mid-session and corrupt the history
             const std::string refusal = refusalReason(id, enabled);
             if (!refusal.empty())
             {
@@ -298,20 +312,15 @@ std::string FeatureManager::refusalReason(const std::string& idOrAlias, bool ena
     // Either direction swaps the fitted General Sound card (FR-4)
     if (id == Features::kGSLightweight)
     {
-        ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
+        ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
         const bool gsFitted = _context && _context->pSoundManager && _context->pSoundManager->getGeneralSound();
         return (ttd && gsFitted) ? ttd->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard) : std::string();
     }
 
+    // Switching timetravel or debugmode off is never refused: setFeature stops a
+    // recording cleanly first (FR-17)
     if (!enabled)
-    {
-        ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
-        if (ttd && id == Features::kTimeTravel)
-            return ttd->RecordingGuard(ttd::TTDGuardedAction::DisableTimeTravel);
-        if (ttd && id == Features::kDebugMode)
-            return ttd->RecordingGuard(ttd::TTDGuardedAction::DisableDebugMode);
         return {};
-    }
 
     if ((id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape) && isRzxPlaying())
     {
@@ -726,9 +735,9 @@ void FeatureManager::onFeatureChanged(const std::string& changedFeatureId)
     }
 
     // Notify TTD manager of feature changes (for memory deallocation on disable)
-    if (_context && _context->pTimeTravelManager)
+    if (_context && _context->pTimeTravelHooks)
     {
-        _context->pTimeTravelManager->UpdateFeatureCache();
+        _context->pTimeTravelHooks->UpdateFeatureCache();
     }
 
     // Update port trace recorder cache in PortDecoder (instantiates/releases the

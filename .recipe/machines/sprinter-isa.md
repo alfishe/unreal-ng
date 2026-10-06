@@ -6,7 +6,7 @@ become ISA A13-A0 and the latch `#9FBD` (port-table code `#1B`) gives A19-A14, A
 
 | Slot | Connector | I/O page | Memory page | Default card |
 |:--|:--|:--|:--|:--|
-| 1 | J6 | `#D4` | `#D0` | ZX-bus adapter with the General Sound of `[SOUND] GSType` (NeoGS; owner decision Q2, ISA phase I2) |
+| 1 | J6 | `#D4` | `#D0` | ZX-bus adapter (owner decision Q2, ISA phase I2), empty: no General Sound on it since 2026-10-04 (owner decision) |
 | 2 | J7 | `#D6` | `#D2` | NE2000 (RTL8019AS at `#300`; owner decision 2026-10-02) |
 
 Worked example: the RTL8019AS network kit reads the chip ID of the card in slot 2: `#1FFD` <- `#11`,
@@ -38,7 +38,9 @@ population refuses to load on another).
   for jumpers J5 / J6, `SlotNDecode=FULL|PARTIAL`): [sprinter-network.md](sprinter-network.md#isa-hayes-modem-and-sprinterserial).
 - At create: WebAPI `{"model":"SPRINTER","sprinter":{"isa_slot1":"none","isa_slot2":"ne2000"}}`, CLI
   `create SPRINTER --isa-slot2 none`, MCP `emulator_manage action=create model=SPRINTER sprinter_isa_slot2=none`.
-- Built kinds: `ZXBUS` (the adapter; the GS behind it is `[SOUND] GSType`: `NGS`, `Z80`, `LW` or `NONE`), `NE2000`,
+- Built kinds: `ZXBUS` (the adapter; the GS behind it is a slot card in `[SLOTS]`: `isa.1 = neogs` | `gs` | `gs-lw`,
+  `isa.1.adapter = sprinter-isa-zxbus`, `isa.1.fit = unrealistic` - the NeoGS as shipped; the legacy
+  `[SOUND] GSType` still works; user guide with every card: [docs/features/sprinter-slots.md](../../docs/features/sprinter-slots.md)), `NE2000`,
   `SPRINTERESP`, `MODEM`, `DUAL16552`. `Slot1=NONE` builds no GS at all (the machine has no ZX-bus then); a second
   `ZXBUS` adapter has an empty ZX-bus (one GS per machine). A kind this build does not have yet is not fitted: the slot report says why (`not_fitted`), the machine starts.
 
@@ -162,6 +164,10 @@ line low -> PB0, interrupts the CPU, N acknowledged".
 
 ## The General Sound / NeoGS behind the ZX-bus adapter (verified 2026-10-04)
 
+The shipped Sprinter config fits the NeoGS behind the adapter (`configs/sprinter/unreal.ini`, `[SLOTS]`:
+`isa.1 = neogs`, `isa.1.adapter = sprinter-isa-zxbus`, `isa.1.fit = unrealistic`; `gs` instead of `neogs` for the
+classic card, no `isa.1` lines for none).
+
 ISA I/O `#xxB3` / `#xxBB` / `#xx33` of slot 1 are the GS ports (data, command / status, control): a program maps
 page `#D4` into window 3 (`#1FFD` <- `#11`, `OUT (#E2),#D4`, `#9FBD` <- `#00`) and reads / writes `#C0B3` / `#C0BB` /
 `#C033`. ISA RESET DRV resets the card; the BIOS pulses it at POST. Play a MOD with ProPlay (the MAME pack's system
@@ -212,7 +218,7 @@ GS port trace `/state/audio/gs/porttrace` sees ProPlay's traffic like any host's
 (`NeoGS (...): status #7E, silent; [SOUND] GSReset=0: ...`); `audio_gs` for the card. Qt: Network window, slot 1's
 row is the adapter's line.
 
-- `[SOUND] GSType=Z80` puts the classic GS (`rom/gs105a.rom`) behind the adapter; a TTD recording then replays
+- `isa.1 = gs` in `[SLOTS]` (legacy `[SOUND] GSType=Z80`) puts the classic GS (`rom/gs105a.rom`) behind the adapter; a TTD recording then replays
   exactly (its RAM is in its blob). The NeoGS replays the same music, not bit-exact (its RAM waits for TTD v2).
 - The NeoGS ZX-DMA cannot reach the Sprinter (the adapter passes no memory cycles); the TTD port journals record with
   the NeoGS fitted.

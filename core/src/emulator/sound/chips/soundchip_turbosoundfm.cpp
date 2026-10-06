@@ -73,13 +73,11 @@ void SoundChip_TurboSoundFM::handleFrameStart()
     // rate or quality switch moves the render loop against the CPU clock
     // (re-anchor once, together with the filter redesign, instead of letting
     // the offsets pile up); far outside the window it has lost the timeline
-    // (host speed multiplier > 1, synthesis resumed after suppression)
-    const int64_t renderT = _pair.renderT();
-    if (_renderReanchor || renderT < -4 * kFmRenderLagT || renderT > 0)
-    {
-        _pair.setRenderT(-kFmRenderLagT);
-        _renderReanchor = false;
-    }
+    // (host speed multiplier > 1, synthesis resumed after suppression).
+    // The pair's one cursor rule (Ym2203Pair::anchorRender): this owner renders as the CPU runs, so at the frame
+    // start the reference is the frame origin of its frame-relative axis (0) with nothing rendered yet (span 0)
+    _pair.anchorRender(0, 0, _renderReanchor);
+    _renderReanchor = false;
 
     // Audio from before an LQ -> HQ switch or a suppression gap must not
     // replay: the HQ decimators were not fed and the hold / coupling still
@@ -111,7 +109,9 @@ void SoundChip_TurboSoundFM::handleFrameStart()
 
     // Render-loop frame base (§6.2), same set as the legacy device (§11):
     // _samplePhase and _decimationPhase carry across frames - only reset()
-    // and setCoreRate() clear them; the FM cursor was rebased above with the
+    // and setCoreRate() clear them, and the mixer's frame-start phase was
+    // pushed just before this call (followSamplePhase: equal at 1x, taken
+    // back after a host speed multiplier or a sound-off gap); the FM cursor was rebased above with the
     // word timestamps. The buffer clears run even when synthesis is
     // suppressed: the sound-feature-off mixing path relies on zeroed buffers.
     _lastTStates = 0;
@@ -573,7 +573,9 @@ void SoundChip_TurboSoundFM::TTDSaveState(uint8_t* dst) const
     uint8_t* cur = dst;
 
     put_u8(cur, kTsfmStateVersion);
-    put_u8(cur, EncodeBoardByte(_board));
+    // Bit 3: the render cursor's pending re-anchor (consumed at the next frame
+    // start; a capture inside a frame - a recording's first checkpoint - can hold it)
+    put_u8(cur, static_cast<uint8_t>(EncodeBoardByte(_board) | (_renderReanchor ? 0x08 : 0)));
     put_u64(cur, _samplePhase);
     put_f64(cur, _decimationPhase);
     put_f64(cur, _pair.chip(0)->ssg.decimatorLeft().phase());
@@ -606,8 +608,10 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
            "and cannot be loaded by this build");
     (void)version;
     TsfmBoard board;
-    DecodeBoardByte(get_u8(cur), board);
+    const uint8_t boardByte = get_u8(cur);
+    DecodeBoardByte(boardByte, board);
     _board = board;
+    const bool renderReanchor = (boardByte & 0x08) != 0;
     _samplePhase = get_u64(cur);
     _decimationPhase = get_f64(cur);
     const double chip0LeftPhase = get_f64(cur);
@@ -663,8 +667,9 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
     _pair.chip(1)->ssg.decimatorLeft().setPhase(chip1LeftPhase);
     _pair.chip(1)->ssg.decimatorRight().setPhase(chip1RightPhase);
 
-    // The render cursor is historical (v4 tail above)
-    _renderReanchor = false;
+    // The render cursor is historical (v4 tail above), and so is a re-anchor
+    // still pending for the next frame start (board byte bit 3)
+    _renderReanchor = renderReanchor;
 
     // The per-frame render progress is historical (v5 tail): the frame was
     // rendered up to the checkpoint's position - left at its live pre-seek

@@ -4,6 +4,11 @@
 /// @brief 512 KB parallel NOR flash of the 29F040B class (ST M29F040B, AMD
 /// Am29F040B) - the NeoGS card's firmware chip (neogs-tdd.md §3.8).
 ///
+/// Also the ZX-Evo's ROM chip (a 29F040 in PLCC32, D3; evo-flash design:
+/// docs/inprogress/2026-09-27-tsconf/tdd-evo-flash.md). There the array is the
+/// machine's ROM memory itself (an external array): what the chip programs is what
+/// the CPU reads afterwards.
+///
 /// Command set (JEDEC, unlock cycles compare address bits A10..A0 only, so
 /// `555`/`2AA` at any page work):
 ///   AA@555 55@2AA F0          reset (also plain F0 at any address)
@@ -47,13 +52,23 @@ public:
     /// Serialized state size (TTDSaveState / TTDLoadState), contents excluded
     static constexpr size_t STATE_SIZE = 32;
 
-    explicit Flash29F040B(double unitsPerSecond, Vendor vendor = Vendor::ST);
+    /// @param external the 512 KB array to work on (the owner keeps it alive);
+    ///        null: the chip owns its array, erased (#FF)
+    explicit Flash29F040B(double unitsPerSecond, Vendor vendor = Vendor::ST, uint8_t* external = nullptr);
 
     /// Contents: `size` bytes copied, the rest erased (#FF). Resets the command
     /// state machine and the modified flag.
     void load(const uint8_t* data, size_t size);
-    const uint8_t* data() const { return _data.data(); }
-    uint8_t* data() { return _data.data(); }
+    const uint8_t* data() const { return _data; }
+    uint8_t* data() { return _data; }
+    /// Work on @p external (512 KB, kept alive by the owner) from now on; null
+    /// goes back to the chip's own array. The command state is not touched
+    void bindArray(uint8_t* external);
+
+    Flash29F040B(const Flash29F040B&) = delete;
+    Flash29F040B& operator=(const Flash29F040B&) = delete;
+    /// The owner's time unit (busy times are converted with it)
+    void setUnitsPerSecond(double unitsPerSecond) { _unitsPerSecond = unitsPerSecond; }
 
     /// Power-on / hardware reset: back to read-array, no operation in progress
     void reset();
@@ -79,6 +94,8 @@ public:
     /// Contents changed since load() (persistence, neogs-tdd.md §5.8)
     bool modified() const { return _modified; }
     void clearModified() { _modified = false; }
+    /// Counts completed programs and erases (not stored in the state: an owner's save debounce, EvoFlash)
+    uint32_t changeCount() const { return _changes; }
 
     /// Time-travel engine region (Phase 1, Step 6): every change of the array
     /// is marked in @p tracker while it is set (null = not recording)
@@ -113,12 +130,14 @@ private:
     uint8_t status(); // advances the DQ6 toggle
     void startProgram(uint32_t offset, uint8_t value, int64_t now);
 
-    std::vector<uint8_t> _data;
+    std::vector<uint8_t> _own;   // the array when no external one is bound
+    uint8_t* _data = nullptr;    // the array the chip works on
     ttd::TTDRegionTracker* _tracker = nullptr;
     double _unitsPerSecond;
     Vendor _vendor;
     bool _writable = true;
     bool _modified = false;
+    uint32_t _changes = 0;
 
     Mode _mode = Mode::Read;
     bool _erasing = false;

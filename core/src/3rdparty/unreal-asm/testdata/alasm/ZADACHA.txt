@@ -1,0 +1,40 @@
+        ORG #6000
+        LD A,127
+        LD C,#38
+        CALL SYM
+        RET
+SYM     ADD A,A
+        LD L,A
+        LD H,15
+        ADD HL,HL
+        ADD HL,HL
+        LD DE,#5800
+L1      LD B,3
+L2      PUSH BC
+        LD A,(HL)
+        LD B,8
+L3      RLA
+        PUSH AF
+        SBC A,A
+        AND C
+        LD (DE),A
+        INC DE
+        LD (DE),A
+        INC DE
+        LD (DE),A
+        INC DE
+        LD (DE),A
+        INC DE
+        POP AF
+        DJNZ L3
+        POP BC
+        DJNZ L2
+        INC L
+        LD A,L
+        AND 7
+        JR NZ,L1
+        RET
+
+
+
+

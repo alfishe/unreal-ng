@@ -76,7 +76,7 @@ const Golden kGolden[] = {
     // ATM3 re-recorded 2026-10-04: the frozen RTC (SetFixedTime) now shows the instant's UTC wall time on every
     // host instead of the host's local time; BaseConf copies the clock into RAM, so only the RAM hash moved (the
     // old row held 07:00:30, recorded on a UTC-5 machine; Linux CI in UTC got 12:00:30)
-    {"ATM3", nullptr, 0x30563EB94B7385D6ull, 0x55475075DE936CBFull, 10483200ull},
+    {"ATM3", nullptr, 0x8F56139A4E4E2656ull, 0xF77434D0AC7101B1ull, 10483200ull},  // 2026-10-05: the ERS's CMOS reads wait for the AVR (#BFF7 /WAIT)
     // TSL (TS-Conf): no row yet - the boot is covered by tsconf_boot_test (BOOT-1/2).
 };
 

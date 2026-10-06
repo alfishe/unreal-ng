@@ -38,6 +38,8 @@ public:
     void SetInterpolation(Interpolation mode) { _cfg.interpolation = mode; }
     uint32_t PolyphonyLimit() const;
     void Describe(SynthReport& out) const;
+    // Every voice fades out (All Sound Off on all parts); nothing else changes
+    void Panic();
     void Sanitize();
 
     const Voice& VoiceAt(size_t i) const { return _voices[i]; }

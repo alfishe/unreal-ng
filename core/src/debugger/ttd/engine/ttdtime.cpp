@@ -15,6 +15,15 @@ int64_t TTDFrameTable::IndexOf(uint64_t frame) const
     return static_cast<int64_t>(_base + static_cast<size_t>(it - _entries.begin()));
 }
 
+int64_t TTDFrameTable::IndexAtOrBefore(uint64_t frame) const
+{
+    const auto it = std::upper_bound(_entries.begin(), _entries.end(), frame,
+                                     [](uint64_t f, const Entry& e) { return f < e.frame; });
+    if (it == _entries.begin())
+        return -1;
+    return static_cast<int64_t>(_base + static_cast<size_t>(it - _entries.begin()) - 1);
+}
+
 bool TTDFrameTable::Start(uint64_t frame, TTDMachineTime& start) const
 {
     const int64_t idx = IndexOf(frame);

@@ -124,7 +124,8 @@ snapshot::Image LoaderZ80::BuildImage() const
         case Z80_256K: image.memoryModel = snapshot::MemoryModel::Extended; break;
         default:
             image.memoryModel = snapshot::MemoryModel::Extended;
-            image.warnings.push_back("a SAM Coupe snapshot: this emulator has no such machine");
+            image.unsupported = "a SamRam / SAM Coupe snapshot: this emulator has no such machine";
+            image.warnings.push_back(image.unsupported);
             break;
     }
     image.timingHint = image.machineHint == "pentagon128" ? "pentagon" : _memoryMode == Z80_48K ? "48k" : "128k";
@@ -141,6 +142,8 @@ snapshot::Image LoaderZ80::BuildImage() const
         {
             image.extensions.push_back({"z80:rom-block", "rom", PAGE_SIZE, "ROM page " + std::to_string(idx), {}});
             image.warnings.push_back("the file carries a ROM block: Z80 snapshots with ROM blocks are not supported");
+            if (image.unsupported.empty())
+                image.unsupported = "the file carries a ROM block (a custom ROM): Z80 snapshots with ROM blocks are not supported";
         }
     }
 
@@ -172,6 +175,7 @@ snapshot::Image LoaderZ80::BuildImage() const
     }
     if (_hasTStates)
         image.framePosition = _tstatesFromInt;
+    image.ayAddressLatch = _portFFFD;
     image.border = static_cast<uint8_t>(_borderColor & 7u);
     if (_hasAyRegisters)
     {
@@ -569,6 +573,7 @@ bool LoaderZ80::validate()
 bool LoaderZ80::stageLoad()
 {
     bool result = false;
+    _image = snapshot::Image();   // staged afresh: an image built from an earlier staging is stale
 
     if (_fileValidated && _snapshotVersion != Unknown)
     {
@@ -610,14 +615,36 @@ void LoaderZ80::commitFromStage()
         PortDecoder& ports = *_context->pPortDecoder;
         Core& core = *_context->pCore;
 
+        // The commit reads the image (snapshot pipeline P9), not the staging buffers. load() has built it for the plan; a
+        // caller that stages and commits by hand has not
+        if (_image.format.empty())
+            _image = BuildImage();
+        const snapshot::Image& image = _image;
+        const snapshot::Cpu& cpu = image.cpu;
+        // load() refuses these in the plan, before anything is touched; a caller that commits by hand gets what it always got
+        if (!image.unsupported.empty())
+            throw std::logic_error("Not supported");
+
+        const Z80MemoryMode memoryMode = image.memoryModel == snapshot::MemoryModel::Mem48k    ? Z80_48K
+                                         : image.memoryModel == snapshot::MemoryModel::Mem128k ? Z80_128K
+                                                                                                : Z80_256K;
+        const uint8_t port7FFD128 = image.paging.p7FFD.value_or(0);
+        const uint8_t portFFFD = image.ayAddressLatch.value_or(0);
+
         // Reset Z80 and all peripherals for a clean state-independent load
         // Ensures AY registers, beeper, FDC, tape, screen mode etc. are clean
         core.Reset();
+        // A model whose reset leaves an extended paging on (the Pentagon 1024) goes back to the plain 128K form
+        ports.EnterSpectrum128Paging(cpu.pc);
 
         /// region <Apply port configuration>
-        switch (_memoryMode)
+        switch (memoryMode)
         {
             case Z80_48K: {
+                // The 48K BASIC, latches included (what the reset does for RM_SOS): the +2A / +3 take the ROM's high bit
+                // from #1FFD, which the shipped RESET=128 leaves at ROM 0 / 1
+                memory.SetROMMode(RM_SOS);
+
                 // Step 1: Unlock paging for state-independent loading
                 ports.UnlockPaging();
 
@@ -630,8 +657,8 @@ void LoaderZ80::commitFromStage()
                 // Step 3: Set port values via decoder (goes through hardware logic)
                 uint8_t port7FFD =
                     PORT_7FFD_RAM_BANK_0 | PORT_7FFD_SCREEN_NORMAL | PORT_7FFD_ROM_BANK_1 | PORT_7FFD_LOCK;
-                ports.DecodePortOut(0x7FFD, port7FFD, _z80Registers.pc);
-                ports.DecodePortOut(0xFFFD, _portFFFD, _z80Registers.pc);
+                ports.DecodePortOut(0x7FFD, port7FFD, cpu.pc);
+                ports.DecodePortOut(0xFFFD, portFFFD, cpu.pc);
 
                 // Step 4: Explicit state assignment
                 _context->emulatorState.p7FFD = port7FFD;
@@ -644,7 +671,7 @@ void LoaderZ80::commitFromStage()
                 // CRITICAL: Must fully unlock emulator state before applying snapshot
                 
                 // Extract RAM page for bank 3 from port 7FFD (bits 0-2)
-                uint8_t bank3Page = _port7FFD & 0x07;
+                uint8_t bank3Page = port7FFD128 & 0x07;
                 
                 // Step 1: Unlock paging via PortDecoder interface
                 // This allows subsequent port writes to succeed even if previously locked
@@ -664,16 +691,16 @@ void LoaderZ80::commitFromStage()
                 // #7FFD's lock bit would block it afterwards
                 const MEM_MODEL model = _context->config.mem_model;
                 const bool has1FFD = model == MM_PLUS2A || model == MM_PLUS3 || model == MM_SCORP || model == MM_PROFSCORP;
-                if (_hasPort1FFD && has1FFD)
+                if (image.paging.p1FFD && has1FFD)
                 {
-                    ports.DecodePortOut(0x1FFD, _port1FFD, _z80Registers.pc);
-                    _context->emulatorState.p1FFD = _port1FFD;
+                    ports.DecodePortOut(0x1FFD, *image.paging.p1FFD, cpu.pc);
+                    _context->emulatorState.p1FFD = *image.paging.p1FFD;
                 }
-                ports.DecodePortOut(0x7FFD, _port7FFD, _z80Registers.pc);
-                ports.DecodePortOut(0xFFFD, _portFFFD, _z80Registers.pc);
+                ports.DecodePortOut(0x7FFD, port7FFD128, cpu.pc);
+                ports.DecodePortOut(0xFFFD, portFFFD, cpu.pc);
                 
                 // Step 4: Ensure emulatorState reflects snapshot's port value (including lock bit)
-                _context->emulatorState.p7FFD = _port7FFD;
+                _context->emulatorState.p7FFD = port7FFD128;
                 
                 // Step 5: Trigger ROM selection based on port 7FFD bit 4
                 memory.UpdateZ80Banks();
@@ -687,7 +714,7 @@ void LoaderZ80::commitFromStage()
         // Pre-fill whole border with color (visual only, no timing side effects)
         // Don't call Default_Port_FE_Out here - it triggers UpdateScreen() with stale t-state
         // Just set the visual state directly like SNA loader does
-        screen.FillBorderWithColor(_borderColor);
+        screen.FillBorderWithColor(image.border);
 
         // Keep the machine state in step with the picture. FillBorderWithColor
         // only paints; pFE is the port latch every consumer reads back, and
@@ -697,37 +724,19 @@ void LoaderZ80::commitFromStage()
         // border restored as white on seek.
         EmulatorState& borderState = _context->emulatorState;
         borderState.pFE = static_cast<uint8_t>((borderState.pFE & 0b1111'1000) |
-                                               (_borderColor & 0b0000'0111));
-        borderState.border_attr = static_cast<uint8_t>(_borderColor & 0b0000'0111);
+                                               (image.border & 0b0000'0111));
+        borderState.border_attr = static_cast<uint8_t>(image.border & 0b0000'0111);
 
         // AY registers: core.Reset() above cleared the chip, so the snapshot's
         // registers go in after it
-        commitPeripheralState();
+        commitPeripheralState(image);
 
         /// endregion </Apply port configuration>
 
         /// region <Transfer memory content>
 
-        for (size_t idx = 0; idx < MAX_ROM_PAGES; idx++)
-        {
-            uint8_t* ptr = _stagingROMPages[idx];
-
-            if (ptr != nullptr)
-            {
-                throw std::logic_error("Z80 snapshot loader: ROM pages transfer from snapshot not implemented yet");
-            }
-        }
-
-        for (size_t idx = 0; idx < MAX_RAM_PAGES; idx++)
-        {
-            uint8_t* ptr = _stagingRAMPages[idx];
-
-            if (ptr != nullptr)
-            {
-                uint8_t* targetPage = memory.RAMPageAddress(idx);
-                memcpy(targetPage, ptr, PAGE_SIZE);
-            }
-        }
+        for (const auto& bank : image.banks)
+            memcpy(memory.RAMPageAddress(bank.first), bank.second.data(), PAGE_SIZE);
 
         // Free used staging memory
         freeStagingMemory();
@@ -740,13 +749,35 @@ void LoaderZ80::commitFromStage()
         // Copy registers but preserve timing state (t) from Reset
         // memcpy would overwrite t to 0, but Reset set it to 3
         // SNA loader uses individual assignments which preserve t
+        Z80Registers regs = {};
+        regs.af = cpu.af;
+        regs.bc = cpu.bc;
+        regs.de = cpu.de;
+        regs.hl = cpu.hl;
+        regs.alt.af = cpu.af2;
+        regs.alt.bc = cpu.bc2;
+        regs.alt.de = cpu.de2;
+        regs.alt.hl = cpu.hl2;
+        regs.ix = cpu.ix;
+        regs.iy = cpu.iy;
+        regs.sp = cpu.sp;
+        regs.pc = cpu.pc;
+        regs.i = cpu.i;
+        regs.r_low = cpu.r & 0x7Fu;
+        regs.r_hi = cpu.r & 0x80u;
+        regs.iff1 = cpu.iff1 ? 1 : 0;
+        regs.iff2 = cpu.iff2 ? 1 : 0;
+        regs.im = cpu.im;
+        regs.memptr = 0;
+        regs.q = 0;
+
         uint32_t preservedT = z80->tt;
         Z80Registers* actualRegisters = static_cast<Z80Registers*>(z80);
-        memcpy(actualRegisters, &_z80Registers, sizeof(Z80Registers));
+        memcpy(actualRegisters, &regs, sizeof(Z80Registers));
         z80->tt = preservedT;  // Restore timing state
         // A v3 file stores the frame position (from the INT): resume there
-        if (_hasTStates)
-            z80->t = LoaderSZX::FramePositionFromIntCount(_context, _tstatesFromInt);
+        if (image.framePosition)
+            z80->t = LoaderSZX::FramePositionFromIntCount(_context, *image.framePosition);
 
         // Detect if CPU was halted when snapshot was taken
         // If PC points to HALT instruction (0x76), set halted state
@@ -1327,9 +1358,9 @@ void LoaderZ80::stagePeripheralState(const Z80Header_v2& header)
 /// @details Called after core.Reset(). The registers go through the chip's logic-level interface (the same one
 ///          the saver reads back from), then the selected register is restored. On a TurboSound machine this is
 ///          chip 0, the chip the reset leaves selected
-void LoaderZ80::commitPeripheralState()
+void LoaderZ80::commitPeripheralState(const snapshot::Image& image)
 {
-    if (!_hasAyRegisters || _context->pSoundManager == nullptr)
+    if (image.ay.empty() || _context->pSoundManager == nullptr)
         return;
 
     SoundChip_AY8910* psg = _context->pSoundManager->getAYChip(0);
@@ -1338,10 +1369,10 @@ void LoaderZ80::commitPeripheralState()
 
     for (uint8_t reg = 0; reg < 16; reg++)
     {
-        psg->writeRegister(reg, _ayRegisters[reg]);
+        psg->writeRegister(reg, image.ay[0].registers[reg]);
     }
 
-    psg->setRegister(_portFFFD & 0x0F);
+    psg->setRegister(image.ay[0].selected & 0x0F);
 }
 
 /// @brief Compress memory page using Z80 RLE compression

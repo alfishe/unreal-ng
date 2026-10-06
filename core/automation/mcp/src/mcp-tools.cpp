@@ -91,6 +91,33 @@ std::vector<std::string> ToolRegistry::ToolNames() const
 namespace
 {
 
+/// A slot change reply (WebAPI /slots/{slot}/{verb}, SlotControl) as a tool result: the status and message, the
+/// plan's lines (what it removes, shadows, loses) and the restart (the new emulator id). Refusals are errors that
+/// carry the whole plan, so the caller sees every card a replaceIfIncompatible would remove
+ToolResult SlotReplyResult(int status, Json::Value response, const std::string& what = "slots")
+{
+    if (status == 0)
+        return ToolResult::Error("WebAPI unreachable - is the emulator running with WebAPI enabled (port 8090)?");
+    std::string text = what + ": " + response.get("status", "").asString();
+    const std::string message = response.get("message", "").asString();
+    if (!message.empty())
+        text += ": " + message;
+    for (const Json::Value& line : response["plan"]["lines"])
+        text += "\n  " + line.asString();
+    const Json::Value& restart = response["restart"];
+    if (restart.get("restarted", false).asBool())
+        text += "\nrestarted: emulator " + restart.get("previousEmulatorId", "").asString() + " -> " +
+                restart.get("emulatorId", "").asString() + (restart.get("started", false).asBool() ? " (running)" : "");
+    for (const Json::Value& line : response["media"]["lines"])
+        text += "\n  media: " + line.asString();
+    const std::string networkNote = response["network"].get("note", "").asString();
+    if (!networkNote.empty())
+        text += "\nnetwork: " + networkNote;
+    if (status >= 200 && status < 300)
+        return ToolResult::Ok(std::move(text), std::move(response));
+    return ToolResult::Error(text);
+}
+
 void RegisterEmulatorManage(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -101,7 +128,10 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                                "transfer_state",
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
                                "gs_switch_personality", "gs_dump_module", "gs_sd_insert", "gs_sd_eject", "gs_flash_save",
-                               "gs_stereo_mode"})
+                               "gs_stereo_mode",
+                               "rom_flash_status", "rom_flash_save", "rom_flash_discard",
+                               "slots_catalog", "slots_matrix", "slots_plug", "slots_remove", "slots_set",
+                               "network_configure"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -124,12 +154,31 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "card over the same /control/audio/gs endpoint the WebAPI serves (gs_reset/gs_reset_card/gs_nmi/"
         "gs_send_command/gs_send_data/gs_read_status/gs_read_data; the byte actions need 'value'; writes, "
         "resets and NMI apply at the next instruction boundary, reads are side-effect-free peeks); "
-        "'gs_switch_personality' swaps the GS-slot card at the next frame boundary (needs 'personality': "
-        "'z80'|'lle', 'lw'|'lightweight' or 'ngs'|'neogs'); NeoGS only: 'gs_sd_insert' (needs 'path' to a raw "
+        "'gs_switch_personality' replaces the card in the GS slot (needs 'personality': 'z80'|'lle', "
+        "'lw'|'lightweight' or 'ngs'|'neogs'): a slot change applied by a machine restart (new emulator id; "
+        "'replace_if_incompatible' / 'dry_run' as for slots_plug); NeoGS only: 'gs_sd_insert' (needs 'path' to a raw "
         "image), 'gs_sd_eject', 'gs_flash_save' (applied at the next instruction boundary; insert/eject are "
         "refused while TTD records), 'gs_stereo_mode' (needs 'mode': 'separated' as on the board, 'gs' 50% "
         "cross-feed like the classic GS, or 'mono'; applied at the next frame); 'gs_dump_module' writes the last completed COM30..D2 module "
-        "upload to a file (optional 'path', defaults to 'gs-module-dump.mod').";
+        "upload to a file (optional 'path', defaults to 'gs-module-dump.mod'). "
+        "ZX-Evo flash ROM (TS-Conf, ATM3; GET/POST /memory/rom/flash): 'rom_flash_status' reports the saved flash "
+        "(the file zxevo-flash-<machine>-<ROM image SHA-256>.rom in the settings folder, unsaved changes, files of "
+        "other ROM images that are not used), 'rom_flash_save' writes it now, 'rom_flash_discard' deletes it (the "
+        "shipped ROM image returns at the next reset). "
+        "ZX-bus slots (the cards on the machine's buses; the slot report is inspect_state aspect 'slots'): "
+        "'slots_catalog' lists every card with its options and how it fits this machine (slot, fit real / adapter / "
+        "unrealistic, outcome fits / needs-replace / refused); 'slots_matrix' the compatibility tables (optional "
+        "'table'); 'slots_plug' puts 'card' into 'slot' (zxbus.next, ay-socket, auto) with optional 'options' "
+        "(\"dip=ym,saa gsRam=2m\"), 'slots_remove' takes the card out of 'slot', 'slots_set' changes its 'options'. "
+        "A change is planned first: one that would remove a card (or fit one unrealistically) is refused with the "
+        "plan unless 'replace_if_incompatible' is true; 'dry_run' returns the plan only; 'media_disposition' "
+        "save | discard for unsaved media of a removed card. Applied, the machine restarts with the new slot set: "
+        "a new emulator id (restart.emulatorId), the machine state is lost, the media follow. "
+        "'network_configure' changes the [NETWORK] settings ('settings': {\"card\": \"zxnetusb,zxwifi\", \"host_access\": "
+        "false, \"hosts\": \"name=10.0.2.7\", ...}, the keys of POST /network/config): a change of the ZX-bus network "
+        "cards (zxnetusb, zxwifi) is a slot change applied by a restart like slots_plug ('replace_if_incompatible', "
+        "'dry_run', 'media_disposition' apply; the other settings go to the restarted machine), any other setting "
+        "applies in place (status accepted).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance (auto-created when none exists)";
@@ -221,6 +270,39 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["path"]["description"] =
         "File path: optional for gs_dump_module (defaults to 'gs-module-dump.mod' in the server's working directory), "
         "required for gs_sd_insert (the SD card image)";
+    schema["properties"]["slot"]["type"] = "string";
+    schema["properties"]["slot"]["description"] =
+        "slots_plug / slots_remove / slots_set: the slot - ay-socket, <bus>.<n> (zxbus.1, edge.1), <bus>.next, or auto "
+        "(plug: where the planner puts the card)";
+    schema["properties"]["card"]["type"] = "string";
+    schema["properties"]["card"]["description"] = "slots_plug: the card id (slots_catalog): multisound, neogs, gs, tsfm, ...";
+    schema["properties"]["options"]["description"] =
+        "slots_plug / slots_set: card options, \"dip=ym,saa gsRam=2m\" or {\"dip\": \"ym,saa\"}";
+    schema["properties"]["adapter"]["type"] = "string";
+    schema["properties"]["adapter"]["description"] = "slots_plug: an adapter in the slot (the card sits behind it)";
+    schema["properties"]["replace_if_incompatible"]["type"] = "boolean";
+    schema["properties"]["replace_if_incompatible"]["description"] =
+        "slots_plug / slots_remove / slots_set / gs_switch_personality: allow the removals (and an unrealistic fit) "
+        "the plan lists; without it such a change is refused with the plan";
+    schema["properties"]["dry_run"]["type"] = "boolean";
+    schema["properties"]["dry_run"]["description"] = "Slot changes: return the plan only, change nothing";
+    schema["properties"]["media_disposition"]["type"] = "string";
+    schema["properties"]["media_disposition"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["media_disposition"]["enum"].append("save");
+    schema["properties"]["media_disposition"]["enum"].append("discard");
+    schema["properties"]["media_disposition"]["description"] =
+        "Slot changes: unsaved media of a removed card (sd.ngs) - save into their files or discard";
+    schema["properties"]["table"]["type"] = "string";
+    schema["properties"]["table"]["description"] = "slots_matrix: one table (functions, cards, card-x-card, machines, card-x-machine)";
+    schema["properties"]["settings"]["type"] = "object";
+    schema["properties"]["settings"]["description"] =
+        "network_configure: the [NETWORK] settings, e.g. {\"card\": \"zxwifi\", \"zx_wifi\": \"at\", \"host_access\": true} "
+        "(the keys of POST /network/config: card, host_access, dns_mode, hosts, forwards, remote_access, com_port, "
+        "zx_wifi, esp_chip, ...)";
+    schema["properties"]["slots"]["type"] = "object";
+    schema["properties"]["slots"]["description"] =
+        "'create': the new machine's slot set in the [SLOTS] key form, replacing its INI's: {\"zxbus.1\": "
+        "\"multisound\", \"zxbus.1.dip\": \"ym,saa,gs,sd\", \"ay-socket\": \"none\"}";
     schema["required"].append("action");
 
     registry.Register(
@@ -228,7 +310,10 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "Manage Unreal-NG emulator instances: create, list, switch models, start/stop/pause/resume/reset/destroy. "
         "Multi-instance: target identifies the machine; 'auto' reuses the single instance or creates a default 128k one. "
         "Also drives the General Sound card (gs_reset/gs_reset_card/gs_nmi/gs_send_command/gs_send_data/"
-        "gs_read_status/gs_read_data/gs_switch_personality/gs_dump_module; NeoGS: gs_sd_insert/gs_sd_eject/gs_flash_save/gs_stereo_mode).",
+        "gs_read_status/gs_read_data/gs_switch_personality/gs_dump_module; NeoGS: gs_sd_insert/gs_sd_eject/gs_flash_save/gs_stereo_mode) "
+        "the ZX-Evo's saved flash ROM (rom_flash_status/rom_flash_save/rom_flash_discard), "
+        "and the ZX-bus slots (slots_catalog/slots_matrix/slots_plug/slots_remove/slots_set; a change restarts the machine); "
+        "network_configure changes the network settings (a network card change is a slot change: a restart).",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
@@ -303,6 +388,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     body["profi"]["zq3_mhz"] = args["profi_zq3_mhz"].asInt();
                 if (args.isMember("profi_ay_clock") && args["profi_ay_clock"].isString())
                     body["profi"]["ay_clock"] = args["profi_ay_clock"].asString();
+                if (args.isMember("slots") && args["slots"].isObject())
+                    body["slots"] = args["slots"];
                 caller.Call("POST", "/api/v1/emulator/start", &body, [done](int status, Json::Value response) {
                     if (status == 201 || status == 200)
                     {
@@ -322,6 +409,17 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 if (action == "status")
                 {
                     ForwardCall("GET", Endpoint(id), nullptr, caller, "Status of " + id, done);
+                }
+                else if (action == "rom_flash_status")
+                {
+                    ForwardCall("GET", Endpoint(id, "/memory/rom/flash"), nullptr, caller, "Saved flash of " + id, done);
+                }
+                else if (action == "rom_flash_save" || action == "rom_flash_discard")
+                {
+                    Json::Value body;
+                    body["action"] = action == "rom_flash_save" ? "save" : "discard";
+                    ForwardCall("POST", Endpoint(id, "/memory/rom/flash"), &body, caller,
+                                "Flash " + body["action"].asString() + " on " + id, done);
                 }
                 else if (action == "zxpoly_status")
                 {
@@ -405,8 +503,102 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                         body["stranded"] = args["stranded"].asString();
                     if (args.isMember("ram_power_on") && args["ram_power_on"].isString())
                         body["ram_power_on"] = args["ram_power_on"].asString();
-                    ForwardCall("POST", Endpoint(id, "/model"), &body, caller, "Switched " + id + " to " + body["model"].asString(),
-                                done);
+                    const std::string model = body["model"].asString();
+                    caller.Call("POST", Endpoint(id, "/model"), &body, [id, model, done](int status, Json::Value response) {
+                        if (status >= 200 && status < 300)
+                        {
+                            // The cards that went along or were dropped (ZX-bus slots R-OP-9), then the media
+                            std::string message = "Switched " + id + " to " + model + ": new emulator " +
+                                                  response.get("new_emulator_id", "").asString();
+                            for (const Json::Value& line : response["report"])
+                                message += "\n  " + line.asString();
+                            done(ToolResult::Ok(std::move(message), std::move(response)));
+                            return;
+                        }
+                        done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(response)));
+                    });
+                }
+                else if (action == "slots_catalog" || action == "slots_matrix")
+                {
+                    std::string path = action == "slots_catalog" ? "/slots/catalog" : "/slots/matrix";
+                    if (action == "slots_matrix" && args.isMember("table") && args["table"].isString())
+                        path += "?table=" + args["table"].asString();
+                    caller.Call("GET", Endpoint(id, path), nullptr, [action, done](int status, Json::Value response) {
+                        if (status >= 200 && status < 300)
+                        {
+                            std::string text;
+                            if (action == "slots_catalog")
+                            {
+                                text = "Cards for " + response.get("model", "").asString() + ":";
+                                for (const Json::Value& card : response["cards"])
+                                {
+                                    const Json::Value& here = card["thisMachine"];
+                                    text += "\n- " + card["id"].asString() + " (" + card["name"].asString() + "): " +
+                                            here.get("outcome", "").asString() + " in " + here.get("slot", "").asString() +
+                                            ", fit " + here.get("fit", "").asString();
+                                }
+                            }
+                            else
+                            {
+                                for (const Json::Value& table : response["tables"])
+                                    text += "## " + table["name"].asString() + "\n\n" + table["markdown"].asString() + "\n";
+                            }
+                            done(ToolResult::Ok(std::move(text), std::move(response)));
+                            return;
+                        }
+                        done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(response)));
+                    });
+                }
+                else if (action == "network_configure")
+                {
+                    if (!args.isMember("settings") || !args["settings"].isObject() || args["settings"].empty())
+                    {
+                        done(ToolResult::Error("Action 'network_configure' requires 'settings' (an object, e.g. "
+                                               "{\"card\": \"zxnetusb\"})"));
+                        return;
+                    }
+                    Json::Value body = args["settings"];
+                    if (args.isMember("replace_if_incompatible"))
+                        body["replaceIfIncompatible"] = args["replace_if_incompatible"].asBool();
+                    if (args.isMember("dry_run"))
+                        body["dryRun"] = args["dry_run"].asBool();
+                    if (args.isMember("media_disposition") && args["media_disposition"].isString())
+                        body["mediaDisposition"] = args["media_disposition"].asString();
+                    caller.Call("POST", Endpoint(id, "/network/config"), &body, [done](int status, Json::Value response) {
+                        done(SlotReplyResult(status, std::move(response), "network"));
+                    });
+                }
+                else if (action == "slots_plug" || action == "slots_remove" || action == "slots_set")
+                {
+                    const std::string slot = args.get("slot", "").asString();
+                    if (slot.empty() && action != "slots_plug")
+                    {
+                        done(ToolResult::Error("Action '" + action + "' requires 'slot' (see inspect_state aspect slots)"));
+                        return;
+                    }
+                    Json::Value body(Json::objectValue);
+                    if (action == "slots_plug")
+                    {
+                        if (!args.isMember("card") || !args["card"].isString() || args["card"].asString().empty())
+                        {
+                            done(ToolResult::Error("Action 'slots_plug' requires 'card' (see slots_catalog)"));
+                            return;
+                        }
+                        body["card"] = args["card"].asString();
+                        if (args.isMember("adapter") && args["adapter"].isString())
+                            body["adapter"] = args["adapter"].asString();
+                    }
+                    if (args.isMember("options"))
+                        body["options"] = args["options"];
+                    if (args.isMember("replace_if_incompatible"))
+                        body["replaceIfIncompatible"] = args["replace_if_incompatible"].asBool();
+                    if (args.isMember("dry_run"))
+                        body["dryRun"] = args["dry_run"].asBool();
+                    if (args.isMember("media_disposition") && args["media_disposition"].isString())
+                        body["mediaDisposition"] = args["media_disposition"].asString();
+                    const std::string verb = action == "slots_plug" ? "plug" : action == "slots_remove" ? "remove" : "options";
+                    caller.Call("POST", Endpoint(id, "/slots/" + (slot.empty() ? std::string("auto") : slot) + "/" + verb), &body,
+                                [done](int status, Json::Value response) { done(SlotReplyResult(status, std::move(response))); });
                 }
                 else if (action == "gs_reset" || action == "gs_reset_card" || action == "gs_nmi" ||
                          action == "gs_send_command" || action == "gs_send_data" ||
@@ -436,6 +628,12 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                             return;
                         }
                         body["personality"] = args["personality"].asString();
+                        if (args.isMember("replace_if_incompatible"))
+                            body["replaceIfIncompatible"] = args["replace_if_incompatible"].asBool();
+                        if (args.isMember("dry_run"))
+                            body["dryRun"] = args["dry_run"].asBool();
+                        if (args.isMember("media_disposition") && args["media_disposition"].isString())
+                            body["mediaDisposition"] = args["media_disposition"].asString();
                     }
                     else if ((action == "gs_dump_module" || action == "gs_sd_insert") && args.isMember("path") &&
                              args["path"].isString())
@@ -457,22 +655,17 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                         body["mode"] = args["mode"].asString();
                     }
                     caller.Call("POST", Endpoint(id, "/control/audio/gs"), &body, [action, done](int status, Json::Value response) {
+                        if (action == "gs_switch_personality" && response.isMember("status"))
+                        {
+                            // A slot change (Q10): the plan, the restart, the new emulator id
+                            done(SlotReplyResult(status, std::move(response)));
+                            return;
+                        }
                         if (status >= 200 && status < 300)
                         {
                             if (response.isMember("value"))
                             {
                                 std::string message = "GS " + action.substr(3) + " -> " + std::to_string(response["value"].asInt());
-                                done(ToolResult::Ok(std::move(message), std::move(response)));
-                            }
-                            else if (action == "gs_switch_personality")
-                            {
-                                // Built in a local first: argument evaluation order in a
-                                // function call is unspecified, so inlining this string
-                                // expression alongside std::move(response) let the compiler
-                                // legally move response out before reading it - GCC did,
-                                // Clang happened not to (empty summary on GCC builds only).
-                                std::string message = "GS personality switch to '" + response.get("personality", "").asString() +
-                                                        "' requested (" + response.get("note", "").asString() + ")";
                                 done(ToolResult::Ok(std::move(message), std::move(response)));
                             }
                             else if (action == "gs_dump_module")
@@ -1265,7 +1458,8 @@ void RegisterInspectState(ToolRegistry& registry)
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "profi", "isa", "network", "mouse",
                                "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
-                               "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist"})
+                               "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
+                               "audio_multisound", "audio_midi"})
     {
         allowed.append(aspect);
     }
@@ -1305,6 +1499,15 @@ void RegisterInspectState(ToolRegistry& registry)
         "/api/v1/emulator/{id}/network/traffic?since=&adapter=&kind=&last=[&format=pcapng], control with POST "
         "{action: clear | start (path: a pcapng file, unbounded) | stop | ring | stream (port: a live pcapng stream for "
         "Wireshark, 0 = any free port) | stream-stop}), "
+        "'audio_multisound' = the ZX-MultiSound card (options, the built-ins its slot shadows, CPLD latches, the YM2203 "
+        "pair as the TSFM report's chips, SAA1099 voices and envelopes, the General Sound report, DACs, MIDI summary), "
+        "'audio_midi' = its MIDI line and SAM2695 synthesizer (16 parts: program, preset name, volume, pan, voices, "
+        "notes sounding; polyphony, counters, bank; a panic is invoke_api POST /api/v1/emulator/{id}/control/audio/midi "
+        "{action: panic}), "
+        "'slots' = the ZX-bus slot report (board, buses with kind / arbitration / retrofit note, every slot's card, "
+        "options, adapter, fit real / adapter / unrealistic, state, functions, port claims, media, and the built-in "
+        "devices: active, switched off, shadowed by a slot, replaced in their socket; change it with emulator_manage "
+        "slots_plug / slots_remove / slots_set), "
         "'rtc' = CMOS clock (part, ports, NVRAM file, time base, time, registers A-D, alarms, every cell; unavailable without one - "
         "write cells with invoke_api POST /api/v1/emulator/{id}/rtc/cells {start, bytes}), "
         "'profi' = the ZX Profi's board chips (the port map in force, the 8255, the 8253 counters, the 8251 and the #B3 latch; "
@@ -1447,11 +1650,12 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
-                    aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist")
+                    aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
+                    aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi"));
                     return;
                 }
             }
@@ -2016,6 +2220,29 @@ void RegisterInspectState(ToolRegistry& registry)
                                                                                   : "/state/audio/moonsound";
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "audio_multisound" || aspect == "audio_midi")
+                        {
+                            // ZX-MultiSound / its MIDI synthesizer via the WebAPI (DeviceState::MultiSound / Midi); 404 = not fitted
+                            const std::string path = aspect == "audio_midi" ? "/state/audio/midi" : "/state/audio/multisound";
+                            steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "slots")
+                        {
+                            // The slot report via the WebAPI (SlotControl list = DeviceState::Slots)
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/slots"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -2748,6 +2975,63 @@ void RegisterInspectState(ToolRegistry& registry)
                                             out << "\n  slot" << slot["slot"].asUInt() << ": wave " << slot["wave"].asUInt()
                                                 << ", " << slot["playback_rate_hz"].asDouble() << " Hz, "
                                                 << slot["envelope"]["phase"].asString();
+                                }
+                            }
+                            else if (aspect == "audio_multisound")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[audio_multisound] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[audio_multisound] " << value["card"].asString() << " in " << value["slot"].asString()
+                                        << ", " << value["options"]["text"].asString() << "; FM "
+                                        << (value["logic"]["fm_muted"].asBool() ? "muted" : "on") << ", SAA "
+                                        << (value["saa"]["sound_enabled"].asBool() ? "on" : "off") << ", GS "
+                                        << (value["gs"]["firmware_ready"].asBool() ? "ready" : "booting") << ", MIDI "
+                                        << value["midi"]["bytes_received"].asUInt64() << " byte(s), "
+                                        << value["midi"]["active_voices"].asUInt() << " voice(s)";
+                                    for (const Json::Value& device : value["shadowed_devices"])
+                                        out << "\n  built-in " << device["id"].asString() << ": " << device["state"].asString();
+                                }
+                            }
+                            else if (aspect == "audio_midi")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[audio_midi] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[audio_midi] bank " << value["bank"]["status"].asString() << ", voices "
+                                        << value["active_voices"].asUInt() << "/" << value["polyphony_limit"].asUInt()
+                                        << ", bytes " << value["counters"]["bytes_received"].asUInt64() << ", framing errors "
+                                        << value["counters"]["framing_errors"].asUInt64();
+                                    for (const Json::Value& part : value["parts"])
+                                    {
+                                        if (part["active_voices"].asUInt() == 0)
+                                            continue;
+                                        out << "\n  ch" << part["channel"].asUInt() << " prog " << part["program"].asUInt() << " "
+                                            << part["preset"].asString() << ":";
+                                        for (const Json::Value& note : part["notes"])
+                                            out << " " << note.asString();
+                                    }
+                                }
+                            }
+                            else if (aspect == "slots")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[slots] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[slots] " << value["model"].asString() << " (" << value["board"].asString()
+                                        << "), cards from " << value["source"].asString();
+                                    for (const Json::Value& slot : value["slots"])
+                                    {
+                                        out << "\n  " << slot["slot"].asString() << " = " << slot["card"].asString();
+                                        if (!slot["options"].asString().empty())
+                                            out << " [" << slot["options"].asString() << "]";
+                                        out << " fit " << slot["fit"].asString() << ", " << slot["state"].asString();
+                                    }
+                                    for (const Json::Value& builtIn : value["builtIns"])
+                                        out << "\n  built-in " << builtIn["id"].asString() << ": " << builtIn["state"].asString();
                                 }
                             }
                             else if (aspect == "audio_covox")
@@ -3533,7 +3817,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "reverse_continue", "find_last", "port_events", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary",
-                               "history_limit", "journal_on", "journal_off", "journal_build"})
+                               "history_limit", "journal_on", "journal_off", "journal_build", "export_clip"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -3543,7 +3827,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "'stop' (end recording, history kept and browsable), 'invalidate' (drop all history), 'position' (current point + "
         "session end), 'markers' (replay barriers: tape control, disk writes, tool memory edits made while recording; "
         "the hardware_reset kind is reserved and never written - a reset stops the recording instead). "
-        "Navigate (needs a stopped session - these return an error while recording): 'seek' (frame + optional tinframe), "
+        "Navigate (while recording they pause the recording: state detached, status recording_paused; 'resume' at the "
+        "paused point continues it, 'stop' ends it; on backend v1 they return an error while recording): "
+        "'seek' (frame + optional tinframe), "
         "'step_back_frame'/'step_forward_frame', 'step_back_instruction'/'step_forward_instruction', "
         "'reverse_step' (count instructions OR tstates back), 'reverse_continue' (run backward until PC hits one of pcs), "
         "'find_last' (latest write/read/execute/io at an address before the current point, or before before_frame). "
@@ -3556,7 +3842,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Files: 'dump' / 'load' a .ttd session (path on the emulator's machine; load needs the same machine model, ROM "
         "set and General Sound / TurboSound card), 'file_info' describes a .ttd file without loading it and without an "
         "emulator: frame range, sections and the recorded machine (model, ROM signature, devices, general_sound card to "
-        "fit before 'load'). "
+        "fit before 'load'); 'export_clip' writes frames from_frame..to_frame as a lossless clip into the directory path "
+        "(final picture, plane B when zxdlss is on, frame meta; chunk = frames per zstd chunk, default 500) in one "
+        "call instead of a seek and a capture per frame (not while recording). "
         "Bookmarks: 'bookmark_add'/'bookmark_list'/'bookmark_delete'/'seek_bookmark' (advisory labels, never barriers). "
         "History limit: 'history_limit' sets (history_frames / history_bytes, 0 = none, a missing one is kept) or "
         "reports the bound on the recorded history - while recording, the oldest frames are released beyond it and "
@@ -3593,8 +3881,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Frame number: target for seek (required), optional start point for resume (default: the current point), optional position for bookmark_add "
         "(default: current position), frame to test for coverage_probe";
     schema["properties"]["tinframe"]["type"] = "integer";
-    schema["properties"]["tinframe"]["default"] = 0;
-    schema["properties"]["tinframe"]["description"] = "T-states within 'frame' for seek / resume / bookmark_add (default 0)";
+    schema["properties"]["tinframe"]["description"] =
+        "T-states within 'frame' for seek / resume / bookmark_add (default 0). A seek without it lands at the frame's end "
+        "on the engine (the frame's final state and picture); give 0 for the frame's start";
     schema["properties"]["count"]["type"] = "integer";
     schema["properties"]["count"]["description"] = "reverse_step: number of instructions to step back (give count OR tstates)";
     schema["properties"]["tstates"]["type"] = "integer";
@@ -3606,7 +3895,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "reverse_continue: reverse breakpoints - PC addresses as integers or '0x8000' strings (non-empty)";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
-        "dump / load / file_info: .ttd file path, resolved by the emulator process (its machine and working directory)";
+        "dump / load / file_info: .ttd file path; export_clip: the clip's directory (created if missing). Resolved by "
+        "the emulator process (its machine and working directory)";
     schema["properties"]["addr"]["type"] = "string";
     schema["properties"]["addr"]["description"] = "find_last: single Z80 address (integer, '0x5800', '#5800' or '$5800')";
     schema["properties"]["access"]["type"] = "string";
@@ -3659,10 +3949,12 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["before_tin"]["description"] = "find_last: T-states within before_frame (default 0)";
     schema["properties"]["from_frame"]["type"] = "integer";
     schema["properties"]["from_frame"]["description"] =
-        "Starting frame for coverage_scan / coverage_summary / port_events / journal_build";
+        "Starting frame for coverage_scan / coverage_summary / port_events / journal_build / export_clip";
     schema["properties"]["to_frame"]["type"] = "integer";
     schema["properties"]["to_frame"]["description"] =
-        "Ending frame for coverage_scan / coverage_summary / port_events / journal_build";
+        "Ending frame for coverage_scan / coverage_summary / port_events / journal_build / export_clip";
+    schema["properties"]["chunk"]["type"] = "integer";
+    schema["properties"]["chunk"]["description"] = "export_clip: frames per zstd chunk (default 500)";
     schema["properties"]["kind"]["type"] = "string";
     schema["properties"]["kind"]["description"] = "Coverage kind: 'executed', 'written', or 'read'";
     schema["properties"]["addr_from"]["type"] = "string";
@@ -3687,9 +3979,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Time-travel debugging (TTD): record execution, then move backward and forward through it. Typical flow: "
         "'start' -> run the program (control_execution) -> 'stop' -> 'find_last' / 'reverse_continue' / 'seek' / step "
         "actions to inspect the past (inspect_state shows the machine at that point) -> 'resume' to continue live from "
-        "there. While recording, the host speed is held at 1x and turbo / fast tape / fast disk are off; loading a "
-        "snapshot, tape or disk, reloading the ROM, or changing speed on a stopped session wipes the history; reset stops "
-        "the recording and keeps it. Also: agent bookmarks and coverage index queries.",
+        "there. While recording, the host speed is held at 1x and turbo / fast tape / fast disk are off; a tape or disk "
+        "load and a ROM reload are refused while recording and wipe a stopped session's history; a snapshot load is part "
+        "of the recording (the engine; v1 refuses it); seek / step / find_last while recording pause it (the engine); "
+        "reset stops the recording and keeps it. Also: agent bookmarks and coverage index queries.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();
@@ -3749,6 +4042,20 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     (*body)["from_frame"] = args["from_frame"];
                 if (args.isMember("to_frame"))
                     (*body)["to_frame"] = args["to_frame"];
+            }
+            else if (action == "export_clip")
+            {
+                if (!args.isMember("from_frame") || !args.isMember("to_frame") || args["path"].asString().empty())
+                {
+                    done(ToolResult::Error("Action 'export_clip' requires 'from_frame', 'to_frame' and 'path' (a directory on "
+                                           "the emulator's machine)"));
+                    return;
+                }
+                (*body)["from"] = args["from_frame"];
+                (*body)["to"] = args["to_frame"];
+                (*body)["path"] = args["path"].asString();
+                if (args.isMember("chunk"))
+                    (*body)["chunk"] = args["chunk"];
             }
             else if (action == "history_limit")
             {
@@ -3917,6 +4224,17 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         if (b["cancelled"].asBool())
                             text << "; cancelled";
                         text << ". It " << DescribeJournalSegments(b) << ".";
+                        return text.str();
+                    }, done);
+                }
+                else if (action == "export_clip")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/export-clip"), body.get(), caller, [](const Json::Value& b) {
+                        std::ostringstream text;
+                        text << "Clip written to " << b["path"].asString() << ": " << b["frames"].asUInt64() << " frame(s), "
+                             << b["width"].asUInt() << "x" << b["height"].asUInt() << ", " << b["bytes"].asUInt64()
+                             << " bytes" << (b["planeb"].asBool() ? ", plane B included" : "") << " in "
+                             << b["seconds"].asDouble() << " s";
                         return text.str();
                     }, done);
                 }

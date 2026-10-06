@@ -121,6 +121,56 @@ TEST_F(TsConfDma_Test, DMA2_LinearCopy)
     EXPECT_EQ(Byte(0x50000 + 16), 0) << "exactly 16 bytes";
 }
 
+/// DMA-2b: the linear step is the full 21-bit word address: it crosses 16 KB pages and wraps at 4 MB ([V] dma.v:344-349
+/// s_addr_next from s_addr[20:7] + carry, 377-382 the same for d_addr; [U] tsconf.cpp:175-176 (+2) & 0x3FFFFF)
+/// (TS-Conf audit, dma row 10)
+TEST_F(TsConfDma_Test, DMA2b_LinearCrossesPagesAndWrapsAt4MB)
+{
+    Byte(0x7FFE) = 0x11;
+    Byte(0x7FFF) = 0x12;
+    Byte(0x8000) = 0x13;
+    Byte(0x8001) = 0x14;
+    Launch(0x7FFE, 0x50000, 1, 0, 0x01);  // 2 words across the page 1 / page 2 boundary
+    RunDma();
+    EXPECT_EQ(Byte(0x50000), 0x11);
+    EXPECT_EQ(Byte(0x50002), 0x13) << "the source went on into page 2";
+
+    Byte(0x3FFFFE) = 0x21;
+    Byte(0x3FFFFF) = 0x22;
+    Byte(0x000000) = 0x23;
+    Byte(0x000001) = 0x24;
+    Launch(0x3FFFFE, 0x60000, 1, 0, 0x01);  // from the last word of page #FF
+    RunDma();
+    EXPECT_EQ(Byte(0x60000), 0x21);
+    EXPECT_EQ(Byte(0x60002), 0x23) << "word #1FFFFF + 1 = 0: the 4 MB wrap";
+    EXPECT_EQ(Ts().dmaSrc, 1u);
+
+    Launch(0x40000, 0x3FFFFE, 1, 0, 0x01);  // and the destination
+    RunDma();
+    EXPECT_EQ(Byte(0x3FFFFE), Byte(0x40000));
+    EXPECT_EQ(Byte(0x000000), Byte(0x40002));
+}
+
+/// DMA-2c: the address counters keep running after a transfer: a launch without address writes goes on from where the
+/// last one ended (the launch loads only the block counters, [V] dma.v:309-313; the addresses only on a register
+/// write, :351-371, 384-403; [U] tsconf.cpp:146-158 leaves the registers at the end address) (TS-Conf audit, dma
+/// row 14)
+TEST_F(TsConfDma_Test, DMA2c_TheNextLaunchContinues)
+{
+    for (uint32_t i = 0; i < 16; i++)
+    {
+        Byte(0x40000 + i) = static_cast<uint8_t>(0x80 + i);
+        Byte(0x50000 + i) = 0;
+    }
+    Launch(0x40000, 0x50000, 1, 0, 0x01);  // 2 words
+    RunDma();
+    Reg(TsConfReg::DmaCtrl, 0x01);         // again, no address written
+    RunDma();
+    for (uint32_t i = 0; i < 8; i++)
+        EXPECT_EQ(Byte(0x50000 + i), 0x80 + i) << i;
+    EXPECT_EQ(Byte(0x50008), 0x00);
+}
+
 /// DMA-3: S_ALGN: the second block starts one block (256 / 512 bytes) further
 TEST_F(TsConfDma_Test, DMA3_SourceAlignment)
 {
@@ -148,6 +198,23 @@ TEST_F(TsConfDma_Test, DMA3_AlignedBlockWraps)
     RunDma();
     EXPECT_EQ(Byte(0x50000 + 4), Byte(0x40000));
     EXPECT_EQ(Byte(0x50000 + 6), Byte(0x40002));
+}
+
+/// DMA-3c: D_ALGN with ASZ 1 (512-byte blocks): inside a block the low 8 word bits wrap (#1FE -> #000), at the block
+/// end the base steps #200 bytes and the low part reloads from the address as written ([V] dma.v:377-382
+/// d_addr_add_h = {next_burst && asz, ...}, d_addr_next_l = next_burst ? d_addr_r : inc; [U] tsconf.cpp:117-118,
+/// 142-158) (TS-Conf audit, dma rows 11-12)
+TEST_F(TsConfDma_Test, DMA3c_DestinationAlignmentAsz1)
+{
+    for (uint32_t i = 0; i < 16; i++)
+        Byte(0x40000 + i) = static_cast<uint8_t>(0xA0 + i);
+    for (uint32_t i = 0; i < 0x400; i++)
+        Byte(0x50000 + i) = 0;
+    Launch(0x40000, 0x501FC, 3, 1, 0x01 | 0x10 | 0x08);  // 4 words x 2 blocks, D_ALGN, ASZ 1
+    RunDma();
+    const uint32_t expected[8] = {0x1FC, 0x1FE, 0x000, 0x002, 0x3FC, 0x3FE, 0x200, 0x202};
+    for (uint32_t i = 0; i < 8; i++)
+        EXPECT_EQ(Byte(0x50000 + expected[i]), 0xA0 + 2 * i) << "word " << i << " at +" << std::hex << expected[i];
 }
 
 /// DMA-4: BLT1 keeps the destination where the source byte / nibble is 0
@@ -237,6 +304,57 @@ TEST_F(TsConfDma_Test, DMA8_StatusAndInterrupt)
     EXPECT_EQ(_decoder->GetInterrupts().AcknowledgeInterrupt(0), 0xFB);
 }
 
+/// DMA-8b: with INT_MASK bit 2 clear the end of a transfer latches nothing, and setting the bit afterwards does not
+/// bring it back ([V] zint.v:97,151-153 dis_int_dma holds int_dma at 0 every clock; [U] tsconf.cpp:974,
+/// io.cpp:1462-1464) (TS-Conf audit, dma row 36)
+TEST_F(TsConfDma_Test, DMA8b_MaskedCompletionIsLost)
+{
+    Reg(TsConfReg::IntMask, TsConfInt::Frame);
+    Launch(0x40000, 0x50000, 3, 0, 0x01);
+    RunDma();
+    ASSERT_FALSE(Dma().Busy());
+    EXPECT_EQ(Ts().intPending & TsConfInt::Dma, 0) << "masked: not latched";
+    Reg(TsConfReg::IntMask, TsConfInt::Frame | TsConfInt::Dma);
+    EXPECT_EQ(Ts().intPending & TsConfInt::Dma, 0) << "unmasking does not raise it";
+}
+
+/// DMA-8c: a transfer that ends inside vdos latches its INT; the output is gated while vdos and the INT is served
+/// after it, vector #FB ([V] zint.v:89-93 int_all ... && !vdos gates only the output, :151-157 the latch; [U]
+/// tsconf.cpp:969-976 latched, z80_main.inl:282-289 handle_int gated by !vdos) (TS-Conf audit, dma row 37)
+TEST_F(TsConfDma_Test, DMA8c_VdosDefersTheDmaInt)
+{
+    Reg(TsConfReg::IntMask, TsConfInt::Dma);
+    TsConfInterrupts& ints = _decoder->GetInterrupts();
+    Ts().vdos = 1;
+    Launch(0x40000, 0x50000, 3, 0, 0x01);
+    RunDma();
+    ASSERT_FALSE(Dma().Busy());
+    EXPECT_NE(Ts().intPending & TsConfInt::Dma, 0) << "latched inside vdos";
+    EXPECT_FALSE(ints.IsIntAsserted(_position)) << "the output is gated";
+    Ts().vdos = 0;
+    EXPECT_TRUE(ints.IsIntAsserted(_position + 1)) << "served once vdos ends";
+    EXPECT_EQ(ints.AcknowledgeInterrupt(_position + 1), 0xFB);
+}
+
+/// DMA-8d: a reset stops a running transfer without a DMA INT: the busy edge falls with the reset ([V] dma.v:300-306
+/// n_ctr[8] set by !rst_n, :406-410 dma_act_r <= dma_act && rst_n, so int_start never fires; [U] tsconf.cpp:903).
+/// The DMA INT stays away after the mask is set again (TS-Conf audit, dma row 38)
+TEST_F(TsConfDma_Test, DMA8d_ResetStopsWithoutInt)
+{
+    Reg(TsConfReg::IntMask, TsConfInt::Dma);
+    Launch(0x40000, 0x50000, 0xFF, 7, 0x01);  // 2048 words: several lines
+    _position = TsConfEngine::kLineTacts;
+    Engine().CatchUp(_position);
+    ASSERT_TRUE(Dma().Busy());
+    _decoder->reset();
+    EXPECT_FALSE(Dma().Busy());
+    EXPECT_EQ(In(0x27AF), 0x00);
+    Reg(TsConfReg::IntMask, TsConfInt::Dma);
+    Engine().OnMachineFrameRollover(TsConfEngine::kFrameTacts);
+    Engine().CatchUp(10 * TsConfEngine::kLineTacts);
+    EXPECT_EQ(Ts().intPending & TsConfInt::Dma, 0) << "no INT for the stopped transfer";
+}
+
 /// DMA-9: DMA_CTRL while busy relaunches; the aborted transfer raises no INT
 TEST_F(TsConfDma_Test, DMA9_RelaunchWhileBusy)
 {
@@ -266,6 +384,25 @@ TEST_F(TsConfDma_Test, DMA10_WritesDuringATransfer)
     EXPECT_EQ(Byte(0x60000), 0x11);
     EXPECT_EQ(Byte(0x60002), 0x22);
     EXPECT_EQ(Byte(0x60004), 0x33) << "3 words: 1 + 2 after the DMA_LEN reload";
+}
+
+/// DMA-10b: DMA_NUM is taken at the launch only: written during a transfer it changes nothing ([V] dma.v:309-313 n_ctr
+/// loaded from b_num on dma_launch, :315-319 then only counts down; [U] io.cpp:1633-1641 drops the write while busy)
+/// (TS-Conf audit, dma row 7)
+TEST_F(TsConfDma_Test, DMA10b_NumIsLatchedAtLaunch)
+{
+    for (uint32_t i = 0; i < 16; i++)
+    {
+        Byte(0x40000 + i) = static_cast<uint8_t>(0x80 + i);
+        Byte(0x50000 + i) = 0;
+    }
+    Launch(0x40000, 0x50000, 0, 1, 0x01);  // 1 word x 2 blocks
+    Reg(TsConfReg::DmaNum, 5);
+    RunDma();
+    EXPECT_FALSE(Dma().Busy());
+    EXPECT_EQ(Byte(0x50000), 0x80);
+    EXPECT_EQ(Byte(0x50002), 0x82);
+    EXPECT_EQ(Byte(0x50004), 0x00) << "2 blocks, as at the launch";
 }
 
 /// DMA-11: undefined codes hang with no INT until the next DMA_CTRL

@@ -4,6 +4,7 @@
 #include <functional>
 
 #include "emulator/cpu/z80.h"
+#include "emulator/platforms/tsconf/tsconfarbiter.h"
 #include "emulator/platforms/tsconf/tsconftsu.h"
 
 class EmulatorContext;
@@ -29,6 +30,9 @@ struct TsConfLine
     bool tsu = false;     ///< the TSU drew something on this line
     uint16_t videoCost = 0;  ///< DRAM accesses of the graphics fetch on this line
     uint16_t tsuCost = 0;    ///< DRAM accesses of the TSU (prefetch + objects)
+    /// TSU DRAM cycles of the pass that drew this line before line_start: objects after them took this
+    /// line's latch (TsConfTsu "When"); 0xFFFF = the whole pass took the previous line's
+    uint16_t tsuSplit = 0xFFFF;
 };
 
 /// TS-Conf line engine (TSConf technical-design §3.8): advances with the CPU
@@ -124,8 +128,17 @@ private:
     void LineStart(uint32_t line);
     /// TS window of the line and its TSU pixels (hs §4.4)
     /// The TSU draws `line` into its buffer and line entry, with the registers
-    /// latched for `latch` (the line during which it works)
-    void RenderTsu(uint32_t line, const TsConfLine& latch);
+    /// latched for `latch` (the line during which it works). `split`: stop at
+    /// the DRAM position of line_start, LineStart finishes the pass with the
+    /// new latch; otherwise the whole pass takes `latch`
+    void RenderTsu(uint32_t line, const TsConfLine& latch, bool split);
+    /// Video DRAM cycles of a line's graphics fetch before DRAM cycle `cycle` of the line
+    static uint32_t VideoCyclesBefore(const TsConfArbiter::Fetch& fetch, uint32_t cycle);
+    /// The DRAM cycle a TSU pass from ts_start before window dot `x0` starts at (x0 + 1, x0 + 2 without a
+    /// prefetch); adds to `prefetch` (its words) the cycle it holds after them unless video takes that cycle
+    static uint32_t PassStart(const TsConfArbiter::Fetch& fetch, uint32_t x0, uint32_t& prefetch);
+    /// DRAM cycle `cycle` of the line is a video cycle (the CPU idle)
+    static bool IsVideoCycle(const TsConfArbiter::Fetch& fetch, uint32_t cycle);
 
     TsConfLine LatchedSet() const;
     /// Hand the DMA its share of the DRAM cycles from budgetRaster to `raster`
@@ -145,4 +158,8 @@ private:
     /// refills it before the TS window starts (the prefetch runs from 17 lines
     /// above the window, and the window starts at line 32 or later)
     uint16_t _mapRing[4][64][2] = {};
+    /// The pass stopped at line_start (RenderTsu with split) and its line,
+    /// kLines = none. Not TTD state: RebuildLineTable draws the first part again
+    TsConfTsu::Pass _pass;
+    uint32_t _passLine = kLines;
 };

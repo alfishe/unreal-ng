@@ -16,6 +16,7 @@ Covox-Blaster work; and it has TTD, debugger and automation support like the oth
 | [goals-and-requirements.md](goals-and-requirements.md) | goals, what "done" means, non-goals, FR / NFR, acceptance scenarios on real firmware |
 | [materials.md](materials.md) | every source with links and revisions, what each is good for, what is missing, ROM and test-data provisioning, licenses |
 | [hardware-reference.md](hardware-reference.md) | the machine as the emulator needs it: CPU and clocks, memory, **the port table**, video, accelerator, sound, IDE, floppy, ISA, CMOS, input, boot; source disagreements tabulated |
+| [peripherals-wiring.md](peripherals-wiring.md) | how every peripheral is wired and driven, with diagrams: the three roads from the CPU (on-chip ports, the DCP, memory-mapped), keyboard, mouse, video, accelerator, FDD, IDE, CMOS, SD (none on board), ISA, General Sound / NeoGS through the ZX-bus adapter |
 | [high-level-design.md](high-level-design.md) | components, port access, boot, memory write path, storage (diagrams); decisions D1-D11 |
 | [technical-design.md](technical-design.md) | index of the detailed designs; the shared hooks (clock ratio, wait states, write intercept, interrupt source); risks |
 | [tdd-ports-memory.md](tdd-ports-memory.md) | port decoder, PLD state, memory windows, graphics pages, configuration loader, PLD configuration modules, resets |

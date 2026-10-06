@@ -208,7 +208,7 @@ bool IdeController::SetUnitKind(int unit, UnitKind kind, std::string* error)
         if (info && (info->present || info->pending))
             return fail("slot '" + id + "' holds a medium: eject it before changing the drive");
     }
-    if (_context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
+    if (_context->pTimeTravelHooks && _context->pTimeTravelHooks->IsRecording())
         return fail("a TTD recording runs: the machine's hardware is fixed until it stops");
 
     if (manager && _registered)

@@ -98,6 +98,15 @@ Decision Pipeline::Plan(const Image& image, EmulatorContext* context, const Opti
     report.machineHint = image.machineHint;
     report.warnings.insert(report.warnings.end(), image.warnings.begin(), image.warnings.end());
 
+    // 0. A snapshot no machine can take (a SAM Coupe's, a Z80 with a ROM block): refused before anything is written
+    if (!image.unsupported.empty())
+    {
+        report.commit = "none";
+        report.verdicts.push_back("unsupported: " + image.unsupported);
+        report.Refuse("this snapshot cannot be loaded: " + image.unsupported, "format:unsupported");
+        return {Decision::Action::Refuse, nullptr};
+    }
+
     // 1. The caller's choice
     if (options.commit == "legacy")
     {

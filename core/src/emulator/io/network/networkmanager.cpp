@@ -272,14 +272,17 @@ void NetworkManager::FitCom(const Plan& plan, const AvrKeep* keep)
     Uart16550::Params params = Uart16550::DefaultParams(Uart16550::Flavor::Chip16550);
     ComPort::RegisterOf registerOf;
     std::function<void()> waitPortInterrupt;
+    EvoAvrWait* avrWait = nullptr;
     if (plan.serial == Plan::Serial::EvoAvr && decoder)
     {
         PortDecoder::NetworkCapabilities caps = decoder->DescribeNetwork();
         params = caps.uart;
         registerOf = std::move(caps.serialRegister);
         waitPortInterrupt = std::move(caps.waitPortInterrupt);
+        avrWait = caps.avrWait;
     }
     _com = std::make_unique<ComPort>(_context, params, std::move(peer), std::move(registerOf));
+    _com->SetAvrWait(avrWait);
     if (keep && keep->com)
         _com->Uart().LoadState(*keep->com);   // the same chip, a new cable: its registers stay
     if (plan.zifi)
@@ -829,17 +832,35 @@ bool NetworkManager::Change::OnlyRemoteAccess() const
 
 bool NetworkManager::RequestChange(const Change& change, std::string& error)
 {
-    if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
+    if (_context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->IsRecording())
     {
         error = "a TTD recording is running: the network settings are fixed until it stops";
         return false;
     }
-    if (change.hosts && change.hosts->size() >= sizeof(_context->config.network.hosts))
+    // The ZX-bus cards are slots (owner decision Q11): a card change is a slot change applied by a restart
+    // (SlotControl verb network, which applies the other settings to the restarted machine); here only the cards that
+    // are fitted already may be named again. ATM2IOESP (the INTERNAL connector, not a bus slot) still changes here
+    if (change.card && _context && ((*change.card ^ _context->config.network.card) & kZxBusCards) != 0)
+    {
+        error = "card: the ZX-bus network cards are slots, a change restarts the machine (the network settings of "
+                "every surface do that; or slots plug / remove)";
+        return false;
+    }
+    if (!ValidateChange(change, error))
+        return false;
+    Submit(change);
+    return true;
+}
+
+bool NetworkManager::ValidateChange(const Change& change, std::string& error)
+{
+    using Net = decltype(CONFIG::network);   // the field sizes of [NETWORK]
+    if (change.hosts && change.hosts->size() >= sizeof(Net::hosts))
     {
         error = "hosts: too long";
         return false;
     }
-    if (change.forwards && change.forwards->size() >= sizeof(_context->config.network.forwards))
+    if (change.forwards && change.forwards->size() >= sizeof(Net::forwards))
     {
         error = "forwards: too long";
         return false;
@@ -857,7 +878,7 @@ bool NetworkManager::RequestChange(const Change& change, std::string& error)
             error = "com_port: " + error;
             return false;
         }
-        if (change.comPort->size() >= sizeof(_context->config.network.comPort))
+        if (change.comPort->size() >= sizeof(Net::comPort))
         {
             error = "com_port: too long";
             return false;
@@ -871,7 +892,7 @@ bool NetworkManager::RequestChange(const Change& change, std::string& error)
             error = "zifi: " + error;
             return false;
         }
-        if (change.zifi->size() >= sizeof(_context->config.network.zifi))
+        if (change.zifi->size() >= sizeof(Net::zifi))
         {
             error = "zifi: too long";
             return false;
@@ -885,13 +906,13 @@ bool NetworkManager::RequestChange(const Change& change, std::string& error)
             error = "zx_wifi: " + error;
             return false;
         }
-        if (change.zxWifi->size() >= sizeof(_context->config.network.zxWifi))
+        if (change.zxWifi->size() >= sizeof(Net::zxWifi))
         {
             error = "zx_wifi: too long";
             return false;
         }
     }
-    if (change.bridgeAdapter && change.bridgeAdapter->size() >= sizeof(_context->config.network.bridgeAdapter))
+    if (change.bridgeAdapter && change.bridgeAdapter->size() >= sizeof(Net::bridgeAdapter))
     {
         error = "bridge_adapter: too long";
         return false;
@@ -904,7 +925,7 @@ bool NetworkManager::RequestChange(const Change& change, std::string& error)
             error = "modem_phonebook: " + error;
             return false;
         }
-        if (change.modemPhonebook->size() >= sizeof(_context->config.network.modemPhonebook))
+        if (change.modemPhonebook->size() >= sizeof(Net::modemPhonebook))
         {
             error = "modem_phonebook: too long";
             return false;
@@ -918,12 +939,16 @@ bool NetworkManager::RequestChange(const Change& change, std::string& error)
             return false;
         }
     }
-        {
+    return true;
+}
+
+void NetworkManager::Submit(const Change& change)
+{
+    {
         std::lock_guard<std::mutex> lock(_changeMutex);
         _pendingChange = change;
     }
     ApplyConfiguration();
-    return true;
 }
 
 void NetworkManager::Reset()

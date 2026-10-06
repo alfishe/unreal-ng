@@ -149,7 +149,7 @@ bool Keyboard::RequestHostRoute(const std::string& name, std::string& error)
         error = "route: auto | matrix | ps2 | both";
         return false;
     }
-    if (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
+    if (_context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->IsRecording())
     {
         error = "a TTD recording is running: the keyboard route is fixed until it stops";
         return false;
@@ -545,18 +545,18 @@ bool Keyboard::IsHostInputSuppressed() const
 {
     // An RZX playback owns input too: every IN returns the recorded value
     return _hostInputGated || (_context && _context->rzxPlayer) ||
-           (_context && _context->pTimeTravelManager && _context->pTimeTravelManager->OwnsInput());
+           (_context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->OwnsInput());
 }
 
 void Keyboard::SubmitHostKey(ZXKeysEnum key, bool pressed)
 {
-    if (_context && _context->pTimeTravelManager)
+    if (_context && _context->pTimeTravelHooks)
     {
         ttd::TTDInputEvent ev;
         ev.kind = ttd::TTDInputKind::Key;
         ev.key = static_cast<uint8_t>(key);
         ev.pressed = pressed;
-        _context->pTimeTravelManager->SubmitLiveInput(ev);
+        _context->pTimeTravelHooks->SubmitLiveInput(ev);
         return;
     }
 
@@ -571,13 +571,13 @@ void Keyboard::SubmitHostPcKey(PcKey key, bool pressed)
     if (!WantsPcKey(key))
         return;
 
-    if (_context && _context->pTimeTravelManager)
+    if (_context && _context->pTimeTravelHooks)
     {
         ttd::TTDInputEvent ev;
         ev.kind = ttd::TTDInputKind::PcKey;
         ev.key = static_cast<uint8_t>(key);
         ev.pressed = pressed;
-        _context->pTimeTravelManager->SubmitLiveInput(ev);
+        _context->pTimeTravelHooks->SubmitLiveInput(ev);
         return;
     }
 

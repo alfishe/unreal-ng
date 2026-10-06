@@ -297,7 +297,10 @@ TEST_F(TsConfArbiter_Test, ARB6_CpuWaitsMatchTheRtl)
             Reg(TsConfReg::Page2, 0x21);
             Reg(TsConfReg::Page3, 0x22);
             Mode(t.vConfig);
-            Reg(TsConfReg::SysConfig, 0x02);  // 14 MHz, a fresh arbiter; cache off: drops the previous group's entries
+            Reg(TsConfReg::SysConfig, 0x02);  // 14 MHz, a fresh arbiter
+            // Each group is a fresh simulation: the cache RAM starts invalid (the FPGA configuration). Nothing
+            // else clears it (zmem.v), so the previous group's entries go here
+            std::memset(_decoder->GetState().cacheTag, 0, sizeof(_decoder->GetState().cacheTag));
             ASSERT_EQ(_context->emulatorState.hw_turbo_ratio, 4);
             Reg(TsConfReg::CacheConfig, t.cache);
             _z80->machineM1Hook = &probe;
@@ -353,4 +356,68 @@ TEST_F(TsConfArbiter_Test, ARB6_CpuWaitsMatchTheRtl)
     }
     _z80->machineM1Hook = _decoder;
     EXPECT_EQ(failed, 0) << "of " << tests.size() << " tests";
+}
+
+/// ARB-7: the CPU never waits for the DMA: the DMA only takes DRAM cycles nobody else asked for, below the CPU, video
+/// and the TSU ([V] arbiter.v:127 dev_over_cpu = 0, :175-188 cpu_next has no DMA term; [U] vars.cpp:52-86 no DMA term
+/// in the CPU timing). A 14 MHz LD A,(HL) / LD (HL),A loop inside the 256C fetch window takes the same clocks with a
+/// RAM copy running (TS-Conf audit, dma row 40)
+TEST_F(TsConfArbiter_Test, ARB7_TheCpuNeverWaitsForTheDma)
+{
+    Mode(0x40 | 0x02);  // 256C 320x200
+    std::vector<uint8_t> loop;
+    for (int i = 0; i < 16; i++)
+    {
+        loop.push_back(0x7E);  // LD A,(HL)
+        loop.push_back(0x77);  // LD (HL),A
+    }
+    auto clocks = [&] {
+        Reg(TsConfReg::SysConfig, 0x02);  // 14 MHz, a fresh arbiter
+        const uint32_t fclk = _z80->rate / 2;
+        _z80->tt = (150u * TsConfArbiter::kLineCycles + 140u) * 4u * fclk;  // DRAM cycle 140 of line 150
+        _z80->hl = 0x8800;
+        const uint32_t before = _z80->tt;
+        RunCode(loop);
+        return (_z80->tt - before) / _z80->rate;
+    };
+    const uint32_t idle = clocks();
+    EXPECT_GT(idle, 16u * (7u + 7u)) << "the window does cost waits at 14 MHz";
+
+    TsConfDma& dma = _decoder->GetDma();
+    Reg(TsConfReg::DmaSAx, 0x10);
+    Reg(TsConfReg::DmaDAx, 0x14);
+    Reg(TsConfReg::DmaLen, 0xFF);
+    Reg(TsConfReg::DmaNum, 0xFF);
+    Reg(TsConfReg::DmaCtrl, 0x01);  // a long RAM copy
+    ASSERT_TRUE(dma.Busy());
+    EXPECT_EQ(clocks(), idle) << "the running DMA adds no CPU wait";
+    ASSERT_TRUE(dma.Busy());
+    dma.Reset();
+}
+
+/// ARB-8: at 3.5 and 7 MHz the CPU never waits for video: a read or write request comes at most once per 3 DRAM
+/// cycles and video takes at most 4 of 8, so cpu_next is never 0 when the CPU asks (stall357 = cpureq_357 &&
+/// !cpu_next never fires: [V] zmem.v:142-151, arbiter.v:143-146,175,187; checked on the running RTL, 384 cases,
+/// tools/machines/tsconf/rtl-sim; [U] vars.cpp:52-64 no video wait). In the TXT window, the busiest fetch, a
+/// LD A,(HL) / LD (HL),A loop runs at border speed (TS-Conf audit, dma row 49)
+TEST_F(TsConfArbiter_Test, ARB8_NoVideoWaitBelow14MHz)
+{
+    Mode(0x80 | 0x03);  // TXT 320x240: lines 56..295, 4 of every 8 cycles video
+    std::vector<uint8_t> loop;
+    for (int i = 0; i < 16; i++)
+    {
+        loop.push_back(0x7E);  // LD A,(HL): 7 T
+        loop.push_back(0x77);  // LD (HL),A: 7 T
+    }
+    for (uint8_t clock : {uint8_t(0x00), uint8_t(0x01)})
+    {
+        SCOPED_TRACE(int(clock));
+        Reg(TsConfReg::SysConfig, clock);
+        const uint32_t multiplier = _context->emulatorState.current_z80_frequency_multiplier;
+        _z80->tt = (150u * TsConfEngine::kLineTacts + 60u) * multiplier * _z80->rate;  // inside the window
+        _z80->hl = 0x8800;
+        const uint32_t before = _z80->tt;
+        RunCode(loop);
+        EXPECT_EQ((_z80->tt - before) / _z80->rate, 16u * 14u);
+    }
 }

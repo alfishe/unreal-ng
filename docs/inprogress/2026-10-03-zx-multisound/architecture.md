@@ -29,7 +29,7 @@ flowchart LR
     SAA --> MIX
     DAC --> MIX
     SAM --> MIX
-    MIX --> SM["SoundManager rows:<br/>MS FM, MS SSG, MS SAA,<br/>MS DAC, MS MIDI"]
+    MIX --> SM["SoundManager rows:<br/>MS SSG 1/2, MS FM 1/2,<br/>MS SAA, MS PCM, MS MIDI"]
 ```
 
 | Piece | Kind | Location |
@@ -44,6 +44,59 @@ flowchart LR
 | AY / YM2203 I/O port output | existing SSG, gains an **I/O port output callback** (register 14 / 15 writes and register 7 direction) | `soundchip_ay8910.*`, the SSG part of `Ym2203Pair` |
 | `MidiLine` | new: line level timeline from IOA2 to the synthesizer | `core/src/emulator/sound/midi/midiline.{h,cpp}` |
 | `sam2695::Synth` | new vendored library | `core/src/3rdparty/sam2695/` |
+
+**As built (MS-3, 2026-10-04).** `MultiSoundCard` (`.../multisound/multisoundcard.{h,cpp}`) is self-contained: no slot
+framework, no `SoundManager`, no machine (the slots core is built in parallel on `zx-bus-slots`). A thin `ICard`
+adapter wraps it in MS-4 ([tdd-integration.md](tdd-integration.md) §3.1). Tests:
+`core/tests/emulator/slots/cards/multisound/multisoundcard_test.cpp` (`MultiSoundCard_Test`).
+
+| Item | As built |
+|---|---|
+| Owns | `MultiSoundLogic`, `Ym2203Pair` (3.5 MHz master clock, `hostTickRate` = the card axis), `Saa1099` (8 MHz, the clock gate follows the control byte), `SoundChip_GeneralSound` (`GSProfile::MultiSound(ram, sink = MultiSoundDacs via the card, clock = the card)`, ROM `rom/gs105b.rom`), `MultiSoundDacs`, `MidiLine` (U4 IOA2), `sam2695::Synth`, `MultiSoundMixer` |
+| Configuration | `MultiSoundCardConfig`: `options` (DIP `ym` / `saa` / `gs` / `sd`, `gsRam`, `ctrlMask`), `hostTickRate`, `outputRate`, `renderMode`, `gsRomPath`, `midiBankPath` (`[MIDI] Bank=`, default `midi/generaluser-gs.sf2`, resolved like a ROM: working dir, executable dir, resources), `midiBank` (a bank object; tests use a synthetic one). `SetOptions` switches DIP and `ctrlMask` live (the CPLD reads its DIP inputs continuously); `gsRam` sizes the GS RAM and is construction-only |
+| Bus | `Iorqge(port)`, `M1(address)` (ROM lock), `Out(port, value, t)`, `In(port, t, drives&)`, `Peek(port[, drives&])` (no side effects), `BusReset(t)` (CPLD, both YM2203, SAA, GS, DACs, MIDI line and SAM2695: they share the board reset) |
+| Frames | `FrameStart(t, frameTicks)`, `FrameEnd(t, frames = 0)` (`frames = 0`: the card counts output samples from the time, remainder carried), `Row(MultiSoundRow::Fm / Ssg / Saa / Dac / Midi)`, `RowFrames()` |
+| Report | `Describe(MultiSoundCardReport&)`: options, CPLD latches (GS fields from the GS), per YM address / status / SSG registers / key-on mirror, ratio phase, `Saa1099Report`, GS (ROM, RAM, page, mailbox, firmware ready, counters), DAC channels + pending / late events, `MidiLineReport`, MIDI (bank status `loaded` / `no bank`, name, source, error, UART counters, voices); `DescribeSynth(sam2695::SynthReport&)` |
+| Time | absolute, monotonic host ticks on the card axis (`hostTickRate`, the emulator's AudioTstate rate). The YM pair runs without `rebaseFrame` (its 64-bit axes take absolute time); the GS reads the axis through `IGSHostClock` frame-relative to the last `FrameStart`, as it reads the machine's Z80 otherwise, and its DAC sink times are turned back into absolute ones by adding the frame base |
+| Control byte | `Control` action: SAA clock gate at `t`; an FM mute change is recorded with its time and `FrameEnd` renders the FM streams in parts split at those times (output-sample granularity). The `YmAddress` action that follows is the address write the control byte also is (`addressWriteOnControlByte` is this board logic) |
+| MIDI | the pair's chip 0 (U4, selected by control bit 0 = 0) SSG listener is the `MidiLine`; the pair reports pin changes at the write's host tick, which is already the card axis, so the line feeds `Synth::WriteLine` unchanged. The synthesizer is configured with `resetDelay` (the chip's 50 ms boot window) and its effects path. A missing or unreadable bank leaves it silent; `Describe` says `no bank` and why |
+| Rows | `FrameEnd`: the GS to its frame end (its own buffer stays silent), the pair synced and rendered per channel (`renderChannels`), `Saa1099::EndFrame`, `MultiSoundDacs::EndFrame`, `Synth::Run` + `Render` (a short first frame holds the last level, the backlog covers later ones), then `MultiSoundMixer::Mix` into the seven rows (int16 stereo, at most `MAX_SAMPLES_PER_FRAME` frames) |
+
+**As built (MS-4, 2026-10-04).** The card sits in a slot through `MultiSoundSlotCard` (`ICard`,
+[tdd-integration.md](tdd-integration.md) §3.2): `[SLOTS] zxbus.N = multisound` builds it at machine creation, its claims
+(§3, with the DIP options) go into the port decoder's claim table in its slot order and every cycle on them is
+resolved with the machine's bus arbitration (§6 "As built"); its seven rows are `SoundManager` rows (§5).
+
+MS-2 open items, resolved:
+
+- **One owner of the GS mailbox: `SoundChip_GeneralSound`.** `MultiSoundLogic` decides whether a host cycle is a GS
+  cycle (decode, DIP, IORQGE); the card then calls the GS's `portDeviceOutMethod` / `portDeviceInMethod`, whose latches
+  and flags the GS CPU's own port accesses also change. The logic's GS-side latches (data, command, page, output,
+  flags and its DAC copy) are not used by the card: only the GS sees both sides, and its TTD blob already carries them.
+  `Describe` reports the GS's values in the latch fields.
+- **SounDrive and the GS volume register.** A SounDrive write calls `SoundChip_GeneralSound::sharedVolumeWrite(ch, 63)`
+  (new: runs the GS to the host's now, then sets the shared volume without telling the sink) and submits the DAC event
+  to `MultiSoundDacs`. GS port `#0B` therefore reads volume 3 bit 5 = 1 after a SounDrive write to channel 3
+  (`SoundriveAndGsShareTheDacsTheLaterStrobeWins`).
+- **Event times.** A host DAC event ends at its `Out` time (`kHostStrobeEndOffset` = 0: the emulator's port access
+  time); a GS event at its instruction's start in host ticks (truncated, the GS reports per instruction). The GS is run
+  to `t` before a host event at `t` is submitted, so the DACs only ever see both timelines at or past an event's time
+  (no late events in any test).
+
+Module changes made for MS-3 (each a configuration of a shared module, none forked):
+
+| Module | Change | Classic / TSFM cost |
+|---|---|---|
+| `GSProfile` | `IGSHostClock` (host tacts now, tick rate, frame length on the board's axis) and `GSProfile::hostClock`; `MultiSound(ram, sink, clock)` | none: null = the machine's Z80 through `GSHostClock`, one pointer test per host port access (never per instruction) |
+| `SoundChip_GeneralSound` | `hostUnitsPerTact` / `hostTactsNow` behind the clock; `sharedVolumeWrite`; `resetAtHostNow` (bus /RESET anchored at the host's now: card time 0 = now, the frame end runs the rest of the host frame; `reset()` alone keeps the frame base and replays the elapsed frame, the `#33` semantics) | none |
+| `Ym2203Pair::renderChannels` | the cursor may trail the chips by up to `kMaxRenderBehind` (three quarters of the FM word queue, ~3 frames) before it is re-anchored; it was 4 x `kRenderLag`, so a board that syncs a whole frame and renders it lost every word but the last per render (aliased, beating FM). Pinned by `Ym2203Pair_Test.PerChannelOutputsRenderAWholeSyncedFrameAtOnce`. MS-7 (2026-10-05): the re-anchor checks where the block ENDS (`renderT + frames x masterClockHz / rate`) and places the cursor so that the block ends `kRenderLag` behind the chips; it used to anchor the block's start at the chips, which after a bus reset on the card's continuous axis (a snapshot load) rendered every block one block ahead of the chips and held the last FM word (owner report: clicks for FM). Pinned by `Ym2203Pair_Test.PerChannelOutputsFollowTheChipsAfterAResetOnAContinuousAxis` and the card's tone tests. Then (owner, 2026-10-05: "no synchronization problems") one rule for every owner and path, see "Render cursor" below | none: the TSFM does not use the per-channel outputs |
+| `Ym2203Pair` render cursor (2026-10-05) | ONE rule, `anchorRender(reference, span, force)`: a render about to advance the cursor by `span` master clocks must END within `kRenderWindow` (4 x `kRenderLag`) behind its reference, else the cursor is placed so that it ends `kRenderLag` behind. The owners differ only in the reference: the TSFM (renders as the CPU runs) passes its frame origin 0 with span 0 at each frame start (bit-identical to its old check, `TsfmGolden_Test` unchanged); the card (syncs, then renders the frame) passes the synced master clock and the frame's samples (`beginChannelRender`, once per frame before the mute-split blocks). The axis is expressed once: `Ym2203PairConfig::continuousHostAxis` (the card); a reset moves the cursor only on a frame-relative axis (to the frame origin), on a continuous axis time does not jump and the cursor keeps its place; `rebaseFrame` asserts a frame-relative axis; a TTD restore puts the cursor back exactly (relative timeline). `kMaxRenderBehind` is gone | TSFM: identical arithmetic at 1x |
+| `SoundChip_TurboSoundFM` sample phase (2026-10-05) | found by the invariant suite: after frames at a host speed multiplier (x2 renders twice the time) the device's sample phase and the mixer's frame sample count disagreed for good - a never-rendered or dropped sample at some frame boundaries, a click. Now one rule for every TurboSound-slot device (AY, TurboSound, TSFM): `SoundManager::handleFrameStart` pushes the mixer's frame-start phase (`ITurboSoundDevice::followSamplePhase`) before the device's frame start; it also covers the sound feature off and on (the mixer counted, the device did not). The beeper and the Covox follow the same phase with their blip streams (see the TSFM folder, ISSUES #20) | none at 1x (the copies are equal there; one store per frame) |
+
+Known limits (for MS-4 / MS-5): the pair's SSG write queue holds 64 writes per chip; a frame with more (a MIDI stream
+bit-banged on R14) applies the oldest early to the generators, which R14 does not affect, and the pins (the MIDI line)
+change at their write time regardless. One emulated frame of the card costs about 1 ms on the dev machine (all five
+paths rendered; not profiled yet).
 
 ## 2. Time
 
@@ -207,7 +260,8 @@ LW stays a GS-card option).
   field for the board's GS RAM (the classic card's is `sound.gs_ram_kb`; the board's comes from the slot options).
 - **For MS-3:** the GS keeps its own host mailbox (`#B3` / `#BB`) like the classic card; `MultiSoundLogic` latches the
   same registers. The card picks one owner. A SounDrive write sets volume 3 to 63 on the board, which `#0B` reads: the
-  card must pass those writes to the GS's volume register as well as to `MultiSoundDacs`.
+  card must pass those writes to the GS's volume register as well as to `MultiSoundDacs`. **Resolved in MS-3** (§1 "As
+  built"): the GS owns the mailbox; SounDrive writes reach `sharedVolumeWrite`.
 
 ### 4.3 AY / SSG I/O port output
 
@@ -241,8 +295,63 @@ FM`, `MS SSG`, `MS SAA`, `MS DAC` (GS + SounDrive), `MS MIDI`. The board weights
 inside the card before the rows, so the rows' unity volume equals the real board. New `AudioSourceType` values go
 before `Custom`; `AudioActivityIndicators::HUD_SOURCES` grows accordingly.
 
+**Registered (MS-4, 2026-10-04):** the rows are `SoundManager` rows while the card is fitted; the master mix runs on
+the wide float bus with the limiter while the card is fitted ([tdd-integration.md](tdd-integration.md) §3.2).
+
+**Per chip (owner, 2026-10-05):** the YM2203 pair shows as the TurboSound FM in the AY socket shows it - per chip, not
+collapsed. Seven rows, keys and HUD indicators:
+
+| Row | Key | What | HUD indicator |
+|---|---|---|---|
+| `MS SSG 1` | `ms_ssg1` | SSG part of chip select 0 (U4, the MIDI pin chip): A left, B centre, C right | `MS AY 1` |
+| `MS SSG 2` | `ms_ssg2` | SSG part of chip select 1 (U10) | `MS AY 2` |
+| `MS FM 1` | `ms_fm1` | FM part of chip select 0, centred | `MS FM 1` |
+| `MS FM 2` | `ms_fm2` | FM part of chip select 1 | `MS FM 2` |
+| `MS SAA` | `ms_saa` | SAA1099 | `MS SAA` |
+| `MS PCM` | `ms_pcm` | the four DACs: General Sound + SounDrive (was `MS DAC` / `ms_dac`) | `MS PCM` |
+| `MS MIDI` | `ms_midi` | SAM2695 | `MS MIDI` |
+
+The old keys `ms_fm`, `ms_ssg`, `ms_dac` are gone (no aliases: a summed FM row no longer exists); every surface,
+the OpenAPI text, the recipes and Qt (the audio settings list the rows like any device, the multitrack dialog names
+them) use the new ones. Mixer settings per row (volume / mute / solo) live with the machine instance like every other
+row's; no row's mixer settings are written to an INI today.
+
+**FM calibration = the TSFM's (owner, 2026-10-05).** The FM rows' level is `0.30 x 10^(trim / 20)` with the trim read
+from the TurboSound FM's `[SOUND] TSFM_FmTrimDb` (7.4 dB in 14 shipped configs; an absent key is 0 dB on both
+boards), applied live by the audio settings' "FM trim" control, which now shows when the machine has any YM2203 FM and
+drives the TSFM and the card together (`SoundManager::setFmTrimDb` / `fmTrimDb`, `ICard::SetFmTrimDb`); the card's
+state report carries `ym.fm_trim_db` like the TSFM's `fm_trim_db`. Measured (`Ym2203PairBoardsLevel_Test`, the same
+register writes on both boards, per chip, at 7.4 dB and at 0 dB): FM row RMS card / TSFM 4060.1 / 4058.7 (+0.003 dB)
+and 1732.0 / 1730.6, the master mix of an FM-only program 4060.6 / 4057.9 (+0.006 dB).
+
+Every row's calibration and why:
+
+| Row | Calibration (1.0 = INT16_MAX) | Board weight | Level vs the TSFM | Why |
+|---|---|---|---|---|
+| MS FM 1 / 2 | 0.30 x 10^(TSFM_FmTrimDb / 20) = 0.7033 at 7.4 dB | 1.000 | equal (0.0 dB) | the YM3014B is the TSFM's; the 7.4 dB is the TSFM board measurement (an emulator calibration, shared) |
+| MS SSG 1 / 2 | 0.30 per channel (the emulator's SSG channel at volume 15, the TSFM's) | A, C 0.417; B 0.213 | -7.6 dB (A, C) | hardware: the MultiSound sums SSG A / C through 24 k and B through 47 k against the FM's 10 k (R13, R14, R16, R17 vs R18); the TSFM gives SSG and FM equal weights. Measured -7.75 dB at every voicing preset: a 0.15 dB rendering residual of the two SSG paths (the card's per-channel decimators and coupling vs the TSFM's mixed stream; same units, same pan 0.9 / 3 for A), not a calibration |
+| MS PCM | 2.5 V per DAC channel x 0.7033 / 1.25 V (volts against the YM3014B's +-1.25 V at the default trim) | 0.208 | - | hardware (schematic), placed against the FM in volts; the user's FM trim does not move it |
+| MS SAA | module units (unmeasured absolute level) | 0.833 | - | hardware weight; absolute SAA level unmeasured |
+| MS MIDI | module units (+-1.0) | 1.000 | - | hardware weight; absolute SAM2695 level unmeasured |
+
+**AY / SSG tone voicing (2026-10-05, after master 7bbc2eaaa):** the card's `MS SSG 1` / `MS SSG 2` rows run through the
+same AY / SSG tone voicing as the AY socket's chips (`[SOUND] AYVoicing`, the audio settings' voicing on every
+surface): `CardMixerRow::ssgVoicing` marks them, `SoundManager` keeps one `VoicingStage` per such row next to
+`_ayVoicing0` / `_ayVoicing1` and treats it the same way - the configured profile at attach, `setAYVoicing` requests
+(click-free crossfade at the next frame), `reset()`, `setup` on a rate change, history invalidated in a gap (turbo
+without audio, sound off) - and voices the row in place after the card's `FrameEnd` (`ICard::VoicedMixerBuffer`), so
+captures and the mix see the voiced row, as for the board. FM, SAA, PCM and MIDI rows are not voiced (FM is not on
+the board either). `[AY] Stereo` is **not** applied to the card: its A left / B centre / C right is the board's
+resistor wiring, not a setting. `Ym2203PairBoardsLevel_Test` holds the SSG relation (the schematic's -7.6 dB) at the
+Flat, Classic and Headphones presets and checks the FM rows do not move with the voicing on either board.
+
+The FM trim is the one calibration the user moves; the board's internal balance (SSG, PCM, SAA, MIDI against FM at the
+default trim) is the schematic's and stays. **Owner question:** the owner asked for the SSG rows to match the TSFM's
+too; that would mean overriding the card's schematic SSG weights (-7.6 dB against its FM), so it is not done - the
+SSG level relation is pinned by the test as the hardware's instead.
+
 **As built (2026-10-04):** `MultiSoundMixer` (`.../multisound/multisoundmixer.{h,cpp}`, not registered yet; MS-4 wires
-the rows). `Mix(input, output)` takes one block of every source at the output rate and writes the five rows (int16,
+the rows). `Mix(input, output)` takes one block of every source at the output rate and writes the rows (int16,
 interleaved stereo; a sixth `external` output exists for the J3 line input, which has no emulated source).
 
 | Source | Input (module convention) | Calibration (row level, 1.0 = INT16_MAX) | Weight L / R |
@@ -278,14 +387,31 @@ The card's IORQGE claims on `#FFFD` / `#BFFD` shadow the machine's AY socket con
 dependent): `ym` -> `ay-socket` role (shadowing) and `midi`; `saa`; `gs`; `soundrive`. See the slots
 [compatibility matrix](../2026-10-03-zx-bus-slots/compatibility-matrix.md).
 
+**As built (MS-4, 2026-10-04):**
+
+| Machine | Bus | What happens |
+|---|---|---|
+| Pentagon (and the other CardWins boards: Scorpion, Profi Scorpion, ATM behind the CPU-socket adapter) | CardWins | an IN / OUT on the card's IORQGE claims (`#FFFD` / `#BFFD` families, `#B3`, `#BB`) never reaches the board (an `IN #BFFD` included: the CPLD asserts IORQGE for it and drives nothing, so the read floats; claimed In + Out since 2026-10-05): the board AY stays fitted, gets no cycle and its mixer row reports `shadowed by zxbus.N` (the slot report's built-in `ay` too); the passive SAA (`#FF`), SounDrive (`#0F` family) and `#DFFD` writes reach the card and the board, the SAA and SounDrive ones skipped while the IN / OUT runs from `#0000-#3FFF` |
+| ZX-Evo Baseconf / TS-Conf | BoardWins | the card detects RD / WR (`RdWr`), so it sees the board's own ports (`#FFFD`, SounDrive `#1F`); the YM2149 is taken out of its socket (Q7): the board AY device is not built, the report says `taken out of its socket for zxbus.N` (`removed: true`), and the board's decode of `#FFFD` no longer drives the read, so the card alone answers |
+
+At creation a config that leaves the AY socket unconfigured lets the card take the chip out (the physical step Q7
+describes). Since the slots' owner decision Q8 (2026-10-05) configured cards that conflict refuse the machine with
+every pair and its rule: `ay-socket = ay` on the ZX-Evo (the chip kept in its socket), a TSFM / TS in the socket under
+the card (a pointless pair), a GS or SounDrive card next to the card's `gs` / `sd` functions. A config that wants the
+card writes no `ay-socket` line (or `ay-socket = ay` on the Pentagon, whose AY the card shadows) and no GS / SounDrive
+card. No shipped config fits the MultiSound; tests fit it in their own configs.
+
 ## 7. TTD
 
 | Blob | Id | Content |
 |---|---|---|
-| `MultiSoundCard` | new id (next free when it lands; 48-50 free on master today, shared with SAA1099 / SAM2695 below) | logic latches (chip select, read mode, FM mute, SAA clock, ROM lock flag), DAC channels, the YM pair (both chips, ratio phase), the MIDI line state |
-| `Saa1099` | new id | chip state (tdd-saa1099 §5), saved through the card |
-| `Sam2695` | new id | synthesizer state incl. bank SHA-256 (tdd-libsam2695 §4) |
-| General Sound | 5 (existing; the board's GS needs its own id and region id, §4.2) | unchanged layout; RAM 1-2 MB, recorded by the time-travel engine as a memory region of 4 KB pieces (the engine's blob is the 95-byte fixed part) |
+| `MultiSound` (`MultiSoundCardTtd`) | 58, instance `<slot>.multisound` | the adapter's time base, then `MultiSoundCard`: card axis times, pending FM mute changes, CPLD latches (chip select, read mode, FM mute, SAA clock, ROM lock, GS mailbox copies, flags), DAC registers, the YM pair (synced time, both chips, ratio phase, timeline), the MIDI line, the shared DACs |
+| `Saa1099` | 53, `<slot>.multisound.saa1099` | chip state (tdd-saa1099 §5) |
+| `Sam2695` (`Sam2695Ttd`) | 59, `<slot>.multisound.sam2695` | synthesizer state incl. bank SHA-256 (tdd-libsam2695 §4); the bank is a fingerprint field and the session guard compares it |
+| `MultiSoundGs` | 60, `<slot>.multisound.gs` | the GS blob (layout of id 5) with 1-2 MB RAM; engine region `MultiSoundGsRam` (17, `multisound.gs.ram`) |
+
+As built in MS-5 (2026-10-05): [tdd-integration.md](tdd-integration.md) §4.1. The ids came from the next free ones on
+the branch (58-60 peripheral, 17 region); master may have taken some since, which a merge must renumber.
 
 The MIDI line itself is driven by YM register 14 writes, which the port journal records; replay re-executes them.
 

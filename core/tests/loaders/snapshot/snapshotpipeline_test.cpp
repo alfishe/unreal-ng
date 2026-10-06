@@ -14,6 +14,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
 #include "loaders/snapshot/loader_sna.h"
@@ -425,4 +426,158 @@ TEST_F(SnapshotPlan_Test, AMachinePolicyIsAskedBeforeTheFitCheck)
     ASSERT_TRUE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/z80/libspectrum/synth-scorpion.z80")))
         << "the policy took it; the 128 KB Pentagon's fit check never ran";
     EXPECT_EQ(machine.committed, 1);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The ATM family (P5): a snapshot lands in RAM and the picture is the Pentagon's
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace
+{
+/// FNV-1a over the frame the machine shows
+uint64_t PictureHash(Emulator* emulator)
+{
+    uint32_t* frame = nullptr;
+    size_t size = 0;
+    emulator->GetContext()->pScreen->GetFramebufferData(&frame, &size);
+    uint64_t h = 14695981038346656037ull;
+    for (size_t i = 0; i < size / sizeof(uint32_t); ++i)
+    {
+        h ^= frame[i];
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+uint64_t PictureAfterLoad(const char* model, const std::string& file)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError, RamPowerOn::Zero);
+    EXPECT_NE(emulator, nullptr) << model;
+    if (!emulator)
+        return 0;
+    EXPECT_TRUE(emulator->LoadSnapshot(file)) << model << " " << file;
+    emulator->RunNFrames(3);
+    const uint64_t hash = PictureHash(emulator);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+    return hash;
+}
+}  // namespace
+
+// The reset of an ATM leaves the pager off (or the system ROM on): the snapshot used to land in a machine whose RAM was not in
+// the address space. The pictures of static programs are compared with the Pentagon's on all three clones
+TEST(SnapshotAtm_Test, TheSamePictureAsThePentagonOnEveryClone)
+{
+    for (const char* file : {"loaders/z80/dizzyx.z80", "loaders/sna/z80full.sna", "loaders/sna/Dizzy Y.sna"})
+    {
+        const std::string path = TestPathHelper::GetTestDataPath(file);
+        const uint64_t pentagon = PictureAfterLoad("PENTAGON", path);
+        for (const char* clone : {"ATM710", "ATM3", "ATM450"})
+            EXPECT_EQ(PictureAfterLoad(clone, path), pentagon) << clone << " " << file;
+    }
+}
+
+TEST(SnapshotAtm_Test, TheMemoryManagerIsOnAndLaidOutLikeA128k)
+{
+    for (const char* model : {"ATM710", "ATM3"})
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError, RamPowerOn::Zero);
+        ASSERT_NE(emulator, nullptr) << model;
+        ASSERT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/across-the-edge-second.sna"))) << model;
+        const EmulatorState& state = emulator->GetContext()->emulatorState;
+        Memory& memory = *emulator->GetContext()->pMemory;
+        EXPECT_NE(state.aFF77 & 0x100, 0) << model << ": the manager (PEN) is on";
+        EXPECT_NE(state.aFF77 & 0x200, 0) << model << ": ~CPM set, TR-DOS is not forced";
+        EXPECT_EQ(state.flags & CF_TRDOS, 0) << model;
+        EXPECT_EQ(memory.GetRAMPageForBank(1), 5u) << model;
+        EXPECT_EQ(memory.GetRAMPageForBank(2), 2u) << model;
+        EXPECT_EQ(memory.GetRAMPageForBank(3), 7u) << model << ": window 3 follows #7FFD";
+        EXPECT_TRUE(memory.IsBank0ROM()) << model << ": window 0 is ROM";
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+    // The ATM450: ROM at #0000, not the system ROM
+    Emulator* atm450 = EmulatorTestHelper::CreateStandardEmulator("ATM450", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(atm450, nullptr);
+    ASSERT_TRUE(atm450->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/across-the-edge-second.sna")));
+    EXPECT_NE(atm450->GetContext()->emulatorState.aFE & 0x80, 0) << "ROM at #0000";
+    EXPECT_EQ(atm450->GetContext()->emulatorState.aFB & 0x80, 0) << "not the system ROM (CPSYS off)";
+    EmulatorTestHelper::CleanupEmulator(atm450);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// TS-Conf (P5): window 0 shows the BASIC the snapshot selected
+// ---------------------------------------------------------------------------------------------------------------------
+
+// The reset leaves MEM_CONFIG in the normal mode: window 0 is ROM page 0 (the TS-BIOS image, an "unknown ROM") whatever #7FFD
+// says, so a snapshot's program called the TS-BIOS where it expected BASIC. The commit now puts MEM_CONFIG in the mapped mode
+// (window 0 = the {service, TR-DOS, 128, 48} group by ROM128 = #7FFD bit 4) with the 128K decode first
+TEST(SnapshotTsConf_Test, WindowZeroShowsTheBasicTheSnapshotSelected)
+{
+    struct Case
+    {
+        const char* file;
+        bool basic48;
+        const char* what;
+    };
+    const Case cases[] = {
+        {"loaders/sna/Dizzy Y 2.sna", false, "128K SNA, #7FFD = #00: BASIC-128"},
+        {"loaders/sna/aytest_0.2.sna", true, "128K SNA, #7FFD = #10: BASIC-48"},
+        {"loaders/sna/z80full.sna", true, "48K SNA"},
+        {"loaders/z80/newbench.z80", true, "48K Z80 (#7FFD = #30)"},
+        {"loaders/z80/BBG128.z80", false, "128K Z80, #7FFD = #30 -> bit 4 set: BASIC-48"},
+    };
+    for (const Case& c : cases)
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("TSL", LoggerLevel::LogError, RamPowerOn::Zero);
+        ASSERT_NE(emulator, nullptr);
+        Memory& memory = *emulator->GetContext()->pMemory;
+        ASSERT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(c.file))) << c.what;
+        const uint8_t p7ffd = emulator->GetContext()->emulatorState.p7FFD;
+        const bool basic48 = (p7ffd & 0x10) != 0;
+        EXPECT_TRUE(memory.IsBank0ROM()) << c.what;
+        EXPECT_EQ(memory.GetROMPage(), memory.GetROMPageFromAddress(basic48 ? memory.base_sos_rom : memory.base_128_rom))
+            << c.what << " (#7FFD " << std::hex << int(p7ffd) << "): the ROM that #7FFD bit 4 names";
+        if (std::string(c.file).find("BBG128") == std::string::npos)
+            EXPECT_EQ(basic48, c.basic48) << c.what;
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The ROM latch agrees with the ROM shown (P5): a bank recompute keeps the BASIC the snapshot selected
+// ---------------------------------------------------------------------------------------------------------------------
+
+// The shipped configs say RESET=128, so after the reset the latches select BASIC-128. A 48K snapshot showed the 48K ROM (a bank
+// pointer) while the latch still said BASIC-128: the first recompute of the banks (any #7FFD write, a TR-DOS page-in) swapped the
+// ROM under the program, on every machine. The other tests reset to RM_SOS, where the latch already agrees and the bug hides
+TEST(SnapshotRomLatch_Test, TheRomTheSnapshotSelectedSurvivesABankRecompute)
+{
+    struct Case
+    {
+        const char* file;
+        bool is48k;   // a 48K snapshot: the ROM must be the 48K BASIC. A 128K one (#7FFD = #10 here) keeps what it selected
+    };
+    const Case cases[] = {
+        {"loaders/sna/z80full.sna", true},      // 48K SNA
+        {"loaders/z80/newbench.z80", true},     // 48K Z80
+        {"loaders/sna/aytest_0.2.sna", false},  // 128K SNA, #7FFD = #10 (on a +2A / +3 that is ROM 1: no #1FFD in an SNA)
+    };
+    for (const char* model : {"PENTAGON", "128k", "PLUS2", "PLUS2A", "PLUS3", "TSL", "ATM710", "ATM3", "ATM450", "PROFI",
+                              "SCORPION", "PROFSCORP"})
+    {
+        for (const Case& c : cases)
+        {
+            Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError, RamPowerOn::Zero);
+            ASSERT_NE(emulator, nullptr) << model;
+            emulator->GetContext()->config.reset_rom = RM_128;
+            emulator->Reset();
+            Memory& memory = *emulator->GetContext()->pMemory;
+            ASSERT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(c.file))) << model << " " << c.file;
+            const uint16_t shown = memory.GetROMPage();
+            if (c.is48k)
+                EXPECT_EQ(shown, memory.GetROMPageFromAddress(memory.base_sos_rom)) << model << " " << c.file << ": the 48K BASIC";
+            memory.UpdateZ80Banks();
+            EXPECT_EQ(memory.GetROMPage(), shown) << model << " " << c.file << ": the latch agrees with the ROM shown";
+            EmulatorTestHelper::CleanupEmulator(emulator);
+        }
+    }
 }

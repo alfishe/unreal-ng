@@ -139,12 +139,14 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/coverage/scan?from_frame=11000&to_frame=1180
 ### Phase 3 — replay and confirm
 
 ```bash
-# rewind to just before the write and watch it happen
+# rewind to just before the write (the frame's start) and watch it happen
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" \
      -H 'Content-Type: application/json' \
-     -d '{"frame": 11781}' | jq '{reached, arrived_at}'
+     -d '{"frame": 11781, "tinframe": 0}' | jq '{reached, arrived_at}'
 
 # arm a watchpoint-style breakpoint on the address, then resume live
+# (breakpoints are a feature, off by default)
+curl -s -X PUT "$BASE/emulator/$EMU_ID/feature/breakpoints" -H 'Content-Type: application/json' -d '{"enabled": true}'
 curl -s -X POST "$BASE/emulator/$EMU_ID/breakpoints" \
      -H 'Content-Type: application/json' \
      -d '{"type":"write","address":16384}' | jq .
@@ -181,9 +183,10 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/save" \
 ## Checklist
 
 - [ ] recording started in **development mode** (journal on)
-- [ ] `ttd/stop` before any scrub (else 409)
-- [ ] no snapshot/tape/disk load between `ttd/start` and the analysis — a
-      load wipes the history (a reset does not)
+- [ ] scrubbing while recording pauses it (`recording_paused`; on `backend: v1` a 409 - `ttd/stop` first)
+- [ ] no tape/disk load between `ttd/start` and the analysis — it is refused
+      while recording and wipes a stopped session (a reset does not; a
+      snapshot load on the engine is part of the recording)
 - [ ] bookmark + dump **before** heavy experimentation
 - [ ] `find-last` with `value`/`pc_from` filters to narrow repeat offenders
 - [ ] verify the fix by re-running Phase 1 and proving `find-last` now names

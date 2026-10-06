@@ -1,4 +1,5 @@
 #include "core.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/io/network/networkmanager.h"
 
 #include <algorithm>
@@ -7,6 +8,7 @@
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
+#include "debugger/ttd/timetravelhooks.h"
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/diskfastload.h"
 #include "emulator/io/fdc/upd765.h"
@@ -311,6 +313,21 @@ bool Core::Init()
 
     /// endregion </Fast disk loading>
 
+    /// region <Slots>
+
+    // The slot set first: it decides which cards the managers below build (ZX-bus slots architecture.md §5-§7)
+    if (result)
+    {
+        _slotManager = new SlotManager(_context);
+        _context->pSlotManager = _slotManager;
+        // Configured cards in conflict refuse the machine (Q8): the reason stays readable (SlotManager::Refusal)
+        result = _slotManager->PlanAtCreate();
+        if (!result)
+            _initError = _slotManager->Refusal();   // kept: the failed Init releases the slot manager
+    }
+
+    /// endregion </Slots>
+
     /// region <Sound manager>
 
     if (result)
@@ -486,6 +503,16 @@ bool Core::Init()
         _networkManager->ApplyConfiguration();
     }
 
+    // The cards the slots build themselves (ZX-bus slots card.h): their claims go onto the decoder, their mixer rows
+    // into the sound manager, both created above
+    if (result && _slotManager)
+    {
+        // A fitted card that cannot be built refuses the machine with the reason (SlotManager::BuildError)
+        result = _slotManager->BuildCards();
+        if (!result)
+            _initError = _slotManager->BuildError();
+    }
+
     /// endregion </Activate IO devices>
 
     // Release all allocated object in case of at least single failure
@@ -499,13 +526,26 @@ bool Core::Init()
 
 void Core::Release()
 {
+    // The machine goes away: the decoder saves what must outlive it while memory and the CPU still exist (the
+    // ZX-Evo's flashed ROM)
+    if (_portDecoder)
+        _portDecoder->BeforeRelease();
+
     // Unregister itself from context
     _context->pCore = nullptr;
+
+    // Slot-built cards first: they leave the decoder's claim table and the mixer while both exist
+    if (_slotManager)
+        _slotManager->ReleaseCards();
 
     // Network adapters first: the card releases its port claim while the decoder exists
     delete _networkManager;
     _networkManager = nullptr;
     _context->pPortDecoder = nullptr;
+
+    _context->pSlotManager = nullptr;
+    delete _slotManager;
+    _slotManager = nullptr;
 
     _context->pSoundManager = nullptr;
     {
@@ -866,6 +906,13 @@ void Core::Reset(ROMModeEnum mode)
     // their own memory manager (ATM) UpdateZ80Banks() re-runs the manager
     // mapping instead of the generic ZX bank layout
     _memory->SetROMMode(_mode);
+
+    // The ULA port latch the decoder reset left is the one source of the border
+    // color: the state's border_attr and the renderer's color follow it, as an
+    // OUT (#FE) makes them. Without this a machine that never wrote #FE showed a
+    // black border while a TTD-composed picture painted pFE's (BUGS.md 2026-10-05 #1)
+    _state->border_attr = _state->pFE & 0x07;
+    _screen->ResetBorderColor(_state->border_attr);
 #ifdef ENABLE_RECORDING
     if (_recordingManager)
         _recordingManager->Reset();  // Reset recording manager (stops active recording, clears counters)
@@ -967,6 +1014,9 @@ uint8_t Core::GetHostSpeedMultiplier() const
 //
 void Core::EnableTurboMode(bool withAudio)
 {
+    // A TTD black box stops before the machine runs in turbo (D29)
+    if (!_context->config.turbo_mode && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->OnAccelerationChanging(true);
     _context->config.turbo_mode = true;
     _context->config.turbo_mode_audio = withAudio;
 
@@ -1003,11 +1053,16 @@ void Core::DisableTurboMode()
         std::lock_guard<std::mutex> lock(_turboHostHoldMutex);
         _turboHostHold.Release();
     }
+    const bool wasTurbo = _context->config.turbo_mode;
     _context->config.turbo_mode = false;
 
     // Restore the previous DSP quality
     if (_context->pSoundManager)
         _context->pSoundManager->setTurboLowQualityOverride(false);
+
+    // A stopped TTD black box records again once nothing accelerates (D29)
+    if (wasTurbo && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->OnAccelerationChanging(false);
 
     MLOGINFO("Core::DisableTurboMode - Turbo mode disabled, host output released");
 

@@ -6,6 +6,10 @@
 #include "emulator/state/statenode.h"
 
 class EmulatorContext;
+class GeneralSoundCard;
+class SoundChip_AY8910;
+class SoundManager;
+class Ym2203Chip;
 struct ScreenDigestQuery;
 namespace SprinterBios
 {
@@ -54,6 +58,28 @@ StateNode Fdc(EmulatorContext* context);
 /// no side effects) where GS-compatible firmwares keep their variables.
 StateNode Gs(EmulatorContext* context, bool ramWindow = false);
 
+/// The reports of one chip / card wherever it sits, so a board that carries the same parts reports them the same way
+/// (the ZX-MultiSound's YM2203 pair with their SSG halves and its General Sound, MultiSound()):
+/// - `AyChipReport()`: one AY / SSG register file decoded (AyChip()'s body);
+/// - `Ym2203ChipReport()`: one YM2203's FM half (FmChip()'s body) at the pair's master clock;
+/// - `GeneralSoundReport()`: a General Sound card (Gs()'s body; `sm` null: the NeoGS stereo mode reads "separated").
+StateNode AyChipReport(SoundChip_AY8910& chip, int index, double clockHz);
+StateNode Ym2203ChipReport(Ym2203Chip& chip, int index, double masterClockHz, double fmTrimDb);
+StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, bool ramWindow = false);
+
+/// ZX-MultiSound (ZX-MultiSound tdd-integration.md §5; built beside the card, slots/cards/multisound/
+/// multisounddevicestate.cpp): `MultiSound()` the fitted card - its slot and options (DIP functions, gsRam, ctrlMask),
+/// fit and the built-in devices its slot shadows, the CPLD latches (YM chip select, status read mode, FM mute, SAA
+/// clock, ROM-fetch lock, the GS mailbox), the YM2203 pair (each chip: address latch, the SSG half as AyChipReport
+/// and the FM half as Ym2203ChipReport - the TSFM report's shape), the SAA1099 (registers, generators, envelopes,
+/// voices), the General Sound (GeneralSoundReport plus the card's RAM and firmware state), the four DAC channels
+/// (sample, volume) and the MIDI line and synthesizer summary. `Midi()` the MIDI side alone and whole: the line (YM
+/// pin, level, edges), the synthesizer's 16 parts (program, bank, preset and its name, volume, pan, expression,
+/// pitch bend, voices, the keys sounding), polyphony, effects, the UART / parser counters and the bank. Unavailable,
+/// with how to fit one, when no ZX-MultiSound is fitted. Peeked: reading changes nothing
+StateNode MultiSound(EmulatorContext* context);
+StateNode Midi(EmulatorContext* context);
+
 /// Covox / SoundDrive: `Covox()` fitment (mono #FB or the quad SoundDrive),
 /// the ports this model's decoder routes to it (from its port map), the ports
 /// it shares with the Beta-128 interface and who wins them, the four DAC
@@ -93,6 +119,15 @@ StateNode Isa(EmulatorContext* context);
 /// first - frame, base T, PC, slot, io / memory, read / write, ISA address, the CPU address, value, the card
 /// register ("ISR", "data port") or the event (RESET DRV, a stall). Recorded live and while a TTD recording replays
 StateNode IsaJournal(EmulatorContext* context, unsigned last);
+
+/// ZX-bus slots (docs/inprogress/2026-10-03-zx-bus-slots, R-REP-1): `Slots()` the machine's declaration (board,
+/// buses with their kind, arbitration, physical slots and whether the bus is retrofitted), where the cards came from
+/// ([SLOTS] or the translated legacy keys), per configured slot the card, its options, adapter, fit (real / adapter /
+/// unrealistic), state (active / disabled with the reason), functions and port claims (IORQGE flag, gate) and what the
+/// plan said, and per built-in device its state (active / switched off / shadowed by a slot / replaced in its
+/// socket). The core report every automation surface renders (surfaces arrive with SL-7). Built in
+/// emulator/slots/slotreport.cpp
+StateNode Slots(EmulatorContext* context);
 
 /// Network adapters (network adapters TDD §9): `Network()` the fitted card
 /// (ZXNETUSB: its ports, the W5300 held in reset or running, the chip's

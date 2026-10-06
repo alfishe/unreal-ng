@@ -172,3 +172,25 @@ TEST(Flash29F040B, StateRoundTrip)
     EXPECT_FALSE(b.arrayMode());
     EXPECT_EQ(b.busyUntil(), a.busyUntil());
 }
+
+// An external array (the ZX-Evo's ROM pages): the chip programs and erases it in place and never copies it
+TEST(Flash29F040B, ExternalArrayIsWorkedInPlace)
+{
+    std::vector<uint8_t> rom(Flash29F040B::SIZE, 0x33);
+    Flash29F040B f(kUnits, Flash29F040B::Vendor::AMD, rom.data());
+    EXPECT_EQ(f.data(), rom.data());
+    EXPECT_EQ(f.read(0x12345, 0), 0x33);
+
+    program(f, 0x12345, 0x21, 0);
+    f.update(100);
+    EXPECT_EQ(rom[0x12345], 0x21);
+
+    sectorErase(f, 7, 200);
+    f.update(200 + 2'000'000);
+    EXPECT_EQ(rom[7 * Flash29F040B::SECTOR_SIZE], 0xFF);
+    EXPECT_EQ(rom[7 * Flash29F040B::SECTOR_SIZE - 1], 0x33) << "sector 6 untouched";
+
+    f.bindArray(nullptr);
+    EXPECT_NE(f.data(), rom.data());
+    EXPECT_EQ(f.read(0, 2'000'300), 0xFF) << "its own array starts erased";
+}

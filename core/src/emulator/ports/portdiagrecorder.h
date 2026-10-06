@@ -64,7 +64,7 @@ namespace PortTraceFlags
 {
 constexpr uint8_t kDirectionOut      = 1u << 0;  // 0=IN, 1=OUT
 constexpr uint8_t kWasDecoded        = 1u << 1;  // A hardware device responded (_lastPortDecoded)
-constexpr uint8_t kHadHandler        = 1u << 2;  // PortDevice existed in _portDevices map
+constexpr uint8_t kHadHandler        = 1u << 2;  // PortDevice registered for the decoded port (RegisterPortHandler)
 constexpr uint8_t kBeta128Gated      = 1u << 3;  // Beta128 port blocked because CF_TRDOS was clear
 constexpr uint8_t kHandledInline     = 1u << 4;  // Decoder handled it directly (not via PeripheralPortIn/Out)
 constexpr uint8_t kCfTrdosActive     = 1u << 5;  // CF_TRDOS state at event time

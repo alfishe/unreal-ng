@@ -18,13 +18,59 @@ on:
       - 'testdata/**'
       - '.gitignore'
 
+# gh api in the throttle job reads this workflow's runs
+permissions:
+  contents: read
+  actions: read
+
 env:
   BUILD_TYPE: Release
   # LD_LIBRARY_PATH is already set correctly inside the Docker image,
   # so we don't need to override it here.
 
 jobs:
+  # Pushes to master build at most once per CI_MIN_INTERVAL_MINUTES (repository variable, Settings -> Secrets and
+  # variables -> Actions -> Variables; default 60, 0 = no throttle). A push that comes too early waits here; a newer push
+  # cancels the waiting one (concurrency below), so only the newest commit of a burst gets built. Builds that already
+  # started are never cancelled. Pull requests are always built at once: no wait, and a group of their own so nothing cancels them.
+  throttle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency:
+      group: ci-throttle-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MIN_INTERVAL: ${{ vars.CI_MIN_INTERVAL_MINUTES || '60' }}
+    steps:
+      - name: Wait for the build interval
+        if: github.event_name == 'push'
+        run: |
+          set -eu
+          interval=$(( MIN_INTERVAL * 60 ))
+          if [ "$interval" -le 0 ]; then echo "throttle off"; exit 0; fi
+          # (the API's branch= and event= filters together return a stale list, so they are filtered in jq)
+          # Start of the newest earlier run that really began building (build-linux job started, run not cancelled)
+          last=0
+          for run in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cmake-ci.yml/runs?per_page=30" \
+                         --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID and .head_branch == \"master\" and .event == \"push\" and .conclusion != \"cancelled\") | .id"); do
+            started=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
+                        --jq '[.jobs[] | select(.name == "build-linux" and .started_at != null) | .started_at][0] // empty')
+            [ -n "$started" ] || continue
+            t=$(date -u -d "$started" +%s)
+            [ "$t" -gt "$last" ] && last=$t
+          done
+          now=$(date -u +%s)
+          wait=$(( last + interval - now ))
+          if [ "$wait" -gt 0 ]; then
+            echo "Last build started $(( (now - last) / 60 )) min ago; waiting $(( wait / 60 )) min (CI_MIN_INTERVAL_MINUTES=$MIN_INTERVAL)"
+            sleep "$wait"
+          else
+            echo "No build in the last $MIN_INTERVAL min"
+          fi
+
   build-linux:
+    needs: throttle
     runs-on: ubuntu-latest # <--- The VM that runs Docker
 
     # 1. TELL GITHUB TO RUN INSIDE YOUR IMAGE
@@ -77,6 +123,7 @@ jobs:
   # Linux packages run on Ubuntu 24.04; this job catches what the next compilers
   # reject and runs the whole core test suite. Core only - no Qt needed.
   build-gcc-latest:
+    needs: throttle
     runs-on: ubuntu-latest
     container: gcc:16
 

@@ -335,7 +335,17 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     // so the trap is active in both debug and release sessions.
     if (pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad != nullptr)
     {
-        if (_context->pTapeFastLoad->HandleLDBytesTrap(*this))
+        // While TTD records (a black box: an explicit recording masks the
+        // shortcut) the trap is an edit with what it did - the block's bytes,
+        // the registers, the tape cursor and its time - so a replay repeats it
+        ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+        const bool recorded = ttd && ttd->IsRecording();
+        if (recorded)
+            ttd->BeginToolEdit();
+        const bool consumed = _context->pTapeFastLoad->HandleLDBytesTrap(*this);
+        if (recorded)
+            ttd->EndToolEdit(consumed ? "fast tape" : nullptr);
+        if (consumed)
         {
             // Trap consumed the invocation — the routine never executes
             return true;
@@ -354,7 +364,15 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     // Drains pending sector bytes directly into memory via Z80::wd() when armed.
     if (pc == 0x3FEC && _context->pDiskFastLoad != nullptr)
     {
-        if (_context->pDiskFastLoad->HandleSectorDrainTrap(*this))
+        // Recorded as an edit like the tape trap above (the FDC's state is in it)
+        ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+        const bool recorded = ttd && ttd->IsRecording();
+        if (recorded)
+            ttd->BeginToolEdit();
+        const bool consumed = _context->pDiskFastLoad->HandleSectorDrainTrap(*this);
+        if (recorded)
+            ttd->EndToolEdit(consumed ? "fast disk" : nullptr);
+        if (consumed)
         {
             // Trap consumed the sector drain loop invocation
             return true;
@@ -769,8 +787,8 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
     // at or before now (TTD playback) and live input queued by other threads.
     // An event stamped T is first visible to the instruction starting at T -
     // the machine state AT T (a seek target, a pause) does not include it yet
-    if ((work & EmulatorContext::kStepWorkTtdInput) && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->ServiceInput();
+    if ((work & EmulatorContext::kStepWorkTtdInput) && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->ServiceInput();
 
     StepResult result;
 
@@ -849,8 +867,8 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
         // A frame end (with its interrupt or, IFF1 clear, without) while TTD
         // records: a fact at the end of this step, where a seek to "RZX
         // frame N" lands (Phase 3, Step 2)
-        if (rzxPlayer->FramesDone() != rzxFramesBefore && _context->pTimeTravelManager)
-            _context->pTimeTravelManager->NoteRzxFrameEnd(rzxPlayer->FramesDone(),
+        if (rzxPlayer->FramesDone() != rzxFramesBefore && _context->pTimeTravelHooks)
+            _context->pTimeTravelHooks->NoteRzxFrameEnd(rzxPlayer->FramesDone(),
                                                           rzxBoundary == RzxBoundary::Interrupt);
         if (rzxPlayer->EndPending())
             rzxPlayer->NotifyEnded();
@@ -1144,10 +1162,10 @@ void Z80::NotifyInstructionStart()
     // actually capturing. This is the only record that a frame executed a
     // given address - instruction fetches are not journalled - so without
     // it a reverse breakpoint has no choice but to replay every frame.
-    if (_context->ttdCoverageActive && _context->pTimeTravelManager != nullptr)
+    if (_context->ttdCoverageActive && _context->ttdCoverage != nullptr)
     {
-        _context->pTimeTravelManager->RecordExecutedCoverage(
-            _memory->GetPhysPageForZ80Address(m1_pc), m1_pc);
+        _context->ttdCoverage->Record(ttd::TTDCoverageKind::Executed,
+                                      ttd::MakeCoverageKey(_memory->GetPhysPageForZ80Address(m1_pc), m1_pc));
     }
 
     // Phase 4 - access probe for Execute access type (TDD 9.2).
@@ -1279,27 +1297,11 @@ uint8_t Z80::inFromBus(uint16_t port)
 
     PortDecoder& portDecoder = *_context->pPortDecoder;
 
-    // Full-decode observer tap (raw port, pre-decode): a real bus card that
-    // fully decodes this address drives the data bus in the same cycle as the
-    // model-decoded device (shared bus, e.g. ZXM-MoonSound vs ULA/AY/Beta-128)
-    bool fullDecodeHandled = false;
-    bool fullDecodeClaims = false;
-    const uint8_t fullDecodeValue = portDecoder.NotifyFullDecodeIn(port, fullDecodeHandled, fullDecodeClaims);
-
-    // Let model-specific decoder to process port input
-    uint8_t result = portDecoder.DecodePortIn(port, m1_pc);
-
-    // Shared read cycle, legacy-device priority (R6): when the model decode
-    // already handed the port to a device (ULA/AY/FDC...), that device's value
-    // IS the bus value - the observer's data is discarded (its access side
-    // effects still happened above). Two exceptions drive the bus with the
-    // observer's value: an otherwise-undecoded port (the floating bus was
-    // already suppressed for it, so the observer value replaces the 0xFF
-    // placeholder) and a CLAIMED port - an armed card overriding the legacy
-    // mirror (ZXM-MoonSound wave data at #7F once OPL4 NEW is set;
-    // MoonService-verified behaviour).
-    if (fullDecodeHandled && (fullDecodeClaims || !portDecoder.WasLastPortDecoded()))
-        result = fullDecodeValue;
+    // One bus cycle: the cards claiming the port (ZX-bus slots claim table) and
+    // the model decode, resolved in one pass (PortDecoder::ReadCycle: the
+    // shared-bus rule R6 lives there). A port no card claims costs one bit test
+    bool cardDrove = false;
+    uint8_t result = portDecoder.ReadCycle(port, m1_pc, cardDrove);
 
     if (busTraceHook)
         busTraceHook('I', port, result);
@@ -1314,7 +1316,7 @@ uint8_t Z80::inFromBus(uint16_t port)
     // port always has a driver on the bus, floating bus must not apply.
     bool fromFloatingBus = false;
     bool lateWaitsCounted = false;
-    if (!portDecoder.WasLastPortDecoded() && (port & 0x0001) && !fullDecodeHandled)
+    if (!portDecoder.WasLastPortDecoded() && (port & 0x0001) && !cardDrove)
     {
         UlaContention* ula = _context->pUlaContention;
         if (ula)
@@ -1387,12 +1389,10 @@ void Z80::out(uint16_t port, uint8_t val)
 
     PortDecoder& portDecoder = *_context->pPortDecoder;
 
-    // Full-decode observer tap (raw port, pre-decode): the card observes the
-    // write cycle in addition to whatever device the model decode hands it to
-    portDecoder.NotifyFullDecodeOut(port, val);
-
-    // Let model-specific decoder to process port output
-    portDecoder.DecodePortOut(port, val, m1_pc);
+    // One bus cycle: the cards claiming the port see the write first, then the
+    // model decode (PortDecoder::WriteCycle). A port no card claims costs one
+    // bit test
+    portDecoder.WriteCycle(port, val, m1_pc);
 
     if (busTraceHook)
         busTraceHook('O', port, val);

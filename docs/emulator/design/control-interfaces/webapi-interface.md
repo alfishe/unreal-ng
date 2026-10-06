@@ -199,6 +199,10 @@ Content-Type: application/json
 
 Omitted, it follows `[MISC] RAMPowerOn` of the model's `unreal.ini` (`RANDOM` when unset). Any other value is a `400`. A ZX-Poly machine applies it to all four modules. Every identity block reports the mode as `ram_power_on`.
 
+`slots` (optional) gives the new machine its slot set in the `[SLOTS]` key form, replacing the INI's
+([ZX-bus Slots](#zx-bus-slots)): `{"ay-socket": "none", "zxbus.1": "multisound", "zxbus.1.dip": ["ym", "saa"]}`.
+Entries that conflict (two cards with one job) refuse the machine with a `400` naming every pair and its rule.
+
 **Response 201**:
 ```json
 {
@@ -307,6 +311,8 @@ not a ZX-Poly machine.
 ### 5b. Switch Model (validate-first)
 **Endpoint**: `POST /api/v1/emulator/{id}/model` (body `{"model": "...", "ram_size": N, "stranded": "refuse|save|discard|keep", "ram_power_on": "random|zero"}`; `ram_power_on` omitted = the mode the current machine was created with)  
 **Description**: The request is validated BEFORE the current instance is stopped/removed: an unknown model, unsupported RAM or non-creatable model returns `400` and the current emulator keeps running untouched. A successful switch stops the old instance, creates and starts a new one (different ID) and returns the machine identity block for the new instance.
+
+The cards go along ([slots.md → Model switch](../../../features/slots.md#model-switch)): `slots` in the reply lists the cards `kept` (in their slot, or moved behind an adapter: `zxbus.2 -> edge.2 = soundrive`) and `dropped` (slot, card, reason) and `report` the same lines for people.
 
 The media follow ([media.md → Model switch](../../../features/media.md#model-switch)): each medium goes into the slot with the same id on the new machine, unsaved writes included. `media` in the reply lists the slot ids `attached` (followed), `detached` (no slot, unsaved writes kept) and `closed` (no slot, nothing unsaved). A medium with unsaved writes the new model has no slot for answers `409` (`code: "dirty"`, the media in `stranded`) and changes nothing, unless `stranded` says `save`, `discard` or `keep`.
 
@@ -441,6 +447,9 @@ GET  /api/v1/emulator/{id}/state/audio/gs      General Sound / NeoGS: mailbox, p
 GET  /api/v1/emulator/{id}/state/audio/covox   Covox / SoundDrive: fitment, ports this model decodes, Beta-128 shared ports, DAC latches (404 without Covox)
 GET  /api/v1/emulator/{id}/state/audio/moonsound        MoonSound OPL4 overview: NEW/NEW2, latches, mix, wave memory, keyed channels (404 without the card)
 GET  /api/v1/emulator/{id}/state/audio/moonsound/{part} part=fm: 18 FM channels, timers, register banks; part=pcm: 24 wavetable slots, envelopes
+GET  /api/v1/emulator/{id}/state/audio/multisound ZX-MultiSound: slot, options, fit, shadowed built-ins, CPLD latches, ym.chips[2] {ssg: the AY chip report, fm: the TSFM chip report}, saa, gs (the GS report), dac[4], midi summary; 404 without the card
+GET  /api/v1/emulator/{id}/state/audio/midi     MIDI line + SAM2695: parts[16] (program, preset, volume, pan, voices, keys / notes sounding), polyphony, effects, counters, bank; 404 without a synthesizer
+POST /api/v1/emulator/{id}/control/audio/midi   {"action": "panic"}: every voice stops (a TTD live input); 404 without a synthesizer, 409 while a TTD replay owns input
 GET  /api/v1/emulator/{id}/state/audio/channels  Audio overview (DeviceState::AudioChannels): beeper (peak, active, muted), AY tone generators, GS / Covox subsets, master (muted, sample_rate_hz, channels, bit depth), mixer[] devices
 GET  /api/v1/emulator/{id}/state/fdc           Beta Disk WD1793: registers, status bits, FSM, signals, drives (404 without Beta Disk)
 GET  /api/v1/emulator/{id}/state/ide           IDE board: scheme, latches, both units' task file and command, CD sense (404 without a board)
@@ -452,7 +461,7 @@ GET  /api/v1/emulator/{id}/state/profi         ZX Profi board chips: port_map, p
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
 GET  /api/v1/emulator/{id}/state/network       Network adapters: card ports, W5300 registers and sockets, virtual network (leases, sockets, guest servers, counters, recent activity), expansion slots (slots[]: a UART card's uart / peer / esp or modem - a Hayes modem's mode, call, DCD / RI / DSR / CTS, settings, counters, journal; SprinterSerial's second UART in channel_b), a serial port's modem peer in com.modem; 404 without an adapter
 POST /api/v1/emulator/{id}/keyboard/route      {"route": "auto|matrix|ps2|both"} - where host and injected keys go (ZX matrix, PS/2 controller of a ZX-Evo / ATM Turbo 2+, both); 409 while TTD records. GET /keyboard/status shows host_route
-POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|atm2ioesp (a list with ',')", "atm2ioesp": "at|espnet|...", "atm2ioesp_address": "0xF0|0xF8", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "remote_access": true, "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,firmware][,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266|esp8266-at221|esp8266-at222", "isa1_peer": "at|modem[,guest port]|loopback|tcp:host:port|serial:dev[,baud]", "isa2_peer": "...", "isa1_peer_b": "... (SprinterSerial COM2)", "isa2_peer_b": "...", "modem_phonebook": "5551234=host:port,...", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41", "zifi": "none|at[,firmware]|zifi-native[,s3|esp01s]|loopback|tcp:host:port|serial:dev[,baud]"} (remote_access: the host listeners of guest servers bind 0.0.0.0 (true, default: the LAN can connect) or 127.0.0.1 (false); alone it keeps every connection; state: settings.remote_access, virtual_network.listen_address; zifi: TS-Conf / ZX-Evo TS firmware, the ZiFi board's ESP, state block zifi; com_port: the machine's own serial port, the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's RS-232 or the ZX Profi v5's 8251 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550) - change [NETWORK] settings; 409 while TTD records
+POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|atm2ioesp (a list with ',')", "atm2ioesp": "at|espnet|...", "atm2ioesp_address": "0xF0|0xF8", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "remote_access": true, "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,firmware][,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266|esp8266-at221|esp8266-at222", "isa1_peer": "at|modem[,guest port]|loopback|tcp:host:port|serial:dev[,baud]", "isa2_peer": "...", "isa1_peer_b": "... (SprinterSerial COM2)", "isa2_peer_b": "...", "modem_phonebook": "5551234=host:port,...", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41", "zifi": "none|at[,firmware]|zifi-native[,s3|esp01s]|loopback|tcp:host:port|serial:dev[,baud]"} (remote_access: the host listeners of guest servers bind 0.0.0.0 (true, default: the LAN can connect) or 127.0.0.1 (false); alone it keeps every connection; state: settings.remote_access, virtual_network.listen_address; zifi: TS-Conf / ZX-Evo TS firmware, the ZiFi board's ESP, state block zifi; com_port: the machine's own serial port, the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's RS-232 or the ZX Profi v5's 8251 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550; replaceIfIncompatible / dryRun / mediaDisposition as for /slots) - change [NETWORK] settings: a card value that changes the ZX-bus cards (zxnetusb, zxwifi) is a slot change applied by a restart (owner decision Q11; the reply is the slot change envelope with plan, restart.emulatorId and network {cardChange, settingsApplied, note}; 409 refused with the plan without replaceIfIncompatible), the other keys go to the restarted machine; without a card change they apply in place (status accepted); 409 while TTD records
 GET  /api/v1/emulator/{id}/rtc/cells?start=&count=   CMOS cells as the guest reads them (peeked): {start, count, bytes[], hex}
 POST /api/v1/emulator/{id}/rtc/cells           {"start": n, "bytes": [..]} - write like the guest; answers the cells read back
 GET  /api/v1/emulator/{id}/state/isa           ISA slots (Sprinter): summary (one line per slot), #9FBD latch (value, a19_a14, aen, reset), window 3 (mapped, slot, space, page), slots[] (slot, page_io, page_mem, configured, card, enabled + why, resources (I/O ranges, memory windows, IRQ, irq_route, DMA), z80_access (the page / latch / #1FFD path), not_fitted, summary_line, the card's own fields (the ZX-bus adapter's zx_bus: the General Sound / NeoGS behind it - personality, ports #B3 / #BB / #33, cpu_addresses, status flags, machine_reset, reset_held / reset_pulses; or why its ZX-bus is empty), irq_line (the slot's IRQ line: driver, level, PIO port B bit and setup, pending / under service, reaches_cpu), counters incl. irq_rises / irq_falls / irq_pio_requests / irq_acknowledged / irq_service_ends), pio_port_b, irq_summary, conflicts; 404 on other machines
@@ -1504,6 +1513,26 @@ POST /api/v1/emulator/{id}/disk/{drive}/eject   ✅ Implemented
 PUT  /api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}   Write into a sector's data field ({"offset": 245, "hex": "4D59..."} | "data": [..] | "base64"): sector by its ID, data CRC recalculated, image modified, TTD tool edit; 400 with the reason when refused (empty drive, write-protected, no such sector, past the data field), 503 when busy
 ```
 
+### ZX-bus Slots
+
+```
+GET  /api/v1/emulator/{id}/slots                         the slot report: buses, slots, fitted cards, built-ins, plan log
+GET  /api/v1/emulator/{id}/slots/catalog                 every card, its options, how it fits this machine
+GET  /api/v1/emulator/{id}/slots/matrix[?table=cards]    the compatibility tables (markdown)
+POST /api/v1/emulator/{id}/slots/{slot}/plug             {card, options, adapter, replaceIfIncompatible, dryRun, mediaDisposition}
+POST /api/v1/emulator/{id}/slots/{slot}/remove           {replaceIfIncompatible, dryRun, mediaDisposition}
+PUT  /api/v1/emulator/{id}/slots/{slot}/options          {options, replaceIfIncompatible, dryRun, mediaDisposition}
+```
+
+Every route is SlotControl ([command-interface.md section 14](./command-interface.md#14-zx-bus-slots); OpenAPI tag
+`Slots`). `{slot}`: `zxbus.2`, `zxbus.next`, `ay-socket`, or `auto` for a plug (where the planner puts the card).
+`options`: `"dip=ym,saa gsRam=2m"` or `{"dip": ["ym", "saa"], "gsRam": "2m"}`. A change is planned first; a refusal is
+`409` with the plan as the body (`status` `refused` or `recording`; `message` `needs replaceIfIncompatible: ...`;
+`plan.removed[]` names every card it would remove with the options that put it back, `undo`). Applied, the machine
+restarts with the new slot set: `200`, `status: "applied"`, `restart.emulatorId` is the new id (`started` when the old
+one ran), `media` says where the media went. `POST /control/audio/gs` `switch_personality` is the same change for the
+card in the GS slot (owner decision Q10).
+
 ### Snapshots (Implemented Separately)
 ```
 POST /api/v1/emulator/{id}/snapshot/save  ✅ Implemented
@@ -1577,18 +1606,20 @@ All TTD endpoints are scoped under `/api/v1/emulator/{id}/ttd/...` (`{id}` is th
 **Read the session rules first:** [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules) (states, 409 while recording, what wipes a session, reset keeps history, markers vs. bookmarks, the acceleration lock). The short version:
 
 - States are `idle`, `recording`, `detached` (positioned in history, emulator paused).
-- `seek`, `step-back`, `step-forward`, `step-instruction`, `find-last`, `reverse-step` and `reverse-continue` return **409 Conflict** while recording — call `POST /ttd/stop` first.
+- `seek`, `step-back`, `step-forward`, `step-instruction`, `find-last`, `reverse-step` and `reverse-continue` while recording pause the recording (`backend: engine`, D8): state `detached`, `recording_paused: true`; `POST /ttd/resume` at the paused point continues it, running into it continues it too, `POST /ttd/stop` ends it. On `backend: v1` they return **409 Conflict** — call `POST /ttd/stop` first.
 - `start` switches the `timetravel` feature on by itself.
-- While recording, snapshot/tape/disk load (and disk autostart), disk create, `invalidate`, switching `timetravel`/`debugmode` off and a GS `switch_personality` return **409 Conflict** whose `message` says why and to stop the recording first. On a stopped session those loads, ROM reload, a host speed change and `invalidate` drop the history; a reset stops the recording and keeps it. `GET /ttd/status` → `last_drop_reason` names what dropped the last history.
+- While recording (also while it is paused for browsing), tape/disk load (and disk autostart), disk create and `invalidate` return **409 Conflict** whose `message` says why and to stop the recording first. On the engine a snapshot load is part of the recording, and a change of the machine itself (ROM load, model switch, GS `switch_personality`, a slot change) ends the session - see [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules); v1 refuses them with 409. On a stopped session those loads, ROM reload, a host speed change and `invalidate` drop the history; a reset stops the recording and keeps it. `GET /ttd/status` → `last_drop_reason` names what dropped the last history. Switching `timetravel`/`debugmode` off stops the recording cleanly instead (history kept; `last_stop_reason`: `feature-off:<feature>`); a frame the history's store does not take stops it the same way (`last_stop_reason`: `capture-failed`).
 - While recording (and through `detached`) the host speed is locked to 1x, turbo mode is off, and fast tape / turbo tape / fast disk read as off.
 
 Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset inside the frame in T-states at the machine's top CPU clock: plain T-states on machines without a hardware turbo; ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see [command-interface.md → Time](./command-interface.md#ttd-session-rules)).
+
+**A seek to a frame without `tinframe`** lands at that frame's **end** on the engine (`backend: engine`, D13): the machine state and the picture are the frame's final ones, the same as `{frame N+1, tinframe 0}`; `arrived_at` names it `{N, <length of frame N>}`. When the history ends inside frame N (a recording paused at the present) it lands at that end. `POST /ttd/step-forward` / `step-back` from there count counts from `{N+1, 0}`. With `tinframe` (also 0) it lands exactly there and shows what the beam drew up to that point - at a frame's start, the previous frame's final picture. v1 lands at the frame's start without `tinframe` and shows the frame's final picture there. Scripts that seek a frame and read memory see one frame later on the engine; ask for `tinframe 0` to keep the frame's start.
 
 | Method | Path | Body / Query | Response fields | Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `GET`  | `/ttd/status` | — | See "status response" below. | ✅ Implemented |
 | `POST` | `/ttd/start` | Optional `{"journal": bool, "history_limit_frames": N, "history_limit_bytes": N}`. `journal` also records the write journal (default false; see [command-interface.md → The write journal](./command-interface.md#ttd-session-rules)); ignored when already recording. The history limits are as `/ttd/history-limit`. | `started`, `already_active`, `state`, `write_journal_enabled`, `history_limit_frames`, `history_limit_bytes` | ✅ Implemented |
-| `GET` / `POST` | `/ttd/journal` | `POST {"enabled": bool}`: switch the write journal at any moment, also while recording (a segment starts or ends at the instruction the machine is on; a running machine is paused for the switch and resumed). 400 without a boolean `enabled`. | `write_journal_enabled`, `write_journal_complete`, `write_journal_segments`, `write_journal_build`, `write_journal_records` | ✅ Implemented |
+| `GET` / `POST` | `/ttd/journal` | `POST {"enabled": bool}`: switch the write journal at any moment, also while recording (a segment starts or ends at the instruction the machine is on; a running machine is paused for the switch and resumed). 400 without a boolean `enabled`. | `write_journal_enabled` (a journal is recorded now), `write_journal_setting` (the choice for recordings, also without a session), `write_journal_complete`, `write_journal_segments`, `write_journal_build`, `write_journal_records` | ✅ Implemented |
 | `POST` | `/ttd/journal/build` | Optional `{"from_frame": N, "to_frame": N}` (default: the whole session). Replays those frames and adds their memory writes to the journal; covered frames are left as they are, the last frame and frames with a marker without its data are not built. About 2-4 ms per frame; answers when done (`GET /ttd/journal` shows the progress meanwhile). 409 while recording. | `ok`, `error` (when refused), `cancelled`, `frames_built`, `frames_covered`, `frames_refused`, `records`, and the journal fields above | ✅ Implemented |
 | `POST` | `/ttd/journal/build/cancel` | — | `cancelled` (false when no build was running). The build stops after its current frame and keeps what it built | ✅ Implemented |
 | `POST` | `/ttd/history-limit` | Optional `{"frames": N, "bytes": N}`: each optional, a missing one is kept, 0 = no limit (default); an empty body only reports. While recording the oldest checkpoints are released beyond either limit and the journals are cut at the new start, so a file saved afterwards replays its remaining frames exactly; two checkpoints always stay. 400 for a value that is not a non-negative integer. | `history_limit_frames`, `history_limit_bytes`, `history_bytes`, `evicted_checkpoints`, `checkpoint_count`, `session_start_frame`, `current_end_frame`, `state` | ✅ Implemented |
@@ -1608,7 +1639,8 @@ Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset
 | `GET`  | `/ttd/bookmarks` | — | `count`, `bookmarks[] {frame, tinframe, label}` (time-sorted) | ✅ Implemented |
 | `POST` | `/ttd/bookmarks` | `{"label": "...", "frame"?: N, "tinframe"?: T}` — no `frame` = current position. Label: non-empty, at most 63 characters, unique per session. | **201** with `added`, `label`, `frame`, `tinframe`. 400 for a missing/empty/overlong label; 409 for a duplicate label or a position outside the timeline. | ✅ Implemented |
 | `DELETE` | `/ttd/bookmarks/{label}` | — | `removed`, `label`; 404 for an unknown label | ✅ Implemented |
-| `POST` | `/ttd/dump` | `{"path": "..."}` | `ok`; on success `path`, `bytes`; on failure `error`. 400 without `path`, 500 if the file cannot be opened. | ✅ Implemented |
+| `POST` | `/ttd/export-clip` | `{"from": F, "to": T, "path": "<dir>", "chunk": N}` (`chunk` optional, default 500) | Frames F..T as a lossless clip in `path` (created if missing): final picture, plane B when `zxdlss` is on, frame meta. Answer: `ok`, `frames`, `bytes`, `planeb`, `width`, `height`, `seconds`, `path`; `error` when it fails (400). 400 for missing or non-numeric fields; 409 while recording. See [command-interface.md → Exporting a clip](./command-interface.md). | ✅ Implemented |
+| `POST` | `/ttd/dump` | `{"path": "..."}` | `ok`; on success `path`, `bytes`; on failure `error` and `message`. 400 without `path`; 409 if the file cannot be opened or the session cannot be written (it was 500 / 200 before Phase 5). | ✅ Implemented |
 | `POST` | `/ttd/load` | `{"path": "..."}` | `ok`, `path`, `checkpoint_count`, `session_start_frame`, `current_end_frame`, `state` (`idle`). 400 without `path` or when the file is refused (`ok: false`, `error` — e.g. a model mismatch naming both model ids); 404 if the file cannot be opened. | ✅ Implemented |
 | `GET` | `/api/v1/ttd/file-info` (no `{id}`) | `?path=<file.ttd>` | A `.ttd` file read without loading it: `ok`, `path`, `file_bytes`, `schema_version`, `flags`, `captured_at_unix_ms`, `recorded_by`, `session_state`, `session_start_frame`, `session_end_frame`, `checkpoint_count`, `page_slot_count`, `sections{...}`, `machine{model_id, model, ram_page_bound, rom_signature, peripheral_mask, peripherals, not_recorded, general_sound, turbo_sound}` (`not_recorded`: devices fitted but deliberately not recorded, e.g. `gs-lw`), `peripherals_from_header`. 400 without `path` or for a file that is no readable `.ttd` (`ok: false`, `error`); 404 if it cannot be opened. Keys: [command-interface.md → Reading a file before loading it](./command-interface.md). | ✅ Implemented |
 | `GET`  | `/ttd/coverage/probe` | `?frame=N&kind=executed\|written\|read&addr_from=A1&addr_to=A2&phys_page=P` | `frame`, `kind`, `addr_from`, `addr_to` (as `"0x%04X"` strings), `phys_page` (if given), `touched`, `index_available`. Frames outside the covered window return `index_available: false, touched: false`. 400 for missing `frame`, invalid `kind`, `addr_from > addr_to`, `phys_page > 255` or non-numeric values. | ✅ Implemented |
@@ -1661,6 +1693,7 @@ There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_her
   "port_replay_value_mismatches": 0,
   "port_replay_divergences": 0,
   "last_drop_reason": null,
+  "last_stop_reason": null,
   "unavailable_reason": null
 }
 ```
@@ -1679,7 +1712,7 @@ There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_her
 }
 ```
 
-`halt_reason` is one of `target`, `external_event`, `out_of_range`. The emulator is left paused after a seek; `POST /ttd/resume` resumes it.
+`halt_reason` is one of `target`, `external_event`, `out_of_range`. The emulator is left paused after a seek; `POST /ttd/resume` resumes it. A target before the earliest position kept (`earliest` in `GET /ttd/status`) fails with `out_of_range`; on the engine the reply also carries `earliest` and a `message` naming it, and the machine has not moved.
 
 **port-events request:** searches the port journals (every IN and OUT with its time and PC) - no replay, works on a loaded file. Events, arguments and options: [command-interface.md → Port events](./command-interface.md).
 

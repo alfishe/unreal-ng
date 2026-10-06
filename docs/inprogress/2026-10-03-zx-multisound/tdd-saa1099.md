@@ -125,7 +125,7 @@ public:
 ## 5. TTD
 
 `PeripheralId::Saa1099` = **53** (taken on the `multisound` branch; ids are append-only, the first branch to master
-keeps the number). The blob is 149 bytes (layout in `saa1099.cpp`, documented in `ttd.ksy`). The blob is a fixed-size POD, layout version byte first. A
+keeps the number). The blob is 157 bytes (version 2 since MS-7: the output level, held while the clock is stopped) (layout in `saa1099.cpp`, documented in `ttd.ksy`). The blob is a fixed-size POD, layout version byte first. A
 card that contains an SAA (the MultiSound) saves it inside its own blob set (integration TDD §4) so the card is
 restored as one unit.
 
@@ -194,7 +194,7 @@ The harness follows the libopl4 template (`tools/poc/015-opl4-synthesis/cosim/`)
 ## 10. As built (2026-10-04)
 
 **Files.** `core/src/emulator/sound/chips/saa1099/saa1099.{h,cpp}`; tests
-`core/tests/emulator/sound/chips/saa1099/saa1099_test.cpp` (14 tests) and `saa1099_golden_test.cpp` (26 digests);
+`core/tests/emulator/sound/chips/saa1099/saa1099_test.cpp` (15 tests) and `saa1099_golden_test.cpp` (26 digests);
 co-simulation `tools/verification/saa1099/` (fetch, drivers, corpus, compare, expectations, README with the full
 consensus table). `PeripheralId::Saa1099` = 53 with its row in `ttdfileinfo.cpp`, `ttd.ksy` and the id contract
 test. The unused `saa1099fq` / `saa1099_vol` fields are removed from `platform.h`; the `SUBMODULE_SOUND_SAA` logger
@@ -203,6 +203,12 @@ id is used (debug: configuration, writes to unused registers; warning: a refused
 **Model.** Event-driven on the chip clock: each step runs to the nearest tone transition, fixed-rate noise shift
 or (Authentic only) PDM slot. Host time converts through an integer ratio accumulator (remainder in the blob).
 The output axis keeps running while the clock gate is stopped, so frames still produce samples (the held level).
+Register writes while the clock is stopped are latched but do not change the output: the output logic runs on the
+chip clock, so the held level stays until the clock runs again, and then the output follows the latched registers at
+once (MS-7 fix: before it, every amplitude / mixer / sound-enable write re-evaluated the output of the stopped chip,
+and the LnxTracker Demo - which stops the SAA every frame with `#FE` / `#FF` - played its amplitude writes as a 3-7 Hz
+step "tune"; `Saa1099_Test.ClockGateHoldsOutputAcrossRegisterWrites`, both render modes, with a checkpoint taken
+while stopped). The held level is part of the TTD blob (it cannot be derived from the registers).
 Output: unipolar summed level 0..720 per side (units: PDM ones per 128 slots), `x 40` into blip_buf at the chip
 clock. The level of a voice comes from the real-chip PDM patterns, so the HiFi mean and the Authentic bit stream
 share one table. `Describe` reports registers, latched and pending numbers, counters, LFSRs, envelope state and

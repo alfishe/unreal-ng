@@ -15,6 +15,33 @@
 #include "emulator/memory/memory.h"
 #include "loaders/disk/loader_trd.h"
 
+#include <cstdio>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <vector>
+
+namespace
+{
+/// Offset of the disk type byte in a .trd file: track 0, sector 9 (0-based 8), byte #E3
+constexpr size_t kTrdDiskTypeOffset = 8 * 256 + 0xE3;
+
+/// A copy of a test TRD with its disk type byte replaced, at a per-process unique scratch path (owner report
+/// 2026-10-05: SAA10991.TRD, a real disk with type 0 that TR-DOS boots, was "not TR-DOS formatted" for the autostart)
+std::string TrdWithDiskType(const std::string& source, uint8_t diskType, const char* leaf)
+{
+    std::ifstream in(source, std::ios::binary);
+    std::vector<char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (bytes.size() <= kTrdDiskTypeOffset)
+        return {};
+    bytes[kTrdDiskTypeOffset] = static_cast<char>(diskType);
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath(leaf);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    return path;
+}
+}  // namespace
+
 class DiskAutostart_Test : public ::testing::Test
 {
 protected:
@@ -91,6 +118,43 @@ TEST_F(DiskAutostart_Test, Catalog_RejectsNonTrdos)
     DiskImage blank(80, 2);  // Formatted but without TR-DOS info sector content
     TrdosCatalog catalog;
     EXPECT_FALSE(catalog.Parse(blank));
+
+    // Formatted and never written by TR-DOS (every byte #E5, as a CP/M or a fresh format leaves it): no signature
+    DiskImage e5(80, 2);
+    std::vector<uint8_t> filler(256, 0xE5);
+    for (uint8_t s = 0; s < 16; s++)
+        e5.getTrack(0)->writeSectorData(s, filler.data(), 256);
+    EXPECT_FALSE(catalog.Parse(e5));
+
+    // A foreign image with #10 at #E7 by chance: its "catalog" points outside a track - refused
+    auto foreign = LoadImage("atarin.trd");
+    ASSERT_NE(foreign, nullptr);
+    uint8_t dir[256];
+    memcpy(dir, foreign->getTrack(0)->getDataForSector(0), 256);
+    dir[14] = 0x37;   // first entry's sector: 55
+    foreign->getTrack(0)->writeSectorData(0, dir, 256);
+    EXPECT_FALSE(catalog.Parse(*foreign));
+}
+
+/// TR-DOS 5.03 / 5.04T check one byte of sector 9 when they read a catalog: the id #10 at #E7 ("Disc Error"
+/// otherwise); the disk type #E3 is decoded (bit 0: 40 tracks, bit 3: one side), never checked. Every type value TR-DOS
+/// accepts is a TR-DOS disk for the autostart too - type 0 (SAA10991.TRD, owner report 2026-10-05) as well as the four
+/// standard ones
+TEST_F(DiskAutostart_Test, Catalog_AcceptsWhatTrdosAccepts)
+{
+    for (const uint8_t diskType : {uint8_t{0x00}, uint8_t{0x16}, uint8_t{0x17}, uint8_t{0x18}, uint8_t{0x19}, uint8_t{0x42}})
+    {
+        const std::string path = TrdWithDiskType(TrdPath("atarin.trd"), diskType, "autostart-type.trd");
+        ASSERT_FALSE(path.empty());
+        LoaderTRD loader(_context, path);
+        ASSERT_TRUE(loader.loadImage()) << int(diskType);
+        TrdosCatalog catalog;
+        EXPECT_TRUE(catalog.Parse(*loader.getImage())) << "disk type #" << std::hex << int(diskType);
+        EXPECT_NE(catalog.FindBoot(), nullptr) << int(diskType);
+        EXPECT_EQ(_context->pDiskAutostart->MakePlan(*loader.getImage()).action, DiskAutostart::Action::Boot)
+            << int(diskType);
+        std::remove(path.c_str());
+    }
 }
 
 TEST_F(DiskAutostart_Test, Injector_GeneratedBootIsVirtual)
@@ -273,6 +337,26 @@ TEST_F(DiskAutostart_Boot_Test, ExistingBoot_RunsThroughRom)
 
     int frames = RunUntilTrue([&] { return ProgramIs(head); }, 1500);
     EXPECT_GT(frames, 0) << "boot.B did not get loaded: " << State();
+}
+
+/// The owner's case end to end: a disk with disk type 0 autostarts, and the real TR-DOS ROM loads its boot (TR-DOS
+/// itself never looks at the type byte)
+TEST_F(DiskAutostart_Boot_Test, DiskTypeZero_BootRunsThroughRom)
+{
+    const std::string path = TrdWithDiskType(TrdPath("atarin.trd"), 0x00, "autostart-type0.trd");
+    ASSERT_FALSE(path.empty());
+    auto result = _emulator->AutostartDisk(path);
+    ASSERT_TRUE(result.mounted);
+    ASSERT_TRUE(result.started) << result.message;
+
+    DiskImage* image = _context->coreState.diskDrives[0]->getDiskImage();
+    TrdosCatalog catalog;
+    ASSERT_TRUE(catalog.Parse(*image));
+    std::vector<uint8_t> head = FileHead(*image, *catalog.FindBoot(), 8);
+
+    int frames = RunUntilTrue([&] { return ProgramIs(head); }, 1500);
+    EXPECT_GT(frames, 0) << "boot.B did not get loaded: " << State();
+    std::remove(path.c_str());
 }
 
 TEST_F(DiskAutostart_Boot_Test, SingleBasic_RunsByName_DiskUntouched)

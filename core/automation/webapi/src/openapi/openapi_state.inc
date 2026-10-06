@@ -588,9 +588,11 @@
         "Drive the GS card the way ZX software does (each action flushes the coprocessor to the current ZX tact "
         "first): reset (full power-on), reset_card (#33 bit7 - CPU/banking/timing, mailbox survives), nmi (#33 "
         "bit6), send_command (OUT #BB), send_data (OUT #B3), read_status (IN #BB, returns the value), read_data "
-        "(IN #B3, clears the data-pending flag and returns the value), switch_personality (runtime swap of the "
-        "GS-slot card: classic GS, lightweight player or NeoGS - the host mailbox and activity counters survive "
-        "the handoff and an uploaded module is replayed; applied at the next frame boundary), dump_module "
+        "(IN #B3, clears the data-pending flag and returns the value), switch_personality (the card in the "
+        "GS slot - classic GS, lightweight player or NeoGS - replaced as a slot change, applied by a restart of the "
+        "machine (owner decision Q10): the reply is SlotControl's (status applied / dry-run / refused / recording, "
+        "plan, restart.emulatorId = the new id, media); 'replaceIfIncompatible', 'dryRun' and 'mediaDisposition' as "
+        "for POST slots/{slot}/plug), dump_module "
         "(writes the last completed COM30..D2 module upload to a file - 'path' optional, defaults to "
         "'gs-module-dump.mod'; 404 when no upload has completed yet). NeoGS only (409 otherwise): sd_insert "
         "(needs 'path' to a raw SD image), sd_eject, flash_save (saves the reprogrammed flash); carried out on the "
@@ -653,15 +655,16 @@
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["path"]["type"] = "string";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["200"]["description"] =
-        "Action result (read_status/read_data carry the byte in 'value'; switch_personality carries the requested "
-        "target and the current personality; dump_module carries 'path', 'bytes' and 'playing')";
+        "Action result (read_status/read_data carry the byte in 'value'; switch_personality carries the slot "
+        "change reply with 'personality' (the requested one) and 'previous'; dump_module carries 'path', 'bytes' and 'playing')";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["400"]["description"] =
         "Unknown action, invalid value or unknown personality";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["404"]["description"] =
         "Emulator or GS card not found, or (dump_module) no completed module upload captured yet";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["409"]["description"] =
         "sd_insert / sd_eject / flash_save on a card that is not NeoGS, sd_insert / sd_eject while TTD records, "
-        "switch_personality while a TTD recording runs (the message says why: stop the recording first), "
+        "switch_personality refused by the slot plan (it would remove another card without replaceIfIncompatible) "
+        "or while a TTD recording runs (the message names the session), "
         "or any of them while a TTD replay owns the machine";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["422"]["description"] =
         "sd_insert: the image cannot be opened; flash_save: the flash could not be saved";
@@ -917,4 +920,43 @@
          ["properties"]["protected"]["type"] = "boolean";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["responses"]["200"]["description"] = "Protection state updated";
     paths["/api/v1/emulator/{id}/memory/rom/protect"]["put"]["responses"]["404"]["description"] = "Emulator not found";
+
+    // GET/POST /api/v1/emulator/{id}/memory/rom/flash - the ZX-Evo's saved flash ROM
+    {
+        const char* flashPath = "/api/v1/emulator/{id}/memory/rom/flash";
+        paths[flashPath]["get"]["summary"] = "ZX-Evo flash ROM: the saved flash";
+        paths[flashPath]["get"]["tags"].append("Memory State");
+        paths[flashPath]["get"]["description"] =
+            "TS-Conf and ATM3 only: the ROM is the board's 29F040 flash, and what programs flash is saved to "
+            "zxevo-flash-<machine>-<SHA-256 of the ROM image>.rom in the settings folder (never to the shipped "
+            "image). Reports the file for the loaded ROM image (file, file_exists, base_rom_sha256), whether the "
+            "array came from it (loaded_from_file), unsaved changes (unsaved, changes) and files flashed over "
+            "other ROM images, which are not used (other_image_files). 400 on other machines.";
+        paths[flashPath]["get"]["parameters"][0]["name"] = "id";
+        paths[flashPath]["get"]["parameters"][0]["in"] = "path";
+        paths[flashPath]["get"]["parameters"][0]["required"] = true;
+        paths[flashPath]["get"]["parameters"][0]["schema"]["type"] = "string";
+        paths[flashPath]["get"]["responses"]["200"]["description"] = "Saved-flash status";
+        paths[flashPath]["get"]["responses"]["400"]["description"] = "The machine's ROM is not a flash";
+        paths[flashPath]["get"]["responses"]["404"]["description"] = "Emulator not found";
+
+        paths[flashPath]["post"]["summary"] = "ZX-Evo flash ROM: save now or discard the saved flash";
+        paths[flashPath]["post"]["tags"].append("Memory State");
+        paths[flashPath]["post"]["description"] =
+            "action 'save' writes the flash file now (it is also written about a second after the last program / "
+            "erase, and when the instance closes); 'discard' deletes it - the shipped ROM image comes back at the "
+            "next reset. Both run on the machine's thread; refused (409) while a TTD replay owns the machine.";
+        paths[flashPath]["post"]["parameters"][0]["name"] = "id";
+        paths[flashPath]["post"]["parameters"][0]["in"] = "path";
+        paths[flashPath]["post"]["parameters"][0]["required"] = true;
+        paths[flashPath]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[flashPath]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["action"]["type"] = "string";
+        paths[flashPath]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["action"]["enum"].append("save");
+        paths[flashPath]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["action"]["enum"].append("discard");
+        paths[flashPath]["post"]["responses"]["200"]["description"] = "Done or queued (result, flash status)";
+        paths[flashPath]["post"]["responses"]["400"]["description"] = "Bad action, or the machine's ROM is not a flash";
+        paths[flashPath]["post"]["responses"]["404"]["description"] = "Emulator not found";
+        paths[flashPath]["post"]["responses"]["409"]["description"] = "A TTD replay owns the machine";
+        paths[flashPath]["post"]["responses"]["500"]["description"] = "Failed (no ROM loaded, persistence off, file error)";
+    }
 

@@ -493,7 +493,7 @@ void EmulatorAPI::transferState(const HttpRequestPtr& req, std::function<void(co
         }
 
         // TTD refuses this while recording: answer why instead of a bare failure
-        if (const std::string refusal = target->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
+        if (const std::string refusal = target->RecordingGuard(ttd::TTDGuardedAction::SwitchModel); !refusal.empty())
         {
             SendError(callback, HttpStatusCode::k409Conflict, "Conflict", refusal);
             return;

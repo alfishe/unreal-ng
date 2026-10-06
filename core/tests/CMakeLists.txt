@@ -301,6 +301,15 @@ if (NOT TARGET ${PROJECT_NAME})
         set(QT_FRONTEND_TEST_COMMAND COMMAND $<TARGET_FILE:unreal-qt-tests>)
         set(QT_FRONTEND_TEST_TARGET unreal-qt-tests)
     endif()
+    # The unreal-asm library's own tests (core/src/3rdparty/unreal-asm) run first as well: milliseconds, no sharding.
+    # The library defines the target once gtest exists (created above in this file)
+    if(COMMAND unrealasm_add_tests)
+        unrealasm_add_tests()
+    endif()
+    if(TARGET unreal-asm-tests)
+        list(APPEND QT_FRONTEND_TEST_COMMAND COMMAND $<TARGET_FILE:unreal-asm-tests>)
+        list(APPEND QT_FRONTEND_TEST_TARGET unreal-asm-tests)
+    endif()
     if(UNIX)
         add_custom_target(test-parallel
             ${QT_FRONTEND_TEST_COMMAND}
@@ -334,6 +343,8 @@ if (NOT TARGET ${PROJECT_NAME})
             "${DATA_PATH}/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${DATA_PATH}/midi" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory

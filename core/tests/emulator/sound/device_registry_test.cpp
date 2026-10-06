@@ -31,10 +31,10 @@ TEST_F(DeviceRegistryTest, RegistryContainsBeeperAndAY)
     ASSERT_NE(beeper, nullptr);
     EXPECT_EQ(beeper->name, "Beeper");
 
-    // AY 1 always present
+    // The socket's first chip always present; the default slot device is a TurboSound (two AY chips)
     auto* ay1 = sm->device(AudioSourceType::AY1_All);
     ASSERT_NE(ay1, nullptr);
-    EXPECT_EQ(ay1->name, "AY 1");
+    EXPECT_EQ(ay1->name, "TS AY 1");
 }
 
 TEST_F(DeviceRegistryTest, TurboSoundHasTwoAYChips)
@@ -44,7 +44,7 @@ TEST_F(DeviceRegistryTest, TurboSoundHasTwoAYChips)
 
     auto* ay2 = sm->device(AudioSourceType::AY2_All);
     ASSERT_NE(ay2, nullptr);
-    EXPECT_EQ(ay2->name, "AY 2");
+    EXPECT_EQ(ay2->name, "TS AY 2");
 }
 
 TEST_F(DeviceRegistryTest, DefaultStateNoMuteNoSoloFullVolume)

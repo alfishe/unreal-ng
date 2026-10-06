@@ -65,6 +65,9 @@ found tokens it could not place: `I`, `R`, `IM`, `IN` / `AND` by context; L1's t
 differently); what the byte after each record is; how labels and local labels are written (plain ASCII at the line
 start in the files seen); whether TASM keeps a label table in RAM after assembling (a live scanner).
 
+**Settled** ([research-tasm.md](research-tasm.md)): L1's table is TASM 4.0 XL Design / 4.4 KVA (`#E7`-`#F0` exist
+only there); TASM 3.x has the same table up to `#E6`; 4.12 is a separate Rst7 line with direct blank counts.
+
 ### 1.3 Comparison of the local implementations
 
 | | L1 (owner, 2012) | L2 (port, 2025) | L3 (doc, 2025) | L4 (Python, 2025) |
@@ -114,6 +117,7 @@ tokenized, GENS3 compressed, AS80, STS / MONS label tables.
 | # | Name | Link | Language / licence | What it reveals |
 |---|---|---|---|---|
 | P7 | **Unreal Speccy 0.37.1** `src/dbglabls.cpp` (a copy of the 0.37.1 sources kept in a game repository) | [dbglabls.cpp](https://github.com/ZXSpectrumVault/MightyFinalFight/blob/master/emul/US0371/src/dbglabls.cpp) | C++ / Unreal's licence | the bodies of `find_alasm` / `import_alasm` / `find_xas` / `import_xas`, removed in later Unreal versions (they keep only the declarations). Checked in the file: **ALASM** - every RAM page is scanned for record chains: byte `s1` (low 6 bits = record size, high 2 bits = flags; flagged records skipped), `+1` = 16-bit value, the name **reversed** from `+5` to the record end (characters `0-9 A-Z a-z @ $ _`, not ending in a digit), size ≥ 6, the chain ends at a zero byte or at offset `#3E00`, at least 2 records. **XAS** - bank 6 (or `#46` on a Pentagon above 128K) marked by `5` at `+#1FFF` and `+#3FFF`; two lists going down from `#1FFD` and `#3FFD` with a 9-byte stride: a 7-character blank-padded name just below a 16-bit value; a list stops when `ptr[2] < 5` or has bit 7 set. Both bind a value to RAM page 5 / 2 / 0 by its top bits (`#4000` / `#8000` / `#C000`), ignoring the real paging and dropping values below `#4000` |
+| P9 | **ALASM's own sources** (Alone Coder): ALASM 5.09 + STS 7.5 and 5.08 with sources; `alTOKENS.H` holds the tokenizer (`cnv2str`), the detokenizer (`str2txt`) and the keyword tables | [Alone Coder's page](http://alonecoder.nedopc.com/zx/): [ALASM509_STS75.rar](http://alonecoder.nedopc.com/zx/ALASM509_STS75.rar), [ALASM508.rar](http://alonecoder.nedopc.com/zx/ALASM508.rar), [ALASMENG.rar](http://alonecoder.nedopc.com/zx/ALASMENG.rar) (English help); every release on [zxart](https://zxart.ee/prod/155267) | ALASM sources (TR-DOS images) / none stated | the format **as ALASM implements it**: settles the P1 / P2 conflicts (`#96` = `DD` in 5.x, `DEFM` in 4.x; `#9F` = `ELSE` or `(BC)` by position); the page also has many ALASM project sources (PT, ACE, games) used as the corpus | 2007-2011 |
 | P8 | Xpeccy `src/xcore/labels.cpp` | [labels.cpp](https://github.com/samstyle/Xpeccy/blob/master/src/xcore/labels.cpp) | C++ / MIT | reads the sjasmplus / Unreal `PP:AAAA name` form (a line starting with `:` is a CPU address); no ALASM / XAS memory import |
 
 ### 2.3 TR-DOS catalog hints (from P1, to verify on real disks)

@@ -1,0 +1,86 @@
+
+        ORG #8000
+
+        CALL #0D6B
+        LD A,2
+        CALL #1601
+        CALL PRINT
+        DB "TESTING...",#0D,0
+
+        LD A,#BE
+        LD HL,#BF00
+        LD DE,#BF01
+        LD BC,#0100
+        LD (HL),A
+        LDIR
+        LD L,A
+        LD H,A
+        LD (HL),#C3
+        LD HL,INTP
+        LD (#BEBF),HL
+        INC A
+        DI
+        LD I,A
+        IM 2
+        LD B,100
+
+CHI
+        EI
+XXX     LD A,I
+        INC B
+        DJNZ CHI
+
+NOEMUL  CALL PRINT
+        DB "NO 'EI' BUG",#0D,0
+        JR CONT
+
+SAYEMUL CALL PRINT
+        DB "'EI' BUG PRESENT",#0D,0
+
+CONT    EI
+        LD B,100
+PEPOBUG LD A,I
+        CALL PO,SAYPO
+        INC B
+        EI
+        DJNZ PEPOBUG
+
+        CALL PRINT
+        DB "NO 'LD A,I' BUG",#0D,0
+        JR EXIT
+
+SAYPO   CALL PRINT
+        DB "'LD A,I' BUG PRESENT",#0D,0
+
+EXIT    IM 1
+        EI
+        XOR A
+KL      IN A,(#FE)
+        OR #E0
+        INC A
+        JR Z,KL
+        RET
+
+
+
+PRINT   POP HL
+CONP    LD A,(HL)
+        INC HL
+        OR A
+        JR Z,ENDP
+        RST #10
+        JR CONP
+ENDP    JP (HL)
+
+
+INTP    POP DE
+        LD HL,XXX
+        EX AF,AF
+        XOR A
+        SBC HL,DE
+        JP Z,SAYEMUL
+        DEC B
+        EX AF,AF
+        EX DE,HL
+        JP (HL)
+

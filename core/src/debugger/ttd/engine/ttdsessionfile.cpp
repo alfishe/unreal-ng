@@ -163,7 +163,7 @@ struct Range
 
 bool TTDSessionFile::KnownStream(uint16_t id)
 {
-    if (id >= kFrameStreamFirst && id <= kFrameStreamLast)
+    if ((id >= kFrameStreamFirst && id <= kFrameStreamLast) || IsHolderStream(id))
         return true;
     for (const TTDStreamDesc& s : Streams())
         if (s.id == id)
@@ -225,6 +225,15 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
         if (e._streams.IsRegistered(id))
             header.streams.push_back(
                 {static_cast<uint16_t>(kFrameStreamFirst + id), 1, TTDStreamKind::Ancillary, e._streams.Name(id)});
+    for (const TTDHolderStream& h : params.holderStreams)
+    {
+        if (!IsHolderStream(h.id))
+        {
+            error = "holder stream " + std::to_string(h.id) + " is not a holder stream id";
+            return false;
+        }
+        header.streams.push_back({h.id, 1, TTDStreamKind::Ancillary, h.name});
+    }
     {
         TTDByteWriter w;
         w.U16(kTablesVersion);
@@ -642,6 +651,12 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
         job.records.emplace_back(kWriteJournal, std::move(wj.bytes));
     }
 
+    // The holder's own data, whole, with the session's last part
+    if (ok && lastPart && atSessionEnd)
+        for (const TTDHolderStream& h : _params.holderStreams)
+            if (!h.bytes.empty())
+                job.records.emplace_back(h.id, h.bytes);
+
     job.end.firstFrame = head.position.frame;
     job.end.frameCount = static_cast<uint32_t>(e.CpAt(last - 1).position.frame - head.position.frame + 1);
     job.end.dependencies.assign(dependencies.begin(), dependencies.end());
@@ -765,6 +780,17 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
             if (!KnownStream(record.streamId))
                 continue;
             std::vector<uint8_t> bytes;
+            if (IsHolderStream(record.streamId))
+            {
+                // The holder's data: ancillary, a damaged one is left out
+                std::string holderWhy;
+                if (reader.ReadRecord(record, bytes, &holderWhy))
+                    report.holderStreams[record.streamId] = std::move(bytes);
+                else
+                    report.notes.push_back("holder stream " + std::to_string(record.streamId) +
+                                           " is damaged: left out (" + holderWhy + ")");
+                continue;
+            }
             if (!reader.ReadRecord(record, bytes, &why))
             {
                 readOk = false;

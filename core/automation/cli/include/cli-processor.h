@@ -105,6 +105,8 @@ private:
     void HandleRunNCycles(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRtc(const ClientSession& session, const std::vector<std::string>& args);
+    /// ZX-Evo flash ROM: the saved flash (status, save, discard) - cli-processor-romflash.cpp
+    void HandleRomFlash(const ClientSession& session, const std::vector<std::string>& args);
     void HandleIsa(const ClientSession& session, const std::vector<std::string>& args);
     static std::string RtcReportText(EmulatorContext* context);
     static std::string IsaReportText(EmulatorContext* context);
@@ -343,6 +345,11 @@ private:
 
     // Media command handlers (every slot through MediaControl)
     void HandleMedia(const ClientSession& session, const std::vector<std::string>& args);
+    // ZX-bus slots: buses, slots, cards; plug / remove / set applied by a restart (cli-processor-slots.cpp, SlotControl)
+    void HandleSlots(const ClientSession& session, const std::vector<std::string>& args);
+    // ZX-MultiSound and its MIDI synthesizer (cli-processor-multisound.cpp, DeviceState::MultiSound / Midi, MidiControl)
+    void HandleMultiSound(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleMidi(const ClientSession& session, const std::vector<std::string>& args);
     // CD audio of the ATAPI CD drives (cli-processor-cdaudio.cpp, CdAudioControl)
     void HandleCdAudio(const ClientSession& session, const std::vector<std::string>& args);
     void ShowCdAudioHelp(const ClientSession& session);
@@ -416,6 +423,8 @@ private:
                        const std::vector<std::string>& args);
     void HandleTTDLoad(const ClientSession& session, EmulatorContext* context,
                        const std::vector<std::string>& args);
+    void HandleTTDExportClip(const ClientSession& session, EmulatorContext* context,
+                             const std::vector<std::string>& args);
     void HandleTTDFindLast(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
     void HandleTTDPortEvents(const ClientSession& session, EmulatorContext* context,

@@ -1,5 +1,25 @@
 # TTD fixture corpus
 
+Two corpora of the same sessions:
+
+- **`engine/`**: recorded by the engine, the application's recorder since the
+  Phase 5 switch, in the engine's session file format (schema 2). Read by
+  `TimeTravelControllerCorpus_Test`
+  (`core/tests/debugger/ttd/timetravelcontroller_corpus_test.cpp`): each file
+  loads into an instance of its model with the engine as its recorder, every
+  visited checkpoint restores with no issue reported, and the session continues
+  from checkpoint 37 - the 25 checkpoints recorded live restore the machine
+  (CPU, chipset, every device, all of RAM) exactly as the recorded ones did.
+  The per-machine fixtures (TS-Conf, Sprinter) are in this folder too.
+- **this folder and `testdata/machines/*/ttd/`**: recorded by v1, in v1's
+  format (schema 1), the reference for v1's own tests until v1 leaves the
+  application (Phase 5, Step 4). The rest of this file is about them unless it
+  says otherwise.
+
+`record_fixtures.py` asks the instance which recorder it runs (`backend` in
+`/ttd/status`): an engine recording goes to `engine/`. To re-record v1's corpus,
+start the application with `UNREAL_TTD_BACKEND=v1`.
+
 Recorded `.ttd` sessions from real emulator runs. They are read by:
 
 - the C++ test `TTD_Corpus_Test` (`core/tests/debugger/ttd/ttdcorpus_test.cpp`).
@@ -92,9 +112,12 @@ with it.
 3. Validate the files and run the C++ gate:
 
    ```bash
-   for f in testdata/ttd/*.ttd; do tools/verification/ttd-analyzer/run.sh validate "$f"; done
-   ./cmake-build-agent-release/bin/core-tests --gtest_filter='TTD_Corpus_Test.*'
+   for f in testdata/ttd/*.ttd testdata/ttd/engine/*.ttd; do tools/verification/ttd-analyzer/run.sh validate "$f"; done
+   ./cmake-build-agent-release/bin/core-tests --gtest_filter='TTD_Corpus_Test.*:TimeTravelControllerCorpus_Test.*'
    ```
+
+   An engine recording's file is not byte-identical to the previous one (its
+   header carries a fresh session id and the creation time); its content is.
 
 The script can run from any directory. It resolves relative paths from the
 project root and passes absolute paths to the emulator, so the emulator must
@@ -171,6 +194,23 @@ write journal has no checksum of its own, so a corrupt zstd frame is caught
 but a flipped byte that still decodes is not.
 
 ## Status
+
+2026-10-05: the engine corpus re-recorded after master's ZX-bus slots (the slot set is in the engine's configuration
+fingerprint). `record_fixtures.py` plugs the General Sound card into a ZX-bus slot when the shipped config fits none;
+`sprinter_boot` has no ZX-bus and is recorded without a GS card, as the Sprinter now ships.
+
+2026-10-05: the engine corpus re-recorded: the controller's own streams moved to the ids the Phase 4 stream table
+names (8 coverage, 12 bookmarks, 17 facts; 0x02xx is reserved for branches).
+
+2026-10-05: the engine corpus (`engine/`, all seven fixtures) recorded for the first time, by the application on the
+engine after the Phase 5 switch; 3 to 7 times smaller than the v1 files of the same sessions.
+
+2026-10-04 (zx-bus-slots, owner decision): the shipped 48K / 128K / +2 / +2A / +3, Profi and Sprinter configs fit no
+General Sound any more. No fixture was re-recorded: `sprinter_boot` (Sprinter) and `greenberet-load` (128K) were
+recorded with the classic GS, and the tests that load them now fit the recorded card at creation
+(`GeneralSoundFitScope`, `core/tests/_helpers/soundcardscope.h`) instead of switching the shipped card. A re-record
+from the stock app needs the card in the instance's `[SLOTS]` first: the recorders' `switch_personality` changes a
+fitted card but cannot fill an empty slot (until SL-6).
 
 2026-10-04: the whole corpus (all seven fixtures) re-recorded after `ttd-engine` landed on master: the engine's
 peripheral ids moved to 54-57 (Smuc, EvoAvrVolatile, KeyboardMatrix, RzxPlayback; master kept 44-53), and master's

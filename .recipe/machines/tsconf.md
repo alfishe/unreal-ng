@@ -85,6 +85,18 @@ menu → TS-Conf; opening or dropping an `.spg` switches to TS-Conf.
 
 ### Wild Commander (the TS-Conf shell) from the SD card
 
+**Out of the box:** the shipped `ts-conf` config (`TSL` and `TSL-VDAC2` both use it) starts with a ready SD card in
+`sd.zc`: Wild Commander 1.11i and a folder `zifi/` (`zifi.spg` + `zifi.ini`), and with a ZiFi board
+(`[NETWORK] ZiFi=ZIFI-NATIVE,S3`), so a fresh instance boots to WC and `zifi.spg` runs from it
+([demo](../peripherals/network.md#demo-the-zifi-browser-on-the-real-internet)). The card is `data/configs/ts-conf/wc-zifi.img.7z`
+(427 KB); the build unpacks it next to the copied config (`cmake/ExtractConfigImages.cmake`), so `bin/configs/ts-conf/wc-zifi.img`
+(35 MB: the smallest FAT32, 512-byte clusters, volume label `UNREAL NG`) exists only in build output and packages. `[ZC] SDWrite=session`: writes live until exit and the image stays as
+shipped. The card holds WC 1.11i (`boot.$C`, `WC/`), `zifi/zifi.spg` (ZiFi client 0.733) and `zifi.ini` (SSID `UnrealNG`). To
+rebuild the archive: copy the files out of the old image (`mcopy -s -m -n ::* dir/`), then
+`mformat -i wc-zifi.img -F -T 69000 -h 255 -s 63 -c 1 -v "UNREAL NG" ::` (69000 sectors is just above the 65525 clusters FAT32
+needs), `mcopy -s -m -n * ::/`, and `7zz a -t7z -mx=9 wc-zifi.img.7z wc-zifi.img`.
+Other card or none: `[ZC] SDCARD=` or the media commands below.
+
 ```bash
 # The packages and ready SD images are untracked test data:
 #   testdata/machines/tsconf/wildcommander/ (README there)
@@ -155,6 +167,48 @@ with AY/TurboSound tracks. `Z80::NotifyCPUFrequencyChanged` classifies this at
 the source (see its comment in `core/src/emulator/cpu/z80.cpp`) so a UI shows
 a stable "lo<->hi" band instead of chasing every flip.
 
+### Flashing the ROM (`MEM_CONFIG.W0_WE`)
+
+The ROM is the board's 29F040 flash, and a program can write it: with `MEM_CONFIG = #06` (normal mode, ROM in
+window 0, `W0_WE`) the window-0 writes are flash commands. Real flashers: Wild Commander's `ROM_PROG.WMF` (Enter on a
+64 or 512 KB `.ROM` file) and NedoOS `evoflash.com`. The chip answers status while it works (DQ6 toggles on every
+read), its ID is `#01 / #A4` (AMD Am29F040B), a byte takes 10 us, a 64 KB sector 1 s. The flashed ROM is **saved** to a file
+of its own, `zxevo-flash-tsconf-<SHA-256 of the ROM image>.rom` in the settings folder (where the NeoGS card keeps its
+reprogrammed flash), about a second after the last program / erase and when the instance closes, and laid over the ROM
+image when a TS-Conf is created again - the shipped `zxevo.rom` is never written. A new ROM image does not take an
+old flash (the hash differs). Status and discard on every automation surface; discard brings the shipped image back
+at the next reset:
+
+```bash
+curl -s "$BASE/emulator/$EMU/memory/rom/flash" | jq '{file, file_exists, unsaved, loaded_from_file}'
+curl -s -X POST "$BASE/emulator/$EMU/memory/rom/flash" -H 'Content-Type: application/json' -d '{"action":"save"}'
+curl -s -X POST "$BASE/emulator/$EMU/memory/rom/flash" -H 'Content-Type: application/json' -d '{"action":"discard"}'
+# CLI: romflash [status|save|discard]; MCP: emulator_manage rom_flash_status|rom_flash_save|rom_flash_discard;
+# Lua / Python: rom_flash_state(), rom_flash_save(), rom_flash_discard()
+```
+
+Save and discard run on the machine's thread: on a paused instance they answer `queued` and happen when it runs
+again (as the NeoGS `flash_save`). Verified 2026-10-06 on a running `unreal-qt`: the byte programmed by the program
+above, `unsaved` true, 60 frames later the file written; `romflash discard` removed it. Design and sources:
+[docs/inprogress/2026-09-27-tsconf/tdd-evo-flash.md](../../docs/inprogress/2026-09-27-tsconf/tdd-evo-flash.md).
+
+Check it from automation - a program in RAM programs one byte of ROM page 8 (the CPU must do the writes: tool writes
+to ROM are not flash cycles). Verified 2026-10-05 on a fresh `TSL` instance after 50 frames of TS-BIOS:
+
+```bash
+# ROM page 8, offset #0100 before (the byte to change must have a bit set: programming only clears bits)
+curl -s "$BASE/emulator/$EMU/memory/page/rom/8?offset=256&length=1" | jq '.data[0]'      # zxevo.rom: 79
+curl -s -X POST "$BASE/emulator/$EMU/ports/out" -H 'Content-Type: application/json' -d '{"port":"0x12AF","value":"0x02"}'  # PAGE2 = RAM 2
+curl -s -X POST "$BASE/emulator/$EMU/assemble" -H 'Content-Type: application/json' -d '{"address":"0x8000","write":true,
+  "code":"DI\nLD BC,#21AF\nLD A,#06\nOUT (C),A\nLD B,#10\nXOR A\nOUT (C),A\nLD A,#AA\nLD (#0555),A\nLD A,#55\nLD (#02AA),A\nLD A,#A0\nLD (#0555),A\nLD A,8\nOUT (C),A\nXOR A\nLD (#0100),A\nPOLL LD A,(#0100)\nLD D,A\nLD A,(#0100)\nXOR D\nBIT 6,A\nJR NZ,POLL\nLD B,#21\nLD A,#04\nOUT (C),A\nIDLE JR IDLE"}' | jq '{success, size}'
+curl -s -X PUT "$BASE/emulator/$EMU/registers/pc" -H 'Content-Type: application/json' -d '{"value":"0x8000"}'
+curl -s -X POST "$BASE/emulator/$EMU/run_frames" -H 'Content-Type: application/json' -d '{"count":1}' | jq .pc  # IDLE
+curl -s "$BASE/emulator/$EMU/memory/page/rom/8?offset=256&length=1" | jq '.data[0]'      # now 0
+```
+
+The same writes with `MEM_CONFIG = #04` (no `W0_WE`) leave the ROM unchanged. TTD records the writes (blob
+`EvoFlash`, engine region `evo.flash`); seeking back before them restores the old bytes.
+
 ### What works / what doesn't
 
 | Area | State |
@@ -165,14 +219,16 @@ a stable "lo<->hi" band instead of chasing every flip.
 | Video: ZX, 16C, 256C, TXT in the four geometries, X/Y offsets, line-latched registers, CRAM colors (no-VDAC curve), 720x288 framebuffer | implemented |
 | TSU: tile layers with the prefetch ring, sprites (layers, LEAP, 85 cap), mixing (NOTSU / NOGFX / GFXOVR, 360-wide window) | implemented |
 | DMA: RAM copy, BLT1, fill, CRAM, SFILE, SPI, IDE; the per-line DRAM budget (video, TSU, CPU reads); TSU starvation | implemented (CPU writes are not counted in the budget) |
-| SD card (`#57` / `#77`, slot `sd.zc`), Nemo IDE (`[HDD] Scheme=NEMO-DIVIDE`, `IdeStall`), Gluk CMOS | implemented |
+| SD card (`#57` / `#77`, slot `sd.zc`), Nemo IDE (`[HDD] Scheme=NEMO-DIVIDE`, `IdeStall`), Gluk CMOS (a `#BFF7` access waits for the AVR like `#xxEF`, inside vdos too: [cmos-rtc.md](../peripherals/cmos-rtc.md)) | implemented |
+| ROM flash writes (`W0_WE` with ROM in window 0: program, sector / chip erase, ID, status polling) | implemented; saved per machine (`zxevo-flash-tsconf-<hash>.rom` in the settings folder), loaded at the next start; `romflash discard` |
 | SPG programs (`.spg` v1.0 / v1.1) | implemented (pager / resident fields not used); opening one on another model switches to TSL on every surface |
 | Sound: AY / TurboSound, one 8-bit DAC shared by Covox `#FB` and the `#FE` beeper bit | implemented |
+| ZX-MultiSound card in a ZX-bus slot (the socketed YM2149 comes out; not in the shipped config): [multisound.md](../peripherals/multisound.md), [docs/features/multisound.md](../../docs/features/multisound.md) | implemented (TSFM, SAA via VGMPLAY, MIDI via GSPLAYER checked) |
 | Wild Commander from SD or the Nemo IDE master (TS-BIOS "BD boot.$c", Boot Device) | works (tests BOOT-3, BOOT-4); WC's panels use the drive in `WC/wc.ini` (`DRV=0` SD, `1` IDE master) |
 | PS/2 keyboard (the AVR's scan code log; Wild Commander reads only this) | implemented (host keys and automation typing) |
 | TTD: all TS-Conf state in blob 16, SD card 15, CMOS 18, IDE 17; DMA writes tracked | implemented (corpus fixture `testdata/machines/tsconf/ttd/sprites.ttd`) |
 | 14 MHz timing: DRAM waits on uncached reads / cache misses (zmem.v phase logic) and the DRAM arbiter (video refusing the CPU in the fetch window), 8-fclk AY / VG93 I/O stall; DMA word costs; DMA CRAM writes land at their dot | implemented (phase 8) |
-| TSU timing: line L drawn at ts_start of line L - 1 with that line's latches (a mid-line write acts from the next line or the one after) | implemented |
+| TSU timing: line L drawn from ts_start of line L - 1 with that line's latches; on a busy line the objects after line_start of L take L's latches, as the RTL (a mid-line write acts from the next line or the one after) | implemented |
 | Firmware build: `[MISC] TS_VDAC` = NONE (default: STATUS VDAC_VER 0, PWM colours) or 3BIT / 4BIT / 5BIT, `TS_VDAC2=1` (VDAC curves, BLT2; the `TSL-VDAC2` variant model sets it with the card, see [tsconf-vdac2.md](tsconf-vdac2.md)); `/state/tsconf` `build{}` | implemented |
 | Video debug mapper (`/video/layout`, `/video/pixel`, `/video/address`, `/video/text`; CLI `video ...`, Lua / Python `video_*`) | graphics layer (layer 0) and the TSU (layer 1 "tsu": the object, its SFILE / tilemap words, graphics byte, CRAM) in 14 MHz pixels; `/video/address?space=sprite_ram|palette` |
 | TS-specific Qt docks | not yet (the model-first debugger) |

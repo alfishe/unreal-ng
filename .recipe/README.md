@@ -167,17 +167,19 @@ call.
 | [machines/spectrum.md](machines/spectrum.md) | 48K/128k/PLUS3: the real-Sinclair boundary, AY/FDC per model, clone-vs-Sinclair differential debugging |
 | [machines/zxpoly.md](machines/zxpoly.md) | ZX-Poly: four synchronized instances of one model, `.zxp` / `.prom` / multiloader disk, 16-colour and 512x384 modes, group status and lockstep check |
 | [machines/sprinter-software.md](machines/sprinter-software.md) | Sprinter Sp2000: run software the shortest way - a native `.EXE` from Flex Navigator's command line, a Spectrum TRD in the SP (21 MHz) and P128 (3.5 MHz) launcher modes from the hard disk, the Scorpion SC256 mode from a floppy; TTD first |
+| [machines/slots.md](machines/slots.md) | ZX-bus slots on every machine: the slot report, the card catalog, plan a plug (what it removes), apply it (a machine restart, new id), options, remove, the GS personality, create with `"slots"`, the model switch carrying the cards |
 | [machines/sprinter.md](machines/sprinter.md) | Sprinter Sp2000 (`SPRINTER`): BIOS selection at create / runtime and full / fast start, DSS from a 1.44 MB floppy, typing DSS commands, Spectrum mode + TR-DOS, `state sprinter` (PLD, windows, accelerator, waits, Z84C15), video modes per square, palettes, video RAM (`vram` region), the video change log, digest / raw framebuffer, the port table and its codes, screen text |
 
 ### `peripherals/` — sound cards and DACs
 
 | Recipe | What it covers |
 |:--|:--|
-| [peripherals/generalsound.md](peripherals/generalsound.md) | GS card: `GSType` Z80 / LW / NGS, runtime personality switch, `#B3/#BB/#33` mailbox, firmware ROMs, `/control/audio/gs`, state and port trace, capture proof |
+| [peripherals/generalsound.md](peripherals/generalsound.md) | GS card: `gs` / `gs-lw` / `neogs` slot cards (legacy `GSType`), personality switch (a slot change, machine restart), `#B3/#BB/#33` mailbox, firmware ROMs, `/control/audio/gs`, state and port trace, capture proof |
+| [peripherals/multisound.md](peripherals/multisound.md) | ZX-MultiSound card: fit it in the slots, a TSFM tune, a SAA tone and MIDI notes from a test program, `audio_multisound` / `audio_midi` state, capture by source (`ms_ssg1` / `ms_ssg2` / `ms_fm1` / `ms_fm2` per YM2203 chip, `ms_saa`, `ms_pcm`, `ms_midi`), MIDI panic, the GM bank |
 | [peripherals/moonsound.md](peripherals/moonsound.md) | OPL4 card: `#C4`-`#C7` FM banks, `#7E/#7F` wave regs, YRW801 ROM, per-model `MoonSound=` defaults, state and capture sources, known issues |
-| [peripherals/neogs.md](peripherals/neogs.md) | NeoGS card (`GSType=NGS`, the shipped default): SD slot `sd.ngs`, flash save, stereo mode, personality switch, MP3 path |
+| [peripherals/neogs.md](peripherals/neogs.md) | NeoGS card (`neogs` in `[SLOTS]`, shipped on the clones and the Sprinter; not on the Sinclair or Profi configs): SD slot `sd.ngs`, flash save, stereo mode, personality switch, MP3 path |
 | [peripherals/audio-mixer-and-capture.md](peripherals/audio-mixer-and-capture.md) | Per-device mixer (gain, mute, solo), audio capture by source, analyzing a capture |
-| [peripherals/turbosound.md](peripherals/turbosound.md) | TurboSound slot: `AY` pair vs TSFM (YM2203), `/state/audio/ay`+`/fm` endpoints, register decode math, loudness calibration |
+| [peripherals/turbosound.md](peripherals/turbosound.md) | AY socket (`ay-socket`): `ts` AY pair vs `tsfm` TSFM (YM2203), `/state/audio/ay`+`/fm` endpoints, register decode math, loudness calibration |
 | [peripherals/covox-sounddrive.md](peripherals/covox-sounddrive.md) | CovoxFB/CovoxDD/SoundDrive toggles, quad-DAC ports `#F1-#FB`, mono compat mode, capture+trace verification |
 | [peripherals/network.md](peripherals/network.md) | Network adapters: ZXNETUSB (W5300) card, the virtual network (DHCP, DNS, gateway, guest servers), NedoOS setup, state on every interface, what hangs without a card |
 | [peripherals/cmos-rtc.md](peripherals/cmos-rtc.md) | CMOS clock on ATM3 / Profi / Scorpion+SMUC: report, cell read / write on every interface, setting the time, battery files |
@@ -217,8 +219,10 @@ call.
 
 1. **One emulator can own port 8090.** Kill stale instances before starting a
    fresh one (see [setup](_common/setup.md)).
-2. **Scrubbing during TTD recording is a 409** — always `POST /ttd/stop`
-   before `seek`/`step-back`/`find-last`.
+2. **Scrubbing during TTD recording pauses it** (`backend: engine`) — the
+   state becomes `detached` with `recording_paused: true`; `POST /ttd/resume`
+   at the paused point continues, `POST /ttd/stop` ends it. On
+   `backend: v1` it is a 409: `POST /ttd/stop` first.
 3. **Disk autostart is drive A only** — a hard error elsewhere, never silent.
 4. **Port trace needs its runtime feature on** —
    `PUT /feature/porttrace {"enabled": true}` (or let the capture tools do it).

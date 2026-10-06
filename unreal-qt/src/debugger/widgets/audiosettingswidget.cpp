@@ -215,7 +215,7 @@ void AudioSettingsWidget::createUI()
     _fmTrimSlider->setRange(-24, 24);  // half-dB units: -12.0 .. +12.0 dB
     _fmTrimSlider->setValue(0);
     _fmTrimSlider->setToolTip("FM loudness relative to the hardware-derived default (0 dB)\n"
-                              "Applies live to both YM2203 chips");
+                              "Applies live to every YM2203 FM: the TurboSound FM and the ZX-MultiSound");
     fmTrimRow->addWidget(_fmTrimSlider, 1);
     _fmTrimLabel = new QLabel("+0.0 dB", _tsfmControls);
     _fmTrimLabel->setMinimumWidth(56);
@@ -287,8 +287,8 @@ void AudioSettingsWidget::createUI()
     _gsCardCombo->addItem("General Sound (classic)", static_cast<int>(GSTypeKind::Z80));
     _gsCardCombo->addItem("General Sound (lightweight player)", static_cast<int>(GSTypeKind::LW));
     _gsCardCombo->addItem("NeoGS", static_cast<int>(GSTypeKind::NGS));
-    _gsCardCombo->setToolTip("The card in the GS slot. Switched at the next frame; "
-                             "the host mailbox survives and an uploaded module is replayed");
+    _gsCardCombo->setToolTip("The card in the GS slot. Another card is a slot change: the machine restarts with it "
+                             "(its state is lost; disks and tapes stay in) - see Machine > Slots");
     cardRow->addWidget(_gsCardCombo, 1);
     gsLayout->addLayout(cardRow);
 
@@ -588,7 +588,16 @@ void AudioSettingsWidget::refreshFromContext()
         _ayGroup->setEnabled(tsDevice != nullptr);
         _chip1SectionLabel->setText(isFm ? "SSG 1" : "AY1");
         _chip2SectionLabel->setText(isFm ? "SSG 2" : "AY2");
-        _tsfmControls->setVisible(isFm);
+        // FM trim: one calibration for every YM2203 FM in the machine - the TurboSound FM in the socket and a
+        // ZX-MultiSound in a slot ([SOUND] TSFM_FmTrimDb on both)
+        double fmTrim = 0.0;
+        const bool hasFmTrim = sm->fmTrimDb(fmTrim);
+        _tsfmControls->setVisible(hasFmTrim);
+        if (hasFmTrim)
+        {
+            _fmTrimSlider->setValue(static_cast<int>(std::lround(fmTrim * 2.0)));
+            _fmTrimLabel->setText(QString("%1%2 dB").arg(fmTrim >= 0 ? "+" : "").arg(fmTrim, 0, 'f', 1));
+        }
         _chipModelCombo->setEnabled(!isFm);
         _chipModelCombo->setToolTip(isFm
                                         ? "Locked: the TSFM board is 2 x YM2203\n"
@@ -604,9 +613,6 @@ void AudioSettingsWidget::refreshFromContext()
                 _chipModelCombo->addItem("YM2203");
             }
             _chipModelCombo->setCurrentIndex(0);
-            const double trim = tsDevice->fmTrimDb();
-            _fmTrimSlider->setValue(static_cast<int>(std::lround(trim * 2.0)));
-            _fmTrimLabel->setText(QString("%1%2 dB").arg(trim >= 0 ? "+" : "").arg(trim, 0, 'f', 1));
         }
         else if (_chipModelCombo->count() != 2)
         {
@@ -855,10 +861,10 @@ void AudioSettingsWidget::onFmTrimChanged(int value)
     if (!_context || !_context->pSoundManager)
         return;
 
-    // Half-dB slider units -> dB, applied live to both YM2203 chips (§7.1)
+    // Half-dB slider units -> dB, applied live to every YM2203 FM: the TurboSound FM's two chips and a ZX-MultiSound's
+    // (§7.1; the same [SOUND] TSFM_FmTrimDb calibration)
     const double db = value / 2.0;
-    if (ITurboSoundDevice* tsDevice = _context->pSoundManager->getTurboSound())
-        tsDevice->setFmTrimDb(db);
+    _context->pSoundManager->setFmTrimDb(db);
     _fmTrimLabel->setText(QString("%1%2 dB").arg(db >= 0 ? "+" : "").arg(db, 0, 'f', 1));
 }
 
@@ -1122,12 +1128,15 @@ void AudioSettingsWidget::onGSCardChanged(int index)
     const auto target = static_cast<GSTypeKind>(_gsCardCombo->itemData(index).toInt());
     if (target == _shownGSSlot.kind)
         return;
-    if (_context->pSoundManager->requestGeneralSoundCardSwitch(target))
+    // The combo shows the card in the slot until the change is made: a slot change (owner decision Q10) that
+    // restarts the machine after a confirmation; the new machine's card shows when the panel follows it
     {
-        // Applied at the next frame boundary; the meter poll shows the new card
-        _gsStatusLabel->setText("Switching at the next frame (while paused: when execution continues)");
-        _gsStatusLabel->setVisible(true);
+        const QSignalBlocker blocker(_gsCardCombo);
+        const int shown = _gsCardCombo->findData(static_cast<int>(_shownGSSlot.kind));
+        if (shown >= 0)
+            _gsCardCombo->setCurrentIndex(shown);
     }
+    emit generalSoundCardRequested(static_cast<int>(target));
 }
 
 void AudioSettingsWidget::onNeoGSInsertSd()

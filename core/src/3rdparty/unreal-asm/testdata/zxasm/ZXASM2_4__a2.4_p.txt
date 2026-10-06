@@ -1,0 +1,18 @@
+
+; ZX Turbo Assembler  ver.2.4
+;_______ Project File ________
+
+        ORG 25200
+
+        include "a2.4_1"
+        include "a2.4_2"
+        include "a2.4_3"
+        include "a2.4_4"
+
+Font6   insert "Bold.fnt"
+
+Stack   DS 256
+StkTop  DW GenError
+
+END     DB 13,13,0
+

@@ -34,7 +34,9 @@ One set of names on every surface (WebAPI, CLI `mixer`/`audiocapture`, Lua
 `beeper`, `ay1`, `ay2`, `fm1`, `fm2`, `covox` (the Covox / SoundDrive, or the
 machine's own DAC: the Sprinter's Covox-Blaster), `gs`, `gs_mp3`,
 `moonsound_fm`, `moonsound_pcm`, `cd0`..`cd3` (the CD drive on IDE unit
-0..3). Only the devices the machine has are listed; naming one that is not
+0..3), and a ZX-MultiSound's `ms_ssg1`, `ms_ssg2`, `ms_fm1`, `ms_fm2` (its
+YM2203 pair per chip, like the TurboSound FM's `ay1` / `ay2` / `fm1` / `fm2`),
+`ms_saa`, `ms_pcm` (the GS + SounDrive DACs), `ms_midi`. Only the devices the machine has are listed; naming one that is not
 fitted is a `400` whose text lists the fitted keys.
 
 ## MCP (preferred)

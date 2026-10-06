@@ -105,6 +105,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"memory", &CLIProcessor::HandleMemory},
                         {"rtc", &CLIProcessor::HandleRtc},   // CMOS clock: report, read / write cells
                         {"cmos", &CLIProcessor::HandleRtc},
+                        {"romflash", &CLIProcessor::HandleRomFlash},  // ZX-Evo flash ROM: the saved flash
                         {"isa", &CLIProcessor::HandleIsa},   // ISA slots (Sprinter): report, cycles
                         {"network", &CLIProcessor::HandleNetwork},  // Network adapters: card, sockets, virtual network
                         {"net", &CLIProcessor::HandleNetwork},
@@ -212,6 +213,13 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // Media: every slot (floppy, SD, later tape / IDE / CD)
                         {"media", &CLIProcessor::HandleMedia},
+
+                        // ZX-bus slots: buses, slots, cards (plug / remove / set restart the machine)
+                        {"slots", &CLIProcessor::HandleSlots},
+
+                        // ZX-MultiSound card and its MIDI synthesizer
+                        {"multisound", &CLIProcessor::HandleMultiSound},
+                        {"midi", &CLIProcessor::HandleMidi},
 
                         // CD audio of the ATAPI CD drives
                         {"cdaudio", &CLIProcessor::HandleCdAudio},
@@ -646,6 +654,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  rtc | cmos | state rtc       - Time, registers A-D, alarms, every cell" << NEWLINE;
     oss << "  rtc read <start> [count]     - Read cells as the guest reads them (no side effects)" << NEWLINE;
     oss << "  rtc write <start> <b> [b..]  - Write cells like the guest (time registers set the clock)" << NEWLINE;
+    oss << "  romflash [status]            - ZX-Evo (TS-Conf, ATM3) flash ROM: the saved flash file, unsaved changes" << NEWLINE;
+    oss << "  romflash save | discard      - Write the flash file now / delete it (shipped ROM back at the next reset)" << NEWLINE;
     oss << "  isa | state isa              - ISA slots (Sprinter): #9FBD latch, window 3, cards, counters" << NEWLINE;
     oss << "  isa io|mem <slot> <addr> [v] - An ISA cycle (read, or write v); isa peek, isa reset, isa latch" << NEWLINE;
     oss << NEWLINE;
@@ -674,7 +684,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  gsporttrace <start|stop|pause|resume|clear|status|counters|events [n]>" << NEWLINE;
     oss << "                                - GS activity counters + opt-in port/DAC event trace" << NEWLINE;
     oss << "  gs <reset|reset_card|nmi|send_command <byte>|send_data <byte>|read_status|read_data" << NEWLINE;
-    oss << "      |switch_personality <z80|lle|lw|lightweight>|dump_module [path]>" << NEWLINE;
+    oss << "      |switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]>" << NEWLINE;
+    oss << "                                  (switch_personality replaces the card in the GS slot: a machine restart)" << NEWLINE;
     oss << "                                - GS card control (same actions as WebAPI /control/audio/gs)" << NEWLINE;
     oss << NEWLINE;
     oss << "Emulator Settings:" << NEWLINE;
@@ -735,6 +746,18 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  media insert <slot|auto> <path> - Insert a file or folder (A, B, sd, fdd.b, ...)" << NEWLINE;
     oss << "  media eject <slot> [--save|--export <path>|--discard]" << NEWLINE;
     oss << "  media help             - All verbs and options" << NEWLINE;
+    oss << NEWLINE;
+    oss << "ZX-bus Slots (cards on the machine's buses; a change restarts the machine):" << NEWLINE;
+    oss << "  slots [list]           - Buses, slots, fitted cards, built-in devices" << NEWLINE;
+    oss << "  slots catalog          - Every card, its options and how it fits this machine" << NEWLINE;
+    oss << "  slots plug <slot> <card> [opt=val ..] [--replace] [--dry-run] - e.g. plug zxbus.next multisound" << NEWLINE;
+    oss << "  slots remove <slot> | set <slot> opt=val .. | gs <gs|gs-lw|neogs> | matrix [table]" << NEWLINE;
+    oss << "  slots help             - All verbs and flags" << NEWLINE;
+    oss << NEWLINE;
+    oss << "ZX-MultiSound and MIDI:" << NEWLINE;
+    oss << "  multisound [--full|--json] - The card: options, CPLD, YM2203 pair, SAA1099, GS, DACs, MIDI" << NEWLINE;
+    oss << "  midi [--json]          - MIDI line, bank, 16 parts (program, volume, notes sounding)" << NEWLINE;
+    oss << "  midi panic             - Every voice of the synthesizer stops" << NEWLINE;
     oss << NEWLINE;
     oss << "CD Audio (ATAPI CD drives):" << NEWLINE;
     oss << "  cdaudio [status]       - Disc, tracks, audio status, head, volume of every CD drive" << NEWLINE;

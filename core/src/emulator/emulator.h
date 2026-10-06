@@ -104,6 +104,7 @@ protected:
     uint32_t _preferredRamSize = 0;
     std::function<void(CONFIG&)> _configOverride;
     std::string _customConfigPath;  // Optional custom config file path
+    std::string _initError;         // why Init() refused the configuration ("" for other failures)
 
     Config* _config = nullptr;
     Core* _core = nullptr;
@@ -290,6 +291,12 @@ public:
     {
         _configOverride = std::move(configOverride);
     }
+    /// The override this instance was created with (empty when none): a restart of the same machine with another
+    /// slot set (SlotChange) applies it again, so a machine variant's board or a create-time option survives
+    const std::function<void(CONFIG&)>& GetConfigOverride() const
+    {
+        return _configOverride;
+    }
 
     /// Set a custom config file path. Must be called before Init().
     /// If set, this path is used instead of the default config search.
@@ -300,6 +307,18 @@ public:
 
     [[nodiscard]] bool Init();
     void Release();
+    /// The configuration loader of this instance (what the INI said beyond CONFIG: the media set, [MIDI] Bank=);
+    /// nullptr before Init
+    const Config* GetConfigLoader() const
+    {
+        return _config;
+    }
+    /// Why Init() refused the machine's configuration (the slot set's conflicts, ZX-bus slots Q8); "" when it did
+    /// not, or failed for another reason
+    const std::string& GetInitError() const
+    {
+        return _initError;
+    }
 
     /// A hidden member of a multi-instance machine (a ZX-Poly slave): left out
     /// of instance listings, index lookup and "most recent" selection, but
@@ -460,6 +479,20 @@ public:
     rzx::RzxSession* LoadedRzxSession();
     /// `ext` (no dot, any case) is an RZX recording
     static bool IsRzxExtension(const std::string& ext);
+
+    /// Which time-travel implementation records and replays on instances
+    /// created from now on (Phase 5): the engine's controller (the default) or
+    /// v1's manager. Both objects exist on every instance; the selected one is
+    /// what the core (hooks, write sink) and the verbs (TTDControl) drive. The
+    /// core-tests binary selects V1 (v1's own tests, the reference); tests of
+    /// the engine select it per test
+    enum class TimeTravelBackend : uint8_t
+    {
+        Engine,
+        V1
+    };
+    static void SetDefaultTimeTravelBackend(TimeTravelBackend backend);
+    static TimeTravelBackend DefaultTimeTravelBackend();
     bool SaveSnapshot(const std::string& path);
     /// A tape file (any TapeLoaderRegistry format) or a folder into the tape
     /// slot, at once; the deck stops and plays the new tape from its start

@@ -26,7 +26,7 @@ inspect_state {"aspects":["ttd"]}                              # status + positi
 time_travel   {"action":"stop"}                                # history retained → idle
 time_travel   {"action":"invalidate","reason":"next scenario"} # drop history
 
-# navigate (refused while recording — stop first)
+# navigate (while recording on the engine this pauses the recording; v1 refuses it - stop first)
 time_travel {"action":"position"}
 time_travel {"action":"seek","frame":12000}                    # optional "tinframe"
 time_travel {"action":"step_back_frame"}
@@ -135,9 +135,13 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/history-limit" \
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/resume" | jq '.state'
 ```
 
-The invariant to respect: **scrub only while stopped/detached**. Seek,
-step, find-last and reverse-* during `recording` return `409 Conflict` with
-an explanation — the API guards the timeline for you.
+Seek, step, find-last and reverse-* during `recording` pause the recording
+(`backend: engine`): everything up to that instant is kept, the state is
+`detached` and `/ttd/status` says `recording_paused: true`. Resume at the
+paused point (`POST /ttd/resume` while there, or seek back to it first)
+continues the same recording; running the machine forward through it
+continues it too; `POST /ttd/stop` ends it. On `backend: v1` these return
+`409 Conflict` - stop first.
 
 ### Traveling
 
@@ -147,7 +151,9 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/position" | jq '.'
 # → {"current": {"frame": 12345, "tinframe": 0},
 #    "session_end": {"frame": 12402, "tinframe": 0}, "state": "detached"}
 
-# Seek to an absolute point (frame + optional intra-frame t-state)
+# Seek to an absolute point (frame + optional intra-frame t-state). A frame
+# alone is the frame's end on the engine: arrived_at {frame, <its length>},
+# the state and picture of {frame+1, 0}; "tinframe": 0 is the frame's start
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" \
      -H 'Content-Type: application/json' \
      -d '{"frame": 12000}' | jq '{reached, arrived_at, halt_reason}'
@@ -167,7 +173,11 @@ replay barrier — tape transport command, WD1793 sector/track write, or a
 memory edit made by a tool (WebAPI, CLI, Lua, Python, DeZog) while
 recording; the response carries `blocking_marker`, and
 `GET /ttd/markers` lists them all), `out_of_range`. Keyboard and mouse input
-are journaled and replayed, so they are not barriers.
+are journaled and replayed, so they are not barriers. On the engine
+(`GET /ttd/status` -> `backend: "engine"`, the default) tape commands, disk
+writes and tool memory / register edits are replayed too and never block a
+seek; only v1 stops at them. A seek before the earliest kept position
+answers `out_of_range` with `earliest` (also in `GET /ttd/status`).
 
 Every scrub pauses the emulator first and leaves it paused at the new
 position; the screen/UI repaint automatically. To continue live execution
@@ -232,7 +242,8 @@ curl -s "$BASE/ttd/file-info?path=scratch/session-001.ttd" \
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/port-events" -H 'Content-Type: application/json' \
      -d '{"event":"key","arg":"enter","newest":true,"limit":3}' | jq -c '.hits[] | {frame, tinframe, port, value, pc}'
 
-# Lossless frame clip, written inside the core (one call instead of seek + capture per frame)
+# Lossless frame clip, written inside the core (one call instead of seek + capture per frame;
+# MCP time_travel "export_clip")
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/export-clip" -H 'Content-Type: application/json' \
      -d '{"from":100,"to":200,"path":"scratch/clip1"}' | jq '{ok, frames, bytes, planeb, width, height, seconds}'
 ```
@@ -248,7 +259,9 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/export-clip" -H 'Content-Type: appli
   `pc`, plus `ay_register` for AY events).
 - `export-clip` takes `from`, `to` (frames), `path` (an absolute directory, as seen by the emulator process) and
   optional `chunk` (frames per chunk). It is synchronous, pauses the emulator, and is refused while recording.
-  There is no dedicated MCP action: use `invoke_api`.
+  The same export on the other surfaces: MCP `time_travel` action `export_clip` (`from_frame`, `to_frame`,
+  `path`, `chunk`), CLI `ttd export-clip <from> <to> <dir> [--chunk N]`, Lua `ttd_export_clip(from, to, dir)`,
+  Python `emu.ttd_export_clip(from_frame, to_frame, path)`.
 
 ### Coverage heatmap (when did my code run?)
 
@@ -270,20 +283,31 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   there until you delete it. Startup cleanup only removes crashed leftovers
   after 7 days; a script that forgets to clean fills the disk (about 2 GB
   per hour of heavy content).
-- **409 on scrub** → you're still recording; `POST /ttd/stop` first.
+- **409 on scrub** → `backend: v1` and still recording; `POST /ttd/stop` first
+  (the engine pauses the recording instead, `recording_paused: true`).
 - **`seek` beyond `current_end_frame`** → `halt_reason: "out_of_range"`,
   machine stays where it was.
 - **Memory budget**: development mode costs ~64 MB journal + page store;
   long captures grow — check `page_store_used_bytes` and dump+invalidate
   between scenarios.
-- **Markers stop backward replay** by design (external inputs can't be
-  un-happened); list them with `GET /ttd/markers` before wondering why a
-  seek halted early.
-- **Loads wipe the session.** Snapshot load, tape load, disk load/create,
-  ROM reload and a host speed change on a stopped session drop the whole
-  history — treat snapshot+TTD as sequential experiments, not interleaved
-  ones ([load-snapshot.md](../media/load-snapshot.md)). Dump first if you
-  need the recording.
+- **Markers**: on the engine tape commands, disk writes and tool edits are
+  replayed and do not stop a seek or a reverse search; on v1 they stop
+  backward replay (list them with `GET /ttd/markers` before wondering why a
+  seek halted early).
+- **A snapshot load is part of the recording** on the engine
+  (`backend: "engine"`, the default): while recording, the machine finishes
+  its frame, the snapshot loads at the boundary, and seeks before / after it
+  show the old / the loaded program; frame numbers go on. Outside a
+  recording it keeps the history. On v1 it is refused while recording and
+  drops a stopped session.
+- **Other loads wipe the session.** Tape load, disk load/create and a host
+  speed change on a stopped session drop the whole history (and are refused
+  while recording, also while a recording is paused for browsing). Dump
+  first if you need the recording.
+- **A machine change ends the session** (the engine): a ROM load, a model
+  switch, a GS card switch or a slot change stop the recording and drop its
+  history (`last_stop_reason: "machine-change"`); a black box starts a new
+  session, an explicit recording stays off. v1 refuses them while recording.
 - **Reset keeps history.** A reset (or a disk autostart's quick reset)
   stops the recording and keeps what was captured; a machine sitting in
   history goes back to `idle`.

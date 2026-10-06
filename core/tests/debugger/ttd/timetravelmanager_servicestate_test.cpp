@@ -21,6 +21,7 @@
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/atm/evoavr.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/models/portdecoder_atm3.h"
 #include "emulator/ports/models/portdecoder_scorpion256.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/video/ulacontention.h"
@@ -161,6 +162,48 @@ TEST_F(TimeTravelManager_ServiceState_Test, TsConfEvoAvrVolatileBytesComeBack)
     EXPECT_EQ(extType, 0x0C);
     EXPECT_EQ(page, 0x07);
     EXPECT_EQ(flags, 0x03);
+}
+
+/// The AVR's /WAIT timing (EvoAvrWait: main-loop phase, EEPROM write end) is shared by #xxEF and #BFF7 and rides
+/// in EvoAvrVolatile on TS-Conf and on the ATM3: a restore puts the AVR's loop back where it was
+TEST_F(TimeTravelManager_ServiceState_Test, EvoAvrWaitStateComesBackOnTsConf)
+{
+    ASSERT_NO_FATAL_FAILURE(Start("TSL"));
+    auto* tsconf = dynamic_cast<PortDecoder_TSConf*>(_context->pPortDecoder);
+    ASSERT_NE(tsconf, nullptr);
+    EvoAvr& avr = tsconf->GetEvoAvr();
+
+    const uint64_t avrNow = EvoAvrWait::BaseNow(_context) * 11059200 / _context->emulatorState.base_z80_frequency;
+    avr.SetWaitState(EvoAvrWait::State{avrNow + 1000, avrNow + 50000});   // inside an EEPROM write
+    const size_t set = Frame();   // the checkpoint closes the frame: the ROM's own CMOS / COM accesses move it on
+    const EvoAvrWait::State atCheckpoint = avr.GetWaitState();
+    EXPECT_NE(atCheckpoint.loopResume, 0u);
+    avr.SetWaitState(EvoAvrWait::State{1, 2});
+    Frame();
+
+    ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(set));
+    EXPECT_EQ(avr.GetWaitState().loopResume, atCheckpoint.loopResume);
+    EXPECT_EQ(avr.GetWaitState().eepromReadyAt, atCheckpoint.eepromReadyAt);
+}
+
+TEST_F(TimeTravelManager_ServiceState_Test, EvoAvrWaitStateComesBackOnAtm3)
+{
+    ASSERT_NO_FATAL_FAILURE(Start("ATM3"));
+    auto* atm3 = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder);
+    ASSERT_NE(atm3, nullptr);
+    EvoAvr& avr = atm3->GetEvoAvr();
+
+    const uint64_t avrNow = EvoAvrWait::BaseNow(_context) * 11059200 / _context->emulatorState.base_z80_frequency;
+    avr.SetWaitState(EvoAvrWait::State{avrNow + 1000, avrNow + 50000});   // inside an EEPROM write
+    const size_t set = Frame();   // the checkpoint closes the frame: the ROM's own CMOS / COM accesses move it on
+    const EvoAvrWait::State atCheckpoint = avr.GetWaitState();
+    EXPECT_NE(atCheckpoint.loopResume, 0u);
+    avr.SetWaitState(EvoAvrWait::State{3, 4});
+    Frame();
+
+    ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(set));
+    EXPECT_EQ(avr.GetWaitState().loopResume, atCheckpoint.loopResume);
+    EXPECT_EQ(avr.GetWaitState().eepromReadyAt, atCheckpoint.eepromReadyAt);
 }
 
 /// Gap 16: an NMI asked for and not taken yet is CPU state; a restore never

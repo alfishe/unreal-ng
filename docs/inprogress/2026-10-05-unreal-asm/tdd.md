@@ -40,8 +40,8 @@ core/src/3rdparty/unreal-asm/
 │   ├── text/                           # the shared lexer helpers (numbers in every ZX notation, strings, comments)
 │   ├── codecs/
 │   │   ├── text/       textcodec.h / .cpp
-│   │   ├── tasm/       tasm3codec, tasm4codec, tasmtokens (tables per sub-version)
-│   │   ├── alasm/      alasm4codec, alasm5codec, alasmtokens, alasmheader
+│   │   ├── tasm/       tasmcodec (every version), tasmtokens (tables per version)
+│   │   ├── alasm/      alasmcodec (every version), alasmtokens (tables per version)
 │   │   ├── storm/      stormcodec, stormexpr (tokenized expressions)
 │   │   ├── zxasm/      zxasmcodec, zxasmtokens
 │   │   └── xas/ masm/ gens3/ zeus/ ads/   (after research)
@@ -58,7 +58,7 @@ core/src/3rdparty/unreal-asm/
 ├── examples/                           # D-14: small programs on the public API, built with the library
 │   ├── decode/  encode/  convert/  detect-encoding/  symbols/
 └── testdata/                           # D-14: the corpus of every codec and plugin, with README provenance
-    ├── tasm3/  tasm4/  text/  sjasmplus/ ...
+    ├── tasm/  alasm/  text/  sjasmplus/ ...
 
 core/src/debugger/asm/                  # emulator adapters: DiskFileSource / Sink, CatalogHints from TR-DOS,
                                         # the surfaces' shared functions (decode / encode / convert / detect)
@@ -90,7 +90,7 @@ struct CatalogHints { char type = 0; uint16_t start = 0; uint16_t length = 0; st
 class ISourceCodec
 {
 public:
-    virtual const CodecInfo& Info() const = 0;          // id "alasm4", title, dialect, sub-version range
+    virtual const CodecInfo& Info() const = 0;          // id "alasm", title, dialect, the versions it reads and writes
     virtual int Detect(std::span<const uint8_t> bytes, const CatalogHints&) const = 0;   // 0..100
     virtual DecodeResult Decode(std::span<const uint8_t> bytes, const DecodeOptions&) const = 0;
     virtual EncodeResult Encode(const SourceDocument&, const EncodeOptions&) const = 0;   // bytes + diagnostics
@@ -182,8 +182,8 @@ Lua / Python `asm_*`, Qt disk browser actions). The symbol module's adapters: [s
 |---|---|---|
 | A0 | Design (this folder); open questions Q-1 … Q-6 | decisions recorded |
 | A1 | Library skeleton (CMake, tests, CLI), document model, code pages, `text` codec, registry, detection; the **sjasmplus text codec** as the first output target (D-10) | round trip of text files in every code page and line end |
-| A2 | `tasm3`, `tasm4` (research documents first), sub-version conversion | byte-exact on the corpus; TASM in the emulator loads the converted files |
-| A3 | `alasm4`, `alasm5` (research: settle `#96` / `#9F`) | the same |
+| A2 | `tasm` (3.x, 4.x; research documents first), version conversion | byte-exact on the corpus; TASM in the emulator loads the converted files |
+| A3 | `alasm` (3.8 … 5.09; research: settle `#96` / `#9F`), every codec covers every version (D-15) | the same |
 | A4 | `storm`, `zxasm` | the same |
 | A5 | Neutral IR (D-7: the construct matrix filled for every dialect first, then the node set frozen), transforms, `sjasmplus` frontend + backend, `tasm` frontend; TASM → sjasmplus first (D-5), ALASM → sjasmplus after A3 | binary equality on the corpus |
 | A6 | `alasm`, `storm`, `zxasm` frontends; `pasmo`, `z88dk` backends; research codecs `xas`, `masm`, `gens3`, `zeus`, `ads` (queued at lower priority, D-8: none dropped) | per pair / codec |

@@ -750,6 +750,9 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | `state audio moonsound` | | `[fm\|pcm]` | Show the MoonSound card (ZXM-MoonSound, YMF278B OPL4) - the same reports as WebAPI `/state/audio/moonsound[/fm\|/pcm]`, Lua/Python `audio_moonsound_state()` and MCP `audio_moonsound` / `audio_opl4_fm` / `audio_opl4_pcm`. A snapshot as of the chip's last guest access or frame run (reading never advances the chip):<br/>• Overview: NEW / NEW2, status, the guest address latches, block mix #F8 (FM) / #F9 (PCM) per side (level, dB, muted), wave memory (ROM size and loaded bytes, SRAM size, dirty pages), keyed FM channels and PCM slots<br/>• `fm`: timers 1/2 (count, load, enabled, masked, flag), 4-op connections, rhythm, tremolo depth (dB), vibrato depth (cents), note select; 18 channels (bank, F-number, block, Hz, key-on, feedback, connection, output route, 4-op role and algorithm `fm` / `additive` / `fm_fm` / `am_fm` / `fm_am` / `am_am`, rhythm part, sounding, render peak) each with `operators[2]`: slot, register offset, MULT and multiplier, KSR, tremolo, vibrato, sustaining (EGT), KSL and dB/octave, TL and `total_level_db`, AR, DR, SL and `sustain_level_db`, RR, waveform and its name, key-on, live `envelope` (phase attack / decay / sustain / release / off, attenuation index and its maximum), sounding; both register banks as hex<br/>• `pcm`: wave enable, memory address, 24 slots (wave, octave, F-number, playback rate, key-on, total level and `total_level_db`, level direct, pan and `pan_attenuation` left/right dB (null = off), damp, sample width, start / loop / end, position, current `sample_address` and `memory` rom / ram, envelope phase / attenuation / rates / D1L and dB, LFO and `lfo_hz`, LFO active, vibrato / AM depth, sounding, render peak), register file as hex | ✅ Implemented |
 | MoonSound overview | `state audio moonsound` | `GET /state/audio/moonsound` | `audio_moonsound_state()` | `audio_moonsound_state()` | `audio_moonsound` |
 | MoonSound FM / PCM half | `state audio moonsound fm\|pcm` | `GET /state/audio/moonsound/fm\|pcm` | `audio_moonsound_state("fm"\|"pcm")` | `audio_moonsound_state(part="fm"\|"pcm")` | `audio_opl4_fm`, `audio_opl4_pcm` |
+| ZX-MultiSound card (slot and options - DIP functions, `gsRam`, `ctrlMask` with the note on the unofficial `classic` mask -, fit, the built-ins its slot shadows, CPLD latches, the YM2203 pair: each chip's SSG half as the AY chip report and FM half as the TurboSound FM chip report, SAA1099 registers / voices / envelopes, the General Sound report plus the card firmware state, the four DACs, a MIDI summary) | `multisound` (`--full`, `--json`) | `GET /state/audio/multisound` | `multisound_state()` | `multisound_state()` | `audio_multisound` |
+| MIDI line and SAM2695 synthesizer (the YM pin, level, edges; bank; 16 parts: program, preset name, volume, pan, expression, pitch bend, voices, the notes sounding; polyphony, effects, UART / parser counters) | `midi` (`--json`) | `GET /state/audio/midi` | `midi_state()` | `midi_state()` | `audio_midi` |
+| MIDI panic: every voice stops (All Sound Off on all 16 parts; programs, controllers and the MIDI stream in progress stay), applied at the next instruction boundary as a TTD live input (journaled, replayed) | `midi panic` | `POST /control/audio/midi {"action": "panic"}` | `midi_panic()` -> `ok, message` | `midi_panic()` -> `{ok, message}` | `invoke_api` |
 | Beta Disk WD1793 | `state fdc` | `GET /state/fdc` | `fdc_state()` | `fdc_state()` | `fdc` |
 | IDE board (disks, CD-ROM) | `state ide` | `GET /state/ide` | `ide_state()` | `ide_state()` | `ide` |
 | CD audio of the ATAPI CD drives (disc and tracks, status 11h-15h, head as LBA / MSF / track / index, play range, page 0Eh volume, mixer row) | `state cdaudio` / `cdaudio` | `GET /state/cdaudio` | `cdaudio_state()` | `cdaudio_state()` | `cdaudio` |
@@ -788,9 +791,10 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | CMOS clock (report) | `state rtc` / `rtc` | `GET /state/rtc` | `rtc_state()` | `rtc_state()` | `rtc` |
 | ZX Profi board chips (report) | `state profi` | `GET /state/profi` | `profi_state()` | `profi_state()` | `profi` |
 | Network adapters (report) | `network` / `net` | `GET /state/network` | `network_state()` | `network_state()` | `network` |
-| Network settings (change) | `network set k=v ..` | `POST /network/config` | `network_configure{..}` | `network_configure(**kw)` | `invoke_api` POST `/network/config` |
+| Network settings (change; a ZX-bus card change restarts the machine, [§14](#14-zx-bus-slots)) | `network set k=v .. [--replace] [--dry-run]` | `POST /network/config` | `network_configure{..}[, opts]` | `network_configure(**kw)` | `emulator_manage` `network_configure` |
 | CMOS cells read | `rtc read <start> [n]` | `GET /rtc/cells?start=&count=` | `rtc_read(start, n)` | `rtc_read(start, n)` | `invoke_api` GET `/rtc/cells` |
 | CMOS cells write | `rtc write <start> <b>..` | `POST /rtc/cells` | `rtc_write(start, {..})` | `rtc_write(start, [..])` | `invoke_api` POST `/rtc/cells` |
+| ZX-Evo saved flash ROM (status / save now / discard; TS-Conf, ATM3) | `romflash [status\|save\|discard]` | `GET` / `POST /memory/rom/flash` `{"action"}` | `rom_flash_state()`, `rom_flash_save()`, `rom_flash_discard()` | same | `emulator_manage` `rom_flash_status` / `rom_flash_save` / `rom_flash_discard` |
 | ISA slots (report; Sprinter) | `state isa` / `isa` | `GET /state/isa` | `isa_state()` | `isa_state()` | `isa` |
 | ISA ZX-bus adapter + the GS behind it (Sprinter) | `isa` (`zx_bus`), `isa io 1 #BB`, `state audio gs` | `GET /state/isa` (`slots[].zx_bus`, `summary_line`), `POST /control/isa`, `GET /state/audio/gs` | `isa_state().slots[1].zx_bus`, `gs_state()` | `isa_state()['slots'][0]['zx_bus']`, `gs_state()` | `isa` (`[isa]` card line), `audio_gs` |
 | ISA IRQ lines (Sprinter) | `isa irq` | `GET /state/isa` (`irq_summary`, `pio_port_b`, `slots[].irq_line`) | `isa_state()` | `isa_state()` | `isa` (`[isa] irq:` line) |
@@ -2316,7 +2320,7 @@ Inspect audio hardware state including beeper, AY-3-8912 PSG, General Sound, and
 | `state audio ay <index>` | | `<chip-index>` | Show detailed information about selected AY chip (0-based indexing):<br/>• Chip index (0=first chip, 1=second chip for TurboSound)<br/>• Chip type (AY-3-8912, YM2149, etc.)<br/>• All register values (0-15) with decoding<br/>• Channel A/B/C: frequency, volume, mixer state<br/>• Envelope shape, period, and current phase<br/>• Noise period and LFSR state<br/>• I/O ports A/B values and direction<br/>• Whether sound was played since reset via this device | 🔮 Planned |
 | `state audio ay <chip> register <N>` | | `<chip-index> <register>` | Show specific AY register (0-15) of specified chip with full decoding and frequency calculations:<br/>**Example: `state audio ay 0 register 0`**<br/>• Register 0: Channel A fine period = 0x123<br/>• Frequency: 432 Hz<br/>• Note: A4 (440 Hz approximately)<br/>• Bit-by-bit decoding with meaning for each register type | 🔮 Planned |
 | `state audio gs` | | | Show the GS-slot card's state (classic GS, lightweight player or NeoGS) - the same report as WebAPI `/state/audio/gs`, Lua/Python `gs_state()` and MCP `audio_gs` (`DeviceState::Gs`):<br/>• Device, implementation, firmware / flash image, RAM size, MPAG<br/>• Mailbox status, pending flags, queue counts (single-latch mailbox: the counts mirror the flags, except the lightweight card's param buffer 0..16) and latches<br/>• DAC channels (4, or 8 on NeoGS) with volumes<br/>• Card CPU: PC/SP/AF/halted (`coprocessor: false` on the lightweight card)<br/>• NeoGS (`neogs`): stereo mode, flash, GSCFG0 raw and decoded (`gscfg0_flags`), clock, the four windows (flash/RAM page), readiness, LED, interrupts, `sctrl`, SD card, MP3 decoder (chip, DREQ, stream, frames, decode time, input fill), DMA modules and ZX-DMA (`neogs.dma.zx`: mode off / watch / divert, read latch, pending byte and address, bytes read / written / dropped, wait T-states, late starts, watch window); the GS port trace records each ZX-DMA byte as side `zxdma` | ✅ Implemented |
-| `gs <action>` | | `reset`, `reset_card`, `nmi`, `send_command <b>`, `send_data <b>`, `read_status`, `read_data`, `switch_personality <z80\|lle\|lw\|lightweight\|ngs\|neogs>`, `dump_module [path]`, `sd_insert <image>`, `sd_eject`, `flash_save`, `stereo_mode [separated\|gs\|mono]` | Drive the GS-slot card like ZX software does; switch the card at the next frame boundary; NeoGS only: SD card slot and flash save, stereo mode of the DAC channels (as on the board / classic GS 50% cross-feed / mono) (carried out on the machine thread - "queued" while it runs; insert/eject refused during a TTD recording) | ✅ Implemented |
+| `gs <action>` | | `reset`, `reset_card`, `nmi`, `send_command <b>`, `send_data <b>`, `read_status`, `read_data`, `switch_personality <z80\|lle\|lw\|lightweight\|ngs\|neogs>`, `dump_module [path]`, `sd_insert <image>`, `sd_eject`, `flash_save`, `stereo_mode [separated\|gs\|mono]` | Drive the GS-slot card like ZX software does; `switch_personality` replaces the card in the GS slot, a slot change applied by a machine restart (`slots gs`, section 14); NeoGS only: SD card slot and flash save, stereo mode of the DAC channels (as on the board / classic GS 50% cross-feed / mono) (carried out on the machine thread - "queued" while it runs; insert/eject refused during a TTD recording) | ✅ Implemented |
 | `state audio covox` | | | Show the Covox / SoundDrive DAC - the same report as WebAPI `/state/audio/covox`, Lua/Python `audio_covox_state()` and MCP `audio_covox` (`DeviceState::Covox`):<br/>• Fitment: `mono` (Covox on #FB) or `quad` (SoundDrive)<br/>• `ports`: the rows this model's decoder routes to it (port, mask, match, decode, gate) - taken from its port map (ZX-Evo: #FB only); the Sinclair models (48K, 128K, +2, +2A, +3) route no Covox port and their configs fit none<br/>• `shared_with_beta128`: Beta-128 registers a DAC row also decodes (SoundDrive mode 1 #1F / #5F) and `shared_port_rule` (Beta-128 owns them while TR-DOS is paged in)<br/>• The four DAC latches (left A/B, right A/B) with mute state<br/>• Last left / right amplitude, whether the DAC was written last frame, DC removal | ✅ Implemented |
 | `state rtc` / `rtc` / `cmos` | | | Show the CMOS clock (MC146818 / DS12887; the ZX-Evo AVR's emulation of one) - the same report as WebAPI `/state/rtc`, Lua/Python `rtc_state()` and MCP `rtc` (`DeviceState::Rtc`):<br/>• Chip, the ports the machine wires it to, cell count, NVRAM file, the guest's address latch<br/>• Time base: `host` (host local time plus the offset the guest set), `emulated` (while TTD records), `fixed` (tests)<br/>• Time as the guest reads it now; registers A-D and the alarms decoded<br/>• Every cell as hex, peeked (register C keeps its flags)<br/>Machines: ATM3 (ZX-Evo), PROFI, SCORPION / PROFSCORP with `[HDD] Scheme=SMUC`; elsewhere the reason why not | ✅ Implemented |
 | `rtc read <start> [count]` | | `<start> [count]` | CMOS cells as the guest reads them, without side effects (`RtcAccess::Read`, same as WebAPI `GET /rtc/cells`). Numbers: decimal, `0x..`, `#..` or `..h` | ✅ Implemented |
@@ -2651,7 +2655,11 @@ Record a per-frame checkpoint timeline of the running emulator, then seek backwa
 
 **Feature flag:** `timetravel` (alias `ttd`). You do not have to switch it on yourself: `ttd start` turns on `timetravel` (and the `debugmode` flag it needs, because TTD sees memory writes through the debug write path) when they are off. `ttd stop` turns `debugmode` back off only if `ttd start` was the one that switched it on; `timetravel` stays on. `ttd status` works at any time.
 
-All `ttd` subcommands act on the currently selected emulator instance. Frame numbers are absolute (the emulator's frame counter), and `tinframe` is the t-state offset inside that frame (default 0).
+All `ttd` subcommands act on the currently selected emulator instance. Frame numbers are absolute (the emulator's frame counter), and `tinframe` is the t-state offset inside that frame (default 0, except for `seek`).
+
+**A seek to a frame without `tinframe`** lands at that frame's **end** on the engine (`backend: engine`, D13): the machine state and the picture are the frame's final ones, the same as `{frame N+1, tinframe 0}`; `arrived_at` names it `{N, <length of frame N>}`. When the history ends inside frame N (a recording paused at the present) it lands at that end. A frame step from there counts from `{N+1, 0}`. With `tinframe` (also 0) it lands exactly there and shows what the beam drew up to that point - at a frame's start, the previous frame's final picture. v1 lands at the frame's start without `tinframe` and shows the frame's final picture there. Scripts that seek a frame and read memory see one frame later on the engine; ask for `tinframe 0` to keep the frame's start.
+
+**One implementation behind every surface.** The CLI, WebAPI (and MCP through it), Lua and Python turn their input into a verb of `ttd::TTDControl` (`core/src/debugger/ttd/ttdcontrol.h`) and print its reply in their own form. Checks, refusals and their messages are therefore the same everywhere: a refusal while recording is the same sentence on the CLI (`Error: ...`), the WebAPI (409 with `message`), Lua (`false, reason` or `ok = false, error`) and Python (`RuntimeError`, or `ValueError` for a bad argument). Numbers take decimal or hex as `0x..`, `#..` or `$..`. `tools/verification/ttd-surface-contract/` checks the surfaces against each other on a running application.
 
 #### Command Reference
 
@@ -2664,7 +2672,7 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd stop` | — | — | Stop recording. History is kept and can be browsed (seek, step, find-last). Prints `Not recording (no-op)` when nothing records. | ✅ Implemented |
 | `ttd invalidate` | `ttd clear`, `ttd reset` | `[reason]` | Drop all history (checkpoints, journals, markers, bookmarks) and return to `idle`. The live machine is not touched. | ✅ Implemented |
 | `ttd limit` | `ttd history-limit` | `[frames <n>] [bytes <n>[K\|M\|G]]` *or* `off` | Bound the history. While recording, the oldest checkpoints (one per frame) are released once there are more than `frames` of them or their data (RAM pages + device blobs, compressed) exceeds `bytes`; the session start moves forward and the input, port, external-event and bookmark records before it go too, so a file saved afterwards replays its remaining frames exactly. Two checkpoints always stay. `0` = no limit (the default), a value not given is kept, `off` clears both; no arguments prints the limit, the history range, the bytes held and how many checkpoints were released. The limit stays for later recordings of this instance. | ✅ Implemented |
-| `ttd seek` | `ttd goto` | `<frame> [tinframe]` *or* `--bookmark <label>` (`-b`) | Seek to a point in the timeline. Prints `Seek reached target (frame=…, tInFrame=…)`, or `Seek halted at (…)` plus the reason (external-event marker with its kind and reason, or target out of range). | ✅ Implemented |
+| `ttd seek` | `ttd goto` | `<frame> [tinframe]` *or* `--bookmark <label>` (`-b`) | Seek to a point in the timeline. `<frame>` alone is the frame's end on the engine (see above). Prints `Seek reached target (frame=…, tInFrame=…)`, or `Seek halted at (…)` plus the reason (external-event marker with its kind and reason, or target out of range). | ✅ Implemented |
 | `ttd step-back` | `ttd back`, `ttd sb` | — | Step back one frame, keeping the position inside the frame. | ✅ Implemented |
 | `ttd step-forward` | `ttd forward`, `ttd sf` | — | Step forward one frame inside recorded history (never extends the timeline). | ✅ Implemented |
 | `ttd step-instruction` | `ttd si-back`, `ttd si-forward` | `[back \| forward \| fwd]` | Step one instruction. `step-instruction` alone and `si-back` step back; `step-instruction forward`/`fwd` and `si-forward` step forward. | ✅ Implemented |
@@ -2678,6 +2686,7 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd port-events` | `ttd pe` | `<event> [arg] [option=value ...]` | "When did the program ...": searches the port journals (every IN and OUT with its time and PC) - no replay, works on a loaded file. Events: `key [KEY]`, `ear`, `ay-read [R]`, `ay-write [R]`, `ay-select [R]`, `border`, `beeper`, `in`, `out`. Options: `limit=N`, `newest=true`, `from=F[:T]`, `to=F[:T]`, `port=`, `port_mask=`, `value=`, `value_mask=`, `match=any\|equals\|any-clear\|any-set`, `trigger=every\|rising\|change`, `stream_mask=M`, `ay_register=R`, `file=<path.ttd>` (search a saved session without loading it). Prints each hit: frame, T-state, PC, port, value (and the AY register). See "Port events" below. | ✅ Implemented |
 | `ttd dump` | `ttd save` | `<path>` | Write the session to a `.ttd` file (readable by `tools/verification/ttd-analyzer`). Prints the byte count. | ✅ Implemented |
 | `ttd load` | `ttd open` | `<path>` | Load a `.ttd` session for playback. Replaces whatever session is held; afterwards the session is `idle`, so use `ttd seek` to position the emulator. | ✅ Implemented |
+| `ttd export-clip` | `ttd clip` | `<from> <to> <dir> [--chunk N]` | Write frames `from..to` as a lossless clip into the directory `dir` (created if missing): the final picture of every frame, plane B when the `zxdlss` feature is on, and the frame meta, zstd-compressed in chunks of N frames (default 500). One call instead of a seek and a capture per frame; not while recording. Prints frames, size, bytes and whether plane B was written. See "Exporting a clip" below. | ✅ Implemented |
 | `ttd coverage` | `ttd cov` | `probe --frame N` / `scan` / `summary`, plus `[--kind executed\|written\|read] [--from-frame F] [--to-frame T] [--addr-from A] [--addr-to B] [--phys-page P] [--limit L] [--bucket-size S]` | Query the coverage index. `probe`: did frame N touch the range? `scan`: which frames in the window touched it (default limit 200). `summary`: activity heatmap per bucket (default limit 100, `--bucket-size 0` = automatic). Address range defaults to the whole 64K; `--to-frame` defaults to the session end. Short forms: `-f`, `-k`, `--from`/`-a`, `--to`/`-b`, `--page`/`-p`, `-l`, `--bucket`. | ✅ Implemented |
 | `ttd help` | `ttd ?`, `ttd` alone | — | Print the subcommand list. | ✅ Implemented |
 
@@ -2738,11 +2747,32 @@ carried its device set: the reader then walks to the first checkpoint for it).
 | `rom_signature` | ROM set fingerprint as a hex string `0x...` (a 64-bit value does not survive a JSON number); null = unknown, not checked |
 | `peripheral_mask`, `peripherals` | Fitted devices: bit per TTD peripheral id, and their names (`betadisk`, `gs`, `neogs`, `tsfm`, `kempston-mouse`, ...) |
 | `not_recorded` | Devices fitted but deliberately not recorded, by name: `gs-lw` (the lightweight General Sound runs live through seeks). Empty for most sessions. CLI: the "Not recorded" line |
-| `general_sound` | `none` / `z80` / `lw` / `ngs` - fit this card before loading (`POST /control/audio/gs` action `switch_personality`, same names) |
+| `general_sound` | `none` / `z80` / `lw` / `ngs` - fit this card before loading (`POST /control/audio/gs` action `switch_personality`, same names: a slot change that restarts the machine, load into the reply's `emulatorId`; or create the machine with `"slots": {"zxbus.1": "gs"}`) |
 | `turbo_sound` | `none` / `turbosound` / `tsfm` |
 
 Provisioning a matching machine: read the info, create an instance of `machine.model`,
 fit `machine.general_sound`, then `ttd load`.
+
+**Exporting a clip (`ttd export-clip`).** A range of recorded frames written as a
+lossless clip in one call: the core seeks once and renders every frame of the range,
+instead of a client seeking and capturing frame by frame. The directory gets the final
+picture of each frame, plane B when the `zxdlss` feature is on (the second field of a
+de-flickered picture), and the frame meta, zstd-compressed in chunks of `chunk` frames.
+The machine is paused for the export and stays where the export left it; refused while
+recording, like every move in the timeline.
+
+| Surface | Call |
+|---|---|
+| CLI | `ttd export-clip <from> <to> <dir> [--chunk N]` (alias `ttd clip`) |
+| WebAPI | `POST /api/v1/emulator/{id}/ttd/export-clip` with `{"from": F, "to": T, "path": "<dir>", "chunk": N}` |
+| Lua | `ttd_export_clip(from, to, dir, [chunk])` |
+| Python | `emu.ttd_export_clip(from_frame, to_frame, path, chunk=None)` |
+| MCP | `time_travel` action `export_clip` with `from_frame`, `to_frame`, `path`, optional `chunk` |
+
+The answer: `ok`, `frames`, `bytes`, `planeb`, `width`, `height`, `seconds`, `path`;
+`error` when `ok` is false (400 on the WebAPI, `ok = false` in Lua and Python;
+Python raises `ValueError` for arguments that do not parse). A recording in progress
+is a 409 / `Error:` with the same sentence as a seek.
 
 **Halt reasons** (seek results; the WebAPI, Lua and Python return them as `halt_reason`):
 
@@ -2774,19 +2804,31 @@ These rules live in the core, so every surface (CLI, WebAPI/MCP, Lua, Python, GD
 
 Example: on a ZX-Evo a frame is 69888 T-states at 3.5 MHz, so `tinframe` runs 0..279551 whatever clock the program selects; a write 1000 T-states into the frame at 3.5 MHz reports `tinframe` 4000. The same unit applies to every position the TTD API returns or takes (seek, find-last, markers, bookmarks, `before_tin`, reverse-step `tstates`). A `.ttd` recorded before this rule on a turbo machine is refused on load (its positions repeat after a switch down); record it again.
 
-**Recording blocks browsing.** Seek, step, find-last, step-instruction, reverse-step and reverse-continue do not run while the session is recording — stop first. The WebAPI answers these with HTTP 409 `Conflict`; the core refuses them on every other surface too (the CLI prints the failure, Lua/Python get `reached = false` / `false` / no result).
+**Browsing while recording pauses the recording** (the engine, `backend: engine`; D8). Seek, step, find-last, step-instruction, reverse-step and reverse-continue run while the session records: the recording pauses first - everything up to that instant is kept - and the state becomes `detached` with `recording_paused: true`. The history then reaches to where it paused, inside its last frame. `resume` at that point (or `resume` with no position while still there) continues the same recording; running the machine forward from an earlier point continues it by itself when execution reaches the paused point; `stop` ends it, and the history stays. `resume` anywhere else drops what was recorded after that point, as before (branches that keep it come with Phase 5, Step 2). Journal build and clip export are still refused while recording. On v1 (`backend: v1`) browsing while recording is refused with HTTP 409 `Conflict` on the WebAPI and the same sentence on the other surfaces.
 
-**A recording protects itself.** While a session is `recording`, anything that would drop or corrupt it is refused, and the refusal says why and what to do (stop the recording first):
+Worked example (CLI): `ttd start`, run 300 frames, `ttd seek 100` - the recording pauses at frame ~300 and the machine shows frame 100; `ttd status` prints `Recording paused: yes`; `ttd seek` to the paused point and `ttd resume` - recording goes on as if never paused.
+
+**A recording protects itself.** While a session is `recording` - also while it is paused for browsing (`recording_paused`, the engine) - anything that would drop or corrupt it is refused, and the refusal says why and what to do (stop the recording first):
 
 | Refused while recording | Why |
 | :--- | :--- |
-| Snapshot load | Replaces the whole machine state. |
+| Snapshot load (v1 only; on the engine it is part of the recording, see below) | Replaces the whole machine state. |
 | Tape load, disk load (including disk autostart), disk create | A new medium. Insert it before starting the recording. |
-| ROM load | The recorded history relies on the current ROM. |
 | `ttd invalidate` | Stop the recording first, then discard it. |
-| Switching the `timetravel` or `debugmode` feature off | Capture (or the memory-write path it depends on) would stop mid-session and leave corrupt history. |
-| Switching the General Sound card type (`gs switch_personality`, the `gs_lightweight` feature) | The history holds the current card's state, which the other card type cannot take back. |
 | Host speed 2x..16x, turbo, fast tape, turbo tape, fast disk | See the acceleration lock below. |
+
+**A change of the machine itself ends the session** (the engine; v1 refuses these while recording): a ROM load, a model switch (also a snapshot that needs another model, and a machine state transfer), a General Sound card switch (`gs switch_personality`, the `gs_lightweight` feature) and every slot change. The recording stops cleanly and its history is dropped (`last_drop_reason` names the change, `last_stop_reason` is `machine-change`). A new session then starts or not by the settings and options: a black box starts one on the changed machine at the next frame; an explicit recording is not started again. A model switch or a slot change restarts the machine as a new instance, which starts recording only by its own settings.
+
+**A snapshot load is part of the recording on the engine** (`backend: engine`, D10). While a session records, the machine first runs to the end of its current frame, then the snapshot replaces it at the frame boundary, and the checkpoint there holds the loaded state; frame numbers go on (a load outside a recording restarts them from 0). The history keeps both sides: a seek before the load shows the old program, a seek after it the loaded one, and running forward from before it takes the loaded state at that boundary. A recording paused for browsing (D8) continues with the load when the machine stands at its paused end; elsewhere it ends where it paused. Outside a recording a snapshot load keeps the history: the machine leaves it, as after a reset. A model switch through a snapshot (machine state transfer) is still refused while recording; tape, disk and ROM loads are unchanged.
+
+**Switching `timetravel` or `debugmode` off stops the recording instead (FR-17).** It is not refused: the
+recording stops cleanly first - the machine is parked, everything recorded up to that instant stays and is
+browsable - and then the feature switches off. The status field `last_stop_reason` says why it stopped
+(`feature-off:timetravel` or `feature-off:debugmode`; `capture-failed` when the history's store did not take a
+frame, everything before it kept; empty / `null` otherwise, cleared by the next `ttd start`).
+A later seek switches what capture needs back on, as `ttd start` does. With `timetravel` off the write
+journal's memory (about 64 MB) is released: the history stays, and "who wrote this last" queries on it replay
+a frame instead of reading the journal.
 
 How each surface reports it:
 
@@ -2814,7 +2856,7 @@ Only a recording you started (`ttd start`, the TTD panel, the API) is protected.
 | `ttd invalidate` (or WebAPI `POST /ttd/invalidate`, Lua/Python `ttd_invalidate`) | Explicit. |
 | A device TTD cannot follow | Today this is the ZX-Evo / ATM3 Z-Controller SD card. The guest program drives it, so it cannot be refused: any SD card activity while recording ends the recording (history dropped) at the next frame boundary, and `last_drop_reason` in the status says so. |
 
-The status field `last_drop_reason` names what dropped the last history (for example `snapshot-load`, `disk-load`); it is empty (WebAPI/Python: `null`/`None`) until something drops one.
+The status field `last_drop_reason` names what dropped the last history (for example `snapshot-load`, `disk-load`); it is empty (WebAPI/Python: `null`/`None`) until something drops one. `last_stop_reason` names what stopped the last recording when no stop request did (a feature switched off, see above).
 
 **Reset keeps history.** A machine reset (and the quick reset a disk autostart does) stops a running recording and **keeps** the history, so you can still browse what led up to the reset. A machine sitting in history (`detached`) goes back to `idle` with its history.
 
@@ -2827,6 +2869,8 @@ The status field `last_drop_reason` names what dropped the last history (for exa
 | `debugger_edit` | A tool changed the machine behind the CPU's back **while a recording is active**: memory written through the CLI (`memory write`) or the WebAPI (memory writes and physical page writes), memory, page and assembler writes from Lua or Python, or memory, registers or paging changed through DeZog. Nothing is written when no recording runs. |
 | `hardware_reset` | Reserved kind, never written: a reset stops the recording instead (see "Reset keeps history" above). |
 | `other` | Anything else. |
+
+**On the engine (`backend: engine`) these markers are replayed, not barriers:** tape control is applied as input, a disk write is written again, and a debugger edit carries what it changed (memory, device state, CPU registers, the chipset's paging latches), so a seek, `find-last` and `reverse-continue` cross them and land on what the machine did after the edit. The history before an edit stays: DeZog no longer restarts the recording at an edit (D9). An edit while a recording is paused for browsing (D8) continues the recording when made at the paused point, and ends the recording where it paused when made earlier (the history stays; an edit in the past starting a branch comes with branches). What follows describes v1 (`backend: v1`).
 
 A seek (and a seek to a bookmark) that meets a marker stops with halt reason `external_event` and reports it (`blocking_marker`); `find-last` reports it as blocked (WebAPI, Lua and Python: `blocked: true` plus `marker_frame`, `marker_tinframe`, `marker_kind`, `marker_reason`); `reverse-continue` reports it (WebAPI, Lua and Python: `blocked_by_marker`). **Bookmarks are advisory and never barriers.**
 
@@ -2974,6 +3018,9 @@ usually the first thing to check when a session is handed to you.
 | `port_read_count`, `port_write_count`, `port_journal_bytes` | IN results and OUTs recorded, and both journals' compressed size in a `.ttd` file |
 | `port_replay_value_mismatches`, `port_replay_divergences` | Replayed reads whose live device answered differently (a changed or missing medium - the CPU got the recorded value), and replayed INs / OUTs at another time, from another instruction, to another port, or OUTs of another value (execution itself left the recording; expected 0). The CLI prints them as `Replay mismatches:` when non-zero |
 | `ttd_available` | False when the build has no TTD engine (WebAPI, Lua, Python) |
+| `recording_paused` | The engine (D8): a seek, step or reverse query while recording paused the recording; `state` is `detached`. Resuming at its end continues it, `stop` ends it. The CLI prints `Recording paused: yes`. Always false on v1 |
+| `earliest` | The earliest position the history keeps (`{frame, tinframe}`), where "jump to start" goes: older frames were released by the history limit or never recorded. `null` with no history. A seek before it fails with `out_of_range` and names it (`earliest` and a `message` in the reply; the engine, D12) |
+| `backend` | Which implementation records on this instance: `engine` (the default) or `v1` (the previous recorder, kept as the reference; the application selects it when started with `UNREAL_TTD_BACKEND=v1`). Session files are in that implementation's format |
 | `unavailable_reason` | Why time travel is not available for this machine at all, e.g. a member of a ZX-Poly machine; empty / `null` when it is available. Recording and loading a `.ttd` file are refused with it (WebAPI: `/ttd/start` answers 409). The CLI prints it as `Not available:` |
 | `last_drop_reason` | What dropped the last history (`snapshot-load`, `tape-load`, `disk-load`, `disk-create`, `rom-reload`, `speed-multiplier-change`, an `invalidate` reason, an SD-card note); empty / `null` when nothing has. The CLI prints it as `Last session dropped:` |
 
@@ -3301,6 +3348,80 @@ and `POST .../joystick/press|release|set|tap` ([webapi-interface.md](./webapi-in
 MCP `joystick_input`, Lua `joystick_*` ([lua-interface.md](./lua-interface.md)), Python
 `emu.joystick_*` ([python-interface.md](./python-interface.md)); the Qt status bar shows a
 joystick LED while a button is held.
+
+### 14. ZX-bus Slots
+
+The cards on the machine's buses (General Sound, NeoGS, TurboSound FM, MoonSound, Covox / SounDrive, the network
+cards, the ZX-MultiSound): which bus and slot a card sits in, which cards fit together and what a change does to the
+others. Design: [ZX-bus slots](../../../inprogress/2026-10-03-zx-bus-slots/architecture.md) §9; the user guide is
+[docs/features/slots.md](../../../features/slots.md), the recipe [.recipe/machines/slots.md](../../../../.recipe/machines/slots.md).
+
+**How a change works.** Every change is planned first against the machine's slot set: the plan says which cards the
+new one would remove (two cards that do the same job, e.g. two General Sound cards), which built-in devices it hides
+(the Pentagon's own AY under a TurboSound card), whether the card really fits the bus (`real`, behind an `adapter`,
+or `unrealistic`) and which media a removed card takes along. A change that removes a card (or fits one
+unrealistically) is refused with that plan unless the request says `--replace` (owner decision Q1); `--dry-run` shows
+the plan and changes nothing. Applied, the machine **restarts** with the new slot set (owner decision Q6): a new
+emulator instance (a new id; the selection follows it), the machine state is lost, disks, tapes and cards' media follow
+into the slots with the same id. A removed card's medium with unsaved writes (`sd.ngs`) needs `--media save` or
+`--media discard`. No change while a TTD recording runs.
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `slots` | `slots list` | `[--json]` | The board, its buses (kind, arbitration, physical slots; a bus the board has no connector for is marked as bolted on), every slot with its card, options, adapter, fit and state (a disabled card with the reason), the built-in devices (active, switched off, shadowed by a slot, replaced in their socket) and the plan log | ✅ Implemented |
+| `slots catalog` | | `[--json]` | Every card with its options (name, values, default) and how it would fit this machine now: the slot the planner suggests, the fit, `fits` / `needs-replace` (with the cards it would remove) / `refused`, the slots it is fitted in | ✅ Implemented |
+| `slots matrix` | | `[table]` | The compatibility tables (functions, cards, card-x-card, machines, card-x-machine) as markdown | ✅ Implemented |
+| `slots plug` | | `<slot> <card> [opt=val ...] [--replace] [--dry-run] [--media save\|discard] [--adapter <id>]` | Put a card into a slot: `zxbus.2`, `zxbus.next` (the next free one), `ay-socket`, or `auto` (where the planner puts it). Options as `name=value`, a set option as a comma list (`dip=ym,saa`) | ✅ Implemented |
+| `slots remove` | | `<slot> [--replace] [--dry-run] [--media save\|discard]` | Take the card out of a slot | ✅ Implemented |
+| `slots set` | | `<slot> opt=val ... [--replace] [--dry-run]` | Change the card's options (merged over the current ones) | ✅ Implemented |
+| `slots gs` | `gs switch_personality` | `<gs\|gs-lw\|neogs>` (also `z80`, `lw`, `ngs`) `[--replace] [--dry-run]` | The General Sound personality: the card in the GS slot replaced by the other one (owner decision Q10), applied by the restart like every change. Only the `gs_lightweight` feature still swaps the card in place | ✅ Implemented |
+
+The reply of a change: the status (`applied`, `dry-run`, `refused`, `recording`, `failed`), the plan line by line
+(`removes zxbus.1 = gs [ram=512k rom=1.05] (D1): shares gs` - the options are the ones that put the card back, the
+rule in brackets), the restart
+(`restarted: emulator <old> -> <new> (running)`) and where the media went. `--json` prints the same object the WebAPI
+returns.
+
+**Worked example** (the shipped Pentagon: TSFM in the AY socket, NeoGS, MoonSound, SounDrive):
+
+```
+slots plug zxbus.next multisound --dry-run
+# refused: needs replaceIfIncompatible: removes `zxbus.1` `neogs`: shares `gs`; ...
+#   removes zxbus.1 = neogs [ram=2m] (D1): shares `gs`
+#   removes zxbus.3 = soundrive [mode=both] (D1): shares `soundrive`
+#   removes ay-socket = tsfm (D3): pointless pair: `zxbus.4` would shadow it ...
+slots plug zxbus.next multisound gsRam=2m --replace
+# applied ... restarted: emulator 8618a033-... -> ed55c5ad-... (running)
+slots set zxbus.4 ctrlMask=classic
+slots remove zxbus.4
+```
+
+A model switch (`model <name>`) carries the cards: each stays in its slot where the new machine has that bus, moves
+behind an adapter where it needs one, and the cards the new machine cannot take are listed with the reason. A new
+machine can be given its slot set at creation: WebAPI / MCP `create` with `"slots": {"zxbus.1": "multisound"}`.
+
+The legacy INI keys (`[SOUND] GSType`, `TurboSound`, `MoonSound`, `CovoxFB`, `SD`, `[NETWORK] Card`) still work: they
+are translated into slots when the machine is created (a deprecation line in the log). New configs use `[SLOTS]`:
+
+```ini
+[SLOTS]
+ay-socket = tsfm
+zxbus.1 = neogs
+zxbus.1.ram = 4m
+```
+
+Every surface offers the same verbs and replies (one core layer, `SlotControl`): WebAPI `GET /emulator/{id}/slots`,
+`/slots/catalog`, `/slots/matrix`, `POST /slots/{slot}/plug|remove|options` ([webapi-interface.md](./webapi-interface.md),
+OpenAPI tag `Slots`), MCP `inspect_state` aspect `slots` and `emulator_manage` actions `slots_plug` / `slots_remove` /
+`slots_set` / `slots_catalog` / `slots_matrix`, Lua `slots_state()` / `slots_plug()` ... ([lua-interface.md](./lua-interface.md)),
+Python `unreal.slots_state()` / `unreal.slots_plug()` ... ([python-interface.md](./python-interface.md)), and the Qt
+window Machine > Slots.
+
+The network settings change the ZX-bus network cards the same way (owner decision Q11): `network set card=zxnetusb
+[--replace] [--dry-run] [--media save|discard] [--json]` plans the removes and plugs as one slot change, restarts the
+machine and applies the other keys of the request to it; settings without a card change apply in place (`accepted`).
+WebAPI `POST /network/config` (with `replaceIfIncompatible` / `dryRun` / `mediaDisposition`), MCP `emulator_manage`
+`network_configure` (`settings`), Lua / Python `network_configure`, and the Qt Network window's card boxes do the same.
 
 ## Future Capabilities
 

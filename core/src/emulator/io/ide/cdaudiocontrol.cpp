@@ -333,9 +333,9 @@ CdAudioReply CdAudioControl::Execute(const CdAudioRequest& request)
         return Mixer(unit, request.options);
 
     // The machine-side verbs: the guest's own commands would do the same, but from outside a replay cannot repeat them
-    if (_context->pTimeTravelManager)
+    if (_context->pTimeTravelHooks)
     {
-        const std::string guard = _context->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::CdFrontPanel);
+        const std::string guard = _context->pTimeTravelHooks->RecordingGuard(ttd::TTDGuardedAction::CdFrontPanel);
         if (!guard.empty())
             return Fail("recording", guard);
     }

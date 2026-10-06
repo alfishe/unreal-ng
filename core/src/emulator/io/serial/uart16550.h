@@ -109,8 +109,9 @@ public:
         bool divisorResets = true;       ///< DLL 1 / DLM 0 at reset (from r377); before: 0 / 0
         bool rtsInverted = false;        ///< before 2011-09: MCR bit 1 set drove RTS inactive
 
-        // AVR timing (the Z80 waits on /WAIT while the AVR serves an access;
-        // research: reference-evo-com-port.md §3)
+        // AVR timing (the Z80 waits on /WAIT while the AVR serves an access; research: reference-evo-com-port.md §3).
+        // The firmware's main loop (clock, ISR, pass, flag tests) configures the board AVR's EvoAvrWait, shared with
+        // the Gluk clock port; the services are the UART's own
         uint32_t avrClockHz = 11059200;  ///< the ATmega128's crystal (Q2 11.059 MHz)
         uint16_t isrCycles = 37;         ///< INT6: the wait flag noted
         uint16_t loopCycles = 260;       ///< one main-loop pass: the flag is looked at once per pass
@@ -199,10 +200,10 @@ public:
     /// T-states one character takes on the line
     uint64_t CharacterT() const;
 
-    /// AVR: how long the Z80 waits for this access, in AVR clock cycles (0 for
-    /// the chip): the interrupt, the main loop reaching the flag (1..loop
-    /// cycles, counted from the previous release), the service. `now` in base T-states
-    uint32_t AccessCycles(uint8_t reg, bool read, uint64_t now);
+    /// AVR: the firmware's service of this access up to the Z80's release, in AVR clock cycles (0 for the chip). The
+    /// wait around it (the interrupt, the main loop reaching the flag) is the board AVR's EvoAvrWait, which the COM
+    /// port shares with the Gluk clock port
+    uint32_t ServiceCycles(uint8_t reg, bool read) const;
 
     /// The line format as programmed (a host serial device follows it). Evo:
     /// stick parity is not supported (plain parity), 8N2 until LCR is written
@@ -229,7 +230,8 @@ public:
         uint16_t rxCount, rxHead, txCount, txHead;
         uint8_t rx[kMaxRx];
         uint8_t tx[kMaxTx];
-        uint64_t txDoneAt, rxArriveAt, lastNow, avrRelease;
+        uint64_t txDoneAt, rxArriveAt, lastNow;
+        uint64_t avrRelease;   ///< unused, saved 0: the AVR wait is the board's EvoAvrWait (blob layout kept)
         uint64_t bytesIn, bytesOut, overruns;
     };
     void SaveState(State& out) const;
@@ -266,7 +268,6 @@ private:
     bool _thrInterrupt = false;    ///< THRE interrupt pending (cleared by reading IIR or writing THR)
     bool _lcrWritten = false;      ///< Evo: the AVR's USART runs 8N2 until the first LCR write
     bool _txc = false;             ///< the USART's transmit-complete flag (TS 2016-04 TEMT)
-    uint64_t _avrRelease = 0;      ///< AVR cycle (absolute) when the last access was released
     uint8_t _stubIir = 0x01;       ///< the 2010 register file: what reg 2 last held
     uint8_t _afr = 0;              ///< PC16552D Alternate Function Register (Params::afr)
     uint8_t _msrLines = 0;         ///< CTS/DSR/RI/DCD last seen (for the delta bits)

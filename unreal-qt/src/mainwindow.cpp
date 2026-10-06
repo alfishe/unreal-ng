@@ -58,6 +58,9 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/soundmanager.h"
 #include "debugger/widgets/audiosettingswidget.h"
+#include "cardslots/midiactivitywindow.h"
+#include "cardslots/slotchangecontroller.h"
+#include "cardslots/slotswindow.h"
 #include "ui/temporaleffectsdialog.h"
 #include "hud/qt/hudoverlaywrapper.h"
 #include "hud/qt/hudsettingsdialog.h"
@@ -168,7 +171,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _originalPalette = palette();
 
     // Register fullscreen shortcut with application-wide context
-    // (works even when menu bar is hidden in fullscreen mode)
+    // (works even when menu bar is hidden in fullscreen mode).
+    // Cmd+F on macOS, Ctrl+F elsewhere (Qt::CTRL maps to Cmd on macOS)
     auto* fullScreenShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
     fullScreenShortcut->setContext(Qt::ApplicationShortcut);
     connect(fullScreenShortcut, &QShortcut::activated, this, &MainWindow::handleFullScreenShortcut);
@@ -308,23 +312,46 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _dockingManager->addDockableWindow(logWindow, Qt::RightEdge);
 
     // Instantiate tape manager window (design §9.4): one instance per app
-    // session, hidden by default — View → Tape Manager (Ctrl+3) shows it
+    // session, hidden by default — View → Tape Manager shows it
     tapeManagerWindow = new TapeManagerWindow();
     tapeManagerWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(tapeManagerWindow, Qt::BottomEdge);
 
-    // Media panel (media-control-design.md §3.9): hidden by default, Tools → Media (Ctrl+4)
+    // Media panel (media-control-design.md §3.9): hidden by default, Tools → Media
     mediaPanelWindow = new MediaPanelWindow();
     mediaPanelWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(mediaPanelWindow, Qt::BottomEdge);
 
-    // Network window (network TDD §8): hidden by default, Tools → Network (Ctrl+5)
+    // Network window (network TDD §8): hidden by default, Tools → Network
     networkWindow = new NetworkWindow();
     networkWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(networkWindow, Qt::RightEdge);
     trafficWindow = new TrafficWindow();
     trafficWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(trafficWindow, Qt::RightEdge);
+
+    // Slot changes (ZX-bus slots, Q1 / Q6): every change restarts the machine; the window follows the new one
+    SlotChangeController::Hooks slotHooks;
+    slotHooks.beforeRelease = [this](Emulator&) { unbindFromEmulator(); };
+    slotHooks.adopt = [this](std::shared_ptr<Emulator> emulator, bool start) {
+        adoptEmulator(emulator, EmulatorOrigin::CreatedByGui);
+        if (start)
+            emulator->StartAsync();
+    };
+    slotHooks.restarting = [this](bool on) { _switchingModel = on; };
+    _slotChangeController = new SlotChangeController(std::move(slotHooks), this);
+    networkWindow->setController(_slotChangeController);   // the network cards are slots (Q11)
+
+    // Slots window: hidden by default, Machine -> Slots
+    _slotsWindow = new SlotsWindow();
+    _slotsWindow->setBinding(m_binding);
+    _slotsWindow->setController(_slotChangeController);
+    _dockingManager->addDockableWindow(_slotsWindow, Qt::RightEdge);
+
+    // MIDI activity: hidden by default, Tools -> MIDI Activity
+    _midiActivityWindow = new MidiActivityWindow();
+    _midiActivityWindow->setBinding(m_binding);
+    _dockingManager->addDockableWindow(_midiActivityWindow, Qt::BottomEdge);
 
     // FT812 Debug (line-budget-metrics.md §3.3): hidden by default, Debug -> FT812 Debug,
     // offered only while the machine has the VDAC2 card
@@ -417,6 +444,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(mediaPanelWindow, &MediaPanelWindow::visibilityChanged, _menuManager, &MenuManager::setMediaPanelChecked);
     connect(_menuManager, &MenuManager::networkWindowToggled, this, &MainWindow::handleNetworkWindowToggled);
     connect(networkWindow, &NetworkWindow::visibilityChanged, _menuManager, &MenuManager::setNetworkWindowChecked);
+    connect(_menuManager, &MenuManager::slotsWindowToggled, this, &MainWindow::handleSlotsWindowToggled);
+    connect(_slotsWindow, &SlotsWindow::visibilityChanged, _menuManager, &MenuManager::setSlotsWindowChecked);
+    connect(_menuManager, &MenuManager::midiActivityToggled, this, &MainWindow::handleMidiActivityToggled);
+    connect(_midiActivityWindow, &MidiActivityWindow::visibilityChanged, _menuManager, &MenuManager::setMidiActivityChecked);
     connect(_menuManager, &MenuManager::trafficWindowToggled, this, &MainWindow::handleTrafficWindowToggled);
     connect(trafficWindow, &TrafficWindow::visibilityChanged, _menuManager, &MenuManager::setTrafficWindowChecked);
     connect(trafficWindow, &TrafficWindow::seeked, this, &MainWindow::refreshViewport);
@@ -1569,7 +1600,7 @@ void MainWindow::toggleEmulatorStartStop()
 void MainWindow::handleFullScreenShortcut()
 {
     // IMPORTANT: Release modifier keys (Ctrl, Shift) to prevent stuck keys in emulator.
-    // The fullscreen shortcut (Ctrl+F) sends a Ctrl press to the emulator. During
+    // The fullscreen shortcut (with its modifier keys) sends a modifier press to the emulator. During
     // window state transitions, the key release may be missed, causing the Ctrl key
     // to stay "stuck" in the emulator's keyboard state.
     if (_emulator)
@@ -1907,7 +1938,7 @@ void MainWindow::handleFullScreenShortcutLinux()
             if (_dockingManager)
                 _dockingManager->setSnappingLocked(false);
 
-            // Ensure keyboard focus for Ctrl+F to work
+            // Ensure keyboard focus for the fullscreen shortcut to work
             activateWindow();
             raise();
             if (_screenWrapper)
@@ -3344,6 +3375,18 @@ void MainWindow::handleNetworkWindowToggled(bool visible)
         networkWindow->setVisible(visible);
 }
 
+void MainWindow::handleSlotsWindowToggled(bool visible)
+{
+    if (_slotsWindow)
+        _slotsWindow->setVisible(visible);
+}
+
+void MainWindow::handleMidiActivityToggled(bool visible)
+{
+    if (_midiActivityWindow)
+        _midiActivityWindow->setVisible(visible);
+}
+
 void MainWindow::handleTrafficWindowToggled(bool visible)
 {
     if (trafficWindow)
@@ -3446,6 +3489,11 @@ void MainWindow::handleAudioSettingsRequested()
     // Create audio settings widget as a dialog
     _audioSettingsWidget = new AudioSettingsWidget(context, this);
     _audioSettingsWidget->setAttribute(Qt::WA_DeleteOnClose);
+    // The General Sound personality is a slot change (owner decision Q10): the machine restarts with the card
+    connect(_audioSettingsWidget, &AudioSettingsWidget::generalSoundCardRequested, this, [this](int kind) {
+        if (_emulator && _slotChangeController)
+            _slotChangeController->ApplyGeneralSound(_emulator->GetId(), kind, _audioSettingsWidget);
+    });
     _audioSettingsWidget->setWindowFlags(Qt::Dialog);
     _audioSettingsWidget->show();
     _audioSettingsWidget->raise();
@@ -3753,14 +3801,18 @@ bool MainWindow::switchMachineModel(const std::string& modelName, uint32_t ramSi
 
     _switchingModel = false;
 
-    // Media that could not follow are worth a word
-    if (!switched.media.detached.empty() || !switched.media.closed.empty())
+    // Cards and media that could not follow are worth a word (the cards: ZX-bus slots R-OP-9)
+    if (!switched.slotCarry.dropped.empty() || !switched.media.detached.empty() || !switched.media.closed.empty())
     {
         QStringList lines;
+        for (const SlotManager::CarryReport::Dropped& card : switched.slotCarry.dropped)
+            lines << tr("%1 = %2 not carried: %3")
+                         .arg(QString::fromStdString(card.slot), QString::fromStdString(card.card),
+                              QString::fromStdString(card.reason));
         for (const std::string& line : switched.media.lines)
             lines << QString::fromStdString(line);
         QMessageBox::information(this, tr("Switch Machine Model"),
-                                 tr("Media on %1:\n\n%2").arg(displayName, lines.join("\n")));
+                                 tr("Cards and media on %1:\n\n%2").arg(displayName, lines.join("\n")));
     }
 
     qInfo() << "MainWindow::switchMachineModel() - Successfully switched to model:" << displayName;

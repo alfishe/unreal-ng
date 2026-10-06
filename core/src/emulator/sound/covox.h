@@ -83,9 +83,12 @@ public:
 
     /// Fitment baked in at construction from config (mirrors Xpeccy's
     /// sdrvCreate(type) - the card itself knows what it is, not the
-    /// machine): Quad answers both mode-1 and mode-2 addresses (SD=1),
-    /// Mono answers only the exact #FB Covox port (CovoxFB=1, SD=0)
-    enum class Fitment { Mono, Quad };
+    /// machine): Quad answers both mode-1 and mode-2 addresses (SD=1, the
+    /// SounDrive card's mode=both), Mono answers only the exact #FB Covox port
+    /// (CovoxFB=1, SD=0), Mode1 / Mode2 one SounDrive port set (mode=1 / 2:
+    /// the real card's S1 switch), Mode1Mono the mode-1 set plus a Covox card's
+    /// #FB (two cards, one DAC module)
+    enum class Fitment { Mono, Quad, Mode1, Mode2, Mode1Mono };
 
     enum class Channel { LeftA = 0, LeftB = 1, RightA = 2, RightB = 3, Count = 4 };
 
@@ -117,6 +120,7 @@ protected:
     blip_t* _blipL = nullptr;
     blip_t* _blipR = nullptr;
     bool _synthesisSuppressed = false;
+    bool _phaseAlignPending = false;  // the blip stream left the mixer's sample grid (followSamplePhase)
 
     // Per-channel DAC state
     uint8_t _dacValue[4] = {0x80, 0x80, 0x80, 0x80};  // Start at midpoint (silence)
@@ -177,6 +181,12 @@ public:
     // Frame lifecycle
     void reset();
     void handleFrameStart();
+    /// The mixer's frame-start sample phase (SoundManager::handleFrameStart, before handleFrameStart): the Covox reads
+    /// the mixer's count from its blip stream, so a frame that rendered more (a host speed multiplier) left a backlog
+    /// behind - the output ran late by it for good - and a synthesis gap restarted the stream off the mixer's grid.
+    /// After either, the stream drops the backlog and takes the mixer's sample position (Beeper::followSamplePhase,
+    /// the same rule); at 1x nothing is touched
+    void followSamplePhase(uint64_t phase);
 
     /// Turbo mode: keep DAC register / level tracking, skip blip deltas (see Beeper)
     void setSynthesisSuppressed(bool suppressed);
@@ -224,6 +234,8 @@ public:
     /// See PortDevice::tryClaimOut/In and the Fitment doc above.
     bool tryClaimOut(uint16_t rawPort, uint8_t value) override;
     bool tryClaimIn(uint16_t rawPort, uint8_t& outValue) override;
+    /// The fitment's raw-port claims (the same mask / match tryClaimOut/In test)
+    std::vector<PortMaskMatch> selfDecodingClaims() const override;
 
     // Determine which channel a port address maps to
     static Channel portToChannel(uint16_t port);

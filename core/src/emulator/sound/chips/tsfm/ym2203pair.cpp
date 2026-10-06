@@ -31,9 +31,14 @@ void Ym2203Pair::reset()
     _chips[0]->resetChip();
     _chips[1]->resetChip();
 
+    // Render cursor (the rule, anchorRender): on a frame-relative axis the reset restarts the axis' time - the
+    // cursor goes to the frame origin; on a continuous axis time does not jump at a reset and the cursor keeps
+    // its place behind the chips
+    if (frameRelativeChipAxis())
+        anchorRender(0, 0, true);
+
     // Output stage: the FM hold / boxcar state and the decimators (state only; the rate-designed coefficients
     // and the slave wiring are preserved)
-    _renderT = _unity ? -kRenderLag : _chipT - kRenderLag;
     for (auto& c : _chips)
     {
         c->out.hold = 0.0;
@@ -99,6 +104,7 @@ void Ym2203Pair::rebaseFrame(uint64_t now)
     // call, so no time is lost or double-counted.
     if (_adoptCpuClock)
         return;
+    assert(!_config.continuousHostAxis && "a continuous host axis is never rebased");
     const int32_t delta = int32_t(_syncedT - now);
     if (delta == 0)
         return;
@@ -285,6 +291,7 @@ void Ym2203Pair::configureChannelOutputs(size_t rate, FilterDecimator::Quality q
     // held on a half-tick grid of master / 8
     const double ssgRate = double(_config.masterClockHz) / 16.0;
     const double fmRate = double(_config.masterClockHz) / 8.0;
+    _channelRate = std::max<size_t>(rate, 1);
     if (!_channels)
         _channels = std::make_unique<ChannelOutputs>();
     FilterDecimator* master = &_channels->ssg[0][0];
@@ -306,10 +313,10 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
     if (!_channels)
         return 0;
 
-    // The cursor trails the synced master clock by the render lag; far outside that window the owner lost the
-    // timeline (a gap in rendering, a speed change): re-anchor
-    if (_renderT < _chipT - 4 * kRenderLag || _renderT > _chipT)
-        _renderT = _chipT - kRenderLag;
+    // The cursor was placed by the owner's beginChannelRender (the rule, anchorRender): the synced period's
+    // blocks end kRenderLag behind the chips. Rendering past the chips would consume every queued word at the first
+    // half-tick and hold the last one - a block-rate staircase instead of the chips' output (MS-7 owner report
+    // 2026-10-05, when the check looked at the block's start)
 
     FilterDecimator& master = _channels->ssg[0][0];
     FilterDecimator* const fmDec = _channels->fm;

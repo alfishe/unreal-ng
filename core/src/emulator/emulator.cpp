@@ -20,6 +20,10 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
+#include <atomic>
+#include <cstdlib>
+
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdinputapply.h"
 #include "emulator/notifications.h"
@@ -203,7 +207,13 @@ bool Emulator::Init()
         }
         else
         {
-            MLOGERROR("Emulator::Init - CPU system core (or main peripheral devices) creation failed");
+            // A configuration the machine refuses (the slot set's conflicts, Q8) says why
+            if (_core)
+                _initError = _core->GetInitError();
+            MLOGERROR("Emulator::Init - CPU system core (or main peripheral devices) creation failed%s%s",
+                      _initError.empty() ? "" : ": ", _initError.c_str());
+            if (!_initError.empty())
+                return false;
         }
     }
 
@@ -285,17 +295,24 @@ bool Emulator::Init()
     // also exposes GetState() == Idle until StartRecording() is called.
     if (result)
     {
+        // Both implementations exist; the selected one is what the core and the
+        // verbs drive (Phase 5): the engine's controller by default
         ttd::TimeTravelManager* ttdManager = new ttd::TimeTravelManager(_context);
-        if (ttdManager != nullptr)
+        _context->pTimeTravelManager = ttdManager;
+        if (DefaultTimeTravelBackend() == TimeTravelBackend::Engine)
         {
-            _context->pTimeTravelManager = ttdManager;
-            MLOGDEBUG("Emulator::Init - TTD manager created");
+            ttd::TimeTravelController* controller = new ttd::TimeTravelController(_context);
+            _context->pTimeTravelController = controller;
+            _context->pTimeTravelHooks = controller;
+            _context->ttdWriteSink = controller;
+            MLOGDEBUG("Emulator::Init - time travel: the engine's controller");
         }
         else
         {
-            MLOGWARNING("Emulator::Init - TTD manager creation failed (non-fatal)");
+            _context->pTimeTravelHooks = ttdManager;
+            _context->ttdWriteSink = ttdManager;
+            MLOGDEBUG("Emulator::Init - time travel: v1's manager");
         }
-        // TTD manager creation is non-fatal — emulator works without it.
     }
 
     /// region <Sanity checks>
@@ -493,11 +510,18 @@ void Emulator::ReleaseNoGuard()
 
     // Release TTD manager. The manager's destructor releases all page-store
     // refs held by the timeline before the page store itself goes away.
+    _context->pTimeTravelHooks = nullptr;
+    if (_context->pTimeTravelController)
+    {
+        delete _context->pTimeTravelController;   // clears the sinks it set
+        _context->pTimeTravelController = nullptr;
+    }
     if (_context->pTimeTravelManager)
     {
         delete _context->pTimeTravelManager;
         _context->pTimeTravelManager = nullptr;
     }
+    _context->ttdWriteSink = nullptr;
 
     // Stop and release main loop
     if (_mainloop != nullptr)
@@ -660,10 +684,17 @@ bool Emulator::SetSpeedMultiplier(uint8_t multiplier)
     // TTD v1 (P1.6): speed change invalidates the recording because frame
     // timing is part of the determinism contract (parent TDD §4.2 + §5 row 13).
     // Simpler to invalidate than to model; revisit if it proves annoying.
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->InvalidateSession("speed-multiplier-change");
+    // A black box stops before the machine runs faster and starts again at 1x (D29)
+    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+    if (ttd && multiplier != 1)
+        ttd->OnAccelerationChanging(true);
+    if (ttd)
+        ttd->OnConfigurationChange(ttd::TTDConfigChangeKind::SpeedMultiplier, "speed-multiplier-change");
 
-    return _core->SetSpeedMultiplier(multiplier);
+    const bool changed = _core->SetSpeedMultiplier(multiplier);
+    if (ttd && multiplier == 1)
+        ttd->OnAccelerationChanging(false);
+    return changed;
 }
 
 void Emulator::SetSpeedChangeInterceptor(std::function<bool(uint8_t)> interceptor)
@@ -674,7 +705,7 @@ void Emulator::SetSpeedChangeInterceptor(std::function<bool(uint8_t)> intercepto
 
 std::string Emulator::RecordingGuard(ttd::TTDGuardedAction action) const
 {
-    ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
+    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
     return ttd ? ttd->RecordingGuard(action) : std::string();
 }
 
@@ -694,10 +725,12 @@ static bool RecordingAllows(const Emulator& emulator, ttd::TTDGuardedAction acti
 void Emulator::EditMemoryFromTool(const char* source, const std::function<void()>& edit)
 {
     NoteDebugChange();
-    ttd::TimeTravelManager* ttd = _context ? _context->pTimeTravelManager : nullptr;
-    const bool recording = ttd && ttd->IsRecording();
+    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+    // Recording, or a session being browsed: the engine continues a recording
+    // paused at this point and records the edit (D9)
+    const bool session = ttd && ttd->GetState() != ttd::TTDSessionState::Idle;
     const bool onEmulationThread = _mainloop && _mainloop->IsRunThread();
-    const bool park = recording && !onEmulationThread && IsRunning() && !IsPaused();
+    const bool park = session && !onEmulationThread && IsRunning() && !IsPaused();
     if (park)
     {
         Pause(false);
@@ -705,10 +738,10 @@ void Emulator::EditMemoryFromTool(const char* source, const std::function<void()
     }
 
     // v1 keeps a marker; the edit's bytes go with it, so the engine's replay applies it
-    if (recording)
+    if (session)
         ttd->BeginToolEdit();
     edit();
-    if (recording)
+    if (session)
         ttd->EndToolEdit(source);
 
     if (park)
@@ -922,14 +955,14 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
     if (start)
     {
         // Same rule as Reset(): a reset must never append to a recorded TTD timeline
-        if (_context->pTimeTravelManager && _context->pTimeTravelManager->IsRecording())
-            _context->pTimeTravelManager->StopRecording();
+        if (_context->pTimeTravelHooks && _context->pTimeTravelHooks->IsRecording())
+            _context->pTimeTravelHooks->StopRecording();
 
         autostart->Disarm();
         _core->Reset(RM_DOS);  // Quick reset straight into TR-DOS: PC = 0 with the DOS ROM active
         RestartFrame();        // Frame 0 starts at the reset state (see Reset())
-        if (_context->pTimeTravelManager)
-            _context->pTimeTravelManager->OnMachineReset();
+        if (_context->pTimeTravelHooks)
+            _context->pTimeTravelHooks->OnMachineReset();
         if (plan.action == DiskAutostart::Action::BootNamed)
             autostart->Arm(plan.bootName);
     }
@@ -986,10 +1019,10 @@ void Emulator::Reset(bool hardReset)
     // See parent TDD §4.2 (StopRecording retains history) and §5.1
     // (markers are for nondeterministic INPUT events, not for state
     // teleports that happen AFTER recording stops).
-    if (_context && _context->pTimeTravelManager
-        && _context->pTimeTravelManager->IsRecording())
+    if (_context && _context->pTimeTravelHooks
+        && _context->pTimeTravelHooks->IsRecording())
     {
-        _context->pTimeTravelManager->StopRecording();
+        _context->pTimeTravelHooks->StopRecording();
     }
 
     // Now perform reset while paused (safe, no race condition).
@@ -1014,8 +1047,8 @@ void Emulator::Reset(bool hardReset)
             rom.CalculateSignatures();
         else
             MLOGERROR("Emulator::Reset - the selected ROM could not be loaded");
-        if (_context && _context->pTimeTravelManager)
-            _context->pTimeTravelManager->InvalidateSession("rom-reload");
+        if (_context && _context->pTimeTravelHooks)
+            _context->pTimeTravelHooks->OnConfigurationChange(ttd::TTDConfigChangeKind::RomReload, "rom-reload");
     }
 
     _core->Reset();
@@ -1034,8 +1067,8 @@ void Emulator::Reset(bool hardReset)
     RestartFrame();
 
     // A machine seeked into recorded history leaves it (the timeline is kept)
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->OnMachineReset();
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->OnMachineReset();
 
     // Resume if it was running before
     if (wasRunning)
@@ -1071,8 +1104,8 @@ bool Emulator::SetFrontPanelSwitch(FrontPanelSwitch sw, bool on)
     ev.kind = ttd::TTDInputKind::FrontPanelSwitch;
     ev.key = static_cast<uint8_t>(sw);
     ev.pressed = on;
-    if (_context->pTimeTravelManager)
-        return _context->pTimeTravelManager->SubmitLiveInput(ev);
+    if (_context->pTimeTravelHooks)
+        return _context->pTimeTravelHooks->SubmitLiveInput(ev);
     return ttd::ApplyInputEvent(ev, ttd::InputDevicesOf(_context));
 }
 
@@ -1449,8 +1482,8 @@ void Emulator::WaitWhilePaused()
 
     // Parking mid-frame: publish the TTD summary first (see MainLoop::Run's
     // park). The caller executes the machine, so it may read the session
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->OnMachineParking();
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->OnMachineParking();
     NoteDebugChange();   // a stop (a breakpoint's park inside the frame) the debugger snapshot's seq counts
 
     std::unique_lock<std::mutex> lock(_pauseWaitMutex);
@@ -1777,7 +1810,7 @@ bool Emulator::ApplySnapshotData(const std::vector<uint8_t>& data, const std::st
         szx::Report report;
         const bool committed = decision.action == snapshot::Decision::Action::Take
                                    ? decision.Commit(image, *_context, _lastSnapshotReport)
-                                   : LoaderSZX::Commit(_context, stage, report, error);
+                                   : LoaderSZX::CommitImage(_context, image, stage, report, error);
         if (!committed && error.empty())
             error = _lastSnapshotReport.reason;
         LoaderSZX::AppendReport(report, _lastSnapshotReport);
@@ -1811,13 +1844,6 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error)>&
     if (IsRzxPlaying())
         StopRzx();
 
-    // TTD v1 (P1.6): snapshot load teleports full machine state (parent TDD §4.2).
-    // Refused while recording; otherwise drop the session before the loader runs.
-    if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadSnapshot))
-        return false;
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->InvalidateSession("snapshot-load");
-
     // Pause execution
     bool wasRunning = false;
     if (!IsPaused())
@@ -1844,20 +1870,52 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error)>&
     }
 
     std::string error;
-    const bool result = load(error);
+    bool result = false;
+    bool loaded = false;
+    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+    auto runLoad = [&]() {
+        loaded = true;
+        result = load(error);
+    };
+
+    // TTD (D10, the engine): a snapshot load while recording is part of the
+    // recording. The machine runs to the end of its frame and the load happens
+    // at the boundary, where the next checkpoint takes the loaded state; that
+    // boundary starts the next frame from it
+    if (ttd && ttd->QueueSnapshotLoad(runLoad))
+    {
+        Z80& z80 = *_core->GetZ80();
+        const uint32_t frameTStates = _context->emulatorState.BaseToCpuT(_context->config.frame);
+        RunTStates(z80.t < frameTStates ? frameTStates - static_cast<uint32_t>(z80.t) : 1, /*skipBreakpoints=*/true);
+        if (!loaded)
+            ttd->QueueSnapshotLoad(nullptr);   // the recording ended before the boundary: load without it
+    }
+
+    if (!loaded)
+    {
+        // v1 refuses it while recording (a snapshot teleports the whole machine,
+        // parent TDD §4.2); outside a recording the session hears of it first
+        if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadSnapshot, &error))
+        {
+            if (wasRunning)
+                Resume();
+            return false;
+        }
+        if (ttd)
+            ttd->OnLoad(ttd::TTDLoadKind::Snapshot, "snapshot-load");
+        runLoad();
+        // The loader reset the machine and replaced its state (ports, memory,
+        // registers): start the frame again from the loaded state, so devices
+        // and the video raster take their frame bases from it
+        if (result)
+            RestartFrame();
+    }
     if (!result && !error.empty())
         MLOGERROR("Snapshot load failed: %s", error.c_str());
 
     // Store snapshot path on success
     if (result)
-    {
         _context->coreState.snapshotFilePath = openedPath;
-
-        // The loader reset the machine and replaced its state (ports, memory,
-        // registers): start the frame again from the loaded state, so devices
-        // and the video raster take their frame bases from it
-        RestartFrame();
-    }
 
     // Resume execution
     if (wasRunning)
@@ -1947,6 +2005,28 @@ rzx::RzxSession* Emulator::LoadedRzxSession()
 {
     std::lock_guard<std::mutex> lock(_rzxSessionMutex);
     return _rzxSession && _rzxSession->Status().loaded ? _rzxSession.get() : nullptr;
+}
+
+namespace
+{
+/// The engine unless the process is started with UNREAL_TTD_BACKEND=v1 (the
+/// previous recorder: re-recording v1's fixture corpus, a comparison, a fallback)
+Emulator::TimeTravelBackend InitialTimeTravelBackend()
+{
+    const char* value = std::getenv("UNREAL_TTD_BACKEND");
+    return value && std::string(value) == "v1" ? Emulator::TimeTravelBackend::V1 : Emulator::TimeTravelBackend::Engine;
+}
+std::atomic<Emulator::TimeTravelBackend> g_defaultTimeTravelBackend{InitialTimeTravelBackend()};
+}
+
+void Emulator::SetDefaultTimeTravelBackend(TimeTravelBackend backend)
+{
+    g_defaultTimeTravelBackend.store(backend);
+}
+
+Emulator::TimeTravelBackend Emulator::DefaultTimeTravelBackend()
+{
+    return g_defaultTimeTravelBackend.load();
 }
 
 bool Emulator::IsRzxExtension(const std::string& ext)
@@ -2157,8 +2237,8 @@ bool Emulator::LoadTape(const std::string& path, std::string* error)
     // invalidate; only playback position is checkpointed). Refused while recording.
     if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadTape, error))
         return false;
-    if (_context->pTimeTravelManager)
-        _context->pTimeTravelManager->InvalidateSession("tape-load");
+    if (_context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->OnLoad(ttd::TTDLoadKind::Tape, "tape-load");
 
     // The format registry probes and loads (every TapeLoaderRegistry format,
     // a folder built into a TZX); the swap happens with the emulator thread
@@ -2286,8 +2366,8 @@ bool Emulator::CreateBlankDisk(uint8_t drive, BlankDiskFormat format, uint8_t cy
     blank.type = MediaSourceType::Blank;
     auto medium = std::make_unique<Medium>(blank, AccessMode::Session, BlankDiskFormatName(format), std::move(image));
 
-    if (_context->pTimeTravelManager)
-        _context->pTimeTravelManager->InvalidateSession("disk-create");
+    if (_context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->OnLoad(ttd::TTDLoadKind::DiskCreate, "disk-create");
 
     // The swap happens with the emulator thread parked, at once (no swap delay)
     const bool wasRunning = !IsPaused();
@@ -2352,8 +2432,8 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
     // session before the loader runs.
     if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadDisk, error))
         return false;
-    if (_context->pTimeTravelManager)
-        _context->pTimeTravelManager->InvalidateSession("disk-load");
+    if (_context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->OnLoad(ttd::TTDLoadKind::Disk, "disk-load");
 
     // The format registry probes and loads; the swap happens with the emulator
     // thread parked, at once (no swap delay: the caller expects the disk in)
@@ -3386,8 +3466,8 @@ bool Emulator::LoadROM(std::string path)
     // TTD v1 (P1.6): ROM reload changes immutable code/data backing every
     // checkpoint relies on (parent TDD §4.2 — "ROM reload" is listed
     // explicitly as a session invalidator).
-    if (_context && _context->pTimeTravelManager)
-        _context->pTimeTravelManager->InvalidateSession("rom-reload");
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->OnConfigurationChange(ttd::TTDConfigChangeKind::RomReload, "rom-reload");
 
     ROM& rom = *_core->GetROM();
 

@@ -33,6 +33,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/models/portdecoder_atm3.h"
 #include "_helpers/zcsdtesthelper.h"
@@ -64,9 +65,18 @@ protected:
 
     void StartMachine(const std::string& model, GSTypeKind generalSound, bool fitGs)
     {
-        _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        // The card the session was recorded with, fitted at creation: the shipped 48K / 128K / +2 / +2A / +3, Profi
+        // and Sprinter configs have no GS since 2026-10-04 (owner decision), and a switch cannot fill an empty slot
+        {
+            GeneralSoundFitScope fit(fitGs ? generalSound : GSTypeKind::NONE);
+            _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
+        }
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
+        // The shipped ts-conf config carries a Z-Controller card (wc-zifi.img, 2026-10-05): these seeks are about the
+        // CPU and the journals, not the SD card, so the slot is left empty
+        if (_context->pMediaManager)
+            _context->pMediaManager->Eject("sd.zc");
         _v1 = _context->pTimeTravelManager;
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);

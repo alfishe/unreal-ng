@@ -63,8 +63,7 @@ TEST_F(TimeTravelManager_RecordingGuard_Test, NothingIsGuarded_WhenNotRecording)
 {
     for (TTDGuardedAction action :
          {TTDGuardedAction::LoadSnapshot, TTDGuardedAction::LoadTape, TTDGuardedAction::LoadDisk,
-          TTDGuardedAction::CreateDisk, TTDGuardedAction::LoadRom, TTDGuardedAction::Invalidate,
-          TTDGuardedAction::DisableTimeTravel, TTDGuardedAction::DisableDebugMode})
+          TTDGuardedAction::CreateDisk, TTDGuardedAction::LoadRom, TTDGuardedAction::Invalidate})
     {
         EXPECT_TRUE(_ttd->RecordingGuard(action).empty()) << static_cast<int>(action);
     }
@@ -76,7 +75,7 @@ TEST_F(TimeTravelManager_RecordingGuard_Test, EveryGuardedActionHasAReason_While
     for (TTDGuardedAction action :
          {TTDGuardedAction::LoadSnapshot, TTDGuardedAction::LoadTape, TTDGuardedAction::LoadDisk,
           TTDGuardedAction::CreateDisk, TTDGuardedAction::LoadRom, TTDGuardedAction::Invalidate,
-          TTDGuardedAction::DisableTimeTravel, TTDGuardedAction::DisableDebugMode})
+          TTDGuardedAction::SwitchModel})
     {
         const std::string reason = _ttd->RecordingGuard(action);
         EXPECT_NE(StringHelper::ToLower(reason).find("stop the recording first"), std::string::npos) << reason;
@@ -117,23 +116,44 @@ TEST_F(TimeTravelManager_RecordingGuard_Test, RomLoadIsRefused_WithoutPausingThe
     ExpectRecordingIntact(checkpoints);
 }
 
-TEST_F(TimeTravelManager_RecordingGuard_Test, SwitchingTtdFeaturesOffIsRefused_WhileRecording)
+/// FR-17 (Phase 5, item 3; supersedes B9's refusal): switching timetravel or
+/// debugmode off while recording stops the recording cleanly - the history
+/// recorded up to that instant stays, browsable, and status says why it stopped
+TEST_F(TimeTravelManager_RecordingGuard_Test, SwitchingTtdFeaturesOffStopsTheRecordingCleanly)
+{
+    for (const char* feature : {Features::kTimeTravel, Features::kDebugMode})
+    {
+        SCOPED_TRACE(feature);
+        StartRecordingWithHistory();
+        _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+        const size_t checkpoints = _ttd->GetCheckpointCount();
+        const uint64_t first = _ttd->GetSessionInfo().sessionStartFrame;
+        const std::string dropReason = _ttd->GetSessionInfo().lastDropReason;
+
+        EXPECT_TRUE(_fm->refusalReason(feature, false).empty());
+        EXPECT_TRUE(_fm->setFeature(feature, false));
+        EXPECT_FALSE(_fm->isEnabled(feature));
+        EXPECT_FALSE(_ttd->IsRecording());
+        EXPECT_EQ(_ttd->GetCheckpointCount(), checkpoints);  // nothing dropped
+        EXPECT_EQ(_ttd->GetSessionInfo().lastStopReason, std::string("feature-off:") + feature);
+        EXPECT_EQ(_ttd->GetSessionInfo().lastDropReason, dropReason);  // a stop, not a drop
+
+        // Still browsable: a seek into it restores (and re-enables what capture needs)
+        EXPECT_TRUE(_ttd->SeekTo(ttd::TTDTimePoint{first + 1, 0}));
+        _ttd->InvalidateSession("next case");
+        _fm->setFeature(Features::kDebugMode, true);
+        _fm->setFeature(Features::kTimeTravel, true);
+    }
+}
+
+/// A new recording forgets why the previous one stopped
+TEST_F(TimeTravelManager_RecordingGuard_Test, ANewRecordingClearsTheStopReason)
 {
     StartRecordingWithHistory();
-
-    EXPECT_FALSE(_fm->setFeature(Features::kTimeTravel, false));
-    EXPECT_FALSE(_fm->setFeature(Features::kDebugMode, false));
-    EXPECT_TRUE(_fm->isEnabled(Features::kTimeTravel));
-    EXPECT_TRUE(_fm->isEnabled(Features::kDebugMode));
-    EXPECT_EQ(_fm->refusalReason(Features::kTimeTravel, false),
-              _ttd->RecordingGuard(TTDGuardedAction::DisableTimeTravel));
-    EXPECT_EQ(_fm->refusalReason(Features::kDebugMode, false),
-              _ttd->RecordingGuard(TTDGuardedAction::DisableDebugMode));
-    EXPECT_TRUE(_ttd->IsRecording());
-
-    _ttd->StopRecording();
-    EXPECT_TRUE(_fm->refusalReason(Features::kTimeTravel, false).empty());
-    EXPECT_TRUE(_fm->setFeature(Features::kTimeTravel, false));
+    ASSERT_TRUE(_fm->setFeature(Features::kTimeTravel, false));
+    ASSERT_FALSE(_ttd->GetSessionInfo().lastStopReason.empty());
+    ASSERT_TRUE(_ttd->StartRecording());
+    EXPECT_TRUE(_ttd->GetSessionInfo().lastStopReason.empty());
 }
 
 /// D40: the write journal is not guarded - it switches on and off at any

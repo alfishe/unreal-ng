@@ -116,6 +116,9 @@ Scope confirmed with the user on 2026-09-27, and how the design honors it:
   video mapper this is what a TSU / palette debug view integrates
 - [x] TSU-6 (2026-09-30, branch `tsconf-tsu6`): the TSU draws line L at
   `ts_start` of line L - 1 with its latches
+- [x] TSU-9 (2026-10-05, RTL audit item 13): the objects of a busy pass after
+  `line_start` of L take L's latches; tile count per layer and the prefetch's extra
+  DRAM cycle as the Verilog (`rtl-sim` `tsulatch`, test TSU9)
 - [x] VDAC builds (2026-09-30, branch `tsconf-vdac`): `[MISC] TS_VDAC` /
   `TS_VDAC2` set STATUS VDAC_VER, the palette curve and BLT2; default NONE
 - [x] TIM-5 (2026-09-30, branch `tsconf-tim5`): a DMA CRAM write lands at its dot

@@ -179,6 +179,13 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         COMMAND ${CMAKE_COMMAND} -E
         copy_directory ${DATA_PATH}/testrom ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom
     )
+
+    # The default General MIDI bank (ZX-MultiSound synthesizer) to /midi
+    add_custom_command(
+        TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E
+        copy_directory ${DATA_PATH}/midi ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/midi
+    )
 else ()
     # Produce static library;  Create unrealng::automation alias for the target
     add_library(${PROJECT_NAME} STATIC ${SOURCES})

@@ -1,0 +1,63 @@
+        ORG     40000
+
+        LD      BC,1000
+MLOOP   PUSH    BC
+AGAIN   CALL    RANDOM
+        LD      A,H
+        AND     #1F
+        LD      B,A
+        LD      A,L
+        AND     #1F
+        LD      L,A
+        LD      H,#58
+        LD      DE,32
+        LD      A,B
+        CP      24
+        JR      NC,AGAIN
+        AND     A
+        JR      Z,ZERO
+LOOP    ADD     HL,DE
+        DJNZ    LOOP
+ZERO    LD      (HL),#FF
+        POP     BC
+        DEC     BC
+        LD      A,B
+        OR      C
+        JR      NZ,MLOOP
+        RET
+
+RANDOM  PUSH    BC
+        PUSH    DE
+        LD      HL,(SEED)
+        INC     HL
+        LD      D,0
+        LD      A,H
+        OR      L
+        JR      NZ,NOCARRY
+        INC     D
+NOCARRY PUSH    DE
+        PUSH    HL
+        SLA     L
+        RL      H
+        RL      D
+        ADD     HL,BC
+        ADC     A,D
+        LD      D,A
+        POP     BC
+        POP     AF
+        ADD     HL,BC
+        ADC     A,D
+        LD      C,A
+        LD      B,0
+        OR      A
+        SBC     HL,BC
+        ADC     HL,BC
+        OR      A
+        SBC     HL,BC
+        DEC     HL
+        LD      (SEED),HL
+        POP     DE
+        POP     BC
+        RET
+SEED    DEFW    0
+

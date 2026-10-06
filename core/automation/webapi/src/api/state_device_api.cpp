@@ -13,8 +13,10 @@
 #include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/io/network/networkmanager.h>
+#include <emulator/slots/slotcontrol.h>
 #include <emulator/cpu/core.h>
 #include <emulator/ports/models/sprinter/sprinterbios.h>
+#include <emulator/sound/midi/midicontrol.h>
 #include <emulator/state/devicestate.h>
 #include <json/json.h>
 
@@ -124,6 +126,48 @@ void EmulatorAPI::getStateAudioMoonSound(const HttpRequestPtr& req,
     if (!emulator)
         return ReplyNotFound("Emulator not found with ID: " + id, callback);
     ReplyState(DeviceState::MoonSound(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/audio/multisound
+void EmulatorAPI::getStateAudioMultiSound(const HttpRequestPtr& req,
+                                          std::function<void(const HttpResponsePtr&)>&& callback,
+                                          const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::MultiSound(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/audio/midi
+void EmulatorAPI::getStateAudioMidi(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::Midi(emulator->GetContext()), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/control/audio/midi  {"action": "panic"}
+/// panic: every voice of the MIDI synthesizer stops (MidiControl), at the next instruction boundary as a TTD live
+/// input; 404 without a synthesizer, 409 while a TTD replay owns the input
+void EmulatorAPI::postControlAudioMidi(const HttpRequestPtr& req,
+                                       std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto json = req->getJsonObject();
+    const std::string action = json ? json->get("action", "").asString() : req->getParameter("action");
+    const MidiControlReply reply = MidiControl::Execute(emulator->GetContext(), action);
+    auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(reply.ToValue()));
+    resp->setStatusCode(static_cast<HttpStatusCode>(reply.httpStatus));
+    addCorsHeaders(resp);
+    callback(resp);
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/audio/moonsound/{fm|pcm}
@@ -649,26 +693,42 @@ void EmulatorAPI::getStateNetworkActive(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/{id}/network/config - change the [NETWORK] settings at runtime
-/// (NetworkManager::ParseChange: the same keys as CLI `network set` and Lua / Python network_configure)
+/// (NetworkManager::ParseChange: the same keys as CLI `network set` and Lua / Python network_configure) through
+/// SlotControl verb network: a change of the ZX-bus cards (`card`) is a slot change applied by a restart (owner decision
+/// Q11; `replaceIfIncompatible`, `dryRun`, `mediaDisposition` as for /slots), the other keys go to the restarted
+/// machine; without a card change they apply in place (status "accepted")
 void EmulatorAPI::postNetworkConfig(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                     const std::string& id) const
 {
     auto emulator = getEmulatorByIdOrIndex(id);
     if (!emulator)
         return ReplyNotFound("Emulator not found with ID: " + id, callback);
-    EmulatorContext* context = emulator->GetContext();
-    NetworkManager* manager = context->pCore ? context->pCore->GetNetworkManager() : nullptr;
-    if (!manager)
-        return ReplyNotFound("no network support in this machine", callback);
 
     auto body = req->getJsonObject();
     if (!body || !body->isObject())
         return ReplyNotFound("Body must be a JSON object, e.g. {\"card\": \"zxnetusb\", \"host_access\": true}", callback,
                              HttpStatusCode::k400BadRequest);
-    std::vector<std::pair<std::string, std::string>> settings;
+    SlotControlRequest request;
+    request.verb = "network";
+    request.emulatorId = emulator->GetId();
     for (const std::string& key : body->getMemberNames())
     {
         const Json::Value& v = (*body)[key];
+        if (key == "replaceIfIncompatible" || key == "replace_if_incompatible")
+        {
+            request.replaceIfIncompatible = v.asBool();
+            continue;
+        }
+        if (key == "dryRun" || key == "dry_run")
+        {
+            request.dryRun = v.asBool();
+            continue;
+        }
+        if (key == "mediaDisposition" || key == "media_disposition")
+        {
+            request.media = v.asString();
+            continue;
+        }
         std::string text;
         if (v.isBool())
             text = v.asBool() ? "on" : "off";
@@ -678,22 +738,21 @@ void EmulatorAPI::postNetworkConfig(const HttpRequestPtr& req, std::function<voi
             text = std::to_string(v.asInt64());
         else
             return ReplyNotFound(key + ": a string, number or boolean", callback, HttpStatusCode::k400BadRequest);
-        settings.emplace_back(key, text);
+        request.settings.emplace_back(key, text);
     }
+    emulator.reset();   // nothing here may keep the old machine alive across a restart
 
-    NetworkManager::Change change;
-    std::string error;
-    if (!NetworkManager::ParseChange(settings, change, error))
-        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
-    if (!manager->RequestChange(change, error))
-        return ReplyNotFound(error, callback, HttpStatusCode::k409Conflict);
-
-    Json::Value ret;
-    ret["status"] = "accepted";
-    ret["note"] = "applied at the next frame boundary (at once while paused); the card is fitted again, so every "
-                  "connection closes (remote_access alone only moves the host listeners: connections stay). "
-                  "GET /state/network shows the result";
+    const SlotControlReply reply = SlotControl::Execute(request);
+    Json::Value ret = StateNodeToJson(reply.ToValue());
+    if (reply.status == "accepted")
+        ret["note"] = "applied at the next frame boundary (at once while paused); the devices are fitted again, so every "
+                      "connection closes (remote_access alone only moves the host listeners: connections stay). "
+                      "GET /state/network shows the result";
+    else if (reply.status == "applied")
+        ret["note"] = "the ZX-bus network cards changed: the machine was restarted with the new slot set (a new emulator "
+                      "id, restart.emulatorId), the other settings were applied to it";
     auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(static_cast<HttpStatusCode>(reply.httpStatus));
     addCorsHeaders(resp);
     callback(resp);
 }

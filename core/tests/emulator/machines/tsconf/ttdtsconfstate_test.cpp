@@ -12,13 +12,14 @@ class TTDTsConfState_Test : public TsConfFixture
 TEST_F(TTDTsConfState_Test, TTD1_RoundTripRestoresStateAndMapping)
 {
     const auto ids = _decoder->GetTTDModelStateIds();
-    ASSERT_EQ(ids.size(), 6u);
+    ASSERT_EQ(ids.size(), 7u);
     EXPECT_EQ(ids[0], ttd::PeripheralId::TsConfPaging);
     EXPECT_EQ(ids[1], ttd::PeripheralId::EvoSdCard) << "the Z-Controller SD slot, shared with ATM3";
     EXPECT_EQ(ids[2], ttd::PeripheralId::Ds12887);
     EXPECT_EQ(ids[3], ttd::PeripheralId::EvoPs2) << "the AVR's PS/2 keyboard log, shared with ATM3";
     EXPECT_EQ(ids[4], ttd::PeripheralId::EvoMouse) << "the AVR's PS/2 mouse, shared with ATM3";
     EXPECT_EQ(ids[5], ttd::PeripheralId::EvoAvrVolatile) << "the AVR's volatile registers (on the ATM3 in AtmPaging)";
+    EXPECT_EQ(ids[6], ttd::PeripheralId::EvoFlash) << "the ROM chip's flash command state, shared with ATM3";
 
     Reg(TsConfReg::MemConfig, 0x40);
     Out(0x7FFD, 0x23);                  // 128K rule, lock48
@@ -49,5 +50,8 @@ TEST_F(TTDTsConfState_Test, TTD1_RoundTripRestoresStateAndMapping)
     EXPECT_EQ(Tag(0xC000), 0x03);
     EXPECT_TRUE(_decoder->IsPagingLocked());
     EXPECT_EQ(_decoder->GetState().fmStash, 0x21);
-    EXPECT_EQ(_core->GetBusOverlayCount(), 3u) << "the DRAM write counter + FM window + cache snoop";
+    EXPECT_EQ(_core->GetBusOverlayCount(), 2u) << "the DRAM write counter + FM window";
+    const TsConfState& ts = _decoder->GetState();
+    EXPECT_EQ(ts.cacheTag[0], 0x8000 | (2 << 5)) << "the cache entry filled by the read came back (page 2, A[13:9] = 0)";
+    EXPECT_EQ(ts.cacheWord[0], 0x0202);
 }

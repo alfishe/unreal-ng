@@ -68,14 +68,19 @@ curl -s "$BASE/emulator/$EMU_ID/state/paging" | jq .
 
 ### Sound defaults that come with the config
 
-`pentagon128k`/`pentagon512k` `unreal.ini` ships `TurboSound=FM` (TSFM in
-the TurboSound slot), `CovoxFB=1` (Pentagon-style Covox at `#FB`),
-`SD=1` (SoundDrive), `GSType=NGS` (NeoGS; `Z80` = classic General Sound, `BASS` is a
-deprecated alias of `LW`). Changing any of these requires **editing the config
-and creating a new instance** — no runtime switching. Details:
+`pentagon128k`/`pentagon512k` `unreal.ini` ships `[SLOTS]` `ay-socket = tsfm`
+(TSFM in the AY socket), `zxbus.1 = neogs` (NeoGS; `gs` = classic General Sound,
+`gs-lw` the lightweight player), `zxbus.2 = moonsound` and `zxbus.3 = soundrive`
+(`mode = both`: the SounDrive also answers the Pentagon-style Covox `#FB`). A change
+at run time is a slot change that **restarts the machine** (a new instance, media
+kept): `emulator_manage {"action":"slots_plug", ...}`, [slots.md](slots.md). Details:
 [turbosound.md](../peripherals/turbosound.md),
 [covox-sounddrive.md](../peripherals/covox-sounddrive.md),
 [generalsound.md](../peripherals/generalsound.md).
+The ZX-MultiSound card (TSFM, SAA1099, GS, SounDrive and MIDI on one card) is not in the
+shipped config; it fits a ZX-bus slot and shadows the board AY (it replaces the TSFM, NeoGS
+and SounDrive): [multisound.md](../peripherals/multisound.md), user guide
+[docs/features/multisound.md](../../docs/features/multisound.md).
 
 ## Pitfalls
 

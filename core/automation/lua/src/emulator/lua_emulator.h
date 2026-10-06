@@ -28,6 +28,8 @@
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
+#include <emulator/slots/slotcontrol.h>
+#include <emulator/sound/midi/midicontrol.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/tape/tape.h>
 #include <tapeaudio/tapeaudioimporter.h>
@@ -36,11 +38,13 @@
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundcharactersettings.h>
 #include <emulator/sound/chips/neogs/neogsmedia.h>
+#include <emulator/memory/atm/evoflashrequest.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
+#include <debugger/ttd/ttdcontrol.h>
 #include <debugger/debugmanager.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
 #include <debugger/mouse/debugmousemanager.h>
@@ -142,32 +146,6 @@ inline sol::object StateNodeToLua(sol::this_state s, const StateNode& node)
 }
 
 
-/// The recorded machine of a TTD session / file as a Lua table (the same keys
-/// as the WebAPI: model_id, model, ram_page_bound, rom_signature, peripheral_mask,
-/// peripherals, general_sound, turbo_sound)
-inline sol::table TtdRecordedMachineTable(sol::state_view& lua, const ttd::TTDRecordedMachine& m)
-{
-    sol::table t = lua.create_table();
-    t["model_id"] = static_cast<unsigned>(m.modelId);
-    if (!m.model.empty())
-        t["model"] = m.model;
-    t["ram_page_bound"] = static_cast<unsigned>(m.ramPageBound);
-    if (m.romSignature != 0)
-        t["rom_signature"] = "0x" + ttd::HashToString(m.romSignature);
-    t["peripheral_mask"] = m.peripheralMask;
-    sol::table list = lua.create_table();
-    for (size_t i = 0; i < m.peripherals.size(); ++i)
-        list[i + 1] = m.peripherals[i];
-    t["peripherals"] = list;
-    sol::table notRecorded = lua.create_table();
-    for (size_t i = 0; i < m.notRecorded.size(); ++i)
-        notRecorded[i + 1] = m.notRecorded[i];
-    t["not_recorded"] = notRecorded;
-    t["general_sound"] = ttd::GeneralSoundName(m.generalSound);
-    t["turbo_sound"] = m.turboSound;
-    return t;
-}
-
 class LuaEmulator
 {
     /// region <Fields>
@@ -190,6 +168,131 @@ protected:
                 return mgr->GetEmulator(id).get();
         }
         return nullptr;
+    }
+
+    /// One time-travel verb through TTDControl, the layer every surface shares
+    /// (Phase 5, Step 1). Without an emulator: NotAvailable "no emulator"
+    ttd::TTDReply TtdRun(const std::string& verb, std::map<std::string, std::string> options = {}) const
+    {
+        Emulator* emulator = effectiveEmulator();
+        if (!emulator)
+        {
+            ttd::TTDReply reply;
+            reply.error = ttd::TTDControlError::NotAvailable;
+            reply.message = "no emulator";
+            return reply;
+        }
+        return ttd::TTDControl(emulator->GetContext()).Execute({verb, std::move(options)});
+    }
+
+    /// A reply as a script sees it: the body, and on failure ok = false and
+    /// error = the message (a body that names its own error keeps it)
+    static StateNode TtdScriptValue(const ttd::TTDReply& reply)
+    {
+        StateNode value = reply.body;
+        if (!reply.Ok())
+        {
+            value["ok"] = false;
+            if (!value.find("error"))
+                value["error"] = reply.message;
+        }
+        return value;
+    }
+
+    /// A Lua value as option text: true / false, an integer, a string; nothing else
+    static std::string TtdOptionText(const sol::object& o)
+    {
+        if (o.is<bool>())
+            return o.as<bool>() ? "true" : "false";
+        if (o.get_type() == sol::type::number)
+            return std::to_string(static_cast<long long>(o.as<double>()));
+        return o.is<std::string>() ? o.as<std::string>() : std::string();
+    }
+
+    /// A seek's answer as a table: the reply's fields; a refused seek has reached = false
+    sol::object TtdSeekValue(sol::this_state ts, const ttd::TTDReply& reply) const
+    {
+        StateNode value = TtdScriptValue(reply);
+        if (!value.find("reached"))
+            value["reached"] = false;
+        return StateNodeToLua(ts, value);
+    }
+
+    /// One slots verb (SlotControl) for the effective emulator. `opts`: the flags (replace, dry_run, media, adapter),
+    /// options = "..." or {name = value}, and - when `cardOptions` - any other key as a card option. A restart of the
+    /// instance this interpreter is bound to rebinds it to the new machine
+    SlotControlReply slotsCall(SlotControlRequest request, const sol::optional<sol::table>& opts, bool cardOptions)
+    {
+        auto text = [](const sol::object& value) -> std::string {
+            if (value.is<bool>())
+                return value.as<bool>() ? "true" : "false";
+            if (value.get_type() == sol::type::number)
+            {
+                const double number = value.as<double>();
+                return number == static_cast<double>(static_cast<long long>(number))
+                           ? std::to_string(static_cast<long long>(number))
+                           : std::to_string(number);
+            }
+            if (value.get_type() == sol::type::table)
+            {
+                std::string list;
+                for (const auto& item : value.as<sol::table>())
+                {
+                    if (item.second.is<std::string>())
+                        list += (list.empty() ? "" : ",") + item.second.as<std::string>();
+                }
+                return list.empty() ? "none" : list;
+            }
+            return value.is<std::string>() ? value.as<std::string>() : std::string();
+        };
+        auto addOption = [&request](const std::string& name, const std::string& value) {
+            request.options += (request.options.empty() ? "" : " ") + name + "=" + value;
+        };
+        if (opts)
+        {
+            for (const auto& [keyObject, value] : *opts)
+            {
+                if (!keyObject.is<std::string>())
+                    continue;
+                const std::string key = keyObject.as<std::string>();
+                if (key == "replace" || key == "replaceIfIncompatible" || key == "replace_if_incompatible")
+                    request.replaceIfIncompatible = value.is<bool>() ? value.as<bool>() : text(value) == "true";
+                else if (key == "dry_run" || key == "dryRun")
+                    request.dryRun = value.is<bool>() ? value.as<bool>() : text(value) == "true";
+                else if (key == "media" || key == "mediaDisposition")
+                    request.media = text(value);
+                else if (key == "adapter")
+                    request.adapter = text(value);
+                else if (key == "options" && value.is<std::string>())
+                    request.options += (request.options.empty() ? "" : " ") + value.as<std::string>();
+                else if (key == "options" && value.get_type() == sol::type::table)
+                {
+                    for (const auto& [name, v] : value.as<sol::table>())
+                    {
+                        if (name.is<std::string>())
+                            addOption(name.as<std::string>(), text(v));
+                    }
+                }
+                else if (cardOptions)
+                    addOption(key, text(value));
+            }
+        }
+        Emulator* emulator = effectiveEmulator();
+        if (!emulator && request.verb != "matrix")
+        {
+            SlotControlReply none;
+            none.status = "no-machine";
+            none.httpStatus = 404;
+            none.message = "no emulator selected";
+            return none;
+        }
+        const bool bound = _emulator != nullptr && _emulator == emulator;
+        request.emulatorId = emulator ? emulator->GetId() : std::string();
+        emulator = nullptr;
+        SlotControlReply reply = SlotControl::Execute(request);
+        if (bound && reply.emulator)
+            _emulator = reply.emulator.get();   // the restarted machine; the manager owns it
+        return reply;
     }
 
     /// Pause() -> op -> Resume() bracket shared by the mutating tape
@@ -1339,6 +1442,59 @@ public:
             if (!ctx || !ctx->coreState.diskDrives[drive]) return false;
             return ctx->coreState.diskDrives[drive]->isDiskInserted();
         });
+
+        // region <ZX-bus slots through SlotControl (ZX-bus slots architecture.md §9)>
+        // slots_state(), slots_catalog(), slots_matrix([table]),
+        // slots_plug(slot, card [, opts]), slots_remove(slot [, opts]), slots_set(slot, opts), slots_gs(card [, opts]).
+        // slot: zxbus.1, zxbus.next, ay-socket ("" or "auto" for plug: the planner's choice).
+        // opts: {options = "dip=ym,saa" | {dip = "ym,saa"}, replace = true, dry_run = true, media = "save" | "discard",
+        //        adapter = "..."}; any other key is a card option (slots_set(slot, {dip = "ym,gs"})).
+        // Each returns the reply table every surface returns: ok, status, message and the verb's fields (the report,
+        // cards, tables; for a change the plan, restart = {restarted, emulatorId, ...}, media). A change restarts
+        // the machine: a script bound to the old instance follows it to the new one
+        lua.set_function("slots_state", [this](sol::this_state s) {
+            SlotControlRequest request;
+            request.verb = "list";
+            return StateNodeToLua(s, slotsCall(request, sol::nullopt, false).ToValue());
+        });
+        lua.set_function("slots_catalog", [this](sol::this_state s) {
+            SlotControlRequest request;
+            request.verb = "catalog";
+            return StateNodeToLua(s, slotsCall(request, sol::nullopt, false).ToValue());
+        });
+        lua.set_function("slots_matrix", [this](sol::this_state s, sol::optional<std::string> table) {
+            SlotControlRequest request;
+            request.verb = "matrix";
+            request.table = table.value_or("");
+            return StateNodeToLua(s, slotsCall(request, sol::nullopt, false).ToValue());
+        });
+        lua.set_function("slots_plug", [this](sol::this_state s, const std::string& slot, const std::string& card,
+                                              sol::optional<sol::table> opts) {
+            SlotControlRequest request;
+            request.verb = "plug";
+            request.slot = slot == "auto" ? std::string() : slot;
+            request.card = card;
+            return StateNodeToLua(s, slotsCall(request, opts, true).ToValue());
+        });
+        lua.set_function("slots_remove", [this](sol::this_state s, const std::string& slot, sol::optional<sol::table> opts) {
+            SlotControlRequest request;
+            request.verb = "remove";
+            request.slot = slot;
+            return StateNodeToLua(s, slotsCall(request, opts, false).ToValue());
+        });
+        lua.set_function("slots_set", [this](sol::this_state s, const std::string& slot, sol::optional<sol::table> opts) {
+            SlotControlRequest request;
+            request.verb = "set";
+            request.slot = slot;
+            return StateNodeToLua(s, slotsCall(request, opts, true).ToValue());
+        });
+        lua.set_function("slots_gs", [this](sol::this_state s, const std::string& card, sol::optional<sol::table> opts) {
+            SlotControlRequest request;
+            request.verb = "gs";
+            request.card = card;
+            return StateNodeToLua(s, slotsCall(request, opts, false).ToValue());
+        });
+        // endregion </ZX-bus slots>
 
         // region <Media: every slot through MediaControl (media-control-design.md)>
         // media_list(), media_info(slot), media_formats([kind]),
@@ -3241,38 +3397,39 @@ public:
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::Network(emulator->GetContext()));
         });
-        // network_configure{card="zxnetusb", host_access=true, hosts="name=1.2.3.4", remote_access=false} -> true | nil, err
-        // (NetworkManager::ParseChange keys; remote_access: guest servers listen on 0.0.0.0, off = 127.0.0.1 only)
-        lua.set_function("network_configure", [this](sol::this_state s, sol::table settings) -> sol::variadic_results {
+        // network_configure{card="zxnetusb", host_access=true, hosts="name=1.2.3.4", remote_access=false} [, opts]
+        //   -> the reply table (truthy) | nil, err, reply
+        // (NetworkManager::ParseChange keys; remote_access: guest servers listen on 0.0.0.0, off = 127.0.0.1 only).
+        // SlotControl verb network (ZX-bus slots, owner decision Q11): a change of the ZX-bus cards is a slot change
+        // applied by a restart (opts: replace, dry_run, media as for slots_plug; an interpreter bound to the machine
+        // follows the restarted one), the other keys go to the restarted machine; without one they apply in place
+        // (status "accepted")
+        lua.set_function("network_configure", [this](sol::this_state s, sol::table settings,
+                                                     sol::optional<sol::table> opts) -> sol::variadic_results {
             sol::variadic_results out;
-            Emulator* emulator = effectiveEmulator();
-            NetworkManager* manager = (emulator && emulator->GetContext()->pCore)
-                                          ? emulator->GetContext()->pCore->GetNetworkManager()
-                                          : nullptr;
-            std::string error = emulator ? "no network support in this machine" : "No emulator selected";
-            if (manager)
+            SlotControlRequest request;
+            request.verb = "network";
+            for (const auto& [key, value] : settings)
             {
-                std::vector<std::pair<std::string, std::string>> kv;
-                for (const auto& [key, value] : settings)
-                {
-                    std::string text;
-                    if (value.get_type() == sol::type::boolean)
-                        text = value.as<bool>() ? "on" : "off";
-                    else if (value.get_type() == sol::type::number)
-                        text = std::to_string(value.as<long long>());
-                    else
-                        text = value.as<std::string>();
-                    kv.emplace_back(key.as<std::string>(), text);
-                }
-                NetworkManager::Change change;
-                if (NetworkManager::ParseChange(kv, change, error) && manager->RequestChange(change, error))
-                {
-                    out.push_back(sol::make_object(s, true));
-                    return out;
-                }
+                std::string text;
+                if (value.get_type() == sol::type::boolean)
+                    text = value.as<bool>() ? "on" : "off";
+                else if (value.get_type() == sol::type::number)
+                    text = std::to_string(value.as<long long>());
+                else
+                    text = value.as<std::string>();
+                request.settings.emplace_back(key.as<std::string>(), text);
+            }
+            const SlotControlReply reply = slotsCall(request, opts, false);
+            sol::object table = StateNodeToLua(s, reply.ToValue());
+            if (reply.Ok())
+            {
+                out.push_back(table);
+                return out;
             }
             out.push_back(sol::make_object(s, sol::lua_nil));
-            out.push_back(sol::make_object(s, error));
+            out.push_back(sol::make_object(s, reply.message));
+            out.push_back(table);
             return out;
         });
 
@@ -3494,6 +3651,23 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::Covox(ctx));
         });
+        // ZX-MultiSound (DeviceState::MultiSound), its MIDI synthesizer (DeviceState::Midi) and the MIDI panic
+        // (MidiControl: every voice stops, a TTD live input); unavailable / (false, reason) without the card
+        lua.set_function("multisound_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::MultiSound(ctx));
+        });
+        lua.set_function("midi_state", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DeviceState::Midi(ctx));
+        });
+        lua.set_function("midi_panic", [this]() -> std::tuple<bool, std::string> {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            if (!ctx)
+                return {false, "no emulator selected"};
+            const MidiControlReply reply = MidiControl::Execute(ctx, "panic");
+            return {reply.ok, reply.message};
+        });
         // MoonSound: overview, or part "fm" / "pcm"
         lua.set_function("audio_moonsound_state", [this](sol::this_state s, sol::optional<std::string> part) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
@@ -3517,6 +3691,33 @@ public:
         lua.set_function("gs_flash_save", [this]() -> bool {
             return _emulator && NeoGSMediaAccepted(NeoGSRequestFlashSave(_emulator->GetContext()));
         });
+        // ZX-Evo flash ROM (TS-Conf, ATM3): the saved flash (evoflashrequest.h). rom_flash_state() is nil on other
+        // machines; save / discard return true when accepted (discard: the shipped ROM returns at the next reset)
+        lua.set_function("rom_flash_state", [this](sol::this_state s) -> sol::object {
+            EvoFlash::PersistStatus st;
+            if (!_emulator || !EvoFlashGetStatus(_emulator->GetContext(), st))
+                return sol::make_object(s, sol::lua_nil);
+            sol::state_view lv(s);
+            sol::table t = lv.create_table();
+            t["machine"] = st.machine;
+            t["file"] = st.path;
+            t["file_exists"] = st.fileExists;
+            t["base_rom_sha256"] = st.baseDigest;
+            t["loaded_from_file"] = st.loadedFromFile;
+            t["unsaved"] = st.unsaved;
+            t["changes"] = st.changes;
+            sol::table others = lv.create_table();
+            for (size_t i = 0; i < st.otherImageFiles.size(); ++i)
+                others[i + 1] = st.otherImageFiles[i];
+            t["other_image_files"] = others;
+            return t;
+        });
+        lua.set_function("rom_flash_save", [this]() -> bool {
+            return _emulator && EvoFlashAccepted(EvoFlashRequestSave(_emulator->GetContext()));
+        });
+        lua.set_function("rom_flash_discard", [this]() -> bool {
+            return _emulator && EvoFlashAccepted(EvoFlashRequestDiscard(_emulator->GetContext()));
+        });
         // NeoGS stereo mode: "separated" (as on the board), "gs" (50% cross-feed
         // like the classic GS) or "mono"; applied at the next frame. False on
         // an unknown name
@@ -3536,12 +3737,12 @@ public:
         auto submitGS = [this](ttd::TTDInputKind kind, int value) -> bool {
             if (!effectiveEmulator() || value < 0 || value > 255) return false;
             auto* ctx = effectiveEmulator()->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
+            if (!ctx || !ctx->pTimeTravelHooks) return false;
             if (!ctx->pSoundManager || !ctx->pSoundManager->getGeneralSound()) return false;
             ttd::TTDInputEvent ev;
             ev.kind = kind;
             ev.value = static_cast<uint8_t>(value);
-            return ctx->pTimeTravelManager->SubmitLiveInput(ev);
+            return ctx->pTimeTravelHooks->SubmitLiveInput(ev);
         };
 
         lua.set_function("gs_reset", [submitGS]() { return submitGS(ttd::TTDInputKind::GSReset, 0); });
@@ -3572,23 +3773,16 @@ public:
             return gs ? (gs->getStatusRaw() | 0x7E) : -1;
         });
 
-        // Runtime personality switch (GS card personalities design §11.3):
-        // requested here, applied at the next frame boundary on the
-        // emulation thread - same semantics as the WebAPI switch_personality
-        // action and the MCP gs_switch_personality tool action
-        lua.set_function("gs_switch_personality", [this](const std::string& personality) -> std::tuple<bool, std::string> {
-            if (!effectiveEmulator()) return {false, ""};
-            auto* ctx = effectiveEmulator()->GetContext();
-            SoundManager* sm = ctx ? ctx->pSoundManager : nullptr;
-            if (!sm) return {false, ""};
-
-            GSTypeKind target;
-            if (!gsParsePersonality(personality, target))
-                return {false, ""};
-
-            std::string refusal;  // a TTD recording refuses the switch (FR-4)
-            const bool requested = sm->requestGeneralSoundCardSwitch(target, &refusal);
-            return {requested, refusal};
+        // The General Sound personality: the card in the GS slot replaced as a slot change, applied by a machine
+        // restart (ZX-bus slots, owner decision Q10) - the same as slots_gs(card). Returns (ok, message); the reply
+        // table of slots_gs has the plan and the new emulator id
+        lua.set_function("gs_switch_personality", [this](const std::string& personality,
+                                                          sol::optional<sol::table> opts) -> std::tuple<bool, std::string> {
+            SlotControlRequest request;
+            request.verb = "gs";
+            request.card = personality;
+            const SlotControlReply reply = slotsCall(request, opts, false);
+            return {reply.Ok(), reply.message};
         });
 
         // Diagnostics: write the last completed COM30..D2 upload (the raw
@@ -3819,130 +4013,25 @@ public:
         // shape. No-op (return false / empty table) when TTD is unavailable.
         // -----------------------------------------------------------------
 
-        lua.set_function("ttd_status", [this]() -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table info = lua_view.create_table();
-            if (!emulator) { info["ttd_available"] = false; return info; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                info["state"]         = "idle";
-                info["ttd_available"] = false;
-                return info;
-            }
-            ttd::TimeTravelManager* mgr = ctx->pTimeTravelManager;
-            ttd::TTDSessionInfo si = mgr->ReadSessionInfo();
-            info["state"]                    = ttd::TTDSessionStateToString(si.state);
-            info["session_start_frame"]      = si.sessionStartFrame;
-            info["current_end_frame"]        = si.currentEndFrame;
-            info["checkpoint_count"]         = static_cast<uint64_t>(si.checkpointCount);
-            info["page_store_bytes"]         = static_cast<uint64_t>(si.pageStoreBytes);
-            info["page_store_used_bytes"]    = static_cast<uint64_t>(si.pageStoreUsedBytes);
-            info["baseline_frames_captured"] = si.baselineFramesCaptured;
-            info["session_heap_bytes"]       = static_cast<uint64_t>(si.sessionHeapBytes);
-            info["history_limit_frames"]     = si.historyLimitFrames;
-            info["history_limit_bytes"]      = si.historyLimitBytes;
-            info["history_bytes"]            = si.historyBytes;
-            info["evicted_checkpoints"]      = si.evictedCheckpoints;
-            info["loaded_from_file"]      = si.loadedFromFile;
-            info["source_path"]           = si.sourcePath;
-            info["captured_at_unix_ms"]   = si.capturedAtUnixMs;
-            info["model_id"]              = si.modelId;
-            info["model_ram_pages"]       = si.modelRamPages;
-            info["write_journal_records"] = si.writeJournalRecords;
-            info["write_journal_bytes"]   = si.writeJournalBytes;
-            info["coverage_index_frames"] = si.coverageIndexFrames;
-            info["coverage_index_bytes"]  = si.coverageIndexBytes;
-            info["write_journal_enabled"]    = si.writeJournalEnabled;
-            info["write_journal_complete"]   = si.writeJournalComplete;
-            sol::table segments = lua_view.create_table();
-            for (size_t i = 0; i < si.writeJournalSpans.size(); ++i)
-            {
-                sol::table span = lua_view.create_table();
-                span["from_frame"]    = si.writeJournalSpans[i].first.frame;
-                span["from_tinframe"] = si.writeJournalSpans[i].first.tInFrame;
-                span["to_frame"]      = si.writeJournalSpans[i].second.frame;
-                span["to_tinframe"]   = si.writeJournalSpans[i].second.tInFrame;
-                segments[i + 1] = span;
-            }
-            info["write_journal_segments"] = segments;
-            info["bookmark_count"]           = static_cast<uint64_t>(si.bookmarkCount);
-            info["input_event_count"]        = static_cast<uint64_t>(si.inputEventCount);
-            info["external_event_count"]     = static_cast<uint64_t>(si.externalEventCount);
-            info["input_history_complete"]   = si.inputHistoryComplete;
-            info["port_journal_active"]      = si.portJournalActive;
-            if (!si.portJournalOffReason.empty())
-                info["port_journal_off_reason"] = si.portJournalOffReason;
-            info["port_read_count"]          = si.portReadCount;
-            info["port_write_count"]         = si.portWriteCount;
-            info["port_journal_bytes"]       = static_cast<uint64_t>(si.portJournalBytes);
-            info["port_replay_value_mismatches"] = si.portReplayValueMismatches;
-            info["port_replay_divergences"]  = si.portReplayDivergences;
-            if (!si.lastDropReason.empty())
-                info["last_drop_reason"]     = si.lastDropReason;  // "" until a history is dropped
-            if (!si.unavailableReason.empty())
-                info["unavailable_reason"]   = si.unavailableReason;  // e.g. a ZX-Poly member
-            if (si.checkpointCount != 0)
-                info["machine"] = TtdRecordedMachineTable(lua_view, si.machine);  // the recorded machine
-            if (!si.recordedBy.empty())
-                info["recorded_by"] = si.recordedBy;  // the instance that recorded a loaded file
-            info["ttd_available"]            = true;
-            return info;
+        lua.set_function("ttd_status", [this](sol::this_state ts) -> sol::object {
+            const ttd::TTDReply reply = TtdRun("status");
+            return StateNodeToLua(ts, reply.Ok() ? reply.body : ttd::TTDControl::StatusBody(nullptr));
         });
 
         // ttd_file_info(path) - a .ttd file's header, sections and recorded machine,
         // read without loading it: {ok, error | path, file_bytes, ..., machine, sections}
-        lua.set_function("ttd_file_info", [this](const std::string& path) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table r = lua_view.create_table();
-            ttd::TTDFileInfo fi;
-            std::string err;
-            if (!ttd::ReadTTDFileInfo(path, fi, err))
-            {
-                r["ok"] = false;
-                r["path"] = path;
-                r["error"] = err;
-                return r;
-            }
-            r["ok"] = true;
-            r["path"] = fi.path;
-            r["file_bytes"] = fi.fileBytes;
-            r["schema_version"] = static_cast<unsigned>(fi.schemaVersion);
-            r["flags"] = static_cast<unsigned>(fi.flags);
-            r["captured_at_unix_ms"] = fi.capturedAtUnixMs;
-            if (!fi.emulatorId.empty())
-                r["recorded_by"] = fi.emulatorId;
-            r["session_state"] = ttd::TTDSessionStateToString(static_cast<ttd::TTDSessionState>(fi.sessionState));
-            r["session_start_frame"] = fi.startFrame;
-            r["session_end_frame"] = fi.endFrame;
-            r["checkpoint_count"] = static_cast<uint64_t>(fi.checkpointCount);
-            r["page_slot_count"] = static_cast<uint64_t>(fi.pageStoreCount);
-            sol::table sections = lua_view.create_table();
-            sections["write_journal"] = fi.hasWriteJournal;
-            sections["write_journal_complete"] = fi.writeJournalComplete;
-            sections["coverage_index"] = fi.hasCoverageIndex;
-            sections["bookmarks"] = fi.hasBookmarks;
-            sections["input_journal"] = fi.hasInputJournal;
-            sections["external_events"] = fi.hasExternalEvents;
-            sections["port_journals"] = fi.hasPortJournals;
-            sections["top_clock_time"] = fi.topClockTime;
-            r["sections"] = sections;
-            r["machine"] = TtdRecordedMachineTable(lua_view, fi.machine);
-            r["peripherals_from_header"] = fi.peripheralsFromHeader;
-            return r;
+        lua.set_function("ttd_file_info", [this](sol::this_state ts, const std::string& path) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(ttd::TTDControl(nullptr).Execute({"file-info", {{"path", path}}})));
         });
 
         // ttd_start([journal]) - start recording; journal = true also records the
         // write journal. Without it the ttd_set_journal_enabled choice stands (off by default, D40)
         lua.set_function("ttd_start", [this](sol::optional<bool> journalOpt) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
+            std::map<std::string, std::string> options;
             if (journalOpt.has_value())
-                ctx->pTimeTravelManager->SetEnableWriteJournal(journalOpt.value());
-            return ctx->pTimeTravelManager->StartRecording();
+                options["journal"] = journalOpt.value() ? "true" : "false";
+            const ttd::TTDReply reply = TtdRun("start", options);
+            return reply.Ok() && (reply.body.find("started")->b || reply.body.find("already_active")->b);
         });
 
         // ttd_set_history_limit(frames, bytes) - bound the recorded history: while
@@ -3950,203 +4039,89 @@ public:
         // nil keeps the current value). Returns the limit now in force: frames, bytes
         lua.set_function("ttd_set_history_limit",
                          [this](sol::optional<uint64_t> frames, sol::optional<uint64_t> bytes) -> std::tuple<uint64_t, uint64_t> {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return {0, 0};
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return {0, 0};
-            const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->ReadSessionInfo();
-            ctx->pTimeTravelManager->SetHistoryLimit(frames.value_or(si.historyLimitFrames),
-                                                     bytes.value_or(si.historyLimitBytes));
-            const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->ReadSessionInfo();
-            return {now.historyLimitFrames, now.historyLimitBytes};
+            std::map<std::string, std::string> options;
+            if (frames.has_value())
+                options["frames"] = std::to_string(frames.value());
+            if (bytes.has_value())
+                options["bytes"] = std::to_string(bytes.value());
+            const ttd::TTDReply reply = TtdRun("history-limit", options);
+            if (!reply.Ok())
+                return {0, 0};
+            return {static_cast<uint64_t>(reply.body.find("history_limit_frames")->i),
+                    static_cast<uint64_t>(reply.body.find("history_limit_bytes")->i)};
         });
 
         // ttd_set_journal_enabled(bool) - switch the write journal at any moment,
         // also while recording: a journal segment starts or ends there (D40). ok, reason
         lua.set_function("ttd_set_journal_enabled", [this](bool enabled) -> std::tuple<bool, std::string> {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return {false, "no emulator"};
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return {false, "TTD not available"};
-            if (ctx->pTimeTravelManager->SwitchWriteJournal(enabled)) return {true, ""};
-            return {false, "write journal not available"};
+            const ttd::TTDReply reply = TtdRun("journal", {{"enabled", enabled ? "true" : "false"}});
+            return {reply.Ok(), reply.message};
         });
 
         // ttd_build_journal([from_frame], [to_frame]) - build the write journal for
         // frames from..to (default: the whole session) by replaying them, about
         // 2-4 ms per frame; not while recording. Returns a table: ok, error,
         // cancelled, frames_built, frames_covered, frames_refused, records
-        lua.set_function("ttd_build_journal", [this](sol::optional<uint64_t> fromOpt, sol::optional<uint64_t> toOpt) {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table r = lua_view.create_table();
-            auto* ctx = emulator ? emulator->GetContext() : nullptr;
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                r["ok"] = false;
-                r["error"] = "TTD not available";
-                return r;
-            }
-            const ttd::TTDJournalBuildResult b =
-                ctx->pTimeTravelManager->BuildWriteJournalFrames(fromOpt.value_or(0), toOpt.value_or(UINT64_MAX));
-            r["ok"] = b.ok;
-            if (!b.ok)
-                r["error"] = b.error;
-            r["cancelled"] = b.cancelled;
-            r["frames_built"] = b.framesBuilt;
-            r["frames_covered"] = b.framesCovered;
-            r["frames_refused"] = b.framesRefused;
-            r["records"] = b.records;
-            return r;
+        lua.set_function("ttd_build_journal", [this](sol::this_state ts, sol::optional<uint64_t> fromOpt,
+                                                    sol::optional<uint64_t> toOpt) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (fromOpt.has_value())
+                options["from_frame"] = std::to_string(fromOpt.value());
+            if (toOpt.has_value())
+                options["to_frame"] = std::to_string(toOpt.value());
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("journal-build", options)));
         });
 
         lua.set_function("ttd_get_journal_enabled", [this]() -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->GetEnableWriteJournal();
+            const ttd::TTDReply reply = TtdRun("journal");
+            return reply.Ok() && reply.body.find("write_journal_setting")->b;
         });
 
-        lua.set_function("ttd_stop", [this]() {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return;
-            auto* ctx = emulator->GetContext();
-            if (ctx && ctx->pTimeTravelManager)
-                ctx->pTimeTravelManager->StopRecording();
-        });
+        lua.set_function("ttd_stop", [this]() { (void)TtdRun("stop"); });
 
         // ok, reason: refused while recording (stop the recording first)
         lua.set_function("ttd_invalidate", [this](sol::optional<std::string> reason) -> std::tuple<bool, std::string> {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return {false, "no emulator"};
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return {false, "TTD not available"};
-            if (std::string refusal = ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::Invalidate);
-                !refusal.empty())
-                return {false, refusal};
-            ctx->pTimeTravelManager->InvalidateSession(reason.value_or("lua invalidate").c_str());
-            return {true, ""};
+            const ttd::TTDReply reply = TtdRun("invalidate", {{"reason", reason.value_or("lua invalidate")}});
+            return {reply.Ok(), reply.message};
         });
 
-        lua.set_function("ttd_seek", [this](uint64_t frame, sol::optional<uint32_t> tInFrameOpt) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) { result["reached"] = false; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                result["reached"] = false;
-                result["error"]   = "TTD not available";
-                return result;
-            }
-            uint32_t tInFrame = tInFrameOpt.value_or(0);
-            ttd::TTDTimePoint target{frame, tInFrame};
-            ttd::TimeTravelManager::TTDSeekResult r;
-            bool reached = ctx->pTimeTravelManager->SeekTo(target, &r);
-            result["reached"] = reached;
-
-            sol::table arrivedAt = lua_view.create_table();
-            arrivedAt["frame"]    = r.arrivedAt.frame;
-            arrivedAt["tinframe"] = r.arrivedAt.tInFrame;
-            result["arrived_at"]  = arrivedAt;
-
-            const char* reasonStr = "target";
-            switch (r.haltReason)
-            {
-                case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
-                case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
-                default: break;
-            }
-            result["halt_reason"] = reasonStr;
-
-            if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
-            {
-                sol::table marker = lua_view.create_table();
-                marker["frame"]    = r.blockingMarker.time.frame;
-                marker["tinframe"] = r.blockingMarker.time.tInFrame;
-                marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
-                marker["reason"]   = r.blockingMarker.reason;
-                result["blocking_marker"] = marker;
-            }
-            return result;
+        lua.set_function("ttd_seek", [this](sol::this_state ts, uint64_t frame, sol::optional<uint32_t> tInFrameOpt) -> sol::object {
+            // Without a T-state: the frame's end on the engine (D13), its start on v1
+            std::map<std::string, std::string> options{{"frame", std::to_string(frame)}};
+            if (tInFrameOpt)
+                options["tinframe"] = std::to_string(*tInFrameOpt);
+            return TtdSeekValue(ts, TtdRun("seek", options));
         });
 
         lua.set_function("ttd_step_back", [this]() -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->StepBackFrame();
+            const ttd::TTDReply reply = TtdRun("step-back");
+            return reply.Ok() && reply.body.find("stepped")->b;
         });
 
         lua.set_function("ttd_step_forward", [this]() -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->StepForwardFrame();
+            const ttd::TTDReply reply = TtdRun("step-forward");
+            return reply.Ok() && reply.body.find("stepped")->b;
         });
 
         lua.set_function("ttd_resume", [this](sol::optional<uint64_t> frameOpt, sol::optional<uint32_t> tInFrameOpt) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            // No frame: resume exactly where the machine stands (as CLI and WebAPI do)
-            ttd::TTDTimePoint from = ctx->pTimeTravelManager->CurrentPosition();
+            // No frame: resume exactly where the machine stands
+            std::map<std::string, std::string> options;
             if (frameOpt)
             {
-                from.frame = *frameOpt;
-                from.tInFrame = tInFrameOpt.value_or(0);
+                options["frame"] = std::to_string(*frameOpt);
+                options["tinframe"] = std::to_string(tInFrameOpt.value_or(0));
             }
-            return ctx->pTimeTravelManager->ResumeRecordingFrom(from);
+            const ttd::TTDReply reply = TtdRun("resume", options);
+            return reply.Ok() && reply.body.find("resumed")->b;
         });
 
-        lua.set_function("ttd_position", [this]() -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                result["error"] = "TTD not available";
-                return result;
-            }
-            ttd::TTDTimePoint pos = ctx->pTimeTravelManager->CurrentPosition();
-            ttd::TTDTimePoint end = ctx->pTimeTravelManager->SessionEndPosition();
-            sol::table current = lua_view.create_table();
-            current["frame"]    = pos.frame;
-            current["tinframe"] = pos.tInFrame;
-            result["current"]   = current;
-            sol::table sessionEnd = lua_view.create_table();
-            sessionEnd["frame"]    = end.frame;
-            sessionEnd["tinframe"] = end.tInFrame;
-            result["session_end"]  = sessionEnd;
-            return result;
+        lua.set_function("ttd_position", [this](sol::this_state ts) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("position")));
         });
 
-        lua.set_function("ttd_markers", [this]() -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) return result;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return result;
-            const auto& journal = ctx->pTimeTravelManager->GetExternalEvents();
-            int idx = 1;  // Lua tables are 1-based
-            for (const auto& e : journal.SnapshotEvents())
-            {
-                sol::table marker = lua_view.create_table();
-                marker["frame"]    = e.time.frame;
-                marker["tinframe"] = e.time.tInFrame;
-                marker["kind"]     = ttd::TTDExternalEventKindToString(e.kind);
-                marker["reason"]   = e.reason;
-                result[idx++]       = marker;
-            }
-            return result;
+        lua.set_function("ttd_markers", [this](sol::this_state ts) -> sol::object {
+            const ttd::TTDReply reply = TtdRun("markers");
+            return StateNodeToLua(ts, reply.Ok() ? *reply.body.find("markers") : StateNode::Array());
         });
 
         // -----------------------------------------------------------------
@@ -4154,112 +4129,41 @@ public:
         // Labels are keys: non-empty, at most 63 chars, unique per session.
         // -----------------------------------------------------------------
 
-        lua.set_function("ttd_bookmark_add", [this](const std::string& label,
+        lua.set_function("ttd_bookmark_add", [this](sol::this_state ts, const std::string& label,
                                                      sol::optional<uint64_t> frameOpt,
-                                                     sol::optional<uint32_t> tInFrameOpt) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            result["added"] = false;
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) { result["error"] = "TTD not available"; return result; }
-
-            // Position omitted → current position (mark here).
-            ttd::TTDTimePoint time = ctx->pTimeTravelManager->CurrentPosition();
+                                                     sol::optional<uint32_t> tInFrameOpt) -> sol::object {
+            // Position omitted: the current position (mark here)
+            std::map<std::string, std::string> options{{"label", label}};
             if (frameOpt)
             {
-                time.frame    = *frameOpt;
-                time.tInFrame = tInFrameOpt.value_or(0);
+                options["frame"] = std::to_string(*frameOpt);
+                options["tinframe"] = std::to_string(tInFrameOpt.value_or(0));
             }
-
-            std::string err;
-            if (!ctx->pTimeTravelManager->AddBookmark(time, label, &err))
+            const ttd::TTDReply reply = TtdRun("bookmark-add", options);
+            StateNode value = reply.body;
+            if (!reply.Ok())
             {
-                result["error"] = err;
-                return result;
+                value["added"] = false;
+                value["error"] = reply.message;
             }
-            result["added"]    = true;
-            result["label"]    = label;
-            result["frame"]    = time.frame;
-            result["tinframe"] = time.tInFrame;
-            return result;
+            return StateNodeToLua(ts, value);
         });
 
-        lua.set_function("ttd_bookmarks", [this]() -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) return result;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return result;
-            int idx = 1;  // Lua tables are 1-based
-            for (const auto& bm : ctx->pTimeTravelManager->GetBookmarks())
-            {
-                sol::table entry = lua_view.create_table();
-                entry["frame"]    = bm.time.frame;
-                entry["tinframe"] = bm.time.tInFrame;
-                entry["label"]    = bm.label;
-                result[idx++]     = entry;
-            }
-            return result;
+        lua.set_function("ttd_bookmarks", [this](sol::this_state ts) -> sol::object {
+            const ttd::TTDReply reply = TtdRun("bookmarks");
+            return StateNodeToLua(ts, reply.Ok() ? *reply.body.find("bookmarks") : StateNode::Array());
         });
 
         lua.set_function("ttd_bookmark_delete", [this](const std::string& label) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->RemoveBookmark(label);
+            return TtdRun("bookmark-delete", {{"label", label}}).Ok();
         });
 
         // A bookmark seek IS a seek — identical result shape to ttd_seek
         // (plus the resolved label), so a real barrier between the restore
         // checkpoint and the target still surfaces as halt_reason
         // "external_event". A bookmark itself never halts anything.
-        lua.set_function("ttd_seek_bookmark", [this](const std::string& label) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) { result["reached"] = false; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                result["reached"] = false;
-                result["error"]   = "TTD not available";
-                return result;
-            }
-            ttd::TimeTravelManager::TTDSeekResult r;
-            std::string err;
-            const bool reached = ctx->pTimeTravelManager->SeekToBookmark(label, &r, &err);
-            result["reached"] = reached;
-            if (!err.empty())
-                result["error"] = err;
-
-            sol::table arrivedAt = lua_view.create_table();
-            arrivedAt["frame"]    = r.arrivedAt.frame;
-            arrivedAt["tinframe"] = r.arrivedAt.tInFrame;
-            result["arrived_at"]  = arrivedAt;
-
-            const char* reasonStr = "target";
-            switch (r.haltReason)
-            {
-                case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
-                case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
-                default: break;
-            }
-            result["halt_reason"] = reasonStr;
-            if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
-            {
-                sol::table marker = lua_view.create_table();
-                marker["frame"]    = r.blockingMarker.time.frame;
-                marker["tinframe"] = r.blockingMarker.time.tInFrame;
-                marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
-                marker["reason"]   = r.blockingMarker.reason;
-                result["blocking_marker"] = marker;
-            }
-            result["bookmark"]    = label;
-            return result;
+        lua.set_function("ttd_seek_bookmark", [this](sol::this_state ts, const std::string& label) -> sol::object {
+            return TtdSeekValue(ts, TtdRun("seek", {{"bookmark", label}}));
         });
 
         // -----------------------------------------------------------------
@@ -4267,43 +4171,28 @@ public:
         // -----------------------------------------------------------------
 
         lua.set_function("ttd_dump", [this](const std::string& path) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            std::ofstream out(path, std::ios::binary);
-            if (!out.is_open()) return false;
-            std::string err;
-            return ctx->pTimeTravelManager->SerializeSession(out, err);
+            return TtdRun("dump", {{"path", path}}).Ok();
         });
 
         // Loading refuses a session recorded on a different machine model: a
         // checkpoint is raw RAM pages plus a chipset snapshot, so it only
         // restores into an instance of the model it came from. Returns a table
         // with ok/error so scripts can report the reason.
-        lua.set_function("ttd_load", [this](const std::string& path) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            result["ok"] = false;
-            if (!emulator) { result["error"] = "no emulator"; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) { result["error"] = "TTD not available"; return result; }
-            std::ifstream in(path, std::ios::binary);
-            if (!in.is_open()) { result["error"] = "cannot open file: " + path; return result; }
-            std::string err;
-            ctx->pTimeTravelManager->SetSessionSourcePath(path);
-            if (!ctx->pTimeTravelManager->DeserializeSession(in, err))
-            {
-                result["error"] = err;
-                return result;
-            }
-            const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->ReadSessionInfo();
-            result["ok"] = true;
-            result["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
-            result["session_start_frame"] = info.sessionStartFrame;
-            result["current_end_frame"] = info.currentEndFrame;
-            return result;
+        lua.set_function("ttd_load", [this](sol::this_state ts, const std::string& path) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("load", {{"path", path}})));
+        });
+
+        // ttd_export_clip(from_frame, to_frame, dir, [chunk]) - frames from..to as a lossless
+        // clip in dir (final picture, plane B when zxdlss is on, frame meta), one call instead
+        // of a seek and a capture per frame; not while recording. {ok, frames, bytes, planeb,
+        // width, height, seconds, path} or {ok = false, error}
+        lua.set_function("ttd_export_clip", [this](sol::this_state ts, uint64_t fromFrame, uint64_t toFrame,
+                                                    const std::string& dir, sol::optional<uint32_t> chunkOpt) -> sol::object {
+            std::map<std::string, std::string> options{
+                {"from", std::to_string(fromFrame)}, {"to", std::to_string(toFrame)}, {"path", dir}};
+            if (chunkOpt)
+                options["chunk"] = std::to_string(*chunkOpt);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("export-clip", options)));
         });
 
         // "When did the program ...": ttd_port_events(event, [arg], [options])
@@ -4313,83 +4202,22 @@ public:
         // ttd::ApplyPortQueryOption names (limit, newest, from, to, port,
         // port_mask, value, value_mask, match, trigger, ay_register; file = a
         // .ttd path searched without loading it)
-        lua.set_function("ttd_port_events", [this](const std::string& event, sol::object argObj,
-                                                     sol::object optionsObj) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            result["ok"] = false;
-            Emulator* emulator = effectiveEmulator();
-            auto* ctx = emulator ? emulator->GetContext() : nullptr;
-            if (!ctx || !ctx->pTimeTravelManager)
-            {
-                result["error"] = "TTD engine not available";
-                return result;
-            }
-            auto text = [](const sol::object& o) -> std::string {
-                if (o.is<bool>())
-                    return o.as<bool>() ? "true" : "false";
-                if (o.is<double>())
-                    return std::to_string(static_cast<long long>(o.as<double>()));
-                return o.is<std::string>() ? o.as<std::string>() : std::string();
-            };
-            ttd::TTDPortQuery q;
-            std::string err;
-            const std::string arg = (argObj.valid() && argObj.get_type() != sol::type::lua_nil) ? text(argObj) : "";
-            if (!ttd::BuildPortEventQuery(event, arg, q, err))
-            {
-                result["error"] = err;
-                return result;
-            }
-            std::string file;  // options.file: a .ttd on disk, searched without loading it
+        lua.set_function("ttd_port_events", [this](sol::this_state ts, const std::string& event, sol::object argObj,
+                                                     sol::object optionsObj) -> sol::object {
+            std::map<std::string, std::string> options{{"event", event}};
+            if (argObj.valid() && argObj.get_type() != sol::type::lua_nil)
+                options["arg"] = TtdOptionText(argObj);
             if (optionsObj.is<sol::table>())
-            {
                 for (const auto& [key, value] : optionsObj.as<sol::table>())
-                {
-                    if (key.as<std::string>() == "file")
-                    {
-                        file = text(value);
-                        continue;
-                    }
-                    if (!ttd::ApplyPortQueryOption(q, key.as<std::string>(), text(value), err))
-                    {
-                        result["error"] = err;
-                        return result;
-                    }
-                }
-            }
-            const ttd::TTDPortSearchResult found = file.empty()
-                                                       ? ctx->pTimeTravelManager->SearchPortEvents(q)
-                                                       : ctx->pTimeTravelManager->SearchPortEventsInFile(file, q);
-            if (!found.ok)
-            {
-                result["error"] = found.error;
-                return result;
-            }
-            result["ok"] = true;
-            result["direction"] = ttd::PortDirectionName(q.direction);
-            result["count"] = static_cast<uint64_t>(found.hits.size());
-            result["truncated"] = found.truncated;
-            result["scanned"] = found.scanned;
-            sol::table hits = lua_view.create_table();
-            int i = 1;
-            for (const ttd::TTDPortHit& h : found.hits)
-            {
-                sol::table hit = lua_view.create_table();
-                hit["index"] = h.index;
-                hit["frame"] = h.record.frame;
-                hit["tinframe"] = h.record.tInFrame;
-                hit["port"] = h.record.port;
-                hit["value"] = h.record.value;
-                hit["pc"] = h.record.pc;
-                if (h.ayRegister >= 0)
-                    hit["ay_register"] = h.ayRegister;
-                hits[i++] = hit;
-            }
-            result["hits"] = hits;
-            return result;
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            const ttd::TTDReply reply = TtdRun("port-events", options);
+            StateNode value = TtdScriptValue(reply);
+            if (reply.Ok())
+                value["ok"] = true;
+            return StateNodeToLua(ts, value);
         });
 
-        lua.set_function("ttd_find_last", [this](sol::object firstArgOpt,
+        lua.set_function("ttd_find_last", [this](sol::this_state ts, sol::object firstArgOpt,
                                                    sol::optional<std::string> accessOpt,
                                                    sol::optional<uint8_t> valueOpt,
                                                    sol::optional<uint16_t> pcFromOpt,
@@ -4398,144 +4226,59 @@ public:
                                                    sol::optional<uint32_t> beforeTinOpt,
                                                    sol::optional<uint32_t> physPageOpt,
                                                    sol::optional<uint16_t> addrFromOpt,
-                                                   sol::optional<uint16_t> addrToOpt) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) { result["found"] = false; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) { result["found"] = false; return result; }
-
-            ttd::TTDSearchQuery q;
+                                                   sol::optional<uint16_t> addrToOpt) -> sol::object {
+            std::map<std::string, std::string> options;
             if (firstArgOpt.is<sol::table>())
             {
-                sol::table tbl = firstArgOpt.as<sol::table>();
-                if (tbl["addr"].valid())
+                // A table of options; the camelCase spellings are accepted as before
+                static const std::map<std::string, std::string> aliases = {
+                    {"addrFrom", "addr_from"}, {"addrTo", "addr_to"}, {"pcFrom", "pc_from"},
+                    {"pcTo", "pc_to"},         {"physPage", "phys_page"}};
+                for (const auto& [key, value] : firstArgOpt.as<sol::table>())
                 {
-                    uint16_t a = tbl["addr"].get<uint16_t>();
-                    q.addrFrom = q.addrTo = a;
-                }
-                else
-                {
-                    q.addrFrom = tbl["addr_from"].valid() ? tbl["addr_from"].get<uint16_t>() : (tbl["addrFrom"].valid() ? tbl["addrFrom"].get<uint16_t>() : 0);
-                    q.addrTo = tbl["addr_to"].valid() ? tbl["addr_to"].get<uint16_t>() : (tbl["addrTo"].valid() ? tbl["addrTo"].get<uint16_t>() : 0xFFFF);
-                }
-
-                std::string accStr = tbl["access"].valid() ? tbl["access"].get<std::string>() : "write";
-                q.access = ttd::TTDAccessTypeFromString(accStr.c_str());
-
-                if (tbl["value"].valid()) { q.hasValueFilter = true; q.value = tbl["value"].get<uint8_t>(); }
-                if (tbl["pc_from"].valid()) { q.hasPcFilter = true; q.pcFrom = tbl["pc_from"].get<uint16_t>(); q.pcTo = tbl["pc_to"].valid() ? tbl["pc_to"].get<uint16_t>() : 0xFFFF; }
-                else if (tbl["pcFrom"].valid()) { q.hasPcFilter = true; q.pcFrom = tbl["pcFrom"].get<uint16_t>(); q.pcTo = tbl["pcTo"].valid() ? tbl["pcTo"].get<uint16_t>() : 0xFFFF; }
-
-                sol::object pageObj = tbl["phys_page"];
-                if (!pageObj.valid())
-                    pageObj = tbl["physPage"];
-                if (pageObj.valid())
-                {
-                    const uint32_t page = pageObj.as<uint32_t>();
-                    if (page > ttd::kPhysPageMax)
-                    {
-                        result["found"] = false;
-                        result["error"] = "phys_page expects 0..255";
-                        return result;
-                    }
-                    q.hasPhysPageFilter = true;
-                    q.physPage = static_cast<ttd::PhysPage>(page);
-                }
-
-                if (tbl["before_frame"].valid())
-                {
-                    uint64_t f = tbl["before_frame"].get<uint64_t>();
-                    uint32_t tin = tbl["before_tin"].valid() ? tbl["before_tin"].get<uint32_t>() : 0;
-                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT({f, tin});
-                }
-                else if (tbl["before"].valid())
-                {
-                    q.beforeGlobalT = tbl["before"].get<uint64_t>();
+                    const std::string name = key.as<std::string>();
+                    const auto alias = aliases.find(name);
+                    options[alias == aliases.end() ? name : alias->second] = TtdOptionText(value);
                 }
             }
             else
             {
-                if (firstArgOpt.is<uint16_t>())
-                {
-                    q.addrFrom = q.addrTo = firstArgOpt.as<uint16_t>();
-                }
-                else
-                {
-                    q.addrFrom = addrFromOpt.value_or(0);
-                    q.addrTo = addrToOpt.value_or(0xFFFF);
-                }
-                q.access = ttd::TTDAccessTypeFromString(accessOpt.value_or("write").c_str());
-                if (valueOpt) { q.hasValueFilter = true; q.value = *valueOpt; }
-                if (pcFromOpt) { q.hasPcFilter = true; q.pcFrom = *pcFromOpt; q.pcTo = pcToOpt.value_or(0xFFFF); }
+                if (firstArgOpt.get_type() == sol::type::number)
+                    options["addr"] = TtdOptionText(firstArgOpt);
+                if (addrFromOpt)
+                    options["addr_from"] = std::to_string(*addrFromOpt);
+                if (addrToOpt)
+                    options["addr_to"] = std::to_string(*addrToOpt);
+                if (accessOpt)
+                    options["access"] = *accessOpt;
+                if (valueOpt)
+                    options["value"] = std::to_string(*valueOpt);
+                if (pcFromOpt)
+                    options["pc_from"] = std::to_string(*pcFromOpt);
+                if (pcToOpt)
+                    options["pc_to"] = std::to_string(*pcToOpt);
                 if (physPageOpt)
-                {
-                    if (*physPageOpt > ttd::kPhysPageMax)
-                    {
-                        result["found"] = false;
-                        result["error"] = "phys_page expects 0..255";
-                        return result;
-                    }
-                    q.hasPhysPageFilter = true;
-                    q.physPage = static_cast<ttd::PhysPage>(*physPageOpt);
-                }
+                    options["phys_page"] = std::to_string(*physPageOpt);
                 if (beforeFrameOpt)
-                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT(
-                        {static_cast<uint64_t>(*beforeFrameOpt), beforeTinOpt.value_or(0)});
-            }
-
-            ttd::TTDExternalEvent marker{};
-            ttd::TTDSearchWindow window;
-            auto found = ctx->pTimeTravelManager->FindLastAccess(q, &marker, &window);
-            // TD-8: the part of history the search examined
-            if (window.searched)
-            {
-                result["covered_from"]          = window.from.frame;
-                result["covered_from_tinframe"] = window.from.tInFrame;
-                result["covered_to"]            = window.to.frame;
-                result["covered_to_tinframe"]   = window.to.tInFrame;
-            }
-            if (!found)
-            {
-                result["found"] = false;
-                if (marker.reason[0] != '\0')
                 {
-                    // A replay barrier stopped the search before any match
-                    result["blocked"]         = true;
-                    result["marker_frame"]    = marker.time.frame;
-                    result["marker_tinframe"] = marker.time.tInFrame;
-                    result["marker_kind"]     = ttd::TTDExternalEventKindToString(marker.kind);
-                    result["marker_reason"]   = marker.reason;
+                    options["before_frame"] = std::to_string(*beforeFrameOpt);
+                    options["before_tin"] = std::to_string(beforeTinOpt.value_or(0));
                 }
-                return result;
             }
-            result["found"]    = true;
-            result["frame"]    = found->time.frame;
-            result["tinframe"]  = found->time.tInFrame;
-            result["pc"]        = found->pc;
-            result["value"]     = found->value;
-            // nil = the access had no RAM page (ROM, cache, I/O)
-            if (found->physPage != ttd::kPhysPageNone)
-                result["phys_page"] = found->physPage;
-            result["access"]    = ttd::TTDAccessTypeToString(found->access);
-            return result;
+            StateNode value = TtdScriptValue(TtdRun("find-last", options));
+            if (!value.find("found"))
+                value["found"] = false;
+            return StateNodeToLua(ts, value);
         });
 
         lua.set_function("ttd_step_instruction_back", [this]() -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->StepBackInstruction();
+            const ttd::TTDReply reply = TtdRun("step-instruction", {{"dir", "back"}});
+            return reply.Ok() && reply.body.find("stepped")->b;
         });
 
         lua.set_function("ttd_step_instruction_forward", [this]() -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->StepForwardInstruction();
+            const ttd::TTDReply reply = TtdRun("step-instruction", {{"dir", "forward"}});
+            return reply.Ok() && reply.body.find("stepped")->b;
         });
 
         // -----------------------------------------------------------------
@@ -4543,220 +4286,44 @@ public:
         // -----------------------------------------------------------------
 
         lua.set_function("ttd_reverse_step", [this](sol::optional<uint32_t> countOpt) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->ReverseStepInstructions(
-                countOpt.value_or(1));
+            const ttd::TTDReply reply = TtdRun("reverse-step", {{"count", std::to_string(countOpt.value_or(1))}});
+            return reply.Ok() && reply.body.find("reached")->b;
         });
 
         lua.set_function("ttd_reverse_step_tstates", [this](uint64_t tstates) -> bool {
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator) return false;
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) return false;
-            return ctx->pTimeTravelManager->ReverseStepTStates(tstates);
+            const ttd::TTDReply reply = TtdRun("reverse-step", {{"tstates", std::to_string(tstates)}});
+            return reply.Ok() && reply.body.find("reached")->b;
         });
 
-        lua.set_function("ttd_reverse_continue", [this](sol::table pcsTable) -> sol::table {
-            Emulator* emulator = effectiveEmulator();
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            if (!emulator) { result["matched"] = false; return result; }
-            auto* ctx = emulator->GetContext();
-            if (!ctx || !ctx->pTimeTravelManager) { result["matched"] = false; return result; }
-
-            std::vector<uint16_t> pcs;
-            pcs.reserve(pcsTable.size());
+        lua.set_function("ttd_reverse_continue", [this](sol::this_state ts, sol::table pcsTable) -> sol::object {
+            std::string pcs;
             for (auto& pair : pcsTable)
-            {
-                uint16_t pc = static_cast<uint16_t>(pair.second.as<uint32_t>());
-                pcs.push_back(pc);
-            }
-
-            auto r = ctx->pTimeTravelManager->ReverseContinue(pcs);
-            result["matched"] = r.matched;
-            result["pc"]      = r.pc;
-            if (r.matched)
-            {
-                result["frame"]   = r.arrivedAt.frame;
-                result["tinframe"] = r.arrivedAt.tInFrame;
-            }
-            if (r.blockingMarker.reason[0] != '\0')
-            {
-                sol::table m = lua_view.create_table();
-                m["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
-                m["reason"]   = r.blockingMarker.reason;
-                m["frame"]    = r.blockingMarker.time.frame;
-                m["tinframe"] = r.blockingMarker.time.tInFrame;
-                result["blocked_by_marker"] = m;
-            }
-            // TD-8: the part of history the search examined
-            if (r.window.searched)
-            {
-                result["covered_from"]          = r.window.from.frame;
-                result["covered_from_tinframe"] = r.window.from.tInFrame;
-                result["covered_to"]            = r.window.to.frame;
-                result["covered_to_tinframe"]   = r.window.to.tInFrame;
-            }
-            return result;
+                pcs += (pcs.empty() ? "" : ",") + TtdOptionText(pair.second);
+            StateNode value = TtdScriptValue(TtdRun("reverse-continue", {{"pcs", pcs}}));
+            if (!value.find("matched"))
+                value["matched"] = false;
+            return StateNodeToLua(ts, value);
         });
 
-        lua.set_function("ttd_coverage_probe", [this](sol::table argsTable) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator || !emulator->GetContext() || !emulator->GetContext()->pTimeTravelManager)
-            {
-                result["index_available"] = false;
-                result["touched"] = false;
-                return result;
-            }
-            uint64_t frame = 0;
-            if (argsTable["frame"].valid()) frame = argsTable.get<uint64_t>("frame");
-            std::string kindStr = "executed";
-            if (argsTable["kind"].valid()) kindStr = argsTable.get<std::string>("kind");
-            ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
-            ttd::TTDCoverageKindFromString(kindStr, kind);
-
-            uint16_t addrFrom = 0;
-            if (argsTable["addr_from"].valid()) addrFrom = static_cast<uint16_t>(argsTable.get<uint32_t>("addr_from"));
-            uint16_t addrTo = 0xFFFF;
-            if (argsTable["addr_to"].valid()) addrTo = static_cast<uint16_t>(argsTable.get<uint32_t>("addr_to"));
-
-            std::optional<ttd::PhysPage> physPage;
-            if (argsTable["phys_page"].valid())
-            {
-                const uint32_t page = argsTable.get<uint32_t>("phys_page");
-                if (page > ttd::kPhysPageMax)
-                {
-                    result["index_available"] = false;
-                    result["error"] = "phys_page expects 0..255";
-                    return result;
-                }
-                physPage = static_cast<ttd::PhysPage>(page);
-            }
-
-            auto res = emulator->GetContext()->pTimeTravelManager->QueryCoverageProbe(frame, kind, addrFrom, addrTo, physPage);
-            result["frame"] = res.frame;
-            result["kind"] = ttd::TTDCoverageKindToString(res.kind);
-            result["touched"] = res.touched;
-            result["index_available"] = res.indexAvailable;
-            return result;
+        lua.set_function("ttd_coverage_probe", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+                options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("coverage-probe", options)));
         });
 
-        lua.set_function("ttd_coverage_scan", [this](sol::table argsTable) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator || !emulator->GetContext() || !emulator->GetContext()->pTimeTravelManager)
-            {
-                result["index_available"] = false;
-                result["scanned_frames"] = 0;
-                result["matching_frames"] = 0;
-                result["frames"] = lua_view.create_table();
-                return result;
-            }
-            auto* mgr = emulator->GetContext()->pTimeTravelManager;
-            uint64_t fromFrame = 0;
-            if (argsTable["from_frame"].valid()) fromFrame = argsTable.get<uint64_t>("from_frame");
-            uint64_t toFrame = mgr->ReadSessionInfo().currentEndFrame;
-            if (argsTable["to_frame"].valid()) toFrame = argsTable.get<uint64_t>("to_frame");
-            std::string kindStr = "executed";
-            if (argsTable["kind"].valid()) kindStr = argsTable.get<std::string>("kind");
-            ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
-            ttd::TTDCoverageKindFromString(kindStr, kind);
-
-            uint16_t addrFrom = 0;
-            if (argsTable["addr_from"].valid()) addrFrom = static_cast<uint16_t>(argsTable.get<uint32_t>("addr_from"));
-            uint16_t addrTo = 0xFFFF;
-            if (argsTable["addr_to"].valid()) addrTo = static_cast<uint16_t>(argsTable.get<uint32_t>("addr_to"));
-            size_t limit = 200;
-            if (argsTable["limit"].valid()) limit = static_cast<size_t>(argsTable.get<uint32_t>("limit"));
-
-            std::optional<ttd::PhysPage> physPage;
-            if (argsTable["phys_page"].valid())
-            {
-                const uint32_t page = argsTable.get<uint32_t>("phys_page");
-                if (page > ttd::kPhysPageMax)
-                {
-                    result["index_available"] = false;
-                    result["error"] = "phys_page expects 0..255";
-                    return result;
-                }
-                physPage = static_cast<ttd::PhysPage>(page);
-            }
-
-            auto res = mgr->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, physPage, limit);
-            result["kind"] = ttd::TTDCoverageKindToString(res.kind);
-            result["scanned_frames"] = res.scannedFrames;
-            result["matching_frames"] = res.matchingFrames;
-            result["first_match"] = res.firstMatch;
-            result["last_match"] = res.lastMatch;
-            result["covered_from"] = res.coveredFrom;
-            result["covered_to"] = res.coveredTo;
-            result["truncated"] = res.truncated;
-            result["index_available"] = res.indexAvailable;
-
-            sol::table framesTbl = lua_view.create_table();
-            for (size_t i = 0; i < res.frames.size(); ++i)
-            {
-                framesTbl[i + 1] = res.frames[i];
-            }
-            result["frames"] = framesTbl;
-            return result;
+        lua.set_function("ttd_coverage_scan", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+                options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("coverage-scan", options)));
         });
 
-        lua.set_function("ttd_coverage_summary", [this](sol::table argsTable) -> sol::table {
-            sol::state_view lua_view(*_lua);
-            sol::table result = lua_view.create_table();
-            Emulator* emulator = effectiveEmulator();
-            if (!emulator || !emulator->GetContext() || !emulator->GetContext()->pTimeTravelManager)
-            {
-                result["index_available"] = false;
-                result["buckets"] = lua_view.create_table();
-                return result;
-            }
-            auto* mgr = emulator->GetContext()->pTimeTravelManager;
-            uint64_t fromFrame = 0;
-            if (argsTable["from_frame"].valid()) fromFrame = argsTable.get<uint64_t>("from_frame");
-            uint64_t toFrame = mgr->ReadSessionInfo().currentEndFrame;
-            if (argsTable["to_frame"].valid()) toFrame = argsTable.get<uint64_t>("to_frame");
-            std::optional<ttd::TTDCoverageKind> optKind;
-            if (argsTable["kind"].valid())
-            {
-                ttd::TTDCoverageKind k;
-                if (ttd::TTDCoverageKindFromString(argsTable.get<std::string>("kind"), k)) optKind = k;
-            }
-            uint64_t bucketSize = 0;
-            if (argsTable["bucket_size"].valid()) bucketSize = argsTable.get<uint64_t>("bucket_size");
-            size_t limit = 100;
-            if (argsTable["limit"].valid()) limit = static_cast<size_t>(argsTable.get<uint32_t>("limit"));
-
-            auto res = mgr->QueryCoverageSummary(fromFrame, toFrame, optKind, bucketSize, limit);
-            result["from_frame"] = res.fromFrame;
-            result["to_frame"] = res.toFrame;
-            result["covered_from"] = res.coveredFrom;
-            result["covered_to"] = res.coveredTo;
-            result["bucket_size"] = res.bucketSize;
-            result["bucket_count"] = res.bucketCount;
-            result["index_available"] = res.indexAvailable;
-
-            sol::table bucketsTbl = lua_view.create_table();
-            for (size_t i = 0; i < res.buckets.size(); ++i)
-            {
-                sol::table bObj = lua_view.create_table();
-                bObj["frame_start"] = res.buckets[i].frameStart;
-                bObj["frame_end"] = res.buckets[i].frameEnd;
-                bObj["executed_distinct"] = res.buckets[i].executedDistinct;
-                bObj["written_distinct"] = res.buckets[i].writtenDistinct;
-                bObj["read_distinct"] = res.buckets[i].readDistinct;
-                bObj["has_keyframe"] = res.buckets[i].hasKeyframe;
-                bucketsTbl[i + 1] = bObj;
-            }
-            result["buckets"] = bucketsTbl;
-            return result;
+        lua.set_function("ttd_coverage_summary", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+                options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("coverage-summary", options)));
         });
 
         // ====================================================================

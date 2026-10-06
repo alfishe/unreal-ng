@@ -63,6 +63,7 @@ protected:
     // Output buffer — points into SoundManager's beeper AudioFrameDescriptor
     int16_t* _outputBuffer = nullptr;
     int _lastSamplesRead = 0;  // Samples delivered on last handleFrameEnd
+    bool _phaseAlignPending = false;  // the blip stream left the mixer's sample grid (followSamplePhase)
 
     // Audio-settings LED (and the HUD nudge held from it): a level change
     // landed this frame. Not the output peak - a level left away from rest
@@ -101,6 +102,13 @@ public:
 
     /// Called at the start of each video frame.
     void handleFrameStart();
+
+    /// The mixer's frame-start sample phase (SoundManager::handleFrameStart, before handleFrameStart). The blip
+    /// stream follows it after a frame that moved only one of the two - a host speed multiplier (the blip closed the
+    /// multiplied frame, the mixer counted the base one) or a synthesis gap (the blip was cleared): its fractional
+    /// sample position is re-placed on the mixer's grid, so it delivers the mixer's count again. At 1x the two run in
+    /// step and nothing is touched
+    void followSamplePhase(uint64_t phase);
 
     /// Called on each OUT to port #FE. Records a band-limited delta
     /// at the exact T-state position.

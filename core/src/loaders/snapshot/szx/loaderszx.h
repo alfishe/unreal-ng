@@ -63,6 +63,11 @@ public:
 
     /// Apply a parsed stage to the running machine
     static bool Commit(EmulatorContext* context, const szx::Stage& stage, szx::Report& report, std::string& error);
+    /// The same, with the machine state (RAM, paging, CPU, AY, border) read from `image` - the stage's BuildImage, as the plan
+    /// left it - and the rest (the model check, media, devices, the version rules) from the stage, whose payloads the neutral
+    /// image only describes
+    static bool CommitImage(EmulatorContext* context, const snapshot::Image& image, const szx::Stage& stage, szx::Report& report,
+                            std::string& error);
     /// The running machine as a stage
     static bool Capture(EmulatorContext* context, szx::Stage& stage, std::string& error);
 
@@ -71,8 +76,8 @@ public:
     static uint32_t IntCountFromFramePosition(EmulatorContext* context, uint32_t framePosition);
 
 private:
-    static void ApplyPaging(EmulatorContext* context, const szx::Stage& stage, szx::Report& report);
-    static void ApplyCpu(EmulatorContext* context, const szx::Stage& stage, szx::Report& report);
+    static void ApplyPaging(EmulatorContext* context, const snapshot::Image& image, const szx::Stage& stage, szx::Report& report);
+    static void ApplyCpu(EmulatorContext* context, const snapshot::Image& image, const szx::Stage& stage, szx::Report& report);
     /// BDSK, +3 / DSK, TAPE: linked or embedded media into the media manager
     static void ApplyMedia(EmulatorContext* context, const szx::Stage& stage, szx::Report& report);
     /// GS, COVX, AMXM, KEYB, JOY, DRUM

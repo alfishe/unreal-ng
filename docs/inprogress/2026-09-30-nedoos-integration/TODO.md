@@ -15,6 +15,11 @@ Index: [README.md](README.md).
   kernel call, ending the stuck call); findings in the kernel reference, new
   NK-21..NK-23. The prototype is POC
   [020-nedoos-layer](../../../tools/poc/020-nedoos-layer/).
+- 2026-10-05 (branch `zx-bus-slots`, not committed): the runtime change of the ZX-bus network cards
+  (`network set card=`, `POST /network/config {card}`, `network_configure`, the Network window's card
+  boxes) is a slot change applied by a restart (ZX-bus slots owner decision Q11,
+  [tdd.md §16](../2026-10-03-zx-bus-slots/tdd.md#16-q11-as-built-the-network-card-change-is-a-slot-change-2026-10-05));
+  [tdd-network.md](tdd-network.md) notes it.
 
 ## Remaining
 

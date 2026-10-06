@@ -78,7 +78,7 @@ private:
     void updateTelemetry();
     /// The history combo's limit onto the active emulator's TTD (a new one, or a change)
     void applyHistoryLimit();
-    void performSeekToFrame(uint64_t targetFrame);
+    void performSeekToFrame(uint64_t targetFrame, bool frameStart = false);
     /// Build the write journal for frames from..to by replay on a worker thread,
     /// with a progress dialog that can cancel it
     void buildJournal(uint64_t fromFrame, uint64_t toFrame);

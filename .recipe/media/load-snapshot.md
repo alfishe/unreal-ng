@@ -6,6 +6,9 @@ and verify a snapshot actually took effect.
 An `.rzx` input recording loads the same way and then plays: see
 [play-rzx.md](play-rzx.md).
 
+The formats themselves (SNA, Z80, SZX, SPG, ZXP) are described in
+[docs/file-formats/snapshots/](../../docs/file-formats/snapshots/README.md).
+
 Snapshots are the cheapest way to reach a known state — much faster than
 booting through TR-DOS or tape. Use them as the entry point for
 [TTD](../analysis/ttd-recording.md) capture and for regression testing.
@@ -223,9 +226,11 @@ HTTP 422 = the target cannot hold the state (e.g. a 128K program into a 48K);
 
 ## Interactions to know
 
-- **TTD invalidate**: loading a snapshot while a TTD session holds history
-  makes the timeline invalid for further capture — start a fresh
-  `POST /ttd/start` after a snapshot load (details in
+- **TTD**: on the engine (`GET /ttd/status` -> `backend: "engine"`, the
+  default) a snapshot load while recording is part of the recording - it
+  happens at the next frame boundary, and a seek before / after it shows the
+  old / the loaded program; outside a recording the history stays. On v1 it
+  is refused while recording and drops a stopped session (details in
   [ttd-recording.md](../analysis/ttd-recording.md)).
 - **Media state**: `.sna`/`.z80` do not carry disks/tapes — re-insert media
   after loading if the program expects it. `.szx` does: saving links the
@@ -233,7 +238,7 @@ HTTP 422 = the target cannot hold the state (e.g. a 128K program into a 48K);
   its current block; loading finds a linked image next to the snapshot first,
   then at the stored path, and inserts it with Session access (the linked
   file is never written). Images embedded in an `.szx` from another emulator
-  are loaded too. The classic GS card (GSType=Z80), the Covox level and the
+  are loaded too. The classic GS card (a `gs` slot card), the Covox level and the
   Kempston mouse type travel as well.
 - **Model mismatch**: a 128K snapshot (or any snapshot with banks the machine does not have, e.g. a Scorpion 256K one on a 128K
   machine) is **refused** with the reason and what would work (`report.needs`: `model:128K`, `ram:256K`); nothing is written. A 48K

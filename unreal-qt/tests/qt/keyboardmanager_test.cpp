@@ -284,6 +284,38 @@ TEST(KeyboardManager_Test, MacPhysicalControlIsCtrl)
                                                      Pc(PcKey::LeftCtrl, false), Zx(ZXKEY_SYM_SHIFT, false)}));
 }
 
+// A layout without Latin letters (Russian: the K position types Cyrillic el): the physical key stands in, so the
+// matrix gets K (and the comma position the ZX comma); a Latin layout's unmapped punctuation stays silent
+TEST(KeyboardManager_Test, NonLatinLayoutUsesThePhysicalKey)
+{
+    // Qt has no enum for these: a letter without one is reported as its (upper case) Unicode code point
+    constexpr int kCyrillicEl = 0x041B;  // Л
+    constexpr int kCyrillicBe = 0x0411;  // Б
+    HostLayout layout(/*mac=*/false, /*commandToGuest=*/false);
+    KeyRecorder recorder;
+
+    const QKeyEvent kDown = HostKey(QEvent::KeyPress, kCyrillicEl, 0x28, 0x25, 37);
+    const QKeyEvent kUp = HostKey(QEvent::KeyRelease, kCyrillicEl, 0x28, 0x25, 37);
+    KeyboardManager::postHostKey(&kDown, KEY_PRESSED, kTarget);
+    KeyboardManager::postHostKey(&kUp, KEY_RELEASED, kTarget);
+    EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Pc(PcKey::K, true), Zx(ZXKEY_K, true), Pc(PcKey::K, false),
+                                                     Zx(ZXKEY_K, false)}));
+
+    const QKeyEvent commaDown = HostKey(QEvent::KeyPress, kCyrillicBe, 0x2B, 0x33, 51);
+    const QKeyEvent commaUp = HostKey(QEvent::KeyRelease, kCyrillicBe, 0x2B, 0x33, 51);
+    KeyboardManager::postHostKey(&commaDown, KEY_PRESSED, kTarget);
+    KeyboardManager::postHostKey(&commaUp, KEY_RELEASED, kTarget);
+    EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Pc(PcKey::Comma, true), Zx(ZXKEY_EXT_COMMA, true),
+                                                     Pc(PcKey::Comma, false), Zx(ZXKEY_EXT_COMMA, false)}));
+
+    // Latin layout, an unmapped punctuation key (';'): the physical key only, as before
+    const QKeyEvent semiDown = HostKey(QEvent::KeyPress, Qt::Key_Semicolon, 0x29, 0x27, 39);
+    const QKeyEvent semiUp = HostKey(QEvent::KeyRelease, Qt::Key_Semicolon, 0x29, 0x27, 39);
+    KeyboardManager::postHostKey(&semiDown, KEY_PRESSED, kTarget);
+    KeyboardManager::postHostKey(&semiUp, KEY_RELEASED, kTarget);
+    EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Pc(PcKey::Semicolon, true), Pc(PcKey::Semicolon, false)}));
+}
+
 // Windows / Linux layout: Ctrl is Ctrl, the Win / Super key is the GUI key (and Symbol Shift, as before)
 TEST(KeyboardManager_Test, PcLayoutUnchanged)
 {

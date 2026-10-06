@@ -251,7 +251,7 @@ TEST_F(TTDGeneralSoundSwitch_Test, SessionFromAnotherGsPersonalityIsRefused)
     ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::LW));
     session.seekg(0);
     EXPECT_FALSE(context->pTimeTravelManager->DeserializeSession(session, err));
-    EXPECT_NE(err.find("General Sound slot mismatch: recorded with GS, fitted: GS lightweight"), std::string::npos) << err;
+    EXPECT_NE(err.find(": recorded gs, this machine gs-lw"), std::string::npos) << err;
 
     ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::Z80));
     session.clear();
@@ -287,7 +287,7 @@ TEST_F(TTDGeneralSoundSwitch_Test, LightweightSessionNamesTheCardInTheHeader)
     session.clear();
     session.seekg(0);
     EXPECT_FALSE(context->pTimeTravelManager->DeserializeSession(session, err));
-    EXPECT_NE(err.find("recorded with GS lightweight, fitted: GS"), std::string::npos) << err;
+    EXPECT_NE(err.find(": recorded gs-lw, this machine gs "), std::string::npos) << err;
 
     ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::LW));
     session.clear();

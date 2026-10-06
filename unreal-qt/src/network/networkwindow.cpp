@@ -27,9 +27,11 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/io/network/vnet/ethernetaccess.h"
 #include "emulator/state/devicestate.h"
+#include "cardslots/slotchangecontroller.h"
 
 namespace
 {
@@ -844,6 +846,11 @@ void NetworkWindow::onEdited()
     updateAvailability();
 }
 
+void NetworkWindow::setController(SlotChangeController* controller)
+{
+    _controller = controller;
+}
+
 void NetworkWindow::onApply()
 {
     Emulator* emulator = _binding && _binding->isBound() ? _binding->emulator() : nullptr;
@@ -851,17 +858,63 @@ void NetworkWindow::onApply()
     NetworkManager* manager = (context && context->pCore) ? context->pCore->GetNetworkManager() : nullptr;
     if (!manager)
         return;
-    const auto settings = NetworkFormChanges(_applied, readForm());
-    if (settings.empty())
+    const NetworkFormApply split = NetworkFormSplitCards(_applied, readForm());
+    if (!split.cardChange && split.rest.empty())
         return;
     NetworkManager::Change change;
     std::string error;
-    if (!NetworkManager::ParseChange(settings, change, error) || !manager->RequestChange(change, error))
+    if (!NetworkManager::ParseChange(split.rest, change, error) || !NetworkManager::ValidateChange(change, error))
     {
         _message->setText(tr("Not applied: %1").arg(Q(error)));
         return;
     }
-    _message->setText(tr("Applied."));
+    if (split.cardChange)
+    {
+        // The ZX-bus cards are slots (owner decision Q11): the slot change's confirmation, a restart, the removed cards
+        // named with Undo; the other settings then go to the restarted machine
+        if (!_controller)
+        {
+            _message->setText(tr("Not applied: the network cards change through Machine > Slots"));
+            return;
+        }
+        const std::string id = emulator->GetId();
+        manager = nullptr;
+        context = nullptr;
+        emulator = nullptr;
+        if (!_controller->ApplyNetworkCards(id, split.zxBusCards, this))
+        {
+            _message->setText(tr("Not applied: the network cards did not change"));
+            return;
+        }
+        std::shared_ptr<Emulator> restarted = EmulatorManager::GetInstance()->GetEmulator(_controller->LastEmulatorId());
+        context = restarted ? restarted->GetContext() : nullptr;
+        manager = (context && context->pCore) ? context->pCore->GetNetworkManager() : nullptr;
+        if (change.Empty())
+        {
+            _message->setText(tr("Applied: the machine restarted with the new network cards."));
+            _dirty = false;
+            QTimer::singleShot(100, this, &NetworkWindow::refresh);
+            return;
+        }
+        if (!manager || !manager->RequestChange(change, error))
+        {
+            _message->setText(tr("The network cards changed (a restart); the other settings were not applied: %1")
+                                  .arg(Q(manager ? error : std::string("no machine"))));
+            _dirty = false;
+            QTimer::singleShot(100, this, &NetworkWindow::refresh);
+            return;
+        }
+        _message->setText(tr("Applied: the machine restarted with the new network cards."));
+    }
+    else
+    {
+        if (!manager->RequestChange(change, error))
+        {
+            _message->setText(tr("Not applied: %1").arg(Q(error)));
+            return;
+        }
+        _message->setText(tr("Applied."));
+    }
     _dirty = false;
     // The machine thread applies it at its next frame boundary: the next
     // refresh shows the settings in force

@@ -72,17 +72,9 @@ void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<
     }
     else if (subcommand == "write")
     {
-        // Phase 2 Item 6 — record a debugger-edit marker before the write
-        // executes. One marker per CLI invocation, regardless of byte count:
-        // the user issued one `memory write` command, so the timeline sees
-        // one barrier. The marker is no-op unless a TTD session is Recording.
-        // See parent TDD §5.1.
-        EmulatorContext* ctx = emulator->GetContext();
-        if (ctx && ctx->pTimeTravelManager)
-            ctx->pTimeTravelManager->RecordExternalEvent(
-                ttd::TTDExternalEventKind::DebuggerEdit, "CLI memory write");
-
-        HandleMemoryWrite(session, memory, args);
+        // A tool edit (Emulator::EditMemoryFromTool): one event per command with
+        // the bytes it wrote, so a TTD replay reproduces it (D9)
+        emulator->EditMemoryFromTool("CLI memory write", [&]() { HandleMemoryWrite(session, memory, args); });
     }
     else if (subcommand == "dump")
     {

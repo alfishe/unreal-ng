@@ -22,10 +22,17 @@ own tests and a command-line tool; the emulator uses it through thin adapters.
 | [goals-and-requirements.md](goals-and-requirements.md) | **Start here.** Problem, goals, non-goals, decisions, open questions, use cases, requirements, acceptance, glossary |
 | [architecture.md](architecture.md) | Layers, data model (source document, line, IR), the three pipelines (decode / encode, format conversion, dialect conversion), plugin model, consumers, decision trees, emulator integration (mermaid diagrams) |
 | [source-formats.md](source-formats.md) | Every source format and sub-version: what is known, from where, how it is detected, what a byte-exact round trip has to keep |
+| [research-storm.md](research-storm.md) | STORM 1.0beta … 1.3i: lines walked backwards, implied commands, number descriptors, packed labels, the 42-file corpus (phase A4) |
+| [research-zxasm.md](research-zxasm.md) | ZX-ASM / ZAsm 2.4 … 4.20: text buffer with keyword pairs, the editor's rules, version detection, the 372-file corpus (phase A4) |
+| [research-alasm.md](research-alasm.md) | ALASM 3.8 … 5.09: the file, lines and keywords from ALASM's own sources, the tables of every version, version detection, the 429-file corpus (phase A3) |
+| [research-alasm-to-sjasmplus.md](research-alasm-to-sjasmplus.md) | ALASM → sjasmplus through the IR: the rules, the facts checked in ALASM 5.09 and sjasmplus 1.23, The Link's objects byte-equal (phase A5) |
+| [research-tasm-to-sjasmplus.md](research-tasm-to-sjasmplus.md) | TASM 3 / 4.0 / 4.12 → sjasmplus: the rules, the GS 1.04 ROM rebuilt byte for byte, TASM 4.12 checked in the emulator (phase A5b) |
+| [research-tasm.md](research-tasm.md) | TASM 3 / 4: the stream, the token table, the canonical tokenizer, what the real TASM 3.2 files show (phase A2) |
 | [dialect-conversion.md](dialect-conversion.md) | The intermediate representation, frontend and backend plugins, the construct matrix, what cannot be converted, a worked ALASM → sjasmplus example |
 | [prior-art.md](prior-art.md) | Existing converters and tools, local and public, compared; nothing is vendored |
 | [tdd.md](tdd.md) | Library layout, namespaces, interfaces (`ISourceCodec`, `IDialectFrontend`, `IDialectBackend`), registry, CLI, emulator adapters, phases |
 | [test-and-benchmark-plan.md](test-and-benchmark-plan.md) | Oracles (byte-exact round trips, the original assembler in the emulator, binary equality after conversion), corpus, tests, benchmarks |
+| [memory-bridge.md](memory-bridge.md) | **P2, design only**: sources straight from the emulated machine's memory (per-assembler memory descriptors), export and conversion, background builds with hints, real-time labels |
 | [symbols/](symbols/README.md) | The symbol module: one symbol model, symbol file codecs (sjasmplus, z88dk, VICE, IDA, Ghidra, ...), live label tables, ROM bundles |
 
 ## In one picture
@@ -52,4 +59,8 @@ flowchart LR
 Design (2026-10-05). Decided (D-1…D-12, [goals-and-requirements.md](goals-and-requirements.md) §3): the library and
 its place; one codec per format, decode and encode; nothing vendored; TASM 3 / 4 first, every other codec queued;
 compiled-in plugins; a neutral IR; TASM → sjasmplus first, sjasmplus the first output target; UTF-8 on the host; the
-`zxasm` CLI. Still open: the symbol module's P-2…P-7 ([TODO.md](TODO.md)). No code.
+`zxasm` CLI. Still open: the symbol module's P-2…P-7 ([TODO.md](TODO.md)).
+
+Implementation on branch `unreal-asm` (master after the owner's review): A1-A4 the codecs of every version (text,
+sjasmplus, TASM, ALASM, ZX-ASM, STORM), A5 the IR with ALASM → sjasmplus conversion checked against ALASM's own
+binaries, A5b TASM → sjasmplus checked against the GS 1.04 ROM and TASM 4.12. Check scripts: `tools/unreal-asm/`. Progress per phase: [TODO.md](TODO.md).

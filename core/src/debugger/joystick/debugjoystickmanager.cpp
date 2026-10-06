@@ -22,7 +22,7 @@ bool DebugJoystickManager::IsReplaying() const
     // (TimeTravelManager::OwnsInput), or an RZX playback
     if (_context && _context->rzxPlayer)
         return true;
-    return _context && _context->pTimeTravelManager && _context->pTimeTravelManager->OwnsInput();
+    return _context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->OwnsInput();
 }
 
 JoystickInjectResult DebugJoystickManager::Guard() const
@@ -69,8 +69,8 @@ bool DebugJoystickManager::Submit(uint8_t state, Joystick& joystick)
     ev.kind = ttd::TTDInputKind::Joystick;
     ev.buttonMask = state;
 
-    if (_context && _context->pTimeTravelManager)
-        return _context->pTimeTravelManager->SubmitLiveInput(ev);
+    if (_context && _context->pTimeTravelHooks)
+        return _context->pTimeTravelHooks->SubmitLiveInput(ev);
     ttd::TTDInputDevices devices;
     devices.joystick = &joystick;
     return ttd::ApplyInputEvent(ev, devices);

@@ -16,6 +16,8 @@
 #include <emulator/emulator.h>
 #include <emulator/io/ide/cdaudiocontrol.h>
 #include <emulator/media/mediacontrol.h>
+#include <emulator/slots/slotcontrol.h>
+#include <emulator/sound/midi/midicontrol.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/rzx/rzxlauncher.h>
 #include <loaders/snapshot/snapshotlauncher.h>
@@ -31,12 +33,14 @@
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundcharactersettings.h>
 #include <emulator/sound/chips/neogs/neogsmedia.h>
+#include <emulator/memory/atm/evoflashrequest.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <base/featuremanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/debugmanager.h>
+#include <debugger/ttd/ttdcontrol.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/labels/labelmanager.h>
 #include <debugger/analyzers/analyzermanager.h>
@@ -153,31 +157,6 @@ inline void ValidatePageIndex(const char* api, const std::string& type, int page
                                     " out of range (0-" + std::to_string(PAGE_SIZE - 1) + ")");
 }
 
-/// The recorded machine of a TTD session / file as a dict (the same keys as the
-/// WebAPI: model_id, model, ram_page_bound, rom_signature, peripheral_mask,
-/// peripherals, general_sound, turbo_sound)
-inline py::dict TtdRecordedMachineDict(const ttd::TTDRecordedMachine& m)
-{
-    py::dict d;
-    d["model_id"] = py::cast(static_cast<unsigned>(m.modelId));
-    d["model"] = m.model.empty() ? py::object(py::none()) : py::object(py::cast(m.model));
-    d["ram_page_bound"] = py::cast(static_cast<unsigned>(m.ramPageBound));
-    d["rom_signature"] = m.romSignature == 0 ? py::object(py::none())
-                                             : py::object(py::cast("0x" + ttd::HashToString(m.romSignature)));
-    d["peripheral_mask"] = py::cast(m.peripheralMask);
-    py::list list;
-    for (const std::string& name : m.peripherals)
-        list.append(name);
-    d["peripherals"] = list;
-    py::list notRecorded;
-    for (const std::string& name : m.notRecorded)
-        notRecorded.append(name);
-    d["not_recorded"] = notRecorded;
-    d["general_sound"] = py::cast(std::string(ttd::GeneralSoundName(m.generalSound)));
-    d["turbo_sound"] = py::cast(m.turboSound);
-    return d;
-}
-
 /// @brief Python bindings for Emulator class and related functionality
 /// Provides comprehensive emulator control matching CLI and WebAPI interfaces
 /// StateNode -> Python object (dict / list / scalars). The one converter
@@ -207,6 +186,52 @@ inline pybind11::object StateNodeToPy(const StateNode& node)
         }
         default: return py::none();
     }
+}
+
+/// One time-travel verb through TTDControl, the layer every surface shares (Phase 5, Step 1)
+inline ttd::TTDReply TtdRunPy(Emulator& self, const std::string& verb, std::map<std::string, std::string> options = {})
+{
+    return ttd::TTDControl(self.GetContext()).Execute({verb, std::move(options)});
+}
+
+/// The reply's body; a failure raises RuntimeError with the message, as the bindings always did
+inline const StateNode& TtdBodyOrThrow(const ttd::TTDReply& reply)
+{
+    if (!reply.Ok())
+        throw std::runtime_error(reply.message);
+    return reply.body;
+}
+
+/// A Python value as option text: True / False, an integer, a string
+inline std::string TtdOptionTextPy(const pybind11::handle& o)
+{
+    namespace py = pybind11;
+    if (py::isinstance<py::bool_>(o))
+        return o.cast<bool>() ? "true" : "false";
+    return py::str(o).cast<std::string>();
+}
+
+/// A coverage query's answer; a bad argument raises ValueError
+inline pybind11::object TtdCoveragePy(const ttd::TTDReply& reply)
+{
+    if (reply.error == ttd::TTDControlError::BadRequest)
+        throw pybind11::value_error(reply.message);
+    return StateNodeToPy(reply.body);
+}
+
+/// A seek's answer as a dict: the reply's fields; a refused seek has reached = False and
+/// error = the message (seeks never raised: scripts read reached)
+inline pybind11::object TtdSeekPy(const ttd::TTDReply& reply)
+{
+    StateNode value = reply.body;
+    if (!reply.Ok())
+    {
+        if (!value.find("error"))
+            value["error"] = reply.message;
+        if (!value.find("reached"))
+            value["reached"] = false;
+    }
+    return StateNodeToPy(value);
 }
 
 /// One media verb through MediaControl (media-control-design.md): the options
@@ -304,6 +329,40 @@ namespace python_rzx
     }
 }  // namespace python_rzx
 
+namespace python_slots
+{
+    /// A kwargs value as option text: bool -> true / false, a list -> "a,b"
+    inline std::string Text(const pybind11::handle& value)
+    {
+        if (pybind11::isinstance<pybind11::bool_>(value))
+            return value.cast<bool>() ? "true" : "false";
+        if (pybind11::isinstance<pybind11::list>(value) || pybind11::isinstance<pybind11::tuple>(value))
+        {
+            std::string list;
+            for (const pybind11::handle item : value)
+                list += (list.empty() ? "" : ",") + pybind11::str(item).cast<std::string>();
+            return list.empty() ? "none" : list;
+        }
+        return pybind11::str(value).cast<std::string>();
+    }
+
+    /// One slots verb through SlotControl (ZX-bus slots architecture.md §9) on the emulator `emulatorId` ("" = the
+    /// selected one); every keyword argument is a card option (dip="ym,saa" or dip=["ym", "saa"]). The reply dict
+    /// every surface returns: ok, status, message and the verb's fields (a change: plan, restart.emulatorId, media)
+    inline pybind11::object Call(SlotControlRequest request, const std::string& emulatorId, const pybind11::kwargs& options)
+    {
+        for (const auto& [key, value] : options)
+            request.options += (request.options.empty() ? "" : " ") + pybind11::str(key).cast<std::string>() + "=" + Text(value);
+        request.emulatorId = python_rzx::ResolveId(emulatorId);
+        SlotControlReply reply;
+        {
+            pybind11::gil_scoped_release release;   // a restart stops and builds a machine
+            reply = SlotControl::Execute(request);
+        }
+        return StateNodeToPy(reply.ToValue());
+    }
+}  // namespace python_slots
+
 namespace PythonBindings
 {
     /// Pause() -> op -> Resume() bracket shared by the mutating tape
@@ -344,14 +403,14 @@ namespace PythonBindings
     inline bool SubmitGSInput(Emulator& self, ttd::TTDInputKind kind, int value = 0)
     {
         auto* ctx = self.GetContext();
-        if (!ctx || !ctx->pTimeTravelManager || value < 0 || value > 255)
+        if (!ctx || !ctx->pTimeTravelHooks || value < 0 || value > 255)
             return false;
         if (!ctx->pSoundManager || !ctx->pSoundManager->getGeneralSound())
             return false;
         ttd::TTDInputEvent ev;
         ev.kind = kind;
         ev.value = static_cast<uint8_t>(value);
-        return ctx->pTimeTravelManager->SubmitLiveInput(ev);
+        return ctx->pTimeTravelHooks->SubmitLiveInput(ev);
     }
 
     /// region <Kempston Mouse helpers (automation-interfaces §4.6)>
@@ -804,6 +863,80 @@ namespace PythonBindings
                 throw std::invalid_argument("no emulator '" + emulatorId + "'");
             return python_rzx::StatusDict(emulator->GetRzxStatus());
         }, "RZX playback status (frame, progress, desyncs, drift)", py::arg("emulator_id") = "");
+
+        // ZX-bus slots through SlotControl (ZX-bus slots architecture.md §9): the machine's buses, slots and cards.
+        // A change (plug / remove / set / gs) restarts the machine: the reply's restart.emulatorId is the new id
+        // (the selection follows it); emulator_id "" = the selected machine
+        m.def("slots_state", [](const std::string& emulatorId) {
+            SlotControlRequest request;
+            request.verb = "list";
+            return python_slots::Call(request, emulatorId, py::kwargs());
+        }, "The slot report: buses, slots, fitted cards, built-in devices", py::arg("emulator_id") = "");
+        m.def("slots_catalog", [](const std::string& emulatorId) {
+            SlotControlRequest request;
+            request.verb = "catalog";
+            return python_slots::Call(request, emulatorId, py::kwargs());
+        }, "Every card with its options and how it fits this machine (slot, fit, outcome)", py::arg("emulator_id") = "");
+        m.def("slots_matrix", [](const std::string& table) {
+            SlotControlRequest request;
+            request.verb = "matrix";
+            request.table = table;
+            return python_slots::Call(request, "", py::kwargs());
+        }, "The compatibility tables as markdown (one table, or all)", py::arg("table") = "");
+        m.def("slots_plug", [](const std::string& slot, const std::string& card, const std::string& options, bool replace,
+                               bool dryRun, const std::string& media, const std::string& adapter,
+                               const std::string& emulatorId, const py::kwargs& cardOptions) {
+            SlotControlRequest request;
+            request.verb = "plug";
+            request.slot = slot == "auto" ? std::string() : slot;
+            request.card = card;
+            request.options = options;
+            request.replaceIfIncompatible = replace;
+            request.dryRun = dryRun;
+            request.media = media;
+            request.adapter = adapter;
+            return python_slots::Call(request, emulatorId, cardOptions);
+        }, "Plug a card into a slot (zxbus.next, ay-socket, auto); options 'dip=ym,saa' or keywords dip='ym,saa'. "
+           "Refused with the plan when it would remove a card unless replace=True; dry_run=True: the plan only; "
+           "media='save'|'discard' for unsaved media of removed cards. Applied by a machine restart",
+           py::arg("slot"), py::arg("card"), py::arg("options") = "", py::arg("replace") = false,
+           py::arg("dry_run") = false, py::arg("media") = "", py::arg("adapter") = "", py::arg("emulator_id") = "");
+        m.def("slots_remove", [](const std::string& slot, bool replace, bool dryRun, const std::string& media,
+                                 const std::string& emulatorId) {
+            SlotControlRequest request;
+            request.verb = "remove";
+            request.slot = slot;
+            request.replaceIfIncompatible = replace;
+            request.dryRun = dryRun;
+            request.media = media;
+            return python_slots::Call(request, emulatorId, py::kwargs());
+        }, "Remove the card from a slot (a machine restart)", py::arg("slot"), py::arg("replace") = false,
+           py::arg("dry_run") = false, py::arg("media") = "", py::arg("emulator_id") = "");
+        m.def("slots_set", [](const std::string& slot, const std::string& options, bool replace, bool dryRun,
+                              const std::string& media, const std::string& emulatorId, const py::kwargs& cardOptions) {
+            SlotControlRequest request;
+            request.verb = "set";
+            request.slot = slot;
+            request.options = options;
+            request.replaceIfIncompatible = replace;
+            request.dryRun = dryRun;
+            request.media = media;
+            return python_slots::Call(request, emulatorId, cardOptions);
+        }, "Change a slot card's options ('dip=ym,gs' or keywords), merged over the current ones (a machine restart)",
+           py::arg("slot"), py::arg("options") = "", py::arg("replace") = false, py::arg("dry_run") = false,
+           py::arg("media") = "", py::arg("emulator_id") = "");
+        m.def("slots_gs", [](const std::string& card, bool replace, bool dryRun, const std::string& media,
+                             const std::string& emulatorId) {
+            SlotControlRequest request;
+            request.verb = "gs";
+            request.card = card;
+            request.replaceIfIncompatible = replace;
+            request.dryRun = dryRun;
+            request.media = media;
+            return python_slots::Call(request, emulatorId, py::kwargs());
+        }, "The General Sound personality (gs, gs-lw, neogs): the card in the GS slot replaced (a machine restart)",
+           py::arg("card"), py::arg("replace") = false, py::arg("dry_run") = false, py::arg("media") = "",
+           py::arg("emulator_id") = "");
 
         m.def("emu_select", [](const std::string& id) -> bool {
             auto* mgr = EmulatorManager::GetInstance();
@@ -2598,26 +2731,48 @@ namespace PythonBindings
             .def("network_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Network(self.GetContext()));
             }, "Network adapters: card (ZXNETUSB ports, W5300 address registers and sockets), virtual network (DHCP leases, sockets, guest servers, counters, recent activity); available=False without one")
-            .def("network_configure", [](Emulator& self, py::kwargs settings) {
-                NetworkManager* manager = self.GetContext()->pCore ? self.GetContext()->pCore->GetNetworkManager() : nullptr;
-                if (!manager)
-                    throw py::value_error("no network support in this machine");
-                std::vector<std::pair<std::string, std::string>> kv;
+            .def("network_configure", [](Emulator& self, py::kwargs settings) -> py::object {
+                // SlotControl verb network (ZX-bus slots, owner decision Q11): a change of the ZX-bus cards is a slot
+                // change applied by a restart (replace=, dry_run=, media= as for slots_plug), the other keys go to the
+                // restarted machine (emu_get_selected(); this object then names the old one); without a card change
+                // they apply in place (status 'accepted')
+                SlotControlRequest request;
+                request.verb = "network";
+                request.emulatorId = self.GetId();
                 for (auto item : settings)
                 {
                     const std::string key = py::str(item.first);
+                    if (key == "replace" || key == "replace_if_incompatible")
+                    {
+                        request.replaceIfIncompatible = item.second.cast<bool>();
+                        continue;
+                    }
+                    if (key == "dry_run")
+                    {
+                        request.dryRun = item.second.cast<bool>();
+                        continue;
+                    }
+                    if (key == "media")
+                    {
+                        request.media = py::str(item.second);
+                        continue;
+                    }
                     std::string text;
                     if (py::isinstance<py::bool_>(item.second))
                         text = item.second.cast<bool>() ? "on" : "off";
                     else
                         text = py::str(item.second);
-                    kv.emplace_back(key, text);
+                    request.settings.emplace_back(key, text);
                 }
-                NetworkManager::Change change;
-                std::string error;
-                if (!NetworkManager::ParseChange(kv, change, error) || !manager->RequestChange(change, error))
-                    throw py::value_error(error);
-            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', remote_access=True|False (the host listeners of guest servers: 0.0.0.0, every interface, or 127.0.0.1 only; alone it keeps every connection), connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,firmware][,baud]' (firmware: 'esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222', for this module alone) (the machine's serial port: the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's or the ZX Profi v5's 8251; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem default 'modem', SprinterSerial COM1 default 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' puts one on any machine's serial port), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at[,firmware]'|'zifi-native[,s3|esp01s]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP; 'at' = the original ESP-01, NonOS AT 1.7.4 unless an ESP8266 build is named; 'zifi-native' = the 2026 firmware, s3 = ESP32-S3-Zero, esp01s = ESP-01S), ethernet_mode='nat'|'bridge' and bridge_adapter='en0' (the frame cards: the gateway's NAT or their frames on a host adapter, see network_adapters()); applied at the next frame boundary, every connection closes")
+                SlotControlReply reply;
+                {
+                    py::gil_scoped_release release;   // a restart stops and builds a machine
+                    reply = SlotControl::Execute(request);
+                }
+                if (!reply.Ok())
+                    throw py::value_error(reply.message);
+                return StateNodeToPy(reply.ToValue());
+            }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', remote_access=True|False (the host listeners of guest servers: 0.0.0.0, every interface, or 127.0.0.1 only; alone it keeps every connection), connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,firmware][,baud]' (firmware: 'esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222', for this module alone) (the machine's serial port: the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's or the ZX Profi v5's 8251; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem default 'modem', SprinterSerial COM1 default 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' puts one on any machine's serial port), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at[,firmware]'|'zifi-native[,s3|esp01s]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP; 'at' = the original ESP-01, NonOS AT 1.7.4 unless an ESP8266 build is named; 'zifi-native' = the 2026 firmware, s3 = ESP32-S3-Zero, esp01s = ESP-01S), ethernet_mode='nat'|'bridge' and bridge_adapter='en0' (the frame cards: the gateway's NAT or their frames on a host adapter, see network_adapters()). A card value that changes the ZX-bus cards (zxnetusb, zxwifi) is a slot change applied by a machine restart (replace=True allows removals / an unrealistic fit, dry_run=True returns the plan, media='save'|'discard'; the other keys are applied to the restarted machine, emu_get_selected()); other settings apply at the next frame boundary, every connection closes (status 'accepted'). Returns the reply dict (ok, status, message, plan, restart, network); ValueError with the reason when refused")
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")
@@ -2738,6 +2893,21 @@ namespace PythonBindings
             .def("audio_covox_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Covox(self.GetContext()));
             }, "Covox / SoundDrive state: fitment, the ports this model decodes, Beta-128 shared ports, DAC latches")
+            .def("multisound_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::MultiSound(self.GetContext()));
+            }, "The ZX-MultiSound card: options, shadowed built-ins, CPLD latches, YM2203 pair (the TSFM report's chips), "
+               "SAA1099, General Sound, DACs, MIDI summary ({'available': False, ...} without the card)")
+            .def("midi_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Midi(self.GetContext()));
+            }, "The MIDI line and the SAM2695 synthesizer: 16 parts (program, preset, volume, pan, voices, notes), "
+               "polyphony, effects, counters, bank")
+            .def("midi_panic", [](Emulator& self) -> py::dict {
+                const MidiControlReply reply = MidiControl::Execute(self.GetContext(), "panic");
+                py::dict d;
+                d["ok"] = reply.ok;
+                d["message"] = reply.message;
+                return d;
+            }, "MIDI panic: every voice of the synthesizer stops (applied at the next instruction boundary, a TTD input)")
             .def("audio_moonsound_state", [](Emulator& self, const std::string& part) -> py::object {
                 if (part == "fm")
                     return StateNodeToPy(DeviceState::MoonSoundFm(self.GetContext()));
@@ -2760,6 +2930,29 @@ namespace PythonBindings
             .def("gs_flash_save", [](Emulator& self) -> bool {
                 return NeoGSMediaAccepted(NeoGSRequestFlashSave(self.GetContext()));
             }, "NeoGS: save the reprogrammed flash (loaded in place of the shipped image with [NGS] FlashWrite=persist)")
+            // ZX-Evo flash ROM (TS-Conf, ATM3): the saved flash (evoflashrequest.h)
+            .def("rom_flash_state", [](Emulator& self) -> py::object {
+                EvoFlash::PersistStatus st;
+                if (!EvoFlashGetStatus(self.GetContext(), st))
+                    return py::none();
+                py::dict d;
+                d["machine"] = st.machine;
+                d["file"] = st.path;
+                d["file_exists"] = st.fileExists;
+                d["base_rom_sha256"] = st.baseDigest;
+                d["loaded_from_file"] = st.loadedFromFile;
+                d["unsaved"] = st.unsaved;
+                d["changes"] = st.changes;
+                d["other_image_files"] = st.otherImageFiles;
+                return d;
+            }, "ZX-Evo flash ROM: the saved flash file for the loaded ROM image, unsaved changes, files of other ROM "
+               "images (not used); None on other machines")
+            .def("rom_flash_save", [](Emulator& self) -> bool {
+                return EvoFlashAccepted(EvoFlashRequestSave(self.GetContext()));
+            }, "ZX-Evo flash ROM: write the saved flash now")
+            .def("rom_flash_discard", [](Emulator& self) -> bool {
+                return EvoFlashAccepted(EvoFlashRequestDiscard(self.GetContext()));
+            }, "ZX-Evo flash ROM: delete the saved flash; the shipped ROM image returns at the next reset")
             .def("gs_stereo_mode", [](Emulator& self, const std::string& mode) -> bool {
                 NeoGSConfig::StereoMode parsed = NeoGSConfig::StereoMode::Separated;
                 SoundManager* sm = self.GetContext() ? self.GetContext()->pSoundManager : nullptr;
@@ -2795,26 +2988,23 @@ namespace PythonBindings
                 return gs ? (gs->getStatusRaw() | 0x7E) : -1;
             }, "Peek the GS status register (IN #BB value)")
             .def("gs_switch_personality", [](Emulator& self, const std::string& personality) -> bool {
-                // Runtime personality switch (GS card personalities design
-                // §11.3): requested here, applied at the next frame boundary
-                // on the emulation thread - same semantics as the WebAPI
-                // switch_personality action and the MCP gs_switch_personality
-                // tool action
-                auto* ctx = self.GetContext();
-                SoundManager* sm = ctx ? ctx->pSoundManager : nullptr;
-                if (!sm) return false;
-
-                GSTypeKind target;
-                if (!gsParsePersonality(personality, target))
-                    return false;
-
-                std::string refusal;
-                const bool requested = sm->requestGeneralSoundCardSwitch(target, &refusal);
-                if (!requested && !refusal.empty())
-                    throw std::runtime_error(refusal);  // a TTD recording refuses the switch (FR-4)
-                return requested;
-            }, "Request a GS card personality swap ('z80'/'lle', 'lw'/'lightweight' or 'ngs'/'neogs'), applied at the next "
-               "frame boundary (RuntimeError while TTD records)",
+                // The card in the GS slot replaced as a slot change, applied by a machine restart (ZX-bus slots,
+                // owner decision Q10): the same as slots_gs(). This object then names the old machine; the new one
+                // is the selected emulator (emu_get_selected())
+                SlotControlRequest request;
+                request.verb = "gs";
+                request.card = personality;
+                request.emulatorId = self.GetId();
+                SlotControlReply reply;
+                {
+                    py::gil_scoped_release release;
+                    reply = SlotControl::Execute(request);
+                }
+                if (!reply.Ok())
+                    throw std::runtime_error(reply.message);
+                return true;
+            }, "Replace the GS-slot card ('z80'/'lle', 'lw'/'lightweight' or 'ngs'/'neogs'): a machine restart; the new "
+               "machine is emu_get_selected() (RuntimeError with the reason when refused, e.g. while TTD records)",
                py::arg("personality"))
             .def("gs_dump_module", [](Emulator& self, const std::string& path) -> py::object {
                 // Diagnostics: write the last completed COM30..D2 upload
@@ -3695,510 +3885,220 @@ namespace PythonBindings
             // -----------------------------------------------------------------
 
             // Session status — returns a dict mirroring the WebAPI shape
-            .def("ttd_status", [](Emulator& self) -> py::dict {
-                py::dict info;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    info["state"] = "idle";
-                    info["ttd_available"] = false;
-                    return info;
-                }
-                ttd::TimeTravelManager* mgr = ctx->pTimeTravelManager;
-                ttd::TTDSessionInfo si = mgr->ReadSessionInfo();
-                info["state"]                    = ttd::TTDSessionStateToString(si.state);
-                info["session_start_frame"]      = py::cast(si.sessionStartFrame);
-                info["current_end_frame"]        = py::cast(si.currentEndFrame);
-                info["checkpoint_count"]         = py::cast(si.checkpointCount);
-                info["page_store_bytes"]         = py::cast(si.pageStoreBytes);
-                info["page_store_used_bytes"]    = py::cast(si.pageStoreUsedBytes);
-                info["baseline_frames_captured"] = py::cast(si.baselineFramesCaptured);
-                info["session_heap_bytes"]       = py::cast(si.sessionHeapBytes);
-                info["history_limit_frames"]     = py::cast(si.historyLimitFrames);
-                info["history_limit_bytes"]      = py::cast(si.historyLimitBytes);
-                info["history_bytes"]            = py::cast(si.historyBytes);
-                info["evicted_checkpoints"]      = py::cast(si.evictedCheckpoints);
-                // Provenance and section sizes: "is this something I recorded
-                // or something I opened, and what is inside it".
-                info["loaded_from_file"]         = py::cast(si.loadedFromFile);
-                info["source_path"]              = py::cast(si.sourcePath);
-                info["captured_at_unix_ms"]      = py::cast(si.capturedAtUnixMs);
-                info["model_id"]                 = py::cast(si.modelId);
-                info["model_ram_pages"]          = py::cast(si.modelRamPages);
-                info["write_journal_records"]    = py::cast(si.writeJournalRecords);
-                info["write_journal_bytes"]      = py::cast(si.writeJournalBytes);
-                info["coverage_index_frames"]    = py::cast(si.coverageIndexFrames);
-                info["coverage_index_bytes"]     = py::cast(si.coverageIndexBytes);
-                info["write_journal_enabled"]    = py::cast(si.writeJournalEnabled);
-                info["write_journal_complete"]   = py::cast(si.writeJournalComplete);
-                py::list segments;
-                for (const auto& [from, to] : si.writeJournalSpans)
-                {
-                    py::dict span;
-                    span["from_frame"]    = py::cast(from.frame);
-                    span["from_tinframe"] = py::cast(from.tInFrame);
-                    span["to_frame"]      = py::cast(to.frame);
-                    span["to_tinframe"]   = py::cast(to.tInFrame);
-                    segments.append(span);
-                }
-                info["write_journal_segments"] = segments;
-                info["bookmark_count"]           = py::cast(static_cast<uint64_t>(si.bookmarkCount));
-                info["input_event_count"]        = py::cast(static_cast<uint64_t>(si.inputEventCount));
-                info["external_event_count"]     = py::cast(static_cast<uint64_t>(si.externalEventCount));
-                info["input_history_complete"]   = py::cast(si.inputHistoryComplete);
-                info["port_journal_active"]      = py::cast(si.portJournalActive);
-                info["port_journal_off_reason"]  = si.portJournalOffReason.empty()
-                                                       ? py::object(py::none())
-                                                       : py::object(py::cast(si.portJournalOffReason));
-                info["port_read_count"]          = py::cast(si.portReadCount);
-                info["port_write_count"]         = py::cast(si.portWriteCount);
-                info["port_journal_bytes"]       = py::cast(static_cast<uint64_t>(si.portJournalBytes));
-                info["port_replay_value_mismatches"] = py::cast(si.portReplayValueMismatches);
-                info["port_replay_divergences"]  = py::cast(si.portReplayDivergences);
-                info["last_drop_reason"]         = si.lastDropReason.empty() ? py::object(py::none())
-                                                                             : py::object(py::cast(si.lastDropReason));
-                info["unavailable_reason"]       = si.unavailableReason.empty() ? py::object(py::none())
-                                                                                : py::object(py::cast(si.unavailableReason));
-                // The recorded machine (None while there is no session) and, for a
-                // loaded file, the instance that recorded it
-                info["machine"] = si.checkpointCount != 0 ? py::object(TtdRecordedMachineDict(si.machine))
-                                                          : py::object(py::none());
-                info["recorded_by"] = si.recordedBy.empty() ? py::object(py::none())
-                                                            : py::object(py::cast(si.recordedBy));
-                info["ttd_available"]            = true;
-                return info;
-            }, "Get TTD session status")
-            .def("ttd_file_info", [](Emulator& /*self*/, const std::string& path) -> py::dict {
-                py::dict r;
-                ttd::TTDFileInfo fi;
-                std::string err;
-                if (!ttd::ReadTTDFileInfo(path, fi, err))
-                {
-                    r["ok"] = false;
-                    r["path"] = path;
-                    r["error"] = err;
-                    return r;
-                }
-                r["ok"] = true;
-                r["path"] = fi.path;
-                r["file_bytes"] = py::cast(fi.fileBytes);
-                r["schema_version"] = py::cast(static_cast<unsigned>(fi.schemaVersion));
-                r["flags"] = py::cast(static_cast<unsigned>(fi.flags));
-                r["captured_at_unix_ms"] = py::cast(fi.capturedAtUnixMs);
-                r["recorded_by"] = fi.emulatorId.empty() ? py::object(py::none()) : py::object(py::cast(fi.emulatorId));
-                r["session_state"] = py::cast(std::string(
-                    ttd::TTDSessionStateToString(static_cast<ttd::TTDSessionState>(fi.sessionState))));
-                r["session_start_frame"] = py::cast(fi.startFrame);
-                r["session_end_frame"] = py::cast(fi.endFrame);
-                r["checkpoint_count"] = py::cast(static_cast<uint64_t>(fi.checkpointCount));
-                r["page_slot_count"] = py::cast(static_cast<uint64_t>(fi.pageStoreCount));
-                py::dict sections;
-                sections["write_journal"] = py::cast(fi.hasWriteJournal);
-                sections["write_journal_complete"] = py::cast(fi.writeJournalComplete);
-                sections["coverage_index"] = py::cast(fi.hasCoverageIndex);
-                sections["bookmarks"] = py::cast(fi.hasBookmarks);
-                sections["input_journal"] = py::cast(fi.hasInputJournal);
-                sections["external_events"] = py::cast(fi.hasExternalEvents);
-                sections["port_journals"] = py::cast(fi.hasPortJournals);
-                sections["top_clock_time"] = py::cast(fi.topClockTime);
-                r["sections"] = sections;
-                r["machine"] = TtdRecordedMachineDict(fi.machine);
-                r["peripherals_from_header"] = py::cast(fi.peripheralsFromHeader);
-                return r;
+            .def("ttd_status", [](Emulator& self) -> py::object {
+                return StateNodeToPy(TtdRunPy(self, "status").body);
+            }, "Session status: the same fields as GET /ttd/status")
+
+            .def("ttd_file_info", [](Emulator& /*self*/, const std::string& path) -> py::object {
+                const ttd::TTDReply reply = ttd::TTDControl(nullptr).Execute({"file-info", {{"path", path}}});
+                StateNode value = reply.body;
+                if (!reply.Ok() && !value.find("error"))
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
             }, "Describe a .ttd file without loading it: header, sections and the recorded machine "
                "(model, ROM signature, General Sound card, devices)", py::arg("path"))
 
             // journal=True also records the write journal; without it the
             // ttd_set_journal_enabled choice stands (off by default, D40)
             .def("ttd_start", [](Emulator& self, py::object journalObj) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
+                std::map<std::string, std::string> options;
                 if (!journalObj.is_none())
-                    ctx->pTimeTravelManager->SetEnableWriteJournal(journalObj.cast<bool>());
-                return ctx->pTimeTravelManager->StartRecording();
+                    options["journal"] = journalObj.cast<bool>() ? "true" : "false";
+                const ttd::TTDReply reply = TtdRunPy(self, "start", options);
+                return reply.Ok() && (reply.body.find("started")->b || reply.body.find("already_active")->b);
             }, "Start TTD recording (journal=True also records the write journal)",
                py::arg("journal") = py::none())
 
             .def("ttd_set_history_limit", [](Emulator& self, py::object framesObj, py::object bytesObj) -> py::tuple {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                    throw std::runtime_error("TTD not available");
-                const ttd::TTDSessionInfo si = ctx->pTimeTravelManager->ReadSessionInfo();
-                ctx->pTimeTravelManager->SetHistoryLimit(
-                    framesObj.is_none() ? si.historyLimitFrames : framesObj.cast<uint64_t>(),
-                    bytesObj.is_none() ? si.historyLimitBytes : bytesObj.cast<uint64_t>());
-                const ttd::TTDSessionInfo now = ctx->pTimeTravelManager->ReadSessionInfo();
-                return py::make_tuple(now.historyLimitFrames, now.historyLimitBytes);
+                std::map<std::string, std::string> options;
+                if (!framesObj.is_none())
+                    options["frames"] = std::to_string(framesObj.cast<uint64_t>());
+                if (!bytesObj.is_none())
+                    options["bytes"] = std::to_string(bytesObj.cast<uint64_t>());
+                const StateNode& body = TtdBodyOrThrow(TtdRunPy(self, "history-limit", options));
+                return py::make_tuple(static_cast<uint64_t>(body.find("history_limit_frames")->i),
+                                      static_cast<uint64_t>(body.find("history_limit_bytes")->i));
             }, "Bound the TTD history: while recording, the oldest frames are released beyond `frames` checkpoints "
                "or `bytes` of checkpoint data (0 = no limit, None keeps the current value). Returns (frames, bytes) in force",
                py::arg("frames") = py::none(), py::arg("bytes") = py::none())
 
             .def("ttd_set_journal_enabled", [](Emulator& self, bool enabled) {
-                auto* ctx = self.GetContext();
-                if (ctx && ctx->pTimeTravelManager && !ctx->pTimeTravelManager->SwitchWriteJournal(enabled))
-                    throw std::runtime_error("write journal not available");
+                TtdBodyOrThrow(TtdRunPy(self, "journal", {{"enabled", enabled ? "true" : "false"}}));
             }, "Switch the write journal at any moment, also while recording: a journal segment starts or ends there",
                py::arg("enabled"))
 
             .def("ttd_get_journal_enabled", [](Emulator& self) -> bool {
-                auto* ctx = self.GetContext();
-                return ctx && ctx->pTimeTravelManager && ctx->pTimeTravelManager->GetEnableWriteJournal();
+                const ttd::TTDReply reply = TtdRunPy(self, "journal");
+                return reply.Ok() && reply.body.find("write_journal_setting")->b;
             }, "Whether the write journal is recorded (off by default)")
 
-            .def("ttd_build_journal", [](Emulator& self, py::object fromObj, py::object toObj) -> py::dict {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                    throw std::runtime_error("TTD not available");
-                const ttd::TTDJournalBuildResult b = ctx->pTimeTravelManager->BuildWriteJournalFrames(
-                    fromObj.is_none() ? 0 : fromObj.cast<uint64_t>(),
-                    toObj.is_none() ? UINT64_MAX : toObj.cast<uint64_t>());
-                py::dict r;
-                r["ok"] = b.ok;
-                r["error"] = b.ok ? py::object(py::none()) : py::object(py::str(b.error));
-                r["cancelled"] = b.cancelled;
-                r["frames_built"] = b.framesBuilt;
-                r["frames_covered"] = b.framesCovered;
-                r["frames_refused"] = b.framesRefused;
-                r["records"] = b.records;
-                return r;
+            .def("ttd_build_journal", [](Emulator& self, py::object fromObj, py::object toObj) -> py::object {
+                std::map<std::string, std::string> options;
+                if (!fromObj.is_none())
+                    options["from_frame"] = std::to_string(fromObj.cast<uint64_t>());
+                if (!toObj.is_none())
+                    options["to_frame"] = std::to_string(toObj.cast<uint64_t>());
+                const ttd::TTDReply reply = TtdRunPy(self, "journal-build", options);
+                // A build that ran and failed answers with its counts; a refusal raises
+                if (!reply.Ok() && !reply.body.find("frames_built"))
+                    throw std::runtime_error(reply.message);
+                StateNode value = reply.body;
+                if (reply.Ok())
+                    value["error"] = StateNode();
+                return StateNodeToPy(value);
             }, "Build the write journal for frames from_frame..to_frame (default: the whole session) by replaying "
                "them, about 2-4 ms per frame; not while recording",
                py::arg("from_frame") = py::none(), py::arg("to_frame") = py::none())
 
-            .def("ttd_stop", [](Emulator& self) {
-                auto* ctx = self.GetContext();
-                if (ctx && ctx->pTimeTravelManager)
-                    ctx->pTimeTravelManager->StopRecording();
-            }, "Stop TTD recording (history retained)")
+            .def("ttd_stop", [](Emulator& self) { (void)TtdRunPy(self, "stop"); }, "Stop TTD recording (history retained)")
 
             .def("ttd_invalidate", [](Emulator& self, const std::string& reason) {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                    return;
-                if (std::string refusal = ctx->pTimeTravelManager->RecordingGuard(ttd::TTDGuardedAction::Invalidate);
-                    !refusal.empty())
-                    throw std::runtime_error(refusal);  // recording: stop it first
-                ctx->pTimeTravelManager->InvalidateSession(reason.c_str());
+                const ttd::TTDReply reply = TtdRunPy(self, "invalidate", {{"reason", reason}});
+                if (reply.error == ttd::TTDControlError::Conflict)
+                    throw std::runtime_error(reply.message);  // recording: stop it first
             }, "Drop all TTD history (RuntimeError while recording)", py::arg("reason") = "python invalidate")
 
-            .def("ttd_seek", [](Emulator& self, uint64_t frame, uint32_t tInFrame) -> py::dict {
-                py::dict result;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    result["reached"] = false;
-                    result["error"]   = "TTD not available";
-                    return result;
-                }
-                ttd::TTDTimePoint target{frame, tInFrame};
-                ttd::TimeTravelManager::TTDSeekResult r;
-                bool reached = ctx->pTimeTravelManager->SeekTo(target, &r);
-                result["reached"] = reached;
-
-                py::dict arrivedAt;
-                arrivedAt["frame"]    = py::cast(r.arrivedAt.frame);
-                arrivedAt["tinframe"] = py::cast(r.arrivedAt.tInFrame);
-                result["arrived_at"]  = arrivedAt;
-
-                const char* reasonStr = "target";
-                switch (r.haltReason)
-                {
-                    case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
-                    case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
-                    default: break;
-                }
-                result["halt_reason"] = reasonStr;
-
-                if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
-                {
-                    py::dict marker;
-                    marker["frame"]    = py::cast(r.blockingMarker.time.frame);
-                    marker["tinframe"] = py::cast(r.blockingMarker.time.tInFrame);
-                    marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
-                    marker["reason"]   = r.blockingMarker.reason;
-                    result["blocking_marker"] = marker;
-                }
-                return result;
-            }, "Seek to a point in the timeline", py::arg("frame"), py::arg("tinframe") = 0)
+            .def("ttd_seek", [](Emulator& self, uint64_t frame, std::optional<uint32_t> tInFrame) -> py::object {
+                // Without a T-state: the frame's end on the engine (D13), its start on v1
+                std::map<std::string, std::string> options{{"frame", std::to_string(frame)}};
+                if (tInFrame)
+                    options["tinframe"] = std::to_string(*tInFrame);
+                return TtdSeekPy(TtdRunPy(self, "seek", options));
+            }, "Seek to a point in the timeline (the machine stays paused there; ttd_resume continues). "
+               "Without tinframe the engine lands at the frame's end, v1 at its start",
+               py::arg("frame"), py::arg("tinframe") = py::none())
 
             .def("ttd_step_back", [](Emulator& self) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                return ctx->pTimeTravelManager->StepBackFrame();
+                const ttd::TTDReply reply = TtdRunPy(self, "step-back");
+                return reply.Ok() && reply.body.find("stepped")->b;
             }, "Step back one frame")
 
             .def("ttd_step_forward", [](Emulator& self) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                return ctx->pTimeTravelManager->StepForwardFrame();
+                const ttd::TTDReply reply = TtdRunPy(self, "step-forward");
+                return reply.Ok() && reply.body.find("stepped")->b;
             }, "Step forward one frame")
 
             .def("ttd_resume", [](Emulator& self, py::object frameObj, uint32_t tInFrame) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                // No frame: resume exactly where the machine stands (as CLI and WebAPI do)
-                ttd::TTDTimePoint from = ctx->pTimeTravelManager->CurrentPosition();
+                // No frame: resume exactly where the machine stands
+                std::map<std::string, std::string> options;
                 if (!frameObj.is_none())
                 {
-                    from.frame = frameObj.cast<uint64_t>();
-                    from.tInFrame = tInFrame;
+                    options["frame"] = std::to_string(frameObj.cast<uint64_t>());
+                    options["tinframe"] = std::to_string(tInFrame);
                 }
-                return ctx->pTimeTravelManager->ResumeRecordingFrom(from);
-            }, "Resume recording from current or specified point",
+                const ttd::TTDReply reply = TtdRunPy(self, "resume", options);
+                return reply.Ok() && reply.body.find("resumed")->b;
+            }, "Resume recording from current or specified point (the machine runs again)",
                py::arg("frame") = py::none(), py::arg("tinframe") = 0)
 
-            .def("ttd_position", [](Emulator& self) -> py::dict {
-                py::dict result;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    result["error"] = "TTD not available";
-                    return result;
-                }
-                ttd::TTDTimePoint pos = ctx->pTimeTravelManager->CurrentPosition();
-                ttd::TTDTimePoint end = ctx->pTimeTravelManager->SessionEndPosition();
-                py::dict current;
-                current["frame"]    = py::cast(pos.frame);
-                current["tinframe"] = py::cast(pos.tInFrame);
-                result["current"]   = current;
-                py::dict sessionEnd;
-                sessionEnd["frame"]    = py::cast(end.frame);
-                sessionEnd["tinframe"] = py::cast(end.tInFrame);
-                result["session_end"]  = sessionEnd;
-                return result;
+            .def("ttd_position", [](Emulator& self) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "position");
+                return reply.Ok() ? StateNodeToPy(reply.body) : py::object(py::dict());
             }, "Get current TTD position")
 
-            .def("ttd_markers", [](Emulator& self) -> py::list {
-                py::list markers;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return markers;
-                const auto& journal = ctx->pTimeTravelManager->GetExternalEvents();
-                for (const auto& e : journal.SnapshotEvents())
-                {
-                    py::dict marker;
-                    marker["frame"]    = py::cast(e.time.frame);
-                    marker["tinframe"] = py::cast(e.time.tInFrame);
-                    marker["kind"]     = ttd::TTDExternalEventKindToString(e.kind);
-                    marker["reason"]   = e.reason;
-                    markers.append(marker);
-                }
-                return markers;
+            .def("ttd_markers", [](Emulator& self) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "markers");
+                return StateNodeToPy(reply.Ok() ? *reply.body.find("markers") : StateNode::Array());
             }, "List external-event markers (replay barriers)")
 
             // -------------------------------------------------------------
             // TD-4 — agent bookmarks (advisory annotations, never barriers).
             // Labels are keys: non-empty, at most 63 chars, unique per session.
             // -------------------------------------------------------------
-            .def("ttd_bookmark_add", [](Emulator& self, const std::string& label,
-                                         py::object frameObj, uint32_t tInFrame) -> py::dict {
-                py::dict result;
-                result["added"] = false;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    result["error"] = "TTD not available";
-                    return result;
-                }
 
-                // Position omitted → current position (mark here).
-                ttd::TTDTimePoint time = ctx->pTimeTravelManager->CurrentPosition();
+            .def("ttd_bookmark_add", [](Emulator& self, const std::string& label,
+                                         py::object frameObj, uint32_t tInFrame) -> py::object {
+                // Position omitted: the current position (mark here)
+                std::map<std::string, std::string> options{{"label", label}};
                 if (!frameObj.is_none())
                 {
-                    time.frame    = frameObj.cast<uint64_t>();
-                    time.tInFrame = tInFrame;
+                    options["frame"] = std::to_string(frameObj.cast<uint64_t>());
+                    options["tinframe"] = std::to_string(tInFrame);
                 }
-
-                std::string err;
-                if (!ctx->pTimeTravelManager->AddBookmark(time, label, &err))
+                const ttd::TTDReply reply = TtdRunPy(self, "bookmark-add", options);
+                StateNode value = reply.body;
+                if (!reply.Ok())
                 {
-                    result["error"] = err;
-                    return result;
+                    value["added"] = false;
+                    value["error"] = reply.message;
                 }
-                result["added"]    = true;
-                result["label"]    = label;
-                result["frame"]    = py::cast(time.frame);
-                result["tinframe"] = py::cast(time.tInFrame);
-                return result;
+                return StateNodeToPy(value);
             }, "Add an agent bookmark (advisory, never a replay barrier); omit frame to mark the current position",
                py::arg("label"), py::arg("frame") = py::none(), py::arg("tinframe") = 0)
 
-            .def("ttd_bookmarks", [](Emulator& self) -> py::list {
-                py::list bookmarks;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return bookmarks;
-                for (const auto& bm : ctx->pTimeTravelManager->GetBookmarks())
-                {
-                    py::dict entry;
-                    entry["frame"]    = py::cast(bm.time.frame);
-                    entry["tinframe"] = py::cast(bm.time.tInFrame);
-                    entry["label"]    = bm.label;
-                    bookmarks.append(entry);
-                }
-                return bookmarks;
+            .def("ttd_bookmarks", [](Emulator& self) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "bookmarks");
+                return StateNodeToPy(reply.Ok() ? *reply.body.find("bookmarks") : StateNode::Array());
             }, "List agent bookmarks (time-sorted)")
 
             .def("ttd_bookmark_delete", [](Emulator& self, const std::string& label) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                return ctx->pTimeTravelManager->RemoveBookmark(label);
+                return TtdRunPy(self, "bookmark-delete", {{"label", label}}).Ok();
             }, "Delete an agent bookmark by label", py::arg("label"))
 
             // A bookmark seek IS a seek — identical result shape to ttd_seek
             // (plus the resolved label); a bookmark never halts anything.
-            .def("ttd_seek_bookmark", [](Emulator& self, const std::string& label) -> py::dict {
-                py::dict result;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    result["reached"] = false;
-                    result["error"]   = "TTD not available";
-                    return result;
-                }
-                ttd::TimeTravelManager::TTDSeekResult r;
-                std::string err;
-                const bool reached = ctx->pTimeTravelManager->SeekToBookmark(label, &r, &err);
-                result["reached"]  = reached;
-                if (!err.empty())
-                    result["error"] = err;
 
-                py::dict arrivedAt;
-                arrivedAt["frame"]    = py::cast(r.arrivedAt.frame);
-                arrivedAt["tinframe"] = py::cast(r.arrivedAt.tInFrame);
-                result["arrived_at"]  = arrivedAt;
-
-                const char* reasonStr = "target";
-                switch (r.haltReason)
-                {
-                    case ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent: reasonStr = "external_event"; break;
-                    case ttd::TimeTravelManager::TTDSeekHaltReason::OutOfRange:    reasonStr = "out_of_range"; break;
-                    default: break;
-                }
-                result["halt_reason"] = reasonStr;
-                if (r.haltReason == ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent)
-                {
-                    py::dict marker;
-                    marker["frame"]    = py::cast(r.blockingMarker.time.frame);
-                    marker["tinframe"] = py::cast(r.blockingMarker.time.tInFrame);
-                    marker["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
-                    marker["reason"]   = std::string(r.blockingMarker.reason);
-                    result["blocking_marker"] = marker;
-                }
-                result["bookmark"]    = label;
-                return result;
+            .def("ttd_seek_bookmark", [](Emulator& self, const std::string& label) -> py::object {
+                return TtdSeekPy(TtdRunPy(self, "seek", {{"bookmark", label}}));
             }, "Seek to an agent bookmark by label", py::arg("label"))
 
             // -------------------------------------------------------------
             // Phase 4 — Reverse search + dump + instruction step
             // -------------------------------------------------------------
             .def("ttd_dump", [](Emulator& self, const std::string& path) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                std::ofstream out(path, std::ios::binary);
-                if (!out.is_open()) return false;
-                std::string err;
-                return ctx->pTimeTravelManager->SerializeSession(out, err);
+                return TtdRunPy(self, "dump", {{"path", path}}).Ok();
             }, "Dump TTD session to .ttd file", py::arg("path"))
 
             // Loading refuses a session recorded on a different machine model:
             // a checkpoint is raw RAM pages plus a chipset snapshot, so it only
             // restores into an instance of the model it came from. Returns a
             // dict rather than a bool so the caller can show the reason.
-            .def("ttd_load", [](Emulator& self, const std::string& path) -> py::dict {
-                py::dict result;
-                result["ok"] = false;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
+            .def("ttd_load", [](Emulator& self, const std::string& path) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "load", {{"path", path}});
+                StateNode value = reply.body;
+                if (!reply.Ok())
                 {
-                    result["error"] = "TTD not available";
-                    return result;
+                    value["ok"] = false;
+                    if (!value.find("error"))
+                        value["error"] = reply.message;
                 }
-                std::ifstream in(path, std::ios::binary);
-                if (!in.is_open())
-                {
-                    result["error"] = "Cannot open file: " + path;
-                    return result;
-                }
-                std::string err;
-                ctx->pTimeTravelManager->SetSessionSourcePath(path);
-                if (!ctx->pTimeTravelManager->DeserializeSession(in, err))
-                {
-                    result["error"] = err;
-                    return result;
-                }
-                const ttd::TTDSessionInfo info = ctx->pTimeTravelManager->ReadSessionInfo();
-                result["ok"] = true;
-                result["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
-                result["session_start_frame"] = info.sessionStartFrame;
-                result["current_end_frame"] = info.currentEndFrame;
-                return result;
+                return StateNodeToPy(value);
             }, "Load a .ttd session for playback (seek to position the emulator)", py::arg("path"))
 
+            .def("ttd_export_clip", [](Emulator& self, uint64_t fromFrame, uint64_t toFrame, const std::string& path,
+                                       py::object chunkObj) -> py::object {
+                std::map<std::string, std::string> options{
+                    {"from", std::to_string(fromFrame)}, {"to", std::to_string(toFrame)}, {"path", path}};
+                if (!chunkObj.is_none())
+                    options["chunk"] = TtdOptionTextPy(chunkObj);
+                const ttd::TTDReply reply = TtdRunPy(self, "export-clip", options);
+                if (reply.error == ttd::TTDControlError::BadRequest && !reply.body.find("frames"))
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                {
+                    value["ok"] = false;
+                    if (!value.find("error"))
+                        value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Write frames from_frame..to_frame as a lossless clip into the directory path (final picture, plane B "
+               "when zxdlss is on, frame meta): one call instead of a seek and a capture per frame; not while recording",
+               py::arg("from_frame"), py::arg("to_frame"), py::arg("path"), py::arg("chunk") = py::none())
+
             .def("ttd_port_events", [](Emulator& self, const std::string& event, py::object argObj,
-                                        py::kwargs options) -> py::dict {
-                py::dict result;
-                result["ok"] = false;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    result["error"] = "TTD engine not available";
-                    return result;
-                }
-                auto text = [](const py::handle& o) -> std::string {
-                    if (py::isinstance<py::bool_>(o))
-                        return o.cast<bool>() ? "true" : "false";
-                    return py::str(o).cast<std::string>();
-                };
-                ttd::TTDPortQuery q;
-                std::string err;
-                if (!ttd::BuildPortEventQuery(event, argObj.is_none() ? std::string() : text(argObj), q, err))
-                {
-                    result["error"] = err;
-                    return result;
-                }
-                std::string file;  // file=: a .ttd on disk, searched without loading it
-                for (const auto& [key, value] : options)
-                {
-                    const std::string name = py::str(key).cast<std::string>();
-                    if (name == "file")
-                    {
-                        file = text(value);
-                        continue;
-                    }
-                    if (!ttd::ApplyPortQueryOption(q, name, text(value), err))
-                    {
-                        result["error"] = err;
-                        return result;
-                    }
-                }
-                const ttd::TTDPortSearchResult found = file.empty()
-                                                           ? ctx->pTimeTravelManager->SearchPortEvents(q)
-                                                           : ctx->pTimeTravelManager->SearchPortEventsInFile(file, q);
-                if (!found.ok)
-                {
-                    result["error"] = found.error;
-                    return result;
-                }
-                result["ok"] = true;
-                result["direction"] = ttd::PortDirectionName(q.direction);
-                result["count"] = py::cast(static_cast<uint64_t>(found.hits.size()));
-                result["truncated"] = found.truncated;
-                result["scanned"] = py::cast(found.scanned);
-                py::list hits;
-                for (const ttd::TTDPortHit& h : found.hits)
-                {
-                    py::dict hit;
-                    hit["index"] = py::cast(h.index);
-                    hit["frame"] = py::cast(h.record.frame);
-                    hit["tinframe"] = py::cast(h.record.tInFrame);
-                    hit["port"] = py::cast(h.record.port);
-                    hit["value"] = py::cast(h.record.value);
-                    hit["pc"] = py::cast(h.record.pc);
-                    if (h.ayRegister >= 0)
-                        hit["ay_register"] = py::cast(h.ayRegister);
-                    hits.append(hit);
-                }
-                result["hits"] = hits;
-                return result;
+                                        py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options{{"event", event}};
+                if (!argObj.is_none())
+                    options["arg"] = TtdOptionTextPy(argObj);
+                for (const auto& [key, value] : kwargs)
+                    options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                const ttd::TTDReply reply = TtdRunPy(self, "port-events", options);
+                StateNode value = reply.body;
+                value["ok"] = reply.Ok();
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
             }, "When did the program ...: search the port journals for an event (key, ear, ay-read, ay-write, "
                "ay-select, border, beeper, in, out) with an optional argument (a key name, an AY register) and "
                "options (limit, newest, from, to, port, port_mask, value, value_mask, match, trigger, ay_register; "
@@ -4215,94 +4115,32 @@ namespace PythonBindings
                                       py::object physPageObj,
                                       py::object addrFromObj,
                                       py::object addrToObj) -> py::object {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return py::none();
-
-                ttd::TTDSearchQuery q;
-                if (!addrObj.is_none())
-                {
-                    q.addrFrom = q.addrTo = static_cast<uint16_t>(addrObj.cast<int>());
-                }
-                else
-                {
-                    if (!addrFromObj.is_none()) q.addrFrom = static_cast<uint16_t>(addrFromObj.cast<int>());
-                    if (!addrToObj.is_none()) q.addrTo = static_cast<uint16_t>(addrToObj.cast<int>());
-                }
-                q.access = ttd::TTDAccessTypeFromString(access.c_str());
-
-                if (!valueObj.is_none())
-                {
-                    q.value = static_cast<uint8_t>(valueObj.cast<int>());
-                    q.hasValueFilter = true;
-                }
-                if (!pcFromObj.is_none())
-                {
-                    q.pcFrom = static_cast<uint16_t>(pcFromObj.cast<int>());
-                    q.hasPcFilter = true;
-                }
-                if (!pcToObj.is_none())
-                {
-                    q.pcTo = static_cast<uint16_t>(pcToObj.cast<int>());
-                    if (!q.hasPcFilter) q.hasPcFilter = true;
-                }
-                // Bank-aware search: pins the query to one physical RAM page.
-                if (!physPageObj.is_none())
-                {
-                    const int page = physPageObj.cast<int>();
-                    if (page < 0 || page > ttd::kPhysPageMax)
-                        throw py::value_error("phys_page expects 0..255");
-                    q.physPage = static_cast<ttd::PhysPage>(page);
-                    q.hasPhysPageFilter = true;
-                }
-
+                std::map<std::string, std::string> options{{"access", access}};
+                const std::pair<const char*, py::object*> fields[] = {
+                    {"addr", &addrObj},     {"value", &valueObj},        {"pc_from", &pcFromObj},
+                    {"pc_to", &pcToObj},    {"phys_page", &physPageObj}, {"addr_from", &addrFromObj},
+                    {"addr_to", &addrToObj}};
+                for (const auto& [name, obj] : fields)
+                    if (!obj->is_none())
+                        options[name] = TtdOptionTextPy(*obj);
                 if (!beforeFrameObj.is_none())
-                    q.beforeGlobalT = ctx->pTimeTravelManager->GlobalT({beforeFrameObj.cast<uint64_t>(), beforeTin});
-
-                ttd::TTDExternalEvent marker{};
-                ttd::TTDSearchWindow window;
-                auto result = ctx->pTimeTravelManager->FindLastAccess(q, &marker, &window);
-                if (!result)
                 {
-                    if (marker.reason[0] == '\0')
-                        return py::none();  // genuinely no match
-                    // A replay barrier stopped the search before any match
-                    py::dict blocked;
-                    blocked["found"]           = false;
-                    blocked["blocked"]         = true;
-                    blocked["marker_frame"]    = py::cast(marker.time.frame);
-                    blocked["marker_tinframe"] = py::cast(marker.time.tInFrame);
-                    blocked["marker_kind"]     = ttd::TTDExternalEventKindToString(marker.kind);
-                    blocked["marker_reason"]   = std::string(marker.reason);
-                    // TD-8: the part of history the search examined
-                    if (window.searched)
-                    {
-                        blocked["covered_from"]          = py::cast(window.from.frame);
-                        blocked["covered_from_tinframe"] = py::cast(window.from.tInFrame);
-                        blocked["covered_to"]            = py::cast(window.to.frame);
-                        blocked["covered_to_tinframe"]   = py::cast(window.to.tInFrame);
-                    }
-                    return blocked;
+                    options["before_frame"] = TtdOptionTextPy(beforeFrameObj);
+                    options["before_tin"] = std::to_string(beforeTin);
                 }
-
-                py::dict r;
-                r["found"]     = true;
-                r["frame"]     = py::cast(result->time.frame);
-                r["tinframe"]  = py::cast(result->time.tInFrame);
-                r["pc"]        = py::cast(result->pc);
-                r["value"]     = py::cast(result->value);
-                // None = the access had no RAM page (ROM, cache, I/O)
-                r["phys_page"] = result->physPage == ttd::kPhysPageNone ? py::object(py::none())
-                                                                         : py::object(py::cast(result->physPage));
-                r["access"]    = ttd::TTDAccessTypeToString(result->access);
-                // TD-8: the part of history the search examined
-                if (window.searched)
+                const ttd::TTDReply reply = TtdRunPy(self, "find-last", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                if (!reply.Ok())
                 {
-                    r["covered_from"]          = py::cast(window.from.frame);
-                    r["covered_from_tinframe"] = py::cast(window.from.tInFrame);
-                    r["covered_to"]            = py::cast(window.to.frame);
-                    r["covered_to_tinframe"]   = py::cast(window.to.tInFrame);
+                    StateNode value = reply.body;
+                    value["found"] = false;
+                    value["error"] = reply.message;
+                    return StateNodeToPy(value);
                 }
-                return r;
+                if (!reply.body.find("found")->b && !reply.body.find("blocked"))
+                    return py::none();  // genuinely no match
+                return StateNodeToPy(reply.body);
             }, "Reverse search: find last access at address or within address/PC range",
                py::arg("addr") = py::none(),
                py::arg("access") = "write",
@@ -4316,185 +4154,87 @@ namespace PythonBindings
                py::arg("addr_to") = py::none())
 
             .def("ttd_step_instruction_back", [](Emulator& self) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                return ctx->pTimeTravelManager->StepBackInstruction();
+                const ttd::TTDReply reply = TtdRunPy(self, "step-instruction", {{"dir", "back"}});
+                return reply.Ok() && reply.body.find("stepped")->b;
             }, "Step back one instruction")
 
             .def("ttd_step_instruction_forward", [](Emulator& self) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                return ctx->pTimeTravelManager->StepForwardInstruction();
+                const ttd::TTDReply reply = TtdRunPy(self, "step-instruction", {{"dir", "forward"}});
+                return reply.Ok() && reply.body.find("stepped")->b;
             }, "Step forward one instruction")
 
-        // -----------------------------------------------------------------
-        // Phase 4 reverse execution (multi-step + reverse-continue).
-        // -----------------------------------------------------------------
             .def("ttd_reverse_step", [](Emulator& self, uint32_t count) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                return ctx->pTimeTravelManager->ReverseStepInstructions(count);
+                const ttd::TTDReply reply = TtdRunPy(self, "reverse-step", {{"count", std::to_string(count)}});
+                return reply.Ok() && reply.body.find("reached")->b;
             }, "Step back N instructions (M1 boundaries)",
                py::arg("count") = 1)
 
             .def("ttd_reverse_step_tstates", [](Emulator& self, uint64_t tstates) -> bool {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return false;
-                return ctx->pTimeTravelManager->ReverseStepTStates(tstates);
+                const ttd::TTDReply reply = TtdRunPy(self, "reverse-step", {{"tstates", std::to_string(tstates)}});
+                return reply.Ok() && reply.body.find("reached")->b;
             }, "Step back N t-states (lands at nearest M1 <= target)",
                py::arg("tstates"))
 
             .def("ttd_reverse_continue", [](Emulator& self, const std::vector<uint16_t>& pcs) -> py::object {
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager) return py::none();
-                auto r = ctx->pTimeTravelManager->ReverseContinue(pcs);
-                const bool blocked = r.blockingMarker.reason[0] != '\0';
-                if (!r.matched && !blocked)
+                std::string list;
+                for (uint16_t pc : pcs)
+                    list += (list.empty() ? "" : ",") + std::to_string(pc);
+                const ttd::TTDReply reply = TtdRunPy(self, "reverse-continue", {{"pcs", list}});
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                if (!reply.Ok())
+                {
+                    StateNode value = reply.body;
+                    value["matched"] = false;
+                    value["error"] = reply.message;
+                    return StateNodeToPy(value);
+                }
+                if (!reply.body.find("matched")->b && !reply.body.find("blocked_by_marker"))
                     return py::none();
-                py::dict d;
-                d["matched"]  = r.matched;
-                d["pc"]       = r.pc;
-                d["frame"]    = r.arrivedAt.frame;
-                d["tinframe"] = r.arrivedAt.tInFrame;
-                if (blocked)
-                {
-                    py::dict m;
-                    m["kind"]     = ttd::TTDExternalEventKindToString(r.blockingMarker.kind);
-                    m["reason"]   = std::string(r.blockingMarker.reason);
-                    m["frame"]    = py::cast(r.blockingMarker.time.frame);
-                    m["tinframe"] = py::cast(r.blockingMarker.time.tInFrame);
-                    d["blocked_by_marker"] = m;
-                }
-                // TD-8: the part of history the search examined
-                if (r.window.searched)
-                {
-                    d["covered_from"]          = py::cast(r.window.from.frame);
-                    d["covered_from_tinframe"] = py::cast(r.window.from.tInFrame);
-                    d["covered_to"]            = py::cast(r.window.to.frame);
-                    d["covered_to_tinframe"]   = py::cast(r.window.to.tInFrame);
-                }
-                return d;
+                return StateNodeToPy(reply.body);
             }, "Run backward until any PC matches; returns dict or None",
                py::arg("pcs"))
 
             .def("ttd_coverage_probe", [](Emulator& self, uint64_t frame, const std::string& kindStr,
-                                          uint16_t addrFrom, uint16_t addrTo, py::object pageObj) -> py::dict {
-                py::dict d;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    d["index_available"] = false;
-                    d["touched"] = false;
-                    return d;
-                }
-                ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
-                ttd::TTDCoverageKindFromString(kindStr, kind);
-                std::optional<ttd::PhysPage> physPage;
+                                          uint16_t addrFrom, uint16_t addrTo, py::object pageObj) -> py::object {
+                std::map<std::string, std::string> options{{"frame", std::to_string(frame)}, {"kind", kindStr},
+                                                           {"addr_from", std::to_string(addrFrom)},
+                                                           {"addr_to", std::to_string(addrTo)}};
                 if (!pageObj.is_none())
-                {
-                    const int page = pageObj.cast<int>();
-                    if (page < 0 || page > ttd::kPhysPageMax)
-                        throw py::value_error("phys_page expects 0..255");
-                    physPage = static_cast<ttd::PhysPage>(page);
-                }
-
-                auto res = ctx->pTimeTravelManager->QueryCoverageProbe(frame, kind, addrFrom, addrTo, physPage);
-                d["frame"] = res.frame;
-                d["kind"] = ttd::TTDCoverageKindToString(res.kind);
-                d["touched"] = res.touched;
-                d["index_available"] = res.indexAvailable;
-                return d;
-            }, "Probe coverage for a frame and address range",
-               py::arg("frame") = 0, py::arg("kind") = "executed", py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none())
+                    options["phys_page"] = TtdOptionTextPy(pageObj);
+                return TtdCoveragePy(TtdRunPy(self, "coverage-probe", options));
+            }, "Was the address range touched in this frame (coverage index)",
+                py::arg("frame") = 0, py::arg("kind") = "executed", py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none())
 
             .def("ttd_coverage_scan", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj,
                                          const std::string& kindStr, uint16_t addrFrom, uint16_t addrTo,
-                                         py::object pageObj, size_t limit) -> py::dict {
-                py::dict d;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    d["index_available"] = false;
-                    d["scanned_frames"] = 0;
-                    d["matching_frames"] = 0;
-                    d["frames"] = py::list();
-                    return d;
-                }
-                auto* mgr = ctx->pTimeTravelManager;
-                uint64_t toFrame = toFrameObj.is_none() ? mgr->ReadSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
-                ttd::TTDCoverageKind kind = ttd::TTDCoverageKind::Executed;
-                ttd::TTDCoverageKindFromString(kindStr, kind);
-                std::optional<ttd::PhysPage> physPage;
+                                         py::object pageObj, size_t limit) -> py::object {
+                std::map<std::string, std::string> options{
+                    {"from_frame", std::to_string(fromFrame)}, {"kind", kindStr},
+                    {"addr_from", std::to_string(addrFrom)},   {"addr_to", std::to_string(addrTo)},
+                    {"limit", std::to_string(limit)}};
+                if (!toFrameObj.is_none())
+                    options["to_frame"] = TtdOptionTextPy(toFrameObj);
                 if (!pageObj.is_none())
-                {
-                    const int page = pageObj.cast<int>();
-                    if (page < 0 || page > ttd::kPhysPageMax)
-                        throw py::value_error("phys_page expects 0..255");
-                    physPage = static_cast<ttd::PhysPage>(page);
-                }
-
-                auto res = mgr->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, physPage, limit);
-                d["kind"] = ttd::TTDCoverageKindToString(res.kind);
-                d["scanned_frames"] = res.scannedFrames;
-                d["matching_frames"] = res.matchingFrames;
-                d["first_match"] = res.firstMatch;
-                d["last_match"] = res.lastMatch;
-                d["covered_from"] = res.coveredFrom;
-                d["covered_to"] = res.coveredTo;
-                d["truncated"] = res.truncated;
-                d["index_available"] = res.indexAvailable;
-                py::list frameList;
-                for (uint64_t f : res.frames) frameList.append(f);
-                d["frames"] = frameList;
-                return d;
-            }, "Scan frames in [fromFrame, toFrame] touching range",
-               py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("kind") = "executed",
-               py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none(), py::arg("limit") = 200)
+                    options["phys_page"] = TtdOptionTextPy(pageObj);
+                return TtdCoveragePy(TtdRunPy(self, "coverage-scan", options));
+            }, "Frames in from_frame..to_frame that touched the address range (coverage index)",
+                py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("kind") = "executed",
+                py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none(), py::arg("limit") = 200)
 
             .def("ttd_coverage_summary", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj,
-                                            py::object kindObj, uint64_t bucketSize, size_t limit) -> py::dict {
-                py::dict d;
-                auto* ctx = self.GetContext();
-                if (!ctx || !ctx->pTimeTravelManager)
-                {
-                    d["index_available"] = false;
-                    d["buckets"] = py::list();
-                    return d;
-                }
-                auto* mgr = ctx->pTimeTravelManager;
-                uint64_t toFrame = toFrameObj.is_none() ? mgr->ReadSessionInfo().currentEndFrame : toFrameObj.cast<uint64_t>();
-                std::optional<ttd::TTDCoverageKind> optKind;
+                                            py::object kindObj, uint64_t bucketSize, size_t limit) -> py::object {
+                std::map<std::string, std::string> options{{"from_frame", std::to_string(fromFrame)},
+                                                           {"bucket_size", std::to_string(bucketSize)},
+                                                           {"limit", std::to_string(limit)}};
+                if (!toFrameObj.is_none())
+                    options["to_frame"] = TtdOptionTextPy(toFrameObj);
                 if (!kindObj.is_none())
-                {
-                    ttd::TTDCoverageKind k;
-                    if (ttd::TTDCoverageKindFromString(kindObj.cast<std::string>(), k)) optKind = k;
-                }
-
-                auto res = mgr->QueryCoverageSummary(fromFrame, toFrame, optKind, bucketSize, limit);
-                d["from_frame"] = res.fromFrame;
-                d["to_frame"] = res.toFrame;
-                d["covered_from"] = res.coveredFrom;
-                d["covered_to"] = res.coveredTo;
-                d["bucket_size"] = res.bucketSize;
-                d["bucket_count"] = res.bucketCount;
-                d["index_available"] = res.indexAvailable;
-                py::list bucketList;
-                for (const auto& b : res.buckets)
-                {
-                    py::dict bObj;
-                    bObj["frame_start"] = b.frameStart;
-                    bObj["frame_end"] = b.frameEnd;
-                    bObj["executed_distinct"] = b.executedDistinct;
-                    bObj["written_distinct"] = b.writtenDistinct;
-                    bObj["read_distinct"] = b.readDistinct;
-                    bObj["has_keyframe"] = b.hasKeyframe;
-                    bucketList.append(bObj);
-                }
-                d["buckets"] = bucketList;
-                return d;
-            }, "Activity heatmap over [fromFrame, toFrame]",
-               py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("kind") = py::none(),
-               py::arg("bucket_size") = 0, py::arg("limit") = 100);
+                    options["kind"] = TtdOptionTextPy(kindObj);
+                return TtdCoveragePy(TtdRunPy(self, "coverage-summary", options));
+            }, "Activity heatmap over from_frame..to_frame (coverage index)",
+                py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("kind") = py::none(),
+                py::arg("bucket_size") = 0, py::arg("limit") = 100);
 
         // ================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI/Lua:

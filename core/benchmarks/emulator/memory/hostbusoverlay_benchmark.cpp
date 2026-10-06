@@ -113,6 +113,9 @@ static void BM_HostFrame_TSConf14_256C_Fast(benchmark::State& s) { RunHostFrame(
 // keyboard controller each IN #FE runs its firmware: the worst case for it)
 static void BM_HostFrame_ATM710_Fast(benchmark::State& s) { RunHostFrame(s, "ATM710", false); }
 static void BM_HostFrame_ATM710_Debug(benchmark::State& s) { RunHostFrame(s, "ATM710", true); }
+// ZX-Evo BaseConf: the ATM3 decoder, its overlays (14 MHz waits, font loader, flash) installed only on demand
+static void BM_HostFrame_ATM3_Fast(benchmark::State& s) { RunHostFrame(s, "ATM3", false); }
+static void BM_HostFrame_ATM3_Debug(benchmark::State& s) { RunHostFrame(s, "ATM3", true); }
 // Profi: the BIOS menu. The v5 runs its video WAIT (ProfiWaitOverlay) at 3.5 MHz, the v3 has no overlay
 static void BM_HostFrame_Profi_Fast(benchmark::State& s) { RunHostFrame(s, "PROFI", false); }
 static void BM_HostFrame_Profi_Debug(benchmark::State& s) { RunHostFrame(s, "PROFI", true); }
@@ -135,6 +138,8 @@ BENCHMARK(BM_HostFrame_TSConf_Debug)->Iterations(1000)->Unit(benchmark::kMicrose
 BENCHMARK(BM_HostFrame_TSConf14_256C_Fast)->Iterations(300)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_ATM710_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_ATM710_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_ATM3_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_ATM3_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Profi_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Profi_Debug)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_Profi3_Fast)->Iterations(1000)->Unit(benchmark::kMicrosecond);

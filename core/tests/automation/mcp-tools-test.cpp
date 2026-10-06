@@ -279,26 +279,33 @@ TEST_F(McpTools_Test, EmulatorManage_GsSendCommand_MissingValueIsError)
 
 TEST_F(McpTools_Test, EmulatorManage_GsSwitchPersonality_PostsPersonalityBody)
 {
+    // Q10: the switch is a slot replace applied by a restart; the reply is SlotControl's
     Json::Value response;
+    response["ok"] = true;
+    response["status"] = "applied";
     response["action"] = "switch_personality";
     response["personality"] = "lw";
-    response["current"] = "z80";
-    response["requested"] = true;
-    response["note"] = "applied at the next frame boundary";
+    response["plan"]["lines"].append("plug gs-lw -> zxbus.1: allowed, fit real");
+    response["restart"]["restarted"] = true;
+    response["restart"]["previousEmulatorId"] = "emu-1";
+    response["restart"]["emulatorId"] = "emu-2";
     _caller->routes["POST /api/v1/emulator/emu-1/control/audio/gs"] = {200, response};
 
     Json::Value args;
     args["action"] = "gs_switch_personality";
     args["personality"] = "lw";
+    args["dry_run"] = false;
     mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
 
-    ASSERT_FALSE(result.isError);
+    ASSERT_FALSE(result.isError) << result.text;
     const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/control/audio/gs");
     ASSERT_NE(call, nullptr);
     EXPECT_EQ(call->body["action"].asString(), "switch_personality");
     EXPECT_EQ(call->body["personality"].asString(), "lw");
-    // Human summary surfaces the applied-when note, not just "done"
-    EXPECT_NE(result.text.find("lw"), std::string::npos);
+    EXPECT_FALSE(call->body["dryRun"].asBool());
+    // The summary names the plan and the new machine
+    EXPECT_NE(result.text.find("plug gs-lw -> zxbus.1"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("restarted: emulator emu-1 -> emu-2"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, EmulatorManage_GsSwitchPersonality_MissingPersonalityIsError)
@@ -662,6 +669,275 @@ TEST_F(McpTools_Test, ControlExecution_Wait_LongPolls)
     mcp::ToolResult result = RunTool(*_registry, "control_execution", args, *_caller);
     ASSERT_FALSE(result.isError) << result.text;
     EXPECT_EQ(result.text, "Changed: seq 43, paused at breakpoint #3 (8000)");
+}
+
+// ===========================================================================
+// emulator_manage: ZX-bus slots (SlotControl through the WebAPI /slots routes)
+// ===========================================================================
+
+TEST_F(McpTools_Test, EmulatorManage_SlotsPlug_PostsTheChangeBody)
+{
+    Json::Value response;
+    response["ok"] = true;
+    response["status"] = "applied";
+    response["plan"]["lines"].append("plug multisound -> zxbus.2: allowed, fit real");
+    response["plan"]["lines"].append("removes zxbus.1 = gs [ram=512k rom=1.05]: shares `gs`");
+    response["restart"]["restarted"] = true;
+    response["restart"]["previousEmulatorId"] = "emu-1";
+    response["restart"]["emulatorId"] = "emu-2";
+    response["restart"]["started"] = true;
+    response["media"]["lines"].append("sd.ngs closed");
+    _caller->routes["POST /api/v1/emulator/emu-1/slots/zxbus.next/plug"] = {200, response};
+
+    Json::Value args;
+    args["action"] = "slots_plug";
+    args["slot"] = "zxbus.next";
+    args["card"] = "multisound";
+    args["options"] = "dip=ym,saa gsRam=2m";
+    args["replace_if_incompatible"] = true;
+    args["media_disposition"] = "discard";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/slots/zxbus.next/plug");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["card"].asString(), "multisound");
+    EXPECT_EQ(call->body["options"].asString(), "dip=ym,saa gsRam=2m");
+    EXPECT_TRUE(call->body["replaceIfIncompatible"].asBool());
+    EXPECT_EQ(call->body["mediaDisposition"].asString(), "discard");
+    EXPECT_NE(result.text.find("removes zxbus.1 = gs"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("restarted: emulator emu-1 -> emu-2 (running)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("media: sd.ngs closed"), std::string::npos) << result.text;
+}
+
+// A refusal (409) is an error that carries the whole plan: every card the flag would remove
+TEST_F(McpTools_Test, EmulatorManage_SlotsPlug_RefusalCarriesThePlan)
+{
+    Json::Value response;
+    response["ok"] = false;
+    response["status"] = "refused";
+    response["message"] = "needs replaceIfIncompatible: shares `gs`";
+    response["plan"]["lines"].append("removes zxbus.1 = gs [ram=512k rom=1.05]: shares `gs`");
+    _caller->routes["POST /api/v1/emulator/emu-1/slots/auto/plug"] = {409, response};
+
+    Json::Value args;
+    args["action"] = "slots_plug";
+    args["card"] = "neogs";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/slots/auto/plug")) << "no slot: the planner's choice";
+    EXPECT_NE(result.text.find("slots: refused: needs replaceIfIncompatible"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("removes zxbus.1 = gs"), std::string::npos) << result.text;
+}
+
+// network_configure (owner decision Q11): the settings and the slot flags go to POST /network/config; a card change
+// replies as a slot change (plan, restart), the other settings as accepted
+TEST_F(McpTools_Test, EmulatorManage_NetworkConfigure_PostsTheSettings)
+{
+    Json::Value response;
+    response["ok"] = true;
+    response["status"] = "applied";
+    response["op"] = "network";
+    response["plan"]["lines"].append("plug zxnetusb -> zxbus.1: allowed, fit real");
+    response["restart"]["restarted"] = true;
+    response["restart"]["previousEmulatorId"] = "emu-1";
+    response["restart"]["emulatorId"] = "emu-2";
+    response["restart"]["started"] = true;
+    response["network"]["note"] = "the other settings were applied to the restarted machine";
+    _caller->routes["POST /api/v1/emulator/emu-1/network/config"] = {200, response};
+
+    Json::Value args;
+    args["action"] = "network_configure";
+    EXPECT_TRUE(RunTool(*_registry, "emulator_manage", args, *_caller).isError) << "needs settings";
+
+    args["settings"]["card"] = "zxnetusb";
+    args["settings"]["host_access"] = false;
+    args["replace_if_incompatible"] = true;
+    args["dry_run"] = false;
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/network/config");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["card"].asString(), "zxnetusb");
+    EXPECT_FALSE(call->body["host_access"].asBool());
+    EXPECT_TRUE(call->body["replaceIfIncompatible"].asBool());
+    EXPECT_FALSE(call->body["dryRun"].asBool());
+    EXPECT_EQ(result.text.rfind("network: applied", 0), 0u) << result.text;
+    EXPECT_NE(result.text.find("restarted: emulator emu-1 -> emu-2 (running)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("network: the other settings were applied"), std::string::npos) << result.text;
+
+    Json::Value refused;
+    refused["ok"] = false;
+    refused["status"] = "refused";
+    refused["message"] = "needs replaceIfIncompatible: `zx-wifi` is a `zxbus` card";
+    _caller->routes["POST /api/v1/emulator/emu-1/network/config"] = {409, refused};
+    args["replace_if_incompatible"] = false;
+    result = RunTool(*_registry, "emulator_manage", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("network: refused: needs replaceIfIncompatible"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, EmulatorManage_SlotsRemoveSetCatalogMatrix_Routes)
+{
+    Json::Value args;
+    args["action"] = "slots_remove";
+    EXPECT_TRUE(RunTool(*_registry, "emulator_manage", args, *_caller).isError) << "remove needs a slot";
+
+    args["slot"] = "zxbus.1";
+    args["dry_run"] = true;
+    RunTool(*_registry, "emulator_manage", args, *_caller);
+    const auto* remove = _caller->Last("POST", "/api/v1/emulator/emu-1/slots/zxbus.1/remove");
+    ASSERT_NE(remove, nullptr);
+    EXPECT_TRUE(remove->body["dryRun"].asBool());
+
+    Json::Value set;
+    set["action"] = "slots_set";
+    set["slot"] = "zxbus.1";
+    set["options"]["ctrlMask"] = "classic";
+    RunTool(*_registry, "emulator_manage", set, *_caller);
+    const auto* options = _caller->Last("POST", "/api/v1/emulator/emu-1/slots/zxbus.1/options");
+    ASSERT_NE(options, nullptr);
+    EXPECT_EQ(options->body["options"]["ctrlMask"].asString(), "classic");
+
+    Json::Value catalog;
+    catalog["model"] = "PENTAGON";
+    Json::Value card;
+    card["id"] = "multisound";
+    card["name"] = "ZX-MultiSound rev.A2";
+    card["thisMachine"]["outcome"] = "fits";
+    card["thisMachine"]["slot"] = "zxbus.next";
+    card["thisMachine"]["fit"] = "real";
+    catalog["cards"].append(card);
+    _caller->routes["GET /api/v1/emulator/emu-1/slots/catalog"] = {200, catalog};
+    Json::Value list;
+    list["action"] = "slots_catalog";
+    mcp::ToolResult listed = RunTool(*_registry, "emulator_manage", list, *_caller);
+    ASSERT_FALSE(listed.isError) << listed.text;
+    EXPECT_NE(listed.text.find("- multisound (ZX-MultiSound rev.A2): fits in zxbus.next, fit real"), std::string::npos)
+        << listed.text;
+
+    Json::Value matrix;
+    matrix["action"] = "slots_matrix";
+    matrix["table"] = "cards";
+    RunTool(*_registry, "emulator_manage", matrix, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/slots/matrix?table=cards"));
+}
+
+// A model switch reports the cards it carried and dropped (R-OP-9) from the reply's report lines
+TEST_F(McpTools_Test, EmulatorManage_SwitchModel_ReportsTheSlotCarry)
+{
+    Json::Value response;
+    response["new_emulator_id"] = "emu-2";
+    response["report"].append("zxbus.2 = multisound not carried to ZX-Spectrum 128k: the bus has no IORQGE");
+    _caller->routes["POST /api/v1/emulator/emu-1/model"] = {200, response};
+
+    Json::Value args;
+    args["action"] = "switch_model";
+    args["model"] = "128K";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("new emulator emu-2"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("multisound not carried"), std::string::npos) << result.text;
+}
+
+// The create body carries the slot set in the [SLOTS] key form
+TEST_F(McpTools_Test, EmulatorManage_CreateWithSlots_PassesTheSet)
+{
+    Json::Value args;
+    args["action"] = "create";
+    args["model"] = "PENTAGON";
+    args["slots"]["zxbus.1"] = "multisound";
+    args["slots"]["ay-socket"] = "none";
+    RunTool(*_registry, "emulator_manage", args, *_caller);
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/start");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["slots"]["zxbus.1"].asString(), "multisound");
+    EXPECT_EQ(call->body["slots"]["ay-socket"].asString(), "none");
+}
+
+// The ZX-MultiSound aspects read their WebAPI reports and summarize them; a card that is not fitted is a line, not an
+// error
+TEST_F(McpTools_Test, InspectState_MultiSoundAndMidiAspects)
+{
+    Json::Value card;
+    card["available"] = true;
+    card["card"] = "ZX-MultiSound (UzixLS)";
+    card["slot"] = "zxbus.1";
+    card["options"]["text"] = "dip=ym,saa,gs,sd gsRam=1m ctrlMask=pro";
+    card["logic"]["fm_muted"] = false;
+    card["saa"]["sound_enabled"] = true;
+    card["gs"]["firmware_ready"] = true;
+    card["midi"]["bytes_received"] = 3;
+    card["midi"]["active_voices"] = 1;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/multisound"] = {200, card};
+    Json::Value midi;
+    midi["available"] = true;
+    midi["bank"]["status"] = "loaded";
+    midi["active_voices"] = 1;
+    midi["polyphony_limit"] = 38;
+    midi["counters"]["bytes_received"] = 3;
+    midi["counters"]["framing_errors"] = 0;
+    Json::Value part;
+    part["channel"] = 1;
+    part["program"] = 1;
+    part["preset"] = "Grand Piano";
+    part["active_voices"] = 1;
+    part["notes"].append("C4");
+    midi["parts"].append(part);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/midi"] = {200, midi};
+
+    Json::Value args;
+    args["aspects"].append("audio_multisound");
+    args["aspects"].append("audio_midi");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[audio_multisound] ZX-MultiSound (UzixLS) in zxbus.1, dip=ym,saa,gs,sd gsRam=1m ctrlMask=pro; "
+                               "FM on, SAA on, GS ready, MIDI 3 byte(s), 1 voice(s)"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("[audio_midi] bank loaded, voices 1/38"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ch1 prog 1 Grand Piano: C4"), std::string::npos) << result.text;
+
+    Json::Value missing;
+    missing["message"] = "no ZX-MultiSound card fitted";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/multisound"] = {404, missing};
+    Json::Value one;
+    one["aspects"].append("audio_multisound");
+    result = RunTool(*_registry, "inspect_state", one, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[audio_multisound] no ZX-MultiSound card fitted"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_SlotsAspect_SummarizesTheReport)
+{
+    Json::Value report;
+    report["ok"] = true;
+    report["available"] = true;
+    report["model"] = "PENTAGON";
+    report["board"] = "Pentagon-1024SL v2.2 class";
+    report["source"] = "[SLOTS]";
+    Json::Value slot;
+    slot["slot"] = "zxbus.1";
+    slot["card"] = "multisound";
+    slot["options"] = "dip=ym,saa,gs,sd gsRam=1m ctrlMask=pro";
+    slot["fit"] = "real";
+    slot["state"] = "active";
+    report["slots"].append(slot);
+    Json::Value ay;
+    ay["id"] = "ay";
+    ay["state"] = "shadowed by zxbus.1";
+    report["builtIns"].append(ay);
+    _caller->routes["GET /api/v1/emulator/emu-1/slots"] = {200, report};
+
+    Json::Value args;
+    args["aspects"].append("slots");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("zxbus.1 = multisound [dip=ym,saa,gs,sd gsRam=1m ctrlMask=pro] fit real, active"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("built-in ay: shadowed by zxbus.1"), std::string::npos) << result.text;
 }
 
 // ===========================================================================
@@ -2579,6 +2855,48 @@ TEST_F(McpTools_Test, TimeTravel_DumpAndLoad_PostPath)
     const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/load");
     ASSERT_NE(call, nullptr);
     EXPECT_EQ(call->body["path"].asString(), "/tmp/s.ttd");
+}
+
+TEST_F(McpTools_Test, TimeTravel_ExportClip_PostsTheRangeAndDirectory)
+{
+    Json::Value written;
+    written["ok"] = true;
+    written["path"] = "/tmp/clip";
+    written["frames"] = 301;
+    written["bytes"] = 123456;
+    written["planeb"] = false;
+    written["width"] = 352;
+    written["height"] = 288;
+    written["seconds"] = 0.5;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/export-clip"] = {200, written};
+
+    Json::Value args;
+    args["action"] = "export_clip";
+    args["from_frame"] = 100;
+    args["to_frame"] = 400;
+    args["path"] = "/tmp/clip";
+    args["chunk"] = 250;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("301 frame(s), 352x288"), std::string::npos) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/export-clip");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["from"].asUInt64(), 100u);
+    EXPECT_EQ(call->body["to"].asUInt64(), 400u);
+    EXPECT_EQ(call->body["path"].asString(), "/tmp/clip");
+    EXPECT_EQ(call->body["chunk"].asUInt(), 250u);
+}
+
+TEST_F(McpTools_Test, TimeTravel_ExportClip_NeedsRangeAndPath)
+{
+    Json::Value args;
+    args["action"] = "export_clip";
+    args["from_frame"] = 100;
+    args["path"] = "/tmp/clip";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("requires 'from_frame', 'to_frame' and 'path'"), std::string::npos) << result.text;
+    EXPECT_EQ(_caller->Last("POST", "/api/v1/emulator/emu-1/ttd/export-clip"), nullptr);
 }
 
 TEST_F(McpTools_Test, TimeTravel_FileInfo_GetsWithoutATargetAndSummarizesTheMachine)

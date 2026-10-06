@@ -72,6 +72,12 @@
     schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["description"] =
         "A SPRINTER's firmware and start options (core SprinterBios): bios = 3.04 | 3.06 | 3.07 or a file in rom/sprinter (or a path), fast_start (skip the PLD loader), accel_int_suspend (an INT acknowledge blocks accelerator operations), isa_slot1 / isa_slot2 (the card in ISA slot 1 / 2: none | ne2000 | zxbus | ram | el3c509b | sprinteresp | modem | dual16552, fixed for the instance; a kind not built yet is refused in /state/isa); default: [ROM] SPRINTER and [SPRINTER] of the model's unreal.ini (shipped: 3.07). 400 on an unknown image";
 
+    schemas["CreateEmulatorRequest"]["properties"]["slots"]["type"] = "object";
+    schemas["CreateEmulatorRequest"]["properties"]["slots"]["additionalProperties"]["type"] = "string";
+    schemas["CreateEmulatorRequest"]["properties"]["slots"]["description"] =
+        "The new machine's slot set in the [SLOTS] key form, replacing its INI's (ZX-bus slots): {\"ay-socket\": "
+        "\"none\", \"zxbus.1\": \"multisound\", \"zxbus.1.dip\": \"ym,saa,gs,sd\", \"builtin.covox\": \"off\"}; "
+        "a set option may be an array. Conflicting entries refuse the machine (400 with every pair and its rule, Q8)";
     schemas["CreateEmulatorRequest"]["properties"]["profi"]["type"] = "object";
     schemas["CreateEmulatorRequest"]["properties"]["profi"]["properties"]["keyboard"]["type"] = "string";
     for (const char* value : {"default", "matrix", "xt", "xttable"})
@@ -676,6 +682,13 @@
             "What dropped the last history (e.g. snapshot-load, disk-load, rom-reload, an invalidate reason, "
             "ZX-Evo SD card activity); null until a history is dropped";
 
+    schemas["TTDStatusResponse"]["properties"]["last_stop_reason"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["last_stop_reason"]["nullable"] = true;
+    schemas["TTDStatusResponse"]["properties"]["last_stop_reason"]["description"] =
+            "What stopped the last recording when no stop request did: feature-off:timetravel or "
+            "feature-off:debugmode (FR-17, a clean stop; the history is kept), or capture-failed (the history's store "
+            "did not take a frame; everything before it is kept). Null otherwise; cleared by a new recording";
+
     schemas["TTDStatusResponse"]["properties"]["unavailable_reason"]["type"] = "string";
     schemas["TTDStatusResponse"]["properties"]["unavailable_reason"]["nullable"] = true;
     schemas["TTDStatusResponse"]["properties"]["unavailable_reason"]["description"] =
@@ -698,6 +711,18 @@
     schemas["TTDStatusResponse"]["properties"]["ttd_available"]["type"] = "boolean";
     schemas["TTDStatusResponse"]["properties"]["ttd_available"]["description"] =
         "False when the manager is missing (minimal build); state will be \"idle\"";
+    schemas["TTDStatusResponse"]["properties"]["recording_paused"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["recording_paused"]["description"] =
+        "The engine (D8): a seek, step or reverse query while recording paused the recording; state is detached. "
+        "Resuming at its end (resume, or running into it) continues the same recording; stop ends it. Always false on v1";
+    schemas["TTDStatusResponse"]["properties"]["earliest"]["$ref"] = "#/components/schemas/TTDTimePoint";
+    schemas["TTDStatusResponse"]["properties"]["earliest"]["description"] =
+        "The earliest position the history keeps (D12): where 'jump to start' goes. Older frames were "
+        "released by the history limit or never recorded. null when there is no history";
+    schemas["TTDStatusResponse"]["properties"]["backend"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["backend"]["description"] =
+        "Which implementation records on this instance: \"engine\" (the default) or \"v1\" (selected with "
+        "UNREAL_TTD_BACKEND=v1); null when time travel is not available";
     // The write journal (D40): the same fields in /ttd/status, /ttd/journal and the build response
     {
         Json::Value journal;
@@ -730,6 +755,9 @@
         for (const std::string& name : journal.getMemberNames())
             schemas["TTDJournalResponse"]["properties"][name] = journal[name];
         schemas["TTDJournalResponse"]["properties"]["write_journal_records"]["type"] = "integer";
+        schemas["TTDJournalResponse"]["properties"]["write_journal_setting"]["type"] = "boolean";
+        schemas["TTDJournalResponse"]["properties"]["write_journal_setting"]["description"] =
+            "The choice for recordings, also without a session (write_journal_enabled: a journal is recorded now)";
 
         schemas["TTDJournalBuildResponse"]["type"] = "object";
         schemas["TTDJournalBuildResponse"]["description"] = "POST /ttd/journal/build: what was built, and the journal now";
@@ -811,14 +839,15 @@
     // ---------------------------------------------------------------------
     schemas["TTDSeekRequest"]["type"] = "object";
     schemas["TTDSeekRequest"]["description"] =
-        "Request body for POST /ttd/seek. Either frame (with optional tinframe, "
-        "defaulting to the frame boundary) or bookmark must be present — a "
-        "bookmark label resolves to its stored (frame, tinframe) first.";
+        "Request body for POST /ttd/seek. Either frame (with optional tinframe) "
+        "or bookmark must be present — a bookmark label resolves to its stored "
+        "(frame, tinframe) first. A frame without tinframe is the frame's end on "
+        "the engine (D13: state and picture of {frame+1, 0}; arrived_at names it "
+        "{frame, its length}), its start on v1; tinframe 0 is the frame's start.";
     schemas["TTDSeekRequest"]["properties"]["frame"]["type"] = "integer";
     schemas["TTDSeekRequest"]["properties"]["frame"]["format"] = "uint64";
     schemas["TTDSeekRequest"]["properties"]["tinframe"]["type"] = "integer";
     schemas["TTDSeekRequest"]["properties"]["tinframe"]["format"] = "uint32";
-    schemas["TTDSeekRequest"]["properties"]["tinframe"]["default"] = 0;
     schemas["TTDSeekRequest"]["properties"]["bookmark"]["type"] = "string";
     schemas["TTDSeekRequest"]["properties"]["bookmark"]["description"] =
             "TD-4 bookmark label to seek to (alternative to frame). Unknown "
@@ -838,6 +867,10 @@
     schemas["TTDSeekResponse"]["properties"]["halt_reason"]["enum"].append("target");
     schemas["TTDSeekResponse"]["properties"]["halt_reason"]["enum"].append("external_event");
     schemas["TTDSeekResponse"]["properties"]["halt_reason"]["enum"].append("out_of_range");
+    schemas["TTDSeekResponse"]["properties"]["earliest"]["$ref"] = "#/components/schemas/TTDTimePoint";
+    schemas["TTDSeekResponse"]["properties"]["earliest"]["description"] =
+        "Present when the target lies before the earliest position kept (halt_reason out_of_range, D12; "
+        "the engine): that position, with message naming it. The machine has not moved";
     schemas["TTDSeekResponse"]["properties"]["blocking_marker"]["$ref"] =
         "#/components/schemas/TTDMarker";
     schemas["TTDSeekResponse"]["properties"]["blocking_marker"]["description"] =

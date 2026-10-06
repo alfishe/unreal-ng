@@ -20,6 +20,7 @@
 #include <emulator/memory/devicememory.h>  // device memory regions (/memory/page/vram/{n})
 #include <emulator/memory/memorymap.h>  // TD-3 compact read formats
 #include <emulator/memory/rom.h>  // ROM signatures
+#include <emulator/memory/atm/evoflashrequest.h>  // ZX-Evo flash persistence
 #include <emulator/cpu/core.h>    // Core::GetROM()
 #include <emulator/ports/portdecoder.h>  // Tagged port registry
 #include <emulator/state/devicestate.h>  // DeviceState::SprinterPaging
@@ -696,41 +697,16 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
     Json::Value& data = (*body)["data"];
     size_t bytesWritten = 0;
 
-    // Phase 2 Item 6 — record a debugger-edit marker before the write
-    // executes. One marker per API call, regardless of byte count. The
-    // marker is a no-op unless a TTD session is Recording.
-    EmulatorContext* ctx = emulator->GetContext();
-
-    // Thread safety: DirectWriteToZ80Memory now mirrors MemoryWriteDebug's
-    // call to TTDDirtyTracker::MarkDirty when TTD is enabled. The dirty
-    // bitmap is documented as emulator-thread-only (ttddirtytracker.h),
-    // so we must pause the Z80 thread before writing when recording is
-    // active. The cost is one paused frame boundary (~20 ms worst case);
-    // a no-op when no session is recording.
-    const bool ttdRecording = ctx && ctx->pTimeTravelManager
-                              && ctx->pTimeTravelManager->IsRecording();
-    const bool wasRunning = ttdRecording && emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning)
-    {
-        emulator->Pause(false);
-        emulator->WaitForPauseConfirmation(1000);
-    }
-
-    if (ctx && ctx->pTimeTravelManager)
-        ctx->pTimeTravelManager->RecordExternalEvent(
-            ttd::TTDExternalEventKind::DebuggerEdit, "WebAPI memory write");
-
-    for (Json::ArrayIndex i = 0; i < data.size(); i++)
-    {
-        memory->DirectWriteToZ80Memory(address + i, static_cast<uint8_t>(data[i].asUInt()));
-        bytesWritten++;
-    }
-
-    // Resume if we paused. Use broadcast=false to avoid spurious UI flicker —
-    // the caller did not ask to pause, and the framebuffer did not change
-    // in a way the periodic refresh won't pick up.
-    if (wasRunning)
-        emulator->Resume(false);
+    // A tool edit (Emulator::EditMemoryFromTool): it parks a running machine and,
+    // while TTD records, records the write as an event with its bytes, so a
+    // replay reproduces it (D9)
+    emulator->EditMemoryFromTool("WebAPI memory write", [&]() {
+        for (Json::ArrayIndex i = 0; i < data.size(); i++)
+        {
+            memory->DirectWriteToZ80Memory(address + i, static_cast<uint8_t>(data[i].asUInt()));
+            bytesWritten++;
+        }
+    });
 
     Json::Value ret;
     ret["success"] = true;
@@ -1374,6 +1350,103 @@ void EmulatorAPI::setROMProtect(const HttpRequestPtr& req, std::function<void(co
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
+}
+
+namespace
+{
+Json::Value EvoFlashStatusJson(const EvoFlash::PersistStatus& s)
+{
+    Json::Value ret;
+    ret["machine"] = s.machine;
+    ret["file"] = s.path;
+    ret["file_exists"] = s.fileExists;
+    ret["base_rom_sha256"] = s.baseDigest;
+    ret["loaded_from_file"] = s.loadedFromFile;
+    ret["unsaved"] = s.unsaved;
+    ret["changes"] = static_cast<Json::UInt>(s.changes);
+    ret["other_image_files"] = Json::arrayValue;
+    for (const std::string& other : s.otherImageFiles)
+        ret["other_image_files"].append(other);
+    return ret;
+}
+
+void SendJson(std::function<void(const HttpResponsePtr&)>& callback, const Json::Value& body, HttpStatusCode code)
+{
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+}  // namespace
+
+/// @brief GET /api/v1/emulator/{id}/memory/rom/flash
+/// @brief The ZX-Evo's saved flash: the file for the loaded ROM image, whether it exists, unsaved changes, files
+/// flashed over other ROM images (not used)
+void EmulatorAPI::getROMFlash(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    (void)req;
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator || !emulator->GetContext())
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+        SendJson(callback, error, HttpStatusCode::k404NotFound);
+        return;
+    }
+    EvoFlash::PersistStatus status;
+    if (!EvoFlashGetStatus(emulator->GetContext(), status))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = EvoFlashResultText(EvoFlashResult::NoFlash);
+        SendJson(callback, error, HttpStatusCode::k400BadRequest);
+        return;
+    }
+    SendJson(callback, EvoFlashStatusJson(status), HttpStatusCode::k200OK);
+}
+
+/// @brief POST /api/v1/emulator/{id}/memory/rom/flash  {"action": "save" | "discard"}
+/// @brief save: write the flash file now; discard: delete it (the shipped ROM image returns at the next reset)
+void EmulatorAPI::postROMFlash(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator || !emulator->GetContext())
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+        SendJson(callback, error, HttpStatusCode::k404NotFound);
+        return;
+    }
+    auto body = req->getJsonObject();
+    const std::string action = body && body->isMember("action") ? (*body)["action"].asString() : "";
+    if (action != "save" && action != "discard")
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "'action' must be 'save' or 'discard'";
+        SendJson(callback, error, HttpStatusCode::k400BadRequest);
+        return;
+    }
+    EmulatorContext* context = emulator->GetContext();
+    const EvoFlashResult result = action == "save" ? EvoFlashRequestSave(context) : EvoFlashRequestDiscard(context);
+    Json::Value ret;
+    ret["action"] = action;
+    ret["result"] = EvoFlashResultText(result);
+    ret["success"] = EvoFlashAccepted(result);
+    if (action == "discard" && EvoFlashAccepted(result))
+        ret["note"] = "the shipped ROM image returns at the next reset";
+    EvoFlash::PersistStatus status;
+    if (EvoFlashGetStatus(context, status))
+        ret["flash"] = EvoFlashStatusJson(status);
+    const HttpStatusCode code = EvoFlashAccepted(result) ? HttpStatusCode::k200OK
+                                : result == EvoFlashResult::NoFlash ? HttpStatusCode::k400BadRequest
+                                : result == EvoFlashResult::ReplayOwnsInput ? HttpStatusCode::k409Conflict
+                                                                             : HttpStatusCode::k500InternalServerError;
+    SendJson(callback, ret, code);
 }
 
 namespace

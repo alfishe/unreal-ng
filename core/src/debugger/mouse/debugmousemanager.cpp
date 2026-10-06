@@ -39,7 +39,7 @@ bool DebugMouseManager::IsReplaying() const
     // recorded history (TimeTravelManager::OwnsInput), or an RZX playback
     if (_context && _context->rzxPlayer)
         return true;
-    return _context && _context->pTimeTravelManager && _context->pTimeTravelManager->OwnsInput();
+    return _context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->OwnsInput();
 }
 
 MouseInjectResult DebugMouseManager::Guard() const
@@ -101,8 +101,8 @@ MouseInjectResult DebugMouseManager::CheckDevice(const std::string& deviceId) co
 // instruction boundary and journalled there while recording (same as keyboard)
 bool DebugMouseManager::Submit(const ttd::TTDInputEvent& ev, Mouse& mouse)
 {
-    if (_context && _context->pTimeTravelManager)
-        return _context->pTimeTravelManager->SubmitLiveInput(ev);
+    if (_context && _context->pTimeTravelHooks)
+        return _context->pTimeTravelHooks->SubmitLiveInput(ev);
     ttd::TTDInputDevices devices;
     devices.mouse = &mouse;
     devices.mouseManager = _context ? _context->pMouseManager : nullptr;

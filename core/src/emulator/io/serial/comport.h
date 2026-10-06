@@ -20,6 +20,7 @@
 #include "emulator/ports/portdecoder.h"
 
 class EmulatorContext;
+class EvoAvrWait;
 class ZiFi;
 
 class ComPort final : public PortDevice
@@ -59,6 +60,11 @@ public:
     /// The TS firmware's ZiFi block: the data area and the #C0..#CF registers go there (nullptr: #FF, the
     /// API off as far as the Z80 can tell)
     void SetZiFi(ZiFi* zifi) { _zifi = zifi; }
+
+    /// ZX-Evo: the board AVR's wait (EvoAvrWait, owned by the machine's EvoAvr), shared with the Gluk clock port.
+    /// Every #xxEF access holds the Z80 for it; nullptr (a real 16550): no wait
+    void SetAvrWait(EvoAvrWait* wait) { _avrWait = wait; }
+    EvoAvrWait* GetAvrWait() const { return _avrWait; }
 
     Uart16550& Uart() { return _uart; }
     const Uart16550& Uart() const { return _uart; }
@@ -106,4 +112,5 @@ private:
     PortDecoder* _decoder = nullptr;
     RegisterOf _registerOf;
     ZiFi* _zifi = nullptr;
+    EvoAvrWait* _avrWait = nullptr;
 };

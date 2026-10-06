@@ -202,6 +202,10 @@ struct TTDEngineCaptureWork
     uint64_t compressInputBytes = 0;
     uint64_t deviceBlobBytes = 0;     ///< device state copied into the checkpoint
     uint64_t deviceStateBytes = 0;    ///< device state serialized for it (raw; TTDFrameInput)
+    /// Pieces of the device state regions compared this capture: the ones the
+    /// states reach now or reached last time, and the time-field anchors - not
+    /// the region's declared maximum (a network card declares 16 MB)
+    uint64_t devicePiecesOffered = 0;
 };
 
 class TimeTravelEngine
@@ -418,6 +422,23 @@ public:
     const TTDEngineCheckpoint* Checkpoint(size_t index) const;
     /// Checkpoint index of @p position's frame boundary, or -1
     int64_t CheckpointIndexOf(const TTDPosition& position) const;
+    /// The last checkpoint held whose frame is at or before @p frame, or -1
+    /// when the held history starts after it
+    int64_t CheckpointAtOrBefore(uint64_t frame) const;
+    /// Drop the oldest segment - its checkpoints, versions and journal records -
+    /// when a later one is held; false when one segment is left. A ring does
+    /// this by itself; a holder with a limit of its own (bytes) calls it
+    bool DropOldestHeldSegment();
+    /// A recording resumed from the past (Phase 5, C2): forget everything after
+    /// checkpoint @p index - later checkpoints, their versions, the events,
+    /// bus, vector and media records after @p cut (records at it stay) - and
+    /// continue capturing from @p index as if it were the last capture. @p cut
+    /// lies in @p index's frame. Live memory is unknown afterwards (the next
+    /// RestoreToMemory writes every piece). The write journal is the holder's
+    /// to rebuild (Writes()). A session loaded from a file continues the same
+    /// way (it is no longer read-only). Branches that keep the old future come
+    /// with Phase 5, Step 2
+    bool TruncateAfter(size_t index, const TTDPosition& cut, std::string& error);
 
     /// Write region @p region as it was at checkpoint @p index into @p out
     /// (the region's pieces × 4 KB). Pieces the session had not seen at that
@@ -566,6 +587,9 @@ private:
     std::vector<TTDRefTables::Table*> _lastSnapshot;
     std::array<int32_t, 256> _deviceRegionOf{};          ///< v1 id -> region index, -1 = none
     std::vector<std::vector<uint8_t>> _deviceScratch;   ///< per region: the state laid out for capture
+    /// Per region: where the last laid-out state ended (4 + its length); kExtentUnknown: the whole region
+    std::vector<uint32_t> _deviceExtent;
+    static constexpr uint32_t kExtentUnknown = 0xFFFFFFFFu;
     /// A time field's line, kept per device region and field while recording
     struct TimeLine
     {

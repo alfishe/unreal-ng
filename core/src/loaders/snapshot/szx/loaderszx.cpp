@@ -114,7 +114,7 @@ bool LoaderSZX::load()
     }
     const bool committed = _decision.action == snapshot::Decision::Action::Take
                                ? _decision.Commit(_image, *_context, _snapshotReport)
-                               : Commit(_context, stage, _report, _error);
+                               : CommitImage(_context, _image, stage, _report, _error);
     if (!committed && _error.empty())
         _error = _snapshotReport.reason;
     // SZX's own per-block outcomes ride on the pipeline's report
@@ -227,11 +227,14 @@ snapshot::Image LoaderSZX::BuildImage(const Stage& stage, const std::string& pat
         cpu.memptr = z.memptr;
         cpu.halted = (z.flags & kHalted) != 0;
         cpu.eiShadow = (z.flags & kSuppressInts) != 0;
+        cpu.q = (z.flags & kFset) ? static_cast<uint8_t>(z.af & 0xFF) : 0;   // Q is F after an instruction that set F, else 0
+        cpu.holdIntCycles = z.holdIntReqCycles;
         image.framePosition = z.cyclesStart;
     }
     if (stage.spec)
     {
         image.border = stage.spec->border & 7u;
+        image.portFE = stage.spec->portFE;
         image.paging.p7FFD = stage.spec->port7FFD;
         if (HasPort1FFD(id))
             image.paging.p1FFD = stage.spec->port1FFDorEFF7;
@@ -327,6 +330,12 @@ uint32_t LoaderSZX::IntCountFromFramePosition(EmulatorContext* context, uint32_t
 
 bool LoaderSZX::Commit(EmulatorContext* context, const Stage& stage, Report& report, std::string& error)
 {
+    return CommitImage(context, BuildImage(stage, std::string()), stage, report, error);
+}
+
+bool LoaderSZX::CommitImage(EmulatorContext* context, const snapshot::Image& image, const Stage& stage, Report& report,
+                            std::string& error)
+{
     if (!context || !context->pCore || !context->pMemory || !context->pPortDecoder || !stage.z80 || !stage.spec)
     {
         error = "no machine to load into";
@@ -360,8 +369,9 @@ bool LoaderSZX::Commit(EmulatorContext* context, const Stage& stage, Report& rep
     // RAM: the machine's pages; a page outside its RAM is reported. A 48K
     // keeps its three pages under their 128K numbers 5, 2 and 0
     const uint32_t ramPages = context->config.ramsize / 16;
-    for (const auto& [page, bytes] : stage.pages)
+    for (const auto& [bank, bytes] : image.banks)
     {
+        const uint8_t page = static_cast<uint8_t>(bank);
         const bool fits = machine.model == MM_SPECTRUM48 ? (page == 0 || page == 2 || page == 5) : page < ramPages;
         if (!fits)
         {
@@ -372,8 +382,8 @@ bool LoaderSZX::Commit(EmulatorContext* context, const Stage& stage, Report& rep
         report.Add("RAMP " + std::to_string(page), Outcome::Applied);
     }
 
-    ApplyPaging(context, stage, report);
-    ApplyCpu(context, stage, report);
+    ApplyPaging(context, image, stage, report);
+    ApplyCpu(context, image, stage, report);
 
     // AY: all registers, then the selected one.
     //
@@ -382,21 +392,22 @@ bool LoaderSZX::Commit(EmulatorContext* context, const Stage& stage, Report& rep
     // half of YM2203 chip 1 - the same SoundChip_AY8910 class, reached through
     // getAYChip(0) - and applies fully. This is not an approximation and must
     // never be reported as an error. Only TurboSound=None has no AY.
-    if (stage.ay)
+    if (!image.ay.empty())
     {
+        const snapshot::Ay& ayBlock = image.ay[0];
         SoundChip_AY8910* ay = context->pSoundManager ? context->pSoundManager->getAYChip(0) : nullptr;
         if (ay)
         {
             for (uint8_t reg = 0; reg < 16; reg++)
-                ay->writeRegister(reg, stage.ay->registers[reg]);
+                ay->writeRegister(reg, ayBlock.registers[reg]);
             // Select the register through the TurboSound device's own #FFFD,
             // so every address latch agrees: the AY's, and on TurboSound FM
             // the YM2203's and ymfm's (the SSG half of chip 0 holds the block)
             ITurboSoundDevice* device = context->pSoundManager->getTurboSound();
             if (device)
-                device->portDeviceOutMethod(0xFFFD, stage.ay->currentRegister);
+                device->portDeviceOutMethod(0xFFFD, ayBlock.selected);
             else
-                ay->setRegister(stage.ay->currentRegister);
+                ay->setRegister(ayBlock.selected);
             const bool fm = device && device->hasFm();
             std::string note = fm ? "into the SSG half of YM2203 chip 1 (TurboSound FM)" : "";
             if (stage.ay->flags)
@@ -432,10 +443,10 @@ bool LoaderSZX::Commit(EmulatorContext* context, const Stage& stage, Report& rep
         report.Add(name, Outcome::Ignored, "hardware this machine does not have");
 
     // Border: the picture and the port latch every consumer reads back
-    const uint8_t border = static_cast<uint8_t>(stage.spec->border & 0x07);
+    const uint8_t border = static_cast<uint8_t>(image.border & 0x07);
     EmulatorState& state = context->emulatorState;
     const unsigned version = (static_cast<unsigned>(stage.versionMajor) << 8) | stage.versionMinor;
-    state.pFE = version >= 0x0101 ? static_cast<uint8_t>((stage.spec->portFE & 0xF8) | border)
+    state.pFE = version >= 0x0101 ? static_cast<uint8_t>((image.portFE.value_or(0) & 0xF8) | border)
                                   : static_cast<uint8_t>((state.pFE & 0xF8) | border);
     state.border_attr = border;
     if (context->pScreen)
@@ -447,21 +458,21 @@ bool LoaderSZX::Commit(EmulatorContext* context, const Stage& stage, Report& rep
     return true;
 }
 
-void LoaderSZX::ApplyPaging(EmulatorContext* context, const Stage& stage, Report& report)
+void LoaderSZX::ApplyPaging(EmulatorContext* context, const snapshot::Image& image, [[maybe_unused]] const Stage& stage,
+                            Report& report)
 {
     Memory& memory = *context->pMemory;
     PortDecoder& ports = *context->pPortDecoder;
     EmulatorState& state = context->emulatorState;
-    const SpecRegs& spec = *stage.spec;
-    const uint16_t pc = stage.z80->pc;
-    const bool betaPaged = stage.beta && (stage.beta->flags & kBetaPaged) && context->pBetaDisk;
+    const uint16_t pc = image.cpu.pc;
+    const bool betaPaged = image.trdosPaged && context->pBetaDisk;
 
     // The TR-DOS session comes from the snapshot, not from what the machine
     // was doing before the load (the SNA loader's rule)
     state.flags &= ~CF_TRDOS;
     memory.UpdateZ80Banks();
 
-    if (!HasAy(stage.machineId))
+    if (image.memoryModel == snapshot::MemoryModel::Mem48k)   // HasAy(machine id): the 128K family
     {
         memory.SetRAMPageToBank1(5);
         memory.SetRAMPageToBank2(2);
@@ -475,18 +486,19 @@ void LoaderSZX::ApplyPaging(EmulatorContext* context, const Stage& stage, Report
     ports.UnlockPaging();
     memory.SetRAMPageToBank1(5);
     memory.SetRAMPageToBank2(2);
-    if (HasPortEFF7(stage.machineId))
+    if (image.paging.pEFF7)   // the Pentagon 1024
     {
-        ports.DecodePortOut(0xEFF7, spec.port1FFDorEFF7, pc);
-        state.pEFF7 = spec.port1FFDorEFF7;
+        ports.DecodePortOut(0xEFF7, *image.paging.pEFF7, pc);
+        state.pEFF7 = *image.paging.pEFF7;
     }
-    if (HasPort1FFD(stage.machineId))
+    if (image.paging.p1FFD)   // the +2A, +3, +3e and the Scorpion
     {
-        ports.DecodePortOut(0x1FFD, spec.port1FFDorEFF7, pc);
-        state.p1FFD = spec.port1FFDorEFF7;
+        ports.DecodePortOut(0x1FFD, *image.paging.p1FFD, pc);
+        state.p1FFD = *image.paging.p1FFD;
     }
-    ports.DecodePortOut(0x7FFD, spec.port7FFD, pc);
-    state.p7FFD = spec.port7FFD;
+    const uint8_t port7FFD = image.paging.p7FFD.value_or(0);
+    ports.DecodePortOut(0x7FFD, port7FFD, pc);
+    state.p7FFD = port7FFD;
 
     if (betaPaged)
     {
@@ -496,19 +508,19 @@ void LoaderSZX::ApplyPaging(EmulatorContext* context, const Stage& stage, Report
     }
 }
 
-void LoaderSZX::ApplyCpu(EmulatorContext* context, const Stage& stage, Report& report)
+void LoaderSZX::ApplyCpu(EmulatorContext* context, const snapshot::Image& image, const Stage& stage, Report& report)
 {
     Z80& cpu = *context->pCore->GetZ80();
-    const Z80Regs& z = *stage.z80;
+    const snapshot::Cpu& z = image.cpu;
 
     cpu.af = z.af;
     cpu.bc = z.bc;
     cpu.de = z.de;
     cpu.hl = z.hl;
-    cpu.alt.af = z.af1;
-    cpu.alt.bc = z.bc1;
-    cpu.alt.de = z.de1;
-    cpu.alt.hl = z.hl1;
+    cpu.alt.af = z.af2;
+    cpu.alt.bc = z.bc2;
+    cpu.alt.de = z.de2;
+    cpu.alt.hl = z.hl2;
     cpu.ix = z.ix;
     cpu.iy = z.iy;
     cpu.sp = z.sp;
@@ -516,14 +528,14 @@ void LoaderSZX::ApplyCpu(EmulatorContext* context, const Stage& stage, Report& r
     cpu.i = z.i;
     cpu.r_low = z.r;
     cpu.r_hi = static_cast<uint8_t>(z.r & 0x80);
-    cpu.iff1 = z.iff1;
-    cpu.iff2 = z.iff2;
+    cpu.iff1 = z.iff1 ? 1 : 0;
+    cpu.iff2 = z.iff2 ? 1 : 0;
     cpu.im = z.im;
-    cpu.memptr = z.memptr;
+    cpu.memptr = z.memptr.value_or(0);
     // Q is F after an instruction that set F, else 0
-    cpu.q = (z.flags & kFset) ? static_cast<uint8_t>(z.af & 0xFF) : 0;
-    cpu.boundary = (z.flags & kSuppressInts) ? Z80_BOUNDARY_INT_SHADOW : Z80_BOUNDARY_NONE;
-    cpu.halted = (z.flags & kHalted) ? 1 : 0;
+    cpu.q = z.q.value_or(0);
+    cpu.boundary = z.eiShadow.value_or(false) ? Z80_BOUNDARY_INT_SHADOW : Z80_BOUNDARY_NONE;
+    cpu.halted = z.halted.value_or(false) ? 1 : 0;
     cpu.halt_cycle = 0;
     cpu.haltpos = 0;
     // While halted, PC points at the HALT here and in Fuse (the INT / NMI
@@ -543,10 +555,10 @@ void LoaderSZX::ApplyCpu(EmulatorContext* context, const Stage& stage, Report& r
 
     // Frame position: counted from the INT in the file
     const FrameGeometry g = Geometry(context);
-    const uint32_t fromInt = z.cyclesStart % g.frame;
+    const uint32_t fromInt = image.framePosition.value_or(0) % g.frame;
     cpu.t = FramePositionFromIntCount(context, fromInt);
     // Inside the INT window with nothing left to accept: the INT was served
-    cpu.int_acked_in_pulse = (fromInt < g.intLength && z.holdIntReqCycles == 0) ? 1 : 0;
+    cpu.int_acked_in_pulse = (fromInt < g.intLength && z.holdIntCycles.value_or(0) == 0) ? 1 : 0;
     report.Add("Z80R", Outcome::Applied,
                "t " + std::to_string(cpu.t) + " (" + std::to_string(fromInt) + " after the INT)" +
                    ((stage.versionMajor << 8 | stage.versionMinor) < 0x0104 ? ", MEMPTR from chBitReg" : "") + haltNote);
