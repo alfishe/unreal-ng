@@ -1274,7 +1274,7 @@ void MenuManager::createHelpMenu()
                               "<p>ZX Spectrum emulator</p>"
                               "<p>Version %1 - %2 @ %3</p>"
                               "<p>Built with Qt %4</p>"
-                              "<p>&copy; 2024 Unreal Speccy Project</p>")
+                              "<p>&copy; 2026 Unreal Speccy Project</p>")
                                .arg(QLatin1String(buildinfo::kVersion),
                                     QLatin1String(buildinfo::kGitBranch),
                                     QLatin1String(buildinfo::kGitCommit),
