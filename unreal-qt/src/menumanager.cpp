@@ -128,25 +128,21 @@ void MenuManager::createFileMenu()
 
     // Open Snapshot
     _openSnapshotAction = _fileMenu->addAction(tr("Open &Snapshot..."));
-    _openSnapshotAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
     _openSnapshotAction->setStatusTip(tr("Load a snapshot file (.z80, .sna, .szx) or a TS-Conf program (.spg)"));
     connect(_openSnapshotAction, &QAction::triggered, this, &MenuManager::openSnapshotRequested);
 
     // Open Tape
     _openTapeAction = _fileMenu->addAction(tr("Open &Tape..."));
-    _openTapeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
     _openTapeAction->setStatusTip(tr("Load a tape file (.tap, .tzx)"));
     connect(_openTapeAction, &QAction::triggered, this, &MenuManager::openTapeRequested);
 
     // Open Disk
     _openDiskAction = _fileMenu->addAction(tr("Open &Disk..."));
-    _openDiskAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
     _openDiskAction->setStatusTip(tr("Load a disk image (.trd, .scl, .fdi)"));
     connect(_openDiskAction, &QAction::triggered, this, &MenuManager::openDiskRequested);
 
     // Insert Medium: a file, then the slot chooser with every slot that takes it
     _insertMediumAction = _fileMenu->addAction(tr("&Insert Medium..."));
-    _insertMediumAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_I));
     _insertMediumAction->setStatusTip(tr("Put a disk, tape, CD, hard-disk or card image into a slot you choose"));
     connect(_insertMediumAction, &QAction::triggered, this, &MenuManager::insertMediumRequested);
 
@@ -188,7 +184,6 @@ void MenuManager::createFileMenu()
     
     // Save Disk (to original path)
     _saveDiskAction = _saveDiskMenu->addAction(tr("Save Disk"));
-    _saveDiskAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
     _saveDiskAction->setStatusTip(tr("Save disk image to its original file (TRD / SCL / UDI); non TR-DOS content is re-targeted to UDI"));
     connect(_saveDiskAction, &QAction::triggered, this, &MenuManager::saveDiskRequested);
     
@@ -228,11 +223,7 @@ void MenuManager::createEditMenu()
 
     // Preferences
     _preferencesAction = _editMenu->addAction(tr("&Preferences..."));
-#ifdef Q_OS_MAC
-    _preferencesAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
-#else
-    _preferencesAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));
-#endif
+    _preferencesAction->setShortcut(QKeySequence::Preferences);
     _preferencesAction->setStatusTip(tr("Configure emulator settings"));
     _preferencesAction->setEnabled(false);  // TODO: Implement preferences dialog
 }
@@ -243,7 +234,6 @@ void MenuManager::createViewMenu()
 
     // Log Window
     _logWindowAction = _viewMenu->addAction(tr("&Log Window"));
-    _logWindowAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_2));
     _logWindowAction->setStatusTip(tr("Show/hide log window"));
     _logWindowAction->setCheckable(true);
     _logWindowAction->setChecked(true);
@@ -253,7 +243,6 @@ void MenuManager::createViewMenu()
 
     // Toolbar (transport toolbar under the menu bar)
     _toolBarAction = _viewMenu->addAction(tr("&Toolbar"));
-    _toolBarAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_T));
     _toolBarAction->setStatusTip(tr("Show/hide toolbar"));
     _toolBarAction->setCheckable(true);
     _toolBarAction->setChecked(true);
@@ -261,7 +250,6 @@ void MenuManager::createViewMenu()
 
     // Status bar (device LEDs and FPS at the bottom of the window)
     _statusBarAction = _viewMenu->addAction(tr("&Status Bar"));
-    _statusBarAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Slash));
     _statusBarAction->setStatusTip(tr("Show/hide status bar"));
     _statusBarAction->setCheckable(true);
     _statusBarAction->setChecked(true);
@@ -269,7 +257,6 @@ void MenuManager::createViewMenu()
 
     // HUD overlay (on-screen toasts, indicators, picture augmentation)
     _hudOverlayAction = _viewMenu->addAction(tr("&HUD Overlay"));
-    _hudOverlayAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_H));
     _hudOverlayAction->setStatusTip(tr("Show/hide on-screen HUD overlay (toasts, indicators)"));
     _hudOverlayAction->setCheckable(true);
     _hudOverlayAction->setChecked(false);
@@ -279,7 +266,6 @@ void MenuManager::createViewMenu()
 
     // GPU acceleration toggle
     _gpuAccelerationAction = _viewMenu->addAction(tr("&GPU Acceleration"));
-    _gpuAccelerationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_G));
     _gpuAccelerationAction->setStatusTip(tr("Use GPU for display rendering (faster scaling, enables CRT effects)"));
     _gpuAccelerationAction->setCheckable(true);
     _gpuAccelerationAction->setChecked(false);
@@ -287,7 +273,6 @@ void MenuManager::createViewMenu()
 
     // CRT effects (scanlines, curvature - GPU only)
     _crtEffectsAction = _viewMenu->addAction(tr("C&RT Effects"));
-    _crtEffectsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
     _crtEffectsAction->setStatusTip(tr("Toggle CRT display effects (scanlines, curvature) - requires GPU acceleration"));
     _crtEffectsAction->setCheckable(true);
     _crtEffectsAction->setChecked(false);
@@ -302,16 +287,16 @@ void MenuManager::createViewMenu()
 
     // Temporal blending (gigascreen flicker smoothing) - works for both GPU and software
     _temporalBlendingAction = _viewMenu->addAction(tr("&Temporal Blending"));
-    _temporalBlendingAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T));
     _temporalBlendingAction->setStatusTip(tr("Smooth gigascreen flicker by blending multiple frames"));
     _temporalBlendingAction->setCheckable(true);
     _temporalBlendingAction->setChecked(false);
     connect(_temporalBlendingAction, &QAction::triggered, this, &MenuManager::temporalBlendingToggled);
 
     // Full Screen
-    // Single full-screen entry: Cmd+F on macOS, Ctrl+F elsewhere (Qt::CTRL maps to Cmd
-    // on macOS). Cocoa's own "Enter Full Screen" View-menu item is suppressed in main().
-    _fullScreenAction = _viewMenu->addAction(tr("&Full Screen\tCtrl+F"));
+    // Single full-screen entry on the platform's standard full-screen key (QKeySequence::FullScreen:
+    // Ctrl+Cmd+F on macOS, F11 on Windows). Cocoa's own "Enter Full Screen" View-menu item is suppressed in main().
+    _fullScreenAction = _viewMenu->addAction(
+        tr("&Full Screen") + "\t" + QKeySequence(QKeySequence::FullScreen).toString(QKeySequence::NativeText));
     // Shortcut is handled by app-wide QShortcut in MainWindow (works when menu hidden)
     _fullScreenAction->setStatusTip(tr("Toggle full screen mode"));
     _fullScreenAction->setCheckable(true);
@@ -325,7 +310,6 @@ void MenuManager::createViewMenu()
     for (int scale = 1; scale <= 4; ++scale)
     {
         QAction* action = _scaleMenu->addAction(tr("%1x (%2x%3)").arg(scale).arg(352 * scale).arg(288 * scale));
-        action->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | (Qt::Key_0 + scale)));
         action->setStatusTip(tr("Resize the window to show the screen at %1x").arg(scale));
         connect(action, &QAction::triggered, this, [this, scale]() { emit scaleRequested(scale); });
         _scaleActions.push_back(action);
@@ -335,7 +319,6 @@ void MenuManager::createViewMenu()
 
     // Overscan mode (Pentagon only - 384x304 with extended border)
     _overscanAction = _viewMenu->addAction(tr("&Overscan Mode"));
-    _overscanAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
     _overscanAction->setStatusTip(tr("Pentagon overscan mode (384x304) - shows invisible border areas"));
     _overscanAction->setCheckable(true);
     _overscanAction->setEnabled(false);  // Enabled only for Pentagon
@@ -586,27 +569,23 @@ void MenuManager::createRunMenu()
 
     // Start
     _startAction = _runMenu->addAction(tr("&Start"));
-    _startAction->setShortcut(QKeySequence(Qt::Key_F5));
     _startAction->setStatusTip(tr("Start emulation"));
     connect(_startAction, &QAction::triggered, this, &MenuManager::startRequested);
 
     // Pause
     _pauseAction = _runMenu->addAction(tr("&Pause"));
-    _pauseAction->setShortcut(QKeySequence(Qt::Key_F6));
     _pauseAction->setStatusTip(tr("Pause emulation"));
     _pauseAction->setEnabled(false);
     connect(_pauseAction, &QAction::triggered, this, &MenuManager::pauseRequested);
 
     // Resume
     _resumeAction = _runMenu->addAction(tr("Res&ume"));
-    _resumeAction->setShortcut(QKeySequence(Qt::Key_F7));
     _resumeAction->setStatusTip(tr("Resume emulation"));
     _resumeAction->setEnabled(false);
     connect(_resumeAction, &QAction::triggered, this, &MenuManager::resumeRequested);
 
     // Stop
     _stopAction = _runMenu->addAction(tr("S&top"));
-    _stopAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F5));
     _stopAction->setStatusTip(tr("Stop emulation"));
     _stopAction->setEnabled(false);
     connect(_stopAction, &QAction::triggered, this, &MenuManager::stopRequested);
@@ -615,7 +594,6 @@ void MenuManager::createRunMenu()
 
     // Reset
     _resetAction = _runMenu->addAction(tr("&Reset"));
-    _resetAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
     _resetAction->setStatusTip(tr("Reset emulator"));
     connect(_resetAction, &QAction::triggered, this, &MenuManager::resetRequested);
 
@@ -627,26 +605,22 @@ void MenuManager::createRunMenu()
     _speedGroup->setExclusive(true);
 
     _speed1xAction = _speedMenu->addAction(tr("1x (Normal)"));
-    _speed1xAction->setShortcut(QKeySequence(Qt::Key_F1));
     _speed1xAction->setCheckable(true);
     _speed1xAction->setChecked(true);
     _speedGroup->addAction(_speed1xAction);
     connect(_speed1xAction, &QAction::triggered, this, [this]() { emit speedMultiplierChanged(1); });
 
     _speed2xAction = _speedMenu->addAction(tr("2x (Fast)"));
-    _speed2xAction->setShortcut(QKeySequence(Qt::Key_F2));
     _speed2xAction->setCheckable(true);
     _speedGroup->addAction(_speed2xAction);
     connect(_speed2xAction, &QAction::triggered, this, [this]() { emit speedMultiplierChanged(2); });
 
     _speed4xAction = _speedMenu->addAction(tr("4x (Very Fast)"));
-    _speed4xAction->setShortcut(QKeySequence(Qt::Key_F3));
     _speed4xAction->setCheckable(true);
     _speedGroup->addAction(_speed4xAction);
     connect(_speed4xAction, &QAction::triggered, this, [this]() { emit speedMultiplierChanged(4); });
 
     _speed8xAction = _speedMenu->addAction(tr("8x (Extreme)"));
-    _speed8xAction->setShortcut(QKeySequence(Qt::Key_F4));
     _speed8xAction->setCheckable(true);
     _speedGroup->addAction(_speed8xAction);
     connect(_speed8xAction, &QAction::triggered, this, [this]() { emit speedMultiplierChanged(8); });
@@ -663,8 +637,7 @@ void MenuManager::createRunMenu()
     // Not bare Tab: it is the file managers' panel-switch key (Wild Commander,
     // NedoOS), so a guest session silently turned turbo - and its audio mute -
     // on within seconds. Tab belongs to the guest
-    _turboModeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Tab));
-    _turboModeAction->setStatusTip(tr("Ctrl+Tab toggles maximum speed (no sync); unavailable while TTD is recording"));
+    _turboModeAction->setStatusTip(tr("Toggle maximum speed (no sync); unavailable while TTD is recording"));
     _turboModeAction->setCheckable(true);
     connect(_turboModeAction, &QAction::triggered, this, &MenuManager::turboModeToggled);
 }
@@ -846,7 +819,6 @@ void MenuManager::createMachineMenu()
 
     // The machine's buses, slots and cards (ZX-bus slots): plug / remove / options, a change restarts the machine
     _slotsWindowAction = _machineMenu->addAction(tr("S&lots..."));
-    _slotsWindowAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_6));
     _slotsWindowAction->setStatusTip(tr("Show/hide the slots window: buses, slots and cards; plug, remove, options"));
     _slotsWindowAction->setCheckable(true);
     _slotsWindowAction->setChecked(false);
@@ -856,11 +828,8 @@ void MenuManager::createMachineMenu()
 
     // MNI - the Scorpion "magic button" (design: 2026-09-07-scorpion-zs256-clone,
     // Task 6): NMI with the Shadow Monitor paged into #0000 so the handler at
-    // #0066 executes monitor code; plain NMI on other models. F11 at window
-    // level - the debugger window rebinds F11 to Step In while focused, and
-    // Full Screen lives on Ctrl+F.
+    // #0066 executes monitor code; plain NMI on other models.
     _mniAction = _machineMenu->addAction(tr("&MNI (NMI + Service Monitor)"));
-    _mniAction->setShortcut(QKeySequence(Qt::Key_F11));
     _mniAction->setStatusTip(tr("Non-maskable interrupt into the service monitor (plain NMI on other models)"));
     connect(_mniAction, &QAction::triggered, this, &MenuManager::mniRequested);
 
@@ -1082,7 +1051,6 @@ void MenuManager::createDebugMenu()
     // Debugger window. Hidden at start; while hidden the emulator runs without
     // debug instrumentation (see MainWindow::handleDebuggerVisibilityChanged)
     _debuggerAction = _debugMenu->addAction(tr("&Debugger Window"));
-    _debuggerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
     _debuggerAction->setStatusTip(tr("Show/hide the debugger window (debug features are active only while it is shown)"));
     _debuggerAction->setCheckable(true);
     _debuggerAction->setChecked(false);
@@ -1101,25 +1069,21 @@ void MenuManager::createDebugMenu()
 
     // Step In
     _stepInAction = _debugMenu->addAction(tr("Step &In"));
-    _stepInAction->setShortcut(QKeySequence(Qt::Key_F8));
     _stepInAction->setStatusTip(tr("Execute one instruction"));
     connect(_stepInAction, &QAction::triggered, this, &MenuManager::stepInRequested);
 
     // Step Over
     _stepOverAction = _debugMenu->addAction(tr("Step &Over"));
-    _stepOverAction->setShortcut(QKeySequence(Qt::Key_F10));
     _stepOverAction->setStatusTip(tr("Execute instruction, skip calls"));
     connect(_stepOverAction, &QAction::triggered, this, &MenuManager::stepOverRequested);
 
     // Step Out
     _stepOutAction = _debugMenu->addAction(tr("Step O&ut"));
-    _stepOutAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F8));
     _stepOutAction->setStatusTip(tr("Execute until return from current function"));
     _stepOutAction->setEnabled(false);  // TODO: Implement step out
 
     // Run to Cursor
     _runToCursorAction = _debugMenu->addAction(tr("Run to &Cursor"));
-    _runToCursorAction->setShortcut(QKeySequence(Qt::Key_F9));
     _runToCursorAction->setStatusTip(tr("Execute until cursor position"));
     _runToCursorAction->setEnabled(false);  // TODO: Implement run to cursor
 
@@ -1127,13 +1091,11 @@ void MenuManager::createDebugMenu()
 
     // Toggle Breakpoint
     _toggleBreakpointAction = _debugMenu->addAction(tr("&Toggle Breakpoint"));
-    _toggleBreakpointAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_B));
     _toggleBreakpointAction->setStatusTip(tr("Toggle breakpoint at current address"));
     _toggleBreakpointAction->setEnabled(false);  // TODO: Implement
 
     // Clear All Breakpoints
     _clearAllBreakpointsAction = _debugMenu->addAction(tr("&Clear All Breakpoints"));
-    _clearAllBreakpointsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
     _clearAllBreakpointsAction->setStatusTip(tr("Remove all breakpoints"));
     _clearAllBreakpointsAction->setEnabled(false);  // TODO: Implement
 
@@ -1161,7 +1123,6 @@ void MenuManager::createToolsMenu()
 
     // Settings
     _settingsAction = _toolsMenu->addAction(tr("&Settings..."));
-    _settingsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_S));
     _settingsAction->setStatusTip(tr("Configure emulator settings"));
     _settingsAction->setEnabled(false);  // TODO: Implement settings dialog
 
@@ -1192,7 +1153,6 @@ void MenuManager::createToolsMenu()
     // Tape Manager Window (design §9.2 — checkable show/hide, hidden until
     // first opened; lives in Tools beside the other auxiliary windows, r7)
     _tapeManagerAction = _toolsMenu->addAction(tr("Tape &Manager"));
-    _tapeManagerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_3));
     _tapeManagerAction->setStatusTip(tr("Show/hide tape manager window"));
     _tapeManagerAction->setCheckable(true);
     _tapeManagerAction->setChecked(false);
@@ -1200,7 +1160,6 @@ void MenuManager::createToolsMenu()
 
     // Media panel: every slot (floppy drives, SD card, ...) through MediaControl
     _mediaPanelAction = _toolsMenu->addAction(tr("M&edia"));
-    _mediaPanelAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_4));
     _mediaPanelAction->setStatusTip(tr("Show/hide the media panel: insert, eject, save and export per drive or card slot"));
     _mediaPanelAction->setCheckable(true);
     _mediaPanelAction->setChecked(false);
@@ -1209,7 +1168,6 @@ void MenuManager::createToolsMenu()
     // Network: ZX-Bus cards, the machine's serial port and what is plugged in,
     // the ZX-Evo AVR firmware, the virtual network, and their live state
     _networkWindowAction = _toolsMenu->addAction(tr("Net&work"));
-    _networkWindowAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_5));
     _networkWindowAction->setStatusTip(tr("Show/hide the network window: cards, serial port, ESP module, virtual network"));
     _networkWindowAction->setCheckable(true);
     _networkWindowAction->setChecked(false);
@@ -1217,13 +1175,11 @@ void MenuManager::createToolsMenu()
 
     // The ZX-MultiSound's MIDI synthesizer as it plays: parts, programs, notes; Panic
     _midiActivityAction = _toolsMenu->addAction(tr("M&IDI Activity"));
-    _midiActivityAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_7));
     _midiActivityAction->setStatusTip(tr("Show/hide the MIDI activity window: the synthesizer's parts and notes"));
     _midiActivityAction->setCheckable(true);
     _midiActivityAction->setChecked(false);
     connect(_midiActivityAction, &QAction::triggered, this, &MenuManager::midiActivityToggled);
     _trafficWindowAction = _toolsMenu->addAction(tr("Network &traffic"));
-    _trafficWindowAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_6));
     _trafficWindowAction->setStatusTip(tr("Show/hide the network traffic window: frames and socket operations, decode, seek, pcapng"));
     _trafficWindowAction->setCheckable(true);
     _trafficWindowAction->setChecked(false);
@@ -1302,30 +1258,9 @@ void MenuManager::createHelpMenu()
     _keyboardShortcutsAction->setStatusTip(tr("View keyboard shortcuts"));
     connect(_keyboardShortcutsAction, &QAction::triggered, []() {
         QMessageBox::information(nullptr, "Keyboard Shortcuts",
-                                 "Emulation:\n"
-                                 "F5 - Start\n"
-                                 "F6 - Pause\n"
-                                 "F7 - Resume\n"
-                                 "Ctrl+R - Reset\n"
-                                 "F11 - MNI (NMI + Service Monitor)\n\n"
-
-                                 "Speed:\n"
-                                 "F1 - 1x (Normal)\n"
-                                 "F2 - 2x (Fast)\n"
-                                 "F3 - 4x (Very Fast)\n"
-                                 "F4 - 8x (Extreme)\n"
-                                 "Tab - Toggle Turbo Mode\n\n"
-
-                                 "Debug:\n"
-                                 "F8 - Step In\n"
-                                 "F10 - Step Over\n"
-                                 "F9 - Run to Cursor\n"
-                                 "Ctrl+B - Toggle Breakpoint\n\n"
-
-                                 "View:\n"
-                                 "Ctrl+F - Full Screen\n"
-                                 "Ctrl+1 - Toggle Debugger\n"
-                                 "Ctrl+2 - Toggle Log Window");
+                                 tr("Only the platform's standard shortcuts are assigned for now:\n"
+                                    "Open, Save snapshot, Quit, Preferences, Help, Full Screen.\n\n"
+                                    "Every other command is in the menus."));
     });
 
     _helpMenu->addSeparator();

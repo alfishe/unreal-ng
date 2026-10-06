@@ -370,6 +370,7 @@ add_custom_command(
         "${DATA_PATH}/fonts" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/fonts"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CONFIGS_DIR}" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
+    COMMAND ${CMAKE_COMMAND} -DDEST="${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs" -P "${ROOT_DIR}/cmake/ExtractConfigImages.cmake"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -432,6 +433,7 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/testrom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/boot" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/configs" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs"
+        COMMAND ${CMAKE_COMMAND} -DDEST="${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/configs" -P "${ROOT_DIR}/cmake/ExtractConfigImages.cmake"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/html"
 
         # 4. Deploy Qt frameworks
@@ -468,6 +470,7 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/testrom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/boot" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/configs" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs"
+        COMMAND ${CMAKE_COMMAND} -DDEST="$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/configs" -P "${ROOT_DIR}/cmake/ExtractConfigImages.cmake"
         # WebAPI HTML resources (404 page, index, etc.)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/core/automation/webapi/resources/html" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/html"
         # Bump the bundle mtime so Finder/Dock drop their cached icon for this path

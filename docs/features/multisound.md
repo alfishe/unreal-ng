@@ -206,7 +206,7 @@ The card's slot also shows in the slot report (`slots`). Example, a Pentagon rig
 
 FM muted and SAA off are the card's state after a reset: the program has not written its control byte yet.
 
-In unreal-qt, **Tools > MIDI Activity** (Ctrl+7) shows the 16 parts with their programs and instrument names, a key
+In unreal-qt, **Tools > MIDI Activity** shows the 16 parts with their programs and instrument names, a key
 strip with the notes sounding on each channel, and a **Panic** button.
 
 ## Time travel (TTD)

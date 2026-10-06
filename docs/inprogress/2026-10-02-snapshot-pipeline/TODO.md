@@ -110,4 +110,21 @@ review the diff, list the changed rows in the commit message.
   ATM450; `action.sna` (an animated demo) runs on all three. Golden: 38 rows of each of the three machines (`ports` hash; `misc`
   where TR-DOS was forced on before; `cpu` in the 10 SNA files whose PC is on a HALT, which the ROM-mapped window could not see).
   Mutation (hook off) fails `SnapshotAtm_Test` x2 and `SnapshotDefects_Test.AtmFamilyMapsTheTopWindow`.
-- Still open in P5: TS-Conf's MemConfig (a policy, not a decision: it fixes banks that land in the wrong place).
+- **TS-Conf done (2026-10-05).** The reset leaves MEM_CONFIG in the normal mode (`W0NoMap` = 1): window 0 is ROM page 0, an
+  "unknown ROM" (the TS-BIOS image), whatever `#7FFD` says, so a 128K snapshot called the TS-BIOS where it expected BASIC (found
+  live: `Dizzy Y 2.sna`, `#7FFD` = `#00`, showed the unknown ROM instead of BASIC-128). `EnterSpectrum128Paging` writes MEM_CONFIG
+  = mapped mode + LCK128 = 128K (`#7FFD` bits 7:6 are no page bits), ROM128 as `#7FFD` bit 4 has it: window 0 is then the
+  {service, TR-DOS, 128, 48} group member the snapshot's own `#7FFD` picks. Golden: the `ports` hash of 34 TSL rows.
+- **Found while checking it, on every machine: a 48K snapshot's ROM latch disagrees with the ROM shown.** The 48K SNA commit sets
+  the 48K ROM as a bank pointer (`SetROM48k`) and never the latch; the shipped configs say `RESET=128`, so the latch says
+  BASIC-128, and the first recompute of the banks (any `#7FFD` write, a TR-DOS page-in) swapped the ROM under the program - on all
+  12 machines probed. The other tests reset to `RM_SOS`, where the latch already agrees, which hid it. The 48K SNA and 48K Z80
+  commits now call `SetROMMode(RM_SOS)` (the latches the reset itself sets, including `#1FFD` ROM bit 2 on the +2A / +3) and the SNA
+  writes the latch through the decoder (models that keep the ROM bit elsewhere, TS-Conf's MEM_CONFIG, follow). Golden: the four
+  48K SNA rows of PENTAGON512 / PENTAGON1024 (their golden machines start from a 128-ROM reset, as the app does).
+  `SnapshotRomLatch_Test` resets to `RM_128` first, like the shipped config, on 12 machines.
+- **Corrected my ATM change of the same day:** the ATM710 hook took the ROM pairs as pages 2 / 0, true for its 64 KB ROM but not
+  for the ATM3, whose ROM roles sit at pages 30 / 28 (the probe above showed the ROM jumping from page 28 to page 0 on a recompute).
+  The pairs now come from the model's own 128K / 48K ROM pages. Golden: the `ports` hash of 38 ATM3 rows.
+- P5 is complete for the machines the proposal listed (the fit check, Pentagon 1024, the ATM family, TS-Conf). Not done:
+  ZX-Poly (Q7), Spec256 (nothing in the codebase).

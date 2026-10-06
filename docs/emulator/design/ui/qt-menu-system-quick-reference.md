@@ -32,40 +32,40 @@ The menu bar will appear automatically at the top of the window.
 
 ```
 File
-├─ Open... (Ctrl+O)
-├─ Open Snapshot... (Ctrl+Shift+O)
-├─ Open Tape... (Ctrl+T)
-├─ Open Disk... (Ctrl+D)
-├─ Save Snapshot... (Ctrl+S) [TODO]
-└─ Exit (Ctrl+Q)
+├─ Open...
+├─ Open Snapshot...
+├─ Open Tape...
+├─ Open Disk...
+├─ Save Snapshot... [TODO]
+└─ Exit
 
 Edit
-└─ Preferences... (Ctrl+P) [TODO]
+└─ Preferences... [TODO]
 
 View
-├─ Debugger (Ctrl+1)
-├─ Log Window (Ctrl+2)
-├─ Full Screen (F11)
+├─ Debugger
+├─ Log Window
+├─ Full Screen
 └─ Zoom... [TODO]
 
 Run
-├─ Start (F5)
-├─ Pause (F6)
-├─ Resume (F7)
+├─ Start
+├─ Pause
+├─ Resume
 ├─ Stop (Shift+F5)
-├─ Reset (Ctrl+R)
+├─ Reset
 └─ Speed
-   ├─ 1x (F1)
-   ├─ 2x (F2)
-   ├─ 4x (F3)
-   ├─ 8x (F4)
+   ├─ 1x
+   ├─ 2x
+   ├─ 4x
+   ├─ 8x
    ├─ 16x
    └─ Turbo Mode (Tab)
 
 Debug
-├─ Debug Mode (Ctrl+Shift+D)
-├─ Step In (F8)
-├─ Step Over (F10)
+├─ Debug Mode
+├─ Step In
+├─ Step Over
 └─ ... [More TODO]
 
 Tools
@@ -74,29 +74,17 @@ Tools
 └─ Save Screenshot As... (PNG or GIF file)
 
 Help
-├─ Documentation (F1)
+├─ Documentation
 ├─ Keyboard Shortcuts
 └─ About
 ```
 
 ## Essential Shortcuts
 
-### Most Used
-- **F5** - Start/Stop emulation
-- **F1-F4** - Speed control (1x, 2x, 4x, 8x)
-- **Tab** - Hold for turbo mode
-- **F8** - Step through code
-- **Ctrl+R** - Reset
-
-### Files
-- **Ctrl+O** - Open any file
-- **Ctrl+T** - Open tape
-- **Ctrl+D** - Open disk
-
-### View
-- **F11** - Full screen
-- **Ctrl+1** - Toggle debugger
-- **Ctrl+2** - Toggle log
+Only the platform's standard shortcuts are assigned (2026-10-05, owner decision; the earlier ad-hoc keys were
+removed): Open (`QKeySequence::Open`), Save snapshot (`Save`), Quit (`Quit`), Preferences (`Preferences`), Help
+(`HelpContents`) and Full Screen (`FullScreen`: Ctrl+Cmd+F on macOS, F11 on Windows). Every other command is
+reached through the menus. Dialogs keep their local keys (Delete, Escape, search).
 
 ## How It Works
 
@@ -129,17 +117,17 @@ updateMenuStates();  // Called when emulator state changes
 
 | Menu Action | CLI Command | Shortcut |
 |-------------|-------------|----------|
-| Run → Start | `start` | F5 |
-| Run → Pause | `pause` | F6 |
-| Run → Resume | `resume` | F7 |
-| Run → Reset | `reset` | Ctrl+R |
-| Run → Speed → 1x | `speed 1` | F1 |
-| Run → Speed → 2x | `speed 2` | F2 |
-| Run → Speed → 4x | `speed 4` | F3 |
+| Run → Start | `start` | - |
+| Run → Pause | `pause` | - |
+| Run → Resume | `resume` | - |
+| Run → Reset | `reset` | - |
+| Run → Speed → 1x | `speed 1` | - |
+| Run → Speed → 2x | `speed 2` | - |
+| Run → Speed → 4x | `speed 4` | - |
 | Run → Speed → Turbo | `turbo on` | Tab |
-| Debug → Step In | `step` | F8 |
-| Debug → Step Over | `stepover` | F10 |
-| Debug → Debug Mode | `debugmode on` | Ctrl+Shift+D |
+| Debug → Step In | `step` | - |
+| Debug → Step Over | `stepover` | - |
+| Debug → Debug Mode | `debugmode on` | - |
 
 ## Platform Differences
 
@@ -161,16 +149,16 @@ updateMenuStates();  // Called when emulator state changes
 
 1. Launch `unreal-qt`
 2. Check menu bar appears
-3. Try **File → Open...** (Ctrl+O)
-4. Try **Run → Start** (F5)
-5. Try **Run → Speed → 2x** (F2)
+3. Try **File → Open...**
+4. Try **Run → Start**
+5. Try **Run → Speed → 2x**
 6. Try **F8** to step through code
 7. Try **Tab** to hold for turbo mode
 8. Try **F11** for full screen
 
 ### Speed Control Test
 
-1. Start emulation (F5)
+1. Start emulation
 2. Press F1 - Should run at normal speed
 3. Press F2 - Should run at 2x speed (audio pitch increases)
 4. Press F3 - Should run at 4x speed (audio pitch increases more)
@@ -179,7 +167,7 @@ updateMenuStates();  // Called when emulator state changes
 
 ### Debug Test
 
-1. Enable Debug Mode (Ctrl+Shift+D)
+1. Enable Debug Mode
 2. Press F8 - Should execute one instruction
 3. Press F10 - Should step over calls
 4. Check debugger window updates

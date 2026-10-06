@@ -606,6 +606,14 @@ bool LoaderSNA::applySnapshotFromStaging()
             memory.SetRAMPageToBank2(2);
             memory.SetRAMPageToBank3(0);
 
+            // The 48K BASIC, latches included (what the reset does for RM_SOS): with the shipped RESET=128 the latch still
+            // says BASIC-128, and the first bank recompute (any #7FFD write, a TR-DOS page-in) would swap the ROM under
+            // the program. Written through the decoder so models that keep the ROM bit elsewhere (TS-Conf) follow
+            memory.SetROMMode(RM_SOS);
+            const uint8_t rom48Latch = _context->emulatorState.p7FFD;
+            _context->pPortDecoder->UnlockPaging();
+            _context->pPortDecoder->DecodePortOut(0x7FFD, rom48Latch, z80.pc);
+
             // The 48K BASIC ROM, wherever the model keeps it (Memory::base_sos_rom: page 3 on the Pentagon,
             // page 1 on the 128K, the only ROM on the 48K - a fixed page 3 was empty there)
             memory.SetROM48k();

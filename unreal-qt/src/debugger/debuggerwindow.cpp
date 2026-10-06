@@ -88,24 +88,20 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     pauseAction = toolBar->addAction("Pause");
     stepInAction = new QAction("Step In", this);
     stepInAction->setIcon(QIcon::fromTheme("debug-step-into"));
-    stepInAction->setShortcut(QKeySequence(Qt::Key_F11));
     connect(stepInAction, &QAction::triggered, this, &DebuggerWindow::stepIn);
     toolBar->addAction(stepInAction);
 
     stepOverAction = new QAction("Step Over", this);
     stepOverAction->setIcon(QIcon::fromTheme("debug-step-over"));
-    stepOverAction->setShortcut(QKeySequence(Qt::Key_F10));
     connect(stepOverAction, &QAction::triggered, this, &DebuggerWindow::stepOver);
     toolBar->addAction(stepOverAction);
 
     stepOutAction = new QAction("Step Out", this);
     stepOutAction->setIcon(QIcon::fromTheme("debug-step-out"));
-    stepOutAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F11));
     connect(stepOutAction, &QAction::triggered, this, &DebuggerWindow::stepOut);
     toolBar->addAction(stepOutAction);
 
     frameStepAction = new QAction("Frame step", this);
-    frameStepAction->setShortcut(QKeySequence(Qt::Key_F9));
     connect(frameStepAction, &QAction::triggered, this, &DebuggerWindow::frameStep);
     toolBar->addAction(frameStepAction);
 
