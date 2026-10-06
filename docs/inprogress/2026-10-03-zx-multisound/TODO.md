@@ -172,8 +172,19 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   (`Ym2203PairBoardsLevel_Test` tolerance 0.2 dB): find where the two SSG output paths differ (owner 2026-10-05:
   after the landing)
 - [x] atm3 / atm450 / atm710 carry `TSFM_FmTrimDb=7.4` since 2026-10-05 (`bab7a4e32`), like every shipped config
-- [ ] side note: the plain AY / TurboSound device (`SoundChip_TurboSound`) has the same sample-phase render loop as the
-  TSFM and probably the same click after a host speed multiplier; not a pair board, not changed here
+- [x] side note: the plain AY / TurboSound device (`SoundChip_TurboSound`) has the same sample-phase render loop as the
+  TSFM and probably the same click after a host speed multiplier. Confirmed and worse (2026-10-05): its render loop
+  stored its frame position unscaled while counting scaled T-states, so 4 frames at x2 left a backlog of tens of
+  millions of samples - 8192 time-compressed samples per frame with a jump at every frame boundary for minutes back at
+  1x. The sound feature off and on again left every device (AY, TurboSound, TSFM) off the mixer's sample grid (one
+  never-rendered or dropped sample at some frame boundaries for good). Fixed with one rule for every device that keeps
+  its own sample position: it follows the mixer's frame-start phase (`followSamplePhase`, pushed by
+  `SoundManager::handleFrameStart`; the TSFM's x2-only branch is gone into it); the beeper and the Covox / SounDrive
+  (blip streams) re-join the mixer's grid after a multiplied frame or a gap, the Covox and the MoonSound drop the
+  excess of a multiplied frame instead of keeping it as a growing delay. Tests:
+  `SoundChipTurboSoundEvents_Test` (single AY on 48K / 128K / Pentagon, TurboSound, TSFM's SSG x none / machine reset /
+  snapshot / core rate / host speed x2 and x4 / hardware turbo / turbo with and without audio / sound off, at T 0, mid,
+  end-1), `SoundChipTurboSoundEventsTtd_Test`, `SoundManagerDeviceMarker_Test` (beeper, SounDrive, MoonSound)
 - [ ] MS-7 second pass: Z-Player 5, the remaining disks of the test images README, WC MOD / TFC / ETC
 - [x] decided 2026-10-05: ZX MIDI Player v3 at 14 MHz on a ZX-Evo sends 23.6 kbaud (the Evo's 14 MHz DRAM waits, as
   the RTL); a limit of the program, not an emulator bug

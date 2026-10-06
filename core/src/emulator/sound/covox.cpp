@@ -90,6 +90,16 @@ void Covox::reset()
     memset(_buffer, 0, _audioDescriptor.memoryBufferSizeInBytes);
 }
 
+void Covox::followSamplePhase(uint64_t phase)
+{
+    if (!_phaseAlignPending)
+        return;
+    _phaseAlignPending = false;
+    const double fraction = static_cast<double>(phase) / static_cast<double>(CPU_CLOCK_RATE);
+    blip_align_phase(_blipL, fraction);
+    blip_align_phase(_blipR, fraction);
+}
+
 void Covox::handleFrameStart()
 {
     _frameHadSound = false;
@@ -148,6 +158,11 @@ void Covox::handleFrameEnd(size_t expectedSamples)
     // Read out band-limited samples into the interleaved stereo buffer
     int samplesL = blip_read_samples(_blipL, &_buffer[0], samplesThisFrame, 1 /* stereo stride */);
     int samplesR = blip_read_samples(_blipR, &_buffer[1], samplesThisFrame, 1 /* stereo stride */);
+
+    // A frame longer than the base frame (host speed multiplier) rendered more than the mixer reads: the rest is the
+    // excess the mixer drops knowingly, taken out at the next frame start together with the phase (followSamplePhase)
+    if (frameDuration != config.frame)
+        _phaseAlignPending = true;
 
     // Zero-fill any shortfall (defensive)
     for (int i = samplesL; i < samplesThisFrame; i++)
@@ -345,6 +360,7 @@ void Covox::setSynthesisSuppressed(bool suppressed)
     {
         if (_blipL) blip_clear(_blipL);
         if (_blipR) blip_clear(_blipR);
+        _phaseAlignPending = true;  // the mixer kept counting through the gap
     }
 }
 

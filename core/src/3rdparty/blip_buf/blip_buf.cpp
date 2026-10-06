@@ -239,6 +239,28 @@ static void remove_samples(blip_t* m, int count)
     std::memset(&m->buffer[m->avail + buf_extra], 0, count * sizeof(int));
 }
 
+void blip_align_phase(blip_t* m, double phase)
+{
+    if (!m) return;
+
+    // The samples available now are dropped: their deltas still move the integrator, so the level that follows them
+    // is the one the stream carries on with
+    if (m->avail > 0)
+    {
+        int sum = m->integrator;
+        for (int i = 0; i < m->avail; i++)
+            sum += m->buffer[i];
+        m->integrator = sum;
+        remove_samples(m, m->avail);
+    }
+
+    phase = std::clamp(phase, 0.0, 1.0);
+    fixed_t offset = static_cast<fixed_t>(phase * static_cast<double>(time_unit)) + m->factor / 2;
+    if (offset >= time_unit)
+        offset = time_unit - 1;
+    m->offset = offset;
+}
+
 int blip_read_samples(blip_t* m, short out[], int count, int stereo)
 {
     if (!m || count <= 0) return 0;

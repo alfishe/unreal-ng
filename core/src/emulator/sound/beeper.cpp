@@ -77,6 +77,16 @@ void Beeper::handleFrameStart()
     _frameHadSound = false;
 }
 
+void Beeper::followSamplePhase(uint64_t phase)
+{
+    if (!_phaseAlignPending)
+        return;
+    _phaseAlignPending = false;
+    const double fraction = static_cast<double>(phase) / static_cast<double>(CPU_CLOCK_RATE);
+    blip_align_phase(_blipL, fraction);
+    blip_align_phase(_blipR, fraction);
+}
+
 void Beeper::handlePortOut(uint8_t value, uint32_t frameTState)
 {
     // Extract EAR (bit 4) and MIC (bit 3) bits
@@ -132,6 +142,8 @@ void Beeper::setSynthesisSuppressed(bool suppressed)
         // suppression that were never consumed by a frame end
         if (_blipL) blip_clear(_blipL);
         if (_blipR) blip_clear(_blipR);
+        // The mixer kept counting through the gap: back on its grid at the next frame start
+        _phaseAlignPending = true;
     }
 }
 
@@ -158,6 +170,11 @@ void Beeper::handleFrameEnd(uint32_t frameDuration)
     }
 
     _lastSamplesRead = avail;
+
+    // A frame longer than the base frame (host speed multiplier) moved the blip's sample position by its own length,
+    // the mixer's by the base frame's: re-join the mixer's grid at the next frame start
+    if (_context && frameDuration != _context->config.frame)
+        _phaseAlignPending = true;
 
     // HUD activity: SoundManager (AudioActivityIndicators), from the
     // audio-settings LED computed on this buffer

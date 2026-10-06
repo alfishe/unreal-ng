@@ -2,11 +2,24 @@
 #include "pch.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <string>
+#include <tuple>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/soundcardscope.h"
+#include "_helpers/testpathhelper.h"
+#include "base/featuremanager.h"
+#include "debugger/analyzers/analyzermanager.h"
+#include "debugger/analyzers/audiocapture/audiocaptureanalyzer.h"
+#include "debugger/debugmanager.h"
+#include "debugger/ttd/timetravelmanager.h"
+#include "emulator/memory/memory.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -344,3 +357,454 @@ TEST_F(SoundChipTurboSound_Test, PowerOnAndMachineResetGiveTheDatasheetState)
 }
 
 /// endregion </Reset state>
+
+/// region <Sample phase and tone across machine events>
+
+// The device renders its frame buffers with its own copy of the mixer's sample accumulator (_samplePhase). The mixer
+// reads `samplesThisFrame` samples from the buffers every frame; when the device's count for a frame differs, the mixer
+// reads a never-rendered zero sample or drops one - a click. The TSFM's copy drifted after a host speed multiplier
+// (master cbf7f777b); this suite runs the same events on the single AY (48K, 128K, Pentagon) and the 2 x AY TurboSound
+// (Pentagon) in a running machine and checks content: the tone's frequency and its periods, no sample-to-sample step
+// beyond the tone's own, and the device's phase equal to the mixer's at every frame end afterwards.
+namespace aytone
+{
+
+enum class Board
+{
+    Ay48,
+    Ay128,
+    AyPentagon,
+    TsPentagon,
+    TsfmPentagon   ///< the TSFM's SSG (its FM silent): the same render loop, the same rule
+};
+
+enum class Event
+{
+    None,           ///< frame boundaries only
+    MachineReset,   ///< Emulator::Reset
+    SnapshotLoad,   ///< a .sna load (machine reset + state load)
+    CoreRate,       ///< the core sample rate to 48 kHz (at the next frame boundary)
+    HostSpeed,      ///< host speed x2 for four frames, back to x1
+    HostSpeedX4,    ///< host speed x4 for three frames, back to x1
+    HardwareTurbo,  ///< the guest's hardware CPU clock x2 for four frames (hw_turbo_ratio), back to x1
+    TurboMode,      ///< turbo (maximum speed) without audio for four frames
+    TurboAudio,     ///< turbo with audio for four frames
+    SoundOff        ///< the sound feature off for four frames, back on
+};
+
+const char* BoardName(Board b)
+{
+    switch (b)
+    {
+        case Board::Ay48: return "Ay48";
+        case Board::Ay128: return "Ay128";
+        case Board::AyPentagon: return "AyPentagon";
+        case Board::TsPentagon: return "TsPentagon";
+        case Board::TsfmPentagon: return "TsfmPentagon";
+    }
+    return "?";
+}
+
+const char* EventName(Event e)
+{
+    switch (e)
+    {
+        case Event::None: return "None";
+        case Event::MachineReset: return "MachineReset";
+        case Event::SnapshotLoad: return "SnapshotLoad";
+        case Event::CoreRate: return "CoreRate";
+        case Event::HostSpeed: return "HostSpeed";
+        case Event::HostSpeedX4: return "HostSpeedX4";
+        case Event::HardwareTurbo: return "HardwareTurbo";
+        case Event::TurboMode: return "TurboMode";
+        case Event::TurboAudio: return "TurboAudio";
+        case Event::SoundOff: return "SoundOff";
+    }
+    return "?";
+}
+
+/// The event's point in a frame: 0 = T 0, 1 = mid-frame, 2 = the frame's last T-state
+const char* OffsetName(uint32_t part)
+{
+    return part == 0 ? "T0" : part == 1 ? "Mid" : "End";
+}
+
+constexpr uint16_t kCode = 0x8000;
+constexpr uint16_t kPeriod0 = 0x100;   // chip 0 tone A: 427.2 Hz at 1.75 MHz
+constexpr uint16_t kPeriod1 = 0x0C0;   // chip 1 tone A: 569.7 Hz
+
+/// The tone as a Z80 program (a reset and a TTD replay re-run it): tone A of chip 0 (and of chip 1 on the TurboSound)
+/// at full volume, then DI; HALT. Chip select: #FF / #FE on the TurboSound, #FC / #FD on the TSFM (bit 0 the chip, FM
+/// off)
+std::vector<uint8_t> ToneProgram(Board board)
+{
+    std::vector<uint8_t> code{0xF3};   // DI
+    auto out = [&](uint16_t port, uint8_t value)
+    {
+        code.insert(code.end(), {0x01, uint8_t(port), uint8_t(port >> 8), 0x3E, value, 0xED, 0x79});
+    };
+    auto reg = [&](uint8_t r, uint8_t v)
+    {
+        out(0xFFFD, r);
+        out(0xBFFD, v);
+    };
+    auto tone = [&](uint16_t period)
+    {
+        reg(0x00, uint8_t(period & 0xFF));
+        reg(0x01, uint8_t(period >> 8));
+        reg(0x07, 0x3E);   // tone A only
+        reg(0x08, 0x0F);
+        reg(0x09, 0x00);
+        reg(0x0A, 0x00);
+    };
+    if (board == Board::TsPentagon)
+    {
+        out(0xFFFD, 0xFE);
+        tone(kPeriod1);
+        out(0xFFFD, 0xFF);
+    }
+    else if (board == Board::TsfmPentagon)
+    {
+        out(0xFFFD, 0xFD);
+        tone(kPeriod1);
+        out(0xFFFD, 0xFC);
+    }
+    tone(kPeriod0);
+    code.insert(code.end(), {0xF3, 0x76});   // DI; HALT
+    return code;
+}
+
+/// A machine with the AY or the TurboSound in its AY socket ([SLOTS] replaced: nothing else fitted), the audio
+/// capture analyzer on
+class AyMachine
+{
+public:
+    explicit AyMachine(Board board) : _board(board)
+    {
+        const char* folder = board == Board::Ay48 ? "spectrum48" : board == Board::Ay128 ? "spectrum128" : "pentagon128k";
+        const std::filesystem::path source = TestPathHelper::FindProjectRoot() / "data" / "configs" / folder / "unreal.ini";
+        std::ifstream in(source, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const size_t shipped = text.find("\n[SLOTS]");
+        if (shipped != std::string::npos)
+        {
+            const size_t next = text.find("\n[", shipped + 1);
+            text.erase(shipped, next == std::string::npos ? std::string::npos : next - shipped);
+        }
+        const char* socket = board == Board::TsPentagon ? "ts" : board == Board::TsfmPentagon ? "tsfm" : "ay";
+        text += std::string("\n[SLOTS]\nay-socket = ") + socket + "\n";
+        _path = TestPathHelper::GetUniqueTestScratchPath(std::string("aytone-") + folder + ".ini");
+        std::ofstream out(_path, std::ios::binary);
+        out << text;
+        out.close();
+        _emulator = std::make_unique<Emulator>(LoggerLevel::LogError);
+        _emulator->SetCustomConfigPath(_path.string());
+        _ok = _emulator->Init();
+    }
+    ~AyMachine()
+    {
+        _emulator->Release();
+        std::error_code ignored;
+        std::filesystem::remove(_path, ignored);
+    }
+
+    bool Init()
+    {
+        if (!_ok)
+            return false;
+        AnalyzerManager* analyzers = Context()->pDebugManager->GetAnalyzerManager();
+        analyzers->activate("audiocapture");
+        _capture = analyzers->getAnalyzer<AudioCaptureAnalyzer>("audiocapture");
+        ITurboSoundDevice* device = Device();
+        return _capture != nullptr && device != nullptr && device->getChipCount() == (TurboSound() ? 2 : 1);
+    }
+
+    Emulator& Machine() { return *_emulator; }
+    EmulatorContext* Context() const { return _emulator->GetContext(); }
+    bool TurboSound() const { return _board == Board::TsPentagon || _board == Board::TsfmPentagon; }
+    ITurboSoundDevice* Device() const { return Context()->pSoundManager->getTurboSound(); }
+    double Rate() const { return double(Context()->pSoundManager->getCoreRate()); }
+    double ToneHz(int chip) const
+    {
+        return double(Device()->GetPsgClock()) / 16.0 / double(chip == 0 ? kPeriod0 : kPeriod1);
+    }
+
+    void PlayTone()
+    {
+        const std::vector<uint8_t> code = ToneProgram(_board);
+        Z80* z80 = Context()->pCore->GetZ80();
+        for (size_t i = 0; i < code.size(); i++)
+            z80->DirectWrite(static_cast<uint16_t>(kCode + i), code[i]);
+        z80->halted = 0;
+        z80->pc = kCode;
+    }
+
+    /// One frame; with `check`, the device rendered the mixer's count and ends the frame on the mixer's phase
+    void Frame(bool check, const std::string& where)
+    {
+        Machine().RunFrame(true);
+        if (!check)
+            return;
+        SoundManager* sound = Context()->pSoundManager;
+        const uint64_t frame = Context()->emulatorState.frame_counter;
+        EXPECT_EQ(sound->lastTurboSoundSamples(), sound->lastFrameSamples())
+            << where << ", frame " << frame << ": the device rendered a different count than the mixer read";
+        EXPECT_EQ(sound->lastTurboSoundPhase(), sound->samplePhase())
+            << where << ", frame " << frame << ": the device's sample phase left the mixer's";
+    }
+    void Frames(int n, bool check, const std::string& where)
+    {
+        for (int i = 0; i < n && !::testing::Test::HasFailure(); i++)
+            Frame(check, where);
+    }
+
+    /// `seconds` of one chip's left channel from the next frame on, mean removed; every frame checked
+    std::vector<double> Capture(int chip, double seconds, const std::string& where)
+    {
+        _capture->startCapture(static_cast<size_t>(seconds * Rate()) * 2,
+                               chip == 0 ? AudioSourceType::AY1_All : AudioSourceType::AY2_All);
+        for (int guard = 0; guard < 400 && !_capture->isCaptureComplete(); guard++)
+            Frame(true, where);
+        std::vector<double> left(_capture->getCapturedSamples() / 2);
+        double mean = 0.0;
+        for (size_t i = 0; i < left.size(); i++)
+            mean += left[i] = _capture->getBuffer()[i * 2];
+        mean /= double(left.empty() ? 1 : left.size());
+        for (double& v : left)
+            v -= mean;
+        _capture->stopCapture();
+        return left;
+    }
+
+private:
+    SoundCardScope _turboSoundScope{TestSound::TurboSound};
+    Board _board;
+    std::filesystem::path _path;
+    std::unique_ptr<Emulator> _emulator;
+    bool _ok = false;
+    AudioCaptureAnalyzer* _capture = nullptr;
+};
+
+/// The tone in a capture: frequency from the rising zero crossings (interpolated), the largest deviation of one period
+/// from their mean, and the largest sample-to-sample step
+struct Tone
+{
+    double hz = 0.0;
+    double worstPeriod = 1.0;   // max |period - mean| / mean
+    double maxStep = 0.0;
+    double peak = 0.0;
+    size_t periods = 0;
+};
+
+Tone Measure(const std::vector<double>& x, double rate)
+{
+    Tone tone;
+    std::vector<double> at;
+    for (size_t i = 1; i < x.size(); i++)
+    {
+        tone.maxStep = std::max(tone.maxStep, std::abs(x[i] - x[i - 1]));
+        tone.peak = std::max(tone.peak, std::abs(x[i]));
+        if (x[i - 1] < 0.0 && x[i] >= 0.0)
+            at.push_back(double(i - 1) + x[i - 1] / (x[i - 1] - x[i]));
+    }
+    if (at.size() < 3)
+        return tone;
+    tone.periods = at.size() - 1;
+    const double mean = (at.back() - at.front()) / double(tone.periods);
+    tone.hz = rate / mean;
+    tone.worstPeriod = 0.0;
+    for (size_t i = 1; i < at.size(); i++)
+        tone.worstPeriod = std::max(tone.worstPeriod, std::abs((at[i] - at[i - 1]) - mean) / mean);
+    return tone;
+}
+
+/// Each chip's tone against the reference taken before the event: the frequency within 1 %, no period off by more than
+/// 5 %, no step more than 10 % above the tone's own largest step
+void ExpectTone(AyMachine& m, const Tone (&reference)[2], const std::string& where)
+{
+    for (int chip = 0; chip < (m.TurboSound() ? 2 : 1); chip++)
+    {
+        const std::string what = where + ", chip " + std::to_string(chip);
+        const Tone tone = Measure(m.Capture(chip, 0.15, what), m.Rate());
+        EXPECT_NEAR(tone.hz, m.ToneHz(chip), m.ToneHz(chip) * 0.01) << what << ": tone frequency";
+        EXPECT_LT(tone.worstPeriod, 0.05) << what << ": a period broken (" << tone.periods << " periods)";
+        EXPECT_LE(tone.maxStep, reference[chip].maxStep * 1.1)
+            << what << ": a step beyond the tone's own (" << reference[chip].maxStep << ")";
+        EXPECT_GT(tone.peak, reference[chip].peak * 0.9) << what << ": the tone lost its level";
+    }
+}
+
+} // namespace aytone
+
+class SoundChipTurboSoundEvents_Test : public ::testing::TestWithParam<std::tuple<aytone::Board, aytone::Event, uint32_t>>
+{
+};
+
+/// One board, one event at one point of a frame (0, mid, the last T-state): the tone carries on and the device's sample
+/// phase is the mixer's at every frame end afterwards. ~60-120 ms each (a machine, ~40 emulated frames with HQ AY
+/// rendering, two to four captures)
+TEST_P(SoundChipTurboSoundEvents_Test, ToneAndSamplePhaseSurviveEvent)
+{
+    using namespace aytone;
+    const auto [board, event, offsetPart] = GetParam();
+
+    AyMachine m(board);
+    ASSERT_TRUE(m.Init());
+    const uint32_t frameT = m.Context()->config.frame;
+    const uint32_t offset = offsetPart == 0 ? 0 : offsetPart == 1 ? frameT / 2 : frameT - 1;
+    const std::string where = std::string(BoardName(board)) + " " + EventName(event) + " at T " + std::to_string(offset);
+
+    m.PlayTone();
+    m.Frames(3, true, where + " (before)");
+    Tone reference[2];
+    for (int chip = 0; chip < (m.TurboSound() ? 2 : 1); chip++)
+    {
+        reference[chip] = Measure(m.Capture(chip, 0.1, where + " (reference)"), m.Rate());
+        ASSERT_NEAR(reference[chip].hz, m.ToneHz(chip), m.ToneHz(chip) * 0.01) << where << ": reference, chip " << chip;
+        ASSERT_GT(reference[chip].peak, 500.0) << where << ": reference, chip " << chip;
+    }
+
+    if (offset > 0)
+        m.Machine().RunTStates(offset);
+    switch (event)
+    {
+        case Event::None:
+            break;
+        case Event::MachineReset:
+            m.Machine().Reset();
+            m.PlayTone();
+            break;
+        case Event::SnapshotLoad:
+        {
+            const auto sna = TestPathHelper::FindProjectRoot() / "testdata/loaders/sna/Timing_Tests-48k_v1.0.sna";
+            ASSERT_TRUE(m.Machine().LoadSnapshot(sna.string())) << where;
+            m.PlayTone();
+            break;
+        }
+        case Event::CoreRate:
+            m.Context()->pSoundManager->requestCoreRate(48000);
+            break;
+        case Event::HostSpeed:
+            ASSERT_TRUE(m.Machine().SetSpeedMultiplier(2));
+            m.Frames(4, false, where);
+            ASSERT_TRUE(m.Machine().SetSpeedMultiplier(1));
+            break;
+        case Event::HostSpeedX4:
+            ASSERT_TRUE(m.Machine().SetSpeedMultiplier(4));
+            m.Frames(3, false, where);
+            ASSERT_TRUE(m.Machine().SetSpeedMultiplier(1));
+            break;
+        case Event::HardwareTurbo:
+            m.Context()->emulatorState.hw_turbo_ratio = 2;
+            m.Frames(4, true, where + " (hardware turbo)");
+            m.Context()->emulatorState.hw_turbo_ratio = 1;
+            break;
+        case Event::TurboMode:
+            m.Machine().EnableTurboMode(false);
+            m.Frames(4, false, where);
+            m.Machine().DisableTurboMode();
+            break;
+        case Event::TurboAudio:
+            m.Machine().EnableTurboMode(true);
+            m.Frames(4, true, where + " (turbo with audio)");
+            m.Machine().DisableTurboMode();
+            break;
+        case Event::SoundOff:
+            m.Machine().GetFeatureManager()->setFeature(Features::kSoundGeneration, false);
+            m.Frames(4, false, where);
+            m.Machine().GetFeatureManager()->setFeature(Features::kSoundGeneration, true);
+            break;
+    }
+    // The frame the event fell in; then every frame is checked
+    m.Frames(1, false, where);
+    m.Frames(3, true, where + " (settle)");
+    if (event == Event::CoreRate)
+        ASSERT_EQ(m.Rate(), 48000.0) << where;
+
+    ExpectTone(m, reference, where);
+    m.Frames(10, true, where + " (after)");
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    BoardsEventsOffsets, SoundChipTurboSoundEvents_Test,
+    ::testing::Combine(::testing::Values(aytone::Board::Ay48, aytone::Board::Ay128, aytone::Board::AyPentagon,
+                                         aytone::Board::TsPentagon, aytone::Board::TsfmPentagon),
+                       ::testing::Values(aytone::Event::None, aytone::Event::MachineReset, aytone::Event::SnapshotLoad,
+                                         aytone::Event::CoreRate, aytone::Event::HostSpeed, aytone::Event::HostSpeedX4,
+                                         aytone::Event::HardwareTurbo, aytone::Event::TurboMode,
+                                         aytone::Event::TurboAudio, aytone::Event::SoundOff),
+                       ::testing::Values(0u, 1u, 2u)),
+    [](const ::testing::TestParamInfo<SoundChipTurboSoundEvents_Test::ParamType>& info)
+    {
+        return std::string(aytone::BoardName(std::get<0>(info.param))) + "_" +
+               aytone::EventName(std::get<1>(info.param)) + "_" + aytone::OffsetName(std::get<2>(info.param));
+    });
+
+/// TTD: a seek at any point of a frame and the replay from there bring the device's sample phase back where it was live
+/// (equal to the mixer's at every later frame end) and the same audio: the capture taken at the same frames live and
+/// replayed agrees within 1 % of its peak. Single AY and TurboSound on the Pentagon, three offsets (~0.5 s in all: two
+/// machines, TTD recording, ~50 frames x 4 runs)
+TEST(SoundChipTurboSoundEventsTtd_Test, SeekAndReplayKeepTheSamplePhaseAndTheTone)
+{
+    using namespace aytone;
+    for (const Board board : {Board::AyPentagon, Board::TsPentagon})
+    {
+        const char* name = BoardName(board);
+        AyMachine m(board);
+        ASSERT_TRUE(m.Init()) << name;
+        FeatureManager* features = m.Machine().GetFeatureManager();
+        features->setFeature(Features::kDebugMode, true);
+        features->setFeature(Features::kTimeTravel, true);
+        m.Context()->pMemory->UpdateFeatureCache();
+        ttd::TimeTravelManager* ttd = m.Context()->pTimeTravelManager;
+        ASSERT_NE(ttd, nullptr);
+        const uint64_t& frame = m.Context()->emulatorState.frame_counter;
+        const uint32_t frameT = m.Context()->config.frame;
+
+        ASSERT_TRUE(ttd->StartRecording()) << name;
+        const uint64_t start = frame;
+        m.PlayTone();
+        std::vector<uint64_t> livePhase;
+        for (int i = 0; i < 24; i++)
+        {
+            m.Frame(true, name);
+            livePhase.push_back(m.Context()->pSoundManager->lastTurboSoundPhase());
+        }
+        const uint64_t captureFrame = frame;
+        const int lastChip = m.TurboSound() ? 1 : 0;
+        const std::vector<double> live = m.Capture(lastChip, 0.1, name);
+        ttd->StopRecording();
+        ASSERT_GT(live.size(), 4000u) << name;
+
+        for (const uint32_t offset : {0u, frameT / 2, frameT - 1})
+        {
+            const std::string where = std::string(name) + " seek at T " + std::to_string(offset);
+            ASSERT_TRUE(ttd->SeekTo({10, offset})) << where;
+            Z80& z80 = *m.Context()->pCore->GetZ80();
+            if (frame < start + 11)
+                m.Machine().RunTStates(frameT - z80.t);
+            ASSERT_EQ(frame, start + 11) << where;
+            for (uint64_t f = 11; f <= livePhase.size(); f++)
+            {
+                if (f > 11)
+                    m.Frame(true, where);
+                if (f > 11)
+                    EXPECT_EQ(m.Context()->pSoundManager->lastTurboSoundPhase(), livePhase[f - 1]) << where << ", frame " << f;
+            }
+            ASSERT_EQ(frame, captureFrame) << where;
+            const std::vector<double> replay = m.Capture(lastChip, 0.1, where);
+            ASSERT_EQ(replay.size(), live.size()) << where;
+            double peak = 0.0;
+            double worst = 0.0;
+            for (size_t i = 0; i < live.size(); i++)
+            {
+                peak = std::max(peak, std::abs(live[i]));
+                worst = std::max(worst, std::abs(live[i] - replay[i]));
+            }
+            EXPECT_GT(peak, 500.0) << where;
+            EXPECT_LT(worst, peak * 0.01) << where << ": replayed AY differs from live";
+        }
+    }
+}
+
+/// endregion </Sample phase and tone across machine events>

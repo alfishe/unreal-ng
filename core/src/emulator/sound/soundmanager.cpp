@@ -995,6 +995,9 @@ void SoundManager::handleFrameStart()
             const bool ttdActive = ttd != nullptr && (ttd->IsRecording() || ttd->IsReplayActive());
             _turboSound->setCoreSynthesisSkipped(turboSoundSuppressed && !ttdActive);
 
+            // The one sample-phase rule (ITurboSoundDevice::followSamplePhase): the device renders this frame from
+            // the mixer's frame-start phase - equal at 1x, taken back after a frame that moved only one of the two
+            _turboSound->followSamplePhase(_sampleAccumulator);
             _turboSound->handleFrameStart();
         }
 
@@ -1011,7 +1014,10 @@ void SoundManager::handleFrameStart()
         // the DAC latch (TTD state), so it must not depend on turbo; the
         // decay's audio step is gated on the covox's own suppressed flag
         if (_covox)
+        {
+            _covox->followSamplePhase(_sampleAccumulator);
             _covox->handleFrameStart();
+        }
 
         // A machine's DAC: the same rule - its play position and interrupts are machine state
         if (_modelAudio)
@@ -1025,7 +1031,8 @@ void SoundManager::handleFrameStart()
             return;  // Skip beeper frame setup and buffer clears (never consumed in turbo)
     }
 
-    // Beeper starts its frame (blip_buf ready to receive deltas)
+    // Beeper starts its frame (blip_buf ready to receive deltas), on the mixer's sample grid
+    _beeper->followSamplePhase(_sampleAccumulator);
     _beeper->handleFrameStart();
 
     // Clear the beeper output buffer (will be filled by handleFrameEnd)
@@ -1179,6 +1186,11 @@ void SoundManager::handleFrameEnd()
         }
     }
     _lastFrameSamples = samplesThisFrame;
+    if (_turboSound)
+    {
+        _lastTurboSoundSamples = _turboSound->getRenderedSamplesThisFrame();
+        _lastTurboSoundPhase = _turboSound->getSamplePhase();
+    }
     /// endregion </Determine actual samples for this frame>
 
     /// region <Process AY through its character chain>

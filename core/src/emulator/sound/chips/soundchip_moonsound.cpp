@@ -236,6 +236,12 @@ void SoundChip_Moonsound::handleFrameEnd(size_t expectedSamples)
             _fmBuffer[i] = TrimToI16(_fmScratch[i]);
             _pcmBuffer[i] = TrimToI16(_pcmScratch[i]);
         }
+
+        // A frame longer than the base frame (host speed multiplier) produced its multiplied time, the mixer read the
+        // base frame's samples: the rest is the excess the mixer drops knowingly. Left in the delivery streams it
+        // piled up (unbounded) and the output ran that much late for good after the speed went back to 1x
+        if (frameDuration() != _context->config.frame)
+            _opl4.DiscardPendingAudio();
     }
 
     // The frame is complete: fold its whole duration into the absolute axis

@@ -412,7 +412,11 @@ void SoundChip_TurboSound::handleStep()
         }
     }
 
-    _lastTStates = currentTStates;
+    // The render loop's position in the units it counts in (scaled, clipped): storing the unscaled position made
+    // every step of a host-speed-multiplied frame count the frame from about its own position again - the phase
+    // piled up a backlog of millions of samples that rendered 8192 samples per frame (time-compressed audio, a jump
+    // at every frame boundary) for minutes after the speed went back to 1x. At 1x the two are the same number
+    _lastTStates = uint32_t(scaledCurrentTStates);
 }
 
 void SoundChip_TurboSound::handleFrameEnd()

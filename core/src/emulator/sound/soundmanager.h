@@ -281,6 +281,8 @@ protected:
     // IDE units with a CD drive, as the mixer rows show them (bit n: unit n)
     uint8_t _cdUnitMask = 0;
     size_t _lastFrameSamples = 0;
+    size_t _lastTurboSoundSamples = 0;   // lastTurboSoundSamples()
+    uint64_t _lastTurboSoundPhase = 0;   // lastTurboSoundPhase()
 
     // Device registry (replaces hardwired master volumes)
     std::vector<AudioDeviceInfo> _devices;
@@ -442,9 +444,9 @@ public:
     }
 
     /// The frame-start sample phase (T-states x rate, modulo CPU_CLOCK_RATE): the authority for how many samples
-    /// every frame has. A device that renders with its own copy (SoundChip_TurboSoundFM) takes it back at the
-    /// first 1x frame after a host speed multiplier (it rendered the faster frames' multiplied time); at 1x the two
-    /// are equal by construction
+    /// every frame has. Every device that keeps its own sample position follows it at each frame start
+    /// (ITurboSoundDevice::followSamplePhase, Beeper / Covox::followSamplePhase); at 1x the copies are equal by
+    /// construction
     uint64_t samplePhase() const
     {
         return _sampleAccumulator;
@@ -674,6 +676,10 @@ public:
 
     /// Stereo sample pairs the last finished frame mixed (0 after a frame without host audio)
     size_t lastFrameSamples() const { return _lastFrameSamples; }
+    /// What the TurboSound-slot device rendered in the last finished frame and its sample phase at that frame end, read
+    /// before the mix (diagnostics and tests): at 1x the count is lastFrameSamples() and the phase samplePhase()
+    size_t lastTurboSoundSamples() const { return _lastTurboSoundSamples; }
+    uint64_t lastTurboSoundPhase() const { return _lastTurboSoundPhase; }
 
     /// The resolved core audio rate (Hz) - recording and analysis consumers
     /// must read this instead of assuming 44100

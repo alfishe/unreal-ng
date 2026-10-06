@@ -43,7 +43,10 @@ protected:
     // mixer consumes on every frame. The previous free-running double PLL
     // drifted against the mixer's accumulator and every disagreeing frame
     // left a zero sample (or dropped one) in the mix - an audible click
-    // train (2026-09-13, FrameSampleCount_Test).
+    // train (2026-09-13, FrameSampleCount_Test). Frames that are not plain
+    // 1x frames (a host speed multiplier, the sound feature off) move only
+    // one of the two: the manager pushes its frame-start phase at every
+    // frame start (followSamplePhase), equal at 1x.
     uint64_t _samplePhase = 0;
     size_t _ayBufferIndex = 0;
     uint32_t _lastTStates = 0;
@@ -136,6 +139,15 @@ public:
     size_t getRenderedSamplesThisFrame() const override
     {
         return _ayBufferIndex / AUDIO_CHANNELS;
+    }
+
+    uint64_t getSamplePhase() const override
+    {
+        return _samplePhase;
+    }
+    void followSamplePhase(uint64_t phase) override
+    {
+        _samplePhase = phase;
     }
 
     int16_t* getChipBuffer(int index) override

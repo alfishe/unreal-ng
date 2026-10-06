@@ -43,6 +43,13 @@ public:
     /// Runs every frame, even in turbo mode (TSFM rebases the core clock
     /// here, design §5.2); clears the frame buffers
     virtual void handleFrameStart() = 0;
+    /// The mixer's frame-start sample phase (T-states x rate, modulo CPU_CLOCK_RATE), pushed by
+    /// SoundManager::handleFrameStart right before handleFrameStart: the device renders the frame from it. The
+    /// mixer's phase is the authority for how many samples every frame has; at 1x the device's own copy is equal by
+    /// construction, after a frame that moved only one of the two (a host speed multiplier renders the multiplied
+    /// time, the sound feature off renders nothing while the mixer still counts) taking it back is what keeps the
+    /// device's count the mixer's - otherwise a never-rendered or a dropped sample at some frame boundaries for good
+    virtual void followSamplePhase(uint64_t phase) = 0;
     /// Advances the core; renders unless suppressed (design §6.1)
     virtual void handleStep() = 0;
     /// Output stage drain; skipped in turbo. Called from
@@ -105,6 +112,9 @@ public:
     /// Number of stereo sample pairs rendered into the frame buffers so far
     /// this frame
     virtual size_t getRenderedSamplesThisFrame() const = 0;
+    /// The render loop's sample phase (T-states x rate, modulo CPU_CLOCK_RATE; diagnostics and tests). At the end of
+    /// a 1x frame it is SoundManager::samplePhase()
+    virtual uint64_t getSamplePhase() const = 0;
     /// Interleaved stereo frame buffer of AY chip `chip` (0/1)
     virtual int16_t* getChipBuffer(int chip) = 0;
     /// Interleaved stereo FM-only frame buffer of chip `chip` (TSFM);
