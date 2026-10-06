@@ -125,7 +125,7 @@ restarts the machine ([slots.md](../machines/slots.md), user guide [docs/feature
 | `[SLOTS]` entry | Values | Notes |
 |:--|:--|:--|
 | `ay-socket` | `tsfm` (shipped on most models), `ts`, `ay`, `none` | the AY socket's board |
-| `zxbus.N` (`edge.N`, `profi-bus.N`, ...) | `neogs` (shipped on the clones; the 48K / 128K / +2 / +2A / +3, Profi and Sprinter configs ship none since 2026-10-04), `gs` (classic GS, Z80 LLE), `gs-lw` (lightweight player), `moonsound` (clones), `soundrive`, `covox-fb`, `multisound`, `zxnetusb`, `zx-wifi` | `GS=rom/gs105a.rom` for the `gs` card; options as `zxbus.N.<option>` |
+| `zxbus.N` (`edge.N`, `profi-bus.N`, ...) | `neogs` (shipped on the clones; the 48K / 128K / +2 / +2A / +3 and Profi configs ship none since 2026-10-04; the Sprinter has it on `isa.1`), `gs` (classic GS, Z80 LLE), `gs-lw` (lightweight player), `moonsound` (clones), `soundrive`, `covox-fb`, `multisound`, `zxnetusb`, `zx-wifi` | `GS=rom/gs105a.rom` for the `gs` card; options as `zxbus.N.<option>` |
 
 The legacy keys (`[SOUND] GSType`, `TurboSound`, `MoonSound`, `CovoxFB`, `SD`, `[NETWORK] Card`) still work in an
 INI without `[SLOTS]`; they are translated into slots at creation. `inspect_state {"aspects":["slots"]}` shows the
