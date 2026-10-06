@@ -10,6 +10,7 @@
 #include <common/filehelper.h>
 #include <loaders/snapshot/snapshotlauncher.h>
 
+#include <optional>
 #include <sstream>
 
 /// region <Snapshot Control Commands>
@@ -72,17 +73,19 @@ void CLIProcessor::HandleSnapshotLoad(const ClientSession& session,
     if (args.size() < 2)
     {
         session.SendResponse(std::string("Error: Missing file path") + NEWLINE +
-                            "Usage: snapshot load <file> [--no-switch] [--commit <name>]" + NEWLINE);
+                            "Usage: snapshot load <file> [--switch | --no-switch] [--commit <name>]" + NEWLINE);
         return;
     }
 
     std::string filepath = args[1];
-    bool switchModel = true;
+    std::optional<bool> switchModel;   // not given: an SPG switches, an SZX of another model is refused (snapshotlauncher.h)
     std::string commit;
     for (size_t i = 2; i < args.size(); i++)
     {
         if (args[i] == "--no-switch")
             switchModel = false;
+        else if (args[i] == "--switch")
+            switchModel = true;
         else if (args[i] == "--commit" && i + 1 < args.size())
             commit = args[++i];
         else
@@ -114,7 +117,7 @@ void CLIProcessor::HandleSnapshotLoad(const ClientSession& session,
     {
         ss << "Error: " << result.message << NEWLINE;
         if (result.modelMismatch)
-            ss << "Switch with 'model " << result.requiredModel << "', or load without --no-switch" << NEWLINE;
+            ss << "Switch with 'model " << result.requiredModel << "', or load with --switch" << NEWLINE;
         if (result.report.refused && !result.report.needs.empty())
             ss << "Needs: " << result.report.needs << NEWLINE;
         session.SendResponse(ss.str());
@@ -250,9 +253,9 @@ void CLIProcessor::ShowSnapshotHelp(const ClientSession& session)
     ss << "Snapshot Commands" << NEWLINE;
     ss << "=================" << NEWLINE;
     ss << NEWLINE;
-    ss << "  snapshot load <file> [--no-switch] [--commit <name>]" << NEWLINE;
+    ss << "  snapshot load <file> [--switch | --no-switch] [--commit <name>]" << NEWLINE;
     ss << "                                 Load snapshot from file (.z80, .sna, .szx; .rzx plays on this machine;" << NEWLINE;
-    ss << "                                 .spg - a TS-Conf program - switches to model TSL unless --no-switch)" << NEWLINE;
+    ss << "                                 .spg - a TS-Conf program - switches to model TSL unless --no-switch;" << NEWLINE << "                                 an .szx saved on another model is refused unless --switch or [SNAPSHOT] SwitchModel=1)" << NEWLINE;
     ss << "  snapshot save <file> [--force] Save snapshot to file (.sna, .z80, .szx: by extension)" << NEWLINE;
     ss << "                                 --commit: who writes the machine - omitted: the machine's own policy," << NEWLINE;
     ss << "                                 else the legacy commit; 'legacy': the legacy commit always; or a policy name" << NEWLINE;

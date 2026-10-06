@@ -89,11 +89,14 @@ Snapshot format notes:
   model replaces the running machine by that model first, as the Machine menu
   does (media follow), then loads. The log
   lists what each block did (applied, approximated, ignored). Saving picks the
-  format by the extension; ATM, ZX-Evo, Profi and TSConf have no SZX machine id
+  format by the extension; an SZX saved on another model than the running one is refused (both named,
+  `modelMismatch`, HTTP 409) unless the call has `switch_model: true` or the configuration has `[SNAPSHOT]
+  SwitchModel=1`: then the machine is replaced by the file's model like for an SPG (new `emulator_id`,
+  `model_switched`); `switch_model: false` always refuses. ATM, ZX-Evo, Profi and TSConf have no SZX machine id
   and cannot be saved as `.szx` yet.
 - `.spg` (TS-Conf "Spectrum Prog", the TS-Conf SDK's program format, v1.0 and
   v1.1) — runs on the TS-Conf machine only (`TSL`). `snapshot/load` takes
-  `switch_model` (default `true`): on another model the emulator switches to
+  `switch_model` (not given: `true` for an SPG): on another model the emulator switches to
   `TSL` first and the reply carries a NEW `emulator_id` (plus `model_switched`,
   `previous_emulator_id`, `model`); use that id from then on. With
   `"switch_model": false` (or `?switch_model=false`) the load is refused with

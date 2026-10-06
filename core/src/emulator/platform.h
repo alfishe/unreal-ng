@@ -582,6 +582,7 @@ struct CONFIG
 	uint8_t fdd_noise;				// Mix FDD disk rotation and positioning noise to sound channel(s)
 
 	bool trdos_present;			// Enable Beta128 disk interface (TR-DOS)
+	bool snapshot_switch_model = false;	// [SNAPSHOT] SwitchModel=: an SZX saved on another model replaces the machine (automation default: refuse)
 	uint8_t trdos_interleave;
 	bool trdos_traps;			// Use TR-DOS traps
 	bool wd93_nodelay;			// Don't emulate WD1793 / VG93 controller delays

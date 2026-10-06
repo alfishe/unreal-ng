@@ -2473,7 +2473,8 @@ public:
             SnapshotLoadRequest request;
             request.emulatorId = emulator->GetId();
             request.path = path;
-            request.switchModel = _emulator == nullptr;
+            if (_emulator != nullptr)
+                request.switchModel = false;   // a script bound to a machine never replaces it; unbound: the launcher's default
             request.commit = commit.value_or("");
             const SnapshotLoadResult result = SnapshotLauncher::Load(request);
             return {result.ok, result.message, result.emulator ? result.emulator->GetId() : std::string()};

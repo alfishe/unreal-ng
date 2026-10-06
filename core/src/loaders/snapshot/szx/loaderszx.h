@@ -56,6 +56,10 @@ public:
     /// SZX's per-block outcomes and warnings onto the pipeline's report (the two Outcome enums differ)
     static void AppendReport(const szx::Report& from, snapshot::Report& to);
 
+    /// Can a running machine (model, RAM in KB) load a snapshot of `machine`? The loader's own rule: the same model, a Scorpion on a
+    /// Scorpion with ProfROM, a smaller Pentagon on a bigger one
+    static bool Suits(MEM_MODEL runningModel, uint32_t runningRamKb, const szx::Machine& machine);
+
     /// The machine an SZX file was saved on, from its header alone (the GUI
     /// creates that machine before loading). False: not an SZX file, or a
     /// machine id we do not emulate (`error` says which)

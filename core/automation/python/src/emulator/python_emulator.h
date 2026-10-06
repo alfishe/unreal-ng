@@ -761,7 +761,7 @@ namespace PythonBindings
 
         // Snapshots by emulator id (default: the selected one). A file that
         // needs another model (an SPG: TS-Conf) switches it: emulator_id is the new one
-        m.def("snapshot_load", [](const std::string& path, const std::string& emulatorId, bool switchModel,
+        m.def("snapshot_load", [](const std::string& path, const std::string& emulatorId, std::optional<bool> switchModel,
                                   const std::string& commit) -> py::dict {
             SnapshotLoadRequest request;
             request.emulatorId = python_rzx::ResolveId(emulatorId);
@@ -784,10 +784,11 @@ namespace PythonBindings
             // What the snapshot pipeline did: the commit that ran, or the refusal and why
             d["report"] = result.report.format.empty() ? py::none() : StateNodeToPy(result.report.ToStateNode());
             return d;
-        }, "Load a snapshot; a file for another model (.spg: TSL) switches the model unless switch_model is False. "
+        }, "Load a snapshot; a file for another model: .spg (TSL) switches the model unless switch_model is False, an .szx saved on "
+           "another model is refused unless switch_model is True (or the configuration says [SNAPSHOT] SwitchModel=1). "
            "commit chooses who writes the machine: '' = the plan decides (the machine's own policy, else the legacy "
            "commit), 'legacy', or a registered policy name; the answer's report says what was done or why not",
-           py::arg("path"), py::arg("emulator_id") = "", py::arg("switch_model") = true, py::arg("commit") = "");
+           py::arg("path"), py::arg("emulator_id") = "", py::arg("switch_model") = py::none(), py::arg("commit") = "");
 
         // What loading a file would do on the machine (default: the selected one), nothing written: the file's image
         // (format, banks as size + hash, CPU, paging, extensions) and the plan (who would commit, or the refusal)
