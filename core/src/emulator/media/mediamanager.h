@@ -37,6 +37,7 @@
 #include "emulator/media/mediatypes.h"
 
 class EmulatorContext;
+struct CompositeInfo;
 
 struct InsertOptions
 {
@@ -76,6 +77,11 @@ struct SaveOptions
     bool compact = false;       ///< block media: a re-synthesized FAT volume (S1 compact)
     std::optional<FatType> fs;  ///< compact: the FAT type
     std::optional<uint64_t> size;  ///< compact: total bytes
+    /// Composites (DT-9): flat (needs a path) | delta | commit | write-back; empty: a path means flat,
+    /// no path the descriptor's writes.save (delta when it names none)
+    std::string strategy;
+    bool force = false;          ///< delta: write over a delta that was made over other sources
+    bool disposition = false;    ///< set by an eject / insert disposition (D-8: commit / write-back fall back to delta)
 };
 
 /// What a save did
@@ -271,6 +277,9 @@ private:
                              const BlockWriteOptions& options = {});
     MediaResult SaveBlockMedium(const std::string& slotId, Medium& medium, IMediaSlot* slot, const SaveOptions& options,
                                 SaveOutcome* outcome);
+    /// S2: the change layer of a composite into its session delta file
+    MediaResult SaveDelta(const std::string& slotId, Medium& medium, const CompositeInfo& composite, const SaveOptions& options,
+                          const std::string& note, SaveOutcome* outcome);
     /// The medium in a slot, or detached under that id
     Medium* FindMedium(const std::string& slotId, SlotState** state);
     MediaResult CheckRecording(bool endRecording);

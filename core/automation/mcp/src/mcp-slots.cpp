@@ -30,7 +30,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"insert", insertOptions},
         {"eject", {"save", "export", "discard", "end_recording", "async"}},
         {"swap", insertOptions},
-        {"save", {"retarget", "compression", "compact", "fs", "size"}},
+        {"save", {"retarget", "compression", "compact", "fs", "size", "strategy", "force"}},
         {"export", {"compression", "parent", "compact", "fs", "size"}},
         {"discard", {"async"}},
         {"rescan", {"async"}},
@@ -190,7 +190,7 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "insert / swap / compose: a composition descriptor inline (version, target, layers) instead of a path";
 
     // Every option any verb takes, typed; MediaControl checks which verb takes which
-    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact"};
+    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact", "force"};
     const std::set<std::string> integers = {"free", "cylinders", "sides", "size"};
     std::set<std::string> options;
     std::string perVerb;
@@ -215,6 +215,10 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "save / export of a hard disk or SD card to a .chd: none, default (lzma,zlib,huff,flac) or up to four of zlib, lzma, "
         "huff, flac, zstd";
     schema["properties"]["parent"]["description"] = "export to a .chd: write a child of this parent CHD";
+    schema["properties"]["strategy"]["description"] =
+        "save of a composite (*.ucompose.yaml): delta (the session's writes into <descriptor>.delta, restored at the "
+        "next insert; the default without a path), flat (a new image at path; the default with one)";
+    schema["properties"]["force"]["description"] = "save as delta over a delta that was written over other sources";
     schema["properties"]["compact"]["description"] =
         "save / export of a FAT disk or card: write a re-synthesized volume (every file contiguous; fs converts, size "
         "resizes) instead of the layout as it is. .vhd targets get a fixed VHD footer";

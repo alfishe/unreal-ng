@@ -54,6 +54,8 @@
 #include "emulator/state/devicestate.h"
 #include "emulator/io/storage/chd/chdfile.h"
 #include "emulator/io/storage/chd/chdimage.h"
+#include "emulator/io/storage/fat/fatvolumereader.h"
+#include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/io/storage/chd/chdwriter.h"
 #include "emulator/io/storage/rawimage.h"
 
@@ -770,7 +772,8 @@ TEST_F(SprinterBoot_Test, ComposeDssGraftedUtilFolder)
 // ACC-C3 (media-multisource, attribution): DSS on the graft session makes a directory in the root and one inside the
 // grafted host folder; `media changes` names both as the guest did them (new: no layer) and nothing else. DSS 1.62 has
 // no internal COPY and no output redirection, so the guest writes no file here: ChangeAttributor_Test and
-// MediaControl_Test.CompositeInsertLayersAndRescan cover files.
+// MediaControl_Test.CompositeInsertLayersAndRescan cover files. DSS 1.71.66 has REN and DEL, but on a BuildDssHdd disk
+// its MKDIR overwrites SYSTEM.DOS (TODO.md, P2), so it is not used here.
 // Boot-bound (BIOS POST, the slave probe, DSS from the hard disk): ~500 frames of real ROM, the turbo mode on
 TEST_F(SprinterBoot_Test, ComposeDssGuestWriteAttributed)
 {
@@ -779,7 +782,7 @@ TEST_F(SprinterBoot_Test, ComposeDssGuestWriteAttributed)
         GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
     ScratchFolder folder("sprinter-attr");
     folder.File("util/HELLO.TXT", "hello from the host folder");
-    folder.File("patch/SYSTEM.BAT", "mkdir c:\\acc\r\nmkdir c:\\util\\sub\r\ndir c:\\util\r\n");
+    folder.File("patch/SYSTEM.BAT", "mkdir c:\\acc\r\nmkdir c:\\util\\sub\r\ncd \\util\r\ndir\r\n");
     std::string base = image;
     std::replace(base.begin(), base.end(), '\\', '/');
     const auto descriptor = folder.File("hd.ucompose.yaml", "version: 1\n"
@@ -790,6 +793,7 @@ TEST_F(SprinterBoot_Test, ComposeDssGuestWriteAttributed)
     InsertHdd(descriptor.string());
     EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("file(s)"); }, 1200, 5);
     ASSERT_TRUE(ScreenHas("C:\\>mkdir c:\\util\\sub")) << ScreenText();
+    ASSERT_TRUE(ScreenHas("HELLO")) << ScreenText();
 
     MediaRequest request;
     request.verb = "changes";
@@ -803,6 +807,79 @@ TEST_F(SprinterBoot_Test, ComposeDssGuestWriteAttributed)
     EXPECT_FALSE(reply.body.find("fullScan")->b);
     for (const StateNode& w : reply.body.find("warnings")->items)
         ADD_FAILURE() << "warning: " << w.s;
+    DestroyEmulator();
+    std::remove(image.c_str());
+}
+
+// ACC-C7 (media-multisource S2): the graft session's guest MKDIR saved as a session delta next to the descriptor; a new
+// emulator inserting the same descriptor gets the change layer back ("session restored") and DSS lists the directory.
+// A host file changed in a layer afterwards: the delta is not applied and the report names that layer.
+// Boot-bound (BIOS POST, the slave probe, DSS from the hard disk, two boots): ~1000 frames of real ROM, turbo mode
+TEST_F(SprinterBoot_Test, ComposeDeltaSurvivesRestart)
+{
+    const std::string image = DssHddFile("dss-delta-base.img", "ver\r\n");
+    if (image.empty())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    ScratchFolder folder("sprinter-delta");
+    folder.File("util/HELLO.TXT", "hello from the host folder");
+    folder.File("patch/SYSTEM.BAT", "mkdir c:\\s7\r\ndir\r\n");
+    std::string base = image;
+    std::replace(base.begin(), base.end(), '\\', '/');
+    const auto descriptor = folder.File("hd.ucompose.yaml", "version: 1\n"
+                                                            "layers:\n"
+                                                            "  - {name: dss, source: {image: '" + base + "'}}\n"
+                                                            "  - {name: util, source: {folder: util}, mount: /UTIL}\n"
+                                                            "  - {name: patch, source: {folder: patch}}\n");
+    InsertHdd(descriptor.string());
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("file(s)"); }, 1200, 5);
+    ASSERT_TRUE(ScreenHas("S7")) << ScreenText();
+    SaveOutcome outcome;
+    const MediaResult saved = _context->pMediaManager->Save("ide0.master", {}, &outcome);
+    ASSERT_TRUE(saved.Ok()) << saved.message;
+    EXPECT_EQ(FileHelper::GetFileExtension(outcome.savedPath), "delta") << outcome.savedPath;
+
+    // A new emulator, the same descriptor
+    DestroyEmulator();
+    SetUp();
+    auto insert = [&]() {
+        MediaSource source;
+        source.path = descriptor.string();
+        InsertOptions options;
+        options.immediate = true;
+        return _context->pMediaManager->Insert("ide0.master", source, options);
+    };
+    MediaResult again = insert();
+    ASSERT_TRUE(again.Ok()) << again.message;
+    std::string report;
+    for (const std::string& line : again.report)
+        report += line + "\n";
+    EXPECT_NE(report.find("session restored"), std::string::npos) << report;
+    {
+        FatVolumeReader reader;
+        FatDirEntryInfo s7;
+        ASSERT_TRUE(reader.Open(*_context->pMediaManager->GetMedium("ide0.master")->Block()));
+        EXPECT_TRUE(reader.Stat("/S7", s7) && s7.isDirectory) << "the guest's directory is back before the boot";
+    }
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("file(s)"); }, 1200, 5);
+    EXPECT_TRUE(ScreenHas("S7")) << ScreenText();
+
+    // A source changed: the delta stays out, the report says which layer
+    EjectOptions discard;
+    discard.disposition = Disposition::Discard;
+    ASSERT_TRUE(_context->pMediaManager->Eject("ide0.master", discard).Ok());
+    folder.File("util/HELLO.TXT", "changed on the host");
+    again = insert();
+    ASSERT_TRUE(again.Ok()) << again.message;
+    report.clear();
+    for (const std::string& line : again.report)
+        report += line + "\n";
+    EXPECT_NE(report.find("layer 'util' changed"), std::string::npos) << report;
+    {
+        FatVolumeReader reader;
+        FatDirEntryInfo s7;
+        ASSERT_TRUE(reader.Open(*_context->pMediaManager->GetMedium("ide0.master")->Block()));
+        EXPECT_FALSE(reader.Stat("/S7", s7)) << "the medium starts clean";
+    }
     DestroyEmulator();
     std::remove(image.c_str());
 }

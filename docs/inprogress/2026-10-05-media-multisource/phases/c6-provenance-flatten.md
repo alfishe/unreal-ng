@@ -1,6 +1,6 @@
 # C6 — flat images (S1), change attribution, session delta (S2)
 
-**Status:** C6a built 2026-10-05, C6b 2026-10-06 (as-built notes in §6, §7); C6c designed. Phase C6 of [tdd.md](../tdd.md) §13 (§9, §10 there), strategies S1 and S2 of
+**Status:** built: C6a 2026-10-05, C6b and C6c 2026-10-06 (as-built notes in §6, §7, §8). Phase C6 of [tdd.md](../tdd.md) §13 (§9, §10 there), strategies S1 and S2 of
 [flatten-strategies.md](../flatten-strategies.md) (its decision trees DT-8, DT-9, DT-13 apply as written). Exit:
 ACC-C3 (attribution), ACC-C6, ACC-C7. The phase lands in three commits:
 
@@ -82,8 +82,8 @@ flowchart TD
 | C6b | `ComposedLayout_Test.EveryRegionKindOfARebuild` / `.GraftOwners` / `.ForEachChangedOwnerInLbaOrder` | owners per region, rebuild and graft; the walk equals per-LBA calls |
 | C6b | `ChangeAttributor_Test.*` | create, modify, append, truncate, delete, rename, move, mkdir, rmdir: one `FileChange` each with the right layer; an ISO layer's file; lost clusters warned; untouched subtrees not read |
 | C6b | ACC-C3 `SprinterBoot_Test.ComposeDssGuestWriteAttributed` | the guest's `mkdir` (in the root and in a grafted folder) shows in `media changes` |
-| C6c | `ComposeDelta_Test.RoundTrip` / `.IdMismatchRefusedWithReason` / `.TruncatedFileRefused` | S2 |
-| C6c | ACC-C7 `ComposeAcceptance_Test.DeltaSurvivesRestart` | a new emulator, the same descriptor: the guest reads its earlier write; a changed source refuses the delta with the layer named |
+| C6c | `ComposeDelta_Test.RoundTrip` / `.IdMismatchRefusedWithReason` / `.TruncatedFileRefused` / `.StrategyFollowsDt9` / `.InlineDescriptorHasNoDeltaFile` | S2, DT-9, DT-13 |
+| C6c | ACC-C7 `SprinterBoot_Test.ComposeDeltaSurvivesRestart` | a new emulator, the same descriptor: the guest reads its earlier write; a changed source refuses the delta with the layer named |
 
 ## 6. As built: C6a
 
@@ -121,4 +121,18 @@ directory as one rename; lost clusters; the untouched subtrees not read (at most
 20+ for the full scan); a graft), `MediaControl_Test.CompositeInsertLayersAndRescan` (the verb), ACC-C3
 `SprinterBoot_Test.ComposeDssGuestWriteAttributed`. The guest in the unit tests is `core/tests/_helpers/fatguest.h`, a
 writer that changes a FAT volume through its sectors the way DOS does. DSS 1.62 has no internal COPY and no output
-redirection, so on the real machine the guest only makes directories, in the root and in a grafted folder.
+redirection, so on the real machine the guest only makes directories, in the root and in a grafted folder. DSS
+1.71.66 has REN and DEL, but on the test's built disk its MKDIR overwrites SYSTEM.DOS (TODO.md, P2).
+
+## 8. As built: C6c
+
+| Piece | Where | Notes |
+|---|---|---|
+| Delta file | `media/sessiondelta.{h,cpp}` | The layout is in the header comment: magic `UNGDELTA`, version 1, the composite's content id and sector count, the changed sector count, then each layer's name and source identity, the runs, the 1 MiB chunks (zstd level 3, stored when that is not smaller) and an end marker with an FNV-1a hash of the raw sectors. It is written to `<file>.writing` and then renamed. A load checks every length, the chunk sizes, the end marker and the hash. Restored sectors go through `SessionWriteMap::WriteSector`, so a sector equal to the composite drops out. |
+| Restore (DT-13) | `CompositeMediumFactory::Open` | After the composite is built with session access: no file means nothing to do. A file with the same content id and sector count is restored ("session restored from X: N sector(s)") and the medium is marked persisted, so it is clean. A damaged file is renamed `*.delta.bad` and reported. A file written over other sources is kept and reported ("not applied ... layer 'games' changed"); the medium starts clean and remembers the conflict. The layer comparison names layers that changed, are new or are gone; when every layer is the same, the composite's options changed. |
+| Clean after a delta | `SessionWriteMap::Generation`, `Medium::MarkPersisted` | The change layer counts the writes that change it. A medium whose layer is at the generation last written to or read from its delta reports no changed units, so it ejects without a disposition and `info` says it is not dirty. A later write makes it dirty again. `discard` empties the layer and leaves the delta file alone, so the next insert restores it. |
+| Save (DT-9) | `MediaManager::SaveBlockMedium`, `SaveDelta`; `SaveOptions::strategy`, `force`, `disposition` | Composites only, while the source is still the descriptor: a flat save rebases the medium onto the new file, and from then on it saves as that file. An explicit `strategy` wins. Otherwise a path means `flat`, and no path means `writes.save`, which defaults to `delta`. `flat` without a path, an unknown strategy and a strategy on a non-composite are bad requests. `commit` and `write-back` answer not-supported until C8, except as an eject or insert disposition, where they fall back to `delta` with a report line (D-8). `delta` writes `writes.delta`, or the path when one is given. An inline descriptor without `writes.delta` is refused. A conflict met on insert refuses with `dirty` unless `force`. |
+| Surfaces | `MediaControl::OptionsFor("save")`: `strategy`, `force`; MCP (`force` boolean), OpenAPI, CLI help | Lua and Python pass them through `MediaControl`. |
+
+The H1 media history will reuse this format as its spill file (flatten-strategies.md S2); version 1 has a single
+unversioned piece.

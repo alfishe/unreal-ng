@@ -821,7 +821,9 @@ ComposeDescriptor ComposeDescriptor::Parse(const std::string& text, const std::f
         failed.error = sourceName + ": cannot be read: " + e.what();
         return failed;
     }
-    if (d.writes.delta.empty() && !sourceName.empty())
+    // S2: the session delta sits next to its descriptor unless writes.delta says otherwise; an inline
+    // descriptor has none unless it names one
+    if (d.writes.delta.empty() && !sourceName.empty() && sourceName != kInlineName)
         d.writes.delta = (d.baseDir / Utf8Path(sourceName + ".delta")).lexically_normal();
     return d;
 }

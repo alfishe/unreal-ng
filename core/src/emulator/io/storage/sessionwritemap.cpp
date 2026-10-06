@@ -32,11 +32,17 @@ bool SessionWriteMap::WriteSector(uint64_t lba, const uint8_t* src)
     uint8_t original[kSectorSize];
     if (_base->ReadSector(lba, original) && std::memcmp(original, src, kSectorSize) == 0)
     {
-        _sectors.erase(lba);
+        if (_sectors.erase(lba))
+            _generation++;
         return true;
     }
 
-    std::memcpy(_sectors[lba].data(), src, kSectorSize);
+    auto& sector = _sectors[lba];
+    if (std::memcmp(sector.data(), src, kSectorSize) != 0)
+    {
+        std::memcpy(sector.data(), src, kSectorSize);
+        _generation++;
+    }
     return true;
 }
 

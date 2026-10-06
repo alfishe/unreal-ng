@@ -41,7 +41,15 @@ public:
     size_t ChangedSectors() const { return _sectors.size(); }
 
     /// Forget every change: reads show the medium again
-    void Discard() { _sectors.clear(); }
+    void Discard()
+    {
+        if (!_sectors.empty())
+            _generation++;
+        _sectors.clear();
+    }
+
+    /// Moves with every write that changes the layer (a saved session delta records it)
+    uint64_t Generation() const { return _generation; }
 
     /// Is any sector in [first, first + count) changed
     bool ChangedIn(uint64_t first, uint64_t count) const
@@ -65,4 +73,5 @@ public:
 private:
     std::unique_ptr<IBlockDevice> _base;
     std::map<uint64_t, std::array<uint8_t, kSectorSize>> _sectors;
+    uint64_t _generation = 0;
 };

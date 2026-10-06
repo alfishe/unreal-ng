@@ -303,7 +303,7 @@ TEST_F(BlockFormats_Test, MediaControlTakesCompressionAndParent)
     const std::string out = Utf8(_folder.Path() / "control.chd");
     // The verbs' option lists (MediaControl_Test.ChdOnTheSharedVerbs runs them on a machine)
     EXPECT_EQ(MediaControl::OptionsFor("export"), (std::vector<std::string>{"compression", "parent", "compact", "fs", "size"}));
-    EXPECT_EQ(MediaControl::OptionsFor("save"), (std::vector<std::string>{"retarget", "compression", "compact", "fs", "size"}));
+    EXPECT_EQ(MediaControl::OptionsFor("save"), (std::vector<std::string>{"retarget", "compression", "compact", "fs", "size", "strategy", "force"}));
     BlockWriteOptions options;
     options.compression = "lzma,huff";
     ASSERT_TRUE(_manager.Export("ide0.master", out, options).Ok());

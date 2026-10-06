@@ -25,6 +25,8 @@
 #include "emulator/io/storage/hostfolder/foldersnapshot.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/medium.h"
+#include "emulator/media/sessiondelta.h"
+#include "emulator/io/storage/sessionwritemap.h"
 
 namespace
 {
@@ -263,6 +265,8 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
     info = CompositeInfo{};
     info.descriptor = d.file.empty() ? "(inline)" : PathText(d.file);
     info.normalized = d.Normalized();
+    info.delta = d.writes.delta;
+    info.writesSave = d.writes.save;
     uint64_t identity = 0xcbf29ce484222325ULL;
     auto mix = [&identity](uint64_t v) {
         for (int i = 0; i < 8; i++)
@@ -702,6 +706,16 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
     return result;
 }
 
+DeltaIdentity CompositeMediumFactory::DeltaIdentityOf(const CompositeInfo& info)
+{
+    DeltaIdentity identity;
+    identity.contentId = info.contentId;
+    identity.sectorCount = info.sectors;
+    for (const CompositeLayerInfo& layer : info.layers)
+        identity.layers.push_back({layer.name, layer.identity});
+    return identity;
+}
+
 MediaResult CompositeMediumFactory::Open(const OpenRequest& request, std::unique_ptr<Medium>& medium)
 {
     medium.reset();
@@ -713,7 +727,7 @@ MediaResult CompositeMediumFactory::Open(const OpenRequest& request, std::unique
 
     ComposeDescriptor descriptor = source.inlineBody.empty()
                                        ? ComposeDescriptor::Load(FileHelper::ToFsPath(source.path))
-                                       : ComposeDescriptor::Parse(source.inlineBody, std::filesystem::current_path(), "(inline)");
+                                       : ComposeDescriptor::Parse(source.inlineBody, std::filesystem::current_path(), ComposeDescriptor::kInlineName);
     if (!descriptor.Ok())
         return MediaResult::Fail(descriptor.error.find("cannot be opened") != std::string::npos ? MediaError::UnreadableSource
                                                                                                    : MediaError::BadRequest,
@@ -754,6 +768,41 @@ MediaResult CompositeMediumFactory::Open(const OpenRequest& request, std::unique
                                             std::move(volume));
     medium->Report() = result.report;
     medium->SetOptions({fs, request.codePage, request.freeBytes});
+
+    // DT-13: a session delta next to the descriptor goes back into the change layer when it was written
+    // over this very composite
+    if (SessionWriteMap* session = medium->Session(); session && !info->delta.empty())
+    {
+        std::string detail;
+        const std::string name = FileHelper::FromFsPath(info->delta.filename());
+        switch (SessionDelta::Load(info->delta, *session, DeltaIdentityOf(*info), detail))
+        {
+            case DeltaLoad::Missing:
+                break;
+            case DeltaLoad::Restored:
+                medium->MarkPersisted();
+                medium->Report().push_back("session restored from " + name + ": " + detail);
+                result.report.push_back(medium->Report().back());
+                break;
+            case DeltaLoad::Damaged:
+            {
+                std::filesystem::path bad = info->delta;
+                bad += ".bad";
+                std::error_code ec;
+                std::filesystem::rename(info->delta, bad, ec);
+                medium->Report().push_back(name + " is damaged (" + detail + "): not applied, kept as " +
+                                           FileHelper::FromFsPath(bad.filename()));
+                result.report.push_back(medium->Report().back());
+                break;
+            }
+            case DeltaLoad::Mismatch:
+                medium->SetDeltaConflict(name + " was written over other sources (" + detail + ")");
+                medium->Report().push_back(name + " not applied, it was written over other sources: " + detail +
+                                           "; the medium starts clean");
+                result.report.push_back(medium->Report().back());
+                break;
+        }
+    }
     medium->SetComposite(std::move(info));
     return result;
 }

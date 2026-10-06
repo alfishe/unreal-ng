@@ -132,6 +132,9 @@ struct ComposeWrites
 
 struct ComposeDescriptor
 {
+    /// The source name of a descriptor given as text (no file, so no default delta file)
+    static constexpr const char* kInlineName = "(inline)";
+
     int version = 0;
     ComposeTarget target;
     std::vector<ComposeLayer> layers;

@@ -14,6 +14,7 @@
 /// tdd.md §11; target file system: fs-compatibility.md §6 (DT-6).
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -22,6 +23,7 @@
 
 #include "emulator/media/composedescriptor.h"
 #include "emulator/media/mediatypes.h"
+#include "emulator/media/sessiondelta.h"
 
 class IBlockDevice;
 class Medium;
@@ -56,6 +58,8 @@ struct CompositeInfo
     uint64_t bytes = 0;
     uint32_t sourceDevices = 0;  ///< images opened for the layers (one per image and partition, shared)
     std::vector<CompositeLayerInfo> layers;
+    std::filesystem::path delta;   ///< S2: the session delta file (writes.delta, or <descriptor>.delta); empty: none
+    std::string writesSave = "delta";  ///< writes.save: the strategy a save runs (DT-9)
 };
 
 /// The slot's side of the build (from OpenRequest / InsertOptions)
@@ -79,6 +83,9 @@ public:
     /// are set; `result.report` lists everything left out, shadowed or chosen
     static MediaResult Build(const ComposeDescriptor& descriptor, const CompositeBuildOptions& options,
                              std::unique_ptr<IBlockDevice>& volume, CompositeInfo& info);
+
+    /// What a session delta of this composite is written over (S2, DT-13)
+    static DeltaIdentity DeltaIdentityOf(const CompositeInfo& info);
 
     /// The registry's entry: a descriptor file (or inline body) into a medium
     static MediaResult Open(const OpenRequest& request, std::unique_ptr<Medium>& medium);

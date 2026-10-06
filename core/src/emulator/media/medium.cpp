@@ -79,7 +79,15 @@ uint64_t Medium::ChangedUnits() const
 {
     if (_disk)
         return _disk->dirtyTrackCount();
-    return _session ? _session->ChangedSectors() : 0;
+    if (!_session || (_persistedGeneration && *_persistedGeneration == _session->Generation()))
+        return 0;
+    return _session->ChangedSectors();
+}
+
+void Medium::MarkPersisted()
+{
+    if (_session)
+        _persistedGeneration = _session->Generation();
 }
 
 namespace

@@ -53,6 +53,11 @@ media {"action":"insert","slot":"ide0.master","path":"/music/album","device":"cd
   `delete`, `rename` (also a move; `oldPath`), `mkdir`, `rmdir`, `attributes` - each with the layer of a composite it
   touched (empty: new). `warnings` names lost clusters and changed boot sectors. Nothing is written. On a composite
   only the directories the writes touched are read; on other media every directory is (`fullScan: true`).
+- Composites (`*.ucompose.yaml`) and `save`: without a path the session goes into `<descriptor>.delta` (S2; the
+  descriptor's `writes.save` / `writes.delta` can say otherwise) and the medium is clean; the next insert of the same
+  descriptor restores it ("session restored"). A delta written over other sources (a host file changed since) is not
+  applied: the report names the layer, and a new `save` over it needs `force`. A damaged delta is renamed
+  `*.delta.bad`. `strategy: flat` with a path writes one image instead (as `export`, then the slot holds that image).
 
 - `slot` takes `A`, `b:`, `fdd.b`, `sd`, `floppy:1`, `tag:sd+neogs` or (insert) `auto`.
 - Paths are read by the **emulator** process (the `media` tool does not upload; `load_software` does, and the WebAPI `insert` / `swap` also take a multipart file or a raw body with `X-Filename`).

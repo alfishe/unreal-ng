@@ -27,10 +27,10 @@ PLAN.md row **#95**.
 - [x] C5a ISO reader, ISO sources, ISO target, optical composites, ACC-C5
 - [x] C5b D-6 boot carry-over (El Torito, and FAT rebuilds: `BootPlan`, the `boot:` section; its
   tests are in C5's list, [test-and-benchmark-plan.md](test-and-benchmark-plan.md) §3.5)
-- [ ] C6 provenance, attribution (`changes`), S1 flat (+ VHD writer, compact), S2 delta
+- [x] C6 provenance, attribution (`changes`), S1 flat (+ VHD writer, compact), S2 delta
   - [x] C6a S1: sparse raw export, fixed VHD writer, `compact` on export / save, ACC-C6
   - [x] C6b provenance, `ChangeAttributor`, `media changes`, ACC-C3 attribution
-  - [ ] C6c S2 delta file, DT-13 restore, DT-9, ACC-C7
+  - [x] C6c S2 delta file, DT-13 restore, DT-9, ACC-C7
 - [ ] C7 partitions
 - [ ] C8 S3 commit, S4 write-back, Qt flatten dialog
 - [ ] C9 optional bulk `ReadSectors` (A/B gated)
@@ -48,6 +48,13 @@ PLAN.md row **#95**.
 - [ ] **P2** ACC-C5, the NedoOS half (owner request 2026-10-05): NedoOS lists the contents of a composite CD on the
   ZX-Evo's ATAPI drive. Needs NedoOS's CD / ISO 9660 driver in the test fixtures (`testdata/machines/zxevo/nedoos/`);
   the ERS boot of `AUTORUN.ZX` already covers the drive path ([phases/c5-iso.md](phases/c5-iso.md) §9)
+- [ ] **P2** DSS 1.71.66 MKDIR corrupts a `BuildDssHdd` disk (found 2026-10-06 while moving ACC-C3 to the newest DSS,
+  whose shell has REN / DEL / ECHO but no COPY and no redirection). On BIOS 3.06 HF2, a plain session image (no
+  composite): `mkdir c:\acc` writes LBA 160-220, the first clusters of SYSTEM.DOS, and `cd \acc` + `dir` answers
+  "Path not found". DSS 1.62.92 makes directories on the same layout correctly (FAT16, 63 hidden sectors, 4 sectors per
+  cluster, 8152 clusters). It is either the test disk's layout or an IDE write path that DSS 1.71's driver takes and
+  1.62's does not. Once it is fixed, move `SprinterBoot_Test.ComposeDssGuestWriteAttributed` to DSS 1.71 so that the
+  guest's REN and DEL are attributed too ([phases/c6-provenance-flatten.md](phases/c6-provenance-flatten.md) §7)
 
 ## Phase documents
 

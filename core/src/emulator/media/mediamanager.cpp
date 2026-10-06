@@ -3,6 +3,8 @@
 #include "mediamanager.h"
 
 #include "emulator/media/composedescriptor.h"
+#include "emulator/media/compositemediumfactory.h"
+#include "emulator/media/sessiondelta.h"
 
 #include <algorithm>
 #include <chrono>
@@ -884,6 +886,7 @@ MediaResult MediaManager::ApplyDisposition(const std::string& slotId, Medium& me
         {
             SaveOptions options;
             options.allowRetarget = true;
+            options.disposition = true;
             return SaveMedium(slotId, medium, it != _slots.end() ? it->second.slot : nullptr, options, nullptr);
         }
         case Disposition::Export:
@@ -1011,6 +1014,34 @@ MediaResult MediaManager::SaveBlockMedium(const std::string& slotId, Medium& med
     if (!CanApplyNow())
         return MediaResult::Fail(MediaError::NotSupported, "pause the emulator to save slot '" + slotId + "'");
 
+    // DT-9: a composite without a target path saves its session as the descriptor says (S2 by default)
+    // (a composite saved flat to a path stands for that file afterwards: its source is no longer the descriptor)
+    const CompositeInfo* composite = medium.Source().type == MediaSourceType::Composite ? medium.Composite() : nullptr;
+    if (composite && medium.Session())
+    {
+        std::string strategy = options.strategy;
+        std::string note;
+        if (strategy.empty())
+        {
+            strategy = options.path.empty() ? composite->writesSave : "flat";
+            if (options.disposition && (strategy == "commit" || strategy == "write-back"))
+            {
+                strategy = "delta";
+                note = composite->writesSave + " needs an explicit strategy on eject: saved as a session delta (D-8)";
+            }
+        }
+        if (strategy == "delta")
+            return SaveDelta(slotId, medium, *composite, options, note, outcome);
+        if (strategy == "commit" || strategy == "write-back")
+            return MediaResult::Fail(MediaError::NotSupported, "strategy '" + strategy + "' is not there yet (phase C8): save as delta, or flat to a path");
+        if (strategy != "flat")
+            return MediaResult::Fail(MediaError::BadRequest, "strategy '" + strategy + "': expected flat, delta, commit or write-back");
+        if (options.path.empty())
+            return MediaResult::Fail(MediaError::BadRequest, "a flat save writes a new image: name the path to save to");
+    }
+    else if (!options.strategy.empty() && options.strategy != "flat")
+        return MediaResult::Fail(MediaError::BadRequest, "strategy '" + options.strategy + "' is for composite media with session writes");
+
     const std::string before = medium.Source().path;
     BlockWriteOptions write;
     write.compression = options.compression;
@@ -1030,6 +1061,35 @@ MediaResult MediaManager::SaveBlockMedium(const std::string& slotId, Medium& med
         outcome->savedPath = savedPath;
         outcome->retargeted = false;
         outcome->note.clear();
+    }
+    Post(NC_MEDIA_SAVED, slotId, &medium, savedPath);
+    return result;
+}
+
+MediaResult MediaManager::SaveDelta(const std::string& slotId, Medium& medium, const CompositeInfo& composite, const SaveOptions& options,
+                                    const std::string& note, SaveOutcome* outcome)
+{
+    std::filesystem::path path = options.path.empty() ? composite.delta : FileHelper::ToFsPath(options.path);
+    if (path.empty())
+        return MediaResult::Fail(MediaError::BadRequest,
+                                 "an inline descriptor has no delta file: name writes.delta in it, or save flat to a path");
+    if (!medium.DeltaConflict().empty() && options.path.empty() && !options.force)
+        return MediaResult::Fail(MediaError::Dirty, medium.DeltaConflict() + ": save with force to replace it, or flat to a path");
+
+    MediaResult result = SessionDelta::Save(path, *medium.Session(), CompositeMediumFactory::DeltaIdentityOf(composite));
+    if (!result.Ok())
+        return result;
+    medium.MarkPersisted();
+    medium.SetDeltaConflict({});
+    const std::string savedPath = FileHelper::FromFsPath(path);
+    result.report.push_back("session delta: " + std::to_string(medium.Session()->ChangedSectors()) + " sector(s) in " + savedPath);
+    if (!note.empty())
+        result.report.push_back(note);
+    if (outcome)
+    {
+        outcome->savedPath = savedPath;
+        outcome->retargeted = false;
+        outcome->note = result.report.back();
     }
     Post(NC_MEDIA_SAVED, slotId, &medium, savedPath);
     return result;

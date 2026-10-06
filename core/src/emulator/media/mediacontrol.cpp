@@ -263,7 +263,7 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"insert", kInsertOptions},
         {"swap", kInsertOptions},
         {"eject", {"save", "export", "discard", "end_recording", "async"}},
-        {"save", {"retarget", "compression", "compact", "fs", "size"}},
+        {"save", {"retarget", "compression", "compact", "fs", "size", "strategy", "force"}},
         {"export", {"compression", "parent", "compact", "fs", "size"}},
         {"discard", {"async"}},
         {"rescan", {"async"}},
@@ -385,7 +385,7 @@ MediaReply MediaControl::Compose(const MediaRequest& request)
         return Fail(MediaError::BadRequest, "name a descriptor file (*.ucompose.yaml) or give its JSON text");
 
     const ComposeDescriptor descriptor = IsInlineDescriptor(request.path)
-                                             ? ComposeDescriptor::Parse(request.path, std::filesystem::current_path(), "(inline)")
+                                             ? ComposeDescriptor::Parse(request.path, std::filesystem::current_path(), ComposeDescriptor::kInlineName)
                                              : ComposeDescriptor::Load(FileHelper::ToFsPath(request.path));
     std::unique_ptr<IBlockDevice> volume;
     CompositeInfo info;
@@ -1038,6 +1038,10 @@ MediaReply MediaControl::Save(const MediaRequest& request)
         options.compression = Trim(compression->second);
     if (MediaReply bad = CompactOptions(request.options, options.compact, options.fs, options.size); !bad.result.Ok())
         return bad;
+    if (auto strategy = request.options.find("strategy"); strategy != request.options.end())
+        options.strategy = Lower(Trim(strategy->second));
+    if (auto force = request.options.find("force"); force != request.options.end() && !ParseBool(force->second, options.force))
+        return Fail(MediaError::BadRequest, "force '" + force->second + "': expected true or false");
 
     SaveOutcome outcome;
     {

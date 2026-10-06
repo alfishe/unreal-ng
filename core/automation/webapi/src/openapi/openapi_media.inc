@@ -126,6 +126,12 @@
         body["properties"]["export"]["type"] = "string";
         body["properties"]["export"]["description"] = "Disposition: write a dirty medium to this new file first";
         body["properties"]["discard"]["type"] = "boolean";
+        body["properties"]["strategy"]["type"] = "string";
+        body["properties"]["strategy"]["description"] =
+            "save of a composite: delta (the session's writes into <descriptor>.delta, restored at the next insert; "
+            "the default without a path) or flat (a new image at path; the default with one)";
+        body["properties"]["force"]["type"] = "boolean";
+        body["properties"]["force"]["description"] = "save as delta over a delta written over other sources";
         body["properties"]["compact"]["type"] = "boolean";
         body["properties"]["compact"]["description"] =
             "save / export of a FAT disk or card: a re-synthesized volume (every file contiguous; with fs: fat16 / fat32 "
