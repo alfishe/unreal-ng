@@ -26,7 +26,7 @@ real software verified as a user runs it.
 | MS-5 | TTD: card blob + SAA + SAM ids, registry through `SlotManager`, round-trip and session-match tests. **Done 2026-10-05** (not committed): §4 "As built"; ids 58 `MultiSound`, 59 `Sam2695`, 60 `MultiSoundGs`, region 17 `MultiSoundGsRam`; `TtdMultiSound_Test` (7 tests: devices registered by slot, `RoundTripMidTune`, `MidiByteAcrossCheckpoint`, `SessionRefusesOtherBank`, card / no-card mismatch, a missing card device refuses recording, two instances of one module refused by the planner); the card in `TTDModelStateContract_Test.EveryDeviceMatchesItsDescriptorOnEveryModel` | MS-3, slots SL-5 |
 | MS-6 | Automation (card options through the slot surfaces; card state report `multisound` on every surface), OpenAPI, Qt card panel, recipe | MS-3, slots SL-6 |
 | MS-7 | Real-software verification (§6) with TTD recording on | MS-4, MS-5 |
-| MS-8 | Docs: `docs/features/` user page, `.recipe/sound/multisound.md`, machine recipes updated where the card is listed | MS-6 |
+| MS-8 | Docs: `docs/features/` user page, `.recipe/sound/multisound.md`, machine recipes updated where the card is listed. **Done 2026-10-05** (not committed): [docs/features/multisound.md](../../features/multisound.md); the recipe is [.recipe/peripherals/multisound.md](../../../.recipe/peripherals/multisound.md) (MS-6); the card in the Pentagon, Scorpion, ZX-Evo Baseconf and TS-Conf machine recipes | MS-6 |
 
 ## 3. Card catalog entry
 

@@ -49,6 +49,9 @@ inspect_state {"aspects":["fdc"]}
   without inserting anything, and `#FF` FDC ports are always decoded.
 - The shipped `[SLOTS]` fit `zxbus.1 = neogs` (NeoGS, as on every clone), a MoonSound, a SounDrive and the TSFM
   (`inspect_state {"aspects":["slots"]}`).
+- The ZX-MultiSound card fits the `PROFSCORP` ZX-bus as on real hardware (not shipped; it replaces the TSFM, NeoGS
+  and SounDrive); the `SCORPION` board has +12 V only on the control port, so there it is an `unrealistic` fit that
+  needs the override: [multisound.md](../peripherals/multisound.md), [docs/features/multisound.md](../../docs/features/multisound.md).
 
 ## WebAPI
 

@@ -43,6 +43,14 @@ below. Common material for all ATM models (creating, ports, video modes, CP/M mo
     of a window that holds the DOS ROM in map 1 takes half a 3.5 MHz T longer
     (the chipset holds the clock 4 x 28 MHz so the ROM chip can answer).
 
+## Sound cards
+
+The shipped `[SLOTS]` fit a TurboSound (`ay-socket = ts`), a NeoGS, a MoonSound and a SounDrive on the ZX-bus
+(`inspect_state {"aspects":["slots"]}`, [slots.md](../slots.md)). The ZX-MultiSound card (TSFM, SAA1099, GS,
+SounDrive and MIDI on one card) is not shipped; it fits a ZX-bus slot, takes the socketed YM2149 out of its socket and
+replaces the TurboSound, NeoGS and SounDrive (`ay-socket = ay` next to it is refused):
+[multisound.md](../../peripherals/multisound.md), user guide [docs/features/multisound.md](../../../docs/features/multisound.md).
+
 ## Hard disk and CD
 
 The IDE board is the NemoIDE (`[HDD] Scheme=NEMO-DIVIDE`). The units are the media slots `ide0.master`

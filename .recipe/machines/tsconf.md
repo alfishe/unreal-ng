@@ -168,6 +168,7 @@ a stable "lo<->hi" band instead of chasing every flip.
 | SD card (`#57` / `#77`, slot `sd.zc`), Nemo IDE (`[HDD] Scheme=NEMO-DIVIDE`, `IdeStall`), Gluk CMOS (a `#BFF7` access waits for the AVR like `#xxEF`, inside vdos too: [cmos-rtc.md](../peripherals/cmos-rtc.md)) | implemented |
 | SPG programs (`.spg` v1.0 / v1.1) | implemented (pager / resident fields not used); opening one on another model switches to TSL on every surface |
 | Sound: AY / TurboSound, one 8-bit DAC shared by Covox `#FB` and the `#FE` beeper bit | implemented |
+| ZX-MultiSound card in a ZX-bus slot (the socketed YM2149 comes out; not in the shipped config): [multisound.md](../peripherals/multisound.md), [docs/features/multisound.md](../../docs/features/multisound.md) | implemented (TSFM, SAA via VGMPLAY, MIDI via GSPLAYER checked) |
 | Wild Commander from SD or the Nemo IDE master (TS-BIOS "BD boot.$c", Boot Device) | works (tests BOOT-3, BOOT-4); WC's panels use the drive in `WC/wc.ini` (`DRV=0` SD, `1` IDE master) |
 | PS/2 keyboard (the AVR's scan code log; Wild Commander reads only this) | implemented (host keys and automation typing) |
 | TTD: all TS-Conf state in blob 16, SD card 15, CMOS 18, IDE 17; DMA writes tracked | implemented (corpus fixture `testdata/machines/tsconf/ttd/sprites.ttd`) |

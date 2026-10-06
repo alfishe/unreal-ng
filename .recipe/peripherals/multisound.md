@@ -9,7 +9,8 @@ state and stops the synthesizer with a MIDI panic. Verified 2026-10-05 against b
 Ground truth: the card [multisoundcard.h](../../core/src/emulator/slots/cards/multisound/multisoundcard.h), its report
 [multisounddevicestate.cpp](../../core/src/emulator/slots/cards/multisound/multisounddevicestate.cpp), the panic
 [midicontrol.h](../../core/src/emulator/sound/midi/midicontrol.h); design
-[docs/inprogress/2026-10-03-zx-multisound/](../../docs/inprogress/2026-10-03-zx-multisound/architecture.md).
+[docs/inprogress/2026-10-03-zx-multisound/](../../docs/inprogress/2026-10-03-zx-multisound/architecture.md); user guide
+[docs/features/multisound.md](../../docs/features/multisound.md).
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred; the WebAPI is used where MCP has no tool (writing
 > a test program into memory). CLI: `multisound`, `midi`, `midi panic`. Lua / Python: `multisound_state()`,
