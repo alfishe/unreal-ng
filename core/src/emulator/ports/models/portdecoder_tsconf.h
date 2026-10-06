@@ -86,6 +86,10 @@ public:
 
     /// The 7FFD lock is TSConf's own latch (§2.3)
     bool IsPagingLocked() const override { return _ts.lock48 != 0; }
+    /// A 48K / 128K snapshot: MEM_CONFIG in mapped mode (window 0 = the {service, TR-DOS, 128, 48} ROM group by ~DOS and
+    /// ROM128, so #7FFD bit 4 picks the BASIC) with #7FFD decoded as on a 128K (LCK128 = 128K). The reset leaves the normal
+    /// mode: window 0 is ROM page 0, whatever #7FFD says, and bits 7:6 of #7FFD add page bits
+    void EnterSpectrum128Paging(uint16_t pc) override;
 
     /// SYS_CONFIG selects 3.5, 7 or 14 MHz
     uint8_t TtdClockUnits() const override { return 4; }

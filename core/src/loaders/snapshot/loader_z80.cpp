@@ -620,6 +620,10 @@ void LoaderZ80::commitFromStage()
         switch (_memoryMode)
         {
             case Z80_48K: {
+                // The 48K BASIC, latches included (what the reset does for RM_SOS): the +2A / +3 take the ROM's high bit
+                // from #1FFD, which the shipped RESET=128 leaves at ROM 0 / 1
+                memory.SetROMMode(RM_SOS);
+
                 // Step 1: Unlock paging for state-independent loading
                 ports.UnlockPaging();
 

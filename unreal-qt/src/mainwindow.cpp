@@ -171,7 +171,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _originalPalette = palette();
 
     // Register fullscreen shortcut with application-wide context
-    // (works even when menu bar is hidden in fullscreen mode)
+    // (works even when menu bar is hidden in fullscreen mode).
+    // Cmd+F on macOS, Ctrl+F elsewhere (Qt::CTRL maps to Cmd on macOS)
     auto* fullScreenShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
     fullScreenShortcut->setContext(Qt::ApplicationShortcut);
     connect(fullScreenShortcut, &QShortcut::activated, this, &MainWindow::handleFullScreenShortcut);
@@ -311,17 +312,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _dockingManager->addDockableWindow(logWindow, Qt::RightEdge);
 
     // Instantiate tape manager window (design §9.4): one instance per app
-    // session, hidden by default — View → Tape Manager (Ctrl+3) shows it
+    // session, hidden by default — View → Tape Manager shows it
     tapeManagerWindow = new TapeManagerWindow();
     tapeManagerWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(tapeManagerWindow, Qt::BottomEdge);
 
-    // Media panel (media-control-design.md §3.9): hidden by default, Tools → Media (Ctrl+4)
+    // Media panel (media-control-design.md §3.9): hidden by default, Tools → Media
     mediaPanelWindow = new MediaPanelWindow();
     mediaPanelWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(mediaPanelWindow, Qt::BottomEdge);
 
-    // Network window (network TDD §8): hidden by default, Tools → Network (Ctrl+5)
+    // Network window (network TDD §8): hidden by default, Tools → Network
     networkWindow = new NetworkWindow();
     networkWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(networkWindow, Qt::RightEdge);
@@ -341,13 +342,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _slotChangeController = new SlotChangeController(std::move(slotHooks), this);
     networkWindow->setController(_slotChangeController);   // the network cards are slots (Q11)
 
-    // Slots window: hidden by default, Machine -> Slots (Ctrl+6)
+    // Slots window: hidden by default, Machine -> Slots
     _slotsWindow = new SlotsWindow();
     _slotsWindow->setBinding(m_binding);
     _slotsWindow->setController(_slotChangeController);
     _dockingManager->addDockableWindow(_slotsWindow, Qt::RightEdge);
 
-    // MIDI activity: hidden by default, Tools -> MIDI Activity (Ctrl+7)
+    // MIDI activity: hidden by default, Tools -> MIDI Activity
     _midiActivityWindow = new MidiActivityWindow();
     _midiActivityWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(_midiActivityWindow, Qt::BottomEdge);
@@ -1599,7 +1600,7 @@ void MainWindow::toggleEmulatorStartStop()
 void MainWindow::handleFullScreenShortcut()
 {
     // IMPORTANT: Release modifier keys (Ctrl, Shift) to prevent stuck keys in emulator.
-    // The fullscreen shortcut (Ctrl+F) sends a Ctrl press to the emulator. During
+    // The fullscreen shortcut (with its modifier keys) sends a modifier press to the emulator. During
     // window state transitions, the key release may be missed, causing the Ctrl key
     // to stay "stuck" in the emulator's keyboard state.
     if (_emulator)
@@ -1937,7 +1938,7 @@ void MainWindow::handleFullScreenShortcutLinux()
             if (_dockingManager)
                 _dockingManager->setSnappingLocked(false);
 
-            // Ensure keyboard focus for Ctrl+F to work
+            // Ensure keyboard focus for the fullscreen shortcut to work
             activateWindow();
             raise();
             if (_screenWrapper)

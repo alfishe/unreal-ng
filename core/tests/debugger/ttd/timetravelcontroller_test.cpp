@@ -987,21 +987,47 @@ TEST_F(TimeTravelController_Test, ASnapshotLoadKeepsTheHistory)
     EXPECT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(3)->time.frame, 0}, &r)) << "still browsable";
 }
 
-/// D10 on the surfaces' guard: on the engine a snapshot load is not refused
-/// while recording, a switch of the machine model is (D26: the history belongs
-/// to this machine) - a machine state transfer into a recording machine
-TEST_F(TimeTravelController_Test, WhileRecordingASnapshotLoadIsAllowedAModelSwitchIsNot)
+/// A change of the machine itself ends the session (owner rule 2026-10-05): on
+/// the engine nothing is refused - a machine state transfer into a recording
+/// machine stops the recording and drops its history; an explicit recording
+/// stays off, a black box starts a new session at the next frame boundary
+TEST_F(TimeTravelController_Test, AMachineChangeEndsTheSession)
 {
-    ASSERT_TRUE(_controller->StartRecording());
-    _b->RunNFrames(2, /*skipBreakpoints=*/true);
-    EXPECT_TRUE(_b->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot).empty());
-    const std::string refusal = _b->RecordingGuard(ttd::TTDGuardedAction::SwitchModel);
-    EXPECT_NE(refusal.find("Stop the recording first"), std::string::npos) << refusal;
+    for (const ttd::TTDGuardedAction action : {ttd::TTDGuardedAction::LoadSnapshot, ttd::TTDGuardedAction::LoadRom,
+                                               ttd::TTDGuardedAction::SwitchGsCard, ttd::TTDGuardedAction::SwitchModel,
+                                               ttd::TTDGuardedAction::ChangeSlots})
+    {
+        ASSERT_TRUE(_controller->StartRecording());
+        EXPECT_TRUE(_b->RecordingGuard(action).empty()) << static_cast<int>(action);
+        _controller->StopRecording();
+    }
 
-    const MachineStateTransfer::Report report = MachineStateTransfer::Transfer(*_a, *_b, {});
-    EXPECT_FALSE(report.ok);
-    EXPECT_EQ(report.reason, refusal);
-    EXPECT_TRUE(_controller->IsRecording());
+    // An explicit recording: ended cleanly (debug mode, which it switched on, back off), not started again
+    FeatureManager* features = _b->GetFeatureManager();
+    ASSERT_TRUE(features->setFeature(Features::kDebugMode, false));
+    ASSERT_TRUE(_controller->StartRecording());
+    ASSERT_TRUE(features->isEnabled(Features::kDebugMode)) << "the recording needs it";
+    _b->RunNFrames(3, /*skipBreakpoints=*/true);
+    MachineStateTransfer::Report report = MachineStateTransfer::Transfer(*_a, *_b, {});
+    EXPECT_TRUE(report.ok) << report.reason;
+    EXPECT_FALSE(_controller->IsRecording());
+    EXPECT_FALSE(features->isEnabled(Features::kDebugMode)) << "the recording's features restored";
+    EXPECT_EQ(_controller->GetCheckpointCount(), 0u) << "the session ended";
+    EXPECT_EQ(_controller->GetSessionInfo().lastDropReason, "state-transfer");
+    _b->RunNFrames(2, /*skipBreakpoints=*/true);
+    EXPECT_FALSE(_controller->IsRecording()) << "an explicit recording is not started again";
+
+    // A black box: a new session on the changed machine
+    _controller->SetBlackBox(true, 5);
+    ASSERT_TRUE(_controller->StartRecording());
+    _b->RunNFrames(3, /*skipBreakpoints=*/true);
+    report = MachineStateTransfer::Transfer(*_a, *_b, {});
+    EXPECT_TRUE(report.ok) << report.reason;
+    EXPECT_FALSE(_controller->IsRecording());
+    _b->RunNFrames(1, /*skipBreakpoints=*/true);
+    EXPECT_TRUE(_controller->IsRecording()) << "the black box records again";
+    _b->RunNFrames(2, /*skipBreakpoints=*/true);
+    EXPECT_LE(_controller->GetCheckpointCount(), 3u) << "a new session, not the old one";
 }
 
 /// Step 3 (D29): the black box records without holding the machine at real

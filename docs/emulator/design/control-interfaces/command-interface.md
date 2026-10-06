@@ -2813,10 +2813,10 @@ Worked example (CLI): `ttd start`, run 300 frames, `ttd seek 100` - the recordin
 | :--- | :--- |
 | Snapshot load (v1 only; on the engine it is part of the recording, see below) | Replaces the whole machine state. |
 | Tape load, disk load (including disk autostart), disk create | A new medium. Insert it before starting the recording. |
-| ROM load | The recorded history relies on the current ROM. |
 | `ttd invalidate` | Stop the recording first, then discard it. |
-| Switching the General Sound card type (the `gs_lightweight` feature; `gs switch_personality` is a slot change, refused while recording like every slot change) | The history holds the current card's state, which the other card type cannot take back. |
 | Host speed 2x..16x, turbo, fast tape, turbo tape, fast disk | See the acceleration lock below. |
+
+**A change of the machine itself ends the session** (the engine; v1 refuses these while recording): a ROM load, a model switch (also a snapshot that needs another model, and a machine state transfer), a General Sound card switch (`gs switch_personality`, the `gs_lightweight` feature) and every slot change. The recording stops cleanly and its history is dropped (`last_drop_reason` names the change, `last_stop_reason` is `machine-change`). A new session then starts or not by the settings and options: a black box starts one on the changed machine at the next frame; an explicit recording is not started again. A model switch or a slot change restarts the machine as a new instance, which starts recording only by its own settings.
 
 **A snapshot load is part of the recording on the engine** (`backend: engine`, D10). While a session records, the machine first runs to the end of its current frame, then the snapshot replaces it at the frame boundary, and the checkpoint there holds the loaded state; frame numbers go on (a load outside a recording restarts them from 0). The history keeps both sides: a seek before the load shows the old program, a seek after it the loaded one, and running forward from before it takes the loaded state at that boundary. A recording paused for browsing (D8) continues with the load when the machine stands at its paused end; elsewhere it ends where it paused. Outside a recording a snapshot load keeps the history: the machine leaves it, as after a reset. A model switch through a snapshot (machine state transfer) is still refused while recording; tape, disk and ROM loads are unchanged.
 

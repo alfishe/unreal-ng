@@ -23,116 +23,71 @@ A comprehensive cross-platform menu system has been implemented for the Unreal S
 ## Menu Structure
 
 ### File Menu
-- **Open...** (Ctrl+O) - Open any supported file
-- **Open Snapshot...** (Ctrl+Shift+O) - Load snapshot (.z80, .sna, .szx) or play an RZX recording (.rzx: another model is replaced by the recording's first; the status bar shows `RZX nn%`, red after a desync, with the details in its tooltip; a click on it toggles a popover - the label is highlighted while it is open: file and creator, a slider over the whole recording with frame and time, `|<` / `>|`, the state, the keyframes and Stop Playback; a seek runs on a worker thread, back through the nearest keyframe. The popover is a small window glued to the main window (macOS: a child window that moves with it; other platforms follow the window's moves) and closes when the window loses focus, on a click outside it, on Esc or on minimize)
+- **Open...** - Open any supported file
+- **Open Snapshot...** - Load snapshot (.z80, .sna, .szx) or play an RZX recording (.rzx: another model is replaced by the recording's first; the status bar shows `RZX nn%`, red after a desync, with the details in its tooltip; a click on it toggles a popover - the label is highlighted while it is open: file and creator, a slider over the whole recording with frame and time, `|<` / `>|`, the state, the keyframes and Stop Playback; a seek runs on a worker thread, back through the nearest keyframe. The popover is a small window glued to the main window (macOS: a child window that moves with it; other platforms follow the window's moves) and closes when the window loses focus, on a click outside it, on Esc or on minimize)
 - **Stop RZX Playback** - End an RZX playback early; the machine continues live (enabled while one plays). While a recording plays, fast tape / turbo tape / fast disk are greyed out
-- **Open Tape...** (Ctrl+T) - Load tape (.tap, .tzx)
-- **Open Disk...** (Ctrl+D) - Load disk image (.trd, .scl, .fdi)
-- **Save Snapshot...** (Ctrl+S) - Save current state [TODO]
+- **Open Tape...** - Load tape (.tap, .tzx)
+- **Open Disk...** - Load disk image (.trd, .scl, .fdi)
+- **Save Snapshot...** - Save current state [TODO]
 - **Recent Files** - Recent file list [TODO]
 - **Exit** (Ctrl+Q / Cmd+Q) - Exit application
 
 ### Edit Menu
-- **Preferences...** (Ctrl+P / Cmd+,) - Configure settings [TODO]
+- **Preferences...** (platform Preferences key) - Configure settings [TODO]
 
 ### View Menu
-- **Debugger** (Ctrl+1) - Toggle debugger window
-- **Log Window** (Ctrl+2) - Toggle log window
-- **Full Screen** (F11 / Ctrl+Cmd+F) - Toggle full screen
-- **Zoom In** (Ctrl++) - Zoom in [TODO]
-- **Zoom Out** (Ctrl+-) - Zoom out [TODO]
-- **Reset Zoom** (Ctrl+0) - Reset zoom [TODO]
+- **Debugger** - Toggle debugger window
+- **Log Window** - Toggle log window
+- **Full Screen** - Toggle full screen
+- **Zoom In** - Zoom in [TODO]
+- **Zoom Out** - Zoom out [TODO]
+- **Reset Zoom** - Reset zoom [TODO]
 
 ### Run Menu
-- **Start** (F5) - Start emulation
-- **Pause** (F6) - Pause emulation
-- **Resume** (F7) - Resume emulation
+- **Start** - Start emulation
+- **Pause** - Pause emulation
+- **Resume** - Resume emulation
 - **Stop** (Shift+F5) - Stop emulation
-- **Reset** (Ctrl+R) - Reset emulator
+- **Reset** - Reset emulator
 - **Speed** submenu:
-  - **1x (Normal)** (F1) - Normal speed (3.5 MHz)
-  - **2x (Fast)** (F2) - 2x speed (7 MHz)
-  - **4x (Very Fast)** (F3) - 4x speed (14 MHz)
-  - **8x (Extreme)** (F4) - 8x speed (28 MHz)
+  - **1x (Normal)** - Normal speed (3.5 MHz)
+  - **2x (Fast)** - 2x speed (7 MHz)
+  - **4x (Very Fast)** - 4x speed (14 MHz)
+  - **8x (Extreme)** - 8x speed (28 MHz)
   - **16x (Insane)** - 16x speed (56 MHz)
   - **Turbo Mode** (Tab) - Max speed (no sync)
 
 ### Debug Menu
-- **Debug Mode** (Ctrl+Shift+D) - Enable debug mode
-- **Step In** (F8) - Execute one instruction
-- **Step Over** (F10) - Execute instruction, skip calls
+- **Debug Mode** - Enable debug mode
+- **Step In** - Execute one instruction
+- **Step Over** - Execute instruction, skip calls
 - **Step Out** (Shift+F8) - Execute until return [TODO]
-- **Run to Cursor** (F9) - Execute until cursor [TODO]
-- **Toggle Breakpoint** (Ctrl+B) - Toggle breakpoint [TODO]
-- **Clear All Breakpoints** (Ctrl+Shift+B) - Remove all breakpoints [TODO]
+- **Run to Cursor** - Execute until cursor [TODO]
+- **Toggle Breakpoint** - Toggle breakpoint [TODO]
+- **Clear All Breakpoints** - Remove all breakpoints [TODO]
 - **Show Breakpoints...** - Show breakpoints window [TODO]
 - **Show Registers** - Show CPU registers [TODO]
 - **Show Memory** - Show memory viewer [TODO]
 
 ### Tools Menu
-- **Settings...** (Ctrl+Alt+S) - Configure emulator [TODO]
+- **Settings...** - Configure emulator [TODO]
 - **Take Screenshot** - Copy what the window shows (viewport-cropped) to the clipboard
 - **Save Screenshot As...** - Save the whole presented frame, with border, as a PNG or GIF file (no keyboard shortcut: plain F12 and the other keys must reach the emulated machine)
   (design: [screenshotter design](../../../inprogress/2026-10-03-screenshotter/design.md))
 - **Record Video...** - Start/stop video recording [TODO]
 
 ### Help Menu
-- **Documentation** (F1) - View documentation
+- **Documentation** - View documentation
 - **Keyboard Shortcuts** - Show shortcuts
 - **About** - About Unreal Speccy
 
 ## Keyboard Shortcuts
 
-### Emulation Control
-| Shortcut | Action |
-|----------|--------|
-| F5 | Start emulation |
-| F6 | Pause emulation |
-| F7 | Resume emulation |
-| Shift+F5 | Stop emulation |
-| Ctrl+R | Reset emulator |
-
-### Speed Control
-| Shortcut | Action |
-|----------|--------|
-| F1 | 1x speed (Normal) |
-| F2 | 2x speed (Fast) |
-| F3 | 4x speed (Very Fast) |
-| F4 | 8x speed (Extreme) |
-| Tab | Toggle Turbo Mode (unavailable while TTD is recording) |
-
-### Debug Control
-| Shortcut | Action |
-|----------|--------|
-| F8 | Step In |
-| F10 | Step Over |
-| Shift+F8 | Step Out |
-| F9 | Run to Cursor |
-| Ctrl+B | Toggle Breakpoint |
-| Ctrl+Shift+B | Clear All Breakpoints |
-| Ctrl+Shift+D | Toggle Debug Mode |
-
-### View Control
-| Shortcut | Action |
-|----------|--------|
-| F11 (Win/Linux) | Full Screen |
-| Ctrl+Cmd+F (macOS) | Full Screen |
-| Ctrl+1 | Toggle Debugger |
-| Ctrl+2 | Toggle Log Window |
-| Ctrl++ | Zoom In |
-| Ctrl+- | Zoom Out |
-| Ctrl+0 | Reset Zoom |
-
-### File Operations
-| Shortcut | Action |
-|----------|--------|
-| Ctrl+O | Open File |
-| Ctrl+Shift+O | Open Snapshot |
-| Ctrl+T | Open Tape |
-| Ctrl+D | Open Disk |
-| Ctrl+S | Save Snapshot |
-| Ctrl+Q (Win/Linux) | Exit |
-| Cmd+Q (macOS) | Exit |
+Only the platform's standard shortcuts are assigned (2026-10-05, owner decision; the earlier ad-hoc keys were
+removed): Open (`QKeySequence::Open`), Save snapshot (`Save`), Quit (`Quit`), Preferences (`Preferences`), Help
+(`HelpContents`); Full Screen is Ctrl+F (Cmd+F on macOS) on every platform (restored 2026-10-06, owner
+decision). Every other command is
+reached through the menus. Dialogs keep their local keys (Delete, Escape, search).
 
 ## Implementation Details
 
@@ -209,12 +164,12 @@ Called from:
 - Native menu bar (`setNativeMenuBar(true)`)
 - Cmd key for shortcuts (e.g., Cmd+Q for Quit)
 - Cmd+, for Preferences
-- Ctrl+Cmd+F for Full Screen
+- Cmd+F for Full Screen
 
 ### Windows/Linux
 - Standard menu bar
 - Ctrl key for shortcuts
-- F11 for Full Screen
+- Ctrl+F for Full Screen
 - Ctrl+P for Preferences
 
 ## CLI Command Mapping

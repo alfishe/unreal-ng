@@ -68,7 +68,7 @@ TrafficStream=auto`, CLI `network traffic stream`) serves the traffic as a pcapn
 packet as it passes. The extcap script [tools/wireshark/](../../tools/wireshark/README.md) lists running emulators in
 Wireshark's interface list instead. `{"action":"stream-stop"}` ends it.
 
-**In the Qt UI**: Tools > Network traffic (Ctrl+6). The newest records (up to 20000) with their frame and the time
+**In the Qt UI**: Tools > Network traffic. The newest records (up to 20000) with their frame and the time
 since the record above; a filter (every word must appear in the adapter, direction, operation or summary, e.g.
 `isa2 dns`) and a kind (frames / socket operations); below, a decode of the selected record (Ethernet, ARP, IPv4,
 ICMP, UDP, TCP, DHCP, DNS, or the socket operation's fields) and its hex dump. **Seek here** (or a double click)
