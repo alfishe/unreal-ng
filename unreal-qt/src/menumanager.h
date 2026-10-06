@@ -97,6 +97,10 @@ public:
 #endif
 
 signals:
+    /// Debug > Time Travel: the black box switched on or off, its window changed (saved in the settings already)
+    void blackBoxToggled(bool on);
+    void blackBoxMinutesChanged(int minutes);
+
     // Signal emitted when user requests to open a file
     void openFileRequested();
     void openSnapshotRequested();
@@ -313,6 +317,8 @@ private:
     QAction* _showBreakpointsAction;
     QAction* _showRegistersAction;
     QAction* _showMemoryAction;
+    QAction* _blackBoxAction = nullptr;    // Debug > Time Travel > Always Record (Black Box)
+    QMenu* _blackBoxMinutesMenu = nullptr; // Debug > Time Travel > Keep Last
 
     // Tools Menu Actions
     QAction* _settingsAction;

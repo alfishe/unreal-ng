@@ -719,6 +719,11 @@
     schemas["TTDStatusResponse"]["properties"]["earliest"]["description"] =
         "The earliest position the history keeps (D12): where 'jump to start' goes. Older frames were "
         "released by the history limit or never recorded. null when there is no history";
+    schemas["TTDStatusResponse"]["properties"]["black_box"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["black_box"]["description"] =
+        "The black box is armed on this instance (the engine; started with black_box, or by unreal-qt's "
+        "Debug > Time Travel > Always Record): its recordings keep the last minutes and step aside for turbo and "
+        "host speed. Always false on v1";
     schemas["TTDStatusResponse"]["properties"]["backend"]["type"] = "string";
     schemas["TTDStatusResponse"]["properties"]["backend"]["description"] =
         "Which implementation records on this instance: \"engine\" (the default) or \"v1\" (selected with "
@@ -787,6 +792,7 @@
     schemas["TTDStartResponse"]["properties"]["started"]["type"] = "boolean";
     schemas["TTDStartResponse"]["properties"]["already_active"]["type"] = "boolean";
     schemas["TTDStartResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDStartResponse"]["properties"]["black_box"]["type"] = "boolean";
     schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("idle");
     schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("recording");
     schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("detached");

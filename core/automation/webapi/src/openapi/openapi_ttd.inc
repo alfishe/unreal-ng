@@ -49,7 +49,11 @@
         "at once; without it the search replays one frame (same answer, slower). It can be switched at any moment "
         "(POST /ttd/journal) and built later for any span by replay (POST /ttd/journal/build)\n"
         "- `history_limit_frames`, `history_limit_bytes`: the history limit, as POST /ttd/history-limit "
-        "(a missing one keeps its current value)";
+        "(a missing one keeps its current value)\n"
+        "- `black_box`: record as the black box (the engine; D29): keep the last `minutes` (default 5, 1..1440) "
+        "and never hold turbo or the host speed - the recording stops before either takes effect, its history kept, "
+        "and a new session starts once nothing accelerates; fast loaders' traps are recorded. Absent or false: an "
+        "explicit recording, which holds the machine at real speed. v1 answers 400 for black_box true";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["required"] = true;

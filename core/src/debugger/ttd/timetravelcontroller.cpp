@@ -162,8 +162,7 @@ bool TimeTravelController::StartRecording()
     // The black box keeps its window (D29): the last N minutes of frames
     if (_blackBox)
     {
-        const unsigned frameMicros = _context && _context->config.frame_duration_us ? _context->config.frame_duration_us : 20000;
-        const uint64_t frames = uint64_t(_blackBoxMinutes) * 60 * 1000000 / frameMicros;
+        const uint64_t frames = BlackBoxFrames();
         _historyLimitFrames.store(frames, std::memory_order_release);
         _historyLimitBytes.store(0, std::memory_order_release);
         ApplyHistoryPolicy();
@@ -1380,6 +1379,19 @@ void TimeTravelController::ApplyBankOverrides(const TTDBankOverrides& in)
         else
             _memory->RevertDebuggerBankOverride(bank);  // the checkpoint had none
     }
+}
+
+uint64_t TimeTravelController::BlackBoxFrames() const
+{
+    const unsigned frameMicros = _context && _context->config.frame_duration_us ? _context->config.frame_duration_us : 20000;
+    return uint64_t(_blackBoxMinutes) * 60 * 1000000 / frameMicros;
+}
+
+void TimeTravelController::SetBlackBoxMinutes(uint32_t minutes)
+{
+    _blackBoxMinutes = minutes ? minutes : 5;
+    if (_blackBox && _state == TTDSessionState::Recording)
+        SetHistoryLimit(BlackBoxFrames(), 0);
 }
 
 void TimeTravelController::SetBlackBox(bool on, uint32_t minutes)
