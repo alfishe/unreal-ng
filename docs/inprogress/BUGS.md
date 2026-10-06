@@ -195,6 +195,15 @@ Two different things show up as "faster" on TS-Conf, and the report does not say
 ### Root cause
 Unknown (open).
 
+### Triage 2026-10-06 (not reproduced)
+Measured on `0ecdcdca2` (the engine), frames per wall second over 10 s per phase, instances created through the
+WebAPI: TSL idle 48.75, explicit recording (history limit 3000) 48.99, black box 48.97; Pentagon idle 48.83,
+explicit 48.85, black box 48.85. Host speed stayed 1; `PUT /settings/speed` 4 and `PUT /settings/turbo_mode` true
+while recording were refused (400 / 409). The WebAPI's `speed_multiplier` 4.0 on TSL is the Z80 clock (TS-BIOS sets
+14 MHz), not the host speed. Not covered: a recording started from the Qt window on a machine the window created.
+The owner saw about 2x ("not quite turbo") in that setting; it stays open until seen again, then measured
+read-only (`GET .../frame_cost` frame counter over a wall interval) while it happens.
+
 ### Requirements / Acceptance Criteria
 - [ ] Triage: decide from measurements which of the two cases was seen (host frames per second vs. hardware turbo);
       if it is only hardware turbo, close as "not a defect" with the evidence and improve the HUD so host speed and
