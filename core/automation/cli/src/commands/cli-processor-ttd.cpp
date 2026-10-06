@@ -317,6 +317,7 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd info <path>                  Describe a .ttd file without loading it: frames, sections and" << NEWLINE;
     ss << "                                     the recorded machine (model, ROM, General Sound card, devices)" << NEWLINE;
     ss << "  ttd start [--journal]            Begin recording (captures baseline checkpoint)" << NEWLINE;
+    ss << "  ttd start --black-box [--minutes N]  Record as the black box: the last N minutes (default 5)" << NEWLINE;
     ss << "                                     --journal: also record the write journal (off by default)" << NEWLINE;
     ss << "  ttd journal [on|off]             The write journal: who wrote an address last, at once." << NEWLINE;
     ss << "                                     Switch it at any moment, also while recording; each on-off" << NEWLINE;
@@ -474,18 +475,29 @@ void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext*
     {
         if (args[i] == "--journal" || args[i] == "-j")
             options["journal"] = "true";
+        else if (args[i] == "--black-box")
+            options["black_box"] = "true";
+        else if (args[i] == "--minutes" && i + 1 < args.size())
+            options["minutes"] = args[++i];
         else
         {
-            session.SendResponse("TTD: unknown option '" + args[i] + "' (ttd start [--journal])" + NEWLINE);
+            session.SendResponse("TTD: unknown option '" + args[i] +
+                                 "' (ttd start [--journal] [--black-box [--minutes N]])" + NEWLINE);
             return;
         }
     }
 
     const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"start", options});
     if (reply.Ok() && reply.body.find("started")->b)
-        session.SendResponse(std::string(options["journal"] == "true" ? "TTD: Recording started (with the write journal)"
-                                                                      : "TTD: Recording started") +
-                             NEWLINE);
+    {
+        std::string text = options["journal"] == "true" ? "TTD: Recording started (with the write journal)"
+                                                        : "TTD: Recording started";
+        if (options.count("black_box"))
+            text += std::string(" as the black box: the last ") +
+                    (options.count("minutes") ? options["minutes"] : std::string("5")) +
+                    " minutes, turbo and host speed stay free";
+        session.SendResponse(text + NEWLINE);
+    }
     else
         session.SendResponse(std::string("TTD: Failed to start recording") +
                              (reply.message.empty() ? "" : ": " + reply.message) + NEWLINE);

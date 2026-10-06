@@ -4024,12 +4024,18 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(ttd::TTDControl(nullptr).Execute({"file-info", {{"path", path}}})));
         });
 
-        // ttd_start([journal]) - start recording; journal = true also records the
-        // write journal. Without it the ttd_set_journal_enabled choice stands (off by default, D40)
-        lua.set_function("ttd_start", [this](sol::optional<bool> journalOpt) -> bool {
+        // ttd_start([journal], [black_box], [minutes]) - start recording; journal = true also records the
+        // write journal. Without it the ttd_set_journal_enabled choice stands (off by default, D40).
+        // black_box = true records as the black box: the last `minutes` (default 5), turbo and host speed free
+        lua.set_function("ttd_start", [this](sol::optional<bool> journalOpt, sol::optional<bool> blackBoxOpt,
+                                             sol::optional<uint32_t> minutesOpt) -> bool {
             std::map<std::string, std::string> options;
             if (journalOpt.has_value())
                 options["journal"] = journalOpt.value() ? "true" : "false";
+            if (blackBoxOpt.has_value())
+                options["black_box"] = blackBoxOpt.value() ? "true" : "false";
+            if (minutesOpt.has_value())
+                options["minutes"] = std::to_string(minutesOpt.value());
             const ttd::TTDReply reply = TtdRun("start", options);
             return reply.Ok() && (reply.body.find("started")->b || reply.body.find("already_active")->b);
         });

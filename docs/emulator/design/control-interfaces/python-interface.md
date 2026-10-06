@@ -1075,6 +1075,7 @@ Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pa
 ```python
 emu.ttd_start()                  # -> bool; keeps the ttd_set_journal_enabled choice (off by default)
 emu.ttd_start(journal=True)              # also record the write journal
+emu.ttd_start(black_box=True, minutes=2)  # the black box: the last 2 minutes (default 5), turbo free
 emu.ttd_set_journal_enabled(True)        # switch it at any moment, also while recording (a segment starts)
 emu.ttd_build_journal(from_frame=1200, to_frame=1500)  # build it by replay for those frames (default: all);
                                                        # RuntimeError while recording

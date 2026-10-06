@@ -155,7 +155,7 @@ the internals).
 | Action | Arguments | What it does |
 |:--|:--|:--|
 | `status` | — | Session state, recorded frame range, checkpoint count, memory use |
-| `start` | `journal`: `true` also records the write journal (default `false`) | Begin recording |
+| `start` | `journal`: `true` also records the write journal (default `false`); `black_box`: `true` records as the black box (the engine): the last `minutes` (default 5, 1..1440), turbo and host speed stay free | Begin recording |
 | `journal_on` / `journal_off` | — | Switch the write journal at any moment, also while recording; the answer lists the spans it covers |
 | `journal_build` | `from_frame` / `to_frame` (optional; default: the whole session) | Build the write journal by replaying those frames, about 2-4 ms per frame; not while recording |
 | `stop` | — | Stop recording; history is kept and can be browsed |

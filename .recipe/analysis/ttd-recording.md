@@ -21,6 +21,7 @@ Reverse *queries* (`find-last`, `reverse-step/continue`) live in
 # record
 time_travel   {"action":"start"}                               # record (write journal off)
 time_travel   {"action":"start","journal":true}                # or: also record the write journal
+time_travel   {"action":"start","black_box":true,"minutes":2}  # or: the black box (last 2 min, turbo free)
 time_travel   {"action":"status"}                              # state, journal size, coverage frames
 inspect_state {"aspects":["ttd"]}                              # status + position alongside other aspects
 time_travel   {"action":"stop"}                                # history retained → idle
@@ -69,7 +70,18 @@ Optional body:
 ```json
 {}                     // record; the write journal is off
 {"journal": true}      // also record the write journal (12 bytes per memory write)
+{"black_box": true, "minutes": 2}   // the black box: keep the last 2 minutes (default 5)
 ```
+
+The black box (the engine) is for "always on" recording: it keeps only the
+last minutes and never holds the machine at real speed - turbo or a host
+speed above 1x stops it first (history kept, `last_stop_reason:
+"acceleration"`), and it starts a new session once nothing accelerates. No
+acceleration lock below applies to it. Same on the other surfaces: CLI
+`ttd start --black-box --minutes 2`, Lua `ttd_start(false, true, 2)`, Python
+`emu.ttd_start(black_box=True, minutes=2)`; unreal-qt: Debug > Time Travel >
+Always Record. `GET /ttd/status` shows `black_box: true` and the folder its
+segment files go to (`recording_folder`, in unreal-qt and the automation app).
 
 The write journal only speeds up "who wrote address X last": with it the
 answer is instant, without it the search replays one frame (a few ms, same

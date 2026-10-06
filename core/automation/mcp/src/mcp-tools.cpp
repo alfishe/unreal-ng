@@ -3823,7 +3823,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
     }
     schema["properties"]["action"]["description"] =
         "Session: 'status' (state, recorded frame range, checkpoints, memory), 'start' (begin recording; journal=true "
-        "also records the write journal), "
+        "also records the write journal; black_box=true records the last 'minutes' and leaves turbo free), "
         "'stop' (end recording, history kept and browsable), 'invalidate' (drop all history), 'position' (current point + "
         "session end), 'markers' (replay barriers: tape control, disk writes, tool memory edits made while recording; "
         "the hardware_reset kind is reserved and never written - a reset stops the recording instead). "
@@ -3863,6 +3863,14 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["journal"]["description"] =
         "start: also record the write journal (default false). find_last for writes then answers at once; without "
         "it, it replays one frame";
+    schema["properties"]["black_box"]["type"] = "boolean";
+    schema["properties"]["black_box"]["description"] =
+        "start: record as the black box (the engine): keep the last 'minutes'; turbo and a host speed above 1x stay "
+        "free (the recording stops before them, history kept). Default false: an explicit recording, which holds 1x";
+    schema["properties"]["minutes"]["type"] = "integer";
+    schema["properties"]["minutes"]["minimum"] = 1;
+    schema["properties"]["minutes"]["maximum"] = 1440;
+    schema["properties"]["minutes"]["description"] = "start with black_box: the minutes the black box keeps (default 5)";
     schema["properties"]["history_frames"]["type"] = "integer";
     schema["properties"]["history_frames"]["minimum"] = 0;
     schema["properties"]["history_frames"]["description"] =
@@ -4027,6 +4035,17 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     }
                     (*body)["journal"] = args["journal"].asBool();
                 }
+                if (args.isMember("black_box"))
+                {
+                    if (!args["black_box"].isBool())
+                    {
+                        done(ToolResult::Error("'black_box' must be true or false"));
+                        return;
+                    }
+                    (*body)["black_box"] = args["black_box"].asBool();
+                }
+                if (args.isMember("minutes"))
+                    (*body)["minutes"] = args["minutes"];
                 if (args.isMember("history_frames"))
                     (*body)["history_limit_frames"] = args["history_frames"];
                 if (args.isMember("history_bytes"))
@@ -4196,8 +4215,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                                                         : "TTD recording started on " + id;
                         text += " (write journal ";
                         text += b["write_journal_enabled"].asBool() ? "on" : "off";
-                        text += "). Host speed is held at 1x and turbo / fast tape / fast disk are off until 'stop'. "
-                                "Run the program now (control_execution), then 'stop' to browse the history.";
+                        if (b["black_box"].asBool())
+                            text += ", the black box: the last minutes are kept; turbo and host speed stay free - the "
+                                    "recording stops before them, history kept). Run the program now "
+                                    "(control_execution), then 'stop' to browse the history.";
+                        else
+                            text += "). Host speed is held at 1x and turbo / fast tape / fast disk are off until 'stop'. "
+                                    "Run the program now (control_execution), then 'stop' to browse the history.";
                         return text;
                     }, done);
                 }

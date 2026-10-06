@@ -468,6 +468,34 @@ def run_contract(c: Contract) -> None:
     c.check(web.get("write_journal_enabled") is False, f"WebAPI start without journal turns it off ({web.get('write_journal_enabled')})")
     c.web("POST", "/ttd/stop")
 
+    print("[black box: every surface starts it with the same window]")
+    _, web = c.web("GET", "/ttd/status")
+    if web.get("backend") != "engine":
+        print("(backend v1: black box checks skipped)")
+        return
+    c.web("POST", "/ttd/start", {"black_box": True, "minutes": 2})
+    _, web = c.web("GET", "/ttd/status")
+    window = web.get("history_limit_frames")
+    c.check(web.get("black_box") is True and isinstance(window, int) and window > 0,
+            f"WebAPI starts the black box ({web.get('black_box')}, {window} frames)")
+    c.web("POST", "/ttd/stop")
+    starts = [("Lua", lambda: c.lua("ttd_start(false, true, 2)")),
+              ("CLI", lambda: c.cli.run("ttd start --black-box --minutes 2"))]
+    if c.python:
+        starts.append(("Python", lambda: c.py("emu.ttd_start(black_box=True, minutes=2)")))
+    for name, start in starts:
+        start()
+        _, web = c.web("GET", "/ttd/status")
+        c.check(web.get("black_box") is True and web.get("history_limit_frames") == window,
+                f"{name} starts the black box with the same window ({web.get('black_box')}, {web.get('history_limit_frames')})")
+        c.web("POST", "/ttd/stop")
+    cli = c.cli.run("ttd start --black-box --minutes 0")
+    c.check("minutes must be an integer from 1 to 1440" in cli, f"CLI refuses 0 minutes ({cli.strip()!r})")
+    c.web("POST", "/ttd/start", {})
+    _, web = c.web("GET", "/ttd/status")
+    c.check(web.get("black_box") is False, f"a start without black_box is explicit ({web.get('black_box')})")
+    c.web("POST", "/ttd/stop")
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])

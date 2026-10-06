@@ -3913,14 +3913,19 @@ namespace PythonBindings
 
             // journal=True also records the write journal; without it the
             // ttd_set_journal_enabled choice stands (off by default, D40)
-            .def("ttd_start", [](Emulator& self, py::object journalObj) -> bool {
+            .def("ttd_start", [](Emulator& self, py::object journalObj, py::object blackBoxObj, py::object minutesObj) -> bool {
                 std::map<std::string, std::string> options;
                 if (!journalObj.is_none())
                     options["journal"] = journalObj.cast<bool>() ? "true" : "false";
+                if (!blackBoxObj.is_none())
+                    options["black_box"] = blackBoxObj.cast<bool>() ? "true" : "false";
+                if (!minutesObj.is_none())
+                    options["minutes"] = std::to_string(minutesObj.cast<uint32_t>());
                 const ttd::TTDReply reply = TtdRunPy(self, "start", options);
                 return reply.Ok() && (reply.body.find("started")->b || reply.body.find("already_active")->b);
-            }, "Start TTD recording (journal=True also records the write journal)",
-               py::arg("journal") = py::none())
+            }, "Start TTD recording (journal=True also records the write journal; black_box=True records as the "
+               "black box: the last `minutes`, default 5, turbo and host speed stay free)",
+               py::arg("journal") = py::none(), py::arg("black_box") = py::none(), py::arg("minutes") = py::none())
 
             .def("ttd_set_history_limit", [](Emulator& self, py::object framesObj, py::object bytesObj) -> py::tuple {
                 std::map<std::string, std::string> options;
