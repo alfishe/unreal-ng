@@ -9,10 +9,10 @@
 ---
 
 2026-10-05
-## 🟣 [Fix Proposed] #1: Live border stays black when nothing wrote port #FE, while a TTD-composed picture fills it from #FE
+## 🟢 [Fixed] #1: Live border stays black when nothing wrote port #FE, while a TTD-composed picture fills it from #FE
 * **Date Opened:** 2026-10-05
-* **Date Fixed:** -
-* **Commit ID:** -
+* **Date Fixed:** 2026-10-06
+* **Commit ID:** 73e4b793a
 * **Found by:** the D13 test (`TTDControl_Test.AFrameWithoutATStateIsItsEnd`, Phase 5 of the TTD v2 migration,
   branch `ttd-engine`), 2026-10-05.
 
@@ -53,10 +53,10 @@ reset left (`Screen::ResetBorderColor`, no drawing), as an `OUT (#FE)` does. Tes
   not `#FE` was ever written.
 - A test that reproduces the case above and fails before the fix.
 
-## 🟣 [Fix Proposed] #2: Running forward from a session's mid-frame baseline diverges the TurboSound FM state
+## 🟢 [Fixed] #2: Running forward from a session's mid-frame baseline diverges the TurboSound FM state
 * **Date Opened:** 2026-10-05
-* **Date Fixed:** -
-* **Commit ID:** -
+* **Date Fixed:** 2026-10-06
+* **Commit ID:** fae373a49
 * **Found by:** the black-box fast-tape test (Phase 5, Step 3 of the TTD v2 migration, branch `ttd-engine`), 2026-10-05.
 
 ### Description
