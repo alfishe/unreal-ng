@@ -1040,8 +1040,14 @@ bool Config::ParseConfig(IniFile& inimanager)
 		_mediaReport.clear();
 		_mediaSet = MediaConfig::FromIni(inimanager, configFolder, &_mediaReport);
 		const MediaSettings settings = MediaConfig::SettingsFromIni(inimanager, configFolder, &_mediaReport);
-		SessionWriteMap::SetDefaultMemoryLimit(settings.sessionMemoryLimit.value_or(128ull * 1024 * 1024));
-		SessionWriteMap::SetSpillFolder(settings.spillFolder.value_or(std::string()));
+		SessionSettings session;  // the defaults where the config says nothing
+		session.memoryLimit = settings.sessionMemoryLimit.value_or(session.memoryLimit);
+		session.arenaBytes = settings.sessionArenaBytes.value_or(session.arenaBytes);
+		session.flushSeconds = settings.sessionFlushSeconds.value_or(session.flushSeconds);
+		session.syncSeconds = settings.sessionSyncSeconds.value_or(session.syncSeconds);
+		session.journal = settings.sessionJournal.value_or(session.journal);
+		session.spillFolder = settings.spillFolder.value_or(std::string());
+		SessionWriteMap::SetDefaults(session);
 	}
 
 	// Emulated model

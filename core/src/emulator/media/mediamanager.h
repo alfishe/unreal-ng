@@ -39,6 +39,15 @@
 class EmulatorContext;
 struct CompositeInfo;
 
+/// What an insert does with the session journal next to the medium (multi-source phases/c10e-session-journal.md §4)
+enum class JournalChoice : uint8_t
+{
+    Default,  ///< [MEDIA] SessionJournal: replay when on, off when off
+    Replay,   ///< a journal left by a crash is replayed
+    Discard,  ///< a journal left by a crash is deleted unread; a new one starts
+    Off,      ///< no journal next to the medium this time (a temp file); an old one is left as it is
+};
+
 struct InsertOptions
 {
     std::optional<AccessMode> access;  ///< the slot's default when not set
@@ -48,6 +57,7 @@ struct InsertOptions
     bool writeProtect = false;         ///< the slot's write-protect switch
     bool endRecording = false;         ///< end a TTD recording instead of refusing
     bool immediate = false;            ///< no swap delay (media the firmware boots from)
+    JournalChoice journal = JournalChoice::Default;  ///< media written in `session` access
     /// A dirty medium already in the slot: what happens to its writes
     Disposition disposition = Disposition::None;
     std::string exportPath;            ///< Disposition::Export
@@ -303,7 +313,12 @@ private:
     /// A write-through floppy with new guest writes goes back to its file (emulation thread)
     void WriteThroughFloppy(const std::string& slotId, SlotState& state);
     /// Destroy a medium that left the machine (a staged upload's file goes too)
-    static void Retire(std::unique_ptr<Medium> medium);
+    /// A medium leaves for good. `keepJournal`: the emulator goes with its unsaved writes (they stay in the journal
+    /// for the next insert); an eject or a swap decided about them already (a disposition), so its journal goes
+    static void Retire(std::unique_ptr<Medium> medium, bool keepJournal = false);
+    /// A medium written in `session` access gets its journal `<source>.usession` (replayed, discarded or off as
+    /// `choice` says); the outcome goes into its report
+    static void AttachJournal(Medium& medium, const MediaSource& source, JournalChoice choice);
 
     EmulatorContext* _context = nullptr;
     std::function<bool()> _applyNowProbe;

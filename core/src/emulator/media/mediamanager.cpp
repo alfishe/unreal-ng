@@ -64,11 +64,15 @@ MediaManager::~MediaManager()
     // data. Staged uploads die with their medium
     for (auto& [id, state] : _slots)
     {
-        Retire(std::move(state.attached));
+        const bool dirty = state.attached && state.attached->IsDirty();
+        Retire(std::move(state.attached), dirty);
         Retire(std::move(state.incoming));
     }
     for (auto& [id, medium] : _parked)
-        Retire(std::move(medium));
+    {
+        const bool dirty = medium && medium->IsDirty();
+        Retire(std::move(medium), dirty);
+    }
 }
 
 /// region <Slots>
@@ -262,6 +266,8 @@ MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& s
         if (!mismatch.empty())
             medium->Report().push_back(std::move(mismatch));
     }
+
+    AttachJournal(*medium, source, options.journal);
 
     MediaResult inserted = Insert(slotId, std::move(medium), options);
     inserted.report.insert(inserted.report.begin(), opened.report.begin(), opened.report.end());
@@ -666,7 +672,13 @@ void MediaManager::ApplyPending()
     {
         std::lock_guard<std::recursive_mutex> lock(_mutex);
         for (auto& [id, state] : _slots)
+        {
             ApplySlot(id, state, retired);
+            // Session writes reach their journal within [MEDIA] SessionFlushSeconds
+            if (state.attached)
+                if (SessionWriteMap* session = state.attached->Session())
+                    session->Tick();
+        }
     }
     for (auto& old : retired)
         Retire(std::move(old));
@@ -1415,10 +1427,57 @@ void MediaManager::Post(const char* topic, const std::string& slotId, const Medi
     MessageCenter::DefaultMessageCenter().Post(topic, payload, true);
 }
 
-void MediaManager::Retire(std::unique_ptr<Medium> medium)
+void MediaManager::AttachJournal(Medium& medium, const MediaSource& source, JournalChoice choice)
+{
+    SessionWriteMap* session = medium.Session();
+    if (!session)
+        return;
+    if (choice == JournalChoice::Default)
+        choice = SessionWriteMap::Defaults().journal ? JournalChoice::Replay : JournalChoice::Off;
+    // A source of its own on the host: an image, a folder, a descriptor (not an inline one, not an upload)
+    std::string path = source.path;
+    while (path.size() > 1 && (path.back() == '/' || path.back() == '\\'))
+        path.pop_back();
+    if (path.empty() || !source.inlineBody.empty() || source.type == MediaSourceType::Upload ||
+        source.type == MediaSourceType::Blank)
+        return;
+    path += ".usession";
+
+    const SessionWriteMap::JournalMode mode = choice == JournalChoice::Discard ? SessionWriteMap::JournalMode::Discard
+                                              : choice == JournalChoice::Off   ? SessionWriteMap::JournalMode::Off
+                                                                               : SessionWriteMap::JournalMode::Replay;
+    const SessionWriteMap::JournalOpen open = session->OpenJournal(path, mode);
+    const std::string name = FileHelper::FromFsPath(FileHelper::ToFsPath(path).filename());
+    using Outcome = SessionWriteMap::JournalOpen::Outcome;
+    switch (open.outcome)
+    {
+        case Outcome::Created:
+        case Outcome::Off:
+            break;
+        case Outcome::Replayed:
+            medium.Report().push_back("session journal " + name + " replayed: " + std::to_string(open.sectors) +
+                                      " sector(s) the guest wrote before the emulator stopped" +
+                                      (open.badSlots ? " (" + std::to_string(open.badSlots) + " damaged slot(s) skipped)" : ""));
+            break;
+        case Outcome::Discarded:
+            medium.Report().push_back("session journal " + name + " discarded unread (journal: discard)");
+            break;
+        case Outcome::Stale:
+            medium.Report().push_back("session journal " + name + " not replayed, " + open.detail + ": kept as " + open.kept);
+            break;
+        case Outcome::InUse:
+            medium.Report().push_back("session journal " + name + " is used by another slot: this one keeps its writes in a "
+                                      "temp file (not recoverable after a crash)");
+            break;
+    }
+}
+
+void MediaManager::Retire(std::unique_ptr<Medium> medium, bool keepJournal)
 {
     if (!medium)
         return;
+    if (SessionWriteMap* session = medium->Session())
+        session->CloseJournal(keepJournal);
     // A staged upload's file goes with its medium - after the medium has
     // closed it (an open file cannot be deleted on Windows)
     const bool upload = medium->Source().type == MediaSourceType::Upload && !medium->Source().path.empty();

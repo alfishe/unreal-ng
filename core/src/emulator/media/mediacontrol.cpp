@@ -171,7 +171,7 @@ namespace
     }
 
     const std::vector<std::string> kInsertOptions = {"access", "format", "fs", "codepage", "free", "wp", "kind", "device",
-                                                     "save", "export", "discard", "end_recording", "async", "immediate"};
+                                                     "save", "export", "discard", "end_recording", "async", "immediate", "journal"};
 
     /// The parked emulator: a save or export reads the medium while the guest
     /// cannot write to it (the same thing SaveDisk does)
@@ -683,14 +683,15 @@ MediaReply MediaControl::Info(const MediaRequest& request)
                 reply.body["info"]["medium"]["disc"] = DiscValue(*disc);
             if (const SessionWriteMap* session = medium->Session(); session && reply.body["info"]["medium"].isObject())
             {
-                // Where the guest's writes are kept (C10d): memory up to the limit, the rest in the spill file
+                // Where the guest's writes are kept (C10e): memory up to the limit, the rest in the journal
                 StateNode writes = StateNode::Object();
                 writes["sectors"] = static_cast<uint64_t>(session->ChangedSectors());
                 writes["memoryBytes"] = session->HotBytes();
                 writes["memoryLimit"] = session->MemoryLimit();
-                writes["spilledBytes"] = static_cast<uint64_t>(session->SpilledSectors()) * IBlockDevice::kSectorSize;
-                writes["spillFile"] = session->SpillPath();
-                writes["spillFailed"] = session->SpillFailed();
+                writes["journalBytes"] = static_cast<uint64_t>(session->SpilledSectors()) * IBlockDevice::kSectorSize;
+                writes["journalFile"] = session->SpillPath();
+                writes["journalRecoverable"] = session->JournalRecoverable();
+                writes["journalFailed"] = session->SpillFailed();
                 reply.body["info"]["medium"]["sessionWrites"] = std::move(writes);
             }
         }
@@ -953,6 +954,18 @@ MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
     if (MediaResult r = Flag(o, "immediate", flag); !r.Ok())
         return Fail(r.error, r.message);
     options.immediate = flag;
+    if (auto it = o.find("journal"); it != o.end())
+    {
+        const std::string journal = Lower(Trim(it->second));
+        if (journal == "replay")
+            options.journal = JournalChoice::Replay;
+        else if (journal == "discard")
+            options.journal = JournalChoice::Discard;
+        else if (journal == "off")
+            options.journal = JournalChoice::Off;
+        else
+            return Fail(MediaError::BadRequest, "journal '" + it->second + "': expected replay, discard or off");
+    }
 
     MediaSource source;
     source.path = path;

@@ -10,6 +10,7 @@
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
+#include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/memory/atm/evoflash.h"
 
 /// Tests share one process-wide EmulatorManager. An instance a test leaves
@@ -61,6 +62,8 @@ static void PinTimeZone()
 int main(int argc, char **argv)
 {
   PinTimeZone();
+  // Session journals (<image>.usession) never land next to test data: a test that wants one says journal: replay
+  SessionWriteMap::OverrideJournalDefault(false);
   // v1 records here: its own tests and the reference; engine tests select the engine per test
   Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::V1);
   ::testing::InitGoogleTest(&argc, argv);

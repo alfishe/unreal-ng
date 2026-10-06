@@ -46,7 +46,8 @@ folders, the write-protect switch, its state (`empty`, `present`, `pending`, `de
 medium (source, format, access, dirty, dirty units, and `changes`: the unsaved changes in words —
 `1 track: 3 sectors`, `1 track: whole` for a track rewritten by FORMAT / WRITE TRACK,
 `5 tracks: 20 sectors total`, or `48 sectors` on a card; a tape is never written). `info` of a medium in
-`session` access adds `sessionWrites`: where the guest's writes are kept ([below](#where-session-writes-are-kept)).
+`session` access adds `sessionWrites`: where the guest's writes are kept and whether they survive a crash
+([below](#where-session-writes-are-kept)).
 
 ## Naming a slot: selectors
 
@@ -100,6 +101,7 @@ on a +3) is `unknown-slot`, never drive A.
 | `cylinders`, `sides` | 40 / 80, 1 / 2 | the format's | create |
 | `size` | bytes, a multiple of 512, up to 128 GiB | — | create (cards, hard disks) |
 | `wp` | bool | false | insert, swap |
+| `journal` | `replay`, `discard`, `off` | `[MEDIA] SessionJournal` (`replay` when on) | insert, swap: a session journal left next to the medium by a crash ([below](#where-session-writes-are-kept)) |
 | `save`, `export <path>`, `discard` | disposition | none | insert, swap, eject, create |
 | `retarget` | bool | true | save: a disk TRD cannot hold goes to `<name>.udi` |
 | `compression` | `none`, `default` (lzma, zlib, huff, flac), or up to four of `zlib`, `lzma`, `huff`, `flac`, `zstd` | the source CHD's codecs, else `default` | save, export of a hard disk or card to a `.chd` |
@@ -137,17 +139,42 @@ out and reported.
 ### Where session writes are kept
 
 A medium in `session` access (folders, CHDs, composites, blank media, any image inserted with
-`access: session`) keeps the guest's writes beside its source until they are saved or discarded. Up to
-`[MEDIA] SessionMemoryLimit` of them (128 MiB) stay in memory; past that, the sectors written longest ago move
-to a spill file, in 64 KiB slots with a small index in memory (about 0.1 % of what was moved). The file is in
-`[MEDIA] SpillFolder` (the system temp folder by default), named `unreal-ng-session-*.spill`, and goes away
-with the medium; on Linux and macOS it has no name on disk at all once open. Nothing else changes: reads, `save`,
-`export`, the session delta, commit, write-back and `changes` see one set of writes.
+`access: session`) keeps the guest's writes beside its source until they are saved or discarded:
+
+- **In memory**, up to `[MEDIA] SessionMemoryLimit` (16 MiB), in arenas of `SessionArenaKiB` (1 MiB) whose pages go
+  back to the system when they are freed.
+- **In a journal** next to the source: `<image>.usession`, `<folder>.usession`, `<descriptor>.usession`. When the
+  arenas pass the limit, the oldest one moves there; every write reaches it at most `SessionFlushSeconds` (30 s)
+  after it was made, and it is synced to the disk every `SessionSyncSeconds` (30 s).
+- **After a crash** of the emulator (or an exit with unsaved writes) the next insert of the same medium replays the
+  journal: the medium comes back dirty with the guest's writes, and the report says
+  `session journal disk.img.usession replayed: N sector(s) ...`. At most the last `SessionFlushSeconds` of writes are
+  lost. A composite's journal replaces its `.delta` (the journal holds everything since that insert).
+- **Ends**: a save, a discard, an eject with a disposition, a commit or a write-back delete the journal: there is
+  nothing left to recover.
+
+The insert option `journal` decides what happens to a journal found next to the medium:
+
+| `journal` | |
+|---|---|
+| `replay` (default with `SessionJournal = on`) | replay it |
+| `discard` | delete it unread, start a new one |
+| `off` (default with `SessionJournal = off`) | leave it as it is; this insert keeps its writes in a temp file in `SpillFolder`, gone with the medium |
+
+A journal written over another disk (the source changed meanwhile) or damaged is never replayed and never deleted:
+it is renamed to `<name>.usession.<n>.stale` and the report says why. A medium without a place of its own for a
+journal (a blank medium, an upload, an inline descriptor, a read-only folder) keeps it in `SpillFolder`, not
+recoverable; so does a second slot holding the same source. A write never fails because of the journal: when it
+cannot be written, the writes stay in memory over the limit and `info` says `journalFailed`.
 
 ```ini
 [MEDIA]
-SessionMemoryLimit = 128     ; MiB in memory per session; 0: no limit (everything in memory)
-SpillFolder        = /var/tmp
+SessionMemoryLimit  = 16       ; MiB in memory per session; 0: no limit
+SessionArenaKiB     = 1024     ; the unit of a flush (64 ... 16384, a power of two)
+SessionFlushSeconds = 30       ; 0: only when the limit is passed
+SessionSyncSeconds  = 30       ; 0: never fsync
+SessionJournal      = on
+SpillFolder         = /var/tmp
 ```
 
 `info` reports it per medium:
@@ -155,13 +182,13 @@ SpillFolder        = /var/tmp
 | Field | Meaning |
 |---|---|
 | `sessionWrites.sectors` | sectors the guest changed |
-| `sessionWrites.memoryBytes`, `memoryLimit` | what the in-memory part holds, and its limit |
-| `sessionWrites.spilledBytes`, `spillFile` | what is in the spill file, and its path (`(deleted) ...` once unlinked) |
-| `sessionWrites.spillFailed` | a spill could not be written (disk full, no folder): the writes stay in memory, over the limit |
+| `sessionWrites.memoryBytes`, `memoryLimit` | the arenas held in memory, and the limit |
+| `sessionWrites.journalBytes`, `journalFile` | what the journal holds, and its path (`(deleted) ...` for a temp one already unlinked) |
+| `sessionWrites.journalRecoverable` | the journal is next to the medium and replayed after a crash |
+| `sessionWrites.journalFailed` | a journal write failed (disk full, no folder): the writes stay in memory |
 
-A write never fails because of the spill. Memory per mode: an image file in `readonly` or `writethrough` holds
-nothing per sector; a composite holds its metadata; a blank card holds a pointer per 64 KiB (128 GiB: 16 MiB)
-and the session above it.
+Memory per mode: an image file in `readonly` or `writethrough` holds nothing per sector; a composite holds its
+metadata; a blank card holds a pointer per GiB and 128 KiB per GiB the guest wrote, plus its session.
 
 ## Tapes
 

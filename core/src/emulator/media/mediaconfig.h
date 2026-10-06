@@ -14,11 +14,15 @@
 /// sd.zc.free      = 268435456          ; folder volumes: bytes of room for guest writes
 /// sd.zc.wp        = 0                  ; the slot's write-protect switch
 /// sd.zc.swapdelay = 500                ; ms the slot stays empty on a swap
-/// SessionMemoryLimit = 128             ; MiB of session writes kept in memory, the rest spilled (0: no limit)
-/// SpillFolder     = /var/tmp           ; where session spill files go (default: the system temp folder)
+/// SessionMemoryLimit  = 16             ; MiB of session writes kept in memory, the rest in the journal (0: no limit)
+/// SessionArenaKiB     = 1024           ; the in-memory chunk, the unit of a flush to the journal
+/// SessionFlushSeconds = 30             ; the longest a write stays only in memory (0: only at the limit)
+/// SessionSyncSeconds  = 30             ; how often a written journal is synced to the disk (0: never)
+/// SessionJournal      = on             ; media keep a journal next to them, replayed after a crash
+/// SpillFolder         = /var/tmp       ; journals of media without a place of their own (default: the temp folder)
 /// ```
 ///
-/// SessionMemoryLimit and SpillFolder are settings, not slots (multi-source phases/c10d-session-spill.md).
+/// The Session* keys and SpillFolder are settings, not slots (multi-source phases/c10e-session-journal.md §5).
 ///
 /// A key is a slot id, or a slot id plus one option suffix. Slot ids contain
 /// dots themselves (sd.zc, ide0.master), so the suffix is only split off when
@@ -61,6 +65,10 @@ struct MediaSetEntry
 struct MediaSettings
 {
     std::optional<uint64_t> sessionMemoryLimit;  ///< bytes
+    std::optional<uint32_t> sessionArenaBytes;
+    std::optional<uint32_t> sessionFlushSeconds;
+    std::optional<uint32_t> sessionSyncSeconds;
+    std::optional<bool> sessionJournal;
     std::optional<std::string> spillFolder;
 };
 
@@ -72,7 +80,7 @@ public:
     static std::vector<MediaSetEntry> FromIni(const IniFile& ini, const std::string& configFolder,
                                               std::vector<std::string>* report = nullptr);
 
-    /// SessionMemoryLimit (MiB) and SpillFolder; `report` receives bad values
+    /// The Session* keys and SpillFolder; `report` receives bad values (the default stays)
     static MediaSettings SettingsFromIni(const IniFile& ini, const std::string& configFolder, std::vector<std::string>* report = nullptr);
 
     /// "~" expanded; a relative path joined to `configFolder`; normalized

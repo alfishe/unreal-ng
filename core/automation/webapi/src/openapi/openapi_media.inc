@@ -159,6 +159,10 @@
         body["properties"]["async"]["type"] = "boolean";
         body["properties"]["device"]["type"] = "string";
         body["properties"]["device"]["description"] = "insert / swap on an IDE unit: disk, cdrom or cf - a CompactFlash card on an IDE adapter, a disk that identifies as CFA (swap the unit's drive first; the unit must be empty)";
+        body["properties"]["journal"]["type"] = "string";
+        body["properties"]["journal"]["description"] =
+            "insert / swap of a medium written in session access: replay (default) a session journal left by a crash "
+            "(<source>.usession), discard it unread, or off (no journal next to the medium this time)";
         body["properties"]["immediate"]["type"] = "boolean";
         body["properties"]["immediate"]["description"] = "insert: no swap delay";
         Json::Value& upload = post["requestBody"]["content"]["multipart/form-data"]["schema"];

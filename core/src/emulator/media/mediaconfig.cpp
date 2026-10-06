@@ -59,7 +59,8 @@ namespace
     /// Settings share the section with the slots
     bool IsSetting(const std::string& key)
     {
-        return key == "sessionmemorylimit" || key == "spillfolder";
+        return key == "sessionmemorylimit" || key == "sessionarenakib" || key == "sessionflushseconds" ||
+               key == "sessionsyncseconds" || key == "sessionjournal" || key == "spillfolder";
     }
 
     MediaSetEntry& EntryFor(std::vector<MediaSetEntry>& entries, const std::string& slotId)
@@ -213,13 +214,41 @@ MediaSettings MediaConfig::SettingsFromIni(const IniFile& ini, const std::string
     {
         const std::string key = Lower(Trim(rawKey));
         const std::string value = Trim(rawValue);
+        auto bad = [&](const std::string& expected) {
+            if (report)
+                report->push_back("[MEDIA] " + rawKey + ": expected " + expected + ", got '" + value + "'");
+        };
+        uint64_t number = 0;
         if (key == "sessionmemorylimit")
         {
-            uint64_t mib = 0;
-            if (ParseUnsigned(value, mib) && mib <= 1024 * 1024)
-                settings.sessionMemoryLimit = mib * 1024 * 1024;
-            else if (report)
-                report->push_back("[MEDIA] " + rawKey + ": expected MiB (0: no limit), got '" + value + "'");
+            if (ParseUnsigned(value, number) && number <= 1024 * 1024)
+                settings.sessionMemoryLimit = number * 1024 * 1024;
+            else
+                bad("MiB (0: no limit)");
+        }
+        else if (key == "sessionarenakib")
+        {
+            if (ParseUnsigned(value, number) && number >= 64 && number <= 16384 && (number & (number - 1)) == 0)
+                settings.sessionArenaBytes = static_cast<uint32_t>(number * 1024);
+            else
+                bad("KiB, a power of two from 64 to 16384");
+        }
+        else if (key == "sessionflushseconds" || key == "sessionsyncseconds")
+        {
+            if (ParseUnsigned(value, number) && number <= 86400)
+                (key == "sessionflushseconds" ? settings.sessionFlushSeconds : settings.sessionSyncSeconds) = static_cast<uint32_t>(number);
+            else
+                bad("seconds (0: off)");
+        }
+        else if (key == "sessionjournal")
+        {
+            const std::string v = Lower(value);
+            if (v == "on" || v == "1" || v == "true")
+                settings.sessionJournal = true;
+            else if (v == "off" || v == "0" || v == "false")
+                settings.sessionJournal = false;
+            else
+                bad("on or off");
         }
         else if (key == "spillfolder" && !value.empty())
         {

@@ -17,3 +17,4 @@ the phase lands. The phase table is in [tdd.md](../tdd.md) §13; the tests per p
 | C9 | [c9-bulk-read.md](c9-bulk-read.md) | dropped after measuring: 14x cheaper at the device, about 2 % of a guest's per-sector cost |
 | C10 | [c10-sparse-memory.md](c10-sparse-memory.md) | done: C10a zero runs + sparse memory, C10b dynamic VHD; C10c measured (images stay streamed); §8 full-disk and RAM findings |
 | C10d | [c10d-session-spill.md](c10d-session-spill.md) | done: session writes bounded in RAM (128 MiB), the rest spilled to disk; streamed deltas |
+| C10e | [c10e-session-journal.md](c10e-session-journal.md) | done (benchmark sweep pending): 1 MiB arenas, 16 MiB in memory, 30 s flush, a recoverable journal next to the medium (on by default) |

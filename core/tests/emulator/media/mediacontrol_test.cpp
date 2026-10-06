@@ -642,7 +642,7 @@ TEST_F(MediaControl_Test, SprinterHardDiskTakesFat16CompositesOnly)
     EXPECT_EQ(_context->pMediaManager->GetMedium("ide0.master")->Format(), "compose-fat16");
 }
 
-/// A blank card up to 128 GiB (C10d: the guest's writes past the session's memory limit go to a spill file), and
+/// A blank card up to 128 GiB (C10d / C10e: the guest's writes past the session's memory limit go to a journal), and
 /// `info` saying where the writes are kept
 TEST_F(MediaControl_Test, BlankMediumSizeAndSessionWrites)
 {
@@ -661,7 +661,8 @@ TEST_F(MediaControl_Test, BlankMediumSizeAndSessionWrites)
     EXPECT_EQ(writes->find("sectors")->i, 0);
     EXPECT_EQ(writes->find("memoryBytes")->i, 0);
     EXPECT_EQ(static_cast<uint64_t>(writes->find("memoryLimit")->i), SessionWriteMap::DefaultMemoryLimit());
-    EXPECT_EQ(writes->find("spilledBytes")->i, 0);
-    EXPECT_EQ(writes->find("spillFile")->s, "");
-    EXPECT_FALSE(writes->find("spillFailed")->b);
+    EXPECT_EQ(writes->find("journalBytes")->i, 0);
+    EXPECT_EQ(writes->find("journalFile")->s, "");
+    EXPECT_FALSE(writes->find("journalRecoverable")->b) << "a blank medium has no place for a journal of its own";
+    EXPECT_FALSE(writes->find("journalFailed")->b);
 }

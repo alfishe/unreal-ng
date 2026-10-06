@@ -209,3 +209,27 @@ TEST(MediaConfig_Test, SessionSettingsAreNotSlots)
     ASSERT_EQ(badReport.size(), 1u);
     EXPECT_NE(badReport[0].find("SessionMemoryLimit"), std::string::npos) << badReport[0];
 }
+
+/// Every C10e key: arena size, flush and sync intervals, the journal switch; bad values reported, the default kept
+TEST(MediaConfig_Test, SessionJournalSettings)
+{
+    IniFile ini;
+    ini.LoadData("[MEDIA]\nSessionArenaKiB = 256\nSessionFlushSeconds = 5\nSessionSyncSeconds = 0\nSessionJournal = off\n");
+    std::vector<std::string> report;
+    const MediaSettings settings = MediaConfig::SettingsFromIni(ini, "", &report);
+    EXPECT_TRUE(report.empty());
+    EXPECT_EQ(settings.sessionArenaBytes, std::optional<uint32_t>(256 * 1024));
+    EXPECT_EQ(settings.sessionFlushSeconds, std::optional<uint32_t>(5));
+    EXPECT_EQ(settings.sessionSyncSeconds, std::optional<uint32_t>(0));
+    EXPECT_EQ(settings.sessionJournal, std::optional<bool>(false));
+    EXPECT_TRUE(MediaConfig::FromIni(ini, "", &report).empty()) << "none of them is a slot";
+
+    IniFile bad;
+    bad.LoadData("[MEDIA]\nSessionArenaKiB = 100\nSessionFlushSeconds = soon\nSessionJournal = maybe\n");
+    std::vector<std::string> badReport;
+    const MediaSettings kept = MediaConfig::SettingsFromIni(bad, "", &badReport);
+    EXPECT_FALSE(kept.sessionArenaBytes.has_value()) << "not a power of two";
+    EXPECT_FALSE(kept.sessionFlushSeconds.has_value());
+    EXPECT_FALSE(kept.sessionJournal.has_value());
+    EXPECT_EQ(badReport.size(), 3u);
+}

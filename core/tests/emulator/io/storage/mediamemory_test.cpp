@@ -89,6 +89,7 @@ TEST(SessionMemory_Test, InMemoryTierBoundedForEveryPattern)
     for (const Pattern& pattern : Patterns(kSectors))
     {
         SessionWriteMap session(std::make_unique<SparseMemoryDisk>(kSectors));
+        session.SetArenaBytes(32 * 1024);  // four arenas under the limit
         session.SetMemoryLimit(kLimit);
         std::map<uint64_t, std::vector<uint8_t>> reference;
         for (uint64_t i = 0; i < 2500; i++)
@@ -106,8 +107,9 @@ TEST(SessionMemory_Test, InMemoryTierBoundedForEveryPattern)
             }
             ASSERT_LE(session.HotBytes(), kLimit) << pattern.name << ", write " << i;
         }
+        // One leaf of the index (a pointer per group of 1 GiB: 128 KiB), a node per touched group, the arenas' slots
         const uint64_t touchedChunks = (kSectors + SessionWriteMap::kChunkSectors - 1) / SessionWriteMap::kChunkSectors;
-        EXPECT_LE(session.IndexBytes(), 16 * 1024 + touchedChunks * 256) << pattern.name;
+        EXPECT_LE(session.IndexBytes(), 128 * 1024 + 16 * 1024 + touchedChunks * 256) << pattern.name;
         EXPECT_EQ(session.ChangedSectors(), reference.size()) << pattern.name;
         std::vector<uint8_t> read(512);
         for (const auto& [lba, data] : reference)
@@ -124,9 +126,9 @@ TEST(SessionMemory_Test, UnlimitedHoldsEverySectorInMemory)
     session.SetMemoryLimit(0);
     for (uint64_t lba = 0; lba < 4000; lba++)
         ASSERT_TRUE(session.WriteSector(lba, Sector(lba).data()));
-    EXPECT_EQ(session.HotBytes(), 4000 * SessionWriteMap::kHotEntryBytes);
+    EXPECT_EQ(session.HotBytes(), 2 * uint64_t(session.ArenaBytes())) << "4000 sectors: two arenas of 2048";
     EXPECT_EQ(session.SpilledSectors(), 0u);
-    EXPECT_TRUE(session.SpillPath().empty()) << "no spill file without a limit";
+    EXPECT_TRUE(session.SpillPath().empty()) << "no journal without a limit, a name or a timeout";
 }
 
 TEST(SessionMemory_Test, LowerLimitSpillsAtOnce)
@@ -134,36 +136,50 @@ TEST(SessionMemory_Test, LowerLimitSpillsAtOnce)
     ScratchFolder folder("session-memory-lower");
     SpillHere here(folder.Path());
     SessionWriteMap session(std::make_unique<SparseMemoryDisk>(8192));
+    session.SetArenaBytes(32 * 1024);
     session.SetMemoryLimit(0);
     for (uint64_t lba = 0; lba < 4000; lba++)
         ASSERT_TRUE(session.WriteSector(lba, Sector(lba).data()));
+    EXPECT_EQ(session.HotBytes(), 63u * 32 * 1024);
     session.SetMemoryLimit(128 * 1024);
     EXPECT_LE(session.HotBytes(), 128u * 1024);
     EXPECT_EQ(session.ChangedSectors(), 4000u);
-    EXPECT_EQ(session.HotBytes() / SessionWriteMap::kHotEntryBytes + session.SpilledSectors(), 4000u);
+    EXPECT_GE(session.SpilledSectors(), 4000u - 4 * 64) << "all but four arenas in the journal";
 }
 
-TEST(SessionMemory_Test, NewSessionsTakeTheDefaultLimit)
+TEST(SessionMemory_Test, NewSessionsTakeTheDefaults)
 {
-    const uint64_t old = SessionWriteMap::DefaultMemoryLimit();
-    EXPECT_EQ(old, 128 * kMiB) << "[MEDIA] SessionMemoryLimit: 128 MiB unless a config says otherwise";
-    SessionWriteMap::SetDefaultMemoryLimit(3 * kMiB);
+    const SessionSettings old = SessionWriteMap::Defaults();
+    const SessionSettings plain;
+    EXPECT_EQ(plain.memoryLimit, 16 * kMiB) << "[MEDIA] SessionMemoryLimit: 16 MiB unless a config says otherwise";
+    EXPECT_EQ(plain.arenaBytes, 1024u * 1024);
+    EXPECT_EQ(plain.flushSeconds, 30u);
+    EXPECT_EQ(plain.syncSeconds, 30u);
+    EXPECT_TRUE(plain.journal);
+    EXPECT_FALSE(old.journal) << "the test runner keeps journals away from test data";
+
+    SessionSettings changed = old;
+    changed.memoryLimit = 3 * kMiB;
+    changed.arenaBytes = 64 * 1024;
+    SessionWriteMap::SetDefaults(changed);
     SessionWriteMap session(std::make_unique<SparseMemoryDisk>(64));
     EXPECT_EQ(session.MemoryLimit(), 3 * kMiB);
-    SessionWriteMap::SetDefaultMemoryLimit(old);
+    EXPECT_EQ(session.ArenaBytes(), 64u * 1024);
+    SessionWriteMap::SetDefaults(old);
 }
 
 TEST(SparseMemory_Test, HoldsWrittenChunksAndItsTable)
 {
-    // A 128 GiB blank card: the chunk table only
+    // A 128 GiB blank card: a pointer per GiB
     SparseMemoryDisk card(128ull * 1024 * kMiB / 512);
     EXPECT_EQ(card.StoredBytes(), 0u);
-    EXPECT_EQ(card.TableBytes(), 128ull * 1024 * kMiB / (64 * 1024) * sizeof(void*));
+    EXPECT_EQ(card.TableBytes(), 128 * sizeof(void*));
 
     // Formatting-like: the first MiB, whole chunks
     for (uint64_t lba = 0; lba < 2048; lba++)
         ASSERT_TRUE(card.WriteSector(lba, Sector(lba).data()));
     EXPECT_EQ(card.StoredBytes(), kMiB);
+    EXPECT_EQ(card.TableBytes(), 128 * sizeof(void*) + 16384 * sizeof(void*)) << "the first GiB's leaf";
 
     // One sector in each of 100 far chunks: a chunk each (the worst case, 64 KiB per scattered sector)
     for (uint64_t i = 0; i < 100; i++)
@@ -189,6 +205,7 @@ TEST(MediaMemory_Test, ResidentGrowthPerMode)
 
     // The control: an unlimited session holds all 64 MiB
     uint64_t control = 0;
+    uint64_t afterDiscard = 0;
     {
         ProcessMemory::Meter meter;
         if (!meter.Known())
@@ -198,10 +215,14 @@ TEST(MediaMemory_Test, ResidentGrowthPerMode)
         for (uint64_t lba = 0; lba < kSectors; lba++)
             session.WriteSector(lba, Sector(lba).data());
         control = meter.Growth();
+        // Its arenas are pages of their own: a discard gives them back to the OS, no heap trim needed
+        session.Discard();
+        afterDiscard = meter.Growth();
     }
     if (control < 48 * kMiB)
         GTEST_SKIP() << "an unlimited session grew only " << control / kMiB << " MiB for 64 MiB of writes: the measurement cannot "
                         "tell bounded from unbounded here";
+    EXPECT_LE(afterDiscard, kSlack) << "after a discard (it held " << control / kMiB << " MiB)";
 
     // A session with a limit, and what is built from it
     {

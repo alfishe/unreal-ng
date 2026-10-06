@@ -1,6 +1,6 @@
-// Session spill (multi-source phases/c10d-session-spill.md): a session keeps at most its memory limit of changed
-// sectors in memory and the rest in a spill file; reads, iteration, the content id and the session delta see one
-// set of changes whichever tier holds them.
+// Session tiers (multi-source phases/c10d-session-spill.md, c10e-session-journal.md): a session keeps at most its
+// memory limit of changed sectors in memory and the rest in its journal; reads, iteration, the content id and the
+// session delta see one set of changes whichever tier holds them.
 
 #include <gtest/gtest.h>
 
@@ -61,7 +61,14 @@ namespace
         return d;
     }
 
-    /// Points new sessions' spill files at a folder of this test, and back afterwards
+    /// A memory limit in 32 KiB arenas (the default arena of 1 MiB is larger than these tests' limits)
+    void Limit(SessionWriteMap& map, uint64_t bytes)
+    {
+        map.SetArenaBytes(32 * 1024);
+        map.SetMemoryLimit(bytes);
+    }
+
+    /// Points new sessions' temp journals at a folder of this test, and back afterwards
     class SpillHere
     {
     public:
@@ -114,7 +121,7 @@ TEST(SessionSpill_Test, ReadsAcrossTiers)
     std::map<uint64_t, std::array<uint8_t, 512>> reference;
     {
         SessionWriteMap map(MakeBase());
-        map.SetMemoryLimit(kLimit / 4);
+        Limit(map, kLimit / 4);
         // 2 MiB scattered over the disk, eight times the limit
         for (uint64_t i = 0; i < 4096; i++)
         {
@@ -140,7 +147,7 @@ TEST(SessionSpill_Test, RewriteMovesBack)
     ScratchFolder folder("session-spill-rewrite");
     SpillHere here(folder.Path());
     SessionWriteMap map(MakeBase());
-    map.SetMemoryLimit(kLimit);
+    Limit(map, kLimit);
     for (uint64_t lba = 0; lba < 4096; lba++)
         ASSERT_TRUE(map.WriteSector(lba, Data(lba, 0).data()));
     ASSERT_GT(map.SpilledSectors(), 0u);
@@ -181,7 +188,7 @@ TEST(SessionSpill_Test, IteratesInOrder)
     SpillHere here(folder.Path());
     std::shared_ptr<IBlockDevice> base = MakeBase();
     SessionWriteMap limited(std::make_unique<SharedBase>(base));
-    limited.SetMemoryLimit(256 * 1024);
+    Limit(limited, 256 * 1024);
     SessionWriteMap unlimited(std::make_unique<SharedBase>(base));
     unlimited.SetMemoryLimit(0);
     std::map<uint64_t, std::array<uint8_t, 512>> reference;
@@ -220,7 +227,7 @@ TEST(SessionSpill_Test, DeltaAcrossTiers)
     SpillHere here(folder.Path());
     std::shared_ptr<IBlockDevice> base = MakeBase();
     SessionWriteMap limited(std::make_unique<SharedBase>(base));
-    limited.SetMemoryLimit(kLimit / 4);
+    Limit(limited, kLimit / 4);
     std::map<uint64_t, std::array<uint8_t, 512>> reference;
     for (uint64_t i = 0; i < 2000; i++)
     {
@@ -238,7 +245,7 @@ TEST(SessionSpill_Test, DeltaAcrossTiers)
 
     // Restored into a limited session again: the load spills as it goes
     SessionWriteMap restored(std::make_unique<SharedBase>(base));
-    restored.SetMemoryLimit(kLimit / 4);
+    Limit(restored, kLimit / 4);
     std::string detail;
     ASSERT_EQ(SessionDelta::Load(path, restored, identity, detail), DeltaLoad::Restored) << detail;
     ExpectChanges(restored, reference);
@@ -254,7 +261,7 @@ TEST(SessionSpill_Test, SpillFailureKeepsData)
     std::ofstream(blocked) << "x";
     SpillHere here(blocked / "spill");
     SessionWriteMap map(MakeBase());
-    map.SetMemoryLimit(64 * 1024);
+    Limit(map, 64 * 1024);
     std::map<uint64_t, std::array<uint8_t, 512>> reference;
     for (uint64_t lba = 0; lba < 1000; lba++)
     {
@@ -307,7 +314,7 @@ TEST(SessionSpill_Test, DamagedDeltaLeavesTheSession)
     SpillHere here(folder.Path());
     std::shared_ptr<IBlockDevice> base = MakeBase();
     SessionWriteMap source(std::make_unique<SharedBase>(base));
-    source.SetMemoryLimit(kLimit);
+    Limit(source, kLimit);
     for (uint64_t lba = 0; lba < 4000; lba++)
         ASSERT_TRUE(source.WriteSector(lba, Data(lba, 1).data()));
     DeltaIdentity identity;
@@ -318,7 +325,7 @@ TEST(SessionSpill_Test, DamagedDeltaLeavesTheSession)
     std::filesystem::resize_file(path, std::filesystem::file_size(path) - 20);
 
     SessionWriteMap target(std::make_unique<SharedBase>(base));
-    target.SetMemoryLimit(kLimit);
+    Limit(target, kLimit);
     ASSERT_TRUE(target.WriteSector(7, Data(7, 9).data()));
     std::string detail;
     EXPECT_EQ(SessionDelta::Load(path, target, identity, detail), DeltaLoad::Damaged);
@@ -333,7 +340,7 @@ TEST(SessionSpill_Test, DiscardDropsTheSpillFile)
     ScratchFolder folder("session-spill-discard");
     SpillHere here(folder.Path());
     SessionWriteMap map(MakeBase());
-    map.SetMemoryLimit(64 * 1024);
+    Limit(map, 64 * 1024);
     for (uint64_t lba = 0; lba < 1000; lba++)
         ASSERT_TRUE(map.WriteSector(lba, Data(lba, 2).data()));
     ASSERT_FALSE(map.SpillPath().empty());

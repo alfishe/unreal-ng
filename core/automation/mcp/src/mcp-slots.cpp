@@ -21,7 +21,7 @@ const std::vector<std::string>& TapeExtensions()
 const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolActions()
 {
     static const std::vector<std::string> insertOptions = {"access", "format", "fs", "codepage", "free", "wp", "kind", "device",
-                                                           "save", "export", "discard", "end_recording", "async", "immediate"};
+                                                           "save", "export", "discard", "end_recording", "async", "immediate", "journal"};
     static const std::vector<std::pair<std::string, std::vector<std::string>>> actions = {
         {"list", {}},
         {"info", {}},
@@ -227,6 +227,9 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["onConflict"]["description"] =
         "write-back: refuse (default) when a host file changed since the build, or keep-both (the guest's version as "
         "'name (guest).ext')";
+    schema["properties"]["journal"]["description"] =
+        "insert / swap of a medium written in session access: replay (default) a session journal left by a crash "
+        "(<source>.usession), discard it unread, or off (no journal next to the medium this time)";
     schema["properties"]["vhd"]["description"] =
         "save / export / flatten of a block medium to a new .vhd: fixed (default) or dynamic (only the 2 MiB blocks "
         "holding data are stored)";

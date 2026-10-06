@@ -286,6 +286,7 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "  insert <slot|auto> <path>    - a file or a folder; auto picks the slot" << NEWLINE;
     out << "                                 a folder of MP3 / FLAC / WAV files in a CD slot is an audio CD" << NEWLINE;
     out << "                                 (--format audio-cd); 'info <slot>' lists its tracks" << NEWLINE;
+    out << "                                 --journal replay|discard|off: a session journal left by a crash" << NEWLINE;
     out << "  swap <slot> <path>           - eject + insert in one step" << NEWLINE;
     out << "  eject <slot>                 - take the medium out" << NEWLINE;
     out << "  save <slot> [path]           - floppies: write back (or to path)" << NEWLINE;
