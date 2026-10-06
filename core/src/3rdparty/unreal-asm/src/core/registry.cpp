@@ -9,6 +9,7 @@
 #include "codecs/tasm/tasmcodec.h"
 #include "codecs/storm/stormcodec.h"
 #include "codecs/text/textcodec.h"
+#include "codecs/zeus/zeuscodec.h"
 #include "codecs/zxasm/zxasmcodec.h"
 
 namespace unrealasm
@@ -26,6 +27,7 @@ const CodecRegistry& CodecRegistry::Builtin()
         r.Add(std::make_unique<codecs::StormCodec>());
         r.Add(std::make_unique<codecs::MasmCodec>());
         r.Add(std::make_unique<codecs::GensCodec>());
+        r.Add(std::make_unique<codecs::ZeusCodec>());
         return r;
     }();
     return registry;

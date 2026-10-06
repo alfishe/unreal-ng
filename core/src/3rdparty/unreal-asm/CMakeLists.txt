@@ -42,6 +42,7 @@ add_library(unreal-asm STATIC
     src/codecs/storm/stormcodec.cpp
     src/codecs/masm/masmcodec.cpp
     src/codecs/gens/genscodec.cpp
+    src/codecs/zeus/zeuscodec.cpp
     src/ir/expr.cpp
     src/core/dialects.cpp
     src/dialects/common/z80.cpp
@@ -98,6 +99,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/stormcodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/masmcodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/genscodec_test.cpp
+        ${UNREAL_ASM_DIR}/tests/zeuscodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/stormfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/zxasmfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/pasmobackend_test.cpp

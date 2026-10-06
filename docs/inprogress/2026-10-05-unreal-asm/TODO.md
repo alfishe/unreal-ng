@@ -60,7 +60,8 @@ phase; master only after the owner's review.
   - [x] codec `masm`, versions 1.0 demo / 1.1 / 2.0 / 3.0 (2026-10-06): MASM 1.1's own source and typed files of every version byte-exact, canonical 100 %; testdata `masm/` ([research-masm.md](research-masm.md))
   - [x] codec `gens`, versions GENS1 / GENS2-4 (2026-10-06): five real sources and GENS3 / GENS4 saves byte-exact, the editor's compression reproduces every real and typed line; testdata `gens/` ([research-gens.md](research-gens.md))
   - [ ] GENS tape files: P blocks and T's multi-block include files need a tape (TAP / TZX) container
-  - [ ] codecs `xas` (4.18 … 9.10), `zeus` (1983 / GG / PHT tables)
+  - [x] codec `zeus`, versions 1983 / GG / PHT (2026-10-06): ADS 2.0 sources (the "ads" format), ZEUS v7.E help, ZXDB Zeus Routines and a typed probe byte-exact, tokenizer 4062 / 4062 lines; testdata `zeus/` ([research-zeus.md](research-zeus.md))
+  - [ ] codec `xas` (4.18 … 9.10)
 - [ ] A7 emulator adapters and surfaces, Qt disk browser, recipe
 - [ ] A8 symbols on the library (symbols S1-S5)
 - [ ] A9 benchmarks, user docs
