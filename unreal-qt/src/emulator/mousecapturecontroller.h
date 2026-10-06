@@ -202,7 +202,6 @@ private:
 
     // Generic backend (non-macOS): re-center warping
     QPoint _warpCenterGlobal;
-    bool _ignoreNextMove = false;
 
     // macOS backend: native relative mode (see platform/macos/mousecapture_macos.mm)
     void* _nativeCapture = nullptr;

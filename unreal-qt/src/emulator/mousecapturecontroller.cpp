@@ -206,8 +206,6 @@ void MouseCaptureController::release()
         MouseCaptureMacOS::End(_nativeCapture);
         _nativeCapture = nullptr;
     }
-    _ignoreNextMove = false;
-
     if (_surface.setMouseTracking)
         _surface.setMouseTracking(false);
     if (_surface.setCursorHidden)
@@ -252,8 +250,8 @@ void MouseCaptureController::recenterCursor()
         _surface.warpCursor(_warpCenterGlobal);
     else
         QCursor::setPos(_warpCenterGlobal);
-    // setPos generates a move event back to the center - it is not user travel
-    _ignoreNextMove = true;
+    // setPos generates a move event back to the center - it is not user travel.
+    // handleMouseMove identifies that echo by its destination coordinates.
 }
 
 /// endregion </Capture>
@@ -316,9 +314,12 @@ bool MouseCaptureController::handleMouseMove(QMouseEvent* event)
         return true;
 
     const QPoint position = event->globalPosition().toPoint();
-    if (_ignoreNextMove || position == _warpCenterGlobal)
+    // QCursor::setPos can enqueue the synthetic move after another real move
+    // has already arrived. Only the event at the warp destination is an echo;
+    // discarding the next event unconditionally loses real travel and makes
+    // Windows capture feel erratic when its mouse message queue is busy.
+    if (position == _warpCenterGlobal)
     {
-        _ignoreNextMove = false;
         return true;
     }
 
