@@ -105,7 +105,8 @@ TEST(SessionMemory_Test, InMemoryTierBoundedForEveryPattern)
                 reference[lba] = Sector(lba, static_cast<uint32_t>(i % 7));
                 ASSERT_TRUE(session.WriteSector(lba, reference[lba].data()));
             }
-            ASSERT_LE(session.HotBytes(), kLimit) << pattern.name << ", write " << i;
+            ASSERT_LE(session.HotBytes(), session.MemoryCeiling()) << pattern.name << ", write " << i;
+            ASSERT_LE(session.MemoryCeiling(), kLimit * 3 / 2);
         }
         // One leaf of the index (a pointer per group of 1 GiB: 128 KiB), a node per touched group, the arenas' slots
         const uint64_t touchedChunks = (kSectors + SessionWriteMap::kChunkSectors - 1) / SessionWriteMap::kChunkSectors;

@@ -3,6 +3,7 @@
 #include "sessionwritemap.h"
 
 #include "common/filehelper.h"
+#include "emulator/io/storage/sessionjournalio.h"
 
 #include <algorithm>
 #include <atomic>
@@ -14,7 +15,6 @@
 #include <fstream>
 #include <mutex>
 #include <new>
-#include <random>
 #include <system_error>
 
 #if defined(_WIN32)
@@ -22,10 +22,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include <io.h>
 #else
 #include <sys/mman.h>
-#include <unistd.h>
 #endif
 
 namespace
@@ -38,6 +36,8 @@ namespace
     constexpr char kSlotMagic[8] = {'U', 'N', 'G', 'S', 'L', 'O', 'T', '!'};
     constexpr uint32_t kVersion = 1;
     constexpr uint64_t kRetryAfterFailure = 4096;  ///< writes between journal attempts once one failed
+    constexpr uint64_t kFlushBytesPerTick = 1024 * 1024;  ///< a timeout flush copies at most this much a frame (about 0.1 ms)
+    constexpr uint32_t kNoArena = ~0u;
 
     std::mutex g_settingsLock;
     SessionSettings g_settings;
@@ -124,189 +124,6 @@ namespace
 
     uint64_t SlotOffset(uint64_t slot) { return kHeaderBytes + slot * kSlotBytes; }
 }  // namespace
-
-/// The journal file: a 4 KiB header naming the base, then 64.5 KiB slots (a 512-byte header naming a group and the
-/// sectors it holds, then the group's 128 sectors). A temp journal is unlinked as soon as it is open on POSIX
-class SessionJournalFile
-{
-public:
-    /// A new journal at `path` (replacing what is there); `temp`: in a folder, unlinked at once where the OS allows
-    static std::unique_ptr<SessionJournalFile> Create(const std::filesystem::path& path, bool temp, uint64_t contentId,
-                                                      uint64_t sectors)
-    {
-        std::unique_ptr<SessionJournalFile> file(new SessionJournalFile());
-        file->_path = path;
-        file->_temp = temp;
-        file->_file = Open(path, "w+b");
-        if (!file->_file)
-            return nullptr;
-#ifndef _WIN32
-        if (temp)
-        {
-            std::error_code ec;
-            file->_unlinked = std::filesystem::remove(path, ec);
-        }
-#endif
-        uint8_t header[kHeaderBytes] = {};
-        std::memcpy(header, kFileMagic, 8);
-        Put32(header + 8, kVersion);
-        Put32(header + 12, 0);
-        Put64(header + 16, contentId);
-        Put64(header + 24, sectors);
-        Put32(header + 32, static_cast<uint32_t>(kSlotBytes));
-        Put32(header + 36, Fnv32(header, 36));
-        if (!file->Write(0, header, sizeof header) || std::fflush(file->_file) != 0)
-            return nullptr;
-        return file;
-    }
-
-    /// An existing journal, to replay
-    static std::unique_ptr<SessionJournalFile> OpenExisting(const std::filesystem::path& path)
-    {
-        std::unique_ptr<SessionJournalFile> file(new SessionJournalFile());
-        file->_path = path;
-        file->_file = Open(path, "r+b");
-        if (!file->_file)
-            return nullptr;
-        return file;
-    }
-
-    ~SessionJournalFile() { Close(); }
-
-    bool Write(uint64_t offset, const void* data, size_t size)
-    {
-        return Seek(offset) && std::fwrite(data, 1, size, _file) == size;
-    }
-
-    bool Read(uint64_t offset, void* data, size_t size) const
-    {
-        return Seek(offset) && std::fread(data, 1, size, _file) == size;
-    }
-
-    bool Flush() { return std::fflush(_file) == 0; }
-
-    /// To the disk, past the OS's cache
-    bool Sync()
-    {
-        if (!Flush())
-            return false;
-#if defined(_WIN32)
-        return _commit(_fileno(_file)) == 0;
-#else
-        return fsync(fileno(_file)) == 0;
-#endif
-    }
-
-    uint64_t Size() const
-    {
-        std::error_code ec;
-        if (!_unlinked)
-        {
-            const uint64_t size = std::filesystem::file_size(_path, ec);
-            if (!ec)
-                return size;
-        }
-#if defined(_WIN32)
-        _fseeki64(_file, 0, SEEK_END);
-        return static_cast<uint64_t>(_ftelli64(_file));
-#else
-        fseeko(_file, 0, SEEK_END);
-        return static_cast<uint64_t>(ftello(_file));
-#endif
-    }
-
-    /// Closed and deleted
-    void Remove()
-    {
-        Close();
-        if (!_unlinked)
-        {
-            std::error_code ec;
-            std::filesystem::remove(_path, ec);
-        }
-        _unlinked = true;
-    }
-
-    void Close()
-    {
-        if (_file)
-        {
-            std::fclose(_file);
-            _file = nullptr;
-            if (_temp && !_unlinked)
-            {
-                std::error_code ec;
-                std::filesystem::remove(_path, ec);
-                _unlinked = true;
-            }
-        }
-    }
-
-    std::string Path() const { return _unlinked ? "(deleted) " + FileHelper::FromFsPath(_path) : FileHelper::FromFsPath(_path); }
-
-    /// A temp journal of a new session: in `folder` (empty: the system temp folder)
-    static std::filesystem::path TempPath(const std::string& folder)
-    {
-        std::error_code ec;
-        std::filesystem::path dir = folder.empty() ? std::filesystem::temp_directory_path(ec) : FileHelper::ToFsPath(folder);
-        if (ec || dir.empty())
-            return {};
-        std::filesystem::create_directories(dir, ec);
-        RemoveLeftovers(dir);
-        static std::atomic<uint64_t> counter{0};
-        static const uint64_t process = std::random_device{}() * 0x9E3779B97F4A7C15ULL;
-        char name[80];
-        std::snprintf(name, sizeof name, "unreal-ng-session-%016llx-%llu.spill", static_cast<unsigned long long>(process),
-                      static_cast<unsigned long long>(counter.fetch_add(1)));
-        return dir / name;
-    }
-
-private:
-    SessionJournalFile() = default;
-
-    static FILE* Open(const std::filesystem::path& path, const char* mode)
-    {
-#if defined(_WIN32)
-        const std::wstring wmode(mode, mode + std::strlen(mode));
-        return _wfopen(path.c_str(), wmode.c_str());
-#else
-        return std::fopen(path.c_str(), mode);
-#endif
-    }
-
-    bool Seek(uint64_t offset) const
-    {
-#if defined(_WIN32)
-        return _fseeki64(_file, static_cast<__int64>(offset), SEEK_SET) == 0;
-#else
-        return fseeko(_file, static_cast<off_t>(offset), SEEK_SET) == 0;
-#endif
-    }
-
-    /// Temp journals of earlier runs that ended without removing theirs (Windows: a file still open by a running
-    /// process cannot be removed, so only the stale ones go)
-    static void RemoveLeftovers(const std::filesystem::path& dir)
-    {
-        static std::once_flag once;
-        std::call_once(once, [&dir] {
-            std::error_code ec;
-            for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
-            {
-                const std::string name = it->path().filename().string();
-                if (name.rfind("unreal-ng-session-", 0) == 0 && it->path().extension() == ".spill")
-                {
-                    std::error_code ignored;
-                    std::filesystem::remove(it->path(), ignored);
-                }
-            }
-        });
-    }
-
-    std::filesystem::path _path;
-    FILE* _file = nullptr;
-    bool _temp = false;
-    bool _unlinked = false;
-};
 
 /// region <Settings>
 
@@ -476,16 +293,31 @@ SessionWriteMap::Arena::~Arena()
 #endif
 }
 
+size_t SessionWriteMap::MaxArenas() const
+{
+    const uint64_t limit = _settings.memoryLimit;
+    return limit ? static_cast<size_t>(std::max<uint64_t>(1, limit / _settings.arenaBytes)) : SIZE_MAX;
+}
+
+size_t SessionWriteMap::MaxInFlight() const
+{
+    const size_t arenas = MaxArenas();
+    return arenas == SIZE_MAX ? SIZE_MAX : std::max<size_t>(1, arenas / 2);
+}
+
+uint64_t SessionWriteMap::MemoryCeiling() const
+{
+    return _settings.memoryLimit ? static_cast<uint64_t>(MaxArenas() + MaxInFlight()) * _settings.arenaBytes : 0;
+}
+
 uint64_t SessionWriteMap::NewSlot(uint64_t lba)
 {
     const uint32_t slots = _settings.arenaBytes / static_cast<uint32_t>(kSector);
     Arena* newest = _arenaOrder.empty() ? nullptr : _arenas.at(_arenaOrder.back()).get();
     if (!newest || (newest->next == slots && newest->free.empty()))
     {
-        // A new arena; past the limit the oldest moves to the journal first
-        const uint64_t limit = _settings.memoryLimit;
-        const size_t maxArenas = limit ? static_cast<size_t>(std::max<uint64_t>(1, limit / _settings.arenaBytes)) : SIZE_MAX;
-        if (_arenaOrder.size() >= maxArenas && (!_spillFailed || _writesSinceFailure >= kRetryAfterFailure))
+        // A new arena; past the limit the oldest goes to the journal first (handed to the I/O pool)
+        if (_arenaOrder.size() >= MaxArenas() && (!_spillFailed || _writesSinceFailure >= kRetryAfterFailure))
         {
             _writesSinceFailure = 0;
             EvictOldest();
@@ -524,6 +356,9 @@ void SessionWriteMap::FreeSlot(uint64_t ref)
         _dirtyTotal--;
     }
     a.live--;
+    // An arena on its way to the journal stays until the pool is done with it (its pages are being read)
+    if (a.inFlight)
+        return;
     a.free.push_back(slot);
     if (a.live == 0 && id != _arenaOrder.back())
     {
@@ -553,18 +388,41 @@ bool SessionWriteMap::EnsureJournal()
 {
     if (_journal)
         return true;
+    std::filesystem::path path;
+    bool temp = false;
     if (!_journalPath.empty())
     {
-        _journal = SessionJournalFile::Create(FileHelper::ToFsPath(_journalPath), /*temp*/ false, _base->ContentId(), SectorCount());
-        if (_journal)
-            return true;
-        ReleaseJournal(JournalKey(_journalPath));
-        _journalPath.clear();  // no place next to the medium: a temp journal, not recoverable
+        path = FileHelper::ToFsPath(_journalPath);
+        _journal = SessionJournalFile::Create(path, /*temp*/ false);
+        if (!_journal)
+        {
+            ReleaseJournal(JournalKey(_journalPath));
+            _journalPath.clear();  // no place next to the medium: a temp journal, not recoverable
+        }
     }
-    const std::filesystem::path temp = SessionJournalFile::TempPath(_settings.spillFolder);
-    if (!temp.empty())
-        _journal = SessionJournalFile::Create(temp, /*temp*/ true, _base->ContentId(), SectorCount());
-    return _journal != nullptr;
+    if (!_journal)
+    {
+        path = SessionJournalFile::TempPath(_settings.spillFolder);
+        temp = true;
+        if (!path.empty())
+            _journal = SessionJournalFile::Create(path, temp);
+    }
+    if (!_journal)
+        return false;
+    // The file header, written by the pool ahead of everything else
+    auto batch = std::make_unique<JournalBatch>();
+    batch->owned.assign(kHeaderBytes, 0);
+    uint8_t* header = batch->owned.data();
+    std::memcpy(header, kFileMagic, 8);
+    Put32(header + 8, kVersion);
+    Put32(header + 12, 0);
+    Put64(header + 16, _base->ContentId());
+    Put64(header + 24, SectorCount());
+    Put32(header + 32, static_cast<uint32_t>(kSlotBytes));
+    Put32(header + 36, Fnv32(header, 36));
+    batch->headers.push_back({0, nullptr, 0, static_cast<uint32_t>(kHeaderBytes)});
+    Post(std::move(batch), kNoArena);
+    return true;
 }
 
 void SessionWriteMap::QueueHeader(uint64_t group, Group& g)
@@ -579,18 +437,16 @@ void SessionWriteMap::QueueHeader(uint64_t group, Group& g)
     }
 }
 
-bool SessionWriteMap::WriteDirty(Arena& arena)
+size_t SessionWriteMap::AddDirty(Arena& arena, JournalBatch& batch, bool copy, size_t budget)
 {
-    if (!arena.dirtyCount)
-        return true;
-    if (!EnsureJournal())
-        return false;
     std::vector<std::pair<uint64_t, uint32_t>> dirty;  // (lba, slot)
     dirty.reserve(arena.dirtyCount);
     for (uint32_t s = 0; s < arena.lba.size(); s++)
-        if (arena.dirty[s])
+        if (arena.dirty[s] && arena.lba[s] != kNone)
             dirty.emplace_back(arena.lba[s], s);
     std::sort(dirty.begin(), dirty.end());
+    if (dirty.size() > budget)
+        dirty.resize(budget);
     uint64_t lastGroup = kNone;
     for (const auto& [lba, s] : dirty)
     {
@@ -609,8 +465,18 @@ bool SessionWriteMap::WriteDirty(Arena& arena)
                 g.slot = _nextJournalSlot++;
             }
         }
-        if (!_journal->Write(SlotOffset(g.slot) + kSlotHeaderBytes + index * kSector, arena.data + s * kSector, kSector))
-            return false;
+        JournalBatch::Piece piece{SlotOffset(g.slot) + kSlotHeaderBytes + index * kSector, nullptr, 0, static_cast<uint32_t>(kSector)};
+        if (copy)
+        {
+            // The arena stays writable: the batch takes a copy
+            piece.ownedAt = batch.owned.size();
+            batch.owned.insert(batch.owned.end(), arena.data + s * kSector, arena.data + (s + 1) * kSector);
+        }
+        else
+        {
+            piece.data = arena.data + s * kSector;  // the arena waits for the batch (in flight, read-only)
+        }
+        batch.data.push_back(piece);
         if (!Has(g.journal, index))
         {
             Set(g.journal, index);
@@ -626,35 +492,21 @@ bool SessionWriteMap::WriteDirty(Arena& arena)
             lastGroup = group;
         }
     }
-    return true;
+    return dirty.size();
 }
 
-bool SessionWriteMap::WriteHeaders()
+void SessionWriteMap::AddHeaders(JournalBatch& batch)
 {
-    if (_headerQueue.empty())
-        return true;
-    if (!EnsureJournal())
-        return false;
-    // Sector data first (written by WriteDirty), then the headers that name it
-    if (!_journal->Flush())
-        return false;
-    std::vector<uint64_t> queue;
-    queue.swap(_headerQueue);
-    bool ok = true;
-    for (size_t i = 0; i < queue.size(); i++)
+    for (const uint64_t group : _headerQueue)
     {
-        const uint64_t group = queue[i];
         Group* g = FindGroup(group);
         if (!g)
             continue;
-        if (!ok)
-        {
-            _headerQueue.push_back(group);  // stays queued for the next attempt
-            continue;
-        }
         if (g->slot != kNone)
         {
-            uint8_t header[kSlotHeaderBytes] = {};
+            const size_t at = batch.owned.size();
+            batch.owned.resize(at + kSlotHeaderBytes, 0);
+            uint8_t* header = batch.owned.data() + at;
             const bool empty = !g->journal[0] && !g->journal[1];
             if (!empty)
             {
@@ -665,14 +517,10 @@ bool SessionWriteMap::WriteHeaders()
                 Put64(header + 32, g->journal[1]);
                 Put32(header + 40, Fnv32(header, 40));
             }
-            ok = _journal->Write(SlotOffset(g->slot), header, sizeof header);
-            if (!ok)
-            {
-                _headerQueue.push_back(group);
-                continue;
-            }
+            batch.headers.push_back({SlotOffset(g->slot), nullptr, at, static_cast<uint32_t>(kSlotHeaderBytes)});
             if (empty)
             {
+                // A wiped header first, then the slot can serve another group (the batches run in order)
                 _freeJournalSlots.push_back(g->slot);
                 g->slot = kNone;
             }
@@ -681,88 +529,185 @@ bool SessionWriteMap::WriteHeaders()
         g->queued = false;
         DropGroupIfEmpty(group);
     }
-    if (ok)
-        ok = _journal->Flush();
-    _unsynced = _unsynced || ok;
-    return ok;
+    _headerQueue.clear();
+}
+
+void SessionWriteMap::Post(std::unique_ptr<JournalBatch> batch, uint32_t arenaId)
+{
+    if (!_strand)
+        _strand = std::make_shared<JournalStrand>();
+    batch->file = _journal;
+    batch->ticket = _nextTicket++;
+    if (!batch->Empty())
+        _unsynced = true;
+    _inFlight.emplace_back(batch->ticket, arenaId);
+    _strand->Post(std::move(batch));
+}
+
+void SessionWriteMap::Reap()
+{
+    if (!_strand || _inFlight.empty())
+        return;
+    for (const auto& [ticket, ok] : _strand->TakeDone())
+    {
+        auto it = std::find_if(_inFlight.begin(), _inFlight.end(), [t = ticket](const auto& f) { return f.first == t; });
+        if (it == _inFlight.end())
+            continue;
+        const uint32_t id = it->second;
+        _inFlight.erase(it);
+        if (!ok)
+            _spillFailed = true;
+        if (id == kNoArena)
+            continue;
+        Arena& a = *_arenas.at(id);
+        a.inFlight = false;
+        if (!ok)
+        {
+            // Not written: the arena stays in memory, dirty again, oldest first
+            for (uint32_t s = 0; s < a.lba.size(); s++)
+            {
+                if (a.lba[s] != kNone && !a.dirty[s])
+                {
+                    a.dirty[s] = 1;
+                    a.dirtyCount++;
+                    _dirtyTotal++;
+                }
+            }
+            _arenaOrder.push_front(id);
+            continue;
+        }
+        _spillFailed = false;
+        // In the journal now: its sectors leave memory (unless written again since: a newer slot holds them)
+        for (uint32_t s = 0; s < a.lba.size(); s++)
+        {
+            if (a.lba[s] == kNone)
+                continue;
+            Group* g = FindGroup(a.lba[s] / kChunkSectors);
+            const uint64_t index = a.lba[s] % kChunkSectors;
+            if (!g || !Has(g->hot, index))
+                continue;
+            const size_t rank = Rank(g->hot, index);
+            if (g->refs[rank] != ((static_cast<uint64_t>(id) << 32) | s))
+                continue;
+            g->refs.erase(g->refs.begin() + static_cast<std::ptrdiff_t>(rank));
+            Clear(g->hot, index);
+            if (a.dirty[s])
+            {
+                // Written into this slot after the hand-off cannot happen (copy on write); stay safe
+                a.dirty[s] = 0;
+                a.dirtyCount--;
+                _dirtyTotal--;
+            }
+        }
+        _arenas.erase(id);
+    }
+}
+
+void SessionWriteMap::WaitJournalIdle()
+{
+    if (_strand)
+        _strand->WaitIdle();
+    Reap();
 }
 
 bool SessionWriteMap::EvictOldest()
 {
     if (_arenaOrder.empty())
         return true;
-    const uint32_t id = _arenaOrder.front();
-    Arena& a = *_arenas.at(id);
-    if (!WriteDirty(a) || !WriteHeaders())
+    if (!EnsureJournal())
     {
         _spillFailed = true;
         return false;
     }
-    _spillFailed = false;
-    // Every live sector of the arena is in the journal now: it leaves memory
-    for (uint32_t s = 0; s < a.lba.size(); s++)
-    {
-        if (a.lba[s] == kNone)
-            continue;
-        Group& g = MakeGroup(a.lba[s] / kChunkSectors);
-        const uint64_t index = a.lba[s] % kChunkSectors;
-        const size_t rank = Rank(g.hot, index);
-        g.refs.erase(g.refs.begin() + static_cast<std::ptrdiff_t>(rank));
-        Clear(g.hot, index);
-    }
+    const uint32_t id = _arenaOrder.front();
+    Arena& a = *_arenas.at(id);
+    auto batch = std::make_unique<JournalBatch>();
+    AddDirty(a, *batch, /*copy*/ false, SIZE_MAX);
+    AddHeaders(*batch);
+    a.inFlight = true;
     _arenaOrder.pop_front();
-    _arenas.erase(id);
+    Post(std::move(batch), id);
+    // The disk cannot keep up with the guest: wait for it (the only time the emulation waits on the journal)
+    auto arenasInFlight = [this] {
+        return static_cast<size_t>(std::count_if(_inFlight.begin(), _inFlight.end(), [](const auto& f) { return f.second != kNoArena; }));
+    };
+    if (arenasInFlight() > MaxInFlight())
+    {
+        _journalWaits++;
+        _strand->WaitIdle();
+        Reap();
+    }
     return true;
 }
 
 void SessionWriteMap::Rebalance()
 {
-    const uint64_t limit = _settings.memoryLimit;
-    if (!limit)
-        return;
-    const size_t maxArenas = static_cast<size_t>(std::max<uint64_t>(1, limit / _settings.arenaBytes));
-    while (_arenaOrder.size() > maxArenas)
+    while (_arenaOrder.size() > MaxArenas())
         if (!EvictOldest())
             break;
+    WaitJournalIdle();
+}
+
+bool SessionWriteMap::PostDirty(size_t budget, bool sync)
+{
+    if (!_dirtyTotal && _headerQueue.empty() && !sync)
+        return true;
+    if (!EnsureJournal())
+    {
+        _spillFailed = true;
+        return false;
+    }
+    auto batch = std::make_unique<JournalBatch>();
+    for (uint32_t id : _arenaOrder)
+    {
+        if (!budget)
+            break;
+        Arena& a = *_arenas.at(id);
+        if (a.dirtyCount)
+            budget -= AddDirty(a, *batch, /*copy*/ true, budget);
+    }
+    AddHeaders(*batch);
+    batch->sync = sync;
+    Post(std::move(batch), kNoArena);
+    return true;
 }
 
 bool SessionWriteMap::FlushJournal()
 {
+    Reap();
     if (!_dirtyTotal && _headerQueue.empty() && !_unsynced)
-        return true;
-    bool ok = true;
-    for (uint32_t id : _arenaOrder)
-        ok = ok && WriteDirty(*_arenas.at(id));
-    ok = ok && WriteHeaders();
-    _spillFailed = !ok;
-    if (!ok || (_journal && !_journal->Sync()))
+        return !_spillFailed;
+    if (!PostDirty(SIZE_MAX, /*sync*/ true))
         return false;
+    WaitJournalIdle();
     _unsynced = false;
     _lastSyncMs = Now();
-    return true;
+    _flushPending = false;
+    return !_spillFailed;
 }
 
 void SessionWriteMap::Tick()
 {
+    Reap();
     // A temp journal holds nothing worth a timeout: it dies with the session anyway
     if (_journalPath.empty())
         return;
-    if ((!_dirtyTotal && _headerQueue.empty() && !_unsynced))
-        return;
     const uint64_t now = Now();
     if (_settings.flushSeconds && (_dirtyTotal || !_headerQueue.empty()) && now - _oldestDirtyMs >= _settings.flushSeconds * 1000ull)
+        _flushPending = true;
+    bool sync = false;
+    if (_settings.syncSeconds && _unsynced && now - _lastSyncMs >= _settings.syncSeconds * 1000ull)
     {
-        bool ok = true;
-        for (uint32_t id : _arenaOrder)
-            ok = ok && WriteDirty(*_arenas.at(id));
-        ok = ok && WriteHeaders();
-        _spillFailed = !ok;
-    }
-    if (_settings.syncSeconds && _unsynced && _journal && now - _lastSyncMs >= _settings.syncSeconds * 1000ull)
-    {
-        if (_journal->Sync())
-            _unsynced = false;
+        sync = true;
+        _unsynced = false;
         _lastSyncMs = now;
+    }
+    if (_flushPending || sync)
+    {
+        // A frame's share: copies of at most kFlushBytesPerTick, the disk work on the pool
+        PostDirty(_flushPending ? kFlushBytesPerTick / kSector : 0, sync);
+        if (!_dirtyTotal)
+            _flushPending = false;
     }
 }
 
@@ -808,11 +753,11 @@ SessionWriteMap::JournalOpen SessionWriteMap::OpenJournal(const std::string& pat
         return result;
     };
 
-    auto file = SessionJournalFile::OpenExisting(fsPath);
+    std::shared_ptr<SessionJournalFile> file = SessionJournalFile::OpenExisting(fsPath);
     if (!file)
         return stale("it cannot be opened");
     uint8_t header[kHeaderBytes];
-    if (!file->Read(0, header, sizeof header) || std::memcmp(header, kFileMagic, 8) != 0 || Get32(header + 36) != Fnv32(header, 36))
+    if (!file->ReadAt(0, header, sizeof header) || std::memcmp(header, kFileMagic, 8) != 0 || Get32(header + 36) != Fnv32(header, 36))
     {
         file.reset();
         return stale("its header is damaged");
@@ -839,7 +784,7 @@ SessionWriteMap::JournalOpen SessionWriteMap::OpenJournal(const std::string& pat
     for (uint64_t s = 0; s < slots; s++)
     {
         uint8_t slotHeader[kSlotHeaderBytes];
-        if (!file->Read(SlotOffset(s), slotHeader, sizeof slotHeader))
+        if (!file->ReadAt(SlotOffset(s), slotHeader, sizeof slotHeader))
             break;
         if (std::memcmp(slotHeader, kSlotMagic, 8) != 0)
         {
@@ -867,16 +812,15 @@ SessionWriteMap::JournalOpen SessionWriteMap::OpenJournal(const std::string& pat
     const uint8_t zero[kSlotHeaderBytes] = {};
     for (uint64_t s : losers)
     {
-        file->Write(SlotOffset(s), zero, sizeof zero);
+        file->WriteAt(SlotOffset(s), zero, sizeof zero);
         _freeJournalSlots.push_back(s);
     }
-    file->Flush();
 
     std::vector<uint8_t> sector(kSector);
     for (const auto& [group, entry] : best)
     {
         uint8_t slotHeader[kSlotHeaderBytes];
-        if (!file->Read(SlotOffset(entry.second), slotHeader, sizeof slotHeader))
+        if (!file->ReadAt(SlotOffset(entry.second), slotHeader, sizeof slotHeader))
             continue;
         Group& g = MakeGroup(group);
         g.slot = entry.second;
@@ -888,7 +832,7 @@ SessionWriteMap::JournalOpen SessionWriteMap::OpenJournal(const std::string& pat
             if (!Has(g.journal, i))
                 continue;
             const uint64_t lba = group * kChunkSectors + i;
-            if (lba >= SectorCount() || !file->Read(SlotOffset(g.slot) + kSlotHeaderBytes + i * kSector, sector.data(), kSector))
+            if (lba >= SectorCount() || !file->ReadAt(SlotOffset(g.slot) + kSlotHeaderBytes + i * kSector, sector.data(), kSector))
             {
                 Clear(g.journal, i);
                 continue;
@@ -913,14 +857,15 @@ void SessionWriteMap::CloseJournal(bool keep)
     if (!_journalPath.empty())
         ReleaseJournal(JournalKey(_journalPath));
     if (keep && !_journalPath.empty() && _changed)
-    {
         FlushJournal();
-        if (_journal)
-            _journal->Close();
-    }
-    else if (_journal)
+    else
+        WaitJournalIdle();  // nothing may still be writing when the file goes
+    if (_journal)
     {
-        _journal->Remove();
+        if (keep && !_journalPath.empty() && _changed)
+            _journal->Close();
+        else
+            _journal->Remove();
     }
     _journal.reset();
     _journalPath.clear();
@@ -948,7 +893,7 @@ bool SessionWriteMap::ReadSector(uint64_t lba, uint8_t* dst)
             return true;
         }
         if (Has(g->journal, index))
-            return _journal && _journal->Read(SlotOffset(g->slot) + kSlotHeaderBytes + index * kSector, dst, kSector);
+            return _journal && _journal->ReadAt(SlotOffset(g->slot) + kSlotHeaderBytes + index * kSector, dst, kSector);
     }
     return _base->ReadSector(lba, dst);
 }
@@ -965,7 +910,7 @@ bool SessionWriteMap::ReadChanged(uint64_t lba, uint8_t* dst) const
         return true;
     }
     if (Has(g->journal, index))
-        return _journal && _journal->Read(SlotOffset(g->slot) + kSlotHeaderBytes + index * kSector, dst, kSector);
+        return _journal && _journal->ReadAt(SlotOffset(g->slot) + kSlotHeaderBytes + index * kSector, dst, kSector);
     return false;
 }
 
@@ -974,6 +919,7 @@ bool SessionWriteMap::WriteSector(uint64_t lba, const uint8_t* src)
     if (lba >= SectorCount())
         return false;
     _writesSinceFailure++;
+    Reap();
 
     // Writing the medium's own contents back frees the entry
     uint8_t original[kSector];
@@ -1004,16 +950,33 @@ bool SessionWriteMap::WriteSector(uint64_t lba, const uint8_t* src)
             DropGroupIfEmpty(group);
             return true;
         }
-        std::memcpy(data, src, kSector);
+        const uint64_t ref = g->refs[Rank(g->hot, index)];
+        Arena& arena = *_arenas.at(static_cast<uint32_t>(ref >> 32));
+        if (arena.inFlight)
+        {
+            // Its arena is being written by the pool: the new data goes to a new slot (copy on write)
+            const uint32_t slot = static_cast<uint32_t>(ref);
+            arena.lba[slot] = kNone;
+            arena.live--;
+            const uint64_t fresh = NewSlot(lba);
+            g = FindGroup(group);
+            std::memcpy(SlotData(fresh), src, kSector);
+            g->refs[Rank(g->hot, index)] = fresh;
+            MarkDirty(fresh);
+        }
+        else
+        {
+            std::memcpy(data, src, kSector);
+            MarkDirty(ref);
+        }
         ToggleHash(lba, src);
-        MarkDirty(g->refs[Rank(g->hot, index)]);
         return true;
     }
 
     if (journal)
     {
         uint8_t old[kSector];
-        if (_journal && _journal->Read(SlotOffset(g->slot) + kSlotHeaderBytes + index * kSector, old, kSector))
+        if (_journal && _journal->ReadAt(SlotOffset(g->slot) + kSlotHeaderBytes + index * kSector, old, kSector))
         {
             if (std::memcmp(old, src, kSector) == 0)
                 return true;
@@ -1102,6 +1065,8 @@ std::optional<uint64_t> SessionWriteMap::NextChanged(uint64_t lba) const
 
 void SessionWriteMap::ClearAll()
 {
+    _inFlight.clear();
+    _flushPending = false;
     _leaves.clear();
     _groupCount = 0;
     _changed = 0;
@@ -1121,6 +1086,12 @@ void SessionWriteMap::Discard()
 {
     if (_changed)
         _generation++;
+    // The pool may still be reading arenas: let it finish before they go
+    if (_strand)
+    {
+        _strand->WaitIdle();
+        _strand->TakeDone();
+    }
     ClearAll();
     // Nothing left to recover: the journal goes (a new one is made at the next flush)
     if (_journal)

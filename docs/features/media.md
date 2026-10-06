@@ -146,6 +146,8 @@ A medium in `session` access (folders, CHDs, composites, blank media, any image 
 - **In a journal** next to the source: `<image>.usession`, `<folder>.usession`, `<descriptor>.usession`. When the
   arenas pass the limit, the oldest one moves there; every write reaches it at most `SessionFlushSeconds` (30 s)
   after it was made, and it is synced to the disk every `SessionSyncSeconds` (30 s).
+- **Off the emulation thread**: the journal is written and synced by a few I/O threads shared by every emulator
+  instance of the process; the emulation only waits for the disk when it falls behind the guest by half the limit.
 - **After a crash** of the emulator (or an exit with unsaved writes) the next insert of the same medium replays the
   journal: the medium comes back dirty with the guest's writes, and the report says
   `session journal disk.img.usession replayed: N sector(s) ...`. At most the last `SessionFlushSeconds` of writes are

@@ -128,7 +128,7 @@ TEST(SessionSpill_Test, ReadsAcrossTiers)
             const uint64_t lba = (i * 7919) % kSectors;
             reference[lba] = Data(lba, 0);
             ASSERT_TRUE(map.WriteSector(lba, reference[lba].data()));
-            ASSERT_LE(map.HotBytes(), kLimit / 4);
+            ASSERT_LE(map.HotBytes(), map.MemoryCeiling()) << "the limit and what is on its way to the disk";
         }
         EXPECT_GT(map.SpilledSectors(), 0u);
         EXPECT_FALSE(map.SpillPath().empty());

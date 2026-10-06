@@ -22,6 +22,13 @@
 /// spills into a temp file that is gone with it. A sector is changed when
 /// either tier holds it; memory wins when both do.
 ///
+/// The emulation thread never waits on the disk: it hands batches of writes
+/// to a pool of I/O threads shared by every session of the process
+/// (sessionjournalio.h) and collects what is done at the next write or tick.
+/// An arena on its way to the disk stays readable; a write to one of its
+/// sectors goes to a new slot. Only a disk slower than the guest makes it
+/// wait (more than half the limit in flight).
+///
 /// Design: docs/inprogress/2026-09-21-profi/2026-09-25-ide-hdd-design.md §7.4.3,
 /// shared with the SD card by tdd-storage-sd-ide-cd.md §1 (S3); the tiers:
 /// docs/inprogress/2026-10-05-media-multisource/phases/c10e-session-journal.md.
@@ -40,6 +47,8 @@
 #include "emulator/io/storage/iblockdevice.h"
 
 class SessionJournalFile;
+class JournalStrand;
+struct JournalBatch;
 
 /// The tunables of new sessions ([MEDIA] keys, c10e-session-journal.md §5)
 struct SessionSettings
@@ -109,8 +118,10 @@ public:
 
     /// Once a frame: writes older than flushSeconds go to the journal, a written journal is synced every syncSeconds
     void Tick();
-    /// Every write in memory to the journal now (and synced)
+    /// Every write in memory to the journal now (and synced); waits for the disk
     bool FlushJournal();
+    /// Until the I/O pool has written everything handed to it (tests, config calls)
+    void WaitJournalIdle();
 
     // --- The journal ---
     enum class JournalMode : uint8_t
@@ -149,10 +160,14 @@ public:
     bool SpillFailed() const { return _spillFailed; }
 
     // --- Accounting ---
-    /// The arenas held in memory
-    uint64_t HotBytes() const { return static_cast<uint64_t>(_arenaOrder.size()) * _settings.arenaBytes; }
+    /// The arenas held in memory (those on their way to the journal included)
+    uint64_t HotBytes() const { return static_cast<uint64_t>(_arenas.size()) * _settings.arenaBytes; }
+    /// The most HotBytes gets: the limit and up to half of it in flight to the disk (0: no limit)
+    uint64_t MemoryCeiling() const;
     /// Sectors whose data the journal holds (some may have a newer copy in memory)
     size_t SpilledSectors() const { return _journalSectors; }
+    /// Times the emulation waited for the disk (more than half the limit on its way to it)
+    uint64_t JournalWaits() const { return _journalWaits; }
     /// The index of both tiers and the arena bookkeeping (an estimate by node sizes)
     uint64_t IndexBytes() const;
 
@@ -186,6 +201,7 @@ private:
         uint32_t next = 0;
         uint32_t live = 0;
         uint32_t dirtyCount = 0;
+        bool inFlight = false;         ///< handed to the I/O pool: read-only until it is done
     };
 
     struct Group
@@ -220,11 +236,18 @@ private:
     void AddHot(Group& g, uint64_t index, uint64_t ref);
     void RemoveHot(Group& g, uint64_t index);
 
-    bool EnsureJournal();
-    bool WriteDirty(Arena& arena);  ///< its dirty slots into their groups' journal slots
-    bool WriteHeaders();                              ///< the queued slot headers
+    size_t MaxArenas() const;
+    size_t MaxInFlight() const;
+    bool EnsureJournal();  ///< the file (and its header, written by the pool)
     void QueueHeader(uint64_t group, Group& g);
+    /// Up to `budget` dirty slots of `arena` into `batch` (`copy`: copied, the arena stays writable; else pointers
+    /// into an arena that waits for the batch); their groups' slots allocated, journal bits set. Returns how many
+    size_t AddDirty(Arena& arena, JournalBatch& batch, bool copy, size_t budget);
+    void AddHeaders(JournalBatch& batch);  ///< the queued slot headers
+    void Post(std::unique_ptr<JournalBatch> batch, uint32_t arenaId);
+    void Reap();  ///< batches the pool finished: their arenas leave memory (or come back dirty when not written)
     bool EvictOldest();
+    bool PostDirty(size_t budget, bool sync);  ///< copies of dirty sectors (up to `budget`), the headers, a sync
     void Rebalance();  ///< arenas over the limit go to the journal
     void ToggleHash(uint64_t lba, const uint8_t* data);
     uint64_t Now() const;
@@ -245,7 +268,12 @@ private:
     uint64_t _dirtyTotal = 0;
     uint64_t _oldestDirtyMs = 0;
 
-    std::unique_ptr<SessionJournalFile> _journal;
+    std::shared_ptr<SessionJournalFile> _journal;  ///< shared with the batches that write it
+    std::shared_ptr<JournalStrand> _strand;        ///< this session's queue on the I/O pool
+    std::deque<std::pair<uint64_t, uint32_t>> _inFlight;  ///< (ticket, arena id or ~0) of posted batches
+    uint64_t _nextTicket = 1;
+    uint64_t _journalWaits = 0;
+    bool _flushPending = false;
     std::string _journalPath;  ///< empty: a temp journal
     bool _journalOff = false;
     std::vector<uint64_t> _freeJournalSlots;

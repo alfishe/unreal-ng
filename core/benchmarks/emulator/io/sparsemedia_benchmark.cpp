@@ -7,6 +7,8 @@
 
 #include <benchmark/benchmark.h>
 
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -271,8 +273,134 @@ namespace
         state.counters["spilledMiB"] = static_cast<double>(spilled) / 2048;
         state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * static_cast<int64_t>(sectors) * 512);
     }
+
+    /// C10e tuning (phases/c10e-session-journal.md §5): a session with a named journal, a guest writing at a set
+    /// rate on a simulated clock (the emulator ticks the session once a 20 ms frame), every write and tick timed.
+    /// Args: memory limit (MiB), arena (KiB), flush interval (s), pattern (0: a 128 MiB file copied sequentially;
+    /// 1: the same amount of writes, 80 % into a 1 MiB hot area - FATs, directories - and 20 % anywhere in 128 MiB),
+    /// sync interval (s; 0: never fsync).
+    /// The guest writes 4000 sectors a second (2 MB/s: a fast turbo copy). Counters: the longest single write or tick
+    /// (a stall of the emulation thread), the groups written to the journal, the arenas' peak, the journal's size
+    void SessionJournalSweep(benchmark::State& state)
+    {
+        const uint64_t limit = static_cast<uint64_t>(state.range(0)) * 1024 * 1024;
+        const uint32_t arena = static_cast<uint32_t>(state.range(1)) * 1024;
+        const uint32_t flush = static_cast<uint32_t>(state.range(2));
+        const bool hot = state.range(3) == 1;
+        const uint32_t sync = static_cast<uint32_t>(state.range(4));
+        constexpr uint64_t kWrites = 128ull * 1024 * 2;  // 128 MiB of sector writes
+        constexpr uint64_t kArea = 128ull * 1024 * 2;
+        constexpr uint64_t kMsPerWrite10 = 2;              // 0.25 ms a write, counted in tenths
+        const auto journal = Folder() / "sweep.img.usession";
+        std::vector<uint8_t> data(512, 0x5A);
+        double longestUs = 0;
+        uint64_t groups = 0, peak = 0, journalBytes = 0, waits = 0;
+        for (auto _ : state)
+        {
+            std::error_code ec;
+            std::filesystem::remove(journal, ec);
+            uint64_t now10 = 0;  // tenths of a millisecond
+            SessionWriteMap session(std::make_unique<SparseMemoryDisk>(kArea));
+            session.SetArenaBytes(arena);
+            session.SetMemoryLimit(limit);
+            session.SetFlushSeconds(flush);
+            session.SetSyncSeconds(sync);
+            session.SetClock([&now10] { return now10 / 10; });
+            session.OpenJournal(journal.string(), SessionWriteMap::JournalMode::Replay);
+            const uint64_t before = SessionWriteMap::TotalSpilledChunks();
+            std::mt19937_64 random(5);
+            longestUs = 0;
+            peak = 0;
+            for (uint64_t i = 0; i < kWrites; i++)
+            {
+                const uint64_t lba = !hot ? i % kArea : (random() % 10 < 8 ? random() % 2048 : random() % kArea);
+                data[0] = static_cast<uint8_t>(i | 1);
+                data[1] = static_cast<uint8_t>(i >> 8);
+                const auto t0 = std::chrono::steady_clock::now();
+                session.WriteSector(lba, data.data());
+                now10 += kMsPerWrite10 + (i % 2);  // 0.25 ms on average
+                if (i % 80 == 79)                  // a 20 ms frame
+                    session.Tick();
+                const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+                longestUs = std::max(longestUs, us);
+                peak = std::max(peak, session.HotBytes());
+            }
+            groups = SessionWriteMap::TotalSpilledChunks() - before;
+            waits = session.JournalWaits();
+            journalBytes = std::filesystem::exists(journal) ? std::filesystem::file_size(journal) : 0;
+            session.CloseJournal(false);
+        }
+        state.counters["longestUs"] = longestUs;
+        state.counters["journalGroups"] = static_cast<double>(groups);
+        state.counters["peakMiB"] = static_cast<double>(peak) / (1024 * 1024);
+        state.counters["journalMiB"] = static_cast<double>(journalBytes) / (1024 * 1024);
+        state.counters["waits"] = static_cast<double>(waits);
+        state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * kWrites));
+    }
+
+    /// The emulation thread's view at a guest's real pace: writes spaced in real time (a busy wait), a tick every
+    /// 20 ms, the journal written by the I/O pool meanwhile. 4 MiB limit, 1 MiB arenas, 5 s flush. Args: the guest's
+    /// rate (KiB/s: 4096 a fast copy, 20480 a turbo one), pattern (as the sweep), sync interval (s). 12 MiB written.
+    /// Counters: the longest write or tick, the times it waited for the disk
+    void SessionJournalPaced(benchmark::State& state)
+    {
+        const double sectorsPerSecond = static_cast<double>(state.range(0)) * 1024 / 512;
+        const bool hot = state.range(1) == 1;
+        const uint32_t sync = static_cast<uint32_t>(state.range(2));
+        constexpr uint64_t kWrites = 12ull * 1024 * 2;
+        constexpr uint64_t kArea = 128ull * 1024 * 2;
+        const auto journal = Folder() / "paced.img.usession";
+        std::vector<uint8_t> data(512, 0x3C);
+        double longestUs = 0;
+        uint64_t waits = 0;
+        for (auto _ : state)
+        {
+            std::error_code ec;
+            std::filesystem::remove(journal, ec);
+            SessionWriteMap session(std::make_unique<SparseMemoryDisk>(kArea));
+            session.SetArenaBytes(1024 * 1024);
+            session.SetMemoryLimit(4ull * 1024 * 1024);
+            session.SetFlushSeconds(5);
+            session.SetSyncSeconds(sync);
+            session.OpenJournal(journal.string(), SessionWriteMap::JournalMode::Replay);
+            std::mt19937_64 random(9);
+            const auto start = std::chrono::steady_clock::now();
+            auto nextTick = start;
+            longestUs = 0;
+            for (uint64_t i = 0; i < kWrites; i++)
+            {
+                const auto due = start + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                             std::chrono::duration<double>(static_cast<double>(i) / sectorsPerSecond));
+                while (std::chrono::steady_clock::now() < due)
+                {
+                }
+                const uint64_t lba = !hot ? i % kArea : (random() % 10 < 8 ? random() % 2048 : random() % kArea);
+                data[0] = static_cast<uint8_t>(i | 1);
+                const auto t0 = std::chrono::steady_clock::now();
+                session.WriteSector(lba, data.data());
+                if (t0 >= nextTick)
+                {
+                    session.Tick();
+                    nextTick += std::chrono::milliseconds(20);
+                }
+                longestUs = std::max(longestUs, std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count());
+            }
+            waits = session.JournalWaits();
+            session.CloseJournal(false);
+        }
+        state.counters["longestUs"] = longestUs;
+        state.counters["waits"] = static_cast<double>(waits);
+    }
 }  // namespace
 
+BENCHMARK(SessionJournalPaced)
+    ->ArgsProduct({{4096, 20480}, {0, 1}, {0, 5}})
+    ->Unit(benchmark::kMillisecond)
+    ->Iterations(1);
+BENCHMARK(SessionJournalSweep)
+    ->ArgsProduct({{4, 16, 64}, {64, 1024, 4096}, {0, 5, 30}, {0, 1}, {0, 30}})
+    ->Unit(benchmark::kMillisecond)
+    ->Iterations(1);
 BENCHMARK(SessionSpillWrite)->Arg(128)->Arg(1024)->Arg(0)->Unit(benchmark::kMillisecond)->Iterations(1);
 BENCHMARK(FullCardRandRead)->Arg(0)->Arg(1)->Arg(2);
 BENCHMARK(FullCardRewrite)->Args({0, 1})->Args({1, 1})->Args({1, 0})->Args({2, 1});

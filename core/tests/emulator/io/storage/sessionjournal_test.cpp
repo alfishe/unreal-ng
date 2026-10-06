@@ -152,6 +152,7 @@ TEST(SessionJournal_Test, TimeoutFlushes)
     now += 1000;
     a->Tick();
     ASSERT_TRUE(std::filesystem::exists(journal)) << "30 s: in the journal";
+    a->WaitJournalIdle();  // the I/O pool writes it, off this thread
 
     Snapshot(journal, folder.Path() / "copy.usession");
     auto b = Session(base);

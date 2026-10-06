@@ -1,6 +1,6 @@
 # C10e — session journal: arenas in memory, a recoverable journal on disk
 
-**Status:** done, 2026-10-06 (as built: §7; the benchmark sweep of §5 still to run). Follows [c10d-session-spill.md](c10d-session-spill.md). Owner decisions 2026-10-06:
+**Status:** done, 2026-10-06 (as built: §7; measured and tuned: §8). Follows [c10d-session-spill.md](c10d-session-spill.md). Owner decisions 2026-10-06:
 
 - "If we keep it in a map, better not to keep that much in memory and fragment the heap that way": chunks (arenas)
   instead of a node per sector, flushed when a chunk boundary is crossed or on a timeout.
@@ -156,3 +156,54 @@ the journal follows the session's state; nothing special.
   injected clock, a torn slot, stale and damaged journals, ownership, insert options, which ends delete it),
   `MediaMemory_Test` (RSS drops after a discard), `MediaConfig_Test.SessionJournalSettings`, the C10d suites and
   the C6-C8 suites on both tiers. Full suite green on Linux gcc 13 (5 shards, about 8400 tests).
+
+## 8. Measured and tuned (2026-10-06)
+
+`sparsemedia_benchmark.cpp`, Release, Linux container (4 cores, an overlay file system).
+
+**Round 1: the journal written on the emulation thread** (as first built). `SessionJournalSweep` (108 combinations:
+limit 4 / 16 / 64 MiB x arena 64 KiB / 1 MiB / 4 MiB x flush 0 / 5 / 30 s x a sequential copy or a hot spot x sync
+0 / 30 s; 128 MiB of guest writes on a simulated clock) timed every write and tick:
+
+| What ran on the emulation thread | Longest single write / tick |
+|---|---|
+| an arena moved to the journal at the limit | 1-21 ms |
+| a timeout flush of 16-64 MiB at once | 30-150 ms |
+| `fsync` every 30 s | 120-600 ms |
+
+A frame is 20 ms: audible and visible stalls. Owner, 2026-10-06: "why did background flushes end up on the
+emulation thread at all? They must be queued to a separate thread, or a pool (many emulator instances in one
+process)."
+
+**Round 2: the I/O pool** (`sessionjournalio.{h,cpp}`):
+
+- `JournalIoPool`: one per process, a quarter of the cores (1 to 4 threads), shared by every emulator instance.
+  `JournalStrand`: one queue per session; its batches run in order, one at a time, on whichever pool thread is free
+  (four batches, then the next strand gets a turn).
+- The emulation thread builds a batch (pointers into an arena that is now read-only and in flight, or copies of
+  dirty sectors for a timeout flush, at most 1 MiB a frame; the slot headers after the data) and posts it; it
+  collects finished batches at the next write or tick. `fsync` runs on the pool. A write to a sector of an arena in
+  flight goes to a new slot (copy on write). The file is read and written at offsets (`pread` / `pwrite`;
+  `ReadFile` / `WriteFile` with an offset), so reads of journaled sectors and the pool's writes do not collide.
+- It waits for the disk only when more arenas are in flight than half the limit (`JournalWaits` counts it): the
+  disk is slower than the guest. Opening the file (once per session) still happens on the emulation thread.
+- `MemoryCeiling()`: the limit plus the arenas in flight, at most 1.5 x the limit.
+
+Unpaced (the sweep writes 128 MiB as fast as the CPU goes, about 250 MB/s): 92 of 108 combinations under 1 ms;
+the rest wait for the disk by design (a burst 100x a guest's rate, with `fsync`).
+
+At a guest's real pace (`SessionJournalPaced`: 12 MiB at 4 MB/s and 20 MB/s, sequential and hot spot, sync off /
+every 5 s; 4 MiB limit, 1 MiB arenas, 5 s flush; two runs):
+
+| Rate | Pattern | Sync | Longest write / tick | Waits for the disk |
+|---|---|---|---|---|
+| 4 MB/s | copy | off / 5 s | 0.36-0.42 / 1.2-2.9 ms | 0 |
+| 4 MB/s | hot spot | off / 5 s | 0.08-0.94 / 2.0-2.1 ms | 0 |
+| 20 MB/s | copy | off / 5 s | 0.18-1.0 / 0.26-0.36 ms | 0 |
+| 20 MB/s | hot spot | off / 5 s | 0.18-0.84 / 0.05-0.11 ms | 0 |
+
+(The 2-3 ms were a timeout flush copying 4 MiB in one tick; the share per tick is now 1 MiB.)
+
+**Defaults kept**: 16 MiB, 1 MiB arenas, 30 s flush, 30 s sync. Throughput hardly moves across the sweep (arena
+size and limit change the journal's group writes, not the guest's cost), and nothing on the emulation thread
+depends on them any more.
