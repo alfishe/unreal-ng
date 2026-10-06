@@ -33,6 +33,7 @@ enum ROMModeEnum : uint8_t;
 
 class ModuleLogger;
 class EmulatorContext;
+class EvoAvrWait;
 namespace snapshot
 {
 class ISnapshotCommitPolicy;
@@ -1021,6 +1022,8 @@ public:
 
         /// The serial port's behavior (EvoAvr: by the configured AVR firmware)
         Uart16550::Params uart;
+        /// EvoAvr / ZiFi: the board AVR's wait (its main loop), shared by #xxEF and the Gluk clock port
+        EvoAvrWait* avrWait = nullptr;
 
         /// Which register an #xxEF access reaches (ComPort::RegisterOf);
         /// nullptr = A10..A8

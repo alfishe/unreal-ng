@@ -241,6 +241,8 @@ private:
     uint8_t DecodeF7In(uint16_t port);
     void DecodeF7Out(uint16_t port, uint8_t value);
     bool CmosReachable() const;
+    /// The AVR firmware's wait handler and main-loop timing from [EVO] Avr= (TS-Labs: 2016-02 or the current line)
+    Uart16550::AvrFirmware ConfigureAvrWait();
 
     static PortDecodeDisposition TraceDisposition(PortArm arm, uint16_t port);
 

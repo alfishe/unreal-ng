@@ -104,7 +104,7 @@ enum class PeripheralId : uint8_t
     Usart8251 = 52,       // an 8251 USART (the ZX Profi v5's COM port): registers, buffers, the line, the #B3 latch (Usart8251::State)
     Saa1099 = 53,         // Philips SAA1099 (tdd-saa1099.md §5): registers, generators, LFSRs, envelopes, clock-ratio phase; carried inside its card's blob set
     Smuc = 54,            // Scorpion SMUC board: #FFBA / #7FBA latches, IDE window registers, serial EEPROM link (not its contents)
-    EvoAvrVolatile = 55,  // ZX-Evo AVR volatile registers (ext type, EEPROM window, LEDs) where the paging blob lacks them: TS-Conf
+    EvoAvrVolatile = 55,  // ZX-Evo AVR volatile state: ext type, EEPROM window, LEDs, the /WAIT ports' timing (TS-Conf, ATM3)
     KeyboardMatrix = 56,  // ZX keyboard: the 8 matrix rows and the pressed-key counts (key changes are journal events)
     RzxPlayback = 57,     // RZX playback position and counters (emulator/rzx/rzxttdstate.h); the recording is the medium
     MultiSound = 58,      // ZX-MultiSound card (slot-built): its time base, CPLD latches, YM2203 pair, MIDI line, DACs

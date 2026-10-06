@@ -20,7 +20,8 @@
 //    bit 7 = the AVR's own divisor: 691200 / (((DLM & #7F) << 8 | DLL) + 1)
 //  - the USART starts 8N2 whatever LCR says, until the first LCR write
 //  - a Z80 reset does not reset it (only the AVR's own restart)
-//  - every access holds the Z80 on /WAIT while the AVR serves it (AccessCycles)
+//  - every access holds the Z80 on /WAIT while the AVR serves it (ServiceCycles; the wait is the board AVR's
+//    EvoAvrWait, shared with the Gluk clock port)
 
 Uart16550::Params Uart16550::DefaultParams(Flavor flavor)
 {
@@ -159,26 +160,12 @@ uint16_t Uart16550::TxDepth() const
     return (_fcr & 0x01) ? kFifoSize : 1;
 }
 
-uint32_t Uart16550::AccessCycles(uint8_t reg, bool read, uint64_t now)
+uint32_t Uart16550::ServiceCycles(uint8_t reg, bool read) const
 {
-    if (!Evo() || !_params.avrClockHz)
+    if (!Evo())
         return 0;
-    // The AVR's clock, absolute, from the base-clock T-states
-    const uint64_t avrNow = now * _params.avrClockHz / _baseClockHz;
-    const uint64_t elapsed = avrNow > _avrRelease ? avrNow - _avrRelease : 0;
-    const uint32_t checks = _params.waitChecksPerLoop ? _params.waitChecksPerLoop : 1;
-    const uint32_t loop = std::max<uint32_t>(1, (_params.loopCycles ? _params.loopCycles : 1) / checks);
-    // The main loop looks at the flag once per pass, and a pass starts when
-    // the previous access is released: right behind it a whole pass is left,
-    // long after it anywhere in one. The interrupt steals its cycles from the
-    // loop on top (reference-evo-com-port.md §3)
-    const uint32_t phase = loop - static_cast<uint32_t>(elapsed % loop);
     const bool dlab = (_lcr & 0x80) != 0;
-    const uint32_t service = !read ? _params.serviceWrite
-                                   : ((reg & 7) == kRbrThr && !dlab ? _params.serviceRbr : _params.serviceRead);
-    const uint32_t total = _params.isrCycles + phase + service;
-    _avrRelease = avrNow + total;
-    return total;
+    return !read ? _params.serviceWrite : ((reg & 7) == kRbrThr && !dlab ? _params.serviceRbr : _params.serviceRead);
 }
 
 uint8_t Uart16550::ReadStub(uint8_t reg) const
@@ -821,7 +808,7 @@ void Uart16550::SaveState(State& out) const
     out.txc = _txc ? 1 : 0;
     out.stubIir = _stubIir;
     out.afr = _afr;
-    out.avrRelease = _avrRelease;
+    out.avrRelease = 0;   // the wait moved to the board AVR (EvoAvrWait): kept for the blob layout
     std::memcpy(out.rx, _rx.data(), kMaxRx);
     std::memcpy(out.tx, _tx.data(), kMaxTx);
     out.txDoneAt = _txDoneAt;
@@ -850,7 +837,6 @@ void Uart16550::LoadState(const State& in)
     _txc = in.txc != 0;
     _stubIir = in.stubIir;
     _afr = static_cast<uint8_t>(in.afr & 0x07);
-    _avrRelease = in.avrRelease;
     _txShift = in.txShift;
     _txBusy = in.txBusy != 0;
     _rxShift = in.rxShift;

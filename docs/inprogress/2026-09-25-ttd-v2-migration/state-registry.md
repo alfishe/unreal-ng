@@ -79,7 +79,7 @@ One row per device blob; the device's memory is in section 1.
 | uPD765 | +3 | id 14 | blob | R | | | ok | `io/fdc/upd765.cpp:1381/1427` |
 | SD card + Z-Controller | ATM3, TSL | id 15 | blob | R | | | ok | `io/sdcard/sdcardspi.cpp:545/571` |
 | TS-Conf state: registers, CRAM, SFILE, DMA, TSU, INT | TSL | id 16 | blob | R | | | ok | |
-| TS-Conf: ZX-Evo AVR volatile bytes (EEPROM window, ext type, LEDs) | TSL | EvoAvrVolatile (id 55) | blob | R | | | ok | `debugger/ttd/atm/ttdevoavrvolatile.cpp` |
+| ZX-Evo AVR volatile bytes (EEPROM window, ext type, LEDs) and the /WAIT ports' timing (`EvoAvrWait`: main-loop phase, EEPROM write end; #xxEF and #BFF7 share it) | TSL, ATM3 | EvoAvrVolatile (id 55, v2, 20 bytes) | blob | R | | | ok | `debugger/ttd/atm/ttdevoavrvolatile.cpp` |
 | IDE / ATA / ATAPI channel | any `[HDD] Scheme` | id 17 | blob | R | | | ok | `debugger/ttd/ide/ttdatachannel.cpp:68/89` |
 | ATA write-protect switch | IDE | — | — | R | | | gap 12 | `io/ide/ata/atadevice.h:196` |
 | DS12887 / DS1685 real-time clock (emulated time while recording) | ATM3, TSL, Profi v5, Scorpion, Sprinter | id 18 | blob | R | | | ok | `rtc/ds12887.cpp:584/620` |

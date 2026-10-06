@@ -6,6 +6,9 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/memory/memory.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
@@ -204,6 +207,12 @@ TEST_F(TsConfAspect_Test, EveryTsConfModeRecordsTheLiveFramebufferDoubledAndByte
     ASSERT_TRUE(context->pRecordingManager->StartRecordingWithEncoder(
         TestPathHelper::GetUniqueTestScratchPath("tsconf-capture-sink") + ".mp4", std::move(sink)))
         << "the sink encoder starts";
+
+    // The CPU parks in DI: HALT, so the booting TS-BIOS cannot set V_CONFIG back while the modes are walked (how far
+    // it gets in a few frames depends on its timing: the CMOS reads wait for the AVR)
+    context->pMemory->DirectWriteToZ80Memory(0x8000, 0xF3);   // DI
+    context->pMemory->DirectWriteToZ80Memory(0x8001, 0x76);   // HALT
+    context->pCore->GetZ80()->pc = 0x8000;
 
     // V_CONFIG[1:0] walks every TS-Conf video mode (ScreenTSConf::ModeOf)
     const VideoModeEnum modes[4] = {M_TSZX, M_TS16, M_TS256, M_TSTX};

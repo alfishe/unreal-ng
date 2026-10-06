@@ -222,6 +222,10 @@ void PortDecoder_TSConf::reset()
     if (!_poweredOn)
         PowerOn();
 
+    // The AVR keeps running through a Z80 reset, but the emulator's time base (t_states) starts again from 0: its
+    // main-loop phase and EEPROM write are re-anchored there (EvoAvrWait counts in that time base)
+    _evoAvr.Wait().Reset();
+
     // A mouse plugged in or out ([INPUT] Mouse=) re-runs the AVR's mouse reset; the
     // registers themselves outlive a Z80 reset (the AVR keeps running)
     _evoAvr.Ps2Mouse().SetConnected(_mouse && _mouse->IsPresent());
@@ -863,6 +867,10 @@ uint8_t PortDecoder_TSConf::DecodeF7In(uint16_t port)
     // is always in DOS - the CPU reads #FF
     if ((port & 0x0100) && (port & 0x4000) == 0 && CmosReachable())  // portf7_rd needs A8 = 1 (zports.v:721)
     {
+        // wait_start_gluclock = gluclock_on && !a[14] && (portf7_rd || portf7_wr) ([V] zports.v:763): the Z80
+        // waits on /WAIT until the AVR answers (zwait.v:39-43), inside vdos too
+        ConfigureAvrWait();
+        _evoAvr.HoldForGlukAccess(_context, true, 0xFF);
         const uint8_t value = _evoAvr.ReadData();
         return _ts.dos ? 0xFF : value;
     }
@@ -884,7 +892,29 @@ void PortDecoder_TSConf::DecodeF7Out(uint16_t port, uint8_t value)
     if (cmos && (port & 0x2000) == 0)
         _evoAvr.WriteAddress(value);
     if (cmos && (port & 0x4000) == 0)
+    {
+        // The data write waits for the AVR like a read ([V] zports.v:763); an OUT with A13 = A14 = 0 hands it the
+        // new address too (wait_addr and wait_write latch the same din, :743-749)
+        ConfigureAvrWait();
+        _evoAvr.HoldForGlukAccess(_context, false, value);
         _evoAvr.WriteData(value);
+    }
+}
+
+Uart16550::AvrFirmware PortDecoder_TSConf::ConfigureAvrWait()
+{
+    // The TS-Conf FPGA needs a TS-Labs AVR firmware: 2016-02 or the current line (2016-04 on), the default. The
+    // current one serves the wait ports with zx_wait_task (since 2021-04-28: cells #F0-#FF in the status byte), the
+    // 2016-02 one with the BaseConf-style path (SPI #41 for the cell)
+    const auto configured = static_cast<Uart16550::AvrFirmware>(_context ? _context->config.atm.evo_avr : 0);
+    const Uart16550::AvrFirmware firmware = configured == Uart16550::AvrFirmware::Ts2016Feb
+                                                ? Uart16550::AvrFirmware::Ts2016Feb
+                                                : Uart16550::AvrFirmware::Ts2016Apr;
+    const Uart16550::Params p = Uart16550::EvoAvrParams(firmware);
+    _evoAvr.SetWaitFirmware(firmware == Uart16550::AvrFirmware::Ts2016Feb ? EvoAvr::WaitHandler::TsOld
+                                                                          : EvoAvr::WaitHandler::TsShort,
+                            EvoAvrWait::Timing{p.avrClockHz, p.isrCycles, p.loopCycles, p.waitChecksPerLoop});
+    return firmware;
 }
 
 PortDecoder::RtcBinding PortDecoder_TSConf::GetRtcBinding()
@@ -1141,12 +1171,9 @@ PortDecoder::NetworkCapabilities PortDecoder_TSConf::DescribeNetwork()
 {
     NetworkCapabilities caps;
     caps.serialPort = NetworkCapabilities::SerialPort::ZiFi;
-    // The TS-Conf FPGA needs a TS-Labs AVR firmware: 2016-02 or the current line (2016-04 on), the default
-    const auto configured = static_cast<Uart16550::AvrFirmware>(_context ? _context->config.atm.evo_avr : 0);
-    const Uart16550::AvrFirmware firmware = configured == Uart16550::AvrFirmware::Ts2016Feb
-                                                ? Uart16550::AvrFirmware::Ts2016Feb
-                                                : Uart16550::AvrFirmware::Ts2016Apr;
+    const Uart16550::AvrFirmware firmware = ConfigureAvrWait();
     caps.uart = Uart16550::EvoAvrParams(firmware);
+    caps.avrWait = &_evoAvr.Wait();   // #xxEF and #BFF7 share the AVR's main loop (zwait.v)
     caps.firmware = Uart16550::AvrFirmwareName(firmware);
     caps.zifi = true;
     // The FPGA packs the high byte into 5 bits (slavespi.v: ~&a[7:6] ? 10h : {&a[7:4], a[3:0]}), the AVR

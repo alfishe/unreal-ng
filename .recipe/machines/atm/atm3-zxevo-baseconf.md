@@ -19,7 +19,10 @@ below. Common material for all ATM models (creating, ports, video modes, CP/M mo
     [input/joystick.md](../../input/joystick.md). The ROM service menu is outside shadow about 60 frames after reset.
   - **CMOS** (Gluk clock): data `#BFF7` / address `#DFF7` outside shadow, but
     only after `OUT (#EFF7),#80`; `#BEF7` / `#DEF7` in shadow (always on).
-    `#EFF7` itself is ignored in shadow and cannot be read.
+    `#EFF7` itself is ignored in shadow and cannot be read. Every data-port
+    access holds the Z80 on /WAIT until the AVR answers (the same AVR wait as
+    the COM port `#xxEF`): a BCD time register 40-60 us, an NVRAM cell
+    over 400 us ([cmos-rtc.md](../../peripherals/cmos-rtc.md)).
   - **Evo registers**: read on `#xxBD` (index = A12..A8: pages, `#7FFD`,
     `#EFF7`, `#xx77` state, border, breakpoint, `#13BD` virtual-drive mask);
     `#xxBE` is a write-only exit strobe. `[EVO] Fpga=legacy` switches to the

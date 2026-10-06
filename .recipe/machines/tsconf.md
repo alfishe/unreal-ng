@@ -165,7 +165,7 @@ a stable "lo<->hi" band instead of chasing every flip.
 | Video: ZX, 16C, 256C, TXT in the four geometries, X/Y offsets, line-latched registers, CRAM colors (no-VDAC curve), 720x288 framebuffer | implemented |
 | TSU: tile layers with the prefetch ring, sprites (layers, LEAP, 85 cap), mixing (NOTSU / NOGFX / GFXOVR, 360-wide window) | implemented |
 | DMA: RAM copy, BLT1, fill, CRAM, SFILE, SPI, IDE; the per-line DRAM budget (video, TSU, CPU reads); TSU starvation | implemented (CPU writes are not counted in the budget) |
-| SD card (`#57` / `#77`, slot `sd.zc`), Nemo IDE (`[HDD] Scheme=NEMO-DIVIDE`, `IdeStall`), Gluk CMOS | implemented |
+| SD card (`#57` / `#77`, slot `sd.zc`), Nemo IDE (`[HDD] Scheme=NEMO-DIVIDE`, `IdeStall`), Gluk CMOS (a `#BFF7` access waits for the AVR like `#xxEF`, inside vdos too: [cmos-rtc.md](../peripherals/cmos-rtc.md)) | implemented |
 | SPG programs (`.spg` v1.0 / v1.1) | implemented (pager / resident fields not used); opening one on another model switches to TSL on every surface |
 | Sound: AY / TurboSound, one 8-bit DAC shared by Covox `#FB` and the `#FE` beeper bit | implemented |
 | Wild Commander from SD or the Nemo IDE master (TS-BIOS "BD boot.$c", Boot Device) | works (tests BOOT-3, BOOT-4); WC's panels use the drive in `WC/wc.ini` (`DRV=0` SD, `1` IDE master) |

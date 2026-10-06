@@ -29,7 +29,7 @@ register and DR read `#FF` and DR writes are dropped. The code, not the document
 | The `#xxEF` device | `ComPort` (the COM port, peer `ComPort=`) | `RegisterOf` returns `0..7` (16550), `kDataRegion`, or `kZiFiBase + n` (register `#C0 + n`); data and ZiFi registers go to the attached `ZiFi` |
 | Enhanced RS-232 DR | `Uart16550::DataRead` / `DataWrite`, `ClearRxRing` / `ClearTxRing` | the same rings as RBR / THR; empty reads `#FF`; RSCLRFIFO leaves LSR alone |
 | Interrupt | `NetworkCapabilities::waitPortInterrupt` (TS-Conf: `TsConfInterrupts::RaiseWaitPort`) | while ISR is not zero the AVR pulses the wait-port INT (vector `#F9`, `INTMASK` bit 3) on every pass: raised at every `#xxEF` access, byte arrival and frame boundary until ISR is read. IBT fires at the byte that reaches the threshold; ITO (silence) is noticed at the next of those points, up to a frame after its deadline (Z2: at the deadline). With nothing on either line (no network) there is no frame-boundary work: nothing can arrive, and that work runs after the TTD checkpoint, so it must not change state a replay cannot repeat |
-| Timing | `ComPort::AddAccessWait` | every `#xxEF` access, ZiFi included, waits for the AVR (the BaseConf model; no TS measurement exists, §8 Q4) |
+| Timing | `ComPort::AddAccessWait` -> the board's `EvoAvrWait` | every `#xxEF` access, ZiFi included, waits for the AVR (the BaseConf model; no TS measurement exists, §8 Q4); the Gluk data port `#BFF7` waits on the same AVR main loop (one phase for both, [reference-evo-com-port.md](../2026-09-30-nedoos-integration/reference-evo-com-port.md) §3.1) |
 
 The AVR keeps its state through a Z80 reset (`rs232_init` runs only at AVR start); the ESP keeps
 its link.

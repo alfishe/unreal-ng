@@ -309,5 +309,7 @@ protected:
     /// Card presence and the slot's write-protect switch into AVR register C
     void UpdateSdStatus();
     uint8_t DecodeF7In(uint16_t port);
+    /// The AVR firmware's wait handler and main-loop timing from [EVO] Avr=
+    Uart16550::AvrFirmware ConfigureAvrWait();
     /// endregion </Port handlers>
 };

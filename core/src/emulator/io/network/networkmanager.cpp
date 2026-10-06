@@ -272,14 +272,17 @@ void NetworkManager::FitCom(const Plan& plan, const AvrKeep* keep)
     Uart16550::Params params = Uart16550::DefaultParams(Uart16550::Flavor::Chip16550);
     ComPort::RegisterOf registerOf;
     std::function<void()> waitPortInterrupt;
+    EvoAvrWait* avrWait = nullptr;
     if (plan.serial == Plan::Serial::EvoAvr && decoder)
     {
         PortDecoder::NetworkCapabilities caps = decoder->DescribeNetwork();
         params = caps.uart;
         registerOf = std::move(caps.serialRegister);
         waitPortInterrupt = std::move(caps.waitPortInterrupt);
+        avrWait = caps.avrWait;
     }
     _com = std::make_unique<ComPort>(_context, params, std::move(peer), std::move(registerOf));
+    _com->SetAvrWait(avrWait);
     if (keep && keep->com)
         _com->Uart().LoadState(*keep->com);   // the same chip, a new cable: its registers stay
     if (plan.zifi)
