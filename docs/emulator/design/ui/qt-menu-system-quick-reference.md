@@ -83,7 +83,8 @@ Help
 
 Only the platform's standard shortcuts are assigned (2026-10-05, owner decision; the earlier ad-hoc keys were
 removed): Open (`QKeySequence::Open`), Save snapshot (`Save`), Quit (`Quit`), Preferences (`Preferences`), Help
-(`HelpContents`) and Full Screen (`FullScreen`: Ctrl+Cmd+F on macOS, F11 on Windows). Every other command is
+(`HelpContents`); Full Screen is Ctrl+F (Cmd+F on macOS) on every platform (restored 2026-10-06, owner
+decision). Every other command is
 reached through the menus. Dialogs keep their local keys (Delete, Escape, search).
 
 ## How It Works
@@ -135,12 +136,12 @@ updateMenuStates();  // Called when emulator state changes
 - Native menu bar (appears in system menu bar)
 - Cmd key instead of Ctrl (e.g., Cmd+Q to quit)
 - Cmd+, for Preferences
-- Ctrl+Cmd+F for Full Screen
+- Cmd+F for Full Screen
 
 ### Windows/Linux
 - Standard menu bar (appears in window)
 - Ctrl key for shortcuts
-- F11 for Full Screen
+- Ctrl+F for Full Screen
 - Ctrl+P for Preferences
 
 ## Testing

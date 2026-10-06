@@ -15,8 +15,10 @@
 /// | Normal      | everything else: other instances,    | timeshare, default QoS   | default            | NORMAL             |
 /// |             | turbo, automation, encoders, tests   |                          |                    |                    |
 ///
-/// The audio device thread is never ours to set: CoreAudio, WASAPI (MMCSS)
-/// and - where not - our Linux callback elevate it, and it outranks all three.
+/// The audio device thread is never ours to set: CoreAudio, WASAPI (MMCSS
+/// "Pro Audio", requested through miniaudio's wasapi.usage - miniaudio does
+/// not ask for it by default) and - where not - our Linux callback elevate it,
+/// and it outranks all three.
 /// On macOS a default-QoS thread under a parallel build wakes 25-100 ms late
 /// (timer coalescing + timeshare decay); a user-interactive one ~15 ms, a
 /// time-constraint one ~0.1 ms. Linux and Windows keep their stock
@@ -46,6 +48,14 @@ public:
 
    /// Restore the CALLING thread to default (timeshare) scheduling
    static void setNormalPriority();
+
+   /// Opt the whole PROCESS out of background power throttling. Windows only
+   /// (no-op elsewhere): Windows 10/11 put a process whose window is not in the
+   /// foreground on EcoQoS - efficiency cores, lower clocks, coalesced timers
+   /// (Windows 11 also ignores its timer resolution) - so the emulation and
+   /// audio threads miss their deadlines and the sound stutters as soon as
+   /// another window is busy. Call once at start-up
+   static void disableProcessPowerThrottling();
 };
 
 

@@ -96,6 +96,8 @@ void unregisterFonts()
 int main(int argc, char *argv[])
 {
     ThreadHelper::setThreadName("qt-main");
+    // Windows: no EcoQoS when another window has the foreground (the sound stuttered)
+    ThreadHelper::disableProcessPowerThrottling();
 
     auto crashHandler = std::unique_ptr<CrashHandler>(CrashHandler::create());
     crashHandler->install();

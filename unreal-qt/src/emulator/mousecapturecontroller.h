@@ -22,7 +22,7 @@ class QWheelEvent;
 ///
 /// Owns everything that is a property of the host, not of the emulated machine:
 /// pointer capture and release, cursor locking (native relative mode on macOS,
-/// re-center warping elsewhere), DPI / upscale mapping with sub-pixel carry,
+/// a clipped, sampled re-center on Windows, re-center warping elsewhere), DPI / upscale mapping with sub-pixel carry,
 /// the host's buttons and wheel notch accumulation. What leaves this class is a
 /// clean MouseEvent (whole emulated pixels, active-low mask, whole notches)
 /// posted to the message center for the shown emulator, whose MouseManager
@@ -73,6 +73,7 @@ public:
         /// Tests: no native relative mode, and the cursor warp replaced (the real cursor stays put)
         bool allowNativeCapture = true;
         std::function<void(QPoint global)> warpCursor;  ///< empty = QCursor::setPos
+        std::function<QPoint()> cursorPosition;         ///< global logical; empty = QCursor::pos
     };
 
     /// Machine-side settings read at capture time
@@ -147,7 +148,7 @@ public:
     void handleFocusOut();
 
     /// Host pointer travel in logical (device-independent) pixels, screen axes.
-    /// Called by the capture backend: Qt warp deltas or native macOS deltas.
+    /// Called by the capture backend: Qt warp deltas, native macOS or Windows deltas.
     void applyHostMotion(double dxLogical, double dyLogical);
 
     /// The release key of the shown machine's config, as Qt sees the physical keys
@@ -200,10 +201,11 @@ private:
     // main window's key forwarding) - otherwise Esc also reaches the machine
     int _swallowKey = 0;
 
-    // Generic backend (non-macOS): re-center warping
+    // Generic backend (Linux, or a native backend unavailable): re-center warping
     QPoint _warpCenterGlobal;
-    bool _ignoreNextMove = false;
 
     // macOS backend: native relative mode (see platform/macos/mousecapture_macos.mm)
     void* _nativeCapture = nullptr;
+    // Windows backend: clipped cursor sampled on every move (see platform/windows/mousecapture_windows.cpp)
+    void* _windowsCapture = nullptr;
 };
