@@ -42,13 +42,17 @@ bool InVersion(std::string_view word, const std::string& version)
 {
     if (version.empty())
         return true;
-    const bool v3 = version == "2.0" || version == "3", v40 = version == "4.0", v412 = version == "4.12";
+    // 5.0 / 5.5 beta: the TASM 4.0 syntax (their files use nothing else; 5.5's IF / MACRO / REPT stay text, below)
+    const bool v3 = version == "2.0" || version == "3", v40 = version == "4.0" || version == "5.0" || version == "5.5", v412 = version == "4.12";
     if (word == "DB" || word == "DM" || word == "DS" || word == "DW" || word == "INF")
         return v40;
     if (word == "DEFM" || word == "PHASE" || word == "UNPHASE" || word == "INCLUDE" || word == "INCBIN")
         return v3 || v40;
     if (word == "DEFMAC" || word == "ENDMAC" || word == "DISPLAY" || (!word.empty() && word[0] == '.'))
         return v412;
+    if (word == "IF" || word == "ELSE" || word == "ENDIF" || word == "IFDEF" || word == "MACRO" || word == "ENDM" || word == "REPT" ||
+        word == "ENDR" || word == "INCSEC" || word == "PRINTF")
+        return version == "5.5";
     return true;
 }
 
@@ -421,6 +425,12 @@ constexpr Directive kDirectives[] = {
     {".IF", ir::DirectiveKind::If},            {".ELSE", ir::DirectiveKind::Else},       {".ENDIF", ir::DirectiveKind::EndIf},
     {"DEFMAC", ir::DirectiveKind::Macro},      {"ENDMAC", ir::DirectiveKind::EndMacro},  {"DISPLAY", ir::DirectiveKind::Display},
     {".LOCAL", ir::DirectiveKind::Other},      {".PAGE", ir::DirectiveKind::Other},      {".RUN", ir::DirectiveKind::Other},
+    // TASM 5.5 beta's keyword table has these; its assembler (a beta) refuses even DB inside them, so their meaning is
+    // not known: kept as text
+    {"IF", ir::DirectiveKind::Other},          {"ELSE", ir::DirectiveKind::Other},       {"ENDIF", ir::DirectiveKind::Other},
+    {"IFDEF", ir::DirectiveKind::Other},       {"MACRO", ir::DirectiveKind::Other},      {"ENDM", ir::DirectiveKind::Other},
+    {"REPT", ir::DirectiveKind::Other},        {"ENDR", ir::DirectiveKind::Other},       {"INCSEC", ir::DirectiveKind::Other},
+    {"PRINTF", ir::DirectiveKind::Other},
 };
 
 std::string FileName(const std::string& operand)

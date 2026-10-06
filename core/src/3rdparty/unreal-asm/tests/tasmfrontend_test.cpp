@@ -265,3 +265,33 @@ TEST(TasmFrontend_Test, TextsBitOperandsAndTypedNames)
     // @ is a character of TASM names (sjasmplus would read @VAL as VAL)
     EXPECT_EQ(ToSjasmplus("@VAL    EQU #11\nVAL     NOP", "4.0"), (std::vector<std::string>{"L__VAL  EQU #11", "VAL     NOP"}));
 }
+
+TEST(TasmFrontend_Test, Tasm50ProgramAssemblesToWhatTasm50Built)
+{
+    // Typed into TASM 5.0 beta in unreal-ng, saved and assembled there at #7000 (45 bytes): left-to-right arithmetic,
+    // ^, a string fill in DS, PUSH with two registers, structural lines without commas
+    const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
+    if (!sjasmplus)
+        GTEST_SKIP() << "set UNREAL_ASM_SJASMPLUS to the sjasmplus binary";
+    const containers::TrdosFile file = Hobeta("tasm/T50PROG.$A");
+    const codecs::TasmCodec tasm;
+    DecodeOptions options;
+    options.catalog = file.Hints();
+    const ConvertResult r = Convert(tasm.Decode(file.data, options).document, "sjasmplus");
+    ASSERT_TRUE(r.ok);
+    std::random_device random;
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+    std::filesystem::create_directories(dir);
+    WriteBytes(dir / "PROG.asm", codecs::SjasmplusCodec().Encode(r.document, {}).bytes);
+    const std::string harness = "        DEVICE ZXSPECTRUM48\n        INCLUDE \"PROG.asm\"\n        SAVEBIN \"out.bin\",#7000,45\n";
+    WriteBytes(dir / "harness.asm", std::vector<uint8_t>(harness.begin(), harness.end()));
+#ifdef _WIN32
+    const std::string command = "cd /d \"" + dir.string() + "\" && \"" + sjasmplus + "\" --nologo harness.asm > out.txt 2>&1";
+#else
+    const std::string command = "cd \"" + dir.string() + "\" && \"" + sjasmplus + "\" --nologo harness.asm > out.txt 2>&1";
+#endif
+    EXPECT_EQ(std::system(command.c_str()), 0);
+    EXPECT_EQ(ReadBytes(dir / "out.bin"), ReadTestData("dialects/tasm50/T50PROG.bin"));
+    std::filesystem::remove_all(dir);
+}

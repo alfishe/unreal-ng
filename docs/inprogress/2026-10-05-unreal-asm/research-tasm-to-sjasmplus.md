@@ -75,7 +75,35 @@ Gold Station and the GS sources: 99 sources, 0 round-trip differences, 2 lines t
 others are parts of projects (labels from the other parts), a source whose `INCBIN` file is not on its disk
 (`ODNO`) and SNAKE, a game TASM 4.12 plays while it assembles.
 
-## 5. Limits and open items
+## 5. TASM 5.x (XL Design, 1997)
+
+Two beta builds by SParker (XL Design) are known, both "TURBO ASSEMBLER 256k": **5.0 beta** keeps the TASM 4.0 token
+table; **5.5 beta** has its own (#80-#F7, adding `ELSE ENDIF ENDM ENDR IF IFDEF INCSEC MACRO PRINTF REPT`; #8A is a
+second `C` its editor never writes). Both keep the TASM framing (`[n] body [n]`, an empty record, `FF FF`) but store a
+line by its parts, which the codec versions `5.0` and `5.5` read and write:
+
+| Part | Stored as | Shown by the editor |
+|---|---|---|
+| label | its characters, then the command token; 5.5 adds a blank after the label | column 0 |
+| command | its token, no blank before or after | column 8 |
+| operands | tokens, names, numbers, operators, quoted texts; no blanks; 5.5 ends every name with a blank (`LAB1 +1`) | column 16, with commas |
+| commas | stored only between a letter or digit and a letter or digit (`1,2`, `#AB,LAB`; in 5.0 also `LAB1,LAB2`); left out after an operand token, `)`, a closing quote or a name's blank, and before a quote, `#`, `%`, `(` or a token (`LD HL LAB2 `, `LD (L)A`, `DB 2"AB"#10`) | always |
+| comment | `;` and its text right after the operands; a run of three or more blanks in it as `#0A n` | column 32 |
+| comment line | `;` first, no leading blanks | column 0 |
+
+Learned by typing lines into both builds in unreal-ng, saving them and reading the bytes; the canonical writer of
+the codec reproduces every line of those files. A file is recognized
+as 5.x when its lines without a label start right with a command token (4.x stores blanks there); 5.0 or 5.5 by the
+table that reads its command tokens as commands and its operand tokens as registers and conditions. The catalog's
+start field holds the editor's state (different on every file), so it is not used.
+
+The 5.x syntax is TASM 4.0's: left to right, `^` swaps bytes; **checked**: a program typed into 5.0 beta and assembled
+there at `#7000` (45 bytes: labels, `DB` / `DW` / `DS "x"`, `1+2*3` = 9, `#1234^`, `PUSH AF,BC`, `(IX+5)`) equals
+its sjasmplus conversion byte for byte (`testdata/dialects/tasm50`). 5.5 beta's assembler refuses even `DB 1` inside
+an `IF`, so the meaning of its new directives is not known: they are kept as text with a warning. 5.5's editor
+shows `DW` as `LD DW ,`, a display slip of the beta; the files hold the `DW` token.
+
+## 6. Limits and open items
 
 | Item | Note |
 |---|---|
@@ -83,5 +111,4 @@ others are parts of projects (labels from the other parts), a source whose `INCB
 | TASM 4.12's manual | it sits compressed in `tasm.ovl` (HyperText); the facts above come from the articles, the binaries and the oracles |
 | `INCBIN` slack of a file filling whole sectors | the `.slack` file is empty: sjasmplus warns, the bytes are right |
 | TASM 2.0 | the codec reads it (plain text); its dialect is TASM 3's |
-| TASM 5.x (XL Design, 1997; a "5.5 beta" exists) | its files keep the TASM framing but store the line structurally: no blanks between label, command and operands, no commas between operands or data items, label references end with a blank; the editor lays out the columns (label, command at 8, operands at 16) and inserts the commas. Its token table differs from 4.0 (#80-#F7: adds `ELSE ENDIF ENDM ENDR IF IFDEF INCSEC MACRO PRINTF REPT`, a separate condition `C`) and differs between 5.x builds; such files are recognized as TASM 4.0 today. To do: a `5.x` codec version with the editor's layout rules, learned in the emulator |
 | A file saved several times | TR-DOS keeps several catalog entries of one name and finds the first: `zxasm convert` writes that one as `NAME.asm`, the later ones as `NAME~2.asm` ...; `INCBIN` takes the first entry of an exact name, the last fitting one of a wildcard (ALASM's rule), and names with wildcards are resolved to the file found |
