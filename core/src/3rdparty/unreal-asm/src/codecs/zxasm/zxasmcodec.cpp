@@ -359,6 +359,11 @@ int ZxasmCodec::Detect(std::span<const uint8_t> bytes, const CatalogHints& hints
         return catalog ? 40 : 0;
     if (catalog)
         return 95;
+    // ZAsm 3.10+ keeps the last two characters of a file's extension in the start field ("A315.lbl": type l, "bl"), so
+    // its texts come with any type; another start (a magazine text at #C000, a screen) is no ZX-ASM source
+    auto extensionChar = [](uint8_t c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ' || c == '_'; };
+    if (hints.type != 0 && !(extensionChar(static_cast<uint8_t>(hints.start & 0xFF)) && extensionChar(static_cast<uint8_t>(hints.start >> 8))))
+        return 20;
     if (keywords > 0)
         return 80;
     return runs > 0 ? 62 : 20;

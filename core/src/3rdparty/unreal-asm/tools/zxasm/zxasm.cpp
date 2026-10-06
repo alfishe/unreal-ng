@@ -203,7 +203,8 @@ bool NameMatches(const std::string& pattern, const std::string& name)
     return k == name.size();
 }
 
-/// The image's file an INCBIN names: "NAME", "NAME.T" (T the type), a name holding a dot itself ("PIC.SCR"), with
+/// The image's file an INCBIN names: "NAME", "NAME.T" (T the type), a name holding a dot itself ("PIC.SCR"), ZAsm's
+/// "NAME.Txx", with
 /// wildcards; without a type the code file (type C) is meant, as TASM and ALASM read it. An exact name is the first
 /// entry TR-DOS finds; a wildcard the last fitting one (ALASM help, Work)
 const containers::TrdosFile* FindBinary(const std::vector<containers::TrdosFile>& files, const std::string& spec)
@@ -213,6 +214,9 @@ const containers::TrdosFile* FindBinary(const std::vector<containers::TrdosFile>
     if (dot != std::string::npos && dot + 2 == spec.size())
         candidates.push_back({spec.substr(0, dot), spec[dot + 1]});
     candidates.push_back({spec, 0});
+    // ZAsm shows a name with the type letter and the two bytes of the catalog's start as its extension ("FONT.fn1")
+    if (dot != std::string::npos && dot > 0 && dot + 4 == spec.size())
+        candidates.push_back({spec.substr(0, dot), spec[dot + 1]});
     for (const auto& [pattern, type] : candidates)
     {
         const bool wildcard = pattern.find_first_of("*?") != std::string::npos;

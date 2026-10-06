@@ -123,6 +123,7 @@ struct Writer
     bool displacementFlag = false;   // DISP / ENT also keep a DEFINE that says whether a displacement is active
     const std::set<std::string>* redefinable = nullptr;   // names some line assigns with "="
     int trueValue = 0;   // what the source's comparisons give when true (ir::Program::trueValue); sjasmplus gives -1
+    std::set<std::string> ifUsedNames{};   // labels some file tests with IFUSED: their definitions set a DEFINE
 
     std::string Name(const std::string& name) const
     {
@@ -205,6 +206,7 @@ struct Writer
             case Expr::Kind::Symbol: return Name(e.text);
             case Expr::Kind::Current: return "$";
             case Expr::Kind::CurrentPage: return "$$";
+            case Expr::Kind::CurrentPhysical: return "$$$";
             case Expr::Kind::Group: return "(" + Print(e.args[0]) + ")";
             case Expr::Kind::Memory: return "{" + Print(e.args[0]) + "}";
             case Expr::Kind::Raw: return e.text;
@@ -388,6 +390,16 @@ struct Writer
         return "@; unreal-asm: not converted: " + what;   // from column 0 (the "@" mark)
     }
 
+    /// The DEFINE that says a label tested with IFUSED is defined so far
+    std::string DefinedFlag(const std::string& label) const
+    {
+        std::string flag = "__UNREALASM_DEF_" + Name(label);
+        for (char& c : flag)
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_')
+                c = '_';
+        return flag;
+    }
+
     /// DS count,pattern... of STORM: count bytes, the pattern repeated and cut (DS 7,1,2 = DB 1,2,1,2,1,2,1)
     std::vector<std::string> CyclicFill(const Statement& s)
     {
@@ -467,7 +479,7 @@ struct Writer
         {
             case ir::DirectiveKind::Org:
                 if (s.args.size() > 1)
-                    diagnostics.push_back({Severity::Warning, line, 0, "ORG with a page: ALASM page numbers follow its memory driver; check the page for sjasmplus' DEVICE"});
+                    diagnostics.push_back({Severity::Warning, line, 0, "ORG with a page: the source's page numbers follow its own memory layout; check the page for sjasmplus' DEVICE"});
                 return {"ORG " + args()};
             case ir::DirectiveKind::Equ:
                 if (redefinable && redefinable->count(label))
@@ -570,6 +582,17 @@ struct Writer
                 // a bare DISPLAY prints an empty line (ALASM); sjasmplus needs something to print
                 return {"DISPLAY " + (s.operands.empty() ? std::string("' '") : Operands(s.operands))};
             case ir::DirectiveKind::End: return {"END"};
+            case ir::DirectiveKind::IfUsed:
+            {
+                // ZX-ASM's IFUSED X: X used and not defined so far (a library routine the program defines itself, or
+                // takes from a label file, stays out). sjasmplus' IFUSED only asks "used"; "defined so far" is the
+                // DEFINE every definition of X sets
+                // DEFINE every definition of X sets. The answer goes to a redefinable label, so one name serves every block
+                const bool negated = !s.params.empty() && s.params[0] == "not";
+                return {"@__UNREALASM_IFU=0", "@        IFUSED " + Name(s.text), "@        IFNDEF " + DefinedFlag(s.text), "@__UNREALASM_IFU=1",
+                        "@        ENDIF", "@        ENDIF", std::string(negated ? "IF !__UNREALASM_IFU" : "IF __UNREALASM_IFU")};
+            }
+            case ir::DirectiveKind::SaveBinary: return {"SAVEBIN \"" + s.text + "\"," + args()};
             case ir::DirectiveKind::Main: return {"@; ALASM MAIN \"" + s.text + "\" (the project's main source)"};
             case ir::DirectiveKind::Run: return {NotConverted("RUN " + args() + " (code called while assembling)")};
             case ir::DirectiveKind::Other:
@@ -592,6 +615,14 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
     Writer w{options, result.diagnostics, 0, {}, {}, false, false, program.expressionBits, program.unsignedArithmetic, options.macroParams, 0, {},
              program.dialect == "sjasmplus", program.displacementAcrossFiles};
     w.trueValue = program.trueValue;
+    w.ifUsedNames = options.ifUsedNames;
+    for (const ir::Line& l : program.lines)
+        for (const Statement& s : l.statements)
+            if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::IfUsed)
+            {
+                w.ifUsedNames.insert(s.text);
+                result.ifUsedNames.insert(s.text);
+            }
 
     // Macro calls may pass more arguments than the body uses (ALASM ignores the rest, sjasmplus refuses them): a macro
     // declares as many parameters as its longest call
@@ -703,7 +734,8 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
         for (const ir::Line& l : program.lines)
             for (const Statement& s : l.statements)
             {
-                if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Org && s.args.size() > 1)
+                if (s.kind == Statement::Kind::Directive &&
+                    ((s.directive == ir::DirectiveKind::Org && s.args.size() > 1) || s.directive == ir::DirectiveKind::SaveBinary))
                     device = true;
                 if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Other && z80::Upper(s.text).rfind("DEVICE", 0) == 0)
                     hasDevice = true;
@@ -714,8 +746,8 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
             }
         if (device && !hasDevice)
         {
-            result.document.lines.push_back({"        DEVICE ZXSPECTRUM4096   ; unreal-asm: ALASM pages and {memory} reads need a device", {}});
-            result.diagnostics.push_back({Severity::Info, 0, 0, "DEVICE ZXSPECTRUM4096 added for ORG pages / memory reads"});
+            result.document.lines.push_back({"        DEVICE ZXSPECTRUM4096   ; unreal-asm: ORG pages, {memory} reads and SAVEBIN need a device", {}});
+            result.diagnostics.push_back({Severity::Info, 0, 0, "DEVICE ZXSPECTRUM4096 added for ORG pages / memory reads / SAVEBIN"});
         }
     }
 
@@ -896,6 +928,8 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
             out += ";" + l.comment;
         }
         result.document.lines.push_back({out, {}});
+        if (!l.label.empty() && w.ifUsedNames.count(l.label))
+            result.document.lines.push_back({"        DEFINE " + w.DefinedFlag(l.label), {}});
     }
     (void)blockOrder;
     return result;

@@ -41,6 +41,7 @@ struct Expr
         Symbol,        ///< text = the name
         Current,       ///< $: the current (displaced) address
         CurrentPage,   ///< $$: the current page
+        CurrentPhysical,   ///< where the code is put now while a displacement (DISP / PHASE) is active (sjasmplus $$$)
         Unary,         ///< op, args[0]
         Binary,        ///< op, args[0] op args[1]
         Group,         ///< (args[0]): parentheses the source wrote
@@ -103,6 +104,8 @@ enum class DirectiveKind : uint8_t
     UntilZero,    ///< args: expression
     Disp,         ///< args: address
     Ent,          ///< text "if-displaced": only when a displacement is active (Program::displacementAcrossFiles)
+    IfUsed,       ///< text: a label; the block is assembled when the label is used (params "not": when it is not, IFNUSED)
+    SaveBinary,   ///< text: file; args: start, length: the bytes written there saved to the file while assembling
     LocalBlock,   ///< ALASM LOCAL ... ENDL: labels inside are local to the block
     EndLocalBlock,
     Display,      ///< operands: strings and expressions; params: per-item format keys

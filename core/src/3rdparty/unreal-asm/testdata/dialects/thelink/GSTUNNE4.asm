@@ -1,4 +1,4 @@
-        DEVICE ZXSPECTRUM4096   ; unreal-asm: ALASM pages and {memory} reads need a device
+        DEVICE ZXSPECTRUM4096   ; unreal-asm: ORG pages, {memory} reads and SAVEBIN need a device
 border=0
 
 ;GS data in ZX memory:

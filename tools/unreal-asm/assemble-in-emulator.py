@@ -7,6 +7,8 @@ converted source is compared with (sjasmplus output must be byte-equal).
                             [--url U] [--id ID]
     assemble-in-emulator.py storm13  <assembler.trd> <source.$C> <address> <length> <out.bin> [--extra FILE.$T ...]
                             [--url U] [--id ID]
+    assemble-in-emulator.py zasm315  <assembler.trd> <source.$a> <address> <length> <out.bin> [--extra FILE.$T ...]
+                            [--url U] [--id ID]
 
 The source is added to a copy of the assembler's disk; the memory range is filled with #AA first, so bytes the
 assembler did not write stay visible. Pick an address the assembler leaves alone: TASM 4.12 keeps its overlay at
@@ -15,6 +17,9 @@ STORM 1.3 clears the 48K memory when it starts and swaps its own code into it wh
 bytes read 0), and the bytes are read after quitting to BASIC. The source is a STORM file (type C, start #C00B; `zxasm
 encode --codec storm` writes one from text); --extra adds files it INCBs / INCLs. Assemble errors stop it after the
 first pass: the screenshot <out>.assembled.png lists them (line numbers count from 0).
+ZAsm 3.15 compiles into its own pages: the source ends with `saveobj "a:out.C",<address>,<length>` and the script
+reads that file from the disk afterwards (address and length are only checked against it). ZAsm looks for drive D
+first; the script answers its "No Disk!" with drive A.
 ALASM's file list is chosen by cursor: --list-position is the column and row of the file in the list `w` shows
 (count them on the screenshot <out>.list.png the tool saves first, 1-based).
 Screenshots of each step are written next to <out.bin>.
@@ -41,7 +46,7 @@ def prepare_disk(assembler_trd, source, work, extra=()):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['tasm412', 'alasm509', 'storm13'])
+    parser.add_argument('assembler', choices=['tasm412', 'alasm509', 'storm13', 'zasm315'])
     parser.add_argument('disk')
     parser.add_argument('source')
     parser.add_argument('address', type=lambda v: int(v, 0))
@@ -50,7 +55,7 @@ def main():
     parser.add_argument('--url')
     parser.add_argument('--id')
     parser.add_argument('--list-position', help='ALASM: column,row of the source in the file list')
-    parser.add_argument('--extra', nargs='*', default=[], help='STORM: hobeta files the source includes')
+    parser.add_argument('--extra', nargs='*', default=[], help='STORM, ZAsm: hobeta files the source includes')
     args = parser.parse_args()
 
     work = os.path.dirname(os.path.abspath(args.out))
@@ -88,6 +93,40 @@ def main():
         emu.stop_recording()
         open(args.out, 'wb').write(data)
         print(f'{len(data)} bytes from #{args.address:04X} written to {args.out}; check {stem}.assembled.png for errors')
+        return 0
+    elif args.assembler == 'zasm315':
+        emu.run_trdos('boot', wait=15)
+        emu.tap('enter')                       # "No Disk!" (ZAsm starts on drive D): Retry, drive A
+        emu.tap('a')
+        time.sleep(6)
+        emu.tap('enter')                       # File
+        time.sleep(2)
+        emu.tap('enter')                       # Load
+        time.sleep(3)
+        emu.type(name)                         # as stored: ZAsm keeps the case of names
+        emu.tap('enter')
+        time.sleep(3)
+        emu.post('/keyboard/combo', {'keys': ['cs', 'ss'], 'frames': 4})   # EXT
+        emu.idle()
+        time.sleep(0.5)
+        emu.tap('a')                           # Assemble
+        time.sleep(5)
+        emu.tap('enter')                       # "No Disk!" again: Retry, drive A
+        emu.tap('a')
+        time.sleep(8)
+        emu.screenshot(stem + '.assembled.png')
+        emu.tap('n')                           # "Launch?" No
+        time.sleep(2)
+        data = emu.read_disk_file('out', 'C')
+        emu.stop_recording()
+        if data is None:
+            print(f'no out.C on the disk: check {stem}.assembled.png for errors')
+            return 1
+        start, data = data
+        if start != args.address or len(data) != args.length:
+            print(f'out.C is {len(data)} bytes at #{start:04X}, not {args.length} at #{args.address:04X}')
+        open(args.out, 'wb').write(data)
+        print(f'{len(data)} bytes from #{start:04X} written to {args.out}')
         return 0
     else:
         if not args.list_position:

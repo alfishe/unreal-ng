@@ -28,6 +28,7 @@ own tests and a command-line tool; the emulator uses it through thin adapters.
 | [research-alasm-to-sjasmplus.md](research-alasm-to-sjasmplus.md) | ALASM → sjasmplus through the IR: the rules, the facts checked in ALASM 5.09 and sjasmplus 1.23, The Link's objects byte-equal (phase A5) |
 | [research-tasm-to-sjasmplus.md](research-tasm-to-sjasmplus.md) | TASM 3 / 4.0 / 4.12 → sjasmplus: the rules, the GS 1.04 ROM rebuilt byte for byte, TASM 4.12 checked in the emulator (phase A5b) |
 | [research-storm-to-sjasmplus.md](research-storm-to-sjasmplus.md) | STORM 1.3 → sjasmplus: several operands per instruction, postfix operators with priorities, built-in macros; STORM's own source and two programs assembled by STORM 1.3 in the emulator equal (phase A6) |
+| [research-zxasm-to-sjasmplus.md](research-zxasm-to-sjasmplus.md) | ZX-ASM → sjasmplus: left to right with postfix functions, macros whose parameters persist, IFUSED libraries, nested PHASE; four programs assembled by ZAsm 3.15 in the emulator equal (phase A6) |
 | [research-tasm.md](research-tasm.md) | TASM 3 / 4: the stream, the token table, the canonical tokenizer, what the real TASM 3.2 files show (phase A2) |
 | [dialect-conversion.md](dialect-conversion.md) | The intermediate representation, frontend and backend plugins, the construct matrix, what cannot be converted, a worked ALASM → sjasmplus example |
 | [prior-art.md](prior-art.md) | Existing converters and tools, local and public, compared; nothing is vendored |

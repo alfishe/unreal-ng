@@ -49,7 +49,9 @@ phase; master only after the owner's review.
   - [ ] TASM 5.5 directives (IF / MACRO / REPT ...): meaning unknown, its beta assembler refuses them
   - [ ] a frontend for the M80-style text dialect of PC cross assemblers (`*D-`, `*Z80` option lines, `NAME$` local labels)
   - [x] `storm` frontend, STORM 1.3 (STORM → sjasmplus) (2026-10-06, branch `unreal-asm-a6`): STORM 1.3's own source rebuilt equal to the released program, two test programs equal to what STORM 1.3 built in the emulator; codec fix: `PO PE P M` imply `JP` ([research-storm-to-sjasmplus.md](research-storm-to-sjasmplus.md))
-  - [ ] `zxasm` frontend
+  - [x] `zxasm` frontend, ZX-ASM 2.x / 3.x / ZAsm (ZX-ASM → sjasmplus) (2026-10-06, branch `unreal-asm-a6`): four programs equal to what ZAsm 3.15 built in the emulator; project-wide macros (`ParseInProject`), ZX-ASM's `IFUSED`; detector fixes in tasm / zxasm ([research-zxasm-to-sjasmplus.md](research-zxasm-to-sjasmplus.md))
+  - [ ] ZX-ASM `MAKE`, `~text~` with `LOADTAB`, `ENDA`
+  - [ ] ALASM: a label `-` in column 0 (sources use it several times per file: an anonymous label?); research and convert
   - [ ] ALASM `DISPLAY` output differs from sjasmplus' (research-alasm-to-sjasmplus.md §7)
 - [ ] A6 more frontends / backends; research codecs xas, masm, gens3, zeus, ads
 - [ ] A7 emulator adapters and surfaces, Qt disk browser, recipe

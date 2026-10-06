@@ -45,6 +45,7 @@ add_library(unreal-asm STATIC
     src/dialects/common/z80.cpp
     src/dialects/common/macros.cpp
     src/dialects/storm/stormfrontend.cpp
+    src/dialects/zxasm/zxasmfrontend.cpp
     src/dialects/tasm/tasmfrontend.cpp
     src/dialects/alasm/alasmfrontend.cpp
     src/dialects/sjasmplus/sjasmplusbackend.cpp
@@ -91,6 +92,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/zxasmcodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/stormcodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/stormfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/zxasmfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/trdos_test.cpp
         ${UNREAL_ASM_DIR}/tests/dialects_test.cpp
         ${UNREAL_ASM_DIR}/tests/tasmfrontend_test.cpp
