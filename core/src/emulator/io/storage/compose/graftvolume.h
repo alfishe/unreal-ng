@@ -70,6 +70,8 @@ public:
     bool ReadSector(uint64_t lba, uint8_t* dst) override;
     bool WriteSector(uint64_t, const uint8_t*) override { return false; }
     bool IsWritable() const override { return false; }
+    /// The base's own runs, cut at the next patched sector or grafted run (C10)
+    uint64_t ZeroRun(uint64_t lba) override;
     std::optional<BlockGeometry> NativeGeometry() const override;
     std::string Describe() const override;
     uint64_t ContentId() const override { return _contentId; }

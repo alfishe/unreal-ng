@@ -14,6 +14,7 @@
 /// Design: docs/inprogress/2026-09-21-profi/2026-09-25-ide-hdd-design.md §7.4.3,
 /// shared with the SD card by tdd-storage-sd-ide-cd.md §1 (S3).
 
+#include <algorithm>
 #include <array>
 #include <map>
 #include <memory>
@@ -30,6 +31,15 @@ public:
     bool ReadSector(uint64_t lba, uint8_t* dst) override;
     bool WriteSector(uint64_t lba, const uint8_t* src) override;
     bool IsWritable() const override { return true; }
+    /// The base's run, cut at the next changed sector (a changed sector itself: 0)
+    uint64_t ZeroRun(uint64_t lba) override
+    {
+        const auto next = _sectors.lower_bound(lba);
+        if (next != _sectors.end() && next->first == lba)
+            return 0;
+        const uint64_t run = _base->ZeroRun(lba);
+        return next == _sectors.end() ? run : std::min<uint64_t>(run, next->first - lba);
+    }
     std::optional<BlockGeometry> NativeGeometry() const override { return _base->NativeGeometry(); }
     std::string Describe() const override { return _base->Describe() + " (session writes)"; }
     uint64_t ContentId() const override;

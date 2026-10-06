@@ -21,6 +21,7 @@ public:
     bool ReadSector(uint64_t lba, uint8_t* dst) override;
     bool WriteSector(uint64_t lba, const uint8_t* src) override;
     bool IsWritable() const override { return _base->IsWritable(); }
+    uint64_t ZeroRun(uint64_t lba) override;
     std::string Describe() const override;
     uint64_t ContentId() const override { return _contentId; }
 

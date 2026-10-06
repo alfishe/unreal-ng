@@ -219,6 +219,30 @@ bool PartitionedDisk::ReadSector(uint64_t lba, uint8_t* dst)
     return true;
 }
 
+uint64_t PartitionedDisk::ZeroRun(uint64_t lba)
+{
+    if (lba >= _totalSectors || std::find(_tables.begin(), _tables.end(), lba) != _tables.end())
+        return 0;
+    // The next table sector or partition start bounds a gap; inside a partition its device answers
+    uint64_t next = _totalSectors;
+    for (uint64_t table : _tables)
+        if (table > lba)
+            next = std::min(next, table);
+    for (const Part& p : _parts)
+    {
+        if (lba >= p.start && lba < p.start + p.sectors)
+        {
+            const uint64_t rel = lba - p.start;
+            const uint64_t run = rel >= p.device->SectorCount() ? p.sectors - rel : p.device->ZeroRun(rel);
+            // A boot sector is patched on read (hidden sectors): never claimed
+            return std::min(std::min(run, p.sectors - rel), next - lba);
+        }
+        if (p.start > lba)
+            next = std::min(next, p.start);
+    }
+    return next - lba;
+}
+
 std::string PartitionedDisk::Describe() const
 {
     std::string text = _description + " (" + std::to_string(_parts.size()) + " partitions:";

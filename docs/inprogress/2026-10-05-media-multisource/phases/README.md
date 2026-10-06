@@ -15,4 +15,4 @@ the phase lands. The phase table is in [tdd.md](../tdd.md) §13; the tests per p
 | C7 | [c7-partitions.md](c7-partitions.md) | done |
 | C8 | [c8-commit-writeback.md](c8-commit-writeback.md) | done (C8c Qt: owner's build pending) |
 | C9 | bulk `ReadSectors` | — |
-| C10 | sparse and in-memory images, efficient packing on save / flatten | — (added 2026-10-05) |
+| C10 | [c10-sparse-memory.md](c10-sparse-memory.md) | done: C10a zero runs + sparse memory, C10b dynamic VHD; C10c measured (images stay streamed) |

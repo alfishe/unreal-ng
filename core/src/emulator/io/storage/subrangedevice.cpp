@@ -2,6 +2,7 @@
 
 #include "subrangedevice.h"
 
+#include <algorithm>
 #include <cstring>
 
 SubRangeDevice::SubRangeDevice(std::shared_ptr<IBlockDevice> base, uint64_t first, uint64_t count)
@@ -18,6 +19,16 @@ SubRangeDevice::SubRangeDevice(std::shared_ptr<IBlockDevice> base, uint64_t firs
         }
     }
     _contentId = h;
+}
+
+uint64_t SubRangeDevice::ZeroRun(uint64_t lba)
+{
+    if (lba >= _count)
+        return 0;
+    const uint64_t base = _base->SectorCount();
+    if (_first + lba >= base)
+        return _count - lba;  // past a cut-down image's end
+    return std::min<uint64_t>(_base->ZeroRun(_first + lba), _count - lba);
 }
 
 bool SubRangeDevice::ReadSector(uint64_t lba, uint8_t* dst)

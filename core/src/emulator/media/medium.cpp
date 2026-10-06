@@ -156,6 +156,13 @@ bool ExportBlockDevice(IBlockDevice& device, const std::string& path, std::strin
     const uint64_t sectors = device.SectorCount();
     for (uint64_t lba = 0; lba < sectors; lba++)
     {
+        // Sectors the device knows to be zero are not even read (C10: a big synthesized volume's free space)
+        if (const uint64_t run = device.ZeroRun(lba))
+        {
+            lba += std::min(run, sectors - lba) - 1;
+            behind = true;
+            continue;
+        }
         if (!device.ReadSector(lba, sector))
         {
             if (error)

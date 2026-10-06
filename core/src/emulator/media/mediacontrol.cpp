@@ -25,6 +25,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/storage/memorydisk.h"
+#include "emulator/io/storage/sparsememorydisk.h"
 #include "emulator/media/floppyformats.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediatargets.h"
@@ -284,8 +285,8 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"insert", kInsertOptions},
         {"swap", kInsertOptions},
         {"eject", {"save", "export", "discard", "end_recording", "async"}},
-        {"save", {"retarget", "compression", "compact", "fs", "size", "strategy", "force", "plan", "onConflict"}},
-        {"export", {"compression", "parent", "compact", "fs", "size"}},
+        {"save", {"retarget", "compression", "compact", "fs", "size", "vhd", "strategy", "force", "plan", "onConflict"}},
+        {"export", {"compression", "parent", "compact", "fs", "size", "vhd"}},
         {"discard", {"async"}},
         {"rescan", {"async"}},
         {"create", {"format", "cylinders", "sides", "size", "save", "export", "discard", "end_recording", "async"}},
@@ -293,7 +294,7 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"compose", {"fs", "codepage", "free"}},
         {"layers", {}},
         {"changes", {}},
-        {"flatten", {"strategy", "plan", "force", "onConflict", "compression", "compact", "fs", "size"}},
+        {"flatten", {"strategy", "plan", "force", "onConflict", "compression", "compact", "fs", "size", "vhd"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -1047,6 +1048,8 @@ MediaReply MediaControl::Save(const MediaRequest& request)
         return Fail(MediaError::BadRequest, "retarget '" + it->second + "': expected true or false");
     if (auto compression = request.options.find("compression"); compression != request.options.end())
         options.compression = Trim(compression->second);
+    if (auto vhd = request.options.find("vhd"); vhd != request.options.end())
+        options.vhd = Lower(Trim(vhd->second));
     if (MediaReply bad = CompactOptions(request.options, options.compact, options.fs, options.size); !bad.result.Ok())
         return bad;
     if (auto strategy = request.options.find("strategy"); strategy != request.options.end())
@@ -1104,6 +1107,8 @@ MediaReply MediaControl::Export(const MediaRequest& request)
         options.compression = Trim(it->second);
     if (auto it = request.options.find("parent"); it != request.options.end())
         options.parent = Trim(it->second);
+    if (auto it = request.options.find("vhd"); it != request.options.end())
+        options.vhd = Lower(Trim(it->second));
     if (MediaReply bad = CompactOptions(request.options, options.compact, options.fs, options.size); !bad.result.Ok())
         return bad;
 
@@ -1183,7 +1188,7 @@ MediaReply MediaControl::Create(const MediaRequest& request)
         auto it = o.find("size");
         if (it == o.end() || !ParseUnsigned(it->second, bytes) || bytes == 0 || bytes % 512 != 0 || bytes > kMaxBlankBytes)
             return Fail(MediaError::BadRequest, "create on a block slot needs size: bytes, a multiple of 512, up to 2 GiB");
-        medium = MediaFormatRegistry::WrapBlock(blank, AccessMode::Session, "blank", std::make_unique<MemoryDisk>(bytes / 512));
+        medium = MediaFormatRegistry::WrapBlock(blank, AccessMode::Session, "blank", std::make_unique<SparseMemoryDisk>(bytes / 512));
         reply.body["size"] = bytes;
     }
     else

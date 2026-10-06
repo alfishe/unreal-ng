@@ -3,6 +3,7 @@
 #include "blockformats.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -21,6 +22,7 @@
 #include "emulator/io/storage/mediareadtap.h"
 #include "emulator/io/storage/readonlyguard.h"
 #include "emulator/io/storage/sessionwritemap.h"
+#include "emulator/io/storage/vhdimage.h"
 #include "emulator/media/medium.h"
 
 namespace
@@ -110,100 +112,16 @@ namespace
         return MediaResult::Success();
     }
 
-    void Be16(uint8_t* p, uint32_t v)
-    {
-        p[0] = static_cast<uint8_t>(v >> 8);
-        p[1] = static_cast<uint8_t>(v);
-    }
-    void Be32(uint8_t* p, uint32_t v)
-    {
-        for (int i = 0; i < 4; i++)
-            p[3 - i] = static_cast<uint8_t>(v >> (8 * i));
-    }
-    void Be64(uint8_t* p, uint64_t v)
-    {
-        for (int i = 0; i < 8; i++)
-            p[7 - i] = static_cast<uint8_t>(v >> (8 * i));
-    }
-
-    /// CHS of a VHD footer: the device's own geometry, else the VHD specification's algorithm
-    void VhdGeometry(const IBlockDevice& device, uint32_t& cylinders, uint32_t& heads, uint32_t& sectors)
-    {
-        if (const auto native = device.NativeGeometry();
-            native && native->cylinders && native->cylinders <= 65535 && native->heads && native->heads <= 255 && native->sectors &&
-            native->sectors <= 255)
-        {
-            cylinders = native->cylinders;
-            heads = native->heads;
-            sectors = native->sectors;
-            return;
-        }
-        uint64_t total = std::min<uint64_t>(device.SectorCount(), 65535ull * 16 * 255);
-        uint64_t cylinderTimesHeads = 0;
-        if (total >= 65535ull * 16 * 63)
-        {
-            sectors = 255;
-            heads = 16;
-            cylinderTimesHeads = total / sectors;
-        }
-        else
-        {
-            sectors = 17;
-            cylinderTimesHeads = total / sectors;
-            heads = static_cast<uint32_t>((cylinderTimesHeads + 1023) / 1024);
-            if (heads < 4)
-                heads = 4;
-            if (cylinderTimesHeads >= heads * 1024ull || heads > 16)
-            {
-                sectors = 31;
-                heads = 16;
-                cylinderTimesHeads = total / sectors;
-            }
-            if (cylinderTimesHeads >= heads * 1024ull)
-            {
-                sectors = 63;
-                heads = 16;
-                cylinderTimesHeads = total / sectors;
-            }
-        }
-        cylinders = static_cast<uint32_t>(cylinderTimesHeads / heads);
-    }
-
     /// A fixed VHD: the raw data, then a 512-byte footer (Microsoft VHD specification 1.0)
     bool AppendVhdFooter(IBlockDevice& device, const std::string& path, std::string* error)
     {
         const uint64_t size = device.SectorCount() * IBlockDevice::kSectorSize;
-        uint8_t f[512] = {};
-        std::memcpy(f, "conectix", 8);
-        Be32(f + 8, 2);               // features: reserved bit set
-        Be32(f + 12, 0x00010000);     // version 1.0
-        Be64(f + 16, ~0ULL);          // data offset: none (fixed disk)
-        Be32(f + 24, 0);              // timestamp: 0, so the same disk gives the same file
-        std::memcpy(f + 28, "ung ", 4);
-        Be32(f + 32, 0x00010000);
-        Be32(f + 36, 0x5769326B);     // "Wi2k"
-        Be64(f + 40, size);           // original size
-        Be64(f + 48, size);           // current size
         uint32_t cylinders = 0, heads = 0, sectors = 0;
-        VhdGeometry(device, cylinders, heads, sectors);
-        Be16(f + 56, cylinders);
-        f[58] = static_cast<uint8_t>(heads);
-        f[59] = static_cast<uint8_t>(sectors);
-        Be32(f + 60, 2);              // fixed hard disk
-        uint64_t id = device.ContentId();
-        for (int i = 0; i < 16; i++)
-        {
-            id ^= id >> 29;
-            id *= 0xBF58476D1CE4E5B9ULL;
-            f[68 + i] = static_cast<uint8_t>(id >> 56);
-        }
-        uint32_t sum = 0;
-        for (uint8_t b : f)
-            sum += b;
-        Be32(f + 64, ~sum);
+        vhd::Geometry(device, cylinders, heads, sectors);
+        const std::array<uint8_t, 512> footer = vhd::Footer(size, cylinders, heads, sectors, vhd::kFixed, ~0ULL, device.ContentId());
         std::fstream out(FileHelper::ToFsPath(path), std::ios::binary | std::ios::in | std::ios::out);
         out.seekp(static_cast<std::streamoff>(size));
-        out.write(reinterpret_cast<const char*>(f), sizeof f);
+        out.write(reinterpret_cast<const char*>(footer.data()), static_cast<std::streamsize>(footer.size()));
         out.flush();
         if (!out && error)
             *error = "cannot write the VHD footer of " + path;
@@ -215,6 +133,10 @@ namespace
     {
         if (format != "chd" && (!options.compression.empty() || !options.parent.empty()))
             return MediaResult::Fail(MediaError::BadRequest, "compression and parent apply to a .chd target only");
+        if (!options.vhd.empty() && options.vhd != "fixed" && options.vhd != "dynamic")
+            return MediaResult::Fail(MediaError::BadRequest, "vhd '" + options.vhd + "': expected fixed or dynamic");
+        if (!options.vhd.empty() && format != "vhd")
+            return MediaResult::Fail(MediaError::BadRequest, "vhd applies to a .vhd target only");
 
         // Written next to the target, renamed into place when complete
         const std::string temp = TempPathFor(path);
@@ -226,8 +148,15 @@ namespace
         else
         {
             std::string error;
-            if (!ExportBlockDevice(device, temp, &error) || (format == "vhd" && !AppendVhdFooter(device, temp, &error)))
+            if (format == "vhd" && options.vhd == "dynamic")
+            {
+                if (!vhd::WriteDynamic(device, temp, &error))
+                    result = MediaResult::Fail(MediaError::IoError, error);
+            }
+            else if (!ExportBlockDevice(device, temp, &error) || (format == "vhd" && !AppendVhdFooter(device, temp, &error)))
+            {
                 result = MediaResult::Fail(MediaError::IoError, error);
+            }
         }
         if (!result.Ok())
             RemoveFile(temp);
@@ -409,7 +338,8 @@ MediaResult BlockFormats::Save(Medium& medium, const std::string& target, const 
     {
         std::string error;
         {
-            auto image = HddImageFormats::Open(path, format, RawImage::Access::ReadWrite, &error);
+            // A dynamic VHD allocates the blocks the changes need
+            auto image = HddImageFormats::OpenBlock(path, format, RawImage::Access::ReadWrite, &error);
             if (!image)
                 return MediaResult::Fail(MediaError::IoError, error);
             for (const auto& [lba, data] : session->Changes())
@@ -417,7 +347,8 @@ MediaResult BlockFormats::Save(Medium& medium, const std::string& target, const 
                 if (!image->WriteSector(lba, data.data()))
                     return MediaResult::Fail(MediaError::IoError, "cannot write sector " + std::to_string(lba) + " of " + path);
             }
-            image->Flush();
+            if (auto* raw = dynamic_cast<RawImage*>(image.get()))
+                raw->Flush();
         }
         // Read the file again through a fresh handle: the old one may hold stale buffers
         auto reopened = HddImageFormats::OpenBlock(path, format, RawImage::Access::ReadOnly, &error);

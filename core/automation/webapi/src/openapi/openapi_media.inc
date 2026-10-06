@@ -136,10 +136,14 @@
         body["properties"]["onConflict"]["description"] = "write-back: refuse (default) or keep-both when a host file changed since the build";
         body["properties"]["force"]["type"] = "boolean";
         body["properties"]["force"]["description"] = "save as delta over a delta written over other sources";
+        body["properties"]["vhd"]["type"] = "string";
+        body["properties"]["vhd"]["description"] =
+            "save / export / flatten of a block medium to a new .vhd: fixed (default, the most compatible) or dynamic "
+            "(sparse: only 2 MiB blocks holding data are stored)";
         body["properties"]["compact"]["type"] = "boolean";
         body["properties"]["compact"]["description"] =
             "save / export of a FAT disk or card: a re-synthesized volume (every file contiguous; with fs: fat16 / fat32 "
-            "converts, with size resizes). A .vhd path gets a fixed VHD footer";
+            "converts, with size resizes)";
         body["properties"]["wp"]["type"] = "boolean";
         body["properties"]["on"]["type"] = "boolean";
         body["properties"]["on"]["description"] = "protect: the slot's write-protect switch";

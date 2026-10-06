@@ -35,6 +35,7 @@ public:
         return ok;
     }
     bool WriteSector(uint64_t lba, const uint8_t* src) override { return _base->WriteSector(lba, src); }
+    uint64_t ZeroRun(uint64_t lba) override { return _base->ZeroRun(lba); }
     bool IsWritable() const override { return _base->IsWritable(); }
     std::optional<BlockGeometry> NativeGeometry() const override { return _base->NativeGeometry(); }
     std::string Describe() const override { return _base->Describe(); }

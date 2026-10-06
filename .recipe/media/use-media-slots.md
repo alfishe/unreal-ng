@@ -46,7 +46,7 @@ media {"action":"insert","slot":"ide0.master","path":"/music/album","device":"cd
   `fs` (`fat16` | `fat32`), `codepage` (`cp866` | `cp1251`), `free` (bytes of room for guest writes), `wp` (insert write-protected),
   `kind`, `device`, `immediate` (skip the swap delay), plus `save` / `export` / `discard` / `end_recording` / `async`.
   `swap` takes every `insert` option.
-- `save` takes `retarget` (a disk that no longer fits its format is kept losslessly as `.udi`) and `compression`; `export` takes `compression` and `parent`.
+- `save` takes `retarget` (a disk that no longer fits its format is kept losslessly as `.udi`) and `compression`; `export` takes `compression` and `parent`; save to a path and export take `vhd` (`fixed`, the default, or `dynamic`: a sparse VHD) for a `.vhd` target.
   Both take `compact` (a FAT disk or card written as a new volume: every file contiguous, deleted data and lost
   clusters gone, label / MBR / boot code carried), with `fs` (`fat16` / `fat32`: converts; a FAT12 floppy needs it)
   and `size` (bytes or `64MiB`; default: the medium's size). `save` with `compact` needs a `path`; the medium then

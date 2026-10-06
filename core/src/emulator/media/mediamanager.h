@@ -77,6 +77,7 @@ struct SaveOptions
     bool compact = false;       ///< block media: a re-synthesized FAT volume (S1 compact)
     std::optional<FatType> fs;  ///< compact: the FAT type
     std::optional<uint64_t> size;  ///< compact: total bytes
+    std::string vhd;               ///< a new .vhd file: fixed (default) or dynamic (BlockWriteOptions)
     /// Composites (DT-9): flat (needs a path) | delta | commit | write-back; empty: a path means flat,
     /// no path the descriptor's writes.save (delta when it names none)
     std::string strategy;

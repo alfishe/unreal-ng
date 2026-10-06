@@ -928,6 +928,34 @@ const GraftVolume::Run* GraftVolume::FindRun(uint64_t lba, uint64_t& cluster) co
     return &*it;
 }
 
+uint64_t GraftVolume::ZeroRun(uint64_t lba)
+{
+    if (lba >= SectorCount())
+        return 0;
+    const auto patch = std::lower_bound(_patchLba.begin(), _patchLba.end(), lba);
+    if (patch != _patchLba.end() && *patch == lba)
+        return 0;
+    uint64_t cluster = 0;
+    if (FindRun(lba, cluster))
+        return 0;
+    uint64_t end = SectorCount();
+    if (patch != _patchLba.end())
+        end = std::min(end, *patch);
+    if (lba >= _dataStart)
+    {
+        const uint64_t c = (lba - _dataStart) / _sectorsPerCluster + 2;
+        const auto next = std::upper_bound(_runs.begin(), _runs.end(), c, [](uint64_t v, const Run& r) { return v < r.firstCluster; });
+        if (next != _runs.end())
+            end = std::min(end, _dataStart + static_cast<uint64_t>(next->firstCluster - 2) * _sectorsPerCluster);
+    }
+    else if (!_runs.empty())
+        end = std::min(end, _dataStart + static_cast<uint64_t>(_runs.front().firstCluster - 2) * _sectorsPerCluster);
+    // Past a cut-down base's end the volume reads zeros; inside it the base knows
+    const uint64_t baseCount = _base->SectorCount();
+    const uint64_t run = lba >= baseCount ? end - lba : std::min(_base->ZeroRun(lba), baseCount - lba);
+    return std::min(run, end - lba);
+}
+
 std::vector<std::pair<uint64_t, uint64_t>> GraftVolume::GraftedSectorRuns() const
 {
     std::vector<std::pair<uint64_t, uint64_t>> runs;

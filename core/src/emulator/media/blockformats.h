@@ -40,6 +40,8 @@ struct BlockWriteOptions
     bool compact = false;
     std::optional<FatType> fs;             ///< compact: the target's FAT type (default: the volume's)
     std::optional<uint64_t> size;          ///< compact: total bytes (default: the medium's, or the content's)
+    /// A .vhd target: "fixed" (empty: the default, the most compatible) or "dynamic" (only blocks holding data stored)
+    std::string vhd;
 };
 
 class BlockFormats

@@ -73,10 +73,10 @@ on a +3) is `unknown-slot`, never drive A.
 | `swap` | slot, path | eject + insert in one step |
 | `eject` | slot | take the medium out |
 | `save` | slot, path? | write the medium back into its file, or to `path` (it then stands for that file): a floppy in its format; a hard disk or card's changed sectors into a raw / HDF / HDI / VHD file, a [CHD](../file-formats/disk-images/chd.md) written again; a [composite](#composite-media-several-sources-in-one-disk) without a path: its session delta file |
-| `export` | slot, path | write a copy of the medium as it is now; the medium keeps its unsaved writes. A hard disk or card goes to a raw image (zero sectors not written: sparse where the host can), a fixed VHD for a `.vhd` path, or a CHD for a `.chd` path |
+| `export` | slot, path | write a copy of the medium as it is now; the medium keeps its unsaved writes. A hard disk or card goes to a raw image (zero sectors not written: sparse where the host can), a VHD for a `.vhd` path (fixed by default, `vhd: dynamic` for a sparse one), or a CHD for a `.chd` path. Free space a composite or a sparse image knows to be zeros is skipped without being read |
 | `discard` | slot | drop the unsaved writes (a floppy is opened again from its file) |
 | `rescan` | slot | build a folder medium again after the host folder changed (refused while dirty) |
-| `create` | slot | a blank floppy (`format`, `cylinders`, `sides`) or card (`size`) |
+| `create` | slot | a blank floppy (`format`, `cylinders`, `sides`) or card (`size`); a blank card or hard disk holds memory only for what the guest writes (64 KiB chunks) |
 | `protect` | slot, `on` | the slot's write-protect switch |
 | `compose` | descriptor | build a [composite](#composite-media-several-sources-in-one-disk) (`*.ucompose.yaml`, or its JSON text) without inserting it: the layout and the report |
 | `layers` | slot | a composite's layers (and partitions) |
@@ -103,6 +103,7 @@ on a +3) is `unknown-slot`, never drive A.
 | `retarget` | bool | true | save: a disk TRD cannot hold goes to `<name>.udi` |
 | `compression` | `none`, `default` (lzma, zlib, huff, flac), or up to four of `zlib`, `lzma`, `huff`, `flac`, `zstd` | the source CHD's codecs, else `default` | save, export of a hard disk or card to a `.chd` |
 | `parent` | a CHD file | — | export to a `.chd`: a child of that CHD (only the hunks that differ are stored) |
+| `vhd` | `fixed`, `dynamic` | `fixed` | save to a path, export, flatten `flat` of a hard disk or card to a `.vhd`: `dynamic` stores only the 2 MiB blocks that hold data (a dynamic VHD in a slot is written in place: a new block goes at the end) |
 | `compact` | bool | false | save, export of a FAT disk or card: write the merged volume laid out again (every file contiguous, deleted data and lost clusters gone, label / MBR / boot code kept); `save` with `compact` needs a path |
 | `fs`, `size` | `fat16` / `fat32`; bytes or `64MiB` | the volume's; the medium's | save, export with `compact`: convert, resize (a FAT12 floppy needs `fs`) |
 | `strategy` | `delta`, `flat`, `commit`, `write-back` | a path: `flat`; none: the descriptor's `writes.save`, else `delta` | save of a composite (`commit` and `write-back`: a later phase) |
@@ -190,7 +191,7 @@ an empty drive changes what some firmware does at boot.
 
 | Unit | Kind | Takes | Default access | Removable |
 |---|---|---|---|---|
-| hard disk | `block` | `.img` `.ima` `.hdd` `.hd` (raw), `.hdf` (RS-IDE, 8-bit halved too), `.hdi`, fixed `.vhd`, MAME's `.chd` (any hard-disk CHD, [chd.md](../file-formats/disk-images/chd.md)), or a folder (a FAT16 volume) | `writethrough`: the guest writes into the image file, as on UnrealSpeccy (a folder or a CHD: `session`, a CHD is written by `save`) | no: insert and eject while paused |
+| hard disk | `block` | `.img` `.ima` `.hdd` `.hd` (raw), `.hdf` (RS-IDE, 8-bit halved too), `.hdi`, fixed and dynamic `.vhd` (written in place too; a differencing VHD is refused), MAME's `.chd` (any hard-disk CHD, [chd.md](../file-formats/disk-images/chd.md)), or a folder (a FAT16 volume) | `writethrough`: the guest writes into the image file, as on UnrealSpeccy (a folder or a CHD: `session`, a CHD is written by `save`) | no: insert and eject while paused |
 | CD-ROM drive | `optical` | `.iso` (ISO 9660), `.cue` (a CUE sheet with its BINARY / MOTOROLA / WAVE files: data and audio tracks, INDEX 00 pregaps, PREGAP / POSTGAP, several files, several sessions with `REM SESSION`), a lone raw `.bin` of 2352-byte frames, MAME's CD-ROM `.chd` (cdlz / cdzl / cdzs / cdfl, v5, multisession too), or a folder of MP3 / FLAC / WAV files (an audio CD, below); read-only | `readonly` | yes: a swap keeps the drive empty for 3 s and the guest sees "medium changed" |
 
 The geometry is `[HDD] CHS0` / `CHS1` (`C/H/S`), else the image header's, else the largest standard

@@ -9,6 +9,12 @@
 #include <filesystem>
 #include <system_error>
 
+#if !defined(_WIN32)
+#include <cerrno>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 namespace
 {
     /// FNV-1a over the path and size: the same file at the same size is the same medium
@@ -77,6 +83,39 @@ RawImage::RawImage(std::string path, Access access, std::fstream file, uint64_t 
 RawImage::~RawImage()
 {
     Flush();
+#if !defined(_WIN32)
+    if (_holeFd >= 0)
+        close(_holeFd);
+#endif
+}
+
+uint64_t RawImage::ZeroRun(uint64_t lba)
+{
+#if defined(SEEK_DATA) && !defined(_WIN32)
+    if (lba >= _sectors || _layout.halved || _holeFd == -2)
+        return 0;
+    if (_holeFd < 0)
+    {
+        _holeFd = open(_path.c_str(), O_RDONLY);
+        if (_holeFd < 0)
+        {
+            _holeFd = -2;
+            return 0;
+        }
+    }
+    // Every write is flushed (WriteSector), so the file's allocation is current
+    const off_t at = static_cast<off_t>(_layout.dataOffset + lba * kSectorSize);
+    const off_t data = lseek(_holeFd, at, SEEK_DATA);
+    const uint64_t left = _sectors - lba;
+    if (data < 0)
+        return errno == ENXIO ? left : 0;  // no data from here to the end of the file
+    if (data <= at)
+        return 0;
+    return std::min<uint64_t>(static_cast<uint64_t>(data - at) / kSectorSize, left);
+#else
+    (void)lba;
+    return 0;
+#endif
 }
 
 bool RawImage::ReadSector(uint64_t lba, uint8_t* dst)

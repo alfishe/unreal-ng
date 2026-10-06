@@ -917,6 +917,8 @@ MediaResult MediaManager::ExportMedium(const std::string& slotId, Medium& medium
         return MediaResult::Fail(MediaError::BadRequest, "compact, fs and size apply to block media (FAT disks and cards)");
     if (!medium.Block() && (!options.compression.empty() || !options.parent.empty()))
         return MediaResult::Fail(MediaError::BadRequest, "compression and parent apply to block media exported as .chd");
+    if (!medium.Block() && !options.vhd.empty())
+        return MediaResult::Fail(MediaError::BadRequest, "vhd applies to block media exported as .vhd");
 
     std::vector<std::string> exportReport;
     if (DiskImage* disk = medium.Floppy())
@@ -1056,6 +1058,9 @@ MediaResult MediaManager::SaveBlockMedium(const std::string& slotId, Medium& med
     write.compact = options.compact;
     write.fs = options.fs;
     write.size = options.size;
+    write.vhd = options.vhd;
+    if (!options.vhd.empty() && options.path.empty())
+        return MediaResult::Fail(MediaError::BadRequest, "vhd writes a new image: name the .vhd path to save to");
     if (options.compact && options.path.empty())
         return MediaResult::Fail(MediaError::BadRequest, "compact writes a new image: name the path to save to");
     std::string savedPath;

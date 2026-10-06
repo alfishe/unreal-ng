@@ -293,6 +293,7 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "                                 at the next insert) | flat <path>; --force over a foreign delta" << NEWLINE;
     out << "  export <slot> <path>         - a copy of the medium as it is now (.img, .vhd, .chd)" << NEWLINE;
     out << "                                 --compact [--fs fat32] [--size 64MiB]: a defragmented FAT volume" << NEWLINE;
+    out << "                                 --vhd fixed|dynamic: a .vhd target's kind (dynamic: sparse)" << NEWLINE;
     out << "  discard <slot>               - drop the unsaved writes" << NEWLINE;
     out << "  rescan <slot>                - rebuild a folder medium" << NEWLINE;
     out << "  create <slot> [--size bytes] - a blank floppy or card" << NEWLINE;

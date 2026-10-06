@@ -30,8 +30,8 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"insert", insertOptions},
         {"eject", {"save", "export", "discard", "end_recording", "async"}},
         {"swap", insertOptions},
-        {"save", {"retarget", "compression", "compact", "fs", "size", "strategy", "force", "plan", "onConflict"}},
-        {"export", {"compression", "parent", "compact", "fs", "size"}},
+        {"save", {"retarget", "compression", "compact", "fs", "size", "vhd", "strategy", "force", "plan", "onConflict"}},
+        {"export", {"compression", "parent", "compact", "fs", "size", "vhd"}},
         {"discard", {"async"}},
         {"rescan", {"async"}},
         {"create", {"format", "cylinders", "sides", "size", "save", "export", "discard", "end_recording", "async"}},
@@ -39,7 +39,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"compose", {"fs", "codepage", "free"}},
         {"layers", {}},
         {"changes", {}},
-        {"flatten", {"strategy", "plan", "force", "onConflict", "compression", "compact", "fs", "size"}},
+        {"flatten", {"strategy", "plan", "force", "onConflict", "compression", "compact", "fs", "size", "vhd"}},
     };
     return actions;
 }
@@ -227,9 +227,12 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["onConflict"]["description"] =
         "write-back: refuse (default) when a host file changed since the build, or keep-both (the guest's version as "
         "'name (guest).ext')";
+    schema["properties"]["vhd"]["description"] =
+        "save / export / flatten of a block medium to a new .vhd: fixed (default) or dynamic (only the 2 MiB blocks "
+        "holding data are stored)";
     schema["properties"]["compact"]["description"] =
         "save / export of a FAT disk or card: write a re-synthesized volume (every file contiguous; fs converts, size "
-        "resizes) instead of the layout as it is. .vhd targets get a fixed VHD footer";
+        "resizes) instead of the layout as it is";
     schema["properties"]["format"]["description"] =
         "insert / swap: 'audio-cd' - a folder of MP3 / FLAC / WAV files into a CD-ROM drive as a Red Book audio CD (a "
         "folder in a CD slot is one anyway; the reply's report lists the tracks and every file not taken); create: auto, "

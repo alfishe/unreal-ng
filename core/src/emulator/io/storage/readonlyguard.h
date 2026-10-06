@@ -18,6 +18,7 @@ public:
     uint64_t SectorCount() const override { return _base->SectorCount(); }
     bool ReadSector(uint64_t lba, uint8_t* dst) override { return _base->ReadSector(lba, dst); }
     bool WriteSector(uint64_t, const uint8_t*) override { return false; }
+    uint64_t ZeroRun(uint64_t lba) override { return _base->ZeroRun(lba); }
     bool IsWritable() const override { return false; }
     std::optional<BlockGeometry> NativeGeometry() const override { return _base->NativeGeometry(); }
     std::string Describe() const override { return _base->Describe() + " (read-only)"; }

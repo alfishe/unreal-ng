@@ -696,6 +696,22 @@ SectorOwner FatSynthVolume::OwnerOf(uint64_t lba) const
     return owner;
 }
 
+uint64_t FatSynthVolume::ZeroRun(uint64_t lba)
+{
+    const uint64_t dataStart = _volumeStart + _reservedSectors + 2ull * _fatSectors + _rootDirSectors;
+    if (lba < dataStart || lba >= _totalSectors)
+        return 0;
+    const uint64_t cluster = (lba - dataStart) / _sectorsPerCluster + 2;
+    if (FindRun(cluster))
+        return 0;
+    // Up to the next run: the first one starting after this cluster
+    const auto next = std::upper_bound(_runs.begin(), _runs.end(), cluster,
+                                       [](uint64_t c, const Run& run) { return c < run.firstCluster; });
+    const uint64_t end = next == _runs.end() ? _totalSectors
+                                             : dataStart + static_cast<uint64_t>(next->firstCluster - 2) * _sectorsPerCluster;
+    return end > lba ? std::min(end, _totalSectors) - lba : 0;
+}
+
 const FatSynthVolume::Run* FatSynthVolume::FindRun(uint64_t cluster) const
 {
     auto it = std::upper_bound(_runs.begin(), _runs.end(), cluster,
