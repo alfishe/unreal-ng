@@ -1,0 +1,42 @@
+   10        ORG  30000
+   20        ENT  $
+   30        LD   HL,24200
+   40        LD   C,6
+   50        LD   B,1
+   60        LD   D,9
+   70        LD   E,15
+   80        CALL 15635
+   90        RET
+  100 
+  110        ORG  24200
+  120        LD   HL,TEXT
+  130        LD   A,60
+  140        CALL 23403
+  150 
+  160        LD   HL,NAME1
+  170        LD   DE,256
+  180        CALL LOAD
+  181        LD   A,0
+  182        OUT  (254),A
+  190        LD   HL,NAME2
+  200        CALL LOAD
+  210 
+  220        LD   A,95
+  230        JP   23403
+  240 
+  250 LOAD
+  260        LD   A,100
+  270        LD   DE,0
+  280        LD   B,1
+  290        LD   IX,0
+  300        CALL 23403
+  310        RET
+  320 
+  330 NAME1
+  340        DEFM "BMP     COM"
+  350 NAME2
+  360        DEFM "APPMAN  COM"
+  400 
+  410 TEXT
+  420        DEFM "Welcome to Pink Floyd"
+  430        DEFB 0
