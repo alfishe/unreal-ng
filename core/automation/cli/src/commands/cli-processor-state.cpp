@@ -920,16 +920,16 @@ void CLIProcessor::HandleStateAudioAYIndex(const ClientSession& session, Emulato
     ss << "  Channel A Noise: " << ((mixer & 0x08) ? "OFF" : "ON") << NEWLINE;
     ss << "  Channel B Noise: " << ((mixer & 0x10) ? "OFF" : "ON") << NEWLINE;
     ss << "  Channel C Noise: " << ((mixer & 0x20) ? "OFF" : "ON") << NEWLINE;
-    ss << "  I/O Port A: " << ((mixer & 0x40) ? "Input" : "Output") << NEWLINE;
-    ss << "  I/O Port B: " << ((mixer & 0x80) ? "Input" : "Output") << NEWLINE;
+    ss << "  I/O Port A: " << ((mixer & 0x40) ? "Output" : "Input") << NEWLINE;
+    ss << "  I/O Port B: " << ((mixer & 0x80) ? "Output" : "Input") << NEWLINE;
     ss << NEWLINE;
 
     // Show I/O ports
     ss << "I/O Ports:" << NEWLINE;
     ss << "  Port A: 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)registers[14] << std::dec;
-    ss << " (" << ((mixer & 0x40) ? "Input" : "Output") << ")" << NEWLINE;
+    ss << " (" << ((mixer & 0x40) ? "Output" : "Input") << ")" << NEWLINE;
     ss << "  Port B: 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)registers[15] << std::dec;
-    ss << " (" << ((mixer & 0x80) ? "Input" : "Output") << ")" << NEWLINE;
+    ss << " (" << ((mixer & 0x80) ? "Output" : "Input") << ")" << NEWLINE;
     ss << NEWLINE;
 
     ss << "Sound Played Since Reset: No (tracking not implemented)"
@@ -1059,8 +1059,8 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
             ss << "  Bit 3: Channel A Noise - " << ((regValue & 0x08) ? "Disabled" : "Enabled") << NEWLINE;
             ss << "  Bit 4: Channel B Noise - " << ((regValue & 0x10) ? "Disabled" : "Enabled") << NEWLINE;
             ss << "  Bit 5: Channel C Noise - " << ((regValue & 0x20) ? "Disabled" : "Enabled") << NEWLINE;
-            ss << "  Bit 6: Port A Direction - " << ((regValue & 0x40) ? "Input" : "Output") << NEWLINE;
-            ss << "  Bit 7: Port B Direction - " << ((regValue & 0x80) ? "Input" : "Output") << NEWLINE;
+            ss << "  Bit 6: Port A Direction - " << ((regValue & 0x40) ? "Output" : "Input") << NEWLINE;
+            ss << "  Bit 7: Port B Direction - " << ((regValue & 0x80) ? "Output" : "Input") << NEWLINE;
             break;
 
         case 8:
@@ -1117,13 +1117,13 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
 
         case 14:  // I/O Port A
             ss << "I/O Port A:" << NEWLINE;
-            ss << "  Direction: " << ((registers[7] & 0x40) ? "Input" : "Output") << NEWLINE;
+            ss << "  Direction: " << ((registers[7] & 0x40) ? "Output" : "Input") << NEWLINE;
             ss << "  Value: 0x" << std::hex << (int)regValue << std::dec << NEWLINE;
             break;
 
         case 15:  // I/O Port B
             ss << "I/O Port B:" << NEWLINE;
-            ss << "  Direction: " << ((registers[7] & 0x80) ? "Input" : "Output") << NEWLINE;
+            ss << "  Direction: " << ((registers[7] & 0x80) ? "Output" : "Input") << NEWLINE;
             ss << "  Value: 0x" << std::hex << (int)regValue << std::dec << NEWLINE;
             break;
     }
