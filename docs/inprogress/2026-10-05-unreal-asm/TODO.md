@@ -22,7 +22,7 @@ D-4 codecs and format conversion first, dialect conversion plugins after. No cod
 
 Design on master; development in a fresh worktree from master (branch `unreal-asm`); a commit after each green
 phase; master only after the owner's review.
-- [ ] symbol module proposals P-2 … P-7 ([symbols/goals-and-requirements.md](symbols/goals-and-requirements.md) §3.2)
+- [ ] symbol module proposals P-2 … P-7 ([symbols/goals-and-requirements.md](symbols/goals-and-requirements.md) §3.2); S1 implements P-2 (`*.usym.json`) and P-4 (`both` + report) as recommended, the owner may still change them
 
 ## Phases ([tdd.md](tdd.md) §8)
 
@@ -63,6 +63,11 @@ phase; master only after the owner's review.
   - [x] codec `xas`, versions 4.18 / 5.05 / 7.43 / 7.43c / 9.07m / 9.10 (2026-10-06): all 18 XAS sources found byte-exact with their sector slack, packer 4794 / 4913 lines (the rest XASCII's lower case); `CatalogHints::slack`, hobeta / TRD readers accept a length beyond the sectors; line numbers of GENS / ZEUS in `SourceLine::number`; testdata `xas/` ([research-xas.md](research-xas.md))
 - [ ] A7 emulator adapters and surfaces, Qt disk browser, recipe
   - [ ] a tape (TAP / TZX) container: GENS P blocks and T's multi-block include files, ZEUS tape saves
-- [ ] A8 symbols on the library (symbols S1-S5)
+- [ ] A8 symbols on the library (symbols S1-S5), branch `unreal-asm-a8`
+  - [x] S1 model, index, store, normalization + merge policies, the native `*.usym.json` codec and the symbol codec registry (2026-10-06): `include/unrealasm/symbols/`, `src/symbols/`; the library is std-only as a whole, so it is the `symbols-std-only` check; 13 tests (round trip identity, unknown members kept, DT-1 / DT-2 cases, index snapshots)
+  - [ ] S2 the five existing `LabelManager` formats + `unreal-l` as codecs; `LabelManager` becomes the facade
+  - [ ] S3 tokenizer; sjasmplus `.sym` / `.sld` / `.lst`, pasmo
+  - [ ] S4 name rules (DT-3 / DT-4), IDA, Ghidra, MAME, CSpect; `symconv`
+  - [ ] S5 surfaces, bundles + manifest, recipe
 - [ ] A9 benchmarks, user docs
 - [ ] P2: memory bridge B0-B6 ([memory-bridge.md](memory-bridge.md)), design only for now

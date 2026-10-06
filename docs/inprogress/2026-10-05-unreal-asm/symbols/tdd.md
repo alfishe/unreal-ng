@@ -93,6 +93,17 @@ struct Index
 Built once per change (`O(n log n)`), read lock-free; `IndexEntry` is 16 bytes. A `PagingResolver` (adapter)
 answers "window → space" for CPU-view lookups at the moment of the call.
 
+### 2.2 As implemented (S1, 2026-10-06)
+
+Naive first, measured in S10 (the budget of §9 is the target there):
+
+- names are plain `std::string`s, not interned; a local symbol's scope is its `parent` name (empty = global);
+- the index holds the sets it was built from (`shared_ptr`), so a reader's symbols stay valid while the store
+  changes; the store publishes a new index under a small mutex that guards only the pointer copy (C++20
+  `std::atomic<std::shared_ptr>` is not in every standard library the project builds with);
+- the index's name maps keep each set's priority, so a higher-priority set wins a name across case rules;
+- a record's own space is anything but the main CPU view (DT-1); `base` is added to every offset except constants.
+
 ## 3. Sources and sinks
 
 ```cpp

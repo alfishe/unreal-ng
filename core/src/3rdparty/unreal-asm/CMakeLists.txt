@@ -58,6 +58,12 @@ add_library(unreal-asm STATIC
     src/dialects/z88dk/z88dkbackend.cpp
     src/dialects/sjasmplus/sjasmplusfrontend.cpp
     src/containers/trdos.cpp
+    src/symbols/model/symbol.cpp
+    src/symbols/model/symbolindex.cpp
+    src/symbols/model/symbolstore.cpp
+    src/symbols/io/json.cpp
+    src/symbols/codecs/native/nativecodec.cpp
+    src/symbols/registry.cpp
 )
 target_include_directories(unreal-asm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(unreal-asm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -109,6 +115,11 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/trdos_test.cpp
         ${UNREAL_ASM_DIR}/tests/dialects_test.cpp
         ${UNREAL_ASM_DIR}/tests/tasmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/symbol_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/symbolindex_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/symbolstore_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/json_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/nativecodec_test.cpp
     )
     target_link_libraries(unreal-asm-tests PRIVATE unreal-asm gtest)
     target_include_directories(unreal-asm-tests PRIVATE ${UNREAL_ASM_DIR}/src ${UNREAL_ASM_DIR}/tests)
