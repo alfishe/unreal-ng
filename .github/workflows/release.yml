@@ -33,8 +33,9 @@
 # and is shipped inside each package (private copy), so no package relies on
 # libraries of the user's system beyond
 # the OS itself (glibc/X11/GL on Linux, system frameworks on macOS, Win32).
-# TLS is off in release builds: the WebAPI serves plain HTTP on localhost, so
-# neither OpenSSL nor c-ares is needed.
+# The WebAPI has no TLS in release builds (plain HTTP on localhost, no c-ares). The
+# emulated network modules do (UNREAL_HOST_TLS): OpenSSL is linked statically on
+# macOS (built here for the minimum macOS) and comes from the toolchain elsewhere.
 #
 # ==============================================================================
 
@@ -80,6 +81,12 @@ env:
   # cmake/MacOSDeploymentTarget.cmake) because CMake otherwise targets the
   # runner's own OS version. Qt 6.9 supports macOS 12 and later.
   MACOS_DEPLOYMENT_TARGET: '12.0'
+  # OpenSSL for host-side TLS of the emulated network modules (UNREAL_HOST_TLS; the WebAPI's
+  # trantor stays without TLS). macOS builds it statically for MACOS_DEPLOYMENT_TARGET: the
+  # runner's Homebrew OpenSSL is built for the runner's macOS and would land in the bundles
+  # as a dylib requiring it.
+  OPENSSL_VERSION: '3.5.9'
+  OPENSSL_SHA256: '603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a'
   # Enable symbol packaging for rolling snapshots only
   PACKAGE_SYMBOLS: ${{ github.event_name == 'workflow_dispatch' && 'ON' || 'OFF' }}
 
@@ -474,12 +481,35 @@ jobs:
       - name: Install build dependencies
         run: brew install ninja
 
+      - name: Cache OpenSSL
+        id: openssl-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/openssl
+          key: openssl-${{ env.OPENSSL_VERSION }}-macos${{ env.MACOS_DEPLOYMENT_TARGET }}-${{ matrix.arch }}
+
+      - name: Build OpenSSL (static, minimum macOS)
+        if: steps.openssl-cache.outputs.cache-hit != 'true'
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o openssl.tar.gz "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz"
+          echo "${OPENSSL_SHA256}  openssl.tar.gz" | shasum -a 256 -c -
+          tar xzf openssl.tar.gz
+          cd "openssl-${OPENSSL_VERSION}"
+          ./Configure "darwin64-${{ matrix.arch }}-cc" no-shared no-tests no-docs \
+            --prefix="$RUNNER_TEMP/openssl" --libdir=lib \
+            -mmacosx-version-min=${{ env.MACOS_DEPLOYMENT_TARGET }}
+          make -j"$(sysctl -n hw.ncpu)" build_libs
+          make install_dev
+
       - name: Configure CMake
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ env.MACOS_DEPLOYMENT_TARGET }} \
+            -DOPENSSL_ROOT_DIR="${{ runner.temp }}/openssl" \
+            -DOPENSSL_USE_STATIC_LIBS=TRUE \
             -DBUILD_QT_APPS=ON \
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \

@@ -3,6 +3,7 @@
 #include <QActionGroup>
 #include <QApplication>
 #include <QMessageBox>
+#include <QSettings>
 #include <set>
 
 #include "debugger/vdac2/ft812debugwindow.h"
@@ -1115,6 +1116,38 @@ void MenuManager::createDebugMenu()
     _showMemoryAction = _debugMenu->addAction(tr("Show &Memory"));
     _showMemoryAction->setStatusTip(tr("Show memory viewer"));
     _showMemoryAction->setEnabled(false);  // TODO: Implement
+
+    // Time Travel: the black box (D29) - every machine this window creates keeps
+    // recording its last minutes; turbo and a host speed above 1x stay free (it
+    // stops while they run). Off by default; saved in the settings
+    _debugMenu->addSeparator();
+    QMenu* timeTravelMenu = _debugMenu->addMenu(tr("Time &Travel"));
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+    _blackBoxAction = timeTravelMenu->addAction(tr("Always Record (&Black Box)"));
+    _blackBoxAction->setCheckable(true);
+    _blackBoxAction->setChecked(settings.value(QStringLiteral("TimeTravel/BlackBox"), false).toBool());
+    _blackBoxAction->setStatusTip(tr("Keep recording the last minutes of every machine this window creates; it steps "
+                                     "aside while turbo or a host speed above 1x runs"));
+    connect(_blackBoxAction, &QAction::toggled, this, [this](bool on) {
+        QSettings s(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        s.setValue(QStringLiteral("TimeTravel/BlackBox"), on);
+        emit blackBoxToggled(on);
+    });
+    _blackBoxMinutesMenu = timeTravelMenu->addMenu(tr("Keep &Last"));
+    QActionGroup* minutesGroup = new QActionGroup(_blackBoxMinutesMenu);
+    const int savedMinutes = settings.value(QStringLiteral("TimeTravel/BlackBoxMinutes"), 5).toInt();
+    for (const int minutes : {1, 2, 5, 10, 30})
+    {
+        QAction* action = _blackBoxMinutesMenu->addAction(tr("%n minute(s)", nullptr, minutes));
+        action->setCheckable(true);
+        action->setChecked(minutes == savedMinutes);
+        minutesGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, minutes]() {
+            QSettings s(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+            s.setValue(QStringLiteral("TimeTravel/BlackBoxMinutes"), minutes);
+            emit blackBoxMinutesChanged(minutes);
+        });
+    }
 }
 
 void MenuManager::createToolsMenu()

@@ -85,7 +85,9 @@
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "ui_mainwindow.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdcontrol.h"
 
 namespace
 {
@@ -468,6 +470,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
             &MainWindow::handleZXPolyConfigurationRequested);
 #ifdef ENABLE_RECORDING
     connect(_menuManager, &MenuManager::videoRecordingRequested, this, &MainWindow::handleVideoRecordingRequested);
+    connect(_menuManager, &MenuManager::blackBoxToggled, this, &MainWindow::handleBlackBoxSettingChanged);
+    connect(_menuManager, &MenuManager::blackBoxMinutesChanged, this, &MainWindow::handleBlackBoxSettingChanged);
     connect(_menuManager, &MenuManager::videoRecordingDialogRequested, this, &MainWindow::openAdvancedRecordingDialog);
     connect(_menuManager, &MenuManager::quickRecordRequested, this, &MainWindow::handleQuickRecord);
 #endif
@@ -4710,6 +4714,7 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
 
     // Store reference
     _emulator = emulator;
+    _emulatorOrigin = origin;
 
     // 0. The user's saved sound character (voicing, punch, room) - only on
     // instances this window created, before audio is bound (so before the
@@ -4874,6 +4879,41 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
 
     qDebug() << "MainWindow::adoptEmulator() - Successfully adopted emulator"
              << QString::fromStdString(_emulator->GetId());
+
+    // The black box starts on an instance this window created (startup, model switch, a slot change's restart)
+    applyBlackBox();
+}
+
+void MainWindow::handleBlackBoxSettingChanged()
+{
+    applyBlackBox();
+}
+
+void MainWindow::applyBlackBox()
+{
+    EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
+    ttd::TimeTravelController* controller = context ? context->pTimeTravelController : nullptr;
+    if (!controller)
+        return;   // v1 (UNREAL_TTD_BACKEND=v1) has no black box
+
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+    const bool on = settings.value(QStringLiteral("TimeTravel/BlackBox"), false).toBool();
+    const int minutes = std::clamp(settings.value(QStringLiteral("TimeTravel/BlackBoxMinutes"), 5).toInt(), 1, 24 * 60);
+
+    ttd::TTDControl control(context);
+    if (on && _emulatorOrigin == EmulatorOrigin::CreatedByGui)
+    {
+        if (!controller->IsRecording() && !controller->HasHistory())
+            (void)control.Execute({"start", {{"black_box", "true"}, {"minutes", std::to_string(minutes)}}});
+        else if (controller->IsBlackBox())
+            controller->SetBlackBoxMinutes(static_cast<uint32_t>(minutes));
+    }
+    else if (!on && controller->IsBlackBox())
+    {
+        if (controller->IsRecording())
+            (void)control.Execute({"stop", {}});
+        controller->SetBlackBox(false);
+    }
 }
 
 void MainWindow::unbindFromEmulator()

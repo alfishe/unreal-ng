@@ -199,6 +199,8 @@ private slots:
     void handleRestartRequested();
 #ifdef ENABLE_RECORDING
     void handleVideoRecordingRequested();
+    /// Debug > Time Travel: the black box setting changed (saved already); applied to the bound instance
+    void handleBlackBoxSettingChanged();
     void handleVideoRecordingToggled(bool visible);
     void handleQuickRecord(const QString& presetName);
 #endif
@@ -400,6 +402,11 @@ private:
     AppSoundManager* _soundManager = nullptr;
     GUIEmulatorContext* _guiContext = nullptr;
     std::shared_ptr<Emulator> _emulator = nullptr;  // TODO: Remove after full binding migration
+    /// Where the bound instance came from: the black box runs on the ones this window created
+    EmulatorOrigin _emulatorOrigin = EmulatorOrigin::Adopted;
+    /// The black box setting on the bound instance (D29): on and created here - it records the last minutes;
+    /// off - a black box it runs stops. An explicit recording is never touched
+    void applyBlackBox();
 
     /// Instances the manager announced as destroyed (NC_EMULATOR_INSTANCE_DESTROYED,
     /// recorded on the MessageCenter worker before the instance is released). An

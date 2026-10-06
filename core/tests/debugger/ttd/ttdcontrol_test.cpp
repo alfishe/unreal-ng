@@ -681,5 +681,29 @@ TEST_P(TTDControl_Test, TheBorderBeforeAnyOutToFEIsTheLatchs)
     EXPECT_EQ(_context->emulatorState.border_attr, _context->emulatorState.pFE & 0x07);
 }
 
+/// Step 3 (D29): `start` with black_box arms the black box (the engine): a
+/// recording of the last `minutes`, reported in status; an explicit start
+/// disarms it. v1 refuses it
+TEST_P(TTDControl_Test, StartArmsTheBlackBox)
+{
+    TTDReply r = Run("start", {{"black_box", "true"}, {"minutes", "2"}});
+    if (!GetParam())
+    {
+        EXPECT_EQ(r.error, TTDControlError::BadRequest) << r.message;
+        EXPECT_FALSE(Bool(Run("status"), "black_box"));
+        return;
+    }
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_TRUE(Bool(r, "black_box"));
+    const TTDReply status = Run("status");
+    EXPECT_TRUE(Bool(status, "black_box"));
+    EXPECT_EQ(Int(status, "history_limit_frames"), int64_t(2 * 60 * 1000000 / _context->config.frame_duration_us));
+    EXPECT_EQ(Run("start", {{"minutes", "0"}}).error, TTDControlError::BadRequest);
+
+    ASSERT_TRUE(Run("stop").Ok());
+    ASSERT_TRUE(Run("start").Ok());
+    EXPECT_FALSE(Bool(Run("status"), "black_box")) << "an explicit recording";
+}
+
 INSTANTIATE_TEST_SUITE_P(Backends, TTDControl_Test, ::testing::Values(false, true),
                          [](const ::testing::TestParamInfo<bool>& info) { return info.param ? "Controller" : "V1"; });

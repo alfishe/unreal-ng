@@ -296,6 +296,8 @@ public:
     /// counted from 1). Empty while nothing records
     std::string RecordingSessionLabel() const;
     bool IsBlackBox() const { return _blackBox; }
+    /// The black box's window in minutes; a running black box keeps the new window at once
+    void SetBlackBoxMinutes(uint32_t minutes);
     /// Whether host speed or turbo mode is on now
     bool AccelerationActive() const;
 
@@ -2100,6 +2102,8 @@ private:
     uint32_t _blackBoxMinutes = 5;
     bool _blackBoxSuspended = false;        // stopped for an acceleration; starts again after it
     bool _blackBoxRestart = false;          // a machine change ended it: a new session at the next frame boundary
+    /// The black box's window in frames (its minutes at the model's frame length)
+    uint64_t BlackBoxFrames() const;
     /// A change of the machine itself (ROM reload, model transfer, General Sound card, slots) ends the session:
     /// the recording stops, its history goes; a black box starts a new session on the changed machine
     void EndSessionForMachineChange(const char* reason);

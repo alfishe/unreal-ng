@@ -211,6 +211,16 @@ public:
     virtual TTDReply Execute(const std::string& verb, const TTDRequest& request) = 0;
 };
 
+/// The black box is armed (the engine; D29): its recordings keep the last minutes and step aside for accelerations
+template <class S>
+bool BlackBoxOf(const S* manager)
+{
+    if constexpr (std::is_same<S, TimeTravelController>::value)
+        return manager && manager->IsBlackBox();
+    else
+        return false;
+}
+
 template <class S>
 StateNode StatusBodyOf(const S* manager);
 template <class S>
@@ -325,7 +335,7 @@ const std::vector<std::string>& TTDControl::Verbs()
 const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
 {
     static const std::map<std::string, std::vector<std::string>> options = {
-        {"start", {"journal", "history_limit_frames", "history_limit_bytes"}},
+        {"start", {"journal", "history_limit_frames", "history_limit_bytes", "black_box", "minutes"}},
         {"invalidate", {"reason"}},
         {"history-limit", {"frames", "bytes"}},
         {"journal", {"enabled"}},
@@ -483,6 +493,7 @@ StateNode StatusBodyOf(const S* manager)
         ret["backend"] = StateNode();
         ret["recording_paused"] = false;
         ret["earliest"] = StateNode();
+        ret["black_box"] = false;
         return ret;
     }
 
@@ -515,6 +526,7 @@ StateNode StatusBodyOf(const S* manager)
     ret["ttd_available"] = true;
     // Which implementation records on this instance (Phase 5): "engine" or "v1"
     ret["backend"] = std::is_same<S, TimeTravelController>::value ? "engine" : "v1";
+    ret["black_box"] = BlackBoxOf(manager);
     ret["loaded_from_file"] = info.loadedFromFile;
     ret["source_path"] = info.sourcePath;
     ret["captured_at_unix_ms"] = info.capturedAtUnixMs;
@@ -613,7 +625,26 @@ TTDReply TTDControlBackend<S>::Start(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest,
                     "history_limit_frames and history_limit_bytes must be non-negative integers (0 = no limit)");
 
+    // black_box: a recording that keeps the last `minutes` (default 5) and never
+    // holds the machine at real speed (D29; the engine only). Absent or false: an
+    // explicit recording, which holds the acceleration lock
+    bool blackBox = false;
+    const std::string* blackBoxText = Option(request, "black_box");
+    if (blackBoxText && !ParseBool(*blackBoxText, blackBox))
+        return Fail(TTDControlError::BadRequest, "black_box must be true or false");
+    uint64_t minutes = 5;
+    const std::string* minutesText = Option(request, "minutes");
+    if (minutesText && (!ParseU64(*minutesText, minutes) || minutes == 0 || minutes > 24 * 60))
+        return Fail(TTDControlError::BadRequest, "minutes must be an integer from 1 to 1440");
+
     const bool alreadyRecording = _manager->IsRecording();
+    if constexpr (std::is_same<S, TimeTravelController>::value)
+    {
+        if (!alreadyRecording)
+            _manager->SetBlackBox(blackBox, static_cast<uint32_t>(minutes));
+    }
+    else if (blackBox)
+        return Fail(TTDControlError::BadRequest, "the black box needs the engine (backend v1 records explicitly only)");
     if (!alreadyRecording && journalText)
         _manager->SetEnableWriteJournal(journal);
     if (framesText || bytesText)
@@ -628,6 +659,7 @@ TTDReply TTDControlBackend<S>::Start(const TTDRequest& request)
     const TTDSessionInfo info = _manager->ReadSessionInfo();
     reply.body["history_limit_frames"] = info.historyLimitFrames;
     reply.body["history_limit_bytes"] = info.historyLimitBytes;
+    reply.body["black_box"] = BlackBoxOf(_manager);
     return reply;
 }
 
