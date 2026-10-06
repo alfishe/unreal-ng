@@ -9,12 +9,15 @@
 #endif
 #include <windows.h>
 
+#include "platform/windows/cursortravel.h"
+
 namespace
 {
 struct NativeCapture
 {
     POINT centre{};  // physical pixels, virtual-screen coordinates
     RECT clip{};
+    CursorTravel travel;
     MouseCaptureWindows::MotionFn onMotion;
 };
 }  // namespace
@@ -29,11 +32,16 @@ void* MouseCaptureWindows::Begin(int clipHalfWidth, int clipHalfHeight, MotionFn
     capture->centre = centre;
     capture->onMotion = std::move(onMotion);
 
-    // At least a few pixels each way: the travel of one sample is bounded by the clip
-    const LONG halfWidth = clipHalfWidth > 8 ? clipHalfWidth : 8;
-    const LONG halfHeight = clipHalfHeight > 8 ? clipHalfHeight : 8;
+    // Not too small: the travel of one sample is bounded by the clip
+    const LONG halfWidth = clipHalfWidth > 64 ? clipHalfWidth : 64;
+    const LONG halfHeight = clipHalfHeight > 64 ? clipHalfHeight : 64;
     capture->clip = RECT{centre.x - halfWidth, centre.y - halfHeight, centre.x + halfWidth, centre.y + halfHeight};
     ClipCursor(&capture->clip);
+    // Warped back once halfway to the clip edge: room for a fast flick either way.
+    // Over RDP never: the client does not follow the server's warp (cursortravel.h)
+    const bool remote = GetSystemMetrics(SM_REMOTESESSION) != 0;
+    capture->travel.Start(CursorTravel::Point{centre.x, centre.y},
+                          CursorTravel::Point{static_cast<int>(halfWidth / 2), static_cast<int>(halfHeight / 2)}, remote);
     return capture;
 }
 
@@ -53,14 +61,12 @@ void MouseCaptureWindows::Sample(void* handle)
     if (GetClipCursor(&clip) && !EqualRect(&clip, &capture->clip))
         ClipCursor(&capture->clip);
 
-    const int dx = static_cast<int>(position.x - capture->centre.x);
-    const int dy = static_cast<int>(position.y - capture->centre.y);
-    if (dx == 0 && dy == 0)
-        return;  // the echo of our own warp, or a move queued before it
-
-    SetCursorPos(capture->centre.x, capture->centre.y);
-    if (capture->onMotion)
-        capture->onMotion(dx, dy);
+    const CursorTravel::Step step =
+        capture->travel.Feed(CursorTravel::Point{position.x, position.y}, static_cast<int64_t>(GetTickCount64()));
+    if (step.warp)
+        SetCursorPos(capture->centre.x, capture->centre.y);
+    if ((step.dx != 0 || step.dy != 0) && capture->onMotion)
+        capture->onMotion(step.dx, step.dy);
 }
 
 void MouseCaptureWindows::End(void* handle)

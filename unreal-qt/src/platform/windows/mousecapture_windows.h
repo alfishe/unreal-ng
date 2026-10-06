@@ -12,12 +12,17 @@
 /// a fractional DPI scale (125 %, 150 %) also round every sample.
 ///
 /// This backend uses move events only as a trigger: GetCursorPos (synchronous,
-/// physical pixels) gives where the pointer really is now, the offset from the
-/// centre is the travel - the system's pointer speed and "Enhance pointer
-/// precision" already applied, as on the host desktop - and SetCursorPos puts
-/// it back. A queued stale event samples the centre and reports nothing.
-/// ClipCursor keeps the pointer over the screen area between samples, so a
-/// fast flick never escapes to another window or monitor.
+/// physical pixels) gives where the pointer really is now, and the difference
+/// from the previous sample is the travel - the system's pointer speed and
+/// "Enhance pointer precision" already applied, as on the host desktop (over
+/// RDP: the client's). SetCursorPos puts it back to the centre once it strays
+/// halfway to the clip edge; the jumps that warp causes - at once locally, a
+/// round trip later over RDP, whose client sends absolute positions of its own
+/// cursor - are not travel (platform/windows/cursortravel.h). In an RDP session
+/// there is no warp at all: the client never moves its own cursor for it, so the
+/// travel is only sample-to-sample, up to the edge of the clip. ClipCursor keeps
+/// the pointer over the screen area, so a fast flick never escapes to another
+/// window or monitor.
 ///
 /// All functions must be called on the main (GUI) thread. No-ops returning
 /// nullptr on other platforms.

@@ -159,7 +159,11 @@ Source for the AVR behavior:
   warp-to-center, measured from the current `QCursor::pos()`, not the event's
   position. Moves queued before a warp carry pre-warp positions: measured against
   the center again they repeated the same travel and the guest pointer leapt
-  across the screen on Windows (fixed 2026-10-06). The macOS dissociation is undone on every release
+  across the screen on Windows (fixed 2026-10-06). The Windows travel is
+  sample-to-sample, warped back only halfway to the clip edge, the warp's own
+  jumps dropped (`platform/windows/cursortravel.h`); in an RDP session
+  (`SM_REMOTESESSION`) never warped at all - the mstsc client does not follow a
+  server warp, and the click offset showed up as diagonal jumps. The macOS dissociation is undone on every release
   path, also from the application's shutdown.
 - **What it posts:** relative motion in physical pixels (`MouseDeltaAccumulator`,
   `[INPUT] MouseScale`), buttons with `[INPUT] SwapMouse`, wheel steps
