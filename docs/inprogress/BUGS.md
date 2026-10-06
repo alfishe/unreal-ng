@@ -53,7 +53,7 @@ reset left (`Screen::ResetBorderColor`, no drawing), as an `OUT (#FE)` does. Tes
   not `#FE` was ever written.
 - A test that reproduces the case above and fails before the fix.
 
-## 🔴 [Open] #2: Running forward from a session's mid-frame baseline diverges the TurboSound FM state
+## 🟣 [Fix Proposed] #2: Running forward from a session's mid-frame baseline diverges the TurboSound FM state
 * **Date Opened:** 2026-10-05
 * **Date Fixed:** -
 * **Commit ID:** -
@@ -87,6 +87,17 @@ noted position: device 4 differs.
 - Suspects: the TSFM render progress and the mixer's sample phase at the first frame end after a mid-frame restore
   (`TTDLoadState`: `_lastTStates`, `adoptSamplePhase`; `followSamplePhase` from 74d9b8ad5), and the single-step
   path's per-step audio work. Audio rendering state only - the guest's program and memory replay exactly.
+
+### Root cause and fix (2026-10-06)
+Only with SoundHQ off (the LQ render path). Setting the sound configuration (quality, core rate) arms TSFM's
+`_renderReanchor`: the render cursor re-anchors at the next frame start. The flag is consumed there, so every
+frame-start checkpoint holds it clear - but a recording started inside the frame right after such a setting captured
+it set, and the blob did not carry it: `TTDLoadState` cleared it, the restored machine skipped the re-anchor at the
+first frame end and its cursor stayed one render tick (16 master clocks) behind the live one; instruction by
+instruction the chips' FM clock phase drifted as well. The pending flag is now bit 3 of the blob's board byte (no size
+or version change; older blobs read it as clear, as before). Test
+`TimeTravelController_Test.RunningFromAMidFrameFirstCheckpointIsExact` - every device equal by frames and instruction
+by instruction (mutant caught). The 2026-10-06 narrowing above was right about the path, wrong about the suspect.
 
 ### Requirements / Acceptance Criteria
 - Running forward from any checkpoint, the baseline included, reproduces every device state of the live run.

@@ -573,7 +573,9 @@ void SoundChip_TurboSoundFM::TTDSaveState(uint8_t* dst) const
     uint8_t* cur = dst;
 
     put_u8(cur, kTsfmStateVersion);
-    put_u8(cur, EncodeBoardByte(_board));
+    // Bit 3: the render cursor's pending re-anchor (consumed at the next frame
+    // start; a capture inside a frame - a recording's first checkpoint - can hold it)
+    put_u8(cur, static_cast<uint8_t>(EncodeBoardByte(_board) | (_renderReanchor ? 0x08 : 0)));
     put_u64(cur, _samplePhase);
     put_f64(cur, _decimationPhase);
     put_f64(cur, _pair.chip(0)->ssg.decimatorLeft().phase());
@@ -606,8 +608,10 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
            "and cannot be loaded by this build");
     (void)version;
     TsfmBoard board;
-    DecodeBoardByte(get_u8(cur), board);
+    const uint8_t boardByte = get_u8(cur);
+    DecodeBoardByte(boardByte, board);
     _board = board;
+    const bool renderReanchor = (boardByte & 0x08) != 0;
     _samplePhase = get_u64(cur);
     _decimationPhase = get_f64(cur);
     const double chip0LeftPhase = get_f64(cur);
@@ -663,8 +667,9 @@ void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
     _pair.chip(1)->ssg.decimatorLeft().setPhase(chip1LeftPhase);
     _pair.chip(1)->ssg.decimatorRight().setPhase(chip1RightPhase);
 
-    // The render cursor is historical (v4 tail above)
-    _renderReanchor = false;
+    // The render cursor is historical (v4 tail above), and so is a re-anchor
+    // still pending for the next frame start (board byte bit 3)
+    _renderReanchor = renderReanchor;
 
     // The per-frame render progress is historical (v5 tail): the frame was
     // rendered up to the checkpoint's position - left at its live pre-seek

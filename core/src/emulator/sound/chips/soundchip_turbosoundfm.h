@@ -377,7 +377,9 @@ public:
     /// region <TTDSerializable interface>
     /// §8.2 layout (v5), 2008 bytes, PeripheralId::TSFM = 4:
     ///   u8 version (= 5)
-    ///   u8 board (chip | statusRead<<1 | fmEnabled<<2)
+    ///   u8 board (chip | statusRead<<1 | fmEnabled<<2 | renderReanchor<<3: a
+    ///     re-anchor of the render cursor pending for the next frame start - only
+    ///     a capture inside a frame sees it set; 0 in blobs written before)
     ///   f64 samplePhase, f64 decimationPhase        (v2: render-loop PLL/LQ phase)
     ///   f64 x4: chip{0,1}.ssg.decimator{Left,Right}().phase()  (v3: per-decimator
     ///     resampling phase - all four of these are tick-gating accumulators,
