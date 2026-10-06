@@ -14,6 +14,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
 #include "loaders/snapshot/loader_sna.h"
@@ -500,4 +501,83 @@ TEST(SnapshotAtm_Test, TheMemoryManagerIsOnAndLaidOutLikeA128k)
     EXPECT_NE(atm450->GetContext()->emulatorState.aFE & 0x80, 0) << "ROM at #0000";
     EXPECT_EQ(atm450->GetContext()->emulatorState.aFB & 0x80, 0) << "not the system ROM (CPSYS off)";
     EmulatorTestHelper::CleanupEmulator(atm450);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// TS-Conf (P5): window 0 shows the BASIC the snapshot selected
+// ---------------------------------------------------------------------------------------------------------------------
+
+// The reset leaves MEM_CONFIG in the normal mode: window 0 is ROM page 0 (the TS-BIOS image, an "unknown ROM") whatever #7FFD
+// says, so a snapshot's program called the TS-BIOS where it expected BASIC. The commit now puts MEM_CONFIG in the mapped mode
+// (window 0 = the {service, TR-DOS, 128, 48} group by ROM128 = #7FFD bit 4) with the 128K decode first
+TEST(SnapshotTsConf_Test, WindowZeroShowsTheBasicTheSnapshotSelected)
+{
+    struct Case
+    {
+        const char* file;
+        bool basic48;
+        const char* what;
+    };
+    const Case cases[] = {
+        {"loaders/sna/Dizzy Y 2.sna", false, "128K SNA, #7FFD = #00: BASIC-128"},
+        {"loaders/sna/aytest_0.2.sna", true, "128K SNA, #7FFD = #10: BASIC-48"},
+        {"loaders/sna/z80full.sna", true, "48K SNA"},
+        {"loaders/z80/newbench.z80", true, "48K Z80 (#7FFD = #30)"},
+        {"loaders/z80/BBG128.z80", false, "128K Z80, #7FFD = #30 -> bit 4 set: BASIC-48"},
+    };
+    for (const Case& c : cases)
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("TSL", LoggerLevel::LogError, RamPowerOn::Zero);
+        ASSERT_NE(emulator, nullptr);
+        Memory& memory = *emulator->GetContext()->pMemory;
+        ASSERT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(c.file))) << c.what;
+        const uint8_t p7ffd = emulator->GetContext()->emulatorState.p7FFD;
+        const bool basic48 = (p7ffd & 0x10) != 0;
+        EXPECT_TRUE(memory.IsBank0ROM()) << c.what;
+        EXPECT_EQ(memory.GetROMPage(), memory.GetROMPageFromAddress(basic48 ? memory.base_sos_rom : memory.base_128_rom))
+            << c.what << " (#7FFD " << std::hex << int(p7ffd) << "): the ROM that #7FFD bit 4 names";
+        if (std::string(c.file).find("BBG128") == std::string::npos)
+            EXPECT_EQ(basic48, c.basic48) << c.what;
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The ROM latch agrees with the ROM shown (P5): a bank recompute keeps the BASIC the snapshot selected
+// ---------------------------------------------------------------------------------------------------------------------
+
+// The shipped configs say RESET=128, so after the reset the latches select BASIC-128. A 48K snapshot showed the 48K ROM (a bank
+// pointer) while the latch still said BASIC-128: the first recompute of the banks (any #7FFD write, a TR-DOS page-in) swapped the
+// ROM under the program, on every machine. The other tests reset to RM_SOS, where the latch already agrees and the bug hides
+TEST(SnapshotRomLatch_Test, TheRomTheSnapshotSelectedSurvivesABankRecompute)
+{
+    struct Case
+    {
+        const char* file;
+        bool is48k;   // a 48K snapshot: the ROM must be the 48K BASIC. A 128K one (#7FFD = #10 here) keeps what it selected
+    };
+    const Case cases[] = {
+        {"loaders/sna/z80full.sna", true},      // 48K SNA
+        {"loaders/z80/newbench.z80", true},     // 48K Z80
+        {"loaders/sna/aytest_0.2.sna", false},  // 128K SNA, #7FFD = #10 (on a +2A / +3 that is ROM 1: no #1FFD in an SNA)
+    };
+    for (const char* model : {"PENTAGON", "128k", "PLUS2", "PLUS2A", "PLUS3", "TSL", "ATM710", "ATM3", "ATM450", "PROFI",
+                              "SCORPION", "PROFSCORP"})
+    {
+        for (const Case& c : cases)
+        {
+            Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError, RamPowerOn::Zero);
+            ASSERT_NE(emulator, nullptr) << model;
+            emulator->GetContext()->config.reset_rom = RM_128;
+            emulator->Reset();
+            Memory& memory = *emulator->GetContext()->pMemory;
+            ASSERT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(c.file))) << model << " " << c.file;
+            const uint16_t shown = memory.GetROMPage();
+            if (c.is48k)
+                EXPECT_EQ(shown, memory.GetROMPageFromAddress(memory.base_sos_rom)) << model << " " << c.file << ": the 48K BASIC";
+            memory.UpdateZ80Banks();
+            EXPECT_EQ(memory.GetROMPage(), shown) << model << " " << c.file << ": the latch agrees with the ROM shown";
+            EmulatorTestHelper::CleanupEmulator(emulator);
+        }
+    }
 }

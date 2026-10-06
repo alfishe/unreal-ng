@@ -748,6 +748,15 @@ void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
     }
 }
 
+void PortDecoder_TSConf::EnterSpectrum128Paging([[maybe_unused]] uint16_t pc)
+{
+    // Mapped mode (W0NoMap = 0), ROM128 as #7FFD bit 4 now has it (the snapshot's own #7FFD write follows), 128K decode
+    const uint8_t rom128 = static_cast<uint8_t>((_state->p7FFD >> 4) & 0x01);
+    WriteRegister(TsConfReg::MemConfig,
+                  static_cast<uint8_t>((static_cast<uint8_t>(TsConfLck128::Mode128K) << 6) | rom128));
+    RefreshM1Hook();   // the DOS trap is armed in mapped mode with ROM128 = 1
+}
+
 /// #7FFD (hardware-spec §2.3): ROM128 = D4, V_PAGE = D3 ? 7 : 5 immediately,
 /// PAGE3 per LCK128, lock48 = D5 outside 1024K mode; ignored while locked
 void PortDecoder_TSConf::Write7FFD(uint8_t value)
