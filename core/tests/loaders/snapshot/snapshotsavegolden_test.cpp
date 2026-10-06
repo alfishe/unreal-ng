@@ -107,6 +107,23 @@ void Prepare(Emulator* emulator, const Scenario& scenario)
     z80.iff2 = 1;
 }
 
+/// The SZX creator block ends with the git commit of the build that wrote the file; that would change every row with each
+/// commit and with the CI checkout. Cut it (and fix the block size) so the digest covers only what the machine state decides.
+void DropBuildFingerprint(std::vector<uint8_t>& bytes)
+{
+    constexpr size_t kHeader = 8;          // "ZXST", version, machine, flags
+    constexpr size_t kCreatorFixed = 36;   // name[32], major, minor
+    if (bytes.size() < kHeader + 8 + kCreatorFixed || std::string(bytes.begin() + kHeader, bytes.begin() + kHeader + 4) != "CRTR")
+        return;
+    const size_t sizeAt = kHeader + 4;
+    const size_t size = bytes[sizeAt] | bytes[sizeAt + 1] << 8 | bytes[sizeAt + 2] << 16 | static_cast<size_t>(bytes[sizeAt + 3]) << 24;
+    if (size <= kCreatorFixed || kHeader + 8 + size > bytes.size())
+        return;
+    bytes.erase(bytes.begin() + kHeader + 8 + kCreatorFixed, bytes.begin() + kHeader + 8 + size);
+    bytes[sizeAt] = kCreatorFixed;
+    bytes[sizeAt + 1] = bytes[sizeAt + 2] = bytes[sizeAt + 3] = 0;
+}
+
 /// "refused" or "<size> <hash of the file>"
 std::string SaveAndHash(Emulator* emulator, const std::string& format)
 {
@@ -114,7 +131,8 @@ std::string SaveAndHash(Emulator* emulator, const std::string& format)
     if (!emulator->SaveSnapshot(path))
         return "refused";
     std::ifstream in(path, std::ios::binary);
-    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    DropBuildFingerprint(bytes);
     std::remove(path.c_str());
     return std::to_string(bytes.size()) + " " + snapshot::HashText(bytes);
 }
