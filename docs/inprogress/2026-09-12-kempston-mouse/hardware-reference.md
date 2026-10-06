@@ -316,6 +316,8 @@ research ([research-cards.md](../2026-10-03-zx-bus-slots/research-cards.md) §2 
 | Second mouse | **A15 selects master / slave**: two mice on one interface |
 | Detection | `#7EDF` / `#FEDF` (the A15 = 0 / 1 button ports) used to detect the interface |
 
+**Not emulated, by decision:** the owner (2026-10-06): the K-Mouse Turbo is a hardware adapter that converts USB mice to the Kempston mouse protocol; there is nothing to emulate beyond the classic Kempston mouse, and the research item is dropped (was PLAN #94).
+
 Not yet confirmed: which programs use the slave mouse or the detection ports (open item in [TODO.md](TODO.md)), and
 how the emulator should expose a second mouse. The AMX Mouse is a separate device with its own decode
 (`zxsp/Source/Uni/Items/AmxMouse.h`) and does not share this port space.
