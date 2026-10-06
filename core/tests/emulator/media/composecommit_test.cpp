@@ -13,6 +13,7 @@
 #include "_helpers/fatguest.h"
 #include "_helpers/fatsourceimage.h"
 #include "_helpers/scratchfolder.h"
+#include "_helpers/sessionspillguard.h"
 #include "emulator/io/storage/commitjournal.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/io/storage/hddimageformats.h"
@@ -55,9 +56,10 @@ namespace
         SlotDescriptor _d;
     };
 
-    class ComposeCommit_Test : public ::testing::Test
+    class ComposeCommit_Test : public ::testing::TestWithParam<bool>
     {
     protected:
+        SessionSpillGuard _spill{GetParam()};  // Spilled: the guest's writes go through the spill file
         ScratchFolder _folder{"compose-commit"};
         MediaManager _manager{nullptr};
         DiskSlot _slot{"ide0.master"};
@@ -126,7 +128,7 @@ namespace
     };
 }  // namespace
 
-TEST_F(ComposeCommit_Test, PlanCountsPatchGraftAndGuest)
+TEST_P(ComposeCommit_Test, PlanCountsPatchGraftAndGuest)
 {
     ASSERT_TRUE(InsertComposite().Ok());
     GuestWrites();
@@ -141,7 +143,7 @@ TEST_F(ComposeCommit_Test, PlanCountsPatchGraftAndGuest)
     EXPECT_TRUE(_manager.Info("ide0.master")->dirty);
 }
 
-TEST_F(ComposeCommit_Test, CommitWritesWhatTheGuestSees)
+TEST_P(ComposeCommit_Test, CommitWritesWhatTheGuestSees)
 {
     ASSERT_TRUE(InsertComposite().Ok());
     GuestWrites();
@@ -170,9 +172,11 @@ TEST_F(ComposeCommit_Test, CommitWritesWhatTheGuestSees)
     EXPECT_TRUE(reader.Stat("/GUEST.TXT", entry)) << "the guest's file";
     EXPECT_TRUE(reader.Stat("/NEWDIR", entry) && entry.isDirectory);
     EXPECT_TRUE(reader.Stat("/README.TXT", entry));
+    if (_spill.Active())
+        EXPECT_TRUE(_spill.Spilled()) << "the guest's writes were committed from a spill file";
 }
 
-TEST_F(ComposeCommit_Test, Refusals)
+TEST_P(ComposeCommit_Test, Refusals)
 {
     // A rebuild is not a graft
     ASSERT_TRUE(InsertComposite("rebuild").Ok());
@@ -281,7 +285,7 @@ TEST(CommitJournal_Test, DamagedJournalKeptAndReported)
 }
 
 /// The registry undoes an interrupted commit when the image goes into a slot, and says so
-TEST_F(ComposeCommit_Test, InsertRollsBackAnInterruptedCommit)
+TEST_P(ComposeCommit_Test, InsertRollsBackAnInterruptedCommit)
 {
     const std::vector<uint8_t> before = Slurp(_base);
     std::string error;
@@ -298,3 +302,5 @@ TEST_F(ComposeCommit_Test, InsertRollsBackAnInterruptedCommit)
     EXPECT_TRUE(Has(inserted.report, "rolled back"));
     EXPECT_EQ(Slurp(_base), before);
 }
+
+INSTANTIATE_TEST_SUITE_P(Tiers, ComposeCommit_Test, ::testing::Bool(), SessionSpillGuard::TierName);

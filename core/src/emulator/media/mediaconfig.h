@@ -14,7 +14,11 @@
 /// sd.zc.free      = 268435456          ; folder volumes: bytes of room for guest writes
 /// sd.zc.wp        = 0                  ; the slot's write-protect switch
 /// sd.zc.swapdelay = 500                ; ms the slot stays empty on a swap
+/// SessionMemoryLimit = 128             ; MiB of session writes kept in memory, the rest spilled (0: no limit)
+/// SpillFolder     = /var/tmp           ; where session spill files go (default: the system temp folder)
 /// ```
+///
+/// SessionMemoryLimit and SpillFolder are settings, not slots (multi-source phases/c10d-session-spill.md).
 ///
 /// A key is a slot id, or a slot id plus one option suffix. Slot ids contain
 /// dots themselves (sd.zc, ide0.master), so the suffix is only split off when
@@ -53,6 +57,13 @@ struct MediaSetEntry
     bool legacy = false;  ///< from a legacy section: quiet when the machine has no such slot
 };
 
+/// The [MEDIA] keys that are settings rather than slots
+struct MediaSettings
+{
+    std::optional<uint64_t> sessionMemoryLimit;  ///< bytes
+    std::optional<std::string> spillFolder;
+};
+
 class MediaConfig
 {
 public:
@@ -60,6 +71,9 @@ public:
     /// `report` receives unknown options and bad values
     static std::vector<MediaSetEntry> FromIni(const IniFile& ini, const std::string& configFolder,
                                               std::vector<std::string>* report = nullptr);
+
+    /// SessionMemoryLimit (MiB) and SpillFolder; `report` receives bad values
+    static MediaSettings SettingsFromIni(const IniFile& ini, const std::string& configFolder, std::vector<std::string>* report = nullptr);
 
     /// "~" expanded; a relative path joined to `configFolder`; normalized
     static std::string ResolvePath(const std::string& path, const std::string& configFolder);

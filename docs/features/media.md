@@ -45,7 +45,8 @@ Every slot reports: id, kind, label, index, aliases, tags, whether it is removab
 folders, the write-protect switch, its state (`empty`, `present`, `pending`, `detached`) and the
 medium (source, format, access, dirty, dirty units, and `changes`: the unsaved changes in words —
 `1 track: 3 sectors`, `1 track: whole` for a track rewritten by FORMAT / WRITE TRACK,
-`5 tracks: 20 sectors total`, or `48 sectors` on a card; a tape is never written).
+`5 tracks: 20 sectors total`, or `48 sectors` on a card; a tape is never written). `info` of a medium in
+`session` access adds `sessionWrites`: where the guest's writes are kept ([below](#where-session-writes-are-kept)).
 
 ## Naming a slot: selectors
 
@@ -97,7 +98,7 @@ on a +3) is `unknown-slot`, never drive A.
 | `format` | `auto`, `unformatted`, `plus3` | `auto` | create (floppies) |
 | `format` | `audio-cd` | a folder in a CD slot is one anyway | insert, swap: a folder of MP3 / FLAC / WAV files into a CD-ROM drive as an audio CD |
 | `cylinders`, `sides` | 40 / 80, 1 / 2 | the format's | create |
-| `size` | bytes, a multiple of 512 | — | create (cards) |
+| `size` | bytes, a multiple of 512, up to 128 GiB | — | create (cards, hard disks) |
 | `wp` | bool | false | insert, swap |
 | `save`, `export <path>`, `discard` | disposition | none | insert, swap, eject, create |
 | `retarget` | bool | true | save: a disk TRD cannot hold goes to `<name>.udi` |
@@ -132,6 +133,35 @@ returns at once with `pending: true`. While the emulator is paused or stopped bo
 tape slot it becomes a tape ([Tapes](#tapes)); into a card slot it becomes a FAT16 (or FAT32) volume. The folder is never written: guest writes stay in
 the session; export them to keep them. Host service files (`.DS_Store`, `Thumbs.db`, ...) are left
 out and reported.
+
+### Where session writes are kept
+
+A medium in `session` access (folders, CHDs, composites, blank media, any image inserted with
+`access: session`) keeps the guest's writes beside its source until they are saved or discarded. Up to
+`[MEDIA] SessionMemoryLimit` of them (128 MiB) stay in memory; past that, the sectors written longest ago move
+to a spill file, in 64 KiB slots with a small index in memory (about 0.1 % of what was moved). The file is in
+`[MEDIA] SpillFolder` (the system temp folder by default), named `unreal-ng-session-*.spill`, and goes away
+with the medium; on Linux and macOS it has no name on disk at all once open. Nothing else changes: reads, `save`,
+`export`, the session delta, commit, write-back and `changes` see one set of writes.
+
+```ini
+[MEDIA]
+SessionMemoryLimit = 128     ; MiB in memory per session; 0: no limit (everything in memory)
+SpillFolder        = /var/tmp
+```
+
+`info` reports it per medium:
+
+| Field | Meaning |
+|---|---|
+| `sessionWrites.sectors` | sectors the guest changed |
+| `sessionWrites.memoryBytes`, `memoryLimit` | what the in-memory part holds, and its limit |
+| `sessionWrites.spilledBytes`, `spillFile` | what is in the spill file, and its path (`(deleted) ...` once unlinked) |
+| `sessionWrites.spillFailed` | a spill could not be written (disk full, no folder): the writes stay in memory, over the limit |
+
+A write never fails because of the spill. Memory per mode: an image file in `readonly` or `writethrough` holds
+nothing per sector; a composite holds its metadata; a blank card holds a pointer per 64 KiB (128 GiB: 16 MiB)
+and the session above it.
 
 ## Tapes
 

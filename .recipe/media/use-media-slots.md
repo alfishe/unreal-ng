@@ -35,7 +35,7 @@ media {"action":"eject","slot":"B","discard":true}
 media {"action":"info","slot":"A"}                                   # one slot: medium, access, dirty state (a CD: the disc's tracks)
 media {"action":"formats","kind":"floppy"}                           # accepted extensions per kind: floppy, tape, block, optical
 media {"action":"rescan","slot":"sd"}                                # re-read a host folder after it changed (refused while dirty)
-media {"action":"create","slot":"B","format":"plus3"}                # blank floppy; a block slot needs "size" (bytes, multiple of 512, up to 2 GiB)
+media {"action":"create","slot":"B","format":"plus3"}                # blank floppy; a block slot needs "size" (bytes, multiple of 512, up to 128 GiB; memory holds at most [MEDIA] SessionMemoryLimit of what the guest writes, the rest goes to a spill file)
 media {"action":"protect","slot":"A","on":true}                      # the write-protect switch
 media {"action":"insert","slot":"ide0.master","path":"/discs/game.iso","device":"cdrom"}  # an empty IDE unit becomes a CD-ROM drive (device: disk | cdrom | cf)
 media {"action":"insert","slot":"ide0.master","path":"/music/album","device":"cdrom","format":"audio-cd"}  # a folder of MP3 / FLAC / WAV as an audio CD

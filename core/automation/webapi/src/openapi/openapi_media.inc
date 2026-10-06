@@ -121,7 +121,7 @@
         body["properties"]["cylinders"]["type"] = "integer";
         body["properties"]["sides"]["type"] = "integer";
         body["properties"]["size"]["type"] = "integer";
-        body["properties"]["size"]["description"] = "create on a block slot: bytes, a multiple of 512";
+        body["properties"]["size"]["description"] = "create on a block slot: bytes, a multiple of 512, up to 128 GiB (memory holds at most [MEDIA] SessionMemoryLimit of the guest's writes)";
         body["properties"]["save"]["type"] = "boolean";
         body["properties"]["export"]["type"] = "string";
         body["properties"]["export"]["description"] = "Disposition: write a dirty medium to this new file first";

@@ -152,7 +152,7 @@ TEST(ComposedLayout_Test, ForEachChangedOwnerInLbaOrder)
     for (uint64_t lba : {uint64_t(0), l.reader.VolumeStart() + 1, l.ClusterLba(l.Stat("/A.TXT").firstCluster) + 2, uint64_t(40)})
         changes[lba] = {};
     std::vector<uint64_t> seen;
-    ForEachChangedOwner(l.Of(), changes, [&](uint64_t lba, const SectorOwner& owner) {
+    ForEachChangedOwner(l.Of(), MapChangeView(changes), [&](uint64_t lba, const SectorOwner& owner) {
         seen.push_back(lba);
         EXPECT_EQ(owner.role, l.Of().OwnerOf(lba).role) << lba;
     });

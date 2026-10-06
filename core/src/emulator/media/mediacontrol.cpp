@@ -681,6 +681,18 @@ MediaReply MediaControl::Info(const MediaRequest& request)
             reply.result.report = medium->Report();  // skipped folder entries, format notes
             if (const CdImage* disc = medium->Cd(); disc && reply.body["info"]["medium"].isObject())
                 reply.body["info"]["medium"]["disc"] = DiscValue(*disc);
+            if (const SessionWriteMap* session = medium->Session(); session && reply.body["info"]["medium"].isObject())
+            {
+                // Where the guest's writes are kept (C10d): memory up to the limit, the rest in the spill file
+                StateNode writes = StateNode::Object();
+                writes["sectors"] = static_cast<uint64_t>(session->ChangedSectors());
+                writes["memoryBytes"] = session->HotBytes();
+                writes["memoryLimit"] = session->MemoryLimit();
+                writes["spilledBytes"] = static_cast<uint64_t>(session->SpilledSectors()) * IBlockDevice::kSectorSize;
+                writes["spillFile"] = session->SpillPath();
+                writes["spillFailed"] = session->SpillFailed();
+                reply.body["info"]["medium"]["sessionWrites"] = std::move(writes);
+            }
         }
         return reply;
     }
@@ -1182,12 +1194,13 @@ MediaReply MediaControl::Create(const MediaRequest& request)
     }
     else if (info->descriptor.kind == MediaKind::Block)
     {
-        // A blank card / disk lives in memory: keep it to what memory holds
-        constexpr uint64_t kMaxBlankBytes = 2ull * 1024 * 1024 * 1024;
+        // A blank card / disk: a session over an empty sparse disk; the guest's writes past the session's memory
+        // limit go to its spill file (C10d), so the size is an SDXC card's, not what memory holds
+        constexpr uint64_t kMaxBlankBytes = 128ull * 1024 * 1024 * 1024;
         uint64_t bytes = 0;
         auto it = o.find("size");
         if (it == o.end() || !ParseUnsigned(it->second, bytes) || bytes == 0 || bytes % 512 != 0 || bytes > kMaxBlankBytes)
-            return Fail(MediaError::BadRequest, "create on a block slot needs size: bytes, a multiple of 512, up to 2 GiB");
+            return Fail(MediaError::BadRequest, "create on a block slot needs size: bytes, a multiple of 512, up to 128 GiB");
         medium = MediaFormatRegistry::WrapBlock(blank, AccessMode::Session, "blank", std::make_unique<SparseMemoryDisk>(bytes / 512));
         reply.body["size"] = bytes;
     }

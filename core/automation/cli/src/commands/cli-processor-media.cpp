@@ -296,7 +296,7 @@ void CLIProcessor::ShowMediaHelp(const ClientSession& session)
     out << "                                 --vhd fixed|dynamic: a .vhd target's kind (dynamic: sparse)" << NEWLINE;
     out << "  discard <slot>               - drop the unsaved writes" << NEWLINE;
     out << "  rescan <slot>                - rebuild a folder medium" << NEWLINE;
-    out << "  create <slot> [--size bytes] - a blank floppy or card" << NEWLINE;
+    out << "  create <slot> [--size bytes] - a blank floppy, or a card / disk up to 128 GiB" << NEWLINE;
     out << "  protect <slot> --on true|false - the write-protect switch" << NEWLINE;
     out << "  compose <descriptor>         - build a *.ucompose.yaml without inserting it: layout and report" << NEWLINE;
     out << "                                 (insert takes the descriptor like any file)" << NEWLINE;

@@ -20,6 +20,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/io/storage/memorydisk.h"
+#include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/media/mediacontrol.h"
 #include "emulator/media/mediaformatregistry.h"
 
@@ -639,4 +640,28 @@ TEST_F(MediaControl_Test, SprinterHardDiskTakesFat16CompositesOnly)
     reply = Run(Request("insert", "ide0.master", Utf8(descriptor)));
     ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
     EXPECT_EQ(_context->pMediaManager->GetMedium("ide0.master")->Format(), "compose-fat16");
+}
+
+/// A blank card up to 128 GiB (C10d: the guest's writes past the session's memory limit go to a spill file), and
+/// `info` saying where the writes are kept
+TEST_F(MediaControl_Test, BlankMediumSizeAndSessionWrites)
+{
+    Create("ATM3");
+    MediaReply reply = Run(Request("create", "sd", {}, {{"size", std::to_string(8ull * 1024 * 1024 * 1024)}}));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    reply = Run(Request("create", "sd", {}, {{"size", std::to_string(129ull * 1024 * 1024 * 1024)}, {"discard", ""}}));
+    EXPECT_EQ(reply.result.error, MediaError::BadRequest) << "past 128 GiB";
+    EXPECT_NE(reply.result.message.find("128 GiB"), std::string::npos) << reply.result.message;
+
+    reply = Run(Request("info", "sd"));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    const StateNode body = reply.ToValue();
+    const StateNode* writes = body.find("info")->find("medium")->find("sessionWrites");
+    ASSERT_NE(writes, nullptr) << "a blank medium is a session";
+    EXPECT_EQ(writes->find("sectors")->i, 0);
+    EXPECT_EQ(writes->find("memoryBytes")->i, 0);
+    EXPECT_EQ(static_cast<uint64_t>(writes->find("memoryLimit")->i), SessionWriteMap::DefaultMemoryLimit());
+    EXPECT_EQ(writes->find("spilledBytes")->i, 0);
+    EXPECT_EQ(writes->find("spillFile")->s, "");
+    EXPECT_FALSE(writes->find("spillFailed")->b);
 }

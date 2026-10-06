@@ -342,10 +342,16 @@ MediaResult BlockFormats::Save(Medium& medium, const std::string& target, const 
             auto image = HddImageFormats::OpenBlock(path, format, RawImage::Access::ReadWrite, &error);
             if (!image)
                 return MediaResult::Fail(MediaError::IoError, error);
-            for (const auto& [lba, data] : session->Changes())
+            uint64_t failed = 0;
+            bool writeFailed = false;
+            if (!session->ForEachChange([&](uint64_t lba, const uint8_t* data) {
+                    failed = lba;
+                    writeFailed = !image->WriteSector(lba, data);
+                    return !writeFailed;
+                }))
             {
-                if (!image->WriteSector(lba, data.data()))
-                    return MediaResult::Fail(MediaError::IoError, "cannot write sector " + std::to_string(lba) + " of " + path);
+                return MediaResult::Fail(MediaError::IoError, writeFailed ? "cannot write sector " + std::to_string(failed) + " of " + path
+                                                                          : "the session's spill file cannot be read");
             }
             if (auto* raw = dynamic_cast<RawImage*>(image.get()))
                 raw->Flush();

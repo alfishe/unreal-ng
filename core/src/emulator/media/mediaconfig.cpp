@@ -56,6 +56,12 @@ namespace
         return {Lower(key), ""};
     }
 
+    /// Settings share the section with the slots
+    bool IsSetting(const std::string& key)
+    {
+        return key == "sessionmemorylimit" || key == "spillfolder";
+    }
+
     MediaSetEntry& EntryFor(std::vector<MediaSetEntry>& entries, const std::string& slotId)
     {
         auto it = std::find_if(entries.begin(), entries.end(), [&slotId](const MediaSetEntry& e) { return e.slotId == slotId; });
@@ -90,7 +96,7 @@ std::vector<MediaSetEntry> MediaConfig::FromIni(const IniFile& ini, const std::s
     {
         const auto [slotId, option] = SplitKey(Trim(rawKey));
         const std::string value = Trim(rawValue);
-        if (slotId.empty())
+        if (slotId.empty() || IsSetting(slotId))
             continue;
         MediaSetEntry& entry = EntryFor(entries, slotId);
         const std::string where = "[MEDIA] " + rawKey;
@@ -198,4 +204,27 @@ std::vector<MediaSetEntry> MediaConfig::FromIni(const IniFile& ini, const std::s
 
     // Options without a source (e.g. only "sd.zc.wp = 1") describe the slot, not a medium
     return entries;
+}
+
+MediaSettings MediaConfig::SettingsFromIni(const IniFile& ini, const std::string& configFolder, std::vector<std::string>* report)
+{
+    MediaSettings settings;
+    for (const auto& [rawKey, rawValue] : ini.GetSectionEntries("MEDIA"))
+    {
+        const std::string key = Lower(Trim(rawKey));
+        const std::string value = Trim(rawValue);
+        if (key == "sessionmemorylimit")
+        {
+            uint64_t mib = 0;
+            if (ParseUnsigned(value, mib) && mib <= 1024 * 1024)
+                settings.sessionMemoryLimit = mib * 1024 * 1024;
+            else if (report)
+                report->push_back("[MEDIA] " + rawKey + ": expected MiB (0: no limit), got '" + value + "'");
+        }
+        else if (key == "spillfolder" && !value.empty())
+        {
+            settings.spillFolder = ResolvePath(value, configFolder);
+        }
+    }
+    return settings;
 }

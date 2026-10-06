@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 
+#include "emulator/io/storage/changeview.h"
 #include "emulator/io/storage/iblockdevice.h"
 
 class IComposedLayout;
@@ -58,6 +59,6 @@ public:
     /// `changes` the change layer's sectors; `layout` the composed layout of `before` when it has one
     /// (else every directory is compared). False with `error` when `before` is not a FAT volume
     static bool Attribute(IBlockDevice& before, IBlockDevice& after,
-                          const std::map<uint64_t, std::array<uint8_t, IBlockDevice::kSectorSize>>& changes,
+                          const IChangeView& changes,
                           const IComposedLayout* layout, ChangeSet& out, std::string* error = nullptr);
 };

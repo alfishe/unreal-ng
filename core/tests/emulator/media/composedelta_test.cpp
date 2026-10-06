@@ -11,6 +11,7 @@
 
 #include "_helpers/fatguest.h"
 #include "_helpers/scratchfolder.h"
+#include "_helpers/sessionspillguard.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/media/mediamanager.h"
@@ -51,9 +52,10 @@ namespace
         return text;
     }
 
-    class ComposeDelta_Test : public ::testing::Test
+    class ComposeDelta_Test : public ::testing::TestWithParam<bool>
     {
     protected:
+        SessionSpillGuard _spill{GetParam()};  // Spilled: the guest's writes go through the spill file
         ScratchFolder _folder{"compose-delta"};
         MediaManager _manager{nullptr};
         DeltaSlot _slot;
@@ -116,7 +118,7 @@ namespace
     };
 }  // namespace
 
-TEST_F(ComposeDelta_Test, RoundTrip)
+TEST_P(ComposeDelta_Test, RoundTrip)
 {
     ASSERT_TRUE(Insert().Ok());
     GuestWrites("/NEW.TXT");
@@ -140,9 +142,11 @@ TEST_F(ComposeDelta_Test, RoundTrip)
     EXPECT_FALSE(_manager.Info("sd.zc")->dirty);
     GuestWrites("/MORE.TXT");
     EXPECT_TRUE(_manager.Info("sd.zc")->dirty) << "a later write is unsaved again";
+    if (_spill.Active())
+        EXPECT_TRUE(_spill.Spilled()) << "the round trip went through a spill file";
 }
 
-TEST_F(ComposeDelta_Test, IdMismatchRefusedWithReason)
+TEST_P(ComposeDelta_Test, IdMismatchRefusedWithReason)
 {
     ASSERT_TRUE(Insert().Ok());
     GuestWrites("/NEW.TXT");
@@ -171,7 +175,7 @@ TEST_F(ComposeDelta_Test, IdMismatchRefusedWithReason)
     EXPECT_TRUE(Exists("/OTHER.TXT"));
 }
 
-TEST_F(ComposeDelta_Test, TruncatedFileRefused)
+TEST_P(ComposeDelta_Test, TruncatedFileRefused)
 {
     ASSERT_TRUE(Insert().Ok());
     GuestWrites("/NEW.TXT");
@@ -192,7 +196,7 @@ TEST_F(ComposeDelta_Test, TruncatedFileRefused)
 
 // DT-9: an explicit strategy wins; flat needs a path; writes.save names the default (commit needs a graft); an
 // eject's save falls back to a delta for commit and write-back (D-8)
-TEST_F(ComposeDelta_Test, StrategyFollowsDt9)
+TEST_P(ComposeDelta_Test, StrategyFollowsDt9)
 {
     ASSERT_TRUE(Insert().Ok());
     GuestWrites("/NEW.TXT");
@@ -219,7 +223,7 @@ TEST_F(ComposeDelta_Test, StrategyFollowsDt9)
     EXPECT_TRUE(std::filesystem::exists(DeltaFile()));
 }
 
-TEST_F(ComposeDelta_Test, InlineDescriptorHasNoDeltaFile)
+TEST_P(ComposeDelta_Test, InlineDescriptorHasNoDeltaFile)
 {
     MediaSource source;
     source.inlineBody = "{\"version\": 1, \"layers\": [{\"source\": {\"folder\": \"" + (_folder.Path() / "sys").generic_string() + "\"}}]}";
@@ -231,3 +235,5 @@ TEST_F(ComposeDelta_Test, InlineDescriptorHasNoDeltaFile)
     EXPECT_EQ(saved.error, MediaError::BadRequest);
     EXPECT_NE(saved.message.find("writes.delta"), std::string::npos) << saved.message;
 }
+
+INSTANTIATE_TEST_SUITE_P(Tiers, ComposeDelta_Test, ::testing::Bool(), SessionSpillGuard::TierName);

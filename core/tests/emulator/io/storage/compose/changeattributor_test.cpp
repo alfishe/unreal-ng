@@ -14,6 +14,7 @@
 #include "_helpers/fatsourceimage.h"
 #include "_helpers/isoimagebuilder.h"
 #include "_helpers/scratchfolder.h"
+#include "_helpers/sessionspillguard.h"
 #include "emulator/io/storage/compose/changeattributor.h"
 #include "emulator/io/storage/compose/composedlayout.h"
 #include "emulator/io/storage/sessionwritemap.h"
@@ -70,7 +71,7 @@ namespace
         {
             ChangeSet set;
             std::string error;
-            EXPECT_TRUE(ChangeAttributor::Attribute(session->Base(), *session, session->Changes(), withLayout ? layout : nullptr, set,
+            EXPECT_TRUE(ChangeAttributor::Attribute(session->Base(), *session, *session, withLayout ? layout : nullptr, set,
                                                     &error))
                 << error;
             return set;
@@ -93,9 +94,16 @@ namespace
     }
 
     using Lines_t = std::vector<std::string>;
+
+    /// Every case twice: the change layer in memory, and spilled to a file but for two sectors
+    class ChangeAttributor_Test : public ::testing::TestWithParam<bool>
+    {
+    protected:
+        SessionSpillGuard _spill{GetParam()};
+    };
 }  // namespace
 
-TEST(ChangeAttributor_Test, NothingWrittenNothingReported)
+TEST_P(ChangeAttributor_Test, NothingWrittenNothingReported)
 {
     Session s;
     s.Make();
@@ -105,7 +113,7 @@ TEST(ChangeAttributor_Test, NothingWrittenNothingReported)
     EXPECT_EQ(set.directoriesRead, 0u);
 }
 
-TEST(ChangeAttributor_Test, CreateModifyAppendTruncateDelete)
+TEST_P(ChangeAttributor_Test, CreateModifyAppendTruncateDelete)
 {
     Session s;
     s.Make();
@@ -124,12 +132,14 @@ TEST(ChangeAttributor_Test, CreateModifyAppendTruncateDelete)
                                       "create /GAMES/NEW.TRD [-]", "modify /README.TXT [sys]"}));
     EXPECT_TRUE(set.warnings.empty()) << set.warnings.front();
     EXPECT_FALSE(set.fullScan);
+    if (_spill.Active())
+        EXPECT_TRUE(_spill.Spilled()) << "attributed from a spill file";
     const auto elite = std::find_if(set.changes.begin(), set.changes.end(), [](const FileChange& c) { return c.path == "/GAMES/ELITE.TRD"; });
     EXPECT_EQ(elite->sizeBefore, 5000u);
     EXPECT_EQ(elite->sizeAfter, 9000u);
 }
 
-TEST(ChangeAttributor_Test, RenameMoveMkdirRmdirAttributes)
+TEST_P(ChangeAttributor_Test, RenameMoveMkdirRmdirAttributes)
 {
     Session s;
     s.Make();
@@ -149,7 +159,7 @@ TEST(ChangeAttributor_Test, RenameMoveMkdirRmdirAttributes)
     EXPECT_TRUE(set.warnings.empty()) << set.warnings.front();
 }
 
-TEST(ChangeAttributor_Test, MovedDirectoryIsOneRename)
+TEST_P(ChangeAttributor_Test, MovedDirectoryIsOneRename)
 {
     Session s;
     s.Make();
@@ -159,7 +169,7 @@ TEST(ChangeAttributor_Test, MovedDirectoryIsOneRename)
     EXPECT_EQ(Lines(s, set), (Lines_t{"rename /DSS -> /GAMES/DSS [sys]"}));
 }
 
-TEST(ChangeAttributor_Test, LostClustersWarned)
+TEST_P(ChangeAttributor_Test, LostClustersWarned)
 {
     Session s;
     s.Make();
@@ -174,7 +184,7 @@ TEST(ChangeAttributor_Test, LostClustersWarned)
 
 // The evidence names the directories: a write in /GAMES reads /GAMES (and the root to find its path), not the rest;
 // without a layout every directory is compared, with the same result
-TEST(ChangeAttributor_Test, UntouchedSubtreesNotRead)
+TEST_P(ChangeAttributor_Test, UntouchedSubtreesNotRead)
 {
     Session s;
     for (int i = 0; i < 20; i++)
@@ -195,7 +205,7 @@ TEST(ChangeAttributor_Test, UntouchedSubtreesNotRead)
 }
 
 // A graft: the base image's files belong to its layer; a grafted folder's to the folder's
-TEST(ChangeAttributor_Test, GraftLayers)
+TEST_P(ChangeAttributor_Test, GraftLayers)
 {
     Session s;
     s.Make("graft", /*imageBase*/ true);
@@ -207,3 +217,5 @@ TEST(ChangeAttributor_Test, GraftLayers)
     EXPECT_EQ(Lines(s, set), (Lines_t{"mkdir /DSS/NEW [-]", "modify /GAMES/ELITE.TRD [games]", "modify /README.TXT [sys]"}));
     EXPECT_FALSE(set.fullScan);
 }
+
+INSTANTIATE_TEST_SUITE_P(Tiers, ChangeAttributor_Test, ::testing::Bool(), SessionSpillGuard::TierName);

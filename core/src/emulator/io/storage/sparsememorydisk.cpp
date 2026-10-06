@@ -14,7 +14,7 @@ namespace
     }
 }  // namespace
 
-SparseMemoryDisk::SparseMemoryDisk(uint64_t sectors) : _sectors(sectors)
+SparseMemoryDisk::SparseMemoryDisk(uint64_t sectors) : _sectors(sectors), _chunks(static_cast<size_t>((sectors + kChunkSectors - 1) / kChunkSectors))
 {
     // A fresh identity per disk: two blank cards are not the same medium
     static std::atomic<uint64_t> next{1};
@@ -25,11 +25,11 @@ bool SparseMemoryDisk::ReadSector(uint64_t lba, uint8_t* dst)
 {
     if (lba >= _sectors)
         return false;
-    const auto it = _chunks.find(lba / kChunkSectors);
-    if (it == _chunks.end())
+    const uint8_t* chunk = _chunks[static_cast<size_t>(lba / kChunkSectors)].get();
+    if (!chunk)
         std::memset(dst, 0, kSectorSize);
     else
-        std::memcpy(dst, it->second.get() + (lba % kChunkSectors) * kSectorSize, kSectorSize);
+        std::memcpy(dst, chunk + (lba % kChunkSectors) * kSectorSize, kSectorSize);
     return true;
 }
 
@@ -37,18 +37,21 @@ bool SparseMemoryDisk::WriteSector(uint64_t lba, const uint8_t* src)
 {
     if (lba >= _sectors)
         return false;
-    const uint64_t index = lba / kChunkSectors;
-    auto it = _chunks.find(index);
+    std::unique_ptr<uint8_t[]>& chunk = _chunks[static_cast<size_t>(lba / kChunkSectors)];
     const bool zero = AllZero(src, kSectorSize);
-    if (it == _chunks.end())
+    if (!chunk)
     {
         if (zero)
             return true;  // it reads zeros already
-        it = _chunks.emplace(index, std::unique_ptr<uint8_t[]>(new uint8_t[kChunkSectors * kSectorSize]())).first;
+        chunk.reset(new uint8_t[kChunkSectors * kSectorSize]());
+        _stored++;
     }
-    std::memcpy(it->second.get() + (lba % kChunkSectors) * kSectorSize, src, kSectorSize);
-    if (zero && AllZero(it->second.get(), kChunkSectors * kSectorSize))
-        _chunks.erase(it);
+    std::memcpy(chunk.get() + (lba % kChunkSectors) * kSectorSize, src, kSectorSize);
+    if (zero && AllZero(chunk.get(), kChunkSectors * kSectorSize))
+    {
+        chunk.reset();
+        _stored--;
+    }
     return true;
 }
 
@@ -56,10 +59,10 @@ uint64_t SparseMemoryDisk::ZeroRun(uint64_t lba)
 {
     if (lba >= _sectors)
         return 0;
-    const uint64_t index = lba / kChunkSectors;
-    const auto next = _chunks.lower_bound(index);
-    if (next != _chunks.end() && next->first == index)
+    size_t index = static_cast<size_t>(lba / kChunkSectors);
+    if (_chunks[index])
         return 0;
-    const uint64_t end = next == _chunks.end() ? _sectors : std::min(_sectors, next->first * kChunkSectors);
-    return end - lba;
+    while (index < _chunks.size() && !_chunks[index])
+        index++;
+    return std::min<uint64_t>(_sectors, static_cast<uint64_t>(index) * kChunkSectors) - lba;
 }

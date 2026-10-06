@@ -12,7 +12,9 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
 
+#include "emulator/io/storage/changeview.h"
 #include "emulator/io/storage/compose/filetree.h"
 
 class SourcePool;
@@ -74,9 +76,9 @@ private:
 
 /// The owners of a change layer's sectors, in LBA order
 inline void ForEachChangedOwner(const IComposedLayout& layout,
-                                const std::map<uint64_t, std::array<uint8_t, 512>>& changes,
+                                const IChangeView& changes,
                                 const std::function<void(uint64_t, const SectorOwner&)>& visit)
 {
-    for (const auto& entry : changes)
-        visit(entry.first, layout.OwnerOf(entry.first));
+    for (std::optional<uint64_t> lba = changes.NextChanged(0); lba; lba = changes.NextChanged(*lba + 1))
+        visit(*lba, layout.OwnerOf(*lba));
 }

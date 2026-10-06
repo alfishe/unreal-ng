@@ -1229,12 +1229,12 @@ MediaResult MediaManager::CommitComposite(const std::string& slotId, Medium& med
             lbas.insert(first + s);
         grafted += count;
     }
-    for (const auto& entry : session->Changes())
-        lbas.insert(entry.first);
+    for (std::optional<uint64_t> lba = session->NextChanged(0); lba; lba = session->NextChanged(*lba + 1))
+        lbas.insert(*lba);
     MediaResult result = MediaResult::Success();
     result.report.push_back("commit into " + base + ": " + std::to_string(lbas.size()) + " sectors (" +
                             std::to_string(graft->PatchLbas().size()) + " re-encoded, " + std::to_string(grafted) +
-                            " of grafted files, " + std::to_string(session->Changes().size()) + " written by the guest)");
+                            " of grafted files, " + std::to_string(session->ChangedSectors()) + " written by the guest)");
     if (options.plan)
     {
         result.report.push_back("plan only: nothing was written");

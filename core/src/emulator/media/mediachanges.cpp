@@ -50,17 +50,14 @@ MediaResult ListMediumChanges(Medium& medium, MediumChanges& out)
             // Each FAT partition on its own: windows of the disk before and after the writes, the changes shifted
             std::shared_ptr<IBlockDevice> before(&session->Base(), [](IBlockDevice*) {});
             std::shared_ptr<IBlockDevice> after(session, [](IBlockDevice*) {});
-            const auto& all = session->Changes();
             for (const uint64_t table : disk->TableSectors())
-                if (all.count(table))
+                if (session->ChangedIn(table, 1))
                     set.warnings.push_back("the partition table changed (LBA " + std::to_string(table) + ")");
             for (size_t i = 0; i < disk->Parts().size(); i++)
             {
                 const PartitionedDisk::Part& p = disk->Parts()[i];
-                std::map<uint64_t, std::array<uint8_t, IBlockDevice::kSectorSize>> shifted;
-                for (auto it = all.lower_bound(p.start); it != all.end() && it->first < p.start + p.sectors; ++it)
-                    shifted.emplace(it->first - p.start, it->second);
-                if (shifted.empty())
+                const WindowChangeView shifted(*session, p.start, p.sectors);
+                if (!shifted.ChangedSectors())
                     continue;
                 SubRangeDevice windowBefore(before, p.start, p.sectors);
                 SubRangeDevice windowAfter(after, p.start, p.sectors);
@@ -84,7 +81,7 @@ MediaResult ListMediumChanges(Medium& medium, MediumChanges& out)
         else
         {
             const auto* layout = dynamic_cast<const IComposedLayout*>(&session->Base());
-            ok = ChangeAttributor::Attribute(session->Base(), *session, session->Changes(), layout, set, &error);
+            ok = ChangeAttributor::Attribute(session->Base(), *session, *session, layout, set, &error);
             if (ok)
                 add(set, "", 0, composite ? composite->layers.size() : 0);
         }

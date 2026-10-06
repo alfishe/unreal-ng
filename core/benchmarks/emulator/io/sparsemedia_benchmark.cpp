@@ -248,8 +248,32 @@ namespace
         for (auto _ : state)
             benchmark::DoNotOptimize(FullCard(state.range(0)).get());
     }
+
+    /// 512 MiB written through a session (arg: its memory limit in MiB, 0: none; 1024: a limit never reached, the cost
+    /// of the bookkeeping alone)
+    void SessionSpillWrite(benchmark::State& state)
+    {
+        const uint64_t sectors = 512ull * 1024 * 2;
+        std::vector<uint8_t> data(512, 0x5A);
+        uint64_t spilled = 0;
+        for (auto _ : state)
+        {
+            SessionWriteMap session(std::make_unique<SparseMemoryDisk>(sectors));
+            session.SetMemoryLimit(static_cast<uint64_t>(state.range(0)) * 1024 * 1024);
+            for (uint64_t lba = 0; lba < sectors; lba++)
+            {
+                data[0] = static_cast<uint8_t>(lba | 1);
+                session.WriteSector(lba, data.data());
+            }
+            spilled = session.SpilledSectors();
+            benchmark::DoNotOptimize(session.ChangedSectors());
+        }
+        state.counters["spilledMiB"] = static_cast<double>(spilled) / 2048;
+        state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) * static_cast<int64_t>(sectors) * 512);
+    }
 }  // namespace
 
+BENCHMARK(SessionSpillWrite)->Arg(128)->Arg(1024)->Arg(0)->Unit(benchmark::kMillisecond)->Iterations(1);
 BENCHMARK(FullCardRandRead)->Arg(0)->Arg(1)->Arg(2);
 BENCHMARK(FullCardRewrite)->Args({0, 1})->Args({1, 1})->Args({1, 0})->Args({2, 1});
 BENCHMARK(FullCardFill)->Arg(0)->Arg(1)->Arg(2)->Unit(benchmark::kMillisecond)->Iterations(2);

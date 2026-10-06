@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -35,7 +36,6 @@ const char* FileChange::OpName(Op op)
 
 namespace
 {
-    using ChangeMap = std::map<uint64_t, std::array<uint8_t, IBlockDevice::kSectorSize>>;
     constexpr uint8_t kAttributeBits = 0x07;  // read-only, hidden, system: what a guest sets on purpose
 
     std::string Key(const std::string& name)
@@ -130,7 +130,7 @@ namespace
     class Attribution
     {
     public:
-        Attribution(Side& before, Side& after, const ChangeMap& changes, const IComposedLayout* layout, ChangeSet& out)
+        Attribution(Side& before, Side& after, const IChangeView& changes, const IComposedLayout* layout, ChangeSet& out)
             : _before(before), _after(after), _changes(changes), _layout(layout), _out(out)
         {
         }
@@ -165,8 +165,7 @@ namespace
                 return true;  // a chain the size does not fit: something changed
             for (const FatChainExtent& x : extents)
             {
-                const auto it = _changes.lower_bound(x.lba);
-                if (it != _changes.end() && it->first < x.lba + x.sectors)
+                if (_changes.ChangedIn(x.lba, x.sectors))
                     return true;
             }
             return false;
@@ -342,12 +341,13 @@ namespace
             const bool fat12 = r.Type() == FatReaderType::Fat12;
             uint64_t lost = 0;
             uint8_t was[IBlockDevice::kSectorSize];
-            for (auto it = _changes.lower_bound(first); it != _changes.end() && it->first < first + r.FatSectors(); ++it)
+            uint8_t now[IBlockDevice::kSectorSize];
+            for (std::optional<uint64_t> lba = _changes.NextChanged(first); lba && *lba < first + r.FatSectors();
+                 lba = _changes.NextChanged(*lba + 1))
             {
-                if (!_before.device->ReadSector(it->first, was))
+                if (!_before.device->ReadSector(*lba, was) || !_changes.ReadChanged(*lba, now))
                     continue;
-                const uint8_t* now = it->second.data();
-                const uint64_t sectorIndex = it->first - first;
+                const uint64_t sectorIndex = *lba - first;
                 if (fat12)
                     continue;  // 12-bit entries straddle sectors: FAT12 media are floppies, checked by their own tools
                 const uint32_t perSector = fat32 ? 128 : 256;
@@ -380,7 +380,7 @@ namespace
 
         Side& _before;
         Side& _after;
-        const ChangeMap& _changes;
+        const IChangeView& _changes;
         const IComposedLayout* _layout;
         ChangeSet& _out;
         std::vector<Candidate> _deleted;
@@ -404,11 +404,11 @@ namespace
     }
 }  // namespace
 
-bool ChangeAttributor::Attribute(IBlockDevice& before, IBlockDevice& after, const ChangeMap& changes, const IComposedLayout* layout,
+bool ChangeAttributor::Attribute(IBlockDevice& before, IBlockDevice& after, const IChangeView& changes, const IComposedLayout* layout,
                                  ChangeSet& out, std::string* error)
 {
     out = ChangeSet();
-    out.changedSectors = changes.size();
+    out.changedSectors = changes.ChangedSectors();
     Side b, a;
     b.device = &before;
     a.device = &after;
@@ -420,7 +420,7 @@ bool ChangeAttributor::Attribute(IBlockDevice& before, IBlockDevice& after, cons
             *error = "not a FAT volume: " + why;
         return false;
     }
-    if (changes.empty())
+    if (!changes.ChangedSectors())
         return true;
     if (!a.reader.Open(after, CodePage::Cp866, &why))
     {
@@ -438,9 +438,9 @@ bool ChangeAttributor::Attribute(IBlockDevice& before, IBlockDevice& after, cons
     std::set<std::string> notes;
     bool fatChanged = false;
     bool unplaced = false;
-    for (const auto& [lba, data] : changes)
+    for (std::optional<uint64_t> next = changes.NextChanged(0); next; next = changes.NextChanged(*next + 1))
     {
-        (void)data;
+        const uint64_t lba = *next;
         if (lba < volumeStart)
             notes.insert(lba == 0 ? "the partition table (LBA 0) changed" : "a sector between the MBR and the partition changed");
         else if (lba < fatStart)

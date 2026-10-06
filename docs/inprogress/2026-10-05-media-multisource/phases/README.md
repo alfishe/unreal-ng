@@ -16,4 +16,4 @@ the phase lands. The phase table is in [tdd.md](../tdd.md) §13; the tests per p
 | C8 | [c8-commit-writeback.md](c8-commit-writeback.md) | done (C8c Qt: owner's build pending) |
 | C9 | bulk `ReadSectors` | — |
 | C10 | [c10-sparse-memory.md](c10-sparse-memory.md) | done: C10a zero runs + sparse memory, C10b dynamic VHD; C10c measured (images stay streamed); §8 full-disk and RAM findings |
-| C10d | [c10d-session-spill.md](c10d-session-spill.md) | design: session writes bounded in RAM (128 MiB), the rest spilled to disk |
+| C10d | [c10d-session-spill.md](c10d-session-spill.md) | done: session writes bounded in RAM (128 MiB), the rest spilled to disk; streamed deltas |

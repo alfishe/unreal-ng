@@ -181,3 +181,31 @@ TEST(MediaConfig_Test, ManagerAppliesTheSetBeforeTheFirstReset)
     EXPECT_NE(problems[0].find("nope.slot"), std::string::npos);
     manager.UnregisterSlot("sd.zc");
 }
+
+/// SessionMemoryLimit and SpillFolder are settings in [MEDIA], not slots (multi-source phases/c10d-session-spill.md)
+TEST(MediaConfig_Test, SessionSettingsAreNotSlots)
+{
+    IniFile ini;
+    ini.LoadData("[MEDIA]\nsd.zc = card.img\nSessionMemoryLimit = 64\nSpillFolder = spill\n");
+    std::vector<std::string> report;
+    const std::vector<MediaSetEntry> set = MediaConfig::FromIni(ini, "/cfg", &report);
+    ASSERT_EQ(set.size(), 1u) << "only sd.zc is a slot";
+    EXPECT_EQ(set[0].slotId, "sd.zc");
+    const MediaSettings settings = MediaConfig::SettingsFromIni(ini, "/cfg", &report);
+    ASSERT_TRUE(settings.sessionMemoryLimit.has_value());
+    EXPECT_EQ(*settings.sessionMemoryLimit, 64ull * 1024 * 1024);
+    ASSERT_TRUE(settings.spillFolder.has_value());
+    EXPECT_EQ(*settings.spillFolder, MediaConfig::ResolvePath("spill", "/cfg")) << "relative to the config file";
+    EXPECT_TRUE(report.empty());
+
+    IniFile none;
+    none.LoadData("[MEDIA]\nSessionMemoryLimit = 0\n");
+    EXPECT_EQ(MediaConfig::SettingsFromIni(none, "").sessionMemoryLimit, std::optional<uint64_t>(0)) << "0: no limit";
+
+    IniFile bad;
+    bad.LoadData("[MEDIA]\nSessionMemoryLimit = lots\n");
+    std::vector<std::string> badReport;
+    EXPECT_FALSE(MediaConfig::SettingsFromIni(bad, "", &badReport).sessionMemoryLimit.has_value());
+    ASSERT_EQ(badReport.size(), 1u);
+    EXPECT_NE(badReport[0].find("SessionMemoryLimit"), std::string::npos) << badReport[0];
+}

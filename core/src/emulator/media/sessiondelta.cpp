@@ -8,6 +8,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <system_error>
 
 #include "common/filehelper.h"
@@ -22,52 +23,47 @@ namespace
     constexpr uint8_t kStored = 0;
     constexpr uint8_t kZstd = 1;
 
+    /// Written straight to the file: a delta of a spilled session is larger than memory
     class Out
     {
     public:
-        void Bytes(const void* data, size_t size)
+        explicit Out(std::ostream& stream) : _stream(stream) {}
+        void Bytes(const void* data, size_t size) { _stream.write(static_cast<const char*>(data), static_cast<std::streamsize>(size)); }
+        void U8(uint8_t v) { Bytes(&v, 1); }
+        void U16(uint16_t v) { Int(v); }
+        void U32(uint32_t v) { Int(v); }
+        void U64(uint64_t v) { Int(v); }
+        std::streamoff Position() { return static_cast<std::streamoff>(_stream.tellp()); }
+        /// Write `v` at `at`, then carry on at the end
+        void PatchU32(std::streamoff at, uint32_t v)
         {
-            const auto* p = static_cast<const uint8_t*>(data);
-            buffer.insert(buffer.end(), p, p + size);
+            const std::streampos end = _stream.tellp();
+            _stream.seekp(at);
+            U32(v);
+            _stream.seekp(end);
         }
-        void U8(uint8_t v) { buffer.push_back(v); }
-        void U16(uint16_t v)
+
+    private:
+        template <typename T>
+        void Int(T v)
         {
-            for (int i = 0; i < 2; i++)
-                buffer.push_back(static_cast<uint8_t>(v >> (8 * i)));
+            uint8_t b[sizeof(T)];
+            for (size_t i = 0; i < sizeof(T); i++)
+                b[i] = static_cast<uint8_t>(v >> (8 * i));
+            Bytes(b, sizeof b);
         }
-        void U32(uint32_t v)
-        {
-            for (int i = 0; i < 4; i++)
-                buffer.push_back(static_cast<uint8_t>(v >> (8 * i)));
-        }
-        void U64(uint64_t v)
-        {
-            for (int i = 0; i < 8; i++)
-                buffer.push_back(static_cast<uint8_t>(v >> (8 * i)));
-        }
-        std::vector<uint8_t> buffer;
+        std::ostream& _stream;
     };
 
+    /// Read from the file as it goes (the chunks twice: checked, then applied)
     class In
     {
     public:
-        explicit In(const std::vector<uint8_t>& data) : _data(data) {}
+        explicit In(std::istream& stream) : _stream(stream) {}
         bool Bytes(void* dst, size_t size)
         {
-            if (size > _data.size() - _at)
-                return false;
-            std::memcpy(dst, _data.data() + _at, size);
-            _at += size;
-            return true;
-        }
-        const uint8_t* Take(size_t size)
-        {
-            if (size > _data.size() - _at)
-                return nullptr;
-            const uint8_t* p = _data.data() + _at;
-            _at += size;
-            return p;
+            _stream.read(static_cast<char*>(dst), static_cast<std::streamsize>(size));
+            return static_cast<size_t>(_stream.gcount()) == size;
         }
         template <typename T>
         bool Int(T& v)
@@ -80,11 +76,16 @@ namespace
                 v |= static_cast<T>(static_cast<T>(b[i]) << (8 * i));
             return true;
         }
-        bool AtEnd() const { return _at == _data.size(); }
+        bool AtEnd() { return _stream.peek() == std::char_traits<char>::eof(); }
+        std::streampos Position() { return _stream.tellg(); }
+        void Seek(std::streampos at)
+        {
+            _stream.clear();
+            _stream.seekg(at);
+        }
 
     private:
-        const std::vector<uint8_t>& _data;
-        size_t _at = 0;
+        std::istream& _stream;
     };
 
     uint64_t Fnv(uint64_t h, const uint8_t* data, size_t size)
@@ -122,94 +123,110 @@ namespace
 
 MediaResult SessionDelta::Save(const std::filesystem::path& path, const SessionWriteMap& map, const DeltaIdentity& identity)
 {
-    const auto& changes = map.Changes();
-    // Runs of consecutive sectors
-    std::vector<std::pair<uint64_t, uint32_t>> runs;
-    for (const auto& entry : changes)
-    {
-        if (!runs.empty() && runs.back().first + runs.back().second == entry.first && runs.back().second < 0xFFFFFFFFu)
-            runs.back().second++;
-        else
-            runs.push_back({entry.first, 1});
-    }
-
-    Out out;
-    out.Bytes(kMagic, sizeof kMagic);
-    out.U32(kVersion);
-    out.U32(0);
-    out.U64(identity.contentId);
-    out.U64(identity.sectorCount);
-    out.U64(changes.size());
-    out.U32(static_cast<uint32_t>(runs.size()));
-    out.U32(static_cast<uint32_t>(identity.layers.size()));
-    for (const DeltaIdentity::Layer& layer : identity.layers)
-    {
-        out.U64(layer.identity);
-        const std::string name = layer.name.substr(0, 0xFFFF);
-        out.U16(static_cast<uint16_t>(name.size()));
-        out.Bytes(name.data(), name.size());
-    }
-    for (const auto& [lba, count] : runs)
-    {
-        out.U64(lba);
-        out.U32(count);
-    }
-
-    // The sectors in LBA order, compressed per 1 MiB
-    const size_t raw = changes.size() * kSector;
-    out.U32(static_cast<uint32_t>((raw + kChunk - 1) / kChunk));
-    std::vector<uint8_t> chunk;
-    chunk.reserve(std::min(raw, kChunk));
-    uint64_t hash = 0xcbf29ce484222325ULL;
-    auto flush = [&]() {
-        hash = Fnv(hash, chunk.data(), chunk.size());
-        std::vector<uint8_t> packed(ZSTD_compressBound(chunk.size()));
-        const size_t n = ZSTD_compress(packed.data(), packed.size(), chunk.data(), chunk.size(), 3);
-        const bool zstd = !ZSTD_isError(n) && n < chunk.size();
-        out.U32(static_cast<uint32_t>(chunk.size()));
-        out.U32(static_cast<uint32_t>(zstd ? n : chunk.size()));
-        out.U8(zstd ? kZstd : kStored);
-        out.U8(0);
-        out.U8(0);
-        out.U8(0);
-        if (zstd)
-            out.Bytes(packed.data(), n);
-        else
-            out.Bytes(chunk.data(), chunk.size());
-        chunk.clear();
-    };
-    for (const auto& entry : changes)
-    {
-        chunk.insert(chunk.end(), entry.second.begin(), entry.second.end());
-        if (chunk.size() == kChunk)
-            flush();
-    }
-    if (!chunk.empty())
-        flush();
-    out.Bytes(kEnd, sizeof kEnd);
-    out.U64(hash);
-
     std::filesystem::path temp = path;
     temp += ".writing";
+    auto fail = [&temp](const std::string& why) {
+        std::error_code ignored;
+        std::filesystem::remove(temp, ignored);
+        return MediaResult::Fail(MediaError::IoError, why);
+    };
+
+    const uint64_t changed = map.ChangedSectors();
     {
         std::ofstream file(temp, std::ios::binary | std::ios::trunc);
-        file.write(reinterpret_cast<const char*>(out.buffer.data()), static_cast<std::streamsize>(out.buffer.size()));
+        if (!file)
+            return fail("cannot write " + FileHelper::FromFsPath(temp));
+        Out out(file);
+        out.Bytes(kMagic, sizeof kMagic);
+        out.U32(kVersion);
+        out.U32(0);
+        out.U64(identity.contentId);
+        out.U64(identity.sectorCount);
+        out.U64(changed);
+        const std::streamoff runCountAt = out.Position();
+        out.U32(0);  // the run count, written once the runs are known
+        out.U32(static_cast<uint32_t>(identity.layers.size()));
+        for (const DeltaIdentity::Layer& layer : identity.layers)
+        {
+            out.U64(layer.identity);
+            const std::string name = layer.name.substr(0, 0xFFFF);
+            out.U16(static_cast<uint16_t>(name.size()));
+            out.Bytes(name.data(), name.size());
+        }
+
+        // Runs of consecutive sectors, written as they close
+        uint32_t runCount = 0;
+        uint64_t runFirst = 0;
+        uint32_t runLength = 0;
+        for (std::optional<uint64_t> lba = map.NextChanged(0); lba; lba = map.NextChanged(*lba + 1))
+        {
+            if (runLength && runFirst + runLength == *lba && runLength < 0xFFFFFFFFu)
+            {
+                runLength++;
+                continue;
+            }
+            if (runLength)
+            {
+                out.U64(runFirst);
+                out.U32(runLength);
+                runCount++;
+            }
+            runFirst = *lba;
+            runLength = 1;
+        }
+        if (runLength)
+        {
+            out.U64(runFirst);
+            out.U32(runLength);
+            runCount++;
+        }
+        out.PatchU32(runCountAt, runCount);
+
+        // The sectors in LBA order, compressed per 1 MiB
+        const uint64_t raw = changed * kSector;
+        out.U32(static_cast<uint32_t>((raw + kChunk - 1) / kChunk));
+        std::vector<uint8_t> chunk;
+        chunk.reserve(static_cast<size_t>(std::min<uint64_t>(raw, kChunk)));
+        std::vector<uint8_t> packed(ZSTD_compressBound(kChunk));
+        uint64_t hash = 0xcbf29ce484222325ULL;
+        auto flush = [&]() {
+            hash = Fnv(hash, chunk.data(), chunk.size());
+            const size_t n = ZSTD_compress(packed.data(), packed.size(), chunk.data(), chunk.size(), 3);
+            const bool zstd = !ZSTD_isError(n) && n < chunk.size();
+            out.U32(static_cast<uint32_t>(chunk.size()));
+            out.U32(static_cast<uint32_t>(zstd ? n : chunk.size()));
+            out.U8(zstd ? kZstd : kStored);
+            out.U8(0);
+            out.U8(0);
+            out.U8(0);
+            if (zstd)
+                out.Bytes(packed.data(), n);
+            else
+                out.Bytes(chunk.data(), chunk.size());
+            chunk.clear();
+        };
+        uint64_t written = 0;
+        const bool read = map.ForEachChange([&](uint64_t, const uint8_t* data) {
+            chunk.insert(chunk.end(), data, data + kSector);
+            written++;
+            if (chunk.size() == kChunk)
+                flush();
+            return true;
+        });
+        if (!read || written != changed)
+            return fail("a changed sector cannot be read back from the session's spill file");
+        if (!chunk.empty())
+            flush();
+        out.Bytes(kEnd, sizeof kEnd);
+        out.U64(hash);
         file.flush();
         if (!file)
-        {
-            std::error_code ignored;
-            std::filesystem::remove(temp, ignored);
-            return MediaResult::Fail(MediaError::IoError, "cannot write " + FileHelper::FromFsPath(temp));
-        }
+            return fail("cannot write " + FileHelper::FromFsPath(temp));
     }
     std::error_code ec;
     std::filesystem::rename(temp, path, ec);
     if (ec)
-    {
-        std::error_code ignored;
-        std::filesystem::remove(temp, ignored);
-        return MediaResult::Fail(MediaError::IoError, "cannot replace " + FileHelper::FromFsPath(path) + ": " + ec.message());
-    }
+        return fail("cannot replace " + FileHelper::FromFsPath(path) + ": " + ec.message());
     return MediaResult::Success();
 }
 
@@ -219,25 +236,14 @@ DeltaLoad SessionDelta::Load(const std::filesystem::path& path, SessionWriteMap&
     std::error_code ec;
     if (!std::filesystem::is_regular_file(path, ec))
         return DeltaLoad::Missing;
-    std::vector<uint8_t> data;
+    std::ifstream file(path, std::ios::binary);
+    if (!file)
     {
-        std::ifstream file(path, std::ios::binary);
-        const auto size = std::filesystem::file_size(path, ec);
-        if (ec || !file)
-        {
-            detail = "cannot be read";
-            return DeltaLoad::Damaged;
-        }
-        data.resize(static_cast<size_t>(size));
-        file.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()));
-        if (!file)
-        {
-            detail = "cannot be read";
-            return DeltaLoad::Damaged;
-        }
+        detail = "cannot be read";
+        return DeltaLoad::Damaged;
     }
 
-    In in(data);
+    In in(file);
     char magic[8];
     uint32_t version = 0, flags = 0, runCount = 0, layerCount = 0, chunkCount = 0;
     DeltaIdentity written;
@@ -286,6 +292,12 @@ DeltaLoad SessionDelta::Load(const std::filesystem::path& path, SessionWriteMap&
         return DeltaLoad::Damaged;
     }
 
+    const uint64_t fileSize = std::filesystem::file_size(path, ec);
+    if (ec || static_cast<uint64_t>(runCount) * 12 > fileSize)
+    {
+        detail = "the run table is damaged";
+        return DeltaLoad::Damaged;
+    }
     std::vector<std::pair<uint64_t, uint32_t>> runs(runCount);
     uint64_t total = 0;
     for (auto& [lba, count] : runs)
@@ -303,53 +315,83 @@ DeltaLoad SessionDelta::Load(const std::filesystem::path& path, SessionWriteMap&
         return DeltaLoad::Damaged;
     }
 
-    std::vector<uint8_t> sectors;
-    sectors.reserve(static_cast<size_t>(std::min<uint64_t>(changed * kSector, data.size() * 64)));
-    for (uint32_t c = 0; c < chunkCount; c++)
-    {
-        uint32_t rawBytes = 0, storedBytes = 0;
+    // Two passes over the chunks: the first checks the whole file (a damaged delta changes nothing), the second
+    // applies it. One chunk in memory at a time
+    const std::streampos chunksAt = in.Position();
+    std::vector<uint8_t> payload;
+    std::vector<uint8_t> chunk(kChunk);
+    auto readChunk = [&](uint32_t c, size_t& rawBytes) {
+        uint32_t raw = 0, stored = 0;
         uint8_t header[4];
-        if (!in.Int(rawBytes) || !in.Int(storedBytes) || !in.Bytes(header, sizeof header) || rawBytes > kChunk)
+        if (!in.Int(raw) || !in.Int(stored) || !in.Bytes(header, sizeof header) || raw > kChunk ||
+            stored > ZSTD_compressBound(kChunk))
         {
             detail = "cut short in chunk " + std::to_string(c);
-            return DeltaLoad::Damaged;
+            return false;
         }
-        const uint8_t* payload = in.Take(storedBytes);
-        if (!payload)
+        payload.resize(stored);
+        if (!in.Bytes(payload.data(), stored))
         {
             detail = "cut short in chunk " + std::to_string(c);
-            return DeltaLoad::Damaged;
+            return false;
         }
-        const size_t at = sectors.size();
-        sectors.resize(at + rawBytes);
-        if (header[0] == kStored && storedBytes == rawBytes)
-            std::memcpy(sectors.data() + at, payload, rawBytes);
-        else if (header[0] != kZstd || ZSTD_decompress(sectors.data() + at, rawBytes, payload, storedBytes) != rawBytes)
+        if (header[0] == kStored && stored == raw)
+            std::memcpy(chunk.data(), payload.data(), raw);
+        else if (header[0] != kZstd || ZSTD_decompress(chunk.data(), raw, payload.data(), stored) != raw)
         {
             detail = "chunk " + std::to_string(c) + " does not decompress";
-            return DeltaLoad::Damaged;
+            return false;
         }
+        rawBytes = raw;
+        return true;
+    };
+
+    uint64_t rawTotal = 0;
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (uint32_t c = 0; c < chunkCount; c++)
+    {
+        size_t raw = 0;
+        if (!readChunk(c, raw))
+            return DeltaLoad::Damaged;
+        hash = Fnv(hash, chunk.data(), raw);
+        rawTotal += raw;
     }
     char end[8];
-    uint64_t hash = 0;
-    if (sectors.size() != changed * kSector || !in.Bytes(end, sizeof end) || std::memcmp(end, kEnd, sizeof end) != 0 ||
-        !in.Int(hash) || !in.AtEnd())
+    uint64_t stored = 0;
+    if (rawTotal != changed * kSector || !in.Bytes(end, sizeof end) || std::memcmp(end, kEnd, sizeof end) != 0 ||
+        !in.Int(stored) || !in.AtEnd())
     {
         detail = "cut short or with trailing bytes";
         return DeltaLoad::Damaged;
     }
-    if (hash != Fnv(0xcbf29ce484222325ULL, sectors.data(), sectors.size()))
+    if (hash != stored)
     {
         detail = "the sector data does not match its checksum";
         return DeltaLoad::Damaged;
     }
 
     map.Discard();
-    size_t at = 0;
-    for (const auto& [lba, count] : runs)
+    in.Seek(chunksAt);
+    size_t run = 0;
+    uint32_t inRun = 0;
+    for (uint32_t c = 0; c < chunkCount; c++)
     {
-        for (uint32_t s = 0; s < count; s++, at += kSector)
-            map.WriteSector(lba + s, sectors.data() + at);
+        size_t raw = 0;
+        if (!readChunk(c, raw))
+        {
+            map.Discard();
+            detail = "changed while it was read";
+            return DeltaLoad::Damaged;
+        }
+        for (size_t at = 0; at + kSector <= raw; at += kSector)
+        {
+            map.WriteSector(runs[run].first + inRun, chunk.data() + at);
+            if (++inRun == runs[run].second)
+            {
+                run++;
+                inRun = 0;
+            }
+        }
     }
     detail = std::to_string(changed) + " sector(s)";
     return DeltaLoad::Restored;

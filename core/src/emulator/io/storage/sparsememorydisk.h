@@ -7,7 +7,7 @@
 /// Design: docs/inprogress/2026-10-05-media-multisource/phases/c10-sparse-memory.md §3.
 
 #include <cstdint>
-#include <map>
+#include <vector>
 #include <memory>
 #include <string>
 
@@ -30,10 +30,14 @@ public:
     uint64_t ZeroRun(uint64_t lba) override;
 
     /// The memory the stored chunks take
-    uint64_t StoredBytes() const { return _chunks.size() * kChunkSectors * kSectorSize; }
+    uint64_t StoredBytes() const { return _stored * kChunkSectors * kSectorSize; }
+    /// The chunk table: one pointer per 64 KiB of the disk
+    uint64_t TableBytes() const { return _chunks.size() * sizeof(_chunks[0]); }
 
 private:
     uint64_t _sectors;
     uint64_t _contentId;
-    std::map<uint64_t, std::unique_ptr<uint8_t[]>> _chunks;  ///< chunk index -> 64 KiB
+    /// One pointer per chunk (O(1) lookup; 128 GiB: 2 M pointers, 16 MiB), null: reads zeros
+    std::vector<std::unique_ptr<uint8_t[]>> _chunks;
+    uint64_t _stored = 0;
 };

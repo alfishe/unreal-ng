@@ -13,6 +13,7 @@
 
 #include "_helpers/fatguest.h"
 #include "_helpers/scratchfolder.h"
+#include "_helpers/sessionspillguard.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/media/writeback.h"
@@ -59,9 +60,10 @@ namespace
     };
 
     /// Layers: `base` read-only at /, `work` writable at /WORK (onDelete as given), `up` writable at / (writes.upper)
-    class ComposeWriteBack_Test : public ::testing::Test
+    class ComposeWriteBack_Test : public ::testing::TestWithParam<bool>
     {
     protected:
+        SessionSpillGuard _spill{GetParam()};  // Spilled: the guest's writes go through the spill file
         ScratchFolder _folder{"compose-writeback"};
         MediaManager _manager{nullptr};
         CardSlot _slot;
@@ -121,7 +123,7 @@ namespace
     };
 }  // namespace
 
-TEST_F(ComposeWriteBack_Test, ModifyCreateAndCopyUp)
+TEST_P(ComposeWriteBack_Test, ModifyCreateAndCopyUp)
 {
     Insert();
     {
@@ -152,9 +154,11 @@ TEST_F(ComposeWriteBack_Test, ModifyCreateAndCopyUp)
                              [](const auto& e) { return e.path().filename().string().rfind(".unreal-staging", 0) == 0; }))
         << "no staged file left";
     EXPECT_FALSE(std::filesystem::exists(WriteBack::JournalFor(_descriptor)));
+    if (_spill.Active())
+        EXPECT_TRUE(_spill.Spilled()) << "the guest's files were attributed and written back from a spill file";
 }
 
-TEST_F(ComposeWriteBack_Test, DeletesFollowTheirPolicies)
+TEST_P(ComposeWriteBack_Test, DeletesFollowTheirPolicies)
 {
     Insert("delete");
     const std::string before = Text(_descriptor);
@@ -173,7 +177,7 @@ TEST_F(ComposeWriteBack_Test, DeletesFollowTheirPolicies)
     EXPECT_EQ(Read("/WORK/OLD.TXT"), "<none>");
 }
 
-TEST_F(ComposeWriteBack_Test, MoveKeepAndIgnore)
+TEST_P(ComposeWriteBack_Test, MoveKeepAndIgnore)
 {
     Insert("move");
     ASSERT_TRUE(Guest().Delete("/WORK/OLD.TXT"));
@@ -203,7 +207,7 @@ TEST_F(ComposeWriteBack_Test, MoveKeepAndIgnore)
     EXPECT_EQ(Read("/WORK/OLD.TXT"), "<none>") << "and a whiteout hides it";
 }
 
-TEST_F(ComposeWriteBack_Test, RenameInsideALayerAndAcross)
+TEST_P(ComposeWriteBack_Test, RenameInsideALayerAndAcross)
 {
     Insert();
     {
@@ -220,7 +224,7 @@ TEST_F(ComposeWriteBack_Test, RenameInsideALayerAndAcross)
     EXPECT_EQ(Read("/READ.TXT"), "base readme");
 }
 
-TEST_F(ComposeWriteBack_Test, ConflictsRefuseOrKeepBoth)
+TEST_P(ComposeWriteBack_Test, ConflictsRefuseOrKeepBoth)
 {
     Insert();
     _folder.File("work/TOOL.TXT", "edited on the host", 1767272400);  // changed after the build
@@ -238,7 +242,7 @@ TEST_F(ComposeWriteBack_Test, ConflictsRefuseOrKeepBoth)
     EXPECT_EQ(Text(_folder.Path() / "work/TOOL (guest).TXT"), "g");
 }
 
-TEST_F(ComposeWriteBack_Test, PlanWritesNothingAndTrashIsAnError)
+TEST_P(ComposeWriteBack_Test, PlanWritesNothingAndTrashIsAnError)
 {
     Insert("trash");
     {
@@ -255,7 +259,7 @@ TEST_F(ComposeWriteBack_Test, PlanWritesNothingAndTrashIsAnError)
 }
 
 /// A write-back cut short after its journal: the next insert of the descriptor finishes it
-TEST_F(ComposeWriteBack_Test, InterruptedApplyIsFinishedOnInsert)
+TEST_P(ComposeWriteBack_Test, InterruptedApplyIsFinishedOnInsert)
 {
     Insert();
     TearDown();
@@ -275,3 +279,5 @@ TEST_F(ComposeWriteBack_Test, InterruptedApplyIsFinishedOnInsert)
     EXPECT_EQ(Read("/WORK/LATE.TXT"), "finished later");
     EXPECT_EQ(Read("/DOC/A.TXT"), "<none>");
 }
+
+INSTANTIATE_TEST_SUITE_P(Tiers, ComposeWriteBack_Test, ::testing::Bool(), SessionSpillGuard::TierName);
