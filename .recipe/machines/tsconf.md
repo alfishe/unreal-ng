@@ -85,6 +85,18 @@ menu → TS-Conf; opening or dropping an `.spg` switches to TS-Conf.
 
 ### Wild Commander (the TS-Conf shell) from the SD card
 
+**Out of the box:** the shipped `ts-conf` config (`TSL` and `TSL-VDAC2` both use it) starts with a ready SD card in
+`sd.zc`: Wild Commander 1.11i and a folder `zifi/` (`zifi.spg` + `zifi.ini`), and with a ZiFi board
+(`[NETWORK] ZiFi=ZIFI-NATIVE,S3`), so a fresh instance boots to WC and `zifi.spg` runs from it
+([demo](../peripherals/network.md#demo-the-zifi-browser-on-the-real-internet)). The card is `data/configs/ts-conf/wc-zifi.img.7z`
+(427 KB); the build unpacks it next to the copied config (`cmake/ExtractConfigImages.cmake`), so `bin/configs/ts-conf/wc-zifi.img`
+(35 MB: the smallest FAT32, 512-byte clusters, volume label `UNREAL NG`) exists only in build output and packages. `[ZC] SDWrite=session`: writes live until exit and the image stays as
+shipped. The card holds WC 1.11i (`boot.$C`, `WC/`), `zifi/zifi.spg` (ZiFi client 0.733) and `zifi.ini` (SSID `UnrealNG`). To
+rebuild the archive: copy the files out of the old image (`mcopy -s -m -n ::* dir/`), then
+`mformat -i wc-zifi.img -F -T 69000 -h 255 -s 63 -c 1 -v "UNREAL NG" ::` (69000 sectors is just above the 65525 clusters FAT32
+needs), `mcopy -s -m -n * ::/`, and `7zz a -t7z -mx=9 wc-zifi.img.7z wc-zifi.img`.
+Other card or none: `[ZC] SDCARD=` or the media commands below.
+
 ```bash
 # The packages and ready SD images are untracked test data:
 #   testdata/machines/tsconf/wildcommander/ (README there)
