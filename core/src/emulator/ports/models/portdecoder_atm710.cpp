@@ -183,6 +183,25 @@ void PortDecoder_ATM710::ApplyBootROMDefaults(ROMModeEnum mode)
     }
 }
 
+void PortDecoder_ATM710::EnterSpectrum128Paging(uint16_t pc)
+{
+    // The reset leaves the manager off (PEN = 0): every window reads the last ROM page, the ATM BIOS, and a snapshot's RAM is
+    // not in the address space. Switch it on the way RM_DOS does (~CPM set: no forced TR-DOS; palette writes gated; video
+    // mode 3, the ZX picture; INT gate on) and lay the windows out as a Spectrum 128K:
+    //   #7FFD.4 = 0 (set 0): window 0 = ROM pair 2 (128K BASIC / the system ROM when the DOS signal is up)
+    //   #7FFD.4 = 1 (set 1): window 0 = ROM pair 0 (48K BASIC / TR-DOS)
+    //   windows 1 and 2 = RAM 5 and 2, window 3 = RAM page from #7FFD (the FFF7 high bits are 0)
+    Port_FF77_Out(0x4000 | 0x200 | 0x100, 0x80 | 0x40 | 0x20 | 3, pc);
+    for (unsigned set = 0; set < 8; set += 4)
+    {
+        _state->pFFF7[set + 0] = static_cast<unsigned>(0x0100 | (set ? 0 : 2));
+        _state->pFFF7[set + 1] = 0x0200 | 5;
+        _state->pFFF7[set + 2] = 0x0200 | 2;
+        _state->pFFF7[set + 3] = 0x0000;
+    }
+    updateMemoryBanks();
+}
+
 void PortDecoder_ATM710::UpdateModelMemoryBanks()
 {
     updateMemoryBanks();

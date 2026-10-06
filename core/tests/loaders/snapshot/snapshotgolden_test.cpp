@@ -7,7 +7,7 @@
 /// Pentagon 1024, the ATM / TS-Conf pagers after a cold reset: proposal section 3). Every later pipeline step must
 /// reproduce it; a row may change only in a commit that says so (P4: the 38 SPRINTER rows that loaded now say
 /// "refused", a fresh Sprinter is in no Spectrum mode; P5 fit check: 38 more, 128K files on the 48K and the Scorpion's
-/// banks 8-15 on 128 KB machines; P5 Pentagon 1024: the "ports" hash of its 38 SNA / Z80 rows, #EFF7 = #04). The defects the proposal suspects are named in the
+/// banks 8-15 on 128 KB machines; P5 Pentagon 1024: the "ports" hash of its 38 SNA / Z80 rows, #EFF7 = #04; P5 ATM: the "ports" hash of the 38 rows of ATM710 / ATM3 / ATM450, "misc" where TR-DOS was forced on, "cpu" where a HALT is now seen in RAM). The defects the proposal suspects are named in the
 /// SnapshotDefects_Test cases below: each pins the CURRENT behavior and says what the fix changes.
 ///
 /// Update after an approved change: UNREAL_SNAPSHOT_GOLDEN_UPDATE=1 core-tests --gtest_filter='SnapshotGoldenRewrite*'
@@ -273,19 +273,19 @@ TEST(SnapshotDefects_Test, Pentagon1024A48kFileLocksThePaging)
     EXPECT_EQ(r.p7ffd & 0x20, 0x20);
 }
 
-// DEFECT (P5, "atm"): on the ATM3 and ATM710 the pager is not in its 128K form after the reset, so a 128K file
-// leaves #C000 unmapped. The other clones map bank 7. Expected after the fix: 7 everywhere
-TEST(SnapshotDefects_Test, AtmFamilyLeavesTheTopWindowUnmapped)
+// FIXED (P5, 2026-10-05): on the ATM3 and ATM710 the reset left the memory manager off (every window read the last ROM page), so a
+// 128K file left #C000 unmapped and the snapshot's RAM was not in the address space; the ATM450's reset left the system ROM
+// selected. PortDecoder::EnterSpectrum128Paging puts each into the plain Spectrum 128K form first. Every clone now maps bank 7;
+// the pictures are compared with the Pentagon's in SnapshotAtm_Test (snapshotpipeline_test.cpp)
+TEST(SnapshotDefects_Test, AtmFamilyMapsTheTopWindow)
 {
     const std::string path = TestPathHelper::GetTestDataPath(kAcrossTheEdge);
-    for (const char* tag : {"ATM3", "ATM710"})
+    for (const char* tag : {"ATM3", "ATM710", "ATM450", "TSL", "PROFI", "PENTAGON128", "SCORPION"})
     {
         const Loaded r = LoadOn(Find(tag), path);
         EXPECT_TRUE(r.ok) << tag;
-        EXPECT_EQ(r.bank3, 0xFFFFu) << tag << ": unmapped (the defect)";
+        EXPECT_EQ(r.bank3, 7u) << tag;
     }
-    for (const char* tag : {"ATM450", "TSL", "PROFI", "PENTAGON128", "SCORPION"})
-        EXPECT_EQ(LoadOn(Find(tag), path).bank3, 7u) << tag;
 }
 
 // FIXED (P5, Q1, 2026-10-05): a 128K file used to load on a 48K machine into pages it never shows, and the program crashed

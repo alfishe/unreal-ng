@@ -426,3 +426,78 @@ TEST_F(SnapshotPlan_Test, AMachinePolicyIsAskedBeforeTheFitCheck)
         << "the policy took it; the 128 KB Pentagon's fit check never ran";
     EXPECT_EQ(machine.committed, 1);
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The ATM family (P5): a snapshot lands in RAM and the picture is the Pentagon's
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace
+{
+/// FNV-1a over the frame the machine shows
+uint64_t PictureHash(Emulator* emulator)
+{
+    uint32_t* frame = nullptr;
+    size_t size = 0;
+    emulator->GetContext()->pScreen->GetFramebufferData(&frame, &size);
+    uint64_t h = 14695981038346656037ull;
+    for (size_t i = 0; i < size / sizeof(uint32_t); ++i)
+    {
+        h ^= frame[i];
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+uint64_t PictureAfterLoad(const char* model, const std::string& file)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError, RamPowerOn::Zero);
+    EXPECT_NE(emulator, nullptr) << model;
+    if (!emulator)
+        return 0;
+    EXPECT_TRUE(emulator->LoadSnapshot(file)) << model << " " << file;
+    emulator->RunNFrames(3);
+    const uint64_t hash = PictureHash(emulator);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+    return hash;
+}
+}  // namespace
+
+// The reset of an ATM leaves the pager off (or the system ROM on): the snapshot used to land in a machine whose RAM was not in
+// the address space. The pictures of static programs are compared with the Pentagon's on all three clones
+TEST(SnapshotAtm_Test, TheSamePictureAsThePentagonOnEveryClone)
+{
+    for (const char* file : {"loaders/z80/dizzyx.z80", "loaders/sna/z80full.sna", "loaders/sna/Dizzy Y.sna"})
+    {
+        const std::string path = TestPathHelper::GetTestDataPath(file);
+        const uint64_t pentagon = PictureAfterLoad("PENTAGON", path);
+        for (const char* clone : {"ATM710", "ATM3", "ATM450"})
+            EXPECT_EQ(PictureAfterLoad(clone, path), pentagon) << clone << " " << file;
+    }
+}
+
+TEST(SnapshotAtm_Test, TheMemoryManagerIsOnAndLaidOutLikeA128k)
+{
+    for (const char* model : {"ATM710", "ATM3"})
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError, RamPowerOn::Zero);
+        ASSERT_NE(emulator, nullptr) << model;
+        ASSERT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/across-the-edge-second.sna"))) << model;
+        const EmulatorState& state = emulator->GetContext()->emulatorState;
+        Memory& memory = *emulator->GetContext()->pMemory;
+        EXPECT_NE(state.aFF77 & 0x100, 0) << model << ": the manager (PEN) is on";
+        EXPECT_NE(state.aFF77 & 0x200, 0) << model << ": ~CPM set, TR-DOS is not forced";
+        EXPECT_EQ(state.flags & CF_TRDOS, 0) << model;
+        EXPECT_EQ(memory.GetRAMPageForBank(1), 5u) << model;
+        EXPECT_EQ(memory.GetRAMPageForBank(2), 2u) << model;
+        EXPECT_EQ(memory.GetRAMPageForBank(3), 7u) << model << ": window 3 follows #7FFD";
+        EXPECT_TRUE(memory.IsBank0ROM()) << model << ": window 0 is ROM";
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+    // The ATM450: ROM at #0000, not the system ROM
+    Emulator* atm450 = EmulatorTestHelper::CreateStandardEmulator("ATM450", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(atm450, nullptr);
+    ASSERT_TRUE(atm450->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/across-the-edge-second.sna")));
+    EXPECT_NE(atm450->GetContext()->emulatorState.aFE & 0x80, 0) << "ROM at #0000";
+    EXPECT_EQ(atm450->GetContext()->emulatorState.aFB & 0x80, 0) << "not the system ROM (CPSYS off)";
+    EmulatorTestHelper::CleanupEmulator(atm450);
+}

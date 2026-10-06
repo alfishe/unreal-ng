@@ -1461,6 +1461,17 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM3::CreateTTDSe
 ///          128K mode (#EFF7 bit 2 = 1) `{reg[7:3], 7FFD[2:0]}`, Pentagon-1024
 ///          mode (bit 2 = 0, the reset state) `{reg[7:6], 7FFD[7:5], 7FFD[2:0]}`.
 ///          A ROM register with the bit set swaps its page LSB for the DOS signal.
+void PortDecoder_ATM3::EnterSpectrum128Paging(uint16_t pc)
+{
+    _state->evoWrProt = 0x00;
+    _state->evoInNmi = false;
+    _state->evoNmiEntry = false;
+    _state->nmiAtIntStartPending = false;
+    _state->evoTrdemu = 0;
+    _state->pEFF7 = static_cast<uint8_t>((_state->pEFF7 | ATM_EFF7_LOCKMEM) & ~ATM_EFF7_ROCACHE);
+    PortDecoder_ATM710::EnterSpectrum128Paging(pc);   // ends in updateMemoryBanks(): this class's mapping
+}
+
 void PortDecoder_ATM3::updateMemoryBanks()
 {
     if (!_memory)

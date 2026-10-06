@@ -99,5 +99,15 @@ review the diff, list the changed rows in the commit message.
   mapped page 32 instead of locking. SZX and the state transfer already did it. Golden: the `ports` hash of the 38 SNA / Z80
   rows of PENTAGON1024 (`#EFF7` = `#04`); RAM and CPU hashes unchanged. The hook is the generic place for the next ones: the
   ATM family's pager and TS-Conf's MemConfig also need "the plain 128K form" after a reset.
-- Still open in P5: the ATM family's pager, TS-Conf's MemConfig (policies, not decisions: they fix banks that land in the wrong
-  place).
+- **ATM family done (2026-10-05).** `EnterSpectrum128Paging` on the ATM710, ATM3 and ATM450. The reset of an ATM710 / ATM3 leaves
+  the memory manager off (PEN = 0: every window reads the last ROM page, writes go to the trash page) and forces the TR-DOS
+  signal (~CPM = 0): a snapshot's RAM was not in the address space (`#C000` read as ROM, the HALT detection read the ROM). Now the
+  manager is on as the RM_DOS boot sets it (`aFF77` = `#4300`, `pFF77` = `#E3`: ZX video mode, INT gate), laid out as a
+  Spectrum 128K: #7FFD.4 = 0 -> ROM pair 2 (128K BASIC / system), #7FFD.4 = 1 -> pair 0 (48K BASIC / TR-DOS), RAM 5 / 2 fixed,
+  window 3 from #7FFD. The ATM3 adds the BaseConf's own: `#EFF7` bit 2 (no 1 MB paging), bit 3 clear (no RAM at #0000), no write
+  protection, no NMI / virtual TR-DOS page. The ATM450: `aFE` = ROM | ZX video mode, `aFB` = 0 (not the system ROM), `pFDFD` = 0.
+  Checked live on the WebAPI: `dizzyx.z80` and `z80full.sna` give a **byte-identical PNG** on the Pentagon, ATM710, ATM3 and
+  ATM450; `action.sna` (an animated demo) runs on all three. Golden: 38 rows of each of the three machines (`ports` hash; `misc`
+  where TR-DOS was forced on before; `cpu` in the 10 SNA files whose PC is on a HALT, which the ROM-mapped window could not see).
+  Mutation (hook off) fails `SnapshotAtm_Test` x2 and `SnapshotDefects_Test.AtmFamilyMapsTheTopWindow`.
+- Still open in P5: TS-Conf's MemConfig (a policy, not a decision: it fixes banks that land in the wrong place).
