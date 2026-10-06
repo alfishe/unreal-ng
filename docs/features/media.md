@@ -414,7 +414,7 @@ Each method returns the result as a dict.
 
 ### Qt
 
-**Tools → Media** (Ctrl+4) shows the slots in a table. Insert a file or a folder into the
+**Tools → Media** shows the slots in a table. Insert a file or a folder into the
 selected slot, drop a file on a row, eject, save, export, discard, protect, create a blank
 medium. When a dirty medium would leave, the panel asks Save / Export / Discard. A row whose slot
 cannot take the dropped file says why and inserts nothing. **Insert Folder** into a CD-ROM drive
