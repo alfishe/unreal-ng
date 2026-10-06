@@ -584,6 +584,8 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/mousecapturecontroller_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/mousecapturecontroller.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/mousecapturecontroller.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/mousecapture_windows.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/mousecapture_windows.h"
         # The Machine menu's host keyboard state against an instance automation removes
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/hostkeyboardmenu_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/hostkeyboardmenu.cpp"

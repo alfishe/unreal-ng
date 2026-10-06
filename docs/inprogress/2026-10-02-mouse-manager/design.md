@@ -153,7 +153,13 @@ Source for the AVR behavior:
   real Qt key events).
 - **No `grabMouse()`.** Motion comes from the platform backend: macOS
   `CGAssociateMouseAndMouseCursorPosition(false)` + an NSEvent monitor (as now);
-  elsewhere warp-to-center. The macOS dissociation is undone on every release
+  Windows: `ClipCursor` to the screen area, and every move event only triggers a
+  sample - `GetCursorPos` (physical pixels) minus the center is the travel, then
+  `SetCursorPos` back (`platform/windows/mousecapture_windows.cpp`); elsewhere
+  warp-to-center, measured from the current `QCursor::pos()`, not the event's
+  position. Moves queued before a warp carry pre-warp positions: measured against
+  the center again they repeated the same travel and the guest pointer leapt
+  across the screen on Windows (fixed 2026-10-06). The macOS dissociation is undone on every release
   path, also from the application's shutdown.
 - **What it posts:** relative motion in physical pixels (`MouseDeltaAccumulator`,
   `[INPUT] MouseScale`), buttons with `[INPUT] SwapMouse`, wheel steps
@@ -161,12 +167,12 @@ Source for the AVR behavior:
 - **Speed matching (on by default, switchable at any time):** the travel is the
   host pointer's own on every platform (macOS: NSEvent deltas of the dissociated
   pointer; Windows / Linux: the offset from the center the pointer is warped back
-  to), so the system's pointer speed and acceleration are in it. Divided by the
+  to, sampled from the pointer's current position), so the system's pointer speed and acceleration are in it. Divided by the
   size of one emulated pixel on screen (the drawn picture: the software widget,
   or the GPU window's letterboxed quad), the guest moves as far as the pointer
   would over the picture. Off (View → Mouse Follows Host Pointer Speed): one host
   pixel = one count. Checked in `unreal-qt-tests` (2x / 1x, the carried fraction,
-  the warp backend).
+  the warp backend, stale pre-warp moves).
 
 ### 3.4 Configuration
 
