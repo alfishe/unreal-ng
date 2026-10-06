@@ -28,6 +28,7 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/snapshotdigest.h"
+#include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
@@ -89,6 +90,9 @@ std::vector<std::string> Fixtures()
 /// A fresh, zero-RAM machine; nullptr when this build cannot create it
 Emulator* Create(const Machine& machine)
 {
+    // The test runner leaves the TurboSound slot empty by default; a snapshot's AY registers need the chip, so the digest
+    // would see no AY at all (it did, until P9: every "ay" hash of the first table was 0)
+    SoundCardScope sound(TestSound::TurboSound);
     if (machine.ramKb == 0)
         return EmulatorTestHelper::CreateStandardEmulator(machine.model, LoggerLevel::LogError, RamPowerOn::Zero);
     std::shared_ptr<Emulator> emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModelAndRAM(

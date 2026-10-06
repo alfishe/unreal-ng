@@ -3,7 +3,8 @@
 `commit-digests.txt`: for every valid SNA / Z80 / SZX fixture under `testdata/loaders/` loaded on every creatable
 machine (fresh machine, zero RAM), one row `<fixture>@<machine><TAB>result`. The result is `refused`,
 `threw: <what>` or the digest of the state left behind: hashes of the RAM pages, the paging latches with the bank
-mapping, the CPU, AY 0 and the border / flags.
+mapping, the CPU, AY 0 (the machines are built with the TurboSound slot, which the test runner leaves empty otherwise) and the
+border / flags.
 
 It records what `master` does TODAY, defects included, so the snapshot pipeline (PLAN #84) can prove each step
 reproduces it. Test: `core/tests/loaders/snapshot/snapshotgolden_test.cpp`; helper `core/tests/_helpers/snapshotdigest.h`;

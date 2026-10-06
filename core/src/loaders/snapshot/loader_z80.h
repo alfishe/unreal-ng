@@ -243,7 +243,7 @@ protected:
     Z80MemoryMode getMemoryModeV2(uint8_t model);
     Z80MemoryMode getMemoryModeV3(uint8_t model);
     void stagePeripheralState(const Z80Header_v2& header);
-    void commitPeripheralState();
+    void commitPeripheralState(const snapshot::Image& image);
     bool validateHeaderSanity(Z80SnapshotVersion version);
 
     // Compression is used when Z80Header_v1.flags1:Bit 5 is set
@@ -314,6 +314,7 @@ public:
     using LoaderZ80::_logger;
     using LoaderZ80::_path;
     using LoaderZ80::_stagingLoaded;
+    using LoaderZ80::_image;
 
     // Staging fields
     using LoaderZ80::_stagingRAMPages;
