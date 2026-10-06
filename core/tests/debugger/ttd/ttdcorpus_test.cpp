@@ -22,6 +22,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/sound/soundmanager.h"
 
@@ -105,6 +106,10 @@ protected:
         }
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
+        // The TS-Conf fixture was recorded with an empty Z-Controller slot; the shipped ts-conf config now carries a
+        // card (wc-zifi.img, 2026-10-05), and a session loads into the machine it was recorded on
+        if (_context->pMediaManager)
+            _context->pMediaManager->Eject("sd.zc");
         _ttd = _context->pTimeTravelManager;
         ASSERT_NE(_ttd, nullptr);
         FeatureManager* features = _emulator->GetFeatureManager();
