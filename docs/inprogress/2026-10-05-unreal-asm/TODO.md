@@ -57,7 +57,8 @@ phase; master only after the owner's review.
   - [x] `pasmo` backend (2026-10-06, branch `unreal-asm-a6`): the oracle programs and the GS ROM equal through pasmo; `crosscheck.py` 0 differences against sjasmplus on the collection's disks ([research-pasmo-backend.md](research-pasmo-backend.md))
   - [x] `z88dk` (z80asm) backend over the writer shared with pasmo (2026-10-06): the oracle programs equal; `crosscheck.py --targets z88dk` 329 equal on the collection, z80asm's limits in [research-z88dk-backend.md](research-z88dk-backend.md) §3
   - [x] research of the XAS, MASM, GENS / Devpac and ZEUS formats (2026-10-06): every corpus file byte-exact with reference codecs, editors checked in the emulator; ADS is a disk utility whose sources are ZEUS beta 1.1 files; materials in the collection
-  - [ ] codecs `xas` (4.18 … 9.10), `masm` (1.x / 2.0 / 3.0), `gens` (GENS1 … 4, tape P / T), `zeus` (1983 / GG / PHT tables)
+  - [x] codec `masm`, versions 1.0 demo / 1.1 / 2.0 / 3.0 (2026-10-06): MASM 1.1's own source and typed files of every version byte-exact, canonical 100 %; testdata `masm/` ([research-masm.md](research-masm.md))
+  - [ ] codecs `xas` (4.18 … 9.10), `gens` (GENS1 … 4, tape P / T), `zeus` (1983 / GG / PHT tables)
 - [ ] A7 emulator adapters and surfaces, Qt disk browser, recipe
 - [ ] A8 symbols on the library (symbols S1-S5)
 - [ ] A9 benchmarks, user docs

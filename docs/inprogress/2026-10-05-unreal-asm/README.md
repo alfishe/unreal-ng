@@ -24,6 +24,7 @@ own tests and a command-line tool; the emulator uses it through thin adapters.
 | [source-formats.md](source-formats.md) | Every source format and sub-version: what is known, from where, how it is detected, what a byte-exact round trip has to keep |
 | [research-storm.md](research-storm.md) | STORM 1.0beta … 1.3i: lines walked backwards, implied commands, number descriptors, packed labels, the 42-file corpus (phase A4) |
 | [research-zxasm.md](research-zxasm.md) | ZX-ASM / ZAsm 2.4 … 4.20: text buffer with keyword pairs, the editor's rules, version detection, the 372-file corpus (phase A4) |
+| [research-masm.md](research-masm.md) | MASM 1.0 demo … 3.0: TASM 3's framing (1.x) and the 2.0 / 3.0 stream, the keyword tables per version, the tokenizer's word rules, MASM 1.1's own source (phase A6) |
 | [research-alasm.md](research-alasm.md) | ALASM 3.8 … 5.09: the file, lines and keywords from ALASM's own sources, the tables of every version, version detection, the 429-file corpus (phase A3) |
 | [research-alasm-to-sjasmplus.md](research-alasm-to-sjasmplus.md) | ALASM → sjasmplus through the IR: the rules, the facts checked in ALASM 5.09 and sjasmplus 1.23, The Link's objects byte-equal (phase A5) |
 | [research-tasm-to-sjasmplus.md](research-tasm-to-sjasmplus.md) | TASM 3 / 4.0 / 4.12 → sjasmplus: the rules, the GS 1.04 ROM rebuilt byte for byte, TASM 4.12 checked in the emulator (phase A5b) |
