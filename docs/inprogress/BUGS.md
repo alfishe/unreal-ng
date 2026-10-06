@@ -93,7 +93,7 @@ v1 (`UNREAL_TTD_BACKEND=v1`) keeps the old behavior.
 - A bookmark without a position works right after `stop` (the history reaches to where it stopped) and while
   recording, or the recipes say what to do instead; a test on both backends.
 
-## 🔴 [Open] #4: `GET /ttd/status` lags the recording's head while the machine runs
+## 🟣 [Fix Proposed] #4: `GET /ttd/status` lags the recording's head while the machine runs
 * **Date Opened:** 2026-10-05
 * **Date Fixed:** -
 * **Commit ID:** -
@@ -104,6 +104,15 @@ While a recording runs, `current_end_frame` / `checkpoint_count` in the status t
 309 / 1 against 308 / 408 / 30); they catch up when the machine pauses or the recording stops. The status of a
 running machine is the published snapshot (`GetPublishedSessionInfo`, refreshed on a throttle), which
 `ttd-recording.md` calls the "live head".
+
+### Root cause and fix (engine, 2026-10-06)
+The machine publishes a fresh snapshot only after an observer asked, at its next frame boundary and at most every
+100 ms; a read returned the snapshot it found, so the first status after a quiet spell was as old as that spell. Now
+`TimeTravelController::ReadSessionInfo` - the status verb on every surface - refreshes a snapshot older than the
+interval first: it asks and waits for the machine's next frame boundary (at most 250 ms; only while a session is
+recording or browsed). The Qt indicators keep the non-blocking `GetPublishedSessionInfo`. Live: status and position
+agree while recording (53 / 53, 101 / 104, 155 / 155). Test `TTDControl_Test.TheStatusOfARunningRecordingFollowsIt`
+(mutant caught). v1 unchanged.
 
 ### Requirements / Acceptance Criteria
 - The status of a running recording is at most about one refresh period behind, or the docs say it is a snapshot.

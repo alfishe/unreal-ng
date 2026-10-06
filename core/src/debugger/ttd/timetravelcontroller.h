@@ -208,6 +208,7 @@ public:
     /// is paused they are exact.
     TTDSessionInfo GetPublishedSessionInfo() const override;
     static constexpr uint32_t kPublishIntervalMs = 100;
+    static constexpr uint32_t kFreshPublishWaitMs = 250;
 
     /// @brief The session summary for automation status reads, from any thread.
     ///
@@ -217,8 +218,11 @@ public:
     /// free) and the session is not recording (a recording machine could be
     /// resumed by another thread mid-read). Otherwise the published snapshot,
     /// which is exact for a parked recording (the machine's thread publishes
-    /// as it parks, see OnMachineParking) and at most kPublishIntervalMs plus
-    /// a frame old while it runs. Never blocks, never pauses the machine.
+    /// as it parks, see OnMachineParking). While the machine runs, a snapshot
+    /// older than kPublishIntervalMs is refreshed first: the read waits for the
+    /// machine's next frame boundary (one frame, at most kFreshPublishWaitMs) -
+    /// so the status follows a running recording instead of the last time
+    /// somebody looked. Never pauses the machine.
     TTDSessionInfo ReadSessionInfo() const override;
     /// D8: the recording is paused for browsing (state detached); see PauseRecordingForBrowsing
     bool IsRecordingPaused() const { return _recordingPaused; }
@@ -1691,6 +1695,10 @@ private:
     void MaybePublishAtFrameBoundary();
     mutable std::mutex _publishedMutex;
     mutable TTDSessionInfo _published;
+    mutable std::condition_variable _publishedCv;          ///< a publication happened
+    mutable std::chrono::steady_clock::time_point _publishedAt{};
+    /// The published snapshot, refreshed first when it is older than kPublishIntervalMs (ReadSessionInfo)
+    TTDSessionInfo FreshPublishedSessionInfo() const;
     mutable std::atomic<bool> _publishRequested{false};
     /// Every public operation that reads or changes the session holds one for
     /// its whole run (TDD section 7.2, "control thread, emulator paused").
