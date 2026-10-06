@@ -127,3 +127,38 @@ void ThreadHelper::setNormalPriority()
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
 #endif
 }
+void ThreadHelper::disableProcessPowerThrottling()
+{
+#ifdef _WIN32
+    // Declared here: older SDKs / MinGW headers lack the power throttling types.
+    // SetProcessInformation itself is in kernel32 since Windows 8; resolved at
+    // run time so the binary still starts where it is missing
+    struct PowerThrottlingState
+    {
+        ULONG Version;
+        ULONG ControlMask;
+        ULONG StateMask;
+    };
+    constexpr ULONG kVersion = 1;                         // PROCESS_POWER_THROTTLING_CURRENT_VERSION
+    constexpr ULONG kExecutionSpeed = 0x1;                // PROCESS_POWER_THROTTLING_EXECUTION_SPEED (EcoQoS)
+    constexpr ULONG kIgnoreTimerResolution = 0x4;         // PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION (Windows 11)
+    constexpr int kProcessPowerThrottling = 4;            // PROCESS_INFORMATION_CLASS::ProcessPowerThrottling
+
+    using SetProcessInformationFn = BOOL(WINAPI*)(HANDLE, int, LPVOID, DWORD);
+    HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+    auto setProcessInformation =
+        kernel ? reinterpret_cast<SetProcessInformationFn>(reinterpret_cast<void*>(GetProcAddress(kernel, "SetProcessInformation")))
+               : nullptr;
+    if (!setProcessInformation)
+        return;
+
+    // ControlMask set + StateMask clear = "never throttle", whatever the window state.
+    // Windows 10 rejects the Windows 11 flag: retry with EcoQoS alone
+    PowerThrottlingState state{kVersion, kExecutionSpeed | kIgnoreTimerResolution, 0};
+    if (!setProcessInformation(GetCurrentProcess(), kProcessPowerThrottling, &state, sizeof(state)))
+    {
+        state.ControlMask = kExecutionSpeed;
+        setProcessInformation(GetCurrentProcess(), kProcessPowerThrottling, &state, sizeof(state));
+    }
+#endif
+}
