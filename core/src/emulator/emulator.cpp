@@ -2101,108 +2101,85 @@ bool Emulator::InspectSnapshot(const std::string& path, const snapshot::Options&
 
 bool Emulator::SaveSnapshot(const std::string& path)
 {
+    _lastSaveResult = snapshot::SaveResult{};
+    _lastSaveResult.path = path;
+    auto refuse = [&](const std::string& reason, const std::string& needs = {}) {
+        _lastSaveResult.reason = reason;
+        _lastSaveResult.needs = needs;
+        _lastSaveResult.text = "cannot save a snapshot: " + reason;
+        MLOGERROR("%s", _lastSaveResult.text.c_str());
+        return false;
+    };
+
     // Guard against operations during destruction (thread safety)
     if (_state == StateDestroying || _isReleased)
-    {
-        MLOGWARNING("SaveSnapshot rejected - emulator is being destroyed");
-        return false;
-    }
-
-    bool result = false;
-
-    /// region <Info logging>
+        return refuse("the emulator is being destroyed");
 
     MLOGEMPTY();
     MLOGINFO("Saving snapshot to file: '%s'", path.c_str());
 
-    /// endregion </Info logging>
-
     // Resolve to absolute path
-    std::string absolutePath = FileHelper::AbsolutePath(path);
+    const std::string absolutePath = FileHelper::AbsolutePath(path);
+    _lastSaveResult.path = absolutePath;
 
     // Validate file extension
-    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(absolutePath));
-    if (ext != "sna" && ext != "z80" && ext != "szx")
-    {
-        MLOGERROR("Invalid snapshot format for save: {}. Supported: .sna, .z80, .szx", ext.c_str());
-        return false;
-    }
+    const std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(absolutePath));
+    const std::optional<snapshot::SaveFormat> format = snapshot::SaveFormatFromExtension(ext);
+    if (!format)
+        return refuse("'." + ext + "' is not a snapshot format this emulator saves: use .sna, .z80 or .szx", "format");
+    _lastSaveResult.format = snapshot::ToText(*format);
 
-    // Pause execution
+    // Stop the machine and wait until it has parked: a save reads RAM, the CPU and the latches, which a frame in flight
+    // would still be changing
     bool wasRunning = false;
     if (!IsPaused())
     {
         Pause();
         wasRunning = true;
     }
-
-    if (ext == "sna")
+    if (!IsEmulationParked() && !WaitForPauseConfirmation(1000))
     {
-        /// region <Save SNA snapshot>
-        LoaderSNA loaderSna(_context, absolutePath);
-        result = loaderSna.save();
-
-        /// region <Info logging>
-        if (result)
-        {
-            MLOGINFO("SNA file saved successfully: '%s'", absolutePath.c_str());
-        }
-        else
-        {
-            MLOGERROR("Failed to save SNA file: '%s'", absolutePath.c_str());
-        }
-
-        MLOGEMPTY();
-        /// endregion </Info logging>
-
-        /// endregion </Save SNA snapshot>
-    }
-    else if (ext == "z80")
-    {
-        /// region <Save Z80 snapshot>
-        LoaderZ80 loaderZ80(_context, absolutePath);
-        result = loaderZ80.save();
-
-        /// region <Info logging>
-        if (result)
-        {
-            MLOGINFO("Z80 file saved successfully: '%s'", absolutePath.c_str());
-        }
-        else
-        {
-            MLOGERROR("Failed to save Z80 file: '%s'", absolutePath.c_str());
-        }
-
-        MLOGEMPTY();
-        /// endregion </Info logging>
-
-        /// endregion </Save Z80 snapshot>
-    }
-    else if (ext == "szx")
-    {
-        /// region <Save SZX snapshot>
-        LoaderSZX loaderSzx(_context, absolutePath);
-        result = loaderSzx.save();
-        if (result)
-            MLOGINFO("SZX file saved successfully: '%s'", absolutePath.c_str());
-        else
-            MLOGERROR("Failed to save SZX file '%s': %s", absolutePath.c_str(), loaderSzx.GetError().c_str());
-        /// endregion </Save SZX snapshot>
+        if (wasRunning)
+            Resume();
+        return refuse("the emulator did not stop within one second, so its state is not stable: nothing was saved", "pause");
     }
 
-    // Store snapshot path on success
-    if (result)
+    const snapshot::SaveResult saved = snapshot::SaveSnapshotFile(*_context, *format, absolutePath);
+    _lastSaveResult = saved;
+    if (saved.ok)
     {
+        MLOGINFO("%s", saved.text.c_str());
+        for (const std::string& warning : saved.warnings)
+            MLOGWARNING("%s", warning.c_str());
+        // Store snapshot path on success
         _context->coreState.snapshotFilePath = absolutePath;
     }
+    else
+        MLOGERROR("%s", saved.text.c_str());
+    MLOGEMPTY();
 
-    // Resume execution
     if (wasRunning)
-    {
         Resume();
-    }
 
-    return result;
+    return saved.ok;
+}
+
+snapshot::SaveFormats Emulator::SnapshotSaveFormats()
+{
+    if (!_context)
+    {
+        snapshot::SaveFormats none;
+        none.view = "no machine";
+        for (snapshot::SaveFormat f : {snapshot::SaveFormat::Sna, snapshot::SaveFormat::Z80, snapshot::SaveFormat::Szx})
+        {
+            snapshot::FormatStatus status;
+            status.format = f;
+            status.reason = "no machine";
+            none.formats.push_back(status);
+        }
+        return none;
+    }
+    return snapshot::QuerySaveFormats(*_context);
 }
 
 bool Emulator::LoadTape(const std::string& path, std::string* error)

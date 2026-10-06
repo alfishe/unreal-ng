@@ -31,6 +31,8 @@ public:
     void updateMenuStates(std::shared_ptr<Emulator> activeEmulator);
     /// The TURBO Switch item follows the machine (CLI / WebAPI / TTD replay flip it too)
     void updateFrontPanelSwitches(const std::shared_ptr<Emulator>& activeEmulator);
+    /// File > Save Snapshot: each format's item enabled when the machine can be saved in it now, the reason as its tip
+    void updateSaveSnapshotMenu(const std::shared_ptr<Emulator>& activeEmulator);
 
     // Update machine model selection based on active emulator's model
     void updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator);
@@ -110,8 +112,9 @@ signals:
     void openZXPolyRequested();  // ZX-Poly: four synchronized instances (.zxp / multiloader disk)
     void importAudioTapeRequested();  // tape-audio-bridge §7.3: WAV/FLAC/MP3 → .tzx/.tap
     void stopRzxRequested();          // stop RZX playback, the machine runs live
-    void saveSnapshotRequested();
-    void saveSnapshotZ80Requested();
+    /// Save a snapshot; `extension` = "szx" / "z80" / "sna" for that format's dialog, empty for the dialog of every format
+    /// the machine can be saved in now
+    void saveSnapshotRequested(const QString& extension);
     
     // Disk save signals
     void saveDiskRequested();       // Save to original path
@@ -230,8 +233,10 @@ private:
     QAction* _importAudioTapeAction;
     QAction* _stopRzxAction = nullptr;  ///< enabled while an RZX recording plays
     QMenu* _saveSnapshotMenu;
-    QAction* _saveSnapshotSNAAction;
-    QAction* _saveSnapshotZ80Action;
+    QAction* _saveSnapshotAction = nullptr;      ///< any available format (Ctrl+S)
+    QAction* _saveSnapshotSZXAction = nullptr;
+    QAction* _saveSnapshotSNAAction = nullptr;
+    QAction* _saveSnapshotZ80Action = nullptr;
     QMenu* _saveDiskMenu;
     QAction* _saveDiskAction;       // Save (to original path)
     QAction* _saveDiskTRDAction;    // Save as TRD

@@ -757,7 +757,7 @@ std::vector<uint8_t> DezogDebugAdapter::captureSnapshotBytes(Emulator& emulator)
     }
     else
     {
-        std::cerr << "[DZRP] captureSnapshotBytes: SaveSnapshot failed\n";
+        std::cerr << "[DZRP] captureSnapshotBytes: " << emulator.LastSaveResult().text << "\n";
     }
 
     std::error_code ec;

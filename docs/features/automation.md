@@ -139,7 +139,8 @@ symbols info            # Show symbol count
 open <file>             # Auto-detect and load file
 snapshot load <file> [--no-switch] [--commit <name>]   # Load a snapshot; --commit chooses who writes the machine
 snapshot inspect <file> [--commit <name>]              # What loading would do here (contents, plan); writes nothing
-snapshot save <file>    # Save snapshot (.sna/.z80/.szx, by extension)
+snapshot save <file>    # Save snapshot (.sna/.z80/.szx, by extension); a refusal says why and what would work
+snapshot formats        # Which formats this machine can be saved in right now, and why not
 snapshot info           # Current snapshot status and the last load's pipeline report
 rzx play <file>         # Play an RZX input recording (switches to its model; command-interface.md §12)
 rzx status              # Frame, progress, desyncs
@@ -345,7 +346,8 @@ Snapshot formats: [docs/file-formats/snapshots](../file-formats/snapshots/README
 | Method | Endpoint | Description |
 |:-------|:---------|:------------|
 | POST | `/emulators/{id}/open` | Load file |
-| POST | `/emulators/{id}/snapshot/save` | Save snapshot |
+| POST | `/emulators/{id}/snapshot/save` | Save snapshot; the machine is stopped first; a refusal (400) carries `reason`, `needs` and `formats` |
+| GET | `/api/v1/emulator/{id}/snapshot/formats` | Which snapshot formats this machine can be saved in right now, and why not |
 | POST | `/api/v1/emulator/{id}/snapshot/load` | Load a snapshot (path or upload); optional `commit`; the answer's `report` says what was done or why it was refused |
 | POST | `/api/v1/emulator/{id}/snapshot/inspect` | What loading a snapshot would do on this machine (its image and the plan); nothing is written |
 | GET | `/emulators/{id}/snapshot/info` | Snapshot status and the last load's `report` |

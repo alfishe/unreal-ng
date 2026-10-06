@@ -421,56 +421,6 @@ TEST_F(LoaderSNA_Test, repeatedLoadIsIdempotent)
 
 /// region <Save Tests>
 
-TEST_F(LoaderSNA_Test, determineOutputFormat_48kMode)
-{
-    // Set up 48K mode by locking paging (bit 5 of port 7FFD)
-    _context->emulatorState.p7FFD = 0x20;  // Lock bit set
-    _context->pPortDecoder->LockPaging();
-    
-    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_determine_48k.sna");
-    LoaderSNACUT loader(_context, tempPath);
-    
-    SNA_MODE mode = loader.determineOutputFormat();
-    EXPECT_EQ(mode, SNA_48) << "Locked paging should result in 48K format";
-}
-
-TEST_F(LoaderSNA_Test, determineOutputFormat_128kMode)
-{
-    // Set up 128K mode (unlocked paging)
-    _context->emulatorState.p7FFD = 0x00;  // No lock bit
-    _context->pPortDecoder->UnlockPaging();
-    
-    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_determine_128k.sna");
-    LoaderSNACUT loader(_context, tempPath);
-    
-    SNA_MODE mode = loader.determineOutputFormat();
-    EXPECT_EQ(mode, SNA_128) << "Unlocked paging should result in 128K format";
-}
-
-TEST_F(LoaderSNA_Test, isPageEmpty_AllZeros)
-{
-    // Explicitly zero out page 0 for this test
-    Memory& memory = *_context->pMemory;
-    memset(memory.RAMPageAddress(0), 0, PAGE_SIZE);
-    
-    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_empty_page.sna");
-    LoaderSNACUT loader(_context, tempPath);
-    
-    // Page 0 should now be empty after explicit zeroing
-    bool isEmpty = loader.isPageEmpty(0);
-    EXPECT_TRUE(isEmpty) << "Page 0 should be empty after zeroing";
-}
-
-TEST_F(LoaderSNA_Test, isPageEmpty_Randomized)
-{
-    std::string tempPath = TestPathHelper::GetUniqueTestScratchPath("test_randomized_page.sna");
-    LoaderSNACUT loader(_context, tempPath);
-    
-    // Page 5 should NOT be empty (randomized during init)
-    bool isEmpty = loader.isPageEmpty(5);
-    EXPECT_FALSE(isEmpty) << "Page 5 should not be empty (randomized)";
-}
-
 // NOTE: Save tests require full EmulatorContext initialization (pCore, pMemory).
 // The test fixture initializes Core but not Screen - save handles Screen being null.
 

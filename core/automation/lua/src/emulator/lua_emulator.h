@@ -2611,9 +2611,27 @@ public:
             return t;
         });
 
+        // snapshot_save(path) -> bool; false = refused or failed, snapshot_save_report() says why
         lua.set_function("snapshot_save", [this](const std::string& path) -> bool {
             if (!effectiveEmulator()) return false;
             return effectiveEmulator()->SaveSnapshot(path);
+        });
+
+        // snapshot_save_report() -> table | nil: the last save {ok, message, format, path, machine, reason, needs, warnings}
+        lua.set_function("snapshot_save_report", [this](sol::this_state state) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator || emulator->LastSaveResult().path.empty())
+                return sol::lua_nil;
+            return StateNodeToLua(state, emulator->LastSaveResult().ToStateNode());
+        });
+
+        // snapshot_formats() -> table: which formats this machine can be saved in right now {view_available, machine, view,
+        // formats = {{format, available, reason, needs, note}}}
+        lua.set_function("snapshot_formats", [this](sol::this_state state) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                return sol::lua_nil;
+            return StateNodeToLua(state, emulator->SnapshotSaveFormats().ToStateNode());
         });
 
         // Breakpoint management

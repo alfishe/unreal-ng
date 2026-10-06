@@ -38,6 +38,7 @@ class EvoFlash;
 namespace snapshot
 {
 class ISnapshotCommitPolicy;
+class ISnapshotCapturePolicy;
 }
 class Memory;
 class Screen;
@@ -428,6 +429,7 @@ protected:
 
     EmulatorState* _state = nullptr;
     snapshot::ISnapshotCommitPolicy* _snapshotPolicy = nullptr;   ///< not owned (SetSnapshotPolicy)
+    snapshot::ISnapshotCapturePolicy* _snapshotCapturePolicy = nullptr;   ///< not owned (SetSnapshotCapturePolicy)
     Keyboard* _keyboard = nullptr;
     Mouse* _mouse = nullptr;
     Tape* _tape = nullptr;
@@ -1317,6 +1319,11 @@ public:
     /// Give the machine a policy (a decoder does it in its constructor; tests with a fake). Not owned: the policy
     /// must outlive its use, a machine's own policy lives as long as the decoder
     void SetSnapshotPolicy(snapshot::ISnapshotCommitPolicy* policy) { _snapshotPolicy = policy; }
+
+    /// The save side (P6): how this machine shows its 128K view to a snapshot. nullptr = the default rule for the model
+    /// (snapshotcapture.cpp): the Spectrum models as they are, TS-Conf and the ATMs by their live window map
+    virtual snapshot::ISnapshotCapturePolicy* GetSnapshotCapturePolicy() { return _snapshotCapturePolicy; }
+    void SetSnapshotCapturePolicy(snapshot::ISnapshotCapturePolicy* policy) { _snapshotCapturePolicy = policy; }
 
     /// endregion </Interaction with peripherals>
 

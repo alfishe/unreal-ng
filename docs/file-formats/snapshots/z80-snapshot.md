@@ -185,10 +185,13 @@ Snapshot overview and how loading works: [README](README.md).
 - A snapshot with a SamRam hardware byte, or one that carries a **ROM block** (a block for a ROM page: a custom ROM), is refused
   before anything is written: the reason says which. Corrupt or truncated files are refused with a warning in the log.
 
-**Saving.** Always version 3, with a 55-byte additional header when the model has #1FFD (+2A, +3, Scorpion) and 54 otherwise. The
-hardware byte follows the machine: 48K 0, 128K 4, +2 12, +2A 13, +3 7, Pentagon 9, Scorpion 10. A Pentagon 512 / 1024 is saved as
-a Pentagon 128, with a warning, since the format has no larger Pentagon. The AY registers are written on machines that have an AY; for a
-48K-mode snapshot on such a machine bit 2 of byte 37 marks them as in use.
+**Saving.** Always version 3, written from the machine's 128K view (see the [README](README.md#how-a-snapshot-is-saved)), with a
+55-byte additional header when the model has #1FFD (+2A, +3, Scorpion) and 54 otherwise. The hardware byte follows the machine the
+snapshot names: 48K 0, 128K 4, +2 12, +2A 13, +3 7, Pentagon 9, Scorpion 10 (a Sprinter in a ZX mode is named by its mode: P128.ZX
+a Pentagon, SC256.ZX a Scorpion, the others a 128K). A 48K machine, a 48K mode, and a 128K-family machine locked with bank 0 on top
+and the normal screen are written as 48K (three pages); the others keep all banks. The AY registers are written on machines that
+have an AY; for a 48K program on such a machine bit 2 of byte 37 marks them as in use. The format has no Pentagon 512 / 1024: they
+are refused with the way out (save as .szx).
 
 ---
 

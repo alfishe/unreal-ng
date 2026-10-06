@@ -1,6 +1,7 @@
 #include "debugger/ttd/atm/ttdatm2kbc.h"
 #include "stdafx.h"
 #include "portdecoder_atm710.h"
+#include "loaders/snapshot/snapshotcapture.h"
 
 #include <algorithm>
 
@@ -24,6 +25,8 @@ PortDecoder_ATM710::PortDecoder_ATM710(EmulatorContext* context) : PortDecoder_A
 PortDecoder_ATM710::PortDecoder_ATM710(EmulatorContext* context, bool v710Board)
     : PortDecoder(context), _v710Board(v710Board)
 {
+    // Its snapshot view exists while the window map is a Spectrum 128K (the ATM3 and the ATM450 inherit it)
+    SetSnapshotCapturePolicy(&snapshot::WindowMapCapture::Instance());
     _context = context;
     _state = &context->emulatorState;
     _memory = context->pMemory;

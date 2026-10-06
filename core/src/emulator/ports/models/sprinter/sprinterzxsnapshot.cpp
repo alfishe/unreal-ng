@@ -10,6 +10,7 @@
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
+#include "emulator/state/devicestate.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
 #include "loaders/snapshot/szx/loaderszx.h"
@@ -212,4 +213,102 @@ bool SprinterZxSnapshot::Commit(const snapshot::Image& image, EmulatorContext& c
     if (context.pScreen)
         context.pScreen->RenderOnlyMainScreen();
     return true;
+}
+
+SprinterZxCapture& SprinterZxCapture::Instance()
+{
+    static SprinterZxCapture instance;
+    return instance;
+}
+
+SprinterZxCapture::Identity SprinterZxCapture::IdentityOf(const std::string& modeName, bool paging7ffd)
+{
+    Identity identity;
+    const std::string lower = StringHelper::ToLower(modeName);
+    if (!paging7ffd)
+    {
+        identity.model = MM_SPECTRUM48;
+        identity.ramKb = 48;
+        identity.machineHint = "48k";
+        identity.timingHint = "48k";
+        identity.layout48 = true;
+        identity.bankCount = 3;
+    }
+    else if (lower.find("scorpion") != std::string::npos)
+    {
+        identity.model = MM_SCORP;
+        identity.ramKb = 256;
+        identity.machineHint = "scorpion256";
+        identity.timingHint = "128k";
+        identity.scorpion = true;
+        identity.bankCount = 16;
+    }
+    else if (lower.find("pentagon") != std::string::npos)
+    {
+        identity.model = MM_PENTAGON;
+        identity.ramKb = 128;
+        identity.machineHint = "pentagon128";
+        identity.timingHint = "pentagon";
+    }
+    return identity;
+}
+
+snapshot::MachineView SprinterZxCapture::Examine(EmulatorContext& context) const
+{
+    snapshot::MachineView view;
+    auto refuse = [&](std::string reason, std::string needs) {
+        view.available = false;
+        view.reason = std::move(reason);
+        view.needs = std::move(needs);
+        return view;
+    };
+
+    PortDecoder_Sprinter* decoder = DecoderOf(context);
+    SprinterMemory* memory = dynamic_cast<SprinterMemory*>(context.pMemory);
+    if (!decoder || !memory)
+        return refuse("no Sprinter to save", "model:SPRINTER");
+    const SprinterPldState& pld = decoder->GetPldState();
+    if (!ZxActive(pld))
+        return refuse(
+            "the Sprinter is not in a Spectrum (ZX) mode: it is at the DSS prompt or in the BIOS, where there is no Spectrum "
+            "memory to save. Start a ZX mode first (the BIOS menu: ESC at the boot prompt; or `spectrum p128.zx` from DSS)",
+            "zx_mode");
+    if (pld.cnf & 0x80)
+        return refuse("the running mode has the 512 KB paging (a Pentagon 512 mode): its memory is not a Spectrum 128K, and no snapshot "
+                      "view exists for it yet; start a 128K mode",
+                      "mode:128k");
+
+    const bool paging7ffd = (pld.cnf & 0x20) == 0;
+    const std::string modeName = DeviceState::SprinterZxModeBrief(&context, false).modeName;
+
+    view.p7FFD = pld.pn;
+    const Identity identity = IdentityOf(modeName, paging7ffd);
+    view.model = identity.model;
+    view.ramKb = identity.ramKb;
+    view.machineHint = identity.machineHint;
+    view.timingHint = identity.timingHint;
+    view.layout48 = identity.layout48;
+    if (identity.scorpion)
+        view.p1FFD = pld.sc;
+    std::vector<uint16_t> banks;
+    if (identity.layout48)
+        banks = {5, 2, 0};
+    else
+        for (uint16_t bank = 0; bank < identity.bankCount; bank++)
+            banks.push_back(bank);
+
+    for (uint16_t bank : banks)
+    {
+        const uint8_t cell = CellOf(bank);
+        const uint8_t page = pld.Cell(cell);
+        if (page == SprinterMemory::kPortTablePage || page == 0x41)
+            return refuse("the mode's page table gives Spectrum bank " + std::to_string(bank) + " (cell " + Hex2(cell) + ") page " +
+                              Hex2(page) + ", which is not RAM for programs: no snapshot view of this mode",
+                          "mode:page_table");
+        if (const uint8_t* bytes = memory->RAMPageAddress(page))
+            view.banks[bank] = bytes;
+    }
+    view.note = "Sprinter ZX mode '" + (modeName.empty() ? std::string("unknown") : modeName) +
+                "': Spectrum banks read through the PLD cell table (#F0-#FF)";
+    return view;
 }

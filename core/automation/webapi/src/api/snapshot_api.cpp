@@ -347,15 +347,59 @@ void EmulatorAPI::saveSnapshot(const HttpRequestPtr& req, std::function<void(con
         }
     }
     
-    bool success = emulator->SaveSnapshot(path);
+    const bool success = emulator->SaveSnapshot(path);
+    const snapshot::SaveResult& saved = emulator->LastSaveResult();
 
     Json::Value ret;
     ret["status"] = success ? "success" : "error";
-    ret["message"] = success ? "Snapshot saved successfully" : "Failed to save snapshot (check logs for details)";
+    ret["message"] = success ? "Snapshot saved successfully" : saved.text;
     ret["path"] = path;
+    if (!saved.format.empty())
+        ret["format"] = saved.format;
+    if (!saved.machine.empty())
+        ret["machine"] = saved.machine;
+    if (!success)
+    {
+        ret["reason"] = saved.reason;
+        if (!saved.needs.empty())
+            ret["needs"] = saved.needs;
+        // What the machine can be saved as now: the way out of a refusal (e.g. "save as .szx")
+        ret["formats"] = StateNodeToJson(emulator->SnapshotSaveFormats().ToStateNode());
+    }
+    if (!saved.warnings.empty())
+    {
+        ret["warnings"] = Json::arrayValue;
+        for (const std::string& warning : saved.warnings)
+            ret["warnings"].append(warning);
+    }
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/:id/snapshot/formats
+/// @brief Which snapshot formats this machine can be saved in right now, and why not
+void EmulatorAPI::getSnapshotFormats(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Json::Value ret = StateNodeToJson(emulator->SnapshotSaveFormats().ToStateNode());
+    ret["status"] = "success";
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
 }

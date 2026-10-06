@@ -283,6 +283,9 @@ struct SprinterZxBrief
     bool active = false;
     std::string text;
     std::string details;
+    /// The mode's name as the status line shows it, without a trailing '?': the launcher's own text in RAM ("Pentagon 128"),
+    /// else the best-matching mode file's name; empty outside the ZX mode
+    std::string modeName;
 };
 /// `details` false: the line only (a GUI tick that keeps the last tooltip)
 SprinterZxBrief SprinterZxModeBrief(EmulatorContext* context, bool details = true);

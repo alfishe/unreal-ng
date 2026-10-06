@@ -29,6 +29,7 @@
 #include "emulatorcontext.h"
 #include "emulator/notifications.h"
 #include "emulator/rzx/rzxsession.h"
+#include "loaders/snapshot/snapshotcapture.h"
 #include "loaders/snapshot/snapshotpipeline.h"
 #include "loaders/snapshot/snapshotreport.h"
 
@@ -132,6 +133,7 @@ protected:
     bool LoadSnapshotStaged(const std::function<bool(std::string& error)>& load, const std::string& openedPath);
     /// What the snapshot pipeline did with the last load (empty before the first one)
     snapshot::Report _lastSnapshotReport;
+    snapshot::SaveResult _lastSaveResult;
 
     // Control flow
     volatile bool _stopRequested = false;
@@ -493,7 +495,14 @@ public:
     };
     static void SetDefaultTimeTravelBackend(TimeTravelBackend backend);
     static TimeTravelBackend DefaultTimeTravelBackend();
+    /// Save the machine's snapshot view as .sna, .z80 or .szx (by the extension): pauses, waits until the machine has parked, writes.
+    /// False = refused or failed, and LastSaveResult() says why (the machine's state is untouched); nothing is written then
     bool SaveSnapshot(const std::string& path);
+    /// The outcome of the last SaveSnapshot: the format, what the file says it was made on, the refusal reason with a
+    /// machine-readable `needs`, warnings
+    const snapshot::SaveResult& LastSaveResult() const { return _lastSaveResult; }
+    /// Which snapshot formats the machine can be saved in right now and why not (reasons, what would work instead)
+    snapshot::SaveFormats SnapshotSaveFormats();
     /// A tape file (any TapeLoaderRegistry format) or a folder into the tape
     /// slot, at once; the deck stops and plays the new tape from its start
     bool LoadTape(const std::string& path, std::string* error = nullptr);

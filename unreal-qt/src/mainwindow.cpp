@@ -1,4 +1,6 @@
 #include "mainwindow.h"
+#include "emulator/savesnapshotchoices.h"
+#include <algorithm>
 
 #include "emulator/media/mediacontrol.h"
 #include "emulator/media/mediaformatregistry.h"
@@ -392,8 +394,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::insertMediumRequested, this, &MainWindow::insertMediumDialog);
     connect(_menuManager, &MenuManager::importAudioTapeRequested, this, &MainWindow::handleImportAudioTapeRequested);
     connect(_menuManager, &MenuManager::stopRzxRequested, this, &MainWindow::handleStopRzxRequested);
-    connect(_menuManager, &MenuManager::saveSnapshotRequested, this, &MainWindow::saveFileDialog);
-    connect(_menuManager, &MenuManager::saveSnapshotZ80Requested, this, &MainWindow::saveFileDialogZ80);
+    connect(_menuManager, &MenuManager::saveSnapshotRequested, this, &MainWindow::saveSnapshotDialog);
     connect(_menuManager, &MenuManager::saveDiskRequested, this, &MainWindow::saveDiskDialog);
     connect(_menuManager, &MenuManager::saveDiskAsTRDRequested, this, &MainWindow::saveDiskAsTRDDialog);
     connect(_menuManager, &MenuManager::saveDiskAsSCLRequested, this, &MainWindow::saveDiskAsSCLDialog);
@@ -2747,7 +2748,7 @@ void MainWindow::insertMediumDialog()
     _dropOverlay->showChooser(dropArea(), QFileInfo(filePath).fileName(), plan);
 }
 
-void MainWindow::saveFileDialog()
+void MainWindow::saveSnapshotDialog(const QString& preferred)
 {
     // Check if emulator is running
     if (!_emulator)
@@ -2756,13 +2757,25 @@ void MainWindow::saveFileDialog()
         return;
     }
 
-    // Show a file save dialog using the last save directory
-    // The format follows the extension; SZX keeps the most state (MEMPTR, the
-    // frame position, AY, Beta 128)
+    // The formats the machine can be saved in NOW: the dialog offers those only (a Pentagon 512 only .szx, a Sprinter at the DSS
+    // prompt none). SZX first: it keeps the most state (MEMPTR, the frame position, AY, Beta 128)
+    const std::vector<SaveSnapshotChoices::Choice> all = SaveSnapshotChoices::Build(_emulator->SnapshotSaveFormats());
+    const std::vector<SaveSnapshotChoices::Choice> offered = SaveSnapshotChoices::Offered(all, preferred);
+    if (offered.empty())
+    {
+        QMessageBox::warning(this, tr("Save Snapshot"),
+                             tr("This machine cannot be saved as a snapshot now.\n\n%1").arg(SaveSnapshotChoices::Refusals(all)));
+        return;
+    }
+    QStringList filters;
+    for (const SaveSnapshotChoices::Choice& choice : offered)
+        filters << choice.filter;
+
+    // The format follows the extension; the dialog starts with the first offered one
     QString selectedFilter;
-    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Snapshot"), _lastSaveDirectory + "/snapshot.szx",
-                                                    tr("SZX Snapshots (*.szx);;Z80 Snapshots (*.z80);;SNA Snapshots (*.sna)"),
-                                                    &selectedFilter);
+    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Snapshot"),
+                                                    _lastSaveDirectory + "/snapshot." + offered.front().extension,
+                                                    filters.join(";;"), &selectedFilter);
 
     if (!filePath.isEmpty())
     {
@@ -2770,12 +2783,13 @@ void MainWindow::saveFileDialog()
         const QString lower = filePath.toLower();
         if (!lower.endsWith(".szx") && !lower.endsWith(".z80") && !lower.endsWith(".sna"))
         {
-            if (selectedFilter.contains("*.z80"))
-                filePath += ".z80";
-            else if (selectedFilter.contains("*.sna"))
-                filePath += ".sna";
-            else
-                filePath += ".szx";
+            QString extension = offered.front().extension;
+            for (const SaveSnapshotChoices::Choice& choice : offered)
+            {
+                if (selectedFilter == choice.filter)
+                    extension = choice.extension;
+            }
+            filePath += "." + extension;
         }
 
         // Save directory to settings (separate from open directory)
@@ -2784,9 +2798,8 @@ void MainWindow::saveFileDialog()
         QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
         settings.setValue("LastSaveDirectory", _lastSaveDirectory);
 
-        // Save the snapshot
-        std::string file = filePath.toStdString();
-        bool result = _emulator->SaveSnapshot(file);
+        // Save the snapshot; a refusal (a format typed over the dialog's filter) says why
+        const bool result = _emulator->SaveSnapshot(filePath.toStdString());
 
         if (result)
         {
@@ -2795,50 +2808,9 @@ void MainWindow::saveFileDialog()
         else
         {
             qDebug() << "Failed to save snapshot:" << filePath;
-            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save snapshot to:\n%1").arg(filePath));
-        }
-    }
-}
-
-void MainWindow::saveFileDialogZ80()
-{
-    // Check if emulator is running
-    if (!_emulator)
-    {
-        qDebug() << "No emulator running, cannot save snapshot";
-        return;
-    }
-
-    // Show a file save dialog using the last save directory
-    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Z80 Snapshot"), _lastSaveDirectory + "/snapshot.z80",
-                                                    tr("Z80 Snapshots (*.z80);;All Files (*)"));
-
-    if (!filePath.isEmpty())
-    {
-        // Ensure .z80 extension
-        if (!filePath.toLower().endsWith(".z80"))
-        {
-            filePath += ".z80";
-        }
-
-        // Save directory to settings (separate from open directory)
-        QFileInfo fileInfo(filePath);
-        _lastSaveDirectory = fileInfo.absolutePath();
-        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
-        settings.setValue("LastSaveDirectory", _lastSaveDirectory);
-
-        // Save the snapshot - Emulator::SaveSnapshot() handles .z80 extension
-        std::string file = filePath.toStdString();
-        bool result = _emulator->SaveSnapshot(file);
-
-        if (result)
-        {
-            qDebug() << "Z80 Snapshot saved successfully:" << filePath;
-        }
-        else
-        {
-            qDebug() << "Failed to save Z80 snapshot:" << filePath;
-            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save Z80 snapshot to:\n%1").arg(filePath));
+            QMessageBox::warning(this, tr("Save Failed"),
+                                 tr("Could not save the snapshot to:\n%1\n\n%2")
+                                     .arg(filePath, QString::fromStdString(_emulator->LastSaveResult().reason)));
         }
     }
 }

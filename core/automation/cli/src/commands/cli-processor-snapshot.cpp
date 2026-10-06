@@ -53,6 +53,10 @@ void CLIProcessor::HandleSnapshot(const ClientSession& session, const std::vecto
     {
         HandleSnapshotInspect(session, emulator, args);
     }
+    else if (subcommand == "formats")
+    {
+        HandleSnapshotFormats(session, emulator);
+    }
     else
     {
         session.SendResponse(std::string("Error: Unknown subcommand '") + args[0] + "'" + NEWLINE +
@@ -255,6 +259,7 @@ void CLIProcessor::ShowSnapshotHelp(const ClientSession& session)
     ss << "  snapshot inspect <file> [--commit <name>]" << NEWLINE;
     ss << "                                 What loading the file would do here (its contents, who would commit, or" << NEWLINE;
     ss << "                                 why it is refused); nothing is written" << NEWLINE;
+    ss << "  snapshot formats               Which formats this machine can be saved in right now, and why not" << NEWLINE;
     ss << "  snapshot info                  Get current snapshot status and the last load's pipeline report" << NEWLINE;
     ss << NEWLINE;
 
@@ -292,17 +297,44 @@ void CLIProcessor::HandleSnapshotSave(const ClientSession& session,
         return;
     }
 
-    // Use SaveSnapshot method
-    bool success = emulator->SaveSnapshot(filepath);
+    // Use SaveSnapshot method; a refusal carries the reason and what would work
+    const bool success = emulator->SaveSnapshot(filepath);
+    const snapshot::SaveResult& saved = emulator->LastSaveResult();
 
     if (success)
     {
-        session.SendResponse(std::string("Snapshot saved: ") + filepath + NEWLINE);
+        std::string text = std::string("Snapshot saved: ") + filepath + " (" + saved.format + ", " + saved.machine + ")" + NEWLINE;
+        for (const std::string& warning : saved.warnings)
+            text += "  note: " + warning + NEWLINE;
+        session.SendResponse(text);
     }
     else
     {
-        session.SendResponse(std::string("Error: Failed to save snapshot: ") + filepath + NEWLINE);
+        std::string text = std::string("Error: ") + saved.text + NEWLINE;
+        if (!saved.needs.empty())
+            text += "  needs: " + saved.needs + NEWLINE;
+        text += std::string("Use 'snapshot formats' to see what this machine can be saved as.") + NEWLINE;
+        session.SendResponse(text);
     }
+}
+
+void CLIProcessor::HandleSnapshotFormats(const ClientSession& session, std::shared_ptr<Emulator> emulator)
+{
+    const snapshot::SaveFormats formats = emulator->SnapshotSaveFormats();
+    std::stringstream ss;
+    ss << "Snapshot formats for this machine" << NEWLINE;
+    ss << "  machine: " << (formats.machine.empty() ? "-" : formats.machine) << NEWLINE;
+    ss << "  view:    " << formats.view << NEWLINE;
+    for (const snapshot::FormatStatus& status : formats.formats)
+    {
+        ss << "  ." << snapshot::ToText(status.format) << ": " << (status.available ? "yes" : "no");
+        if (!status.available)
+            ss << " - " << status.reason << (status.needs.empty() ? "" : " [needs: " + status.needs + "]");
+        else if (!status.note.empty())
+            ss << " (" << status.note << ")";
+        ss << NEWLINE;
+    }
+    session.SendResponse(ss.str());
 }
 
 /// endregion </Snapshot Control Commands>
