@@ -7,6 +7,7 @@
 #include "codecs/masm/masmcodec.h"
 #include "codecs/sjasmplus/sjasmpluscodec.h"
 #include "codecs/tasm/tasmcodec.h"
+#include "codecs/xas/xascodec.h"
 #include "codecs/storm/stormcodec.h"
 #include "codecs/text/textcodec.h"
 #include "codecs/zeus/zeuscodec.h"
@@ -28,6 +29,7 @@ const CodecRegistry& CodecRegistry::Builtin()
         r.Add(std::make_unique<codecs::MasmCodec>());
         r.Add(std::make_unique<codecs::GensCodec>());
         r.Add(std::make_unique<codecs::ZeusCodec>());
+        r.Add(std::make_unique<codecs::XasCodec>());
         return r;
     }();
     return registry;

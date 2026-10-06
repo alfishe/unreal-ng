@@ -201,13 +201,6 @@ bool ZeusCodec::EncodeBody(const std::string& text, const std::string& version, 
     return true;
 }
 
-int ZeusCodec::LineNumber(const SourceLine& line)
-{
-    if (line.attrs.codec != "zeus" || line.attrs.bytes.size() < 2)
-        return -1;
-    return line.attrs.bytes[0] | (line.attrs.bytes[1] << 8);
-}
-
 std::vector<std::string> ZeusCodec::DetectVersions(std::span<const uint8_t> bytes)
 {
     const Walk w = WalkRecords(bytes);
@@ -261,6 +254,22 @@ int ZeusCodec::Detect(std::span<const uint8_t> bytes, const CatalogHints& hints)
     int score = w.lines.size() >= 3 ? 70 : 35;
     if (w.end == bytes.size())
         score += 20;
+    // What ZEUS's line entry writes: no control byte but a blank count, no token past the largest table, a line that
+    // fits the editor (the corpus: at most 25 bytes; music data whose #00 / #FF #FF happen to frame "lines" fails this)
+    constexpr size_t kLongest = 64;
+    for (const Record& r : w.lines)
+    {
+        bool typical = r.body.size() <= kLongest;
+        for (size_t i = 0; i < r.body.size() && typical; ++i)
+        {
+            if (r.body[i] == kBlanks && i + 1 < r.body.size())
+                ++i;
+            else
+                typical = r.body[i] >= 0x20 && r.body[i] < 0x80 + 103;
+        }
+        if (!typical)
+            return std::min(score, 15);
+    }
     // TR-DOS ports save type C (ZEUS v7.E: Z)
     if (hints.type != 0 && hints.type != 'C' && hints.type != 'Z')
         score = std::min(score, 30);
@@ -288,12 +297,11 @@ DecodeResult ZeusCodec::Decode(std::span<const uint8_t> bytes, const DecodeOptio
     {
         SourceLine line;
         line.text = DecodeBody(r.body, document.subversion);
-        line.attrs.codec = _info.id;
-        line.attrs.bytes = {static_cast<uint8_t>(r.number & 0xFF), static_cast<uint8_t>(r.number >> 8)};
+        line.number = r.number;
         std::vector<uint8_t> canonical;
         std::string error;
         if (!EncodeBody(line.text, document.subversion, canonical, error) || !std::equal(canonical.begin(), canonical.end(), r.body.begin(), r.body.end()))
-            line.attrs.bytes.insert(line.attrs.bytes.end(), r.body.begin(), r.body.end());
+            line.attrs = {_info.id, std::vector<uint8_t>(r.body.begin(), r.body.end())};
         document.lines.push_back(std::move(line));
     }
     document.attrs = {_info.id, std::vector<uint8_t>(bytes.begin() + static_cast<std::ptrdiff_t>(w.end), bytes.end())};
@@ -314,7 +322,7 @@ EncodeResult ZeusCodec::Encode(const SourceDocument& document, const EncodeOptio
     int previous = -1;
     for (const SourceLine& line : document.lines)
     {
-        const int n = LineNumber(line);
+        const int n = line.number;
         if (n <= previous || n >= kEndNumber)
             break;
         numbers.push_back(n);
@@ -340,9 +348,8 @@ EncodeResult ZeusCodec::Encode(const SourceDocument& document, const EncodeOptio
     for (size_t i = 0; i < document.lines.size(); ++i)
     {
         const SourceLine& line = document.lines[i];
-        const auto& a = line.attrs.bytes;
-        if (keep && line.attrs.codec == _info.id && a.size() > 2 && DecodeBody(std::span<const uint8_t>(a).subspan(2), version) == line.text)
-            body.assign(a.begin() + 2, a.end());
+        if (keep && line.attrs.codec == _info.id && !line.attrs.bytes.empty() && DecodeBody(line.attrs.bytes, version) == line.text)
+            body = line.attrs.bytes;
         else
         {
             std::string error;

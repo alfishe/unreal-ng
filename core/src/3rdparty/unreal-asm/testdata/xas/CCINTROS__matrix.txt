@@ -1,0 +1,333 @@
+        ORG   #8000
+chun8   EQU   #e000
+atrtab  EQU   #da00
+font    EQU   #db00
+fnttab  EQU   #de00
+frmbuf  EQU   #e000
+maskbuf EQU   #e040
+brigbuf EQU   #e080
+        ENT
+
+;INIT SECTION
+        XOR   A
+        OUT   (#fe),A
+        LD    L,A
+        LD    H,#5b
+scrn
+        DEC   HL
+        LD    (HL),A
+        BIT   6,H
+        JR    NZ,scrn
+        LD    L,A
+        LD    H,#83
+        LD    D,H
+        LD    E,1
+        LD    BC,#7d00
+        LD    (HL),L
+        LDIR
+
+        LD    D,font&h
+        LD    L,E
+        LD    H,#3d
+        PUSH  DE
+ifn0
+        LD    A,(HL)
+        SLA   A
+        OR    (HL)
+        LD    (DE),A
+        INC   HL
+        INC   DE
+        BIT   6,H
+        JR    Z,ifn0
+        POP   HL
+        LD    C,8
+        LD    E,#20
+tbfan
+        EX    DE,HL
+        LD    (HL),E
+        INC   H
+        LD    (HL),D
+        DEC   H
+        EX    DE,HL
+        ADD   HL,BC
+        INC   E
+        JR    NZ,tbfan
+        LD    C,L
+        LD    L,B
+lip1
+        LD    DE,cn8
+lip2
+        LD    H,chun8&h
+lip3
+        LD    A,(DE)
+        BIT   0,H
+        JR    Z,skp1
+        XOR   #10
+        INC   DE
+skp1
+        CP    L
+        JR    NC,skp2
+        PUSH  HL
+        SET   6,L
+        LD    A,C
+        OR    (HL)
+        LD    (HL),A
+        POP   HL
+skp2
+        INC   H
+        BIT   3,H
+        JR    Z,lip3
+        RLC   C
+        JR    NC,lip2
+        INC   L
+        BIT   5,L
+        JR    Z,lip1
+        LD    H,frmbuf&h
+llfai
+        LD    L,0
+        LD    A,#20
+        CALL  fill
+        CALL  filla
+        INC   H
+        JR    NZ,llfai
+        LD    H,atrtab&h
+        LD    A,4
+        CALL  lfill
+        LD    L,#5a
+        LD    A,#44
+        CALL  s_fill
+        INC   A
+        CALL  s_fill
+        CALL  s_fill
+;
+;END OF INIT SECTION
+;
+        LD    B,5
+loop
+        XOR   A
+        CALL  lgoza
+        CALL  frame
+        LD    A,#f8
+        CALL  lgoza
+        LD    B,150
+        CALL  frame
+
+        LD    HL,msg-1
+messa
+        INC   HL
+        LD    A,(HL)
+        CP    #20
+        JR    C,e_mess
+        LD    (cdsym+1),A
+        LD    (cdsym2+1),A
+        PUSH  HL
+        CALL  fade_on
+        LD    B,6
+lpcyr
+        PUSH  BC
+        CALL  prnmx
+        POP   BC
+        DJNZ  lpcyr
+        INC   B
+        CALL  frame
+        CALL  fade_off
+        POP   HL
+        JR    messa
+e_mess
+
+        CALL  frame
+        CALL  fade_on
+        LD    B,80
+frame
+        PUSH  BC
+        CALL  outfrm
+        POP   BC
+        DJNZ  frame
+        LD    HL,10072
+        PUSH  HL
+        EXX
+        POP   HL
+        RET
+fade_on
+        LD    HL,fadefrm
+        JR    fd_tr
+fade_off
+        LD    HL,subfrm
+fd_tr
+        LD    (fade_f+1),HL
+        RET
+sdfrm
+        LD    (sdram+1),DE
+        LD    B,0
+lsdfr
+        LD    A,R
+        ADD   A,LX
+        RRCA
+        LD    LX,A
+        SBC   A,HX
+        RRCA
+        LD    HX,A
+        JR    C,nosdv
+        PUSH  HL
+        LD    D,H
+        LD    E,L
+        DEC   E
+        LD    C,#17
+        LDIR
+sdram   CALL  0
+        LD    (DE),A
+        POP   HL
+nosdv
+        INC   H
+        JR    NZ,lsdfr
+        RET
+subfrm
+        AND   #7f
+        CP    #21
+        RET   NC
+        ADD   A,#40
+        RET
+fadefrm
+        LD    A,#20
+        RET
+subbrg
+        AND   1
+        INC   A
+        LD    C,A
+        LD    A,(DE)
+        SUB   C
+        CP    #40
+        RET   NC
+cmna    LD    A,#20;ADD/LD
+        RET
+lgoza
+        LD    (xrtu+1),A
+        LD    A,#3e
+        LD    (cmna),A
+        RET
+prnmx
+cdsym2  LD    HL,fnttab
+        LD    A,(HL)
+        INC   H
+        LD    H,(HL)
+        LD    L,A
+        LD    E,#17
+lpsh2
+        LD    C,4
+lpsh0
+        LD    D,frmbuf&h
+lpsh
+        RLC   (HL)
+        JR    C,ypsym
+        LD    A,#20
+        JR    yys
+ypsym
+cdsym   LD    A,0
+yys
+        LD    B,4
+lyu
+        LD    (DE),A
+        INC   D
+        DJNZ  lyu
+        JR    NZ,lpsh
+        DEC   E
+        DEC   C
+        JR    NZ,lpsh0
+        INC   L
+        BIT   7,E
+        JR    Z,lpsh2
+outfrm
+        LD    HL,frmbuf+1
+fade_f  LD    DE,subfrm
+        CALL  sdfrm
+        LD    HL,brigbuf+1
+        LD    DE,subbrg
+        CALL  sdfrm
+        LD    A,(cmna);ADD/LD
+xrtu    XOR   #f8
+        LD    (cmna),A
+        XOR   A
+        LD    B,#58
+        LD    C,A
+        LD    H,atrtab&h
+        EXX
+        LD    C,A
+        LD    L,#17
+        LD    A,(rmsc+1)
+        XOR   1
+        LD    (rmsc+1),A
+        ADD   A,frmbuf&h+2;E2/E3
+        LD    (msk+1),A
+        AND   1
+        ADD   A,#41;41/42
+        LD    B,A
+nlin
+        LD    H,frmbuf&h
+lin0
+        PUSH  HL
+        LD    L,(HL)
+        LD    H,fnttab&h
+        LD    A,(HL)
+rmsc    ADD   A,0
+        LD    E,A
+        INC   H
+        LD    D,(HL)
+        POP   HL
+        PUSH  HL
+        SET   7,L
+        LD    L,(HL)
+msk     LD    H,frmbuf&h
+        !ASSM 2
+        LD    A,(DE)
+        AND   (HL)
+        LD    (BC),A
+        INC   B
+        INC   B
+        INC   E
+        INC   E
+        INC   H
+        INC   H
+        !CONT
+        LD    A,(DE)
+        AND   (HL)
+        LD    (BC),A
+        LD    A,L
+        EXX
+        LD    L,A
+        LD    A,(HL)
+        LD    (BC),A
+        INC   BC
+        EXX
+        POP   HL
+        LD    A,#fc;-4
+        INC   C
+        JR    NZ,nps0
+        NEG;+4
+nps0
+        ADD   A,B
+        LD    B,A
+        INC   H
+        JR    NZ,lin0
+        DEC   L
+        JP    P,nlin
+        RET
+s_fill
+        LD    B,2
+        JR    lfill
+filla
+        LD    L,#80
+        LD    A,#5f
+fill
+        LD    B,#18
+lfill
+        LD    (HL),A
+        INC   L
+        DJNZ  lfill
+        INC   A
+        RET
+msg     DEFM  "CHAOS HAS YOU"
+cn8
+        DEFB  #1E,#1B,#1E,#1A,7,3,6,3
+        DEFB  #19,#1D,#18,#1C,1,5,0,4
+        DEFB  #1D,#19,#1E,#1A,5,1,6,2
+        DEFB  #17,#1B,#18,#1C,0,3,1,4

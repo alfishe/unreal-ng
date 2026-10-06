@@ -22,8 +22,9 @@ struct AttrBag
 
 struct SourceLine
 {
-    std::string text;    ///< UTF-8, exactly as the assembler shows it, without the line break
+    std::string text;    ///< UTF-8, exactly as the assembler shows it, without the line break (and without its number)
     AttrBag attrs;
+    int number = -1;     ///< the line's number in formats that number their lines (GENS, ZEUS); -1 = none
 };
 
 struct SourceDocument

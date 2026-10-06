@@ -53,16 +53,16 @@ phase; master only after the owner's review.
   - [ ] ZX-ASM `MAKE`, `~text~` with `LOADTAB`, `ENDA`
   - [ ] ALASM: a label `-` in column 0 (sources use it several times per file: an anonymous label?); research and convert
   - [ ] ALASM `DISPLAY` output differs from sjasmplus' (research-alasm-to-sjasmplus.md §7)
-- [ ] A6 more frontends / backends; research codecs xas, masm, gens3, zeus, ads
+- [x] A6 more frontends / backends; research codecs xas, masm, gens3, zeus, ads (2026-10-06, branch `unreal-asm-a6`)
   - [x] `pasmo` backend (2026-10-06, branch `unreal-asm-a6`): the oracle programs and the GS ROM equal through pasmo; `crosscheck.py` 0 differences against sjasmplus on the collection's disks ([research-pasmo-backend.md](research-pasmo-backend.md))
   - [x] `z88dk` (z80asm) backend over the writer shared with pasmo (2026-10-06): the oracle programs equal; `crosscheck.py --targets z88dk` 329 equal on the collection, z80asm's limits in [research-z88dk-backend.md](research-z88dk-backend.md) §3
   - [x] research of the XAS, MASM, GENS / Devpac and ZEUS formats (2026-10-06): every corpus file byte-exact with reference codecs, editors checked in the emulator; ADS is a disk utility whose sources are ZEUS beta 1.1 files; materials in the collection
   - [x] codec `masm`, versions 1.0 demo / 1.1 / 2.0 / 3.0 (2026-10-06): MASM 1.1's own source and typed files of every version byte-exact, canonical 100 %; testdata `masm/` ([research-masm.md](research-masm.md))
   - [x] codec `gens`, versions GENS1 / GENS2-4 (2026-10-06): five real sources and GENS3 / GENS4 saves byte-exact, the editor's compression reproduces every real and typed line; testdata `gens/` ([research-gens.md](research-gens.md))
-  - [ ] GENS tape files: P blocks and T's multi-block include files need a tape (TAP / TZX) container
   - [x] codec `zeus`, versions 1983 / GG / PHT (2026-10-06): ADS 2.0 sources (the "ads" format), ZEUS v7.E help, ZXDB Zeus Routines and a typed probe byte-exact, tokenizer 4062 / 4062 lines; testdata `zeus/` ([research-zeus.md](research-zeus.md))
-  - [ ] codec `xas` (4.18 … 9.10)
+  - [x] codec `xas`, versions 4.18 / 5.05 / 7.43 / 7.43c / 9.07m / 9.10 (2026-10-06): all 18 XAS sources found byte-exact with their sector slack, packer 4794 / 4913 lines (the rest XASCII's lower case); `CatalogHints::slack`, hobeta / TRD readers accept a length beyond the sectors; line numbers of GENS / ZEUS in `SourceLine::number`; testdata `xas/` ([research-xas.md](research-xas.md))
 - [ ] A7 emulator adapters and surfaces, Qt disk browser, recipe
+  - [ ] a tape (TAP / TZX) container: GENS P blocks and T's multi-block include files, ZEUS tape saves
 - [ ] A8 symbols on the library (symbols S1-S5)
 - [ ] A9 benchmarks, user docs
 - [ ] P2: memory bridge B0-B6 ([memory-bridge.md](memory-bridge.md)), design only for now

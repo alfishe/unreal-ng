@@ -9,9 +9,9 @@
 //   INCBIN), "pht" (ZEUS 1.1 beta of Professional Hackers Tools and ZEUS v7.E: DB DM DS DW, INCLUDE, PLACE, and '_'
 //   and other symbols join words)
 //
-// A line's text is what ZEUS lists after the number and its blank, other bytes in the Spectrum character set. A line's
-// attributes hold its number and, when ZEUS's tokenizer would not give the stored bytes for the text, those bytes; the
-// document's attributes the bytes after #FF #FF. Decoding then encoding gives the input bytes.
+// A line's text is what ZEUS lists after the number and its blank, other bytes in the Spectrum character set; its
+// number is SourceLine::number. A line's attributes hold the stored bytes when ZEUS's tokenizer would not give them for
+// the text; the document's attributes the bytes after #FF #FF. Decoding then encoding gives the input bytes.
 
 #include "unrealasm/codec.h"
 
@@ -31,8 +31,6 @@ public:
     static std::string DecodeBody(std::span<const uint8_t> body, const std::string& version);
     /// Text -> line bytes by ZEUS's line entry (research-zeus.md §4); false with the reason when the text cannot be held
     static bool EncodeBody(const std::string& text, const std::string& version, std::vector<uint8_t>& body, std::string& error);
-    /// The line number a decoded line carries (-1 when it has none)
-    static int LineNumber(const SourceLine& line);
 
 private:
     CodecInfo _info;

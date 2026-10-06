@@ -545,7 +545,7 @@ int main(int argc, char** argv)
         {
             const EncodeResult exact = codec->Encode(decoded.document, {});
             // Per line: the line alone, once with its kept bytes and once without (file-level data kept in both)
-            size_t same = 0;
+            size_t canonical = 0;
             SourceDocument one = decoded.document;
             for (const SourceLine& line : decoded.document.lines)
             {
@@ -553,18 +553,22 @@ int main(int argc, char** argv)
                 const EncodeResult kept = codec->Encode(one, {});
                 one.lines[0].attrs = {};
                 const bool equal = codec->Encode(one, {}).bytes == kept.bytes;
-                same += equal;
+                canonical += equal;
                 if (!equal && args.show)
                     std::cout << "  canonical differs: " << line.text << "\n";
             }
             const SourceDocument& plain = decoded.document;
+            // A format that reads the sector slack (XAS) writes it back too
+            std::vector<uint8_t> sectors = bytes;
+            sectors.insert(sectors.end(), hints.slack.begin(), hints.slack.end());
+            const bool same = exact.bytes == bytes || exact.bytes == sectors;
             std::string range;
             for (const std::string& v : decoded.subversions)
                 range += (range.empty() ? "" : ",") + v;
             std::cout << args.file << (args.inner.empty() ? "" : ":" + args.inner) << "\t" << codec->Info().id << "\t"
                       << decoded.document.subversion << "\t[" << range << "]\t" << decoded.document.lines.size() << " lines\t"
-                      << (exact.bytes == bytes ? "byte-exact" : "DIFFERS") << "\tcanonical " << same << "/" << plain.lines.size() << "\n";
-            return decoded.ok && exact.bytes == bytes ? 0 : 1;
+                      << (same ? "byte-exact" : "DIFFERS") << "\tcanonical " << canonical << "/" << plain.lines.size() << "\n";
+            return decoded.ok && same ? 0 : 1;
         }
         std::string text = decoded.document.Text();
         if (!decoded.document.lines.empty())

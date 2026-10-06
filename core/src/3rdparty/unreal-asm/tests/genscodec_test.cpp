@@ -66,7 +66,7 @@ std::string Listing(const SourceDocument& document)
     char number[8];
     for (const SourceLine& line : document.lines)
     {
-        std::snprintf(number, sizeof(number), "%5d ", codecs::GensCodec::LineNumber(line));
+        std::snprintf(number, sizeof(number), "%5d ", line.number);
         out += number + line.text + "\n";
     }
     return out;
@@ -99,11 +99,11 @@ TEST(GensCodec_Test, CompressionReproducesTheStoredLines)
             continue;
         const DecodeResult decoded = codec.Decode(Load(sample).data, {});
         for (const SourceLine& line : decoded.document.lines)
-            EXPECT_EQ(line.attrs.bytes.size(), 2u) << sample.file << ": " << line.text;   // the number only
+            EXPECT_TRUE(line.attrs.Empty()) << sample.file << ": " << line.text;   // no stored bytes kept
         // The text alone (no attributes) encodes to the same bytes
         SourceDocument plain = decoded.document;
         for (SourceLine& line : plain.lines)
-            line.attrs.bytes.resize(2);
+            line.attrs = {};
         plain.attrs = {};
         EXPECT_EQ(codec.Encode(plain, {}).bytes, Load(sample).data) << sample.file;
     }
@@ -144,6 +144,11 @@ TEST(GensCodec_Test, Gens1EndMarkerAndRenumbering)
     EXPECT_TRUE(fromText.ok);
     EXPECT_EQ(fromText.bytes, (std::vector<uint8_t>{10, 0, 0x09, 'O', 'R', 'G', 0x09, '#', '8', '0', '0', '0', 0x0D,
                                                     20, 0, 'L', '1', 0x09, 'J', 'R', 0x09, 'L', '1', 0x0D}));
+    // numbers another numbered format carried (a ZEUS source) are kept
+    SourceDocument numbered = SourceDocument::FromText(" NOP\n RET");
+    numbered.lines[0].number = 5;
+    numbered.lines[1].number = 7;
+    EXPECT_EQ(codec.Encode(numbered, {}).bytes, (std::vector<uint8_t>{5, 0, 0x09, 'N', 'O', 'P', 0x0D, 7, 0, 0x09, 'R', 'E', 'T', 0x0D}));
 }
 
 TEST(GensCodec_Test, Detection)

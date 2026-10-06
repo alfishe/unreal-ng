@@ -1,5 +1,7 @@
 #include "unrealasm/containers.h"
 
+#include <algorithm>
+
 namespace unrealasm::containers
 {
 namespace
@@ -16,6 +18,7 @@ CatalogHints TrdosFile::Hints() const
     hints.length = length;
     hints.name = TrimmedName();
     hints.extension = std::string("$") + type;
+    hints.slack = tail;
     return hints;
 }
 
@@ -54,14 +57,11 @@ bool ReadHobeta(std::span<const uint8_t> bytes, TrdosFile& out, std::string& err
     out.start = static_cast<uint16_t>(bytes[9] | (bytes[10] << 8));
     out.length = static_cast<uint16_t>(bytes[11] | (bytes[12] << 8));
     out.sectors = bytes[14];
+    // A length field larger than the body is kept as it is (XAS does not use the field: 8018 on a 15-sector file)
     const std::span<const uint8_t> body = bytes.subspan(kHobetaHeader);
-    if (body.size() < out.length)
-    {
-        error = "hobeta body shorter than its length field";
-        return false;
-    }
-    out.data.assign(body.begin(), body.begin() + out.length);
-    out.tail.assign(body.begin() + out.length, body.end());
+    const size_t length = std::min<size_t>(out.length, body.size());
+    out.data.assign(body.begin(), body.begin() + static_cast<std::ptrdiff_t>(length));
+    out.tail.assign(body.begin() + static_cast<std::ptrdiff_t>(length), body.end());
     return true;
 }
 
@@ -110,13 +110,14 @@ bool ReadTrd(std::span<const uint8_t> image, std::vector<TrdosFile>& out, std::s
         file.sectors = entry[13];
         const size_t offset = (static_cast<size_t>(entry[15]) * 16 + entry[14]) * kSector;
         const size_t size = static_cast<size_t>(file.sectors) * kSector;
-        if (offset + size > image.size() || file.length > size)
+        if (offset + size > image.size())
         {
             error = "catalog entry " + file.TrimmedName() + " points outside the image";
             return false;
         }
-        file.data.assign(image.begin() + offset, image.begin() + offset + file.length);
-        file.tail.assign(image.begin() + offset + file.length, image.begin() + offset + size);
+        const size_t length = std::min<size_t>(file.length, size);   // a length beyond the sectors: as in ReadHobeta
+        file.data.assign(image.begin() + static_cast<std::ptrdiff_t>(offset), image.begin() + static_cast<std::ptrdiff_t>(offset + length));
+        file.tail.assign(image.begin() + static_cast<std::ptrdiff_t>(offset + length), image.begin() + static_cast<std::ptrdiff_t>(offset + size));
         out.push_back(std::move(file));
     }
     return true;

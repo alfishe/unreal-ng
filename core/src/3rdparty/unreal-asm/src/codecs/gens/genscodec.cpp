@@ -132,13 +132,6 @@ std::string GensCodec::Expand(std::span<const uint8_t> text)
     return out;
 }
 
-int GensCodec::LineNumber(const SourceLine& line)
-{
-    if (line.attrs.codec != "gens" || line.attrs.bytes.size() < 2)
-        return 0;
-    return line.attrs.bytes[0] | (line.attrs.bytes[1] << 8);
-}
-
 int GensCodec::Detect(std::span<const uint8_t> bytes, const CatalogHints& hints) const
 {
     const Walk w = WalkRecords(bytes);
@@ -180,12 +173,11 @@ DecodeResult GensCodec::Decode(std::span<const uint8_t> bytes, const DecodeOptio
     {
         SourceLine line;
         line.text = Expand(r.text);
-        line.attrs.codec = _info.id;
-        line.attrs.bytes = {static_cast<uint8_t>(r.number & 0xFF), static_cast<uint8_t>(r.number >> 8)};
+        line.number = r.number;
         std::vector<uint8_t> canonical;
         std::string error;
         if (!Canonical(line.text, document.subversion, canonical, error) || !std::equal(canonical.begin(), canonical.end(), r.text.begin(), r.text.end()))
-            line.attrs.bytes.insert(line.attrs.bytes.end(), r.text.begin(), r.text.end());
+            line.attrs = {_info.id, std::vector<uint8_t>(r.text.begin(), r.text.end())};
         document.lines.push_back(std::move(line));
     }
     // File attributes: 1 when the end marker was there, then the bytes after the records
@@ -209,7 +201,7 @@ EncodeResult GensCodec::Encode(const SourceDocument& document, const EncodeOptio
     int previous = 0;
     for (const SourceLine& line : document.lines)
     {
-        const int n = LineNumber(line);
+        const int n = line.number;
         if (n <= previous || n > kMaxNumber)
             break;
         numbers.push_back(n);
@@ -235,9 +227,8 @@ EncodeResult GensCodec::Encode(const SourceDocument& document, const EncodeOptio
     for (size_t i = 0; i < document.lines.size(); ++i)
     {
         const SourceLine& line = document.lines[i];
-        const auto& a = line.attrs.bytes;
-        if (keep && line.attrs.codec == _info.id && a.size() > 2 && Expand(std::span<const uint8_t>(a).subspan(2)) == line.text)
-            body.assign(a.begin() + 2, a.end());
+        if (keep && line.attrs.codec == _info.id && !line.attrs.bytes.empty() && Expand(line.attrs.bytes) == line.text)
+            body = line.attrs.bytes;
         else
         {
             std::string error;

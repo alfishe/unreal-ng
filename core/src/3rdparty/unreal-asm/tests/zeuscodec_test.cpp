@@ -69,7 +69,7 @@ std::string Listing(const SourceDocument& document)
     char number[8];
     for (const SourceLine& line : document.lines)
     {
-        std::snprintf(number, sizeof(number), "%05d ", codecs::ZeusCodec::LineNumber(line));
+        std::snprintf(number, sizeof(number), "%05d ", line.number);
         out += number + line.text + "\n";
     }
     return out;
@@ -109,7 +109,7 @@ TEST(ZeusCodec_Test, TokenizerReproducesTheStoredLines)
         const DecodeResult decoded = codec.Decode(Load(sample).data, {});
         size_t misses = 0;
         for (const SourceLine& line : decoded.document.lines)
-            misses += line.attrs.bytes.size() != 2;   // the number only: the tokenizer gives the stored bytes
+            misses += !line.attrs.Empty();   // no stored bytes kept: the tokenizer gives them
         EXPECT_EQ(misses, 0u) << sample.file;
     }
 }
@@ -157,4 +157,7 @@ TEST(ZeusCodec_Test, Detection)
         ASSERT_NE(detected.chosen, nullptr) << sample.file << ": " << detected.reason;
         EXPECT_EQ(detected.chosen->Info().id, "zeus") << sample.file;
     }
+    // music data whose bytes happen to frame increasing "lines" up to an #FF #FF: control bytes give it away
+    const std::vector<uint8_t> music{0x01, 0x00, 0x05, 0x10, 0x00, 0x02, 0x00, 0x07, 0x00, 0x03, 0x00, 0x81, 0x00, 0xFF, 0xFF};
+    EXPECT_LE(codecs::ZeusCodec().Detect(music, {}), 15);
 }
