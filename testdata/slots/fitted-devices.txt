@@ -372,9 +372,9 @@ port FFFD C002/C000 AY / TurboSound register select (chip select)
 ttd 1:72 2:34 4:107 7:20 35:52 56:22 notRecorded 0
 == sprinter
 model 19
-mixer [Beeper] [AY] [Covox-Blaster]
+mixer [Beeper] [AY] [NeoGS] [NeoGS MP3] [Covox-Blaster]
 turbosound 1 ay
-gs none
+gs NeoGS
 covox none
 network.card 0 comport 0
 port 0010 00FC/0010 Z84C15 CTC channels 0-3 (on-chip)
@@ -382,6 +382,7 @@ port 0018 00FC/0018 Z84C15 SIO A / B data and control: AT keyboard, serial mouse
 port 001C 00FC/001C Z84C15 PIO A / B (on-chip)
 port 001F 0087/0007 WD1793 #1F / #3F / #5F / #7F, Beta #FF (codes #10-#15)
 port 0024 00A7/0024 CNF / SYS: port map, clean rules, turbo, system RAM (code #C6)
+port 0033 FFFF/0033 Registered peripheral device
 port 003C 00BF/003C OUT #3C / #7C: system ROM out of / into window 0 (fixed decode)
 port 0050 00E0/0040 IDE task file (codes #20-#29)
 port 005C 00FF/005C OUT #5C: ROM_RG while the system ROM is in (fixed decode)
@@ -389,6 +390,8 @@ port 007B 007F/007B IN #FB / #7B: fast RAM in window 0 on / off (fixed decode)
 port 0082 00E7/0082 Window 0 page (code #E8)
 port 0089 00E7/0081 PORT_Y / RGADR: graphics row (code #C4)
 port 00A2 00E7/00A2 Window 1 page (code #E9)
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
 port 00BD 00E7/00A5 #xxBD group: density #01BD / #21BD, CMOS #DFBD / #BFBD / #FFBD, ISA #9FBD, frame #40BD / #60BD (codes #16-#1E, #2C, #2D)
 port 00C1 00E7/00C1 RGMOD: mode table page (code #C5)
 port 00C2 00E7/00C2 Window 2 page (code #EA)
@@ -406,7 +409,7 @@ port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis
 port FFDF 023F/021F Kempston mouse Y axis
 port FFFD C002/C000 AY / TurboSound register select (chip select)
-ttd 0:77 1:64 2:34 7:20 17:70 18:52 20:39 23:14 25:142 28:42 29:93 30:32 31:39 32:42 33:16 35:52 45:var 56:22 notRecorded 0
+ttd 0:77 1:64 2:34 7:20 12:138 17:70 18:52 20:39 23:14 25:142 28:42 29:93 30:32 31:39 32:42 33:16 35:52 45:var 56:22 notRecorded 0
 == ts-conf
 model 4
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]

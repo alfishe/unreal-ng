@@ -33,6 +33,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/models/portdecoder_atm3.h"
 #include "_helpers/zcsdtesthelper.h"
@@ -72,6 +73,10 @@ protected:
         }
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
+        // The shipped ts-conf config carries a Z-Controller card (wc-zifi.img, 2026-10-05): these seeks are about the
+        // CPU and the journals, not the SD card, so the slot is left empty
+        if (_context->pMediaManager)
+            _context->pMediaManager->Eject("sd.zc");
         _v1 = _context->pTimeTravelManager;
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);

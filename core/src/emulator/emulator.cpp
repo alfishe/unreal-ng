@@ -1810,7 +1810,7 @@ bool Emulator::ApplySnapshotData(const std::vector<uint8_t>& data, const std::st
         szx::Report report;
         const bool committed = decision.action == snapshot::Decision::Action::Take
                                    ? decision.Commit(image, *_context, _lastSnapshotReport)
-                                   : LoaderSZX::Commit(_context, stage, report, error);
+                                   : LoaderSZX::CommitImage(_context, image, stage, report, error);
         if (!committed && error.empty())
             error = _lastSnapshotReport.reason;
         LoaderSZX::AppendReport(report, _lastSnapshotReport);
