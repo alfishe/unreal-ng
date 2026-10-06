@@ -9,7 +9,8 @@ surface's own documentation links here.
 
 Design: [ZX-bus slots architecture.md](../inprogress/2026-10-03-zx-bus-slots/architecture.md); the compatibility
 tables: [compatibility-matrix.md](../inprogress/2026-10-03-zx-bus-slots/compatibility-matrix.md); step-by-step
-automation: [.recipe/machines/slots.md](../../.recipe/machines/slots.md).
+automation: [.recipe/machines/slots.md](../../.recipe/machines/slots.md). The Sprinter (AY socket and ISA slots, an
+example for every card it takes): [sprinter-slots.md](sprinter-slots.md).
 
 These slots are not the **media** slots of [media.md](media.md) (floppy drives, SD sockets): a card can bring media
 slots with it (the NeoGS brings `sd.ngs`).

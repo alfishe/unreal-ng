@@ -39,8 +39,8 @@ population refuses to load on another).
 - At create: WebAPI `{"model":"SPRINTER","sprinter":{"isa_slot1":"none","isa_slot2":"ne2000"}}`, CLI
   `create SPRINTER --isa-slot2 none`, MCP `emulator_manage action=create model=SPRINTER sprinter_isa_slot2=none`.
 - Built kinds: `ZXBUS` (the adapter; the GS behind it is a slot card in `[SLOTS]`: `isa.1 = neogs` | `gs` | `gs-lw`,
-  `isa.1.adapter = sprinter-isa-zxbus`, `isa.1.fit = unrealistic` - the legacy `[SOUND] GSType` still works; none
-  as shipped), `NE2000`,
+  `isa.1.adapter = sprinter-isa-zxbus`, `isa.1.fit = unrealistic` - the NeoGS as shipped; the legacy
+  `[SOUND] GSType` still works; user guide with every card: [docs/features/sprinter-slots.md](../../docs/features/sprinter-slots.md)), `NE2000`,
   `SPRINTERESP`, `MODEM`, `DUAL16552`. `Slot1=NONE` builds no GS at all (the machine has no ZX-bus then); a second
   `ZXBUS` adapter has an empty ZX-bus (one GS per machine). A kind this build does not have yet is not fitted: the slot report says why (`not_fitted`), the machine starts.
 
@@ -164,9 +164,9 @@ line low -> PB0, interrupts the CPU, N acknowledged".
 
 ## The General Sound / NeoGS behind the ZX-bus adapter (verified 2026-10-04)
 
-The shipped Sprinter config fits no GS (owner decision 2026-10-04). For this walkthrough add one to
-`configs/sprinter/unreal.ini`, `[SLOTS]`: `isa.1 = neogs`, `isa.1.adapter = sprinter-isa-zxbus`,
-`isa.1.fit = unrealistic` (`gs` instead of `neogs` for the classic card).
+The shipped Sprinter config fits the NeoGS behind the adapter (`configs/sprinter/unreal.ini`, `[SLOTS]`:
+`isa.1 = neogs`, `isa.1.adapter = sprinter-isa-zxbus`, `isa.1.fit = unrealistic`; `gs` instead of `neogs` for the
+classic card, no `isa.1` lines for none).
 
 ISA I/O `#xxB3` / `#xxBB` / `#xx33` of slot 1 are the GS ports (data, command / status, control): a program maps
 page `#D4` into window 3 (`#1FFD` <- `#11`, `OUT (#E2),#D4`, `#9FBD` <- `#00`) and reads / writes `#C0B3` / `#C0BB` /

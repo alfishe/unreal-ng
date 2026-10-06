@@ -17,7 +17,8 @@ personality is swapped by a slot replace that restarts the machine
 The legacy `GSType` key still works in an INI without `[SLOTS]`: it is
 translated into a slot card at creation (a deprecation line in the log).
 The shipped clone configs under `data/configs/` fit the NeoGS (`neogs` in `[SLOTS]`); the 48K / 128K / +2 / +2A /
-+3, Profi (v5, v3) and Sprinter configs fit no GS since 2026-10-04 (owner decision), a user adds one in `[SLOTS]`. Classic-card
++3 and Profi (v5, v3) configs fit no GS since 2026-10-04 (owner decision), a user adds one in `[SLOTS]`; the Sprinter
+fits its NeoGS behind the ISA ZX-bus adapter (`isa.1`, [docs/features/sprinter-slots.md](../../docs/features/sprinter-slots.md)). Classic-card
 firmware `[ROM] GS=` defaults to `rom/gs105a.rom` (`gs104.rom` also ships);
 `bootGS.rom` and `rom/neogs/` hold the NeoGS flash image. Other keys:
 `GSVol` (0-8192 ini scale, shipped 8000), `GSReset=1` makes a ZX reset

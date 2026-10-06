@@ -351,14 +351,14 @@ TEST_F(Config_Test, NeoGSMp3DecoderDefaultsToSoftware)
 namespace
 {
 /// The shipped configs without a General Sound card. Owner decision 2026-10-04: the standard Sinclair models (48K,
-/// 128K, +2, +2A, +3), the Profi (v5, v3) and the Sprinter ship without the NeoGS / GS card - on real hardware none
-/// of them takes a ZX-bus card without an adapter (the Sinclair edge has no IORQGE, the Profi bus has no known
-/// adapter, the Sprinter needs an ISA ZX-bus adapter), so the card was fitted only as `fit = unrealistic`. A user
-/// still adds one in [SLOTS]. Every other shipped config keeps its NeoGS.
+/// 128K, +2, +2A, +3) and the Profi (v5, v3) ship without the NeoGS / GS card - on real hardware none of them takes
+/// a ZX-bus card without an adapter (the Sinclair edge has no IORQGE, the Profi bus has no known adapter), so the
+/// card was fitted only as `fit = unrealistic`. A user still adds one in [SLOTS]. Every other shipped config keeps
+/// its NeoGS (the Sprinter's sits behind its ISA ZX-bus adapter, owner decision 2026-10-06).
 bool ShipsWithoutGeneralSound(const std::string& folder)
 {
     static const char* const kFolders[] = {"spectrum48", "spectrum128", "spectrum2", "spectrum2a",
-                                           "spectrum3",  "profi",       "profi3",    "sprinter"};
+                                           "spectrum3",  "profi",       "profi3"};
     for (const char* name : kFolders)
     {
         if (folder == name)
@@ -370,7 +370,7 @@ bool ShipsWithoutGeneralSound(const std::string& folder)
 
 TEST_F(Config_Test, ShippedConfigsFitNeoGSExceptTheMachinesShippedWithout)
 {
-    // Every shipped model fits the NeoGS card, except the eight shipped without a GS (ShipsWithoutGeneralSound:
+    // Every shipped model fits the NeoGS card, except the seven shipped without a GS (ShipsWithoutGeneralSound:
     // owner decision 2026-10-04), which fit none. (The runner leaves GS out unless a scope keeps it)
     SoundCardScope gs(TestSound::GeneralSound);
     size_t checked = 0;
@@ -389,13 +389,13 @@ TEST_F(Config_Test, ShippedConfigsFitNeoGSExceptTheMachinesShippedWithout)
         without += none ? 1 : 0;
     }
     EXPECT_GE(checked, 14u);
-    EXPECT_EQ(without, 8u) << "every machine of the owner decision has a shipped config";
+    EXPECT_EQ(without, 7u) << "every machine of the owner decision has a shipped config";
 }
 
 TEST_F(Config_Test, ShippedConfigsFitTheirGeneralSoundCard)
 {
     // Each shipped config as shipped: the ones with a NeoGS name it in [SLOTS], the parsed config selects NeoGS, and
-    // a SoundManager built from it fits the card under the mixer name "NeoGS" with its MP3 source. The eight shipped
+    // a SoundManager built from it fits the card under the mixer name "NeoGS" with its MP3 source. The seven shipped
     // without a GS (ShipsWithoutGeneralSound, owner decision 2026-10-04) name no GS card in [SLOTS] and the
     // SoundManager fits no GS source at all. (ZX-bus slots SL-4 step 7: the card is a [SLOTS] entry, no longer
     // [SOUND] GSType=, so the copy is the shipped file)
