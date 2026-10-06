@@ -120,6 +120,7 @@ protected:
     blip_t* _blipL = nullptr;
     blip_t* _blipR = nullptr;
     bool _synthesisSuppressed = false;
+    bool _phaseAlignPending = false;  // the blip stream left the mixer's sample grid (followSamplePhase)
 
     // Per-channel DAC state
     uint8_t _dacValue[4] = {0x80, 0x80, 0x80, 0x80};  // Start at midpoint (silence)
@@ -180,6 +181,12 @@ public:
     // Frame lifecycle
     void reset();
     void handleFrameStart();
+    /// The mixer's frame-start sample phase (SoundManager::handleFrameStart, before handleFrameStart): the Covox reads
+    /// the mixer's count from its blip stream, so a frame that rendered more (a host speed multiplier) left a backlog
+    /// behind - the output ran late by it for good - and a synthesis gap restarted the stream off the mixer's grid.
+    /// After either, the stream drops the backlog and takes the mixer's sample position (Beeper::followSamplePhase,
+    /// the same rule); at 1x nothing is touched
+    void followSamplePhase(uint64_t phase);
 
     /// Turbo mode: keep DAC register / level tracking, skip blip deltas (see Beeper)
     void setSynthesisSuppressed(bool suppressed);

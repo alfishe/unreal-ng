@@ -2,8 +2,13 @@
 #include "pch.h"
 #include <optional>
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <string>
 #include <memory>
 #include <vector>
 
@@ -12,7 +17,15 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/scratchfolder.h"
 #include "_helpers/soundcardscope.h"
+#include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
+#include "debugger/analyzers/analyzermanager.h"
+#include "debugger/analyzers/audiocapture/audiocaptureanalyzer.h"
+#include "debugger/debugmanager.h"
+#include "emulator/ports/portdecoder.h"
+#ifdef UNREALNG_HAVE_OPL4
+#include "emulator/sound/chips/soundchip_moonsound.h"
+#endif
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -759,3 +772,231 @@ TEST_F(SoundManagerHostOutput_Test, ReconcileDropsOnlyStaleHolds)
     EXPECT_EQ(_sink.calls, 1u);
     EXPECT_GT(_sink.nonSilentCalls, 0u);
 }
+
+/// region <Device output position across a host speed multiplier>
+
+// The mixer's frame has the base frame's samples at every host speed (SoundManager::handleFrameEnd: the excess of a
+// faster frame is dropped knowingly). A device that renders a frame's time into its own stream must come back to that
+// frame grid at 1x: the same count as the mixer (the beeper reads its own count), and no backlog left in its stream
+// (the Covox / SounDrive, the MoonSound read the mixer's count from a stream that a faster frame filled with more).
+// Content check: a marker written at a T-state of a frame lands at the same sample of that frame's output before and
+// after the event.
+namespace devicemarker
+{
+
+enum class Event
+{
+    HostSpeed,    ///< x2 for four frames, back to x1
+    HostSpeedX4,  ///< x4 for three frames, back to x1
+    SoundOff      ///< the sound feature off for four frames, back on
+};
+
+/// A Pentagon with its [SLOTS] replaced; the audio capture analyzer on; the CPU parked in DI; HALT
+class MarkerMachine
+{
+public:
+    MarkerMachine(const std::string& slots, TestSound devices) : _scope(devices)
+    {
+        const std::filesystem::path source = TestPathHelper::FindProjectRoot() / "data/configs/pentagon128k/unreal.ini";
+        std::ifstream in(source, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const size_t shipped = text.find("\n[SLOTS]");
+        if (shipped != std::string::npos)
+        {
+            const size_t next = text.find("\n[", shipped + 1);
+            text.erase(shipped, next == std::string::npos ? std::string::npos : next - shipped);
+        }
+        text += "\n[SLOTS]\n" + slots + "\n";
+        _path = TestPathHelper::GetUniqueTestScratchPath("devicemarker-pentagon.ini");
+        std::ofstream out(_path, std::ios::binary);
+        out << text;
+        out.close();
+        _emulator = std::make_unique<Emulator>(LoggerLevel::LogError);
+        _emulator->SetCustomConfigPath(_path.string());
+        _ok = _emulator->Init();
+        if (_ok)
+        {
+            AnalyzerManager* analyzers = Context()->pDebugManager->GetAnalyzerManager();
+            analyzers->activate("audiocapture");
+            _capture = analyzers->getAnalyzer<AudioCaptureAnalyzer>("audiocapture");
+            Z80* z80 = Context()->pCore->GetZ80();
+            z80->DirectWrite(0x8000, 0xF3);
+            z80->DirectWrite(0x8001, 0x76);
+            z80->pc = 0x8000;
+        }
+    }
+    ~MarkerMachine()
+    {
+        _emulator->Release();
+        std::error_code ignored;
+        std::filesystem::remove(_path, ignored);
+    }
+
+    bool Ok() const { return _ok && _capture != nullptr; }
+    Emulator& Machine() { return *_emulator; }
+    EmulatorContext* Context() const { return _emulator->GetContext(); }
+
+    void Out(uint16_t port, uint8_t value)
+    {
+        Context()->pCore->GetZ80()->m1_pc = 0x8000;
+        Context()->pPortDecoder->WriteCycle(port, value, 0x8000);
+    }
+
+    /// One frame; with `check`, the beeper delivered the mixer's count
+    void Frame(bool check, const std::string& where)
+    {
+        Machine().RunFrame(true);
+        if (check)
+            EXPECT_EQ(size_t(Context()->pSoundManager->getBeeper().getLastSamplesRead()),
+                      Context()->pSoundManager->lastFrameSamples())
+                << where << ", frame " << Context()->emulatorState.frame_counter
+                << ": the beeper delivered a different count than the mixer read";
+    }
+    void Frames(int n, bool check, const std::string& where)
+    {
+        for (int i = 0; i < n; i++)
+            Frame(check, where);
+    }
+
+    /// The sample of a frame's output of `source` where a marker switched on at T 20000 and off 1000 T later shows:
+    /// the first sample whose distance from the frame's first sample exceeds half the largest one; -1 without one
+    int MarkerPosition(AudioSourceType source, const std::function<void(bool)>& marker, const std::string& where)
+    {
+        Z80& z80 = *Context()->pCore->GetZ80();
+        const uint32_t frameT = Context()->config.frame;
+        _capture->startCapture(2 * 2 * Context()->pSoundManager->lastFrameSamples(), source);
+        Machine().RunTStates(20000 - z80.t);
+        marker(true);
+        Machine().RunTStates(1000);
+        marker(false);
+        Machine().RunTStates(frameT - z80.t);
+        for (int guard = 0; guard < 8 && !_capture->isCaptureComplete(); guard++)
+            Frame(true, where);
+        const std::vector<int16_t>& buffer = _capture->getBuffer();
+        const size_t samples = _capture->getCapturedSamples() / 2;
+        int position = -1;
+        double largest = 0.0;
+        for (size_t i = 0; i < samples; i++)
+            largest = std::max(largest, std::abs(double(buffer[i * 2]) - double(buffer[0])));
+        for (size_t i = 0; i < samples && largest > 200.0; i++)
+        {
+            if (std::abs(double(buffer[i * 2]) - double(buffer[0])) > largest / 2)
+            {
+                position = int(i);
+                break;
+            }
+        }
+        _capture->stopCapture();
+        Frames(6, true, where);   // the marker's tail and the stale-channel decay pass
+        return position;
+    }
+
+    void RunEvent(Event event, const std::string& where)
+    {
+        switch (event)
+        {
+            case Event::HostSpeed:
+                ASSERT_TRUE(Machine().SetSpeedMultiplier(2));
+                Frames(4, false, where);
+                ASSERT_TRUE(Machine().SetSpeedMultiplier(1));
+                break;
+            case Event::HostSpeedX4:
+                ASSERT_TRUE(Machine().SetSpeedMultiplier(4));
+                Frames(3, false, where);
+                ASSERT_TRUE(Machine().SetSpeedMultiplier(1));
+                break;
+            case Event::SoundOff:
+                Machine().GetFeatureManager()->setFeature(Features::kSoundGeneration, false);
+                Frames(4, false, where);
+                Machine().GetFeatureManager()->setFeature(Features::kSoundGeneration, true);
+                break;
+        }
+        Frames(1, false, where);   // the frame the switch back falls in
+        Frames(3, true, where + " (settle)");
+    }
+
+private:
+    SoundCardScope _scope;
+    std::filesystem::path _path;
+    std::unique_ptr<Emulator> _emulator;
+    bool _ok = false;
+    AudioCaptureAnalyzer* _capture = nullptr;
+};
+
+const char* EventName(Event e)
+{
+    switch (e)
+    {
+        case Event::HostSpeed: return "HostSpeed";
+        case Event::HostSpeedX4: return "HostSpeedX4";
+        case Event::SoundOff: return "SoundOff";
+    }
+    return "?";
+}
+
+} // namespace devicemarker
+
+/// Beeper and SounDrive (both port sets) on a Pentagon: before and after each event a marker lands on the same sample
+/// of its frame, and the beeper delivers the mixer's count every frame (~100 ms: one machine, ~60 frames per event)
+TEST(SoundManagerDeviceMarker_Test, BeeperAndSoundriveMarkersStayOnTheFrameGrid)
+{
+    using namespace devicemarker;
+    for (const Event event : {Event::HostSpeed, Event::HostSpeedX4, Event::SoundOff})
+    {
+        const std::string where = EventName(event);
+        MarkerMachine m("ay-socket = none\nzxbus.1 = soundrive\nzxbus.1.mode = both", TestSound::TurboSound);
+        ASSERT_TRUE(m.Ok()) << where;
+        ASSERT_NE(m.Context()->pSoundManager->getCovox(), nullptr) << where;
+        m.Frames(3, true, where + " (start)");
+        const auto beeper = [&m](bool on) { m.Out(0x00FE, on ? 0x10 : 0x00); };
+        const auto soundrive = [&m](bool on) { m.Out(0x000F, on ? 0xFF : 0x80); };
+
+        const int beeperBefore = m.MarkerPosition(AudioSourceType::Beeper, beeper, where + " beeper (before)");
+        const int soundriveBefore = m.MarkerPosition(AudioSourceType::COVOX, soundrive, where + " SounDrive (before)");
+        ASSERT_GT(beeperBefore, 0) << where;
+        ASSERT_GT(soundriveBefore, 0) << where;
+
+        m.RunEvent(event, where);
+        EXPECT_NEAR(m.MarkerPosition(AudioSourceType::Beeper, beeper, where + " beeper (after)"), beeperBefore, 1)
+            << where << ": the beeper marker moved";
+        EXPECT_NEAR(m.MarkerPosition(AudioSourceType::COVOX, soundrive, where + " SounDrive (after)"), soundriveBefore, 1)
+            << where << ": the SounDrive marker moved (a backlog in its stream)";
+    }
+}
+
+#ifdef UNREALNG_HAVE_OPL4
+/// The MoonSound's FM: a note keyed on at T 20000 of a frame starts on the same sample of that frame's output before
+/// and after each event (~150 ms: the OPL4 renders every frame)
+TEST(SoundManagerDeviceMarker_Test, MoonSoundMarkerStaysOnTheFrameGrid)
+{
+    using namespace devicemarker;
+    for (const Event event : {Event::HostSpeed, Event::HostSpeedX4, Event::SoundOff})
+    {
+        const std::string where = EventName(event);
+        MarkerMachine m("ay-socket = none\nzxbus.1 = moonsound", TestSound::TurboSound | TestSound::MoonSound);
+        ASSERT_TRUE(m.Ok()) << where;
+        SoundChip_Moonsound* moonsound = m.Context()->pSoundManager->getMoonSound();
+        ASSERT_NE(moonsound, nullptr) << where;
+        auto fm = [moonsound](uint8_t reg, uint8_t value)
+        {
+            moonsound->portDeviceOutMethod(0xC4, reg);
+            moonsound->portDeviceOutMethod(0xC5, value);
+        };
+        // Channel 0: a sine carrier at full level, fastest attack and release
+        for (const auto& [r, v] : std::initializer_list<std::pair<uint8_t, uint8_t>>{
+                 {0x20, 0x01}, {0x23, 0x01}, {0x40, 0x3F}, {0x43, 0x00}, {0x60, 0xFF}, {0x63, 0xFF},
+                 {0x80, 0x0F}, {0x83, 0x0F}, {0xE0, 0x00}, {0xE3, 0x00}, {0xC0, 0x31}, {0xA0, 0x41}})
+            fm(r, v);
+        m.Frames(3, true, where + " (start)");
+        const auto note = [&fm](bool on) { fm(0xB0, on ? 0x32 : 0x12); };
+
+        const int before = m.MarkerPosition(AudioSourceType::Moonsound_FM, note, where + " (before)");
+        ASSERT_GT(before, 0) << where;
+        m.RunEvent(event, where);
+        EXPECT_NEAR(m.MarkerPosition(AudioSourceType::Moonsound_FM, note, where + " (after)"), before, 1)
+            << where << ": the MoonSound note moved (a backlog in its stream)";
+    }
+}
+#endif  // UNREALNG_HAVE_OPL4
+
+/// endregion </Device output position across a host speed multiplier>

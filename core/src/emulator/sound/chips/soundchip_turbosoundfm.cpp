@@ -107,18 +107,11 @@ void SoundChip_TurboSoundFM::handleFrameStart()
         MLOGWARNING("SoundChip_TurboSoundFM: prescaler != /6 - the SSG clock ratio is not modelled (design §9.4)");
     }
 
-    // Sample phase after a host speed multiplier: frames at x2 / x4 render their multiplied time, so our phase
-    // advanced by more than the mixer's (whose frame always has the base frame's samples). Back at 1x the two would
-    // disagree at some frame boundaries for good - a never-rendered or a dropped sample, a click. The mixer's
-    // frame-start phase is the authority: take it on the first 1x frame (at 1x the two are equal by construction)
-    const uint8_t speedMultiplier = _context ? _context->emulatorState.HostSpeedMultiplier() : 1;
-    if (speedMultiplier == 1 && _renderSpeedMultiplier != 1 && _context && _context->pSoundManager)
-        _samplePhase = _context->pSoundManager->samplePhase();
-    _renderSpeedMultiplier = speedMultiplier;
-
     // Render-loop frame base (§6.2), same set as the legacy device (§11):
     // _samplePhase and _decimationPhase carry across frames - only reset()
-    // and setCoreRate() clear them; the FM cursor was rebased above with the
+    // and setCoreRate() clear them, and the mixer's frame-start phase was
+    // pushed just before this call (followSamplePhase: equal at 1x, taken
+    // back after a host speed multiplier or a sound-off gap); the FM cursor was rebased above with the
     // word timestamps. The buffer clears run even when synthesis is
     // suppressed: the sound-feature-off mixing path relies on zeroed buffers.
     _lastTStates = 0;

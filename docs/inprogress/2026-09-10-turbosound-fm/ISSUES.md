@@ -23,7 +23,7 @@ Everything found while verifying the TurboSound FM implementation against real h
 | 17 | After a TTD seek the device and mixer sample counts disagreed | TTD / mixer | fixed |
 | 18 | AY DC remover: delayed step after bursts, bass cut below ~150 Hz | AY output | fixed, 5 Hz high-pass |
 | 19 | Mixer and devices disagreed on sample counts for 128K/+3/ATM frames | mixer | fixed |
-| 20 | Host speed multiplier > 1: device renders mult x samples, FM cursor re-anchors every frame | devices / mixer | open |
+| 20 | Host speed multiplier > 1: device renders mult x samples, FM cursor re-anchors every frame | devices / mixer | open (what it left for the 1x frames after it: fixed 2026-10-05) |
 | 21 | Decimator outputs up to one input sample (4.57 us) late | FilterDecimator | fixed |
 | 22 | AY register writes reached the generators on the output-sample grid | devices | fixed |
 | 23 | TTD restored the CPU at T 0 instead of the frame's overshoot | TTD | fixed |
@@ -178,6 +178,11 @@ Everything found while verifying the TurboSound FM implementation against real h
 **Observed.** With the host speed multiplier above 1 the devices scale T-states by it and render mult x samples per frame, while the mixer consumes the base frame's count (the rest of the device buffer is dropped). FM words are timed in unscaled T-states, so the FM render cursor runs mult x faster than the words and re-anchors at every frame start.
 
 **Status.** Open, pre-existing. No zero samples result (the device renders more than is consumed), but the output is not a clean time-scaled render. Needs a decision on what audio a multiplied frame should carry.
+
+**What a multiplied frame leaves behind (fixed 2026-10-05).** The open part above is what a multiplied frame sounds like. What it left for the frames AFTER it, back at 1x, was a bug on every device with its own sample position, found by `SoundChipTurboSoundEvents_Test` / `SoundManagerDeviceMarker_Test`:
+- `SoundChip_TurboSound` stored its frame position unscaled (`_lastTStates = currentTStates`) while counting scaled T-states, so every step of a multiplied frame counted the frame from about its own position again: 4 frames at x2 left a phase backlog of ~6.5e7 samples, rendered as 8192 time-compressed samples per frame (a jump at every frame boundary) for minutes at 1x. It stores the scaled position now, as the TSFM does (the same number at 1x).
+- The TurboSound-slot devices' sample phase moved by the multiplied time, the mixer's by the base frame; and with the sound feature off the mixer kept counting while the devices rendered nothing. Either way a never-rendered or dropped sample at some frame boundaries for good. Rule: the mixer's frame-start phase is the authority; `SoundManager::handleFrameStart` pushes it to the device (`ITurboSoundDevice::followSamplePhase`) every frame (equal at 1x).
+- The beeper's blip stream closed the multiplied frame: its fractional sample position left the mixer's grid (903 / 904 swapped on some frames for good). The Covox / SounDrive read the mixer's count from its blip stream, so a multiplied frame left the rest in it as a delay that never went away (up to the stream's size, ~190 ms); the MoonSound kept it in its delivery streams (unbounded). Rule: after a multiplied frame or a synthesis gap the blip streams drop what is left and take the mixer's phase (`blip_align_phase`, `Beeper` / `Covox::followSamplePhase`); the MoonSound discards its delivery streams after a multiplied frame (the excess the mixer drops knowingly).
 
 ## 21. Decimator outputs up to one input sample late
 
