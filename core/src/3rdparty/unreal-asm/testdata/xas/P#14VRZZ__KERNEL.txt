@@ -1,0 +1,296 @@
+;(C)LYNX'99
+;SOME LITTLE HELP DR.SYSTEM
+
+               ORG     #7000
+; ---------
+
+duatr          EQU     #7000;ATTRIBUTES
+border         EQU     #7001
+winatr         EQU     #7002
+butatr         EQU     #7004
+nameatr        EQU     #7006
+chbxatr        EQU     #7008
+dwatr          EQU     #700a
+koncol         EQU     #700c;KONSOL ATTR
+track          EQU     #700e;EXTENDED DIRECTORY TRRACK
+ext            EQU     #7010;DB      "SCRRLECMP123123123123"
+free           EQU     #7025;UNUSED
+fils           EQU     #7027;FILES ON DISK
+lstf           EQU     #7029;LAST FILE NUMBER
+delf           EQU     #702a;DELETED FILES
+flg            EQU     #702c
+cords          EQU     #702d
+xtxt           EQU     #702e
+ytxt           EQU     #702f
+xlen           EQU     #7030
+ylen           EQU     #7031
+fn             EQU     #7032
+pnosn          EQU     #7033
+flgs           EQU     #7034
+filwin         EQU     #7036
+cur            EQU     #7037
+step           EQU     #7039;MOUSE STEP
+restbl         EQU     #703a;RESIDENTS TABLE
+               ORG     #7058
+obois          DB      "FlyShit C",0
+music          DB      "MUS     C",0
+theme          DB      "THEME   C",0
+plugin         DB      "PLUG1   o",0
+csr            DB      "CURSOR  C",0
+resid          DB      "CLOCK   C",0
+ssaver         DB      "SAVER   C",0
+setnm          DB      "fsetup  s",0
+plugv          EQU     #70a8;PLUG VIEW (CALL WH. UNKN. EXT)
+data           EQU     #70aa;DATA FOR NUMBER PRINT
+mpl            EQU     #70b2;MUSIC PLAY ADDRES
+stime          EQU     #70b4;SCREEN SAVER TIME ELAPSED
+               ORG     #7100
+setwin         EQU     #7100;SET WINDOW
+checkw         EQU     #7103;CHECK WINDOW
+animal         EQU     #7106;MOUSE
+dopus          EQU     #7109
+read           EQU     #710c;REREAD DISK CATALOG TO #C000
+multy          EQU     #710f;HL=B*C
+page           EQU     #7112;SET PAGE
+cpblok         EQU     #7115;CP TWO BLOCK (HL&DE)
+gtadr          EQU     #7118;GET ADDR OF FILE DESC (IN PAGE 0)
+getext         EQU     #711b;GET ADDR OF EXTENDED FILE DESC
+clearbf        EQU     #711e;CLEAR FILENAME BUFFER
+viewf          EQU     #7121;VIEW FILE (FNM=NUMBER OF FILENAME)
+xyatr          EQU     #7124;XY->ADDR IN ATR
+xyscr          EQU     #7127;XY->ADDR IN SCR
+prstr          EQU     #712a;Print String HL-ADDR,BC -COOR.
+remw           EQU     #712d;REMOVE WINDOW FROM SCREEN
+shutay         EQU     #7130;SHUT UP MUSIC COPROC
+paused         EQU     #7133;PAUSE
+press          EQU     #7136;PRESS ZNK IN SCR(BC - COORDINATES)
+putspr         EQU     #7139;PUT SPRITE
+prsum          EQU     #713c;SET NUMBER (IN HL) TO DATA STRING)
+uph            EQU     #713f;UP H
+downh          EQU     #7142;DOWN H
+mnu            EQU     #7145;MAIN MENU
+dos            EQU     #7148;TR DOS
+getfil         EQU     #714b;FILE PANEL
+ankey          EQU     #714e;WAIT ANY KEY
+rpkey          EQU     #7151;WAIT UNTIL ANY KEY UNPRESSED
+getarc         EQU     #7154;GET ARC ATR BYTE&ADDRES(BC-COORD)
+mscrd          EQU     #7157;GET MOUSE COORDINATES (IN BC)
+kilarc         EQU     #715a;KILL 'move window' ARCADE LINE
+sssr           EQU     #715d;SAVE SCREEN IN PAGE 7
+ussr           EQU     #7160;REPRINT SCREEN FROM PAGE 7
+;----------------------------------------------------
+               ORG     #6000
+               LCODE   "DBG3_33"
+;----------------------------------------------------
+               ORG     #9c3c
+               ENT
+               JP      #7200
+;----------------------------------------------------
+               ORG     #9c40
+;----------------------------------------------------
+;Now following text of your programm
+;----------------------------------------------------
+;ДЛЯ ПPИMEPA ИCXOДHИK Setup.o
+;----------------------------------------------------
+;SETUP 2.0 4 FIRES
+;(c)Lynx ... Bug fix ideas by Employer/Alliance
+;----------------------------------------------------
+               ORG     #9c40
+setup          PUSH    IX;COXPAHИЛИ OПИCATEЛЬ ПPEД. OKHA
+               LD      A,#16;BKЛЮЧИЛИ 6Ю CTPAHИЦУ
+               CALL    page;(TAM БУФФEP ГPAФИKИ).
+               LD      IX,swin;AДPEC OПИCATEЛЯ OKHA
+               CALL    setwin;HAPИCOBAЛИ OKHO.
+               CALL    sb_1;OБPAБOTAЛИ
+               POP     IX;(!)BOCCTAHOBИЛИ OПИCATEЛЬ ПPEД. OKHA
+               LD      A,#10
+               CALL    page
+               RET
+;-----------------------
+;ПPИ BЫ3OBE OДHOГO OKHA И3 ДPУГOГO HAДO ДEЛATЬ TAK ПEPEД
+;BO3BPATOM B ПPEД. OKHO:(ПOCЛE (!))
+;CALL REMW
+;CALL SETWIN
+;TAKИM OБPA3OM BOCCTAHOBИB APKAДHЫE ATTPИБУTЫ ПPEД. OKHA!
+;-----------------------
+ss             LD      DE,obois
+               JP      selset
+sm             LD      DE,music
+               JP      selset
+sa             LD      DE,theme
+               JR      selset
+spi            LD      DE,plugin
+               JR      selset
+sc             LD      DE,csr
+               JR      selset
+sr             LD      DE,resid
+               JR      selset
+savset         LD      HL,setnm;3AПИCЬ CETAПA
+               LD      DE,#5cdd
+               LD      BC,9
+               LDIR
+               LD      C,10
+               CALL    dos;K TPДOCУ OБPAЩATCЯ TOЛЬKO ЧEPE3
+;ЭTУ TOЧKУ BXOДA
+               LD      A,C
+               CP      #ff
+               JR      NZ,sv_1
+               LD      HL,setnm
+               LD      DE,#5cdd
+               LD      BC,9
+               LDIR
+               LD      DE,18
+               LD      HL,#7000
+               LD      C,11
+               CALL    dos
+               RET
+sv_1           LD      C,8
+               CALL    dos
+               LD      A,(#5cec)
+               LD      D,A
+               LD      A,(#5ceb)
+               LD      E,A
+               LD      BC,#106
+               LD      HL,#7000
+               CALL    dos
+               RET
+savpro         LD      A,#10
+               CALL    page
+               LD      HL,obois
+               LD      DE,#c850
+               LD      BC,#5a
+               LDIR
+               LD      A,(track)
+               LD      (#c8aa),A
+               LD      HL,#c800
+               LD      DE,#0008
+               LD      BC,#106
+               CALL    dos
+               LD      A,#16
+               CALL    page
+               RET
+sess           LD      DE,ssaver
+;BOT УCTAHOBKA ИMEHИ ФAЙЛA... ПO BЫ3OBУ ФAЙЛOBOГO MEHЮ И KOГДA
+;TAM HAЖAЛИ ПPOБEЛ...
+selset
+               PUSH    DE
+               CALL    getfil;ПAHEЛЬ ФAЙЛOBOГO MEHЮ
+               CALL    gtadr;У3HAЛИ AДPEC ИMEHИ ФAЙЛA
+               POP     DE
+               LD      A,#10
+               CALL    page
+               LD      BC,9
+               LDIR
+               LD      A,#16
+               CALL    page
+moo            RET
+default        LD      HL,obois
+               LD      DE,obois+1
+               LD      BC,#3e
+               LD      (HL),"-"
+               LDIR
+               RET
+;-----------------------------------------
+;OБPAБOTЧИK OKHA
+;-----------------------------------------
+sb_1           CALL    animal;KУPCOP
+               CALL    checkw;ПPOBEPKA
+               JR      sb_1;3AЦИKЛИЛИ
+;-----------------------------------------
+;A BOT CAM OПИCATEЛЬ OKHA...
+;KAK OПИCЫBATЬ OKHA HAПИCAHO B ФAЙЛE
+;KERNEL.W
+;-----------------------------------------
+swin           DB      3,3,19,11
+               DW      s_win,moo,moo
+               DB      16,1,1
+               DW      st_w
+               DB      0,16,2,1
+               DW      st_w1
+               DB      0,16,3,1
+               DW      st_w2
+               DB      0,16,4,1
+               DW      st_w3
+               DB      0,16,5,1
+               DW      st_w4
+               DB      0,16,6,1
+               DW      st_w5
+               DB      0,16,7,1
+               DW      st_w6
+               DB      0,16,8,1
+               DW      st_w65
+               DB      0,20,2,7
+               DW      winatr
+               DB      4,20,3,7
+               DW      nameatr
+               DB      4,20,4,7
+               DW      butatr
+               DB      4,20,5,7
+               DW      koncol
+               DB      4,20,6,7
+               DW      chbxatr
+               DB      4,20,7,7
+               DW      border
+               DB      2,20,8,7
+               DW      dwatr
+               DB      4,16,9,1
+               DW      st_w7
+               DB      0,16,10,1
+               DW      st_w8
+               DB      0,20,10,7
+               DW      track
+               DB      4,16,1,11
+               DW      st_w9
+               DB      0,17,2,11
+               DW      cn_w10
+               DB      8,17,3,11
+               DW      cn_w11
+               DB      8,17,4,11
+               DW      cn_w12
+               DB      8,17,5,11
+               DW      cn_w13
+               DB      8,17,6,11
+               DW      cn_w14
+               DB      8,17,7,11
+               DW      cn_w15
+               DB      8,17,8,11
+               DW      cn_w16
+               DB      8,17,10,11
+               DW      cn_a01
+               DB      8,17,11,11
+               DW      cn_a02
+               DB      8,17,11,1
+               DW      df_a03
+               DB      9,#FF
+s_win          DB      "Setup for Firestarter...",0
+st_w           DB      "  -- ATTRIBUTES: --",0
+st_w1          DB      " WINDOW:",0
+st_w2          DB      " WIN.NAME:",0
+st_w3          DB      " BUTTON:",0
+st_w4          DB      " KONSOL:",0
+st_w5          DB      " CHECK BOX:",0
+st_w6          DB      " BORDER:",0
+st_w65         DB      " OVR LINE:",0
+st_w7          DB      " -- DISK SETUP: --",0
+st_w8          DB      " EXTDIR TRK:",0
+st_w9          DB      " -- AUTOLOAD PROTOCOL:",0
+cn_w10         DW      ss
+               DB      "- Select Screen -",0
+cn_w11         DW      sm
+               DB      "- Select Music -",0
+cn_w12         DW      sa
+               DB      "- Select App -",0
+cn_w13         DW      spi
+               DB      "- Select Plug-In -",0
+cn_w14         DW      sc
+               DB      "- Select Cursor -",0
+cn_w15         DW      sr
+               DB      "- Select Resident -",0
+cn_w16         DW      sess
+               DB      "- Select S.Saver -",0
+cn_a01         DW      savset
+               DB      " -- SAVE SETUP --",0
+cn_a02         DW      savpro
+               DB      "-- SAVE AUTOLOG --",0
+df_a03         DW      default
+               DB      "-- Default Autolog --",0

@@ -259,7 +259,7 @@ struct Decoder
         else if (c > 0x77 && c < 0x7C)
             o += "JR";
         else if (c >= 0x7C && c < 0x80)
-            o += "CALL";
+            o += "JP";   // PO PE P M imply JP: STORM 1.3's binary has JP where its source shows these (reference decoders say CALL)
         else if (c >= 0x80 && c < kString)
             o += (c & 0x20) ? "LD" : "JR";
         else if (c == kString)
@@ -926,7 +926,7 @@ struct Encoder
             else if (command == "JR")
                 implicit = (first >= 0x78 && first < 0x7B) || (first >= 0xC0 && first < kString) || (first >= 0x80 && first < 0xC0 && !(first & 0x20)) ||
                            first > kString;
-            else if (command == "CALL")
+            else if (command == "JP")
                 implicit = first >= 0x7C && first < 0x80;
         }
         if (!implicit)
@@ -1089,6 +1089,10 @@ int StormCodec::Detect(std::span<const uint8_t> bytes, const CatalogHints& hints
     }
     if (catalog)
         return 95;
+    // A catalog entry with another start is no STORM text (every one found starts at #C00B): zeros and other data
+    // also walk back as STORM lines (a screen at #4000 reads as empty lines and CCF)
+    if (hints.type != 0)
+        return 20;
     return lines.size() >= 3 ? 70 : 40;
 }
 

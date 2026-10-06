@@ -1,0 +1,9 @@
+   10        ORG  30000
+   20 LABEL  LD   A,(HL)   ; COMMENT  TWO
+   30        NOP
+   40 LAB    ;COMMENT      X
+   50 A1     B1   C1 D1 E1
+   60        RET
+   70 ;FULL   COMMENT
+   80        DEFM "A  B"
+   90 *D+

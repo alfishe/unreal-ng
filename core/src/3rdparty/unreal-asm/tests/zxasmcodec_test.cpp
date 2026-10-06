@@ -147,4 +147,9 @@ TEST(ZxasmCodec_Test, Detection)
     }
     EXPECT_LT(codec.Detect(ReadTestData("text/source-cp866-cr.asm"), {}), 60) << "plain CR text is the text codec's";
     EXPECT_EQ(codec.Detect(ReadTestData("tasm/000LOAD.$A"), {}), 0);
+    // The same bytes in a catalog entry no ZX-ASM version writes (a magazine text: type C at #C000)
+    const containers::TrdosFile file = Unwrap(kSamples[0].file);
+    CatalogHints text = file.Hints();
+    text.start = 0xC000;
+    EXPECT_LT(codec.Detect(file.data, text), 50);
 }

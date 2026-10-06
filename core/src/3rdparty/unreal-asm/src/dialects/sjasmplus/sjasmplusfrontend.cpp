@@ -704,6 +704,7 @@ FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
 {
     FrontendResult result;
     result.program.dialect = "sjasmplus";
+    result.program.trueValue = -1;   // sjasmplus' comparisons give -1
     std::set<std::string> macros;
     bool inBlock = false;   // inside /* ... */
     uint32_t number = 0;

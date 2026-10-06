@@ -1,0 +1,275 @@
+;---------------------------------------------------
+;Setup
+;---------------------------------------------------
+               ORG     #9c40
+               LD      A,(cursym)
+               LD      (symba),A
+               CALL    mains
+               LD      A,(symba)
+               LD      (cursym),A
+               RET
+savem          LD      IX,stwin4
+               JR      izzc
+irc            CALL    animal
+               CALL    checkw
+               JR      irc
+
+lda            RET
+
+mains          LD      IX,stwin5
+               CALL    setwin
+               JR      irc
+color
+               LD      IX,stwin1
+izzc           CALL    setwin
+               CALL    irc
+               LD      IX,stwin5
+               CALL    frfsh
+               RET
+autol
+               LD      IX,stwin3
+               JR      izzc
+pointer        LD      IX,stwin2
+               JR      izzc
+prc_1          LD      A,(symba)
+               INC     A
+               CP      13
+               JR      NZ,pp_1
+               INC     A
+pp_1           LD      (symba),A
+               CALL    rfsh
+               RET
+prc_2
+               LD      A,(symba)
+               DEC     A
+               CP      13
+               JR      NZ,pp_1
+               DEC     A
+               JR      pp_1
+               RET
+slt_1          LD      DE,music
+               JR      sptnm
+slt_2          LD      DE,back
+               JR      sptnm
+slt_3          LD      DE,font
+               JR      sptnm
+slt_4          LD      DE,skin
+               JR      sptnm
+slt_5          LD      DE,atplug
+sptnm
+               PUSH    DE
+               CALL    getfil
+               CALL    gtadr
+               POP     DE
+               LD      A,#10
+               CALL    page
+               LD      A,(fnm)
+               CP      #ff
+               RET     Z
+               LD      BC,9
+               LDIR
+               RET
+fsav           CALL    savset
+               CALL    savicq_1
+               RET
+
+savset         LD      HL,setnm
+               LD      DE,#5cdd
+               LD      BC,9
+               LDIR
+               LD      C,10
+               CALL    dos
+               LD      A,C
+               CP      #ff
+               JR      NZ,sv_1
+               LD      HL,setnm
+               LD      DE,#5cdd
+               LD      BC,9
+               LDIR
+               LD      DE,#100
+               LD      HL,#6100
+               LD      C,11
+               CALL    dos
+               RET
+sv_1           LD      C,8
+               CALL    dos
+               LD      A,(#5cec)
+               LD      D,A
+               LD      A,(#5ceb)
+               LD      E,A
+               LD      BC,#106
+               LD      HL,#6100
+               CALL    dos
+               RET
+
+
+savspr         LD      HL,icons
+               LD      DE,#5cdd
+               LD      BC,9
+               LDIR
+               LD      C,10
+               CALL    dos
+               LD      A,C
+               CP      #ff
+               JR      NZ,sv_2
+               LD      HL,icons
+               LD      DE,#5cdd
+               LD      BC,9
+               LDIR
+               LD      A,#13
+               CALL    page
+               LD      DE,#97e
+               LD      HL,sprts
+               LD      C,11
+               CALL    dos
+               RET
+sv_2           PUSH    AF
+               LD      A,#13
+               CALL    page
+               POP     AF
+               LD      C,8
+               CALL    dos
+               LD      A,(#5cec)
+               LD      D,A
+               LD      A,(#5ceb)
+               LD      E,A
+               LD      BC,#a06
+               LD      HL,sprts
+               CALL    dos
+               RET
+savicq_1               LD HL,icc
+               LD      DE,#5cdd
+               LD      BC,9
+               LDIR
+               LD      C,10
+               CALL    dos
+               LD      A,C
+               CP      #ff
+               JR      NZ,sv_3
+               LD      HL,icc
+               LD      DE,#5cdd
+               LD      BC,9
+               LDIR
+               LD      A,#13
+               CALL    page
+               LD      DE,#97e
+               LD      HL,(ictbl)
+               LD      C,11
+               CALL    dos
+               RET
+sv_3
+               LD      C,8
+               CALL    dos
+               LD      A,(#5cec)
+               LD      D,A
+               LD      A,(#5ceb)
+               LD      E,A
+               LD      BC,#a06
+               LD      HL,(ictbl)
+               CALL    dos
+               RET
+
+stwin1         DB      3,3,7,7
+               DW      snam1,lda,lda
+               DB      16,2,1
+               DW      stx_1
+               DB      0,20,2,7
+               DW      border
+               DB      2,20,3,7
+               DW      winatr
+               DB      4,20,4,7
+               DW      butatr
+               DB      4,20,5,7
+               DW      nameatr
+               DB      4,20,6,7
+               DW      chbxatr
+               DB      4,20,7,7
+               DW      koncol
+               DB      4,#FF
+stwin2         DB      5,6,7,3
+               DW      snam2,lda,lda
+               DB      16,2,1
+               DW      stx_2
+               DB      0,11,2,8
+               DW      prc_1
+               DB      0,10,2,9
+               DW      prc_2
+               DB      0,20,3,6
+               DW      step
+               DB      2,#FF
+stwin3         DB      8,9,8,6
+               DW      snam3,lda,lda
+               DB      17,2,1
+               DW      optt_1
+               DB      9,17,3,1
+               DW      optt_2
+               DB      9,17,4,1
+               DW      optt_3
+               DB      9,17,5,1
+               DW      optt_4
+               DB      9,17,6,1
+               DW      optt_5
+               DB      9,#FF
+stwin4         DB      8,9,8,2
+               DW      snam4,lda,lda
+               DB      17,1,1
+               DW      optt_6
+               DB      9,17,2,1
+               DW      optt_7
+               DB      9,#FF
+stwin5         DB      8,8,7,4
+               DW      snam5,lda,lda
+               DB      17,1,1
+               DW      optt_1a
+               DB      6,17,2,1
+               DW      optt_2a
+               DB      6,17,3,1
+               DW      optt_3a
+               DB      7,17,4,1
+               DW      optt_4a
+               DB      6,#FF
+
+
+
+stx_1          DB      "Border : ",13
+               DB      "Window : ",13
+               DB      "Buttons: ",13
+               DB      "Name   : ",13
+               DB      "C_boxes: ",13
+               DB      "Konsol : ",0
+stx_2          DB      "Cursor : ["
+symba          DB      " ]",13
+               DB      "St_step:",0
+setnm          DB      "ZXNsetupS"
+
+optt_1         DW      slt_1
+               DB      " - Select music -",0
+optt_2         DW      slt_2
+               DB      " - Select screen -",0
+optt_3         DW      slt_3
+               DB      "  - Select font -",0
+optt_4         DW      slt_4
+               DB      "  - Select skin -",0
+optt_5         DW      slt_5
+               DB      "  - Select ovl -",0
+optt_6         DW      fsav
+               DB      "Save setup...",0
+optt_7         DW      savspr
+               DB      "Save sprites...",0
+optt_1a        DW      color
+               DB      "Color setup.",0
+optt_2a        DW      pointer
+               DB      "Cursor setup.",0
+optt_3a        DW      autol
+               DB      "Autoload setup.",0
+optt_4a        DW      savem
+               DB      "Save sets...",0
+
+
+icc            DB      "Icons   t"
+
+snam1          DB      "Colors...",0
+snam2          DB      "Pointers...",0
+snam3          DB      "Autoload...",0
+snam4          DB      "Save menu...",0
+snam5          DB      "Setup..."

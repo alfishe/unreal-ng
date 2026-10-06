@@ -1,0 +1,8 @@
+    1 A      B    C        D   E       F    G        H
+    2        LD   A,B      ;c  x
+    3 ABCDEFGHIJ  X
+    4 abc    def
+    5 TAB12345678901       Y
+    6 © 
+    7 
+    8 Q

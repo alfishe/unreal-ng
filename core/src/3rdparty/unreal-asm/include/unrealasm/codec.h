@@ -25,6 +25,9 @@ struct CatalogHints
     uint16_t length = 0;         ///< the catalog's length field
     std::string name;            ///< file name without the type
     std::string extension;       ///< host file extension without the dot ("asm", "a80", "$A"); "" = unknown
+    /// The bytes after `length` up to the end of the file's last sector. A format whose program ignores the catalog
+    /// length (XAS) reads its text from them too; the others leave them alone
+    std::vector<uint8_t> slack;
 };
 
 enum class CodecFamily : uint8_t

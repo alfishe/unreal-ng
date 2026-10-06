@@ -40,13 +40,22 @@ add_library(unreal-asm STATIC
     src/codecs/alasm/alasmcodec.cpp
     src/codecs/zxasm/zxasmcodec.cpp
     src/codecs/storm/stormcodec.cpp
+    src/codecs/masm/masmcodec.cpp
+    src/codecs/gens/genscodec.cpp
+    src/codecs/zeus/zeuscodec.cpp
+    src/codecs/xas/xascodec.cpp
     src/ir/expr.cpp
     src/core/dialects.cpp
     src/dialects/common/z80.cpp
     src/dialects/common/macros.cpp
+    src/dialects/storm/stormfrontend.cpp
+    src/dialects/zxasm/zxasmfrontend.cpp
     src/dialects/tasm/tasmfrontend.cpp
     src/dialects/alasm/alasmfrontend.cpp
     src/dialects/sjasmplus/sjasmplusbackend.cpp
+    src/dialects/common/classicbackend.cpp
+    src/dialects/pasmo/pasmobackend.cpp
+    src/dialects/z88dk/z88dkbackend.cpp
     src/dialects/sjasmplus/sjasmplusfrontend.cpp
     src/containers/trdos.cpp
 )
@@ -89,6 +98,14 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/alasmcodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/zxasmcodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/stormcodec_test.cpp
+        ${UNREAL_ASM_DIR}/tests/masmcodec_test.cpp
+        ${UNREAL_ASM_DIR}/tests/genscodec_test.cpp
+        ${UNREAL_ASM_DIR}/tests/zeuscodec_test.cpp
+        ${UNREAL_ASM_DIR}/tests/xascodec_test.cpp
+        ${UNREAL_ASM_DIR}/tests/stormfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/zxasmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/pasmobackend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/z88dkbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/trdos_test.cpp
         ${UNREAL_ASM_DIR}/tests/dialects_test.cpp
         ${UNREAL_ASM_DIR}/tests/tasmfrontend_test.cpp

@@ -204,6 +204,10 @@ TEST(TasmCodec_Test, DetectionByCatalogAndByStream)
     const DetectResult detected = CodecRegistry::Builtin().Detect(file.data, file.Hints());
     ASSERT_NE(detected.chosen, nullptr) << detected.reason;
     EXPECT_EQ(detected.chosen->Info().id, "tasm");
+    // The same bytes as another type are no TASM source (a screen, a MASM 1.x file of type a walk as TASM lines too)
+    CatalogHints code = file.Hints();
+    code.type = 's';
+    EXPECT_LT(codec.Detect(file.data, code), 50);
 }
 
 TEST(TasmCodec_Test, ConversionBetweenVersions)

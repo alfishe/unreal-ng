@@ -25,7 +25,7 @@ DL0     DI
 DL1     LD A,(BC)
         INC BC
 DL2     OR A
-        CALL M,DL8
+        JP M,DL8
         CP #2F
         JP Z,DLREM
         LD E,A
@@ -104,7 +104,7 @@ DL14    LD (HL),D
         JR NZ,DL14
         LD A,E
 DL15    OR A
-        CALL P,DL16
+        JP P,DL16
         LD D,#6C; DB STRING
         CP #DC
         JR Z,DL17
@@ -820,7 +820,7 @@ PL13    CP #75
         JR C,PL14; JR
         OR A
         LD L,#50
-        CALL P,PL14; JP
+        JP P,PL14; JP
         LD A,(DE)
 ;        CP #22
 ;        LD L,#6C

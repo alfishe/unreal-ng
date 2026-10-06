@@ -5,6 +5,7 @@
 // Convert chains them. Each reports what it could not convert.
 
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -27,6 +28,14 @@ struct BackendOptions
     bool hexDollar = false;   ///< write hex numbers as $C000 instead of #C000 (where the target accepts both)
     /// Macros defined in other files of the project and the parameters each declares (ConvertProject fills it)
     std::map<std::string, int> macroParams;
+    /// Labels some file of the project tests with IFUSED / IFNUSED (ConvertProject fills it)
+    std::set<std::string> ifUsedNames;
+    /// The file being written as INCLUDE names it ("" = a single source): names a target must keep unique across the
+    /// files of a project (z80asm's sections) are made from it
+    std::string fileName;
+    /// How often each name is defined in the files of the project (ConvertProject fills it; pasmo needs DEFL for a name
+    /// defined twice, EQU for one defined once)
+    std::map<std::string, int> definitions;
 };
 
 struct BackendResult
@@ -34,6 +43,8 @@ struct BackendResult
     SourceDocument document;
     Diagnostics diagnostics;
     std::map<std::string, int> macroParams;   ///< the macros this file defines
+    std::set<std::string> ifUsedNames;        ///< the labels this file tests with IFUSED / IFNUSED
+    std::map<std::string, int> definitions;   ///< how often this file defines each name
 };
 
 class IFrontend
@@ -42,6 +53,13 @@ public:
     virtual ~IFrontend() = default;
     virtual std::string_view Dialect() const = 0;
     virtual FrontendResult Parse(const SourceDocument& source) const = 0;
+    /// The source as one file of a project: a dialect whose macros must be expanded at their calls (ZX-ASM) learns the
+    /// macros the other files define (an INCLUDEd definitions file); the others parse the file alone
+    virtual FrontendResult ParseInProject(const SourceDocument& source, const std::vector<const SourceDocument*>& project) const
+    {
+        (void)project;
+        return Parse(source);
+    }
 };
 
 class IBackend

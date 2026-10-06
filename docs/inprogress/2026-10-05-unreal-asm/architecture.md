@@ -22,11 +22,11 @@ emulator's disk tools) work on documents or on the IR.
 flowchart TB
     subgraph L1["1 · bytes"]
         BS["ByteSource / ByteSink<br/>file · buffer · (emulator) disk file · memory"]
-        CH["CatalogHints<br/>TR-DOS type · start · name"]
+        CH["CatalogHints<br/>TR-DOS type · start · name · sector slack"]
         EN["encoding detectors (D-13)<br/>code page · line ends · text / binary<br/>reusable outside the library"]
     end
     subgraph L2["2 · codecs (one per format + sub-version)"]
-        C1["tasm (3.x, 4.x)"] --- C3["alasm (3.8 … 5.09)"] --- C4["storm"] --- C5["zxasm"] --- C6["text (code page, line ends)"]
+        C1["tasm (2.0 … 5.5)"] --- C3["alasm (3.8 … 5.09)"] --- C4["storm"] --- C5["zxasm"] --- C7["masm · gens · zeus · xas"] --- C6["text (code page, line ends)"]
     end
     subgraph L3["3 · document"]
         SD["SourceDocument<br/>lines · dialect · format · code page · attributes"]
@@ -70,6 +70,7 @@ classDiagram
     class SourceLine {
         +text : string (UTF-8, exact)
         +attrs : AttrBag (codec-private)
+        +number : int (GENS, ZEUS; -1 none)
         +origin : ByteRange
     }
     class AttrBag {

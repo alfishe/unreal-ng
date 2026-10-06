@@ -10,9 +10,11 @@ tools run the corpus-sized and emulator-driven checks behind them (the results a
 |---|---|
 | `roundtrip.py` | Converts every source of a set of TRD / SCL images to sjasmplus, reads each result back through the sjasmplus frontend and backend (the text must not change), optionally assembles every file with sjasmplus; prints a summary |
 | `objcheck.py` | For a converted ALASM project: builds every object of each main source's `SAVEOBJ` table with sjasmplus and compares it with the file ALASM saved on the same disk |
-| `assemble-in-emulator.py` | Runs TASM 4.12 or ALASM 5.09 in an unreal-ng instance, assembles a source and saves the bytes it built (the oracle for a source with no binary on its disk) |
+| `assemble-in-emulator.py` | Runs TASM 4.12, ALASM 5.09, STORM 1.3 or ZAsm 3.15 in an unreal-ng instance, assembles a source and saves the bytes it built (the oracle for a source with no binary on its disk) |
+| `crosscheck.py` | Converts the main sources of a set of TR-DOS images to sjasmplus and to pasmo / z88dk (`--targets`), assembles each and compares the bytes each built |
+| `lstcheck.py` | Compares the bytes of a sjasmplus listing with a memory dump, line by line (a converted program against a running copy of it, e.g. an assembler's own source against the assembler unpacked in memory) |
 | `emulator.py` | The WebAPI client the emulator script uses (own instance, disk swap with TTD recording, keys, screenshots, memory) |
-| `zxdisk.py` | TR-DOS images: list a TRD / SCL catalog, extract a file as hobeta, add hobeta files to a TRD, SCL to TRD |
+| `zxdisk.py` | TR-DOS images: list a TRD / SCL catalog, extract a file as hobeta, add hobeta files to a TRD, SCL to TRD, a file as hobeta |
 
 ## Example: a disk of ALASM sources with the objects ALASM built
 
@@ -53,5 +55,45 @@ assembler did not write stay visible), assembles, saves the range and a screensh
 address the assembler leaves alone: TASM 4.12 keeps its overlay at `#8000`, ALASM 5.09 compiles `#8000-#BFFF` into
 its system page. ALASM picks the file by cursor: a first run without `--list-position` saves a screenshot of the
 list to count the column and row on. Stop the instance afterwards (its own PID only).
+
+STORM 1.3 clears the 48K memory when it starts and keeps its own code there while it runs, so the script reads the
+bytes after quitting to BASIC (unwritten bytes read 0). The source is a STORM file, which `zxasm encode` writes from
+text; files the source includes go along with `--extra`:
+
+```bash
+$UNREAL_ASM_ZXASM encode PROG.txt --codec storm --version 1.3 -o scratch/PROG.bin
+python3 tools/unreal-asm/zxdisk.py hobeta scratch/PROG.bin PROG.C 0xC00B scratch/PROG.\$C
+python3 tools/unreal-asm/assemble-in-emulator.py storm13 STORM_13.SCL scratch/PROG.\$C 0x8000 1024 scratch/prog.bin \
+    --extra scratch/INC.\$C --url http://localhost:8095
+```
+
+ZAsm 3.15 compiles into its own pages, so the source saves what it built: it ends with
+`saveobj "a:out.C",<address>,<length>` and the script reads `out.C` from the disk afterwards:
+
+```bash
+python3 tools/unreal-asm/assemble-in-emulator.py zasm315 ZASM315.trd scratch/PROG.\$a 0x8000 320 scratch/prog.bin \
+    --extra scratch/inc1.\$a --url http://localhost:8095
+```
+
+## Example: two targets against each other
+
+```bash
+export UNREAL_ASM_PASMO=<path to pasmo> UNREAL_ASM_Z80ASM=<path to z88dk-z80asm>
+python3 tools/unreal-asm/crosscheck.py scratch/xc disk1.trd disk2.scl ... --targets pasmo,z88dk
+#   equal: 245  no code: 5  pasmo errors: 5  skipped (sjasmplus errors or pages): 164
+```
+
+pasmo 0.5.5 writes an empty file when the code spans the whole 64K (its size wraps to 16 bits); such sources show as
+"pasmo wrote nothing" unless pasmo is built with that one line widened.
+
+## Example: a converted program against a running copy
+
+```bash
+sjasmplus --lst=scratch/build.lst scratch/build.asm
+python3 tools/unreal-asm/lstcheck.py scratch/build.lst mem64k.bin --from 0x6000
+#   90B3  listing C3 F1 FD   memory C3 15 FB   | PRBUF2  JP #FDF1
+#   ...
+#   bytes compared: 18928  differing: 32
+```
 
 Write all outputs to `scratch/`.
