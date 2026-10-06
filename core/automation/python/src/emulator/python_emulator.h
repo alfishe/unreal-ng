@@ -33,6 +33,7 @@
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundcharactersettings.h>
 #include <emulator/sound/chips/neogs/neogsmedia.h>
+#include <emulator/memory/atm/evoflashrequest.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
@@ -2916,6 +2917,29 @@ namespace PythonBindings
             .def("gs_flash_save", [](Emulator& self) -> bool {
                 return NeoGSMediaAccepted(NeoGSRequestFlashSave(self.GetContext()));
             }, "NeoGS: save the reprogrammed flash (loaded in place of the shipped image with [NGS] FlashWrite=persist)")
+            // ZX-Evo flash ROM (TS-Conf, ATM3): the saved flash (evoflashrequest.h)
+            .def("rom_flash_state", [](Emulator& self) -> py::object {
+                EvoFlash::PersistStatus st;
+                if (!EvoFlashGetStatus(self.GetContext(), st))
+                    return py::none();
+                py::dict d;
+                d["machine"] = st.machine;
+                d["file"] = st.path;
+                d["file_exists"] = st.fileExists;
+                d["base_rom_sha256"] = st.baseDigest;
+                d["loaded_from_file"] = st.loadedFromFile;
+                d["unsaved"] = st.unsaved;
+                d["changes"] = st.changes;
+                d["other_image_files"] = st.otherImageFiles;
+                return d;
+            }, "ZX-Evo flash ROM: the saved flash file for the loaded ROM image, unsaved changes, files of other ROM "
+               "images (not used); None on other machines")
+            .def("rom_flash_save", [](Emulator& self) -> bool {
+                return EvoFlashAccepted(EvoFlashRequestSave(self.GetContext()));
+            }, "ZX-Evo flash ROM: write the saved flash now")
+            .def("rom_flash_discard", [](Emulator& self) -> bool {
+                return EvoFlashAccepted(EvoFlashRequestDiscard(self.GetContext()));
+            }, "ZX-Evo flash ROM: delete the saved flash; the shipped ROM image returns at the next reset")
             .def("gs_stereo_mode", [](Emulator& self, const std::string& mode) -> bool {
                 NeoGSConfig::StereoMode parsed = NeoGSConfig::StereoMode::Separated;
                 SoundManager* sm = self.GetContext() ? self.GetContext()->pSoundManager : nullptr;

@@ -13,12 +13,12 @@ L_iy    EQU 7
         LD IY,L_iy              ;a lower-case name is a label, not the register
 
 loop__L1 DJNZ loop__L1
-@shared NOP
+L__shared NOP
 
 
 loop__L2 DJNZ loop__L2
 
-        JP @shared
+        JP L__shared
         MACRO FILL _arg0,_arg1
         LD A,_arg0
         LD (_arg1),A

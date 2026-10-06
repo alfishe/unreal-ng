@@ -37,6 +37,9 @@ const Sample kSamples[] = {
     {"SINUS", "4.12", {"4.12"}},
     {"SNAKE", "4.12", {"4.12"}},
     {"ODNO", "4.12", {"4.12"}},              // start 71 (4.12 keeps the editor's line there)
+    {"T50SMPL", "5.0", {"5.0"}},             // typed into TASM 5.0 beta in unreal-ng and saved: structural lines
+    {"T50PROG", "5.0", {"5.0"}},             // the same; TASM 5.0 beta assembled it (testdata/dialects/tasm50)
+    {"T55SMPL", "5.5", {"5.5"}},             // typed into TASM 5.5 beta: its own table, names end with a blank
 };
 
 containers::TrdosFile Unwrap(const std::string& name)
@@ -288,4 +291,22 @@ TEST(TasmCodec_Test, Tasm20IsTextWithEditorTabs)
     const std::string as40Text = codec.Decode(as40.bytes, as40Reading).document.Text();
     EXPECT_EQ(upper(as40Text), upper(decoded.document.Text()));
     EXPECT_NE(as40Text.find("start   LD A,7      ; BORDER"), std::string::npos) << as40Text.substr(0, 80);
+}
+
+TEST(TasmCodec_Test, Tasm5xStoresLinesStructurally)
+{
+    // No blanks and no comma where the boundary is plain: after a register / condition, ')', a quote or (5.5) a name
+    // ending in its blank, before a quote, '#', '%', '(' or a token; a comma stays between letters or digits
+    std::vector<uint8_t> body;
+    std::string error;
+    ASSERT_TRUE(codecs::TasmCodec::EncodeBody("        DB      1,LAB1,\"X\",2,#3,%101", "5.5", body, error));
+    EXPECT_EQ(body, (std::vector<uint8_t>{0x95, '1', ',', 'L', 'A', 'B', '1', ' ', '"', 'X', '"', '2', '#', '3', '%', '1', '0', '1'}));
+    ASSERT_TRUE(codecs::TasmCodec::EncodeBody("        DB      1,LAB1,\"X\",2,#3,%101", "5.0", body, error));
+    EXPECT_EQ(body, (std::vector<uint8_t>{0xED, '1', ',', 'L', 'A', 'B', '1', '"', 'X', '"', '2', '#', '3', '%', '1', '0', '1'}));
+    ASSERT_TRUE(codecs::TasmCodec::EncodeBody("LAB4    LD      A,(IX-LAB1)     ;C2", "5.5", body, error));
+    EXPECT_EQ(body, (std::vector<uint8_t>{'L', 'A', 'B', '4', ' ', 0xBE, 0x80, '(', 0xB9, '-', 'L', 'A', 'B', '1', ' ', ')', ';', 'C', '2'}));
+    // and back: the editor's columns (label 0, command 8, operands 16, comment 32)
+    EXPECT_EQ(codecs::TasmCodec::DecodeBody(body, "5.5"), "LAB4    LD      A,(IX-LAB1)     ;C2");
+    EXPECT_EQ(codecs::TasmCodec::DecodeBody(std::vector<uint8_t>{0xB3, 0x80, '1', 0x86, '2'}, "5.0"), "        LD      A,1,B,2");
+    EXPECT_EQ(codecs::TasmCodec::DecodeBody(std::vector<uint8_t>{'L', 'A', 'B', '1', ',', 'L', 'A', 'B', '2'}, "5.0").substr(0, 4), "LAB1");
 }

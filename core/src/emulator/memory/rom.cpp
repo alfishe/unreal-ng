@@ -11,6 +11,7 @@
 #include "common/filehelper.h"
 #include "common/signaturecache.h"
 #include "common/stringhelper.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/cpu/core.h"
 #include "emulator/memory/memory.h"
 
@@ -451,6 +452,9 @@ bool ROM::LoadROM()
 				// ProfROM image geometry for the quadrant window (design §4.2);
 				// no-op on every other model
 				memory.OnRomLoaded(_ROMBanksLoaded);
+				// A board whose ROM is a flash lays its saved flash over the image (ZX-Evo)
+				if (_context->pPortDecoder)
+					_context->pPortDecoder->OnRomLoaded(_ROMBanksLoaded);
 
 				MLOGDEBUG("ROM successully loaded from file '%s'", romname.c_str());
 			}

@@ -38,6 +38,7 @@
 #include <emulator/video/screen.h>
 #include <emulator/sound/soundcharactersettings.h>
 #include <emulator/sound/chips/neogs/neogsmedia.h>
+#include <emulator/memory/atm/evoflashrequest.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
@@ -3671,6 +3672,33 @@ public:
         });
         lua.set_function("gs_flash_save", [this]() -> bool {
             return _emulator && NeoGSMediaAccepted(NeoGSRequestFlashSave(_emulator->GetContext()));
+        });
+        // ZX-Evo flash ROM (TS-Conf, ATM3): the saved flash (evoflashrequest.h). rom_flash_state() is nil on other
+        // machines; save / discard return true when accepted (discard: the shipped ROM returns at the next reset)
+        lua.set_function("rom_flash_state", [this](sol::this_state s) -> sol::object {
+            EvoFlash::PersistStatus st;
+            if (!_emulator || !EvoFlashGetStatus(_emulator->GetContext(), st))
+                return sol::make_object(s, sol::lua_nil);
+            sol::state_view lv(s);
+            sol::table t = lv.create_table();
+            t["machine"] = st.machine;
+            t["file"] = st.path;
+            t["file_exists"] = st.fileExists;
+            t["base_rom_sha256"] = st.baseDigest;
+            t["loaded_from_file"] = st.loadedFromFile;
+            t["unsaved"] = st.unsaved;
+            t["changes"] = st.changes;
+            sol::table others = lv.create_table();
+            for (size_t i = 0; i < st.otherImageFiles.size(); ++i)
+                others[i + 1] = st.otherImageFiles[i];
+            t["other_image_files"] = others;
+            return t;
+        });
+        lua.set_function("rom_flash_save", [this]() -> bool {
+            return _emulator && EvoFlashAccepted(EvoFlashRequestSave(_emulator->GetContext()));
+        });
+        lua.set_function("rom_flash_discard", [this]() -> bool {
+            return _emulator && EvoFlashAccepted(EvoFlashRequestDiscard(_emulator->GetContext()));
         });
         // NeoGS stereo mode: "separated" (as on the board), "gs" (50% cross-feed
         // like the classic GS) or "mono"; applied at the next frame. False on

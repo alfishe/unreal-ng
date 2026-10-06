@@ -105,6 +105,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"memory", &CLIProcessor::HandleMemory},
                         {"rtc", &CLIProcessor::HandleRtc},   // CMOS clock: report, read / write cells
                         {"cmos", &CLIProcessor::HandleRtc},
+                        {"romflash", &CLIProcessor::HandleRomFlash},  // ZX-Evo flash ROM: the saved flash
                         {"isa", &CLIProcessor::HandleIsa},   // ISA slots (Sprinter): report, cycles
                         {"network", &CLIProcessor::HandleNetwork},  // Network adapters: card, sockets, virtual network
                         {"net", &CLIProcessor::HandleNetwork},
@@ -653,6 +654,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  rtc | cmos | state rtc       - Time, registers A-D, alarms, every cell" << NEWLINE;
     oss << "  rtc read <start> [count]     - Read cells as the guest reads them (no side effects)" << NEWLINE;
     oss << "  rtc write <start> <b> [b..]  - Write cells like the guest (time registers set the clock)" << NEWLINE;
+    oss << "  romflash [status]            - ZX-Evo (TS-Conf, ATM3) flash ROM: the saved flash file, unsaved changes" << NEWLINE;
+    oss << "  romflash save | discard      - Write the flash file now / delete it (shipped ROM back at the next reset)" << NEWLINE;
     oss << "  isa | state isa              - ISA slots (Sprinter): #9FBD latch, window 3, cards, counters" << NEWLINE;
     oss << "  isa io|mem <slot> <addr> [v] - An ISA cycle (read, or write v); isa peek, isa reset, isa latch" << NEWLINE;
     oss << NEWLINE;

@@ -14,14 +14,16 @@ constexpr char32_t kRawBase = 0xF700;   // a byte the format gives no character:
 
 enum class Spacing : uint8_t
 {
-    Run0A,     ///< 3.x, 4.0, 4.4: #0A n = n blanks
-    Direct,    ///< 4.12: #02-#1F = that many blanks (#0A = ten), #01 n = n blanks
+    Run0A,        ///< 3.x, 4.0, 4.4: #0A n = n blanks
+    Direct,       ///< 4.12: #02-#1F = that many blanks (#0A = ten), #01 n = n blanks
+    Structural,   ///< 5.x: no blanks or separating commas stored; the editor lays the line out (see DecodeStructural)
 };
 
 struct Version
 {
     Spacing spacing;
     const tasm::TokenTable& tokens;
+    bool terminators = false;   ///< 5.5: a name in a line ends with a blank
 };
 
 Version VersionOf(const std::string& version)
@@ -30,13 +32,427 @@ Version VersionOf(const std::string& version)
         return {Spacing::Run0A, tasm::Tasm3Tokens()};
     if (version == "4.12")
         return {Spacing::Direct, tasm::Tasm412Tokens()};
+    if (version == "5.0")
+        return {Spacing::Structural, tasm::Tasm40Tokens()};
+    if (version == "5.5")
+        return {Spacing::Structural, tasm::Tasm55Tokens(), true};
     return {Spacing::Run0A, tasm::Tasm40Tokens()};
+}
+
+// --- TASM 5.x: structural lines ------------------------------------------------------------------------------------
+// A 5.x line is stored as its parts: [label][command token][operands][;comment], no blanks between them and no comma
+// where the boundary between two operands is plain without one: after an operand token (register, condition), a ')',
+// a closing quote or (5.5) a name, and before a quote, '#', '%', '(' or a token. A comma stays only between a letter or
+// digit and a letter or digit (1,2 / #AB,LAB / LAB,LAB in 5.0). 5.5 ends every name (label definition and reference)
+// with a blank. The editor shows the label in column 0, the command at 8, the operands at 16, a comment at 32. Seen on
+// files typed into TASM 5.0 beta and 5.5 beta and saved (research-tasm-to-sjasmplus.md section 5).
+
+std::string_view TokenName(const tasm::TokenTable& tokens, uint8_t b)
+{
+    if (b < tasm::kFirstToken || b > tasm::kLastToken)
+        return {};
+    std::string_view name = tokens[b - tasm::kFirstToken];
+    if (!name.empty() && name.back() == ' ')
+        name.remove_suffix(1);
+    return name;
+}
+
+bool IsNameChar(uint8_t c)
+{
+    return std::isalnum(c) || c == '_' || c == '.' || c == '@' || c == '?' || c == '!' || c == '\'';
+}
+
+void Pad(std::string& line, size_t column)
+{
+    if (line.size() < column)
+        line.append(column - line.size(), ' ');
+    else
+        line.push_back(' ');
+}
+
+void AppendRaw(std::string& text, uint8_t b, const tasm::TokenTable& tokens)
+{
+    const std::string_view name = b >= tasm::kFirstToken ? std::string_view(tokens[b - tasm::kFirstToken]) : std::string_view();
+    if (b >= 0x20 && b < 0x7F)
+        text.push_back(static_cast<char>(b));
+    else if (!name.empty())
+        text.append(name);
+    else
+        utf8::Append(text, kRawBase + b);
+}
+
+std::string DecodeStructural(std::span<const uint8_t> body, const Version& version)
+{
+    const auto& tokens = version.tokens;
+    const size_t n = body.size();
+    if (n == 0)
+        return {};
+    auto comment = [&](size_t from) {
+        std::string c;
+        for (size_t k = from; k < n; ++k)
+        {
+            if (body[k] == 0x0A && k + 1 < n)   // a blank run (lines the editor turned into comments)
+            {
+                c.append(body[k + 1], ' ');
+                ++k;
+            }
+            else
+                AppendRaw(c, body[k], tokens);
+        }
+        return c;
+    };
+    if (body[0] == ';')
+        return comment(0);
+    size_t i = 0;
+    std::string label;
+    if (body[0] < tasm::kFirstToken)
+    {
+        while (i < n && body[i] < tasm::kFirstToken && body[i] != ';' && !(version.terminators && body[i] == ' '))
+            AppendRaw(label, body[i++], tokens);
+        if (version.terminators && i < n && body[i] == ' ')
+            ++i;
+    }
+    std::string command;
+    if (i < n && !TokenName(tokens, body[i]).empty() && !tasm::IsOperandToken(TokenName(tokens, body[i])))
+        command = std::string(TokenName(tokens, body[i++]));
+    // Operands, with the commas the editor shows
+    enum class End { None, Name, Plain, Operator };   // Name: a letter or digit; Plain: token, ')', quote, name terminator
+    End end = End::None;
+    std::string operands;
+    auto separate = [&](bool alnumStart) {
+        if (end == End::Plain || (end == End::Name && !alnumStart))
+            operands.push_back(',');
+    };
+    while (i < n && body[i] != ';')
+    {
+        const uint8_t b = body[i];
+        const std::string_view name = TokenName(tokens, b);
+        if (!name.empty())
+        {
+            separate(false);
+            operands.append(name);
+            end = End::Plain;
+            ++i;
+        }
+        else if (b == '"')
+        {
+            separate(false);
+            size_t k = i + 1;
+            while (k < n && body[k] != '"')
+                ++k;
+            for (size_t c = i; c <= std::min(k, n - 1); ++c)
+                AppendRaw(operands, body[c], tokens);
+            i = std::min(k + 1, n);
+            end = End::Plain;
+        }
+        else if (b == ' ')
+        {
+            if (end == End::Name)
+                end = End::Plain;   // the blank that ends a name (5.5)
+            ++i;
+        }
+        else if (b == ',')
+        {
+            operands.push_back(',');
+            end = End::None;
+            ++i;
+        }
+        else if (b == '#' || b == '%' || b == '$')
+        {
+            separate(false);
+            operands.push_back(static_cast<char>(b));
+            ++i;
+            while (i < n && std::isalnum(body[i]))
+                operands.push_back(static_cast<char>(body[i++]));
+            end = End::Name;
+        }
+        else if (IsNameChar(b))
+        {
+            separate(true);
+            while (i < n && IsNameChar(body[i]) && TokenName(tokens, body[i]).empty())
+                operands.push_back(static_cast<char>(body[i++]));
+            end = End::Name;
+        }
+        else if (b == '(')
+        {
+            separate(false);
+            operands.push_back('(');
+            end = End::None;
+            ++i;
+        }
+        else if (b == ')')
+        {
+            operands.push_back(')');
+            end = End::Plain;
+            ++i;
+        }
+        else
+        {
+            AppendRaw(operands, b, tokens);
+            end = End::Operator;
+            ++i;
+        }
+    }
+    std::string line = label;
+    if (!command.empty() || !operands.empty())
+    {
+        if (!line.empty() || !command.empty() || !operands.empty())
+            Pad(line, 8);
+        line += command;
+        if (!operands.empty())
+        {
+            Pad(line, 16);
+            line += operands;
+        }
+    }
+    if (i < n)
+    {
+        if (!line.empty())
+            Pad(line, 32);
+        line += comment(i);
+    }
+    return line;
+}
+
+bool EncodeStructural(const std::string& text, const Version& version, std::vector<uint8_t>& body, std::string& error)
+{
+    const auto& tokens = version.tokens;
+    body.clear();
+    auto findToken = [&](const std::string& word, bool operand) -> int {
+        for (size_t t = 0; t < tokens.size(); ++t)
+        {
+            std::string_view name = tokens[t];
+            if (!name.empty() && name.back() == ' ')
+                name.remove_suffix(1);
+            if (name.empty() || name != word || tasm::IsOperandToken(name) != operand)
+                continue;
+            return static_cast<int>(t);
+        }
+        return -1;
+    };
+    auto upper = [](std::string w) {
+        for (char& c : w)
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        return w;
+    };
+    // Raw bytes (U+F700 + byte) and plain characters of a text part; in a comment three or more blanks are a run
+    // (#0A n), as the editor stores them
+    auto plain = [&](const std::string& part, bool comment = false) {
+        for (size_t k = 0; k < part.size();)
+        {
+            const unsigned char c = static_cast<unsigned char>(part[k]);
+            if (comment && c == ' ')
+            {
+                size_t m = k;
+                while (m < part.size() && part[m] == ' ' && m - k < 255)
+                    ++m;
+                if (m - k >= 3)
+                {
+                    body.push_back(0x0A);
+                    body.push_back(static_cast<uint8_t>(m - k));
+                    k = m;
+                    continue;
+                }
+            }
+            if (c >= 0x80)
+            {
+                char32_t cp = 0;
+                const size_t length = utf8::DecodeOne(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(part.data()) + k, part.size() - k), cp);
+                if (!length || cp < kRawBase || cp > kRawBase + 0xFF)
+                    return false;
+                body.push_back(static_cast<uint8_t>(cp - kRawBase));
+                k += length;
+                continue;
+            }
+            body.push_back(c);
+            ++k;
+        }
+        return true;
+    };
+    size_t i = text.find_first_not_of(' ');
+    if (i == std::string::npos)
+        return true;
+    if (text[i] == ';')
+    {
+        if (!plain(text.substr(i), true))
+            return error = "a character TASM cannot hold", false;
+        return true;
+    }
+    // Label
+    if (i == 0)
+    {
+        size_t j = 0;
+        while (j < text.size() && text[j] != ' ' && text[j] != ';')
+            ++j;
+        if (!plain(text.substr(0, j)))
+            return error = "a character TASM cannot hold", false;
+        if (version.terminators)
+            body.push_back(' ');
+        i = j;
+    }
+    while (i < text.size() && text[i] == ' ')
+        ++i;
+    // Command
+    size_t j = i;
+    while (j < text.size() && std::isalpha(static_cast<unsigned char>(text[j])))
+        ++j;
+    if (j > i && (j == text.size() || text[j] == ' ' || text[j] == ';'))
+    {
+        const int token = findToken(upper(text.substr(i, j - i)), false);
+        if (token >= 0)
+        {
+            body.push_back(static_cast<uint8_t>(tasm::kFirstToken + token));
+            i = j;
+        }
+    }
+    // Operands up to a comment, split at commas outside quotes and parentheses
+    std::vector<std::vector<uint8_t>> items;
+    std::vector<uint8_t> item;
+    size_t k = i;
+    int depth = 0;
+    bool quote = false;
+    std::string part;
+    auto flushPart = [&]() {
+        // a part of an item without quotes: names, numbers, operators; blanks dropped
+        for (size_t p = 0; p < part.size();)
+        {
+            const unsigned char c = static_cast<unsigned char>(part[p]);
+            if (c == ' ')
+            {
+                ++p;
+                continue;
+            }
+            if (c == '#' || c == '%' || c == '$' || std::isdigit(c))
+            {
+                item.push_back(c);
+                ++p;
+                while (p < part.size() && std::isalnum(static_cast<unsigned char>(part[p])))
+                    item.push_back(static_cast<uint8_t>(part[p++]));
+                continue;
+            }
+            if (std::isalpha(c) || c == '_' || c == '.' || c == '@' || c == '?' || c == '!')
+            {
+                size_t q = p;
+                while (q < part.size() && IsNameChar(static_cast<uint8_t>(part[q])) && part[q] != '\'')
+                    ++q;
+                std::string word = part.substr(p, q - p);
+                if (upper(word) == "AF" && q < part.size() && part[q] == '\'')
+                    word += '\'', ++q;
+                const int token = findToken(upper(word), true);
+                if (token >= 0)
+                    item.push_back(static_cast<uint8_t>(tasm::kFirstToken + token));
+                else
+                {
+                    item.insert(item.end(), word.begin(), word.end());
+                    if (version.terminators)
+                        item.push_back(' ');
+                }
+                p = q;
+                continue;
+            }
+            item.push_back(c);
+            ++p;
+        }
+        part.clear();
+    };
+    for (; k < text.size(); ++k)
+    {
+        const char c = text[k];
+        if (quote)
+        {
+            item.push_back(static_cast<uint8_t>(c));
+            quote = c != '"';
+            continue;
+        }
+        if (c == ';')
+            break;
+        if (c == '"')
+        {
+            flushPart();
+            item.push_back('"');
+            quote = true;
+            continue;
+        }
+        if (c == '(')
+            ++depth;
+        else if (c == ')' && depth > 0)
+            --depth;
+        if (c == ',' && depth == 0)
+        {
+            flushPart();
+            items.push_back(item);
+            item.clear();
+            continue;
+        }
+        part.push_back(c);
+    }
+    flushPart();
+    if (!item.empty() || !items.empty())
+        items.push_back(item);
+    auto alnumByte = [&](uint8_t b) { return b < tasm::kFirstToken && std::isalnum(b); };
+    for (size_t n = 0; n < items.size(); ++n)
+    {
+        if (n > 0 && !items[n - 1].empty() && !items[n].empty() && alnumByte(items[n - 1].back()) && alnumByte(items[n].front()))
+            body.push_back(',');
+        body.insert(body.end(), items[n].begin(), items[n].end());
+    }
+    if (k < text.size() && !plain(text.substr(k), true))
+        return error = "a character TASM cannot hold", false;
+    if (body.size() >= kEndMarker)
+        return error = "the line is longer than a TASM record (254 bytes)", false;
+    return true;
+}
+
+/// A 5.x file: lines without a label start right with a command token (4.x stores blanks before the command)
+bool LooksStructural(const std::vector<std::span<const uint8_t>>& bodies)
+{
+    size_t token = 0, blank = 0;
+    for (const auto& body : bodies)
+    {
+        if (body.empty() || body[0] == ';')
+            continue;
+        if (body[0] >= tasm::kFirstToken)
+            ++token;
+        else if (body[0] == 0x0A || body[0] == ' ' || (body[0] >= 0x01 && body[0] <= 0x1F))
+            ++blank;
+    }
+    return token > 0 && token > blank * 4;
+}
+
+/// How well a table reads a 5.x file: a command token where the command stands, operand tokens after it
+size_t StructuralScore(const std::vector<std::span<const uint8_t>>& bodies, const tasm::TokenTable& tokens)
+{
+    size_t score = 0;
+    for (const auto& body : bodies)
+    {
+        size_t i = 0;
+        while (i < body.size() && body[i] < tasm::kFirstToken && body[i] != ';')
+            ++i;
+        if (i >= body.size() || body[i] == ';')
+            continue;
+        const std::string_view first = TokenName(tokens, body[i]);
+        if (first.empty() || tasm::IsOperandToken(first))
+            continue;
+        ++score;
+        for (size_t k = i + 1; k < body.size() && body[k] != ';'; ++k)
+            if (body[k] >= tasm::kFirstToken)
+            {
+                const std::string_view name = TokenName(tokens, body[k]);
+                if (!name.empty() && tasm::IsOperandToken(name))
+                    ++score;
+                else
+                    score = score > 0 ? score - 1 : 0;
+            }
+    }
+    return score;
 }
 
 /// Blanks at body[i]: their count and the bytes they take; 0 when body[i] is not a blank run
 size_t BlankRun(std::span<const uint8_t> body, size_t i, Spacing spacing, size_t& taken)
 {
     const uint8_t b = body[i];
+    if (spacing == Spacing::Structural)
+        return 0;
     if (spacing == Spacing::Run0A)
     {
         if (b == 0x0A && i + 1 < body.size())
@@ -153,7 +569,12 @@ bool EncodeTasm2Line(const std::string& text, std::vector<uint8_t>& out, std::st
 
 TasmCodec::TasmCodec()
     : _info{"tasm", "TASM source (tokenized)", "tasm", CodecFamily::Tokenized,
-            {{"2.0", "TASM 2.0 (Rst7): plain text"}, {"3", "TASM 3.0-3.5 (Rst7)"}, {"4.0", "TASM 4.0 (XL Design) / 4.4 (KVA)"}, {"4.12", "TASM 4.12 (Rst7)"}}}
+            {{"2.0", "TASM 2.0 (Rst7): plain text"},
+             {"3", "TASM 3.0-3.5 (Rst7)"},
+             {"4.0", "TASM 4.0 (XL Design) / 4.4 (KVA)"},
+             {"4.12", "TASM 4.12 (Rst7)"},
+             {"5.0", "TASM 5.0 beta (XL Design): structural lines, the TASM 4.0 table"},
+             {"5.5", "TASM 5.5 beta (XL Design): structural lines, its own table"}}}
 {
 }
 
@@ -191,6 +612,16 @@ std::string TasmCodec::DetectVersion(std::span<const uint8_t> bytes, const Catal
     }
     if (!ended)
         return {};
+    // TASM 5.x: structural lines whatever the catalog says (its start field holds the editor's state); the table that
+    // reads the commands best
+    if (LooksStructural(bodies))
+    {
+        const size_t v50 = StructuralScore(bodies, tasm::Tasm40Tokens()), v55 = StructuralScore(bodies, tasm::Tasm55Tokens());
+        const std::string chosen = v55 > v50 ? "5.5" : "5.0";
+        if (consistent)
+            *consistent = {chosen};
+        return chosen;
+    }
     // The TR-DOS catalog's start field: each version saves sources with its own value (the word is in its binary)
     std::string byCatalog;
     if (hints.type == 'A' && hints.start == 39221)
@@ -253,7 +684,11 @@ int TasmCodec::Detect(std::span<const uint8_t> bytes, const CatalogHints& hints)
 
 std::string TasmCodec::DecodeBody(std::span<const uint8_t> body, const std::string& version)
 {
-    const auto [spacing, tokens] = VersionOf(version);
+    const Version v = VersionOf(version);
+    if (v.spacing == Spacing::Structural)
+        return DecodeStructural(body, v);
+    const auto& spacing = v.spacing;
+    const auto& tokens = v.tokens;
     std::string text;
     for (size_t i = 0; i < body.size();)
     {
@@ -274,7 +709,11 @@ std::string TasmCodec::DecodeBody(std::span<const uint8_t> body, const std::stri
 
 bool TasmCodec::EncodeBody(const std::string& text, const std::string& version, std::vector<uint8_t>& body, std::string& error)
 {
-    const auto [spacing, tokens] = VersionOf(version);
+    const Version v = VersionOf(version);
+    if (v.spacing == Spacing::Structural)
+        return EncodeStructural(text, v, body, error);
+    const auto& spacing = v.spacing;
+    const auto& tokens = v.tokens;
     body.clear();
     const size_t n = text.size();
     auto spaces = [&](size_t count) {

@@ -5,6 +5,7 @@
 #include <map>
 #include <set>
 
+#include "dialects/common/macros.h"
 #include "dialects/common/z80.h"
 
 namespace unrealasm::dialects
@@ -25,6 +26,31 @@ struct Failure
 {
     std::string reason;
 };
+
+/// The characters of a quoted text starting at t[start] (a quote): "" inside is one quote (ALASM's own sources write
+/// CP """); the text may run to the end of the line. `end` is the offset after the closing quote, or t.size()
+std::string Quoted(std::string_view t, size_t start, size_t& end)
+{
+    std::string chars;
+    size_t j = start + 1;
+    while (j < t.size())
+    {
+        if (t[j] == '"')
+        {
+            if (j + 1 < t.size() && t[j + 1] == '"')
+            {
+                chars.push_back('"');
+                j += 2;
+                continue;
+            }
+            end = j + 1;
+            return chars;
+        }
+        chars.push_back(t[j++]);
+    }
+    end = t.size();
+    return chars;
+}
 
 /// Expressions: left to right without priorities (ALASM help §5)
 struct ExpressionParser
@@ -122,17 +148,16 @@ struct ExpressionParser
         }
         if (c == '"')
         {
-            // A character constant; ALASM lets it run to the end of the line ("CP ":")
-            size_t j = i + 1;
-            while (j < t.size() && t[j] != '"')
-                ++j;
-            const std::string_view chars = t.substr(i + 1, j - i - 1);
+            // A character constant; ALASM lets it run to the end of the line ("CP ":"). Its value is a 16-bit word
+            // (the last two characters)
+            size_t end = 0;
+            const std::string chars = Quoted(t, i, end);
             int64_t value = 0;
             for (const char ch : chars)
-                value = (value << 8) | static_cast<unsigned char>(ch);
+                value = ((value << 8) | static_cast<unsigned char>(ch)) & 0xFFFF;
             Expr e = Expr::Number(value, ir::NumberSpelling::Character, static_cast<int>(chars.size()));
-            e.text = std::string(chars);
-            i = j < t.size() ? j + 1 : j;
+            e.text = chars;
+            i = end;
             return e;
         }
         if (c == '$')
@@ -325,8 +350,8 @@ Operand StringOperand(const std::string& text)
 {
     Operand o;
     o.kind = Operand::Kind::String;
-    size_t end = text.find('"', 1);
-    o.text = text.substr(1, end == std::string::npos ? std::string::npos : end - 1);
+    size_t end = 0;
+    o.text = Quoted(text, 0, end);
     return o;
 }
 
@@ -355,6 +380,8 @@ std::string FileName(const std::string& operand)
     std::string name = operand;
     if (!name.empty() && name.front() == '"')
         name = name.substr(1, name.find('"', 1) == std::string::npos ? std::string::npos : name.find('"', 1) - 1);
+    while (!name.empty() && name.back() == ' ')   // TR-DOS names are blank padded: "PARTS "
+        name.pop_back();
     return name;
 }
 
@@ -382,6 +409,13 @@ Statement ParseStatement(const std::string& word, const std::string& rest, Diagn
         switch (d.kind)
         {
             case ir::DirectiveKind::Db:
+                // DD with a quoted text: the code older ALASM versions show as DEFM (the codec spells it as 5.07 does)
+                if (word == "DD" && !ops.empty() && !ops[0].empty() && ops[0].front() == '"')
+                {
+                    for (const std::string& op : ops)
+                        s.operands.push_back(!op.empty() && op.front() == '"' ? StringOperand(op) : ParseOperand(op, false));
+                    break;
+                }
                 if (word == "DD")
                 {
                     // DD [#]hexbytes[,hexbytes]: pairs of hex digits
@@ -415,9 +449,11 @@ Statement ParseStatement(const std::string& word, const std::string& rest, Diagn
                         continue;
                     }
                     // A string (ALASM lets the last one run to the end of the line); in DW only a 1-2 character constant
-                    const size_t close = op.empty() ? std::string::npos : op.find('"', 1);
-                    if (!op.empty() && op.front() == '"' && (close == std::string::npos || close + 1 == op.size()) &&
-                        (d.kind != ir::DirectiveKind::Dw || op.size() > 4))
+                    size_t close = 0;
+                    if (!op.empty() && op.front() == '"')
+                        Quoted(op, 0, close);
+                    if (!op.empty() && op.front() == '"' && close == op.size() && (d.kind != ir::DirectiveKind::Dw || op.size() > 4) &&
+                        !(op.size() == 4 && op == "\"\"\"\""))
                         s.operands.push_back(StringOperand(op));
                     else
                         s.operands.push_back(ParseOperand(op, false));
@@ -592,11 +628,15 @@ void ParseLine(const std::string& text, uint32_t number, std::set<std::string>& 
                 t = t.substr(w0);
             }
         }
-        if (!t.empty() && t[0] != ' ' && (indentedLabel || (!IsKeyword(firstWord) && !macros.count(firstWord))))
+        const size_t afterFirst = t.find_first_not_of(' ', wordEnd);
+        const bool definesName = afterFirst != std::string::npos && (t[afterFirst] == '=' || t.compare(afterFirst, 4, "EQU ") == 0);
+        if (!t.empty() && t[0] != ' ' && (indentedLabel || definesName || (!IsKeyword(firstWord) && !macros.count(firstWord))))
         {
             while (i < t.size() && t[i] != ' ' && t[i] != '=')
                 ++i;
             line.label = t.substr(0, i);
+            if (line.label.size() > 1 && line.label.back() == ':')
+                line.label.pop_back();   // DATA: is DATA
             // "@" is part of the name (ALASM help, LOCAL: labels starting with @ are global); sjasmplus reads
             // "@name" as the global label too
             line.labelGlobal = !line.label.empty() && line.label.front() == '@';
@@ -677,117 +717,43 @@ void ParseLine(const std::string& text, uint32_t number, std::set<std::string>& 
     result.program.lines.push_back(std::move(line));
 }
 
-/// A macro body gluing a parameter to a name (ax\0, TEXTURER\0MAX) or walking its parameter text (\C \N \S \P \R):
-/// no target expresses that, the calls are expanded
-bool NeedsExpansion(const std::vector<std::string>& body)
+}  // namespace
+
+/// ALASM 4.4x writes macro parameters as :0..:9 (its own SAVEOBJ 2.1): inside a macro they become \0..\9, outside
+/// strings and comments
+std::string ColonParameters(const std::string& line)
 {
-    for (const std::string& line : body)
-        for (size_t k = 0; k + 1 < line.size(); ++k)
-        {
-            if (line[k] != '\\')
-                continue;
-            const char c = line[k + 1];
-            if (c == 'C' || c == 'N' || c == 'S' || c == 'P' || c == 'R')
-                return true;
-            if (std::isdigit(static_cast<unsigned char>(c)))
-            {
-                const bool before = k > 0 && (std::isalnum(static_cast<unsigned char>(line[k - 1])) || line[k - 1] == '_');
-                const bool after = k + 2 < line.size() && (std::isalnum(static_cast<unsigned char>(line[k + 2])) || line[k + 2] == '_' ||
-                                                           line[k + 2] == '\\');
-                if (before || after)
-                    return true;
-            }
-        }
-    return false;
-}
-
-/// The parameter text of one macro call and ALASM's pointer into it (help "MACRO"): \0..\9 count comma-separated
-/// parameters from the pointer, \P returns parameter 0 and moves the pointer to parameter 1, \C is the symbol at the
-/// pointer, \N moves it one symbol, \S<char> is the text from the pointer up to <char>, \R puts the pointer back
-struct MacroArguments
-{
-    std::string text;
-    size_t pointer = 0;
-
-    /// Offset of the end of the parameter starting at `from` (a comma outside quotes, or the end)
-    size_t FieldEnd(size_t from) const
+    std::string out = line;
+    bool quote = false;
+    for (size_t k = 0; k + 1 < out.size(); ++k)
     {
-        bool quote = false;
-        for (size_t k = from; k < text.size(); ++k)
-        {
-            if (text[k] == '"')
-                quote = !quote;
-            else if (text[k] == ',' && !quote)
-                return k;
-        }
-        return text.size();
-    }
-
-    std::string Field(size_t index) const
-    {
-        size_t start = std::min(pointer, text.size());
-        for (size_t n = 0; n < index; ++n)
-        {
-            const size_t end = FieldEnd(start);
-            if (end >= text.size())
-                return {};
-            start = end + 1;
-        }
-        return text.substr(start, FieldEnd(start) - start);
-    }
-};
-
-std::string Substitute(const std::string& line, MacroArguments& args)
-{
-    std::string out;
-    for (size_t k = 0; k < line.size(); ++k)
-    {
-        if (line[k] != '\\' || k + 1 >= line.size())
-        {
-            out.push_back(line[k]);
-            continue;
-        }
-        const char c = line[k + 1];
-        ++k;
-        if (std::isdigit(static_cast<unsigned char>(c)))
-            out += args.Field(static_cast<size_t>(c - '0'));
-        else if (c == 'P')
-        {
-            out += args.Field(0);
-            const size_t end = args.FieldEnd(std::min(args.pointer, args.text.size()));
-            args.pointer = end < args.text.size() ? end + 1 : args.text.size();
-        }
-        else if (c == 'R')
-            args.pointer = 0;
-        else if (c == 'C')
-        {
-            if (args.pointer < args.text.size())
-                out.push_back(args.text[args.pointer]);
-        }
-        else if (c == 'N')
-        {
-            if (args.pointer < args.text.size())
-                ++args.pointer;
-        }
-        else if (c == 'S' && k + 1 < line.size())
-        {
-            const char stop = line[++k];
-            const size_t from = std::min(args.pointer, args.text.size());
-            const size_t end = std::min(args.text.find(stop, from), args.text.size());
-            out += args.text.substr(from, end - from);
-        }
-        else
-        {
-            out.push_back('\\');
-            out.push_back(c);
-        }
+        if (out[k] == '"')
+            quote = !quote;
+        else if (!quote && out[k] == ';')
+            break;
+        else if (!quote && out[k] == ':' && std::isdigit(static_cast<unsigned char>(out[k + 1])))
+            out[k] = '\\';
     }
     return out;
 }
-}  // namespace
 
-FrontendResult AlasmFrontend::Parse(const SourceDocument& source) const
+FrontendResult AlasmFrontend::Parse(const SourceDocument& original) const
 {
+    SourceDocument source = original;
+    {
+        bool inMacro = false;
+        for (SourceLine& l : source.lines)
+        {
+            const size_t first = l.text.find_first_not_of(' ');
+            const std::string rest = first == std::string::npos ? std::string() : l.text.substr(first);
+            if (rest.rfind("MACRO ", 0) == 0)
+                inMacro = true;
+            else if (rest.rfind("ENDM", 0) == 0)
+                inMacro = false;
+            else if (inMacro)
+                l.text = ColonParameters(l.text);
+        }
+    }
     FrontendResult result;
     result.program.dialect = "alasm";
     result.program.expressionBits = 16;          // ALASM help §5: 16-bit integers

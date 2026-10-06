@@ -73,19 +73,19 @@ rules (characters, length, local syntax, case), its number spellings, its reserv
 | Construct | sjasmplus | pasmo | z88dk | ALASM | TASM | STORM | ZX-ASM | GENS |
 |---|---|---|---|---|---|---|---|---|
 | global labels | ● | ● | ● | ● | ● | ● | ● | ● |
-| local labels | ● (`.name`) | ? | ? | ● (`LOCAL` / `ENDL` blocks, `@name` global) → R (`name__L<n>`, `.name` in macros) | ? | ? | ? | ? |
+| local labels | ● (`.name`) | ? | ? | ● (`LOCAL` / `ENDL` blocks, `@name` global) → R (`name__L<n>`, `.name` in macros) | 4.12 (`.LOCAL` regions, `...name`) → R | ? | ? | ? |
 | temporary labels | ● (`1`, `1B` / `1F`) | ? | ? | ? | ? | ? | ? | ? |
-| `EQU` / `DEFL` | ● / ● | ● / ? | ? | ● / ● (`label=expr`) | ● / ? | ? | ? | ● / ? |
+| `EQU` / `DEFL` | ● / ● | ● / ? | ? | ● / ● (`label=expr`) | ● / ● (4.12 `label = expr`) | ? | ? | ● / ? |
 | `DB` / `DW` / `DS` | ● | ● | ● | ● | ● (`defb`, `defw`, `defs`, `db`, `dw`, `ds` in L1's table) | ? | ? | ● |
 | `INCLUDE` / `INCBIN` | ● / ● | ● / ● | ? | ● / ● | ● / ● (L1) | ? | ? | ? |
-| conditionals | ● | ● | ● | ● (`IF`, `IF0`, `IFN`; `?label` → R `exist`) | ? | ? | ? | ? |
-| macros | ● | ● | ● | ● (`\0`…`\9` → R named; glued or `\P \R \C \N \S` → X) | TASM 4 (`DEFMAC` / `ENDMAC`, P1) | ? | ? | ? |
-| repeat blocks | ● (`DUP` / `REPT`, `WHILE`) | ● (`REPT`) | ? | ● (`DUP` / `EDUP`; `REPEAT` / `UNTIL0` → R `WHILE`) | ? | ? | ? | ? |
+| conditionals | ● | ● | ● | ● (`IF`, `IF0`, `IFN`; `?label` → R `exist`) | 4.12 (`.IF` true at 0) → R | ? | ? | ? |
+| macros | ● | ● | ● | ● (`\0`…`\9` → R named; glued or `\P \R \C \N \S` → X) | 4.12 (`DEFMAC` / `ENDMAC`, `\0` or `/0`; `\c \n \s \r` → X) | ? | ? | ? |
+| repeat blocks | ● (`DUP` / `REPT`, `WHILE`) | ● (`REPT`) | ? | ● (`DUP` / `EDUP`; `REPEAT` / `UNTIL0` → R `WHILE`) | – (recursive macros) | ? | ? | ? |
 | assemble for another address | ● (`DISP` / `ENT`) | ? | ? | ● (`DISP`, L8) | ● (`PHASE` / `UNPHASE`, L1) | ? | ? | ? |
 | modules / name spaces | ● | – | ? | ? | – | – | – | – |
 | print at assembly | ● (`DISPLAY`) | ? | ? | ● (`DISPLAY`, L8) | TASM 4 (`DISPLAY`, P1) | ? | ? | ? |
 | undocumented instructions | ● | ● | ● | ● (`LX` / `HX` forms) | ● (`lx`, `hx`, `ly`, `hy`, `sli`, L1) | ? | ? | ? |
-| expression priorities | C-like, 32-bit signed | ? | ? | none (left to right), 16-bit unsigned → R parentheses, masks | ? | ? | ? | ? |
+| expression priorities | C-like, 32-bit signed | ? | ? | none (left to right), 16-bit unsigned → R parentheses, masks | none (left to right), 16-bit unsigned, postfix `^ { } [ ]` → R | ? | ? | ? |
 
 The `?` cells are filled by the research of each dialect (the probe source of [source-formats.md](source-formats.md)
 §3 shows what the assembler accepts and what binary it builds).

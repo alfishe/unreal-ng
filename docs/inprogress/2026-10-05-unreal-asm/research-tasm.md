@@ -7,6 +7,7 @@
 | **Programs** | [TASM 2.0](https://zxart.ee/releasefile/id:249301/TASM2_0.zip), [3.0](https://zxart.ee/releasefile/id:249302/TASM3_0.zip), [3.02](https://zxart.ee/releasefile/id:249303/TASM3_2.zip), [3.5](https://vtrd.in/system/TASM_3_5.zip), [4.0 XLD](https://zxart.ee/releasefile/id:249304/TASM4_0.zip), [4.4 KVA](https://zxart.ee/releasefile/id:249307/TASM4_4.zip), [4.12](https://zxart.ee/releasefile/id:249305/TASM_412.ZIP) (also [TRD](https://zxart.ee/releasefile/id:155527/TASMV4.12.trd.zip)); keyword tables read from each binary |
 | **Corpus** | 127 distinct type-`A` sources: 24 TASM 3 (from [Legend of Kyrandia demo](https://zxart.ee/releasefile/id:168024/LegendOfKyrandiaDemo.trd.zip)), 91 TASM 4.0 / 4.4 (General Sound ROM 1.04 sources, Sprinter BIOS and 2D Studio sources, the TASM 3.02 disk's examples), 12 TASM 4.12 (the program's own examples, Kyrandia, [sobdemo](https://zxart.ee/releasefile/id:298066/sobdemo.zip), J7N's HD formatter) |
 | **Result** | all 127 (and the TASM 2.0 file made in the emulator) decode and encode back **byte for byte**; the version from the catalog is never contradicted by the bytes; the canonical tokenizer alone writes 99.85 % of the lines exactly as TASM stored them (§5); the decoded text matches TASM's screen in 3.0, 4.0 and 4.12, and a file converted 4.0 → 4.12 opens in TASM 4.12 (§6.1) |
+| **Later versions** | TASM 5.0 beta and 5.5 beta (XL Design, 1997) store lines structurally: codec versions `5.0` / `5.5`, see [research-tasm-to-sjasmplus.md](research-tasm-to-sjasmplus.md) §5 |
 
 ## 1. Example first
 

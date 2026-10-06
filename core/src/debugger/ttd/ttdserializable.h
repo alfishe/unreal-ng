@@ -110,6 +110,7 @@ enum class PeripheralId : uint8_t
     MultiSound = 58,      // ZX-MultiSound card (slot-built): its time base, CPLD latches, YM2203 pair, MIDI line, DACs
     Sam2695 = 59,         // a Dream SAM2695 General MIDI synthesizer (the ZX-MultiSound's): UART, parser, channels, voices; names its bank by SHA-256
     MultiSoundGs = 60,    // the ZX-MultiSound's General Sound (GS profile MultiSound, 1-2 MB RAM): the classic GS blob, own id next to a GS card
+    EvoFlash = 61,        // the ZX-Evo's ROM chip as a flash (TS-Conf, ATM3): its command state; the array is the engine region EvoFlash
     // Future: GS512, etc.
     Count
 };
@@ -186,7 +187,8 @@ enum class TTDDeviceType : uint16_t
     RzxPlayback = 57,
     MultiSound = 58,
     Sam2695 = 59,
-    MultiSoundGs = 60
+    MultiSoundGs = 60,
+    EvoFlash = 61
 };
 static_assert(static_cast<uint16_t>(TTDDeviceType::TurboSound) == static_cast<uint16_t>(PeripheralId::TurboSound), "TTDDeviceType::TurboSound must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::BetaDisk) == static_cast<uint16_t>(PeripheralId::BetaDisk), "TTDDeviceType::BetaDisk must keep its v1 number");
@@ -249,6 +251,7 @@ static_assert(static_cast<uint16_t>(TTDDeviceType::RzxPlayback) == static_cast<u
 static_assert(static_cast<uint16_t>(TTDDeviceType::MultiSound) == static_cast<uint16_t>(PeripheralId::MultiSound), "TTDDeviceType::MultiSound must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::Sam2695) == static_cast<uint16_t>(PeripheralId::Sam2695), "TTDDeviceType::Sam2695 must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::MultiSoundGs) == static_cast<uint16_t>(PeripheralId::MultiSoundGs), "TTDDeviceType::MultiSoundGs must keep its v1 number");
+static_assert(static_cast<uint16_t>(TTDDeviceType::EvoFlash) == static_cast<uint16_t>(PeripheralId::EvoFlash), "TTDDeviceType::EvoFlash must keep its v1 number");
 
 /// A device in the engine's device table: its kind and its instance name
 /// ("betadisk", "betadisk.context", "zifi.uart"; lower case, dots, digits)

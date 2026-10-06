@@ -200,6 +200,13 @@ struct ExpressionParser
             return Expr::Number(std::stoll(run.substr(0, run.size() - 1), nullptr, 16), ir::NumberSpelling::Hex, static_cast<int>(run.size() - 1));
         if (all(run, "0123456789"))
             return Expr::Number(std::stoll(run), ir::NumberSpelling::Decimal, static_cast<int>(run.size()));
+        if ((last == 'b' || last == 'f') && all(std::string_view(run).substr(0, run.size() - 1), "0123456789"))
+        {
+            // 1B / 1F: a temporary label backwards / forwards (or 101b, binary): written back as it is, sjasmplus decides
+            Expr raw = Expr::Make(Expr::Kind::Raw);
+            raw.text = run;
+            return raw;
+        }
         if (last == 'b' && all(std::string_view(run).substr(0, run.size() - 1), "01"))
             return Expr::Number(std::stoll(run.substr(0, run.size() - 1), nullptr, 2), ir::NumberSpelling::Binary, static_cast<int>(run.size() - 1));
         throw Failure{"number " + run + " in a form the converter does not read"};
@@ -581,6 +588,14 @@ Statement ParseStatement(const std::string& text, std::string& label, const Cont
     if (upper.size() > 1 && upper[0] == '.')
         upper.erase(0, 1);   // .db, .org: sjasmplus accepts a dot before a directive
 
+    // ".3 INC HL": sjasmplus repeats the instruction; kept as written
+    if (word.size() > 1 && word[0] == '.' && (std::isdigit(static_cast<unsigned char>(word[1])) || word[1] == '('))
+    {
+        s.kind = Statement::Kind::Directive;
+        s.directive = ir::DirectiveKind::Other;
+        s.text = text;
+        return s;
+    }
     // A macro may take a directive's or an instruction's name (sjasmplus looks for macros first)
     if (c.macros.count(word) && upper != "ENDM")
     {
@@ -609,6 +624,8 @@ Statement ParseStatement(const std::string& text, std::string& label, const Cont
                 s.text = ops.empty() ? std::string() : FileName(ops[0]);
                 if (d.kind == ir::DirectiveKind::Include && s.text.size() > 4 && z80::Lower(s.text.substr(s.text.size() - 4)) == ".asm")
                     s.text.resize(s.text.size() - 4);   // the IR names a source without its extension
+                else if (d.kind == ir::DirectiveKind::Include)
+                    s.params = {"verbatim"};            // another extension (.a80, .inc): the name stays as written
                 for (size_t k = 1; k < ops.size(); ++k)
                     s.args.push_back(c.Parse(ops[k]));
                 break;
@@ -688,6 +705,7 @@ FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
     FrontendResult result;
     result.program.dialect = "sjasmplus";
     std::set<std::string> macros;
+    bool inBlock = false;   // inside /* ... */
     uint32_t number = 0;
     for (const SourceLine& sourceLine : source.lines)
     {
@@ -695,6 +713,48 @@ FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
         ir::Line line;
         line.sourceLine = number;
         std::string text = sourceLine.text;
+
+        // Block comments /* ... */, also over several lines: their text becomes line comments
+        {
+            std::string kept, note;
+            size_t at = 0;
+            while (at < text.size())
+            {
+                if (inBlock)
+                {
+                    const size_t end = text.find("*/", at);
+                    note += text.substr(at, end == std::string::npos ? std::string::npos : end - at);
+                    if (end == std::string::npos)
+                        break;
+                    inBlock = false;
+                    at = end + 2;
+                    continue;
+                }
+                const std::string m = Mask(text.substr(at));
+                const size_t open = m.find("/*");
+                const size_t semicolon = m.find(';');
+                const size_t slashes = m.find("//");
+                if (open == std::string::npos || (semicolon != std::string::npos && semicolon < open) || (slashes != std::string::npos && slashes < open))
+                {
+                    kept += text.substr(at);
+                    break;
+                }
+                kept += text.substr(at, open);
+                inBlock = true;
+                at += open + 2;
+            }
+            if (!note.empty() || inBlock || kept.size() != text.size())
+            {
+                text = kept;
+                while (!text.empty() && (text.back() == ' ' || text.back() == '\t'))
+                    text.pop_back();
+                if (!note.empty())
+                {
+                    line.comment = note;
+                    line.hasComment = true;
+                }
+            }
+        }
 
         // The comment: ';' or "//" outside strings
         const std::string m = Mask(text);

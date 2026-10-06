@@ -2,6 +2,7 @@
 
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/atm/evoflash.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
 
 TsConfMemory::TsConfMemory(EmulatorContext* context) : Memory(context)
@@ -33,6 +34,8 @@ bool TsConfMemory::UpdateModelBanks()
         SetRAMPageToBank1(5);
         SetRAMPageToBank2(2);
         SetRAMPageToBank3(0);
+        if (_flash)
+            _flash->SetWriteWindows(0);
         return true;
     }
 
@@ -72,6 +75,12 @@ bool TsConfMemory::UpdateModelBanks()
     {
         SetROMPageToBank(0, page & 0x1F);
     }
+
+    // The flash's /WE: a write cycle while W0_WE is set, its /CE: window 0 shows ROM ([V] zmem.v:83,294-298). The
+    // chip's array is the ROM page itself, so the write still goes nowhere here (the trash page) and the flash
+    // overlay takes it as a command or a program byte
+    if (_flash)
+        _flash->SetWriteWindows((!ram && writable) ? 0x01 : 0x00);
 
     SetRAMPageToBank1(ts.Page(1));
     SetRAMPageToBank2(ts.Page(2));

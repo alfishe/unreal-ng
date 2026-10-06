@@ -6,6 +6,7 @@
 #include "common/modulelogger.h"
 #include "debugger/ttd/atm/ttdevofontram.h"
 #include "debugger/ttd/atm/ttdevoavrvolatile.h"
+#include "debugger/ttd/atm/ttdevoflash.h"
 #include "debugger/ttd/atm/ttdevomouse.h"
 #include "debugger/ttd/atm/ttdevops2.h"
 #include "debugger/ttd/atm/ttdevosdcard.h"
@@ -85,6 +86,9 @@ PortDecoder_ATM3::~PortDecoder_ATM3()
     if (_fontOverlayInstalled && _context->pCore)
         _context->pCore->RemoveBusOverlay(_fontOverlay.get());
 
+    if (_context->pCore)
+        _context->pCore->RemoveBusOverlay(&_flash);
+
     // Battery-backed state outlives the machine ([EVO] NvramFile)
     const char* nvramPath = _context->config.atm.evo_nvram_path;
     if (_nvramLoaded && nvramPath[0] != '\0' && !_evoAvr.SaveNvram(nvramPath))
@@ -104,6 +108,8 @@ void PortDecoder_ATM3::reset()
     // The AVR keeps running through a Z80 reset, but the emulator's time base (t_states) starts again from 0: its
     // main-loop phase and EEPROM write are re-anchored there (EvoAvrWait counts in that time base)
     _evoAvr.Wait().Reset();
+    // The flash chip has no reset pin; the time base restarts, so a running program / erase completes here
+    _flash.OnMachineReset();
 
     // A mouse plugged in or out ([INPUT] Mouse=) re-runs the AVR's mouse reset; the
     // registers themselves outlive a Z80 reset (the AVR keeps running)
@@ -116,6 +122,7 @@ void PortDecoder_ATM3::reset()
     _state->pBF = 0x00;
     _state->evoWrProt = 0x00;  // atm_pager.v: wrdisables reset to 0
     SyncFontOverlay();         // pBF.2 is clear now; the font RAM itself keeps its content (altdpram, not reset)
+    SyncFlashWindows();        // pBF.1 is clear now: no window writes the flash
     _state->evoFddMask = 0x00;  // fdd_mask resets to "all drives real" (zports.v:521-525)
 
     // znmi.v: reset clears pending_nmi, in_nmi, in_nmi_2 (pBE doubles as the
@@ -876,6 +883,22 @@ bool PortDecoder_ATM3::IsWindowWriteProtected(uint8_t bank) const
     return (_state->evoWrProt >> (regSet + (bank & 3))) & 1;
 }
 
+void PortDecoder_ATM3::SyncFlashWindows()
+{
+    uint8_t mask = 0;
+    if (_memory && (_state->pBF & 0x02))
+        for (uint8_t bank = 0; bank < 4; bank++)
+            if (_memory->IsWindowRom(bank) && !IsWindowWriteProtected(bank))
+                mask |= static_cast<uint8_t>(1u << bank);
+    _flash.SetWriteWindows(mask);
+}
+
+void PortDecoder_ATM3::OnFrameEnd()
+{
+    PortDecoder_ATM710::OnFrameEnd();
+    _flash.OnFrameEnd();
+}
+
 void PortDecoder_ATM3::OnDosRomFetch(uint16_t pc)
 {
     // atm_pager.v zclk_stall: 4 fclk of the 28 MHz clock (half a 3.5 MHz T = 128 counter ticks) on every fetch from
@@ -1433,6 +1456,7 @@ std::vector<ttd::PeripheralId> PortDecoder_ATM3::GetTTDModelStateIds() const
     // The AVR's /WAIT timing (main-loop phase, EEPROM write) rides in EvoAvrVolatile; its first bytes repeat what
     // AtmPaging carries for the ATM3 (restored after it, the same values)
     ids.push_back(ttd::PeripheralId::EvoAvrVolatile);
+    ids.push_back(ttd::PeripheralId::EvoFlash);
     return ids;
 }
 
@@ -1449,6 +1473,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_ATM3::CreateTTDSe
     serializers.push_back(std::make_unique<ttd::TTDEvoTurboCache>(const_cast<PortDecoder_ATM3&>(*this)));
     serializers.push_back(std::make_unique<ttd::TTDEvoFontRam>(_context));
     serializers.push_back(std::make_unique<ttd::TTDEvoAvrVolatile>(const_cast<EvoAvr&>(_evoAvr)));
+    serializers.push_back(std::make_unique<ttd::TTDEvoFlash>(self._flash));
     return serializers;
 }
 
@@ -1495,6 +1520,7 @@ void PortDecoder_ATM3::updateMemoryBanks()
     {
         for (uint8_t bank = 0; bank < 4; bank++)
             _memory->SetROMPageToBank(bank, romMask);
+        SyncFlashWindows();
         return;
     }
 
@@ -1551,6 +1577,8 @@ void PortDecoder_ATM3::updateMemoryBanks()
         for (uint8_t bank = 0; bank < 4; bank++)
             if (!_memory->IsWindowRom(bank) && IsWindowWriteProtected(bank))
                 _memory->SetBankWriteProtected(bank);
+
+    SyncFlashWindows();
 
     // Every state restore (TTD seek, snapshot) re-runs the decode: re-attach
     // the M1 hook the restored NMI / breakpoint state needs

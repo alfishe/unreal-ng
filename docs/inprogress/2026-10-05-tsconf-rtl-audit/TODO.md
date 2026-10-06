@@ -63,7 +63,19 @@ first; tests that assert the current wrong value are named and change with the f
   load; equal in two rounds). Other machines do not use `TsConfMemory`. `testdata/machines/tsconf/ttd/sprites.ttd`
   no longer replays (`TTD_Corpus_Test`: the TS-Conf blob differs from byte 1024, `cacheTag`, because the recording
   has no entries for reads made with the cache off): it needs re-recording.
-- W0_WE with ROM in window 0 should write the flash (`zmem.v:297`); both emulators drop the write.
+- ~~W0_WE with ROM in window 0 should write the flash (`zmem.v:297`); both emulators drop the write.~~ **Fixed
+  2026-10-05** (not committed): the ROM chip is modeled as the board's 29F040 flash (`Flash29F040B`, shared with
+  NeoGS, working on the machine's ROM pages) behind `EvoFlash`, a host bus overlay installed only while W0_WE lets
+  window 0 ROM writes through or the chip answers status; the ATM3 gets the same through `#BF` bit 1 (BaseConf
+  `zmem.v:193`). Commands, status polling (DQ7 / DQ6 / DQ5 / DQ3), autoselect ID `#01 / #A4`, byte program, sector
+  and chip erase with the datasheet's typical times; TTD blob `EvoFlash` (id 61) + engine region `EvoFlash` (18).
+  Tests `TsConfMemory_Test.MEM6_RomWriteEnableReachesTheFlash`, `EvoFlashTsConf_Test.*` (with the Wild Commander ROM
+  writer's routines), `EvoFlashAtm3_Test.*` (with NedoOS `evoflash.com`'s routines),
+  `TTDEvoFlash_Test.SeeksRestoreTheFlashBytesAndTheChipState`. Saving the flash: ~~open owner decision~~ **decided 2026-10-06** (option 3) and
+  implemented: a file of its own per machine, `zxevo-flash-<tsconf|atm3>-<ROM image SHA-256>.rom` in the settings
+  folder (the whole 512 KB), loaded over the ROM image at machine creation, written after a quiet second and at the
+  machine's end, never during a TTD replay; discard on every automation surface (`romflash`, `/memory/rom/flash`,
+  `rom_flash_*`). Tests `EvoFlashPersist_Test.*`. Design: [../2026-09-27-tsconf/tdd-evo-flash.md](../2026-09-27-tsconf/tdd-evo-flash.md) section 6.
 
 ## Known approximations (documented in unreal-ng, kept unless a program needs them)
 

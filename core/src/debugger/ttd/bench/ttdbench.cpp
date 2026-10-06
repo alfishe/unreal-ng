@@ -42,6 +42,7 @@ bool V1Lacks(TTDRegionId id)
         case TTDRegionId::NeoGSFlash:
         case TTDRegionId::EvoAvrEeprom:
         case TTDRegionId::SmucEeprom:
+        case TTDRegionId::EvoFlash:
             return true;
         default:
             return false;

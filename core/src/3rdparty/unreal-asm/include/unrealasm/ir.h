@@ -30,6 +30,7 @@ enum class Op : uint8_t
     Negate, Plus, Not, High, Low,
     LogicalNot,
     Exists,                        ///< sjasmplus "exist name": 1 when the label is defined anywhere in the source
+    SwapBytes,                     ///< TASM's postfix "^": the high and low bytes of a 16-bit word exchanged
 };
 
 struct Expr
@@ -88,7 +89,7 @@ enum class DirectiveKind : uint8_t
     Dw,
     Ds,           ///< args: count [, fill bytes...]
     Include,      ///< text: file; args: [page]
-    Incbin,       ///< text: file; args: [offset [, length]]
+    Incbin,       ///< text: file; args: [offset [, length]]; params "sector-slack": the rest of the file's last disk sector is written after it without moving the address (TASM)
     If,           ///< args: condition (true when not zero)
     Else,
     EndIf,
@@ -101,7 +102,7 @@ enum class DirectiveKind : uint8_t
     RepeatUntil,  ///< ALASM REPEAT: the block runs until UntilZero's expression is 0
     UntilZero,    ///< args: expression
     Disp,         ///< args: address
-    Ent,
+    Ent,          ///< text "if-displaced": only when a displacement is active (Program::displacementAcrossFiles)
     LocalBlock,   ///< ALASM LOCAL ... ENDL: labels inside are local to the block
     EndLocalBlock,
     Display,      ///< operands: strings and expressions; params: per-item format keys
@@ -147,5 +148,8 @@ struct Program
     /// reproduces by masking where it matters (division)
     int expressionBits = 0;
     bool unsignedArithmetic = false;   ///< division and shifts on unsigned values
+    /// The displacement (PHASE / DISP) may continue across INCLUDE: a file cannot know whether one is active where it
+    /// starts (TASM). An `Ent` statement with text "if-displaced" ends one only when it is active
+    bool displacementAcrossFiles = false;
 };
 }  // namespace unrealasm::ir

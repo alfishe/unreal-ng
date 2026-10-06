@@ -26,7 +26,8 @@ Peripheral ids are `ttd::PeripheralId` (one byte, v1); region ids are `ttd::TTDR
 | Item | Machines | Stream v1 | Stream engine | Class | Size | Variability | Status | Source |
 |---|---|---|---|---|---|---|---|---|
 | Machine RAM, 16 KB pages | all | page store (dirty pages, XOR deltas) | region 0 `MachineRam`, 4 KB pieces | R | | | ok | `timetravelmanager.cpp` capture; engine `timetravelengine.cpp` |
-| ROM pages | all | — (fixed, fingerprinted) | — | R (constant) | | | ok | ROM reload ends the session |
+| ROM pages | all but ATM3, TSL | — (fixed, fingerprinted) | — | R (constant) | | | ok | ROM reload ends the session |
+| ZX-Evo ROM = the 29F040 flash, pages 0-31 (written by flash commands; saved outside the session to its own file, never during a replay) | ATM3, TSL | — (v1 keeps no ROM) | region 18 `EvoFlash`, pieces marked by the chip's programs and erases | R | 512 KB | rare (a flasher run), 4 KB pieces | ok in the engine | `emulator/memory/atm/evoflash.cpp` `TTDRegions`; `io/flash/flash29f040b.cpp` |
 | General Sound RAM | GS classic | inside the GS blob (id 5) | region 1 `GeneralSoundRam` | R | | | ok | `sound/chips/soundchip_gs.cpp` |
 | GS lightweight upload store | GS lightweight | not recorded (the card is class N) | — | N | | | ok | `debugger/ttd/ttdmachineperipherals.cpp` |
 | MoonSound wave SRAM (RAM after the ROM) | MoonSound | — | region 3 `MoonSoundWaveMemory` | R | | | gap 3 | `soundchip_moonsound.cpp` |
@@ -79,6 +80,7 @@ One row per device blob; the device's memory is in section 1.
 | uPD765 | +3 | id 14 | blob | R | | | ok | `io/fdc/upd765.cpp:1381/1427` |
 | SD card + Z-Controller | ATM3, TSL | id 15 | blob | R | | | ok | `io/sdcard/sdcardspi.cpp:545/571` |
 | TS-Conf state: registers, CRAM, SFILE, DMA, TSU, INT | TSL | id 16 | blob | R | | | ok | |
+| ZX-Evo ROM flash command state (mode, toggle, DQ7 source, erase sectors, pending program, window and busy ends in base t-states) | TSL, ATM3 | EvoFlash (id 61, 33 bytes) | blob | R | | | ok | `debugger/ttd/atm/ttdevoflash.cpp`; `emulator/memory/atm/evoflash.cpp` |
 | ZX-Evo AVR volatile bytes (EEPROM window, ext type, LEDs) and the /WAIT ports' timing (`EvoAvrWait`: main-loop phase, EEPROM write end; #xxEF and #BFF7 share it) | TSL, ATM3 | EvoAvrVolatile (id 55, v2, 20 bytes) | blob | R | | | ok | `debugger/ttd/atm/ttdevoavrvolatile.cpp` |
 | IDE / ATA / ATAPI channel | any `[HDD] Scheme` | id 17 | blob | R | | | ok | `debugger/ttd/ide/ttdatachannel.cpp:68/89` |
 | ATA write-protect switch | IDE | — | — | R | | | gap 12 | `io/ide/ata/atadevice.h:196` |

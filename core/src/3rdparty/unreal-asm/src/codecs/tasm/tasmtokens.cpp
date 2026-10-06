@@ -25,6 +25,25 @@ constexpr TokenTable kTasm40 = {
     "DW ",                                                                               // F0
 };
 
+// TASM 5.5 beta, #80-#F7: the table in its binary, in the binary's order (confirmed on files the editor saved)
+constexpr TokenTable kTasm55 = {
+    "A", "ADC ", "ADD ", "AF'", "AF", "AND ", "B", "BC",                                  // 80-87
+    "BIT ", "C", "C", "CALL ", "CCF", "CP ", "CPD", "CPDR",                                 // 88-8F
+    "CPI", "CPIR", "CPL", "D", "DAA", "DB ", "DE", "DEC ",                                  // 90-97
+    "DI", "DJNZ ", "DM ", "DS ", "DW ", "E", "EI", "ELSE",                                  // 98-9F
+    "ENDIF", "ENDM", "ENDR", "EQU ", "EX ", "EXX", "H", "HALT",                             // A0-A7
+    "HL", "HX", "HY", "I", "IF ", "IFDEF ", "IM ", "IN ",                                    // A8-AF
+    "INC ", "INCLUDE ", "INCBIN ", "INCSEC ", "IND", "INDR", "INF", "INI",                  // B0-B7
+    "INIR", "IX", "IY", "JP ", "JR ", "L", "LD ", "LDD",                                    // B8-BF
+    "LDDR", "LDI", "LDIR", "LX", "LY", "M", "MACRO", "NC",                                  // C0-C7
+    "NEG", "NOP", "NV", "NZ", "OR ", "ORG ", "OTDR", "OTIR",                                // C8-CF
+    "OUT ", "OUTD", "OUTI", "P", "PE", "PHASE ", "PO", "POP ",                              // D0-D7
+    "PRINTF ", "PUSH ", "R", "REPT ", "RES ", "RET", "RETI", "RETN",                        // D8-DF
+    "RL ", "RLA", "RLC ", "RLCA", "RLD", "RR ", "RRA", "RRC ",                              // E0-E7
+    "RRCA", "RRD", "RST ", "SBC ", "SCF", "SET ", "SLA ", "SLI ",                           // E8-EF
+    "SP", "SRA ", "SRL ", "SUB ", "UNPHASE", "V", "XOR ", "Z",                              // F0-F7
+};
+
 void Clear(TokenTable& table, uint8_t from, uint8_t to)
 {
     for (int code = from; code <= to; ++code)
@@ -66,5 +85,20 @@ const TokenTable& Tasm412Tokens()
 {
     static const TokenTable table = MakeTasm412();
     return table;
+}
+
+const TokenTable& Tasm55Tokens()
+{
+    return kTasm55;
+}
+
+bool IsOperandToken(std::string_view name)
+{
+    static const std::string_view kOperands[] = {"A",  "B",  "C",  "D",  "E",  "H",  "L",  "I",  "R",  "AF", "AF'", "BC", "DE", "HL", "SP",
+                                                 "IX", "IY", "HX", "LX", "HY", "LY", "NZ", "Z",  "NC", "PO", "PE",  "P",  "M",  "NV", "V"};
+    for (const std::string_view operand : kOperands)
+        if (name == operand)
+            return true;
+    return false;
 }
 }  // namespace unrealasm::codecs::tasm

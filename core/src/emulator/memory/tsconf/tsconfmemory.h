@@ -4,6 +4,7 @@
 #include "emulator/platforms/tsconf/tsconfarbiter.h"
 
 struct TsConfState;
+class EvoFlash;
 class Z80;
 
 /// TS-Conf memory subsystem (TSConf technical-design §3.5, hardware-spec §2).
@@ -40,6 +41,9 @@ public:
     uint8_t MemoryReadDebug(uint16_t addr, bool isExecution) override;
 
     void AttachState(TsConfState* state) { _ts = state; }
+    /// The board's ROM chip: told at every bank mapping whether window 0 writes reach it (W0_WE with ROM mapped,
+    /// [V] zmem.v:297 `romwe_n = !(memwr && w0_we)` gated by `csrom`)
+    void AttachFlash(EvoFlash* flash) { _flash = flash; }
     TsConfState* GetState() const { return _ts; }
 
     /// 14 MHz DRAM waits (phase 8 TIM-1, hardware-spec §2.5, TsConfArbiter):
@@ -90,6 +94,7 @@ private:
     void RefusedBeforeM1();
 
     TsConfState* _ts = nullptr;
+    EvoFlash* _flash = nullptr;
     Z80* _waitCpu = nullptr;
     TsConfArbiter* _arbiter = nullptr;
     bool _nextIsM1 = false;
