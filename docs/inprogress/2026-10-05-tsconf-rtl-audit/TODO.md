@@ -122,9 +122,30 @@ first; tests that assert the current wrong value are named and change with the f
 
 ## Tests missing for behaviors that match
 
-About 40 rows match in all three but have no unreal-ng test (TSU wraps and flips, frame constants, V_CONFIG
-mid-line latching, FLASH rate, DMA counter stepping, masked / vdos-deferred DMA INT, register readback, ...). Each
-area file's "Bugs and gaps" section names the test and its assertion.
+**Done 2026-10-06** for every row that matches in all three and had no test (the fixed bugs brought their own tests).
+25 tests, each assertion from the RTL (file:line in the test's comment) and checked against TS-Labs Unreal; all pass,
+so no new bug was found:
+
+| Area | Rows | Tests |
+|:--|:--|:--|
+| [interrupts.md](interrupts.md) | 4, 23, 35 | `TsConfInterrupts_Test.INT2b_VsIntHHighBitsAreIgnored`, `TsConfInterruptsCpu_Test.INT13_HaltWakesAndReturnsPastTheHalt`, `TsConfArbiter_Test.ARB8_NoVideoWaitBelow14MHz` |
+| [video.md](video.md) | 1-2, 10, 21, 24 | `TsConfInterrupts_Test.TIM0_FrameIs320LinesOf224T`, `TsConfEngine_Test.ENG2_VConfigActsFromTheNextLine`, `ScreenTSConf_Test.VID9_ZxRowsWrapAt256`, `ScreenTSConf_Test.VID10_FlashSwapsEvery16Frames` |
+| [tsu.md](tsu.md) | 2, 13, 17, 20, 23, 26-27, 29 | `TsConfTsu_Test.TSU4b_T1ZeroTile`, `TSU1b_SpriteWrapsAtLine512`, `TSU1c_SpriteWrapsAtX512`, `TSU1e_TilePagesUseTheirEightPageBlock`, `TSU4d_T1UsesPalSelBits7And6`, `TSU4c_TileFlips`, `TSU4e_MapColumnWrapsAt64` |
+| [dma.md](dma.md) | 7 (DMA_NUM), 10, 11-12, 14, 34, 36, 37, 38, 40, 49 | `TsConfDma_Test.DMA10b_NumIsLatchedAtLaunch`, `DMA2b_LinearCrossesPagesAndWrapsAt4MB`, `DMA3c_DestinationAlignmentAsz1`, `DMA2c_TheNextLaunchContinues`, `PortDecoder_TSConf_Test.REG1b_DmaRegistersReadFF`, `TsConfDma_Test.DMA8b_MaskedCompletionIsLost`, `DMA8c_VdosDefersTheDmaInt`, `DMA8d_ResetStopsWithoutInt`, `TsConfArbiter_Test.ARB7_TheCpuNeverWaitsForTheDma`, `ARB8_NoVideoWaitBelow14MHz` |
+| [memory-ports.md](memory-ports.md) | 3, 16 | `PortDecoder_TSConf_Test.REG2b_StatusReportsTheBuild`, `P7F8_1FFDIsPagingAndDFFDIsTheAy` |
+
+Already covered since the audit: dma row 47 (a cache hit takes no DRAM cycle) by `CCH3_CacheFillAndRetentionMatchTheRtl`,
+interrupts row 9 (the vdos gate ends at once) by `INT11b`.
+
+Left without a new test:
+
+- Rows where TS-Labs Unreal differs from the RTL (`ng-matches-RTL, Unreal differs`), though their area files suggest a
+  test: tsu 18 (sheet wrap), 19 (SG_PAGE mask), 34 (prefetch window edges), 45 (tile G_PAGE pipeline); dma 15-16 (device
+  transfers step the counters), 25 (CRAM / SFILE cost 2); memory-ports 21-22 (DOS trap from RAM / DOS kept in window-0
+  RAM), 34 (power-on CRAM), 35 (`#FE` read), 40 (mouse ports), 61 (IDE CS0 aliases). unreal-ng follows the RTL there;
+  a test would pin the RTL value against the fork.
+- tsu row 42 (the map prefetch charged first): matches only while the budget covers the prefetch, which it always does at
+  real CPU rates; no test until the starved case is settled.
 
 ## Spec corrections
 

@@ -55,6 +55,22 @@ TEST_F(TsConfEngine_Test, ENG2_LatchedRegisterActsFromTheNextLine)
     EXPECT_EQ(Engine().Line(200).vPage, 0x20);
 }
 
+/// ENG-2: V_CONFIG is latched at the line start like V_PAGE ([V] video_ports.v:124 vconf_r, :153-157 vconf <= vconf_r
+/// at line_start_s; [U] io.cpp:1515-1516 vconf_d, draw.cpp:613-617 copied at line_pos 0): written mid-line it sets
+/// the mode and the window from the next line, so the current line keeps its ZX fetch (TS-Conf audit, video row 10)
+TEST_F(TsConfEngine_Test, ENG2_VConfigActsFromTheNextLine)
+{
+    NewFrame();
+    RunTo(T(100, 120));
+    Reg(TsConfReg::VConfig, 0x41);  // 16C 320x200
+    RunTo(T(103, 0));
+    EXPECT_EQ(Engine().Line(100).vConfig, 0x00);
+    EXPECT_EQ(Engine().Line(100).videoCost, 33) << "ZX 256 wide: ceil(260 / 8)";
+    EXPECT_EQ(Engine().Line(101).vConfig, 0x41);
+    EXPECT_EQ(Engine().Line(101).videoCost, 81) << "16C 320 wide: ceil(324 / 4)";
+    EXPECT_EQ(Engine().Line(102).vConfig, 0x41);
+}
+
 /// ENG-2: BORDER acts at the dot - the rest of the same line changes
 TEST_F(TsConfEngine_Test, ENG2_BorderChangesWithinTheLine)
 {
