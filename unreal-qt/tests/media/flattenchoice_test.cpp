@@ -49,6 +49,11 @@ TEST(FlattenChoice_Test, WhatACompositeCanTake)
     const auto inlined = FlattenOptionsFor(Layers("graft", "delta", true, "(inline)"));
     EXPECT_FALSE(Option(inlined, FlattenStrategy::Delta).available);
     EXPECT_FALSE(Option(inlined, FlattenStrategy::WriteBack).available);
+
+    // C8d: a partitioned disk writes back per partition
+    const auto partitions = FlattenOptionsFor(Layers("partitions", "delta", true));
+    EXPECT_TRUE(Option(partitions, FlattenStrategy::WriteBack).available);
+    EXPECT_FALSE(Option(partitions, FlattenStrategy::Commit).available);
 }
 
 TEST(FlattenChoice_Test, PreselectionFollowsWritesSave)

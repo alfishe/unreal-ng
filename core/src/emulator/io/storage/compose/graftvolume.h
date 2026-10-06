@@ -95,7 +95,9 @@ public:
     uint16_t BaseDevice() const { return _baseDevice; }
 
     /// Provenance (C6b). A base file's data is found from the union tree's extents on the
-    /// base image (an index built at the first call that needs it)
+    /// base image (an index built at the first call that needs it). C4b: the directories and files
+    /// under base directories the build did not read are indexed from the image at the first call
+    /// that needs them (SectorOwner::unlisted)
     SectorOwner OwnerOf(uint64_t lba) const override;
     const FileTree& Tree() const override { return *_tree; }
     const SourcePool* Pool() const override { return _pool.get(); }
@@ -130,6 +132,23 @@ private:
     friend class GraftBuilder;
 
     void IndexBaseFiles() const;
+    void IndexUnexpanded() const;
+
+    /// C4b: a cluster of a directory under an untouched base directory
+    struct LazyDir
+    {
+        uint32_t cluster;
+        uint32_t firstCluster;  ///< the directory's own first cluster
+        uint32_t index;         ///< the cluster's place in the directory's chain
+    };
+    /// C4b: a run of a file under an untouched base directory, on the volume's LBAs
+    struct LazyRun
+    {
+        uint64_t lba;
+        uint32_t sectors;
+        uint32_t fileSectorStart;
+        uint32_t dirCluster;    ///< its directory's first cluster
+    };
 
     /// The grafted run holding `lba`, or nullptr (updates the last-hit index)
     const Run* FindRun(uint64_t lba, uint64_t& cluster) const;
@@ -151,6 +170,11 @@ private:
     std::unordered_map<uint32_t, uint32_t> _dirClusterOfNode;  ///< directory node -> first cluster (root: 0)
     mutable std::vector<BaseRun> _baseRuns;  ///< sorted by lba; built on demand
     mutable bool _baseIndexed = false;
+    std::vector<uint32_t> _unexpanded;           ///< C4b: first clusters of the base directories kept unread
+    mutable std::vector<LazyDir> _lazyDirs;      ///< sorted by cluster; built on demand
+    mutable std::vector<LazyRun> _lazyRuns;      ///< sorted by lba; built on demand
+    mutable bool _lazyIndexed = false;
+    CodePage _codePage = CodePage::Cp866;
     uint16_t _baseDevice = 0;
     int _extentDevice = -1;             ///< the pool device the base files' extents name (the image, or its partition window)
     uint64_t _extentOffset = 0;         ///< the LBA of that device's sector 0 on the image

@@ -61,13 +61,16 @@ namespace
         return fs == FatType::Fat32 ? "fat32" : "fat16";
     }
 
-    void Count(const FileTree& tree, uint32_t dir, uint64_t& files, uint64_t& bytes)
+    /// The files and bytes under `dir`; an unexpanded base directory (C4b) goes to `unexpanded` (its cluster)
+    void Count(const FileTree& tree, uint32_t dir, uint64_t& files, uint64_t& bytes, std::vector<uint32_t>* unexpanded = nullptr)
     {
         for (uint32_t child : tree.Node(dir).children)
         {
             const TreeNode& node = tree.Node(child);
-            if (node.isDirectory)
-                Count(tree, child, files, bytes);
+            if (node.isDirectory && node.unexpanded && unexpanded)
+                unexpanded->push_back(node.baseCluster);
+            else if (node.isDirectory)
+                Count(tree, child, files, bytes, unexpanded);
             else
             {
                 files++;
@@ -391,6 +394,23 @@ MediaResult CompositeMediumFactory::BuildPartitioned(const ComposeDescriptor& d,
             info.files += childInfo.files;
             info.bytes += childInfo.bytes;
             info.sourceDevices += childInfo.sourceDevices;
+            if (childInfo.countLater)
+            {
+                // C4b: a graft partition counts its unread base directories when the disk's counts are asked for
+                auto chained = std::move(info.countLater);
+                info.countLater = [chained, child = std::make_shared<CompositeInfo>(std::move(childInfo)),
+                                   first = pi.firstLayer](CompositeInfo& counted) {
+                    if (chained)
+                        chained(counted);
+                    const uint64_t files = child->files, bytes = child->bytes;
+                    const uint64_t baseFiles = child->layers.front().files, baseBytes = child->layers.front().bytes;
+                    child->CompleteCounts();
+                    counted.files += child->files - files;
+                    counted.bytes += child->bytes - bytes;
+                    counted.layers[first].files += child->layers.front().files - baseFiles;
+                    counted.layers[first].bytes += child->layers.front().bytes - baseBytes;
+                };
+            }
         }
         if (p.type)
             part.type = *p.type;
@@ -483,6 +503,16 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
     for (char c : info.normalized)
         mix(static_cast<uint8_t>(c));
 
+    // C4b: a graft candidate's base is read lazily, only the directories the upper layers reach. Filters on
+    // the base keep the full read: a graft removes what they leave out, in every directory
+    const ComposeLayer* bottomLayer = d.layers.empty() ? nullptr : &d.layers.front();
+    const bool lazyBase = options.lazyBase && !optical && d.target.build != ComposeTarget::Build::Rebuild && bottomLayer &&
+                          bottomLayer->source.kind == ComposeSource::Kind::Image && (bottomLayer->mount.empty() || bottomLayer->mount == "/") &&
+                          (bottomLayer->from.empty() || bottomLayer->from == "/") && bottomLayer->include.empty() &&
+                          bottomLayer->exclude.empty();
+    std::unique_ptr<FatImageExpander> expander;
+    std::vector<uint32_t> uncountedBase, uncountedUnion;  ///< C4b: unexpanded directories, counted by CompleteCounts
+
     for (size_t i = 0; i < d.layers.size(); i++)
     {
         const ComposeLayer& layer = d.layers[i];
@@ -554,11 +584,15 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
             source.exclude = layer.exclude;
             source.partition = layer.source.partition;
             source.codePage = layer.source.codePage.value_or(CodePage::Cp866);
+            source.lazy = i == 0 && lazyBase;
             std::vector<std::string> sourceReport;
             std::string error;
+            uint16_t volume = 0;
             if (!FatImageSource::Enumerate(static_cast<uint16_t>(device), source, *pool, trees[i], &sourceReport, &error,
-                                           &sourceIdentity))
+                                           &sourceIdentity, &volume))
                 return MediaResult::Fail(MediaError::UnreadableSource, where + ": " + path + ": " + error);
+            if (source.lazy)
+                expander = std::make_unique<FatImageExpander>(*pool, volume, source);
             for (const std::string& line : sourceReport)
                 result.report.push_back(where + ": " + line);
         }
@@ -606,7 +640,7 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
         layerInfo.from = layer.from;
         layerInfo.identity = sourceIdentity;
         layerInfo.writable = layer.writable && layer.source.kind == ComposeSource::Kind::Folder;
-        Count(trees[i], FileTree::kRoot, layerInfo.files, layerInfo.bytes);
+        Count(trees[i], FileTree::kRoot, layerInfo.files, layerInfo.bytes, i == 0 && expander ? &uncountedBase : nullptr);
         info.layers.push_back(layerInfo);
         mix(sourceIdentity);
 
@@ -622,14 +656,43 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
 
     info.sourceDevices = static_cast<uint32_t>(pool->DeviceCount());
 
-    // --- Union ---
-    auto tree = std::make_shared<FileTree>();
-    std::string error;
-    if (!UnionBuilder::Merge(layers, optical ? UnionBuilder::ExactKey : UnionBuilder::FatKey, *tree, &result.report, &error))
-        return MediaResult::Fail(MediaError::BadRequest, error);
-    // S4: what the guest deleted from layers that are not changed by a delete (<descriptor>.whiteout)
-    for (const std::string& path : d.deleted)
+    // --- C4b: the base directories the build reaches, read before the merge ---
+    if (expander)
     {
+        std::vector<std::string> paths;
+        for (size_t i = 1; i < d.layers.size(); i++)
+        {
+            // Every directory of an upper layer merges with the base's directory of the same path
+            const std::string mount = d.layers[i].mount.empty() ? std::string("/") : d.layers[i].mount;
+            for (uint32_t n = 0; n < trees[i].NodeCount(); n++)
+                if (trees[i].Node(n).isDirectory)
+                    paths.push_back(mount + "/" + trees[i].PathOf(n));
+            paths.insert(paths.end(), d.layers[i].whiteout.begin(), d.layers[i].whiteout.end());
+            paths.insert(paths.end(), d.layers[i].opaque.begin(), d.layers[i].opaque.end());
+        }
+        paths.insert(paths.end(), d.deleted.begin(), d.deleted.end());
+        for (const auto& [path, bits] : d.attributes)
+            paths.push_back(path);
+        for (const ComposeBootFile* file : {&d.boot.mbrCode, &d.boot.volumeCode})
+            paths.push_back(file->unionPath);
+        for (const auto& [lba, file] : d.boot.reserved)
+            paths.push_back(file.unionPath);
+        std::vector<std::string> expandReport;
+        std::string error;
+        for (const std::string& path : paths)
+        {
+            if (!expander->ExpandPath(trees[0], path, &expandReport, &error))
+                return MediaResult::Fail(MediaError::UnreadableSource, "layer '" + d.layers[0].name + "': " + error);
+        }
+        for (const std::string& line : expandReport)
+            result.report.push_back("layer '" + d.layers[0].name + "': " + line);
+    }
+
+    // --- Union ---
+    std::shared_ptr<FileTree> tree;
+    std::string error;
+    // A guest path in the union, by the FAT key of each component
+    auto findInUnion = [&tree](const std::string& path) {
         uint32_t at = FileTree::kRoot;
         size_t pos = 1;
         while (at != FileTree::kNone && pos < path.size())
@@ -643,13 +706,41 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
                     found = child;
             at = found;
         }
-        if (at != FileTree::kNone && at != FileTree::kRoot)
+        return at;
+    };
+    // The merge, what the guest deleted and the attributes it set, and the counts: again when a lazily read base
+    // is read in full for a rebuild
+    auto unite = [&](std::vector<std::string>& report) {
+        tree = std::make_shared<FileTree>();
+        if (!UnionBuilder::Merge(layers, optical ? UnionBuilder::ExactKey : UnionBuilder::FatKey, *tree, &report, &error))
+            return false;
+        // S4: what the guest deleted from layers that are not changed by a delete (<descriptor>.whiteout)
+        for (const std::string& path : d.deleted)
         {
-            tree->Detach(at);
-            result.report.push_back(path + ": deleted by the guest (" + FileHelper::FromFsPath(d.file.filename()) + ".whiteout)");
+            const uint32_t at = findInUnion(path);
+            if (at != FileTree::kNone && at != FileTree::kRoot)
+            {
+                tree->Detach(at);
+                report.push_back(path + ": deleted by the guest (" + FileHelper::FromFsPath(d.file.filename()) + ".whiteout)");
+            }
         }
-    }
-    Count(*tree, FileTree::kRoot, info.files, info.bytes);
+        // C8d: the attribute bits the guest gave files (<descriptor>.attributes)
+        for (const auto& [path, bits] : d.attributes)
+        {
+            const uint32_t at = findInUnion(path);
+            if (at != FileTree::kNone && at != FileTree::kRoot)
+                tree->Node(at).attributes = bits;
+            else
+                report.push_back(path + ": in " + FileHelper::FromFsPath(d.file.filename()) + ".attributes but not on the disk any more");
+        }
+        info.files = 0;
+        info.bytes = 0;
+        uncountedUnion.clear();
+        Count(*tree, FileTree::kRoot, info.files, info.bytes, expander ? &uncountedUnion : nullptr);
+        return true;
+    };
+    if (!unite(result.report))
+        return MediaResult::Fail(MediaError::BadRequest, error);
 
     // --- An ISO 9660 CD ---
     if (optical)
@@ -869,6 +960,26 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
                     info.sectorsPerCluster = probe.SectorsPerCluster();
                     info.contentId = grafted->ContentId();
                     volume = std::move(grafted);
+                    if (expander && (!uncountedBase.empty() || !uncountedUnion.empty()))
+                    {
+                        // C4b: the directories the graft did not read are counted when somebody asks
+                        std::shared_ptr<FatImageExpander> lister(std::move(expander));
+                        info.countLater = [lister, pool, base = std::move(uncountedBase),
+                                           merged = std::move(uncountedUnion)](CompositeInfo& counted) {
+                            for (uint32_t cluster : base)
+                            {
+                                const auto [files, bytes] = lister->Count(cluster);
+                                counted.layers.front().files += files;
+                                counted.layers.front().bytes += bytes;
+                            }
+                            for (uint32_t cluster : merged)
+                            {
+                                const auto [files, bytes] = lister->Count(cluster);
+                                counted.files += files;
+                                counted.bytes += bytes;
+                            }
+                        };
+                    }
                     return result;
                 }
                 failWith = failure == GraftFailure::DoesNotFit ? MediaError::DoesNotFit : MediaError::UnreadableSource;
@@ -876,6 +987,25 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
             if (graftOnly)
                 return MediaResult::Fail(failWith, "build: graft: " + why);
             result.report.push_back("rebuild instead of a graft: " + why);
+        }
+    }
+    if (expander)
+    {
+        // C4b: a rebuild lays out the whole base: read the rest of it and merge again (the report has the merge already)
+        std::vector<std::string> again;
+        if (!expander->ExpandAll(trees[0], &again, &error))
+            return MediaResult::Fail(MediaError::UnreadableSource, "layer '" + d.layers[0].name + "': " + error);
+        expander.reset();
+        if (!unite(again))
+            return MediaResult::Fail(MediaError::BadRequest, error);
+        info.layers.front().files = 0;
+        info.layers.front().bytes = 0;
+        Count(trees[0], FileTree::kRoot, info.layers.front().files, info.layers.front().bytes);
+        if (descriptorBoot)
+        {
+            descriptorBoot = std::make_shared<FatBootPlan>();
+            if (!PlanFromDescriptor(d.boot, *tree, *pool, *descriptorBoot, error))
+                return MediaResult::Fail(MediaError::BadRequest, error);
         }
     }
     const std::vector<FatType> candidates = FsCandidates(want, options.allowedFs, options.defaultFs, &error);
@@ -936,6 +1066,17 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
     info.contentId = rebuilt->ContentId();
     volume = std::move(rebuilt);
     return result;
+}
+
+void CompositeInfo::CompleteCounts() const
+{
+    if (!countLater)
+        return;
+    // The info is made mutable by the build and only shared as const: the counts are its own to finish
+    auto& self = const_cast<CompositeInfo&>(*this);
+    const std::function<void(CompositeInfo&)> count = std::move(self.countLater);
+    self.countLater = nullptr;
+    count(self);
 }
 
 DeltaIdentity CompositeMediumFactory::DeltaIdentityOf(const CompositeInfo& info)

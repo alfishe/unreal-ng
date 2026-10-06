@@ -127,10 +127,18 @@ TEST(ComposedLayout_Test, GraftOwners)
     EXPECT_EQ(l.NameOf(grafted), "/GAMES/ELITE.TRD");
     EXPECT_EQ(grafted.layer, 1);
 
+    // C4b: an untouched base directory is not read at build: no tree node, but its layer and cluster
     const SectorOwner dss = layout.OwnerOf(l.ClusterLba(l.Stat("/DSS").firstCluster));
     EXPECT_EQ(dss.role, SectorRole::Directory) << "an untouched base directory";
-    EXPECT_EQ(l.NameOf(dss), "/DSS");
+    EXPECT_TRUE(dss.unlisted);
+    EXPECT_TRUE(dss.Known());
+    EXPECT_EQ(dss.layer, 0);
+    EXPECT_EQ(dss.dirCluster, l.Stat("/DSS").firstCluster);
     EXPECT_FALSE(dss.patched);
+    const SectorOwner shell = layout.OwnerOf(l.ClusterLba(l.Stat("/DSS/COMMAND.COM").firstCluster));
+    EXPECT_EQ(shell.role, SectorRole::FileData);
+    EXPECT_TRUE(shell.unlisted);
+    EXPECT_EQ(shell.dirCluster, l.Stat("/DSS").firstCluster) << "the file's directory";
 
     const SectorOwner games = layout.OwnerOf(l.ClusterLba(l.Stat("/GAMES").firstCluster));
     EXPECT_EQ(games.role, SectorRole::Directory) << "a new directory";

@@ -11,10 +11,14 @@
 ///
 /// File: "UNGJRNL1", u64 image sector count, u64 entry count; per entry u64
 /// lba and the 512 old bytes; "UNGJEND!" and the FNV-1a hash of the entries.
+/// Written and read back an entry at a time (C8d: a commit of many GB of guest
+/// writes holds nothing per sector in memory).
 /// Design: docs/inprogress/2026-10-05-media-multisource/phases/c8-commit-writeback.md §2 (DT-14).
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -35,6 +39,9 @@ public:
 
     /// The old content of `lbas` of `image` (opened on `device`) into the journal, synced
     static bool Write(const std::filesystem::path& image, IBlockDevice& device, const std::vector<uint64_t>& lbas, std::string* error);
+    /// The same for the sectors `next` yields (then nullopt), streamed: nothing per sector stays in memory
+    static bool Write(const std::filesystem::path& image, IBlockDevice& device, const std::function<std::optional<uint64_t>()>& next,
+                      std::string* error);
 
     /// The journal is no longer needed (the commit is written and synced)
     static void Remove(const std::filesystem::path& image);

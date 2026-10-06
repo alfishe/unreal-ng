@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "emulator/io/storage/compose/sourcepool.h"
+#include "emulator/io/storage/compose/unionbuilder.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/io/storage/hostfolder/servicefilefilter.h"
 #include "emulator/io/storage/subrangedevice.h"
@@ -32,9 +33,13 @@ namespace
         FileTree& out;
         std::vector<std::string>* report;
         std::string* error;
+        bool lazy = false;              ///< C4b: subdirectories become unexpanded nodes
+        uint32_t* directoriesRead = nullptr;
 
         bool Copy(uint32_t dirCluster, uint32_t into, const std::string& path, int depth)
         {
+            if (directoriesRead)
+                ++*directoriesRead;
             if (depth > kMaxDepth)
             {
                 if (error)
@@ -93,6 +98,11 @@ namespace
                         }
                     }
                 }
+                if (entry.isDirectory && entry.firstCluster != 0 && lazy)
+                {
+                    node.unexpanded = true;
+                    node.baseCluster = entry.firstCluster;
+                }
                 const uint32_t index = out.Add(into, std::move(node));
                 if (entry.isDirectory && entry.firstCluster == 0)
                 {
@@ -101,7 +111,7 @@ namespace
                         report->push_back(path + entry.name + ": a directory without clusters, kept empty");
                     continue;
                 }
-                if (entry.isDirectory && !Copy(entry.firstCluster, index, path + entry.name + "/", depth + 1))
+                if (entry.isDirectory && !lazy && !Copy(entry.firstCluster, index, path + entry.name + "/", depth + 1))
                     return false;
             }
             return true;
@@ -110,7 +120,7 @@ namespace
 }  // namespace
 
 bool FatImageSource::Enumerate(uint16_t device, const FatImageSourceOptions& options, SourcePool& pool, FileTree& out,
-                               std::vector<std::string>* report, std::string* error, uint64_t* identity)
+                               std::vector<std::string>* report, std::string* error, uint64_t* identity, uint16_t* volumeOut)
 {
     // The volume: the whole image, or a window of it for an explicit partition
     uint16_t volume = device;
@@ -162,6 +172,119 @@ bool FatImageSource::Enumerate(uint16_t device, const FatImageSourceOptions& opt
         *identity = h;
     }
 
-    Walker walker{reader, options, volume, out, report, error};
+    if (volumeOut)
+        *volumeOut = volume;
+    Walker walker{reader, options, volume, out, report, error, options.lazy};
     return walker.Copy(root.firstCluster, FileTree::kRoot, "/", 0);
+}
+
+FatImageExpander::FatImageExpander(SourcePool& pool, uint16_t volume, const FatImageSourceOptions& options)
+    : _pool(pool), _volume(volume), _options(options)
+{
+    _open = _reader.Open(_pool.Device(_volume), _options.codePage);
+}
+
+bool FatImageExpander::Expand(FileTree& tree, uint32_t node, std::vector<std::string>* report, std::string* error)
+{
+    if (!tree.Node(node).unexpanded)
+        return true;
+    if (!_open)
+    {
+        if (error)
+            *error = "the image's FAT volume cannot be read any more";
+        return false;
+    }
+    int depth = 0;
+    for (uint32_t at = node; at != FileTree::kRoot; at = tree.Node(at).parent)
+        depth++;
+    tree.Node(node).unexpanded = false;
+    Walker walker{_reader, _options, _volume, tree, report, error, true, &_directoriesRead};
+    return walker.Copy(tree.Node(node).baseCluster, node, tree.PathOf(node) + "/", depth);
+}
+
+bool FatImageExpander::ExpandPath(FileTree& tree, const std::string& path, std::vector<std::string>* report, std::string* error)
+{
+    uint32_t at = FileTree::kRoot;
+    size_t pos = 0;
+    while (true)
+    {
+        if (!Expand(tree, at, report, error))
+            return false;
+        while (pos < path.size() && path[pos] == '/')
+            pos++;
+        if (pos >= path.size())
+            return true;
+        const size_t slash = path.find('/', pos);
+        const std::string part = path.substr(pos, slash == std::string::npos ? std::string::npos : slash - pos);
+        pos = slash == std::string::npos ? path.size() : slash;
+        const std::string key = UnionBuilder::FatKey(part);
+        uint32_t next = FileTree::kNone;
+        for (uint32_t child : tree.Node(at).children)
+        {
+            const TreeNode& c = tree.Node(child);
+            if (c.isDirectory && UnionBuilder::FatKey(c.name) == key)
+                next = child;
+        }
+        if (next == FileTree::kNone)
+            return true;  // the image has no directory there: nothing below to read
+        at = next;
+    }
+}
+
+bool FatImageExpander::ExpandAll(FileTree& tree, std::vector<std::string>* report, std::string* error)
+{
+    // Nodes are appended while expanding: every index is visited once, children of a full read are never unexpanded
+    for (uint32_t n = 0; n < tree.NodeCount(); n++)
+    {
+        if (!tree.Node(n).unexpanded)
+            continue;
+        if (!_open)
+        {
+            if (error)
+                *error = "the image's FAT volume cannot be read any more";
+            return false;
+        }
+        int depth = 0;
+        for (uint32_t at = n; at != FileTree::kRoot; at = tree.Node(at).parent)
+            depth++;
+        tree.Node(n).unexpanded = false;
+        Walker walker{_reader, _options, _volume, tree, report, error, false, &_directoriesRead};
+        if (!walker.Copy(tree.Node(n).baseCluster, n, tree.PathOf(n) + "/", depth))
+            return false;
+    }
+    return true;
+}
+
+std::pair<uint64_t, uint64_t> FatImageExpander::Count(uint32_t cluster)
+{
+    const auto known = _counts.find(cluster);
+    if (known != _counts.end())
+        return known->second;
+    uint64_t files = 0, bytes = 0;
+    if (_open)
+        CountInto(cluster, 1, files, bytes);
+    _counts.emplace(cluster, std::make_pair(files, bytes));
+    return {files, bytes};
+}
+
+void FatImageExpander::CountInto(uint32_t cluster, int depth, uint64_t& files, uint64_t& bytes)
+{
+    std::vector<FatDirEntryInfo> entries;
+    if (depth > kMaxDepth || !_reader.ListDirectory(cluster, entries))
+        return;
+    for (const FatDirEntryInfo& entry : entries)
+    {
+        if (Matches(_options.exclude, entry.name))
+            continue;
+        if (entry.isDirectory)
+        {
+            if (entry.firstCluster != 0)
+                CountInto(entry.firstCluster, depth + 1, files, bytes);
+            continue;
+        }
+        if (!_options.include.empty() && !Matches(_options.include, entry.name))
+            continue;
+        files++;
+        bytes += entry.size;
+    }
 }

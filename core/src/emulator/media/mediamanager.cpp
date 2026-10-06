@@ -1139,7 +1139,7 @@ MediaResult MediaManager::WriteBackComposite(const std::string& slotId, Medium& 
     MediaResult result = MediaResult::Success();
     for (const WriteBackStep& s : plan.steps)
     {
-        std::string line = std::string(WriteBackStep::KindName(s.kind)) + " " + s.path;
+        std::string line = std::string(WriteBackStep::KindName(s.kind)) + " " + (s.partition.empty() ? s.path : s.partition + ":" + s.path);
         if (!s.layer.empty())
             line += " [" + s.layer + "]";
         if (!s.host.empty())
@@ -1232,20 +1232,59 @@ MediaResult MediaManager::CommitComposite(const std::string& slotId, Medium& med
                                                                 "): commit with force, or flatten to an image");
     }
 
-    // The plan: patches, grafted files, guest writes; each sector as the composite reads it now
-    std::set<uint64_t> lbas(graft->PatchLbas().begin(), graft->PatchLbas().end());
+    // The plan: patches, grafted files, guest writes; each sector as the composite reads it now. Walked from the
+    // three sorted sources each time (C8d): no list of every sector in memory
+    std::vector<uint64_t> patches = graft->PatchLbas();
+    std::sort(patches.begin(), patches.end());
+    std::vector<std::pair<uint64_t, uint64_t>> runs = graft->GraftedSectorRuns();
+    std::sort(runs.begin(), runs.end());
     uint64_t grafted = 0;
-    for (const auto& [first, count] : graft->GraftedSectorRuns())
+    for (const auto& run : runs)
+        grafted += run.second;
+    auto walk = [&]() {
+        return [&, p = size_t(0), r = size_t(0), offset = uint64_t(0), guest = session->NextChanged(0),
+                last = std::optional<uint64_t>()]() mutable -> std::optional<uint64_t> {
+            for (;;)
+            {
+                std::optional<uint64_t> next;
+                auto offer = [&next](uint64_t lba) { next = next ? std::min(*next, lba) : lba; };
+                if (p < patches.size())
+                    offer(patches[p]);
+                if (r < runs.size())
+                    offer(runs[r].first + offset);
+                if (guest)
+                    offer(*guest);
+                if (!next)
+                    return std::nullopt;
+                if (p < patches.size() && patches[p] == *next)
+                    p++;
+                if (r < runs.size() && runs[r].first + offset == *next && ++offset == runs[r].second)
+                {
+                    r++;
+                    offset = 0;
+                }
+                if (guest && *guest == *next)
+                    guest = session->NextChanged(*guest + 1);
+                if (last && *last == *next)
+                    continue;  // in two sources
+                last = next;
+                return next;
+            }
+        };
+    };
+    uint64_t total = 0;
+    uint64_t last = 0;
     {
-        for (uint64_t s = 0; s < count; s++)
-            lbas.insert(first + s);
-        grafted += count;
+        auto next = walk();
+        for (std::optional<uint64_t> lba = next(); lba; lba = next())
+        {
+            total++;
+            last = *lba;
+        }
     }
-    for (std::optional<uint64_t> lba = session->NextChanged(0); lba; lba = session->NextChanged(*lba + 1))
-        lbas.insert(*lba);
     MediaResult result = MediaResult::Success();
-    result.report.push_back("commit into " + base + ": " + std::to_string(lbas.size()) + " sectors (" +
-                            std::to_string(graft->PatchLbas().size()) + " re-encoded, " + std::to_string(grafted) +
+    result.report.push_back("commit into " + base + ": " + std::to_string(total) + " sectors (" +
+                            std::to_string(patches.size()) + " re-encoded, " + std::to_string(grafted) +
                             " of grafted files, " + std::to_string(session->ChangedSectors()) + " written by the guest)");
     if (options.plan)
     {
@@ -1254,12 +1293,11 @@ MediaResult MediaManager::CommitComposite(const std::string& slotId, Medium& med
     }
 
     const std::filesystem::path basePath = FileHelper::ToFsPath(base);
-    const uint64_t last = lbas.empty() ? 0 : *lbas.rbegin();
     auto device = HddImageFormats::OpenBlock(base, format, RawImage::Access::ReadWrite, &error);
     if (!device)
         return MediaResult::Fail(MediaError::IoError, "cannot open " + base + " for writing: " + error);
     const uint64_t originalSectors = device->SectorCount();
-    if (!CommitJournal::Write(basePath, *device, std::vector<uint64_t>(lbas.begin(), lbas.end()), &error))
+    if (!CommitJournal::Write(basePath, *device, walk(), &error))
         return MediaResult::Fail(MediaError::IoError, error);
     if (last >= originalSectors)
     {
@@ -1278,8 +1316,10 @@ MediaResult MediaManager::CommitComposite(const std::string& slotId, Medium& med
                                                               FileHelper::FromFsPath(CommitJournal::PathFor(basePath)) + " undoes it at the next open");
     }
     uint8_t sector[IBlockDevice::kSectorSize];
-    for (uint64_t lba : lbas)
+    auto next = walk();
+    for (std::optional<uint64_t> at = next(); at; at = next())
     {
+        const uint64_t lba = *at;
         if (!session->ReadSector(lba, sector) || !device->WriteSector(lba, sector))
             return MediaResult::Fail(MediaError::IoError, "writing sector " + std::to_string(lba) + " of " + base + " failed: the journal " +
                                                               FileHelper::FromFsPath(CommitJournal::PathFor(basePath)) +

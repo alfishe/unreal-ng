@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <vector>
@@ -252,6 +254,92 @@ TEST(ComposePartitions_Test, ChangesAndDeltaPerPartition)
     compact.compact = true;
     EXPECT_EQ(manager.Export("ide0.master", FileHelper::FromFsPath(d.root.Path() / "c.img"), compact).error, MediaError::NotSupported)
         << "compact makes one FAT volume";
+    EjectOptions discard;
+    discard.disposition = Disposition::Discard;
+    manager.Eject("ide0.master", discard);
+    manager.UnregisterSlot("ide0.master");
+}
+
+TEST(ComposePartitions_Test, WriteBackPerPartition)
+{
+    class Slot : public IMediaSlot
+    {
+    public:
+        Slot()
+        {
+            _d.id = "ide0.master";
+            _d.kind = MediaKind::Block;
+            _d.label = "disk";
+            _d.tags = {"ide", "hdd"};
+        }
+        const SlotDescriptor& Descriptor() const override { return _d; }
+        void Attach(Medium& m) override { attached = &m; }
+        void Detach() override { attached = nullptr; }
+        void SourceChanged(Medium&) override {}
+        Medium* attached = nullptr;
+
+    private:
+        SlotDescriptor _d;
+    };
+    Disk d;
+    d.MakeImage();
+    d.root.File("games/ELITE.TXT", "elite v1");
+    d.root.File("work/NOTES.TXT", "notes");
+    d.root.File("disk.ucompose.yaml",
+                "version: 1\ntarget: {fixedTime: 1767268800}\npartitions:\n"
+                "  - {name: dos, source: {image: dos.img, partition: 1}}\n"
+                "  - {name: games, fs: fat16, compose: {free: 1MiB, layers: [{name: g, source: {folder: games}, writable: true}]}}\n"
+                "  - {name: work, fs: fat16, compose: {free: 1MiB, layers: [{name: w, source: {folder: work}, writable: true, onDelete: delete}]}}\n");
+    MediaManager manager(nullptr);
+    Slot slot;
+    manager.RegisterSlot(slot);
+    MediaSource source;
+    source.path = FileHelper::FromFsPath(d.root.Path() / "disk.ucompose.yaml");
+    ASSERT_TRUE(manager.Insert("ide0.master", source, {}).Ok());
+    {
+        std::shared_ptr<IBlockDevice> stack(slot.attached->Block(), [](IBlockDevice*) {});
+        auto games = PartitionOf(stack, 2);
+        auto work = PartitionOf(stack, 3);
+        ASSERT_TRUE(games && work);
+        FatGuest g(*games);
+        ASSERT_TRUE(g.Write("/ELITE.TXT", std::vector<uint8_t>{'e', 'l', 'i', 't', 'e', ' ', 'v', '2'}));
+        FatGuest w(*work);
+        ASSERT_TRUE(w.Create("/TODO.TXT", std::vector<uint8_t>(4, 't')));
+        ASSERT_TRUE(w.Delete("/NOTES.TXT"));
+    }
+    manager.ApplyPending();
+
+    SaveOptions writeBack;
+    writeBack.strategy = "write-back";
+    const MediaResult result = manager.Save("ide0.master", writeBack);
+    ASSERT_TRUE(result.Ok()) << result.message;
+    const auto has = [&result](const std::string& text) {
+        return std::any_of(result.report.begin(), result.report.end(), [&text](const std::string& l) { return l.find(text) != std::string::npos; });
+    };
+    EXPECT_TRUE(has("games:/ELITE.TXT"));
+    EXPECT_TRUE(has("work:/TODO.TXT"));
+    EXPECT_TRUE(has("work:/NOTES.TXT"));
+    std::ifstream elite(d.root.Path() / "games/ELITE.TXT", std::ios::binary);
+    EXPECT_EQ(std::string(std::istreambuf_iterator<char>(elite), std::istreambuf_iterator<char>()), "elite v2");
+    EXPECT_TRUE(std::filesystem::exists(d.root.Path() / "work/TODO.TXT"));
+    std::string all;
+    for (const std::string& line : result.report)
+        all += line + "\n";
+    EXPECT_FALSE(std::filesystem::exists(d.root.Path() / "work/NOTES.TXT")) << all;
+
+    // A change on the passthrough partition cannot go to a folder: the plan says so, nothing is written
+    {
+        std::shared_ptr<IBlockDevice> stack(slot.attached->Block(), [](IBlockDevice*) {});
+        auto dos = PartitionOf(stack, 1);
+        ASSERT_NE(dos, nullptr);
+        FatGuest one(*dos);
+        ASSERT_TRUE(one.Create("/NEW.TXT", std::vector<uint8_t>(10, 'n')));
+    }
+    manager.ApplyPending();
+    const MediaResult refused = manager.Save("ide0.master", writeBack);
+    EXPECT_FALSE(refused.Ok());
+    EXPECT_NE(refused.message.find("dos"), std::string::npos) << refused.message;
+
     EjectOptions discard;
     discard.disposition = Disposition::Discard;
     manager.Eject("ide0.master", discard);

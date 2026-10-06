@@ -42,8 +42,13 @@ struct SectorOwner
     uint32_t dirCluster = 0;
     uint64_t offset = 0;   ///< Directory / FileData: the byte offset of the sector in it
     bool patched = false;  ///< graft: a sector re-encoded over the base (directory, FAT, FSInfo, boot)
+    /// C4b: a directory or file of a graft's base that the build never read into the tree (an untouched
+    /// directory): no node, but `layer` (0), `dirCluster` and `offset` hold
+    bool unlisted = false;
 
     bool HasNode() const { return node != FileTree::kNone; }
+    /// The layer and directory are known (a tree node, or an unlisted base entry)
+    bool Known() const { return HasNode() || unlisted; }
 };
 
 class IComposedLayout

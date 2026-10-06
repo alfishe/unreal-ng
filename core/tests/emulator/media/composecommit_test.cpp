@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -217,6 +218,44 @@ TEST_P(ComposeCommit_Test, Refusals)
     raw.reset();
     ASSERT_TRUE(InsertComposite("graft", "base.chd").Ok());
     EXPECT_EQ(_manager.Save("ide0.master", Commit()).error, MediaError::NotSupported);
+}
+
+/// C8d: the streamed journal takes the sectors one at a time (no list): its count is patched in at the end, and a
+/// rollback puts back every sector of a long sequence (each a different old content)
+TEST(CommitJournal_Test, StreamedSequenceRolledBack)
+{
+    ScratchFolder folder("commit-journal-stream");
+    std::string sectors;
+    for (int lba = 0; lba < 2048; lba++)
+        sectors += std::string(512, static_cast<char>(lba * 7));
+    const auto image = folder.File("disk.img", sectors);
+    const std::vector<uint8_t> before = Slurp(image);
+    std::string error;
+    uint64_t handedOut = 0;
+    {
+        auto device = HddImageFormats::OpenBlock(FileHelper::FromFsPath(image), "raw", RawImage::Access::ReadWrite, &error);
+        ASSERT_NE(device, nullptr) << error;
+        uint64_t next = 1;
+        const auto sequence = [&next, &handedOut]() -> std::optional<uint64_t> {
+            if (next >= 2048)
+                return std::nullopt;
+            handedOut++;
+            const uint64_t lba = next;
+            next += 3;
+            return lba;
+        };
+        ASSERT_TRUE(CommitJournal::Write(image, *device, sequence, &error)) << error;
+        const std::vector<uint8_t> junk(512, 0xEE);
+        for (uint64_t lba = 1; lba < 2048; lba += 3)
+            ASSERT_TRUE(device->WriteSector(lba, junk.data()));
+    }
+    EXPECT_EQ(handedOut, 683u);
+    ASSERT_NE(Slurp(image), before);
+
+    std::string detail;
+    EXPECT_EQ(CommitJournal::Recover(image, &detail), CommitJournal::Recovery::RolledBack);
+    EXPECT_NE(detail.find("683"), std::string::npos) << detail;
+    EXPECT_EQ(Slurp(image), before);
 }
 
 /// The journal of a commit cut short: written in full, then half the planned sectors written; the next open puts

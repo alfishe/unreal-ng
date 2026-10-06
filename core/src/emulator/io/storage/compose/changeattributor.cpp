@@ -153,7 +153,7 @@ namespace
             if (!_layout || entry.firstCluster < 2)
                 return -1;
             const SectorOwner owner = _layout->OwnerOf(_before.ClusterLba(entry.firstCluster));
-            return owner.HasNode() ? owner.layer : -1;
+            return owner.Known() ? owner.layer : -1;
         }
 
         bool DataChanged(const FatDirEntryInfo& entry)
@@ -458,7 +458,7 @@ bool ChangeAttributor::Attribute(IBlockDevice& before, IBlockDevice& after, cons
         {
             const SectorOwner owner = layout->OwnerOf(lba);
             if (owner.role == SectorRole::Directory || owner.role == SectorRole::FileData)
-                scope.insert(owner.HasNode() ? owner.dirCluster : 0);
+                scope.insert(owner.Known() ? owner.dirCluster : 0);
             // Free: new data; the entries that name it are in a changed directory
         }
         else

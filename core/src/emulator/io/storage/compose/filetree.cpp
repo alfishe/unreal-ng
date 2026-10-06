@@ -82,6 +82,8 @@ uint32_t FileTree::CopySubtree(const FileTree& source, uint32_t from, uint32_t p
     copy.layer = layer;
     copy.attributes = node.attributes;
     copy.isDirectory = node.isDirectory;
+    copy.unexpanded = node.unexpanded;
+    copy.baseCluster = node.baseCluster;
     if (copy.data.storage == FileData::Storage::DeviceExtents)
     {
         copy.data.firstExtent = static_cast<uint32_t>(_extents.size());

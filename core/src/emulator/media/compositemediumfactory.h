@@ -69,13 +69,20 @@ struct CompositeInfo
     uint32_t clusterCount = 0;
     uint32_t sectorsPerCluster = 0;
     uint64_t contentId = 0;
-    uint64_t files = 0;      ///< files in the merged tree
+    uint64_t files = 0;      ///< files in the merged tree (a lazily read graft base: after CompleteCounts)
     uint64_t bytes = 0;
     uint32_t sourceDevices = 0;  ///< images opened for the layers (one per image and partition, shared)
     std::vector<CompositeLayerInfo> layers;
     std::vector<CompositePartitionInfo> partitions;  ///< a partitioned composite (build "partitions")
     std::filesystem::path delta;   ///< S2: the session delta file (writes.delta, or <descriptor>.delta); empty: none
     std::string writesSave = "delta";  ///< writes.save: the strategy a save runs (DT-9)
+
+    /// C4b: a graft reads only the base directories its upper layers reach; the files under the others are
+    /// counted from the image's directory listings here, at the first call (the `layers` reply), not at build.
+    /// Until then `files` / `bytes` and the base layer's leave them out
+    void CompleteCounts() const;
+    /// Set by the build when counts are left to CompleteCounts
+    std::function<void(CompositeInfo&)> countLater;
 };
 
 /// The slot's side of the build (from OpenRequest / InsertOptions)
@@ -90,6 +97,9 @@ struct CompositeBuildOptions
     std::optional<uint64_t> freeBytes;
     std::function<bool()> cancelRequested;
     std::function<void(uint64_t, uint64_t)> onProgress;
+    /// C4b: a graft candidate's base image is read lazily (only the directories the upper layers reach);
+    /// false reads it in full first (tests and benchmarks compare the two)
+    bool lazyBase = true;
 };
 
 class CompositeMediumFactory

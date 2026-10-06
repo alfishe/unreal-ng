@@ -52,6 +52,13 @@ namespace
         FileTree& out = ctx.out;
         const UnionLayer& L = ctx.layers[layer];
 
+        if (out.Node(dst).unexpanded)
+        {
+            // C4b: the factory reads every base directory an upper layer reaches before the merge
+            if (ctx.error)
+                *ctx.error = path + ": layer '" + L.name + "' merges into a base directory that was not read";
+            return false;
+        }
         if (std::find(ctx.opaque.begin(), ctx.opaque.end(), path) != ctx.opaque.end() && !out.Node(dst).children.empty())
         {
             for (uint32_t child : std::vector<uint32_t>(out.Node(dst).children))

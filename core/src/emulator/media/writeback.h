@@ -33,10 +33,13 @@ struct WriteBackStep
         Remove,    ///< `host` removed (onDelete: delete), a directory when it is empty
         Move,      ///< `from` moved to `host` under the layer's deleted-files folder (onDelete: move)
         Whiteout,  ///< `path` hidden from the next build (onDelete: keep, or a read-only owner)
-        Note,      ///< nothing done; `detail` says why (onDelete: ignore, attributes)
+        Note,      ///< nothing done; `detail` says why (onDelete: ignore)
+        Attributes,  ///< `path`'s FAT attribute bits (`detail`: `RHS` / `-`) into the descriptor's `.attributes` sidecar
+        Trash,       ///< `host` moved to the host's trash (onDelete: trash)
     };
     Kind kind = Kind::Note;
-    std::string path;              ///< the guest's path
+    std::string path;              ///< the guest's path (in its partition, when `partition` is set)
+    std::string partition;         ///< a partitioned disk's partition (p1, p2, ...); empty: the whole disk is the volume
     std::string layer;             ///< the layer it lands in
     std::filesystem::path host;    ///< the host path written, made, removed or moved to
     std::filesystem::path from;    ///< Rename / Move: the host path before

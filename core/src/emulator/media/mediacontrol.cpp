@@ -58,6 +58,7 @@ namespace
     /// The `compose` / `layers` body: the layout and every layer
     StateNode CompositeValue(const CompositeInfo& info)
     {
+        info.CompleteCounts();  // C4b: a graft's unread base directories are counted now
         StateNode value = StateNode::Object();
         value["descriptor"] = info.descriptor;
         value["fs"] = info.fsName;

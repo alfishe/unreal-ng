@@ -59,11 +59,10 @@ std::vector<FlattenOption> FlattenOptionsFor(const StateNode& layersReply)
                   build == "graft", build == "graft" ? "" : "only a graft (a FAT image at the bottom) has a base image"};
     options[3] = {FlattenStrategy::WriteBack, Name(FlattenStrategy::WriteBack), "Write back into the folders (S4)",
                   "Carry the guest's file changes into the layers marked writable; changed host files are conflicts",
-                  writable && !inlineDescriptor && build != "partitions",
-                  inlineDescriptor  ? "an inline descriptor cannot take write-back"
-                  : !writable       ? "no layer is marked writable: true"
-                  : build == "partitions" ? "a partitioned disk is not written back yet"
-                                          : ""};
+                  writable && !inlineDescriptor,
+                  inlineDescriptor ? "an inline descriptor cannot take write-back"
+                  : !writable      ? "no layer is marked writable: true"
+                                   : ""};
     return options;
 }
 

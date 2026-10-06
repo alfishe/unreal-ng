@@ -77,48 +77,63 @@ bool CommitJournal::Sync(const std::filesystem::path& file)
 bool CommitJournal::Write(const std::filesystem::path& image, IBlockDevice& device, const std::vector<uint64_t>& lbas,
                           std::string* error)
 {
-    std::vector<uint8_t> out;
-    out.insert(out.end(), kMagic, kMagic + sizeof kMagic);
-    Put64(out, device.SectorCount());
-    Put64(out, lbas.size());
-    const size_t entries = out.size();
+    size_t next = 0;
+    return Write(image, device, [&]() -> std::optional<uint64_t> {
+        return next < lbas.size() ? std::optional<uint64_t>(lbas[next++]) : std::nullopt; }, error);
+}
+
+bool CommitJournal::Write(const std::filesystem::path& image, IBlockDevice& device, const std::function<std::optional<uint64_t>()>& next,
+                          std::string* error)
+{
+    // Streamed: an entry at a time into the file, the count patched in at the end
+    const std::filesystem::path path = PathFor(image);
+    auto fail = [&](const std::string& why) {
+        if (error)
+            *error = why;
+        return false;
+    };
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file)
+        return fail("cannot write " + FileHelper::FromFsPath(path));
+    std::vector<uint8_t> head;
+    head.insert(head.end(), kMagic, kMagic + sizeof kMagic);
+    Put64(head, device.SectorCount());
+    Put64(head, 0);  // the entry count, once known
+    file.write(reinterpret_cast<const char*>(head.data()), static_cast<std::streamsize>(head.size()));
+
+    uint64_t count = 0;
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    std::vector<uint8_t> entry;
+    entry.reserve(8 + kSector);
     uint8_t sector[kSector];
-    for (uint64_t lba : lbas)
+    for (std::optional<uint64_t> lba = next(); lba; lba = next())
     {
         // A sector past the end of a cut-down image reads as zeros: put back as zeros
-        if (lba >= device.SectorCount())
+        if (*lba >= device.SectorCount())
             std::memset(sector, 0, sizeof sector);
-        else if (!device.ReadSector(lba, sector))
-        {
-            if (error)
-                *error = "cannot read sector " + std::to_string(lba) + " of " + FileHelper::FromFsPath(image);
-            return false;
-        }
-        Put64(out, lba);
-        out.insert(out.end(), sector, sector + kSector);
+        else if (!device.ReadSector(*lba, sector))
+            return fail("cannot read sector " + std::to_string(*lba) + " of " + FileHelper::FromFsPath(image));
+        entry.clear();
+        Put64(entry, *lba);
+        entry.insert(entry.end(), sector, sector + kSector);
+        hash = Fnv(hash, entry.data(), entry.size());
+        file.write(reinterpret_cast<const char*>(entry.data()), static_cast<std::streamsize>(entry.size()));
+        count++;
     }
-    const uint64_t hash = Fnv(0xcbf29ce484222325ULL, out.data() + entries, out.size() - entries);
-    out.insert(out.end(), kEnd, kEnd + sizeof kEnd);
-    Put64(out, hash);
-
-    const std::filesystem::path path = PathFor(image);
-    {
-        std::ofstream file(path, std::ios::binary | std::ios::trunc);
-        file.write(reinterpret_cast<const char*>(out.data()), static_cast<std::streamsize>(out.size()));
-        file.flush();
-        if (!file)
-        {
-            if (error)
-                *error = "cannot write " + FileHelper::FromFsPath(path);
-            return false;
-        }
-    }
+    std::vector<uint8_t> tail;
+    tail.insert(tail.end(), kEnd, kEnd + sizeof kEnd);
+    Put64(tail, hash);
+    file.write(reinterpret_cast<const char*>(tail.data()), static_cast<std::streamsize>(tail.size()));
+    std::vector<uint8_t> countBytes;
+    Put64(countBytes, count);
+    file.seekp(static_cast<std::streamoff>(sizeof kMagic + 8));
+    file.write(reinterpret_cast<const char*>(countBytes.data()), 8);
+    file.flush();
+    if (!file)
+        return fail("cannot write " + FileHelper::FromFsPath(path));
+    file.close();
     if (!Sync(path))
-    {
-        if (error)
-            *error = "cannot sync " + FileHelper::FromFsPath(path);
-        return false;
-    }
+        return fail("cannot sync " + FileHelper::FromFsPath(path));
     return true;
 }
 
@@ -140,26 +155,45 @@ CommitJournal::Recovery CommitJournal::Recover(const std::filesystem::path& imag
             *detail = text;
     };
 
-    std::vector<uint8_t> data(static_cast<size_t>(std::filesystem::file_size(path, ec)));
-    {
-        std::ifstream in(path, std::ios::binary);
-        in.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()));
-    }
+    // Streamed: the header, then two passes over the entries (checked, then applied), an entry at a time
+    const uint64_t size = std::filesystem::file_size(path, ec);
+    std::ifstream in(path, std::ios::binary);
     const size_t header = sizeof kMagic + 16;
-    const bool started = data.size() >= header && std::memcmp(data.data(), kMagic, sizeof kMagic) == 0;
-    const uint64_t count = started ? Get64(data.data() + sizeof kMagic + 8) : 0;
-    const size_t entrySize = 8 + kSector;
-    const size_t complete = header + static_cast<size_t>(count) * entrySize + sizeof kEnd + 8;
-    if (!started || count > (data.size() / entrySize) || data.size() != complete ||
-        std::memcmp(data.data() + complete - 16, kEnd, sizeof kEnd) != 0)
+    uint8_t head[sizeof kMagic + 16] = {};
+    const bool started = !ec && size >= header && in.read(reinterpret_cast<char*>(head), header) &&
+                         std::memcmp(head, kMagic, sizeof kMagic) == 0;
+    const uint64_t count = started ? Get64(head + sizeof kMagic + 8) : 0;
+    const uint64_t sectors = started ? Get64(head + sizeof kMagic) : 0;
+    const uint64_t entrySize = 8 + kSector;
+    const uint64_t complete = header + count * entrySize + sizeof kEnd + 8;
+    uint8_t tail[sizeof kEnd + 8] = {};
+    const bool ended = started && count <= size / entrySize && size == complete &&
+                       in.seekg(static_cast<std::streamoff>(complete - sizeof tail)) &&
+                       in.read(reinterpret_cast<char*>(tail), sizeof tail) && std::memcmp(tail, kEnd, sizeof kEnd) == 0;
+    if (!ended)
     {
         // Never finished: the commit writes the image only after a complete, synced journal
+        in.close();
         std::filesystem::remove(path, ec);
         say(name + ": an unfinished commit journal was found and dropped; the image had not been written");
         return Recovery::Dropped;
     }
-    if (Get64(data.data() + complete - 8) != Fnv(0xcbf29ce484222325ULL, data.data() + header, static_cast<size_t>(count) * entrySize))
+    std::vector<uint8_t> entry(static_cast<size_t>(entrySize));
+    auto readEntry = [&](uint64_t i) {
+        in.clear();
+        in.seekg(static_cast<std::streamoff>(header + i * entrySize));
+        return static_cast<bool>(in.read(reinterpret_cast<char*>(entry.data()), static_cast<std::streamsize>(entrySize)));
+    };
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (uint64_t i = 0; i < count; i++)
     {
+        if (!readEntry(i))
+            break;
+        hash = Fnv(hash, entry.data(), entry.size());
+    }
+    if (Get64(tail + sizeof kEnd) != hash)
+    {
+        in.close();
         std::filesystem::path bad = path;
         bad += ".bad";
         std::filesystem::rename(path, bad, ec);
@@ -179,17 +213,21 @@ CommitJournal::Recovery CommitJournal::Recover(const std::filesystem::path& imag
     }
     for (uint64_t i = 0; i < count; i++)
     {
-        const uint8_t* entry = data.data() + header + i * entrySize;
-        const uint64_t lba = Get64(entry);
-        if (lba < device->SectorCount() && !device->WriteSector(lba, entry + 8))
+        if (!readEntry(i))
+        {
+            say(name + ": an interrupted commit could not be rolled back (the journal cannot be read); the journal is kept");
+            return Recovery::Damaged;
+        }
+        const uint64_t lba = Get64(entry.data());
+        if (lba < device->SectorCount() && !device->WriteSector(lba, entry.data() + 8))
         {
             say(name + ": an interrupted commit could not be rolled back (sector " + std::to_string(lba) + "); the journal is kept");
             return Recovery::Damaged;
         }
     }
     device.reset();
+    in.close();
     // A cut-down image the commit extended goes back to its size
-    const uint64_t sectors = Get64(data.data() + sizeof kMagic);
     if (format == "raw" && std::filesystem::file_size(image, ec) > sectors * kSector)
         std::filesystem::resize_file(image, sectors * kSector, ec);
     Sync(image);

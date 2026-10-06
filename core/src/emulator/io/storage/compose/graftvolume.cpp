@@ -312,7 +312,9 @@ bool GraftBuilder::Walk(uint32_t baseCluster, uint32_t unionDir, bool isRoot, ui
         {
             matched[found] = true;
             job.kept.push_back(group.slots);
-            if (entry.isDirectory)
+            if (entry.isDirectory && _tree.Node(children[found]).unexpanded)
+                _volume._unexpanded.push_back(entry.firstCluster);  // C4b: untouched, kept as it is; provenance reads it later
+            else if (entry.isDirectory)
                 recurse.push_back({entry, children[found]});
             continue;
         }
@@ -876,6 +878,7 @@ std::unique_ptr<GraftVolume> GraftVolume::Build(std::shared_ptr<const FileTree> 
         volume->_extentOffset = offset;
     }
     volume->_description = std::move(description);
+    volume->_codePage = options.codePage;
 
     uint64_t id = sourceIdentity;
     for (uint64_t v : {volume->_base->ContentId(), static_cast<uint64_t>(options.partition.value_or(0)),
@@ -986,6 +989,51 @@ void GraftVolume::IndexBaseFiles() const
     std::sort(_baseRuns.begin(), _baseRuns.end(), [](const BaseRun& a, const BaseRun& b) { return a.lba < b.lba; });
 }
 
+void GraftVolume::IndexUnexpanded() const
+{
+    _lazyIndexed = true;
+    if (_unexpanded.empty() || _extentDevice < 0)
+        return;
+    FatVolumeReader reader;
+    if (!reader.Open(_pool->Device(static_cast<uint16_t>(_extentDevice)), _codePage))
+        return;
+    constexpr int kMaxDepth = 64;  // deeper is a directory loop
+    std::vector<std::pair<uint32_t, int>> pending;
+    for (uint32_t cluster : _unexpanded)
+        pending.push_back({cluster, 0});
+    std::vector<uint32_t> chain;
+    std::vector<FatDirEntryInfo> entries;
+    std::vector<FatChainExtent> extents;
+    while (!pending.empty())
+    {
+        const auto [first, depth] = pending.back();
+        pending.pop_back();
+        if (depth > kMaxDepth || !reader.ChainClusters(first, chain) || !reader.ListDirectory(first, entries))
+            continue;
+        for (uint32_t i = 0; i < chain.size(); i++)
+            _lazyDirs.push_back({chain[i], first, i});
+        for (const FatDirEntryInfo& entry : entries)
+        {
+            if (entry.isDirectory)
+            {
+                if (entry.firstCluster >= 2)
+                    pending.push_back({entry.firstCluster, depth + 1});
+                continue;
+            }
+            if (entry.size == 0 || !reader.ChainExtents(entry.firstCluster, entry.size, extents))
+                continue;
+            uint32_t fileSector = 0;
+            for (const FatChainExtent& x : extents)
+            {
+                _lazyRuns.push_back({x.lba + _extentOffset, x.sectors, fileSector, first});
+                fileSector += x.sectors;
+            }
+        }
+    }
+    std::sort(_lazyDirs.begin(), _lazyDirs.end(), [](const LazyDir& a, const LazyDir& b) { return a.cluster < b.cluster; });
+    std::sort(_lazyRuns.begin(), _lazyRuns.end(), [](const LazyRun& a, const LazyRun& b) { return a.lba < b.lba; });
+}
+
 SectorOwner GraftVolume::OwnerOf(uint64_t lba) const
 {
     SectorOwner owner;
@@ -1039,6 +1087,29 @@ SectorOwner GraftVolume::OwnerOf(uint64_t lba) const
                 owner.role = SectorRole::FileData;
                 owner.node = it->node;
                 owner.offset = (it->fileSectorStart + (lba - it->lba)) * kSector;
+            }
+            else if (!_unexpanded.empty())
+            {
+                if (!_lazyIndexed)
+                    IndexUnexpanded();
+                const auto d = std::lower_bound(_lazyDirs.begin(), _lazyDirs.end(), cluster,
+                                                [](const LazyDir& x, uint64_t c) { return x.cluster < c; });
+                auto r = std::upper_bound(_lazyRuns.begin(), _lazyRuns.end(), lba, [](uint64_t l, const LazyRun& x) { return l < x.lba; });
+                if (d != _lazyDirs.end() && d->cluster == cluster)
+                {
+                    owner.role = SectorRole::Directory;
+                    owner.unlisted = true;
+                    owner.dirCluster = d->firstCluster;
+                    owner.offset = (static_cast<uint64_t>(d->index) * _sectorsPerCluster + (lba - _dataStart) % _sectorsPerCluster) * kSector;
+                }
+                else if (r != _lazyRuns.begin() && lba < (r - 1)->lba + (r - 1)->sectors)
+                {
+                    --r;
+                    owner.role = SectorRole::FileData;
+                    owner.unlisted = true;
+                    owner.dirCluster = r->dirCluster;
+                    owner.offset = (r->fileSectorStart + (lba - r->lba)) * kSector;
+                }
             }
         }
     }

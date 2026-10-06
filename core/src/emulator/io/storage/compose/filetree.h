@@ -51,6 +51,10 @@ struct TreeNode
     uint16_t layer = 0;               ///< the layer that provided the node (the first for a merged directory)
     uint8_t attributes = 0;           ///< FAT attribute bits from the source (hidden, read-only, system)
     bool isDirectory = false;
+    /// C4b: a directory of a lazily read FAT image whose entries are not in the tree (FatImageExpander reads them);
+    /// `baseCluster` is its first cluster in the image
+    bool unexpanded = false;
+    uint32_t baseCluster = 0;
 };
 
 class FileTree

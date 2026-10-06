@@ -986,6 +986,22 @@ ComposeDescriptor ComposeDescriptor::Load(const std::filesystem::path& file)
     const std::filesystem::path absolute = std::filesystem::absolute(file, ec);
     ComposeDescriptor d = Parse(text.str(), (ec ? file : absolute).parent_path(), sourceName);
     d.file = (ec ? file : absolute).lexically_normal();
+    // The machine-owned sidecars of a write-back (S4, C8d); a line `p2:/PATH` belongs to partition p2
+    auto owner = [&d](std::string& path) -> ComposeDescriptor* {
+        const size_t colon = path.find(':');
+        if (colon == std::string::npos || path[0] == '/')
+            return &d;
+        const std::string name = path.substr(0, colon);
+        for (ComposePartition& p : d.partitions)
+        {
+            if (p.name == name && p.compose)
+            {
+                path = path.substr(colon + 1);
+                return p.compose.get();
+            }
+        }
+        return nullptr;
+    };
     std::filesystem::path whiteout = d.file;
     whiteout += ".whiteout";
     if (std::ifstream list(whiteout); list)
@@ -995,8 +1011,26 @@ ComposeDescriptor ComposeDescriptor::Load(const std::filesystem::path& file)
         {
             while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
                 line.pop_back();
-            if (!line.empty() && line[0] == '/')
-                d.deleted.push_back(line);
+            if (ComposeDescriptor* to = line.empty() ? nullptr : owner(line); to && !line.empty() && line[0] == '/')
+                to->deleted.push_back(line);
+        }
+    }
+    std::filesystem::path attributes = d.file;
+    attributes += ".attributes";
+    if (std::ifstream list(attributes); list)
+    {
+        std::string line;
+        while (std::getline(list, line))
+        {
+            while (!line.empty() && line.back() == '\r')
+                line.pop_back();
+            const size_t tab = line.find('\t');
+            if (tab == std::string::npos)
+                continue;
+            std::string path = line.substr(tab + 1);
+            const uint8_t bits = ParseAttributeBits(line.substr(0, tab));
+            if (ComposeDescriptor* to = path.empty() ? nullptr : owner(path); to && !path.empty() && path[0] == '/')
+                to->attributes.emplace_back(path, bits);
         }
     }
     return d;
@@ -1102,4 +1136,24 @@ std::string ComposeDescriptor::Normalized() const
     }
     o << "}";
     return o.str();
+}
+
+std::string ComposeDescriptor::AttributeBitsText(uint8_t bits)
+{
+    std::string text;
+    if (bits & 0x01)
+        text += 'R';
+    if (bits & 0x02)
+        text += 'H';
+    if (bits & 0x04)
+        text += 'S';
+    return text.empty() ? "-" : text;
+}
+
+uint8_t ComposeDescriptor::ParseAttributeBits(const std::string& text)
+{
+    uint8_t bits = 0;
+    for (const char c : text)
+        bits |= c == 'R' || c == 'r' ? 0x01 : c == 'H' || c == 'h' ? 0x02 : c == 'S' || c == 's' ? 0x04 : 0;
+    return bits;
 }

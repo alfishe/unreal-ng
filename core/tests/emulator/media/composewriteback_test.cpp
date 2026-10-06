@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
+
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -242,7 +244,7 @@ TEST_P(ComposeWriteBack_Test, ConflictsRefuseOrKeepBoth)
     EXPECT_EQ(Text(_folder.Path() / "work/TOOL (guest).TXT"), "g");
 }
 
-TEST_P(ComposeWriteBack_Test, PlanWritesNothingAndTrashIsAnError)
+TEST_P(ComposeWriteBack_Test, PlanWritesNothing)
 {
     Insert("trash");
     {
@@ -253,9 +255,87 @@ TEST_P(ComposeWriteBack_Test, PlanWritesNothingAndTrashIsAnError)
     const MediaResult plan = WriteBack(/*plan*/ true);
     ASSERT_TRUE(plan.Ok()) << plan.message;
     EXPECT_TRUE(Has(plan.report, "write /WORK/NEW.TXT [work]")) << Join(plan.report);
-    EXPECT_TRUE(Has(plan.report, "trash")) << Join(plan.report);
+    EXPECT_TRUE(Has(plan.report, "trash /WORK/OLD.TXT [work]")) << Join(plan.report);
     EXPECT_FALSE(std::filesystem::exists(_folder.Path() / "work/NEW.TXT"));
+    EXPECT_TRUE(std::filesystem::exists(_folder.Path() / "work/OLD.TXT")) << "a plan moves nothing to the trash";
     EXPECT_TRUE(_manager.Info("sd.zc")->dirty);
+}
+
+/// C8d: onDelete: trash moves the host file to the host's trash (freedesktop.org on Linux: a scratch XDG_DATA_HOME)
+TEST_P(ComposeWriteBack_Test, TrashMovesToTheHostTrash)
+{
+#if defined(_WIN32)
+    GTEST_SKIP() << "the Recycle Bin is the user's own: not filled by a test";
+#else
+    const auto home = _folder.Path() / "home";
+    std::filesystem::create_directories(home);
+    const char* oldXdg = std::getenv("XDG_DATA_HOME");
+    const char* oldHome = std::getenv("HOME");
+    const std::string keepXdg = oldXdg ? oldXdg : "", keepHome = oldHome ? oldHome : "";
+    setenv("XDG_DATA_HOME", (home / "data").c_str(), 1);
+    setenv("HOME", home.c_str(), 1);
+    Insert("trash");
+    {
+        FatGuest g = Guest();
+        ASSERT_TRUE(g.Delete("/WORK/OLD.TXT"));
+    }
+    const MediaResult result = WriteBack();
+    if (oldXdg)
+        setenv("XDG_DATA_HOME", keepXdg.c_str(), 1);
+    else
+        unsetenv("XDG_DATA_HOME");
+    setenv("HOME", keepHome.c_str(), 1);
+    ASSERT_TRUE(result.Ok()) << result.message << "\n" << Join(result.report);
+    EXPECT_FALSE(std::filesystem::exists(_folder.Path() / "work/OLD.TXT"));
+#if defined(__APPLE__)
+    EXPECT_TRUE(std::filesystem::exists(home / ".Trash" / "OLD.TXT"));
+#else
+    EXPECT_EQ(Text(home / "data" / "Trash" / "files" / "OLD.TXT"), "old");
+    const std::string info = Text(home / "data" / "Trash" / "info" / "OLD.TXT.trashinfo");
+    EXPECT_NE(info.find("[Trash Info]\nPath=/"), std::string::npos) << info;
+    EXPECT_NE(info.find("/work/OLD.TXT\nDeletionDate="), std::string::npos) << info;
+#endif
+#endif
+}
+
+/// C8d: attribute changes go to <descriptor>.attributes and come back on the next build; the host files are untouched
+TEST_P(ComposeWriteBack_Test, AttributesGoToTheSidecar)
+{
+    Insert();
+    {
+        FatGuest g = Guest();
+        ASSERT_TRUE(g.SetAttributes("/WORK/TOOL.TXT", 0x01 | 0x02));  // read-only, hidden: a writable layer's file
+        ASSERT_TRUE(g.SetAttributes("/README.TXT", 0x04));           // system: a read-only layer's file
+    }
+    const MediaResult result = WriteBack();
+    ASSERT_TRUE(result.Ok()) << result.message << "\n" << Join(result.report);
+    std::filesystem::path sidecar = _descriptor;
+    sidecar += ".attributes";
+    const std::string lines = Text(sidecar);
+    EXPECT_NE(lines.find("RH\t/WORK/TOOL.TXT\n"), std::string::npos) << lines;
+    EXPECT_NE(lines.find("S\t/README.TXT\n"), std::string::npos) << lines;
+    EXPECT_EQ(Text(_folder.Path() / "work/TOOL.TXT"), "tool v1") << "the content is untouched";
+
+    // Rebuilt from the layers and the sidecar: the bits are back
+    FatVolumeReader reader;
+    ASSERT_TRUE(reader.Open(*_slot.attached->Block()));
+    FatDirEntryInfo e;
+    ASSERT_TRUE(reader.Stat("/WORK/TOOL.TXT", e));
+    EXPECT_EQ(e.attributes & 0x07, 0x03);
+    ASSERT_TRUE(reader.Stat("/README.TXT", e));
+    EXPECT_EQ(e.attributes & 0x07, 0x04);
+    EXPECT_FALSE(_manager.Info("sd.zc")->dirty);
+
+    // Cleared again: the line says so
+    {
+        FatGuest g = Guest();
+        ASSERT_TRUE(g.SetAttributes("/WORK/TOOL.TXT", 0));
+    }
+    ASSERT_TRUE(WriteBack().Ok());
+    EXPECT_NE(Text(sidecar).find("-\t/WORK/TOOL.TXT\n"), std::string::npos) << Text(sidecar);
+    ASSERT_TRUE(reader.Open(*_slot.attached->Block()));
+    ASSERT_TRUE(reader.Stat("/WORK/TOOL.TXT", e));
+    EXPECT_EQ(e.attributes & 0x07, 0);
 }
 
 /// A write-back cut short after its journal: the next insert of the descriptor finishes it

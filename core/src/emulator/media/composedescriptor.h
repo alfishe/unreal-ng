@@ -147,6 +147,10 @@ struct ComposeDescriptor
     /// The source name of a descriptor given as text (no file, so no default delta file)
     static constexpr const char* kInlineName = "(inline)";
 
+    /// FAT attribute bits (read-only 1, hidden 2, system 4) as the `.attributes` sidecar writes them: `RHS`, `-`
+    static std::string AttributeBitsText(uint8_t bits);
+    static uint8_t ParseAttributeBits(const std::string& text);
+
     int version = 0;
     ComposeTarget target;
     std::vector<ComposeLayer> layers;
@@ -158,6 +162,9 @@ struct ComposeDescriptor
     /// S4: paths the guest deleted, kept in `<descriptor>.whiteout` (one per line) and removed from the merged
     /// tree after every layer merged; the user's descriptor itself is never rewritten
     std::vector<std::string> deleted;
+    /// C8d: FAT attribute bits the guest gave files, kept in `<descriptor>.attributes` (`RHS<tab>/PATH`), set on
+    /// the merged tree after the whiteouts; a partition's lines (`p2:/PATH`) go to that partition's descriptor
+    std::vector<std::pair<std::string, uint8_t>> attributes;
 
     std::filesystem::path file;             ///< empty for an inline descriptor
     std::filesystem::path baseDir;          ///< relative paths resolve against it
