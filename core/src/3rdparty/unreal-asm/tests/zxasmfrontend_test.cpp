@@ -166,8 +166,8 @@ TEST(ZxasmFrontend_Test, PhaseNestsAndConditions)
 {
     // UNPHASE returns to the outer PHASE where it would be now (checked: #C006 after a 3-byte inner part)
     const std::vector<std::string> phase = FromOrg("        org #8000\n        phase #c000\n        nop\n        phase #d000\n        nop\n        unphase\n        unphase");
-    EXPECT_EQ(phase, (std::vector<std::string>{"ORG #8000", "DISP #C000", "DEFINE __UNREALASM_DISP", "NOP", "__UNREALASM_PH1=$", "__UNREALASM_PP1=$$$", "ENT",
-                                               "UNDEFINE __UNREALASM_DISP", "DISP #D000", "DEFINE __UNREALASM_DISP", "NOP", "ENT", "UNDEFINE __UNREALASM_DISP",
+    EXPECT_EQ(phase, (std::vector<std::string>{"ORG #8000", "DISP #C000", "DEFINE __UNREALASM_DISP", "NOP", "__UNREALASM_PH1=$", "ENT", "UNDEFINE __UNREALASM_DISP",
+                                               "__UNREALASM_PP1=$", "DISP #D000", "DEFINE __UNREALASM_DISP", "NOP", "ENT", "UNDEFINE __UNREALASM_DISP",
                                                "DISP __UNREALASM_PH1+($-__UNREALASM_PP1)", "DEFINE __UNREALASM_DISP", "ENT", "UNDEFINE __UNREALASM_DISP"}));
     // IFUSED X: used and not defined so far (a label file's EQU keeps the library's copy out)
     EXPECT_EQ(ToSjasmplus("X       equ 1\n        call X\n        ifused X\nX       nop\n        endif"),

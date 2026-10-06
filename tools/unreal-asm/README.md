@@ -11,7 +11,7 @@ tools run the corpus-sized and emulator-driven checks behind them (the results a
 | `roundtrip.py` | Converts every source of a set of TRD / SCL images to sjasmplus, reads each result back through the sjasmplus frontend and backend (the text must not change), optionally assembles every file with sjasmplus; prints a summary |
 | `objcheck.py` | For a converted ALASM project: builds every object of each main source's `SAVEOBJ` table with sjasmplus and compares it with the file ALASM saved on the same disk |
 | `assemble-in-emulator.py` | Runs TASM 4.12, ALASM 5.09, STORM 1.3 or ZAsm 3.15 in an unreal-ng instance, assembles a source and saves the bytes it built (the oracle for a source with no binary on its disk) |
-| `crosscheck.py` | Converts the main sources of a set of TR-DOS images to sjasmplus and to pasmo, assembles both and compares the bytes each built |
+| `crosscheck.py` | Converts the main sources of a set of TR-DOS images to sjasmplus and to pasmo / z88dk (`--targets`), assembles each and compares the bytes each built |
 | `lstcheck.py` | Compares the bytes of a sjasmplus listing with a memory dump, line by line (a converted program against a running copy of it, e.g. an assembler's own source against the assembler unpacked in memory) |
 | `emulator.py` | The WebAPI client the emulator script uses (own instance, disk swap with TTD recording, keys, screenshots, memory) |
 | `zxdisk.py` | TR-DOS images: list a TRD / SCL catalog, extract a file as hobeta, add hobeta files to a TRD, SCL to TRD, a file as hobeta |
@@ -78,8 +78,8 @@ python3 tools/unreal-asm/assemble-in-emulator.py zasm315 ZASM315.trd scratch/PRO
 ## Example: two targets against each other
 
 ```bash
-export UNREAL_ASM_PASMO=<path to pasmo>
-python3 tools/unreal-asm/crosscheck.py scratch/xc disk1.trd disk2.scl ...
+export UNREAL_ASM_PASMO=<path to pasmo> UNREAL_ASM_Z80ASM=<path to z88dk-z80asm>
+python3 tools/unreal-asm/crosscheck.py scratch/xc disk1.trd disk2.scl ... --targets pasmo,z88dk
 #   equal: 245  no code: 5  pasmo errors: 5  skipped (sjasmplus errors or pages): 164
 ```
 

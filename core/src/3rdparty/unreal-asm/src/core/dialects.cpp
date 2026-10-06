@@ -5,6 +5,7 @@
 #include "dialects/zxasm/zxasmfrontend.h"
 #include "dialects/tasm/tasmfrontend.h"
 #include "dialects/pasmo/pasmobackend.h"
+#include "dialects/z88dk/z88dkbackend.h"
 #include "dialects/sjasmplus/sjasmplusbackend.h"
 #include "dialects/sjasmplus/sjasmplusfrontend.h"
 
@@ -22,6 +23,7 @@ const DialectRegistry& DialectRegistry::Builtin()
         r.Add(std::make_unique<dialects::SjasmplusFrontend>());
         r.Add(std::make_unique<dialects::SjasmplusBackend>());
         r.Add(std::make_unique<dialects::PasmoBackend>());
+        r.Add(std::make_unique<dialects::Z88dkBackend>());
         return r;
     }();
     return registry;
@@ -193,6 +195,7 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
     for (size_t k = 0; k < programs.size(); ++k)
     {
         withMacros.definitions = unitDefinitions[k];
+        withMacros.fileName = files[k].name;
         BackendResult written = backend->Write(programs[k], withMacros);
         written.document.name = files[k].name;
         result.files.push_back({files[k].name, std::move(written.document)});

@@ -30,6 +30,9 @@ struct BackendOptions
     std::map<std::string, int> macroParams;
     /// Labels some file of the project tests with IFUSED / IFNUSED (ConvertProject fills it)
     std::set<std::string> ifUsedNames;
+    /// The file being written as INCLUDE names it ("" = a single source): names a target must keep unique across the
+    /// files of a project (z80asm's sections) are made from it
+    std::string fileName;
     /// How often each name is defined in the files of the project (ConvertProject fills it; pasmo needs DEFL for a name
     /// defined twice, EQU for one defined once)
     std::map<std::string, int> definitions;

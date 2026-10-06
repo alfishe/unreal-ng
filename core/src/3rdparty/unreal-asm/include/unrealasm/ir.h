@@ -154,7 +154,8 @@ struct Program
     /// The displacement (PHASE / DISP) may continue across INCLUDE: a file cannot know whether one is active where it
     /// starts (TASM). An `Ent` statement with text "if-displaced" ends one only when it is active
     bool displacementAcrossFiles = false;
-    /// What a comparison or a logical not gives when true: 0 = what the target gives, 1 (STORM), -1 (sjasmplus)
+    /// What a comparison or a logical not gives when true: 1 (STORM), -1 (sjasmplus); 0 = not said (the source has no
+    /// comparisons whose value is used: the target's own)
     int trueValue = 0;
 };
 }  // namespace unrealasm::ir

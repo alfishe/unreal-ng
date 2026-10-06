@@ -934,12 +934,16 @@ struct LineParser
             disp.args = args();
             if (!phases.empty())
             {
-                // Nested: keep the outer address and the physical one for the UNPHASE back to it
+                // Nested: keep the outer address, end the displacement (sjasmplus does not nest DISP), keep the address
+                // where the code is put ($ once no displacement is active) for the UNPHASE back to the outer one
                 const int n = ++phaseLabels;
                 before.push_back(Assignment("__UNREALASM_PH" + std::to_string(n), Expr::Make(Expr::Kind::Current), number));
-                before.push_back(Assignment("__UNREALASM_PP" + std::to_string(n), Expr::Make(Expr::Kind::CurrentPhysical), number));
+                ir::Line ent;
+                ent.sourceLine = number;
+                ent.statements.push_back(Directive(ir::DirectiveKind::Ent));
+                before.push_back(std::move(ent));
+                before.push_back(Assignment("__UNREALASM_PP" + std::to_string(n), Expr::Make(Expr::Kind::Current), number));
                 phases.push_back(n);
-                out.push_back(Directive(ir::DirectiveKind::Ent));   // sjasmplus does not nest DISP
             }
             else
                 phases.push_back(0);

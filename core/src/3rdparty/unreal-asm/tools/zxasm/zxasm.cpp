@@ -236,6 +236,14 @@ const containers::TrdosFile* FindBinary(const std::vector<containers::TrdosFile>
     return nullptr;
 }
 
+/// Where a converted line includes a binary file: INCBIN "..." (sjasmplus, pasmo) or BINARY "..." (z80asm), both 8
+/// characters up to the name
+size_t FindIncbin(const std::string& text)
+{
+    const size_t incbin = text.find("INCBIN \"");
+    return incbin != std::string::npos ? incbin : text.find("BINARY \"");
+}
+
 /// A TR-DOS name as a host file name: TR-DOS allows / \ : and the like ("SIN64/FF"), a file system and an INCBIN
 /// path do not
 std::string HostName(std::string name)
@@ -309,7 +317,7 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
         }
         for (SourceLine& line : f.document.lines)
         {
-            const size_t at = line.text.find("INCBIN \"");
+            const size_t at = FindIncbin(line.text);
             if (at == std::string::npos)
                 continue;
             const size_t close = line.text.find('"', at + 8);
@@ -331,7 +339,7 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
         for (SourceLine& line : f.document.lines)
         {
             const size_t marker = line.text.find("; unreal-asm: slice ");
-            const size_t at = line.text.find("INCBIN \"");
+            const size_t at = FindIncbin(line.text);
             if (marker == std::string::npos || at == std::string::npos)
                 continue;
             const size_t close = line.text.find('"', at + 8);
@@ -368,7 +376,7 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
         // INCBIN "name" / "name.T": the file of the image, written under the name the source uses
         for (const SourceLine& line : f.document.lines)
         {
-            const size_t at = line.text.find("INCBIN \"");
+            const size_t at = FindIncbin(line.text);
             if (at == std::string::npos)
                 continue;
             const size_t close = line.text.find('"', at + 8);
