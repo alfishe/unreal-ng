@@ -268,7 +268,7 @@ const std::vector<std::string>& MediaControl::Verbs()
 {
     static const std::vector<std::string> verbs = {"list", "info", "formats", "targets", "insert", "eject", "swap",
                                                    "save", "export", "discard", "rescan", "create", "protect",
-                                                   "compose", "layers", "changes"};
+                                                   "compose", "layers", "changes", "flatten"};
     return verbs;
 }
 
@@ -282,7 +282,7 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"insert", kInsertOptions},
         {"swap", kInsertOptions},
         {"eject", {"save", "export", "discard", "end_recording", "async"}},
-        {"save", {"retarget", "compression", "compact", "fs", "size", "strategy", "force"}},
+        {"save", {"retarget", "compression", "compact", "fs", "size", "strategy", "force", "plan"}},
         {"export", {"compression", "parent", "compact", "fs", "size"}},
         {"discard", {"async"}},
         {"rescan", {"async"}},
@@ -291,6 +291,7 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"compose", {"fs", "codepage", "free"}},
         {"layers", {}},
         {"changes", {}},
+        {"flatten", {"strategy", "plan", "force", "compression", "compact", "fs", "size"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -348,6 +349,8 @@ MediaReply MediaControl::Run(const MediaRequest& request)
         reply = Insert(request, true);
     else if (verb == "eject")
         reply = Eject(request);
+    else if (verb == "flatten")
+        reply = Flatten(request);
     else if (verb == "save")
         reply = Save(request);
     else if (verb == "export")
@@ -1048,6 +1051,16 @@ MediaReply MediaControl::Save(const MediaRequest& request)
         options.strategy = Lower(Trim(strategy->second));
     if (auto force = request.options.find("force"); force != request.options.end() && !ParseBool(force->second, options.force))
         return Fail(MediaError::BadRequest, "force '" + force->second + "': expected true or false");
+    if (auto plan = request.options.find("plan"); plan != request.options.end() && !ParseBool(plan->second, options.plan))
+        return Fail(MediaError::BadRequest, "plan '" + plan->second + "': expected true or false");
+    if (request.verb == "flatten")
+    {
+        // flatten names its strategy and never goes through DT-9 (that is save)
+        if (options.strategy.empty())
+            return Fail(MediaError::BadRequest, "flatten names its strategy: flat <path>, delta, commit or write-back");
+        if (options.strategy == "flat" && options.path.empty())
+            return Fail(MediaError::BadRequest, "flatten flat writes a new image: name the path");
+    }
 
     SaveOutcome outcome;
     {
@@ -1060,6 +1073,11 @@ MediaReply MediaControl::Save(const MediaRequest& request)
         reply.body["retargeted"] = outcome.retargeted;
     }
     return reply;
+}
+
+MediaReply MediaControl::Flatten(const MediaRequest& request)
+{
+    return Save(request);
 }
 
 MediaReply MediaControl::Export(const MediaRequest& request)

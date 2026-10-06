@@ -108,6 +108,7 @@ private:
     MediaReply Insert(const MediaRequest& request, bool swap);
     MediaReply Eject(const MediaRequest& request);
     MediaReply Save(const MediaRequest& request);
+    MediaReply Flatten(const MediaRequest& request);
     MediaReply Export(const MediaRequest& request);
     MediaReply Discard(const MediaRequest& request);
     MediaReply Rescan(const MediaRequest& request);

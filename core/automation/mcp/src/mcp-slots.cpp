@@ -30,7 +30,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"insert", insertOptions},
         {"eject", {"save", "export", "discard", "end_recording", "async"}},
         {"swap", insertOptions},
-        {"save", {"retarget", "compression", "compact", "fs", "size", "strategy", "force"}},
+        {"save", {"retarget", "compression", "compact", "fs", "size", "strategy", "force", "plan"}},
         {"export", {"compression", "parent", "compact", "fs", "size"}},
         {"discard", {"async"}},
         {"rescan", {"async"}},
@@ -39,6 +39,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolAc
         {"compose", {"fs", "codepage", "free"}},
         {"layers", {}},
         {"changes", {}},
+        {"flatten", {"strategy", "plan", "force", "compression", "compact", "fs", "size"}},
     };
     return actions;
 }
@@ -190,7 +191,7 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "insert / swap / compose: a composition descriptor inline (version, target, layers) instead of a path";
 
     // Every option any verb takes, typed; MediaControl checks which verb takes which
-    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact", "force"};
+    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact", "force", "plan"};
     const std::set<std::string> integers = {"free", "cylinders", "sides", "size"};
     std::set<std::string> options;
     std::string perVerb;
@@ -218,7 +219,10 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["strategy"]["description"] =
         "save of a composite (*.ucompose.yaml): delta (the session's writes into <descriptor>.delta, restored at the "
         "next insert; the default without a path), flat (a new image at path; the default with one)";
-    schema["properties"]["force"]["description"] = "save as delta over a delta that was written over other sources";
+    schema["properties"]["force"]["description"] =
+        "save as delta over a delta that was written over other sources; commit although the guest's file system has "
+        "lost clusters or cross-links";
+    schema["properties"]["plan"]["description"] = "save / flatten with strategy commit: report what would be written, write nothing";
     schema["properties"]["compact"]["description"] =
         "save / export of a FAT disk or card: write a re-synthesized volume (every file contiguous; fs converts, size "
         "resizes) instead of the layout as it is. .vhd targets get a fixed VHD footer";
@@ -240,7 +244,8 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "nothing does), insert, swap, eject, save, export, discard, rescan, create, protect, compose (build a "
         "*.ucompose.yaml - several folders layered into one FAT disk - without inserting it; insert takes the "
         "descriptor like a file), layers (a composite medium's layers), changes (the guest's unsaved writes as file "
-        "operations - create, modify, delete, rename, mkdir, rmdir - with the layer each touched). Operations are synchronous (the reply "
+        "operations - create, modify, delete, rename, mkdir, rmdir - with the layer each touched), flatten (a composite by a "
+        "named strategy: flat <path>, delta, commit - the graft base image takes everything, journaled). Operations are synchronous (the reply "
         "comes when the medium is in or out; async:true returns at once). A dirty medium leaves its slot only with "
         "save:true, export:'<path>' or discard:true. The reply's 'revision' increases with every change. "
         "Options per action:" + perVerb,

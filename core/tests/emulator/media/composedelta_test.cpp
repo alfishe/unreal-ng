@@ -190,8 +190,8 @@ TEST_F(ComposeDelta_Test, TruncatedFileRefused)
     EXPECT_FALSE(_manager.Info("sd.zc")->dirty);
 }
 
-// DT-9: an explicit strategy wins; flat needs a path; writes.save names the default; commit and write-back are for
-// phase C8, and an eject's save falls back to a delta for them (D-8)
+// DT-9: an explicit strategy wins; flat needs a path; writes.save names the default (commit needs a graft); an
+// eject's save falls back to a delta for commit and write-back (D-8)
 TEST_F(ComposeDelta_Test, StrategyFollowsDt9)
 {
     ASSERT_TRUE(Insert().Ok());
@@ -207,7 +207,9 @@ TEST_F(ComposeDelta_Test, StrategyFollowsDt9)
     Descriptor("writes: {save: commit}\n");
     ASSERT_TRUE(Insert().Ok());
     GuestWrites("/NEW.TXT");
-    EXPECT_EQ(_manager.Save("sd.zc", {}).error, MediaError::NotSupported) << "commit is phase C8";
+    const MediaResult commit = _manager.Save("sd.zc", {});
+    EXPECT_EQ(commit.error, MediaError::BadRequest) << "writes.save: commit, and this composite is no graft";
+    EXPECT_NE(commit.message.find("graft"), std::string::npos) << commit.message;
     SaveOptions delta;
     delta.strategy = "delta";
     EXPECT_TRUE(_manager.Save("sd.zc", delta).Ok());

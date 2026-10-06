@@ -1445,6 +1445,11 @@ public:
                                                    sol::optional<sol::table> opts) {
             return mediaCall(s, "save", slot, path.value_or(""), opts);
         });
+        // A composite by a named strategy: strategy = "flat" (path) | "delta" | "commit"; plan, force
+        lua.set_function("media_flatten", [mediaCall](sol::this_state s, const std::string& slot, sol::optional<std::string> path,
+                                                      sol::optional<sol::table> opts) {
+            return mediaCall(s, "flatten", slot, path.value_or(""), opts);
+        });
         lua.set_function("media_export", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path) {
             return mediaCall(s, "export", slot, path, sol::nullopt);
         });

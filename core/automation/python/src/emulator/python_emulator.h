@@ -1325,6 +1325,10 @@ namespace PythonBindings
             .def("media_save", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
                      return MediaCallPy(self, "save", slot, path, options);
                  }, py::arg("slot"), py::arg("path") = "", "Floppies: write the disk back (or to path)")
+            .def("media_flatten", [](Emulator& self, const std::string& slot, const std::string& path, const py::kwargs& options) {
+                     return MediaCallPy(self, "flatten", slot, path, options);
+                 }, py::arg("slot"), py::arg("path") = "", "A composite by a named strategy (strategy='flat' with a path, 'delta', "
+                 "'commit'; plan=True, force=True)")
             .def("media_export", [](Emulator& self, const std::string& slot, const std::string& path) {
                      return MediaCallPy(self, "export", slot, path, py::kwargs());
                  }, py::arg("slot"), py::arg("path"), "A copy of the medium as it is now")

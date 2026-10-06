@@ -21,6 +21,7 @@
 #include "emulator/io/storage/compose/unionbuilder.h"
 #include "emulator/io/storage/fat/fatsynthvolume.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
+#include "emulator/io/storage/commitjournal.h"
 #include "emulator/io/storage/partitioneddisk.h"
 #include "emulator/io/storage/subrangedevice.h"
 #include "emulator/io/storage/hostfolder/foldermanifest.h"
@@ -284,6 +285,9 @@ MediaResult CompositeMediumFactory::BuildPartitioned(const ComposeDescriptor& d,
         {
             // Passthrough: the image's sectors as they are (a window of it for one of its partitions)
             const std::string path = PathText(p.source->path);
+            std::string recovered;
+            if (CommitJournal::Recover(p.source->path, &recovered) != CommitJournal::Recovery::None)
+                result.report.push_back(where + ": " + recovered);
             std::string error;
             const std::string format = FileHelper::FileExists(path) ? HddImageFormats::Probe(path, &error) : std::string();
             std::unique_ptr<IBlockDevice> opened =
@@ -528,6 +532,10 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
             int device = pool->FindDevice(key);
             if (device < 0)
             {
+                // An interrupted S3 commit into this image is undone first (DT-14)
+                std::string recovered;
+                if (CommitJournal::Recover(layer.source.path, &recovered) != CommitJournal::Recovery::None)
+                    result.report.push_back(where + ": " + recovered);
                 std::string error;
                 const std::string format = HddImageFormats::Probe(path, &error);
                 std::unique_ptr<IBlockDevice> opened =

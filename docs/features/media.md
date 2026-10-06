@@ -80,6 +80,7 @@ on a +3) is `unknown-slot`, never drive A.
 | `protect` | slot, `on` | the slot's write-protect switch |
 | `compose` | descriptor | build a [composite](#composite-media-several-sources-in-one-disk) (`*.ucompose.yaml`, or its JSON text) without inserting it: the layout and the report |
 | `layers` | slot | a composite's layers (and partitions) |
+| `flatten` | slot, path? | a composite by a named `strategy`: `flat` (a new image at `path`), `delta`, `commit` (everything into the graft's base image, journaled; the slot then holds that image; `plan` reports and writes nothing) |
 | `changes` | slot | the guest's unsaved writes on a disk or card with session writes as file operations: `create`, `modify`, `delete`, `rename` (a move too), `mkdir`, `rmdir`, `attributes`, each with the composite layer it touched; nothing is written |
 
 `save`, `export` and `discard` also take a detached medium's slot id.
@@ -105,7 +106,8 @@ on a +3) is `unknown-slot`, never drive A.
 | `compact` | bool | false | save, export of a FAT disk or card: write the merged volume laid out again (every file contiguous, deleted data and lost clusters gone, label / MBR / boot code kept); `save` with `compact` needs a path |
 | `fs`, `size` | `fat16` / `fat32`; bytes or `64MiB` | the volume's; the medium's | save, export with `compact`: convert, resize (a FAT12 floppy needs `fs`) |
 | `strategy` | `delta`, `flat`, `commit`, `write-back` | a path: `flat`; none: the descriptor's `writes.save`, else `delta` | save of a composite (`commit` and `write-back`: a later phase) |
-| `force` | bool | false | save of a composite as `delta` over a delta written over other sources |
+| `force` | bool | false | save of a composite as `delta` over a delta written over other sources; `commit` although the guest's file system has lost clusters or cross-links |
+| `plan` | bool | false | save, flatten with `strategy: commit`: what would be written, nothing written |
 | `on` | bool | true | protect |
 | `end_recording` | bool | false | insert, swap, eject, create: stop a TTD recording instead of refusing |
 | `async` | bool | false | insert, swap, eject, discard, rescan, create |
@@ -292,6 +294,7 @@ writes: {save: delta}                     # what `save` does without a path; del
 | **Boot code** | the bottom image's MBR code, boot sector code and reserved sectors (the sectors between the MBR and the partition too: the DSS loader) are carried into a rebuilt volume; a bootable ISO keeps its El Torito entries. A `boot:` section names other files (`mbrCode`, `volumeCode`, `reserved`, `eltorito`) |
 | **Partitions** | `partitions:` instead of `layers:` makes a partitioned disk: each entry a passthrough `{source: {image: x.img, partition: 1}}` or a composition `{fs: fat16, size: 64MiB, compose: {build: graft, layers: [...]}}`, 1 MiB aligned, more than four as logical partitions. The first source disk's MBR code is carried (the Profi BIOS runs it) and each boot sector gets its partition's start |
 | **Unsaved writes** | `media changes` lists them as file operations with their layers. `save` without a path writes them to `<descriptor>.delta` (S2) and the medium is clean; the next insert of the same descriptor restores them ("session restored"). A delta written over other sources (a host file changed since) is not applied: the report names the layer, and saving over it needs `force`. A damaged delta is renamed `*.delta.bad`. `save` with a path (or `strategy: flat`) writes one image and the slot then holds it; `export` writes one and leaves the composite as it is |
+| **Commit (S3)** | `flatten <slot> --strategy commit` writes a graft's re-encoded sectors, its grafted files and the guest's writes into the base image (raw, HDF, HDI or fixed VHD; not a CHD, and not while another slot uses it). The old sectors go to `<image>.ujournal` first; if the commit is cut short, the next open of the image puts them back. Afterwards the slot holds the base image; the descriptor is not changed |
 | **Rescan** | `rescan` builds the composite again from its sources (refused while there are unsaved writes) |
 
 ### Which file system a slot takes

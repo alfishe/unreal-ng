@@ -15,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "common/unicodehelper.h"
@@ -84,6 +85,12 @@ public:
     size_t GraftRuns() const { return _runs.size(); }
     uint32_t FreeClusters() const { return _freeClusters; }
     GraftSectorOrigin SectorOrigin(uint64_t lba) const;
+
+    /// S3 commit plan: the re-encoded sectors (sorted), and the runs of sectors holding grafted files
+    /// (first LBA, count), in the base image's coordinates
+    const std::vector<uint64_t>& PatchLbas() const { return _patchLba; }
+    std::vector<std::pair<uint64_t, uint64_t>> GraftedSectorRuns() const;
+    uint16_t BaseDevice() const { return _baseDevice; }
 
     /// Provenance (C6b). A base file's data is found from the union tree's extents on the
     /// base image (an index built at the first call that needs it)

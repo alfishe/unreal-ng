@@ -33,6 +33,9 @@ PLAN.md row **#95**.
   - [x] C6c S2 delta file, DT-13 restore, DT-9, ACC-C7
 - [x] C7 partitions (`PartitionedDisk`, passthrough and composed partitions, ACC-C4; Profi IDE slots FAT16 only)
 - [ ] C8 S3 commit, S4 write-back, Qt flatten dialog
+  - [x] C8a S3: journaled commit into the graft base, recovery on open, `media flatten`
+  - [ ] C8b S4 write-back into folder layers
+  - [ ] C8c Qt strategy dialog
 - [ ] C9 optional bulk `ReadSectors` (A/B gated)
 - [ ] Lazy base enumeration for grafts: walk only the base directories upper layers touch (the full walk dominates
   the graft build today, [phases/c4-graft.md](phases/c4-graft.md) §8)

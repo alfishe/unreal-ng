@@ -928,6 +928,15 @@ const GraftVolume::Run* GraftVolume::FindRun(uint64_t lba, uint64_t& cluster) co
     return &*it;
 }
 
+std::vector<std::pair<uint64_t, uint64_t>> GraftVolume::GraftedSectorRuns() const
+{
+    std::vector<std::pair<uint64_t, uint64_t>> runs;
+    for (const Run& run : _runs)
+        runs.push_back({_dataStart + static_cast<uint64_t>(run.firstCluster - 2) * _sectorsPerCluster,
+                        static_cast<uint64_t>(run.clusters) * _sectorsPerCluster});
+    return runs;
+}
+
 void GraftVolume::IndexBaseFiles() const
 {
     _baseIndexed = true;

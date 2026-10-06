@@ -72,7 +72,7 @@
             verbs += "\n- **" + v + "**: " + (options.empty() ? "no options" : options);
         }
         Json::Value& post = paths["/api/v1/emulator/{id}/media/{slot}/{verb}"]["post"];
-        post["summary"] = "insert / swap / eject / save / export / discard / rescan / create / protect / layers / changes";
+        post["summary"] = "insert / swap / eject / save / export / discard / rescan / create / protect / layers / changes / flatten";
         post["description"] =
             "Operations are synchronous: the reply comes when the medium is in or out of the slot (swap delay "
             "included, at most 5 s, then pending = true). async: true replies at once with pending = true. "
@@ -130,6 +130,8 @@
         body["properties"]["strategy"]["description"] =
             "save of a composite: delta (the session's writes into <descriptor>.delta, restored at the next insert; "
             "the default without a path) or flat (a new image at path; the default with one)";
+        body["properties"]["plan"]["type"] = "boolean";
+        body["properties"]["plan"]["description"] = "save / flatten with strategy commit: report what would be written, write nothing";
         body["properties"]["force"]["type"] = "boolean";
         body["properties"]["force"]["description"] = "save as delta over a delta written over other sources";
         body["properties"]["compact"]["type"] = "boolean";
