@@ -77,6 +77,10 @@ kept): `emulator_manage {"action":"slots_plug", ...}`, [slots.md](slots.md). Det
 [turbosound.md](../peripherals/turbosound.md),
 [covox-sounddrive.md](../peripherals/covox-sounddrive.md),
 [generalsound.md](../peripherals/generalsound.md).
+The ZX-MultiSound card (TSFM, SAA1099, GS, SounDrive and MIDI on one card) is not in the
+shipped config; it fits a ZX-bus slot and shadows the board AY (it replaces the TSFM, NeoGS
+and SounDrive): [multisound.md](../peripherals/multisound.md), user guide
+[docs/features/multisound.md](../../docs/features/multisound.md).
 
 ## Pitfalls
 

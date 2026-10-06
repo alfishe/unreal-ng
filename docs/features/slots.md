@@ -1,10 +1,11 @@
 # Slots: the cards on the machine's buses
 
 A ZX Spectrum clone takes add-on cards: a General Sound or a NeoGS, a TurboSound FM in the AY socket, a MoonSound,
-a Covox or SounDrive, a network card, the ZX-MultiSound. Each card sits in a **slot** of a **bus** of the machine. The
-emulator keeps a list of the machine's buses and of the cards in them, checks that the cards can work together, and
-tells you what a change would do before it does it. The same verbs exist in the Qt window (Machine > Slots), the
-WebAPI, the CLI, MCP, Lua and Python. This page is the reference; each surface's own documentation links here.
+a Covox or SounDrive, a network card, the ZX-MultiSound ([multisound.md](multisound.md)). Each card sits in a
+**slot** of a **bus** of the machine. The emulator keeps a list of the machine's buses and of the cards in them,
+checks that the cards can work together, and tells you what a change would do before it does it. The same verbs exist
+in the Qt window (Machine > Slots), the WebAPI, the CLI, MCP, Lua and Python. This page is the reference; each
+surface's own documentation links here.
 
 Design: [ZX-bus slots architecture.md](../inprogress/2026-10-03-zx-bus-slots/architecture.md); the compatibility
 tables: [compatibility-matrix.md](../inprogress/2026-10-03-zx-bus-slots/compatibility-matrix.md); step-by-step

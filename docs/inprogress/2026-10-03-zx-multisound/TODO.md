@@ -1,8 +1,8 @@
 # TODO - ZX-MultiSound (UzixLS) sound card
 
 **Status:** on master since 2026-10-05 (`7605bf104`, pushed): MS-1 to MS-7 first pass, with the ZX-bus slots SL-1 to
-SL-7 ([slots TODO](../2026-10-03-zx-bus-slots/TODO.md)); demo to the owner done (MIDI, TSFM, SAA). Shipped configs keep
-the card off (owner decision): it is fitted through the slots. Left: the open items below (MS-8 docs, profiling, a
+SL-7 ([slots TODO](../2026-10-03-zx-bus-slots/TODO.md)); demo to the owner done (MIDI, TSFM, SAA); MS-8 user docs done 2026-10-05. Shipped configs keep
+the card off (owner decision): it is fitted through the slots. Left: the open items below (profiling, a
 TTD fixture, the MS-7 second pass, the 0.15 dB SSG residue).
 
 ## Documents
@@ -177,9 +177,17 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
 - [ ] MS-7 second pass: Z-Player 5, the remaining disks of the test images README, WC MOD / TFC / ETC
 - [x] decided 2026-10-05: ZX MIDI Player v3 at 14 MHz on a ZX-Evo sends 23.6 kbaud (the Evo's 14 MHz DRAM waits, as
   the RTL); a limit of the program, not an emulator bug
-- [ ] side note (not the card): the AY state report names the I/O port direction the wrong way round
-  (`devicestate.cpp` ~121 / 127 report "input" when R7 bit 6 = 1, which is output)
-- [ ] MS-8 docs: the user page in `docs/features/`, machine recipes that list sound cards
+- [x] side note (not the card): the AY state report named the I/O port direction the wrong way round
+  (`devicestate.cpp` reported "input" when R7 bit 6 = 1, which is output): fixed on master in `79c638835` (state
+  report, WebAPI register decoding and CLI read R7 bits 6 / 7 as the datasheet does; `DeviceState_Test.AyReportPortDirectionFollowsR7`)
+- [x] MS-8 docs (2026-10-05, not committed): the user page [docs/features/multisound.md](../../features/multisound.md)
+  (what the card is, machines and conflicts, fitting by INI / Qt / automation with the options, the MIDI bank, mixer
+  rows and levels, state reports, TTD, known behavior, software to try); the card in the machine recipes that list sound
+  cards and where it fits for real ([pentagon.md](../../../.recipe/machines/pentagon.md),
+  [scorpion.md](../../../.recipe/machines/scorpion.md), [atm3-zxevo-baseconf.md](../../../.recipe/machines/atm/atm3-zxevo-baseconf.md),
+  [tsconf.md](../../../.recipe/machines/tsconf.md)); links from [slots.md](../../features/slots.md) and the recipe
+  [.recipe/peripherals/multisound.md](../../../.recipe/peripherals/multisound.md). Not added to `spectrum.md` / `profi.md`
+  (only an `unrealistic` fit there)
 - [ ] Profile the card's frame cost (~1 ms per emulated frame on the dev machine with all five paths; the SAM2695
   effects path and the eight Reference-quality YM decimators are the suspects); still open after MS-4 registered it
   (machines without the card pay nothing)
