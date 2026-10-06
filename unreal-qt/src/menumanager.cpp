@@ -293,10 +293,10 @@ void MenuManager::createViewMenu()
     connect(_temporalBlendingAction, &QAction::triggered, this, &MenuManager::temporalBlendingToggled);
 
     // Full Screen
-    // Single full-screen entry on the platform's standard full-screen key (QKeySequence::FullScreen:
-    // Ctrl+Cmd+F on macOS, F11 on Windows). Cocoa's own "Enter Full Screen" View-menu item is suppressed in main().
+    // Single full-screen entry: Cmd+F on macOS, Ctrl+F elsewhere (Qt::CTRL maps to Cmd
+    // on macOS). Cocoa's own "Enter Full Screen" View-menu item is suppressed in main().
     _fullScreenAction = _viewMenu->addAction(
-        tr("&Full Screen") + "\t" + QKeySequence(QKeySequence::FullScreen).toString(QKeySequence::NativeText));
+        tr("&Full Screen") + "\t" + QKeySequence(Qt::CTRL | Qt::Key_F).toString(QKeySequence::NativeText));
     // Shortcut is handled by app-wide QShortcut in MainWindow (works when menu hidden)
     _fullScreenAction->setStatusTip(tr("Toggle full screen mode"));
     _fullScreenAction->setCheckable(true);
@@ -1259,7 +1259,8 @@ void MenuManager::createHelpMenu()
     connect(_keyboardShortcutsAction, &QAction::triggered, []() {
         QMessageBox::information(nullptr, "Keyboard Shortcuts",
                                  tr("Only the platform's standard shortcuts are assigned for now:\n"
-                                    "Open, Save snapshot, Quit, Preferences, Help, Full Screen.\n\n"
+                                    "Open, Save snapshot, Quit, Preferences, Help.\n"
+                                    "Full Screen: Ctrl+F (Cmd+F on macOS).\n\n"
                                     "Every other command is in the menus."));
     });
 
