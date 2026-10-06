@@ -49,10 +49,11 @@ jobs:
           set -eu
           interval=$(( MIN_INTERVAL * 60 ))
           if [ "$interval" -le 0 ]; then echo "throttle off"; exit 0; fi
+          # (the API's branch= and event= filters together return a stale list, so they are filtered in jq)
           # Start of the newest earlier run that really began building (build-linux job started, run not cancelled)
           last=0
-          for run in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cmake-ci.yml/runs?branch=master&event=push&per_page=10" \
-                         --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID and .conclusion != \"cancelled\") | .id"); do
+          for run in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cmake-ci.yml/runs?per_page=30" \
+                         --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID and .head_branch == \"master\" and .event == \"push\" and .conclusion != \"cancelled\") | .id"); do
             started=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
                         --jq '[.jobs[] | select(.name == "build-linux" and .started_at != null) | .started_at][0] // empty')
             [ -n "$started" ] || continue
