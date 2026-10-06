@@ -314,6 +314,8 @@ The states (`idle`, `recording`, `detached`) keep their names (`TTDSessionStateT
 
 #### 4.3.4 Loading a snapshot is an event (D10, D25, D26)
 
+> **Owner rule 2026-10-05 (supersedes the "linked to its parent" rows below):** any change of the machine itself - ROM reload, model switch, General Sound card or slot change - ends the current session; a new one starts or not by settings and options. There are no linked sessions. An RZX playback's start snapshot is a snapshot load. Branches (Step 2b) are postponed until v2 is stable.
+
 | Action | Today (`InvalidateSession` reason) | After |
 |---|---|---|
 | Snapshot load, RZX snapshot | `snapshot-load`, `rzx-snapshot` | `OnLoad`: an event, followed at once by a checkpoint of the loaded state. A seek before it replays up to it; a seek after it restores from that checkpoint; it is not a replay barrier |

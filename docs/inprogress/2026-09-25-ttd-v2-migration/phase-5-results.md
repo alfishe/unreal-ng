@@ -36,7 +36,8 @@ default; the engine's tests select it per test.
 ## Moved to master (owner decision 2026-10-05: land first)
 
 - Step 3b-3d: the black box's Qt settings and menu, its files (`~/.unreal-ng/ttd/`), automation arguments.
-- Step 2b: branches (resume or edit in the past keeps the later history).
-- D10 rest: RZX start snapshot, ROM reload / model transfer as linked sessions (D26), GS card switch (D38); media loads wait for the storage manager's change layer.
+- Machine changes (owner rule 2026-10-05): a ROM reload, a model switch, a GS card or slot change end the current session; a new one starts or not by settings and options. No linked sessions. RZX needs nothing beyond the snapshot load.
+- Media loads as events wait for the storage manager's change layer.
+- Step 2b (branches): postponed; v2 is stabilized first.
 - Step 4: v1 into the verification tools; open question 4 (soak time) is asked before it.
 - Known bugs found on the way: [BUGS.md](../BUGS.md) 2026-10-05 #1 (live border before `#FE` is written), #2 (TurboSound FM after a mid-frame baseline).
