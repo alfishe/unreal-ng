@@ -137,3 +137,34 @@ TEST(CrossAsmCodecs_Test, PasmoWritesTheSameBytes)
     EXPECT_EQ(s.at("play").location.offset, 0x800Cu);
     EXPECT_EQ(s.at("00000000").location.offset, 0x800Eu);   // pasmo names a PROC's LOCAL label itself
 }
+
+TEST(CrossAsmCodecs_Test, Z88dkMapDefAndSym)
+{
+    const std::vector<uint8_t> map = ReadTestData("symbols/z88dk/labels.map");
+    const SymbolDecodeResult r = Codec("z88dk-map").Decode(map);
+    ASSERT_TRUE(r.ok);
+    const auto s = ByName(r);
+    ASSERT_EQ(s.size(), 15u);   // six of the source, nine the linker defines
+    EXPECT_EQ(s.at("SCREEN").kind, SymbolKind::Const);
+    EXPECT_EQ(s.at("start").exported, true);
+    EXPECT_EQ(s.at("start").section, "code");
+    EXPECT_EQ(s.at("start").module, "labels");
+    EXPECT_EQ(s.at("start").source.file, "labels.asm");
+    EXPECT_EQ(s.at("start").source.line, 7u);
+    EXPECT_EQ(s.at("data_tab").section, "data");
+    EXPECT_EQ(s.at("data_tab").location.offset, 0x800Cu);
+    EXPECT_EQ(s.at("loop").exported, false);
+    EXPECT_EQ(s.at("__code_size").traits, std::vector<std::string>{"def"});
+    EXPECT_EQ(Codec("z88dk-map").Encode(r.file, {}).bytes, map);   // byte for byte, in source order
+    EXPECT_EQ(SymbolCodecRegistry::Builtin().Detect(map, "map").chosen, &Codec("z88dk-map"));
+    // -s: the same layout with section-relative values
+    const auto sym = ByName(Codec("z88dk-map").Decode(ReadTestData("symbols/z88dk/labels.sym")));
+    EXPECT_EQ(sym.at("loop").location.offset, 3u);
+    // -g: DEFC lines, read and written back by z88dk-defc
+    const std::vector<uint8_t> def = ReadTestData("symbols/z88dk/labels.def");
+    const SymbolDecodeResult d = Codec("z88dk-defc").Decode(def);
+    ASSERT_TRUE(d.ok);
+    EXPECT_EQ(d.file.sets[0].symbols.size(), 2u);
+    EXPECT_EQ(Codec("z88dk-defc").Encode(d.file, {}).bytes, def);
+    EXPECT_EQ(SymbolCodecRegistry::Builtin().Detect(def, "def").chosen, &Codec("z88dk-defc"));
+}

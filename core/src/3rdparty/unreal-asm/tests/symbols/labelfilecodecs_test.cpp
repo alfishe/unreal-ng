@@ -154,7 +154,7 @@ TEST(LabelFileCodecs_Test, ViceSjasmZ88dk)
     ASSERT_EQ(s.size(), 3u);
     EXPECT_EQ(s[2].name, "lower");
     EXPECT_EQ(d.size(), 1u);
-    EXPECT_EQ(Write("z88dk-defc", {s[1]}), "DEFC buffer = $C000 ; (DATA)\n");
+    EXPECT_EQ(Write("z88dk-defc", {s[1]}), "DEFC buffer                          = $C000 ; (DATA)\n");   // z80asm -g's layout
     ExpectSame(Read("z88dk-defc", Write("z88dk-defc", s)), s, "z88dk-defc");
 }
 

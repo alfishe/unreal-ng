@@ -528,7 +528,11 @@ std::string Z88dkDefcCodec::WriteLine(const Symbol& s, bool& folded, std::string
     uint16_t a = 0;
     if (!FoldedAddress(s, a, folded, message))
         return {};
-    return "DEFC " + s.name + " = $" + Hex(a, 4) + TrailingComment(s);
+    // z80asm -g: "DEFC " + the name 31 wide + " = $HHHH"
+    std::string name = s.name;
+    if (name.size() < 31)
+        name.append(31 - name.size(), ' ');
+    return "DEFC " + name + " = $" + Hex(a, 4) + TrailingComment(s);
 }
 
 int Z88dkDefcCodec::ScoreLines(const std::vector<std::string_view>& lines) const

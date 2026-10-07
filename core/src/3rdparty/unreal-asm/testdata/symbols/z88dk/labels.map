@@ -1,0 +1,15 @@
+SCREEN                          = $4000 ; const, local, , labels, , labels.asm:3
+LINES                           = $0018 ; const, local, , labels, , labels.asm:4
+loop                            = $8003 ; addr, local, , labels, code, labels.asm:8
+data_tab                        = $800C ; addr, local, , labels, data, labels.asm:14
+start                           = $8000 ; addr, public, , labels, code, labels.asm:7
+play                            = $8009 ; addr, public, , labels, code, labels.asm:11
+__head                          = $0000 ; const, public, def, , ,
+__tail                          = $800F ; const, public, def, , ,
+__size                          = $800F ; const, public, def, , ,
+__code_head                     = $8000 ; const, public, def, , ,
+__code_tail                     = $800C ; const, public, def, , ,
+__code_size                     = $000C ; const, public, def, , ,
+__data_head                     = $800C ; const, public, def, , ,
+__data_tail                     = $800F ; const, public, def, , ,
+__data_size                     = $0003 ; const, public, def, , ,

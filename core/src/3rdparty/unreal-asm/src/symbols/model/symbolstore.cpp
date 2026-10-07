@@ -44,6 +44,14 @@ bool FillEmpty(Symbol& into, const Symbol& from)
     fill(into.window, from.window, -1);
     fill(into.parent, from.parent, std::string());
     fill(into.module, from.module, std::string());
+    fill(into.section, from.section, std::string());
+    fill(into.exported, from.exported, false);
+    for (const std::string& t : from.traits)
+        if (std::find(into.traits.begin(), into.traits.end(), t) == into.traits.end())
+        {
+            into.traits.push_back(t);
+            changed = true;
+        }
     fill(into.source.file, from.source.file, std::string());
     fill(into.source.line, from.source.line, 0u);
     fill(into.source.column, from.source.column, 0u);

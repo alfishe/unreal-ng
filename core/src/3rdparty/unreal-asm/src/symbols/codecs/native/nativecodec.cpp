@@ -172,7 +172,19 @@ public:
             if (!ok)
                 Error(where, "\"scope\" is not an object with a \"parent\" string");
         }
-        ok = ok && String(v, "module", s.module, where);
+        ok = ok && String(v, "module", s.module, where) && String(v, "section", s.section, where) && Boolean(v, "exported", s.exported, where);
+        if (const Value* traits = v.Get("traits"); ok && traits)
+        {
+            ok = traits->type == Value::Type::Array;
+            for (const Value& t : traits->array)
+            {
+                ok = ok && t.type == Value::Type::String;
+                if (ok)
+                    s.traits.push_back(t.string);
+            }
+            if (!ok)
+                Error(where, "\"traits\" is not a list of strings");
+        }
         if (const Value* source = v.Get("source"); ok && source)
         {
             if (source->type != Value::Type::Object)
@@ -203,8 +215,8 @@ public:
                  String(*provenance, "type", s.provenance.type, where);
         }
         if (ok)
-            s.extra = Extra(v, {"name", "space", "offset", "kind", "size", "window", "scope", "module", "source", "comment",
-                                "aliases", "enabled", "provenance"});
+            s.extra = Extra(v, {"name", "space", "offset", "kind", "size", "window", "scope", "module", "section", "exported", "traits",
+                                "source", "comment", "aliases", "enabled", "provenance"});
         return ok;
     }
 
@@ -288,6 +300,18 @@ Value SymbolValue(const Symbol& s)
     }
     if (!s.module.empty())
         Add(v, "module", Str(s.module));
+    if (!s.section.empty())
+        Add(v, "section", Str(s.section));
+    if (s.exported)
+        Add(v, "exported", Bool(true));
+    if (!s.traits.empty())
+    {
+        Value traits;
+        traits.type = Value::Type::Array;
+        for (const std::string& t : s.traits)
+            traits.array.push_back(Str(t));
+        Add(v, "traits", std::move(traits));
+    }
     if (!s.source.file.empty() || s.source.line || s.source.column)
     {
         Value source = Object();

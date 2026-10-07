@@ -68,7 +68,8 @@ phase; master only after the owner's review.
   - [x] S2 the five existing `LabelManager` formats + `unreal-l` as codecs (2026-10-06): `unreal-map`, `simple-sym`, `unreal-l`, `vice`, `sjasm-equ`, `z88dk-defc`, each decode + encode; `LabelManager` loads and saves through them (core links `unreal-asm`); golden dumps (`testdata/debugger/labels/`): all 11 files of `data/symbols` load as before; fixed on the way: a CPU-view label's bank is "any" (65535, was 255 for SYM / VICE / SJASM / Z88DK), `#FFFF` loads, `al 1234` reads `#1234` (was `#34`), VICE's dot and sjasmplus' colon are syntax, lower-case `defc` reads, sjasm comments kept, an unknown bank prefix is a CPU address (reported); `SaveLabels` writes MAP / VICE / SJASM / Z88DK in their own formats (all wrote the SYM body before)
   - [ ] S2b the per-CPU `SymbolStore` behind `LabelManager` (sets, priorities; `Label` a view of `Symbol`): needed by the S5 surfaces
   - [x] S3 tokenizer; sjasmplus `.sym` / `.sld` / `.lst`, pasmo (2026-10-06): golden files written by sjasmplus 1.24 and pasmo 0.5.5 (`testdata/symbols/`); `.sym` and pasmo files written back byte for byte, SLD keeps pages, kinds, scopes and source lines, the listing gives the same names and values as `--sym`
-  - [ ] z88dk `z80asm` `.map` (`z88dk-map`): golden files from the real z80asm first
+  - [x] z88dk `z80asm` `.map` (`z88dk-map`) and `-g` / `-s` (2026-10-06): golden files from z88dk 2.3, `.map` and `.def` written back byte for byte; the model gains `section`, `exported` and `traits` (z88dk scope / def, SLD's `+used`)
+  - [ ] LabelManager: a `.map` whose content is z80asm's should go to `z88dk-map` (today the extension picks `unreal-map`)
   - [ ] S4 name rules (DT-3 / DT-4), IDA, Ghidra, MAME, CSpect; `symconv`
   - [ ] S5 surfaces, bundles + manifest, recipe
 - [ ] A9 benchmarks, user docs

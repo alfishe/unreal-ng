@@ -50,8 +50,8 @@ Phase numbers refer to [tdd.md](tdd.md) §10.
 | `unreal-l` | text | ● | ● | lines `HHHH name` (the linear RAM address: page `HHHH >> 14`) / `PP:HHHH name` (RAM page `PP`); RAM pages only (checked in Unreal's `MON_LABELS::load`) | done (S2) | S2 |
 | `vice` | text | ● | ● | lines `al C:HHHH .name` | done (S2) | S2 |
 | `sjasm-equ` | text | ● | ● | lines `NAME EQU $HHHH ; (TYPE)` (also reads sjasmplus' `NAME: EQU 0x0000HHHH`) | done (S2) | S2 |
-| `z88dk-defc` | text | ● | ● | lines `DEFC name = $HHHH ; (TYPE)` (what LabelManager read) | done (S2) | S2 |
-| `z88dk-map` | text | ● | ● | lines `name = $HHHH ; ...` **verify** the field list against z88dk's current output | new | S3 |
+| `z88dk-defc` | text | ● | ● | lines `DEFC name = $HHHH ; (TYPE)` (what LabelManager read); writes z80asm `-g`'s layout (the name 31 wide), byte for byte | done (S2) | S2 |
+| `z88dk-map` | text | ● | ● | z80asm `-m` (and `-s`, section-relative): `name` 31 wide, ` = $HHHH ; type, scope, def, module, section, file:line` (z88dk 2.3 `symtab1.c`), source order; written back byte for byte | done (S3) | S3 |
 | `sjasmplus-sym` | text | ● | ● | lines `NAME: EQU 0x0000HHHH` (`--sym`, `--exp`), sorted by name; checked on sjasmplus 1.24 output, written back byte for byte | done (S3) | S3 |
 | `sjasmplus-sld` | text | ● | ● | first line `\|SLD.data.version\|1`, then `file\|line\|deffile\|defline\|page\|value\|type\|data` (sjasmplus documentation, version 1); `L` lines give module / main / local and traits (`+equ`, `+local`), `T` lines mark code, `Z` the page size | done (S3) | S3 |
 | `sjasmplus-lst` | text | ● | ● | the listing: a line defining a label gives its address (the source starts 18 characters after the address), `EQU` with a plain number its value, `MODULE` / `ENDMODULE` the prefix; no pages | done (S3) | S3 |

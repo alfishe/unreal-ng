@@ -28,6 +28,8 @@ Part of the library (decision D-14): every codec and plugin is tested on the fil
 
 | `symbols/pasmo/` | `labels.asm` and what pasmo 0.5.5 wrote for it: `labels.symbol` (all names), `labels.pub` (`--public`) | written for these tests; the outputs from `pasmo labels.asm labels.bin labels.symbol` and `pasmo --public ...` ([pasmo](https://pasmo.speccy.org/)) |
 
+| `symbols/z88dk/` | `labels.asm` and what z88dk 2.3's z80asm wrote for it: `labels.map` (`-m`), `labels.def` (`-g`), `labels.sym` (`-s`) | written for these tests; the outputs from `z88dk-z80asm -m -g -s -b labels.asm` ([z88dk](https://github.com/z88dk/z88dk)) |
+
 | `dialects/alasm-sjasmplus/` | `constructs.alasm.txt`: every ALASM construct the ALASM → sjasmplus conversion handles; `constructs.sjasmplus.asm`: its expected conversion; `constructs.bin`: the 67 bytes ALASM 5.09 built from it at `#6000` | written for these tests; `constructs.bin` read from the emulator's memory after ALASM 5.09 ([ALASM509_STS75.rar](http://alonecoder.nedopc.com/zx/ALASM509_STS75.rar)) assembled the source in unreal-ng. Research: `docs/inprogress/2026-10-05-unreal-asm/research-alasm-to-sjasmplus.md` |
 
 | `dialects/thelink/` | The GSTUNNE4 unit of The Link (hobeta): the main source, `gsports` and `SAVEOBJ4` it includes, `torusr.p`, `dplan2r.p`, `thelinkm` it `INCBIN`s, and `TUNNELZX` / `TUNNELGS`, the objects ALASM built from it; `*.asm` = the expected sjasmplus conversion of the three sources | The Link's working disk (`testdata/machines/pentagon1024sl/TheLink.trd` in unreal-ng), extracted unchanged (file bytes up to the catalog length, rewrapped as hobeta); the `*.asm` files are written by `unreal-asm-tests` with `UNREAL_ASM_UPDATE_GOLDEN=1` and checked by hand against sjasmplus + ALASM's objects |

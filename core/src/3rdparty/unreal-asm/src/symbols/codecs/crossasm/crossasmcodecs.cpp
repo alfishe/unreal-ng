@@ -283,6 +283,9 @@ SymbolDecodeResult SjasmplusSldCodec::Decode(std::span<const uint8_t> bytes) con
                 name += (name.empty() ? "" : ".") + std::string(p);
         s.name = name;
         s.module = std::string(parts[0]);
+        for (const std::string_view t : traits)
+            if (t != "+equ" && t != "+local")
+                s.traits.push_back(std::string(t));
         int64_t page = 0;
         int64_t value = 0;
         ToInt(l.fields[4], page);
@@ -368,6 +371,9 @@ SymbolEncodeResult SjasmplusSldCodec::Encode(const SymbolFile& file, const Symbo
                 data += ",+equ";
             if (s.kind == SymbolKind::Local)
                 data += ",+local";
+            for (const std::string& t : s.traits)
+                if (!t.empty() && t[0] == '+')
+                    data += "," + t;
             body += where + "L|" + data + nl;
             if (s.kind == SymbolKind::Code)
                 body += where + "T|" + nl;   // an instruction at the label: code
@@ -610,6 +616,132 @@ SymbolEncodeResult PasmoCodec::Encode(const SymbolFile& file, const SymbolEncode
         out += s->name + (s->name.size() < 8 ? "\t\t" : "\t") + "EQU 0" + Hex(v, 4) + "H" + options.lineEnd;
         ++result.written;
     }
+    return Finish(std::move(result), out);
+}
+
+// z88dk-map --------------------------------------------------------------------------------------------------------
+
+namespace
+{
+constexpr size_t kZ88Column = 31;   // z80asm's "%-*s" with COLUMN_WIDTH - 1 (src/z80asm/src/c/symtab1.c)
+
+/// "name = $HHHH [; type, scope, def, module, section, file:line]"
+bool MapLine(std::string_view line, std::string_view& name, int64_t& value, std::string_view& info)
+{
+    const size_t equals = line.find(" = $");
+    if (equals == std::string_view::npos || equals == 0)
+        return false;
+    name = Trim(line.substr(0, equals));
+    std::string_view rest = line.substr(equals + 3);
+    const size_t semicolon = rest.find(';');
+    info = semicolon == std::string_view::npos ? std::string_view() : Trim(rest.substr(semicolon + 1));
+    return !name.empty() && text::ParseNumber(Trim(rest.substr(0, semicolon)), value) && value >= 0;
+}
+
+bool MapAccepts(std::string_view line)
+{
+    std::string_view name;
+    std::string_view info;
+    int64_t value = 0;
+    return MapLine(line, name, value, info) && std::count(info.begin(), info.end(), ',') == 5;
+}
+}  // namespace
+
+Z88dkMapCodec::Z88dkMapCodec() : _info{"z88dk-map", "z88dk z80asm map file (-m; also -s)", Family::Text, {"map", "sym"}} {}
+
+int Z88dkMapCodec::Detect(const Probe& probe) const
+{
+    return ScoreProbe(probe, 95, MapAccepts);
+}
+
+SymbolDecodeResult Z88dkMapCodec::Decode(std::span<const uint8_t> bytes) const
+{
+    SymbolDecodeResult result;
+    SymbolSet set;
+    const auto lines = text::Lines(bytes);
+    for (size_t i = 0; i < lines.size(); ++i)
+    {
+        const std::string_view line = Trim(lines[i]);
+        if (line.empty())
+            continue;
+        std::string_view name;
+        std::string_view info;
+        int64_t value = 0;
+        if (!MapLine(line, name, value, info))
+        {
+            Bad(result, i + 1, "not \"name = $value ; ...\"");
+            continue;
+        }
+        Symbol s;
+        s.name = std::string(name);
+        PlaceValue(s, static_cast<uint32_t>(value));
+        const std::vector<std::string_view> f = Split(info, ',', 6);
+        if (f.size() == 6)
+        {
+            const std::string_view type = Trim(f[0]);
+            const std::string_view scope = Trim(f[1]);
+            if (type == "const")
+                s.kind = SymbolKind::Const;
+            else if (type != "addr" && !type.empty())
+                s.provenance.type = std::string(type);
+            s.exported = scope == "public" || scope == "global";
+            if (scope != "local" && scope != "public" && !scope.empty())
+                s.traits.push_back(std::string(scope));   // global, extern
+            if (Trim(f[2]) == "def")
+                s.traits.push_back("def");                 // defined by the linker (__head, __code_size ...)
+            s.module = std::string(Trim(f[3]));
+            s.section = std::string(Trim(f[4]));
+            const std::string_view where = Trim(f[5]);
+            const size_t colon = where.rfind(':');
+            int64_t number = 0;
+            if (colon != std::string_view::npos && ToInt(where.substr(colon + 1), number) && number > 0)
+            {
+                s.source.file = std::string(where.substr(0, colon));
+                s.source.line = static_cast<uint32_t>(number);
+            }
+            else
+                s.source.file = std::string(where);
+        }
+        Stamp(s, _info.id, line, i + 1);
+        set.symbols.push_back(std::move(s));
+    }
+    result.file.sets.push_back(std::move(set));
+    result.ok = true;
+    return result;
+}
+
+SymbolEncodeResult Z88dkMapCodec::Encode(const SymbolFile& file, const SymbolEncodeOptions& options) const
+{
+    SymbolEncodeResult result;
+    std::string out;
+    size_t folded = 0;
+    // z80asm writes the symbols in source order: the file's order is kept
+    for (const SymbolSet& set : file.sets)
+        for (const Symbol& s : set.symbols)
+        {
+            const std::optional<uint32_t> v = Value(s);
+            if (!v)
+            {
+                result.diagnostics.push_back({Severity::Warning, 0, 0, s.name + ": " + s.location.space.Format() + " cannot be written (skipped)"});
+                continue;
+            }
+            folded += IsPaged(s);
+            auto has = [&s](const char* t) { return std::find(s.traits.begin(), s.traits.end(), t) != s.traits.end(); };
+            const char* scope = has("global") ? "global" : has("extern") ? "extern" : s.exported ? "public" : "local";
+            const std::string type = s.kind == SymbolKind::Const ? "const" : !s.provenance.type.empty() ? s.provenance.type : "addr";
+            std::string name = s.name;
+            if (name.size() < kZ88Column)
+                name.append(kZ88Column - name.size(), ' ');
+            std::string line = name + " = $" + Hex(*v, *v > 0xFFFF ? 8 : 4) + " ; " + type + ", " + scope + ", " + (has("def") ? "def" : "") + ", " +
+                               s.module + ", " + s.section + ", " +
+                               (s.source.line ? s.source.file + ":" + std::to_string(s.source.line) : s.source.file);
+            while (!line.empty() && (line.back() == ' ' || line.back() == '\t'))
+                line.pop_back();   // z80asm strips the line
+            out += line + options.lineEnd;
+            ++result.written;
+        }
+    if (folded)
+        result.diagnostics.push_back({Severity::Info, 0, 0, std::to_string(folded) + " page symbol(s) written at CPU addresses (the format has no pages)"});
     return Finish(std::move(result), out);
 }
 }  // namespace unrealasm::symbols::codecs

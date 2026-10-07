@@ -23,6 +23,7 @@ const SymbolCodecRegistry& SymbolCodecRegistry::Builtin()
         r.Add(std::make_unique<codecs::SjasmplusSldCodec>());
         r.Add(std::make_unique<codecs::SjasmplusLstCodec>());
         r.Add(std::make_unique<codecs::PasmoCodec>());
+        r.Add(std::make_unique<codecs::Z88dkMapCodec>());
         return r;
     }();
     return registry;

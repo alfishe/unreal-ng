@@ -96,6 +96,9 @@ struct Symbol
     std::string parent;         ///< the scope a local symbol belongs to ("" = global)
     int window = -1;            ///< the CPU window (0-3) the source showed a page symbol in ("RAM2:C000": 3); -1 = unknown
     std::string module;
+    std::string section;        ///< the linker section it is in (z88dk "code", "data")
+    bool exported = false;      ///< visible outside its module (PUBLIC, EXPORT)
+    std::vector<std::string> traits;   ///< a tool's own flags kept for writing back (z88dk "def", "extern"; SLD "+used")
     SourceRef source;
     std::string comment;
     std::vector<std::string> aliases;
