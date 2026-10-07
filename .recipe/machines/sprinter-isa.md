@@ -42,7 +42,11 @@ population refuses to load on another).
   `isa.1.adapter = sprinter-isa-zxbus`, `isa.1.fit = unrealistic` - the NeoGS as shipped; the legacy
   `[SOUND] GSType` still works; user guide with every card: [docs/features/sprinter-slots.md](../../docs/features/sprinter-slots.md)), `NE2000`,
   `SPRINTERESP`, `MODEM`, `DUAL16552`. `Slot1=NONE` builds no GS at all (the machine has no ZX-bus then); a second
-  `ZXBUS` adapter has an empty ZX-bus (one GS per machine). A kind this build does not have yet is not fitted: the slot report says why (`not_fitted`), the machine starts.
+  `ZXBUS` adapter has an empty ZX-bus (one GS per machine; it sits on the adapter of the slot its `[SLOTS]` line
+  names, `isa.2 = gs` with both slots `ZXBUS`). A kind this build does not have yet is not fitted: the slot report says why (`not_fitted`), the machine starts.
+- The slot report (`GET .../slots`, CLI `slots`, MCP aspect `slots`) lists both ISA slots as the machine's own slots
+  (`machineSlots[]`: card, name, resources, source `[ISA] SlotN`) and the adapter's ZX-bus `isa.1.zxbus` with the GS
+  on it: [slots.md](slots.md#the-sprinters-isa-slots-sl-8).
 
 ## WebAPI (verified)
 

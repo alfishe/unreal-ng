@@ -3028,7 +3028,20 @@ void RegisterInspectState(ToolRegistry& registry)
                                         out << "\n  " << slot["slot"].asString() << " = " << slot["card"].asString();
                                         if (!slot["options"].asString().empty())
                                             out << " [" << slot["options"].asString() << "]";
+                                        if (slot.isMember("host"))
+                                            out << " on " << slot["bus"].asString() << " (behind "
+                                                << slot["adapter"].asString() << ")";
                                         out << " fit " << slot["fit"].asString() << ", " << slot["state"].asString();
+                                    }
+                                    // The board's own slots (the Sprinter's ISA slots, SL-8)
+                                    for (const Json::Value& slot : value["machineSlots"])
+                                    {
+                                        out << "\n  machine slot " << slot["slot"].asString() << " = "
+                                            << slot["card"].asString() << " (" << slot["name"].asString() << ", "
+                                            << slot["source"].asString() << ")";
+                                        if (slot.isMember("hostsBus"))
+                                            out << " hosts " << slot["hostsBus"].asString() << ": "
+                                                << slot["hostedCard"].asString();
                                     }
                                     for (const Json::Value& builtIn : value["builtIns"])
                                         out << "\n  built-in " << builtIn["id"].asString() << ": " << builtIn["state"].asString();

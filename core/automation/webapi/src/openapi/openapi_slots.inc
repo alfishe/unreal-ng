@@ -16,7 +16,8 @@
             operation["parameters"][index]["schema"]["type"] = "string";
             operation["parameters"][index]["description"] =
                 "A slot of the machine: ay-socket, <bus>.<n> (zxbus.1, edge.1, atm-iobus.1, profi-bus.1, cpu-socket.1), "
-                "<bus>.next for the next free slot of a bus, or auto (plug only: where the planner puts the card)";
+                "<bus>.next for the next free slot of a bus, or auto (plug only: where the planner puts the card). "
+                "Sprinter: isa.1 / isa.2 take a ZX-bus card only where [ISA] SlotN=ZXBUS fits the ZX-bus adapter";
         };
         auto changeReply = [](Json::Value& operation) {
             operation["responses"]["200"]["description"] =
@@ -67,8 +68,11 @@
             "The slot report (DeviceState::Slots): the board, its buses (kind, arbitration, physical slots, retrofit "
             "note for a bus the board has no connector for), every configured slot (card, options, adapter, fit "
             "real / adapter / unrealistic, state active / disabled with the reason, functions, port claims, media, "
-            "notes), every built-in device (active, switched off, shadowed by a slot, replaced in its socket) and "
-            "the plan log";
+            "notes; bus = the bus the card sits on, busKind; behind an adapter host = the slot whose adapter hosts "
+            "that bus, e.g. the Sprinter's isa.1 = neogs on bus isa.1.zxbus), every built-in device (active, switched "
+            "off, shadowed by a slot, replaced in its socket), machineSlots[] (the board's own slots filled by its own "
+            "configuration - the Sprinter's ISA slots from [ISA] SlotN: slot, bus, card, name, source, details, and "
+            "for the ZX-bus adapter hostsBus + hostedCard; a hosted bus is also in buses[] with host) and the plan log";
         list["tags"].append("Slots");
         idParameter(list, 0);
         list["responses"]["200"]["description"] = "The slot report (status ok)";

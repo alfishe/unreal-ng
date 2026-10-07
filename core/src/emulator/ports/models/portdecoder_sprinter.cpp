@@ -18,6 +18,7 @@
 #include "debugger/ttd/ttdds12887.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/io/tape/tape.h"
@@ -1773,17 +1774,25 @@ PortDecoder::NetworkCapabilities PortDecoder_Sprinter::DescribeNetwork()
 
 void PortDecoder_Sprinter::FitZxBusAdapters()
 {
-    // ISA phase I2: a ZX-bus adapter per configured slot. The General Sound / NeoGS ([SOUND] GSType, built by
-    // SoundManager because ZxBusPresent() now holds) sits on the first one; the machine has one GS, so a second
-    // adapter's ZX-bus is empty, with the reason in its report
+    // ISA phase I2: a ZX-bus adapter per configured slot. The General Sound / NeoGS (built by SoundManager because
+    // ZxBusPresent() now holds) sits on the adapter of the slot the slot set names (`isa.N = neogs`, SL-8), else on
+    // the first one; the machine has one GS, so the other adapter's ZX-bus is empty, with the reason in its report
+    int gsSlot = -1;
+    if (_context && _context->pSlotManager)
+        if (const SlotManager::Slot* gs = _context->pSlotManager->Current().FindGroup(SlotCardGroup::GeneralSound))
+            if (gs->entry.slot.size() == 5 && gs->entry.slot.compare(0, 4, "isa.") == 0)
+                gsSlot = gs->entry.slot[4] - '1';
     for (int n = 0; n < SprinterIsaBus::kSlots; ++n)
     {
         if (static_cast<sprinterisa::CardKind>(_isaBus.Configured(n).kind) != sprinterisa::CardKind::ZxBus)
             continue;
-        const bool carriesGs = _zxBusSlot < 0;
+        const bool carriesGs = gsSlot >= 0 ? n == gsSlot : _zxBusSlot < 0;
         std::string why;
         if (!carriesGs)
-            why = StringHelper::Format("one General Sound per machine: it sits on the adapter in slot %d", _zxBusSlot + 1);
+            why = gsSlot >= 0 ? StringHelper::Format("one General Sound per machine: it sits on the adapter in ISA slot %d ([SLOTS] isa.%d)",
+                                                     gsSlot + 1, gsSlot + 1)
+                              : StringHelper::Format("one General Sound per machine: it sits on the adapter in slot %d",
+                                                     _zxBusSlot + 1);
         _isaBus.Fit(n, std::make_unique<sprinterisa::IsaZxBusAdapter>(_context, this, carriesGs, why));
         if (carriesGs)
             _zxBusSlot = n;

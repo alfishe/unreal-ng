@@ -93,6 +93,25 @@ void SlotsWindow::buildUi()
         _builtInsToggle->setArrowType(visible ? Qt::DownArrow : Qt::RightArrow);
     });
 
+    // The machine's own slots (SL-8: the Sprinter's ISA slots, filled by [ISA]): read-only; the ZX-bus adapter's
+    // card is an expansion slot below, on the adapter's ZX-bus
+    _machineSlotsLabel = new QLabel(tr("Board Slots"), this);
+    _machineSlotsLabel->setStyleSheet("font-weight: bold;");
+    _machineSlotsLabel->setToolTip(tr("Cards of the machine's own slots, set in its configuration ([ISA]); not changed "
+                                      "from this window"));
+    layout->addWidget(_machineSlotsLabel);
+    _machineSlotsTree = new QTreeWidget(this);
+    _machineSlotsTree->setHeaderHidden(true);
+    _machineSlotsTree->setColumnCount(3);
+    _machineSlotsTree->setRootIsDecorated(false);
+    _machineSlotsTree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    _machineSlotsTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    _machineSlotsTree->header()->setStretchLastSection(true);
+    _machineSlotsTree->setMaximumHeight(80);
+    layout->addWidget(_machineSlotsTree);
+    _machineSlotsLabel->hide();
+    _machineSlotsTree->hide();
+
     auto* slotsHeader = new QHBoxLayout();
     auto* slotsLabel = new QLabel(tr("Expansion Slots"), this);
     slotsLabel->setStyleSheet("font-weight: bold;");
@@ -212,11 +231,15 @@ void SlotsWindow::refresh()
         _machineLabel->setText(tr("No machine"));
         _builtInsTree->clear();
         _slotsList->clear();
+        _machineSlotsTree->clear();
+        _machineSlotsLabel->hide();
+        _machineSlotsTree->hide();
         return;
     }
 
     _machineLabel->setText(Q(Text(report.find("model"))));
     fillBuiltIns(report);
+    fillMachineSlots(report);
     fillSlots(report);
 
     SlotManager* manager = context->pSlotManager;
@@ -303,12 +326,51 @@ void SlotsWindow::fillSlots(const StateNode& report)
             else
             {
                 QString display = Q(slotId) + ": " + Q(cardName.empty() ? cardId : cardName);
+                // Behind an adapter the card is on the adapter's bus, hosted by the slot (SL-8: isa.1.zxbus)
+                const std::string host = Text(slot.find("host"));
+                if (!host.empty())
+                    display += tr(" (on %1)").arg(Q(Text(slot.find("bus"))));
                 item->setText(display);
                 if (!options.empty())
                     item->setToolTip(Q(options));
             }
         }
     }
+}
+
+void SlotsWindow::fillMachineSlots(const StateNode& report)
+{
+    _machineSlotsTree->clear();
+    const StateNode* list = report.find("machineSlots");
+    const bool any = list != nullptr && list->size() > 0;
+    _machineSlotsLabel->setVisible(any);
+    _machineSlotsTree->setVisible(any);
+    if (!any)
+        return;
+    for (const StateNode& slot : list->items)
+    {
+        auto* item = new QTreeWidgetItem(_machineSlotsTree);
+        item->setText(0, Q(Text(slot.find("slot"))));
+        item->setText(1, Q(Text(slot.find("name"))));
+        const std::string hosts = Text(slot.find("hostsBus"));
+        const std::string details = Text(slot.find("details"));
+        item->setText(2, !hosts.empty() ? tr("hosts %1: %2").arg(Q(hosts), Q(Text(slot.find("hostedCard"))))
+                                        : Q(details));
+        item->setToolTip(0, tr("from %1").arg(Q(Text(slot.find("source")))));
+    }
+}
+
+QString SlotsWindow::slotsText() const
+{
+    QStringList lines;
+    for (int i = 0; i < _slotsList->count(); i++)
+        lines << _slotsList->item(i)->text();
+    for (int i = 0; i < _machineSlotsTree->topLevelItemCount(); i++)
+    {
+        const QTreeWidgetItem* item = _machineSlotsTree->topLevelItem(i);
+        lines << "board " + item->text(0) + " | " + item->text(1) + " | " + item->text(2);
+    }
+    return lines.join('\n');
 }
 
 void SlotsWindow::onAddSlot()
@@ -452,7 +514,8 @@ std::string SlotsWindow::nextFreeSlot() const
         for (const StateNode& bus : buses->items)
         {
             const std::string id = Text(bus.find("id"));
-            if (id != "ay-socket")
+            // A hosted bus (the ZX-bus adapter's) is reached through its host slot, not as "<bus>.next"
+            if (id != "ay-socket" && Text(bus.find("host")).empty())
                 return id + ".next";
         }
     }

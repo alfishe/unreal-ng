@@ -211,3 +211,36 @@ TEST_F(SlotsWindow_Test, NetworkCardsAreASlotChange)
     EXPECT_TRUE(_asked.isEmpty());
     EXPECT_EQ(_current->GetId(), sameId);
 }
+
+/// SL-8: on the Sprinter the window shows the board's own ISA slots (read-only, from [ISA]) with what the ZX-bus
+/// adapter hosts, and the General Sound expansion slot on the adapter's ZX-bus
+TEST_F(SlotsWindow_Test, SprinterIsaSlotsAndTheAdapterBus)
+{
+    std::string error;
+    _current = EmulatorManager::GetInstance()->CreateEmulatorWithModel(
+        "", "SPRINTER", LoggerLevel::LogError, &error, [](CONFIG& config) {
+            SlotConfig slots;
+            ParseSlotsSection({{"isa.1", "neogs"}, {"isa.1.adapter", "sprinter-isa-zxbus"}, {"isa.1.fit", "unrealistic"}},
+                              slots);
+            SlotManager::UseSlots(slots, config);
+        });
+    ASSERT_NE(_current, nullptr) << error;
+    _binding.bind(_current.get());
+    auto controller = Controller();
+    SlotsWindow window;
+    window.setBinding(&_binding);
+    window.setController(controller.get());
+    window.show();
+
+    const QString text = window.slotsText();
+    EXPECT_TRUE(text.contains("isa.1: NeoGS (on isa.1.zxbus)")) << text.toStdString();
+    EXPECT_TRUE(text.contains("board isa.1 | ISA to ZX-bus adapter | hosts isa.1.zxbus: neogs")) << text.toStdString();
+    EXPECT_TRUE(text.contains("board isa.2 | NE2000 Ethernet | RTL8019AS, #300, IRQ 3")) << text.toStdString();
+
+    // A Pentagon has no board slots: the section stays hidden
+    _binding.unbind();
+    auto pentagon = Create({{"zxbus.1", "gs"}});
+    ASSERT_NE(pentagon, nullptr);
+    _binding.bind(pentagon.get());
+    EXPECT_FALSE(window.slotsText().contains("board ")) << window.slotsText().toStdString();
+}

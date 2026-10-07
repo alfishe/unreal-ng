@@ -657,3 +657,28 @@ TEST(TtdMultiSound_Test, TwoInstancesOfOneModuleRefusedByThePlanner)
     EXPECT_TRUE(registry.IsRegistered(PeripheralId::MultiSoundGs));
     EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
 }
+
+/// Two MultiSound cards with disjoint DIP switches share no function and no port, so the planner fits both: each
+/// card hands out all four of its devices, under the same four ids. A checkpoint of either backend keeps one state per
+/// id (v1: one blob per id; the engine: its per-checkpoint device states, the device state regions and the binding of
+/// a loaded session are keyed by the v1 id although its device table is keyed by {type, instance}), so the second
+/// card's devices are refused at registration and named with the first's: recording is refused instead of losing one
+/// card's state (slots TODO, item "two instances of one module"). One Pentagon with both cards (~30 ms)
+TEST(TtdMultiSound_Test, TwoCardsWithDisjointDipsRefuseRecordingNamingBoth)
+{
+    const SlotManager::Result plan = PlanOf(MM_PENTAGON, { { "zxbus.1", "multisound" }, { "zxbus.1.dip", "ym" },
+                                                           { "zxbus.2", "multisound" }, { "zxbus.2.dip", "saa" } });
+    EXPECT_TRUE(plan.conflicts.empty()) << plan.Refusal();
+
+    StagedMachine m("pentagon128k", "zxbus.1 = multisound\nzxbus.1.dip = ym\nzxbus.2 = multisound\nzxbus.2.dip = saa");
+    ASSERT_TRUE(m.Ok()) << m.Machine().GetInitError();
+    ASSERT_NE(m.Card("zxbus.1"), nullptr);
+    ASSERT_NE(m.Card("zxbus.2"), nullptr);
+    ttd::TTDPeripheralRegistry registry;
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> owned;
+    std::string error;
+    EXPECT_FALSE(ttd::RegisterMachinePeripherals(m.Context(), registry, owned, &error));
+    EXPECT_NE(error.find("two devices under id 58: zxbus.1.multisound and zxbus.2.multisound"), std::string::npos)
+        << error;
+    EXPECT_FALSE(m.Ttd()->StartRecording()) << "both cards' state cannot be kept";
+}
