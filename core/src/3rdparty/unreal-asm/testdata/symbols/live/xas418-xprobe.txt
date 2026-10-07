@@ -1,0 +1,29 @@
+;label table probe
+        ORG   #8000
+aq      NOP
+bb      NOP
+ccc     NOP
+dddd    NOP
+eeeee   NOP
+ffffff  NOP
+ggggggg NOP
+hhhhhhhh NOP
+Iota    NOP
+JK      NOP
+k9      NOP
+l_x     NOP
+mm      NOP
+nNnN    NOP
+o       NOP
+p1234567 NOP
+qq      NOP
+rq      NOP
+sAb     NOP
+t2      NOP
+u       NOP
+vv      NOP
+w       NOP
+x       NOP
+y       NOP
+zed     NOP
+eq1     EQU   #4321
