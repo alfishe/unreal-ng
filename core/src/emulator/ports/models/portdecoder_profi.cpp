@@ -5,6 +5,7 @@
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
 
 #include "portdecoder_profi.h"
+#include "loaders/snapshot/snapshotcapture.h"
 
 #include "debugger/ttd/profi/ttdprofipaging.h"
 #include "debugger/ttd/profi/ttdprofixtkbc.h"
@@ -49,6 +50,8 @@ namespace
 PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context)
     : PortDecoder(context), _board(ProfiBoard::For(context->config.mem_model))
 {
+    // Its snapshot view exists while the window map is a Spectrum 128K (both boards: RAM page n is bank n there)
+    SetSnapshotCapturePolicy(&snapshot::WindowMapCapture::Instance());
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
     _rtc.SetSessionWall([this]() { return SessionWallMicros(); });
     // Port A's lines are the Kempston joystick (MAN v3.2 sheet: PA0-PA4 + PB0); nothing else drives the 8255's inputs

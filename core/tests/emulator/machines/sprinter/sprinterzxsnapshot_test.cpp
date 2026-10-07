@@ -437,3 +437,59 @@ TEST(SprinterZxCaptureIdentity_Test, TheLauncherModeNamesTheMachine)
     EXPECT_EQ(none.machineHint, "48k");
     EXPECT_EQ(none.bankCount, 3);
 }
+
+// A 512 KB mode (CNF bit 7: P512.ZX, PENT512.ZX) is a Pentagon 512: banks 0-31, the banks 16-31 behind the cells #D0-#DF. Only an
+// .szx holds 32 banks; the file restores on a Pentagon 512 and keeps every bank
+TEST_F(SprinterZxSnapshot_Test, A512kModeIsAPentagon512SavedAsSzx)
+{
+    ToTheZxMenu();
+    Memory& memory = *_context->pMemory;
+    SprinterPldState& pld = _decoder->GetPldState();
+    pld.cnf = static_cast<uint8_t>(pld.cnf | 0x80);   // the 512 KB paging
+    // Give banks 16-31 their own pages (the launcher of a real mode allocates them), a pattern in every bank
+    for (uint16_t bank = 0; bank < 32; bank++)
+    {
+        const uint8_t cell = bank < 8 ? 0xF0 + bank : (bank < 16 ? 0xF8 + (bank - 8) : (bank < 24 ? 0xD0 + (bank - 16) : 0xD8 + (bank - 24)));
+        if (bank >= 16)
+            pld.Cell(static_cast<uint8_t>(cell)) = static_cast<uint8_t>(0xE0 + (bank - 16));
+        uint8_t* bytes = memory.RAMPageAddress(pld.Cell(static_cast<uint8_t>(cell)));
+        for (uint32_t i = 0; i < PAGE_SIZE; i++)
+            bytes[i] = static_cast<uint8_t>((i * 5 + bank * 29) & 0xFF);
+    }
+    pld.pn = 0xD5;   // bank 5 | bit 6 -> +8 | bit 7 -> +16 = bank 29, screen normal
+
+    const snapshot::SaveFormats formats = _emulator->SnapshotSaveFormats();
+    ASSERT_TRUE(formats.viewAvailable) << formats.view;
+    EXPECT_EQ(formats.machine, "Pentagon 512");
+    EXPECT_FALSE(formats.For(snapshot::SaveFormat::Sna).available);
+    EXPECT_FALSE(formats.For(snapshot::SaveFormat::Z80).available);
+    EXPECT_EQ(formats.For(snapshot::SaveFormat::Sna).needs, "format:szx");
+    ASSERT_TRUE(formats.For(snapshot::SaveFormat::Szx).available);
+
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("sprinter-p512.szx");
+    ASSERT_TRUE(_emulator->SaveSnapshot(path)) << _emulator->LastSaveResult().text;
+    Emulator* pentagon = EmulatorManager::GetInstance()->CreateEmulatorWithModelAndRAM("p512-target", "PENTAGON", 512, LoggerLevel::LogError).get();
+    ASSERT_NE(pentagon, nullptr);
+    ASSERT_TRUE(pentagon->LoadSnapshot(path)) << pentagon->LastSnapshotReport().ToText();
+    for (uint16_t bank = 0; bank < 32; bank++)
+    {
+        const uint8_t cell = bank < 8 ? 0xF0 + bank : (bank < 16 ? 0xF8 + (bank - 8) : (bank < 24 ? 0xD0 + (bank - 16) : 0xD8 + (bank - 24)));
+        EXPECT_EQ(0, std::memcmp(memory.RAMPageAddress(pld.Cell(static_cast<uint8_t>(cell))),
+                                 pentagon->GetContext()->pMemory->RAMPageAddress(bank), PAGE_SIZE))
+            << "bank " << bank << " (cell #" << std::hex << int(cell) << ")";
+    }
+    EXPECT_EQ(pentagon->GetContext()->emulatorState.p7FFD, 0xD5);
+    EXPECT_EQ(pentagon->GetContext()->pMemory->GetRAMPageForBank3(), 29) << "bank 29 at #C000";
+    std::remove(path.c_str());
+}
+
+TEST(SprinterZxCaptureIdentity_Test, A512kModeIsAPentagon512)
+{
+    using Capture = SprinterZxCapture;
+    const Capture::Identity identity = Capture::IdentityOf("Pentagon 512", true, true);
+    EXPECT_EQ(identity.machineHint, "pentagon512");
+    EXPECT_EQ(identity.model, MM_PENTAGON);
+    EXPECT_EQ(identity.ramKb, 512u);
+    EXPECT_EQ(identity.bankCount, 32);
+    EXPECT_EQ(Capture::IdentityOf("Pentagon 128", true, false).machineHint, "pentagon128") << "no CNF bit 7: a 128";
+}

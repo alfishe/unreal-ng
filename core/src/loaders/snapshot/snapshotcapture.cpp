@@ -161,7 +161,7 @@ MachineView DefaultView(EmulatorContext& context)
             break;
         default:
             return Unavailable("this machine has no snapshot view yet (its memory is not the Spectrum 128K's, and no capture "
-                               "rule exists for it)",
+                               "rule exists for it: Kay, Quorum, LSY256, Phoenix, GMX and ZX Next cannot be created yet)",
                                "capture_unsupported");
     }
 

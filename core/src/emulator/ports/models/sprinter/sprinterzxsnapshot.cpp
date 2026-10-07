@@ -29,8 +29,17 @@ bool ZxActive(const SprinterPldState& pld)
     return pld.configState == SprinterConfigState::Configured && pld.romOff && !pld.cacheOn && (pld.allMode & 0x01) == 0;
 }
 
-/// The PLD cell that holds the physical page of Spectrum bank `bank`: #F0-#F7 for banks 0-7, #F8-#FF for 8-15
-uint8_t CellOf(uint16_t bank) { return static_cast<uint8_t>(bank < 8 ? 0xF0 + bank : 0xF8 + (bank - 8)); }
+/// The PLD cell that holds the physical page of Spectrum bank `bank`: #F0-#F7 for banks 0-7, #F8-#FF for 8-15 and, in the 512 KB
+/// modes (CNF bit 7: #7FFD bits 7-6 are page bits), #D0-#D7 for 16-23 and #D8-#DF for 24-31 (window 3's cell is
+/// ComputePg3: bit 5 = !#7FFD.7, bit 4 = 1, bit 3 = #7FFD.6, bits 2-0 = the low bits)
+uint8_t CellOf(uint16_t bank)
+{
+    if (bank < 8)
+        return static_cast<uint8_t>(0xF0 + bank);
+    if (bank < 16)
+        return static_cast<uint8_t>(0xF8 + (bank - 8));
+    return static_cast<uint8_t>(bank < 24 ? 0xD0 + (bank - 16) : 0xD8 + (bank - 24));
+}
 
 std::string Hex2(unsigned value) { return StringHelper::Format("#%02X", value); }
 
@@ -221,7 +230,7 @@ SprinterZxCapture& SprinterZxCapture::Instance()
     return instance;
 }
 
-SprinterZxCapture::Identity SprinterZxCapture::IdentityOf(const std::string& modeName, bool paging7ffd)
+SprinterZxCapture::Identity SprinterZxCapture::IdentityOf(const std::string& modeName, bool paging7ffd, bool mem512)
 {
     Identity identity;
     const std::string lower = StringHelper::ToLower(modeName);
@@ -233,6 +242,15 @@ SprinterZxCapture::Identity SprinterZxCapture::IdentityOf(const std::string& mod
         identity.timingHint = "48k";
         identity.layout48 = true;
         identity.bankCount = 3;
+    }
+    else if (mem512)
+    {
+        // A Pentagon 512 mode (P512.ZX, PENT512.ZX): 32 banks; only an .szx can hold them
+        identity.model = MM_PENTAGON;
+        identity.ramKb = 512;
+        identity.machineHint = "pentagon512";
+        identity.timingHint = "pentagon";
+        identity.bankCount = 32;
     }
     else if (lower.find("scorpion") != std::string::npos)
     {
@@ -273,16 +291,13 @@ snapshot::MachineView SprinterZxCapture::Examine(EmulatorContext& context) const
             "the Sprinter is not in a Spectrum (ZX) mode: it is at the DSS prompt or in the BIOS, where there is no Spectrum "
             "memory to save. Start a ZX mode first (the BIOS menu: ESC at the boot prompt; or `spectrum p128.zx` from DSS)",
             "zx_mode");
-    if (pld.cnf & 0x80)
-        return refuse("the running mode has the 512 KB paging (a Pentagon 512 mode): its memory is not a Spectrum 128K, and no snapshot "
-                      "view exists for it yet; start a 128K mode",
-                      "mode:128k");
 
+    const bool mem512 = (pld.cnf & 0x80) != 0;   // the 512 KB modes: a Pentagon 512 (#7FFD bits 7-6 are page bits)
     const bool paging7ffd = (pld.cnf & 0x20) == 0;
     const std::string modeName = DeviceState::SprinterZxModeBrief(&context, false).modeName;
 
     view.p7FFD = pld.pn;
-    const Identity identity = IdentityOf(modeName, paging7ffd);
+    const Identity identity = IdentityOf(modeName, paging7ffd, mem512);
     view.model = identity.model;
     view.ramKb = identity.ramKb;
     view.machineHint = identity.machineHint;

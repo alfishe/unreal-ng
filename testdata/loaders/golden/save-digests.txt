@@ -79,18 +79,18 @@ open@ATM450.szx	4545 fe353e4b39bb79c2
 locked@ATM450.sna	131103 e94b722eb8df450c
 locked@ATM450.z80	131182 073e39083b00e056
 locked@ATM450.szx	4545 f58c42e24bf7a70f
-open@PROFI.sna	refused
-open@PROFI.z80	refused
-open@PROFI.szx	refused
-locked@PROFI.sna	refused
-locked@PROFI.z80	refused
-locked@PROFI.szx	refused
-open@PROFI3.sna	refused
-open@PROFI3.z80	refused
-open@PROFI3.szx	refused
-locked@PROFI3.sna	refused
-locked@PROFI3.z80	refused
-locked@PROFI3.szx	refused
+open@PROFI.sna	131103 5591cd6e09f07c9a
+open@PROFI.z80	131182 25941f4b5ef0e30b
+open@PROFI.szx	4545 b6d1348edd0f011d
+locked@PROFI.sna	131103 4a2962eda899b735
+locked@PROFI.z80	131182 13289e8b00c3fe96
+locked@PROFI.szx	4545 33fc4bb6dcabbb74
+open@PROFI3.sna	131103 5591cd6e09f07c9a
+open@PROFI3.z80	131182 dde7cd9447c93580
+open@PROFI3.szx	4545 e5f69df0ae3cd38e
+locked@PROFI3.sna	131103 4a2962eda899b735
+locked@PROFI3.z80	131182 54bc06a18002c2d5
+locked@PROFI3.szx	4545 efbd29d61ac586a3
 open@TSL.sna	131103 5591cd6e09f07c9a
 open@TSL.z80	131182 dcb018c0eb4800f3
 open@TSL.szx	4545 5deb49b08297d83c

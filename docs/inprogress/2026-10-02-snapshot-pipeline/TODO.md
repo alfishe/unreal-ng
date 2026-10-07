@@ -229,3 +229,13 @@ Open: a media load (tape, disk) is still refused while recording, unchanged.
 - **Q8: the state transfer is not merged with anything.** It stays `MachineStateTransfer`. Rule: it works wherever that is physically
   possible. See the matrix in `docs/features/automation.md`: what works today, what is expected next (ATM family among themselves,
   a 128K into a Sprinter ZX mode), what never works (TS-Conf state, ZX-Poly modules).
+
+## P13 notes (2026-10-07): Profi and the Sprinter's 512 KB modes get a save view
+
+- **Profi v5 / v3:** the decoder installs `snapshot::WindowMapCapture` (the view while the live window map is a Spectrum 128K, RAM page n = bank
+  n), as TS-Conf and the ATMs do. Checked: a 128K snapshot loaded into a Profi saves as a .z80 any plain 128K loads back bank for bank.
+- **Sprinter 512 KB modes** (CNF bit 7: P512.ZX, PENT512.ZX): a Pentagon 512 with 32 banks. Bank n sits behind the cell window 3 shows for it
+  (`ComputePg3`): #F0-#F7 / #F8-#FF for banks 0-15 as before, #D0-#D7 for 16-23, #D8-#DF for 24-31. Only .szx holds 32 banks (`needs:
+  format:szx` for the others), restored on a Pentagon 512 with the same banks and #7FFD.
+- **Kay, Quorum, LSY256, Phoenix, GMX, ZX Next** stay `capture_unsupported`: the models cannot be created yet, so there is no layout to read
+  and no machine to test against. Each needs its own rule when it becomes creatable.
