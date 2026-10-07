@@ -86,7 +86,7 @@ std::vector<uint8_t> ReadBytes(const std::filesystem::path& path)
 
 /// The project converted and assembled with sjasmplus from `main`; the bytes of each range (empty when skipped)
 std::vector<std::vector<uint8_t>> Assemble(const char* sjasmplus, const std::vector<ProjectFile>& project, const std::string& main,
-                                           const std::vector<std::pair<int, int>>& ranges)
+                                           const std::vector<std::pair<int, int>>& ranges, const std::vector<std::string>& binaries = {})
 {
     const ProjectResult converted = ConvertProject(project, "sjasmplus");
     EXPECT_TRUE(converted.ok);
@@ -96,6 +96,13 @@ std::vector<std::vector<uint8_t>> Assemble(const char* sjasmplus, const std::vec
     std::filesystem::create_directories(dir);
     for (const ProjectFile& f : converted.files)
         WriteBytes(dir / (f.name + ".asm"), codecs::SjasmplusCodec().Encode(f.document, {}).bytes);
+    for (const std::string& relative : binaries)
+    {
+        // A file INCBIN names and the rest of its last sector (the conversion INCBINs NAME.slack after it)
+        const containers::TrdosFile file = Hobeta(relative);
+        WriteBytes(dir / file.TrimmedName(), file.data);
+        WriteBytes(dir / (file.TrimmedName() + ".slack"), file.tail);
+    }
     std::string harness = "        DEVICE ZXSPECTRUM48\n        INCLUDE \"" + main + ".asm\"\n";
     for (size_t k = 0; k < ranges.size(); ++k)
         harness += "        SAVEBIN \"out" + std::to_string(k) + ".bin\"," + std::to_string(ranges[k].first) + "," + std::to_string(ranges[k].second) + "\n";
@@ -223,6 +230,9 @@ TEST(MasmFrontend_Test, ProgramsAssembleToWhatMasm11Built)
     // Every construct (MT1): 140 bytes at #6000
     const std::vector<std::vector<uint8_t>> mt1 = Assemble(sjasmplus, {Decoded("dialects/masm11/MT1.$a")}, "MT1", {{0x6000, 140}});
     EXPECT_EQ(mt1[0], ReadTestData("dialects/masm11/MT1.bin"));
+    // INCBIN (MT2 with DAT.C, 5 bytes): TR-DOS loads the whole sector, the address moves by the length
+    const std::vector<std::vector<uint8_t>> mt2 = Assemble(sjasmplus, {Decoded("dialects/masm11/MT2.$a")}, "MT2", {{0x6000, 257}}, {"dialects/masm11/DAT.$C"});
+    EXPECT_EQ(mt2[0], ReadTestData("dialects/masm11/MT2.bin"));
     // MASM 1.1's own source: #C000-#ED90 and #6000-#6016, what MASM 1.1 built from it
     const std::vector<std::vector<uint8_t>> own = Assemble(sjasmplus, MasmSource(), "LS2", {{0xC000, 11665}, {0x6000, 23}});
     EXPECT_EQ(own[0], ReadTestData("dialects/masm11/MASM_SRC-C000.bin"));
