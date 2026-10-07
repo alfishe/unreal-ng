@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "loaders/snapshot/snapshotlauncher.h"
 #include "emulator/savesnapshotchoices.h"
 #include <algorithm>
 
@@ -2392,8 +2393,6 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
             qWarning() << "ROM loading not implemented:" << filePath;
             break;
         case FileSnapshot:
-            if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadSnapshot))
-                break;
             // An RZX recording plays on the machine its start snapshot names
             if (_emulator && filePath.toLower().endsWith(".rzx"))
             {
@@ -2402,47 +2401,26 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
                 _lastFrameCount = 0;
                 break;
             }
-            // An SZX file names its machine: another model is replaced by that one
-            // first (as the Machine menu does, media follow), the same one just loads
-            if (_emulator && filePath.toLower().endsWith(".szx"))
+            // An SZX file names its machine, an SPG runs on TS-Conf only: another model is replaced by the one the file
+            // needs first (as the Machine menu does, media follow). Choosing the file here is the explicit request, so
+            // the window switches whatever the automation default is
+            if (_emulator && (filePath.toLower().endsWith(".szx") || filePath.toLower().endsWith(".spg")))
             {
-                szx::Machine machine;
+                EmulatorContext* runningContext = _emulator->GetContext();
+                if (!runningContext)
+                    break;  // removed by automation; the queued unbind follows
+                SnapshotLauncher::Need need;
                 std::string error;
-                if (!LoaderSZX::ProbeMachine(file, machine, error))
+                if (!SnapshotLauncher::NeedOf(file, runningContext->config.mem_model, runningContext->config.ramsize, need, error))
                 {
                     QMessageBox::warning(this, tr("Load Snapshot"), QString::fromStdString(error));
                     break;
                 }
-                EmulatorContext* runningContext = _emulator->GetContext();
-                if (!runningContext)
-                    break;  // removed by automation; the queued unbind follows
-                const CONFIG& running = runningContext->config;
-                if (running.mem_model != machine.model || running.ramsize != machine.ramKb)
+                if (need.differs && !need.model.empty())
                 {
-                    const TMemModel* target = Config::FindModelByEnum(machine.model);
-                    qInfo() << "SZX saved on" << QString::fromStdString(szx::DescribeModel(machine.model, machine.ramKb))
-                            << "- replacing the running"
-                            << QString::fromStdString(szx::DescribeModel(running.mem_model, running.ramsize));
-                    if (!target || !switchMachineModel(target->ShortName, machine.ramKb))
-                        break;
-                }
-            }
-            // An SPG is a TS-Conf program: another model is replaced by TS-Conf first
-            if (_emulator && filePath.toLower().endsWith(".spg"))
-            {
-                std::string error;
-                if (!LoaderSPG::Probe(file, error))
-                {
-                    QMessageBox::warning(this, tr("Load Snapshot"), QString::fromStdString(error));
-                    break;
-                }
-                EmulatorContext* runningContext = _emulator->GetContext();
-                if (!runningContext)
-                    break;  // removed by automation; the queued unbind follows
-                if (runningContext->config.mem_model != MM_TSL)
-                {
-                    qInfo() << "SPG program - replacing the running machine by TS-Conf";
-                    if (!switchMachineModel(LoaderSPG::kModel, LoaderSPG::kRamKb))
+                    qInfo() << "The file needs" << QString::fromStdString(need.description) << "- replacing the running"
+                            << QString::fromStdString(szx::DescribeModel(runningContext->config.mem_model, runningContext->config.ramsize));
+                    if (!switchMachineModel(need.model, need.ramKb))
                         break;
                 }
             }

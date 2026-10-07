@@ -1,7 +1,8 @@
-# CD audio (CDDA) — TODO
+# CD audio (CDDA) — DONE (PLAN #83 retired)
 
-**Status:** implemented on branch `cdda` (2026-10-02). PLAN.md row **#83**. Design, tests and
-results: [README.md](README.md).
+**Status:** implemented 2026-10-02. All formats, all MMC audio commands, playback, mixer, TTD,
+every surface. Open only: seek latency, CD-player software for Profi/Pentagon/Scorpion/TS-Conf.
+Design, tests and results: [README.md](README.md).
 
 ## Done
 

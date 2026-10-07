@@ -108,11 +108,11 @@ SZX writes the paging through each model's decoder.
   converted or dropped silently. The Sprinter is the exception that proves the rule: it takes a snapshot only into a running
   Spectrum mode (its own RAM pages 0-7 are not Spectrum banks) and refuses it at the DSS prompt.
 - **SZX:** the model it was saved on (the file's machine id names it; 16K and NTSC 48K load as a 48K, 128Ke as a 128K, +3e as a
-  +3). A file for another model is refused through the automation interfaces, naming both models; the Qt window offers to
+  +3). A file for another model is refused through the automation interfaces, naming both models, unless the call says `switch_model=true` or the configuration has `[SNAPSHOT] SwitchModel=1` (then the machine is replaced by the file's model, like for an SPG); the Qt window offers to
   switch to the file's model first, as it does for SPG and RZX. Saving needs a machine id (the 48K, 128K, +2, +2A, +3,
   Pentagon 128 / 512 / 1024 and Scorpion have one): a TS-Conf, ATM or Sprinter in a Spectrum 128K layout is saved as the 128K (or the
   Pentagon / Scorpion its Sprinter mode names); other states are refused with the reason ([above](#how-a-snapshot-is-saved)).
-- **SPG:** TS-Conf only (the Qt window and the automation launchers switch to it first).
+- **SPG:** TS-Conf only (the Qt window and the automation launchers switch to it first; `switch_model=false` refuses).
 - **ZXP:** a ZX-Poly machine only (four modules).
 
 ## Test material

@@ -451,8 +451,9 @@ Each with a recommendation; asked one at a time when work starts.
 4. **Q4 — callbacks from automation.** *Recommendation:* names only on the five surfaces, plus `inspect` so a
    script can decide before loading; C++ callbacks only for core callers. Lua / Python code inside a commit
    would run on a paused emulation thread and could not be journaled for TTD.
-5. **Q5 — TTD level.** *Recommendation:* committed level (a full checkpoint + marker), never the image plus
-   policy name, because a later policy fix would change old tracks; keep today's guard-and-drop until P8.
+5. **Q5 — TTD level.** *Withdrawn 2026-10-06 (owner, final):* a snapshot load does not continue a recording at all. It ENDS the
+   session like a reset (TTD decision D42); a new one starts only with the `ttdrestart` feature. Nothing about a load is
+   recorded on the track, so the question of image versus checkpoint no longer arises.
 6. **Q6 — model switch for SZX through automation.** Qt switches the model, `SnapshotLauncher` refuses.
    *Recommendation:* one orchestrator (P7) honoring the existing `switch_model` option, so SZX behaves like SPG
    and RZX on every surface.

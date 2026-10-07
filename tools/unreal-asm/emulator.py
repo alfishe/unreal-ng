@@ -84,6 +84,19 @@ class Emulator:
                 out += bytes(int(x, 16) for x in line.split(':', 1)[1].split('|')[0].split())
         return bytes(out[:length])
 
+    def read_disk_file(self, name, type_):
+        """(start, bytes) of the last catalog entry NAME.T on drive A, read sector by sector; None when missing"""
+        import base64
+        entries = [f for f in self.get('/disk/A/catalog').get('files', []) if f['name'].strip() == name and f['type'] == type_]
+        if not entries:
+            return None
+        f = entries[-1]
+        data = b''
+        for k in range(f['sectors']):
+            track, sector = divmod(f['first_track'] * 16 + f['first_sector'] + k, 16)
+            data += base64.b64decode(self.get(f'/disk/A/sector/{track // 2}/{track % 2}/{sector + 1}')['data_base64'])
+        return f['start'], data[:f['length']]
+
     def write(self, address, data):
         return self.post('/memory/write', {'address': address, 'data': list(data)})
 

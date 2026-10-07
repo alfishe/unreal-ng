@@ -3903,7 +3903,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "reverse_continue: reverse breakpoints - PC addresses as integers or '0x8000' strings (non-empty)";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
-        "dump / load / file_info: .ttd file path; export_clip: the clip's directory (created if missing). Resolved by "
+        "dump / load / file_info: .ttd file path (load also takes a recording's folder under ~/.unreal-ng/ttd/, or "
+        "one of its segment files: the segments are joined); export_clip: the clip's directory (created if missing). Resolved by "
         "the emulator process (its machine and working directory)";
     schema["properties"]["addr"]["type"] = "string";
     schema["properties"]["addr"]["description"] = "find_last: single Z80 address (integer, '0x5800', '#5800' or '$5800')";

@@ -1,0 +1,52 @@
+;L LD_
+;C CALL_
+;J JR_
+;R RET_
+;Q EQU_
+;H HL_
+;B BC_
+;D DE_
+;P PUSH_
+;O POP_
+;x (IX+
+;y (IY+
+;X IX_
+;Y IY_
+;A EX AF,AF'.
+;e EXX.
+;E EX DE,HL.
+;F LD A,(HL).
+;G LD (HL),A.
+;. DEFB_
+;M DEFM  "
+;W DEFW_
+;S DEFS_
+;t BIT_
+;r RES_
+;s SET_
+;a ADD_
+;u SUB_
+;K CP_
+;£ (IX+0)_
+;Z XOR_
+;I INC_
+;i DEC_
+;c SCF.
+;U OUT (#FE),A.
+;T RST_16.
+;N JR NZ,
+;1 (HL)_
+;2 (BC)_
+;3 (DE)_
+;4 INC HL.
+;5 INC BC.
+;6 INC DE.
+;7 DEC HL.
+;8 DEC BC.
+;9 DEC DE.
+;0 ORG_
+;V DJNZ_
+;H HALT.
+;, ADD_
+;" AND_
+;; RRCA.

@@ -137,7 +137,7 @@ symbols info            # Show symbol count
 #### Media Operations
 ```
 open <file>             # Auto-detect and load file
-snapshot load <file> [--no-switch] [--commit <name>]   # Load a snapshot; --commit chooses who writes the machine
+snapshot load <file> [--switch|--no-switch] [--commit <name>]   # Load a snapshot; --switch / --no-switch: replace the machine when the file needs another model (an SPG does by default, an SZX of another model only with --switch); --commit chooses who writes the machine
 snapshot inspect <file> [--commit <name>]              # What loading would do here (contents, plan); writes nothing
 snapshot save <file>    # Save snapshot (.sna/.z80/.szx, by extension); a refusal says why and what would work
 snapshot formats        # Which formats this machine can be saved in right now, and why not

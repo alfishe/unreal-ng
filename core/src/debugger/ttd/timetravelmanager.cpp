@@ -1128,9 +1128,6 @@ std::string TimeTravelManager::RecordingGuard(TTDGuardedAction action) const
 
     switch (action)
     {
-        case TTDGuardedAction::LoadSnapshot:
-            return "Cannot load a snapshot while TTD is recording: it replaces the whole machine state and would drop "
-                   "the recorded history. Stop the recording first.";
         case TTDGuardedAction::LoadTape:
             return "Cannot insert a tape while TTD is recording: a new medium would drop the recorded history. Insert "
                    "it before starting the recording, or stop the recording first.";

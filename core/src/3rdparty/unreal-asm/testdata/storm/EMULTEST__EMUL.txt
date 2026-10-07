@@ -40,7 +40,7 @@ SAYEMUL CALL PRINT
 CONT    EI
         LD B,100
 PEPOBUG LD A,I
-        CALL PO,SAYPO
+        JP PO,SAYPO
         INC B
         EI
         DJNZ PEPOBUG

@@ -29,6 +29,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -202,7 +203,8 @@ bool NameMatches(const std::string& pattern, const std::string& name)
     return k == name.size();
 }
 
-/// The image's file an INCBIN names: "NAME", "NAME.T" (T the type), a name holding a dot itself ("PIC.SCR"), with
+/// The image's file an INCBIN names: "NAME", "NAME.T" (T the type), a name holding a dot itself ("PIC.SCR"), ZAsm's
+/// "NAME.Txx", with
 /// wildcards; without a type the code file (type C) is meant, as TASM and ALASM read it. An exact name is the first
 /// entry TR-DOS finds; a wildcard the last fitting one (ALASM help, Work)
 const containers::TrdosFile* FindBinary(const std::vector<containers::TrdosFile>& files, const std::string& spec)
@@ -212,6 +214,9 @@ const containers::TrdosFile* FindBinary(const std::vector<containers::TrdosFile>
     if (dot != std::string::npos && dot + 2 == spec.size())
         candidates.push_back({spec.substr(0, dot), spec[dot + 1]});
     candidates.push_back({spec, 0});
+    // ZAsm shows a name with the type letter and the two bytes of the catalog's start as its extension ("FONT.fn1")
+    if (dot != std::string::npos && dot > 0 && dot + 4 == spec.size())
+        candidates.push_back({spec.substr(0, dot), spec[dot + 1]});
     for (const auto& [pattern, type] : candidates)
     {
         const bool wildcard = pattern.find_first_of("*?") != std::string::npos;
@@ -229,6 +234,24 @@ const containers::TrdosFile* FindBinary(const std::vector<containers::TrdosFile>
             return found;
     }
     return nullptr;
+}
+
+/// Where a converted line includes a binary file: INCBIN "..." (sjasmplus, pasmo) or BINARY "..." (z80asm), both 8
+/// characters up to the name
+size_t FindIncbin(const std::string& text)
+{
+    const size_t incbin = text.find("INCBIN \"");
+    return incbin != std::string::npos ? incbin : text.find("BINARY \"");
+}
+
+/// A TR-DOS name as a host file name: TR-DOS allows / \ : and the like ("SIN64/FF"), a file system and an INCBIN
+/// path do not
+std::string HostName(std::string name)
+{
+    for (char& c : name)
+        if (c == '/' || c == '\\' || c == ':' || c == '"' || c == '<' || c == '>' || c == '|')
+            c = '_';
+    return name;
 }
 
 /// zxasm convert image.trd --to dialect -o dir
@@ -270,8 +293,10 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
     }
     const ProjectResult converted = ConvertProject(project, args.to);
     PrintDiagnostics(converted.diagnostics);
-    const ISourceCodec* target = registry.Find(args.to);
+    // A dialect without its own codec (pasmo) is a text file in the document's code page (texts are program bytes)
+    const ISourceCodec* target = registry.Find(args.to) ? registry.Find(args.to) : registry.Find("text");
     std::string extracted;
+    std::map<std::string, std::string> imageNames;   // host file name -> the name in the image
     for (ProjectFile f : converted.files)
     {
         // An INCBIN with wildcards names the file it found (the converted source then assembles anywhere). A sector
@@ -286,13 +311,13 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
                 const size_t length = base ? base->tail.size() : 0;
                 if (length == 0)
                     line.text = "; " + line.text.substr(line.text.find_first_not_of(' ')) + " (no sector slack)";
-                else
+                else if (args.to == "sjasmplus")   // sjasmplus' INCBIN takes an offset and a length; pasmo's the whole file
                     line.text += ",0,(#10000-__UNREALASM_INCBIN_P)<?" + std::to_string(length);
             }
         }
         for (SourceLine& line : f.document.lines)
         {
-            const size_t at = line.text.find("INCBIN \"");
+            const size_t at = FindIncbin(line.text);
             if (at == std::string::npos)
                 continue;
             const size_t close = line.text.find('"', at + 8);
@@ -300,10 +325,40 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
             const bool slack = wanted.size() > 6 && wanted.compare(wanted.size() - 6, 6, ".slack") == 0;
             if (slack)
                 wanted.resize(wanted.size() - 6);
-            if (wanted.find_first_of("*?") == std::string::npos)
+            std::string resolved = wanted;
+            if (wanted.find_first_of("*?") != std::string::npos)
+                if (const containers::TrdosFile* found = FindBinary(files, wanted))
+                    resolved = found->TrimmedName() + (found->type == 'C' ? std::string() : std::string(".") + found->type);
+            const std::string host = HostName(resolved);
+            imageNames[host] = resolved;
+            if (host != wanted)
+                line.text.replace(at + 8, wanted.size(), host);
+        }
+        // A target whose INCBIN takes the whole file (pasmo) marks a part as "; unreal-asm: slice offset[,length]": the
+        // part goes to its own file "name.offset-length"
+        for (SourceLine& line : f.document.lines)
+        {
+            const size_t marker = line.text.find("; unreal-asm: slice ");
+            const size_t at = FindIncbin(line.text);
+            if (marker == std::string::npos || at == std::string::npos)
                 continue;
-            if (const containers::TrdosFile* found = FindBinary(files, wanted))
-                line.text.replace(at + 8, wanted.size(), found->TrimmedName() + (found->type == 'C' ? std::string() : std::string(".") + found->type));
+            const size_t close = line.text.find('"', at + 8);
+            const std::string name = line.text.substr(at + 8, close - at - 8);
+            const std::string spec = line.text.substr(marker + 20);
+            const size_t offset = std::stoul(spec);
+            const containers::TrdosFile* found = FindBinary(files, name);
+            if (!found)
+                continue;
+            const size_t comma = spec.find(',');
+            const size_t length = comma == std::string::npos ? found->data.size() - std::min(offset, found->data.size()) : std::stoul(spec.substr(comma + 1));
+            const std::string part = name + "." + std::to_string(offset) + "-" + std::to_string(length);
+            std::vector<uint8_t> bytes;
+            for (size_t k = offset; k < offset + length && k < found->data.size(); ++k)
+                bytes.push_back(found->data[k]);
+            WriteFile(args.output + "/" + HostName(part), bytes);
+            line.text = line.text.substr(0, at + 8) + HostName(part) + line.text.substr(close, marker - close);
+            while (!line.text.empty() && line.text.back() == ' ')
+                line.text.pop_back();
         }
         std::vector<uint8_t> out;
         if (target)
@@ -321,15 +376,16 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
         // INCBIN "name" / "name.T": the file of the image, written under the name the source uses
         for (const SourceLine& line : f.document.lines)
         {
-            const size_t at = line.text.find("INCBIN \"");
+            const size_t at = FindIncbin(line.text);
             if (at == std::string::npos)
                 continue;
             const size_t close = line.text.find('"', at + 8);
             const std::string wanted = line.text.substr(at + 8, close - at - 8);
             // "<file>.slack": the rest of the file's last sector (TASM's INCBIN copies whole sectors)
             const bool slack = wanted.size() > 6 && wanted.compare(wanted.size() - 6, 6, ".slack") == 0;
-            const std::string file = slack ? wanted.substr(0, wanted.size() - 6) : wanted;
-            const containers::TrdosFile* found = FindBinary(files, file);
+            const std::string host = slack ? wanted.substr(0, wanted.size() - 6) : wanted;
+            const auto inImage = imageNames.find(host);
+            const containers::TrdosFile* found = FindBinary(files, inImage != imageNames.end() ? inImage->second : host);
             if (found)
             {
                 WriteFile(args.output + "/" + wanted, slack ? found->tail : found->data);
@@ -443,7 +499,7 @@ int main(int argc, char** argv)
         PrintDiagnostics(converted.diagnostics);
         // Written with the target's text codec when there is one (sjasmplus keeps the Spectrum code page for strings)
         std::vector<uint8_t> out;
-        if (const ISourceCodec* target = registry.Find(args.to))
+        if (const ISourceCodec* target = registry.Find(args.to) ? registry.Find(args.to) : registry.Find("text"))
             out = target->Encode(converted.document, {}).bytes;
         else
         {
@@ -489,7 +545,7 @@ int main(int argc, char** argv)
         {
             const EncodeResult exact = codec->Encode(decoded.document, {});
             // Per line: the line alone, once with its kept bytes and once without (file-level data kept in both)
-            size_t same = 0;
+            size_t canonical = 0;
             SourceDocument one = decoded.document;
             for (const SourceLine& line : decoded.document.lines)
             {
@@ -497,18 +553,22 @@ int main(int argc, char** argv)
                 const EncodeResult kept = codec->Encode(one, {});
                 one.lines[0].attrs = {};
                 const bool equal = codec->Encode(one, {}).bytes == kept.bytes;
-                same += equal;
+                canonical += equal;
                 if (!equal && args.show)
                     std::cout << "  canonical differs: " << line.text << "\n";
             }
             const SourceDocument& plain = decoded.document;
+            // A format that reads the sector slack (XAS) writes it back too
+            std::vector<uint8_t> sectors = bytes;
+            sectors.insert(sectors.end(), hints.slack.begin(), hints.slack.end());
+            const bool same = exact.bytes == bytes || exact.bytes == sectors;
             std::string range;
             for (const std::string& v : decoded.subversions)
                 range += (range.empty() ? "" : ",") + v;
             std::cout << args.file << (args.inner.empty() ? "" : ":" + args.inner) << "\t" << codec->Info().id << "\t"
                       << decoded.document.subversion << "\t[" << range << "]\t" << decoded.document.lines.size() << " lines\t"
-                      << (exact.bytes == bytes ? "byte-exact" : "DIFFERS") << "\tcanonical " << same << "/" << plain.lines.size() << "\n";
-            return decoded.ok && exact.bytes == bytes ? 0 : 1;
+                      << (same ? "byte-exact" : "DIFFERS") << "\tcanonical " << canonical << "/" << plain.lines.size() << "\n";
+            return decoded.ok && same ? 0 : 1;
         }
         std::string text = decoded.document.Text();
         if (!decoded.document.lines.empty())

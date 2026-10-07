@@ -15,7 +15,7 @@
          ["properties"]["switch_model"]["type"] = "boolean";
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["switch_model"]["description"] =
-        "A file that needs another model (.spg: TSL): switch the model first (true, default) or refuse (false). Also a query parameter for uploads";
+        "A file that needs another model: switch the model first (true) or refuse (false). Not given: an .spg (TS-Conf only) switches; an .szx saved on another model is refused unless the configuration has [SNAPSHOT] SwitchModel=1. Also a query parameter for uploads";
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["commit"]["type"] = "string";
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]

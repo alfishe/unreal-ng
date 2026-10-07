@@ -1111,6 +1111,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | `turbomode` | `turbo` | OFF | Turbo mode: run the whole emulation as fast as the host allows. Audio is muted unless `setting turbo_audio on`. Same switch as `setting speed unlimited`. | Runs the host as fast as it can while on |
 | `hud` | `hud` | OFF | On-screen HUD: indicators and messages drawn over the emulator picture. | None when off |
 | `kempstonmouse` | `kmouse` | ON | Kempston Mouse on the bus, when the machine config fits one (`[INPUT] Mouse=KEMPSTON`). Off: the mouse ports are not decoded. | None |
+| `ttdrestart` | `ttdre` | OFF | Start a new TTD session after one ends: a reset, an autostart, a snapshot load and a change of the machine itself END the recording session; with this on a new session starts at the next frame boundary. Off: the machine is left without a recording. A black box always restarts. See *TTD Session Rules* |
 | `gs_lightweight` | `gslw` | OFF | General Sound lightweight personality: fit the built-in ProTracker player card, which needs no coprocessor firmware. Off keeps the personality from `[SOUND] GSType`. | None (a choice of card, not a cost) |
 | `contention` | `cont` | ON | Video memory contention on the machines that have it (48K / 128K / +2 ULA, +2A / +3 gate array): the CPU waits for the screen fetches, opcode fetches included. OFF runs those machines uncontended for comparison; no effect on machines without contention. `state contention` shows the rule, the switch and where the CPU waits. | None on machines without contention |
 
@@ -2713,6 +2714,11 @@ Loading is available on every control surface: CLI (`ttd load <path>`), WebAPI
 (`POST /api/v1/emulator/{id}/ttd/load` with body `{"path": "..."}`), Lua (`ttd_load(path)`), Python
 (`emu.ttd_load(path)`), and the TTD Scrubber's **Load session…** button.
 
+The path may also be a recording's folder under `~/.unreal-ng/ttd/` (the engine), or any `segment-NNNN.ttd`
+file in it: the folder's segments are joined into one session and loaded. Such folders are what a black box
+leaves behind when it restarts after turbo, a host speed above 1x or a machine change: the recording up to
+that moment, kept while the process runs and 7 days after it ends (see `recording_folder` in `ttd status`).
+
 **Reading a file before loading it (`ttd info <path>`).** Besides the model, the
 loader refuses a session recorded against another ROM set or with another device
 in the General Sound or TurboSound slot (a Pentagon now fits NeoGS; a session
@@ -2817,9 +2823,20 @@ Worked example (CLI): `ttd start`, run 300 frames, `ttd seek 100` - the recordin
 | `ttd invalidate` | Stop the recording first, then discard it. |
 | Host speed 2x..16x, turbo, fast tape, turbo tape, fast disk | See the acceleration lock below. |
 
-**A change of the machine itself ends the session** (the engine; v1 refuses these while recording): a ROM load, a model switch (also a snapshot that needs another model, and a machine state transfer), a General Sound card switch (`gs switch_personality`, the `gs_lightweight` feature) and every slot change. The recording stops cleanly and its history is dropped (`last_drop_reason` names the change, `last_stop_reason` is `machine-change`). A new session then starts or not by the settings and options: a black box starts one on the changed machine at the next frame; an explicit recording is not started again. A model switch or a slot change restarts the machine as a new instance, which starts recording only by its own settings.
+**One rule: what replaces or restarts the machine ENDS the recording session.** (Owner rule 2026-10-06, engine decision D42; it settles the earlier D10a "a snapshot load is part of the recording", which no longer exists, and D39's optional "recording again". Do not reintroduce a per-operation exception: if a new operation replaces or restarts the machine, it joins this list.)
 
-**A snapshot load is part of the recording on the engine** (`backend: engine`, D10). While a session records, the machine first runs to the end of its current frame, then the snapshot replaces it at the frame boundary, and the checkpoint there holds the loaded state; frame numbers go on (a load outside a recording restarts them from 0). The history keeps both sides: a seek before the load shows the old program, a seek after it the loaded one, and running forward from before it takes the loaded state at that boundary. A recording paused for browsing (D8) continues with the load when the machine stands at its paused end; elsewhere it ends where it paused. Outside a recording a snapshot load keeps the history: the machine leaves it, as after a reset. A model switch through a snapshot (machine state transfer) is still refused while recording; tape, disk and ROM loads are unchanged.
+| Operation | Ends the session | History of the ended session |
+|---|---|---|
+| Machine reset, a disk autostart's quick reset | yes | kept, browsable (`last_stop_reason`: `reset` / `autostart`) |
+| Snapshot load (every format, also the one an RZX starts from) | yes | kept, browsable (`last_stop_reason`: `snapshot-load`) |
+| ROM load, model switch (also a snapshot or a machine state transfer that needs another model), General Sound card switch (`gs switch_personality`, the `gs_lightweight` feature), slot change | yes | dropped: another machine (`last_drop_reason` names the change, `last_stop_reason` is `machine-change`) |
+
+None of them is refused while recording: the recording stops cleanly (the machine parked, the features it switched on go back off) and the operation runs. The ended session is a stopped session like after `ttd stop`; a machine that sat in its history goes back to `idle`. **No new session starts by itself.** One starts only by setting:
+
+- the **`ttdrestart` feature** (alias `ttdre`, off by default; `feature ttdrestart on`, `features.ini`, every surface's feature command): after any of the operations above a new explicit recording starts at the next frame boundary, on the machine as it then is (a model switch or a slot change restarts the machine as a new instance, which starts only by its own settings);
+- the **black box** (Debug > Time Travel > Always Record): always starts a new session, whatever `ttdrestart` says.
+
+Not on this list (still refused while recording, unchanged): tape, disk and disk-image loads and creation, `ttd invalidate`, host speed and turbo (see the table above).
 
 **Switching `timetravel` or `debugmode` off stops the recording instead (FR-17).** It is not refused: the
 recording stops cleanly first - the machine is parked, everything recorded up to that instant stays and is
@@ -3021,7 +3038,7 @@ usually the first thing to check when a session is handed to you.
 | `recording_paused` | The engine (D8): a seek, step or reverse query while recording paused the recording; `state` is `detached`. Resuming at its end continues it, `stop` ends it. The CLI prints `Recording paused: yes`. Always false on v1 |
 | `earliest` | The earliest position the history keeps (`{frame, tinframe}`), where "jump to start" goes: older frames were released by the history limit or never recorded. `null` with no history. A seek before it fails with `out_of_range` and names it (`earliest` and a `message` in the reply; the engine, D12) |
 | `black_box` | The black box is armed (the engine): `ttd start` with `black_box`, or unreal-qt's Debug > Time Travel > Always Record (Black Box) on a machine the window created. Its recordings keep the last minutes (`history_limit_frames`) and step aside for turbo and a host speed above 1x (stopped first, history kept, `last_stop_reason` `acceleration`; a new session once nothing accelerates); a machine change ends its session and a new one starts at the next frame. Always false on v1 |
-| `recording_folder` | The engine, an instance of unreal-qt or the automation app: the folder the current session's segment files are written to as it records (`~/.unreal-ng/ttd/<date-time>-<name>/`), null when none. The folder lives as long as its session: a new session, `invalidate` and closing the instance delete it; after a crash it stays and the startup cleanup removes it after 7 days. A black box keeps only its window's files there. "Save session..." writes a session file elsewhere |
+| `recording_folder` | The engine, an instance of unreal-qt or the automation app: the folder the current session's segment files are written to as it records (`~/.unreal-ng/ttd/<date-time>-<name>/`), null when none. Every emulator instance records into a folder of its own (many instances and processes side by side). The folder lives as long as its session: a new recording on the same instance, `invalidate` and closing the instance delete it. Two cases keep it on disk: a black box restarting after an acceleration or a machine change (the recording up to that moment stays, loadable with `ttd load <folder>`), and a crash. A kept folder is removed by the startup cleanup once its process has ended and it is 7 days old. A black box keeps only its window's files there. "Save session..." writes a session file elsewhere |
 | `backend` | Which implementation records on this instance: `engine` (the default) or `v1` (the previous recorder, kept as the reference; the application selects it when started with `UNREAL_TTD_BACKEND=v1`). Session files are in that implementation's format |
 | `unavailable_reason` | Why time travel is not available for this machine at all, e.g. a member of a ZX-Poly machine; empty / `null` when it is available. Recording and loading a `.ttd` file are refused with it (WebAPI: `/ttd/start` answers 409). The CLI prints it as `Not available:` |
 | `last_drop_reason` | What dropped the last history (`snapshot-load`, `tape-load`, `disk-load`, `disk-create`, `rom-reload`, `speed-multiplier-change`, an `invalidate` reason, an SD-card note); empty / `null` when nothing has. The CLI prints it as `Last session dropped:` |

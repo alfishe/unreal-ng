@@ -818,11 +818,10 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                 for (auto& c : ext) c = static_cast<char>(std::tolower(c));
 
                 bool ok = false;
-                std::string refusal;  // B9: a TTD recording refuses loads; report why
+                std::string refusal;  // B9: a TTD recording refuses a medium load; report why
                 if (ext == "sna" || ext == "z80" || ext == "szx" || ext == "spg" || ext == "rzx")
                 {
-                    refusal = _emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot);
-                    ok = refusal.empty() && _emulator->LoadSnapshot(path);
+                    ok = _emulator->LoadSnapshot(path);   // ends a TTD recording session, never refused by it
                 }
                 else if (Emulator::IsTapeExtension(ext))
                 {

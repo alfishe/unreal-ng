@@ -62,6 +62,15 @@ TEST_F(TimeTravelHooks_Test, TheCoreSeesTheManagerThroughTheHooks)
     EXPECT_TRUE(_hooks->HasHistory());
 }
 
+// A snapshot load is not one of them: it ends a recording like a reset and the history of the machine stays (the one rule)
+TEST_F(TimeTravelHooks_Test, ASnapshotLoadKeepsTheHistoryOfAStoppedSession)
+{
+    RecordAndStop();
+    _hooks->OnLoad(ttd::TTDLoadKind::Snapshot, "snapshot-load");
+    EXPECT_TRUE(_hooks->HasHistory());
+    EXPECT_TRUE(_ttd->GetSessionInfo().lastDropReason.empty());
+}
+
 TEST_F(TimeTravelHooks_Test, LoadsConfigurationChangesAndTransfersDropAStoppedSessionWithTheirReason)
 {
     struct Case
@@ -70,7 +79,6 @@ TEST_F(TimeTravelHooks_Test, LoadsConfigurationChangesAndTransfersDropAStoppedSe
         void (*call)(ttd::ITimeTravelHooks&, const char*);
     };
     const Case cases[] = {
-        {"snapshot-load", [](ttd::ITimeTravelHooks& h, const char* r) { h.OnLoad(ttd::TTDLoadKind::Snapshot, r); }},
         {"tape-load", [](ttd::ITimeTravelHooks& h, const char* r) { h.OnLoad(ttd::TTDLoadKind::Tape, r); }},
         {"media-change", [](ttd::ITimeTravelHooks& h, const char* r) { h.OnLoad(ttd::TTDLoadKind::Media, r); }},
         {"rom-reload",

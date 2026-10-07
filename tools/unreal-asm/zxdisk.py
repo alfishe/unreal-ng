@@ -5,6 +5,7 @@
     zxdisk.py extract <image> <NAME.T> <out.$T>       a file as hobeta (the last one of that name, as TASM / ALASM read)
     zxdisk.py add     <image.trd> <out.trd> <file.$T>...   the hobeta files appended after the last used sector
     zxdisk.py scl2trd <image.scl> <out.trd>
+    zxdisk.py hobeta  <file> <NAME.T> <start> <out.$T>      a file as hobeta (a STORM text: type C, start 0xC00B)
 
 Used as a module by the other tools: files(image_bytes) yields (name, type, start, length, sector_bytes).
 """
@@ -98,6 +99,9 @@ def main(argv):
         open(argv[4], 'wb').write(hobeta(*found[-1]))
     elif command == 'add' and len(argv) >= 5:
         open(argv[3], 'wb').write(add(image, [open(f, 'rb').read() for f in argv[4:]]))
+    elif command == 'hobeta' and len(argv) == 6:
+        name, _, type_ = argv[3].partition('.')
+        open(argv[5], 'wb').write(hobeta(name, type_ or 'C', int(argv[4], 0), len(image), image))
     elif command == 'scl2trd' and len(argv) == 4:
         open(argv[3], 'wb').write(scl2trd(image))
     else:

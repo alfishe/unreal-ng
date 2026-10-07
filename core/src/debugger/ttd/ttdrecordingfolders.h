@@ -61,6 +61,10 @@ namespace ttd
         static std::unique_ptr<TTDRecordingFolder> Create(const std::string& root, const std::string& name,
                                                           std::time_t when, std::string& error);
 
+        /// The recording folder at @p path, or the one holding the segment file @p path
+        /// (".../2026-10-04-153012-pentagon/segment-0003.ttd"); null when it is neither
+        static std::unique_ptr<TTDRecordingFolder> Open(const std::string& path);
+
         const std::string& Path() const { return _path; }
         std::string SegmentPath(uint32_t index) const;
         /// The segment files that exist, in order (the oldest may be gone: DropOldestSegments)

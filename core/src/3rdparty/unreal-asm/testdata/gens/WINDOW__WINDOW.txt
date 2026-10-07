@@ -1,0 +1,1004 @@
+   10 ;  Unlimited Hackers     Copyright 1993
+   20 ;
+   30 ;  Subroutines:
+   40 ;   OPEN    - open new window on screen
+   50 ;     input: A - window's number
+   60 ;   CLOSE   - close last window
+   70 ;   CHANGE  - change current window
+   80 ;     input: A - number of new screen's win.
+   90 ;   CHOICE  - lets you choice some positions
+  100 ;             in current window
+  110 ;   MAX qiantity of windows - 4
+  120 ;
+  130 ;  Auxiliary subroutines:
+  140 ;   ADR   - give you address of screen's
+  150 ;           attribute & 1st line
+  160 ;     input: HL - koords (L=0..255,H=0..192)
+  170 ;     output:HL - address of attribute
+  180 ;            DE - address of 1st line
+  190 ;   PRINT  - print texts on current window
+  200 ;            PRINT use IBM's font
+  210 ;     input: DE - begin of text (end - #00)
+  220 ;   STRELA - lets you use arrow
+  230 ;     output: (XX) - X position
+  240 ;             (YY) - Y position
+  250 ;   DRAW   - draw window with shadow
+  260 ;     input: HL - koords left-up (L=X,H=Y)
+  270 ;            DE - length (E=X,D=Y)
+  280 ;            BC - shadow's & window's attrib.
+  290 ;   BORDER - draw border for window
+  300 ;     input: (KOORDT) - koords left-up
+  310 ;            (LENT)   - length of window
+  320 ;   POSIT  - define address of any screen's 
+  330 ;            point
+  340 ;     input: HL - koords of point
+  350 ;     output:HL - address of this point
+  360 
+  370        ORG  $
+  380        ENT  $
+  390        LD   A,1
+  400        CALL OPEN
+  410        CALL PAUSE
+  420        LD   A,2
+  430        CALL OPEN
+  440        CALL CHOICE
+  450        CALL PAUSE
+  460        CALL CLOSE
+  470        CALL CHOICE
+  480        CALL PAUSE
+  490        CALL CLOSE
+  500        CALL NORMA
+  510        RET
+  520 
+  530 PAUSE  EI
+  540        LD   B,50
+  550 PAUSE1 HALT
+  560        DJNZ PAUSE1
+  570        RET
+  580 
+  590 NORMA  LD   A,#3F
+  600        LD   I,A
+  610        IM   1
+  620        RET
+  630 
+  640 WIN_S  DEFB #08,#05;XY koords left-up corner
+  650 ;                   of 1 window
+  660        DEFB #10,#05;XY length of 1 window
+  670        DEFB #30,#00;window's & shadow's
+  680 ;                   attributes of 1 window
+  690        DEFW TEXT1;begin address of text,
+  700 ;                 printing with open 1 win.
+  710        DEFW CASE1;begin address of bytes,
+  720 ;                 for choice of 1 window
+  730        DEFB #0B,#07; 2 WINDOW
+  740        DEFB #0B,#0C
+  750        DEFB #20,#01
+  760        DEFW TEXT2
+  770        DEFW CASE2
+  780 TEXT1  DEFB #0D; text fo 1 window
+  790        DEFM " We are kings !"
+  800        DEFB #16,#04,#03
+  810        DEFB #8A,#AE,#E0,#AE,#AB,#A8," ","!"
+  820        DEFB #00; end of text for 1 WINDOW
+  830 TEXT2  DEFB #0D
+  840        DEFM " Unlimited  Hackers "
+  850        DEFB #7F,#0D,#0D
+  860        DEFM " All right  reserved"
+  870        DEFB #00
+  880 ; OPTIONS FOR 1st WINDOW
+  890 CASE1  DEFB #02,#01,#01; LENGTH & XY KOORDS
+  900 ;                     FOR 1st OPTION
+  910        DEFB #03,#04,#01; -~~- FOR 2nd OPTION
+  920        DEFB #05,#08,#01; -~~- FOR 3rd OPTION
+  930        DEFB #08,#04,#03; -~~- FOR 3th OPTION
+  940        DEFB #00 ; TERMINATOR
+  950 CASE2  DEFB #0B,#00,#01 ; FOR 2nd WINDOW
+  960        DEFB #0B,#00,#02
+  970        DEFB #0B,#00,#04
+  980        DEFB #0B,#00,#05
+  990        DEFB #00
+ 1000 KOORD0 DEFB 0,0
+ 1010 ADDRT  DEFW FREE
+ 1020 SCRWIN DEFS 48
+ 1030 SCROP  DEFB #00
+ 1040 SCRT   DEFB #00
+ 1050 KOORDT DEFW #0000
+ 1060 LENT   DEFW #0000
+ 1070 ATTRT  DEFW #0000
+ 1080 CASET  DEFW #0000
+ 1090 FIRE   DEFB #00
+ 1100 XX     DEFB 100
+ 1110 YY     DEFB 100
+ 1120 
+ 1130 OPEN   PUSH IY
+ 1140        PUSH AF
+ 1150        LD   A,(SCROP)
+ 1160        CP   #04
+ 1170        JR   C,OP2
+ 1180        POP  AF
+ 1190 OP1    POP  IY
+ 1200        RET
+ 1210 OP2    INC  A
+ 1220        LD   (SCROP),A
+ 1230        LD   (SCRT),A
+ 1240        LD   IY,SCRWIN
+ 1250 OP3    DEC  A
+ 1260        JR   Z,OP4
+ 1270        LD   DE,#000C
+ 1280        ADD  IY,DE
+ 1290        JR   OP3
+ 1300 OP4    POP  AF
+ 1310        LD   IX,WIN_S
+ 1320 OP5    DEC  A
+ 1330        JR   Z,OP6
+ 1340        LD   DE,#000A
+ 1350        ADD  IX,DE
+ 1360        JR   OP5
+ 1370 OP6    LD   C,(IX+2)
+ 1380        LD   B,(IX+3)
+ 1390        LD   A,B
+ 1400        OR   A
+ 1410        JR   Z,OP1
+ 1420        LD   A,C
+ 1430        OR   A
+ 1440        JR   Z,OP1
+ 1450        LD   L,(IX+0)
+ 1460        LD   H,(IX+1)
+ 1470        LD   (IY+0),L
+ 1480        LD   (IY+1),H
+ 1490        LD   (IY+2),C
+ 1500        LD   (IY+3),B
+ 1510        LD   (KOORDT),HL
+ 1520        LD   (LENT),BC
+ 1530        LD   E,(IX+4)
+ 1540        LD   D,(IX+5)
+ 1550        LD   (IY+4),E
+ 1560        LD   (IY+5),D
+ 1570        LD   (ATTRT),DE
+ 1580        LD   L,(IX+8)
+ 1590        LD   H,(IX+9)
+ 1600        LD   (CASET),HL
+ 1610        LD   (IY+10),L
+ 1620        LD   (IY+11),H
+ 1630        LD   A,B
+ 1640        ADD  A,C
+ 1650        LD   HL,#0000
+ 1660        LD   D,0
+ 1670        LD   E,C
+ 1680 OP7    ADD  HL,DE
+ 1690        DJNZ OP7
+ 1700        LD   E,L
+ 1710        LD   D,H
+ 1720        ADD  HL,HL
+ 1730        ADD  HL,HL
+ 1740        ADD  HL,HL
+ 1750        LD   C,A
+ 1760        LD   B,0
+ 1770        ADD  HL,BC
+ 1780        ADD  HL,DE
+ 1790        LD   (IY+8),L
+ 1800        LD   (IY+9),H
+ 1810        LD   DE,(ADDRT)
+ 1820        LD   (IY+6),E
+ 1830        LD   (IY+7),D
+ 1840        ADD  HL,DE
+ 1850        LD   (ADDRT),HL
+ 1860        PUSH DE
+ 1870        POP  IY
+ 1880        LD   HL,(KOORDT)
+ 1890        LD   BC,(LENT)
+ 1900 OP8    PUSH HL
+ 1910        PUSH BC
+ 1920 OP9    PUSH HL
+ 1930        PUSH BC
+ 1940        CALL ADR
+ 1950        LD   H,(HL)
+ 1960        LD   L,#08
+ 1970 OP10   LD   A,(DE)
+ 1980        LD   (IY+0),A
+ 1990        XOR  A
+ 2000        LD   (DE),A
+ 2010        INC  D
+ 2020        INC  IY
+ 2030        DEC  L
+ 2040        JR   NZ,OP10
+ 2050        LD   (IY+0),H
+ 2060        INC  IY
+ 2070        POP  BC
+ 2080        POP  HL
+ 2090        INC  L
+ 2100        DEC  C
+ 2110        JR   NZ,OP9
+ 2120        INC  H
+ 2130        CALL ADR
+ 2140        LD   A,(HL)
+ 2150        LD   (IY+0),A
+ 2160        INC  IY
+ 2170        POP  BC
+ 2180        POP  HL
+ 2190        INC  H
+ 2200        DJNZ OP8
+ 2210        INC  L
+ 2220        LD   BC,(LENT)
+ 2230 OP11   PUSH HL
+ 2240        CALL ADR
+ 2250        LD   A,(HL)
+ 2260        LD   (IY+0),A
+ 2270        INC  IY
+ 2280        POP  HL
+ 2290        INC  L
+ 2300        DEC  C
+ 2310        JR   NZ,OP11
+ 2320        LD   HL,(KOORDT)
+ 2330        LD   DE,(LENT)
+ 2340        LD   BC,(ATTRT)
+ 2350        CALL DRAW
+ 2360        LD   E,(IX+6)
+ 2370        LD   D,(IX+7)
+ 2380        LD   A,D
+ 2390        OR   E
+ 2400        JR   Z,OP12
+ 2410        LD   HL,#0000
+ 2420        LD   (KOORD0),HL
+ 2430        CALL PRINT
+ 2440 OP12   CALL BORDER
+ 2450        JP   OP1
+ 2460 
+ 2465 CLOSE  DI
+ 2466        CALL STR46
+ 2470        LD   A,(SCROP)
+ 2480        OR   A
+ 2490        RET  Z
+ 2500        DEC  A
+ 2510        LD   (SCROP),A
+ 2520        PUSH IY
+ 2530        LD   HL,SCRT
+ 2540        LD   B,(HL)
+ 2550        CP   B
+ 2560        JR   NC,CL0
+ 2570        PUSH AF
+ 2580        CALL CHANGE
+ 2590        POP  AF
+ 2600 CL0    INC  A
+ 2610        LD   IX,SCRWIN
+ 2620        LD   DE,#000C
+ 2630 CL1    DEC  A
+ 2640        JR   Z,CL2
+ 2650        ADD  IX,DE
+ 2660        JR   CL1
+ 2670 CL2    LD   L,(IX+0)
+ 2680        LD   H,(IX+1)
+ 2690        LD   E,(IX+6)
+ 2700        LD   D,(IX+7)
+ 2710        LD   (ADDRT),DE
+ 2720        PUSH DE
+ 2730        POP  IY
+ 2740        LD   C,(IX+2)
+ 2750        LD   B,(IX+3)
+ 2760 CL3    PUSH HL
+ 2770        PUSH BC
+ 2780 CL4    PUSH HL
+ 2790        PUSH BC
+ 2800        CALL ADR
+ 2810        LD   B,#08
+ 2820 CL5    LD   A,(IY+0)
+ 2830        LD   (DE),A
+ 2840        INC  IY
+ 2850        INC  D
+ 2860        DJNZ CL5
+ 2870        LD   A,(IY+0)
+ 2880        LD   (HL),A
+ 2890        INC  IY
+ 2900        POP  BC
+ 2910        POP  HL
+ 2920        INC  L
+ 2930        DEC  C
+ 2940        JR   NZ,CL4
+ 2950        INC  H
+ 2960        CALL ADR
+ 2970        LD   A,(IY+0)
+ 2980        LD   (HL),A
+ 2990        INC  IY
+ 3000        POP  BC
+ 3010        POP  HL
+ 3020        INC  H
+ 3030        DJNZ CL3
+ 3040        INC  L
+ 3050        LD   C,(IX+2)
+ 3060 CL6    PUSH HL
+ 3070        CALL ADR
+ 3080        LD   A,(IY+0)
+ 3090        LD   (HL),A
+ 3100        INC  IY
+ 3110        POP  HL
+ 3120        INC  L
+ 3130        DEC  C
+ 3140        JR   NZ,CL6
+ 3150        LD   B,12
+ 3160 CL7    LD   (IX+0),0
+ 3170        INC  IX
+ 3180        DJNZ CL7
+ 3190        POP  IY
+ 3195 
+ 3196        EI
+ 3200        RET
+ 3210 
+ 3220 CHANGE OR   A
+ 3230        RET  Z
+ 3240        LD   HL,SCROP
+ 3250        LD   B,(HL)
+ 3260        INC  B
+ 3270        CP   B
+ 3280        RET  NC
+ 3290        LD   (SCRT),A
+ 3300        LD   IX,SCRWIN
+ 3310        LD   DE,#000C
+ 3320 CH1    DEC  A
+ 3330        JR   Z,CH2
+ 3340        ADD  IX,DE
+ 3350        JR   CH1
+ 3360 CH2    LD   L,(IX+0)
+ 3370        LD   H,(IX+1)
+ 3380        LD   E,(IX+2)
+ 3390        LD   D,(IX+3)
+ 3400        LD   C,(IX+4)
+ 3410        LD   B,(IX+5)
+ 3420        LD   (KOORDT),HL
+ 3430        LD   (LENT),DE
+ 3440        LD   (ATTRT),BC
+ 3450        LD   HL,#0000
+ 3460        LD   (KOORD0),HL
+ 3470        LD   L,(IX+10)
+ 3480        LD   H,(IX+11)
+ 3490        LD   (CASET),HL
+ 3500        RET
+ 3510 
+ 3520 DRAW   LD   (ATTRT),BC
+ 3530        PUSH DE
+ 3540        LD   BC,#0020
+ 3550        LD   A,H
+ 3560        LD   H,#00
+ 3570        OR   A
+ 3580 DRAW1  JR   Z,DRAW2
+ 3590        ADD  HL,BC
+ 3600        DEC  A
+ 3610        JR   DRAW1
+ 3620 DRAW2  LD   BC,#5800
+ 3630        ADD  HL,BC
+ 3640        PUSH DE
+ 3650        POP  BC
+ 3660        POP  DE
+ 3670 DRAW3  PUSH BC
+ 3680        PUSH HL
+ 3690 DRAW4  LD   A,(ATTRT)
+ 3700        LD   (HL),A
+ 3710        DEC  C
+ 3720        INC  HL
+ 3730        JR   NZ,DRAW4
+ 3740        LD   A,B
+ 3750        CP   D
+ 3760        JR   Z,DRAW5
+ 3770        LD   BC,(ATTRT)
+ 3780        LD   (HL),B
+ 3790 DRAW5  POP  HL
+ 3800        LD   BC,#0020
+ 3810        ADD  HL,BC
+ 3820        POP  BC
+ 3830        DJNZ DRAW3
+ 3840        LD   B,E
+ 3850        LD   DE,(ATTRT)
+ 3860        INC  HL
+ 3870 DRAW6  LD   (HL),D
+ 3880        INC  HL
+ 3890        DJNZ DRAW6
+ 3900        RET
+ 3910 
+ 3920 ADR    LD   A,H
+ 3930        LD   H,0
+ 3940        LD   DE,#0020
+ 3950        INC  A
+ 3960 ADR1   DEC  A
+ 3970        JR   Z,ADR2
+ 3980        ADD  HL,DE
+ 3990        JR   ADR1
+ 4000 ADR2   LD   DE,#5800
+ 4010        ADD  HL,DE
+ 4020        LD   E,L
+ 4030        LD   D,H
+ 4040        SLA  D
+ 4050        SLA  D
+ 4060        SLA  D
+ 4070        RES  7,D
+ 4080        RET
+ 4090 
+ 4100 PRINT  LD   A,(DE)
+ 4110        CP   00
+ 4120        RET  Z
+ 4130        PUSH DE
+ 4140        CP   #0D
+ 4150        JR   Z,M0D
+ 4160        CP   #16
+ 4170        JR   Z,M16
+ 4180        PUSH AF
+ 4190        LD   HL,(LENT)
+ 4200        LD   DE,(KOORD0)
+ 4210        LD   A,E
+ 4220        CP   L
+ 4230        JR   C,MA5
+ 4240        LD   E,0
+ 4250        INC  D
+ 4260        LD   (KOORD0),DE
+ 4270 MA5    LD   A,D
+ 4280        CP   H
+ 4290        JR   C,MA6
+ 4300        POP  AF
+ 4310        POP  DE
+ 4320        RET
+ 4330 MA6    POP  AF
+ 4340        SUB  #20
+ 4350        LD   H,0
+ 4360        LD   L,A
+ 4370        ADD  HL,HL
+ 4380        ADD  HL,HL
+ 4390        ADD  HL,HL
+ 4400        LD   BC,63000
+ 4410        ADD  HL,BC
+ 4420        PUSH HL
+ 4430        LD   HL,(KOORDT)
+ 4440        LD   DE,(KOORD0)
+ 4450        ADD  HL,DE
+ 4460        PUSH HL
+ 4470        POP  BC
+ 4480        LD   HL,#5800
+ 4490        LD   DE,32
+ 4500 MA1    ADD  HL,DE
+ 4510        DJNZ MA1
+ 4520        ADD  HL,BC
+ 4530        SLA  H
+ 4540        SLA  H
+ 4550        SLA  H
+ 4560        RES  7,H
+ 4570        EX   DE,HL
+ 4580        POP  HL
+ 4590        LD   B,8
+ 4600 MA2    LD   A,(HL)
+ 4610        INC  HL
+ 4620        LD   (DE),A
+ 4630        INC  D
+ 4640        DJNZ MA2
+ 4650        POP  DE
+ 4660        INC  DE
+ 4670        LD   HL,(KOORD0)
+ 4680        INC  L
+ 4690        LD   (KOORD0),HL
+ 4700        JR   PRINT
+ 4710 M0D    LD   HL,(KOORD0)
+ 4720        INC  H
+ 4730        LD   L,0
+ 4740        LD   (KOORD0),HL
+ 4750        POP  DE
+ 4760        INC  DE
+ 4770        JR   PRINT
+ 4780 M16    POP  DE
+ 4790        INC  DE
+ 4800        LD   A,(DE)
+ 4810        LD   BC,(LENT)
+ 4820        INC  C
+ 4830        CP   C
+ 4840        RET  NC
+ 4850        LD   L,A
+ 4860        INC  DE
+ 4870        LD   A,(DE)
+ 4880        INC  B
+ 4890        CP   B
+ 4900        RET  NC
+ 4910        LD   H,A
+ 4920        LD   (KOORD0),HL
+ 4930        INC  DE
+ 4940        JP   PRINT
+ 4950 
+ 4960 
+ 4970 STRELA DI
+ 4980        LD   HL,#FE00
+ 4990        LD   D,H
+ 5000        LD   E,L
+ 5010        INC  E
+ 5020        LD   BC,#0100
+ 5030        LD   A,H
+ 5040        LD   I,A
+ 5050        DEC  A
+ 5060        LD   (HL),A
+ 5070        LDIR
+ 5080        LD   A,#C3
+ 5090        LD   (#FDFD),A
+ 5100        LD   HL,STR1
+ 5110        LD   (#FDFE),HL
+ 5120        EXX
+ 5130        PUSH HL
+ 5140        CALL STR37
+ 5150        CALL STR28
+ 5160        POP  HL
+ 5170        EXX
+ 5180        IM   2
+ 5190        EI
+ 5200        RET
+ 5210 
+ 5220 STR1   DI
+ 5230        PUSH AF
+ 5240        PUSH BC
+ 5250        PUSH DE
+ 5260        PUSH HL
+ 5270        PUSH IX
+ 5280        PUSH IY
+ 5290        EXX
+ 5300        PUSH BC
+ 5310        PUSH DE
+ 5320        PUSH HL
+ 5330        EXX
+ 5340        XOR  A
+ 5350        LD   (FIRE),A
+ 5360        LD   A,(STR40)
+ 5370        LD   B,A
+ 5380        LD   C,0
+ 5390        EXX
+ 5400        IN   A,(#1F)
+ 5410        BIT  7,A
+ 5420        JR   Z,STR2
+ 5430        XOR  A
+ 5440 STR2   LD   E,A
+ 5450        LD   BC,#EFFE
+ 5460        IN   D,(C)
+ 5470        XOR  A
+ 5480        BIT  0,D
+ 5490        JR   Z,STR3
+ 5500        BIT  4,E
+ 5510        JR   NZ,STR3
+ 5520        LD   B,#7F
+ 5530        IN   B,(C)
+ 5540        BIT  0,B
+ 5550        JR   NZ,STR4
+ 5560 STR3   OR   #10
+ 5570 STR4   BIT  3,D
+ 5580        JR   Z,STR5
+ 5590        BIT  0,E
+ 5600        JR   NZ,STR5
+ 5610        LD   B,#DF
+ 5620        IN   B,(C)
+ 5630        BIT  0,B
+ 5640        JR   NZ,STR6
+ 5650 STR5   OR   #01
+ 5660 STR6   BIT  4,D
+ 5670        JR   Z,STR7
+ 5680        BIT  1,E
+ 5690        JR   NZ,STR7
+ 5700        LD   B,#DF
+ 5710        IN   B,(C)
+ 5720        BIT  1,B
+ 5730        JR   NZ,STR8
+ 5740 STR7   OR   #02
+ 5750 STR8   BIT  2,D
+ 5760        JR   Z,STR9
+ 5770        BIT  2,E
+ 5780        JR   NZ,STR9
+ 5790        LD   B,#FD
+ 5800        IN   B,(C)
+ 5810        BIT  0,B
+ 5820        JR   NZ,STR10
+ 5830 STR9   OR   #08
+ 5840 STR10  BIT  1,D
+ 5850        JR   Z,STR11
+ 5860        BIT  3,E
+ 5870        JR   NZ,STR11
+ 5880        LD   B,#FB
+ 5890        IN   B,(C)
+ 5900        BIT  0,B
+ 5910        JR   NZ,STR12
+ 5920 STR11  OR   #04
+ 5930 STR12  EXX
+ 5940        LD   D,A
+ 5950        LD   HL,(XX)
+ 5960        BIT  4,D
+ 5970        JR   Z,STR23
+ 5980        LD   A,#01
+ 5990        LD   (FIRE),A
+ 6000 STR13  EXX
+ 6010        POP  HL
+ 6020        POP  DE
+ 6030        POP  BC
+ 6040        EXX
+ 6050        POP  IY
+ 6060        POP  IX
+ 6070        POP  HL
+ 6080        POP  DE
+ 6090        POP  BC
+ 6100        POP  AF
+ 6110        EI
+ 6120        JP   #0038
+ 6130        RET
+ 6140 STR14  BIT  0,D
+ 6150        JR   Z,STR15
+ 6160        INC  L
+ 6170 STR15  BIT  1,D
+ 6180        JR   Z,STR16
+ 6190        DEC  L
+ 6200 STR16  BIT  2,D
+ 6210        JR   Z,STR17
+ 6220        DEC  H
+ 6230 STR17  BIT  3,D
+ 6240        JR   Z,STR18
+ 6250        INC  H
+ 6260 STR18  LD   A,L
+ 6270        CP   249
+ 6280        JR   NZ,STR19
+ 6290        DEC  L
+ 6300 STR19  CP   #FF
+ 6310        JR   NZ,STR20
+ 6320        INC  L
+ 6330 STR20  LD   A,H
+ 6340        CP   178
+ 6350        JR   NZ,STR21
+ 6360        DEC  H
+ 6370 STR21  CP   #FF
+ 6380        JR   NZ,STR22
+ 6390        INC  H
+ 6400 STR22  LD   (XX),HL
+ 6410        JR   STR24
+ 6420 STR23  LD   A,D
+ 6430        AND  #0F
+ 6440        JR   NZ,STR25
+ 6450        LD   A,1
+ 6460        LD   (STR40),A
+ 6470        JR   STR13
+ 6480 STR24  DJNZ STR14
+ 6490        EXX
+ 6510        PUSH AF
+ 6520        PUSH HL
+ 6530        PUSH DE
+ 6540        PUSH BC       
+ 6550        PUSH IX
+ 6560        CALL SEARCH
+ 6570        POP  IX       
+ 6580        POP  BC
+ 6590        POP  DE
+ 6591        POP  HL
+ 6592        POP  AF
+ 6593        CALL STR37
+ 6600        CALL STR28
+ 6610        EXX
+ 6620        JR   STR26
+ 6630 STR25  EXX
+ 6640        CALL STR46
+ 6650        EXX
+ 6660        JR   STR14
+ 6670 STR26  LD   E,5
+ 6680        LD   A,(STR40)
+ 6690        CP   E
+ 6700        LD   E,A
+ 6710        JR   Z,STR27
+ 6720        LD   A,(STR39)
+ 6730        INC  A
+ 6740        LD   (STR39),A
+ 6750        CP   #0A
+ 6760        JR   NZ,STR27
+ 6770        INC  E
+ 6780        XOR  A
+ 6790        LD   (STR39),A
+ 6800 STR27  LD   A,E
+ 6810        LD   (STR40),A
+ 6820        JP   STR13
+ 6830 STR28  LD   IX,STR41
+ 6840        LD   B,#0F
+ 6850        LD   HL,STR29
+ 6860        PUSH HL
+ 6870        PUSH BC
+ 6880        XOR  A
+ 6890        LD   (STR34),A
+ 6900        LD   (STR35),A
+ 6910        LD   A,(XX)
+ 6920        AND  #07
+ 6930        LD   B,A
+ 6940        LD   DE,STR44
+ 6950        JR   STR30
+ 6960 STR29  LD   DE,STR45
+ 6970        LD   IX,STR41
+ 6980        LD   B,#0F
+ 6990        LD   A,#AA
+ 7000        LD   (STR34),A
+ 7010        LD   A,#AB
+ 7020        LD   (STR35),A
+ 7030        LD   A,(XX)
+ 7040        AND  #07
+ 7050        PUSH BC
+ 7060        LD   B,A
+ 7070 STR30  PUSH AF
+ 7080        LD   A,(DE)
+ 7090        LD   H,A
+ 7100        LD   L,0
+ 7110        XOR  A
+ 7120        CP   B
+ 7130        JR   Z,STR33
+ 7140 STR31  SRL  L
+ 7150        SRL  H
+ 7160        JR   NC,STR32
+ 7170        SET  7,L
+ 7180 STR32  DJNZ STR31
+ 7190 STR33  INC  DE
+ 7200        PUSH DE
+ 7210        PUSH HL
+ 7220        LD   A,(IX+0)
+ 7230        LD   L,A
+ 7240        LD   A,(IX+1)
+ 7250        LD   H,A
+ 7260        INC  IX
+ 7270        INC  IX
+ 7280        POP  DE
+ 7290        LD   A,(HL)
+ 7300        OR   D
+ 7310 STR34  XOR  D
+ 7320        LD   (HL),A
+ 7330        INC  L
+ 7340        LD   A,(HL)
+ 7350        OR   E
+ 7360 STR35  XOR  E
+ 7370        LD   (HL),A
+ 7380        POP  DE
+ 7390        POP  AF
+ 7400        POP  BC
+ 7410        DJNZ STR36
+ 7420        RET
+ 7430 STR36  PUSH BC
+ 7440        LD   B,A
+ 7450        JR   STR30
+ 7460 STR37  LD   IX,STR41
+ 7470        LD   B,#0F
+ 7480        LD   DE,STR42
+ 7490        LD   HL,(XX)
+ 7500        LD   (STR43),HL
+ 7510 STR38  CALL STR48
+ 7520        LD   (IX+0),L
+ 7530        LD   (IX+1),H
+ 7540        LD   A,(HL)
+ 7550        LD   (DE),A
+ 7560        INC  DE
+ 7570        INC  IX
+ 7580        INC  IX
+ 7590        INC  L
+ 7600        LD   A,(HL)
+ 7610        LD   (DE),A
+ 7620        LD   HL,(STR43)
+ 7630        INC  H
+ 7640        INC  DE
+ 7650        LD   (STR43),HL
+ 7660        DJNZ STR38
+ 7670        RET
+ 7680 STR39  DEFB #00
+ 7690 STR40  DEFB #01
+ 7700 STR41  DEFS #1E
+ 7710 STR42  DEFS #1E
+ 7720 STR43  DEFS #02
+ 7730 STR44  DEFB #00,#40,#60,#70,#78,#7C,#7E,#78
+ 7740        DEFB #48,#08,#04,#04,#02,#02,#00
+ 7750 STR45  DEFB #C0,#A0,#90,#88,#84,#82,#81,#86
+ 7760        DEFB #B4,#14,#0A,#0A,#05,#05,#02
+ 7770 STR46  LD   IX,STR41
+ 7780        LD   B,#0F
+ 7790        LD   DE,STR42
+ 7800 STR47  LD   A,(IX+0)
+ 7810        LD   L,A
+ 7820        LD   A,(IX+1)
+ 7830        LD   H,A
+ 7840        INC  IX
+ 7850        INC  IX
+ 7860        LD   A,(DE)
+ 7870        LD   (HL),A
+ 7880        INC  L
+ 7890        INC  DE
+ 7900        LD   A,(DE)
+ 7910        LD   (HL),A
+ 7920        INC  DE
+ 7930        DJNZ STR47
+ 7940        RET
+ 7950 STR48  LD   A,H
+ 7960        SRL  L
+ 7970        SRL  L        
+ 7980        SRL  L
+ 7990        AND  #38
+ 8000        ADD  A,A
+ 8010        ADD  A,A
+ 8020        ADD  A,L
+ 8030        LD   L,A
+ 8040        LD   A,H
+ 8050        RR   A
+ 8060        RR   A
+ 8070        RR   A
+ 8080        AND  #18
+ 8090        LD   C,A
+ 8100        LD   A,H
+ 8110        AND  #07
+ 8120        ADD  A,C
+ 8130        ADD  A,#40
+ 8140        LD   H,A
+ 8150        RET
+ 8160 
+ 8170 POSIT  LD   A,H
+ 8180        AND  #38
+ 8190        ADD  A,A
+ 8200        ADD  A,A
+ 8210        ADD  A,L
+ 8220        LD   L,A
+ 8230        LD   A,H
+ 8240        RRA
+ 8250        RRA
+ 8260        RRA
+ 8270        AND  #18
+ 8280        LD   C,A
+ 8290        LD   A,H
+ 8300        AND  #07
+ 8310        ADD  A,C
+ 8320        ADD  A,#40
+ 8330        LD   H,A
+ 8340        RET
+ 8350 
+ 8360 BORDER LD   HL,(KOORDT)
+ 8370        LD   DE,(LENT)
+ 8380        RL   H
+ 8390        RL   H
+ 8400        RL   H
+ 8410        CALL POSIT
+ 8420        PUSH HL
+ 8430        POP  IX
+ 8440        LD   HL,(KOORDT)
+ 8450        LD   A,H
+ 8460        ADD  A,D
+ 8470        LD   H,A
+ 8480        RL   H
+ 8490        RL   H
+ 8500        RL   H
+ 8510        DEC  H
+ 8520        CALL POSIT
+ 8530        LD   B,E
+ 8540        LD   A,#FF
+ 8550 BORD1  LD   (IX+0),A
+ 8560        LD   (HL),A
+ 8570        INC  HL
+ 8580        INC  IX
+ 8590        DJNZ BORD1
+ 8600        LD   HL,(KOORDT)
+ 8610        LD   DE,(LENT)
+ 8620        RL   D
+ 8630        RL   D
+ 8640        RL   D
+ 8650        DEC  D
+ 8660        DEC  D
+ 8670        LD   B,D
+ 8680        RL   H
+ 8690        RL   H
+ 8700        RL   H
+ 8710        INC  H
+ 8720 BORD2  PUSH HL
+ 8730        CALL POSIT
+ 8740        SET  7,(HL)
+ 8750        LD   C,E
+ 8760        DEC  C
+ 8770        DEC  C
+ 8780        INC  HL
+ 8790        XOR  A
+ 8800 BORD3  INC  HL
+ 8810        DEC  C
+ 8820        JR   NZ,BORD3
+ 8830        SET  0,(HL)
+ 8840        POP  HL
+ 8850        INC  H
+ 8860        DJNZ BORD2
+ 8870        RET
+ 8880 SEARCH SUB  A
+ 8890        LD   (NUM+1),A
+ 8900        LD   HL,#5800
+ 8910        LD   D,#00
+ 8920        LD   A,(XX)
+ 8930        SRL  A
+ 8940        SRL  A
+ 8950        SRL  A
+ 8960        LD   E,A
+ 8970        ADD  HL,DE
+ 8980        LD   A,(YY)
+ 8990        AND  #F8
+ 9000        SLA  A
+ 9010        RL   D
+ 9020        SLA  A
+ 9030        RL   D
+ 9040        LD   E,A
+ 9050        ADD  HL,DE
+ 9060 SEARC1 LD   (SE9+1),HL
+ 9070        LD   IX,(CASET)
+ 9080 SE2    LD   A,(IX+0)
+ 9090        OR   A
+ 9100        RET  Z
+ 9110        AND  #7F
+ 9120        LD   B,A
+ 9130        LD   E,(IX+1)
+ 9140        LD   D,(IX+2)
+ 9150        LD   HL,(KOORDT)
+ 9160        ADD  HL,DE
+ 9170        SUB  A
+ 9180        SRL  H
+ 9190        RR   A
+ 9200        SRL  H
+ 9210        RR   A
+ 9220        SRL  H
+ 9230        RR   A
+ 9240        ADD  A,L
+ 9250        LD   L,A
+ 9260        LD   DE,#5800
+ 9270        ADD  HL,DE
+ 9280        LD   D,H
+ 9290        LD   E,L
+ 9300 SE9    LD   HL,#0000
+ 9310        SBC  HL,DE
+ 9320 SE0    LD   A,H
+ 9330        OR   L
+ 9340        JR   NZ,SE5
+ 9350        BIT  7,(IX+0)
+ 9360        JR   NZ,SE4
+ 9370 SE3    LD   A,(IX+0)
+ 9380        XOR  #80
+ 9390        LD   (IX+0),A
+ 9400        AND  #7F
+ 9410        LD   L,A
+ 9420        SLA  D
+ 9430        SLA  D
+ 9440        SLA  D
+ 9450        RES  7,D
+ 9460        LD   B,#08
+ 9470 SE6    LD   H,L
+ 9480 SE7    LD   C,#FF
+ 9490        LD   A,H
+ 9500        CP   L
+ 9510        JR   NZ,$+4
+ 9520        LD   C,#7F
+ 9530        CP   #01
+ 9540        JR   NZ,$+4
+ 9550        LD   C,#FE
+ 9560        LD   A,(DE)
+ 9570        XOR  C
+ 9580        LD   (DE),A
+ 9590        INC  E
+ 9600        DEC  H
+ 9610        JR   NZ,SE7
+ 9620        LD   A,E
+ 9630        SUB  L
+ 9640        LD   E,A
+ 9650        INC  D
+ 9660        DJNZ SE6
+ 9670 SE4    LD   DE,#0003
+ 9680        ADD  IX,DE
+ 9690        JR   SE2
+ 9700 SE5    DEC  HL
+ 9710        DJNZ SE0
+ 9720        BIT  7,(IX+0)
+ 9730        JR   NZ,SE3
+ 9740        JR   SE4
+ 9750 CHOICE CALL STRELA
+ 9760 CHOIC1 HALT
+ 9780        LD   HL,(CASET)
+ 9790        LD   B,0
+ 9800 CHOIC2 LD   A,(HL)
+ 9810        INC  B
+ 9820        OR   A
+ 9830        JR   Z,CHOIC1
+ 9840        BIT  7,A
+ 9850        LD   DE,#0003
+ 9860        ADD  HL,DE
+ 9870        JR   Z,CHOIC2
+ 9880        LD   A,(FIRE)
+ 9890        OR   A
+ 9900        JR   Z,CHOIC1
+ 9910        LD   A,B
+ 9920        LD   (NUM+1),A
+ 9930        LD   HL,#0000
+ 9940        DI
+ 9950        CALL SEARC1
+ 9960        EI
+ 9970 NUM    LD   A,#00
+ 9980        RET
+ 9990 FREE   DEFB 0

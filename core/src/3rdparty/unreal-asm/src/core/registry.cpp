@@ -3,10 +3,14 @@
 #include <algorithm>
 
 #include "codecs/alasm/alasmcodec.h"
+#include "codecs/gens/genscodec.h"
+#include "codecs/masm/masmcodec.h"
 #include "codecs/sjasmplus/sjasmpluscodec.h"
 #include "codecs/tasm/tasmcodec.h"
+#include "codecs/xas/xascodec.h"
 #include "codecs/storm/stormcodec.h"
 #include "codecs/text/textcodec.h"
+#include "codecs/zeus/zeuscodec.h"
 #include "codecs/zxasm/zxasmcodec.h"
 
 namespace unrealasm
@@ -22,6 +26,10 @@ const CodecRegistry& CodecRegistry::Builtin()
         r.Add(std::make_unique<codecs::AlasmCodec>());
         r.Add(std::make_unique<codecs::ZxasmCodec>());
         r.Add(std::make_unique<codecs::StormCodec>());
+        r.Add(std::make_unique<codecs::MasmCodec>());
+        r.Add(std::make_unique<codecs::GensCodec>());
+        r.Add(std::make_unique<codecs::ZeusCodec>());
+        r.Add(std::make_unique<codecs::XasCodec>());
         return r;
     }();
     return registry;

@@ -21,7 +21,7 @@ struct TrdosFile
     uint16_t start = 0;
     uint16_t length = 0;
     uint8_t sectors = 0;
-    std::vector<uint8_t> data;  ///< `length` bytes (the catalog's length field)
+    std::vector<uint8_t> data;  ///< `length` bytes (the catalog's length field; fewer when it claims more than the sectors)
     std::vector<uint8_t> tail;  ///< the bytes after `length` up to the end of the last sector (kept for exact copies)
 
     /// Catalog hints for codec detection

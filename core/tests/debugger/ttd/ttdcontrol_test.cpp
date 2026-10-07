@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <string>
@@ -16,11 +17,14 @@
 #include <vector>
 
 #include "_helpers/testpathhelper.h"
+#include "common/filehelper.h"
 #include "_helpers/testwaithelper.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "debugger/ttd/ttdexternalevents.h"
+#include "debugger/ttd/ttdrecordingfolders.h"
+#include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/core.h"
@@ -703,6 +707,62 @@ TEST_P(TTDControl_Test, StartArmsTheBlackBox)
     ASSERT_TRUE(Run("stop").Ok());
     ASSERT_TRUE(Run("start").Ok());
     EXPECT_FALSE(Bool(Run("status"), "black_box")) << "an explicit recording";
+}
+
+/// Step 3c (owner decision 2026-10-06): a black box that restarts - after turbo
+/// or a host speed, after a machine change - keeps its previous recording's
+/// folder on disk (a new session in memory, no linked sessions). "load" opens
+/// such a folder, given the folder or any of its segment files: its segments
+/// are joined into one session
+TEST_P(TTDControl_Test, ARestartedBlackBoxLeavesItsRecordingToLoad)
+{
+    if (!GetParam())
+        GTEST_SKIP() << "the black box needs the engine";
+    const std::string root = TestPathHelper::GetUniqueTestScratchPath("ttd-black-box");
+    _controller->SetShadowRecordingRoot(root);
+    ASSERT_TRUE(Run("start", {{"black_box", "true"}, {"minutes", "1"}}).Ok());
+    _emulator->RunNFrames(6, /*skipBreakpoints=*/true);
+    const std::string beforeTurbo = _controller->ShadowRecordingFolder();
+    ASSERT_FALSE(beforeTurbo.empty());
+
+    // Turbo stops it; off again, a new session in a new folder, the old one kept
+    FeatureManager* features = _emulator->GetFeatureManager();
+    ASSERT_TRUE(features->setFeature(Features::kTurboMode, true));
+    ASSERT_TRUE(features->setFeature(Features::kTurboMode, false));
+    ASSERT_TRUE(_controller->IsRecording());
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    const std::string afterTurbo = _controller->ShadowRecordingFolder();
+    EXPECT_NE(afterTurbo, beforeTurbo);
+    const auto kept = ttd::TTDRecordingFolder::Open(beforeTurbo);
+    ASSERT_NE(kept, nullptr) << "the recording before the turbo stays on disk";
+    EXPECT_FALSE(kept->Segments().empty());
+
+    // A machine change the same way: the session ends, its folder stays
+    _controller->OnConfigurationChange(ttd::TTDConfigChangeKind::RomReload, "test: ROM reload");
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    ASSERT_TRUE(_controller->IsRecording()) << "the black box records again after the change";
+    EXPECT_NE(ttd::TTDRecordingFolder::Open(afterTurbo), nullptr) << "the recording before the change stays";
+
+    // Load the first one by its folder, then by one of its segment files
+    ASSERT_TRUE(Run("stop").Ok());
+    TTDReply loaded = Run("load", {{"path", beforeTurbo}});
+    ASSERT_TRUE(loaded.Ok()) << loaded.message;
+    EXPECT_GE(Int(loaded, "checkpoint_count"), 6);
+    loaded = Run("load", {{"path", kept->Segments().front()}});
+    ASSERT_TRUE(loaded.Ok()) << loaded.message;
+    EXPECT_GE(Int(loaded, "checkpoint_count"), 6);
+
+    // An explicit recording started again leaves nothing behind
+    ASSERT_TRUE(Run("start").Ok());
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    const std::string explicitFolder = _controller->ShadowRecordingFolder();
+    ASSERT_TRUE(Run("stop").Ok());
+    // The next folder may take the same name (a second's resolution): a marker tells them apart
+    const std::string marker = explicitFolder + "/marker";
+    std::ofstream(FileHelper::ToFsPath(marker)) << "explicit";
+    ASSERT_TRUE(Run("start").Ok());
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+    EXPECT_FALSE(FileHelper::FileExists(marker)) << "an explicit session's folder goes with it";
 }
 
 INSTANTIATE_TEST_SUITE_P(Backends, TTDControl_Test, ::testing::Values(false, true),

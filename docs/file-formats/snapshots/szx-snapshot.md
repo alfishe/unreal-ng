@@ -99,7 +99,7 @@ Snapshot overview and how loading works: [README](README.md).
 must be the running one: 16K and NTSC 48K are read as a 48K, 128Ke as a 128K, +3e as a +3, and a Scorpion on a ProfScorp or a smaller
 Pentagon on a bigger one is allowed with a warning. Any other model is refused with both named
 (*"the snapshot was saved on a Pentagon 512K, the running machine is a ZX-Spectrum 128k: create a Pentagon 512K to load it"*).
-The Qt window instead switches to the file's model first. The CPU position inside the frame is converted from "T-states since the
+The Qt window instead switches to the file's model first (choosing the file is the request). Through automation the same switch is opt-in: `switch_model=true` on the load (WebAPI, CLI `--switch`, Python, MCP `load_software`), or `[SNAPSHOT] SwitchModel=1` in the configuration makes it the default; an explicit `switch_model=false` always refuses. The switch replaces the emulator (the answer carries the new `emulator_id`). The CPU position inside the frame is converted from "T-states since the
 interrupt" to the emulator's own frame counting. The load report lists every block with its outcome: *applied*,
 *approximated* (applied as far as this machine can hold it), *ignored* or *unknown*.
 

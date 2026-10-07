@@ -381,7 +381,6 @@ bool TimeTravelController::StartRecording()
 void TimeTravelController::StopRecording()
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
-    _queuedSnapshotLoad = nullptr;   // a load waiting for the boundary runs without the recording
     if (_state != TTDSessionState::Recording)
     {
         // Compress whatever coverage is still accumulating, so size reporting
@@ -510,7 +509,6 @@ void TimeTravelController::EndDebuggerLiveHistory()
 void TimeTravelController::InvalidateSession(const char* reason)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
-    _queuedSnapshotLoad = nullptr;
     _stoppedEndValid = false;
     ClearFrameCache();
 
@@ -1159,8 +1157,6 @@ std::string TimeTravelController::RecordingGuard(TTDGuardedAction action) const
 
     switch (action)
     {
-        case TTDGuardedAction::LoadSnapshot:
-            return {};   // part of the recording (D10, QueueSnapshotLoad)
         case TTDGuardedAction::LoadRom:
         case TTDGuardedAction::SwitchGsCard:
         case TTDGuardedAction::SwitchModel:
@@ -1213,13 +1209,13 @@ void TimeTravelController::OnFrameBoundary()
         }
     }
 
-    // A machine change ended the black box's session: the new one starts here,
-    // on the changed machine
-    if (_blackBoxRestart && _state == TTDSessionState::Idle)
+    // The session ended (a reset, a snapshot load, a machine change) and a new one is due (a black box, or the
+    // `ttdrestart` feature): it starts here, on the machine as it now is
+    if (_restartPending && _state == TTDSessionState::Idle)
     {
-        _blackBoxRestart = false;
-        if (_blackBox && StartRecording())
-            MLOGINFO("TimeTravelController: the black box records again after a machine change (a new session)");
+        _restartPending = false;
+        if ((_blackBox || RestartFeatureOn()) && StartRecording())
+            MLOGINFO("TimeTravelController: a new session started after the previous one ended");
         return;
     }
 
@@ -1251,33 +1247,6 @@ void TimeTravelController::OnFrameBoundary()
         const uint64_t endedFrame = _context->emulatorState.frame_counter;
         if (_enableCoverageIndex && endedFrame > 0)
             _coverageIndex.SealFrame(endedFrame - 1);
-
-        // D10: a snapshot load queued for this boundary replaces the machine
-        // here, and the checkpoint below takes the loaded state. Machine time
-        // goes on: the loader's reset zeroed the frame counter and the T-state
-        // count, which the frame table and every position follow
-        if (_queuedSnapshotLoad)
-        {
-            const std::function<void()> load = std::move(_queuedSnapshotLoad);
-            _queuedSnapshotLoad = nullptr;
-            EmulatorState& st = _context->emulatorState;
-            const uint64_t frame = st.frame_counter;
-            const uint64_t base = st.t_states;
-            load();
-            st.frame_counter = frame;
-            st.t_states = base;
-            // The frame start ran before the load (MainLoop::CompleteFrame) and the
-            // loader's reset cleared the device frame bases: take them from the
-            // loaded state, as a load outside a recording does
-            if (_context->pEmulator)
-                _context->pEmulator->RestartFrame();
-            // The cut sits at the boundary itself (the loaded CPU may stand a few T-states in)
-            TTDPendingFact cut;
-            cut.at = {frame, 0};
-            cut.ev.kind = TTDEventKind::SnapshotLoad;
-            _shadowFacts.push_back(cut);
-            _shadowRescan = true;   // the loader wrote memory behind the dirty tracker
-        }
 
         TTDCheckpoint cp;
         if (!CaptureNow(cp))
@@ -1401,7 +1370,7 @@ void TimeTravelController::SetBlackBox(bool on, uint32_t minutes)
     _blackBox = on;
     _blackBoxMinutes = minutes ? minutes : 5;
     _blackBoxSuspended = false;
-    _blackBoxRestart = false;
+    _restartPending = false;
 }
 
 bool TimeTravelController::AccelerationActive() const
@@ -1431,6 +1400,7 @@ void TimeTravelController::OnAccelerationChanging(bool accelerating)
     if (_blackBoxSuspended && !AccelerationActive() && _state != TTDSessionState::Recording)
     {
         _blackBoxSuspended = false;
+        KeepShadowFiles();   // what led up to the acceleration stays loadable
         if (StartRecording())
             MLOGINFO("TimeTravelController: the black box records again (a new session)");
     }
@@ -1452,15 +1422,41 @@ void TimeTravelController::OnConfigurationChange(TTDConfigChangeKind kind, const
 
 void TimeTravelController::EndSessionForMachineChange(const char* reason)
 {
-    const bool blackBoxRecorded = _blackBox && (_state == TTDSessionState::Recording || _blackBoxSuspended);
-    if (_state == TTDSessionState::Recording || _recordingPaused)
+    EndSessionImpl(reason, /*keepHistory=*/false);   // another machine: the history belongs to the old one
+}
+
+void TimeTravelController::EndSession(const char* reason)
+{
+    EndSessionImpl(reason, /*keepHistory=*/true);   // the same machine: its history stays browsable
+}
+
+bool TimeTravelController::RestartFeatureOn() const
+{
+    FeatureManager* fm = _context ? _context->pFeatureManager : nullptr;
+    return fm && fm->isEnabled(Features::kTTDRestart);
+}
+
+// The one rule (D42, owner 2026-10-06): a reset, an autostart, a snapshot load and a change of the machine itself END the
+// recording session. Nothing is refused and nothing continues "inside" the recording; the recording stops cleanly (the
+// features it switched on go back off), the history of the same machine stays browsable, and a new session starts only by
+// setting: the `ttdrestart` feature, or the black box which always records
+void TimeTravelController::EndSessionImpl(const char* reason, bool keepHistory)
+{
+    const bool wasRecording = _state == TTDSessionState::Recording || _recordingPaused;
+    const bool blackBoxRecorded = _blackBox && (wasRecording || _blackBoxSuspended);
+    if (wasRecording)
         StopRecording();   // cleanly: the machine parked, the features it switched on back off
-    InvalidateSession(reason);
-    _lastStopReason = "machine-change";
+    if (blackBoxRecorded)
+        KeepShadowFiles();   // what led up to the end stays loadable
+    if (keepHistory)
+        OnMachineReset();   // the machine leaves the recorded timeline (kept)
+    else
+        InvalidateSession(reason);
+    _lastStopReason = keepHistory ? reason : "machine-change";
     _blackBoxSuspended = false;
-    _blackBoxRestart = blackBoxRecorded;
-    if (_blackBoxRestart)
-        MLOGINFO("TimeTravelController: '%s' ended the black box's session; a new one starts at the next frame", reason);
+    _restartPending = blackBoxRecorded || (wasRecording && RestartFeatureOn());
+    if (_restartPending)
+        MLOGINFO("TimeTravelController: '%s' ended the session; a new one starts at the next frame", reason);
 }
 
 bool TimeTravelController::CutAtFrameStart(uint64_t frame) const
@@ -1470,33 +1466,13 @@ bool TimeTravelController::CutAtFrameStart(uint64_t frame) const
 
 void TimeTravelController::OnLoad(TTDLoadKind kind, const char* reason)
 {
-    // D10: a snapshot outside a recording replaces the live machine only; the
-    // history stays, the machine leaves it as after a reset. A recording
-    // paused for browsing ends where it paused (its history kept)
-    if (kind == TTDLoadKind::Snapshot && _state != TTDSessionState::Recording)
+    // A snapshot load ends the session like a reset (D42); a medium (tape, disk) drops it
+    if (kind == TTDLoadKind::Snapshot && !IsDebuggerLive())   // a debugger's rolling history is dropped by any outside change
     {
-        if (_recordingPaused)
-            StopRecording();
-        OnMachineReset();
+        EndSession(reason);
         return;
     }
     InvalidateSession(reason);
-}
-
-bool TimeTravelController::QueueSnapshotLoad(std::function<void()> load)
-{
-    // A recording paused at its end goes on with the load, as with an edit (D9)
-    if (_recordingPaused && _state == TTDSessionState::Detached && CurrentPosition() == _pausedEnd)
-        ContinueRecordingAt(_pausedEnd);
-    if (!load)
-    {
-        _queuedSnapshotLoad = nullptr;   // the caller withdraws it
-        return false;
-    }
-    if (_state != TTDSessionState::Recording)
-        return false;
-    _queuedSnapshotLoad = std::move(load);
-    return true;
 }
 
 bool TimeTravelController::ConsumeAutoPauseRequest()
@@ -3867,6 +3843,10 @@ std::string TimeTravelController::ShadowRecordingFolder() const
 
 void TimeTravelController::FinishShadowFiles()
 {
+    // The facts, the coverage and the bookmarks as they are at the end: a
+    // finished recording's folder loads like a saved session
+    if (_shadowWriter && _shadowEngine)
+        _shadowWriter->SetHolderStreams(SessionHolderStreams(/*declareAll=*/true));
     if (_shadowWriter && _shadowEngine && !_shadowWriter->Finish(*_shadowEngine))
         MLOGWARNING("TimeTravelController: the shadow session's files: %s", _shadowWriter->Error().c_str());
     _shadowWriter.reset();   // the folder stays the session's until a new one starts or it is invalidated
@@ -3877,6 +3857,16 @@ void TimeTravelController::DiscardShadowFiles()
     _shadowWriter.reset();   // its thread stops; the files go with the folder
     if (_shadowFolder)
         _shadowFolder->Discard();
+    _shadowFolder.reset();
+}
+
+void TimeTravelController::KeepShadowFiles()
+{
+    FinishShadowFiles();
+    if (_shadowFolder && _shadowFolder->Segments().empty())
+        _shadowFolder->Discard();
+    else if (_shadowFolder)
+        MLOGINFO("TimeTravelController: the black box's previous recording stays in %s", _shadowFolder->Path().c_str());
     _shadowFolder.reset();
 }
 
@@ -4216,6 +4206,7 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
                 std::random_device random;
                 for (uint8_t& b : params.uuid)
                     b = static_cast<uint8_t>(random());
+                params.holderStreams = SessionHolderStreams(/*declareAll=*/true);
                 TTDRecordingFolder* folder = _shadowFolder.get();
                 _shadowWriter = std::make_unique<TTDRecordingWriter>(
                     [folder](uint32_t n) { return folder->SegmentPath(n); }, params);

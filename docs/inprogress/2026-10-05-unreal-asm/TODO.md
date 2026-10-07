@@ -44,13 +44,25 @@ phase; master only after the owner's review.
 - [x] A5 IR, sjasmplus frontend + backend, alasm frontend (ALASM → sjasmplus) (2026-10-05, branch `unreal-asm`): IR v1 (`ir.h`), `Convert` / `ConvertProject`, `zxasm convert` (file, `--from`, whole disk with `INCBIN` files); The Link 18 / 19 objects byte-equal with ALASM's, a constructs sample byte-equal with ALASM 5.09 in the emulator, 508 / 513 sources unchanged through the sjasmplus round trip; example `convert-dialect`; testdata `dialects/` ([research-alasm-to-sjasmplus.md](research-alasm-to-sjasmplus.md))
   - [x] A5b `tasm` frontend, versions 3 / 4.0 / 4.12 (TASM → sjasmplus, D-9) (2026-10-05, branch `unreal-asm-next`): the GS 1.04 ROM sources assemble to the ROM byte for byte, TASM 4.12's SINUS equal to what TASM 4.12 built in the emulator, 99 sources unchanged through the round trip; macro expansion shared (`common/macros`); check scripts in `tools/unreal-asm/` ([research-tasm-to-sjasmplus.md](research-tasm-to-sjasmplus.md))
   - [ ] TASM 4.12 `.PAGE` / `.RUN`; its compressed HyperText manual (in `tasm.ovl`)
+  - [ ] the `tasm` detector takes some code files (type C, start #8000) for TASM text: weigh the catalog type and start
   - [x] TASM 5.x codec versions `5.0` / `5.5` (structural lines, both beta builds' tables, the editor's layout), the 5.0 assembler checked in the emulator (2026-10-06, [research-tasm-to-sjasmplus.md](research-tasm-to-sjasmplus.md) §5)
   - [ ] TASM 5.5 directives (IF / MACRO / REPT ...): meaning unknown, its beta assembler refuses them
   - [ ] a frontend for the M80-style text dialect of PC cross assemblers (`*D-`, `*Z80` option lines, `NAME$` local labels)
-  - [ ] `storm` and `zxasm` frontends
+  - [x] `storm` frontend, STORM 1.3 (STORM → sjasmplus) (2026-10-06, branch `unreal-asm-a6`): STORM 1.3's own source rebuilt equal to the released program, two test programs equal to what STORM 1.3 built in the emulator; codec fix: `PO PE P M` imply `JP` ([research-storm-to-sjasmplus.md](research-storm-to-sjasmplus.md))
+  - [x] `zxasm` frontend, ZX-ASM 2.x / 3.x / ZAsm (ZX-ASM → sjasmplus) (2026-10-06, branch `unreal-asm-a6`): four programs equal to what ZAsm 3.15 built in the emulator; project-wide macros (`ParseInProject`), ZX-ASM's `IFUSED`; detector fixes in tasm / zxasm ([research-zxasm-to-sjasmplus.md](research-zxasm-to-sjasmplus.md))
+  - [ ] ZX-ASM `MAKE`, `~text~` with `LOADTAB`, `ENDA`
+  - [ ] ALASM: a label `-` in column 0 (sources use it several times per file: an anonymous label?); research and convert
   - [ ] ALASM `DISPLAY` output differs from sjasmplus' (research-alasm-to-sjasmplus.md §7)
-- [ ] A6 more frontends / backends; research codecs xas, masm, gens3, zeus, ads
+- [x] A6 more frontends / backends; research codecs xas, masm, gens3, zeus, ads (2026-10-06, branch `unreal-asm-a6`)
+  - [x] `pasmo` backend (2026-10-06, branch `unreal-asm-a6`): the oracle programs and the GS ROM equal through pasmo; `crosscheck.py` 0 differences against sjasmplus on the collection's disks ([research-pasmo-backend.md](research-pasmo-backend.md))
+  - [x] `z88dk` (z80asm) backend over the writer shared with pasmo (2026-10-06): the oracle programs equal; `crosscheck.py --targets z88dk` 329 equal on the collection, z80asm's limits in [research-z88dk-backend.md](research-z88dk-backend.md) §3
+  - [x] research of the XAS, MASM, GENS / Devpac and ZEUS formats (2026-10-06): every corpus file byte-exact with reference codecs, editors checked in the emulator; ADS is a disk utility whose sources are ZEUS beta 1.1 files; materials in the collection
+  - [x] codec `masm`, versions 1.0 demo / 1.1 / 2.0 / 3.0 (2026-10-06): MASM 1.1's own source and typed files of every version byte-exact, canonical 100 %; testdata `masm/` ([research-masm.md](research-masm.md))
+  - [x] codec `gens`, versions GENS1 / GENS2-4 (2026-10-06): five real sources and GENS3 / GENS4 saves byte-exact, the editor's compression reproduces every real and typed line; testdata `gens/` ([research-gens.md](research-gens.md))
+  - [x] codec `zeus`, versions 1983 / GG / PHT (2026-10-06): ADS 2.0 sources (the "ads" format), ZEUS v7.E help, ZXDB Zeus Routines and a typed probe byte-exact, tokenizer 4062 / 4062 lines; testdata `zeus/` ([research-zeus.md](research-zeus.md))
+  - [x] codec `xas`, versions 4.18 / 5.05 / 7.43 / 7.43c / 9.07m / 9.10 (2026-10-06): all 18 XAS sources found byte-exact with their sector slack, packer 4794 / 4913 lines (the rest XASCII's lower case); `CatalogHints::slack`, hobeta / TRD readers accept a length beyond the sectors; line numbers of GENS / ZEUS in `SourceLine::number`; testdata `xas/` ([research-xas.md](research-xas.md))
 - [ ] A7 emulator adapters and surfaces, Qt disk browser, recipe
+  - [ ] a tape (TAP / TZX) container: GENS P blocks and T's multi-block include files, ZEUS tape saves
 - [ ] A8 symbols on the library (symbols S1-S5)
 - [ ] A9 benchmarks, user docs
 - [ ] P2: memory bridge B0-B6 ([memory-bridge.md](memory-bridge.md)), design only for now

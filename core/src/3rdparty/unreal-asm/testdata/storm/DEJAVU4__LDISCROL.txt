@@ -60,7 +60,7 @@ METK4   LD SP,0;           10    (В    )
 METK1   LD DE,0;           10    (   Г )
         LD (METK1+1),HL;   16    (    О)
 .32     LDI;              16*32 (     )
-        CALL PE,METK4;       10    ( 578 )
+        JP PE,METK4;       10    ( 578 )
 
         LD SP,#5800;       10
 .16     PUSH BC;           11*16

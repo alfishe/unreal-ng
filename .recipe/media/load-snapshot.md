@@ -89,11 +89,14 @@ Snapshot format notes:
   model replaces the running machine by that model first, as the Machine menu
   does (media follow), then loads. The log
   lists what each block did (applied, approximated, ignored). Saving picks the
-  format by the extension; ATM, ZX-Evo, Profi and TSConf have no SZX machine id
+  format by the extension; an SZX saved on another model than the running one is refused (both named,
+  `modelMismatch`, HTTP 409) unless the call has `switch_model: true` or the configuration has `[SNAPSHOT]
+  SwitchModel=1`: then the machine is replaced by the file's model like for an SPG (new `emulator_id`,
+  `model_switched`); `switch_model: false` always refuses. ATM, ZX-Evo, Profi and TSConf have no SZX machine id
   and cannot be saved as `.szx` yet.
 - `.spg` (TS-Conf "Spectrum Prog", the TS-Conf SDK's program format, v1.0 and
   v1.1) — runs on the TS-Conf machine only (`TSL`). `snapshot/load` takes
-  `switch_model` (default `true`): on another model the emulator switches to
+  `switch_model` (not given: `true` for an SPG): on another model the emulator switches to
   `TSL` first and the reply carries a NEW `emulator_id` (plus `model_switched`,
   `previous_emulator_id`, `model`); use that id from then on. With
   `"switch_model": false` (or `?switch_model=false`) the load is refused with
@@ -254,12 +257,10 @@ HTTP 422 = the target cannot hold the state (e.g. a 128K program into a 48K);
 
 ## Interactions to know
 
-- **TTD**: on the engine (`GET /ttd/status` -> `backend: "engine"`, the
-  default) a snapshot load while recording is part of the recording - it
-  happens at the next frame boundary, and a seek before / after it shows the
-  old / the loaded program; outside a recording the history stays. On v1 it
-  is refused while recording and drops a stopped session (details in
-  [ttd-recording.md](../analysis/ttd-recording.md)).
+- **TTD**: a snapshot load is never refused by a recording: it ENDS the
+  session like a reset does (the one TTD rule), the history stays browsable
+  and no new session starts unless the `ttdrestart` feature is on (or a black
+  box is armed). Details in [ttd-recording.md](../analysis/ttd-recording.md).
 - **Media state**: `.sna`/`.z80` do not carry disks/tapes — re-insert media
   after loading if the program expects it. `.szx` does: saving links the
   file-backed disks (Beta 128 TRD / SCL / FDI / UDI, +3 DSK) and the tape with

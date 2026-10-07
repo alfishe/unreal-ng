@@ -1,0 +1,34 @@
+        LD      A,(HL)
+label   ld a,b ;ld a,b AND LD A,B
+        defb "LD A",1,"ld"
+X  Y   Z    W
+  ;  TWO   BLANKS
+LDIR LDIRX LDI.LD LD_A LA LD1
+        db "AF'",AF' ,af'
+START:  EXA
+        ld a,"A"
+        LD A,"A"
+PP      equ 10 ; EQU
+MIXED   lD A,B
+
+!A "A #A $A %A &A 'A (A )A *A +A ,A -A .A /A
+:A ;A <A =A >A ?A @A ^A _A 0A 1A 2A 3A 4A 5A
+6A 7A 8A 9A
+A! A" A# A$ A% A& A' A( A) A* A+ A, A- A. A/
+A: A; A< A= A> A? A@ A^ A_ A0 A1 A2 A3 A4 A5
+A6 A7 A8 A9
+(LD X ,LD X +LD X -LD X :LD X ;LD X "LD X 'LD X #LD X
+.LD X =LD X *LD X /LD X LD X @LD X $LD X %LD X &LD X
+LD A
+LD  A
+LD   A
+ A
+  A
+A
+A
+  A
+EXA AF' AF'' AF
+DOWN HL:UP DE:SYSTEM:STOPKEY
+LDIR:LDIR;LD,LD(LD)LD+LD
+1LD 1A A1 _A A_ .A A.
+

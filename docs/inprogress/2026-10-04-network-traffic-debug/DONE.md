@@ -1,4 +1,4 @@
-# TODO - network traffic for the debuggers
+# DONE - network traffic for the debuggers (PLAN #91 retired)
 
 - [x] Design ([design.md](design.md)): one tap in the virtual network (after the one-door refactor, master 81c12ef21);
   owner Q1 always ring + start / stop file, Q2 operations in our list + synthetic packets in pcapng, Q3 TCP port + extcap

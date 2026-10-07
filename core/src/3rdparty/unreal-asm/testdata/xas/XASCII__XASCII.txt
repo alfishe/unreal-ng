@@ -1,0 +1,1291 @@
+debug   EQU   1; Define for don't restart
+;                DOS
+
+        ORG   #6000
+        ENT
+
+re      LD    BC,#1005
+        LD    DE,0
+        XOR   A
+        OUT   (#fe),A
+        LD    (IY+#30),A
+        LD    HL,#a000
+        CALL  dos
+        LD    HL,#a8f5
+        LD    DE,nam
+        LD    BC,8
+        LDIR
+        LD    HL,#a000
+        LD    E,L
+        LD    BC,16
+c1      LD    A,(HL)
+        OR    A
+        JR    Z,cd
+        ADD   HL,BC
+        INC   E
+        JR    c1
+cd      LD    A,E
+        LD    (num),A
+        CP    19
+        JR    C,c2
+        LD    A,18
+c2      OR    A
+        JR    NZ,c3
+        LD    HL,n1
+        LD    DE,#a000
+        LD    BC,9
+        LDIR
+        LD    A,1
+        LD    (num),A
+c3      LD    (mx1),A
+        LD    (mx2),A
+        LD    A,1
+        LD    (pos),A
+        LD    HL,#a000
+        LD    (st),HL
+
+fresh
+        LD    A,#10
+        OUT   (#fd),A
+        LD    HL,#4000
+        LD    DE,#4001
+        LD    BC,#300
+f1      PUSH  BC
+        LD    A,4
+f2      LD    (HL),#55
+        LD    B,1
+        LDIR
+        LD    (HL),#aa
+        LD    B,1
+        LDIR
+        DEC   A
+        JR    NZ,f2
+        POP   BC
+        DJNZ  f1
+        LD    (HL),4
+        LD    BC,#2ff
+        LDIR
+        LD    DE,#4022
+        LD    B,8
+        LD    HL,nam
+nm      LD    A,(HL)
+        INC   HL
+        CALL  pr
+        DJNZ  nm
+        LD    HL,#5822
+        LD    DE,#5823
+        LD    BC,7
+        LD    (HL),49
+        LDIR
+        LD    HL,msg
+        LD    DE,#4020
+        LD    IX,#5820
+        LD    A,#4f
+        LD    (col),A
+m1      CALL  r1
+        INC   HL
+        LD    A,(HL)
+        CP    "%"
+        JR    NZ,m1
+        LD    HL,hlp
+        LD    DE,#40c0
+        LD    IX,#58c0
+        LD    A,#18
+        LD    (col),A
+m1      CALL  r1
+        INC   HL
+        LD    A,(HL)
+        CP    "%"
+        JR    NZ,m1
+;
+c2      CALL  show
+c3      CALL  mx2
+;
+mloop   CALL  info
+        CALL  gc
+        CP    "9"
+        JR    Z,up
+        CP    "q"
+        JR    Z,up
+        CP    11
+        JR    NZ,nup
+up      LD    HL,pos
+        DEC   (HL)
+        JR    NZ,c3
+        INC   (HL)
+        LD    HL,(st)
+        LD    BC,0-16
+        ADD   HL,BC
+        LD    A,H
+        CP    #a0
+        JR    C,mloop
+        LD    (st),HL
+        JR    c2
+nup     CP    "8"
+        JR    Z,dn
+        CP    "a"
+        JR    Z,dn
+        CP    10
+        JR    NZ,ndn
+dn      LD    HL,pos
+        LD    A,(mx1)
+        CP    (HL)
+        JR    Z,dn1
+        INC   (HL)
+        JR    c3
+dn1     LD    HL,(st)
+        LD    BC,#a000
+        SBC   HL,BC
+        SRL   H
+        RR    L
+        SRL   H
+        RR    L
+        SRL   H
+        RR    L
+        SRL   H
+        RR    L
+        LD    A,(pos)
+        ADD   A,L
+        LD    D,A
+        LD    A,(num)
+        SUB   D
+        JR    Z,mloop
+        LD    HL,(st)
+        LD    BC,16
+        ADD   HL,BC
+        LD    (st),HL
+        JR    c2
+ndn     CP    "e"
+        JR    NZ,nexit
+        LD    HL,sure
+        LD    A,#68
+        CALL  r2
+lp1     CALL  gc
+        OR    #20
+        CP    "n"
+        JP    Z,fresh
+        CP    "y"
+        JR    NZ,lp1
+
+        IFNZ  debug
+        RET
+        !CONT
+
+        LD    A,#10
+        OUT   (#fd),A
+        LD    HL,0
+        PUSH  HL
+        JP    #3d2f
+sure
+"Are You sure (Y/N)?↑"
+
+nexit   CP    "1"
+        JR    NZ,npg3
+        LD    A,#53
+        LD    HL,fl1
+page    LD    (bank1+1),A
+        LD    (st),HL
+        JP    recode
+npg3    CP    "2"
+        JR    NZ,nsel
+        LD    A,#54
+        LD    HL,fl2
+        JR    page
+nsel    CP    "r"
+        JP    Z,re
+        CP    "R"
+        JP    Z,re
+noall   CP    13
+        JR    Z,sel
+        CP    " "
+        JR    Z,sel
+        CP    "0"
+        JP    NZ,mloop
+sel     LD    HL,0
+        LD    DE,23773
+        LD    BC,9
+        LDIR
+        LD    IX,(st)
+        LD    A,(IX+8)
+        CP    "X"
+st      EQU   sel+1
+        LD    A,#54
+        LD    (bank1+1),A
+        JP    Z,loadxas; else load ASCII
+
+        XOR   A
+        LD    (er1+1),A
+        LD    (er2+1),A
+        LD    L,(IX+11)
+        LD    H,(IX+12)
+        LD    (ln+1),HL
+        LD    E,(IX+14)
+        LD    D,(IX+15)
+        LD    B,(IX+13)
+        LD    C,5
+        LD    HL,filebuffer
+        PUSH  HL
+        CALL  dos
+        CALL  wait
+ln      LD    HL,0
+        POP   DE
+        ADD   HL,DE
+        LD    (HL),#0d
+        INC   HL
+        LD    (HL),0
+        PUSH  DE
+        LD    A,#54
+        OUT   (#fd),A
+        LD    HL,begin
+        LD    DE,#c000
+        LD    BC,#24
+        LDIR
+        POP   HL
+        LD    A,#10
+        OUT   (#fd),A
+cd2loop LD    (de2+1),DE
+        LD    BC,43
+        LD    DE,txtfield
+cod1    LD    A,(HL)
+        CP    #0d
+        JR    Z,eoln
+        OR    A
+        JR    Z,endcode
+        CP    #80
+        JP    C,cod_ok
+        LD    (HL),"?"
+        LD    (er2+1),A
+        LD    (errflag+1),A
+        JP    nspace
+cod_ok
+        CP    #0a
+        JR    Z,ignore
+        CP    #09
+        JP    NZ,nspace
+        LD    (HL)," "
+nspace  LDI
+        JP    PE,cod1
+        JR    error
+ignore  INC   HL
+        JR    cod1
+error   LD    (errflag+1),A
+        LD    (er1+1),A
+        JP    cd1end
+eoln    INC   HL
+        LD    A," "
+        INC   C
+        DEC   C
+eoln1   JR    Z,cd1end
+        LD    (DE),A
+        INC   DE
+        DEC   C
+        JP    eoln1
+cd1end  PUSH  HL
+        CALL  pack
+        LD    HL,tokened
+de2     LD    DE,0
+        LD    A,#54
+        OUT   (#fd),A
+cd2     LD    A,(HL)
+        CP    #0e
+        JR    C,cd2end
+        LDI
+        JP    cd2
+cd2end  LD    A,#0d
+errflag LD    C,0
+        INC   C
+        DEC   C
+        JR    Z,ok
+        LD    A,#c
+ok      LD    (DE),A
+        INC   DE
+        LD    A,#10
+        OUT   (#fd),A
+        XOR   A
+        LD    (errflag+1),A
+        POP   HL
+        JP    cd2loop
+endcode LD    A,#54
+        OUT   (#fd),A
+        LD    DE,(de2+1)
+        LD    A,#0d
+        LD    (DE),A
+        INC   DE
+        XOR   A
+        LD    (DE),A
+        INC   DE
+        LD    HL,#c000
+        EX    DE,HL
+        OR    A
+        SBC   HL,DE
+        LD    (len+1),HL
+        PUSH  HL
+er1     LD    A,0
+        OR    A
+        JR    Z,er2
+        LD    HL,err1msg
+        CALL  enter
+er2     LD    A,0
+        OR    A
+        JR    Z,save
+        LD    HL,err2msg
+        CALL  enter
+save    POP   HL
+        CALL  saveyn
+        LD    C,#0b
+        LD    HL,#c000
+len     LD    DE,0
+        LD    A,"X"
+        LD    (23781),A
+        CALL  dos
+        LD    C,10
+        LD    A,9
+        LD    (23814),A
+        CALL  dos
+        BIT   7,C
+        LD    HL,shit
+        JP    NZ,err1+3
+        PUSH  BC
+        LD    A,C
+        LD    C,8
+        CALL  dos
+        LD    HL,"SA"
+        LD    (23782),HL
+        POP   BC
+        LD    A,C
+        LD    C,9
+        CALL  dos
+        JP    re
+
+
+loadxas
+        CALL  bank1
+        LD    E,(IX+14)
+        LD    D,(IX+15)
+        LD    B,(IX+13)
+        LD    C,5
+        LD    HL,#c000
+        CALL  dos
+
+recode  CALL  wait
+        LD    HL,(st)
+        LD    DE,23773
+        LD    BC,9
+        LDIR
+        LD    HL,#c024
+        LD    DE,filebuffer
+        CALL  bank1
+        LD    A,(#c023)
+        DEC   A
+        JP    NZ,err1
+cd1loop LD    (de1+1),DE
+        LD    DE,tokened
+cd1lp1  LD    A,(HL)
+        LD    (DE),A
+        INC   HL
+        INC   DE
+        CP    #0e
+        JP    NC,cd1lp1
+        PUSH  HL
+        CALL  unpack
+        LD    A,#10
+        OUT   (#fd),A
+        LD    HL,txtfield
+        PUSH  HL
+        LD    B,42
+rus     LD    A,(HL)
+        CP    #80
+        JR    NC,cd1
+        CP    #10
+        LD    E,#84
+        JR    Z,cod
+        CP    #11
+        LD    E,#86
+        JR    Z,cod
+        CP    #12
+        LD    E,#88
+        JR    Z,cod
+        CP    #13
+        LD    E,#89
+        JR    Z,cod
+        CP    #14
+        LD    E,#8b
+        JR    Z,cod
+        CP    #15
+        LD    E,#8f
+        JR    Z,cod
+        CP    #16
+        LD    E,#93
+        JR    Z,cod
+        CP    #17
+        LD    E,#94
+        JR    Z,cod
+        CP    #18
+        LD    E,#96
+        JR    Z,cod
+        CP    #19
+        LD    E,#97
+        JR    Z,cod
+        CP    #1a
+        LD    E,#9b
+        JR    Z,cod
+        CP    #1b
+        LD    E,#9c
+        JR    Z,cod
+        CP    #1c
+        LD    E,#9d
+        JR    Z,cod
+        CP    #1d
+        LD    E,#9e
+        JR    Z,cod
+        CP    #1e
+        LD    E,#9f
+        JR    Z,cod
+        CP    #7b
+        LD    E,#98
+        JR    Z,cod
+        CP    #7c
+        LD    E,#99
+        JR    Z,cod
+        CP    #7d
+        LD    E,#81
+        JR    Z,cod
+        CP    #7e
+        LD    E,#83
+        JR    Z,cod
+cd1     LD    E,A
+cod     LD    A,E
+        LD    (HL),A
+        INC   HL
+        DJNZ  rus
+        POP   HL
+        LD    BC,42
+de1     LD    DE,0
+        LDIR
+cd1lp2  DEC   DE
+        LD    A,(DE)
+        CP    " "
+        JP    Z,cd1lp2
+        INC   DE
+        LD    A,#0d
+        LD    (DE),A
+        INC   DE
+        POP   HL
+        CALL  bank1
+        LD    A,(HL)
+        OR    A
+        JP    NZ,cd1loop
+        LD    A,#10
+        OUT   (#fd),A
+        EX    DE,HL
+        LD    BC,filebuffer
+        OR    A
+        SBC   HL,BC
+        LD    (len+1),HL
+        CALL  saveyn
+        LD    A,"C"
+        LD    (23781),A
+len     LD    DE,0
+        LD    HL,filebuffer
+        LD    C,11
+        CALL  dos
+        JP    re
+
+err1    LD    HL,merr1
+        LD    A,#80+#20
+        CALL  r2
+err1    CALL  gc
+        CP    13
+        JR    NZ,err1
+        JP    re
+enter   LD    A,%01010111
+        LD    (col),A
+        CALL  r2
+        JP    gc
+wait    LD    HL,wt
+        LD    IX,#5ac1
+        LD    DE,#50c1
+        LD    A,7
+        JP    r2
+
+wt
+"    PLEASE WAIT,RECODING...↑"
+merr1
+" NOT XAS TEXT.PRESS ENTER!↑"
+shit
+"WHAT'S A FUCKING SHITING DISK?↑"
+err1msg
+"Long lines split & marked red!↑"
+err2msg
+"Wrong codes replaced to '?' !↑"
+
+;in BC=LEN
+saveyn  LD    B,H
+        LD    C,L
+        LD    HL,svmsglen
+        CALL  hex
+        LD    HL,svmsg
+        LD    A,#38+#40
+        CALL  r2
+yn      CALL  gc
+        CP    "Y"
+        RET   Z
+        CP    "y"
+        RET   Z
+        CP    13
+        RET   Z
+        CP    "n"
+        JR    Z,no
+        CP    "N"
+        JR    Z,no
+        CP    " "
+        JR    NZ,yn
+no      POP   AF
+        JP    re
+
+svmsg
+"Length=#"
+svmsglen
+"XXXX. Save file (Y/N)?"
+
+bank1   LD    A,#54
+        OUT   (#fd),A
+        RET
+;
+info    LD    A,(pos)
+        LD    H,0
+        LD    L,A
+        DEC   L
+        ADD   HL,HL
+        ADD   HL,HL
+        ADD   HL,HL
+        ADD   HL,HL
+        LD    DE,(st)
+        ADD   HL,DE
+        LD    (st),HL
+        LD    DE,inf1
+        LD    BC,8
+        LDIR
+        LD    A,32
+        LD    (DE),A
+        INC   DE
+        LDI
+        LD    C,(HL)
+        INC   HL
+        LD    B,(HL)
+        INC   HL
+        CALL  hex
+        LD    C,(HL)
+        INC   HL
+        LD    B,(HL)
+        INC   HL
+        CALL  hex
+        CALL  hx0
+        CALL  hx0
+        CALL  hx0
+        LD    A,#28
+        LD    HL,inf1
+r2      LD    IX,#5ac1
+        LD    DE,#50c1
+        LD    (col),A
+        JP    r2
+;
+show    LD    HL,#a000
+mx1     LD    B,10
+        LD    DE,#4061
+s1      PUSH  BC
+        LD    B,8
+        PUSH  DE
+s2      LD    A,(HL)
+        INC   HL
+        CALL  pr
+        DJNZ  s2
+        LD    A,32
+        CALL  pr
+        LD    A,(HL)
+        CALL  pr
+        LD    C,8
+        ADD   HL,BC
+        POP   DE
+        LD    A,E
+        ADD   A,32
+        LD    E,A
+        JR    NC,s4
+        LD    A,D
+        ADD   A,8
+        LD    D,A
+s4      POP   BC
+        DJNZ  s1
+        RET
+
+mx2     LD    B,10
+        LD    DE,#5862
+        LD    HL,#5861
+        LD    A,1
+s1      PUSH  BC
+        LD    (HL),5
+ps      CP    1
+        JR    NZ,s2
+        LD    (HL),56
+s2      LD    BC,9
+        LDIR
+        LD    BC,23
+        ADD   HL,BC
+        EX    DE,HL
+        ADD   HL,BC
+        EX    DE,HL
+        POP   BC
+        INC   A
+        DJNZ  s1
+        RET
+;
+pos     EQU   ps+1
+mx1     EQU   mx1+1
+mx2     EQU   mx2+1
+st      EQU   show+1
+num     DB    1
+;
+pr      PUSH  BC
+        PUSH  HL
+        LD    BC,15360
+        CP    32
+        JR    NC,p1
+        LD    BC,font
+p1      ADD   A,A
+        LD    L,A
+        LD    H,0
+        ADD   HL,HL
+        ADD   HL,HL
+        ADD   HL,BC
+        LD    C,D
+        LD    A,(HL)
+        LD    (DE),A
+        INC   L
+        INC   D
+        LD    A,(HL)
+        LD    (DE),A
+        INC   L
+        INC   D
+        LD    A,(HL)
+        LD    (DE),A
+        INC   L
+        INC   D
+        LD    A,(HL)
+        LD    (DE),A
+        INC   L
+        INC   D
+        LD    A,(HL)
+        LD    (DE),A
+        INC   L
+        INC   D
+        LD    A,(HL)
+        LD    (DE),A
+        INC   L
+        INC   D
+        LD    A,(HL)
+        LD    (DE),A
+        INC   L
+        INC   D
+        LD    A,(HL)
+        LD    (DE),A
+        LD    D,C
+        POP   HL
+        POP   BC
+        INC   E
+        RET
+;
+font    DB    0,2,4,4,#48,#30
+        DB    16,0,0,#40,#60,#70
+        DB    #70,#60,#40,0
+
+gc      EI
+        RES   5,(IY+1)
+g1      HALT
+        BIT   5,(IY+1)
+        JR    Z,g1
+        RES   5,(IY+1)
+        LD    A,(#5c08)
+        RET
+;
+r1      LD    A,E
+        AND   #e0
+        OR    12
+        LD    E,A
+        DB    #DD
+        LD    A,L
+        AND   #e0
+        OR    12
+        DB    #DD
+        LD    L,A
+r2      LD    A,(HL)
+        INC   HL
+        CP    "↑"
+        JR    NZ,r3
+        DEC   HL
+        LD    A,32
+r3      CALL  pr
+        LD    A,E
+        AND   31
+cl      LD    (IX),56
+        INC   IX
+        CP    31
+        JR    NZ,r2
+        LD    A,E
+        ADD   A,32
+        LD    E,A
+        JR    NC,r1
+        LD    A,D
+        ADD   A,8
+        LD    D,A
+r1      LD    BC,32
+        ADD   IX,BC
+        RET
+col     EQU   cl+3
+;
+hex     EX    DE,HL
+        LD    (HL),32
+        INC   HL
+hex     LD    A,B
+        CALL  hex
+        LD    A,C
+        CALL  hex
+        EX    DE,HL
+        RET
+hex     PUSH  AF
+        RRA
+        RRA
+        RRA
+        RRA
+        CALL  _hx
+        POP   AF
+_hx     AND   #f
+        CP    10
+        JR    C,h1
+        ADD   A,7
+h1      ADD   A,"0"
+        LD    (HL),A
+        INC   HL
+        RET
+hx0     LD    A,(HL)
+        INC   HL
+        EX    DE,HL
+        LD    (HL),32
+        INC   HL
+        CALL  hex
+        EX    DE,HL
+        RET
+;
+msg
+"     ASCI<>XAS↑"
+"  CONVERTOR  v1.1↑"
+"(p)&(c) 1997 by SMT↑%"
+;                    "
+
+hlp
+"Use keys Q,A or↑"
+"SINCLAIR or CURSOR↑"
+"joysick to move,hit↑"
+"'0',ENTER, or SPACE↑"
+"to select a file...↑"
+"Files <C> recodings↑"
+"from ASCII to XAS2,↑"
+"storing in page #54↑"
+"Files <X> recodings↑"
+"from XAS2 format to↑"
+"standart ASCII file↑"
+"Press 'R' to ReRead↑"
+"Disk,'E' - to quit.↑"
+"Press '1'-text P#53↑"
+"Press '2'-text P#54↑%"
+
+;
+inf1    DM    "ABCD0123 B"
+        DM    " aaaa llll 00 00 "
+        DM    "00  ↑"
+;
+n1      DM    "NO FILES!"
+nam     DM    "DISKNAME"
+;
+dos     EQU   #3d13
+save    EQU   #4c2
+
+;SAVE LD DE,#E020:JR BE
+
+be      XOR   A
+b1      LD    B,D
+        OUT   (#fe),A
+b2      DJNZ  b2
+        XOR   #10
+        DEC   E
+        JR    NZ,b1
+        RET
+
+ptr     DS    3
+fnm     EQU   #5b00
+
+
+pack
+        LD    IX,tokened
+        LD    (ll8859),SP
+        LD    HL,txtfield
+ll87f3  LD    A,#03
+        LD    (ll8855),A
+        LD    A,#0d
+        LD    (txtend),A
+        XOR   A
+        LD    C,A
+        LD    (ll8852),A
+ll8802  CALL  ll8956
+        JR    C,ll8884
+        EX    AF,AF'
+        LD    A,B
+        CP    #d0
+        JR    NC,ll8863
+        EX    AF,AF'
+        LD    (IX+#00),B
+        INC   IX
+        LD    A,B
+        CP    #c8
+        JR    C,ll8823
+        CP    #ca
+        JR    Z,ll8823
+        CP    #cc
+        JR    NC,ll8823
+        LD    (ll8855),A
+ll8823  LD    C,#00
+ll8825  CALL  ll8956
+        EX    AF,AF'
+        LD    A,B
+        CP    #d0
+        JR    C,ll8863
+        EX    AF,AF'
+        JR    NC,ll8838
+        CP    #ff
+        JR    NZ,ll883f
+        EX    DE,HL
+        JR    ll883f
+ll8838  LD    (IX+#00),B
+        INC   IX
+        JR    ll8825
+ll883f  CALL  ll8a75
+        JR    Z,ll8851
+        CP    #3b
+        JR    Z,ll8825
+        CP    #0e
+        CALL  NC,ll88c9
+ll8851  LD    A,#00
+ll8852  EQU   $-1
+        INC   A
+        CP    #03
+ll8855  EQU   $-1
+        JR    NZ,ll885e
+ll8858  LD    SP,#5fe0
+ll8859  EQU   $-2
+        SCF
+        JR    ll8874
+ll885e  LD    (ll8852),A
+        JR    ll8825
+ll8863  LD    (IX+#00),B
+        INC   IX
+        XOR   A
+        SCF
+        JR    ll886d
+ll886c  XOR   A
+ll886d  LD    (IX+#00),#0d
+ll8870  EQU   $-1
+        LD    (IX+#01),A
+ll8874
+        RET
+ll8884  CALL  ll888a
+        JP    ll8802
+ll888a  INC   A
+        JR    Z,ll888e
+        EX    DE,HL
+ll888e  LD    A,(HL)
+        CP    #3b
+        JR    Z,ll8902
+        CP    #28
+        JP    Z,ll891c
+ll8898  LD    A,C
+        OR    A
+        JR    NZ,ll889c
+ll889c  INC   C
+ll889d  LD    A,(HL)
+        CP    #22
+        JR    Z,ll88de
+ll88a2  LD    A,(HL)
+        CP    #3b
+        JR    Z,ll8902
+        CP    #0e
+        RET   C
+        CP    #2c
+        JR    Z,ll88cf
+        CP    #20
+        RET   Z
+        CP    #3a
+        JR    NZ,ll88c1
+        LD    (IX+#00),#0e
+        INC   IX
+        INC   HL
+        POP   AF
+        JP    ll87f3
+        NOP
+ll88c1  LD    (IX+#00),A
+        INC   IX
+        INC   HL
+        JR    ll88a2
+ll88c9  EX    DE,HL
+        CALL  ll8997
+        JR    ll888e
+ll88cf  LD    A,(ll8855)
+        CP    #03
+        RET   Z
+        LD    (IX+#00),#2c
+        INC   IX
+        LD    C,#00
+        RET
+ll88de  LD    (IX+#00),A
+        INC   IX
+        INC   HL
+ll88e4  LD    A,(HL)
+        CP    #0e
+        JP    C,ll8858
+        LD    (IX+#00),A
+        INC   IX
+        INC   HL
+        LD    A,(HL)
+        CP    #22
+        JR    NZ,ll88e4
+        INC   HL
+        LD    (IX+#00),A
+        INC   IX
+        LD    A,(HL)
+        CP    #2c
+        JR    NZ,ll88a2
+        JR    ll88cf
+ll8902  LD    A,(HL)
+        CP    #0e
+        JR    C,ll890f
+        LD    (IX+#00),A
+        INC   IX
+        INC   HL
+        JR    ll8902
+ll890f  POP   AF
+        LD    A,#20
+ll8912  CP    (IX-#01)
+        JP    NZ,ll886c
+        DEC   IX
+        JR    ll8912
+ll891c  PUSH  HL
+        PUSH  IX
+        LD    (IX+#00),A
+        INC   IX
+        INC   HL
+        LD    A,(HL)
+        AND   #df
+        CP    #49
+        JR    NZ,ll8950
+        INC   HL
+        LD    A,(HL)
+        AND   #df
+        SUB   #58
+        CP    #02
+        JR    NC,ll8950
+        ADD   A,#d3
+        LD    (IX+#00),A
+        INC   HL
+        INC   IX
+        LD    A,(HL)
+        CP    #2d
+        JR    Z,ll894b
+        CP    #29
+        JR    Z,ll894b
+        CP    #2b
+        JR    NZ,ll8950
+ll894b  POP   AF
+        POP   AF
+        JP    ll889d
+ll8950  POP   IX
+        POP   HL
+        JP    ll8898
+ll8956  LD    B,#80
+        LD    DE,tokentable+1
+        CALL  ll8997
+ll895e  PUSH  HL
+ll895f  LD    A,(DE)
+        AND   #7f
+        PUSH  BC
+        LD    C,A
+        LD    A,(HL)
+        CP    #61
+        JR    C,ll896f
+        CP    #7b
+        JR    NC,ll896f
+        AND   #df
+ll896f  CP    C
+        POP   BC
+        JR    NZ,ll898e
+        INC   HL
+        LD    A,(DE)
+        RLCA
+        INC   DE
+        JR    NC,ll895f
+        LD    A,(HL)
+        CALL  ll8a6f
+        JR    Z,ll898b
+ll8986  DEC   DE
+        CP    #0e
+        JR    NC,ll898e
+ll898b  OR    A
+        POP   DE
+        RET
+ll898e  CALL  ll89ab
+        POP   HL
+        LD    A,#ff
+        RET   C
+        JR    ll895e
+ll8997  LD    A,(HL)
+        CP    #0e
+        JR    C,ll89a6
+        CP    #20
+        JR    Z,ll89a3
+        CP    #2c
+        RET   NZ
+ll89a3  INC   HL
+        JR    ll8997
+ll89a6  POP   AF
+        POP   AF
+        JP    ll886c
+ll89ab  LD    A,(DE)
+        CP    #0e
+        RET   C
+        INC   DE
+        RLCA
+        JR    NC,ll89ab
+        INC   B
+        OR    A
+        RET
+
+
+
+ll8a3a  LDI
+        INC   C
+        INC   C
+        LD    A,C
+        CP    #2b
+        RET   NC
+        LD    A,(HL)
+        CP    #0e
+        JR    C,ll8a62
+        JR    ll8a3a
+
+unpack  LD    BC,#0300
+        JR    ll8a55
+ll8a4e  RET   Z
+        CP    #2c
+        RET
+        LD    A,(DE)
+        JR    ll8a75
+ll8a55  LD    DE,txtfield
+        LD    HL,tokened
+ll8a5b  LD    A,C
+        CP    #2b
+        RET   NC
+ll8a5f  LD    A,(HL)
+        CP    #0e
+ll8a62  JP    C,ll8b02
+        BIT   7,A
+        JR    NZ,ll8a7e
+        CP    #3b
+        JR    Z,ll8a3a
+        JR    ll8a79
+ll8a6f  CP    #3a
+        RET   Z
+        CP    #3b
+        RET   Z
+ll8a75  CP    #20
+        JR    ll8a4e
+ll8a79  LD    A,B
+        CP    #03
+        JR    Z,ll8aa2
+ll8a7e  DEC   B
+        JR    NZ,ll8a86
+        LD    A,#2c
+        INC   B
+        JR    ll8a98
+ll8a86  DEC   DE
+        LD    A,(DE)
+        INC   DE
+        CP    #3a
+        LD    A,#20
+        JR    Z,ll8aa2
+        LD    A,(HL)
+        CP    #0e
+        LD    A,#20
+        JR    NZ,ll8a9f
+        JR    ll8aa2
+ll8a98  LD    A,(HL)
+        CP    #0e
+        JR    Z,ll8aa2
+        LD    A,#2c
+ll8a9f  LD    (DE),A
+        INC   C
+        INC   DE
+ll8aa2  LD    A,(HL)
+        BIT   7,A
+        JR    Z,ll8aad
+        CALL  ll8b18
+        INC   HL
+ll8aab  JR    ll8a5b
+ll8aad  CP    #28
+        JR    NZ,ll8ade
+        INC   HL
+        BIT   7,(HL)
+        JR    Z,ll8add
+        DEC   HL
+        DEC   HL
+        BIT   7,(HL)
+        INC   HL
+        INC   HL
+        JR    NZ,ll8ac5
+        LD    A,#2c
+        LD    (DE),A
+        INC   DE
+        INC   C
+        LD    A,#28
+ll8ac5  LD    (DE),A
+        INC   DE
+        INC   C
+        LD    A,(HL)
+        CALL  ll8b18
+ll8acc  INC   HL
+        LD    A,(HL)
+        CP    #0e
+        JP    C,ll8b02
+        CP    #29
+        LD    (DE),A
+        INC   DE
+        INC   BC
+        JR    NZ,ll8acc
+        INC   HL
+        JR    ll8a5f
+ll8add  DEC   HL
+ll8ade  CP    #0e
+        JR    NZ,ll8aea
+        LD    A,#3a
+        LD    B,#03
+ll8aea  LD    (DE),A
+        INC   DE
+        INC   C
+        LD    A,C
+        CP    #2b
+        RET   NC
+        INC   HL
+        LD    A,(HL)
+        CP    #0e
+        JR    C,ll8b02
+        CP    #3b
+        JR    Z,ll8aab
+        BIT   7,A
+        JP    NZ,ll8a7e
+        JR    ll8aad
+ll8b02  CP    #02
+        JR    NC,ll8b08
+        LD    A,#0d
+ll8b08  LD    (ll8870),A
+        LD    A,#2a
+        SUB   C
+        RET   C
+        RET   Z
+        LD    B,A
+        LD    A,#20
+ll8b13  LD    (DE),A
+        INC   DE
+        DJNZ  ll8b13
+        RET
+
+ll8b18  PUSH  HL
+        LD    L,A
+        SUB   #c8
+        LD    A,#02
+        JR    Z,ll8b21
+ll8b21  NOP
+        LD    A,L
+        LD    HL,tokentable
+        SUB   #7f
+ll8b2a  BIT   7,(HL)
+        INC   HL
+        JR    Z,ll8b2a
+        DEC   A
+        JR    NZ,ll8b2a
+ll8b32  LD    A,(HL)
+        AND   #7f
+        LD    (DE),A
+        INC   DE
+        INC   C
+        BIT   7,(HL)
+        JR    NZ,ll8b3f
+        INC   HL
+        JR    ll8b32
+ll8b3f  POP   HL
+        RET
+txtfield      DS 42,"  "
+txtend  DS    4,#0d0d
+tokened DS    44,#0d0d
+
+tokentable
+#ac
+#4c4449d24c4444d2
+#4c44c94c44c44350
+#49d2435044d24350
+#c94350c4494e49d2
+#494e44d2494ec949
+#4ec44f5554c94f54
+#49d24f5554c44f54
+#44d2524554c95245
+#54ce4e45c7524cc4
+#5252c4505553c850
+#4fd04144c45355c2
+#4144c35342c3414e
+#c44fd2584fd243d0
+#494ec34445c34249
+#d45245d35345d452
+#4cc35252c352cc52
+#d2534cc15352c153
+#4cc95352cc4cc445
+#d849ce4f55d449cd
+#5253d4444a4eda4a
+#d04ad243414ccc52
+#45d44558d84350cc
+#4441c1524c43c152
+#5243c1524cc15252
+#c14e4fd048414cd4
+#44c945c95343c643
+#43c64f52c7454ed4
+#4551d5574f52cb44
+#4546c2444546d744
+#4546cd444546d321
+#415353cd21434f4e
+#d44c4f4144544558
+#d44c4f4144434f44
+#c542c344c548cc49
+#d849d953d041c628
+#43a9c2c3c4c5c8cc
+#28484ca9c1284243
+#a9284445a948d84c
+#d848d94cd9c9d24e
+#dada4ec350cf50c5
+#d0cd214fce214f46
+#c6285350a94146a7
+#00
+fl1
+"XASTXT#1"
+fl2
+"XASTXT#2"
+
+begin   DM    "ASCII>XAS CONVERTOR v";21
+filenam DM    "1.1     ";8
+        DW    #c023,#0000
+        DB    #00,#80,1
+filebuffer    DS 1000
+

@@ -44,6 +44,11 @@ No header, no end marker: the editor's text buffer as is (catalog length = text 
 | `#10`, `#11`, `#18`-`#1F` | control codes inside strings (colours, arrows), kept as U+F700 + byte |
 | other bytes | CP866 text |
 
+ZAsm 3.10 and later save every text with a TR-DOS type letter and the next two characters of its extension in the
+catalog's start field: `ovlib.asm` is type `a` with start "sm", `A315.lbl` type `l` with "bl", `About.txt` type `t`
+with "xt". Its texts therefore come with any type; the detector takes a start made of two such characters as a ZAsm
+start (phase A6).
+
 2.6 and 3.2x and later write an optional first line `;*a,b,c,…` (the editor state); it is an ordinary line.
 
 ## 4. The editor's rules (canonical tokenizer)

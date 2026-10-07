@@ -41,6 +41,7 @@ struct Expr
         Symbol,        ///< text = the name
         Current,       ///< $: the current (displaced) address
         CurrentPage,   ///< $$: the current page
+        CurrentPhysical,   ///< where the code is put now while a displacement (DISP / PHASE) is active (sjasmplus $$$)
         Unary,         ///< op, args[0]
         Binary,        ///< op, args[0] op args[1]
         Group,         ///< (args[0]): parentheses the source wrote
@@ -87,7 +88,7 @@ enum class DirectiveKind : uint8_t
     Defl,         ///< the label = args[0], redefinable
     Db,           ///< operands: bytes and strings
     Dw,
-    Ds,           ///< args: count [, fill bytes...]
+    Ds,           ///< args: count [, fill bytes...]; operands: a fill sequence repeated count times; params "cyclic": count bytes of the sequence repeated and cut (STORM)
     Include,      ///< text: file; args: [page]
     Incbin,       ///< text: file; args: [offset [, length]]; params "sector-slack": the rest of the file's last disk sector is written after it without moving the address (TASM)
     If,           ///< args: condition (true when not zero)
@@ -103,6 +104,8 @@ enum class DirectiveKind : uint8_t
     UntilZero,    ///< args: expression
     Disp,         ///< args: address
     Ent,          ///< text "if-displaced": only when a displacement is active (Program::displacementAcrossFiles)
+    IfUsed,       ///< text: a label; the block is assembled when the label is used (params "not": when it is not, IFNUSED)
+    SaveBinary,   ///< text: file; args: start, length: the bytes written there saved to the file while assembling
     LocalBlock,   ///< ALASM LOCAL ... ENDL: labels inside are local to the block
     EndLocalBlock,
     Display,      ///< operands: strings and expressions; params: per-item format keys
@@ -151,5 +154,8 @@ struct Program
     /// The displacement (PHASE / DISP) may continue across INCLUDE: a file cannot know whether one is active where it
     /// starts (TASM). An `Ent` statement with text "if-displaced" ends one only when it is active
     bool displacementAcrossFiles = false;
+    /// What a comparison or a logical not gives when true: 1 (STORM), -1 (sjasmplus); 0 = not said (the source has no
+    /// comparisons whose value is used: the target's own)
+    int trueValue = 0;
 };
 }  // namespace unrealasm::ir

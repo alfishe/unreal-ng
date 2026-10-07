@@ -1,0 +1,116 @@
+   10        ORG  45000
+   20        ENT  $
+   30        JP   DISK
+   40 TX_I   LD   BC,#BFFD
+   50        LD   D,255
+   60        LD   E,127
+   70        EXX
+   80        LD   BC,#FFFD
+   90        LD   D,7
+  100        LD   H,14
+  110        LD   L,15
+  120        OUT  (C),D
+  130        EXX
+  140        OUT  (C),D
+  150        EXX
+  160        OUT  (C),L
+  170        EXX
+  180        LD   A,2
+  190        OUT  (C),A
+  200        EXX
+  210        OUT  (C),D
+  220        EXX
+  230        OUT  (C),E
+  240        EXX
+  250        OUT  (C),L
+  260 TX_I_1 IN   A,(C)
+  270        RRA
+  280        JR   NC,TX_I_1
+  290        OUT  (C),D
+  300        EXX
+  310        OUT  (C),D
+  320        EXX
+  330        OUT  (C),L
+  340        EXX
+  350        XOR  A
+  360        OUT  (C),A
+  370        EXX
+  380        OUT  (C),H
+  390        EXX
+  400        OUT  (C),E
+  410        EXX
+  420        OUT  (C),L
+  430 TX_I_2 IN   A,(C)
+  440        RRA
+  450        JR   C,TX_I_2
+  460        EXX
+  470        RET
+  480 TX
+  490        CALL TX_I
+  500 TX_0   EXX
+  510        OUT  (C),D
+  520        EXX
+  530        OUT  (C),D
+  540        EXX
+  550        OUT  (C),H
+  560        EXX
+  570        LD   A,(IX+0)
+  580        INC  IX
+  590        OUT  (C),A
+  600        EXX
+  610        OUT  (C),L
+  620        EXX
+  630        LD   A,2
+  640        OUT  (C),A
+  650        EXX
+  660        OUT  (C),D
+  670        EXX
+  680        OUT  (C),E
+  690        EXX
+  700        OUT  (C),L
+  710 TX_1   IN   A,(C)
+  720        RRA
+  730        JR   NC,TX_1
+  740        OUT  (C),D
+  750        EXX
+  760        OUT  (C),D
+  770        EXX
+  780        OUT  (C),L
+  790        EXX
+  800        XOR  A
+  810        OUT  (C),A
+  820        EXX
+  830        OUT  (C),D
+  840        EXX
+  850        OUT  (C),D
+  860        EXX
+  870        OUT  (C),L
+  880 TX_2   IN   A,(C)
+  890        RRA
+  900        JR   C,TX_2
+  910        EXX
+  920        DEC  HL
+  930        LD   A,H
+  940        OR   L
+  950        JP   NZ,TX_0
+  960        RET
+  970 DISK   LD   C,#18
+  980        CALL 15635
+  990        LD   DE,0
+ 1000        LD   B,40
+ 1010 DISK_1 PUSH BC
+ 1020        PUSH DE
+ 1030        LD   B,64
+ 1040        LD   C,5
+ 1050        LD   HL,49152
+ 1060        CALL 15635
+ 1070        LD   IX,49152
+ 1080        LD   HL,16384
+ 1090        CALL TX
+ 1100        POP  DE
+ 1110        POP  BC
+ 1120        LD   A,D
+ 1130        ADD  A,4
+ 1140        LD   D,A
+ 1150        DJNZ DISK_1
+ 1160        RET

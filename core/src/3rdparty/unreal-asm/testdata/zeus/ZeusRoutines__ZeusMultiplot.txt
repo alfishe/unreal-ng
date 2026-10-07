@@ -1,0 +1,169 @@
+00010       ORG 50000
+00020 ;********************
+00030 ; X2 AND X4 MULTIPLOT
+00040 ;********************
+00050       ENT
+00060       DI
+00070       CALL TAB
+00080       EXX
+00090       LD HL,00000 ;MAP
+00100       EXX
+00110       LD IX,DT
+00120       LD A,(IX+1)
+00130       LD (P1+1),A
+00140       LD C,(IX+0)
+00150       LD B,0
+00160 K0    LD A,B
+00170 P1    ADD A,00
+00180       PUSH BC
+00190       LD B,A
+00200       CALL FIND
+00210       LD A,(F1)
+00220       LD H,A
+00230 ;     CALL FOUR
+00240       CALL TWO
+00250       POP BC
+00260       INC B
+00270       LD A,(F0)
+00280       CP B
+00290       JR NZ,K0
+00300 TEL   EXX
+00310       LD HL,10072
+00320       EXX
+00330       EI
+00340       RET
+00350 F0    DEFB 96 ; X4>48
+00360 F1    DEFB 8  ; MAP WIDTH
+00370 DT    DEFB 0  ; X coord
+00380       DEFB 0  ; Y coord
+00390 TAB   LD IX,23296
+00400       LD H,64
+00410       LD L,0
+00420       LD D,L
+00430       LD E,32
+00440       LD B,96
+00450 OOO   LD (IX+0),L
+00460       LD (IX+1),H
+00470       INC IX
+00480       INC IX
+00490       LD C,2 ; X4>4
+00500 III   CALL DN
+00510       DEC C
+00520       JR NZ,III
+00530       DJNZ OOO
+00540       RET
+00550 FIND  LD H,91
+00560       LD L,B
+00570       RLC L
+00580       LD A,(HL)
+00590       INC L
+00600       LD D,(HL)
+00610       OR C
+00620       LD E,A
+00630       RET
+00640 DN    INC H
+00650       LD A,H
+00660       AND 7
+00670       RET NZ
+00680       LD A,L
+00690       ADD A,32
+00700       LD L,A
+00710       RET C
+00720       LD A,H
+00730       SUB 8
+00740       LD H,A
+00750       RET
+00760 FOUR  EXX
+00770       LD A,(HL)
+00780       EXX
+00790       LD C,A
+00800       LD L,4
+00810 K2    XOR A
+00820       RL C
+00830       JR NC,K3
+00840       OR 240
+00850 K3    RL C
+00860       JR NC,K4
+00870       OR 15
+00880 K4    LD (DE),A
+00890       INC D
+00900       LD (DE),A
+00910       INC D
+00920       LD (DE),A
+00930       INC D
+00940       LD (DE),A
+00950       DEC D
+00960       DEC D
+00970       DEC D
+00980       INC DE
+00990       DEC L
+01000       JR NZ,K2
+01010       EXX
+01020       INC HL
+01030       EXX
+01040       DEC H
+01050       JR NZ,FOUR
+01060       RET
+01070 TWO   EXX
+01080       LD A,(HL)
+01090       EXX
+01100 T1    LD C,A
+01110       PUSH BC
+01120       PUSH HL
+01130       LD HL,0
+01140       LD B,2
+01150 T2    SLA C
+01160       LD A,3
+01170       JR C,DOUB
+01180       XOR A
+01190 DOUB  ADD HL,HL
+01200       ADD HL,HL
+01210       OR L
+01220       LD L,A
+01230       SLA C
+01240       LD A,3
+01250       JR C,DOUB2
+01260       XOR A
+01270 DOUB2 ADD HL,HL
+01280       ADD HL,HL
+01290       OR L
+01300       LD L,A
+01310       SLA C
+01320       LD A,3
+01330       JR C,DOUB3
+01340       XOR A
+01350 DOUB3 ADD HL,HL
+01360       ADD HL,HL
+01370       OR L
+01380       LD L,A
+01390       SLA C
+01400       LD A,3
+01410       JR C,DOUB4
+01420       XOR A
+01430 DOUB4 ADD HL,HL
+01440       ADD HL,HL
+01450       OR L
+01460       LD L,A
+01470       DJNZ T2
+01480       EX DE,HL
+01490       LD (HL),D
+01500       INC L
+01510       LD (HL),E
+01520       DEC L
+01530       INC H
+01540       LD (HL),D
+01550       INC L
+01560       LD (HL),E
+01570       DEC L
+01580       DEC H
+01590       EX DE,HL
+01600       INC E
+01610       INC E
+01620       EXX
+01630       INC HL
+01640       EXX
+01650       POP HL
+01660       POP BC
+01670       DEC H
+01680       JR NZ,TWO
+01690       RET

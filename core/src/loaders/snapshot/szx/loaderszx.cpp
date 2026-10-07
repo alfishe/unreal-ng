@@ -60,10 +60,8 @@ namespace
     }
 
     /// The running machine can hold the snapshot's machine
-    bool MachineFits(EmulatorContext* context, const Machine& machine, Report& report)
+    bool MachineFits(MEM_MODEL running, uint32_t ramKb, const Machine& machine, Report& report)
     {
-        const MEM_MODEL running = context->config.mem_model;
-        const uint32_t ramKb = context->config.ramsize;
         if (machine.model == MM_SCORP && running == MM_PROFSCORP)
         {
             report.warnings.push_back("Scorpion ZS-256 snapshot loaded on a Scorpion with ProfROM (the configured ROM stays)");
@@ -302,6 +300,12 @@ bool LoaderSZX::save()
     return true;
 }
 
+bool LoaderSZX::Suits(MEM_MODEL runningModel, uint32_t runningRamKb, const Machine& machine)
+{
+    Report ignored;
+    return MachineFits(runningModel, runningRamKb, machine, ignored);
+}
+
 bool LoaderSZX::ProbeMachine(const std::string& path, Machine& machine, std::string& error)
 {
     uint8_t header[kHeaderSize] = {};
@@ -348,7 +352,7 @@ bool LoaderSZX::CommitImage(EmulatorContext* context, const snapshot::Image& ima
         return false;
     if (!machine.note.empty())
         report.warnings.push_back(machine.note);
-    if (!MachineFits(context, machine, report))
+    if (!MachineFits(context->config.mem_model, context->config.ramsize, machine, report))
     {
         error = "the snapshot was saved on a " + DescribeModel(machine.model, machine.ramKb) +
                 ", the running machine is a " + DescribeModel(context->config.mem_model, context->config.ramsize) +

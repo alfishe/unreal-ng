@@ -3,58 +3,58 @@
 # core/tests/loaders/snapshot/snapshotsavegolden_test.cpp. <scenario>@<machine>.<format><TAB>refused | size hash
 open@48K.sna	49179 010f80888f2f7e39
 open@48K.z80	33123 7249b61977b5f709
-open@48K.szx	1304 4c10a3df0a440541
+open@48K.szx	1295 1a99eda28b7c74b1
 locked@48K.sna	49179 010f80888f2f7e39
 locked@48K.z80	33123 7249b61977b5f709
-locked@48K.szx	1304 4c10a3df0a440541
+locked@48K.szx	1295 1a99eda28b7c74b1
 open@128K.sna	131103 5591cd6e09f07c9a
 open@128K.z80	131182 362ecc4979522f30
-open@128K.szx	4542 49e1fc6554aa8830
+open@128K.szx	4533 46619ad96d6ec14e
 locked@128K.sna	131103 4a2962eda899b735
 locked@128K.z80	131182 0223ae23d1dca771
-locked@128K.szx	4542 4b1e7e4ab66fcb99
+locked@128K.szx	4533 74dd6de54d3011cb
 open@PLUS2.sna	131103 5591cd6e09f07c9a
 open@PLUS2.z80	131182 b36932897d982438
-open@PLUS2.szx	4542 0fa20543d484cc9d
+open@PLUS2.szx	4533 2529b954095a2d19
 locked@PLUS2.sna	131103 4a2962eda899b735
 locked@PLUS2.z80	131182 21c77473657c4999
-locked@PLUS2.szx	4542 921723b4b204f23c
+locked@PLUS2.szx	4533 a4dbe2f9a2edf9b0
 open@PLUS2A.sna	49179 3520a07e2d6f5239
 open@PLUS2A.z80	49247 a75ae3f3ba62eb74
-open@PLUS2A.szx	4524 5f35d15b463df048
+open@PLUS2A.szx	4515 11808da98dbd925a
 locked@PLUS2A.sna	49179 3520a07e2d6f5239
 locked@PLUS2A.z80	49247 a75ae3f3ba62eb74
-locked@PLUS2A.szx	4524 5f35d15b463df048
+locked@PLUS2A.szx	4515 11808da98dbd925a
 open@PLUS3.sna	49179 3520a07e2d6f5239
 open@PLUS3.z80	49247 a75ae3f3ba62eb74
-open@PLUS3.szx	4534 166c2f711b60eb4b
+open@PLUS3.szx	4525 99840e53eb563803
 locked@PLUS3.sna	49179 3520a07e2d6f5239
 locked@PLUS3.z80	49247 a75ae3f3ba62eb74
-locked@PLUS3.szx	4534 166c2f711b60eb4b
+locked@PLUS3.szx	4525 99840e53eb563803
 open@PENTAGON128.sna	131103 5591cd6e09f07c9a
 open@PENTAGON128.z80	131182 55adcd3bbd28f95e
-open@PENTAGON128.szx	4554 b4bd1e191bc1fca5
+open@PENTAGON128.szx	4545 01cbee7958b9d1c1
 locked@PENTAGON128.sna	131103 4a2962eda899b735
 locked@PENTAGON128.z80	131182 77aa7834d899f1e7
-locked@PENTAGON128.szx	4554 c0f6ea87e1864a3c
+locked@PENTAGON128.szx	4545 97d9863c9433bd50
 open@PENTAGON512.sna	refused
 open@PENTAGON512.z80	refused
-open@PENTAGON512.szx	17597 599bfe168f741eb5
+open@PENTAGON512.szx	17588 c4dca3e1a73dd83d
 locked@PENTAGON512.sna	refused
 locked@PENTAGON512.z80	refused
-locked@PENTAGON512.szx	17597 8dc697bf64da2bb2
+locked@PENTAGON512.szx	17588 4b78f5f1ac46e6da
 open@PENTAGON1024.sna	refused
 open@PENTAGON1024.z80	refused
-open@PENTAGON1024.szx	34985 4319793f35315e86
+open@PENTAGON1024.szx	34976 a90eb95ea713715c
 locked@PENTAGON1024.sna	refused
 locked@PENTAGON1024.z80	refused
-locked@PENTAGON1024.szx	34985 f73a1ab725c5c949
+locked@PENTAGON1024.szx	34976 25b2ed96f3eda1e3
 open@SCORPION.sna	refused
 open@SCORPION.z80	262279 a022a00e0ece75c9
-open@SCORPION.szx	8902 fcc285a90aedbc9f
+open@SCORPION.szx	8893 e67f4e8759db85b9
 locked@SCORPION.sna	refused
 locked@SCORPION.z80	262279 defe1fcc1ec064ea
-locked@SCORPION.szx	8902 43dabd05a310ff1e
+locked@SCORPION.szx	8893 eb98e54bfd3ec574
 open@PROFSCORP.sna	refused
 open@PROFSCORP.z80	262279 a022a00e0ece75c9
 open@PROFSCORP.szx	refused
@@ -75,10 +75,10 @@ locked@ATM3.z80	refused
 locked@ATM3.szx	refused
 open@ATM450.sna	131103 13adcae0b7fad2c3
 open@ATM450.z80	131182 ee7817155000fd23
-open@ATM450.szx	4554 d6c268e076fdbcf0
+open@ATM450.szx	4545 fe353e4b39bb79c2
 locked@ATM450.sna	131103 e94b722eb8df450c
 locked@ATM450.z80	131182 073e39083b00e056
-locked@ATM450.szx	4554 bf009bd0390f56e1
+locked@ATM450.szx	4545 f58c42e24bf7a70f
 open@PROFI.sna	refused
 open@PROFI.z80	refused
 open@PROFI.szx	refused
@@ -93,10 +93,10 @@ locked@PROFI3.z80	refused
 locked@PROFI3.szx	refused
 open@TSL.sna	131103 5591cd6e09f07c9a
 open@TSL.z80	131182 dcb018c0eb4800f3
-open@TSL.szx	4554 139f0c3d9784df8e
+open@TSL.szx	4545 5deb49b08297d83c
 locked@TSL.sna	131103 4a2962eda899b735
 locked@TSL.z80	131182 a202e6fe8469e5aa
-locked@TSL.szx	4554 1d659823040d92a3
+locked@TSL.szx	4545 51b17d41bcd38aa5
 open@SPRINTER.sna	refused
 open@SPRINTER.z80	refused
 open@SPRINTER.szx	refused

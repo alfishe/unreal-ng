@@ -679,6 +679,10 @@ int TasmCodec::Detect(std::span<const uint8_t> bytes, const CatalogHints& hints)
     const bool tasmStart = hints.start == 39221 || hints.start == 40872 || hints.start <= 4096;
     if (hints.type == 'A' && tasmStart)
         return 95;
+    // TASM 3 / 4 / 5 save type A; data of another type also walks as TASM lines (a screen), and MASM 1.x shares the
+    // framing with type a
+    if (hints.type != 0 && hints.type != 'A')
+        return 20;
     return lines >= 3 ? 80 : 60;
 }
 

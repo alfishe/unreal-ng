@@ -185,8 +185,7 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/save" \
 - [ ] recording started in **development mode** (journal on)
 - [ ] scrubbing while recording pauses it (`recording_paused`; on `backend: v1` a 409 - `ttd/stop` first)
 - [ ] no tape/disk load between `ttd/start` and the analysis — it is refused
-      while recording and wipes a stopped session (a reset does not; a
-      snapshot load on the engine is part of the recording)
+      while recording and wipes a stopped session (a reset and a snapshot load do not: they end the session and keep its history)
 - [ ] bookmark + dump **before** heavy experimentation
 - [ ] `find-last` with `value`/`pc_from` filters to narrow repeat offenders
 - [ ] verify the fix by re-running Phase 1 and proving `find-last` now names
