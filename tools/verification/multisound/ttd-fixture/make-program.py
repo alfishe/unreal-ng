@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Writes the ZX-MultiSound TTD fixture program, a 128K .sna that plays every source of the card.
 
-The TTD corpus fixtures `multisound_pentagon` and `multisound_zxevo` (testdata/ttd/README.md) record this program
-on a Pentagon 128 and on a ZX-Evo (BaseConf) with the card in ZX-bus slot 1. Every frame the program writes the
+The TTD corpus sessions `multisound-pentagon` and `multisound-zxevo` (testdata/ttd/README.md) record this program
+on a Pentagon 128 and on a ZX-Evo (BaseConf) with the card in ZX-bus slot 1; the corpus tests record them in their
+own process (core/tests/_helpers/ttdmultisoundsessions.h), nothing else needs re-recording after a change here. Every frame the program writes the
 SounDrive DACs; every 16 frames it changes the notes of both YM2203 (FM and SSG), of the SAA1099 and sends MIDI
 (reverb / chorus sends off, a program change, note off / note on and a drum hit), bit-banged on YM U4's IOA2 at 31 250 baud; once it sends the
 General Sound a command. So a 300-frame recording holds state changes of every device of the card.

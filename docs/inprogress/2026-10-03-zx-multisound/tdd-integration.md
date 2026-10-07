@@ -124,8 +124,10 @@ panel (MS-6), the frame cost (~1 ms per frame, TODO) is not profiled.
     the card state hash and the five rows' audio digests with the original run.
   - `TtdMultiSound_Test.MidiByteAcrossCheckpoint`: a checkpoint between two bits of a MIDI byte, restore, byte arrives.
   - `TtdMultiSound_Test.SessionRefusesOtherBank`.
-- The TTD fixture corpus gets one MultiSound fixture per machine family where it fits (Pentagon, ZX-Evo); recorded
-  once the card lands (memory: re-record after any device-state change).
+- The TTD fixture corpus gets one MultiSound session per machine family where it fits (Pentagon, ZX-Evo). As built
+  (2026-10-07): not stored; the corpus tests record them in their own process from
+  `testdata/sound/multisound/ttd/allsources.sna` (`core/tests/_helpers/ttdmultisoundsessions.h`), so a device-state
+  change needs no re-recording.
 
 ### 4.1 As built (MS-5, 2026-10-05)
 
@@ -138,7 +140,7 @@ panel (MS-6), the frame cost (~1 ms per frame, TODO) is not profiled.
 | Fingerprint | `slots.<slot>.bank` = the bank's SHA-256 folded (0 = no bank), `affectsRestore`, from `ICard::TtdFingerprint` once the cards are built; the card's options were already in `slots.<slot>` (SL-5) |
 | Session guard | the slot-set guard knows a position per slot-built card type (its first id): `zxbus.1: recorded none, this machine multisound` / `multisound card: recorded multisound, this machine none`; then `ICard::TtdSessionMatches`: the MultiSound reads the bank digest out of the session's `Sam2695` blob (`sam2695::Synth::StateBank`) and refuses another bank (`zxbus.1: MIDI bank differs from the recording (recorded SHA-256 ...)`) |
 | Two instances | the planner refuses them up front (a second MultiSound shares `saa`, a GS card shares `gs`: a conflict, slots Q8); with the card's GS switched off by its DIP a GS card may stay, and the two GS record under their own ids (5 and 60) |
-| Corpus | no device format changed (the classic GS blob and every other id are unchanged), so the corpus is not re-recorded. No MultiSound fixture: the corpus recorder creates machines from the shipped configs through the WebAPI, which cannot fit a card yet (slot surfaces: SL-7 / MS-6), no shipped config fits the card (slots Q8), and `TTD_Corpus_Test` would need the slot set of the fixture. Left in the TODO |
+| Corpus | no device format changed (the classic GS blob and every other id are unchanged), so the corpus is not re-recorded. No MultiSound fixture: the corpus recorder creates machines from the shipped configs through the WebAPI, which cannot fit a card yet (slot surfaces: SL-7 / MS-6), no shipped config fits the card (slots Q8), and `TTD_Corpus_Test` would need the slot set of the fixture. Left in the TODO. **Later:** stored fixtures `multisound-pentagon` / `multisound-zxevo` (2026-10-06), then (owner decision 2026-10-07) recorded by the corpus tests themselves instead of stored - see the TODO, MS-5, and `core/tests/_helpers/ttdmultisoundsessions.h` |
 | Cost | the GS blob carries its 1-2 MB RAM in every v1 checkpoint, as the classic GS does with its 128-512 KB (compressed; the engine keeps the RAM as a region of 4 KB pieces and stores only written pieces) |
 
 Tests (`core/tests/debugger/ttd/ttdmultisound_test.cpp`, `TtdMultiSound_Test`): `DevicesRegisteredBySlot`;

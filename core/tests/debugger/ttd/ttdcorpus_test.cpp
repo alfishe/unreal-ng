@@ -13,6 +13,7 @@
 #include "_helpers/soundcardscope.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/gsslot.h"
+#include "_helpers/ttdmultisoundsessions.h"
 #include "_helpers/ttdslotcards.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
@@ -46,17 +47,20 @@
 /// sprites.ttd: DMA every frame, TS-Conf blob 16) run the same checks on a
 /// fresh machine of their recorded model (no TSFM history there).
 /// A format change that is not followed by a re-recording fails here first.
-/// The ZX-MultiSound fixtures run on a machine with the card in ZX-bus slot 1, as
-/// the recorder created it (ttdslotcards.h).
-/// Over the 50 ms budget (~4 s): nine multi-megabyte sessions, each loaded,
-/// restored at four points and replayed; this is the corpus's only C++ gate.
+/// The ZX-MultiSound sessions are not stored: the test records them in its own
+/// process first (ttdmultisoundsessions.h) and loads them like the stored ones,
+/// on a machine with the card in ZX-bus slot 1 (ttdslotcards.h).
+/// Over the 50 ms budget (~5 s): nine multi-megabyte sessions (two of them
+/// recorded here first), each loaded, restored at four points and replayed;
+/// this is the corpus's only C++ gate.
 
 namespace
 {
 namespace fs = std::filesystem;
 
-/// The corpus: testdata/ttd (Pentagon) and the per-machine fixtures in
-/// testdata/machines/<machine>/ttd; each runs on the model it was recorded on
+/// The corpus: testdata/ttd (Pentagon), the per-machine fixtures in
+/// testdata/machines/<machine>/ttd and the ZX-MultiSound sessions recorded in
+/// this process; each runs on the model it was recorded on
 std::vector<fs::path> CorpusFiles()
 {
     std::vector<fs::path> files;
@@ -71,6 +75,8 @@ std::vector<fs::path> CorpusFiles()
                 if (entry.path().extension() == ".ttd")
                     files.push_back(entry.path());
     std::sort(files.begin(), files.end());
+    for (const fs::path& recorded : ttdtest::MultiSoundSessions(ttdtest::SessionRecorder::V1))
+        files.push_back(recorded);
     return files;
 }
 

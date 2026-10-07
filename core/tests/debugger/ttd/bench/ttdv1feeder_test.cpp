@@ -4,7 +4,9 @@
 /// (docs/inprogress/2026-09-25-ttd-v2-migration/phase-1-memory-regions-tdd.md §4.2, §6).
 ///
 /// The corpus is testdata/ttd and testdata/machines/<machine>/ttd: real
-/// recordings on Pentagon, ZX-Evo, TS-Conf and the other models with fixtures.
+/// recordings on Pentagon, TS-Conf and the other models with fixtures, and the
+/// ZX-MultiSound sessions (Pentagon, ZX-Evo), recorded by v1 in the test process
+/// first (ttdmultisoundsessions.h).
 /// Each file boots its machine and decodes every checkpoint twice (engine
 /// and v1), so the test takes a few seconds - it is the engine's acceptance
 /// check, not a unit test.
@@ -24,6 +26,7 @@
 #include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/ttdmultisoundsessions.h"
 #include "_helpers/ttdslotcards.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/bench/ttdv1feeder.h"
@@ -54,6 +57,8 @@ std::vector<fs::path> CorpusFiles()
                 if (entry.path().extension() == ".ttd")
                     files.push_back(entry.path());
     std::sort(files.begin(), files.end());
+    for (const fs::path& recorded : ttdtest::MultiSoundSessions(ttdtest::SessionRecorder::V1))
+        files.push_back(recorded);
     return files;
 }
 }  // namespace

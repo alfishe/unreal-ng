@@ -86,12 +86,10 @@ CORPUS: List[Tuple[str, str, Optional[str], int]] = [
     # the PLD its bitstream at 3.5 MHz, then the default BIOS (3.06 Hotfix 2 since 2026-10-03) starts its POST
     # at 21 MHz: the PLD, Z84C15, video RAM, fast RAM, input and WD1793-context blobs (ids 25, 28-31, 35)
     ("sprinter_boot", "SPRINTER", None, 0),
-    # ZX-MultiSound in ZX-bus slot 1 (FIXTURE_OPTIONS "slots"): a program that plays every source of the card - both
-    # YM2203 (FM + SSG), the SAA1099, the SounDrive DACs, a General Sound command and bit-banged MIDI notes into the
-    # SAM2695 (tools/verification/multisound/ttd-fixture/make-program.py); the card's four devices (ids 53, 58-60)
-    # and the GS RAM region in every checkpoint. The settle frames let the synthesizer's 50 ms boot window pass
-    ("multisound-pentagon", "PENTAGON", "testdata/sound/multisound/ttd/allsources.sna", 10),
-    ("multisound-zxevo", "ATM3", "testdata/sound/multisound/ttd/allsources.sna", 10),
+    # The ZX-MultiSound sessions (multisound-pentagon, multisound-zxevo) are not stored any more (2026-10-07): the
+    # corpus tests record them in their own process (core/tests/_helpers/ttdmultisoundsessions.h). A session of the
+    # card for other uses: --snapshot testdata/sound/multisound/ttd/allsources.sna --settle-frames 10 --frames 70
+    # with "slots": {"zxbus.1": "multisound"} in FIXTURE_OPTIONS under the --name you give it
 ]
 CORPUS_DIR = "testdata/ttd"
 # Sessions recorded by the engine (the application's default recorder since the
@@ -124,10 +122,6 @@ FIXTURE_OPTIONS: Dict[str, Dict[str, Any]] = {
     "demo_7threality": {"gs": "z80"},
     "demo_across-the-edge-second": {"gs": "z80"},
     "tsfm_tech_support": {"gs": "z80"},
-    # 70 frames, not 300: the SAM2695 state (292 KB: voices, effect lines) changes in every checkpoint, about
-    # 30 KB a frame in the engine file and 100 KB in v1; the corpus tests need 63 checkpoints
-    "multisound-pentagon": {"slots": {"zxbus.1": "multisound"}, "frames": 70},
-    "multisound-zxevo": {"slots": {"zxbus.1": "multisound"}, "frames": 70},
 }
 
 # /run_frames runs at most this many frames per call

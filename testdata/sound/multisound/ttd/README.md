@@ -1,8 +1,10 @@
 # ZX-MultiSound TTD fixture program
 
-`allsources.sna` is a 128K snapshot that plays every source of the ZX-MultiSound at once. The TTD corpus fixtures
+`allsources.sna` is a 128K snapshot that plays every source of the ZX-MultiSound at once. The TTD corpus sessions
 `multisound-pentagon` and `multisound-zxevo` ([testdata/ttd/README.md](../../../ttd/README.md)) record it, so a
-time-travel session holds state changes of every device of the card in every checkpoint.
+time-travel session holds state changes of every device of the card in every checkpoint. The sessions are not stored:
+the corpus tests record them from this snapshot in their own process, with v1 and with the engine
+([`core/tests/_helpers/ttdmultisoundsessions.h`](../../../../core/tests/_helpers/ttdmultisoundsessions.h)).
 
 What it does, as a user would hear it with the card fitted in a ZX-bus slot:
 
@@ -24,5 +26,4 @@ Regenerate it (deterministic: the same file every time) with
 python3 tools/verification/multisound/ttd-fixture/make-program.py
 ```
 
-and then re-record the two fixtures (`record_fixtures.py --only multisound-pentagon`, `--only multisound-zxevo`;
-once with the application started normally and once with `UNREAL_TTD_BACKEND=v1`).
+Nothing to re-record afterwards: the next test run records the sessions from the new snapshot.

@@ -5,7 +5,7 @@
 ///
 /// A slot-built card (one SlotManager builds itself, an ICard: the ZX-MultiSound) is in no shipped config, so a test
 /// that loads a session recorded with one builds its machine with the slot set the recorder created it with
-/// (`"slots": {"zxbus.1": "multisound"}`, tools/verification/ttd-analyzer/scripts/record_fixtures.py). A session
+/// (`"slots": {"zxbus.1": "multisound"}`; the corpus's ZX-MultiSound sessions: ttdmultisoundsessions.h). A session
 /// names its devices by id (TTDRecordedMachine::peripheralMask), not by slot: the corpus records every such card in
 /// ZX-bus slot 1, and the session guard refuses a load into another slot with the reason. The cards a config
 /// translates into its slots (General Sound, MoonSound) are not listed: the shipped configs carry them.

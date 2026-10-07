@@ -4,7 +4,7 @@
 ([slots TODO](../2026-10-03-zx-bus-slots/TODO.md)); demo to the owner done (MIDI, TSFM, SAA). MS-1 to MS-8 done; on
 2026-10-06 (branch `multisound-remainder`) the 0.15 dB SSG residue explained, the frame cost profiled (silent FM skips
 its FIR), the TTD corpus fixtures (they found a seek bug, fixed) and the MS-7 second pass; on 2026-10-07 (branch
-`ms-ssg-chain-fixtures`) the SSG rows got the AY character chain. Shipped configs keep the card
+`ms-ssg-chain-fixtures`) the SSG rows got the AY character chain and the corpus sessions are recorded by the tests. Shipped configs keep the card
 off (owner decision): it is fitted through the slots. Left: the open items below - follow-ups that need a real board
 or real-program traces, the frame-cost backlog, SAM-6 / SAM-7.
 
@@ -133,6 +133,15 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
     plays every source of the card (written by `tools/verification/multisound/ttd-fixture/make-program.py`).
     `TTD_Corpus_Test` and `TimeTravelControllerCorpus_Test` build their machine with the card and the shipped default
     bank (`core/tests/_helpers/ttdslotcards.h`). The ZX-Evo fixture found the sample-phase bug below
+  - [x] 2026-10-07 (owner decision, branch `ms-ssg-chain-fixtures`): the four stored sessions (~19 MB) are gone; the
+    corpus tests record the same program in their own process instead
+    (`core/tests/_helpers/ttdmultisoundsessions.h`: a fresh machine with the card in `zxbus.1`, 44.1 kHz, Sound HQ and
+    Screen HQ on, the snapshot, 10 settle frames, 70 recorded frames with the write journal, saved to the process's
+    scratch folder, deleted when the process ends), with v1 for `TTD_Corpus_Test`, `TTDSessionFile_Test` and
+    `TTDV1Feeder_Test` and with the engine for `TimeTravelControllerCorpus_Test`; once per recorder and test process,
+    about 0.35 s per session (the bank load included). `allsources.sna` stays committed; a change of the card or the
+    program needs no re-recording. `record_fixtures.py` no longer lists them; the corpus README lists them as
+    recorded sessions
   - [x] the ids 58-60 / region 17 and input kind 17 (`MidiPanic`) were checked free on master at the landing (2026-10-05)
   - [x] 2026-10-06, found by the corpus fixture `multisound-zxevo`: a seek on a machine without a board AY device (the
     ZX-Evo, whose YM2149 the card takes out of its socket) left the mixer's sample phase (SoundManager::samplePhase,
