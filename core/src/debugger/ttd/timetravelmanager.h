@@ -199,6 +199,11 @@ public:
     ///        flows. Idempotent (no-op when not in DebuggerLive).
     void EndDebuggerLiveHistory();
 
+    /// The engine's names for the debugger's history (TTDSessionRef): v1 keeps its DebuggerLive mode
+    bool HoldBackgroundRecording() { return BeginDebuggerLiveHistory(); }
+    void ReleaseBackgroundRecording() { EndDebuggerLiveHistory(); }
+    bool IsBackgroundSession() const { return IsDebuggerLive(); }
+
     /// @brief The session summary, computed from the live session structures.
     ///
     /// Thread contract (TDD section 7.2): only the thread that drives the

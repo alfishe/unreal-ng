@@ -77,7 +77,10 @@ The black box (the engine) is for "always on" recording: it keeps only the
 last minutes and never holds the machine at real speed - turbo or a host
 speed above 1x stops it first (history kept, `last_stop_reason:
 "acceleration"`), and it starts a new session once nothing accelerates. No
-acceleration lock below applies to it. Same on the other surfaces: CLI
+acceleration lock below applies to it, and it refuses no load: inserting a
+tape, a disk or another medium ends its session (the recording up to there
+stays in its folder) and the next one starts at the next frame. The same
+holds for the history DeZog starts for reverse debugging. Same on the other surfaces: CLI
 `ttd start --black-box --minutes 2`, Lua `ttd_start(false, true, 2)`, Python
 `emu.ttd_start(black_box=True, minutes=2)`; unreal-qt: Debug > Time Travel >
 Always Record. `GET /ttd/status` shows `black_box: true` and the folder its

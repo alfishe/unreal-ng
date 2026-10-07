@@ -128,7 +128,7 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchDropsAStoppedSession)
 /// allocator happening to crash on the stale pointer).
 TEST_F(TTDGeneralSoundSwitch_Test, SwitchUnderLiveHistoryRepointsRegistry)
 {
-    ASSERT_TRUE(context->pTimeTravelController->BeginDebuggerLiveHistory());
+    ASSERT_TRUE(context->pTimeTravelController->HoldBackgroundRecording());
 
     GeneralSoundCard* before = sm->getGeneralSound();
     const ttd::PeripheralId beforeId = before->TTDPeripheralId();
@@ -155,14 +155,14 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchUnderLiveHistoryRepointsRegistry)
         << "the outgoing personality's slot must be vacated, not left pointing at the freed card";
     EXPECT_EQ(context->pTimeTravelController->GetSessionInfo().lastDropReason, "gs-card-switch");
 
-    context->pTimeTravelController->EndDebuggerLiveHistory();
+    context->pTimeTravelController->ReleaseBackgroundRecording();
 }
 
 /// A checkpoint captured after a switch to the lightweight card holds no
 /// General Sound blob at all: neither the freed classic card's nor the LW's
 TEST_F(TTDGeneralSoundSwitch_Test, CheckpointAfterSwitchToLightweightHoldsNoGsBlob)
 {
-    ASSERT_TRUE(context->pTimeTravelController->BeginDebuggerLiveHistory());
+    ASSERT_TRUE(context->pTimeTravelController->HoldBackgroundRecording());
     ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::LW));
     GeneralSoundCard* after = sm->getGeneralSound();
     ASSERT_NE(after, nullptr);
@@ -174,7 +174,7 @@ TEST_F(TTDGeneralSoundSwitch_Test, CheckpointAfterSwitchToLightweightHoldsNoGsBl
     EXPECT_EQ(blobs.count(static_cast<uint8_t>(ttd::PeripheralId::GeneralSoundLightweight)), 0u);
     EXPECT_EQ(blobs.count(static_cast<uint8_t>(ttd::PeripheralId::GeneralSound)), 0u);
 
-    context->pTimeTravelController->EndDebuggerLiveHistory();
+    context->pTimeTravelController->ReleaseBackgroundRecording();
 }
 
 /// A switch with no recording in progress is the common case (every switch
@@ -219,7 +219,7 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchToNeoGSEndsARecordingAndRepointsUnderLi
     EXPECT_FALSE(context->pTimeTravelController->IsRecording());
     ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::Z80));   // back, for the live history below
 
-    ASSERT_TRUE(context->pTimeTravelController->BeginDebuggerLiveHistory());
+    ASSERT_TRUE(context->pTimeTravelController->HoldBackgroundRecording());
     ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::NGS));
     GeneralSoundCard* after = sm->getGeneralSound();
     EXPECT_EQ(context->pTimeTravelController->GetPeripheralRegistry().GetDevice(ttd::PeripheralId::NeoGS),
@@ -227,7 +227,7 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchToNeoGSEndsARecordingAndRepointsUnderLi
     EXPECT_EQ(context->pTimeTravelController->GetPeripheralRegistry().GetDevice(ttd::PeripheralId::GeneralSound), nullptr);
     EXPECT_EQ(context->pTimeTravelController->GetSessionInfo().lastDropReason, "gs-card-switch");
     EmulatorTestHelper::RunFramesFast(emulator, 2); // checkpoints save through the new card
-    context->pTimeTravelController->EndDebuggerLiveHistory();
+    context->pTimeTravelController->ReleaseBackgroundRecording();
 }
 
 /// A session recorded with the classic card must not load on an instance

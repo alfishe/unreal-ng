@@ -144,10 +144,11 @@ public:
     bool HasHistory() const override { return !_timeline.empty(); }
     const TTDInputJournal& InputJournal() const override { return _inputJournal; }
 
-    /// @brief Whether `action` may run now. While a user recording runs, every
-    /// TTDGuardedAction is refused - stop the recording first. A debugger's
-    /// live history (DebuggerLive) is not protected: an outside change drops it
-    /// and the debugger restarts it.
+    /// @brief Whether `action` may run now. While an explicit recording runs
+    /// (one the user started), a media change is refused - stop the recording
+    /// first. A background recording (the black box, a debugger's history) is
+    /// not protected: the change ends its session, the next one starts at once
+    /// (owner decision 2026-10-07).
     /// @return empty when allowed; otherwise the reason, one sentence a user can
     /// act on. Every automation surface shows it verbatim, and the core paths
     /// that perform the action refuse with it too.
@@ -165,26 +166,21 @@ public:
     inline bool IsRecording() const override { return _state.load(std::memory_order_acquire) == TTDSessionState::Recording; }
 
     inline TTDSessionState GetState() const override { return _state.load(std::memory_order_acquire); }
-    inline TTDRecordMode GetRecordMode() const { return _recordMode; }
-    inline bool IsDebuggerLive() const { return _recordMode == TTDRecordMode::DebuggerLive; }
+    /// The current session is a background one (the black box, a debugger's
+    /// history): it holds no lock and refuses nothing; an outside change ends it
+    inline bool IsBackgroundSession() const { return _backgroundSession; }
 
-    /// @brief Enter DebuggerLive mode (debugger session live history).
-    ///
-    /// Adopts whatever recording state exists instead of wiping:
-    ///  - already Recording (a Session-mode start hijacked by an attach):
-    ///    keep the timeline, just switch the mode flag;
-    ///  - Idle with history and no unrecorded gap: ResumeRecordingLive()
-    ///    (append after the recorded end);
-    ///  - Idle empty or gapped: fresh StartRecording-style baseline.
-    ///
-    /// @return true when recording is active in DebuggerLive mode on
-    ///         return.
-    bool BeginDebuggerLiveHistory();
+    /// @brief A debugger needs a history (DeZog, owner decision 2026-10-07): the
+    /// recording that runs is used - an explicit one stays explicit; with none,
+    /// a background recording starts (it goes on after the retained history
+    /// when it can, as a fresh session otherwise). Idempotent: called on every
+    /// resume and step. False while browsing a stopped session (Detached).
+    bool HoldBackgroundRecording();
 
-    /// @brief Leave DebuggerLive mode. Recording stops, the timeline is
-    ///        KEPT as normal Idle-with-history for the scrubber/.ttd
-    ///        flows. Idempotent (no-op when not in DebuggerLive).
-    void EndDebuggerLiveHistory();
+    /// @brief The debugger is gone: a background recording it started stops
+    /// (history kept, as for the scrubber and the .ttd flows) unless the black
+    /// box keeps it. Idempotent
+    void ReleaseBackgroundRecording();
 
     /// @brief The session summary, computed from the live session structures.
     ///
@@ -1744,8 +1740,8 @@ private:
     /// recording relies on); GetSessionInfo no longer hashes the ROM per call
     uint64_t _liveRomSignature = 0;
 
-    /// Recording mode (Session vs DebuggerLive). See TTDRecordMode.
-    TTDRecordMode _recordMode = TTDRecordMode::Session;
+    bool _debuggerHold = false;        ///< HoldBackgroundRecording: a debugger wants a history
+    bool _backgroundSession = false;   ///< the session started as a background one (the black box, a debugger)
 
     /// The recorded timeline. Appended only on the emulator thread.
     std::vector<TTDCheckpoint> _timeline;
@@ -2112,7 +2108,9 @@ private:
 
     bool _recordingLockEngaged = false;
     uint8_t _savedHostSpeedMultiplier = 1;  // restored on release
-    bool _accelerationLocked = false;       // this session's lock covers acceleration (not a black box)
+    bool _accelerationLocked = false;       // this session's lock covers acceleration (not a background one)
+    /// A new session now would be a background one: the black box is on, or a debugger holds a history
+    bool BackgroundWanted() const { return _blackBox || _debuggerHold; }
     bool _blackBox = false;                 // SetBlackBox
     uint32_t _recordingNumber = 0;          // recordings this instance started (RecordingSessionLabel)
     /// DeZog-forced RAM windows 1/2 (no latch describes them): beside each checkpoint, re-applied after the banks

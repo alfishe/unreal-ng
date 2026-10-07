@@ -930,10 +930,10 @@ void DezogDebugAdapter::onSessionClosed()
 
     leaveHistory(*emulator);
 
-    // End the live-history mode: recording stops, the timeline is kept for
-    // the scrubber/.ttd flows (§6.3.1).
+    // The debugger's history ends: a background recording it started stops,
+    // the timeline is kept for the scrubber/.ttd flows (§6.3.1)
     if (ttd::TTDSessionRef mgr = ttdManagerOf(*emulator))
-        mgr->EndDebuggerLiveHistory();
+        mgr->ReleaseBackgroundRecording();
 
     if (BreakpointManager* bpManager = emulator->GetBreakpointManager())
     {
@@ -1003,12 +1003,11 @@ void DezogDebugAdapter::ensureHistoryRecording(Emulator& emulator)
     if (!mgr)
         return;
 
-    // Debug sessions record via the TTD DebuggerLive mode: continuous
-    // capture that survives browse cycles. A plain StartRecording here
-    // would wipe the timeline on every browse exit (reverse-debugging.md
-    // §6.2). Idempotent - safe to call while browsing.
-    if (!mgr->BeginDebuggerLiveHistory())
-        std::cerr << "[DZRP] TTD BeginDebuggerLiveHistory failed - instruction history unavailable"
+    // A debug session uses the recording that runs, or a background one: it
+    // survives browse cycles and refuses nothing (an outside change ends its
+    // session and the next starts at once). Idempotent - safe while browsing
+    if (!mgr->HoldBackgroundRecording())
+        std::cerr << "[DZRP] TTD history unavailable"
                   << (mgr->GetUnavailableReason().empty() ? "" : ": " + mgr->GetUnavailableReason()) << "\n";
 }
 
@@ -1202,13 +1201,13 @@ std::optional<dzrp::IDebugInterface::HistoryEntry> DezogDebugAdapter::getHistory
         return std::nullopt;
 
     // Entering history: remember the present TimePoint (partial-frame
-    // counting in resolveHistoryIndex). Browse is read-only under the
-    // DebuggerLive mode - recording never stops; GetFrameCache builds under
-    // the paused exemption. No snapshot, no restore (§6.3.2).
+    // counting in resolveHistoryIndex). Browse is read-only - recording never
+    // stops; GetFrameCache builds under the paused exemption. No snapshot, no
+    // restore (§6.3.2).
     if (getHistoryCursor() < 0)
     {
-        if (!mgr->IsDebuggerLive())
-            return std::nullopt;  // history requires the live-history mode
+        if (!mgr->IsRecording())
+            return std::nullopt;  // history requires a recording
         ttd::TTDTimePoint present = mgr->CurrentPosition();
         std::lock_guard<std::mutex> lock(_mutex);
         _present = {present.frame, present.tInFrame};

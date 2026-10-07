@@ -2858,7 +2858,7 @@ How each surface reports it:
 | GDB `monitor load` | `Error: <reason>` |
 | Qt UI | A "TTD Recording Active" dialog with the reason |
 
-Only a recording you started (`ttd start`, the TTD panel, the API) is protected. A DeZog session keeps its own rolling live history for reverse debugging; that history is not protected: loading media or a snapshot during a debug session works as before, drops that history (`last_drop_reason` says why), and DeZog starts a fresh one on the next resume or step. If DeZog connects while your recording runs, it takes that recording over as its live history.
+Only a recording you started (`ttd start` without `black_box`, the TTD panel's Record, the API) is protected. A background recording - the black box (Debug > Time Travel > Always Record, `ttd start` with `black_box`) or the history DeZog starts for reverse debugging - refuses nothing (owner decision 2026-10-07): inserting a tape, a disk or another medium ends its session (`last_stop_reason` names the load), the recording up to that point stays in its folder (`recording_folder`, loadable with `ttd load <folder>`), and the next session starts at the next frame. Turbo and a host speed above 1x stop it the same way; a reset, a snapshot load and a machine change end it by the common rule (D42). If DeZog connects while a recording runs, it uses that recording: yours stays explicit and protected, and goes on when DeZog disconnects; a background one DeZog started stops when it disconnects (history kept). On v1 (`UNREAL_TTD_BACKEND=v1`) DeZog keeps its own live history mode as before.
 
 **What wipes a stopped session** (history dropped, state back to `idle`):
 
