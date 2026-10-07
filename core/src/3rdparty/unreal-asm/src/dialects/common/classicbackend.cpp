@@ -276,8 +276,9 @@ struct Writer
 
     std::string Hex(int64_t value, int digits) const
     {
+        // The width is clamped to the buffer: gcc 13 rejects an unbounded one (-Werror=format-truncation)
         char buffer[32];
-        std::snprintf(buffer, sizeof(buffer), "%0*llX", std::max(digits, 1), static_cast<unsigned long long>(value & 0xFFFF));
+        std::snprintf(buffer, sizeof(buffer), "%0*llX", std::clamp(digits, 1, 30), static_cast<unsigned long long>(value & 0xFFFF));
         return std::string(Z80asm() ? "$" : "#") + buffer;
     }
 
