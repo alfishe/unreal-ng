@@ -67,9 +67,13 @@ written. Any other size is refused.
   their reset values (a +2A or +3 snapshot loses its special paging).
 - A PC on a `HALT` opcode starts the CPU halted.
 
-**Saving.** The 48K layout is written when #7FFD is locked, otherwise the 128K layout. The 48K saver puts the PC on the stack in
-the machine's live memory before writing (two bytes under SP are overwritten in the running machine as well as in the file);
-this is a known limitation of that saver.
+**Saving.** The machine's 128K view is written (see the [README](README.md#how-a-snapshot-is-saved)). The 48K layout goes to a
+48K machine, a 48K mode of a bigger machine, and a 128K-family machine whose paging is locked with bank 0 on top and the normal
+screen (the other banks cannot be reached by the running program); everything else gets the 128K layout. The PC is pushed on the
+stack in the file's own copy of the RAM: the running machine is not touched. A 48K layout whose SP is in the ROM (1 to #4001: the
+PC would have no place on the stack) is refused with the reason and the way out (save as .z80 or .szx). A .sna cannot hold more than
+128 KB, so a Pentagon 512 / 1024 and a Scorpion are refused (.szx; for the Scorpion also .z80); the AY registers and #1FFD are not
+in the format, so they are not written (the save answer says which state is lost).
 
 ---
 

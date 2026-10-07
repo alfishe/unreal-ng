@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <fstream>
 
+#include "debugger/ttd/ttdrecordingfolders.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "mainwindow.h"
@@ -647,7 +648,7 @@ void TtdWidget::onLoadSession()
     EmulatorContext* context = _activeEmulator->GetContext();
     if (!context || !ttd::HasTimeTravelSession(context)) return;
 
-    QString fileName = QFileDialog::getOpenFileName(this, tr("Load TTD Session"), QString(),
+    QString fileName = QFileDialog::getOpenFileName(this, tr("Load TTD Session"), QString::fromStdString(ttd::RecordingsRoot()),
                                                    tr("Time Travel Session (*.ttd)"));
     if (fileName.isEmpty()) return;
 
@@ -704,7 +705,11 @@ void TtdWidget::onExportSession()
     if (!context || !ttd::HasTimeTravelSession(context)) return;
     ttd::TTDSessionRef ttd(context);
 
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Export TTD Session"), QString(),
+    // Saved sessions live in ~/.unreal-ng/ttd, next to the folders recordings are written into
+    const std::string recordings = ttd::RecordingsRoot();
+    if (!recordings.empty())
+        FileHelper::CreateFolders(recordings);
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Export TTD Session"), QString::fromStdString(recordings),
                                                    tr("Time Travel Session (*.ttd)"));
     if (fileName.isEmpty()) return;
 

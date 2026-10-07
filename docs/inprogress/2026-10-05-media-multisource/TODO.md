@@ -37,17 +37,19 @@ PLAN.md row **#95**.
   - [x] C8b S4 write-back into folder layers; C8d: attributes (sidecar), the host trash, partitioned disks, a commit without a sector list in memory
   - [x] C4b a graft reads only the base directories its upper layers reach
   - [x] C8c Qt strategy dialog (code; awaits the owner's Qt build on macOS / Windows / Linux)
-- [ ] C9 optional bulk `ReadSectors` (A/B gated)
-- [ ] Lazy base enumeration for grafts: walk only the base directories upper layers touch (the full walk dominates
-  the graft build today, [phases/c4-graft.md](phases/c4-graft.md) §8)
+- [x] C9 optional bulk `ReadSectors`: dropped after measuring (14x cheaper at the device, about 2 % of a guest's
+  per-sector cost; [phases/c9-bulk-read.md](phases/c9-bulk-read.md))
+- [x] Lazy base enumeration for grafts: done as C4b ([phases/c4b-lazy-graft-base.md](phases/c4b-lazy-graft-base.md))
 - [x] A folder layer's mount point dated 1980: the snapshot root now has its folder's time (owner decision 2026-10-05,
   [phases/c4-graft.md](phases/c4-graft.md) §8)
-- [ ] C10 sparse and in-memory images (owner request 2026-10-05): sparse image files and sparse in-memory disks
+- [x] C10 sparse and in-memory images (owner request 2026-10-05; done as C10a-C10e, see [phases/README.md](phases/README.md)): sparse image files and sparse in-memory disks
   (store only written / non-zero sectors: a FAT32 volume is >= 32 MiB, 256 MiB with 4 KiB clusters, nearly all
   zeros), images held in memory instead of on disk where it pays, and packing back efficiently on save / flatten
   (S1-S4): skip zero and unchanged runs, sparse output files, compact VHD / CHD. Design first, in phases/
 - [ ] Benchmarks and charts C1-C8 with the results table filled in ([test-and-benchmark-plan.md](test-and-benchmark-plan.md) §5.5)
-- [ ] User docs (`docs/features/media.md`) and recipe `.recipe/media/compose-media.md`
+- [x] User docs (`docs/features/media.md`) and recipe [`.recipe/media/compose-media.md`](../../../.recipe/media/compose-media.md)
+- [ ] Owner's check on macOS / Windows before master: the Qt flatten dialog (partitioned write-back too), `HostTrash`
+  (Recycle Bin, `~/.Trash`), the C10e journal's positional I/O
 - [ ] Follow-up after C0-C9: library extraction and unification, phases X0-X13 ([library-extraction/](library-extraction/README.md)), PLAN.md row **#96**
 - [ ] **P2** ACC-C5, the NedoOS half (owner request 2026-10-05): NedoOS lists the contents of a composite CD on the
   ZX-Evo's ATAPI drive. Needs NedoOS's CD / ISO 9660 driver in the test fixtures (`testdata/machines/zxevo/nedoos/`);

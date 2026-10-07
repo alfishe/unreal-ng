@@ -1291,3 +1291,54 @@ TEST_F(TimeTravelController_Test, RunningFromAMidFrameFirstCheckpointIsExact)
     ASSERT_EQ(_controller->CurrentPosition(), at);
     expectLive("instruction by instruction");
 }
+
+/// Step 3c: a recording is written as it records into a folder of its own under
+/// the recording root. The folder lives as long as its session: a new session,
+/// a discard and a clean close of the instance delete it (a crash would leave it
+/// to the startup cleanup). A black box keeps only its window's segment files
+/// ~150 ms: the fixture boots two machines (~100 ms in every test here)
+TEST_F(TimeTravelController_Test, RecordingFoldersLiveAsLongAsTheirSession)
+{
+    const std::string root = TestPathHelper::GetUniqueTestScratchPath("ttd-recordings");
+    _controller->SetShadowRecordingRoot(root);
+
+    ASSERT_TRUE(_controller->StartRecording());
+    _b->RunNFrames(3, /*skipBreakpoints=*/true);
+    const std::string first = _controller->ShadowRecordingFolder();
+    ASSERT_FALSE(first.empty());
+    EXPECT_TRUE(FileHelper::IsFolder(first));
+    _controller->StopRecording();
+    EXPECT_TRUE(FileHelper::IsFolder(first)) << "a stopped session keeps its folder";
+    // The next folder may take the same name (a second's resolution): a marker tells them apart
+    const std::string marker = first + "/marker";
+    std::ofstream(FileHelper::ToFsPath(marker)) << "first";
+
+    ASSERT_TRUE(_controller->StartRecording());   // a new session
+    _b->RunNFrames(2, /*skipBreakpoints=*/true);
+    const std::string second = _controller->ShadowRecordingFolder();
+    EXPECT_FALSE(std::filesystem::exists(FileHelper::ToFsPath(marker))) << "the previous session's folder went with it";
+    EXPECT_TRUE(FileHelper::IsFolder(second));
+    _controller->StopRecording();
+    _controller->InvalidateSession("test discard");
+    EXPECT_FALSE(FileHelper::IsFolder(second)) << "a discarded session's folder goes";
+
+    // A black box with a small window: its oldest segment files go as it moves on
+    _controller->SetBlackBox(true, 1);
+    ASSERT_TRUE(_controller->StartRecording());
+    _controller->SetHistoryLimit(8, 0);   // segments of a frame
+    _b->RunNFrames(30, /*skipBreakpoints=*/true);
+    _controller->StopRecording();
+    const std::string third = _controller->ShadowRecordingFolder();
+    size_t files = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(FileHelper::ToFsPath(third)))
+        files += entry.path().extension() == ".ttd";
+    EXPECT_GT(files, 0u);
+    EXPECT_LE(files, _controller->GetEngine().Segments().size() + 1) << "only the window's segments stay on disk";
+
+    // A clean close of the instance
+    _controller.reset();
+    EXPECT_FALSE(FileHelper::IsFolder(third)) << "an unsaved recording goes with its instance";
+    _controller = std::make_unique<ttd::TimeTravelController>(_b->GetContext());
+    _b->GetContext()->pTimeTravelHooks = _controller.get();
+    _b->GetContext()->ttdWriteSink = _controller.get();
+}

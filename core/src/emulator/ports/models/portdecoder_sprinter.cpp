@@ -79,6 +79,7 @@ PortDecoder_Sprinter::PortDecoder_Sprinter(EmulatorContext* context) : PortDecod
 {
     // The machine's snapshot policy: a snapshot goes into the Spectrum mode through the cell table (PLAN #84)
     SetSnapshotPolicy(&SprinterZxSnapshot::Instance());
+    SetSnapshotCapturePolicy(&SprinterZxCapture::Instance());
 
     _rtc.SetCenturyRegister(0x32);
     _rtc.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });

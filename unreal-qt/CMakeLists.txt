@@ -641,6 +641,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/network/trafficwindow.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/network/trafficwindow.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/network/core/trafficpanelmodel.cpp"
+        # File > Save Snapshot: the formats the machine can be saved in now (snapshot pipeline P6)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/savesnapshotchoices_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/savesnapshotchoices.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/savesnapshotchoices.h"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")

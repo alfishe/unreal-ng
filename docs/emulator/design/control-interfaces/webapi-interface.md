@@ -1692,13 +1692,14 @@ There are no `/ttd/clear`, `/ttd/timeline`, `/ttd/step` or `/ttd/resume_from_her
   "port_journal_bytes": 9234,
   "port_replay_value_mismatches": 0,
   "port_replay_divergences": 0,
+  "recording_folder": null,
   "last_drop_reason": null,
   "last_stop_reason": null,
   "unavailable_reason": null
 }
 ```
 
-`state` is `idle`, `recording` or `detached`. `last_drop_reason` is `null` until something drops a history, then names it (e.g. `"snapshot-load"`). `unavailable_reason` is `null` unless time travel is not available for this machine at all (a ZX-Poly member); then `/ttd/start` answers **409 Conflict** with it as `message`. When the build has no TTD engine the response still comes back with `ttd_available: false`, `state: "idle"` and zero counters. Field meanings: [command-interface.md → Status fields](./command-interface.md#status-fields).
+`state` is `idle`, `recording` or `detached`. `recording_folder` is the folder the session's segment files are written to as it records (`~/.unreal-ng/ttd/<date-time>-<name>/`, the engine in unreal-qt and the automation app; deleted with its session, a crashed one left for the 7-day startup cleanup), null when none. `last_drop_reason` is `null` until something drops a history, then names it (e.g. `"snapshot-load"`). `unavailable_reason` is `null` unless time travel is not available for this machine at all (a ZX-Poly member); then `/ttd/start` answers **409 Conflict** with it as `message`. When the build has no TTD engine the response still comes back with `ttd_available: false`, `state: "idle"` and zero counters. Field meanings: [command-interface.md → Status fields](./command-interface.md#status-fields).
 
 **`POST /ttd/seek` response shape:**
 

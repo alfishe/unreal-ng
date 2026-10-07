@@ -1,6 +1,8 @@
 #include "debugger/ttd/ttdrecordingfolders.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <system_error>
 
@@ -157,14 +159,36 @@ namespace ttd
 
     std::vector<std::string> TTDRecordingFolder::Segments() const
     {
-        std::vector<std::string> out;
-        for (uint32_t i = 0;; ++i)
+        // Every segment file in the folder by its number: a black box deletes
+        // its oldest ones as its window moves on, so the run may not start at 0
+        std::vector<uint32_t> numbers;
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(FileHelper::ToFsPath(_path), ec))
         {
-            const std::string p = SegmentPath(i);
-            if (!FileHelper::FileExists(p))
-                return out;
-            out.push_back(p);
+            const std::string name = FileHelper::FromFsPath(entry.path().filename());
+            unsigned number = 0;
+            char tail[8] = {};
+            if (std::sscanf(name.c_str(), "segment-%u.%7s", &number, tail) == 2 && std::string(tail) == "ttd")
+                numbers.push_back(number);
         }
+        std::sort(numbers.begin(), numbers.end());
+        std::vector<std::string> out;
+        for (const uint32_t n : numbers)
+            out.push_back(SegmentPath(n));
+        return out;
+    }
+
+    size_t TTDRecordingFolder::DropOldestSegments(size_t keep)
+    {
+        const std::vector<std::string> segments = Segments();
+        size_t dropped = 0;
+        for (size_t i = 0; i + keep < segments.size(); ++i)
+        {
+            std::error_code ec;
+            if (std::filesystem::remove(FileHelper::ToFsPath(segments[i]), ec))
+                ++dropped;
+        }
+        return dropped;
     }
 
     bool TTDRecordingFolder::SaveAs(const std::string& target, bool overwrite, std::string& error) const

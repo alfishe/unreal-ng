@@ -116,6 +116,8 @@ TimeTravelController::TimeTravelController(EmulatorContext* context)
 
 TimeTravelController::~TimeTravelController()
 {
+    // A clean close of the instance: its unsaved recording goes with it
+    DiscardShadowFiles();
     if (_context && _context->ttdCoverage == &_coverageIndex)
         _context->ttdCoverage = nullptr;
     if (_context && _context->ttdWriteSink == this)
@@ -3746,6 +3748,9 @@ void TimeTravelController::EnforceHistoryLimit()
     {
     }
     SyncTimelineFront();
+    // A black box keeps its window on disk too: the files of the dropped segments go
+    if (_blackBox && _shadowFolder)
+        _shadowFolder->DropOldestSegments(_engine->Segments().size());
 }
 
 void TimeTravelController::SyncTimelineFront()
@@ -3877,8 +3882,10 @@ void TimeTravelController::DiscardShadowFiles()
 
 void TimeTravelController::ResetShadow()
 {
-    FinishShadowFiles();
-    _shadowFolder.reset();   // a finished recording stays on disk
+    // The session in memory goes, and its files with it: a recording's folder
+    // lives as long as its session (a saved session is a file of its own; a
+    // crash leaves the folder, which the startup cleanup removes after 7 days)
+    DiscardShadowFiles();
     ArmShadowRegions(false);
     _shadowDeviceRegions.clear();
     if (_shadowEngine)
@@ -4234,10 +4241,9 @@ void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const
     const size_t keepEngine = _engine->FirstCheckpoint() + static_cast<size_t>(keep);
     const TTDCheckpoint& kept = _timeline[static_cast<size_t>(keep)];
 
-    // A file written as it recorded holds the old future: it ends here
-    // (branches that keep it come with Phase 5, Step 2)
-    FinishShadowFiles();
-    _shadowFolder.reset();
+    // The files written as it recorded hold the old future: they go, and the
+    // continued session writes a folder of its own from its next capture
+    DiscardShadowFiles();
 
     std::string error;
     const TTDPosition engineCut{0, cut.frame, cut.frame == kept.time.frame ? cut.tInFrame : 0};

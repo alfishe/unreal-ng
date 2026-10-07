@@ -12,6 +12,7 @@
 #include "base/featuremanager.h"
 #include "emulator/buildinfo.h"
 #include "emulator/emulator.h"
+#include "emulator/savesnapshotchoices.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/platform.h"
@@ -166,19 +167,23 @@ void MenuManager::createFileMenu()
 
     _fileMenu->addSeparator();
 
-    // Save Snapshot submenu
+    // Save Snapshot submenu: the items follow what the running machine can be saved in (updateSaveSnapshotMenu)
     _saveSnapshotMenu = _fileMenu->addMenu(tr("&Save Snapshot"));
-    
-    // Save as SNA
-    _saveSnapshotSNAAction = _saveSnapshotMenu->addAction(tr("Save as .sna..."));
-    _saveSnapshotSNAAction->setShortcut(QKeySequence::Save);
-    _saveSnapshotSNAAction->setStatusTip(tr("Save current emulator state to SNA snapshot format"));
-    connect(_saveSnapshotSNAAction, &QAction::triggered, this, &MenuManager::saveSnapshotRequested);
-    
-    // Save as Z80
+    _saveSnapshotMenu->setToolTipsVisible(true);
+
+    _saveSnapshotAction = _saveSnapshotMenu->addAction(tr("Save Snapshot..."));
+    _saveSnapshotAction->setShortcut(QKeySequence::Save);
+    connect(_saveSnapshotAction, &QAction::triggered, this, [this]() { emit saveSnapshotRequested(QString()); });
+    _saveSnapshotMenu->addSeparator();
+
+    _saveSnapshotSZXAction = _saveSnapshotMenu->addAction(tr("Save as .szx..."));
+    connect(_saveSnapshotSZXAction, &QAction::triggered, this, [this]() { emit saveSnapshotRequested("szx"); });
     _saveSnapshotZ80Action = _saveSnapshotMenu->addAction(tr("Save as .z80..."));
-    _saveSnapshotZ80Action->setStatusTip(tr("Save current emulator state to Z80 v3 snapshot format"));
-    connect(_saveSnapshotZ80Action, &QAction::triggered, this, &MenuManager::saveSnapshotZ80Requested);
+    connect(_saveSnapshotZ80Action, &QAction::triggered, this, [this]() { emit saveSnapshotRequested("z80"); });
+    _saveSnapshotSNAAction = _saveSnapshotMenu->addAction(tr("Save as .sna..."));
+    connect(_saveSnapshotSNAAction, &QAction::triggered, this, [this]() { emit saveSnapshotRequested("sna"); });
+    // The answer depends on the machine's mode (a Sprinter at the DSS prompt, a TS-Conf in its native mode): ask at the moment the menu opens
+    connect(_saveSnapshotMenu, &QMenu::aboutToShow, this, [this]() { updateSaveSnapshotMenu(_activeEmulator.lock()); });
 
     // Save Disk submenu
     _saveDiskMenu = _fileMenu->addMenu(tr("Save &Disk"));
@@ -1340,6 +1345,7 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
 
     // File menu - Save Snapshot requires active emulator
     _saveSnapshotMenu->setEnabled(emulatorExists);
+    updateSaveSnapshotMenu(activeEmulator);
     
     // File menu - Save Disk menu and actions
     bool hasDiskLoaded = false;
@@ -1533,6 +1539,36 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
 
     // Update machine model selection
     updateMachineModelSelection(activeEmulator);
+}
+
+void MenuManager::updateSaveSnapshotMenu(const std::shared_ptr<Emulator>& activeEmulator)
+{
+    if (!_saveSnapshotMenu)
+        return;
+    snapshot::SaveFormats formats;
+    if (activeEmulator)
+        formats = activeEmulator->SnapshotSaveFormats();
+    const std::vector<SaveSnapshotChoices::Choice> choices = SaveSnapshotChoices::Build(formats);
+    bool any = false;
+    for (const SaveSnapshotChoices::Choice& choice : choices)
+    {
+        QAction* action = choice.format == snapshot::SaveFormat::Szx   ? _saveSnapshotSZXAction
+                          : choice.format == snapshot::SaveFormat::Z80 ? _saveSnapshotZ80Action
+                                                                       : _saveSnapshotSNAAction;
+        if (!action)
+            continue;
+        action->setEnabled(choice.enabled);
+        action->setStatusTip(choice.tip);
+        action->setToolTip(choice.tip);
+        any = any || choice.enabled;
+    }
+    if (_saveSnapshotAction)
+    {
+        const QString tip = any ? tr("Save the machine to a snapshot file") : QString::fromStdString(formats.view);
+        _saveSnapshotAction->setEnabled(any);
+        _saveSnapshotAction->setStatusTip(tip);
+        _saveSnapshotAction->setToolTip(tip);
+    }
 }
 
 void MenuManager::updateFrontPanelSwitches(const std::shared_ptr<Emulator>& activeEmulator)

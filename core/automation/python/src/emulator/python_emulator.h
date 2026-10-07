@@ -810,6 +810,24 @@ namespace PythonBindings
         }, "What the snapshot pipeline did with the last load: commit, verdicts, per-block outcomes, warnings, refusal",
            py::arg("emulator_id") = "");
 
+        // The last save: {ok, message, format, path, machine, reason, needs, warnings} (None before the first)
+        m.def("snapshot_save_report", [](const std::string& emulatorId) -> py::object {
+            auto emulator = EmulatorManager::GetInstance()->GetEmulator(python_rzx::ResolveId(emulatorId));
+            if (!emulator || emulator->LastSaveResult().path.empty())
+                return py::none();
+            return StateNodeToPy(emulator->LastSaveResult().ToStateNode());
+        }, "What the last snapshot save did: the format, the machine the file names, the refusal reason with what would work",
+           py::arg("emulator_id") = "");
+
+        // Which formats the machine can be saved in right now, and why not
+        m.def("snapshot_formats", [](const std::string& emulatorId) -> py::object {
+            auto emulator = EmulatorManager::GetInstance()->GetEmulator(python_rzx::ResolveId(emulatorId));
+            if (!emulator)
+                return py::none();
+            return StateNodeToPy(emulator->SnapshotSaveFormats().ToStateNode());
+        }, "Which snapshot formats this machine can be saved in right now (reason and what would work for each it cannot)",
+           py::arg("emulator_id") = "");
+
         // RZX input recordings, by emulator id (default: the selected one). A
         // model switch replaces the machine: the answer's emulator_id is the new one
         m.def("rzx_play", [](const std::string& path, const std::string& emulatorId, const std::string& desyncMode,
@@ -1863,7 +1881,15 @@ namespace PythonBindings
                     return py::none();
                 return StateNodeToPy(self.LastSnapshotReport().ToStateNode());
             }, "What the snapshot pipeline did with the last load (None before the first)")
-            .def("snapshot_save", &Emulator::SaveSnapshot, "Save snapshot file", py::arg("path"))
+            .def("snapshot_save", &Emulator::SaveSnapshot,
+                 "Save snapshot file (.sna, .z80, .szx); False = refused or failed, snapshot_save_report() says why", py::arg("path"))
+            .def("snapshot_save_report", [](Emulator& self) -> py::object {
+                if (self.LastSaveResult().path.empty())
+                    return py::none();
+                return StateNodeToPy(self.LastSaveResult().ToStateNode());
+            }, "What the last snapshot save did (None before the first)")
+            .def("snapshot_formats", [](Emulator& self) { return StateNodeToPy(self.SnapshotSaveFormats().ToStateNode()); },
+                 "Which snapshot formats this machine can be saved in right now, with the reason for each it cannot")
             // RZX playback on this machine (unreal.rzx_play plays, switching the model when needed)
             .def("rzx_stop", [](Emulator& self) { return self.StopRzx(); }, "Stop RZX playback")
             .def("rzx_status", [](Emulator& self) { return python_rzx::StatusDict(self.GetRzxStatus()); },
@@ -3900,14 +3926,19 @@ namespace PythonBindings
 
             // journal=True also records the write journal; without it the
             // ttd_set_journal_enabled choice stands (off by default, D40)
-            .def("ttd_start", [](Emulator& self, py::object journalObj) -> bool {
+            .def("ttd_start", [](Emulator& self, py::object journalObj, py::object blackBoxObj, py::object minutesObj) -> bool {
                 std::map<std::string, std::string> options;
                 if (!journalObj.is_none())
                     options["journal"] = journalObj.cast<bool>() ? "true" : "false";
+                if (!blackBoxObj.is_none())
+                    options["black_box"] = blackBoxObj.cast<bool>() ? "true" : "false";
+                if (!minutesObj.is_none())
+                    options["minutes"] = std::to_string(minutesObj.cast<uint32_t>());
                 const ttd::TTDReply reply = TtdRunPy(self, "start", options);
                 return reply.Ok() && (reply.body.find("started")->b || reply.body.find("already_active")->b);
-            }, "Start TTD recording (journal=True also records the write journal)",
-               py::arg("journal") = py::none())
+            }, "Start TTD recording (journal=True also records the write journal; black_box=True records as the "
+               "black box: the last `minutes`, default 5, turbo and host speed stay free)",
+               py::arg("journal") = py::none(), py::arg("black_box") = py::none(), py::arg("minutes") = py::none())
 
             .def("ttd_set_history_limit", [](Emulator& self, py::object framesObj, py::object bytesObj) -> py::tuple {
                 std::map<std::string, std::string> options;

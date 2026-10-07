@@ -47,7 +47,14 @@
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["summary"] = "Save snapshot file";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["tags"].append("Snapshot Control");
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["description"] =
-        "Save current emulator state to a snapshot file (.sna, .z80 or .szx, chosen by the extension)";
+        "Save the machine's snapshot view to a file (.sna, .z80 or .szx, chosen by the extension). The emulator is stopped first "
+        "and the call waits until it has parked (refused if it does not stop within a second). A snapshot holds what a "
+        "Spectrum 128K program sees (RAM banks 0-7, #7FFD, CPU, AY): the Sprinter in a ZX mode gives its banks in Spectrum "
+        "order and is named by the mode ('Pentagon 128' for P128.ZX, ...); TS-Conf and the ATMs give it while their memory "
+        "is laid out as a 128K. Where no such view exists, or the format cannot hold the state, nothing is written and the "
+        "400 answer carries 'reason', a machine-readable 'needs' (zx_mode, mode:128k, format:szx, format:z80, pause, "
+        "capture_unsupported, ...) and 'formats' = what the machine can be saved as right now. Pentagon 512 / 1024 save as "
+        ".szx only; Scorpion as .z80 or .szx. No file is converted into another.";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["parameters"][0]["required"] = true;
@@ -62,10 +69,29 @@
          ["properties"]["force"]["description"] = "Set to true to overwrite existing file";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["responses"]["200"]["description"] =
         "Snapshot saved successfully";
-    paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["responses"]["400"]["description"] = "Failed to save snapshot";
+    paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["responses"]["400"]["description"] =
+        "Refused or failed: message, reason, needs, formats (what would work); nothing was written";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["responses"]["404"]["description"] = "Emulator not found";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["responses"]["409"]["description"] =
         "File already exists (use force: true to overwrite)";
+
+    // GET /api/v1/emulator/{id}/snapshot/formats - which formats can be saved now
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/snapshot/formats"]["get"];
+        op["summary"] = "Which snapshot formats this machine can be saved in";
+        op["tags"].append("Snapshot Control");
+        op["description"] =
+            "Ask before saving: for each of sna, z80 and szx whether the machine can be saved in it right now, and when not "
+            "why ('reason') and what would work ('needs': format:szx, format:z80, zx_mode, mode:128k, ...). 'machine' = what "
+            "the file will say it was made on, 'view' = how the state is taken (the Sprinter's mode, the 128K window map). "
+            "The answer follows the machine's current mode, so ask again after a mode change.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["responses"]["200"]["description"] = "view_available, machine, view, formats[{format, available, reason, needs, note}]";
+        op["responses"]["404"]["description"] = "Emulator not found";
+    }
 
     paths["/api/v1/emulator/{id}/snapshot/info"]["get"]["summary"] = "Get snapshot status";
     paths["/api/v1/emulator/{id}/snapshot/info"]["get"]["tags"].append("Snapshot Control");

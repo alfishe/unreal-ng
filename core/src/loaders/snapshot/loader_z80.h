@@ -207,7 +207,10 @@ public:
 
 public:
     bool load();
+    /// Save the machine's snapshot view (snapshot::SaveSnapshotFile): false = refused or not writable (logged)
     bool save();
+    /// Write an image captured by snapshot::CaptureImage as a .z80 (always v3); `error` says why not
+    bool WriteImage(const snapshot::Image& image, std::string& error, std::vector<std::string>& warnings);
 
     /// What the caller asked for (call before load(); the default lets the plan decide)
     void SetOptions(const snapshot::Options& options) { _options = options; }
@@ -225,12 +228,6 @@ protected:
     /// Image + plan step between staging and commit; false = refused (the report says why)
     bool planSnapshot();
     void commitFromStage();
-
-    // Save helpers
-    Z80MemoryMode determineOutputFormat();
-    bool captureStateToStaging();
-    bool saveV3FromStaging();
-    uint8_t getModelCodeV3();
 
     /// region <Helper methods>
 protected:

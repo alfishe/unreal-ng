@@ -876,6 +876,7 @@ Unlike the WebAPI, the Lua functions do not pause the emulator for you: pause it
 ```lua
 ttd_start()                  --> bool   -- keeps the ttd_set_journal_enabled choice (off by default)
 ttd_start(true)              --> bool   -- also record the write journal
+ttd_start(false, true, 2)    --> bool   -- the black box: the last 2 minutes (default 5), turbo free
 ttd_set_journal_enabled(b)   --> ok, reason  -- switch the write journal at any moment, also while recording
                                        --   (each on-off span is a segment; status.write_journal_segments)
 ttd_build_journal([from_frame], [to_frame])  --> {ok, error, cancelled, frames_built, frames_covered,

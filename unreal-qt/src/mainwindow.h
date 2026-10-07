@@ -129,8 +129,8 @@ private slots:
     void openSpecificFile(const QString& filepath);
     /// Open a file by type. mountOnly: a disk is mounted without the TR-DOS autostart (Shift+drop)
     void loadFile(const QString& filePath, bool mountOnly = false, LoadOrigin origin = LoadOrigin::Interactive);
-    void saveFileDialog();
-    void saveFileDialogZ80();
+    /// Save a snapshot: the dialog offers the formats this machine can be saved in now, `preferred` ("szx", "z80", "sna") first
+    void saveSnapshotDialog(const QString& preferred);
     void saveDiskDialog();
     void saveDiskAsTRDDialog();
     void saveDiskAsSCLDialog();

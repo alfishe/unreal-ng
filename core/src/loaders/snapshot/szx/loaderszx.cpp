@@ -24,6 +24,7 @@
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
+#include "loaders/snapshot/snapshotcapture.h"
 #include "loaders/snapshot/szx/szxreader.h"
 #include "loaders/snapshot/szx/szxwriter.h"
 
@@ -1024,7 +1025,14 @@ bool LoaderSZX::Capture(EmulatorContext* context, Stage& stage, std::string& err
         error = "no machine to save";
         return false;
     }
-    const std::optional<uint8_t> id = IdFor(context->config.mem_model, context->config.ramsize);
+    // What the snapshot shows of the machine: its 128K view (a Sprinter in its Pentagon 128 mode is a Pentagon 128 here)
+    const snapshot::MachineView view = snapshot::ExamineView(*context);
+    if (!view.available)
+    {
+        error = view.reason;
+        return false;
+    }
+    const std::optional<uint8_t> id = IdFor(view.model, view.ramKb);
     if (!id)
     {
         error = "this model has no SZX machine id; save it as .z80 or .sna";
@@ -1074,17 +1082,16 @@ bool LoaderSZX::Capture(EmulatorContext* context, Stage& stage, std::string& err
     const EmulatorState& state = context->emulatorState;
     SpecRegs spec;
     spec.border = static_cast<uint8_t>(state.border_attr & 0x07);
-    spec.port7FFD = HasAy(*id) ? state.p7FFD : 0;
-    spec.port1FFDorEFF7 = HasPort1FFD(*id) ? state.p1FFD : (HasPortEFF7(*id) ? state.pEFF7 : 0);
+    spec.port7FFD = HasAy(*id) ? view.p7FFD : 0;
+    spec.port1FFDorEFF7 = HasPort1FFD(*id) ? view.p1FFD.value_or(0) : (HasPortEFF7(*id) ? view.pEFF7.value_or(0) : 0);
     spec.portFE = state.pFE;
     stage.spec = spec;
 
-    Memory& memory = *context->pMemory;
     for (uint8_t page : PagesOf(*id))
     {
-        const uint8_t* bytes = memory.RAMPageAddress(page);
-        if (bytes)
-            stage.pages[page] = std::vector<uint8_t>(bytes, bytes + kPageSize);
+        const auto bank = view.banks.find(page);
+        if (bank != view.banks.end())
+            stage.pages[page] = std::vector<uint8_t>(bank->second, bank->second + kPageSize);
     }
 
     SoundChip_AY8910* ay = (HasAy(*id) && context->pSoundManager) ? context->pSoundManager->getAYChip(0) : nullptr;

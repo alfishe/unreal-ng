@@ -3,6 +3,7 @@
 #include "common/modulelogger.h"
 
 #include "portdecoder_tsconf.h"
+#include "loaders/snapshot/snapshotcapture.h"
 
 #include "emulator/io/mouse/mousemanager.h"
 
@@ -34,6 +35,9 @@
 
 PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(context)
 {
+    // Its snapshot view exists while the window map is a Spectrum 128K
+    SetSnapshotCapturePolicy(&snapshot::WindowMapCapture::Instance());
+
     _evoAvr.SetEmulatedClock([this]() { return EmulatedMicroseconds(); });
     _evoAvr.SetSessionWall([this]() { return SessionWallMicros(); });
 
