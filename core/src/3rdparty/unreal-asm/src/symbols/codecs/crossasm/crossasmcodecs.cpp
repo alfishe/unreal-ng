@@ -5,6 +5,7 @@
 #include <optional>
 #include <set>
 
+#include "symbols/codecs/rules.h"
 #include "symbols/codecs/text/textlines.h"
 #include "symbols/codecs/text/tokenizer.h"
 
@@ -66,6 +67,15 @@ SymbolEncodeResult Finish(SymbolEncodeResult result, const std::string& text)
     result.bytes.assign(text.begin(), text.end());
     result.ok = true;
     return result;
+}
+
+/// The comment lines Prepare made (renames, commented symbols)
+std::string Header(const PreparedFile& prepared, const SymbolEncodeOptions& options)
+{
+    std::string out;
+    for (const std::string& line : prepared.header)
+        out += line + options.lineEnd;
+    return out;
 }
 
 void Bad(SymbolDecodeResult& result, size_t line, std::string message)
@@ -158,7 +168,10 @@ bool PasmoAccepts(std::string_view line)
 
 // sjasmplus-sym -----------------------------------------------------------------------------------------------------
 
-SjasmplusSymCodec::SjasmplusSymCodec() : _info{"sjasmplus-sym", "sjasmplus symbol file (--sym, --exp)", Family::Text, {"sym", "exp"}} {}
+SjasmplusSymCodec::SjasmplusSymCodec()
+    : _info(MakeInfo("sjasmplus-sym", "sjasmplus symbol file (--sym, --exp)", Family::Text, {"sym", "exp"}, SjasmplusRules(), false, ";"))
+{
+}
 
 int SjasmplusSymCodec::Detect(const Probe& probe) const
 {
@@ -193,10 +206,12 @@ SymbolDecodeResult SjasmplusSymCodec::Decode(std::span<const uint8_t> bytes) con
     return result;
 }
 
-SymbolEncodeResult SjasmplusSymCodec::Encode(const SymbolFile& file, const SymbolEncodeOptions& options) const
+SymbolEncodeResult SjasmplusSymCodec::Encode(const SymbolFile& source, const SymbolEncodeOptions& options) const
 {
     SymbolEncodeResult result;
-    std::string out;
+    const PreparedFile prepared = Prepare(source, _info, options, result.diagnostics);
+    const SymbolFile& file = prepared.file;
+    std::string out = Header(prepared, options);
     for (const auto& [s, v] : SortedValues(file, 0xFFFFFFFF, result))
     {
         out += s->name + ": EQU 0x" + Hex(v, 8) + options.lineEnd;
@@ -207,7 +222,10 @@ SymbolEncodeResult SjasmplusSymCodec::Encode(const SymbolFile& file, const Symbo
 
 // sjasmplus-sld -----------------------------------------------------------------------------------------------------
 
-SjasmplusSldCodec::SjasmplusSldCodec() : _info{"sjasmplus-sld", "sjasmplus source-level debugging data (--sld)", Family::Text, {"sld"}} {}
+SjasmplusSldCodec::SjasmplusSldCodec()
+    : _info(MakeInfo("sjasmplus-sld", "sjasmplus source-level debugging data (--sld)", Family::Text, {"sld"}, SjasmplusRules(), true, "||"))
+{
+}
 
 int SjasmplusSldCodec::Detect(const Probe& probe) const
 {
@@ -324,9 +342,11 @@ SymbolDecodeResult SjasmplusSldCodec::Decode(std::span<const uint8_t> bytes) con
     return result;
 }
 
-SymbolEncodeResult SjasmplusSldCodec::Encode(const SymbolFile& file, const SymbolEncodeOptions& options) const
+SymbolEncodeResult SjasmplusSldCodec::Encode(const SymbolFile& source, const SymbolEncodeOptions& options) const
 {
     SymbolEncodeResult result;
+    const PreparedFile prepared = Prepare(source, _info, options, result.diagnostics);
+    const SymbolFile& file = prepared.file;
     const std::string& nl = options.lineEnd;
     std::string body;
     int lastPage = -1;
@@ -379,7 +399,7 @@ SymbolEncodeResult SjasmplusSldCodec::Encode(const SymbolFile& file, const Symbo
                 body += where + "T|" + nl;   // an instruction at the label: code
             ++result.written;
         }
-    std::string out = "|SLD.data.version|1" + nl;
+    std::string out = "|SLD.data.version|1" + nl + Header(prepared, options);
     if (lastPage >= 0)
         out += "symbols|1||0|-1|-1|Z|pages.size:16384,pages.count:" + std::to_string(std::max(lastPage + 1, 8)) +
                ",slots.count:4,slots.adr:0,16384,32768,49152" + nl;
@@ -390,7 +410,10 @@ SymbolEncodeResult SjasmplusSldCodec::Encode(const SymbolFile& file, const Symbo
 
 // sjasmplus-lst -----------------------------------------------------------------------------------------------------
 
-SjasmplusLstCodec::SjasmplusLstCodec() : _info{"sjasmplus-lst", "sjasmplus listing (--lst): labels", Family::Text, {"lst"}} {}
+SjasmplusLstCodec::SjasmplusLstCodec()
+    : _info(MakeInfo("sjasmplus-lst", "sjasmplus listing (--lst): labels", Family::Text, {"lst"}, SjasmplusRules(), false, ""))
+{
+}
 
 namespace
 {
@@ -535,9 +558,11 @@ SymbolDecodeResult SjasmplusLstCodec::Decode(std::span<const uint8_t> bytes) con
     return result;
 }
 
-SymbolEncodeResult SjasmplusLstCodec::Encode(const SymbolFile& file, const SymbolEncodeOptions& options) const
+SymbolEncodeResult SjasmplusLstCodec::Encode(const SymbolFile& source, const SymbolEncodeOptions& options) const
 {
     SymbolEncodeResult result;
+    const PreparedFile prepared = Prepare(source, _info, options, result.diagnostics);
+    const SymbolFile& file = prepared.file;
     const std::string& nl = options.lineEnd;
     size_t count = 0;
     for (const SymbolSet& set : file.sets)
@@ -572,7 +597,7 @@ SymbolEncodeResult SjasmplusLstCodec::Encode(const SymbolFile& file, const Symbo
 
 // pasmo -------------------------------------------------------------------------------------------------------------
 
-PasmoCodec::PasmoCodec() : _info{"pasmo", "pasmo symbol file (NAME EQU 0HHHHH)", Family::Text, {"symbol", "pub"}} {}
+PasmoCodec::PasmoCodec() : _info(MakeInfo("pasmo", "pasmo symbol file (NAME EQU 0HHHHH)", Family::Text, {"symbol", "pub"}, PasmoRules(), false, ";")) {}
 
 int PasmoCodec::Detect(const Probe& probe) const
 {
@@ -607,10 +632,12 @@ SymbolDecodeResult PasmoCodec::Decode(std::span<const uint8_t> bytes) const
     return result;
 }
 
-SymbolEncodeResult PasmoCodec::Encode(const SymbolFile& file, const SymbolEncodeOptions& options) const
+SymbolEncodeResult PasmoCodec::Encode(const SymbolFile& source, const SymbolEncodeOptions& options) const
 {
     SymbolEncodeResult result;
-    std::string out;
+    const PreparedFile prepared = Prepare(source, _info, options, result.diagnostics);
+    const SymbolFile& file = prepared.file;
+    std::string out = Header(prepared, options);
     for (const auto& [s, v] : SortedValues(file, 0xFFFF, result))
     {
         out += s->name + (s->name.size() < 8 ? "\t\t" : "\t") + "EQU 0" + Hex(v, 4) + "H" + options.lineEnd;
@@ -647,7 +674,10 @@ bool MapAccepts(std::string_view line)
 }
 }  // namespace
 
-Z88dkMapCodec::Z88dkMapCodec() : _info{"z88dk-map", "z88dk z80asm map file (-m; also -s)", Family::Text, {"map", "sym"}} {}
+Z88dkMapCodec::Z88dkMapCodec()
+    : _info(MakeInfo("z88dk-map", "z88dk z80asm map file (-m; also -s)", Family::Text, {"map", "sym"}, Z88dkRules(), false, ""))
+{
+}
 
 int Z88dkMapCodec::Detect(const Probe& probe) const
 {
@@ -710,9 +740,11 @@ SymbolDecodeResult Z88dkMapCodec::Decode(std::span<const uint8_t> bytes) const
     return result;
 }
 
-SymbolEncodeResult Z88dkMapCodec::Encode(const SymbolFile& file, const SymbolEncodeOptions& options) const
+SymbolEncodeResult Z88dkMapCodec::Encode(const SymbolFile& source, const SymbolEncodeOptions& options) const
 {
     SymbolEncodeResult result;
+    const PreparedFile prepared = Prepare(source, _info, options, result.diagnostics);
+    const SymbolFile& file = prepared.file;
     std::string out;
     size_t folded = 0;
     // z80asm writes the symbols in source order: the file's order is kept
@@ -742,6 +774,134 @@ SymbolEncodeResult Z88dkMapCodec::Encode(const SymbolFile& file, const SymbolEnc
         }
     if (folded)
         result.diagnostics.push_back({Severity::Info, 0, 0, std::to_string(folded) + " page symbol(s) written at CPU addresses (the format has no pages)"});
+    return Finish(std::move(result), out);
+}
+
+// cspect-map --------------------------------------------------------------------------------------------------------
+
+namespace
+{
+/// "HHHHHHHH LLLLLLLL TT NAME": the 16-bit address, the physical address (page * page size + offset), the type
+bool CspectLine(std::string_view line, uint32_t& address, uint32_t& physical, uint32_t& type, std::string_view& name)
+{
+    if (line.size() < 22 || line[8] != ' ' || line[17] != ' ' || line[20] != ' ')
+        return false;
+    return text::ParseHex(line.substr(0, 8), address) && text::ParseHex(line.substr(9, 8), physical) && text::ParseHex(line.substr(18, 2), type) &&
+           !(name = Trim(line.substr(21))).empty();
+}
+
+bool CspectAccepts(std::string_view line)
+{
+    uint32_t a = 0, p = 0, t = 0;
+    std::string_view name;
+    return CspectLine(line, a, p, t, name) && t <= 4;
+}
+}  // namespace
+
+CspectMapCodec::CspectMapCodec()
+    : _info(MakeInfo("cspect-map", "#CSpect map (sjasmplus CSPECTMAP)", Family::Text, {"map"}, [] {
+          NameRules r = SjasmplusRules();
+          r.upper = true;   // CSpect's names are in capitals
+          return r;
+      }(), true, ""))
+{
+}
+
+int CspectMapCodec::Detect(const Probe& probe) const
+{
+    return ScoreProbe(probe, 95, CspectAccepts);
+}
+
+SymbolDecodeResult CspectMapCodec::Decode(std::span<const uint8_t> bytes) const
+{
+    SymbolDecodeResult result;
+    SymbolSet set;
+    const auto lines = text::Lines(bytes);
+    for (size_t i = 0; i < lines.size(); ++i)
+    {
+        const std::string_view line = Trim(lines[i]);
+        if (line.empty())
+            continue;
+        uint32_t address = 0, physical = 0, type = 0;
+        std::string_view name;
+        if (!CspectLine(line, address, physical, type, name))
+        {
+            Bad(result, i + 1, "not \"address physical type NAME\"");
+            continue;
+        }
+        Symbol s;
+        // CSpect writes a local label PARENT@LOCAL
+        std::string full(name);
+        const size_t at = full.rfind('@');
+        if (at != std::string::npos && at > 0)
+        {
+            s.parent = full.substr(0, at);
+            full[at] = '.';
+            s.kind = SymbolKind::Local;
+        }
+        s.name = full;
+        if (type == 1 || type == 2)
+        {
+            s.kind = SymbolKind::Const;   // EQU, DEFL
+            PlaceValue(s, address);
+        }
+        else if (type == 0 && address <= 0xFFFF)
+        {
+            // A label: the physical address is the RAM page and the offset in it
+            s.location.space.kind = SpaceKind::Ram;
+            s.location.space.page = static_cast<uint16_t>(physical >> 14);
+            s.location.offset = physical & 0x3FFF;
+            s.window = static_cast<int>(address >> 14);
+        }
+        else
+        {
+            PlaceValue(s, address);   // a ROM page or no device (3), a structure (4)
+            s.provenance.type = type == 4 ? "struct" : "";
+        }
+        Stamp(s, _info.id, line, i + 1);
+        set.symbols.push_back(std::move(s));
+    }
+    result.file.sets.push_back(std::move(set));
+    result.ok = true;
+    return result;
+}
+
+SymbolEncodeResult CspectMapCodec::Encode(const SymbolFile& source, const SymbolEncodeOptions& options) const
+{
+    SymbolEncodeResult result;
+    const PreparedFile prepared = Prepare(source, _info, options, result.diagnostics);
+    std::string out;
+    for (const SymbolSet& set : prepared.file.sets)
+        for (const Symbol& s : set.symbols)
+        {
+            const std::optional<uint32_t> v = Value(s);
+            if (!v)
+            {
+                result.diagnostics.push_back({Severity::Warning, 0, 0, s.name + ": " + s.location.space.Format() + " cannot be written (skipped)"});
+                continue;
+            }
+            uint32_t physical = *v;
+            uint32_t type = 3;   // a ROM page or no device
+            if (s.kind == SymbolKind::Const)
+                type = 1;
+            else if (s.location.space.kind == SpaceKind::Ram && s.location.space.cpu == "main")
+            {
+                type = 0;
+                physical = static_cast<uint32_t>(s.location.space.page) * 0x4000 + (s.location.offset & 0x3FFF);
+            }
+            else if (s.location.space.kind == SpaceKind::CpuView)
+                type = s.provenance.type == "struct" ? 4 : 0;
+            // A constant's second field is what sjasmplus made of it (SCREEN EQU #4000 gets 0): kept from the line read
+            uint32_t a = 0, p = 0, t = 0;
+            std::string_view n;
+            if (s.kind == SymbolKind::Const && s.provenance.importer == _info.id && CspectLine(s.provenance.raw, a, p, t, n))
+                physical = p;
+            std::string name = s.name;
+            if (s.kind == SymbolKind::Local && !s.parent.empty() && name.rfind(s.parent + ".", 0) == 0)
+                name[s.parent.size()] = '@';
+            out += Hex(*v, 8) + " " + Hex(physical, 8) + " " + Hex(type, 2) + " " + name + options.lineEnd;
+            ++result.written;
+        }
     return Finish(std::move(result), out);
 }
 }  // namespace unrealasm::symbols::codecs

@@ -3,6 +3,7 @@
 #include "symbols/codecs/crossasm/crossasmcodecs.h"
 #include "symbols/codecs/labelfiles/labelfilecodecs.h"
 #include "symbols/codecs/native/nativecodec.h"
+#include "symbols/codecs/script/scriptcodecs.h"
 #include "unrealasm/symbols/codec.h"
 
 namespace unrealasm::symbols
@@ -24,6 +25,11 @@ const SymbolCodecRegistry& SymbolCodecRegistry::Builtin()
         r.Add(std::make_unique<codecs::SjasmplusLstCodec>());
         r.Add(std::make_unique<codecs::PasmoCodec>());
         r.Add(std::make_unique<codecs::Z88dkMapCodec>());
+        r.Add(std::make_unique<codecs::CspectMapCodec>());
+        r.Add(std::make_unique<codecs::IdaCodec>(false));
+        r.Add(std::make_unique<codecs::IdaCodec>(true));
+        r.Add(std::make_unique<codecs::GhidraCodec>());
+        r.Add(std::make_unique<codecs::MameCodec>());
         return r;
     }();
     return registry;

@@ -123,7 +123,7 @@ TEST(LabelFileCodecs_Test, UnrealUserL)
     EXPECT_EQ(s[1].location.offset, 0x10u);
     EXPECT_EQ(s[2].name, "with blanks in it");
     EXPECT_EQ(d.size(), 1u);
-    EXPECT_EQ(Write("unreal-l", {s[1]}), "05:C010 SCREEN_LINE\n");
+    EXPECT_EQ(Write("unreal-l", {s[1]}), "05:0010 SCREEN_LINE\n");   // as sjasmplus' LABELSLIST: the offset in the page
     const std::string text = Write("unreal-l", {Paged("CPU", "cpu:main", 0x8000)}, &d);
     EXPECT_TRUE(text.empty());                               // user.l has RAM pages only
     EXPECT_EQ(d.size(), 1u);

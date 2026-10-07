@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <initializer_list>
 
+#include "symbols/codecs/rules.h"
 #include "symbols/io/json.h"
 
 namespace unrealasm::symbols::codecs
@@ -361,7 +362,12 @@ void Members(const Value& object, const std::string& indent, const std::string& 
 }
 }  // namespace
 
-NativeCodec::NativeCodec() : _info{"native", "unreal-ng symbol file (*.usym.json)", Family::Native, {"json"}} {}
+NativeCodec::NativeCodec()
+{
+    NameRules any;
+    any.charset = Charset::Any;
+    _info = MakeInfo("native", "unreal-ng symbol file (*.usym.json)", Family::Native, {"json"}, any, true, "");
+}
 
 int NativeCodec::Detect(const Probe& probe) const
 {

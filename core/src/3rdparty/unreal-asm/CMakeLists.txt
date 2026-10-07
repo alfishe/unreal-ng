@@ -67,6 +67,8 @@ add_library(unreal-asm STATIC
     src/symbols/codecs/labelfiles/labelfilecodecs.cpp
     src/symbols/codecs/text/tokenizer.cpp
     src/symbols/codecs/crossasm/crossasmcodecs.cpp
+    src/symbols/codecs/script/scriptcodecs.cpp
+    src/symbols/model/namerules.cpp
     src/symbols/registry.cpp
 )
 target_include_directories(unreal-asm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -77,6 +79,11 @@ target_compile_options(unreal-asm PRIVATE ${UNREAL_ASM_WARNINGS})
 add_executable(zxasm tools/zxasm/zxasm.cpp)
 target_link_libraries(zxasm PRIVATE unreal-asm)
 target_compile_options(zxasm PRIVATE ${UNREAL_ASM_WARNINGS})
+
+# Command-line tool: symconv, symbol files from any format to any format (symbols/tdd.md §10, S4)
+add_executable(symconv tools/symconv/symconv.cpp)
+target_link_libraries(symconv PRIVATE unreal-asm)
+target_compile_options(symconv PRIVATE ${UNREAL_ASM_WARNINGS})
 
 # Examples (decision D-14): small programs on the public API, built with the library
 foreach(example detect-encoding decode-encode read-hobeta convert-version convert-dialect)
@@ -127,6 +134,8 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/symbols/labelfilecodecs_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/tokenizer_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/crossasmcodecs_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/namerules_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/scriptcodecs_test.cpp
     )
     target_link_libraries(unreal-asm-tests PRIVATE unreal-asm gtest)
     target_include_directories(unreal-asm-tests PRIVATE ${UNREAL_ASM_DIR}/src ${UNREAL_ASM_DIR}/tests)
