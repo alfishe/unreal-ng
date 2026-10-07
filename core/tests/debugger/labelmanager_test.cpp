@@ -523,6 +523,8 @@ TEST_F(LabelManager_test, LoadLabelsMatchesGolden)
             inputs.push_back({entry.path(), "sprinter-" + entry.path().filename().string()});
     for (const char* name : {"sample-banks.map", "sample.sym", "sample.vice", "sample.s", "sample.z88"})
         inputs.push_back({labels / name, name});
+    // z80asm's own .map goes to the z88dk-map codec, not to our MAP format
+    inputs.push_back({root / "core" / "src" / "3rdparty" / "unreal-asm" / "testdata" / "symbols" / "z88dk" / "labels.map", "z88dk-labels.map"});
     const bool update = std::getenv("UNREAL_UPDATE_GOLDEN") != nullptr;
     for (const auto& [input, name] : inputs)
     {
