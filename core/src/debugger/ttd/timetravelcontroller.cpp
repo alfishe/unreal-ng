@@ -1675,6 +1675,9 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
 
     // --- Chipset port latches + counters (a pure field copy into emulatorState) ---
     RestoreChipsetState(engineCp->chipset, &_context->emulatorState);
+    // The audio timeline jumps: the host-side post-processing (voicing, character chains) restarts
+    if (_context->pSoundManager)
+        _context->pSoundManager->onStateRestored();
 
     // The CPU's in-frame position (the frame-end overshoot), then the frame geometry
     // (frame limit, INT window) from the restored multiplier
@@ -5918,6 +5921,9 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
         z80->SetNmiPending(snap.cpu.nmi_pending != 0);
     }
     RestoreChipsetState(snap.chipset, &_context->emulatorState);
+    // The audio timeline jumps: the host-side post-processing (voicing, character chains) restarts
+    if (_context->pSoundManager)
+        _context->pSoundManager->onStateRestored();
     if (z80)
     {
         z80->t = snap.z80TInFrame;

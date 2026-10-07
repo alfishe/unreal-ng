@@ -1796,6 +1796,9 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // RestoreChipsetState is a pure field copy into emulatorState. It does
     // NOT re-run the port decoder — that's the next sub-step.
     RestoreChipsetState(chipsetState, &_context->emulatorState);
+    // The audio timeline jumps: the host-side post-processing (voicing, character chains) restarts
+    if (_context->pSoundManager)
+        _context->pSoundManager->onStateRestored();
 
     // The CPU's in-frame position (the frame-end overshoot) - before the
     // peripherals load, so devices rebuild their timelines around the
@@ -7300,6 +7303,9 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
         z80->SetNmiPending(snap.cpu.nmi_pending != 0);
     }
     RestoreChipsetState(snap.chipset, &_context->emulatorState);
+    // The audio timeline jumps: the host-side post-processing (voicing, character chains) restarts
+    if (_context->pSoundManager)
+        _context->pSoundManager->onStateRestored();
     if (z80)
     {
         z80->t = snap.z80TInFrame;

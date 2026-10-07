@@ -320,10 +320,21 @@ protected:
     /// Per-frame cache: turbo mode with audio not requested and no recording in progress
     bool _synthesisSuppressed = false;
 
-    /// True while the character chains (punch / room) were skipped on the last
-    /// frame because HQ is off. When HQ comes back the chains' delay lines and
-    /// envelopes are reset before their first use, so no stale audio replays.
-    bool _chainsBypassed = false;
+    /// A gap in the chains' stream (sound off, turbo without audio): the next
+    /// frame with audio resets every character chain first, so no delay line or
+    /// envelope replays audio from before the gap. Sound HQ is not a gap: it
+    /// gates the chains (AudioCharacterChain::setActive), which ramp out / in
+    bool _chainsGap = false;
+    /// The TurboSound device and its render epoch the AY / FM chains run in: a
+    /// TTD restore (or another device) resets them
+    const ITurboSoundDevice* _chainsDevice = nullptr;
+    uint64_t _chainsDeviceEpoch = 0;
+    /// Reset every character chain (socket AY / FM, beeper, the cards' SSG rows)
+    void resetCharacterChains();
+    /// Reset every AY / SSG voicing stage (socket chips, the cards' SSG rows): filter state and pre-roll history
+    void resetVoicing();
+    /// Set by onStateRestored(), taken by the next frame with audio
+    std::atomic<bool> _stateRestored{false};
 
     /// endregion </Fields>
 
@@ -438,6 +449,11 @@ public:
     /// sample count and the device's rendered count stay equal. Left behind,
     /// the mixer kept its pre-seek phase and read one never-rendered (zero)
     /// sample every few frames for the rest of the session
+    /// The machine state was restored (TTD checkpoint, return to the live state): the host-side post-processing of
+    /// every row (character chains, AY / SSG voicing) restarts on the next frame with audio, so no filter history,
+    /// delay line or envelope from the timeline that was left leaks into the restored one. Any thread
+    void onStateRestored();
+
     void adoptSamplePhase(uint64_t tstateRatePhase)
     {
         _sampleAccumulator = tstateRatePhase;
@@ -774,7 +790,7 @@ private:
     std::vector<ICard*> _slotCards;
     /// The slot cards' SSG rows (CardMixerRow::ssgRow) get what the AY socket's chips get: the AY / SSG tone voicing
     /// (one stage per row, set up, requested, reset and invalidated together with _ayVoicing0 / _ayVoicing1) and then
-    /// the AY character chain (punch, room: configured, set up, reset and bypassed together with _ayChain0 /
+    /// the AY character chain (punch, room: configured, set up, reset and gated together with _ayChain0 /
     /// _ayChain1, Sound HQ only). Both restart when the card restarts its render layers (a TTD restore)
     struct CardSsgRow
     {

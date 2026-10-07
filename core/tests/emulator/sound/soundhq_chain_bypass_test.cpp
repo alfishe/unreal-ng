@@ -1,7 +1,9 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -12,15 +14,18 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/chips/iturbosounddevice.h"
+#include "common/sound/filters/filtervoicing.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/soundmanager.h"
 
 /// With `soundhq` off (or the turbo low-quality override on) the character
 /// chains - punch / room post-processing on the AY, FM and beeper buffers -
-/// are skipped entirely in SoundManager::handleFrameEnd: the buffers the
-/// devices rendered reach the mixer untouched. With HQ on, the AY chain
-/// (punch enabled by default) reshapes the buffer. The chains are reset when
-/// HQ comes back so no stale room / envelope state replays.
+/// are bypassed in SoundManager::handleFrameEnd after one ramp-out frame: the
+/// buffers the devices rendered reach the mixer untouched. The same holds with
+/// HQ on and every effect off (owner decision 2026-10-07: zero cost and
+/// bit-exact when not used). With HQ on, the AY chain (punch enabled by
+/// default) reshapes the buffer. A chain that ramped out holds no audio, so
+/// nothing stale replays when HQ comes back.
 
 namespace
 {
@@ -72,6 +77,39 @@ protected:
     /// One frame: render the device for the full frame, snapshot the raw
     /// chip-0 buffer, then let the manager run its frame end (chains + mix).
     /// Returns true when the chain left the chip-0 buffer byte-identical.
+    /// One frame as above; true when the chains left every chip buffer (AY / SSG 0 and 1, FM 0 and 1 on a TSFM)
+    /// byte-identical
+    bool FrameLeavesAllChipBuffersUntouched(SoundManager& sound)
+    {
+        ITurboSoundDevice* device = sound.getTurboSound();
+        Z80* z80 = _context->pCore->GetZ80();
+
+        sound.handleFrameStart();
+        z80->t = PENTAGON_FRAME;
+        sound.handleStep();
+        z80->t = 0;
+
+        const size_t bytes = device->getRenderedSamplesThisFrame() * AUDIO_CHANNELS * sizeof(int16_t);
+        std::vector<int16_t*> buffers;
+        for (int chip = 0; chip < device->getChipCount(); chip++)
+            buffers.push_back(device->getChipBuffer(chip));
+        if (device->hasFm())
+            for (int chip = 0; chip < 2; chip++)
+                buffers.push_back(device->getFmBuffer(chip));
+        std::vector<std::vector<uint8_t>> raw;
+        for (int16_t* buffer : buffers)
+        {
+            raw.emplace_back(bytes);
+            memcpy(raw.back().data(), buffer, bytes);
+        }
+
+        sound.handleFrameEnd();
+        bool same = true;
+        for (size_t i = 0; i < buffers.size(); i++)
+            same = same && memcmp(raw[i].data(), buffers[i], bytes) == 0;
+        return same;
+    }
+
     bool FrameLeavesChipBufferUntouched(SoundManager& sound)
     {
         ITurboSoundDevice* device = sound.getTurboSound();
@@ -106,18 +144,46 @@ TEST_F(SoundHQChainBypass_Test, ChainsSkippedWhileHQOff)
         FrameLeavesChipBufferUntouched(sound);
     EXPECT_FALSE(FrameLeavesChipBufferUntouched(sound)) << "with HQ on the AY chain must process the buffer";
 
-    // HQ off via the turbo override: the chain is bypassed, the raw render
-    // reaches the mixer byte-identical
+    // HQ off via the turbo override: the first frame ramps the chain out (no
+    // click), from then on it is bypassed and the raw render reaches the
+    // mixer byte-identical
     sound.setTurboLowQualityOverride(true);
     ASSERT_FALSE(sound.isHQActive());
+    EXPECT_FALSE(FrameLeavesChipBufferUntouched(sound)) << "the HQ-off frame ramps the chain out";
+    EXPECT_TRUE(sound.getAYChain().isBypassed());
     for (int i = 0; i < 5; i++)
-        EXPECT_TRUE(FrameLeavesChipBufferUntouched(sound)) << "frame " << i << ": chain ran with HQ off";
+        EXPECT_TRUE(FrameLeavesAllChipBuffersUntouched(sound)) << "frame " << i << ": chain ran with HQ off";
 
-    // HQ back on: processing resumes
+    // HQ back on: processing resumes (ramping in on the first HQ frame)
     sound.setTurboLowQualityOverride(false);
     ASSERT_TRUE(sound.isHQActive());
-    FrameLeavesChipBufferUntouched(sound);  // first HQ frame resets the chains
+    EXPECT_FALSE(FrameLeavesChipBufferUntouched(sound)) << "the first HQ frame ramps the chain in";
     EXPECT_FALSE(FrameLeavesChipBufferUntouched(sound)) << "the chain must run again once HQ is restored";
+}
+
+TEST_F(SoundHQChainBypass_Test, EffectsOffLeaveEveryChipBufferUntouched)
+{
+    // Punch and room off with Sound HQ on and off: every chain is bypassed, the AY / SSG and FM buffers reach the
+    // mixer bit-identical (no int16 round trip). The FM chains are always off. Switched live: one ramp frame
+    SoundManager sound(_context);
+    ITurboSoundDevice* device = sound.getTurboSound();
+    ASSERT_NE(device, nullptr);
+    ProgramTone(*device);
+    for (int i = 0; i < 3; i++)
+        FrameLeavesChipBufferUntouched(sound);
+
+    sound.setAYPunch(false);
+    sound.setAYRoomMode(AudioCharacterChain::RoomMode::Off);
+    sound.setBeeperPunch(false);
+    EXPECT_FALSE(FrameLeavesChipBufferUntouched(sound)) << "the switch frame ramps the effects out";
+    for (const bool hq : {true, false, true})
+    {
+        sound.setTurboLowQualityOverride(!hq);
+        for (int i = 0; i < 4; i++)
+            EXPECT_TRUE(FrameLeavesAllChipBuffersUntouched(sound)) << "HQ " << hq << ", frame " << i;
+        EXPECT_TRUE(sound.getAYChain().isBypassed());
+        EXPECT_TRUE(sound.getBeeperChain().isBypassed());
+    }
 }
 
 TEST_F(SoundHQChainBypass_Test, ChainsResetWhenHQReturns)
@@ -167,4 +233,134 @@ TEST_F(SoundHQChainBypass_Test, ChainsResetWhenHQReturns)
     sound.setTurboLowQualityOverride(false);
     FrameLeavesChipBufferUntouched(sound);
     EXPECT_LT(range(0, 84), 64) << "pre-bypass audio replayed (device decimator or stale room delay line)";
+}
+
+TEST_F(SoundHQChainBypass_Test, ChainsResetOnTtdRestore)
+{
+    // A TTD restore of the TurboSound device is a gap: the restored machine must not hear the room delay line's
+    // audio from the timeline it left. Room at -6 dB (punch off, so the room is the only effect), the tone plays
+    // and fills the delay line, then a state saved before the tone is restored. Over the first 2 ms after the
+    // restore (the AY room delay: 88 samples at 44.1 kHz) a reset chain has nothing to cross-feed yet - its output
+    // is the render itself (up to the processed path's x 32767 / 32768 rounding) - while a stale line would add the
+    // tone at -6 dB (thousands of LSB). The render itself is not silent there: the AY output coupling releases the
+    // tone's DC with its own time constant
+    SoundManager sound(_context);
+    sound.getAYChain().setPunchEnabled(false);
+    sound.getAYChain().setRoomMode(AudioCharacterChain::RoomMode::Room_6dB);
+    sound.syncAYChainSettings();
+    ITurboSoundDevice* device = sound.getTurboSound();
+    ASSERT_NE(device, nullptr);
+    for (int i = 0; i < 3; i++)
+        FrameLeavesChipBufferUntouched(sound);
+
+    std::vector<uint8_t> silent(device->TTDStateSize());
+    device->TTDSaveState(silent.data());
+    const uint64_t epoch = device->renderEpoch();
+
+    ProgramTone(*device);
+    for (int i = 0; i < 10; i++)
+        FrameLeavesChipBufferUntouched(sound);
+
+    device->TTDLoadState(silent.data());
+    EXPECT_NE(device->renderEpoch(), epoch) << "a restore restarts the render layers";
+
+    // The frame after the restore, split as in FrameLeavesChipBufferUntouched: the render, then the frame end
+    Z80* z80 = _context->pCore->GetZ80();
+    sound.handleFrameStart();
+    z80->t = PENTAGON_FRAME;
+    sound.handleStep();
+    z80->t = 0;
+    constexpr size_t kWindow = 84;
+    const std::vector<int16_t> raw(device->getChipBuffer(0), device->getChipBuffer(0) + kWindow * 2);
+    sound.handleFrameEnd();
+    const int16_t* out = device->getChipBuffer(0);
+    int worst = 0;
+    for (size_t i = 0; i < kWindow * 2; i++)
+        worst = std::max(worst, std::abs(int(out[i]) - int(raw[i])));
+    EXPECT_LE(worst, 2) << "audio from before the restore replayed through the room delay line";
+}
+
+/// Render one frame and return the raw chip-0 buffer (before the frame end's voicing and chains), then run the frame
+/// end. The output stays in the device's chip-0 buffer
+static std::vector<int16_t> RenderFrameKeepRaw(SoundManager& sound, EmulatorContext* context, uint32_t frame)
+{
+    ITurboSoundDevice* device = sound.getTurboSound();
+    Z80* z80 = context->pCore->GetZ80();
+    sound.handleFrameStart();
+    z80->t = frame;
+    sound.handleStep();
+    z80->t = 0;
+    const size_t samples = device->getRenderedSamplesThisFrame();
+    std::vector<int16_t> raw(device->getChipBuffer(0), device->getChipBuffer(0) + samples * AUDIO_CHANNELS);
+    sound.handleFrameEnd();
+    return raw;
+}
+
+TEST_F(SoundHQChainBypass_Test, VoicingResetsOnTtdRestore)
+{
+    // The AY / SSG voicing's filters (Classic: coupling high-pass + peak, ms time constants) hold the audio they
+    // last saw. A TTD restore of the device restarts them (as the card rows' voicing restarts with the card): the
+    // first frame after the restore is a freshly reset Classic filter run over that frame's render, sample for
+    // sample. A filter that kept its history would carry the tone played before the restore into it. Punch and
+    // room off: the chains pass the voiced buffer untouched, the voicing is all there is
+    SoundManager sound(_context);
+    sound.getAYChain().setPunchEnabled(false);
+    sound.getAYChain().setRoomMode(AudioCharacterChain::RoomMode::Off);
+    sound.syncAYChainSettings();
+    sound.setAYVoicing(FilterVoicing::Preset::Classic);
+    ITurboSoundDevice* device = sound.getTurboSound();
+    ASSERT_NE(device, nullptr);
+    for (int i = 0; i < 3; i++)
+        FrameLeavesChipBufferUntouched(sound);
+    ASSERT_EQ(sound.getActiveAYVoicing(), FilterVoicing::Preset::Classic);
+
+    std::vector<uint8_t> silent(device->TTDStateSize());
+    device->TTDSaveState(silent.data());
+
+    ProgramTone(*device);   // the marker: a full-volume tone the filters settle on
+    for (int i = 0; i < 10; i++)
+        FrameLeavesChipBufferUntouched(sound);
+
+    device->TTDLoadState(silent.data());
+    std::vector<int16_t> expected = RenderFrameKeepRaw(sound, _context, PENTAGON_FRAME);
+    FilterVoicing fresh(static_cast<double>(sound.getCoreRate()), FilterVoicing::Preset::Classic);
+    fresh.processInt16(expected.data(), expected.size() / AUDIO_CHANNELS);
+
+    const int16_t* out = device->getChipBuffer(0);
+    int worst = 0;
+    for (size_t i = 0; i < expected.size(); i++)
+        worst = std::max(worst, std::abs(int(out[i]) - int(expected[i])));
+    EXPECT_EQ(worst, 0) << "the voicing carried filter history from before the restore into the restored frame";
+}
+
+TEST_F(SoundHQChainBypass_Test, MachineRestoreResetsEveryRow)
+{
+    // SoundManager::onStateRestored() - what the TTD checkpoint and live-state restores call - restarts every row's
+    // host post-processing on the next frame with audio, whether or not a sound device was restored with it: the
+    // voicing (here Classic) and the character chains (room at -6 dB, punch off; the beeper's and the cards' chains
+    // go through the same reset). The tone keeps playing across the call. Over the first 2 ms (the room delay) the
+    // output is a fresh Classic filter over the render, the room has nothing to cross-feed yet (up to the processed
+    // path's x 32767 / 32768 rounding); stale state would add the tone at -6 dB and the filters' history
+    SoundManager sound(_context);
+    sound.getAYChain().setPunchEnabled(false);
+    sound.getAYChain().setRoomMode(AudioCharacterChain::RoomMode::Room_6dB);
+    sound.syncAYChainSettings();
+    sound.setAYVoicing(FilterVoicing::Preset::Classic);
+    ITurboSoundDevice* device = sound.getTurboSound();
+    ASSERT_NE(device, nullptr);
+    ProgramTone(*device);
+    for (int i = 0; i < 10; i++)
+        FrameLeavesChipBufferUntouched(sound);
+
+    sound.onStateRestored();
+    std::vector<int16_t> expected = RenderFrameKeepRaw(sound, _context, PENTAGON_FRAME);
+    FilterVoicing fresh(static_cast<double>(sound.getCoreRate()), FilterVoicing::Preset::Classic);
+    fresh.processInt16(expected.data(), expected.size() / AUDIO_CHANNELS);
+
+    const int16_t* out = device->getChipBuffer(0);
+    int worst = 0;
+    for (size_t i = 0; i < 84 * AUDIO_CHANNELS; i++)
+        worst = std::max(worst, std::abs(int(out[i]) - int(expected[i])));
+    EXPECT_LE(worst, 1) << "voicing or room state from before the restore reached the restored frame";
+
 }

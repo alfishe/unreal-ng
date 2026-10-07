@@ -165,4 +165,15 @@ public:
     /// Identity: TTDSerializable::TTDPeripheralId() — TurboSound (0) or
     /// TSFM (4); TTD registration and session-kind guards key on it
     /// endregion </Interface methods>
+
+    /// Render-layer restarts (bumped by every TTD restore, not TTD state): the host's post-processing of the chip
+    /// buffers (SoundManager's character chains) restarts with it, so the audio after a restore does not depend on
+    /// what played before it
+    uint64_t renderEpoch() const
+    {
+        return _renderEpoch;
+    }
+
+protected:
+    uint64_t _renderEpoch = 0;
 };

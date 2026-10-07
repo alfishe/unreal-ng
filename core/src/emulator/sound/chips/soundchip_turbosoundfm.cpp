@@ -608,6 +608,7 @@ void SoundChip_TurboSoundFM::TTDSaveState(uint8_t* dst) const
 void SoundChip_TurboSoundFM::TTDLoadState(const uint8_t* src)
 {
     const uint8_t* cur = src;
+    ++_renderEpoch;   // the host's character chains restart (ITurboSoundDevice::renderEpoch)
 
     const uint8_t version = get_u8(cur);
     assert(version == kTsfmStateVersion &&

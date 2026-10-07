@@ -1190,9 +1190,8 @@ TEST(Ym2203PairBoardsLevel_Test, SsgRatioIsTheSchematicWeightAndTheChainActsAlik
             reference.setRoomMode(room ? AudioCharacterChain::RoomMode::Room_9dB : AudioCharacterChain::RoomMode::Off);
             std::vector<int16_t> expected(dry.begin(), dry.begin() + static_cast<std::ptrdiff_t>(n));
             reference.processInt16(expected.data(), static_cast<int32_t>(n / 2));
-            // The chain-off row has been through the chain's int16 round trip once already (x 32767 / 32768,
-            // truncated), the reference takes it a second time: a difference of up to 2 LSB, against an effect of
-            // hundreds to thousands
+            // The chain-off row is the row as rendered (a chain with every effect off passes it bit-identical), and
+            // the settings are in force from the first frame: the reference reproduces the row sample for sample
             int worst = 0;
             double errorEnergy = 0.0;
             double effectEnergy = 0.0;
@@ -1206,7 +1205,7 @@ TEST(Ym2203PairBoardsLevel_Test, SsgRatioIsTheSchematicWeightAndTheChainActsAlik
             }
             const double errorRms = std::sqrt(errorEnergy / double(std::max<size_t>(n, 1)));
             const double effectRms = std::sqrt(effectEnergy / double(std::max<size_t>(n, 1)));
-            EXPECT_LE(worst, 2) << where << ": the row is not the chain applied to the chain-off row";
+            EXPECT_EQ(worst, 0) << where << ": the row is not the chain applied to the chain-off row";
             EXPECT_GT(effectRms, 10.0 * errorRms) << where << ": the chain's effect is lost in the rounding";
             std::printf("[ chain    ] %s: effect RMS %.1f, off the reference by RMS %.2f, at most %d\n", where.c_str(),
                         effectRms, errorRms, worst);

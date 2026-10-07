@@ -219,6 +219,13 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   `SoundManager` (no voicing, no chain), `TtdMultiSound_Test` compares a run with its own replay. What changes by
   design is the mixed card SSG with Sound HQ on: punch (on by default) and room (-9 dB by default) now shape it; with
   both off only the chain's int16 round trip (x 32767 / 32768, truncated, at most 1 LSB) is added, as for the socket
+- [x] 2026-10-07 (owner decision, branch `sound-chain-bypass`): `AudioCharacterChain` is zero cost and bit-exact when
+  not used - with punch and room off, or Sound HQ off, the row passes untouched (the int16 round trip above is gone, for
+  the card's SSG rows and every socket chain alike). Switching punch / room / the room level / Sound HQ ramps over one
+  frame; an effect switched on starts from the current input and one that ramped out is cleared; a gap (sound off,
+  turbo without audio, a TTD restore of the card or of the socket device, a machine reset, a rate change) resets the
+  chains. The board test above now matches its reference chain exactly (0 LSB). Design:
+  [ay-tone-voicing.md](../../emulator/design/audio/ay-tone-voicing.md#switching-and-bypass)
 - [x] atm3 / atm450 / atm710 carry `TSFM_FmTrimDb=7.4` since 2026-10-05 (`bab7a4e32`), like every shipped config
 - [x] side note: the plain AY / TurboSound device (`SoundChip_TurboSound`) has the same sample-phase render loop as the
   TSFM and probably the same click after a host speed multiplier. Confirmed and worse (2026-10-05): its render loop
