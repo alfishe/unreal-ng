@@ -81,7 +81,7 @@ protected:
     bool WaitForBootMenu()
     {
         EmulatorState& state = _context->emulatorState;
-        auto menuUp = [&] { return state.aFE == 0xBE && state.atmPalette[0] != 0xFF000000u; };
+        auto menuUp = [&] { return state.atm.aFE == 0xBE && state.atm.palette[0] != 0xFF000000u; };
         EmulatorTestHelper::RunUntil(_emulator.get(), menuUp, 300);
         if (!menuUp())
             return false;
@@ -118,12 +118,12 @@ protected:
             return false;
 
         // ENTER leaves the hi-res menu (every entry but CP/M switches to the ZX screen)
-        for (int tries = 0; _context->emulatorState.aFE == 0xBE && tries < 4; tries++)
+        for (int tries = 0; _context->emulatorState.atm.aFE == 0xBE && tries < 4; tries++)
         {
             Tap({ZXKEY_ENTER});
-            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return _context->emulatorState.aFE != 0xBE; }, 60, 1);
+            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return _context->emulatorState.atm.aFE != 0xBE; }, 60, 1);
         }
-        return _context->emulatorState.aFE != 0xBE;
+        return _context->emulatorState.atm.aFE != 0xBE;
     }
 
     /// Type a CP/M command line and ENTER. A key that did not echo (pressed while the ROM was not
@@ -226,18 +226,18 @@ TEST_F(ATM450Boot_Test, SystemRomBootMenu)
 
     // The Sinclair palette arrives first (before the menu's own colors replace it): blue (cell 1) is
     // the high blue line alone, bright blue (cell 9) both lines - the empirical pin of the ATM1 layout
-    auto paletteWritten = [&] { return state.atmPalette[1] != 0xFFC72200u; };
+    auto paletteWritten = [&] { return state.atm.palette[1] != 0xFFC72200u; };
     EmulatorTestHelper::RunUntil(_emulator.get(), paletteWritten, 100, 1);
     ASSERT_TRUE(paletteWritten()) << "the system ROM never wrote the palette";
-    EXPECT_EQ(state.atmPalette[1], 0xFFAA0000u) << "blue = #0000AA";
-    EXPECT_EQ(state.atmPalette[9], 0xFFFF0000u) << "bright blue = #0000FF";
-    EXPECT_EQ(state.atmPalette[0], 0xFF000000u) << "black";
-    EXPECT_EQ(state.atmPalette[15], 0xFFFFFFFFu) << "bright white";
+    EXPECT_EQ(state.atm.palette[1], 0xFFAA0000u) << "blue = #0000AA";
+    EXPECT_EQ(state.atm.palette[9], 0xFFFF0000u) << "bright blue = #0000FF";
+    EXPECT_EQ(state.atm.palette[0], 0xFF000000u) << "black";
+    EXPECT_EQ(state.atm.palette[15], 0xFFFFFFFFu) << "bright white";
 
     ASSERT_TRUE(WaitForBootMenu());
-    EXPECT_EQ(state.aFE, 0xBE) << "ROM at #0000, mode RG0 = 0 / RG1 = 1: 640x200";
+    EXPECT_EQ(state.atm.aFE, 0xBE) << "ROM at #0000, mode RG0 = 0 / RG1 = 1: 640x200";
     EXPECT_EQ(_context->pScreen->_vid.mode, M_ATMHR);
-    EXPECT_EQ(state.aFB & 0x80, 0x80) << "CPSYS";
+    EXPECT_EQ(state.atm.aFB & 0x80, 0x80) << "CPSYS";
     EXPECT_EQ(_context->pMemory->GetROMPage(), kRomSys);
 }
 
@@ -251,8 +251,8 @@ TEST_F(ATM450Boot_Test, MenuTrdos48)
     EXPECT_NE(DecodeZXScreen().find("TechnologyResearch"), std::string::npos) << DecodeZXScreen();
 
     EmulatorState& state = _context->emulatorState;
-    EXPECT_EQ(state.aFE & 0x60, 0x60) << "ZX screen mode";
-    EXPECT_EQ(state.aFB & 0x80, 0x00) << "CPSYS off";
+    EXPECT_EQ(state.atm.aFE & 0x60, 0x60) << "ZX screen mode";
+    EXPECT_EQ(state.atm.aFB & 0x80, 0x00) << "CPSYS off";
     EXPECT_EQ(_context->pScreen->_vid.mode, M_ZX48);
 }
 
@@ -376,8 +376,8 @@ TEST_F(ATM450Boot_Test, ResetIntoTrdos)
 {
     _context->pCore->Reset(RM_DOS);
     EmulatorState& state = _context->emulatorState;
-    EXPECT_EQ(state.aFE, 0xE0);
-    EXPECT_EQ(state.aFB, 0x00);
+    EXPECT_EQ(state.atm.aFE, 0xE0);
+    EXPECT_EQ(state.atm.aFB, 0x00);
     EXPECT_EQ(state.p7FFD & 0x10, 0x10);
     EXPECT_EQ(_context->pMemory->GetROMPage(), kRomDos);
 

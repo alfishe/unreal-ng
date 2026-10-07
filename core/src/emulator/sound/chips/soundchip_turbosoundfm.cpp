@@ -217,12 +217,19 @@ void SoundChip_TurboSoundFM::handleStep()
 
                 // Get decimated output per chip (SSG verbatim; FM slaves
                 // follow the master's cadence, gain-scaled, §7.1)
-                float c0L = chip0.ssg.decimatorLeft().getOutput();
-                float c0R = chip0.ssg.decimatorRight().getOutput();
-                float c1L = chip1.ssg.decimatorLeft().getOutput();
-                float c1R = chip1.ssg.decimatorRight().getOutput();
-                float f0 = static_cast<float>(chip0.out.decimator.getOutput() * _fmGain);
-                float f1 = static_cast<float>(chip1.out.decimator.getOutput() * _fmGain);
+                // One pass per design (FilterDecimator::getOutputs): the four SSG decimators are fed in lockstep
+                // and share their rows, the two FM slaves theirs; the same order as one getOutput() each
+                FilterDecimator* decimators[6] = {&chip0.ssg.decimatorLeft(), &chip0.ssg.decimatorRight(),
+                                                  &chip1.ssg.decimatorLeft(), &chip1.ssg.decimatorRight(),
+                                                  &chip0.out.decimator,       &chip1.out.decimator};
+                double values[6];
+                FilterDecimator::getOutputs(decimators, 6, values);
+                float c0L = static_cast<float>(values[0]);
+                float c0R = static_cast<float>(values[1]);
+                float c1L = static_cast<float>(values[2]);
+                float c1R = static_cast<float>(values[3]);
+                float f0 = static_cast<float>(values[4] * _fmGain);
+                float f1 = static_cast<float>(values[5] * _fmGain);
 
                 // Store per-chip buffers (SSG for registry-driven capture,
                 // FM centre-panned, §6.4/§7.2)

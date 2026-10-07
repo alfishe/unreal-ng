@@ -108,11 +108,11 @@ TEST_F(TtdScorpionPaging_Test, SeekRestoresMagicButtonTrigger)
 {
     ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
-    ASSERT_EQ(_context->emulatorState.scorpionDosTrigger, 0);
+    ASSERT_EQ(_context->emulatorState.scorpion.dosTrigger, 0);
     const uint64_t frame = CaptureCheckpoint(ttd);
 
-    _context->emulatorState.scorpionDosTrigger = 1;
+    _context->emulatorState.scorpion.dosTrigger = 1;
 
     ASSERT_TRUE(SeekToFrame(ttd, frame));
-    EXPECT_EQ(_context->emulatorState.scorpionDosTrigger, 0);
+    EXPECT_EQ(_context->emulatorState.scorpion.dosTrigger, 0);
 }

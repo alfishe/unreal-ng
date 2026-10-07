@@ -139,15 +139,15 @@ TEST_F(PortDecoder_ATM450_Test, FELatchTakesLowAddressByte)
     EmulatorState& state = _context->emulatorState;
 
     _portDecoder->DecodePortOut(0x12FE, 0x00, 0x0000);
-    EXPECT_EQ(state.aFE, 0xFE) << "the high byte (#12) is not latched";
+    EXPECT_EQ(state.atm.aFE, 0xFE) << "the high byte (#12) is not latched";
 
     _portDecoder->DecodePortOut(0xFF7E, 0x00, 0x0000);
-    EXPECT_EQ(state.aFE, 0x7E);
+    EXPECT_EQ(state.atm.aFE, 0x7E);
 
     // Odd ports do not reach the latch
     _portDecoder->DecodePortOut(0x00FF, 0x00, 0x0000);
     _portDecoder->DecodePortOut(0x7FFD, 0x00, 0x0000);
-    EXPECT_EQ(state.aFE, 0x7E);
+    EXPECT_EQ(state.atm.aFE, 0x7E);
 }
 
 TEST_F(PortDecoder_ATM450_Test, FELatchA7SwitchesRamAtZero)
@@ -177,9 +177,9 @@ TEST_F(PortDecoder_ATM450_Test, BrightBorderFromA3)
     EmulatorState& state = _context->emulatorState;
 
     _portDecoder->DecodePortOut(0x00F6, 0x02, 0x0000);
-    EXPECT_EQ(state.atmBorderBright, 1);
+    EXPECT_EQ(state.atm.borderBright, 1);
     _portDecoder->DecodePortOut(0x00FE, 0x02, 0x0000);
-    EXPECT_EQ(state.atmBorderBright, 0);
+    EXPECT_EQ(state.atm.borderBright, 0);
 }
 
 /// endregion </RAM mapping>
@@ -215,7 +215,7 @@ TEST_F(PortDecoder_ATM450_Test, RomPriorityMatrix)
     // CPNET inside a TR-DOS session raises CPSYS (sticky)
     _portDecoder->DecodePortOut(0xFDFD, 0x08, 0x0000);
     EXPECT_EQ(_memory->GetROMPage(), kRomSys);
-    EXPECT_EQ(state.aFB & 0x80, 0x80);
+    EXPECT_EQ(state.atm.aFB & 0x80, 0x80);
 
     // CPNET outside a session does nothing new, the latch stays raised
     state.flags &= ~CF_TRDOS;
@@ -232,7 +232,7 @@ TEST_F(PortDecoder_ATM450_Test, PagingLockClearsCpsys)
 
     // 7FFD.5 (the 48K lock, Z48 on the schematic) resets the CPSYS flip-flop
     _portDecoder->DecodePortOut(0x7FFD, 0x30, 0x0000);
-    EXPECT_EQ(state.aFB & 0x80, 0x00);
+    EXPECT_EQ(state.atm.aFB & 0x80, 0x00);
     EXPECT_EQ(_memory->GetROMPage(), kRomSos);
 
     // ... and keeps it down: a later CPSYS read is overridden on the next rebuild
@@ -263,15 +263,15 @@ TEST_F(PortDecoder_ATM450_Test, FBLatchOnUnclaimedA2ZeroRead)
     EmulatorState& state = _context->emulatorState;
 
     EXPECT_EQ(_portDecoder->DecodePortIn(0x12FB, 0x0000), 0xFF);
-    EXPECT_EQ(state.aFB, 0xFB) << "low byte, not the high byte #12";
+    EXPECT_EQ(state.atm.aFB, 0xFB) << "low byte, not the high byte #12";
 
     EXPECT_EQ(_portDecoder->DecodePortIn(0xFF7B, 0x0000), 0xFF);
-    EXPECT_EQ(state.aFB, 0x7B);
+    EXPECT_EQ(state.atm.aFB, 0x7B);
 
     // A2 = 1 reads do not latch
     _portDecoder->DecodePortIn(0x00FF, 0x0000);
     _portDecoder->DecodePortIn(0x00DF, 0x0000);
-    EXPECT_EQ(state.aFB, 0x7B);
+    EXPECT_EQ(state.atm.aFB, 0x7B);
 }
 
 // T1.5 / OQ-6: a GS status read (#BB: A2 = 0, A7 = 1) is answered by the card (the shipped config fits
@@ -279,11 +279,11 @@ TEST_F(PortDecoder_ATM450_Test, FBLatchOnUnclaimedA2ZeroRead)
 TEST_F(PortDecoder_ATM450_Test, GsReadIsClaimedBeforeFBLatch)
 {
     EmulatorState& state = _context->emulatorState;
-    ASSERT_EQ(state.aFB & 0x80, 0x00);
+    ASSERT_EQ(state.atm.aFB & 0x80, 0x00);
 
     _portDecoder->DecodePortIn(0x00BB, 0x0000);
     _portDecoder->DecodePortIn(0x00B3, 0x0000);
-    EXPECT_EQ(state.aFB & 0x80, 0x00) << "the GS reads must not flip CPSYS";
+    EXPECT_EQ(state.atm.aFB & 0x80, 0x00) << "the GS reads must not flip CPSYS";
     EXPECT_EQ(_memory->GetROMPage(), kRom128);
 }
 
@@ -338,7 +338,7 @@ TEST_F(PortDecoder_ATM450_Test, PaletteATM1BitLayout)
 {
     EmulatorState& state = _context->emulatorState;
     state.border_attr = 0;
-    state.atmBorderBright = 0;
+    state.atm.borderBright = 0;
 
     struct Case
     {
@@ -363,8 +363,8 @@ TEST_F(PortDecoder_ATM450_Test, PaletteATM1BitLayout)
         // Rewrite to black first so a missing write cannot pass on a stale value
         _portDecoder->DecodePortOut(0x7DFD, c.value == 0x3F ? 0x00 : 0x3F, 0x0000);
         _portDecoder->DecodePortOut(0x7DFD, c.value, 0x0000);
-        EXPECT_EQ(state.atmPalette[0], c.abgr) << c.what;
-        EXPECT_EQ(state.atmPaletteRegs[0], c.value);
+        EXPECT_EQ(state.atm.palette[0], c.abgr) << c.what;
+        EXPECT_EQ(state.atm.paletteRegs[0], c.value);
     }
 }
 
@@ -374,19 +374,19 @@ TEST_F(PortDecoder_ATM450_Test, PaletteCellIsFourBitBorderAndNoGate)
 
     // Border 2 + bright (A3 = 0 on the #FE write) -> cell 10
     _portDecoder->DecodePortOut(0x00F6, 0x02, 0x0000);
-    const uint32_t cell2Before = state.atmPalette[2];
+    const uint32_t cell2Before = state.atm.palette[2];
 
     // pen2-style gate of 7.10 does not exist on 4.50, no DOS session needed
-    state.aFF77 = 0x4000;
+    state.atm.aFF77 = 0x4000;
     state.flags = 0;
     _portDecoder->DecodePortOut(0x7DFD, 0x00, 0x0000);
-    EXPECT_EQ(state.atmPalette[10], 0xFFFFFFFFu);
-    EXPECT_EQ(state.atmPalette[2], cell2Before);
+    EXPECT_EQ(state.atm.palette[10], 0xFFFFFFFFu);
+    EXPECT_EQ(state.atm.palette[2], cell2Before);
 
     // The 7.10 #xx9F/#xxFF palette group is not a palette port on 4.50
     _portDecoder->DecodePortOut(0x00FF, 0x3F, 0x0000);
     _portDecoder->DecodePortOut(0x009F, 0x3F, 0x0000);
-    EXPECT_EQ(state.atmPalette[10], 0xFFFFFFFFu);
+    EXPECT_EQ(state.atm.palette[10], 0xFFFFFFFFu);
 }
 
 /// endregion </Palette>
@@ -399,8 +399,8 @@ TEST_F(PortDecoder_ATM450_Test, NoAtm710RegisterFile)
     EmulatorState& state = _context->emulatorState;
     _portDecoder->DecodePortOut(0x7FFD, 0x03, 0x0000);
 
-    const uint8_t aFE = state.aFE;
-    const uint8_t aFB = state.aFB;
+    const uint8_t aFE = state.atm.aFE;
+    const uint8_t aFB = state.atm.aFB;
     const uint8_t pFDFD = state.pFDFD;
     const uint8_t p7FFD = state.p7FFD;
     const uint16_t page3 = _memory->GetRAMPageForBank3();
@@ -413,8 +413,8 @@ TEST_F(PortDecoder_ATM450_Test, NoAtm710RegisterFile)
         _portDecoder->DecodePortOut(port, 0xFF, 0x0000);
     }
 
-    EXPECT_EQ(state.aFE, aFE);
-    EXPECT_EQ(state.aFB, aFB);
+    EXPECT_EQ(state.atm.aFE, aFE);
+    EXPECT_EQ(state.atm.aFB, aFB);
     EXPECT_EQ(state.pFDFD, pFDFD);
     EXPECT_EQ(state.p7FFD, p7FFD);
     EXPECT_EQ(state.pFF77, 0x00);
@@ -439,8 +439,8 @@ TEST_F(PortDecoder_ATM450_Test, ResetAndBootDefaults)
     EXPECT_EQ(state.pFDFD, 0x00);
 
     _portDecoder->ApplyBootROMDefaults(RM_128);
-    EXPECT_EQ(state.aFE, 0x80);
-    EXPECT_EQ(state.aFB, 0x80);
+    EXPECT_EQ(state.atm.aFE, 0x80);
+    EXPECT_EQ(state.atm.aFB, 0x80);
     EXPECT_EQ(_memory->GetROMPage(), kRomSys) << "the machine starts in the system ROM";
     // atm1.rom page 0 opens with DI; JP #3F00 (the R3 page-order pin)
     EXPECT_EQ(_memory->DirectReadFromZ80Memory(0x0000), 0xF3);
@@ -449,8 +449,8 @@ TEST_F(PortDecoder_ATM450_Test, ResetAndBootDefaults)
     EXPECT_EQ(_memory->DirectReadFromZ80Memory(0x0003), 0x3F);
 
     _portDecoder->ApplyBootROMDefaults(RM_DOS);
-    EXPECT_EQ(state.aFE, 0xE0);
-    EXPECT_EQ(state.aFB, 0x00);
+    EXPECT_EQ(state.atm.aFE, 0xE0);
+    EXPECT_EQ(state.atm.aFB, 0x00);
 }
 
 // R6: RM_DOS keeps 7FFD.4 on 4.50 (Memory::SetROMMode) and lands in the dos ROM

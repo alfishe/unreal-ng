@@ -298,13 +298,13 @@ TEST_F(PortDecoder_PortTag_Test, ReadPagingLatchMapsEnumToStateField)
     state.p7FFD = 0x11;
     state.p1FFD = 0x02;
     state.pDFFD = 0x81;
-    state.p7EFD = 0x05;
+    state.scorpion.p7EFD = 0x05;
     state.pEFF7 = 0x03;
     state.pFF77 = 0x10;
-    state.aFE = 0x40;
-    state.aFB = 0x20;
+    state.atm.aFE = 0x40;
+    state.atm.aFB = 0x20;
     state.pFDFD = 0x07;
-    state.pFFF7[0] = 0x1234;
+    state.atm.pFFF7[0] = 0x1234;
 
     EXPECT_EQ(PortDecoder::ReadPagingLatch(PagingLatch::P7FFD, state), 0x11u);
     EXPECT_EQ(PortDecoder::ReadPagingLatch(PagingLatch::P1FFD, state), 0x02u);

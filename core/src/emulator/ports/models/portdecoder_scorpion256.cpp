@@ -90,17 +90,17 @@ void PortDecoder_Scorpion256::reset()
     EmulatorState& state = _context->emulatorState;
     state.p7FFD = 0x00;     // Reset port 0x7FFD to default (Screen 0, RAM bank 0, SOS ROM, paging enabled)
     state.p1FFD = 0x00;     // Reset port 0x1FFD (no RAM at #0000, Shadow Monitor off, extended bank bits clear)
-    state.p7EFD = 0x00;     // Reset ProfROM window latch
-    state.profrom_bank = 0x00;  // ProfROM quadrant 0 at power-on (design §4.2)
-    state.scorpionDosTrigger = 0x00;  // Magic-button DOS trigger cleared by RESET (hardware-reference §9)
-    state.scorpion_turbo = 0x00;    // Turbo flip-flop cleared by RESET - 3.5 MHz (hardware-reference 13)
+    state.scorpion.p7EFD = 0x00;     // Reset ProfROM window latch
+    state.scorpion.profromBank = 0x00;  // ProfROM quadrant 0 at power-on (design §4.2)
+    state.scorpion.dosTrigger = 0x00;  // Magic-button DOS trigger cleared by RESET (hardware-reference §9)
+    state.scorpion.turbo = 0x00;    // Turbo flip-flop cleared by RESET - 3.5 MHz (hardware-reference 13)
     state.hw_turbo_ratio = 1;       // ... and the model-neutral hardware clock ratio with it
     state.pBFFD = 0x00;     // Reset AY register select port
     state.pFFFD = 0x00;     // Reset AY data port
     state.pFE = 0xF8;       // Reset ULA port (border black, no sound; keys released)
     state.border_attr = 0x00;  // Sync border_attr with pFE bits 0-2 (black)
-    state.pFFBA = 0x00;     // SMUC system latch: serial link released, CMOS address phase
-    state.p7FBA = 0x00;     // SMUC virtual FDD latch
+    state.scorpion.pFFBA = 0x00;     // SMUC system latch: serial link released, CMOS address phase
+    state.scorpion.p7FBA = 0x00;     // SMUC virtual FDD latch
 
     // Set default 128K memory pages
     Memory& memory = *_context->pMemory;
@@ -142,7 +142,7 @@ void PortDecoder_Scorpion256::SyncTurboWaits()
 
     // While the turbo latch is on: the overlay stays through the 3.5 MHz /INT stretches (OnMachineStep), its waits
     // follow the applied clock
-    const bool wanted = _state->scorpion_turbo != 0;
+    const bool wanted = _state->scorpion.turbo != 0;
     Z80* z80 = core->GetZ80();
     if (wanted)
     {
@@ -182,7 +182,7 @@ void PortDecoder_Scorpion256::SyncTurboWaits()
 
 void PortDecoder_Scorpion256::OnMachineStep(uint32_t t)
 {
-    if (!_state->scorpion_turbo)
+    if (!_state->scorpion.turbo)
         return;
     Z80* z80 = _context->pCore->GetZ80();
     // Dropped = the latch is on and the clock is 3.5 MHz: no state of its own, so a TTD restore needs nothing
@@ -208,7 +208,7 @@ void PortDecoder_Scorpion256::OnMachineStep(uint32_t t)
 void PortDecoder_Scorpion256::OnMachineFrameRollover([[maybe_unused]] uint32_t frameLength)
 {
     // A new frame: watch for its pulse again
-    if (_state->scorpion_turbo)
+    if (_state->scorpion.turbo)
         _context->pCore->GetZ80()->SetMachineStepWork(true);
 }
 
@@ -246,11 +246,11 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     switch (port & 0xC023)
     {
         case 0x4021:
-            _state->scorpion_turbo = 1;     // IN #7FFD family - 7 MHz
+            _state->scorpion.turbo = 1;     // IN #7FFD family - 7 MHz
             _state->hw_turbo_ratio = 2;     // CPU 2x per frame (model-neutral view for Z80/audio)
             break;
         case 0x0021:
-            _state->scorpion_turbo = 0;     // IN #1FFD family - 3.5 MHz
+            _state->scorpion.turbo = 0;     // IN #1FFD family - 3.5 MHz
             _state->hw_turbo_ratio = 1;
             break;
         default:
@@ -375,7 +375,7 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
         disp.wasHandledInline = true;
     }
     else if (isBeta128 && !(_state->flags & CF_TRDOS) && !(_state->p1FFD & 0x02)
-             && !_state->scorpionDosTrigger)
+             && !_state->scorpion.dosTrigger)
     {
         // Beta128 FDC off the bus: with no TR-DOS session, the Shadow Monitor
         // unpaged and the magic-button DOS trigger disarmed, #1F/#3F/#5F/#7F/#FF
@@ -577,7 +577,7 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
     // with the session closed, hardware-reference 12.3) or the magic-button
     // DOS trigger is armed (MAME selects the same DOS I/O shadow view on it)
     else if (isBeta128 && ((state.flags & CF_TRDOS) || (state.p1FFD & 0x02)
-                           || state.scorpionDosTrigger))
+                           || state.scorpion.dosTrigger))
     {
         // Mirrors (e.g. OUT (#3CFF),A drive-select with A on A15-A8) dispatch
         // through the canonical device key - raw addresses miss the exact-key
@@ -914,7 +914,7 @@ bool PortDecoder_Scorpion256::IsPort_KempstonMouse(uint16_t port, uint8_t& outRe
 /// ScorpionZS256 trdos_en, which the MNI also sets). The Shadow Monitor latch is not part of it
 bool PortDecoder_Scorpion256::ScorpionTrDosSelected() const
 {
-    return (_state->flags & CF_TRDOS) || _state->scorpionDosTrigger;
+    return (_state->flags & CF_TRDOS) || _state->scorpion.dosTrigger;
 }
 /// endregion </Helper methods>
 
@@ -1064,7 +1064,7 @@ uint8_t PortDecoder_Scorpion256::ReadSMUCPort(uint16_t port)
             return _smucNvram.GetRtc().ReadData();
 
         case 0x2000:  // #7FBA - virtual FDD
-            return static_cast<uint8_t>(state.p7FBA | 0x3F);
+            return static_cast<uint8_t>(state.scorpion.p7FBA | 0x3F);
 
         case 0x0000:  // #5FBA - version register
             return 0x3F;
@@ -1075,13 +1075,13 @@ uint8_t PortDecoder_Scorpion256::ReadSMUCPort(uint16_t port)
 
         case 0x8004:  // #D8BE - IDE data high byte (16-bit path)
             if (_ide.Scheme() == IDE_SMUC)
-                return _ide.SmucIn(port, state.pFFBA);
+                return _ide.SmucIn(port, state.scorpion.pFFBA);
             return 0x00;
 
         case 0xA004:  // #F8BE-#FFBE - IDE window, A10-A8 select the ATA register
         {
             if (_ide.Scheme() == IDE_SMUC)
-                return _ide.SmucIn(port, state.pFFBA);  // the real disk core (IDE design §4, SMUC row)
+                return _ide.SmucIn(port, state.scorpion.pFFBA);  // the real disk core (IDE design §4, SMUC row)
             const uint8_t ideReg = static_cast<uint8_t>((port >> 8) & 0x07);
             switch (ideReg)
             {
@@ -1110,7 +1110,7 @@ void PortDecoder_Scorpion256::WriteSMUCPort(uint16_t port, uint8_t value)
     switch (port & 0xA044)
     {
         case 0xA000:  // #FFBA - bit 7 CMOS data phase / IDE control block, bit 0 IDE reset, bits 4/6/5 = SDA/SCL/WP
-            state.pFFBA = value;
+            state.scorpion.pFFBA = value;
             _smucNvram.WriteSerialLink(value);
             if (!(value & 0x01) && _ide.Scheme() == IDE_SMUC)
                 _ide.ResetUnits();  // 0 resets (IDE design Q3): MAME smuc.cpp, and ProfROM 4.01 keeps
@@ -1118,24 +1118,24 @@ void PortDecoder_Scorpion256::WriteSMUCPort(uint16_t port, uint8_t value)
             break;
 
         case 0x8000:  // #DFBA - RTC address or data, latched by #FFBA bit 7
-            if (state.pFFBA & 0x80)
+            if (state.scorpion.pFFBA & 0x80)
                 _smucNvram.GetRtc().WriteData(value);
             else
                 _smucNvram.GetRtc().WriteAddress(value);
             break;
 
         case 0x2000:  // #7FBA - virtual FDD latch
-            state.p7FBA = value;
+            state.scorpion.p7FBA = value;
             break;
 
         case 0x8004:  // #D8BE - IDE data high byte latch
             if (_ide.Scheme() == IDE_SMUC)
-                _ide.SmucOut(port, state.pFFBA, value);
+                _ide.SmucOut(port, state.scorpion.pFFBA, value);
             break;
 
         case 0xA004:  // #F8BE-#FFBE - IDE window task file
             if (_ide.Scheme() == IDE_SMUC)
-                _ide.SmucOut(port, state.pFFBA, value);
+                _ide.SmucOut(port, state.scorpion.pFFBA, value);
             else
                 _smucIdeRegs[static_cast<uint8_t>((port >> 8) & 0x07)] = value;
             break;

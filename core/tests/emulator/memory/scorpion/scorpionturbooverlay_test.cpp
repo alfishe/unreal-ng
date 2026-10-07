@@ -198,7 +198,7 @@ TEST_F(ScorpionTurboOverlay_Test, TurboDropsToNormalSpeedWhileIntIsActive)
         _z80->StepInstruction(true);  // the frame loop step: it runs the machine step hooks
     ASSERT_EQ(state.hw_turbo_ratio_applied, 2) << "7 MHz again after /INT";
     EXPECT_GE(_z80->t, 2 * intEnd);
-    EXPECT_EQ(state.scorpion_turbo, 1) << "the latch is untouched";
+    EXPECT_EQ(state.scorpion.turbo, 1) << "the latch is untouched";
 
     // The hook is needed only up to the pulse's end: it turns itself off for the rest of the frame (the steps take
     // the plain path) and back on at the next frame start

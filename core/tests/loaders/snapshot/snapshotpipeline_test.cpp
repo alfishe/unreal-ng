@@ -485,8 +485,8 @@ TEST(SnapshotAtm_Test, TheMemoryManagerIsOnAndLaidOutLikeA128k)
         ASSERT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/across-the-edge-second.sna"))) << model;
         const EmulatorState& state = emulator->GetContext()->emulatorState;
         Memory& memory = *emulator->GetContext()->pMemory;
-        EXPECT_NE(state.aFF77 & 0x100, 0) << model << ": the manager (PEN) is on";
-        EXPECT_NE(state.aFF77 & 0x200, 0) << model << ": ~CPM set, TR-DOS is not forced";
+        EXPECT_NE(state.atm.aFF77 & 0x100, 0) << model << ": the manager (PEN) is on";
+        EXPECT_NE(state.atm.aFF77 & 0x200, 0) << model << ": ~CPM set, TR-DOS is not forced";
         EXPECT_EQ(state.flags & CF_TRDOS, 0) << model;
         EXPECT_EQ(memory.GetRAMPageForBank(1), 5u) << model;
         EXPECT_EQ(memory.GetRAMPageForBank(2), 2u) << model;
@@ -498,8 +498,8 @@ TEST(SnapshotAtm_Test, TheMemoryManagerIsOnAndLaidOutLikeA128k)
     Emulator* atm450 = EmulatorTestHelper::CreateStandardEmulator("ATM450", LoggerLevel::LogError, RamPowerOn::Zero);
     ASSERT_NE(atm450, nullptr);
     ASSERT_TRUE(atm450->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/across-the-edge-second.sna")));
-    EXPECT_NE(atm450->GetContext()->emulatorState.aFE & 0x80, 0) << "ROM at #0000";
-    EXPECT_EQ(atm450->GetContext()->emulatorState.aFB & 0x80, 0) << "not the system ROM (CPSYS off)";
+    EXPECT_NE(atm450->GetContext()->emulatorState.atm.aFE & 0x80, 0) << "ROM at #0000";
+    EXPECT_EQ(atm450->GetContext()->emulatorState.atm.aFB & 0x80, 0) << "not the system ROM (CPSYS off)";
     EmulatorTestHelper::CleanupEmulator(atm450);
 }
 
