@@ -438,7 +438,7 @@ zxbus.3 = gs                     ; would clash with zxbus.1's gs: the machine is
 | Covox / SounDrive | one `Covox` device, `Fitment {Mono, Quad}` | cards `covox-fb` (`#FB`) and `soundrive` (mode 1 + mode 2 ports) built on the same `Covox` module |
 | ZXNETUSB, ZX-WiFi | `NetworkManager::MakePlan` / `Refit` | cards `zxnetusb`, `zx-wifi`; `NetworkManager` keeps the virtual network and peers, `SlotManager` decides fitting |
 | ATM2IOESP | `IIoBusDevice` on the ATM INTERNAL connector | a slot on a machine-declared `atm-internal` bus (same model, one more bus kind) |
-| Sprinter ISA cards | `SprinterIsaBus` | unchanged; `isa1` / `isa2` appear in the slot report; the ZX-bus adapter hosts a `zxbus` |
+| Sprinter ISA cards | `SprinterIsaBus` | unchanged; `isa1` / `isa2` appear in the slot report; the ZX-bus adapter hosts a `zxbus`. As built (SL-8, [tdd.md](tdd.md) §17.4): `machineSlots` from `[ISA]`, the hosted bus `isa.N.zxbus` with its host, a GS card behind the adapter only where `[ISA] SlotN=ZXBUS` |
 | Built-ins (Beta-128 on Pentagon, ZX-Evo TurboSound, board Covox, Kempston on Pentagon) | inline in decoders | declared as `BuiltInDef`s of the machine's `MachineDef` with functions and ports; behavior unchanged |
 
 **As built (SL-4):** `SlotManager` owns the decision and the slot report (`DeviceState::Slots`), not the card
@@ -485,6 +485,13 @@ module's decode.
   (`ICard::TtdSessionMatches`: the MultiSound's MIDI bank); the cards' own fingerprint fields
   (`ICard::TtdFingerprint`, `slots.zxbus.1.bank`) join the slot set's. Two instances of one module are refused by the
   planner as a conflict (Q8) before any registry sees them.
+- **After TTD Phase 5 (2026-10-06,** [tdd.md](tdd.md) §17**):** the engine never refuses a slot change (a machine
+  change ends its session), so the R-OP-7 text is v1's only; the engine has no stable session UUID to name. The
+  socket's `ay` / `ts` boards are told apart by the device instance (`ay-socket.ts`), and the slot-set guard runs on
+  the engine's session load too. Two instances of one module are still refused at registration: the engine keys its
+  table by `{type, instance}` but its capture, state regions, restore and binding by the v1 id (§17.2 lists them).
+  Shared functions (D1) are a hardware rule and are refused whatever TTD can do; two MultiSounds with disjoint DIP
+  switches are fitted and refuse recording.
 - **Fixture corpus:** the Sprinter and TS-Conf fixtures were recorded with the classic GS swapped in; card migration must
   keep every blob byte-identical (`TTD_Corpus_Test.EveryFixtureLoadsRestoresAndReplaysExactly`).
 - **Snapshots** (SZX and our own): the slot set is written where the format allows (SZX has blocks for some cards);
