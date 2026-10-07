@@ -50,7 +50,7 @@ void MakeCredentials(const std::string& name, Credentials& c)
     X509_gmtime_adj(X509_getm_notBefore(c.cert), -60);
     X509_gmtime_adj(X509_getm_notAfter(c.cert), 3600);
     X509_set_pubkey(c.cert, c.key);
-    // A name of its own, set as subject and issuer: OpenSSL 4 hands out the certificate's names as const
+    // The name is built on its own and copied in: OpenSSL 4 returns the certificate's subject as const
     X509_NAME* subject = X509_NAME_new();
     X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC, reinterpret_cast<const unsigned char*>(name.c_str()), -1, -1, 0);
     X509_set_subject_name(c.cert, subject);
