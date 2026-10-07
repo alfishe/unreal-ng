@@ -562,6 +562,8 @@ private:
         // FM samples fed in a row that were zero (muted or silent FM): from fm[i].window() on, the FIR's output is
         // exactly +0.0 and is not evaluated (render layer, not TTD state; 0 = evaluate)
         size_t fmZeroRun[2] = {};
+        // The same for the SSG channels: levels 0.0 fed in a row (a silent channel)
+        size_t ssgZeroRun[2][3] = {};
     };
     std::unique_ptr<ChannelOutputs> _channels;
     size_t _channelRate = 44100;   // output rate of the per-channel streams (configureChannelOutputs)

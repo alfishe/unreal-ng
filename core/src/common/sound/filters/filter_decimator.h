@@ -313,6 +313,13 @@ public:
         }
     }
 
+    /// Consume the output instant due now without evaluating the FIR (a caller that knows the output already: a
+    /// window of zeros gives exactly +0.0, see window()). A master's phase moves exactly as getOutput() moves it
+    void skipOutput()
+    {
+        (void)takeInstant();
+    }
+
 private:
     /// Where an output falls: the two coefficient rows around the instant, the weight between them and how many
     /// whole input samples back from the newest one it lies
