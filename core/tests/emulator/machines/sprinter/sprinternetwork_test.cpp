@@ -136,17 +136,20 @@ TEST_F(SprinterNetwork_Test, Journal_NamesTheRegisters)
     EXPECT_EQ(entries->items[1].find("cpu_address")->s, "#C307");
 }
 
+// The legacy [NETWORK] Card=ZXNETUSB becomes a slot behind the ISA ZX-bus adapter; the adapter passes the General
+// Sound's ports only (ZX-bus slots SL-8), so the slot plan leaves the card out and its report says why
 TEST_F(SprinterNetwork_Test, ZxBusCardsAreRefusedWithTheReason)
 {
     Create([](CONFIG& config) { config.network.card = 1; });
     EXPECT_EQ(_context->pZxNetUsb, nullptr);
-    const StateNode net = DeviceState::Network(_context);
-    const StateNode* notes = net.find("not_fitted");
-    ASSERT_NE(notes, nullptr);
-    bool found = false;
-    for (const StateNode& n : notes->items)
-        found |= n.s.find("no ZX-Bus") != std::string::npos;
-    EXPECT_TRUE(found);
+    const StateNode slots = DeviceState::Slots(_context);
+    const StateNode* entries = slots.find("slots");
+    ASSERT_NE(entries, nullptr);
+    std::string reason;
+    for (const StateNode& slot : entries->items)
+        if (slot.find("card") && slot.find("card")->s == "zxnetusb" && slot.find("reason"))
+            reason = slot.find("reason")->s;
+    EXPECT_NE(reason.find("passes the General Sound's ports only"), std::string::npos) << reason;
 }
 
 TEST_F(SprinterNetwork_Test, OtherPopulations)

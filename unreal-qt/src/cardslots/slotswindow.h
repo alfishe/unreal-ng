@@ -46,6 +46,8 @@ public:
     void choose(const QString& slot, const QString& card, const QString& options = QString());
     /// The options the editors hold, as "name=value ..." (tests)
     QString optionsText() const;
+    /// The slot tree as lines "<indent><column 0> | <column 1>", two spaces per level (tests)
+    QString treeText() const;
 
 signals:
     /// Visibility changed via the window's own close box (keeps the menu in sync)

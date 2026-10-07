@@ -121,7 +121,13 @@ ay-socket = ay
 ```
 
 Other ZX-bus cards (MoonSound, Covox, SounDrive, ZX-MultiSound, ZXNETUSB, ZX-WiFi) are **not** supported on the
-Sprinter: the adapter carries the General Sound family only.
+Sprinter: the adapter carries the General Sound family only. Such an entry is left out with the reason (`the ZX-bus
+adapter in isa.1 passes the General Sound's ports only ...`), and a slot change asking for one is refused.
+
+A General Sound card goes only where the ISA slot holds the adapter: `isa.2 = gs` needs `[ISA] Slot2=ZXBUS`, else it
+is left out (`isa.2 holds NE2000 Ethernet ([ISA] Slot2), not the ZX-bus adapter a ZX-bus card needs: [ISA]
+Slot2=ZXBUS`). With the adapter in both slots the card sits on the one its `[SLOTS]` line names; the other adapter's
+ZX-bus is empty.
 
 ## ISA cards (`[ISA]`)
 
@@ -216,8 +222,17 @@ CLI: `create SPRINTER --isa-slot2 none`.
 B=http://localhost:8090/api/v1/emulator
 curl -s $B/$ID/state/isa | jq -r .summary
 # slot 1: zxbus I/O #033-#0BB -> NeoGS on the ZX-bus: #B3 / #BB / #33, RESET from ISA RESET DRV; slot 2: ne2000 I/O #300-#31F IRQ 3
-curl -s $B/$ID/slots | jq '.slots[] | {slot, card, fit, state}'
+curl -s $B/$ID/slots | jq '.slots[] | {slot, card, bus, host, fit, state}'
+# {"slot":"isa.1","card":"neogs","bus":"isa.1.zxbus","host":"isa.1","fit":"unrealistic","state":"active"}
+curl -s $B/$ID/slots | jq -c '.machineSlots[] | {slot, card, name, details, source, hostsBus, hostedCard}'
+# {"slot":"isa.1","card":"zxbus","name":"ISA to ZX-bus adapter","details":"","source":"[ISA] Slot1","hostsBus":"isa.1.zxbus","hostedCard":"neogs"}
+# {"slot":"isa.2","card":"ne2000","name":"NE2000 Ethernet","details":"RTL8019AS, #300, IRQ 3","source":"[ISA] Slot2","hostsBus":null,"hostedCard":null}
 ```
 
-CLI: `slots`, `isa` (or `state isa`). A card that was not fitted shows the reason (`not_fitted` in `state/isa`, the `state` of
+The slot report lists the ISA slots as the machine's own slots (`machineSlots`: the cards come from `[ISA]`, not from
+`[SLOTS]`), the adapter's ZX-bus as a bus hosted by its slot (`buses[]`: `isa.1.zxbus`, `host` `isa.1`) and the
+General Sound on that bus. The Qt Machine > Slots window shows the same tree: `isa`, under it `isa.1` (the adapter)
+with its ZX-bus and the card, and `isa.2`.
+
+CLI: `slots` (with a "machine slots" part), `isa` (or `state isa`). A card that was not fitted shows the reason (`not_fitted` in `state/isa`, the `state` of
 the slot in `slots`).

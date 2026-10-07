@@ -20,6 +20,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <functional>
 #include <map>
 #include <sstream>
 
@@ -251,23 +252,63 @@ void SlotsWindow::fillTree(const StateNode& report)
 {
     _tree->clear();
     std::map<std::string, QTreeWidgetItem*> buses;
+    auto addBus = [&](const StateNode& bus, QTreeWidgetItem* parent) {
+        auto* item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(_tree);
+        const std::string id = Text(bus.find("id"));
+        item->setText(0, Q(id));
+        item->setText(1, Q(Text(bus.find("kind"))));
+        item->setText(4, tr("arbitration %1").arg(Q(Text(bus.find("arbitration")))));
+        const StateNode* retrofit = bus.find("retrofit");
+        if (retrofit != nullptr && retrofit->b)
+        {
+            item->setText(3, tr("retrofitted"));
+            item->setToolTip(0, Q(Text(bus.find("retrofitNote"))));
+        }
+        else if (!Text(bus.find("note")).empty())
+        {
+            item->setToolTip(0, Q(Text(bus.find("note"))));
+        }
+        item->setExpanded(true);
+        buses[id] = item;
+    };
+    // The machine's buses first, then the board's own cards in its own slots (the Sprinter's ISA slots, SL-8), then
+    // the buses those cards host (the ZX-bus adapter's) under them
     if (const StateNode* list = report.find("buses"))
     {
         for (const StateNode& bus : list->items)
         {
-            auto* item = new QTreeWidgetItem(_tree);
-            const std::string id = Text(bus.find("id"));
+            if (Text(bus.find("host")).empty())
+                addBus(bus, nullptr);
+        }
+    }
+    std::map<std::string, QTreeWidgetItem*> machineSlots;
+    if (const StateNode* list = report.find("machineSlots"))
+    {
+        for (const StateNode& slot : list->items)
+        {
+            const std::string busId = Text(slot.find("bus"));
+            QTreeWidgetItem* parent = buses.count(busId) ? buses[busId] : nullptr;
+            auto* item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(_tree);
+            const std::string id = Text(slot.find("slot"));
             item->setText(0, Q(id));
-            item->setText(1, Q(Text(bus.find("kind"))));
-            item->setText(4, tr("arbitration %1").arg(Q(Text(bus.find("arbitration")))));
-            const StateNode* retrofit = bus.find("retrofit");
-            if (retrofit != nullptr && retrofit->b)
-            {
-                item->setText(3, tr("retrofitted"));
-                item->setToolTip(0, Q(Text(bus.find("retrofitNote"))));
-            }
+            item->setText(1, Q(Text(slot.find("card"))));
+            item->setToolTip(1, Q(Text(slot.find("name"))));
+            item->setText(2, Q(Text(slot.find("details"))));
+            item->setText(3, tr("board card"));
+            item->setText(4, tr("from %1").arg(Q(Text(slot.find("source")))));
+            item->setToolTip(4, tr("Set in the machine configuration (%1); not changed from this window")
+                                    .arg(Q(Text(slot.find("source")))));
             item->setExpanded(true);
-            buses[id] = item;
+            machineSlots[id] = item;
+        }
+    }
+    if (const StateNode* list = report.find("buses"))
+    {
+        for (const StateNode& bus : list->items)
+        {
+            const std::string host = Text(bus.find("host"));
+            if (!host.empty())
+                addBus(bus, machineSlots.count(host) ? machineSlots[host] : nullptr);
         }
     }
     if (const StateNode* list = report.find("slots"))
@@ -275,7 +316,9 @@ void SlotsWindow::fillTree(const StateNode& report)
         for (const StateNode& slot : list->items)
         {
             const std::string id = Text(slot.find("slot"));
-            const std::string busId = id.substr(0, id.find('.'));
+            std::string busId = Text(slot.find("bus"));
+            if (!buses.count(busId))
+                busId = id.substr(0, id.find('.'));
             QTreeWidgetItem* parent = buses.count(busId) ? buses[busId] : nullptr;
             auto* item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(_tree);
             item->setText(0, Q(id));
@@ -323,7 +366,9 @@ void SlotsWindow::fillSlotChoices(const StateNode& report)
         for (const StateNode& bus : list->items)
         {
             const std::string id = Text(bus.find("id"));
-            choices << (id == "ay-socket" ? Q(id) : Q(id + ".next"));
+            const std::string host = Text(bus.find("host"));
+            // A hosted bus (the ZX-bus adapter's) has one place: the slot of the card that hosts it
+            choices << (!host.empty() ? Q(host) : id == "ay-socket" ? Q(id) : Q(id + ".next"));
         }
     }
     choices.removeDuplicates();
@@ -488,6 +533,19 @@ void SlotsWindow::choose(const QString& slot, const QString& card, const QString
         }
     }
     updatePreview();
+}
+
+QString SlotsWindow::treeText() const
+{
+    QStringList lines;
+    std::function<void(QTreeWidgetItem*, int)> walk = [&](QTreeWidgetItem* item, int depth) {
+        lines << QString(depth * 2, ' ') + item->text(0) + " | " + item->text(1);
+        for (int i = 0; i < item->childCount(); i++)
+            walk(item->child(i), depth + 1);
+    };
+    for (int i = 0; i < _tree->topLevelItemCount(); i++)
+        walk(_tree->topLevelItem(i), 0);
+    return lines.join('\n');
 }
 
 QString SlotsWindow::previewText() const

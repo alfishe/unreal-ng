@@ -120,6 +120,21 @@ public:
         std::string reason;     ///< the planner's sentence and what the rule says
     };
 
+    /// A slot of the machine's own design, filled by the machine's own configuration (SL-8: the Sprinter's ISA-8
+    /// slots, `[ISA] SlotN`): reported with the slot set, not planned (the cards in it are the board's). A ZX-bus
+    /// adapter in it hosts a ZX-bus of its own: the slot of the same id in [SLOTS] (`isa.1 = neogs`, behind the
+    /// adapter `sprinter-isa-zxbus`) is that bus's card
+    struct MachineSlot
+    {
+        std::string slot;       ///< "isa.1"
+        std::string bus;        ///< the machine's bus id: "isa"
+        std::string card;       ///< the board's card key ("zxbus", "ne2000", "none")
+        std::string name;       ///< "ISA to ZX-bus adapter"
+        std::string source;     ///< "[ISA] Slot1"
+        std::string hosts;      ///< the bus kind a ZX-bus adapter hosts ("zxbus"); "" when none
+        std::string details;    ///< the card's resources ("RTL8019AS, #300, IRQ 3"); "" when none
+    };
+
     struct Result
     {
         MEM_MODEL model{};
@@ -130,6 +145,7 @@ public:
         std::vector<std::string> log;                 ///< deprecation and refusal lines (logged as warnings)
         std::vector<std::string> info;                ///< cards fitted with the fit override (logged as info)
         std::vector<Conflict> conflicts;              ///< configured entries in conflict: the machine is not created
+        std::vector<MachineSlot> machineSlots;        ///< the machine's own slots (Sprinter ISA), SL-8
 
         /// Why the machine is not created: every conflicting pair with its rule; "" when the set is creatable
         std::string Refusal() const;
@@ -140,7 +156,12 @@ public:
         const Slot* FindSlot(const std::string& slot) const;
         const Slot* FindGroup(SlotCardGroup group) const;
         const BuiltIn* FindBuiltIn(const std::string& id) const;
+        const MachineSlot* FindMachineSlot(const std::string& slot) const;
     };
+
+    /// The machine's own slots of a config (SL-8): the Sprinter's ISA slots from `[ISA]`; empty for a machine
+    /// without them
+    static std::vector<MachineSlot> MachineSlotsOf(const CONFIG& config, const slots::MachineDef* machine);
 
     /// The legacy card fields of a config as slots (every group, or only `groups`), for the machine of the config:
     /// TurboSound -> ay-socket, GSType -> a GS card, MoonSound, SD / CovoxFB -> soundrive / covox-fb or the board

@@ -24,6 +24,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/io/keyboard/atm2kbc.h"
+#include "emulator/io/sprinter/isa/isaslotconfig.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/serial/comport.h"
@@ -609,6 +610,83 @@ TEST_F(SlotControl_Test, SlotRestartCarriesTheFirmwareChoices)
     EXPECT_EQ(atmPlug.emulator->GetContext()->config.atm.kbc_firmware,
               static_cast<uint8_t>(Atm2Kbc::Firmware::V22At7));
     EXPECT_STREQ(atmPlug.emulator->GetContext()->config.atm.kbc_rom_path, "") << "the preset's image, as chosen";
+}
+
+/// SL-8: the Sprinter's ISA slots are the machine's own slots, filled by [ISA]: the slot report lists them
+/// (machineSlots), the ZX-bus adapter in one hosts a ZX-bus (a bus with a host), and the General Sound behind it is
+/// listed on that ZX-bus. A ZX-bus card needs the adapter in its ISA slot: a plug into the NE2000's slot is refused,
+/// and the GS sits on the adapter of the slot the slot set names. ~100 ms: three Sprinter machines are built (their
+/// creation dominates; the refusals cost nothing)
+TEST_F(SlotControl_Test, SprinterIsaSlotsInTheReport)
+{
+    const Lines gsOnIsa1 = {{"isa.1", "neogs"}, {"isa.1.adapter", "sprinter-isa-zxbus"}, {"isa.1.fit", "unrealistic"}};
+    std::shared_ptr<Emulator> emulator = Create("SPRINTER", gsOnIsa1);
+    ASSERT_NE(emulator, nullptr);
+    const StateNode report = DeviceState::Slots(emulator->GetContext());
+
+    std::vector<std::string> machineSlots;
+    for (const StateNode& slot : Field(report, "machineSlots").items)
+        machineSlots.push_back(Field(slot, "slot").s + " = " + Field(slot, "card").s + " (" + Field(slot, "source").s +
+                               ")" + (slot.find("hostsBus") ? " hosts " + Field(slot, "hostsBus").s + ": " +
+                                                                  Field(slot, "hostedCard").s
+                                                            : std::string()));
+    EXPECT_EQ(machineSlots, (std::vector<std::string>{"isa.1 = zxbus ([ISA] Slot1) hosts isa.1.zxbus: neogs",
+                                                      "isa.2 = ne2000 ([ISA] Slot2)"}));
+    EXPECT_EQ(Field(Field(report, "machineSlots").items[1], "details").s, "RTL8019AS, #300, IRQ 3");
+
+    bool hostedBus = false;
+    for (const StateNode& bus : Field(report, "buses").items)
+        if (Field(bus, "id").s == "isa.1.zxbus")
+        {
+            hostedBus = true;
+            EXPECT_EQ(Field(bus, "kind").s, "zxbus");
+            EXPECT_EQ(Field(bus, "host").s, "isa.1");
+        }
+    EXPECT_TRUE(hostedBus) << "the adapter's ZX-bus is a bus of the report";
+    const StateNode& gs = Field(report, "slots").items.at(0);
+    EXPECT_EQ(Field(gs, "slot").s, "isa.1");
+    EXPECT_EQ(Field(gs, "card").s, "neogs");
+    EXPECT_EQ(Field(gs, "bus").s, "isa.1.zxbus");
+    EXPECT_EQ(Field(gs, "busKind").s, "zxbus");
+    EXPECT_EQ(Field(gs, "host").s, "isa.1");
+
+    // isa.2 holds the NE2000: a ZX-bus card cannot go there
+    SlotControlRequest plug = Request("plug", emulator->GetId(), "isa.2", "gs");
+    plug.adapter = "sprinter-isa-zxbus";
+    plug.replaceIfIncompatible = true;
+    const SlotControlReply refused = Run(plug);
+    EXPECT_NE(refused.status, "applied") << refused.message;
+    EXPECT_NE(refused.message.find("isa.2 holds NE2000 Ethernet ([ISA] Slot2), not the ZX-bus adapter"),
+              std::string::npos)
+        << refused.message;
+
+    // The adapter passes the General Sound's ports only: another ZX-bus card behind it waits for ISA phase I5
+    SlotControlRequest moon = Request("plug", emulator->GetId(), "isa.1", "moonsound");
+    moon.adapter = "sprinter-isa-zxbus";
+    moon.replaceIfIncompatible = true;
+    const SlotControlReply notPassed = Run(moon);
+    EXPECT_NE(notPassed.status, "applied") << notPassed.message;
+    EXPECT_NE(notPassed.message.find("passes the General Sound's ports only"), std::string::npos) << notPassed.message;
+
+    // Both slots hold the adapter, the slot set puts the GS in isa.2: it sits on the second adapter
+    std::string error;
+    std::shared_ptr<Emulator> both = EmulatorManager::GetInstance()->CreateEmulatorWithModel(
+        "", "SPRINTER", LoggerLevel::LogError, &error, [](CONFIG& config) {
+            config.sprinter.isa.slot[0].kind = static_cast<uint8_t>(sprinterisa::CardKind::ZxBus);
+            config.sprinter.isa.slot[1].kind = static_cast<uint8_t>(sprinterisa::CardKind::ZxBus);
+            SlotConfig slotConfig;
+            ParseSlotsSection({{"isa.2", "gs"}, {"isa.2.adapter", "sprinter-isa-zxbus"}, {"isa.2.fit", "unrealistic"}},
+                              slotConfig);
+            SlotManager::UseSlots(slotConfig, config);
+        });
+    ASSERT_NE(both, nullptr) << error;
+    _ids.push_back(both->GetId());
+    const StateNode isa = DeviceState::Isa(both->GetContext());
+    const StateNode& slots = Field(isa, "slots");
+    ASSERT_EQ(slots.items.size(), 2u);
+    EXPECT_NE(Field(Field(slots.items[0], "zx_bus"), "empty").s.find("ISA slot 2 ([SLOTS] isa.2)"), std::string::npos)
+        << "the GS is not on the first adapter";
+    EXPECT_EQ(Field(Field(slots.items[1], "zx_bus"), "cards").items.size(), 1u) << "the GS sits on the second";
 }
 
 /// The runtime feature `network` is a power switch of the network devices (owner decision 2026-10-05): with it off a

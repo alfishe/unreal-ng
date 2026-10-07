@@ -211,3 +211,31 @@ TEST_F(SlotsWindow_Test, NetworkCardsAreASlotChange)
     EXPECT_TRUE(_asked.isEmpty());
     EXPECT_EQ(_current->GetId(), sameId);
 }
+
+/// SL-8: on the Sprinter the tree shows the board's own ISA slots under the `isa` bus, the ZX-bus the adapter in isa.1
+/// hosts under that slot, and the General Sound on that ZX-bus; the slot choices offer the adapter's slot, not a
+/// "<hosted bus>.next"
+TEST_F(SlotsWindow_Test, SprinterIsaSlotsAndTheAdapterBus)
+{
+    std::string error;
+    _current = EmulatorManager::GetInstance()->CreateEmulatorWithModel(
+        "", "SPRINTER", LoggerLevel::LogError, &error, [](CONFIG& config) {
+            SlotConfig slots;
+            ParseSlotsSection({{"isa.1", "neogs"}, {"isa.1.adapter", "sprinter-isa-zxbus"}, {"isa.1.fit", "unrealistic"}},
+                              slots);
+            SlotManager::UseSlots(slots, config);
+        });
+    ASSERT_NE(_current, nullptr) << error;
+    _binding.bind(_current.get());
+    auto controller = Controller();
+    SlotsWindow window;
+    window.setBinding(&_binding);
+    window.setController(controller.get());
+    window.show();
+
+    const QString tree = window.treeText();
+    EXPECT_TRUE(tree.contains("isa | isa8\n  isa.1 | zxbus\n    isa.1.zxbus | zxbus\n      isa.1 | neogs\n  isa.2 | ne2000"))
+        << tree.toStdString();
+    window.choose("isa.1", "gs");   // the hosted bus's place is its host slot
+    EXPECT_TRUE(window.previewText().contains("isa.1")) << window.previewText().toStdString();
+}

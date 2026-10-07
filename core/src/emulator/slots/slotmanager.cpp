@@ -12,6 +12,7 @@
 #include "emulator/config.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/network/networkspec.h"
+#include "emulator/io/sprinter/isa/isaslotconfig.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
@@ -624,6 +625,49 @@ std::string SlotManager::Result::Refusal() const
                 ": " + c.reason;
     }
     return text;
+}
+
+const SlotManager::MachineSlot* SlotManager::Result::FindMachineSlot(const std::string& slot) const
+{
+    for (const MachineSlot& machineSlot : machineSlots)
+    {
+        if (machineSlot.slot == slot)
+        {
+            return &machineSlot;
+        }
+    }
+    return nullptr;
+}
+
+std::vector<SlotManager::MachineSlot> SlotManager::MachineSlotsOf(const CONFIG& config, const MachineDef* machine)
+{
+    std::vector<MachineSlot> out;
+    if (machine == nullptr)
+    {
+        return out;
+    }
+    for (const BusDef& bus : machine->buses)
+    {
+        // Isa8: the Sprinter's ISA slots, filled by its [ISA] section
+        if (bus.kind != BusKind::Isa8)
+        {
+            continue;
+        }
+        const std::vector<sprinterisa::SlotSummary> summaries = sprinterisa::SlotSummaries(config);
+        for (size_t n = 0; n < summaries.size(); n++)
+        {
+            MachineSlot slot;
+            slot.slot = std::string(bus.id) + "." + std::to_string(n + 1);
+            slot.bus = bus.id;
+            slot.card = summaries[n].key;
+            slot.name = summaries[n].name;
+            slot.source = "[ISA] Slot" + std::to_string(n + 1);
+            slot.hosts = summaries[n].hostsZxBus ? Describe(BusKind::ZxBus).id : "";
+            slot.details = summaries[n].details;
+            out.push_back(std::move(slot));
+        }
+    }
+    return out;
 }
 
 const SlotManager::BuiltIn* SlotManager::Result::FindBuiltIn(const std::string& id) const
@@ -1535,6 +1579,9 @@ SlotManager::Result SlotManager::Plan(const CONFIG& config, uint32_t decidedGrou
         result.log.push_back("Config: [SLOTS] " + error);
     }
 
+    // The machine's own slots (the Sprinter's ISA slots): what the board holds there
+    result.machineSlots = MachineSlotsOf(config, machine);
+
     // Built-in devices and their switches
     if (machine != nullptr)
     {
@@ -1635,6 +1682,33 @@ SlotManager::Result SlotManager::Plan(const CONFIG& config, uint32_t decidedGrou
         {
             disable("the slot is taken");
             continue;
+        }
+        // A slot of the machine's own (an ISA slot) holds a ZX-bus card only behind the ZX-bus adapter the board's
+        // configuration fits there (SL-8): the adapter hosts the card's bus
+        if (const BusDef* bus = FindBus(machine, BusOf(request.slot)); bus != nullptr && bus->kind == BusKind::Isa8)
+        {
+            const MachineSlot* host = result.FindMachineSlot(request.slot);
+            if (host == nullptr)
+            {
+                disable("the machine has no slot " + request.slot + " (two ISA slots: isa.1, isa.2)");
+                continue;
+            }
+            if (host->hosts.empty())
+            {
+                disable(request.slot + " holds " + (host->card == "none" ? std::string("no card") : host->name) +
+                        " (" + host->source + "), not the ZX-bus adapter a ZX-bus card needs: " + host->source +
+                        "=ZXBUS");
+                continue;
+            }
+            // The adapter as emulated passes the General Sound's ports only (Sprinter ISA phase I2); another card
+            // would be built and hear nothing - or answer the Z80's own port cycles, which never reach an ISA card
+            if (slot.group != SlotCardGroup::GeneralSound)
+            {
+                disable("the ZX-bus adapter in " + request.slot +
+                        " passes the General Sound's ports only (gs, gs-lw, neogs); other ZX-bus cards behind it wait "
+                        "for Sprinter ISA phase I5");
+                continue;
+            }
         }
 
         // The AY socket with its chip taken out
