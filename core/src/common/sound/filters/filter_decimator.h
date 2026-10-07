@@ -216,6 +216,10 @@ public:
     }
 
     size_t taps() const { return _taps; }
+    /// Input samples one output can read: the FIR's row (taps + 1, the fractional shift) behind the output instant,
+    /// which lies up to MAX_DELAY whole samples back. When the newest window() samples fed are all zero, getOutput()
+    /// is exactly +0.0 (every product is a signed zero, every sum of them +0.0)
+    size_t window() const { return _taps + 1 + MAX_DELAY; }
     double samplesPerOutput() const { return _samplesPerOutput; }
     const std::vector<double>& coefficients() const { return _coeffs; }
 
@@ -308,7 +312,10 @@ public:
         // Four interleaved accumulators per dot product: independent chains the
         // compiler can pipeline/vectorize (a single running sum is one serial
         // dependency chain under strict FP). Deterministic - the summation
-        // order is fixed - but not bit-identical to a single-chain sum
+        // order is fixed - but not bit-identical to a single-chain sum.
+        // SIMD-CANDIDATE(fir-decimator-dot): two rows x four accumulators; the
+        // ZX-MultiSound evaluates eight of these per output sample (frame-cost
+        // profile 2026-10-06, docs/inprogress/2026-10-03-zx-multisound/TODO.md)
         const size_t start = (_bufferIndex + HISTORY - whole) % HISTORY;
         const double* x = &_buffer[start + HISTORY - 1];
         double ya0 = 0.0, ya1 = 0.0, ya2 = 0.0, ya3 = 0.0;

@@ -102,6 +102,11 @@ public:
         _origin = origin;
         _last = last;
     }
+    /// The mixer's frame-start sample phase (SoundManager::samplePhase): how many samples the frames have, so how
+    /// many the card renders. Part of the card's blob: a machine without a board AY device (a ZX-Evo, whose YM2149
+    /// the card takes out of its socket) has nothing else that puts it back after a seek
+    uint64_t MixerSamplePhase() const;
+    void AdoptMixerSamplePhase(uint64_t phase);
 
     /// The time-travel devices (tests)
     MultiSoundCardTtd& CardTtd()

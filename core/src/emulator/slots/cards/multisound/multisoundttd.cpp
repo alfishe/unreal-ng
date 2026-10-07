@@ -48,6 +48,7 @@ void MultiSoundCardTtd::TTDSaveState(uint8_t* dst) const
     *p++ = kVersion;
     PutU64(p, _card.Origin());
     PutU64(p, _card.LastTime());
+    PutU64(p, _card.MixerSamplePhase());
     _card.Card().TtdSave(p);
 }
 
@@ -58,8 +59,15 @@ void MultiSoundCardTtd::TTDLoadState(const uint8_t* src)
         return;
     const uint64_t origin = GetU64(p);
     const uint64_t last = GetU64(p);
+    const uint64_t samplePhase = GetU64(p);
     if (_card.Card().TtdLoad(p))
+    {
         _card.RestoreTime(origin, last);
+        // The mixer still counts samples from its live, pre-seek phase: the frames after the restore must have the
+        // sample counts they were recorded with, or the card renders them to other lengths and its YM2203
+        // decimator phase (TTD state) leaves the recording
+        _card.AdoptMixerSamplePhase(samplePhase);
+    }
 }
 
 uint64_t MultiSoundCardTtd::TTDHashState() const

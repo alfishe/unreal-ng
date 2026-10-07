@@ -305,6 +305,7 @@ void Ym2203Pair::configureChannelOutputs(size_t rate, FilterDecimator::Quality q
         }
         _channels->fm[i].configure(double(rate), quality, false, fmRate);
         _channels->fm[i].attachMaster(master);
+        _channels->fmZeroRun[i] = 0;
     }
 }
 
@@ -320,6 +321,16 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
 
     FilterDecimator& master = _channels->ssg[0][0];
     FilterDecimator* const fmDec = _channels->fm;
+    size_t* const fmZeroRun = _channels->fmZeroRun;
+    // A muted or silent FM part feeds zeros: its decimator's output is exactly +0.0 once its whole window is zero
+    // (FilterDecimator::window), so the FIR is skipped - the same output for a fraction of the cost (frame-cost
+    // profile 2026-10-06: the two FM FIRs were 12 % of an idle card frame)
+    auto feedFm = [&](int i)
+    {
+        const double v = fmEnabled ? _chips[i]->out.hold : 0.0;
+        fmDec[i].feedSample(v);
+        fmZeroRun[i] = v == 0.0 ? fmZeroRun[i] + 1 : 0;
+    };
     for (size_t n = 0; n < frames; n++)
     {
         while (!master.hasOutput())
@@ -327,7 +338,7 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
             for (int i = 0; i < 2; i++)
             {
                 consumeWords(*_chips[i], _renderT);
-                fmDec[i].feedSample(fmEnabled ? _chips[i]->out.hold : 0.0);
+                feedFm(i);
             }
             applySsgWrites(_renderT);
             updateState(true);
@@ -340,7 +351,7 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
             for (int i = 0; i < 2; i++)
             {
                 consumeWords(*_chips[i], _renderT + 8);
-                fmDec[i].feedSample(fmEnabled ? _chips[i]->out.hold : 0.0);
+                feedFm(i);
             }
             _renderT += 16;
         }
@@ -349,7 +360,7 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
         // consumed it alike)
         for (int i = 0; i < 2; i++)
         {
-            const float fm = static_cast<float>(fmDec[i].getOutput());
+            const float fm = fmZeroRun[i] >= fmDec[i].window() ? 0.0f : static_cast<float>(fmDec[i].getOutput());
             if (block.fm[i])
                 block.fm[i][n] = fm;
             for (int ch = 0; ch < 3; ch++)

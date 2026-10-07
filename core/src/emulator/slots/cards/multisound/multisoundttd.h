@@ -24,12 +24,13 @@ namespace sam2695
 class Synth;
 }
 
-/// The card's own blob: u1 version, u8 adapter origin, u8 adapter last time, then MultiSoundCard::TtdSave
+/// The card's own blob: u1 version, u8 adapter origin, u8 adapter last time, u8 the mixer's frame-start sample phase
+/// (version 2, MultiSoundSlotCard::MixerSamplePhase; a load puts it back into the mixer), then MultiSoundCard::TtdSave
 class MultiSoundCardTtd final : public ttd::TTDSerializable
 {
 public:
-    static constexpr uint8_t kVersion = 1;
-    static constexpr uint16_t kCardOffset = 1 + 8 + 8;
+    static constexpr uint8_t kVersion = 2;
+    static constexpr uint16_t kCardOffset = 1 + 8 + 8 + 8;
 
     explicit MultiSoundCardTtd(MultiSoundSlotCard& card) : _card(card)
     {
