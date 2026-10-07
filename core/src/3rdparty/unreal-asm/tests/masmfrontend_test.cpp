@@ -181,6 +181,21 @@ TEST(MasmFrontend_Test, MacroCommandsAreWrittenOut)
     EXPECT_EQ(ToSjasmplus("DOWN    NOP", "1.0"), std::vector<std::string>{"DOWN    NOP"});
 }
 
+TEST(MasmFrontend_Test, Masm30CommandsAreWrittenOutAsItsHandlersDo)
+{
+    // BANK / BORDER / CLS: the code MASM 3.0's handlers emit (read from its binary, checked against what it built)
+    EXPECT_EQ(ToSjasmplus("        BANK 3", "3.0"), (std::vector<std::string>{"LD A,3", "LD BC,#7FFD", "OUT (C),A"}));
+    EXPECT_EQ(ToSjasmplus("        BORDER 0", "3.0"), (std::vector<std::string>{"XOR A", "OUT (#FE),A"}));
+    EXPECT_EQ(ToSjasmplus("        BORDER 2", "3.0"), (std::vector<std::string>{"LD A,2", "OUT (#FE),A"}));
+    EXPECT_EQ(ToSjasmplus("        CLS", "3.0").size(), 5u);
+    EXPECT_EQ(ToSjasmplus("        CLS #38", "3.0").size(), 8u);
+    // A MAC block is skipped (MASM 3.0 has no call), ENDIF has no effect
+    for (const std::string& line : ToSjasmplus("M1      MAC\n        NOP\n        ENDM\n        ENDIF", "3.0"))
+        EXPECT_TRUE(line.empty() || line[0] == ';') << line;
+    // In 1.1 these are labels or unknown words
+    EXPECT_EQ(ToSjasmplus("BANK    NOP", "1.1"), std::vector<std::string>{"BANK    NOP"});
+}
+
 TEST(MasmFrontend_Test, PhaseInsidePhaseTakesTheLogicalAddress)
 {
     // $ is the logical address: PHASE $-#1000 inside a PHASE is computed before the PHASE ends
@@ -237,4 +252,7 @@ TEST(MasmFrontend_Test, ProgramsAssembleToWhatMasm11Built)
     const std::vector<std::vector<uint8_t>> own = Assemble(sjasmplus, MasmSource(), "LS2", {{0xC000, 11665}, {0x6000, 23}});
     EXPECT_EQ(own[0], ReadTestData("dialects/masm11/MASM_SRC-C000.bin"));
     EXPECT_EQ(own[1], ReadTestData("dialects/masm11/MASM_SRC-6000.bin"));
+    // MASM 3.0: BANK / BORDER (a number, a name of value 0) / CLS, a skipped MAC block, ENDIF
+    const std::vector<std::vector<uint8_t>> m30 = Assemble(sjasmplus, {Decoded("dialects/masm30/M30T1.$a")}, "M30T1", {{0x6000, 60}});
+    EXPECT_EQ(m30[0], ReadTestData("dialects/masm30/M30T1.bin"));
 }

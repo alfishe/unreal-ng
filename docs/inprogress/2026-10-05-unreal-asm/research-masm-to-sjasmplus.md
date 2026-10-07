@@ -65,8 +65,31 @@ No other MASM source exists in the collection (research-masm.md §7).
 
 ## 4. MASM 2.0 / 3.0
 
-No documentation and no real source. Tried in MASM 3.0 (`RUN "TSM"`, `G` to load, `A`): plain programs assemble to
-the addresses they name; `NAME MAC` (and `NAME MAC n`) is accepted, a call `NAME` (with or without an argument)
-gives error 3; `IF 1`, `IF X` (X EQU 1), with or without ELSE, give "!?Unknown error?!" in pass 1. The binary's
-messages ("Found macros:", "Macros inside!", "'ENDM' absent!", "Begin haven't end!") confirm named macros; the
-syntax of the call and of IF is not known. Open.
+**MASM 3.0 MACRO** (`MASM30M.SCL`, `RUN "TSM"`), read from its code in memory (unreal-ng, 2026-10-07) and checked by
+assembling. At run time MMM1 sits in RAM page 2 and a working copy of the assembler in page 1 at `#C000`. A line whose
+command field starts with a token is dispatched through a table at `#D3EA`: three bytes a token (handler address, a
+parameter), from `#80` up to `#FB` (`CLS`):
+
+| Word | Handler | What it emits (and what MASM 3.0 built, `testdata/dialects/masm30/M30T1`) |
+|---|---|---|
+| `BANK n` | `#D791` | `LD A,n` `LD BC,#7FFD` `OUT (C),A` (7 bytes) |
+| `BORDER n` | `#D7AA` | `LD A,n` `OUT (#FE),A`; when n evaluates to 0, also through a name: `XOR A` `OUT (#FE),A` |
+| `CLS` | `#D7CA` | `LD HL,#4000` `LD DE,#4001` `LD BC,#1AFF` `LD (HL),L` `LDIR` (pixels and attributes 0) |
+| `CLS a` | `#D7CA` | `LD HL,#4000` `LD DE,#4001` `LD BC,#1800` `LD (HL),L` `LDIR` `LD BC,#02FF` `LD (HL),a` `LDIR` |
+| `NAME MAC` … `ENDM` | first pass (`#D504`) | nothing: the pass skips to `ENDM` ("Macros inside!" for a nested MAC, "'ENDM' absent!" at the end of the text); NAME gets a pointer into MASM's text (`#9138` in the check). Nothing calls a macro: a word without a token in the command field is a label (`        ZZ` defines ZZ), so `        NAME` defines NAME a second time (error 3) |
+| `IF`, `ELSE`, `ENDIF` | none | the table ends at `#FB`: their entries are the bytes after it. `IF` stops pass 1 with "!?Unknown error?!", `ELSE` jumps into the menu code, `ENDIF` does nothing |
+
+The frontend (codec version `3.0`) writes BANK / BORDER / CLS as above (BORDER of a non-constant as an `IF` of the
+target), skips a MAC block into comments and drops ENDIF; IF / ELSE stay as text with a warning (MASM 3.0 cannot
+assemble them either). Checked: `M30T1` (BORDER by number and by a name of value 0, CLS with and without an attribute,
+BANK by number and expression, a MAC block, ENDIF) converted to sjasmplus assembles to the 60 bytes MASM 3.0 built.
+
+**MASM 2.0 TURBO** (`MASM2_0D.SCL`, `RUN "m2"`): the editor works (`W` selects the work file, `E` edits), but the
+copy does not assemble: `A` from the menu and Extend + `A` in the editor return without a word, no "Pass" text is in
+its memory, and the binary holds "Necessary file(s) absent!": the compiler part is not on this disk (the archive name
+ends in D: a demo?). Its MAC / IF / ELSE / ENDIF (tokens `#F7`-`#FB`) stay text with a warning. Open.
+
+**MASM 1.3** (`RUN "MASMv1.3"`, `W`, `A`): assembles like 1.1 (`DOWN HL` as 1.1 writes it; the binary differs from
+1.1 only in the version text). **1.0 demo** (Spectrofon #15, `RUN "MASMdemo"`): the menu lists no `W` and neither `W`
+nor `G` loads a file; text typed in its editor arrives in lower case (no tokens) and `A` assembles nothing: not
+established how the demo is meant to be used.

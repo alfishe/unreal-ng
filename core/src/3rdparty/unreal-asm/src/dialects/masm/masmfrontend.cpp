@@ -398,6 +398,58 @@ std::vector<Statement> ScreenLine(const std::string& pair, bool down)
     return out;
 }
 
+/// MASM 3.0's BANK n: page n at #C000 (its handler writes LD A,n : LD BC,#7FFD : OUT (C),A)
+std::vector<Statement> Bank(const std::string& operand)
+{
+    Operand c;
+    c.kind = Operand::Kind::Indirect;
+    c.text = "c";
+    return {Instruction("ld", {Reg("a"), Value(Parse(operand))}), Instruction("ld", {Reg("bc"), Value(Expr::Number(0x7FFD, ir::NumberSpelling::Hex, 4))}),
+            Instruction("out", {c, Reg("a")})};
+}
+
+/// MASM 3.0's BORDER n: LD A,n : OUT (#FE),A, or XOR A : OUT (#FE),A when n is 0 (decided while assembling: a
+/// non-constant n becomes an IF of the target)
+std::vector<Statement> Border(const std::string& operand)
+{
+    const Expr value = Parse(operand);
+    std::vector<Statement> out;
+    if (value.kind == Expr::Kind::Number)
+        out.push_back(value.value == 0 ? Instruction("xor", {Reg("a")}) : Instruction("ld", {Reg("a"), Value(value)}));
+    else
+    {
+        Statement test = Directive(ir::DirectiveKind::If);
+        test.args.push_back(Expr::Binary(Op::Equal, value, Expr::Number(0)));
+        out.push_back(std::move(test));
+        out.push_back(Instruction("xor", {Reg("a")}));
+        out.push_back(Directive(ir::DirectiveKind::Else));
+        out.push_back(Instruction("ld", {Reg("a"), Value(value)}));
+        out.push_back(Directive(ir::DirectiveKind::EndIf));
+    }
+    out.push_back(Instruction("out", {Port(0xFE), Reg("a")}));
+    return out;
+}
+
+/// MASM 3.0's CLS [attribute]: the screen cleared with LDIR; without an operand pixels and attributes become 0, with
+/// one the attributes take it (its CLS handler and the two code blocks it copies)
+std::vector<Statement> Cls(const std::string& operand)
+{
+    auto word = [](int64_t v) { return Value(Expr::Number(v, ir::NumberSpelling::Hex, 4)); };
+    Operand hl;
+    hl.kind = Operand::Kind::Indirect;
+    hl.text = "hl";
+    std::vector<Statement> out = {Instruction("ld", {Reg("hl"), word(0x4000)}), Instruction("ld", {Reg("de"), word(0x4001)}),
+                                  Instruction("ld", {Reg("bc"), word(operand.empty() ? 0x1AFF : 0x1800)}), Instruction("ld", {hl, Reg("l")}),
+                                  Instruction("ldir")};
+    if (!operand.empty())
+    {
+        out.push_back(Instruction("ld", {Reg("bc"), word(0x02FF)}));
+        out.push_back(Instruction("ld", {hl, Value(Parse(operand))}));
+        out.push_back(Instruction("ldir"));
+    }
+    return out;
+}
+
 /// SYSTEM / SYSTEM+: the 48K system state for BASIC (the TAB_SYS table), + returns with interrupts on
 std::vector<Statement> System(bool plus)
 {
@@ -482,6 +534,7 @@ struct LineParser
     // PHASE state: MASM's ORG sets both addresses, PHASE the logical one, UNPHASE puts it back; where a file starts
     // it is not known (an INCLUDE inside PHASE): the end is then conditional
     enum class Phase { Unknown, Active, Off } phase = Phase::Unknown;
+    bool inMacro = false;   // inside a MASM 3.0 MAC block
 
     void EndPhase(ir::Line& line)
     {
@@ -556,7 +609,9 @@ struct LineParser
         {
             s = Directive(ir::DirectiveKind::Other);
             s.text = word + (rest.empty() ? "" : " " + rest);
-            result.diagnostics.push_back({Severity::Warning, number, 0, "MASM 2.0 / 3.0 directive " + word + " kept as text (not documented)"});
+            const std::string why = IsKeyword.version == "3.0" ? " (MASM 3.0 has no handler for it: IF stops with \"!?Unknown error?!\", ELSE jumps into its menu)"
+                                                                : " (MASM 2.0's syntax not established: the copy found does not assemble)";
+            result.diagnostics.push_back({Severity::Warning, number, 0, "MASM directive " + word + " kept as text" + why});
             return s;
         }
         // Instructions
@@ -583,6 +638,19 @@ struct LineParser
     {
         ir::Line line;
         line.sourceLine = number;
+        if (inMacro)
+        {
+            // A MASM 3.0 MAC body up to ENDM: kept as a comment
+            std::string t = text;
+            const size_t semicolon = t.find(';');
+            const std::string code = semicolon == std::string::npos ? t : t.substr(0, semicolon);
+            if (code.find("ENDM") != std::string::npos)
+                inMacro = false;
+            line.comment = " " + text;
+            line.hasComment = true;
+            result.program.lines.push_back(std::move(line));
+            return;
+        }
         std::string t = text;
         bool quote = false;
         for (size_t k = 0; k < t.size(); ++k)
@@ -641,6 +709,25 @@ struct LineParser
                 else if (word == "STOPKEY" && IsKeyword.MacroCommand(word))
                     for (Statement& s : StopKey(rest))
                         line.statements.push_back(std::move(s));
+                else if ((word == "BANK" || word == "BORDER" || word == "CLS") && IsKeyword.version == "3.0")
+                {
+                    if (word != "CLS" && rest.empty())
+                        throw Failure{word + " needs an operand"};
+                    for (Statement& s : word == "BANK" ? Bank(rest) : word == "BORDER" ? Border(rest) : Cls(rest))
+                        line.statements.push_back(std::move(s));
+                }
+                else if (word == "MAC" && IsKeyword.version == "3.0")
+                {
+                    // NAME MAC ... ENDM: MASM 3.0 skips the block (its first pass); nothing calls it (a NAME in the
+                    // command field defines a label: error 3, twice). NAME's value is a pointer into MASM's text
+                    inMacro = true;
+                    line.label.clear();
+                    line.comment = " MASM 3.0 MAC block (assembled as nothing): " + text;
+                    line.hasComment = true;
+                    result.diagnostics.push_back({Severity::Warning, number, 0, "MASM 3.0 MAC block skipped as MASM skips it (no call exists)"});
+                }
+                else if (word == "ENDIF" && IsKeyword.version == "3.0")
+                    ;   // MASM 3.0 has no handler for ENDIF: its dispatch lands on code that does nothing
                 else if (!IsKeyword(word))
                     throw Failure{"no command " + word + " (MASM keywords are capitals)"};
                 else
