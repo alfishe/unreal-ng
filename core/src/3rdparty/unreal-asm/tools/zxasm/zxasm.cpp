@@ -492,6 +492,7 @@ int main(int argc, char** argv)
         DecodeOptions options;
         options.catalog = hints;
         options.codePage = codePage;
+        options.subversion = args.version;
         DecodeResult decoded = codec->Decode(bytes, options);
         if (!args.from.empty())
             decoded.document.dialect = args.from;
