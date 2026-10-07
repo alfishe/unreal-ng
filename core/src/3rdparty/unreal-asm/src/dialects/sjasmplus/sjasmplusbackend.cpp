@@ -262,22 +262,20 @@ struct Writer
                     const bool zeroTest = comparison && ((e.args[1].kind == Expr::Kind::Number && e.args[1].value == 0) ||
                                                          (e.args[0].kind == Expr::Kind::Number && e.args[0].value == 0));
                     if (!zeroTest)
-                    {
-                        const int bits = wordBits;
-                        wordBits = 0;
-                        const std::string out = Print(Expr::Binary(e.op, mask(e.args[0]), e.op == Op::Shr ? e.args[1] : mask(e.args[1])));
-                        wordBits = bits;
-                        return out;
-                    }
+                        return Joined(e.op, mask(e.args[0]), e.op == Op::Shr ? e.args[1] : mask(e.args[1]));
                 }
                 if (e.op == Op::Div && wordBits == 16 && unsignedWords)
+                    return Joined(Op::Div, Masked16(e.args[0]), Masked16(e.args[1]));   // ALASM: unsigned 16-bit division
+                if ((e.op == Op::Div || e.op == Op::Mod) && wordBits == 16 && !unsignedWords)
                 {
-                    // ALASM: unsigned 16-bit division
-                    const int bits = wordBits;
-                    wordBits = 0;
-                    const std::string out = Print(Expr::Binary(Op::Div, Masked16(e.args[0]), Masked16(e.args[1])));
-                    wordBits = bits;
-                    return out;
+                    // GENS: 16-bit two's complement words, signed division (#8000/2 = #C000, 60000/2 = -2768)
+                    auto widen = [](const Expr& a) {
+                        if (a.kind == Expr::Kind::Number && a.value >= 0 && a.value <= 0x7FFF)
+                            return a;
+                        return Grouped(Expr::Binary(Op::Sub, Grouped(Expr::Binary(Op::Xor, Masked16(a), Expr::Number(0x8000, ir::NumberSpelling::Hex, 4))),
+                                                    Expr::Number(0x8000, ir::NumberSpelling::Hex, 4)));
+                    };
+                    return Joined(e.op, widen(e.args[0]), widen(e.args[1]));
                 }
                 const int p = Priority(e.op);
                 std::string left = Print(e.args[0]);
@@ -290,6 +288,20 @@ struct Writer
             }
         }
         return "?";
+    }
+
+    /// a op b with the operands printed under the same rules (an operation nested in a masked operand keeps its own
+    /// 16-bit treatment), only this operator written as it is
+    std::string Joined(Op op, const Expr& a, const Expr& b)
+    {
+        const int p = Priority(op);
+        std::string left = Print(a);
+        std::string right = Print(b);
+        if (a.kind == Expr::Kind::Binary && Priority(a.op) < p)
+            left = "(" + left + ")";
+        if (b.kind == Expr::Kind::Binary && Priority(b.op) <= p)
+            right = "(" + right + ")";
+        return left + Symbol(op) + right;
     }
 
     /// A comparison or logical not of a source whose true is 1, printed as sjasmplus' (true -1) in parentheses

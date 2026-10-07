@@ -465,23 +465,26 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/snapshot/transfer \
 
 - **Same model and RAM size**: a full clone - the in-frame position and every device, so both machines continue identically.
 - **Another model**: what the target can express - RAM pages, CPU, the `#7FFD` / `#1FFD` / `#EFF7` paging replayed through the target's port decoder, border, TR-DOS paging, and the devices that do not depend on the machine: TurboSound / TSFM, Covox, General Sound / NeoGS (with its RAM and flash; the flash file is not written), MoonSound (with its wave SRAM), Kempston mouse, Kempston joystick. Example: a 128K game moved to a Pentagon keeps its pages, paging and sound, and starts at the Pentagon's own frame start.
-- **Refused** (HTTP 422, nothing changes) when the target cannot hold the state: pages the target lacks, +2A/+3 all-RAM modes on a 128K, extended Pentagon / Scorpion paging on another family, ATM / Profi / TSConf on another model, ZX-Poly modules. A 48K target takes a 128K machine only when it is locked in 48K mode.
+- **Refused** (HTTP 422, nothing changes) when the target cannot hold the state: pages the target lacks, +2A/+3 all-RAM modes on a 128K, extended Pentagon / Scorpion paging on another family, a TS-Conf state, an ATM / Profi / Sprinter in its own pager mode on another model, ZX-Poly modules (the matrix below says what moves where). A 48K target takes a 128K machine only when it is locked in 48K mode.
 - The response is a per-item report: `items[]` with `status` `copied` / `dropped` / `refused` / `note`, plus `summary` as text. A device the target lacks is `dropped`; the rest proceeds.
 - **Floppies and the tape follow** into the same slots as the target's own in-memory copies: same contents (the source's unsaved writes included), clean, and standing for a postfixed file - `game.trd` becomes `game.pentagon-1a2b3c4d.trd` - so a save on the target never overwrites the source's image. Their controllers follow with them (Beta 128 / WD1793 mid-command, the tape deck mid-block): the target takes the source's time axis, so the disk's rotation phase and the pulse in flight hold. An empty source drive empties the target's. A target floppy or tape with unsaved writes refuses the transfer.
 - **NOT moved (by design, for now): SD cards, hard disks and CDs.** The target keeps its own, and their controllers (IDE channel, Z-Controller) keep the target's state. Every report carries an explicit `SD / HDD / CD` item saying so.
 - The target's TTD session is dropped (409 while it records).
 
-**What can be moved where (owner rule 2026-10-07).** The state transfer is the emulator's own mechanism, separate from loading and saving snapshot files, and it is never merged with them. It works as long as it is physically possible for the target to hold the state:
+**What can be moved where (owner rule 2026-10-07).** The state transfer is the emulator's own mechanism, separate from loading and saving snapshot files, and it is never merged with them. It works as long as it is physically possible for the target to hold the state. A *Spectrum state* is a 48K state, or a 128K-class state (128K, +2, +2A / +3 in a plain mode, Pentagon, Scorpion without its extensions) - or a machine that runs a plain Spectrum 128K layout (an ATM, a Profi, a Sprinter in a ZX mode).
 
-| From \ to | Spectrum 48K / 128K family, Pentagon, Scorpion | ATM Turbo 2+ 7.10 / ATM3 / ZX-Evo Base | Sprinter (ZX mode) | TS-Conf | ZX-Poly module |
+| From / to | Spectrum 48K / 128K family, Pentagon, Scorpion | ATM (7.10, ATM3 / ZX-Evo Base, 4.50), Profi | Sprinter in a ZX mode | TS-Conf | ZX-Poly module |
 |:--|:--|:--|:--|:--|:--|
-| **Spectrum 48K / 128K family, Pentagon, Scorpion** | works (the table above) | expected to work (a 128K state in the ATM's 128K layout) - **not yet: refused today** | expected to work into a 128K / Pentagon mode (`p128.zx`) - **not yet** | not a target (the machine has its own memory model) | never (four modules in lockstep) |
-| **ATM Turbo 2+ 7.10 / ATM3 / ZX-Evo Base** | expected to work in about 99% of cases (the same board family) - **not yet: refused today** | expected to work - **not yet** | not a target | not a target | never |
-| **Sprinter** | not yet | not yet | same model: full clone | not a target | never |
+| **A Spectrum state** | works (the table above) | works: the board is put in its plain Spectrum 128K layout, #7FFD is replayed through its decoder | works into a 128K mode (`P128.ZX`, `SP.ZX`...: the banks go behind the PLD cells, the machine is not reset); a 48K state into any mode; refused at the DSS prompt / BIOS (start a mode first) | not a target | never (four modules in lockstep) |
+| **ATM, Profi in a Spectrum 128K layout** | works (a 128K state) | works | works | not a target | never |
+| **ATM Turbo 2+ 7.10 in its own pager state** | refused (the state is the ATM pager's) | **to an ATM3 / ZX-Evo Base: works** - the eight window registers (ROM selectors translated to the target's ROM image by the role of the page), the #xx77 latch, the palette and font RAM move; refused when the pager maps a ROM page outside the standard set, or the target has less RAM. To another model: refused | refused | not a target | never |
+| **ATM3 / ZX-Evo Base, ATM 4.50, Profi in their own modes** | refused | only into the same model (a clone); ATM3 -> 7.10 refused (the ATM3's pager has more) | refused | not a target | never |
+| **Sprinter in a ZX mode (128K or 48K)** | works (banks read through the PLD cells, #7FFD from its latch) | works | same model: full clone | not a target | never |
+| **Sprinter at the DSS / BIOS, in a 512 KB mode** | refused | refused | same model: full clone | not a target | never |
 | **TS-Conf** | **never**: a TS-Conf state moves nowhere (its pager, tile engine and DMA have no counterpart) | never | never | same model and RAM: full clone | never |
 | **ZX-Poly module** | never | never | never | never | never |
 
-"Not yet" rows are work for the transfer code itself (its own rules and tests), not for the snapshot pipeline.
+The report names what moved (`items[]`) and, for a refusal, why. Not moved to a Sprinter: a TR-DOS session (its TR-DOS follows its own M1 trap rule), devices the source has and a Sprinter lacks (dropped, as everywhere); a Sprinter target is not reset, so devices the source lacks keep the Sprinter's own state.
 
 MCP: `emulator_manage` action `transfer_state` (`to` or `model` + optional `ram_size`, `check`). Core API: `MachineStateTransfer` (`core/src/loaders/snapshot/machinestatetransfer.h`).
 

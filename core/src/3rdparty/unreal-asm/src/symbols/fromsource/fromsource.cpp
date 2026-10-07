@@ -43,6 +43,14 @@ std::string LineText(const ProjectFile& file, uint32_t line)
     return line >= 1 && line <= file.document.lines.size() ? file.document.lines[line - 1].text : std::string();
 }
 
+/// The line as the source numbers it: the number a numbered format stores (GENS, ZEUS), else its position
+uint32_t SourceLineNumber(const ProjectFile& file, uint32_t line)
+{
+    if (line >= 1 && line <= file.document.lines.size() && file.document.lines[line - 1].number >= 0)
+        return static_cast<uint32_t>(file.document.lines[line - 1].number);
+    return line;
+}
+
 void Keep(Diagnostics& into, const Diagnostics& from, Severity least)
 {
     for (const Diagnostic& d : from)
@@ -130,6 +138,8 @@ SourceSymbolsResult SymbolsFromProject(const std::vector<ProjectFile>& files, si
             {
                 if (n.inMacro || n.written.empty() || n.written.find_first_not_of("0123456789") == std::string::npos)
                     continue;   // macro body labels have one value per expansion; temporary labels none
+                if (n.source.rfind("__UNREALASM_", 0) == 0)
+                    continue;   // a value a frontend made for the conversion
                 const auto found = byName.find(n.written);
                 if (found == byName.end())
                 {
@@ -145,7 +155,7 @@ SourceSymbolsResult SymbolsFromProject(const std::vector<ProjectFile>& files, si
                 if (n.local)
                     s.kind = SymbolKind::Local;
                 s.source.file = files[k].name;
-                s.source.line = n.line;
+                s.source.line = SourceLineNumber(files[k], n.line);
                 s.provenance.raw = LineText(files[k], n.line);
                 if (n.written != n.source)
                     s.provenance.type = "written as " + n.written;

@@ -3,7 +3,11 @@
 #include "dialects/alasm/alasmfrontend.h"
 #include "dialects/storm/stormfrontend.h"
 #include "dialects/zxasm/zxasmfrontend.h"
+#include "dialects/xas/xasfrontend.h"
+#include "dialects/gens/gensfrontend.h"
 #include "dialects/tasm/tasmfrontend.h"
+#include "dialects/masm/masmfrontend.h"
+#include "dialects/zeus/zeusfrontend.h"
 #include "dialects/pasmo/pasmobackend.h"
 #include "dialects/z88dk/z88dkbackend.h"
 #include "dialects/sjasmplus/sjasmplusbackend.h"
@@ -20,6 +24,10 @@ const DialectRegistry& DialectRegistry::Builtin()
         r.Add(std::make_unique<dialects::TasmFrontend>());
         r.Add(std::make_unique<dialects::StormFrontend>());
         r.Add(std::make_unique<dialects::ZxasmFrontend>());
+        r.Add(std::make_unique<dialects::MasmFrontend>());
+        r.Add(std::make_unique<dialects::XasFrontend>());
+        r.Add(std::make_unique<dialects::ZeusFrontend>());
+        r.Add(std::make_unique<dialects::GensFrontend>());
         r.Add(std::make_unique<dialects::SjasmplusFrontend>());
         r.Add(std::make_unique<dialects::SjasmplusBackend>());
         r.Add(std::make_unique<dialects::PasmoBackend>());

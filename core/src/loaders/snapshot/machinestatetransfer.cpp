@@ -1,5 +1,7 @@
 #include "machinestatetransfer.h"
 
+#include "loaders/snapshot/machinestatetransferlayouts.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -19,6 +21,7 @@
 #include "emulator/media/medium.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/ports/statetransferhost.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #ifdef UNREALNG_HAVE_OPL4
@@ -41,7 +44,11 @@ namespace
         Plus3,        ///< +2A, +3: #7FFD + #1FFD (ROM high bit, all-RAM modes)
         Pentagon,     ///< Pentagon 128 / 512 / 1024: #7FFD with extension bits, #EFF7 on 1024
         Scorpion,     ///< Scorpion ZS-256 (and 1024): #7FFD + Scorpion #1FFD
-        Other         ///< Machine-specific paging (ATM, Profi, TSConf, ProfROM, ...)
+        AtmTurbo,     ///< ATM Turbo 2+ 7.10 and ATM3 / ZX-Evo Base: the ATM pager; a Spectrum 128K layout through EnterSpectrum128Paging
+        Atm450,       ///< ATM Turbo 2 v4.50: its own pager; a Spectrum 128K layout through EnterSpectrum128Paging
+        ProfiBoard,   ///< Profi v5 / v3: #7FFD + #DFFD; plain #7FFD in its Spectrum 128K layout
+        BankHost,     ///< A machine that holds a Spectrum state inside a mode it runs (a Sprinter in a ZX mode): no paging of its own to move
+        Other         ///< Machine-specific paging (TSConf, ProfROM, ...)
     };
 
     PagingFamily FamilyOf(const CONFIG& config)
@@ -60,10 +67,27 @@ namespace
                 return PagingFamily::Pentagon;
             case MM_SCORP:
                 return PagingFamily::Scorpion;
+            case MM_ATM710:
+            case MM_ATM3:
+                return PagingFamily::AtmTurbo;
+            case MM_ATM450:
+                return PagingFamily::Atm450;
+            case MM_PROFI:
+            case MM_PROFI3:
+                return PagingFamily::ProfiBoard;
             default:
                 // ProfROM Scorpion carries a ROM-plane state machine no other model has
                 return PagingFamily::Other;
         }
+    }
+
+    /// The family of a running machine: one that holds a state inside a mode of its own (its decoder gives a state-transfer host)
+    /// is a BankHost, any other by its model
+    PagingFamily FamilyOf(EmulatorContext& context)
+    {
+        if (context.pPortDecoder && context.pPortDecoder->GetStateTransferHost())
+            return PagingFamily::BankHost;
+        return FamilyOf(context.config);
     }
 
     const char* FamilyName(PagingFamily family)
@@ -80,6 +104,14 @@ namespace
                 return "Pentagon";
             case PagingFamily::Scorpion:
                 return "Scorpion";
+            case PagingFamily::AtmTurbo:
+                return "ATM Turbo 2+ / ATM3";
+            case PagingFamily::Atm450:
+                return "ATM Turbo 2 v4.50";
+            case PagingFamily::ProfiBoard:
+                return "Profi";
+            case PagingFamily::BankHost:
+                return "Sprinter";
             default:
                 return "model-specific";
         }
@@ -110,6 +142,14 @@ namespace
     constexpr uint8_t P1FFD_PLUS3_SPECIAL = 0x01;  // all-RAM mode
     constexpr uint8_t P1FFD_PLUS3_ROM_HIGH = 0x04;
     constexpr uint8_t PEFF7_P1024_COMPAT = 0x04;   // #7FFD bit 5 is the lock, pages 0-7 only
+
+    /// The #7FFD the machine runs with (a machine with a state-transfer host keeps it in a latch of its own)
+    uint8_t P7ffdOf(EmulatorContext& context)
+    {
+        if (const IStateTransferHost* host = context.pPortDecoder ? context.pPortDecoder->GetStateTransferHost() : nullptr)
+            return host->P7ffd(context);
+        return context.emulatorState.p7FFD;
+    }
 
     uint16_t RamPages(const CONFIG& config)
     {
@@ -150,6 +190,7 @@ namespace
         RomRole rom = RomRole::Editor;
         bool fitsIn48 = false;  ///< A 128K-class source locked in 48K mode
         std::string why;        ///< Why the need is what it is
+        bool atmNative = false; ///< ATM 7.10 into an ATM3 line target: the pager's own state moves
     };
 
     SourceAnalysis Analyze(EmulatorContext& source)
@@ -157,9 +198,9 @@ namespace
         SourceAnalysis a;
         const CONFIG& config = source.config;
         const EmulatorState& state = source.emulatorState;
-        a.family = FamilyOf(config);
+        a.family = FamilyOf(source);
 
-        const uint8_t p7FFD = state.p7FFD;
+        const uint8_t p7FFD = P7ffdOf(source);
         a.rom = (p7FFD & P7FFD_ROM) ? RomRole::Basic48 : RomRole::Editor;
 
         switch (a.family)
@@ -174,6 +215,47 @@ namespace
                 a.need = Need::SameModel;
                 a.why = "the source's memory map is specific to its model";
                 return a;
+
+            case PagingFamily::AtmTurbo:
+            case PagingFamily::Atm450:
+            case PagingFamily::ProfiBoard:
+                // Its own pager state moves only to the ATM Turbo 2+ line (PlanMachine decides that); in a Spectrum 128K layout
+                // it is a 128K machine to everything else
+                if (statetransfer::IsSpectrum128Layout(source))
+                {
+                    a.need = Need::Mode128;
+                    break;
+                }
+                a.need = Need::SameModel;
+                a.why = std::string("the source's memory is not laid out as a Spectrum 128K (it runs its own ") +
+                        FamilyName(a.family) + " pager)";
+                return a;
+
+            case PagingFamily::BankHost:
+            {
+                const IStateTransferHost::Mode mode = source.pPortDecoder->GetStateTransferHost()->CurrentMode(source);
+                if (!mode.active)
+                {
+                    a.need = Need::SameModel;
+                    a.why = "the source " + mode.machine + " is not in a Spectrum (ZX) mode: it runs its own software (the DSS, the BIOS)";
+                    return a;
+                }
+                if (mode.tooBig)
+                {
+                    a.need = Need::SameModel;
+                    a.why = "the source " + mode.machine + " runs a 512 KB mode (32 banks), which only a " + mode.machine + " can hold";
+                    return a;
+                }
+                if (!mode.paging7ffd)
+                {
+                    a.need = Need::Mode48;   // a 48K mode: banks 5, 2, 0
+                    a.rom = RomRole::Basic48;
+                    a.fitsIn48 = true;
+                    return a;
+                }
+                a.need = Need::Mode128;
+                break;
+            }
 
             case PagingFamily::Spectrum128:
                 a.need = Need::Mode128;
@@ -233,9 +315,37 @@ namespace
     /// Whether the target can hold what the source needs; the reason when not
     bool TargetAccepts(const SourceAnalysis& a, EmulatorContext& source, EmulatorContext& target, std::string& why)
     {
-        const PagingFamily targetFamily = FamilyOf(target.config);
+        const PagingFamily targetFamily = FamilyOf(target);
+        // The ATM and Profi boards hold a Spectrum 128K state in their 128K layout (EnterSpectrum128Paging, then #7FFD)
         const bool target128Class = targetFamily == PagingFamily::Spectrum128 || targetFamily == PagingFamily::Plus3 ||
-                                    targetFamily == PagingFamily::Pentagon || targetFamily == PagingFamily::Scorpion;
+                                    targetFamily == PagingFamily::Pentagon || targetFamily == PagingFamily::Scorpion ||
+                                    targetFamily == PagingFamily::AtmTurbo || targetFamily == PagingFamily::Atm450 ||
+                                    targetFamily == PagingFamily::ProfiBoard;
+        // A machine with a state-transfer host holds it in the Spectrum mode it runs: the banks go behind its own mapping, the machine
+        // is not reset
+        if (targetFamily == PagingFamily::BankHost && (a.need == Need::Mode48 || a.need == Need::Mode128))
+        {
+            const IStateTransferHost* host = target.pPortDecoder->GetStateTransferHost();
+            const IStateTransferHost::Mode mode = host->CurrentMode(target);
+            if (!mode.active)
+            {
+                why = "the target " + mode.machine + " is not in a Spectrum (ZX) mode (it runs its own software, the DSS or the BIOS): start "
+                      "a mode first, e.g. P128.ZX";
+                return false;
+            }
+            if (mode.tooBig)
+            {
+                why = "the target " + mode.machine + " runs a 512 KB mode; start a 128K mode";
+                return false;
+            }
+            if (a.need == Need::Mode128 && !mode.paging7ffd && !a.fitsIn48)
+            {
+                why = "the source uses 128K paging; the target " + mode.machine +
+                      "'s mode has no #7FFD paging (a 48K mode): start a 128K mode, e.g. P128.ZX";
+                return false;
+            }
+            return host->BanksAreRam(target, 8u, why);
+        }
 
         switch (a.need)
         {
@@ -710,6 +820,24 @@ namespace
             std::memcpy(to, from, PAGE_SIZE);
     }
 
+    /// Spectrum bank `bank` of the source into the target's bank (a Sprinter's banks are behind its PLD cells)
+    void CopyBank(EmulatorContext& source, EmulatorContext& target, uint16_t bank)
+    {
+        const uint8_t* from = statetransfer::BankPage(source, bank);
+        uint8_t* to = statetransfer::BankPage(target, bank);
+        if (from && to)
+            std::memcpy(to, from, PAGE_SIZE);
+    }
+
+    /// The #7FFD a Spectrum-class state (Mode48 / Mode128) is replayed with on a target of another model
+    uint8_t CrossP7ffd(const SourceAnalysis& a, EmulatorContext& source)
+    {
+        const bool mode48 = a.need == Need::Mode48;
+        const bool basic48 = mode48 || a.rom == RomRole::Basic48;
+        uint8_t p7FFD = mode48 ? static_cast<uint8_t>(P7FFD_LOCK | P7FFD_ROM) : static_cast<uint8_t>(P7ffdOf(source) & P7FFD_128_BITS);
+        return static_cast<uint8_t>((p7FFD & ~P7FFD_ROM) | (basic48 ? P7FFD_ROM : 0));
+    }
+
     bool SameFrameGeometry(const CONFIG& a, const CONFIG& b)
     {
         return a.frame == b.frame && a.intstart == b.intstart && a.intlen == b.intlen;
@@ -722,10 +850,17 @@ namespace
         PortDecoder& ports = *target.pPortDecoder;
         EmulatorState& state = target.emulatorState;
         const EmulatorState& from = source.emulatorState;
-        const PagingFamily targetFamily = FamilyOf(target.config);
+        const PagingFamily targetFamily = FamilyOf(target);
         const uint16_t pc = source.pCore->GetZ80()->pc;
 
         ports.UnlockPaging();
+
+        // The ATM boards come out of a reset with a pager of their own: put them in the plain Spectrum 128K layout first
+        if (targetFamily == PagingFamily::AtmTurbo || targetFamily == PagingFamily::Atm450)
+            ports.EnterSpectrum128Paging(pc);
+        // A Sprinter keeps its Spectrum mode: the banks go behind its cells, then the latch (FinishSprinterTarget)
+        if (targetFamily == PagingFamily::BankHost)
+            return;
 
         if (targetFamily == PagingFamily::Spectrum48)
         {
@@ -736,8 +871,7 @@ namespace
             return;
         }
 
-        const bool mode48 = a.need == Need::Mode48;
-        const bool basic48 = mode48 || a.rom == RomRole::Basic48;
+        const bool basic48 = a.need == Need::Mode48 || a.rom == RomRole::Basic48;
 
         if (a.need == Need::SameFamily)
         {
@@ -758,8 +892,7 @@ namespace
             return;
         }
 
-        uint8_t p7FFD = mode48 ? static_cast<uint8_t>(P7FFD_LOCK | P7FFD_ROM) : static_cast<uint8_t>(from.p7FFD & P7FFD_128_BITS);
-        p7FFD = static_cast<uint8_t>((p7FFD & ~P7FFD_ROM) | (basic48 ? P7FFD_ROM : 0));
+        const uint8_t p7FFD = CrossP7ffd(a, source);
 
         if (targetFamily == PagingFamily::Plus3)
         {
@@ -856,7 +989,24 @@ namespace
                        source.config.ramsize == target.config.ramsize;
 
         a = Analyze(source);
-        if (!report.clone)
+        // ATM Turbo 2+ 7.10 into an ATM3 / ZX-Evo Base: the pager's own state moves (not only a Spectrum 128K layout)
+        a.atmNative = !report.clone && source.config.mem_model == MM_ATM710 && FamilyOf(target) == PagingFamily::AtmTurbo;
+        if (a.atmNative)
+        {
+            std::string why;
+            if (target.config.ramsize < source.config.ramsize)
+                why = "the target has " + std::to_string(target.config.ramsize) + "K of RAM, the source " +
+                      std::to_string(source.config.ramsize) + "K";
+            else
+                statetransfer::CanMoveAtmTurboState(source, target, why);
+            if (!why.empty())
+            {
+                report.reason = why;
+                report.items.push_back({"memory map", Status::Refused, why});
+                return false;
+            }
+        }
+        else if (!report.clone)
         {
             std::string why;
             if (!TargetAccepts(a, source, target, why))
@@ -865,6 +1015,12 @@ namespace
                 report.items.push_back({"memory map", Status::Refused, why});
                 return false;
             }
+        }
+        if (FamilyOf(target) == PagingFamily::BankHost && !report.clone && (source.emulatorState.flags & CF_TRDOS))
+        {
+            report.reason = "the source is in TR-DOS; a Sprinter's TR-DOS follows its own M1 trap rule and cannot be forced into";
+            report.items.push_back({"TR-DOS", Status::Refused, report.reason});
+            return false;
         }
 
         if ((source.emulatorState.flags & CF_TRDOS) && !(target.config.trdos_present && target.pBetaDisk))
@@ -881,18 +1037,23 @@ namespace
         }
         else
         {
-            const bool to48 = FamilyOf(target.config) == PagingFamily::Spectrum48;
+            const bool to48 = FamilyOf(target) == PagingFamily::Spectrum48;
             const std::string pages = (a.need == Need::Mode48 || to48) ? "pages 5, 2, 0"
                                       : a.need == Need::Mode128     ? "pages 0-7"
                                                                     : std::to_string(RamPages(source.config)) + " pages";
             report.items.push_back({"RAM", Status::Copied, pages});
-            report.items.push_back({"paging", Status::Copied,
-                                    std::string(FamilyName(a.family)) + " state replayed through the " +
-                                        FamilyName(FamilyOf(target.config)) + " port decoder"});
+            if (a.atmNative)
+                report.items.push_back({"paging", Status::Copied,
+                                        "the ATM pager's window registers (ROM pages translated by role), #xx77 latch, palette and "
+                                        "font RAM move to the target"});
+            else
+                report.items.push_back({"paging", Status::Copied,
+                                        std::string(FamilyName(a.family)) + " state replayed through the " +
+                                            FamilyName(FamilyOf(target)) + " port decoder"});
             if (!SameFrameGeometry(source.config, target.config))
                 report.items.push_back({"frame position", Status::Note,
                                         "frame geometry differs; the target starts at its own frame start"});
-            if (source.pCore->GetZ80()->pc < 0x4000 && FamilyOf(source.config) != FamilyOf(target.config))
+            if (source.pCore->GetZ80()->pc < 0x4000 && FamilyOf(source) != FamilyOf(target))
                 report.items.push_back({"ROM", Status::Note,
                                         "the CPU is in ROM code; the target's ROM set differs from the source's"});
         }
@@ -944,8 +1105,11 @@ MachineStateTransfer::Report MachineStateTransfer::Apply(EmulatorContext& source
         }
     }
 
-    // A clean machine first: devices the source lacks start from reset (as a snapshot load does)
-    target.pCore->Reset();
+    // A clean machine first: devices the source lacks start from reset (as a snapshot load does). Not a Sprinter running a ZX
+    // mode: a reset would leave the mode, and the state goes into the mode as it is
+    const bool intoSprinterMode = !report.clone && FamilyOf(target) == PagingFamily::BankHost;
+    if (!intoSprinterMode)
+        target.pCore->Reset();
 
     // The floppies and the tape go in before the controllers take the source's state
     const MediaOutcome media = TransferMedia(source, target, true, report.items);
@@ -966,19 +1130,35 @@ MachineStateTransfer::Report MachineStateTransfer::Apply(EmulatorContext& source
     }
     else
     {
-        ApplyCrossPaging(a, source, target);
-
-        const bool to48 = FamilyOf(target.config) == PagingFamily::Spectrum48;
-        if (a.need == Need::Mode48 || to48)
+        if (a.atmNative)
         {
-            for (uint16_t page : {uint16_t(5), uint16_t(2), uint16_t(0)})
+            // RAM first (the pager registers refer to pages), then the pager's own state through the target's decoder
+            for (uint16_t page = 0; page < RamPages(source.config); page++)
                 CopyPage(source, target, page);
+            std::string why;
+            if (!statetransfer::MoveAtmTurboState(source, target, why))
+            {
+                report.reason = why;
+                report.items.push_back({"memory map", ItemStatus::Refused, why});
+                return report;
+            }
         }
         else
         {
-            const uint16_t pages = a.need == Need::Mode128 ? uint16_t(8) : RamPages(source.config);
-            for (uint16_t page = 0; page < pages; page++)
-                CopyPage(source, target, page);
+            ApplyCrossPaging(a, source, target);
+
+            const bool to48 = FamilyOf(target) == PagingFamily::Spectrum48;
+            if (a.need == Need::Mode48 || to48)
+            {
+                for (uint16_t bank : {uint16_t(5), uint16_t(2), uint16_t(0)})
+                    CopyBank(source, target, bank);
+            }
+            else
+            {
+                const uint16_t pages = a.need == Need::Mode128 ? uint16_t(8) : RamPages(source.config);
+                for (uint16_t bank = 0; bank < pages; bank++)
+                    CopyBank(source, target, bank);
+            }
         }
 
         EmulatorState& state = target.emulatorState;
@@ -995,11 +1175,23 @@ MachineStateTransfer::Report MachineStateTransfer::Apply(EmulatorContext& source
         TransferDevices(source, target, false, true, media, report.items);
 
         // The banks from the latches, then the DOS ROM over them when the source is in TR-DOS
+        // (The ATM pager's own state already carries the DOS signal in its ROM selectors: the DOS ROM is not forced over it)
         target.pMemory->UpdateZ80Banks();
-        ApplyTrdos(source, target);
+        if (!a.atmNative)
+            ApplyTrdos(source, target);
+
+        if (intoSprinterMode)
+            target.pPortDecoder->GetStateTransferHost()->FinishTarget(target, CrossP7ffd(a, source), source.emulatorState.border_attr & 0x07,
+                                                                      source.pCore->GetZ80()->pc);
     }
 
-    ResyncScreen(target);
+    if (intoSprinterMode)
+    {
+        if (target.pScreen)
+            target.pScreen->RenderOnlyMainScreen();   // the Sprinter's own raster follows its PLD, not the Spectrum ULA's
+    }
+    else
+        ResyncScreen(target);
     report.ok = true;
     return report;
 }

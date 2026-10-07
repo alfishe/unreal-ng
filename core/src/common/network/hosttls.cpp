@@ -194,7 +194,13 @@ HostTls::HostTls(const std::string& serverName) : _impl(std::make_unique<Impl>()
     SSL_set_tlsext_host_name(_impl->ssl, serverName.c_str());
     X509_VERIFY_PARAM* param = SSL_get0_param(_impl->ssl);
     if (X509_VERIFY_PARAM_set1_ip_asc(param, serverName.c_str()) != 1)
+    {
+#if defined(OPENSSL_VERSION_MAJOR) && OPENSSL_VERSION_MAJOR >= 4
+        SSL_set1_dnsname(_impl->ssl, serverName.c_str());   // 4.0 deprecates SSL_set1_host
+#else
         SSL_set1_host(_impl->ssl, serverName.c_str());
+#endif
+    }
     _state = State::Handshaking;
 }
 

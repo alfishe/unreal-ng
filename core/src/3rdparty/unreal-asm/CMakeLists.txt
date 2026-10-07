@@ -50,13 +50,17 @@ add_library(unreal-asm STATIC
     src/dialects/common/macros.cpp
     src/dialects/storm/stormfrontend.cpp
     src/dialects/zxasm/zxasmfrontend.cpp
+    src/dialects/xas/xasfrontend.cpp
     src/dialects/tasm/tasmfrontend.cpp
+    src/dialects/masm/masmfrontend.cpp
     src/dialects/alasm/alasmfrontend.cpp
+    src/dialects/gens/gensfrontend.cpp
     src/dialects/sjasmplus/sjasmplusbackend.cpp
     src/dialects/common/classicbackend.cpp
     src/dialects/pasmo/pasmobackend.cpp
     src/dialects/z88dk/z88dkbackend.cpp
     src/dialects/sjasmplus/sjasmplusfrontend.cpp
+    src/dialects/zeus/zeusfrontend.cpp
     src/containers/trdos.cpp
     src/symbols/model/symbol.cpp
     src/symbols/model/symbolindex.cpp
@@ -124,11 +128,15 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/xascodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/stormfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/zxasmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/xasfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/pasmobackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/z88dkbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/trdos_test.cpp
         ${UNREAL_ASM_DIR}/tests/dialects_test.cpp
         ${UNREAL_ASM_DIR}/tests/tasmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/masmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/zeusfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/gensfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbol_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbolindex_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbolstore_test.cpp

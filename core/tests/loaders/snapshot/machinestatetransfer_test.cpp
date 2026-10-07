@@ -795,3 +795,146 @@ TEST_F(MachineStateTransfer_Test, everyModelPairKeepsTheProgramsView)
     // 48K / 128K / +2 / Pentagon / Scorpion states move between each other at least
     EXPECT_GE(accepted, models.size()) << "almost every pair refused";
 }
+
+/// A 128K state moves into the ATM and Profi boards, as far as they can hold it: they are put in their plain Spectrum 128K layout
+/// first (EnterSpectrum128Paging), then #7FFD is replayed through their own decoder
+TEST_F(MachineStateTransfer_Test, a128kStateMovesIntoTheAtmAndProfiBoards)
+{
+    for (const char* model : {"ATM710", "ATM3", "ATM450", "PROFI", "PROFI3"})
+    {
+        SCOPED_TRACE(model);
+        auto a = Create("128k");
+        auto b = Create(model);
+        ASSERT_TRUE(a && b);
+        for (uint16_t page = 0; page < 8; page++)
+            FillPage(Ctx(a), page, static_cast<uint8_t>(page * 31 + 1));
+        Ctx(a).pPortDecoder->UnlockPaging();
+        Ctx(a).pPortDecoder->DecodePortOut(0x7FFD, 0x13, 0x8000);   // bank 3 on top, 48 BASIC
+        SetCpu(Ctx(a));
+
+        const auto report = MachineStateTransfer::Transfer(*a, *b);
+        ASSERT_TRUE(report.ok) << report.ToString();
+        for (uint16_t page = 0; page < 8; page++)
+            EXPECT_TRUE(SamePage(Ctx(a), Ctx(b), page)) << "page " << page;
+        EXPECT_EQ(Ctx(b).emulatorState.p7FFD, 0x13);
+        EXPECT_EQ(Ctx(b).pMemory->GetRAMPageForBank3(), 3) << "bank 3 at #C000";
+        EXPECT_EQ(Ctx(b).pMemory->GetRAMPageForBank1(), 5);
+        EXPECT_EQ(Ctx(b).pMemory->GetRAMPageForBank2(), 2);
+        EXPECT_TRUE(Ctx(b).pMemory->IsBank0ROM()) << "ROM at #0000";
+        EXPECT_EQ(FirstZ80ViewDifference(Ctx(a), Ctx(b), 0x4000), -1) << "the program sees the same RAM";
+        ExpectSameCpu(Ctx(a), Ctx(b));
+        EmulatorManager::GetInstance()->RemoveEmulator(a->GetId());
+        EmulatorManager::GetInstance()->RemoveEmulator(b->GetId());
+    }
+}
+
+TEST_F(MachineStateTransfer_Test, a48kStateMovesIntoAnAtm)
+{
+    auto a = Create("48K");
+    auto b = Create("ATM3");
+    ASSERT_TRUE(a && b);
+    for (uint16_t page : {5, 2, 0})
+        FillPage(Ctx(a), page, static_cast<uint8_t>(page * 17 + 3));
+    SetCpu(Ctx(a));
+    const auto report = MachineStateTransfer::Transfer(*a, *b);
+    ASSERT_TRUE(report.ok) << report.ToString();
+    EXPECT_EQ(FirstZ80ViewDifference(Ctx(a), Ctx(b), 0x4000), -1);
+    EXPECT_TRUE(Ctx(b).emulatorState.p7FFD & 0x20) << "a 48K program: paging locked";
+}
+
+/// The other way: an ATM or a Profi that runs its plain Spectrum 128K layout is a 128K state to every machine that holds one
+TEST_F(MachineStateTransfer_Test, anAtmIn128kLayoutMovesToAPlain128k)
+{
+    auto a = Create("ATM3");
+    auto b = Create("128k");
+    ASSERT_TRUE(a && b);
+    Ctx(a).pPortDecoder->EnterSpectrum128Paging(0x8000);
+    Ctx(a).pPortDecoder->DecodePortOut(0x7FFD, 0x14, 0x8000);   // bank 4 on top, 128 editor ROM
+    for (uint16_t page = 0; page < 8; page++)
+        FillPage(Ctx(a), page, static_cast<uint8_t>(page * 13 + 9));
+    SetCpu(Ctx(a));
+
+    const auto report = MachineStateTransfer::Transfer(*a, *b);
+    ASSERT_TRUE(report.ok) << report.ToString();
+    for (uint16_t page = 0; page < 8; page++)
+        EXPECT_TRUE(SamePage(Ctx(a), Ctx(b), page)) << "page " << page;
+    EXPECT_EQ(Ctx(b).emulatorState.p7FFD, 0x14);
+    EXPECT_EQ(FirstZ80ViewDifference(Ctx(a), Ctx(b), 0x4000), -1);
+}
+
+/// An ATM Turbo 2+ 7.10 in its OWN pager state moves to an ATM3 / ZX-Evo Base: the window registers (the ROM selectors translated to
+/// the target's ROM image by the role of the page), the #xx77 latch, the RAM
+TEST_F(MachineStateTransfer_Test, anAtm710InItsOwnModeMovesToAnAtm3)
+{
+    auto a = Create("ATM710");
+    auto b = Create("ATM3");
+    ASSERT_TRUE(a && b);
+    EmulatorContext& source = Ctx(a);
+    for (uint16_t page = 0; page < 16; page++)
+        FillPage(source, page, static_cast<uint8_t>(page * 11 + 5));
+    // The pager on, its own layout: window 0 = the 128K BASIC ROM pair (a standard-set page), windows 1 / 2 = RAM 9 / 10, window 3 = RAM 12
+    const uint8_t sourceRoms = source.pCore->GetROM()->GetROMBanksLoaded();
+    ASSERT_GE(sourceRoms, 4);
+    source.emulatorState.pFFF7[0] = 0x100u | static_cast<unsigned>(sourceRoms - 4 + 2);   // ROM, page LSB by the DOS signal
+    source.emulatorState.pFFF7[1] = 0x200u | 9;
+    source.emulatorState.pFFF7[2] = 0x200u | 10;
+    source.emulatorState.pFFF7[3] = 0x200u | 12;
+    source.emulatorState.aFF77 = 0x0100 | 0x0200;   // PEN (pager on), ~CPM
+    source.emulatorState.pFF77 = 0x00;
+    source.pPortDecoder->UpdateModelMemoryBanks();
+    SetCpu(source);
+    const uint16_t sourceRomPage = source.pMemory->GetROMPage();
+
+    const auto report = MachineStateTransfer::Transfer(*a, *b);
+    ASSERT_TRUE(report.ok) << report.ToString();
+    EmulatorContext& target = Ctx(b);
+    EXPECT_EQ(target.pMemory->GetRAMPageForBank1(), 9);
+    EXPECT_EQ(target.pMemory->GetRAMPageForBank2(), 10);
+    EXPECT_EQ(target.pMemory->GetRAMPageForBank3(), 12);
+    EXPECT_TRUE(target.pMemory->IsBank0ROM());
+    const uint8_t targetRoms = target.pCore->GetROM()->GetROMBanksLoaded();
+    EXPECT_EQ(target.pMemory->GetROMPage() & ~1, (targetRoms - 4 + 2) & ~1) << "the same standard-set ROM (128 BASIC), in the target's image; the source "
+                                                                              "showed page " << sourceRomPage;
+    for (uint16_t page = 0; page < 16; page++)
+        EXPECT_TRUE(SamePage(source, target, page)) << "page " << page;
+    EXPECT_EQ(FirstZ80ViewDifference(source, target, 0x4000), -1) << "the program sees the same RAM";
+    ExpectSameCpu(source, target);
+}
+
+/// A ROM page outside the standard set (a service ROM of the 7.10 image) has no equivalent: refused, naming the page
+TEST_F(MachineStateTransfer_Test, anAtmPagerRomWithoutAnEquivalentIsRefused)
+{
+    auto a = Create("ATM710");
+    auto b = Create("ATM3");
+    ASSERT_TRUE(a && b);
+    EmulatorContext& source = Ctx(a);
+    const uint8_t roms = source.pCore->GetROM()->GetROMBanksLoaded();
+    if (roms <= 4)
+        GTEST_SKIP() << "this ROM image holds the standard set only";
+    source.emulatorState.pFFF7[0] = 0x300u | 0;   // ROM page 0 of a bigger image: not in the standard set
+    source.emulatorState.aFF77 = 0x0100 | 0x0200;
+    const auto check = MachineStateTransfer::Check(source, Ctx(b));
+    EXPECT_FALSE(check.ok);
+    EXPECT_NE(check.reason.find("ROM page"), std::string::npos) << check.reason;
+}
+
+/// ATM3 states do not go back to an ATM 7.10 (the ATM3's pager has more than the 7.10's); a TS-Conf state moves nowhere
+TEST_F(MachineStateTransfer_Test, whatCannotMoveSaysWhy)
+{
+    auto atm3 = Create("ATM3");
+    auto atm710 = Create("ATM710");
+    auto tsconf = Create("TSL", 4096);
+    auto plain = Create("128k");
+    ASSERT_TRUE(atm3 && atm710 && tsconf && plain);
+
+    const auto back = MachineStateTransfer::Check(Ctx(atm3), Ctx(atm710));
+    EXPECT_FALSE(back.ok);
+    EXPECT_FALSE(back.reason.empty());
+
+    for (const auto& target : {plain, atm3, atm710})
+    {
+        const auto report = MachineStateTransfer::Check(Ctx(tsconf), Ctx(target));
+        EXPECT_FALSE(report.ok) << "TS-Conf -> " << target->GetContext()->config.mem_model;
+        EXPECT_NE(report.reason.find("specific to its model"), std::string::npos) << report.reason;
+    }
+}
