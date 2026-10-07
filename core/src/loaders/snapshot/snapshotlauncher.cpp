@@ -12,6 +12,7 @@
 #include "emulator/media/modelswitch.h"
 #include "emulator/platform.h"
 #include "loaders/snapshot/loaderspg.h"
+#include "loaders/snapshot/snapshotpipeline.h"
 #include "loaders/snapshot/szx/loaderszx.h"
 
 bool SnapshotLauncher::RequiredModel(const std::string& path, std::string& model, uint32_t& ramKb, std::string& error)
@@ -72,6 +73,14 @@ SnapshotLoadResult SnapshotLauncher::Load(const SnapshotLoadRequest& request)
         return out;
     }
     out.emulator = emulator;
+
+    // A ZX-Poly module takes a .zxp only and is never replaced by another model (the group would lose a module)
+    if (snapshot::IsZXPolyModule(*emulator->GetContext()))
+    {
+        const std::string::size_type dot = request.path.find_last_of('.');
+        out.message = snapshot::ZXPolyRefusal(dot == std::string::npos ? std::string("snapshot") : request.path.substr(dot + 1));
+        return out;
+    }
 
     std::string error;
     const CONFIG& running = emulator->GetContext()->config;

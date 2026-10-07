@@ -240,8 +240,13 @@ struct ExpressionParser
         {
             if (Peek(1) == '$')
             {
+                if (Peek(2) == '$' && !IsLabelChar(Peek(3)))
+                {
+                    i += 3;   // $$$: where the code goes while DISP is active
+                    return Expr::Make(Expr::Kind::CurrentPhysical);
+                }
                 if (Peek(2) == '$' || IsLabelChar(Peek(2)))
-                    throw Failure{"$$$ / $$label have no counterpart"};
+                    throw Failure{"$$label has no counterpart"};
                 i += 2;
                 return Expr::Make(Expr::Kind::CurrentPage);
             }

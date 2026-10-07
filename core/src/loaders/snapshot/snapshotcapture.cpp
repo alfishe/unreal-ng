@@ -13,6 +13,7 @@
 #include "emulator/video/screen.h"
 #include "loaders/snapshot/loader_sna.h"
 #include "loaders/snapshot/loader_z80.h"
+#include "loaders/snapshot/snapshotpipeline.h"
 #include "loaders/snapshot/szx/loaderszx.h"
 
 namespace snapshot
@@ -216,6 +217,12 @@ MachineView WindowMapCapture::Examine(EmulatorContext& context) const
 
 MachineView ExamineView(EmulatorContext& context)
 {
+    // A ZX-Poly module is one of four machines in lockstep: none of the single-machine formats describes it, and a .zxp is not
+    // written yet (owner rule 2026-10-07: a ZX-Poly takes a .zxp only)
+    if (IsZXPolyModule(context))
+        return Unavailable("this machine is a ZX-Poly: its four modules run in lockstep, so a snapshot of one of them means nothing. "
+                           "The .zxp format that holds all four is not written yet",
+                           "zxpoly");
     if (context.pPortDecoder)
     {
         if (ISnapshotCapturePolicy* policy = context.pPortDecoder->GetSnapshotCapturePolicy())

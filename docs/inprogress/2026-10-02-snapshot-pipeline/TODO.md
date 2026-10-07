@@ -218,3 +218,14 @@ and an SPG on a machine whose policy does not take it (`needs: model:TSL`). The 
 Tests: `SnapshotBeforeCommit_Test` (announced once on a good load, never on a refusal, legacy judged too, inspect never),
 `ARefusedSnapshotLoadLeavesTheRecordingRunning`.
 Open: a media load (tape, disk) is still refused while recording, unchanged.
+
+## P12 notes (2026-10-07): owner decisions Q7 and Q8
+
+- **Q7: a ZX-Poly takes a .zxp and nothing else.** `snapshot::IsZXPolyModule` (the machine is a member of a ZX-Poly group): the plan
+  refuses every other format with `needs: format:zxp` (the reason: `snapshot::ZXPolyRefusal`), which also covers `inspect` and the
+  automation surfaces; `SnapshotLauncher::Load` never replaces a module by another model; the Qt window refuses an SZX / SPG
+  before it would switch the model, and a SNA / Z80 through the plan (message box with the reason); a save from a module is refused
+  for every format (`needs: zxpoly`). A .zxp load into the group itself (the module images carry `format: zxp`) is unchanged.
+- **Q8: the state transfer is not merged with anything.** It stays `MachineStateTransfer`. Rule: it works wherever that is physically
+  possible. See the matrix in `docs/features/automation.md`: what works today, what is expected next (ATM family among themselves,
+  a 128K into a Sprinter ZX mode), what never works (TS-Conf state, ZX-Poly modules).

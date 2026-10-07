@@ -38,6 +38,17 @@ struct BackendOptions
     std::map<std::string, int> definitions;
 };
 
+/// A label of the source and the name the backend wrote it under (a reserved word renamed, a LOCAL block's label made
+/// unique): how a value found in the written text is given back to the source's label
+struct LabelName
+{
+    uint32_t line = 0;           ///< the source line defining it (ir::Line::sourceLine)
+    std::string source;          ///< as the source writes it
+    std::string written;         ///< as the backend wrote it
+    bool local = false;          ///< a label of a LOCAL block (ALASM, TASM's DEFMAC)
+    bool inMacro = false;        ///< defined in a macro body: one per expansion, no single value
+};
+
 struct BackendResult
 {
     SourceDocument document;
@@ -45,6 +56,7 @@ struct BackendResult
     std::map<std::string, int> macroParams;   ///< the macros this file defines
     std::set<std::string> ifUsedNames;        ///< the labels this file tests with IFUSED / IFNUSED
     std::map<std::string, int> definitions;   ///< how often this file defines each name
+    std::vector<LabelName> labels;            ///< every label line of the program (backends that keep names fill it)
 };
 
 class IFrontend
@@ -104,6 +116,7 @@ struct ProjectFile
 struct ProjectResult
 {
     std::vector<ProjectFile> files;   ///< converted, in the same order; names unchanged
+    std::vector<std::vector<LabelName>> labels;   ///< per file (same order): its labels as the backend wrote them
     Diagnostics diagnostics;          ///< each prefixed with the file name
     bool ok = false;
 };
