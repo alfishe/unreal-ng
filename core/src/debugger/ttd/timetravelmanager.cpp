@@ -5431,9 +5431,8 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
         if (_context->pSlotManager)
             matches = _context->pSlotManager->TtdSessionMatches(blobs, notRecordedMask, _peripherals, why);
         else
-            matches = SlotManager::TtdSlotSetMatches({}, SlotManager::TtdDeviceSet::Of(blobs, notRecordedMask),
-                                                     SlotManager::TtdDeviceSet::Of(_peripherals), why) &&
-                      (!_context->pPortDecoder || _context->pPortDecoder->TtdSessionMatches(blobs, why));
+            matches = SlotManager::TtdSessionMatchesWithoutSlots(
+                _context, SlotManager::TtdDeviceSet::Of(blobs, notRecordedMask), blobs, _peripherals, why);
         if (!matches)
         {
             err = why;

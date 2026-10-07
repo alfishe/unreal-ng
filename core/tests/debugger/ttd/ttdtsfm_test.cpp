@@ -232,7 +232,7 @@ TEST_F(TtdTsfm_Test, SessionKindMismatchRefused)
         std::istringstream in(forged, std::ios::binary);
         std::string err;
         EXPECT_FALSE(_ttd->DeserializeSession(in, err));
-        EXPECT_NE(err.find("ay-socket: recorded tsfm, this machine ay / ts"), std::string::npos) << err;
+        EXPECT_NE(err.find("ay-socket: recorded tsfm, this machine ts"), std::string::npos) << err;
     }
 
     // The live machine state is untouched by the refused load (restores only

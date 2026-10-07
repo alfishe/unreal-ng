@@ -484,6 +484,14 @@ public:
     /// issues are listed; the message counts the rest
     TTDRestoreResult CheckSession() const;
 
+    /// The state device @p id (its v1 id) holds at checkpoint @p index, without
+    /// restoring anything (a load's guards read the baseline's); false when the
+    /// checkpoint holds none or it fails its integrity check
+    bool DeviceStateAt(size_t index, uint8_t id, std::vector<uint8_t>& out) const
+    {
+        return ReadDeviceState(index, id, out) == DeviceStateRead::Ok;
+    }
+
     /// Tests only: damage the stored version of @p piece of @p region at
     /// checkpoint @p index (one flipped bit)
     bool DamageForTesting(size_t index, uint32_t region, uint32_t piece)
