@@ -19,4 +19,6 @@ namespace HeapCounter
     void Start();
     void Stop();
     int64_t Net();
+    /// The most the window held at once (Net() at its highest)
+    int64_t Peak();
 }  // namespace HeapCounter

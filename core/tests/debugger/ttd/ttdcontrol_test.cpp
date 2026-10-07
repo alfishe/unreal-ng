@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "_helpers/heapcounter.h"
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
 #include "_helpers/testwaithelper.h"
@@ -551,6 +552,48 @@ TEST_P(TTDControl_Test, ASessionDumpedIsDescribedAndLoadedThroughTheVerbs)
     ASSERT_TRUE(r.Ok()) << r.message;
     EXPECT_GT(Int(r, "checkpoint_count"), 0);
     EXPECT_EQ(Str(r, "state"), "idle");
+    std::remove(path.c_str());
+}
+
+/// Phase 5: the engine's load reads the file where its loader asks; the file is
+/// not copied into memory first. The same file loaded from a stream (read
+/// whole) and through the "load" verb: the verb's load holds at least half the file less
+TEST_P(TTDControl_Test, LoadingAFileDoesNotHoldItInMemory)
+{
+    if (!GetParam())
+        GTEST_SKIP() << "v1 reads the whole file";
+    if (!HeapCounter::Available())
+        GTEST_SKIP() << "no heap block size query on this platform";
+    Record(3);
+    ASSERT_TRUE(Run("stop").Ok());
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("ttdcontrol-load-heap.ttd");
+    TTDReply r = Run("dump", {{"path", path}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    const int64_t fileBytes = Int(r, "bytes");
+
+    auto peakOf = [&](bool fromPath) {
+        _controller->InvalidateSession("test: the next load");
+        std::string error;
+        std::ifstream in(FileHelper::ToFsPath(path), std::ios::binary);
+        HeapCounter::Start();
+        bool ok = false;
+        if (fromPath)
+        {
+            const TTDReply loaded = Run("load", {{"path", path}});   // the verb every surface uses
+            ok = loaded.Ok();
+            error = loaded.message;
+        }
+        else
+            ok = _controller->DeserializeSession(in, error);
+        HeapCounter::Stop();
+        EXPECT_TRUE(ok) << error;
+        return HeapCounter::Peak();
+    };
+    peakOf(true);   // first-use allocations out of the way
+    const int64_t whole = peakOf(false);
+    const int64_t fromPath = peakOf(true);
+    EXPECT_LT(fromPath, whole - fileBytes / 2) << "file " << fileBytes << " bytes, peak read whole " << whole
+                                               << ", from the path " << fromPath;
     std::remove(path.c_str());
 }
 
