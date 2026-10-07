@@ -331,6 +331,10 @@ protected:
     uint64_t _chainsDeviceEpoch = 0;
     /// Reset every character chain (socket AY / FM, beeper, the cards' SSG rows)
     void resetCharacterChains();
+    /// Reset every AY / SSG voicing stage (socket chips, the cards' SSG rows): filter state and pre-roll history
+    void resetVoicing();
+    /// Set by onStateRestored(), taken by the next frame with audio
+    std::atomic<bool> _stateRestored{false};
 
     /// endregion </Fields>
 
@@ -445,6 +449,11 @@ public:
     /// sample count and the device's rendered count stay equal. Left behind,
     /// the mixer kept its pre-seek phase and read one never-rendered (zero)
     /// sample every few frames for the rest of the session
+    /// The machine state was restored (TTD checkpoint, return to the live state): the host-side post-processing of
+    /// every row (character chains, AY / SSG voicing) restarts on the next frame with audio, so no filter history,
+    /// delay line or envelope from the timeline that was left leaks into the restored one. Any thread
+    void onStateRestored();
+
     void adoptSamplePhase(uint64_t tstateRatePhase)
     {
         _sampleAccumulator = tstateRatePhase;

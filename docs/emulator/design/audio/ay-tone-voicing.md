@@ -156,6 +156,10 @@ AY / SSG generators @218.75 kHz → 5 Hz coupling high-pass → decimator → ch
 
 - **HQ and LQ alike.** Voicing is tonal balance, not an HQ effect: toggling *Sound HQ* or leaving
   turbo mode does not change it. It is not reset when HQ comes back.
+- **Reset on a time-travel restore.** Seeking in the time-travel history, returning to the live
+  state, a machine reset or a snapshot load clears the voicing's filter state and pre-roll history
+  (socket chips and card SSG rows alike), so nothing played before the jump leaks into the first
+  frame after it. The character chains are reset at the same point, the beeper's included.
 - **Not applied to** the beeper, Covox / SoundDrive, TSFM's FM channels, General Sound or
   MoonSound.
 - **Sound off / turbo without audio:** nothing is voiced.

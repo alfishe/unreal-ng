@@ -746,6 +746,19 @@ void SoundManager::resetCharacterChains()
         v.chain->reset();
 }
 
+void SoundManager::resetVoicing()
+{
+    _ayVoicing0.reset();
+    _ayVoicing1.reset();
+    for (CardSsgRow& v : _cardSsgRows)
+        v.stage->reset();
+}
+
+void SoundManager::onStateRestored()
+{
+    _stateRestored.store(true, std::memory_order_release);
+}
+
 void SoundManager::syncAYChainSettings()
 {
     // Copy settings from chain 0 to chain 1 (UI edits chain 0, both should match)
@@ -1238,8 +1251,10 @@ void SoundManager::handleFrameEnd()
     // per-sample work: AudioCharacterChain::isBypassed()), and the raw chip /
     // beeper buffers go straight to the mixer. Switching an effect or Sound HQ
     // ramps over one frame (no click); a gap (sound off, turbo without audio,
-    // a TTD restore of the TurboSound device) resets the chains, so no delay
-    // line or envelope replays audio from before it.
+    // a TTD restore) resets the chains, so no delay line or envelope replays
+    // audio from before it. A TTD restore also resets the AY / SSG voicing of
+    // the restored rows (filter state and pre-roll history), as the card rows'
+    // voicing restarts with the card's render epoch.
     // Sound feature off: no generator runs, no character chain runs, nothing is mixed. The frame
     // buffers are zeroed instead, so the output path (and the per-device meters) see silence
     const bool soundOff = !_feature_sound_enabled;
@@ -1251,12 +1266,32 @@ void SoundManager::handleFrameEnd()
         resetCharacterChains();
         _chainsGap = false;
     }
-    if (_turboSound != _chainsDevice || (_turboSound && _turboSound->renderEpoch() != _chainsDeviceEpoch))
+
+    // A TTD restore of the whole machine (checkpoint, return to the live state): every host stream restarts -
+    // the character chains (socket AY / FM, beeper, card SSG rows) and the AY / SSG voicing. Applied on the first
+    // frame with audio after it (turbo without audio keeps the request)
+    const bool machineRestored = _stateRestored.exchange(false, std::memory_order_acq_rel);
+    if (machineRestored)
+    {
+        resetCharacterChains();
+        resetVoicing();
+    }
+
+    // The TurboSound device restored on its own (its render epoch moved: TTDLoadState) or replaced: its chains
+    // restart, and on a restore its voicing too
+    const bool deviceChanged = _turboSound != _chainsDevice;
+    const bool deviceRestored = !deviceChanged && _turboSound && _turboSound->renderEpoch() != _chainsDeviceEpoch;
+    if (deviceChanged || deviceRestored)
     {
         _ayChain0.reset();
         _ayChain1.reset();
         _fmChain0.reset();
         _fmChain1.reset();
+        if (deviceRestored && !machineRestored)
+        {
+            _ayVoicing0.reset();
+            _ayVoicing1.reset();
+        }
         _chainsDevice = _turboSound;
         _chainsDeviceEpoch = _turboSound ? _turboSound->renderEpoch() : 0;
     }
