@@ -69,6 +69,7 @@ public:
 protected:
     Line ParseLine(std::string_view line, Symbol& out, std::string& message) const override;
     std::string WriteLine(const Symbol& s, bool& folded, std::string& message) const override;
+    int ScoreLines(const std::vector<std::string_view>& lines) const override;
     std::string Header(const std::string& nl) const override;
 };
 

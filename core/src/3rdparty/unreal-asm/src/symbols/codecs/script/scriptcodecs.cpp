@@ -226,10 +226,10 @@ int IdaCodec::Detect(const Probe& probe) const
     }
     const bool pythonFlavor = all.find("import idc") != std::string_view::npos || all.find("idc.set_name") != std::string_view::npos;
     const bool idcFlavor = all.find("static main") != std::string_view::npos || all.find("<idc.idc>") != std::string_view::npos;
-    const int score = Ratio(calls, data, 90);
-    if (pythonFlavor == idcFlavor)
-        return score * 2 / 3;
-    return _python == pythonFlavor ? score : score / 3;
+    // A script that says what it is (IDA's own database dump has many other statements) is enough with one name
+    if (pythonFlavor != idcFlavor && calls)
+        return _python == pythonFlavor ? 90 : 30;
+    return Ratio(calls, data, 90) * 2 / 3;
 }
 
 SymbolDecodeResult IdaCodec::Decode(std::span<const uint8_t> bytes) const
@@ -276,8 +276,12 @@ SymbolEncodeResult IdaCodec::Encode(const SymbolFile& source, const SymbolEncode
     const std::string indent = _python ? "" : "    ";
     const std::string prefix = _python ? "idc." : "";
     const std::string end = _python ? "" : ";";
+    std::map<uint32_t, std::string> named;   // IDA keeps one name per address: a later set_name replaces the earlier
     ForEachWritable(prepared.file, result, [&](const Symbol& s, uint32_t v) {
         const std::string ea = "0x" + Hex(v, 4);
+        if (const auto it = named.find(v); it != named.end())
+            result.diagnostics.push_back({Severity::Warning, 0, 0, "two names at " + ea + ": " + s.name + " replaces " + it->second + " in IDA (one name per address)"});
+        named[v] = s.name;
         out += indent + prefix + "set_name(" + ea + ", " + QuoteC(s.name) + ", " + prefix + "SN_NOWARN)" + end + nl;
         if (!s.comment.empty())
             out += indent + prefix + "set_cmt(" + ea + ", " + QuoteC(s.comment) + ", 0)" + end + nl;

@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include "testdata.h"
 #include "unrealasm/symbols/codec.h"
 
 using namespace unrealasm;
@@ -101,4 +102,21 @@ TEST(ScriptCodecs_Test, MameComments)
     EXPECT_EQ(r.file.sets[0].symbols[3].name, "PRINT-A-1");
     EXPECT_EQ(r.file.sets[0].symbols[3].location.offset, 0x10u);
     EXPECT_EQ(SymbolCodecRegistry::Builtin().Detect(Bytes(cmd), "").chosen, &Codec("mame"));
+}
+
+TEST(ScriptCodecs_Test, IdaOwnDatabaseDump)
+{
+    // testdata/symbols/ida/labels.py (written by ida-python) was run in IDA 9.2 on a 64K Z80 image and IDA wrote its
+    // database as IDC (File > Produce file > IDC): every name reads back, the file is detected as IDC
+    const std::vector<uint8_t> dump = unrealasm::testing::ReadTestData("symbols/ida/labels-dump.idc");
+    const SymbolDetectResult d = SymbolCodecRegistry::Builtin().Detect(dump, "idc");
+    ASSERT_EQ(d.chosen, &Codec("ida-idc"));
+    const SymbolDecodeResult r = Codec("ida-idc").Decode(dump);
+    ASSERT_EQ(r.file.sets[0].symbols.size(), 10u);   // paged1 and paged3 share #C000: IDA keeps one name per address
+    EXPECT_EQ(r.file.sets[0].symbols[0].name, "LINES");
+    EXPECT_EQ(r.file.sets[0].symbols[0].location.offset, 0x18u);
+    EXPECT_EQ(r.file.sets[0].symbols[9].name, "paged1.inner");
+    // The script written for IDA is what ida-python writes now
+    const std::vector<uint8_t> script = unrealasm::testing::ReadTestData("symbols/ida/labels.py");
+    EXPECT_EQ(Codec("ida-python").Encode(Codec("ida-python").Decode(script).file, {}).bytes, script);
 }

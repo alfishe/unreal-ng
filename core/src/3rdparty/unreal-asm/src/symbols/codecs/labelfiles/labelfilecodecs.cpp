@@ -273,7 +273,7 @@ std::string UnrealMapCodec::WriteLine(const Symbol& s, bool& folded, std::string
 int UnrealMapCodec::ScoreLines(const std::vector<std::string_view>& lines) const
 {
     text::LineScore score;
-    bool mapOnly = false;   // a bank prefix or a "(TYPE)": only a map file has them
+    bool mapOnly = false;   // a bank prefix or an upper-case "(CODE)": what our map files write (simple-sym writes "(code)")
     for (const std::string_view raw : lines)
     {
         const std::string_view line = Trim(raw);
@@ -285,7 +285,8 @@ int UnrealMapCodec::ScoreLines(const std::vector<std::string_view>& lines) const
         if (ParseLine(line, s, message) == Line::Symbol)
         {
             ++score.matched;
-            mapOnly = mapOnly || s.location.space.kind != SpaceKind::CpuView || s.kind != SymbolKind::Unknown || !s.provenance.type.empty();
+            mapOnly = mapOnly || s.location.space.kind != SpaceKind::CpuView || line.find("(CODE)") != std::string_view::npos ||
+                      line.find("(DATA)") != std::string_view::npos;
         }
     }
     return score.Score(mapOnly ? 75 : 50);
@@ -315,6 +316,25 @@ std::string SimpleSymCodec::WriteLine(const Symbol& s, bool& folded, std::string
     if (!s.comment.empty())
         out += " ; " + s.comment;
     return out;
+}
+
+int SimpleSymCodec::ScoreLines(const std::vector<std::string_view>& lines) const
+{
+    text::LineScore score;
+    bool typed = false;   // a lower-case "(code)": what simple-sym writes
+    for (const std::string_view raw : lines)
+    {
+        const std::string_view line = Trim(raw);
+        if (text::Skipped(line))
+            continue;
+        ++score.data;
+        if (Accepts(line))
+        {
+            ++score.matched;
+            typed = typed || line.find("(code)") != std::string_view::npos || line.find("(data)") != std::string_view::npos;
+        }
+    }
+    return score.Score(typed ? 75 : 50);
 }
 
 std::string SimpleSymCodec::Header(const std::string& nl) const

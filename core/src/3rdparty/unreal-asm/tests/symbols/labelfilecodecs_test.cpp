@@ -177,4 +177,7 @@ TEST(LabelFileCodecs_Test, Detection)
     EXPECT_EQ(chosen(plain, "map"), "unreal-map");
     EXPECT_EQ(chosen(plain, "l"), "unreal-l");
     EXPECT_EQ(chosen(plain, "").rfind("none", 0), 0u);
+    // simple-sym writes lower-case types, our maps upper-case ones
+    EXPECT_EQ(chosen("8000 START (code) ; entry\n9000 TABLE (data)\n9100 MORE (code)\n", "sym"), "simple-sym");
+    EXPECT_EQ(chosen("8000 START (code) ; entry\n9000 TABLE (data)\n9100 MORE (code)\n", ""), "simple-sym");
 }
