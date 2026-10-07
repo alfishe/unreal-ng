@@ -15,6 +15,12 @@ converted source is compared with (sjasmplus output must be byte-equal).
                             [--list-keys right] [--url U] [--id ID]
     assemble-in-emulator.py xas418   <assembler.trd> <source.$X> <address> <length> <out.bin> [--extra FILE.$T ...]
                             [--list-keys down] [--url U] [--id ID]
+    assemble-in-emulator.py zeus1983 <ZEUS.TAP> <source> <address> <length> <out.bin> [--url U] [--id ID]
+    assemble-in-emulator.py zeus11   <zeus.$C> <source> <address> <length> <out.bin> [--url U] [--id ID]
+    assemble-in-emulator.py zeusgg   <ZEUS_GG.SCL> <source> <address> <length> <out.bin> [--extra FILE.$T ...]
+                            [--url U] [--id ID]
+    assemble-in-emulator.py zeus7e   <ZEUS72ZK.SCL> <source> <address> <length> <out.bin> [--extra FILE.$T ...]
+                            [--url U] [--id ID]
 
 The source is added to a copy of the assembler's disk; the memory range is filled with #AA first, so bytes the
 assembler did not write stay visible. Pick an address the assembler leaves alone: TASM 4.12 keeps its overlay at
@@ -33,6 +39,11 @@ XAS (7.447 `XAS7.447`, 4.18 `XASo`) starts with the disk's XAS sources in two co
 keys that reach the source from the first entry (default: right for 7.447, whose list starts with Read Me; down for
 4.18, after XMACROS and Xas help). The code goes to its ORG address; the report screenshot lists the errors (XAS
 goes on after an error with the value 0). --extra adds the sources LTEXT loads and the files LCODE loads.
+ZEUS keeps its source in memory: the source (raw ZEUS bytes, or a hobeta file) is written to 32768, made current with
+O and assembled with A; the code is read from memory. ZEUS 1983 is the code block of its tape (run at 57344 on a 48K
+model); ZEUS 1.1 (PHT_ZEUS.LZH's zeus.$C) runs at 57344 in 48 BASIC on a Pentagon (its INCLUDE / PLACE need the PHT
+shell: not available here); ZEUS v7.E and the GG ZEUS ("with B-disk") run from their disks, where --extra adds the
+files v7.E INCLUDEs (type Z) and PLACEs (type C) or GG INCBINs (INCBIN "name"). GG's O needs the address (O 32768). The first assemble error stops ZEUS: check the screenshot.
 ALASM's file list is chosen by cursor: --list-position is the column and row of the file in the list `w` shows
 (count them on the screenshot <out>.list.png the tool saves first, 1-based).
 Screenshots of each step are written next to <out.bin>.
@@ -57,9 +68,76 @@ def prepare_disk(assembler_trd, source, work, extra=()):
     return path, open(source, 'rb').read()[:8].decode('latin1').rstrip()
 
 
+def tap_code(path):
+    """The data of the first CODE block of a TAP file"""
+    data, at, code = open(path, 'rb').read(), 0, False
+    while at + 2 <= len(data):
+        length = data[at] | data[at + 1] << 8
+        block = data[at + 2:at + 2 + length]
+        at += 2 + length
+        if block and block[0] == 0 and block[1] == 3:
+            code = True
+        elif block and block[0] == 0xFF and code:
+            return block[1:-1]
+    return None
+
+
+def zeus(args, stem, work):
+    """ZEUS assembles the source it keeps in memory at 32768"""
+    source = open(args.source, 'rb').read()
+    if args.source.lower().split('.')[-1].startswith('$'):
+        source = source[17:17 + (source[11] | source[12] << 8)]   # a hobeta file: its data
+    emu = Emulator(args.url, args.id, model='48K' if args.assembler == 'zeus1983' else 'PENTAGON')
+    if args.assembler in ('zeus7e', 'zeusgg'):
+        image = open(args.disk, 'rb').read()
+        if image[:8] == b'SINCLAIR':
+            image = zxdisk.scl2trd(image)
+        if args.extra:
+            image = zxdisk.add(image, [open(f, 'rb').read() for f in args.extra])
+        disk = os.path.join(work, 'oracle.trd')
+        open(disk, 'wb').write(image)
+        emu.insert_disk(disk)
+        emu.run_trdos('ZEUSv7.E' if args.assembler == 'zeus7e' else 'ZEUS', wait=10)
+    else:
+        emu.post('/reset')
+        time.sleep(3)
+        if args.assembler == 'zeus11':
+            for _ in range(3):                 # 48 BASIC
+                emu.tap('down')
+            emu.tap('enter')
+            time.sleep(2)
+            code = open(args.disk, 'rb').read()[17:]
+        else:
+            code = tap_code(args.disk)
+        for k in range(0, len(code), 1024):
+            emu.write(57344 + k, code[k:k + 1024])
+        emu.post('/basic/run', {'command': 'RANDOMIZE USR 57344'})
+        time.sleep(5)
+    emu.post('/keyboard/combo', {'keys': ['cs', '2'], 'frames': 6})   # CAPS LOCK: ZEUS takes capitals
+    emu.idle()
+    time.sleep(0.5)
+    for k in range(0, len(source), 1024):
+        emu.write(32768 + k, source[k:k + 1024])
+    emu.type('o 32768')                        # the source at 32768 becomes the current one
+    emu.tap('enter')
+    time.sleep(1)
+    for k in range(0, args.length, 1024):
+        emu.write(args.address + k, [0xAA] * min(1024, args.length - k))
+    emu.type('a')                              # assemble
+    emu.tap('enter')
+    time.sleep(8)
+    emu.screenshot(stem + '.assembled.png')
+    data = emu.read(args.address, args.length)
+    emu.stop_recording()
+    open(args.out, 'wb').write(data)
+    print(f'{len(data)} bytes from #{args.address:04X} written to {args.out}; check {stem}.assembled.png for errors')
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['tasm412', 'alasm509', 'storm13', 'zasm315', 'masm11', 'xas7447', 'xas418'])
+    parser.add_argument('assembler', choices=['tasm412', 'alasm509', 'storm13', 'zasm315', 'masm11', 'xas7447', 'xas418', 'zeus1983',
+                                              'zeus11', 'zeusgg', 'zeus7e'])
     parser.add_argument('disk')
     parser.add_argument('source')
     parser.add_argument('address', type=lambda v: int(v, 0))
@@ -75,6 +153,8 @@ def main():
 
     work = os.path.dirname(os.path.abspath(args.out))
     stem = os.path.splitext(args.out)[0]
+    if args.assembler.startswith('zeus'):
+        return zeus(args, stem, work)
     disk, name = prepare_disk(args.disk, args.source, work, args.extra)
     emu = Emulator(args.url, args.id)
     if not emu.insert_disk(disk):

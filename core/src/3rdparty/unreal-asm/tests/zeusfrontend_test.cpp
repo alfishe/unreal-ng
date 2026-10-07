@@ -1,6 +1,6 @@
 // The ZEUS frontend: ZEUS sources into the IR, written by the sjasmplus backend. Construct by construct, then the
-// programs ZEUS itself assembled in unreal-ng (testdata/dialects/zeus: probes for ZEUS 1983, ZEUS 1.1 (PHT) and ZEUS
-// v7.E, and the five Zeus Routines of ZXDB 19058 built by ZEUS 1983); with UNREAL_ASM_SJASMPLUS=<path to sjasmplus>
+// programs ZEUS itself assembled in unreal-ng (testdata/dialects/zeus: probes for ZEUS 1983, GG, ZEUS 1.1 (PHT) and
+// ZEUS v7.E, and the five Zeus Routines of ZXDB 19058 built by ZEUS 1983); with UNREAL_ASM_SJASMPLUS=<path to sjasmplus>
 // the conversions are assembled and compared with those bytes. The labels of the ADS 2.0 project come through
 // SymbolsFromProject equal to what sjasmplus 1.24 wrote with --sym for its conversion.
 
@@ -159,6 +159,7 @@ TEST(ZeusFrontend_Test, ProgramsAssembleToWhatZeusBuilt)
         {"PROBE11", "dialects/zeus/PROBE11.$Z", "pht", 40000, {}, {}},
         {"PROBE7E", "dialects/zeus/PROBE7E.$Z", "pht", 40000, {}, {}},
         {"INCL7E", "dialects/zeus/INCL7E.$Z", "pht", 40000, {{"inc1", "dialects/zeus/inc1.$Z"}}, {{"dat", "dialects/zeus/dat.$C"}}},
+        {"INCLGG", "dialects/zeus/INCLGG.$C", "gg", 40000, {}, {{"dat", "dialects/zeus/dat.$C"}}},
         {"ZeusGlitter", "zeus/ZeusRoutines__ZeusGlitter.bin", "1983", 40000, {}, {}},
         {"ZeusMultiplot", "zeus/ZeusRoutines__ZeusMultiplot.bin", "1983", 50000, {}, {}},
         {"ZeusPrint", "zeus/ZeusRoutines__ZeusPrint.bin", "1983", 40000, {}, {}},
@@ -203,8 +204,9 @@ TEST(ZeusFrontend_Test, ProgramsAssembleToWhatZeusBuilt)
         ASSERT_EQ(built.size(), expected.size()) << o.name;
         for (size_t k = 0; k < expected.size(); ++k)
         {
-            // ZEUS 1983's DEFS leaves memory as it was; sjasmplus' DS writes zeros (research-zeus-to-sjasmplus.md)
-            if (expected[k] == 0xAA && built[k] == 0 && std::string(o.version) == "1983")
+            // DEFS / DS of ZEUS 1983 and GG leaves memory as it was; sjasmplus' DS writes zeros
+            // (research-zeus-to-sjasmplus.md)
+            if (expected[k] == 0xAA && built[k] == 0 && (std::string(o.version) == "1983" || std::string(o.version) == "gg"))
                 continue;
             EXPECT_EQ(built[k], expected[k]) << o.name << " at " << (o.address + k);
         }
