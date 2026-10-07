@@ -59,5 +59,8 @@
 # NedoOS network test card: the files exactly as NedoOS ships them (net.ini is CRLF text NedoOS parses)
 testdata/machines/zxevo/nedoos/sdcard-net/** -text
 
+# Wild Commander Improved card folder: the files byte for byte as released (wc.ini is CR text WC parses)
+testdata/machines/tsconf/wc-improved/sdcard/** -text
+
 # Sprinter network kit releases: the files byte for byte as released (DSS reads CRLF text, the EXEs are binary)
 testdata/machines/sprinter/network/** -text

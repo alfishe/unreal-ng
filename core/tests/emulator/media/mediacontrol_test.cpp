@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/fatguest.h"
 #include "_helpers/scratchfolder.h"
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
@@ -19,6 +20,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/io/storage/memorydisk.h"
+#include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/media/mediacontrol.h"
 #include "emulator/media/mediaformatregistry.h"
 
@@ -515,4 +517,152 @@ TEST_F(MediaControl_Test, ChdOnTheSharedVerbs)
     EXPECT_NE(Slurp(card), before) << "save writes the CHD";
     EXPECT_FALSE(_context->pMediaManager->Info("sd.zc")->dirty);
     EXPECT_EQ(Slurp(card).substr(16, 4), std::string(4, '\0')) << "saved uncompressed";
+}
+
+/// `compose` builds a descriptor without touching any slot (multi-source tdd.md §11, C2): the layout, the layers,
+/// the report; a bad option or no descriptor is a BadRequest; the JSON text works as well as the file
+TEST_F(MediaControl_Test, ComposeBuildsWithoutInserting)
+{
+    Create("ATM3");
+    ScratchFolder folder("control-compose");
+    folder.File("base/readme.txt", "base");
+    folder.File("games/elite.trd", "elite");
+    const auto descriptor = folder.File(
+        "sd.ucompose.yaml", "version: 1\ntarget: {free: 1MiB}\nlayers:\n  - {name: base, source: {folder: base}}\n"
+                            "  - {name: games, source: {folder: games}, mount: /GAMES}\n");
+    const uint64_t revision = _context->pMediaManager->Revision();
+
+    MediaReply reply = Run(Request("compose", "", Utf8(descriptor)));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    const StateNode* compose = reply.body.find("compose");
+    ASSERT_NE(compose, nullptr);
+    EXPECT_EQ(compose->find("fs")->s, "fat16");
+    EXPECT_EQ(compose->find("files")->i, 2);
+    ASSERT_EQ(compose->find("layers")->items.size(), 2u);
+    EXPECT_EQ(compose->find("layers")->items[1].find("mount")->s, "/GAMES");
+    EXPECT_EQ(_context->pMediaManager->Revision(), revision) << "nothing was inserted";
+    EXPECT_EQ(_context->pMediaManager->GetMedium("sd.zc"), nullptr);
+
+    reply = Run(Request("compose", "", Utf8(descriptor), {{"fs", "fat32"}}));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(reply.body.find("compose")->find("fs")->s, "fat32");
+
+    const std::string inlineText = "{\"version\": 1, \"layers\": [{\"source\": {\"folder\": \"" +
+                                   (folder.Path() / "base").generic_string() + "\"}}]}";
+    reply = Run(Request("compose", "", inlineText));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(reply.body.find("compose")->find("descriptor")->s, "(inline)");
+
+    EXPECT_EQ(Run(Request("compose", "", Utf8(descriptor), {{"fs", "ntfs"}})).result.error, MediaError::BadRequest);
+    EXPECT_EQ(Run(Request("compose", "", "")).result.error, MediaError::BadRequest);
+    EXPECT_EQ(Run(Request("compose", "", Utf8(descriptor), {{"access", "readonly"}})).result.error, MediaError::BadRequest)
+        << "compose takes fs, codepage and free only";
+}
+
+/// A descriptor goes into a slot like a file: the slot reads the merged volume, `layers` names the layers,
+/// `rescan` picks up a file added to a layer's folder; a non-composite slot has no layers
+TEST_F(MediaControl_Test, CompositeInsertLayersAndRescan)
+{
+    Create("ATM3");
+    MediaManager& manager = *_context->pMediaManager;
+    ScratchFolder folder("control-composite");
+    folder.File("base/readme.txt", "base readme");
+    folder.File("patch/README.TXT", "patched");
+    const auto descriptor = folder.File(
+        "sd.ucompose.yaml", "version: 1\ntarget: {free: 1MiB}\nlayers:\n  - {name: base, source: {folder: base}}\n"
+                            "  - {name: patch, source: {folder: patch}}\n");
+
+    MediaReply reply = Run(Request("insert", "sd", Utf8(descriptor)));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    Medium* medium = manager.GetMedium("sd.zc");
+    ASSERT_NE(medium, nullptr);
+    EXPECT_EQ(medium->Source().type, MediaSourceType::Composite);
+    EXPECT_EQ(medium->Format(), "compose-fat16");
+    EXPECT_EQ(medium->Access(), AccessMode::Session) << "a composite is never written in place";
+
+    FatVolumeReader reader;
+    ASSERT_TRUE(reader.Open(*medium->Block()));
+    std::vector<uint8_t> data;
+    ASSERT_TRUE(reader.ReadFile("/README.TXT", data));
+    EXPECT_EQ(std::string(data.begin(), data.end()), "patched") << "the upper layer shadows the lower one";
+
+    reply = Run(Request("layers", "sd"));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    ASSERT_EQ(reply.body.find("layers")->find("layers")->items.size(), 2u);
+    EXPECT_EQ(reply.body.find("layers")->find("layers")->items[0].find("name")->s, "base");
+
+    // The guest writes a file: `changes` names it, with no layer (it is new); README.TXT came from `patch`
+    reply = Run(Request("changes", "sd"));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_TRUE(reply.body.find("changes")->items.empty());
+    {
+        FatGuest guest(*medium->Block());
+        ASSERT_TRUE(guest.Create("/NOTE.TXT", std::vector<uint8_t>(10, 'n')));
+        ASSERT_TRUE(guest.Poke("/README.TXT", 0, 'P'));
+    }
+    manager.ApplyPending();
+    reply = Run(Request("changes", "sd"));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    const auto& changes = reply.body.find("changes")->items;
+    ASSERT_EQ(changes.size(), 2u);
+    EXPECT_EQ(changes[0].find("op")->s, "create");
+    EXPECT_EQ(changes[0].find("path")->s, "/NOTE.TXT");
+    EXPECT_EQ(changes[0].find("layer")->s, "");
+    EXPECT_EQ(changes[1].find("op")->s, "modify");
+    EXPECT_EQ(changes[1].find("layer")->s, "patch");
+    EXPECT_FALSE(reply.body.find("fullScan")->b);
+    EXPECT_EQ(MediaControl::OptionsFor("changes"), std::vector<std::string>{});
+    Run(Request("discard", "sd"));
+
+    folder.File("base/new.txt", "added on the host");
+    reply = Run(Request("rescan", "sd"));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    FatVolumeReader rescanned;
+    ASSERT_TRUE(rescanned.Open(*manager.GetMedium("sd.zc")->Block()));
+    EXPECT_TRUE(rescanned.ReadFile("/new.txt", data)) << "the new host file is on the rebuilt volume";
+
+    EXPECT_EQ(Run(Request("layers", "A")).result.error, MediaError::NotSupported);
+    EXPECT_EQ(Run(Request("changes", "A")).result.error, MediaError::NotSupported) << "a floppy";
+}
+
+/// Estex DSS reads FAT12 / FAT16 only: a Sprinter hard disk builds a composite as FAT16 and refuses an explicit FAT32
+TEST_F(MediaControl_Test, SprinterHardDiskTakesFat16CompositesOnly)
+{
+    Create("SPRINTER");
+    ScratchFolder folder("control-sprinter-compose");
+    folder.File("dss/command.exe", "dss");
+    const auto descriptor = folder.File("hd.ucompose.yaml", "version: 1\ntarget: {free: 1MiB}\nlayers: [{source: {folder: dss}}]\n");
+
+    MediaReply reply = Run(Request("insert", "ide0.master", Utf8(descriptor), {{"fs", "fat32"}}));
+    EXPECT_EQ(reply.result.error, MediaError::BadRequest) << reply.result.message;
+    EXPECT_NE(reply.result.message.find("fat16"), std::string::npos) << reply.result.message;
+
+    reply = Run(Request("insert", "ide0.master", Utf8(descriptor)));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_EQ(_context->pMediaManager->GetMedium("ide0.master")->Format(), "compose-fat16");
+}
+
+/// A blank card up to 128 GiB (C10d / C10e: the guest's writes past the session's memory limit go to a journal), and
+/// `info` saying where the writes are kept
+TEST_F(MediaControl_Test, BlankMediumSizeAndSessionWrites)
+{
+    Create("ATM3");
+    MediaReply reply = Run(Request("create", "sd", {}, {{"size", std::to_string(8ull * 1024 * 1024 * 1024)}}));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    reply = Run(Request("create", "sd", {}, {{"size", std::to_string(129ull * 1024 * 1024 * 1024)}, {"discard", ""}}));
+    EXPECT_EQ(reply.result.error, MediaError::BadRequest) << "past 128 GiB";
+    EXPECT_NE(reply.result.message.find("128 GiB"), std::string::npos) << reply.result.message;
+
+    reply = Run(Request("info", "sd"));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    const StateNode body = reply.ToValue();
+    const StateNode* writes = body.find("info")->find("medium")->find("sessionWrites");
+    ASSERT_NE(writes, nullptr) << "a blank medium is a session";
+    EXPECT_EQ(writes->find("sectors")->i, 0);
+    EXPECT_EQ(writes->find("memoryBytes")->i, 0);
+    EXPECT_EQ(static_cast<uint64_t>(writes->find("memoryLimit")->i), SessionWriteMap::DefaultMemoryLimit());
+    EXPECT_EQ(writes->find("journalBytes")->i, 0);
+    EXPECT_EQ(writes->find("journalFile")->s, "");
+    EXPECT_FALSE(writes->find("journalRecoverable")->b) << "a blank medium has no place for a journal of its own";
+    EXPECT_FALSE(writes->find("journalFailed")->b);
 }

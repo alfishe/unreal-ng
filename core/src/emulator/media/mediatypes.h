@@ -34,6 +34,7 @@ enum class MediaSourceType : uint8_t
     Folder,  ///< a host folder, presented as a medium of the slot's kind
     Blank,   ///< created in memory
     Upload,  ///< a staged upload: a File the manager deletes on eject
+    Composite,  ///< a composition descriptor (*.ucompose.yaml / .json, or an inline body): several sources, one medium
 };
 
 /// File system of a folder volume

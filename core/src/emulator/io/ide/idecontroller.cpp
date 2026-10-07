@@ -104,6 +104,11 @@ void IdeController::BuildUnit(int unit)
         d.tags.push_back(channelName);
     if (FirstOfKind(unit))
         d.aliases.push_back(ide.cd ? "cd" : "hd");
+    // Estex DSS reads FAT12 / FAT16 only (the Sprinter hardware reference §9.3), and so does PQ-DOS 2023-09 on the
+    // Profi (ACC-C4, ProfiPlusComposed_Test: it boots from a FAT16 partition and ignores a FAT32 one): a FAT32
+    // folder volume or composite on such a disk is refused, never built
+    if ((_scheme == IDE_SPRINTER || _scheme == IDE_PROFI) && !ide.cd)
+        d.fsCompatibility = {FatType::Fat16};
     _slots[unit] = std::move(slot);
 }
 

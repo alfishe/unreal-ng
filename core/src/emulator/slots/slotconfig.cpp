@@ -183,7 +183,8 @@ std::string FormatSlotsSection(const SlotConfig& config)
         while (!options.empty())
         {
             const size_t space = options.find(' ');
-            const std::string_view pair = options.substr(0, space);
+            // An explicit length: substr(0, npos) makes gcc 13 warn about an unbounded memchr in the find below
+            const std::string_view pair = options.substr(0, space == std::string_view::npos ? options.size() : space);
             const size_t eq = pair.find('=');
             if (eq != std::string_view::npos)
             {

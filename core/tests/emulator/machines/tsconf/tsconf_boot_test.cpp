@@ -21,6 +21,8 @@
 #include <emulator/ports/models/portdecoder_tsconf.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -28,6 +30,7 @@
 #include <string>
 #include <vector>
 
+#include "_helpers/scratchfolder.h"
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
 #include "emulator/media/mediamanager.h"
@@ -349,4 +352,57 @@ TEST_F(TsConfBootSd_Test, BOOT5_DefaultSettingsBootWildCommanderFromSd)
     EmulatorTestHelper::RunUntil(_emulator.get(), wildCommander, 500);
     ASSERT_TRUE(wildCommander()) << "pc=" << std::hex << Cpu().pc << " vconf=" << int(ts.regs[TsConfReg::VConfig]);
     EXPECT_FALSE(SetupMenuShown());
+}
+
+/// ACC-C2 (media-multisource): Wild Commander on a FAT32 composite of three folders with filters.
+/// Layer 1 is the card folder of testdata/machines/tsconf/wc-improved (boot.$C and WC/, MIT, README
+/// there); layer 2 a games folder at the root that takes *.trd and *.scl only; layer 3 a docs folder
+/// mounted at /DOCS. The slot reads FAT32 only, so the composite is FAT32 without asking. WC's left
+/// panel lists the card's root: the program, its folder, the mount point and the filtered games, and
+/// none of the files the filter left out
+/// Real-ROM boot plus Wild Commander reading the card (~200 frames): slower than 50 ms by nature
+TEST_F(TsConfBootSd_Test, ComposeWildCommanderListsFilteredFat32Layers)
+{
+    const std::filesystem::path wc = TestPathHelper::FindProjectRoot() / "testdata/machines/tsconf/wc-improved/sdcard";
+    ASSERT_TRUE(std::filesystem::exists(wc / "boot.$C")) << wc.generic_string();
+    ScratchFolder folder("tsconf-compose-wc");
+    folder.File("games/elite.trd", std::string(2560, 'e'));
+    folder.File("games/exolon.scl", std::string(1024, 'x'));
+    folder.File("games/notincl.txt", "left out by the filter");
+    folder.File("games/skipme.bak", "left out by the filter");
+    folder.File("docs/readme.txt", "docs");
+    const auto descriptor = folder.File("sd.ucompose.yaml", "version: 1\n"
+                                                            "target: {free: 64MiB, fixedTime: 1767268800}\n"
+                                                            "layers:\n"
+                                                            "  - {name: wc, source: {folder: '" + wc.generic_string() + "'}}\n"
+                                                            "  - {name: games, source: {folder: games}, include: ['*.trd', '*.scl']}\n"
+                                                            "  - {name: docs, source: {folder: docs}, mount: /DOCS}\n");
+    MediaSource source;
+    source.path = descriptor.string();
+    InsertOptions options;
+    options.immediate = true;
+    const MediaResult inserted = _context->pMediaManager->Insert("sd.zc", source, options);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    ASSERT_EQ(_context->pMediaManager->GetMedium("sd.zc")->Format(), "compose-fat32") << "TS-Conf reads FAT32 only";
+    _emulator->Reset();
+
+    const TsConfState& ts = _decoder->GetState();
+    auto screen = [&] {
+        std::string text;
+        for (uint8_t row = 0; row < 36; row++)
+            text += TextRow(ts.regs[TsConfReg::VPage], row) + "\n";
+        std::transform(text.begin(), text.end(), text.begin(), [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+        return text;
+    };
+    auto panelListed = [&] {
+        return (ts.regs[TsConfReg::VConfig] & 0x03) == 0x03 && screen().find("wild commander") != std::string::npos &&
+               screen().find("exolon") != std::string::npos;
+    };
+    EmulatorTestHelper::RunUntil(_emulator.get(), panelListed, 600);
+    const std::string text = screen();
+    ASSERT_TRUE(panelListed()) << "pc=" << std::hex << Cpu().pc << "\n" << text;
+    for (const char* shown : {"boot", "elite", "exolon", "docs"})
+        EXPECT_NE(text.find(shown), std::string::npos) << shown << "\n" << text;
+    for (const char* hidden : {"notincl", "skipme"})
+        EXPECT_EQ(text.find(hidden), std::string::npos) << hidden << " is not included\n" << text;
 }

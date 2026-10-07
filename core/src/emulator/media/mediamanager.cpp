@@ -2,6 +2,16 @@
 
 #include "mediamanager.h"
 
+#include "emulator/media/composedescriptor.h"
+#include "emulator/media/compositemediumfactory.h"
+#include "emulator/media/sessiondelta.h"
+#include "emulator/media/mediachanges.h"
+#include "emulator/media/writeback.h"
+#include "emulator/io/storage/commitjournal.h"
+#include "emulator/io/storage/compose/graftvolume.h"
+#include "emulator/io/storage/hddimageformats.h"
+#include <set>
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -54,11 +64,15 @@ MediaManager::~MediaManager()
     // data. Staged uploads die with their medium
     for (auto& [id, state] : _slots)
     {
-        Retire(std::move(state.attached));
+        const bool dirty = state.attached && state.attached->IsDirty();
+        Retire(std::move(state.attached), dirty);
         Retire(std::move(state.incoming));
     }
     for (auto& [id, medium] : _parked)
-        Retire(std::move(medium));
+    {
+        const bool dirty = medium && medium->IsDirty();
+        Retire(std::move(medium), dirty);
+    }
 }
 
 /// region <Slots>
@@ -192,10 +206,14 @@ MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& s
     request.access = options.access.value_or(descriptor.defaultAccess);
     // A folder is never written: a slot whose images default to write-through
     // (an IDE hard disk) keeps a folder's writes for the session
-    const bool folder = source.type == MediaSourceType::Folder || FileHelper::IsFolder(source.path);
+    // A composite reads folders and images and is never written in place either
+    const bool folder = source.type == MediaSourceType::Folder || FileHelper::IsFolder(source.path) ||
+                        source.type == MediaSourceType::Composite || !source.inlineBody.empty() ||
+                        ComposeDescriptor::IsDescriptorName(source.path);
     if (!options.access && folder && request.access == AccessMode::WriteThrough)
         request.access = AccessMode::Session;
     request.fs = options.fs.value_or(descriptor.defaultFs);
+    request.explicitFs = options.fs.has_value();
     request.allowedFs = descriptor.fsCompatibility;
     request.mbr = descriptor.folderMbr;
     request.codePage = options.codePage;
@@ -248,6 +266,8 @@ MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& s
         if (!mismatch.empty())
             medium->Report().push_back(std::move(mismatch));
     }
+
+    AttachJournal(*medium, source, options.journal);
 
     MediaResult inserted = Insert(slotId, std::move(medium), options);
     inserted.report.insert(inserted.report.begin(), opened.report.begin(), opened.report.end());
@@ -543,8 +563,9 @@ MediaResult MediaManager::Rescan(const std::string& slotId)
     if (it == _slots.end())
         return MediaResult::Fail(MediaError::UnknownSlot, "no slot '" + slotId + "' on this machine");
     SlotState& state = it->second;
-    if (!state.attached || state.attached->Source().type != MediaSourceType::Folder)
-        return MediaResult::Fail(MediaError::NotSupported, "slot '" + slotId + "' does not hold a folder");
+    if (!state.attached || (state.attached->Source().type != MediaSourceType::Folder &&
+                            state.attached->Source().type != MediaSourceType::Composite))
+        return MediaResult::Fail(MediaError::NotSupported, "slot '" + slotId + "' does not hold a folder or a composite");
     const uint64_t changed = CanApplyNow() ? state.attached->ChangedUnits() : state.changedUnits;
     if (changed > 0)
         return MediaResult::Fail(MediaError::Dirty, "slot '" + slotId + "' has " + std::to_string(changed) +
@@ -651,7 +672,13 @@ void MediaManager::ApplyPending()
     {
         std::lock_guard<std::recursive_mutex> lock(_mutex);
         for (auto& [id, state] : _slots)
+        {
             ApplySlot(id, state, retired);
+            // Session writes reach their journal within [MEDIA] SessionFlushSeconds
+            if (state.attached)
+                if (SessionWriteMap* session = state.attached->Session())
+                    session->Tick();
+        }
     }
     for (auto& old : retired)
         Retire(std::move(old));
@@ -877,6 +904,7 @@ MediaResult MediaManager::ApplyDisposition(const std::string& slotId, Medium& me
         {
             SaveOptions options;
             options.allowRetarget = true;
+            options.disposition = true;
             return SaveMedium(slotId, medium, it != _slots.end() ? it->second.slot : nullptr, options, nullptr);
         }
         case Disposition::Export:
@@ -897,9 +925,14 @@ MediaResult MediaManager::ExportMedium(const std::string& slotId, Medium& medium
 
     if (FileHelper::AbsolutePath(path, /*resolveSymlinks*/ true) == medium.SourceKey())
         return MediaResult::Fail(MediaError::InUse, "the export target is the medium's own source");
+    if (!medium.Block() && (options.compact || options.fs || options.size))
+        return MediaResult::Fail(MediaError::BadRequest, "compact, fs and size apply to block media (FAT disks and cards)");
     if (!medium.Block() && (!options.compression.empty() || !options.parent.empty()))
         return MediaResult::Fail(MediaError::BadRequest, "compression and parent apply to block media exported as .chd");
+    if (!medium.Block() && !options.vhd.empty())
+        return MediaResult::Fail(MediaError::BadRequest, "vhd applies to block media exported as .vhd");
 
+    std::vector<std::string> exportReport;
     if (DiskImage* disk = medium.Floppy())
     {
         // The format writers mark the disk clean and rename it: an export is a
@@ -922,6 +955,7 @@ MediaResult MediaManager::ExportMedium(const std::string& slotId, Medium& medium
         const MediaResult written = BlockFormats::Write(*medium.Block(), path, options, unchanged);
         if (!written.Ok())
             return written;
+        exportReport = written.report;
     }
     else if (const TapeImage* tape = medium.Tape())
     {
@@ -939,7 +973,9 @@ MediaResult MediaManager::ExportMedium(const std::string& slotId, Medium& medium
     }
 
     Post(NC_MEDIA_EXPORTED, slotId, &medium, path);
-    return MediaResult::Success();
+    MediaResult exported = MediaResult::Success();
+    exported.report = exportReport;
+    return exported;
 }
 
 MediaResult MediaManager::SaveMedium(const std::string& slotId, Medium& medium, IMediaSlot* slot,
@@ -998,9 +1034,47 @@ MediaResult MediaManager::SaveBlockMedium(const std::string& slotId, Medium& med
     if (!CanApplyNow())
         return MediaResult::Fail(MediaError::NotSupported, "pause the emulator to save slot '" + slotId + "'");
 
+    // DT-9: a composite without a target path saves its session as the descriptor says (S2 by default)
+    // (a composite saved flat to a path stands for that file afterwards: its source is no longer the descriptor)
+    const CompositeInfo* composite = medium.Source().type == MediaSourceType::Composite ? medium.Composite() : nullptr;
+    if (composite && medium.Session())
+    {
+        std::string strategy = options.strategy;
+        std::string note;
+        if (strategy.empty())
+        {
+            strategy = options.path.empty() ? composite->writesSave : "flat";
+            if (options.disposition && (strategy == "commit" || strategy == "write-back"))
+            {
+                strategy = "delta";
+                note = composite->writesSave + " needs an explicit strategy on eject: saved as a session delta (D-8)";
+            }
+        }
+        if (strategy == "delta")
+            return SaveDelta(slotId, medium, *composite, options, note, outcome);
+        if (strategy == "commit")
+            return CommitComposite(slotId, medium, slot, *composite, options, outcome);
+        if (strategy == "write-back")
+            return WriteBackComposite(slotId, medium, *composite, options, outcome);
+        if (strategy != "flat")
+            return MediaResult::Fail(MediaError::BadRequest, "strategy '" + strategy + "': expected flat, delta, commit or write-back");
+        if (options.path.empty())
+            return MediaResult::Fail(MediaError::BadRequest, "a flat save writes a new image: name the path to save to");
+    }
+    else if (!options.strategy.empty() && options.strategy != "flat")
+        return MediaResult::Fail(MediaError::BadRequest, "strategy '" + options.strategy + "' is for composite media with session writes");
+
     const std::string before = medium.Source().path;
     BlockWriteOptions write;
     write.compression = options.compression;
+    write.compact = options.compact;
+    write.fs = options.fs;
+    write.size = options.size;
+    write.vhd = options.vhd;
+    if (!options.vhd.empty() && options.path.empty())
+        return MediaResult::Fail(MediaError::BadRequest, "vhd writes a new image: name the .vhd path to save to");
+    if (options.compact && options.path.empty())
+        return MediaResult::Fail(MediaError::BadRequest, "compact writes a new image: name the path to save to");
     std::string savedPath;
     MediaResult result = BlockFormats::Save(medium, options.path, write, savedPath);
     if (!result.Ok())
@@ -1014,6 +1088,273 @@ MediaResult MediaManager::SaveBlockMedium(const std::string& slotId, Medium& med
         outcome->note.clear();
     }
     Post(NC_MEDIA_SAVED, slotId, &medium, savedPath);
+    return result;
+}
+
+MediaResult MediaManager::SaveDelta(const std::string& slotId, Medium& medium, const CompositeInfo& composite, const SaveOptions& options,
+                                    const std::string& note, SaveOutcome* outcome)
+{
+    std::filesystem::path path = options.path.empty() ? composite.delta : FileHelper::ToFsPath(options.path);
+    if (path.empty())
+        return MediaResult::Fail(MediaError::BadRequest,
+                                 "an inline descriptor has no delta file: name writes.delta in it, or save flat to a path");
+    if (!medium.DeltaConflict().empty() && options.path.empty() && !options.force)
+        return MediaResult::Fail(MediaError::Dirty, medium.DeltaConflict() + ": save with force to replace it, or flat to a path");
+
+    MediaResult result = SessionDelta::Save(path, *medium.Session(), CompositeMediumFactory::DeltaIdentityOf(composite));
+    if (!result.Ok())
+        return result;
+    medium.MarkPersisted();
+    medium.SetDeltaConflict({});
+    const std::string savedPath = FileHelper::FromFsPath(path);
+    result.report.push_back("session delta: " + std::to_string(medium.Session()->ChangedSectors()) + " sector(s) in " + savedPath);
+    if (!note.empty())
+        result.report.push_back(note);
+    if (outcome)
+    {
+        outcome->savedPath = savedPath;
+        outcome->retargeted = false;
+        outcome->note = result.report.back();
+    }
+    Post(NC_MEDIA_SAVED, slotId, &medium, savedPath);
+    return result;
+}
+
+MediaResult MediaManager::WriteBackComposite(const std::string& slotId, Medium& medium, const CompositeInfo& composite,
+                                             const SaveOptions& options, SaveOutcome* outcome)
+{
+    if (composite.descriptor == ComposeDescriptor::kInlineName)
+        return MediaResult::Fail(MediaError::BadRequest, "an inline descriptor cannot take write-back: write it to a file");
+    const ComposeDescriptor d = ComposeDescriptor::Load(FileHelper::ToFsPath(composite.descriptor));
+    if (!d.Ok())
+        return MediaResult::Fail(MediaError::BadRequest, d.error);
+    WriteBackOptions wb;
+    wb.force = options.force;
+    wb.keepBoth = options.keepBoth;
+    WriteBackPlan plan;
+    MediaResult planned = WriteBack::Plan(medium, d, wb, plan);
+    if (!planned.Ok())
+        return planned;
+
+    MediaResult result = MediaResult::Success();
+    for (const WriteBackStep& s : plan.steps)
+    {
+        std::string line = std::string(WriteBackStep::KindName(s.kind)) + " " + (s.partition.empty() ? s.path : s.partition + ":" + s.path);
+        if (!s.layer.empty())
+            line += " [" + s.layer + "]";
+        if (!s.host.empty())
+            line += " -> " + FileHelper::FromFsPath(s.host);
+        if (s.kind == WriteBackStep::Kind::Write)
+            line += " (" + std::to_string(s.bytes) + " bytes)";
+        if (!s.detail.empty())
+            line += ": " + s.detail;
+        result.report.push_back(line);
+    }
+    for (const std::string& e : plan.errors)
+        result.report.push_back("error: " + e);
+    if (options.plan)
+    {
+        result.report.push_back(plan.errors.empty() ? "plan only: nothing was written" : "plan only: write-back would be refused");
+        return result;
+    }
+    MediaResult applied = WriteBack::Apply(medium, d, plan);
+    if (!applied.Ok())
+    {
+        applied.report.insert(applied.report.begin(), result.report.begin(), result.report.end());
+        return applied;
+    }
+    result.report.insert(result.report.end(), applied.report.begin(), applied.report.end());
+
+    // The host now holds the guest's files: build again, with an empty change layer
+    medium.Session()->Discard();
+    std::error_code ec;
+    if (!composite.delta.empty() && std::filesystem::remove(composite.delta, ec))
+        result.report.push_back(FileHelper::FromFsPath(composite.delta.filename()) + " removed: the layers hold its changes now");
+    if (outcome)
+    {
+        outcome->savedPath = composite.descriptor;
+        outcome->retargeted = false;
+        outcome->note = result.report.empty() ? std::string() : result.report.back();
+    }
+    Post(NC_MEDIA_SAVED, slotId, &medium, composite.descriptor);
+    if (auto it = _slots.find(slotId); it != _slots.end() && it->second.attached.get() == &medium)
+    {
+        const MediaResult rebuilt = Rescan(slotId);
+        result.report.push_back(rebuilt.Ok() ? "rebuilt from the layers" : "rebuild: " + rebuilt.message);
+    }
+    return result;
+}
+
+bool MediaManager::UsedElsewhere(const Medium& self, const std::string& path) const
+{
+    const std::string key = FileHelper::AbsolutePath(path, /*resolveSymlinks*/ true);
+    auto uses = [&key](const Medium& m) {
+        if (m.SourceKey() == key)
+            return true;
+        if (const CompositeInfo* info = m.Composite())
+            for (const CompositeLayerInfo& layer : info->layers)
+                if (!layer.path.empty() && FileHelper::AbsolutePath(layer.path, true) == key)
+                    return true;
+        return false;
+    };
+    for (const auto& [id, state] : _slots)
+        if (state.attached && state.attached.get() != &self && uses(*state.attached))
+            return true;
+    for (const auto& [id, parked] : _parked)
+        if (parked && parked.get() != &self && uses(*parked))
+            return true;
+    return false;
+}
+
+MediaResult MediaManager::CommitComposite(const std::string& slotId, Medium& medium, IMediaSlot* slot, const CompositeInfo& composite,
+                                          const SaveOptions& options, SaveOutcome* outcome)
+{
+    // DT-14: a graft over a writable image, used nowhere else, with a consistent guest file system
+    SessionWriteMap* session = medium.Session();
+    const auto* graft = session ? dynamic_cast<const GraftVolume*>(&session->Base()) : nullptr;
+    if (!graft || composite.layers.empty())
+        return MediaResult::Fail(MediaError::BadRequest, "commit needs a graft composite (a FAT image at the bottom, build: graft): "
+                                                         "flatten it to an image (strategy flat) instead");
+    const std::string base = composite.layers[0].path;
+    std::string error;
+    const std::string format = HddImageFormats::Probe(base, &error);
+    if (format != "raw" && format != "hdf" && format != "hdi" && format != "vhd")
+        return MediaResult::Fail(MediaError::NotSupported, "the base " + base + " is " + (format.empty() ? error : "a " + format + " image") +
+                                                               ": it cannot be written in place; flatten to a .chd child or an image instead");
+    if (UsedElsewhere(medium, base))
+        return MediaResult::Fail(MediaError::InUse, "the base " + base + " is in use in another slot: a commit needs it alone");
+    MediumChanges changes;
+    if (ListMediumChanges(medium, changes).Ok() && !options.force)
+    {
+        for (const std::string& w : changes.warnings)
+            if (w.find("lost clusters") != std::string::npos || w.find("cross-linked") != std::string::npos)
+                return MediaResult::Fail(MediaError::Dirty, "the guest's file system is inconsistent (" + w +
+                                                                "): commit with force, or flatten to an image");
+    }
+
+    // The plan: patches, grafted files, guest writes; each sector as the composite reads it now. Walked from the
+    // three sorted sources each time (C8d): no list of every sector in memory
+    std::vector<uint64_t> patches = graft->PatchLbas();
+    std::sort(patches.begin(), patches.end());
+    std::vector<std::pair<uint64_t, uint64_t>> runs = graft->GraftedSectorRuns();
+    std::sort(runs.begin(), runs.end());
+    uint64_t grafted = 0;
+    for (const auto& run : runs)
+        grafted += run.second;
+    auto walk = [&]() {
+        return [&, p = size_t(0), r = size_t(0), offset = uint64_t(0), guest = session->NextChanged(0),
+                last = std::optional<uint64_t>()]() mutable -> std::optional<uint64_t> {
+            for (;;)
+            {
+                std::optional<uint64_t> next;
+                auto offer = [&next](uint64_t lba) { next = next ? std::min(*next, lba) : lba; };
+                if (p < patches.size())
+                    offer(patches[p]);
+                if (r < runs.size())
+                    offer(runs[r].first + offset);
+                if (guest)
+                    offer(*guest);
+                if (!next)
+                    return std::nullopt;
+                if (p < patches.size() && patches[p] == *next)
+                    p++;
+                if (r < runs.size() && runs[r].first + offset == *next && ++offset == runs[r].second)
+                {
+                    r++;
+                    offset = 0;
+                }
+                if (guest && *guest == *next)
+                    guest = session->NextChanged(*guest + 1);
+                if (last && *last == *next)
+                    continue;  // in two sources
+                last = next;
+                return next;
+            }
+        };
+    };
+    uint64_t total = 0;
+    uint64_t last = 0;
+    {
+        auto next = walk();
+        for (std::optional<uint64_t> lba = next(); lba; lba = next())
+        {
+            total++;
+            last = *lba;
+        }
+    }
+    MediaResult result = MediaResult::Success();
+    result.report.push_back("commit into " + base + ": " + std::to_string(total) + " sectors (" +
+                            std::to_string(patches.size()) + " re-encoded, " + std::to_string(grafted) +
+                            " of grafted files, " + std::to_string(session->ChangedSectors()) + " written by the guest)");
+    if (options.plan)
+    {
+        result.report.push_back("plan only: nothing was written");
+        return result;
+    }
+
+    const std::filesystem::path basePath = FileHelper::ToFsPath(base);
+    auto device = HddImageFormats::OpenBlock(base, format, RawImage::Access::ReadWrite, &error);
+    if (!device)
+        return MediaResult::Fail(MediaError::IoError, "cannot open " + base + " for writing: " + error);
+    const uint64_t originalSectors = device->SectorCount();
+    if (!CommitJournal::Write(basePath, *device, walk(), &error))
+        return MediaResult::Fail(MediaError::IoError, error);
+    if (last >= originalSectors)
+    {
+        // A cut-down image: grafted files land past its end, the file grows to hold them
+        if (format != "raw")
+        {
+            CommitJournal::Remove(basePath);
+            return MediaResult::Fail(MediaError::NotSupported, "the base " + base + " ends before its volume does: only a raw image can grow");
+        }
+        device.reset();
+        std::error_code ec;
+        std::filesystem::resize_file(basePath, (last + 1) * IBlockDevice::kSectorSize, ec);
+        device = ec ? nullptr : HddImageFormats::OpenBlock(base, format, RawImage::Access::ReadWrite, &error);
+        if (!device)
+            return MediaResult::Fail(MediaError::IoError, "cannot grow " + base + ": the journal " +
+                                                              FileHelper::FromFsPath(CommitJournal::PathFor(basePath)) + " undoes it at the next open");
+    }
+    uint8_t sector[IBlockDevice::kSectorSize];
+    auto next = walk();
+    for (std::optional<uint64_t> at = next(); at; at = next())
+    {
+        const uint64_t lba = *at;
+        if (!session->ReadSector(lba, sector) || !device->WriteSector(lba, sector))
+            return MediaResult::Fail(MediaError::IoError, "writing sector " + std::to_string(lba) + " of " + base + " failed: the journal " +
+                                                              FileHelper::FromFsPath(CommitJournal::PathFor(basePath)) +
+                                                              " restores the image at the next open");
+    }
+    device.reset();
+    if (!CommitJournal::Sync(basePath))
+        return MediaResult::Fail(MediaError::IoError, "cannot sync " + base + ": the journal is kept");
+    CommitJournal::Remove(basePath);
+
+    // The slot now holds the base itself: it has every layer's files and the guest's writes
+    std::unique_ptr<IBlockDevice> old = session->ReleaseBase();
+    old.reset();
+    auto reopened = HddImageFormats::OpenBlock(base, format, RawImage::Access::ReadOnly, &error);
+    if (!reopened)
+        return MediaResult::Fail(MediaError::IoError, "committed, but " + base + " cannot be opened again: " + error);
+    session->SetBase(std::move(reopened));
+    session->Discard();
+    MediaSource source;
+    source.type = MediaSourceType::File;
+    source.path = base;
+    medium.Rebase(source);
+    medium.SetFormat(format);
+    medium.SetComposite(nullptr);
+    if (slot)
+        slot->SourceChanged(medium);
+    result.report.push_back("the slot now holds " + base + "; the descriptor still names its upper layers (inserting it again "
+                            "grafts them again)");
+    if (outcome)
+    {
+        outcome->savedPath = base;
+        outcome->retargeted = false;
+        outcome->note = result.report.front();
+    }
+    Post(NC_MEDIA_SAVED, slotId, &medium, base);
     return result;
 }
 
@@ -1126,10 +1467,57 @@ void MediaManager::Post(const char* topic, const std::string& slotId, const Medi
     MessageCenter::DefaultMessageCenter().Post(topic, payload, true);
 }
 
-void MediaManager::Retire(std::unique_ptr<Medium> medium)
+void MediaManager::AttachJournal(Medium& medium, const MediaSource& source, JournalChoice choice)
+{
+    SessionWriteMap* session = medium.Session();
+    if (!session)
+        return;
+    if (choice == JournalChoice::Default)
+        choice = SessionWriteMap::Defaults().journal ? JournalChoice::Replay : JournalChoice::Off;
+    // A source of its own on the host: an image, a folder, a descriptor (not an inline one, not an upload)
+    std::string path = source.path;
+    while (path.size() > 1 && (path.back() == '/' || path.back() == '\\'))
+        path.pop_back();
+    if (path.empty() || !source.inlineBody.empty() || source.type == MediaSourceType::Upload ||
+        source.type == MediaSourceType::Blank)
+        return;
+    path += ".usession";
+
+    const SessionWriteMap::JournalMode mode = choice == JournalChoice::Discard ? SessionWriteMap::JournalMode::Discard
+                                              : choice == JournalChoice::Off   ? SessionWriteMap::JournalMode::Off
+                                                                               : SessionWriteMap::JournalMode::Replay;
+    const SessionWriteMap::JournalOpen open = session->OpenJournal(path, mode);
+    const std::string name = FileHelper::FromFsPath(FileHelper::ToFsPath(path).filename());
+    using Outcome = SessionWriteMap::JournalOpen::Outcome;
+    switch (open.outcome)
+    {
+        case Outcome::Created:
+        case Outcome::Off:
+            break;
+        case Outcome::Replayed:
+            medium.Report().push_back("session journal " + name + " replayed: " + std::to_string(open.sectors) +
+                                      " sector(s) the guest wrote before the emulator stopped" +
+                                      (open.badSlots ? " (" + std::to_string(open.badSlots) + " damaged slot(s) skipped)" : ""));
+            break;
+        case Outcome::Discarded:
+            medium.Report().push_back("session journal " + name + " discarded unread (journal: discard)");
+            break;
+        case Outcome::Stale:
+            medium.Report().push_back("session journal " + name + " not replayed, " + open.detail + ": kept as " + open.kept);
+            break;
+        case Outcome::InUse:
+            medium.Report().push_back("session journal " + name + " is used by another slot: this one keeps its writes in a "
+                                      "temp file (not recoverable after a crash)");
+            break;
+    }
+}
+
+void MediaManager::Retire(std::unique_ptr<Medium> medium, bool keepJournal)
 {
     if (!medium)
         return;
+    if (SessionWriteMap* session = medium->Session())
+        session->CloseJournal(keepJournal);
     // A staged upload's file goes with its medium - after the medium has
     // closed it (an open file cannot be deleted on Windows)
     const bool upload = medium->Source().type == MediaSourceType::Upload && !medium->Source().path.empty();

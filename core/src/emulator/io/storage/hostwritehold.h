@@ -41,6 +41,8 @@ public:
         return true;
     }
     bool IsWritable() const override { return _base->IsWritable(); }
+    /// Held writes make a run unknown (they are few and short-lived: replay only)
+    uint64_t ZeroRun(uint64_t lba) override { return _held.empty() ? _base->ZeroRun(lba) : 0; }
     std::optional<BlockGeometry> NativeGeometry() const override { return _base->NativeGeometry(); }
     std::string Describe() const override { return _base->Describe(); }
     uint64_t ContentId() const override { return _base->ContentId(); }

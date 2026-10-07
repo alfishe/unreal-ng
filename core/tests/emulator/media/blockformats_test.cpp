@@ -4,12 +4,17 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
 #include <vector>
+
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
 
 #include "_helpers/scratchfolder.h"
 #include "_helpers/testpathhelper.h"
@@ -297,8 +302,8 @@ TEST_F(BlockFormats_Test, MediaControlTakesCompressionAndParent)
     ASSERT_TRUE(Insert(path, AccessMode::Session).Ok());
     const std::string out = Utf8(_folder.Path() / "control.chd");
     // The verbs' option lists (MediaControl_Test.ChdOnTheSharedVerbs runs them on a machine)
-    EXPECT_EQ(MediaControl::OptionsFor("export"), (std::vector<std::string>{"compression", "parent"}));
-    EXPECT_EQ(MediaControl::OptionsFor("save"), (std::vector<std::string>{"retarget", "compression"}));
+    EXPECT_EQ(MediaControl::OptionsFor("export"), (std::vector<std::string>{"compression", "parent", "compact", "fs", "size", "vhd"}));
+    EXPECT_EQ(MediaControl::OptionsFor("save"), (std::vector<std::string>{"retarget", "compression", "compact", "fs", "size", "vhd", "strategy", "force", "plan", "onConflict"}));
     BlockWriteOptions options;
     options.compression = "lzma,huff";
     ASSERT_TRUE(_manager.Export("ide0.master", out, options).Ok());
@@ -306,4 +311,75 @@ TEST_F(BlockFormats_Test, MediaControlTakesCompressionAndParent)
     auto file = chd::ChdFile::Open(out, &error);
     ASSERT_NE(file, nullptr) << error;
     EXPECT_EQ(chd::FormatCodecList(file->Codecs()), "lzma,huff");
+}
+
+// A fixed VHD: the data, then the 512-byte footer (cookie, sizes, CHS, type 2, checksum); probed as vhd and read
+// back as the same sectors. The same disk gives the same file (timestamp 0, the UUID from the content id)
+TEST_F(BlockFormats_Test, VhdFixedFooter)
+{
+    const std::string raw = Utf8(_folder.File("disk.img", std::string(2048 * 512, '\x42')));
+    ASSERT_TRUE(Insert(raw, AccessMode::Session).Ok());
+    GuestWrite(17, 0x9A);
+    const std::vector<uint8_t> expected = GuestView();
+
+    const std::string vhd = Utf8(_folder.Path() / "disk.vhd");
+    ASSERT_EQ(BlockFormats::WriterFor(vhd), "vhd");
+    ASSERT_TRUE(_manager.Export("ide0.master", vhd).Ok());
+    std::vector<uint8_t> bytes = Slurp(vhd);
+    ASSERT_EQ(bytes.size(), expected.size() + 512);
+    const uint8_t* f = bytes.data() + expected.size();
+    auto be32 = [](const uint8_t* p) { return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3]; };
+    auto be64 = [&](const uint8_t* p) { return (uint64_t(be32(p)) << 32) | be32(p + 4); };
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(f), 8), "conectix");
+    EXPECT_EQ(be32(f + 12), 0x00010000u) << "version 1.0";
+    EXPECT_EQ(be64(f + 16), ~0ULL) << "a fixed disk has no data offset";
+    EXPECT_EQ(be32(f + 24), 0u) << "timestamp 0: deterministic";
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(f + 28), 4), "ung ");
+    EXPECT_EQ(be64(f + 40), expected.size());
+    EXPECT_EQ(be64(f + 48), expected.size());
+    const uint32_t cylinders = (uint32_t(f[56]) << 8) | f[57];
+    EXPECT_GE(uint64_t(cylinders) * f[58] * f[59], 1900u) << "CHS covers the disk (VHD algorithm)";
+    EXPECT_LE(uint64_t(cylinders) * f[58] * f[59], 2048u);
+    EXPECT_EQ(be32(f + 60), 2u) << "fixed";
+    uint32_t sum = 0;
+    for (int i = 0; i < 512; i++)
+        sum += (i >= 64 && i < 68) ? 0 : f[i];
+    EXPECT_EQ(be32(f + 64), ~sum) << "checksum";
+    EXPECT_TRUE(std::any_of(f + 68, f + 84, [](uint8_t b) { return b != 0; })) << "a UUID";
+
+    ASSERT_TRUE(_manager.Export("ide0.master", Utf8(_folder.Path() / "again.vhd")).Ok());
+    EXPECT_EQ(Slurp(Utf8(_folder.Path() / "again.vhd")), bytes) << "the same disk, the same file";
+
+    // Inserted, it is a vhd medium with the same sectors (the footer is not one)
+    ASSERT_TRUE(_manager.Eject("ide0.master", DiscardChanges()).Ok());
+    ASSERT_TRUE(Insert(vhd, AccessMode::Session).Ok());
+    EXPECT_EQ(_manager.Info("ide0.master")->format, "vhd");
+    EXPECT_EQ(GuestView(), expected);
+}
+
+// Raw export skips all-zero sectors: the file has its full size, the host stores only the data where it can
+TEST_F(BlockFormats_Test, SparseRawExport)
+{
+    const std::filesystem::path disk = _folder.Path() / "big.img";
+    {
+        std::ofstream out(disk, std::ios::binary);
+        out << "start";
+    }
+    std::filesystem::resize_file(disk, 4ull * 1024 * 1024);  // 4 MiB of zeros, sparse itself
+    ASSERT_TRUE(Insert(Utf8(disk), AccessMode::Session).Ok());
+    GuestWrite(6000, 0x33);
+
+    const std::filesystem::path out = _folder.Path() / "out.img";
+    ASSERT_TRUE(_manager.Export("ide0.master", Utf8(out)).Ok());
+    ASSERT_EQ(std::filesystem::file_size(out), 4ull * 1024 * 1024);
+    const std::vector<uint8_t> bytes = Slurp(Utf8(out));
+    EXPECT_EQ(std::string(bytes.begin(), bytes.begin() + 5), "start");
+    EXPECT_EQ(bytes[6000 * 512], 0x33);
+    EXPECT_EQ(std::count(bytes.begin(), bytes.end(), uint8_t(0)), static_cast<std::ptrdiff_t>(bytes.size() - 5 - 512));
+#ifndef _WIN32
+    struct stat st{};
+    ASSERT_EQ(stat(out.c_str(), &st), 0);
+    if (st.st_blocks > 0)
+        EXPECT_LT(uint64_t(st.st_blocks) * 512, 1024ull * 1024) << "only the data is stored (host with sparse files)";
+#endif
 }

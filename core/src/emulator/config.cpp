@@ -19,6 +19,7 @@
 #include "emulator/io/serial/uart16550.h"
 #include "emulator/io/serial/esp/espmodule.h"
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
+#include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/slots/slotmanager.h"
 #include <cassert>
 #include <array>
@@ -1041,6 +1042,15 @@ bool Config::ParseConfig(IniFile& inimanager)
 		}
 		_mediaReport.clear();
 		_mediaSet = MediaConfig::FromIni(inimanager, configFolder, &_mediaReport);
+		const MediaSettings settings = MediaConfig::SettingsFromIni(inimanager, configFolder, &_mediaReport);
+		SessionSettings session;  // the defaults where the config says nothing
+		session.memoryLimit = settings.sessionMemoryLimit.value_or(session.memoryLimit);
+		session.arenaBytes = settings.sessionArenaBytes.value_or(session.arenaBytes);
+		session.flushSeconds = settings.sessionFlushSeconds.value_or(session.flushSeconds);
+		session.syncSeconds = settings.sessionSyncSeconds.value_or(session.syncSeconds);
+		session.journal = settings.sessionJournal.value_or(session.journal);
+		session.spillFolder = settings.spillFolder.value_or(std::string());
+		SessionWriteMap::SetDefaults(session);
 	}
 
 	// Emulated model

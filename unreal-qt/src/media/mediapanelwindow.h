@@ -23,6 +23,7 @@
 #include <thread>
 #include <vector>
 
+#include "media/core/flattenchoice.h"
 #include "media/core/mediapanelmodel.h"
 #include "emulator/state/statenode.h"
 
@@ -85,6 +86,7 @@ private slots:
     void onProtect();
     void onCreate();
     void onCompactFlash();
+    void onLayers();
     void onFilesDropped(int row, const QStringList& paths);
 
 private:
@@ -93,6 +95,8 @@ private:
     void updateButtons();
     const MediaPanelRow* selectedRow() const;
 
+    /// A composite's unsaved writes through the strategy dialog (DT-9); false when cancelled or refused
+    bool saveComposite(const std::string& slot);
     /// Run one verb; a refused request because of unsaved writes asks
     /// Save / Export / Discard and runs again with the answer
     StateNode run(const std::string& verb, const std::string& slot, const std::string& path,
@@ -119,6 +123,7 @@ private:
     QPushButton* _protect = nullptr;
     QPushButton* _create = nullptr;
     QPushButton* _compactFlash = nullptr;
+    QPushButton* _layers = nullptr;  ///< a composite's layers and the guest's changes
     std::map<std::string, bool> _cfChoice;  ///< empty IDE units: whether the next disk image is a CompactFlash card
     bool WantsCompactFlash(const MediaPanelRow& row) const;
     QTimer* _timer = nullptr;

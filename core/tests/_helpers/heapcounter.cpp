@@ -19,6 +19,7 @@ namespace
     std::atomic<bool> g_counting{false};
     std::atomic<int64_t> g_net{0};
     std::atomic<int64_t> g_peak{0};
+    std::atomic<int64_t> g_allocations{0};
 }  // namespace
 
 #ifdef HEAP_COUNTER_AVAILABLE
@@ -35,6 +36,7 @@ void* operator new(size_t size)
         while (now > peak && !g_peak.compare_exchange_weak(peak, now, std::memory_order_relaxed))
         {
         }
+        g_allocations.fetch_add(1, std::memory_order_relaxed);
     }
     return p;
 }
@@ -82,6 +84,7 @@ namespace HeapCounter
     {
         g_net = 0;
         g_peak = 0;
+        g_allocations = 0;
         g_counting = true;
     }
 
@@ -98,5 +101,10 @@ namespace HeapCounter
     int64_t Peak()
     {
         return g_peak.load();
+    }
+
+    int64_t Allocations()
+    {
+        return g_allocations.load();
     }
 }  // namespace HeapCounter

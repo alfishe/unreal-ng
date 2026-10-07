@@ -21,6 +21,7 @@
 
 #include <array>
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -41,8 +42,11 @@ class FatNameMapper
 {
 public:
     /// Map the names of one folder, in order. Short names are unique within
-    /// the folder (the volume label and "." / ".." are not in this list)
-    static std::vector<FatMappedName> MapFolder(const std::vector<std::string>& utf8Names, CodePage page = CodePage::Cp866);
+    /// the folder (the volume label and "." / ".." are not in this list) and
+    /// differ from every name in `taken` (entries already in the directory:
+    /// a graft adds to a base directory)
+    static std::vector<FatMappedName> MapFolder(const std::vector<std::string>& utf8Names, CodePage page = CodePage::Cp866,
+                                                const std::set<FatShortName>& taken = {});
 
     /// The LFN checksum of a short name (the "sum" byte of every LFN entry)
     static uint8_t Checksum(const FatShortName& shortName);

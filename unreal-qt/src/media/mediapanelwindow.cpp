@@ -30,6 +30,7 @@
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/media/mediacontrol.h"
+#include "media/flattendialog.h"
 
 namespace
 {
@@ -168,7 +169,7 @@ void MediaPanelWindow::buildUi()
     _insertFile = add(tr("Insert File..."), tr("Insert an image file into the selected slot"), &MediaPanelWindow::onInsertFile);
     _insertFolder = add(tr("Insert Folder..."), tr("A host folder as a disk (TR-DOS), a card or hard disk (FAT) or, in a CD-ROM drive, an audio CD of its MP3 / FLAC / WAV files"), &MediaPanelWindow::onInsertFolder);
     _eject = add(tr("Eject"), tr("Take the medium out"), &MediaPanelWindow::onEject);
-    _save = add(tr("Save"), tr("Write the disk back into its file"), &MediaPanelWindow::onSave);
+    _save = add(tr("Save"), tr("Write the disk back into its file; a composite: choose how (one image, keep the session, commit, write back)"), &MediaPanelWindow::onSave);
     _export = add(tr("Export..."), tr("Write a copy of the medium as it is now"), &MediaPanelWindow::onExport);
     _discard = add(tr("Discard"), tr("Drop the unsaved writes"), &MediaPanelWindow::onDiscard);
     _protect = add(tr("Protect"), tr("The slot's write-protect switch"), &MediaPanelWindow::onProtect);
@@ -179,6 +180,8 @@ void MediaPanelWindow::buildUi()
                            "disk that identifies itself as CFA) instead of a hard disk"),
                         &MediaPanelWindow::onCompactFlash);
     _compactFlash->setCheckable(true);
+    _layers = add(tr("Layers..."), tr("A composite medium's layers (and partitions) and the guest's unsaved changes as files"),
+                  &MediaPanelWindow::onLayers);
     buttons->addStretch(1);
     layout->addLayout(buttons);
 
@@ -312,6 +315,7 @@ void MediaPanelWindow::updateButtons()
         _protect->setEnabled(false);
         _create->setEnabled(false);
         _compactFlash->setEnabled(false);
+        _layers->setEnabled(false);
         return;
     }
 
@@ -320,7 +324,9 @@ void MediaPanelWindow::updateButtons()
     _insertFile->setEnabled(slot);
     _insertFolder->setEnabled(slot && row->acceptsFolder);
     _eject->setEnabled(slot && row->present);
-    _save->setEnabled(row && (row->present || row->detached) && row->kind == "floppy");
+    // A floppy writes back into its file; a composite opens the strategy dialog (S1 to S4)
+    _save->setEnabled(row && (row->present || row->detached) && (row->kind == "floppy" || IsCompositeRow(*row)));
+    _layers->setEnabled(row && row->present && IsCompositeRow(*row));
     _export->setEnabled(row && (row->present || row->detached));
     _discard->setEnabled(row && (row->isDirty || row->detached));
     _protect->setEnabled(slot);
@@ -363,6 +369,9 @@ StateNode MediaPanelWindow::run(const std::string& verb, const std::string& slot
 
     if (askDisposition && MediaNeedsDisposition(reply))
     {
+        // A composite's Save is the strategy dialog (DT-9): once it ran, the request goes through as it was
+        const auto composite = std::find_if(_rows.begin(), _rows.end(),
+                                            [&slot](const MediaPanelRow& r) { return r.slot == slot && IsCompositeRow(r); });
         QMessageBox box(QMessageBox::Question, tr("Unsaved changes"),
                         tr("%1 has changes that are not saved.").arg(Q(slot)), QMessageBox::NoButton, this);
         QPushButton* save = box.addButton(tr("Save"), QMessageBox::AcceptRole);
@@ -370,7 +379,12 @@ StateNode MediaPanelWindow::run(const std::string& verb, const std::string& slot
         QPushButton* discard = box.addButton(tr("Discard"), QMessageBox::DestructiveRole);
         box.addButton(QMessageBox::Cancel);
         box.exec();
-        if (box.clickedButton() == save)
+        if (box.clickedButton() == save && composite != _rows.end())
+        {
+            if (!saveComposite(slot))
+                return reply;
+        }
+        else if (box.clickedButton() == save)
             options["save"] = "true";
         else if (box.clickedButton() == discard)
             options["discard"] = "true";
@@ -610,12 +624,32 @@ void MediaPanelWindow::onEject()
         report(run("eject", row->slot, "", {{"async", "true"}}), tr("Eject"));
 }
 
+bool MediaPanelWindow::saveComposite(const std::string& slot)
+{
+    FlattenDialog dialog(
+        slot,
+        [this, slot](const std::string& verb, const std::string& path, const std::map<std::string, std::string>& options) {
+            return run(verb, slot, path, options, false);
+        },
+        _lastDirectory, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return false;
+    _revision = UINT64_MAX;
+    refresh();
+    return true;
+}
+
 void MediaPanelWindow::onSave()
 {
     const MediaPanelRow* row = selectedRow();
     if (!row)
         return;
     const std::string slot = row->slot;
+    if (IsCompositeRow(*row))
+    {
+        saveComposite(slot);
+        return;
+    }
     StateNode reply = run("save", slot, "", {}, false);
     if (!Ok(reply))
     {
@@ -627,6 +661,52 @@ void MediaPanelWindow::onSave()
         reply = run("save", slot, S(target), {}, false);
     }
     report(reply, tr("Save"));
+}
+
+void MediaPanelWindow::onLayers()
+{
+    const MediaPanelRow* row = selectedRow();
+    if (!row)
+        return;
+    const std::string slot = row->slot;
+    const StateNode layers = run("layers", slot, "", {}, false);
+    const StateNode changes = run("changes", slot, "", {}, false);
+    QStringList lines;
+    if (const StateNode* body = layers.find("layers"))
+    {
+        lines << tr("%1: %2, build %3").arg(Q(body->find("descriptor")->s), Q(body->find("fs")->s), Q(body->find("build")->s));
+        if (const StateNode* list = body->find("layers"))
+            for (const StateNode& l : list->items)
+                lines << QString("  %1  %2  %3 -> %4%5")
+                             .arg(Q(l.find("name")->s), Q(l.find("kind")->s), Q(l.find("path")->s), Q(l.find("mount")->s),
+                                  l.find("writable") && l.find("writable")->b ? tr("  (writable)") : QString());
+        if (const StateNode* parts = body->find("partitions"))
+            for (const StateNode& p : parts->items)
+                lines << tr("  partition %1: %2 %3, %4 sectors").arg(Q(p.find("name")->s), Q(p.find("kind")->s), Q(p.find("fs")->s))
+                             .arg(static_cast<qlonglong>(p.find("sectors")->i));
+    }
+    else
+        lines << Q(ReplyMessage(layers));
+    lines << QString() << tr("Unsaved changes:");
+    if (const StateNode* list = changes.find("changes"); list && !list->items.empty())
+    {
+        for (const StateNode& c : list->items)
+        {
+            QString line = "  " + Q(c.find("op")->s) + " " + Q(c.find("path")->s);
+            if (const StateNode* old = c.find("oldPath"))
+                line += tr(" (was %1)").arg(Q(old->s));
+            if (!c.find("layer")->s.empty())
+                line += " [" + Q(c.find("layer")->s) + "]";
+            lines << line;
+        }
+    }
+    else
+        lines << tr("  none");
+    if (const StateNode* warnings = changes.find("warnings"))
+        for (const StateNode& w : warnings->items)
+            lines << tr("  warning: %1").arg(Q(w.s));
+    QMessageBox box(QMessageBox::Information, tr("Layers of %1").arg(Q(slot)), lines.join("\n"), QMessageBox::Ok, this);
+    box.exec();
 }
 
 void MediaPanelWindow::onExport()

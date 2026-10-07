@@ -69,10 +69,11 @@ namespace
     }
 }  // namespace
 
-std::vector<FatMappedName> FatNameMapper::MapFolder(const std::vector<std::string>& utf8Names, CodePage page)
+std::vector<FatMappedName> FatNameMapper::MapFolder(const std::vector<std::string>& utf8Names, CodePage page,
+                                                   const std::set<FatShortName>& taken)
 {
     std::vector<FatMappedName> result(utf8Names.size());
-    std::set<FatShortName> used;
+    std::set<FatShortName> used = taken;
 
     // Two passes: exact short names first, so a lossless name keeps its short
     // name even when a lossy sibling earlier in the list would map onto it
