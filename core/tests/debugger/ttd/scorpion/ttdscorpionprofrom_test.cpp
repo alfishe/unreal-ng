@@ -3,7 +3,7 @@
 
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/scorpion/ttdscorpionprofrom.h"
 #include "emulator/ports/models/scorpionfixture.h"
 
@@ -307,7 +307,7 @@ TEST_F(TtdScorpionProfRom_Test, RecordingRegistersTheScorpionSerializer)
 {
     SetUpProf(4);
 
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     EXPECT_FALSE(ttd.GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::ScorpionProfROM))
         << "serializers must be session-scoped, not constructed eagerly";
 
@@ -328,7 +328,7 @@ TEST_F(TtdScorpionProfRom_Test, RestartingRecordingDoesNotDuplicateSerializers)
 {
     SetUpProf(4);
 
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
     const size_t afterFirst = ttd.GetPeripheralRegistry().Count();
     ttd.StopRecording();
@@ -345,8 +345,7 @@ TEST_F(TtdScorpionProfRom_Test, CaptureRestoreSelfTestCoversProfRomState)
 {
     SetUpProf(16);
 
-    ttd::TimeTravelManager ttd(_context);
-    ASSERT_TRUE(ttd.StartRecording());
+    ttd::TimeTravelController ttd(_context);   // the self-test runs without a session
 
     // Drive the state off its power-on values first, so a serializer that
     // silently captured nothing would still be caught.
@@ -357,8 +356,6 @@ TEST_F(TtdScorpionProfRom_Test, CaptureRestoreSelfTestCoversProfRomState)
     const auto result = ttd.CaptureRestoreSelfTest();
     EXPECT_TRUE(result.pre_post_match)
         << "capture/restore diverged: " << result.notes;
-
-    ttd.StopRecording();
 }
 
 /// A seek must put the plane and the paging that follows from it back exactly.
@@ -368,7 +365,7 @@ TEST_F(TtdScorpionProfRom_Test, SeekRestoresPlaneAndResultingRomPage)
 {
     SetUpProf(16);
 
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
 
     WritePort(0x7EFD, 0x10);
@@ -377,6 +374,8 @@ TEST_F(TtdScorpionProfRom_Test, SeekRestoresPlaneAndResultingRomPage)
     ttd::TTDScorpionProfROM probe(_context);
     const uint8_t planeAtCapture = _context->emulatorState.profrom_bank;
     const uint8_t pageAtCapture  = probe.CurrentRomPage();
+
+    _context->emulatorState.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
 
     ttd.OnFrameBoundary();
     ASSERT_GE(ttd.GetCheckpointCount(), 1u);
@@ -410,11 +409,12 @@ TEST_F(TtdScorpionProfRom_Test, SessionRoundTripPreservesModelBlobs)
 {
     SetUpProf(16);
 
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
     WritePort(0x7EFD, 0x10);
     FastRead(0x0104);
     const uint8_t planeAtCapture = _context->emulatorState.profrom_bank;
+    _context->emulatorState.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
     ttd.OnFrameBoundary();
     ASSERT_GE(ttd.GetCheckpointCount(), 1u);
     ttd.StopRecording();
@@ -424,7 +424,7 @@ TEST_F(TtdScorpionProfRom_Test, SessionRoundTripPreservesModelBlobs)
     ASSERT_TRUE(ttd.SerializeSession(out, err)) << err;
 
     // Load into a second manager on the same machine.
-    ttd::TimeTravelManager reloaded(_context);
+    ttd::TimeTravelController reloaded(_context);
     std::istringstream in(out.str(), std::ios::binary);
     ASSERT_TRUE(reloaded.DeserializeSession(in, err)) << err;
     ASSERT_EQ(reloaded.GetCheckpointCount(), ttd.GetCheckpointCount());
@@ -434,11 +434,12 @@ TEST_F(TtdScorpionProfRom_Test, SessionRoundTripPreservesModelBlobs)
     WritePort(0x7EFD, 0x00);
     ASSERT_NE(_context->emulatorState.profrom_bank, planeAtCapture);
 
-    const ttd::TTDCheckpoint* first = reloaded.GetCheckpoint(0);
-    ASSERT_NE(first, nullptr);
+    // The checkpoint of the frame boundary (the baseline before it holds the power-on plane)
+    const ttd::TTDCheckpoint* captured = reloaded.GetCheckpoint(reloaded.GetCheckpointCount() - 1);
+    ASSERT_NE(captured, nullptr);
 
     ttd::TTDTimePoint target;
-    target.frame = first->time.frame;
+    target.frame = captured->time.frame;
     target.tInFrame = 0;
     ASSERT_TRUE(reloaded.SeekTo(target));
 
@@ -453,8 +454,9 @@ TEST_F(TtdScorpionProfRom_Test, SessionFromDifferentRomSetIsRejected)
 {
     SetUpProf(16);
 
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
+    _context->emulatorState.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
     ttd.OnFrameBoundary();
     ttd.StopRecording();
 
@@ -466,7 +468,7 @@ TEST_F(TtdScorpionProfRom_Test, SessionFromDifferentRomSetIsRejected)
     // count changes the bundle contents, hence the signature).
     ASSERT_TRUE(LoadSyntheticRom(4));
 
-    ttd::TimeTravelManager reloaded(_context);
+    ttd::TimeTravelController reloaded(_context);
     std::istringstream in(out.str(), std::ios::binary);
     EXPECT_FALSE(reloaded.DeserializeSession(in, err))
         << "a session recorded against another ROM set must not load";
@@ -479,8 +481,9 @@ TEST_F(TtdScorpionProfRom_Test, SessionFromSameRomSetLoads)
 {
     SetUpProf(16);
 
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
+    _context->emulatorState.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
     ttd.OnFrameBoundary();
     ttd.StopRecording();
 
@@ -488,7 +491,7 @@ TEST_F(TtdScorpionProfRom_Test, SessionFromSameRomSetLoads)
     std::string err;
     ASSERT_TRUE(ttd.SerializeSession(out, err)) << err;
 
-    ttd::TimeTravelManager reloaded(_context);
+    ttd::TimeTravelController reloaded(_context);
     std::istringstream in(out.str(), std::ios::binary);
     EXPECT_TRUE(reloaded.DeserializeSession(in, err)) << err;
 }

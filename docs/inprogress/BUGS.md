@@ -8,6 +8,38 @@
 
 ---
 
+2026-10-07
+## 🔴 [Open] #1: TTD engine - the VDAC2 (FT812) picture at a frame boundary differs from the live one for some frames
+* **Date Opened:** 2026-10-07
+* **Date Fixed:** -
+* **Commit ID:** -
+* **Found by:** moving `TTDVdac2_Test` onto the engine (Phase 5 Step 4b of the TTD v2 migration), 2026-10-07.
+
+### Description
+A seek to the end of a frame on a TS-Conf + VDAC2 machine shows the FT812 picture of that frame. On the engine three
+of the six frames `TTDVdac2_Test.SeekByFrameMatchesTheLiveRun` visits (55, 59, 62 of the recorded 54-63) show a picture
+other than the one the live run showed at that frame's end; the other three match. The card state, the chip memory
+and the metrics block at the same positions are exact (hashes equal), and v1 passes the same test.
+
+### Already changed (2026-10-07)
+The controller composed a frame target as v1 did - the current frame run to its end - while D13 puts "frame N" at the
+boundary `{N+1, 0}`; it also never asked for a frame target. Now a seek that lands on a frame boundary composes the
+frame that ended there, from its lead-in (`ComposeDisplay`, `PresentPosition`). Before the change no frame matched.
+
+### Repro
+`core-tests --gtest_filter='TTDVdac2_Test.SeekByFrameMatchesTheLiveRun'` with `debugger/ttd/ttdvdac2_test.cpp` taken
+out of `core/tests/_helpers/ttdv1tests.h` and its seeks by frame number changed to `SeekTo(FrameEndPosition(f))`.
+More lead-in frames do not change which frames differ.
+
+### Root cause
+Unknown. Candidate: a render-side part of the card's state that the engine's restore for a replay does not bring back
+(the TurboSound FM had one, 2026-10-05 #2: `_renderReanchor`).
+
+### Requirements / Acceptance Criteria
+- [ ] `TTDVdac2_Test` passes on the engine (the file leaves `ttdv1tests.h`).
+
+---
+
 2026-10-05
 ## 🟢 [Fixed] #1: Live border stays black when nothing wrote port #FE, while a TTD-composed picture fills it from #FE
 * **Date Opened:** 2026-10-05

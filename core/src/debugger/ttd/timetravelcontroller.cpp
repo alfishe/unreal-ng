@@ -2163,11 +2163,25 @@ void TimeTravelController::ServiceInput()
                 TTDInputEvent in;
                 TTDEventLog::ToInput(ev, in);
                 TTDNetInput net;
-                const bool isNet = in.kind == TTDInputKind::NetEvent;
+                const bool isNet = HasNetRecord(in.kind);
                 if (isNet)
                 {
                     TTDEventLog::UnpackNet(ev, net);
                     net.payloadLength = static_cast<uint32_t>(_replayEngine->Payloads().Bytes(ev.payload).size());
+                    // The input journal's record of the same bytes (both hold the session's inputs in
+                    // order): a device keeps its number, not the bytes, and a restore reads them there
+                    const auto& journalEvents = _inputJournal.Events();
+                    while (_inputCursor < journalEvents.size() && !HasNetRecord(journalEvents[_inputCursor].kind))
+                        ++_inputCursor;
+                    if (_inputCursor < journalEvents.size())
+                    {
+                        if (const TTDNetInput* recorded = _inputJournal.NetOf(journalEvents[_inputCursor]))
+                        {
+                            net.journalIndex = journalEvents[_inputCursor].netIndex;
+                            net.payloadOffset = recorded->payloadOffset;
+                        }
+                        ++_inputCursor;
+                    }
                 }
                 ApplyInputEvent(in, InputDevicesOf(_context), isNet ? &net : nullptr,
                                 isNet && net.payloadLength ? _replayEngine->Payloads().Bytes(ev.payload).data() : nullptr);
@@ -2837,9 +2851,11 @@ bool TimeTravelController::SeekTo(const TTDTimePoint& target, TTDSeekResult* out
     // position shows what the beam drew up to it, as a live machine has it
     // there: at a frame's start that is the previous frame's final picture.
     // "Frame N" asks for frame N's end (D13), which shows frame N's picture
-    // with the machine state that goes with it
+    // with the machine state that goes with it. At a frame boundary that is
+    // the finished frame, also for a device drawing on its own clock (the
+    // FT812 composes it from its lead-in frames), as a live machine shows it
     if (ok || result.haltReason == TTDSeekHaltReason::ExternalEvent)
-        PresentPosition(false);
+        PresentPosition(ok && CurrentPosition().tInFrame == 0);
 
     return ok;
 }
@@ -3220,7 +3236,7 @@ void TimeTravelController::RunToFrameEnd()
         _context->pEmulator->RunTStates(frameTStates - startT, /*skipBreakpoints=*/true);
 }
 
-void TimeTravelController::ComposeDisplay(bool frameTarget)
+void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame)
 {
     if (!_context || !_context->pEmulator || !_context->pCore || !_context->pScreen || _timeline.empty())
         return;
@@ -3275,16 +3291,20 @@ void TimeTravelController::ComposeDisplay(bool frameTarget)
     ITTDDisplayParticipant* participant = _context->pTtdDisplayParticipant;
     if (frameTarget)
     {
-        // The frame's final picture: its own T-states, start to end. A device
-        // picture (VDAC2) runs on its own frame clock: its frame that finished
-        // last may have started before this frame, so replay from earlier
+        // At a frame boundary (D13): the final picture of the frame that ended
+        // here, its own T-states start to end. A device picture (VDAC2) runs on
+        // its own frame clock: its frame that finished last may have started
+        // before that frame, so replay from earlier
+        const uint64_t ended = targetFrame == kCurrentFrame ? frame
+                               : targetFrame == kEndedFrame ? (frame > 0 ? frame - 1 : 0)
+                                                            : targetFrame;
         const uint64_t leadIn = participant ? participant->TTDLeadInFrames() : 0;
-        const uint64_t from = frame > leadIn ? frame - leadIn : 0;
+        const uint64_t from = ended > leadIn ? ended - leadIn : 0;
         if (const TTDCheckpoint* cp = checkpointAtOrBefore(from))
         {
             RestoreCheckpointForReplay(*cp);
             paintStaticBase();
-            runUntilFrame(frame);
+            runUntilFrame(ended);
             RunToFrameEnd();
         }
     }
@@ -4355,6 +4375,17 @@ TimeTravelController::SelfTestResult TimeTravelController::CaptureRestoreSelfTes
     if (!_timeline.empty())
     {
         result.notes = "a session holds history: the self-test runs without one";
+        return result;
+    }
+    // The machine's RAM size and serializers, as a recording sets them up:
+    // the engine begins the capture's session with them
+    _modelRamPages = ResolveModelRamPages();
+    std::string registrationError;
+    if (_modelRamPages == 0 || _modelRamPages > MAX_RAM_PAGES || !RegisterModelPeripherals(&registrationError))
+    {
+        result.notes = "cannot set up the machine's capture: " +
+                       (registrationError.empty() ? std::string("no RAM size") : registrationError);
+        _modelRamPages = 0;
         return result;
     }
 

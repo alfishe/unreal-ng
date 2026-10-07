@@ -6,8 +6,9 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/ttdrecordedstate.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdds12887.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -73,7 +74,7 @@ TEST_P(TTDDs12887_Test, RecordingRunsTheClockOnEmulatedTime)
     EmulatorContext* context = emulator->GetContext();
     Ds12887* rtc = RtcOf(context);
     ASSERT_NE(rtc, nullptr);
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
 
     EXPECT_EQ(rtc->GetTimeMode(), Ds12887::TimeMode::Host);
@@ -83,11 +84,9 @@ TEST_P(TTDDs12887_Test, RecordingRunsTheClockOnEmulatedTime)
 
     const ttd::TTDCheckpoint* baseline = ttd->GetCheckpoint(0);
     ASSERT_NE(baseline, nullptr);
-    ASSERT_EQ(baseline->peripheralBlobs.count(static_cast<uint8_t>(ttd::PeripheralId::Ds12887)), 1u);
-    const auto state = ttd::TTDPeripheralRegistry::DecodeBlob(static_cast<uint8_t>(ttd::PeripheralId::Ds12887),
-                                                             baseline->peripheralBlobs.at(static_cast<uint8_t>(ttd::PeripheralId::Ds12887)));
+    const auto state = ttdtest::RecordedDeviceState(*ttd, 0, ttd::PeripheralId::Ds12887);
     ASSERT_EQ(state.size(), Ds12887::kStateSize);
-    EXPECT_EQ(state[6], static_cast<uint8_t>(Ds12887::TimeMode::Emulated)) << "the baseline blob holds the emulated time base";
+    EXPECT_EQ(state[6], static_cast<uint8_t>(Ds12887::TimeMode::Emulated)) << "the baseline holds the emulated time base";
 
     // Emulated time, however fast the host runs it. The chip follows the
     // video frames: on a turbo machine RunNFrames(n) runs fewer of them.

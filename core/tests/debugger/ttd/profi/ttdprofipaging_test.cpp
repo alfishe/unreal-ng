@@ -7,7 +7,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/profi/ttdprofipaging.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -186,7 +186,7 @@ TEST(TTDProfiPagingSeek_Test, SeekRestoresDffdPaletteAndBankMap)
     EmulatorContext* context = emulator->GetContext();
     EmulatorState& state = context->emulatorState;
     Memory* memory = context->pMemory;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
 
     ASSERT_TRUE(ttd->StartRecording()) << "recording refused: Profi declares state without a serializer?";
 
@@ -200,6 +200,8 @@ TEST(TTDProfiPagingSeek_Test, SeekRestoresDffdPaletteAndBankMap)
     const uint8_t* bank1AtCapture = memory->MapZ80AddressToPhysicalAddress(0x4000);
     const uint8_t* bank2AtCapture = memory->MapZ80AddressToPhysicalAddress(0x8000);
     const uint8_t* bank3AtCapture = memory->MapZ80AddressToPhysicalAddress(0xC000);
+
+    state.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
 
     ttd->OnFrameBoundary();
     ASSERT_GE(ttd->GetCheckpointCount(), 1u);
@@ -235,7 +237,7 @@ TEST(TTDProfiTurboSwitch_Test, FlipIsJournaledAndReplayed)
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PROFI3", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
     ASSERT_TRUE(ttd->StartRecording());
 

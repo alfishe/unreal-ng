@@ -17,7 +17,7 @@
 #include "base/featuremanager.h"
 #include "debugger/ttd/network/ttdserialport.h"
 #include "debugger/ttd/network/ttdzxnetusb.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -76,7 +76,7 @@ protected:
     {
         Emulator* emulator = nullptr;
         EmulatorContext* context = nullptr;
-        ttd::TimeTravelManager* ttd = nullptr;
+        ttd::TimeTravelController* ttd = nullptr;
         FakeHostNet* host = nullptr;
 
         bool Create()
@@ -85,7 +85,7 @@ protected:
             if (!emulator)
                 return false;
             context = emulator->GetContext();
-            ttd = context->pTimeTravelManager;
+            ttd = context->pTimeTravelController;
             FeatureManager* features = emulator->GetFeatureManager();
             features->setFeature(Features::kDebugMode, true);
             features->setFeature(Features::kTimeTravel, true);
@@ -268,7 +268,7 @@ class TTDComPort_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FakeHostNet* _host = nullptr;
 
     void SetUp() override
@@ -276,7 +276,7 @@ protected:
         _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
@@ -380,7 +380,7 @@ TEST(TTDComPortName_Test, TheNameLookupReplaysFromTheJournal)
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     FeatureManager* features = emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
@@ -440,7 +440,7 @@ TEST(TTDEspModule_Test, ReplayWithoutTheHostRebuildsTheModule)
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     FeatureManager* features = emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);

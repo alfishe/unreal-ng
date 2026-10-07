@@ -1068,7 +1068,7 @@ private:
     /// and the operations built on it, StepForwardInstruction). Internal
     /// restores during search, reverse execution and frame-cache builds never
     /// reach it, so they cannot touch the display.
-    /// @param frameTarget true when the user positioned by frame number
+    /// @param frameTarget true at a frame boundary: the frame that ended there
     void PresentPosition(bool frameTarget);
 
     /// @brief Flush the video delay line and post NC_VIDEO_FRAME_REFRESH so
@@ -1512,8 +1512,10 @@ private:
     /// @brief Compose the picture for the current position (display rule,
     /// docs/inprogress/2026-09-28-ttd-positioning-and-display/design.md §3).
     ///
-    /// - Frame target (positioned by frame number): the frame's FINAL
-    ///   picture — its own T-states replayed from its checkpoint to its end.
+    /// - Frame target: a frame's FINAL picture — its own T-states replayed
+    ///   from its checkpoint to its end. @p frame: the frame that ended at the
+    ///   current position (a frame boundary, D13: "frame N" is {N+1, 0});
+    ///   the clip export passes the current frame instead (kCurrentFrame).
     /// - Time target (frame f, T-state T): what the beam rendered from the
     ///   start of f up to T, over frame f-1's final picture for the part not
     ///   drawn yet — exactly the framebuffer of a live machine paused there.
@@ -1523,7 +1525,9 @@ private:
     /// the composed pixels are written. Machine state is never changed.
     /// Checkpoint restores themselves never paint (ResyncScreenState), so
     /// this is the only place that decides what a TTD position shows.
-    void ComposeDisplay(bool frameTarget);
+    static constexpr uint64_t kEndedFrame = UINT64_MAX;     ///< ComposeDisplay: the frame that ended here
+    static constexpr uint64_t kCurrentFrame = UINT64_MAX - 1;   ///< ComposeDisplay: the current frame to its end
+    void ComposeDisplay(bool frameTarget, uint64_t frame = kEndedFrame);
 
     /// @brief Replay the rest of the current frame up to its end through the
     /// normal CPU/video pipeline (the frame-end processing runs, so the
