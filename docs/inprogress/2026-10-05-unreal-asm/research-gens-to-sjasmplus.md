@@ -48,7 +48,7 @@ value, not text).
 | `IF` / `ELSE` / `END` (END ends the condition; not nested) | 2.8 | `IF X-1` with X = 1 takes the ELSE part | `IF` / `ELSE` / `ENDIF`; an `END` without an open IF is dropped |
 | `NAME MAC` … `ENDM`, parameters `=0`..`=31` | 2.6 | `2*=0` with argument `1+1` is 4 (a value); a label in the body is defined once (`*ERROR* 04` at the second call) | `MACRO NAME _g0,...` (as many as the body uses); a call passes `+(expression)`, a value in sjasmplus too |
 | Macro buffer | editor `C` command | GENS4: "No Macro Space" until `C` sets it | — |
-| `*F name` (drive `n:` optional) includes a file; other `*` commands shape the listing | 2.9 | not run (tape include needs `T` blocks) | `INCLUDE "name"`; the others become comments |
+| `*F name` (drive `n:` optional) includes a file; other `*` commands shape the listing | 2.9 | checked in GENS4B: `*F 1:INC` read INC.C from drive A | `INCLUDE "name"`; the others become comments |
 
 GENS3 (the 1983 tape build in `DEVPAC_1.TAP`) gives the same values for the probes it can assemble, but it has no
 `MAC` / `ENDM` (`*ERROR* 02`) and no `C` command, asks `Buffer size?` when it starts, and lists the assembly unless
@@ -81,10 +81,11 @@ numbers (`SourceLine::number`).
 
 ## 4. Open points
 
-- The TR-DOS build GENS4B (`MONSGENS.LZH`) starts in 48K BASIC mode (`CLEAR 29999`, code at 30000,
-  `RANDOMIZE USR 30000`) but its `G,,1:NAME` and `G,,A:NAME` hung or reset the machine here; how the disk port names
-  files is not known yet. Its sources are the same format.
-- `*F` include was converted but not run in GENS (a tape include needs a `T` dump).
+- GENS4B (`MONSGENS.LZH`, "1990 MOA B-Disk version") works when started from the TR-DOS prompt (code at 30000,
+  `RANDOMIZE USR 30000`); from BASIC without TR-DOS set up its disk commands hung or reset the machine. It names a
+  file `n:NAME` (`n` = 1-4, drives A-D) and always uses type `C`: `G,,1:NAME` loads, `P10,30,1:NAME` saves the same
+  bytes, `*F 1:NAME` includes; checked with `testdata/dialects/gens/GMAIN.$C` + `GINC.$C` (`3E 01 06 02 C9`, equal
+  to the sjasmplus conversion; `ImageProject` takes the one-line INC that detection alone cannot tell).
 - A value beyond 16 bits stays one in sjasmplus where GENS keeps the low 16 bits (`X EQU #FFFF+2` then `DEFS X`);
   no real source does this.
 - The pasmo and z88dk backends have no signed 16-bit division yet: a GENS source converted to them divides as they do.

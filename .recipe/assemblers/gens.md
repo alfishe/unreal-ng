@@ -17,14 +17,14 @@ MONS, saving to tape from inside GENS.
 |---|---|---|---|
 | GENS4 V4.0 (tape) | `DEVPAC_4.TAP` in [HiSoftDevpacV4.tap.zip](https://spectrumcomputing.co.uk/pub/sinclair/utils/h/HiSoftDevpacV4.tap.zip) (ZXDB [8091](https://spectrumcomputing.co.uk/entry/8091); in the ZX collection under `software/programming/gens-mons/archives/zxdb/`) | tape block 5 (`gens4`, 10880 bytes, saved for 26000; block 7 is the 51-column `gens4-51`) | works: load, assemble, run, macros |
 | GENS3 (tape, 1983) | `DEVPAC_1.TAP` in [HiSoftDevpacV3.tap.zip](https://spectrumcomputing.co.uk/pub/sinclair/utils/h/HiSoftDevpacV3.tap.zip) (same folder) | tape block 3 (`GENS3`, 8355 bytes); its BASIC loader puts it at 25444 after `CLEAR 25443` | works; no `MAC` / `ENDM` (`*ERROR* 02`) and no `C` command in this build |
-| GENS4B V4.1 (TR-DOS) | `gens4b.$c` in `MONSGENS.LZH` (collection: `software/programming/gens-mons/`), hobeta, start 30000 | the file's 12174 bytes | starts in 48K BASIC mode; loading from disk (`G,,1:NAME`, `G,,A:NAME`) hung or reset the machine: not usable here yet |
+| GENS4B V4.1 (TR-DOS) | `gens4b.$c` in `MONSGENS.LZH` (collection: `software/programming/gens-mons/`), hobeta, start 30000 | the file's 12174 bytes | works when started from the TR-DOS prompt: `X` catalogue, `G,,1:NAME` load, `P10,30,1:NAME` save, `A` with `*F 1:NAME` |
 
 GENS runs from any address: put it where the program you assemble will not go. The editor's text follows GENS in
 memory and the symbol table follows the text; code that would overwrite them stops the assembly with `Bad ORG!`.
 GENS4 at 26000 leaves `#C000` and up free for small programs; at 45000 it leaves `#5B00`-`#AFC7` for the code.
 
-Machine: **48K** (`model: "48K"`). GENS is a 48K program; the TR-DOS build needs the Pentagon's TR-DOS ROM with
-BASIC switched to 48K mode.
+Machine: **48K** (`model: "48K"`) for the tape builds. The TR-DOS build GENS4B runs on `PENTAGON`, started from the
+TR-DOS prompt (its disk calls need TR-DOS's system variables).
 
 ## MCP (preferred)
 
@@ -120,17 +120,34 @@ reverse of GENS4).
 
 ### GENS4B (TR-DOS)
 
-Starts with the Pentagon in 48K BASIC mode (from 128K BASIC its disk access reset the machine):
+Start it from the TR-DOS prompt: TR-DOS from the Pentagon menu ([run/manual-trdos-run.md](../run/manual-trdos-run.md)),
+the code to 30000, `RANDOMIZE USR 30000` at the `A>` prompt. Started from 48K or 128K BASIC without entering TR-DOS
+first, its disk commands hang or reset the machine (that was the earlier failure: TR-DOS's variables were not set up).
 
 ```text
-invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/basic/mode","body":{"mode":"48K"}}
-invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"command":"CLEAR 29999"}}
+media      {"action":"insert","slot":"A","path":"/abs/scratch/gens.trd","discard":true}
+emulator_manage {"action":"reset"}
+type_input {"action":"tap","key":"down"}                  # x4: TR-DOS
+type_input {"action":"tap","key":"enter"}
 invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/memory/write","body":{"address":30000,"data":[...12174 bytes...]}}
 invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"command":"RANDOMIZE USR 30000"}}
 ```
 
-The editor (V4.1) comes up; loading a text from the disk did not work (see the table). Use the tape GENS4 for
-assembling; the TR-DOS files are the same format and load into it from a tape image.
+The editor (V4.1, "1990 MOA B-Disk version") lists its commands. A disk file is named `n:NAME`, `n` = 1-4 for drives
+A-D, the type is always `C` (the code reads the digit, the name, pads it to 8 blanks and asks TR-DOS for type `C`):
+
+```text
+type_input {"action":"type","text":"X"}                   # catalogue: "A:TEST <C> 1", free sectors
+type_input {"action":"tap","key":"enter"}
+type_input {"action":"type","text":"G,,1:TEST"}           # load TEST.C (appended to the text in memory)
+type_input {"action":"tap","key":"enter"}
+type_input {"action":"type","text":"P10,30,1:SAVED"}      # save lines 10-30 as SAVED.C (start = the text's address)
+type_input {"action":"tap","key":"enter"}
+```
+
+Checked: `P` wrote back the same 35 bytes `G` read; a source with `*F 1:INC` assembled with `A` read `INC.C` from the
+disk (`3E 01 06 02 C9` from `LD A,1` / `*F 1:INC` (`LD B,2`) / `RET`). `zxasm encode --codec gens --version 2` writes
+such files (type `C`, numbered lines).
 
 ## WebAPI
 

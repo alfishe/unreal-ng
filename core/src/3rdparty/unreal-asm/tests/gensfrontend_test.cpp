@@ -240,3 +240,30 @@ TEST(GensFrontend_Test, RealSourcesAssembleToWhatGens4Built)
         EXPECT_EQ(Assembled(sjasmplus, source, c.start, expected.size()), expected) << c.file;
     }
 }
+
+TEST(GensFrontend_Test, StarFIncludesFromTheDiskAsGens4BDid)
+{
+    // GENS4B (TR-DOS, started from the TR-DOS prompt) loaded MAIN with G,,1:MAIN and assembled it: `*F 1:INC` read INC
+    // from drive A (1). The image project takes INC (one line: detection alone cannot tell) as GENS
+    const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
+    if (!sjasmplus)
+        GTEST_SKIP() << "set UNREAL_ASM_SJASMPLUS to the sjasmplus binary";
+    const std::vector<ProjectFile> project = ImageProject({Hobeta("dialects/gens/GMAIN.$C"), Hobeta("dialects/gens/GINC.$C")});
+    ASSERT_EQ(project.size(), 2u);
+    const ProjectResult converted = ConvertProject(project, "sjasmplus");
+    ASSERT_TRUE(converted.ok);
+    const codecs::SjasmplusCodec codec;
+    const std::filesystem::path dir = ScratchDirectory();
+    for (const ProjectFile& f : converted.files)
+        WriteBytes(dir / (f.name + ".asm"), codec.Encode(f.document, {}).bytes);
+    const std::string harness = "        DEVICE ZXSPECTRUM48\n        INCLUDE \"MAIN.asm\"\n        SAVEBIN \"out.bin\",#C000,5\n";
+    WriteBytes(dir / "harness.asm", std::vector<uint8_t>(harness.begin(), harness.end()));
+#ifdef _WIN32
+    const std::string command = "cd /d \"" + dir.string() + "\" && \"" + sjasmplus + "\" --nologo harness.asm > out.txt 2>&1";
+#else
+    const std::string command = "cd \"" + dir.string() + "\" && \"" + sjasmplus + "\" --nologo harness.asm > out.txt 2>&1";
+#endif
+    EXPECT_EQ(std::system(command.c_str()), 0);
+    EXPECT_EQ(ReadBytes(dir / "out.bin"), ReadTestData("dialects/gens/GMAIN.bin"));
+    std::filesystem::remove_all(dir);
+}
