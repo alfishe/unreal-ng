@@ -1,8 +1,11 @@
 # TODO - ZX-MultiSound (UzixLS) sound card
 
-**Status:** on master since 2026-10-05 (`7605bf104`, pushed): MS-1 to MS-7 first pass, with the ZX-bus slots SL-1 to
-SL-7 ([slots TODO](../2026-10-03-zx-bus-slots/TODO.md)); demo to the owner done (MIDI, TSFM, SAA); MS-8 user docs done 2026-10-05. Shipped configs keep
-the card off (owner decision): it is fitted through the slots. MS-1 to MS-8 done; left: the open items below.
+**Status:** on master since 2026-10-05 (`7605bf104`, pushed), with the ZX-bus slots SL-1 to SL-7
+([slots TODO](../2026-10-03-zx-bus-slots/TODO.md)); demo to the owner done (MIDI, TSFM, SAA). MS-1 to MS-8 done; on
+2026-10-06 (branch `multisound-remainder`) the 0.15 dB SSG residue explained, the frame cost profiled (silent FM skips
+its FIR), the TTD corpus fixtures (they found a seek bug, fixed) and the MS-7 second pass. Shipped configs keep the card
+off (owner decision): it is fitted through the slots. Left: the open items below - follow-ups that need a real board
+or real-program traces, the frame-cost backlog, one owner question, SAM-6 / SAM-7.
 
 ## Documents
 
@@ -51,17 +54,20 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   datasheet facts of the I/O port stage (input = `#FF`, push-pull output, reset = inputs), `IAyIoPortListener` on
   `SoundChip_AY8910` (pins, called on change only, one pointer test per register latch without a listener),
   `MidiLine` feeding `sam2695::Synth::WriteLine` with its TTD blob; `AyIoPort_Test` and `MidiLine_Test` in core-tests
-- [ ] ML follow-ups with the card: the YM2203 SSG drives the same listener (done in MS-1: `Ym2203Pair::setIoPortListener`),
+- [x] ML follow-ups with the card: the YM2203 SSG drives the same listener (done in MS-1: `Ym2203Pair::setIoPortListener`),
   `MidiLine` wired to U4 (chip select 0) and "chip 2 does not drive" (done in MS-3:
   `MultiSoundCard_Test.MidiNoteBitBangedOnU4ReachesTheSynthAndU10DoesNotDrive`); the line in the card's blob set and
-  the Z80 send routine under TTD done in MS-5 (`TtdMultiSound_Test.MidiByteAcrossCheckpoint`); left: `Describe` on the
-  automation surfaces
+  the Z80 send routine under TTD done in MS-5 (`TtdMultiSound_Test.MidiByteAcrossCheckpoint`); the line's report (pin,
+  level, edges, last change) on every surface since MS-6 (`DeviceState::Midi`, the `line` object of
+  `/state/audio/midi`)
 - [x] SAA-0..3 `Saa1099` ([tdd-saa1099.md](tdd-saa1099.md) §10 "As built"): co-simulation in
   `tools/verification/saa1099/` (SAASound, MAME, MiSTer RTL under Verilator; consensus table in its README), the
   module, golden digests over the corpus, TTD blob `PeripheralId::Saa1099` = 53; not registered in any machine
 - [ ] SAA follow-ups: the MultiSound integration plugs it in (TTD done in MS-5: id 53 as a device of the card,
-  `<slot>.multisound.saa1099`; mixer row done in MS-4; left: `Describe` on the automation surfaces, its `[SAA1099]` ini section); audio-level check against the real-chip recordings in
-  `rejunity/tt06-psg-saa1099`; captured SAM Coupe / VGM SAA streams in the corpus (tdd §6 item 1)
+  `<slot>.multisound.saa1099`; mixer row done in MS-4; its report - registers, voices, envelopes, noise - in the
+  card's report on every surface since MS-6). Left: an audio-level check against the real-chip recordings in
+  `rejunity/tt06-psg-saa1099`; captured SAM Coupe / VGM SAA streams in the corpus (tdd §6 item 1). The shipped
+  configs' `[SAA1099] FQ=` is a legacy section nothing parses (the card's SAA runs at its board's 8 MHz)
 - [x] CL-0 RTL co-simulation (`tools/verification/multisound/`: pinned `top.v`, Verilator testbench, `.msc` scenarios,
   sweep tables) and CL-1 `MultiSoundLogic` + `core-tests` ([tdd-card-logic.md](tdd-card-logic.md) §2, §4, §5)
 - [x] RTL findings F1-F11 folded into [hardware-reference.md](hardware-reference.md) and [architecture.md](architecture.md)
@@ -76,8 +82,8 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   from the component values (`multisoundanalog.h`), calibration through the TSFM FM measurement and volts, coupling
   high-pass, Authentic SAA ladder; `MultiSoundAnalog_Test`, `MultiSoundDacs_Test`, `MultiSoundMixer_Test`
 - [ ] Mixer / DAC follow-ups: done in MS-3 - the card feeds the mixer from `Ym2203Pair::renderChannels` and
-  `MultiSoundDacs` from the GS sink and `SoundriveSample` actions with strobe-end times; left: the rows registered with
-  SoundManager (MS-4); absolute SAA / SAM2695 levels against a real card (today module conventions,
+  `MultiSoundDacs` from the GS sink and `SoundriveSample` actions with strobe-end times; the rows registered with
+  SoundManager in MS-4. Left: absolute SAA / SAM2695 levels against a real card (today module conventions,
   hardware-reference §7)
 - [x] MS-2 input from the RTL: GS INT 321 clocks of 12 MHz, port reads `#FF`, flag rules on any access, GS memory map;
   the ROM's A15 wiring is moot (the 27C512 image is the 32 KB image twice)
@@ -253,4 +259,7 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
 - [x] `data/midi/generaluser-gs.sf2` + license + README tracked (Q4, done 2026-10-05), shipped next to the
   executables by every target that ships `data/rom`; `[MIDI] Bank=NONE`; the test runner's policy keeps the default bank
   out of test machines unless asked (`TestSound::DefaultMidiBank`, `MultiSoundSlotCard_Test.ShippedDefaultBankLoadsWithoutAnOverride`); GS 1.05b ROM as `data/rom/gs105b.rom` done in MS-2 (README-ROMS entry)
+- [ ] Owner question (2026-10-06): should the card's SSG rows run the AY character chain (punch, room crossfeed) the
+  socket's chips run? Today they run only the AY tone voicing; the room setting does not reach them (the 0.15 dB
+  item above)
 - [ ] Later: SAM-6 host MIDI output, SAM-7 Dream-native banks research
