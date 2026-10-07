@@ -1348,15 +1348,15 @@ struct EmulatorState
 
 	unsigned aFF77;
 	unsigned active_ay;
-	// ATM3
+	// ATM3: pBD word, pBDb.l / pBDb.h bytes (named to satisfy ISO C++)
 	union
 	{
 		uint16_t pBD;
 		struct
 		{
-			uint8_t pBDl;
-			uint8_t pBDh;
-		};
+			uint8_t l;
+			uint8_t h;
+		} pBDb;
 	};
 	uint8_t pBE, pBF;
 	uint8_t evoFddMask;  // ZX-Evo #13BD: bit n = drive n emulated in software (trdemu FPGA only)
@@ -1430,43 +1430,6 @@ uint8_t scorpionDosTrigger;
 #define PF_EMUL			0x08	// page mode at #0000
 #define PF_PA3			0x10	// page bit3 at #C000
 
-#define TAPE_QUANTUM 64
-struct tzx_block
-{
-	uint8_t *data;
-	unsigned datasize;    // data size, in bytes
-	unsigned pause;
-	union
-	{
-		struct
-		{
-			unsigned pilot_t, s1_t, s2_t, zero_t, one_t;
-			unsigned pilot_len;
-		};
-		struct
-		{
-			unsigned numblocks, numpulses;
-		};
-		unsigned param;
-	};
-
-	uint8_t type; // 0-playable, 1-pulses, 10-20 - info, etc...
-	uint8_t crc; // xor of all bytes
-	char desc[128];
-};
-
-struct SNDVAL
-{
-	union
-	{
-		unsigned data;
-		struct
-		{
-			short left, right;
-		};
-	};
-};
-
 struct virtkeyt
 {
 	const char *name;
@@ -1499,19 +1462,6 @@ struct action
 	void(*func)();
 	uint16_t k1, k2, k3, k4;
 };
-
-// video overlay 
-typedef union
-{
-	uint32_t p;
-	struct
-	{
-		uint8_t b;
-		uint8_t g;
-		uint8_t r;
-		uint8_t a;
-	};
-} RGB32;
 
 // flags for video filters
 								// misc options

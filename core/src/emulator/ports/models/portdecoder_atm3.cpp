@@ -116,8 +116,8 @@ void PortDecoder_ATM3::reset()
     _evoAvr.Ps2Mouse().SetConnected(_mouse && _mouse->IsPresent());
 
     // ATM3-specific reset
-    _state->pBDl = 0x00;
-    _state->pBDh = 0x00;
+    _state->pBDb.l = 0x00;
+    _state->pBDb.h = 0x00;
     _state->pBE = 0x00;
     _state->pBF = 0x00;
     _state->evoWrProt = 0x00;  // atm_pager.v: wrdisables reset to 0
@@ -1022,9 +1022,9 @@ uint8_t PortDecoder_ATM3::ReadEvoRegister(uint8_t index)
         case 0x0F:  // border color incl. the bright half (0..15)
             return static_cast<uint8_t>((_state->border_attr & 0x07) | ((_state->atmBorderBright & 1) << 3));
         case 0x10:  // breakpoint address low / high
-            return _state->pBDl;
+            return _state->pBDb.l;
         case 0x11:
-            return _state->pBDh;
+            return _state->pBDb.h;
         case 0x12:  // #xBF7 write-protect bits, the order of 08
             return _state->evoWrProt;
         case 0x13:  // virtual-drive mask, current tree only
@@ -1047,9 +1047,9 @@ void PortDecoder_ATM3::Port_BD_Out(uint16_t port, uint8_t value)
     if (IsLegacyFpga() || (index >> 1) == (0x10 >> 1))
     {
         if (port & 0x0100)
-            _state->pBDh = value;
+            _state->pBDb.h = value;
         else
-            _state->pBDl = value;
+            _state->pBDb.l = value;
         return;
     }
 
