@@ -1,0 +1,6 @@
+SCREEN                          = $4000 ; const, local, , , , labels.asm:3
+LINES                           = $0018 ; const, local, , , , labels.asm:4
+loop                            = $0003 ; addr, local, , , code, labels.asm:8
+data_tab                        = $0000 ; addr, local, , , data, labels.asm:14
+start                           = $0000 ; addr, public, , , code, labels.asm:7
+play                            = $0009 ; addr, public, , , code, labels.asm:11

@@ -31,6 +31,9 @@ SymbolFile Sample()
     play.kind = SymbolKind::Code;
     play.size = 412;
     play.module = "music";
+    play.section = "code";
+    play.exported = true;
+    play.traits = {"+used", "def"};
     play.source = {"music.asm", 12, 3};
     play.comment = "plays one frame; \"quoted\"";
     play.aliases = {"MUS_FRAME"};

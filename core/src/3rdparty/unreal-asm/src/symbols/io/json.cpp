@@ -1,7 +1,6 @@
 #include "symbols/io/json.h"
 
 #include <charconv>
-#include <cstdio>
 #include <locale>
 #include <sstream>
 
@@ -366,9 +365,11 @@ std::string Quote(std::string_view text)
             default:
                 if (static_cast<unsigned char>(c) < 0x20)
                 {
-                    char buffer[8];
-                    std::snprintf(buffer, sizeof(buffer), "\\u%04X", static_cast<unsigned>(static_cast<unsigned char>(c)));
-                    out += buffer;
+                    static const char kHex[] = "0123456789ABCDEF";
+                    const unsigned v = static_cast<unsigned char>(c);
+                    out += "\\u00";
+                    out += kHex[v >> 4];
+                    out += kHex[v & 0xF];
                 }
                 else
                     out.push_back(c);
