@@ -1152,7 +1152,7 @@ void Emulator::RequestMNI()
                 window->Reset(state);
         }
 
-        state.scorpionDosTrigger = 1;
+        state.scorpion.dosTrigger = 1;
         _context->pMemory->UpdateZ80Banks();
     }
     else if (IsProfiModel(config.mem_model))

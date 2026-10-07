@@ -101,15 +101,15 @@ TEST(TtdAtmPaging_Test, RoundTripCarriesMemoryMapAndLatches)
     EmulatorState& state = context->emulatorState;
 
     for (int i = 0; i < 8; ++i)
-        state.pFFF7[i] = 0xA0000000u + static_cast<unsigned>(i);
-    state.aFF77 = 0x0000002Au;
-    state.pBD = 0xBEEF;
-    state.pBE = 0x5A;
-    state.pBF = 0x01;   // shaden
-    state.aFE = 0x20;
-    state.aFB = 0x40;
+        state.atm.pFFF7[i] = 0xA0000000u + static_cast<unsigned>(i);
+    state.atm.aFF77 = 0x0000002Au;
+    state.evo.pBD = 0xBEEF;
+    state.evo.pBE = 0x5A;
+    state.evo.pBF = 0x01;   // shaden
+    state.atm.aFE = 0x20;
+    state.atm.aFB = 0x40;
     state.pFDFD = 0x0B;
-    state.atmMemSwapped = true;
+    state.atm.memSwapped = true;
 
     ttd::TTDAtmPaging serializer(context);
     uint8_t blob[sizeof(ttd::AtmPagingState)] = {};
@@ -117,29 +117,29 @@ TEST(TtdAtmPaging_Test, RoundTripCarriesMemoryMapAndLatches)
 
     // Scribble every field the blob owns.
     for (int i = 0; i < 8; ++i)
-        state.pFFF7[i] = 0;
-    state.aFF77 = 0;
-    state.pBD = 0;
-    state.pBE = 0;
-    state.pBF = 0;
-    state.aFE = 0;
-    state.aFB = 0;
+        state.atm.pFFF7[i] = 0;
+    state.atm.aFF77 = 0;
+    state.evo.pBD = 0;
+    state.evo.pBE = 0;
+    state.evo.pBF = 0;
+    state.atm.aFE = 0;
+    state.atm.aFB = 0;
     state.pFDFD = 0;
-    state.atmMemSwapped = false;
+    state.atm.memSwapped = false;
 
     serializer.TTDLoadState(blob);
 
     for (int i = 0; i < 8; ++i)
-        EXPECT_EQ(state.pFFF7[i], 0xA0000000u + static_cast<unsigned>(i))
+        EXPECT_EQ(state.atm.pFFF7[i], 0xA0000000u + static_cast<unsigned>(i))
             << "pFFF7[" << i << "] - the ATM memory map must round-trip";
-    EXPECT_EQ(state.aFF77, 0x0000002Au);
-    EXPECT_EQ(state.pBD, 0xBEEF);
-    EXPECT_EQ(state.pBE, 0x5A);
-    EXPECT_EQ(state.pBF, 0x01);
-    EXPECT_EQ(state.aFE, 0x20);
-    EXPECT_EQ(state.aFB, 0x40);
+    EXPECT_EQ(state.atm.aFF77, 0x0000002Au);
+    EXPECT_EQ(state.evo.pBD, 0xBEEF);
+    EXPECT_EQ(state.evo.pBE, 0x5A);
+    EXPECT_EQ(state.evo.pBF, 0x01);
+    EXPECT_EQ(state.atm.aFE, 0x20);
+    EXPECT_EQ(state.atm.aFB, 0x40);
     EXPECT_EQ(state.pFDFD, 0x0B) << "ATM 4.50 #FDFD latch";
-    EXPECT_TRUE(state.atmMemSwapped);
+    EXPECT_TRUE(state.atm.memSwapped);
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
@@ -160,18 +160,18 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndAvrState)
 
     for (int i = 0; i < 16; ++i)
     {
-        state.atmPalette[i] = 0xFF000000u | static_cast<uint32_t>(i * 0x010203);
-        state.atmPaletteRegs[i] = static_cast<uint8_t>(0x80 | i);
+        state.atm.palette[i] = 0xFF000000u | static_cast<uint32_t>(i * 0x010203);
+        state.atm.paletteRegs[i] = static_cast<uint8_t>(0x80 | i);
     }
-    state.atmBorderBright = 1;
-    state.evoFddMask = 0x05;
-    state.evoInNmi = true;
-    state.evoNmiEntry = true;
+    state.atm.borderBright = 1;
+    state.evo.fddMask = 0x05;
+    state.evo.inNmi = true;
+    state.evo.nmiEntry = true;
     state.nmiAtIntStartPending = true;
-    state.evoTrdemu = PortDecoder_ATM3::kTrdemuIn;
-    state.evoVgSys = 3;
-    state.evoWrProt = 0x96;
-    state.evoTurboPending = 1;
+    state.evo.trdemu = PortDecoder_ATM3::kTrdemuIn;
+    state.evo.vgSys = 3;
+    state.evo.wrProt = 0x96;
+    state.evo.turboPending = 1;
     atm3->GetEvoAvr().SetVolatileState(EvoAvr::kExtBootloaderVersion, 0x42, 0x03);
 
     ttd::TTDAtmPaging serializer(context);
@@ -180,36 +180,36 @@ TEST(TtdAtmPaging_Test, Atm3RoundTripCarriesPaletteBorderAndAvrState)
 
     for (int i = 0; i < 16; ++i)
     {
-        state.atmPalette[i] = 0;
-        state.atmPaletteRegs[i] = 0;
+        state.atm.palette[i] = 0;
+        state.atm.paletteRegs[i] = 0;
     }
-    state.atmBorderBright = 0;
-    state.evoFddMask = 0;
-    state.evoInNmi = false;
-    state.evoNmiEntry = false;
+    state.atm.borderBright = 0;
+    state.evo.fddMask = 0;
+    state.evo.inNmi = false;
+    state.evo.nmiEntry = false;
     state.nmiAtIntStartPending = false;
-    state.evoTrdemu = 0;
-    state.evoVgSys = 0;
-    state.evoWrProt = 0;
-    state.evoTurboPending = 0;
+    state.evo.trdemu = 0;
+    state.evo.vgSys = 0;
+    state.evo.wrProt = 0;
+    state.evo.turboPending = 0;
     atm3->GetEvoAvr().SetVolatileState(0, 0, 0);
 
     serializer.TTDLoadState(blob);
 
     for (int i = 0; i < 16; ++i)
     {
-        EXPECT_EQ(state.atmPalette[i], 0xFF000000u | static_cast<uint32_t>(i * 0x010203)) << "atmPalette[" << i << "]";
-        EXPECT_EQ(state.atmPaletteRegs[i], 0x80 | i) << "atmPaletteRegs[" << i << "]";
+        EXPECT_EQ(state.atm.palette[i], 0xFF000000u | static_cast<uint32_t>(i * 0x010203)) << "atmPalette[" << i << "]";
+        EXPECT_EQ(state.atm.paletteRegs[i], 0x80 | i) << "atmPaletteRegs[" << i << "]";
     }
-    EXPECT_EQ(state.atmBorderBright, 1);
-    EXPECT_EQ(state.evoFddMask, 0x05) << "the #13BD virtual-drive mask";
-    EXPECT_TRUE(state.evoInNmi) << "board NMI page state";
-    EXPECT_TRUE(state.evoNmiEntry);
+    EXPECT_EQ(state.atm.borderBright, 1);
+    EXPECT_EQ(state.evo.fddMask, 0x05) << "the #13BD virtual-drive mask";
+    EXPECT_TRUE(state.evo.inNmi) << "board NMI page state";
+    EXPECT_TRUE(state.evo.nmiEntry);
     EXPECT_TRUE(state.nmiAtIntStartPending);
-    EXPECT_EQ(state.evoTrdemu, PortDecoder_ATM3::kTrdemuIn) << "virtual TR-DOS page state";
-    EXPECT_EQ(state.evoVgSys, 3);
-    EXPECT_EQ(state.evoWrProt, 0x96) << "#xBF7 write protect";
-    EXPECT_EQ(state.evoTurboPending, 1) << "a clock select waiting for the next M1";
+    EXPECT_EQ(state.evo.trdemu, PortDecoder_ATM3::kTrdemuIn) << "virtual TR-DOS page state";
+    EXPECT_EQ(state.evo.vgSys, 3);
+    EXPECT_EQ(state.evo.wrProt, 0x96) << "#xBF7 write protect";
+    EXPECT_EQ(state.evo.turboPending, 1) << "a clock select waiting for the next M1";
     EXPECT_EQ(atm3->GetEvoAvr().GetExtensionType(), EvoAvr::kExtBootloaderVersion) << "AVR extension type";
     EXPECT_EQ(atm3->GetEvoAvr().GetEepromPage(), 0x42);
     EXPECT_TRUE(atm3->GetEvoAvr().IsEepromMode());
@@ -231,65 +231,65 @@ TEST(TtdAtmPaging_Test, HashRespondsToEveryCarriedField)
 
     const uint64_t base = serializer.TTDHashState();
 
-    state.pFFF7[3] ^= 0x00000010u;
+    state.atm.pFFF7[3] ^= 0x00000010u;
     EXPECT_NE(serializer.TTDHashState(), base) << "pFFF7 not hashed";
-    state.pFFF7[3] ^= 0x00000010u;
+    state.atm.pFFF7[3] ^= 0x00000010u;
 
-    state.aFF77 ^= 0x01u;
+    state.atm.aFF77 ^= 0x01u;
     EXPECT_NE(serializer.TTDHashState(), base) << "aFF77 not hashed";
-    state.aFF77 ^= 0x01u;
+    state.atm.aFF77 ^= 0x01u;
 
-    state.pBD ^= 0x0100;
+    state.evo.pBD ^= 0x0100;
     EXPECT_NE(serializer.TTDHashState(), base) << "pBD not hashed";
-    state.pBD ^= 0x0100;
+    state.evo.pBD ^= 0x0100;
 
-    state.pBE ^= 0x01;
+    state.evo.pBE ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), base) << "pBE not hashed";
-    state.pBE ^= 0x01;
+    state.evo.pBE ^= 0x01;
 
-    state.pBF ^= 0x01;
+    state.evo.pBF ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), base) << "pBF not hashed";
-    state.pBF ^= 0x01;
+    state.evo.pBF ^= 0x01;
 
-    state.atmPalette[5] ^= 0x00010000u;
+    state.atm.palette[5] ^= 0x00010000u;
     EXPECT_NE(serializer.TTDHashState(), base) << "atmPalette not hashed";
-    state.atmPalette[5] ^= 0x00010000u;
+    state.atm.palette[5] ^= 0x00010000u;
 
-    state.atmPaletteRegs[9] ^= 0x01;
+    state.atm.paletteRegs[9] ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), base) << "atmPaletteRegs not hashed";
-    state.atmPaletteRegs[9] ^= 0x01;
+    state.atm.paletteRegs[9] ^= 0x01;
 
-    state.atmBorderBright ^= 0x01;
+    state.atm.borderBright ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), base) << "atmBorderBright not hashed";
-    state.atmBorderBright ^= 0x01;
+    state.atm.borderBright ^= 0x01;
 
-    state.evoFddMask ^= 0x04;
+    state.evo.fddMask ^= 0x04;
     EXPECT_NE(serializer.TTDHashState(), base) << "evoFddMask not hashed";
-    state.evoFddMask ^= 0x04;
+    state.evo.fddMask ^= 0x04;
 
-    state.evoWrProt ^= 0x04;
+    state.evo.wrProt ^= 0x04;
     EXPECT_NE(serializer.TTDHashState(), base) << "evoWrProt not hashed";
-    state.evoWrProt ^= 0x04;
+    state.evo.wrProt ^= 0x04;
 
-    state.evoInNmi = !state.evoInNmi;
+    state.evo.inNmi = !state.evo.inNmi;
     EXPECT_NE(serializer.TTDHashState(), base) << "evoInNmi not hashed";
-    state.evoInNmi = !state.evoInNmi;
+    state.evo.inNmi = !state.evo.inNmi;
 
-    state.aFE ^= 0x01;
+    state.atm.aFE ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), base) << "aFE not hashed";
-    state.aFE ^= 0x01;
+    state.atm.aFE ^= 0x01;
 
-    state.aFB ^= 0x01;
+    state.atm.aFB ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), base) << "aFB not hashed";
-    state.aFB ^= 0x01;
+    state.atm.aFB ^= 0x01;
 
     state.pFDFD ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), base) << "pFDFD not hashed";
     state.pFDFD ^= 0x01;
 
-    state.atmMemSwapped = !state.atmMemSwapped;
+    state.atm.memSwapped = !state.atm.memSwapped;
     EXPECT_NE(serializer.TTDHashState(), base) << "atmMemSwapped not hashed";
-    state.atmMemSwapped = !state.atmMemSwapped;
+    state.atm.memSwapped = !state.atm.memSwapped;
 
     EXPECT_EQ(serializer.TTDHashState(), base) << "hash is not a pure function of state";
 
@@ -310,21 +310,21 @@ TEST(TtdAtmPaging_Test, RegistryCaptureAllRestoresMemoryMap)
     ttd::TTDAtmPaging serializer(context);
     registry.Register(ttd::PeripheralId::AtmPaging, &serializer);
 
-    state.pFFF7[0] = 0x12345678u;
-    state.atmMemSwapped = true;
+    state.atm.pFFF7[0] = 0x12345678u;
+    state.atm.memSwapped = true;
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     registry.CaptureAll(blobs);
     ASSERT_EQ(blobs.count(static_cast<uint8_t>(ttd::PeripheralId::AtmPaging)), 1u);
 
-    state.pFFF7[0] = 0;
-    state.atmMemSwapped = false;
+    state.atm.pFFF7[0] = 0;
+    state.atm.memSwapped = false;
 
     const auto report = registry.RestoreAll(blobs);
     EXPECT_EQ(report.restored, 1u);
     EXPECT_TRUE(report.Complete());
-    EXPECT_EQ(state.pFFF7[0], 0x12345678u);
-    EXPECT_TRUE(state.atmMemSwapped);
+    EXPECT_EQ(state.atm.pFFF7[0], 0x12345678u);
+    EXPECT_TRUE(state.atm.memSwapped);
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
@@ -379,11 +379,11 @@ TEST(TtdAtmPaging_Test, SeekRestoresMemoryMapAndResultingBanks)
     // Drive the map off its power-on values so a serializer that captured
     // nothing would still be caught.
     for (int i = 0; i < 8; ++i)
-        state.pFFF7[i] = 0xC0000000u + static_cast<unsigned>(i);
-    state.atmMemSwapped = true;
+        state.atm.pFFF7[i] = 0xC0000000u + static_cast<unsigned>(i);
+    state.atm.memSwapped = true;
     memory->UpdateZ80Banks();
 
-    const unsigned mapAtCapture0 = state.pFFF7[0];
+    const unsigned mapAtCapture0 = state.atm.pFFF7[0];
     const uint8_t* bankAtCapture = memory->MapZ80AddressToPhysicalAddress(0x8000);
 
     state.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
@@ -396,18 +396,18 @@ TEST(TtdAtmPaging_Test, SeekRestoresMemoryMapAndResultingBanks)
 
     // Move the map somewhere else entirely.
     for (int i = 0; i < 8; ++i)
-        state.pFFF7[i] = 0x10000000u + static_cast<unsigned>(i);
-    state.atmMemSwapped = false;
+        state.atm.pFFF7[i] = 0x10000000u + static_cast<unsigned>(i);
+    state.atm.memSwapped = false;
     memory->UpdateZ80Banks();
-    ASSERT_NE(state.pFFF7[0], mapAtCapture0);
+    ASSERT_NE(state.atm.pFFF7[0], mapAtCapture0);
 
     ttd::TTDTimePoint target;
     target.frame = frame;
     target.tInFrame = 0;
     ASSERT_TRUE(ttd->SeekTo(target));
 
-    EXPECT_EQ(state.pFFF7[0], mapAtCapture0) << "ATM memory map not restored by the seek";
-    EXPECT_TRUE(state.atmMemSwapped) << "address-swap flag not restored";
+    EXPECT_EQ(state.atm.pFFF7[0], mapAtCapture0) << "ATM memory map not restored by the seek";
+    EXPECT_TRUE(state.atm.memSwapped) << "address-swap flag not restored";
     EXPECT_EQ(memory->MapZ80AddressToPhysicalAddress(0x8000), bankAtCapture)
         << "map restored but the paging decode was not rebuilt from it";
 
@@ -456,7 +456,7 @@ TEST(TtdAtmPaging_Test, Atm450SeekRestoresLatchesAndBanks)
     ASSERT_TRUE(ttd->SeekTo(target));
 
     EXPECT_EQ(state.pFDFD, 0x03);
-    EXPECT_EQ(state.aFE, 0x3E);
+    EXPECT_EQ(state.atm.aFE, 0x3E);
     EXPECT_EQ(memory->GetRAMPageForBank3(), 29) << "#C000 extension page not rebuilt";
     EXPECT_EQ(memory->GetMemoryBankMode(0), MemoryBankModeEnum::BANK_RAM) << "RAM at #0000 not rebuilt";
     EXPECT_EQ(memory->GetRAMPageForBank1(), 4);

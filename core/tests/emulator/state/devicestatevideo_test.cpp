@@ -42,7 +42,7 @@ protected:
         if (ff77 >= 0)
         {
             _context->emulatorState.pFF77 = static_cast<uint8_t>((ff77 & 0x07) | 0x20);
-            _context->emulatorState.aFF77 = 0x0100;
+            _context->emulatorState.atm.aFF77 = 0x0100;
         }
         _context->pScreen->InitRaster();
     }

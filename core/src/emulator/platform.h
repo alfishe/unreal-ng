@@ -6,6 +6,12 @@
 #include "common/sound/filters/filtervoicing.h"
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
 #include "emulator/slots/slotconfig.h"
+#include "emulator/platforms/atm/atmstate.h"
+#include "emulator/platforms/profi/profistate.h"
+#include "emulator/platforms/scorpion/scorpionstate.h"
+#include "emulator/platforms/zxevo/evostate.h"
+
+#include <type_traits>
 
 #define EMUL_DEBUG
 #define TRASH_PAGE
@@ -1106,19 +1112,6 @@ enum SNAP
 	snHOB, snSCL, snTRD, snFDI, snTD0, snUDI, snISD, snPRO
 };
 
-struct NVRAM
-{
-	enum EEPROM_STATE { IDLE = 0, RCV_CMD, RCV_ADDR, RCV_DATA, SEND_DATA, RD_ACK };
-	unsigned address;
-	uint8_t datain, dataout, bitsin, bitsout;
-	uint8_t state;
-	uint8_t prev;
-	uint8_t out;
-	uint8_t out_z;
-
-	void MemoryWrite(uint8_t val);
-};
-
 struct EmulatorState
 {
     /// region <Counters>
@@ -1162,18 +1155,10 @@ struct EmulatorState
     uint32_t current_z80_frequency;             // xN CPU clock generator (in Hz)
     uint8_t current_z80_frequency_multiplier;   // Frequency multiplier comparing to CPU base
     uint8_t next_z80_frequency_multiplier;      // Queued multiplier to apply at next frame start (prevents mid-frame changes)
-    uint8_t scorpion_turbo;                     // Scorpion ZS-256 Turbo+ hardware turbo flip-flop (hardware-reference 13):
-                                                // 1 = 7 MHz. Set by IN from the #7FFD-family decode, cleared by IN from
-                                                // the #1FFD-family decode and by reset. Composes with the host speed
-                                                // multiplier at the frame boundary - see Z80::Z80FrameCycle()
-    uint8_t profi_turbo_switch;                 // Profi front-panel TURBO switch: 1 = pressed. The clock is 7 MHz while it is
-                                                // pressed and (v3) the VG93's HLD is low (PortDecoder_Profi::SyncTurbo)
-    uint8_t profi_cpm_switch;                   // Profi v5 front-panel CP/M switch: 1 = pressed. Holds #DFFD at #00 (the
-                                                // latches' clear input) and every #DFFD write is lost while pressed
     uint8_t hw_turbo_ratio;                     // Model-neutral HARDWARE turbo: the guest-visible CPU clock multiplier,
                                                 // 1..8 (1 = base clock, 2 = e.g. Scorpion / ATM 7 MHz, 4 = 14 MHz clones,
                                                 // 6 = Sprinter 21 MHz). Maintained by the model's port decoder from its
-                                                // own latch (Scorpion: scorpion_turbo; ATM: its turbo bits). The Z80
+                                                // own latch (Scorpion: scorpion.turbo; ATM: its turbo bits). The Z80
                                                 // multiplies it with the host speed control; audio/video descale it
 
     uint8_t hw_turbo_ratio_applied;             // hw_turbo_ratio as composed into current_z80_frequency_multiplier at
@@ -1274,117 +1259,26 @@ struct EmulatorState
 
 
     /// region <Port state>
-	uint8_t p7FFD, pFE, pEFF7, pXXXX;   // Common ports
+	uint8_t p7FFD, pFE, pEFF7;          // Common ports
 	uint8_t pBFFD, pFFFD;               // AY sound-specific
 	uint8_t pDFFD, pFDFD, p1FFD, pFF77; // Models with extended memory-specific
-	uint8_t p7EFD, p78FD, p7AFD, p7CFD, gmx_config, gmx_magic_shift; // GMX specific
-	uint8_t p00, p80FD; // Quorum specific
 	/// endregion </Port state>
 
 	/// region <Access flags>
 	bool video_memory_changed;  // [Debug mode only] Indicates if video memory was changed
 	/// endregion </Access flags>
 
-	// ZX-Evo board NMI (znmi.v): evoInNmi = RAM page #FF forced into #0000-#3FFF;
-	// evoNmiEntry = the next NMI the Z80 accepts is the board's own (NOP at #0066,
-	// page switch); nmiAtIntStartPending = a board NMI waits for the frame INT
-	// (read by Z80::ProcessInterrupts, false on every other model). Packed into
-	// the one byte of the former nmi_in_progress flag, so EmulatorState keeps
-	// its layout
-	bool evoInNmi : 1 = false;
-	bool evoNmiEntry : 1 = false;
-	bool nmiAtIntStartPending : 1 = false;
-	
-	uint8_t pLSY256;
-
-	uint8_t aFE, aFB; // ATM 4.50 system ports
-	unsigned pFFF7[8]; // ATM 7.10 / ATM3(4Mb) memory map
-	// |7ffd|rom|b7b6|b5..b0| b7b6 = 0 for atm2
-	bool atmMemSwapped; // ATM A5-A7 <-> A8-A10 swap flag (vestigial: the swap is not emulated - reference gates it behind the default-off AtmMemSwap ini; kept for the TTD paging blob)
-
-	/// region <ATM Turbo 2+ / ZX-Evo BaseConf video state>
-	// 16-cell programmable palette RAM behind port #FF (both machines). Cell
-	// pointer = the 4-bit border color (border_attr + the FE bright bit), the
-	// write gate = A14 of the last #xx77 write (aFF77 & 0x4000, "pen2").
-	// atmPalette carries the ABGR cell colors (same packing as the ULA
-	// _rgbaColors tables); atmPaletteRegs keeps the raw written byte for the
-	// ATM3 #BE.0D readback. atmBorderBright is the 4th border bit latched from
-	// A3 of every #FE port write (A3 = 0 -> bright border).
-	uint32_t atmPalette[16];
-	uint8_t atmPaletteRegs[16];
-	uint8_t atmBorderBright;
-
-	/// Seed the palette with the standard 16 ZX colors - what the machine
-	/// shows until software overrides cells through #FF (xpeccy vid_reset()
-	/// / zx_set_pal() copy the preset into the live palette the same way at
-	/// every reset). Values mirror ScreenZX's TransformZXSpectrumColorsToRGBA
-	/// tables (ABGR: 0xFF << 24 | B << 16 | G << 8 | R).
-	void InitAtmPalette()
-	{
-		static const uint32_t ZXPAL[16] = {
-			// Brightness = 0
-			0xFF000000, 0xFFC72200, 0xFF1628D6, 0xFFC733D4,
-			0xFF25C500, 0xFFC9C700, 0xFF2AC8CC, 0xFFCACACA,
-			// Brightness = 1
-			0xFF000000, 0xFFFB2B00, 0xFF1C33FF, 0xFFFC40FF,
-			0xFF2FF900, 0xFFFEFB00, 0xFF36FCFF, 0xFFFFFFFF};
-		for (int i = 0; i < 16; i++)
-		{
-			atmPalette[i] = ZXPAL[i];
-			atmPaletteRegs[i] = 0x00;
-		}
-		atmBorderBright = 0;
-	}
-	// Text-mode font RAM (ATM Turbo 2+ renders from it too, nothing writes it there). Address = code * 8 + row,
-	// the FPGA's read address {char, row}; the built-in font (stored row * 256 + code) is copied in by
-	// InitAtmFont. ZX-Evo #BF bit 2 mirrors every memory write into it (EvoFontOverlay). atmFontByte is the
-	// glyph byte the text renderer fetched last, what #0EBD reads back (#FF until a text frame is drawn)
-	uint8_t atmFontRam[2048];
-	uint8_t atmFontByte;
-	void InitAtmFont();
-	/// endregion </ATM Turbo 2+ / ZX-Evo BaseConf video state>
+	// A board NMI waits for the frame INT: read by Z80::ProcessInterrupts on every model,
+	// set only by the ZX-Evo board NMI (EvoState::inNmi / nmiEntry)
+	bool nmiAtIntStartPending = false;
 
 	uint8_t wd_shadow[4]; // 2F, 4F, 6F, 8F
 
-	unsigned aFF77;
 	unsigned active_ay;
-	// ATM3: pBD word, pBDb.l / pBDb.h bytes (named to satisfy ISO C++)
-	union
-	{
-		uint16_t pBD;
-		struct
-		{
-			uint8_t l;
-			uint8_t h;
-		} pBDb;
-	};
-	uint8_t pBE, pBF;
-	uint8_t evoFddMask;  // ZX-Evo #13BD: bit n = drive n emulated in software (trdemu FPGA only)
-	// ZX-Evo virtual TR-DOS (zdos.v): bit 0 = RAM page #FE swapped into #0000-#3FFF,
-	// bit 1 = swap due before the next opcode fetch; evoVgSys = D5..D0 of the last OUT (#FF) (the VG93 system latch: drive D1..D0, reset, HLT, side)
-	uint8_t evoTrdemu;
-	uint8_t evoVgSys;
-	// ZX-Evo #xBF7 write protect: bit i = window i of map 0, bit 4 + i = window i of map 1 (the #12BD order)
-	uint8_t evoWrProt;
-	// ZX-Evo clock select written, taken over by the CPU clock at the next M1 refresh (zclock.v int_turbo)
-	uint8_t evoTurboPending;
 
 	uint8_t flags = 0x00; // Stores execution flags
 	uint8_t border_attr;
-	uint8_t pVD;
 
-#ifdef MOD_VID_VD
-	uint8_t *vdbase;
-#endif
-
-	uint8_t pFFBA, p7FBA; // SMUC
-	uint8_t res1, res2;
-
-	uint8_t p0F, p1F, p4F, p5F; // soundrive
-	
-	//struct WD1793 wd;
-	
-	struct NVRAM nvram;
 	struct
 	{
 		uint64_t edge_change;
@@ -1396,23 +1290,22 @@ struct EmulatorState
 	} tape;
 	
 	uint8_t comp_pal[0x10];
-	uint16_t profiPalette[0x10];			// Profi hi-res palette: 9-bit GGGRRRBBB (bits 8:6 G, 5:3 R, 2:0 B;
-											// B0 is the extra blue LSB latched from #FE.D7 on the previous OUT),
-											// index = {bright,G,R,B}
 	uint8_t ulaplus_cram[64];
 	uint8_t ulaplus_mode;
 	uint8_t ulaplus_reg;
-	uint8_t profrom_bank;
 
-// Scorpion magic-button DOS trigger (DD50.1 "1-DOS/0-SOS", hardware-reference §9):
-// armed together with the NMI pulse (DD50.2), it forces page 3 (TR-DOS) of the
-// current ProfROM plane over the #0000-#3FFF window - without touching the #1FFD
-// latch (the service bit still outranks it) or the plane register. Released by
-// the first CPU read from #4000-#FFFF (the Beta128 "leave the ROM window"
-// strobe); cleared by reset. Like profrom_bank it is not reproducible from
-// ports, so TTD checkpoints and the divergence hash carry it explicitly
-uint8_t scorpionDosTrigger;
+	/// region <Hardware-family state>
+	// Model-specific latches and RAM, one plain struct per hardware family (no pointers: reset is
+	// EmulatorState{}, TTD copies field by field). docs/inprogress/2026-10-07-model-state/tdd.md
+	AtmState atm;             // ATM Turbo 1 / 2+ / 3, ZX-Evo BaseConf (shared by the three ATM decoders)
+	EvoState evo;             // ATM3 / ZX-Evo BaseConf decoder only
+	ScorpionState scorpion;   // Scorpion ZS-256 (Turbo+, ProfROM, SMUC)
+	ProfiState profi;         // Profi (front-panel switches, hi-res palette)
+	/// endregion </Hardware-family state>
 };
+
+static_assert(std::is_trivially_copyable_v<EmulatorState>,
+              "EmulatorState is reset by assignment and copied by TTD: no owning members");
 
 // bits for State::flags
 #define CF_DOSPORTS     0x01    // tr-dos ports are accessible
@@ -1423,12 +1316,6 @@ uint8_t scorpionDosTrigger;
 #define CF_CACHEON      0x20    // cache active
 #define CF_Z80FBUS      0x40    // unstable data bus
 #define CF_PROFROM      0x80    // PROF-ROM active
-
-// LSY256 - BarmaleyM's Orel' extension
-#define PF_DV0			0x01	// RAM r/w at #0000 page selector
-#define PF_BLKROM		0x02	// RAM/!ROM at #0000
-#define PF_EMUL			0x08	// page mode at #0000
-#define PF_PA3			0x10	// page bit3 at #C000
 
 struct virtkeyt
 {

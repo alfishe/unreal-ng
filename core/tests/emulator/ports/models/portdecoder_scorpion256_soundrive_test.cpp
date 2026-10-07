@@ -123,7 +123,7 @@ TEST_F(PortDecoder_Scorpion256_Soundrive_Test, ModeOnePortsRespectBeta128Precede
     // SoundDrive claims all four addresses, Beta128 must not see them
     _context->emulatorState.flags &= ~CF_TRDOS;
     _context->emulatorState.p1FFD &= ~0x02;
-    _context->emulatorState.scorpionDosTrigger = false;
+    _context->emulatorState.scorpion.dosTrigger = false;
 
     const uint16_t rawPorts[] = { 0x000F, 0x001F, 0x004F, 0x005F };
     for (size_t i = 0; i < std::size(rawPorts); i++)

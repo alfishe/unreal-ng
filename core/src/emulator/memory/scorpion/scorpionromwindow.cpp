@@ -51,43 +51,43 @@ void ScorpionRomWindow::Configure(TEMP& temp, uint16_t imageBanks)
 
 bool ScorpionRomWindow::OnRomRead(EmulatorState& state, const TEMP& temp, uint16_t addr)
 {
-    uint8_t previous = state.profrom_bank;
+    uint8_t previous = state.scorpion.profromBank;
 
     // The GAL advances its 2-bit state per the verified table with the row
     // selector taken from A3:A2, masked by the image size; the window bits
     // above it are preserved (hardware-reference §5.2)
     uint8_t selector = static_cast<uint8_t>((addr >> 2) & 0b11);
     uint8_t galState = static_cast<uint8_t>(ScorpionRomSwitchTable[selector][previous & 0b11] & temp.profrom_mask);
-    state.profrom_bank = static_cast<uint8_t>((previous & 0b11111100 & _imageQuadrantMask) | galState);
+    state.scorpion.profromBank = static_cast<uint8_t>((previous & 0b11111100 & _imageQuadrantMask) | galState);
 
-    return state.profrom_bank != previous;
+    return state.scorpion.profromBank != previous;
 }
 
 void ScorpionRomWindow::OnWindowPortWrite(EmulatorState& state, const TEMP& temp, uint8_t value)
 {
-    state.p7EFD = value;
+    state.scorpion.p7EFD = value;
 
     // Window bits replace their part of the quadrant, the GAL 2-bit state is
     // preserved; bit 6 is the emulator extension (debug/API, 2 MB images only -
     // the image clamp drops it everywhere else)
     uint8_t window = static_cast<uint8_t>((value >> 4) & temp.profrom_window_mask);
     uint8_t extension = static_cast<uint8_t>((value >> 6) & 0b1);
-    uint8_t composed = static_cast<uint8_t>(((window << 2) | (state.profrom_bank & 0b11)) | (extension << 4));
+    uint8_t composed = static_cast<uint8_t>(((window << 2) | (state.scorpion.profromBank & 0b11)) | (extension << 4));
 
-    state.profrom_bank = static_cast<uint8_t>(composed & _imageQuadrantMask);
+    state.scorpion.profromBank = static_cast<uint8_t>(composed & _imageQuadrantMask);
 }
 
 uint8_t ScorpionRomWindow::Quadrant(const EmulatorState& state) const
 {
     // Kept inside the image bounds by construction - every composition path
     // masks with _imageQuadrantMask
-    return state.profrom_bank;
+    return state.scorpion.profromBank;
 }
 
 void ScorpionRomWindow::Reset(EmulatorState& state) const
 {
     // Power-on: quadrant 0 (boot always comes from the image's first 64 KB)
     // with a cleared window latch (hardware-reference §5.2)
-    state.profrom_bank = 0;
-    state.p7EFD = 0;
+    state.scorpion.profromBank = 0;
+    state.scorpion.p7EFD = 0;
 }

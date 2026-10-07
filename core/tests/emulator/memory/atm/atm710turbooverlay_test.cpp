@@ -56,7 +56,7 @@ protected:
     {
         const EmulatorState& state = _context->emulatorState;
         const uint8_t value = on ? static_cast<uint8_t>(state.pFF77 | 0x08) : static_cast<uint8_t>(state.pFF77 & ~0x08);
-        _decoder->DecodePortOut(state.aFF77 ? state.aFF77 : 0xFF77, value, 0x0000);
+        _decoder->DecodePortOut(state.atm.aFF77 ? state.atm.aFF77 : 0xFF77, value, 0x0000);
         _z80->ApplyHardwareTurboNow();
     }
 
@@ -132,7 +132,7 @@ TEST_F(Atm710TurboOverlay_Test, RomAndIoDoNotWait)
     Turbo(true);
     // Window 0 = ROM page 0 through its #xFF7 register (type 0x300, "ROM from FFF7"), as software selects it
     EmulatorState& state = _context->emulatorState;
-    state.pFFF7[((state.p7FFD & 0x10) ? 4 : 0) + 0] = 0x300;
+    state.atm.pFFF7[((state.p7FFD & 0x10) ? 4 : 0) + 0] = 0x300;
     _context->pMemory->UpdateZ80Banks();
     ASSERT_TRUE(_context->pMemory->IsWindowRom(0));
     Poke(0x8000, {0x7E, 0xD3, 0xFE});   // LD A,(HL); OUT (#FE),A

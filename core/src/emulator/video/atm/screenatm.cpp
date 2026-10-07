@@ -58,7 +58,7 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
     // to the standard ZX colors, so a machine whose software never touches
     // #FF shows stock colors (xpeccy vid_reset / zx_set_pal preset).
     const uint32_t borderColor =
-        state.atmPalette[(state.border_attr & 0x07) | ((state.atmBorderBright & 1) << 3)];
+        state.atm.palette[(state.border_attr & 0x07) | ((state.atm.borderBright & 1) << 3)];
     const bool inScreenRow = (fbRow >= rd.screenOffsetTop) &&
                              (fbRow < rd.screenOffsetTop + SCREEN_LINES);
 
@@ -108,8 +108,8 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
         uint8_t* plane = (q & 1) ? vp : ap;
         const uint8_t bt = plane[((q >> 1) << 13) + offset + j];
         const uint32_t col = rd.screenOffsetLeft + 8 * j + 2 * q;
-        framebufferARGB[rowOffset + col] = state.atmPalette[PairColourIndex(bt, false)];
-        framebufferARGB[rowOffset + col + 1] = state.atmPalette[PairColourIndex(bt, true)];
+        framebufferARGB[rowOffset + col] = state.atm.palette[PairColourIndex(bt, false)];
+        framebufferARGB[rowOffset + col + 1] = state.atm.palette[PairColourIndex(bt, true)];
         return;
     }
 
@@ -132,8 +132,8 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
         // ATM attribute decode (xpeccy vidATMDoubleDot, shared by HWM / TX /
         // TL): bit 6 = ink bright, bit 7 = PAPER bright - there is no flash.
         // _rgbaFlashColors would misread bit 7 as the flash/paper-swap flag.
-        const uint32_t ink = state.atmPalette[AttrColourIndex(attr, true)];
-        const uint32_t paper = state.atmPalette[AttrColourIndex(attr, false)];
+        const uint32_t ink = state.atm.palette[AttrColourIndex(attr, true)];
+        const uint32_t paper = state.atm.palette[AttrColourIndex(attr, false)];
         const uint32_t col = rd.screenOffsetLeft + 8 * n + 4 * half;
         const uint32_t shift = 4 * half;
         for (uint32_t k = 0; k < 4; ++k)
@@ -164,11 +164,11 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
         const uint32_t attrAddr = (evenCol ? kTlAttrEven : kTlAttrOdd) + rowBase + ((n + 1) >> 1);
         const uint8_t code = page[codeAddr];
         const uint8_t attr = page[attrAddr];
-        const uint8_t glyph = state.atmFontRam[code * 8 + (screenY % 8)];
-        state.atmFontByte = glyph;  // what #0EBD reads back
+        const uint8_t glyph = state.atm.fontRam[code * 8 + (screenY % 8)];
+        state.atm.fontByte = glyph;  // what #0EBD reads back
         // vidATMDoubleDot decode: bit 6 = ink bright, bit 7 = paper bright
-        const uint32_t ink = state.atmPalette[AttrColourIndex(attr, true)];
-        const uint32_t paper = state.atmPalette[AttrColourIndex(attr, false)];
+        const uint32_t ink = state.atm.palette[AttrColourIndex(attr, true)];
+        const uint32_t paper = state.atm.palette[AttrColourIndex(attr, false)];
         const uint32_t col = rd.screenOffsetLeft + 8 * n + 4 * half;
         const uint32_t shift = 4 * half;
         for (uint32_t k = 0; k < 4; ++k)
@@ -196,11 +196,11 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
         const bool fromP0 = (n % 2 == 0);
         const uint8_t code = fromP0 ? vp[byteIdx] : vp[kPlaneHigh + byteIdx];
         const uint8_t attr = fromP0 ? ap[kPlaneHigh + byteIdx] : ap[1 + byteIdx];
-        const uint8_t glyph = state.atmFontRam[code * 8 + (screenY % 8)];
-        state.atmFontByte = glyph;  // what #0EBD reads back
+        const uint8_t glyph = state.atm.fontRam[code * 8 + (screenY % 8)];
+        state.atm.fontByte = glyph;  // what #0EBD reads back
         // vidATMDoubleDot decode: bit 6 = ink bright, bit 7 = paper bright
-        const uint32_t ink = state.atmPalette[AttrColourIndex(attr, true)];
-        const uint32_t paper = state.atmPalette[AttrColourIndex(attr, false)];
+        const uint32_t ink = state.atm.palette[AttrColourIndex(attr, true)];
+        const uint32_t paper = state.atm.palette[AttrColourIndex(attr, false)];
         const uint32_t col = rd.screenOffsetLeft + 8 * n + 4 * half;
         const uint32_t shift = 4 * half;
         for (uint32_t k = 0; k < 4; ++k)

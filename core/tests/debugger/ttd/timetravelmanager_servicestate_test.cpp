@@ -95,17 +95,17 @@ TEST_F(TimeTravelManager_ServiceState_Test, ScorpionTurboLatchAndItsHookComeBack
     const size_t slow = Frame();
     scorpion->DecodePortIn(0x7FFD, 0x0000);   // the #7FFD read family sets the latch
     const size_t fast = Frame();
-    ASSERT_EQ(_context->emulatorState.scorpion_turbo, 1);
+    ASSERT_EQ(_context->emulatorState.scorpion.turbo, 1);
     scorpion->DecodePortIn(0x1FFD, 0x0000);   // the #1FFD read family clears it
     Frame();
-    ASSERT_EQ(_context->emulatorState.scorpion_turbo, 0);
+    ASSERT_EQ(_context->emulatorState.scorpion.turbo, 0);
 
     ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(fast));
-    EXPECT_EQ(_context->emulatorState.scorpion_turbo, 1);
+    EXPECT_EQ(_context->emulatorState.scorpion.turbo, 1);
     EXPECT_EQ(z80->GetMachineStepHook(), scorpion) << "the /INT-pulse hook follows the latch";
 
     ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(slow));
-    EXPECT_EQ(_context->emulatorState.scorpion_turbo, 0);
+    EXPECT_EQ(_context->emulatorState.scorpion.turbo, 0);
     EXPECT_EQ(z80->GetMachineStepHook(), nullptr);
 }
 
@@ -117,8 +117,8 @@ TEST_F(TimeTravelManager_ServiceState_Test, SmucLatchesAndLinkComeBack)
     ASSERT_NE(scorpion, nullptr);
     EmulatorState& state = _context->emulatorState;
 
-    state.pFFBA = 0x80;
-    state.p7FBA = 0x40;
+    state.scorpion.pFFBA = 0x80;
+    state.scorpion.p7FBA = 0x40;
     scorpion->GetSmucIdeRegs()[3] = 0x5A;
     SMUCNvram::LinkState link = scorpion->GetSMUCNvram().GetLinkState();
     link.mode = 2;          // NV_ADR: an address byte is coming in
@@ -127,15 +127,15 @@ TEST_F(TimeTravelManager_ServiceState_Test, SmucLatchesAndLinkComeBack)
     scorpion->GetSMUCNvram().SetLinkState(link);
     const size_t mid = Frame();
 
-    state.pFFBA = 0;
-    state.p7FBA = 0;
+    state.scorpion.pFFBA = 0;
+    state.scorpion.p7FBA = 0;
     scorpion->GetSmucIdeRegs()[3] = 0;
     scorpion->GetSMUCNvram().ResetSerialLinkState();
     Frame();
 
     ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(mid));
-    EXPECT_EQ(state.pFFBA, 0x80) << "routes #DFBA to the clock's data register";
-    EXPECT_EQ(state.p7FBA, 0x40);
+    EXPECT_EQ(state.scorpion.pFFBA, 0x80) << "routes #DFBA to the clock's data register";
+    EXPECT_EQ(state.scorpion.p7FBA, 0x40);
     EXPECT_EQ(scorpion->GetSmucIdeRegs()[3], 0x5A);
     const SMUCNvram::LinkState back = scorpion->GetSMUCNvram().GetLinkState();
     EXPECT_EQ(back.mode, 2);

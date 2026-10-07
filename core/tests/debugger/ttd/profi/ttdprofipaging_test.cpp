@@ -58,23 +58,23 @@ TEST_F(TTDProfiPaging_Test, SaveLoadRoundTrip)
     ttd::TTDProfiPaging serializer(_context);
 
     State().pDFFD = 0xA5;
-    State().profi_turbo_switch = 1;
+    State().profi.turboSwitch = 1;
     for (uint8_t i = 0; i < 16; i++)
-        State().profiPalette[i] = static_cast<uint8_t>(0x10 + i);
+        State().profi.palette[i] = static_cast<uint8_t>(0x10 + i);
 
     std::vector<uint8_t> blob(serializer.TTDStateSize());
     serializer.TTDSaveState(blob.data());
 
     State().pDFFD = 0;
-    State().profi_turbo_switch = 0;
-    std::memset(State().profiPalette, 0, sizeof(State().profiPalette));
+    State().profi.turboSwitch = 0;
+    std::memset(State().profi.palette, 0, sizeof(State().profi.palette));
 
     serializer.TTDLoadState(blob.data());
 
-    EXPECT_EQ(State().profi_turbo_switch, 1) << "the TURBO switch";
+    EXPECT_EQ(State().profi.turboSwitch, 1) << "the TURBO switch";
     EXPECT_EQ(State().pDFFD, 0xA5);
     for (uint8_t i = 0; i < 16; i++)
-        EXPECT_EQ(State().profiPalette[i], 0x10 + i) << "palette entry " << static_cast<int>(i);
+        EXPECT_EQ(State().profi.palette[i], 0x10 + i) << "palette entry " << static_cast<int>(i);
 }
 
 /// @brief The divergence hash covers every field of the blob
@@ -88,16 +88,16 @@ TEST_F(TTDProfiPaging_Test, HashSensitiveToEveryField)
     State().pDFFD ^= 0x01;
     EXPECT_EQ(serializer.TTDHashState(), baseline);
 
-    State().profi_turbo_switch ^= 0x01;
+    State().profi.turboSwitch ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), baseline) << "TURBO switch";
-    State().profi_turbo_switch ^= 0x01;
+    State().profi.turboSwitch ^= 0x01;
     EXPECT_EQ(serializer.TTDHashState(), baseline);
 
     for (uint8_t i = 0; i < 16; i++)
     {
-        State().profiPalette[i] ^= 0x40;
+        State().profi.palette[i] ^= 0x40;
         EXPECT_NE(serializer.TTDHashState(), baseline) << "palette entry " << static_cast<int>(i);
-        State().profiPalette[i] ^= 0x40;
+        State().profi.palette[i] ^= 0x40;
     }
 }
 
@@ -194,7 +194,7 @@ TEST(TTDProfiPagingSeek_Test, SeekRestoresDffdPaletteAndBankMap)
     context->pPortDecoder->DecodePortOut(0xDFFD, 0x80 | 0x40 | 0x08 | 0x05, 0x0000);
     context->pPortDecoder->DecodePortOut(0x7FFD, 0x03, 0x0000);
     for (uint8_t i = 0; i < 16; i++)
-        state.profiPalette[i] = static_cast<uint8_t>(0x20 + i);
+        state.profi.palette[i] = static_cast<uint8_t>(0x20 + i);
 
     const uint8_t dffdAtCapture = state.pDFFD;
     const uint8_t* bank1AtCapture = memory->MapZ80AddressToPhysicalAddress(0x4000);
@@ -211,7 +211,7 @@ TEST(TTDProfiPagingSeek_Test, SeekRestoresDffdPaletteAndBankMap)
     // Move everything somewhere else
     context->pPortDecoder->DecodePortOut(0xDFFD, 0x00, 0x0000);
     context->pPortDecoder->DecodePortOut(0x7FFD, 0x00, 0x0000);
-    std::memset(state.profiPalette, 0, sizeof(state.profiPalette));
+    std::memset(state.profi.palette, 0, sizeof(state.profi.palette));
     ASSERT_NE(state.pDFFD, dffdAtCapture);
 
     ttd::TTDTimePoint target;
@@ -221,7 +221,7 @@ TEST(TTDProfiPagingSeek_Test, SeekRestoresDffdPaletteAndBankMap)
 
     EXPECT_EQ(state.pDFFD, dffdAtCapture) << "#DFFD not restored by the seek";
     for (uint8_t i = 0; i < 16; i++)
-        EXPECT_EQ(state.profiPalette[i], 0x20 + i) << "palette entry " << static_cast<int>(i);
+        EXPECT_EQ(state.profi.palette[i], 0x20 + i) << "palette entry " << static_cast<int>(i);
     EXPECT_EQ(memory->MapZ80AddressToPhysicalAddress(0x4000), bank1AtCapture);
     EXPECT_EQ(memory->MapZ80AddressToPhysicalAddress(0x8000), bank2AtCapture);
     EXPECT_EQ(memory->MapZ80AddressToPhysicalAddress(0xC000), bank3AtCapture)

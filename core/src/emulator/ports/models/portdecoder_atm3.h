@@ -83,7 +83,7 @@ public:
         LegacyFddLatch,     ///< legacy FPGA only: #2F/#4F/#6F/#8F in shadow, plain R/W bytes of the RAM-disk DOS
     };
 
-    /// EmulatorState::evoTrdemu bits
+    /// EvoState::trdemu bits
     static constexpr uint8_t kTrdemuIn = 0x01;       ///< RAM page #FE is in window 0
     static constexpr uint8_t kTrdemuPending = 0x02;  ///< swap in before the next opcode fetch
 
@@ -277,7 +277,7 @@ public:
     bool IsPaletteWriteEnabled() override;
 
     /// `#BF` bit 5 (pal444): 4 bits per channel, the low ones from A15..A8
-    bool PaletteLowBitsFromAddress() const override { return (_state->pBF & 0x20) != 0 && !IsLegacyFpga(); }
+    bool PaletteLowBitsFromAddress() const override { return (_state->evo.pBF & 0x20) != 0 && !IsLegacyFpga(); }
 
     // Gluk clock ports: #DFF7 / #BFF7 outside shadow (needs #EFF7 bit 7),
     // #DEF7 / #BEF7 in shadow (always on); decoded on A8/A13/A14 (zports.v)
