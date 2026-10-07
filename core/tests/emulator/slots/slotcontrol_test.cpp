@@ -23,9 +23,11 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/serial/comport.h"
+#include "emulator/io/serial/uart16550.h"
 #include "emulator/memory/memory.h"
 #include "emulator/slots/slotchange.h"
 #include "emulator/slots/slotcontrol.h"
@@ -571,6 +573,42 @@ TEST_F(SlotControl_Test, SlotRestartCarriesTheRunningNetworkSettings)
     ASSERT_EQ(undone.status, "applied") << undone.message;
     EXPECT_STREQ(undone.emulator->GetContext()->config.network.hosts, "carry.test=10.0.2.55");
     EXPECT_EQ(undone.emulator->GetContext()->config.network.card & NetworkManager::kZxBusCards, 0);
+}
+
+/// The firmware choices of the network settings are configuration too (owner decision 2026-10-06): `avr_firmware`
+/// ([EVO] Avr=, the ZX-Evo's AVR) and `kbc_firmware` ([ATM] Kbc=, the ATM Turbo 2+ keyboard controller, with its
+/// [ROM] ATM2KBC= image) survive a slot restart as the [NETWORK] settings do. Two machines, two restarts (~60 ms)
+TEST_F(SlotControl_Test, SlotRestartCarriesTheFirmwareChoices)
+{
+    std::shared_ptr<Emulator> evo = Create("ATM3", {});
+    ASSERT_NE(evo, nullptr);
+    const std::string evoId = evo->GetId();
+    ASSERT_NE(evo->GetContext()->config.atm.evo_avr, static_cast<uint8_t>(Uart16550::AvrFirmware::Base2011Apr));
+    evo.reset();
+    const SlotControlReply avr = Run(NetworkRequest(evoId, {{"avr_firmware", "base2011-04"}}));
+    ASSERT_EQ(avr.status, "accepted") << avr.message;
+    const SlotControlReply evoPlug = Run(Request("plug", evoId, "zxbus.next", "gs"));
+    ASSERT_EQ(evoPlug.status, "applied") << evoPlug.message;
+    ASSERT_NE(evoPlug.emulator, nullptr);
+    EXPECT_NE(evoPlug.emulator->GetId(), evoId) << "a restart";
+    EXPECT_EQ(evoPlug.emulator->GetContext()->config.atm.evo_avr,
+              static_cast<uint8_t>(Uart16550::AvrFirmware::Base2011Apr));
+
+    std::shared_ptr<Emulator> atm = Create("ATM710", {});
+    ASSERT_NE(atm, nullptr);
+    const std::string atmId = atm->GetId();
+    ASSERT_NE(atm->GetContext()->config.atm.kbc_firmware, static_cast<uint8_t>(Atm2Kbc::Firmware::V22At7));
+    atm.reset();
+    const SlotControlReply kbc = Run(NetworkRequest(atmId, {{"kbc_firmware", "v22-7"}}));
+    ASSERT_EQ(kbc.status, "accepted") << kbc.message;
+    SlotControlRequest atmRequest = Request("plug", atmId, "ay-socket", "ts");
+    atmRequest.replaceIfIncompatible = true;   // the TurboSound board in place of the AY
+    const SlotControlReply atmPlug = Run(atmRequest);
+    ASSERT_EQ(atmPlug.status, "applied") << atmPlug.message;
+    ASSERT_NE(atmPlug.emulator, nullptr);
+    EXPECT_EQ(atmPlug.emulator->GetContext()->config.atm.kbc_firmware,
+              static_cast<uint8_t>(Atm2Kbc::Firmware::V22At7));
+    EXPECT_STREQ(atmPlug.emulator->GetContext()->config.atm.kbc_rom_path, "") << "the preset's image, as chosen";
 }
 
 /// The runtime feature `network` is a power switch of the network devices (owner decision 2026-10-05): with it off a

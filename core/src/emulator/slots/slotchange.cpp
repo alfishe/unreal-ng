@@ -5,6 +5,9 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 
+#include <cstdio>
+#include <string>
+
 namespace
 {
 
@@ -98,7 +101,17 @@ SlotChangeResult SlotChange::Run(const SlotChangeRequest& request)
     // machine keeps them - a hosts entry or host_access changed at run time survives the plug of an unrelated card. The
     // slot set then decides the ZX-bus card bits of Card=; a request's own settings (verb network) are applied to the
     // restarted machine afterwards, so they win
-    restart.carrySettings = [network = context->config.network](CONFIG& config) { config.network = network; };
+    //
+    // The firmware choices set through the network settings live in other sections ([EVO] Avr=, [ATM] Kbc= with its
+    // [ROM] ATM2KBC= image) but are configuration as well (owner decision 2026-10-06): carried the same way
+    restart.carrySettings = [network = context->config.network, avr = context->config.atm.evo_avr,
+                             kbc = context->config.atm.kbc_firmware,
+                             kbcRom = std::string(context->config.atm.kbc_rom_path)](CONFIG& config) {
+        config.network = network;
+        config.atm.evo_avr = avr;
+        config.atm.kbc_firmware = kbc;
+        std::snprintf(config.atm.kbc_rom_path, sizeof(config.atm.kbc_rom_path), "%s", kbcRom.c_str());
+    };
     out.previousEmulatorId = request.emulatorId;
     out.wasRunning = old->IsRunning() && !old->IsPaused();
     context = nullptr;
