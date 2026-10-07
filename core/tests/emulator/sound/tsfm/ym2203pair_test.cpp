@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
@@ -739,6 +740,17 @@ public:
 
     double Rate() const { return double(Context()->pSoundManager->getCoreRate()); }
 
+    /// `seconds` of one source, interleaved stereo as mixed, from the next frame on
+    void CaptureStereo(AudioSourceType source, double seconds, std::vector<int16_t>& out)
+    {
+        const size_t rate = Context()->pSoundManager->getCoreRate();
+        _capture->startCapture(static_cast<size_t>(seconds * double(rate)) * 2, source);
+        for (int guard = 0; guard < 400 && !_capture->isCaptureComplete(); guard++)
+            Machine().RunFrame(true);
+        out.assign(_capture->getBuffer().begin(), _capture->getBuffer().begin() + static_cast<std::ptrdiff_t>(_capture->getCapturedSamples()));
+        _capture->stopCapture();
+    }
+
 private:
     Board _board;
     multisoundtest::StagedMachine _m;
@@ -1093,18 +1105,21 @@ TEST(Ym2203PairBoardsLevel_Test, FmRowsAndMasterAtTheSameLevelOnBothBoards)
 }
 
 
-/// Where the 0.15 dB between the two SSG rows came from: the AY room crossfeed (`[SOUND]` AY room, default -9 dB, sound
-/// HQ), not the card's SSG path. The room adds the opposite channel 2 ms late at 0.35. The emulator's ABC pan law puts
-/// 0.1 of channel A on the right of the socket's chip (0.9 left), so the TSFM's left row gets A back from the right,
-/// 0.35 x 0.1 / 0.9 of it, 2 ms late; the board wires the card's A to the left only and runs its SSG rows without the
-/// character chain (only the voicing). On a square tone the added copy is correlated with the direct one by the
-/// square's triangle autocorrelation at that lag: +0.14 dB at the test tone (427 Hz), another value at another pitch.
-/// With the room off both rows sit exactly the schematic's SSG weight apart, punch on or off.
-/// (~0.7 s: eight machines, 0.7 s of audio each - two boards x punch x room)
-TEST(Ym2203PairBoardsLevel_Test, SsgRatioIsTheSchematicWeightAndTheRoomCrossfeedExplainsTheRest)
+/// The AY character chain (`[SOUND]` AY punch / AY room, Sound HQ) runs on the card's SSG rows as on the socket's
+/// chips (owner decision 2026-10-07). With punch and room off both SSG rows sit exactly the schematic's SSG weight
+/// apart. With either on, each board's row is the chain applied to that board's chain-off row: a standalone
+/// AudioCharacterChain at the same settings and rate, run over the chain-off capture from the first frame, gives the
+/// chain-on capture sample for sample - the same effect for the same input on both boards. The room shows on each
+/// board by its own wiring: the emulator's ABC pan law puts 0.1 of the socket chip's A on the right, the board wires
+/// the card's A to the left only, so the room (the opposite channel 2 ms late at 0.35) changes the TSFM's left (+0.14
+/// dB at the 427 Hz test tone, the square's triangle autocorrelation at that lag) and puts the card's A on its right.
+/// (~0.8 s: eight machines, 0.7 s of audio each - two boards x punch x room)
+TEST(Ym2203PairBoardsLevel_Test, SsgRatioIsTheSchematicWeightAndTheChainActsAlikeOnBothBoards)
 {
     using namespace pairboards;
-    double rmsOf[2][2][2] = {};   // [punch][room][board]
+    constexpr double kSeconds = 0.7;
+    constexpr double kTailSeconds = 0.3;   // past the card's coupling capacitors charging (0.66 Hz corner)
+    std::vector<int16_t> captured[2][2][2];   // [punch][room][board]: the SSG row, interleaved stereo, from frame 0
     double rate = 44100.0;
     for (const bool punch : {false, true})
     for (const bool room : {false, true})
@@ -1113,38 +1128,121 @@ TEST(Ym2203PairBoardsLevel_Test, SsgRatioIsTheSchematicWeightAndTheRoomCrossfeed
         PairMachine m(board);
         ASSERT_TRUE(m.Init());
         SoundManager* sound = m.Context()->pSoundManager;
+        ASSERT_TRUE(sound->isHQActive()) << "the character chain runs with Sound HQ";
         sound->setAYVoicing(FilterVoicing::Preset::Flat);
         sound->setAYPunch(punch);
         sound->setAYRoomMode(room ? AudioCharacterChain::RoomMode::Room_9dB : AudioCharacterChain::RoomMode::Off);
         m.PlayTones(0);
-        m.Frames(20);   // past the card's coupling capacitors charging (0.66 Hz corner)
-        const std::vector<double> x = m.Capture(m.SsgSource(1), 0.3);
-        double sum = 0.0;
-        for (double v : x)
-            sum += v * v;
-        rmsOf[punch][room][board == Board::Tsfm ? 0 : 1] = std::sqrt(sum / double(x.empty() ? 1 : x.size()));
+        std::vector<int16_t>& x = captured[punch][room][board == Board::Tsfm ? 0 : 1];
+        m.CaptureStereo(m.SsgSource(1), kSeconds, x);
+        ASSERT_GT(x.size(), size_t(kSeconds * 0.9 * m.Rate()) * 2);
+        if (board == Board::MultiSound)
+        {
+            const AudioCharacterChain* chain = sound->getCardCharacterChain(m.SsgSource(1));
+            ASSERT_NE(chain, nullptr) << "the card's SSG row runs the character chain";
+            EXPECT_EQ(chain->isPunchEnabled(), punch);
+            EXPECT_EQ(chain->getRoomMode(), room ? AudioCharacterChain::RoomMode::Room_9dB : AudioCharacterChain::RoomMode::Off);
+            EXPECT_EQ(sound->getCardCharacterChain(m.FmSource(0)), nullptr) << "FM rows do not run it";
+        }
         rate = m.Rate();
     }
-    const double schematicDb = 20.0 * std::log10(MultiSoundBoard::kWeightSsgSide);
-    auto db = [](double a, double b) { return 20.0 * std::log10(a / b); };
-    for (const bool punch : {false, true})
+
+    // Left channel of the tail, mean removed
+    auto tailRms = [&](const std::vector<int16_t>& x)
     {
-        const std::string where = punch ? "punch on" : "punch off";
-        ASSERT_GT(rmsOf[punch][0][0], 1000.0) << where;
-        // Room off: the board's SSG weight (measured within 0.01 dB)
-        EXPECT_NEAR(db(rmsOf[punch][0][1], rmsOf[punch][0][0]), schematicDb, 0.03) << where << ": SSG row, card vs TSFM";
-        // The room does not touch the card's row (A has nothing on the right to feed back)
-        EXPECT_NEAR(db(rmsOf[punch][1][1], rmsOf[punch][0][1]), 0.0, 0.01) << where << ": the room moved the card's SSG";
+        const size_t frames = x.size() / 2;
+        const size_t from = frames - std::min(frames, size_t(kTailSeconds * rate));
+        double mean = 0.0;
+        for (size_t i = from; i < frames; i++)
+            mean += x[i * 2];
+        mean /= double(std::max<size_t>(frames - from, 1));
+        double sum = 0.0;
+        for (size_t i = from; i < frames; i++)
+            sum += (x[i * 2] - mean) * (x[i * 2] - mean);
+        return std::sqrt(sum / double(std::max<size_t>(frames - from, 1)));
+    };
+    auto db = [](double a, double b) { return 20.0 * std::log10(a / b); };
+    const double schematicDb = 20.0 * std::log10(MultiSoundBoard::kWeightSsgSide);
+
+    // Punch and room off: the board's SSG weight (measured within 0.01 dB)
+    const double tsfmDry = tailRms(captured[0][0][0]);
+    ASSERT_GT(tsfmDry, 1000.0);
+    EXPECT_NEAR(db(tailRms(captured[0][0][1]), tsfmDry), schematicDb, 0.03) << "SSG row, card vs TSFM";
+
+    // Punch / room on: every board's row is the chain run over its own chain-off row
+    for (const bool punch : {false, true})
+    for (const bool room : {false, true})
+    {
+        if (!punch && !room)
+            continue;
+        for (int b = 0; b < 2; b++)
+        {
+            const std::string where = std::string(b == 0 ? "TSFM" : "card") + (punch ? ", punch on" : ", punch off") +
+                                      (room ? ", room on" : ", room off");
+            const std::vector<int16_t>& dry = captured[0][0][b];
+            const std::vector<int16_t>& wet = captured[punch][room][b];
+            const size_t n = std::min(dry.size(), wet.size());
+            AudioCharacterChain reference;
+            reference.setup(rate);
+            reference.setChipType(AudioCharacterChain::ChipType::AY);
+            reference.setPunchPreset(AudioCharacterChain::PunchPreset::AY);
+            reference.setPunchEnabled(punch);
+            reference.setRoomMode(room ? AudioCharacterChain::RoomMode::Room_9dB : AudioCharacterChain::RoomMode::Off);
+            std::vector<int16_t> expected(dry.begin(), dry.begin() + static_cast<std::ptrdiff_t>(n));
+            reference.processInt16(expected.data(), static_cast<int32_t>(n / 2));
+            // The chain-off row has been through the chain's int16 round trip once already (x 32767 / 32768,
+            // truncated), the reference takes it a second time: a difference of up to 2 LSB, against an effect of
+            // hundreds to thousands
+            int worst = 0;
+            double errorEnergy = 0.0;
+            double effectEnergy = 0.0;
+            for (size_t i = 0; i < n; i++)
+            {
+                const double error = double(wet[i]) - double(expected[i]);
+                const double effect = double(wet[i]) - double(dry[i]);
+                worst = std::max(worst, int(std::abs(error)));
+                errorEnergy += error * error;
+                effectEnergy += effect * effect;
+            }
+            const double errorRms = std::sqrt(errorEnergy / double(std::max<size_t>(n, 1)));
+            const double effectRms = std::sqrt(effectEnergy / double(std::max<size_t>(n, 1)));
+            EXPECT_LE(worst, 2) << where << ": the row is not the chain applied to the chain-off row";
+            EXPECT_GT(effectRms, 10.0 * errorRms) << where << ": the chain's effect is lost in the rounding";
+            std::printf("[ chain    ] %s: effect RMS %.1f, off the reference by RMS %.2f, at most %d\n", where.c_str(),
+                        effectRms, errorRms, worst);
+        }
     }
-    // The TSFM's row with the room: x(t) + k x(t - d), k = 0.35 x 0.1 / 0.9, d = int(2 ms x rate) samples; for a
-    // square of period P the correlation at lag d is 1 - 4 min(f, 1 - f), f = frac(d / P)
-    const double k = 0.35 * 0.1 / 0.9;
-    const double lag = std::floor(0.002 * rate) * kSsgToneHz / rate;
-    const double f = lag - std::floor(lag);
-    const double rho = 1.0 - 4.0 * std::min(f, 1.0 - f);
-    const double predictedDb = 10.0 * std::log10(1.0 + k * k + 2.0 * k * rho);
-    EXPECT_GT(predictedDb, 0.1) << "the test tone sits where the crossfeed adds";
-    EXPECT_NEAR(db(rmsOf[0][1][0], rmsOf[0][0][0]), predictedDb, 0.02) << "the room on the TSFM's SSG row";
+
+    // The room's own content on each board's wiring
+    {
+        // The TSFM's left with the room: x(t) + k x(t - d), k = 0.35 x 0.1 / 0.9, d = int(2 ms x rate) samples; for a
+        // square of period P the correlation at lag d is 1 - 4 min(f, 1 - f), f = frac(d / P)
+        const double k = 0.35 * 0.1 / 0.9;
+        const double lag = std::floor(0.002 * rate) * kSsgToneHz / rate;
+        const double f = lag - std::floor(lag);
+        const double rho = 1.0 - 4.0 * std::min(f, 1.0 - f);
+        const double predictedDb = 10.0 * std::log10(1.0 + k * k + 2.0 * k * rho);
+        EXPECT_GT(predictedDb, 0.1) << "the test tone sits where the crossfeed adds";
+        EXPECT_NEAR(db(tailRms(captured[0][1][0]), tsfmDry), predictedDb, 0.02) << "the room on the TSFM's SSG row";
+
+        // The card's A is on the left only: the room leaves the left alone and puts 0.35 of it, 2 ms late, on the
+        // right, where the dry row has nothing
+        const std::vector<int16_t>& dry = captured[0][0][1];
+        const std::vector<int16_t>& wet = captured[0][1][1];
+        EXPECT_NEAR(db(tailRms(wet), tailRms(dry)), 0.0, 0.01) << "the room moved the card's left";
+        auto rightRms = [&](const std::vector<int16_t>& x)
+        {
+            std::vector<int16_t> swapped(x.size());
+            for (size_t i = 0; i + 1 < x.size(); i += 2)
+            {
+                swapped[i] = x[i + 1];
+                swapped[i + 1] = x[i];
+            }
+            return tailRms(swapped);
+        };
+        EXPECT_LT(rightRms(dry), tailRms(dry) * 0.01) << "the card's A is wired to the left only";
+        EXPECT_NEAR(rightRms(wet) / tailRms(dry), 0.35, 0.02) << "the room's crossfeed on the card's right";
+    }
 }
 
 /// endregion </Render-cursor invariant on both boards>

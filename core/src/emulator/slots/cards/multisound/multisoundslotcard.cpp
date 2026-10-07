@@ -28,8 +28,8 @@ constexpr struct
     AudioSourceType type;
     MultiSoundRow row;
     const char* name;
-    bool ssgVoicing;   // the AY / SSG tone voicing, as for the AY socket's chips (not the [AY] Stereo panning: the
-                       // card's ABC is its board wiring)
+    bool ssgRow;   // the AY / SSG tone voicing and character chain (punch, room), as for the AY socket's chips (not
+                   // the [AY] Stereo panning: the card's ABC is its board wiring)
 } kRows[] = {
     { AudioSourceType::MultiSoundSsg1, MultiSoundRow::Ssg1, "MS SSG 1", true },
     { AudioSourceType::MultiSoundSsg2, MultiSoundRow::Ssg2, "MS SSG 2", true },
@@ -220,11 +220,11 @@ void MultiSoundSlotCard::SetOutputRate(uint32_t rate)
     _card.SetOutputRate(rate);
 }
 
-int16_t* MultiSoundSlotCard::VoicedMixerBuffer(AudioSourceType type)
+int16_t* MultiSoundSlotCard::SsgMixerBuffer(AudioSourceType type)
 {
     for (const auto& row : kRows)
     {
-        if (row.type == type && row.ssgVoicing)
+        if (row.type == type && row.ssgRow)
             return _card.MutableRow(row.row);
     }
     return nullptr;
@@ -246,7 +246,7 @@ void MultiSoundSlotCard::MixerRows(std::vector<CardMixerRow>& out) const
 {
     for (const auto& row : kRows)
     {
-        out.push_back({ row.type, row.name, row.ssgVoicing });
+        out.push_back({ row.type, row.name, row.ssgRow });
     }
 }
 

@@ -182,6 +182,12 @@ The rows exist only while the card is fitted. The HUD shows one activity indicat
   balanced on a TSFM has a quieter AY part on the card, as on the real hardware.
 - **The AY tone voicing applies.** The SSG rows go through the same AY / SSG tone voicing as the socket's chips (the
   audio settings' "EQ profile", `[SOUND] AYVoicing`); the FM is not voiced.
+- **The AY punch and room settings apply.** With Sound HQ on, the SSG rows also go through the same AY character
+  chain as the socket's chips: `ay_punch` (sharper attacks) and `ay_room` (the headphone crossfeed, default -9 dB)
+  change the card's SSG exactly as they change an AY, TurboSound or TurboSound FM in the socket, live, on every
+  surface. Example: with `ay_room` at `9db` a tone on SSG channel A, which the board wires to the left only, is also
+  heard on the right, 2 ms later and 9 dB quieter; with `ay_room` at `off` the right stays silent. FM, SAA, SounDrive,
+  General Sound and MIDI are not affected.
 - **The stereo layout is fixed by the board.** SSG channel A is left, B is in the center (quieter), C is right (what
   the emulator calls ABC); `[AY] Stereo` does not change it. The General Sound is hard left / hard right (channels 1-2
   left, 3-4 right), with no cross-feed; SounDrive `#0F` / `#1F` are left, `#4F` / `#5F` right. FM, SAA and MIDI are

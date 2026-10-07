@@ -323,7 +323,7 @@ void SoundManager::reset()
     // Voicing: clear filter state and pre-roll history (the profile stays)
     _ayVoicing0.reset();
     _ayVoicing1.reset();
-    for (CardVoicing& v : _cardVoicing)
+    for (CardSsgRow& v : _cardSsgRows)
         v.stage->reset();
 
     // Restart the exact sample accumulator (machine change / hard reset /
@@ -606,18 +606,21 @@ void SoundManager::attachSlotCard(ICard* card)
     for (const CardMixerRow& row : rows)
     {
         _devices.push_back({row.type, row.name, false, false, 1.0f, 0.0f, false});
-        if (row.ssgVoicing)
+        if (row.ssgRow)
         {
             // The AY / SSG tone voicing the socket's chips run, at the same profile (requested one: a change in
-            // flight lands on every stage at the next frame)
-            CardVoicing v;
+            // flight lands on every stage at the next frame), then their character chain at the same settings
+            CardSsgRow v;
             v.card = card;
             v.type = row.type;
             v.stage = std::make_unique<VoicingStage>(MAX_SAMPLES_PER_FRAME);
             v.stage->setup(static_cast<double>(_coreRate));
             v.stage->setPresetImmediate(_ayVoicing0.requested());
+            v.chain = std::make_unique<AudioCharacterChain>();
+            v.chain->setup(static_cast<double>(_coreRate));
+            configureCardChain(*v.chain);
             v.renderEpoch = card->RenderEpoch();
-            _cardVoicing.push_back(std::move(v));
+            _cardSsgRows.push_back(std::move(v));
         }
     }
     // Several full-scale sources: the float bus and the master limiter own the master mix while the card is fitted
@@ -631,7 +634,7 @@ void SoundManager::detachSlotCard(ICard* card)
     if (it == _slotCards.end())
         return;
     _slotCards.erase(it);
-    std::erase_if(_cardVoicing, [card](const CardVoicing& v) { return v.card == card; });
+    std::erase_if(_cardSsgRows, [card](const CardSsgRow& v) { return v.card == card; });
     std::vector<CardMixerRow> rows;
     card->MixerRows(rows);
     for (const CardMixerRow& row : rows)
@@ -743,13 +746,25 @@ void SoundManager::syncAYChainSettings()
     _appliedAYRoom = static_cast<uint8_t>(_ayChain0.getRoomMode());
     _requestedAYPunch.store(_appliedAYPunch, std::memory_order_release);
     _requestedAYRoom.store(_appliedAYRoom, std::memory_order_release);
+
+    for (CardSsgRow& v : _cardSsgRows)
+        configureCardChain(*v.chain);
+}
+
+void SoundManager::configureCardChain(AudioCharacterChain& chain) const
+{
+    // Chip type before the room mode (setRoomMode derives the room from it)
+    chain.setChipType(_ayChain0.getChipType());
+    chain.setPunchPreset(_ayChain0.getPunchPreset());
+    chain.setPunchEnabled(_ayChain0.isPunchEnabled());
+    chain.setRoomMode(_ayChain0.getRoomMode());
 }
 
 void SoundManager::setAYVoicing(FilterVoicing::Preset preset)
 {
     _ayVoicing0.request(preset);
     _ayVoicing1.request(preset);
-    for (CardVoicing& v : _cardVoicing)
+    for (CardSsgRow& v : _cardSsgRows)
         v.stage->request(preset);
 }
 
@@ -775,6 +790,8 @@ void SoundManager::applyCharacterRequests()
     {
         _ayChain0.setPunchEnabled(ayPunch);
         _ayChain1.setPunchEnabled(ayPunch);
+        for (CardSsgRow& v : _cardSsgRows)
+            v.chain->setPunchEnabled(ayPunch);
         _appliedAYPunch = ayPunch;
     }
 
@@ -784,6 +801,8 @@ void SoundManager::applyCharacterRequests()
         const auto mode = static_cast<AudioCharacterChain::RoomMode>(ayRoom);
         _ayChain0.setRoomMode(mode);
         _ayChain1.setRoomMode(mode);
+        for (CardSsgRow& v : _cardSsgRows)
+            v.chain->setRoomMode(mode);
         _appliedAYRoom = ayRoom;
     }
 
@@ -887,8 +906,11 @@ void SoundManager::applyCoreRate(size_t rate)
     // would pass a step); the pre-roll history holds old-rate samples and is dropped
     _ayVoicing0.setup(static_cast<double>(rate));
     _ayVoicing1.setup(static_cast<double>(rate));
-    for (CardVoicing& v : _cardVoicing)
+    for (CardSsgRow& v : _cardSsgRows)
+    {
         v.stage->setup(static_cast<double>(rate));
+        v.chain->setup(static_cast<double>(rate));
+    }
 
     // Restart the exact sample accumulator - its residue is in old-rate units
     _sampleAccumulator = 0;
@@ -1115,7 +1137,7 @@ void SoundManager::handleFrameEnd()
         // A gap in the voiced stream: the pre-roll history no longer precedes the next frame
         _ayVoicing0.invalidateHistory();
         _ayVoicing1.invalidateHistory();
-        for (CardVoicing& v : _cardVoicing)
+        for (CardSsgRow& v : _cardSsgRows)
             v.stage->invalidateHistory();
         if (_gs)
             _gs->handleFrameEnd(0);
@@ -1213,6 +1235,8 @@ void SoundManager::handleFrameEnd()
         _fmChain0.reset();
         _fmChain1.reset();
         _beeperChain.reset();
+        for (CardSsgRow& v : _cardSsgRows)
+            v.chain->reset();
     }
     _chainsBypassed = !chainsActive;
 
@@ -1341,19 +1365,25 @@ void SoundManager::handleFrameEnd()
     for (ICard* card : _slotCards)
         card->FrameEnd(samplesThisFrame);
 
-    // The cards' SSG rows: the same AY / SSG tone voicing as the socket's chips above (sound off: a gap)
-    for (CardVoicing& v : _cardVoicing)
+    // The cards' SSG rows: the same AY / SSG tone voicing and then the same AY character chain (punch, room; HQ
+    // only) as the socket's chips above (sound off: a gap)
+    for (CardSsgRow& v : _cardSsgRows)
     {
-        // The card restarted its render layers (a TTD restore): the voicing restarts with them, so the row after a
-        // restore does not depend on what played before it - the card's contract for its rows
+        // The card restarted its render layers (a TTD restore): the voicing and the chain restart with them, so the
+        // row after a restore does not depend on what played before it - the card's contract for its rows
         if (v.card->RenderEpoch() != v.renderEpoch)
         {
             v.stage->reset();
+            v.chain->reset();
             v.renderEpoch = v.card->RenderEpoch();
         }
-        int16_t* row = soundOff ? nullptr : v.card->VoicedMixerBuffer(v.type);
+        int16_t* row = soundOff ? nullptr : v.card->SsgMixerBuffer(v.type);
         if (row)
+        {
             v.stage->process(row, samplesThisFrame);
+            if (chainsActive)
+                v.chain->processInt16(row, static_cast<int32_t>(samplesThisFrame));
+        }
         else
             v.stage->invalidateHistory();
     }

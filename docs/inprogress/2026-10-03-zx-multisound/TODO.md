@@ -3,9 +3,10 @@
 **Status:** on master since 2026-10-05 (`7605bf104`, pushed), with the ZX-bus slots SL-1 to SL-7
 ([slots TODO](../2026-10-03-zx-bus-slots/TODO.md)); demo to the owner done (MIDI, TSFM, SAA). MS-1 to MS-8 done; on
 2026-10-06 (branch `multisound-remainder`) the 0.15 dB SSG residue explained, the frame cost profiled (silent FM skips
-its FIR), the TTD corpus fixtures (they found a seek bug, fixed) and the MS-7 second pass. Shipped configs keep the card
+its FIR), the TTD corpus fixtures (they found a seek bug, fixed) and the MS-7 second pass; on 2026-10-07 (branch
+`ms-ssg-chain-fixtures`) the SSG rows got the AY character chain. Shipped configs keep the card
 off (owner decision): it is fitted through the slots. Left: the open items below - follow-ups that need a real board
-or real-program traces, the frame-cost backlog, one owner question, SAM-6 / SAM-7.
+or real-program traces, the frame-cost backlog, SAM-6 / SAM-7.
 
 ## Documents
 
@@ -127,9 +128,9 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   - [x] a MultiSound fixture in the TTD corpus (2026-10-06): `multisound-pentagon` and `multisound-zxevo`, in v1's
     corpus (`testdata/ttd/`) and the engine's (`testdata/ttd/engine/`), 70 frames each (the SAM2695's state changes
     in every checkpoint: about 30 KB a frame in the engine file, 100 KB in v1's; 2.1 / 2.4 MB and 6.9 / 7.4 MB).
-    The recorder creates the machine with `"slots": {"zxbus.1": "multisound"}` (`record_fixtures.py` option
-    `slots`) and records [testdata/sound/multisound/ttd/allsources.sna](../../../testdata/sound/multisound/ttd/README.md),
-    a program that plays every source of the card (written by `tools/verification/multisound/ttd-fixture/make-program.py`).
+    The recorder created the machine with `"slots": {"zxbus.1": "multisound"}` and recorded
+    [testdata/sound/multisound/ttd/allsources.sna](../../../testdata/sound/multisound/ttd/README.md), a program that
+    plays every source of the card (written by `tools/verification/multisound/ttd-fixture/make-program.py`).
     `TTD_Corpus_Test` and `TimeTravelControllerCorpus_Test` build their machine with the card and the shipped default
     bank (`core/tests/_helpers/ttdslotcards.h`). The ZX-Evo fixture found the sample-phase bug below
   - [x] the ids 58-60 / region 17 and input kind 17 (`MidiPanic`) were checked free on master at the landing (2026-10-05)
@@ -191,9 +192,24 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   at the 427 Hz test tone (punch adds 0.01 dB). The card wires A to the left only and runs its SSG rows through the
   voicing but not the character chain. Room off: -7.595 / -7.608 dB (punch off / on), within 0.01 dB of the schematic.
   `Ym2203PairBoardsLevel_Test` measures with the room off, tolerance 0.03 dB (was 0.2);
-  `SsgRatioIsTheSchematicWeightAndTheRoomCrossfeedExplainsTheRest` checks the predicted +0.14 dB on the TSFM and no
-  change on the card. Open (owner): should the card's SSG rows run the AY character chain (punch, room) like the
-  socket's chips?
+  `SsgRatioIsTheSchematicWeightAndTheRoomCrossfeedExplainsTheRest` checked the predicted +0.14 dB on the TSFM and no
+  change on the card. Owner decision 2026-10-07: the card's SSG rows run the AY character chain too (next item)
+- [x] 2026-10-07 (owner decision, branch `ms-ssg-chain-fixtures`): the card's SSG rows run the AY character chain
+  (punch, room crossfeed) exactly as the socket's chips' SSG, after the voicing ([architecture.md](architecture.md)
+  §5): one `AudioCharacterChain` per row next to its `VoicingStage` (`SoundManager::CardSsgRow`;
+  `CardMixerRow::ssgVoicing` became `ssgRow`, `ICard::VoicedMixerBuffer` became `SsgMixerBuffer`), driven by the same
+  settings (`ay_punch`, `ay_room`, Sound HQ) on every surface, live, with the socket chains' attach configuration,
+  rate setup, HQ bypass and reset, and a reset with the card's render epoch on a TTD restore. FM, SAA, PCM and MIDI
+  rows untouched. `Ym2203PairBoardsLevel_Test.SsgRatioIsTheSchematicWeightAndTheChainActsAlikeOnBothBoards` (replaces
+  `...RoomCrossfeedExplainsTheRest`): punch and room off, card / TSFM within 0.03 dB of the schematic's -7.60 dB;
+  with punch and / or room on, each board's row equals a standalone chain at the same settings run over that board's
+  chain-off row (within 2 LSB: the chain's int16 round trip taken twice; effect RMS 13-1227 against an error RMS of
+  0.7-1.3); the room's content on each board's wiring: +0.14 dB on the TSFM's left, the card's left unchanged and 0.35
+  of it on the card's right. `TtdMultiSound_Test.RoundTripMidTune` stays bit-exact. Golden digests: none of the
+  committed ones changes - `MultiSoundCard_Test.YmRowsMatchTheirGoldenDigests` hashes the card's rows before
+  `SoundManager` (no voicing, no chain), `TtdMultiSound_Test` compares a run with its own replay. What changes by
+  design is the mixed card SSG with Sound HQ on: punch (on by default) and room (-9 dB by default) now shape it; with
+  both off only the chain's int16 round trip (x 32767 / 32768, truncated, at most 1 LSB) is added, as for the socket
 - [x] atm3 / atm450 / atm710 carry `TSFM_FmTrimDb=7.4` since 2026-10-05 (`bab7a4e32`), like every shipped config
 - [x] side note: the plain AY / TurboSound device (`SoundChip_TurboSound`) has the same sample-phase render loop as the
   TSFM and probably the same click after a host speed multiplier. Confirmed and worse (2026-10-05): its render loop
@@ -259,7 +275,6 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
 - [x] `data/midi/generaluser-gs.sf2` + license + README tracked (Q4, done 2026-10-05), shipped next to the
   executables by every target that ships `data/rom`; `[MIDI] Bank=NONE`; the test runner's policy keeps the default bank
   out of test machines unless asked (`TestSound::DefaultMidiBank`, `MultiSoundSlotCard_Test.ShippedDefaultBankLoadsWithoutAnOverride`); GS 1.05b ROM as `data/rom/gs105b.rom` done in MS-2 (README-ROMS entry)
-- [ ] Owner question (2026-10-06): should the card's SSG rows run the AY character chain (punch, room crossfeed) the
-  socket's chips run? Today they run only the AY tone voicing; the room setting does not reach them (the 0.15 dB
-  item above)
+- [x] Owner question (2026-10-06): should the card's SSG rows run the AY character chain (punch, room crossfeed) the
+  socket's chips run? Decided 2026-10-07: yes, done (above)
 - [ ] Later: SAM-6 host MIDI output, SAM-7 Dream-native banks research

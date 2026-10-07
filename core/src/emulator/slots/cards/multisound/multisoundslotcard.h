@@ -54,7 +54,7 @@ public:
     void FrameEnd(size_t samples) override;
     void SetOutputRate(uint32_t rate) override;
     void MixerRows(std::vector<CardMixerRow>& out) const override;
-    int16_t* VoicedMixerBuffer(AudioSourceType type) override;
+    int16_t* SsgMixerBuffer(AudioSourceType type) override;
     uint64_t RenderEpoch() const override { return _card.RenderEpoch(); }
     bool SetFmTrimDb(double db) override;
     bool FmTrimDb(double& db) const override;

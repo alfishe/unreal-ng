@@ -220,7 +220,9 @@ every surface; applied at the next frame boundary):
 Bool settings also accept `true` / `false` / `1` / `0` on input; the WebAPI returns JSON
 booleans for them. `ay_punch`, `ay_room` and `beeper_punch` have no ini key: they are runtime
 settings, persisted only by the GUI preference. Voicing always applies; punch and room apply
-only while *Sound HQ* is on.
+only while *Sound HQ* is on. All three apply to the AY / SSG chips in the AY socket (AY,
+TurboSound, TurboSound FM) and to the SSG rows of a ZX-MultiSound card in a ZX-bus slot
+(`MS SSG 1` / `MS SSG 2`, since 2026-10-07), never to FM, SAA, PCM or MIDI rows.
 
 The voicing and punch/room stack in this order: voicing → punch → room. For example, Headphones
 with punch on softens the highs first and then sharpens the attacks, so the result is less harsh
