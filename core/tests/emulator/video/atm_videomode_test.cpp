@@ -62,7 +62,7 @@ protected:
         // mode 3: ZX Standard (FF77_ZX)
         // mode 6: Text 80x25 (FF77_TX)
         _context->emulatorState.pFF77 = (mode & 0x07) | 0x20; // bit 5 = INT gate
-        _context->emulatorState.aFF77 = 0x0100; // PEN=1 to enable ATM paging
+        _context->emulatorState.atm.aFF77 = 0x0100; // PEN=1 to enable ATM paging
     }
 };
 
@@ -259,7 +259,7 @@ TEST_F(ATMVideoMode_Test, PortFF77Write_TriggersVideoModeChange)
 
     // Start in ZX mode (mode 3 = 0x03, with INT gate = 0x20)
     _context->emulatorState.pFF77 = 0x23;  // bits 0,1 = mode 3, bit 5 = INT gate
-    _context->emulatorState.aFF77 = 0x0100;  // PEN=1
+    _context->emulatorState.atm.aFF77 = 0x0100;  // PEN=1
     _screen->InitRaster();
     // Mode 3 (FF77_ZX) stays in ZX-compatible mode (ZX48-class timing)
     EXPECT_EQ(_screen->_vid.mode, M_ZX48);

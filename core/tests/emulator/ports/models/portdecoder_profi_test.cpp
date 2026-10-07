@@ -289,19 +289,19 @@ TEST_F(ProfiPortDecoder_Test, PaletteWrite)
 {
     // Without DS80 the write is ignored
     WritePort(0x00FE, 0x05);
-    const uint16_t before = State().profiPalette[0x0A];
+    const uint16_t before = State().profi.palette[0x0A];
     WritePort(0xE27E, 0x00);
-    EXPECT_EQ(State().profiPalette[0x0A], before);
+    EXPECT_EQ(State().profi.palette[0x0A], before);
 
     OutDFFD(0x80);
     WritePort(0x00FE, 0x05);            // index source: 0x05 ^ 0x0F = 0x0A; D7=0 -> blue LSB = 0
     WritePort(0xE27E, 0x00);            // colour = ~0xE2 = 0x1D -> entry = 0x1D << 1 | 0 = 0x3A
-    EXPECT_EQ(State().profiPalette[0x0A], 0x3A);
+    EXPECT_EQ(State().profi.palette[0x0A], 0x3A);
 
     // A7=1 is not the palette port
     WritePort(0x00FE, 0x05);
     WritePort(0xFFFE, 0x00);            // A7=1: border write only
-    EXPECT_EQ(State().profiPalette[0x0A], 0x3A);
+    EXPECT_EQ(State().profi.palette[0x0A], 0x3A);
 }
 
 /// @brief The extra blue LSB (9th palette bit) is latched from #FE.D7 of the write that supplies
@@ -312,24 +312,24 @@ TEST_F(ProfiPortDecoder_Test, PaletteWriteCarriesExtraBlueBitFromFEBit7)
 
     WritePort(0x00FE, 0x85);            // D7=1 -> blue LSB = 1; index = 0x85 ^ 0x0F = 0x0A
     WritePort(0xE27E, 0x00);            // colour = ~0xE2 = 0x1D -> entry = 0x1D << 1 | 1 = 0x3B
-    EXPECT_EQ(State().profiPalette[0x0A], 0x3B);
+    EXPECT_EQ(State().profi.palette[0x0A], 0x3B);
 
     WritePort(0x00FE, 0x05);            // D7=0 -> blue LSB = 0; same index 0x0A
     WritePort(0xE27E, 0x00);
-    EXPECT_EQ(State().profiPalette[0x0A], 0x3A) << "D7=0 clears the extra blue bit on the next write";
+    EXPECT_EQ(State().profi.palette[0x0A], 0x3A) << "D7=0 clears the extra blue bit on the next write";
 }
 
 /// @brief Power-on palette matches the Karabas defaults (video.vhd:199-203): each active channel
 /// is level 4/7 non-bright, 6/7 bright, out of the now-3-bit (0..7) range for G/R/B alike.
 TEST_F(ProfiPortDecoder_Test, ResetPaletteMatchesHardwareDefaults)
 {
-    EXPECT_EQ(State().profiPalette[0x00], 0x000) << "black";
-    EXPECT_EQ(State().profiPalette[0x01], 0x004) << "B4";
-    EXPECT_EQ(State().profiPalette[0x02], 0x020) << "R4";
-    EXPECT_EQ(State().profiPalette[0x04], 0x100) << "G4";
-    EXPECT_EQ(State().profiPalette[0x07], 0x124) << "G4R4B4";
-    EXPECT_EQ(State().profiPalette[0x08], 0x000) << "bright black stays black";
-    EXPECT_EQ(State().profiPalette[0x0F], 0x1B6) << "G6R6B6 (bright white)";
+    EXPECT_EQ(State().profi.palette[0x00], 0x000) << "black";
+    EXPECT_EQ(State().profi.palette[0x01], 0x004) << "B4";
+    EXPECT_EQ(State().profi.palette[0x02], 0x020) << "R4";
+    EXPECT_EQ(State().profi.palette[0x04], 0x100) << "G4";
+    EXPECT_EQ(State().profi.palette[0x07], 0x124) << "G4R4B4";
+    EXPECT_EQ(State().profi.palette[0x08], 0x000) << "bright black stays black";
+    EXPECT_EQ(State().profi.palette[0x0F], 0x1B6) << "G6R6B6 (bright white)";
 }
 
 /// @brief #FE bit 7 ("GX0"/UniCopy palette-present flag): in DS80, bit6 XOR bit0 of the palette
@@ -549,10 +549,10 @@ TEST_F(ProfiV3PortDecoder_Test, NoIde)
 TEST_F(ProfiV3PortDecoder_Test, NoPaletteMonochromeHiRes)
 {
     OutDFFD(0x80);
-    const uint16_t before = State().profiPalette[0x0A];
+    const uint16_t before = State().profi.palette[0x0A];
     WritePort(0x00FE, 0x05);
     WritePort(0xE27E, 0x00);
-    EXPECT_EQ(State().profiPalette[0x0A], before);
+    EXPECT_EQ(State().profi.palette[0x0A], before);
 
     // The entry that reads GX0 = 0 on v5 (FEReadBit7ReportsGX0InDS80) - v3 has no such entry, bit 7 is 1
     WritePort(0x00FE, 0x85);

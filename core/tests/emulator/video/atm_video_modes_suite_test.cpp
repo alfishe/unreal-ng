@@ -97,7 +97,7 @@ protected:
     void SetFF77Mode(uint8_t mode, uint8_t extra = 0x20)
     {
         _context->emulatorState.pFF77 = (mode & 0x07) | extra;  // bit 5 = INT gate
-        _context->emulatorState.aFF77 = 0x0100;                 // PEN=1
+        _context->emulatorState.atm.aFF77 = 0x0100;                 // PEN=1
     }
 
     /// Beam T-state inside the screen window: screen row 0 is beam line 68
@@ -185,7 +185,7 @@ TEST_F(ATMVideoModesSuite_Test, ModeMatrix_ATM450_AFEBits)
     for (const auto& e : cases)
     {
         SCOPED_TRACE(testing::Message() << "aFE bits 5-6 = " << int(e.afe >> 5));
-        _context->emulatorState.aFE = e.afe;
+        _context->emulatorState.atm.aFE = e.afe;
         _screen->InitRaster();
         EXPECT_EQ(_screen->_vid.mode, e.mode);
         EXPECT_EQ(_screen->_vid.raster.num, e.raster);
@@ -403,7 +403,7 @@ TEST_F(ATMVideoModesSuite_Test, PortFF77_StoresFullByteInPFF77_AddressInAFF77)
     // Full 8-bit value (turbo/memswap/intgate bits included); address captured
     pd->DecodePortOut(0xFF77, 0xC3, 0);
     EXPECT_EQ(_context->emulatorState.pFF77, 0xC3);
-    EXPECT_EQ(_context->emulatorState.aFF77, 0xFF77);
+    EXPECT_EQ(_context->emulatorState.atm.aFF77, 0xFF77);
     EXPECT_EQ(_screen->_vid.mode, M_ZX48);  // mode bits 3 = ZX compat
 }
 
@@ -418,7 +418,7 @@ TEST_F(ATMVideoModesSuite_Test, PortFF77_ATM710Aliases_LowByteDecode)
         SCOPED_TRACE(testing::Message() << "port 0x" << std::hex << port);
         pd->DecodePortOut(port, 0x23, 0);
         EXPECT_EQ(_context->emulatorState.pFF77, 0x23);
-        EXPECT_EQ(_context->emulatorState.aFF77, port);
+        EXPECT_EQ(_context->emulatorState.atm.aFF77, port);
     }
 
     // Non-matching ports must not touch FF77 state (0x17F7 = FFF7 bank select)
@@ -439,7 +439,7 @@ TEST_F(ATMVideoModesSuite_Test, PortFF77_ATM3PartialDecode_MatchesXF77)
     // xx77 responses live behind the DOS-port gate (original io.cpp CF_DOSPORTS
     // block). Writing FF77 first latches aFF77 = 0xFF77 (cpm set) which would
     // CLOSE the gate for the aliases - hold it open with shaden (pBF.0)
-    _context->emulatorState.pBF = 0x01;
+    _context->emulatorState.evo.pBF = 0x01;
 
     // ATM3 decodes low byte 0x77 (original io.cpp `p1 == 0x77`): FF77, any
     // high-byte alias, and the BaseConf manager-enable port 0xBC77
@@ -489,7 +489,7 @@ TEST_F(ATMVideoModesSuite_Test, PortEFF7_ControlBitsStored_ZBitsTriggerRedetecti
 
     // Hold the DOS-port gate open for the xx77 write: #FF77 latches aFF77
     // with cpm set, which would close it afterwards
-    _context->emulatorState.pBF = 0x01;
+    _context->emulatorState.evo.pBF = 0x01;
 
     pd->DecodePortOut(0xFF77, 0x23, 0);  // ZX compat base
     EXPECT_EQ(_screen->_vid.mode, M_ZX48);
@@ -499,7 +499,7 @@ TEST_F(ATMVideoModesSuite_Test, PortEFF7_ControlBitsStored_ZBitsTriggerRedetecti
     // #EFF7 is written only outside shadow (BaseConf zports.v:716 "EEF7 in
     // shadow mode is abandoned"): close the gate again - #FF77 latched cpm,
     // so only shaden and the DOS line are left to clear
-    _context->emulatorState.pBF = 0x00;
+    _context->emulatorState.evo.pBF = 0x00;
     _context->emulatorState.flags &= ~CF_TRDOS;
 
     // Control-only EFF7 bits (turbo / lockmem / rocache): stored, no redetect
@@ -674,8 +674,8 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMTX_ReadsTheFontRam)
     // A loaded glyph: a different pattern on every font row of code 0x41
     EmulatorState& state = _context->emulatorState;
     for (unsigned row = 0; row < 8; row++)
-        state.atmFontRam[0x41 * 8 + row] = static_cast<uint8_t>(0x80 >> row);  // a diagonal
-    state.atmFontByte = 0xFF;
+        state.atm.fontRam[0x41 * 8 + row] = static_cast<uint8_t>(0x80 >> row);  // a diagonal
+    state.atm.fontByte = 0xFF;
 
     const uint32_t ink = InkColor(0x47);
     const uint32_t paper = PaperColor(0x47);
@@ -687,7 +687,7 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMTX_ReadsTheFontRam)
         const uint32_t row = 44 + s;
         for (uint32_t k = 0; k < 8; ++k)
             EXPECT_EQ(At(row, k), k == s ? ink : paper) << "px " << k;
-        EXPECT_EQ(state.atmFontByte, static_cast<uint8_t>(0x80 >> s)) << "#0EBD shows the byte last fetched";
+        EXPECT_EQ(state.atm.fontByte, static_cast<uint8_t>(0x80 >> s)) << "#0EBD shows the byte last fetched";
     }
 }
 
@@ -900,8 +900,8 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATM16_PalettePortProgramsColorsAndBorder)
     // -> ABGR 0xFF5555AA (packing 0xAABBGGRR, red in the low byte).
     // #009F is a palette alias the Beta128 does not decode
     pd->DecodePortOut(0x009F, 0x55, 0);
-    EXPECT_EQ(state.atmPalette[0], 0xFF5555AAu) << "border_attr = 0, bright = 0 -> cell 0";
-    EXPECT_EQ(state.atmPaletteRegs[0], 0x55) << "raw byte stored pre-inversion";
+    EXPECT_EQ(state.atm.palette[0], 0xFF5555AAu) << "border_attr = 0, bright = 0 -> cell 0";
+    EXPECT_EQ(state.atm.paletteRegs[0], 0x55) << "raw byte stored pre-inversion";
 
     uint8_t* ap = _memory->RAMPageAddress(1);  // EGA plane q0 = ap + 0
     ap[0] = 0x0F;                              // pair (0,1): colors 7 and 1
@@ -914,8 +914,8 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATM16_PalettePortProgramsColorsAndBorder)
 
     auto& fb = _screen->GetFramebufferDescriptor();
     auto* px = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
-    EXPECT_EQ(px[44 * fb.width + 0], state.atmPalette[7]);
-    EXPECT_EQ(px[44 * fb.width + 1], state.atmPalette[1]);
+    EXPECT_EQ(px[44 * fb.width + 0], state.atm.palette[7]);
+    EXPECT_EQ(px[44 * fb.width + 1], state.atm.palette[1]);
     EXPECT_EQ(px[10 * fb.width + 0], 0xFF5555AAu) << "border renders through the reprogrammed cell";
 }
 
@@ -935,16 +935,16 @@ TEST_F(ATMVideoModesSuite_Test, Border_FEAddressBit3_SelectsBrightPaletteCell)
 
     pd->DecodePortOut(0x00FE, 0x02, 0);  // red border, A3 = 1 -> bright 0
     EXPECT_EQ(state.border_attr, 0x02);
-    EXPECT_EQ(state.atmBorderBright, 0);
+    EXPECT_EQ(state.atm.borderBright, 0);
 
     pd->DecodePortOut(0x00F6, 0x02, 0);  // same color, A3 = 0 -> bright 1
     EXPECT_EQ(state.border_attr, 0x02);
-    EXPECT_EQ(state.atmBorderBright, 1);
+    EXPECT_EQ(state.atm.borderBright, 1);
 
     // White into cell 2 | (1 << 3) = 10; the non-bright cell 2 stays preset
     pd->DecodePortOut(0x009F, 0x00, 0);
-    EXPECT_EQ(state.atmPalette[10], 0xFFFFFFFFu);
-    EXPECT_EQ(state.atmPalette[2], 0xFF1628D6u) << "cell 2 keeps the ZX red preset";
+    EXPECT_EQ(state.atm.palette[10], 0xFFFFFFFFu);
+    EXPECT_EQ(state.atm.palette[2], 0xFF1628D6u) << "cell 2 keeps the ZX red preset";
 
     // ATM extended modes have no side border (screenOffsetLeft=0, verified
     // against 3 independent ZXMAK2 renderer classes) - only top/bottom
@@ -956,7 +956,7 @@ TEST_F(ATMVideoModesSuite_Test, Border_FEAddressBit3_SelectsBrightPaletteCell)
 
     // A3 is re-latched per write: back on #FE the border falls to cell 2
     pd->DecodePortOut(0x00FE, 0x02, 0);
-    EXPECT_EQ(state.atmBorderBright, 0);
+    EXPECT_EQ(state.atm.borderBright, 0);
     _screen->Draw(34 * 224);
     EXPECT_EQ(px[10 * fb.width], 0xFF1628D6u);
 }
@@ -984,8 +984,8 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATMHR_AttributeBit7IsPaperBright_NoFlash)
     ap[0] = 0xC7;  // ink = 7 | 8 = 15 (bright white), paper = 0 | 8 = 8 (bright black)
 
     _screen->Draw(BeamT(0, 0));  // byte group n=0, bits 7..4 -> cols 0..3
-    EXPECT_EQ(At(44, 0), state.atmPalette[15]);
-    EXPECT_EQ(At(44, 1), state.atmPalette[8]);
+    EXPECT_EQ(At(44, 0), state.atm.palette[15]);
+    EXPECT_EQ(At(44, 1), state.atm.palette[8]);
 }
 
 /// endregion </Renderer: programmable palette (port #FF) and 4-bit border>
@@ -1024,14 +1024,14 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATM3Alco_FourPlanes_PagePair)
     for (uint32_t pair = 0; pair < 4; ++pair)
         _screen->Draw(72 * 224 + 24 + pair);
 
-    EXPECT_EQ(At(48, 48 + 0), state.atmPalette[7]);
-    EXPECT_EQ(At(48, 48 + 1), state.atmPalette[1]);
-    EXPECT_EQ(At(48, 48 + 2), state.atmPalette[15]);
-    EXPECT_EQ(At(48, 48 + 3), state.atmPalette[8]);
-    EXPECT_EQ(At(48, 48 + 4), state.atmPalette[15]);
-    EXPECT_EQ(At(48, 48 + 5), state.atmPalette[0]);
-    EXPECT_EQ(At(48, 48 + 6), state.atmPalette[0]);
-    EXPECT_EQ(At(48, 48 + 7), state.atmPalette[3]);
+    EXPECT_EQ(At(48, 48 + 0), state.atm.palette[7]);
+    EXPECT_EQ(At(48, 48 + 1), state.atm.palette[1]);
+    EXPECT_EQ(At(48, 48 + 2), state.atm.palette[15]);
+    EXPECT_EQ(At(48, 48 + 3), state.atm.palette[8]);
+    EXPECT_EQ(At(48, 48 + 4), state.atm.palette[15]);
+    EXPECT_EQ(At(48, 48 + 5), state.atm.palette[0]);
+    EXPECT_EQ(At(48, 48 + 6), state.atm.palette[0]);
+    EXPECT_EQ(At(48, 48 + 7), state.atm.palette[3]);
 }
 
 TEST_F(ATMVideoModesSuite_Test, Render_ATM3Hwmc_AttrAtPixelAddressPlus2000_FlashBit)
@@ -1057,27 +1057,27 @@ TEST_F(ATMVideoModesSuite_Test, Render_ATM3Hwmc_AttrAtPixelAddressPlus2000_Flash
     p5[0] = 0x40;       // bitmap: pixel 0 paper, pixel 1 ink
     p5[0x2000] = 0x47;  // ink = 7 | 8 = 15, paper = 8
     _screen->Draw(72 * 224 + 24 + 0);
-    EXPECT_EQ(At(48, 48), state.atmPalette[8]) << "bit 7 clear -> paper";
-    EXPECT_EQ(At(48, 49), state.atmPalette[15]) << "bit 6 set -> ink";
+    EXPECT_EQ(At(48, 48), state.atm.palette[8]) << "bit 7 clear -> paper";
+    EXPECT_EQ(At(48, 49), state.atm.palette[15]) << "bit 6 set -> ink";
 
     // Each pixel line has its own attribute: line 1 is pixel offset 0x100
     p5[0x100] = 0x80;
     p5[0x2100] = 0x0A;  // ink 2, paper 1
     _screen->Draw(73 * 224 + 24 + 0);
-    EXPECT_EQ(At(49, 48), state.atmPalette[2]);
-    EXPECT_EQ(At(49, 49), state.atmPalette[1]);
+    EXPECT_EQ(At(49, 48), state.atm.palette[2]);
+    EXPECT_EQ(At(49, 49), state.atm.palette[1]);
 
     // Bit 7 = flash: on the flash phase the bitmap inverts, attrs untouched
     p5[0x2000] = 0xC7;
     _screen->_vid.flash = 1;
     _screen->Draw(72 * 224 + 24 + 0);
-    EXPECT_EQ(At(48, 48), state.atmPalette[15]);
-    EXPECT_EQ(At(48, 49), state.atmPalette[8]);
+    EXPECT_EQ(At(48, 48), state.atm.palette[15]);
+    EXPECT_EQ(At(48, 49), state.atm.palette[8]);
 
     _screen->_vid.flash = 0;
     _screen->Draw(72 * 224 + 24 + 0);
-    EXPECT_EQ(At(48, 48), state.atmPalette[8]) << "flash off restores the raw bitmap";
-    EXPECT_EQ(At(48, 49), state.atmPalette[15]);
+    EXPECT_EQ(At(48, 48), state.atm.palette[8]) << "flash off restores the raw bitmap";
+    EXPECT_EQ(At(48, 49), state.atm.palette[15]);
 }
 
 TEST_F(ATMVideoModesSuite_Test, Timing_ATM3ZModes_KeepAtm312LineFrame)

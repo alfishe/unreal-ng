@@ -95,7 +95,7 @@ TEST_F(ScorpionMachine_Test, ScriptedInSevenFFDSetsTurbo)
 
     RunTStates(100);
 
-    EXPECT_EQ(_context->emulatorState.scorpion_turbo, 1) << "the scripted IN A,(C) set the flip-flop";
+    EXPECT_EQ(_context->emulatorState.scorpion.turbo, 1) << "the scripted IN A,(C) set the flip-flop";
 }
 
 /// endregion <Hardware turbo (hardware-reference 13)>

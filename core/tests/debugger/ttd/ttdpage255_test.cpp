@@ -105,12 +105,12 @@ protected:
         // window 3 - "RAM from FFF7" (0x200 | page). Setting a bank directly
         // would not stick: every rebank recomputes the windows from these latches.
         EmulatorState& st = _context->emulatorState;
-        st.aFF77 |= PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;
+        st.atm.aFF77 |= PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;
         st.p7FFD = 0;
-        st.pFFF7[0] = 0x300 | 28;
-        st.pFFF7[1] = 0x200 | 0x05;
-        st.pFFF7[2] = 0x200 | 0x02;
-        st.pFFF7[3] = 0x200 | kTopPage;
+        st.atm.pFFF7[0] = 0x300 | 28;
+        st.atm.pFFF7[1] = 0x200 | 0x05;
+        st.atm.pFFF7[2] = 0x200 | 0x02;
+        st.atm.pFFF7[3] = 0x200 | kTopPage;
         _memory->UpdateZ80Banks();
         ASSERT_EQ(_memory->GetRAMPageForBank(3), kTopPage) << "ATM manager did not bank page 255";
 

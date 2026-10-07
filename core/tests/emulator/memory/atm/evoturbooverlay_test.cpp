@@ -44,7 +44,7 @@ protected:
 
         // TR-DOS boot map: ROM in window 0, RAM in windows 1-3, the shadow ports open
         _decoder->ApplyBootROMDefaults(RM_DOS);
-        _context->emulatorState.pBF = 0x01;
+        _context->emulatorState.evo.pBF = 0x01;
         _z80->iff1 = 0;
     }
 

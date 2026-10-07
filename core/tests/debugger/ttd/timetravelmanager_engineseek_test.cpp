@@ -306,9 +306,9 @@ TEST_F(TimeTravelManager_EngineSeek_Test, SectorReadsComeFromTheSessionNotTheIma
             out.put(static_cast<char>(i / 512 + i % 7));
     }
     ASSERT_TRUE(decoder->InsertSdCard(image, SdCardSpi::WriteMode::Session, false));
-    _context->emulatorState.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
+    _context->emulatorState.atm.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
     _context->emulatorState.flags &= ~CF_TRDOS;
-    _context->emulatorState.pBF = 0x00;
+    _context->emulatorState.evo.pBF = 0x00;
     _context->pMemory->UpdateZ80Banks();
     decoder->DecodePortOut(0x0077, 0x00, 0);
     ASSERT_TRUE(zcsdtest::SdInit(decoder, 0x0057));

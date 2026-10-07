@@ -88,12 +88,12 @@ bool Core::Init()
     _state->current_z80_frequency = baseFrequency;
     _state->current_z80_frequency_multiplier = 1;
     _state->next_z80_frequency_multiplier = 1;  // Initialize queued multiplier
-    _state->scorpion_turbo = 0;                 // Turbo flip-flop cleared at power-on (hardware-reference 13)
+    _state->scorpion.turbo = 0;                 // Turbo flip-flop cleared at power-on (hardware-reference 13)
     _state->hw_turbo_ratio = 1;                 // No hardware turbo engaged at power-on (model-neutral)
     _state->hw_turbo_ratio_applied = 1;
     _state->hw_clock_den = 1;                   // A whole multiple of the base clock (the Profi's hi-res clock is not)
     _state->hw_clock_den_applied = 1;
-    _state->scorpionDosTrigger = 0;            // Magic-button DOS trigger cleared at power-on (hardware-reference §9)
+    _state->scorpion.dosTrigger = 0;            // Magic-button DOS trigger cleared at power-on (hardware-reference §9)
 
     // Initialize speed multiplier from configuration
     if (_config->speed_multiplier > 0 && _config->speed_multiplier <= 16)

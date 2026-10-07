@@ -266,15 +266,15 @@ TEST_F(ZXEvoErs_Test, MagicButtonEntersNmiPageAndReachesMagicService)
 
     _emulator->RequestMNI();
     _emulator->RunNFrames(1, true);
-    EXPECT_TRUE(_context->emulatorState.evoInNmi) << "the board NMI must map RAM #FF";
+    EXPECT_TRUE(_context->emulatorState.evo.inNmi) << "the board NMI must map RAM #FF";
 
     Memory* memory = _context->pMemory;
     Z80* z80 = _context->pCore->GetZ80();
     EmulatorTestHelper::RunUntil(
         _emulator.get(),
-        [&] { return !_context->emulatorState.evoInNmi && memory->IsBank0ROM() && memory->GetROMPage() == 23u && z80->pc == 0x281D; },
+        [&] { return !_context->emulatorState.evo.inNmi && memory->IsBank0ROM() && memory->GetROMPage() == 23u && z80->pc == 0x281D; },
         60, 1);
-    EXPECT_FALSE(_context->emulatorState.evoInNmi) << "the ERS handler left the NMI page (#xxBE exit)";
+    EXPECT_FALSE(_context->emulatorState.evo.inNmi) << "the ERS handler left the NMI page (#xxBE exit)";
     ASSERT_TRUE(memory->IsBank0ROM());
     EXPECT_EQ(memory->GetROMPage(), 23u) << "MAGIC Service code page";
     EXPECT_EQ(z80->pc, 0x281D) << "key-wait loop";
@@ -298,7 +298,7 @@ TEST_F(ZXEvoErs_Test, RamDiskSaveListLoadThroughVirtualTrdos)
     Tap(ZXKEY_S);
     _emulator->RunNFrames(60, true);
     ASSERT_NE(Screen().find("Virtual Drive: A"), std::string::npos) << Screen();
-    EXPECT_EQ(_context->emulatorState.evoFddMask & 0x01, 0x01) << "drive A is emulated by the ERS";
+    EXPECT_EQ(_context->emulatorState.evo.fddMask & 0x01, 0x01) << "drive A is emulated by the ERS";
 
     // LIST: the fresh RAM disk the ERS created
     Tap(ZXKEY_K);
@@ -441,7 +441,7 @@ TEST_F(ZXEvoErs_Test, SdCardTrdMountedAsDriveBReadAndWrittenByTrdos)
         Tap(key);
         _emulator->RunNFrames(40, true);
     }
-    EXPECT_EQ(_context->emulatorState.evoFddMask, 0x02) << "drive B is now served by the ERS";
+    EXPECT_EQ(_context->emulatorState.evo.fddMask, 0x02) << "drive B is now served by the ERS";
 
     // S. TR-DOS; the first key after NEO-DOS starts is swallowed, so an empty
     // line first; then *"b" makes B the current drive
@@ -624,7 +624,7 @@ TEST_F(ZXEvoErs_Test, SdCardFolderTrdMountedReadWrittenAndExported)
         Tap(key);
         _emulator->RunNFrames(40, true);
     }
-    ASSERT_EQ(_context->emulatorState.evoFddMask, 0x02);
+    ASSERT_EQ(_context->emulatorState.evo.fddMask, 0x02);
 
     Tap(ZXKEY_S);
     _emulator->RunNFrames(60, true);
@@ -710,7 +710,7 @@ TEST_F(ZXEvoErs_Test, ImageMntAutomountFromAHostFolder)
     ASSERT_TRUE(_context->pMediaManager->Insert("sd.zc", source).Ok());
     ASSERT_TRUE(RunToMainMenu());
     // A blank NVRAM makes drive A the ERS RAM disk (E4): bit 0 only
-    EXPECT_EQ(_context->emulatorState.evoFddMask, 0x01) << "nothing mounted from the card while automount is off";
+    EXPECT_EQ(_context->emulatorState.evo.fddMask, 0x01) << "nothing mounted from the card while automount is off";
 
     Tap(ZXKEY_N);  // main menu: automount on (CMOS #EC bit 5)
     _emulator->RunNFrames(20, true);
@@ -720,7 +720,7 @@ TEST_F(ZXEvoErs_Test, ImageMntAutomountFromAHostFolder)
 
     _emulator->Reset();
     ASSERT_TRUE(RunToMainMenu());
-    EXPECT_EQ(_context->emulatorState.evoFddMask, 0x03) << "IMAGE.MNT mounted EYEACHE.TRD as drive B at start (A stays the RAM disk)";
+    EXPECT_EQ(_context->emulatorState.evo.fddMask, 0x03) << "IMAGE.MNT mounted EYEACHE.TRD as drive B at start (A stays the RAM disk)";
     EXPECT_TRUE(_context->pMediaManager->Info("sd.zc")->present) << "the card survived the reset";
 
     // TR-DOS on drive B lists the TRD's catalog

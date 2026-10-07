@@ -350,13 +350,13 @@ TEST_F(TurboTest_Test, LeavesOtherMachinesAlone)
         BootEditor(m.editor);
         ASSERT_FALSE(HasFatalFailure()) << m.editor;
         const uint8_t value77 = _context->emulatorState.pFF77;
-        const unsigned port77 = _context->emulatorState.aFF77;
+        const unsigned port77 = _context->emulatorState.atm.aFF77;
         TearDown();
         SetUp();
         Run(m.editor, p, nullptr, false);
         ASSERT_FALSE(HasFatalFailure()) << m.editor;
         EXPECT_EQ(_context->emulatorState.pFF77, value77) << m.editor << ": #xx77 written";
-        EXPECT_EQ(_context->emulatorState.aFF77, port77) << m.editor << ": #xx77 written";
+        EXPECT_EQ(_context->emulatorState.atm.aFF77, port77) << m.editor << ": #xx77 written";
         EXPECT_EQ(Peek(p.Sym("MATCH")), m.match) << m.editor << Describe(Read(p.Sym("COUNTS"))) << "\n" << Screen();
         EXPECT_EQ(Peek(p.Sym("EVO")), 0) << m.editor;
         TearDown();

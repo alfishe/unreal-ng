@@ -59,7 +59,7 @@ void ScreenProfi::Draw(uint32_t tstate, const RasterDescriptor& rd, FramebufferD
 
     // Palette entry -> ABGR (9-bit GGGRRRBBB: 3-bit G, 3-bit R, 3-bit B - the extra blue LSB
     // comes from #FE.D7 latched at the time of the palette write, see Port_Palette_Out)
-    auto paletteColor = [&state](uint8_t index) -> uint32_t { return PaletteColour(state.profiPalette[index & 0x0F]); };
+    auto paletteColor = [&state](uint8_t index) -> uint32_t { return PaletteColour(state.profi.palette[index & 0x0F]); };
 
     const uint32_t border = paletteColor(static_cast<uint8_t>(~borderColor) & 0x07);
     const bool inScreenRow = (fbRow >= rd.screenOffsetTop) && (fbRow < rd.screenOffsetTop + SCREEN_LINES);

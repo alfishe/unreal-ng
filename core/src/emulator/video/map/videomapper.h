@@ -17,7 +17,7 @@ namespace videomap
 class MemView
 {
 public:
-    /// @param atmFontRam the text font RAM (EmulatorState::atmFontRam, code * 8 + row); its table offsets are the
+    /// @param atmFontRam the text font RAM (AtmState::fontRam, code * 8 + row); its table offsets are the
     /// font's own layout, row * 256 + code
     explicit MemView(Memory* memory, const uint8_t* atmFontRam = nullptr) : _memory(memory), _atmFontRam(atmFontRam) {}
     /// Byte of a memory source (Ram, InternalTable); 0 for spaces without storage here

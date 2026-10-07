@@ -215,9 +215,9 @@ TEST_F(PortDecoder_ATM710_Test, Reset)
     state.p7FFD = 0x12;
     state.pFF77 = 0x35;
     state.pEFF7 = 0x56;
-    state.aFF77 = 0x1234;
-    state.atmMemSwapped = true;
-    state.pFFF7[0] = 0x100;
+    state.atm.aFF77 = 0x1234;
+    state.atm.memSwapped = true;
+    state.atm.pFFF7[0] = 0x100;
 
     // Reset
     _portDecoder->reset();
@@ -228,9 +228,9 @@ TEST_F(PortDecoder_ATM710_Test, Reset)
     EXPECT_EQ(state.p7FFD, 0x00);
     EXPECT_EQ(state.pEFF7, 0x00);
     EXPECT_EQ(state.pFF77, 0x35);
-    EXPECT_EQ(state.aFF77, 0x1234);
-    EXPECT_TRUE(state.atmMemSwapped);
-    EXPECT_EQ(state.pFFF7[0], 0x100);
+    EXPECT_EQ(state.atm.aFF77, 0x1234);
+    EXPECT_TRUE(state.atm.memSwapped);
+    EXPECT_EQ(state.atm.pFFF7[0], 0x100);
 }
 
 /// endregion </Reset test>
@@ -244,20 +244,20 @@ TEST_F(PortDecoder_ATM710_Test, ApplyBootROMDefaults_NonDOS_ManagerDisabled)
 
     // Consistent pre-state: video mode 3 with memswap active (pFF77 bit 0 set)
     state.pFF77 = 0x80 | 0x40 | 0x20 | 3;
-    state.aFF77 = 0x4000 | 0x200 | 0x100;
-    state.atmMemSwapped = true;
+    state.atm.aFF77 = 0x4000 | 0x200 | 0x100;
+    state.atm.memSwapped = true;
 
     // Any non-DOS boot mode (RESET=128/48/SYS, original reset(mode) default branch)
     _portDecoder->ApplyBootROMDefaults(RM_128);
 
     // aFF77 = 0: memory manager off, ~CPM active, palette gate off; pFF77 = 0
-    EXPECT_EQ(state.aFF77, 0x0000);
+    EXPECT_EQ(state.atm.aFF77, 0x0000);
     EXPECT_EQ(state.pFF77, 0x00);
 
     // The pFF77 bit0 1->0 transition does NOT permute RAM: the original
     // atm_memswap() is gated behind the default-off "AtmMemSwap" ini option,
     // so nothing at runtime ever touches the swap flag
-    EXPECT_TRUE(state.atmMemSwapped);
+    EXPECT_TRUE(state.atm.memSwapped);
 
     // ~CPM=0 raises CF_TRDOS (original set_banks() ATM branch)
     EXPECT_TRUE(state.flags & CF_TRDOS);
@@ -278,20 +278,20 @@ TEST_F(PortDecoder_ATM710_Test, ApplyBootROMDefaults_DOS_ManagerDefaults)
     _portDecoder->ApplyBootROMDefaults(RM_DOS);
 
     // RM_DOS defaults (original reset(mode) RM_DOS block)
-    EXPECT_EQ(state.aFF77, 0x4000 | 0x200 | 0x100);
+    EXPECT_EQ(state.atm.aFF77, 0x4000 | 0x200 | 0x100);
     EXPECT_EQ(state.pFF77, 0x80 | 0x40 | 0x20 | 3);
 
     // No RAM permutation on the pFF77 bit0 0->1 transition (original:
     // default-off "AtmMemSwap" ini option gates atm_memswap)
-    EXPECT_FALSE(state.atmMemSwapped);
+    EXPECT_FALSE(state.atm.memSwapped);
 
     // Both pFFF7 register sets (7FFD.4 = 0 / 1) initialized identically
-    EXPECT_EQ(state.pFFF7[0], 0x0100 | 1);  // ROM from 7FFD, page pair 0/1 (sys / trdos)
-    EXPECT_EQ(state.pFFF7[1], 0x0200 | 5);  // RAM from FFF7, page 5
-    EXPECT_EQ(state.pFFF7[2], 0x0200 | 2);  // RAM from FFF7, page 2
-    EXPECT_EQ(state.pFFF7[3], 0x0200 | 0);  // RAM from FFF7, page 0
-    EXPECT_EQ(state.pFFF7[4], 0x0100 | 1);  // Second register set: same mapping
-    EXPECT_EQ(state.pFFF7[7], 0x0200 | 0);
+    EXPECT_EQ(state.atm.pFFF7[0], 0x0100 | 1);  // ROM from 7FFD, page pair 0/1 (sys / trdos)
+    EXPECT_EQ(state.atm.pFFF7[1], 0x0200 | 5);  // RAM from FFF7, page 5
+    EXPECT_EQ(state.atm.pFFF7[2], 0x0200 | 2);  // RAM from FFF7, page 2
+    EXPECT_EQ(state.atm.pFFF7[3], 0x0200 | 0);  // RAM from FFF7, page 0
+    EXPECT_EQ(state.atm.pFFF7[4], 0x0100 | 1);  // Second register set: same mapping
+    EXPECT_EQ(state.atm.pFFF7[7], 0x0200 | 0);
 
     // Manager on: window 0 = sys/TR-DOS ROM pair, windows 1-3 = RAM 5/2/0
     EXPECT_EQ(_memory->GetMemoryBankMode(0), MemoryBankModeEnum::BANK_ROM);
@@ -312,20 +312,20 @@ TEST_F(PortDecoder_ATM710_Test, FFF7_RegisterEncoding_FromDataBus)
     state.p7FFD = 0x00;  // Register set 0
 
     _portDecoder->DecodePortOut(0x00F7, 0xFF, 0x0000);
-    EXPECT_EQ(state.pFFF7[0], 0x000);  // Type 0 (RAM from 7FFD), page 0
+    EXPECT_EQ(state.atm.pFFF7[0], 0x000);  // Type 0 (RAM from 7FFD), page 0
 
     _portDecoder->DecodePortOut(0x00F7, 0xBF, 0x0000);
-    EXPECT_EQ(state.pFFF7[0], 0x100);  // Type 1 (ROM from 7FFD), page 0
+    EXPECT_EQ(state.atm.pFFF7[0], 0x100);  // Type 1 (ROM from 7FFD), page 0
 
     _portDecoder->DecodePortOut(0x00F7, 0x7F, 0x0000);
-    EXPECT_EQ(state.pFFF7[0], 0x200);  // Type 2 (RAM from FFF7), page 0
+    EXPECT_EQ(state.atm.pFFF7[0], 0x200);  // Type 2 (RAM from FFF7), page 0
 
     _portDecoder->DecodePortOut(0x00F7, 0x3F, 0x0000);
-    EXPECT_EQ(state.pFFF7[0], 0x300);  // Type 3 (ROM from FFF7), page 0
+    EXPECT_EQ(state.atm.pFFF7[0], 0x300);  // Type 3 (ROM from FFF7), page 0
 
     // Page bits: val 0xB8 -> type 1, page ~0x38 & 0x3F = 7
     _portDecoder->DecodePortOut(0x00F7, 0xB8, 0x0000);
-    EXPECT_EQ(state.pFFF7[0], 0x107);  // Type 1, page 7
+    EXPECT_EQ(state.atm.pFFF7[0], 0x107);  // Type 1, page 7
 }
 
 TEST_F(PortDecoder_ATM710_Test, FFF7_WindowAndRegisterSetSelection)
@@ -339,16 +339,16 @@ TEST_F(PortDecoder_ATM710_Test, FFF7_WindowAndRegisterSetSelection)
     _portDecoder->DecodePortOut(0xBFF7, 0xBF, 0x0000);  // Window 2
     _portDecoder->DecodePortOut(0xFFF7, 0x3F, 0x0000);  // Window 3
 
-    EXPECT_EQ(state.pFFF7[0], 0x200);
-    EXPECT_EQ(state.pFFF7[1], 0x000);
-    EXPECT_EQ(state.pFFF7[2], 0x100);
-    EXPECT_EQ(state.pFFF7[3], 0x300);
+    EXPECT_EQ(state.atm.pFFF7[0], 0x200);
+    EXPECT_EQ(state.atm.pFFF7[1], 0x000);
+    EXPECT_EQ(state.atm.pFFF7[2], 0x100);
+    EXPECT_EQ(state.atm.pFFF7[3], 0x300);
 
     // 7FFD bit 4 switches to the second register set
     state.p7FFD = 0x10;
     _portDecoder->DecodePortOut(0x00F7, 0x3F, 0x0000);  // Window 0 of set 1 -> pFFF7[4]
-    EXPECT_EQ(state.pFFF7[4], 0x300);
-    EXPECT_EQ(state.pFFF7[0], 0x200);  // Set 0 stays untouched
+    EXPECT_EQ(state.atm.pFFF7[4], 0x300);
+    EXPECT_EQ(state.atm.pFFF7[0], 0x200);  // Set 0 stays untouched
 }
 
 TEST_F(PortDecoder_ATM710_Test, FFF7_MemoryBanks_RAMFromFFF7)
@@ -356,7 +356,7 @@ TEST_F(PortDecoder_ATM710_Test, FFF7_MemoryBanks_RAMFromFFF7)
     EmulatorState& state = _context->emulatorState;
     // Manager on with ~CPM: the SYSEN half of the DOSEN || SYSEN write gate
     // keeps the manager ports enabled for direct window writes
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
+    state.atm.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
     state.p7FFD = 0x00;
 
     // Window 1 <- RAM page 10: stored 0x20A comes from val 0x40 | (0x3F ^ 0x0A) = 0x75
@@ -374,13 +374,13 @@ TEST_F(PortDecoder_ATM710_Test, FFF7_MemoryBanks_RAMFrom7FFD)
 {
     EmulatorState& state = _context->emulatorState;
     // Manager on with ~CPM: SYSEN keeps the manager ports enabled
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
+    state.atm.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
     state.p7FFD = 0x03;  // Low 3 page bits = 3
 
     // Window 3 <- RAM from 7FFD: stored 0x038 comes from val 0xC7.
     // Final page = (p7FFD & 7) | (stored & 0xF8) = 3 | 0x38 = 0x3B
     _portDecoder->DecodePortOut(0xFFF7, 0xC7, 0x0000);
-    EXPECT_EQ(state.pFFF7[3], 0x038);
+    EXPECT_EQ(state.atm.pFFF7[3], 0x038);
     EXPECT_EQ(_memory->GetRAMPageForBank3(), 0x3B);
 }
 
@@ -388,7 +388,7 @@ TEST_F(PortDecoder_ATM710_Test, FFF7_MemoryBanks_ROMTypes)
 {
     EmulatorState& state = _context->emulatorState;
     // Manager on with ~CPM: SYSEN keeps the manager ports enabled
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
+    state.atm.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
     state.p7FFD = 0x00;
 
     // Window 0 <- ROM from 7FFD (val 0xBF -> stored 0x100)
@@ -406,7 +406,7 @@ TEST_F(PortDecoder_ATM710_Test, FFF7_PEN_Disabled_AllROM)
     _portDecoder->reset();  // Mode-neutral: pFFF7 content is irrelevant with PEN=0
 
     // PEN=0: manager disabled - all four windows must read the last ROM page
-    state.aFF77 = 0x0000;
+    state.atm.aFF77 = 0x0000;
     state.p7FFD = 0x00;
     _portDecoder->DecodePortOut(0x00F7, 0x7F, 0x0000);  // Any manager write re-runs the mapping
 
@@ -422,7 +422,7 @@ TEST_F(PortDecoder_ATM710_Test, FFF7_TRDOSFlag_FromCPMBit)
     state.flags = 0x00;
 
     // ~CPM=0 (aFF77 bit 9 clear) raises CF_TRDOS (selects the TR-DOS ROM half)
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
+    state.atm.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
     _portDecoder->DecodePortOut(0x00F7, 0x7F, 0x0000);
     EXPECT_TRUE(state.flags & CF_TRDOS);
 }
@@ -437,33 +437,33 @@ TEST_F(PortDecoder_ATM710_Test, WriteGate_DOSPORTS_or_SYSEN)
     // (OUT (F7),0 executed from RAM at $5C92 with CPM set) fail and boot
     // classic TR-DOS instead of activating the sys-BIOS launcher.
     EmulatorState& state = _context->emulatorState;
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;  // Manager on, CPM set
+    state.atm.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;  // Manager on, CPM set
     state.flags = 0x00;
     state.p7FFD = 0x00;
-    state.pFFF7[0] = 0x123;
+    state.atm.pFFF7[0] = 0x123;
 
     // No session + CPM set -> write ignored
     _portDecoder->DecodePortOut(0x00F7, 0x7F, 0x0000);
-    EXPECT_EQ(state.pFFF7[0], 0x123);
+    EXPECT_EQ(state.atm.pFFF7[0], 0x123);
 
     // Active TR-DOS session (CF_DOSPORTS = the DOSEN line) -> write passes
     state.flags = CF_DOSPORTS;
     _portDecoder->DecodePortOut(0x00F7, 0x7F, 0x0000);
-    EXPECT_EQ(state.pFFF7[0], 0x200);  // val 0x7F -> RAM from FFF7, page 0
+    EXPECT_EQ(state.atm.pFFF7[0], 0x200);  // val 0x7F -> RAM from FFF7, page 0
 
     // ~CPM (SYSEN continuous access) -> write passes without a session
     state.flags = 0x00;
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
-    state.pFFF7[0] = 0x123;
+    state.atm.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
+    state.atm.pFFF7[0] = 0x123;
     _portDecoder->DecodePortOut(0x00F7, 0xBF, 0x0000);
-    EXPECT_EQ(state.pFFF7[0], 0x100);  // val 0xBF -> ROM from 7FFD, page 0
+    EXPECT_EQ(state.atm.pFFF7[0], 0x100);  // val 0xBF -> ROM from 7FFD, page 0
 }
 
 TEST_F(PortDecoder_ATM710_Test, FFF7_RAMPageMask)
 {
     EmulatorState& state = _context->emulatorState;
     // Manager on with ~CPM: SYSEN keeps the manager ports enabled
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
+    state.atm.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
     state.p7FFD = 0x00;
 
     // 256KB machine: 16 RAM pages -> mask 0x0F
@@ -471,7 +471,7 @@ TEST_F(PortDecoder_ATM710_Test, FFF7_RAMPageMask)
 
     // Window 0 <- RAM page 0x3F (val 0x40 -> stored 0x23F), masked down to 0x0F
     _portDecoder->DecodePortOut(0x00F7, 0x40, 0x0000);
-    EXPECT_EQ(state.pFFF7[0], 0x23F);
+    EXPECT_EQ(state.atm.pFFF7[0], 0x23F);
     EXPECT_EQ(_memory->GetRAMPageForBank0(), 0x0F);
 }
 
@@ -487,7 +487,7 @@ TEST_F(PortDecoder_ATM710_Test, Reset_ReferenceBootMapping)
 
     // Non-DOS boot: manager disabled, all four windows read the last ROM page
     // (atm2.rom page 3 = ATM BIOS, which then drives FF77 itself during boot)
-    EXPECT_EQ(state.aFF77, 0x0000);
+    EXPECT_EQ(state.atm.aFF77, 0x0000);
     EXPECT_EQ(state.pFF77, 0x00);
     for (int bank = 0; bank < 4; bank++)
     {
@@ -496,7 +496,7 @@ TEST_F(PortDecoder_ATM710_Test, Reset_ReferenceBootMapping)
 
     // RESET=DOS boots the TR-DOS memory-manager defaults instead
     _portDecoder->ApplyBootROMDefaults(RM_DOS);
-    EXPECT_EQ(state.aFF77, 0x4000 | 0x200 | 0x100);
+    EXPECT_EQ(state.atm.aFF77, 0x4000 | 0x200 | 0x100);
     EXPECT_EQ(state.pFF77, 0x80 | 0x40 | 0x20 | 3);
 
     // Window 0: ROM pair page 0/1 (sys / trdos), windows 1-3: RAM 5/2/0
@@ -584,29 +584,29 @@ TEST_F(PortDecoder_ATM710_Test, PaletteFF_WriteFormula_ActiveLowDAC)
     // two formulas are byte-identical)
     EmulatorState& state = _context->emulatorState;
     state.flags = 0x00;
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;  // gate open, pen2 clear
+    state.atm.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;  // gate open, pen2 clear
     state.border_attr = 0x00;
-    state.atmBorderBright = 0;
+    state.atm.borderBright = 0;
 
     // 0x00 -> v = 0xFF: all DAC lines released -> white
     _portDecoder->DecodePortOut(0x009F, 0x00, 0x0000);
-    EXPECT_EQ(state.atmPalette[0], 0xFFFFFFFFu);
-    EXPECT_EQ(state.atmPaletteRegs[0], 0x00) << "raw byte stored pre-inversion";
+    EXPECT_EQ(state.atm.palette[0], 0xFFFFFFFFu);
+    EXPECT_EQ(state.atm.paletteRegs[0], 0x00) << "raw byte stored pre-inversion";
 
     // 0xFF -> v = 0x00: all lines pulled -> black
     _portDecoder->DecodePortOut(0x009F, 0xFF, 0x0000);
-    EXPECT_EQ(state.atmPalette[0], 0xFF000000u);
-    EXPECT_EQ(state.atmPaletteRegs[0], 0xFF);
+    EXPECT_EQ(state.atm.palette[0], 0xFF000000u);
+    EXPECT_EQ(state.atm.paletteRegs[0], 0xFF);
 
     // 0x55 -> v = 0xAA: red = 10*v1+5*v6 = 10, green = 10*v4+5*v7 = 5,
     // blue = 10*v0+5*v5 = 5 -> ABGR 0xFF5555AA (packing 0xAABBGGRR, red in
     // the low byte - cf. the ZX-blue default 0xFFC72200 = #0022C7)
     _portDecoder->DecodePortOut(0x009F, 0x55, 0x0000);
-    EXPECT_EQ(state.atmPalette[0], 0xFF5555AAu);
+    EXPECT_EQ(state.atm.palette[0], 0xFF5555AAu);
 
     // Only the addressed cell changes; the rest keep the ZX presets
-    EXPECT_EQ(state.atmPalette[1], 0xFFC72200u);
-    EXPECT_EQ(state.atmPalette[2], 0xFF1628D6u);
+    EXPECT_EQ(state.atm.palette[1], 0xFFC72200u);
+    EXPECT_EQ(state.atm.palette[2], 0xFF1628D6u);
 }
 
 TEST_F(PortDecoder_ATM710_Test, PaletteFF_CellIsTheFourBitBorder)
@@ -616,13 +616,13 @@ TEST_F(PortDecoder_ATM710_Test, PaletteFF_CellIsTheFourBitBorder)
     // pal_addr = zxcolor = {bright, din[2:0]})
     EmulatorState& state = _context->emulatorState;
     state.flags = 0x00;
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
+    state.atm.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
     state.border_attr = 0x02;
-    state.atmBorderBright = 1;
+    state.atm.borderBright = 1;
 
     _portDecoder->DecodePortOut(0x009F, 0x00, 0x0000);
-    EXPECT_EQ(state.atmPalette[10], 0xFFFFFFFFu) << "border 2 + bright -> cell 10";
-    EXPECT_EQ(state.atmPalette[2], 0xFF1628D6u) << "cell 2 untouched";
+    EXPECT_EQ(state.atm.palette[10], 0xFFFFFFFFu) << "border 2 + bright -> cell 10";
+    EXPECT_EQ(state.atm.palette[2], 0xFF1628D6u) << "cell 2 untouched";
 }
 
 TEST_F(PortDecoder_ATM710_Test, PaletteFF_WriteGates_Pen2AndDosLine)
@@ -634,30 +634,30 @@ TEST_F(PortDecoder_ATM710_Test, PaletteFF_WriteGates_Pen2AndDosLine)
     EmulatorState& state = _context->emulatorState;
     state.flags = 0x00;
     state.border_attr = 0x00;
-    state.atmBorderBright = 0;
+    state.atm.borderBright = 0;
 
     // pen2 set -> write ignored (cell 0 keeps the black preset)
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN2 | PortDecoder_ATM710::ATM_AFF77_PEN;
+    state.atm.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN2 | PortDecoder_ATM710::ATM_AFF77_PEN;
     _portDecoder->DecodePortOut(0x009F, 0x00, 0x0000);
-    EXPECT_EQ(state.atmPalette[0], 0xFF000000u) << "pen2 (A14) set blocks the palette write";
-    EXPECT_EQ(state.atmPaletteRegs[0], 0x00);
+    EXPECT_EQ(state.atm.palette[0], 0xFF000000u) << "pen2 (A14) set blocks the palette write";
+    EXPECT_EQ(state.atm.paletteRegs[0], 0x00);
 
     // CPM set and no TR-DOS session -> the dos line is closed
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;
+    state.atm.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;
     _portDecoder->DecodePortOut(0x009F, 0x00, 0x0000);
-    EXPECT_EQ(state.atmPalette[0], 0xFF000000u) << "closed dos line blocks the palette write";
+    EXPECT_EQ(state.atm.palette[0], 0xFF000000u) << "closed dos line blocks the palette write";
 
     // ~CPM (SYSEN continuous access) reopens the group
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
+    state.atm.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN;
     _portDecoder->DecodePortOut(0x009F, 0x00, 0x0000);
-    EXPECT_EQ(state.atmPalette[0], 0xFFFFFFFFu);
+    EXPECT_EQ(state.atm.palette[0], 0xFFFFFFFFu);
 
     // ... and so does an active TR-DOS session, even with CPM set
-    state.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;
+    state.atm.aFF77 = PortDecoder_ATM710::ATM_AFF77_PEN | PortDecoder_ATM710::ATM_AFF77_CPM;
     state.flags = CF_DOSPORTS;
-    state.atmPalette[0] = 0x12345678;  // sentinel
+    state.atm.palette[0] = 0x12345678;  // sentinel
     _portDecoder->DecodePortOut(0x009F, 0x00, 0x0000);
-    EXPECT_EQ(state.atmPalette[0], 0xFFFFFFFFu) << "CF_DOSPORTS session opens the dos gate";
+    EXPECT_EQ(state.atm.palette[0], 0xFFFFFFFFu) << "CF_DOSPORTS session opens the dos gate";
 }
 
 /// endregion </ATM palette port #FF tests>
@@ -808,7 +808,7 @@ TEST(PortDecoder_ATM710_Machine_Test, BetaPortsOnlyWithTheShadowPorts)
     EmulatorState& state = context->emulatorState;
 
     // Spectrum mode: CPM set (no continuous access), outside a TR-DOS session
-    state.aFF77 |= PortDecoder_ATM710::ATM_AFF77_CPM;
+    state.atm.aFF77 |= PortDecoder_ATM710::ATM_AFF77_CPM;
     state.flags &= ~(CF_DOSPORTS | CF_TRDOS);
     for (uint16_t port : { 0x001F, 0x003F, 0x005F, 0x007F, 0x00FF })
     {
@@ -823,7 +823,7 @@ TEST(PortDecoder_ATM710_Machine_Test, BetaPortsOnlyWithTheShadowPorts)
 
     // So does CP/M mode (~CPM) without a session
     state.flags &= ~CF_DOSPORTS;
-    state.aFF77 &= static_cast<uint16_t>(~PortDecoder_ATM710::ATM_AFF77_CPM);
+    state.atm.aFF77 &= static_cast<uint16_t>(~PortDecoder_ATM710::ATM_AFF77_CPM);
     decoder->DecodePortIn(0x001F, 0x8000);
     EXPECT_TRUE(decoder->WasLastPortDecoded()) << "~CPM: continuous access";
 
