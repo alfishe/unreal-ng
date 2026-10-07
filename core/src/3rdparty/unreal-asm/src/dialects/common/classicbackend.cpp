@@ -1,7 +1,6 @@
 #include "dialects/common/classicbackend.h"
 
 #include <algorithm>
-#include <cstdio>
 #include <functional>
 #include <iterator>
 #include <map>
@@ -276,9 +275,7 @@ struct Writer
 
     std::string Hex(int64_t value, int digits) const
     {
-        char buffer[32];
-        std::snprintf(buffer, sizeof(buffer), "%0*llX", std::max(digits, 1), static_cast<unsigned long long>(value & 0xFFFF));
-        return std::string(Z80asm() ? "$" : "#") + buffer;
+        return std::string(Z80asm() ? "$" : "#") + z80::HexDigits(static_cast<uint64_t>(value & 0xFFFF), digits);
     }
 
     std::string Number(const Expr& e) const

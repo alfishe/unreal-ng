@@ -31,13 +31,14 @@ env:
 jobs:
   # Pushes to master build at most once per CI_MIN_INTERVAL_MINUTES (repository variable, Settings -> Secrets and
   # variables -> Actions -> Variables; default 60, 0 = no throttle). A push that comes too early waits here; a newer push
-  # cancels the waiting one (concurrency below), so only the newest commit of a burst gets built. Builds that already
-  # started are never cancelled. Pull requests are always built at once: no wait, and a group of their own so nothing cancels them.
+  # cancels older waiting throttle jobs (concurrency on throttle), so only the newest commit of a burst waits. Builds
+  # that already started are never cancelled. Pull requests build at once (no wait, own concurrency group).
   throttle:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    # No concurrency here — let all throttle jobs wait in parallel. The first one past the
-    # interval starts its build; concurrency on build-linux (below) cancels any stragglers.
+    concurrency:
+      group: ci-throttle-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
     env:
       GH_TOKEN: ${{ github.token }}
       MIN_INTERVAL: ${{ vars.CI_MIN_INTERVAL_MINUTES || '60' }}
