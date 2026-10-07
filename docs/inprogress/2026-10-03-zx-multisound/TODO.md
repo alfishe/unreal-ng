@@ -269,18 +269,18 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   -13 % to -16 % (idle 0.95 -> 0.82 ms, SAA / SounDrive / MIDI / GS alone the same), FM playing within noise
   (-0.4 %, -0.3 % all five). Golden digests of the YM rows unchanged
   (`MultiSoundCard_Test.YmRowsMatchTheirGoldenDigests`, taken before the change); the TSFM path is untouched.
+  Done 2026-10-07 (branch `ym-decimators-a-c0`; prototype, quality analysis and A/B in
+  [ym-decimator-prototype.md](ym-decimator-prototype.md)): one multi-stream FIR pass with NEON / SSE2 kernels
+  (`FilterDecimator::getOutputs`, `DecimatorDot`; also used by the TSFM board and the AY device) and the silent-SSG
+  FIR skip - both bit-identical; card frame -11 to -27 %, TSFM frame -5 %.
   Backlog (measure before and after, owner rule "naive first"):
-  - one multi-stream FIR pass: the eight decimators share one output instant (slaves of chip 0 SSG A); one loop
-    over the taps with every stream's accumulators shares the coefficient loads and keeps each stream's summation
-    order, so the output stays bit-identical (the 36 %)
-  - an SSG "channel levels only" mode for the card's two generators: the card reads the per-channel levels, the
-    pan sums and DC blockers of `SoundChip_AY8910::updateMixer` are computed for nothing (part of the 11 %); the
-    AY generator is a shared hot path, so it needs the A/B of the AY machines too
-  - SSG channels that hold one level (volume 0, tone off) still run their FIR; a constant-history shortcut is not
-    bit-identical (v x sum(c) rounds otherwise than sum(v x c)): owner decision
+  - an SSG "channel levels only" mode for the card's two generators (prototype variant b, kept on branch
+    `proto-ym-decimators`: bit-identical, -2 to -4 % of a card frame; it duplicates the level computation of
+    `SoundChip_AY8910::updateMixer`, and folding both onto one helper touches the AY hot path: its own A/B)
+  - SSG channels that hold one non-zero level still run their FIR (prototype variant c, kept on
+    `proto-ym-decimators`): identical at the card's float output for every YM2149 level, but not the same
+    arithmetic (1.2e-15 in double); owner decision 2026-10-07: not landed
   - the SAM2695 effects with no input and their tails run out (4.5 %)
-  - SIMD-CANDIDATE(fir-decimator-dot): the FIR dot products (`FilterDecimator::getOutput`, two rows x four
-    interleaved accumulators today)
 - [x] `data/midi/generaluser-gs.sf2` + license + README tracked (Q4, done 2026-10-05), shipped next to the
   executables by every target that ships `data/rom`; `[MIDI] Bank=NONE`; the test runner's policy keeps the default bank
   out of test machines unless asked (`TestSound::DefaultMidiBank`, `MultiSoundSlotCard_Test.ShippedDefaultBankLoadsWithoutAnOverride`); GS 1.05b ROM as `data/rom/gs105b.rom` done in MS-2 (README-ROMS entry)
