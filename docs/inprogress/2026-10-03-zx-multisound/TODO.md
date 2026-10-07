@@ -124,6 +124,13 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
     running instance (`SlotChange::Run`, a plug applied by a restart, [slots tdd.md](../2026-10-03-zx-bus-slots/tdd.md)
     §14); a model switch carries it (Pentagon -> ZX-Evo keeps it, ZX-Evo -> 128K reports it as not carried)
   - [x] the ids 58-60 / region 17 and input kind 17 (`MidiPanic`) were checked free on master at the landing (2026-10-05)
+  - [x] 2026-10-06, found by the corpus fixture `multisound-zxevo`: a seek on a machine without a board AY device (the
+    ZX-Evo, whose YM2149 the card takes out of its socket) left the mixer's sample phase (SoundManager::samplePhase,
+    the per-frame sample count) at its live pre-seek value - on the Pentagon the AY's blob puts it back. The card
+    renders its rows to that count, so the frames after the seek had other lengths and the YM2203 channel decimator's
+    phase (TTD state) left the recording at the first replayed frame. The card's blob (`MultiSoundCardTtd` version 2)
+    carries the mixer's frame-start phase and a load adopts it, as the TurboSound / TSFM blobs do.
+    `TtdMultiSound_Test.SeekRestoresTheMixerSampleCountWithoutABoardAy`
 - [x] MS-6 surfaces (2026-10-05, working tree of `zx-bus-slots`, not committed; [tdd-integration.md](tdd-integration.md)
   §5.1): `DeviceState::MultiSound` / `Midi` on every surface, MIDI panic as TTD input `MidiPanic`, Qt slot window card
   options, MIDI activity window, HUD icon; recipe [.recipe/peripherals/multisound.md](../../../.recipe/peripherals/multisound.md)
