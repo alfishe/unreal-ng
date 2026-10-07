@@ -9,6 +9,8 @@ converted source is compared with (sjasmplus output must be byte-equal).
                             [--url U] [--id ID]
     assemble-in-emulator.py zasm315  <assembler.trd> <source.$a> <address> <length> <out.bin> [--extra FILE.$T ...]
                             [--url U] [--id ID]
+    assemble-in-emulator.py masm11   <assembler.scl> <source.$a> <address> <length> <out.bin> [--extra FILE.$T ...]
+                            [--wait S] [--url U] [--id ID]
 
 The source is added to a copy of the assembler's disk; the memory range is filled with #AA first, so bytes the
 assembler did not write stay visible. Pick an address the assembler leaves alone: TASM 4.12 keeps its overlay at
@@ -20,6 +22,9 @@ first pass: the screenshot <out>.assembled.png lists them (line numbers count fr
 ZAsm 3.15 compiles into its own pages: the source ends with `saveobj "a:out.C",<address>,<length>` and the script
 reads that file from the disk afterwards (address and length are only checked against it). ZAsm looks for drive D
 first; the script answers its "No Disk!" with drive A.
+MASM 1.1 (MASM_11.SCL) lists only its sources (type a) and starts on the first: the source goes first, the files it
+INCLUDEs / INCBINs follow with --extra. It compiles to the addresses the source names (#C000 and up into RAM page 0,
+which the script reads there); --wait gives a long source its time (its own source: 50 s).
 ALASM's file list is chosen by cursor: --list-position is the column and row of the file in the list `w` shows
 (count them on the screenshot <out>.list.png the tool saves first, 1-based).
 Screenshots of each step are written next to <out.bin>.
@@ -46,7 +51,7 @@ def prepare_disk(assembler_trd, source, work, extra=()):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['tasm412', 'alasm509', 'storm13', 'zasm315'])
+    parser.add_argument('assembler', choices=['tasm412', 'alasm509', 'storm13', 'zasm315', 'masm11'])
     parser.add_argument('disk')
     parser.add_argument('source')
     parser.add_argument('address', type=lambda v: int(v, 0))
@@ -55,7 +60,8 @@ def main():
     parser.add_argument('--url')
     parser.add_argument('--id')
     parser.add_argument('--list-position', help='ALASM: column,row of the source in the file list')
-    parser.add_argument('--extra', nargs='*', default=[], help='STORM, ZAsm: hobeta files the source includes')
+    parser.add_argument('--extra', nargs='*', default=[], help='STORM, ZAsm, MASM: hobeta files the source includes')
+    parser.add_argument('--wait', type=float, default=6, help='MASM: seconds the assembly takes')
     args = parser.parse_args()
 
     work = os.path.dirname(os.path.abspath(args.out))
@@ -90,6 +96,27 @@ def main():
         emu.tap('q')                           # Quit to BASIC: the 48K memory holds the code again
         time.sleep(3)
         data = emu.read(args.address, args.length)
+        emu.stop_recording()
+        open(args.out, 'wb').write(data)
+        print(f'{len(data)} bytes from #{args.address:04X} written to {args.out}; check {stem}.assembled.png for errors')
+        return 0
+    elif args.assembler == 'masm11':
+        emu.run_trdos('MASM 1.1', wait=8)
+        emu.tap('enter')                       # past the title
+        emu.tap('w')                           # Work file: the source is the first in the list
+        time.sleep(2)
+        emu.tap('enter')
+        time.sleep(3)
+        if args.address < 0xC000:
+            emu.write(args.address, [0xAA] * args.length)
+        emu.tap('a')                           # Assemble
+        time.sleep(args.wait)
+        emu.screenshot(stem + '.assembled.png')
+        if args.address >= 0xC000:             # RAM page 0 holds what it compiled for #C000-#FFFF
+            page = bytes(emu.get(f'/memory/page/ram/0?offset=0&length=16384')['data'])
+            data = page[args.address - 0xC000:args.address - 0xC000 + args.length]
+        else:
+            data = emu.read(args.address, args.length)
         emu.stop_recording()
         open(args.out, 'wb').write(data)
         print(f'{len(data)} bytes from #{args.address:04X} written to {args.out}; check {stem}.assembled.png for errors')
