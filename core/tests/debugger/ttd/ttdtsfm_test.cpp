@@ -280,7 +280,8 @@ TEST_F(TtdTsfm_Test, SessionWithSlotDeviceRefusedOnEmptySlot)
     std::istringstream in(data, std::ios::binary);
     std::string err;
     EXPECT_FALSE(empty.GetContext()->pTimeTravelController->DeserializeSession(in, err));
-    EXPECT_NE(err.find("ay-socket: recorded ay / ts, this machine none"), std::string::npos) << err;
+    // The engine's device table names the socket's board (a v1 file could not: "ay / ts")
+    EXPECT_NE(err.find("ay-socket: recorded ts, this machine none"), std::string::npos) << err;
 
     empty.Stop();
     empty.Release();
