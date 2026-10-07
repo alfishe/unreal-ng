@@ -50,6 +50,9 @@ public:
         std::vector<Block> blocks;
     };
 
+    /// The origin of the image extension that carries the TS-Conf registers the file names (payload: [0] RAM page at #C000, [1] SYS_CONFIG[1:0])
+    static constexpr const char* kHeaderOrigin = "spg:header";
+
     LoaderSPG(EmulatorContext* context, const std::string& path);
     LoaderSPG(EmulatorContext* context, std::vector<uint8_t> data, const std::string& name);
 
