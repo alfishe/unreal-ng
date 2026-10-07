@@ -19,7 +19,10 @@ port decoder PROM (`[PROFI] ExtPorts=v003`: the extended ports also from the SYS
 0.41h1 (`rom/profi/bios-plus-041h1.rom`). It boots PQ-DOS from a floppy or an IDE disk (`ide0.master`) and runs DOS
 Navigator. Its start-up board test passes the FDC, drives, parallel port (8255), serial port (8253 + 8251, see
 [Serial port](#serial-port-com)), RTC and AY. PQ-DOS disks and a 2 GB HDD image: see
-`docs/inprogress/2026-10-04-profi-plus/design.md`; create it with `{"model":"PROFI-PLUS"}`.
+`docs/inprogress/2026-10-04-profi-plus/design.md`; create it with `{"model":"PROFI-PLUS"}`. The IDE disk slots read
+FAT16 only (PQ-DOS ignores FAT32 partitions): FAT32 folders, composites and images are refused. A composed disk of
+two partitions (PQ-DOS on partition 1, a host folder as partition 2, drive D:) is a `*.ucompose.yaml` with
+`partitions:` (see `.recipe/media/use-media-slots.md`).
 
 `[PROFI] SyncProm=` picks another sync PROM: `0a1d`, `samx6`, `fb0579b6`
 (71680 T, INT 48 T before paper) or `v503`.

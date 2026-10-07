@@ -212,8 +212,8 @@ and the expected outcome (result code, report line, written state).
 
 | ID | Test class / case | Machine, software |
 |---|---|---|
-| ACC-C1 | `ComposeAcceptance_Test.NedoOsBootsFromTwoFolders` | ZX-Evo, NedoOS `sd_boot.$C`, shadowed `term.com` |
-| ACC-C2 | `ComposeAcceptance_Test.WildCommanderListsFilteredFat32` | ZX-Evo, Wild Commander |
+| ACC-C1 | `ZXEvoErs_Test.NedoOsBootsFromTwoComposedFolders` | ZX-Evo, NedoOS `SD_BOOT.$C`, shadowed `bin/autoexec.bat` |
+| ACC-C2 | `TsConfBootSd_Test.ComposeWildCommanderListsFilteredFat32Layers` | TS-Conf, Wild Commander Improved (`testdata/machines/tsconf/wc-improved/`) |
 | ACC-C3 | `ComposeAcceptance_Test.SprinterDssGraftedUtilFolder` | Sprinter, DSS on `dss_1_62_92.img` + folder |
 | ACC-C4 | `ComposeAcceptance_Test.ProfiTwoPartitions` | Profi, PQ-DOS image + composed partition |
 | ACC-C5 | `ComposeAcceptance_Test.EvoCdFromComposedIso` | ZX-Evo, ATAPI, NedoOS / ERS `AUTORUN.ZX` |

@@ -55,6 +55,8 @@ public:
     std::optional<BlockGeometry> NativeGeometry() const override { return _layout.geometry; }
     std::string Describe() const override { return _path; }
     uint64_t ContentId() const override { return _contentId; }
+    /// A hole of a sparse host file (POSIX SEEK_DATA); 0 where the host cannot tell (C10)
+    uint64_t ZeroRun(uint64_t lba) override;
 
     const std::string& Path() const { return _path; }
     uint64_t SizeBytes() const { return _sizeBytes; }
@@ -74,4 +76,5 @@ private:
     uint64_t _contentId = 0;
     Layout _layout;
     bool _fixedSize = false;  ///< the layout sets the length: writes never grow the file
+    int _holeFd = -1;         ///< a read-only descriptor for SEEK_DATA, opened at the first ZeroRun (-2: not available)
 };

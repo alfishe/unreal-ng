@@ -2,6 +2,15 @@
 
 #include "mediacontrol.h"
 
+#include "emulator/media/mediachanges.h"
+#include "emulator/io/storage/compose/composedlayout.h"
+#include "emulator/io/storage/fat/fatsynthvolume.h"
+#include "emulator/io/storage/partitioneddisk.h"
+#include "emulator/io/storage/sessionwritemap.h"
+#include "emulator/io/storage/subrangedevice.h"
+#include "emulator/media/composedescriptor.h"
+#include "emulator/media/compositemediumfactory.h"
+
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/storage/cd/cdimage.h"
 #include "emulator/io/storage/hddimageformats.h"
@@ -16,6 +25,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/storage/memorydisk.h"
+#include "emulator/io/storage/sparsememorydisk.h"
 #include "emulator/media/floppyformats.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediatargets.h"
@@ -29,6 +39,72 @@ namespace
         for (const std::string& item : items)
             array.push(item);
         return array;
+    }
+
+    /// "{...}": a composition descriptor's JSON text instead of a path
+    bool IsInlineDescriptor(const std::string& path)
+    {
+        const size_t first = path.find_first_not_of(" \t\r\n");
+        return first != std::string::npos && path[first] == '{';
+    }
+
+    std::string Hex64(uint64_t value)
+    {
+        char text[24];
+        std::snprintf(text, sizeof text, "%016llx", static_cast<unsigned long long>(value));
+        return text;
+    }
+
+    /// The `compose` / `layers` body: the layout and every layer
+    StateNode CompositeValue(const CompositeInfo& info)
+    {
+        info.CompleteCounts();  // C4b: a graft's unread base directories are counted now
+        StateNode value = StateNode::Object();
+        value["descriptor"] = info.descriptor;
+        value["fs"] = info.fsName;
+        value["build"] = info.build;
+        value["sectors"] = info.sectors;
+        value["bytes"] = info.sectors * 512;
+        value["clusters"] = static_cast<uint64_t>(info.clusterCount);
+        value["sectorsPerCluster"] = static_cast<uint64_t>(info.sectorsPerCluster);
+        value["contentId"] = Hex64(info.contentId);
+        value["files"] = info.files;
+        value["fileBytes"] = info.bytes;
+        value["sourceDevices"] = static_cast<uint64_t>(info.sourceDevices);
+        value["writesSave"] = info.writesSave;  // what `save` runs without a path (D-7): the GUI preselects it
+        StateNode layers = StateNode::Array();
+        for (const CompositeLayerInfo& layer : info.layers)
+        {
+            StateNode l = StateNode::Object();
+            l["name"] = layer.name;
+            l["kind"] = layer.kind;
+            l["path"] = layer.path;
+            l["mount"] = layer.mount;
+            l["from"] = layer.from;
+            l["files"] = layer.files;
+            l["bytes"] = layer.bytes;
+            l["writable"] = layer.writable;
+            layers.push(std::move(l));
+        }
+        value["layers"] = std::move(layers);
+        if (!info.partitions.empty())
+        {
+            StateNode partitions = StateNode::Array();
+            for (const CompositePartitionInfo& p : info.partitions)
+            {
+                StateNode n = StateNode::Object();
+                n["name"] = p.name;
+                n["kind"] = p.kind;
+                n["fs"] = p.fs;
+                n["build"] = p.build;
+                n["type"] = static_cast<uint64_t>(p.type);
+                n["start"] = p.start;
+                n["sectors"] = p.sectors;
+                partitions.push(std::move(n));
+            }
+            value["partitions"] = std::move(partitions);
+        }
+        return value;
     }
 
     std::string Lower(std::string text)
@@ -96,7 +172,7 @@ namespace
     }
 
     const std::vector<std::string> kInsertOptions = {"access", "format", "fs", "codepage", "free", "wp", "kind", "device",
-                                                     "save", "export", "discard", "end_recording", "async", "immediate"};
+                                                     "save", "export", "discard", "end_recording", "async", "immediate", "journal"};
 
     /// The parked emulator: a save or export reads the medium while the guest
     /// cannot write to it (the same thing SaveDisk does)
@@ -195,7 +271,8 @@ MediaControl::MediaControl(EmulatorContext* context)
 const std::vector<std::string>& MediaControl::Verbs()
 {
     static const std::vector<std::string> verbs = {"list", "info", "formats", "targets", "insert", "eject", "swap",
-                                                   "save", "export", "discard", "rescan", "create", "protect"};
+                                                   "save", "export", "discard", "rescan", "create", "protect",
+                                                   "compose", "layers", "changes", "flatten"};
     return verbs;
 }
 
@@ -209,12 +286,16 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"insert", kInsertOptions},
         {"swap", kInsertOptions},
         {"eject", {"save", "export", "discard", "end_recording", "async"}},
-        {"save", {"retarget", "compression"}},
-        {"export", {"compression", "parent"}},
+        {"save", {"retarget", "compression", "compact", "fs", "size", "vhd", "strategy", "force", "plan", "onConflict"}},
+        {"export", {"compression", "parent", "compact", "fs", "size", "vhd"}},
         {"discard", {"async"}},
         {"rescan", {"async"}},
         {"create", {"format", "cylinders", "sides", "size", "save", "export", "discard", "end_recording", "async"}},
         {"protect", {"on"}},
+        {"compose", {"fs", "codepage", "free"}},
+        {"layers", {}},
+        {"changes", {}},
+        {"flatten", {"strategy", "plan", "force", "onConflict", "compression", "compact", "fs", "size", "vhd"}},
     };
     static const std::vector<std::string> none;
     auto it = options.find(verb);
@@ -272,6 +353,8 @@ MediaReply MediaControl::Run(const MediaRequest& request)
         reply = Insert(request, true);
     else if (verb == "eject")
         reply = Eject(request);
+    else if (verb == "flatten")
+        reply = Flatten(request);
     else if (verb == "save")
         reply = Save(request);
     else if (verb == "export")
@@ -282,10 +365,115 @@ MediaReply MediaControl::Run(const MediaRequest& request)
         reply = Rescan(request);
     else if (verb == "create")
         reply = Create(request);
+    else if (verb == "compose")
+        reply = Compose(request);
+    else if (verb == "layers")
+        reply = Layers(request);
+    else if (verb == "changes")
+        reply = Changes(request);
     else
         reply = Protect(request);
     return reply;
 }
+
+/// region <Composite media>
+
+MediaReply MediaControl::Compose(const MediaRequest& request)
+{
+    MediaReply reply;
+    const Options& o = request.options;
+    CompositeBuildOptions options;
+    if (auto it = o.find("fs"); it != o.end())
+    {
+        const std::string fs = Lower(Trim(it->second));
+        if (fs == "fat16")
+            options.fs = FatType::Fat16;
+        else if (fs == "fat32")
+            options.fs = FatType::Fat32;
+        else
+            return Fail(MediaError::BadRequest, "fs '" + it->second + "': expected fat16 or fat32");
+    }
+    if (auto it = o.find("codepage"); it != o.end())
+    {
+        CodePage page;
+        if (!UnicodeHelper::ParseCodePage(it->second, page))
+            return Fail(MediaError::BadRequest, "codepage '" + it->second + "': expected cp866 or cp1251");
+        options.codePage = page;
+    }
+    if (auto it = o.find("free"); it != o.end())
+    {
+        uint64_t bytes = 0;
+        if (!ComposeDescriptor::ParseSize(it->second, bytes))
+            return Fail(MediaError::BadRequest, "free '" + it->second + "': expected a size (256MiB, 1048576)");
+        options.freeBytes = bytes;
+    }
+    if (Trim(request.path).empty())
+        return Fail(MediaError::BadRequest, "name a descriptor file (*.ucompose.yaml) or give its JSON text");
+
+    const ComposeDescriptor descriptor = IsInlineDescriptor(request.path)
+                                             ? ComposeDescriptor::Parse(request.path, std::filesystem::current_path(), ComposeDescriptor::kInlineName)
+                                             : ComposeDescriptor::Load(FileHelper::ToFsPath(request.path));
+    std::unique_ptr<IBlockDevice> volume;
+    CompositeInfo info;
+    reply.result = CompositeMediumFactory::Build(descriptor, options, volume, info);
+    if (reply.result.Ok())
+        reply.body["compose"] = CompositeValue(info);
+    return reply;
+}
+
+MediaReply MediaControl::Layers(const MediaRequest& request)
+{
+    MediaReply reply;
+    reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
+    if (!reply.result.Ok())
+        return reply;
+    Medium* medium = _manager->GetMedium(reply.slot);
+    if (!medium || !medium->Composite())
+        return Fail(MediaError::NotSupported, "slot '" + reply.slot + "' does not hold a composite medium");
+    reply.body["layers"] = CompositeValue(*medium->Composite());
+    reply.result.report = medium->Report();
+    return reply;
+}
+
+MediaReply MediaControl::Changes(const MediaRequest& request)
+{
+    MediaReply reply;
+    reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
+    if (!reply.result.Ok())
+        return reply;
+    Medium* medium = _manager->GetMedium(reply.slot);
+    if (!medium)
+        return Fail(MediaError::NotSupported, "slot '" + reply.slot + "' is empty");
+    MediumChanges list;
+    {
+        ParkedEmulator parked(_context);
+        reply.result = ListMediumChanges(*medium, list);
+    }
+    if (!reply.result.Ok())
+        return Fail(reply.result.error, "slot '" + reply.slot + "': " + reply.result.message);
+
+    StateNode changes = StateNode::Array();
+    for (const MediumChange& change : list.changes)
+    {
+        StateNode c = StateNode::Object();
+        c["op"] = change.op;
+        c["path"] = change.path;
+        if (change.op == "rename")
+            c["oldPath"] = change.oldPath;
+        c["layer"] = change.layer;
+        c["sizeBefore"] = change.sizeBefore;
+        c["sizeAfter"] = change.sizeAfter;
+        changes.push(std::move(c));
+    }
+    reply.body["changes"] = std::move(changes);
+    reply.body["warnings"] = Strings(list.warnings);
+    reply.body["changedSectors"] = list.changedSectors;
+    reply.body["directoriesRead"] = static_cast<uint64_t>(list.directoriesRead);
+    reply.body["fullScan"] = list.fullScan;
+    return reply;
+}
+
+/// endregion <Composite media>
 
 /// region <Selectors>
 
@@ -494,6 +682,19 @@ MediaReply MediaControl::Info(const MediaRequest& request)
             reply.result.report = medium->Report();  // skipped folder entries, format notes
             if (const CdImage* disc = medium->Cd(); disc && reply.body["info"]["medium"].isObject())
                 reply.body["info"]["medium"]["disc"] = DiscValue(*disc);
+            if (const SessionWriteMap* session = medium->Session(); session && reply.body["info"]["medium"].isObject())
+            {
+                // Where the guest's writes are kept (C10e): memory up to the limit, the rest in the journal
+                StateNode writes = StateNode::Object();
+                writes["sectors"] = static_cast<uint64_t>(session->ChangedSectors());
+                writes["memoryBytes"] = session->HotBytes();
+                writes["memoryLimit"] = session->MemoryLimit();
+                writes["journalBytes"] = static_cast<uint64_t>(session->SpilledSectors()) * IBlockDevice::kSectorSize;
+                writes["journalFile"] = session->SpillPath();
+                writes["journalRecoverable"] = session->JournalRecoverable();
+                writes["journalFailed"] = session->SpillFailed();
+                reply.body["info"]["medium"]["sessionWrites"] = std::move(writes);
+            }
         }
         return reply;
     }
@@ -754,11 +955,30 @@ MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
     if (MediaResult r = Flag(o, "immediate", flag); !r.Ok())
         return Fail(r.error, r.message);
     options.immediate = flag;
+    if (auto it = o.find("journal"); it != o.end())
+    {
+        const std::string journal = Lower(Trim(it->second));
+        if (journal == "replay")
+            options.journal = JournalChoice::Replay;
+        else if (journal == "discard")
+            options.journal = JournalChoice::Discard;
+        else if (journal == "off")
+            options.journal = JournalChoice::Off;
+        else
+            return Fail(MediaError::BadRequest, "journal '" + it->second + "': expected replay, discard or off");
+    }
 
     MediaSource source;
     source.path = path;
     source.type = request.upload ? MediaSourceType::Upload
                                  : FileHelper::IsFolder(path) ? MediaSourceType::Folder : MediaSourceType::File;
+    if (IsInlineDescriptor(path))
+    {
+        // A composition descriptor given as text (WebAPI / MCP / scripts) instead of a file
+        source.inlineBody = path;
+        source.path.clear();
+        source.type = MediaSourceType::Composite;
+    }
     if (auto it = o.find("format"); it != o.end())
         source.formatHint = Lower(Trim(it->second));
 
@@ -796,6 +1016,50 @@ MediaReply MediaControl::Eject(const MediaRequest& request)
     return reply;
 }
 
+/// `compact`, `fs`, `size` of save / export (S1 compact); a reply with an error when one is malformed
+static MediaReply CompactOptions(const std::map<std::string, std::string>& o, bool& compact, std::optional<FatType>& fs,
+                                 std::optional<uint64_t>& size)
+{
+    MediaReply reply;
+    if (auto it = o.find("compact"); it != o.end())
+    {
+        const std::string v = Lower(Trim(it->second));
+        if (v.empty() || v == "true" || v == "1" || v == "yes" || v == "on")
+            compact = true;
+        else if (v != "false" && v != "0" && v != "no" && v != "off")
+        {
+            reply.result = MediaResult::Fail(MediaError::BadRequest, "compact '" + it->second + "': expected true or false");
+            return reply;
+        }
+    }
+    if (auto it = o.find("fs"); it != o.end())
+    {
+        const std::string v = Lower(Trim(it->second));
+        if (v == "fat16")
+            fs = FatType::Fat16;
+        else if (v == "fat32")
+            fs = FatType::Fat32;
+        else
+        {
+            reply.result = MediaResult::Fail(MediaError::BadRequest, "fs '" + it->second + "': expected fat16 or fat32");
+            return reply;
+        }
+    }
+    if (auto it = o.find("size"); it != o.end())
+    {
+        uint64_t bytes = 0;
+        if (!ComposeDescriptor::ParseSize(it->second, bytes) || bytes == 0)
+        {
+            reply.result = MediaResult::Fail(MediaError::BadRequest, "size '" + it->second + "': expected a size (64MiB, 67108864)");
+            return reply;
+        }
+        size = bytes;
+    }
+    if ((fs || size) && !compact)
+        reply.result = MediaResult::Fail(MediaError::BadRequest, "fs and size go with compact (a re-synthesized volume)");
+    return reply;
+}
+
 MediaReply MediaControl::Save(const MediaRequest& request)
 {
     MediaReply reply;
@@ -810,6 +1074,31 @@ MediaReply MediaControl::Save(const MediaRequest& request)
         return Fail(MediaError::BadRequest, "retarget '" + it->second + "': expected true or false");
     if (auto compression = request.options.find("compression"); compression != request.options.end())
         options.compression = Trim(compression->second);
+    if (auto vhd = request.options.find("vhd"); vhd != request.options.end())
+        options.vhd = Lower(Trim(vhd->second));
+    if (MediaReply bad = CompactOptions(request.options, options.compact, options.fs, options.size); !bad.result.Ok())
+        return bad;
+    if (auto strategy = request.options.find("strategy"); strategy != request.options.end())
+        options.strategy = Lower(Trim(strategy->second));
+    if (auto force = request.options.find("force"); force != request.options.end() && !ParseBool(force->second, options.force))
+        return Fail(MediaError::BadRequest, "force '" + force->second + "': expected true or false");
+    if (auto plan = request.options.find("plan"); plan != request.options.end() && !ParseBool(plan->second, options.plan))
+        return Fail(MediaError::BadRequest, "plan '" + plan->second + "': expected true or false");
+    if (auto conflict = request.options.find("onConflict"); conflict != request.options.end())
+    {
+        const std::string v = Lower(Trim(conflict->second));
+        if (v != "refuse" && v != "keep-both")
+            return Fail(MediaError::BadRequest, "onConflict '" + conflict->second + "': expected refuse or keep-both");
+        options.keepBoth = v == "keep-both";
+    }
+    if (request.verb == "flatten")
+    {
+        // flatten names its strategy and never goes through DT-9 (that is save)
+        if (options.strategy.empty())
+            return Fail(MediaError::BadRequest, "flatten names its strategy: flat <path>, delta, commit or write-back");
+        if (options.strategy == "flat" && options.path.empty())
+            return Fail(MediaError::BadRequest, "flatten flat writes a new image: name the path");
+    }
 
     SaveOutcome outcome;
     {
@@ -822,6 +1111,11 @@ MediaReply MediaControl::Save(const MediaRequest& request)
         reply.body["retargeted"] = outcome.retargeted;
     }
     return reply;
+}
+
+MediaReply MediaControl::Flatten(const MediaRequest& request)
+{
+    return Save(request);
 }
 
 MediaReply MediaControl::Export(const MediaRequest& request)
@@ -839,6 +1133,10 @@ MediaReply MediaControl::Export(const MediaRequest& request)
         options.compression = Trim(it->second);
     if (auto it = request.options.find("parent"); it != request.options.end())
         options.parent = Trim(it->second);
+    if (auto it = request.options.find("vhd"); it != request.options.end())
+        options.vhd = Lower(Trim(it->second));
+    if (MediaReply bad = CompactOptions(request.options, options.compact, options.fs, options.size); !bad.result.Ok())
+        return bad;
 
     ParkedEmulator parked(_context);
     reply.result = _manager->Export(reply.slot, path, options);
@@ -910,13 +1208,14 @@ MediaReply MediaControl::Create(const MediaRequest& request)
     }
     else if (info->descriptor.kind == MediaKind::Block)
     {
-        // A blank card / disk lives in memory: keep it to what memory holds
-        constexpr uint64_t kMaxBlankBytes = 2ull * 1024 * 1024 * 1024;
+        // A blank card / disk: a session over an empty sparse disk; the guest's writes past the session's memory
+        // limit go to its spill file (C10d), so the size is an SDXC card's, not what memory holds
+        constexpr uint64_t kMaxBlankBytes = 128ull * 1024 * 1024 * 1024;
         uint64_t bytes = 0;
         auto it = o.find("size");
         if (it == o.end() || !ParseUnsigned(it->second, bytes) || bytes == 0 || bytes % 512 != 0 || bytes > kMaxBlankBytes)
-            return Fail(MediaError::BadRequest, "create on a block slot needs size: bytes, a multiple of 512, up to 2 GiB");
-        medium = MediaFormatRegistry::WrapBlock(blank, AccessMode::Session, "blank", std::make_unique<MemoryDisk>(bytes / 512));
+            return Fail(MediaError::BadRequest, "create on a block slot needs size: bytes, a multiple of 512, up to 128 GiB");
+        medium = MediaFormatRegistry::WrapBlock(blank, AccessMode::Session, "blank", std::make_unique<SparseMemoryDisk>(bytes / 512));
         reply.body["size"] = bytes;
     }
     else

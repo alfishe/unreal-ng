@@ -37,6 +37,16 @@
 #include "emulator/media/mediatypes.h"
 
 class EmulatorContext;
+struct CompositeInfo;
+
+/// What an insert does with the session journal next to the medium (multi-source phases/c10e-session-journal.md §4)
+enum class JournalChoice : uint8_t
+{
+    Default,  ///< [MEDIA] SessionJournal: replay when on, off when off
+    Replay,   ///< a journal left by a crash is replayed
+    Discard,  ///< a journal left by a crash is deleted unread; a new one starts
+    Off,      ///< no journal next to the medium this time (a temp file); an old one is left as it is
+};
 
 struct InsertOptions
 {
@@ -47,6 +57,7 @@ struct InsertOptions
     bool writeProtect = false;         ///< the slot's write-protect switch
     bool endRecording = false;         ///< end a TTD recording instead of refusing
     bool immediate = false;            ///< no swap delay (media the firmware boots from)
+    JournalChoice journal = JournalChoice::Default;  ///< media written in `session` access
     /// A dirty medium already in the slot: what happens to its writes
     Disposition disposition = Disposition::None;
     std::string exportPath;            ///< Disposition::Export
@@ -73,6 +84,17 @@ struct SaveOptions
     std::string path;           ///< empty: the medium's own image file
     bool allowRetarget = true;  ///< floppies: save as <stem>.udi when the format cannot hold the disk
     std::string compression;    ///< block media saved as a CHD: the codecs (BlockWriteOptions)
+    bool compact = false;       ///< block media: a re-synthesized FAT volume (S1 compact)
+    std::optional<FatType> fs;  ///< compact: the FAT type
+    std::optional<uint64_t> size;  ///< compact: total bytes
+    std::string vhd;               ///< a new .vhd file: fixed (default) or dynamic (BlockWriteOptions)
+    /// Composites (DT-9): flat (needs a path) | delta | commit | write-back; empty: a path means flat,
+    /// no path the descriptor's writes.save (delta when it names none)
+    std::string strategy;
+    bool force = false;          ///< delta: write over a delta that was made over other sources
+    bool disposition = false;    ///< set by an eject / insert disposition (D-8: commit / write-back fall back to delta)
+    bool plan = false;           ///< commit / write-back: report what would be written, write nothing
+    bool keepBoth = false;       ///< write-back: a host file changed since the build gets "name (guest).ext" next to it
 };
 
 /// What a save did
@@ -268,6 +290,17 @@ private:
                              const BlockWriteOptions& options = {});
     MediaResult SaveBlockMedium(const std::string& slotId, Medium& medium, IMediaSlot* slot, const SaveOptions& options,
                                 SaveOutcome* outcome);
+    /// S3: a graft composite's patches, grafted files and guest writes into its base image (DT-14)
+    MediaResult CommitComposite(const std::string& slotId, Medium& medium, IMediaSlot* slot, const CompositeInfo& composite,
+                                const SaveOptions& options, SaveOutcome* outcome);
+    /// S4: the guest's file changes into the composite's writable folder layers (DT-10 to DT-12), then a rebuild
+    MediaResult WriteBackComposite(const std::string& slotId, Medium& medium, const CompositeInfo& composite,
+                                   const SaveOptions& options, SaveOutcome* outcome);
+    /// Another slot (or detached medium) uses `path`: as its own file or as a layer source
+    bool UsedElsewhere(const Medium& self, const std::string& path) const;
+    /// S2: the change layer of a composite into its session delta file
+    MediaResult SaveDelta(const std::string& slotId, Medium& medium, const CompositeInfo& composite, const SaveOptions& options,
+                          const std::string& note, SaveOutcome* outcome);
     /// The medium in a slot, or detached under that id
     Medium* FindMedium(const std::string& slotId, SlotState** state);
     MediaResult CheckRecording(bool endRecording);
@@ -280,7 +313,12 @@ private:
     /// A write-through floppy with new guest writes goes back to its file (emulation thread)
     void WriteThroughFloppy(const std::string& slotId, SlotState& state);
     /// Destroy a medium that left the machine (a staged upload's file goes too)
-    static void Retire(std::unique_ptr<Medium> medium);
+    /// A medium leaves for good. `keepJournal`: the emulator goes with its unsaved writes (they stay in the journal
+    /// for the next insert); an eject or a swap decided about them already (a disposition), so its journal goes
+    static void Retire(std::unique_ptr<Medium> medium, bool keepJournal = false);
+    /// A medium written in `session` access gets its journal `<source>.usession` (replayed, discarded or off as
+    /// `choice` says); the outcome goes into its report
+    static void AttachJournal(Medium& medium, const MediaSource& source, JournalChoice choice);
 
     EmulatorContext* _context = nullptr;
     std::function<bool()> _applyNowProbe;

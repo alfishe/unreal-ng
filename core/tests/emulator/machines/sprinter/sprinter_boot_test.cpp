@@ -20,6 +20,7 @@
 #include <emulator/io/fdc/wd1793.h>
 #include <emulator/io/ide/idecontroller.h>
 #include <emulator/io/keyboard/keyboard.h>
+#include <emulator/media/mediacontrol.h>
 #include <emulator/media/mediamanager.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/sprinter/sprinteraccelerator.h>
@@ -38,6 +39,7 @@
 #include <vector>
 
 #include "3rdparty/lodepng/lodepng.h"
+#include "_helpers/scratchfolder.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
@@ -52,6 +54,8 @@
 #include "emulator/state/devicestate.h"
 #include "emulator/io/storage/chd/chdfile.h"
 #include "emulator/io/storage/chd/chdimage.h"
+#include "emulator/io/storage/fat/fatvolumereader.h"
+#include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/io/storage/chd/chdwriter.h"
 #include "emulator/io/storage/rawimage.h"
 
@@ -729,6 +733,254 @@ TEST_F(SprinterBoot_Test, Dss162_BootsFromAHardDiskImage)
     DestroyEmulator();
     EXPECT_TRUE(RootHasDirectory(ReadAll(image), "S3B        ")) << "C:\\S3B in the root of " << image;
     std::remove(image.c_str());
+}
+
+// ACC-C3 (media-multisource, read side): DSS 1.62.92 boots from a composite whose bottom layer is a DSS hard disk image
+// (BuildDssHdd) and whose upper layers are host folders grafted into its free clusters: UTIL/ at /UTIL, and a
+// SYSTEM.BAT that replaces the image's own in place (the image's says only "ver"). The MBR, the loader at LBA 1-3 and
+// SYSTEM.DOS stay where DSS expects them; DSS runs the upper SYSTEM.BAT, which changes to C:\UTIL, and DIR lists
+// the host file. Session writes:
+// the image file is not touched.
+// Boot-bound (BIOS POST, the slave probe, DSS from the hard disk): ~500 frames of real ROM, the turbo mode on
+TEST_F(SprinterBoot_Test, ComposeDssGraftedUtilFolder)
+{
+    const std::string image = DssHddFile("dss-graft-base.img", "ver\r\n");
+    if (image.empty())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    ScratchFolder folder("sprinter-graft");
+    folder.File("util/HELLO.TXT", "hello from the host folder");
+    folder.File("patch/SYSTEM.BAT", "ver\r\ncd \\util\r\ndir\r\n");
+    std::string base = image;
+    std::replace(base.begin(), base.end(), '\\', '/');
+    const auto descriptor = folder.File("hd.ucompose.yaml", "version: 1\n"
+                                                            "layers:\n"
+                                                            "  - {name: dss, source: {image: '" + base + "'}}\n"
+                                                            "  - {name: util, source: {folder: util}, mount: /UTIL}\n"
+                                                            "  - {name: patch, source: {folder: patch}}\n");
+    InsertHdd(descriptor.string());
+    Medium* medium = _context->pMediaManager->GetMedium("ide0.master");
+    ASSERT_NE(medium, nullptr);
+    EXPECT_EQ(medium->Format(), "graft-fat16");
+
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("file(s)"); }, 1200, 5);
+    EXPECT_TRUE(ScreenHas("Estex DSS Version 1.62.92")) << ScreenText();
+    EXPECT_TRUE(ScreenHas("C:\\>cd \\util")) << "the upper SYSTEM.BAT ran\n" << ScreenText();
+    EXPECT_TRUE(ScreenHas("HELLO")) << "DIR lists the grafted host file\n" << ScreenText();
+    std::remove(image.c_str());
+}
+
+// ACC-C3 (media-multisource, attribution): DSS on the graft session makes a directory in the root and one inside the
+// grafted host folder; `media changes` names both as the guest did them (new: no layer) and nothing else. DSS 1.62 has
+// no internal COPY and no output redirection, so the guest writes no file here: ChangeAttributor_Test and
+// MediaControl_Test.CompositeInsertLayersAndRescan cover files. DSS 1.71.66 has REN and DEL, but on a BuildDssHdd disk
+// its MKDIR overwrites SYSTEM.DOS (TODO.md, P2), so it is not used here.
+// Boot-bound (BIOS POST, the slave probe, DSS from the hard disk): ~500 frames of real ROM, the turbo mode on
+TEST_F(SprinterBoot_Test, ComposeDssGuestWriteAttributed)
+{
+    const std::string image = DssHddFile("dss-attr-base.img", "ver\r\n");
+    if (image.empty())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    ScratchFolder folder("sprinter-attr");
+    folder.File("util/HELLO.TXT", "hello from the host folder");
+    folder.File("patch/SYSTEM.BAT", "mkdir c:\\acc\r\nmkdir c:\\util\\sub\r\ncd \\util\r\ndir\r\n");
+    std::string base = image;
+    std::replace(base.begin(), base.end(), '\\', '/');
+    const auto descriptor = folder.File("hd.ucompose.yaml", "version: 1\n"
+                                                            "layers:\n"
+                                                            "  - {name: dss, source: {image: '" + base + "'}}\n"
+                                                            "  - {name: util, source: {folder: util}, mount: /UTIL}\n"
+                                                            "  - {name: patch, source: {folder: patch}}\n");
+    InsertHdd(descriptor.string());
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("file(s)"); }, 1200, 5);
+    ASSERT_TRUE(ScreenHas("C:\\>mkdir c:\\util\\sub")) << ScreenText();
+    ASSERT_TRUE(ScreenHas("HELLO")) << ScreenText();
+
+    MediaRequest request;
+    request.verb = "changes";
+    request.selector = "ide0.master";
+    const MediaReply reply = MediaControl(_context).Execute(request);
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    std::string lines;
+    for (const StateNode& c : reply.body.find("changes")->items)
+        lines += c.find("op")->s + " " + c.find("path")->s + " [" + c.find("layer")->s + "]\n";
+    EXPECT_EQ(lines, "mkdir /ACC []\nmkdir /UTIL/SUB []\n") << lines;
+    EXPECT_FALSE(reply.body.find("fullScan")->b);
+    for (const StateNode& w : reply.body.find("warnings")->items)
+        ADD_FAILURE() << "warning: " << w.s;
+    DestroyEmulator();
+    std::remove(image.c_str());
+}
+
+// S3 acceptance (media-multisource C8a): the graft session - a DSS disk image with a host folder at /UTIL and a guest
+// MKDIR - committed into the image itself (journaled); the slot then holds the image, and a reset boots DSS from it
+// alone: the folder's file and the guest's directory are in it.
+// Boot-bound (BIOS POST, the slave probe, DSS from the hard disk, two boots): ~1000 frames of real ROM, turbo mode
+TEST_F(SprinterBoot_Test, ComposeCommitBootsFromTheBase)
+{
+    const std::string image = DssHddFile("dss-commit-base.img", "ver\r\n");
+    if (image.empty())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    ScratchFolder folder("sprinter-commit");
+    folder.File("util/HELLO.TXT", "hello from the host folder");
+    folder.File("patch/SYSTEM.BAT", "mkdir c:\\s8\r\ncd \\util\r\ndir\r\n");
+    std::string base = image;
+    std::replace(base.begin(), base.end(), '\\', '/');
+    const auto descriptor = folder.File("hd.ucompose.yaml", "version: 1\n"
+                                                            "layers:\n"
+                                                            "  - {name: dss, source: {image: '" + base + "'}}\n"
+                                                            "  - {name: util, source: {folder: util}, mount: /UTIL}\n"
+                                                            "  - {name: patch, source: {folder: patch}}\n");
+    InsertHdd(descriptor.string());
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("file(s)"); }, 1200, 5);
+    ASSERT_TRUE(ScreenHas("C:\\>mkdir c:\\s8")) << ScreenText();
+
+    SaveOptions commit;
+    commit.strategy = "commit";
+    const MediaResult committed = _context->pMediaManager->Save("ide0.master", commit);
+    ASSERT_TRUE(committed.Ok()) << committed.message;
+    EXPECT_EQ(_context->pMediaManager->Info("ide0.master")->format, "raw") << "the slot holds the image itself";
+    EXPECT_TRUE(RootHasDirectory(ReadAll(image), "S8         ")) << "the guest's MKDIR is in the image";
+
+    // The image alone: the upper SYSTEM.BAT is in it too, so DSS tries S8 again (it exists) and lists C:\UTIL
+    _emulator->Reset();
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !ScreenHas("file(s)"); }, 300, 5);
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("file(s)"); }, 1200, 5);
+    EXPECT_TRUE(ScreenHas("C:\\>cd \\util")) << "the upper SYSTEM.BAT, from the image\n" << ScreenText();
+    EXPECT_TRUE(ScreenHas("HELLO")) << "the folder's file, from the image\n" << ScreenText();
+    DestroyEmulator();
+    std::remove(image.c_str());
+}
+
+// ACC-C7 (media-multisource S2): the graft session's guest MKDIR saved as a session delta next to the descriptor; a new
+// emulator inserting the same descriptor gets the change layer back ("session restored") and DSS lists the directory.
+// A host file changed in a layer afterwards: the delta is not applied and the report names that layer.
+// Boot-bound (BIOS POST, the slave probe, DSS from the hard disk, two boots): ~1000 frames of real ROM, turbo mode
+TEST_F(SprinterBoot_Test, ComposeDeltaSurvivesRestart)
+{
+    const std::string image = DssHddFile("dss-delta-base.img", "ver\r\n");
+    if (image.empty())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    ScratchFolder folder("sprinter-delta");
+    folder.File("util/HELLO.TXT", "hello from the host folder");
+    folder.File("patch/SYSTEM.BAT", "mkdir c:\\s7\r\ndir\r\n");
+    std::string base = image;
+    std::replace(base.begin(), base.end(), '\\', '/');
+    const auto descriptor = folder.File("hd.ucompose.yaml", "version: 1\n"
+                                                            "layers:\n"
+                                                            "  - {name: dss, source: {image: '" + base + "'}}\n"
+                                                            "  - {name: util, source: {folder: util}, mount: /UTIL}\n"
+                                                            "  - {name: patch, source: {folder: patch}}\n");
+    InsertHdd(descriptor.string());
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("file(s)"); }, 1200, 5);
+    ASSERT_TRUE(ScreenHas("S7")) << ScreenText();
+    SaveOutcome outcome;
+    const MediaResult saved = _context->pMediaManager->Save("ide0.master", {}, &outcome);
+    ASSERT_TRUE(saved.Ok()) << saved.message;
+    EXPECT_EQ(FileHelper::GetFileExtension(outcome.savedPath), "delta") << outcome.savedPath;
+
+    // A new emulator, the same descriptor
+    DestroyEmulator();
+    SetUp();
+    auto insert = [&]() {
+        MediaSource source;
+        source.path = descriptor.string();
+        InsertOptions options;
+        options.immediate = true;
+        return _context->pMediaManager->Insert("ide0.master", source, options);
+    };
+    MediaResult again = insert();
+    ASSERT_TRUE(again.Ok()) << again.message;
+    std::string report;
+    for (const std::string& line : again.report)
+        report += line + "\n";
+    EXPECT_NE(report.find("session restored"), std::string::npos) << report;
+    {
+        FatVolumeReader reader;
+        FatDirEntryInfo s7;
+        ASSERT_TRUE(reader.Open(*_context->pMediaManager->GetMedium("ide0.master")->Block()));
+        EXPECT_TRUE(reader.Stat("/S7", s7) && s7.isDirectory) << "the guest's directory is back before the boot";
+    }
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("file(s)"); }, 1200, 5);
+    EXPECT_TRUE(ScreenHas("S7")) << ScreenText();
+
+    // A source changed: the delta stays out, the report says which layer
+    EjectOptions discard;
+    discard.disposition = Disposition::Discard;
+    ASSERT_TRUE(_context->pMediaManager->Eject("ide0.master", discard).Ok());
+    folder.File("util/HELLO.TXT", "changed on the host");
+    again = insert();
+    ASSERT_TRUE(again.Ok()) << again.message;
+    report.clear();
+    for (const std::string& line : again.report)
+        report += line + "\n";
+    EXPECT_NE(report.find("layer 'util' changed"), std::string::npos) << report;
+    {
+        FatVolumeReader reader;
+        FatDirEntryInfo s7;
+        ASSERT_TRUE(reader.Open(*_context->pMediaManager->GetMedium("ide0.master")->Block()));
+        EXPECT_FALSE(reader.Stat("/S7", s7)) << "the medium starts clean";
+    }
+    DestroyEmulator();
+    std::remove(image.c_str());
+}
+
+// ACC-C6 (media-multisource S1): the ACC-C3 session - a DSS hard disk image with a host folder grafted at /UTIL - and a
+// guest MKDIR, exported to a raw .img, a fixed .vhd and a compacted .img (the merged volume re-synthesized, the DSS
+// loader in the MBR gap and the boot sector code carried). Each file then boots DSS alone on a reset machine: the
+// guest's directory and the folder's file are in it. The upper SYSTEM.BAT makes the directory and lists C:\UTIL.
+// Boot-bound (BIOS POST, the slave probe, DSS from the hard disk, four boots): ~2000 frames of real ROM, turbo mode
+TEST_F(SprinterBoot_Test, ComposeFlatImageBootsAlone)
+{
+    const std::string image = DssHddFile("dss-flat-base.img", "ver\r\n");
+    if (image.empty())
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    ScratchFolder folder("sprinter-flat");
+    folder.File("util/HELLO.TXT", "hello from the host folder");
+    folder.File("patch/SYSTEM.BAT", "ver\r\nmkdir c:\\s6\r\ncd \\util\r\ndir\r\n");
+    std::string base = image;
+    std::replace(base.begin(), base.end(), '\\', '/');
+    const auto descriptor = folder.File("hd.ucompose.yaml", "version: 1\n"
+                                                            "layers:\n"
+                                                            "  - {name: dss, source: {image: '" + base + "'}}\n"
+                                                            "  - {name: util, source: {folder: util}, mount: /UTIL}\n"
+                                                            "  - {name: patch, source: {folder: patch}}\n");
+    InsertHdd(descriptor.string());
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("file(s)"); }, 1200, 5);
+    ASSERT_TRUE(ScreenHas("C:\\>mkdir c:\\s6")) << ScreenText();
+    ASSERT_TRUE(ScreenHas("HELLO")) << ScreenText();
+
+    const std::string img = TestPathHelper::GetUniqueTestScratchPath("dss-flat.img");
+    const std::string vhd = TestPathHelper::GetUniqueTestScratchPath("dss-flat.vhd");
+    const std::string compact = TestPathHelper::GetUniqueTestScratchPath("dss-compact.img");
+    ASSERT_TRUE(_context->pMediaManager->Export("ide0.master", img).Ok());
+    ASSERT_TRUE(_context->pMediaManager->Export("ide0.master", vhd).Ok());
+    BlockWriteOptions compacted;
+    compacted.compact = true;
+    const MediaResult result = _context->pMediaManager->Export("ide0.master", compact, compacted);
+    ASSERT_TRUE(result.Ok()) << result.message;
+    std::string report;
+    for (const std::string& line : result.report)
+        report += line + "\n";
+    EXPECT_NE(report.find("after the MBR"), std::string::npos) << "the DSS loader is carried\n" << report;
+    EXPECT_TRUE(RootHasDirectory(ReadAll(img), "S6         ")) << "the guest's MKDIR is in the flat image";
+
+    for (const std::string& path : {img, vhd, compact})
+    {
+        EjectOptions discard;
+        discard.disposition = Disposition::Discard;
+        ASSERT_TRUE(_context->pMediaManager->Eject("ide0.master", discard).Ok());
+        InsertHdd(path);
+        _emulator->Reset();
+        // The last boot's screen goes first (the BIOS clears it), then this boot's DIR
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return !ScreenHas("file(s)"); }, 300, 5);
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("file(s)"); }, 1200, 5);
+        EXPECT_TRUE(ScreenHas("Estex DSS Version 1.62.92")) << path << "\n" << ScreenText();
+        EXPECT_TRUE(ScreenHas("HELLO")) << path << ": the folder's file\n" << ScreenText();
+    }
+    EXPECT_EQ(_context->pMediaManager->Info("ide0.master")->format, "raw");
+    DestroyEmulator();
+    for (const std::string& path : {image, img, vhd, compact})
+        std::remove(path.c_str());
 }
 
 // T-IDE-8: BIOS 3.04 probes ide0.slave whatever it holds: with an empty CD unit there (CD1=1, the configuration

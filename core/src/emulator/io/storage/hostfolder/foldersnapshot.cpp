@@ -251,6 +251,9 @@ bool FolderSnapshot::Scan(const std::filesystem::path& folder, const FolderScanO
     out._root.name = ToUtf8(folder.filename());
     out._root.hostPath = folder;
     out._root.isDirectory = true;
+    // The folder's own time: the volume label's date, and a mount point's when the folder is a layer
+    if (!GetMTimeUnixSeconds(folder, out._root.mtimeUtc))
+        out._root.mtimeUtc = 0;
 
     Scanner scanner(options, filter, out._skipped);
     scanner.ScanFolder(folder, "", 0, out._root);

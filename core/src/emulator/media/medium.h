@@ -18,6 +18,7 @@
 #include "emulator/media/mediatypes.h"
 
 class CdImage;
+struct CompositeInfo;
 class HostWriteHold;
 class MediaReadTap;
 class SessionWriteMap;
@@ -27,6 +28,7 @@ struct MediaSource
     MediaSourceType type = MediaSourceType::File;
     std::string path;        ///< file or folder; empty for Blank
     std::string formatHint;  ///< optional: "raw", "folder-fat16", ...
+    std::string inlineBody;  ///< Composite: the descriptor itself (YAML / JSON) instead of a file
 };
 
 class Medium
@@ -90,9 +92,20 @@ public:
     const OpenOptions& Options() const { return _options; }
     void SetOptions(const OpenOptions& options) { _options = options; }
 
+    /// A composite medium's layers and layout (`media layers`), nullptr for any other medium
+    const CompositeInfo* Composite() const { return _composite.get(); }
+    void SetComposite(std::shared_ptr<const CompositeInfo> info) { _composite = std::move(info); }
+
     /// A write-through floppy whose file format refused the guest's writes
     /// falls back to keeping them in memory
     void SetAccess(AccessMode access) { _access = access; }
+
+    /// S2: the change layer as it is now is in a session delta file (saved or restored); a later
+    /// write makes the medium dirty again
+    void MarkPersisted();
+    /// A delta met on insert was written over other sources: an S2 save over it needs `force`
+    const std::string& DeltaConflict() const { return _deltaConflict; }
+    void SetDeltaConflict(std::string reason) { _deltaConflict = std::move(reason); }
 
     /// Guest writes not saved anywhere
     bool IsDirty() const;
@@ -128,6 +141,9 @@ private:
     std::string _sourceKey;
     std::vector<std::string> _report;
     OpenOptions _options;
+    std::shared_ptr<const CompositeInfo> _composite;
+    std::optional<uint64_t> _persistedGeneration;
+    std::string _deltaConflict;
 };
 
 /// Write a block device to a raw image file, sector by sector

@@ -1054,6 +1054,45 @@ TEST_F(ZXEvoErs_Test, CdBootRunsAutorunFromAnIso)
     EXPECT_EQ(memory->DirectReadFromZ80Memory(0x9002), 0xC0);
 }
 
+/// ACC-C5 (media-multisource): the same CD boot from a composite CD, an ISO 9660 volume built from two host folders:
+/// one holds AUTORUN.ZX, the other a few files and a directory around it. The drive reads the synthesized PVD, root
+/// directory and file extent as from a pressed disc.
+/// Real-ROM boot plus a CD load: slower than 50 ms by nature
+TEST_F(ZXEvoErs_Test, ErsBootsAutorunFromComposedIso)
+{
+    // AUTORUN.ZX at #6000: DI : LD (#9000),A : LD HL,#C0DE : LD (#9001),HL : JR $
+    const std::vector<uint8_t> code = {0xF3, 0x32, 0x00, 0x90, 0x21, 0xDE, 0xC0, 0x22, 0x01, 0x90, 0x18, 0xFE};
+    ScratchFolder folder("zxevo-cdboot-compose");
+    folder.File("boot/AUTORUN.ZX", std::string(code.begin(), code.end()));
+    folder.File("data/README.TXT", "a composed CD");
+    folder.File("data/GAMES/Long Game Name.trd", std::string(20000, 'g'));
+    folder.File("data/zz-last.bin", std::string(5000, 'z'));
+    const auto descriptor = folder.File("cd.ucompose.yaml", "version: 1\n"
+                                                            "layers:\n"
+                                                            "  - {name: data, source: {folder: data}}\n"
+                                                            "  - {name: boot, source: {folder: boot}}\n");
+
+    Create();
+    MediaSource source;
+    source.path = Utf8(descriptor);
+    InsertOptions options;
+    options.immediate = true;
+    const MediaResult inserted = _context->pMediaManager->Insert("ide0.slave", source, options);
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    ASSERT_EQ(_context->pMediaManager->GetMedium("ide0.slave")->Format(), "compose-iso");
+    ASSERT_TRUE(RunToMainMenu());
+
+    Tap(ZXKEY_D);  // "D. CD boot"
+
+    Z80* z80 = _context->pCore->GetZ80();
+    Memory* memory = _context->pMemory;
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return z80->pc == 0x600A; }, 600);
+    ASSERT_EQ(z80->pc, 0x600A) << "AUTORUN.ZX did not run";
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x9000), 0xB0) << "entered with A = #B0 (slave)";
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x9001), 0xDE);
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x9002), 0xC0);
+}
+
 /// ERS-CD-2: the shipped ZX-Evo has its CD drive (the slave), and the ERS
 /// sees the disc go and come back. With the disc ejected, "D. CD boot" gets
 /// NOT READY / medium not present (sense 2/#3A) and keeps retrying READ (10);
@@ -1152,4 +1191,46 @@ TEST_F(ZXEvoErs_Test, NedoOsShellRunsATypedCommand)
 
     EXPECT_TRUE(screenHas("M:/bin>free")) << "the typed command echoed";
     EXPECT_TRUE(screenHas("free pages=")) << "the command ran and printed";
+}
+
+/// ACC-C1 (media-multisource): NedoOS boots from a composite of two folders. The lower layer is the boot
+/// folder above; the upper one holds only bin/AUTOEXEC.BAT (another case: FAT names fold) echoing another
+/// marker. The shell runs the upper batch file and never sees the lower one: upper shadows lower
+/// Real-ROM boot plus a whole OS boot (~300 frames): slower than 50 ms by nature
+TEST_F(ZXEvoErs_Test, NedoOsBootsFromTwoComposedFolders)
+{
+    const std::filesystem::path card = TestPathHelper::FindProjectRoot() / "testdata/machines/zxevo/nedoos/sdcard";
+    ASSERT_TRUE(std::filesystem::is_directory(card)) << Utf8(card);
+    ScratchFolder folder("nedoos-compose");
+    folder.File("patch/bin/AUTOEXEC.BAT", "echo UNREALNGCOMPOSE\r\n");
+    const auto descriptor = folder.File("sd.ucompose.yaml", "version: 1\n"
+                                                            "target: {free: 16MiB}\n"
+                                                            "layers:\n"
+                                                            "  - {name: nedoos, source: {folder: '" + card.generic_string() + "'}}\n"
+                                                            "  - {name: patch, source: {folder: patch}}\n");
+
+    Create();
+    MediaSource source;
+    source.path = Utf8(descriptor);
+    const MediaResult inserted = _context->pMediaManager->Insert("sd.zc", source, InsertOptions{});
+    ASSERT_TRUE(inserted.Ok()) << inserted.message;
+    ASSERT_EQ(_context->pMediaManager->GetMedium("sd.zc")->Source().type, MediaSourceType::Composite);
+    ASSERT_TRUE(RunToMainMenu());
+
+    auto inRam = [this](const std::string& needle) {
+        for (uint16_t page = 0; page < 256; page++)
+        {
+            const uint8_t* bytes = _context->pMemory->RAMPageAddress(page);
+            if (bytes && std::search(bytes, bytes + PAGE_SIZE, needle.begin(), needle.end()) != bytes + PAGE_SIZE)
+                return true;
+        }
+        return false;
+    };
+
+    Tap(ZXKEY_5);  // "5. SDcard boot" -> SD_BOOT.$C -> the NedoOS kernel
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return inRam("M:/bin>") && inRam("UNREALNGCOMPOSE"); }, 800, 20);
+    EXPECT_TRUE(inRam("M:/bin>")) << "the NedoOS shell prompt";
+    EXPECT_TRUE(inRam("UNREALNGCOMPOSE")) << "the shell ran the upper layer's autoexec.bat";
+    EXPECT_FALSE(inRam("UNREALNGSDBOOT")) << "the lower layer's autoexec.bat is shadowed";
+    EXPECT_FALSE(_context->pMediaManager->Info("sd.zc")->dirty) << "booting writes nothing to the card";
 }

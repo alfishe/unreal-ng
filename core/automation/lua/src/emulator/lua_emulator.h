@@ -1502,7 +1502,8 @@ public:
         // media_eject(slot [, opts]), media_save(slot [, path] [, opts]),
         // media_export(slot, path), media_discard(slot [, opts]),
         // media_rescan(slot [, opts]), media_create(slot [, opts]),
-        // media_protect(slot, on), and media(verb, slot, path, opts).
+        // media_protect(slot, on), media_compose(descriptor [, opts]), media_layers(slot),
+        // and media(verb, slot, path, opts).
         // slot: fdd.b, B, b:, sd, floppy:1, tag:sd+neogs ("auto" for insert).
         // opts: {access="readonly", save=true, export="x.trd", discard=true, async=true, ...}.
         // Each returns the reply table every surface returns: ok, error, message,
@@ -1568,6 +1569,18 @@ public:
         lua.set_function("media_targets", [mediaCall](sol::this_state s, const std::string& path) {
             return mediaCall(s, "targets", "", path, sol::nullopt);
         });
+        // A composition descriptor (*.ucompose.yaml, or its JSON text) built without inserting it
+        lua.set_function("media_compose", [mediaCall](sol::this_state s, const std::string& descriptor,
+                                                      sol::optional<sol::table> opts) {
+            return mediaCall(s, "compose", "", descriptor, opts);
+        });
+        lua.set_function("media_layers", [mediaCall](sol::this_state s, const std::string& slot) {
+            return mediaCall(s, "layers", slot, "", sol::nullopt);
+        });
+        // The guest's unsaved writes as file operations, with the layer each touched
+        lua.set_function("media_changes", [mediaCall](sol::this_state s, const std::string& slot) {
+            return mediaCall(s, "changes", slot, "", sol::nullopt);
+        });
         for (const char* verb : {"insert", "swap"})
         {
             lua.set_function(std::string("media_") + verb,
@@ -1587,6 +1600,11 @@ public:
         lua.set_function("media_save", [mediaCall](sol::this_state s, const std::string& slot, sol::optional<std::string> path,
                                                    sol::optional<sol::table> opts) {
             return mediaCall(s, "save", slot, path.value_or(""), opts);
+        });
+        // A composite by a named strategy: strategy = "flat" (path) | "delta" | "commit"; plan, force
+        lua.set_function("media_flatten", [mediaCall](sol::this_state s, const std::string& slot, sol::optional<std::string> path,
+                                                      sol::optional<sol::table> opts) {
+            return mediaCall(s, "flatten", slot, path.value_or(""), opts);
         });
         lua.set_function("media_export", [mediaCall](sol::this_state s, const std::string& slot, const std::string& path) {
             return mediaCall(s, "export", slot, path, sol::nullopt);

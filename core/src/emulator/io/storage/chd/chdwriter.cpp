@@ -527,20 +527,24 @@ namespace chd
         const uint32_t perHunk = options.hunkBytes / IBlockDevice::kSectorSize;
         if (options.hunkBytes % IBlockDevice::kSectorSize != 0)
             return Fail(error, "the hunk size must be a whole number of sectors");
+        uint64_t zeroUntil = 0;  // sectors below this are known zeros (IBlockDevice::ZeroRun): not read
         auto read = [&](uint32_t hunk, uint8_t* dst, std::string* readError) {
             const uint64_t first = static_cast<uint64_t>(hunk) * perHunk;
             for (uint32_t i = 0; i < perHunk; i++)
             {
                 uint8_t* sector = dst + static_cast<size_t>(i) * IBlockDevice::kSectorSize;
-                if (first + i >= sectors)
+                const uint64_t lba = first + i;
+                if (lba >= zeroUntil && lba < sectors)
+                    zeroUntil = lba + device.ZeroRun(lba);
+                if (lba >= sectors || lba < zeroUntil)
                 {
                     std::memset(sector, 0, IBlockDevice::kSectorSize);
                     continue;
                 }
-                if (!device.ReadSector(first + i, sector))
+                if (!device.ReadSector(lba, sector))
                 {
                     if (readError)
-                        *readError = "cannot read sector " + std::to_string(first + i) + " of " + device.Describe();
+                        *readError = "cannot read sector " + std::to_string(lba) + " of " + device.Describe();
                     return false;
                 }
             }

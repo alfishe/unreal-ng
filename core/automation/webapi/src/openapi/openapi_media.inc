@@ -46,7 +46,11 @@
             "GET /media/targets?path=<file>: what the file is (reply field 'file': kinds, format, evidence) and where "
             "it can go on this machine (field 'targets', in the order a chooser lists them; 'default': the index used "
             "without asking, null when the caller should ask; 'refusal': why nothing takes it). A refusal is an answer: "
-            "ok stays true";
+            "ok stays true. "
+            "GET /media/compose?path=<descriptor>[&fs=fat16|fat32&codepage=&free=]: build a composition descriptor "
+            "(a *.ucompose.yaml / .json file, or its JSON text) without inserting it (reply field 'compose': fs, sectors, "
+            "clusters, contentId, files, layers; 'report': shadowed, whited-out and skipped entries). Insert takes the "
+            "descriptor like any file";
         info["tags"].append("Media");
         idParameter(info, 0);
         slotParameter(info, 1);
@@ -54,13 +58,13 @@
         info["parameters"][2]["in"] = "query";
         info["parameters"][2]["required"] = false;
         info["parameters"][2]["schema"]["type"] = "string";
-        info["parameters"][2]["description"] = "targets: the file or folder to place";
+        info["parameters"][2]["description"] = "targets: the file or folder to place; compose: the descriptor";
         replyRef(info);
 
         std::string verbs;
         for (const std::string& v : MediaControl::Verbs())
         {
-            if (v == "list" || v == "info" || v == "formats" || v == "targets")
+            if (v == "list" || v == "info" || v == "formats" || v == "targets" || v == "compose")
                 continue;
             std::string options;
             for (const std::string& o : MediaControl::OptionsFor(v))
@@ -68,7 +72,7 @@
             verbs += "\n- **" + v + "**: " + (options.empty() ? "no options" : options);
         }
         Json::Value& post = paths["/api/v1/emulator/{id}/media/{slot}/{verb}"]["post"];
-        post["summary"] = "insert / swap / eject / save / export / discard / rescan / create / protect";
+        post["summary"] = "insert / swap / eject / save / export / discard / rescan / create / protect / layers / changes / flatten";
         post["description"] =
             "Operations are synchronous: the reply comes when the medium is in or out of the slot (swap delay "
             "included, at most 5 s, then pending = true). async: true replies at once with pending = true. "
@@ -85,13 +89,16 @@
         post["parameters"][2]["schema"]["type"] = "string";
         for (const std::string& v : MediaControl::Verbs())
         {
-            if (v != "list" && v != "info" && v != "formats" && v != "targets")
+            if (v != "list" && v != "info" && v != "formats" && v != "targets" && v != "compose")
                 post["parameters"][2]["schema"]["enum"].append(v);
         }
         Json::Value& body = post["requestBody"]["content"]["application/json"]["schema"];
         body["type"] = "object";
         body["properties"]["path"]["type"] = "string";
         body["properties"]["path"]["description"] = "insert / swap: the source; save / export: the target";
+        body["properties"]["descriptor"]["type"] = "object";
+        body["properties"]["descriptor"]["description"] =
+            "insert / swap: a composition descriptor inline (the *.ucompose.json body) instead of a path";
         body["properties"]["access"]["type"] = "string";
         body["properties"]["access"]["enum"].append("readonly");
         body["properties"]["access"]["enum"].append("session");
@@ -114,11 +121,29 @@
         body["properties"]["cylinders"]["type"] = "integer";
         body["properties"]["sides"]["type"] = "integer";
         body["properties"]["size"]["type"] = "integer";
-        body["properties"]["size"]["description"] = "create on a block slot: bytes, a multiple of 512";
+        body["properties"]["size"]["description"] = "create on a block slot: bytes, a multiple of 512, up to 128 GiB (memory holds at most [MEDIA] SessionMemoryLimit of the guest's writes)";
         body["properties"]["save"]["type"] = "boolean";
         body["properties"]["export"]["type"] = "string";
         body["properties"]["export"]["description"] = "Disposition: write a dirty medium to this new file first";
         body["properties"]["discard"]["type"] = "boolean";
+        body["properties"]["strategy"]["type"] = "string";
+        body["properties"]["strategy"]["description"] =
+            "save of a composite: delta (the session's writes into <descriptor>.delta, restored at the next insert; "
+            "the default without a path) or flat (a new image at path; the default with one)";
+        body["properties"]["plan"]["type"] = "boolean";
+        body["properties"]["plan"]["description"] = "save / flatten with strategy commit or write-back: report what would be written, write nothing";
+        body["properties"]["onConflict"]["type"] = "string";
+        body["properties"]["onConflict"]["description"] = "write-back: refuse (default) or keep-both when a host file changed since the build";
+        body["properties"]["force"]["type"] = "boolean";
+        body["properties"]["force"]["description"] = "save as delta over a delta written over other sources";
+        body["properties"]["vhd"]["type"] = "string";
+        body["properties"]["vhd"]["description"] =
+            "save / export / flatten of a block medium to a new .vhd: fixed (default, the most compatible) or dynamic "
+            "(sparse: only 2 MiB blocks holding data are stored)";
+        body["properties"]["compact"]["type"] = "boolean";
+        body["properties"]["compact"]["description"] =
+            "save / export of a FAT disk or card: a re-synthesized volume (every file contiguous; with fs: fat16 / fat32 "
+            "converts, with size resizes)";
         body["properties"]["wp"]["type"] = "boolean";
         body["properties"]["on"]["type"] = "boolean";
         body["properties"]["on"]["description"] = "protect: the slot's write-protect switch";
@@ -134,6 +159,10 @@
         body["properties"]["async"]["type"] = "boolean";
         body["properties"]["device"]["type"] = "string";
         body["properties"]["device"]["description"] = "insert / swap on an IDE unit: disk, cdrom or cf - a CompactFlash card on an IDE adapter, a disk that identifies as CFA (swap the unit's drive first; the unit must be empty)";
+        body["properties"]["journal"]["type"] = "string";
+        body["properties"]["journal"]["description"] =
+            "insert / swap of a medium written in session access: replay (default) a session journal left by a crash "
+            "(<source>.usession), discard it unread, or off (no journal next to the medium this time)";
         body["properties"]["immediate"]["type"] = "boolean";
         body["properties"]["immediate"]["description"] = "insert: no swap delay";
         Json::Value& upload = post["requestBody"]["content"]["multipart/form-data"]["schema"];

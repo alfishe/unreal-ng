@@ -203,6 +203,34 @@ TEST_F(MediaTargets_Test, PlanOnTheZxEvo)
     EXPECT_EQ(card.SlotList().find("ide0.slave"), std::string::npos);
 }
 
+/// A composition descriptor goes where its target says: a CD drive for an ISO target, the SD and IDE disks for a
+/// FAT one, all of them (disks first, or the CD first when every layer is an ISO) when it does not say
+TEST_F(MediaTargets_Test, DescriptorFollowsItsTarget)
+{
+    Create("ATM3");
+    ASSERT_TRUE(HasSlot("ide0.slave"));
+    std::vector<std::string> disks = {"sd.zc"};
+    if (HasSlot("sd.ngs"))
+        disks.push_back("sd.ngs");
+    disks.push_back("ide0.master");
+
+    const MediaPlan cd = PlanFor(File("cd.ucompose.yaml", "version: 1\ntarget: {kind: optical}\nlayers: [{source: {folder: .}}]\n"));
+    EXPECT_EQ(Slots(cd), (std::vector<std::string>{"ide0.slave"}));
+    EXPECT_EQ(cd.defaultTarget, 0);
+
+    const MediaPlan fat = PlanFor(File("sd.ucompose.yaml", "version: 1\ntarget: {fs: fat32}\nlayers: [{source: {folder: .}}]\n"));
+    EXPECT_EQ(Slots(fat), disks);
+
+    std::vector<std::string> any = disks;
+    any.push_back("ide0.slave");
+    const MediaPlan either = PlanFor(File("any.ucompose.yaml", "version: 1\nlayers: [{source: {folder: .}}]\n"));
+    EXPECT_EQ(Slots(either), any);
+
+    const MediaPlan isos = PlanFor(File("isos.ucompose.yaml", "version: 1\nlayers: [{source: {iso: a.iso}}]\n"));
+    ASSERT_FALSE(Slots(isos).empty());
+    EXPECT_EQ(Slots(isos).front(), "ide0.slave") << "every layer an ISO: the CD drive first";
+}
+
 /// Creating the 48K machine dominates (about 60 ms)
 TEST_F(MediaTargets_Test, PlanOnAMachineWithoutIde)
 {

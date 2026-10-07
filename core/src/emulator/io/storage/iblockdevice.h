@@ -41,6 +41,14 @@ public:
 
     virtual bool IsWritable() const = 0;
 
+    /// How many sectors from `lba` on are known to read as zeros without reading them (0: not known, read it).
+    /// Exports and the CHD writer skip such runs (docs/inprogress/2026-10-05-media-multisource/phases/c10-sparse-memory.md §2)
+    virtual uint64_t ZeroRun(uint64_t lba)
+    {
+        (void)lba;
+        return 0;
+    }
+
     /// Geometry from the image header, if the format has one
     virtual std::optional<BlockGeometry> NativeGeometry() const { return std::nullopt; }
 
