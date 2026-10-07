@@ -24,6 +24,7 @@ which stays as the facade. Closes the debugger additions' label import E7
 | [architecture.md](architecture.md) | Component view, data model, import workflow, sequences (import, live scan, export, ROM bundle), decision trees DT-1…DT-4, threading, relation to existing code, **code placement** (mermaid flowchart, class, sequence and decision diagrams) |
 | [formats.md](formats.md) | Format families (text, script, tokenized, live, native, bundle), lossiness matrix, catalog with detection and phases, examples side by side, name rules per target, the research plan for tokenized ZX assemblers, the native `*.usym.json` file |
 | [prior-art.md](../prior-art.md) | Existing converters and tools, local (the owner's 2012 TASM detokenizer, its 2025 port, a Python 3.x decoder, test data) and public, compared; what each reveals about the formats; nothing is vendored (D-2) |
+| [ida.md](ida.md) | IDA (9.2 checked, 9.3+ the target): names and comments into IDA with `symconv --to ida-python` / `ida-idc`, out of IDA through its IDC dump, loading a ZX program, headless `idat` checks, fixing IDAPython's Python path |
 | [tdd.md](tdd.md) | Layers and the std-only rule, model structs, index, sources and sinks, `ICodec` (decode + encode per format), the tokenizer, tokenized codecs, live scanners, normalization and merge, export, bundles manifest, surfaces, memory budget, phases S0-S10 |
 | [test-and-benchmark-plan.md](test-and-benchmark-plan.md) | Golden corpus from the real tools, unit tests per file, round trips, fuzzing, live checks, benchmarks and targets |
 
