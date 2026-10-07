@@ -71,7 +71,7 @@ type_input {"action":"tap","key":"enter"}                     # "No Disk!": Retr
 type_input {"action":"tap","key":"a"}                         # drive A
 capture_media {"action":"screenshot","filename":"scratch/zasm-compiled.png"}
 type_input {"action":"tap","key":"y"}                         # Launch: runs from ENT or the first ORG, RET returns
-invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/memory/page/ram/1"}    # body.data[0..] = the bytes at #8000
+invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/memory/page/ram/1?offset=0&length=16384"}   # body.data = #8000-#BFFF
 ```
 
 `n` instead of `y` returns to the editor. A source that ends with `saveobj "a:out.C",<address>,<length>` writes the
@@ -88,7 +88,7 @@ FILE.$T ...]` runs the whole sequence (the source must end with `saveobj "a:out.
 from the disk). The calls are those of [tasm.md](tasm.md#webapi) with `RUN "boot"` and the keys above; RAM page 1:
 
 ```bash
-curl -s "$BASE/emulator/$EMU_ID/memory/page/ram/1" | jq '.data[0:8]'
+curl -s "$BASE/emulator/$EMU_ID/memory/page/ram/1?offset=0&length=16384" | jq '.data[0:8]'   # without offset / length: 128 bytes
 ```
 
 ## Pitfalls

@@ -110,7 +110,8 @@ Four ways, from the most to the least convenient:
 
 - The CPU's view: `inspect_state {"aspects":["memory"],"address":24576,"length":64}` (`structuredContent.memory.hexdump`).
 - A RAM page as it is (an assembler that keeps the user's memory elsewhere while it runs, ZAsm):
-  `invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/memory/page/ram/1"}` (`body.data`, 16384 bytes).
+  `invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/memory/page/ram/1?offset=0&length=16384"}` (`body.data`;
+  without `offset` / `length` the reply holds only the first 128 bytes).
 - The object file the assembler saved: export the disk (above) or read its sectors.
 - `tools/unreal-asm/assemble-in-emulator.py <profile>` runs a whole assemble and saves the bytes (profiles for TASM
   4.12, ALASM 5.09, STORM 1.3, ZAsm 3.15, MASM 1.1, XAS, ZEUS, GENS4).
