@@ -244,9 +244,10 @@ instance and retry. After `load` the session is idle/browsable (use
 `loaded_from_file: true`, `source_path`, `captured_at_unix_ms`, plus the
 recording machine's `model_id`/`model_ram_pages`. The `.ttd` header pins a ROM signature:
 replaying against a different ROM set is refused, not silently wrong.
-The binary format is portable (Kaitai schema `core/src/debugger/ttd/ttd.ksy`;
-Python analyzer in `tools/verification/ttd-analyzer`), so captures outlive
-the process.
+The binary format is portable (the engine's session file, schema 2: Kaitai
+schema `core/src/debugger/ttd/engine/ttdsession.ksy`; Python analyzer in
+`tools/verification/ttd-analyzer`), so captures outlive the process. v1 files (`ttd.ksy`) are not loaded by the engine; the
+verification tools read and convert them.
 
 ### Inspect a file, search port journals, export a clip
 

@@ -533,8 +533,9 @@
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["tags"].append("Time-Travel Debug");
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["description"] =
         "Serializes the current TTD session to a .ttd binary file at the "
-        "given filesystem path. The file format is documented in "
-        "ttd_dump_format.h (schema v3 with embedded write journal).";
+        "given filesystem path: the engine's session file (schema 2, Kaitai "
+        "schema core/src/debugger/ttd/engine/ttdsession.ksy); on v1 "
+        "(UNREAL_TTD_BACKEND=v1) v1's format (ttd.ksy).";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["required"] = true;
