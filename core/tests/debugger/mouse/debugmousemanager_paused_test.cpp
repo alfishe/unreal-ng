@@ -2,7 +2,7 @@
 /// @brief Automation mouse input on a paused, running emulator is applied before the call returns.
 ///
 /// The API promises "the change is applied before the response". While the emulation thread runs, live
-/// input is queued for its next instruction boundary (TimeTravelManager::SubmitLiveInput). A paused machine
+/// input is queued for its next instruction boundary (TimeTravelController::SubmitLiveInput). A paused machine
 /// has no instruction boundary until it resumes, so the queue used to hold the input and a status read right
 /// after it showed the old values (the WebAPI's test_api_mouse.py: 8 cases). A parked machine now takes the
 /// input on the caller's thread at once (Emulator::RunWhileParked), in order after anything queued before.

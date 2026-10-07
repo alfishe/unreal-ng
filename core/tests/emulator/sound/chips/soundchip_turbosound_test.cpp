@@ -18,7 +18,7 @@
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/analyzers/audiocapture/audiocaptureanalyzer.h"
 #include "debugger/debugmanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/memory/memory.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -756,7 +756,7 @@ TEST(SoundChipTurboSoundEventsTtd_Test, SeekAndReplayKeepTheSamplePhaseAndTheTon
         features->setFeature(Features::kDebugMode, true);
         features->setFeature(Features::kTimeTravel, true);
         m.Context()->pMemory->UpdateFeatureCache();
-        ttd::TimeTravelManager* ttd = m.Context()->pTimeTravelManager;
+        ttd::TimeTravelController* ttd = m.Context()->pTimeTravelController;
         ASSERT_NE(ttd, nullptr);
         const uint64_t& frame = m.Context()->emulatorState.frame_counter;
         const uint32_t frameT = m.Context()->config.frame;

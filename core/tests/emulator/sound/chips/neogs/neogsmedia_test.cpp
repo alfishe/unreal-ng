@@ -23,7 +23,7 @@
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testwaithelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/media/mediamanager.h"
@@ -105,7 +105,7 @@ TEST_F(NeoGSMedia_Test, CarriedOutAtOnceWhileTheLoopIsNotRunning)
 TEST_F(NeoGSMedia_Test, InsertAndEjectRefusedWhileTtdRecords)
 {
     fitNeoGS();
-    ASSERT_TRUE(_ctx->pTimeTravelManager->StartRecording());
+    ASSERT_TRUE(_ctx->pTimeTravelController->StartRecording());
     const std::string path = card()->sdCardImage();
 
     EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::TtdRecording);
@@ -121,7 +121,7 @@ TEST_F(NeoGSMedia_Test, InsertAndEjectRefusedWhileTtdRecords)
     const NeoGSMediaResult save = NeoGSRequestFlashSave(_ctx);
     EXPECT_TRUE(save == NeoGSMediaResult::Done || save == NeoGSMediaResult::Failed) << NeoGSMediaResultText(save);
 
-    _ctx->pTimeTravelManager->StopRecording();
+    _ctx->pTimeTravelController->StopRecording();
     EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::Done);
     EXPECT_FALSE(card()->sdCardPresent());
 }
@@ -221,7 +221,7 @@ TEST_F(NeoGSMedia_Test, EjectAndInsertStormWhileTheCardReadsTheSdCard)
         accepted += NeoGSMediaAccepted(r) ? 1 : 0;
         queued += r == NeoGSMediaResult::Queued ? 1 : 0;
         // Restart the loader so it reads the card again (also on the machine thread)
-        _ctx->pTimeTravelManager->SubmitMachineTask([this] { card()->resetCard(); });
+        _ctx->pTimeTravelController->SubmitMachineTask([this] { card()->resetCard(); });
         std::this_thread::sleep_for(std::chrono::milliseconds(3));
     }
     ASSERT_TRUE(TestWait::For([this] { return !_ctx->HasStepWork(EmulatorContext::kStepWorkTtdInput); }));

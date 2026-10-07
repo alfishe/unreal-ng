@@ -16,7 +16,7 @@
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "common/filehelper.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
@@ -526,7 +526,7 @@ TEST(MediaManager_Test, RecordingRefusesChangesUnlessAskedToEndIt)
     MediaManager& manager = *context->pMediaManager;
     FakeBlockSlot slot("sd.test");
     manager.RegisterSlot(slot);
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
 
     EXPECT_EQ(manager.Insert("sd.test", MemoryMedium(8)).error, MediaError::Recording);
     EXPECT_EQ(slot.attached, nullptr);
@@ -534,7 +534,7 @@ TEST(MediaManager_Test, RecordingRefusesChangesUnlessAskedToEndIt)
     InsertOptions end;
     end.endRecording = true;
     ASSERT_TRUE(manager.Insert("sd.test", MemoryMedium(8), end).Ok());
-    EXPECT_FALSE(context->pTimeTravelManager->IsRecording());
+    EXPECT_FALSE(context->pTimeTravelController->IsRecording());
     EXPECT_NE(slot.attached, nullptr);
 
     manager.UnregisterSlot("sd.test");

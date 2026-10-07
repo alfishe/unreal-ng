@@ -2,7 +2,7 @@
 /// @brief Kempston Mouse injection funnel (automation-interfaces §5.1-§5.4) and the input
 ///        journal / replay guard fixes it shares with the keyboard.
 ///
-/// Real Emulator instance (DebugManager, Mouse, TimeTravelManager wired as in the app),
+/// Real Emulator instance (DebugManager, Mouse, the TTD controller wired as in the app),
 /// no running CPU unless a test drives frames explicitly.
 
 #include <gtest/gtest.h>
@@ -16,7 +16,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdinputjournal.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -34,7 +34,7 @@ protected:
     EmulatorContext* _context = nullptr;
     DebugMouseManager* _manager = nullptr;
     Mouse* _mouse = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
 
     void SetUp() override
     {
@@ -47,7 +47,7 @@ protected:
         ASSERT_NE(_manager, nullptr);
         _mouse = _context->pMouse;
         ASSERT_NE(_mouse, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
     }
 
     void TearDown() override

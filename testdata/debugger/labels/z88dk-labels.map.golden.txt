@@ -1,0 +1,15 @@
+LINES|18|65535|65535|ROM|const|labels||1
+SCREEN|4000|65535|65535|RAM|const|labels||1
+__code_head|8000|65535|65535|RAM|const|||1
+__code_size|C|65535|65535|ROM|const|||1
+__code_tail|800C|65535|65535|RAM|const|||1
+__data_head|800C|65535|65535|RAM|const|||1
+__data_size|3|65535|65535|ROM|const|||1
+__data_tail|800F|65535|65535|RAM|const|||1
+__head|0|65535|65535|ROM|const|||1
+__size|800F|65535|65535|RAM|const|||1
+__tail|800F|65535|65535|RAM|const|||1
+data_tab|800C|65535|65535|RAM|code|labels||1
+loop|8003|65535|65535|RAM|code|labels||1
+play|8009|65535|65535|RAM|code|labels||1
+start|8000|65535|65535|RAM|code|labels||1

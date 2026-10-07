@@ -332,6 +332,13 @@ bool LabelManager::LoadLabels(const std::string& path)
         extension.erase(0, 1);
     const auto& registry = unrealasm::symbols::SymbolCodecRegistry::Builtin();
     const unrealasm::symbols::ISymbolCodec* codec = registry.Find(CodecForExtension(extension));
+    // z80asm writes its map (-m) as .map too: its content says so
+    if (extension == "map")
+    {
+        const auto detected = registry.Detect(bytes, extension);
+        if (detected.chosen && detected.chosen->Info().id == "z88dk-map")
+            codec = detected.chosen;
+    }
     if (!codec)
     {
         const auto detected = registry.Detect(bytes, extension);

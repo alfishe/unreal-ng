@@ -25,7 +25,7 @@
 #include "_helpers/testtiminghelper.h"
 #include "_helpers/testwaithelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include <memory>
 #include <thread>
 #include "emulator/notifications.h"
@@ -1113,7 +1113,7 @@ TEST(EmulatorHostAudioTTD_Test, SeekThenResumeIsHeardAgain)
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
     SoundManager* sound = context->pSoundManager;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
     FeatureManager* features = emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);

@@ -20,7 +20,7 @@
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/analyzers/analyzermanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/memory/memory.h"
 #include "debugger/analyzers/audiocapture/audiocaptureanalyzer.h"
 #include "debugger/debugmanager.h"
@@ -930,7 +930,7 @@ TEST(Ym2203PairBoardsTtd_Test, SeekAndReplayKeepTheCursorAndTheAudio)
         features->setFeature(Features::kDebugMode, true);
         features->setFeature(Features::kTimeTravel, true);
         m.Context()->pMemory->UpdateFeatureCache();
-        ttd::TimeTravelManager* ttd = m.Context()->pTimeTravelManager;
+        ttd::TimeTravelController* ttd = m.Context()->pTimeTravelController;
         ASSERT_NE(ttd, nullptr);
         Ym2203Pair& pair = *m.Pair();
         const uint64_t& frame = m.Context()->emulatorState.frame_counter;

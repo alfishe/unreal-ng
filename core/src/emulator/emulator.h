@@ -130,7 +130,10 @@ protected:
     rzx::RzxSession& RzxSessionLocked();
     /// The common body of the snapshot loads: RZX stop, TTD guard, pause,
     /// `load`, frame restart, resume, NC_FILE_LOADED
-    bool LoadSnapshotStaged(const std::function<bool(std::string& error)>& load, const std::string& openedPath);
+    /// Pause, run `load` and restart the frame. `load` receives the options to plan with: the caller's, plus a beforeCommit that ends
+    /// the TTD recording session when (and only when) the plan has decided the snapshot will be committed
+    bool LoadSnapshotStaged(const std::function<bool(std::string& error, const snapshot::Options& planned)>& load,
+                            const std::string& openedPath, const snapshot::Options& options);
     /// What the snapshot pipeline did with the last load (empty before the first one)
     snapshot::Report _lastSnapshotReport;
     snapshot::SaveResult _lastSaveResult;

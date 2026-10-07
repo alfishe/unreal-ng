@@ -10,6 +10,7 @@
 #include <iterator>
 #include <random>
 #include <sstream>
+#include <unordered_map>
 
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
@@ -19,6 +20,7 @@
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/ttddirtytracker.h"
 #include "debugger/ttd/ttddumpformat.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
 #include "debugger/ttd/ttdsessionfacts.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -200,7 +202,7 @@ std::unique_ptr<TimeTravelEngine> TimeTravelController::LoadEngineSession(const 
     // where one is fitted, the live card's state kept; the socket's `ay` and `ts` boards share an id, the device
     // table's instance names the board). Then the slot-built cards' and the board's own checks (the MultiSound's
     // MIDI bank, the Sprinter's ISA population) read the baseline checkpoint's device states
-    if (_context)
+    if (_context && loaded->CheckpointCount() > loaded->FirstCheckpoint())
     {
         const SlotManager::TtdDeviceSet recorded = SlotManager::TtdDeviceSet::Of(loaded->Devices(), facts.notRecordedMask);
         std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;

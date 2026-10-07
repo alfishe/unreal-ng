@@ -17,6 +17,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/ttdv1tests.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
 #include "debugger/ttd/timetravelcontroller.h"
@@ -130,9 +131,9 @@ public:
     bool Ok() const { return _ok; }
     Emulator* Get() const { return _emulator.get(); }
     EmulatorContext* Context() const { return _emulator->GetContext(); }
-    ttd::TimeTravelManager* Ttd() const { return _emulator->GetContext()->pTimeTravelManager; }
-    /// The engine's controller: set when the machine was created with the engine backend (EngineBackend)
-    ttd::TimeTravelController* Controller() const { return _emulator->GetContext()->pTimeTravelController; }
+    ttd::TimeTravelController* Ttd() const { return _emulator->GetContext()->pTimeTravelController; }
+    /// The same controller under the name the slot TTD tests use
+    ttd::TimeTravelController* Controller() const { return Ttd(); }
 
 private:
     SoundCardScope _everySound;
@@ -386,10 +387,11 @@ TEST(TtdSlots_Test, EngineSessionLoadRunsTheSlotSetGuard)
 
 /// tdd.md §2.4: the cards that moved onto slots in SL-4 keep the blob ids and layouts the corpus was recorded with.
 /// The Pentagon fixture with TurboSound FM and the classic GS (testdata/ttd, recorded before the slots) loads into a
-/// machine planned from [SLOTS]; its slot cards' blobs carry the ids the live devices register under, each of the
+/// machine planned from [SLOTS] on v1; its slot cards' blobs carry the ids the live devices register under, each of the
 /// live device's state size. The engine names them by slot. ~40 ms: one machine and a real 300-frame fixture
 TEST(TtdSlots_Test, MigratedCardsKeepBlobIds)
 {
+    const ttdtest::V1Scope v1;   // the fixture is a v1 file, read by v1
     const fs::path fixture = TestPathHelper::FindProjectRoot() / "testdata/ttd/tsfm_tech_support.ttd";
     ttd::TTDFileInfo info;
     std::string err;
@@ -407,11 +409,11 @@ TEST(TtdSlots_Test, MigratedCardsKeepBlobIds)
     machine.Get()->GetFeatureManager()->setFeature(Features::kScreenHQ, true);
 
     std::ifstream in(fixture, std::ios::binary);
-    ASSERT_TRUE(machine.Ttd()->DeserializeSession(in, err)) << err;
-    const ttd::TTDCheckpoint* baseline = machine.Ttd()->GetCheckpoint(0);
+    ASSERT_TRUE(machine.Context()->pTimeTravelManager->DeserializeSession(in, err)) << err;
+    const ttd::TTDCheckpoint* baseline = machine.Context()->pTimeTravelManager->GetCheckpoint(0);
     ASSERT_NE(baseline, nullptr);
 
-    const ttd::TTDPeripheralRegistry& registry = machine.Ttd()->GetPeripheralRegistry();
+    const ttd::TTDPeripheralRegistry& registry = machine.Context()->pTimeTravelManager->GetPeripheralRegistry();
     const SlotManager* slotManager = machine.Context()->pSlotManager;
     ASSERT_NE(slotManager, nullptr);
     struct Card
@@ -548,24 +550,15 @@ TEST(TtdSlots_Test, RuntimePersonalitySwitchMovesThePlanAndTheFingerprint)
               std::string::npos);
 }
 
-/// R-OP-7: no slot change while a user recording runs, the refusal names the session; allowed once it stopped.
-/// One machine (~20 ms)
-TEST(TtdSlots_Test, RefusedWhileTtdRecords)
+/// D42 (owner rule 2026-10-06): a recording does not refuse a slot change - the change restarts the machine, which
+/// ends the session (SlotChange_Test.AppliedWhileTtdRecords). The guard has nothing to say while recording
+TEST(TtdSlots_Test, ARecordingDoesNotRefuseASlotChange)
 {
     StagedMachine machine("pentagon128k", "zxbus.1 = gs");
     ASSERT_TRUE(machine.Ok());
     const SlotManager* slotManager = machine.Context()->pSlotManager;
     ASSERT_NE(slotManager, nullptr);
-    EXPECT_EQ(slotManager->ChangeRefusal(), "");
-
     ASSERT_TRUE(machine.Ttd()->StartRecording());
-    const std::string refusal = slotManager->ChangeRefusal();
-    EXPECT_NE(refusal.find("Cannot change the slot set while TTD is recording session #1"), std::string::npos)
-        << refusal;
-    machine.Ttd()->StopRecording();
     EXPECT_EQ(slotManager->ChangeRefusal(), "");
-
-    ASSERT_TRUE(machine.Ttd()->StartRecording());
-    EXPECT_NE(slotManager->ChangeRefusal().find("session #2"), std::string::npos) << "a new recording, a new session";
     machine.Ttd()->StopRecording();
 }

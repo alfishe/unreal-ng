@@ -6,7 +6,7 @@
 #include "emulator/io/mouse/mousemanager.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediamanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/zcsdtesthelper.h"
@@ -983,7 +983,7 @@ TEST(ZXEvoSdCardTtd_Test, SdCardUnderTheCommonTtdRule)
     ASSERT_NE(decoder, nullptr);
     ASSERT_NE(context->pMediaManager, nullptr);
     EXPECT_TRUE(context->pMediaManager->HasSlot("sd.zc")) << "the ZX-Evo registers its SD slot";
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
 
     ASSERT_TRUE(decoder->InsertSdCard(PatternDisk(64), SdCardSpi::WriteMode::Session));
@@ -993,6 +993,7 @@ TEST(ZXEvoSdCardTtd_Test, SdCardUnderTheCommonTtdRule)
     SetShadow(context->emulatorState, false);
     decoder->DecodePortOut(0x0077, 0x00, 0);
     ASSERT_TRUE(SdInit(decoder, 0x0057));
+    context->emulatorState.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
     ttd->OnFrameBoundary();
     EXPECT_TRUE(ttd->IsRecording()) << "commands no longer end a recording";
 
@@ -1741,7 +1742,7 @@ TEST_F(ZXEvoTrdemu_Test, RestoreBetweenTrapAndSwapStillSwaps)
     ASSERT_EQ(Trdemu(), 0);
     ASSERT_EQ(_z80->machineM1Hook, nullptr);
 
-    // Restore the way TimeTravelManager::RestoreCheckpoint does: serializers, then the paging decode
+    // Restore the way TimeTravelController::RestoreCheckpoint does: serializers, then the paging decode
     serializer.TTDLoadState(blob);
     _memory->UpdateZ80Banks();
     _z80->pc = 0x1FDF;

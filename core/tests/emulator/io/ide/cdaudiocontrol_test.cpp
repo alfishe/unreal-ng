@@ -10,7 +10,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/scratchfolder.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/ide/cdaudiocontrol.h"
@@ -155,14 +155,14 @@ TEST_F(CdAudioControl_Test, VolumeAndMixer)
 TEST_F(CdAudioControl_Test, RefusedWhileRecordingAndWithoutADrive)
 {
     _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
-    ASSERT_TRUE(_context->pTimeTravelManager->StartRecording());
+    ASSERT_TRUE(_context->pTimeTravelController->StartRecording());
     CdAudioReply reply = Run("play", "", {{"track", "2"}});
     EXPECT_FALSE(reply.ok);
     EXPECT_EQ(reply.error, "recording");
     EXPECT_EQ(reply.HttpStatus(), 409);
     EXPECT_TRUE(Run("mixer", "", {{"mute", "false"}}).ok) << "the mixer row is host state";
     EXPECT_TRUE(Run("status").ok);
-    _context->pTimeTravelManager->StopRecording();
+    _context->pTimeTravelController->StopRecording();
 
     Emulator* spectrum = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
     ASSERT_NE(spectrum, nullptr);

@@ -20,7 +20,7 @@
 #include "emulator/io/sprinter/isa/sprinterisabus.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
 #include "emulator/state/devicestate.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/io/network/vnet/ethernetgateway.h"
 
 class SprinterNetwork_Test : public ::testing::Test
@@ -540,7 +540,7 @@ TEST_F(SprinterNetwork_Test, Bridge_FramesFromTheLanAreJournaledInputs)
     ASSERT_EQ(host->stations.size(), 1u) << "the adapter keeps the card's frames";
     EXPECT_EQ(host->stations[0][5], 0x02);
 
-    ttd::TimeTravelManager* ttm = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttm = _context->pTimeTravelController;
     ASSERT_NE(ttm, nullptr);
     ASSERT_TRUE(ttm->StartRecording());
     std::vector<uint8_t> frame(60, 0x5A);

@@ -16,7 +16,7 @@
 #include "emulator/state/devicestate.h"
 #include "base/featuremanager.h"
 #include "common/stringhelper.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdportsearch.h"
 
 class SprinterZxMode_Test : public SprinterZxSession_Test
@@ -155,7 +155,7 @@ TEST_F(SprinterZxMode_Test, LauncherModes_ReportAndJournal)
     FeatureManager* features = _emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
 
     for (const Mode& mode : modes)

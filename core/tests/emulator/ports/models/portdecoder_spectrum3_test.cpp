@@ -5,7 +5,7 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "debugger/ttd/plus3/ttdplus3paging.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -118,8 +118,8 @@ TEST_F(Spectrum3Paging_Test, Port1FFDRidesItsOwnTtdBlob)
     ASSERT_EQ(ids.size(), 2u);
     EXPECT_EQ(ids[0], ttd::PeripheralId::Plus3Paging);
     EXPECT_EQ(ids[1], ttd::PeripheralId::Upd765);
-    ASSERT_NE(_context->pTimeTravelManager, nullptr);
-    EXPECT_TRUE(_context->pTimeTravelManager->StartRecording());
+    ASSERT_NE(_context->pTimeTravelController, nullptr);
+    EXPECT_TRUE(_context->pTimeTravelController->StartRecording());
 }
 
 TEST_F(Spectrum3Paging_Test, FloppyControllerAnswersOn2FFDAnd3FFD)

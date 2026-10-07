@@ -17,7 +17,7 @@
 #include "_helpers/soundcardscope.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdconfigcapture.h"
 #include "emulator/config.h"
 #include "emulator/emulator.h"
@@ -269,24 +269,27 @@ TEST_F(SlotControl_Test, GsPersonalityIsASlotReplace)
     EXPECT_NE(refused.message.find("no General Sound card is fitted"), std::string::npos) << refused.message;
 }
 
-/// R-OP-7 through the surfaces' layer: status recording, 409, the session named
-TEST_F(SlotControl_Test, RecordingRefusesChanges)
+/// D42 through the surfaces' layer: a plug while a recording runs is applied, 200, and ends the session with the
+/// machine it restarts
+TEST_F(SlotControl_Test, ARecordingDoesNotRefuseChanges)
 {
     std::shared_ptr<Emulator> emulator = Create("PENTAGON", {{"zxbus.1", "gs"}});
     ASSERT_NE(emulator, nullptr);
     emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
     emulator->GetContext()->pMemory->UpdateFeatureCache();
-    ttd::TimeTravelManager* ttd = emulator->GetContext()->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = emulator->GetContext()->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
     ASSERT_TRUE(ttd->StartRecording());
+    const std::string id = emulator->GetId();
+    emulator.reset();
 
-    const SlotControlReply refused = Run(Request("plug", emulator->GetId(), "zxbus.next", "zxnetusb"));
-    EXPECT_EQ(refused.status, "recording");
-    EXPECT_EQ(refused.httpStatus, 409);
-    EXPECT_NE(refused.message.find("TTD is recording session #1"), std::string::npos) << refused.message;
-    EXPECT_TRUE(Field(Field(refused.body, "plan"), "recording").b);
-    ttd->StopRecording();
+    const SlotControlReply applied = Run(Request("plug", id, "zxbus.next", "zxnetusb"));
+    EXPECT_EQ(applied.status, "applied") << applied.message;
+    EXPECT_EQ(applied.httpStatus, 200);
+    EXPECT_FALSE(Field(Field(applied.body, "plan"), "recording").b);
+    ASSERT_NE(applied.emulator, nullptr);
+    EXPECT_FALSE(applied.emulator->GetContext()->pTimeTravelController->IsRecording());
 }
 
 /// Malformed requests are 400 / 404 with the reason; nothing is planned
@@ -506,19 +509,22 @@ TEST_F(SlotControl_Test, NetworkSettingsWithoutCardChangeStayInPlace)
     edge.replaceIfIncompatible = true;
     EXPECT_EQ(Run(edge).status, "dry-run");
 
-    // R-OP-7: refused while TTD records, the card change and the in-place settings alike
+    // R-OP-7: the in-place settings are fixed while TTD records; the card change (D42) restarts the machine and so
+    // ends the session instead of being refused
     emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
     emulator->GetContext()->pMemory->UpdateFeatureCache();
-    ttd::TimeTravelManager* ttd = emulator->GetContext()->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = emulator->GetContext()->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
     ASSERT_TRUE(ttd->StartRecording());
-    const SlotControlReply card = Run(NetworkRequest(id, {{"card", "none"}}));
-    EXPECT_EQ(card.status, "recording") << card.message;
-    EXPECT_EQ(card.httpStatus, 409);
     const SlotControlReply hosts = Run(NetworkRequest(id, {{"hosts", "b.test=10.0.2.9"}}));
     EXPECT_EQ(hosts.status, "recording") << hosts.message;
-    ttd->StopRecording();
+    EXPECT_TRUE(ttd->IsRecording());
+    emulator.reset();
+    const SlotControlReply card = Run(NetworkRequest(id, {{"card", "none"}}));
+    EXPECT_EQ(card.status, "applied") << card.message;
+    ASSERT_NE(card.emulator, nullptr);
+    EXPECT_FALSE(card.emulator->GetContext()->pTimeTravelController->IsRecording());
 }
 
 /// The running [NETWORK] settings are configuration, not machine state (owner decision 2026-10-05): a slot restart
