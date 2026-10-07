@@ -978,4 +978,88 @@ TEST_F(MultiSoundCard_Test, TfmPlayerTracePlaysThroughTheCard)
 
 /// endregion </Real program>
 
+/// region <Golden digests>
+
+/// The YM2203 rows (FM 1 / 2, SSG 1 / 2) of a fixed script, hashed: FM muted from the reset, then a note on U4, FM
+/// muted again, a note on U10, every key off with FM on (the FM decays to silence), SSG tones and an envelope
+/// throughout. The digests were taken before the render path's frame-cost work (2026-10-06) and must not change
+/// unless the card's YM output is meant to change. (~40 ms: 40 frames of the card with a halted GS)
+TEST_F(MultiSoundCard_Test, YmRowsMatchTheirGoldenDigests)
+{
+    MultiSoundCardConfig config = QuietConfig();
+    config.midiBankPath.clear();
+    Rig rig(_context.get(), config);
+
+    auto frameAt = [&](int frame, uint64_t offset) { rig.t = std::max(rig.t, uint64_t(frame) * kFrameTicks + offset); };
+    for (int frame = 0; frame < 40; frame++)
+    {
+        frameAt(frame, 1000);
+        switch (frame)
+        {
+            case 3:
+                // SSG tones on both chips while FM stays muted (control byte with bit 2 set)
+                for (uint8_t select : {uint8_t{0xFC}, uint8_t{0xFD}})
+                {
+                    rig.Out(kYmRegister, select);
+                    rig.Reg(0x00, select == 0xFC ? 0x80 : 0x3C);
+                    rig.Reg(0x01, 0x01);
+                    rig.Reg(0x02, 0x55);
+                    rig.Reg(0x08, 0x0F);
+                    rig.Reg(0x09, 0x10);   // B on the envelope
+                    rig.Reg(0x0B, 0x00);
+                    rig.Reg(0x0C, 0x04);
+                    rig.Reg(0x0D, 0x0E);
+                    rig.Reg(0x07, 0x3C);
+                }
+                break;
+            case 6:
+                rig.Out(kYmRegister, 0xF8);   // U4, FM on
+                ProgramFmNote(rig);
+                break;
+            case 14:
+                rig.Out(kYmRegister, 0xFC);   // FM muted again
+                break;
+            case 18:
+                rig.Out(kYmRegister, 0xF9);   // U10, FM on
+                ProgramFmNote(rig);
+                rig.Reg(0xA6, 0x2A);
+                rig.Reg(0xA2, 0x80);
+                break;
+            case 26:
+                for (uint8_t select : {uint8_t{0xF8}, uint8_t{0xF9}})
+                {
+                    rig.Out(kYmRegister, select);
+                    rig.Reg(0x28, 0x02);    // key off: the release runs out, FM stays on
+                }
+                break;
+            default:
+                break;
+        }
+    }
+    rig.RunFrames(1);
+
+    auto digest = [&](MultiSoundRow row)
+    {
+        uint64_t h = 0xcbf29ce484222325ull;
+        for (int16_t v : rig.collected[static_cast<size_t>(row)])
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                h ^= static_cast<uint8_t>(static_cast<uint16_t>(v) >> (8 * i));
+                h *= 0x100000001b3ull;
+            }
+        }
+        return h;
+    };
+    ASSERT_GE(rig.collected[static_cast<size_t>(MultiSoundRow::Fm1)].size(), 40u * 880u * 2u);
+    EXPECT_GT(rig.Swing(MultiSoundRow::Fm1, 0), 1000.0);
+    EXPECT_GT(rig.Swing(MultiSoundRow::Fm2, 0), 1000.0);
+    EXPECT_EQ(digest(MultiSoundRow::Fm1), 0x4F2C590448438521ull) << std::hex << digest(MultiSoundRow::Fm1);
+    EXPECT_EQ(digest(MultiSoundRow::Fm2), 0xDC6D19F578F8E44Dull) << std::hex << digest(MultiSoundRow::Fm2);
+    EXPECT_EQ(digest(MultiSoundRow::Ssg1), 0x5DFF1165C310DBDCull) << std::hex << digest(MultiSoundRow::Ssg1);
+    EXPECT_EQ(digest(MultiSoundRow::Ssg2), 0x75E8C22DFC9A5A21ull) << std::hex << digest(MultiSoundRow::Ssg2);
+}
+
+/// endregion </Golden digests>
+
 #endif  // UNREALNG_HAVE_SAM2695

@@ -2,8 +2,8 @@
 
 **Status:** on master since 2026-10-05 (`7605bf104`, pushed): MS-1 to MS-7 first pass, with the ZX-bus slots SL-1 to
 SL-7 ([slots TODO](../2026-10-03-zx-bus-slots/TODO.md)); demo to the owner done (MIDI, TSFM, SAA); MS-8 user docs done 2026-10-05. Shipped configs keep
-the card off (owner decision): it is fitted through the slots. Left: the open items below (profiling, a
-TTD fixture, the MS-7 second pass).
+the card off (owner decision): it is fitted through the slots. Left: the open items below (a TTD fixture,
+the MS-7 second pass).
 
 ## Documents
 
@@ -213,9 +213,33 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   [tsconf.md](../../../.recipe/machines/tsconf.md)); links from [slots.md](../../features/slots.md) and the recipe
   [.recipe/peripherals/multisound.md](../../../.recipe/peripherals/multisound.md). Not added to `spectrum.md` / `profi.md`
   (only an `unrealistic` fit there)
-- [ ] Profile the card's frame cost (~1 ms per emulated frame on the dev machine with all five paths; the SAM2695
-  effects path and the eight Reference-quality YM decimators are the suspects); still open after MS-4 registered it
-  (machines without the card pay nothing)
+- [x] Profile the card's frame cost (2026-10-06). Benchmark `BM_MultiSoundFrame/<sources>`
+  (`core/benchmarks/emulator/sound/multisoundframe_benchmark.cpp`): one Pentagon frame of the card alone, the
+  argument a mask of the sources that play (1 YM2203 pair, 2 SAA, 4 SounDrive, 8 SAM2695, 16 GS module, 31 all;
+  0 = idle, the GS firmware in its command loop). Minimum CPU time per frame, dev Mac at load 5-11: idle 0.95 ms,
+  YM 1.06 ms, all five 1.31 ms. Where an all-five frame goes (`sample` profile): the YM2203 pair 53 % - its eight
+  Reference-quality channel decimators (six SSG FIRs of 97 taps, two FM FIRs of 193 taps, all evaluated for every
+  output sample) about 36 %, the SSG generators with their unused stereo mix 11 %, ymfm 5 %; the GS Z80 at 16 MHz
+  27 %; the SAM2695 10 % (voices 2.4 %, output resampler 2.3 %, reverb 2.4 %, equalizer 1 %, chorus 0.9 %); the
+  board mixer 5 %. The SAM2695 effects path is not the cost; the YM decimators are.
+  Done (clearly wasteful, output unchanged): a muted or silent FM part feeds its decimator zeros, and once the
+  whole FIR window is zero the output is exactly +0.0 - the FIR is skipped (`Ym2203Pair::renderChannels`,
+  `FilterDecimator::window`). A/B (interleaved A B A B A B B A B A, load 5-11, CPU time per frame): FM silent
+  -13 % to -16 % (idle 0.95 -> 0.82 ms, SAA / SounDrive / MIDI / GS alone the same), FM playing within noise
+  (-0.4 %, -0.3 % all five). Golden digests of the YM rows unchanged
+  (`MultiSoundCard_Test.YmRowsMatchTheirGoldenDigests`, taken before the change); the TSFM path is untouched.
+  Backlog (measure before and after, owner rule "naive first"):
+  - one multi-stream FIR pass: the eight decimators share one output instant (slaves of chip 0 SSG A); one loop
+    over the taps with every stream's accumulators shares the coefficient loads and keeps each stream's summation
+    order, so the output stays bit-identical (the 36 %)
+  - an SSG "channel levels only" mode for the card's two generators: the card reads the per-channel levels, the
+    pan sums and DC blockers of `SoundChip_AY8910::updateMixer` are computed for nothing (part of the 11 %); the
+    AY generator is a shared hot path, so it needs the A/B of the AY machines too
+  - SSG channels that hold one level (volume 0, tone off) still run their FIR; a constant-history shortcut is not
+    bit-identical (v x sum(c) rounds otherwise than sum(v x c)): owner decision
+  - the SAM2695 effects with no input and their tails run out (4.5 %)
+  - SIMD-CANDIDATE(fir-decimator-dot): the FIR dot products (`FilterDecimator::getOutput`, two rows x four
+    interleaved accumulators today)
 - [x] `data/midi/generaluser-gs.sf2` + license + README tracked (Q4, done 2026-10-05), shipped next to the
   executables by every target that ships `data/rom`; `[MIDI] Bank=NONE`; the test runner's policy keeps the default bank
   out of test machines unless asked (`TestSound::DefaultMidiBank`, `MultiSoundSlotCard_Test.ShippedDefaultBankLoadsWithoutAnOverride`); GS 1.05b ROM as `data/rom/gs105b.rom` done in MS-2 (README-ROMS entry)
