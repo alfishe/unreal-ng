@@ -11,6 +11,10 @@ converted source is compared with (sjasmplus output must be byte-equal).
                             [--url U] [--id ID]
     assemble-in-emulator.py masm11   <assembler.scl> <source.$a> <address> <length> <out.bin> [--extra FILE.$T ...]
                             [--wait S] [--url U] [--id ID]
+    assemble-in-emulator.py xas7447  <assembler.trd> <source.$X> <address> <length> <out.bin> [--extra FILE.$T ...]
+                            [--list-keys right] [--url U] [--id ID]
+    assemble-in-emulator.py xas418   <assembler.trd> <source.$X> <address> <length> <out.bin> [--extra FILE.$T ...]
+                            [--list-keys down] [--url U] [--id ID]
 
 The source is added to a copy of the assembler's disk; the memory range is filled with #AA first, so bytes the
 assembler did not write stay visible. Pick an address the assembler leaves alone: TASM 4.12 keeps its overlay at
@@ -25,6 +29,10 @@ first; the script answers its "No Disk!" with drive A.
 MASM 1.1 (MASM_11.SCL) lists only its sources (type a) and starts on the first: the source goes first, the files it
 INCLUDEs / INCBINs follow with --extra. It compiles to the addresses the source names (#C000 and up into RAM page 0,
 which the script reads there); --wait gives a long source its time (its own source: 50 s).
+XAS (7.447 `XAS7.447`, 4.18 `XASo`) starts with the disk's XAS sources in two columns: --list-keys are the cursor
+keys that reach the source from the first entry (default: right for 7.447, whose list starts with Read Me; down for
+4.18, after XMACROS and Xas help). The code goes to its ORG address; the report screenshot lists the errors (XAS
+goes on after an error with the value 0). --extra adds the sources LTEXT loads and the files LCODE loads.
 ALASM's file list is chosen by cursor: --list-position is the column and row of the file in the list `w` shows
 (count them on the screenshot <out>.list.png the tool saves first, 1-based).
 Screenshots of each step are written next to <out.bin>.
@@ -51,7 +59,7 @@ def prepare_disk(assembler_trd, source, work, extra=()):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['tasm412', 'alasm509', 'storm13', 'zasm315', 'masm11'])
+    parser.add_argument('assembler', choices=['tasm412', 'alasm509', 'storm13', 'zasm315', 'masm11', 'xas7447', 'xas418'])
     parser.add_argument('disk')
     parser.add_argument('source')
     parser.add_argument('address', type=lambda v: int(v, 0))
@@ -60,8 +68,9 @@ def main():
     parser.add_argument('--url')
     parser.add_argument('--id')
     parser.add_argument('--list-position', help='ALASM: column,row of the source in the file list')
-    parser.add_argument('--extra', nargs='*', default=[], help='STORM, ZAsm, MASM: hobeta files the source includes')
+    parser.add_argument('--extra', nargs='*', default=[], help='STORM, ZAsm, MASM, XAS: hobeta files the source includes')
     parser.add_argument('--wait', type=float, default=6, help='MASM: seconds the assembly takes')
+    parser.add_argument('--list-keys', help='XAS: comma-separated cursor keys from the first file of the list to the source')
     args = parser.parse_args()
 
     work = os.path.dirname(os.path.abspath(args.out))
@@ -117,6 +126,25 @@ def main():
             data = page[args.address - 0xC000:args.address - 0xC000 + args.length]
         else:
             data = emu.read(args.address, args.length)
+        emu.stop_recording()
+        open(args.out, 'wb').write(data)
+        print(f'{len(data)} bytes from #{args.address:04X} written to {args.out}; check {stem}.assembled.png for errors')
+        return 0
+    elif args.assembler in ('xas7447', 'xas418'):
+        emu.run_trdos('XAS7.447' if args.assembler == 'xas7447' else 'XASo', wait=8)
+        emu.screenshot(stem + '.list.png')
+        for key in (args.list_keys or ('right' if args.assembler == 'xas7447' else 'down')).split(','):
+            emu.tap(key)
+        emu.tap('enter')                       # Load
+        time.sleep(3)
+        emu.write(args.address, [0xAA] * args.length)
+        emu.post('/keyboard/combo', {'keys': ['cs', 'ss'], 'frames': 4})   # EXT
+        emu.idle()
+        time.sleep(0.4)
+        emu.tap('a')                           # Assemble
+        time.sleep(4)
+        emu.screenshot(stem + '.assembled.png')
+        data = emu.read(args.address, args.length)
         emu.stop_recording()
         open(args.out, 'wb').write(data)
         print(f'{len(data)} bytes from #{args.address:04X} written to {args.out}; check {stem}.assembled.png for errors')

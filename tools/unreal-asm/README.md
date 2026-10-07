@@ -10,7 +10,7 @@ tools run the corpus-sized and emulator-driven checks behind them (the results a
 |---|---|
 | `roundtrip.py` | Converts every source of a set of TRD / SCL images to sjasmplus, reads each result back through the sjasmplus frontend and backend (the text must not change), optionally assembles every file with sjasmplus; prints a summary |
 | `objcheck.py` | For a converted ALASM project: builds every object of each main source's `SAVEOBJ` table with sjasmplus and compares it with the file ALASM saved on the same disk |
-| `assemble-in-emulator.py` | Runs TASM 4.12, ALASM 5.09, STORM 1.3, ZAsm 3.15 or MASM 1.1 in an unreal-ng instance, assembles a source and saves the bytes it built (the oracle for a source with no binary on its disk) |
+| `assemble-in-emulator.py` | Runs TASM 4.12, ALASM 5.09, STORM 1.3, ZAsm 3.15, MASM 1.1 or XAS 7.447 / 4.18 in an unreal-ng instance, assembles a source and saves the bytes it built (the oracle for a source with no binary on its disk) |
 | `crosscheck.py` | Converts the main sources of a set of TR-DOS images to sjasmplus and to pasmo / z88dk (`--targets`), assembles each and compares the bytes each built |
 | `symcheck.py` | The labels the symbol module takes from sources (`symconv source`) against sjasmplus: every main source of a set of TRD / SCL images converted and assembled with `--sym`, the same project laid out by `symconv`; names and values compared |
 | `lstcheck.py` | Compares the bytes of a sjasmplus listing with a memory dump, line by line (a converted program against a running copy of it, e.g. an assembler's own source against the assembler unpacked in memory) |
