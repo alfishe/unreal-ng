@@ -62,8 +62,8 @@ Phase numbers refer to [tdd.md](tdd.md) §10.
 | `mame` | script | ● | ● | debugger commands `comadd HHHH,name[ - comment]` (MAME has comments, no labels; `,` and `;` are its separators); from MAME 0.289's `debugcmd.cpp` / help: its `-debugger none` does not run a script, so no headless check | done (S4) | S4 |
 | `cspect-map` | text | ● | ● | sjasmplus' `CSPECTMAP` directive: `HHHHHHHH LLLLLLLL TT NAME` (address, physical address, 00 label / 01 EQU / 02 DEFL / 03 ROM or no device / 04 STRUCT), names in capitals, a local label `PARENT@LOCAL`; checked on sjasmplus 1.24 output, written back byte for byte | done (S4) | S4 |
 | sources of `tasm`, `alasm`, `storm`, `zxasm`, `masm` (1.x), `zeus`, `gens`, `xas`, `sjasmplus` | tokenized source / text | ● | – | the library's source codecs ([../source-formats.md](../source-formats.md)) and dialect frontends; values by the layout of §4.1 (`SymbolsFromProject`, `symconv source`) | done (2026-10-07) | S6-S9 |
-| `alasm`, `xas` label tables | live | ● | – | after research (where the table is, the entry layout) | research | S7-S8 |
-| `sts` (labels kept by the STS monitor) | live | ● | – | after research | research | S9 |
+| `alasm`, `xas` label tables | live | ● | – | ALASM 4.4x / 5.0x: page 3, records below a zero byte; XAS 4.x / 7.x: page 6, 9-byte entries ([../research-labeltables.md](../research-labeltables.md)); `symbols/live.h`, `symconv live` | done (2026-10-07) | S7-S8 |
+| `sts` (labels kept by the STS monitor) | live | – | – | STS 7 has no table of its own: it reads ALASM's ([../research-labeltables.md](../research-labeltables.md) §3); STS 5.x / 6.x not examined | researched | S9 |
 
 Tools without a symbol format in this table (for example Fuse) are not targets until someone asks; the registry
 makes adding one a single file.

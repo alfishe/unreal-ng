@@ -29,7 +29,7 @@ Part of [unreal-ng](https://github.com/alfishe/unreal-ng); design: `docs/inprogr
 | `src/dialects/<dialect>/` | dialect plugins: frontends (dialect → IR) and backends (IR → dialect); `common/` holds the Z80 facts |
 | `src/ir/` | IR helpers |
 | `src/layout/` | label values of a sjasmplus project without building bytes: instruction sizes, passes, conditionals, macros |
-| `src/symbols/` | the symbol module: model, store, codecs, `fromsource/` (labels from sources) |
+| `src/symbols/` | the symbol module: model, store, codecs, `fromsource/` (labels from sources), `live/` (assemblers' label tables in RAM pages) |
 | `tools/zxasm/` | the `zxasm` CLI |
 | `tools/symconv/` | the `symconv` CLI: symbol files from any format to any format (`symconv formats`, `symconv detect f`, `symconv f --to id`), the labels of a source or a disk's project (`symconv source disk.trd --main NAME --to id`) |
 | `examples/` | small programs on the public API |
@@ -60,6 +60,7 @@ unrealasmexampleconvertdialect 'testdata/dialects/thelink/gsports.$H'          #
 zxasm convert testdata/dialects/alasm-sjasmplus/constructs.alasm.txt --codec text --from alasm --to sjasmplus
 zxasm convert TheLink.trd --to sjasmplus -o out/              # every source of a disk, INCBIN files extracted
 symconv source TheLink.trd --main GSTUNNE4 --to native         # its labels with values, names and lines (ALASM)
+symconv live 3:ram3.bin 6:ram6.bin --to unreal-map              # ALASM / XAS label tables in dumped RAM pages
 ```
 
 `unreal-asm-tests` assembles converted sources with sjasmplus and compares them with ALASM's binaries when

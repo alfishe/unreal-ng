@@ -12,6 +12,11 @@
 //                                                    for INCBIN; --main picks the source to assemble), a hobeta file or a
 //                                                    text source; --sjasmplus-names gives every label under the name its
 //                                                    sjasmplus conversion writes (to compare with sjasmplus --sym)
+//   symconv live <page:file | dump>... --to id [-o out] [--pick N] [--pages ...]
+//                                                    the label tables of assemblers in RAM (symbols/live.h): a file of
+//                                                    16 KB pages, `3:ram3.bin` from page 3, a bare file from page 0
+//                                                    (a 128K dump: pages 0-7); lists the tables found on stderr and
+//                                                    writes the best (or the N-th) as `id`
 //
 // Without -o the result is written to stdout. Exit code 0 on success, 1 on errors, 2 on bad usage.
 
@@ -27,6 +32,7 @@
 #include "unrealasm/registry.h"
 #include "unrealasm/symbols/codec.h"
 #include "unrealasm/symbols/fromsource.h"
+#include "unrealasm/symbols/live.h"
 
 using namespace unrealasm;
 using namespace unrealasm::symbols;
@@ -37,7 +43,8 @@ int Usage()
 {
     std::cerr << "usage: symconv formats | detect <file> |\n"
                  "       <in> --to id [-o out] [--from id] [--pages fold|comment|drop] |\n"
-                 "       source <in> --to id [-o out] [--main NAME] [--generated] [--sjasmplus-names] [--pages ...]\n";
+                 "       source <in> --to id [-o out] [--main NAME] [--generated] [--sjasmplus-names] [--pages ...] |\n"
+                 "       live <page:file | dump>... --to id [-o out] [--pick N] [--pages ...]\n";
     return 2;
 }
 
@@ -184,6 +191,79 @@ int Write(const ISymbolCodec& target, const SymbolFile& file, const SymbolEncode
     return 0;
 }
 
+int Live(const std::vector<std::string>& args)
+{
+    std::string to, output;
+    size_t pick = 0;
+    SymbolEncodeOptions options;
+    std::vector<std::pair<uint16_t, std::vector<uint8_t>>> files;   // first page, bytes
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        const std::string& a = args[i];
+        const bool hasValue = i + 1 < args.size();
+        if (a == "--to" && hasValue)
+            to = args[++i];
+        else if (a == "-o" && hasValue)
+            output = args[++i];
+        else if (a == "--pick" && hasValue)
+            pick = static_cast<size_t>(std::stoul(args[++i]));
+        else if (a == "--pages" && hasValue)
+        {
+            if (!ParseUnrepresentable(args[++i], options.unrepresentable))
+                return Usage();
+        }
+        else if (!a.empty() && a[0] != '-')
+        {
+            // page:file (digits before the colon), else a file from page 0
+            uint16_t first = 0;
+            std::string path = a;
+            const size_t colon = a.find(':');
+            if (colon != std::string::npos && colon > 0 && a.find_first_not_of("0123456789") == colon)
+            {
+                first = static_cast<uint16_t>(std::stoul(a.substr(0, colon)));
+                path = a.substr(colon + 1);
+            }
+            std::vector<uint8_t> bytes;
+            if (!ReadFile(path, bytes) || bytes.size() < 0x4000)
+            {
+                std::cerr << "symconv: cannot read 16 KB pages from " << path << "\n";
+                return 1;
+            }
+            files.emplace_back(first, std::move(bytes));
+        }
+        else
+            return Usage();
+    }
+    MemoryView memory;
+    for (const auto& [first, bytes] : files)
+        for (size_t at = 0; at + 0x4000 <= bytes.size(); at += 0x4000)
+            memory.pages.push_back({static_cast<uint16_t>(first + at / 0x4000), std::span<const uint8_t>(bytes.data() + at, 0x4000)});
+    if (to.empty() || memory.pages.empty())
+        return Usage();
+    const ISymbolCodec* target = SymbolCodecRegistry::Builtin().Find(to);
+    if (!target)
+    {
+        std::cerr << "symconv: unknown format " << to << " (symconv formats lists them)\n";
+        return 2;
+    }
+    const std::vector<LiveCandidate> found = FindLabelTables(memory);
+    for (size_t k = 0; k < found.size(); ++k)
+        std::cerr << k << "\t" << found[k].scanner << " " << found[k].version << "\tram" << found[k].page << "\t#" << std::hex << std::uppercase
+                  << found[k].offset << std::dec << "\t" << found[k].count << " entries\tscore " << found[k].score << "\n";
+    if (pick >= found.size())
+    {
+        std::cerr << "symconv: no label table" << (found.empty() ? "" : " with that number") << "\n";
+        return 1;
+    }
+    const LiveReadResult r = ReadLabelTable(memory, found[pick]);
+    Print(r.diagnostics);
+    if (!r.ok)
+        return 1;
+    SymbolFile file;
+    file.sets.push_back(r.set);
+    return Write(*target, file, options, found[pick].scanner, r.set.symbols.size(), output);
+}
+
 const char* FamilyName(Family f)
 {
     switch (f)
@@ -230,6 +310,8 @@ int main(int argc, char** argv)
         std::cout << (d.chosen ? "chosen: " + d.chosen->Info().id : d.reason) << "\n";
         return d.chosen ? 0 : 1;
     }
+    if (args[0] == "live")
+        return Live(args);
     std::string input;
     std::string to;
     std::string from;
