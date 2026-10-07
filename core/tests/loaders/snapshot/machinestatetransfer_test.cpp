@@ -875,11 +875,11 @@ TEST_F(MachineStateTransfer_Test, anAtm710InItsOwnModeMovesToAnAtm3)
     // The pager on, its own layout: window 0 = the 128K BASIC ROM pair (a standard-set page), windows 1 / 2 = RAM 9 / 10, window 3 = RAM 12
     const uint8_t sourceRoms = source.pCore->GetROM()->GetROMBanksLoaded();
     ASSERT_GE(sourceRoms, 4);
-    source.emulatorState.pFFF7[0] = 0x100u | static_cast<unsigned>(sourceRoms - 4 + 2);   // ROM, page LSB by the DOS signal
-    source.emulatorState.pFFF7[1] = 0x200u | 9;
-    source.emulatorState.pFFF7[2] = 0x200u | 10;
-    source.emulatorState.pFFF7[3] = 0x200u | 12;
-    source.emulatorState.aFF77 = 0x0100 | 0x0200;   // PEN (pager on), ~CPM
+    source.emulatorState.atm.pFFF7[0] = 0x100u | static_cast<unsigned>(sourceRoms - 4 + 2);   // ROM, page LSB by the DOS signal
+    source.emulatorState.atm.pFFF7[1] = 0x200u | 9;
+    source.emulatorState.atm.pFFF7[2] = 0x200u | 10;
+    source.emulatorState.atm.pFFF7[3] = 0x200u | 12;
+    source.emulatorState.atm.aFF77 = 0x0100 | 0x0200;   // PEN (pager on), ~CPM
     source.emulatorState.pFF77 = 0x00;
     source.pPortDecoder->UpdateModelMemoryBanks();
     SetCpu(source);
@@ -911,8 +911,8 @@ TEST_F(MachineStateTransfer_Test, anAtmPagerRomWithoutAnEquivalentIsRefused)
     const uint8_t roms = source.pCore->GetROM()->GetROMBanksLoaded();
     if (roms <= 4)
         GTEST_SKIP() << "this ROM image holds the standard set only";
-    source.emulatorState.pFFF7[0] = 0x300u | 0;   // ROM page 0 of a bigger image: not in the standard set
-    source.emulatorState.aFF77 = 0x0100 | 0x0200;
+    source.emulatorState.atm.pFFF7[0] = 0x300u | 0;   // ROM page 0 of a bigger image: not in the standard set
+    source.emulatorState.atm.aFF77 = 0x0100 | 0x0200;
     const auto check = MachineStateTransfer::Check(source, Ctx(b));
     EXPECT_FALSE(check.ok);
     EXPECT_NE(check.reason.find("ROM page"), std::string::npos) << check.reason;
