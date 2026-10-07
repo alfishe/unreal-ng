@@ -266,6 +266,17 @@ struct Writer
                 }
                 if (e.op == Op::Div && wordBits == 16 && unsignedWords)
                     return Joined(Op::Div, Masked16(e.args[0]), Masked16(e.args[1]));   // ALASM: unsigned 16-bit division
+                if ((e.op == Op::Div || e.op == Op::Mod) && wordBits == 16 && !unsignedWords)
+                {
+                    // GENS: 16-bit two's complement words, signed division (#8000/2 = #C000, 60000/2 = -2768)
+                    auto widen = [](const Expr& a) {
+                        if (a.kind == Expr::Kind::Number && a.value >= 0 && a.value <= 0x7FFF)
+                            return a;
+                        return Grouped(Expr::Binary(Op::Sub, Grouped(Expr::Binary(Op::Xor, Masked16(a), Expr::Number(0x8000, ir::NumberSpelling::Hex, 4))),
+                                                    Expr::Number(0x8000, ir::NumberSpelling::Hex, 4)));
+                    };
+                    return Joined(e.op, widen(e.args[0]), widen(e.args[1]));
+                }
                 const int p = Priority(e.op);
                 std::string left = Print(e.args[0]);
                 std::string right = Print(e.args[1]);

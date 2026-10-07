@@ -54,6 +54,7 @@ add_library(unreal-asm STATIC
     src/dialects/tasm/tasmfrontend.cpp
     src/dialects/masm/masmfrontend.cpp
     src/dialects/alasm/alasmfrontend.cpp
+    src/dialects/gens/gensfrontend.cpp
     src/dialects/sjasmplus/sjasmplusbackend.cpp
     src/dialects/common/classicbackend.cpp
     src/dialects/pasmo/pasmobackend.cpp
@@ -135,6 +136,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/tasmfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/masmfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/zeusfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/gensfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbol_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbolindex_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbolstore_test.cpp
