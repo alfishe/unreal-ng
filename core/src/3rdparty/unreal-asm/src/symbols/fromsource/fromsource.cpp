@@ -130,6 +130,8 @@ SourceSymbolsResult SymbolsFromProject(const std::vector<ProjectFile>& files, si
             {
                 if (n.inMacro || n.written.empty() || n.written.find_first_not_of("0123456789") == std::string::npos)
                     continue;   // macro body labels have one value per expansion; temporary labels none
+                if (n.source.rfind("__UNREALASM_", 0) == 0)
+                    continue;   // a value a frontend made for the conversion
                 const auto found = byName.find(n.written);
                 if (found == byName.end())
                 {
