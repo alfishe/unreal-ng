@@ -4,6 +4,7 @@
 #include <cctype>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <limits>  // Required for UINT32_MAX
 #include <sstream>
 
@@ -12,6 +13,7 @@
 #include "common/filehelper.h"
 #include "emulator/emulatorcontext.h"
 #include "stdafx.h"
+#include "unrealasm/symbols/codec.h"
 
 // @file labelmanager.cpp
 // @brief Implementation of the LabelManager class for managing debug symbols and labels
@@ -319,44 +321,28 @@ bool LabelManager::UpdateLabel(const Label& updatedLabel)
 bool LabelManager::LoadLabels(const std::string& path)
 {
     if (path.empty())
-    {
         return false;
-    }
-
-    std::ifstream file(FileHelper::ToFsPath(path));
-    if (!file.is_open())
-    {
-        LOGERROR("Failed to open label file: %s", path.c_str());
+    std::vector<uint8_t> bytes;
+    if (!ReadLabelFile(path, bytes))
         return false;
-    }
-
-    FileFormat format = DetectFileFormat(path);
-    bool result = false;
-
-    switch (format)
+    // The extension decides as it always did (.map, .sym, .vice, .s / .asm, .z88); other files by their content
+    std::string extension = FileHelper::ToFsPath(path).extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+    if (!extension.empty() && extension[0] == '.')
+        extension.erase(0, 1);
+    const auto& registry = unrealasm::symbols::SymbolCodecRegistry::Builtin();
+    const unrealasm::symbols::ISymbolCodec* codec = registry.Find(CodecForExtension(extension));
+    if (!codec)
     {
-        case FileFormat::MAP:
-            result = ParseMapFile(file);
-            break;
-        case FileFormat::SYM:
-            result = ParseSymFile(file);
-            break;
-        case FileFormat::VICE:
-            result = ParseViceSymFile(file);
-            break;
-        case FileFormat::SJASM:
-            result = ParseSJASMSymFile(file);
-            break;
-        case FileFormat::Z88DK:
-            result = ParseZ88DKSymFile(file);
-            break;
-        default:
-            LOGERROR("Unsupported label file format: %s", path.c_str());
-            break;
+        const auto detected = registry.Detect(bytes, extension);
+        codec = detected.chosen;
+        if (!codec)
+        {
+            LOGERROR("Unsupported label file format: %s (%s)", path.c_str(), detected.reason.c_str());
+            return false;
+        }
     }
-
-    file.close();
-    return result;
+    return ImportWith(*codec, bytes, path);
 }
 
 // @brief Load labels from a map file
@@ -365,13 +351,8 @@ bool LabelManager::LoadLabels(const std::string& path)
 // @return false if the file could not be opened or parsed
 bool LabelManager::LoadMapFile(const std::string& path)
 {
-    std::ifstream file(FileHelper::ToFsPath(path));
-    if (!file.is_open())
-    {
-        return false;
-    }
-
-    return ParseMapFile(file);
+    std::vector<uint8_t> bytes;
+    return ReadLabelFile(path, bytes) && ImportWith(*unrealasm::symbols::SymbolCodecRegistry::Builtin().Find("unreal-map"), bytes, path);
 }
 
 // @brief Load labels from a symbol file
@@ -380,13 +361,8 @@ bool LabelManager::LoadMapFile(const std::string& path)
 // @return false if the file could not be opened or parsed
 bool LabelManager::LoadSymFile(const std::string& path)
 {
-    std::ifstream file(FileHelper::ToFsPath(path));
-    if (!file.is_open())
-    {
-        return false;
-    }
-
-    return ParseSymFile(file);
+    std::vector<uint8_t> bytes;
+    return ReadLabelFile(path, bytes) && ImportWith(*unrealasm::symbols::SymbolCodecRegistry::Builtin().Find("simple-sym"), bytes, path);
 }
 
 // @brief Save all labels to a file in the specified format
@@ -396,591 +372,128 @@ bool LabelManager::LoadSymFile(const std::string& path)
 // @return false if the file could not be written
 bool LabelManager::SaveLabels(const std::string& path, FileFormat format) const
 {
-    std::ofstream file(FileHelper::ToFsPath(path));
-    if (!file.is_open())
+    const char* id = "simple-sym";
+    switch (format)
     {
+        case FileFormat::MAP: id = "unreal-map"; break;
+        case FileFormat::VICE: id = "vice"; break;
+        case FileFormat::SJASM: id = "sjasm-equ"; break;
+        case FileFormat::Z88DK: id = "z88dk-defc"; break;
+        case FileFormat::SYM:
+        case FileFormat::UNKNOWN: break;
+    }
+    const auto* codec = unrealasm::symbols::SymbolCodecRegistry::Builtin().Find(id);
+    unrealasm::symbols::SymbolFile file;
+    file.sets.emplace_back();
+    for (const auto& [address, label] : _labelsByZ80Address)
+        file.sets[0].symbols.push_back(ToSymbol(*label));
+    const auto encoded = codec->Encode(file, {});
+    for (const auto& d : encoded.diagnostics)
+        LOGWARNING("SaveLabels %s: %s", path.c_str(), d.message.c_str());
+    std::ofstream out(FileHelper::ToFsPath(path), std::ios::binary);
+    if (!out.is_open())
         return false;
-    }
-
-    // Common header for all formats
-    file << "; Labels exported by UnrealNG Emulator" << std::endl;
-    file << "; Format: " << (format == FileFormat::SYM ? "Simple Symbol" : "Map") << std::endl << std::endl;
-
-    // Export all labels in a format that ParseSymFile can read
-    for (const auto& pair : _labelsByZ80Address)
-    {
-        const auto& label = pair.second;
-
-        // Format: ADDR NAME [TYPE] [; COMMENT]
-        // Example: 1234 main code ; Entry point
-        
-        // Write address (4 hex digits)
-        file << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << label->address << " ";
-        
-        // Write name
-        file << label->name;
-        
-        // Write type if not empty
-        if (!label->type.empty())
-        {
-            file << " (" << label->type << ")";
-        }
-        
-        // Write comment if present
-        if (!label->comment.empty())
-        {
-            file << " ; " << label->comment;
-        }
-        
-        file << std::endl;
-    }
-
-    file.close();
-    return true;
+    out.write(reinterpret_cast<const char*>(encoded.bytes.data()), static_cast<std::streamsize>(encoded.bytes.size()));
+    return out.good();
 }
 
 /// endregion </File operations>
 
-/// region <File format detection and parsing>
+/// region <Symbol codecs>
 
-// @brief Detect the format of a label file based on its extension and content
-// @param path Path to the file to analyze
-// @return FileFormat Detected file format or FileFormat::UNKNOWN if format cannot be determined
-LabelManager::FileFormat LabelManager::DetectFileFormat(const std::string& path) const
+// @brief The codec LabelManager has always picked for a file extension ("" when the extension says nothing)
+std::string LabelManager::CodecForExtension(const std::string& extension)
 {
-    std::string ext = FileHelper::ToFsPath(path).extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-
-    if (ext == ".map")
-        return FileFormat::MAP;
-    else if (ext == ".sym")
-        return FileFormat::SYM;
-    else if (ext == ".vice")
-        return FileFormat::VICE;
-    else if (ext == ".s" || ext == ".asm")
-        return FileFormat::SJASM;
-    else if (ext == ".z88")
-        return FileFormat::Z88DK;
-
-    // Try to detect by content
-    std::ifstream file(FileHelper::ToFsPath(path));
-    if (file.is_open())
-    {
-        std::string line;
-        if (std::getline(file, line))
-        {
-            // Check for common map file patterns
-            if (line.find("Linker script and memory map") != std::string::npos ||
-                line.find("Memory map") != std::string::npos)
-            {
-                return FileFormat::MAP;
-            }
-            // Check for VICE symbol format
-            else if (line.find("al") == 0 || line.find("add_label") == 0)
-            {
-                return FileFormat::VICE;
-            }
-        }
-        file.close();
-    }
-
-    return FileFormat::UNKNOWN;
+    if (extension == "map")
+        return "unreal-map";
+    if (extension == "sym")
+        return "simple-sym";
+    if (extension == "vice")
+        return "vice";
+    if (extension == "s" || extension == "asm")
+        return "sjasm-equ";
+    if (extension == "z88")
+        return "z88dk-defc";
+    return {};
 }
 
-// @brief Parse a map file from an input stream
-// @param input Input stream containing the map file data
-// @return true if the file was parsed successfully
-// @return false if a parse error occurred
-// @note Map file format: ADDR TYPE NAME [; COMMENT]
-// Example: 1234 code main ; Entry point
-bool LabelManager::ParseMapFile(std::istream& input)
+bool LabelManager::ReadLabelFile(const std::string& path, std::vector<uint8_t>& bytes) const
 {
-    std::string line;
-    while (std::getline(input, line))
+    std::ifstream file(FileHelper::ToFsPath(path), std::ios::binary);
+    if (!file.is_open())
     {
-        line = TrimWhitespace(line);
-        if (line.empty() || line[0] == ';' || line[0] == '#')
-            continue;
-
-        // Create a string stream to parse the line
-        std::istringstream iss(line);
-
-        // Variables to hold parsed components
-        std::string addressStr;     // First column: memory address in hex
-        std::string name;           // Second column: label name
-        std::string typeStr;        // Third column: type in parentheses (e.g., (CODE))
-        std::string type = "code";  // Default type is "code"
-
-        // Read address, name, and type
-        if (iss >> addressStr >> name)
-        {
-            // Try to read type in format (TYPE)
-            std::string token;
-            if (iss >> token)
-            {
-                if (token.size() >= 3 && token[0] == '(' && token[token.size() - 1] == ')')
-                {
-                    // Extract type from (TYPE) and convert to lowercase
-                    type = token.substr(1, token.size() - 2);
-                    std::transform(type.begin(), type.end(), type.begin(),
-                                   [](unsigned char c) { return std::tolower(c); });
-                }
-            }
-
-            // Extract comment if present (after semicolon)
-            std::string comment;
-            size_t commentPos = line.find(';');
-            if (commentPos != std::string::npos)
-            {
-                comment = line.substr(commentPos + 1);
-                comment = TrimWhitespace(comment);
-            }
-
-            uint16_t bank = UINT16_MAX;
-            uint16_t bankOffset = UINT16_MAX;
-            uint16_t address = 0xFFFF;
-
-            // Check if the address contains a bank specification (e.g., "RAM2:4000" or "ROM1:0000")
-            size_t colonPos = addressStr.find(':');
-            if (colonPos != std::string::npos)
-            {
-                // Extract bank and address parts
-                std::string bankStr = addressStr.substr(0, colonPos);
-                std::string addrStr = addressStr.substr(colonPos + 1);
-
-                // Convert bank to uppercase for case-insensitive comparison
-                std::transform(bankStr.begin(), bankStr.end(), bankStr.begin(),
-                               [](unsigned char c) { return std::toupper(c); });
-
-                // Determine if this is a RAM or ROM bank
-                bool isRamBank = (bankStr.find("RAM") == 0);
-                bool isRomBank = (bankStr.find("ROM") == 0);
-
-                // Extract bank number from bank string (e.g., "RAM2" -> 2, "ROM1" -> 1)
-                size_t firstDigit = bankStr.find_first_of("0123456789");
-                if (firstDigit != std::string::npos)
-                {
-                    std::string numberStr = bankStr.substr(firstDigit);
-                    try
-                    {
-                        uint16_t bankNumber = (uint16_t)std::stoi(numberStr);
-
-                        // Validate bank number based on bank type
-                        if (isRamBank)
-                        {
-                            // RAM bank: 0-255 (MAX_RAM_PAGES - 1)
-                            bank = (bankNumber < MAX_RAM_PAGES) ? bankNumber : 0;
-                        }
-                        else if (isRomBank)
-                        {
-                            // ROM bank: 0-127 (MAX_ROM_PAGES - 1)
-                            bank = (bankNumber < MAX_ROM_PAGES) ? bankNumber : 0;
-                        }
-                        else
-                        {
-                            // Default to bank 0 for unknown bank types
-                            bank = 0;
-                        }
-                    }
-                    catch (...)
-                    {
-                        bank = 0;
-                    }
-                }
-                else
-                {
-                    bank = 0;
-                }
-
-                // Parse the address part and calculate bank offset
-                uint16_t fullAddress = ParseHex16(addrStr);
-                if (fullAddress != 0xFFFF)
-                {
-                    // Calculate offset within the 16KB bank (PAGE_SIZE - 1)
-                    bankOffset = fullAddress & (PAGE_SIZE - 1);
-                    address = fullAddress;
-                }
-            }
-            else
-            {
-                // No bank specified, use the address directly in Z80 space
-                address = ParseHex16(addressStr);
-            }
-
-            if (address != 0xFFFF)
-            {  // 0xFFFF indicates parse error
-                // If bank is UINT16_MAX, it means no bank was specified (direct Z80 address)
-                // Otherwise, use the bank and calculated bank offset
-                // Addresses below 0x4000 are assumed to be ROM, others are RAM
-                // The bank type will be set in AddLabel based on the address
-                AddLabel(name, address, bank, bankOffset, type, "", comment, true);
-            }
-        }
+        LOGERROR("Failed to open label file: %s", path.c_str());
+        return false;
     }
-
+    bytes.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
     return true;
 }
 
-// @brief Parse a simple symbol file from an input stream
-// @param input Input stream containing the symbol file data
-// @return true if the file was parsed successfully
-// @return false if a parse error occurred
-// @note Simple symbol format: ADDR NAME [TYPE] [; COMMENT]
-// Example: 1234 main code ; Entry point
-bool LabelManager::ParseSymFile(std::istream& input)
+// @brief Decodes a label file with a codec and adds its symbols in file order (a later name or address wins, as before)
+bool LabelManager::ImportWith(const unrealasm::symbols::ISymbolCodec& codec, const std::vector<uint8_t>& bytes, const std::string& path)
 {
-    const std::string DEFAULT_LABEL_TYPE = "code";
-
-    std::string line;
-    while (std::getline(input, line))
+    const auto decoded = codec.Decode(bytes);
+    for (const auto& d : decoded.diagnostics)
+        LOGDEBUG("%s line %u: %s", path.c_str(), d.line, d.message.c_str());
+    if (!decoded.ok)
     {
-        // Skip empty lines and comments
-        line = TrimWhitespace(line);
-        if (line.empty() || line[0] == ';' || line[0] == '#')
-        {
-            continue;
-        }
-
-        // Parse the line into components
-        std::istringstream lineStream(line);
-        std::string addressStr, name, type;
-
-        // Read the address (required)
-        if (!(lineStream >> addressStr))
-        {
-            continue;  // Skip malformed lines
-        }
-
-        // Read the name (required)
-        if (!(lineStream >> name))
-        {
-            continue;  // Skip lines without a name
-        }
-
-        // Read type if present in format (TYPE)
-        type = DEFAULT_LABEL_TYPE;
-        std::string token;
-        if (lineStream >> token)
-        {
-            // Check if the token is in (TYPE) format
-            if (token.size() >= 3 && token[0] == '(' && token[token.size() - 1] == ')')
-            {
-                // Extract type from (TYPE) and convert to lowercase
-                type = token.substr(1, token.size() - 2);
-                std::transform(type.begin(), type.end(), type.begin(), [](unsigned char c) { return std::tolower(c); });
-            }
-        }
-
-        // Extract comment if present (after semicolon)
-        std::string comment;
-        size_t commentPos = line.find(';');
-        if (commentPos != std::string::npos)
-        {
-            comment = line.substr(commentPos + 1);
-            comment = TrimWhitespace(comment);
-        }
-
-        // Parse address and add the label if valid
-        uint16_t address = ParseHex16(addressStr);
-        if (address != 0xFFFF)
-        {
-            // Use UINT8_MAX for bank and UINT16_MAX for bankOffset to indicate they're not specified
-            AddLabel(name, address, UINT8_MAX, UINT16_MAX, type, "", comment);
-        }
+        LOGERROR("Failed to read label file %s as %s", path.c_str(), codec.Info().id.c_str());
+        return false;
     }
-
+    for (const auto& set : decoded.file.sets)
+        for (const auto& symbol : set.symbols)
+            AddSymbol(symbol);
     return true;
 }
 
-// @brief Parse a VICE emulator symbol file
-// @param input Input stream containing the VICE symbol file data
-// @return true if the file was parsed successfully
-// @return false if a parse error occurred
-// @note VICE symbol file format: .al ADDR "NAME"
-// Example: .al 0x1234 "main"
-bool LabelManager::ParseViceSymFile(std::istream& input)
+// @brief A symbol as a label: the CPU address (a page symbol at its window), the page as bank + bank offset, the kind
+// (or the file's own type word) as the type, "code" when the file gave none
+bool LabelManager::AddSymbol(const unrealasm::symbols::Symbol& symbol)
 {
-    std::string line;
-    while (std::getline(input, line))
+    using unrealasm::symbols::SpaceKind;
+    const auto address = unrealasm::symbols::CpuAddress(symbol);
+    if (!address)
+        return false;
+    uint16_t bank = UINT16_MAX;
+    uint16_t bankOffset = UINT16_MAX;
+    const SpaceKind kind = symbol.location.space.kind;
+    if (kind == SpaceKind::Rom || kind == SpaceKind::Ram || kind == SpaceKind::Cache)
     {
-        line = TrimWhitespace(line);
-        if (line.empty() || line[0] == '#')
-            continue;
-
-        // VICE format: al C:address name (TYPE)
-        if (line.find("al ") == 0)
-        {
-            std::vector<std::string> parts = SplitString(line, ' ');
-            if (parts.size() >= 3)
-            {
-                std::string addrStr = parts[1].substr(2);  // Skip "C:" prefix
-                std::string name = parts[2];
-                std::string type = "code";  // Default type
-
-                // Check for type in format (TYPE)
-                if (parts.size() >= 4)
-                {
-                    std::string token = parts[3];
-                    if (token.size() >= 3 && token[0] == '(' && token[token.size() - 1] == ')')
-                    {
-                        // Extract type from (TYPE) and convert to lowercase
-                        type = token.substr(1, token.size() - 2);
-                        std::transform(type.begin(), type.end(), type.begin(),
-                                       [](unsigned char c) { return std::tolower(c); });
-                    }
-                }
-
-                uint16_t address = ParseHex16(addrStr);
-
-                if (address != 0xFFFF)
-                {
-                    // Use UINT8_MAX for bank and UINT16_MAX for bankOffset to indicate they're not specified
-                    AddLabel(name, address, UINT8_MAX, UINT16_MAX, type, "", "", true);
-                }
-            }
-        }
+        bank = symbol.location.space.page;
+        bankOffset = static_cast<uint16_t>(symbol.location.offset & (PAGE_SIZE - 1));
     }
-
-    return true;
+    std::string type = symbol.kind != unrealasm::symbols::SymbolKind::Unknown ? std::string(unrealasm::symbols::KindName(symbol.kind))
+                                                                                 : symbol.provenance.type;
+    if (type.empty())
+        type = "code";
+    return AddLabel(symbol.name, *address, bank, bankOffset, type, symbol.module, symbol.comment, symbol.enabled);
 }
 
-// @brief Parse an SJASM symbol file
-// @param input Input stream containing the SJASM symbol file data
-// @return true if the file was parsed successfully
-// @return false if a parse error occurred
-// @note SJASM symbol file format: NAME = VALUE ; TYPE
-// Example: main = 0x1234 ; code
-bool LabelManager::ParseSJASMSymFile(std::istream& input)
+// @brief A label as a symbol: a label with a bank is a page symbol (ROM / RAM by its bank type), else the CPU view
+unrealasm::symbols::Symbol LabelManager::ToSymbol(const Label& label)
 {
-    std::string line;
-    while (std::getline(input, line))
+    using namespace unrealasm::symbols;
+    Symbol s;
+    s.name = label.name;
+    if (label.bank != UINT16_MAX && label.bank != UINT8_MAX)
     {
-        line = TrimWhitespace(line);
-        if (line.empty() || line[0] == ';' || line[0] == '#')
-            continue;
-
-        // SJASM format: LABEL EQU $ADDR ; (TYPE)
-        size_t equPos = line.find(" EQU ");
-        if (equPos != std::string::npos)
-        {
-            std::string name = line.substr(0, equPos);
-            std::string rest = line.substr(equPos + 5);
-
-            // Extract address and type
-            std::string addrStr = rest;
-            std::string type = "code";  // Default type
-
-            // Check for comment with type
-            size_t commentPos = rest.find(';');
-            if (commentPos != std::string::npos)
-            {
-                addrStr = TrimWhitespace(rest.substr(0, commentPos));
-                std::string comment = TrimWhitespace(rest.substr(commentPos + 1));
-
-                // Check if comment contains type in (TYPE) format
-                if (comment.size() >= 3 && comment[0] == '(' && comment[comment.size() - 1] == ')')
-                {
-                    // Extract type from (TYPE) and convert to lowercase
-                    type = comment.substr(1, comment.size() - 2);
-                    std::transform(type.begin(), type.end(), type.begin(),
-                                   [](unsigned char c) { return std::tolower(c); });
-                }
-            }
-
-            // Remove $ prefix if present
-            if (!addrStr.empty() && addrStr[0] == '$')
-                addrStr = addrStr.substr(1);
-
-            uint16_t address = ParseHex16(addrStr);
-            if (address != 0xFFFF)
-            {
-                // Use UINT8_MAX for bank and UINT16_MAX for bankOffset to indicate they're not specified
-                AddLabel(name, address, UINT8_MAX, UINT16_MAX, type, "", "", true);
-            }
-        }
+        s.location.space.kind = label.isROM() ? SpaceKind::Rom : SpaceKind::Ram;
+        s.location.space.page = label.bank;
+        s.location.offset = label.bankOffset != UINT16_MAX ? (label.bankOffset & (PAGE_SIZE - 1)) : (label.address & (PAGE_SIZE - 1));
+        s.window = label.address >> 14;
     }
-
-    return true;
+    else
+        s.location.offset = label.address;
+    if (!ParseKind(label.type, s.kind) || s.kind == SymbolKind::Unknown)
+    {
+        s.kind = SymbolKind::Unknown;
+        s.provenance.type = label.type;
+    }
+    s.module = label.module;
+    s.comment = label.comment;
+    s.enabled = label.active;
+    return s;
 }
 
-// @brief Parse a Z88DK symbol file
-// @param input Input stream containing the Z88DK symbol file data
-// @return true if the file was parsed successfully
-// @return false if a parse error occurred
-// @note Z88DK symbol file format: DEFC NAME = VALUE ; TYPE
-// Example: DEFC main = 0x1234 ; code
-bool LabelManager::ParseZ88DKSymFile(std::istream& input)
-{
-    std::string line;
-    while (std::getline(input, line))
-    {
-        line = TrimWhitespace(line);
-        if (line.empty() || line[0] == ';' || line[0] == '#')
-            continue;
+/// endregion </Symbol codecs>
 
-        // Z88DK format: DEFC name = $ADDR
-        if (line.find("DEFC ") == 0)
-        {
-            size_t nameStart = 5;  // Length of "DEFC "
-            size_t eqPos = line.find('=');
-
-            if (eqPos != std::string::npos)
-            {
-                std::string name = line.substr(nameStart, eqPos - nameStart);
-                name = TrimWhitespace(name);
-
-                std::string addrStr = line.substr(eqPos + 1);
-                addrStr = TrimWhitespace(addrStr);
-
-                // Extract type from comment if present
-                std::string type = "code";  // Default type
-                size_t commentPos = addrStr.find(';');
-                if (commentPos != std::string::npos)
-                {
-                    // Extract the address part before the comment
-                    std::string addrPart = TrimWhitespace(addrStr.substr(0, commentPos));
-                    std::string comment = TrimWhitespace(addrStr.substr(commentPos + 1));
-
-                    // Check if comment contains type in (TYPE) format
-                    if (comment.size() >= 3 && comment[0] == '(' && comment[comment.size() - 1] == ')')
-                    {
-                        // Extract type from (TYPE) and convert to lowercase
-                        type = comment.substr(1, comment.size() - 2);
-                        std::transform(type.begin(), type.end(), type.begin(),
-                                       [](unsigned char c) { return std::tolower(c); });
-                    }
-
-                    addrStr = addrPart;
-                }
-
-                // Remove $ prefix if present
-                if (!addrStr.empty() && addrStr[0] == '$')
-                    addrStr = addrStr.substr(1);
-
-                uint16_t address = ParseHex16(addrStr);
-                if (address != 0xFFFF)
-                {
-                    // Use UINT8_MAX for bank and UINT16_MAX for bankOffset to indicate they're not specified
-                    AddLabel(name, address, UINT8_MAX, UINT16_MAX, type, "", "", true);
-                }
-            }
-        }
-    }
-
-    return true;
-}
-
-/// endregion </File format detection and parsing>
-
-/// region <Helper methods>
-
-// @brief Remove leading and trailing whitespace from a string
-// @param str Input string to trim
-// @return std::string Trimmed string
-std::string LabelManager::TrimWhitespace(const std::string& str)
-{
-    size_t first = str.find_first_not_of(" \t");
-    if (std::string::npos == first)
-    {
-        return "";
-    }
-    size_t last = str.find_last_not_of(" \t");
-    return str.substr(first, (last - first + 1));
-}
-
-// @brief Split a string into tokens using the specified delimiter
-// @param str String to split
-// @param delimiter Character to use as delimiter
-// @return std::vector<std::string> Vector of tokens
-std::vector<std::string> LabelManager::SplitString(const std::string& str, char delimiter)
-{
-    std::vector<std::string> tokens;
-    std::string token;
-    std::istringstream tokenStream(str);
-
-    while (std::getline(tokenStream, token, delimiter))
-    {
-        token = TrimWhitespace(token);
-        if (!token.empty())
-        {
-            tokens.push_back(token);
-        }
-    }
-
-    return tokens;
-}
-
-// @brief Check if a character is a valid hexadecimal digit
-// @param c Character to check
-// @return true if the character is 0-9, a-f, or A-F
-// @return false otherwise
-bool LabelManager::IsHexDigit(char c)
-{
-    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-}
-
-// @brief Parse a 16-bit hexadecimal string to an integer
-// @param str String containing hexadecimal number (with or without 0x prefix)
-// @return uint16_t Parsed value, or 0xFFFF if parsing fails
-uint16_t LabelManager::ParseHex16(const std::string& str)
-{
-    if (str.empty())
-        return 0xFFFF;
-
-    std::string s = str;
-    // Remove 0x or $ prefix if present
-    if (s.size() > 1 && (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')))
-        s = s.substr(2);
-    else if (s[0] == '$')
-        s = s.substr(1);
-
-    // Check if all characters are valid hex digits
-    for (char c : s)
-    {
-        if (!IsHexDigit(c))
-            return 0xFFFF;
-    }
-
-    try
-    {
-        return static_cast<uint16_t>(std::stoul(s, nullptr, 16));
-    }
-    catch (...)
-    {
-        return 0xFFFF;
-    }
-}
-
-// @brief Parse a 32-bit hexadecimal string to an integer
-// @param str String containing hexadecimal number (with or without 0x prefix)
-// @return uint32_t Parsed value, or 0xFFFFFFFF if parsing fails
-uint32_t LabelManager::ParseHex32(const std::string& str)
-{
-    if (str.empty())
-        return 0xFFFFFFFF;
-
-    std::string s = str;
-    // Remove 0x or $ prefix if present
-    if (s.size() > 1 && (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')))
-        s = s.substr(2);
-    else if (s[0] == '$')
-        s = s.substr(1);
-
-    // Check if all characters are valid hex digits
-    for (char c : s)
-    {
-        if (!IsHexDigit(c))
-            return 0xFFFFFFFF;
-    }
-
-    try
-    {
-        return static_cast<uint32_t>(std::stoul(s, nullptr, 16));
-    }
-    catch (...)
-    {
-        return 0xFFFFFFFF;
-    }
-}
-
-/// endregion </Helper methods>

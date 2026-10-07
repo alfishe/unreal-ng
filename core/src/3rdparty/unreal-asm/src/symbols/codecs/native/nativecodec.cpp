@@ -155,6 +155,17 @@ public:
         if (ok && !kind.empty() && !ParseKind(kind, s.kind))
             Warning(where, "unknown kind \"" + kind + "\" (read as unknown)");
         ok = ok && Unsigned(v, "size", s.size, where);
+        uint32_t window = 0xFFFFFFFF;
+        ok = ok && Unsigned(v, "window", window, where);
+        if (ok && window != 0xFFFFFFFF)
+        {
+            if (window > 3)
+            {
+                Error(where, "\"window\" is not 0..3");
+                return false;
+            }
+            s.window = static_cast<int>(window);
+        }
         if (const Value* scope = v.Get("scope"); ok && scope)
         {
             ok = scope->type == Value::Type::Object && String(*scope, "parent", s.parent, where);
@@ -188,11 +199,12 @@ public:
             if (provenance->type != Value::Type::Object)
                 Error(where, "\"provenance\" is not an object");
             ok = provenance->type == Value::Type::Object && String(*provenance, "importer", s.provenance.importer, where) &&
-                 String(*provenance, "raw", s.provenance.raw, where) && Unsigned(*provenance, "line", s.provenance.line, where);
+                 String(*provenance, "raw", s.provenance.raw, where) && Unsigned(*provenance, "line", s.provenance.line, where) &&
+                 String(*provenance, "type", s.provenance.type, where);
         }
         if (ok)
-            s.extra = Extra(v, {"name", "space", "offset", "kind", "size", "scope", "module", "source", "comment", "aliases",
-                                "enabled", "provenance"});
+            s.extra = Extra(v, {"name", "space", "offset", "kind", "size", "window", "scope", "module", "source", "comment",
+                                "aliases", "enabled", "provenance"});
         return ok;
     }
 
@@ -266,6 +278,8 @@ Value SymbolValue(const Symbol& s)
         Add(v, "kind", Str(std::string(KindName(s.kind))));
     if (s.size)
         Add(v, "size", Int(s.size));
+    if (s.window >= 0)
+        Add(v, "window", Int(s.window));
     if (!s.parent.empty())
     {
         Value scope = Object();
@@ -297,7 +311,7 @@ Value SymbolValue(const Symbol& s)
     }
     if (!s.enabled)
         Add(v, "enabled", Bool(false));
-    if (!s.provenance.importer.empty() || !s.provenance.raw.empty() || s.provenance.line)
+    if (!s.provenance.importer.empty() || !s.provenance.raw.empty() || s.provenance.line || !s.provenance.type.empty())
     {
         Value p = Object();
         if (!s.provenance.importer.empty())
@@ -306,6 +320,8 @@ Value SymbolValue(const Symbol& s)
             Add(p, "raw", Str(s.provenance.raw));
         if (s.provenance.line)
             Add(p, "line", Int(s.provenance.line));
+        if (!s.provenance.type.empty())
+            Add(p, "type", Str(s.provenance.type));
         Add(v, "provenance", std::move(p));
     }
     AddExtra(v, s.extra);

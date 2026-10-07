@@ -41,6 +41,7 @@ bool FillEmpty(Symbol& into, const Symbol& from)
     };
     fill(into.kind, from.kind, SymbolKind::Unknown);
     fill(into.size, from.size, 0u);
+    fill(into.window, from.window, -1);
     fill(into.parent, from.parent, std::string());
     fill(into.module, from.module, std::string());
     fill(into.source.file, from.source.file, std::string());

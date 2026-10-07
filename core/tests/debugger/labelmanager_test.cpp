@@ -1,7 +1,11 @@
 #include "labelmanager_test.h"
 
+#include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <sstream>
 
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
@@ -484,4 +488,55 @@ TEST_F(LabelManager_test, GetLabelsFilterByBank)
     results = _labelManager->GetLabels(filter);
     EXPECT_EQ(results.size(), 1);
     EXPECT_EQ(results[0]->name, "bank5");
+}
+
+// ============================================================================
+// Golden files: what LoadLabels makes of every shipped symbol file and of one crafted file per format
+// (testdata/debugger/labels/*.golden.txt; UNREAL_UPDATE_GOLDEN=1 rewrites them)
+// ============================================================================
+
+namespace
+{
+std::string DumpLabels(const LabelManager& manager)
+{
+    auto labels = manager.GetAllLabels();
+    std::sort(labels.begin(), labels.end(), [](const auto& a, const auto& b) {
+        return a->name != b->name ? a->name < b->name : a->address < b->address;
+    });
+    std::ostringstream out;
+    for (const auto& l : labels)
+        out << l->name << '|' << std::hex << std::uppercase << l->address << '|' << std::dec << l->bank << '|' << l->bankOffset << '|'
+            << (l->isROM() ? "ROM" : "RAM") << '|' << l->type << '|' << l->module << '|' << l->comment << '|' << l->active << '\n';
+    return out.str();
+}
+}  // namespace
+
+TEST_F(LabelManager_test, LoadLabelsMatchesGolden)
+{
+    const std::filesystem::path root = TestPathHelper::FindProjectRoot();
+    const std::filesystem::path labels = root / "testdata" / "debugger" / "labels";
+    std::vector<std::pair<std::filesystem::path, std::string>> inputs;   // file, golden name
+    for (const char* name : {"48k_rom.map", "48k_variables.map", "128k_rom.map", "128k_rom_relabeled.map", "128k_variables.map"})
+        inputs.push_back({root / "data" / "symbols" / name, name});
+    for (const auto& entry : std::filesystem::directory_iterator(root / "data" / "symbols" / "sprinter"))
+        if (entry.path().extension() == ".map")
+            inputs.push_back({entry.path(), "sprinter-" + entry.path().filename().string()});
+    for (const char* name : {"sample-banks.map", "sample.sym", "sample.vice", "sample.s", "sample.z88"})
+        inputs.push_back({labels / name, name});
+    const bool update = std::getenv("UNREAL_UPDATE_GOLDEN") != nullptr;
+    for (const auto& [input, name] : inputs)
+    {
+        _labelManager->ClearAllLabels();
+        EXPECT_TRUE(_labelManager->LoadLabels(input.string())) << input;
+        const std::string dump = DumpLabels(*_labelManager);
+        const std::filesystem::path golden = labels / (name + ".golden.txt");
+        if (update)
+        {
+            std::ofstream(golden, std::ios::binary) << dump;
+            continue;
+        }
+        std::ifstream in(golden, std::ios::binary);
+        const std::string expected((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        EXPECT_EQ(dump, expected) << name;
+    }
 }

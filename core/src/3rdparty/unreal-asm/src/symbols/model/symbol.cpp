@@ -138,4 +138,32 @@ bool ParseKind(std::string_view text, SymbolKind& out)
     }
     return false;
 }
+std::optional<uint16_t> CpuAddress(const Symbol& s)
+{
+    const AddressSpace& space = s.location.space;
+    if (space.cpu != "main")
+        return std::nullopt;
+    switch (space.kind)
+    {
+        case SpaceKind::CpuView:
+        case SpaceKind::Constant:
+            if (s.location.offset > 0xFFFF)
+                return std::nullopt;
+            return static_cast<uint16_t>(s.location.offset);
+        case SpaceKind::Rom:
+        case SpaceKind::Ram:
+        case SpaceKind::Cache:
+        {
+            int window = s.window;
+            if (window < 0)
+                window = space.kind == SpaceKind::Rom ? 0 : space.kind == SpaceKind::Ram && space.page == 5 ? 1
+                                                        : space.kind == SpaceKind::Ram && space.page == 2 ? 2 : 3;
+            return static_cast<uint16_t>(window * 0x4000 + (s.location.offset & 0x3FFF));
+        }
+        case SpaceKind::Device:
+        case SpaceKind::Port: return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 }  // namespace unrealasm::symbols

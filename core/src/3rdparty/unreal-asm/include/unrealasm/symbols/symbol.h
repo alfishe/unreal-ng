@@ -5,6 +5,7 @@
 // + offset), what it is, and where it came from. Symbols live in sets; a file holds sets.
 
 #include <compare>
+#include <optional>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -80,6 +81,7 @@ struct Provenance
     std::string importer;       ///< the codec that read it ("sjasmplus-sym", "native", ...)
     std::string raw;            ///< the original line or entry
     uint32_t line = 0;          ///< the line of the imported file (diagnostics, conflicts)
+    std::string type;           ///< the source's own word for the kind when it is none of the kinds ("bss", "func")
 
     bool operator==(const Provenance&) const = default;
 };
@@ -92,6 +94,7 @@ struct Symbol
     SymbolKind kind = SymbolKind::Unknown;
     uint32_t size = 0;
     std::string parent;         ///< the scope a local symbol belongs to ("" = global)
+    int window = -1;            ///< the CPU window (0-3) the source showed a page symbol in ("RAM2:C000": 3); -1 = unknown
     std::string module;
     SourceRef source;
     std::string comment;
@@ -131,6 +134,11 @@ struct SymbolSet
 
     bool operator==(const SymbolSet&) const = default;
 };
+
+/// The 16-bit CPU address of a symbol where no page can be written: the CPU view as is, a constant's value, a ROM page
+/// in window 0, a RAM / cache page in the window its source showed it in, else the usual 128K window (page 5 at #4000,
+/// page 2 at #8000, the others at #C000); none for devices, ports and other CPUs
+std::optional<uint16_t> CpuAddress(const Symbol& s);
 
 /// What a symbol file holds: the native file several sets, every other format one
 struct SymbolFile

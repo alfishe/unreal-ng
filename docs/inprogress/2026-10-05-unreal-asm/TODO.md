@@ -65,7 +65,8 @@ phase; master only after the owner's review.
   - [ ] a tape (TAP / TZX) container: GENS P blocks and T's multi-block include files, ZEUS tape saves
 - [ ] A8 symbols on the library (symbols S1-S5), branch `unreal-asm-a8`
   - [x] S1 model, index, store, normalization + merge policies, the native `*.usym.json` codec and the symbol codec registry (2026-10-06): `include/unrealasm/symbols/`, `src/symbols/`; the library is std-only as a whole, so it is the `symbols-std-only` check; 13 tests (round trip identity, unknown members kept, DT-1 / DT-2 cases, index snapshots)
-  - [ ] S2 the five existing `LabelManager` formats + `unreal-l` as codecs; `LabelManager` becomes the facade
+  - [x] S2 the five existing `LabelManager` formats + `unreal-l` as codecs (2026-10-06): `unreal-map`, `simple-sym`, `unreal-l`, `vice`, `sjasm-equ`, `z88dk-defc`, each decode + encode; `LabelManager` loads and saves through them (core links `unreal-asm`); golden dumps (`testdata/debugger/labels/`): all 11 files of `data/symbols` load as before; fixed on the way: a CPU-view label's bank is "any" (65535, was 255 for SYM / VICE / SJASM / Z88DK), `#FFFF` loads, `al 1234` reads `#1234` (was `#34`), VICE's dot and sjasmplus' colon are syntax, lower-case `defc` reads, sjasm comments kept, an unknown bank prefix is a CPU address (reported); `SaveLabels` writes MAP / VICE / SJASM / Z88DK in their own formats (all wrote the SYM body before)
+  - [ ] S2b the per-CPU `SymbolStore` behind `LabelManager` (sets, priorities; `Label` a view of `Symbol`): needed by the S5 surfaces
   - [ ] S3 tokenizer; sjasmplus `.sym` / `.sld` / `.lst`, pasmo
   - [ ] S4 name rules (DT-3 / DT-4), IDA, Ghidra, MAME, CSpect; `symconv`
   - [ ] S5 surfaces, bundles + manifest, recipe

@@ -34,7 +34,8 @@ SymbolFile Sample()
     play.source = {"music.asm", 12, 3};
     play.comment = "plays one frame; \"quoted\"";
     play.aliases = {"MUS_FRAME"};
-    play.provenance = {"sjasmplus-sld", "|music.asm|12||3|49152|F|PLAYMUS", 7};
+    play.provenance = {"sjasmplus-sld", "|music.asm|12||3|49152|F|PLAYMUS", 7, "func"};
+    play.window = 3;
     Symbol loop;
     loop.name = "PLAYMUS.loop";
     AddressSpace::Parse("ram3", loop.location.space);

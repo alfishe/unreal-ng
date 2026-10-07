@@ -1,5 +1,6 @@
 #include <algorithm>
 
+#include "symbols/codecs/labelfiles/labelfilecodecs.h"
 #include "symbols/codecs/native/nativecodec.h"
 #include "unrealasm/symbols/codec.h"
 
@@ -11,6 +12,12 @@ const SymbolCodecRegistry& SymbolCodecRegistry::Builtin()
         SymbolCodecRegistry r;
         // One line per codec
         r.Add(std::make_unique<codecs::NativeCodec>());
+        r.Add(std::make_unique<codecs::UnrealMapCodec>());
+        r.Add(std::make_unique<codecs::SimpleSymCodec>());
+        r.Add(std::make_unique<codecs::UnrealLCodec>());
+        r.Add(std::make_unique<codecs::ViceCodec>());
+        r.Add(std::make_unique<codecs::SjasmEquCodec>());
+        r.Add(std::make_unique<codecs::Z88dkDefcCodec>());
         return r;
     }();
     return registry;
