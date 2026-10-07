@@ -726,7 +726,7 @@ TEST_F(DezogDebugAdapter_test, ReadFull64KMatchesMemory)
 /// region <Instruction history (TTD reverse debugging)>
 
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 
 class DezogHistory_test : public DezogEmulatorFixture
 {
@@ -747,7 +747,7 @@ protected:
         _adapter->removeBreakpoint(id);
     }
 
-    ttd::TimeTravelManager* ttd() { return _emulator->GetContext()->pTimeTravelManager; }
+    ttd::TimeTravelController* ttd() { return _emulator->GetContext()->pTimeTravelController; }
 };
 
 TEST_F(DezogHistory_test, AvailableButNotRecordingUntilSessionOpens)
@@ -1206,7 +1206,7 @@ TEST_F(DezogHistory_test, UnrecordedGapFallsBackToFreshSession)
     EXPECT_GT(checkpointsBefore, 1u);
 
     // Host-side resume (adapter not involved - it would auto-restart capture)
-    ttd::TimeTravelManager* mgr = ttd();
+    ttd::TimeTravelController* mgr = ttd();
     mgr->StopRecording();
     freeRunFrames(10);
 

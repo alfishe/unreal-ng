@@ -21,7 +21,7 @@
 #include "base/featuremanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/cpu/core.h"
@@ -287,7 +287,7 @@ TEST(DebugMouseManagerMachinesTtd_Test, KempstonGlideReplaysExactly)
         ~Cleanup() { manager->RemoveEmulator(id); }
     } cleanup{manager, emulatorId};
     EmulatorContext* context = emulator->GetContext();
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
     DebugMouseManager* api = context->pDebugManager->GetMouseManager();
     Z80* z80 = context->pCore->GetZ80();

@@ -13,7 +13,7 @@
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "common/filehelper.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/tape/tape.h"
@@ -136,7 +136,7 @@ TEST_F(TapeSlot_Test, RecordingRefusesTapeChanges)
 {
     ASSERT_TRUE(_emulator->LoadTape(TapFile()));
     _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
-    ASSERT_TRUE(_context->pTimeTravelManager->StartRecording());
+    ASSERT_TRUE(_context->pTimeTravelController->StartRecording());
 
     std::string error;
     EXPECT_FALSE(_emulator->EjectTape(&error));
@@ -148,7 +148,7 @@ TEST_F(TapeSlot_Test, RecordingRefusesTapeChanges)
     EjectOptions end;
     end.endRecording = true;
     ASSERT_TRUE(Manager().Eject("tape", end).Ok());
-    EXPECT_FALSE(_context->pTimeTravelManager->IsRecording());
+    EXPECT_FALSE(_context->pTimeTravelController->IsRecording());
 }
 
 /// Any registry format loads; content decides, and a non-tape answers why

@@ -13,7 +13,7 @@
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/ttd/atm/ttdatm2kbc.h"
 #include "debugger/ttd/network/ttdmachineserialpeer.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/memory/memory.h"
 #include "emulator/cpu/z80.h"
@@ -297,7 +297,7 @@ TEST_F(Atm2Kbc_Test, TtdSeekReplaysTheControllerExactly)
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
     _context->pMemory->UpdateFeatureCache();
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
     ASSERT_TRUE(ttd->StartRecording());
     _emulator->RunNFrames(2);

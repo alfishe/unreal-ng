@@ -12,7 +12,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/ports/portwrite.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -149,7 +149,7 @@ TEST_F(PortWrite_Test, RecordingKeepsTheWriteAsAToolEdit)
 {
     ASSERT_NO_FATAL_FAILURE(Create("128K"));
     _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     // The CPU spins in "DI; JR $" at #8000 so the ROM never writes #7FFD itself
     _memory->DirectWriteToZ80Memory(0x8000, 0xF3);
     _memory->DirectWriteToZ80Memory(0x8001, 0x18);

@@ -19,7 +19,7 @@
 
 #include "_helpers/soundcardscope.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -276,7 +276,7 @@ TEST_F(IsaZxBusAdapter_Test, NeoGsZxDmaCannotInstall_PortJournalRecords)
     FeatureManager* features = _emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_TRUE(ttd->StartRecording());
     _emulator->RunNFrames(2, true);
     ttd->StopRecording();

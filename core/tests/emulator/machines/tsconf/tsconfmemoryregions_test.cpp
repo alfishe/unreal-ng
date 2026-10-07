@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/memory/devicememory.h"
@@ -91,7 +91,7 @@ TEST(TsConfMemoryRegionsTtd_Test, RecordingKeepsARegionWrite)
     auto* decoder = dynamic_cast<PortDecoder_TSConf*>(context->pPortDecoder);
     ASSERT_NE(decoder, nullptr);
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     emulator->RunNFrames(1, /*skipBreakpoints=*/true);
     ASSERT_TRUE(ttd->StartRecording());
     emulator->RunNFrames(1, true);

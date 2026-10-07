@@ -35,7 +35,7 @@
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/io/serial/serialpeer.h"
 #include "emulator/ports/models/portdecoder_profi.h"
@@ -934,7 +934,7 @@ TEST_F(ProfiPlusBoot_Test, TtdReplaysTheComPortExactly)
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
     context->pMemory->UpdateFeatureCache();
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
     ASSERT_TRUE(ttd->StartRecording());
     _emulator->RunNFrames(2);

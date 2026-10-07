@@ -10,6 +10,7 @@
 #include <iterator>
 #include <random>
 #include <sstream>
+#include <unordered_map>
 
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
@@ -19,9 +20,12 @@
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/ttddirtytracker.h"
 #include "debugger/ttd/ttddumpformat.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
 #include "debugger/ttd/ttdsessionfacts.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/ports/portdecoder.h"
+#include "emulator/slots/slotmanager.h"
 
 namespace ttd
 {
@@ -192,6 +196,37 @@ std::unique_ptr<TimeTravelEngine> TimeTravelController::LoadEngineSession(const 
         return nullptr;
     }
     _modelRamPages = facts.modelRamPages;
+
+    // The slot-set guard (ZX-bus slots SL-5), as v1's: a session recorded with
+    // other cards in the slots is refused with every difference listed by slot
+    // ("ay-socket: recorded tsfm, this machine ay / ts"), before the binding
+    // below would name only the devices it cannot place. The session's first
+    // checkpoint names its cards: the device set is fixed for a session (D38)
+    if (_context && loaded->CheckpointCount() > loaded->FirstCheckpoint())
+    {
+        std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
+        const size_t first = loaded->FirstCheckpoint();
+        for (const TTDDeviceEntry& device : loaded->Devices().Entries())
+        {
+            const uint8_t id = static_cast<uint8_t>(device.descriptor.legacyId);
+            std::vector<uint8_t> state;
+            if (id < 64 && loaded->DeviceState(first, id, state) && !state.empty())
+                blobs[id] = TTDPeripheralRegistry::EncodeBlob(id, state.data(), state.size());
+        }
+        std::string why;
+        const bool matches =
+            _context->pSlotManager
+                ? _context->pSlotManager->TtdSessionMatches(blobs, facts.notRecordedMask, _peripherals, why)
+                : SlotManager::TtdSlotSetMatches({}, SlotManager::TtdDeviceSet::Of(blobs, facts.notRecordedMask),
+                                                 SlotManager::TtdDeviceSet::Of(_peripherals), why) &&
+                      (!_context->pPortDecoder || _context->pPortDecoder->TtdSessionMatches(blobs, why));
+        if (!matches)
+        {
+            err = why;
+            return nullptr;
+        }
+    }
+
     std::string unbound;
     if (loaded->BindLive(LiveRegions(), _peripherals.DeviceEntries(), &unbound) != 0)
     {

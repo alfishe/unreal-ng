@@ -13,7 +13,7 @@
 
 #include "_helpers/scriptedhostnet.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/io/network/ethernet/etherlink3.h"
@@ -192,7 +192,7 @@ TEST_F(SprinterNetworkKit_Test, TtdReplaysTheFetchWithoutTheHost)
     FeatureManager* features = _emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_TRUE(ttd->StartRecording());
     std::string screen = Run("IFUP", 3000);
     ASSERT_EQ(ScreenCount("RESULT FAIL"), 0u) << screen;
@@ -356,7 +356,7 @@ TEST_F(SprinterEl3Kit_Test, TtdReplaysTheFetchWithoutTheHost)
     FeatureManager* features = _emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_TRUE(ttd->StartRecording());
     std::string screen = Run("IFUP", 4000);
     ASSERT_EQ(ScreenCount("RESULT FAIL"), 0u) << screen;
@@ -556,7 +556,7 @@ TEST_F(SprinterEspKit_Test, TtdReplaysTheSessionWithoutTheHost)
     FeatureManager* features = _emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_TRUE(ttd->StartRecording());
     std::string screen = Run("NETUP", 4000);
     ASSERT_NE(screen.find("NETUP done."), std::string::npos) << screen << Exchanges();
@@ -696,7 +696,7 @@ TEST_F(SprinterBcTerm_Test, ReceivesTheEspsAnswerThroughTheIsaInterrupt)
     FeatureManager* features = _emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_TRUE(ttd->StartRecording());
 
     Dss("C:\\MODEM\\BCTERM.EXE");
@@ -861,7 +861,7 @@ TEST_F(SprinterBcTermModem_Test, DialsTheBbsAndTalksThroughTheIsaInterrupt)
     FeatureManager* features = _emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_TRUE(ttd->StartRecording());
 
     Dss("C:\\MODEM\\BCTERM.EXE");

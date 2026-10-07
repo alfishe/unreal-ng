@@ -15,7 +15,7 @@
 #include "_helpers/testpathhelper.h"
 #include "_helpers/tsfmplayerharness.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -1142,7 +1142,7 @@ protected:
         if (mode == RunMode::SoundOff || mode == RunMode::SoundOffUnderTtd)
             fm->GetFeatureManager()->setFeature(Features::kSoundGeneration, false);
         if (mode == RunMode::SoundOffUnderTtd)
-            EXPECT_TRUE(fm->GetContext()->pTimeTravelManager->StartRecording()) << "TTD recording did not start";
+            EXPECT_TRUE(fm->GetContext()->pTimeTravelController->StartRecording()) << "TTD recording did not start";
 
         TsfmPlayerHarness harness;
         EXPECT_TRUE(harness.Setup(fm, 0));
