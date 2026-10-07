@@ -168,3 +168,36 @@ TEST(CrossAsmCodecs_Test, Z88dkMapDefAndSym)
     EXPECT_EQ(Codec("z88dk-defc").Encode(d.file, {}).bytes, def);
     EXPECT_EQ(SymbolCodecRegistry::Builtin().Detect(def, "def").chosen, &Codec("z88dk-defc"));
 }
+
+TEST(CrossAsmCodecs_Test, CspectMapWritesTheSameBytes)
+{
+    const std::vector<uint8_t> bytes = ReadTestData("symbols/sjasmplus/labels.cspect.map");
+    const SymbolDecodeResult r = Codec("cspect-map").Decode(bytes);
+    ASSERT_TRUE(r.ok);
+    const auto s = ByName(r);
+    ASSERT_EQ(s.size(), 11u);
+    EXPECT_EQ(s.at("SCREEN").kind, SymbolKind::Const);
+    EXPECT_EQ(s.at("PAGED1").location.space.Format(), "ram1");     // physical #4000: page 1
+    EXPECT_EQ(s.at("PAGED1").window, 3);
+    EXPECT_EQ(s.at("START").location.space.Format(), "ram2");
+    EXPECT_EQ(s.at("START.LOOP").kind, SymbolKind::Local);         // CSpect writes START@LOOP
+    EXPECT_EQ(s.at("START.LOOP").parent, "START");
+    EXPECT_EQ(Codec("cspect-map").Encode(r.file, {}).bytes, bytes);
+    EXPECT_EQ(SymbolCodecRegistry::Builtin().Detect(bytes, "map").chosen, &Codec("cspect-map"));
+    // The same pages as SLD gives for the source
+    const auto sld = ByName(Codec("sjasmplus-sld").Decode(ReadTestData("symbols/sjasmplus/labels.sld")));
+    EXPECT_EQ(s.at("PAGED3").location, sld.at("paged3").location);
+}
+
+TEST(CrossAsmCodecs_Test, SjasmplusLabelslistIsUnrealL)
+{
+    // sjasmplus' LABELSLIST writes Unreal's user.l: the unreal-l codec reads it and writes the same bytes
+    const std::vector<uint8_t> bytes = ReadTestData("symbols/sjasmplus/labels.unreal.l");
+    const SymbolDecodeResult r = Codec("unreal-l").Decode(bytes);
+    ASSERT_TRUE(r.ok);
+    const auto s = ByName(r);
+    ASSERT_EQ(s.size(), 11u);
+    EXPECT_EQ(s.at("paged1").location.space.Format(), "ram1");
+    EXPECT_EQ(s.at("start").location.space.Format(), "ram2");
+    EXPECT_EQ(Codec("unreal-l").Encode(r.file, {}).bytes, bytes);
+}

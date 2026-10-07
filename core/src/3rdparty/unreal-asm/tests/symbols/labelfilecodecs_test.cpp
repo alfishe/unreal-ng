@@ -123,7 +123,7 @@ TEST(LabelFileCodecs_Test, UnrealUserL)
     EXPECT_EQ(s[1].location.offset, 0x10u);
     EXPECT_EQ(s[2].name, "with blanks in it");
     EXPECT_EQ(d.size(), 1u);
-    EXPECT_EQ(Write("unreal-l", {s[1]}), "05:C010 SCREEN_LINE\n");
+    EXPECT_EQ(Write("unreal-l", {s[1]}), "05:0010 SCREEN_LINE\n");   // as sjasmplus' LABELSLIST: the offset in the page
     const std::string text = Write("unreal-l", {Paged("CPU", "cpu:main", 0x8000)}, &d);
     EXPECT_TRUE(text.empty());                               // user.l has RAM pages only
     EXPECT_EQ(d.size(), 1u);
@@ -177,4 +177,7 @@ TEST(LabelFileCodecs_Test, Detection)
     EXPECT_EQ(chosen(plain, "map"), "unreal-map");
     EXPECT_EQ(chosen(plain, "l"), "unreal-l");
     EXPECT_EQ(chosen(plain, "").rfind("none", 0), 0u);
+    // simple-sym writes lower-case types, our maps upper-case ones
+    EXPECT_EQ(chosen("8000 START (code) ; entry\n9000 TABLE (data)\n9100 MORE (code)\n", "sym"), "simple-sym");
+    EXPECT_EQ(chosen("8000 START (code) ; entry\n9000 TABLE (data)\n9100 MORE (code)\n", ""), "simple-sym");
 }

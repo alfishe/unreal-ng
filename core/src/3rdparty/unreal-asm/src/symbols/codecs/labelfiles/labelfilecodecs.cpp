@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 
+#include "symbols/codecs/rules.h"
 #include "symbols/codecs/text/textlines.h"
 
 namespace unrealasm::symbols::codecs
@@ -201,10 +202,14 @@ SymbolDecodeResult LineCodec::Decode(std::span<const uint8_t> bytes) const
     return result;
 }
 
-SymbolEncodeResult LineCodec::Encode(const SymbolFile& file, const SymbolEncodeOptions& options) const
+SymbolEncodeResult LineCodec::Encode(const SymbolFile& source, const SymbolEncodeOptions& options) const
 {
     SymbolEncodeResult result;
+    const PreparedFile prepared = Prepare(source, _info, options, result.diagnostics);
+    const SymbolFile& file = prepared.file;
     std::string out = Header(options.lineEnd);
+    for (const std::string& line : prepared.header)
+        out += line + options.lineEnd;
     size_t folded = 0;
     for (const SymbolSet& set : file.sets)
         for (const Symbol& s : set.symbols)
@@ -230,7 +235,10 @@ SymbolEncodeResult LineCodec::Encode(const SymbolFile& file, const SymbolEncodeO
 
 // unreal-map --------------------------------------------------------------------------------------------------------
 
-UnrealMapCodec::UnrealMapCodec() : LineCodec({"unreal-map", "unreal-ng map file ([ROMn:|RAMn:]HHHH NAME (TYPE))", Family::Text, {"map"}}) {}
+UnrealMapCodec::UnrealMapCodec()
+    : LineCodec(MakeInfo("unreal-map", "unreal-ng map file ([ROMn:|RAMn:]HHHH NAME (TYPE))", Family::Text, {"map"}, WordRules(), true, ";"))
+{
+}
 
 LineCodec::Line UnrealMapCodec::ParseLine(std::string_view line, Symbol& out, std::string& message) const
 {
@@ -265,7 +273,7 @@ std::string UnrealMapCodec::WriteLine(const Symbol& s, bool& folded, std::string
 int UnrealMapCodec::ScoreLines(const std::vector<std::string_view>& lines) const
 {
     text::LineScore score;
-    bool mapOnly = false;   // a bank prefix or a "(TYPE)": only a map file has them
+    bool mapOnly = false;   // a bank prefix or an upper-case "(CODE)": what our map files write (simple-sym writes "(code)")
     for (const std::string_view raw : lines)
     {
         const std::string_view line = Trim(raw);
@@ -277,7 +285,8 @@ int UnrealMapCodec::ScoreLines(const std::vector<std::string_view>& lines) const
         if (ParseLine(line, s, message) == Line::Symbol)
         {
             ++score.matched;
-            mapOnly = mapOnly || s.location.space.kind != SpaceKind::CpuView || s.kind != SymbolKind::Unknown || !s.provenance.type.empty();
+            mapOnly = mapOnly || s.location.space.kind != SpaceKind::CpuView || line.find("(CODE)") != std::string_view::npos ||
+                      line.find("(DATA)") != std::string_view::npos;
         }
     }
     return score.Score(mapOnly ? 75 : 50);
@@ -285,7 +294,7 @@ int UnrealMapCodec::ScoreLines(const std::vector<std::string_view>& lines) const
 
 // simple-sym --------------------------------------------------------------------------------------------------------
 
-SimpleSymCodec::SimpleSymCodec() : LineCodec({"simple-sym", "simple symbol file (HHHH NAME)", Family::Text, {"sym"}}) {}
+SimpleSymCodec::SimpleSymCodec() : LineCodec(MakeInfo("simple-sym", "simple symbol file (HHHH NAME)", Family::Text, {"sym"}, WordRules(), false, ";")) {}
 
 LineCodec::Line SimpleSymCodec::ParseLine(std::string_view line, Symbol& out, std::string& message) const
 {
@@ -309,6 +318,25 @@ std::string SimpleSymCodec::WriteLine(const Symbol& s, bool& folded, std::string
     return out;
 }
 
+int SimpleSymCodec::ScoreLines(const std::vector<std::string_view>& lines) const
+{
+    text::LineScore score;
+    bool typed = false;   // a lower-case "(code)": what simple-sym writes
+    for (const std::string_view raw : lines)
+    {
+        const std::string_view line = Trim(raw);
+        if (text::Skipped(line))
+            continue;
+        ++score.data;
+        if (Accepts(line))
+        {
+            ++score.matched;
+            typed = typed || line.find("(code)") != std::string_view::npos || line.find("(data)") != std::string_view::npos;
+        }
+    }
+    return score.Score(typed ? 75 : 50);
+}
+
 std::string SimpleSymCodec::Header(const std::string& nl) const
 {
     return "; Labels exported by unreal-ng" + nl + "; Format: ADDR NAME [(TYPE)] [; COMMENT]" + nl + nl;
@@ -316,7 +344,10 @@ std::string SimpleSymCodec::Header(const std::string& nl) const
 
 // unreal-l ----------------------------------------------------------------------------------------------------------
 
-UnrealLCodec::UnrealLCodec() : LineCodec({"unreal-l", "Unreal user.l (HHHH name, PP:HHHH name; RAM pages)", Family::Text, {"l"}}) {}
+UnrealLCodec::UnrealLCodec()
+    : LineCodec(MakeInfo("unreal-l", "Unreal user.l (HHHH name, PP:HHHH name; RAM pages)", Family::Text, {"l"}, WordRules(), true, ""))
+{
+}
 
 LineCodec::Line UnrealLCodec::ParseLine(std::string_view line, Symbol& out, std::string& message) const
 {
@@ -332,7 +363,8 @@ LineCodec::Line UnrealLCodec::ParseLine(std::string_view line, Symbol& out, std:
     else if (line.size() >= 9 && line[2] == ':' && line[7] == ' ' && ParseHex(line.substr(0, 2), page) && ParseHex(line.substr(3, 4), value) &&
              line.substr(0, 7).find_first_of("$xX") == std::string_view::npos)
     {
-        out.window = static_cast<int>(value >> 14);
+        if (value >= 0x4000)
+            out.window = static_cast<int>(value >> 14);   // sjasmplus' LABELSLIST writes the offset alone (0000-3FFF)
         name = line.substr(8);
     }
     else
@@ -362,7 +394,8 @@ std::string UnrealLCodec::WriteLine(const Symbol& s, bool& folded, std::string& 
         message = s.name + ": user.l holds RAM pages 0-255 only (" + space.Format() + " skipped)";
         return {};
     }
-    return Hex(space.page, 2) + ":" + Hex(*CpuAddress(s), 4) + " " + s.name;
+    // As sjasmplus' LABELSLIST writes it: the page and the offset in it (0000-3FFF); Unreal masks the address anyway
+    return Hex(space.page, 2) + ":" + Hex(s.location.offset & 0x3FFF, 4) + " " + s.name;
 }
 
 int UnrealLCodec::ScoreLines(const std::vector<std::string_view>& lines) const
@@ -386,7 +419,7 @@ int UnrealLCodec::ScoreLines(const std::vector<std::string_view>& lines) const
 
 // vice --------------------------------------------------------------------------------------------------------------
 
-ViceCodec::ViceCodec() : LineCodec({"vice", "VICE label file (al C:HHHH .name)", Family::Text, {"vice", "lbl"}}) {}
+ViceCodec::ViceCodec() : LineCodec(MakeInfo("vice", "VICE label file (al C:HHHH .name)", Family::Text, {"vice", "lbl"}, ViceRules(), false, "")) {}
 
 LineCodec::Line ViceCodec::ParseLine(std::string_view line, Symbol& out, std::string& message) const
 {
@@ -441,7 +474,10 @@ int ViceCodec::ScoreLines(const std::vector<std::string_view>& lines) const
 
 // sjasm-equ ---------------------------------------------------------------------------------------------------------
 
-SjasmEquCodec::SjasmEquCodec() : LineCodec({"sjasm-equ", "sjasm symbol file (NAME EQU $HHHH)", Family::Text, {"s", "asm", "equ"}}) {}
+SjasmEquCodec::SjasmEquCodec()
+    : LineCodec(MakeInfo("sjasm-equ", "sjasm symbol file (NAME EQU $HHHH)", Family::Text, {"s", "asm", "equ"}, SjasmplusRules(), false, ";"))
+{
+}
 
 LineCodec::Line SjasmEquCodec::ParseLine(std::string_view line, Symbol& out, std::string& message) const
 {
@@ -495,7 +531,10 @@ int SjasmEquCodec::ScoreLines(const std::vector<std::string_view>& lines) const
 
 // z88dk-defc --------------------------------------------------------------------------------------------------------
 
-Z88dkDefcCodec::Z88dkDefcCodec() : LineCodec({"z88dk-defc", "z88dk DEFC file (DEFC name = $HHHH)", Family::Text, {"z88", "def"}}) {}
+Z88dkDefcCodec::Z88dkDefcCodec()
+    : LineCodec(MakeInfo("z88dk-defc", "z88dk DEFC file (DEFC name = $HHHH)", Family::Text, {"z88", "def"}, Z88dkRules(), false, ";"))
+{
+}
 
 LineCodec::Line Z88dkDefcCodec::ParseLine(std::string_view line, Symbol& out, std::string& message) const
 {

@@ -26,6 +26,7 @@ Part of [unreal-ng](https://github.com/alfishe/unreal-ng); design: `docs/inprogr
 | `src/dialects/<dialect>/` | dialect plugins: frontends (dialect → IR) and backends (IR → dialect); `common/` holds the Z80 facts |
 | `src/ir/` | IR helpers |
 | `tools/zxasm/` | the `zxasm` CLI |
+| `tools/symconv/` | the `symconv` CLI: symbol files from any format to any format (`symconv formats`, `symconv detect f`, `symconv f --to id`) |
 | `examples/` | small programs on the public API |
 | `tests/` | `unreal-asm-tests` (GoogleTest) |
 | `testdata/` | the corpus the tests use, with provenance in its README |
