@@ -249,6 +249,12 @@ With a 2 ms delay the crossfeed's comb notches sit at 250 Hz, 750 Hz, 1250 Hz an
   a time-travel restore, a machine reset or snapshot load, a sample-rate change) clears every
   chain, which then starts at the current settings without a ramp.
 
+Cost (A/B 2026-10-07, `dd64db70d` against the change, Apple Silicon, 44.1 kHz, two interleaved runs of ten rounds,
+load below 12 at every round start): `BM_AudioCharacterChain_Frame` per 882-sample call - off 1.58-1.65 µs ->
+0.05 µs (-97 %), punch 3.47-3.61 -> 3.21-3.37 µs (-7 %), room and punch + room unchanged within 1-2 %. The
+whole-machine `BM_TurboSoundFrame_*` (Pentagon TSFM, about 2.3 ms per frame) and `BM_MultiSoundFrame` (the card
+alone, no chain on that path) stay within the ±2 % noise in both runs, with effects on and off.
+
 The voicing and punch/room stack in this order: voicing → punch → room. For example, Headphones
 with punch on softens the highs first and then sharpens the attacks, so the result is less harsh
 than Flat with punch but keeps its definition.
@@ -348,6 +354,7 @@ A profile is one row in the table in `FilterVoicing::profile()` plus one value i
 | `core/tests/emulator/config_test.cpp` | `[SOUND] AYVoicing` parsing, the `classic` default |
 | `core/tests/emulator/recording/dsd_native_test.cpp` | DSD native mode applies the voicing |
 | `core/benchmarks/emulator/sound/filtervoicing_benchmark.cpp` | per-frame cost, switch-frame cost |
+| `core/benchmarks/emulator/sound/audio_character_chain_benchmark.cpp` | punch / room chain per frame: off, punch, room, both |
 
 Tests that check mixer arithmetic or the punch/room bypass exactly
 (`device_mixer_test`, `soundhq_chain_bypass_test`) pin `flat`.
