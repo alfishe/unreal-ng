@@ -377,9 +377,26 @@ TEST_F(BlockFormats_Test, SparseRawExport)
     EXPECT_EQ(bytes[6000 * 512], 0x33);
     EXPECT_EQ(std::count(bytes.begin(), bytes.end(), uint8_t(0)), static_cast<std::ptrdiff_t>(bytes.size() - 5 - 512));
 #ifndef _WIN32
-    struct stat st{};
-    ASSERT_EQ(stat(out.c_str(), &st), 0);
-    if (st.st_blocks > 0)
+    // APFS and some other filesystems allocate all blocks for a sparse file when it is closed,
+    // so the sparse assertion only applies where the filesystem actually preserves holes after
+    // writing at scattered offsets
+    const std::filesystem::path probe = _folder.Path() / "sparse_probe";
+    {
+        std::ofstream probeOut(probe, std::ios::binary | std::ios::trunc);
+        probeOut << "x";                      // write at offset 0
+        probeOut.seekp(500 * 1024);           // seek to 500 KiB
+        probeOut << "y";                      // write at offset 500 KiB
+    }
+    std::filesystem::resize_file(probe, 1024 * 1024);  // extend to 1 MiB
+    struct stat probeSt{};
+    const bool sparseSupported = stat(probe.c_str(), &probeSt) == 0 && uint64_t(probeSt.st_blocks) * 512 < 256 * 1024;
+    std::filesystem::remove(probe);
+
+    if (sparseSupported)
+    {
+        struct stat st{};
+        ASSERT_EQ(stat(out.c_str(), &st), 0);
         EXPECT_LT(uint64_t(st.st_blocks) * 512, 1024ull * 1024) << "only the data is stored (host with sparse files)";
+    }
 #endif
 }
