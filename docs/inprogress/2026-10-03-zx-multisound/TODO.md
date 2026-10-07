@@ -2,8 +2,7 @@
 
 **Status:** on master since 2026-10-05 (`7605bf104`, pushed): MS-1 to MS-7 first pass, with the ZX-bus slots SL-1 to
 SL-7 ([slots TODO](../2026-10-03-zx-bus-slots/TODO.md)); demo to the owner done (MIDI, TSFM, SAA); MS-8 user docs done 2026-10-05. Shipped configs keep
-the card off (owner decision): it is fitted through the slots. Left: the open items below (the MS-7 second
-pass).
+the card off (owner decision): it is fitted through the slots. MS-1 to MS-8 done; left: the open items below.
 
 ## Documents
 
@@ -203,7 +202,14 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   `SoundChipTurboSoundEvents_Test` (single AY on 48K / 128K / Pentagon, TurboSound, TSFM's SSG x none / machine reset /
   snapshot / core rate / host speed x2 and x4 / hardware turbo / turbo with and without audio / sound off, at T 0, mid,
   end-1), `SoundChipTurboSoundEventsTtd_Test`, `SoundManagerDeviceMarker_Test` (beeper, SounDrive, MoonSound)
-- [ ] MS-7 second pass: Z-Player 5, the remaining disks of the test images README, WC MOD / TFC / ETC
+- [x] MS-7 second pass (2026-10-06, [tdd-integration.md](tdd-integration.md) §6.2): every check against a reference
+  rendering (the same program on the TSFM / classic GS / SounDrive it replaces, the SMF on the disk for MIDI, the SAA
+  register file for the SAA). Pass: Z-Player 5 (MIDI note for note, MODs = classic GS), Z-Player 4, WC GSPLAYER MOD,
+  WPLAYER TFC (= TSFM) and ETC (the E-Tracker disk's tune), the E-Tracker disk, TFM tunes, deNextPlayer (TurboSound
+  PT3), X Ball's SounDrive part (Space starts it), the 128K MIDI game Sinty Snoki, MIDIPIANO. ZXM-SoundCard programs
+  never start the SAA clock (silent SAA, as on the card); the S98 player is for other ports. No emulator bug found in
+  the programs. Not driven: the menus of Titanic, GS Music Player, GS-Player, Wild Player, The Link, the ZXAAA MFX pack
+  and a few others (list in §6.2)
 - [x] decided 2026-10-05: ZX MIDI Player v3 at 14 MHz on a ZX-Evo sends 23.6 kbaud (the Evo's 14 MHz DRAM waits, as
   the RTL); a limit of the program, not an emulator bug
 - [x] side note (not the card): the AY state report named the I/O port direction the wrong way round
