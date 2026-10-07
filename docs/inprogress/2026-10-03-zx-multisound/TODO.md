@@ -2,8 +2,8 @@
 
 **Status:** on master since 2026-10-05 (`7605bf104`, pushed): MS-1 to MS-7 first pass, with the ZX-bus slots SL-1 to
 SL-7 ([slots TODO](../2026-10-03-zx-bus-slots/TODO.md)); demo to the owner done (MIDI, TSFM, SAA); MS-8 user docs done 2026-10-05. Shipped configs keep
-the card off (owner decision): it is fitted through the slots. Left: the open items below (a TTD fixture,
-the MS-7 second pass).
+the card off (owner decision): it is fitted through the slots. Left: the open items below (the MS-7 second
+pass).
 
 ## Documents
 
@@ -119,10 +119,14 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   slot (ids 58 `MultiSound`, 53 `Saa1099`, 59 `Sam2695`, 60 `MultiSoundGs`, region 17 `MultiSoundGsRam`), registered
   through `SlotManager`'s cards, recording refused when a slot-built card's device is missing, the bank in the
   fingerprint and the session guard, `TtdMultiSound_Test` (7), the card in the model contract test
-  - [ ] a MultiSound fixture in the TTD corpus (Pentagon, ZX-Evo): needs the recorder to fit the card (slot surfaces,
-    SL-7 / MS-6) and `TTD_Corpus_Test` to create the fixture's slot set. Since slots SL-6 the core can fit it into a
-    running instance (`SlotChange::Run`, a plug applied by a restart, [slots tdd.md](../2026-10-03-zx-bus-slots/tdd.md)
-    §14); a model switch carries it (Pentagon -> ZX-Evo keeps it, ZX-Evo -> 128K reports it as not carried)
+  - [x] a MultiSound fixture in the TTD corpus (2026-10-06): `multisound-pentagon` and `multisound-zxevo`, in v1's
+    corpus (`testdata/ttd/`) and the engine's (`testdata/ttd/engine/`), 70 frames each (the SAM2695's state changes
+    in every checkpoint: about 30 KB a frame in the engine file, 100 KB in v1's; 2.1 / 2.4 MB and 6.9 / 7.4 MB).
+    The recorder creates the machine with `"slots": {"zxbus.1": "multisound"}` (`record_fixtures.py` option
+    `slots`) and records [testdata/sound/multisound/ttd/allsources.sna](../../../testdata/sound/multisound/ttd/README.md),
+    a program that plays every source of the card (written by `tools/verification/multisound/ttd-fixture/make-program.py`).
+    `TTD_Corpus_Test` and `TimeTravelControllerCorpus_Test` build their machine with the card and the shipped default
+    bank (`core/tests/_helpers/ttdslotcards.h`). The ZX-Evo fixture found the sample-phase bug below
   - [x] the ids 58-60 / region 17 and input kind 17 (`MidiPanic`) were checked free on master at the landing (2026-10-05)
   - [x] 2026-10-06, found by the corpus fixture `multisound-zxevo`: a seek on a machine without a board AY device (the
     ZX-Evo, whose YM2149 the card takes out of its socket) left the mixer's sample phase (SoundManager::samplePhase,

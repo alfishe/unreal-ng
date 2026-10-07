@@ -32,11 +32,14 @@ public:
     ///        depends on RAM contents - the default noise comes from the
     ///        process-wide rand(), so it depends on every test that ran before
     ///        (core/tests/README.md, "Power-on RAM is a hidden global input")
+    /// @param configOverride Applied to the loaded config before the machine is built (a create request's
+    ///        override, e.g. SlotControl::CreateOverride for a slot set); empty = none
     /// @return Initialized emulator instance (caller owns)
     static Emulator* CreateStandardEmulator(
         const std::string& modelName = "PENTAGON",
         LoggerLevel logLevel = LoggerLevel::LogError,
-        RamPowerOn ramPowerOn = RamPowerOn::Random);
+        RamPowerOn ramPowerOn = RamPowerOn::Random,
+        const std::function<void(CONFIG&)>& configOverride = {});
 
     /// Create an emulator whose TurboSound slot kind is pinned instead of
     /// inherited from the shipped default. The shipped inis now enable TSFM

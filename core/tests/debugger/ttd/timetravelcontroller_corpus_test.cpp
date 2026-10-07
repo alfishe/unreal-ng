@@ -9,7 +9,9 @@
 ///     recorded live reproduce the recorded ones - seeking to each new
 ///     checkpoint shows the CPU, chipset, every device and all of RAM that
 ///     seeking to the recorded one showed.
-/// Over the 50 ms budget (~4 s): seven sessions, each loaded, seeked 55 times
+/// The ZX-MultiSound fixtures (multisound-pentagon, multisound-zxevo) run on a machine
+/// with the card in ZX-bus slot 1, as the recorder created it (ttdslotcards.h).
+/// Over the 50 ms budget (~7 s): nine sessions, each loaded, seeked 55 times
 /// and replayed; this is the engine corpus's only C++ gate.
 
 #include <gtest/gtest.h>
@@ -22,12 +24,14 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/ttdslotcards.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
@@ -83,11 +87,14 @@ protected:
     EmulatorContext* _context = nullptr;
     std::unique_ptr<ttd::TimeTravelController> _controller;
 
-    void StartMachine(const std::string& model, GSTypeKind generalSound)
+    /// A fresh machine of the fixture's recorded machine: its General Sound card and its slot-built cards
+    /// (ttdslotcards.h)
+    void StartMachine(const ttd::TTDRecordedMachine& machine)
     {
         StopMachine();
-        _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
-        ASSERT_NE(_emulator, nullptr);
+        std::string why;
+        _emulator = ttdtest::CreateRecordedMachine(machine, why, /*fitGeneralSound=*/false);
+        ASSERT_NE(_emulator, nullptr) << why;
         _context = _emulator->GetContext();
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
@@ -97,7 +104,7 @@ protected:
         features->setFeature(Features::kScreenHQ, true);
         _context->pMemory->UpdateFeatureCache();
         _context->pSoundManager->UpdateFeatureCache();
-        ASSERT_TRUE(FitGeneralSoundCard(_context->pSoundManager, generalSound));
+        ASSERT_TRUE(FitGeneralSoundCard(_context->pSoundManager, machine.generalSound));
         _controller = std::make_unique<ttd::TimeTravelController>(_context);
         _context->pTimeTravelHooks = _controller.get();
         _context->ttdWriteSink = _controller.get();
@@ -183,7 +190,7 @@ protected:
 TEST_F(TimeTravelControllerCorpus_Test, EveryFixtureLoadsRestoresAndContinuesExactly)
 {
     const std::vector<fs::path> files = EngineCorpus();
-    ASSERT_GE(files.size(), 7u) << "testdata/ttd/engine/ should hold the engine-recorded corpus";
+    ASSERT_GE(files.size(), 9u) << "testdata/ttd/engine/ should hold the engine-recorded corpus";
 
     for (const fs::path& file : files)
     {
@@ -192,7 +199,7 @@ TEST_F(TimeTravelControllerCorpus_Test, EveryFixtureLoadsRestoresAndContinuesExa
         std::string err;
         ASSERT_TRUE(ttd::ReadTTDFileInfo(file.string(), info, err)) << err;
         ASSERT_EQ(info.schemaVersion, 2u) << "the engine's format";
-        ASSERT_NO_FATAL_FAILURE(StartMachine(info.machine.model, info.machine.generalSound));
+        ASSERT_NO_FATAL_FAILURE(StartMachine(info.machine));
 
         std::ifstream in(file, std::ios::binary);
         ASSERT_TRUE(_controller->DeserializeSession(in, err)) << err;

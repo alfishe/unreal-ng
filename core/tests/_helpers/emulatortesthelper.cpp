@@ -69,20 +69,30 @@ namespace
 std::unordered_map<uint32_t, BreakpointCallback> EmulatorTestHelper::_breakpointCallbacks;
 
 Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelName, LoggerLevel logLevel,
-                                                     RamPowerOn ramPowerOn)
+                                                     RamPowerOn ramPowerOn,
+                                                     const std::function<void(CONFIG&)>& configOverride)
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
+
+    std::function<void(CONFIG&)> overrides = Config::RamPowerOnOverride(ramPowerOn);
+    if (configOverride)
+    {
+        overrides = [ram = std::move(overrides), configOverride](CONFIG& config)
+        {
+            ram(config);
+            configOverride(config);
+        };
+    }
 
     // Create emulator with model name if specified
     std::shared_ptr<Emulator> emulator;
     if (!modelName.empty())
     {
-        emulator = manager->CreateEmulatorWithModel("test-emulator", modelName, logLevel, nullptr,
-                                                    Config::RamPowerOnOverride(ramPowerOn));
+        emulator = manager->CreateEmulatorWithModel("test-emulator", modelName, logLevel, nullptr, overrides);
     }
     else
     {
-        emulator = manager->CreateEmulator("test-emulator", logLevel, Config::RamPowerOnOverride(ramPowerOn));
+        emulator = manager->CreateEmulator("test-emulator", logLevel, overrides);
     }
 
     if (!emulator)

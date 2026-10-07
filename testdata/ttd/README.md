@@ -48,8 +48,14 @@ All paths in this file are relative to the project root.
 | `tsfm_tech_support.ttd` | Pentagon 128K | `testdata/sound/tsfm/tech_support.sna` (TurboSound FM music) | 0 |
 | [`../machines/tsconf/ttd/sprites.ttd`](../machines/tsconf/ttd/sprites.ttd) (`--only tsconf_sprites`) | TS-Conf | `testdata/machines/tsconf/spg/sprites.spg` (16C frame drawn by a DMA copy every frame), classic GS card swapped in | 50 |
 | [`../machines/sprinter/ttd/boot.ttd`](../machines/sprinter/ttd/boot.ttd) (`--only sprinter_boot`) | Sprinter Sp2000 | cold full start of the shipped config, no snapshot: the PLD load at 3.5 MHz, then the POST of the default BIOS 3.06 Hotfix 2 at 21 MHz (re-recorded 2026-10-03 when the default moved back from 3.07 BETA 1); classic GS card swapped in (the GS behind the ISA ZX-bus adapter, since 2026-10-04) | 0 |
+| `multisound-pentagon.ttd` | Pentagon 128K, ZX-MultiSound in `zxbus.1` (the create request's `"slots"`, so the socket keeps its plain AY) | [`../sound/multisound/ttd/allsources.sna`](../sound/multisound/ttd/allsources.sna): every source of the card - both YM2203 (FM + SSG), the SAA1099, the SounDrive DACs, a General Sound command, MIDI notes bit-banged into the SAM2695 (written by [`make-program.py`](../../tools/verification/multisound/ttd-fixture/make-program.py)) | 10 |
+| `multisound-zxevo.ttd` | ZX-Evo (`ATM3`), ZX-MultiSound in `zxbus.1` (the YM2149 leaves its socket) | the same program (it measures the CPU clock - the ZX-Evo starts at 7 MHz - and times its MIDI bits to it) | 10 |
 
-Each fixture records 300 frames (301 checkpoints). The table lives in code as
+Each fixture records 300 frames (301 checkpoints); the ZX-MultiSound ones 70 (71 checkpoints): the SAM2695's
+state (292 KB raw) changes in every checkpoint, about 30 KB a frame in the engine file and 100 KB in v1's, and
+the corpus tests need 63 checkpoints. `TTD_Corpus_Test` and `TimeTravelControllerCorpus_Test` build their machine
+with the card in `zxbus.1` and the shipped default MIDI bank, which the sessions name
+(`core/tests/_helpers/ttdslotcards.h`). The table lives in code as
 `CORPUS` in `tools/verification/ttd-analyzer/scripts/record_fixtures.py`. To
 add or change a fixture, edit that list and this table together. A fixture of
 another machine lives in `testdata/machines/<machine>/ttd/` (the script's

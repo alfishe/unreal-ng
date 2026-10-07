@@ -24,6 +24,7 @@
 #include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/ttdslotcards.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/bench/ttdv1feeder.h"
 #include "debugger/ttd/timetravelengine.h"
@@ -65,17 +66,15 @@ protected:
     Emulator* _emulator = nullptr;
     ttd::TimeTravelManager* _v1 = nullptr;
 
-    void StartMachine(const std::string& model, GSTypeKind generalSound)
+    /// A fresh machine of a session's recorded machine: its General Sound card and its slot-built cards
+    /// (ttdslotcards.h)
+    void StartMachine(const ttd::TTDRecordedMachine& machine)
     {
         if (_emulator)
             EmulatorTestHelper::CleanupEmulator(_emulator);
-        // The card the session was recorded with, fitted at creation: the shipped 48K / 128K / +2 / +2A / +3, Profi
-        // and Sprinter configs have no GS since 2026-10-04 (owner decision), and a switch cannot fill an empty slot
-        {
-            GeneralSoundFitScope fit(generalSound);
-            _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
-        }
-        ASSERT_NE(_emulator, nullptr);
+        std::string err;
+        _emulator = ttdtest::CreateRecordedMachine(machine, err);
+        ASSERT_NE(_emulator, nullptr) << err;
         EmulatorContext* context = _emulator->GetContext();
         _v1 = context->pTimeTravelManager;
         ASSERT_NE(_v1, nullptr);
@@ -83,7 +82,7 @@ protected:
         features->setFeature(Features::kDebugMode, true);
         features->setFeature(Features::kTimeTravel, true);
         context->pMemory->UpdateFeatureCache();
-        ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, generalSound));
+        ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, machine.generalSound));
     }
 
     void TearDown() override
@@ -99,7 +98,7 @@ protected:
         ttd::TTDFileInfo info;
         std::string err;
         ASSERT_TRUE(ttd::ReadTTDFileInfo(file.string(), info, err)) << err;
-        ASSERT_NO_FATAL_FAILURE(StartMachine(info.machine.model, info.machine.generalSound));
+        ASSERT_NO_FATAL_FAILURE(StartMachine(info.machine));
         std::ifstream in(file, std::ios::binary);
         ASSERT_TRUE(_v1->DeserializeSession(in, err)) << err;
         ASSERT_GT(_v1->GetCheckpointCount(), 0u);
