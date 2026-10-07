@@ -320,6 +320,9 @@ void SoundManager::reset()
     std::fill(_mixBus, _mixBus + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0.0f);
     _limiter.Reset();
 
+    // Character chains: a machine reset / snapshot load is a gap in the stream
+    resetCharacterChains();
+
     // Voicing: clear filter state and pre-roll history (the profile stays)
     _ayVoicing0.reset();
     _ayVoicing1.reset();
@@ -732,6 +735,17 @@ void SoundManager::setDeviceVolume(AudioSourceType type, float volume)
         d->volume = std::clamp(volume, 0.0f, 1.0f);
 }
 
+void SoundManager::resetCharacterChains()
+{
+    _ayChain0.reset();
+    _ayChain1.reset();
+    _fmChain0.reset();
+    _fmChain1.reset();
+    _beeperChain.reset();
+    for (CardSsgRow& v : _cardSsgRows)
+        v.chain->reset();
+}
+
 void SoundManager::syncAYChainSettings()
 {
     // Copy settings from chain 0 to chain 1 (UI edits chain 0, both should match)
@@ -1135,6 +1149,8 @@ void SoundManager::handleFrameEnd()
     if (frameConfig.turbo_mode && !frameConfig.turbo_mode_audio)
     {
         // A gap in the voiced stream: the pre-roll history no longer precedes the next frame
+        // (and the character chains restart at the next frame with audio)
+        _chainsGap = true;
         _ayVoicing0.invalidateHistory();
         _ayVoicing1.invalidateHistory();
         for (CardSsgRow& v : _cardSsgRows)
@@ -1216,29 +1232,44 @@ void SoundManager::handleFrameEnd()
     /// endregion </Determine actual samples for this frame>
 
     /// region <Process AY through its character chain>
-    // The character chains (punch / room) are HQ-only post-processing: with
-    // `soundhq` off (or the turbo override on) they are skipped entirely -
-    // no float round trip, no per-sample DSP - and the raw chip / beeper
-    // buffers go straight to the mixer, the same as the LQ boxcar path
-    // inside the devices. On the first HQ frame after a bypass the chains'
-    // delay lines and envelopes are cleared so they do not replay audio
-    // from before the switch.
+    // The character chains (punch / room) are HQ-only post-processing. A
+    // chain with every effect off - or gated off by `soundhq` off / the turbo
+    // override - leaves its buffer untouched (no float round trip, no
+    // per-sample work: AudioCharacterChain::isBypassed()), and the raw chip /
+    // beeper buffers go straight to the mixer. Switching an effect or Sound HQ
+    // ramps over one frame (no click); a gap (sound off, turbo without audio,
+    // a TTD restore of the TurboSound device) resets the chains, so no delay
+    // line or envelope replays audio from before it.
     // Sound feature off: no generator runs, no character chain runs, nothing is mixed. The frame
     // buffers are zeroed instead, so the output path (and the per-device meters) see silence
     const bool soundOff = !_feature_sound_enabled;
 
-    const bool chainsActive = isHQActive() && !soundOff;
-    if (chainsActive && _chainsBypassed)
+    if (soundOff)
+        _chainsGap = true;
+    else if (_chainsGap)
+    {
+        resetCharacterChains();
+        _chainsGap = false;
+    }
+    if (_turboSound != _chainsDevice || (_turboSound && _turboSound->renderEpoch() != _chainsDeviceEpoch))
     {
         _ayChain0.reset();
         _ayChain1.reset();
         _fmChain0.reset();
         _fmChain1.reset();
-        _beeperChain.reset();
-        for (CardSsgRow& v : _cardSsgRows)
-            v.chain->reset();
+        _chainsDevice = _turboSound;
+        _chainsDeviceEpoch = _turboSound ? _turboSound->renderEpoch() : 0;
     }
-    _chainsBypassed = !chainsActive;
+
+    // Sound HQ gates every chain (applied at this frame boundary: a switch ramps)
+    const bool chainsActive = isHQActive();
+    _ayChain0.setActive(chainsActive);
+    _ayChain1.setActive(chainsActive);
+    _fmChain0.setActive(chainsActive);
+    _fmChain1.setActive(chainsActive);
+    _beeperChain.setActive(chainsActive);
+    for (CardSsgRow& v : _cardSsgRows)
+        v.chain->setActive(chainsActive);
 
     // Punch / room changes requested since the last frame (GUI, automation)
     applyCharacterRequests();
@@ -1263,7 +1294,7 @@ void SoundManager::handleFrameEnd()
     // AY chain: gentler punch (square waves already have harmonics)
     // Room uses no LP to preserve brightness
     // Process per-chip buffers with separate chain instances to preserve DSP state
-    if (_turboSound && chainsActive)
+    if (_turboSound && !soundOff)
     {
         int16_t* chip0Buf = _turboSound->getChipBuffer(0);
         int16_t* chip1Buf = _turboSound->getChipBuffer(1);
@@ -1325,8 +1356,7 @@ void SoundManager::handleFrameEnd()
         }
 
         // Beeper chain: operates on alias-free blip_buf output (HQ only, see above)
-        if (chainsActive)
-            _beeperChain.processInt16(_beeperBuffer, samplesThisFrame);
+        _beeperChain.processInt16(_beeperBuffer, static_cast<int32_t>(samplesThisFrame));
     }
     /// endregion </Process beeper>
 
@@ -1381,8 +1411,7 @@ void SoundManager::handleFrameEnd()
         if (row)
         {
             v.stage->process(row, samplesThisFrame);
-            if (chainsActive)
-                v.chain->processInt16(row, static_cast<int32_t>(samplesThisFrame));
+            v.chain->processInt16(row, static_cast<int32_t>(samplesThisFrame));
         }
         else
             v.stage->invalidateHistory();

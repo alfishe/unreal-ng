@@ -657,6 +657,7 @@ void SoundChip_TurboSound::TTDSaveState(uint8_t* dst) const
 void SoundChip_TurboSound::TTDLoadState(const uint8_t* src)
 {
     const uint8_t* cur = src;
+    ++_renderEpoch;   // the host's character chains restart (ITurboSoundDevice::renderEpoch)
 
     uint8_t currentIdx = *cur++;
 
