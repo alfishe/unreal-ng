@@ -574,6 +574,19 @@ TEST_F(SprinterNetwork_Test, Bridge_FramesFromTheLanAreJournaledInputs)
     EXPECT_TRUE(journaled) << "a frame from the LAN is an outside input";
     ttm->StopRecording();
 
+    // The engine holds each frame with its bytes: a replay and a saved session deliver them again
+    size_t engineFrames = 0;
+    const ttd::TimeTravelEngine& engine = ttm->GetEngine();
+    for (size_t i = 0; i < engine.Events().Count(); ++i)
+    {
+        const ttd::TTDEvent& ev = engine.Events().At(i);
+        if (static_cast<uint16_t>(ev.kind) != static_cast<uint16_t>(ttd::TTDInputKind::NetFrame))
+            continue;
+        EXPECT_EQ(engine.Payloads().Bytes(ev.payload).size(), frame.size()) << "frame " << engineFrames;
+        ++engineFrames;
+    }
+    EXPECT_EQ(engineFrames, 2u);
+
     const StateNode report = DeviceState::Network(_context);
     const StateNode* gateway = report.find("ethernet_gateway");
     ASSERT_NE(gateway, nullptr);

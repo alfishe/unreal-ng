@@ -10,7 +10,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/atm/ttdatmpaging.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -349,12 +349,12 @@ TEST(TtdAtmPaging_Test, AtmDecodersDeclareAndProvideTheSerializer)
 
         // Recording must therefore start: the guard refuses a model whose
         // declared state has no serializer behind it.
-        EXPECT_TRUE(context->pTimeTravelManager->StartRecording())
+        EXPECT_TRUE(context->pTimeTravelController->StartRecording())
             << model << ": declared state has no serializer";
-        EXPECT_TRUE(context->pTimeTravelManager->GetPeripheralRegistry()
+        EXPECT_TRUE(context->pTimeTravelController->GetPeripheralRegistry()
                         .IsRegistered(ttd::PeripheralId::AtmPaging))
             << model << ": AtmPaging not registered for the session";
-        context->pTimeTravelManager->StopRecording();
+        context->pTimeTravelController->StopRecording();
 
         EmulatorTestHelper::CleanupEmulator(emulator);
     }
@@ -372,7 +372,7 @@ TEST(TtdAtmPaging_Test, SeekRestoresMemoryMapAndResultingBanks)
     EmulatorContext* context = emulator->GetContext();
     EmulatorState& state = context->emulatorState;
     Memory* memory = context->pMemory;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
 
     ASSERT_TRUE(ttd->StartRecording());
 
@@ -385,6 +385,8 @@ TEST(TtdAtmPaging_Test, SeekRestoresMemoryMapAndResultingBanks)
 
     const unsigned mapAtCapture0 = state.pFFF7[0];
     const uint8_t* bankAtCapture = memory->MapZ80AddressToPhysicalAddress(0x8000);
+
+    state.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
 
     ttd->OnFrameBoundary();
     ASSERT_GE(ttd->GetCheckpointCount(), 1u);
@@ -424,7 +426,7 @@ TEST(TtdAtmPaging_Test, Atm450SeekRestoresLatchesAndBanks)
     EmulatorState& state = context->emulatorState;
     Memory* memory = context->pMemory;
     PortDecoder* ports = context->pPortDecoder;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
 
     EXPECT_EQ(ports->TtdClockUnits(), 1) << "no turbo states on the 4.50 board";
 
@@ -435,6 +437,8 @@ TEST(TtdAtmPaging_Test, Atm450SeekRestoresLatchesAndBanks)
     ports->DecodePortOut(0x003E, 0x00, 0x0000);  // aFE = #3E: RAM at #0000, hi-res mode
     ASSERT_EQ(memory->GetRAMPageForBank3(), 29);
     ASSERT_EQ(memory->GetMemoryBankMode(0), MemoryBankModeEnum::BANK_RAM);
+
+    state.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
 
     ttd->OnFrameBoundary();
     ASSERT_GE(ttd->GetCheckpointCount(), 1u);
@@ -475,7 +479,7 @@ TEST(TtdAtmPaging_Test, SeekRestoresCpuClockAcrossTurboChange)
 
     EmulatorContext* context = emulator->GetContext();
     EmulatorState& state = context->emulatorState;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
 
     ASSERT_TRUE(ttd->StartRecording());
 
@@ -484,6 +488,8 @@ TEST(TtdAtmPaging_Test, SeekRestoresCpuClockAcrossTurboChange)
     state.next_z80_frequency_multiplier = 4;
     state.hw_turbo_ratio = 4;
     state.hw_turbo_ratio_applied = 4;
+
+    state.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
 
     ttd->OnFrameBoundary();
     ASSERT_GE(ttd->GetCheckpointCount(), 1u);

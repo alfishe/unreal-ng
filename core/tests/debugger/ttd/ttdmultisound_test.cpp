@@ -24,7 +24,7 @@
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdconfigcapture.h"
 #include "debugger/ttd/ttdmachineperipherals.h"
@@ -104,7 +104,7 @@ public:
     bool Ok() const { return _ok; }
     Emulator& Machine() { return *_emulator; }
     EmulatorContext* Context() const { return _emulator->GetContext(); }
-    ttd::TimeTravelManager* Ttd() const { return _emulator->GetContext()->pTimeTravelManager; }
+    ttd::TimeTravelController* Ttd() const { return _emulator->GetContext()->pTimeTravelController; }
     MultiSoundSlotCard* Card(const std::string& slot = "zxbus.1") const
     {
         SlotManager* slots = Context()->pSlotManager;

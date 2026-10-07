@@ -281,7 +281,7 @@ void TimeTravelController::CommitLoadedSession(std::unique_ptr<TimeTravelEngine>
             TTDInputEvent in;
             TTDEventLog::ToInput(ev, in);
             in.time = at;
-            if (in.kind == TTDInputKind::NetEvent)
+            if (HasNetRecord(in.kind))
             {
                 TTDNetInput n;
                 TTDEventLog::UnpackNet(ev, n);
