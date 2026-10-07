@@ -3,7 +3,7 @@
 **Status:** on master since 2026-10-05 (`7605bf104`, pushed): MS-1 to MS-7 first pass, with the ZX-bus slots SL-1 to
 SL-7 ([slots TODO](../2026-10-03-zx-bus-slots/TODO.md)); demo to the owner done (MIDI, TSFM, SAA); MS-8 user docs done 2026-10-05. Shipped configs keep
 the card off (owner decision): it is fitted through the slots. Left: the open items below (profiling, a
-TTD fixture, the MS-7 second pass, the 0.15 dB SSG residue).
+TTD fixture, the MS-7 second pass).
 
 ## Documents
 
@@ -168,9 +168,16 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   applied to the card (board wiring). `Ym2203PairBoardsLevel_Test` over Flat / Classic / Headphones, FM unvoiced on both
 - [x] decided 2026-10-05: the SSG rows are the schematic's -7.6 dB below the TSFM's (SSG through 24 k against the
   FM's 10 k on the MultiSound, equal weights on the TSFM); kept as hardware, not matched
-- [ ] the measured card / TSFM SSG ratio is -7.75 dB at every voicing preset, 0.15 dB beyond the schematic's -7.60 dB
-  (`Ym2203PairBoardsLevel_Test` tolerance 0.2 dB): find where the two SSG output paths differ (owner 2026-10-05:
-  after the landing)
+- [x] the measured card / TSFM SSG ratio of -7.75 dB, 0.15 dB beyond the schematic's -7.60 dB (2026-10-06): not the
+  card's SSG path. The AY room crossfeed (`[SOUND]` AY room, default -9 dB, sound HQ) adds the opposite channel 2 ms late
+  at 0.35; the emulator's ABC pan law puts 0.1 of SSG A on the TSFM's right, so the TSFM's left row gets
+  0.35 x 0.1 / 0.9 of A back, correlated with the direct A by the square's triangle autocorrelation at 2 ms: +0.14 dB
+  at the 427 Hz test tone (punch adds 0.01 dB). The card wires A to the left only and runs its SSG rows through the
+  voicing but not the character chain. Room off: -7.595 / -7.608 dB (punch off / on), within 0.01 dB of the schematic.
+  `Ym2203PairBoardsLevel_Test` measures with the room off, tolerance 0.03 dB (was 0.2);
+  `SsgRatioIsTheSchematicWeightAndTheRoomCrossfeedExplainsTheRest` checks the predicted +0.14 dB on the TSFM and no
+  change on the card. Open (owner): should the card's SSG rows run the AY character chain (punch, room) like the
+  socket's chips?
 - [x] atm3 / atm450 / atm710 carry `TSFM_FmTrimDb=7.4` since 2026-10-05 (`bab7a4e32`), like every shipped config
 - [x] side note: the plain AY / TurboSound device (`SoundChip_TurboSound`) has the same sample-phase render loop as the
   TSFM and probably the same click after a host speed multiplier. Confirmed and worse (2026-10-05): its render loop
