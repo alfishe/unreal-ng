@@ -65,6 +65,8 @@ add_library(unreal-asm STATIC
     src/symbols/codecs/native/nativecodec.cpp
     src/symbols/codecs/text/textlines.cpp
     src/symbols/codecs/labelfiles/labelfilecodecs.cpp
+    src/symbols/codecs/text/tokenizer.cpp
+    src/symbols/codecs/crossasm/crossasmcodecs.cpp
     src/symbols/registry.cpp
 )
 target_include_directories(unreal-asm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -123,6 +125,8 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/symbols/json_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/nativecodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/labelfilecodecs_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/tokenizer_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/crossasmcodecs_test.cpp
     )
     target_link_libraries(unreal-asm-tests PRIVATE unreal-asm gtest)
     target_include_directories(unreal-asm-tests PRIVATE ${UNREAL_ASM_DIR}/src ${UNREAL_ASM_DIR}/tests)

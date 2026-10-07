@@ -52,10 +52,10 @@ Phase numbers refer to [tdd.md](tdd.md) §10.
 | `sjasm-equ` | text | ● | ● | lines `NAME EQU $HHHH ; (TYPE)` (also reads sjasmplus' `NAME: EQU 0x0000HHHH`) | done (S2) | S2 |
 | `z88dk-defc` | text | ● | ● | lines `DEFC name = $HHHH ; (TYPE)` (what LabelManager read) | done (S2) | S2 |
 | `z88dk-map` | text | ● | ● | lines `name = $HHHH ; ...` **verify** the field list against z88dk's current output | new | S3 |
-| `sjasmplus-sym` | text | ● | ● | lines `NAME: EQU 0x0000HHHH` **verify** (`--sym`, `--exp`) | new | S3 |
-| `sjasmplus-sld` | text | ● | ● | first line `\|SLD.data.version\|N`, then `\|`-separated records **verify** the field order per SLD version | new | S3 |
-| `sjasmplus-lst` | text | ● | ● | the `ListingParser` grammar; labels are the lines that define one | existing (`ListingParser`) | S3 |
-| `pasmo` | text | ● | ● | lines `NAME EQU 0HHHHH` **verify** the option and form | new | S3 |
+| `sjasmplus-sym` | text | ● | ● | lines `NAME: EQU 0x0000HHHH` (`--sym`, `--exp`), sorted by name; checked on sjasmplus 1.24 output, written back byte for byte | done (S3) | S3 |
+| `sjasmplus-sld` | text | ● | ● | first line `\|SLD.data.version\|1`, then `file\|line\|deffile\|defline\|page\|value\|type\|data` (sjasmplus documentation, version 1); `L` lines give module / main / local and traits (`+equ`, `+local`), `T` lines mark code, `Z` the page size | done (S3) | S3 |
+| `sjasmplus-lst` | text | ● | ● | the listing: a line defining a label gives its address (the source starts 18 characters after the address), `EQU` with a plain number its value, `MODULE` / `ENDMODULE` the prefix; no pages | done (S3) | S3 |
+| `pasmo` | text | ● | ● | lines `NAME<TAB>[<TAB>]EQU 0HHHHH` (the third command-line argument; `--public` writes only PUBLIC names), sorted by name; a PROC's LOCAL label is named by pasmo (`00000000`); checked on pasmo 0.5.5, written back byte for byte | done (S3) | S3 |
 | `ida-python` | script | ● | ● | — | new | S4 |
 | `ida-idc` | script | ● | ● | `set_name(` / `MakeName(` lines | new | S4 |
 | `ghidra` | script / text | ● | ● | lines `name address [type]` for Ghidra's symbol-import script **verify** | new | S4 |

@@ -1,0 +1,2 @@
+play		EQU 0800CH
+start		EQU 08000H

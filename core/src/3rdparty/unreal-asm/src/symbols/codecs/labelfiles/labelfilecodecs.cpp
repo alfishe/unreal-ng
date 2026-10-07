@@ -477,15 +477,20 @@ std::string SjasmEquCodec::WriteLine(const Symbol& s, bool& folded, std::string&
 int SjasmEquCodec::ScoreLines(const std::vector<std::string_view>& lines) const
 {
     text::LineScore score;
+    size_t sjasmplus = 0;   // "NAME: EQU 0x0000HHHH": sjasmplus' own --sym form, its codec's file
     for (const std::string_view raw : lines)
     {
         const std::string_view line = Trim(raw);
         if (text::Skipped(line))
             continue;
         ++score.data;
-        score.matched += Accepts(line);
+        if (Accepts(line))
+        {
+            ++score.matched;
+            sjasmplus += line.find(": EQU 0x") != std::string_view::npos;
+        }
     }
-    return score.Score(85);
+    return score.Score(score.matched && sjasmplus == score.matched ? 60 : 85);
 }
 
 // z88dk-defc --------------------------------------------------------------------------------------------------------
