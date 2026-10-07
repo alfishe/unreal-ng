@@ -267,7 +267,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC $<TARGET_NAME:zstd::libzstd>)
 target_link_libraries(${PROJECT_NAME} PUBLIC miniz)
 
 # Host-side TLS for emulated devices whose firmware speaks TLS itself (the ZiFi ESP32-S3's HTTPS):
-# common/network/hosttls.cpp with OpenSSL, the library the WebAPI already uses. Without OpenSSL (or with
+# common/network/hosttls.cpp with OpenSSL, the project's only TLS user (the WebAPI is plain HTTP). Without OpenSSL (or with
 # UNREAL_HOST_TLS=OFF, e.g. release packages that drop the dependency) the device's TLS connect fails as on a
 # module whose server is unreachable. PRIVATE: only hosttls.cpp includes OpenSSL
 option(UNREAL_HOST_TLS "Host-side TLS for emulated TLS clients (needs OpenSSL)" ON)
