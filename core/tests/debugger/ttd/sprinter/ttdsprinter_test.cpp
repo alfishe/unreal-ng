@@ -25,6 +25,7 @@
 #include "3rdparty/z84c15/z84c15.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/ttdrecordedstate.h"
 #include "base/featuremanager.h"
 #include "common/filehelper.h"
 #include "debugger/debugmanager.h"
@@ -32,7 +33,7 @@
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/sprinter/ttdsprinter.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "debugger/ttd/ttdportsearch.h"
@@ -350,7 +351,7 @@ protected:
     std::shared_ptr<Emulator> _emulator;
     EmulatorContext* _context = nullptr;
     PortDecoder_Sprinter* _decoder = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     Z80* _z80 = nullptr;
 
     /// The recorded run: the picture at every frame boundary, by frame
@@ -368,7 +369,7 @@ protected:
         _context = _emulator->GetContext();
         _decoder = dynamic_cast<PortDecoder_Sprinter*>(_context->pPortDecoder);
         ASSERT_NE(_decoder, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         _z80 = _context->pCore->GetZ80();
         _decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
@@ -482,8 +483,20 @@ protected:
         return SIZE_MAX;
     }
 
-    /// The live machine against checkpoint `idx` of the recording: CPU, chipset, every device blob
-    /// (decoded), every RAM sub-page it holds, and the picture of that frame
+    /// The live state of a device as the engine records it: without the memory it offers as regions
+    static std::vector<uint8_t> LiveDeviceState(ttd::TTDSerializable* device)
+    {
+        std::vector<uint8_t> state;
+        uint8_t id = 0;
+        if (auto* source = dynamic_cast<ttd::ITTDRegionSource*>(device); source && source->TTDStateWithoutRegions(id, state))
+            return state;
+        device->TTDSaveStateTo(state);
+        return state;
+    }
+
+    /// The live machine against checkpoint `idx` of the recording: CPU, chipset, every device the engine
+    /// recorded there, every memory region (machine RAM, the video and fast RAM) and the picture of that frame.
+    /// `allRam`: every piece of every region; otherwise the pieces this checkpoint stored anew
     void ExpectLiveMatchesCheckpoint(size_t idx, const std::string& where, bool allRam = false, bool picture = true)
     {
         const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(idx);
@@ -498,37 +511,51 @@ protected:
             << where << ": chipset differs (t " << std::dec << ttd::GetChipsetCpuTInFrame(chipset) << " vs "
             << ttd::GetChipsetCpuTInFrame(cp->chipset) << ")";
 
-        std::unordered_map<uint8_t, std::vector<uint8_t>> live;
-        _ttd->GetPeripheralRegistry().CaptureAll(live);
-        EXPECT_EQ(live.size(), cp->peripheralBlobs.size()) << where << ": device sets differ";
-        for (const auto& [id, blob] : cp->peripheralBlobs)
+        // Devices: each one the engine recorded at this checkpoint, against the live device
+        const ttd::TimeTravelEngine& engine = _ttd->GetEngine();
+        const size_t index = engine.FirstCheckpoint() + idx;
+        size_t devices = 0;
+        for (const ttd::TTDDeviceEntry& entry : engine.Devices().Entries())
         {
-            const auto it = live.find(id);
-            ASSERT_NE(it, live.end()) << where << ": device " << int(id) << " missing";
-            const std::vector<uint8_t> expected = ttd::TTDPeripheralRegistry::DecodeBlob(id, blob);
-            const std::vector<uint8_t> actual = ttd::TTDPeripheralRegistry::DecodeBlob(id, it->second);
-            ASSERT_EQ(actual.size(), expected.size()) << where << ": device " << int(id);
+            const uint8_t id = static_cast<uint8_t>(entry.descriptor.legacyId);
+            std::vector<uint8_t> recorded;
+            if (!engine.DeviceState(index, id, recorded))
+                continue;
+            ttd::TTDSerializable* device = _ttd->GetPeripheralRegistry().GetDevice(static_cast<ttd::PeripheralId>(id));
+            ASSERT_NE(device, nullptr) << where << ": device " << int(id) << " missing";
+            const std::vector<uint8_t> live = LiveDeviceState(device);
+            ASSERT_EQ(live.size(), recorded.size()) << where << ": device " << int(id);
             size_t first = 0;
-            while (first < expected.size() && actual[first] == expected[first])
+            while (first < recorded.size() && live[first] == recorded[first])
                 first++;
-            EXPECT_EQ(first, expected.size()) << where << ": device " << int(id) << " differs from byte " << first;
+            EXPECT_EQ(first, recorded.size()) << where << ": device " << int(id) << " differs from byte " << first;
+            devices++;
         }
+        EXPECT_GT(devices, 0u) << where;
 
-        // RAM: the sub-pages this checkpoint stored anew (all of them on request: 4 MB to decode)
-        const ttd::TTDCheckpoint* prev = idx > 0 && !allRam ? _ttd->GetCheckpoint(idx - 1) : nullptr;
-        std::vector<uint8_t> page(4096);
-        for (size_t p = 0; p < cp->ramPages.size(); p++)
-            for (uint32_t sub = 0; sub < 4; sub++)
+        // Memory: every region, the pieces the session had seen by then
+        const ttd::TimeTravelEngine* previous = idx > 0 && !allRam ? &engine : nullptr;
+        for (uint32_t r = 0; r < engine.Regions().size(); r++)
+        {
+            const ttd::TTDRegionDesc& region = engine.Regions()[r];
+            if (!region.memory)
+                continue;
+            std::vector<uint8_t> recorded(size_t(region.pieces) * ttd::kTTDPieceSize);
+            std::vector<uint8_t> present;
+            const ttd::TTDRestoreResult restored = engine.RestoreRegion(index, r, recorded.data(), &present);
+            ASSERT_TRUE(restored.Ok()) << where << ": region " << region.name << ": " << restored.message;
+            for (uint32_t p = 0; p < region.pieces; p++)
             {
-                const uint32_t slot = cp->ramPages[p].pageSlots[sub];
-                if (slot == ttd::TTDPageRef::kNeverTouched)
+                if (p < present.size() && !present[p])
                     continue;
-                if (prev && p < prev->ramPages.size() && prev->ramPages[p].pageSlots[sub] == slot)
+                if (previous && engine.VersionAt(index, r, p) == engine.VersionAt(index - 1, r, p))
                     continue;
-                ASSERT_TRUE(_ttd->GetPageStore().GetPage(slot, page.data()));
-                const uint8_t* ram = _context->pMemory->RAMPageAddress(static_cast<uint16_t>(p)) + sub * 4096;
-                ASSERT_EQ(std::memcmp(ram, page.data(), 4096), 0) << where << ": RAM page " << p << " sub-page " << sub;
+                const size_t offset = size_t(p) * ttd::kTTDPieceSize;
+                const size_t length = std::min<size_t>(ttd::kTTDPieceSize, region.bytes - offset);
+                ASSERT_EQ(std::memcmp(region.memory + offset, recorded.data() + offset, length), 0)
+                    << where << ": " << region.name << " piece " << p;
             }
+        }
 
         // The picture of the frame that ended here (a seek itself draws nothing into the framebuffer)
         const auto screen = _screens.find(cp->time.frame);
@@ -552,13 +579,8 @@ protected:
         }
     }
 
-    /// The decoded blob of `id` in checkpoint `idx`
-    std::vector<uint8_t> BlobOf(size_t idx, ttd::PeripheralId id) const
-    {
-        const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(idx);
-        const auto it = cp->peripheralBlobs.find(static_cast<uint8_t>(id));
-        return it == cp->peripheralBlobs.end() ? std::vector<uint8_t>() : ttd::TTDPeripheralRegistry::DecodeBlob(static_cast<uint8_t>(id), it->second);
-    }
+    /// The recorded state of `id` at checkpoint `idx` (as the engine keeps it)
+    std::vector<uint8_t> BlobOf(size_t idx, ttd::PeripheralId id) const { return ttdtest::RecordedDeviceState(*_ttd, idx, id); }
 
     DebugKeyboardManager* Keys() const { return _context->pDebugManager->GetKeyboardManager(); }
     DebugMouseManager* MouseManager() const { return _context->pDebugManager->GetMouseManager(); }
@@ -595,12 +617,18 @@ TEST_F(TTDSprinterMachine_Test, RecordsWithEverySprinterBlob)
     Record(3);
     _ttd->StopRecording();
     ASSERT_GE(_ttd->GetCheckpointCount(), 4u);
-    const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(3);
+    // The video and fast RAM are the engine's regions; their devices keep the rest of their state
     for (ttd::PeripheralId id : {ttd::PeripheralId::SprinterPld, ttd::PeripheralId::Ds12887, ttd::PeripheralId::SprinterVideoRam,
                                  ttd::PeripheralId::Z84C15, ttd::PeripheralId::SprinterFastRam, ttd::PeripheralId::SprinterInput,
                                  ttd::PeripheralId::BetaDisk, ttd::PeripheralId::Wd1793Context, ttd::PeripheralId::KempstonMouse,
                                  ttd::PeripheralId::SprinterIsa, ttd::PeripheralId::EthernetNics})
-        EXPECT_EQ(cp->peripheralBlobs.count(static_cast<uint8_t>(id)), 1u) << "id " << int(id);
+        EXPECT_FALSE(BlobOf(3, id).empty()) << "id " << int(id);
+    for (ttd::TTDRegionId region : {ttd::TTDRegionId::SprinterVideoRam, ttd::TTDRegionId::SprinterFastRam})
+    {
+        const auto& regions = _ttd->GetEngine().Regions();
+        EXPECT_TRUE(std::any_of(regions.begin(), regions.end(), [&](const ttd::TTDRegionDesc& r) { return r.id == region; }))
+            << "region " << int(region);
+    }
     ExpectExactReplay(0, 3, "a few frames of BIOS POST");
 }
 
@@ -1190,4 +1218,31 @@ TEST_F(TTDSprinterMachine_Test, GameModule_ReplaysBitExactWithAnyRendering)
         RunToBoundary();
         ExpectLiveMatchesCheckpoint(idx, "Game, ScreenHQ on: frame " + std::to_string(idx), false, false);
     }
+}
+
+/// The video RAM is the engine's region: a restore writes its bytes back directly, and the region's
+/// after-restore call rebuilds the pens' color cache from them. With every pen repainted live after the
+/// recording, a seek composes the recorded picture: the replay it composes from draws with the restored pens
+TEST_F(TTDSprinterMachine_Test, ASeekRebuildsThePensFromTheRestoredVideoRam)
+{
+    PowerOn(true);
+    Skip(5);
+    StartRecording();
+    Record(3);
+    _ttd->StopRecording();
+    ASSERT_GE(_ttd->GetCheckpointCount(), 3u);
+
+    // The live machine repaints every pen (all three components flipped)
+    SprinterVideoRam& vram = _decoder->GetVideoRam();
+    for (uint32_t pen = 0; pen < SprinterVideoRam::kPens; pen++)
+        for (uint32_t c = 0; c < 3; c++)
+        {
+            const uint32_t address = SprinterVideoRam::PenAddress(pen) + c;
+            vram.Write(address, static_cast<uint8_t>(~vram.Read(address)));
+        }
+
+    const uint64_t frame = _ttd->GetCheckpoint(2)->time.frame;
+    ASSERT_TRUE(_ttd->SeekTo({frame, 0}));
+    ASSERT_NE(_screens.find(frame), _screens.end());
+    EXPECT_EQ(ScreenHash(), _screens.at(frame)) << "the composed picture uses the restored pens";
 }

@@ -26,7 +26,6 @@ namespace ttdtest
 inline constexpr const char* kV1TestFiles[] = {
     "debugger/ttd/bench/ttdv1feeder_test.cpp",
     "debugger/ttd/engine/ttdsessionfile_test.cpp",
-    "debugger/ttd/sprinter/ttdsprinter_test.cpp",
     "debugger/ttd/timetravelcontroller_corpus_test.cpp",
     "debugger/ttd/timetravelcontroller_test.cpp",
     "debugger/ttd/timetravelframecache_test.cpp",
