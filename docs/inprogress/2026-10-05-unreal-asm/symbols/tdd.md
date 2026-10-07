@@ -184,6 +184,12 @@ The tokenized codec for a file uses `ReadSourceFile` (labels with their source l
 `--assemble`, from `Z80TextAssembler` over the detokenized text) and its encoder writes the assembler's own form; the
 live scanner uses `ScoreTable` + `ReadTable` on the RAM copy.
 
+**As implemented (2026-10-07).** Sources are no symbol codec: the library's source codecs decode them, and
+`SymbolsFromProject(files, main, options)` (`include/unrealasm/symbols/fromsource.h`) gives their labels. The values
+come from `layout::Layout` (`include/unrealasm/layout.h`, `src/layout/`) over the sjasmplus conversion, not from
+`Z80TextAssembler` ([formats.md](formats.md) §4.1). The label tables (`ScoreTable` / `ReadTable`) and the live
+scanners stay as designed, after their research.
+
 ### 4.3 Live scanning
 
 ```cpp

@@ -783,6 +783,13 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
         std::string label = l.label.empty() ? std::string() : w.Name(l.label);
         if (w.sameDialect && !l.label.empty() && l.label.find_first_not_of("0123456789") == std::string::npos)
             label = l.label;   // a sjasmplus temporary label (1, referred to as 1B / 1F)
+        if (!l.label.empty())
+        {
+            bool local = false;
+            for (const auto& scope : w.localScopes)
+                local = local || scope.count(l.label);
+            result.labels.push_back({l.sourceLine, l.label, label, local, w.inMacro});
+        }
         if (!label.empty() && redefinable.count(l.label))
         {
             bool defines = false;

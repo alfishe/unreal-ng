@@ -70,6 +70,9 @@ add_library(unreal-asm STATIC
     src/symbols/codecs/script/scriptcodecs.cpp
     src/symbols/model/namerules.cpp
     src/symbols/registry.cpp
+    src/layout/z80size.cpp
+    src/layout/layout.cpp
+    src/symbols/fromsource/fromsource.cpp
 )
 target_include_directories(unreal-asm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(unreal-asm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -136,6 +139,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/symbols/crossasmcodecs_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/namerules_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/scriptcodecs_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/fromsource_test.cpp
     )
     target_link_libraries(unreal-asm-tests PRIVATE unreal-asm gtest)
     target_include_directories(unreal-asm-tests PRIVATE ${UNREAL_ASM_DIR}/src ${UNREAL_ASM_DIR}/tests)

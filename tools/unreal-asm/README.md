@@ -12,6 +12,7 @@ tools run the corpus-sized and emulator-driven checks behind them (the results a
 | `objcheck.py` | For a converted ALASM project: builds every object of each main source's `SAVEOBJ` table with sjasmplus and compares it with the file ALASM saved on the same disk |
 | `assemble-in-emulator.py` | Runs TASM 4.12, ALASM 5.09, STORM 1.3 or ZAsm 3.15 in an unreal-ng instance, assembles a source and saves the bytes it built (the oracle for a source with no binary on its disk) |
 | `crosscheck.py` | Converts the main sources of a set of TR-DOS images to sjasmplus and to pasmo / z88dk (`--targets`), assembles each and compares the bytes each built |
+| `symcheck.py` | The labels the symbol module takes from sources (`symconv source`) against sjasmplus: every main source of a set of TRD / SCL images converted and assembled with `--sym`, the same project laid out by `symconv`; names and values compared |
 | `lstcheck.py` | Compares the bytes of a sjasmplus listing with a memory dump, line by line (a converted program against a running copy of it, e.g. an assembler's own source against the assembler unpacked in memory) |
 | `emulator.py` | The WebAPI client the emulator script uses (own instance, disk swap with TTD recording, keys, screenshots, memory) |
 | `zxdisk.py` | TR-DOS images: list a TRD / SCL catalog, extract a file as hobeta, add hobeta files to a TRD, SCL to TRD, a file as hobeta |
@@ -95,5 +96,18 @@ python3 tools/unreal-asm/lstcheck.py scratch/build.lst mem64k.bin --from 0x6000
 #   ...
 #   bytes compared: 18928  differing: 32
 ```
+
+## Example: labels from sources against sjasmplus
+
+```bash
+export UNREAL_ASM_ZXASM=<build>/bin/zxasm UNREAL_ASM_SYMCONV=<build>/bin/symconv UNREAL_ASM_SJASMPLUS=<path to sjasmplus>
+python3 tools/unreal-asm/symcheck.py scratch/symcheck --images-from scratch/images.txt
+#   differ 1/Marazm: 1 values, 0 missing, 0 extra (first: rnd)
+#   ...
+#   differ: ...  equal: ...  skipped (sjasmplus errors): ...  labels compared: ...
+```
+
+A program that runs while it assembles (ALASM's SNAKE waits for keys) is stopped by `--timeout` (sjasmplus) and by
+the layout's own limit. Names that differ only in case share one host file and are skipped.
 
 Write all outputs to `scratch/`.

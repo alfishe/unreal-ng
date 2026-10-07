@@ -61,11 +61,10 @@ Phase numbers refer to [tdd.md](tdd.md) §10.
 | `ghidra` | script / text | ● | ● | System.map lines `hhhh T name` (or `hhhh name`) for the `LinuxSystemMapImportScript` that ships with Ghidra 12 (the old `ImportSymbolsScript.py` is gone with Jython): `T` / `t` make a function, `D` data, `A` a constant, `l` (ours) a local label; checked in Ghidra 12.1.4 headless: every label lands, functions only at code | done (S4) | S4 |
 | `mame` | script | ● | ● | debugger commands `comadd HHHH,name[ - comment]` (MAME has comments, no labels; `,` and `;` are its separators); from MAME 0.289's `debugcmd.cpp` / help: its `-debugger none` does not run a script, so no headless check | done (S4) | S4 |
 | `cspect-map` | text | ● | ● | sjasmplus' `CSPECTMAP` directive: `HHHHHHHH LLLLLLLL TT NAME` (address, physical address, 00 label / 01 EQU / 02 DEFL / 03 ROM or no device / 04 STRUCT), names in capitals, a local label `PARENT@LOCAL`; checked on sjasmplus 1.24 output, written back byte for byte | done (S4) | S4 |
-| `tasm` | tokenized source | ● | ● | TR-DOS type `A` / `.$A`; line records `[len][bytes][trailer]`, tokens `#80-#F0`, `#0A n` = n spaces, `#FF` end (owner's 2012 converter; **verify** the trailer byte and TASM 3 vs 4 tables) | prior art | S6 |
-| `alasm` | tokenized + live | ● | ● | after research | research | S7 |
-| `xas` | tokenized + live | ● | ● | after research | research | S8 |
-| `storm`, `gens`, `masm`, `zxasm` | tokenized | ● | ● | after research | research | S9 |
-| `sts` (labels kept by the STS monitor) | live | ● | ● | after research | research | S9 |
+| sources of `tasm`, `alasm`, `storm`, `zxasm`, `sjasmplus` | tokenized source / text | ● | – | the library's source codecs ([../source-formats.md](../source-formats.md)) and dialect frontends; values by the layout of §4.1 (`SymbolsFromProject`, `symconv source`) | done (2026-10-07) | S6-S9 |
+| sources of `gens`, `masm`, `zeus`, `xas` | tokenized source | ● | – | the source codecs exist; a dialect frontend (and its sjasmplus conversion) comes first | codec done, no frontend | S9 |
+| `alasm`, `xas` label tables | live | ● | – | after research (where the table is, the entry layout) | research | S7-S8 |
+| `sts` (labels kept by the STS monitor) | live | ● | – | after research | research | S9 |
 
 Tools without a symbol format in this table (for example Fuse) are not targets until someone asks; the registry
 makes adding one a single file.
@@ -122,11 +121,39 @@ flags, link to the next entry), and how the source refers to labels.
 ### 4.1 A source is not a label table
 
 A tokenized **source** file holds label *names* and the lines that define them, but not their addresses: those exist
-only after the assembler ran. A source codec therefore gives, per label: name, defining line, kind (from `EQU` /
-`DEFB` / an instruction), and a value only where the line itself says it (`EQU 24`). With `--assemble` the
-detokenized text goes through the core's two-pass `Z80TextAssembler`, whose symbol table supplies the addresses (and
-reports what it could not assemble: macros, includes it cannot reach). A **label table** (in RAM after assembling,
-or saved by the assembler) has the addresses directly.
+only after the assembler ran. A **label table** (in RAM after assembling, or saved by the assembler) has the
+addresses directly.
+
+**As implemented (2026-10-07, `symbols/fromsource.h`, `layout.h`).** The addresses come from a **layout** of the
+source's sjasmplus conversion, not from the core's `Z80TextAssembler` (which has no macros, `IF`, `DISP`, `INCLUDE` or
+local labels, so it cannot take real TASM / ALASM projects):
+
+1. A project of another dialect (TASM, ALASM, STORM, ZX-ASM) is converted with `ConvertProject` to sjasmplus: the
+   conversion whose output assembles to the bytes the original assembler built (research-*-to-sjasmplus.md). The
+   backend records, for every label line, the name it wrote (`LabelName`: a reserved word renamed, a LOCAL block's
+   label suffixed `__Ln`, a label in a macro body).
+2. `layout::Layout` walks the sjasmplus text as sjasmplus does, without producing bytes: the size of every instruction
+   form (sjasmplus' fake instructions and its multi-operand forms included), `ORG` / `DISP` / `ENT`, `DB` / `DW` /
+   `DS` / `DZ` / `DC` / `DD` / `ALIGN`, `INCLUDE`, `INCBIN` (the caller gives the file sizes), `IF` / `IFDEF` /
+   `IFUSED` / `ELSE`, `DUP`, `WHILE`, macros (named parameters substituted as sjasmplus does, local labels private to
+   each expansion), `MODULE`, temporary labels; expressions in 32 bits with C's rules and true = -1. The symbol table
+   lives through the passes as in sjasmplus (an unknown name is 0 until defined, which TASM's `IF PASS` relies on);
+   the passes repeat until no label moves.
+3. The laid-out labels get their names in the source back through the backend's record, with the source file and
+   line, the kind (code / data from what follows the label, const for `EQU` / `=`, local for a LOCAL block's label)
+   and the page an `ORG address,page` named. Labels in a block an `IF` leaves out are reported, not given a value.
+   A sjasmplus project is laid out directly (full names `module.label.local`).
+
+Checked against sjasmplus 1.24's `--sym` for the same text: every instruction form (599), the layout rules
+(`testdata/symbols/fromsource/probe.asm`), five projects whose bytes equal the original assemblers' (General Sound ROM
+1.04 in TASM 4.0: 927 labels, The Link's GSTUNNE4 in ALASM: 202, STORM 1.3, ZAsm 3.15 and TASM 4.12 programs), and
+the collection's disks with `tools/unreal-asm/symcheck.py`: of 117 TASM / ALASM / STORM / ZX-ASM images, 530 main
+sources sjasmplus assembles, 511 give the same names and values (67 264 labels); the other 19 are ALASM 5.09's
+examples that draw random numbers from FRAMES (`{#5C77}`, the device memory sjasmplus starts with, rewritten every
+pass: 15) and a sjasmplus quirk (a forward reference to a macro's local label leaves an entry of value 0 under the
+enclosing label: 4). The layout reads `{address}` from what `DB` / `DW` / `DS` wrote and warns for other bytes; a
+program that runs while it assembles (ALASM's SNAKE) is stopped after 8M lines in a pass. Command line:
+`symconv source <image.trd | file.$X | file.asm> [--main NAME] --to <codec>`.
 
 ### 4.2 Research
 

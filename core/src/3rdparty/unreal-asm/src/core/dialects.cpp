@@ -199,6 +199,7 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
         BackendResult written = backend->Write(programs[k], withMacros);
         written.document.name = files[k].name;
         result.files.push_back({files[k].name, std::move(written.document)});
+        result.labels.push_back(std::move(written.labels));
         for (Diagnostic d : notes[k])
             result.diagnostics.push_back({d.severity, d.line, d.byteOffset, files[k].name + ": " + d.message});
         for (Diagnostic d : written.diagnostics)

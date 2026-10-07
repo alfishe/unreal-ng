@@ -6,16 +6,27 @@
 //                                                    read <in> (format detected unless --from) and write it as `id`;
 //                                                    renames by the target's name rules, page symbols by --pages
 //                                                    (default fold); the report goes to stderr
+//   symconv source <in> --to id [-o out] [--main NAME] [--generated] [--sjasmplus-names] [--pages ...]
+//                                                    the labels a source defines, with their values (symbols/fromsource.h):
+//                                                    <in> is a TR-DOS image (the project: its sources, and its other files
+//                                                    for INCBIN; --main picks the source to assemble), a hobeta file or a
+//                                                    text source; --sjasmplus-names gives every label under the name its
+//                                                    sjasmplus conversion writes (to compare with sjasmplus --sym)
 //
 // Without -o the result is written to stdout. Exit code 0 on success, 1 on errors, 2 on bad usage.
 
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include "unrealasm/containers.h"
+#include "unrealasm/registry.h"
 #include "unrealasm/symbols/codec.h"
+#include "unrealasm/symbols/fromsource.h"
 
 using namespace unrealasm;
 using namespace unrealasm::symbols;
@@ -25,7 +36,8 @@ namespace
 int Usage()
 {
     std::cerr << "usage: symconv formats | detect <file> |\n"
-                 "       <in> --to id [-o out] [--from id] [--pages fold|comment|drop]\n";
+                 "       <in> --to id [-o out] [--from id] [--pages fold|comment|drop] |\n"
+                 "       source <in> --to id [-o out] [--main NAME] [--generated] [--sjasmplus-names] [--pages ...]\n";
     return 2;
 }
 
@@ -62,6 +74,116 @@ void Print(const Diagnostics& diagnostics)
     }
 }
 
+/// ALASM's wildcards in an INCBIN name: * any run of characters, ? one (case-insensitive here: host names)
+bool Matches(std::string_view pattern, std::string_view name)
+{
+    auto lower = [](char c) { return static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c); };
+    if (pattern.empty())
+        return name.empty();
+    if (pattern[0] == '*')
+    {
+        for (size_t k = 0; k <= name.size(); ++k)
+            if (Matches(pattern.substr(1), name.substr(k)))
+                return true;
+        return false;
+    }
+    return !name.empty() && (pattern[0] == '?' || lower(pattern[0]) == lower(name[0])) && Matches(pattern.substr(1), name.substr(1));
+}
+
+/// A source project read from a file: an image's sources (as `zxasm convert` takes them) and the sizes of all its files
+/// under the names INCBIN gives them (NAME for type C, NAME.T, NAME.slack for the rest of the last sector)
+struct Project
+{
+    std::vector<ProjectFile> sources;
+    std::vector<std::pair<std::string, uint64_t>> sizes;
+
+    std::optional<uint64_t> Size(const std::string& wanted) const
+    {
+        std::optional<uint64_t> found;
+        for (const auto& [name, size] : sizes)
+            if (Matches(wanted, name))
+                found = size;   // the last match, as ALASM takes it
+        return found;
+    }
+};
+
+void AddSource(Project& project, std::string name, const std::vector<uint8_t>& bytes, const CatalogHints& hints, bool text)
+{
+    const CodecRegistry& registry = CodecRegistry::Builtin();
+    const DetectResult detected = registry.Detect(bytes, hints);
+    const ISourceCodec* codec = detected.chosen;
+    if (text && (!codec || codec->Info().family != CodecFamily::Tokenized))
+        codec = registry.Find("sjasmplus");   // a text source: sjasmplus' dialect
+    if (!codec || (!text && codec->Info().family != CodecFamily::Tokenized))
+        return;
+    int copies = 1;
+    for (const ProjectFile& earlier : project.sources)
+        if (earlier.name == name || earlier.name.rfind(name + "~", 0) == 0)
+            ++copies;
+    if (copies > 1)
+        name += "~" + std::to_string(copies);   // a name saved again: TR-DOS finds the first
+    DecodeOptions options;
+    options.catalog = hints;
+    project.sources.push_back({name, codec->Decode(bytes, options).document});
+}
+
+bool ReadProject(const std::string& path, const std::vector<uint8_t>& bytes, Project& project)
+{
+    std::vector<containers::TrdosFile> files;
+    std::string error;
+    const std::string extension = Extension(path);
+    const bool image = extension == "trd" && containers::ReadTrd(bytes, files, error);
+    containers::TrdosFile one;
+    if (!image && extension.size() == 2 && extension[0] == '$' && containers::ReadHobeta(bytes, one, error))
+        files.push_back(one);
+    if (files.empty())
+    {
+        // A text source: named as INCLUDE would name it (no folder, no .asm)
+        const size_t slash = path.find_last_of("/\\");
+        std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+        if (name.size() > 4 && Extension(name) == "asm")
+            name.resize(name.size() - 4);
+        AddSource(project, name, bytes, {}, true);
+        return !project.sources.empty();
+    }
+    for (const containers::TrdosFile& f : files)
+    {
+        const std::string name = f.TrimmedName() + (f.type == 'C' ? std::string() : std::string(".") + f.type);
+        project.sizes.emplace_back(name, f.data.size());
+        project.sizes.emplace_back(f.TrimmedName() + "." + std::string(1, f.type), f.data.size());
+        project.sizes.emplace_back(name + ".slack", f.tail.size());
+        // A three-letter extension: the type and the two bytes of the start address ("Font4_3.fn1")
+        const char second = static_cast<char>(f.start & 0xFF), third = static_cast<char>(f.start >> 8);
+        if (second > ' ' && second < 0x7F && third > ' ' && third < 0x7F)
+            project.sizes.emplace_back(f.TrimmedName() + "." + std::string{f.type, second, third}, f.data.size());
+        AddSource(project, f.TrimmedName(), f.data, f.Hints(), false);
+    }
+    return !project.sources.empty();
+}
+
+int Write(const ISymbolCodec& target, const SymbolFile& file, const SymbolEncodeOptions& options, const std::string& from, size_t count,
+          const std::string& output)
+{
+    const SymbolEncodeResult encoded = target.Encode(file, options);
+    Print(encoded.diagnostics);
+    std::cerr << from << " -> " << target.Info().id << ": " << count << " read, " << encoded.written << " written\n";
+    if (!encoded.ok)
+        return 1;
+    if (output.empty())
+    {
+        std::cout.write(reinterpret_cast<const char*>(encoded.bytes.data()), static_cast<std::streamsize>(encoded.bytes.size()));
+        return 0;
+    }
+    std::ofstream out(output, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(encoded.bytes.data()), static_cast<std::streamsize>(encoded.bytes.size()));
+    if (!out)
+    {
+        std::cerr << "symconv: cannot write " << output << "\n";
+        return 1;
+    }
+    return 0;
+}
+
 const char* FamilyName(Family f)
 {
     switch (f)
@@ -84,7 +206,7 @@ int main(int argc, char** argv)
     {
         for (const auto& codec : registry.All())
         {
-            const CodecInfo& info = codec->Info();
+            const symbols::CodecInfo& info = codec->Info();
             std::cout << info.id << "\t" << FamilyName(info.family) << "\t" << (info.pages ? "pages" : "no pages") << "\t";
             for (size_t i = 0; i < info.extensions.size(); ++i)
                 std::cout << (i ? "," : "") << info.extensions[i];
@@ -112,12 +234,21 @@ int main(int argc, char** argv)
     std::string to;
     std::string from;
     std::string output;
+    std::string main;
     SymbolEncodeOptions options;
-    for (size_t i = 0; i < args.size(); ++i)
+    SourceSymbolsOptions sourceOptions;
+    const bool fromSource = args[0] == "source";
+    for (size_t i = fromSource ? 1 : 0; i < args.size(); ++i)
     {
         const std::string& a = args[i];
         const bool hasValue = i + 1 < args.size();
-        if (a == "--to" && hasValue)
+        if (fromSource && a == "--main" && hasValue)
+            main = args[++i];
+        else if (fromSource && a == "--generated")
+            sourceOptions.generated = true;
+        else if (fromSource && a == "--sjasmplus-names")
+            sourceOptions.writtenNames = true;
+        else if (a == "--to" && hasValue)
             to = args[++i];
         else if (a == "--from" && hasValue)
             from = args[++i];
@@ -147,6 +278,44 @@ int main(int argc, char** argv)
         std::cerr << "symconv: cannot read " << input << "\n";
         return 1;
     }
+    if (fromSource)
+    {
+        Project project;
+        if (!ReadProject(input, bytes, project))
+        {
+            std::cerr << "symconv: no assembler source in " << input << "\n";
+            return 1;
+        }
+        size_t at = 0;
+        if (!main.empty())
+        {
+            at = project.sources.size();
+            for (size_t k = 0; k < project.sources.size(); ++k)
+                if (project.sources[k].name == main)
+                    at = k;
+            if (at == project.sources.size())
+            {
+                std::cerr << "symconv: no source " << main << " in " << input << "\n";
+                return 1;
+            }
+        }
+        else if (project.sources.size() > 1)
+        {
+            std::cerr << "symconv: " << input << " holds several sources, pick one with --main:";
+            for (const ProjectFile& f : project.sources)
+                std::cerr << " " << f.name;
+            std::cerr << "\n";
+            return 2;
+        }
+        sourceOptions.layout.fileSize = [&project](const std::string& name) { return project.Size(name); };
+        const SourceSymbolsResult r = SymbolsFromProject(project.sources, at, sourceOptions);
+        Print(r.diagnostics);
+        SymbolFile file;
+        file.sets.push_back(r.set);
+        const int written = Write(*target, file, options, r.set.symbols.empty() ? std::string("source") : r.set.symbols[0].provenance.importer,
+                                  r.set.symbols.size(), output);
+        return written ? written : (r.ok ? 0 : 1);
+    }
     const ISymbolCodec* source = from.empty() ? nullptr : registry.Find(from);
     if (!from.empty() && !source)
     {
@@ -170,22 +339,5 @@ int main(int argc, char** argv)
     size_t count = 0;
     for (const SymbolSet& set : decoded.file.sets)
         count += set.symbols.size();
-    const SymbolEncodeResult encoded = target->Encode(decoded.file, options);
-    Print(encoded.diagnostics);
-    std::cerr << source->Info().id << " -> " << target->Info().id << ": " << count << " read, " << encoded.written << " written\n";
-    if (!encoded.ok)
-        return 1;
-    if (output.empty())
-    {
-        std::cout.write(reinterpret_cast<const char*>(encoded.bytes.data()), static_cast<std::streamsize>(encoded.bytes.size()));
-        return 0;
-    }
-    std::ofstream out(output, std::ios::binary);
-    out.write(reinterpret_cast<const char*>(encoded.bytes.data()), static_cast<std::streamsize>(encoded.bytes.size()));
-    if (!out)
-    {
-        std::cerr << "symconv: cannot write " << output << "\n";
-        return 1;
-    }
-    return 0;
+    return Write(*target, decoded.file, options, source->Info().id, count, output);
 }
