@@ -15,6 +15,12 @@
 class ModuleLogger;
 class EmulatorContext;
 
+namespace unrealasm::symbols
+{
+class ISymbolCodec;
+struct Symbol;
+}
+
 /// @brief Structure representing a single label with address and type information
 struct Label
 {
@@ -122,19 +128,11 @@ public:
     size_t GetLabelCount() const;
     
 protected:
-    // File format detection and parsing
-    FileFormat DetectFileFormat(const std::string& path) const;
-    bool ParseMapFile(std::istream& input);
-    bool ParseSymFile(std::istream& input);
-    bool ParseViceSymFile(std::istream& input);
-    bool ParseSJASMSymFile(std::istream& input);
-    bool ParseZ88DKSymFile(std::istream& input);
-    
-    // Helper methods
-    static std::string TrimWhitespace(const std::string& str);
-    static std::vector<std::string> SplitString(const std::string& str, char delimiter);
-    static bool IsHexDigit(char c);
-    static uint16_t ParseHex16(const std::string& str);
-    static uint32_t ParseHex32(const std::string& str);
+    // Label files through the symbol module's codecs (unreal-asm, docs/inprogress/2026-10-05-unreal-asm/symbols/)
+    static std::string CodecForExtension(const std::string& extension);
+    bool ReadLabelFile(const std::string& path, std::vector<uint8_t>& bytes) const;
+    bool ImportWith(const unrealasm::symbols::ISymbolCodec& codec, const std::vector<uint8_t>& bytes, const std::string& path);
+    bool AddSymbol(const unrealasm::symbols::Symbol& symbol);
+    static unrealasm::symbols::Symbol ToSymbol(const Label& label);
     /// endregion </Methods>
 };

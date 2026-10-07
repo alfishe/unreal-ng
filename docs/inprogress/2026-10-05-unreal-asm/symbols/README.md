@@ -59,4 +59,4 @@ command-line converter built from the std-only part; bundles get `data/symbols/m
 
 ## Status
 
-Design (2026-10-05): proposals P-1…P-7 wait for the owner; no code. See [TODO.md](../TODO.md).
+Design (2026-10-05). S1-S2 implemented (2026-10-06): the model, index, store, merge, the native file and the six label file codecs behind `LabelManager` (`core/src/3rdparty/unreal-asm/include/unrealasm/symbols/`, `src/symbols/`). See [TODO.md](../TODO.md).

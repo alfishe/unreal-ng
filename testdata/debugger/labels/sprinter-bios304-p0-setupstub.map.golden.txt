@@ -1,0 +1,5 @@
+HrustDepacker|803E|65535|65535|RAM|code|||1
+SetupCopyright|8007|65535|65535|RAM|data|||1
+SetupName|8000|65535|65535|RAM|data|||1
+SetupStubEntry|8005|65535|65535|RAM|code|||1
+SetupStubStart|8020|65535|65535|RAM|code|||1

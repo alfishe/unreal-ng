@@ -1,0 +1,139 @@
+ATTRP|5C8D|65535|65535|RAM|data||1 IY+83 Permanent current colours, etc.|1
+ATTRT|5C8F|65535|65535|RAM|data||N1 IY+85 Temporary current colours, etc.|1
+BANK678|5B67|65535|65535|RAM|data||X1 Copy of last byte output to I/O port 1FFD (8189). Controls +3 RAM/ROM switching, disk motor, Centronics strobe. Must be kept up to date if interrupts enabled.|1
+BANKM|5B5C|65535|65535|RAM|data||X1 Copy of last byte output to I/O port 7FFD (32765). Controls RAM paging, ROM switch, screen selection, I/O disabling. Must be kept up to date if interrupts enabled.|1
+BAUD|5B5F|65535|65535|RAM|data||2 RS232 bit period in T states/26. Set by FORMAT LINE. (Note: See also 5CC3 for IF1 BAUD)|1
+BAUD_IF1|5CC3|65535|65535|RAM|data||2 Timing constant for RS232 I/O. (3500000/(26*baudrate))-2. (Renamed from BAUD) ; IF1 INACTIVE: val 15 (low byte), 'R' (high byte at 5CC4, for 'R' chan)|1
+BORDCR|5C48|65535|65535|RAM|data||1 IY+14 Border colour * 8; also lower screen attributes.|1
+BREG|5C67|65535|65535|RAM|data||N1 IY+45 Calculator's B register.|1
+CHADD_|5CCB|65535|65535|RAM|data||N2 Temporary store for CH_ADD. ; IF1 INACTIVE: val PROG (points to 1st byte of program, e.g. 800Dh)|1
+CHANS|5C4F|65535|65535|RAM|data||X2 IY+21 Address of channel data. (See 5CB6/5CF0 for IF1 CHANS start)|1
+CHARS|5C36|65535|65535|RAM|data||2 IY-4 256 less than address of character set.|1
+CH_ADD|5C5D|65535|65535|RAM|data||X2 IY+35 Address of the next character to be interpreted.|1
+COL|5B63|65535|65535|RAM|data||N1 Current column from 1 to width.|1
+COORDS_X|5C7D|65535|65535|RAM|data||1 IY+67 X-coordinate of last point plotted. (Original COORDS implies X then Y)|1
+COORDS_Y|5C7E|65535|65535|RAM|data||1 IY+68 Y-coordinate of last point plotted.|1
+COPIES|5CEF|65535|65535|RAM|data||N1 Number of copies made by SAVE. Reset to 1 after SAVE.|1
+CURCHL|5C51|65535|65535|RAM|data||X2 IY+23 Address of channel currently being used for input/output.|1
+DATADD|5C57|65535|65535|RAM|data||X2 IY+29 Address of terminator of last DATA item.|1
+DEFADD|5C0B|65535|65535|RAM|data||N2 IY-47 Address of arguments of user defined function, else 0.|1
+DEST|5C4D|65535|65535|RAM|data||N2 IY+19 Address of variable in assignment.|1
+DFCC|5C84|65535|65535|RAM|data||2 IY+74 Address in display file of PRINT position.|1
+DFCCL|5C86|65535|65535|RAM|data||2 IY+76 Like DFCC for lower part of screen.|1
+DFSZ|5C6B|65535|65535|RAM|data||X1 IY+49 The number of lines in lower part of screen.|1
+DUMPLF|5B7B|65535|65535|RAM|data||1 Number of 1/216ths used for line feeds in 'COPY EXP'. Normally 9. POKE with 8 for smaller dump.|1
+D_STR1|5CD6|65535|65535|RAM|data||N2 Drive number 1-8, station 0-64, or baud rate 75-19200. ; IF1 INACTIVE: Program bytes|1
+D_STR2|5CDE|65535|65535|RAM|data||N2 Drive number 1-8, station 0-64, or baud rate 75-19200.|1
+ECHO_E|5C82|65535|65535|RAM|data||2 IY+72 33-column number and 24-line number (lower half, end of input buffer).|1
+ERRNR|5C3A|65535|65535|RAM|data||1 IY+0 1 less than the report code. Starts at 255 (for -1).|1
+ERRSP|5C3D|65535|65535|RAM|data||X2 IY+3 Address of item on machine stack for error return.|1
+E_LINE|5C59|65535|65535|RAM|data||X2 IY+31 Address of command being typed in.|1
+E_PPC|5C49|65535|65535|RAM|data||2 IY+15 Number of current line (with program cursor).|1
+FLAGS|5C3B|65535|65535|RAM|data||X1 IY+1 Various flags: b7?, b6 Str/Num, b5 NewKey, b4 128KMode, b3 K/L In, b2 K/L Prn, b1 PrnTxt/Raw, b0 LeadSpace.|1
+FLAGS2|5C6A|65535|65535|RAM|data||1 IY+48 More flags: b7 DefTokIgnoreCase, b6 DefTokNoAbbrev, b5 DefTokSep, b4 OutChanK, b3 CapsLock, b2 ParseInQuote, b1 PrnBufNotEmpty, b0 ScreenClear.|1
+FLAGS3|5CB6|65535|65535|RAM|data||X1 IY+124 Various flags: b7 VERIFY, b6 MERGE, b5 SAVE, b4 LOAD/MOVE, b3 NetUse, b2 MainROMError, b1 CLEAR#/ShadowEntry, b0 NewCmd. ; IF1 INACTIVE: val F4 (is 1st byte of CHANS for 'K')|1
+FLAGS3_128|5B66|65535|65535|RAM|data||1 Various flags. Bit 2=expand tokens, Bit 3=RS232 print, Bit 4=disk interface present, Bit 5=drive B: present. (Renamed from FLAGS3 to avoid clash with IF1 FLAGS3)|1
+FLAGX|5C71|65535|65535|RAM|data||N1 IY+55 Various flags: b7 INPLINE, b6 StrRes, b5 INPUT, b4?, b3?, b2?, b1 NewVar, b0 Slice/SimpleStr.|1
+FN_STR1|5CDC|65535|65535|RAM|data||(Assumed label for Filename start) ; IF1 INACTIVE: Program bytes (Filename start implicitly here)|1
+FN_STR2|5CE4|65535|65535|RAM|data||(Assumed label for Filename start) (Filename start implicitly here)|1
+FRAMES|5C78|65535|65535|RAM|data||3 IY+62 3-byte frame counter, incremented every 20ms.|1
+HD_00|5CE6|65535|65535|RAM|data||N1 File type.|1
+HD_0B|5CE7|65535|65535|RAM|data||N2 Data block length.|1
+HD_0D|5CE9|65535|65535|RAM|data||N2 Data block start address.|1
+HD_0F|5CEB|65535|65535|RAM|data||N2 Program length without variables, or array name.|1
+HD_11|5CED|65535|65535|RAM|data||N2 Autostart line number, execute address, address called by hook code &32.|1
+H_L|5CBA|65535|65535|RAM|data||(part of SBRT) Used to save HL when calling main ROM routines. ; IF1 INACTIVE: val 'K'|1
+IOBORD|5CC6|65535|65535|RAM|data||1 Border colour during I/O, normally 0 (black). ; IF1 INACTIVE: val 09|1
+KSTATE|5C00|65535|65535|RAM|data||N8 IY-58 Used in reading the keyboard.|1
+K_CUR|5C5B|65535|65535|RAM|data||2 IY+33 Address of cursor.|1
+K_DATA|5C0D|65535|65535|RAM|data||N1 IY-45 Stores 2nd byte of colour controls entered from keyboard.|1
+LASTK|5C08|65535|65535|RAM|data||N1 IY-50 Stores newly pressed key.|1
+LASTV|5B6E|65535|65535|RAM|data||5 Last value printed by calculator.|1
+LISTSP|5C3F|65535|65535|RAM|data||N2 IY+5 Address of return address from automatic listing.|1
+LODDRV|5B79|65535|65535|RAM|data||1 Holds 'T' if LOAD/VERIFY/MERGE from tape, else 'A', 'B', 'M'.|1
+L_STR1|5CD9|65535|65535|RAM|data||N1 Device specifier 'M', 'N', 'T' or 'B'. ; IF1 INACTIVE: Program byte|1
+L_STR2|5CE1|65535|65535|RAM|data||N1 Device specifier 'M', 'N', 'T' or 'B'.|1
+MASKP|5C8E|65535|65535|RAM|data||1 IY+84 Permanent transparency mask.|1
+MASKT|5C90|65535|65535|RAM|data||N1 IY+86 Temporary transparency mask.|1
+MEM|5C68|65535|65535|RAM|data||N2 IY+46 Address of area used for calculator's memory (usually MEMBOT).|1
+MEMBOT|5C92|65535|65535|RAM|data||N30 IY+88 Calculator's memory area / miscellaneous workspace.|1
+MODE|5C41|65535|65535|RAM|data||N1 IY+7 Specifies 'K', 'L', 'C', 'E' or 'G' cursor.|1
+NEWPPC|5C42|65535|65535|RAM|data||2 IY+8 Line to be jumped to.|1
+NMIADD|5CB0|65535|65535|RAM|data||2 IY+118 Holds user's NMI service routine address. [IF1: PRCOL]|1
+NSPPC|5C44|65535|65535|RAM|data||1 IY+10 Statement number in line to be jumped to.|1
+NTCHS|5CD5|65535|65535|RAM|data||N1 Current header block checksum. ; IF1 INACTIVE: Program byte|1
+NTDCS|5CD4|65535|65535|RAM|data||N1 Current data block checksum. ; IF1 INACTIVE: Program byte|1
+NTDEST|5CCE|65535|65535|RAM|data||1 Destination station for current packet. ; IF1 INACTIVE: Program byte|1
+NTLEN|5CD3|65535|65535|RAM|data||X1 Length of data block, 1-255. ; IF1 INACTIVE: Program byte|1
+NTNUMB|5CD0|65535|65535|RAM|data||X2 Current packet block number. ; IF1 INACTIVE: Program bytes|1
+NTRESP|5CCD|65535|65535|RAM|data||1 Store for network response code +1. ; IF1 INACTIVE: val 80 (3rd byte of program if CHADD_ points to PROG)|1
+NTSRCE|5CCF|65535|65535|RAM|data||1 Station number of sending machine in current packet. ; IF1 INACTIVE: Program byte|1
+NTSTAT|5CC5|65535|65535|RAM|data||1 Network station. ; IF1 INACTIVE: val F4 (for 'P' chan)|1
+NTTYPE|5CD2|65535|65535|RAM|data||N1 Packet type, 0=normal, 1=EOF. ; IF1 INACTIVE: Program byte|1
+NXTLIN|5C55|65535|65535|RAM|data||X2 IY+27 Address of next line in program. (Note: Original text has 5C57 for NXTLIN, typo? DATADD is also 5C57)|1
+N_STR1|5CDA|65535|65535|RAM|data||N2 Filename length. ; IF1 INACTIVE: Program bytes|1
+N_STR2|5CE2|65535|65535|RAM|data||N2 Filename length.|1
+OLDAF|5B56|65535|65535|RAM|data||X2 Temporary register store while switching ROMs.|1
+OLDBC|5B54|65535|65535|RAM|data||X2 Temporary register store while switching ROMs.|1
+OLDHL|5B52|65535|65535|RAM|data||X2 Temporary register store while switching ROMs.|1
+OLDPPC|5C6E|65535|65535|RAM|data||2 IY+52 Line number to which CONTINUE jumps.|1
+OLDSP|5B6A|65535|65535|RAM|data||X2 Old SP (stack pointer when TSTACK is in use.|1
+ONERR|5B3A|65535|65535|RAM|code||R24 Paging subroutine.|1
+OSPPC|5C70|65535|65535|RAM|data||1 IY+54 Number within line of statement to which CONTINUE jumps.|1
+PFLAG|5C91|65535|65535|RAM|data||1 IY+87 Print flags: b7 Pap9Perm, b6 Pap9Curr, b5 Ink9Perm, b4 Ink9Curr, b3 InvPerm, b2 InvCurr, b1 OverPerm, b0 OverCurr.|1
+PIP|5C39|65535|65535|RAM|data||1 IY-1 Length of keyboard click.|1
+PPC|5C45|65535|65535|RAM|data||2 IY+11 Line number of statement currently being executed.|1
+PRAMT|5CB4|65535|65535|RAM|data||2 IY+122 Address of last byte of physical RAM.|1
+PRCC|5C80|65535|65535|RAM|data||X2 IY+70 Full address of next LPRINT pos (ZX printer buffer 5B00-5B1F). [Not used in 128K/some peripherals] [NMIADD on some systems]|1
+PROG|5C53|65535|65535|RAM|data||X2 IY+25 Address of BASIC program.|1
+P_POSN|5C7F|65535|65535|RAM|data||1 IY+69 33-column number of printer position. [Current default device 'T' or '1'-'8']|1
+RAMERR|5B5E|65535|65535|RAM|data||N1 Error number passed from ROM 1 to ROM 3. Also used by SAVE/LOAD as temporary drive store.|1
+RAMRST|5B5D|65535|65535|RAM|data||X1 RST 8 instruction. Used by ROM 1 to report old errors to ROM 3.|1
+RAMTOP|5CB2|65535|65535|RAM|data||2 IY+120 Address of last byte of BASIC system area.|1
+RASP|5C38|65535|65535|RAM|data||1 IY-2 Length of warning buzz.|1
+RCLINE|5B73|65535|65535|RAM|data||2 Current line being renumbered.|1
+RCSTART|5B75|65535|65535|RAM|data||2 Starting line number for renumbering. Default 10.|1
+RCSTEP|5B77|65535|65535|RAM|data||2 Incremental value for renumbering. Default 10.|1
+REGNUOY|5B2A|65535|65535|RAM|code||R16 Paging subroutine.|1
+REPDEL|5C09|65535|65535|RAM|data||1 IY-49 Time (in 50ths of a second) before key repeat. Default 35.|1
+REPPER|5C0A|65535|65535|RAM|data||1 IY-48 Delay (in 50ths of a second) between successive repeats. Default 5.|1
+RETADDR|5B5A|65535|65535|RAM|data||X2 Return address in ROM 1.|1
+SAVDRV|5B7A|65535|65535|RAM|data||1 Holds 'T' if SAVE to tape, else 'A', 'B', 'M'.|1
+SBRT|5CB9|65535|65535|RAM|data||X10 IY+127 ROM paging routine. ; IF1 INACTIVE: SBRT[0]=10h, SBRT[1]='K'(5CBA), SBRT[2]=F4h(5CBB for 'S' chan), etc. as CHANS area|1
+SCRCT|5C8C|65535|65535|RAM|data||1 IY+82 Scroll counter before 'scroll?'. Poke >1 to disable prompt.|1
+SECTOR|5CC9|65535|65535|RAM|data||N2 Counter of sectors examined during Microdrive ops. ; IF1 INACTIVE: val 'P' (low byte), 80h (high byte at 5CCA, End of CHANS)|1
+SEED|5C76|65535|65535|RAM|data||2 IY+60 The seed for RND. Set by RANDOMIZE.|1
+SERFL|5B61|65535|65535|RAM|data||N2 Second-character-received-flag, and data.|1
+SER_BF|5CC8|65535|65535|RAM|data||N1 One-byte serial input buffer. ; IF1 INACTIVE: val 15|1
+SER_FL|5CC7|65535|65535|RAM|data||N1 Number of buffered serial characters, 0 or 1. ; IF1 INACTIVE: val C4|1
+SPOSNL|5C8A|65535|65535|RAM|data||X2 IY+80 Like S_POSN but for lower part.|1
+STKBOT|5C63|65535|65535|RAM|data||X2 IY+41 Address of bottom of calculator stack.|1
+STKEND|5C65|65535|65535|RAM|data||X2 IY+43 Address of start of spare space.|1
+STOO|5B10|65535|65535|RAM|code||R17 Paging subroutine. Entered with interrupts already disabled and AF, BC on the stack.|1
+STRIP1|5B7C|65535|65535|RAM|data||N8 Stripe one bitmap.|1
+STRIP2|5B84|65535|65535|RAM|data||N8 Stripe two bitmap. Extends to 5B8B (23436).|1
+STRLEN|5C72|65535|65535|RAM|data||N2 IY+56 Length of string type destination in assignment.|1
+STRMS|5C10|65535|65535|RAM|data||X38 IY-42 Addresses of channels attached to streams &FD to &0F.|1
+SUBPPC|5C47|65535|65535|RAM|data||1 IY+13 Number within line of statement currently being executed.|1
+SWAP|5B00|65535|65535|RAM|code||R16 Paging subroutine.|1
+SYNRET|5B6C|65535|65535|RAM|data||X2 Return address for ONERR.|1
+S_POSN_COL|5C88|65535|65535|RAM|data||X1 IY+78 33-column number for PRINT position. (Original S_POSN implies col then line)|1
+S_POSN_ROW|5C89|65535|65535|RAM|data||X1 IY+79 24-line number for PRINT position.|1
+S_STR1|5CD8|65535|65535|RAM|data||N1 Stream number 0-15. ; IF1 INACTIVE: Program byte|1
+S_STR2|5CE0|65535|65535|RAM|data||N1 Stream number 0-15.|1
+S_TOP|5C6C|65535|65535|RAM|data||2 IY+50 The number of the top program line in automatic listings.|1
+TARGET|5B58|65535|65535|RAM|data||N2 Subroutine address in ROM 3.|1
+TSTACK|5BFF|65535|65535|RAM|data||X115 Temporary stack grows down from here. Used when RAM page 7 in. Min 115 bytes.|1
+TVDATA|5C0E|65535|65535|RAM|data||N2 IY-44 Stores bytes of colour, AT and TAB controls going to TV.|1
+TVFLAG|5C3C|65535|65535|RAM|data||X1 IY+2 TV Flags: b7?, b6?, b5 ClrLwKey, b4 AutoList, b3 ModeChg, b2?, b1?, b0?.|1
+TVPARS|5B65|65535|65535|RAM|data||1 Number of inline parameters expected by RS232.|1
+T_ADDR|5C74|65535|65535|RAM|data||N2 IY+58 Address of next item in syntax table; file ops: 0=SAVE,1=LOAD,2=VERIFY,3=MERGE.|1
+UDG|5C7B|65535|65535|RAM|data||2 IY+65 Address of first user-defined graphic.|1
+VARS|5C4B|65535|65535|RAM|data||X2 IY+17 Address of variables.|1
+VECTOR|5CB7|65535|65535|RAM|data||X2 IY+125 Normally points to 01F0 (ERR_6). For command extension. ; IF1 INACTIVE: val 09A8h|1
+WIDTH|5B64|65535|65535|RAM|data||1 Paper column width. Defaults to 80. (Note: See also 5CB1 for IF1 RS232 width)|1
+WORKSP|5C61|65535|65535|RAM|data||X2 IY+39 Address of temporary work space.|1
+XLOC|5B68|65535|65535|RAM|data||N1 Holds X location when using the unexpanded COPY command.|1
+X_PTR|5C5F|65535|65535|RAM|data||2 IY+37 Address of the character after the [?] error marker.|1
+YLOC|5B69|65535|65535|RAM|data||N1 Holds Y location when using the unexpanded COPY command.|1
+YOUNGER|5B21|65535|65535|RAM|code||R9 Paging subroutine.|1

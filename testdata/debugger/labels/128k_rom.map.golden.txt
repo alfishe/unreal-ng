@@ -1,0 +1,1127 @@
+$FCAE|FCAE|65535|65535|RAM|code||Construct Keyword Representation|1
+$FCFD|FCFD|65535|65535|RAM|code||Copy Keyword Characters|1
+$FD2E|FD2E|65535|65535|RAM|code||Identify Token from Table|1
+$FF28|FF28|65535|65535|RAM|code||Insert Character into Display File|1
+$FF36|FF36|65535|65535|RAM|code||UNUSED - Toggle ROMs 1 <<< RAM Routine >>>|1
+$FF56|FF56|65535|65535|RAM|code||UNUSED - Toggle ROMs 2 <<< RAM Routine >>>|1
+L0000|0|65535|65535|ROM|code||RST $00 - Reset Machine|1
+L0004|4|65535|65535|ROM|code||Delay about 0.2s to allow screen switching mechanism to settle.|1
+L000C|C|65535|65535|ROM|data||Spare bytes|1
+L0010|10|65535|65535|ROM|code||RST $10 - Print A Character|1
+L0014|14|65535|65535|ROM|data||Spare bytes|1
+L0018|18|65535|65535|ROM|code||RST $18 - Collect A Character|1
+L001C|1C|65535|65535|ROM|data||Spare bytes|1
+L0020|20|65535|65535|ROM|code||RST $20 - Collect Next Character|1
+L0024|24|65535|65535|ROM|data||Spare bytes|1
+L0028|28|65535|65535|ROM|code||RST $28 - Call Routine in ROM 1|1
+L0037|37|65535|65535|ROM|data||Spare byte|1
+L0038|38|65535|65535|ROM|code||MASKABLE INTERRUPT ROUTINE|1
+L0048|48|65535|65535|ROM|code||End of interrupt routine.|1
+L004A|4A|65535|65535|ROM|code||128K Error Routine|1
+L005C|5C|65535|65535|ROM|code||Call ROM 1 Routine (RST $28 Continuation)|1
+L006B|6B|65535|65535|ROM|code||Swap to Other ROM (copied to $5B00)|1
+L007F|7F|65535|65535|ROM|code||Return to Other ROM Routine (copied to $5B14)|1
+L0088|88|65535|65535|ROM|code||Error Handler Routine (copied to $5B1D)|1
+L009A|9A|65535|65535|ROM|code||'P' Channel Input Routine (copied to $5B2F)|1
+L009F|9F|65535|65535|ROM|code||'P' Channel Output Routine (copied to $5B34)|1
+L00A2|A2|65535|65535|ROM|code||Part of 'P' Channel Output Routine|1
+L00B5|B5|65535|65535|ROM|code||'P' Channel Exit Routine (copied to $5B4A)|1
+L00C3|C3|65535|65535|ROM|code||Call Subroutine|1
+L00C7|C7|65535|65535|ROM|code||Reset Routine (RST $00 Continuation, Part 1)|1
+L00C9|C9|65535|65535|ROM|code||Loop through all RAM banks.|1
+L00FF|FF|65535|65535|ROM|data||Spare byte|1
+L0100|100|65535|65535|ROM|code||ROUTINE VECTOR TABLE - BASIC interpreter parser.|1
+L0103|103|65535|65535|ROM|code||ROUTINE VECTOR TABLE - 'Line Run' entry point.|1
+L0106|106|65535|65535|ROM|code||ROUTINE VECTOR TABLE - Transfer bytes to logical RAM bank 4.|1
+L0109|109|65535|65535|ROM|code||ROUTINE VECTOR TABLE - Transfer bytes from logical RAM bank 4.|1
+L010C|10C|65535|65535|ROM|code||ROUTINE VECTOR TABLE - 128K error routine.|1
+L010F|10F|65535|65535|ROM|code||ROUTINE VECTOR TABLE - Error routine from ROM 1 patch.|1
+L0112|112|65535|65535|ROM|code||ROUTINE VECTOR TABLE - 'Statement Return' routine from ROM 1 patch.|1
+L0115|115|65535|65535|ROM|code||ROUTINE VECTOR TABLE - 'Statement Next' routine from ROM 1 patch.|1
+L0118|118|65535|65535|ROM|code||ROUTINE VECTOR TABLE - Scan the keypad.|1
+L011B|11B|65535|65535|ROM|code||ROUTINE VECTOR TABLE - Play music strings.|1
+L011E|11E|65535|65535|ROM|code||ROUTINE VECTOR TABLE - MIDI byte output routine.|1
+L0121|121|65535|65535|ROM|code||ROUTINE VECTOR TABLE - RS232 byte input routine.|1
+L0124|124|65535|65535|ROM|code||ROUTINE VECTOR TABLE - RS232 text output routine.|1
+L0127|127|65535|65535|ROM|code||ROUTINE VECTOR TABLE - RS232 byte output routine.|1
+L012A|12A|65535|65535|ROM|code||ROUTINE VECTOR TABLE - COPY (screen dump) routine.|1
+L012D|12D|65535|65535|ROM|code||ROUTINE VECTOR TABLE - Call keypad scan routine in ROM 1.|1
+L0131|131|65535|65535|ROM|code||Fatal RAM Error|1
+L0135|135|65535|65535|ROM|code||Infinite loop for Fatal RAM Error.|1
+L0137|137|65535|65535|ROM|code||Reset Routine (RST # and PRINT#|1
+L063D|63D|65535|65535|ROM|code||Return if a character was received.|1
+L0641|641|65535|65535|ROM|code||FORMAT Routine|1
+L0659|659|65535|65535|ROM|code||Handle character after FORMAT|1
+L0661|661|65535|65535|ROM|code||Check for semicolon and get baud rate.|1
+L067D|67D|65535|65535|ROM|code||Get next character after baud rate.|1
+L0689|689|65535|65535|ROM|code||Check for end of line after baud rate.|1
+L0698|698|65535|65535|ROM|code||Lookup timing constant for specified baud rate.|1
+L069B|69B|65535|65535|ROM|code||Loop through baud rate table.|1
+L06AF|6AF|65535|65535|ROM|code||Baud rate has been matched.|1
+L06B8|6B8|65535|65535|ROM|data||Baud Rate Table|1
+L06D8|6D8|65535|65535|ROM|code||RS232 Input Routine|1
+L06E5|6E5|65535|65535|ROM|code||Read Byte from RS232 Port|1
+L070E|70E|65535|65535|ROM|code||Look for the start bit.|1
+L0715|715|65535|65535|ROM|code||Timeout loop for start bit.|1
+L071E|71E|65535|65535|ROM|code||Second/Third test of START BIT.|1
+L0731|731|65535|65535|ROM|code||Start bit found, read data bits.|1
+L0736|736|65535|65535|ROM|code||BD-DELAY - delay loop for bit reading.|1
+L074B|74B|65535|65535|ROM|code||Received one 0.|1
+L0754|754|65535|65535|ROM|code||After reading 8 data bits.|1
+L0757|757|65535|65535|ROM|code||Success and failure paths converge here.|1
+L0766|766|65535|65535|ROM|code||Delay for the stop bit.|1
+L0771|771|65535|65535|ROM|code||Check for a second byte.|1
+L077F|77F|65535|65535|ROM|code||A second byte is on its way.|1
+L079D|79D|65535|65535|ROM|code||Fine tune delay for second byte.|1
+L07A2|7A2|65535|65535|ROM|code||Delay loop for second byte.|1
+L07B7|7B7|65535|65535|ROM|code||Received one 0 (second byte).|1
+L07C0|7C0|65535|65535|ROM|code||Exit with the byte that was read in.|1
+L07CA|7CA|65535|65535|ROM|code||RS232 Output Routine|1
+L07DB|7DB|65535|65535|ROM|code||Handle parameter processing.|1
+L07E0|7E0|65535|65535|ROM|code||No parameters to process.|1
+L07F2|7F2|65535|65535|ROM|code||Handle space character output.|1
+L07FD|7FD|65535|65535|ROM|code||Compare against graphic/UDG characters.|1
+L0803|803|65535|65535|ROM|code||Check for control character.|1
+L0807|807|65535|65535|ROM|code||Printable character handling.|1
+L081A|81A|65535|65535|ROM|code||Character ready to print.|1
+L081E|81E|65535|65535|ROM|code||Process control codes.|1
+L0822|822|65535|65535|ROM|code||Handle a carriage return.|1
+L0830|830|65535|65535|ROM|code||Check for comma.|1
+L083A|83A|65535|65535|ROM|code||Comma handler loop.|1
+L0840|840|65535|65535|ROM|code||Subtract 8 from column position.|1
+L0848|848|65535|65535|ROM|code||Output multiple spaces.|1
+L0853|853|65535|65535|ROM|code||Check for AT, TAB, or colour codes.|1
+L0860|860|65535|65535|ROM|code||Handle AT and TAB.|1
+L0869|869|65535|65535|ROM|code||Handle INK, PAPER, FLASH, BRIGHT, INVERSE, OVER.|1
+L0872|872|65535|65535|ROM|code||All parameters processed.|1
+L0882|882|65535|65535|ROM|code||Process AT and TAB parameters.|1
+L088A|88A|65535|65535|ROM|code||Column position equal or greater than length of row.|1
+L0890|890|65535|65535|ROM|code||Column position less than length of row.|1
+L0895|895|65535|65535|ROM|code||Compare against desired column position.|1
+L08A3|8A3|65535|65535|ROM|code||Write Byte to RS232 Port|1
+L08AF|8AF|65535|65535|ROM|code||Wait for device to be ready.|1
+L08C8|8C8|65535|65535|ROM|code||Transmit each bit.|1
+L08DA|8DA|65535|65535|ROM|code||Transmit a 1.|1
+L08E0|8E0|65535|65535|ROM|code||Delay the length of a bit.|1
+L08F0|8F0|65535|65535|ROM|code||COPY Command Routine|1
+L08F5|8F5|65535|65535|ROM|code||Loop for each half row.|1
+L090E|90E|65535|65535|ROM|code||Copy done, reset printer line spacing.|1
+L0915|915|65535|65535|ROM|code||Output Half Row|1
+L091A|91A|65535|65535|ROM|code||Output a column of pixels.|1
+L0926|926|65535|65535|ROM|code||Output a column of pixels (at double height).|1
+L093A|93A|65535|65535|ROM|code||Loop for four pixels in half row.|1
+L0944|944|65535|65535|ROM|code||Add double height pixel value to byte.|1
+L0955|955|65535|65535|ROM|code||Output Nibble of Pixels|1
+L095F|95F|65535|65535|ROM|code||Output Characters from Table|1
+L0961|961|65535|65535|ROM|code||Loop to send characters.|1
+L096D|96D|65535|65535|ROM|code||Test Whether Pixel (B,C) is Set|1
+L0974|974|65535|65535|ROM|code||Shift the mask bit into the required bit position.|1
+L0979|979|65535|65535|ROM|data||EPSON Printer Control Code Tables - double density|1
+L0980|980|65535|65535|ROM|data||EPSON Printer Control Code Tables - line feed|1
+L0982|982|65535|65535|ROM|data||EPSON Printer Control Code Tables - 1/6 inch spacing|1
+L0985|985|65535|65535|ROM|code||PLAY COMMAND ROUTINES - main entry|1
+L098D|98D|65535|65535|ROM|code||Loop to calculate workspace size.|1
+L09A0|9A0|65535|65535|ROM|code||Loop over each string to initialize.|1
+L0A05|A05|65535|65535|ROM|code||Entry point from vector table for PLAY.|1
+L0A31|A31|65535|65535|ROM|code||Calculate Timing Loop Counter <<< RAM Routine >>>|1
+L0A3E|A3E|65535|65535|ROM|code||Test BREAK Key|1
+L0A4A|A4A|65535|65535|ROM|code||Select Channel Data Block Duration Pointers|1
+L0A4F|A4F|65535|65535|ROM|code||Select Channel Data Block Pointers|1
+L0A52|A52|65535|65535|ROM|code||Continue to get channel pointers.|1
+L0A67|A67|65535|65535|ROM|code||Get Channel Data Block Address for Current String|1
+L0A6E|A6E|65535|65535|ROM|code||Next Channel Data Pointer|1
+L0A7D|A7D|65535|65535|ROM|code||PLAY Command (Continuation) - main processing loop|1
+L0A80|A80|65535|65535|ROM|code||Process next string in PLAY command.|1
+L0A8C|A8C|65535|65535|ROM|code||Check if all channels processed.|1
+L0A97|A97|65535|65535|ROM|code||Find smallest duration and play notes.|1
+L0A9F|A9F|65535|65535|ROM|code||Check if there is anything left to play.|1
+L0AAB|AAB|65535|65535|ROM|code||Wait for note duration and update.|1
+L0AB7|AB7|65535|65535|ROM|data||PLAY Command Character Table|1
+L0AC5|AC5|65535|65535|ROM|code||Get Play Character|1
+L0AD1|AD1|65535|65535|ROM|code||Get Next Note in Semitones|1
+L0AD4|AD4|65535|65535|ROM|code||Get current character from PLAY string.|1
+L0ADF|ADF|65535|65535|ROM|code||Signal a rest and restore HL.|1
+L0AE1|AE1|65535|65535|ROM|code||End of string found, clear channel flag.|1
+L0AEC|AEC|65535|65535|ROM|code||Check for sharp.|1
+L0AF3|AF3|65535|65535|ROM|code||Check for flat.|1
+L0AFA|AFA|65535|65535|ROM|code||Check for lower case letter.|1
+L0B04|B04|65535|65535|ROM|code||Convert to upper case and check range.|1
+L0B1D|B1D|65535|65535|ROM|code||Get Numeric Value from Play String|1
+L0B28|B28|65535|65535|ROM|code||Loop to parse numeric digits.|1
+L0B42|B42|65535|65535|ROM|code||Produce "l number too big" error.|1
+L0B45|B45|65535|65535|ROM|code||End of numeric value reached.|1
+L0B50|B50|65535|65535|ROM|code||Multiply DE by 10|1
+L0B55|B55|65535|65535|ROM|code||Loop to multiply.|1
+L0B5C|B5C|65535|65535|ROM|code||Find Next Note from Channel String|1
+L0B69|B69|65535|65535|ROM|code||Main loop for finding next note.|1
+L0B83|B83|65535|65535|ROM|code||Make a return after processing non-numeric digit.|1
+L0B84|B84|65535|65535|ROM|code||Jump to the command handler routine.|1
+L0B85|B85|65535|65535|ROM|code||Play Command '!' (Comment)|1
+L0B90|B90|65535|65535|ROM|code||Play Command 'O' (Octave)|1
+L0BA5|BA5|65535|65535|ROM|code||Play Command 'N' (Separator)|1
+L0BA6|BA6|65535|65535|ROM|code||Play Command '(' (Start of Repeat)|1
+L0BC2|BC2|65535|65535|ROM|code||Play Command ')' (End of Repeat)|1
+L0BF0|BF0|65535|65535|ROM|code||A new level of closing bracket nesting.|1
+L0C0B|C0B|65535|65535|ROM|code||Set return address for a closing bracket.|1
+L0C27|C27|65535|65535|ROM|code||Get Address of Bracket Pointer Store|1
+L0C32|C32|65535|65535|ROM|code||Play Command 'T' (Tempo)|1
+L0C76|C76|65535|65535|ROM|code||Tempo Command Return|1
+L0C84|C84|65535|65535|ROM|code||Play Command 'M' (Mixer)|1
+L0C95|C95|65535|65535|ROM|code||Play Command 'V' (Volume)|1
+L0CAD|CAD|65535|65535|ROM|code||Play Command 'U' (Use Volume Effect)|1
+L0CBA|CBA|65535|65535|ROM|code||Play command 'W' (Volume Effect Specifier)|1
+L0CCE|CCE|65535|65535|ROM|code||Play Command 'X' (Volume Effect Duration)|1
+L0CDD|CDD|65535|65535|ROM|code||Play Command 'Y' (MIDI Channel)|1
+L0CEE|CEE|65535|65535|ROM|code||Play Command 'Z' (MIDI Programming Code)|1
+L0CF6|CF6|65535|65535|ROM|code||Play Command 'H' (Stop)|1
+L0CFB|CFB|65535|65535|ROM|code||Play Commands 'a'..'g', 'A'..'G', '1'.."12", '&' and ''|1
+L0D28|D28|65535|65535|ROM|code||Increment the counter of tied notes for triplets.|1
+L0D32|D32|65535|65535|ROM|code||Note duration in range 1-9.|1
+L0D38|D38|65535|65535|ROM|code||Check for tied note.|1
+L0D3B|D3B|65535|65535|ROM|code||Check for '' tied note marker.|1
+L0D5F|D5F|65535|65535|ROM|code||A non-triplet tied note.|1
+L0D6E|D6E|65535|65535|ROM|code||Store duration value for non-tied note.|1
+L0D74|D74|65535|65535|ROM|code||Increment the tied notes counter.|1
+L0D81|D81|65535|65535|ROM|code||The character is a letter, '&' or '_'.|1
+L0D9C|D9C|65535|65535|ROM|code||Modify the return address to point to the RET instruction.|1
+L0DA1|DA1|65535|65535|ROM|code||End of String Found (from comment)|1
+L0DA2|DA2|65535|65535|ROM|code||End of string found (processing).|1
+L0DAC|DAC|65535|65535|ROM|code||Point to Duration Length within Channel Data Block|1
+L0DB4|DB4|65535|65535|ROM|code||Store Entry in Command Data Block's Channel Duration Length Pointer Table|1
+L0DCA|DCA|65535|65535|ROM|data||PLAY Command Jump Table|1
+L0DE8|DE8|65535|65535|ROM|data||Envelope Waveform Lookup Table|1
+L0DF0|DF0|65535|65535|ROM|code||Identify Command Character|1
+L0DF9|DF9|65535|65535|ROM|data||Semitones Table|1
+L0E00|E00|65535|65535|ROM|code||Find Note Duration Length|1
+L0E0C|E0C|65535|65535|ROM|data||Note Duration Table|1
+L0E19|E19|65535|65535|ROM|code||Is Numeric Digit?|1
+L0E20|E20|65535|65535|ROM|code||Play a Note On a Sound Chip Channel|1
+L0E3F|E3F|65535|65535|ROM|code||Store note number and check if sound chip channel.|1
+L0E57|E57|65535|65535|ROM|code||Note number 21 to 107.|1
+L0E5E|E5E|65535|65535|ROM|code||Look up note value and play it.|1
+L0E7C|E7C|65535|65535|ROM|code||Set Sound Generator Register|1
+L0E89|E89|65535|65535|ROM|code||Read Sound Generator Register|1
+L0E93|E93|65535|65535|ROM|code||Turn Off All Sound|1
+L0EAC|EAC|65535|65535|ROM|code||Reset all MIDI channels in use.|1
+L0EB8|EB8|65535|65535|ROM|code||Check if all MIDI channels reset.|1
+L0EC3|EC3|65535|65535|ROM|code||All MIDI channels reset.|1
+L0EC8|EC8|65535|65535|ROM|code||Get Previous Character from Play String|1
+L0ED0|ED0|65535|65535|ROM|code||Loop to skip spaces and enters.|1
+L0EE3|EE3|65535|65535|ROM|code||Get Current Character from Play String|1
+L0EEC|EEC|65535|65535|ROM|code||Check for end of string.|1
+L0EFB|EFB|65535|65535|ROM|code||Get next play character, skipping spaces and enters.|1
+L0F05|F05|65535|65535|ROM|code||Return after skipping.|1
+L0F09|F09|65535|65535|ROM|code||Advance character pointer.|1
+L0F12|F12|65535|65535|ROM|code||Produce Play Error Reports - "n Out of range"|1
+L0F1A|F1A|65535|65535|ROM|code||Produce Play Error Reports - "l Number too big"|1
+L0F22|F22|65535|65535|ROM|code||Produce Play Error Reports - "k Invalid note name"|1
+L0F2A|F2A|65535|65535|ROM|code||Produce Play Error Reports - "d Too many brackets"|1
+L0F32|F32|65535|65535|ROM|code||Produce Play Error Reports - "m Note out of range"|1
+L0F3A|F3A|65535|65535|ROM|code||Produce Play Error Reports - "o Too many tied notes"|1
+L0F42|F42|65535|65535|ROM|code||Play Note on Each Channel|1
+L0F45|F45|65535|65535|ROM|code||Main loop to play note on each channel.|1
+L0F69|F69|65535|65535|ROM|code||Play MIDI note.|1
+L0F6C|F6C|65535|65535|ROM|code||Check if all channels processed.|1
+L0F76|F76|65535|65535|ROM|code||Wait Note Duration|1
+L0F86|F86|65535|65535|ROM|code||Tempo-100 loop.|1
+L0F91|F91|65535|65535|ROM|code||Find Smallest Duration Length|1
+L0F97|F97|65535|65535|ROM|code||Main loop to find smallest duration.|1
+L0FAF|FAF|65535|65535|ROM|code||All channel strings checked.|1
+L0FBA|FBA|65535|65535|ROM|code||Store the smallest channel duration length.|1
+L0FC1|FC1|65535|65535|ROM|code||Play a Note on Each Channel and Update Channel Duration Lengths|1
+L0FC8|FC8|65535|65535|ROM|code||Main loop to update duration lengths.|1
+L0FFC|FFC|65535|65535|ROM|code||Current channel uses the smallest duration length.|1
+L100C|100C|65535|65535|ROM|code||Turn off the assigned MIDI channel sound.|1
+L1026|1026|65535|65535|ROM|code||The channel has more tied notes.|1
+L103D|103D|65535|65535|ROM|code||Get next note in the string.|1
+L105A|105A|65535|65535|ROM|code||Check whether another channel needs its duration length updated.|1
+L1066|1066|65535|65535|ROM|code||Delay for 1/96th of a note.|1
+L106F|106F|65535|65535|ROM|code||Update volume/note on each MIDI/sound chip channel.|1
+L1089|1089|65535|65535|ROM|code||Play a note and set volume on assigned MIDI channel.|1
+L108C|108C|65535|65535|ROM|code||Check if all channels processed.|1
+L1096|1096|65535|65535|ROM|data||Note Lookup Table|1
+L116E|116E|65535|65535|ROM|code||Play Note on MIDI Channel|1
+L118D|118D|65535|65535|ROM|code||Turn MIDI Channel Off|1
+L11A3|11A3|65535|65535|ROM|code||Send Byte to MIDI Device|1
+L11B4|11B4|65535|65535|ROM|code||Delay loop for MIDI timing.|1
+L11BE|11BE|65535|65535|ROM|code||Rotate and send next bit.|1
+L11C9|11C9|65535|65535|ROM|code||Send a 0 bit.|1
+L11CF|11CF|65535|65535|ROM|code||Delay for MIDI data bit.|1
+L11D1|11D1|65535|65535|ROM|code||Loop for MIDI data bit delay.|1
+L11E7|11E7|65535|65535|ROM|code||Delay for MIDI stop bit.|1
+L11EB|11EB|65535|65535|ROM|code||SAVE Routine|1
+L11F2|11F2|65535|65535|ROM|code||LOAD Routine|1
+L11F9|11F9|65535|65535|ROM|code||VERIFY Routine|1
+L1200|1200|65535|65535|ROM|code||MERGE Routine|1
+L1205|1205|65535|65535|ROM|code||Common entry for tape commands.|1
+L1219|1219|65535|65535|ROM|code||Produce error "C Nonsense in BASIC" for RAM disk.|1
+L121D|121D|65535|65535|ROM|code||RAM Disk Command Handling|1
+L124E|124E|65535|65535|ROM|code||Handle array type.|1
+L1280|1280|65535|65535|ROM|code||Produce error "b Wrong file type".|1
+L1284|1284|65535|65535|ROM|code||Check for MERGE or VERIFY.|1
+L1290|1290|65535|65535|ROM|code||Handle verify/load of CODE/SCREEN|1
+L129B|129B|65535|65535|ROM|code||RAM Disk VERIFY routine|1
+L12AE|12AE|65535|65535|ROM|code||Handle requested length.|1
+L12B8|12B8|65535|65535|ROM|code||Handle program/array start address.|1
+L12C1|12C1|65535|65535|ROM|code||Load DE bytes at address pointed to by HL.|1
+L12C5|12C5|65535|65535|ROM|code||RAM Disk MERGE! Routine|1
+L12DB|12DB|65535|65535|ROM|code||RAM Disk LOAD! Routine|1
+L12ED|12ED|65535|65535|ROM|code||A start address was specified.|1
+L12F6|12F6|65535|65535|ROM|code||Test if there is room for file.|1
+L12FF|12FF|65535|65535|ROM|code||Test file type.|1
+L1303|1303|65535|65535|ROM|code||Handle program/array type.|1
+L1315|1315|65535|65535|ROM|code||Insert new array entry into variables area.|1
+L1331|1331|65535|65535|ROM|code||Load DE bytes to address pointed to by HL.|1
+L1335|1335|65535|65535|ROM|code||Program type handling.|1
+L1370|1370|65535|65535|ROM|code||Set auto-run and load program.|1
+L137E|137E|65535|65535|ROM|code||RAM Disk Load Bytes|1
+L1385|1385|65535|65535|ROM|code||Get Expression from BASIC Line|1
+L1393|1393|65535|65535|ROM|code||Check Filename and Copy|1
+L13AD|13AD|65535|65535|ROM|code||Loop to fill filename with spaces.|1
+L13BA|13BA|65535|65535|ROM|code||Produce error "f Invalid name".|1
+L13BE|13BE|65535|65535|ROM|code||Cassette / RAM Disk Command Handling|1
+L13D2|13D2|65535|65535|ROM|code||Create space in workspace for header.|1
+L13DC|13DC|65535|65535|ROM|code||Loop to clear filename.|1
+L13F9|13F9|65535|65535|ROM|code||Check filename validity.|1
+L1400|1400|65535|65535|ROM|code||Transfer filename to workspace.|1
+L1407|1407|65535|65535|ROM|code||Handle 'xxx "name" DATA'.|1
+L1425|1425|65535|65535|ROM|code||Handle new array SAVE/VERIFY.|1
+L142F|142F|65535|65535|ROM|code||Continue with the handling of an existing array.|1
+L1444|1444|65535|65535|ROM|code||Handle old/new array type.|1
+L144E|144E|65535|65535|ROM|code||Save the 'type' in the header area.|1
+L1451|1451|65535|65535|ROM|code||Examine last part of the statement.|1
+L145F|145F|65535|65535|ROM|code||Now Consider 'SCREEN|1
+L14D5|14D5|65535|65535|ROM|code||Now consider 'LINE' and 'no further parameters'|1
+L14E2|14E2|65535|65535|ROM|code||Fetch the 'line number' that must follow 'LINE'|1
+L14F9|14F9|65535|65535|ROM|code||'LINE' and 'no further parameters' are both of type 0.|1
+L1519|1519|65535|65535|ROM|code||Separate SAVE from LOAD, VERIFY and MERGE.|1
+L152B|152B|65535|65535|ROM|code||Handle LOAD, VERIFY or MERGE from tape.|1
+L152F|152F|65535|65535|ROM|code||Relist the BASIC Program from the Current Line|1
+L1536|1536|65535|65535|ROM|code||Main loop to display a screenful of program listing.|1
+L1540|1540|65535|65535|ROM|code||Fetch number of rows in Above-Screen buffer.|1
+L1554|1554|65535|65535|ROM|code||Check if rows off top of screen.|1
+L1563|1563|65535|65535|ROM|code||Copy BASIC line rows into the Screen Line Edit Buffer.|1
+L156F|156F|65535|65535|ROM|code||Shift BASIC line into Below-Screen buffer.|1
+L1594|1594|65535|65535|ROM|code||Signal this is the current line.|1
+L1596|1596|65535|65535|ROM|code||Copy row from Below-Screen to Screen Line Edit Buffer.|1
+L15AB|15AB|65535|65535|ROM|code||Scan across BASIC line to locate cursor column position.|1
+L15C0|15C0|65535|65535|ROM|code||Column position of cursor located.|1
+L15CB|15CB|65535|65535|ROM|code||Store the current cursor position.|1
+L15D3|15D3|65535|65535|ROM|code||Move to next row.|1
+L15F4|15F4|65535|65535|ROM|code||No current line, create line number representation.|1
+L15FD|15FD|65535|65535|ROM|code||Continue listing from the first line.|1
+L1602|1602|65535|65535|ROM|code||Bottom line is the current line.|1
+L1605|1605|65535|65535|ROM|code||Print All Screen Line Edit Buffer Rows to the Display File|1
+L160C|160C|65535|65535|ROM|code||Loop to print each row.|1
+L1615|1615|65535|65535|ROM|code||Advance to the next row.|1
+L161E|161E|65535|65535|ROM|code||Find new cursor column position.|1
+L1630|1630|65535|65535|ROM|code||Clear Editing Display|1
+L1639|1639|65535|65535|ROM|code||Shift All Edit Buffer Rows Up and Update Display File if Required|1
+L1648|1648|65535|65535|ROM|code||Shift All Screen Line Edit Buffer Rows Up and Update Display File if Required|1
+L1656|1656|65535|65535|ROM|code||Loop to shift rows up.|1
+L1663|1663|65535|65535|ROM|code||All Screen Line Edit Buffer rows shifted up.|1
+L1664|1664|65535|65535|ROM|code||Shift up all edit rows in the display file.|1
+L166F|166F|65535|65535|ROM|code||Shift All Edit Buffer Rows Down and Update Display File if Required|1
+L1675|1675|65535|65535|ROM|code||Entry point to insert a blank row.|1
+L168E|168E|65535|65535|ROM|code||Loop to shift rows down.|1
+L1695|1695|65535|65535|ROM|code||Row shift counter.|1
+L169A|169A|65535|65535|ROM|code||All Screen Line Edit Buffer rows shifted down.|1
+L16A9|16A9|65535|65535|ROM|code||The Below-Screen Line Edit Buffer is full.|1
+L16AC|16AC|65535|65535|ROM|code||Insert Character into Edit Buffer Row, Shifting Row Right|1
+L16B0|16B0|65535|65535|ROM|code||Set up for shifting.|1
+L16B3|16B3|65535|65535|ROM|code||Loop to shift bytes right.|1
+L16C1|16C1|65535|65535|ROM|code||Insert Character into Edit Buffer Row, Shifting Row Left|1
+L16C5|16C5|65535|65535|ROM|code||Set up for shifting.|1
+L16CC|16CC|65535|65535|ROM|code||Loop to shift bytes left.|1
+L16D3|16D3|65535|65535|ROM|code||Main shift loop entry.|1
+L16D6|16D6|65535|65535|ROM|code||End of shift.|1
+L16DC|16DC|65535|65535|ROM|data||The Syntax Offset Table|1
+L170E|170E|65535|65535|ROM|data||The Syntax Parameter Table - LET|1
+L1711|1711|65535|65535|ROM|data||The Syntax Parameter Table - GO TO|1
+L1715|1715|65535|65535|ROM|data||The Syntax Parameter Table - IF|1
+L171A|171A|65535|65535|ROM|data||The Syntax Parameter Table - GO SUB|1
+L171E|171E|65535|65535|ROM|data||The Syntax Parameter Table - STOP|1
+L1721|1721|65535|65535|ROM|data||The Syntax Parameter Table - RETURN|1
+L1724|1724|65535|65535|ROM|data||The Syntax Parameter Table - FOR|1
+L172C|172C|65535|65535|ROM|data||The Syntax Parameter Table - NEXT|1
+L1730|1730|65535|65535|ROM|data||The Syntax Parameter Table - PRINT|1
+L1733|1733|65535|65535|ROM|data||The Syntax Parameter Table - INPUT|1
+L1736|1736|65535|65535|ROM|data||The Syntax Parameter Table - DIM|1
+L1739|1739|65535|65535|ROM|data||The Syntax Parameter Table - REM|1
+L173C|173C|65535|65535|ROM|data||The Syntax Parameter Table - NEW|1
+L173F|173F|65535|65535|ROM|data||The Syntax Parameter Table - RUN|1
+L1742|1742|65535|65535|ROM|data||The Syntax Parameter Table - LIST|1
+L1745|1745|65535|65535|ROM|data||The Syntax Parameter Table - POKE|1
+L1749|1749|65535|65535|ROM|data||The Syntax Parameter Table - RANDOMIZE|1
+L174C|174C|65535|65535|ROM|data||The Syntax Parameter Table - CONTINUE|1
+L174F|174F|65535|65535|ROM|data||The Syntax Parameter Table - CLEAR|1
+L1752|1752|65535|65535|ROM|data||The Syntax Parameter Table - CLS|1
+L1755|1755|65535|65535|ROM|data||The Syntax Parameter Table - PLOT|1
+L1759|1759|65535|65535|ROM|data||The Syntax Parameter Table - PAUSE|1
+L175D|175D|65535|65535|ROM|data||The Syntax Parameter Table - READ|1
+L1760|1760|65535|65535|ROM|data||The Syntax Parameter Table - DATA|1
+L1763|1763|65535|65535|ROM|data||The Syntax Parameter Table - RESTORE|1
+L1766|1766|65535|65535|ROM|data||The Syntax Parameter Table - DRAW|1
+L176A|176A|65535|65535|ROM|data||The Syntax Parameter Table - COPY|1
+L176D|176D|65535|65535|ROM|data||The Syntax Parameter Table - LPRINT|1
+L1770|1770|65535|65535|ROM|data||The Syntax Parameter Table - LLIST|1
+L1773|1773|65535|65535|ROM|data||The Syntax Parameter Table - SAVE|1
+L1774|1774|65535|65535|ROM|data||The Syntax Parameter Table - LOAD|1
+L1775|1775|65535|65535|ROM|data||The Syntax Parameter Table - VERIFY|1
+L1776|1776|65535|65535|ROM|data||The Syntax Parameter Table - MERGE|1
+L1777|1777|65535|65535|ROM|data||The Syntax Parameter Table - BEEP|1
+L177B|177B|65535|65535|ROM|data||The Syntax Parameter Table - CIRCLE|1
+L177F|177F|65535|65535|ROM|data||The Syntax Parameter Table - INK|1
+L1780|1780|65535|65535|ROM|data||The Syntax Parameter Table - PAPER|1
+L1781|1781|65535|65535|ROM|data||The Syntax Parameter Table - FLASH|1
+L1782|1782|65535|65535|ROM|data||The Syntax Parameter Table - BRIGHT|1
+L1783|1783|65535|65535|ROM|data||The Syntax Parameter Table - INVERSE|1
+L1784|1784|65535|65535|ROM|data||The Syntax Parameter Table - OVER|1
+L1785|1785|65535|65535|ROM|data||The Syntax Parameter Table - OUT|1
+L1789|1789|65535|65535|ROM|data||The Syntax Parameter Table - BORDER|1
+L178D|178D|65535|65535|ROM|data||The Syntax Parameter Table - DEF FN|1
+L1790|1790|65535|65535|ROM|data||The Syntax Parameter Table - OPEN #|1
+L1796|1796|65535|65535|ROM|data||The Syntax Parameter Table - CLOSE #|1
+L179A|179A|65535|65535|ROM|data||The Syntax Parameter Table - FORMAT|1
+L179D|179D|65535|65535|ROM|data||The Syntax Parameter Table - MOVE|1
+L17A3|17A3|65535|65535|ROM|data||The Syntax Parameter Table - ERASE|1
+L17A6|17A6|65535|65535|ROM|data||The Syntax Parameter Table - CAT|1
+L17A9|17A9|65535|65535|ROM|data||The Syntax Parameter Table - SPECTRUM|1
+L17AC|17AC|65535|65535|ROM|data||The Syntax Parameter Table - PLAY|1
+L17AF|17AF|65535|65535|ROM|code||The 'Main Parser' Of the BASIC Interpreter|1
+L17C0|17C0|65535|65535|ROM|code||Loop for ':' separator.|1
+L17C1|17C1|65535|65535|ROM|code||The Statement Loop|1
+L17F4|17F4|65535|65535|ROM|code||Handle commands from $CE onwards.|1
+L17FD|17FD|65535|65535|ROM|code||Loop for command class routines.|1
+L1800|1800|65535|65535|ROM|code||Loop for parameter entries.|1
+L181A|181A|65535|65535|ROM|code||The 'Separator' Subroutine|1
+L1821|1821|65535|65535|ROM|code||The 'Statement Return' Subroutine|1
+L182A|182A|65535|65535|ROM|code||Handle jump after statement.|1
+L1838|1838|65535|65535|ROM|code||The 'Line Run' Entry Point|1
+L184C|184C|65535|65535|ROM|code||The 'Line New' Subroutine|1
+L1862|1862|65535|65535|ROM|code||REM Routine|1
+L1863|1863|65535|65535|ROM|code||The 'Line End' Routine|1
+L1870|1870|65535|65535|ROM|code||The 'Line Use' Routine|1
+L1882|1882|65535|65535|ROM|code||The 'Next Line' Routine|1
+L189D|189D|65535|65535|ROM|code||Produce error report "N Statement lost".|1
+L18A1|18A1|65535|65535|ROM|code||The 'CHECK-END' Subroutine|1
+L18A8|18A8|65535|65535|ROM|code||The 'STMT-NEXT' Routine|1
+L18B5|18B5|65535|65535|ROM|data||The 'Command Class' Table|1
+L18C4|18C4|65535|65535|ROM|code||The 'Command Classes - 0C, 0D & 0E' - class-0D|1
+L18C7|18C7|65535|65535|ROM|code||The 'Command Classes - 0C, 0D & 0E' - class-0C|1
+L18C8|18C8|65535|65535|ROM|code||The 'Command Classes - 0C, 0D & 0E' - class-0E|1
+L18D6|18D6|65535|65535|ROM|code||The 'Command Classes - 00, 03 & 05' - class-03|1
+L18D9|18D9|65535|65535|ROM|code||The 'Command Classes - 00, 03 & 05' - class-00|1
+L18DA|18DA|65535|65535|ROM|code||The 'Command Classes - 00, 03 & 05' - class-05|1
+L18F8|18F8|65535|65535|ROM|code||Return point after ROM paging.|1
+L18F9|18F9|65535|65535|ROM|code||The 'Command Class - 01'|1
+L18FD|18FD|65535|65535|ROM|code||The 'Command Class - 02'|1
+L1905|1905|65535|65535|ROM|code||The 'Command Class - 04'|1
+L1909|1909|65535|65535|ROM|code||The 'Command Class - 08'|1
+L190A|190A|65535|65535|ROM|code||Delegate handling to ROM 1 for EXPT_2NUM.|1
+L190E|190E|65535|65535|ROM|code||The 'Command Class - 06'|1
+L1912|1912|65535|65535|ROM|code||Report C - Nonsense in BASIC|1
+L1916|1916|65535|65535|ROM|code||The 'Command Class - 0A'|1
+L191A|191A|65535|65535|ROM|code||The 'Command Class - 07'|1
+L1927|1927|65535|65535|ROM|code||Process colour commands.|1
+L1944|1944|65535|65535|ROM|code||The 'Command Class - 09'|1
+L1948|1948|65535|65535|ROM|code||The 'Command Class - 0B'|1
+L1967|1967|65535|65535|ROM|code||IF Routine|1
+L196E|196E|65535|65535|ROM|code||'delete' the last value on the calculator stack.|1
+L197E|197E|65535|65535|ROM|code||Jump to next statement if 'TRUE'.|1
+L1981|1981|65535|65535|ROM|code||FOR Routine|1
+L198E|198E|65535|65535|ROM|code||Handle 'STEP 1'.|1
+L19A6|19A6|65535|65535|ROM|code||Delegate FOR handling to ROM 1.|1
+L19AA|19AA|65535|65535|ROM|code||READ Routine - loop for each variable.|1
+L19AB|19AB|65535|65535|ROM|code||READ Routine - main entry.|1
+L19CB|19CB|65535|65535|ROM|code||Pick up a value from the DATA list.|1
+L19E2|19E2|65535|65535|ROM|code||Check for comma separator.|1
+L19E5|19E5|65535|65535|ROM|code||Loop for more items.|1
+L19EB|19EB|65535|65535|ROM|code||DATA Routine|1
+L19F1|19F1|65535|65535|ROM|code||Loop for each expression in DATA.|1
+L19FC|19FC|65535|65535|ROM|code||Pass-by in 'run-time'.|1
+L19FE|19FE|65535|65535|ROM|code||Pass-by 'DATA' or 'DEF FN'.|1
+L1A02|1A02|65535|65535|ROM|code||RUN Routine|1
+L1A0D|1A0D|65535|65535|ROM|code||CLEAR Routine|1
+L1A10|1A10|65535|65535|ROM|code||Entry from RUN routine.|1
+L1A18|1A18|65535|65535|ROM|code||Set RAMTOP.|1
+L1A3B|1A3B|65535|65535|ROM|code||Produce error "M Ramtop no good".|1
+L1A3F|1A3F|65535|65535|ROM|code||Finalize CLEAR.|1
+L1A53|1A53|65535|65535|ROM|code||GO SUB Routine|1
+L1A6F|1A6F|65535|65535|ROM|code||RETURN Routine|1
+L1A86|1A86|65535|65535|ROM|code||Produce error "7 RETURN without GO SUB".|1
+L1A8C|1A8C|65535|65535|ROM|code||DEF FN Routine|1
+L1A97|1A97|65535|65535|ROM|code||Handle the variable of the function.|1
+L1AAA|1AAA|65535|65535|ROM|code||Check for parenthesis.|1
+L1AB3|1AB3|65535|65535|ROM|code||Loop for each parameter.|1
+L1AB6|1AB6|65535|65535|ROM|code||The present code must be a letter.|1
+L1AC1|1AC1|65535|65535|ROM|code||Handle parameters.|1
+L1AD3|1AD3|65535|65535|ROM|code||Handle the definition of the function.|1
+L1AEA|1AEA|65535|65535|ROM|code||Give error report if syntax incorrect.|1
+L1AF0|1AF0|65535|65535|ROM|code||MOVE Routine|1
+L1AF1|1AF1|65535|65535|ROM|code||Run Tape Loader|1
+L1B14|1B14|65535|65535|ROM|code||List Program to Printer|1
+L1B2B|1B2B|65535|65535|ROM|code||SPECTRUM Routine|1
+L1B47|1B47|65535|65535|ROM|code||Main Menu - 48 BASIC Option|1
+L1B53|1B53|65535|65535|ROM|code||Set 'P' Channel Data|1
+L1B6E|1B6E|65535|65535|ROM|data||LOAD "" Command Bytes|1
+L1B71|1B71|65535|65535|ROM|code||LLIST Routine|1
+L1B75|1B75|65535|65535|ROM|code||LIST Routine|1
+L1B77|1B77|65535|65535|ROM|code||Common entry for LIST/LLIST.|1
+L1B83|1B83|65535|65535|ROM|code||Open channel for LIST.|1
+L1B96|1B96|65535|65535|ROM|code||Handle numeric expression after LIST.|1
+L1B9E|1B9E|65535|65535|ROM|code||Use zero if no numeric expression.|1
+L1BA3|1BA3|65535|65535|ROM|code||Fetch line number if no stream change.|1
+L1BA6|1BA6|65535|65535|ROM|code||Delegate LIST handling to ROM 1.|1
+L1BAD|1BAD|65535|65535|ROM|code||RAM Disk SAVE! Routine|1
+L1BE5|1BE5|65535|65535|ROM|code||CAT! Routine|1
+L1C0C|1C0C|65535|65535|ROM|code||ERASE! Routine|1
+L1C2E|1C2E|65535|65535|ROM|code||Load Header from RAM Disk|1
+L1C4B|1C4B|65535|65535|ROM|code||Load from RAM Disk|1
+L1C64|1C64|65535|65535|ROM|code||Page Logical RAM Bank|1
+L1C81|1C81|65535|65535|ROM|data||Physical RAM Bank Mapping Table|1
+L1C87|1C87|65535|65535|ROM|code||Compare Filenames|1
+L1C8A|1C8A|65535|65535|ROM|code||Compare filenames at DE and IX.|1
+L1C8F|1C8F|65535|65535|ROM|code||Loop to compare characters.|1
+L1C97|1C97|65535|65535|ROM|code||Create New Catalogue Entry|1
+L1CA0|1CA0|65535|65535|ROM|code||Check for space in catalogue.|1
+L1CBE|1CBE|65535|65535|ROM|code||Copy filename and set flags.|1
+L1CF3|1CF3|65535|65535|ROM|code||Adjust RAM Disk Free Space|1
+L1D03|1D03|65535|65535|ROM|code||Store new free space value.|1
+L1D0A|1D0A|65535|65535|ROM|code||Handle adding data.|1
+L1D0E|1D0E|65535|65535|ROM|code||Produce "4 Out of memory" error.|1
+L1D12|1D12|65535|65535|ROM|code||Find Catalogue Entry for Filename|1
+L1D1B|1D1B|65535|65535|ROM|code||Loop to find entry.|1
+L1D2E|1D2E|65535|65535|ROM|code||No match found, point to next entry.|1
+L1D35|1D35|65535|65535|ROM|code||Find RAM Disk File|1
+L1D3E|1D3E|65535|65535|ROM|code||File exists, set up current working address.|1
+L1D56|1D56|65535|65535|ROM|code||Update Catalogue Entry|1
+L1D9C|1D9C|65535|65535|ROM|code||Copy the end address of the previous entry into the new entry.|1
+L1DAC|1DAC|65535|65535|ROM|code||Save Bytes to RAM Disk|1
+L1DCC|1DCC|65535|65535|ROM|code||Source fits completely below upper RAM bank.|1
+L1DD5|1DD5|65535|65535|ROM|code||Source fits completely within upper RAM bank.|1
+L1DE4|1DE4|65535|65535|ROM|code||Source fits completely within transfer buffer.|1
+L1DE9|1DE9|65535|65535|ROM|code||Transfer a block.|1
+L1DF4|1DF4|65535|65535|ROM|code||Set up for block transfer.|1
+L1E05|1E05|65535|65535|ROM|code||Transfer a byte.|1
+L1E0B|1E0B|65535|65535|ROM|code||All bytes transferred.|1
+L1E24|1E24|65535|65535|ROM|code||End of RAM bank reached.|1
+L1E37|1E37|65535|65535|ROM|code||Load Bytes from RAM Disk|1
+L1E45|1E45|65535|65535|ROM|code||Destination is below $C000.|1
+L1E5C|1E5C|65535|65535|ROM|code||Code will span across $C000.|1
+L1E67|1E67|65535|65535|ROM|code||Code destined for upper RAM bank.|1
+L1E76|1E76|65535|65535|ROM|code||Code will span transfer buffer.|1
+L1E7B|1E7B|65535|65535|ROM|code||Transfer a block.|1
+L1E80|1E80|65535|65535|ROM|code||Set up for block transfer.|1
+L1E91|1E91|65535|65535|ROM|code||Loop to transfer bytes.|1
+L1E97|1E97|65535|65535|ROM|code||All bytes transferred.|1
+L1EB7|1EB7|65535|65535|ROM|code||Transfer remaining bytes from buffer.|1
+L1EBC|1EBC|65535|65535|ROM|code||End of RAM bank has been reached.|1
+L1ECF|1ECF|65535|65535|ROM|code||Transfer Bytes to RAM Bank 4 - Vector Table Entry|1
+L1EE8|1EE8|65535|65535|ROM|code||Entry point for load vector routine.|1
+L1F04|1F04|65535|65535|ROM|code||Transfer Bytes from RAM Bank 4 - Vector Table Entry|1
+L1F20|1F20|65535|65535|ROM|code||Use Normal RAM Configuration|1
+L1F3A|1F3A|65535|65535|ROM|code||Select RAM Bank|1
+L1F45|1F45|65535|65535|ROM|code||Use Workspace RAM Configuration|1
+L1F5F|1F5F|65535|65535|ROM|code||Erase a RAM Disk File|1
+L1F68|1F68|65535|65535|ROM|code||File found, free up space.|1
+L200D|200D|65535|65535|ROM|code||Decrement and move file.|1
+L2024|2024|65535|65535|ROM|code||Store byte from next file.|1
+L203E|203E|65535|65535|ROM|code||The file has been moved.|1
+L2048|2048|65535|65535|ROM|code||Delete a catalogue entry.|1
+L2061|2061|65535|65535|ROM|code||Loop to update catalogue entries.|1
+L207C|207C|65535|65535|ROM|code||Update start address.|1
+L2099|2099|65535|65535|ROM|code||Update end address.|1
+L20D2|20D2|65535|65535|ROM|code||Print RAM Disk Catalogue|1
+L20DA|20DA|65535|65535|ROM|code||Set up initial comparison filenames.|1
+L20E1|20E1|65535|65535|ROM|code||Loop to find and print next highest filename.|1
+L210A|210A|65535|65535|ROM|code||Point to next catalogue entry.|1
+L2111|2111|65535|65535|ROM|code||All filenames printed.|1
+L2121|2121|65535|65535|ROM|data||Print Catalogue Filename Data - lowest|1
+L212B|212B|65535|65535|ROM|data||Print Catalogue Filename Data - highest|1
+L2135|2135|65535|65535|ROM|code||Print Single Catalogue Entry|1
+L2152|2152|65535|65535|ROM|code||Loop to print filename.|1
+L2174|2174|65535|65535|ROM|code||LPRINT Routine|1
+L2178|2178|65535|65535|ROM|code||PRINT Routine|1
+L217A|217A|65535|65535|ROM|code||Common entry for PRINT/LPRINT.|1
+L2182|2182|65535|65535|ROM|code||Delegate PRINT handling to ROM 1.|1
+L218C|218C|65535|65535|ROM|code||INPUT Routine|1
+L2199|2199|65535|65535|ROM|code||Signal lower screen is being handled.|1
+L21A7|21A7|65535|65535|ROM|code||COPY Routine|1
+L21AA|21AA|65535|65535|ROM|code||NEW Routine|1
+L21AE|21AE|65535|65535|ROM|code||CIRCLE Routine|1
+L21BE|21BE|65535|65535|ROM|code||DRAW Routine|1
+L21CA|21CA|65535|65535|ROM|code||Handle third parameter (angle).|1
+L21D5|21D5|65535|65535|ROM|code||DIM Routine|1
+L21E7|21E7|65535|65535|ROM|code||An 'existing array' is reclaimed.|1
+L21EB|21EB|65535|65535|ROM|code||Error Report C - Nonsense in BASIC|1
+L21EF|21EF|65535|65535|ROM|code||Clear Screen Routine|1
+L21F8|21F8|65535|65535|ROM|code||Evaluate Numeric Expression|1
+L223A|223A|65535|65535|ROM|code||Produce error "Q Parameter error".|1
+L223E|223E|65535|65535|ROM|code||Make it appear that 'Enter' has been pressed.|1
+L2264|2264|65535|65535|ROM|code||Loop to process all characters of floating point number.|1
+L226F|226F|65535|65535|ROM|code||Process Key Press|1
+L228E|228E|65535|65535|ROM|code||Find Start of BASIC Command|1
+L2297|2297|65535|65535|ROM|code||Is LET Command?|1
+L22A0|22A0|65535|65535|ROM|code||Loop to check for multi-statement LET.|1
+L22AB|22AB|65535|65535|ROM|code||Is Operator Character?|1
+L22AF|22AF|65535|65535|ROM|code||Loop to find operator in table.|1
+L22B9|22B9|65535|65535|ROM|code||Not found.|1
+L22BD|22BD|65535|65535|ROM|data||Operator Tokens Table|1
+L22CB|22CB|65535|65535|ROM|code||Is Function Character?|1
+L22DD|22DD|65535|65535|ROM|code||Return zero flag set if a function token.|1
+L22E0|22E0|65535|65535|ROM|code||Is Numeric or Function Expression?|1
+L22E9|22E9|65535|65535|ROM|code||Character is a letter.|1
+L22ED|22ED|65535|65535|ROM|code||Character is not a letter.|1
+L22F6|22F6|65535|65535|ROM|code||Loop for next numeric character.|1
+L2307|2307|65535|65535|ROM|code||Reset zero flag for non-alphanumeric.|1
+L230A|230A|65535|65535|ROM|code||Is Numeric Character?|1
+L2314|2314|65535|65535|ROM|code||Not a numeric digit.|1
+L2317|2317|65535|65535|ROM|code||PLAY Routine|1
+L231A|231A|65535|65535|ROM|code||Loop for each string in PLAY.|1
+L2327|2327|65535|65535|ROM|code||Check number of strings.|1
+L2330|2330|65535|65535|ROM|code||Continue with PLAY code.|1
+L2336|2336|65535|65535|ROM|code||UNUSED - Return to Editor|1
+L2342|2342|65535|65535|ROM|code||UNUSED - BC=HL-DE, Swap HL and DE|1
+L234A|234A|65535|65535|ROM|code||UNUSED - Create Room for 1 Byte|1
+L2358|2358|65535|65535|ROM|code||UNUSED - Room for BC Bytes?|1
+L2368|2368|65535|65535|ROM|code||UNUSED - Signal error "4 Out of Memory".|1
+L236F|236F|65535|65535|ROM|code||UNUSED - HL = A32|1
+L2371|2371|65535|65535|ROM|code||UNUSED - HL = A8|1
+L2378|2378|65535|65535|ROM|code||UNUSED - Find Amount of Free Space|1
+L2384|2384|65535|65535|ROM|code||UNUSED - Print Screen Buffer Row|1
+L23B8|23B8|65535|65535|ROM|code||UNUSED - Blank Screen Buffer Content|1
+L23CB|23CB|65535|65535|ROM|code||UNUSED - Print Screen Buffer to Display File|1
+L23E1|23E1|65535|65535|ROM|code||UNUSED - Print Screen Buffer Characters to Display File|1
+L23EC|23EC|65535|65535|ROM|code||UNUSED - Handle control characters.|1
+L23F7|23F7|65535|65535|ROM|code||UNUSED - Handle graphic/UDG characters.|1
+L2409|2409|65535|65535|ROM|code||UNUSED - Handle graphic characters.|1
+L2411|2411|65535|65535|ROM|code||UNUSED - Handle UDG characters.|1
+L2422|2422|65535|65535|ROM|code||UNUSED - Handle special symbols and graphic characters.|1
+L2429|2429|65535|65535|ROM|code||UNUSED - Display a symbol.|1
+L242B|242B|65535|65535|ROM|code||UNUSED - Drop through to Copy A Character.|1
+L242C|242C|65535|65535|ROM|code||UNUSED - Copy A Character <<< RAM Routine >>>|1
+L244C|244C|65535|65535|ROM|code||UNUSED - Switch back to RAM bank 7 if needed.|1
+L2450|2450|65535|65535|ROM|code||UNUSED - Continue to next character.|1
+L2456|2456|65535|65535|ROM|code||UNUSED - Toggle ROMs 1 <<< RAM Routine >>>|1
+L2464|2464|65535|65535|ROM|code||UNUSED - Toggle ROMs 2 <<< RAM Routine >>>|1
+L246F|246F|65535|65535|ROM|code||UNUSED - Construct 'Copy Character' Routine in RAM|1
+L2488|2488|65535|65535|ROM|code||UNUSED - Set Attributes File from Screen Buffer|1
+L249B|249B|65535|65535|ROM|code||UNUSED - Set Attributes for a Screen Buffer Row|1
+L249C|249C|65535|65535|ROM|code||UNUSED - Main loop for setting attributes.|1
+L24AA|24AA|65535|65535|ROM|code||UNUSED - Not a blank character.|1
+L24C2|24C2|65535|65535|ROM|code||UNUSED - Handle PAPER.|1
+L24D1|24D1|65535|65535|ROM|code||UNUSED - Handle FLASH.|1
+L24DE|24DE|65535|65535|ROM|code||UNUSED - Handle BRIGHT.|1
+L24EC|24EC|65535|65535|ROM|code||UNUSED - Handle INVERSE.|1
+L2505|2505|65535|65535|ROM|code||UNUSED - Combine and store new attribute value.|1
+L2507|2507|65535|65535|ROM|code||UNUSED - Loop for all characters in row.|1
+L2513|2513|65535|65535|ROM|code||UNUSED - Swap Ink and Paper Attribute Bits|1
+L2527|2527|65535|65535|ROM|data||UNUSED - Character Data - Graphic control code|1
+L252F|252F|65535|65535|ROM|data||UNUSED - Character Data - Error marker|1
+L2537|2537|65535|65535|ROM|data||Editing Keys Action Table|1
+L2577|2577|65535|65535|ROM|data||Menu Keys Action Table|1
+L2584|2584|65535|65535|ROM|code||Initialise Mode Settings|1
+L259F|259F|65535|65535|ROM|code||Show Main Menu|1
+L25AD|25AD|65535|65535|ROM|code||Set up for Main Menu display.|1
+L25CB|25CB|65535|65535|ROM|code||Return to Editor / Calculator / Menu from Error|1
+L25E3|25E3|65535|65535|ROM|code||Main return loop from error/action.|1
+L2601|2601|65535|65535|ROM|code||Return to Calculator mode.|1
+L2604|2604|65535|65535|ROM|code||Return to the Editor|1
+L262A|262A|65535|65535|ROM|code||No program exists.|1
+L262D|262D|65535|65535|ROM|code||Relist from last edited line.|1
+L2653|2653|65535|65535|ROM|code||Main Waiting Loop|1
+L2669|2669|65535|65535|ROM|code||Process Key Press|1
+L2677|2677|65535|65535|ROM|code||Find and call the action handler for this key press.|1
+L2681|2681|65535|65535|ROM|code||No action defined for key code.|1
+L2689|2689|65535|65535|ROM|code||A menu is not being displayed.|1
+L2694|2694|65535|65535|ROM|code||Check if a supported function key code was pressed.|1
+L269B|269B|65535|65535|ROM|code||TOGGLE Key Handler Routine|1
+L26B6|26B6|65535|65535|ROM|code||Set the lower area as the current editing area.|1
+L26B9|26B9|65535|65535|ROM|code||Signal do not produce an error beep.|1
+L26BB|26BB|65535|65535|ROM|code||Select Lower Screen|1
+L26CE|26CE|65535|65535|ROM|code||Select Upper Screen|1
+L26D9|26D9|65535|65535|ROM|code||Relist the BASIC program.|1
+L26E7|26E7|65535|65535|ROM|code||Produce Error Beep|1
+L26EC|26EC|65535|65535|ROM|code||Entry point for key click tone.|1
+L26F4|26F4|65535|65535|ROM|code||Produce a tone.|1
+L26FA|26FA|65535|65535|ROM|code||Produce Success Beep|1
+L2704|2704|65535|65535|ROM|code||Menu Key Press Handler - MENU|1
+L270F|270F|65535|65535|ROM|code||Display menu and highlight first item.|1
+L2717|2717|65535|65535|ROM|code||Menu Key Press Handler - SELECT|1
+L272E|272E|65535|65535|ROM|code||Menu Key Press Handler - CURSOR UP|1
+L2731|2731|65535|65535|ROM|code||Menu Key Press Handler - CURSOR DOWN|1
+L2732|2732|65535|65535|ROM|code||Handle cursor up/down.|1
+L2742|2742|65535|65535|ROM|code||Complete handling of Menu cursor.|1
+L2744|2744|65535|65535|ROM|data||Main Menu - Jump table|1
+L2754|2754|65535|65535|ROM|data||Main Menu - Text|1
+L275E|275E|65535|65535|ROM|data||"Tape Loade"|1
+L2769|2769|65535|65535|ROM|data||"128 BASI"|1
+L2772|2772|65535|65535|ROM|data||"Calculato"|1
+L2784|2784|65535|65535|ROM|data||"Tape Teste"|1
+L2790|2790|65535|65535|ROM|data||Edit Menu - Jump table|1
+L27A0|27A0|65535|65535|ROM|data||Edit Menu - Text|1
+L27CB|27CB|65535|65535|ROM|data||Calculator Menu - Jump table|1
+L27D2|27D2|65535|65535|ROM|data||Calculator Menu - Text|1
+L27EB|27EB|65535|65535|ROM|data||Tape Loader Text|1
+L2811|2811|65535|65535|ROM|code||Edit Menu - Screen Option|1
+L2816|2816|65535|65535|ROM|code||Main Menu - Tape Tester Option|1
+L281C|281C|65535|65535|ROM|code||Edit Menu / Calculator Menu - Exit Option|1
+L2831|2831|65535|65535|ROM|code||Main Menu - Tape Loader Option|1
+L2851|2851|65535|65535|ROM|code||Edit Menu - Renumber Option|1
+L2862|2862|65535|65535|ROM|code||Edit Menu - Print Option|1
+L2865|2865|65535|65535|ROM|code||Edit Menu - Renumber option joins here.|1
+L286C|286C|65535|65535|ROM|code||Clear screen and print "128 BASIC" banner.|1
+L2874|2874|65535|65535|ROM|code||Edit Menu - Screen option joins here.|1
+L2885|2885|65535|65535|ROM|code||Main Menu - Calculator Option|1
+L28B1|28B1|65535|65535|ROM|code||Edit Menu - Print option joins here.|1
+L28BE|28BE|65535|65535|ROM|code||Reset Cursor Position|1
+L28C7|28C7|65535|65535|ROM|code||Return to Main Menu|1
+L28D1|28D1|65535|65535|ROM|data||Main Screen Error Cursor Settings|1
+L28D8|28D8|65535|65535|ROM|data||Lower Screen Good Cursor Settings|1
+L28DF|28DF|65535|65535|ROM|code||Initialise Lower Screen Editing Settings|1
+L28E8|28E8|65535|65535|ROM|code||Initialise Main Screen Editing Settings|1
+L28F1|28F1|65535|65535|ROM|code||Handle Key Press Character Code|1
+L291B|291B|65535|65535|ROM|code||DELETE-RIGHT Key Handler Routine|1
+L292B|292B|65535|65535|ROM|code||DELETE Key Handler Routine|1
+L2944|2944|65535|65535|ROM|code||ENTER Key Handler Routine|1
+L295E|295E|65535|65535|ROM|code||On a BASIC line.|1
+L296A|296A|65535|65535|ROM|code||Insert a blank row after the current line.|1
+L297A|297A|65535|65535|ROM|code||Cursor is on a blank row.|1
+L297F|297F|65535|65535|ROM|code||A syntax error occurred.|1
+L2983|2983|65535|65535|ROM|code||TOP-OF-PROGRAM Key Handler Routine|1
+L29AB|29AB|65535|65535|ROM|code||END-OF-PROGRAM Key Handler Routine|1
+L29D4|29D4|65535|65535|ROM|code||WORD-LEFT Key Handler Routine|1
+L29E1|29E1|65535|65535|ROM|code||WORD-RIGHT Key Handler Routine|1
+L29EC|29EC|65535|65535|ROM|code||Remove Cursor|1
+L29F2|29F2|65535|65535|ROM|code||Show Cursor|1
+L29F8|29F8|65535|65535|ROM|code||Display Cursor|1
+L2A07|2A07|65535|65535|ROM|code||Fetch Cursor Position|1
+L2A11|2A11|65535|65535|ROM|code||Store Cursor Position|1
+L2A1A|2A1A|65535|65535|ROM|code||Get Current Character from Screen Line Edit Buffer|1
+L2A25|2A25|65535|65535|ROM|code||TEN-ROWS-DOWN Key Handler Routine|1
+L2A2B|2A2B|65535|65535|ROM|code||Loop to move down.|1
+L2A42|2A42|65535|65535|ROM|code||A blank row was found below.|1
+L2A4F|2A4F|65535|65535|ROM|code||TEN-ROWS-UP Key Handler Routine|1
+L2A55|2A55|65535|65535|ROM|code||Loop to move up.|1
+L2A6D|2A6D|65535|65535|ROM|code||A blank row was found above.|1
+L2A7A|2A7A|65535|65535|ROM|code||END-OF-LINE Key Handler Routine|1
+L2A87|2A87|65535|65535|ROM|code||START-OF-LINE Key Handler Routine|1
+L2A94|2A94|65535|65535|ROM|code||CURSOR-UP Key Handler Routine|1
+L2AB5|2AB5|65535|65535|ROM|code||CURSOR-DOWN Key Handler Routine|1
+L2AD7|2AD7|65535|65535|ROM|code||CURSOR-LEFT Key Handler Routine|1
+L2AE3|2AE3|65535|65535|ROM|code||CURSOR-RIGHT Key Handler Routine|1
+L2AF9|2AF9|65535|65535|ROM|code||Find Closest Screen Line Edit Buffer Editable Position to the Right else Left|1
+L2B02|2B02|65535|65535|ROM|code||Find Closest Screen Line Edit Buffer Editable Position to the Left else Right|1
+L2B0B|2B0B|65535|65535|ROM|code||Insert BASIC Line, Shift Edit Buffer Rows Down If Required and Update Display File If Required|1
+L2B2D|2B2D|65535|65535|ROM|code||Move onto the previous row.|1
+L2B2F|2B2F|65535|65535|ROM|code||Signal a new row was moved to.|1
+L2B30|2B30|65535|65535|ROM|code||Insert BASIC Line, Shift Edit Buffer Rows Up If Required and Update Display File If Required|1
+L2B3F|2B3F|65535|65535|ROM|code||Insert the BASIC Line into the BASIC program if the line has been altered.|1
+L2B58|2B58|65535|65535|ROM|code||On the last row of the editing area?|1
+L2B5A|2B5A|65535|65535|ROM|code||Signal a new row was moved to.|1
+L2B5B|2B5B|65535|65535|ROM|code||Find Next Screen Line Edit Buffer Editable Position to Left, Wrapping Above if Required|1
+L2B66|2B66|65535|65535|ROM|code||Wrap above to the previous row.|1
+L2B78|2B78|65535|65535|ROM|code||Find Next Screen Line Edit Buffer Editable Position to Right, Wrapping Below if Required|1
+L2B85|2B85|65535|65535|ROM|code||Need to wrap below to the next row.|1
+L2BC0|2BC0|65535|65535|ROM|code||Continue wrapping to row below.|1
+L2BD4|2BD4|65535|65535|ROM|code||Find Screen Line Edit Buffer Editable Position from Previous Column to the Right|1
+L2BDF|2BDF|65535|65535|ROM|code||Find Screen Line Edit Buffer Editable Position to the Left|1
+L2BEA|2BEA|65535|65535|ROM|code||Find Start of Word to Left in Screen Line Edit Buffer|1
+L2BEC|2BEC|65535|65535|ROM|code||Search towards the left of this row until a space or start of line is found.|1
+L2BF1|2BF1|65535|65535|ROM|code||Get character at new position.|1
+L2BF8|2BF8|65535|65535|ROM|code||Search towards the left of this row until the start of the word or start of the line is found.|1
+L2C07|2C07|65535|65535|ROM|code||A space prior to the word was found.|1
+L2C09|2C09|65535|65535|ROM|code||Find Start of Word to Right in Screen Line Edit Buffer|1
+L2C0B|2C0B|65535|65535|ROM|code||Search towards the right of this row until a space or end of line is found.|1
+L2C17|2C17|65535|65535|ROM|code||Search towards the right of this row until the start of a new word or end of the line is found.|1
+L2C2B|2C2B|65535|65535|ROM|code||End of line or start of next line was found.|1
+L2C31|2C31|65535|65535|ROM|code||Find Start of Current BASIC Line in Screen Line Edit Buffer|1
+L2C33|2C33|65535|65535|ROM|code||Loop to find the start of the BASIC line.|1
+L2C45|2C45|65535|65535|ROM|code||On the first row of the BASIC line, so find the starting column.|1
+L2C4C|2C4C|65535|65535|ROM|code||Find End of Current BASIC Line in Screen Line Edit Buffer|1
+L2C4E|2C4E|65535|65535|ROM|code||Loop to find the end of the BASIC line.|1
+L2C60|2C60|65535|65535|ROM|code||On the last row of the BASIC line, so find the last column.|1
+L2C65|2C65|65535|65535|ROM|code||Restore registers.|1
+L2C68|2C68|65535|65535|ROM|code||Insert BASIC Line into Program if Altered|1
+L2C7C|2C7C|65535|65535|ROM|code||Insert Line into BASIC Program If Altered and the First Row of the Line|1
+L2C8E|2C8E|65535|65535|ROM|code||Insert Line into BASIC Program|1
+L2C90|2C90|65535|65535|ROM|code||Find the start address of the row in the Screen Line Edit Buffer.|1
+L2CA3|2CA3|65535|65535|ROM|code||Tokenize the typed BASIC line.|1
+L2CEF|2CEF|65535|65535|ROM|code||A syntax error occurred.|1
+L2D0A|2D0A|65535|65535|ROM|code||Shift the cursor to the error marker position.|1
+L2D1B|2D1B|65535|65535|ROM|code||Move the cursor back until it is at the same position as the error marker.|1
+L2D2A|2D2A|65535|65535|ROM|code||Move the cursor forward until it is at the same position as the error marker.|1
+L2D2B|2D2B|65535|65535|ROM|code||Get a key press.|1
+L2D38|2D38|65535|65535|ROM|code||Loop to move cursor forward.|1
+L2D45|2D45|65535|65535|ROM|code||The cursor position is at the location of the error marker.|1
+L2D54|2D54|65535|65535|ROM|code||Fetch Next Character from BASIC Line to Insert|1
+L2D62|2D62|65535|65535|ROM|code||Get character and status.|1
+L2D85|2D85|65535|65535|ROM|data||Fetch Next Character Jump Table|1
+L2D8F|2D8F|65535|65535|ROM|code||Fetch Character from the Current Row of the BASIC Line in the Screen Line Edit Buffer|1
+L2D92|2D92|65535|65535|ROM|code||Loop to get character from Above-Screen buffer.|1
+L2D9E|2D9E|65535|65535|ROM|code||End of row reached - no more editable characters in Above-Screen Line Edit Buffer row.|1
+L2DAC|2DAC|65535|65535|ROM|code||On visible row of BASIC line.|1
+L2DBE|2DBE|65535|65535|ROM|code||Cursor on first visible row of the BASIC line in the Screen Line Edit Buffer.|1
+L2DBF|2DBF|65535|65535|ROM|code||Fetch a character from the Screen Line Edit Buffer.|1
+L2DCE|2DCE|65535|65535|ROM|code||End of row reached - no editable characters in the Screen Line Edit Buffer row.|1
+L2DDB|2DDB|65535|65535|ROM|code||Not on the last row of the BASIC line so move to the beginning of the next, if it is on screen.|1
+L2DE9|2DE9|65535|65535|ROM|code||Using lower screen and only top row of a multi-row BASIC line is visible.|1
+L2DEC|2DEC|65535|65535|ROM|code||Fetch character from Below-Screen Line Edit Buffer.|1
+L2DF8|2DF8|65535|65535|ROM|code||End of row reached - no editable characters in the Below-Screen Line Edit Buffer row.|1
+L2E09|2E09|65535|65535|ROM|code||All characters from rows off bottom of screen fetched so return an 'Enter'.|1
+L2E0E|2E0E|65535|65535|ROM|code||Fetch Character from Edit Buffer Row|1
+L2E1B|2E1B|65535|65535|ROM|data||Upper Screen Rows Table|1
+L2E1D|2E1D|65535|65535|ROM|data||Lower Screen Rows Table|1
+L2E1F|2E1F|65535|65535|ROM|code||Reset to Main Screen|1
+L2E2D|2E2D|65535|65535|ROM|code||Reset to Lower Screen|1
+L2E41|2E41|65535|65535|ROM|code||Find Edit Buffer Editable Position from Previous Column to the Right|1
+L2E56|2E56|65535|65535|ROM|code||Check current character.|1
+L2E5B|2E5B|65535|65535|ROM|code||Advance to next position.|1
+L2E63|2E63|65535|65535|ROM|code||Find Edit Buffer Editable Position to the Left|1
+L2E6C|2E6C|65535|65535|ROM|code||Check current character.|1
+L2E78|2E78|65535|65535|ROM|code||Advance to the column after the editable position.|1
+L2E7B|2E7B|65535|65535|ROM|code||Fetch Edit Buffer Row Character|1
+L2E81|2E81|65535|65535|ROM|code||Insert Character into Screen Line Edit Buffer|1
+L2E8E|2E8E|65535|65535|ROM|code||Insert character into edit buffer row at current cursor position, shifting the row right.|1
+L2ECC|2ECC|65535|65535|ROM|code||Retrieve cursor position.|1
+L2ECE|2ECE|65535|65535|ROM|code||Insert Blank Row into Screen Edit Buffer, Shifting Rows Down|1
+L2ED3|2ED3|65535|65535|ROM|code||Save registers.|1
+L2EEC|2EEC|65535|65535|ROM|code||Restore registers after shifting rows.|1
+L2EEF|2EEF|65535|65535|ROM|data||Empty Edit Buffer Row Data|1
+L2F12|2F12|65535|65535|ROM|code||Delete a Character from a BASIC Line in the Screen Line Edit Buffer|1
+L2F17|2F17|65535|65535|ROM|code||Loop to find the last row of the BASIC line.|1
+L2F31|2F31|65535|65535|ROM|code||Fetch the initial cursor row and column numbers.|1
+L2F32|2F32|65535|65535|ROM|code||Stack initial cursor row and column numbers.|1
+L2F41|2F41|65535|65535|ROM|code||Save the character to insert.|1
+L2F4A|2F4A|65535|65535|ROM|code||Set up for character shift.|1
+L2F54|2F54|65535|65535|ROM|code||Insert character and check for blank row.|1
+L2F6F|2F6F|65535|65535|ROM|code||Restore start address of the row.|1
+L2F74|2F74|65535|65535|ROM|code||Restore character and continue shift.|1
+L2F80|2F80|65535|65535|ROM|code||Shift Rows Up to Close Blank Row in Screen Line Edit Buffer|1
+L2FBC|2FBC|65535|65535|ROM|code||DELETE-WORD-LEFT Key Handler Routine|1
+L2FBF|2FBF|65535|65535|ROM|code||Save address of the editing area information.|1
+L2FD9|2FD9|65535|65535|ROM|code||Loop to search for the start of the word.|1
+L2FF3|2FF3|65535|65535|ROM|code||A space prior to a word has been found.|1
+L2FF7|2FF7|65535|65535|ROM|code||Retrieve address of the editing area information.|1
+L2FF8|2FF8|65535|65535|ROM|code||Print all rows to the screen.|1
+L3017|3017|65535|65535|ROM|code||DELETE-WORD-RIGHT Key Handler Routine|1
+L301A|301A|65535|65535|ROM|code||Save address of the editing area information.|1
+L302F|302F|65535|65535|ROM|code||Handle spaces at the end of the word.|1
+L303E|303E|65535|65535|ROM|code||DELETE-TO-START-OF-LINE Key Handler Routine|1
+L3041|3041|65535|65535|ROM|code||Save address of the editing area information.|1
+L3059|3059|65535|65535|ROM|code||In the first row of the BASIC line.|1
+L306D|306D|65535|65535|ROM|code||Retrieve address of the editing area information.|1
+L306E|306E|65535|65535|ROM|code||Signal not to produce error beep.|1
+L3072|3072|65535|65535|ROM|code||DELETE-TO-END-OF-LINE Key Handler Routine|1
+L3075|3075|65535|65535|ROM|code||Loop to delete characters.|1
+L3084|3084|65535|65535|ROM|code||Remove Cursor Attribute and Disable Updating Display File|1
+L3095|3095|65535|65535|ROM|code||Previous Character Exists in Screen Line Edit Buffer?|1
+L30AE|30AE|65535|65535|ROM|code||On first row of a BASIC line.|1
+L30B2|30B2|65535|65535|ROM|code||Set the zero flag.|1
+L30B4|30B4|65535|65535|ROM|code||Find Row Address in Screen Line Edit Buffer|1
+L30B7|30B7|65535|65535|ROM|code||Save A.|1
+L30BC|30BC|65535|65535|ROM|code||Loop to find row.|1
+L30C3|30C3|65535|65535|ROM|code||Transfer address to DE.|1
+L30C6|30C6|65535|65535|ROM|code||(UNUSED) Find Position within Screen Line Edit Buffer|1
+L30D0|30D0|65535|65535|ROM|data||Below-Screen Line Edit Buffer Settings|1
+L30D6|30D6|65535|65535|ROM|code||Set Below-Screen Line Edit Buffer Settings|1
+L30DF|30DF|65535|65535|ROM|code||Shift Up Rows in Below-Screen Line Edit Buffer|1
+L30F8|30F8|65535|65535|ROM|code||Copy the BASIC line into the buffer.|1
+L3101|3101|65535|65535|ROM|code||There are rows in the buffer, so shift them up.|1
+L3116|3116|65535|65535|ROM|code||Update the number of rows held in the buffer.|1
+L311E|311E|65535|65535|ROM|code||Shift Down Rows in Below-Screen Line Edit Buffer|1
+L313F|313F|65535|65535|ROM|code||First row of the BASIC line or an associated line number stored.|1
+L314C|314C|65535|65535|ROM|code||Not the first row the BASIC line.|1
+L316E|316E|65535|65535|ROM|code||Insert Character into Below-Screen Line Edit Buffer|1
+L3180|3180|65535|65535|ROM|code||Insert character into the current row.|1
+L3184|3184|65535|65535|ROM|code||Insert character into the start of the edit buffer row.|1
+L31A0|31A0|65535|65535|ROM|code||Check whether there is another row to shift.|1
+L31BA|31BA|65535|65535|ROM|code||The shifting of all rows has completed.|1
+L31C3|31C3|65535|65535|ROM|code||Find Row Address in Below-Screen Line Edit Buffer|1
+L31C9|31C9|65535|65535|ROM|code||Delete a Character from a BASIC Line in the Below-Screen Line Edit Buffer|1
+L31D9|31D9|65535|65535|ROM|code||There is at least one row in the Below-Screen Line Edit Buffer.|1
+L31F2|31F2|65535|65535|ROM|code||The row is already blank or the result of the shift has caused it to become blank.|1
+L3204|3204|65535|65535|ROM|code||The blank row is not the first row in the Below-Screen Line Edit Buffer.|1
+L3208|3208|65535|65535|ROM|code||Update the flag byte for the row above.|1
+L3216|3216|65535|65535|ROM|code||Continue with the next row.|1
+L321B|321B|65535|65535|ROM|code||All rows in the Below-Screen Line Edit Buffer have been shifted.|1
+L321E|321E|65535|65535|ROM|data||Above-Screen Line Edit Buffer Settings|1
+L3222|3222|65535|65535|ROM|code||Set Above-Screen Line Edit Buffer Settings|1
+L322B|322B|65535|65535|ROM|code||Shift Rows Down in the Above-Screen Line Edit Buffer|1
+L3244|3244|65535|65535|ROM|code||Set up to copy the new BASIC line.|1
+L3253|3253|65535|65535|ROM|code||There are rows of the BASIC line off the top of the screen.|1
+L325D|325D|65535|65535|ROM|code||Update the number of rows if necessary.|1
+L3262|3262|65535|65535|ROM|code||Store the address of the next row.|1
+L326A|326A|65535|65535|ROM|code||Shift Row Up into the Above-Screen Line Edit Buffer if Required|1
+L3282|3282|65535|65535|ROM|code||Check if last row of BASIC line.|1
+L32A0|32A0|65535|65535|ROM|code||Not the last row of the BASIC line.|1
+L32B3|32B3|65535|65535|ROM|code||Above-Screen Line Edit Buffer is full.|1
+L32B7|32B7|65535|65535|ROM|code||Find Row Address in Above-Screen Line Edit Buffer|1
+L32BD|32BD|65535|65535|ROM|data||BASIC Line Character Action Handler Jump Table|1
+L32D6|32D6|65535|65535|ROM|code||Copy a BASIC Line into the Above-Screen or Below-Screen Line Edit Buffer|1
+L32EA|32EA|65535|65535|ROM|code||Loop to process each character from the current BASIC line.|1
+L3307|3307|65535|65535|ROM|code||Call action handler to process character.|1
+L3323|3323|65535|65535|ROM|code||The edit buffer has room for another character.|1
+L3326|3326|65535|65535|ROM|code||Store the character.|1
+L332C|332C|65535|65535|ROM|code||No more characters are available.|1
+L3331|3331|65535|65535|ROM|code||Set 'Continuation' Row in Line Edit Buffer|1
+L334A|334A|65535|65535|ROM|code||Find Address of BASIC Line with Specified Line Number|1
+L3352|3352|65535|65535|ROM|code||Create Next Line Number Representation in Keyword Construction Buffer|1
+L335A|335A|65535|65535|ROM|code||Fetch Next De-tokenized Character from Selected BASIC Line in Program Area|1
+L335F|335F|65535|65535|ROM|code||Copy 'Insert Keyword Representation into Keyword Construction Buffer' Routine into RAM|1
+L3374|3374|65535|65535|ROM|code||Insert Keyword Representation into Keyword Construction Buffer <<< RAM Routine >>>|1
+L3395|3395|65535|65535|ROM|code||Used for token range B5-C4|1
+L339C|339C|65535|65535|ROM|code||Used for token range C5-D4|1
+L33A3|33A3|65535|65535|ROM|code||Used for token range D5-E4|1
+L33AA|33AA|65535|65535|ROM|code||Used for token range E5-F4|1
+L33B1|33B1|65535|65535|ROM|code||Used for token range F5-FF|1
+L33B6|33B6|65535|65535|ROM|code||Loop to find token entry.|1
+L33B8|33B8|65535|65535|ROM|code||Jump if indexed item found.|1
+L33BA|33BA|65535|65535|ROM|code||Loop to find end of token.|1
+L33C3|33C3|65535|65535|ROM|code||Copy Keyword Characters <<< RAM Routine >>>|1
+L33D9|33D9|65535|65535|ROM|code||Loop to copy keyword characters.|1
+L33F4|33F4|65535|65535|ROM|code||Identify Token from Table|1
+L3401|3401|65535|65535|ROM|code||Entry point for matching 128K mode tokens.|1
+L3404|3404|65535|65535|ROM|code||Loop to match characters.|1
+L340E|340E|65535|65535|ROM|code||Compare characters.|1
+L341A|341A|65535|65535|ROM|code||Handle mismatch.|1
+L341D|341D|65535|65535|ROM|code||The token does not match, skip to next entry.|1
+L3425|3425|65535|65535|ROM|code||All character codes tested and no match found.|1
+L3426|3426|65535|65535|ROM|code||The common exit point.|1
+L3430|3430|65535|65535|ROM|code||Create Next Line Number Representation in Keyword Construction Buffer|1
+L344D|344D|65535|65535|ROM|code||Insert line number into the buffer.|1
+L3491|3491|65535|65535|ROM|code||End of program reached, no line number available.|1
+L3495|3495|65535|65535|ROM|code||Insert ASCII Line Number Digit|1
+L3496|3496|65535|65535|ROM|code||Loop to subtract.|1
+L34B1|34B1|65535|65535|ROM|code||Handle non-zero digit.|1
+L34B3|34B3|65535|65535|ROM|code||Point to the next buffer location.|1
+L34B6|34B6|65535|65535|ROM|code||Find Address of BASIC Line with Specified Line Number|1
+L34CF|34CF|65535|65535|ROM|code||Move to Next BASIC Line|1
+L34D9|34D9|65535|65535|ROM|code||Check if at End of BASIC Program|1
+L34E0|34E0|65535|65535|ROM|code||Compare Line Numbers|1
+L34EA|34EA|65535|65535|ROM|code||Clear BASIC Line Construction Pointers|1
+L34F6|34F6|65535|65535|ROM|code||Find Address of BASIC Line|1
+L350A|350A|65535|65535|ROM|code||Loop to find line.|1
+L3517|3517|65535|65535|ROM|code||Fetch Next De-tokenized Character from BASIC Line in Program Area|1
+L3529|3529|65535|65535|ROM|code||Store 'print a leading space' flag.|1
+L3534|3534|65535|65535|ROM|code||Store address of next character.|1
+L353C|353C|65535|65535|ROM|code||Fetch next tokenized character from BASIC line.|1
+L3547|3547|65535|65535|ROM|code||Handle floating-point representation.|1
+L3554|3554|65535|65535|ROM|code||Store next command address and check for keyword.|1
+L3567|3567|65535|65535|ROM|code||Handle non-48K keywords.|1
+L3572|3572|65535|65535|ROM|code||Handle 'PLAY'.|1
+L3575|3575|65535|65535|ROM|code||Copy keyword string and continue.|1
+L357B|357B|65535|65535|ROM|code||Not a keyword.|1
+L358F|358F|65535|65535|ROM|code||Signal a character was available.|1
+L3591|3591|65535|65535|ROM|code||Signal no character available.|1
+L3594|3594|65535|65535|ROM|data||Keywords String Table - "SPECTRUM"|1
+L359C|359C|65535|65535|ROM|data||Keywords String Table - "PLAY"|1
+L35B9|35B9|65535|65535|ROM|data||Indentation Settings|1
+L35BC|35BC|65535|65535|ROM|code||Set Indentation Settings|1
+L35C5|35C5|65535|65535|ROM|code||Store Character in Column of Edit Buffer Row|1
+L35CC|35CC|65535|65535|ROM|code||'Enter' Action Handler Routine|1
+L35DA|35DA|65535|65535|ROM|code||'Null Columns' Action Handler Routine|1
+L35E6|35E6|65535|65535|ROM|code||Null Column Positions|1
+L35EC|35EC|65535|65535|ROM|code||Loop to null columns.|1
+L35F4|35F4|65535|65535|ROM|code||Indent Edit Buffer Row|1
+L35F9|35F9|65535|65535|ROM|code||Loop to indent row.|1
+L3604|3604|65535|65535|ROM|code||Print Edit Buffer Row to Display File if Required|1
+L3614|3614|65535|65535|ROM|code||Restore registers.|1
+L3618|3618|65535|65535|ROM|code||Shift Up Edit Rows in Display File if Required|1
+L3628|3628|65535|65535|ROM|code||Restore registers.|1
+L362C|362C|65535|65535|ROM|code||Shift Down Edit Rows in Display File if Required|1
+L363C|363C|65535|65535|ROM|code||Restore registers.|1
+L3640|3640|65535|65535|ROM|code||Set Cursor Attribute Colour|1
+L364F|364F|65535|65535|ROM|code||Restore Cursor Position Previous Attribute|1
+L365E|365E|65535|65535|ROM|code||Reset 'L' Mode|1
+L3668|3668|65535|65535|ROM|code||Check if returning to calculator.|1
+L367C|367C|65535|65535|ROM|code||Select BASIC/Calculator mode.|1
+L367F|367F|65535|65535|ROM|code||Wait for a Key Press|1
+L3680|3680|65535|65535|ROM|code||Main loop waiting for key.|1
+L3683|3683|65535|65535|ROM|code||Loop waiting for key.|1
+L36A2|36A2|65535|65535|ROM|code||Restore HL.|1
+L36A4|36A4|65535|65535|ROM|code||Handle CAPS LOCK and mode codes.|1
+L36A8|36A8|65535|65535|ROM|code||Display Menu|1
+L36D1|36D1|65535|65535|ROM|code||Loop to print menu items.|1
+L36D7|36D7|65535|65535|ROM|code||Loop to print a single menu item.|1
+L36E0|36E0|65535|65535|ROM|code||Print final character.|1
+L36E3|36E3|65535|65535|ROM|code||Print trailing spaces.|1
+L3719|3719|65535|65535|ROM|code||Plot a Line|1
+L372B|372B|65535|65535|ROM|code||Print "AT B,C" Characters|1
+L3733|3733|65535|65535|ROM|code||Print String|1
+L373B|373B|65535|65535|ROM|code||Store Menu Screen Area|1
+L373E|373E|65535|65535|ROM|code||Restore Menu Screen Area|1
+L373F|373F|65535|65535|ROM|code||Start of restore/store loop.|1
+L3748|3748|65535|65535|ROM|code||Loop for system variables.|1
+L374D|374D|65535|65535|ROM|code||Continue loop for system variables.|1
+L3753|3753|65535|65535|ROM|code||Copy COORDS.|1
+L375B|375B|65535|65535|ROM|code||Set up for screen area copy.|1
+L3769|3769|65535|65535|ROM|code||Loop to store/restore multiple rows.|1
+L377E|377E|65535|65535|ROM|code||Store / Restore Menu Screen Row - display file|1
+L3781|3781|65535|65535|ROM|code||Loop to copy display file bytes.|1
+L3789|3789|65535|65535|ROM|code||Copy display file bytes.|1
+L378E|378E|65535|65535|ROM|code||Save copy direction flag.|1
+L37A0|37A0|65535|65535|ROM|code||Copy attribute bytes.|1
+L37A5|37A5|65535|65535|ROM|code||Save copy direction flag.|1
+L37A7|37A7|65535|65535|ROM|code||Move Up Menu|1
+L37B1|37B1|65535|65535|ROM|code||Toggle new menu item selection.|1
+L37B6|37B6|65535|65535|ROM|code||Move Down Menu|1
+L37C5|37C5|65535|65535|ROM|code||Toggle new menu item selection.|1
+L37CA|37CA|65535|65535|ROM|code||Toggle Menu Option Selection Highlight|1
+L37D6|37D6|65535|65535|ROM|code||Loop to find attribute byte.|1
+L37DA|37DA|65535|65535|ROM|code||Set attribute byte for highlight.|1
+L37E1|37E1|65535|65535|ROM|code||Set up for setting attributes.|1
+L37E3|37E3|65535|65535|ROM|code||Loop to set attributes.|1
+L37EC|37EC|65535|65535|ROM|data||Menu Title Colours Table|1
+L37FA|37FA|65535|65535|ROM|data||Menu Title Space Table|1
+L3802|3802|65535|65535|ROM|data||Menu Sinclair Stripes Bitmaps|1
+L3812|3812|65535|65535|ROM|data||Sinclair Strip 'Text'|1
+L3822|3822|65535|65535|ROM|code||Print the Sinclair stripes on the menu|1
+L3848|3848|65535|65535|ROM|code||Print '128 BASIC' Banner|1
+L384D|384D|65535|65535|ROM|code||Print 'Calculator' Banner|1
+L3852|3852|65535|65535|ROM|code||Print 'Tape Loader' Banner|1
+L3857|3857|65535|65535|ROM|code||Print 'Tape Tester' Banner|1
+L385A|385A|65535|65535|ROM|code||Print Banner|1
+L3865|3865|65535|65535|ROM|code||Loop to set black row.|1
+L3881|3881|65535|65535|ROM|code||Clear Lower Editing Display|1
+L3888|3888|65535|65535|ROM|code||RENUMBER ROUTINE|1
+L38AA|38AA|65535|65535|ROM|code||Loop to renumber each line.|1
+L38B8|38B8|65535|65535|ROM|code||Loop to renumber tokens in a line.|1
+L38C5|38C5|65535|65535|ROM|code||End of line, update line number.|1
+L38DD|38DD|65535|65535|ROM|code||Loop to update line numbers.|1
+L3907|3907|65535|65535|ROM|data||Tokens Using Line Numbers|1
+L390E|390E|65535|65535|ROM|code||Parse a Line Renumbering Line Number References|1
+L391F|391F|65535|65535|ROM|code||Loop to parse characters.|1
+L393B|393B|65535|65535|ROM|code||A line number reference was not found.|1
+L393F|393F|65535|65535|ROM|code||Increment digit counter and continue parsing.|1
+L3943|3943|65535|65535|ROM|code||An embedded number was found.|1
+L3957|3957|65535|65535|ROM|code||End of statement/line found.|1
+L396F|396F|65535|65535|ROM|code||The reference line exists.|1
+L3980|3980|65535|65535|ROM|code||HL=New line number being referenced.|1
+L39BE|39BE|65535|65535|ROM|code||No room available to insert extra line number digits.|1
+L39C0|39C0|65535|65535|ROM|code||Exit if no BASIC program or renumbering would cause overflow.|1
+L39C5|39C5|65535|65535|ROM|code||The new line number contains less digits than the old line number.|1
+L39CF|39CF|65535|65535|ROM|code||The appropriate amount of space now exists in the BASIC line so update the line number value.|1
+L3A05|3A05|65535|65535|ROM|code||Count the Number of BASIC Lines|1
+L3A0B|3A0B|65535|65535|ROM|code||Check if program exists.|1
+L3A1D|3A1D|65535|65535|ROM|code||Loop to count lines.|1
+L3A2E|3A2E|65535|65535|ROM|code||Retrieve and increment line count.|1
+L3A31|3A31|65535|65535|ROM|code||No BASIC program.|1
+L3A35|3A35|65535|65535|ROM|code||Skip Spaces|1
+L3A36|3A36|65535|65535|ROM|code||Fetch and check character.|1
+L3A3C|3A3C|65535|65535|ROM|code||Create ASCII Line Number Representation|1
+L3A56|3A56|65535|65535|ROM|code||Skip over leading zeros.|1
+L3A60|3A60|65535|65535|ROM|code||Insert Line Number Digit|1
+L3A61|3A61|65535|65535|ROM|code||Loop to add negative value.|1
+L3A6D|3A6D|65535|65535|ROM|data||Initial Lower Screen Cursor Settings|1
+L3A76|3A76|65535|65535|ROM|data||Initial Main Screen Cursor Settings|1
+L3A7F|3A7F|65535|65535|ROM|code||Set Main Screen Editing Cursor Details|1
+L3A88|3A88|65535|65535|ROM|code||Set Lower Screen Editing Cursor Details|1
+L3A8B|3A8B|65535|65535|ROM|code||Jump to copy settings.|1
+L3A91|3A91|65535|65535|ROM|code||(UNUSED) Print 'AD'|1
+L3A96|3A96|65535|65535|ROM|code||Store Cursor Colour|1
+L3A9D|3A9D|65535|65535|ROM|code||Set Cursor Position Attribute|1
+L3AB2|3AB2|65535|65535|ROM|code||Restore Cursor Position Attribute|1
+L3ABF|3ABF|65535|65535|ROM|code||Shift Up Edit Rows in Display File|1
+L3AC6|3AC6|65535|65535|ROM|code||Shift Down Edit Rows in Display File|1
+L3ACD|3ACD|65535|65535|ROM|code||Shift Rows|1
+L3AD6|3AD6|65535|65535|ROM|code||Shift up/down to previous row.|1
+L3AE3|3AE3|65535|65535|ROM|code||Move to next row.|1
+L3AE4|3AE4|65535|65535|ROM|code||Set up for row copy.|1
+L3AEE|3AEE|65535|65535|ROM|code||Copy one row of the display file.|1
+L3B16|3B16|65535|65535|ROM|code||Move to the next row.|1
+L3B17|3B17|65535|65535|ROM|code||Decrement the row counter.|1
+L3B1D|3B1D|65535|65535|ROM|code||Print a Row of the Edit Buffer to the Screen|1
+L3B1E|3B1E|65535|65535|ROM|code||Exchange colour items.|1
+L3B31|3B31|65535|65535|ROM|code||Set TVFLAG and print AT.|1
+L3B3C|3B3C|65535|65535|ROM|code||Loop to print characters.|1
+L3B42|3B42|65535|65535|ROM|code||Check for UDG.|1
+L3B49|3B49|65535|65535|ROM|code||Loop for next character.|1
+L3B55|3B55|65535|65535|ROM|code||Print UDG.|1
+L3B5E|3B5E|65535|65535|ROM|code||Clear Display Rows|1
+L3B68|3B68|65535|65535|ROM|code||Clear display file row.|1
+L3B6E|3B6E|65535|65535|ROM|code||Loop to blank a row.|1
+L3B72|3B72|65535|65535|ROM|code||Loop to blank columns.|1
+L3B86|3B86|65535|65535|ROM|code||Reset display file attributes.|1
+L3B94|3B94|65535|65535|ROM|code||Find Rows and Columns to End of Screen|1
+L3B98|3B98|65535|65535|ROM|code||Find Rows to End of Screen|1
+L3BA0|3BA0|65535|65535|ROM|code||Get Attribute Address|1
+L3BB8|3BB8|65535|65535|ROM|code||Exchange Colour Items|1
+L3BE9|3BE9|65535|65535|ROM|code||TAPE TESTER ROUTINE|1
+L3BFA|3BFA|65535|65535|ROM|code||Loop to print black squares.|1
+L3BFE|3BFE|65535|65535|ROM|code||Main loop for tape input signal.|1
+L3C04|3C04|65535|65535|ROM|code||Check for key presses.|1
+L3C1D|3C1D|65535|65535|ROM|code||Sample tape port.|1
+L3C2B|3C2B|65535|65535|ROM|code||All samples read.|1
+L3C3D|3C3D|65535|65535|ROM|code||Handle initial tape port level.|1
+L3C3F|3C3F|65535|65535|ROM|code||L holds the column for the cyan marker.|1
+L3C4B|3C4B|65535|65535|ROM|code||Loop to set blue squares.|1
+L3C56|3C56|65535|65535|ROM|code||Half second delay then clear key press flag.|1
+L3C59|3C59|65535|65535|ROM|code||Loop for half second delay.|1
+L3C63|3C63|65535|65535|ROM|code||Tokenize BASIC Line - syntax error detected|1
+L3C67|3C67|65535|65535|ROM|code||Tokenize BASIC Line - main entry|1
+L3C69|3C69|65535|65535|ROM|code||Store 'locate error marker' flag and initialize.|1
+L3CA1|3CA1|65535|65535|ROM|code||Loop to fetch and process characters.|1
+L3CB3|3CB3|65535|65535|ROM|code||The first character to potentially put into the Keyword Conversion Buffer.|1
+L3CB8|3CB8|65535|65535|ROM|code||Insert the character.|1
+L3CC4|3CC4|65535|65535|ROM|code||String too long, not a keyword.|1
+L3CCC|3CCC|65535|65535|ROM|code||Copy the Keyword Conversion Buffer into the BASIC line workspace.|1
+L3CD6|3CD6|65535|65535|ROM|code||String was too long to be a keyword and was followed by a space, a '#' or a '|1
+L3DAF|3DAF|65535|65535|ROM|code||Handle non-letter characters.|1
+L3DBD|3DBD|65535|65535|ROM|code||Indicate a '#' or '$'.|1
+L3DC0|3DC0|65535|65535|ROM|code||Indicate a space.|1
+L3DC3|3DC3|65535|65535|ROM|code||Indicate a letter.|1
+L3DC6|3DC6|65535|65535|ROM|code||Is Lowercase Letter?|1
+L3DCD|3DCD|65535|65535|ROM|code||Copy Keyword Conversion Buffer Contents into BASIC Line Workspace|1
+L3DDA|3DDA|65535|65535|ROM|code||Loop to copy characters.|1
+L3DE9|3DE9|65535|65535|ROM|code||Insert Character into Keyword Conversion Buffer|1
+L3DF8|3DF8|65535|65535|ROM|code||End of buffer not reached.|1
+L3E03|3E03|65535|65535|ROM|code||Remove terminator bit from previous character.|1
+L3E09|3E09|65535|65535|ROM|code||Store the character.|1
+L3E13|3E13|65535|65535|ROM|code||End of buffer reached.|1
+L3E16|3E16|65535|65535|ROM|code||Insert Character into BASIC Line Workspace, Handling '>' and '<'|1
+L3E26|3E26|65535|65535|ROM|code||Insert character and return.|1
+L3E2A|3E2A|65535|65535|ROM|code||Store '<' or '>' for special treatment.|1
+L3E2F|3E2F|65535|65535|ROM|code||The previous character was '<' or '>'.|1
+L3E41|3E41|65535|65535|ROM|code||Handle '<='.|1
+L3E49|3E49|65535|65535|ROM|code||Previous character was '<' and new character is '<'.|1
+L3E52|3E52|65535|65535|ROM|code||Previous character was '>'.|1
+L3E5B|3E5B|65535|65535|ROM|code||Previous character was '>' and new character is '>'.|1
+L3E64|3E64|65535|65535|ROM|code||Insert Character into BASIC Line Workspace, Handling 'REM' and Quotes|1
+L3E74|3E74|65535|65535|ROM|code||Handle non-REM characters.|1
+L3E82|3E82|65535|65535|ROM|code||Insert character.|1
+L3E88|3E88|65535|65535|ROM|code||Handle 'ENTER' character.|1
+L3E99|3E99|65535|65535|ROM|code||Tokenizing the BASIC line.|1
+L3E9C|3E9C|65535|65535|ROM|code||Insert Character into BASIC Line Workspace With Space Suppression|1
+L3EB7|3EB7|65535|65535|ROM|code||Character to insert is a space and the last character was a space.|1
+L3EBF|3EBF|65535|65535|ROM|code||Character to insert is a space and the last character was a token.|1
+L3EC6|3EC6|65535|65535|ROM|code||Character to insert is not a space.|1
+L3EDA|3EDA|65535|65535|ROM|code||Character to insert is not a space and not a token and the last character was a space.|1
+L3EEE|3EEE|65535|65535|ROM|code||Character to insert is a token.|1
+L3EFB|3EFB|65535|65535|ROM|code||Insert a Character into BASIC Line Workspace|1
+L3F2A|3F2A|65535|65535|ROM|code||Handle error marker located.|1
+L3F30|3F30|65535|65535|ROM|code||The error marker has not yet been reached.|1
+L3F33|3F33|65535|65535|ROM|code||Tokenizing the BASIC line.|1
+L3F35|3F35|65535|65535|ROM|code||Searching for the error marker.|1
+L3F47|3F47|65535|65535|ROM|code||Tokenizing the BASIC line.|1
+L3F5D|3F5D|65535|65535|ROM|code||Advance to the next character.|1
+L3F66|3F66|65535|65535|ROM|code||Room for BC Bytes?|1
+L3F76|3F76|65535|65535|ROM|code||Signal error "4 Out of Memory".|1
+L3F7E|3F7E|65535|65535|ROM|code||Identify Keyword|1
+L3F96|3F96|65535|65535|ROM|code||Handle "OPEN#".|1
+L3F9E|3F9E|65535|65535|ROM|code||Handle "DEFFN".|1
+L3FA6|3FA6|65535|65535|ROM|code||Handle "GOSUB".|1
+L3FAE|3FAE|65535|65535|ROM|code||Handle "GOTO".|1
+L3FB6|3FB6|65535|65535|ROM|code||Handle 'SPECTRUM' and 'PLAY'.|1
+L3FB8|3FB8|65535|65535|ROM|code||Signal keyword identified.|1
+L3FBA|3FBA|65535|65535|ROM|code||Copy Data Block|1
+L3FBC|3FBC|65535|65535|ROM|code||Loop to copy bytes.|1
+L3FC3|3FC3|65535|65535|ROM|code||(UNUSED) Get Numeric Value for ASCII Character|1
+L3FCE|3FCE|65535|65535|ROM|code||Call Action Handler Routine|1
+L3FD2|3FD2|65535|65535|ROM|code||Loop to find match.|1
+L3FE1|3FE1|65535|65535|ROM|code||Found a match.|1
+L3FEB|3FEB|65535|65535|ROM|code||Handle no error beep.|1
+L3FEE|3FEE|65535|65535|ROM|code||Jump to the action handler routine.|1
+L3FEF|3FEF|65535|65535|ROM|data||PROGRAMMERS' INITIALS|1
+L3FFF|3FFF|65535|65535|ROM|data||END OF ROM MARKER|1

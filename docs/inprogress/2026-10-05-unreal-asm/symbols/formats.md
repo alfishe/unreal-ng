@@ -44,13 +44,14 @@ Phase numbers refer to [tdd.md](tdd.md) §10.
 
 | Codec id | Family | Decode | Encode | Detection (content first, extension as hint) | Status | Phase |
 |---|---|---|---|---|---|---|
-| `native` | native | ● | ● | JSON with `"format": "unreal-symbols"` | new | S1 |
-| `unreal-map` | text | ● | ● | lines `[ROMn:]HHHH  NAME  (TYPE) ; comment`, often a `---` banner | existing parser (`ParseMapFile`) | S2 |
-| `simple-sym` | text | ● | ● | lines `HHHH NAME` (also `sos.l`) | existing (`ParseSymFile`) | S2 |
-| `unreal-l` | text | ● | ● | lines `HHHH name` / `PP:HHHH name` (Unreal `user.l`, TDD-DBG-01 §11) | new | S2 |
-| `vice` | text | ● | ● | lines `al C:HHHH .name` | existing (`ParseViceSymFile`) | S2 |
-| `sjasm-equ` | text | ● | ● | lines `NAME EQU $HHHH ; (TYPE)` | existing (`ParseSJASMSymFile`) | S2 |
-| `z88dk-map` | text | ● | ● | lines `name = $HHHH ; ...` **verify** the field list against z88dk's current output | existing (`ParseZ88DKSymFile`) | S2 |
+| `native` | native | ● | ● | JSON with `"format": "unreal-symbols"` | done (S1) | S1 |
+| `unreal-map` | text | ● | ● | lines `[ROMn:\|RAMn:]HHHH  NAME  (TYPE) ; comment`, often a `---` banner; a bank prefix or a `(TYPE)` sets it apart | done (S2) | S2 |
+| `simple-sym` | text | ● | ● | lines `HHHH NAME [(TYPE)] [; comment]` (also `sos.l`); the extension tells it from the other `HHHH NAME` formats | done (S2) | S2 |
+| `unreal-l` | text | ● | ● | lines `HHHH name` (the linear RAM address: page `HHHH >> 14`) / `PP:HHHH name` (RAM page `PP`); RAM pages only (checked in Unreal's `MON_LABELS::load`) | done (S2) | S2 |
+| `vice` | text | ● | ● | lines `al C:HHHH .name` | done (S2) | S2 |
+| `sjasm-equ` | text | ● | ● | lines `NAME EQU $HHHH ; (TYPE)` (also reads sjasmplus' `NAME: EQU 0x0000HHHH`) | done (S2) | S2 |
+| `z88dk-defc` | text | ● | ● | lines `DEFC name = $HHHH ; (TYPE)` (what LabelManager read) | done (S2) | S2 |
+| `z88dk-map` | text | ● | ● | lines `name = $HHHH ; ...` **verify** the field list against z88dk's current output | new | S3 |
 | `sjasmplus-sym` | text | ● | ● | lines `NAME: EQU 0x0000HHHH` **verify** (`--sym`, `--exp`) | new | S3 |
 | `sjasmplus-sld` | text | ● | ● | first line `\|SLD.data.version\|N`, then `\|`-separated records **verify** the field order per SLD version | new | S3 |
 | `sjasmplus-lst` | text | ● | ● | the `ListingParser` grammar; labels are the lines that define one | existing (`ListingParser`) | S3 |
@@ -78,7 +79,7 @@ them):
 |---|---|---|---|
 | native | `{"name":"PRINT-A-1","space":"rom0","offset":16,"kind":"entry"}` | `{"name":"PLAYMUS","space":"ram3","offset":0,"kind":"code"}` | `{"name":"SCREEN","space":"cpu:main","offset":16384,"kind":"data"}` |
 | unreal-map | `ROM0:0010  PRINT-A-1  (CODE)` | `C000  PLAYMUS  (CODE)` (page lost: folded) | `4000  SCREEN  (DATA)` |
-| unreal-l | `00:0010 PRINT-A-1` **verify** how `user.l` numbers ROM pages | `03:0000 PLAYMUS` | `4000 SCREEN` |
+| unreal-l | — (RAM pages only) | `03:C000 PLAYMUS` | — (RAM pages only) |
 | vice | `al C:0010 .PRINT_A_1` | `al C:C000 .PLAYMUS` (folded) | `al C:4000 .SCREEN` |
 | sjasmplus-sym | `PRINT_A_1: EQU 0x00000010` | `PLAYMUS: EQU 0x0000C000` (folded) | `SCREEN: EQU 0x00004000` |
 | ida-idc | `set_name(0x0010, "PRINT_A_1");` | `set_name(0xC000, "PLAYMUS");` (or in a `RAM3` segment) | `set_name(0x4000, "SCREEN");` |
