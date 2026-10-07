@@ -113,7 +113,7 @@ SZX writes the paging through each model's decoder.
   Pentagon 128 / 512 / 1024 and Scorpion have one): a TS-Conf, ATM or Sprinter in a Spectrum 128K layout is saved as the 128K (or the
   Pentagon / Scorpion its Sprinter mode names); other states are refused with the reason ([above](#how-a-snapshot-is-saved)).
 - **SPG:** TS-Conf only (the Qt window and the automation launchers switch to it first; `switch_model=false` refuses).
-- **ZXP:** a ZX-Poly machine only (four modules).
+- **ZXP:** a ZX-Poly machine only (four modules), and a ZX-Poly takes nothing else: a SNA, Z80, SZX or SPG is refused there, and nothing is saved from a module.
 
 ## Test material
 

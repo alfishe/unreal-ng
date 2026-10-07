@@ -30,6 +30,12 @@ struct Options
     std::function<void()> beforeCommit;
 };
 
+/// Is this machine one of the four modules of a ZX-Poly group? A ZX-Poly runs its modules in lockstep: it takes a .zxp (all four
+/// modules) and nothing else (owner rule 2026-10-07): a single-machine snapshot is refused on load, and none is written on save
+bool IsZXPolyModule(const EmulatorContext& context);
+/// Why a snapshot of `format` ("sna", "z80", "szx", "spg") is refused on a ZX-Poly module (the text every surface shows)
+std::string ZXPolyRefusal(const std::string& format);
+
 /// The plan's answer
 struct Decision
 {

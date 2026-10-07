@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "loaders/snapshot/snapshotlauncher.h"
+#include "loaders/snapshot/snapshotpipeline.h"
 #include "emulator/savesnapshotchoices.h"
 #include <algorithm>
 
@@ -2409,6 +2410,13 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
                 EmulatorContext* runningContext = _emulator->GetContext();
                 if (!runningContext)
                     break;  // removed by automation; the queued unbind follows
+                // A ZX-Poly module takes a .zxp only: never replaced by another model, never given a single-machine snapshot
+                if (snapshot::IsZXPolyModule(*runningContext))
+                {
+                    QMessageBox::warning(this, tr("Load Snapshot"),
+                                         QString::fromStdString(snapshot::ZXPolyRefusal(filePath.right(3).toLower().toStdString())));
+                    break;
+                }
                 SnapshotLauncher::Need need;
                 std::string error;
                 if (!SnapshotLauncher::NeedOf(file, runningContext->config.mem_model, runningContext->config.ramsize, need, error))

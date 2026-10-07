@@ -257,6 +257,8 @@ HTTP 422 = the target cannot hold the state (e.g. a 128K program into a 48K);
 
 ## Interactions to know
 
+- **ZX-Poly**: a ZX-Poly machine takes a `.zxp` and nothing else. A `.sna` / `.z80` / `.szx` / `.spg` is refused with `needs: format:zxp` (a snapshot of one machine means nothing to four modules in lockstep), `inspect` says `would_load: false`, and nothing is saved from a module (`needs: zxpoly`).
+
 - **TTD**: a snapshot load is never refused by a recording: it ENDS the
   session like a reset does (the one TTD rule), the history stays browsable
   and no new session starts unless the `ttdrestart` feature is on (or a black

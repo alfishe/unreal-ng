@@ -3,8 +3,10 @@
 #include <algorithm>
 
 #include "emulator/config.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/zxpoly/zxpolygroup.h"
 #include "loaders/snapshot/szx/loaderszx.h"
 
 namespace snapshot
@@ -118,6 +120,18 @@ bool LegacyWillRefuse(const Image& image, EmulatorContext& context, Report& repo
 }
 }  // namespace
 
+bool IsZXPolyModule(const EmulatorContext& context)
+{
+    return !context.emulatorId.isNil() && EmulatorManager::GetInstance()->GetZXPolyGroup(context.emulatorId.toString()) != nullptr;
+}
+
+std::string ZXPolyRefusal(const std::string& format)
+{
+    return "this machine is a ZX-Poly: its four modules run in lockstep, so only a .zxp snapshot (all four modules) can be loaded into "
+           "it; a ." + format + " snapshot is the state of one machine. Open the .zxp with File > Open ZX-Poly, or load the ." + format +
+           " on a single machine";
+}
+
 bool Decision::Commit(const Image& image, EmulatorContext& context, Report& report) const
 {
     if (action != Action::Take || !policy)
@@ -150,6 +164,15 @@ Decision Pipeline::PlanImpl(const Image& image, EmulatorContext* context, const 
         report.commit = "none";
         report.verdicts.push_back("unsupported: " + image.unsupported);
         report.Refuse("this snapshot cannot be loaded: " + image.unsupported, "format:unsupported");
+        return {Decision::Action::Refuse, nullptr};
+    }
+
+    // 0b. A ZX-Poly module takes a .zxp only: the four modules run in lockstep, so a snapshot of one machine has no meaning there
+    if (context && image.format != "zxp" && IsZXPolyModule(*context))
+    {
+        report.commit = "none";
+        report.verdicts.push_back("a ZX-Poly module takes a .zxp only");
+        report.Refuse(ZXPolyRefusal(image.format), "format:zxp");
         return {Decision::Action::Refuse, nullptr};
     }
 

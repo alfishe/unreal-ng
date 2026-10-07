@@ -471,6 +471,18 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/snapshot/transfer \
 - **NOT moved (by design, for now): SD cards, hard disks and CDs.** The target keeps its own, and their controllers (IDE channel, Z-Controller) keep the target's state. Every report carries an explicit `SD / HDD / CD` item saying so.
 - The target's TTD session is dropped (409 while it records).
 
+**What can be moved where (owner rule 2026-10-07).** The state transfer is the emulator's own mechanism, separate from loading and saving snapshot files, and it is never merged with them. It works as long as it is physically possible for the target to hold the state:
+
+| From \ to | Spectrum 48K / 128K family, Pentagon, Scorpion | ATM Turbo 2+ 7.10 / ATM3 / ZX-Evo Base | Sprinter (ZX mode) | TS-Conf | ZX-Poly module |
+|:--|:--|:--|:--|:--|:--|
+| **Spectrum 48K / 128K family, Pentagon, Scorpion** | works (the table above) | expected to work (a 128K state in the ATM's 128K layout) - **not yet: refused today** | expected to work into a 128K / Pentagon mode (`p128.zx`) - **not yet** | not a target (the machine has its own memory model) | never (four modules in lockstep) |
+| **ATM Turbo 2+ 7.10 / ATM3 / ZX-Evo Base** | expected to work in about 99% of cases (the same board family) - **not yet: refused today** | expected to work - **not yet** | not a target | not a target | never |
+| **Sprinter** | not yet | not yet | same model: full clone | not a target | never |
+| **TS-Conf** | **never**: a TS-Conf state moves nowhere (its pager, tile engine and DMA have no counterpart) | never | never | same model and RAM: full clone | never |
+| **ZX-Poly module** | never | never | never | never | never |
+
+"Not yet" rows are work for the transfer code itself (its own rules and tests), not for the snapshot pipeline.
+
 MCP: `emulator_manage` action `transfer_state` (`to` or `model` + optional `ram_size`, `check`). Core API: `MachineStateTransfer` (`core/src/loaders/snapshot/machinestatetransfer.h`).
 
 #### Command Batching

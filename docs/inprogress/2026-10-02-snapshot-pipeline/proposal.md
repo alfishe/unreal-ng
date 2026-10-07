@@ -457,12 +457,13 @@ Each with a recommendation; asked one at a time when work starts.
 6. **Q6 — model switch for SZX through automation.** Qt switches the model, `SnapshotLauncher` refuses.
    *Recommendation:* one orchestrator (P7) honoring the existing `switch_model` option, so SZX behaves like SPG
    and RZX on every surface.
-7. **Q7 — plain SNA / Z80 on a ZX-Poly group.** *Recommendation:* load into the master and replicate to the
-   three modules (`CopyMasterState`), which is what a ZX-Poly user loading a normal game expects; a
-   `commit=legacy` keeps the single-instance load.
-8. **Q8 — fold `MachineStateTransfer` into the pipeline?** It already does check → apply with a report.
-   *Recommendation:* later: make its source side a capture into `SnapshotImage` and its cross-model paging
-   the shared transforms, so one set of rules serves files and instance transfers; not part of P0-P4.
+7. **Q7 — plain SNA / Z80 on a ZX-Poly group.** *DECIDED 2026-10-07 (owner):* REFUSED. A ZX-Poly takes a .zxp and nothing else;
+   a single-machine snapshot has no meaning for four modules in lockstep. Same in the Qt window and in every automation surface,
+   for load, inspect and save (no replication to the modules).
+8. **Q8 — fold `MachineStateTransfer` into the pipeline?** *DECIDED 2026-10-07 (owner):* NEVER merge them. The state transfer is the
+   emulator's internal mechanism and stays its own code with its own rules. It must work as long as that is physically possible
+   (a 128K into a Sprinter's p128.zx mode, an ATM Turbo 2+ 7.10 state into an ATM3 or a ZX-Evo Base are expected to work in 99% of
+   cases); where it cannot (a TS-Conf state moves nowhere) the capability matrix says so. The matrix is in docs/features/automation.md.
 
 Already decided: **2026-10-02, owner:** the Sprinter's snapshot parse/apply split (ZX-mode design Q4) is
 done through this shared pipeline, at lower priority (PLAN T3).

@@ -40,7 +40,7 @@ Snapshot overview and how loading works: [README](README.md).
   refused with the reason.
 - The group is **planned, then committed**: each module's image (banks, CPU, #7FFD, the border) goes through the snapshot plan on its own machine (the shared fit check, the machine's policy, a caller's `commit`), and one refusal stops the whole load before any module is touched (the reason names the module, `module 2: ...`). Each module is then committed from its image.
 - After the modules the group latches #3D00 and the module registers.
-- A plain SNA or Z80 given to a ZX-Poly group goes to one instance only (a normal snapshot is not replicated into the four modules).
+- **A ZX-Poly takes a .zxp and nothing else** (owner rule 2026-10-07). A plain SNA, Z80, SZX or SPG is the state of one machine and means nothing to four modules in lockstep: it is refused on load (`needs: format:zxp`, the reason says so; the Qt window shows it in a message box, every automation surface in the answer), `inspect` says `would_load: false`, the launcher never replaces a module by another model, and nothing is saved from a module (`needs: zxpoly`; the .zxp writer does not exist yet).
 - Loading only; there is no ZXP writer.
 
 Test material: `testdata/machines/zxpoly/zxp/` with the measurements in its README.
