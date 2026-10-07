@@ -1,12 +1,18 @@
 /**
  * @file slotconfigdialog.h
- * @brief SlotConfigDialog - popup for configuring a single slot: compatible cards on the left,
- *        selected card with its options on the right. Shows conflict warning before applying.
+ * @brief SlotConfigDialog - popup for configuring a single slot.
+ *
+ * Layout:
+ *   - Current card section (shows what's installed, if any)
+ *   - Available cards tree (grouped by category)
+ *   - Options section (shows card name + "current"/"new" indicator)
+ *   - Buttons: Clear Slot, Cancel, Apply
  */
 
 #pragma once
 
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -16,10 +22,11 @@
 
 class QCheckBox;
 class QComboBox;
+class QGroupBox;
 class QLabel;
-class QListWidget;
-class QListWidgetItem;
 class QPushButton;
+class QTreeWidget;
+class QTreeWidgetItem;
 class QVBoxLayout;
 
 class SlotConfigDialog : public QDialog
@@ -52,10 +59,12 @@ signals:
 
 private:
     void buildUi();
-    void onCardSelected(QListWidgetItem* current, QListWidgetItem* previous);
+    void populateCardTree();
+    void onCardSelected();
     void rebuildOptionEditors();
     void updatePlan();
     void onSave();
+    void onClearSlot();
     QString formatOptions() const;
 
     struct OptionEditor
@@ -73,13 +82,17 @@ private:
     ConflictProvider _conflictProvider;
     ConflictInfo _lastConflicts;
 
-    QListWidget* _cardList = nullptr;
-    QLabel* _selectedCardLabel = nullptr;
+    QLabel* _currentCardLabel = nullptr;
+    QTreeWidget* _cardTree = nullptr;
+    QGroupBox* _optionsGroup = nullptr;
+    QLabel* _optionsCardLabel = nullptr;
+    QLabel* _optionsStatusLabel = nullptr;
     QWidget* _optionsContainer = nullptr;
     QVBoxLayout* _optionsLayout = nullptr;
-    QLabel* _cardDescription = nullptr;
     std::vector<OptionEditor> _editors;
     QPushButton* _saveButton = nullptr;
     QPushButton* _cancelButton = nullptr;
     QPushButton* _clearButton = nullptr;
+
+    std::map<std::string, QTreeWidgetItem*> _categoryItems;
 };
