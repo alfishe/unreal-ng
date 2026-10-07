@@ -314,7 +314,9 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   runs. A reset and a snapshot load keep the ended session's history (browsable,
   `last_stop_reason` `reset` / `snapshot-load`); a ROM reload, model switch,
   GS card switch or slot change is another machine and drops it
-  (`machine-change`). **No new session starts by itself**: turn the `ttdrestart`
+  (`machine-change`). A snapshot load that is refused (wrong model, no such
+  banks, not a snapshot) ends nothing: the session ends only when the load
+  goes ahead. **No new session starts by itself**: turn the `ttdrestart`
   feature on (`feature ttdrestart on`, off by default) and one starts at the next
   frame boundary; the black box always starts one. Do not look for the old
   "snapshot is part of the recording": it was removed on purpose.

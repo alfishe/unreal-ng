@@ -225,7 +225,35 @@ test images' README (untracked, `testdata/sound/multisound/software/README.md`).
 | Soundrive Player `emdig1.scl` | Pentagon | DAC | channel 0 left, channel 2 right (DAC L 0.19 / R 0.12) | pass | - | |
 | `MODS20SP.SCL`, `xball.TRD` | Pentagon | - / SSG | the disk holds the player only (no MODs); X Ball's SounDrive part not reached in 24 s | not checked | - | |
 
-Not run in MS-7: Z-Player 5, the other GS / SAA / TSFM disks of the README, WC MOD / TFC / ETC plugins.
+### 6.2 Results (MS-7 second pass, 2026-10-06)
+
+Same setup as 6.1 (own `unreal-qt` instance, TTD black box started before every program, shipped default bank). The
+content checks compare with a **reference rendering**: the same program and keystrokes on the card the MultiSound
+replaces (TurboSound FM in the Pentagon's socket, classic General Sound `zxbus.1 = gs`, SounDrive `zxbus.1 =
+soundrive`), log-band spectrum correlation of the mono sum (48 bands, 40 Hz - 16 kHz) and the strongest spectral peaks;
+for MIDI the line decoded from the TTD port journal (U4 R14 bit 2, 8N1 at 112 T) against the Standard MIDI File on
+the disk; for the SAA a naive square-wave rendering of the SAA register file read every frame. No emulator bug found
+in this pass (the TTD fixture work of the same day found one: TODO, MS-5).
+
+| Program | Machine | Sources | Check | Result |
+|---|---|---|---|---|
+| Z-Player 5.0 `.mid` (*Maputo*, format 1, 11 tracks) | Pentagon | MIDI | line from the port journal: 1506 bytes, 0 framing errors; 201 note-ons, all 201 in the file's order (ratio 1.0); the synthesizer got the same bytes (1505 + the start-up `#FF` of the R7 switch) | pass |
+| Z-Player 5.0 MODs (*Logos & scrollers*, *Luxury cruise*) | Pentagon | GS (card reported as "GS Classic, 16 MHz, 1008 KB") | vs classic GS: peaks 58.2 / 74.8 / 409 Hz = 58.3 / 75.0 / 410 Hz; mono spectrum 0.997 (*Luxury cruise*) | pass; card hard L / R (corr 0.00), the classic GS mixes (corr 0.83) |
+| Z-Player 4.0 MOD | Pentagon | GS | vs classic GS: mono spectrum 0.999, peaks 76.8 / 43.6 / 47.8 = 77.0 / 43.8 / 48.0 Hz | pass |
+| WC GSPLAYER `Laxity_A.mod` | TS-Conf | GS | vs classic GS on TS-Conf: mono spectrum 0.977, peaks 43.5 / 87.2 = 43.8 / 87.5 Hz | pass |
+| WC WPLAYER `.TFC` (TFM Compiler 1.12, first file) | TS-Conf | FM | vs the TS-Conf's TSFM: FM 1 spectrum 1.000, FM 2 0.996, RMS equal to 0.0001 | pass (this tune has no SSG) |
+| WC WPLAYER `.ETC` (`music000`) | TS-Conf | SAA | vs the register rendering: spectrum 0.918, peaks 82.3 / 250.7 / 165.3 Hz (register voices 82.0 / 251 / 166 Hz); the same tune on the E-Tracker disk (Pentagon) has the same peaks | pass (the `.ETC` layout is the one WPLAYER expects) |
+| SAA E-Tracker disk 1 (`SAA10991.TRD`) | Pentagon | SAA | vs the register rendering: spectrum 0.913, peaks 82.2 / 164.2 / 247.2 / 330.2 Hz | pass |
+| TFM tunes `shanson.scl`, `number1.scl` | Pentagon | FM | vs TSFM: FM 1 / FM 2 spectra 1.000 / 1.000, peaks and RMS equal | pass (no SSG in either) |
+| ZXAAA Compo 2013 pack intro (`zxaaa13m.scl`) | Pentagon | FM | vs TSFM: spectrum 1.000, peaks 42 / 164 / 49 Hz both | pass |
+| deNextPlayer 0.76, `crepesTS.pt3` (TurboSound) | Pentagon | SSG | vs TSFM's SSG: spectra 0.94 / 0.95, peaks 152.3 / 458.7 and 114 / 510 / 77 Hz both; card 7.6 dB lower plus the board's hard ABC | pass (the remaining spectral difference is the stereo layout, the TSFM row's AY room crossfeed and pan law) |
+| X Ball Techno Opera | Pentagon | SSG, then SounDrive | the SounDrive part starts with Space (the AY intro loops for minutes: the 24 s of 6.1 never reached it); vs SounDrive card: L 0.998, R 0.994, peaks 58.6 / 246.6 / 87.8 Hz both; card 4.8 dB lower (board weights) | pass |
+| Sinty Snoki (`snake.tap`, 128K MIDI port) | Pentagon | MIDI | the 128K routine's R14 writes reach U4 (the reset chip select); decoded 4226 bytes = the synthesizer's 4226, 0 framing errors, 600 note-ons / 590 note-offs on 13 channels | pass |
+| MIDIPIANO 1.11 | Pentagon | MIDI | "TS chip 2": Q W E R T give C3 D3 E3 F3 G3, 0 framing errors; "chip 1" (U10): nothing reaches the synthesizer | pass |
+| `arcane2.trd`, `digitcatsaa.trd`, `zxm_soundcard.trd` (E-Tunes 1) | Pentagon | SSG / none | no control byte `#F0-#FF` in the port journal (arcane2), SAA clock off in the card report: ZXM-SoundCard programs, SAA silent as on the real card | not card programs |
+| S98 Player 0.59 | Pentagon | - | written for a TSFM at `#7F3B` / `#7E3B` (its title) | not a card program |
+| Nedodemo (`NEDODEMO`) | Pentagon | - | black screen and silence after 30 s on the card and on a TSFM board alike | not reached (machine / program) |
+| ZXAAA MFX pack menu, Titanic, GS Music Player, GS-Player, Wild Player (asks for a hard-disk / SD driver), The Link (`RUN` gives an assembler session), TFM Instrument Editor, TSolitaire, Digital Player, Soundrive Music | Pentagon | - | menus not driven through automation in this pass | not checked |
 
 ## 7. Risks
 

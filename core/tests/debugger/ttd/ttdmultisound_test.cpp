@@ -458,6 +458,56 @@ TEST(TtdMultiSound_Test, RoundTripMidTune)
     std::remove(bank.c_str());
 }
 
+/// The mixer's sample count per frame (SoundManager's sample phase) is the authority the card renders its rows to,
+/// and the card's YM2203 decimator phase is TTD state: after a seek the mixer must count the frames as it did when
+/// they were recorded. The board AY's device restores that phase on a Pentagon; on a ZX-Evo the card takes the
+/// YM2149 out of its socket, so the card's own blob carries it. Found by the corpus fixture multisound-zxevo
+/// (2026-10-06): replayed from a checkpoint, the card's decimator phase left the recording at the first frame.
+/// ~60 ms: one ZX-Evo, eight frames recorded and five replayed, the card's GS in every checkpoint
+TEST(TtdMultiSound_Test, SeekRestoresTheMixerSampleCountWithoutABoardAy)
+{
+    const std::string bank = WriteBank("ttdms-bank.sf2", 0);
+    StagedMachine m("atm3", "zxbus.1 = multisound", "[MIDI]\nBank = " + bank);
+    ASSERT_TRUE(m.Ok());
+    MultiSoundSlotCard* card = m.Card();
+    ASSERT_NE(card, nullptr);
+    ASSERT_EQ(m.Context()->pSoundManager->getTurboSound(), nullptr) << "no board AY device to restore the phase";
+
+    Park(m);
+    m.Machine().RunNFrames(4);
+    const std::vector<uint8_t> midi = MidiLineBits({ 0x90, 0x3C, 0x64 });
+    Load(m, TuneProgram(static_cast<uint8_t>(midi.size())), midi);
+    m.Machine().RunNFrames(2);
+
+    constexpr int kFrames = 8;
+    constexpr int kFrom = 3;
+    std::vector<uint64_t> phase;     // the mixer's sample phase at each frame's start
+    std::vector<size_t> samples;     // the frame's sample count
+    std::vector<uint64_t> state;     // the card's state at its end
+    ASSERT_TRUE(m.Ttd()->StartRecording());
+    const uint64_t start = m.Ttd()->GetCheckpoint(0)->time.frame;
+    for (int f = 0; f < kFrames; f++)
+    {
+        phase.push_back(m.Context()->pSoundManager->samplePhase());
+        m.Machine().RunNFrames(1);
+        samples.push_back(card->Card().RowFrames());
+        state.push_back(CardStateHash(*card));
+    }
+    m.Ttd()->StopRecording();
+    // The live session goes on: the mixer's phase moves away from the recording's
+    m.Machine().RunNFrames(1);
+
+    ASSERT_TRUE(m.Ttd()->SeekTo({ start + kFrom, 0 }));
+    EXPECT_EQ(m.Context()->pSoundManager->samplePhase(), phase[kFrom]) << "the mixer's sample phase of the checkpoint";
+    for (int f = kFrom; f < kFrames; f++)
+    {
+        m.Machine().RunNFrames(1);
+        EXPECT_EQ(card->Card().RowFrames(), samples[static_cast<size_t>(f)]) << "frame " << f;
+        EXPECT_EQ(CardStateHash(*card), state[static_cast<size_t>(f)]) << "frame " << f;
+    }
+    std::remove(bank.c_str());
+}
+
 /// A checkpoint falls between two bits of a MIDI byte: restored there, the rest of the byte still arrives, without a
 /// framing error, and the synthesizer ends where it did. ~40 ms: one machine, three frames recorded and replayed
 TEST(TtdMultiSound_Test, MidiByteAcrossCheckpoint)
@@ -656,4 +706,29 @@ TEST(TtdMultiSound_Test, TwoInstancesOfOneModuleRefusedByThePlanner)
     EXPECT_TRUE(registry.IsRegistered(PeripheralId::GeneralSound));
     EXPECT_TRUE(registry.IsRegistered(PeripheralId::MultiSoundGs));
     EXPECT_TRUE(registry.CheckDeviceTable(error)) << error;
+}
+
+/// Two MultiSound cards with disjoint DIP switches share no function and no port, so the planner fits both: each
+/// card hands out all four of its devices, under the same four ids. A checkpoint of either backend keeps one state per
+/// id (v1: one blob per id; the engine: its per-checkpoint device states, the device state regions and the binding of
+/// a loaded session are keyed by the v1 id although its device table is keyed by {type, instance}), so the second
+/// card's devices are refused at registration and named with the first's: recording is refused instead of losing one
+/// card's state (slots TODO, item "two instances of one module"). One Pentagon with both cards (~30 ms)
+TEST(TtdMultiSound_Test, TwoCardsWithDisjointDipsRefuseRecordingNamingBoth)
+{
+    const SlotManager::Result plan = PlanOf(MM_PENTAGON, { { "zxbus.1", "multisound" }, { "zxbus.1.dip", "ym" },
+                                                           { "zxbus.2", "multisound" }, { "zxbus.2.dip", "saa" } });
+    EXPECT_TRUE(plan.conflicts.empty()) << plan.Refusal();
+
+    StagedMachine m("pentagon128k", "zxbus.1 = multisound\nzxbus.1.dip = ym\nzxbus.2 = multisound\nzxbus.2.dip = saa");
+    ASSERT_TRUE(m.Ok()) << m.Machine().GetInitError();
+    ASSERT_NE(m.Card("zxbus.1"), nullptr);
+    ASSERT_NE(m.Card("zxbus.2"), nullptr);
+    ttd::TTDPeripheralRegistry registry;
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> owned;
+    std::string error;
+    EXPECT_FALSE(ttd::RegisterMachinePeripherals(m.Context(), registry, owned, &error));
+    EXPECT_NE(error.find("two devices under id 58: zxbus.1.multisound and zxbus.2.multisound"), std::string::npos)
+        << error;
+    EXPECT_FALSE(m.Ttd()->StartRecording()) << "both cards' state cannot be kept";
 }

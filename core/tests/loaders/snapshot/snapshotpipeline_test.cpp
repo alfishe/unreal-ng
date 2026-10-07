@@ -581,3 +581,80 @@ TEST(SnapshotRomLatch_Test, TheRomTheSnapshotSelectedSurvivesABankRecompute)
         }
     }
 }
+
+// The plan announces a commit exactly once, and only when the snapshot WILL be committed: the emulator ends a TTD recording
+// session from it, so a refused load must never fire it
+class SnapshotBeforeCommit_Test : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
+        ASSERT_NE(_emulator, nullptr);
+        _options.beforeCommit = [this] { _announced++; };
+    }
+    void TearDown() override { EmulatorTestHelper::CleanupEmulator(_emulator); }
+
+    Emulator* _emulator = nullptr;
+    snapshot::Options _options;
+    int _announced = 0;
+};
+
+TEST_F(SnapshotBeforeCommit_Test, AGoodLoadAnnouncesTheCommitOnce)
+{
+    for (const char* file : {"loaders/sna/action.sna", "loaders/z80/dizzyx.z80", "loaders/szx/libspectrum/synth-pentagon.szx"})
+    {
+        _announced = 0;
+        EXPECT_TRUE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(file), {}, _options)) << file;
+        EXPECT_EQ(_announced, 1) << file;
+    }
+}
+
+TEST_F(SnapshotBeforeCommit_Test, ARefusedLoadNeverAnnouncesIt)
+{
+    // an SZX of another model (the loader's own rule, now judged by the plan), an SPG on a machine that is not a TS-Conf
+    for (const char* file : {"loaders/szx/libspectrum/synth-48.szx", "loaders/szx/libspectrum/synth-128.szx",
+                             "machines/tsconf/spg/empty.spg"})
+    {
+        EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(file), {}, _options)) << file;
+        EXPECT_EQ(_announced, 0) << file << ": the load was refused, nothing was announced";
+        EXPECT_TRUE(_emulator->LastSnapshotReport().refused) << file;
+        EXPECT_FALSE(_emulator->LastSnapshotReport().reason.empty()) << file;
+    }
+    // the refusals carry what would work
+    EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("machines/tsconf/spg/empty.spg"), {}, _options));
+    EXPECT_EQ(_emulator->LastSnapshotReport().needs, "model:TSL");
+    EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/szx/libspectrum/synth-128.szx"), {}, _options));
+    EXPECT_EQ(_emulator->LastSnapshotReport().needs, "model:128k");
+    EXPECT_EQ(_announced, 0);
+
+    // a file that is no snapshot at all fails before the plan
+    const std::string garbage = TestPathHelper::GetUniqueTestScratchPath("garbage.sna");
+    {
+        std::ofstream out(garbage, std::ios::binary);
+        out << "not a snapshot";
+    }
+    EXPECT_FALSE(_emulator->LoadSnapshot(garbage, {}, _options));
+    EXPECT_EQ(_announced, 0);
+    std::remove(garbage.c_str());
+}
+
+TEST_F(SnapshotBeforeCommit_Test, TheCallersChoiceOfLegacyIsJudgedByThePlanToo)
+{
+    _options.commit = "legacy";
+    EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("machines/tsconf/spg/empty.spg"), {}, _options));
+    EXPECT_EQ(_announced, 0);
+    EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/szx/libspectrum/synth-128.szx"), {}, _options));
+    EXPECT_EQ(_announced, 0);
+    EXPECT_TRUE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/action.sna"), {}, _options));
+    EXPECT_EQ(_announced, 1);
+}
+
+// inspect (the dry plan) never announces
+TEST_F(SnapshotBeforeCommit_Test, InspectNeverAnnouncesIt)
+{
+    StateNode inspected;
+    std::string error;
+    ASSERT_TRUE(_emulator->InspectSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/action.sna"), _options, inspected, error)) << error;
+    EXPECT_EQ(_announced, 0);
+}

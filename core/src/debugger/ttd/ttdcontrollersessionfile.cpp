@@ -24,7 +24,6 @@
 #include "debugger/ttd/ttdsessionfacts.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
-#include "emulator/ports/portdecoder.h"
 #include "emulator/slots/slotmanager.h"
 
 namespace ttd
@@ -197,29 +196,25 @@ std::unique_ptr<TimeTravelEngine> TimeTravelController::LoadEngineSession(const 
     }
     _modelRamPages = facts.modelRamPages;
 
-    // The slot-set guard (ZX-bus slots SL-5), as v1's: a session recorded with
-    // other cards in the slots is refused with every difference listed by slot
-    // ("ay-socket: recorded tsfm, this machine ay / ts"), before the binding
-    // below would name only the devices it cannot place. The session's first
-    // checkpoint names its cards: the device set is fixed for a session (D38)
+    // Slot-set guard (ZX-bus slots SL-5, on the engine since the slots' TTD follow-up): the cards the session
+    // recorded against this machine's, per slot position, with every difference listed - before the binding, which
+    // only asks that each recorded device has a live counterpart of its id (a session without a card would load
+    // where one is fitted, the live card's state kept; the socket's `ay` and `ts` boards share an id, the device
+    // table's instance names the board). Then the slot-built cards' and the board's own checks (the MultiSound's
+    // MIDI bank, the Sprinter's ISA population) read the baseline checkpoint's device states
     if (_context && loaded->CheckpointCount() > loaded->FirstCheckpoint())
     {
+        const SlotManager::TtdDeviceSet recorded = SlotManager::TtdDeviceSet::Of(loaded->Devices(), facts.notRecordedMask);
         std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
-        const size_t first = loaded->FirstCheckpoint();
-        for (const TTDDeviceEntry& device : loaded->Devices().Entries())
-        {
-            const uint8_t id = static_cast<uint8_t>(device.descriptor.legacyId);
-            std::vector<uint8_t> state;
-            if (id < 64 && loaded->DeviceState(first, id, state) && !state.empty())
-                blobs[id] = TTDPeripheralRegistry::EncodeBlob(id, state.data(), state.size());
-        }
+        std::vector<uint8_t> state;
+        for (const uint8_t id : recorded.ids)
+            if (loaded->DeviceStateAt(loaded->FirstCheckpoint(), id, state))
+                blobs.emplace(id, TTDPeripheralRegistry::EncodeBlob(id, state.data(), state.size()));
         std::string why;
         const bool matches =
             _context->pSlotManager
-                ? _context->pSlotManager->TtdSessionMatches(blobs, facts.notRecordedMask, _peripherals, why)
-                : SlotManager::TtdSlotSetMatches({}, SlotManager::TtdDeviceSet::Of(blobs, facts.notRecordedMask),
-                                                 SlotManager::TtdDeviceSet::Of(_peripherals), why) &&
-                      (!_context->pPortDecoder || _context->pPortDecoder->TtdSessionMatches(blobs, why));
+                ? _context->pSlotManager->TtdSessionMatches(recorded, blobs, _peripherals, why)
+                : SlotManager::TtdSessionMatchesWithoutSlots(_context, recorded, blobs, _peripherals, why);
         if (!matches)
         {
             err = why;

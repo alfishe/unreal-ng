@@ -138,6 +138,17 @@ uint64_t MultiSoundSlotCard::Position() const
     return std::max(_last, now);
 }
 
+uint64_t MultiSoundSlotCard::MixerSamplePhase() const
+{
+    return (_context != nullptr && _context->pSoundManager != nullptr) ? _context->pSoundManager->samplePhase() : 0;
+}
+
+void MultiSoundSlotCard::AdoptMixerSamplePhase(uint64_t phase)
+{
+    if (_context != nullptr && _context->pSoundManager != nullptr)
+        _context->pSoundManager->adoptSamplePhase(phase);
+}
+
 void MultiSoundSlotCard::TrackM1()
 {
     Z80* z80 = (_context != nullptr && _context->pCore != nullptr) ? _context->pCore->GetZ80() : nullptr;

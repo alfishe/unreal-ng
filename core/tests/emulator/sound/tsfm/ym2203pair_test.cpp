@@ -1023,6 +1023,9 @@ TEST(Ym2203PairBoardsLevel_Test, FmRowsAndMasterAtTheSameLevelOnBothBoards)
                 ASSERT_TRUE(m.Init());
                 ASSERT_TRUE(m.Context()->pSoundManager->setFmTrimDb(trim));
                 m.Context()->pSoundManager->setAYVoicing(voicing);
+                // The board weights without the AY room crossfeed, which brings back the 0.1 of SSG A the emulator's
+                // ABC pan law puts on the TSFM's right (SsgRatioIsTheSchematicWeightAndTheRoomCrossfeedExplainsTheRest)
+                m.Context()->pSoundManager->setAYRoomMode(AudioCharacterChain::RoomMode::Off);
                 double readBack = -100.0;
                 ASSERT_TRUE(m.Context()->pSoundManager->fmTrimDb(readBack));
                 EXPECT_DOUBLE_EQ(readBack, trim);
@@ -1070,7 +1073,7 @@ TEST(Ym2203PairBoardsLevel_Test, FmRowsAndMasterAtTheSameLevelOnBothBoards)
             // The SSG is the board's own balance, not a calibration: the MultiSound sums SSG A through 24 k against
             // the FM's 10 k (R13 / R14 vs R18; weight 0.417 = -7.6 dB), the TSFM gives FM and SSG equal weights. Same
             // chip-level SSG unit on both (0.30 per channel), so the card's SSG row sits the schematic's -7.6 dB below
-            // the TSFM's (the TSFM's ABC pan law adds 0.06 dB)
+            // the TSFM's (whose ABC pan law gives channel A 0.9 / 3 = the same 0.30 on the left)
             // Both SSGs go through the same AY / SSG tone voicing ([SOUND] AYVoicing): at every preset the card / TSFM
             // ratio is the Flat one (master 7bbc2eaaa made Classic the default: the card's then unvoiced SSG sat
             // 0.09 dB off it, Headphones 0.05 dB the other way). Measured: within 0.006 dB
@@ -1080,14 +1083,68 @@ TEST(Ym2203PairBoardsLevel_Test, FmRowsAndMasterAtTheSameLevelOnBothBoards)
             else
                 EXPECT_NEAR(ssgRatioDb, ssgFlatRatioDb, 0.02) << where << ": the card's SSG voiced unlike the TSFM's";
             // And the ratio is the schematic's SSG weight (-7.60 dB: SSG A through 24 k against the FM's 10 k; the
-            // TSFM gives SSG and FM equal weights). Measured -7.75 dB at Flat: the 0.15 dB residual is a rendering
-            // difference of the two SSG paths (the card's per-channel decimators and coupling vs the TSFM's mixed
-            // stream), the same at every preset; not a calibration
-            EXPECT_NEAR(ssgRatioDb, 20.0 * std::log10(MultiSoundBoard::kWeightSsgSide), 0.2)
+            // TSFM gives SSG and FM equal weights). With the room on, -7.75 dB: the room crossfeed's +0.14 dB on the
+            // TSFM's row (SsgRatioIsTheSchematicWeightAndTheRoomCrossfeedExplainsTheRest); room off, within 0.01 dB
+            EXPECT_NEAR(ssgRatioDb, 20.0 * std::log10(MultiSoundBoard::kWeightSsgSide), 0.03)
                 << where << ": SSG row, card vs TSFM";
         }
         haveReference = haveReference || voicing == FilterVoicing::Preset::Flat;
     }
+}
+
+
+/// Where the 0.15 dB between the two SSG rows came from: the AY room crossfeed (`[SOUND]` AY room, default -9 dB, sound
+/// HQ), not the card's SSG path. The room adds the opposite channel 2 ms late at 0.35. The emulator's ABC pan law puts
+/// 0.1 of channel A on the right of the socket's chip (0.9 left), so the TSFM's left row gets A back from the right,
+/// 0.35 x 0.1 / 0.9 of it, 2 ms late; the board wires the card's A to the left only and runs its SSG rows without the
+/// character chain (only the voicing). On a square tone the added copy is correlated with the direct one by the
+/// square's triangle autocorrelation at that lag: +0.14 dB at the test tone (427 Hz), another value at another pitch.
+/// With the room off both rows sit exactly the schematic's SSG weight apart, punch on or off.
+/// (~0.7 s: eight machines, 0.7 s of audio each - two boards x punch x room)
+TEST(Ym2203PairBoardsLevel_Test, SsgRatioIsTheSchematicWeightAndTheRoomCrossfeedExplainsTheRest)
+{
+    using namespace pairboards;
+    double rmsOf[2][2][2] = {};   // [punch][room][board]
+    double rate = 44100.0;
+    for (const bool punch : {false, true})
+    for (const bool room : {false, true})
+    for (const Board board : {Board::Tsfm, Board::MultiSound})
+    {
+        PairMachine m(board);
+        ASSERT_TRUE(m.Init());
+        SoundManager* sound = m.Context()->pSoundManager;
+        sound->setAYVoicing(FilterVoicing::Preset::Flat);
+        sound->setAYPunch(punch);
+        sound->setAYRoomMode(room ? AudioCharacterChain::RoomMode::Room_9dB : AudioCharacterChain::RoomMode::Off);
+        m.PlayTones(0);
+        m.Frames(20);   // past the card's coupling capacitors charging (0.66 Hz corner)
+        const std::vector<double> x = m.Capture(m.SsgSource(1), 0.3);
+        double sum = 0.0;
+        for (double v : x)
+            sum += v * v;
+        rmsOf[punch][room][board == Board::Tsfm ? 0 : 1] = std::sqrt(sum / double(x.empty() ? 1 : x.size()));
+        rate = m.Rate();
+    }
+    const double schematicDb = 20.0 * std::log10(MultiSoundBoard::kWeightSsgSide);
+    auto db = [](double a, double b) { return 20.0 * std::log10(a / b); };
+    for (const bool punch : {false, true})
+    {
+        const std::string where = punch ? "punch on" : "punch off";
+        ASSERT_GT(rmsOf[punch][0][0], 1000.0) << where;
+        // Room off: the board's SSG weight (measured within 0.01 dB)
+        EXPECT_NEAR(db(rmsOf[punch][0][1], rmsOf[punch][0][0]), schematicDb, 0.03) << where << ": SSG row, card vs TSFM";
+        // The room does not touch the card's row (A has nothing on the right to feed back)
+        EXPECT_NEAR(db(rmsOf[punch][1][1], rmsOf[punch][0][1]), 0.0, 0.01) << where << ": the room moved the card's SSG";
+    }
+    // The TSFM's row with the room: x(t) + k x(t - d), k = 0.35 x 0.1 / 0.9, d = int(2 ms x rate) samples; for a
+    // square of period P the correlation at lag d is 1 - 4 min(f, 1 - f), f = frac(d / P)
+    const double k = 0.35 * 0.1 / 0.9;
+    const double lag = std::floor(0.002 * rate) * kSsgToneHz / rate;
+    const double f = lag - std::floor(lag);
+    const double rho = 1.0 - 4.0 * std::min(f, 1.0 - f);
+    const double predictedDb = 10.0 * std::log10(1.0 + k * k + 2.0 * k * rho);
+    EXPECT_GT(predictedDb, 0.1) << "the test tone sits where the crossfeed adds";
+    EXPECT_NEAR(db(rmsOf[0][1][0], rmsOf[0][0][0]), predictedDb, 0.02) << "the room on the TSFM's SSG row";
 }
 
 /// endregion </Render-cursor invariant on both boards>

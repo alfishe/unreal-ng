@@ -167,6 +167,25 @@ inline std::string ListText(const StateNode& report)
                    std::to_string(bus.find("physicalSlots")->i) + " slot(s), arbitration " + Text(bus.find("arbitration"));
             if (const StateNode* retrofit = bus.find("retrofit"); retrofit != nullptr && retrofit->b)
                 out += " - " + Text(bus.find("retrofitNote"));
+            const std::string host = Text(bus.find("host"));
+            if (!host.empty())
+                out += " - hosted by the card in " + host;
+            out += "\n";
+        }
+    }
+    if (const StateNode* machineSlots = report.find("machineSlots"); machineSlots != nullptr && machineSlots->size() > 0)
+    {
+        out += "machine slots (the board's own cards):\n";
+        for (const StateNode& slot : machineSlots->items)
+        {
+            out += "  " + Text(slot.find("slot")) + " = " + Text(slot.find("card")) + " (" + Text(slot.find("name"));
+            const std::string details = Text(slot.find("details"));
+            if (!details.empty())
+                out += ", " + details;
+            out += ") from " + Text(slot.find("source"));
+            const std::string hosted = Text(slot.find("hostsBus"));
+            if (!hosted.empty())
+                out += " - hosts " + hosted + ": " + Text(slot.find("hostedCard"));
             out += "\n";
         }
     }
@@ -183,7 +202,7 @@ inline std::string ListText(const StateNode& report)
                 out += " [" + options + "]";
             const std::string adapter = Text(slot.find("adapter"));
             if (!adapter.empty())
-                out += " behind " + adapter;
+                out += " behind " + adapter + " (on " + Text(slot.find("bus")) + ")";
             out += "  fit " + Text(slot.find("fit")) + ", " + Text(slot.find("state"));
             const std::string reason = Text(slot.find("reason"));
             if (!reason.empty())

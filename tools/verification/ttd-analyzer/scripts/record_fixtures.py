@@ -86,6 +86,12 @@ CORPUS: List[Tuple[str, str, Optional[str], int]] = [
     # the PLD its bitstream at 3.5 MHz, then the default BIOS (3.06 Hotfix 2 since 2026-10-03) starts its POST
     # at 21 MHz: the PLD, Z84C15, video RAM, fast RAM, input and WD1793-context blobs (ids 25, 28-31, 35)
     ("sprinter_boot", "SPRINTER", None, 0),
+    # ZX-MultiSound in ZX-bus slot 1 (FIXTURE_OPTIONS "slots"): a program that plays every source of the card - both
+    # YM2203 (FM + SSG), the SAA1099, the SounDrive DACs, a General Sound command and bit-banged MIDI notes into the
+    # SAM2695 (tools/verification/multisound/ttd-fixture/make-program.py); the card's four devices (ids 53, 58-60)
+    # and the GS RAM region in every checkpoint. The settle frames let the synthesizer's 50 ms boot window pass
+    ("multisound-pentagon", "PENTAGON", "testdata/sound/multisound/ttd/allsources.sna", 10),
+    ("multisound-zxevo", "ATM3", "testdata/sound/multisound/ttd/allsources.sna", 10),
 ]
 CORPUS_DIR = "testdata/ttd"
 # Sessions recorded by the engine (the application's default recorder since the
@@ -97,12 +103,14 @@ ENGINE_CORPUS_DIR = "testdata/ttd/engine"
 GS_CARDS = ("gs", "gs-lw", "neogs")
 GS_CARD_OF = {"z80": "gs", "lle": "gs", "lightweight": "gs-lw", "ngs": "neogs"}
 
-# Per-fixture extras. "out": where the fixture lives when it is not a Pentagon
+# Per-fixture extras. "slots": the machine's [SLOTS] set at creation (the create request's "slots" object; it
+# replaces the shipped config's set, so the socket keeps its plain AY / YM2149). "frames": the fixture's length
+# instead of --frames. "out": where the fixture lives when it is not a Pentagon
 # corpus file (testdata/machines/<machine>/ttd, next to the machine's other
 # test data; TTD_Corpus_Test picks those up too). "gs": the General Sound card
 # swapped in before loading - NeoGS keeps its RAM outside TTD so far, so a
 # fixture recorded with it cannot replay exactly; the classic card can
-FIXTURE_OPTIONS: Dict[str, Dict[str, str]] = {
+FIXTURE_OPTIONS: Dict[str, Dict[str, Any]] = {
     "tsconf_sprites": {"out": "testdata/machines/tsconf/ttd/sprites.ttd", "gs": "z80"},
     # The Sprinter fits the General Sound behind its ISA ZX-bus adapter (slot 1, ISA phase I2, 2026-10-03); the classic
     # card, as for the Pentagon corpus (NeoGS leaves its RAM out of TTD v1). The fixture also carries the port journals
@@ -116,6 +124,10 @@ FIXTURE_OPTIONS: Dict[str, Dict[str, str]] = {
     "demo_7threality": {"gs": "z80"},
     "demo_across-the-edge-second": {"gs": "z80"},
     "tsfm_tech_support": {"gs": "z80"},
+    # 70 frames, not 300: the SAM2695 state (292 KB: voices, effect lines) changes in every checkpoint, about
+    # 30 KB a frame in the engine file and 100 KB in v1; the corpus tests need 63 checkpoints
+    "multisound-pentagon": {"slots": {"zxbus.1": "multisound"}, "frames": 70},
+    "multisound-zxevo": {"slots": {"zxbus.1": "multisound"}, "frames": 70},
 }
 
 # /run_frames runs at most this many frames per call
@@ -183,14 +195,17 @@ class EmulatorApi:
     def delete(self, path: str) -> Any:
         return self._request("DELETE", path)
 
-    def create_instance(self, model: str) -> str:
+    def create_instance(self, model: str, slots: Optional[Dict[str, str]] = None) -> str:
         """A fresh, never-started instance: power-on state, nothing run yet.
 
         /emulator/create does not start the run loop, so nothing advances
         before /run_frames does - unlike /emulator/start, which runs the
         machine until it is paused.
         """
-        info = self.post("/emulator/create", {"model": model}) or {}
+        body: Dict[str, Any] = {"model": model}
+        if slots:
+            body["slots"] = slots
+        info = self.post("/emulator/create", body) or {}
         emu_id = info.get("id") or info.get("emulator_id")
         if not emu_id:
             raise ApiError(f"/emulator/create returned no id: {info}")
@@ -344,8 +359,8 @@ def main() -> int:
         emu_id = args.emulator_id
         try:
             if emu_id is None:
-                emu_id = api.create_instance(model)
-                print(f"  fresh {model} instance: {emu_id}")
+                emu_id = api.create_instance(model, options.get("slots"))
+                print(f"  fresh {model} instance: {emu_id}" + (f", slots {options['slots']}" if "slots" in options else ""))
             backend = api.get(f"/emulator/{emu_id}/ttd/status").get("backend") or "v1"
             out_path = os.path.join(out_dir, f"{name}.ttd")
             if args.out_dir == CORPUS_DIR and backend == "engine":
@@ -373,7 +388,7 @@ def main() -> int:
                     print(f"  General Sound card: {options['gs']} (machine {emu_id})")
                 else:
                     print("  General Sound card: none (the machine has no ZX-bus)")
-            record_session(api, emu_id, out_path, args.frames,
+            record_session(api, emu_id, out_path, int(options.get("frames", args.frames)),
                            from_root(snapshot) if snapshot else None, settle,
                            fresh=args.emulator_id is None)
         except ApiError as exc:

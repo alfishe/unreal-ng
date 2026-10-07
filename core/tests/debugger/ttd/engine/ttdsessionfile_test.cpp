@@ -27,6 +27,7 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/gsslot.h"
+#include "_helpers/ttdslotcards.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testwaithelper.h"
@@ -156,13 +157,9 @@ protected:
         ASSERT_TRUE(ReadTTDFileInfo(file.string(), info, err)) << err;
         if (_emulator)
             EmulatorTestHelper::CleanupEmulator(_emulator);
-        // The card the session was recorded with, fitted at creation: the shipped 48K / 128K / +2 / +2A / +3 and
-        // Profi configs have no GS since 2026-10-04 (owner decision), and a switch cannot fill an empty slot
-        {
-            GeneralSoundFitScope fit(info.machine.generalSound);
-            _emulator = EmulatorTestHelper::CreateStandardEmulator(info.machine.model, LoggerLevel::LogError);
-        }
-        ASSERT_NE(_emulator, nullptr);
+        // The machine the session was recorded on: its General Sound card and its slot-built cards (ttdslotcards.h)
+        _emulator = ttdtest::CreateRecordedMachine(info.machine, err);
+        ASSERT_NE(_emulator, nullptr) << err;
         EmulatorContext* context = _emulator->GetContext();
         _v1 = context->pTimeTravelManager;
         _emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);

@@ -21,7 +21,7 @@
 | **SL-5** | TTD: slot set in the configuration fingerprint, `SlotManager` as the source of fitted devices in `RegisterMachinePeripherals`, the session population guard generalized (from the Sprinter's `TtdSessionMatches`) | TTD tests §2.4 green; corpus unchanged | M; **built 2026-10-04**, see §10 |
 | **SL-6** | Apply by restart: write the slot set into the configuration, restart through the model-switch path, media carried over with the stranded-media rules, restore of the previous configuration if the start fails; model switch carrying the slot set; the GS personality switch moved onto it | tests §2.3 green | M; **built 2026-10-05**, see §14 |
 | **SL-7** | Surfaces: `SlotControl`, `DeviceState::Slots`, WebAPI + OpenAPI, CLI, MCP, Lua, Python, Qt slot window, recipe `.recipe/machines/slots.md`, user doc `docs/features/slots.md` | automation parity tests §2.5 green; recipe verified against a running emulator | M; **built 2026-10-05**, see §15; the network card change on it (Q11) §16 |
-| **SL-8** | Sprinter: `isa1` / `isa2` in the slot report, the ZX-bus adapter as a `zxbus` host (ISA phase I5 folded in) | Sprinter ISA tests unchanged; a GS card behind the adapter listed as `zxbus` in the report | M |
+| **SL-8** | Sprinter: `isa1` / `isa2` in the slot report, the ZX-bus adapter as a `zxbus` host (ISA phase I5 folded in) | Sprinter ISA tests unchanged; a GS card behind the adapter listed as `zxbus` in the report | M; **built 2026-10-06**, see §17.4 (I5's other cards behind the adapter still open) |
 
 The ZX-MultiSound ([integration TDD](../2026-10-03-zx-multisound/tdd-integration.md)) starts after SL-4 (it needs the
 migrated TSFM, GS and SounDrive) and SL-5 for its TTD step.
@@ -93,7 +93,10 @@ the running machine's personality switch in `slotttd_test.cpp`.
 | `TtdSlots_Test.SessionMismatchListsEveryDifference` | the guard's decision per position (socket kinds both ways, empty socket, both socket ids, GS personality incl. the not-recorded lightweight card, MoonSound on one side) |
 | `TtdSlots_Test.RegistryFollowsThePlan` | the registered slot-card devices against the plan |
 | `TtdSlots_Test.TwoInstancesOfOneModuleAreRefusedByName` | two devices under one blob id: the second refused and named, recording refused |
-| `TtdSlots_Test.RefusedWhileTtdRecords` | R-OP-7: a slot change refused while recording, the reason names the session (§2.1's `SlotManager_Test.RefusedWhileTtdRecords`) |
+| `TtdSlots_Test.RefusedWhileTtdRecords` | R-OP-7: a slot change refused while recording, the reason names the session (§2.1's `SlotManager_Test.RefusedWhileTtdRecords`; v1 only, the engine ends its session instead, §17.1) |
+| `TtdSlots_Test.SocketBoardsToldApartByTheInstance` | §17.3: `ay` and `ts` named by the device instance; a side that cannot tell them apart (a v1 file) matches either |
+| `TtdSlots_Test.EngineSessionLoadRunsTheSlotSetGuard` | §17.3: the engine's session load refuses another socket board and a session without a card where one is fitted; the same set loads |
+| `TtdMultiSound_Test.TwoCardsWithDisjointDipsRefuseRecordingNamingBoth` | §17.2: two MultiSounds the planner fits; recording refused naming both |
 
 ### 2.5 Surfaces
 
@@ -970,3 +973,126 @@ card, `ValueError` for a bad card, both cards removed). The WebAPI `POST /networ
 `network_configure` were checked live on the same instance. The build directory was deleted (4 GB). A script run
 through `/python/file` gets separate globals and locals: functions defined at its top level do not see its imports, so
 the script keeps everything in one `main()`.
+
+## 17. The slots' remainder (2026-10-06, branch `slots-remainder`)
+
+Commits: `1c438d888` (§17.1-§17.3), `0fc55d829` (§17.6), `c4e8da725` (§17.4), `68e8d54b8` (§17.5); each with a full
+build without compiler warnings and green `core-tests` + `unreal-qt-tests`.
+
+The items that waited for the TTD engine (TTD Phase 5, on master since 2026-10-05), the firmware carry, SL-8 and a
+debugger race found during SL-6. What Phase 5 delivered was read from the code, not from the plan text: the application
+records on `ttd::TimeTravelController` over `TimeTravelEngine` (v1's `TimeTravelManager` stays for the core-tests and
+the verification tools); the engine's device table is keyed by `TTDDeviceKey{type, instance}`; a change of the machine
+(ROM, model, GS card, slot set) ends the session instead of being refused (owner rule 2026-10-05).
+
+### 17.1 The R-OP-7 refusal and the v2 session UUID
+
+Nothing to switch. On the engine `RecordingGuard(ChangeSlots)` answers "": the slot change goes ahead, the restart
+builds a new instance and the old instance's recording ends (`EndSessionForMachineChange`, `last_stop_reason`
+`machine-change`; a black box starts again on the new instance by the GUI's setting). The refusal exists only on v1,
+whose sessions have no id, so it keeps `#n, started at frame f`. The engine has no session identity to show either:
+`TTDSessionSaveParams::uuid` is drawn from `std::random_device` for every file written (`ttd dump`, each black box
+segment), so two saves of one session carry two UUIDs. The recipe's pitfall was v1's behavior and now says both.
+
+### 17.2 Two instances of one module
+
+Still not recordable, on either backend. The engine's device table keys `{type, instance}` and its session file keeps a
+state region per table entry (`device.<instance>`), so the file format could hold both cards. Everything between the
+live devices and that table is keyed by the v1 id (`PeripheralId`, one byte):
+
+| Place | Keyed by |
+|---|---|
+| `TTDPeripheralRegistry` (both backends register through it) | `_devices[id]`: one device per id; a second is refused and named (SL-5) |
+| the controller's capture (`CaptureStates`, `LastCaptureState(id)`, `TTDFrameInput::deviceStates`) | id |
+| the device state regions (`TimeTravelEngine::_deviceRegionOf[legacyId]`) | id: a second entry with the same id overwrites the first's region index |
+| the restore (`RestoreDevices` -> `ReadDeviceState(index, id)`, `claimed[id]`) | id |
+| a loaded session's binding (`BindLive`) | `legacyId` |
+| device memory regions (`TTDRegionId`: `MultiSoundGsRam` = 17, `NeoGsRam`, ...) | one id per device type: two cards list the same region id, `BeginSession` refuses ("region id listed twice") |
+
+The planner's refusals of two cards with one module are not TTD rules: two cards sharing a function (`gs`, `saa`) is
+D1 (they answer the same ports) and stays whatever TTD does. The case that does reach TTD is two MultiSound cards with
+disjoint DIP switches: no shared function, no shared port, so the planner fits both and `BuildCards` builds both; each
+hands out its four devices under ids 58, 53, 59, 60, the registry refuses the second set and recording is refused with
+`two devices under id 58: zxbus.1.multisound and zxbus.2.multisound (a checkpoint holds one state per id)`
+(`TtdMultiSound_Test.TwoCardsWithDisjointDipsRefuseRecordingNamingBoth`). Lifting it is TTD engine work: the six
+places above keyed by the device key (or the table index), region ids per instance, and the v1 manager left refusing.
+It changes no file format (the regions are per table entry already) but the engine corpus would have to be re-recorded
+if region ids moved.
+
+### 17.3 The AY socket's `ay` and `ts` boards; the slot-set guard on the engine
+
+The two boards are one module (`TurboSound`, blob id 0); v1 files cannot tell them apart. The engine names devices,
+so the socket's device is now named by the socket's card: `ay-socket.ay`, `ay-socket.ts`, `ay-socket.tsfm`
+(`SlotManager::TtdInstance`; before, both boards were `ay-socket.turbosound`). `TtdDeviceSet` carries the socket's
+card when an instance names it (the live registry, `TTDPeripheralRegistry::InstanceOf`; the engine's device table) and
+the guard compares it; a side that cannot tell (a v1 file, a session recorded before this change with the instance
+`turbosound`) matches either board. No id, blob or file format changed; the engine corpus loads unchanged (its
+instance names are only compared through the socket card, and `turbosound` is "either").
+
+Checking this found a gap: the slot-set guard (SL-5) ran only in v1's `DeserializeSession`. The controller's load
+checked the model, the ROM set and `BindLive`, which only asks that each recorded device has a live device of its id:
+on the application a session recorded without a card loaded into a machine with one (the live card keeping its own
+state), a `ts` session loaded on an `ay` machine, and neither the MultiSound's MIDI bank nor the Sprinter's ISA
+population was compared. `TimeTravelController::LoadEngineSession` now runs `SlotManager::TtdSessionMatches` before
+the binding, with the recorded device set from the engine's device table (`TtdDeviceSet::Of(TTDDeviceTable, ...)`,
+the not-recorded mask from the controller's facts) and the baseline checkpoint's device states as blobs for the card
+checks (`TimeTravelEngine::DeviceStateAt`). Machines without a slot manager use `TtdSessionMatchesWithoutSlots`
+(also v1's path now).
+
+Tests: `TtdSlots_Test.SocketBoardsToldApartByTheInstance`, `TtdSlots_Test.EngineSessionLoadRunsTheSlotSetGuard`
+(recorded on the engine with `ay-socket = ts`; refused on `ay` + `zxbus.1 = gs` naming both differences; loads on
+`ts`); `SessionMismatchRefused` and `TtdTsfm_Test.SessionKindMismatchRefused` now name the live board (`this machine
+ay`, `this machine ts`).
+
+### 17.4 SL-8: the Sprinter's ISA slots in the report, the ZX-bus adapter as a bus host
+
+The ISA slots are the board's own slots: their cards come from `[ISA] SlotN` (and the create option `"sprinter"`),
+the slot set does not plan them. As built:
+
+- `SlotManager::Result::machineSlots` (`MachineSlotsOf`): one entry per slot of an `Isa8` bus, from
+  `sprinterisa::SlotSummaries(config)` (the Sprinter's files keep `config.sprinter.`, `SprinterIsolation_Test`):
+  `isa.1` = `zxbus` "ISA to ZX-bus adapter" (hosts `zxbus`), `isa.2` = `ne2000` "NE2000 Ethernet" with "RTL8019AS,
+  #300, IRQ 3", source `[ISA] Slot2`.
+- The report (`DeviceState::Slots`): `machineSlots[]` (`slot`, `bus`, `card`, `name`, `source`, `details`; the
+  adapter: `hostsBus` `isa.1.zxbus`, `hostedCard`); the adapter's ZX-bus is in `buses[]` with `host` `isa.1`; every
+  slot entry says its `bus` and `busKind`, and behind an adapter its `host` (`isa.1 = neogs` is on `isa.1.zxbus`,
+  kind `zxbus`).
+- The plan: a card in an ISA slot needs the ZX-bus adapter there (`isa.2 holds NE2000 Ethernet ([ISA] Slot2), not
+  the ZX-bus adapter a ZX-bus card needs: [ISA] Slot2=ZXBUS`), and behind it only a General Sound card (`gs`, `gs-lw`,
+  `neogs`): the adapter as emulated passes the GS ports alone; another card would be built and either hear nothing or
+  answer the Z80's own port cycles. Both at creation (the entry left out with the reason) and for a change (refused).
+- The General Sound sits on the adapter of the slot the slot set names (`PortDecoder_Sprinter::FitZxBusAdapters`;
+  before: always the first adapter), the other adapter's report says where it is.
+- Surfaces: WebAPI / Lua / Python get the tree; CLI `slots` lists "machine slots" and the hosting bus; MCP
+  `inspect_state slots` names the machine slots and the bus behind an adapter; OpenAPI describes the fields; Qt
+  Machine > Slots (the list design of master `ce45b4141`, merged in) shows a read-only "Board Slots" list (the ISA
+  slots, what the adapter hosts, the NE2000's resources), the GS expansion slot as `isa.1: NeoGS (on isa.1.zxbus)`,
+  and "+" never offers a hosted bus as `<bus>.next`.
+- TTD: the ISA population stays in the Sprinter's blob 33 and is compared by the decoder's `TtdSessionMatches`, now
+  on both backends (§17.3); no fingerprint field added (the engine corpus's `sprinter_boot` stays valid).
+
+Tests: `SlotControl_Test.SprinterIsaSlotsInTheReport` (the report, the NE2000 slot refused, a MoonSound behind the
+adapter refused, the GS on the second adapter), `SlotsWindow_Test.SprinterIsaSlotsAndTheAdapterBus`
+(`unreal-qt-tests`), `IsaZxBusAdapter_Test.SecondAdapterAndNoGsType` (the empty adapter's reason). Open: ISA phase I5
+proper (any ZX-bus card behind the adapter through the claim table); the ISA cards as slot changes.
+
+### 17.5 The step-over race (`EmulatorStepOverObserver_Test.DestroyedEmulatorLeavesNoHandlerBehind`)
+
+`Emulator::StepOver` across a CALL adds a hidden execution breakpoint after it and resumes. Its end (remove the
+breakpoint, reactivate the ones it deactivated, restore the debug / breakpoint features) ran in an observer of
+`NC_EXECUTION_BREAKPOINT`, and the MessageCenter delivers on its own dispatcher thread. The emulation thread posts that
+message and goes on; with the machine stopped right after (the test, or any stop / step), it ran `JR $` over the still
+armed breakpoint and called `GetBreakpointById` (a `std::map::find`) while the dispatcher thread's
+`RemoveBreakpointByID` erased the node: a crash inside the map. The fix moves the end onto the thread that reads the
+breakpoints: `OnBreakpointHit` claims the step's breakpoint id (an atomic exchange) and ends the step before the
+machine parks; `CancelPendingStepOver` (a step while the run is under way) parks the machine first and claims the id
+the same way, and the release cleans an orphan. No observer is registered any more. The test now also checks that the
+temporary breakpoint is gone when the step ends; `--gtest_repeat=200` of it and `StepOverASoundingSubroutineIsSilent`:
+200 / 200; the same repeat before the fix: a segfault in iteration 41.
+
+### 17.6 The firmware choices survive a slot restart
+
+Owner decision 2026-10-06: `avr_firmware` (`[EVO] Avr=`) and `kbc_firmware` (`[ATM] Kbc=`, with `[ROM] ATM2KBC=`) set
+through the network settings are configuration: `SlotChange::Run`'s `carrySettings` copies them with `[NETWORK]`.
+Test `SlotControl_Test.SlotRestartCarriesTheFirmwareChoices` (an ATM3's AVR set to `base2011-04`, an ATM710's KBC to
+`v22-7`, each followed by a slot change).

@@ -117,6 +117,49 @@ The reply of every change: `status` (`applied`, `dry-run`, `refused`, `recording
 `shadowed[]`, `lostFunctions[]`, `media[]`, `resultingSlots[]`, `slotsSection[]`, `lines[]`), `restart`
 (`restarted`, `previousEmulatorId`, `emulatorId`, `started`) and `media` (`attached`, `detached`, `closed`).
 
+## The Sprinter's ISA slots (SL-8)
+
+The ISA slots are the board's own: their cards come from `[ISA] SlotN` (or the create option `"sprinter"`), and the
+report lists them apart from the slot set. The ZX-bus adapter in one hosts a ZX-bus; the General Sound card of
+`[SLOTS] isa.N` sits on it.
+
+```bash
+ID=$(curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' -d '{"model":"SPRINTER"}' | jq -r .id)
+curl -s "$BASE/emulator/$ID/slots" | jq -c '.machineSlots[]'
+# {"bus":"isa","card":"zxbus","details":"","hostedCard":"neogs","hostsBus":"isa.1.zxbus","name":"ISA to ZX-bus adapter","slot":"isa.1","source":"[ISA] Slot1"}
+# {"bus":"isa","card":"ne2000","details":"RTL8019AS, #300, IRQ 3","name":"NE2000 Ethernet","slot":"isa.2","source":"[ISA] Slot2"}
+curl -s "$BASE/emulator/$ID/slots" | jq -c '(.buses[] | {id, kind, host}), (.slots[] | {slot, card, bus, busKind, host})'
+# {"id":"ay-socket","kind":"ay-socket","host":null}
+# {"id":"isa","kind":"isa8","host":null}
+# {"id":"isa.1.zxbus","kind":"zxbus","host":"isa.1"}
+# {"slot":"ay-socket","card":"ay","bus":"ay-socket","busKind":"ay-socket","host":null}
+# {"slot":"isa.1","card":"neogs","bus":"isa.1.zxbus","busKind":"zxbus","host":"isa.1"}
+
+# A General Sound card where the slot holds the NE2000: refused, the reason names [ISA]
+curl -s -X POST "$BASE/emulator/$ID/slots/isa.2/plug" -H 'Content-Type: application/json' \
+     -d '{"card":"gs","adapter":"sprinter-isa-zxbus","replaceIfIncompatible":true,"dryRun":true}' | jq -r .message
+# refused: isa.2 = gs cannot be fitted: isa.2 holds NE2000 Ethernet ([ISA] Slot2), not the ZX-bus adapter a ZX-bus card needs: [ISA] Slot2=ZXBUS
+```
+
+MCP: `inspect_state` aspect `slots` says `isa.1 = neogs [ram=2m] on isa.1.zxbus (behind sprinter-isa-zxbus)` and adds
+`machine slot isa.1 = zxbus (ISA to ZX-bus adapter, [ISA] Slot1) hosts isa.1.zxbus: neogs`; Lua / Python
+`slots_state().machineSlots`; Qt Machine > Slots a read-only "Board Slots" list (`isa.1` ISA to ZX-bus adapter, hosts
+`isa.1.zxbus: neogs`; `isa.2` NE2000) above the expansion slots, where the card reads `isa.1: NeoGS (on isa.1.zxbus)`. CLI
+`slots` (checked live 2026-10-06 with the WebAPI, MCP and Lua lines above):
+
+```text
+buses:
+  ay-socket  ay-socket, 1 slot(s), arbitration None
+  isa  isa8, 2 slot(s), arbitration None
+  isa.1.zxbus  zxbus, 1 slot(s), arbitration None - hosted by the card in isa.1
+machine slots (the board's own cards):
+  isa.1 = zxbus (ISA to ZX-bus adapter) from [ISA] Slot1 - hosts isa.1.zxbus: neogs
+  isa.2 = ne2000 (NE2000 Ethernet, RTL8019AS, #300, IRQ 3) from [ISA] Slot2
+slots:
+  ay-socket = ay  fit real, active
+  isa.1 = neogs [ram=2m] behind sprinter-isa-zxbus (on isa.1.zxbus)  fit unrealistic, active
+```
+
 ## CLI
 
 ```text
@@ -145,8 +188,15 @@ curl -s -X POST "$BASE/emulator/start" -H 'Content-Type: application/json' \
 
 - **The id changes.** Every applied change (and `gs_switch_personality`) is a new emulator; calls with the old id
   answer 404. Take `restart.emulatorId` from the reply (MCP `target: "auto"` resolves the single instance).
-- **Refused while TTD records** (`status: "recording"`: `Cannot change the slot set while TTD is recording session #1,
-  started at frame 1: ...`): stop the recording first. A dry run says so too.
+- **A TTD recording ends with the change** (the application's time travel, the engine): the machine is a new
+  instance, the old recording stops (`last_stop_reason` `machine-change`). Only the old implementation
+  (`UNREAL_TTD_BACKEND=v1`, the core-tests) refuses instead (`status: "recording"`: `Cannot change the slot set while
+  TTD is recording session #1, started at frame 1: ...`); a dry run says so there too.
+- **Sprinter:** `isa.1` / `isa.2` take a General Sound card (`gs`, `gs-lw`, `neogs`) behind `sprinter-isa-zxbus` only
+  where `[ISA] SlotN=ZXBUS` fits the ZX-bus adapter; the ISA cards themselves are `[ISA]` settings, listed in the
+  report's `machineSlots` (see below).
+- **Firmware choices survive a restart**: `avr_firmware` / `kbc_firmware` set through the network settings stay, as
+  the network settings do.
 - **Conflicting cards refuse a new machine**: `create` with `{"zxbus.1":"gs","zxbus.2":"neogs"}` answers 400 `the
   [SLOTS] cards conflict, the machine is not created (Q8): zxbus.2 = neogs and zxbus.1 = gs: shares gs (D1: ...)`.
 - **Unsaved media of a removed card** (the NeoGS SD card `sd.ngs` with writes): the change is refused until it says
