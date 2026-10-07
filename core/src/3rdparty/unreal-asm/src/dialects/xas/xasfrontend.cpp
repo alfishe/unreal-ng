@@ -731,6 +731,85 @@ struct LineParser
 };
 }  // namespace
 
+namespace
+{
+/// XAS 9.10: a string of several characters in an expression puts all but its last character into the code as bytes
+/// (before the command or the DW item) and stands for its last character ("AB" in LD HL,"AB" gives #41, then
+/// LD HL,#42); checked in XAS 9.10 (research-xas-to-sjasmplus.md §4)
+void LastCharacterOnly(Expr& e, std::string& before)
+{
+    if (e.kind == Expr::Kind::Number && e.spelling == ir::NumberSpelling::Character && e.text.size() > 1)
+    {
+        before += e.text.substr(0, e.text.size() - 1);
+        e = Expr::Number(static_cast<unsigned char>(e.text.back()), ir::NumberSpelling::Character, 1);
+        e.text = std::string(1, static_cast<char>(e.value));
+        return;
+    }
+    for (Expr& a : e.args)
+        LastCharacterOnly(a, before);
+}
+
+Statement Bytes(const std::string& chars)
+{
+    Statement db = Directive(ir::DirectiveKind::Db);
+    for (const char c : chars)
+    {
+        Operand o;
+        o.kind = Operand::Kind::Immediate;
+        o.expr = Expr::Number(static_cast<unsigned char>(c), ir::NumberSpelling::Hex, 2);
+        db.operands.push_back(std::move(o));
+    }
+    return db;
+}
+
+void StringsAsXas910(FrontendResult& result)
+{
+    for (ir::Line& line : result.program.lines)
+    {
+        bool moved = false;
+        std::vector<Statement> out;
+        for (Statement& s : line.statements)
+        {
+            const bool dw = s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Dw;
+            if (dw)
+            {
+                // Item by item: each item's bytes come before its word
+                for (Operand& o : s.operands)
+                {
+                    std::string before;
+                    LastCharacterOnly(o.expr, before);
+                    if (!before.empty())
+                    {
+                        out.push_back(Bytes(before));
+                        moved = true;
+                    }
+                    Statement item = Directive(ir::DirectiveKind::Dw);
+                    item.operands.push_back(std::move(o));
+                    out.push_back(std::move(item));
+                }
+                continue;
+            }
+            if (s.kind == Statement::Kind::Instruction)
+            {
+                std::string before;
+                for (Operand& o : s.operands)
+                    LastCharacterOnly(o.expr, before);
+                if (!before.empty())
+                {
+                    out.push_back(Bytes(before));
+                    moved = true;
+                }
+            }
+            out.push_back(std::move(s));
+        }
+        line.statements = std::move(out);
+        if (moved)
+            result.diagnostics.push_back({Severity::Warning, line.sourceLine, 0,
+                                          "XAS 9.10 puts a string's leading characters into the code; its first pass does not count them, so its labels after this line are that many bytes lower (not reproduced)"});
+    }
+}
+}  // namespace
+
 FrontendResult XasFrontend::Parse(const SourceDocument& source) const
 {
     FrontendResult result;
@@ -761,6 +840,8 @@ FrontendResult XasFrontend::Parse(const SourceDocument& source) const
         result.program.lines.push_back(std::move(end));
         result.diagnostics.push_back({Severity::Warning, number, 0, "a block without its !CONT at the end of the file"});
     }
+    if (source.subversion == "9.10")
+        StringsAsXas910(result);
     return result;
 }
 }  // namespace unrealasm::dialects

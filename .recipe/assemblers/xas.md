@@ -3,7 +3,8 @@
 Goal: run XAS (Max Petrov / Creator, 1996-97) in the emulator, load a source, assemble it and read the bytes it
 built; exchange sources with the host; get the labels of an XAS project. Everything below was run on XAS 7.447 and
 4.18 (the oracle of the XAS -> sjasmplus conversion, `docs/inprogress/2026-10-05-unreal-asm/research-xas-to-sjasmplus.md`).
-XAS 9.10 starts, but the command key sequence that works in 7.447 types into its text instead: not covered.
+XAS 9.10 was run on 2026-10-07 too: its command line needs Caps Shift + Symbol Shift held 12 frames
+(`type_input combo ["cs","ss"]` with `frames: 12`), then `A` assembles as in 7.447; see the pitfalls.
 
 Prerequisite: a running PENTAGON instance (the default model; 128K, TR-DOS). For the generic steps see
 [_common/setup.md](../_common/setup.md), [input/keyboard.md](../input/keyboard.md) and
@@ -106,6 +107,11 @@ name, `X`, `41 53`, `00 00`, `00`, sector count, checksum. LTEXT names another X
 = type C, `"name.Z"` another type, `"B:name"` drive B).
 
 ## Pitfalls
+
+- **XAS 9.10**: Extend for 4 frames types letters into the text: hold it 12 frames. Its file list shows only files
+  with `AS` in the catalog start field (what XAS and `zxasm encode` write); after a Pentagon reset it reopens the
+  text left in RAM instead of showing the list (start a new machine). A string of several characters in an LD / DW
+  operand puts its leading characters into the code (research-xas-to-sjasmplus.md §4).
 
 - **Typing into the text instead of a command.** EXT (`caps`+`symbol`) followed by the command letter works right
   after loading a file; in other editor states the letter went into the text as a new line (seen after an assemble

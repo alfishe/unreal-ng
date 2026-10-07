@@ -144,6 +144,8 @@ uint16_t CatalogStart(const std::string& codec, const std::string& version, char
             return 0x7361;   // extension "as"
         return version == "2" ? 0xA1DF : 35151;
     }
+    if (codec == "xas")
+        return 0x5341;   // "AS": XAS lists only files that carry it (research-xas.md)
     return 0;
 }
 
@@ -603,7 +605,8 @@ int main(int argc, char** argv)
             const std::string version = !args.version.empty() ? args.version
                                         : codec->Info().subversions.empty() ? std::string() : codec->Info().subversions.back().id;
             file.start = CatalogStart(codec->Info().id, version, file.type);
-            file.length = static_cast<uint16_t>(encoded.bytes.size());
+            // XAS keeps 0 in the length field (it reads whole sectors): its file list skips other files
+            file.length = codec->Info().id == "xas" ? 0 : static_cast<uint16_t>(encoded.bytes.size());
             file.data = encoded.bytes;
             encoded.bytes = containers::WriteHobeta(file);
         }

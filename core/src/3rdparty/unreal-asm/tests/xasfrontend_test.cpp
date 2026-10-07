@@ -125,6 +125,21 @@ TEST(XasFrontend_Test, ExpressionsRunLeftToRightOnUnsignedWords)
     EXPECT_FALSE(d.empty());
 }
 
+TEST(XasFrontend_Test, Xas910PutsLeadingStringCharactersIntoTheCode)
+{
+    // XAS 9.10: LD HL,"AB" is #41, then LD HL,#42; DW "AB" is #41, then DW #42 (checked: dialects/xas910/s9)
+    SourceDocument doc = SourceDocument::FromText("        LD    HL,\"AB\"\n        DW    \"AB\",1\n        LD    A,\"A\"", "xas");
+    doc.subversion = "9.10";
+    const ConvertResult r = Convert(doc, "sjasmplus");
+    std::vector<std::string> out;
+    for (const SourceLine& l : r.document.lines)
+        if (l.text.find_first_not_of(' ') != std::string::npos && l.text[l.text.find_first_not_of(' ')] != ';')
+            out.push_back(l.text.substr(l.text.find_first_not_of(' ')));
+    EXPECT_EQ(out, (std::vector<std::string>{"DB #41", "LD HL,'B'", "DB #41", "DW 'B'", "DW 1", "LD A,'A'"}));
+    // 7.447 keeps the two characters as one word
+    EXPECT_EQ(ToSjasmplus("        LD    HL,\"AB\""), (std::vector<std::string>{"LD HL,16706"}));
+}
+
 TEST(XasFrontend_Test, InstructionForms)
 {
     EXPECT_EQ(ToSjasmplus("        EX    AF,AF"), (std::vector<std::string>{"EX AF,AF'"}));
@@ -183,6 +198,8 @@ TEST(XasFrontend_Test, ProgramsAssembleToWhatXasBuilt)
         GTEST_SKIP() << "set UNREAL_ASM_SJASMPLUS to the sjasmplus binary";
     EXPECT_EQ(AssembleConverted(sjasmplus, {Source("dialects/xas7447/constrct.$X")}, "constrct", {}, 0x110), ReadTestData("dialects/xas7447/constrct.bin"));
     EXPECT_EQ(AssembleConverted(sjasmplus, {Source("dialects/xas418/cons418.$X")}, "cons418", {}, 0x90), ReadTestData("dialects/xas418/cons418.bin"));
+    // XAS 9.10: strings of several characters in LD / DW (the leading characters as bytes)
+    EXPECT_EQ(AssembleConverted(sjasmplus, {Source("dialects/xas910/s9.$X")}, "s9", {}, 21), ReadTestData("dialects/xas910/s9.bin"));
     EXPECT_EQ(AssembleConverted(sjasmplus, {Source("dialects/xas7447/proj.$X"), Source("dialects/xas7447/inc.$X")}, "proj", ProjBinaries(), 0x20),
               ReadTestData("dialects/xas7447/proj.bin"));
 }

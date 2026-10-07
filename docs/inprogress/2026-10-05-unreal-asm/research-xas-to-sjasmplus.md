@@ -60,8 +60,29 @@ XAS 7.447                          sjasmplus
 | Labels of `constrct` laid out by `SymbolsFromProject` against sjasmplus 1.24's `--sym` of the conversion | 8 of 8 equal |
 | `roundtrip.py --assemble` on the collection's XAS disks (Chaos Constructions 2000 intros, Oberon #5, SNG #2 appendix, ZX Navigator 1.3, ZXN): 9 sources | 0 round-trip differences; 4 assemble; the others need what their disks lack: `LCODE "SIN_CUT"` and `LCODE "DEB13"` are not on them, and three ZX Navigator modules use the kernel's labels without loading the kernel |
 
-## 4. Open
+## 4. XAS 9.10
 
-- XAS 9.10 / 9.07m in the emulator (the EXT command sequence of 7.447 types into the 9.10 editor instead).
-- `USEL` libraries and `MAKE`.
+Run in unreal-ng (2026-10-07, `XAS9_10.SCL`, `RUN "XAS9.10"`):
+
+- **The command line** opens with Caps Shift + Symbol Shift held longer than 7.447 needs: 12 frames
+  (`keyboard/combo` with `frames: 12`; the 4 frames 7.447 takes type letters into the text). The line shows `>Edit`;
+  `A` assembles ("Label Table Made, Last Address", "Object Length").
+- **The file list** at start shows only files whose catalog start field holds `AS` (and 0 in the length field), as
+  XAS writes them; a file without it is not listed. `zxasm encode --codec xas` now writes that header. A Pentagon
+  reset does not clear RAM and XAS then reopens the text it finds there instead of the list: start a fresh machine.
+- **Strings in expressions**: a string of several characters in an operand of a command or a `DW` item puts all
+  but its last character into the code as bytes before it and stands for its last character: `LD HL,"AB"` is `41 21
+  42 00`, `DW "AB"` is `41 42 00`, `LD BC,"XY"+1` is `58 01 5A 00`; one character and numbers behave as in 7.447
+  (testdata `dialects/xas910/s9`, equal through the conversion). Its first pass does not count those bytes: labels
+  after such a line are that many bytes lower than the code (seen on `constrct` re-encoded for 9.10: `w2` under
+  `WORK` one higher than the layout). The frontend (codec version `9.10`) writes the bytes and warns; the label
+  offset is not reproduced.
+- Apart from that, `constrct` re-encoded for 9.10 (without `IFNZ` / `IFZ`, which 9.10's table lacks) assembles in
+  9.10 to the bytes of its conversion.
+
+## 5. Open
+
+- XAS 9.07m (its tables match 9.10 apart from the dot words; not run).
+- `USEL` libraries and `MAKE` (not established: no source uses them, no help text found unpacked; 9.10's "XAS help"
+  is packed inside its BASIC file).
 - How ZX Navigator's modules got the kernel's labels (XAS's two texts, `aNother`?).

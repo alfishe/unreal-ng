@@ -132,10 +132,10 @@ MASM's own source, 11688 bytes).
 
 | Version | Disk | Start | Checked |
 |---|---|---|---|
-| 1.0 demo | Spectrofon #15 | — | not run here (the codec's typed sample came from it); no `DOWN` / `UP` / `SYSTEM` / `STOPKEY` |
-| 1.3 | `MASM1_3.SCL`, boot `MASMv1.3` | as 1.1 | not run; the binary differs from 1.1 in 5 bytes (the version text) |
-| 2.0 TURBO | `MASM2_0D.SCL`, boot `m2` | — | not run |
-| 3.0 MACRO | `MASM30M.SCL`, boot `TSM` | `RUN "TSM"`, any key, `G` (merge file: the list, Enter), `A` | plain programs assemble to the addresses they name; `NAME MAC [n]` is accepted, a call `NAME` gives error 3; `IF 1` / `IF X` give "!?Unknown error?!" in pass 1. MAC / IF / BANK / BORDER / CLS remain unknown |
+| 1.0 demo | Spectrofon #15 (`SpFon_15.Trd`, boot `MASMdemo`) | `RUN "MASMdemo"`, any key | started (2026-10-07): the menu has no `W`; neither `W` nor `G` loaded a file, text typed in its editor arrives in lower case (no tokens) and `A` assembled nothing; no `DOWN` / `UP` / `SYSTEM` / `STOPKEY` |
+| 1.3 | `MASM1_3.SCL`, boot `MASMv1.3` | `RUN "MASMv1.3"`, any key, `W`, Enter, `A` | run (2026-10-07): assembles as 1.1 (`DOWN HL` the same bytes); the binary differs from 1.1 in 5 bytes (the version text) |
+| 2.0 TURBO | `MASM2_0D.SCL`, boot `m2` | `RUN "m2"`, any key, `W`, Enter | the editor works; `A` (menu, or Extend + `A` in the editor) returns without a word: this copy has no compiler ("Necessary file(s) absent!" in its binary) |
+| 3.0 MACRO | `MASM30M.SCL`, boot `TSM` | `RUN "TSM"`, any key, `G` (merge file: the list, Enter), `A` | run: `BANK n`, `BORDER n`, `CLS [a]` emit fixed code; `NAME MAC` ... `ENDM` is skipped (nothing calls it: a word in the command field is a label, so `NAME` there gives error 3); `IF` stops with "!?Unknown error?!", `ENDIF` does nothing, `ELSE` jumps into the menu: research-masm-to-sjasmplus.md §4 |
 
 ## Pitfalls
 
