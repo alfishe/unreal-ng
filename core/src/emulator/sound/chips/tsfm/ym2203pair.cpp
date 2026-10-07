@@ -356,25 +356,42 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
             _renderT += 16;
         }
 
-        // Slaves first (a slave takes the output instant from the master's phase, before or after the master
-        // consumed it alike)
+        // All eight at one output instant in one pass per design (FilterDecimator::getOutputs: the six SSG
+        // decimators share their rows, the two FM ones theirs). Slaves first, the master last (a slave takes the
+        // output instant from the master's phase, before or after the master consumed it alike)
+        FilterDecimator* decimators[8];
+        float* targets[8];
+        size_t count = 0;
         for (int i = 0; i < 2; i++)
         {
-            const float fm = fmZeroRun[i] >= fmDec[i].window() ? 0.0f : static_cast<float>(fmDec[i].getOutput());
-            if (block.fm[i])
-                block.fm[i][n] = fm;
             for (int ch = 0; ch < 3; ch++)
             {
                 if (i == 0 && ch == 0)
                     continue;
-                const float v = static_cast<float>(_channels->ssg[i][ch].getOutput());
-                if (block.ssg[i][ch])
-                    block.ssg[i][ch][n] = v;
+                decimators[count] = &_channels->ssg[i][ch];
+                targets[count++] = block.ssg[i][ch] ? &block.ssg[i][ch][n] : nullptr;
             }
         }
-        const float a0 = static_cast<float>(master.getOutput());
-        if (block.ssg[0][0])
-            block.ssg[0][0][n] = a0;
+        decimators[count] = &master;
+        targets[count++] = block.ssg[0][0] ? &block.ssg[0][0][n] : nullptr;
+        for (int i = 0; i < 2; i++)
+        {
+            if (fmZeroRun[i] >= fmDec[i].window())
+            {
+                if (block.fm[i])
+                    block.fm[i][n] = 0.0f;
+                continue;
+            }
+            decimators[count] = &fmDec[i];
+            targets[count++] = block.fm[i] ? &block.fm[i][n] : nullptr;
+        }
+        double values[8];
+        FilterDecimator::getOutputs(decimators, count, values);
+        for (size_t k = 0; k < count; k++)
+        {
+            if (targets[k])
+                *targets[k] = static_cast<float>(values[k]);
+        }
     }
     return frames;
 }

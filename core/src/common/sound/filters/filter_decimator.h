@@ -9,6 +9,7 @@
 #include <tuple>
 #include <vector>
 
+#include "decimatordot.h"
 #include "fir_designer.h"
 
 /// Polyphase FIR decimator for AY native clock rendering
@@ -85,12 +86,14 @@ private:
     /// standalone. Cleared by configure() — re-attach after a redesign.
     const FilterDecimator* _master = nullptr;
 
-    // History ring, mirrored: every sample is stored at i and at i + HISTORY,
-    // so the taps of getOutput() read one contiguous run backwards from any
-    // start without a wrap check per tap (the same values in the same order,
-    // bit-identical output - it only removes the per-tap branch/modulo)
+    // History ring, newest first and mirrored: a sample is written below the
+    // previous one (the index counts down) and stored at i and at i + HISTORY,
+    // so the taps of getOutput() - newest first - read one contiguous run
+    // forwards from any start without a wrap check per tap (the same values in
+    // the same order, bit-identical output). Forwards: the SIMD kernels load
+    // two taps per register in tap order (DecimatorDot)
     double _buffer[2 * HISTORY];
-    size_t _bufferIndex;
+    size_t _bufferIndex;   // the newest sample
     double _phase;
 
     static std::shared_ptr<const PhaseTable> phaseTableFor(size_t taps, double fc, double inputRate, double beta)
@@ -247,9 +250,9 @@ public:
     /// sample joins the history ring; the master owns the output cadence.
     void feedSample(double sample)
     {
+        _bufferIndex = (_bufferIndex == 0) ? HISTORY - 1 : _bufferIndex - 1;
         _buffer[_bufferIndex] = sample;
         _buffer[_bufferIndex + HISTORY] = sample;
-        _bufferIndex = (_bufferIndex + 1) % HISTORY;
         if (!_master)
             _phase += 1.0;
     }
@@ -266,6 +269,63 @@ public:
     /// the instant from its master (scaled to its own input rate), whether
     /// the master has already produced this output or not.
     double getOutput()
+    {
+        const Instant in = takeInstant();
+        const double* x = &_buffer[_bufferIndex + in.whole];
+        double ya;
+        double yb;
+        DecimatorDot::Rows(&x, 1, in.a, in.b, _table->rowLength, &ya, &yb);
+        return ya + in.t * (yb - ya);
+    }
+
+    /// getOutput() of `count` decimators at one output instant, out[k] for decimators[k] - the same bits as calling
+    /// getOutput() on each in this order. Decimators whose instant falls on the same pair of coefficient rows (one
+    /// design, the same phase: the slaves of one master at its rate, standalone decimators fed in lockstep) share
+    /// one pass over the taps (DecimatorDot: the coefficient loads, independent accumulator chains). Neighbours in
+    /// the list group, so list such decimators next to each other
+    static void getOutputs(FilterDecimator* const* decimators, size_t count, double* out)
+    {
+        constexpr size_t kChunk = 8;
+        Instant in[kChunk];
+        const double* x[kChunk];
+        double ya[kChunk];
+        double yb[kChunk];
+        for (size_t base = 0; base < count; base += kChunk)
+        {
+            const size_t n = std::min(kChunk, count - base);
+            for (size_t k = 0; k < n; k++)
+            {
+                FilterDecimator& d = *decimators[base + k];
+                in[k] = d.takeInstant();
+                x[k] = &d._buffer[d._bufferIndex + in[k].whole];
+            }
+            for (size_t first = 0; first < n;)
+            {
+                size_t last = first + 1;
+                while (last < n && in[last].a == in[first].a && in[last].t == in[first].t)
+                    last++;
+                DecimatorDot::Rows(&x[first], last - first, in[first].a, in[first].b,
+                                   decimators[base + first]->_table->rowLength, &ya[first], &yb[first]);
+                for (size_t k = first; k < last; k++)
+                    out[base + k] = ya[k] + in[k].t * (yb[k] - ya[k]);
+                first = last;
+            }
+        }
+    }
+
+private:
+    /// Where an output falls: the two coefficient rows around the instant, the weight between them and how many
+    /// whole input samples back from the newest one it lies
+    struct Instant
+    {
+        const double* a;
+        const double* b;
+        double t;
+        size_t whole;
+    };
+
+    /// The output instant of the getOutput() due now (a standalone or master decimator consumes its phase)
+    Instant takeInstant()
     {
         double delay;  // input samples back from the newest one
         if (_master)
@@ -301,49 +361,10 @@ public:
             t = 1.0;
         }
 
+        // Taps newest first from the output instant: the run starting `whole` samples behind the newest one
+        // (length <= MAX_TAPS + 1 and whole <= MAX_DELAY keep it inside the mirrored ring)
         const size_t length = _table->rowLength;
         const double* a = &_table->rows[row * length];
-        const double* b = a + length;
-        double ya = 0.0;
-        double yb = 0.0;
-        // Newest-first taps: the sample just before `start`, then backwards.
-        // In the mirrored ring that is one contiguous run ending at
-        // start + HISTORY - 1 (length <= MAX_TAPS < HISTORY keeps it in range).
-        // Four interleaved accumulators per dot product: independent chains the
-        // compiler can pipeline/vectorize (a single running sum is one serial
-        // dependency chain under strict FP). Deterministic - the summation
-        // order is fixed - but not bit-identical to a single-chain sum.
-        // SIMD-CANDIDATE(fir-decimator-dot): two rows x four accumulators; the
-        // ZX-MultiSound evaluates eight of these per output sample (frame-cost
-        // profile 2026-10-06, docs/inprogress/2026-10-03-zx-multisound/TODO.md)
-        const size_t start = (_bufferIndex + HISTORY - whole) % HISTORY;
-        const double* x = &_buffer[start + HISTORY - 1];
-        double ya0 = 0.0, ya1 = 0.0, ya2 = 0.0, ya3 = 0.0;
-        double yb0 = 0.0, yb1 = 0.0, yb2 = 0.0, yb3 = 0.0;
-        size_t i = 0;
-        for (; i + 3 < length; i += 4)
-        {
-            const double s0 = x[-static_cast<ptrdiff_t>(i)];
-            const double s1 = x[-static_cast<ptrdiff_t>(i + 1)];
-            const double s2 = x[-static_cast<ptrdiff_t>(i + 2)];
-            const double s3 = x[-static_cast<ptrdiff_t>(i + 3)];
-            ya0 += s0 * a[i];
-            ya1 += s1 * a[i + 1];
-            ya2 += s2 * a[i + 2];
-            ya3 += s3 * a[i + 3];
-            yb0 += s0 * b[i];
-            yb1 += s1 * b[i + 1];
-            yb2 += s2 * b[i + 2];
-            yb3 += s3 * b[i + 3];
-        }
-        for (; i < length; i++)
-        {
-            const double s0 = x[-static_cast<ptrdiff_t>(i)];
-            ya0 += s0 * a[i];
-            yb0 += s0 * b[i];
-        }
-        ya = (ya0 + ya1) + (ya2 + ya3);
-        yb = (yb0 + yb1) + (yb2 + yb3);
-        return ya + t * (yb - ya);
+        return Instant{a, a + length, t, whole};
     }
 };
