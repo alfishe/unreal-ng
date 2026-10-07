@@ -1,5 +1,9 @@
 #include "unrealasm/dialect.h"
 
+#include <algorithm>
+
+#include "unrealasm/registry.h"
+
 #include "dialects/alasm/alasmfrontend.h"
 #include "dialects/storm/stormfrontend.h"
 #include "dialects/zxasm/zxasmfrontend.h"
@@ -215,5 +219,63 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
     }
     result.ok = !HasErrors(result.diagnostics);
     return result;
+}
+std::vector<ProjectFile> ImageProject(const std::vector<containers::TrdosFile>& files)
+{
+    const CodecRegistry& registry = CodecRegistry::Builtin();
+    std::vector<ProjectFile> project;
+    std::vector<size_t> taken;   // the index in `files` of each project file
+    auto add = [&](size_t k, const ISourceCodec& codec, const std::string& subversion) {
+        const containers::TrdosFile& f = files[k];
+        DecodeOptions options;
+        options.catalog = f.Hints();
+        options.subversion = subversion;
+        // A name saved again (another catalog entry): TR-DOS finds the first one, so it keeps the name; the later ones
+        // are NAME~2, NAME~3 ...
+        std::string name = f.TrimmedName();
+        int copies = 1;
+        for (const ProjectFile& earlier : project)
+            if (earlier.name == name || earlier.name.rfind(name + "~", 0) == 0)
+                ++copies;
+        if (copies > 1)
+            name += "~" + std::to_string(copies);
+        project.push_back({name, codec.Decode(f.data, options).document});
+        taken.push_back(k);
+    };
+    for (size_t k = 0; k < files.size(); ++k)
+    {
+        const DetectResult detected = registry.Detect(files[k].data, files[k].Hints());
+        if (detected.chosen && detected.chosen->Info().family == CodecFamily::Tokenized)
+            add(k, *detected.chosen, std::string());
+    }
+    // The files the sources INCLUDE that detection left out, read like their includer (until none is left)
+    for (size_t at = 0; at < project.size(); ++at)
+    {
+        const IFrontend* frontend = DialectRegistry::Builtin().Frontend(project[at].document.dialect);
+        const ISourceCodec* codec = registry.Find(project[at].document.format);
+        if (!frontend || !codec)
+            continue;
+        const std::string subversion = project[at].document.subversion;
+        const FrontendResult parsed = frontend->Parse(project[at].document);
+        for (const ir::Line& line : parsed.program.lines)
+            for (const ir::Statement& s : line.statements)
+            {
+                if (s.kind != ir::Statement::Kind::Directive || s.directive != ir::DirectiveKind::Include)
+                    continue;
+                std::string wanted = s.text;
+                const size_t colon = wanted.find(':');
+                if (colon != std::string::npos)
+                    wanted = wanted.substr(colon + 1);   // a drive (ALASM's "A:name")
+                if (wanted.empty() || wanted.find_first_of("*?") != std::string::npos)
+                    continue;
+                for (size_t k = 0; k < files.size(); ++k)
+                    if (files[k].TrimmedName() == wanted && std::find(taken.begin(), taken.end(), k) == taken.end())
+                    {
+                        add(k, *codec, subversion);
+                        break;
+                    }
+            }
+    }
+    return project;
 }
 }  // namespace unrealasm

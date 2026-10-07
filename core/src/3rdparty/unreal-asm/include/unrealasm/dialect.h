@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+#include "unrealasm/containers.h"
 #include "unrealasm/diagnostics.h"
 #include "unrealasm/document.h"
 #include "unrealasm/ir.h"
@@ -124,4 +125,10 @@ struct ProjectResult
 /// Every source of a project in the target dialect: INCLUDE wildcards resolve against the project's names (the last
 /// matching one, as ALASM does), macros defined in one file are known to the others
 ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_view targetDialect, const BackendOptions& options = {});
+
+/// The sources among the files of a TR-DOS image as one project, named as INCLUDE names them (a name saved again:
+/// NAME~2, NAME~3 ...): every file the codec detection takes for a tokenized source, and every file such a source
+/// INCLUDEs that detection could not tell (a source of two lines), read with the codec and version of the source that
+/// INCLUDEs it
+std::vector<ProjectFile> ImageProject(const std::vector<containers::TrdosFile>& files);
 }  // namespace unrealasm

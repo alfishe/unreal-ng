@@ -114,24 +114,16 @@ struct Project
     }
 };
 
-void AddSource(Project& project, std::string name, const std::vector<uint8_t>& bytes, const CatalogHints& hints, bool text)
+/// A text file as the project's one source: a tokenized format when detection says so, else sjasmplus' dialect
+void AddTextSource(Project& project, const std::string& name, const std::vector<uint8_t>& bytes)
 {
     const CodecRegistry& registry = CodecRegistry::Builtin();
-    const DetectResult detected = registry.Detect(bytes, hints);
+    const DetectResult detected = registry.Detect(bytes, {});
     const ISourceCodec* codec = detected.chosen;
-    if (text && (!codec || codec->Info().family != CodecFamily::Tokenized))
-        codec = registry.Find("sjasmplus");   // a text source: sjasmplus' dialect
-    if (!codec || (!text && codec->Info().family != CodecFamily::Tokenized))
-        return;
-    int copies = 1;
-    for (const ProjectFile& earlier : project.sources)
-        if (earlier.name == name || earlier.name.rfind(name + "~", 0) == 0)
-            ++copies;
-    if (copies > 1)
-        name += "~" + std::to_string(copies);   // a name saved again: TR-DOS finds the first
-    DecodeOptions options;
-    options.catalog = hints;
-    project.sources.push_back({name, codec->Decode(bytes, options).document});
+    if (!codec || codec->Info().family != CodecFamily::Tokenized)
+        codec = registry.Find("sjasmplus");
+    if (codec)
+        project.sources.push_back({name, codec->Decode(bytes, {}).document});
 }
 
 bool ReadProject(const std::string& path, const std::vector<uint8_t>& bytes, Project& project)
@@ -150,7 +142,7 @@ bool ReadProject(const std::string& path, const std::vector<uint8_t>& bytes, Pro
         std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
         if (name.size() > 4 && Extension(name) == "asm")
             name.resize(name.size() - 4);
-        AddSource(project, name, bytes, {}, true);
+        AddTextSource(project, name, bytes);
         return !project.sources.empty();
     }
     for (const containers::TrdosFile& f : files)
@@ -163,8 +155,9 @@ bool ReadProject(const std::string& path, const std::vector<uint8_t>& bytes, Pro
         const char second = static_cast<char>(f.start & 0xFF), third = static_cast<char>(f.start >> 8);
         if (second > ' ' && second < 0x7F && third > ' ' && third < 0x7F)
             project.sizes.emplace_back(f.TrimmedName() + "." + std::string{f.type, second, third}, f.data.size());
-        AddSource(project, f.TrimmedName(), f.data, f.Hints(), false);
     }
+    // The sources, and the files they INCLUDE that detection could not tell (read like their includer)
+    project.sources = ImageProject(files);
     return !project.sources.empty();
 }
 

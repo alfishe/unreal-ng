@@ -1,6 +1,6 @@
 // The ZEUS frontend: ZEUS sources into the IR, written by the sjasmplus backend. Construct by construct, then the
 // programs ZEUS itself assembled in unreal-ng (testdata/dialects/zeus: probes for ZEUS 1983, GG, ZEUS 1.1 (PHT) and
-// ZEUS v7.E, and the five Zeus Routines of ZXDB 19058 built by ZEUS 1983); with UNREAL_ASM_SJASMPLUS=<path to sjasmplus>
+// ZEUS v7.E, the five Zeus Routines of ZXDB 19058 built by ZEUS 1983, ADS 2.0 built by ZEUS 1.1 in the PHT shell); with UNREAL_ASM_SJASMPLUS=<path to sjasmplus>
 // the conversions are assembled and compared with those bytes. The labels of the ADS 2.0 project come through
 // SymbolsFromProject equal to what sjasmplus 1.24 wrote with --sym for its conversion.
 
@@ -160,6 +160,12 @@ TEST(ZeusFrontend_Test, ProgramsAssembleToWhatZeusBuilt)
         {"PROBE7E", "dialects/zeus/PROBE7E.$Z", "pht", 40000, {}, {}},
         {"INCL7E", "dialects/zeus/INCL7E.$Z", "pht", 40000, {{"inc1", "dialects/zeus/inc1.$Z"}}, {{"dat", "dialects/zeus/dat.$C"}}},
         {"INCLGG", "dialects/zeus/INCLGG.$C", "gg", 40000, {}, {{"dat", "dialects/zeus/dat.$C"}}},
+        // ZEUS 1.1 run from the PHT 3.6 shell (its INCLUDE / PLACE need the shell): the included source is type C
+        {"INCL11", "dialects/zeus/INCL11.$C", "pht", 40000, {{"inc1", "dialects/zeus/inc11.$C"}}, {{"dat", "dialects/zeus/dat.$C"}}},
+        // ADS 2.0 as ZEUS 1.1 (PHT shell, OPEN "adsobj": the code compiled to the disk) built it: 20155 bytes at #6000
+        {"ADS20", "zeus/ADS20SRC__MAKE_ADS.bin", "pht", 0x6000,
+         {{"cc0", "zeus/ADS20SRC__CC0.bin"}, {"cc1", "zeus/ADS20SRC__CC1.bin"}, {"cc2", "zeus/ADS20SRC__CC2.bin"}},
+         {{"$ads", "dialects/zeus/ADSSCR.$C"}, {"FONT$", "dialects/zeus/ADSFONT.$C"}}},
         {"ZeusGlitter", "zeus/ZeusRoutines__ZeusGlitter.bin", "1983", 40000, {}, {}},
         {"ZeusMultiplot", "zeus/ZeusRoutines__ZeusMultiplot.bin", "1983", 50000, {}, {}},
         {"ZeusPrint", "zeus/ZeusRoutines__ZeusPrint.bin", "1983", 40000, {}, {}},
@@ -256,4 +262,24 @@ TEST(ZeusFrontend_Test, AdsLabelsComeThroughSymbolsFromProject)
         EXPECT_EQ(address ? *address : s.location.offset, sym.at(written)) << s.name;
         EXPECT_EQ(s.provenance.importer, "source-zeus");
     }
+}
+
+TEST(ZeusFrontend_Test, AnImageProjectTakesTheShortFileASourceIncludes)
+{
+    // inc1 (two lines) is too short for the codec detection; INCL11 INCLUDEs it, so the project reads it as ZEUS (PHT)
+    std::vector<containers::TrdosFile> files;
+    for (const char* path : {"dialects/zeus/INCL11.$C", "dialects/zeus/inc11.$C", "dialects/zeus/dat.$C"})
+    {
+        containers::TrdosFile file;
+        std::string error;
+        ASSERT_TRUE(containers::ReadHobeta(ReadTestData(path), file, error)) << error;
+        files.push_back(file);
+    }
+    const std::vector<ProjectFile> project = ImageProject(files);
+    ASSERT_EQ(project.size(), 2u);
+    EXPECT_EQ(project[0].name, "INCL11");
+    EXPECT_EQ(project[1].name, "inc1");
+    EXPECT_EQ(project[1].document.dialect, "zeus");
+    EXPECT_EQ(project[1].document.subversion, project[0].document.subversion);
+    EXPECT_EQ(project[1].document.lines.size(), 2u);
 }

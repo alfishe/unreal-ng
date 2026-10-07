@@ -3,7 +3,8 @@
 ZEUS (Simon Brattel and Neil Mottershead, Crystal Computing 1983) keeps its source in memory as numbered lines
 and assembles straight into memory. This recipe runs four versions in unreal-ng, gets a source in and the code out,
 and moves sources between ZEUS and the host. Every step below was run on 2026-10-07 (unreal-ng release build, own
-instance). Not covered: the PHT 3.6 shell (only its ZEUS 1.1 was run, standalone), tape saves from inside ZEUS.
+instance). Not covered: the PHT 3.6 shell's other tools (its file manager is used here only to start ZEUS 1.1), tape
+saves from inside ZEUS.
 
 > **Transport:** MCP first (`target` = the id `emulator_manage create` returned). The WebAPI section is what the
 > host-side tool `tools/unreal-asm/assemble-in-emulator.py` (profiles `zeus1983`, `zeus11`, `zeusgg`, `zeus7e`)
@@ -29,7 +30,7 @@ says otherwise; every row was checked by assembling in that version.
 | operators | `+ - & !`, strictly left to right | as 1983 | as 1983 | also `*` `/` and `%binary`, left to right; `/` rounds to the nearest (half down: `7/2` = 3, `11/4` = 3); a dividend smaller than the divisor is error 4 |
 | leading `-` (`LD DE,-1`) | error 0 | — | — | — |
 | `DEFS` / `DS n` | leaves memory as it was | leaves memory as it was | writes zeros | writes zeros |
-| files | — | `INCBIN "name"` (quoted; `INCBIN"name"` is error 0) | `INCLUDE` / `PLACE`: error A when run without the PHT shell | `INCLUDE name` (a type `Z` source), `PLACE name` (a type `C` file) |
+| files | — | `INCBIN "name"` (quoted; `INCBIN"name"` is error 0) | `INCLUDE name` / `PLACE name`, both type `C` files, only when started from the PHT 3.6 shell (standalone: error A); `OPEN "name"` compiles to a disk file | `INCLUDE name` (a type `Z` source), `PLACE name` (a type `C` file) |
 
 Common to all: statements separated by `:` each with its own optional label (`NOP:L3 NOP`); a label is any first
 word that is not a keyword; keywords are upper case only; `"c` is a character (`LD A,"Z`); `DEFM /text/` takes any
@@ -122,6 +123,31 @@ on the disk) and `DATA PLACE dat` (type `C`) built `01 3E 01 41 02 11 22 33 44 5
 
 ZEUS 1.1 (`zeus.$c`): `PENTAGON`, menu item 48 BASIC (four items down is TR-DOS, three is 48 BASIC), write the
 file's data (hobeta bytes 17..) to 57344, `basic/run` `RANDOMIZE USR 57344`, wait ~5 s before the first command.
+Standalone it answers `INCLUDE` / `PLACE` with error A: their disk access is the PHT shell's.
+
+### ZEUS 1.1 from the PHT 3.6 shell (INCLUDE, PLACE, OPEN)
+
+Put the files of `PHT_ZEUS.LZH` on a TR-DOS disk (`zxdisk.py add`; at least `pht36.$b`, `zeus.$c`, `config.$c`)
+with the files the source INCLUDEs and PLACEs, **all type `C`** (the help: "the extension is always *.C"; nothing may
+follow the name on the line). `RUN "PHT 3.6"` starts the shell's file manager ("DOS 5.03 Tool"): Q / A move the
+cursor, ENTER on a `C` file opens its File Functions, `G` there is Call Subroutine (a register line: type the PC),
+ENTER calls it; `X` would be Exit to BASIC.
+
+```text
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"command":"RUN \"PHT 3.6\""}}
+type_input {"action":"tap","key":"a"}                      # the cursor to zeus.C (the second entry)
+type_input {"action":"tap","key":"enter"}                  # File Functions
+type_input {"action":"tap","key":"g"}                      # Call Subroutine
+type_input {"action":"tap","key":"enter"}
+type_input {"action":"type","text":"E000"}                 # PC = 57344, zeus.C's start
+type_input {"action":"tap","key":"enter"}                  # ZEUS Z80 ASSEMBLER BETA version 1.1
+```
+
+Then CAPS LOCK, the source to 32768, `o 32768`, `a` as above. Checked: `INCLUDE inc1` + `DATA PLACE dat` (both type
+`C`) built `01 3E 01 41 02 11 22 33 44 55 45` at 40000, as v7.E. `OPEN "name"` before `a` sends the code to a disk
+file instead of memory ("Save File <NAME .C> ? (Enter for save)": ENTER): that is how a program larger than the
+memory beside ZEUS is built. ADS 2.0 (`MAKE_ADS`: `ORG #6000`, `INCLUDE cc0` / `cc1` / `cc2`; CC2 PLACEs `$ads` and
+`FONT$`) built this way to `ADSOBJ.C`, 20155 bytes, equal to its sjasmplus conversion.
 
 ## WebAPI
 

@@ -44,7 +44,7 @@ Each row was seen in the emulator (the probe files of `testdata/dialects/zeus/`)
 | `ENT` marks the entry point for the `X` command, no code (manual 5.5) | nothing (a label on it stays) |
 | `V` / `NV` are `PE` / `PO` (manual 5.1.2); checked `JP V` = `EA`, `JP NV` = `E2` | conditions `pe` / `po` |
 | GG: `INCBIN "name"` puts a file (checked: the 5 bytes of `dat` between the bytes around it; `INCBIN"name"` without a blank is error 0) | `INCBIN "name"` |
-| v7.E: `INCLUDE name` assembles a type `Z` source of the disk (its labels are known), `PLACE name` puts a type `C` file (checked); ZEUS 1.1 run without the PHT shell answers error A to both | `INCLUDE "name.asm"`, `INCBIN "name"` |
+| v7.E: `INCLUDE name` assembles a type `Z` source of the disk (its labels are known), `PLACE name` puts a type `C` file (checked). ZEUS 1.1 does the same only when started from the PHT 3.6 shell (its file manager: File Functions, Call Subroutine at `#E000`), and there the INCLUDEd source is a type `C` file too (its help: "the extension is always *.C"); standalone it answers error A to both. `OPEN "name"` (an editor command) sends the code to a disk file instead of memory | `INCLUDE "name.asm"`, `INCBIN "name"` |
 
 ## 3. Oracle results
 
@@ -55,11 +55,15 @@ Each row was seen in the emulator (the probe files of `testdata/dialects/zeus/`)
 | `PROBE7E` (`* / %`, the rounded division, 16-bit words) | v7.E | 132 | equal |
 | `INCL7E` + `inc1` (type Z) + `dat` (type C) | v7.E | 11 | equal |
 | `INCLGG` + `dat` | GG | 10 | equal (2 `DS` bytes) |
+| `INCL11` + `inc1` (type C) + `dat`, in the PHT 3.6 shell | 1.1 | 11 | equal |
+| ADS 2.0: `MAKE_ADS` + `CC0`-`CC2`, `PLACE $ads` / `FONT$`, `OPEN "adsobj"` in the PHT 3.6 shell | 1.1 | 20155 | equal |
 | Zeus Routines: Glitter, Multiplot, Print, Scrolling, Select | 1983 | 239, 238, 623, 270, 295 | equal |
 
 The ADS 2.0 sources (`MAKE_ADS` includes `CC0`-`CC2`, about 20K of code at `#6000`) do not fit beside the sources and
-ZEUS in 48K memory, so ZEUS itself could not build them here; the released `ads_2^0i.b` of `ADS20SRC.LZH` is an
-"Improved version" (it differs from the first 48 bytes on). Their conversion assembles with sjasmplus without errors
+ZEUS in 48K memory, but ZEUS 1.1 compiles to a disk file with `OPEN` and reads the INCLUDEd parts from the disk: run
+from the PHT shell it built all 20155 bytes, and the sjasmplus conversion of the same sources is equal to them byte for
+byte (`testdata/dialects/zeus/ADS20.bin`). The released `ads_2^0i.b` of `ADS20SRC.LZH` is an "Improved version": a
+BASIC loader reading its code from the disk to `#9C40`, not the program the sources build. Their conversion assembles with sjasmplus without errors
 once the screen file is named as `PLACE` names it (`$ads`; the archive calls it `ads$`), and their 369 labels come
 through `SymbolsFromProject` equal to what sjasmplus 1.24 wrote with `--sym` (`testdata/symbols/fromsource/zeus-ADS20.sym`).
 
@@ -70,6 +74,5 @@ main source assembles (ADS with its screen file under the `PLACE` name).
 
 | Item | Note |
 |---|---|
-| ZEUS 1.1's `INCLUDE` / `PLACE` | error A without the PHT 3.6 shell; the shell was not run |
-| `$ads` / `ads$` | ADS's `PLACE $ads` names a file the archive calls `ads$`: a renaming by whoever packed it, or a rule of the PHT shell |
+| `$ads` / `ads$` | ADS's `PLACE $ads` names a file the archive calls `ads$`; ZEUS 1.1 found the screen under `$ads` (the build above): the archive's name is a renaming by whoever packed it |
 | Characters above `#7F` in `DEFM` | decoded in the ZX Spectrum code page; the sjasmplus text keeps CP866: none in the corpus |

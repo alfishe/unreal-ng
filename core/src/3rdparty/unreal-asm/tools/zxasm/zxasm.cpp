@@ -272,25 +272,8 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
         std::cerr << "zxasm: cannot make " << args.output << ": " << made.message() << "\n";
         return 1;
     }
-    std::vector<ProjectFile> project;
-    for (const auto& f : files)
-    {
-        const DetectResult detected = registry.Detect(f.data, f.Hints());
-        if (!detected.chosen || detected.chosen->Info().family != CodecFamily::Tokenized)
-            continue;
-        DecodeOptions options;
-        options.catalog = f.Hints();
-        // A name saved again (another catalog entry): TR-DOS finds the first one, so it keeps the name; the later
-        // ones are written as NAME~2, NAME~3 ...
-        std::string name = f.TrimmedName();
-        int copies = 1;
-        for (const ProjectFile& earlier : project)
-            if (earlier.name == name || earlier.name.rfind(name + "~", 0) == 0)
-                ++copies;
-        if (copies > 1)
-            name += "~" + std::to_string(copies);
-        project.push_back({name, detected.chosen->Decode(f.data, options).document});
-    }
+    // The sources, and the files they INCLUDE that detection could not tell (read like their includer)
+    const std::vector<ProjectFile> project = ImageProject(files);
     const ProjectResult converted = ConvertProject(project, args.to);
     PrintDiagnostics(converted.diagnostics);
     // A dialect without its own codec (pasmo) is a text file in the document's code page (texts are program bytes)

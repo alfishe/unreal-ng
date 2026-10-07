@@ -81,7 +81,7 @@ phase; master only after the owner's review.
     - [ ] GENS4B (TR-DOS) disk G / P: how the port names files (it hung here); `*F` run in GENS
     - [ ] MASM 2.0 / 3.0: the syntax of MAC / ENDM / IF / ELSE / ENDIF / BANK / BORDER / CLS (kept as text with a warning); 2.0, 1.3 and the 1.0 demo not run
     - [ ] XAS 9.10 / 9.07m: CS+SS types letters there instead of opening the command line; `USEL` / `MAKE` meaning
-    - [ ] ZEUS 1.1: `INCLUDE` / `PLACE` need the PHT 3.6 shell; ADS 2.0 rebuilt in ZEUS (20K of code does not fit beside the sources)
+    - [x] ZEUS 1.1 from the PHT 3.6 shell (2026-10-07): INCLUDE / PLACE of type C files equal to v7.E's; ADS 2.0 built by ZEUS 1.1 with `OPEN` (20155 bytes to a disk file) equal to its sjasmplus conversion (testdata `dialects/zeus/ADS20.bin`); `ImageProject` reads a file a source INCLUDEs that detection cannot tell (two lines) with the includer's codec (`zxasm convert`, `symconv source`)
   - [x] label tables in RAM (2026-10-07): ALASM 5.09 / 4.44 (page 3, records below a zero at #3DFF / #3F7F) and XAS 7.447 / 4.18 (page 6, 9-byte entries; 7.x two sorted lists under markers, 4.x one list from #0B16) found from dumps; scanners `symbols/live.h`, `symconv live`; STS keeps none of its own (it reads ALASM's) ([research-labeltables.md](research-labeltables.md))
     - [ ] ALASM tables over one page, above 128K; ALASM 3.8c / 4.2 / 4.5; XAS 5.05 / 9.x, XAS above 128K; STS 5.x / 6.x; label files on disk (none seen)
     - [ ] the emulator surface: copy the pages of a running machine, offer the candidates (S5)
