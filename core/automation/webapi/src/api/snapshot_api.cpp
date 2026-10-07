@@ -103,18 +103,7 @@ void EmulatorAPI::loadSnapshot(const HttpRequestPtr& req, std::function<void(con
         path = content.path;
     }
 
-    // TTD refuses this while recording: answer why instead of a bare failure
-    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
-    {
-        Json::Value error;
-        error["error"] = "Conflict";
-        error["message"] = refusal;
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k409Conflict);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
+    // A snapshot load ENDS a TTD recording session (the one rule), it is never refused by it
 
     // A file that needs another model (an SPG: TS-Conf) switches the model
     // first unless switch_model is false (body field, query parameter)

@@ -585,6 +585,14 @@ void FeatureManager::setDefaults()
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
 
+    registerFeature({Features::kTTDRestart,
+                     Features::kTTDRestartAlias,
+                     Features::kTTDRestartDesc,
+                     false,  // OFF by default - an operation that ends a TTD session leaves the machine unrecorded
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryDebug});
+
     registerFeature({Features::kGSLightweight,
                      Features::kGSLightweightAlias,
                      Features::kGSLightweightDesc,

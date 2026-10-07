@@ -2468,8 +2468,6 @@ public:
                                               -> std::tuple<bool, std::string, std::string> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return {false, "no emulator", ""};
-            if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
-                return {false, refusal, emulator->GetId()};
             SnapshotLoadRequest request;
             request.emulatorId = emulator->GetId();
             request.path = path;

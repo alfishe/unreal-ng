@@ -1,6 +1,6 @@
-# Screenshotter - TODO
+# Screenshotter — DONE (PLAN #85 retired)
 
-Status: implemented and on `origin/master` (2026-10-03); what is left is verification that could not be done.
+Status: phases 1-5 done 2026-10-03. Open only: video recording of changing resolutions (postponed).
 
 Done (owner decisions 1-7 in [design.md](design.md)):
 - Survey of every screenshot / capture path and of `RasterDescriptor`.

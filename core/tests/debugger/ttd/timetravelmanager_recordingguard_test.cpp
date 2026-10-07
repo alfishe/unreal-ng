@@ -62,7 +62,7 @@ protected:
 TEST_F(TimeTravelManager_RecordingGuard_Test, NothingIsGuarded_WhenNotRecording)
 {
     for (TTDGuardedAction action :
-         {TTDGuardedAction::LoadSnapshot, TTDGuardedAction::LoadTape, TTDGuardedAction::LoadDisk,
+         {TTDGuardedAction::LoadTape, TTDGuardedAction::LoadDisk,
           TTDGuardedAction::CreateDisk, TTDGuardedAction::LoadRom, TTDGuardedAction::Invalidate})
     {
         EXPECT_TRUE(_ttd->RecordingGuard(action).empty()) << static_cast<int>(action);
@@ -73,7 +73,7 @@ TEST_F(TimeTravelManager_RecordingGuard_Test, EveryGuardedActionHasAReason_While
 {
     StartRecordingWithHistory();
     for (TTDGuardedAction action :
-         {TTDGuardedAction::LoadSnapshot, TTDGuardedAction::LoadTape, TTDGuardedAction::LoadDisk,
+         {TTDGuardedAction::LoadTape, TTDGuardedAction::LoadDisk,
           TTDGuardedAction::CreateDisk, TTDGuardedAction::LoadRom, TTDGuardedAction::Invalidate,
           TTDGuardedAction::SwitchModel})
     {
@@ -87,9 +87,6 @@ TEST_F(TimeTravelManager_RecordingGuard_Test, MediaLoadsAreRefused_WhileRecordin
 {
     StartRecordingWithHistory();
     const size_t checkpoints = _ttd->GetCheckpointCount();
-
-    EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/action.sna")));
-    ExpectRecordingIntact(checkpoints);
 
     EXPECT_FALSE(_emulator->LoadTape(TestPathHelper::GetTestDataPath("loaders/tap/action.tap")));
     ExpectRecordingIntact(checkpoints);
@@ -174,9 +171,14 @@ TEST_F(TimeTravelManager_RecordingGuard_Test, ActionsWorkAfterStop_AndStatusSays
     _ttd->StopRecording();
     EXPECT_GT(_ttd->GetCheckpointCount(), 0u);  // stop keeps the history
 
+    // A snapshot load keeps the history (it ended the recording like a reset); a tape load drops it
+    const size_t kept = _ttd->GetCheckpointCount();
     EXPECT_TRUE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/action.sna")));
+    EXPECT_EQ(_ttd->GetCheckpointCount(), kept);
+    EXPECT_TRUE(_ttd->GetSessionInfo().lastDropReason.empty());
+    EXPECT_TRUE(_emulator->LoadTape(TestPathHelper::GetTestDataPath("loaders/tap/action.tap")));
     EXPECT_EQ(_ttd->GetCheckpointCount(), 0u);
-    EXPECT_EQ(_ttd->GetSessionInfo().lastDropReason, "snapshot-load");
+    EXPECT_EQ(_ttd->GetSessionInfo().lastDropReason, "tape-load");
 }
 
 TEST_F(TimeTravelManager_RecordingGuard_Test, DebuggerLiveHistoryIsNotProtected)

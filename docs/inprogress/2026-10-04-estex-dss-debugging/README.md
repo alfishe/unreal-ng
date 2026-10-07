@@ -1,6 +1,6 @@
 # Estex DSS aware debugging
 
-Started 2026-10-04 (owner request). Status: [TODO.md](TODO.md). Plan row: #88 in [PLAN.md](../PLAN.md).
+Started 2026-10-04 (owner request). Status: [TODO.md](TODO.md). Plan row: #99 in [PLAN.md](../PLAN.md).
 
 Estex DSS is the disk operating system of the Peters Plus Sprinter (DSS 1.62 from Peters Plus, the community DSS
 1.70 / 1.71 by the Sprinter Team). This folder is for an OS-level layer in the debugger and the analyzers that

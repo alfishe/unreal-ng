@@ -36,9 +36,8 @@ jobs:
   throttle:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    concurrency:
-      group: ci-throttle-${{ github.event_name == 'push' && 'master' || github.run_id }}
-      cancel-in-progress: true
+    # No concurrency here — let all throttle jobs wait in parallel. The first one past the
+    # interval starts its build; concurrency on build-linux (below) cancels any stragglers.
     env:
       GH_TOKEN: ${{ github.token }}
       MIN_INTERVAL: ${{ vars.CI_MIN_INTERVAL_MINUTES || '60' }}
@@ -49,16 +48,20 @@ jobs:
           set -eu
           interval=$(( MIN_INTERVAL * 60 ))
           if [ "$interval" -le 0 ]; then echo "throttle off"; exit 0; fi
-          # (the API's branch= and event= filters together return a stale list, so they are filtered in jq)
-          # Start of the newest earlier run that really began building (build-linux job started, run not cancelled)
+          # Find the most recent run where build-linux actually started (any conclusion — even
+          # cancelled runs count if the build job began). Fix type mismatch: .id is a number,
+          # $GITHUB_RUN_ID is a string — tonumber makes jq compare correctly.
           last=0
-          for run in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cmake-ci.yml/runs?per_page=30" \
-                         --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID and .head_branch == \"master\" and .event == \"push\" and .conclusion != \"cancelled\") | .id"); do
+          for run in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cmake-ci.yml/runs?per_page=50" \
+                         --jq ".workflow_runs[] | select(.id != ($GITHUB_RUN_ID | tonumber) and .head_branch == \"master\" and .event == \"push\") | .id"); do
             started=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \
                         --jq '[.jobs[] | select(.name == "build-linux" and .started_at != null) | .started_at][0] // empty')
             [ -n "$started" ] || continue
             t=$(date -u -d "$started" +%s)
-            [ "$t" -gt "$last" ] && last=$t
+            if [ "$t" -gt "$last" ]; then
+              last=$t
+              echo "Found build-linux in run $run started at $started (epoch $t)"
+            fi
           done
           now=$(date -u +%s)
           wait=$(( last + interval - now ))
@@ -66,12 +69,15 @@ jobs:
             echo "Last build started $(( (now - last) / 60 )) min ago; waiting $(( wait / 60 )) min (CI_MIN_INTERVAL_MINUTES=$MIN_INTERVAL)"
             sleep "$wait"
           else
-            echo "No build in the last $MIN_INTERVAL min"
+            echo "No build in the last $MIN_INTERVAL min (last=$last, now=$now)"
           fi
 
   build-linux:
     needs: throttle
     runs-on: ubuntu-latest # <--- The VM that runs Docker
+    concurrency:
+      group: ci-build-linux-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
 
     # 1. TELL GITHUB TO RUN INSIDE YOUR IMAGE
     container:             # <--- Custom environment inside the VM
@@ -126,6 +132,9 @@ jobs:
     needs: throttle
     runs-on: ubuntu-latest
     container: gcc:16
+    concurrency:
+      group: ci-build-gcc-${{ github.event_name == 'push' && 'master' || github.run_id }}
+      cancel-in-progress: true
 
     steps:
       - name: Install build dependencies
