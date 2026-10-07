@@ -140,8 +140,14 @@ public:
 
     /// ITimeTravelHooks: a load, a configuration change and a model transfer all end
     /// the session in v1, with the reason kept for status (Phase 5, Step 2 makes them events)
-    void OnLoad(TTDLoadKind, const char* reason) override { InvalidateSession(reason); }
-    bool QueueSnapshotLoad(std::function<void()>) override { return false; }   // v1 refuses it while recording
+    void OnLoad(TTDLoadKind kind, const char* reason) override   // a snapshot load ends the recording (D42), history kept; a medium drops it
+    {
+        if (kind == TTDLoadKind::Snapshot && !IsDebuggerLive())   // a debugger's rolling history is dropped by any outside change
+            StopRecording();
+        else
+            InvalidateSession(reason);
+    }
+    void EndSession(const char*) override { StopRecording(); }   // v1: the recording ends, no restart
     void OnConfigurationChange(TTDConfigChangeKind, const char* reason) override { InvalidateSession(reason); }
     void OnModelTransfer(const char* reason) override { InvalidateSession(reason); }
     bool HasHistory() const override { return !_timeline.empty(); }

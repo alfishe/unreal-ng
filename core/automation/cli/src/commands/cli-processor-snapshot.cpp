@@ -95,13 +95,6 @@ void CLIProcessor::HandleSnapshotLoad(const ClientSession& session,
         }
     }
 
-    // TTD refuses a snapshot load while recording (it would drop the history)
-    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
-    {
-        session.SendResponse("Error: " + refusal + NEWLINE);
-        return;
-    }
-
     // A file that needs another model (an SPG: TS-Conf) switches it first,
     // as on every surface (snapshotlauncher.h)
     SnapshotLoadRequest request;

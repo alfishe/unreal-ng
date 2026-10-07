@@ -963,9 +963,9 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
 
     if (start)
     {
-        // Same rule as Reset(): a reset must never append to a recorded TTD timeline
-        if (_context->pTimeTravelHooks && _context->pTimeTravelHooks->IsRecording())
-            _context->pTimeTravelHooks->StopRecording();
+        // Same rule as Reset(): the recording session ends (TTD D42)
+        if (_context->pTimeTravelHooks)
+            _context->pTimeTravelHooks->EndSession("autostart");
 
         autostart->Disarm();
         _core->Reset(RM_DOS);  // Quick reset straight into TR-DOS: PC = 0 with the DOS ROM active
@@ -1028,11 +1028,9 @@ void Emulator::Reset(bool hardReset)
     // See parent TDD §4.2 (StopRecording retains history) and §5.1
     // (markers are for nondeterministic INPUT events, not for state
     // teleports that happen AFTER recording stops).
-    if (_context && _context->pTimeTravelHooks
-        && _context->pTimeTravelHooks->IsRecording())
-    {
-        _context->pTimeTravelHooks->StopRecording();
-    }
+    // D42: the reset ENDS the recording session (a new one only by the `ttdrestart` feature)
+    if (_context && _context->pTimeTravelHooks)
+        _context->pTimeTravelHooks->EndSession("reset");
 
     // Now perform reset while paused (safe, no race condition).
     // The live emulator state is teleported; the TTD timeline is not.
@@ -1880,45 +1878,19 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error)>&
 
     std::string error;
     bool result = false;
-    bool loaded = false;
     ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
-    auto runLoad = [&]() {
-        loaded = true;
-        result = load(error);
-    };
+    auto runLoad = [&]() { result = load(error); };
 
-    // TTD (D10, the engine): a snapshot load while recording is part of the
-    // recording. The machine runs to the end of its frame and the load happens
-    // at the boundary, where the next checkpoint takes the loaded state; that
-    // boundary starts the next frame from it
-    if (ttd && ttd->QueueSnapshotLoad(runLoad))
-    {
-        Z80& z80 = *_core->GetZ80();
-        const uint32_t frameTStates = _context->emulatorState.BaseToCpuT(_context->config.frame);
-        RunTStates(z80.t < frameTStates ? frameTStates - static_cast<uint32_t>(z80.t) : 1, /*skipBreakpoints=*/true);
-        if (!loaded)
-            ttd->QueueSnapshotLoad(nullptr);   // the recording ended before the boundary: load without it
-    }
-
-    if (!loaded)
-    {
-        // v1 refuses it while recording (a snapshot teleports the whole machine,
-        // parent TDD §4.2); outside a recording the session hears of it first
-        if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadSnapshot, &error))
-        {
-            if (wasRunning)
-                Resume();
-            return false;
-        }
-        if (ttd)
-            ttd->OnLoad(ttd::TTDLoadKind::Snapshot, "snapshot-load");
-        runLoad();
-        // The loader reset the machine and replaced its state (ports, memory,
-        // registers): start the frame again from the loaded state, so devices
-        // and the video raster take their frame bases from it
-        if (result)
-            RestartFrame();
-    }
+    // TTD (D42): a snapshot load ENDS the recording session, like a reset (the history of this machine stays browsable;
+    // a new session starts only by the `ttdrestart` feature). Nothing is refused
+    if (ttd)
+        ttd->OnLoad(ttd::TTDLoadKind::Snapshot, "snapshot-load");
+    runLoad();
+    // The loader reset the machine and replaced its state (ports, memory,
+    // registers): start the frame again from the loaded state, so devices
+    // and the video raster take their frame bases from it
+    if (result)
+        RestartFrame();
     if (!result && !error.empty())
         MLOGERROR("Snapshot load failed: %s", error.c_str());
 

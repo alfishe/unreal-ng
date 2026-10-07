@@ -768,11 +768,6 @@ namespace PythonBindings
             request.path = path;
             request.switchModel = switchModel;
             request.commit = commit;
-            if (auto emulator = EmulatorManager::GetInstance()->GetEmulator(request.emulatorId))
-            {
-                if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
-                    throw std::runtime_error(refusal);
-            }
             const SnapshotLoadResult result = SnapshotLauncher::Load(request);
             py::dict d;
             d["ok"] = result.ok;
@@ -1838,8 +1833,6 @@ namespace PythonBindings
             
             // Snapshot operations
             .def("snapshot_load", [](Emulator& self, const std::string& path, const std::string& commit) -> bool {
-                if (std::string refusal = self.RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot); !refusal.empty())
-                    throw std::runtime_error(refusal);  // TTD is recording: RuntimeError with the reason
                 // This object is one machine: a file for another model (an SPG:
                 // TS-Conf) is refused; unreal.snapshot_load switches the model
                 SnapshotLoadRequest request;
@@ -1853,7 +1846,7 @@ namespace PythonBindings
                 if (!result.ok && result.report.refused)
                     throw std::runtime_error(result.message);  // the pipeline refused: RuntimeError with the reason
                 return result.ok;
-            }, "Load snapshot file (RuntimeError while TTD records, when the file needs another model, or when the "
+            }, "Load snapshot file (ends a TTD recording session; RuntimeError when the file needs another model, or when the "
                "snapshot pipeline refuses it; commit as in unreal.snapshot_load)",
                py::arg("path"), py::arg("commit") = "")
             .def("snapshot_inspect", [](Emulator& self, const std::string& path, const std::string& commit) -> py::object {

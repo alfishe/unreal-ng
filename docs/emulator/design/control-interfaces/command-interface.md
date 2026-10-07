@@ -1111,6 +1111,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | `turbomode` | `turbo` | OFF | Turbo mode: run the whole emulation as fast as the host allows. Audio is muted unless `setting turbo_audio on`. Same switch as `setting speed unlimited`. | Runs the host as fast as it can while on |
 | `hud` | `hud` | OFF | On-screen HUD: indicators and messages drawn over the emulator picture. | None when off |
 | `kempstonmouse` | `kmouse` | ON | Kempston Mouse on the bus, when the machine config fits one (`[INPUT] Mouse=KEMPSTON`). Off: the mouse ports are not decoded. | None |
+| `ttdrestart` | `ttdre` | OFF | Start a new TTD session after one ends: a reset, an autostart, a snapshot load and a change of the machine itself END the recording session; with this on a new session starts at the next frame boundary. Off: the machine is left without a recording. A black box always restarts. See *TTD Session Rules* |
 | `gs_lightweight` | `gslw` | OFF | General Sound lightweight personality: fit the built-in ProTracker player card, which needs no coprocessor firmware. Off keeps the personality from `[SOUND] GSType`. | None (a choice of card, not a cost) |
 | `contention` | `cont` | ON | Video memory contention on the machines that have it (48K / 128K / +2 ULA, +2A / +3 gate array): the CPU waits for the screen fetches, opcode fetches included. OFF runs those machines uncontended for comparison; no effect on machines without contention. `state contention` shows the rule, the switch and where the CPU waits. | None on machines without contention |
 
@@ -2822,9 +2823,20 @@ Worked example (CLI): `ttd start`, run 300 frames, `ttd seek 100` - the recordin
 | `ttd invalidate` | Stop the recording first, then discard it. |
 | Host speed 2x..16x, turbo, fast tape, turbo tape, fast disk | See the acceleration lock below. |
 
-**A change of the machine itself ends the session** (the engine; v1 refuses these while recording): a ROM load, a model switch (also a snapshot that needs another model, and a machine state transfer), a General Sound card switch (`gs switch_personality`, the `gs_lightweight` feature) and every slot change. The recording stops cleanly and its history is dropped (`last_drop_reason` names the change, `last_stop_reason` is `machine-change`). A new session then starts or not by the settings and options: a black box starts one on the changed machine at the next frame; an explicit recording is not started again. A model switch or a slot change restarts the machine as a new instance, which starts recording only by its own settings.
+**One rule: what replaces or restarts the machine ENDS the recording session.** (Owner rule 2026-10-06, engine decision D42; it settles the earlier D10a "a snapshot load is part of the recording", which no longer exists, and D39's optional "recording again". Do not reintroduce a per-operation exception: if a new operation replaces or restarts the machine, it joins this list.)
 
-**A snapshot load is part of the recording on the engine** (`backend: engine`, D10). While a session records, the machine first runs to the end of its current frame, then the snapshot replaces it at the frame boundary, and the checkpoint there holds the loaded state; frame numbers go on (a load outside a recording restarts them from 0). The history keeps both sides: a seek before the load shows the old program, a seek after it the loaded one, and running forward from before it takes the loaded state at that boundary. A recording paused for browsing (D8) continues with the load when the machine stands at its paused end; elsewhere it ends where it paused. Outside a recording a snapshot load keeps the history: the machine leaves it, as after a reset. A model switch through a snapshot (machine state transfer) is still refused while recording; tape, disk and ROM loads are unchanged.
+| Operation | Ends the session | History of the ended session |
+|---|---|---|
+| Machine reset, a disk autostart's quick reset | yes | kept, browsable (`last_stop_reason`: `reset` / `autostart`) |
+| Snapshot load (every format, also the one an RZX starts from) | yes | kept, browsable (`last_stop_reason`: `snapshot-load`) |
+| ROM load, model switch (also a snapshot or a machine state transfer that needs another model), General Sound card switch (`gs switch_personality`, the `gs_lightweight` feature), slot change | yes | dropped: another machine (`last_drop_reason` names the change, `last_stop_reason` is `machine-change`) |
+
+None of them is refused while recording: the recording stops cleanly (the machine parked, the features it switched on go back off) and the operation runs. The ended session is a stopped session like after `ttd stop`; a machine that sat in its history goes back to `idle`. **No new session starts by itself.** One starts only by setting:
+
+- the **`ttdrestart` feature** (alias `ttdre`, off by default; `feature ttdrestart on`, `features.ini`, every surface's feature command): after any of the operations above a new explicit recording starts at the next frame boundary, on the machine as it then is (a model switch or a slot change restarts the machine as a new instance, which starts only by its own settings);
+- the **black box** (Debug > Time Travel > Always Record): always starts a new session, whatever `ttdrestart` says.
+
+Not on this list (still refused while recording, unchanged): tape, disk and disk-image loads and creation, `ttd invalidate`, host speed and turbo (see the table above).
 
 **Switching `timetravel` or `debugmode` off stops the recording instead (FR-17).** It is not refused: the
 recording stops cleanly first - the machine is parked, everything recorded up to that instant stays and is

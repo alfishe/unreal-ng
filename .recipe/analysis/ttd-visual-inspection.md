@@ -113,8 +113,8 @@ one call instead of a seek and a capture per frame (see
   `backend: v1` they answer `409`: call `ttd/stop` first (history is retained).
 - Load the software **before** `ttd/start`: a tape or disk load (and disk
   create) is refused while recording and wipes a stopped session's history;
-  a ROM reload, model switch or slot change ends the session (the engine). A snapshot load on the engine is part of the recording
-  (v1 refuses it). A reset stops the recording and keeps it.
+  a ROM reload, model switch or slot change ends the session (the engine). A snapshot load and a reset END the session
+  and keep its history (one rule; a new session only with the `ttdrestart` feature or a black box).
 - While recording, the host speed is held at 1x and turbo / fast tape /
   fast disk are off, so a recording plays at real speed. See
   [command-interface.md → TTD Session Rules](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-session-rules).

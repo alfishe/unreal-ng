@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <functional>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -885,108 +886,82 @@ TEST_F(TimeTravelController_Test, AnEditWhilePausedContinuesAtTheEndOrEndsTheRec
     EXPECT_TRUE(seen.ram == live.ram);
 }
 
-/// D10: a snapshot load while recording is part of the recording. The machine
-/// finishes its frame, the load happens at the boundary and that checkpoint
-/// holds the loaded state; machine time goes on. Seeks before and after it
-/// restore what ran, and running forward from before it takes the loaded
-/// state at the boundary as the recording did
-TEST_F(TimeTravelController_Test, ASnapshotLoadWhileRecordingIsPartOfTheRecording)
+/// THE rule (D42, owner 2026-10-06; it replaces D10's "a snapshot load is part of the recording"): a snapshot load ENDS the
+/// recording session exactly as a reset does. Nothing is refused, the recording stops cleanly, the history of the machine stays
+/// browsable, and no new session starts unless the `ttdrestart` feature is on
+TEST_F(TimeTravelController_Test, ASnapshotLoadEndsTheSession)
 {
-    EmulatorContext* context = _b->GetContext();
-    Memory* memory = context->pMemory;
-    Z80* z80 = context->pCore->GetZ80();
-    _b->RunNFrames(3, /*skipBreakpoints=*/true);
-    memory->DirectWriteToZ80Memory(0x8100, 0x11);
-    const std::string path = TestPathHelper::GetUniqueTestScratchPath("d10-snapshot.z80");
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("d40-snapshot.z80");
     ASSERT_TRUE(_b->SaveSnapshot(path));
-    const uint16_t snapshotPc = z80->pc;
-    memory->DirectWriteToZ80Memory(0x8100, 0x22);
-    _b->RunNFrames(2, /*skipBreakpoints=*/true);
-
     ASSERT_TRUE(_controller->StartRecording());
     _b->RunNFrames(5, /*skipBreakpoints=*/true);
-    _b->RunTStates(20000, /*skipBreakpoints=*/true);
-    const ttd::TTDTimePoint beforeLoad = _controller->CurrentPosition();
-    const MachineState liveBeforeLoad = CaptureState(context, *_controller);
-    const ttd::TTDTimePoint first = _controller->GetCheckpoint(0)->time;
-    const size_t checkpoints = _controller->GetCheckpointCount();
+    const size_t recorded = _controller->GetCheckpointCount();
+    ASSERT_GE(recorded, 5u);
 
-    ASSERT_TRUE(_b->LoadSnapshot(path));
-    EXPECT_TRUE(_controller->IsRecording()) << "the load does not end the recording";
-    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x8100), 0x11) << "the snapshot is loaded";
-    const uint64_t cutFrame = beforeLoad.frame + 1;
-    EXPECT_EQ(context->emulatorState.frame_counter, cutFrame) << "at the next frame boundary, machine time going on";
-    ASSERT_EQ(_controller->GetCheckpointCount(), checkpoints + 1);
-    EXPECT_EQ(_controller->GetCheckpoint(checkpoints)->time.frame, cutFrame);
-    EXPECT_EQ(_controller->GetCheckpoint(0)->time, first) << "the history before the load stays";
-
+    ASSERT_TRUE(_b->LoadSnapshot(path)) << "never refused while recording";
+    EXPECT_FALSE(_controller->IsRecording()) << "the load ended the session";
+    EXPECT_EQ(_controller->GetSessionInfo().lastStopReason, "snapshot-load");
+    EXPECT_EQ(_controller->GetCheckpointCount(), recorded) << "the history of this machine stays";
     _b->RunNFrames(3, /*skipBreakpoints=*/true);
-    _b->RunTStates(15000, /*skipBreakpoints=*/true);
-    const ttd::TTDTimePoint afterLoad = _controller->CurrentPosition();
-    const MachineState liveAfterLoad = CaptureState(context, *_controller);
-    _controller->StopRecording();
-
-    auto expectSame = [&](const MachineState& seen, const MachineState& live, const char* where) {
-        EXPECT_EQ(std::memcmp(&seen.cpu, &live.cpu, sizeof(seen.cpu)), 0) << where << ": CPU (pc " << seen.cpu.pc
-                                                                          << " vs " << live.cpu.pc << ")";
-        EXPECT_TRUE(seen.ram == live.ram) << where << ": RAM";
-        EXPECT_TRUE(seen.devices == live.devices) << where << ": devices";
-    };
-    ASSERT_TRUE(_controller->SeekTo(afterLoad, nullptr));
-    expectSame(CaptureState(context, *_controller), liveAfterLoad, "a seek after the load");
-    ASSERT_TRUE(_controller->SeekTo(beforeLoad, nullptr));
-    expectSame(CaptureState(context, *_controller), liveBeforeLoad, "a seek before the load");
-    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x8100), 0x22);
-    ASSERT_TRUE(_controller->SeekTo({cutFrame, 0}, nullptr));
-    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x8100), 0x11) << "the boundary holds the loaded state";
-    EXPECT_EQ(z80->pc, snapshotPc);
-
-    // The machine playing the history forward from before the load crosses it as recorded
-    // (the recording ran the rest of the load's frame first)
-    ASSERT_TRUE(_controller->SeekTo(beforeLoad, nullptr));
-    _b->RunTStates(_controller->FrameSpan() - z80->t, /*skipBreakpoints=*/true);
-    _b->RunNFrames(3, /*skipBreakpoints=*/true);
-    _b->RunTStates(15000, /*skipBreakpoints=*/true);
-    EXPECT_EQ(_controller->CurrentPosition(), afterLoad);
-    expectSame(CaptureState(context, *_controller), liveAfterLoad, "running across the load");
+    EXPECT_FALSE(_controller->IsRecording()) << "no new session by default";
+    EXPECT_EQ(_controller->GetCheckpointCount(), recorded);
+    ttd::TTDSeekResult seek;
+    EXPECT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(2)->time.frame, 0}, &seek)) << "still browsable";
 }
 
-/// D10 outside a running recording: at a paused recording's end the load
-/// continues it and is recorded; anywhere else the history stays and the
-/// machine leaves it (a paused recording ends where it paused)
-TEST_F(TimeTravelController_Test, ASnapshotLoadKeepsTheHistory)
+/// The same rule for a recording paused for browsing, and for no recording at all (the history stays)
+TEST_F(TimeTravelController_Test, ASnapshotLoadEndsAPausedRecordingToo)
 {
-    const std::string path = TestPathHelper::GetUniqueTestScratchPath("d10-keep.z80");
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("d40-paused.z80");
     ASSERT_TRUE(_b->SaveSnapshot(path));
     ASSERT_TRUE(_controller->StartRecording());
     _b->RunNFrames(5, /*skipBreakpoints=*/true);
-    _b->RunTStates(20000, /*skipBreakpoints=*/true);
-    const ttd::TTDTimePoint pausedAt = _controller->CurrentPosition();
-
-    // At the paused end: the recording goes on with the load
     ASSERT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(2)->time.frame, 0}, nullptr));
-    ASSERT_TRUE(_controller->SeekTo(pausedAt, nullptr));
     ASSERT_TRUE(_controller->GetSessionInfo().recordingPaused);
-    const size_t before = _controller->GetCheckpointCount();
-    ASSERT_TRUE(_b->LoadSnapshot(path));
-    EXPECT_TRUE(_controller->IsRecording());
-    EXPECT_EQ(_controller->GetCheckpointCount(), before + 1) << "the load's boundary";
-
-    // In the past: the recording ends where it paused, the history stays
-    _b->RunNFrames(2, /*skipBreakpoints=*/true);
-    ASSERT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(2)->time.frame, 0}, nullptr));
     const size_t kept = _controller->GetCheckpointCount();
+
     ASSERT_TRUE(_b->LoadSnapshot(path));
     EXPECT_FALSE(_controller->IsRecording());
     EXPECT_FALSE(_controller->GetSessionInfo().recordingPaused);
     EXPECT_EQ(_controller->GetState(), ttd::TTDSessionState::Idle) << "the machine left the history";
     EXPECT_EQ(_controller->GetCheckpointCount(), kept);
 
-    // Idle with history: the history stays
-    ASSERT_TRUE(_b->LoadSnapshot(path));
+    ASSERT_TRUE(_b->LoadSnapshot(path)) << "with no recording the history stays";
     ASSERT_EQ(_controller->GetCheckpointCount(), kept);
     ttd::TTDSeekResult r;
-    EXPECT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(3)->time.frame, 0}, &r)) << "still browsable";
+    EXPECT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(3)->time.frame, 0}, &r));
+}
+
+/// One rule, three operations: a reset, a snapshot load and a change of the machine itself each end the recording session; a
+/// new one starts at the next frame boundary only with the `ttdrestart` feature on (default off). The black box always starts one
+TEST_F(TimeTravelController_Test, EveryEndingOperationFollowsTheOneRule)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("d40-rule.z80");
+    ASSERT_TRUE(_b->SaveSnapshot(path));
+    FeatureManager* features = _b->GetFeatureManager();
+    EXPECT_FALSE(features->isEnabled(Features::kTTDRestart)) << "off by default";
+
+    const std::pair<const char*, std::function<void()>> operations[] = {
+        {"reset", [&] { _b->Reset(); }},
+        {"snapshot load", [&] { ASSERT_TRUE(_b->LoadSnapshot(path)); }},
+        {"machine change", [&] { EXPECT_TRUE(MachineStateTransfer::Transfer(*_a, *_b, {}).ok); }},
+    };
+    for (const bool restart : {false, true})
+    {
+        ASSERT_TRUE(features->setFeature(Features::kTTDRestart, restart));
+        for (const auto& [name, operation] : operations)
+        {
+            ASSERT_TRUE(_controller->StartRecording()) << name;
+            _b->RunNFrames(3, /*skipBreakpoints=*/true);
+            operation();
+            EXPECT_FALSE(_controller->IsRecording()) << name << ": the operation ended the session";
+            _b->RunNFrames(2, /*skipBreakpoints=*/true);
+            EXPECT_EQ(_controller->IsRecording(), restart)
+                << name << ": a new session " << (restart ? "starts" : "does not start") << " (ttdrestart " << restart << ")";
+            if (_controller->IsRecording())
+                _controller->StopRecording();
+        }
+    }
 }
 
 /// A change of the machine itself ends the session (owner rule 2026-10-05): on
@@ -995,7 +970,7 @@ TEST_F(TimeTravelController_Test, ASnapshotLoadKeepsTheHistory)
 /// stays off, a black box starts a new session at the next frame boundary
 TEST_F(TimeTravelController_Test, AMachineChangeEndsTheSession)
 {
-    for (const ttd::TTDGuardedAction action : {ttd::TTDGuardedAction::LoadSnapshot, ttd::TTDGuardedAction::LoadRom,
+    for (const ttd::TTDGuardedAction action : {ttd::TTDGuardedAction::LoadRom,
                                                ttd::TTDGuardedAction::SwitchGsCard, ttd::TTDGuardedAction::SwitchModel,
                                                ttd::TTDGuardedAction::ChangeSlots})
     {
@@ -1201,7 +1176,6 @@ TEST_F(TimeTravelController_Test, APausedRecordingIsStillGuarded)
     EXPECT_NE(error.find("stop the recording first"), std::string::npos) << error;
     EXPECT_EQ(_controller->GetCheckpointCount(), kept) << "the paused recording's history stays";
     EXPECT_TRUE(_controller->GetSessionInfo().recordingPaused);
-    EXPECT_TRUE(_b->RecordingGuard(ttd::TTDGuardedAction::LoadSnapshot).empty()) << "a snapshot load is an event";
 }
 
 /// BUGS.md 2026-10-05 #3: the history of a stopped recording reaches to where
