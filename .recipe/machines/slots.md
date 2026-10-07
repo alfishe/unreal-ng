@@ -143,7 +143,8 @@ curl -s -X POST "$BASE/emulator/$ID/slots/isa.2/plug" -H 'Content-Type: applicat
 
 MCP: `inspect_state` aspect `slots` says `isa.1 = neogs [ram=2m] on isa.1.zxbus (behind sprinter-isa-zxbus)` and adds
 `machine slot isa.1 = zxbus (ISA to ZX-bus adapter, [ISA] Slot1) hosts isa.1.zxbus: neogs`; Lua / Python
-`slots_state().machineSlots`; Qt Machine > Slots the `isa` branch with the adapter, its ZX-bus and the card. CLI
+`slots_state().machineSlots`; Qt Machine > Slots a read-only "Board Slots" list (`isa.1` ISA to ZX-bus adapter, hosts
+`isa.1.zxbus: neogs`; `isa.2` NE2000) above the expansion slots, where the card reads `isa.1: NeoGS (on isa.1.zxbus)`. CLI
 `slots` (checked live 2026-10-06 with the WebAPI, MCP and Lua lines above):
 
 ```text

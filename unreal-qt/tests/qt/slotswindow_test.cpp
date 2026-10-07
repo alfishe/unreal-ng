@@ -212,9 +212,8 @@ TEST_F(SlotsWindow_Test, NetworkCardsAreASlotChange)
     EXPECT_EQ(_current->GetId(), sameId);
 }
 
-/// SL-8: on the Sprinter the tree shows the board's own ISA slots under the `isa` bus, the ZX-bus the adapter in isa.1
-/// hosts under that slot, and the General Sound on that ZX-bus; the slot choices offer the adapter's slot, not a
-/// "<hosted bus>.next"
+/// SL-8: on the Sprinter the window shows the board's own ISA slots (read-only, from [ISA]) with what the ZX-bus
+/// adapter hosts, and the General Sound expansion slot on the adapter's ZX-bus
 TEST_F(SlotsWindow_Test, SprinterIsaSlotsAndTheAdapterBus)
 {
     std::string error;
@@ -233,9 +232,15 @@ TEST_F(SlotsWindow_Test, SprinterIsaSlotsAndTheAdapterBus)
     window.setController(controller.get());
     window.show();
 
-    const QString tree = window.treeText();
-    EXPECT_TRUE(tree.contains("isa | isa8\n  isa.1 | zxbus\n    isa.1.zxbus | zxbus\n      isa.1 | neogs\n  isa.2 | ne2000"))
-        << tree.toStdString();
-    window.choose("isa.1", "gs");   // the hosted bus's place is its host slot
-    EXPECT_TRUE(window.previewText().contains("isa.1")) << window.previewText().toStdString();
+    const QString text = window.slotsText();
+    EXPECT_TRUE(text.contains("isa.1: NeoGS (on isa.1.zxbus)")) << text.toStdString();
+    EXPECT_TRUE(text.contains("board isa.1 | ISA to ZX-bus adapter | hosts isa.1.zxbus: neogs")) << text.toStdString();
+    EXPECT_TRUE(text.contains("board isa.2 | NE2000 Ethernet | RTL8019AS, #300, IRQ 3")) << text.toStdString();
+
+    // A Pentagon has no board slots: the section stays hidden
+    _binding.unbind();
+    auto pentagon = Create({{"zxbus.1", "gs"}});
+    ASSERT_NE(pentagon, nullptr);
+    _binding.bind(pentagon.get());
+    EXPECT_FALSE(window.slotsText().contains("board ")) << window.slotsText().toStdString();
 }

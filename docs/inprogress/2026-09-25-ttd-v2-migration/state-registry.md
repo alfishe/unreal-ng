@@ -180,7 +180,7 @@ Ordered by severity. "Breaks replay" means a restore or a replay can give a stat
 |---|---|---|---|
 | 1 | *v1 only, not fixed (decided 2026-10-02):* v1's history limit (`SetHistoryLimit`) renumbers network payload records on eviction, but references held inside surviving checkpoints (ZXNETUSB, COM port, ZiFi, ATM2 I/O ESP, serial peer) keep the old numbers. The engine does not evict history from memory (decision 28: memory is a cache of the session file) and keeps every payload a checkpoint refers to (decision 24); record numbers there are absolute | Wrong bytes or zeros after a v1 eviction, with a history limit set and unread network bytes | v1 only |
 | 2 | *Closed 2026-10-02 by design:* the lightweight GS is not recorded (class N, named in the header); it runs live through seeks | — | — |
-| 3 | NeoGS RAM and flash, MoonSound wave SRAM exist only as engine regions; the engine has no restore path yet | Card memory not restored | breaks replay until the engine restores (Phase 5) |
+| 3 | NeoGS RAM and flash, MoonSound wave SRAM exist only as engine regions; the engine has no restore path yet | Card memory not restored | fixed: the controller restores every region from the engine (Phase 5 switch, edb2f3c40) |
 | 4 | *Fixed 2026-10-02:* WD1793 command context declared only on the Sprinter | A checkpoint inside a multi-frame disk transfer ended it early on every other Beta machine | — |
 | 5 | *Fixed 2026-10-02:* ZX keyboard matrix in no checkpoint | Machines without the port journal read the live matrix in replay; stuck or missing keys after seek + resume | breaks replay |
 | 6 | *Fixed 2026-10-02:* `scorpion_turbo` not stored, waits not resynced after a restore | Wait states, step hook, INT pulse diverge | breaks replay |

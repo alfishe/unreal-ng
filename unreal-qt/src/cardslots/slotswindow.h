@@ -1,12 +1,13 @@
 /**
  * @file slotswindow.h
- * @brief SlotsWindow - Machine > Slots: the machine's buses, slots and cards, a card catalog with how each card
- *        fits, the options of a card (the ZX-MultiSound's DIP switches, GS RAM and control mask), the plan of a change
- *        before it is made, and plug / remove / set options / Undo (ZX-bus slots SL-7, architecture.md §9).
+ * @brief SlotsWindow - Machine > Slots: simplified slot management with a list view.
  *
- * A thin adapter like every automation surface: it shows DeviceState::Slots and SlotControl::Catalog, previews
- * SlotManager::PlanChange, and applies through SlotChangeController (confirmation, restart, removed cards named with
- * Undo). Nothing slot-specific is decided here.
+ * Layout:
+ *   - Machine header (model name)
+ *   - Built-in devices (collapsible, shows active/replaced state)
+ *   - Board slots (the machine's own, the Sprinter's ISA slots from [ISA]; read-only, shown when the machine has them)
+ *   - Expansion slots list with +/- buttons and "..." for configuration popup
+ *   - Undo button
  */
 
 #pragma once
@@ -19,16 +20,15 @@
 #include "emulator/state/statenode.h"
 
 class EmulatorBinding;
-class QCheckBox;
-class QComboBox;
 class QLabel;
-class QPlainTextEdit;
+class QListWidget;
+class QListWidgetItem;
 class QPushButton;
 class QTimer;
+class QToolButton;
 class QTreeWidget;
-class QTreeWidgetItem;
-class QVBoxLayout;
 class SlotChangeController;
+class SlotConfigDialog;
 
 class SlotsWindow : public QWidget
 {
@@ -40,25 +40,20 @@ public:
     void setBinding(EmulatorBinding* binding);
     void setController(SlotChangeController* controller);
 
-    /// The plan preview's text now (tests)
-    QString previewText() const;
-    /// Selects a slot / card / options as a user would (tests and the tree)
+    /// Test helpers - simulate the old form-based API for backward compatibility with tests
     void choose(const QString& slot, const QString& card, const QString& options = QString());
-    /// The options the editors hold, as "name=value ..." (tests)
+    QString previewText() const;
     QString optionsText() const;
-    /// The slot tree as lines "<indent><column 0> | <column 1>", two spaces per level (tests)
-    QString treeText() const;
-
-signals:
-    /// Visibility changed via the window's own close box (keeps the menu in sync)
-    void visibilityChanged(bool visible);
-
-public:
-    // Button actions (the buttons call them; tests too)
     void plugChosen();
     void removeChosen();
     void setChosenOptions();
     void undoLast();
+    /// The expansion slots list and the board slots as lines (tests): "<slot list row>" per slot, then
+    /// "board <slot> | <card> | <what it hosts or its details>" per board slot
+    QString slotsText() const;
+
+signals:
+    void visibilityChanged(bool visible);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -67,42 +62,38 @@ protected:
 private:
     void buildUi();
     void refresh();
-    void fillTree(const StateNode& report);
-    void fillCatalog(const StateNode& cards);
-    void fillSlotChoices(const StateNode& report);
-    void rebuildOptionEditors();
-    void updatePreview();
-    void onTreeSelection();
+    void fillBuiltIns(const StateNode& report);
+    void fillSlots(const StateNode& report);
+    void fillMachineSlots(const StateNode& report);
+    void onAddSlot();
+    void onRemoveSlot();
+    void onConfigureSlot(int row);
+    void onSlotDialogAccepted(const std::string& slotId, const std::string& cardId, const std::string& options);
     std::string currentEmulatorId() const;
-
-    struct OptionEditor
-    {
-        std::string name;
-        bool set = false;
-        QComboBox* combo = nullptr;                    ///< enum
-        std::vector<std::pair<std::string, QCheckBox*>> boxes;   ///< set: value id, its box
-    };
+    std::string nextFreeSlot() const;
+    QString defaultOptionsFor(const std::string& cardId) const;
+    QString mergeOptionsWithDefaults(const std::string& cardId, const std::string& given) const;
 
     EmulatorBinding* _binding = nullptr;
     SlotChangeController* _controller = nullptr;
     QTimer* _timer = nullptr;
-    std::string _shownReport;       ///< the report the tree shows (JSON), to refresh only on a change
-    std::string _shownModel;
-    StateNode _catalog;             ///< the catalog's cards
-    StateNode _report;              ///< the slot report
-    bool _loading = false;
+    std::string _shownReport;
+    StateNode _report;
+    StateNode _catalog;
 
-    QLabel* _machine = nullptr;
-    QTreeWidget* _tree = nullptr;
-    QComboBox* _slot = nullptr;
-    QComboBox* _card = nullptr;
-    QWidget* _optionsBox = nullptr;
-    QVBoxLayout* _optionsLayout = nullptr;
-    QLabel* _cardNote = nullptr;
-    std::vector<OptionEditor> _editors;
-    QPushButton* _plug = nullptr;
-    QPushButton* _remove = nullptr;
-    QPushButton* _setOptions = nullptr;
-    QPushButton* _undo = nullptr;
-    QPlainTextEdit* _preview = nullptr;
+    QLabel* _machineLabel = nullptr;
+    QToolButton* _builtInsToggle = nullptr;
+    QTreeWidget* _builtInsTree = nullptr;
+    QListWidget* _slotsList = nullptr;
+    QLabel* _machineSlotsLabel = nullptr;      ///< "Board Slots": the machine's own slots (the Sprinter's ISA slots)
+    QTreeWidget* _machineSlotsTree = nullptr;
+    QPushButton* _addButton = nullptr;
+    QPushButton* _removeButton = nullptr;
+    QPushButton* _configButton = nullptr;
+    QPushButton* _undoButton = nullptr;
+
+    /// Test state - simulates the old form-based selection
+    QString _testSlot;
+    QString _testCard;
+    QString _testOptions;
 };

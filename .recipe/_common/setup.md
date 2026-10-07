@@ -53,14 +53,15 @@ Only **one process can bind port 8090** — a stale instance silently wins or
 loses the race and everything downstream gets confusing. Always start with:
 
 ```bash
-# 1. Kill stale instances
-pkill -9 unreal-qt 2>/dev/null || true
-sleep 1
+# 1. Check if port 8090 is already in use
+if lsof -i :8090 >/dev/null 2>&1; then
+  echo "WARNING: Port 8090 in use. Another session may own this emulator."
+  echo "Use that instance, or ask the user before killing it."
+  lsof -i :8090
+  exit 1
+fi
 
-# 2. Verify port 8090 is free
-lsof -i :8090 2>/dev/null && echo "WARNING: port 8090 still in use!" || echo "port free"
-
-# 3. Start the freshly built emulator (macOS path; Linux: bin/unreal-qt)
+# 2. Start the freshly built emulator (macOS path; Linux: bin/unreal-qt)
 ./cmake-build-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt &
 sleep 4   # WebAPI + MCP listeners come up with the app
 

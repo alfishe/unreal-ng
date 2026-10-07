@@ -2,6 +2,12 @@
 #include "pch.h"
 
 #include "_helpers/testpathhelper.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/memory/memory.h"
 #include "loaders/snapshot/loaderzxp.h"
 
 #include <fstream>
@@ -116,4 +122,90 @@ TEST_F(LoaderZXP_Test, RejectsPageIndexOutOfRange)
     data[ZXPSnapshot::HEADER_SIZE + 1] = 8;    // module 0, first page index
     LoaderZXP loader(nullptr, "bad-page");
     EXPECT_FALSE(loader.ParseBuffer(data.data(), data.size()));
+}
+
+/// A .zxp is four machines: the group is planned first (each module's image on its own machine), then committed. One refusal
+/// stops the load with no machine touched, and the reason names the module
+class LoaderZXPGroup_Test : public LoaderZXP_Test
+{
+protected:
+    void TearDown() override
+    {
+        for (const auto& id : EmulatorManager::GetInstance()->GetEmulatorIds())
+            EmulatorManager::GetInstance()->RemoveEmulator(id);
+    }
+
+    std::array<EmulatorContext*, ZXPSnapshot::MODULE_COUNT> Machines(const char* thirdModel)
+    {
+        std::array<EmulatorContext*, ZXPSnapshot::MODULE_COUNT> contexts{};
+        for (size_t m = 0; m < contexts.size(); m++)
+        {
+            auto emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("zxp-module-" + std::to_string(m),
+                                                                                   m == 2 ? thirdModel : "128k", LoggerLevel::LogError);
+            EXPECT_NE(emulator, nullptr);
+            contexts[m] = emulator ? emulator->GetContext() : nullptr;
+        }
+        return contexts;
+    }
+
+    static uint64_t RamHash(EmulatorContext* context)
+    {
+        uint64_t h = 14695981038346656037ull;
+        for (uint16_t page = 0; page < 8; page++)
+        {
+            const uint8_t* bytes = context->pMemory->RAMPageAddress(page);
+            for (uint32_t i = 0; i < 16384; i++)
+            {
+                h ^= bytes[i];
+                h *= 1099511628211ull;
+            }
+        }
+        return h;
+    }
+};
+
+TEST_F(LoaderZXPGroup_Test, TheGroupIsPlannedThenEachModuleIsCommittedFromItsImage)
+{
+    LoaderZXP loader(nullptr, CorpusPath("Alien8.zxp"));
+    ASSERT_TRUE(loader.Parse()) << loader.GetError();
+    const auto contexts = Machines("128k");
+    ASSERT_TRUE(loader.Apply(contexts)) << loader.GetError();
+
+    for (size_t m = 0; m < contexts.size(); m++)
+    {
+        const ZXPModuleState& module = loader.GetSnapshot().modules[m];
+        EXPECT_EQ(loader.GetReport(m).format, "zxp") << "module " << m;
+        EXPECT_EQ(loader.GetReport(m).commit, "legacy") << "module " << m;
+        EXPECT_FALSE(loader.GetReport(m).refused);
+        EXPECT_EQ(contexts[m]->pCore->GetZ80()->pc, module.pc) << "module " << m;
+        EXPECT_EQ(contexts[m]->emulatorState.p7FFD, module.port7FFD) << "module " << m;
+        for (uint8_t page = 0; page < 8; page++)
+        {
+            if (module.pageUsed[page])
+                EXPECT_EQ(0, std::memcmp(contexts[m]->pMemory->RAMPageAddress(page), module.pages.data() + page * PAGE_SIZE, PAGE_SIZE))
+                    << "module " << m << " page " << int(page);
+        }
+    }
+}
+
+TEST_F(LoaderZXPGroup_Test, OneRefusingModuleStopsTheWholeLoadBeforeAnythingIsWritten)
+{
+    LoaderZXP loader(nullptr, CorpusPath("flyshark.zxp"));
+    ASSERT_TRUE(loader.Parse()) << loader.GetError();
+    const auto contexts = Machines("48K");   // module 2 is a 48K: it has no banks 0, 1, 3, 4, 6, 7
+    std::array<uint64_t, ZXPSnapshot::MODULE_COUNT> before{};
+    for (size_t m = 0; m < contexts.size(); m++)
+        before[m] = m == 2 ? 0 : RamHash(contexts[m]);
+    const uint16_t pc0 = contexts[0]->pCore->GetZ80()->pc;
+
+    EXPECT_FALSE(loader.Apply(contexts));
+    EXPECT_NE(loader.GetError().find("module 2"), std::string::npos) << loader.GetError();
+    EXPECT_TRUE(loader.GetReport(2).refused);
+    EXPECT_EQ(loader.GetReport(2).needs, "model:128K");
+    for (size_t m = 0; m < contexts.size(); m++)
+    {
+        if (m != 2)
+            EXPECT_EQ(RamHash(contexts[m]), before[m]) << "module " << m << " was not touched";
+    }
+    EXPECT_EQ(contexts[0]->pCore->GetZ80()->pc, pc0) << "no CPU was written either";
 }

@@ -3,6 +3,7 @@
 // Z80 facts shared by the dialect plugins: the instruction set (undocumented forms included), register and condition
 // names, how many operands an instruction takes (to split ALASM / STORM multi-operand lines).
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -20,4 +21,6 @@ int SplitArity(std::string_view mnemonic);
 bool TakesCondition(std::string_view mnemonic);
 std::string Lower(std::string_view text);
 std::string Upper(std::string_view text);
+/// Upper-case hex digits of a value, at least `digits` of them (zero-padded)
+std::string HexDigits(uint64_t value, int digits);
 }  // namespace unrealasm::dialects::z80

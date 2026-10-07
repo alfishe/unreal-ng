@@ -1291,3 +1291,15 @@ TEST_F(TimeTravelManagerSearchWindow_Test, RefusedSearchHasNoWindow)
 }
 
 // Write-journal segments and their status: timetravelmanager_journalsegments_test.cpp (D40)
+
+/// Phase 5 Step 4: this file is one of v1's own (ttdv1tests.h), so the
+/// machines its tests create record with v1, not with the engine
+TEST(TimeTravelManager_Backend_Test, MachinesOfV1TestsRecordWithV1)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    EXPECT_EQ(static_cast<void*>(context->pTimeTravelHooks), static_cast<void*>(context->pTimeTravelManager))
+        << "the core calls v1's manager";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

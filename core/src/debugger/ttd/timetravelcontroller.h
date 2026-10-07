@@ -361,6 +361,9 @@ public:
     /// or with devices this machine lacks. The session is Idle afterwards;
     /// SeekTo browses it, ResumeRecordingFrom continues it
     bool DeserializeSession(std::istream& in, std::string& err);
+    /// DeserializeSession from a file, read where the loader asks: the file is
+    /// not copied into memory first ("Cannot open file: <path>" when it cannot be opened)
+    bool DeserializeSessionFile(const std::string& path, std::string& err);
 
 private:
     /// The engine this controller records into and restores from (Phase 5, C1): created
@@ -370,6 +373,8 @@ private:
 
     /// Load @p source into a fresh engine, checked against this machine and
     /// bound to it; nothing of the current session changes
+    /// The load from any byte source (a file, memory)
+    bool DeserializeSessionFrom(const ITTDByteSource& source, std::string& err);
     std::unique_ptr<TimeTravelEngine> LoadEngineSession(const ITTDByteSource& source, TTDSessionFacts& facts,
                                                         std::vector<uint8_t>& coverage, TTDBookmarkJournal& bookmarks,
                                                         std::string& err);
@@ -1994,6 +1999,9 @@ private:
     /// Set via SetEnableWriteJournal() before StartRecording().
 
     bool _enableWriteJournal = false;   ///< D40: the journal is recorded on demand
+    /// The live ring holds one frame's writes: it is drained into the engine at
+    /// each capture and cleared, its memory committed in chunks as it fills.
+    /// This is the most one frame may write before the oldest records are lost
     static constexpr size_t kDefaultWriteJournalBytes = 64u * 1024 * 1024;
     size_t _writeJournalBytes = kDefaultWriteJournalBytes;   ///< SetWriteJournalCapacity
 

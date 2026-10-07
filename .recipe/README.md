@@ -59,8 +59,7 @@ matches; it names the recipe(s) for that action.
 | Recording/replaying/seeking machine state | [analysis/ttd-recording.md](analysis/ttd-recording.md) (+ [ttd-reverse-debugging.md](analysis/ttd-reverse-debugging.md) for `find-last`/`reverse-continue`) | port-trace, memory-counters |
 | Typing, key presses, key combos, macros, the host-keyboard gate | [input/keyboard.md](input/keyboard.md) | joystick, mouse |
 | Pressing joystick buttons / checking what the guest reads at `IN #1F` | [input/joystick.md](input/joystick.md) | everything else |
-| Moving the mouse, clicking, the wheel / checking what the guest reads at `#FADF` / `#FBDF` / `#FFDF` | [input/keyboard.md](input/keyboard.md) | Keyboard injection: tap / type / press / release / combo / macro / abort, timing in frames, key names, the host-keyboard route gate, ZX-Evo PS/2 and the ATM2 controller path |
-| [input/mouse.md](input/mouse.md) | everything else |
+| Moving the mouse, clicking, the wheel / checking what the guest reads at `#FADF` / `#FBDF` / `#FFDF` | [input/mouse.md](input/mouse.md) | keyboard, joystick |
 | Breakpoints, stepping, being told about pauses (WebSocket events) | [analysis/breakpoints-and-events.md](analysis/breakpoints-and-events.md) | ttd-* |
 | Running to a scanline / pixel / interrupt, frame and T-state stepping, step over / out | [analysis/execution-control-and-stepping.md](analysis/execution-control-and-stepping.md) | ttd-*, profilers |
 | Who calls a routine, hot opcodes, per-frame cost | [analysis/calltrace-and-opcode-profiler.md](analysis/calltrace-and-opcode-profiler.md) | port-trace |
@@ -73,13 +72,7 @@ matches; it names the recipe(s) for that action.
 | Per-device volume, mute, solo, recording a sound source | [peripherals/audio-mixer-and-capture.md](peripherals/audio-mixer-and-capture.md) | the card recipes unless the card matters |
 | Watching port I/O | [analysis/port-trace.md](analysis/port-trace.md) | ttd-*, memory-counters |
 | Capturing the VDAC2 card's FT812 bus (an .evr replay stream) | [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | port-trace |
-| Counting/mapping memory access | [analysis/execution-control-and-stepping.md](analysis/execution-control-and-stepping.md) | Pause / resume / reset / NMI, step / steps / step over / out, run frames / T-states / scanlines, run to scanline / pixel / interrupt, skip until, beam position |
-| [analysis/calltrace-and-opcode-profiler.md](analysis/calltrace-and-opcode-profiler.md) | Call-trace, opcode and memory profilers, frame cost: start, run, read, stop; which one answers which question |
-| [analysis/symbols-listings-and-source-stepping.md](analysis/symbols-listings-and-source-stepping.md) | Labels and symbols, sjasmplus listings, step / run to a source line, assemble into memory |
-| [analysis/code-coverage-and-analyzers.md](analysis/code-coverage-and-analyzers.md) | Code coverage and its gaps, the analyzer framework (TR-DOS events, raw FDC), coverage over a TTD timeline |
-| [analysis/memory-search-map-and-regions.md](analysis/memory-search-map-and-regions.md) | Memory find / map / info, named regions, write, ROM protect, paging state, a port write through the decoder (`ports/out`), disasm pages |
-| [analysis/debugger-snapshot.md](analysis/debugger-snapshot.md) | `GET /debug/snapshot` (registers, prev_regs, pages, stack, time, code, memory at one moment, `seq`), `format=binary` memory reads, `mem_read_bytes`, `memory save` windows |
-| [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
+| Counting/mapping memory access | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
 | Recording a video (with sound) of a run | [media/video-recording.md](media/video-recording.md) | everything else |
 | Debugging a visual/screen bug | [analysis/ttd-visual-inspection.md](analysis/ttd-visual-inspection.md) + [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | everything else until you have a reproducible frame |
 | Detecting a custom loader / triaging a hang | [analysis/nonstandard-loader.md](analysis/nonstandard-loader.md) | port-trace (it's composed in already) |

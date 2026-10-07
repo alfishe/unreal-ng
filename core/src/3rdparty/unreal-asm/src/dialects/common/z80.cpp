@@ -26,6 +26,20 @@ std::string Lower(std::string_view text)
     return out;
 }
 
+std::string HexDigits(uint64_t value, int digits)
+{
+    static const char kDigits[] = "0123456789ABCDEF";
+    std::string out;
+    do
+    {
+        out.insert(out.begin(), kDigits[value & 0xF]);
+        value >>= 4;
+    } while (value);
+    if (static_cast<int>(out.size()) < digits)
+        out.insert(out.begin(), static_cast<size_t>(digits) - out.size(), '0');
+    return out;
+}
+
 std::string Upper(std::string_view text)
 {
     std::string out(text);

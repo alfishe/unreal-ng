@@ -1,0 +1,7 @@
+; sjasm symbols
+START EQU $8000
+DATA_PTR EQU $C000 ; (DATA)
+CONSTVAL EQU 0x0018 ; plain comment
+LABEL: EQU 0x0000C010
+TOP EQU $FFFF
+bad EQU $XYZ

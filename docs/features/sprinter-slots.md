@@ -231,8 +231,9 @@ curl -s $B/$ID/slots | jq -c '.machineSlots[] | {slot, card, name, details, sour
 
 The slot report lists the ISA slots as the machine's own slots (`machineSlots`: the cards come from `[ISA]`, not from
 `[SLOTS]`), the adapter's ZX-bus as a bus hosted by its slot (`buses[]`: `isa.1.zxbus`, `host` `isa.1`) and the
-General Sound on that bus. The Qt Machine > Slots window shows the same tree: `isa`, under it `isa.1` (the adapter)
-with its ZX-bus and the card, and `isa.2`.
+General Sound on that bus. The Qt Machine > Slots window lists the ISA slots under "Board Slots" (read-only: `isa.1`
+ISA to ZX-bus adapter, hosts `isa.1.zxbus: neogs`; `isa.2` NE2000 Ethernet) and the card among the expansion slots as
+`isa.1: NeoGS (on isa.1.zxbus)`.
 
 CLI: `slots` (with a "machine slots" part), `isa` (or `state isa`). A card that was not fitted shows the reason (`not_fitted` in `state/isa`, the `state` of
 the slot in `slots`).

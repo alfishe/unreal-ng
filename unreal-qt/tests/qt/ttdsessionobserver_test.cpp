@@ -16,7 +16,7 @@
 #include <thread>
 
 #include "_helpers/testwaithelper.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdsession.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -65,8 +65,8 @@ TEST_F(TtdSessionObserver_Test, PollWhileAutomationRecordsStopsAndInvalidates)
 {
     auto emulator = _manager->CreateEmulator();  // the UI keeps its shared_ptr, as MainWindow does
     ASSERT_NE(emulator, nullptr);
-    ttd::TimeTravelManager* ttd = emulator->GetContext()->pTimeTravelManager;
-    ASSERT_NE(ttd, nullptr);
+    ttd::TTDSessionRef ttd(emulator->GetContext());
+    ASSERT_TRUE(ttd);
 
     constexpr int kCycles = 10;
     std::atomic<bool> done{false};
@@ -114,8 +114,8 @@ TEST_F(TtdSessionObserver_Test, PollWhileAutomationRemovesTheInstance)
 {
     auto emulator = _manager->CreateEmulator();
     ASSERT_NE(emulator, nullptr);
-    ttd::TimeTravelManager* ttd = emulator->GetContext()->pTimeTravelManager;
-    ASSERT_NE(ttd, nullptr);
+    ttd::TTDSessionRef ttd(emulator->GetContext());
+    ASSERT_TRUE(ttd);
     ASSERT_TRUE(ttd->StartRecording());
     emulator->RunNFrames(2);
 

@@ -370,6 +370,26 @@ void TimeTravelController::CommitLoadedSession(std::unique_ptr<TimeTravelEngine>
 
 bool TimeTravelController::DeserializeSession(std::istream& in, std::string& err)
 {
+    std::vector<uint8_t> bytes;
+    if (!ReadAll(in, bytes, err))
+        return false;
+    return DeserializeSessionFrom(TTDMemorySource(std::move(bytes)), err);
+}
+
+bool TimeTravelController::DeserializeSessionFile(const std::string& path, std::string& err)
+{
+    // Read where the loader asks (the container reader seeks), not the whole file first
+    const TTDFileSource source(path);
+    if (!source.Valid())
+    {
+        err = "Cannot open file: " + path;
+        return false;
+    }
+    return DeserializeSessionFrom(source, err);
+}
+
+bool TimeTravelController::DeserializeSessionFrom(const ITTDByteSource& source, std::string& err)
+{
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     // A machine where time travel is not available at all (a ZX-Poly member)
     // loads no session
@@ -383,15 +403,12 @@ bool TimeTravelController::DeserializeSession(std::istream& in, std::string& err
         err = "stop the recording first: loading a session replaces it";
         return false;
     }
-    std::vector<uint8_t> bytes;
-    if (!ReadAll(in, bytes, err))
-        return false;
-    if (IsV1File(bytes))
+    std::vector<uint8_t> head(std::min<uint64_t>(source.Size(), 6));
+    if (!head.empty() && source.ReadAt(0, head.data(), head.size()) && IsV1File(head))
     {
         err = kV1Refused;
         return false;
     }
-    const TTDMemorySource source(std::move(bytes));
     TTDSessionFacts facts;
     std::vector<uint8_t> coverage;
     TTDBookmarkJournal bookmarks;

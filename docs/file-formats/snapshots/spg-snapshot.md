@@ -74,6 +74,7 @@ Snapshot overview and how loading works: [README](README.md).
 - The whole file is parsed and depacked before the machine is touched: a corrupt file, a block running past the end, or a
   broken MegaLZ / Hrust stream changes nothing, and the error says which block.
 - Blocks are written by **physical RAM address** (page times 16 KB plus the offset), not through the Z80's windows.
+- The program is committed **from the neutral snapshot image** by the TS-Conf machine's own policy (`tsconf-program`; the load report names it). The image holds the blocks as physical runs, the CPU, and the two TS-Conf registers the file names (the page at #C000 and the clock bits) as the `spg:header` extension's payload. `commit=legacy` runs the same code from the same image.
 - The commit resets the machine, leaves the SD card as the shell would (idle, initialized), puts MEM_CONFIG in mapped mode with
   the BASIC-48 ROM at #0000, pages 5 and 2 in windows 1 and 2 and the header's page in window 3, sets SYS_CONFIG from the
   clock bits, #7FFD = #10, IY = #5C3A, HL' = #2758, I = #3F, IM 1, and the interrupt enable from the header.

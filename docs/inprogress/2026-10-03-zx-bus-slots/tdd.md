@@ -1065,8 +1065,9 @@ the slot set does not plan them. As built:
   before: always the first adapter), the other adapter's report says where it is.
 - Surfaces: WebAPI / Lua / Python get the tree; CLI `slots` lists "machine slots" and the hosting bus; MCP
   `inspect_state slots` names the machine slots and the bus behind an adapter; OpenAPI describes the fields; Qt
-  Machine > Slots shows the ISA slots under `isa`, the adapter's ZX-bus under its slot and the GS under that bus, and
-  offers the adapter's slot (not `isa.1.zxbus.next`) as a place.
+  Machine > Slots (the list design of master `ce45b4141`, merged in) shows a read-only "Board Slots" list (the ISA
+  slots, what the adapter hosts, the NE2000's resources), the GS expansion slot as `isa.1: NeoGS (on isa.1.zxbus)`,
+  and "+" never offers a hosted bus as `<bus>.next`.
 - TTD: the ISA population stays in the Sprinter's blob 33 and is compared by the decoder's `TtdSessionMatches`, now
   on both backends (§17.3); no fingerprint field added (the engine corpus's `sprinter_boot` stays valid).
 
