@@ -50,6 +50,7 @@ add_library(unreal-asm STATIC
     src/dialects/common/macros.cpp
     src/dialects/storm/stormfrontend.cpp
     src/dialects/zxasm/zxasmfrontend.cpp
+    src/dialects/xas/xasfrontend.cpp
     src/dialects/tasm/tasmfrontend.cpp
     src/dialects/masm/masmfrontend.cpp
     src/dialects/alasm/alasmfrontend.cpp
@@ -125,6 +126,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/xascodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/stormfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/zxasmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/xasfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/pasmobackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/z88dkbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/trdos_test.cpp

@@ -42,6 +42,12 @@ Part of the library (decision D-14): every codec and plugin is tested on the fil
 
 | `dialects/masm11/` | `MT1.$a`: a MASM 1.1 source with every construct the MASM → sjasmplus conversion handles; `MT1.bin`: the 140 bytes MASM 1.1 built from it at `#6000`; `MT2.$a` + `DAT.$C` (5 bytes, the rest of its sector `#50`-`#5F`): an INCBIN, `MT2.bin` the 257 bytes MASM 1.1 built (the whole sector lands, the address moves by 5); `MASM_SRC-C000.bin` / `MASM_SRC-6000.bin`: what MASM 1.1 built from its own source (`masm/MASM_SRC__LS2` with `M1+`, `M2+`): `#C000-#ED90` (RAM page 0) and `#6000-#6016` | `MT1`, `MT2`, `DAT` written for these tests (the sources encoded with `zxasm encode --codec masm --version 1.1`); the bytes read from the emulator's memory after [MASM 1.1](https://vtrd.in/system/MASM_11.ZIP) assembled the sources in unreal-ng. Research: `docs/inprogress/2026-10-05-unreal-asm/research-masm-to-sjasmplus.md` |
 
+| `dialects/xas7447/` | `constrct.$X`: every XAS construct the XAS → sjasmplus conversion handles; `constrct.asm`: its expected conversion; `constrct.bin`: the #110 bytes from #6000 after XAS 7.447 assembled it over memory filled with #AA; `proj.$X` with `inc.$X` (LTEXT), `dat.$C` and `dat2.$Z` (LCODE), `proj.bin` (#20 bytes from #6000) | written for these tests, encoded with the `xas` codec and assembled by [XAS 7.447](https://vtrd.in/system/XAS7_447.ZIP) running in unreal-ng (the bytes read from the emulator's memory). Research: `docs/inprogress/2026-10-05-unreal-asm/research-xas-to-sjasmplus.md` |
+
+| `dialects/xas418/` | `cons418.$X`: the constructs XAS 4.18 has (DEFB / DEFW / DEFM / DEFS); `cons418.asm` its expected conversion; `cons418.bin`: the #90 bytes from #6000 XAS 4.18 built over #AA | the same way with [XAS 4.18](https://vtrd.in/system/XAS418.zip) |
+
+| `symbols/fromsource/xas7447-constrct.sym` | what sjasmplus 1.24 wrote with `--sym` for `dialects/xas7447/constrct.asm` | `sjasmplus --sym=xas7447-constrct.sym constrct.asm` |
+
 | `dialects/tasm50/` | `T50PROG.bin`: the 45 bytes TASM 5.0 beta built at `#7000` from `tasm/T50PROG.$A` | read from the emulator's memory after TASM 5.0 beta assembled it in unreal-ng |
 
 | `dialects/tasm412/` | `SIN7.$A`: TASM 4.12's SINUS example with `ORG #7000` (clear of TASM's overlay at `#8000`); `SIN7.bin`: the 256 bytes TASM 4.12 built from it | SINUS from [TASM 4.12](https://zxart.ee/releasefile/id:249305/TASM_412.ZIP); `SIN7.bin` read from the emulator's memory after TASM 4.12 assembled it in unreal-ng (`tools/unreal-asm/assemble-in-emulator.py tasm412`) |
