@@ -1,6 +1,6 @@
-> Feature r4 (ROM-trap fast loading) is **done** — its summary is kept at the bottom. Restore DONE.md once PLAN #5 is fixed.
+> Feature r4 (ROM-trap fast loading) is **done**. The non-standard loader investigation (reopened 2026-09-16) is also **done** — all items closed 2026-10-04. PLAN #5 retired.
 
-# TODO — reopened 2026-09-16: non-standard loader tapes fail deterministically
+# DONE — non-standard loader tapes
 
 The feature itself (r4) stays done; this file tracks one open defect found while
 re-testing custom-loader tapes on 2026-09-16 ("here we still have issue with

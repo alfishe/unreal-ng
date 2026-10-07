@@ -1650,7 +1650,15 @@ TTDReply TTDControlBackend<S>::Load(const TTDRequest& request)
     // A session loads only into an instance of the model it was recorded on: the reason says so
     std::string err;
     _manager->SetSessionSourcePath(*path);
-    if (!_manager->DeserializeSession(in, err))
+    bool loaded = false;
+    if constexpr (std::is_same<S, TimeTravelController>::value)
+    {
+        in.close();   // the engine reads the file where its loader asks
+        loaded = _manager->DeserializeSessionFile(file, err);
+    }
+    else
+        loaded = _manager->DeserializeSession(in, err);
+    if (!loaded)
     {
         StateNode body = StateNode::Object();
         body["ok"] = false;

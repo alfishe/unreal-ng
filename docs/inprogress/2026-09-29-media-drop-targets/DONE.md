@@ -1,8 +1,8 @@
-# TODO — media drop targets (2026-09-29)
+# DONE — media drop targets (PLAN #77 retired)
 
-**Status:** design written, no code. PLAN row **#77**. One core analysis of which slots take a
-file, used by every entry point; a Qt slot chooser (menu at the cursor, labeled drop zones on a
-1.5 s hold), a red refusal when no slot takes the file. Design: [design.md](design.md).
+**Status:** M0-M4 done 2026-10-02. `MediaTargets` (Classify, Plan, Apply), slot chooser in Qt,
+drop zones with icons. Left only: media panel's red row while dragging, dirty disk question.
+Design: [design.md](design.md).
 
 ## Next
 - [x] Decided 2026-09-29: an ISO goes only to a unit that is a CD-ROM drive (no switching on a drop); the hold is a fixed 1.5 s; several targets are the user's choice (slot chooser menu on a quick drop, labeled drop zones with device icons on the hold), the floppy's drive A with autostart the only shortcut.

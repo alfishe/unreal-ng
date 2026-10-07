@@ -2,6 +2,8 @@
 
 This document provides a comprehensive reference of all supported emulator operations across different interfaces: CLI, API, Lua, Python, and WebAPI. Focus is on programmatic operations that can be used in headless mode.
 
+Environment variables that change how the emulator, the tests and the tools run: [environment-variables.md](environment-variables.md).
+
 ## Core Operations Reference Table
 
 | **Category** | **Operation** | **CLI Command** | **API Method** | **Lua Interface** | **Python Interface** | **WebAPI Endpoint** | **Description** |

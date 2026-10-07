@@ -1,7 +1,6 @@
 #include "dialects/sjasmplus/sjasmplusbackend.h"
 
 #include <algorithm>
-#include <cstdio>
 #include <functional>
 #include <map>
 #include <set>
@@ -144,9 +143,7 @@ struct Writer
 
     std::string Hex(int64_t value, int digits) const
     {
-        char buffer[32];
-        std::snprintf(buffer, sizeof(buffer), "%0*llX", std::max(digits, 1), static_cast<unsigned long long>(value));
-        return std::string(options.hexDollar ? "$" : "#") + buffer;
+        return std::string(options.hexDollar ? "$" : "#") + z80::HexDigits(static_cast<uint64_t>(value), digits);
     }
 
     std::string Number(const Expr& e) const

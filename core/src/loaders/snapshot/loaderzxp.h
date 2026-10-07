@@ -3,6 +3,8 @@
 
 #include "emulator/platform.h"
 #include "loaders/snapshot/snapshotimage.h"
+#include "loaders/snapshot/snapshotpipeline.h"
+#include "loaders/snapshot/snapshotreport.h"
 
 #include <array>
 #include <string>
@@ -96,6 +98,8 @@ protected:
     ZXPSnapshot _snapshot;
     bool _parsed = false;
     std::string _error;
+    snapshot::Options _options;
+    std::array<snapshot::Report, ZXPSnapshot::MODULE_COUNT> _reports;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -113,8 +117,19 @@ public:
     bool ParseBuffer(const uint8_t* data, size_t size);
 
     /// Applies the parsed snapshot: module i -> contexts[i]. Every context
-    /// must be a model with 128K #7FFD paging
+    /// must be a model with 128K #7FFD paging. The group is planned first, then committed: every module's image goes through
+    /// snapshot::Pipeline::Plan on its own machine (the caller's commit, the machine's policy, the fit check), and ONE refusal
+    /// stops the whole load before any machine is touched (the reason names the module)
     bool Apply(const std::array<EmulatorContext*, ZXPSnapshot::MODULE_COUNT>& contexts);
+
+    /// What the caller asked for (call before Apply(); the default lets each module's plan decide)
+    void SetOptions(const snapshot::Options& options) { _options = options; }
+    /// The plan's report of module i in the last Apply(): the commit that ran, the verdicts, a refusal's reason
+    const snapshot::Report& GetReport(size_t module) const { return _reports[module < ZXPSnapshot::MODULE_COUNT ? module : 0]; }
+
+    /// Commit one module image (from BuildImage) into a machine: reset, RAM banks, CPU, #7FFD paging, the border. The legacy
+    /// commit of the plan step; false + error when the image cannot be committed
+    static bool CommitImage(EmulatorContext* context, const snapshot::Image& image, std::string& error);
 
     const ZXPSnapshot& GetSnapshot() const { return _snapshot; }
 
@@ -127,7 +142,6 @@ public:
 
     /// region <Helper methods>
 protected:
-    bool ApplyModule(EmulatorContext* context, const ZXPModuleState& module, uint8_t portFE);
     bool Fail(const std::string& message);
     /// endregion </Helper methods>
 };

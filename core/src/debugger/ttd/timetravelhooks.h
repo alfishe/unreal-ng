@@ -53,11 +53,9 @@ const char* TTDSessionStateToString(TTDSessionState state);
 
 /// @brief Actions that would end, wipe or corrupt a recording in progress.
 /// While TTD records they are refused (ITimeTravelHooks::RecordingGuard):
-/// stop the recording first. A machine reset is not one of them - it stops
-/// the recording and keeps the history.
+/// stop the recording first. A machine reset and a snapshot load are not among them: they END the session (EndSession).
 enum class TTDGuardedAction : uint8_t
 {
-    LoadSnapshot,        ///< replaces the whole machine state
     LoadTape,            ///< a new medium
     LoadDisk,            ///< a new medium
     CreateDisk,          ///< a new medium
@@ -69,9 +67,9 @@ enum class TTDGuardedAction : uint8_t
     ChangeSlots          ///< a slot change (plug, remove, options) changes the device set (D38, ZX-bus slots R-OP-7)
 };
 
-/// What replaced the machine's state or its media (OnLoad). On the engine a
-/// snapshot load is part of a recording (QueueSnapshotLoad, D10) and keeps a
-/// stopped session; every other kind still ends the session (D10, D25 to come)
+/// What replaced the machine's state or its media (OnLoad). A snapshot load ENDS the recording session like a reset does (the
+/// one TTD rule, D42): the history stays browsable, a new session starts only by the `ttdrestart` feature; every other
+/// kind still ends the session and drops its history
 enum class TTDLoadKind : uint8_t
 {
     Snapshot,       ///< a snapshot file
@@ -126,8 +124,12 @@ public:
     virtual void ServiceInput() = 0;
     /// The machine left the recorded timeline from outside (reset)
     virtual void OnMachineReset() = 0;
-    /// Ends a recording (a reset, an autostart); the history is kept
+    /// Ends a recording; the history is kept. For an operation that ends the session (reset, autostart) use EndSession
     virtual void StopRecording() = 0;
+    /// THE rule (D42): a reset, an autostart, a snapshot load, a change of the machine itself END the recording session. The
+    /// history of the same machine stays browsable; a new session starts only when the `ttdrestart` feature is on (the black
+    /// box always starts one), at the next frame boundary
+    virtual void EndSession(const char* reason) = 0;
     /// RZX playback facts (Phase 3, Step 2): an RZX frame ended / where replay input comes from
     virtual void NoteRzxFrameEnd(uint64_t rzxFrame, bool interrupt) = 0;
     virtual void NoteReplaySource(TTDReplaySource source) = 0;
@@ -135,13 +137,6 @@ public:
     // Things that happen to the machine
     /// A load replaced the machine state or a medium; @p reason names it in status
     virtual void OnLoad(TTDLoadKind kind, const char* reason) = 0;
-    /// A snapshot load while recording (D10, the engine): true when it becomes
-    /// part of the recording - @p load is queued for the next frame boundary,
-    /// where it runs and the checkpoint there takes the loaded state; the
-    /// caller then runs the machine to that boundary. False: nothing recorded
-    /// (or v1) - the caller loads at once and reports it with OnLoad. An
-    /// empty @p load withdraws a queued one
-    virtual bool QueueSnapshotLoad(std::function<void()> load) = 0;
     /// The machine's configuration changed under the session
     virtual void OnConfigurationChange(TTDConfigChangeKind kind, const char* reason) = 0;
     /// The machine state moved to another model (D26)

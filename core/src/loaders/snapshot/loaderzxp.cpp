@@ -143,10 +143,26 @@ bool LoaderZXP::Apply(const std::array<EmulatorContext*, ZXPSnapshot::MODULE_COU
             return Fail(StringHelper::Format("instance for module %zu is not initialized", m));
     }
 
+    // Plan the whole group first: each module's image on its own machine. One refusal stops the load with nothing written
+    std::array<snapshot::Image, ZXPSnapshot::MODULE_COUNT> images;
+    std::array<snapshot::Decision, ZXPSnapshot::MODULE_COUNT> decisions;
     for (size_t m = 0; m < ZXPSnapshot::MODULE_COUNT; m++)
     {
-        if (!ApplyModule(contexts[m], _snapshot.modules[m], _snapshot.portFE))
-            return false;
+        images[m] = BuildImage(m);
+        _reports[m] = snapshot::Report();
+        decisions[m] = snapshot::Pipeline::Plan(images[m], contexts[m], _options, _reports[m]);
+        if (!decisions[m].Proceeds())
+            return Fail(StringHelper::Format("module %zu: ", m) + _reports[m].reason);
+    }
+
+    for (size_t m = 0; m < ZXPSnapshot::MODULE_COUNT; m++)
+    {
+        std::string error;
+        const bool committed = decisions[m].action == snapshot::Decision::Action::Take
+                                   ? decisions[m].Commit(images[m], *contexts[m], _reports[m])
+                                   : CommitImage(contexts[m], images[m], error);
+        if (!committed)
+            return Fail(StringHelper::Format("module %zu: ", m) + (error.empty() ? _reports[m].reason : error));
     }
 
     if (_logger)
@@ -164,40 +180,44 @@ bool LoaderZXP::Apply(const std::array<EmulatorContext*, ZXPSnapshot::MODULE_COU
 
 /// region <Helper methods>
 
-bool LoaderZXP::ApplyModule(EmulatorContext* context, const ZXPModuleState& module, uint8_t portFE)
+bool LoaderZXP::CommitImage(EmulatorContext* context, const snapshot::Image& image, std::string& error)
 {
+    if (!context || !context->pCore || !context->pMemory || !context->pPortDecoder)
+    {
+        error = "no machine to load into";
+        return false;
+    }
     Core& core = *context->pCore;
     Memory& memory = *context->pMemory;
     Z80& z80 = *core.GetZ80();
+    const snapshot::Cpu& cpu = image.cpu;
+    const uint8_t p7ffd = image.paging.p7FFD.value_or(0);
 
     // Reset Z80 and all peripherals, then replace the state (the order the
     // SNA/Z80 loaders use)
     core.Reset();
 
-    for (uint8_t page = 0; page < 8; page++)
-    {
-        if (module.pageUsed[page])
-            memory.LoadRAMPageData(page, const_cast<uint8_t*>(module.pages.data() + page * PAGE_SIZE), PAGE_SIZE);
-    }
+    for (const auto& bank : image.banks)
+        memory.LoadRAMPageData(bank.first, const_cast<uint8_t*>(bank.second.data()), bank.second.size());
 
-    z80.af = module.af;
-    z80.bc = module.bc;
-    z80.de = module.de;
-    z80.hl = module.hl;
-    z80.alt.af = module.afAlt;
-    z80.alt.bc = module.bcAlt;
-    z80.alt.de = module.deAlt;
-    z80.alt.hl = module.hlAlt;
-    z80.ix = module.ix;
-    z80.iy = module.iy;
-    z80.i = static_cast<uint8_t>(module.ir >> 8);
-    z80.r_low = static_cast<uint8_t>(module.ir & 0xFFu);
-    z80.r_hi = static_cast<uint8_t>(module.ir & 0x80u);
-    z80.im = module.im & 0x03u;
-    z80.iff1 = module.iff1 ? 1 : 0;
-    z80.iff2 = module.iff2 ? 1 : 0;
-    z80.sp = module.sp;
-    z80.pc = module.pc;
+    z80.af = cpu.af;
+    z80.bc = cpu.bc;
+    z80.de = cpu.de;
+    z80.hl = cpu.hl;
+    z80.alt.af = cpu.af2;
+    z80.alt.bc = cpu.bc2;
+    z80.alt.de = cpu.de2;
+    z80.alt.hl = cpu.hl2;
+    z80.ix = cpu.ix;
+    z80.iy = cpu.iy;
+    z80.i = cpu.i;
+    z80.r_low = cpu.r;
+    z80.r_hi = static_cast<uint8_t>(cpu.r & 0x80u);
+    z80.im = cpu.im & 0x03u;
+    z80.iff1 = cpu.iff1 ? 1 : 0;
+    z80.iff2 = cpu.iff2 ? 1 : 0;
+    z80.sp = cpu.sp;
+    z80.pc = cpu.pc;
     z80.memptr = 0;
     z80.q = 0;
 
@@ -208,9 +228,9 @@ bool LoaderZXP::ApplyModule(EmulatorContext* context, const ZXPModuleState& modu
     memory.UpdateZ80Banks();
     memory.SetRAMPageToBank1(5);
     memory.SetRAMPageToBank2(2);
-    memory.SetRAMPageToBank3(module.port7FFD & 0x07u);
-    context->pPortDecoder->DecodePortOut(0x7FFD, module.port7FFD, z80.pc);
-    context->emulatorState.p7FFD = module.port7FFD;
+    memory.SetRAMPageToBank3(p7ffd & 0x07u);
+    context->pPortDecoder->DecodePortOut(0x7FFD, p7ffd, z80.pc);
+    context->emulatorState.p7FFD = p7ffd;
 
     if (memory.DirectReadFromZ80Memory(z80.pc) == 0x76)
     {
@@ -220,7 +240,7 @@ bool LoaderZXP::ApplyModule(EmulatorContext* context, const ZXPModuleState& modu
     }
 
     // Border: the file has one #FE for the machine (the master drives it)
-    const uint8_t border = portFE & 0x07u;
+    const uint8_t border = image.border & 0x07u;
     EmulatorState& state = context->emulatorState;
     state.pFE = static_cast<uint8_t>((state.pFE & 0b1111'1000) | border);
     state.border_attr = border;

@@ -44,6 +44,7 @@ constexpr const char* const kKempstonJoystick = "kempstonjoystick";
 constexpr const char* const kGSLightweight = "gs_lightweight";
 constexpr const char* const kNetwork = "network";
 constexpr const char* const kContention = "contention";
+constexpr const char* const kTTDRestart = "ttdrestart";
 
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
@@ -70,6 +71,7 @@ constexpr const char* const kKempstonJoystickAlias = "kjoy";
 constexpr const char* const kGSLightweightAlias = "gslw";
 constexpr const char* const kNetworkAlias = "net";
 constexpr const char* const kContentionAlias = "cont";
+constexpr const char* const kTTDRestartAlias = "ttdre";
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -128,6 +130,12 @@ constexpr const char* const kContentionDesc =
     "for the screen fetches, and on the ULA machines a refresh with I in the screen's memory corrupts the picture "
     "(ULA snow). Off runs those machines uncontended and without snow, for comparison. No effect on machines without "
     "contention. Cannot change while the machine is bound to a TTD timeline (it changes timing).";
+
+constexpr const char* const kTTDRestartDesc =
+    "Start a new TTD session after one ends. A machine reset, a snapshot load, an autostart and a change of the machine itself "
+    "(ROM reload, model switch, General Sound card or slot change) END the current recording session; with this on a new "
+    "session starts at the next frame boundary, off (default) leaves the machine without a recording until one is started. "
+    "The black box always starts a new one.";
 
 // Categories
 constexpr const char* const kCategoryDebug = "debug";

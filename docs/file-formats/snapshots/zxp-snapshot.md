@@ -38,6 +38,7 @@ Snapshot overview and how loading works: [README](README.md).
   Every module must be a model with 128K #7FFD paging.
 - The file is parsed and validated completely before any module is touched. A wrong magic, a truncated file or trailing bytes are
   refused with the reason.
+- The group is **planned, then committed**: each module's image (banks, CPU, #7FFD, the border) goes through the snapshot plan on its own machine (the shared fit check, the machine's policy, a caller's `commit`), and one refusal stops the whole load before any module is touched (the reason names the module, `module 2: ...`). Each module is then committed from its image.
 - After the modules the group latches #3D00 and the module registers.
 - A plain SNA or Z80 given to a ZX-Poly group goes to one instance only (a normal snapshot is not replicated into the four modules).
 - Loading only; there is no ZXP writer.

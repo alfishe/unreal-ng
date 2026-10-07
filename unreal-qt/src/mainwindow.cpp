@@ -2393,8 +2393,6 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
             qWarning() << "ROM loading not implemented:" << filePath;
             break;
         case FileSnapshot:
-            if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadSnapshot))
-                break;
             // An RZX recording plays on the machine its start snapshot names
             if (_emulator && filePath.toLower().endsWith(".rzx"))
             {

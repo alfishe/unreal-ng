@@ -1,0 +1,4 @@
+buffer|C000|65535|65535|RAM|data|||1
+lower|1234|65535|65535|ROM|code|||1
+main|8000|65535|65535|RAM|code|||1
+top|FFFF|65535|65535|RAM|code|||1

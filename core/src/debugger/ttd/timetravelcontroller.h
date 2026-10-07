@@ -138,7 +138,7 @@ public:
     /// ITimeTravelHooks: a load, a configuration change and a model transfer all end
     /// the session in v1, with the reason kept for status (Phase 5, Step 2 makes them events)
     void OnLoad(TTDLoadKind kind, const char* reason) override;
-    bool QueueSnapshotLoad(std::function<void()> load) override;
+    void EndSession(const char* reason) override;
     void OnConfigurationChange(TTDConfigChangeKind kind, const char* reason) override;
     void OnModelTransfer(const char* reason) override { EndSessionForMachineChange(reason); }
     bool HasHistory() const override { return !_timeline.empty(); }
@@ -361,6 +361,9 @@ public:
     /// or with devices this machine lacks. The session is Idle afterwards;
     /// SeekTo browses it, ResumeRecordingFrom continues it
     bool DeserializeSession(std::istream& in, std::string& err);
+    /// DeserializeSession from a file, read where the loader asks: the file is
+    /// not copied into memory first ("Cannot open file: <path>" when it cannot be opened)
+    bool DeserializeSessionFile(const std::string& path, std::string& err);
 
 private:
     /// The engine this controller records into and restores from (Phase 5, C1): created
@@ -370,6 +373,8 @@ private:
 
     /// Load @p source into a fresh engine, checked against this machine and
     /// bound to it; nothing of the current session changes
+    /// The load from any byte source (a file, memory)
+    bool DeserializeSessionFrom(const ITTDByteSource& source, std::string& err);
     std::unique_ptr<TimeTravelEngine> LoadEngineSession(const ITTDByteSource& source, TTDSessionFacts& facts,
                                                         std::vector<uint8_t>& coverage, TTDBookmarkJournal& bookmarks,
                                                         std::string& err);
@@ -1585,8 +1590,7 @@ private:
     /// ResumeRecordingFrom, after its seek; called without one at a paused end
     bool ContinueRecordingAt(const TTDTimePoint& from);
     bool _recordingPaused = false;   ///< D8: the recording is paused for browsing
-    std::function<void()> _queuedSnapshotLoad;   ///< D10: runs at the next frame boundary while recording
-    /// D10: the boundary at the start of @p frame is a cut (a snapshot load): its checkpoint holds the loaded state
+    /// The boundary at the start of @p frame is a cut (a snapshot load recorded by an older build): its checkpoint holds the loaded state
     bool CutAtFrameStart(uint64_t frame) const;
     TTDTimePoint _pausedEnd{};       ///< where it paused
     /// @brief The engine checkpoint held at or before @p t, as an index into
@@ -1995,6 +1999,9 @@ private:
     /// Set via SetEnableWriteJournal() before StartRecording().
 
     bool _enableWriteJournal = false;   ///< D40: the journal is recorded on demand
+    /// The live ring holds one frame's writes: it is drained into the engine at
+    /// each capture and cleared, its memory committed in chunks as it fills.
+    /// This is the most one frame may write before the oldest records are lost
     static constexpr size_t kDefaultWriteJournalBytes = 64u * 1024 * 1024;
     size_t _writeJournalBytes = kDefaultWriteJournalBytes;   ///< SetWriteJournalCapacity
 
@@ -2109,7 +2116,11 @@ private:
     void ApplyBankOverrides(const TTDBankOverrides& in);
     uint32_t _blackBoxMinutes = 5;
     bool _blackBoxSuspended = false;        // stopped for an acceleration; starts again after it
-    bool _blackBoxRestart = false;          // a machine change ended it: a new session at the next frame boundary
+    bool _restartPending = false;           // the session ended (reset, snapshot load, machine change): a new one at the next frame boundary
+    /// The one rule (D42): the recording session ends, @p keepHistory = the machine is still the one the history belongs to.
+    /// A new session starts at the next frame boundary for a black box, or when the `ttdrestart` feature is on
+    void EndSessionImpl(const char* reason, bool keepHistory);
+    bool RestartFeatureOn() const;
     /// The black box's window in frames (its minutes at the model's frame length)
     uint64_t BlackBoxFrames() const;
     /// A change of the machine itself (ROM reload, model transfer, General Sound card, slots) ends the session:

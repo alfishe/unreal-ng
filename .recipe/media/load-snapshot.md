@@ -257,12 +257,10 @@ HTTP 422 = the target cannot hold the state (e.g. a 128K program into a 48K);
 
 ## Interactions to know
 
-- **TTD**: on the engine (`GET /ttd/status` -> `backend: "engine"`, the
-  default) a snapshot load while recording is part of the recording - it
-  happens at the next frame boundary, and a seek before / after it shows the
-  old / the loaded program; outside a recording the history stays. On v1 it
-  is refused while recording and drops a stopped session (details in
-  [ttd-recording.md](../analysis/ttd-recording.md)).
+- **TTD**: a snapshot load is never refused by a recording: it ENDS the
+  session like a reset does (the one TTD rule), the history stays browsable
+  and no new session starts unless the `ttdrestart` feature is on (or a black
+  box is armed). Details in [ttd-recording.md](../analysis/ttd-recording.md).
 - **Media state**: `.sna`/`.z80` do not carry disks/tapes — re-insert media
   after loading if the program expects it. `.szx` does: saving links the
   file-backed disks (Beta 128 TRD / SCL / FDI / UDI, +3 DSK) and the tape with

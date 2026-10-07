@@ -622,6 +622,8 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotchangecontroller.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotswindow.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotswindow.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotconfigdialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/slotconfigdialog.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/midiactivitywindow.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cardslots/midiactivitywindow.h"
         # The debugger's Device memory dialog (debugger additions TODO A2q)

@@ -17,7 +17,8 @@ Status: proposal written 2026-10-02 (documents only, no code). Open questions Q1
 | P5 | Fit checks and machine policies after the owner's answers: 128K on 48K (Q1), 48K on 128K (Q2), Pentagon 1024 compatibility, ATM family, TS-Conf | M | open |
 | P6 | Save path: capture → image → writer; 48K SNA writer stops touching live RAM | M | **done 2026-10-06** (branch `snapshot-p6`, see "P6 notes"): `snapshotcapture.{h,cpp}` (the machine's 128K view, `QuerySaveFormats`, `SaveSnapshotFile`), SNA / Z80 written from the image, `Emulator::SaveSnapshot` waits for the pause and keeps a `LastSaveResult`, `SnapshotSaveFormats`; reasons + formats on WebAPI (`GET snapshot/formats`, the save answer), CLI (`snapshot formats`), Lua, Python, Qt (items disabled with the reason, dialog filters follow the machine) |
 | P7 | One model-switch orchestrator for SZX / SPG / RZX; Qt uses it (Q6) | S | **done 2026-10-06** (branch `snapshot-p7`): `SnapshotLauncher::NeedOf` (what a file needs of the running machine: SPG = TS-Conf, SZX = a machine that fits by `LoaderSZX::Suits`); `switchModel` is optional: an SPG switches by default, an SZX of another model is refused unless `switch_model=true` / CLI `--switch` or `[SNAPSHOT] SwitchModel=1` (owner decision Q6: not by default, on request or by setting); Qt's two probe blocks are one call of `NeedOf` (the window keeps switching: choosing the file is the request). RZX keeps its own launcher |
-| P8 | TTD: a load during a recording continues the track with a full checkpoint + marker (Q5), after TTD v2 regions | S-M | open |
+| P8 | TTD: a load during a recording | S-M | **closed 2026-10-06 by the one TTD rule (D42, owner, final):** a snapshot load ENDS the recording session like a reset (history kept, no new session unless the `ttdrestart` feature is on); the earlier "continue the track with a checkpoint + marker" (Q5, TTD D10a) is withdrawn and its code removed. Nothing left to do here |
+| P10 | SPG and ZXP through the image (see P10 notes) | S | **done 2026-10-06** (branch `snapshot-p10`) |
 | P9 | Clean-up: legacy commits read the image instead of private staging; drop the duplicated staging and the SNA dead code; SP-1 unchanged | M | **done 2026-10-05** for SNA, Z80 and SZX (branch `snapshot-p9`): the three commits read `snapshot::Image`; SPG and ZXP stay as they are (see "P9 notes"); the SNA dead code is gone (`SNAHeader`, `SNA128Header`, `_borderColor`); the golden table is unchanged (with AY now visible in it) |
 
 ## P0 findings (2026-10-05)
@@ -187,3 +188,18 @@ gets the refusal's reason instead of a junk file.
 
 Open (not in P6): Profi / Kay / Quorum views; the Sprinter 512 KB modes; ZX-Poly saves; restoring a file onto another model through the
 Qt window (P7); the debugger UI of the capture view.
+
+## P10 notes (2026-10-06): SPG and ZXP through the image
+
+- **SPG:** the commit moved from the loader (which read `LoaderSPG::Image`, the format's own record) into the TS-Conf machine's snapshot
+  policy `TsConfProgramSnapshot` (`emulator/platforms/tsconf/`, handed out by `PortDecoder_TSConf::GetSnapshotPolicy`). It reads the
+  neutral image: the blocks as physical runs, the CPU, and the two TS-Conf registers the file names (the page at #C000, SYS_CONFIG[1:0])
+  as the payload of the `spg:header` extension - no TS-Conf field in the shared image. The load report now says `commit: tsconf-program`
+  (it said `legacy`); `commit=legacy` and `LoaderSPG::Commit` run the same code from the same image, on a machine without the policy they
+  refuse as before. The policy is not in the by-name registry (shared code may not name TS-Conf paths, `TsConfIsolation_Test`).
+- **ZXP:** `LoaderZXP::Apply` plans the group first (each module's image through `Pipeline::Plan` on its own machine) and commits only if
+  all four proceed: one refusal stops the load before any machine is touched, the reason names the module. The module commit is
+  `LoaderZXP::CommitImage` from the image (the old `ApplyModule` read the module record). This is the group-level plan the P1 note waited
+  for; owner question Q7 (a plain SNA / Z80 on a ZX-Poly group) is separate and stays open.
+- Tests: `tsconfprogramsnapshot_test.cpp` (the machine's policy decides, the machine follows a changed image, another machine refuses, a
+  Spectrum snapshot declines, legacy), `LoaderZXPGroup_Test` (planned then committed; one refusing module touches nothing).

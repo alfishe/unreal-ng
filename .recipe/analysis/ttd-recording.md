@@ -309,22 +309,24 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   replayed and do not stop a seek or a reverse search; on v1 they stop
   backward replay (list them with `GET /ttd/markers` before wondering why a
   seek halted early).
-- **A snapshot load is part of the recording** on the engine
-  (`backend: "engine"`, the default): while recording, the machine finishes
-  its frame, the snapshot loads at the boundary, and seeks before / after it
-  show the old / the loaded program; frame numbers go on. Outside a
-  recording it keeps the history. On v1 it is refused while recording and
-  drops a stopped session.
+- **One rule: a reset, a snapshot load and a change of the machine END the
+  session.** Nothing is refused: the recording stops cleanly and the operation
+  runs. A reset and a snapshot load keep the ended session's history (browsable,
+  `last_stop_reason` `reset` / `snapshot-load`); a ROM reload, model switch,
+  GS card switch or slot change is another machine and drops it
+  (`machine-change`). **No new session starts by itself**: turn the `ttdrestart`
+  feature on (`feature ttdrestart on`, off by default) and one starts at the next
+  frame boundary; the black box always starts one. Do not look for the old
+  "snapshot is part of the recording": it was removed on purpose.
 - **Other loads wipe the session.** Tape load, disk load/create and a host
   speed change on a stopped session drop the whole history (and are refused
   while recording, also while a recording is paused for browsing). Dump
   first if you need the recording.
-- **A machine change ends the session** (the engine): a ROM load, a model
-  switch, a GS card switch or a slot change stop the recording and drop its
-  history (`last_stop_reason: "machine-change"`); a black box starts a new
-  session, an explicit recording stays off. v1 refuses them while recording.
-- **Reset keeps history.** A reset (or a disk autostart's quick reset)
-  stops the recording and keeps what was captured; a machine sitting in
-  history goes back to `idle`.
+- **A machine change** (ROM load, model switch, GS card switch, slot
+  change) is the same rule with another machine behind it: the history is
+  dropped, `last_stop_reason: "machine-change"`. v1 still refuses these while
+  recording.
+- **A reset (or a disk autostart's quick reset)** ends the session and keeps
+  what was captured; a machine sitting in history goes back to `idle`.
 - **ZX-Evo / ATM3 SD card** activity ends the recording (history dropped)
   at the next frame boundary: TTD cannot follow the SD card yet.
