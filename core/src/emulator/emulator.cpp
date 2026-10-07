@@ -1682,13 +1682,13 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
     // The file the user opened: a temporary image is reported as the file it came from
     const std::string openedPath = reportedPath.empty() ? absolutePath : reportedPath;
     return LoadSnapshotStaged(
-        [&](std::string& error) {
+        [&](std::string& error, const snapshot::Options& planned) {
             bool result = false;
             if (ext == "sna")
             {
                 /// region <Load SNA snapshot>
                 LoaderSNA loaderSna(_context, absolutePath);
-                loaderSna.SetOptions(options);
+                loaderSna.SetOptions(planned);
                 result = loaderSna.load();
                 _lastSnapshotReport = loaderSna.GetSnapshotReport();
 
@@ -1707,7 +1707,7 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
             {
                 /// region <Load Z80 snapshot>
                 LoaderZ80 loaderZ80(_context, absolutePath);
-                loaderZ80.SetOptions(options);
+                loaderZ80.SetOptions(planned);
                 result = loaderZ80.load();
                 _lastSnapshotReport = loaderZ80.GetSnapshotReport();
 
@@ -1726,7 +1726,7 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
             {
                 // TS-Conf SDK program (loaderspg.h): the TS-Conf machine only
                 LoaderSPG loaderSpg(_context, absolutePath);
-                loaderSpg.SetOptions(options);
+                loaderSpg.SetOptions(planned);
                 result = loaderSpg.load();
                 _lastSnapshotReport = loaderSpg.GetSnapshotReport();
                 if (!result)
@@ -1736,7 +1736,7 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
             {
                 /// region <Load SZX snapshot>
                 LoaderSZX loaderSzx(_context, absolutePath);
-                loaderSzx.SetOptions(options);
+                loaderSzx.SetOptions(planned);
                 result = loaderSzx.load();
                 _lastSnapshotReport = loaderSzx.GetSnapshotReport();
                 if (result)
@@ -1749,7 +1749,7 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
                 error = "the " + ext + " loader refused '" + absolutePath + "'";
             return result;
         },
-        openedPath);
+        openedPath, options);
 }
 
 bool Emulator::LoadSnapshotData(const std::vector<uint8_t>& data, const std::string& extension,
@@ -1770,8 +1770,9 @@ bool Emulator::LoadSnapshotData(const std::vector<uint8_t>& data, const std::str
         return false;
     }
     MLOGINFO("Loading %s snapshot from memory (%zu bytes) for '%s'", ext.c_str(), data.size(), reportedPath.c_str());
-    return LoadSnapshotStaged([&](std::string& error) { return ApplySnapshotData(data, ext, error, options); },
-                              reportedPath);
+    return LoadSnapshotStaged(
+        [&](std::string& error, const snapshot::Options& planned) { return ApplySnapshotData(data, ext, error, planned); },
+        reportedPath, options);
 }
 
 bool Emulator::ApplySnapshotData(const std::vector<uint8_t>& data, const std::string& extension, std::string& error,
@@ -1844,7 +1845,8 @@ bool Emulator::ApplySnapshotData(const std::vector<uint8_t>& data, const std::st
     return false;
 }
 
-bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error)>& load, const std::string& openedPath)
+bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error, const snapshot::Options& planned)>& load,
+                                  const std::string& openedPath, const snapshot::Options& options)
 {
     // Another snapshot replaces the machine an RZX playback runs on: it ends
     // first (the playback's own start snapshot loads with the player out)
@@ -1879,12 +1881,17 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error)>&
     std::string error;
     bool result = false;
     ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
-    auto runLoad = [&]() { result = load(error); };
-
-    // TTD (D42): a snapshot load ENDS the recording session, like a reset (the history of this machine stays browsable;
-    // a new session starts only by the `ttdrestart` feature). Nothing is refused
-    if (ttd)
-        ttd->OnLoad(ttd::TTDLoadKind::Snapshot, "snapshot-load");
+    // TTD (D42): a snapshot load ENDS the recording session, like a reset (the history of this machine stays browsable; a new
+    // session starts only by the `ttdrestart` feature). Nothing is refused - but the session ends only when the load really goes
+    // ahead: the plan calls beforeCommit once it has decided to commit, so a refused load leaves the recording running
+    snapshot::Options planned = options;
+    planned.beforeCommit = [&]() {
+        if (options.beforeCommit)
+            options.beforeCommit();
+        if (ttd)
+            ttd->OnLoad(ttd::TTDLoadKind::Snapshot, "snapshot-load");
+    };
+    auto runLoad = [&]() { result = load(error, planned); };
     runLoad();
     // The loader reset the machine and replaced its state (ports, memory,
     // registers): start the frame again from the loaded state, so devices
@@ -2076,7 +2083,9 @@ bool Emulator::InspectSnapshot(const std::string& path, const snapshot::Options&
 
     // The plan asks its questions and writes nothing
     snapshot::Report plan;
-    const snapshot::Decision decision = snapshot::Pipeline::Plan(image, _context, options, plan);
+    snapshot::Options dryRun = options;
+    dryRun.beforeCommit = nullptr;   // a dry plan commits nothing: it announces nothing
+    const snapshot::Decision decision = snapshot::Pipeline::Plan(image, _context, dryRun, plan);
     result = StateNode::Object();
     result["path"] = absolutePath;
     result["image"] = snapshot::ToStateNode(image);

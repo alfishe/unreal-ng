@@ -909,6 +909,41 @@ TEST_F(TimeTravelController_Test, ASnapshotLoadEndsTheSession)
     EXPECT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(2)->time.frame, 0}, &seek)) << "still browsable";
 }
 
+/// A load that is refused is not an operation: the plan decides first, the session ends only when the snapshot really goes in. A
+/// refused load (another model's SZX, an SPG on a machine that is not a TS-Conf, a file that is no snapshot, a bank the machine
+/// lacks) leaves the recording running and its history growing
+TEST_F(TimeTravelController_Test, ARefusedSnapshotLoadLeavesTheRecordingRunning)
+{
+    ASSERT_TRUE(_controller->StartRecording());
+    _b->RunNFrames(3, /*skipBreakpoints=*/true);
+    const size_t recorded = _controller->GetCheckpointCount();
+
+    const std::string garbage = TestPathHelper::GetUniqueTestScratchPath("d42-garbage.z80");
+    {
+        std::ofstream out(garbage, std::ios::binary);
+        out << "not a snapshot";
+    }
+    for (const std::string& file : {TestPathHelper::GetTestDataPath("loaders/szx/libspectrum/synth-48.szx"),
+                                    TestPathHelper::GetTestDataPath("machines/tsconf/spg/empty.spg"), garbage})
+    {
+        EXPECT_FALSE(_b->LoadSnapshot(file)) << file;
+        EXPECT_TRUE(_controller->IsRecording()) << file << ": a refused load does not end the session";
+        EXPECT_TRUE(_controller->GetSessionInfo().lastStopReason.empty()) << file;
+    }
+    _b->RunNFrames(2, /*skipBreakpoints=*/true);
+    EXPECT_TRUE(_controller->IsRecording());
+    EXPECT_GT(_controller->GetCheckpointCount(), recorded) << "the recording went on";
+    std::remove(garbage.c_str());
+
+    // ...while a load that goes in still ends it
+    const std::string good = TestPathHelper::GetUniqueTestScratchPath("d42-good.z80");
+    ASSERT_TRUE(_b->SaveSnapshot(good));
+    ASSERT_TRUE(_b->LoadSnapshot(good));
+    EXPECT_FALSE(_controller->IsRecording());
+    EXPECT_EQ(_controller->GetSessionInfo().lastStopReason, "snapshot-load");
+    std::remove(good.c_str());
+}
+
 /// The same rule for a recording paused for browsing, and for no recording at all (the history stays)
 TEST_F(TimeTravelController_Test, ASnapshotLoadEndsAPausedRecordingToo)
 {

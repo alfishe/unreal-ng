@@ -203,3 +203,18 @@ Qt window (P7); the debugger UI of the capture view.
   for; owner question Q7 (a plain SNA / Z80 on a ZX-Poly group) is separate and stays open.
 - Tests: `tsconfprogramsnapshot_test.cpp` (the machine's policy decides, the machine follows a changed image, another machine refuses, a
   Spectrum snapshot declines, legacy), `LoaderZXPGroup_Test` (planned then committed; one refusing module touches nothing).
+
+## P11 notes (2026-10-07): a refused load does not end the TTD session
+
+The TTD rule (D42) ends the recording session when a snapshot is loaded. It used to end it when the load was CALLED, so a load that was
+then refused (another model's SZX, an SPG on a Pentagon, a corrupt file) had already stopped the recording of a machine that never
+changed. Now `snapshot::Options::beforeCommit` is called by `Pipeline::Plan` once, at the moment the plan decides to commit (a Take or a
+Legacy decision), before the loader writes anything; `Emulator::LoadSnapshotStaged` ends the session there (`OnLoad(Snapshot)`).
+A file that fails before the plan (unreadable, corrupt) never reaches it.
+
+Two refusals used to come AFTER the plan, inside the legacy commit, and would have ended the session first: they moved into the plan
+(`LegacyWillRefuse`): an SZX saved on another model than the running one (the loader's own `LoaderSZX::Suits` rule, `needs: model:<short>`)
+and an SPG on a machine whose policy does not take it (`needs: model:TSL`). The commits keep their own checks as a second line.
+Tests: `SnapshotBeforeCommit_Test` (announced once on a good load, never on a refusal, legacy judged too, inspect never),
+`ARefusedSnapshotLoadLeavesTheRecordingRunning`.
+Open: a media load (tape, disk) is still refused while recording, unchanged.
