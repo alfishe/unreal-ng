@@ -2853,8 +2853,10 @@ bool TimeTravelController::SeekTo(const TTDTimePoint& target, TTDSeekResult* out
     // with the machine state that goes with it. At a frame boundary that is
     // the finished frame, also for a device drawing on its own clock (the
     // FT812 composes it from its lead-in frames), as a live machine shows it
+    // The target decides, not the landing: a seek lands on the first
+    // instruction boundary at or after it, a few T-states into the frame
     if (ok || result.haltReason == TTDSeekHaltReason::ExternalEvent)
-        PresentPosition(ok && CurrentPosition().tInFrame == 0);
+        PresentPosition(ok && target.tInFrame == 0);
 
     return ok;
 }
