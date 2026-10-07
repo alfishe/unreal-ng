@@ -94,6 +94,11 @@ public:
     // Actions
     bool StartRecording() { return Call(false, [](auto& s) { return s.StartRecording(); }); }
     void StopRecording() { Do([](auto& s) { s.StopRecording(); }); }
+    void InvalidateSession(const char* reason) { Do([reason](auto& s) { s.InvalidateSession(reason); }); }
+    void SetHistoryLimit(uint64_t maxFrames, uint64_t maxBytes)
+    {
+        Do([maxFrames, maxBytes](auto& s) { s.SetHistoryLimit(maxFrames, maxBytes); });
+    }
     bool BeginDebuggerLiveHistory() { return Call(false, [](auto& s) { return s.BeginDebuggerLiveHistory(); }); }
     void EndDebuggerLiveHistory() { Do([](auto& s) { s.EndDebuggerLiveHistory(); }); }
     void RecordExternalEvent(TTDExternalEventKind kind, const char* reason)

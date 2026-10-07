@@ -19,7 +19,7 @@
 #include <thread>
 
 #include "_helpers/testwaithelper.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdsession.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatormanager.h"
@@ -144,8 +144,8 @@ TEST_F(HostKeyboardMenu_Test, InstanceRecreatedAroundQueuedAdoption)
                     whileLeased();
                 // Everything the adoption reads stays alive under the lease
                 ASSERT_NE(lease->pKeyboard, nullptr);
-                ASSERT_NE(lease->pTimeTravelManager, nullptr);
-                lease->pTimeTravelManager->GetSessionInfo();
+                ASSERT_TRUE(ttd::TTDSessionRef(lease.get()));
+                ttd::TTDSessionRef(lease.get())->GetSessionInfo();
                 adoptions++;
             },
             Qt::QueuedConnection);

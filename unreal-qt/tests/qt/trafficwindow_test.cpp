@@ -16,7 +16,7 @@
 #include <vector>
 
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdsession.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorbinding.h"
@@ -79,7 +79,7 @@ TEST(TrafficWindow_Test, RowsFilterDecodeAndSeekInsideTheRecording)
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
     context->pMemory->UpdateFeatureCache();
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TTDSessionRef ttd(context);
     ASSERT_TRUE(ttd->StartRecording());
     emulator->RunNFrames(3);
     const uint64_t arpFrame = context->emulatorState.frame_counter;

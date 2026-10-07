@@ -7,8 +7,9 @@ Measured 2026-10-05 on branch `ttd-engine` (master merged at `730566fbe`), Relea
 ## What changed for users
 
 The application records with the engine (`GET /ttd/status` → `backend: "engine"`). v1 stays in the build as the
-reference and the fallback: `UNREAL_TTD_BACKEND=v1` selects it for a run. `core-tests` and `unreal-qt-tests` run v1 by
-default; the engine's tests select it per test.
+reference and the fallback: `UNREAL_TTD_BACKEND=v1` selects it for a run. `core-tests` and `unreal-qt-tests` record
+with the engine too (Step 4, 2026-10-06); the test files that drive v1 directly are listed in
+`core/tests/_helpers/ttdv1tests.h` and get v1.
 
 | Behavior | v1 | The engine |
 |---|---|---|

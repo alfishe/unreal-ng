@@ -9,6 +9,7 @@
 #include "emulator/emulatormanager.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/ttdv1tests.h"
 #include "common/filehelper.h"
 #include "emulator/memory/atm/evoflash.h"
 
@@ -61,8 +62,8 @@ static void PinTimeZone()
 int main(int argc, char **argv)
 {
   PinTimeZone();
-  // v1 records here: its own tests and the reference; engine tests select the engine per test
-  Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::V1);
+  // The engine records, as in the application; v1's own tests select v1 (TtdBackendListener below)
+  Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::Engine);
   ::testing::InitGoogleTest(&argc, argv);
 
   // The settings folder (FileHelper::GetWritablePath) is this process's scratch folder: files a machine saves there
@@ -82,6 +83,9 @@ int main(int argc, char **argv)
   // out of every machine unless a test opts in with a SoundCardScope (see
   // soundcardscope.h for why)
   SoundCardScope::InstallPolicy();
+
+  // v1's own tests (the files in ttdv1tests.h) record with v1; every other test with the engine
+  ::testing::UnitTest::GetInstance()->listeners().Append(new ttdtest::TtdBackendListener());
 
   auto* leakGuard = new ManagerLeakGuard();  // owned by gtest once appended
   ::testing::UnitTest::GetInstance()->listeners().Append(leakGuard);
