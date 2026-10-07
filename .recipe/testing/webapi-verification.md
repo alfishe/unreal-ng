@@ -49,4 +49,4 @@ curl -s "http://localhost:8090/api/v1/emulator/$EMU_ID/disasm?address=0&count=10
 
 Runtime-authoritative list: `GET /api/v1/emulator/models` (each entry has a `creatable` flag).
 
-See [machines/README.md](../machines/README.md) for per-machine recipes and details.
+See [_common/machines.md](../_common/machines.md) for the model table and per-machine recipes in [machines/](../machines/).
