@@ -372,6 +372,14 @@ if (BUILD_POC)
 	add_subdirectory(tools/poc)
 endif (BUILD_POC)
 
+# Steam Deck client experiments (SDL3), built on their own: the other PoCs are not needed
+# (tools/poc/023-steamdeck-client/build.sh configures a steamrt4 container with this ON)
+option(BUILD_STEAMDECK_POC "Build the Steam Deck client PoCs (tools/poc/023-steamdeck-client, needs SDL3)" OFF)
+if (BUILD_STEAMDECK_POC)
+	message(STATUS ">>> Building Steam Deck client PoCs")
+	add_subdirectory(tools/poc/023-steamdeck-client)
+endif (BUILD_STEAMDECK_POC)
+
 # ========================================
 # ZX DLSS verification tools (opt-in; the algorithms are in the core)
 # ========================================
