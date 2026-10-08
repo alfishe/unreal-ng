@@ -633,23 +633,19 @@ uint8_t Tape::handlePortIn([[maybe_unused]] uint16_t port)
         //   into the input, bit 6 follows bit 4 of the last #FE write. z80test's
         //   hardware CRCs of the IN tests (z80full: IN A,(N) .. INDR->NOP')
         //   are taken this way, with bit 4 = 0.
-        // - Scorpion (with or without ProfROM): HIGH even with no tape image.
-        //   The ProfROM monitor's tape-port check reads #FFBE and treats
-        //   bit 6 = 0 as "no signal" (error #61); its boot/NMI path polls the
-        //   port with no tape present, and a low level wedged it.
-        // - Other boards: LOW with no tape image (z80full passes as on the
+        // - Every other board: LOW with no tape image (z80full passes as on the
         //   48K), HIGH once an image is loaded - the line is not driven low
-        //   until the first edge of a real tape pulse arrives.
+        //   until the first edge of a real tape pulse arrives. No clone feeds
+        //   the output back: on the Scorpion the tape input is a self-biased
+        //   CD4069 amplifier with no pull-up, its idle level set by no part.
+        //   The ProfROM's #FFBE reads are the SMUC IDE status (bit 6 = DRDY,
+        //   error #61 = DRDY timeout), not the tape port.
         switch (config.mem_model)
         {
             case MM_SPECTRUM48:
             case MM_SPECTRUM128:
             case MM_PLUS2:
                 result = (prevPortValue & 0b0001'0000) ? 0b0100'0000 : 0;
-                break;
-            case MM_SCORP:
-            case MM_PROFSCORP:
-                result = 0b0100'0000;
                 break;
             default:
                 result = _imageLoadedPath.empty() ? 0 : 0b0100'0000;

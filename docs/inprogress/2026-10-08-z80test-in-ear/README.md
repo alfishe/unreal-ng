@@ -19,9 +19,9 @@ Not the M1 change. The failures are the same on the Pentagon, which has no ULA c
 they go away with the M1 code untouched once the port value is fixed.
 
 `62782b699` (2026-09-10) changed `Tape::handlePortIn`: with no tape playing, the EAR bit (#FE
-bit 6) became HIGH on every machine, also with no tape image loaded. The Scorpion's ProfROM
-monitor needed that (its tape-port check reads #FFBE and treats bit 6 = 0 as "no signal",
-error #61). Before, the level was LOW with no image loaded.
+bit 6) became HIGH on every machine, also with no tape image loaded, to unwedge the Scorpion
+ProfROM boot. Before, the level was LOW with no image loaded. The reason given for it was wrong:
+see "The Scorpion and the ProfROM" below.
 
 z80test's CRCs are taken on hardware, where #FE reads #BF (bit 6 = 0) in these tests. Every IN
 test folds the value read into its CRC, so all 9 failed. The same commit regenerated the
@@ -37,11 +37,11 @@ EAR level"):
 | Board | Idle EAR (no playback) | Why |
 |:--|:--|:--|
 | 48K, 128K, +2 (Ferranti ULA) | bit 4 of the last #FE write | Issue 3: the EAR output feeds back into the input |
-| Scorpion, Scorpion + ProfROM | HIGH | ProfROM's tape-port check (error #61) |
-| Everything else | LOW with no tape image, HIGH with one | The behavior before 2026-09-10 |
+| Every other board (clones, +2A / +3) | LOW with no tape image, HIGH with one | The behavior before 2026-09-10 |
 
 Tests:
-- `TapeIdleEar_Test.*` (fast, runs by default): the three rows above through the port decoder.
+- `TapeIdleEar_Test.*` (fast, runs by default): both rows through the port decoder, the Scorpions
+  included.
 - `Z80TestVerification.*`: `IN R,(C)` / `IN (C)` back on Rak's hardware CRCs (`0x61F21A52`,
   `0x8F4B242F`).
 - `Models/Z80TestProgram_Test.DISABLED_Z80Full/*` (on demand): the whole z80full program per
@@ -51,14 +51,43 @@ Tests:
 
 | Model | Result | Note |
 |:--|:--|:--|
-| 48K, 128k, PLUS2, PLUS2A, PLUS3, PENTAGON, ATM710, PROFI, PROFI3, TSL | all 160 passed | In the harness |
-| SCORPION, PROFSCORP | 9 IN tests fail | EAR pulled up by design (ProfROM) |
+| 48K, 128k, PLUS2, PLUS2A, PLUS3, PENTAGON, ATM710, SCORPION, PROFSCORP, PROFI, PROFI3, TSL | all 160 passed | In the harness |
 | ATM3 | 9 IN tests fail | #FE bit 5 reads 0 (`zports.v`: `{1'b1, tape_read, 1'b0, keys_in}`) |
 | ATM450 | INI, IND, INDR->NOP' fail | #FE bit 7 is the PAL marker, a function of the T-state since INT, so the result depends on timing |
 | SPRINTER | not run | Refuses snapshots (`testdata/loaders/golden/commit-digests.txt`: `refused`) |
 
 All failures in the table come from the board's #FE read, not from the CPU. These models are left
 out of the harness.
+
+## The Scorpion and the ProfROM
+
+Until the follow-up fix the Scorpion and Scorpion + ProfROM read HIGH, "for the ProfROM's
+tape-port check (#FFBE, error #61)". That reason is wrong, and the Scorpions now follow the
+clone rule (z80full passes on both):
+
+- **The ROM** (`data/rom/scorp_prof401.rom`, page 7; page 23 is a copy): #FFBE is the SMUC IDE
+  status register (ATA #1F7), not the tape port. `#1CF0: LD BC,#FFBE / IN D,(C) / BIT 6,D /
+  RET NZ ...` then `#1D00: LD A,#61 / SCF` is a DRDY ("drive ready") timeout. #60, #61 and #62
+  are the BSY, DRDY and DRQ timeouts. `#1E96: LD BC,#FFBE / IN A,(C) / XOR #FF / JR Z` is
+  "no IDE controller if the bus reads #FF". With no SMUC decode, #FFBE reached the #FE mirror
+  and read #BF (BSY = 1), so the boot spun in the BSY wait (#1D0A-#1D0E). EAR = 1 made it read
+  #FF, "no controller", so the boot went on. It worked by accident. The plain Scorpion ROMs
+  (`scorpion.rom`, `scorp295.rom`) never read #FFBE, and their tape reads work on edges.
+- **The emulator now**: on the PROFSCORP the SMUC stub answers #F8BE-#FFBE ahead of the #FE
+  arm (`portdecoder_scorpion256.cpp`), so the EAR level no longer reaches this code. Checked
+  on a live instance: SCORPION and PROFSCORP boot to the 128 menu with EAR LOW, and after NMI
+  the PROFSCORP screen digest is the same with EAR LOW and HIGH (a tape image inserted).
+- **The schematic** (Scorpion 256 Turbo+ re-creation, KiCad): the tape input is C13 0.1u, R39
+  100K into a CD4069UB (К561ЛН2, DD70), stage 1 self-biased by R40 100K, three more unbiased
+  stages, then DD37 (КП11А) puts it on D6. No pull-up or pull-down, so no part sets the idle
+  level. The beeper and MIC bits (DD35) go only to `T_OUT` / `AUDIO`; nothing feeds them back
+  into the input. The board behind the tape jack (XP1.A25) is not in the schematic.
+- **Other emulators** do nothing special for the Scorpion: the Unreal family and Xpeccy read 1 on
+  every model, MAME and ZX-M8XXX 0, ZXMAK2 / ZEsarUX / BizHawk / Spectral / Zero follow bit 4 of
+  the last #FE write. None cites a Scorpion circuit.
+
+`docs/inprogress/2026-09-07-scorpion-zs256-clone/profrom-nmi-boot-analysis.md` §7 carries the old
+reading and has a correction note.
 
 ## Recipe: run z80test fast (core-tests, no GUI)
 
