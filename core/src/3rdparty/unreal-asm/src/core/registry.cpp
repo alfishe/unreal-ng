@@ -15,6 +15,7 @@
 #include "codecs/odin/odincodec.h"
 #include "codecs/prometheus/prometheuscodec.h"
 #include "codecs/lasergenius/lasergeniuscodec.h"
+#include "codecs/pasm/pasmcodec.h"
 #include "codecs/masm/masmcodec.h"
 #include "codecs/sjasmplus/sjasmpluscodec.h"
 #include "codecs/tasm/tasmcodec.h"
@@ -52,6 +53,7 @@ const CodecRegistry& CodecRegistry::Builtin()
         r.Add(std::make_unique<codecs::OdinCodec>());
         r.Add(std::make_unique<codecs::PrometheusCodec>());
         r.Add(std::make_unique<codecs::LaserGeniusCodec>());
+        r.Add(std::make_unique<codecs::PasmCodec>());
         return r;
     }();
     return registry;

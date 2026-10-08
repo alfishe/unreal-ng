@@ -61,6 +61,7 @@ add_library(unreal-asm STATIC
     src/codecs/prometheus/prometheuscodec.cpp
     src/codecs/prometheus/prometheustable.cpp
     src/codecs/lasergenius/lasergeniuscodec.cpp
+    src/codecs/pasm/pasmcodec.cpp
     src/codecs/zeus/zeuscodec.cpp
     src/codecs/xas/xascodec.cpp
     src/ir/expr.cpp
@@ -88,6 +89,7 @@ add_library(unreal-asm STATIC
     src/dialects/zasm/zasmcompound.cpp
     src/dialects/prometheus/prometheusfrontend.cpp
     src/dialects/lasergenius/lasergeniusfrontend.cpp
+    src/dialects/pasm/pasmfrontend.cpp
     src/dialects/sjasmplus/sjasmplusbackend.cpp
     src/dialects/common/classicbackend.cpp
     src/dialects/pasmo/pasmobackend.cpp
@@ -183,6 +185,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/zmacrasmfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/odinspecasm_test.cpp
         ${UNREAL_ASM_DIR}/tests/lasergenius_test.cpp
+        ${UNREAL_ASM_DIR}/tests/pasm_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbol_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbolindex_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbolstore_test.cpp

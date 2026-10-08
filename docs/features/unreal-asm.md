@@ -23,6 +23,7 @@ Running the assemblers themselves inside the emulator: [.recipe/assemblers/](../
 | XAS | `xas` | 4.18, 5.05, 7.43, 7.43c, 9.07m, 9.10 | yes |
 | ASM80 / Asm80Win (PC cross assembler) | `asm80` | 2.02 (text) | yes |
 | PROMETHEUS (Proxima) | `prometheus` | the editor's save (records + symbol table) | yes |
+| Power Assembler (Sergeyev) | `pasm` | 3.0 (text, CR LF) | yes |
 | Laser Genius (Oasis Software) | `lasergenius` | the editor's tokenized text (tape blocks joined, the Beta Disk file); Phoenix paragraphs kept as bytes | yes |
 | sjasmplus | `sjasmplus` | text | - |
 | any text | `text` | CP866, KOI8-R, CP1251, UTF-8; any line end | - |
@@ -74,7 +75,7 @@ symconv source disk.trd --main MAIN --to unreal-map -o main.map   # the labels o
 symconv live 3:ram3.bin 6:ram6.bin --to native       # the label table of ALASM / XAS from RAM pages
 ```
 
-- **Labels from sources** (`symconv source`): the labels a TASM, ALASM, STORM, ZX-ASM, MASM, GENS, ZEUS, XAS, ASM80, PROMETHEUS, Laser Genius or
+- **Labels from sources** (`symconv source`): the labels a TASM, ALASM, STORM, ZX-ASM, MASM, GENS, ZEUS, XAS, ASM80, PROMETHEUS, Laser Genius, Power Assembler or
   sjasmplus project defines, with the value each gets, its kind and its source line. The values come from a layout
   of the project's sjasmplus conversion (no bytes are built), checked against sjasmplus on the collection's disks.
   `symconv source` reads TR-DOS and tape images; an ASM80 project (host files) goes through the library's
