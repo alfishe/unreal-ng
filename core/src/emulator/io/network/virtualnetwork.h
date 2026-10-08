@@ -35,6 +35,7 @@
 #include "common/network/hostframes.h"
 #include "common/network/hostnet.h"
 #include "common/network/mactranslator.h"
+#include "emulator/io/network/netstatetail.h"
 #include "common/network/nettypes.h"
 #include "emulator/io/network/ethernet/ethernetlink.h"
 #include "emulator/state/statenode.h"
@@ -265,15 +266,16 @@ public:
 
     // --- TTD state (netstate.h) --------------------------------------------
 
-    /// Guest-side tables (sockets, guest servers, leases, counters). Returns
-    /// false when something did not fit the fixed limits (saved as far as it goes)
+    /// Guest-side tables (sockets, guest servers, leases, counters); what the
+    /// fixed arrays cannot hold goes to `tail` (netstatetail.h)
     /// `serial`: the serial ports' peers, saved as guests 2 and 3 (every other guest is 1)
-    bool SaveState(netstate::VirtualNetwork& out, const SerialGuests& serial = {}) const;
+    void SaveState(netstate::VirtualNetwork& out, netstate::Tail& tail, const SerialGuests& serial = {}) const;
 
     /// Restore the tables; a socket of guest 1 is handed to `guest` (the
     /// card's chip), of guests 2 / 3 to the serial ports' peers. Queued
     /// answers are dropped: after the checkpoint they come from the journal
-    void LoadState(const netstate::VirtualNetwork& in, INetGuest* guest, const SerialGuests& serial = {});
+    void LoadState(const netstate::VirtualNetwork& in, const netstate::Tail& tail, INetGuest* guest,
+                   const SerialGuests& serial = {});
 
 private:
     struct Socket

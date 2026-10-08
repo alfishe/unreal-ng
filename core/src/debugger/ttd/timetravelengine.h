@@ -598,6 +598,11 @@ private:
     /// Per region: where the last laid-out state ended (4 + its length); kExtentUnknown: the whole region
     std::vector<uint32_t> _deviceExtent;
     static constexpr uint32_t kExtentUnknown = 0xFFFFFFFFu;
+    /// Per region: a variable-size device state without time fields. Its scratch and delta base cover the pieces
+    /// the state reached, not the largest size (a network adapter declares 64 MiB and usually uses a few KiB)
+    std::vector<uint8_t> _growsWithState;
+    /// `v` covering pieces [0, pieces): a growing region's buffer grows to them, any other is the whole region
+    void CoverPieces(uint32_t region, std::vector<uint8_t>& v, uint32_t pieces) const;
     /// A time field's line, kept per device region and field while recording
     struct TimeLine
     {

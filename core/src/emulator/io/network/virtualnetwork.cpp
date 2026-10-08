@@ -970,20 +970,15 @@ std::vector<VirtualNetwork::ListenerInfo> VirtualNetwork::Listeners() const
 // TTD state
 // ---------------------------------------------------------------------------
 
-bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out, const SerialGuests& serial) const
+void VirtualNetwork::SaveState(netstate::VirtualNetwork& out, netstate::Tail& tail, const SerialGuests& serial) const
 {
-    bool complete = true;
+    using List = netstate::Tail::List;
     out.nextId = _nextId;
 
-    uint16_t n = 0;
+    uint32_t n = 0;
     for (const auto& [id, s] : _sockets)
     {
-        if (n >= netstate::kMaxNetSockets)
-        {
-            complete = false;
-            break;
-        }
-        netstate::NetSocket& o = out.sockets[n++];
+        netstate::NetSocket o{};
         o.id = s.id;
         o.hostId = s.hostId;
         o.proto = static_cast<uint8_t>(s.proto);
@@ -1005,63 +1000,65 @@ bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out, const SerialGuests
         o.listenPort = s.listenPort;
         o.bytesIn = s.bytesIn;
         o.bytesOut = s.bytesOut;
+        if (n < netstate::kMaxNetSockets)
+            out.sockets[n] = o;
+        else
+            tail.Add(List::NetSocket, 0, n, &o, sizeof(o));
+        ++n;
     }
-    out.socketCount = n;
+    out.socketCount = static_cast<uint16_t>(std::min<uint32_t>(n, netstate::kMaxNetSockets));
 
     n = 0;
     for (const auto& [port, l] : _listeners)
     {
-        if (n >= netstate::kMaxListeners)
-        {
-            complete = false;
-            break;
-        }
-        netstate::Listener& o = out.listeners[n++];
+        netstate::Listener o{};
         o.guestPort = port;
         o.hostListenerId = l.hostListenerId;
         o.hostPort = l.hostPort;
-        uint8_t w = 0;
+        const uint16_t server = static_cast<uint16_t>(n);
+        uint32_t w = 0;
         for (uint16_t id : l.waiting)
         {
-            if (w >= netstate::kMaxWaiting)
-            {
-                complete = false;
-                break;
-            }
-            o.waiting[w++] = id;
+            if (w < netstate::kMaxWaiting)
+                o.waiting[w] = id;
+            else
+                tail.Add(List::NetWaiting, server, w, &id, sizeof(id));
+            ++w;
         }
-        o.waitingCount = w;
-        uint8_t p = 0;
+        o.waitingCount = static_cast<uint8_t>(std::min<uint32_t>(w, netstate::kMaxWaiting));
+        uint32_t p = 0;
         for (const Listener::Pending& client : l.pending)
         {
-            if (p >= netstate::kMaxPending)
-            {
-                complete = false;
-                break;
-            }
-            o.pending[p].hostId = client.hostId;
-            o.pending[p].addr = client.peer.addr;
-            o.pending[p].port = client.peer.port;
+            const netstate::ListenerPending entry{client.hostId, client.peer.port, client.peer.addr};
+            if (p < netstate::kMaxPending)
+                o.pending[p] = entry;
+            else
+                tail.Add(List::NetPending, server, p, &entry, sizeof(entry));
             ++p;
         }
-        o.pendingCount = p;
+        o.pendingCount = static_cast<uint8_t>(std::min<uint32_t>(p, netstate::kMaxPending));
+        if (n < netstate::kMaxListeners)
+            out.listeners[n] = o;
+        else
+            tail.Add(List::NetListener, 0, n, &o, sizeof(o));
+        ++n;
     }
-    out.listenerCount = n;
+    out.listenerCount = static_cast<uint16_t>(std::min<uint32_t>(n, netstate::kMaxListeners));
 
     n = 0;
     for (const auto& [mac, addr] : _dhcp.Leases())
     {
-        if (n >= netstate::kMaxLeases)
-        {
-            complete = false;
-            break;
-        }
+        netstate::Lease lease{};
         for (size_t i = 0; i < 6; ++i)
-            out.leases[n].mac[i] = mac[i];
-        out.leases[n].addr = addr;
+            lease.mac[i] = mac[i];
+        lease.addr = addr;
+        if (n < netstate::kMaxLeases)
+            out.leases[n] = lease;
+        else
+            tail.Add(List::NetLease, 0, n, &lease, sizeof(lease));
         ++n;
     }
-    out.leaseCount = n;
+    out.leaseCount = static_cast<uint16_t>(std::min<uint32_t>(n, netstate::kMaxLeases));
 
     out.counters[0] = _counters.dhcpReplies;
     out.counters[1] = _counters.dnsLocalAnswers;
@@ -1069,19 +1066,18 @@ bool VirtualNetwork::SaveState(netstate::VirtualNetwork& out, const SerialGuests
     out.counters[3] = _counters.echoReplies;
     out.counters[4] = _counters.hostEvents;
     out.counters[5] = _counters.linkResets;
-    return complete;
 }
 
-void VirtualNetwork::LoadState(const netstate::VirtualNetwork& in, INetGuest* guest, const SerialGuests& serial)
+void VirtualNetwork::LoadState(const netstate::VirtualNetwork& in, const netstate::Tail& tail, INetGuest* guest,
+                               const SerialGuests& serial)
 {
+    using List = netstate::Tail::List;
     _sockets.clear();
     _listeners.clear();
     _deferred.clear();
     _nextId = in.nextId ? in.nextId : 1;
 
-    for (uint16_t i = 0; i < in.socketCount && i < netstate::kMaxNetSockets; ++i)
-    {
-        const netstate::NetSocket& o = in.sockets[i];
+    auto addSocket = [&](const netstate::NetSocket& o) {
         Socket s;
         s.id = o.id;
         s.hostId = o.hostId;
@@ -1104,27 +1100,76 @@ void VirtualNetwork::LoadState(const netstate::VirtualNetwork& in, INetGuest* gu
         s.bytesIn = o.bytesIn;
         s.bytesOut = o.bytesOut;
         _sockets[s.id] = s;
-    }
-    for (uint16_t i = 0; i < in.listenerCount && i < netstate::kMaxListeners; ++i)
-    {
-        const netstate::Listener& o = in.listeners[i];
+    };
+    for (uint16_t i = 0; i < in.socketCount && i < netstate::kMaxNetSockets; ++i)
+        addSocket(in.sockets[i]);
+    tail.ForEach(List::NetSocket, 0, [&](uint32_t, const uint8_t* data, uint32_t size) {
+        netstate::NetSocket o{};
+        if (size == sizeof(o))
+        {
+            std::memcpy(&o, data, sizeof(o));
+            addSocket(o);
+        }
+    });
+
+    auto addListener = [&](uint32_t index, const netstate::Listener& o) {
         Listener l;
         l.hostListenerId = o.hostListenerId;
         l.hostPort = o.hostPort;
+        const uint16_t server = static_cast<uint16_t>(index);
         for (uint8_t w = 0; w < o.waitingCount && w < netstate::kMaxWaiting; ++w)
             l.waiting.push_back(o.waiting[w]);
+        tail.ForEach(List::NetWaiting, server, [&](uint32_t, const uint8_t* data, uint32_t size) {
+            uint16_t id = 0;
+            if (size == sizeof(id))
+            {
+                std::memcpy(&id, data, sizeof(id));
+                l.waiting.push_back(id);
+            }
+        });
+        auto addPending = [&](uint16_t hostId, uint32_t addr, uint16_t port) {
+            l.pending.push_back({hostId, NetEndpoint{addr, port}});
+        };
         for (uint8_t p = 0; p < o.pendingCount && p < netstate::kMaxPending; ++p)
-            l.pending.push_back({o.pending[p].hostId, NetEndpoint{o.pending[p].addr, o.pending[p].port}});
+            addPending(o.pending[p].hostId, o.pending[p].addr, o.pending[p].port);
+        tail.ForEach(List::NetPending, server, [&](uint32_t, const uint8_t* data, uint32_t size) {
+            netstate::ListenerPending entry{};
+            if (size == sizeof(entry))
+            {
+                std::memcpy(&entry, data, sizeof(entry));
+                addPending(entry.hostId, entry.addr, entry.port);
+            }
+        });
         _listeners[o.guestPort] = std::move(l);
-    }
+    };
+    for (uint16_t i = 0; i < in.listenerCount && i < netstate::kMaxListeners; ++i)
+        addListener(i, in.listeners[i]);
+    tail.ForEach(List::NetListener, 0, [&](uint32_t index, const uint8_t* data, uint32_t size) {
+        netstate::Listener o{};
+        if (size == sizeof(o))
+        {
+            std::memcpy(&o, data, sizeof(o));
+            addListener(index, o);
+        }
+    });
+
     std::map<DhcpServer::Mac, uint32_t> leases;
-    for (uint16_t i = 0; i < in.leaseCount && i < netstate::kMaxLeases; ++i)
-    {
+    auto addLease = [&](const netstate::Lease& lease) {
         DhcpServer::Mac mac{};
         for (size_t b = 0; b < mac.size(); ++b)
-            mac[b] = in.leases[i].mac[b];
-        leases[mac] = in.leases[i].addr;
-    }
+            mac[b] = lease.mac[b];
+        leases[mac] = lease.addr;
+    };
+    for (uint16_t i = 0; i < in.leaseCount && i < netstate::kMaxLeases; ++i)
+        addLease(in.leases[i]);
+    tail.ForEach(List::NetLease, 0, [&](uint32_t, const uint8_t* data, uint32_t size) {
+        netstate::Lease lease{};
+        if (size == sizeof(lease))
+        {
+            std::memcpy(&lease, data, sizeof(lease));
+            addLease(lease);
+        }
+    });
     _dhcp.SetLeases(leases);
 
     _counters.dhcpReplies = in.counters[0];

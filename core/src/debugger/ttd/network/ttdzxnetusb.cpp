@@ -18,13 +18,18 @@ TTDZxNetUsb::TTDZxNetUsb(EmulatorContext* context)
 {
 }
 
-void TTDZxNetUsb::TTDSaveState(uint8_t* dst) const
+namespace
+{
+constexpr uint8_t kHasTail = 1;   ///< netstate::Adapters::reserved[0]: a tail follows the fixed part
+}
+
+void TTDZxNetUsb::TTDSaveStateTo(std::vector<uint8_t>& out) const
 {
     netstate::Adapters& state = *_scratch;
+    _tail.Clear();
     const SerialGuests serial = ComPort::SerialNetGuests(_context);
-    bool complete = true;
     if (_context && _context->pZxNetUsb)
-        complete = _context->pZxNetUsb->SaveState(state, serial);
+        _context->pZxNetUsb->SaveState(state, _tail, serial);
     else
     {
         std::memset(&state, 0, sizeof(state));   // no card fitted at this frame
@@ -32,12 +37,21 @@ void TTDZxNetUsb::TTDSaveState(uint8_t* dst) const
         if (_context && _context->pVirtualNetwork)
         {
             state.networkPresent = 1;
-            complete = _context->pVirtualNetwork->SaveState(state.network, serial);
+            _context->pVirtualNetwork->SaveState(state.network, _tail, serial);
         }
     }
-    if (!complete)
-        state.incomplete = 1;
-    std::memcpy(dst, &state, sizeof(state));
+    state.reserved[0] = _tail.Empty() ? 0 : kHasTail;
+    const uint8_t* fixed = reinterpret_cast<const uint8_t*>(&state);
+    out.assign(fixed, fixed + sizeof(state));
+    if (!_tail.Empty())
+        _tail.AppendTo(out);
+}
+
+void TTDZxNetUsb::TTDSaveState(uint8_t* dst) const
+{
+    std::vector<uint8_t> blob;
+    TTDSaveStateTo(blob);
+    std::memcpy(dst, blob.data(), blob.size());
 }
 
 void TTDZxNetUsb::TTDLoadState(const uint8_t* src)
@@ -48,8 +62,10 @@ void TTDZxNetUsb::TTDLoadState(const uint8_t* src)
     std::memcpy(&state, src, sizeof(state));
     if (state.version != netstate::kVersion)
         return;
+    const netstate::Tail tail =
+        (state.reserved[0] & kHasTail) ? netstate::Tail::Read(src + sizeof(state)) : netstate::Tail();
 
-    // Received bytes come from the TTD journal (option A)
+    // Received bytes come from the TTD journal (option A), or inline from the tail
     const ttd::TTDInputJournal* journal =
         _context->pTimeTravelHooks ? &_context->pTimeTravelHooks->InputJournal() : nullptr;
     W5300::ByteSource bytes = [journal](uint32_t source, uint32_t offset, uint32_t length, std::vector<uint8_t>& out) {
@@ -68,17 +84,16 @@ void TTDZxNetUsb::TTDLoadState(const uint8_t* src)
     const SerialGuests serial = ComPort::SerialNetGuests(_context);
     bool complete = true;
     if (_context->pZxNetUsb && state.present)
-        complete = _context->pZxNetUsb->LoadState(state, bytes, serial);
+        complete = _context->pZxNetUsb->LoadState(state, tail, bytes, serial);
     else if (_context->pVirtualNetwork && state.networkPresent)
-        _context->pVirtualNetwork->LoadState(state.network, nullptr, serial);
+        _context->pVirtualNetwork->LoadState(state.network, tail, nullptr, serial);
 
-    if ((!complete || state.incomplete) && _context->pModuleLogger)
+    if (!complete && _context->pModuleLogger)
     {
         ModuleLogger* _logger = _context->pModuleLogger;
         const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_DEBUGGER;
         const uint16_t _SUBMODULE = 0x0000;
-        MLOGWARNING("TTDZxNetUsb: the network adapter state was restored incompletely (%s)",
-                    state.incomplete ? "it did not fit the checkpoint limits" : "received bytes missing from the journal");
+        MLOGWARNING("TTDZxNetUsb: received bytes the checkpoint refers to are missing from the journal");
     }
 }
 

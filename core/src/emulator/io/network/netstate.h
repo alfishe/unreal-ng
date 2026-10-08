@@ -87,17 +87,19 @@ struct NetSocket
     uint64_t bytesIn, bytesOut;
 };
 
+struct ListenerPending
+{
+    uint16_t hostId;
+    uint16_t port;
+    uint32_t addr;
+};
+
 struct Listener
 {
     uint16_t guestPort, hostListenerId, hostPort;
     uint8_t waitingCount, pendingCount;
     uint16_t waiting[kMaxWaiting];
-    struct
-    {
-        uint16_t hostId;
-        uint16_t port;
-        uint32_t addr;
-    } pending[kMaxPending];
+    ListenerPending pending[kMaxPending];
 };
 
 struct Lease
