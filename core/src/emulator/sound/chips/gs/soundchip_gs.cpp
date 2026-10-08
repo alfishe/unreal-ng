@@ -728,6 +728,14 @@ void SoundChip_GeneralSound::gsOut(uint16_t port, uint8_t value)
 uint8_t SoundChip_GeneralSound::gsInMultiSound(uint16_t port)
 {
     traceEvent(GSTraceSide::GsInternal, port & 0x00FF, 0, false);
+    const uint8_t value = gsInMultiSoundDecode(port);
+    if (_busObserver) [[unlikely]]
+        _busObserver->GsPortCycle(hostTimeNow(), static_cast<uint8_t>(port), value, false);
+    return value;
+}
+
+uint8_t SoundChip_GeneralSound::gsInMultiSoundDecode(uint16_t port)
+{
     const uint8_t undecoded = _profile.undecodedPortRead;
     switch (port & 0x0F)
     {
@@ -745,6 +753,8 @@ uint8_t SoundChip_GeneralSound::gsInMultiSound(uint16_t port)
 void SoundChip_GeneralSound::gsOutMultiSound(uint16_t port, uint8_t value)
 {
     traceEvent(GSTraceSide::GsInternal, port & 0x00FF, value, true);
+    if (_busObserver) [[unlikely]]
+        _busObserver->GsPortCycle(hostTimeNow(), static_cast<uint8_t>(port), value, true);
     switch (port & 0x0F)
     {
         case 0x00: _mpag = value; applyBanking(); return;
@@ -895,6 +905,8 @@ void SoundChip_GeneralSound::dacFetch(uint16_t addr, uint8_t value)
     _activityCounters.lastDacFetchGsCycle = totalGsCycles();
     _activityCounters.lastDacFetchFrame = currentFrameNumber();
     traceEvent(GSTraceSide::DacFetch, addr, value, false, static_cast<uint8_t>(channel));
+    if (_busObserver) [[unlikely]]
+        _busObserver->GsDacFetch(hostTimeNow(), addr, value);
     if (_profile.dacSink)
     {
         sinkSample(channel, value);

@@ -73,10 +73,17 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   sweep tables) and CL-1 `MultiSoundLogic` + `core-tests` ([tdd-card-logic.md](tdd-card-logic.md) §2, §4, §5)
 - [x] RTL findings F1-F11 folded into [hardware-reference.md](hardware-reference.md) and [architecture.md](architecture.md)
   (GS INT / 321, DAC transfer, IORQGE direction, GS flag rules, GS memory map) - [tdd-card-logic.md](tdd-card-logic.md) §7
-- [ ] CL-2 rest (the write-only TFM trace now also plays through the card: `MultiSoundCard_Test.TfmPlayerTracePlaysThroughTheCard`;
-  it starts after the player loaded its instruments - TL #7F, AR 0 - so the test adds a stand-in instrument): real-program traces with reads and M1 context (TSFM players with status polling, VGMPLAY.WMF, GS MOD
-  player, WC MIDI player, Ball Quest) once the card is on the bus (integration phase); one write-only trace (TFM Music
-  Compiler player) is in the corpus
+- [x] CL-2 real-program traces with reads and M1 context (2026-10-08, branch `ms-cl2-traces`;
+  walkthrough and results: [cl2-real-program-traces.md](cl2-real-program-traces.md)): the card's bus trace
+  (`MultiSoundCard::SetBusTrace`, host and GS side, M1 address, times, read values), captured from five programs on
+  the bus - TFM Music Compiler player with busy polling ("uzhos"), Mod Player v2.5 (GS), Ball Quest (ZX-Evo, `pro` and
+  `classic`), VGMPLAY.WMF (YM2203 + SAA) and GSPLAYER.WMF MIDI (TS-Conf 14 MHz); stored in
+  `testdata/sound/multisound/traces/` (zstd, 67 KB, with their capture scripts) because the programs cannot be
+  committed. Logic = RTL = the emulator's reads on all 208 176 cycles; a fresh card replays each program read for
+  read with the same GS cycles; audio digests and content checks (`MultiSoundTrace_Test`). No model bug found. The
+  earlier write-only TFM trace stays (`MultiSoundCard_Test.TfmPlayerTracePlaysThroughTheCard`).
+  Left, with reasons: no trace from a real card (needs a logic analyzer on the board's bus); SounDrive players not
+  traced (no reads; the shared DACs have their card tests)
 - [x] `MultiSoundDacs` + `MultiSoundMixer` ([architecture.md](architecture.md) §4.4, §5 "as built", 2026-10-04, not
   committed): four DAC channels from strobe events ordered by strobe end (F7) with the measured transfer (F9), blip
   output 0-1 L / 2-3 R, Authentic 16.25 kHz RC, TTD blob (no PeripheralId); the mixer's schematic weights computed
