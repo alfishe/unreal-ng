@@ -40,6 +40,10 @@ struct LiveCandidate
     uint32_t end = 0;        ///< the byte after it (the terminator)
     size_t count = 0;        ///< entries, symbols and others
     int score = 0;           ///< higher = more certain (the entries, plus the place the assembler is known to use)
+    /// ALASM 5.0x, a table over two pages: the page holding its lower part (from `offset` to the page's end), the upper
+    /// part going on in `page` from `split` to `end`; -1 = one page
+    int lowerPage = -1;
+    uint32_t split = 0;
 };
 
 struct LiveReadResult

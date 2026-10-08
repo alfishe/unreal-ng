@@ -21,6 +21,8 @@ std::string Hex(uint32_t value, int digits)
 
 std::string Where(const LiveCandidate& c)
 {
+    if (c.lowerPage >= 0)   // a table over two pages: where it starts in the lower one, then the upper one
+        return "ram" + std::to_string(c.lowerPage) + ":#" + Hex(c.offset, 4) + "+ram" + std::to_string(c.page) + ":#" + Hex(c.split, 4);
     return "ram" + std::to_string(c.page) + ":#" + Hex(c.offset, 4);
 }
 
@@ -47,7 +49,11 @@ Symbol Label(std::string name, uint32_t value, const LiveCandidate& c, uint32_t 
     s.name = std::move(name);
     s.location.offset = value;   // the CPU view: neither table says which page a value was assembled for
     s.provenance.importer = "live-" + c.scanner;
-    s.provenance.raw = "ram" + std::to_string(c.page) + ":#" + Hex(at, 4);
+    // A table over two pages counts `at` in the lower page and then the upper page from `split`
+    const bool lower = c.lowerPage >= 0 && at < kPage;
+    const uint32_t page = lower ? static_cast<uint32_t>(c.lowerPage) : c.page;
+    const uint32_t offset = c.lowerPage >= 0 && !lower ? at - kPage + c.split : at;
+    s.provenance.raw = "ram" + std::to_string(page) + ":#" + Hex(offset, 4);
     return s;
 }
 
@@ -56,7 +62,8 @@ Symbol Label(std::string name, uint32_t value, const LiveCandidate& c, uint32_t 
 // +0  bits 0-5: the record's size (5 + the name's length), bits 6-7: 0 defined, 1 macro, 2 used but not defined,
 //     3 wrong (an assembly error)
 // +1  the value, low byte first
-// +3  two bytes (zero in every table seen)
+// +3  two bytes: zero in a small table; a link of ALASM's hash chains (a CPU address) once names collide
+//     (research-labeltables.md §1.1); not needed to read the table
 // +5  the name, last character first
 // The newest label is the lowest record; the table ends at a zero byte (#3DFF in ALASM 5.0x, #3F7F in 4.4x).
 
@@ -65,11 +72,12 @@ bool AlasmNameChar(uint8_t c)
     return std::isalnum(c) != 0 || c == '_' || c == '@' || c == '.' || c == '!';
 }
 
-/// The records from `at` up to a zero byte: their count, or 0 when they do not chain to one
+/// The records from `at` up to a zero byte: their count, or 0 when they do not chain to one (`d` is one page, or the
+/// 32 KB of a table over two pages)
 size_t AlasmChain(std::span<const uint8_t> d, uint32_t at, uint32_t& end)
 {
     size_t n = 0;
-    while (at < kPage)
+    while (at < d.size())
     {
         const uint8_t head = d[at];
         if (head == 0)
@@ -78,7 +86,7 @@ size_t AlasmChain(std::span<const uint8_t> d, uint32_t at, uint32_t& end)
             return n;
         }
         const uint32_t size = head & 63u;
-        if (size < 6 || at + size > kPage)
+        if (size < 6 || at + size > d.size())
             return 0;
         for (uint32_t k = 5; k < size; ++k)
             if (!AlasmNameChar(d[at + k]))
@@ -140,20 +148,72 @@ public:
             }
             out.insert(out.end(), best.begin(), best.end());
         }
+        TwoPages(memory, out);
         std::sort(out.begin(), out.end(), [](const LiveCandidate& a, const LiveCandidate& b) { return a.score > b.score; });
         return out;
+    }
+
+    /// ALASM 5.0x keeps the table in two pages (INFO's "Symbols pg - #43,#C3"): it grows down from #FDFF of the first
+    /// to #C0FB (#C000-#C0FA hold other data) and goes on from the top of the second, seen at #8000-#BFFF (on 128K both
+    /// name page 3 and the second part overwrites the first). A one-page 5.0x chain starting near the page's start may
+    /// go on in another page given
+    static void TwoPages(const MemoryView& memory, std::vector<LiveCandidate>& out)
+    {
+        std::vector<LiveCandidate> added;
+        for (const LiveCandidate& upper : out)
+        {
+            if (upper.version != "5.0x" || upper.lowerPage >= 0 || upper.offset >= 0x200)
+                continue;
+            const MemoryPage* high = Page(memory, upper.page);
+            for (const MemoryPage& low : memory.pages)
+            {
+                if (low.page == upper.page || low.bytes.size() < kPage)
+                    continue;
+                std::vector<uint8_t> both(low.bytes.begin(), low.bytes.begin() + kPage);
+                both.insert(both.end(), high->bytes.begin() + upper.offset, high->bytes.begin() + kPage);
+                LiveCandidate best;
+                for (uint32_t s = 0; s < kPage; ++s)
+                {
+                    uint32_t end = 0;
+                    const size_t n = AlasmChain(both, s, end);
+                    if (n > upper.count && end == kPage + upper.end - upper.offset)
+                    {
+                        best = upper;
+                        best.lowerPage = low.page;
+                        best.split = upper.offset;
+                        best.offset = s;
+                        best.end = end;
+                        best.count = n;
+                        break;   // the lowest start is the whole table
+                    }
+                }
+                if (best.lowerPage >= 0 && best.count > upper.count + 1)
+                {
+                    best.score = upper.score + 20;
+                    added.push_back(best);
+                }
+            }
+        }
+        out.insert(out.end(), added.begin(), added.end());
     }
 
     LiveReadResult Read(const MemoryView& memory, const LiveCandidate& c) const override
     {
         LiveReadResult r = Start(c, Title());
         const MemoryPage* p = Page(memory, c.page);
-        if (!p)
+        const MemoryPage* low = c.lowerPage >= 0 ? Page(memory, static_cast<uint16_t>(c.lowerPage)) : nullptr;
+        if (!p || (c.lowerPage >= 0 && !low))
         {
-            r.diagnostics.push_back({Severity::Error, 0, 0, "page " + std::to_string(c.page) + " not in the memory given"});
+            r.diagnostics.push_back({Severity::Error, 0, 0, "page " + std::to_string(p ? c.lowerPage : c.page) + " not in the memory given"});
             return r;
         }
-        std::span<const uint8_t> d = p->bytes;
+        std::vector<uint8_t> both;
+        if (low)
+        {
+            both.assign(low->bytes.begin(), low->bytes.begin() + kPage);
+            both.insert(both.end(), p->bytes.begin() + c.split, p->bytes.begin() + kPage);
+        }
+        std::span<const uint8_t> d = low ? std::span<const uint8_t>(both) : p->bytes;
         size_t skipped[4] = {0, 0, 0, 0};
         std::vector<Symbol> found;
         for (uint32_t at = c.offset; at < c.end && d[at] != 0;)

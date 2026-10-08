@@ -242,8 +242,14 @@ int Live(const std::vector<std::string>& args)
     }
     const std::vector<LiveCandidate> found = FindLabelTables(memory);
     for (size_t k = 0; k < found.size(); ++k)
-        std::cerr << k << "\t" << found[k].scanner << " " << found[k].version << "\tram" << found[k].page << "\t#" << std::hex << std::uppercase
-                  << found[k].offset << std::dec << "\t" << found[k].count << " entries\tscore " << found[k].score << "\n";
+    {
+        const LiveCandidate& c = found[k];
+        std::cerr << k << "\t" << c.scanner << " " << c.version << "\tram" << (c.lowerPage >= 0 ? c.lowerPage : c.page) << "\t#" << std::hex
+                  << std::uppercase << c.offset << std::dec;
+        if (c.lowerPage >= 0)   // a table over two pages
+            std::cerr << " + ram" << c.page << " #" << std::hex << std::uppercase << c.split << std::dec;
+        std::cerr << "\t" << c.count << " entries\tscore " << c.score << "\n";
+    }
     if (pick >= found.size())
     {
         std::cerr << "symconv: no label table" << (found.empty() ? "" : " with that number") << "\n";

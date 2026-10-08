@@ -53,6 +53,8 @@ constexpr Case kCases[] = {
     {"alasm509-lta-ram3.bin", 3, "alasm509-lta.expected.txt", "5.0x", 0x3D8A, false},
     {"alasm509-ltb-ram3.bin", 3, "alasm509-ltb.expected.txt", "5.0x", 0x3DC3, false},
     {"alasm444-lta-ram3.bin", 3, "alasm444-lta.expected.txt", "4.4x", 0x3F0A, false},
+    {"alasm38c-ltc-ram3.bin", 3, "alasm-ltc.expected.txt", "4.4x", 0x3F2E, false},
+    {"alasm45-ltc-ram6.bin", 6, "alasm-ltc.expected.txt", "4.4x", 0x3F2E, false},
     {"xas7447-constrct-ram6.bin", 6, "xas7447-constrct.expected.txt", "7.x", 0x1FFF, true},
     {"xas7447-xprobe-ram6.bin", 6, "xas7447-xprobe.expected.txt", "7.x", 0x1FFF, true},
     {"xas418-cons418-ram6.bin", 6, "xas418-cons418.expected.txt", "4.x", 0x0B16, true},
@@ -129,4 +131,34 @@ TEST(Live_Test, SeveralPagesAtOnceAndPagesWithoutATable)
     EXPECT_TRUE(alasmFound);
     EXPECT_TRUE(xasFound);
     EXPECT_TRUE(FindLabelTables(MemoryView{{{0, zeros}}}).empty());
+}
+
+TEST(Live_Test, AlasmTableOverTwoPagesOfAPentagon512)
+{
+    // 1800 labels: ALASM 5.09 filled #FDFF-#C0FB of its first symbol page (RAM 11, INFO's #43) and went on from the top
+    // of the second (RAM 27, #C3); on 128K both are page 3 and the second part overwrites the first
+    const std::vector<uint8_t> upper = ReadTestData("symbols/live/alasm509-big-ram11.bin");
+    const std::vector<uint8_t> lower = ReadTestData("symbols/live/alasm509-big-ram27.bin");
+    const MemoryView memory{{{11, upper}, {27, lower}}};
+    const std::vector<LiveCandidate> found = FindLabelTables(memory);
+    ASSERT_FALSE(found.empty());
+    const LiveCandidate& best = found[0];
+    EXPECT_EQ(best.page, 11);
+    EXPECT_EQ(best.lowerPage, 27);
+    EXPECT_EQ(best.split, 0x00FBu);
+    EXPECT_EQ(best.count, 1800u);
+    const LiveReadResult r = ReadLabelTable(memory, best);
+    ASSERT_TRUE(r.ok);
+    const auto expected = Expected("alasm509-big.expected.txt", false);
+    ASSERT_EQ(r.set.symbols.size(), expected.size());
+    for (size_t k = 0; k < expected.size(); ++k)
+    {
+        EXPECT_EQ(r.set.symbols[k].name, expected[k].first);
+        EXPECT_EQ(r.set.symbols[k].location.offset, expected[k].second) << expected[k].first;
+    }
+    EXPECT_EQ(r.set.symbols.front().provenance.raw.rfind("ram11:", 0), 0u);   // L0000, the oldest, at the top of RAM 11
+    EXPECT_EQ(r.set.symbols.back().provenance.raw.rfind("ram27:", 0), 0u);
+    // One page alone gives its part only
+    const MemoryView alone{{{11, upper}}};
+    EXPECT_EQ(FindLabelTables(alone).at(0).count, 1562u);
 }
