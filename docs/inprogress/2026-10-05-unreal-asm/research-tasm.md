@@ -123,6 +123,30 @@ lines are reported (`DecodeResult::subversions`), the newest is chosen.
 Run: an own emulator instance (Pentagon, TR-DOS, `RUN "<tasm>"`, `E` + the file name), TTD recorded; the screenshots
 are kept with the research materials, not in the repository.
 
+### 6.2 TASM 4.12's own manual
+
+TASM 4.12 ships its manual as "HyperText 1.0 (C) 1997 by Rst7" (`TASMHELP` loads it from `tasm.ovl`): the text is
+packed and unpacked page by page straight onto the screen, so it is nowhere in memory as text. It was read from the
+screen of TASM 4.12 running in unreal-ng (2026-10-07): each cell of the 64-column screen matched against the viewer's
+4x8 font in RAM page 2 (at `#02DF + code * 8`, low nibbles), CP866 codes, every page of the eleven sections (How to use
+Help; 1-6 the manual chapters; 7 the 6502 cross-assembler; 8 thanks; 9, 10 the SINUS and SNAKE examples). The text is
+kept in the ZX collection (`software/programming/tasm4/docs/tasm412-hypertext.utf8.txt`, 37211 bytes), not here: the
+text stores Latin twins of Cyrillic letters in places and the reading keeps a few of them Latin. What matters here:
+
+- the editor's command mode is CS+SS (`COMMAND (B,C,E,F,H,L,M,Q,R,S,W,X,Y,?,ENTER)`): Q back to the menu, B / E start
+  / end, S / X search / replace, R / C the line buffer, F the next error (4.07, the first 76 kept), M / L remembered /
+  last changed line (4.09), W 32 / 64 columns (4.10), Y find a label (4.09), H help (4.12), ENTER duplicate the line
+  (4.06); SS+SPACE / SS+ENTER record / replay a key sequence of up to 32 keys (4.10);
+- the bottom line: free text memory and the line buffer's size (hex; no overflow check), current line / lines;
+- directives (chapter 5): labels of any length, hashed; expressions left to right; `.INCLUDE` / `.INCBIN` (`.INCBIN`
+  loads a CODE file at the current address); `.PHASE` / `.UNPHASE`; `label = expression` redefinable (4.09); `.PAGE n`
+  "assemble into page n, ORG must be above #C000" (4.05); `DISPLAY expression` (4.07); `DEFMAC` / `ENDMAC` with
+  `\0`..`\9` and the pointer operators `\r \c \n \s<char>`; macro-local labels start with three dots; `.LOCAL` a new
+  set of local labels (4.08); `.RUN expression` the Run address (4.11); `.IF` / `.ELSE` / `.ENDIF` (4.11);
+- the main menu (chapter 3): Import/export reads TASM 3.0 / 2.0 files and writes Amiga / PC text (4.08); with SS:
+  Calculator (4.07), Monitor (page `#17`, `JP #D000`, 4.08), Dos shell; CS+6 / CS+7 at a file name prompt choose from the
+  catalog.
+
 ## 7. Open items
 
 | Item | Note |
