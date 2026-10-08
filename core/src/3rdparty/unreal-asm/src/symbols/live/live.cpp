@@ -246,7 +246,9 @@ public:
 //
 // 7.x: page 6 holds two lists marked by 5 at +#1FFF and +#3FFF, each going down from just below the marker: names
 //      A-L under #3FFF, M-Z under #1FFF, sorted; an entry starting with a byte >= #80 ends a list.
+// 5.x: one list going down from #3FFF of page 6 in definition order (no markers; 5.05), ended the same way.
 // 4.x: one list going up in definition order (from #0B16 of page 6 in 4.18), ended by a zero byte.
+// Above 128K XAS 7.x puts it in RAM 14 (#46: page 6 with bit 6 of its page number).
 
 bool XasNameAt(std::span<const uint8_t> d, uint32_t at)
 {
@@ -321,10 +323,23 @@ public:
                     c.offset = 0x1FFF;
                     c.end = 0x4000;
                     c.count = static_cast<size_t>(high + low);
-                    c.score = static_cast<int>(std::min<size_t>(c.count, 200)) + 50 + (p.page == 6 ? 20 : 0);
+                    c.score = static_cast<int>(std::min<size_t>(c.count, 200)) + 50 + (p.page == 6 || p.page == 14 ? 20 : 0);
                     out.push_back(c);
                     continue;   // the two lists also read as 4.x runs: not twice
                 }
+            }
+            else if (const int one = Xas7List(d, 0x3FFF); one >= 2)
+            {
+                LiveCandidate c;
+                c.scanner = std::string(Id());
+                c.version = "5.x";
+                c.page = p.page;
+                c.offset = 0x3FFF;
+                c.end = 0x4000;
+                c.count = static_cast<size_t>(one);
+                c.score = static_cast<int>(std::min<size_t>(c.count, 200)) + 40 + (p.page == 6 ? 20 : 0);
+                out.push_back(c);
+                continue;
             }
             // 4.x: runs of entries going up to a zero byte
             for (uint32_t s = 0; s + 9 <= kPage; ++s)
@@ -374,6 +389,11 @@ public:
             for (const uint32_t top : {0x3FFFu, 0x1FFFu})   // A-L, then M-Z: alphabetical
                 for (uint32_t at = top - 9; at >= 9 && d[at] < 0x80 && XasNameAt(d, at); at -= 9)
                     add(at);
+        }
+        else if (c.version == "5.x")
+        {
+            for (uint32_t at = 0x3FFF - 9; at >= 9 && d[at] < 0x80 && XasNameAt(d, at); at -= 9)
+                add(at);
         }
         else
         {

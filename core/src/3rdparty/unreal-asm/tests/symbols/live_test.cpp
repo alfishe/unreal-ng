@@ -59,6 +59,9 @@ constexpr Case kCases[] = {
     {"xas7447-xprobe-ram6.bin", 6, "xas7447-xprobe.expected.txt", "7.x", 0x1FFF, true},
     {"xas418-cons418-ram6.bin", 6, "xas418-cons418.expected.txt", "4.x", 0x0B16, true},
     {"xas418-xprobe-ram6.bin", 6, "xas418-xprobe.expected.txt", "4.x", 0x0B16, true},
+    {"xas7447-xprobe512-ram14.bin", 14, "xas7447-xprobe.expected.txt", "7.x", 0x1FFF, true},
+    {"xas910-xprobe-ram6.bin", 6, "xas7447-xprobe.expected.txt", "7.x", 0x1FFF, true},
+    {"xas505-xprobe-ram6.bin", 6, "xas505-xprobe.expected.txt", "5.x", 0x3FFF, true},
 };
 }  // namespace
 
