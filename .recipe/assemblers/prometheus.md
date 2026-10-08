@@ -83,6 +83,6 @@ records and the second `#FF` (the test `AFileFromText` builds `testdata/dialects
 - **No comment after an instruction**: comments are whole lines starting with `;`.
 - **`$` in `DEFB` / `DEFW` is the address of each item**; **`DEFS` writes nothing** (a hole); **`PUT`** moves only where
   the bytes go; without `ORG` the code goes after the source and table.
-- **Real-time tape loading fails in this emulator build** (with `fast_tape` / `turbo_tape` off, even `LOAD "" CODE`
-  of a plain two-block TAP stops with "R Tape loading error" after the header): keep fast loading on. PROMETHEUS'
-  LOAD calls ROM LD-BYTES at `#0562`; the fast loader serves it.
+- **Real-time tape loading** (with `fast_tape` / `turbo_tape` off) works since the fix to the tape engine (2026-10-08):
+  before it, WebAPI play after `LOAD` played the header twice and the load stopped with "R Tape loading error".
+  PROMETHEUS' LOAD calls ROM LD-BYTES at `#0562`; the fast loader serves it as well.

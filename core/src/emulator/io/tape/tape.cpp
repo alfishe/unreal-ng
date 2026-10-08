@@ -1079,6 +1079,11 @@ size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint32_t pilotHalfPeriod_tS
     // Signal half-periods come from the shared pure generator (tapepulsegen —
     // tape-audio-bridge design §4.3); the engine-side addition is the pause
     // hold-edge the playback cursor semantics rely on (1 ms == 3500 T-states).
+    // The edges replace any earlier ones: a block restarted at its first pulse
+    // (StartPlaybackAtCursor, from both WebAPI play and the ROM anchor at #0564)
+    // is generated again, and appending played it twice - the header replayed
+    // where LD-BYTES expected the data block
+    tapeBlock.edgePulseTimings.clear();
     uint64_t signalTotal = TapePulseGen::GenerateHalfPeriods(tapeBlock.data,
                                                              pilotHalfPeriod_tStates, synchro1_tStates, synchro2_tStates,
                                                              zeroEncodingHalfPeriod_tState, oneEncodingHalfPeriod_tStates,
