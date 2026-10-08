@@ -1,0 +1,23 @@
+;PROBE for unreal-asm
+         org  60000
+START    ld   a,7*3+1/2
+         ld   hl,-1/2
+         ld   bc,100?7
+         ld   de,"AB"
+         defb "a",-1,#FF,%101
+         defw START,$
+         defs 3
+         defm "Hi"
+         ld   hx,5
+         ld   a,ly
+         slia b
+         ld   (iy-3),7
+         ld   (ix+2),a
+         jr   START
+         rst  #10
+         put  62000
+HERE     ld   hl,HERE
+         nop
+         org  60200
+         defw HERE
+         ent  START

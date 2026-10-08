@@ -15,6 +15,7 @@ sjasmplus are in the unreal-asm design
 | GENS (HiSoft Devpac) | [gens.md](gens.md) | GENS4 and GENS3 (tape), GENS4B (TR-DOS, editor only) |
 | MASM (AIG, KSA) | [masm.md](masm.md) | 1.1, 3.0 |
 | ASM80 / Asm80Win (Copper Feet; PC cross assembler) | [asm80.md](asm80.md) | 2.02 (under wine and as a host build) |
+| PROMETHEUS (Proxima) | [prometheus.md](prometheus.md) | 48K tape edition |
 | ZEUS (Brattel, Mottershead; Russian disk builds) | [zeus.md](zeus.md) | 1983 (tape), 1.1 beta, GG, v7.E |
 | XAS (Maxim Petrov) | [xas.md](xas.md) | 4.18, 7.447 |
 
@@ -38,6 +39,11 @@ UNREAL_DEZOG_PORT=$((PORT+400)) UNREAL_ZRCP_PORT=$((PORT+500)) <build>/bin/unrea
 ```
 
 Every command below uses `$PORT` (`BASE=http://localhost:$PORT/api/v1`, `--port $PORT`).
+
+A machine made with `POST /api/v1/emulator/start` beside another one comes up **paused**: `POST
+/emulator/{id}/resume` (until its state reads `running` twice) before typing, or the keys queue forever.
+`lib/emulator.py` does it (`ensure_running`). Tape fast loading must stay on: real-time loading fails in this
+build (see [prometheus.md](prometheus.md#pitfalls)).
 
 Stop it by its own PID when done. The emulator's working directory is where you started it: a relative path given to
 it (a screenshot's `filename`) lands there, so give `scratch/...`.

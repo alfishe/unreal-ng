@@ -119,4 +119,11 @@ those of [tasm.md](tasm.md#webapi) with `RUN "alasm64"` and the ALASM commands a
 - **Inverted keyboard**: file names in capitals are typed in lower case.
 - **`#8000-#BFFF` in 5.09** is compiled into ALASM's system page, not where the CPU reads it: assemble lower or into
   a page.
-- **ALASM 4.2** did not start in unreal-ng here; use 4.42 or later.
+- **ALASM 4.2** did not start in unreal-ng here (`ALM` falls to 48 BASIC on a Pentagon 128 and 512); use 4.42 or
+  later (4.3, 4.43, 4.45, 4.46 and 5.0 are in the KLUG BBS archive, `klug-bbs/`).
+- **The `W` list draws for a moment**: a cursor key pressed right after ENTER is lost and the wrong file loads (seen
+  with 5.0 / 5.05). Wait about 3 s, move with keys held 6 frames, and check the highlighted name before ENTER
+  (`assemble-in-emulator.py alasm509` saves `<out>.selected.png`).
+- **`IF` before 5.03 is `IF0`**: the same code `#D3`, renamed in 5.03; it takes the block when the expression is 0
+  (ALASM 4.2's help, checked in ALASM 5.0). `IFN` takes it when not 0.
+- **`UNTIL` (4.5 … 5.05) and `UNTIL0` (5.07 …)** are one keyword (`#D2`): `zxasm encode --version` picks the spelling.

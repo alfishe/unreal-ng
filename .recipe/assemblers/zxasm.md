@@ -101,4 +101,8 @@ curl -s "$BASE/emulator/$EMU_ID/memory/page/ram/1?offset=0&length=16384" | jq '.
 - **More than 128K for 3.2x and later** (3.2x ReadMe: ZAsm takes the last 128K of the memory): on a 128K machine they
   hang on their picture (red border). Create a `PENTAGON` with 512K (`emulator_manage create` with `ram_size: 512`,
   `assemble-in-emulator.py zasm315 --ram 512`).
+- **`ENDA`** (3.2x and later) ends one assembly and starts the next with an empty label table: a label defined again
+  after it is no error, one defined only before it is undefined after it.
+- **`~text~`** goes through an XLAT table: ZAsm's own (Latin to CP866 Russian and back, the same in 3.10 … 4.20)
+  until `LOADTAB "file"` loads a file's first 256 bytes; `zxasm convert` of an image reads that file.
 - **A second instance starts paused** (WebAPI `POST /emulator/start`): `resume` it before typing, or the keys wait.

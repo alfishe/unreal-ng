@@ -1,0 +1,495 @@
+
+         ent  $
+
+RUN      ld   hl,16384
+         ld   de,16385
+         ld   bc,6143
+         ld   (hl),l
+         ldir
+         ld   bc,768
+         ld   (hl),56
+         ldir
+
+MAIN     ld   hx,31
+         ld   hl,6*32+20480
+         call INPUT
+         cp   7
+         ret  z
+
+         ld   hl,TEXT1
+         call TEXTOUT
+
+         ld   de,23296
+         call COMPUT
+         push hl
+         call NUMBER
+         ld   hl,TEXT3
+         call TEXTOUT2
+
+         ld   hl,TEXT2
+         call TEXTOUT
+
+         pop  hl
+         call NUMSIGN
+         ld   hl,TEXT3
+         call TEXTOUT2
+         jr   MAIN
+
+
+
+INPCLEAR ld   de,(INPOS+1)
+         ld   c,16
+INPC2    ld   b,hx
+         inc  b
+         xor  a
+         push de
+
+INPC3    ld   (de),a
+         inc  de
+         djnz INPC3
+         pop  de
+         call DOWNDE
+         dec  c
+         jr   nz,INPC2
+         ret
+
+
+INPUT    ld   (INPOS+1),hl
+         ld   hl,23296
+         ld   b,hx
+IN1      ld   (hl),32
+         inc  hl
+         djnz IN1
+         ld   (hl),b
+
+         res  5,(iy+1)
+         xor  a
+         ld   (CURSOR+1),a
+
+IN2      ld   b,hx
+INPOS    ld   hl,0
+         ld   (PPOS+1),hl
+         ld   hl,23296
+
+CURSOR   ld   c,0
+IN3      ld   a,l
+         cp   c
+         ld   a,"C"+128
+         call z,CHAR
+
+         ld   a,(hl)
+         call CHAR
+
+         inc  hl
+         djnz IN3
+
+         ld   a,l
+         cp   c
+         ld   a,"<"+128
+         call z,CHAR
+
+         call INKEY
+         cp   7
+         ret  z
+         cp   13
+         jr   z,INPCLEAR
+
+         ld   hl,IN2
+         push hl
+         ld   hl,CURSOR+1
+         cp   8
+         jr   z,CURSLEFT
+         cp   9
+         jr   z,CURSRGHT
+         cp   12
+         jr   z,BCKSPACE
+         cp   199
+         jr   z,DELETE
+         cp   32
+         ret  c
+         cp   128
+         ret  nc
+         ex   af,af'
+
+         ld   a,(hl)
+         cp   hx
+         ret  nc
+
+         inc  (hl)
+         ld   l,(hl)
+         dec  l
+         ld   h,23296/256
+
+IN5      ld   a,(hl)
+         or   a
+         ret  z
+         ex   af,af'
+         ld   (hl),a
+         inc  hl
+         jr   IN5
+
+
+CURSLEFT ld   a,(hl)
+         or   a
+         ret  z
+         dec  (hl)
+         ret
+
+
+CURSRGHT ld   a,(hl)
+         cp   hx
+         ret  nc
+         inc  (hl)
+         ret
+
+
+DELETE   ld   a,(hl)
+         cp   hx
+         ret  z
+         inc  a
+         jr   BCK2
+
+
+BCKSPACE ld   a,(hl)
+         or   a
+         ret  z
+
+         dec  (hl)
+
+BCK2     ld   l,a
+         ld   h,23296/256
+         ld   e,l
+         ld   d,h
+         dec  e
+
+DEL2     ld   a,(hl)
+         ldi
+         or   a
+         jr   nz,DEL2
+         ex   de,hl
+         dec  hl
+         ld   (hl)," "
+         ret
+
+
+DOWNDE   inc  d
+         ld   a,d
+         and  7
+         ret  nz
+         ld   a,e
+         add  a,32
+         ld   e,a
+         ld   a,d
+         jr   c,DOWNDE2
+         sub  8
+         ld   d,a
+DOWNDE2  cp   88
+         ret  c
+         ld   d,64
+         ret
+
+
+INKEY    ei
+         halt
+         bit  5,(iy+1)
+         jr   z,INKEY
+         res  5,(iy+1)
+
+         push bc
+         push hl
+
+         ld   hl,0
+         ld   b,l
+INKEY2   ld   a,(hl)
+         inc  hl
+         and  24
+         or   4
+         out  (254),a
+         djnz INKEY2
+
+         pop  hl
+         pop  bc
+
+         ld   a,(23560)
+         ret
+
+
+READSIGN ld   a,(de)
+         cp   "-"
+         jr   nz,READNUM
+         inc  de
+         call READNUM
+SWAPSIGN ld   a,l
+         cpl
+         ld   l,a
+         ld   a,h
+         cpl
+         ld   h,a
+         inc  hl
+         ret
+
+
+INVCHAR  ld   a,(de)
+         inc  de
+         inc  de
+         add  a,128
+         ld   l,a
+         ret
+
+
+CODECHAR ld   a,(de)
+         inc  de
+         inc  de
+         ld   l,a
+         ret
+
+
+READNUM  ld   a,(de)
+         inc  de
+         ld   hl,0
+
+         cp   """"
+         jr   z,CODECHAR
+
+         cp   "'"
+         jr   z,INVCHAR
+
+         ld   b,16
+         cp   "#"
+         jr   z,READNUM3
+
+         ld   b,2
+         cp   "%"
+         jr   z,READNUM3
+
+         ld   b,10
+         dec  de
+
+READNUM3 ld   a,(de)
+         sub  "0"
+         cp   10
+         jr   c,READNUM4
+         sub  "A"-"9"-1
+         cp   10
+         ret  c
+
+READNUM4 cp   16
+         jr   c,READNUM6
+         sub  32
+
+READNUM6 cp   16
+         ret  nc
+
+         inc  de
+         push de
+
+         ex   de,hl
+         ld   hl,0
+
+         push bc
+READNUM5 add  hl,de
+         djnz READNUM5
+         ld   d,b
+         pop  bc
+
+         ld   e,a
+         add  hl,de
+
+         pop  de
+         jr   READNUM3
+
+
+NUMSIGN  bit  7,h
+         jr   z,NUMBER
+         call SWAPSIGN
+         push hl
+         ld   a,"-"
+         call CHAR
+         pop  hl
+
+NUMBER   ld   de,10000
+         ld   b,0
+         call N1
+         ld   de,1000
+         call N1
+         ld   de,100
+         call N1
+         ld   e,10
+         call N1
+         ld   b,1
+         ld   e,b
+
+N1       ld   a,"0"-1
+N2       inc  a
+         or   a
+         sbc  hl,de
+         jr   nc,N2
+         add  hl,de
+
+         cp   "0"
+         jr   nz,N3
+         bit  0,b
+         ret  z
+
+N3       ld   b,1
+
+CHAR     exx
+
+         add  a,a
+         ld   l,a
+         sbc  a,a
+         ld   c,a
+         ld   h,15
+         add  hl,hl
+         add  hl,hl
+
+PPOS     ld   de,16384
+         push de
+         ld   b,8
+
+CHAR2    ld   a,(hl)
+         rrca
+         or   (hl)
+         xor  c
+         ld   (de),a
+         call DOWNDE
+         ld   a,(hl)
+         xor  c
+         ld   (de),a
+         call DOWNDE
+         inc  hl
+         djnz CHAR2
+
+         pop  de
+         inc  e
+         ld   a,e
+         and  31
+         jr   nz,CHAR3
+         dec  e
+         ld   a,e
+         and  %11100000
+         ld   e,a
+         ld   b,16
+CHAR4    call DOWNDE
+         djnz CHAR4
+CHAR3    ld   (PPOS+1),de
+
+         exx
+         ret
+
+
+SEEKCHAR ld   a,(de)
+         cp   " "
+         ret  nz
+         inc  de
+         jr   SEEKCHAR
+
+
+COMPUT   call SEEKCHAR
+         call READSIGN
+         push de
+
+COMPUT2  pop  de
+         call SEEKCHAR
+         or   a
+         ret  z
+
+         push af
+         push hl
+         inc  de
+         call SEEKCHAR
+         call READSIGN
+         pop  bc
+         pop  af
+         push de
+         ld   d,b
+         ld   e,c
+
+         ld   bc,COMPUT2
+         push bc
+
+         ex   de,hl
+         cp   "?"
+         jr   z,MOD
+
+         cp   "/"
+         jr   z,LOM
+
+         cp   "*"
+         jr   z,KRAT
+
+         cp   "+"
+         jr   z,PLUS
+
+         cp   "-"
+         jr   z,MINUS
+
+         pop  af
+         ret
+
+
+MOD      ld   a,h
+         ld   c,l
+         ld   hl,0
+         ld   b,16
+MOD2     slia c
+         rla
+         adc  hl,hl
+         sbc  hl,de
+         jr   nc,MOD1
+         add  hl,de
+         dec  c
+MOD1     djnz MOD2
+         ret
+
+
+LOM      call MOD
+         ld   h,a
+         ld   l,c
+         ret
+
+
+KRAT     ld   b,16
+         ld   a,h
+         ld   c,l
+         ld   hl,0
+KRAT2    add  hl,hl
+         rl   c
+         rla
+         jr   nc,KRAT1
+         add  hl,de
+KRAT1    djnz KRAT2
+         ret
+
+
+MINUS    or   a
+         sbc  hl,de
+         ret
+
+
+PLUS     add  hl,de
+         ret
+
+
+TEXTOUT  ld   e,(hl)
+         inc  hl
+         ld   d,(hl)
+         inc  hl
+         ld   (PPOS+1),de
+
+TEXTOUT2 ld   a,(hl)
+         and  127
+         call CHAR
+         bit  7,(hl)
+         inc  hl
+         jr   z,TEXTOUT2
+         ret
+
+
+TEXT1    defw 18432+8
+         defm 'Unsigned:'
+
+TEXT2    defw 18432+96+8
+         defm '  Signed:'
+
+TEXT3    defm '      '

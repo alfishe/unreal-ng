@@ -5,6 +5,7 @@
 #include "codecs/alasm/alasmcodec.h"
 #include "codecs/gens/genscodec.h"
 #include "codecs/asm80/asm80codec.h"
+#include "codecs/prometheus/prometheuscodec.h"
 #include "codecs/masm/masmcodec.h"
 #include "codecs/sjasmplus/sjasmpluscodec.h"
 #include "codecs/tasm/tasmcodec.h"
@@ -32,6 +33,7 @@ const CodecRegistry& CodecRegistry::Builtin()
         r.Add(std::make_unique<codecs::ZeusCodec>());
         r.Add(std::make_unique<codecs::XasCodec>());
         r.Add(std::make_unique<codecs::Asm80Codec>());
+        r.Add(std::make_unique<codecs::PrometheusCodec>());
         return r;
     }();
     return registry;
