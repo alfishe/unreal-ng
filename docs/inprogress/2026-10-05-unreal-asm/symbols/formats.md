@@ -146,7 +146,7 @@ local labels, so it cannot take real TASM / ALASM projects):
 Checked against sjasmplus 1.24's `--sym` for the same text: every instruction form (599), the layout rules
 (`testdata/symbols/fromsource/probe.asm`), five projects whose bytes equal the original assemblers' (General Sound ROM
 1.04 in TASM 4.0: 927 labels, The Link's GSTUNNE4 in ALASM: 202, STORM 1.3, ZAsm 3.15 and TASM 4.12 programs), and
-the collection's disks with `tools/unreal-asm/symcheck.py`: of 117 TASM / ALASM / STORM / ZX-ASM images, 530 main
+the collection's disks with `docs/inprogress/2026-10-05-unreal-asm/scripts/checks/symcheck.py`: of 117 TASM / ALASM / STORM / ZX-ASM images, 530 main
 sources sjasmplus assembles, 511 give the same names and values (67 264 labels); the other 19 are ALASM 5.09's
 examples that draw random numbers from FRAMES (`{#5C77}`, the device memory sjasmplus starts with, rewritten every
 pass: 15) and a sjasmplus quirk (a forward reference to a macro's local label leaves an entry of value 0 under the

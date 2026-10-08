@@ -131,6 +131,15 @@ ProjectResult TheLinkUnit()
 
 // --- ALASM -> sjasmplus, construct by construct ---------------------------------------------------------------------
 
+TEST(Dialects_Test, AlasmIfTakesTheBlockOnZero)
+{
+    // #D3 is IF before 5.03 and IF0 after it, the same directive: the block when the expression is 0 (ALASM 4.2's help;
+    // checked in ALASM 5.0); IFN when it is not
+    EXPECT_EQ(ToSjasmplus("        IF X-3\n        NOP\n        ENDIF"), (std::vector<std::string>{"IF (X-3)==0", "NOP", "ENDIF"}));
+    EXPECT_EQ(ToSjasmplus("        IF0 X-3\n        NOP\n        ENDIF"), (std::vector<std::string>{"IF (X-3)==0", "NOP", "ENDIF"}));
+    EXPECT_EQ(ToSjasmplus("        IFN X-3\n        NOP\n        ENDIF"), (std::vector<std::string>{"IF X-3", "NOP", "ENDIF"}));
+}
+
 TEST(Dialects_Test, AlasmEvaluatesLeftToRightWithoutPriorities)
 {
     EXPECT_EQ(ToSjasmplus("        LD A,1+2*3"), std::vector<std::string>{"LD A,(1+2)*3"});
@@ -323,31 +332,42 @@ TEST(Dialects_Test, ConstructsAssembleToWhatAlasmBuilt)
     std::filesystem::remove_all(dir);
 }
 
-TEST(Dialects_Test, Alasm505ProbeAssemblesToWhatAlasm505Built)
+TEST(Dialects_Test, Alasm50And505ProbesAssembleToWhatTheyBuilt)
 {
-    // Typed for ALASM 5.05 (UNTIL, not 5.07's UNTIL0, at #D2), DD with commas, JNZ / JC / EXA / EXD; ALASM 5.05
-    // itself built U505.bin (18 bytes at #6000) in unreal-ng
-    const containers::TrdosFile file = Hobeta("dialects/alasm505/U505.$H");
-    const codecs::AlasmCodec alasm;
-    DecodeOptions options;
-    options.catalog = file.Hints();
-    options.subversion = "5.05";
-    const DecodeResult decoded = alasm.Decode(file.data, options);
-    ASSERT_TRUE(decoded.ok);
-    EXPECT_NE(decoded.document.Text().find("        UNTIL CNT-5"), std::string::npos);
-    const ConvertResult r = Convert(decoded.document, "sjasmplus");
-    ASSERT_TRUE(r.ok);
-    const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
-    if (!sjasmplus)
-        GTEST_SKIP() << "set UNREAL_ASM_SJASMPLUS to the sjasmplus binary";
-    const std::filesystem::path dir = ScratchDirectory();
-    const codecs::SjasmplusCodec codec;
-    WriteBytes(dir / "u505.asm", codec.Encode(r.document, {}).bytes);
-    const std::string harness = "        DEVICE ZXSPECTRUM48\n        INCLUDE \"u505.asm\"\n        SAVEBIN \"out.bin\",#6000,$-#6000\n";
-    WriteBytes(dir / "harness.asm", std::vector<uint8_t>(harness.begin(), harness.end()));
-    EXPECT_TRUE(RunSjasmplus(sjasmplus, dir, "harness.asm"));
-    EXPECT_EQ(ReadBytes(dir / "out.bin"), ReadTestData("dialects/alasm505/U505.bin"));   // ALASM 5.05's bytes
-    std::filesystem::remove_all(dir);
+    // U50: typed for ALASM 5.0 (IF / IFN on a zero expression, REPEAT / UNTIL, DD, JNZ, EXD); U505: for ALASM 5.05
+    // (UNTIL, not 5.07's UNTIL0, at #D2), DD with commas, JNZ / JC / EXA / EXD. Each ALASM built its .bin at #6000
+    // in unreal-ng
+    struct Probe
+    {
+        const char* name;
+        const char* version;
+        const char* line;   ///< a line as that version spells it
+    };
+    for (const Probe& probe : {Probe{"alasm50/U50", "5.0", "        IF CNT-3"}, Probe{"alasm505/U505", "5.05", "        UNTIL CNT-5"}})
+    {
+        const std::string name = std::string("dialects/") + probe.name;
+        const containers::TrdosFile file = Hobeta(name + ".$H");
+        const codecs::AlasmCodec alasm;
+        DecodeOptions options;
+        options.catalog = file.Hints();
+        options.subversion = probe.version;
+        const DecodeResult decoded = alasm.Decode(file.data, options);
+        ASSERT_TRUE(decoded.ok) << name;
+        EXPECT_NE(decoded.document.Text().find(probe.line), std::string::npos) << name;
+        const ConvertResult r = Convert(decoded.document, "sjasmplus");
+        ASSERT_TRUE(r.ok) << name;
+        const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
+        if (!sjasmplus)
+            GTEST_SKIP() << "set UNREAL_ASM_SJASMPLUS to the sjasmplus binary";
+        const std::filesystem::path dir = ScratchDirectory();
+        const codecs::SjasmplusCodec codec;
+        WriteBytes(dir / "probe.asm", codec.Encode(r.document, {}).bytes);
+        const std::string harness = "        DEVICE ZXSPECTRUM48\n        INCLUDE \"probe.asm\"\n        SAVEBIN \"out.bin\",#6000,$-#6000\n";
+        WriteBytes(dir / "harness.asm", std::vector<uint8_t>(harness.begin(), harness.end()));
+        EXPECT_TRUE(RunSjasmplus(sjasmplus, dir, "harness.asm")) << name;
+        EXPECT_EQ(ReadBytes(dir / "out.bin"), ReadTestData(name + ".bin")) << name << ": ALASM's bytes";
+        std::filesystem::remove_all(dir);
+    }
 }
 
 TEST(Dialects_Test, TheLinkUnitAssemblesToWhatAlasmBuilt)

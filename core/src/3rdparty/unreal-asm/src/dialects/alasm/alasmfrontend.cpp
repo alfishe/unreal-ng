@@ -474,7 +474,9 @@ Statement ParseStatement(const std::string& word, const std::string& rest, Diagn
             case ir::DirectiveKind::If:
             {
                 Expr cond = ops.empty() ? Expr::Number(0) : ParseExpression(rest);
-                if (word == "IF0")
+                // IF0 (5.03 and later) and IF (the same code #D3 before 5.03; ALASM 4.2's help: "if the expression = 0,
+                // body 1 is compiled") take the block when the expression is 0
+                if (word == "IF0" || word == "IF")
                 {
                     Expr group = Expr::Make(Expr::Kind::Group);
                     group.args.push_back(std::move(cond));

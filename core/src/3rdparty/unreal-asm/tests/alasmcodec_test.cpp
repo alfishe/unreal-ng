@@ -24,18 +24,18 @@ struct Sample
     size_t canonicalMisses;              ///< lines the canonical tokenizer writes differently (older editors, text imports)
 };
 
-const std::vector<std::string> kAll = {"3.8", "4.2", "4.42", "4.5", "4.44", "5.05", "5.07"};
+const std::vector<std::string> kAll = {"3.8", "4.2", "4.42", "4.5", "4.44", "5.0", "5.05", "5.07"};
 
 // research-alasm.md §5 explains each range and each miss; 5.05 differs from 5.07 only in spelling #D2 (UNTIL), so
-// every file valid for 5.07 is valid for 5.05 too
+// every file valid for 5.07 is valid for 5.05 too; 5.0 also spells #D3 IF and has no RUN (BUILD+ uses RUN)
 const Sample kSamples[] = {
     {"ZADACHA", kAll, 0},                                  // from the ALASM 3.8 disk; nothing version-specific
     {"SCR4MAKE", kAll, 1},                                 // a text import: trailing blank run kept
-    {"128KDRV", {"4.2", "4.42", "4.5", "4.44", "5.05", "5.07"}, 0},  // uses ELSE / DB-family codes 3.8 lacks
-    {"fibo", {"4.42", "4.5", "4.44", "5.05", "5.07"}, 0},
-    {"SNAKE", {"4.5", "4.44", "5.05", "5.07"}, 0},
-    {"2Kolonki", {"4.44", "5.05", "5.07"}, 0},
-    {"RECPIC", {"5.05", "5.07"}, 0},
+    {"128KDRV", {"4.2", "4.42", "4.5", "4.44", "5.0", "5.05", "5.07"}, 0},  // uses ELSE / DB-family codes 3.8 lacks
+    {"fibo", {"4.42", "4.5", "4.44", "5.0", "5.05", "5.07"}, 0},
+    {"SNAKE", {"4.5", "4.44", "5.0", "5.05", "5.07"}, 0},
+    {"2Kolonki", {"4.44", "5.0", "5.05", "5.07"}, 0},
+    {"RECPIC", {"5.0", "5.05", "5.07"}, 0},
     {"BUILD+", {"5.05", "5.07"}, 2},                       // DISPLAY /D: an older editor tokenized the switch letter
     {"AL442nfo", {"4.2", "4.42", "4.5"}, 1},               // DEFM "string"
     {"AL444nfo", {"4.5"}, 1},                              // DD left as text: typed in a version without DD

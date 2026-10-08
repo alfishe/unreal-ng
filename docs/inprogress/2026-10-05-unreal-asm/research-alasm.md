@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Date** | 2026-10-05 |
-| **Codec** | `alasm`, versions `3.8`, `4.2`, `4.42`, `4.5`, `4.44`, `5.07` (= 5.07-5.09) (`core/src/3rdparty/unreal-asm/src/codecs/alasm/`) |
+| **Codec** | `alasm`, versions `3.8`, `4.2` (= 4.2, 4.3), `4.42`, `4.5` (= 4.43, 4.5), `4.44` (= 4.44-4.46), `5.0`, `5.05`, `5.07` (= 5.07-5.09) (`core/src/3rdparty/unreal-asm/src/codecs/alasm/`) |
 | **Primary source** | ALASM 5.09's own sources, `alTOKENS.H` (`cnv2str` = text → line, `str2txt` = line → text, `mnemtkn` / `regstkn` tables), on the disk of [ALASM509_STS75.rar](http://alonecoder.nedopc.com/zx/ALASM509_STS75.rar) from [Alone Coder's page](http://alonecoder.nedopc.com/zx/) (prior-art P9) |
-| **Other versions** | the keyword tables read from each release's binary: [ALASM 3.8c](https://zxart.ee/releasefile/id:406950/ALASM38c.zip), [4.2](https://zxart.ee/releasefile/id:574325/ALM.scl), [4.42](https://zxart.ee/releasefile/id:408359/Alasm442.SCL), [4.44](https://zxart.ee/releasefile/id:249270/ALASM444.ZIP), [4.5](https://zxart.ee/releasefile/id:589336/alasm45.scl), [5.07](https://zxart.ee/releasefile/id:155270/ALASMV5.07(AloneCoder).trd.zip), [5.08](http://alonecoder.nedopc.com/zx/ALASM508.rar), [5.09](https://zxart.ee/releasefile/id:249271/ALASM509.zip), [5.09 ZX Evolution](https://zxart.ee/releasefile/id:424011/ALSM509E.zip) (release list: [zxart](https://zxart.ee/prod/155267)) |
+| **Other versions** | the keyword tables read from each release's binary: [ALASM 3.8c](https://zxart.ee/releasefile/id:406950/ALASM38c.zip), [4.2](https://zxart.ee/releasefile/id:574325/ALM.scl), [4.42](https://zxart.ee/releasefile/id:408359/Alasm442.SCL), [4.44](https://zxart.ee/releasefile/id:249270/ALASM444.ZIP), [4.5](https://zxart.ee/releasefile/id:589336/alasm45.scl), [4.3, 4.43, 4.44 bugfix, 4.45, 4.46 (with its source), 5.0](https://yadi.sk/d/N_p56RIHWU15Gw) (the KLUG BBS archive, `SINCLAIR/ALASM4.ZIP`, `ALASM443.ZIP`, `AL4_44BF.ZIP`, `ALASM445.RAR`, `ALASM446.RAR`, `AL446SRC.RAR`, `ALASM5_0.RAR`), [5.05](https://vtrd.in/system/PT+ALASM.ZIP) (in Pro Tracker + ALASM; the whole 5.05 disk with ALASM's sources and change log is `alasm/wdc/alasm505.zip` of the collection, the same build 01728 of 15.04.06), [5.07](https://zxart.ee/releasefile/id:155270/ALASMV5.07(AloneCoder).trd.zip), [5.08](http://alonecoder.nedopc.com/zx/ALASM508.rar), [5.09](https://zxart.ee/releasefile/id:249271/ALASM509.zip), [5.09 ZX Evolution](https://zxart.ee/releasefile/id:424011/ALSM509E.zip) (release list: [zxart](https://zxart.ee/prod/155267)) |
 | **Corpus** | every type-`H` file on those disks, plus [PT372SRC.rar](http://alonecoder.nedopc.com/zx/PT372SRC.rar), [ACE102SRC.rar](http://alonecoder.nedopc.com/zx/ACE102SRC.rar) and the repository's `testdata/machines/pentagon1024sl/TheLink.trd`: **429 files, 205 959 lines** |
 | **Result** | all 429 files decode and encode back **byte for byte**; the canonical tokenizer alone writes 99.6 % of the lines exactly as the editor stored them (§5) |
 
@@ -69,24 +69,27 @@ is `08 'L' 'A' 'B' 'E' 'L' 01 FF`.
 The operand table is the same in every version. The mnemonic codes are shared; versions differ in which codes exist
 and how a few are spelled:
 
-| Code | 3.8 | 4.2 | 4.42 | 4.5 | 4.44 | 5.07-5.09 |
-|---|---|---|---|---|---|---|
-| `#83` | ERASE | LOCAL | LOCAL | LOCAL | LOCAL | LOCAL |
-| `#96` | DEFM (string) | DEFM | DEFM | DEFM | DD (hex) | DD (hex) |
-| `#9D` | STOP | ENDL | ENDL | ENDL | ENDL | ENDL |
-| `#9F` | — | ELSE | ELSE | ELSE | ELSE | ELSE |
-| `#A0` | — | — | DISPLAY | DISPLAY | DISPLAY | DISPLAY |
-| `#A1` | — | — | — | — | EXA | EXA |
-| `#A2`-`#A4` | — | DB DW DS | DB DW DS | DB DW DS | DB DW DS | DB DW DS |
-| `#D0` | — | IFN | IFN | IFN | IFN | IFN |
-| `#D1` | — | — | — | REPEAT | REPEAT | REPEAT |
-| `#D2` | — | — | — | UNTIL | UNTIL | UNTIL0 |
-| `#D3` | — | IF | IF | IF | IF | IF0 |
-| `#E0` | — | ENDIF | ENDIF | ENDIF | ENDIF | ENDIF |
-| `#E1`-`#E6` | — | — | — | — | — | EXD JNZ JZ JNC JC RUN |
+| Code | 3.8 | 4.2 | 4.42 | 4.5 | 4.44 | 5.0 | 5.05 | 5.07-5.09 |
+|---|---|---|---|---|---|---|---|---|
+| `#83` | ERASE | LOCAL | LOCAL | LOCAL | LOCAL | LOCAL | LOCAL | LOCAL |
+| `#96` | DEFM (string) | DEFM | DEFM | DEFM | DD (hex) | DD (hex) | DD (hex) | DD (hex) |
+| `#9D` | STOP | ENDL | ENDL | ENDL | ENDL | ENDL | ENDL | ENDL |
+| `#9F` | — | ELSE | ELSE | ELSE | ELSE | ELSE | ELSE | ELSE |
+| `#A0` | — | — | DISPLAY | DISPLAY | DISPLAY | DISPLAY | DISPLAY | DISPLAY |
+| `#A1` | — | — | — | — | EXA | EXA | EXA | EXA |
+| `#A2`-`#A4` | — | DB DW DS | DB DW DS | DB DW DS | DB DW DS | DB DW DS | DB DW DS | DB DW DS |
+| `#D0` | — | IFN | IFN | IFN | IFN | IFN | IFN | IFN |
+| `#D1` | — | — | — | REPEAT | REPEAT | REPEAT | REPEAT | REPEAT |
+| `#D2` | — | — | — | UNTIL | UNTIL | UNTIL | UNTIL | UNTIL0 |
+| `#D3` | — | IF | IF | IF | IF | IF | IF0 | IF0 |
+| `#E0` | — | ENDIF | ENDIF | ENDIF | ENDIF | ENDIF | ENDIF | ENDIF |
+| `#E1`-`#E6` | — | — | — | — | — | EXD JNZ JZ JNC JC (no RUN) | EXD JNZ JZ JNC JC RUN | EXD JNZ JZ JNC JC RUN |
 
 3.8 stores its table grouped by word length (`alasm4x8.C`), the others as `DC` strings with gap bytes; the codes come
-out the same. ALASM 2.8 (only its help survives) and 5.00-5.06 (no release found) are not covered.
+out the same. 4.3 has 4.2's table, 4.43 4.5's, 4.45 and 4.46 4.44's (read from their binaries). ALASM 2.8 (only its help survives)
+and 5.01-5.04 / 5.06 (no release found) are not covered; 5.05's change log names
+the keyword changes of 5.0-5.05 (`IF` became `IF0` in 5.03, `RUN` came in 5.0f2), and its `alTOKENS.H` and binary
+have 5.07's table with `UNTIL` at `#D2` (5.07 renamed it `UNTIL0`; the help gives both the same meaning).
 
 The same code can mean different things: 3.8's `DEFM "text"` is a string, 5.x's `DD 1D4F` hex bytes (help of each
 version). The codec therefore never maps one spelling to another: converting to another version re-tokenizes the text
@@ -145,9 +148,15 @@ spellings, indents; the pseudographics header is drawn by ALASM's font). Own emu
 screenshot is kept with the research materials. ALASM, like TASM, starts with the keyboard in inverted case: a file
 name typed in capitals arrives in lower case.
 
+ALASM 5.0 (2026-10-08): a probe typed for 5.0 (`IF` / `IFN` on a zero expression, `REPEAT` / `UNTIL`, `DD`, `JNZ`,
+`EXD`) assembles to the 11 bytes of its sjasmplus conversion: `IF` takes the block on 0 (testdata `dialects/alasm50/U50`).
+ALASM 5.05 (2026-10-08, `assemble-in-emulator.py alasm509` on the 5.05 disk): a probe typed for 5.05 (`REPEAT` /
+`UNTIL`, `IF0`, `DD 1234,5678,9A` with commas, `JNZ`, `JC`, `EXA`, `EXD`) shows in its editor as the codec decodes it
+(`UNTIL CNT-5`) and assembles to the 18 bytes its sjasmplus conversion gives (testdata `dialects/alasm505/U505`).
+
 ## 7. Open items
 
 | Item | Note |
 |---|---|
-| ALASM 2.x, 5.00-5.06 | no binaries found; add when found |
+| ALASM 2.x, 5.01-5.04, 5.06 | no binaries found (zxart, vtrd, spectrumcomputing, the collection, 2026-10-08); add when found |
 | `#10` placement | the canonical encoder writes `#10` right before the first Russian letter; files with `#10` earlier keep their bytes |

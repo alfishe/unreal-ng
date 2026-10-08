@@ -5,7 +5,7 @@
 | **Date** | 2026-10-07 |
 | **Frontend** | `src/dialects/masm/masmfrontend.{h,cpp}`, tests `MasmFrontend_Test` |
 | **Sources of the rules** | MASM 1.1's help (`MASMHELP`, in `MASM1_1.LZH`), 1.3's help (`MASMHELP.W` on `MASM1_3.SCL`), and MASM 1.1's own source (`testdata/masm/MASM_SRC__*`), whose assembler routines are quoted below by label |
-| **Oracle** | MASM 1.1 running in unreal-ng (`tools/unreal-asm/assemble-in-emulator.py masm11`), testdata `dialects/masm11/` |
+| **Oracle** | MASM 1.1 running in unreal-ng (`docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py masm11`), testdata `dialects/masm11/` |
 | **Result** | a program with every construct (140 bytes), an INCBIN (257 bytes) and MASM 1.1's own source (LS2 with M1+ and M2+: 11688 bytes) assemble through the sjasmplus conversion to the bytes MASM 1.1 built; the source's 711 labels lay out as sjasmplus 1.24 gives them |
 
 ## 1. The language (MASM 1.x)

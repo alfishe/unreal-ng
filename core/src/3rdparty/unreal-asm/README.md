@@ -13,7 +13,7 @@ Part of [unreal-ng](https://github.com/alfishe/unreal-ng); design: `docs/inprogr
 - A5: dialect conversion through a neutral IR (`ir.h`, `dialect.h`): the `alasm` frontend, the `sjasmplus` frontend
   and backend; ALASM → sjasmplus checked against ALASM's own binaries.
 - A5b: the `tasm` frontend (3 / 4.0 / 4.12); the GS 1.04 ROM sources convert and assemble to the ROM byte for byte.
-  STORM and ZX-ASM frontends come next. Corpus and emulator checks: `tools/unreal-asm/` in unreal-ng.
+  STORM and ZX-ASM frontends come next. Corpus and emulator checks: `docs/inprogress/2026-10-05-unreal-asm/scripts/` in unreal-ng.
 - A8: the symbol module (`include/unrealasm/symbols/`): model, index, store, the symbol codecs of every label file
   format, `symconv`; labels from sources (`symbols/fromsource.h`) with values from `layout.h`, a layout of the
   sjasmplus conversion equal to what sjasmplus assembles.

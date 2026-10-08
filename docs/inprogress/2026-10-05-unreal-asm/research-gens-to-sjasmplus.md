@@ -59,7 +59,7 @@ option 4 is given (GENS4: option 4 turns the listing on).
 GENS4 (`gens4` block of `DEVPAC_4.TAP`, HiSoft Devpac 4 on tape) ran in an own unreal-ng instance (48K): written at
 26000 or 45000 (it runs from any address; the text and the symbol table follow it), started with
 `RANDOMIZE USR`, the macro buffer set with `C`, the source loaded from a tape image with `G,,`, assembled with `A`,
-the bytes read from memory filled with `#AA` beforehand. `tools/unreal-asm/assemble-in-emulator.py gens4` does
+the bytes read from memory filled with `#AA` beforehand. `docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py gens4` does
 these steps.
 
 | Source | Bytes compared | Result |

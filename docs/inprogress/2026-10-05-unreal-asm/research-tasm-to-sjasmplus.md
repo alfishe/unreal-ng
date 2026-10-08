@@ -6,7 +6,7 @@
 | **Code** | `src/dialects/tasm/tasmfrontend.cpp` (the `tasm` frontend, versions 3 / 4.0 / 4.12), shared macro expansion `src/dialects/common/macros.cpp`, the sjasmplus backend |
 | **Oracles** | the General Sound 1.04 ROM (the sources and the ROM TASM 4.0 built, disk `GS104SRC.TRD` in `GS104SRC.ZIP` from KLUG's BBS archive, [klug_bbs.7z](https://yadi.sk/d/N_p56RIHWU15Gw); the ROM is also unreal-ng's `data/rom/gs104.rom`), and TASM 4.12's SINUS example assembled by TASM 4.12 in the emulator |
 | **Result** | the converted ROM sources assemble to the 32 768 bytes of the ROM, every byte; SINUS's 256-byte table equal; 99 sources from 6 disks unchanged through the sjasmplus round trip |
-| **Checks** | `tools/unreal-asm/` (round trip, emulator oracle) and `unreal-asm-tests` (`TasmFrontend_Test`) |
+| **Checks** | `docs/inprogress/2026-10-05-unreal-asm/scripts/` (round trip, emulator oracle) and `unreal-asm-tests` (`TasmFrontend_Test`) |
 
 ## 1. Example first
 
