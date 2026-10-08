@@ -1,11 +1,13 @@
 #include "dialects/zxasm/zxasmfrontend.h"
 
+#include <array>
 #include <cctype>
 #include <map>
 #include <optional>
 #include <set>
 
 #include "dialects/common/z80.h"
+#include "unrealasm/encoding.h"
 
 namespace unrealasm::dialects
 {
@@ -844,6 +846,28 @@ struct Expander
     }
 };
 
+/// ZAsm's XLAT table, used for ~text~ until LOADTAB loads another: Latin letters to CP866 Russian ones and back, the
+/// rest unchanged (the same 256 bytes in the binaries of 3.10, 3.15, 3.2x, 3.3, 3.4, 3.8, 4.0 x8, 4.20 and Lite 1.07;
+/// checked in ZAsm 3.2x: ~AZaz~ = #80 #87 #A0 #A7). ZX-ASM 2.x has none
+constexpr std::array<uint8_t, 256> kXlat = {
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,  // 00
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,  // 10
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,  // 20
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F,  // 30
+    0x40, 0x80, 0x81, 0x96, 0x84, 0x85, 0x94, 0x83, 0x95, 0x88, 0x89, 0x8A, 0x8B, 0x8C, 0x8D, 0x8E,  // 40
+    0x8F, 0x9F, 0x90, 0x91, 0x92, 0x93, 0x86, 0x82, 0x9C, 0x9B, 0x87, 0x5B, 0x9A, 0x5D, 0x5E, 0x5F,  // 50
+    0x9E, 0xA0, 0xA1, 0xE6, 0xA4, 0xA5, 0xE4, 0xA3, 0xE5, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE,  // 60
+    0xAF, 0xEF, 0xE0, 0xE1, 0xE2, 0xE3, 0xA6, 0xA2, 0xEC, 0xEB, 0xA7, 0xE8, 0xED, 0xE9, 0xE7, 0x7F,  // 70
+    0x41, 0x42, 0x57, 0x47, 0x44, 0x45, 0x56, 0x5A, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50,  // 80
+    0x52, 0x53, 0x54, 0x55, 0x46, 0x48, 0x43, 0x7E, 0x7B, 0x7D, 0x5C, 0x59, 0x58, 0x7C, 0x60, 0x51,  // 90
+    0x61, 0x62, 0x77, 0x67, 0x64, 0x65, 0x76, 0x7A, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F, 0x70,  // A0
+    0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF,  // B0
+    0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF,  // C0
+    0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF,  // D0
+    0x72, 0x73, 0x74, 0x75, 0x66, 0x68, 0x63, 0x7E, 0x7B, 0x7D, 0x5C, 0x79, 0x78, 0x7C, 0x60, 0x71,  // E0
+    0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF,  // F0
+};
+
 struct LineParser
 {
     FrontendResult& result;
@@ -860,6 +884,53 @@ struct LineParser
     // written)
     std::string makeFile;
     std::optional<Expr> makeStart;
+    // ENDA ends one assembly and starts another after it with an empty label table (ZAsm 3.2x ReadMe; checked in ZAsm
+    // 3.2x: a label defined again after ENDA is no error, one defined only before it is undefined after it, the code
+    // before it stays). Each part becomes a LOCAL block, so the backend keeps the parts' labels apart
+    int endaParts = 0;
+    // ~text~: each character replaced by the XLAT table's byte (ZAsm 3.3 ReadMe2; checked in ZAsm 3.2x: a one
+    // character ~A~ is a value, ~A~+1 works). LOADTAB "file" loads the file's first 256 bytes (a shorter file: the rest
+    // of its sector); a file the project does not have leaves the table unknown and ~text~ untranslated
+    DataFileReader dataFiles;
+    std::array<uint8_t, 256> xlat = kXlat;
+    bool xlatKnown = true;
+
+    /// The statement's operands with every ~text~ outside other quotes written as the bytes the table gives: one byte
+    /// as a number, several (DB / DEFB) as a list
+    std::string Translate(const std::string& text, bool data) const
+    {
+        std::string out;
+        for (size_t i = 0; i < text.size(); ++i)
+        {
+            const char c = text[i];
+            if (c == '"' || c == '\'')
+            {
+                const size_t close = text.find(c, i + 1);
+                const size_t end = close == std::string::npos ? text.size() : close + 1;
+                out += text.substr(i, end - i);
+                i = end - 1;
+                continue;
+            }
+            const size_t close = c == '~' ? text.find('~', i + 1) : std::string::npos;
+            std::vector<uint8_t> bytes;
+            std::string error;
+            if (close == std::string::npos ||
+                !encoding::FromUtf8(text.substr(i + 1, close - i - 1), encoding::CodePage::Cp866, bytes, error) || bytes.empty() ||
+                (bytes.size() > 1 && !data))
+            {
+                out += c;
+                continue;
+            }
+            for (size_t k = 0; k < bytes.size(); ++k)
+            {
+                static const char* const digits = "0123456789ABCDEF";
+                const uint8_t v = xlat[bytes[k]];
+                out += std::string(k ? "," : "") + "#" + digits[v >> 4] + digits[v & 15];
+            }
+            i = close;
+        }
+        return out;
+    }
 
     /// The MAKE section open so far ends: its bytes are saved to its file
     void CloseMake(std::vector<Statement>& out)
@@ -906,7 +977,7 @@ struct LineParser
             if (QuotedText(op, chars, quote) && (chars.size() != 1 || quote == '~'))
             {
                 if (quote == '~')
-                    result.diagnostics.push_back({Severity::Warning, number, 0, "~text~ is translated by the LOADTAB table: kept as written"});
+                    result.diagnostics.push_back({Severity::Warning, number, 0, "~text~ needs the LOADTAB table, which the project lacks: written untranslated"});
                 Operand o;
                 o.kind = Operand::Kind::String;
                 o.text = chars;
@@ -924,8 +995,9 @@ struct LineParser
     void ParseStatement(const std::string& statement, uint32_t number, const std::string& label, std::vector<ir::Line>& before,
                         std::vector<Statement>& out)
     {
-        const auto [word, rest] = Command(statement);
+        const auto [word, written] = Command(statement);
         const std::string lower = z80::Lower(word);
+        const std::string rest = xlatKnown && written.find('~') != std::string::npos ? Translate(written, lower == "db" || lower == "defb") : written;
         const std::vector<std::string> ops = rest.empty() ? std::vector<std::string>{} : Split(rest, ',');
         auto args = [&] {
             std::vector<Expr> a;
@@ -1143,6 +1215,36 @@ struct LineParser
             out.push_back(Directive(ir::DirectiveKind::EndRepeat));
             return;
         }
+        if (lower == "loadtab")
+        {
+            const std::string name = ops.empty() ? std::string() : FileName(ops[0], false);
+            const std::vector<uint8_t> table = dataFiles && !name.empty() ? dataFiles(name) : std::vector<uint8_t>{};
+            xlatKnown = !table.empty();
+            if (xlatKnown)
+                for (size_t k = 0; k < xlat.size(); ++k)
+                    xlat[k] = k < table.size() ? table[k] : 0;
+            else
+                result.diagnostics.push_back({Severity::Warning, number, 0, "LOADTAB: " + name + " is not in the project: ~text~ after it written untranslated"});
+            Statement s = Directive(ir::DirectiveKind::Other);
+            s.text = "@comment " + word + " " + written;
+            out.push_back(std::move(s));
+            return;
+        }
+        if (lower == "enda")
+        {
+            EndPhases(out);
+            CloseMake(out);
+            ir::Line end;   // on a line of its own: the backend opens a line's blocks before it closes them
+            end.sourceLine = number;
+            end.statements.push_back(Directive(ir::DirectiveKind::EndLocalBlock));
+            before.push_back(std::move(end));
+            out.push_back(Directive(ir::DirectiveKind::LocalBlock));
+            Statement note = Directive(ir::DirectiveKind::Other);
+            note.text = "@comment ENDA: a new assembly, its labels kept apart";
+            out.push_back(std::move(note));
+            ++endaParts;
+            return;
+        }
         if (lower == "ent" || lower == "create")
         {
             // ENT: the run address after assembling; CREATE: room for $labels. Neither makes code
@@ -1279,6 +1381,12 @@ FrontendResult ZxasmFrontend::Parse(const SourceDocument& source) const
 
 FrontendResult ZxasmFrontend::ParseInProject(const SourceDocument& source, const std::vector<const SourceDocument*>& project) const
 {
+    return ParseWithData(source, project, {});
+}
+
+FrontendResult ZxasmFrontend::ParseWithData(const SourceDocument& source, const std::vector<const SourceDocument*>& project,
+                                            const DataFileReader& dataFiles) const
+{
     FrontendResult result;
     result.program.dialect = "zxasm";
     result.program.expressionBits = 16;          // 16-bit words: (0-1)/2 = #7FFF (checked)
@@ -1307,7 +1415,7 @@ FrontendResult ZxasmFrontend::ParseInProject(const SourceDocument& source, const
     }
     expander.Run(split(source));
 
-    LineParser parser{result, {}, {}, true, 0, std::nullopt, {}, std::nullopt};
+    LineParser parser{result, {}, {}, true, 0, std::nullopt, {}, std::nullopt, 0, dataFiles, kXlat, true};
     for (const SourceDocument* other : project)
         parser.projectNames.insert(other->name);
     for (const SourceStatementLine& l : expander.out)
@@ -1323,6 +1431,16 @@ FrontendResult ZxasmFrontend::ParseInProject(const SourceDocument& source, const
         end.sourceLine = expander.out.empty() ? 0 : expander.out.back().number;
         parser.CloseMake(end.statements);
         result.program.lines.push_back(std::move(end));
+    }
+    if (parser.endaParts)
+    {
+        // the part before the first ENDA is a block too; the last one ends with the file
+        ir::Line first, last;
+        first.statements.push_back(Directive(ir::DirectiveKind::LocalBlock));
+        last.sourceLine = expander.out.empty() ? 0 : expander.out.back().number;
+        last.statements.push_back(Directive(ir::DirectiveKind::EndLocalBlock));
+        result.program.lines.insert(result.program.lines.begin(), std::move(first));
+        result.program.lines.push_back(std::move(last));
     }
     return result;
 }

@@ -17,7 +17,9 @@ manuals (`ide.txt`, `edit.txt`, `compile.txt`) are on its disks (UTF-8 copies in
 | 3.0 (1996) | `zxpk-65803-ZAsm3.0/ZAsm3.0.trd` ([zx-pk.ru](https://zx-pk.ru/attachment.php?attachmentid=65803)) | `ZX-TASM3` | starts: File / Edit / Compile / Run / Print / Setup |
 | 2.6 (Rubts0FF, 2018) | `zxart-249316/ZASM2_6.SCL` ([zxart](https://zxart.ee/releasefile/id:249316/ZASM2_6.zip)) | `boot` | starts: File / Edit / Compile / Run / Setup, a "No Named.C" text |
 | 2.4 (Hohlov, 1994; 48K) | `zxart-421759/ZXASM2_4.SCL` ([zxart](https://zxart.ee/releasefile/id:421759/ZXASM2_4.zip)) | `ZXASM2.4` | starts: the same menu |
-| 4.20 (2026) | `vtrd-ZASM4_20/Z4_20.trd` ([vtrd](https://vtrd.in/system/ZASM4_20.zip)) | `boot` | **hung** on its picture (red border) on `PENTAGON` 128K; ENTER and `a` did not help |
+| 4.20 (2026) | `vtrd-ZASM4_20/Z4_20.trd` ([vtrd](https://vtrd.in/system/ZASM4_20.zip)) | `boot` | needs **`PENTAGON` 512K** (hangs on its picture on 128K): load, assemble (`ENDA` probe) |
+| 3.3 Final (2021) | `vtrd-Z33_F9/Z33_F9/Z33_F9.trd` ([vtrd](https://vtrd.in/system/Z33_F9.zip)) | `boot` | needs `PENTAGON` 512K: load, assemble (`ENDA` probe) |
+| 3.2x (2017) | `zxart-249319/Z32X.trd` ([zxart](https://zxart.ee/releasefile/id:249319/Z32X.zip)) | `boot` | needs `PENTAGON` 512K: load, assemble, `ENDA`, `LOADTAB` / `~text~` checked |
 
 Sources: 2.x saves plain text (type `C`), 3.0 type `C` start 35151, 3.10 and later type `a` with the extension `sm`
 (`NAME.asm` in ZAsm's own naming). `zxasm encode --codec zxasm --version 3.15` (3.15-4.20; `2` for 2.4-2.6, `3.0` for 3.0-3.10, `lite`
@@ -83,7 +85,7 @@ CS+SPACE cancel. Input lines: CS+1 Rus / Lat, CS+2 caps, SS+W insert / overwrite
 
 ## WebAPI
 
-`tools/unreal-asm/assemble-in-emulator.py zasm315 <ZASM315.trd> <source.$a> <address> <length> <out.bin> [--extra
+`tools/verification/unreal-asm/emulator/assemble-in-emulator.py zasm315 <ZASM315.trd> <source.$a> <address> <length> <out.bin> [--extra
 FILE.$T ...]` runs the whole sequence (the source must end with `saveobj "a:out.C",...`; the script reads `out.C`
 from the disk). The calls are those of [tasm.md](tasm.md#webapi) with `RUN "boot"` and the keys above; RAM page 1:
 
@@ -96,4 +98,7 @@ curl -s "$BASE/emulator/$EMU_ID/memory/page/ram/1?offset=0&length=16384" | jq '.
 - **Drive D first**: every disk operation of a fresh ZAsm asks for D; answer A each time (or set the default drive
   in SetUp).
 - **`#8000` is ZAsm's own code** while it runs: the user's bytes are in RAM page 1.
-- ZAsm 4.20 did not start here; 3.15 is the newest version checked.
+- **More than 128K for 3.2x and later** (3.2x ReadMe: ZAsm takes the last 128K of the memory): on a 128K machine they
+  hang on their picture (red border). Create a `PENTAGON` with 512K (`emulator_manage create` with `ram_size: 512`,
+  `assemble-in-emulator.py zasm315 --ram 512`).
+- **A second instance starts paused** (WebAPI `POST /emulator/start`): `resume` it before typing, or the keys wait.

@@ -123,12 +123,12 @@ Same command letters; 3.0 / 3.2 have `Import 2.0 file`, 2.0 `Print text`. 2.0 sa
 
 ## WebAPI
 
-`tools/unreal-asm/emulator.py` wraps the calls (`run_trdos`, `tap`, `type`, `read`, `read_disk_file`,
-`screenshot`); `tools/unreal-asm/assemble-in-emulator.py tasm412 <TASM_412.trd> <source.$A> <address> <length>
+`tools/verification/unreal-asm/lib/emulator.py` wraps the calls (`run_trdos`, `tap`, `type`, `read`, `read_disk_file`,
+`screenshot`); `tools/verification/unreal-asm/emulator/assemble-in-emulator.py tasm412 <TASM_412.trd> <source.$A> <address> <length>
 <out.bin>` runs a whole TASM 4.12 assemble and saves the bytes. The raw calls:
 
 ```bash
-BASE=http://localhost:8901/api/v1
+BASE=http://localhost:${PORT:-8090}/api/v1
 EMU_ID=$(curl -s -X POST $BASE/emulator/start -H 'Content-Type: application/json' -d '{"model":"PENTAGON"}' | jq -r .id)
 curl -s -X POST $BASE/emulator/$EMU_ID/media/A/swap -H 'Content-Type: application/json' \
      -d '{"path":"/abs/scratch/work412.trd","discard":true,"immediate":true}'

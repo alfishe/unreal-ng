@@ -1,9 +1,11 @@
 """A small WebAPI client for driving an unreal-ng instance from the unreal-asm checks.
 
-Run your own instance on its own ports (other sessions may run theirs on the defaults), e.g.
-    UNREAL_WEBAPI_PORT=8095 UNREAL_CLI_PORT=8195 UNREAL_MCP_PORT=8295 UNREAL_GDB_PORT=8395 \
-    UNREAL_DEZOG_PORT=8495 UNREAL_ZRCP_PORT=8595 <build>/bin/unreal-qt.app/Contents/MacOS/unreal-qt &
-and point the tools at it with --url http://localhost:8095 (or UNREAL_ASM_EMULATOR_URL).
+The WebAPI port is a parameter (default 8090, the emulator's own default). Run your own instance on ports of its own
+when other sessions use the defaults, e.g.
+    PORT=8095
+    UNREAL_WEBAPI_PORT=$PORT UNREAL_CLI_PORT=$((PORT+100)) UNREAL_MCP_PORT=$((PORT+200)) UNREAL_GDB_PORT=$((PORT+300)) \
+    UNREAL_DEZOG_PORT=$((PORT+400)) UNREAL_ZRCP_PORT=$((PORT+500)) <build>/bin/unreal-qt.app/Contents/MacOS/unreal-qt &
+and give the tools --port $PORT (a whole --url, or UNREAL_ASM_EMULATOR_URL, for another host).
 """
 import json
 import os
@@ -12,13 +14,37 @@ import urllib.error
 import urllib.request
 
 
+DEFAULT_PORT = 8090   # the emulator's WebAPI default
+
+
 class Emulator:
-    def __init__(self, url=None, emulator_id=None, model='PENTAGON'):
-        self.url = (url or os.environ.get('UNREAL_ASM_EMULATOR_URL') or 'http://localhost:8095').rstrip('/') + '/api/v1/emulator'
-        if not emulator_id:
-            emulator_id = self._request('POST', self.url + '/start', {'model': model})['id']
+    def __init__(self, url=None, emulator_id=None, model='PENTAGON', ram_size=None, port=DEFAULT_PORT):
+        url = url or os.environ.get('UNREAL_ASM_EMULATOR_URL') or f'http://localhost:{port}'
+        self.url = url.rstrip('/') + '/api/v1/emulator'
+        created = not emulator_id
+        if created:
+            body = {'model': model}
+            if ram_size:
+                body['ram_size'] = ram_size
+            emulator_id = self._request('POST', self.url + '/start', body)['id']
         self.id = emulator_id
         self.base = f'{self.url}/{self.id}'
+        if created:
+            self.ensure_running()
+
+    def ensure_running(self):
+        """A second instance comes up paused: typed keys would wait for it forever"""
+        # it can report running for a moment before the new instance settles paused: wait for two running reads
+        settled = 0
+        for _ in range(50):
+            if self.get('').get('state') == 'running':
+                settled += 1
+                if settled == 2:
+                    return
+            else:
+                settled = 0
+                self.post('/resume')
+            time.sleep(0.2)
 
     @staticmethod
     def _request(method, url, body=None):
@@ -57,6 +83,7 @@ class Emulator:
 
     def insert_disk(self, image):
         """Drive A gets the image; TTD recording (rolling history) starts afresh, as media swaps wipe it"""
+        self.ensure_running()
         self.post('/ttd/stop')
         result = self.post('/media/A/swap', {'path': os.path.abspath(image), 'discard': True, 'immediate': True})
         self.post('/ttd/start')
@@ -65,6 +92,7 @@ class Emulator:
 
     def run_trdos(self, program, wait=10):
         """Reset, choose TR-DOS in the Pentagon menu, RUN "program" """
+        self.ensure_running()
         self.post('/reset')
         time.sleep(3)
         for _ in range(4):

@@ -2,27 +2,29 @@
 """Assemble a source with the original assembler running in unreal-ng and save the bytes it built: the oracle the
 converted source is compared with (sjasmplus output must be byte-equal).
 
-    assemble-in-emulator.py tasm412  <assembler.trd> <source.$A> <address> <length> <out.bin> [--url U] [--id ID]
+    assemble-in-emulator.py tasm412  <assembler.trd> <source.$A> <address> <length> <out.bin> [--port P] [--id ID]
     assemble-in-emulator.py alasm509 <assembler.trd> <source.$H> <address> <length> <out.bin> --list-position C,R
-                            [--url U] [--id ID]
+                            [--port P] [--id ID]
     assemble-in-emulator.py storm13  <assembler.trd> <source.$C> <address> <length> <out.bin> [--extra FILE.$T ...]
-                            [--url U] [--id ID]
+                            [--port P] [--id ID]
     assemble-in-emulator.py zasm315  <assembler.trd> <source.$a> <address> <length> <out.bin> [--extra FILE.$T ...]
-                            [--url U] [--id ID]
+                            [--ram 512] [--port P] [--id ID]
     assemble-in-emulator.py masm11   <assembler.scl> <source.$a> <address> <length> <out.bin> [--extra FILE.$T ...]
-                            [--wait S] [--url U] [--id ID]
+                            [--wait S] [--port P] [--id ID]
     assemble-in-emulator.py xas7447  <assembler.trd> <source.$X> <address> <length> <out.bin> [--extra FILE.$T ...]
-                            [--list-keys right] [--url U] [--id ID]
+                            [--list-keys right] [--port P] [--id ID]
     assemble-in-emulator.py xas418   <assembler.trd> <source.$X> <address> <length> <out.bin> [--extra FILE.$T ...]
-                            [--list-keys down] [--url U] [--id ID]
-    assemble-in-emulator.py zeus1983 <ZEUS.TAP> <source> <address> <length> <out.bin> [--url U] [--id ID]
-    assemble-in-emulator.py zeus11   <zeus.$C> <source> <address> <length> <out.bin> [--url U] [--id ID]
+                            [--list-keys down] [--port P] [--id ID]
+    assemble-in-emulator.py zeus1983 <ZEUS.TAP> <source> <address> <length> <out.bin> [--port P] [--id ID]
+    assemble-in-emulator.py zeus11   <zeus.$C> <source> <address> <length> <out.bin> [--port P] [--id ID]
     assemble-in-emulator.py zeusgg   <ZEUS_GG.SCL> <source> <address> <length> <out.bin> [--extra FILE.$T ...]
-                            [--url U] [--id ID]
+                            [--port P] [--id ID]
     assemble-in-emulator.py zeus7e   <ZEUS72ZK.SCL> <source> <address> <length> <out.bin> [--extra FILE.$T ...]
-                            [--url U] [--id ID]
-    assemble-in-emulator.py gens4    <DEVPAC_4.TAP> <source> <address> <length> <out.bin> [--at A] [--url U] [--id ID]
+                            [--port P] [--id ID]
+    assemble-in-emulator.py gens4    <DEVPAC_4.TAP> <source> <address> <length> <out.bin> [--at A] [--port P] [--id ID]
 
+--port is the emulator's WebAPI port (default 8090); --url a whole address instead (another host); --id an instance
+that runs already, else the tool creates one (a Pentagon, a 48K model for ZEUS 1983 / GENS4; --ram sets its memory).
 The source is added to a copy of the assembler's disk; the memory range is filled with #AA first, so bytes the
 assembler did not write stay visible. Pick an address the assembler leaves alone: TASM 4.12 keeps its overlay at
 #8000, ALASM 5.09 compiles #8000-#BFFF into its system page (use #6000 / #7000).
@@ -30,9 +32,10 @@ STORM 1.3 clears the 48K memory when it starts and swaps its own code into it wh
 bytes read 0), and the bytes are read after quitting to BASIC. The source is a STORM file (type C, start #C00B; `zxasm
 encode --codec storm` writes one from text); --extra adds files it INCBs / INCLs. Assemble errors stop it after the
 first pass: the screenshot <out>.assembled.png lists them (line numbers count from 0).
-ZAsm 3.15 compiles into its own pages: the source ends with `saveobj "a:out.C",<address>,<length>` and the script
-reads that file from the disk afterwards (address and length are only checked against it). ZAsm looks for drive D
-first; the script answers its "No Disk!" with drive A.
+ZAsm 3.2x and later (3.3 Final, 4.20, ...) use the last 128K of a larger memory and hang on their title on a 128K
+machine: give them --ram 512. ZAsm compiles into its own pages: the source ends with
+`saveobj "a:out.C",<address>,<length>` and the script reads that file from the disk afterwards (address and length
+are only checked against it). ZAsm looks for drive D first; the script answers its "No Disk!" with drive A.
 MASM 1.1 (MASM_11.SCL) lists only its sources (type a) and starts on the first: the source goes first, the files it
 INCLUDEs / INCBINs follow with --extra. It compiles to the addresses the source names (#C000 and up into RAM page 0,
 which the script reads there); --wait gives a long source its time (its own source: 50 s).
@@ -59,8 +62,8 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from emulator import Emulator  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib'))
+from emulator import DEFAULT_PORT, Emulator  # noqa: E402
 import zxdisk  # noqa: E402
 
 
@@ -89,7 +92,7 @@ def gens4(args, stem):
     header = bytes([3]) + b'SOURCE    ' + len(text).to_bytes(2, 'little') + bytes(4)
     tape = os.path.join(os.path.dirname(os.path.abspath(args.out)), 'oracle.tap')
     open(tape, 'wb').write(tape_block(0, header) + tape_block(0xFF, text))
-    emu = Emulator(args.url, args.id, model='48K')
+    emu = Emulator(args.url, args.id, model='48K', port=args.port)
     emu.post('/reset')
     time.sleep(3)
     emu.write(args.at, code)
@@ -149,7 +152,7 @@ def zeus(args, stem, work):
     source = open(args.source, 'rb').read()
     if args.source.lower().split('.')[-1].startswith('$'):
         source = source[17:17 + (source[11] | source[12] << 8)]   # a hobeta file: its data
-    emu = Emulator(args.url, args.id, model='48K' if args.assembler == 'zeus1983' else 'PENTAGON')
+    emu = Emulator(args.url, args.id, model='48K' if args.assembler == 'zeus1983' else 'PENTAGON', port=args.port)
     if args.assembler in ('zeus7e', 'zeusgg'):
         image = open(args.disk, 'rb').read()
         if image[:8] == b'SINCLAIR':
@@ -205,8 +208,10 @@ def main():
     parser.add_argument('address', type=lambda v: int(v, 0))
     parser.add_argument('length', type=lambda v: int(v, 0))
     parser.add_argument('out')
-    parser.add_argument('--url')
-    parser.add_argument('--id')
+    parser.add_argument('--port', type=int, default=DEFAULT_PORT, help=f'the emulator\'s WebAPI port (default {DEFAULT_PORT})')
+    parser.add_argument('--url', help='the whole WebAPI address instead (another host): http://host:port')
+    parser.add_argument('--id', help='an instance that runs already (default: the tool creates one)')
+    parser.add_argument('--ram', type=int, help='RAM of the Pentagon the tool creates, in KB (ZAsm 3.2x and later: 512)')
     parser.add_argument('--list-position', help='ALASM: column,row of the source in the file list')
     parser.add_argument('--extra', nargs='*', default=[], help='STORM, ZAsm, MASM, XAS: hobeta files the source includes')
     parser.add_argument('--wait', type=float, default=6, help='MASM: seconds the assembly takes')
@@ -221,7 +226,7 @@ def main():
     if args.assembler == 'gens4':
         return gens4(args, stem)
     disk, name = prepare_disk(args.disk, args.source, work, args.extra)
-    emu = Emulator(args.url, args.id)
+    emu = Emulator(args.url, args.id, ram_size=args.ram, port=args.port)
     if not emu.insert_disk(disk):
         print('the disk was not inserted')
         return 1
@@ -334,14 +339,17 @@ def main():
         emu.run_trdos('alasm64')
         emu.type('w')
         emu.tap('enter')
+        time.sleep(3)                          # the list draws first: keys before it are lost
         emu.screenshot(stem + '.list.png')
         if not args.list_position:
             return 2
         column, row = (int(v) for v in args.list_position.split(','))
         for _ in range(column - 1):
-            emu.tap('right')
+            emu.tap('right', 6)
         for _ in range(row - 1):
-            emu.tap('down')
+            emu.tap('down', 6)
+        time.sleep(1)
+        emu.screenshot(stem + '.selected.png')   # the highlighted file is the one loaded: check it when the bytes differ
         emu.tap('enter')
         time.sleep(3)
         emu.write(args.address, [0xAA] * args.length)

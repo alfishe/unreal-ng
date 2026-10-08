@@ -11,7 +11,7 @@ Related: [run/manual-trdos-run.md](../run/manual-trdos-run.md) (TR-DOS), [input/
 `docs/inprogress/2026-10-05-unreal-asm/research-masm-to-sjasmplus.md`.
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred. Use [WebAPI](#webapi) inside host-side
-> pipelines (`tools/unreal-asm/assemble-in-emulator.py masm11` drives exactly these steps over HTTP) or when MCP is
+> pipelines (`tools/verification/unreal-asm/emulator/assemble-in-emulator.py masm11` drives exactly these steps over HTTP) or when MCP is
 > unavailable (policy: [_common/transports.md](../_common/transports.md)).
 
 ## Where MASM is
@@ -28,9 +28,9 @@ a hobeta file, then goes onto a copy of the program disk:
 
 ```bash
 zxasm encode prog.txt --codec masm --version 1.1 -o prog.bin            # MASM 1.1 tokenized text
-python3 tools/unreal-asm/zxdisk.py hobeta prog.bin PROG.a 38667 'PROG.$a'   # type a, start 38667 (1.x)
+python3 tools/verification/unreal-asm/lib/zxdisk.py hobeta prog.bin PROG.a 38667 'PROG.$a'   # type a, start 38667 (1.x)
 python3 - <<'EOF'
-import sys; sys.path.insert(0, 'tools/unreal-asm'); import zxdisk
+import sys; sys.path.insert(0, 'tools/verification/unreal-asm/lib'); import zxdisk
 img = zxdisk.scl2trd(open('MASM_11.SCL', 'rb').read())
 open('scratch/masm.trd', 'wb').write(zxdisk.add(img, [open('PROG.$a', 'rb').read()]))
 EOF
@@ -80,7 +80,7 @@ invoke_api {"target":"EMU_ID","method":"GET","path":"/api/v1/emulator/{id}/disk/
 
 ## WebAPI
 
-`BASE=http://localhost:8090/api/v1`; `tools/unreal-asm/emulator.py` wraps these calls.
+`BASE=http://localhost:${PORT:-8090}/api/v1`; `tools/verification/unreal-asm/lib/emulator.py` wraps these calls.
 
 ```bash
 curl -s -X POST $BASE/emulator/$EMU_ID/media/A/swap -H 'Content-Type: application/json' \
@@ -100,10 +100,10 @@ curl -s "$BASE/emulator/$EMU_ID/capture/screen?area=full&format=png&path=$PWD/sc
 The whole sequence as one tool (source first on the disk, included files after it):
 
 ```bash
-python3 tools/unreal-asm/assemble-in-emulator.py masm11 MASM_11.SCL 'PROG.$a' 0x6000 140 scratch/prog.bin \
-    --url http://localhost:8095 --id $EMU_ID
-python3 tools/unreal-asm/assemble-in-emulator.py masm11 MASM_11.SCL LS2.\$a 0xC000 11665 scratch/own.bin \
-    --extra M1+.\$a M2+.\$a --wait 50 --url http://localhost:8095 --id $EMU_ID        # MASM's own source: ~45 s
+python3 tools/verification/unreal-asm/emulator/assemble-in-emulator.py masm11 MASM_11.SCL 'PROG.$a' 0x6000 140 scratch/prog.bin \
+    --port $PORT --id $EMU_ID
+python3 tools/verification/unreal-asm/emulator/assemble-in-emulator.py masm11 MASM_11.SCL LS2.\$a 0xC000 11665 scratch/own.bin \
+    --extra M1+.\$a M2+.\$a --wait 50 --port $PORT --id $EMU_ID        # MASM's own source: ~45 s
 ```
 
 ## What MASM 1.1 does (checked)

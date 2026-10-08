@@ -287,7 +287,20 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
     }
     // The sources, and the files they INCLUDE that detection could not tell (read like their includer)
     const std::vector<ProjectFile> project = ImageProject(files);
-    const ProjectResult converted = ConvertProject(project, args.to);
+    // Data files a source reads while assembling (ZX-ASM's LOADTAB table) come from the image as the assembler loads
+    // them: the data and the rest of the last sector
+    BackendOptions options;
+    options.dataFiles = [&files](const std::string& name) {
+        const containers::TrdosFile* file = FindBinary(files, name);
+        std::vector<uint8_t> bytes;
+        if (file)
+        {
+            bytes = file->data;
+            bytes.insert(bytes.end(), file->tail.begin(), file->tail.end());
+        }
+        return bytes;
+    };
+    const ProjectResult converted = ConvertProject(project, args.to, options);
     PrintDiagnostics(converted.diagnostics);
     // A dialect without its own codec (pasmo) is a text file in the document's code page (texts are program bytes)
     const ISourceCodec* target = registry.Find(args.to) ? registry.Find(args.to) : registry.Find("text");

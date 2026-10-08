@@ -15,15 +15,17 @@ instance, entering TR-DOS, keys, host exchange, labels): [README.md](README.md).
 |---|---|---|---|
 | 5.09 (Alone Coder, 2011) | `x/ALASM509_STS75/ALASM509_STS75.TRD` ([alonecoder.nedopc.com](http://alonecoder.nedopc.com/zx/ALASM509_STS75.rar), [zxart](https://zxart.ee/releasefile/id:249271/ALASM509.zip)) | `alasm64` (64 columns), `alasm42`, `alasmatm` | load, assemble, symbol list, edit, export, import: all run |
 | 5.08 | `x/ALASM508/ALASM508.TRD` ([zxart](https://zxart.ee/releasefile/id:406951/ALASM508.zip)) | `alasm64` | load, assemble |
+| 5.05 (build 01728, 15.04.06) | `wdc/alasm505.zip` (binaries, ALASM's sources, change log), `vtrd/PT+ALASM.ZIP` ([vtrd](https://vtrd.in/system/PT+ALASM.ZIP)) | `alasm64` | load, assemble (2026-10-08) |
+| 5.0 (2005) | `klug-bbs/ALASM5_0.RAR` | `alasm64` | load, assemble (2026-10-08) |
 | 5.07 | `ALASMV5.07(AloneCoder).trd` in `zxart/ALASMV5.07(AloneCoder).trd.zip` ([zxart](https://zxart.ee/releasefile/id:155270/ALASMV5.07(AloneCoder).trd.zip)) | `alasm64` | load, assemble |
 | 4.5 | `zxart/alasm45.scl` ([zxart](https://zxart.ee/releasefile/id:589336/alasm45.scl)) | `ALASM4.5` | load, assemble |
 | 4.44 (Stall edition) | `ALASM444.SCL` in `zxart/ALASM444.ZIP` ([zxart](https://zxart.ee/releasefile/id:249270/ALASM444.ZIP)) | `al64_444` | load, assemble |
 | 4.42 | `zxart/Alasm442.SCL` ([zxart](https://zxart.ee/releasefile/id:408359/Alasm442.SCL)) | `alasm442` | load, assemble |
 | 3.8c (Alem, 1997) | `al38c_.scl` in `zxart/ALASM38c.zip` ([zxart](https://zxart.ee/releasefile/id:406950/ALASM38c.zip)) | `ALASM` | load, assemble; no `DB` (use `DEFB`) |
-| 4.2 | `zxart/ALM.scl` ([zxart](https://zxart.ee/releasefile/id:574325/ALM.scl)), `klug-bbs/ALASM42.ZIP` | `ALM`, `ALASM48` | **did not start** on `PENTAGON`: `ALM` crashed, `ALASM48` ended at once with `0 OK` |
+| 4.2 | `zxart/ALM.scl` ([zxart](https://zxart.ee/releasefile/id:574325/ALM.scl)), `klug-bbs/ALASM42.ZIP` | `ALM`, `ALASM48` | **did not start** on `PENTAGON` 128K or 512K: `ALM` crashed to 48 BASIC, `ALASM48` ended at once with `0 OK` |
 
 Each version saves sources in its own variant of the format (type `H`): give `zxasm encode --codec alasm --version`
-`3.8`, `4.2`, `4.42`, `4.44`, `4.5` or `5.07` (5.07-5.09). ALASM 5.09 compiles `#8000-#BFFF` into its system page:
+`3.8`, `4.2` (also 4.3), `4.42`, `4.5` (also 4.43), `4.44` (4.44-4.46), `5.0`, `5.05` or `5.07` (5.07-5.09). ALASM 5.09 compiles `#8000-#BFFF` into its system page:
 assemble below (the checks used `#6000`) or with `ORG addr,page`.
 
 ## MCP (preferred)
@@ -107,7 +109,7 @@ data mismatch` when asked to assemble with no text.
 
 ## WebAPI
 
-`tools/unreal-asm/assemble-in-emulator.py alasm509 <ALASM509.trd> <source.$H> <address> <length> <out.bin>
+`tools/verification/unreal-asm/emulator/assemble-in-emulator.py alasm509 <ALASM509.trd> <source.$H> <address> <length> <out.bin>
 --list-position C,R` runs a whole ALASM 5.09 assemble (it picks the file from `W`'s list by cursor). The calls are
 those of [tasm.md](tasm.md#webapi) with `RUN "alasm64"` and the ALASM commands above.
 

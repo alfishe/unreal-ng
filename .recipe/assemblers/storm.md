@@ -84,7 +84,7 @@ STORM's own `imporT` reads plain text from the disk (unknown lines are marked as
 
 ## WebAPI
 
-`tools/unreal-asm/assemble-in-emulator.py storm13 <STORM_13.trd> <source.$C> <address> <length> <out.bin> [--extra
+`tools/verification/unreal-asm/emulator/assemble-in-emulator.py storm13 <STORM_13.trd> <source.$C> <address> <length> <out.bin> [--extra
 FILE.$T ...]` runs the whole sequence (BREAK L, BREAK A, BREAK Q, the bytes read in BASIC). The calls are those of
 [tasm.md](tasm.md#webapi) with `RUN "STORM1.3"` and the keys above.
 

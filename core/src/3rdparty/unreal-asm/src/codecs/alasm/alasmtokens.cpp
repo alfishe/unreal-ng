@@ -49,7 +49,8 @@ MnemonicTable Derive(std::initializer_list<Change> changes)
 }
 
 // The older tables, read from each version's binary (research-alasm.md §3): 3.8 alasm4x8.C, 4.2 alasm48.C,
-// 4.42 alasm442.C, 4.5 alasm4.5.C, 4.44 al64_444.C / al42_444.C
+// 4.42 alasm442.C, 4.5 alasm4.5.C, 4.44 al64_444.C / al42_444.C, 5.0 alasm_64.C / alasm_42.C, 5.05 alasm_64.C /
+// alasm_42.C (and its alTOKENS.H). Other builds share one of them: 4.3 has 4.2's table, 4.43 4.5's, 4.45 / 4.46 4.44's
 std::vector<Version> Build()
 {
     std::vector<Version> versions;
@@ -57,17 +58,19 @@ std::vector<Version> Build()
                         Derive({{0x83, "ERASE"}, {0x96, "DEFM"}, {0x9D, "STOP"}, {0x9F, ""}, {0xA0, ""}, {0xA1, ""}, {0xA2, ""},
                                 {0xA3, ""}, {0xA4, ""}, {0xD0, ""}, {0xD1, ""}, {0xD2, ""}, {0xD3, ""}, {0xE0, ""}, {0xE1, ""},
                                 {0xE2, ""}, {0xE3, ""}, {0xE4, ""}, {0xE5, ""}, {0xE6, ""}})});
-    versions.push_back({"4.2", "ALASM 4.2",
+    versions.push_back({"4.2", "ALASM 4.2 / 4.3",
                         Derive({{0x96, "DEFM"}, {0xA0, ""}, {0xA1, ""}, {0xD1, ""}, {0xD2, ""}, {0xD3, "IF"}, {0xE1, ""}, {0xE2, ""},
                                 {0xE3, ""}, {0xE4, ""}, {0xE5, ""}, {0xE6, ""}})});
     versions.push_back({"4.42", "ALASM 4.42",
                         Derive({{0x96, "DEFM"}, {0xA1, ""}, {0xD1, ""}, {0xD2, ""}, {0xD3, "IF"}, {0xE1, ""}, {0xE2, ""}, {0xE3, ""},
                                 {0xE4, ""}, {0xE5, ""}, {0xE6, ""}})});
-    versions.push_back({"4.5", "ALASM 4.5",
+    versions.push_back({"4.5", "ALASM 4.43 / 4.5",
                         Derive({{0x96, "DEFM"}, {0xA1, ""}, {0xD2, "UNTIL"}, {0xD3, "IF"}, {0xE1, ""}, {0xE2, ""}, {0xE3, ""}, {0xE4, ""},
                                 {0xE5, ""}, {0xE6, ""}})});
-    versions.push_back({"4.44", "ALASM 4.44",
+    versions.push_back({"4.44", "ALASM 4.44-4.46",
                         Derive({{0xD2, "UNTIL"}, {0xD3, "IF"}, {0xE1, ""}, {0xE2, ""}, {0xE3, ""}, {0xE4, ""}, {0xE5, ""}, {0xE6, ""}})});
+    versions.push_back({"5.0", "ALASM 5.0", Derive({{0xD2, "UNTIL"}, {0xD3, "IF"}, {0xE6, ""}})});
+    versions.push_back({"5.05", "ALASM 5.05", Derive({{0xD2, "UNTIL"}})});
     versions.push_back({"5.07", "ALASM 5.07-5.09", kAlasm5});
     return versions;
 }

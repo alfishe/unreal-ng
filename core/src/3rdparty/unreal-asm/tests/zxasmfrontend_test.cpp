@@ -233,3 +233,95 @@ TEST(ZxasmFrontend_Test, MakeAssemblesSectionsIntoFiles)
     EXPECT_EQ(ReadBytes(dir / "out.C"), ReadTestData("dialects/zasm315/zmk-out.bin"));
     std::filesystem::remove_all(dir);
 }
+
+TEST(ZxasmFrontend_Test, EndaStartsAnAssemblyWithAnEmptyLabelTable)
+{
+    // ENDA: each part is a block of its own, its labels kept apart (A1 defined again after ENDA is no error)
+    EXPECT_EQ(FromOrg("        org #8000\na1      nop\n        dw a1\n        enda\n        org #8010\na1      ret\n        dw a1\n"),
+              (std::vector<std::string>{"ORG #8000", "a1__L1  NOP", "DW a1__L1", "ORG #8010", "a1__L2  RET", "DW a1__L2"}));
+    // enda1: forward references on both sides of ENDA, A1 defined in both parts; ZAsm 3.2x (on a Pentagon 512: it needs
+    // more than 128K) built the 32 bytes SAVEOBJ wrote in unreal-ng
+    const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
+    if (!sjasmplus)
+        GTEST_SKIP() << "set UNREAL_ASM_SJASMPLUS to the sjasmplus binary";
+    const codecs::ZxasmCodec zxasm;
+    const containers::TrdosFile hobeta = Hobeta("dialects/zasm32x/enda1.$a");
+    DecodeOptions options;
+    options.catalog = hobeta.Hints();
+    const ConvertResult r = Convert(zxasm.Decode(hobeta.data, options).document, "sjasmplus");
+    std::random_device random;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() /
+                                      ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+    std::filesystem::create_directories(dir);
+    WriteBytes(dir / "enda1.asm", codecs::SjasmplusCodec().Encode(r.document, {}).bytes);
+#ifdef _WIN32
+    const std::string command = "cd /d \"" + dir.string() + "\" && \"" + sjasmplus + "\" --nologo enda1.asm > out.txt 2>&1";
+#else
+    const std::string command = "cd \"" + dir.string() + "\" && \"" + sjasmplus + "\" --nologo enda1.asm > out.txt 2>&1";
+#endif
+    EXPECT_EQ(std::system(command.c_str()), 0);
+    EXPECT_EQ(ReadBytes(dir / "out.C"), ReadTestData("dialects/zasm32x/enda1.bin"));
+    std::filesystem::remove_all(dir);
+}
+
+TEST(ZxasmFrontend_Test, TildeTextGoesThroughTheXlatTable)
+{
+    // Without LOADTAB ZAsm's own table: Latin to CP866 Russian and back (checked in ZAsm 3.2x); one character is a value
+    EXPECT_EQ(FromOrg("        org #8000\n        db ~AZaz~,\"A\"\n        db ~A~+1\n        ld a,~a~\n"),
+              (std::vector<std::string>{"ORG #8000", "DB #80,#87,#A0,#A7,'A'", "DB #80+1", "LD A,#A0"}));
+    // ~ inside another quote is text
+    EXPECT_EQ(FromOrg("        org #8000\n        db \"Press ~BREAK~\",#ff\n"), (std::vector<std::string>{"ORG #8000", "DB 'Press ~BREAK~',#FF"}));
+    // LOADTAB of a file the conversion does not have: the table is unknown, ~text~ is written untranslated and a warning says so
+    const ConvertResult r = Convert(SourceDocument::FromText("        org #8000\n        loadtab \"a:t.xlt\"\n        db ~AB~\n", "zxasm"), "sjasmplus");
+    ASSERT_TRUE(r.ok);
+    EXPECT_NE(r.document.Text().find("; loadtab \"a:t.xlt\""), std::string::npos);
+    EXPECT_NE(r.document.Text().find("DB 'AB'"), std::string::npos) << r.document.Text();
+    EXPECT_TRUE(std::any_of(r.diagnostics.begin(), r.diagnostics.end(),
+                            [](const Diagnostic& d) { return d.message.find("LOADTAB: t.xlt is not in the project") != std::string::npos; }));
+}
+
+TEST(ZxasmFrontend_Test, LoadtabTablesAssembleToWhatZasmBuilt)
+{
+    // xlt1: LOADTAB of a 256-byte table (byte = code + 1); xlt2: ~text~ before LOADTAB (ZAsm's table), then an 80-byte
+    // table, whose sector's zeros give a code beyond it 0; xlt3: ZAsm's table on Latin and Russian letters. The bytes
+    // ZAsm 3.2x built in unreal-ng (as many as each wrote)
+    const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
+    if (!sjasmplus)
+        GTEST_SKIP() << "set UNREAL_ASM_SJASMPLUS to the sjasmplus binary";
+    const codecs::ZxasmCodec zxasm;
+    BackendOptions options;
+    options.dataFiles = [](const std::string& name) {
+        std::vector<uint8_t> bytes;
+        if (name == "t.xlt" || name == "s.xlt")
+        {
+            const containers::TrdosFile table = Hobeta("dialects/zasm32x/" + name.substr(0, 1) + ".$x");
+            bytes = table.data;
+            bytes.insert(bytes.end(), table.tail.begin(), table.tail.end());
+        }
+        return bytes;
+    };
+    for (const std::string name : {"xlt1", "xlt2", "xlt3"})
+    {
+        const containers::TrdosFile hobeta = Hobeta("dialects/zasm32x/" + name + ".$a");
+        DecodeOptions decode;
+        decode.catalog = hobeta.Hints();
+        const ProjectResult r = ConvertProject({{name, zxasm.Decode(hobeta.data, decode).document}}, "sjasmplus", options);
+        ASSERT_EQ(r.files.size(), 1u);
+        std::random_device random;
+        const std::filesystem::path dir = std::filesystem::temp_directory_path() /
+                                          ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+        std::filesystem::create_directories(dir);
+        WriteBytes(dir / "x.asm", codecs::SjasmplusCodec().Encode(r.files[0].document, {}).bytes);
+#ifdef _WIN32
+        const std::string command = "cd /d \"" + dir.string() + "\" && \"" + sjasmplus + "\" --nologo x.asm > out.txt 2>&1";
+#else
+        const std::string command = "cd \"" + dir.string() + "\" && \"" + sjasmplus + "\" --nologo x.asm > out.txt 2>&1";
+#endif
+        EXPECT_EQ(std::system(command.c_str()), 0) << name;
+        const std::vector<uint8_t> expected = ReadTestData("dialects/zasm32x/" + name + ".bin");
+        std::vector<uint8_t> built = ReadBytes(dir / "out.C");
+        built.resize(std::min(built.size(), expected.size()));
+        EXPECT_EQ(built, expected) << name;
+        std::filesystem::remove_all(dir);
+    }
+}

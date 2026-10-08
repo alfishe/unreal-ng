@@ -5,7 +5,7 @@
 | **Date** | 2026-10-06 |
 | **Code** | `src/dialects/z88dk/z88dkbackend.cpp` over the writer it shares with pasmo (`src/dialects/common/classicbackend.cpp`); `zxasm convert --to z88dk` |
 | **Target** | z80asm of [z88dk 2.3](https://github.com/z88dk/z88dk/releases/tag/v2.3) (`z88dk-z80asm`, build 22110); its keyword list from `src/z80asm` (`keyword.def`, `scan_def.h`) |
-| **Checks** | `unreal-asm-tests` (`Z88dkBackend_Test`, with `UNREAL_ASM_Z80ASM` the oracle programs too); `tools/unreal-asm/crosscheck.py --targets z88dk` |
+| **Checks** | `unreal-asm-tests` (`Z88dkBackend_Test`, with `UNREAL_ASM_Z80ASM` the oracle programs too); `tools/verification/unreal-asm/checks/crosscheck.py --targets z88dk` |
 | **Result** | the STORM 1.3, ZAsm 3.15 (ZXT2, ZXT3), TASM 5.0 and ALASM 5.09 oracle programs assemble with z80asm to the bytes the original assemblers built; on the collection's disks 329 main sources build to the same bytes as with sjasmplus, the others hit the z80asm limits of §3 |
 
 ## 1. Example first

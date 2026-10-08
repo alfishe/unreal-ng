@@ -6,7 +6,7 @@
 | **Code** | `src/dialects/xas/xasfrontend.cpp` (the `xas` frontend), the sjasmplus backend (16-bit unsigned words, `DS` patterns) |
 | **Syntax source** | the help files of XAS 4.18 (`Xas help`, the same file in ZX Format #4's appendix) and 7.43 (`Read Me`), the editor's token table (research-xas.md §4), and XAS itself: every fact marked *run* below was assembled by XAS 7.447 (and 4.18 where noted) in unreal-ng. The full description the help files mention was not found |
 | **Oracles** | three programs written for the test (`testdata/dialects/xas7447/constrct`, `proj` with the files it loads, `testdata/dialects/xas418/cons418`), assembled by XAS 7.447 / 4.18 over memory filled with #AA; their sjasmplus conversions build the same bytes |
-| **Checks** | `unreal-asm-tests` (`XasFrontend_Test`; with `UNREAL_ASM_SJASMPLUS` the oracle programs too); `tools/unreal-asm/roundtrip.py --assemble` on the collection's XAS disks; how to run XAS: `.recipe/assemblers/xas.md` |
+| **Checks** | `unreal-asm-tests` (`XasFrontend_Test`; with `UNREAL_ASM_SJASMPLUS` the oracle programs too); `tools/verification/unreal-asm/checks/roundtrip.py --assemble` on the collection's XAS disks; how to run XAS: `.recipe/assemblers/xas.md` |
 
 ## 1. Example first
 

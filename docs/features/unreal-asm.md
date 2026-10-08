@@ -14,7 +14,7 @@ Running the assemblers themselves inside the emulator: [.recipe/assemblers/](../
 | Assembler | Codec (`zxasm --codec`) | Versions | Converts to sjasmplus |
 |---|---|---|---|
 | TASM (Rst7, XL Design, KVA) | `tasm` | 2.0, 3.0-3.5, 4.0 / 4.4, 4.12, 5.0 beta, 5.5 beta | yes (3, 4.0, 4.12, 5.0) |
-| ALASM (Alem, Alone Coder) | `alasm` | 3.8, 4.2, 4.42, 4.44, 4.5, 5.07-5.09 | yes |
+| ALASM (Alem, Alone Coder) | `alasm` | 3.8, 4.2 / 4.3, 4.42, 4.43 / 4.5, 4.44-4.46, 5.0, 5.05, 5.07-5.09 | yes |
 | ZX-ASM / ZAsm | `zxasm` | 2.4-2.6, 3.0-3.10, Lite 1.07, 3.15-4.20 | yes |
 | STORM | `storm` | 1.0beta, 1.2-1.3i | yes |
 | MASM (AIG, KSA) | `masm` | 1.0 demo, 1.1, 2.0, 3.0 | yes (1.x, 3.0) |
@@ -26,7 +26,7 @@ Running the assemblers themselves inside the emulator: [.recipe/assemblers/](../
 
 Every codec decodes the assembler's own file to UTF-8 text and encodes text back to the same bytes (byte for byte
 for files the assembler wrote; the research documents give the corpus numbers). Containers: hobeta files
-(`NAME.$A`), TR-DOS images (`.trd`, `.scl` through `tools/unreal-asm/zxdisk.py scl2trd`) and tape images (`.tap`,
+(`NAME.$A`), TR-DOS images (`.trd`, `.scl` through `tools/verification/unreal-asm/lib/zxdisk.py scl2trd`) and tape images (`.tap`,
 `.tzx`).
 
 The conversion goes through a neutral intermediate form; the sjasmplus output of every dialect is checked against
@@ -43,7 +43,8 @@ zxasm encode   game.txt --codec alasm --version 5.07 -o 'GAME.$H'   # back to AL
 zxasm files    disk.trd                        # the catalog, with the codec of each file
 zxasm decode   disk.trd --file MAIN.A -o main.txt
 zxasm convert  'GAME.$H' --to sjasmplus -o game.asm
-zxasm convert  disk.trd --to sjasmplus -o out/ # the whole project: INCLUDE resolved, INCBIN files extracted
+zxasm convert  disk.trd --to sjasmplus -o out/ # the whole project: INCLUDE resolved, INCBIN files extracted,
+                                                # ZX-ASM's LOADTAB tables read from the image
 zxasm check    'GAME.$H'                        # decode + encode: byte-exact?
 ```
 

@@ -7,7 +7,7 @@ instance). Not covered: the PHT 3.6 shell's other tools (its file manager is use
 saves from inside ZEUS.
 
 > **Transport:** MCP first (`target` = the id `emulator_manage create` returned). The WebAPI section is what the
-> host-side tool `tools/unreal-asm/assemble-in-emulator.py` (profiles `zeus1983`, `zeus11`, `zeusgg`, `zeus7e`)
+> host-side tool `tools/verification/unreal-asm/emulator/assemble-in-emulator.py` (profiles `zeus1983`, `zeus11`, `zeusgg`, `zeus7e`)
 > sends.
 
 ## Versions and where they are
@@ -151,7 +151,7 @@ memory beside ZEUS is built. ADS 2.0 (`MAKE_ADS`: `ORG #6000`, `INCLUDE cc0` / `
 
 ## WebAPI
 
-`BASE=http://localhost:8090/api/v1`, `ID` from `POST $BASE/emulator/start {"model":"48K"}`.
+`BASE=http://localhost:${PORT:-8090}/api/v1`, `ID` from `POST $BASE/emulator/start {"model":"48K"}`.
 
 ```bash
 curl -s -X POST $BASE/emulator/$ID/memory/write -H "$J" -d '{"address":57344,"data":[...]}'      # ZEUS code (1983: the tape's CODE block)
@@ -171,8 +171,8 @@ Disk versions: `POST /media/A/swap {"path":...,"discard":true,"immediate":true}`
 between keys. The same steps as one call per run:
 
 ```bash
-python3 tools/unreal-asm/assemble-in-emulator.py zeus1983 ZEUS.TAP PROG.bin 40000 623 scratch/prog.bin --url http://localhost:8095
-python3 tools/unreal-asm/assemble-in-emulator.py zeus7e ZEUS72ZK.SCL 'PROG.$Z' 40000 64 scratch/prog.bin --extra 'inc1.$Z' 'dat.$C'
+python3 tools/verification/unreal-asm/emulator/assemble-in-emulator.py zeus1983 ZEUS.TAP PROG.bin 40000 623 scratch/prog.bin --port $PORT
+python3 tools/verification/unreal-asm/emulator/assemble-in-emulator.py zeus7e ZEUS72ZK.SCL 'PROG.$Z' 40000 64 scratch/prog.bin --extra 'inc1.$Z' 'dat.$C'
 ```
 
 ## Sources between ZEUS and the host
@@ -180,8 +180,8 @@ python3 tools/unreal-asm/assemble-in-emulator.py zeus7e ZEUS72ZK.SCL 'PROG.$Z' 4
 ```bash
 zxasm decode PROG.bin --codec zeus                         # text (5-digit numbers dropped; --version 1983 | gg | pht)
 zxasm encode prog.txt --codec zeus --version pht -o PROG.bin   # lines numbered 10, 20, ... when the text has none
-python3 tools/unreal-asm/zxdisk.py hobeta PROG.bin PROG.Z 32768 'PROG.$Z'   # a TR-DOS file for v7.E's INCLUDE
-python3 tools/unreal-asm/zxdisk.py add disk.trd out.trd 'PROG.$Z'
+python3 tools/verification/unreal-asm/lib/zxdisk.py hobeta PROG.bin PROG.Z 32768 'PROG.$Z'   # a TR-DOS file for v7.E's INCLUDE
+python3 tools/verification/unreal-asm/lib/zxdisk.py add disk.trd out.trd 'PROG.$Z'
 zxasm convert PROG.bin --codec zeus --version pht --to sjasmplus -o prog.asm
 symconv source ads.trd --main make_ads --to native             # labels with values: the disk's sources, and its files
                                                                # under the names PLACE / INCBIN use (else "INCBIN file not found")
