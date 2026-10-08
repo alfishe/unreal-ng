@@ -50,9 +50,10 @@ phase; master only after the owner's review.
   - [ ] a frontend for the M80-style text dialect of PC cross assemblers (`*D-`, `*Z80` option lines, `NAME$` local labels)
   - [x] `storm` frontend, STORM 1.3 (STORM → sjasmplus) (2026-10-06, branch `unreal-asm-a6`): STORM 1.3's own source rebuilt equal to the released program, two test programs equal to what STORM 1.3 built in the emulator; codec fix: `PO PE P M` imply `JP` ([research-storm-to-sjasmplus.md](research-storm-to-sjasmplus.md))
   - [x] `zxasm` frontend, ZX-ASM 2.x / 3.x / ZAsm (ZX-ASM → sjasmplus) (2026-10-06, branch `unreal-asm-a6`): four programs equal to what ZAsm 3.15 built in the emulator; project-wide macros (`ParseInProject`), ZX-ASM's `IFUSED`; detector fixes in tasm / zxasm ([research-zxasm-to-sjasmplus.md](research-zxasm-to-sjasmplus.md))
-  - [ ] ZX-ASM `MAKE`, `~text~` with `LOADTAB`, `ENDA`
-  - [ ] ALASM: a label `-` in column 0 (sources use it several times per file: an anonymous label?); research and convert
-  - [ ] ALASM `DISPLAY` output differs from sjasmplus' (research-alasm-to-sjasmplus.md §7)
+  - [x] ZX-ASM `MAKE` (2026-10-07): ORG + SAVEBIN of each section, equal to what ZAsm 3.15 wrote (testdata `dialects/zasm315/zmk`)
+  - [ ] ZX-ASM `ENDA`: ZAsm 3.15 refuses it, 3.3 Final / 4.20 hang on their title in unreal-ng (not checked); `~text~` with `LOADTAB`: the table file is not part of the converted project
+  - [x] ALASM `+` / `-` in column 0 (2026-10-07): the assemble-once mark (help), also before blanks; checked in ALASM 5.09 (`+LBL` is a label, an indented `+` a syntax error); no anonymous label
+  - [x] ALASM `DISPLAY` output (2026-10-07): explained (line counter + text, numbers as `#XXXX`); sjasmplus has no `#` number form, so not identical (research-alasm-to-sjasmplus.md §7); switches `/H` / `/D` errored in 5.09 on codec-written files (one typed in its editor not tried)
 - [x] A6 more frontends / backends; research codecs xas, masm, gens3, zeus, ads (2026-10-06, branch `unreal-asm-a6`)
   - [x] `pasmo` backend (2026-10-06, branch `unreal-asm-a6`): the oracle programs and the GS ROM equal through pasmo; `crosscheck.py` 0 differences against sjasmplus on the collection's disks ([research-pasmo-backend.md](research-pasmo-backend.md))
   - [x] `z88dk` (z80asm) backend over the writer shared with pasmo (2026-10-06): the oracle programs equal; `crosscheck.py --targets z88dk` 329 equal on the collection, z80asm's limits in [research-z88dk-backend.md](research-z88dk-backend.md) §3

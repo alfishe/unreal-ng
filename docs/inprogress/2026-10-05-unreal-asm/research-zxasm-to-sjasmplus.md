@@ -70,7 +70,7 @@ The ZX-ASM disks of the collection (73 images, research-zxasm.md §6): `roundtri
 
 | Item | Note |
 |---|---|
-| `~text~` and `LOADTAB` | the XLAT table is a file the source loads; not applied |
-| `MAKE` (assemble into a disk file) | sjasmplus `OUTPUT`; not converted yet |
-| `ENDA` (end the assembly here, start again after it) | kept as text |
+| `~text~` and `LOADTAB` | the XLAT table is a binary file `LOADTAB` names (each character replaced by the table's byte, ZAsm 3.3 ReadMe2); the conversion sees only the sources of a project, not that file, and the IR has no table lookup: kept as written with a warning |
+| `MAKE` (assemble into a disk file) | converted (2026-10-07): `ORG` and, where the section ends (the next `MAKE` / `ORG` / the end), `SAVEBIN` of it; checked in ZAsm 3.15: the label on the `MAKE` line keeps the address before it, the section's code goes only into the file (`zmk`: mk1.C, mk2.C and the SAVEOBJ file equal) |
+| `ENDA` (end the assembly here, start again after it) | kept as text: ZAsm 3.15 refuses it (a syntax error: it comes with 3.3, per the 3.3 Final ReadMe2), and ZAsm 3.3 Final and 4.20 hang on their title in unreal-ng, so its behaviour (the address after it) was not checked |
 | ZX-ASM 2.x | the frontend reads its sources like 3.x (same syntax per its ReadMe); no 2.x oracle |
