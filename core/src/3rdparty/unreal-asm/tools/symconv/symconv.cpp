@@ -8,7 +8,7 @@
 //                                                    (default fold); the report goes to stderr
 //   symconv source <in> --to id [-o out] [--main NAME] [--generated] [--sjasmplus-names] [--pages ...]
 //                                                    the labels a source defines, with their values (symbols/fromsource.h):
-//                                                    <in> is a TR-DOS image (the project: its sources, and its other files
+//                                                    <in> is a TR-DOS or tape image (TAP / TZX; the project: its sources, and its other files
 //                                                    for INCBIN; --main picks the source to assemble), a hobeta file or a
 //                                                    text source; --sjasmplus-names gives every label under the name its
 //                                                    sjasmplus conversion writes (to compare with sjasmplus --sym)
@@ -131,7 +131,8 @@ bool ReadProject(const std::string& path, const std::vector<uint8_t>& bytes, Pro
     std::vector<containers::TrdosFile> files;
     std::string error;
     const std::string extension = Extension(path);
-    const bool image = extension == "trd" && containers::ReadTrd(bytes, files, error);
+    const bool image = (extension == "trd" && containers::ReadTrd(bytes, files, error)) ||
+                       ((extension == "tap" || extension == "tzx") && containers::ReadTape(bytes, files, error));
     containers::TrdosFile one;
     if (!image && extension.size() == 2 && extension[0] == '$' && containers::ReadHobeta(bytes, one, error))
         files.push_back(one);

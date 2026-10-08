@@ -69,6 +69,7 @@ add_library(unreal-asm STATIC
     src/dialects/sjasmplus/sjasmplusfrontend.cpp
     src/dialects/zeus/zeusfrontend.cpp
     src/containers/trdos.cpp
+    src/containers/tape.cpp
     src/symbols/model/symbol.cpp
     src/symbols/model/symbolindex.cpp
     src/symbols/model/symbolstore.cpp
@@ -140,6 +141,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/pasmobackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/z88dkbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/trdos_test.cpp
+        ${UNREAL_ASM_DIR}/tests/tape_test.cpp
         ${UNREAL_ASM_DIR}/tests/dialects_test.cpp
         ${UNREAL_ASM_DIR}/tests/tasmfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/masmfrontend_test.cpp

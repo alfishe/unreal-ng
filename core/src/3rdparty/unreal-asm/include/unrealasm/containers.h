@@ -39,4 +39,21 @@ std::vector<uint8_t> WriteHobeta(const TrdosFile& file);
 
 /// The files of a TR-DOS image (deleted entries skipped); false with the reason when it is not one
 bool ReadTrd(std::span<const uint8_t> image, std::vector<TrdosFile>& out, std::string& error);
+
+/// One data block of a tape image: the flag byte (0 header, #FF data) and the bytes between it and the checksum
+struct TapeBlock
+{
+    uint8_t flag = 0;
+    std::vector<uint8_t> data;
+    bool checksumOk = true;
+};
+
+/// The data blocks of a TAP or TZX image (TZX: standard, turbo and pure data blocks; the other blocks are skipped);
+/// false with the reason when it is neither
+bool ReadTapeBlocks(std::span<const uint8_t> image, std::vector<TapeBlock>& out, std::string& error);
+
+/// The files of a TAP or TZX image as TR-DOS-like entries: a header block names the data block after it (type 3
+/// "Bytes" is `C` with its start, 0 "Program" `B`, the arrays `D`); a data block without a header becomes `C` named
+/// BLOCKnn
+bool ReadTape(std::span<const uint8_t> image, std::vector<TrdosFile>& out, std::string& error);
 }  // namespace unrealasm::containers

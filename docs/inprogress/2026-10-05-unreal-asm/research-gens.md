@@ -144,7 +144,7 @@ Testdata `gens/` (`*.txt` = the expected listing, number and text):
 
 The KLUG BBS archive: [klug_bbs.7z](https://yadi.sk/d/N_p56RIHWU15Gw). The T-command include files (one typed in
 GENS4, one saved by GENS3) were checked with the reference decoder; the codec reads one text block (a TR-DOS file or
-a tape data block) and leaves T's multi-block files to a tape container (TODO).
+a tape data block) and leaves T's multi-block files to the tape container (`containers::ReadTape`, 2026-10-07: the lines of every block joined).
 
 All 8 files byte-exact; the GENS2-4 rule (§3) applied to the listed text reproduces every real and typed line (1713);
 the crafted lines with more than two TABs or `#80`+ bytes keep their stored bytes in the line attributes.

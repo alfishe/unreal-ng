@@ -5,10 +5,10 @@
 //   zxasm encoding <file>                           code page ranking, line ends, text score
 //   zxasm decode   <file> [-o out] [--codec id] [--version v] [--codepage cp]
 //   zxasm encode   <file> --codec id [--version v] [-o out] [--codepage cp] [--line-end lf|crlf|cr]
-//   zxasm files    <image.trd>                      list the files of a TR-DOS image
+//   zxasm files    <image.trd|.tap|.tzx>             list the files of a TR-DOS disk or tape image
 //   zxasm convert  <file> --to dialect [-o out] [--from dialect]  convert a source to another dialect (alasm ->
 //                                                   sjasmplus, ...); --from names the dialect of a plain text file
-//   zxasm convert  <image.trd> --to dialect -o dir    the whole project: every source of the image converted together
+//   zxasm convert  <image> --to dialect -o dir        the whole project (TRD, TAP or TZX): every source of the image converted together
 //                                                   (INCLUDE wildcards resolved), INCBIN files extracted next to them
 //   zxasm check    <file> [--codec id] [--version v] [--show]  decode, encode back: byte-exact? how many lines the
 //                                                   canonical tokenizer alone reproduces (--show lists the others)
@@ -45,7 +45,7 @@ int Usage()
                  "       decode <file> [-o out] [--codec id] [--version v] [--codepage cp] |\n"
                  "       encode <file> --codec id [--version v] [-o out] [--codepage cp] [--line-end lf|crlf|cr] |\n"
                  "       check <file> [--codec id] [--version v] |\n"
-                 "       files <image.trd>      (decode/detect/encoding/check take --file NAME[.T] for a file in an image)\n";
+                 "       files <image.trd|.tap|.tzx> (decode/detect/encoding/check take --file NAME[.T] for a file in an image)\n";
     return 2;
 }
 
@@ -149,17 +149,28 @@ uint16_t CatalogStart(const std::string& codec, const std::string& version, char
     return 0;
 }
 
-/// Hobeta / TR-DOS image -> the file's bytes and catalog hints; false with a message when the container is broken or
+/// An image of files: a TR-DOS disk (.trd) or a tape (.tap / .tzx)
+bool IsImage(const std::string& extension)
+{
+    return extension == "trd" || extension == "tap" || extension == "tzx";
+}
+
+bool ReadImage(const std::string& extension, std::span<const uint8_t> bytes, std::vector<containers::TrdosFile>& files, std::string& error)
+{
+    return extension == "trd" ? containers::ReadTrd(bytes, files, error) : containers::ReadTape(bytes, files, error);
+}
+
+/// Hobeta / TR-DOS image / tape image -> the file's bytes and catalog hints; false with a message when the container is broken or
 /// the named file is missing. Plain host files pass through.
 bool Unwrap(const Args& args, std::vector<uint8_t>& bytes, CatalogHints& hints)
 {
     const std::string extension = Lower(Extension(args.file));
     containers::TrdosFile file;
     std::string error;
-    if (extension == "trd")
+    if (IsImage(extension))
     {
         std::vector<containers::TrdosFile> files;
-        if (!containers::ReadTrd(bytes, files, error))
+        if (!ReadImage(extension, bytes, files, error))
         {
             std::cerr << "zxasm: " << error << "\n";
             return false;
@@ -261,7 +272,7 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
 {
     std::vector<containers::TrdosFile> files;
     std::string error;
-    if (!containers::ReadTrd(image, files, error) || args.output.empty() || args.to.empty())
+    if (!ReadImage(Lower(Extension(args.file)), image, files, error) || args.output.empty() || args.to.empty())
     {
         std::cerr << "zxasm: " << (error.empty() ? "convert of an image needs --to and -o <directory>" : error) << "\n";
         return 2;
@@ -415,7 +426,7 @@ int main(int argc, char** argv)
     {
         std::vector<containers::TrdosFile> files;
         std::string error;
-        if (!containers::ReadTrd(bytes, files, error))
+        if (!ReadImage(Lower(Extension(args.file)), bytes, files, error))
         {
             std::cerr << "zxasm: " << error << "\n";
             return 1;
@@ -428,7 +439,7 @@ int main(int argc, char** argv)
         }
         return 0;
     }
-    if (args.command == "convert" && Lower(Extension(args.file)) == "trd" && args.inner.empty())
+    if (args.command == "convert" && IsImage(Lower(Extension(args.file))) && args.inner.empty())
         return ConvertImage(args, bytes, registry);
     if (args.command != "encode" && !Unwrap(args, bytes, hints))
         return 1;
