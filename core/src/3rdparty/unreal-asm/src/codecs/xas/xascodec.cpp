@@ -72,16 +72,42 @@ const Version& FindVersion(const std::string& id)
     return kVersions[2];   // 7.43
 }
 
-/// The table of a version: index = code - #80
-std::vector<std::string_view> Table(const Version& v)
+/// The table of a version: index = code - #80 (built once per version)
+const std::vector<std::string_view>& Table(const Version& v)
 {
-    std::vector<std::string_view> t(kCommands.begin(), kCommands.end());
-    t.insert(t.end(), v.c8.begin(), v.c8.end());
-    t.insert(t.end(), kRegisters.begin(), kRegisters.end());
-    for (const std::string_view name : v.ef)
-        if (!name.empty())
-            t.push_back(name);
-    return t;
+    static const std::array<std::vector<std::string_view>, kVersions.size()> tables = [] {
+        std::array<std::vector<std::string_view>, kVersions.size()> out;
+        for (size_t k = 0; k < kVersions.size(); ++k)
+        {
+            std::vector<std::string_view>& t = out[k];
+            t.assign(kCommands.begin(), kCommands.end());
+            t.insert(t.end(), kVersions[k].c8.begin(), kVersions[k].c8.end());
+            t.insert(t.end(), kRegisters.begin(), kRegisters.end());
+            for (const std::string_view name : kVersions[k].ef)
+                if (!name.empty())
+                    t.push_back(name);
+        }
+        return out;
+    }();
+    return tables[static_cast<size_t>(&v - kVersions.data())];
+}
+
+/// The codes of a version's table by the first character of the name (table order kept, so the first match wins as
+/// in a scan of the whole table)
+const std::array<std::vector<uint8_t>, 256>& ByFirst(const Version& v)
+{
+    static const std::array<std::array<std::vector<uint8_t>, 256>, kVersions.size()> buckets = [] {
+        std::array<std::array<std::vector<uint8_t>, 256>, kVersions.size()> out;
+        for (size_t k = 0; k < kVersions.size(); ++k)
+        {
+            const std::vector<std::string_view>& t = Table(kVersions[k]);
+            for (size_t i = 0; i < t.size(); ++i)
+                if (!t[i].empty())
+                    out[k][static_cast<uint8_t>(t[i][0])].push_back(static_cast<uint8_t>(i));
+        }
+        return out;
+    }();
+    return buckets[static_cast<size_t>(&v - kVersions.data())];
 }
 
 // The editor's font: Russian letters that do not look like Latin ones at #10-#1F and #7B-#7E (research-xas.md §6)
@@ -109,12 +135,35 @@ char32_t Glyph(uint8_t b)
 
 bool GlyphByte(char32_t c, uint8_t& out)
 {
-    for (int b = 0x10; b < 0x100; ++b)
-        if (Glyph(static_cast<uint8_t>(b)) == c)
-        {
-            out = static_cast<uint8_t>(b);
-            return true;
-        }
+    // The font read backwards once: the lowest byte showing each character, sorted by character
+    static const std::vector<std::pair<char32_t, uint8_t>> reverse = [] {
+        std::vector<std::pair<char32_t, uint8_t>> r;
+        for (int b = 0x10; b < 0x100; ++b)
+            r.emplace_back(Glyph(static_cast<uint8_t>(b)), static_cast<uint8_t>(b));
+        std::stable_sort(r.begin(), r.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+        r.erase(std::unique(r.begin(), r.end(), [](const auto& x, const auto& y) { return x.first == y.first; }), r.end());
+        return r;
+    }();
+    // ASCII, the common case, from a direct table (-1 = not in the font)
+    static const std::array<int16_t, 128> ascii = [] {
+        std::array<int16_t, 128> a;
+        a.fill(-1);
+        for (const auto& [glyph, byte] : reverse)
+            if (glyph < 0x80)
+                a[glyph] = byte;
+        return a;
+    }();
+    if (c < 0x80 && ascii[c] >= 0)
+    {
+        out = static_cast<uint8_t>(ascii[c]);
+        return true;
+    }
+    const auto found = std::lower_bound(reverse.begin(), reverse.end(), c, [](const auto& e, char32_t v) { return e.first < v; });
+    if (found != reverse.end() && found->first == c)
+    {
+        out = found->second;
+        return true;
+    }
     if (c < 0x10)
     {
         out = static_cast<uint8_t>(c);
@@ -127,7 +176,7 @@ bool GlyphByte(char32_t c, uint8_t& out)
 /// token names)
 std::string Format(std::span<const uint8_t> line, const Version& v)
 {
-    const std::vector<std::string_view> table = Table(v);
+    const std::vector<std::string_view>& table = Table(v);
     std::string out;
     int col = 0;
     int fields = 3;
@@ -223,7 +272,7 @@ std::string Format(std::span<const uint8_t> line, const Version& v)
 class Packer
 {
 public:
-    Packer(std::span<const uint8_t> src, const Version& v) : _src(src), _v(v), _table(Table(v)) {}
+    Packer(std::span<const uint8_t> src, const Version& v) : _src(src), _v(v), _table(Table(v)), _byFirst(ByFirst(v)) {}
 
     bool Run(std::vector<uint8_t>& out, std::string& error)
     {
@@ -358,7 +407,12 @@ private:
     /// A keyword at k (either case) followed by ',' ' ' ';' or the line end: its code, else 0
     uint8_t Match(size_t k, size_t& next) const
     {
-        for (size_t t = 0; t < _table.size(); ++t)
+        if (k >= _src.size())
+            return 0;
+        uint8_t first = _src[k];
+        if (first >= 'a' && first <= 'z')
+            first &= 0xDF;
+        for (const uint8_t t : _byFirst[first])
         {
             const std::string_view name = _table[t];
             if (k + name.size() > _src.size())
@@ -436,7 +490,8 @@ private:
 
     std::span<const uint8_t> _src;
     const Version& _v;
-    std::vector<std::string_view> _table;
+    const std::vector<std::string_view>& _table;
+    const std::array<std::vector<uint8_t>, 256>& _byFirst;
     std::vector<uint8_t> _out;
     std::string _error;
     int _limit = 3;
@@ -513,6 +568,7 @@ std::string XasCodec::DecodeBody(std::span<const uint8_t> body, const std::strin
 bool XasCodec::EncodeBody(const std::string& text, const std::string& version, std::vector<uint8_t>& body, std::string& error)
 {
     std::vector<uint8_t> src;
+    src.reserve(text.size());
     const std::span<const uint8_t> utf(reinterpret_cast<const uint8_t*>(text.data()), text.size());
     for (size_t p = 0; p < utf.size();)
     {

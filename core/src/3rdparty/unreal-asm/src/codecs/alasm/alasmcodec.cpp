@@ -1,6 +1,7 @@
 #include "codecs/alasm/alasmcodec.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 
 #include "encoding/utf8.h"
@@ -67,6 +68,34 @@ bool ToBuffer(const std::string& text, std::vector<uint8_t>& out, std::string& e
     return true;
 }
 
+/// The indexes of a table's names by their first character (the low 7 bits, as sea_tkn compares), table order kept
+template <typename Table>
+std::array<std::vector<uint8_t>, 128> FirstIndex(const Table& names)
+{
+    std::array<std::vector<uint8_t>, 128> out;
+    for (size_t c = 0; c < names.size(); ++c)
+        if (!names[c].empty())
+            out[static_cast<uint8_t>(names[c][0]) & 0x7F].push_back(static_cast<uint8_t>(c));
+    return out;
+}
+
+const std::array<std::vector<uint8_t>, 128>& MnemonicIndex(const alasm::Version& version)
+{
+    static const std::vector<std::array<std::vector<uint8_t>, 128>> indexes = [] {
+        std::vector<std::array<std::vector<uint8_t>, 128>> out;
+        for (const alasm::Version& v : alasm::Versions())
+            out.push_back(FirstIndex(v.mnemonics));
+        return out;
+    }();
+    return indexes[static_cast<size_t>(&version - alasm::Versions().data())];
+}
+
+const std::array<std::vector<uint8_t>, 128>& RegisterIndex()
+{
+    static const std::array<std::vector<uint8_t>, 128> index = FirstIndex(alasm::Registers());
+    return index;
+}
+
 /// sea_tkn of alTOKENS.H: the keyword starting at `h`; 0 when none. `end` = where scanning goes on (a mnemonic takes
 /// one blank after it)
 uint8_t FindKeyword(const std::vector<uint8_t>& t, size_t h, bool operands, const alasm::Version& version, size_t& end)
@@ -78,9 +107,12 @@ uint8_t FindKeyword(const std::vector<uint8_t>& t, size_t h, bool operands, cons
                 return false;
         return true;
     };
+    if (h >= t.size())
+        return 0;
+    const uint8_t first = t[h] & 0x7F;
     if (!operands)
     {
-        for (size_t c = 0; c < version.mnemonics.size(); ++c)
+        for (const uint8_t c : MnemonicIndex(version)[first])
         {
             const std::string_view name = version.mnemonics[c];
             if (name.empty() || !matches(name))
@@ -98,7 +130,7 @@ uint8_t FindKeyword(const std::vector<uint8_t>& t, size_t h, bool operands, cons
         return 0;
     }
     const alasm::RegisterTable& registers = alasm::Registers();
-    for (size_t c = 0; c < registers.size(); ++c)
+    for (const uint8_t c : RegisterIndex()[first])
     {
         const std::string_view name = registers[c];
         if (name.empty() || !matches(name))

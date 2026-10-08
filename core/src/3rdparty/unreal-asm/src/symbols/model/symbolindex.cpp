@@ -7,6 +7,14 @@ namespace unrealasm::symbols
 {
 namespace
 {
+uint64_t Key(uint32_t space, uint32_t offset)
+{
+    return static_cast<uint64_t>(space) << 32 | offset;
+}
+}  // namespace
+
+namespace
+{
 std::string Upper(const std::string& s)
 {
     std::string out = s;
@@ -25,12 +33,19 @@ SymbolIndex::SymbolIndex(std::shared_ptr<const std::vector<SymbolSet>> sets) : _
             order.push_back(&set);
     std::stable_sort(order.begin(), order.end(), [](const SymbolSet* a, const SymbolSet* b) { return a->priority > b->priority; });
 
+    // The distinct spaces (a handful as a rule: collected without copying one per symbol), sorted
+    const AddressSpace* last = nullptr;
     for (const SymbolSet* set : order)
         for (const Symbol& s : set->symbols)
-            if (s.enabled)
+        {
+            if (!s.enabled || (last && *last == s.location.space))
+                continue;
+            const auto known = std::find(_spaces.begin(), _spaces.end(), s.location.space);
+            if (known == _spaces.end())
                 _spaces.push_back(s.location.space);
+            last = &s.location.space;
+        }
     std::sort(_spaces.begin(), _spaces.end());
-    _spaces.erase(std::unique(_spaces.begin(), _spaces.end()), _spaces.end());
 
     for (const SymbolSet* set : order)
         for (const Symbol& s : set->symbols)
@@ -51,10 +66,24 @@ SymbolIndex::SymbolIndex(std::shared_ptr<const std::vector<SymbolSet>> sets) : _
             return a.offset < b.offset;
         return a.priority > b.priority;
     });
+    _keys.reserve(_byLocation.size());
+    for (const Entry& e : _byLocation)
+        _keys.push_back(Key(e.space, e.offset));
 }
 
 std::optional<uint32_t> SymbolIndex::SpaceKey(const AddressSpace& space) const
 {
+    // A handful of spaces as a rule: compare the cheap fields first, the names only when they agree
+    if (_spaces.size() <= 16)
+    {
+        for (size_t k = 0; k < _spaces.size(); ++k)
+        {
+            const AddressSpace& s = _spaces[k];
+            if (s.kind == space.kind && s.page == space.page && s.cpu == space.cpu && s.region == space.region)
+                return static_cast<uint32_t>(k);
+        }
+        return std::nullopt;
+    }
     const auto it = std::lower_bound(_spaces.begin(), _spaces.end(), space);
     if (it == _spaces.end() || !(*it == space))
         return std::nullopt;
@@ -63,8 +92,12 @@ std::optional<uint32_t> SymbolIndex::SpaceKey(const AddressSpace& space) const
 
 const Symbol* SymbolIndex::At(const Location& location) const
 {
-    const std::vector<const Symbol*> all = AllAt(location);
-    return all.empty() ? nullptr : all.front();
+    const std::optional<uint32_t> key = SpaceKey(location.space);
+    if (!key)
+        return nullptr;
+    const uint64_t want = Key(*key, location.offset);
+    const auto it = std::lower_bound(_keys.begin(), _keys.end(), want);
+    return it != _keys.end() && *it == want ? _byLocation[static_cast<size_t>(it - _keys.begin())].symbol : nullptr;
 }
 
 std::vector<const Symbol*> SymbolIndex::AllAt(const Location& location) const
@@ -73,10 +106,9 @@ std::vector<const Symbol*> SymbolIndex::AllAt(const Location& location) const
     const std::optional<uint32_t> key = SpaceKey(location.space);
     if (!key)
         return out;
-    auto it = std::lower_bound(_byLocation.begin(), _byLocation.end(), std::make_pair(*key, location.offset),
-                               [](const Entry& e, const std::pair<uint32_t, uint32_t>& k) { return std::make_pair(e.space, e.offset) < k; });
-    for (; it != _byLocation.end() && it->space == *key && it->offset == location.offset; ++it)
-        out.push_back(it->symbol);
+    const uint64_t want = Key(*key, location.offset);
+    for (auto it = std::lower_bound(_keys.begin(), _keys.end(), want); it != _keys.end() && *it == want; ++it)
+        out.push_back(_byLocation[static_cast<size_t>(it - _keys.begin())].symbol);
     return out;
 }
 
@@ -85,18 +117,19 @@ Nearest SymbolIndex::NearestBelow(const Location& location, uint32_t maxDistance
     const std::optional<uint32_t> key = SpaceKey(location.space);
     if (!key)
         return {};
-    auto it = std::upper_bound(_byLocation.begin(), _byLocation.end(), std::make_pair(*key, location.offset),
-                               [](const std::pair<uint32_t, uint32_t>& k, const Entry& e) { return k < std::make_pair(e.space, e.offset); });
-    if (it == _byLocation.begin())
+    auto it = std::upper_bound(_keys.begin(), _keys.end(), Key(*key, location.offset));
+    if (it == _keys.begin())
         return {};
     --it;
-    if (it->space != *key || location.offset - it->offset > maxDistance)
+    const Entry* e = &_byLocation[static_cast<size_t>(it - _keys.begin())];
+    if (e->space != *key || location.offset - e->offset > maxDistance)
         return {};
     // The first entry at that offset is the highest priority one
-    const uint32_t offset = it->offset;
-    while (it != _byLocation.begin() && (it - 1)->space == *key && (it - 1)->offset == offset)
+    const uint64_t at = *it;
+    while (it != _keys.begin() && *(it - 1) == at)
         --it;
-    return {it->symbol, location.offset - offset};
+    e = &_byLocation[static_cast<size_t>(it - _keys.begin())];
+    return {e->symbol, location.offset - e->offset};
 }
 
 std::vector<const Symbol*> SymbolIndex::InRange(const Location& from, uint32_t to) const
@@ -105,10 +138,9 @@ std::vector<const Symbol*> SymbolIndex::InRange(const Location& from, uint32_t t
     const std::optional<uint32_t> key = SpaceKey(from.space);
     if (!key)
         return out;
-    auto it = std::lower_bound(_byLocation.begin(), _byLocation.end(), std::make_pair(*key, from.offset),
-                               [](const Entry& e, const std::pair<uint32_t, uint32_t>& k) { return std::make_pair(e.space, e.offset) < k; });
-    for (; it != _byLocation.end() && it->space == *key && it->offset <= to; ++it)
-        out.push_back(it->symbol);
+    const uint64_t last = Key(*key, to);
+    for (auto it = std::lower_bound(_keys.begin(), _keys.end(), Key(*key, from.offset)); it != _keys.end() && *it <= last; ++it)
+        out.push_back(_byLocation[static_cast<size_t>(it - _keys.begin())].symbol);
     return out;
 }
 

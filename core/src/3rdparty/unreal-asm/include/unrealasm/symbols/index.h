@@ -54,6 +54,7 @@ private:
     std::shared_ptr<const std::vector<SymbolSet>> _sets;
     std::vector<AddressSpace> _spaces;
     std::vector<Entry> _byLocation;
+    std::vector<uint64_t> _keys;   ///< space << 32 | offset of each _byLocation entry: what lookups search (dense)
     using Named = std::pair<const Symbol*, int>;   // the symbol and its set's priority
     std::unordered_map<std::string, Named> _byName;
     std::unordered_map<std::string, Named> _byFoldedName;   // names of Fold sets, ASCII upper case

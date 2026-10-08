@@ -24,7 +24,7 @@ constexpr std::array<std::string_view, 101> k1983 = {
     "SLA ", "SP", "SRA ", "SRL ", "SUB ", "V", "XOR ", "Z",                                                           // DD
 };
 
-std::vector<std::string_view> Table(const std::string& version)
+std::vector<std::string_view> BuildTable(const std::string& version)
 {
     std::vector<std::string_view> t(k1983.begin(), k1983.end());
     if (version == "gg" || version == "pht")
@@ -39,6 +39,36 @@ std::vector<std::string_view> Table(const std::string& version)
             t.insert(t.end(), {"INCLUDE ", "PLACE "});
     }
     return t;
+}
+
+/// A version's keyword table and its keyword indexes by first byte (table order kept: the first match still wins),
+/// built once per version
+struct TableIndex
+{
+    std::vector<std::string_view> names;
+    std::array<std::vector<uint8_t>, 256> byFirst;
+};
+
+const TableIndex& Indexed(const std::string& version)
+{
+    static const std::array<TableIndex, 3> tables = [] {
+        std::array<TableIndex, 3> out;
+        const char* const ids[] = {"1983", "gg", "pht"};
+        for (size_t k = 0; k < out.size(); ++k)
+        {
+            out[k].names = BuildTable(ids[k]);
+            for (size_t i = 0; i < out[k].names.size(); ++i)
+                if (!out[k].names[i].empty())
+                    out[k].byFirst[static_cast<uint8_t>(out[k].names[i][0])].push_back(static_cast<uint8_t>(i));
+        }
+        return out;
+    }();
+    return tables[version == "gg" ? 1 : version == "pht" ? 2 : 0];
+}
+
+const std::vector<std::string_view>& Table(const std::string& version)
+{
+    return Indexed(version).names;
 }
 
 /// Word characters: 1983 and GG letters and digits; PHT digits and #3C-#7E
@@ -104,7 +134,7 @@ ZeusCodec::ZeusCodec()
 
 std::string ZeusCodec::DecodeBody(std::span<const uint8_t> body, const std::string& version)
 {
-    const std::vector<std::string_view> table = Table(version);
+    const std::vector<std::string_view>& table = Table(version);
     std::string text;
     for (size_t i = 0; i < body.size(); ++i)
     {
@@ -135,7 +165,7 @@ bool ZeusCodec::EncodeBody(const std::string& text, const std::string& version, 
             error = "a zero byte ends a ZEUS line";
             return false;
         }
-    const std::vector<std::string_view> table = Table(version);
+    const std::vector<std::string_view>& table = Table(version);
     const size_t end = buf.size();
     buf.resize(end + 40, ' ');   // the screen line is padded with blanks
     size_t i = 0;
@@ -169,7 +199,7 @@ bool ZeusCodec::EncodeBody(const std::string& text, const std::string& version, 
         blanks = 0;
         // The first keyword of the table that matches wins
         size_t hit = table.size();
-        for (size_t k = 0; k < table.size(); ++k)
+        for (const uint8_t k : Indexed(version).byFirst[c])
         {
             const std::string_view kw = table[k];
             if (i + kw.size() > buf.size() || !std::equal(kw.begin(), kw.end(), buf.begin() + static_cast<std::ptrdiff_t>(i)))

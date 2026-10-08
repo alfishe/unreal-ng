@@ -19,6 +19,13 @@ else()
 endif()
 option(UNREAL_ASM_TESTS "Build unreal-asm-tests" ${UNREAL_ASM_TESTS_DEFAULT})
 set(UNREAL_ASM_GOOGLETEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../lib/googletest" CACHE PATH "GoogleTest sources")
+# Benchmarks follow the emulator's BENCHMARKS switch when embedded (on every configure); standalone they are opt-in
+if (DEFINED BENCHMARKS)
+    set(UNREAL_ASM_BENCHMARKS ${BENCHMARKS})
+else()
+    option(UNREAL_ASM_BENCHMARKS "Build unreal-asm-benchmarks" OFF)
+endif()
+set(UNREAL_ASM_BENCHMARK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../lib/benchmark" CACHE PATH "Google Benchmark sources")
 
 if (MSVC)
     set(UNREAL_ASM_WARNINGS /W4)
@@ -170,5 +177,34 @@ if (UNREAL_ASM_TESTS)
         unrealasm_add_tests()
     else()
         cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR} CALL unrealasm_add_tests)
+    endif()
+endif()
+
+# unreal-asm-benchmarks (test-and-benchmark-plan.md §5, symbols/test-and-benchmark-plan.md §5): defined at the end of
+# the top-level directory like the tests, so an emulator build with BENCHMARKS shares core/benchmarks' Google Benchmark
+function(unrealasm_add_benchmarks)
+    if (TARGET unreal-asm-benchmarks)
+        return()
+    endif()
+    if (NOT TARGET benchmark)
+        set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+        set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+        add_subdirectory(${UNREAL_ASM_BENCHMARK_DIR} ${CMAKE_BINARY_DIR}/unreal-asm-googlebenchmark EXCLUDE_FROM_ALL)
+    endif()
+    add_executable(unreal-asm-benchmarks EXCLUDE_FROM_ALL
+        ${UNREAL_ASM_DIR}/benchmarks/asm_benchmark.cpp
+        ${UNREAL_ASM_DIR}/benchmarks/symbols_benchmark.cpp
+    )
+    target_link_libraries(unreal-asm-benchmarks PRIVATE unreal-asm benchmark::benchmark_main)
+    target_include_directories(unreal-asm-benchmarks PRIVATE ${UNREAL_ASM_DIR}/src)
+    target_compile_definitions(unreal-asm-benchmarks PRIVATE UNREAL_ASM_TESTDATA_DIR="${UNREAL_ASM_DIR}/testdata")
+    target_compile_options(unreal-asm-benchmarks PRIVATE ${UNREAL_ASM_WARNINGS_LIST})
+endfunction()
+
+if (UNREAL_ASM_BENCHMARKS)
+    if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+        unrealasm_add_benchmarks()
+    else()
+        cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR} CALL unrealasm_add_benchmarks)
     endif()
 endif()
