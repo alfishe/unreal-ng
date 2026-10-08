@@ -220,6 +220,14 @@ TEST(Dialects_Test, DsWithAPatternRepeatsIt)
     EXPECT_EQ(ToSjasmplus("        DS 4,#AA,#55"), (std::vector<std::string>{"DUP 4", "DB #AA,#55", "EDUP"}));
 }
 
+TEST(Dialects_Test, AssembleOnceMarksInColumnZeroAreAssembled)
+{
+    // ALASM 5.09 assembled this to 3E 01 06 02 16 04 04 60 C9 (LBL = #6004): "+" / "-" in column 0 mark a line it
+    // assembles once ("-" read from the disk is "+" again); "+LBL" is the label LBL
+    EXPECT_EQ(ToSjasmplus("        ORG #6000\n+       LD A,1\n-       LD B,2\n+LBL    LD D,4\n        DW LBL\n        RET"),
+              (std::vector<std::string>{"ORG #6000", "LD A,1", "LD B,2", "LBL     LD D,4", "DW LBL", "RET"}));
+}
+
 TEST(Dialects_Test, IncbinSizeBecomesOffsetAndLength)
 {
     EXPECT_EQ(ToSjasmplus("        INCBIN \"pic\",#1000"), std::vector<std::string>{"INCBIN \"pic\",0,#1000"});
