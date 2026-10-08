@@ -174,12 +174,35 @@ TtdWidget::TtdWidget(QWidget* parent)
     const int iconMetric = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
     const QSize toolbarIconSize(iconMetric, iconMetric);
 
+    // Flat like the close button: the sliders icon and the label in the row's font, a soft
+    // background while the row is open
     _advancedBtn = new QToolButton(this);
     _advancedBtn->setCheckable(true);
     _advancedBtn->setAutoRaise(true);
     _advancedBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    _advancedBtn->setArrowType(Qt::RightArrow);
+    _advancedBtn->setIcon(tintedSvgIcon(QStringLiteral("sliders")));
+    _advancedBtn->setIconSize(toolbarIconSize);
+    _advancedBtn->setFont(_recordBtn->font());
+    _advancedBtn->setCursor(Qt::PointingHandCursor);
     _advancedBtn->setText(tr("Advanced"));
+    _advancedBtn->setStyleSheet(QStringLiteral(
+        "QToolButton {"
+        "    border: none;"
+        "    background: transparent;"
+        "    padding: 0px 6px;"
+        "    margin: 0px;"
+        "    border-radius: 3px;"
+        "}"
+        "QToolButton:hover {"
+        "    background: rgba(128, 128, 128, 40);"
+        "}"
+        "QToolButton:checked {"
+        "    background: rgba(128, 128, 128, 55);"
+        "}"
+        "QToolButton:pressed {"
+        "    background: rgba(128, 128, 128, 70);"
+        "}"
+    ));
     _advancedBtn->setToolTip(tr("Recording options: the write journal, how much history to keep"));
     connect(_advancedBtn, &QToolButton::toggled, this, &TtdWidget::onAdvancedToggled);
 
@@ -216,7 +239,7 @@ TtdWidget::TtdWidget(QWidget* parent)
     _exportBtn->setFixedHeight(row1Height);
     _clearBtn->setFixedHeight(row1Height);
     _historyCombo->setFixedHeight(row1Height);
-    _advancedBtn->setFixedHeight(row1Height);
+    _advancedBtn->setFixedHeight(closeBtnDim);   // the same pill as the close button beside it
     _advancedContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     _advancedContainer->setFixedHeight(row1Height);
 
@@ -330,7 +353,6 @@ TtdWidget::TtdWidget(QWidget* parent)
         _advancedContainer->setVisible(open);
         const QSignalBlocker block(_advancedBtn);
         _advancedBtn->setChecked(open);
-        _advancedBtn->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
     }
     setFixedHeight(rowsHeight(_advancedContainer->isVisible(), false));
 
@@ -930,7 +952,6 @@ void TtdWidget::onAdvancedToggled(bool open)
 {
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
     settings.setValue(QStringLiteral("ttd/advancedOpen"), open);
-    _advancedBtn->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
     _advancedContainer->setVisible(open);
     if (_visibleByUser)
         setFixedHeight(desiredHeight());
