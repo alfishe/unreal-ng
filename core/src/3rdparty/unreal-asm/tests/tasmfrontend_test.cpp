@@ -254,6 +254,49 @@ TEST(TasmFrontend_Test, SinusTableAssemblesToWhatTasm412Built)
     std::filesystem::remove_all(dir);
 }
 
+TEST(TasmFrontend_Test, PageAndRunAsTasm412Uses)
+{
+    // .PAGE n puts the code of the next ORGs at #C000 and up into RAM page n; .RUN sets where TASM's Run command
+    // starts (checked in TASM 4.12: R ran the .RUN address, not the last ORG). PGTEST.bin is what TASM 4.12 built:
+    // 2 bytes of page 1, 2 of page 0 (both at #C000), 5 at #7000 and 5 at #7100
+    const containers::TrdosFile file = Hobeta("dialects/tasm412/PGTEST.$A");
+    const codecs::TasmCodec tasm;
+    DecodeOptions options;
+    options.catalog = file.Hints();
+    const ConvertResult r = Convert(tasm.Decode(file.data, options).document, "sjasmplus");
+    ASSERT_TRUE(r.ok);
+    const std::string text = r.document.Text();
+    EXPECT_NE(text.find("ORG #C000,1"), std::string::npos) << text;
+    EXPECT_NE(text.find("ORG #C000,0"), std::string::npos) << text;
+    EXPECT_NE(text.find("ORG #7000\n"), std::string::npos) << text;   // below #C000 the page stays out
+    EXPECT_NE(text.find("; .RUN #7000"), std::string::npos) << text;
+    const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
+    if (!sjasmplus)
+        GTEST_SKIP() << "set UNREAL_ASM_SJASMPLUS to the sjasmplus binary";
+    std::random_device random;
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+    std::filesystem::create_directories(dir);
+    WriteBytes(dir / "PGTEST.asm", codecs::SjasmplusCodec().Encode(r.document, {}).bytes);
+    const std::string harness = "        INCLUDE \"PGTEST.asm\"\n        SLOT 3\n        PAGE 1\n        SAVEBIN \"p1.bin\",#C000,2\n"
+                                "        PAGE 0\n        SAVEBIN \"p0.bin\",#C000,2\n        SAVEBIN \"r2.bin\",#7000,5\n        SAVEBIN \"r4.bin\",#7100,5\n";
+    WriteBytes(dir / "harness.asm", std::vector<uint8_t>(harness.begin(), harness.end()));
+#ifdef _WIN32
+    const std::string command = "cd /d \"" + dir.string() + "\" && \"" + sjasmplus + "\" --nologo harness.asm > out.txt 2>&1";
+#else
+    const std::string command = "cd \"" + dir.string() + "\" && \"" + sjasmplus + "\" --nologo harness.asm > out.txt 2>&1";
+#endif
+    EXPECT_EQ(std::system(command.c_str()), 0);
+    std::vector<uint8_t> built;
+    for (const char* part : {"p1.bin", "p0.bin", "r2.bin", "r4.bin"})
+    {
+        const std::vector<uint8_t> bytes = ReadBytes(dir / part);
+        built.insert(built.end(), bytes.begin(), bytes.end());
+    }
+    EXPECT_EQ(built, ReadTestData("dialects/tasm412/PGTEST.bin"));
+    std::filesystem::remove_all(dir);
+}
+
 TEST(TasmFrontend_Test, TextsBitOperandsAndTypedNames)
 {
     // """ is one quote (TASM 4.0, the GENS form); a text may run to the end of the line
