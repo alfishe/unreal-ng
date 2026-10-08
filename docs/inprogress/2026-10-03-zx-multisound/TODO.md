@@ -281,11 +281,11 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   (`FilterDecimator::getOutputs`, `DecimatorDot`; also used by the TSFM board and the AY device) and the silent-SSG
   FIR skip - both bit-identical; card frame -11 to -27 %, TSFM frame -5 %.
   Backlog (measure before and after, owner rule "naive first"):
-  - an SSG "channel levels only" mode for the card's two generators (prototype variant b, kept on branch
-    `proto-ym-decimators`: bit-identical, -2 to -4 % of a card frame; it duplicates the level computation of
+  - an SSG "channel levels only" mode for the card's two generators (prototype variant b, kept as a
+    patch, [ym-decimator-prototype.md](ym-decimator-prototype.md) §7: bit-identical, -2 to -4 % of a card frame; it duplicates the level computation of
     `SoundChip_AY8910::updateMixer`, and folding both onto one helper touches the AY hot path: its own A/B)
-  - SSG channels that hold one non-zero level still run their FIR (prototype variant c, kept on
-    `proto-ym-decimators`): identical at the card's float output for every YM2149 level, but not the same
+  - SSG channels that hold one non-zero level still run their FIR (prototype variant c, kept as a
+    patch, [ym-decimator-prototype.md](ym-decimator-prototype.md) §7): identical at the card's float output for every YM2149 level, but not the same
     arithmetic (1.2e-15 in double); owner decision 2026-10-07: not landed
   - the SAM2695 effects with no input and their tails run out (4.5 %)
 - [x] `data/midi/generaluser-gs.sf2` + license + README tracked (Q4, done 2026-10-05), shipped next to the

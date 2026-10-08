@@ -1,0 +1,142 @@
+From b0fc99d86bf0a7af1d6666cc2f8b5c773b6d7653 Mon Sep 17 00:00:00 2001
+From: Ilia Sharin <isharin@gmail.com>
+Date: Wed, 7 Oct 2026 09:28:35 -0400
+Subject: [PATCH 4/5] proto(sound): constant-level shortcut for the SSG
+ per-channel outputs
+
+Variant (c) of the YM decimator prototype: a channel whose whole window of
+fed levels holds one value writes that value instead of the FIR output
+(generalizes the silent-channel skip). In double the FIR of a constant
+differs from the level by at most 1.2e-15 (rounding of v x sum(c)); after
+the cast to the card's float rows the result is the same for every YM2149
+level at every output instant and design (DecimatorDot_Test), and for 4.1M
+random levels (DISABLED_ConstantWindowStatistics: 0 mismatches). Quality
+harness A/B: all renders identical.
+
+Prototype, docs/inprogress/2026-10-03-zx-multisound/ym-decimator-prototype.md
+---
+ .../emulator/sound/chips/tsfm/ym2203pair.cpp  |  4 +-
+ core/tests/common/decimatordot_test.cpp       | 81 +++++++++++++++++++
+ 2 files changed, 83 insertions(+), 2 deletions(-)
+
+diff --git a/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp b/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp
+index 5a18c101b..724f12848 100644
+--- a/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp
++++ b/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp
+@@ -377,7 +377,7 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
+             {
+                 if (i == 0 && ch == 0)
+                     continue;
+-                if (_channels->ssgRun[i][ch] >= _channels->ssg[i][ch].window() && _channels->ssgLast[i][ch] == 0.0)
++                if (_channels->ssgRun[i][ch] >= _channels->ssg[i][ch].window())
+                 {
+                     if (block.ssg[i][ch])
+                         block.ssg[i][ch][n] = static_cast<float>(_channels->ssgLast[i][ch]);
+@@ -390,7 +390,7 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
+         {
+             const int i = 0;
+             const int ch = 0;
+-            if (_channels->ssgRun[i][ch] >= _channels->ssg[i][ch].window() && _channels->ssgLast[i][ch] == 0.0)
++            if (_channels->ssgRun[i][ch] >= _channels->ssg[i][ch].window())
+             {
+                 master.skipOutput();
+                 if (block.ssg[0][0])
+diff --git a/core/tests/common/decimatordot_test.cpp b/core/tests/common/decimatordot_test.cpp
+index 3a1e60bcc..6f24d1125 100644
+--- a/core/tests/common/decimatordot_test.cpp
++++ b/core/tests/common/decimatordot_test.cpp
+@@ -1,6 +1,9 @@
+ #include "pch.h"
+ 
++#include <algorithm>
++#include <cmath>
+ #include <cstdint>
++#include <cstdio>
+ #include <cstring>
+ #include <random>
+ #include <vector>
+@@ -159,3 +162,81 @@ TEST_F(DecimatorDot_Test, GetOutputsReturnsTheBitsOfOneGetOutputEach)
+     }
+     EXPECT_EQ(compared, 30000u);
+ }
++
++namespace
++{
++/// Output of `d` with a history of `window` copies of `v`, at every tabulated row and half-way between rows, for
++/// the four whole-sample delays: how many outputs differ from v after the cast to float, and the largest |out - v|
++struct ConstantResult
++{
++    size_t outputs = 0;
++    size_t floatMismatches = 0;
++    double maxDoubleError = 0.0;
++};
++
++ConstantResult ConstantWindow(FilterDecimator& d, double v)
++{
++    ConstantResult r;
++    d.reset();
++    for (size_t i = 0; i < d.window(); i++)
++        d.feedSample(v);
++    const double spo = d.samplesPerOutput();
++    for (size_t k = 0; k < 4 * 2 * FilterDecimator::PHASES; k++)
++    {
++        d.setPhase(spo + double(k) / double(2 * FilterDecimator::PHASES));
++        const double y = d.getOutput();
++        r.outputs++;
++        if (static_cast<float>(y) != static_cast<float>(v))
++            r.floatMismatches++;
++        r.maxDoubleError = std::max(r.maxDoubleError, std::abs(y - v));
++    }
++    return r;
++}
++}  // namespace
++
++TEST_F(DecimatorDot_Test, ConstantWindowOfAnSsgLevelGivesThatLevelAsFloat)
++{
++    // The constant-SSG shortcut of Ym2203Pair::renderChannels writes the held level instead of the FIR output: the
++    // same float for every level the card's YM2149 tables produce (user volume 1, the card never sets one), at every
++    // output instant, for the designs the card can get (Reference / HighFidelity, 44.1 / 48 / 96 kHz)
++    static constexpr double kYm[] = {0.0, 0.0, 0.00465400167849, 0.00772106507973, 0.01095597772180,
++                                     0.01396200503550, 0.01699855039290, 0.02001983672850, 0.02436865796900,
++                                     0.02969405661100, 0.03506523231860, 0.04039063096060, 0.04853894865340,
++                                     0.05833524071110, 0.06805523765930, 0.07777523460750, 0.09251544975970,
++                                     0.11108567940800, 0.12974746318800, 0.14848554207700, 0.17666895552000,
++                                     0.21155107957600, 0.24638742656600, 0.28110170138100, 0.33373006790300,
++                                     0.40042725261300, 0.46738384069600, 0.53443198291000, 0.63517204547200,
++                                     0.75800717174000, 0.87992675669500, 1.0};
++    for (double rate : {44100.0, 48000.0, 96000.0})
++    {
++        for (auto quality : {FilterDecimator::Quality::Reference, FilterDecimator::Quality::HighFidelity})
++        {
++            FilterDecimator d;
++            d.configure(rate, quality, false, 218750.0);
++            for (double v : kYm)
++            {
++                const ConstantResult r = ConstantWindow(d, v);
++                EXPECT_EQ(r.floatMismatches, 0u) << "level " << v << " rate " << rate;
++            }
++        }
++    }
++}
++
++TEST_F(DecimatorDot_Test, DISABLED_ConstantWindowStatistics)
++{
++    // Analysis tool (ym-decimator-prototype.md): any level in [0, 1] (a user channel volume), random
++    std::mt19937_64 rng(5);
++    std::uniform_real_distribution<double> dist(0.0, 1.0);
++    FilterDecimator d;
++    d.configure(44100.0, FilterDecimator::Quality::Reference, false, 218750.0);
++    ConstantResult total;
++    for (int n = 0; n < 2000; n++)
++    {
++        const ConstantResult r = ConstantWindow(d, dist(rng));
++        total.outputs += r.outputs;
++        total.floatMismatches += r.floatMismatches;
++        total.maxDoubleError = std::max(total.maxDoubleError, r.maxDoubleError);
++    }
++    std::printf("constant windows: %zu outputs, %zu float mismatches, max |out - v| %.3e\n", total.outputs,
++                total.floatMismatches, total.maxDoubleError);
++}
+-- 
+2.56.0
+
