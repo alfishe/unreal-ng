@@ -1,0 +1,550 @@
+;Window interface
+
+
+;Subprograms of high level.
+
+mblock          defb    0       ;# identification of memory block for pages
+mpage           defb    0       ;# current free page
+opened          defb    0       ;Quantity of opened windows
+numbers         defs    10      ;Buffer of numbers of opened windows
+
+
+win_init
+                ld      c,#3d
+                ld      b,4
+                rst     #10
+                ld      (mblock),a
+                ret
+
+
+
+
+
+
+windraw
+;IX-win data
+;+
+;0,1    - x
+;2      - y
+;3,4    - Dx
+;5      - Dy
+;6,7    - Header line address; 0= no header
+;8      - SetUp, Don't touch it!!!
+;         Bit 7 - Safe back screen
+;         Bit 0 - 4 Number of buttons set for this window.
+;9,10   - Addr. of buffer of back screen
+;11     - number of memory block for windows buffer
+;12     - Number of page in the block (page which include buffer)
+;13,14  - Addr. of block of objects descriptions 
+
+                call    hide_cursor
+
+                ld      h,(ix+1)
+                ld      l,(ix+0)
+                ld      d,(ix+2)
+                ld      b,(ix+4)
+                ld      c,(ix+3)
+                ld      a,(ix+5)
+                call    sqrw
+
+                ld      h,(ix+7)
+                ld      l,(ix+6)
+                ld      a,h
+                or      l
+                jr      z,windraw1
+                push    hl
+
+                ld      h,(ix+1)
+                ld      l,(ix+0)
+                inc     hl
+                inc     hl
+                ld      d,(ix+2)
+                inc     d
+                inc     d
+                ld      a,10
+                ld      b,(ix+4)
+                ld      c,(ix+3)
+                dec     bc
+                dec     bc
+                dec     bc
+                dec     bc
+                ld      e,1
+                call    fbox
+                pop     iy
+                ld      h,(ix+1)
+                ld      l,(ix+0)
+                inc     hl
+                inc     hl
+                inc     hl
+                ld      b,(ix+2)
+                inc     b
+                inc     b
+                inc     b
+                ld      c,7
+                call    pline
+
+windraw1
+;Painting objects
+                ld      h,(ix+14)
+                ld      l,(ix+13)
+                push    ix
+                push    hl
+                pop     ix
+                call    windraw_objects
+                pop     ix
+;                call    v_mouse
+                call    unhide_cursor
+                ret
+
+
+
+windraw_objects
+;Loop. Calculating: what is the object?, then send it to the right subprogram
+;At the last, chack: is it all objects?
+                ld      a,(ix+0)
+                cp      #FF
+                ret     z
+                cp      0
+                jp      z,wd_key
+                cp      1
+                jp      z,wd_spr                ;Sprite
+                cp      2
+                jp      z,wd_inline             ;Input text line
+;               cp      3
+;               jp      z,wd_radio              ;Trigger
+                cp      4
+                jp      z,wd_flag               ;Flag
+                cp      5
+                jp      z,wd_grayarea           ;Gray place
+                cp      6
+                jp      z,wd_txtarea            ;White place
+                cp      7
+                jp      z,wd_txtline            ;Text
+                cp      11
+                jp      z,wd_hr                 ;Hor. line
+                cp      12
+                jp      z,wd_vr                 ;Vert. line
+
+
+                ret
+
+wd_txtline
+                inc     ix
+                ld      h,(ix+4)
+                ld      l,(ix+3)
+                push    hl
+                pop     iy
+                ld      h,(ix+1)
+                ld      l,(ix+0)
+                ld      b,(ix+2)
+                ld      c,0
+                call    pline
+                inc     ix
+                inc     ix
+;                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                jp      windraw_objects
+
+
+wd_flag
+                inc     ix
+                ld      h,(ix+1)
+                ld      l,(ix+0)
+                ld      d,(ix+2)
+                ld      bc,16
+                ld      a,10
+                ld      iy,check_box
+                push    hl
+                call    putspr
+                ld      h,(ix+4)
+                ld      l,(ix+3)
+                push    hl
+                pop     iy
+                pop     hl
+                ld      de,18
+                add     hl,de
+                ld      b,(ix+2)
+                ld      c,0
+                call    pline
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                jp      windraw_objects
+
+wd_inline
+                inc     ix
+                ld      h,(ix+1)
+                ld      l,(ix+0)
+                dec     hl
+                ld      d,(ix+2)
+                dec     d
+                ld      b,(ix+4)
+                ld      c,(ix+3)
+                inc     bc
+                inc     bc
+                ld      a,12
+                call    sqrtxt
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                jp      windraw_objects
+
+wd_txtarea
+                inc     ix
+                ld      h,(ix+1)
+                ld      l,(ix+0)
+                ld      d,(ix+2)
+                ld      b,(ix+4)
+                ld      c,(ix+3)
+                ld      a,(ix+5)
+                call    sqrtxt
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                jp      windraw_objects
+
+
+
+
+wd_grayarea
+                inc     ix
+                ld      h,(ix+1)
+                ld      l,(ix+0)
+                ld      d,(ix+2)
+                ld      b,(ix+4)
+                ld      c,(ix+3)
+                ld      a,(ix+5)
+                call    sqrd
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                jp      windraw_objects
+
+
+
+;wd_radio
+;               inc     ix
+;               ld      h,(ix+1)
+;               ld      l,(ix+0)
+;               ld      d,(ix+2)
+;               ld      bc,14
+;               ld      a,10
+;               ld      iy,radio_button
+;               push    hl
+;               call    putspr
+;               ld      h,(ix+4)
+;               ld      l,(ix+3)
+;               push    hl
+;               pop     iy
+;               pop     hl
+;               ld      de,18
+;               add     hl,de
+;               ld      b,(ix+2)
+;               ld      c,0
+;               call    pline
+;               inc     ix
+;               inc     ix
+;               inc     ix
+;               inc     ix
+;               inc     ix
+;               jp      windraw_objects
+
+
+
+wd_hr
+                inc     ix
+                ld      h,(ix+1)
+                ld      l,(ix+0)
+                ld      d,(ix+2)
+                ld      b,(ix+4)
+                ld      c,(ix+3)
+                ld      e,11
+                call    horline
+                ld      h,(ix+1)
+                ld      l,(ix+0)
+                ld      d,(ix+2)
+                ld      b,(ix+4)
+                ld      c,(ix+3)
+                inc     d
+                ld      e,10
+                call    horline
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                jp      windraw_objects
+
+
+wd_vr
+                inc     ix
+                ld      h,(ix+1)
+                ld      l,(ix+0)
+                ld      d,(ix+2)
+                ld      a,(ix+3)
+                ld      e,11
+                call    verline
+                ld      h,(ix+1)
+                ld      l,(ix+0)
+                ld      d,(ix+2)
+                ld      a,(ix+3)
+                inc     a
+                ld      e,10
+                call    verline
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                jp      windraw_objects
+
+
+
+wd_key
+                inc     ix
+                ld      h,(ix+1)
+                ld      l,(ix+0)
+                ld      d,(ix+2)
+                ld      bc,52
+                ld      a,12
+                call    sqrw
+
+                ld      h,(ix+4)
+                ld      l,(ix+3)
+                ld      (wd_key3),hl
+
+                ld      b,0
+wd_key1
+                ld      a,(hl)
+                or      a
+                jp      z,wd_key2
+                inc     b
+                inc     hl
+                jp      wd_key1
+wd_key2
+                ld      de,24
+                ld      c,b
+                ld      b,0
+                sla     c
+                rlc     b
+                sla     c
+                rlc     b
+                sla     c
+                rlc     b
+
+                sub     de,bc
+                srl     d
+                rr      e
+                ld      h,(ix+1)
+                ld      l,(ix+0)
+                inc     hl
+                inc     hl
+                add     hl,de
+                ld      b,(ix+2)
+                inc     b
+                inc     b
+                ld      c,0
+                ld      iy,0
+wd_key3         equ     $-2
+                call    pline
+                ld      bc,5
+                add     ix,bc
+                jp      windraw_objects
+
+wd_spr
+                inc     ix
+                ld      h,(ix+7)
+                ld      l,(ix+6)
+                push    hl
+                pop     iy
+                ld      h,(ix+1)
+                ld      l,(ix+0)
+                ld      d,(ix+2)
+                ld      b,(ix+4)
+                ld      c,(ix+3)
+                ld      a,(ix+5)
+                call    putspr
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                inc     ix
+                jp      windraw_objects
+
+
+
+
+
+
+
+
+
+
+
+
+wintable
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+                defw    0
+
+
+
+
+sqrw
+;HL - X
+;D - Y
+;BC - DX
+;A - Dy
+                ld      e,9
+                push    hl
+                push    de
+                push    bc
+                push    af
+                call    fbox
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+                ld      e,8
+                push    hl
+                push    de
+                push    bc
+                push    af
+                call    box
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+
+                push    hl
+                push    de
+                push    bc
+                push    af
+                dec     bc
+                ld      e,7
+                call    horline
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+                ld      e,7
+                ld      b,a
+                dec     b
+                call    verline
+                ret
+
+sqrtxt
+;HL - X
+;D - Y
+;BC - DX
+;A - Dy
+                ld      e,7
+                push    hl
+                push    de
+                push    bc
+                push    af
+                call    fbox
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+                ld      e,7
+                push    hl
+                push    de
+                push    bc
+                push    af
+                call    box
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+
+                push    hl
+                push    de
+                push    bc
+                push    af
+                dec     bc
+                ld      e,11
+                call    horline
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+                ld      e,11
+                ld      b,a
+                dec     b
+                call    verline
+                ret
+
+
+sqrd
+;HL - X
+;D - Y
+;BC - DX
+;A - Dy
+                ld      e,9
+                push    hl
+                push    de
+                push    bc
+                push    af
+                call    fbox
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+                ld      e,7
+                push    hl
+                push    de
+                push    bc
+                push    af
+                call    box
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+                push    hl
+                push    de
+                push    bc
+                push    af
+                ld      e,8
+                call    horline
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+                ld      e,8
+                ld      b,a
+                call    verline
+                ret
+

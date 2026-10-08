@@ -21,6 +21,7 @@ Running the assemblers themselves inside the emulator: [.recipe/assemblers/](../
 | GENS (HiSoft Devpac) | `gens` | GENS1, GENS2-4 | yes |
 | ZEUS | `zeus` | 1983, GG, 1.1 beta / v7.E | yes |
 | XAS | `xas` | 4.18, 5.05, 7.43, 7.43c, 9.07m, 9.10 | yes |
+| ASM80 / Asm80Win (PC cross assembler) | `asm80` | 2.02 (text) | yes |
 | sjasmplus | `sjasmplus` | text | - |
 | any text | `text` | CP866, KOI8-R, CP1251, UTF-8; any line end | - |
 
@@ -45,6 +46,7 @@ zxasm decode   disk.trd --file MAIN.A -o main.txt
 zxasm convert  'GAME.$H' --to sjasmplus -o game.asm
 zxasm convert  disk.trd --to sjasmplus -o out/ # the whole project: INCLUDE resolved, INCBIN files extracted,
                                                 # ZX-ASM's LOADTAB tables read from the image
+zxasm convert  project/ --codec asm80 --to sjasmplus -o out/   # a host directory (ASM80) as one project
 zxasm check    'GAME.$H'                        # decode + encode: byte-exact?
 ```
 
@@ -70,9 +72,11 @@ symconv source disk.trd --main MAIN --to unreal-map -o main.map   # the labels o
 symconv live 3:ram3.bin 6:ram6.bin --to native       # the label table of ALASM / XAS from RAM pages
 ```
 
-- **Labels from sources** (`symconv source`): the labels a TASM, ALASM, STORM, ZX-ASM, MASM, GENS, ZEUS, XAS or
+- **Labels from sources** (`symconv source`): the labels a TASM, ALASM, STORM, ZX-ASM, MASM, GENS, ZEUS, XAS, ASM80 or
   sjasmplus project defines, with the value each gets, its kind and its source line. The values come from a layout
   of the project's sjasmplus conversion (no bytes are built), checked against sjasmplus on the collection's disks.
+  `symconv source` reads TR-DOS and tape images; an ASM80 project (host files) goes through the library's
+  `SymbolsFromProject`.
 - **Label tables in RAM** (`symconv live`): ALASM keeps its labels in RAM page 3, XAS in page 6; the scanner finds
   the table in a set of 16 KB pages and reads it. STS uses ALASM's table.
 - A name the target cannot take is renamed by its rules and reported; a page symbol in a format without pages is

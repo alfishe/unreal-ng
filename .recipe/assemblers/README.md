@@ -14,6 +14,7 @@ sjasmplus are in the unreal-asm design
 | ZX-ASM / ZAsm (Hohlov, Afendikov, Rubtsov) | [zxasm.md](zxasm.md) | 2.4, 2.6, 3.0, 3.10, 3.15 |
 | GENS (HiSoft Devpac) | [gens.md](gens.md) | GENS4 and GENS3 (tape), GENS4B (TR-DOS, editor only) |
 | MASM (AIG, KSA) | [masm.md](masm.md) | 1.1, 3.0 |
+| ASM80 / Asm80Win (Copper Feet; PC cross assembler) | [asm80.md](asm80.md) | 2.02 (under wine and as a host build) |
 | ZEUS (Brattel, Mottershead; Russian disk builds) | [zeus.md](zeus.md) | 1983 (tape), 1.1 beta, GG, v7.E |
 | XAS (Maxim Petrov) | [xas.md](xas.md) | 4.18, 7.447 |
 

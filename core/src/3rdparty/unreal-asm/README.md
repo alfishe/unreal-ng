@@ -14,6 +14,8 @@ Part of [unreal-ng](https://github.com/alfishe/unreal-ng); design: `docs/inprogr
   and backend; ALASM → sjasmplus checked against ALASM's own binaries.
 - A5b: the `tasm` frontend (3 / 4.0 / 4.12); the GS 1.04 ROM sources convert and assemble to the ROM byte for byte.
   STORM and ZX-ASM frontends come next. Corpus and emulator checks: `tools/verification/unreal-asm/` in unreal-ng.
+- A6-A8: frontends for STORM, ZX-ASM, MASM, GENS, ZEUS, XAS and the PC cross assembler ASM80 (`asm80`, a text
+  codec), pasmo and z88dk backends; `zxasm convert` of a TR-DOS / tape image or of a host directory as one project.
 - A8: the symbol module (`include/unrealasm/symbols/`): model, index, store, the symbol codecs of every label file
   format, `symconv`; labels from sources (`symbols/fromsource.h`) with values from `layout.h`, a layout of the
   sjasmplus conversion equal to what sjasmplus assembles.

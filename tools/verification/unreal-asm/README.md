@@ -22,6 +22,9 @@ unreal-asm/
                                 3.2x ... 4.20 with --ram 512), masm11, xas7447, xas418, zeus1983, zeus11, zeusgg,
                                 zeus7e, gens4 (tape): assembles a source and saves the bytes it built (the oracle for
                                 a source with no binary on its disk)
+  oracles/                      original assemblers built or run on the host
+    build-asm80.py              ASM80 / Asm80Win 2.02 (PC cross assembler) from its own C++ source: the same bytes as
+                                asm80win.exe (which also runs under wine: .recipe/assemblers/asm80.md)
   checks/                       the converted sources against cross assemblers and against what is on the disks
     roundtrip.py                every source of a set of TRD / SCL images to sjasmplus and back through the sjasmplus
                                 frontend and backend (the text must not change); optionally assembles every file
