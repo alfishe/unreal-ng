@@ -8,6 +8,9 @@ its FIR), the TTD corpus fixtures (they found a seek bug, fixed) and the MS-7 se
 off (owner decision): it is fitted through the slots. Left: the open items below - follow-ups that need a real board
 or real-program traces, the frame-cost backlog, SAM-6 / SAM-7.
 
+**Global plan:** the card is off the global plan (owner, 2026-10-08; its former row #88 in
+[PLAN.md](../PLAN.md#retired-rows) stays reserved); the remaining items are tracked only here.
+
 ## Documents
 
 - [hardware-reference.md](hardware-reference.md): board, bus, port map, control byte, reset state, sound blocks,
