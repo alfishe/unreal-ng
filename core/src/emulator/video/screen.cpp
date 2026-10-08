@@ -1309,11 +1309,14 @@ void Screen::LatchFramebuffer()
 
 void Screen::FlushAndPresentFramebuffer()
 {
-    if (_framebuffer.memoryBuffer == nullptr)
+    // What the monitor shows: the external picture (VDAC2's FT812) while one is active
+    const bool external = IsExternalPictureActive();
+    const FramebufferDescriptor& shown = external ? _external : _framebuffer;
+    if (shown.memoryBuffer == nullptr)
         return;
 
     std::lock_guard<std::mutex> lock(_presentMutex);
-    if (_presentSlots[0] == nullptr || _presentBufferSize != _framebuffer.memoryBufferSize)
+    if (_presentSlots[0] == nullptr || _presentBufferSize != shown.memoryBufferSize)
         return;
 
     // Empty the delay line, then make the freshly rendered frame its only
@@ -1321,12 +1324,12 @@ void Screen::FlushAndPresentFramebuffer()
     // configured delay to what exists (zero) and serves this frame; once
     // playback resumes the queue refills on its own.
     _presentLatchCounter = 0;
-    VideoUtils::CopyFrameBuffer(_presentSlots[0], _framebuffer.memoryBuffer, _presentBufferSize);
-    if (_planeBEnabled)
+    VideoUtils::CopyFrameBuffer(_presentSlots[0], shown.memoryBuffer, _presentBufferSize);
+    if (_planeBEnabled && !external)   // plane B belongs to the ZX raster
         _presentPlaneB[0].assign(_planeB.begin(), _planeB.end());
     else
         _presentPlaneB[0].clear();
-    _presentSlotGeometry[0] = DescribeNativeFrame();
+    _presentSlotGeometry[0] = external ? DescribeExternalFrame() : DescribeNativeFrame();
     _presentSlotSerial[0] = ++_presentSerial;
     _presentSlotWindow[0] = TemporalWindow{};  // never submitted: the effect restarts below
     _presentSlotProcessed[0] = false;

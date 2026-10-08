@@ -209,6 +209,37 @@ TEST_F(TTDVdac2_Test, SeekByFrameMatchesTheLiveRun)
     EXPECT_LE(inexact, 2) << "most positions must be reached exactly";
 }
 
+/// What the monitor shows (the UI, screenshots, the video wall read the present queue, not the
+/// framebuffer): after a seek the FT812 picture of that position, and a throwaway replay that composes
+/// nothing for the user (a frame-cache build) leaves it alone. Found with Zuma on 2026-10-08: the queue
+/// kept the picture from before the seek
+TEST_F(TTDVdac2_Test, TheMonitorShowsTheSeekedPicture)
+{
+    std::map<uint64_t, Moment> stateAt;
+    std::map<uint64_t, std::vector<uint32_t>> finalPicture;
+    Record(10, stateAt, finalPicture);
+    auto presented = [this]() {
+        std::vector<uint32_t> picture(Shown().size());
+        EXPECT_TRUE(_context->pScreen->CopyPresentedFramebuffer(reinterpret_cast<uint8_t*>(picture.data()),
+                                                                picture.size() * sizeof(uint32_t)));
+        return picture;
+    };
+
+    const uint64_t first = finalPicture.begin()->first + 1;
+    const uint64_t last = finalPicture.rbegin()->first;
+    for (uint64_t f : {last, first, first + 4, first + 1})
+    {
+        SCOPED_TRACE(f);
+        ASSERT_TRUE(_ttd->SeekTo(_ttd->FrameEndPosition(f)));
+        ASSERT_TRUE(presented() == finalPicture.at(f)) << "the monitor shows the picture at the end of frame " << f;
+        // Frame-cache builds replay whole frames (FT812 frames end in them) and show nothing; more
+        // of them than the present queue delays, so a frame they latched would reach the monitor
+        for (uint64_t other = first; other <= last; ++other)
+            ASSERT_NE(_ttd->GetFrameCache(other), nullptr);
+        EXPECT_TRUE(presented() == finalPicture.at(f)) << "still frame " << f << " after frame-cache builds";
+    }
+}
+
 /// Seek to a T-state inside a frame: the FT812 frame drawn up to there over its previous frame
 TEST_F(TTDVdac2_Test, SeekInsideFrameShowsTheFrameDrawnSoFar)
 {
