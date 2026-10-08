@@ -280,6 +280,18 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   [ym-decimator-prototype.md](ym-decimator-prototype.md)): one multi-stream FIR pass with NEON / SSE2 kernels
   (`FilterDecimator::getOutputs`, `DecimatorDot`; also used by the TSFM board and the AY device) and the silent-SSG
   FIR skip - both bit-identical; card frame -11 to -27 %, TSFM frame -5 %.
+  Done 2026-10-08 (branch `sam-fxidle`): the SAM2695 effects with no input skip their blocks once their state is
+  exact zeros (`Effects::Process`; the reverb, chorus, spatial effect and equalizer each derive an idle flag from
+  their state, never serialized; a skipped block only moves the write positions and LFO phases). Bit-identical:
+  `Fx.IdleEffects*` render every case with the skip on and off (`SynthConfig::skipIdleEffects`) and compare every
+  output bit and the state blob. It engages while the chip has played nothing since power-up or a reset (the card
+  at rest); a tail does not reliably end in exact zeros - the tank reverbs (0-5), chorus 5 / 7 and the equalizer
+  settle into a limit cycle at the denormal guard's quantum (about 2e-27 at the output) and keep running; making
+  them stop needs an output change (owner decision, not done). A/B (interleaved base land base land base land
+  land base land base, load 6-12, CPU time per frame, minimum, paired mean in brackets): idle 597 -> 589 us
+  -1.3 % (-3.8 %), YM -6.6 % (-4.6 %), SAA -4.5 % (-2.4 %), SounDrive -4.4 % (-4.3 %), GS -9.2 % (-6.6 %), MIDI
+  -1.0 % (+0.2 %) and all five +1.1 % (+0.2 %) within noise (the effects are busy there); a first run without the
+  MIDI rows: idle -5.4 % (-6.6 %), SAA -5.5 %, SounDrive -5.2 %, GS -8.8 %.
   Backlog (measure before and after, owner rule "naive first"):
   - an SSG "channel levels only" mode for the card's two generators (prototype variant b, kept as a
     patch, [ym-decimator-prototype.md](ym-decimator-prototype.md) §7: bit-identical, -2 to -4 % of a card frame; it duplicates the level computation of
@@ -287,7 +299,6 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   - SSG channels that hold one non-zero level still run their FIR (prototype variant c, kept as a
     patch, [ym-decimator-prototype.md](ym-decimator-prototype.md) §7): identical at the card's float output for every YM2149 level, but not the same
     arithmetic (1.2e-15 in double); owner decision 2026-10-07: not landed
-  - the SAM2695 effects with no input and their tails run out (4.5 %)
 - [x] `data/midi/generaluser-gs.sf2` + license + README tracked (Q4, done 2026-10-05), shipped next to the
   executables by every target that ships `data/rom`; `[MIDI] Bank=NONE`; the test runner's policy keeps the default bank
   out of test machines unless asked (`TestSound::DefaultMidiBank`, `MultiSoundSlotCard_Test.ShippedDefaultBankLoadsWithoutAnOverride`); GS 1.05b ROM as `data/rom/gs105b.rom` done in MS-2 (README-ROMS entry)

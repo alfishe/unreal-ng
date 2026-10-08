@@ -101,17 +101,30 @@ void Effects::Process(FxBuses& in, uint32_t n, uint8_t effectsWord, bool dsp, fl
     if (dsp)
     {
         float fxL[kControlBlock] = {}, fxR[kControlBlock] = {};
+        // an idle effect with an all +0.0 input adds +0.0 to fx* (which never holds -0.0): skipped
         if (effectsWord & kReverbBit)
         {
             for (uint32_t i = 0; i < n; i++)
                 in.reverb[i] *= gmVolume;
-            _reverb.Process(in.reverb, fxL, fxR, n);
+            if (skipIdle && _reverb.Idle() && AllPositiveZero(in.reverb, n))
+            {
+                _reverb.Skip(n);
+                skippedBlocks++;
+            }
+            else
+                _reverb.Process(in.reverb, fxL, fxR, n);
         }
         if (effectsWord & kChorusBit)
         {
             for (uint32_t i = 0; i < n; i++)
                 in.chorus[i] *= gmVolume;
-            _chorus.Process(in.chorus, fxL, fxR, n);
+            if (skipIdle && _chorus.Idle() && AllPositiveZero(in.chorus, n))
+            {
+                _chorus.Skip(n);
+                skippedBlocks++;
+            }
+            else
+                _chorus.Process(in.chorus, fxL, fxR, n);
         }
         // post effects: what is routed through them goes to post*, the rest straight to out*
         const bool postGm = params.postGm >= 0x40, postFx = params.postFx >= 0x40;
@@ -122,10 +135,28 @@ void Effects::Process(FxBuses& in, uint32_t n, uint8_t effectsWord, bool dsp, fl
             outL[i] = (postGm ? 0.0f : in.left[i]) + (postFx ? 0.0f : fxL[i]);
             outR[i] = (postGm ? 0.0f : in.right[i]) + (postFx ? 0.0f : fxR[i]);
         }
+        bool postSilent = skipIdle && AllPositiveZero(postL, n) && AllPositiveZero(postR, n);
         if (effectsWord & kSpatialBit)
-            _spatial.Process(postL, postR, n);
+        {
+            if (postSilent && _spatial.Idle())
+            {
+                _spatial.Skip(n);
+                skippedBlocks++;
+            }
+            else
+            {
+                _spatial.Process(postL, postR, n);
+                postSilent = skipIdle && AllPositiveZero(postL, n) && AllPositiveZero(postR, n); // the equalizer's input
+            }
+        }
+        const bool fourBand = (effectsWord & 0x03) == 0x03;
         if ((effectsWord & 0x03) >= 0x02)
-            _eq.Process(postL, postR, n, (effectsWord & 0x03) == 0x03);
+        {
+            if (postSilent && _eq.Idle(fourBand))
+                skippedBlocks++;
+            else
+                _eq.Process(postL, postR, n, fourBand);
+        }
         for (uint32_t i = 0; i < n; i++)
         {
             outL[i] += postL[i];

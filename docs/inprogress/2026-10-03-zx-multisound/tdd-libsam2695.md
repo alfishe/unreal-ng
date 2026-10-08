@@ -361,6 +361,8 @@ and test), "GS parts and SysEx", "Pedals and portamento", "Effects and output".
   over). The soft clipper engages on 42 banks (peak above the 0.75 knee); the loudest peaks at 0.9999
   (eapci8m Hedsound), the next at 0.965.
 - **Cost:** GeneralUser GS through the GM test file, 25 s of audio: 474 ms with the effects, 426 ms dry.
+  Idle effects (2026-10-08): an effect whose state is all +0.0 skips the blocks without input, bit-identically
+  (library README "Idle effects", `Fx.IdleEffects*`, `Fx.IdleEqualizerTakesTheSpatialTail`; suite now 114 tests).
 - Full emulator build (`tools/build/build.sh`): zero warnings; `tools/build/test.sh`: 6918 tests in 20 shards, 6845 passed, 73 skipped, 0 failed.
 
 ### 10.8 Left for SAM-5

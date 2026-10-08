@@ -64,6 +64,10 @@ struct SynthConfig
     // but no effect and no clipping, a linear signal for analysis. The polyphony accounting of NRPN
     // 375Fh is the chip's in both modes.
     bool effects = true;
+    // true: a reverb, chorus, spatial effect or equalizer whose whole state is +0.0 skips the blocks with
+    // no input - output and state bit-identical to processing them (README "Idle effects"). false
+    // processes every block (tests, A/B).
+    bool skipIdleEffects = true;
     bool resetDelay = true;           // ignore MIDI for 50 ms after a reset, as the chip does
     uint32_t eventCapacity = 4096;    // queued MIDI bytes not yet rendered
     uint32_t streamFrames = 37500;    // internal-rate frames kept for Render() (1 s)

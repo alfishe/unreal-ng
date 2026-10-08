@@ -10,6 +10,11 @@
 //   depth  p: p x 0.1 ms peak to peak
 //   feedback f: f / 127 x 0.85
 //   level  l: l / 127
+//
+// Idle (as the reverb, reverb.h): the chorus and the spatial effect are idle once their line holds
+// only +0.0 (a run of +0.0 writes as long as the line, or Clear / Sanitize); a block with no input
+// then skips them, moving the write position (and the chorus LFO) as processing would. The equalizer
+// is idle when its filter memory is +0.0. Derived, never serialized.
 #pragma once
 
 #include "fx/dsp.h"
@@ -29,6 +34,8 @@ public:
     void Clear();
     void Process(const float* in, float* outL, float* outR, uint32_t n);
     void Sanitize(const FxParams& p);
+    bool Idle() const { return _idle; }
+    void Skip(uint32_t n);
 
     template <class Ar>
     void Serialize(Ar& ar)
@@ -46,6 +53,9 @@ private:
     // derived
     float _base = 40.0f, _depth = 0.0f, _feedback = 0.0f, _level = 0.0f;
     uint32_t _lfoIncrement = 0;
+    // idle (derived)
+    bool _idle = false;
+    uint32_t _zeroRun = 0;
 };
 
 // The spatial effect (datasheet p.16 and the block diagram p.42): L - R (stereo wide) or L + R
@@ -59,6 +69,8 @@ public:
     void Clear();
     void Process(float* left, float* right, uint32_t n);
     void Sanitize(const FxParams& p);
+    bool Idle() const { return _idle; }
+    void Skip(uint32_t n) { _line.Advance(n); }
 
     template <class Ar>
     void Serialize(Ar& ar)
@@ -74,6 +86,9 @@ private:
     uint32_t _delay = 1;
     float _volume = 0.0f;
     bool _mono = false;
+    // idle (derived)
+    bool _idle = false;
+    uint32_t _zeroRun = 0;
 };
 
 // The 4-band stereo equalizer (NRPN 3700h-370Bh, datasheet p.18): a low shelf, two peaking bands
@@ -86,6 +101,8 @@ public:
     void Update(const FxParams& p);
     void Clear();
     void Process(float* left, float* right, uint32_t n, bool fourBand);
+    // The memory of the bands in use is +0.0 (a block of +0.0 then leaves it and the signal as they are)
+    bool Idle(bool fourBand) const;
 
     template <class Ar>
     void Serialize(Ar& ar)

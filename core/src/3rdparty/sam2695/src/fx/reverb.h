@@ -8,6 +8,11 @@
 // time. Programs 6 (delay) and 7 (pan delay: echoes alternate left and right) are a feedback delay
 // whose time is REV_TIME and feedback REV_FEED. The two layouts share one pool; changing the
 // algorithm (the GS "character") clears it, changing time / feedback / level does not.
+//
+// Idle: once every line of the layout and every filter state holds +0.0, a block whose send is all
+// +0.0 would compute +0.0 everywhere; Skip() then only moves the write positions and the LFO phase as
+// processing would. The idle flag is derived from the state (Clear, Sanitize, and a run of +0.0 writes
+// as long as the longest written line), never serialized.
 #pragma once
 
 #include "fx/dsp.h"
@@ -28,6 +33,9 @@ public:
     void Clear();
     // Mono send in, stereo return added to outL / outR (scaled by the program level)
     void Process(const float* in, float* outL, float* outR, uint32_t n);
+    // The whole state is +0.0: a block with an all +0.0 send may Skip() instead of Process()
+    bool Idle() const { return _idle; }
+    void Skip(uint32_t n);
 
     // Seconds for the tail to fall 60 dB at the current settings (tank programs), for tests and Describe
     double DecaySeconds() const { return _rt60; }
@@ -66,6 +74,10 @@ private:
         TankLines
     };
     void Layout(uint8_t character);
+    uint32_t LongestLine() const;
+    bool FiltersZero() const;
+    bool LinesZero() const;
+    void TrackIdle(const float* in, uint32_t n);
 
     std::vector<float> _pool;
     uint8_t _layoutCharacter = 0xFF;
@@ -92,6 +104,11 @@ private:
     float _echoFeedback = 0.0f;
     float _level = 0.0f;
     double _rt60 = 0.0;
+
+    // derived from the state (see the header comment), not serialized
+    bool _idle = false;
+    uint32_t _zeroRun = 0;     // samples since the last non-zero write or filter state
+    uint32_t _longestLine = 1; // of the lines the layout writes every sample
 };
 
 } // namespace sam2695

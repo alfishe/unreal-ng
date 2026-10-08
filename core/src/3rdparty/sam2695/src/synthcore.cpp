@@ -42,6 +42,7 @@ void SynthCore::Configure(const SynthConfig& cfg)
 {
     _cfg = cfg;
     _fx.Allocate();
+    _fx.skipIdle = cfg.skipIdleEffects;
 }
 
 void SynthCore::PowerOn()
@@ -920,6 +921,11 @@ void SynthCore::Describe(SynthReport& out) const
     out.softClip = p.clipMode < 0x40;
     out.codecGainDb = Effects::CodecGainDb(p.codec0);
     out.codecMuted = Effects::CodecMuted(p.codec0);
+    out.reverbIdle = _fx.ReverbIdle();
+    out.chorusIdle = _fx.ChorusIdle();
+    out.spatialIdle = _fx.SpatialIdle();
+    out.equalizerIdle = _fx.EqualizerIdle((_effectsWord & 0x03) == 0x03);
+    out.idleEffectBlocks = _fx.skippedBlocks;
     for (const Voice& v : _voices)
     {
         if (v.Counts())
