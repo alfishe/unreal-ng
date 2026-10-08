@@ -215,6 +215,13 @@ but a flipped byte that still decodes is not.
 
 ## Status
 
+2026-10-08: the Pentagon fixtures of both corpora (`*.ttd`, `engine/` but `tsconf_sprites` and `sprinter_boot`) and
+the port-journal fixtures re-recorded: with no tape image, #FE bit 6 now reads 0 on the Pentagon and follows the EAR
+output on the 128K (idle EAR per board, `docs/inprogress/2026-10-08-z80test-in-ear/`). In `expected.json`, Dizzy X's
+`key` / `in` answers changed only in the value read (bit 6); Green Beret's answers all moved, because the 128K reads
+the EAR level before playback starts and the load runs on a slightly different timeline. The TS-Conf and Sprinter
+fixtures replay unchanged and were left alone.
+
 2026-10-05: the engine corpus re-recorded after master's ZX-bus slots (the slot set is in the engine's configuration
 fingerprint). `record_fixtures.py` plugs the General Sound card into a ZX-bus slot when the shipped config fits none;
 `sprinter_boot` has no ZX-bus and is recorded without a GS card, as the Sprinter now ships.

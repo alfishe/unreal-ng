@@ -24,6 +24,7 @@
 # ATM3/idle blob and file rows updated 2026-10-05 (Gluk CMOS /WAIT): the EvoAvrVolatile blob (id 55, now 20 bytes, also on the ATM3); the ERS's CMOS reads wait for the AVR.
 # ATM3/idle blob and file rows updated 2026-10-05 (ZX-Evo flash, audit gap G2): the EvoFlash blob (id 61, 33 bytes: the flash chip's command state) on every capture; nothing else moved.
 # ATM3/idle device state row updated 2026-10-07 (state-registry gap 15): the EvoPs2 blob (id 19) carries the F12 hold, 56 bytes (was 40); nothing else moved.
+# 48K/idle file rows updated 2026-10-08 (idle EAR per board): the 48K's #FE bit 6 follows the EAR output with no tape, the idle ROM's key scans read #BF, and the saved file is 1 byte bigger; nothing else moved.
 48K/idle bm2_work_compress_calls_opf 3.966667 0
 48K/idle bm2_work_compress_input_bpf 16247.466667 0
 48K/idle bm2_work_decoded_opf 0.000000 0
@@ -47,8 +48,8 @@
 48K/idle bm3_write_journal_bpf 21704.400000 0
 48K/idle bm4_resident_bpf 80450.950000 25
 48K/idle bm4_resident_bytes 4827057.000000 25
-48K/idle bm7_file_bpf 1104.816667 0
-48K/idle bm7_file_bytes 66289.000000 0
+48K/idle bm7_file_bpf 1104.833333 0
+48K/idle bm7_file_bytes 66290.000000 0
 48K/idle checkpoints 61.000000 0
 48K/idle frames 60.000000 0
 ATM3/idle bm2_work_compress_calls_opf 8.216667 0

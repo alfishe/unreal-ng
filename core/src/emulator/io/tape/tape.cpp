@@ -627,20 +627,34 @@ uint8_t Tape::handlePortIn([[maybe_unused]] uint16_t port)
 
         /// region <Idle EAR level>
 
-        // No playback: the EAR input idles HIGH - the line is not driven low
-        // until the first edge of a real tape pulse arrives (on hardware the
-        // input is pulled up; UnrealSpeccy models the idle level as
-        // tape_bit() = -1, all bits set). Firmware EAR tests depend on this:
-        // the ProfROM monitor's tape-port check reads #FFBE and treats
-        // bit 6 = 0 as "no signal" (error #61), so a low idle level wedged its
-        // input polling forever. This also holds with NO tape image loaded:
-        // the monitor's boot/NMI path polls the tape port with no tape present
-        // (2026-09-10: the no-tape EAR-LOW exception kept for the z80test CRC
-        // snapshot re-wedged it; the z80test golden CRCs of the port-reading
-        // vectors were regenerated for the HIGH idle level instead).
-        // Deterministic by design - a random idle level would turn firmware
-        // timing into a lottery
-        result = 0b0100'0000;
+        // No playback: the level depends on the board. Deterministic by
+        // design - a random idle level would turn firmware timing into a lottery.
+        // - Ferranti ULA (48K / 128K / +2), issue 3: the EAR output feeds back
+        //   into the input, bit 6 follows bit 4 of the last #FE write. z80test's
+        //   hardware CRCs of the IN tests (z80full: IN A,(N) .. INDR->NOP')
+        //   are taken this way, with bit 4 = 0.
+        // - Scorpion (with or without ProfROM): HIGH even with no tape image.
+        //   The ProfROM monitor's tape-port check reads #FFBE and treats
+        //   bit 6 = 0 as "no signal" (error #61); its boot/NMI path polls the
+        //   port with no tape present, and a low level wedged it.
+        // - Other boards: LOW with no tape image (z80full passes as on the
+        //   48K), HIGH once an image is loaded - the line is not driven low
+        //   until the first edge of a real tape pulse arrives.
+        switch (config.mem_model)
+        {
+            case MM_SPECTRUM48:
+            case MM_SPECTRUM128:
+            case MM_PLUS2:
+                result = (prevPortValue & 0b0001'0000) ? 0b0100'0000 : 0;
+                break;
+            case MM_SCORP:
+            case MM_PROFSCORP:
+                result = 0b0100'0000;
+                break;
+            default:
+                result = _imageLoadedPath.empty() ? 0 : 0b0100'0000;
+                break;
+        }
 
         /// endregion </Idle EAR level>
 
