@@ -442,6 +442,76 @@ TEST_F(WD1793_Ports_Test, DiskChangeDuringReadSectorEndsTheCommandWithoutTouchin
     EXPECT_FALSE(Busy());
 }
 
+/// The turbo loader of "Shock Megademo" (MiSTer ZX-Spectrum issue #3) does, per sector,
+/// #2FC3 (SEEK #18) and then #2F1B at once: sector register and READ SECTOR are written while
+/// the SEEK may still be busy, with no wait for INTRQ. The chip latches the sector register
+/// even when busy and ignores the READ; the ROM's INI loop ends on the SEEK's INTRQ, the
+/// status is non-zero (head loaded), so #2F1B retries the READ - which must find the sector
+/// written before. Dropping the sector write while busy makes every retry read the wrong sector
+TEST_F(WD1793_Ports_Test, SectorRegisterWrittenDuringSeekIsUsedByTheRetriedRead)
+{
+    // Tracks 0 and 1 (side 0), every sector with its own content
+    for (uint8_t cyl = 0; cyl < 2; cyl++)
+    {
+        DiskImage::Track* track = _disk->getTrackForCylinderAndSide(cyl, 0);
+        if (cyl > 0)
+            track->formatTrack(cyl, 0);
+        for (uint8_t sec = 0; sec < 16; sec++)
+        {
+            uint8_t data[256];
+            for (int i = 0; i < 256; i++)
+                data[i] = static_cast<uint8_t>(((cyl << 4) | sec) ^ i);
+            track->writeSectorData(sec, data, sizeof(data));
+        }
+    }
+
+    _fdc->portDeviceOutMethod(0xFF, 0x3C);             // #1FF3 with A = #3C: drive A, side 0 (bit 4 is inverted)
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x08);  // RESTORE
+    RunUntilNotBusy();
+    ASSERT_FALSE(Busy());
+
+    // Zero-distance seeks on track 0, then a one-step seek (busy for the 6 ms step) to track 1
+    const struct { uint8_t cyl, sec; } reads[] = {{0, 1}, {0, 2}, {1, 1}, {1, 2}};
+    for (const auto& r : reads)
+    {
+        std::string where = StringHelper::Format("cyl %d sec %d", r.cyl, r.sec);
+
+        _fdc->portDeviceOutMethod(WD1793::PORT_7F, r.cyl);  // #2A53: OUT (C),A with C = #7F
+        _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x18);   // #2FC3: SEEK, h = 1, no verify
+        Advance(150);                                       // back through #3D2F and into #2F1B
+        bool busyAtSectorWrite = Busy();
+        _fdc->portDeviceOutMethod(WD1793::PORT_5F, r.sec);  // #2F1B: OUT (#5F),A
+        EXPECT_EQ(_fdc->getSectorRegister(), r.sec) << where << ": the sector register is latched even while busy";
+        if (r.cyl == 1 && r.sec == 1)
+            EXPECT_TRUE(busyAtSectorWrite) << "the step case must hit the busy controller";
+
+        // #2F1B: READ SECTOR, INI loop at #3FE5 (INTRQ ends it before DRQ), up to 20 attempts
+        std::vector<uint8_t> got;
+        uint8_t status = 0xFF;
+        for (int attempt = 0; attempt < 20; attempt++)
+        {
+            got.clear();
+            _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x80);
+            for (uint64_t spent = 0; spent < 4 * Z80_FREQUENCY; spent += 50)
+            {
+                Advance(50);
+                if (Intrq())
+                    break;
+                if (Drq())
+                    got.push_back(_fdc->portDeviceInMethod(WD1793::PORT_7F));
+            }
+            status = _fdc->portDeviceInMethod(WD1793::PORT_1F);
+            if ((status & 0x7F) == 0)
+                break;
+        }
+
+        EXPECT_EQ(status & 0x7F, 0) << where << ": the retried read must succeed";
+        ASSERT_EQ(got.size(), 256u) << where;
+        for (int i = 0; i < 256; i++)
+            ASSERT_EQ(got[i], static_cast<uint8_t>(((r.cyl << 4) | (r.sec - 1)) ^ i)) << where << " byte " << i;
+    }
+}
+
 /// endregion </Status bits behavior>
 
 /// region <FDD related>

@@ -1236,33 +1236,41 @@ void WD1793::processWD93Command(uint8_t value)
     WD1793::WD_COMMANDS command = decodeWD93Command(value);
     uint8_t commandValue = getWD93CommandValue(command, value);
 
-    // Persist information about command
-    _commandRegister = value;
-    _lastDecodedCmd = command;
-    _lastCmdValue = commandValue;
-
     if (command < sizeof(commandTable) / sizeof(commandTable[0]))
     {
+        const CommandHandler& handler = commandTable[command];
+        bool isBusy = _statusRegister & WDS_BUSY;
+
+        // All commands except Force Interrupt are ignored while busy. An ignored write must not touch the
+        // running command's context: status format and the Type I FSM read it (a loader writing READ SECTOR
+        // during a SEEK must still see the SEEK's Type I status, as TR-DOS #2F1B retries on it)
+        if (command != WD_CMD_FORCE_INTERRUPT && isBusy)
+        {
+            notifyFdcStateChanged();
+            return;
+        }
+
+        // Persist information about command
+        _commandRegister = value;
+        _lastDecodedCmd = command;
+        _lastCmdValue = commandValue;
+
         // Register call in a collection
         _collector->recordCommandStart(*this, value);
-        
+
         // Notify observers
         for (auto* obs : _observers)
         {
             obs->onFDCCommand(value, *this);
         }
 
-        const CommandHandler& handler = commandTable[command];
-        bool isBusy = _statusRegister & WDS_BUSY;
-
         if (command == WD_CMD_FORCE_INTERRUPT)  // Force interrupt command executes in any state
         {
             // Call the corresponding command method
             (this->*handler)(commandValue);
         }
-        else if (!isBusy)  // All other commands are ignored if controller is busy
+        else
         {
-            _commandRegister = value;
             _statusRegister |= WDS_BUSY;
             _beta128status = 0;
             _indexPulseCounter = 0;
