@@ -16,6 +16,7 @@ sjasmplus are in the unreal-asm design
 | MASM (AIG, KSA) | [masm.md](masm.md) | 1.1, 3.0 |
 | ASM80 / Asm80Win (Copper Feet; PC cross assembler) | [asm80.md](asm80.md) | 2.02 (under wine and as a host build) |
 | PROMETHEUS (Proxima) | [prometheus.md](prometheus.md) | 48K tape edition |
+| Laser Genius (Oasis Software) | [laser-genius.md](laser-genius.md) | 1.04 Beta Disk (MOA) |
 | ZEUS (Brattel, Mottershead; Russian disk builds) | [zeus.md](zeus.md) | 1983 (tape), 1.1 beta, GG, v7.E |
 | XAS (Maxim Petrov) | [xas.md](xas.md) | 4.18, 7.447 |
 

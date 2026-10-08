@@ -251,8 +251,9 @@ struct Writer
                 }
                 const bool comparison = e.op == Op::Equal || e.op == Op::NotEqual || e.op == Op::Less || e.op == Op::Greater ||
                                         e.op == Op::LessEqual || e.op == Op::GreaterEqual;
-                if (comparison && trueValue == 1)
-                    return "-" + TrueIsOne(e);   // sjasmplus' true is -1
+                const bool logical = e.op == Op::LogicalAnd || e.op == Op::LogicalOr;
+                if ((comparison || logical) && trueValue == 1)
+                    return "-" + TrueIsOne(e);   // sjasmplus' true is -1 (also for && and ||: 2&&1 = -1)
                 if ((comparison || e.op == Op::Mod || e.op == Op::Shr) && wordBits == 16 && unsignedWords)
                 {
                     // 16-bit unsigned words (STORM: 0-1 is #FFFF, so #FFFF>>1 = #7FFF and 0-1>0): the operands masked

@@ -14,8 +14,8 @@ Part of [unreal-ng](https://github.com/alfishe/unreal-ng); design: `docs/inprogr
   and backend; ALASM → sjasmplus checked against ALASM's own binaries.
 - A5b: the `tasm` frontend (3 / 4.0 / 4.12); the GS 1.04 ROM sources convert and assemble to the ROM byte for byte.
   STORM and ZX-ASM frontends come next. Corpus and emulator checks: `tools/verification/unreal-asm/` in unreal-ng.
-- A6-A8: frontends for STORM, ZX-ASM, MASM, GENS, ZEUS, XAS and the PC cross assembler ASM80 (`asm80`, a text
-  codec), pasmo and z88dk backends; `zxasm convert` of a TR-DOS / tape image or of a host directory as one project.
+- A6-A8: frontends for STORM, ZX-ASM, MASM, GENS, ZEUS, XAS, PROMETHEUS, Laser Genius and the PC cross assembler
+  ASM80 (`asm80`, a text codec), pasmo and z88dk backends; `zxasm convert` of a TR-DOS / tape image or of a host directory as one project.
 - Z80N (ZX Spectrum Next): the sjasmplus frontend reads the Next mnemonics (`swapnib`, `nextreg`, `ldirx` ...) after
   `DEVICE ZXSPECTRUMNEXT` / `OPT --zxnext` (or `zxasm convert --z80n`, `BackendOptions::z80n`, `SourceDocument::z80n`) and
   never otherwise, since a classic source may use `test` or `mirror` as a label; the layout module sizes them; the

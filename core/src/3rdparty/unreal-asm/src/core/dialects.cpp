@@ -20,6 +20,7 @@
 #include "dialects/specasm/specasmfrontend.h"
 #include "dialects/odin/odinfrontend.h"
 #include "dialects/prometheus/prometheusfrontend.h"
+#include "dialects/lasergenius/lasergeniusfrontend.h"
 #include "dialects/tasm/tasmfrontend.h"
 #include "dialects/masm/masmfrontend.h"
 #include "dialects/zeus/zeusfrontend.h"
@@ -53,6 +54,7 @@ const DialectRegistry& DialectRegistry::Builtin()
         r.Add(std::make_unique<dialects::SpecasmFrontend>());
         r.Add(std::make_unique<dialects::OdinFrontend>());
         r.Add(std::make_unique<dialects::PrometheusFrontend>());
+        r.Add(std::make_unique<dialects::LaserGeniusFrontend>());
         r.Add(std::make_unique<dialects::SjasmplusFrontend>());
         r.Add(std::make_unique<dialects::SjasmplusBackend>());
         r.Add(std::make_unique<dialects::PasmoBackend>());

@@ -1,0 +1,826 @@
+# Laser Genius 1.04 (Beta Disk), typed into its editor in unreal-ng: the statement as typed, TAB, the tokens it stored
+nop	33
+lab: ld a,7	f1 6c 61 e2 b5 fd 07
+ld hl,lab+2 ;x	be ec 6c 61 e2 d5 fd 02 ee 78 f0
+defb 1,"AB",#FF	74 fd 01 ed 41 42 00 ff ff
+jr lab	54 ec 6c 61 e2
+; comment line	ef 20 63 6f 6d 6d 65 6e 74 20 6c 69 6e 65 f0
+start: equ 1234	f1 73 74 61 72 f4 7a fc d2 04
+defw start,$,lab+2*3	77 ec 73 74 61 72 f4 e9 ec 6c 61 e2 d5 fd 02 d7 fd 03
+defm "hello"	75 ed 68 65 6c 6c 6f 00
+ld a,"x"	b5 eb 78
+org #8000	5d fe 00 80
+; comment line	ef 20 63 6f 6d 6d 65 6e 74 20 6c 69 6e 65 f0
+nop ;inline	33 ee 69 6e 6c 69 6e 65 f0
+ds 5	7b fd 05
+ld hl,#ABCD	be fe cd ab
+ld de,-1	bd ca fd 01
+djnz $	65 e9
+cp "a"+1	62 eb 61 d5 fd 01
+ld a,7*3+1/2	b5 fd 07 d7 fd 03 d5 fd 01 d8 fd 02
+ld bc,%1010	bc f9 0a
+ld a,@17	b5 fb 0f
+ld hl,0FFH	be ff ff
+nop	33
+rlc b	6a 0c
+ld bc,7	bc fd 07
+rlc c	6a 0d
+ld (bc),a	ad 0b
+rlc d	6a 0e
+inc bc	52 05
+rlc e	6a 0f
+inc b	52 0c
+rlc h	6a 10
+dec b	51 0c
+rlc l	6a 11
+ld b,7	b6 fd 07
+rlc (hl)	6a 22
+rlc (ix+2)	6a 27 fd 02
+rlc (iy+2)	6a 29 fd 02
+rlca	35
+rlc a	6a 0b
+ex af,af'	ab 09
+rrc b	6c 0c
+add hl,bc	9c 05
+add ix,bc	9d 05
+add iy,bc	9e 05
+rrc c	6c 0d
+ld a,(bc)	b5 20
+rrc d	6c 0e
+dec bc	51 05
+rrc e	6c 0f
+inc c	52 0d
+rrc h	6c 10
+dec c	51 0d
+rrc l	6c 11
+ld c,7	b7 fd 07
+rrc (hl)	6c 22
+rrc (ix+2)	6c 27 fd 02
+rrc (iy+2)	6c 29 fd 02
+rrca	37
+rrc a	6c 0b
+djnz 7	65 fd 07
+rl b	6b 0c
+ld de,7	bd fd 07
+rl c	6b 0d
+ld (de),a	ae 0b
+rl d	6b 0e
+inc de	52 06
+rl e	6b 0f
+inc d	52 0e
+rl h	6b 10
+dec d	51 0e
+rl l	6b 11
+ld d,7	b8 fd 07
+rl (hl)	6b 22
+rl (ix+2)	6b 27 fd 02
+rl (iy+2)	6b 29 fd 02
+rla	34
+rl a	6b 0b
+jr 7	54 fd 07
+rr b	6d 0c
+add hl,de	9c 06
+add ix,de	9d 06
+add iy,de	9e 06
+rr c	6d 0d
+ld a,(de)	b5 21
+rr d	6d 0e
+dec de	51 06
+rr e	6d 0f
+inc e	52 0f
+rr h	6d 10
+dec e	51 0f
+rr l	6d 11
+ld e,7	b9 fd 07
+rr (hl)	6d 22
+rr (ix+2)	6d 27 fd 02
+rr (iy+2)	6d 29 fd 02
+rra	36
+rr a	6d 0b
+jr nz,7	8e fd 07
+sla b	6e 0c
+ld hl,7	be fd 07
+ld ix,7	c0 fd 07
+ld iy,7	bf fd 07
+sla c	6e 0d
+ld (9),hl	b4 fd 09 07
+ld (9),ix	b4 fd 09 12
+ld (9),iy	b4 fd 09 13
+sla d	6e 0e
+inc hl	52 07
+inc ix	52 12
+inc iy	52 13
+sla e	6e 0f
+inc h	52 10
+sla h	6e 10
+dec h	51 10
+sla l	6e 11
+ld h,7	ba fd 07
+sla (hl)	6e 22
+sla (ix+2)	6e 27 fd 02
+sla (iy+2)	6e 29 fd 02
+daa	2e
+sla a	6e 0b
+jr z,7	8d fd 07
+sra b	6f 0c
+add hl,hl	9c 07
+add ix,ix	9d 12
+add iy,iy	9e 13
+sra c	6f 0d
+ld hl,(9)	be 2b fd 09
+ld ix,(9)	c0 2b fd 09
+ld iy,(9)	bf 2b fd 09
+sra d	6f 0e
+dec hl	51 07
+dec ix	51 12
+dec iy	51 13
+sra e	6f 0f
+inc l	52 11
+sra h	6f 10
+dec l	51 11
+sra l	6f 11
+ld l,7	bb fd 07
+sra (hl)	6f 22
+sra (ix+2)	6f 27 fd 02
+sra (iy+2)	6f 29 fd 02
+cpl	2d
+sra a	6f 0b
+jr nc,7	90 fd 07
+ld sp,7	c3 fd 07
+ld (9),a	b4 fd 09 0b
+inc sp	52 08
+inc (hl)	52 22
+inc (ix+2)	52 27 fd 02
+inc (iy+2)	52 29 fd 02
+dec (hl)	51 22
+dec (ix+2)	51 27 fd 02
+dec (iy+2)	51 29 fd 02
+ld (hl),7	af fd 07
+ld (ix+2),7	b2 fd 02 fd 07
+ld (iy+2),7	b0 fd 02 fd 07
+scf	38
+jr c,7	8f fd 07
+srl b	70 0c
+add hl,sp	9c 08
+add ix,sp	9d 08
+add iy,sp	9e 08
+srl c	70 0d
+ld a,(9)	b5 2b fd 09
+srl d	70 0e
+dec sp	51 08
+srl e	70 0f
+inc a	52 0b
+srl h	70 10
+dec a	51 0b
+srl l	70 11
+ld a,7	b5 fd 07
+srl (hl)	70 22
+srl (ix+2)	70 27 fd 02
+srl (iy+2)	70 29 fd 02
+ccf	2c
+srl a	70 0b
+ld b,b	b6 0c
+in b,(c)	a2 26
+bit 0,b	67 fd 00 0c
+ld b,c	b6 0d
+out (c),b	a8 0c
+bit 0,c	67 fd 00 0d
+ld b,d	b6 0e
+sbc hl,bc	a0 05
+bit 0,d	67 fd 00 0e
+ld b,e	b6 0f
+ld (9),bc	b4 fd 09 05
+bit 0,e	67 fd 00 0f
+ld b,h	b6 10
+neg	4d
+bit 0,h	67 fd 00 10
+ld b,l	b6 11
+retn	4c
+bit 0,l	67 fd 00 11
+ld b,(hl)	b6 22
+ld b,(ix+2)	b6 27 fd 02
+ld b,(iy+2)	b6 29 fd 02
+im 0	71 fd 00
+bit 0,(hl)	67 fd 00 22
+bit 0,(ix+2)	67 fd 00 27 fd 02
+bit 0,(iy+2)	67 fd 00 29 fd 02
+ld b,a	b6 0b
+ld i,a	c1 0b
+bit 0,a	67 fd 00 0b
+ld c,b	b7 0c
+in c,(c)	a3 26
+bit 1,b	67 fd 01 0c
+ld c,c	b7 0d
+out (c),c	a8 0d
+bit 1,c	67 fd 01 0d
+ld c,d	b7 0e
+adc hl,bc	9a 05
+bit 1,d	67 fd 01 0e
+ld c,e	b7 0f
+ld bc,(9)	bc 2b fd 09
+bit 1,e	67 fd 01 0f
+ld c,h	b7 10
+bit 1,h	67 fd 01 10
+ld c,l	b7 11
+reti	4b
+bit 1,l	67 fd 01 11
+ld c,(hl)	b7 22
+ld c,(ix+2)	b7 27 fd 02
+ld c,(iy+2)	b7 29 fd 02
+bit 1,(hl)	67 fd 01 22
+bit 1,(ix+2)	67 fd 01 27 fd 02
+bit 1,(iy+2)	67 fd 01 29 fd 02
+ld c,a	b7 0b
+ld r,a	c2 0b
+bit 1,a	67 fd 01 0b
+ld d,b	b8 0c
+in d,(c)	a4 26
+bit 2,b	67 fd 02 0c
+ld d,c	b8 0d
+out (c),d	a8 0e
+bit 2,c	67 fd 02 0d
+ld d,d	b8 0e
+sbc hl,de	a0 06
+bit 2,d	67 fd 02 0e
+ld d,e	b8 0f
+ld (9),de	b4 fd 09 06
+bit 2,e	67 fd 02 0f
+ld d,h	b8 10
+bit 2,h	67 fd 02 10
+ld d,l	b8 11
+bit 2,l	67 fd 02 11
+ld d,(hl)	b8 22
+ld d,(ix+2)	b8 27 fd 02
+ld d,(iy+2)	b8 29 fd 02
+im 1	71 fd 01
+bit 2,(hl)	67 fd 02 22
+bit 2,(ix+2)	67 fd 02 27 fd 02
+bit 2,(iy+2)	67 fd 02 29 fd 02
+ld d,a	b8 0b
+ld a,i	b5 1b
+bit 2,a	67 fd 02 0b
+ld e,b	b9 0c
+in e,(c)	a5 26
+bit 3,b	67 fd 03 0c
+ld e,c	b9 0d
+out (c),e	a8 0f
+bit 3,c	67 fd 03 0d
+ld e,d	b9 0e
+adc hl,de	9a 06
+bit 3,d	67 fd 03 0e
+ld e,e	b9 0f
+ld de,(9)	bd 2b fd 09
+bit 3,e	67 fd 03 0f
+ld e,h	b9 10
+bit 3,h	67 fd 03 10
+ld e,l	b9 11
+bit 3,l	67 fd 03 11
+ld e,(hl)	b9 22
+ld e,(ix+2)	b9 27 fd 02
+ld e,(iy+2)	b9 29 fd 02
+im 2	71 fd 02
+bit 3,(hl)	67 fd 03 22
+bit 3,(ix+2)	67 fd 03 27 fd 02
+bit 3,(iy+2)	67 fd 03 29 fd 02
+ld e,a	b9 0b
+ld a,r	b5 1c
+bit 3,a	67 fd 03 0b
+ld h,b	ba 0c
+in h,(c)	a6 26
+bit 4,b	67 fd 04 0c
+ld h,c	ba 0d
+out (c),h	a8 10
+bit 4,c	67 fd 04 0d
+ld h,d	ba 0e
+sbc hl,hl	a0 07
+bit 4,d	67 fd 04 0e
+ld h,e	ba 0f
+bit 4,e	67 fd 04 0f
+ld h,h	ba 10
+bit 4,h	67 fd 04 10
+ld h,l	ba 11
+bit 4,l	67 fd 04 11
+ld h,(hl)	ba 22
+ld h,(ix+2)	ba 27 fd 02
+ld h,(iy+2)	ba 29 fd 02
+bit 4,(hl)	67 fd 04 22
+bit 4,(ix+2)	67 fd 04 27 fd 02
+bit 4,(iy+2)	67 fd 04 29 fd 02
+ld h,a	ba 0b
+rrd	4a
+bit 4,a	67 fd 04 0b
+ld l,b	bb 0c
+in l,(c)	a7 26
+bit 5,b	67 fd 05 0c
+ld l,c	bb 0d
+out (c),l	a8 11
+bit 5,c	67 fd 05 0d
+ld l,d	bb 0e
+adc hl,hl	9a 07
+bit 5,d	67 fd 05 0e
+ld l,e	bb 0f
+bit 5,e	67 fd 05 0f
+ld l,h	bb 10
+bit 5,h	67 fd 05 10
+ld l,l	bb 11
+bit 5,l	67 fd 05 11
+ld l,(hl)	bb 22
+ld l,(ix+2)	bb 27 fd 02
+ld l,(iy+2)	bb 29 fd 02
+bit 5,(hl)	67 fd 05 22
+bit 5,(ix+2)	67 fd 05 27 fd 02
+bit 5,(iy+2)	67 fd 05 29 fd 02
+ld l,a	bb 0b
+rld	49
+bit 5,a	67 fd 05 0b
+ld (hl),b	af 0c
+ld (ix+2),b	b2 fd 02 0c
+ld (iy+2),b	b0 fd 02 0c
+bit 6,b	67 fd 06 0c
+ld (hl),c	af 0d
+ld (ix+2),c	b2 fd 02 0d
+ld (iy+2),c	b0 fd 02 0d
+bit 6,c	67 fd 06 0d
+ld (hl),d	af 0e
+ld (ix+2),d	b2 fd 02 0e
+ld (iy+2),d	b0 fd 02 0e
+sbc hl,sp	a0 08
+bit 6,d	67 fd 06 0e
+ld (hl),e	af 0f
+ld (ix+2),e	b2 fd 02 0f
+ld (iy+2),e	b0 fd 02 0f
+ld (9),sp	b4 fd 09 08
+bit 6,e	67 fd 06 0f
+ld (hl),h	af 10
+ld (ix+2),h	b2 fd 02 10
+ld (iy+2),h	b0 fd 02 10
+bit 6,h	67 fd 06 10
+ld (hl),l	af 11
+ld (ix+2),l	b2 fd 02 11
+ld (iy+2),l	b0 fd 02 11
+bit 6,l	67 fd 06 11
+halt	32
+bit 6,(hl)	67 fd 06 22
+bit 6,(ix+2)	67 fd 06 27 fd 02
+bit 6,(iy+2)	67 fd 06 29 fd 02
+ld (hl),a	af 0b
+ld (ix+2),a	b2 fd 02 0b
+ld (iy+2),a	b0 fd 02 0b
+bit 6,a	67 fd 06 0b
+ld a,b	b5 0c
+in a,(c)	a1 26
+bit 7,b	67 fd 07 0c
+ld a,c	b5 0d
+out (c),a	a8 0b
+bit 7,c	67 fd 07 0d
+ld a,d	b5 0e
+adc hl,sp	9a 08
+bit 7,d	67 fd 07 0e
+ld a,e	b5 0f
+ld sp,(9)	c3 2b fd 09
+bit 7,e	67 fd 07 0f
+ld a,h	b5 10
+bit 7,h	67 fd 07 10
+ld a,l	b5 11
+bit 7,l	67 fd 07 11
+ld a,(hl)	b5 22
+ld a,(ix+2)	b5 27 fd 02
+ld a,(iy+2)	b5 29 fd 02
+bit 7,(hl)	67 fd 07 22
+bit 7,(ix+2)	67 fd 07 27 fd 02
+bit 7,(iy+2)	67 fd 07 29 fd 02
+ld a,a	b5 0b
+bit 7,a	67 fd 07 0b
+add a,b	9b 0c
+res 0,b	69 fd 00 0c
+add a,c	9b 0d
+res 0,c	69 fd 00 0d
+add a,d	9b 0e
+res 0,d	69 fd 00 0e
+add a,e	9b 0f
+res 0,e	69 fd 00 0f
+add a,h	9b 10
+res 0,h	69 fd 00 10
+add a,l	9b 11
+res 0,l	69 fd 00 11
+add a,(hl)	9b 22
+add a,(ix+2)	9b 27 fd 02
+add a,(iy+2)	9b 29 fd 02
+res 0,(hl)	69 fd 00 22
+res 0,(ix+2)	69 fd 00 27 fd 02
+res 0,(iy+2)	69 fd 00 29 fd 02
+add a,a	9b 0b
+res 0,a	69 fd 00 0b
+adc a,b	99 0c
+res 1,b	69 fd 01 0c
+adc a,c	99 0d
+res 1,c	69 fd 01 0d
+adc a,d	99 0e
+res 1,d	69 fd 01 0e
+adc a,e	99 0f
+res 1,e	69 fd 01 0f
+adc a,h	99 10
+res 1,h	69 fd 01 10
+adc a,l	99 11
+res 1,l	69 fd 01 11
+adc a,(hl)	99 22
+adc a,(ix+2)	99 27 fd 02
+adc a,(iy+2)	99 29 fd 02
+res 1,(hl)	69 fd 01 22
+res 1,(ix+2)	69 fd 01 27 fd 02
+res 1,(iy+2)	69 fd 01 29 fd 02
+adc a,a	99 0b
+res 1,a	69 fd 01 0b
+sub b	61 0c
+res 2,b	69 fd 02 0c
+sub c	61 0d
+res 2,c	69 fd 02 0d
+sub d	61 0e
+res 2,d	69 fd 02 0e
+sub e	61 0f
+res 2,e	69 fd 02 0f
+sub h	61 10
+res 2,h	69 fd 02 10
+sub l	61 11
+res 2,l	69 fd 02 11
+sub (hl)	61 22
+sub (ix+2)	61 27 fd 02
+sub (iy+2)	61 29 fd 02
+res 2,(hl)	69 fd 02 22
+res 2,(ix+2)	69 fd 02 27 fd 02
+res 2,(iy+2)	69 fd 02 29 fd 02
+sub a	61 0b
+res 2,a	69 fd 02 0b
+sbc a,b	9f 0c
+res 3,b	69 fd 03 0c
+sbc a,c	9f 0d
+res 3,c	69 fd 03 0d
+sbc a,d	9f 0e
+res 3,d	69 fd 03 0e
+sbc a,e	9f 0f
+res 3,e	69 fd 03 0f
+sbc a,h	9f 10
+res 3,h	69 fd 03 10
+sbc a,l	9f 11
+res 3,l	69 fd 03 11
+sbc a,(hl)	9f 22
+sbc a,(ix+2)	9f 27 fd 02
+sbc a,(iy+2)	9f 29 fd 02
+res 3,(hl)	69 fd 03 22
+res 3,(ix+2)	69 fd 03 27 fd 02
+res 3,(iy+2)	69 fd 03 29 fd 02
+sbc a,a	9f 0b
+res 3,a	69 fd 03 0b
+and b	5e 0c
+ldi	41
+res 4,b	69 fd 04 0c
+and c	5e 0d
+cpi	43
+res 4,c	69 fd 04 0d
+and d	5e 0e
+ini	45
+res 4,d	69 fd 04 0e
+and e	5e 0f
+outi	47
+res 4,e	69 fd 04 0f
+and h	5e 10
+res 4,h	69 fd 04 10
+and l	5e 11
+res 4,l	69 fd 04 11
+and (hl)	5e 22
+and (ix+2)	5e 27 fd 02
+and (iy+2)	5e 29 fd 02
+res 4,(hl)	69 fd 04 22
+res 4,(ix+2)	69 fd 04 27 fd 02
+res 4,(iy+2)	69 fd 04 29 fd 02
+and a	5e 0b
+res 4,a	69 fd 04 0b
+xor b	60 0c
+ldd	42
+res 5,b	69 fd 05 0c
+xor c	60 0d
+cpd	44
+res 5,c	69 fd 05 0d
+xor d	60 0e
+ind	46
+res 5,d	69 fd 05 0e
+xor e	60 0f
+outd	48
+res 5,e	69 fd 05 0f
+xor h	60 10
+res 5,h	69 fd 05 10
+xor l	60 11
+res 5,l	69 fd 05 11
+xor (hl)	60 22
+xor (ix+2)	60 27 fd 02
+xor (iy+2)	60 29 fd 02
+res 5,(hl)	69 fd 05 22
+res 5,(ix+2)	69 fd 05 27 fd 02
+res 5,(iy+2)	69 fd 05 29 fd 02
+xor a	60 0b
+res 5,a	69 fd 05 0b
+or b	5f 0c
+ldir	39
+res 6,b	69 fd 06 0c
+or c	5f 0d
+cpir	3b
+res 6,c	69 fd 06 0d
+or d	5f 0e
+inir	3d
+res 6,d	69 fd 06 0e
+or e	5f 0f
+otir	3f
+res 6,e	69 fd 06 0f
+or h	5f 10
+res 6,h	69 fd 06 10
+or l	5f 11
+res 6,l	69 fd 06 11
+or (hl)	5f 22
+or (ix+2)	5f 27 fd 02
+or (iy+2)	5f 29 fd 02
+res 6,(hl)	69 fd 06 22
+res 6,(ix+2)	69 fd 06 27 fd 02
+res 6,(iy+2)	69 fd 06 29 fd 02
+or a	5f 0b
+res 6,a	69 fd 06 0b
+cp b	62 0c
+lddr	3a
+res 7,b	69 fd 07 0c
+cp c	62 0d
+cpdr	3c
+res 7,c	69 fd 07 0d
+cp d	62 0e
+indr	3e
+res 7,d	69 fd 07 0e
+cp e	62 0f
+otdr	40
+res 7,e	69 fd 07 0f
+cp h	62 10
+res 7,h	69 fd 07 10
+cp l	62 11
+res 7,l	69 fd 07 11
+cp (hl)	62 22
+cp (ix+2)	62 27 fd 02
+cp (iy+2)	62 29 fd 02
+res 7,(hl)	69 fd 07 22
+res 7,(ix+2)	69 fd 07 27 fd 02
+res 7,(iy+2)	69 fd 07 29 fd 02
+cp a	62 0b
+res 7,a	69 fd 07 0b
+ret nz	66 14
+set 0,b	68 fd 00 0c
+pop bc	64 05
+set 0,c	68 fd 00 0d
+jp nz,7	83 fd 07
+set 0,d	68 fd 00 0e
+jp 7	53 fd 07
+set 0,e	68 fd 00 0f
+call nz,7	92 fd 07
+set 0,h	68 fd 00 10
+push bc	63 05
+set 0,l	68 fd 00 11
+add a,7	9b fd 07
+set 0,(hl)	68 fd 00 22
+set 0,(ix+2)	68 fd 00 27 fd 02
+set 0,(iy+2)	68 fd 00 29 fd 02
+rst 8	72 fd 08
+set 0,a	68 fd 00 0b
+ret z	66 15
+set 1,b	68 fd 01 0c
+ret	66
+set 1,c	68 fd 01 0d
+jp z,7	82 fd 07
+set 1,d	68 fd 01 0e
+set 1,e	68 fd 01 0f
+call z,7	91 fd 07
+set 1,h	68 fd 01 10
+call 7	55 fd 07
+set 1,l	68 fd 01 11
+adc a,7	99 fd 07
+set 1,(hl)	68 fd 01 22
+set 1,(ix+2)	68 fd 01 27 fd 02
+set 1,(iy+2)	68 fd 01 29 fd 02
+set 1,a	68 fd 01 0b
+ret nc	66 16
+set 2,b	68 fd 02 0c
+pop de	64 06
+set 2,c	68 fd 02 0d
+jp nc,7	85 fd 07
+set 2,d	68 fd 02 0e
+out (9),a	a9 fd 09 0b
+set 2,e	68 fd 02 0f
+call nc,7	94 fd 07
+set 2,h	68 fd 02 10
+push de	63 06
+set 2,l	68 fd 02 11
+sub 7	61 fd 07
+set 2,(hl)	68 fd 02 22
+set 2,(ix+2)	68 fd 02 27 fd 02
+set 2,(iy+2)	68 fd 02 29 fd 02
+set 2,a	68 fd 02 0b
+ret c	66 0d
+set 3,b	68 fd 03 0c
+exx	31
+set 3,c	68 fd 03 0d
+jp c,7	84 fd 07
+set 3,d	68 fd 03 0e
+in a,(9)	a1 2b fd 09
+set 3,e	68 fd 03 0f
+call c,7	93 fd 07
+set 3,h	68 fd 03 10
+set 3,l	68 fd 03 11
+sbc a,7	9f fd 07
+set 3,(hl)	68 fd 03 22
+set 3,(ix+2)	68 fd 03 27 fd 02
+set 3,(iy+2)	68 fd 03 29 fd 02
+set 3,a	68 fd 03 0b
+ret po	66 18
+set 4,b	68 fd 04 0c
+pop hl	64 07
+pop ix	64 12
+pop iy	64 13
+set 4,c	68 fd 04 0d
+jp po,7	89 fd 07
+set 4,d	68 fd 04 0e
+ex (sp),hl	ac 07
+ex (sp),ix	ac 12
+ex (sp),iy	ac 13
+set 4,e	68 fd 04 0f
+call po,7	98 fd 07
+set 4,h	68 fd 04 10
+push hl	63 07
+push ix	63 12
+push iy	63 13
+set 4,l	68 fd 04 11
+and 7	5e fd 07
+set 4,(hl)	68 fd 04 22
+set 4,(ix+2)	68 fd 04 27 fd 02
+set 4,(iy+2)	68 fd 04 29 fd 02
+set 4,a	68 fd 04 0b
+ret pe	66 19
+set 5,b	68 fd 05 0c
+jp (hl)	8a
+jp (ix)	8b
+jp (iy)	8c
+set 5,c	68 fd 05 0d
+jp pe,7	88 fd 07
+set 5,d	68 fd 05 0e
+ex de,hl	aa 07
+set 5,e	68 fd 05 0f
+call pe,7	97 fd 07
+set 5,h	68 fd 05 10
+set 5,l	68 fd 05 11
+xor 7	60 fd 07
+set 5,(hl)	68 fd 05 22
+set 5,(ix+2)	68 fd 05 27 fd 02
+set 5,(iy+2)	68 fd 05 29 fd 02
+set 5,a	68 fd 05 0b
+ret p	66 1a
+set 6,b	68 fd 06 0c
+pop af	64 0a
+set 6,c	68 fd 06 0d
+jp p,7	87 fd 07
+set 6,d	68 fd 06 0e
+di	2f
+set 6,e	68 fd 06 0f
+call p,7	96 fd 07
+set 6,h	68 fd 06 10
+push af	63 0a
+set 6,l	68 fd 06 11
+or 7	5f fd 07
+set 6,(hl)	68 fd 06 22
+set 6,(ix+2)	68 fd 06 27 fd 02
+set 6,(iy+2)	68 fd 06 29 fd 02
+set 6,a	68 fd 06 0b
+ret m	66 17
+set 7,b	68 fd 07 0c
+ld sp,hl	c3 07
+ld sp,ix	c3 12
+ld sp,iy	c3 13
+set 7,c	68 fd 07 0d
+jp m,7	86 fd 07
+set 7,d	68 fd 07 0e
+ei	30
+set 7,e	68 fd 07 0f
+call m,7	95 fd 07
+set 7,h	68 fd 07 10
+set 7,l	68 fd 07 11
+cp 7	62 fd 07
+set 7,(hl)	68 fd 07 22
+set 7,(ix+2)	68 fd 07 27 fd 02
+set 7,(iy+2)	68 fd 07 29 fd 02
+set 7,a	68 fd 07 0b
+ld a,(ix-2)	b5 28 fd 02
+ld a,(iy-2)	b5 2a fd 02
+ld (ix-2),7	b3 fd 02 fd 07
+ld (iy-2),7	b1 fd 02 fd 07
+ld (ix-2),a	b3 fd 02 0b
+ld (iy-2),b	b1 fd 02 0c
+inc (ix-2)	52 28 fd 02
+bit 1,(iy-2)	67 fd 01 2a fd 02
+ld a,(ix+lab)	b5 27 ec 6c 61 e2
+ex (sp),hl	ac 07
+jp (ix)	8b
+ld hl,1+2	be fd 01 d5 fd 02
+ld hl,1-2	be fd 01 d6 fd 02
+ld hl,1*2	be fd 01 d7 fd 02
+ld hl,1/2	be fd 01 d8 fd 02
+ld hl,1%2	be fd 01 d9 fd 02
+ld hl,1<=2	be fd 01 da fd 02
+ld hl,1>=2	be fd 01 db fd 02
+ld hl,1?=2	be fd 01 dc fd 02
+ld hl,1!=2	be fd 01 dd fd 02
+ld hl,1<<2	be fd 01 de fd 02
+ld hl,1>>2	be fd 01 df fd 02
+ld hl,1<2	be fd 01 e0 fd 02
+ld hl,1>2	be fd 01 e1 fd 02
+ld hl,1@<2	be fd 01 e2 fd 02
+ld hl,1@>2	be fd 01 e3 fd 02
+ld hl,1&&2	be fd 01 e4 fd 02
+ld hl,1&2	be fd 01 e6 fd 02
+ld hl,1^2	be fd 01 e8 fd 02
+ld hl,-lab	be ca ec 6c 61 e2
+ld hl,!lab	be c8 ec 6c 61 e2
+ld hl,^lab	be c9 ec 6c 61 e2
+ld hl,*lab	be c7 ec 6c 61 e2
+ld hl,$	be e9
+ld hl,.	be ea
+ld hl,$+1	be e9 d5 fd 01
+ld a,"\""	b5 eb 22
+ld a," "	b5 eb 20
+ld hl,1000	be fc e8 03
+ld hl,65535	be fc ff ff
+ld a,255	b5 fd ff
+ld a,0	b5 fd 00
+ld hl,#12	be ff 12
+ld hl,#1234	be fe 34 12
+ld hl,%10101010	be f9 aa
+ld hl,%1010101010101010	be f8 aa aa
+ld hl,@177	be fb 7f
+ld hl,@177777	be fa ff ff
+ld hl,12H	be ff 12
+ld hl,1234H	be fe 34 12
+ld hl,0ABCDH	be fe cd ab
+ld hl,Lab.x$	be ec 4c 61 62 2e 78 a4
+ld a,AMSTRAD	b5 ec 41 4d 53 54 52 41 c4
+db 1,2,3	73 fd 01 fd 02 fd 03
+db "Hello, world."	73 ed 48 65 6c 6c 6f 2c 20 77 6f 72 6c 64 2e 00
+db "a",1,"bc"	73 eb 61 fd 01 ed 62 63 00
+dw 1,2	76 fd 01 fd 02
+dw #1234	76 fe 34 12
+defm "x"	75 eb 78
+defs 10	7c fd 0a
+ds lab*2	7b ec 6c 61 e2 d7 fd 02
+cnt: equ 1	f1 63 6e f4 7a fd 01
+cnt: dl cnt+1	f1 63 6e f4 78 ec 63 6e f4 d5 fd 01
+cnt: defl 2	f1 63 6e f4 79 fd 02
+cond lab	7e ec 6c 61 e2
+else	4e
+endc	4f
+put #9000	7d fe 00 90
+org $	5d e9
+endm	50
+*list on	f5 82 1e
+*list off	f5 82 1f
+*llist on	f5 83 1e
+*screen off	f5 85 1f
+*printer on	f5 86 1e
+*form	f5 8f
+*title "head"	f5 91 ed 68 65 61 64 00
+*maclist on	f5 8a 1e
+*include "file"	f5 87 ed 66 69 6c 65 00
+*openout "obj"	f5 88 ed 6f 62 6a 00
+*closeout	f5 89
+*prompts on	f5 95 1e
+*count on	f5 84 1e
+*report off	f5 90 1f
+*code off	f5 94 1f
+*print "msg"	f5 93 ed 6d 73 67 00
+*pause	f5 92
+*while cnt<=10	f5 8b ec 63 6e f4 da fd 0a
+*endw	f5 8c
+*repeat	f5 8d
+*until cnt	f5 8e ec 63 6e f4
+nop ; comment after	33 ee 20 63 6f 6d 6d 65 6e 74 20 61 66 74 65 72 f0
+lab: nop	f1 6c 61 e2 33
+lab2:	f1 6c 61 62 b2
+;	ef f0
+; spaced   comment	ef 20 73 70 61 63 65 64 20 20 20 63 6f 6d 6d 65 6e 74 f0
+ld a,7 ; c1	b5 fd 07 ee 20 63 31 f0
+nop	33
+rst #38	72 ff 38
+im 2	71 fd 02
+out (#FE),a	a9 ff fe 0b
+in a,(#FE)	a1 2b ff fe
+jr $+2	54 e9 d5 fd 02
+djnz lab	65 ec 6c 61 e2
+ld hl,[1+2]*3	be cb fd 01 d5 fd 02 d0 d7 fd 03
+ld hl,[[1]]	be cb cb fd 01 d0 d0
+ld hl,1|2	be fd 01 e7 fd 02
+ld hl,1||2	be fd 01 e5 fd 02
+exg: macro \p1,\p2	f1 65 78 e7 7f f2 70 b1 f2 70 b2
+push \p1	63 f2 70 b1
+endm	50
+\exg bc,de	81 65 78 e7 05 06
+ld a,"\13"	b5 eb fd 0d
+nop	33

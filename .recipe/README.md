@@ -64,7 +64,7 @@ matches; it names the recipe(s) for that action.
 | Running to a scanline / pixel / interrupt, frame and T-state stepping, step over / out | [analysis/execution-control-and-stepping.md](analysis/execution-control-and-stepping.md) | ttd-*, profilers |
 | Who calls a routine, hot opcodes, per-frame cost | [analysis/calltrace-and-opcode-profiler.md](analysis/calltrace-and-opcode-profiler.md) | port-trace |
 | Labels, symbols, sjasmplus listings, stepping by source line, assembling | [analysis/symbols-listings-and-source-stepping.md](analysis/symbols-listings-and-source-stepping.md) | everything else |
-| Running a Spectrum assembler (TASM, ALASM, STORM, ZX-ASM, GENS, MASM, ZEUS, XAS, PROMETHEUS; the PC cross assembler ASM80) in the machine; its sources, code and labels to and from the host | [assemblers/README.md](assemblers/README.md), then the one assembler's recipe | the other assemblers' recipes |
+| Running a Spectrum assembler (TASM, ALASM, STORM, ZX-ASM, GENS, MASM, ZEUS, XAS, PROMETHEUS, Laser Genius; the PC cross assembler ASM80) in the machine; its sources, code and labels to and from the host | [assemblers/README.md](assemblers/README.md), then the one assembler's recipe | the other assemblers' recipes |
 | Which code ran / never ran, TR-DOS analyzer events | [analysis/code-coverage-and-analyzers.md](analysis/code-coverage-and-analyzers.md) | port-trace |
 | Searching, mapping or writing memory; named regions; ROM protect; writing a port (paging) | [analysis/memory-search-map-and-regions.md](analysis/memory-search-map-and-regions.md) | memory-counters unless you need access counts |
 | A debugger front end's redraw in one call; raw (binary) memory dumps | [analysis/debugger-snapshot.md](analysis/debugger-snapshot.md) | separate /registers + /disasm + /memory calls per redraw |
@@ -154,6 +154,7 @@ call.
 | [assemblers/gens.md](assemblers/gens.md) | GENS4 / GENS3 (tape) and GENS4B (TR-DOS): put in memory, `G` from a tape image, `A`, `R` |
 | [assemblers/masm.md](assemblers/masm.md) | MASM 1.1 / 3.0: Work file, Assemble, code in RAM page 0 for `#C000` up |
 | [assemblers/prometheus.md](assemblers/prometheus.md) | PROMETHEUS 48K: installer, SS+letter commands, `LOAD :name` (the name is required), ASSEMBLY, saves to and from the host |
+| [assemblers/laser-genius.md](assemblers/laser-genius.md) | Laser Genius 1.04 (Beta Disk): loader questions, paragraph numbers, Y/N keys pressed once, `assem` after `PUT`, sources to and from the host |
 | [assemblers/asm80.md](assemblers/asm80.md) | ASM80 / Asm80Win 2.02 (PC): asm80win.exe under wine or its host build, a directory project to sjasmplus, labels from the listing |
 | [assemblers/zeus.md](assemblers/zeus.md) | ZEUS 1983 (tape), 1.1, GG, v7.E: source in memory, `O`, `A`, INCLUDE / PLACE / INCBIN |
 | [assemblers/xas.md](assemblers/xas.md) | XAS 4.18 / 7.447: the file list, EXT commands, LTEXT / LCODE |
