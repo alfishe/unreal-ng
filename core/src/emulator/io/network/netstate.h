@@ -8,8 +8,10 @@
 /// journaled NetEvent, so the state keeps references (journal index of the
 /// network record, offset, length) and the loader takes the bytes from the
 /// journal. Bytes the Z80 wrote but the chip has not sent yet are stored (at
-/// a frame boundary usually none). Limits below are generous; a state that
-/// does not fit is saved as far as it goes and marked incomplete.
+/// a frame boundary usually none). The arrays below are sized for the usual
+/// state; what does not fit them, and received bytes the journal does not hold
+/// (they arrived before the recording), follow the fixed part as a
+/// netstate::Tail (netstatetail.h).
 ///
 /// Plain structs, filled after a memset (padding bytes are always zero, so
 /// equal states give equal blobs).
@@ -256,7 +258,7 @@ struct Adapters
 {
     uint32_t version;       ///< kVersion
     uint8_t present;        ///< a card was fitted at capture
-    uint8_t incomplete;     ///< some state did not fit the limits above
+    uint8_t incomplete;     ///< unused since 2026-10-08 (the tail holds what did not fit); 1 in older blobs
     uint8_t p83, p82, p81;
     uint8_t networkPresent; ///< the virtual network existed (a card or a COM stream peer)
     uint8_t reserved[2];
@@ -273,11 +275,12 @@ constexpr uint32_t kVersion = 3;   ///< 2: the COM port; 3: the COM port in its 
 struct SerialPort
 {
     uint32_t version;       ///< kSerialPortVersion
-    uint8_t incomplete;     ///< some peer state did not fit the limits above
+    uint8_t flags;          ///< kSerialPortHasTail: a netstate::Tail follows (bit 0, "incomplete" before 2026-10-08, is ignored)
     uint8_t reserved[3];
     Com com;                ///< com.uart always; the peer part only in the full size
 };
 constexpr uint32_t kSerialPortVersion = 1;
+constexpr uint8_t kSerialPortHasTail = 2;
 constexpr size_t kSerialPortShortSize = offsetof(SerialPort, com) + offsetof(Com, uart) + sizeof(Uart16550::State);
 static_assert(std::is_trivial_v<SerialPort>, "the serial port blob is cleared and copied as bytes");
 

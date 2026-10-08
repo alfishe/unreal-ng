@@ -21,6 +21,8 @@
 #include <cstring>
 #include <vector>
 
+#include "emulator/io/network/netstate.h"
+
 namespace netstate
 {
 
@@ -40,6 +42,20 @@ public:
         NetWaiting = 12,        ///< a guest server's waiting connections past kMaxWaiting (u16 each; owner = server)
         NetPending = 13,        ///< a guest server's queued clients past kMaxPending (the pending element; owner = server)
         NetLease = 14,          ///< DHCP leases past kMaxLeases (netstate::Lease)
+        ComLoopback = 20,       ///< loopback echo bytes past kMaxComBytes (one bytes record, index 0)
+        ComRun = 21,            ///< a stream peer's received runs past kMaxComRuns (netstate::Reference)
+        ComRunBytes = 22,       ///< a received run's bytes the journal does not hold (index = run)
+        ComUnsent = 23,         ///< a stream peer's unsent bytes past kMaxComBytes (one bytes record, index 0)
+        EspRx = 30,             ///< ESP module: bytes from the ZX past kEspRxBytes (one bytes record, index 0)
+        EspOut = 31,            ///< ESP module: reply bytes past kEspOutBytes (one bytes record, index 0)
+        EspRun = 32,            ///< a slot's unread runs past kEspRuns (netstate::Reference; owner = slot)
+        EspRunBytes = 33,       ///< a slot run's bytes the journal does not hold (owner = slot, index = run)
+        EspDatagram = 34,       ///< a slot's datagrams past kEspDatagrams (netstate::EspDatagram; owner = slot)
+        EspDatagramBytes = 35,  ///< a datagram's bytes when it is no single journaled run (owner = slot, index = datagram)
+        EspPending = 36,        ///< a server slot's queued clients past kEspPending (netstate::EspPending; owner = slot)
+        EspPendingRun = 37,     ///< a queued client's runs past kEspPendingRuns (owner = slot, index = client << 16 | run)
+        EspPendingRunBytes = 38,///< such a run's bytes the journal does not hold (index as EspPendingRun)
+        EspClose = 39,          ///< sockets to close past kEspClose (u16 each, index = position)
     };
 
     bool Empty() const { return _bytes.empty(); }
@@ -156,5 +172,96 @@ private:
     mutable std::vector<uint8_t> _found;
     mutable bool _hit = false;
 };
+
+/// Received bytes ({value, source, offset} items) as runs of one journal record: `runs[0, max)` first, the runs
+/// past it as `list` records; a run of bytes the journal does not hold (source 0) is a Reference {0, 0, length}
+/// with its bytes as a `bytesList` record of the run's index. Indices are `indexBase` + the run's position.
+/// Returns the run count
+template <typename It>
+uint32_t SaveRuns(It begin, It end, Reference* runs, uint32_t max, Tail& tail, Tail::List list, Tail::List bytesList,
+                  uint16_t owner, uint32_t indexBase = 0)
+{
+    uint32_t count = 0;
+    Reference current{};
+    std::vector<uint8_t> unjournaled;
+    auto close = [&]() {
+        if (current.length == 0)
+            return;
+        if (count < max)
+            runs[count] = current;
+        else
+            tail.Add(list, owner, indexBase + count, &current, sizeof(current));
+        if (current.source == 0)
+            tail.AddBytes(bytesList, owner, indexBase + count, unjournaled.data(), unjournaled.size());
+        ++count;
+        current = {};
+        unjournaled.clear();
+    };
+    for (It it = begin; it != end; ++it)
+    {
+        const bool extends = current.length && (it->source == 0 ? current.source == 0
+                                                                : current.source == it->source &&
+                                                                      current.sourceOffset + current.length == it->offset);
+        if (!extends)
+        {
+            close();
+            current = {it->source, it->source ? it->offset : 0, 0};
+        }
+        ++current.length;
+        if (it->source == 0)
+            unjournaled.push_back(it->value);
+    }
+    close();
+    return count;
+}
+
+/// The bytes of run `index` (SaveRuns): the journal's, or the tail's inline ones. False when neither has them
+template <typename ByteSource>
+bool RunBytes(const Reference& run, const Tail& tail, Tail::List bytesList, uint16_t owner, uint32_t index,
+              const ByteSource& bytes, std::vector<uint8_t>& out)
+{
+    if (run.source == 0)
+    {
+        const std::vector<uint8_t>* own = tail.Find(bytesList, owner, index);
+        if (!own || own->size() != run.length)
+            return false;
+        out = *own;
+        return true;
+    }
+    return bytes && bytes(run.source, run.sourceOffset, run.length, out) && out.size() == run.length;
+}
+
+/// Back from SaveRuns: the fixed runs (`count` of them, at most `max`), then the tail's whose index matches
+/// `indexBase` under `group` (several lists sharing one owner: EspPendingRun). Items are pushed as
+/// {value, source, offset}. False when some bytes were missing (the rest are loaded)
+template <typename ByteSource, typename Container>
+bool LoadRuns(const Reference* runs, uint32_t count, uint32_t max, const Tail& tail, Tail::List list,
+              Tail::List bytesList, uint16_t owner, const ByteSource& bytes, Container& out, uint32_t indexBase = 0,
+              uint32_t group = 0)
+{
+    bool complete = true;
+    std::vector<uint8_t> chunk;
+    auto load = [&](const Reference& run, uint32_t index) {
+        if (!RunBytes(run, tail, bytesList, owner, index, bytes, chunk))
+        {
+            complete = false;
+            return;
+        }
+        for (uint32_t i = 0; i < run.length; ++i)
+            out.push_back({chunk[i], run.source, run.source ? run.sourceOffset + i : 0});
+    };
+    const uint32_t fixed = count < max ? count : max;
+    for (uint32_t r = 0; r < fixed; ++r)
+        load(runs[r], indexBase + r);
+    if (count > max)
+        tail.ForEach(list, owner, [&](uint32_t index, const uint8_t* data, uint32_t size) {
+            if (size != sizeof(Reference) || (index & group) != (indexBase & group))
+                return;
+            Reference run;
+            std::memcpy(&run, data, sizeof(run));
+            load(run, index);
+        });
+    return complete;
+}
 
 }  // namespace netstate

@@ -5,7 +5,9 @@
 
 #include "_helpers/networksettings.h"
 
+#include <algorithm>
 #include <cstring>
+#include <deque>
 #include <memory>
 
 #include "base/featuremanager.h"
@@ -463,6 +465,28 @@ TEST_F(Atm2KbcSerial_Test, TtdBlobKeepsThePeer)
     serializer.TTDLoadState(blob.data());
     ASSERT_EQ(loop->Queue().size(), 1u);
     EXPECT_EQ(loop->Queue().front(), 0x77);
+}
+
+/// An echo queue longer than the blob's array (netstate::kMaxComBytes) comes back whole from the blob's tail
+TEST_F(Atm2KbcSerial_Test, TtdBlobKeepsAnEchoQueueLongerThanTheFixedArray)
+{
+    CreateWith({{"com_port", "loopback"}});
+    auto* loop = dynamic_cast<LoopbackPeer*>(_context->pMachineSerialPeer);
+    ASSERT_NE(loop, nullptr);
+    std::vector<uint8_t> queue(netstate::kMaxComBytes + 700);
+    for (size_t i = 0; i < queue.size(); ++i)
+        queue[i] = static_cast<uint8_t>(i * 11 + 2);
+    loop->SetQueue(queue.data(), queue.size());
+
+    ttd::TTDMachineSerialPeer serializer(_context);
+    std::vector<uint8_t> blob;
+    serializer.TTDSaveStateTo(blob);
+    EXPECT_GT(blob.size(), sizeof(netstate::Com)) << "the rest of the queue in the tail";
+    EXPECT_LE(blob.size(), serializer.TTDStateSize());
+    loop->Reset();
+    serializer.TTDLoadState(blob.data());
+    const std::deque<uint8_t>& back = loop->Queue();
+    EXPECT_TRUE(std::equal(back.begin(), back.end(), queue.begin(), queue.end())) << back.size() << " bytes came back";
 }
 
 TEST_F(Atm2KbcSerial_Test, AnEspModuleRateCanBeGiven)

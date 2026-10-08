@@ -245,7 +245,7 @@ void EspModule::OnFrame()
     Process();
 }
 
-bool EspModule::SaveState(netstate::EspModuleState& out) const
+void EspModule::SaveState(netstate::EspModuleState& out, netstate::Tail& tail) const
 {
     std::memset(&out, 0, sizeof(out));
     out.present = 1;
@@ -271,19 +271,24 @@ bool EspModule::SaveState(netstate::EspModuleState& out) const
                                             ((parity && *parity ? static_cast<uint8_t>(parity - kParities) : 0) << 2) |
                                             (_zxLine.stopBits == 2 ? 0x20 : 0));
     out.zxLineBaud = _zxLine.baud;
-    bool complete = true;
-    out.rxLength = static_cast<uint32_t>(std::min<size_t>(_rx.size(), netstate::kEspRxBytes));
-    std::copy(_rx.begin(), _rx.begin() + out.rxLength, out.rx);
-    complete = complete && _rx.size() <= static_cast<size_t>(netstate::kEspRxBytes);
-    out.outLength = static_cast<uint32_t>(std::min<size_t>(_out.size(), netstate::kEspOutBytes));
-    std::copy(_out.begin(), _out.begin() + out.outLength, out.out);
-    complete = complete && _out.size() <= static_cast<size_t>(netstate::kEspOutBytes);
+    // The buffers' first bytes in the fixed arrays, the rest in the tail
+    auto save = [&tail](const auto& data, uint8_t* fixed, size_t max, netstate::Tail::List list) {
+        const size_t n = std::min(data.size(), max);
+        std::copy(data.begin(), data.begin() + static_cast<std::ptrdiff_t>(n), fixed);
+        if (data.size() > max)
+        {
+            const std::vector<uint8_t> rest(data.begin() + static_cast<std::ptrdiff_t>(max), data.end());
+            tail.AddBytes(list, 0, 0, rest.data(), rest.size());
+        }
+        return static_cast<uint32_t>(n);
+    };
+    out.rxLength = save(_rx, out.rx, netstate::kEspRxBytes, netstate::Tail::List::EspRx);
+    out.outLength = save(_out, out.out, netstate::kEspOutBytes, netstate::Tail::List::EspOut);
     SaveFirmware(out);
-    complete = _stack->SaveState(out.stack) && complete;
-    return complete;
+    _stack->SaveState(out.stack, tail);
 }
 
-bool EspModule::LoadState(const netstate::EspModuleState& in, const EspStack::ByteSource& bytes)
+bool EspModule::LoadState(const netstate::EspModuleState& in, const netstate::Tail& tail, const EspStack::ByteSource& bytes)
 {
     if (!in.present)
         return false;
@@ -313,7 +318,11 @@ bool EspModule::LoadState(const netstate::EspModuleState& in, const EspStack::By
         _zxLine.stopBits = (in.zxLineFormat & 0x20) ? 2 : 1;
     }
     _rx.assign(in.rx, in.rx + std::min<uint32_t>(in.rxLength, netstate::kEspRxBytes));
+    if (const std::vector<uint8_t>* rest = tail.Find(netstate::Tail::List::EspRx, 0, 0))
+        _rx.insert(_rx.end(), rest->begin(), rest->end());
     _out.assign(in.out, in.out + std::min<uint32_t>(in.outLength, netstate::kEspOutBytes));
+    if (const std::vector<uint8_t>* rest = tail.Find(netstate::Tail::List::EspOut, 0, 0))
+        _out.insert(_out.end(), rest->begin(), rest->end());
     LoadFirmware(in);
-    return _stack->LoadState(in.stack, bytes);
+    return _stack->LoadState(in.stack, tail, bytes);
 }

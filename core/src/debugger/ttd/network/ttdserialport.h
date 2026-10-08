@@ -9,6 +9,9 @@
 /// The blob size is chosen when the recording starts (the port's set is fixed
 /// while TTD records): the full netstate::SerialPort with a peer, only the
 /// header and the UART without one (a ZX-Evo whose COM port is unconnected).
+/// With a peer the blob is variable: what the fixed arrays do not hold (a long
+/// echo queue, many received runs, received bytes the journal does not have)
+/// follows as a netstate::Tail, only when there is something in it.
 ///
 /// The same serializer saves any other 16550 + peer the machine has under its
 /// own id: the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector.
@@ -19,6 +22,7 @@
 
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/io/network/netstate.h"
+#include "emulator/io/network/netstatetail.h"
 
 class ComPort;
 class EmulatorContext;
@@ -34,7 +38,11 @@ public:
     /// Another 16550 + peer: `port` finds it at save / load time
     TTDSerialPort(EmulatorContext* context, std::function<ComPort*()> port, PeripheralId id, std::string name);
 
-    size_t TTDStateSize() const override { return _size; }
+    /// The largest blob: the fixed part and a tail
+    static constexpr size_t kMaxTailBytes = 16u << 20;
+    size_t TTDStateSize() const override { return HasPeer() ? _size + kMaxTailBytes : _size; }
+    bool TTDVariableSize() const override { return HasPeer(); }
+    void TTDSaveStateTo(std::vector<uint8_t>& out) const override;
     void TTDSaveState(uint8_t* dst) const override;
     void TTDLoadState(const uint8_t* src) override;
     std::string TTDDeviceName() const override { return _name; }
@@ -52,12 +60,15 @@ public:
     uint64_t TTDHashState() const override;
 
 private:
+    bool HasPeer() const { return _size == sizeof(netstate::SerialPort); }
+
     EmulatorContext* _context = nullptr;
     std::function<ComPort*()> _port;
     PeripheralId _id = PeripheralId::SerialPort;
     std::string _name = "SerialPort";
     size_t _size = netstate::kSerialPortShortSize;
     std::unique_ptr<netstate::SerialPort> _scratch;   ///< one buffer for save / load: no allocation per frame
+    mutable netstate::Tail _tail;                      ///< the same for the tail
 };
 
 }  // namespace ttd

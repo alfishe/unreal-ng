@@ -193,7 +193,7 @@ Ordered by severity. "Breaks replay" means a restore or a replay can give a stat
 | 13 | A media swap queued before recording can land mid-recording without a marker | | breaks replay |
 | 14 | *Fixed 2026-10-02:* ESP module `_zxLine` not restored, reapplied stale | | breaks replay |
 | 15 | ZX-Evo F12 soft reset reads the host clock | Not sealed | fixed 2026-10-07: the hold is measured in emulated time and is part of the EvoPs2 state (layout 2, 56 bytes) |
-| 16 | Edge cases (*NMI pending and +3 floating-bus byte fixed 2026-10-02; RZX playback position 2026-10-04*): disk autostart hook (fixed 2026-10-07: its rewrite is a recorded edit, a replay never runs the hook), network state marked "incomplete" with a warning only | | breaks replay, rare |
+| 16 | Edge cases (*NMI pending and +3 floating-bus byte fixed 2026-10-02; RZX playback position 2026-10-04*): disk autostart hook (fixed 2026-10-07: its rewrite is a recorded edit, a replay never runs the hook), network state marked "incomplete" with a warning only (fixed 2026-10-08: what the fixed arrays do not hold and bytes received before the recording go into a blob tail, `netstatetail.h`) | | closed |
 | 17 | Telemetry items stale after a seek (§5) | Wrong LEDs, state report, status bar | wrong UI |
 | 18 | `ttd.ksy:532` says NeoGS memory is in the blob | | documentation |
 

@@ -16,17 +16,34 @@ TTDMachineSerialPeer::TTDMachineSerialPeer(EmulatorContext* context)
 {
 }
 
-void TTDMachineSerialPeer::TTDSaveState(uint8_t* dst) const
+namespace
+{
+/// netstate::Com::reserved[0]: a tail follows (1 was "incomplete" before 2026-10-08, ignored)
+constexpr uint8_t kHasTail = 2;
+}  // namespace
+
+void TTDMachineSerialPeer::TTDSaveStateTo(std::vector<uint8_t>& out) const
 {
     netstate::Com& state = *_scratch;
     std::memset(&state, 0, sizeof(state));
+    _tail.Clear();
     if (_context && _context->pMachineSerialPeer)
     {
         state.present = 1;
-        if (!ComPort::SavePeer(_context->pMachineSerialPeer, state))
-            state.reserved[0] = 1;   // incomplete: did not fit the limits
+        ComPort::SavePeer(_context->pMachineSerialPeer, state, _tail);
     }
-    std::memcpy(dst, &state, sizeof(state));
+    state.reserved[0] = _tail.Empty() ? 0 : kHasTail;
+    const uint8_t* fixed = reinterpret_cast<const uint8_t*>(&state);
+    out.assign(fixed, fixed + sizeof(state));
+    if (!_tail.Empty())
+        _tail.AppendTo(out);
+}
+
+void TTDMachineSerialPeer::TTDSaveState(uint8_t* dst) const
+{
+    std::vector<uint8_t> blob;
+    TTDSaveStateTo(blob);
+    std::memcpy(dst, blob.data(), blob.size());
 }
 
 void TTDMachineSerialPeer::TTDLoadState(const uint8_t* src)
@@ -37,6 +54,8 @@ void TTDMachineSerialPeer::TTDLoadState(const uint8_t* src)
     std::memcpy(&state, src, sizeof(state));
     if (!state.present)
         return;
+    const netstate::Tail tail =
+        (state.reserved[0] & kHasTail) ? netstate::Tail::Read(src + sizeof(state)) : netstate::Tail();
     const ttd::TTDInputJournal* journal =
         _context->pTimeTravelHooks ? &_context->pTimeTravelHooks->InputJournal() : nullptr;
     ComPort::ByteSource bytes = [journal](uint32_t source, uint32_t offset, uint32_t length, std::vector<uint8_t>& out) {
@@ -51,13 +70,13 @@ void TTDMachineSerialPeer::TTDLoadState(const uint8_t* src)
         out.assign(payload + offset, payload + offset + length);
         return true;
     };
-    const bool complete = ComPort::LoadPeer(_context->pMachineSerialPeer, state, bytes) && !state.reserved[0];
+    const bool complete = ComPort::LoadPeer(_context->pMachineSerialPeer, state, tail, bytes);
     if (!complete && _context->pModuleLogger)
     {
         ModuleLogger* _logger = _context->pModuleLogger;
         const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_DEBUGGER;
         const uint16_t _SUBMODULE = 0x0000;
-        MLOGWARNING("TTDMachineSerialPeer: the serial peer was restored incompletely");
+        MLOGWARNING("TTDMachineSerialPeer: received bytes the checkpoint refers to are missing from the journal");
     }
 }
 

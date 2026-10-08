@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <deque>
 #include <memory>
 #include <vector>
 
@@ -266,9 +267,10 @@ TEST_F(ComPort_Test, TtdStateRestoresTheUartAndTheEchoQueue)
     ASSERT_EQ(_context->pComPort->Peer()->Pending(), 1u);
 
     ttd::TTDSerialPort serializer(_context);
-    ASSERT_EQ(serializer.TTDStateSize(), sizeof(netstate::SerialPort)) << "a peer: the full blob";
-    std::vector<uint8_t> blob(serializer.TTDStateSize());
-    serializer.TTDSaveState(blob.data());
+    EXPECT_TRUE(serializer.TTDVariableSize()) << "a peer: the full blob and a tail when one is needed";
+    std::vector<uint8_t> blob;
+    serializer.TTDSaveStateTo(blob);
+    ASSERT_EQ(blob.size(), sizeof(netstate::SerialPort)) << "a short echo queue fits: no tail";
 
     z80->out(0xFFEF, 0x99);
     z80->out(0xFCEF, 0x02);
@@ -279,6 +281,30 @@ TEST_F(ComPort_Test, TtdStateRestoresTheUartAndTheEchoQueue)
     EXPECT_EQ(_context->pComPort->Uart().GetView().scr, 0x33);
     EXPECT_EQ(_context->pComPort->Uart().GetView().mcr, 0x00);
     EXPECT_EQ(_context->pComPort->Peer()->Pending(), 1u) << "the echo queue came back";
+}
+
+/// An echo queue longer than the blob's array (netstate::kMaxComBytes) comes back whole from the tail
+TEST_F(ComPort_Test, TtdStateRestoresAnEchoQueueLongerThanTheFixedArray)
+{
+    Create("ATM3", 4096);
+    ASSERT_TRUE(Fit("loopback"));
+    auto* loop = dynamic_cast<LoopbackPeer*>(_context->pComPort->Peer());
+    ASSERT_NE(loop, nullptr);
+    std::vector<uint8_t> queue(netstate::kMaxComBytes + 1904);
+    for (size_t i = 0; i < queue.size(); ++i)
+        queue[i] = static_cast<uint8_t>(i * 7 + 1);
+    loop->SetQueue(queue.data(), queue.size());
+
+    ttd::TTDSerialPort serializer(_context);
+    std::vector<uint8_t> blob;
+    serializer.TTDSaveStateTo(blob);
+    EXPECT_GT(blob.size(), sizeof(netstate::SerialPort)) << "the rest of the queue in the tail";
+    EXPECT_LE(blob.size(), serializer.TTDStateSize());
+    loop->SetQueue(nullptr, 0);
+
+    serializer.TTDLoadState(blob.data());
+    const std::deque<uint8_t>& back = loop->Queue();
+    EXPECT_TRUE(std::equal(back.begin(), back.end(), queue.begin(), queue.end())) << back.size() << " bytes came back";
 }
 
 TEST_F(ComPort_Test, TtdKeepsAnUnconnectedEvoUartInAShortBlob)

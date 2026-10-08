@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "emulator/io/network/netstate.h"
+#include "emulator/io/network/netstatetail.h"
 #include "emulator/io/serial/serialpeer.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/serial/uart16550.h"
@@ -83,24 +84,24 @@ public:
     static SerialGuests SerialNetGuests(const EmulatorContext* context);
 
     /// TTD state (netstate::Com): UART registers, the echo queue by value,
-    /// bytes from the network by journal reference. False when something did
-    /// not fit the limits (saved as far as it goes)
-    bool SaveState(netstate::Com& out) const;
+    /// bytes from the network by journal reference. What the fixed arrays do
+    /// not hold, and received bytes the journal does not, go to `tail`
+    void SaveState(netstate::Com& out, netstate::Tail& tail) const;
 
     /// `bytes` resolves a journal reference (the W5300's ByteSource). False
     /// when some referenced bytes were missing
     using ByteSource = std::function<bool(uint32_t source, uint32_t offset, uint32_t length, std::vector<uint8_t>& out)>;
-    bool LoadState(const netstate::Com& in, const ByteSource& bytes);
+    bool LoadState(const netstate::Com& in, const netstate::Tail& tail, const ByteSource& bytes);
 
     /// A peer's part of netstate::Com (loopback queue, stream link and bytes,
     /// ESP module), shared with the ports that are no 16550 (ATM Turbo 2+
     /// keyboard controller)
-    static bool SavePeer(const ISerialPeer* peer, netstate::Com& out);
-    static bool LoadPeer(ISerialPeer* peer, const netstate::Com& in, const ByteSource& bytes);
+    static void SavePeer(const ISerialPeer* peer, netstate::Com& out, netstate::Tail& tail);
+    static bool LoadPeer(ISerialPeer* peer, const netstate::Com& in, const netstate::Tail& tail, const ByteSource& bytes);
     /// A stream link's part (phase, sockets, received bytes by reference, unsent bytes): a stream peer's, the
     /// Hayes modem's call
-    static bool SaveStream(const StreamPeer& stream, netstate::Com& out);
-    static bool LoadStream(StreamPeer& stream, const netstate::Com& in, const ByteSource& bytes);
+    static void SaveStream(const StreamPeer& stream, netstate::Com& out, netstate::Tail& tail);
+    static bool LoadStream(StreamPeer& stream, const netstate::Com& in, const netstate::Tail& tail, const ByteSource& bytes);
 
 private:
     void AddAccessWait(uint8_t reg, bool read);
