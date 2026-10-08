@@ -29,6 +29,7 @@ contributors) as the format reference; no MAME source is vendored.
 | ymfm @ 81aec25c (with local TTD patch and the CSM key-on fix ported from Furnace, see `PATCHES.md` there) | `core/src/3rdparty/ymfm/` | BSD-3-Clause | static |
 | unreal-z80 0.5.0 @ a0433ec (General Sound coprocessor core; see `README.md` there) | `core/src/3rdparty/unreal-z80/` | MIT | static |
 | z84c15, a fork of unreal-z80 0.5.0 @ a0433ec (the Sprinter's Zilog Z84C15 CPU; local changes in `README.md` there) | `core/src/3rdparty/z84c15/` | MIT | static |
+| unreal-next-z80, the ZX Spectrum Next's Z80N CPU: a fork of the z84c15 core (unreal-z80 0.5.0 @ a0433ec) without the chip; local changes in `README.md` there | `core/src/3rdparty/unreal-next-z80/` | MIT | static |
 | lodepng 20200306 | `core/src/3rdparty/lodepng/` | zlib | static |
 | miniz 3.1.2 (zlib streams of SZX snapshots, the CHD `zlib` codec; see `CMakeLists.txt` there) | `core/src/3rdparty/miniz/` | MIT | static |
 | digestpp | `core/src/3rdparty/digestpp/` | Public domain | header |

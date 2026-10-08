@@ -7,6 +7,12 @@ ZX Spectrum Next (`NEXT`): design only, written 2026-10-07. Plan: [phases.md](ph
 - [x] Design documents: requirements, architecture, core, CPU, peripherals, video timing, boot, media/snapshots, TTD, automation, tests, roms, research
 - [x] Opcode, register and port tables read from MAME and ZXSpectrumNextTests
 
+## N1 status (2026-10-08)
+- [x] Library `core/src/3rdparty/unreal-next-z80/` (fork script, README, CMake glob, notices row); tests in `core/tests/3rdparty/unreal-next-z80/`
+- [ ] The V1 `Z80N` / `Z80Nc2` real-board programs on a bare host (acceptance), the FUSE vectors green in core-tests, A/B benchmark of a non-Next machine (must show zero)
+- [ ] Debugger disassembler and `unreal-asm` ZXN mode (Q10: in N1)
+- [ ] The engine adapter `Z80NEngine` (N2)
+
 ## Remaining
 - [x] Verification program: public suites collected and graded ([verification-program.md](verification-program.md)); esxDOS source availability checked ([esxdos-and-sd.md](esxdos-and-sd.md) section 1a)
 - [x] N0 second pass (2026-10-08): ULA / Timex / ULA+ / ULAnext, LoRes, palettes and the layer compositor, audio (AY x 3, DAC, mixer), CTC, UART, SPI, DivMMC, keyboard, ZEsarUX comparison: [research-fpga-vhdl.md](research-fpga-vhdl.md) sections 16-22; [esxdos-and-sd.md](esxdos-and-sd.md); [design-integration.md](design-integration.md)

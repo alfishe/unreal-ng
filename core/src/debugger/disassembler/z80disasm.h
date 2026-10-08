@@ -141,6 +141,7 @@ constexpr uint32_t OF_IO = (1UL << 17);             // I/O operations (IN, OUT)
 constexpr uint32_t OF_INTERRUPT = (1UL << 18);      // Interrupt-related (EI, DI, IM)
 constexpr uint32_t OF_DJNZ = (1UL << 19);           // DJNZ instruction
 constexpr uint32_t OF_INDIRECT = (1UL << 20);       // Command uses indirect addressing (via one register pairs)
+constexpr uint32_t OF_BIGENDIAN = (1UL << 21);      // Word operand is stored high byte first (Z80N PUSH nn)
 
 namespace OpFlags
 {
@@ -291,6 +292,8 @@ protected:
     static OpCode cbOpcodes[256];
     static OpCode ddOpcodes[256];
     static OpCode edOpcodes[256];
+    static const std::pair<uint8_t, OpCode> z80nOpcodes[];   // Z80N ED-prefixed additions, used when _z80nMode is on
+    static const size_t z80nOpcodesCount;
     static OpCode fdOpcodes[256];
     static OpCode ddcbOpcodes[256];
     static OpCode fdcbOpcodes[256];
@@ -305,6 +308,7 @@ protected:
 protected:
     ModuleLogger* _logger;
     EmulatorContext* _context;
+    bool _z80nMode = false;     // decode the ZX Spectrum Next (Z80N) ED-prefixed extensions
     /// endregion </Fields>
 
 public:
@@ -312,6 +316,10 @@ public:
     virtual ~Z80Disassembler() = default;
 
     void SetLogger(ModuleLogger* logger) { _logger = logger; }
+
+    /// Enables the Z80N (ZX Spectrum Next) extended instructions; off by default so plain Z80 listings do not change
+    void SetZ80nMode(bool enabled) { _z80nMode = enabled; }
+    bool IsZ80nMode() const { return _z80nMode; }
     
     std::string disassembleSingleCommand(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
     std::string disassembleSingleCommandWithRuntime(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);
