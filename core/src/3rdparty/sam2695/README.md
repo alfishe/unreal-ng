@@ -351,6 +351,20 @@ datasheet's power-up values). Everything runs at the internal rate inside the co
   model uses it). The NRPN 375Fh voice accounting is the chip's in both modes (`Render.Modes`).
 - **Denormals.** Every value written into a feedback path passes (x + 1e-20) - 1e-20, which rounds anything
   below ~1e-27 to zero: no denormal circulates, on any CPU, deterministically.
+- **Idle effects.** An effect whose whole state is +0.0 (every bit clear: delay lines, filter memory) and whose
+  input block is all +0.0 computes +0.0 everywhere, so the block is skipped: only its write positions and LFO
+  phase move, by the n samples processing would have taken. Output and state are bit-identical to processing
+  (`SynthConfig::skipIdleEffects = false` processes every block; `Fx.IdleEffects*` render both ways and compare
+  every output bit and the state blob). Idle is derived, never serialized: true after power-up, a reset, an
+  effect switched off or a new reverb character (all clear the state) and after a load whose state is all
+  +0.0; the reverb, chorus and spatial line become idle again after a run of +0.0 writes as long as the line,
+  the equalizer when its filter memory is +0.0. `Describe()` reports the flags and the skipped blocks. In
+  practice the effects are idle until the first note with a send (the MultiSound card at rest) and after a
+  reset. A tail does not always end in exact zeros: the delay reverbs (6, 7), the chorus programs 0-4 and 6
+  and the spatial line do (after a 0.2 s note at full sends: delay 3.8 s, pan delay 36 s, chorus 1 0.3 s,
+  feedback chorus 3.2 s); the tank reverbs (0-5), the flanger and feedback delay (chorus 5, 7) and the equalizer settle into a
+  limit cycle of the denormal guard's quantum (about 1e-27 in float, 1e-215 in double, 2e-27 at the output,
+  -530 dBFS) and keep running.
 - **Cost.** GeneralUser GS through the corpus GM test file: 25 s of audio in 474 ms with the effects, 426 ms dry
   (Apple M-series, one core).
 - **Not modeled:** the microphone input and its echo (MICIN is grounded on the MultiSound; their voice cost is).

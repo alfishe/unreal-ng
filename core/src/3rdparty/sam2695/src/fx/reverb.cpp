@@ -110,6 +110,7 @@ void Reverb::Layout(uint8_t character)
             place(_tank[i], Scaled(kTank[i], scale) + 1 + ((i == Ap1 || i == Ap3) ? exc : 0));
         _echo.fill(DelayLine{});
     }
+    _longestLine = LongestLine();
     Clear();
 }
 
@@ -120,6 +121,8 @@ void Reverb::Clear()
     _damp.fill(0.0f);
     _echoDamp.fill(0.0f);
     _lfoPhase = 0;
+    _idle = true;
+    _zeroRun = _longestLine;
 }
 
 void Reverb::Update(const FxParams& p)
@@ -184,6 +187,84 @@ void Reverb::Sanitize(const FxParams& p)
     if (!ok)
         _layoutCharacter = 0xFF; // the next Update lays out again and clears
     Update(p);
+    // idle is derived: a loaded tail is not, a loaded silence is
+    _longestLine = LongestLine();
+    _idle = FiltersZero() && LinesZero();
+    _zeroRun = _idle ? _longestLine : 0;
+}
+
+uint32_t Reverb::LongestLine() const
+{
+    // the other layout's lines are size 1
+    uint32_t longest = std::max({_predelay.size, _diffuser[0].size, _diffuser[1].size, _diffuser[2].size, _diffuser[3].size,
+                                 _echo[0].size, _echo[1].size});
+    for (const DelayLine& l : _tank)
+        longest = std::max(longest, l.size);
+    return longest;
+}
+
+bool Reverb::FiltersZero() const
+{
+    return AllPositiveZero(&_bandState, 1) && AllPositiveZero(_damp.data(), 2) && AllPositiveZero(_echoDamp.data(), 2);
+}
+
+bool Reverb::LinesZero() const
+{
+    const float* pool = _pool.data();
+    if (_layoutCharacter >= 6)
+        return _echo[0].AllZero(pool) && _echo[1].AllZero(pool);
+    bool zero = _predelay.AllZero(pool);
+    for (const DelayLine& l : _diffuser)
+        zero = zero && l.AllZero(pool);
+    for (const DelayLine& l : _tank)
+        zero = zero && l.AllZero(pool);
+    return zero;
+}
+
+void Reverb::TrackIdle(const float* in, uint32_t n)
+{
+    // A block counts toward idle when its send, its writes and the filter states are +0.0; once the run
+    // covers the longest line every written line holds only +0.0, and a scan of the whole layout (the
+    // delay program's right line is not written) confirms it.
+    const float* pool = _pool.data();
+    bool zero = AllPositiveZero(in, n) && FiltersZero();
+    if (zero && _echoMode)
+        zero = _echo[0].RecentZero(pool, n) && (!_panEcho || _echo[1].RecentZero(pool, n));
+    else if (zero)
+    {
+        zero = _predelay.RecentZero(pool, n);
+        for (const DelayLine& l : _diffuser)
+            zero = zero && l.RecentZero(pool, n);
+        for (const DelayLine& l : _tank)
+            zero = zero && l.RecentZero(pool, n);
+    }
+    if (!zero)
+    {
+        _idle = false;
+        _zeroRun = 0;
+        return;
+    }
+    const uint32_t before = _zeroRun;
+    _zeroRun = std::min(_zeroRun + n, _longestLine);
+    if (before < _longestLine && _zeroRun == _longestLine)
+        _idle = LinesZero();
+}
+
+void Reverb::Skip(uint32_t n)
+{
+    if (_echoMode)
+    {
+        _echo[0].Advance(n);
+        if (_panEcho)
+            _echo[1].Advance(n);
+        return;
+    }
+    _predelay.Advance(n);
+    for (DelayLine& l : _diffuser)
+        l.Advance(n);
+    for (DelayLine& l : _tank)
+        l.Advance(n);
+    _lfoPhase += n * _lfoIncrement; // wraps as n single increments do
 }
 
 void Reverb::Process(const float* in, float* outL, float* outR, uint32_t n)
@@ -213,6 +294,7 @@ void Reverb::Process(const float* in, float* outL, float* outR, uint32_t n)
                 outR[i] += _level * yl;
             }
         }
+        TrackIdle(in, n);
         return;
     }
     const float gain = 0.6f * _level;
@@ -256,6 +338,7 @@ void Reverb::Process(const float* in, float* outL, float* outR, uint32_t n)
         outL[i] += gain * y[0];
         outR[i] += gain * y[1];
     }
+    TrackIdle(in, n);
 }
 
 } // namespace sam2695

@@ -1,6 +1,7 @@
 // libsam2695 tests - the effects block (SAM-4): reverb and chorus programs and parameters, the spatial
 // effect, the equalizer, post-effects routing, sends and their scaling, the output stage (clipping,
-// codec gain), the effects word as the effects' switch, and the effects' state in the blob.
+// codec gain), the effects word as the effects' switch, the effects' state in the blob, and the idle
+// effects (skipped blocks bit-identical to processed ones).
 //
 // The wet signal of an effect is taken as the difference of two renders that differ only in the send
 // (the chip path is linear below the soft-clip knee), so each test sees exactly what the effect adds.
@@ -10,6 +11,7 @@
 #include "testfw.h"
 
 #include <cmath>
+#include <cstring>
 #include <functional>
 
 using namespace sam2695;
@@ -583,4 +585,196 @@ TEST(Render, Modes)
     }
     CHECK(dry->out == chip->out);
     CHECK(dry->PeakL(0, 8000) > 0.1);
+}
+
+// ---- idle effects ----
+
+namespace
+{
+
+// One script on two chips: `skip` skips the idle effects (the default), `full` processes every block
+struct IdlePair
+{
+    std::unique_ptr<TestSynth> skip, full;
+
+    explicit IdlePair(const std::shared_ptr<const ISoundBank>& bank)
+    {
+        SynthConfig c;
+        skip = std::make_unique<TestSynth>(bank, c, true);
+        c.skipIdleEffects = false;
+        full = std::make_unique<TestSynth>(bank, c, true);
+    }
+    void Send(uint64_t t, std::initializer_list<int> bytes)
+    {
+        skip->Send(t, bytes);
+        full->Send(t, bytes);
+    }
+    void Nrpn(uint64_t t, int msb, int lsb, int value)
+    {
+        skip->Nrpn(t, 0, msb, lsb, value);
+        full->Nrpn(t, 0, msb, lsb, value);
+    }
+    void RunTo(uint64_t t)
+    {
+        skip->RunTo(t);
+        full->RunTo(t);
+    }
+    // every output bit and the whole state blob
+    bool Same() const
+    {
+        return skip->out.size() == full->out.size() &&
+               std::memcmp(skip->out.data(), full->out.data(), skip->out.size() * sizeof(float)) == 0 &&
+               Save(skip->synth) == Save(full->synth);
+    }
+    SynthReport R() const { return Report(*skip); }
+};
+
+bool AllIdle(const SynthReport& r)
+{
+    return r.reverbIdle && r.chorusIdle && r.spatialIdle && r.equalizerIdle;
+}
+
+// The delay reverb (6) and chorus 1 (0): tails that reach exact +0.0 within seconds (the tank
+// programs and the equalizer settle into a limit cycle at the denormal guard's quantum instead)
+void DyingTail(IdlePair& p)
+{
+    p.Send(0, {0xB0, 80, 6, 0xB0, 81, 0, 0xB0, 91, 127, 0xB0, 93, 127, 0x90, 69, 100});
+    p.Send(7500, {0x80, 69, 0});
+}
+
+} // namespace
+
+TEST(Fx, IdleEffectsSilence)
+{
+    // nothing played: every effect is idle from power-up and skips every block; output and state are
+    // those of processing every block
+    IdlePair p(BasicBank());
+    p.RunTo(37500);
+    CHECK(p.Same());
+    CHECK(AllIdle(p.R()));
+    CHECK_EQ_I(p.R().idleEffectBlocks, 4 * p.skip->Frames() / kControlBlock); // reverb, chorus, spatial, EQ
+    CHECK_EQ_I(Report(*p.full).idleEffectBlocks, 0);
+    CHECK_EQ_I(p.skip->PeakL(0, p.skip->Frames()), 0);
+}
+
+TEST(Fx, IdleEffectsTailOut)
+{
+    // a note through the delay reverb and chorus 1, then silence until their tails are exact zeros:
+    // they go idle and skip; the equalizer keeps its limit cycle and keeps running
+    IdlePair p(BasicBank());
+    DyingTail(p);
+    p.RunTo(150000);
+    const uint64_t at4s = p.R().idleEffectBlocks;
+    p.RunTo(187500);
+    CHECK(p.Same());
+    SynthReport r = p.R();
+    CHECK(r.reverbIdle && r.chorusIdle && r.spatialIdle);
+    CHECK(!r.equalizerIdle);
+    CHECK(r.idleEffectBlocks >= at4s + 3 * (37500 / kControlBlock)); // the last second: three effects skipped
+    CHECK(p.skip->RmsL(7500, 30000) > 1e-4);                         // there was a tail
+
+    // the default hall never reaches exact zero: it runs, identically
+    IdlePair hall(BasicBank());
+    hall.Send(0, {0xB0, 91, 127, 0xB0, 93, 127, 0x90, 69, 100});
+    hall.Send(7500, {0x80, 69, 0});
+    hall.RunTo(112500);
+    CHECK(hall.Same());
+    CHECK(!hall.R().reverbIdle);
+}
+
+TEST(Fx, IdleEffectsSettingChanges)
+{
+    // sends, programs, the effects word, post routing and resets while idle and in the middle of tails
+    IdlePair p(BasicBank());
+    p.Send(0, {0xB0, 80, 6, 0xB0, 81, 0});            // new reverb layout while idle
+    p.Send(3750, {0xB0, 91, 127, 0xB0, 93, 127});     // sends without a note: still idle
+    p.Send(7500, {0x90, 69, 100});
+    p.Send(11250, {0x80, 69, 0});
+    p.Send(15000, {0xB0, 91, 0});                     // send change mid-tail
+    p.Send(18750, {0xB0, 81, 3});                     // chorus program mid-tail
+    p.Nrpn(22500, 0x37, 0x5F, 0x18);                  // reverb and EQ off: they lose their tails
+    p.Nrpn(26250, 0x37, 0x5F, 0x3B);
+    p.Send(30000, {0xF0, 0x41, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7F, 0x00, 0x41, 0xF7}); // GS reset
+    p.Send(33750, {0xB0, 80, 6, 0xB0, 91, 127, 0x90, 64, 110});
+    p.Send(37500, {0x80, 64, 0});
+    p.Send(45000, {0xB0, 80, 7});                     // pan delay mid-tail: a new layout
+    p.Send(48750, {0x90, 72, 100});
+    p.Send(52500, {0x80, 72, 0});
+    p.Nrpn(60000, 0x37, 0x18, 0x00);                  // GM bus around the post effects
+    p.Nrpn(60000, 0x37, 0x1A, 0x00);                  // returns around the post effects
+    p.Send(63750, {0x90, 60, 100});
+    p.Send(67500, {0x80, 60, 0, 0xF0, 0x7E, 0x7F, 0x09, 0x01, 0xF7}); // GM reset mid-tail
+    p.Send(75000, {0xB0, 91, 127, 0x90, 62, 100});
+    p.Send(78750, {0x80, 62, 0});
+    p.Send(90000, {0xFF});                            // MIDI reset: power-up condition, every effect cleared
+    for (uint64_t t = 7500; t <= 120000; t += 7500)
+    {
+        p.RunTo(t);
+        CHECK(p.Same());
+    }
+    CHECK(AllIdle(p.R()));
+    CHECK(p.R().idleEffectBlocks > 0);
+    CHECK(p.skip->RmsL(33750, 45000) > 1e-4);
+}
+
+TEST(Fx, IdleEffectsAcrossState)
+{
+    // a blob saved in the middle of a tail and one saved while idle: loaded into fresh chips (idle
+    // from power-up: no stale flag may survive the load) that skip and that do not, both continue
+    // exactly as the chip that saved them
+    std::shared_ptr<const ISoundBank> bank = BasicBank();
+    IdlePair a(bank);
+    DyingTail(a);
+    a.RunTo(15000);
+    const std::vector<uint8_t> tail = Save(a.skip->synth);
+    const SynthReport tailReport = a.R();
+    CHECK(!tailReport.reverbIdle);
+    a.RunTo(187500);
+    const std::vector<uint8_t> idle = Save(a.skip->synth);
+    const SynthReport idleReport = a.R();
+    CHECK(idleReport.reverbIdle && idleReport.chorusIdle && idleReport.spatialIdle);
+    a.Send(195000, {0x90, 67, 100});
+    a.Send(198750, {0x80, 67, 0});
+    a.RunTo(262500);
+    CHECK(a.Same());
+    for (const std::vector<uint8_t>* blob : {&tail, &idle})
+    {
+        IdlePair b(bank);
+        b.RunTo(3750); // idle chips
+        CHECK(b.skip->synth.LoadState(blob->data(), blob->size()));
+        CHECK(b.full->synth.LoadState(blob->data(), blob->size()));
+        // idle is derived from the loaded state: the saving chip's flags
+        const SynthReport& saved = blob == &idle ? idleReport : tailReport;
+        CHECK(b.R().reverbIdle == saved.reverbIdle && b.R().chorusIdle == saved.chorusIdle);
+        CHECK(b.R().spatialIdle == saved.spatialIdle && b.R().equalizerIdle == saved.equalizerIdle);
+        b.skip->out.clear();
+        b.full->out.clear();
+        const size_t from = b.skip->synth.InternalPosition();
+        b.Send(195000, {0x90, 67, 100});
+        b.Send(198750, {0x80, 67, 0});
+        b.RunTo(262500);
+        CHECK(b.Same());
+        CHECK(b.skip->out.size() == a.skip->out.size() - from * 2);
+        CHECK(std::memcmp(b.skip->out.data(), a.skip->out.data() + from * 2, b.skip->out.size() * sizeof(float)) == 0);
+        CHECK(Save(b.skip->synth) == Save(a.skip->synth));
+    }
+}
+
+TEST(Fx, IdleEqualizerTakesTheSpatialTail)
+{
+    // the equalizer's input is the post bus after the spatial effect: a silent GM bus with a spatial
+    // tail still runs a freshly cleared (idle) equalizer
+    IdlePair p(BasicBank());
+    p.Nrpn(0, 0x37, 0x5F, 0x0B);  // spatial + 4-band EQ
+    p.Nrpn(0, 0x37, 0x20, 0x7F);  // spatial volume
+    p.Nrpn(0, 0x37, 0x2C, 0x7F);  // the longest spatial delay (19 ms)
+    p.Nrpn(0, 0x37, 0x2D, 0x7F);  // mono input (L + R): a centered note feeds it
+    p.Send(0, {0x90, 69, 127});
+    p.Send(3750, {0xB0, 120, 0}); // All Sound Off
+    p.Nrpn(4000, 0x37, 0x5F, 0x08);
+    p.Nrpn(4000, 0x37, 0x5F, 0x0B); // the EQ cleared while the spatial line still rings
+    p.RunTo(7500);
+    CHECK(p.Same());
+    CHECK(p.R().spatialIdle && !p.R().equalizerIdle); // the tail left the EQ in its limit cycle
+    CHECK(p.skip->PeakL(4032, 4500) > 1e-4);
 }

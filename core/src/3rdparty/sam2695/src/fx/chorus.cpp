@@ -42,6 +42,8 @@ void Chorus::Clear()
     std::fill(_pool.begin(), _pool.end(), 0.0f);
     _line.pos = 0;
     _lfoPhase = 0;
+    _idle = true;
+    _zeroRun = _line.size;
 }
 
 void Chorus::Update(const FxParams& p)
@@ -62,6 +64,14 @@ void Chorus::Sanitize(const FxParams& p)
         Clear();
     }
     Update(p);
+    _idle = _line.AllZero(_pool.data());
+    _zeroRun = _idle ? _line.size : 0;
+}
+
+void Chorus::Skip(uint32_t n)
+{
+    _line.Advance(n);
+    _lfoPhase += n * _lfoIncrement; // wraps as n single increments do
 }
 
 void Chorus::Process(const float* in, float* outL, float* outR, uint32_t n)
@@ -78,6 +88,9 @@ void Chorus::Process(const float* in, float* outL, float* outR, uint32_t n)
         outL[i] += _level * yl;
         outR[i] += _level * yr;
     }
+    // idle once the line has taken a run of +0.0 as long as itself (the input is written into it)
+    _zeroRun = _line.RecentZero(pool, n) ? std::min(_zeroRun + n, _line.size) : 0;
+    _idle = _zeroRun == _line.size;
 }
 
 // ---- spatial effect ----
@@ -92,6 +105,8 @@ void Spatial::Clear()
 {
     std::fill(_pool.begin(), _pool.end(), 0.0f);
     _line.pos = 0;
+    _idle = true;
+    _zeroRun = _line.size;
 }
 
 void Spatial::Update(const FxParams& p)
@@ -110,6 +125,8 @@ void Spatial::Sanitize(const FxParams& p)
         Clear();
     }
     Update(p);
+    _idle = _line.AllZero(_pool.data());
+    _zeroRun = _idle ? _line.size : 0;
 }
 
 void Spatial::Process(float* left, float* right, uint32_t n)
@@ -122,6 +139,8 @@ void Spatial::Process(float* left, float* right, uint32_t n)
         left[i] += d;
         right[i] -= d;
     }
+    _zeroRun = _line.RecentZero(pool, n) ? std::min(_zeroRun + n, _line.size) : 0;
+    _idle = _zeroRun == _line.size;
 }
 
 // ---- equalizer ----
@@ -141,6 +160,18 @@ double Equalizer::BandGainDb(uint8_t value)
 void Equalizer::Clear()
 {
     _state.fill(0.0);
+}
+
+bool Equalizer::Idle(bool fourBand) const
+{
+    // [channel][band][s1, s2]: the shelves are bands 0 and 3, the peaking bands 1 and 2
+    for (int ch = 0; ch < 2; ch++)
+    {
+        const double* st = &_state[ch * 8];
+        if (!AllPositiveZero(st, 2) || !AllPositiveZero(st + 6, 2) || (fourBand && !AllPositiveZero(st + 2, 4)))
+            return false;
+    }
+    return true;
 }
 
 void Equalizer::Update(const FxParams& p)

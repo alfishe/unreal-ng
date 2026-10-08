@@ -1,5 +1,5 @@
 // libsam2695 - DSP building blocks of the effects: delay lines over a shared pool, an exact
-// polynomial sine for the modulation LFOs, a biquad, the denormal guard.
+// polynomial sine for the modulation LFOs, a biquad, the denormal guard, the idle test.
 //
 // Every element keeps its whole state in plain members (indices, floats) so the effects serialize
 // with the chip: a TTD restore continues a reverb tail sample for sample.
@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 
 namespace sam2695
 {
@@ -21,6 +22,33 @@ inline float Flush(float x)
 inline double Flush(double x)
 {
     return (x + 1e-200) - 1e-200;
+}
+
+// The idle test of the effects: every value is +0.0 (all bits clear; -0.0 does not count). An effect
+// whose state is all +0.0 and whose input block is all +0.0 computes +0.0 everywhere - every product
+// and sum of +0.0 operands with the effects' coefficients is +0.0, Flush() of it too - so skipping the
+// block leaves the very bits processing it would (README "Idle effects").
+inline bool AllPositiveZero(const float* p, uint32_t n)
+{
+    uint32_t acc = 0;
+    for (uint32_t i = 0; i < n; i++)
+    {
+        uint32_t bits;
+        std::memcpy(&bits, p + i, sizeof bits);
+        acc |= bits;
+    }
+    return acc == 0;
+}
+inline bool AllPositiveZero(const double* p, uint32_t n)
+{
+    uint64_t acc = 0;
+    for (uint32_t i = 0; i < n; i++)
+    {
+        uint64_t bits;
+        std::memcpy(&bits, p + i, sizeof bits);
+        acc |= bits;
+    }
+    return acc == 0;
 }
 
 // A circular delay line living in a slice [base, base + size) of a float pool. Read(d) returns the
@@ -64,6 +92,19 @@ struct DelayLine
         pool[base + pos] = v;
         if (++pos == size)
             pos = 0;
+    }
+
+    // n writes of an idle block: only the position moves (the line holds +0.0 and receives +0.0)
+    void Advance(uint32_t n) { pos = static_cast<uint32_t>((static_cast<uint64_t>(pos) + n) % size); }
+
+    // The whole line, or the last n values written (n <= size), are +0.0
+    bool AllZero(const float* pool) const { return AllPositiveZero(pool + base, size); }
+    bool RecentZero(const float* pool, uint32_t n) const
+    {
+        n = n < size ? n : size;
+        if (pos >= n)
+            return AllPositiveZero(pool + base + pos - n, n);
+        return AllPositiveZero(pool + base, pos) && AllPositiveZero(pool + base + size - (n - pos), n - pos);
     }
 
     // Schroeder all-pass of delay d and gain g on the line: y = (g + z^-d) / (1 + g z^-d) x
