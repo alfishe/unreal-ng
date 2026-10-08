@@ -173,6 +173,12 @@ set_source_files_properties(${UNREAL_Z80_FILES} PROPERTIES SKIP_PRECOMPILE_HEADE
 file (GLOB Z84C15_FILES ${SOURCE_DIR}/3rdparty/z84c15/*.cpp)
 set_source_files_properties(${Z84C15_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
+# unreal-next-z80 (the ZX Spectrum Next's Z80N CPU library: a fork of the z84c15 core without the chip, plus the
+# Z80N instructions): the same treatment; namespace Z80nLib, C API prefix Z80nCpu
+# (see 3rdparty/unreal-next-z80/README.md)
+file (GLOB UNREAL_NEXT_Z80_FILES ${SOURCE_DIR}/3rdparty/unreal-next-z80/*.cpp)
+set_source_files_properties(${UNREAL_NEXT_Z80_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+
 # rapidyaml (single-header YAML / JSON parser): its definitions compile in one
 # translation unit, ryml_impl.cpp. The vendored code is not warning-clean under
 # -Wall -Wextra -Werror and must not be force-fed stdafx.h

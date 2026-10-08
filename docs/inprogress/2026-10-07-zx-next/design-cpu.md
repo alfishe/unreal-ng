@@ -10,7 +10,7 @@ little as possible. **The base Z80 and the native interpreter are not touched.**
 
 | Item | Rule |
 |:--|:--|
-| Origin | a fork of `core/src/3rdparty/unreal-z80/` (library 0.5.0, MIT), flat like the original; its own `README.md` listing every local change and a row in `THIRD_PARTY_NOTICES.md` |
+| Origin | a fork of the **z84c15 core** (`core/src/3rdparty/z84c15/`, itself unreal-z80 0.5.0, MIT) without the chip, so the interface is the one the Sprinter adapter already uses; flat like the originals; its own `README.md` listing every local change and a row in `THIRD_PARTY_NOTICES.md`. **Implemented 2026-10-08** (first pass: all 29 instructions of the table, NEXTREG callback, stackless NMI; 29 + the core tests) |
 | Renames | C API prefix `Z80n` (`Z80nCpu*`, type `Z80nCPU`), private namespace `Z80nLib`, files `z80n*`, so it links beside unreal-z80 (GS card), z84c15 and the native core with no symbol clash (the z84c15 README table is the checklist) |
 | Bus | callback bus only: the host owns memory (slot table, overlays, DMA, contention) |
 | New | the `ED`-page extension in `opcodes-ed.inc`: the entries of research-z80n.md; callbacks `Z80nCpuSetNextRegWrite(reg, value)` and `Z80nCpuSetNextRegRead(reg)` for `NEXTREG` (no port cycle: the hook is called, the host does not see an `OUT`), and `Z80nCpuSetStacklessNmi(bool)` + a `RETN`-seen callback for NR `#C0` bit 3 (MAME has the same two) |

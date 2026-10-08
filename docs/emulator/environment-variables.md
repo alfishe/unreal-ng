@@ -111,6 +111,7 @@ CMake reads a few standard variables while configuring: `VCPKG_ROOT` (Windows de
 | `UNREAL_SPRINTER_ZX_BIOS` | path to a BIOS image (the repository's 3.06) | Another BIOS for the Sprinter ZX-mode session tests (exploration). | `core/tests/emulator/machines/sprinter/sprinterzxsession.h:156` |
 | `UNREAL_SPRINTER_ZX_FULLSTART` | set / unset (fast start) | Runs the Sprinter's full firmware start in the ZX-mode tests. | `sprinterzxsession.h:173` |
 | `UNREAL_SPRINTER_NGS_FLASH` | path to a NeoGS flash image (built-in) | Uses another NeoGS firmware in the ProPlay sound tests (comparison with MAME). | `core/tests/emulator/machines/sprinter/sprintergeneralsound_test.cpp:314` |
+| `UNREAL_NEXT_TESTS` | a ZXSpectrumNextTests folder with `release/!Z80N.snx` and `release/!Z80Nc2.snx` (tests skipped) | Real-board acceptance of the Z80N CPU library: runs the two programs (checked on real boards) on a bare host and expects no `ERR` result. Sub-second. | `core/tests/3rdparty/unreal-next-z80/z80nrealboard_test.cpp` |
 | `UNREAL_CHDMAN` | path to MAME's `chdman` (skipped) | Checks that `chdman` accepts the CHD files we write. | `core/tests/emulator/io/storage/chd/chdwriter_test.cpp:228` ([`chd.md`](../file-formats/disk-images/chd.md)) |
 | `COEMU_OUT`, `COEMU_PROGRAM`, `COEMU_MACHINES`, `COEMU_MAX_FRAMES` | out folder, program base path, machine list (`48k`), frames (60000) | The co-emulation runner test; skipped without the first two. Set by `tools/verification/coemu/unreal-ng/run.sh`. | `core/tests/emulator/coemurunner_test.cpp:85` |
 
