@@ -1443,7 +1443,8 @@ void TimeTravelController::EndSessionImpl(const char* reason, bool keepHistory)
         InvalidateSession(reason);
     _lastStopReason = keepHistory ? reason : "machine-change";
     _blackBoxSuspended = false;
-    _restartPending = (blackBoxRecorded && BackgroundWanted()) || (wasRecording && RestartFeatureOn());
+    // A second end before the restart (a disk autostart: the disk load, then its reset) keeps it due
+    _restartPending = _restartPending || (blackBoxRecorded && BackgroundWanted()) || (wasRecording && RestartFeatureOn());
     if (_restartPending)
         MLOGINFO("TimeTravelController: '%s' ended the session; a new one starts at the next frame", reason);
 }

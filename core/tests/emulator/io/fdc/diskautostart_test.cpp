@@ -14,6 +14,8 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/memory.h"
 #include "loaders/disk/loader_trd.h"
+#include "base/featuremanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 
 #include <cstdio>
 #include <fstream>
@@ -523,4 +525,43 @@ TEST(DiskAutostart_Unsupported, NoTrdosRomMachinesOnlyMount)
         }
         EmulatorTestHelper::CleanupEmulator(emulator);
     }
+}
+
+/// State-registry gap 16 (2026-10-07): the name hook rewrites the cold-start line from the host side. In a
+/// black box (the autostart's reset ended the session, the next one starts at the next frame) the rewrite is a
+/// recorded edit with its bytes, so a replay across it lands on the live machine; a replay never runs the hook
+TEST_F(DiskAutostart_Boot_Test, TheNameHookIsARecordedEditOfTheBlackBox)
+{
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
+    ASSERT_NE(ttd, nullptr);
+    _emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    _context->pMemory->UpdateFeatureCache();
+    ttd->SetBlackBox(true, 1);
+    ASSERT_TRUE(ttd->StartRecording());   // the black box runs, as unreal-qt starts it
+
+    auto result = _emulator->AutostartDisk(TrdPath("across_the_edge_by_demarche.trd"));
+    ASSERT_TRUE(result.started) << result.message;
+    ASSERT_TRUE(_context->pDiskAutostart->IsArmed());
+    _emulator->RunNFrames(1, true);
+    ASSERT_TRUE(ttd->IsRecording()) << "the black box records again after the autostart's reset";
+    const size_t events = ttd->GetSessionInfo().externalEventCount;
+
+    ASSERT_GT(RunUntilTrue([&] { return !_context->pDiskAutostart->IsArmed(); }, 300), 0) << "the hook did not fire";
+    EXPECT_EQ(ttd->GetSessionInfo().externalEventCount, events + 1) << "the rewrite is one recorded edit";
+    _emulator->RunNFrames(1, true);
+    const uint64_t after = _context->emulatorState.frame_counter;
+    std::vector<uint8_t> live(0xC000);
+    for (uint32_t a = 0x4000; a < 0x10000; a++)
+        live[a - 0x4000] = _context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(a));
+    ttd->StopRecording();
+    ttd->SetBlackBox(false);
+
+    ASSERT_TRUE(ttd->SeekTo({ttd->GetCheckpoint(0)->time.frame, 0}));
+    ASSERT_TRUE(ttd->SeekTo({after, 0}));
+    size_t first = 0;
+    while (first < live.size() &&
+           _context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(0x4000 + first)) == live[first])
+        first++;
+    EXPECT_EQ(first, live.size()) << "the replay differs from #" << std::hex << (0x4000 + first);
 }

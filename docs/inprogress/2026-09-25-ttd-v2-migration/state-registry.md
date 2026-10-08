@@ -107,7 +107,7 @@ One row per device blob; the device's memory is in section 1.
 | CD drive | IDE with a CD unit | id 41 | blob | R | | | ok | `debugger/ttd/ide/ttdcddrive.cpp:55/74` |
 | VDAC2 card and FT812 control state | TSL-VDAC2 | id 43 | blob | R (metrics: T, see §5) | | | ok | `ttdvdac2.cpp` |
 | ZX keyboard matrix, pressed keys | all | KeyboardMatrix (id 56), variable size | device state in the checkpoint ([decision 37](engine-decisions.md#h-classes-of-recorded-data)); key changes are events | R | | | ok | `io/keyboard/keyboard.cpp` TTD region |
-| Disk autostart one-shot hook | TR-DOS | — | — | R | | | gap 16 | `io/fdc/diskautostart.h:75-77` |
+| Disk autostart one-shot hook | TR-DOS | — | — | R | | | gap 16: the rewrite is a recorded edit (2026-10-07) | `io/fdc/diskautostart.h:75-77`, `z80.cpp` |
 | RZX player position and counters | RZX playback | RzxPlayback (id 57), 84 bytes; registered when a recording was played on the machine | device state in the checkpoint; a restore installs or removes the playback's hooks as it was then; each RZX frame end is an `InterruptFrame` fact (Phase 3, Step 2) | R | | | ok (2026-10-04) | `rzx/rzxttdstate.cpp` |
 
 ## 4. Journals and events
@@ -193,7 +193,7 @@ Ordered by severity. "Breaks replay" means a restore or a replay can give a stat
 | 13 | A media swap queued before recording can land mid-recording without a marker | | breaks replay |
 | 14 | *Fixed 2026-10-02:* ESP module `_zxLine` not restored, reapplied stale | | breaks replay |
 | 15 | ZX-Evo F12 soft reset reads the host clock | Not sealed | fixed 2026-10-07: the hold is measured in emulated time and is part of the EvoPs2 state (layout 2, 56 bytes) |
-| 16 | Edge cases (*NMI pending and +3 floating-bus byte fixed 2026-10-02; RZX playback position 2026-10-04*): disk autostart hook, network state marked "incomplete" with a warning only | | breaks replay, rare |
+| 16 | Edge cases (*NMI pending and +3 floating-bus byte fixed 2026-10-02; RZX playback position 2026-10-04*): disk autostart hook (fixed 2026-10-07: its rewrite is a recorded edit, a replay never runs the hook), network state marked "incomplete" with a warning only | | breaks replay, rare |
 | 17 | Telemetry items stale after a seek (§5) | Wrong LEDs, state report, status bar | wrong UI |
 | 18 | `ttd.ksy:532` says NeoGS memory is in the blob | | documentation |
 
