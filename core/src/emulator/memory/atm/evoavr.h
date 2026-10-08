@@ -7,7 +7,6 @@
 #include "stdafx.h"
 
 #include <array>
-#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -115,8 +114,11 @@ public:
         uint8_t skipBytes;         ///< parser: bytes of a Pause sequence still to skip
         uint8_t modifiers;         ///< kb_ctrl_status (register D bits 6..0)
         uint8_t held[16];          ///< host side: PcKey bitmap of the keys held down
+        uint8_t f12Down;           ///< atx.c: F12 is held - its release decides between a reset and power-off
+        uint8_t reserved[7];
+        uint64_t f12PressMicros;   ///< when F12 went down, emulated time (PortDecoder::EmulatedMicroseconds)
     };
-    static_assert(sizeof(Ps2State) == 40, "EvoAvr::Ps2State layout changed");
+    static_assert(sizeof(Ps2State) == 56, "EvoAvr::Ps2State layout changed");
 
 public:
     EvoAvr();
@@ -255,8 +257,6 @@ protected:
     EvoAvrWait _wait;
     WaitHandler _waitHandler = WaitHandler::BaseConf;
     ResetHandler _resetHandler;
-    std::chrono::steady_clock::time_point _f12Press{};
-    bool _f12Down = false;
     // Its resolution lives in the AVR's battery-backed RTC cell #FD, which the Z80 cannot reach
     EvoAvrMouse _mouse{[this] { return GetCell(EvoAvrMouse::kResolutionCell); },
                        [this](uint8_t value) { SetCell(EvoAvrMouse::kResolutionCell, value); }};

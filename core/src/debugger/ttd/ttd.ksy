@@ -561,7 +561,8 @@ types:
           18 Ds12887 (MC146818 / DS12887 clock: cells, address latch, time base;
           ATM3, Profi, Scorpion SMUC), 19 EvoPs2 (ZX-Evo AVR PS/2 keyboard: the
           16-byte scan code log, its pointers, the parser flags, the modifier
-          mask and the held keys), 20 ZxNetUsb (ZXNETUSB card ports, W5300
+          mask, the held keys and the F12 hold: down flag and its press time in
+          emulated microseconds - 56 bytes since 2026-10-07), 20 ZxNetUsb (ZXNETUSB card ports, W5300
           registers and socket states, unsent bytes, and journal references
           for the received bytes; the virtual network's guest-side tables -
           netstate.h),

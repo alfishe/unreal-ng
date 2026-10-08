@@ -54,7 +54,7 @@ Found by the 2026-10-02 audit. Gaps 1–16 break replay in v1 today; each is fix
 - [x] 10 ZX-Evo AVR and SMUC EEPROMs as regions 15, 16 (engine; compared at each capture, no write hook; decoders hand them over through `PortDecoder::CollectTTDRegionSources`)
 - [ ] 11–13 Media: written sectors, write-protect toggles, queued swaps as events and media versions (decision 25) **Deferred:** the storage manager's change layer (H1 / H5), owner decision 2026-10-05
 - [x] 14 ESP module `_zxLine`
-- [ ] 15 ZX-Evo F12 timer on emulated time
+- [x] 15 ZX-Evo F12 timer on emulated time (2026-10-07): the AVR measures the F12 hold on the machine's clock (`EmulatedMicroseconds`), and the hold is in the EvoPs2 state (layout 2, 56 bytes), so a seek between press and release decides as the recording did. Test `EvoAvr_Test.F12HoldIsMeasuredInEmulatedTime` (mutant caught). Both TS-Conf fixtures re-recorded; the recorder empties the SD slot and turns ZiFi off for them (the shipped config gained both, the corpus machine has neither)
 - [ ] 16 Edge cases: NMI pending, the +3 floating-bus byte and the RZX playback position (2026-10-04, Phase 3 Step 2) done; disk autostart, "incomplete" network state open
 - [ ] 17 Telemetry streams (decision 35), starting with the VDAC2 line-budget metrics if emulation does not read them
 - [ ] 18 `ttd.ksy:532` NeoGS memory note

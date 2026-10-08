@@ -107,9 +107,14 @@ GS_CARD_OF = {"z80": "gs", "lle": "gs", "lightweight": "gs-lw", "ngs": "neogs"}
 # corpus file (testdata/machines/<machine>/ttd, next to the machine's other
 # test data; TTD_Corpus_Test picks those up too). "gs": the General Sound card
 # swapped in before loading - NeoGS keeps its RAM outside TTD so far, so a
-# fixture recorded with it cannot replay exactly; the classic card can
+# fixture recorded with it cannot replay exactly; the classic card can. "network":
+# network settings applied before loading (POST /network/config; a board change
+# restarts the machine under a new id). "eject": media slots emptied before loading
 FIXTURE_OPTIONS: Dict[str, Dict[str, Any]] = {
-    "tsconf_sprites": {"out": "testdata/machines/tsconf/ttd/sprites.ttd", "gs": "z80"},
+    # The shipped ts-conf config fits a ZiFi board and an SD card with Wild Commander (2026-10): the corpus machine
+    # has neither (core-tests build TS-Conf without a network or a card), so the fixture is recorded without them
+    "tsconf_sprites": {"out": "testdata/machines/tsconf/ttd/sprites.ttd", "gs": "z80", "network": {"zifi": "NONE"},
+                       "eject": ["sd.zc"]},
     # The Sprinter fits the General Sound behind its ISA ZX-bus adapter (slot 1, ISA phase I2, 2026-10-03); the classic
     # card, as for the Pentagon corpus (NeoGS leaves its RAM out of TTD v1). The fixture also carries the port journals
     # (PortDecoder::TtdEnginesSealed; the adapter passes no memory cycles, so no NeoGS ZX-DMA could stop them either)
@@ -382,6 +387,13 @@ def main() -> int:
                     print(f"  General Sound card: {options['gs']} (machine {emu_id})")
                 else:
                     print("  General Sound card: none (the machine has no ZX-bus)")
+            if "network" in options:
+                reply = api.post(f"/emulator/{emu_id}/network/config", options["network"]) or {}
+                emu_id = reply.get("restart", {}).get("emulatorId") or reply.get("emulatorId") or emu_id
+                print(f"  network: {options['network']} (machine {emu_id})")
+            for slot in options.get("eject", []):
+                api.post(f"/emulator/{emu_id}/media/{slot}/eject", {})
+                print(f"  media slot {slot}: ejected")
             record_session(api, emu_id, out_path, int(options.get("frames", args.frames)),
                            from_root(snapshot) if snapshot else None, settle,
                            fresh=args.emulator_id is None)

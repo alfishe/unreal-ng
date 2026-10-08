@@ -87,7 +87,7 @@ One row per device blob; the device's memory is in section 1.
 | DS12887 / DS1685 real-time clock (emulated time while recording) | ATM3, TSL, Profi v5, Scorpion, Sprinter | id 18 | blob | R | | | ok | `rtc/ds12887.cpp:584/620` |
 | SMUC serial EEPROM link, IDE window registers | Scorpion, ProfScorpion | Smuc (id 54) | blob | R | | | ok | `io/rtc/smucnvram.h` `LinkState` |
 | ZX-Evo PS/2 keyboard | ATM3, TSL | id 19 | blob | R | | | ok | |
-| ZX-Evo AVR F12 soft reset timer (host clock) | ATM3, TSL | — | — | R | | | gap 15 | `evoavr.cpp:180-190` |
+| ZX-Evo AVR F12 hold (down flag, press time in emulated microseconds) | ATM3, TSL | 19 | — | R | | | gap 15 fixed | `evoavr.cpp` OnPcKey, EvoPs2 blob |
 | ZXNETUSB + W5300 + virtual network | network card | id 20 (30.6 KB fixed) | blob | R | | | gap 1 | `debugger/ttd/network/ttdzxnetusb.cpp:20/42` |
 | ZX-Evo extras | ATM3 | ids 21, 22 | blob | R | | | ok | |
 | Kempston joystick | decoders answering #1F | id 23 | blob | R | | | ok | |
@@ -192,7 +192,7 @@ Ordered by severity. "Breaks replay" means a restore or a replay can give a stat
 | 12 | Write-protect toggles not recorded; ATA protect switch in no checkpoint | | breaks replay |
 | 13 | A media swap queued before recording can land mid-recording without a marker | | breaks replay |
 | 14 | *Fixed 2026-10-02:* ESP module `_zxLine` not restored, reapplied stale | | breaks replay |
-| 15 | ZX-Evo F12 soft reset reads the host clock | Not sealed | breaks replay |
+| 15 | ZX-Evo F12 soft reset reads the host clock | Not sealed | fixed 2026-10-07: the hold is measured in emulated time and is part of the EvoPs2 state (layout 2, 56 bytes) |
 | 16 | Edge cases (*NMI pending and +3 floating-bus byte fixed 2026-10-02; RZX playback position 2026-10-04*): disk autostart hook, network state marked "incomplete" with a warning only | | breaks replay, rare |
 | 17 | Telemetry items stale after a seek (§5) | Wrong LEDs, state report, status bar | wrong UI |
 | 18 | `ttd.ksy:532` says NeoGS memory is in the blob | | documentation |

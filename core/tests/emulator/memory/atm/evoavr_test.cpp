@@ -390,3 +390,38 @@ TEST(EvoAvr_Test, Ps2ReleaseAllSendsBreaks)
     const std::vector<uint8_t> bytes = DrainLog(avr);
     EXPECT_EQ(bytes, (std::vector<uint8_t>{0xF0, 0x1C, 0xF0, 0x12}));
 }
+
+/// atx.c: F12 released after a short hold resets the Z80 (soft), after 5 s it is the ATX power-off
+/// and nothing resets. The AVR counts the hold on its own timer: emulated time, never the host's
+/// clock (state-registry gap 15) - and the hold is part of the PS/2 state, so a restore between
+/// the press and the release decides as the recording did
+TEST(EvoAvr_Test, F12HoldIsMeasuredInEmulatedTime)
+{
+    EvoAvr avr;
+    uint64_t now = 1'000'000;
+    avr.SetEmulatedClock([&now]() { return now; });
+    int softResets = 0;
+    avr.SetResetHandler([&softResets](bool hard) { softResets += hard ? 0 : 1; });
+
+    avr.OnPcKey(PcKey::Function12, true);
+    now += 4'900'000;
+    avr.OnPcKey(PcKey::Function12, false);
+    EXPECT_EQ(softResets, 1) << "a hold under 5 s of emulated time resets";
+
+    avr.OnPcKey(PcKey::Function12, true);
+    now += 5'000'000;
+    avr.OnPcKey(PcKey::Function12, false);
+    EXPECT_EQ(softResets, 1) << "5 s of emulated time is the power-off, however short the host's wait";
+
+    // The press is in the state: a state saved mid-hold and loaded after another press decides by its own
+    avr.OnPcKey(PcKey::Function12, true);
+    const EvoAvr::Ps2State midHold = avr.GetPs2State();
+    EXPECT_EQ(midHold.f12Down, 1);
+    now += 1'000'000;
+    avr.OnPcKey(PcKey::Function12, false);
+    ASSERT_EQ(softResets, 2) << "the live short hold";
+    now += 10'000'000;
+    avr.SetPs2State(midHold);   // back to the middle of the hold, its press 11 s ago
+    avr.OnPcKey(PcKey::Function12, false);
+    EXPECT_EQ(softResets, 2) << "the restored press decides: 11 s of emulated time is the power-off";
+}
