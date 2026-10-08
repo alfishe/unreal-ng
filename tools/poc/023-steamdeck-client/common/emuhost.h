@@ -69,6 +69,15 @@ public:
     /// Border flip test program: DI; loop: IN A,(#1F); AND #10; border 7 if fire else 0
     static std::vector<uint8_t> BorderFlipProgram();
 
+    /// The model decodes a Kempston joystick at #1F (a bare 48K does not: #1F reads #FF there)
+    bool HasKempston() const;
+
+    /// Clear the ZX screen (white paper, black ink) and print lines of text with the 48K ROM font (read from
+    /// rom/48.rom next to the binary, not from the paged ROM: a 128K / Pentagon resets into a ROM without it),
+    /// one string per character row; before Start, so a test program that never runs the ROM shows what it
+    /// is instead of power-on RAM
+    void PrintScreen(const std::vector<std::string>& rows);
+
 private:
     static void AudioCallback(void* obj, int16_t* samples, size_t numSamples);
 

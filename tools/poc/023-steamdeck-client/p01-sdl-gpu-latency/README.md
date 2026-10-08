@@ -26,7 +26,10 @@ The default guest program is a tight loop, poked at `#8000`:
 DI; loop: IN A,(#1F); AND #10; border = fire ? 7 : 0; JR loop
 ```
 
-It reacts within a few T-states, so all measured latency belongs to the host.
+It reacts within a few T-states, so all measured latency belongs to the host. It needs a model that decodes
+Kempston at `#1F` (Pentagon by default): a bare 48K has no Kempston interface, reads `#FF` there, and
+would show "fire held" all the time, so P-01 refuses it. The test never runs the ROM, so the screen is
+cleared and labelled first (48K ROM font from `rom/48.rom`).
 
 ## Run
 
@@ -36,9 +39,10 @@ It reacts within a few T-states, so all measured latency belongs to the host.
 --present vsync --fif 2                                # smoother, +1 frame?
 --present mailbox --fif 1                              # if gamescope offers it
 --crop deckfit                                         # 320x200 x4 = 1280x800
---model PENTAGON                                       # 48.83 Hz machine
+--model 128K-class with Kempston, e.g. PENTAGON (default, 48.83 Hz); a bare 48K has no Kempston: refused
 --file /home/deck/ZX/game.tap                          # any program (press logging only works for the border test)
 --windowed                                             # desktop development: a 1280x800 window
+--autofire 137                                         # toggle fire every 137 ms by itself (no human; the phase sweeps the frame)
 ```
 
 Controls: A (or Space) = Kempston fire; D-pad = directions; View + Menu = quit.
@@ -56,3 +60,4 @@ Controls: A (or Space) = Kempston fire; D-pad = directions; View + Menu = quit.
 | Date | Deck | Panel Hz | Config | Software median / p99 (ms) | Photon median (ms) | Repeats / skips per min | Verdict |
 |------|------|----------|--------|----------------------------|--------------------|-------------------------|---------|
 | 2026-10-08 | none: macOS M1 Ultra, Metal, `--windowed`, 60 Hz monitor (development smoke run) | 60 | vsync, fif 1, delay 0, 48K | no presses (no input) | — | 250 refreshes in 4 s: 197 new frames, 53 repeats, 0 skips. That is the 50-on-60 beat (1 repeat in 5) predicted by rendering.md §4; nothing else broken | path works on Metal |
+| 2026-10-08 | none: macOS M1 Ultra, Metal, `--windowed --autofire 137`, Pentagon (core-clocked 48.83 Hz on a 60 Hz monitor) | 60 | vsync, fif 1, delay 0 | 17.1 / 46.8 (p10 14.6, p90 33.2, min 12.4; n=181; 78 % in the next refresh, 22 % one later) | — | one 1014 ms stall near the end of the run, cause not known yet | software path confirmed; the 2-frame tail is the 48.83-on-60 beat that display-locked pacing (P-04) removes |

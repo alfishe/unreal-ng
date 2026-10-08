@@ -7,10 +7,12 @@
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 
 namespace deckpoc
 {
@@ -70,6 +72,47 @@ std::vector<uint8_t> EmuHost::BorderFlipProgram()
         0xD3, 0xFE,       // 800E OUT (#FE),A
         0x18, 0xEF,       // 8010 JR loop
     };
+}
+
+bool EmuHost::HasKempston() const
+{
+    PortDecoder* decoder = _emulator->GetContext()->pPortDecoder;
+    return decoder && decoder->HasKempstonJoystick();
+}
+
+void EmuHost::PrintScreen(const std::vector<std::string>& rows)
+{
+    // Character set of the 48K ROM: 96 glyphs x 8 bytes at #3D00
+    std::vector<uint8_t> font(96 * 8, 0);
+    const char* base = SDL_GetBasePath();
+    std::ifstream rom(std::filesystem::path(base ? base : "") / "rom" / "48.rom", std::ios::binary);
+    if (rom)
+    {
+        rom.seekg(0x3D00);
+        rom.read(reinterpret_cast<char*>(font.data()), static_cast<std::streamsize>(font.size()));
+    }
+
+    Memory* memory = _emulator->GetMemory();
+    for (uint16_t a = 0x4000; a < 0x5800; a++)
+        memory->DirectWriteToZ80Memory(a, 0x00);
+    for (uint16_t a = 0x5800; a < 0x5B00; a++)
+        memory->DirectWriteToZ80Memory(a, 0x38);   // white paper, black ink
+
+    for (size_t row = 0; row < rows.size() && row < 24; row++)
+    {
+        const std::string& text = rows[row];
+        for (size_t col = 0; col < text.size() && col < 32; col++)
+        {
+            const unsigned char ch = static_cast<unsigned char>(text[col]);
+            if (ch < 0x20 || ch > 0x7F)
+                continue;
+            const size_t glyph = static_cast<size_t>(ch - 0x20) * 8;
+            // Pixel line l of character row r: 010r rlll rrrc cccc (r split into thirds)
+            const uint16_t addr = static_cast<uint16_t>(0x4000 + ((row & 0x18) << 8) + ((row & 0x07) << 5) + col);
+            for (uint16_t line = 0; line < 8; line++)
+                memory->DirectWriteToZ80Memory(static_cast<uint16_t>(addr + (line << 8)), font[glyph + line]);
+        }
+    }
 }
 
 void EmuHost::AudioCallback(void* obj, int16_t* samples, size_t numSamples)

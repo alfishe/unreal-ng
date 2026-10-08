@@ -67,6 +67,7 @@ int main(int argc, char** argv)
         SDL_Log("GPU setup: %s", SDL_GetError());
         return 1;
     }
+    SDL_RaiseWindow(window);   // take keyboard focus (a binary started outside a bundle on macOS may not)
     if (!SDL_WindowSupportsGPUPresentMode(device, window, presentMode))
     {
         SDL_Log("present mode %s not supported, using vsync", presentName);

@@ -10,8 +10,8 @@
 // measures the rest (README.md). Per frame it logs acquire wait, copy, submit and the emulator frame
 // counter step (0 = repeated frame, 2+ = a frame skipped).
 //
-//   p01-sdl-gpu-latency [--model 48K] [--file game.tap] [--present vsync|mailbox|immediate] [--fif 1|2]
-//                       [--delay 0..3] [--crop full|deckfit|paper] [--seconds N] [--windowed]
+//   p01-sdl-gpu-latency [--model PENTAGON] [--file game.tap] [--present vsync|mailbox|immediate] [--fif 1|2]
+//                       [--delay 0..3] [--crop full|deckfit|paper] [--seconds N] [--windowed] [--autofire MS]
 //
 // Logs: ~/steamdeck-poc-logs/p01-*.csv. Quit: View + Menu, Esc.
 
@@ -31,13 +31,14 @@ namespace
 
 struct Options
 {
-    std::string model = "48K";
+    std::string model = "PENTAGON";   // decodes Kempston at #1F (a bare 48K does not)
     std::string file;
     std::string present = "vsync";
     std::string crop = "full";
     uint32_t framesInFlight = 1;
     int presentDelay = 0;
     double seconds = 0;
+    double autofireMs = 0;   // > 0: toggle fire on a timer, no human needed (automated latency runs)
     bool windowed = false;   // development on a desktop: a 1280x800 window instead of fullscreen
 };
 
@@ -87,6 +88,7 @@ int main(int argc, char** argv)
         else if (k == "--delay") opt.presentDelay = std::stoi(v);
         else if (k == "--crop") opt.crop = v;
         else if (k == "--seconds") opt.seconds = std::stod(v);
+        else if (k == "--autofire") opt.autofireMs = std::stod(v);
     }
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD))
@@ -109,7 +111,22 @@ int main(int argc, char** argv)
             SDL_Log("load %s: %s", opt.file.c_str(), error.c_str());
     }
     else
+    {
+        // The border test reads Kempston at #1F: a model without it reads #FF there, "fire" always held
+        if (!emu.HasKempston())
+        {
+            SDL_Log("model %s has no Kempston joystick at #1F: the border test needs one (use --model PENTAGON)",
+                    opt.model.c_str());
+            return 1;
+        }
+        // The test program never runs the ROM: say on screen what this is, or it looks hung
+        emu.PrintScreen({"", " BORDER LATENCY TEST (P-01)", "",
+                         " Hold FIRE: the border turns", " white while it is held.", "",
+                         " FIRE  = Space / A button", " QUIT  = Esc / View + Menu", "",
+                         " No ROM, no interrupts: the CPU", " polls Kempston port #1F in a", " tight loop. Every press is",
+                         " timed into the log."});
         emu.InstallProgram(0x8000, deckpoc::EmuHost::BorderFlipProgram());
+    }
     if (!emu.OpenAudio(&error))
         SDL_Log("audio: %s", error.c_str());
     emu.SetPresentDelayFrames(static_cast<uint8_t>(opt.presentDelay));
@@ -123,6 +140,7 @@ int main(int argc, char** argv)
         SDL_Log("GPU setup: %s", SDL_GetError());
         return 1;
     }
+    SDL_RaiseWindow(window);   // take keyboard focus (a binary started outside a bundle on macOS may not)
     SDL_GPUPresentMode presentMode = opt.present == "mailbox" ? SDL_GPU_PRESENTMODE_MAILBOX
                                    : opt.present == "immediate" ? SDL_GPU_PRESENTMODE_IMMEDIATE
                                    : SDL_GPU_PRESENTMODE_VSYNC;
@@ -140,7 +158,7 @@ int main(int argc, char** argv)
 
     // Logs
     deckpoc::CsvLog frameLog;
-    frameLog.Open(deckpoc::LogPath("p01-frames", "csv"), "acquire_wait_us,copy_us,submit_us,emu_frame,emu_step,audio_queued,underruns");
+    frameLog.Open(deckpoc::LogPath("p01-frames", "csv"), "acquire_wait_us,copy_us,submit_us,emu_frame,emu_step,audio_queued,underruns,swapchain_ok,border_white,swapchain_w,swapchain_h,window_flags");
     deckpoc::CsvLog pressLog;
     pressLog.Open(deckpoc::LogPath("p01-presses", "csv"), "event_ns,first_frame_submit_ns,software_latency_ms,frames_waited");
     pressLog.Row(deckpoc::NowNs(), "# model=%s present=%s fif=%u delay=%d crop=%s gpu=%s video=%s audio_rate=%u",
@@ -156,6 +174,7 @@ int main(int argc, char** argv)
     std::vector<uint64_t> softwareLatencies;
     const uint64_t start = deckpoc::NowNs();
     bool quit = false;
+    uint64_t nextAutofire = start + 1'000'000'000ull;   // first toggle after 1 s
 
     auto setFire = [&](bool down, uint64_t eventNs)
     {
@@ -203,6 +222,14 @@ int main(int argc, char** argv)
         }
         if (pad && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_BACK) && SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START))
             quit = true;
+
+        // Timer-driven presses at a period that is not a multiple of the frame time, so the press phase
+        // relative to the emulated frame sweeps through every position
+        if (opt.autofireMs > 0 && deckpoc::NowNs() >= nextAutofire)
+        {
+            setFire(!fireDown, deckpoc::NowNs());
+            nextAutofire += static_cast<uint64_t>(opt.autofireMs * 1e6);
+        }
 
         SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
         const uint64_t t0 = deckpoc::NowNs();
@@ -282,10 +309,11 @@ int main(int argc, char** argv)
         const uint64_t t2 = deckpoc::NowNs();
 
         const uint64_t emuFrame = emu.FrameCounter();
-        frameLog.Row(t1, "%llu,%llu,%llu,%llu,%lld,%u,%u", static_cast<unsigned long long>((t1 - t0) / 1000),
+        frameLog.Row(t1, "%llu,%llu,%llu,%llu,%lld,%u,%u,%d,%d,%u,%u,0x%llx", static_cast<unsigned long long>((t1 - t0) / 1000),
                      static_cast<unsigned long long>(copyNs / 1000), static_cast<unsigned long long>((t2 - t1) / 1000),
                      static_cast<unsigned long long>(emuFrame), static_cast<long long>(emuFrame - lastEmuFrame),
-                     emu.AudioQueuedFrames(), emu.AudioUnderruns());
+                     emu.AudioQueuedFrames(), emu.AudioUnderruns(), swapchain ? 1 : 0, borderWhite ? 1 : 0, sw, sh,
+                     static_cast<unsigned long long>(SDL_GetWindowFlags(window)));
         lastEmuFrame = emuFrame;
 
         if (pendingPressNs)
