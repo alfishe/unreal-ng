@@ -32,20 +32,24 @@ bool IsKeyword(const std::string& word, const std::string& version)
         "RR",   "RRA",  "RRC",  "RRCA", "RRD",  "RST",  "SBC",  "SCF",  "SET",  "SLA",  "SP",   "SRA",  "SRL",  "SUB",  "V",    "XOR",
         "Z",
     };
+    // Primus Assembler 2.9: DISK (include a text file) in DISP's place
+    if (version == "primus" && (word == "DISK" || word == "DISP"))
+        return word == "DISK";
     if (table.count(word))
         return true;
-    if (version == "1983")
+    if (version == "1983" || version == "primus")
         return word == "DEFB" || word == "DEFM" || word == "DEFS" || word == "DEFW";
     if (word == "DB" || word == "DM" || word == "DS" || word == "DW")
         return true;
     return version == "gg" ? word == "INCBIN" : (word == "INCLUDE" || word == "PLACE");
 }
 
-bool IsLabelChar(char c, bool pht)
+bool IsLabelChar(char c, bool pht, bool primus = false)
 {
     const unsigned char u = static_cast<unsigned char>(c);
-    // 1983 / GG: letters and digits; PHT / v7.E: also the symbols #3C-#7E (research-zeus.md §4: its word characters)
-    return std::isalnum(u) || (pht && (c == '_' || c == '?' || c == '@'));
+    // 1983 / GG: letters and digits; PHT / v7.E: also the symbols #3C-#7E (research-zeus.md §4: its word characters);
+    // Primus 2.9: ? . @ _ $ (its manual; checked: L.X, L?Z, L$V are labels)
+    return std::isalnum(u) || (pht && (c == '_' || c == '?' || c == '@')) || (primus && (c == '.' || c == '$'));
 }
 
 Expr Grouped(Expr e)
@@ -61,6 +65,7 @@ struct ExpressionParser
     std::string_view t;
     bool pht = false;
     size_t i = 0;
+    bool primus = false;   ///< Primus 2.9: ? the remainder after a number, / truncating
 
     char Peek() const { return i < t.size() ? t[i] : '\0'; }
     void Blanks()
@@ -118,14 +123,14 @@ struct ExpressionParser
                 ++j;
             const Expr e = Expr::Number(std::stoll(std::string(t.substr(i, j - i))) & 0xFFFF, ir::NumberSpelling::Decimal, static_cast<int>(j - i));
             i = j;
-            if (i < t.size() && IsLabelChar(t[i], pht))
+            if (i < t.size() && IsLabelChar(t[i], pht, primus) && !(primus && t[i] == '?'))
                 throw Failure{"a number followed by letters"};
             return e;
         }
-        if (IsLabelChar(c, pht))
+        if (IsLabelChar(c, pht, primus))
         {
             size_t j = i;
-            while (j < t.size() && IsLabelChar(t[j], pht))
+            while (j < t.size() && IsLabelChar(t[j], pht, primus))
                 ++j;
             Expr e = Expr::Symbol(std::string(t.substr(i, j - i)));
             i = j;
@@ -154,11 +159,19 @@ struct ExpressionParser
                 op = Op::Mul;
             else if (pht && c == '/')
                 op = Op::Div;
+            else if (primus && c == '?')
+                op = Op::Mod;
             else
                 return left;
             ++i;
             // left to right: what is built so far is one operand of the next operator
             Expr right = Term();
+            if (op == Op::Div && primus)
+            {
+                // Primus 2.9 truncates (checked: 11/4 = 2, 3000/7 = 428, 0-1/2 = #7FFF)
+                left = Grouped(Expr::Binary(Op::Div, std::move(left), std::move(right)));
+                continue;
+            }
             if (op == Op::Div)
             {
                 // ZEUS v7.E rounds the quotient to the nearest, a remainder of exactly half down (seen in the
@@ -174,9 +187,9 @@ struct ExpressionParser
     }
 };
 
-Expr ParseExpression(std::string_view text, bool pht)
+Expr ParseExpression(std::string_view text, bool pht, bool primus = false)
 {
-    ExpressionParser p{text, pht};
+    ExpressionParser p{text, pht, 0, primus};
     Expr e = p.Sequence();
     p.Blanks();
     if (p.i != text.size())
@@ -243,7 +256,7 @@ bool WhollyParenthesized(const std::string& text)
     return true;
 }
 
-Operand ParseOperand(const std::string& text, bool conditionAllowed, bool pht)
+Operand ParseOperand(const std::string& text, bool conditionAllowed, bool pht, bool primus = false)
 {
     Operand o;
     const std::string lower = z80::Lower(text);
@@ -287,16 +300,16 @@ Operand ParseOperand(const std::string& text, bool conditionAllowed, bool pht)
             {
                 o.kind = Operand::Kind::Indexed;
                 o.text = z80::Lower(inner.substr(0, 2));
-                o.expr = ParseExpression(displacement, pht);
+                o.expr = ParseExpression(displacement, pht, primus);
                 return o;
             }
         }
         o.kind = Operand::Kind::Memory;
-        o.expr = ParseExpression(inner, pht);
+        o.expr = ParseExpression(inner, pht, primus);
         return o;
     }
     o.kind = Operand::Kind::Immediate;
-    o.expr = ParseExpression(text, pht);
+    o.expr = ParseExpression(text, pht, primus);
     return o;
 }
 
@@ -366,6 +379,7 @@ struct LineParser
     FrontendResult& result;
     std::string version;
     bool pht = false;
+    bool primus = false;   ///< Primus Assembler 2.9 (version "primus")
     // DISP: the offset from ORG where code is put (manual 5.5); none while it is 0
     bool displaced = false;
     Expr displacement;
@@ -437,7 +451,7 @@ struct LineParser
                 throw Failure{"an empty item"};
             Operand o;
             o.kind = Operand::Kind::Immediate;
-            o.expr = ParseExpression(op, pht);
+            o.expr = ParseExpression(op, pht, primus);
             out.push_back(std::move(o));
         }
         return out;
@@ -476,14 +490,22 @@ struct LineParser
         {
             if (!label.empty())
                 out.push_back(std::move(line));
-            Org(ParseExpression(rest, pht), number, out);
+            Org(ParseExpression(rest, pht, primus), number, out);
             return;
         }
-        if (word == "DISP")
+        if (primus && word == "DISK")
+        {
+            // DISK NAME: the text file NAME from the disk, assembled here (not nested)
+            Statement s = Directive(ir::DirectiveKind::Include);
+            s.text = FileName(rest);
+            push(std::move(s));
+            return;
+        }
+        if (word == "DISP" && !primus)
         {
             if (!label.empty())
                 out.push_back(std::move(line));
-            Disp(ParseExpression(rest, pht), number, out);
+            Disp(ParseExpression(rest, pht, primus), number, out);
             return;
         }
         if (word == "ENT")
@@ -496,7 +518,7 @@ struct LineParser
             if (label.empty())
                 throw Failure{"EQU without a label"};
             Statement s = Directive(ir::DirectiveKind::Equ);
-            s.args.push_back(ParseExpression(rest, pht));
+            s.args.push_back(ParseExpression(rest, pht, primus));
             push(std::move(s));
             return;
         }
@@ -517,7 +539,7 @@ struct LineParser
         if (word == "DEFS" || word == "DS")
         {
             Statement s = Directive(ir::DirectiveKind::Ds);
-            s.args.push_back(ParseExpression(rest, pht));
+            s.args.push_back(ParseExpression(rest, pht, primus));
             push(std::move(s));
             return;
         }
@@ -568,7 +590,7 @@ struct LineParser
         for (size_t k = 0; k < ops.size(); ++k)
         {
             const bool condition = k == 0 && z80::TakesCondition(mnemonic) && (ops.size() > 1 || mnemonic == "ret");
-            s.operands.push_back(ParseOperand(ops[k], condition, pht));
+            s.operands.push_back(ParseOperand(ops[k], condition, pht, primus));
         }
         push(std::move(s));
     }
@@ -596,7 +618,7 @@ struct LineParser
                 if (!IsKeyword(first, version))
                 {
                     for (const char c : first)
-                        if (!IsLabelChar(c, pht))
+                        if (!IsLabelChar(c, pht, primus))
                             throw Failure{"label " + first};
                     if (!std::isalpha(static_cast<unsigned char>(first[0])) && !(pht && first[0] == '_'))
                         throw Failure{"a label starts with a letter: " + first};
@@ -649,7 +671,8 @@ FrontendResult ZeusFrontend::Parse(const SourceDocument& source) const
     result.program.trueValue = 1;          // the comparison of the rounded division gives 1
     // * / and %binary are ZEUS v7.E's; the bytes of a v7.E source without INCLUDE / PLACE are valid 1983 bytes too, so
     // they are read in every version (1983 and ZEUS 1.1 refuse them: such a source was written for v7.E)
-    LineParser parser{result, source.subversion.empty() ? std::string("1983") : source.subversion, true, false, {}, 0};
+    const std::string version = source.subversion.empty() ? std::string("1983") : source.subversion;
+    LineParser parser{result, version, true, version == "primus", false, {}, 0};
     uint32_t number = 0;
     for (const SourceLine& line : source.lines)
         parser.ParseLine(line.text, ++number);

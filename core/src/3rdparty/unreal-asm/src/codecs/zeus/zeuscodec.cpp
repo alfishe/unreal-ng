@@ -24,9 +24,18 @@ constexpr std::array<std::string_view, 101> k1983 = {
     "SLA ", "SP", "SRA ", "SRL ", "SUB ", "V", "XOR ", "Z",                                                           // DD
 };
 
+// Primus Assembler 2.9 (Trunov, 1994): ZEUS 1983's table with DISK (include a text file) for DISP; Russian letters
+// that do not look like Latin ones at #EB-#FF, in KOI-8 order (its keyboard table at #6896; PRI.DOC)
+constexpr uint8_t kPrimusFirstLetter = 0xEB;
+constexpr char32_t kPrimusLetters[] = {U'Ю', U'Б', U'Ц', U'Д', U'Ф', U'Г', U'И', U'Й', U'Л', U'П', U'Я',
+                                       U'У', U'Ж', U'Ь', U'Ы', U'З', U'Ш', U'Э', U'Щ', U'Ч', U'Ъ'};
+constexpr uint16_t kPrimusTextStart = 33364;   // where Primus keeps the text: the start of its files
+
 std::vector<std::string_view> BuildTable(const std::string& version)
 {
     std::vector<std::string_view> t(k1983.begin(), k1983.end());
+    if (version == "primus")
+        t[0x1B] = "DISK ";
     if (version == "gg" || version == "pht")
     {
         t[0x16] = "DB ";   // #96-#99 renamed by the later versions
@@ -51,9 +60,9 @@ struct TableIndex
 
 const TableIndex& Indexed(const std::string& version)
 {
-    static const std::array<TableIndex, 3> tables = [] {
-        std::array<TableIndex, 3> out;
-        const char* const ids[] = {"1983", "gg", "pht"};
+    static const std::array<TableIndex, 4> tables = [] {
+        std::array<TableIndex, 4> out;
+        const char* const ids[] = {"1983", "gg", "pht", "primus"};
         for (size_t k = 0; k < out.size(); ++k)
         {
             out[k].names = BuildTable(ids[k]);
@@ -63,7 +72,7 @@ const TableIndex& Indexed(const std::string& version)
         }
         return out;
     }();
-    return tables[version == "gg" ? 1 : version == "pht" ? 2 : 0];
+    return tables[version == "gg" ? 1 : version == "pht" ? 2 : version == "primus" ? 3 : 0];
 }
 
 const std::vector<std::string_view>& Table(const std::string& version)
@@ -71,13 +80,15 @@ const std::vector<std::string_view>& Table(const std::string& version)
     return Indexed(version).names;
 }
 
-/// Word characters: 1983 and GG letters and digits; PHT digits and #3C-#7E
+/// Word characters: 1983 and GG letters and digits; PHT digits and #3C-#7E; Primus also ? . @ _ $ (it keeps L.X whole)
 bool IsWord(uint8_t c, const std::string& version)
 {
     if (c >= '0' && c <= '9')
         return true;
     if (version == "pht")
         return c >= 0x3C && c <= 0x7E;
+    if (version == "primus" && (c == '?' || c == '.' || c == '@' || c == '_' || c == '$'))
+        return true;
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
 }
 
@@ -128,7 +139,10 @@ ZeusCodec::ZeusCodec()
             "ZEUS source (tokenized)",
             "zeus",
             CodecFamily::Tokenized,
-            {{"1983", "ZEUS 1983 (Crystal) and ports with its table"}, {"gg", "ZEUS (GG)"}, {"pht", "ZEUS 1.1 beta (PHT) / ZEUS v7.E"}}}
+            {{"1983", "ZEUS 1983 (Crystal) and ports with its table"},
+             {"gg", "ZEUS (GG)"},
+             {"pht", "ZEUS 1.1 beta (PHT) / ZEUS v7.E"},
+             {"primus", "Primus Assembler 2.9 (Trunov, 1994)"}}}
 {
 }
 
@@ -147,6 +161,8 @@ std::string ZeusCodec::DecodeBody(std::span<const uint8_t> body, const std::stri
         }
         if (c >= 0x80 && static_cast<size_t>(c - 0x80) < table.size())
             text += table[c - 0x80];
+        else if (version == "primus" && c >= kPrimusFirstLetter)
+            utf8::Append(text, kPrimusLetters[c - kPrimusFirstLetter]);
         else
             utf8::Append(text, encoding::ByteToCodePoint(c, encoding::CodePage::ZxSpectrum));
     }
@@ -157,7 +173,31 @@ bool ZeusCodec::EncodeBody(const std::string& text, const std::string& version, 
 {
     body.clear();
     std::vector<uint8_t> buf;
-    if (!encoding::FromUtf8(text, encoding::CodePage::ZxSpectrum, buf, error))
+    std::string spectrum = text;
+    if (version == "primus")
+    {
+        // Primus' Russian letters to the code points that stand for their bytes in the Spectrum set
+        spectrum.clear();
+        const std::span<const uint8_t> in(reinterpret_cast<const uint8_t*>(text.data()), text.size());
+        for (size_t k = 0; k < in.size();)
+        {
+            char32_t cp = 0;
+            const size_t n = utf8::DecodeOne(in.subspan(k), cp);
+            if (n == 0)
+            {
+                error = "invalid UTF-8";
+                return false;
+            }
+            const char32_t* const at = std::find(std::begin(kPrimusLetters), std::end(kPrimusLetters), cp);
+            if (at != std::end(kPrimusLetters))
+                utf8::Append(spectrum, encoding::ByteToCodePoint(static_cast<uint8_t>(kPrimusFirstLetter + (at - std::begin(kPrimusLetters))),
+                                                                 encoding::CodePage::ZxSpectrum));
+            else
+                spectrum.append(text, k, n);
+            k += n;
+        }
+    }
+    if (!encoding::FromUtf8(spectrum, encoding::CodePage::ZxSpectrum, buf, error))
         return false;
     for (const uint8_t c : buf)
         if (c == 0)
@@ -236,15 +276,16 @@ std::vector<std::string> ZeusCodec::DetectVersions(std::span<const uint8_t> byte
     const Walk w = WalkRecords(bytes);
     if (!w.ended || w.lines.empty())
         return {};
-    // A token past a version's table rules it out; then the tokenizer that reproduces most lines, ties in the order
-    // 1983, pht, gg (#E5 is INCLUDE in pht and INCBIN in gg: the bytes cannot tell)
+    // A token past a version's table rules it out (Primus: its Russian letters past it); then the tokenizer that
+    // reproduces most lines, ties in the order 1983, pht, gg, primus (#E5 is INCLUDE in pht and INCBIN in gg: the
+    // bytes cannot tell)
     struct Score
     {
         std::string version;
         size_t exact;
     };
     std::vector<Score> scores;
-    for (const char* v : {"1983", "pht", "gg"})
+    for (const char* v : {"1983", "pht", "gg", "primus"})
     {
         const size_t top = 0x80 + Table(v).size();
         bool covers = true;
@@ -256,7 +297,7 @@ std::vector<std::string> ZeusCodec::DetectVersions(std::span<const uint8_t> byte
                     ++i;
                     continue;
                 }
-                covers = covers && (r.body[i] < 0x80 || r.body[i] < top);
+                covers = covers && (r.body[i] < 0x80 || r.body[i] < top || (std::string_view(v) == "primus" && r.body[i] >= kPrimusFirstLetter));
             }
         if (!covers)
             continue;
@@ -295,14 +336,16 @@ int ZeusCodec::Detect(std::span<const uint8_t> bytes, const CatalogHints& hints)
             if (r.body[i] == kBlanks && i + 1 < r.body.size())
                 ++i;
             else
-                typical = r.body[i] >= 0x20 && r.body[i] < 0x80 + 103;
+                typical = r.body[i] >= 0x20 && (r.body[i] < 0x80 + 103 || r.body[i] >= kPrimusFirstLetter);
         }
         if (!typical)
             return std::min(score, 15);
     }
-    // TR-DOS ports save type C (ZEUS v7.E: Z)
+    // TR-DOS ports save type C (ZEUS v7.E: Z); Primus a CODE file at its text buffer
     if (hints.type != 0 && hints.type != 'C' && hints.type != 'Z')
         score = std::min(score, 30);
+    else if (hints.type == 'C' && hints.start == kPrimusTextStart)
+        score = std::min(score + 5, 100);
     return score;
 }
 
@@ -316,6 +359,13 @@ DecodeResult ZeusCodec::Decode(std::span<const uint8_t> bytes, const DecodeOptio
     document.lineEnd = encoding::LineEnd::Lf;
     const Walk w = WalkRecords(bytes);
     result.subversions = options.subversion.empty() ? DetectVersions(bytes) : std::vector<std::string>{options.subversion};
+    // A CODE file at Primus' text buffer is Primus' when its bytes allow it (DISK and DISP share a token)
+    if (options.subversion.empty() && options.catalog.type == 'C' && options.catalog.start == kPrimusTextStart)
+    {
+        const auto primus = std::find(result.subversions.begin(), result.subversions.end(), "primus");
+        if (primus != result.subversions.end())
+            std::rotate(result.subversions.begin(), primus, primus + 1);
+    }
     document.subversion = result.subversions.empty() ? std::string("1983") : result.subversions.front();
     std::sort(result.subversions.begin(), result.subversions.end());
     if (!w.ended)

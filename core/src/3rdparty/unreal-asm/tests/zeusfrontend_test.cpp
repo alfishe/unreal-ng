@@ -149,6 +149,14 @@ TEST(ZeusFrontend_Test, FilesOfTheDiskVersions)
     EXPECT_EQ(ToSjasmplus(" INCBIN data", "gg"), (Lines{"INCBIN \"data\""}));
 }
 
+TEST(ZeusFrontend_Test, PrimusExpressionsLabelsAndDisk)
+{
+    // Primus 2.9 (checked in it): left to right, ? the remainder, / truncating, ! OR; ? . @ _ $ in labels; DISK NAME
+    // includes a text file
+    EXPECT_EQ(ToSjasmplus(" LD A,100?7\n LD A,11/4\nL.X NOP\nL?Z NOP\n LD A,L?Z-L.X\n DISK LIB1", "primus"),
+              (Lines{"LD A,+(100%7)", "LD A,+((11&#FFFF)/(4&#FFFF))", "L.X NOP", "L?Z NOP", "LD A,+(L?Z-L.X)", "INCLUDE \"LIB1.asm\""}));
+}
+
 TEST(ZeusFrontend_Test, ProgramsAssembleToWhatZeusBuilt)
 {
     const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
@@ -171,6 +179,9 @@ TEST(ZeusFrontend_Test, ProgramsAssembleToWhatZeusBuilt)
         {"ZeusPrint", "zeus/ZeusRoutines__ZeusPrint.bin", "1983", 40000, {}, {}},
         {"ZeusScrolling", "zeus/ZeusRoutines__ZeusScrolling.bin", "1983", 40000, {}, {}},
         {"ZeusSelect", "zeus/ZeusRoutines__ZeusSelect.bin", "1983", 30000, {}, {}},
+        // Primus 2.9 (its code goes after the text; the bytes read from there): a probe, and DISK LIB1
+        {"PROBEPRI", "dialects/zeus/PROBEPRI.$C", "primus", 0x6000, {}, {}},
+        {"INCLPRI", "dialects/zeus/INCLPRI.$C", "primus", 0x6000, {{"LIB1", "dialects/zeus/LIB1PRI.$C"}}, {}},
     };
     const codecs::SjasmplusCodec codec;
     for (const Oracle& o : oracles)
@@ -212,7 +223,7 @@ TEST(ZeusFrontend_Test, ProgramsAssembleToWhatZeusBuilt)
         {
             // DEFS / DS of ZEUS 1983 and GG leaves memory as it was; sjasmplus' DS writes zeros
             // (research-zeus-to-sjasmplus.md)
-            if (expected[k] == 0xAA && built[k] == 0 && (std::string(o.version) == "1983" || std::string(o.version) == "gg"))
+            if (expected[k] == 0xAA && built[k] == 0 && (std::string(o.version) == "1983" || std::string(o.version) == "gg" || std::string(o.version) == "primus"))
                 continue;
             EXPECT_EQ(built[k], expected[k]) << o.name << " at " << (o.address + k);
         }

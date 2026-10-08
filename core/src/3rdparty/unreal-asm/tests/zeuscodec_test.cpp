@@ -37,6 +37,8 @@ const Sample kSamples[] = {
     {"ZeusRoutines__ZeusScrolling.bin", "ZeusRoutines__ZeusScrolling", "1983", 135},
     {"ZeusRoutines__ZeusSelect.bin", "ZeusRoutines__ZeusSelect", "1983", 179},
     {"typed-zeus1983-PROBE.bin", "typed-zeus1983-PROBE", "1983", 28},   // typed into ZEUS 1983: every tokenizer rule
+    {"PRIMUS29__PRI.DOC.$C", "PRIMUS29__PRI.DOC", "primus", 311},   // Primus 2.9's manual in its own format: Russian letters
+    {"typed-primus29-PROBE.bin", "typed-primus29-PROBE", "primus", 26},   // Primus 2.9's text buffer: L.X, L?Z, L$V words
 };
 
 struct Input
@@ -160,4 +162,15 @@ TEST(ZeusCodec_Test, Detection)
     // music data whose bytes happen to frame increasing "lines" up to an #FF #FF: control bytes give it away
     const std::vector<uint8_t> music{0x01, 0x00, 0x05, 0x10, 0x00, 0x02, 0x00, 0x07, 0x00, 0x03, 0x00, 0x81, 0x00, 0xFF, 0xFF};
     EXPECT_LE(codecs::ZeusCodec().Detect(music, {}), 15);
+}
+
+TEST(ZeusCodec_Test, PrimusLettersAndWords)
+{
+    // Primus 2.9: Russian letters at #EB-#FF (KOI-8 order without the ones that look Latin), ? . @ _ $ inside words,
+    // DISK in DISP's place
+    EXPECT_EQ(Body("ACCEMБЛEP ЮЩИЙ", "primus"), (std::vector<uint8_t>{'A', 'C', 'C', 'E', 'M', 0xEC, 0xF3, 'E', 'P', ' ', 0xEB, 0xFD, 0xF1, 0xF2}));
+    EXPECT_EQ(Body("L.X NOP", "primus"), (std::vector<uint8_t>{'L', '.', 'X', ' ', 0xBB}));
+    EXPECT_EQ(Body("L.X NOP", "1983"), (std::vector<uint8_t>{0xB2, '.', 'X', ' ', 0xBB}));
+    EXPECT_EQ(Body(" DISK LIB1", "primus"), (std::vector<uint8_t>{' ', 0x9B, 'L', 'I', 'B', '1'}));
+    EXPECT_EQ(codecs::ZeusCodec::DecodeBody(std::vector<uint8_t>{0x9B, 0xFE, 0xFF}, "primus"), "DISK ЧЪ");
 }

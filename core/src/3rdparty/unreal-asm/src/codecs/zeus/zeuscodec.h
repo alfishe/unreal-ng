@@ -7,7 +7,8 @@
 //   that takes operands holds its blank)
 // - versions: "1983" (Crystal ZEUS and the ports that keep its table and tokenizer), "gg" (ZEUS from GG: DB DM DS DW,
 //   INCBIN), "pht" (ZEUS 1.1 beta of Professional Hackers Tools and ZEUS v7.E: DB DM DS DW, INCLUDE, PLACE, and '_'
-//   and other symbols join words)
+//   and other symbols join words), "primus" (Primus Assembler 2.9: DISK for DISP, ? . @ _ $ join words, Russian
+//   letters at #EB-#FF; its files are type C at 33364)
 //
 // A line's text is what ZEUS lists after the number and its blank, other bytes in the Spectrum character set; its
 // number is SourceLine::number. A line's attributes hold the stored bytes when ZEUS's tokenizer would not give them for

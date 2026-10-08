@@ -19,7 +19,7 @@ Running the assemblers themselves inside the emulator: [.recipe/assemblers/](../
 | STORM | `storm` | 1.0beta, 1.2-1.3i | yes |
 | MASM (AIG, KSA) | `masm` | 1.0 demo, 1.1, 2.0, 3.0 | yes (1.x, 3.0) |
 | GENS (HiSoft Devpac) | `gens` | GENS1, GENS2-4 | yes |
-| ZEUS | `zeus` | 1983, GG, 1.1 beta / v7.E | yes |
+| ZEUS | `zeus` | 1983, GG, 1.1 beta / v7.E, Primus Assembler 2.9 | yes |
 | XAS | `xas` | 4.18, 5.05, 7.43, 7.43c, 9.07m, 9.10 | yes |
 | ASM80 / Asm80Win (PC cross assembler) | `asm80` | 2.02 (text) | yes |
 | PROMETHEUS (Proxima) | `prometheus` | the editor's save (records + symbol table) | yes |
