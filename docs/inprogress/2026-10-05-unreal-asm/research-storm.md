@@ -101,6 +101,10 @@ Russian comment, `DB "ПРИВЕТ",#0D,0`), written entirely by the codec's rul
 (STORM shows `EX AF,AF` for the token pair `AF AF`, as the codec does). Own emulator instance, TTD recorded;
 screenshots kept with the research materials.
 
+A STORM 1.0beta file (2026-10-07): five lines typed into STORM 1.0beta in unreal-ng, saved with BREAK S: type `C`,
+start `#C003` (1.3 saves at `#C00B`); the codec reads it as version `1.0`, writes it back byte for byte, and its rules
+give every stored line (`testdata/storm/typed-storm10b__ST1BETA`).
+
 ## 7. Open items
 
 | Item | Note |

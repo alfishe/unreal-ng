@@ -61,6 +61,31 @@ TEST(StormCodec_Test, RealSourcesDecodeAndRoundTrip)
     }
 }
 
+TEST(StormCodec_Test, Storm10BetaFileStartsAtC003)
+{
+    // Typed into STORM 1.0beta in unreal-ng and saved there (BREAK S): type C, start #C003; decoded as version 1.0,
+    // written back byte for byte, every line in the form STORM's rules give
+    const codecs::StormCodec codec;
+    const containers::TrdosFile file = Unwrap("typed-storm10b__ST1BETA");
+    EXPECT_EQ(file.type, 'C');
+    EXPECT_EQ(file.start, 0xC003);
+    DecodeOptions options;
+    options.catalog = file.Hints();
+    const DecodeResult decoded = codec.Decode(file.data, options);
+    ASSERT_TRUE(decoded.ok);
+    EXPECT_EQ(decoded.document.subversion, "1.0");
+    EXPECT_EQ(decoded.document.Text() + "\n", ReadTestText("storm/typed-storm10b__ST1BETA.txt"));
+    EXPECT_EQ(codec.Encode(decoded.document, {}).bytes, file.data);
+    for (const SourceLine& line : decoded.document.lines)
+    {
+        std::vector<uint8_t> body;
+        std::string error;
+        ASSERT_TRUE(codecs::StormCodec::EncodeLine(line.text, body, error)) << line.text << ": " << error;
+        body.push_back(static_cast<uint8_t>(body.size()));
+        EXPECT_EQ(body, line.attrs.bytes) << line.text;
+    }
+}
+
 TEST(StormCodec_Test, StormsRulesReproduceTheStoredLines)
 {
     const codecs::StormCodec codec;
