@@ -21,9 +21,11 @@
 #include <emulator/video/screen.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "3rdparty/lodepng/lodepng.h"
@@ -33,6 +35,11 @@
 #include "debugger/analyzers/rom-print/screenocr.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
+#include "debugger/ttd/engine/ttdregiontracker.h"
+#include "debugger/ttd/ttdwritejournal.h"
+#include "debugger/ttd/engine/ttdwriteindex.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/io/storage/iblockdevice.h"
@@ -360,6 +367,222 @@ protected:
         ASSERT_TRUE(InZxMode()) << ScreenText();
         ASSERT_TRUE(SpectrumHas(menuText)) << SpectrumText() << ScreenText();
         EmulatorTestHelper::RunFramesFast(_emulator.get(), 20);
+    }
+
+    /// Stop exactly at the next frame boundary (a checkpoint's position; the live run and a replay meet there)
+    void ToBoundary()
+    {
+        Z80* cpu = _context->pCore->GetZ80();
+        const uint64_t frame = Frame();
+        for (int guard = 0; guard < 4 && Frame() == frame; guard++)
+            _emulator->RunTStates(cpu->t < cpu->_frameLimit ? cpu->_frameLimit - cpu->t : 1u, true);
+    }
+
+    /// What TTD records of the machine now: every device's blob (by v1 id) and, under key 0x100 + r, every memory
+    /// region of the recording (machine RAM, video RAM, fast RAM, the cards' memories)
+    using MachineState = std::unordered_map<uint32_t, std::vector<uint8_t>>;
+    MachineState Recordable()
+    {
+        ttd::TimeTravelController* ttd = _context->pTimeTravelController;
+        std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
+        ttd->GetPeripheralRegistry().CaptureAll(blobs);
+        MachineState state;
+        for (auto& [id, blob] : blobs)
+            state[id] = ttd::TTDPeripheralRegistry::DecodeBlob(id, blob);
+        const auto& regions = ttd->GetEngine().Regions();
+        for (uint32_t r = 0; r < regions.size(); r++)
+            if (regions[r].memory)
+                state[0x100 + r].assign(regions[r].memory, regions[r].memory + regions[r].bytes);
+        return state;
+    }
+
+    /// Seek to checkpoint `from` of the (stopped) recording and run to `endFrame` - the journal plays the input
+    /// and every host answer: what differs from `recorded` (taken live at that boundary), "" when nothing does
+    std::string ReplayDiff(size_t from, uint64_t endFrame, const MachineState& recorded)
+    {
+        ttd::TimeTravelController* ttd = _context->pTimeTravelController;
+        const ttd::TTDCheckpoint* cp = ttd->GetCheckpoint(from);
+        if (!cp)
+            return "no checkpoint " + std::to_string(from);
+        if (!ttd->SeekTo({cp->time.frame, 0}))
+            return "the seek to checkpoint " + std::to_string(from) + " failed";
+        _emulator->DisableTurboMode();
+        while (Frame() < endFrame)
+            ToBoundary();
+        const MachineState live = Recordable();
+        std::string diffs;
+        for (const auto& [key, want] : recorded)
+        {
+            const std::string name = key >= 0x100 ? ttd->GetEngine().Regions()[key - 0x100].name : "device " + std::to_string(key);
+            const auto got = live.find(key);
+            if (got == live.end())
+            {
+                diffs += name + ": missing after the replay\n";
+                continue;
+            }
+            if (got->second.size() != want.size())
+            {
+                diffs += name + ": " + std::to_string(got->second.size()) + " bytes, recorded " + std::to_string(want.size()) + "\n";
+                continue;
+            }
+            size_t first = 0;
+            while (first < want.size() && got->second[first] == want[first])
+                first++;
+            if (first != want.size())
+                diffs += name + ": differs from byte " + std::to_string(first) + "\n";
+        }
+        return diffs;
+    }
+
+    /// Diagnosis: replay from checkpoint `from` frame by frame against the engine's checkpoints (CPU registers, every
+    /// recorded device); the first frame where the replay leaves the recording, and what differs there
+    std::string FirstDivergence(size_t from)
+    {
+        ttd::TimeTravelController* ttd = _context->pTimeTravelController;
+        const ttd::TimeTravelEngine& engine = ttd->GetEngine();
+        if (!ttd->SeekTo({ttd->GetCheckpoint(from)->time.frame, 0}))
+            return "seek failed";
+        _emulator->DisableTurboMode();
+        for (size_t idx = from + 1; idx < ttd->GetCheckpointCount(); idx++)
+        {
+            const ttd::TTDCheckpoint* cp = ttd->GetCheckpoint(idx);
+            while (Frame() < cp->time.frame)
+                ToBoundary();
+            std::string diffs;
+            const ttd::TTDCpuState cpu = ttd::CaptureCpuState(*static_cast<const Z80State*>(_context->pCore->GetZ80()));
+            if (std::memcmp(&cpu, &cp->cpu, sizeof(cpu)) != 0)
+                diffs += " cpu(pc " + std::to_string(cpu.pc) + " vs " + std::to_string(cp->cpu.pc) + ")";
+            for (const ttd::TTDDeviceEntry& entry : engine.Devices().Entries())
+            {
+                const uint8_t id = static_cast<uint8_t>(entry.descriptor.legacyId);
+                std::vector<uint8_t> recorded;
+                if (!engine.DeviceState(engine.FirstCheckpoint() + idx, id, recorded))
+                    continue;
+                ttd::TTDSerializable* device = ttd->GetPeripheralRegistry().GetDevice(static_cast<ttd::PeripheralId>(id));
+                if (!device)
+                    continue;
+                std::vector<uint8_t> live;
+                uint8_t region = 0;
+                if (auto* source = dynamic_cast<ttd::ITTDRegionSource*>(device); !(source && source->TTDStateWithoutRegions(region, live)))
+                    device->TTDSaveStateTo(live);
+                if (live != recorded)
+                {
+                    size_t first = 0;
+                    while (first < live.size() && first < recorded.size() && live[first] == recorded[first])
+                        first++;
+                    diffs += " " + entry.descriptor.instance + "(" + std::to_string(id) + ")@" + std::to_string(first);
+                }
+            }
+            for (uint32_t r = 0; r < engine.Regions().size(); r++)
+            {
+                const ttd::TTDRegionDesc& region = engine.Regions()[r];
+                if (!region.memory)
+                    continue;
+                std::vector<uint8_t> recorded(size_t(region.pieces) * ttd::kTTDPieceSize);
+                std::vector<uint8_t> present;
+                if (!engine.RestoreRegion(engine.FirstCheckpoint() + idx, r, recorded.data(), &present).Ok())
+                    continue;
+                for (uint32_t p = 0; p < region.pieces; p++)
+                {
+                    if (p < present.size() && !present[p])
+                        continue;
+                    const size_t offset = size_t(p) * ttd::kTTDPieceSize;
+                    const size_t length = std::min<size_t>(ttd::kTTDPieceSize, region.bytes - offset);
+                    if (std::memcmp(region.memory + offset, recorded.data() + offset, length) != 0)
+                    {
+                        size_t b = 0;
+                        while (region.memory[offset + b] == recorded[offset + b])
+                            b++;
+                        diffs += " " + region.name + "@" + std::to_string(offset + b);
+                        break;
+                    }
+                }
+            }
+            if (!diffs.empty())
+            {
+                std::string why = "checkpoint " + std::to_string(idx) + " (frame " + std::to_string(cp->time.frame) + "):" + diffs;
+                if (const ttd::TimeTravelEngine* source = ttd->GetReplaySource())
+                    why += "\n  media reads: cursor " + std::to_string(source->MediaReads().Cursor()) + ", divergences " +
+                           std::to_string(source->MediaReads().Divergences()) + ", the checkpoint's cursor " +
+                           std::to_string(engine.Checkpoint(engine.FirstCheckpoint() + idx)->mediaReadCursor) + ", bus reads cursor " + std::to_string(engine.Checkpoint(engine.FirstCheckpoint() + idx)->busReadCursor);
+                for (const ttd::TTDPortJournal* j : {&ttd->GetPortReadJournal(), &ttd->GetPortWriteJournal()})
+                {
+                    if (!j->HasDivergence())
+                        continue;
+                    const auto& m = j->FirstDivergence();
+                    char line[256];
+                    std::snprintf(line, sizeof(line),
+                                  "\n  %s journal first divergence #%llu: recorded %llu:%u port %04X pc %04X val %02X | live %llu:%u port %04X pc %04X val %02X",
+                                  j == &ttd->GetPortReadJournal() ? "IN" : "OUT", (unsigned long long)m.index,
+                                  (unsigned long long)m.recorded.frame, m.recorded.tInFrame, m.recorded.port, m.recorded.pc, m.recorded.value,
+                                  (unsigned long long)m.live.frame, m.live.tInFrame, m.live.port, m.live.pc, m.live.value);
+                    why += line;
+                }
+                for (const ttd::TTDSyncMiss& miss : engine.SyncMisses())
+                    why += "\n  sync miss frame " + std::to_string(miss.frame) + " " + miss.device.instance + " offset " + std::to_string(miss.offset);
+                // The memory writes of the frame before, recorded against replayed: the first that differs
+                const ttd::TTDWriteIndex* journal = &engine.Writes();
+                const uint64_t frame = ttd->GetCheckpoint(idx - 1)->time.frame;
+                std::vector<ttd::TTDSearchResult> replayed;
+                if (journal && ttd->RegenerateFrameWrites(frame, replayed))
+                {
+                    const uint64_t fromT = ttd->GlobalT({frame, 0});
+                    const uint64_t toT = ttd->GlobalT({cp->time.frame, 0});
+                    std::vector<ttd::TTDWriteRecord> recorded;
+                    journal->FindLastInRange(fromT - 1, toT - 1, [&](const ttd::TTDWriteRecord& r) {
+                        if (!r.isIo)
+                            recorded.push_back(r);
+                        return false;
+                    });
+                    std::reverse(recorded.begin(), recorded.end());
+                    why += "\n  writes in frame " + std::to_string(frame) + ": recorded " + std::to_string(recorded.size()) +
+                           ", replayed " + std::to_string(replayed.size()) + " (window " + std::to_string(fromT) + ".." +
+                           std::to_string(toT) + ", journal " + std::to_string(journal->Size()) + " records)";
+                    // The writes of an instruction that began in the frame before land at its start: not replayed here
+                    size_t skip = 0;
+                    while (skip < recorded.size() && !replayed.empty() && recorded[skip].globalT - fromT < replayed[0].time.tInFrame &&
+                           recorded[skip].m1pc != replayed[0].pc)
+                        skip++;
+                    recorded.erase(recorded.begin(), recorded.begin() + static_cast<std::ptrdiff_t>(skip));
+                    why += " skipped " + std::to_string(skip);
+                    for (size_t w = 0; w < std::min(recorded.size(), replayed.size()); w++)
+                    {
+                        const ttd::TTDWriteRecord& r = recorded[w];
+                        const ttd::TTDSearchResult& p = replayed[w];
+                        if (r.addr != p.addr || r.value != p.value || r.m1pc != p.pc)
+                        {
+                            char line[200];
+                            std::snprintf(line, sizeof(line), "\n  write %zu differs: recorded t%llu %04X=%02X pc %04X | replayed t%u %04X=%02X pc %04X",
+                                          w, (unsigned long long)(r.globalT - fromT), (unsigned)r.addr, (unsigned)r.value, (unsigned)r.m1pc,
+                                          p.time.tInFrame, (unsigned)p.addr, (unsigned)p.value, (unsigned)p.pc);
+                            why += line;
+                            break;
+                        }
+                    }
+                }
+                return why;
+            }
+        }
+        return "";
+    }
+
+    /// The recording replays to the live machine from its first checkpoint and from the middle one (a restore
+    /// inside the session, every device mid-flight): `recorded` was taken live at `endFrame`
+    void ExpectReplaysFromStartAndMiddle(uint64_t endFrame, const MachineState& recorded)
+    {
+        ttd::TimeTravelController* ttd = _context->pTimeTravelController;
+        ASSERT_GE(ttd->GetCheckpointCount(), 4u);
+        if (std::getenv("UNREAL_TTD_DIVERGENCE"))
+        {
+            for (const auto& info : _context->pMediaManager->List())
+                std::printf("MEDIA %s changes '%s'\n", info.descriptor.id.c_str(), info.changes.c_str());
+            std::printf("JOURNAL before the replay: %llu records\n", (unsigned long long)ttd->GetEngine().Writes().Size());
+            std::printf("FIRST DIVERGENCE: %s\n", FirstDivergence(0).c_str());
+        }
+        for (size_t from : {size_t(0), ttd->GetCheckpointCount() / 2})
+            EXPECT_EQ(ReplayDiff(from, endFrame, recorded), "") << "replayed from checkpoint " << from << " of "
+                                                                 << ttd->GetCheckpointCount();
+
     }
 
 private:

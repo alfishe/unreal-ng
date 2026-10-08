@@ -676,6 +676,13 @@ TTDReply TTDControlBackend<S>::Start(const TTDRequest& request)
     reply.body["history_limit_frames"] = info.historyLimitFrames;
     reply.body["history_limit_bytes"] = info.historyLimitBytes;
     reply.body["black_box"] = BlackBoxOf(_manager);
+    if (!ok)
+    {
+        // A refusal says why (a device table that does not build, a machine not ready): 409 with the reason
+        const std::string& why = _manager->LastStartError();
+        return Fail(TTDControlError::Conflict,
+                    "the recording did not start: " + (why.empty() ? std::string("see the log") : why), reply.body);
+    }
     return reply;
 }
 

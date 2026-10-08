@@ -53,6 +53,7 @@
 #include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/sprinter/sprintermemory.h"
+#include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
 #include "emulator/video/screen.h"
@@ -357,6 +358,9 @@ protected:
     /// The recorded run: the picture at every frame boundary, by frame
     std::map<uint64_t, uint64_t> _screens;
 
+    /// A variant's machine (the ISA population): applied when the instance is created
+    virtual void ConfigureMachine(CONFIG& config) { (void)config; }
+
     void SetUp() override
     {
         if (!SprinterFixture::Rom304Available())
@@ -364,7 +368,8 @@ protected:
         _manager = EmulatorManager::GetInstance();
         for (const auto& id : _manager->GetEmulatorIds())
             _manager->RemoveEmulator(id);
-        _emulator = _manager->CreateEmulatorWithModelAndRAM("sprinter-ttd", "SPRINTER", 4096, LoggerLevel::LogError);
+        _emulator = _manager->CreateEmulatorWithModelAndRAM("sprinter-ttd", "SPRINTER", 4096, LoggerLevel::LogError,
+                                                            nullptr, [this](CONFIG& config) { ConfigureMachine(config); });
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
         _decoder = dynamic_cast<PortDecoder_Sprinter*>(_context->pPortDecoder);
@@ -565,11 +570,13 @@ protected:
 
     /// Seek to checkpoint `from` and run forward through `frames` recorded frames (the journal
     /// plays the input): every boundary must be the recorded one
-    void ExpectExactReplay(size_t from, size_t frames, const std::string& what)
+    void ExpectExactReplay(size_t from, size_t frames, const std::string& what, const std::function<void()>& afterSeek = {})
     {
         const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(from);
         ASSERT_NE(cp, nullptr) << what;
         ASSERT_TRUE(_ttd->SeekTo({cp->time.frame, 0})) << what;
+        if (afterSeek)
+            afterSeek();   // what a user may do there before running on (a frame-cache build replays elsewhere)
         ExpectLiveMatchesCheckpoint(from, what + ": the restore", true, false);
         const size_t last = std::min(_ttd->GetCheckpointCount() - 1, from + frames);
         for (size_t idx = from + 1; idx <= last && !HasFailure(); idx++)
@@ -830,6 +837,72 @@ TEST_F(TTDSprinterMachine_Test, ExactRestore_MidIdeSector)
     ASSERT_GT(midSector, 0u) << "no frame boundary fell into an IDE sector";
 
     ExpectExactReplay(midSector, 40, "from the middle of an IDE sector");
+    std::remove(path.c_str());
+}
+
+/// A recording that writes the hard disk and reads it back replays from its start (a seek, then the machine runs on
+/// through the recorded history): every sector read comes from the read journal, not from the image - which holds the
+/// recording's last state by then (the copy already there). Until 2026-10-08 the run after a seek read the image and
+/// left the recording where DSS read the directory. SYSTEM.BAT makes a directory (DSS's built-in MD writes the
+/// root directory and a cluster) and lists the root (DIR reads them back).
+/// Boot-bound: DSS from the disk and the batch (a few hundred frames), replayed once from the start
+TEST_F(TTDSprinterMachine_Test, AReplayAfterASeekReadsTheRecordedSectorsNotTheImage)
+{
+    const std::vector<uint8_t> floppy = [] {
+        std::vector<uint8_t> bytes;
+        const std::string path = TestPathHelper::GetTestDataPath("machines/sprinter/dss_1_62_92.img");
+        FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f)
+            return bytes;
+        bytes.resize(1474560);
+        if (std::fread(bytes.data(), 1, bytes.size(), f) != bytes.size())
+            bytes.clear();
+        std::fclose(f);
+        return bytes;
+    }();
+    if (floppy.size() != 1474560u)
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    const std::vector<uint8_t> loader(floppy.begin() + 512, floppy.begin() + 4 * 512);
+    const std::string bat = "md newdir\r\ndir\r\n";
+    std::vector<uint8_t> disk = BuildDssHdd(loader, {{"SYSTEM  DOS", FloppyRootFile(floppy, "SYSTEM  DOS")},
+                                                           {"SYSTEM  EXE", FloppyRootFile(floppy, "SYSTEM  EXE")},
+                                                           {"SYSTEM  BAT", std::vector<uint8_t>(bat.begin(), bat.end())}});
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("ttd-sprinter-hdd-write.img");
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(path, disk.data(), disk.size()));
+
+    PowerOn(true);
+    MediaSource source;
+    source.path = path;
+    InsertOptions options;
+    options.immediate = true;
+    options.access = AccessMode::Session;
+    ASSERT_TRUE(_context->pMediaManager->Insert("ide0.master", source, options).Ok());
+    ASSERT_NO_FATAL_FAILURE(SkipIdeProbe());
+
+    StartRecording();
+    bool typed = false;
+    for (int i = 0; i < 3000 && !typed && !HasFatalFailure(); i++)
+        Record(1, {}, [&] { typed = ScreenHas("NEWDIR") && ScreenText().rfind("C:\\>") > ScreenText().find("NEWDIR"); });
+    Record(60);
+    _ttd->StopRecording();
+    ASSERT_TRUE(typed) << ScreenText();
+    const auto info = _context->pMediaManager->Info("ide0.master");
+    ASSERT_TRUE(info.has_value());
+    ASSERT_TRUE(info->dirty) << "MD wrote the disk\n" << ScreenText();
+
+    // Before running on, a throwaway replay elsewhere (a frame-cache build of a later frame): the run continues from
+    // checkpoint 0's place in the journals, not from where that replay left them
+    const uint64_t later = _ttd->GetCheckpoint(_ttd->GetCheckpointCount() - 5)->time.frame;
+    ExpectExactReplay(0, _ttd->GetCheckpointCount() - 1, "the recording that wrote the disk, from its start",
+                      [&] { ASSERT_NE(_ttd->GetFrameCache(later), nullptr); });
+
+    // Recording on from a past point leaves the recorded history: its sectors are not played any more
+    ASSERT_TRUE(_ttd->ResumeRecordingFrom({_ttd->GetCheckpoint(10)->time.frame, 0}));
+    for (const ttd::TimeTravelEngine* engine : {_ttd->GetReplaySource(), &_ttd->GetEngine()})
+        if (engine)
+            EXPECT_NE(engine->MediaReads().GetMode(), ttd::TTDMediaJournal::Mode::Play)
+                << "the new branch reads the disk, not the old recording's sectors";
+    _ttd->StopRecording();
     std::remove(path.c_str());
 }
 
@@ -1246,3 +1319,56 @@ TEST_F(TTDSprinterMachine_Test, ASeekRebuildsThePensFromTheRestoredVideoRam)
     ASSERT_NE(_screens.find(frame), _screens.end());
     EXPECT_EQ(ScreenHash(), _screens.at(frame)) << "the composed picture uses the restored pens";
 }
+
+/// Every ISA population records and replays whole (owner request 2026-10-08: TTD of the whole Sprinter with its ISA
+/// cards): the network cards (NE2000, 3C509B), the UART cards (SprinterESP, the Hayes modem, SprinterSerial with
+/// both channels) in either slot and together, the ZX-bus adapter, empty slots. BIOS POST frames are recorded and
+/// replayed from the first checkpoint and from the middle one: CPU, chipset, every recorded device, every memory
+/// region and the picture equal the recording at every boundary. Two UART cards once made the device table refuse the
+/// recording (both named "uart"). Over 50 ms: BIOS POST frames and two replays, about 0.1 s per population
+class TTDSprinterIsa_Test : public TTDSprinterMachine_Test,
+                            public ::testing::WithParamInterface<std::pair<const char*, const char*>>
+{
+protected:
+    void ConfigureMachine(CONFIG& config) override
+    {
+        SprinterBios::Options options;
+        std::string error;
+        ASSERT_TRUE(SprinterBios::IsaSlotFromString(GetParam().first, 0, options, error)) << error;
+        ASSERT_TRUE(SprinterBios::IsaSlotFromString(GetParam().second, 1, options, error)) << error;
+        ASSERT_TRUE(SprinterBios::ApplyToConfig(config, options, error)) << error;
+    }
+};
+
+TEST_P(TTDSprinterIsa_Test, RecordsAndReplaysEveryCard)
+{
+    PowerOn(true);
+    Skip(5);
+    StartRecording();
+    Record(8);
+    _ttd->StopRecording();
+    ASSERT_GE(_ttd->GetCheckpointCount(), 9u);
+    ExpectExactReplay(0, 8, std::string(GetParam().first) + " + " + GetParam().second + " from the start");
+    ExpectExactReplay(4, 4, std::string(GetParam().first) + " + " + GetParam().second + " from the middle");
+
+    // Each UART on the cards is its own device
+    auto uarts = [](const char* card) { return std::strcmp(card, "dual16552") == 0 ? 2 : std::strcmp(card, "sprinteresp") == 0 ||
+                                                                                    std::strcmp(card, "modem") == 0 ? 1 : 0; };
+    const ttd::TTDDeviceTable& devices = _ttd->GetEngine().Devices();
+    const char* names[2][2] = {{"slot1.uart", "slot1.uart2"}, {"slot2.uart", "slot2.uart2"}};
+    for (int slot = 0; slot < 2; slot++)
+    {
+        const int count = uarts(slot == 0 ? GetParam().first : GetParam().second);
+        for (int ch = 0; ch < 2; ch++)
+            EXPECT_EQ(devices.Find({ttd::TTDDeviceType::SerialPort, names[slot][ch]}) != nullptr, ch < count)
+                << names[slot][ch];
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(Populations, TTDSprinterIsa_Test,
+                         ::testing::Values(std::make_pair("zxbus", "ne2000"), std::make_pair("ne2000", "el3c509b"),
+                                           std::make_pair("el3c509b", "ne2000"), std::make_pair("sprinteresp", "modem"),
+                                           std::make_pair("modem", "sprinteresp"), std::make_pair("dual16552", "dual16552"),
+                                           std::make_pair("dual16552", "sprinteresp"), std::make_pair("ne2000", "ne2000"),
+                                           std::make_pair("zxbus", "zxbus"), std::make_pair("none", "none")),
+                         [](const auto& info) { return std::string(info.param.first) + "_" + info.param.second; });

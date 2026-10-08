@@ -47,15 +47,31 @@ public:
     void TTDLoadState(const uint8_t* src) override;
     std::string TTDDeviceName() const override { return _name; }
     PeripheralId TTDPeripheralId() const override { return _id; }
-    /// One kind, SerialPort, whatever v1 id the port records under: the
-    /// machine's #xxEF port ("uart"), the ATM2IOESP card's ("atm2ioesp.uart"),
-    /// the TS AVR's ZiFi line ("zifi.uart")
+    /// One kind, SerialPort, whatever v1 id the port records under; the
+    /// instance tells the ports of one machine apart: the machine's #xxEF port
+    /// ("uart"), the ATM2IOESP card's ("atm2ioesp.uart"), the TS AVR's ZiFi
+    /// line ("zifi.uart"), the UART cards in expansion slots 1 / 2 and their
+    /// second channels ("slot1.uart", "slot1.uart2", "slot2.uart", "slot2.uart2":
+    /// a Sprinter with SprinterESP and a modem, or SprinterSerial's two ports)
     TTDDeviceDescriptor TTDDescribe() const override
     {
         TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
         d.type = TTDDeviceType::SerialPort;
-        d.instance = _id == PeripheralId::Atm2IoEsp ? "atm2ioesp.uart" : _id == PeripheralId::ZiFiLine ? "zifi.uart" : "uart";
+        d.instance = InstanceOf(_id);
         return d;
+    }
+    static const char* InstanceOf(PeripheralId id)
+    {
+        switch (id)
+        {
+        case PeripheralId::Atm2IoEsp: return "atm2ioesp.uart";
+        case PeripheralId::ZiFiLine: return "zifi.uart";
+        case PeripheralId::SlotSerial1: return "slot1.uart";
+        case PeripheralId::SlotSerial1B: return "slot1.uart2";
+        case PeripheralId::SlotSerial2: return "slot2.uart";
+        case PeripheralId::SlotSerial2B: return "slot2.uart2";
+        default: return "uart";
+        }
     }
     uint64_t TTDHashState() const override;
 

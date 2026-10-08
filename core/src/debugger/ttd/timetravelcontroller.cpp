@@ -146,10 +146,12 @@ bool TimeTravelController::StartRecording()
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (_state == TTDSessionState::Recording)
         return true;  // Idempotent
+    _lastStartError.clear();
 
     if (!_unavailableReason.empty())
     {
         MLOGWARNING("TimeTravelController::StartRecording — refused: %s", _unavailableReason.c_str());
+        _lastStartError = _unavailableReason;
         return false;
     }
 
@@ -183,6 +185,7 @@ bool TimeTravelController::StartRecording()
     {
         MLOGWARNING("TimeTravelController::StartRecording — missing dependencies (context=%p memory=%p tracker=%p)",
                     (void*)_context, (void*)_memory, (void*)_dirtyTracker);
+        _lastStartError = "the machine is not ready (no context, memory or dirty tracker)";
         return false;
     }
 
@@ -252,6 +255,7 @@ bool TimeTravelController::StartRecording()
         {
             MLOGERROR("TimeTravelController::StartRecording - refusing to record: %s",
                       registrationError.c_str());
+            _lastStartError = registrationError;
             return refuse();
         }
     }
@@ -300,6 +304,7 @@ bool TimeTravelController::StartRecording()
         MLOGWARNING("TimeTravelController::StartRecording — implausible modelRamPages=%u, refusing to start",
                     static_cast<unsigned>(_modelRamPages));
         _modelRamPages = 0;
+        _lastStartError = "the machine reports no RAM pages to record";
         return refuse();
     }
 
@@ -344,6 +349,7 @@ bool TimeTravelController::StartRecording()
         _lastStopReason = "capture-failed";
         if (wasRunning && emu)
             emu->Resume(false);
+        _lastStartError = "the engine did not take the baseline checkpoint";
         return false;
     }
     _blobBytes += BlobBytes(baseline);
@@ -585,9 +591,29 @@ void TimeTravelController::EngageCaptureFeatures()
     }
 }
 
+void TimeTravelController::StopHistoryPlayback()
+{
+    if (!_replayEngine)
+        return;
+    if (_replayEngine->MediaReads().GetMode() == TTDMediaJournal::Mode::Play)
+        _replayEngine->MediaReads().Stop();
+    if (_replayEngine->BusVectors().GetMode() == TTDPortJournal::Mode::Play)
+        _replayEngine->BusVectors().Stop();
+    if (_context && (_context->ttdPortReads == _replayEngine->BusReadsForPlayback() ||
+                     _context->ttdPortWrites == _replayEngine->BusWritesForPlayback()))
+        SyncPortJournalHook();   // the CPU's IN / OUT hooks back on the controller's own journals
+}
+
 void TimeTravelController::SetState(TTDSessionState next)
 {
+    const bool leavesHistory = _state == TTDSessionState::Detached && next != TTDSessionState::Detached;
     _state = next;
+    if (leavesHistory && !_inReplayMode)
+    {
+        // Off the recorded history: sectors, interrupt vectors and IN results are live again
+        StopHistoryPlayback();
+        SyncMediaReadJournal();
+    }
     SyncCoverageSink();
     if (next == TTDSessionState::Recording)
         EngageRecordingLock();
@@ -5862,6 +5888,19 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out)
     out.portReadCursor = _portReads.Cursor();
     out.portWriteMode = _portWrites.GetMode();
     out.portWriteCursor = _portWrites.Cursor();
+    if (_replayEngine)
+    {
+        out.busReadMode = _replayEngine->BusReads().GetMode();
+        out.busReadCursor = _replayEngine->BusReads().Cursor();
+        out.busWriteMode = _replayEngine->BusWrites().GetMode();
+        out.busWriteCursor = _replayEngine->BusWrites().Cursor();
+        out.busVectorMode = _replayEngine->BusVectors().GetMode();
+        out.busVectorCursor = _replayEngine->BusVectors().Cursor();
+        out.mediaReadMode = _replayEngine->MediaReads().GetMode();
+        out.mediaReadCursor = _replayEngine->MediaReads().Cursor();
+    }
+    out.portReadHook = _context->ttdPortReads;
+    out.portWriteHook = _context->ttdPortWrites;
 
     out.hasKeyboard = _context->pKeyboard != nullptr;
     if (out.hasKeyboard)
@@ -5955,7 +5994,20 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
     UpdateInputWorkFlag();
     _portReads.RestorePosition(snap.portReadMode, snap.portReadCursor);
     _portWrites.RestorePosition(snap.portWriteMode, snap.portWriteCursor);
-    SyncPortJournalHook();
+    if (_replayEngine)
+    {
+        // The engine's journals where the caller had them (a machine on the recorded history keeps playing them)
+        _replayEngine->BusReadsMutable().RestorePosition(snap.busReadMode, snap.busReadCursor);
+        _replayEngine->BusWritesMutable().RestorePosition(snap.busWriteMode, snap.busWriteCursor);
+        _replayEngine->BusVectors().RestorePosition(snap.busVectorMode, snap.busVectorCursor);
+        if (snap.mediaReadMode == TTDMediaJournal::Mode::Play)
+            _replayEngine->MediaReads().StartPlayback(snap.mediaReadCursor);
+        else
+            _replayEngine->MediaReads().Stop();
+    }
+    _context->ttdPortReads = snap.portReadHook;
+    _context->ttdPortWrites = snap.portWriteHook;
+    SyncMediaReadJournal();
 
     if (snap.hasKeyboard && _context->pKeyboard)
         _context->pKeyboard->RestoreInputState(snap.keyboard);

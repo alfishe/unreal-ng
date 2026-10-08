@@ -97,7 +97,9 @@ answer). Switch it during the recording or build it afterwards:
 StartRecording **auto-enables** the `timetravel` and `debugmode` runtime
 features. On stop it turns `debugmode` back off if it was the one that
 enabled it; `timetravel` stays on. Idempotent: starting twice is a no-op
-(`already_active: true`).
+(`already_active: true`). A start the recorder refuses answers `409` with the reason
+(`"the recording did not start: device table: device uart (type 24) is registered twice"`,
+`"... the machine reports no RAM pages to record"`), every surface alike.
 
 While recording (and while the machine sits in `detached`) the
 **acceleration lock** holds: host speed forced to 1x (2x-16x refused),

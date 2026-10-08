@@ -118,6 +118,8 @@ public:
     /// Idempotent: calling while already Recording is a no-op.
     /// @return true if recording was started (or was already active).
     bool StartRecording();
+    /// Why the last StartRecording() refused (empty after a start that succeeded): the automation surfaces report it
+    const std::string& LastStartError() const { return _lastStartError; }
 
     /// @brief Make time travel unavailable for this instance, with the reason a
     /// user sees: StartRecording (and the debugger live history built on it)
@@ -1653,6 +1655,18 @@ private:
         uint64_t portReadCursor = 0;
         TTDPortJournal::Mode portWriteMode = TTDPortJournal::Mode::Off;
         uint64_t portWriteCursor = 0;
+        /// The replay engine's journals as the machine plays them (a machine on the recorded history after a seek
+        /// runs from them; a throwaway replay starts them elsewhere) and the hooks the CPU and the media read through
+        TTDPortJournal::Mode busReadMode = TTDPortJournal::Mode::Off;
+        uint64_t busReadCursor = 0;
+        TTDPortJournal::Mode busWriteMode = TTDPortJournal::Mode::Off;
+        uint64_t busWriteCursor = 0;
+        TTDPortJournal::Mode busVectorMode = TTDPortJournal::Mode::Off;
+        uint64_t busVectorCursor = 0;
+        TTDMediaJournal::Mode mediaReadMode = TTDMediaJournal::Mode::Off;
+        uint64_t mediaReadCursor = 0;
+        TTDPortJournal* portReadHook = nullptr;
+        TTDPortJournal* portWriteHook = nullptr;
         /// Keyboard matrix + counters: journal playback inside a sandbox
         /// replay presses/releases keys on the live device.
         Keyboard::InputState keyboard{};
@@ -1807,6 +1821,9 @@ private:
     MediaReadAdapter _mediaReads{*this};
     /// Point the media manager at the journal the session now needs (recording, replaying, none)
     void SyncMediaReadJournal();
+    /// Stop the replay engine's journals the machine plays on the recorded history (sectors, interrupt vectors, the
+    /// CPU's IN / OUT hooks): it leaves the history (a resume, a reset, a new recording)
+    void StopHistoryPlayback();
     std::map<uint8_t, std::vector<uint8_t>> _toolEditBefore;   ///< device states when a tool edit began
     bool _toolEditOpen = false;
     TTDTimePoint _toolEditAt{};   ///< where the edit began: its event's time (a trap's instruction boundary)
@@ -2033,6 +2050,7 @@ private:
     std::string _lastDropReason;
     /// See TTDSessionInfo::lastStopReason
     std::string _lastStopReason;
+    std::string _lastStartError;   ///< LastStartError()
     std::string _unavailableReason;    // see SetUnavailableReason
     /// Position at StopRecording, to tell whether the machine ran before a live resume
     uint64_t _recordingStoppedAtT = 0;

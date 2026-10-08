@@ -121,6 +121,8 @@ public:
     /// Idempotent: calling while already Recording is a no-op.
     /// @return true if recording was started (or was already active).
     bool StartRecording();
+    /// Why the last StartRecording() refused (empty after a start that succeeded): the automation surfaces report it
+    const std::string& LastStartError() const { return _lastStartError; }
 
     /// @brief Make time travel unavailable for this instance, with the reason a
     /// user sees: StartRecording (and the debugger live history built on it)
@@ -2008,6 +2010,7 @@ private:
     std::string _lastDropReason;
     /// See TTDSessionInfo::lastStopReason
     std::string _lastStopReason;
+    std::string _lastStartError;   ///< LastStartError()
     std::string _unavailableReason;    // see SetUnavailableReason
     /// Position at StopRecording, to tell whether the machine ran before a live resume
     uint64_t _recordingStoppedAtT = 0;

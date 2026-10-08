@@ -149,10 +149,12 @@ bool TimeTravelManager::StartRecording()
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (_state == TTDSessionState::Recording)
         return true;  // Idempotent
+    _lastStartError.clear();
 
     if (!_unavailableReason.empty())
     {
         MLOGWARNING("TimeTravelManager::StartRecording — refused: %s", _unavailableReason.c_str());
+        _lastStartError = _unavailableReason;
         return false;
     }
 
@@ -170,6 +172,7 @@ bool TimeTravelManager::StartRecording()
     {
         MLOGWARNING("TimeTravelManager::StartRecording — missing dependencies (context=%p memory=%p tracker=%p)",
                     (void*)_context, (void*)_memory, (void*)_dirtyTracker);
+        _lastStartError = "the machine is not ready (no context, memory or dirty tracker)";
         return false;
     }
 
@@ -238,6 +241,7 @@ bool TimeTravelManager::StartRecording()
         {
             MLOGERROR("TimeTravelManager::StartRecording - refusing to record: %s",
                       registrationError.c_str());
+            _lastStartError = registrationError;
             return refuse();
         }
     }
@@ -288,6 +292,7 @@ bool TimeTravelManager::StartRecording()
         MLOGWARNING("TimeTravelManager::StartRecording — implausible modelRamPages=%u, refusing to start",
                     static_cast<unsigned>(_modelRamPages));
         _modelRamPages = 0;
+        _lastStartError = "the machine reports no RAM pages to record";
         return refuse();
     }
 

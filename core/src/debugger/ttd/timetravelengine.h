@@ -337,6 +337,9 @@ public:
     const TTDMediaJournal& MediaReads() const { return _mediaReads; }
     const TTDPortJournal& BusReads() const { return _busReads; }
     const TTDPortJournal& BusWrites() const { return _busWrites; }
+    /// The bus journals' positions, for a caller that puts a replay's position back (a throwaway replay)
+    TTDPortJournal& BusReadsMutable() { return _busReads; }
+    TTDPortJournal& BusWritesMutable() { return _busWrites; }
     /// A replay reads the bus journals from these cursors (a checkpoint's):
     /// reads hand the CPU the recorded values, writes are checked
     void PlayBus(uint64_t readCursor, uint64_t writeCursor, uint64_t vectorCursor = 0)

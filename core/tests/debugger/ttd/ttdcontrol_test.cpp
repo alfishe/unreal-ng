@@ -148,6 +148,25 @@ TEST_P(TTDControl_Test, WithoutTimeTravelStatusAnswersIdleAndEveryOtherVerbIsNot
     EXPECT_EQ(start.message, "TTD engine not available in this build");
 }
 
+/// A start the recorder refuses says why (409 with the reason), not a quiet "started": false - a Sprinter with two
+/// UART cards was refused that way, unexplained, until 2026-10-08. Here: a configuration with no RAM page to record
+TEST_P(TTDControl_Test, ARefusedStartSaysWhy)
+{
+    const uint32_t ramsize = _context->config.ramsize;
+    _context->config.ramsize = 8;   // under one 16 KB page
+    TTDReply r = Run("start");
+    _context->config.ramsize = ramsize;
+    EXPECT_FALSE(r.Ok());
+    EXPECT_EQ(r.HttpStatus(), 409);
+    EXPECT_NE(r.message.find("the recording did not start: the machine reports no RAM pages to record"), std::string::npos)
+        << r.message;
+    EXPECT_FALSE(Bool(r, "started"));
+
+    r = Run("start");   // the next start that succeeds clears the reason
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_TRUE(Bool(r, "started"));
+}
+
 TEST_P(TTDControl_Test, StartStopAndStatusReportTheSession)
 {
     TTDReply r = Run("start", {{"journal", "true"}, {"history_limit_frames", "500"}});
