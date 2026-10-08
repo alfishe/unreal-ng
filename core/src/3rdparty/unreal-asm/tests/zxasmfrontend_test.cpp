@@ -201,3 +201,35 @@ TEST(ZxasmFrontend_Test, ProgramsAssembleToWhatZasm315Built)
         EXPECT_EQ(AssembleConverted(sjasmplus, name, expected.size()), expected) << name;
     }
 }
+
+TEST(ZxasmFrontend_Test, MakeAssemblesSectionsIntoFiles)
+{
+    // MAKE "file",address: the code up to the next MAKE / ORG / the end goes into the file, assembled for the address;
+    // the label on the MAKE line keeps the address before it (ZAsm 3.15: lev = #8003)
+    EXPECT_EQ(FromOrg("        org #8000\n        ret\nlev     make \"a:mk1.C\",#C000\n        nop\n        org #8100\n"),
+              (std::vector<std::string>{"ORG #8000", "RET", "lev     ORG #C000", "NOP", "SAVEBIN \"mk1.C\",#C000,$-(#C000)", "ORG #8100"}));
+    // zmk: two MAKE sections and an ORG after them, assembled by ZAsm 3.15 in unreal-ng: mk1.C, mk2.C and SAVEOBJ's out.C
+    const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
+    if (!sjasmplus)
+        GTEST_SKIP() << "set UNREAL_ASM_SJASMPLUS to the sjasmplus binary";
+    const codecs::ZxasmCodec zxasm;
+    const containers::TrdosFile hobeta = Hobeta("dialects/zasm315/zmk.$a");
+    DecodeOptions options;
+    options.catalog = hobeta.Hints();
+    const ConvertResult r = Convert(zxasm.Decode(hobeta.data, options).document, "sjasmplus");
+    std::random_device random;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() /
+                                      ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+    std::filesystem::create_directories(dir);
+    WriteBytes(dir / "zmk.asm", codecs::SjasmplusCodec().Encode(r.document, {}).bytes);
+#ifdef _WIN32
+    const std::string command = "cd /d \"" + dir.string() + "\" && \"" + sjasmplus + "\" --nologo zmk.asm > out.txt 2>&1";
+#else
+    const std::string command = "cd \"" + dir.string() + "\" && \"" + sjasmplus + "\" --nologo zmk.asm > out.txt 2>&1";
+#endif
+    EXPECT_EQ(std::system(command.c_str()), 0);
+    EXPECT_EQ(ReadBytes(dir / "mk1.C"), ReadTestData("dialects/zasm315/zmk-mk1.bin"));
+    EXPECT_EQ(ReadBytes(dir / "mk2.C"), ReadTestData("dialects/zasm315/zmk-mk2.bin"));
+    EXPECT_EQ(ReadBytes(dir / "out.C"), ReadTestData("dialects/zasm315/zmk-out.bin"));
+    std::filesystem::remove_all(dir);
+}

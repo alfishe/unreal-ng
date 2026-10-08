@@ -855,6 +855,23 @@ struct LineParser
     bool phaseUnknown = true;
     int phaseLabels = 0;
     std::optional<Expr> lastOrg;
+    // MAKE "file",address: the code from here to the next MAKE / ORG / the end goes into the file, assembled for the
+    // address (ZAsm 3.3 ReadMe2; checked: the label on the MAKE line keeps the address before it, memory is not
+    // written)
+    std::string makeFile;
+    std::optional<Expr> makeStart;
+
+    /// The MAKE section open so far ends: its bytes are saved to its file
+    void CloseMake(std::vector<Statement>& out)
+    {
+        if (!makeStart)
+            return;
+        Statement s = Directive(ir::DirectiveKind::SaveBinary);
+        s.text = makeFile;
+        s.args = {*makeStart, Expr::Binary(Op::Sub, Expr::Make(Expr::Kind::Current), Grouped(*makeStart))};
+        out.push_back(std::move(s));
+        makeStart.reset();
+    }
 
     void EndPhases(std::vector<Statement>& out)
     {
@@ -922,10 +939,26 @@ struct LineParser
             if (a.empty())
                 throw Failure{"ORG without an address"};
             EndPhases(out);
+            CloseMake(out);
             Statement s = Directive(ir::DirectiveKind::Org);
             s.args = a;
             lastOrg = a[0];
             out.push_back(std::move(s));
+            return;
+        }
+        if (lower == "make")
+        {
+            if (ops.size() < 2)
+                throw Failure{"MAKE without a file and an address"};
+            EndPhases(out);
+            CloseMake(out);
+            Statement s = Directive(ir::DirectiveKind::Org);
+            Expr at = ParseExpression(ops[1]);
+            s.args = {at};
+            out.push_back(std::move(s));
+            makeFile = FileName(ops[0], false);
+            makeStart = at;
+            lastOrg = at;
             return;
         }
         if (lower == "phase")
@@ -1274,7 +1307,7 @@ FrontendResult ZxasmFrontend::ParseInProject(const SourceDocument& source, const
     }
     expander.Run(split(source));
 
-    LineParser parser{result, {}, {}, true, 0, std::nullopt};
+    LineParser parser{result, {}, {}, true, 0, std::nullopt, {}, std::nullopt};
     for (const SourceDocument* other : project)
         parser.projectNames.insert(other->name);
     for (const SourceStatementLine& l : expander.out)
@@ -1283,6 +1316,13 @@ FrontendResult ZxasmFrontend::ParseInProject(const SourceDocument& source, const
         for (size_t k = 0; k < l.statements.size(); ++k)
             original += (k ? ":" : (original.empty() ? "        " : " ")) + l.statements[k];
         parser.ParseLine(l, original);
+    }
+    if (parser.makeStart)
+    {
+        ir::Line end;
+        end.sourceLine = expander.out.empty() ? 0 : expander.out.back().number;
+        parser.CloseMake(end.statements);
+        result.program.lines.push_back(std::move(end));
     }
     return result;
 }
