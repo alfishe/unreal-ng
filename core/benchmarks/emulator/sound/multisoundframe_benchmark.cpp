@@ -20,6 +20,8 @@
 ///   4  SounDrive: 200 writes per channel per frame (10 kHz sample playback on all four DACs)
 ///   8  SAM2695: 16 sustained notes, one per MIDI channel (drums on 10), effects on (the chip's default path)
 ///   16 General Sound: a looped ProTracker module (the GS benchmark's), GS firmware playing
+///   32 SAM2695 after playback: the 16 notes of 8 played for 2 s, then released (All Notes Off) and 30 s of silence -
+///      the card after a tune ended, the effects' tails run out (alone: 32, not 8 | 32)
 /// 0 = idle (FM muted and the SAA clock stopped by the reset, the GS firmware in its command loop), 31 = everything.
 /// The marginal cost of a source is its row minus the idle row.
 namespace
@@ -40,6 +42,7 @@ enum Source : int
     kSd = 4,
     kMidi = 8,
     kGs = 16,
+    kMidiStopped = 32,
 };
 
 /// The GS benchmark's module: one pattern, a looped square sample on channel 1
@@ -224,16 +227,10 @@ void StartSaa(Board& b)
     reg(0x14, 0x3F);           // frequency enable, all six
 }
 
-/// 16 notes, one per MIDI channel (program change + note on), bit-banged on U4's IOA2 as a Z80 player does: 31 250
-/// baud = 112 ticks a bit, LSB first, one start and one stop bit
-void StartMidi(Board& b)
+/// MIDI bytes bit-banged on U4's IOA2 as a Z80 player does: 31 250 baud = 112 ticks a bit, LSB first, one start and
+/// one stop bit
+void SendMidi(Board& b, const std::vector<uint8_t>& bytes)
 {
-    std::vector<uint8_t> bytes;
-    for (uint8_t ch = 0; ch < 16; ch++)
-    {
-        bytes.insert(bytes.end(), {static_cast<uint8_t>(0xC0 | ch), static_cast<uint8_t>(ch * 7 + 48)});
-        bytes.insert(bytes.end(), {static_cast<uint8_t>(0x90 | ch), static_cast<uint8_t>(ch == 9 ? 42 : 48 + ch * 2), 0x64});
-    }
     constexpr uint8_t kHigh = 0xFF;   // R14, IOA2 = 1: the line idle
     constexpr uint8_t kLow = 0xFB;
     // 40 bytes a frame (44 800 ticks of a 71 680-tick frame)
@@ -263,6 +260,27 @@ void StartMidi(Board& b)
     }
 }
 
+/// 16 notes, one per MIDI channel (program change + note on)
+void StartMidi(Board& b)
+{
+    std::vector<uint8_t> bytes;
+    for (uint8_t ch = 0; ch < 16; ch++)
+    {
+        bytes.insert(bytes.end(), {static_cast<uint8_t>(0xC0 | ch), static_cast<uint8_t>(ch * 7 + 48)});
+        bytes.insert(bytes.end(), {static_cast<uint8_t>(0x90 | ch), static_cast<uint8_t>(ch == 9 ? 42 : 48 + ch * 2), 0x64});
+    }
+    SendMidi(b, bytes);
+}
+
+/// All Notes Off on the 16 channels
+void StopMidi(Board& b)
+{
+    std::vector<uint8_t> bytes;
+    for (uint8_t ch = 0; ch < 16; ch++)
+        bytes.insert(bytes.end(), {static_cast<uint8_t>(0xB0 | ch), 123, 0});
+    SendMidi(b, bytes);
+}
+
 void RunMultiSoundFrames(benchmark::State& state)
 {
     const int sources = static_cast<int>(state.range(0));
@@ -272,7 +290,7 @@ void RunMultiSoundFrames(benchmark::State& state)
         state.SkipWithError("GS firmware did not boot");
         return;
     }
-    if ((sources & kMidi) && !b.Card().MidiBankLoaded())
+    if ((sources & (kMidi | kMidiStopped)) && !b.Card().MidiBankLoaded())
     {
         state.SkipWithError("no MIDI bank (data/midi next to the executable)");
         return;
@@ -288,8 +306,16 @@ void RunMultiSoundFrames(benchmark::State& state)
         b.Frame([&](uint64_t) { StartYm(b); });
     if (sources & kSaa)
         b.Frame([&](uint64_t) { StartSaa(b); });
-    if (sources & kMidi)
+    if (sources & (kMidi | kMidiStopped))
         StartMidi(b);
+    if (sources & kMidiStopped)
+    {
+        for (int i = 0; i < 100; i++)   // 2 s of the notes
+            b.Frame();
+        StopMidi(b);
+        for (int i = 0; i < 1500; i++)   // 30 s: the voices' release, the effects' tails
+            b.Frame();
+    }
 
     uint8_t sample = 0;
     auto writes = [&](uint64_t)
@@ -336,5 +362,6 @@ BENCHMARK(BM_MultiSoundFrame)
     ->Arg(kMidi)
     ->Arg(kGs)
     ->Arg(kYm | kSaa | kSd | kMidi | kGs)
+    ->Arg(kMidiStopped)
     ->Iterations(1000)
     ->Unit(benchmark::kMicrosecond);

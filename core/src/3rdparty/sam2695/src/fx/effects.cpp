@@ -135,10 +135,10 @@ void Effects::Process(FxBuses& in, uint32_t n, uint8_t effectsWord, bool dsp, fl
             outL[i] = (postGm ? 0.0f : in.left[i]) + (postFx ? 0.0f : fxL[i]);
             outR[i] = (postGm ? 0.0f : in.right[i]) + (postFx ? 0.0f : fxR[i]);
         }
-        bool postSilent = skipIdle && AllPositiveZero(postL, n) && AllPositiveZero(postR, n);
+        bool postSilent = AllPositiveZero(postL, n) && AllPositiveZero(postR, n);
         if (effectsWord & kSpatialBit)
         {
-            if (postSilent && _spatial.Idle())
+            if (skipIdle && postSilent && _spatial.Idle())
             {
                 _spatial.Skip(n);
                 skippedBlocks++;
@@ -146,16 +146,20 @@ void Effects::Process(FxBuses& in, uint32_t n, uint8_t effectsWord, bool dsp, fl
             else
             {
                 _spatial.Process(postL, postR, n);
-                postSilent = skipIdle && AllPositiveZero(postL, n) && AllPositiveZero(postR, n); // the equalizer's input
+                postSilent = AllPositiveZero(postL, n) && AllPositiveZero(postR, n); // the equalizer's input
             }
         }
         const bool fourBand = (effectsWord & 0x03) == 0x03;
         if ((effectsWord & 0x03) >= 0x02)
         {
-            if (postSilent && _eq.Idle(fourBand))
+            if (skipIdle && postSilent && _eq.Idle(fourBand))
                 skippedBlocks++;
             else
+            {
                 _eq.Process(postL, postR, n, fourBand);
+                if (postSilent && _eq.TailOut(fourBand)) // the tail-out rule, processing or not
+                    eqTailsOut++;
+            }
         }
         for (uint32_t i = 0; i < n; i++)
         {

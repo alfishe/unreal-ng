@@ -1,5 +1,5 @@
 // libsam2695 - DSP building blocks of the effects: delay lines over a shared pool, an exact
-// polynomial sine for the modulation LFOs, a biquad, the denormal guard, the idle test.
+// polynomial sine for the modulation LFOs, a biquad, the denormal guard, the idle test, the tail floor.
 //
 // Every element keeps its whole state in plain members (indices, floats) so the effects serialize
 // with the chip: a TTD restore continues a reverb tail sample for sample.
@@ -51,6 +51,29 @@ inline bool AllPositiveZero(const double* p, uint32_t n)
     return acc == 0;
 }
 
+// The tail floor: where an effect's tail ends (README "Tail floor"). The SAM2695 is a fixed-point DSP
+// whose word length the datasheet does not give; its family states 16-bit samples and RAM and up to 20-bit
+// audio data (SAM2634 / SAM2635), Dream's later DSP 24 bits (SAM5000). 2^-24 of full scale is half the
+// LSB of a 24-bit word, the finest of them: a value below it rounds to zero in any of those words, so a
+// tail ends no earlier than the chip's would. -144 dBFS, 1 / 512 of the card's 16-bit LSB.
+constexpr float kTailFloor = 0x1p-24f;
+
+// Every value is below the tail floor in magnitude
+inline bool AllBelowFloor(const float* p, uint32_t n)
+{
+    for (uint32_t i = 0; i < n; i++)
+        if (!(std::fabs(p[i]) < kTailFloor))
+            return false;
+    return true;
+}
+inline bool AllBelowFloor(const double* p, uint32_t n)
+{
+    for (uint32_t i = 0; i < n; i++)
+        if (!(std::fabs(p[i]) < static_cast<double>(kTailFloor)))
+            return false;
+    return true;
+}
+
 // A circular delay line living in a slice [base, base + size) of a float pool. Read(d) returns the
 // sample written d writes ago (1 = the newest); read before writing for a delay of exactly d.
 struct DelayLine
@@ -58,6 +81,9 @@ struct DelayLine
     uint32_t base = 0;
     uint32_t size = 1;
     uint32_t pos = 0; // next write position inside the slice
+    // Derived from the contents, not state: how many of the newest values (counting back from the last
+    // write, at most size) are below the tail floor. quiet == size: the whole line is.
+    uint32_t quiet = 0;
 
     float Read(const float* pool, uint32_t d) const
     {
@@ -106,6 +132,29 @@ struct DelayLine
             return AllPositiveZero(pool + base + pos - n, n);
         return AllPositiveZero(pool + base, pos) && AllPositiveZero(pool + base + size - (n - pos), n - pos);
     }
+
+    // After n writes: the run of below-floor values at the newest end, exactly as Quiet() would count it
+    // (a loud tail stops the scan at the first value, a quiet one scans the n new values)
+    void TrackQuiet(const float* pool, uint32_t n)
+    {
+        n = n < size ? n : size;
+        uint32_t run = 0, i = pos;
+        while (run < n)
+        {
+            i = i == 0 ? size - 1 : i - 1;
+            if (!(std::fabs(pool[base + i]) < kTailFloor))
+                break;
+            run++;
+        }
+        quiet = run < n ? run : (quiet + n < size ? quiet + n : size);
+    }
+    // The run counted from scratch (Clear, a load)
+    void DeriveQuiet(const float* pool)
+    {
+        quiet = 0;
+        TrackQuiet(pool, size);
+    }
+    bool Quiet() const { return quiet == size; }
 
     // Schroeder all-pass of delay d and gain g on the line: y = (g + z^-d) / (1 + g z^-d) x
     float AllPass(float* pool, float x, uint32_t d, float g)

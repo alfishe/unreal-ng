@@ -59,6 +59,7 @@ struct SynthReport
     // the effect's state is all +0.0, so blocks without input skip it (README "Idle effects")
     bool reverbIdle = false, chorusIdle = false, spatialIdle = false, equalizerIdle = false;
     uint64_t idleEffectBlocks = 0;     // effect blocks skipped that way since Configure (not state)
+    uint64_t effectTailsOut = 0;       // reverb / chorus / EQ tails ended at the tail floor since Configure (not state)
     // UART and parser counters since the last Reset
     uint64_t bytesReceived = 0;
     uint64_t framingErrors = 0;

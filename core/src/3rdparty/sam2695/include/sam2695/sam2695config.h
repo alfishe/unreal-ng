@@ -66,7 +66,7 @@ struct SynthConfig
     bool effects = true;
     // true: a reverb, chorus, spatial effect or equalizer whose whole state is +0.0 skips the blocks with
     // no input - output and state bit-identical to processing them (README "Idle effects"). false
-    // processes every block (tests, A/B).
+    // processes every block (tests, A/B); the effects' tails end at the tail floor either way.
     bool skipIdleEffects = true;
     bool resetDelay = true;           // ignore MIDI for 50 ms after a reset, as the chip does
     uint32_t eventCapacity = 4096;    // queued MIDI bytes not yet rendered

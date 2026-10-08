@@ -926,6 +926,7 @@ void SynthCore::Describe(SynthReport& out) const
     out.spatialIdle = _fx.SpatialIdle();
     out.equalizerIdle = _fx.EqualizerIdle((_effectsWord & 0x03) == 0x03);
     out.idleEffectBlocks = _fx.skippedBlocks;
+    out.effectTailsOut = _fx.TailsOut();
     for (const Voice& v : _voices)
     {
         if (v.Counts())

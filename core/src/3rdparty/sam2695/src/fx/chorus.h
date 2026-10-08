@@ -14,7 +14,9 @@
 // Idle (as the reverb, reverb.h): the chorus and the spatial effect are idle once their line holds
 // only +0.0 (a run of +0.0 writes as long as the line, or Clear / Sanitize); a block with no input
 // then skips them, moving the write position (and the chorus LFO) as processing would. The equalizer
-// is idle when its filter memory is +0.0. Derived, never serialized.
+// is idle when its filter memory is +0.0. Derived, never serialized. The chorus line and the equalizer's
+// memory end their tails at the floor as the reverb does (reverb.h); the spatial line, without feedback,
+// ends in exact zeros by itself.
 #pragma once
 
 #include "fx/dsp.h"
@@ -36,6 +38,7 @@ public:
     void Sanitize(const FxParams& p);
     bool Idle() const { return _idle; }
     void Skip(uint32_t n);
+    uint64_t tailsOut = 0; // tails ended by the floor since Configure (Describe; diagnostics, not state)
 
     template <class Ar>
     void Serialize(Ar& ar)
@@ -103,6 +106,8 @@ public:
     void Process(float* left, float* right, uint32_t n, bool fourBand);
     // The memory of the bands in use is +0.0 (a block of +0.0 then leaves it and the signal as they are)
     bool Idle(bool fourBand) const;
+    // After a block whose input was all +0.0: that memory, all below the tail floor, becomes +0.0 (true)
+    bool TailOut(bool fourBand);
 
     template <class Ar>
     void Serialize(Ar& ar)

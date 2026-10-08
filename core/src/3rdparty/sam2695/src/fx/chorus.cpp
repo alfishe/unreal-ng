@@ -44,6 +44,7 @@ void Chorus::Clear()
     _lfoPhase = 0;
     _idle = true;
     _zeroRun = _line.size;
+    _line.quiet = _line.size;
 }
 
 void Chorus::Update(const FxParams& p)
@@ -66,6 +67,7 @@ void Chorus::Sanitize(const FxParams& p)
     Update(p);
     _idle = _line.AllZero(_pool.data());
     _zeroRun = _idle ? _line.size : 0;
+    _line.DeriveQuiet(_pool.data());
 }
 
 void Chorus::Skip(uint32_t n)
@@ -91,6 +93,20 @@ void Chorus::Process(const float* in, float* outL, float* outR, uint32_t n)
     // idle once the line has taken a run of +0.0 as long as itself (the input is written into it)
     _zeroRun = _line.RecentZero(pool, n) ? std::min(_zeroRun + n, _line.size) : 0;
     _idle = _zeroRun == _line.size;
+    if (_idle)
+    {
+        _line.quiet = _line.size; // all +0.0
+        return;
+    }
+    // the tail-out rule (as the reverb's, reverb.cpp): no input and the whole line below the floor
+    _line.TrackQuiet(pool, n);
+    if (_line.Quiet() && AllPositiveZero(in, n) && AllBelowFloor(pool, _line.size))
+    {
+        std::fill(_pool.begin(), _pool.end(), 0.0f);
+        _idle = true;
+        _zeroRun = _line.size;
+        tailsOut++;
+    }
 }
 
 // ---- spatial effect ----
@@ -170,6 +186,29 @@ bool Equalizer::Idle(bool fourBand) const
         const double* st = &_state[ch * 8];
         if (!AllPositiveZero(st, 2) || !AllPositiveZero(st + 6, 2) || (fourBand && !AllPositiveZero(st + 2, 4)))
             return false;
+    }
+    return true;
+}
+
+bool Equalizer::TailOut(bool fourBand)
+{
+    // the tail-out rule (as the reverb's, reverb.cpp) after a block without input: the memory of the
+    // bands in use below the floor becomes +0.0
+    if (Idle(fourBand))
+        return false;
+    for (int ch = 0; ch < 2; ch++)
+    {
+        const double* st = &_state[ch * 8];
+        if (!AllBelowFloor(st, 2) || !AllBelowFloor(st + 6, 2) || (fourBand && !AllBelowFloor(st + 2, 4)))
+            return false;
+    }
+    for (int ch = 0; ch < 2; ch++)
+    {
+        double* st = &_state[ch * 8];
+        std::fill(st, st + 2, 0.0);
+        std::fill(st + 6, st + 8, 0.0);
+        if (fourBand)
+            std::fill(st + 2, st + 6, 0.0);
     }
     return true;
 }

@@ -287,11 +287,23 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   output bit and the state blob. It engages while the chip has played nothing since power-up or a reset (the card
   at rest); a tail does not reliably end in exact zeros - the tank reverbs (0-5), chorus 5 / 7 and the equalizer
   settle into a limit cycle at the denormal guard's quantum (about 2e-27 at the output) and keep running; making
-  them stop needs an output change (owner decision, not done). A/B (interleaved base land base land base land
+  them stop needs an output change (owner decision: done below, the tail floor). A/B (interleaved base land base land base land
   land base land base, load 6-12, CPU time per frame, minimum, paired mean in brackets): idle 597 -> 589 us
   -1.3 % (-3.8 %), YM -6.6 % (-4.6 %), SAA -4.5 % (-2.4 %), SounDrive -4.4 % (-4.3 %), GS -9.2 % (-6.6 %), MIDI
   -1.0 % (+0.2 %) and all five +1.1 % (+0.2 %) within noise (the effects are busy there); a first run without the
   MIDI rows: idle -5.4 % (-6.6 %), SAA -5.5 %, SounDrive -5.2 %, GS -8.8 %.
+  Done 2026-10-08 (branch `sam-fxtail`): the tail floor (library README "Tail floor"). A block without input that
+  leaves the reverb's lines and filters, the chorus line or the equalizer's memory below 2^-24 of full scale
+  (-144 dBFS; half the LSB of a 24-bit word, the finest word length documented in the SAM2695's family: 16-bit
+  samples and RAM, up to 20-bit audio data in the SAM2634 / SAM2635, 24-bit SAM5000 DSP) sets them to +0.0, so
+  every tail ends (hall2 5.8 s after the note-off, pan delay 8.0 s, chorus 7 1.0 s) and the skip engages after
+  playback. Part of the model (skip on or off), a function of the state (per-line runs of below-floor writes,
+  derived again after a load, confirmed by a scan), blob format unchanged. Output change at most 1.0e-7 (0.003 of
+  a 16-bit LSB); the card's int16 MIDI row identical on 17 played-and-stopped scenarios (2^-19 and 2^-15 change
+  3 samples by 1 LSB; no MIDI golden digest exists). Tests `Fx.TailsEndAtTheFloor`, `Fx.TailOutAcrossState`.
+  A/B (`BM_MultiSoundFrame`, new row 32 = the 16 MIDI notes played 2 s, released, 30 s of silence; interleaved,
+  load 5-11, CPU time per frame, minimum, paired mean in brackets): MIDI stopped 619 -> 590 us -4.6 % (-4.9 %),
+  all five -2.6 % (-1.6 %), idle / YM / SAA / SounDrive / MIDI / GS within noise (-0.7 to +1.3 %).
   Backlog (measure before and after, owner rule "naive first"):
   - an SSG "channel levels only" mode for the card's two generators (prototype variant b, kept as a
     patch, [ym-decimator-prototype.md](ym-decimator-prototype.md) §7: bit-identical, -2 to -4 % of a card frame; it duplicates the level computation of

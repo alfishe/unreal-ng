@@ -123,6 +123,7 @@ void Reverb::Clear()
     _lfoPhase = 0;
     _idle = true;
     _zeroRun = _longestLine;
+    ForEachLine([](DelayLine& l) { l.quiet = l.size; });
 }
 
 void Reverb::Update(const FxParams& p)
@@ -191,6 +192,8 @@ void Reverb::Sanitize(const FxParams& p)
     _longestLine = LongestLine();
     _idle = FiltersZero() && LinesZero();
     _zeroRun = _idle ? _longestLine : 0;
+    const float* pool = _pool.data();
+    ForEachLine([pool](DelayLine& l) { l.DeriveQuiet(pool); });
 }
 
 uint32_t Reverb::LongestLine() const
@@ -221,6 +224,52 @@ bool Reverb::LinesZero() const
     return zero;
 }
 
+void Reverb::TailOut(const float* in, uint32_t n)
+{
+    // The tail-out rule (README "Tail floor"): a block without input that leaves every line and filter
+    // state below the tail floor ends the tail - the values become +0.0, the positions and the LFO phase
+    // stay. A function of the state, run whether idle blocks are skipped or not. The per-line runs
+    // (exact, so derived again after a load) make the test cheap; a scan of the layout confirms it.
+    if (_idle)
+        return; // all +0.0: every run is the line's size (set where _idle became true)
+    const float* pool = _pool.data();
+    if (!_echoMode)
+    {
+        _predelay.TrackQuiet(pool, n);
+        for (DelayLine& l : _diffuser)
+            l.TrackQuiet(pool, n);
+        for (DelayLine& l : _tank)
+            l.TrackQuiet(pool, n);
+    }
+    else
+    {
+        _echo[0].TrackQuiet(pool, n);
+        if (_panEcho)
+            _echo[1].TrackQuiet(pool, n);
+    }
+    if (!AllPositiveZero(in, n))
+        return;
+    bool quiet = AllBelowFloor(&_bandState, 1) && AllBelowFloor(_damp.data(), 2) && AllBelowFloor(_echoDamp.data(), 2);
+    ForEachLine([&quiet](DelayLine& l) { quiet = quiet && l.Quiet(); });
+    if (!quiet || !LinesBelowFloor())
+        return;
+    std::fill(_pool.begin(), _pool.end(), 0.0f);
+    _bandState = 0.0f;
+    _damp.fill(0.0f);
+    _echoDamp.fill(0.0f);
+    _idle = true;
+    _zeroRun = _longestLine;
+    tailsOut++;
+}
+
+bool Reverb::LinesBelowFloor()
+{
+    const float* pool = _pool.data();
+    bool below = true;
+    ForEachLine([&below, pool](DelayLine& l) { below = below && AllBelowFloor(pool + l.base, l.size); });
+    return below;
+}
+
 void Reverb::TrackIdle(const float* in, uint32_t n)
 {
     // A block counts toward idle when its send, its writes and the filter states are +0.0; once the run
@@ -247,7 +296,11 @@ void Reverb::TrackIdle(const float* in, uint32_t n)
     const uint32_t before = _zeroRun;
     _zeroRun = std::min(_zeroRun + n, _longestLine);
     if (before < _longestLine && _zeroRun == _longestLine)
+    {
         _idle = LinesZero();
+        if (_idle)
+            ForEachLine([](DelayLine& l) { l.quiet = l.size; }); // all +0.0
+    }
 }
 
 void Reverb::Skip(uint32_t n)
@@ -295,6 +348,7 @@ void Reverb::Process(const float* in, float* outL, float* outR, uint32_t n)
             }
         }
         TrackIdle(in, n);
+        TailOut(in, n);
         return;
     }
     const float gain = 0.6f * _level;
@@ -339,6 +393,7 @@ void Reverb::Process(const float* in, float* outL, float* outR, uint32_t n)
         outR[i] += gain * y[1];
     }
     TrackIdle(in, n);
+    TailOut(in, n);
 }
 
 } // namespace sam2695

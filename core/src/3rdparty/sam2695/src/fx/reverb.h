@@ -13,6 +13,9 @@
 // +0.0 would compute +0.0 everywhere; Skip() then only moves the write positions and the LFO phase as
 // processing would. The idle flag is derived from the state (Clear, Sanitize, and a run of +0.0 writes
 // as long as the longest written line), never serialized.
+//
+// Tail floor: a block without input that leaves every line and filter value below kTailFloor (dsp.h)
+// sets them to +0.0 - the tail ends there, as a fixed-point chip's would, and the reverb is idle.
 #pragma once
 
 #include "fx/dsp.h"
@@ -36,6 +39,7 @@ public:
     // The whole state is +0.0: a block with an all +0.0 send may Skip() instead of Process()
     bool Idle() const { return _idle; }
     void Skip(uint32_t n);
+    uint64_t tailsOut = 0; // tails ended by the floor since Configure (Describe; diagnostics, not state)
 
     // Seconds for the tail to fall 60 dB at the current settings (tank programs), for tests and Describe
     double DecaySeconds() const { return _rt60; }
@@ -78,6 +82,24 @@ private:
     bool FiltersZero() const;
     bool LinesZero() const;
     void TrackIdle(const float* in, uint32_t n);
+    void TailOut(const float* in, uint32_t n);
+    bool LinesBelowFloor();
+    // f(line) for the lines of the current layout (the other layout's are size 1 at the pool's start)
+    template <class F>
+    void ForEachLine(F&& f)
+    {
+        if (_layoutCharacter >= 6)
+        {
+            f(_echo[0]);
+            f(_echo[1]);
+            return;
+        }
+        f(_predelay);
+        for (DelayLine& l : _diffuser)
+            f(l);
+        for (DelayLine& l : _tank)
+            f(l);
+    }
 
     std::vector<float> _pool;
     uint8_t _layoutCharacter = 0xFF;

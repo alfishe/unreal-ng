@@ -1,7 +1,7 @@
 // libsam2695 tests - the effects block (SAM-4): reverb and chorus programs and parameters, the spatial
 // effect, the equalizer, post-effects routing, sends and their scaling, the output stage (clipping,
-// codec gain), the effects word as the effects' switch, the effects' state in the blob, and the idle
-// effects (skipped blocks bit-identical to processed ones).
+// codec gain), the effects word as the effects' switch, the effects' state in the blob, the idle
+// effects (skipped blocks bit-identical to processed ones) and the tail floor (every tail ends).
 //
 // The wet signal of an effect is taken as the difference of two renders that differ only in the send
 // (the chip path is linear below the soft-clip knee), so each test sees exactly what the effect adds.
@@ -11,6 +11,7 @@
 #include "testfw.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 
@@ -634,12 +635,23 @@ bool AllIdle(const SynthReport& r)
     return r.reverbIdle && r.chorusIdle && r.spatialIdle && r.equalizerIdle;
 }
 
-// The delay reverb (6) and chorus 1 (0): tails that reach exact +0.0 within seconds (the tank
-// programs and the equalizer settle into a limit cycle at the denormal guard's quantum instead)
+// The delay reverb (6) and chorus 1 (0): tails that end within seconds
 void DyingTail(IdlePair& p)
 {
     p.Send(0, {0xB0, 80, 6, 0xB0, 81, 0, 0xB0, 91, 127, 0xB0, 93, 127, 0x90, 69, 100});
     p.Send(7500, {0x80, 69, 0});
+}
+
+// Runs in 0.1 s steps until every effect is idle or `limit`: the first idle step (0 = never)
+uint64_t RunUntilIdle(IdlePair& p, uint64_t from, uint64_t limit)
+{
+    for (uint64_t t = from; t <= limit; t += 3750)
+    {
+        p.RunTo(t);
+        if (AllIdle(p.R()))
+            return t;
+    }
+    return 0;
 }
 
 } // namespace
@@ -659,27 +671,135 @@ TEST(Fx, IdleEffectsSilence)
 
 TEST(Fx, IdleEffectsTailOut)
 {
-    // a note through the delay reverb and chorus 1, then silence until their tails are exact zeros:
-    // they go idle and skip; the equalizer keeps its limit cycle and keeps running
+    // a note through the delay reverb and chorus 1, then silence: the tails end, every effect goes
+    // idle and skips
     IdlePair p(BasicBank());
     DyingTail(p);
     p.RunTo(150000);
     const uint64_t at4s = p.R().idleEffectBlocks;
+    const size_t frames4s = p.skip->Frames();
     p.RunTo(187500);
     CHECK(p.Same());
-    SynthReport r = p.R();
-    CHECK(r.reverbIdle && r.chorusIdle && r.spatialIdle);
-    CHECK(!r.equalizerIdle);
-    CHECK(r.idleEffectBlocks >= at4s + 3 * (37500 / kControlBlock)); // the last second: three effects skipped
-    CHECK(p.skip->RmsL(7500, 30000) > 1e-4);                         // there was a tail
+    CHECK(AllIdle(p.R()));
+    CHECK_EQ_I(p.R().idleEffectBlocks, at4s + 4 * (p.skip->Frames() - frames4s) / kControlBlock); // the last second: all four skipped
+    CHECK(p.skip->RmsL(7500, 30000) > 1e-4);                                // there was a tail
 
-    // the default hall never reaches exact zero: it runs, identically
+    // the default hall reaches the floor too (it settled into a limit cycle of the denormal guard before
+    // the tail floor): it ends, identically
     IdlePair hall(BasicBank());
     hall.Send(0, {0xB0, 91, 127, 0xB0, 93, 127, 0x90, 69, 100});
     hall.Send(7500, {0x80, 69, 0});
     hall.RunTo(112500);
-    CHECK(hall.Same());
     CHECK(!hall.R().reverbIdle);
+    CHECK(RunUntilIdle(hall, 112500, 300000) > 0);
+    CHECK(hall.Same());
+}
+
+TEST(Fx, TailsEndAtTheFloor)
+{
+    // every reverb program, every chorus program and the equalizer alone: a 0.2 s note at a full send,
+    // then silence. The tail ends at the floor (README "Idle effects": the table of these times) within
+    // its bound, skipping and processing render the same bits and state, the output steps to zero by
+    // less than the floor, and from then on every effect skips. ~31 s of reverb tails and 6 s of chorus
+    // tails on two chips: ~250 ms.
+    struct Case
+    {
+        int cc, program, send, otherSend;
+        double bound; // seconds, the measured time + 0.5 s
+    };
+    std::vector<Case> cases;
+    const double reverbBound[8] = {2.1, 2.7, 3.5, 5.0, 6.5, 5.3, 1.8, 8.7};
+    const double chorusBound[8] = {0.8, 0.8, 0.9, 0.8, 1.4, 1.7, 0.8, 1.7};
+    for (int i = 0; i < 8; i++)
+        cases.push_back({80, i, 91, 93, reverbBound[i]});
+    for (int i = 0; i < 8; i++)
+        cases.push_back({81, i, 93, 91, chorusBound[i]});
+    cases.push_back({80, 4, 91, 93, 0.7}); // no send: the equalizer's tail of the dry note alone
+    cases.back().send = 0;
+    std::shared_ptr<const ISoundBank> bank = BasicBank();
+    for (const Case& c : cases)
+    {
+        IdlePair p(bank);
+        p.Send(0, {0xB0, c.cc, c.program, 0xB0, c.send == 0 ? 91 : c.send, c.send == 0 ? 0 : 127, 0xB0, c.otherSend, 0});
+        p.Send(0, {0x90, 69, 100});
+        p.Send(7500, {0x80, 69, 0});
+        const uint64_t idle = RunUntilIdle(p, 7500, static_cast<uint64_t>(c.bound * kInternalRate));
+        CHECK(idle > 0);
+        CHECK(p.Same());
+        CHECK(p.R().effectTailsOut > 0);
+        // the last non-zero output sample: the step to the silence after the cut
+        float last = 0.0f;
+        for (float v : p.skip->out)
+            if (v != 0.0f)
+                last = v;
+        CHECK(std::fabs(last) < kTailFloor);
+        CHECK(p.skip->PeakL(0, 7500) > 0.01);
+        // idle: every block of every effect skipped, the output exact zeros
+        const uint64_t skipped = p.R().idleEffectBlocks;
+        const size_t from = p.skip->Frames();
+        p.RunTo(idle + 7500);
+        CHECK_EQ_I(p.R().idleEffectBlocks, skipped + 4 * (p.skip->Frames() - from) / kControlBlock);
+        CHECK_EQ_I(p.skip->PeakL(from, p.skip->Frames()) + p.skip->PeakR(from, p.skip->Frames()), 0);
+        CHECK(p.Same());
+        if (idle == 0 || !p.Same())
+            std::printf("    tail of CC %d program %d did not end in %.1f s or differs\n", c.cc, c.program, c.bound);
+    }
+}
+
+TEST(Fx, TailOutAcrossState)
+{
+    // blobs saved shortly before a tank reverb's tail ends - while its lines are partly below the
+    // floor - continue exactly: the per-line runs are derived from the loaded lines, so the cut lands
+    // on the same block, skipping or not (room1: the tank algorithm with the shortest tail)
+    std::shared_ptr<const ISoundBank> bank = BasicBank();
+    auto script = [](IdlePair& p) {
+        p.Send(0, {0xB0, 80, 0, 0xB0, 91, 127, 0x90, 69, 100});
+        p.Send(7500, {0x80, 69, 0});
+    };
+    IdlePair ref(bank);
+    script(ref);
+    uint64_t idle = 7500; // the first 0.1 s step with the reverb idle
+    for (ref.RunTo(idle); idle < 375000 && !ref.R().reverbIdle;)
+        ref.RunTo(idle += 3750);
+    CHECK(idle > 7500 && idle < 375000);
+    // the second chip: a blob 0.1 s before that step, then one every block up to the cut; kept: that
+    // first one, and those 20 blocks and 1 block before the cut
+    IdlePair a(bank);
+    script(a);
+    a.RunTo(idle - 3750);
+    std::vector<std::pair<size_t, std::vector<uint8_t>>> blobs, recent; // the position and the blob
+    blobs.emplace_back(a.skip->synth.InternalPosition(), Save(a.skip->synth));
+    for (uint64_t t = idle - 3750 + kControlBlock; !a.R().reverbIdle && t <= idle; t += kControlBlock)
+    {
+        recent.emplace_back(a.skip->synth.InternalPosition(), Save(a.skip->synth));
+        CHECK(recent.back().second == Save(a.full->synth));
+        a.RunTo(t);
+    }
+    CHECK(recent.size() > 20);
+    if (recent.size() > 20)
+    {
+        blobs.push_back(recent[recent.size() - 20]);
+        blobs.push_back(recent.back());
+    }
+    a.RunTo(idle + 3750);
+    CHECK(a.Same());
+    CHECK(a.R().reverbIdle);
+    for (const auto& [from, blob] : blobs)
+    {
+        IdlePair b(bank);
+        b.RunTo(3750);
+        CHECK(b.skip->synth.LoadState(blob.data(), blob.size()));
+        CHECK(b.full->synth.LoadState(blob.data(), blob.size()));
+        CHECK(!b.R().reverbIdle);
+        b.skip->out.clear();
+        b.full->out.clear();
+        b.RunTo(idle + 3750);
+        CHECK(b.Same());
+        CHECK(b.R().reverbIdle);
+        CHECK(b.skip->out.size() == a.skip->out.size() - from * 2);
+        CHECK(std::memcmp(b.skip->out.data(), a.skip->out.data() + from * 2, b.skip->out.size() * sizeof(float)) == 0);
+        CHECK(Save(b.skip->synth) == Save(a.skip->synth));
+    }
 }
 
 TEST(Fx, IdleEffectsSettingChanges)
@@ -763,7 +883,7 @@ TEST(Fx, IdleEffectsAcrossState)
 TEST(Fx, IdleEqualizerTakesTheSpatialTail)
 {
     // the equalizer's input is the post bus after the spatial effect: a silent GM bus with a spatial
-    // tail still runs a freshly cleared (idle) equalizer
+    // tail still runs a freshly cleared (idle) equalizer, until that tail ends at the floor
     IdlePair p(BasicBank());
     p.Nrpn(0, 0x37, 0x5F, 0x0B);  // spatial + 4-band EQ
     p.Nrpn(0, 0x37, 0x20, 0x7F);  // spatial volume
@@ -775,6 +895,7 @@ TEST(Fx, IdleEqualizerTakesTheSpatialTail)
     p.Nrpn(4000, 0x37, 0x5F, 0x0B); // the EQ cleared while the spatial line still rings
     p.RunTo(7500);
     CHECK(p.Same());
-    CHECK(p.R().spatialIdle && !p.R().equalizerIdle); // the tail left the EQ in its limit cycle
+    CHECK(p.R().spatialIdle && p.R().equalizerIdle);
+    CHECK(p.R().effectTailsOut > 0);  // the EQ ran on the spatial tail and ended at the floor
     CHECK(p.skip->PeakL(4032, 4500) > 1e-4);
 }

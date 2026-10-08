@@ -363,6 +363,12 @@ and test), "GS parts and SysEx", "Pedals and portamento", "Effects and output".
 - **Cost:** GeneralUser GS through the GM test file, 25 s of audio: 474 ms with the effects, 426 ms dry.
   Idle effects (2026-10-08): an effect whose state is all +0.0 skips the blocks without input, bit-identically
   (library README "Idle effects", `Fx.IdleEffects*`, `Fx.IdleEqualizerTakesTheSpatialTail`; suite now 114 tests).
+  Tail floor (2026-10-08): a block without input that leaves the reverb's lines and filters, the chorus line or
+  the equalizer's memory below 2^-24 of full scale (-144 dBFS, half the LSB of a 24-bit word, the finest word
+  length documented in the SAM2695's family) sets them to +0.0, so every tail ends (hall2 5.8 s after the
+  note-off, pan delay 8.0 s) and the effects go idle after playback; part of the model with the skip on or off,
+  TTD-exact (library README "Tail floor", `Fx.TailsEndAtTheFloor`, `Fx.TailOutAcrossState`; suite 116 tests).
+  Output change at most 1.0e-7 (0.003 of a 16-bit LSB); the card's int16 MIDI row is unchanged.
 - Full emulator build (`tools/build/build.sh`): zero warnings; `tools/build/test.sh`: 6918 tests in 20 shards, 6845 passed, 73 skipped, 0 failed.
 
 ### 10.8 Left for SAM-5

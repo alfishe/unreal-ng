@@ -11,7 +11,8 @@
 // spatial effect, equalizer and clipping: a linear voice mix for analysis.
 // Idle effects: an effect whose whole state is +0.0 and whose input block is all +0.0 is skipped (only
 // its write positions and LFO phase move); output and state are bit-identical to processing it
-// (SynthConfig::skipIdleEffects = false processes every block, for tests and A/B).
+// (SynthConfig::skipIdleEffects = false processes every block, for tests and A/B). Tails end at the tail
+// floor (dsp.h, README "Tail floor") either way: the floor is the model, the skip an optimization.
 #pragma once
 
 #include "fx/chorus.h"
@@ -59,6 +60,8 @@ public:
     void Process(FxBuses& in, uint32_t n, uint8_t effectsWord, bool dsp, float outputGain, float* outL, float* outR);
     bool skipIdle = true;     // SynthConfig::skipIdleEffects
     uint64_t skippedBlocks = 0; // effect blocks skipped since Configure (Describe; diagnostics, not state)
+    uint64_t eqTailsOut = 0;    // equalizer tails ended by the floor since Configure (diagnostics)
+    uint64_t TailsOut() const { return _reverb.tailsOut + _chorus.tailsOut + eqTailsOut; }
 
     // The effect's state is all +0.0: a block without input skips it (Describe, tests)
     bool ReverbIdle() const { return _reverb.Idle(); }
