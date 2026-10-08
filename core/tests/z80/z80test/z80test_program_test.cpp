@@ -125,11 +125,10 @@ TEST_P(Z80TestProgram_Test, DISABLED_Z80Full)
 }
 
 // Every model whose #FE read is the standard Spectrum one. Left out, the board differs (IN tests fail by design):
-//   SCORPION, PROFSCORP - EAR pulled up with no tape (the ProfROM's tape check), bit 6 = 1
 //   ATM3                - bit 5 of #FE reads 0 (zports.v)
 //   ATM450              - bit 7 of #FE is the PAL marker, a function of the T-state since INT
 //   SPRINTER            - refuses snapshots
 INSTANTIATE_TEST_SUITE_P(Models, Z80TestProgram_Test,
-                         ::testing::Values("48K", "128k", "PLUS2", "PLUS2A", "PLUS3", "PENTAGON", "ATM710", "PROFI",
-                                           "PROFI3", "TSL"),
+                         ::testing::Values("48K", "128k", "PLUS2", "PLUS2A", "PLUS3", "PENTAGON", "ATM710", "SCORPION",
+                                           "PROFSCORP", "PROFI", "PROFI3", "TSL"),
                          [](const ::testing::TestParamInfo<std::string>& info) { return info.param; });
