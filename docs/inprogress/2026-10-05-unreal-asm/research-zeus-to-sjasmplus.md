@@ -6,7 +6,7 @@
 | **Code** | `src/dialects/zeus/zeusfrontend.cpp` (the `zeus` frontend); the sjasmplus backend (16-bit unsigned words, comparisons that give 1) |
 | **Syntax source** | the ZEUS manual, section 5 ([Zeus.txt, ZXDB 9010](https://spectrumcomputing.co.uk/pub/sinclair/games-info/z/Zeus.txt)); the ZEUS v7.E help (a ZEUS source on the [ZEUS72ZK disk](https://vtrd.in/system/ZEUS72ZK.zip)); the GG ZEUS's `zeus.doc` on the [ZEUS_GG disk](https://vtrd.in/system/ZEUS_GG.zip); the format: [research-zeus.md](research-zeus.md) |
 | **Oracles** | four ZEUS versions running in unreal-ng: ZEUS 1983 (tape), GG, ZEUS 1.1 beta (`PHT_ZEUS.LZH`, KLUG BBS archive [klug_bbs.7z](https://yadi.sk/d/N_p56RIHWU15Gw)), ZEUS v7.E; probes for every rule below and the five Zeus Routines ([ZXDB 19058](https://spectrumcomputing.co.uk/entry/19058)) assemble through sjasmplus to the bytes ZEUS built |
-| **Checks** | `unreal-asm-tests` (`ZeusFrontend_Test`; with `UNREAL_ASM_SJASMPLUS` the oracle programs too); `docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py zeus1983 / zeus11 / zeusgg / zeus7e`; `roundtrip.py --assemble`; the recipe `.recipe/assemblers/zeus.md` |
+| **Checks** | `unreal-asm-tests` (`ZeusFrontend_Test`; with `UNREAL_ASM_SJASMPLUS` the oracle programs too); `tools/verification/unreal-asm/emulator/assemble-in-emulator.py zeus1983 / zeus11 / zeusgg / zeus7e`; `roundtrip.py --assemble`; the recipe `.recipe/assemblers/zeus.md` |
 
 ## 1. Example first
 

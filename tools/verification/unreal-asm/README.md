@@ -2,15 +2,16 @@
 
 Scripts that check the dialect conversion of the unreal-asm library (`core/src/3rdparty/unreal-asm`) against the
 original assemblers and the cross assemblers: the bytes a converted source assembles to must equal the bytes the
-original assembler built. They are research tools of this design folder; the ones that prove general may move to the
-library's `tools/` later. Python 3, standard library only. The library's own unit tests are in `unreal-asm-tests`;
-these scripts run the corpus-sized and emulator-driven checks behind them (results in `../research-*-to-sjasmplus.md`,
-how to drive each assembler by hand in [`.recipe/assemblers/`](../../../../.recipe/assemblers/README.md)).
+original assembler built. The ones that prove general may move to the library's own `tools/` later. Python 3,
+standard library only. The library's own unit tests are in `unreal-asm-tests`; these scripts run the corpus-sized and
+emulator-driven checks behind them (results in the design folder's
+[`research-*-to-sjasmplus.md`](../../../docs/inprogress/2026-10-05-unreal-asm/README.md), how to drive each assembler
+by hand in [`.recipe/assemblers/`](../../../.recipe/assemblers/README.md)).
 
 ## Layout
 
 ```
-scripts/
+unreal-asm/
   README.md                     this file
   lib/                          modules the scripts import (also usable alone)
     emulator.py                 WebAPI client: own instance, disk swap with TTD recording, keys, screenshots, memory
@@ -42,7 +43,7 @@ scripts/
 - **Tools.** `UNREAL_ASM_ZXASM`, `UNREAL_ASM_SYMCONV` (the library's `zxasm` / `symconv` from `<build>/bin`),
   `UNREAL_ASM_SJASMPLUS`, `UNREAL_ASM_PASMO`, `UNREAL_ASM_Z80ASM` (+ `ZCCCFG`), or the matching options.
 - **Outputs** go to `scratch/`. Commands below run from the repository root with
-  `S=docs/inprogress/2026-10-05-unreal-asm/scripts`.
+  `S=tools/verification/unreal-asm`.
 
 ## Example: a disk of ALASM sources with the objects ALASM built
 

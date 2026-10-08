@@ -18,6 +18,14 @@ Tests multiple CMake build combinations for the `unreal-qt` project to ensure th
 
 ---
 
+### unreal-asm
+
+[`unreal-asm/`](unreal-asm/README.md): the assembler source library's conversions against the original assemblers
+running in unreal-ng (`emulator/assemble-in-emulator.py`) and against cross assemblers and the disks' own binaries
+(`checks/`: round trip, objects, pasmo / z88dk, labels, listings). The emulator's WebAPI port is `--port` (default 8090).
+
+---
+
 ### TTD surface contract
 
 [`ttd-surface-contract/`](ttd-surface-contract/README.md): the time-travel calls give the same answers on WebAPI, CLI, Lua and Python (run against a live application).

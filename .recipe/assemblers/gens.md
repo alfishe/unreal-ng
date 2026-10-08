@@ -8,7 +8,7 @@ Not covered: the GENS language itself (see
 MONS, saving to tape from inside GENS.
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred. Use [WebAPI](#webapi) inside host-side Python
-> tools (`docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py` is one) or when MCP is unavailable
+> tools (`tools/verification/unreal-asm/emulator/assemble-in-emulator.py` is one) or when MCP is unavailable
 > ([_common/transports.md](../_common/transports.md)).
 
 ## Versions and where they are
@@ -151,8 +151,8 @@ such files (type `C`, numbered lines).
 
 ## WebAPI
 
-The same steps; `docs/inprogress/2026-10-05-unreal-asm/scripts/lib/emulator.py` wraps them (`write`, `tap`, `type`, `read`, `screenshot`), and
-`docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py gens4` runs the whole oracle: GENS4 at `--at`, the source (hobeta or a
+The same steps; `tools/verification/unreal-asm/lib/emulator.py` wraps them (`write`, `tap`, `type`, `read`, `screenshot`), and
+`tools/verification/unreal-asm/emulator/assemble-in-emulator.py gens4` runs the whole oracle: GENS4 at `--at`, the source (hobeta or a
 raw GENS file) on a tape image, `G,,`, `A`, the bytes read into a file.
 
 ```bash
@@ -170,7 +170,7 @@ curl -s "$BASE/emulator/$EMU_ID/capture/screen?area=full&format=png&path=/abs/sc
 ```
 
 ```bash
-python3 docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py gens4 DEVPAC_4.TAP 'gens/ISC11VRG__ISCOP.C.$C' 0x80E8 1235 \
+python3 tools/verification/unreal-asm/emulator/assemble-in-emulator.py gens4 DEVPAC_4.TAP 'gens/ISC11VRG__ISCOP.C.$C' 0x80E8 1235 \
     scratch/iscop.bin --at 45000 --port $PORT
 #   1235 bytes from #80E8 written to scratch/iscop.bin; check scratch/iscop.assembled.png for errors
 ```
@@ -181,7 +181,7 @@ python3 docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emula
   file.txt` gives the text (`gens 2: 165 line(s)`); `zxasm files disk.trd` lists a disk and names the codec of each
   file; `--file NAME.T` takes one file from a disk image.
 - **Write a GENS file**: `zxasm encode file.txt --codec gens -o file.gens` (lines numbered 10, 20, ... when the
-  text has no numbers); `python3 docs/inprogress/2026-10-05-unreal-asm/scripts/lib/zxdisk.py hobeta file.gens NAME.C 37066 NAME.$C` wraps it as
+  text has no numbers); `python3 tools/verification/unreal-asm/lib/zxdisk.py hobeta file.gens NAME.C 37066 NAME.$C` wraps it as
   hobeta, `zxdisk.py add disk.trd out.trd NAME.$C` puts it on a disk.
 - **A tape image GENS loads with `G`**: a standard header of type 3 (CODE) with the name and the text length, then
   one data block with the line records (number low, number high, text, `#0D`). `assemble-in-emulator.py gens4`

@@ -5,7 +5,7 @@
 | **Date** | 2026-10-06 |
 | **Code** | `src/dialects/pasmo/pasmobackend.cpp` over the writer it shares with z88dk (`src/dialects/common/classicbackend.cpp`); `zxasm convert --to pasmo` |
 | **Target** | [pasmo 0.5.5](https://pasmo.speccy.org/) by Julián Albo (its manual `pasmodoc.html` in the source archive) |
-| **Checks** | `unreal-asm-tests` (`PasmoBackend_Test`, with `UNREAL_ASM_PASMO` the oracle programs too); `docs/inprogress/2026-10-05-unreal-asm/scripts/checks/crosscheck.py` on real disks |
+| **Checks** | `unreal-asm-tests` (`PasmoBackend_Test`, with `UNREAL_ASM_PASMO` the oracle programs too); `tools/verification/unreal-asm/checks/crosscheck.py` on real disks |
 | **Result** | the oracle programs of STORM 1.3, ZAsm 3.15, TASM 5.0 and ALASM 5.09 and the General Sound 1.04 ROM (TASM 4.0) assemble with pasmo to the bytes the original assemblers built; on the collection's disks every main source both sjasmplus and pasmo assemble gives the same bytes (419 sources, 0 differences) |
 
 ## 1. Example first

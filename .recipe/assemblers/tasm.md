@@ -123,8 +123,8 @@ Same command letters; 3.0 / 3.2 have `Import 2.0 file`, 2.0 `Print text`. 2.0 sa
 
 ## WebAPI
 
-`docs/inprogress/2026-10-05-unreal-asm/scripts/lib/emulator.py` wraps the calls (`run_trdos`, `tap`, `type`, `read`, `read_disk_file`,
-`screenshot`); `docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py tasm412 <TASM_412.trd> <source.$A> <address> <length>
+`tools/verification/unreal-asm/lib/emulator.py` wraps the calls (`run_trdos`, `tap`, `type`, `read`, `read_disk_file`,
+`screenshot`); `tools/verification/unreal-asm/emulator/assemble-in-emulator.py tasm412 <TASM_412.trd> <source.$A> <address> <length>
 <out.bin>` runs a whole TASM 4.12 assemble and saves the bytes. The raw calls:
 
 ```bash

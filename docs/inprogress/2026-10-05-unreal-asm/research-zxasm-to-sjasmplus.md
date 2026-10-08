@@ -6,7 +6,7 @@
 | **Code** | `src/dialects/zxasm/zxasmfrontend.cpp` (the `zxasm` frontend), the sjasmplus backend (`IFUSED` with ZX-ASM's meaning, `SAVEBIN`, `$$$`), `IFrontend::ParseInProject` (macros from the other files of a project) |
 | **Syntax source** | ZX-ASM 3.10's manual (`compile.t` on the [3.10 disk](https://zxart.ee/releasefile/id:249317/ZASM_310.ZIP)) and the 3.3 ReadMe ([Z33_F9](https://vtrd.in/system/Z33_F9.zip)) |
 | **Oracle** | ZAsm 3.15 ([ZASM315](https://zxart.ee/releasefile/id:249318/ZASM315.zip)) in unreal-ng: four test programs it assembled and saved with `SAVEOBJ` equal their conversions byte for byte; ZAsm 3.2x ([Z32X](https://zxart.ee/releasefile/id:249319/Z32X.zip)) on a Pentagon 512 for `ENDA` and `~text~` (§3.1), the `ENDA` probe also in 3.3 Final and 4.20 |
-| **Checks** | `unreal-asm-tests` (`ZxasmFrontend_Test`, with `UNREAL_ASM_SJASMPLUS` the oracle programs too); `docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py zasm315` |
+| **Checks** | `unreal-asm-tests` (`ZxasmFrontend_Test`, with `UNREAL_ASM_SJASMPLUS` the oracle programs too); `tools/verification/unreal-asm/emulator/assemble-in-emulator.py zasm315` |
 
 ## 1. Example first
 

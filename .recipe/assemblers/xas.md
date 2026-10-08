@@ -11,7 +11,7 @@ Prerequisite: a running PENTAGON instance (the default model; 128K, TR-DOS). For
 [run/basic-inject-extract.md](../run/basic-inject-extract.md).
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred; the TR-DOS `RUN` and the memory write ride
-> `invoke_api`. Use [WebAPI](#webapi) inside host-side Python pipelines (`docs/inprogress/2026-10-05-unreal-asm/scripts/` speaks HTTP) or when MCP
+> `invoke_api`. Use [WebAPI](#webapi) inside host-side Python pipelines (`tools/verification/unreal-asm/` speaks HTTP) or when MCP
 > is unavailable (policy: [_common/transports.md](../_common/transports.md)).
 
 ## Where the programs are
@@ -63,7 +63,7 @@ inspect_state   {"aspects":["memory"],"address":24576,"size":16}
 
 ## WebAPI
 
-`docs/inprogress/2026-10-05-unreal-asm/scripts/lib/emulator.py` wraps these calls (`Emulator(url, id)`; `insert_disk`, `run_trdos`, `tap`, `type`,
+`tools/verification/unreal-asm/lib/emulator.py` wraps these calls (`Emulator(url, id)`; `insert_disk`, `run_trdos`, `tap`, `type`,
 `write`, `read`, `screenshot`):
 
 ```bash
@@ -79,11 +79,11 @@ curl -s -X POST $B/$ID/keyboard/tap -H "$J" -d '{"key":"a","frames":4}'
 curl -s "$B/$ID/memory/read/24576?length=16" | jq -r .hexdump
 ```
 
-`docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py xas7447` / `xas418` runs these steps end to end (the source and the files
+`tools/verification/unreal-asm/emulator/assemble-in-emulator.py xas7447` / `xas418` runs these steps end to end (the source and the files
 it loads added to a copy of the program disk, the range filled with #AA, the report saved as a screenshot):
 
 ```bash
-python3 docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py xas7447 XAS7_447.trd 'proj.$X' 0x6000 0x20 scratch/xas/proj.bin \
+python3 tools/verification/unreal-asm/emulator/assemble-in-emulator.py xas7447 XAS7_447.trd 'proj.$X' 0x6000 0x20 scratch/xas/proj.bin \
     --extra 'inc.$X' 'dat.$C' 'dat2.$Z' --port $PORT --id <EMU_ID>
 #   32 bytes from #6000 written to scratch/xas/proj.bin; check scratch/xas/proj.assembled.png for errors
 ```
@@ -96,7 +96,7 @@ The script the conversion was checked with ran exactly this per test program, on
 ```bash
 zxasm encode prog.txt --codec xas --version 7.43 -o prog.bin   # text -> an XAS file (4.18 / 5.05 / 7.43 / 9.10 ...)
 zxasm decode 'prog.$X'                                         # an XAS file (hobeta, or --file NAME.X in a .trd) -> text
-python3 docs/inprogress/2026-10-05-unreal-asm/scripts/lib/zxdisk.py add XAS7_447.trd work.trd 'prog.$X' 'inc.$X' 'dat.$C'
+python3 tools/verification/unreal-asm/lib/zxdisk.py add XAS7_447.trd work.trd 'prog.$X' 'inc.$X' 'dat.$C'
 zxasm convert work.trd --to sjasmplus -o out/                  # every source of the disk -> sjasmplus, LCODE files extracted
 symconv source work.trd --main prog --to sjasmplus-sym         # the labels with the values XAS gives them
 ```

@@ -71,4 +71,4 @@ compiled-in plugins; a neutral IR; TASM → sjasmplus first, sjasmplus the first
 
 Implementation on branch `unreal-asm` (master after the owner's review): A1-A4 the codecs of every version (text,
 sjasmplus, TASM, ALASM, ZX-ASM, STORM), A5 the IR with ALASM → sjasmplus conversion checked against ALASM's own
-binaries, A5b TASM → sjasmplus checked against the GS 1.04 ROM and TASM 4.12. Check scripts: `docs/inprogress/2026-10-05-unreal-asm/scripts/`. Progress per phase: [TODO.md](TODO.md).
+binaries, A5b TASM → sjasmplus checked against the GS 1.04 ROM and TASM 4.12. Check scripts: `tools/verification/unreal-asm/`. Progress per phase: [TODO.md](TODO.md).

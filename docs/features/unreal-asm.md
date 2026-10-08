@@ -26,7 +26,7 @@ Running the assemblers themselves inside the emulator: [.recipe/assemblers/](../
 
 Every codec decodes the assembler's own file to UTF-8 text and encodes text back to the same bytes (byte for byte
 for files the assembler wrote; the research documents give the corpus numbers). Containers: hobeta files
-(`NAME.$A`), TR-DOS images (`.trd`, `.scl` through `docs/inprogress/2026-10-05-unreal-asm/scripts/lib/zxdisk.py scl2trd`) and tape images (`.tap`,
+(`NAME.$A`), TR-DOS images (`.trd`, `.scl` through `tools/verification/unreal-asm/lib/zxdisk.py scl2trd`) and tape images (`.tap`,
 `.tzx`).
 
 The conversion goes through a neutral intermediate form; the sjasmplus output of every dialect is checked against

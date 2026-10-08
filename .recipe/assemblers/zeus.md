@@ -7,7 +7,7 @@ instance). Not covered: the PHT 3.6 shell's other tools (its file manager is use
 saves from inside ZEUS.
 
 > **Transport:** MCP first (`target` = the id `emulator_manage create` returned). The WebAPI section is what the
-> host-side tool `docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py` (profiles `zeus1983`, `zeus11`, `zeusgg`, `zeus7e`)
+> host-side tool `tools/verification/unreal-asm/emulator/assemble-in-emulator.py` (profiles `zeus1983`, `zeus11`, `zeusgg`, `zeus7e`)
 > sends.
 
 ## Versions and where they are
@@ -171,8 +171,8 @@ Disk versions: `POST /media/A/swap {"path":...,"discard":true,"immediate":true}`
 between keys. The same steps as one call per run:
 
 ```bash
-python3 docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py zeus1983 ZEUS.TAP PROG.bin 40000 623 scratch/prog.bin --port $PORT
-python3 docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py zeus7e ZEUS72ZK.SCL 'PROG.$Z' 40000 64 scratch/prog.bin --extra 'inc1.$Z' 'dat.$C'
+python3 tools/verification/unreal-asm/emulator/assemble-in-emulator.py zeus1983 ZEUS.TAP PROG.bin 40000 623 scratch/prog.bin --port $PORT
+python3 tools/verification/unreal-asm/emulator/assemble-in-emulator.py zeus7e ZEUS72ZK.SCL 'PROG.$Z' 40000 64 scratch/prog.bin --extra 'inc1.$Z' 'dat.$C'
 ```
 
 ## Sources between ZEUS and the host
@@ -180,8 +180,8 @@ python3 docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emula
 ```bash
 zxasm decode PROG.bin --codec zeus                         # text (5-digit numbers dropped; --version 1983 | gg | pht)
 zxasm encode prog.txt --codec zeus --version pht -o PROG.bin   # lines numbered 10, 20, ... when the text has none
-python3 docs/inprogress/2026-10-05-unreal-asm/scripts/lib/zxdisk.py hobeta PROG.bin PROG.Z 32768 'PROG.$Z'   # a TR-DOS file for v7.E's INCLUDE
-python3 docs/inprogress/2026-10-05-unreal-asm/scripts/lib/zxdisk.py add disk.trd out.trd 'PROG.$Z'
+python3 tools/verification/unreal-asm/lib/zxdisk.py hobeta PROG.bin PROG.Z 32768 'PROG.$Z'   # a TR-DOS file for v7.E's INCLUDE
+python3 tools/verification/unreal-asm/lib/zxdisk.py add disk.trd out.trd 'PROG.$Z'
 zxasm convert PROG.bin --codec zeus --version pht --to sjasmplus -o prog.asm
 symconv source ads.trd --main make_ads --to native             # labels with values: the disk's sources, and its files
                                                                # under the names PLACE / INCBIN use (else "INCBIN file not found")

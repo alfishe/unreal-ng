@@ -109,7 +109,7 @@ data mismatch` when asked to assemble with no text.
 
 ## WebAPI
 
-`docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py alasm509 <ALASM509.trd> <source.$H> <address> <length> <out.bin>
+`tools/verification/unreal-asm/emulator/assemble-in-emulator.py alasm509 <ALASM509.trd> <source.$H> <address> <length> <out.bin>
 --list-position C,R` runs a whole ALASM 5.09 assemble (it picks the file from `W`'s list by cursor). The calls are
 those of [tasm.md](tasm.md#webapi) with `RUN "alasm64"` and the ALASM commands above.
 

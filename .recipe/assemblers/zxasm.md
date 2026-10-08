@@ -85,7 +85,7 @@ CS+SPACE cancel. Input lines: CS+1 Rus / Lat, CS+2 caps, SS+W insert / overwrite
 
 ## WebAPI
 
-`docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py zasm315 <ZASM315.trd> <source.$a> <address> <length> <out.bin> [--extra
+`tools/verification/unreal-asm/emulator/assemble-in-emulator.py zasm315 <ZASM315.trd> <source.$a> <address> <length> <out.bin> [--extra
 FILE.$T ...]` runs the whole sequence (the source must end with `saveobj "a:out.C",...`; the script reads `out.C`
 from the disk). The calls are those of [tasm.md](tasm.md#webapi) with `RUN "boot"` and the keys above; RAM page 1:
 

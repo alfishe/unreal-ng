@@ -6,7 +6,7 @@
 | **Code** | `src/dialects/storm/stormfrontend.cpp` (the `storm` frontend), the sjasmplus backend (comparisons that give 1, 16-bit unsigned words, `DS` patterns) |
 | **Syntax source** | STORM 1.3's help (`STORMhlp`, an edition of the ZX Format #7 description) on the [STORM 1.3 disk](https://vtrd.in/system/STORM_13.ZIP), and STORM 1.3's own source (`STORM1_3.ZIP` from the KLUG BBS archive, [klug_bbs.7z](https://yadi.sk/d/N_p56RIHWU15Gw)) |
 | **Oracles** | STORM 1.3 itself: its own source converted and assembled by sjasmplus equals the released program in memory; two test programs assembled by STORM 1.3 in unreal-ng equal their conversions byte for byte |
-| **Checks** | `unreal-asm-tests` (`StormFrontend_Test`, with `UNREAL_ASM_SJASMPLUS` the oracle programs too); `docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py storm13`, `docs/inprogress/2026-10-05-unreal-asm/scripts/checks/lstcheck.py` |
+| **Checks** | `unreal-asm-tests` (`StormFrontend_Test`, with `UNREAL_ASM_SJASMPLUS` the oracle programs too); `tools/verification/unreal-asm/emulator/assemble-in-emulator.py storm13`, `tools/verification/unreal-asm/checks/lstcheck.py` |
 
 ## 1. Example first
 

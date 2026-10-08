@@ -41,7 +41,7 @@ Windows `cmd`: `set UNREAL_WEBAPI_PORT=8190` and then the command on the next li
   `UNREAL_SLOTS_TEST` belong to the build wrappers (machine-wide job slots), `UNREAL_SLOTS_FITTED_UPDATE` /
   `UNREAL_SLOTS_MATRIX_UPDATE` to the expansion-slot tests (they rewrite files).
 - **Port switches:** the six server ports each have their own variable. To run a second instance beside a
-  first one, move all of them (example in [`scripts/README.md`](../inprogress/2026-10-05-unreal-asm/scripts/README.md)).
+  first one, move all of them (example in [`tools/verification/unreal-asm/README.md`](../../tools/verification/unreal-asm/README.md)).
 
 ## 1. The application at run time
 
@@ -228,8 +228,8 @@ The last three are in the shared bench code, so they also act in `core-tests`' `
 |---|---|---|---|
 | `UNREAL_API_URL` | URL (`http://localhost:8090`) | Emulator the WebAPI pytest suite talks to. | `tools/verification/webapi/src/conftest.py:13` ([README](../../tools/verification/webapi/README.md)) |
 | `UNREAL_WEBAPI_URL` | URL (`http://127.0.0.1:8090`) | Emulator the Wireshark capture plugin talks to. | `tools/wireshark/unreal-ng-extcap.py:26` ([README](../../tools/wireshark/README.md)) |
-| `UNREAL_ASM_EMULATOR_URL` | URL (default `http://localhost:<--port>`, port 8090) | Emulator the assembler scripts talk to (another host); `--port` is enough on this one. | `docs/inprogress/2026-10-05-unreal-asm/scripts/lib/emulator.py` |
-| `UNREAL_ASM_ZXASM`, `UNREAL_ASM_SJASMPLUS`, `UNREAL_ASM_PASMO`, `UNREAL_ASM_Z80ASM` | binary paths (names on `PATH`; in `unreal-asm-tests` the tests skip) | External assemblers for the cross-checks, in `docs/inprogress/2026-10-05-unreal-asm/scripts/*.py` and in `unreal-asm-tests`. | `docs/inprogress/2026-10-05-unreal-asm/scripts/checks/crosscheck.py:115`, `core/src/3rdparty/unreal-asm/tests/*_test.cpp` ([README](../../core/src/3rdparty/unreal-asm/README.md)) |
+| `UNREAL_ASM_EMULATOR_URL` | URL (default `http://localhost:<--port>`, port 8090) | Emulator the assembler scripts talk to (another host); `--port` is enough on this one. | `tools/verification/unreal-asm/lib/emulator.py` |
+| `UNREAL_ASM_ZXASM`, `UNREAL_ASM_SJASMPLUS`, `UNREAL_ASM_PASMO`, `UNREAL_ASM_Z80ASM` | binary paths (names on `PATH`; in `unreal-asm-tests` the tests skip) | External assemblers for the cross-checks, in `tools/verification/unreal-asm/*/*.py` and in `unreal-asm-tests`. | `tools/verification/unreal-asm/checks/crosscheck.py:115`, `core/src/3rdparty/unreal-asm/tests/*_test.cpp` ([README](../../core/src/3rdparty/unreal-asm/README.md)) |
 | `UNREAL_TTD_PERIPHERAL_HEADER` | header path (the repository's `ttdserializable.h`) | Where the TTD analyzer reads device ids from, when run outside the tree. | `tools/verification/ttd-analyzer/src/ttd_format.py:216` |
 | `UNREAL_BUILD` | build folder (`cmake-build-agent-release`) | Build with `core-tests` for the co-emulation runner. | `tools/verification/coemu/unreal-ng/run.sh:8` |
 | `PROGRAM`, `OUT`, `MAX_FRAMES` | program base path (the contention probe), out folder, frames (60000) | Co-emulation harness: what to run, where results go, when to give up. | `tools/verification/coemu/common/common.sh:23` |

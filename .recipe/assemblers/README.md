@@ -21,7 +21,7 @@ Pick the recipe of your assembler; read this page for the parts every recipe poi
 
 > **How to use the sections:** MCP is preferred (`type_input`, `media`, `inspect_state`, `capture_media`,
 > `manage_symbols`, `invoke_api` for the rest). Use WebAPI inside host-side Python tools
-> (`docs/inprogress/2026-10-05-unreal-asm/scripts/lib/emulator.py` wraps it) or when MCP is unavailable
+> (`tools/verification/unreal-asm/lib/emulator.py` wraps it) or when MCP is unavailable
 > ([_common/transports.md](../_common/transports.md)).
 
 ## Your own instance
@@ -57,7 +57,7 @@ capture_media     {"action":"screenshot","filename":"scratch/asm-started.png"}
 ```
 
 `basic/run` types the line through the ROM editor and presses ENTER (`structuredContent.body.basic_mode` is `trdos`).
-Give the loader its time (5-15 s) before the next key. SCL images are accepted as they are; `docs/inprogress/2026-10-05-unreal-asm/scripts/lib/zxdisk.py
+Give the loader its time (5-15 s) before the next key. SCL images are accepted as they are; `tools/verification/unreal-asm/lib/zxdisk.py
 scl2trd` makes a TRD when a TRD is needed (adding files with `zxdisk.py add`).
 
 ## Keys
@@ -91,7 +91,7 @@ Four ways, from the most to the least convenient:
 
    ```bash
    zxasm encode prog.txt --codec tasm --version 4.12 -o 'PROG.$A'        # alasm --version 5.07, storm --version 1.3 ...
-   python3 docs/inprogress/2026-10-05-unreal-asm/scripts/lib/zxdisk.py add TASM_412.trd work.trd 'PROG.$A'
+   python3 tools/verification/unreal-asm/lib/zxdisk.py add TASM_412.trd work.trd 'PROG.$A'
    ```
 
    An assembler already running sees a disk swapped under it (`media swap` with `immediate: true`) after its next
@@ -99,7 +99,7 @@ Four ways, from the most to the least convenient:
 
 3. **The assembler's own text import / export.** TASM 4.12 (Import/export, `p`), ALASM (`impOrt`, `eXport`), STORM
    (`imporT`, `eXport`) and ZAsm 3.10+ (the Convert overlay) read and write plain text on the disk; read the file
-   back with `disk/{drive}` sector reads (`docs/inprogress/2026-10-05-unreal-asm/scripts/lib/emulator.py read_disk_file`).
+   back with `disk/{drive}` sector reads (`tools/verification/unreal-asm/lib/emulator.py read_disk_file`).
 
 4. **The disk back to the host.** `media export` writes the disk with everything the assembler saved:
 
@@ -117,7 +117,7 @@ Four ways, from the most to the least convenient:
   `invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/memory/page/ram/1?offset=0&length=16384"}` (`body.data`;
   without `offset` / `length` the reply holds only the first 128 bytes).
 - The object file the assembler saved: export the disk (above) or read its sectors.
-- `docs/inprogress/2026-10-05-unreal-asm/scripts/emulator/assemble-in-emulator.py <profile>` runs a whole assemble and saves the bytes (profiles for TASM
+- `tools/verification/unreal-asm/emulator/assemble-in-emulator.py <profile>` runs a whole assemble and saves the bytes (profiles for TASM
   4.12, ALASM 5.09, STORM 1.3, ZAsm 3.15, MASM 1.1, XAS, ZEUS, GENS4).
 
 ## Labels into the debugger
