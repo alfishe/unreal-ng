@@ -492,8 +492,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 #endif
     _toolBarManager->restoreSettings();
 
-    _ttdWidget = new TtdWidget(this, this);
+    _ttdWidget = new TtdWidget(this);
     _ttdWidget->setVisible(false);
+    connect(_ttdWidget, &TtdWidget::viewportRefreshRequested, this, &MainWindow::refreshViewport);
     ui->verticalLayout->insertWidget(0, _ttdWidget);
     connect(_ttdWidget, &TtdWidget::heightChanged, this, &MainWindow::adjustWindowHeightForTtdWidget);
     connect(_ttdWidget, &TtdWidget::visibilityChanged, this, [this](bool visible) {

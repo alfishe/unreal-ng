@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -21,7 +22,6 @@
 #include <memory>
 
 class Emulator;
-class MainWindow;
 
 
 /**
@@ -35,7 +35,7 @@ class TtdWidget : public QWidget
     Q_OBJECT
 
 public:
-    explicit TtdWidget(MainWindow* mainWindow, QWidget* parent = nullptr);
+    explicit TtdWidget(QWidget* parent = nullptr);
     virtual ~TtdWidget() override = default;
 
     /// Update enabled state, status labels, and slider bounds from active emulator
@@ -57,6 +57,8 @@ signals:
     void visibilityChanged(bool visible);
     void heightChanged();
     void recordingStateChanged(bool isRecording);
+    /// The machine moved in time (a seek, a load): the window repaints its viewport
+    void viewportRefreshRequested();
 
 public slots:
     void onRecordToggled();
@@ -70,20 +72,26 @@ public slots:
     void onResumeFromHere();
     void onSliderValueChanged(int value);
     void onSliderMoved(int value);
-    /// The "Journal" button: switch the write journal at any moment
+    /// The Advanced row's "Write journal" box: switch the write journal at any moment (remembered)
     void onJournalToggled(bool on);
+    /// Show or hide the Advanced row (remembered)
+    void onAdvancedToggled(bool open);
 
 
 private:
     void updateTelemetry();
     /// The history combo's limit onto the active emulator's TTD (a new one, or a change)
     void applyHistoryLimit();
+    /// The saved journal choice onto the active emulator's TTD while it holds no session (a recording
+    /// already under way keeps what it records with)
+    void applyJournalPreference();
+    /// Height of the visible rows and the spacing between them
+    int rowsHeight(bool advanced, bool scrubber) const;
     void performSeekToFrame(uint64_t targetFrame, bool frameStart = false);
     /// Build the write journal for frames from..to by replay on a worker thread,
     /// with a progress dialog that can cancel it
     void buildJournal(uint64_t fromFrame, uint64_t toFrame);
 
-    MainWindow* _mainWindow = nullptr;
     std::shared_ptr<Emulator> _activeEmulator = nullptr;
     QTimer* _telemetryTimer = nullptr;
 
@@ -98,10 +106,14 @@ private:
     QPushButton* _loadBtn = nullptr;
     QPushButton* _exportBtn = nullptr;
     QPushButton* _clearBtn = nullptr;
-    QPushButton* _journalBtn = nullptr;   // write journal on / off (D40)
-    QComboBox* _historyCombo = nullptr;  // history limit (bytes, 0 = all); saved in the settings
     QLabel* _statusLabel = nullptr;
+    QToolButton* _advancedBtn = nullptr;   // shows the Advanced row
     QToolButton* _closeBtn = nullptr;
+
+    // Advanced Row (hidden by default; its settings and whether it is open are saved)
+    QWidget* _advancedContainer = nullptr;
+    QCheckBox* _journalCheck = nullptr;   // write journal on / off (D40); on by default in the panel
+    QComboBox* _historyCombo = nullptr;   // history limit (bytes, 0 = all)
 
     // Scrubber Row Container (Bottom)
     QWidget* _scrubberContainer = nullptr;
