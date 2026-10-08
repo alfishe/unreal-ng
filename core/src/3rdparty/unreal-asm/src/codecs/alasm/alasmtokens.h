@@ -22,7 +22,7 @@ using RegisterTable = std::array<std::string_view, kLastRegister - kFirstRegiste
 
 struct Version
 {
-    std::string_view id;       ///< "3.8", "4.2", "4.42", "4.5", "4.44", "5.07"
+    std::string_view id;       ///< "3.8", "4.2", "4.42", "4.5", "4.44", "5.05", "5.07"
     std::string_view title;    ///< "ALASM 5.07-5.09"
     MnemonicTable mnemonics;
 };

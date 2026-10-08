@@ -4,6 +4,7 @@
 // frontend parses a decoded source of its dialect into the IR, a backend writes the IR as a source of its dialect;
 // Convert chains them. Each reports what it could not convert.
 
+#include <functional>
 #include <map>
 #include <set>
 #include <memory>
@@ -18,6 +19,11 @@
 
 namespace unrealasm
 {
+/// The bytes of a data file a source reads while it is assembled (ZX-ASM's LOADTAB table), by the name the source gives
+/// (the drive dropped): the file's data and the rest of its last sector, as the assembler loads it; empty when the
+/// project has no such file
+using DataFileReader = std::function<std::vector<uint8_t>(const std::string& name)>;
+
 struct FrontendResult
 {
     ir::Program program;
@@ -37,6 +43,8 @@ struct BackendOptions
     /// How often each name is defined in the files of the project (ConvertProject fills it; pasmo needs DEFL for a name
     /// defined twice, EQU for one defined once)
     std::map<std::string, int> definitions;
+    /// The project's data files (ConvertProject hands it to the frontends; none: the sources alone)
+    DataFileReader dataFiles;
 };
 
 /// A label of the source and the name the backend wrote it under (a reserved word renamed, a LOCAL block's label made
@@ -72,6 +80,13 @@ public:
     {
         (void)project;
         return Parse(source);
+    }
+    /// As ParseInProject, with the project's data files (a dialect that reads one while assembling)
+    virtual FrontendResult ParseWithData(const SourceDocument& source, const std::vector<const SourceDocument*>& project,
+                                         const DataFileReader& dataFiles) const
+    {
+        (void)dataFiles;
+        return ParseInProject(source, project);
     }
 };
 

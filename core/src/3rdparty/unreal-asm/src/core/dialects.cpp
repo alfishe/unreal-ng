@@ -133,7 +133,7 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
         for (size_t n = 0; n < files.size(); ++n)
             if (n != k)
                 others.push_back(&named[n]);
-        FrontendResult parsed = frontend->ParseInProject(files[k].document, others);
+        FrontendResult parsed = frontend->ParseWithData(files[k].document, others, options.dataFiles);
         notes[k] = std::move(parsed.diagnostics);
         // INCLUDE "pattern": the last project file whose name matches
         for (ir::Line& line : parsed.program.lines)

@@ -49,7 +49,7 @@ MnemonicTable Derive(std::initializer_list<Change> changes)
 }
 
 // The older tables, read from each version's binary (research-alasm.md §3): 3.8 alasm4x8.C, 4.2 alasm48.C,
-// 4.42 alasm442.C, 4.5 alasm4.5.C, 4.44 al64_444.C / al42_444.C
+// 4.42 alasm442.C, 4.5 alasm4.5.C, 4.44 al64_444.C / al42_444.C, 5.05 alasm_64.C / alasm_42.C (and its alTOKENS.H)
 std::vector<Version> Build()
 {
     std::vector<Version> versions;
@@ -68,6 +68,7 @@ std::vector<Version> Build()
                                 {0xE5, ""}, {0xE6, ""}})});
     versions.push_back({"4.44", "ALASM 4.44",
                         Derive({{0xD2, "UNTIL"}, {0xD3, "IF"}, {0xE1, ""}, {0xE2, ""}, {0xE3, ""}, {0xE4, ""}, {0xE5, ""}, {0xE6, ""}})});
+    versions.push_back({"5.05", "ALASM 5.05", Derive({{0xD2, "UNTIL"}})});
     versions.push_back({"5.07", "ALASM 5.07-5.09", kAlasm5});
     return versions;
 }
