@@ -65,6 +65,22 @@ core/src/3rdparty/unreal-asm/testdata/
 
 ## 6. Results table (filled in A9)
 
+`unreal-asm-benchmarks` (`-DBENCHMARKS=ON`, target `unreal-asm-benchmarks`), 2026-10-07, Apple M-series, Release,
+the testdata corpus of each codec; load average about 7 (other builds running): figures are a floor. Decode is
+measured twice: with the version detected (every version of the format tried on every line, decision D-15) and with
+the version given (`DecodeOptions::subversion`, what a caller that knows it pays).
+
 | Benchmark | Result | Target | OK |
 |---|---|---|---|
-| | | | |
+| Decode, version given: tasm / alasm / zxasm / storm / masm / gens | 135 / 114 / 115 / 63 / 78 / 67 MB/s | ≥ 50 MB/s | yes |
+| Decode, version given: zeus / xas | 39 / 33 MB/s | ≥ 50 MB/s | no (each line is encoded again to check it is canonical) |
+| Decode, version detected: tasm / storm / masm / gens | 112 / 63 / 65 / 65 MB/s | ≥ 50 MB/s | yes |
+| Decode, version detected: alasm / zxasm / zeus / xas | 6.0 / 9.2 / 20 / 34 MB/s | ≥ 50 MB/s | no (6 / 4 / 3 versions tried; a 640 KB disk of ALASM in about 0.1 s) |
+| Encode: tasm / alasm / zxasm / storm / masm / gens / zeus / xas | 123 / 125 / 118 / 81 / 81 / 111 / 71 / 51 MB/s | ≥ 50 MB/s | yes |
+| Parse: every dialect | 208 k (alasm) to 1.95 M (masm) lines/s | ≥ 200 000 lines/s | yes |
+| Convert to sjasmplus: every dialect but alasm | 720 k (zxasm) to 1.28 M (masm) lines/s | ≥ 200 000 lines/s | yes |
+| Convert to sjasmplus: alasm | 187 k lines/s | ≥ 200 000 lines/s | no (7 % short) |
+
+Speed-ups the profiles led to (2026-10-07): keyword tables of XAS, ALASM and ZEUS built once per version and
+searched by first character; XAS's font read backwards once (it scanned 240 glyphs per character); an ASCII fast path
+in `CodePointToByte`. XAS decode went from 1.5 to 33 MB/s, encode from 8 to 51; ZEUS encode from 20 to 71.

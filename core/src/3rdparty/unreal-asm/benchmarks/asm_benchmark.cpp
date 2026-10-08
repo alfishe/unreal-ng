@@ -25,9 +25,17 @@ struct Sample
     SourceDocument document;
 };
 
-/// The hobeta sources of testdata/<folder> the codec reads (decoded once)
-const std::vector<Sample>& Samples(const std::string& codecId, const std::string& folder)
+struct CodecCase
 {
+    const char* id;
+    const char* folder;
+};
+
+/// The hobeta sources of testdata/<folder> the codec reads (decoded once)
+const std::vector<Sample>& Samples(const CodecCase& c)
+{
+    const std::string codecId = c.id;
+    const std::string folder = c.folder;
     static std::map<std::string, std::vector<Sample>> cache;
     auto found = cache.find(codecId);
     if (found != cache.end())
@@ -58,19 +66,13 @@ const std::vector<Sample>& Samples(const std::string& codecId, const std::string
     return out;
 }
 
-struct CodecCase
-{
-    const char* id;
-    const char* folder;
-};
-
 constexpr CodecCase kCodecs[] = {{"tasm", "tasm"}, {"alasm", "alasm"}, {"zxasm", "zxasm"}, {"storm", "storm"}, {"masm", "masm"},
                                  {"gens", "gens"}, {"zeus", "zeus"},   {"xas", "xas"}};
 
 void BmDecode(benchmark::State& state, const CodecCase c)
 {
     const ISourceCodec* codec = CodecRegistry::Builtin().Find(c.id);
-    const std::vector<Sample>& samples = Samples(c.id, c.folder);
+    const std::vector<Sample>& samples = Samples(c);
     if (!codec || samples.empty())
     {
         state.SkipWithError("no samples");
@@ -92,7 +94,7 @@ void BmDecode(benchmark::State& state, const CodecCase c)
 void BmDecodeKnown(benchmark::State& state, const CodecCase c)
 {
     const ISourceCodec* codec = CodecRegistry::Builtin().Find(c.id);
-    const std::vector<Sample>& samples = Samples(c.id, c.folder);
+    const std::vector<Sample>& samples = Samples(c);
     if (!codec || samples.empty())
     {
         state.SkipWithError("no samples");
@@ -114,7 +116,7 @@ void BmDecodeKnown(benchmark::State& state, const CodecCase c)
 void BmEncode(benchmark::State& state, const CodecCase c)
 {
     const ISourceCodec* codec = CodecRegistry::Builtin().Find(c.id);
-    const std::vector<Sample>& samples = Samples(c.id, c.folder);
+    const std::vector<Sample>& samples = Samples(c);
     if (!codec || samples.empty())
     {
         state.SkipWithError("no samples");
@@ -134,7 +136,7 @@ void BmEncode(benchmark::State& state, const CodecCase c)
 /// Parse (frontend) and convert (frontend + sjasmplus backend) of the codec's samples, counted in source lines
 void BmParse(benchmark::State& state, const CodecCase c)
 {
-    const std::vector<Sample>& samples = Samples(c.id, c.folder);
+    const std::vector<Sample>& samples = Samples(c);
     const IFrontend* frontend = samples.empty() ? nullptr : DialectRegistry::Builtin().Frontend(samples.front().document.dialect);
     if (!frontend)
     {
@@ -153,7 +155,7 @@ void BmParse(benchmark::State& state, const CodecCase c)
 
 void BmConvert(benchmark::State& state, const CodecCase c)
 {
-    const std::vector<Sample>& samples = Samples(c.id, c.folder);
+    const std::vector<Sample>& samples = Samples(c);
     if (samples.empty() || !DialectRegistry::Builtin().Frontend(samples.front().document.dialect))
     {
         state.SkipWithError("no frontend");

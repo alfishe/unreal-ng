@@ -48,7 +48,7 @@ zxasm check    'GAME.$H'                        # decode + encode: byte-exact?
 ```
 
 Decoding without `--version` tries every version of the format and keeps the newest one that reproduces the file;
-giving the version (from the catalog or the user) skips that and is about ten times faster for ALASM and ZX-ASM.
+giving the version (from the catalog or the user) skips that: 12 (ZX-ASM) to 19 (ALASM) times faster.
 
 ## Symbols
 
