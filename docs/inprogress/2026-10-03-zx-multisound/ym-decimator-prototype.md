@@ -7,7 +7,9 @@ The same `Ym2203Pair` serves the TSFM board, and the same `FilterDecimator` serv
 `proto-ym-decimators` (on master `012418ef4`); owner rule 2026-10-07: into the main code base only if the quality
 analysis is fully good.
 
-**Landed: a + c0 (owner 2026-10-07); b and c kept on `proto-ym-decimators`.** Branch `ym-decimators-a-c0` carries
+**Landed: a + c0 (owner 2026-10-07); b and c kept as patches** in
+[ym-decimator-prototype-patches/](ym-decimator-prototype-patches/) ([section 7](#7-the-prototype-as-patches); the branch
+`proto-ym-decimators` is deleted). Branch `ym-decimators-a-c0` carries
 variant a and variant c0 rewritten without b (a zero-run counter per SSG channel, the same as the FM one; no held
 level, no `ssgLast`); the forced-scalar build switch of the prototype is gone (the tests call the scalar kernel
 directly). Verification on that branch: [section 6](#6-landing-a--c0).
@@ -20,6 +22,7 @@ directly). Verification on that branch: [section 6](#6-landing-a--c0).
 - [4. Recommendation](#4-recommendation)
 - [5. How to repeat](#5-how-to-repeat)
 - [6. Landing a + c0](#6-landing-a--c0)
+- [7. The prototype as patches](#7-the-prototype-as-patches)
 
 ## 1. Variants
 
@@ -213,3 +216,23 @@ zero-run counter per SSG channel next to the FM one, without b's levels-only tic
 
   The same picture as the prototype's a + c0 rows (section 3); the classic host frames and port benchmarks were
   measured there (within noise) and the landed code for them is variant a unchanged.
+
+## 7. The prototype as patches
+
+The prototype branch `proto-ym-decimators` was deleted on 2026-10-08 after its five code commits were saved as a
+`git format-patch` series in [ym-decimator-prototype-patches/](ym-decimator-prototype-patches/). The series applies
+in order on master `012418ef4` (`git am` of all five) and reproduces the branch's tree exactly (checked: the tree after
+`git am` equals the prototype's `bf80d53a5`). The variants build on each other, so a later patch needs the earlier
+ones; on today's master, where a and c0 landed in their production form, b or c have to be ported, not applied.
+
+| Patch | Variant | Commit | What it changes |
+|---|---|---|---|
+| [01-variant-a-multi-stream-fir-simd.patch](ym-decimator-prototype-patches/01-variant-a-multi-stream-fir-simd.patch) | a | `64c2e29a4` | one pass over the taps for all decimators of a pair, NEON / SSE2 / scalar `DecimatorDot` kernels (landed, reworked) |
+| [02-variant-b-ssg-levels-only.patch](ym-decimator-prototype-patches/02-variant-b-ssg-levels-only.patch) | b | `943e21c60` | `SoundChip_AY8910::updateStateLevels`: the card's SSG tick computes channel levels only (not landed) |
+| [03-variant-c0-skip-silent-ssg-fir.patch](ym-decimator-prototype-patches/03-variant-c0-skip-silent-ssg-fir.patch) | c0 | `182103b36` | skip the FIR of an SSG channel whose whole window is 0.0 (landed, rewritten without b) |
+| [04-variant-c-constant-level-shortcut.patch](ym-decimator-prototype-patches/04-variant-c-constant-level-shortcut.patch) | c | `b0fc99d86` | the same skip for any held level, plus its tests (not landed) |
+| [05-variant-c-plain-order-outputs.patch](ym-decimator-prototype-patches/05-variant-c-plain-order-outputs.patch) | c | `bf80d53a5` | `renderChannels` evaluates the eight outputs in plain order (not landed; landed separately in c0's form) |
+
+Why b and c stay out: section 4 (b duplicates the AY level computation, a merge touches the AY hot path and needs its
+own A/B; c is identical at the float output but not the same arithmetic).
+

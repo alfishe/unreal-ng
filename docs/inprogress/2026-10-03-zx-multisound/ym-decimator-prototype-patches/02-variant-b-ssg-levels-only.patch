@@ -1,0 +1,111 @@
+From 943e21c6045f7e2dd7aa66f5cb7a9339a95d2568 Mon Sep 17 00:00:00 2001
+From: Ilia Sharin <isharin@gmail.com>
+Date: Wed, 7 Oct 2026 09:19:19 -0400
+Subject: [PATCH 2/5] proto(sound): SSG levels-only generator tick for the
+ per-channel outputs
+
+SoundChip_AY8910::updateStateLevels ticks the generators and computes the
+three channel levels without the pan sums and DC blockers of updateMixer;
+Ym2203Pair::renderChannels (ZX-MultiSound) reads only the levels. The AY
+machines' updateState / updateMixer are untouched. Card rows bit-identical
+(quality harness A/B, golden digests); the DC blocker state is not TTD
+state.
+
+Prototype variant (b), docs/inprogress/2026-10-03-zx-multisound/ym-decimator-prototype.md
+---
+ .../emulator/sound/chips/soundchip_ay8910.cpp | 30 +++++++++++++++++++
+ .../emulator/sound/chips/soundchip_ay8910.h   |  4 +++
+ .../emulator/sound/chips/tsfm/ym2203pair.cpp  |  2 +-
+ .../emulator/sound/chips/tsfm/ym2203pair.h    |  7 +++++
+ 4 files changed, 42 insertions(+), 1 deletion(-)
+
+diff --git a/core/src/emulator/sound/chips/soundchip_ay8910.cpp b/core/src/emulator/sound/chips/soundchip_ay8910.cpp
+index c384b6acf..52d591625 100644
+--- a/core/src/emulator/sound/chips/soundchip_ay8910.cpp
++++ b/core/src/emulator/sound/chips/soundchip_ay8910.cpp
+@@ -395,6 +395,36 @@ void SoundChip_AY8910::updateState(bool bypassPrescaler)
+     }
+ }
+ 
++void SoundChip_AY8910::updateStateLevels()
++{
++    _tick++;
++
++    _noiseGenerator.updateState();
++    _envelopeGenerator.updateState();
++
++    _toneGenerators[AY_CHANNEL_A].updateState();
++    _toneGenerators[AY_CHANNEL_B].updateState();
++    _toneGenerators[AY_CHANNEL_C].updateState();
++
++    // The levels of updateMixer, nothing else
++    for (size_t i = 0; i < TONE_CHANNELS; i++)
++    {
++        ToneGenerator& toneGenerator = _toneGenerators[i];
++        uint8_t channelOut = (toneGenerator.out() || !toneGenerator.toneEnabled()) &&
++                             (_noiseGenerator.out() || !toneGenerator.noiseEnabled());
++        uint8_t volume = toneGenerator.envelopeEnabled() ? _envelopeGenerator.out() : toneGenerator.volume() * 2 + 1;
++        channelOut *= volume;
++        channelOut &= 0x1F;
++        double dacValue = _volumeDACTablePtr[channelOut];
++        if (!toneGenerator.isMuted())
++            dacValue *= toneGenerator.userVolume();
++        else
++            dacValue = 0.0;
++        _left[i] = dacValue;
++        _right[i] = dacValue;
++    }
++}
++
+ void SoundChip_AY8910::updateMixer()
+ {
+     // Zero-down all output samples
+diff --git a/core/src/emulator/sound/chips/soundchip_ay8910.h b/core/src/emulator/sound/chips/soundchip_ay8910.h
+index 8be7c0aa9..fe085a0ee 100644
+--- a/core/src/emulator/sound/chips/soundchip_ay8910.h
++++ b/core/src/emulator/sound/chips/soundchip_ay8910.h
+@@ -464,6 +464,10 @@ public:
+     void reset() override;
+     void updateState(bool bypassPrescaler = false);
+     void updateMixer();
++    /// One generator tick (the prescaler bypassed, as updateState(true)) for an owner that reads the per-channel
++    /// levels only (left() / right(): the ZX-MultiSound's per-channel outputs): the pan sums and DC blockers of
++    /// updateMixer are skipped, so mixedLeft() / mixedRight() and the DC blockers keep their last values
++    void updateStateLevels();
+ 
+     void setMixer(uint8_t mixerValue);
+     void setVolume(uint8_t volume, uint8_t channel);
+diff --git a/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp b/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp
+index 216c70d1c..57d08a4a1 100644
+--- a/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp
++++ b/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp
+@@ -341,7 +341,7 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
+                 feedFm(i);
+             }
+             applySsgWrites(_renderT);
+-            updateState(true);
++            updateLevels();
+             for (int i = 0; i < 2; i++)
+             {
+                 const double* levels = _chips[i]->ssg.left();  // per channel, before panning and DC removal
+diff --git a/core/src/emulator/sound/chips/tsfm/ym2203pair.h b/core/src/emulator/sound/chips/tsfm/ym2203pair.h
+index 418be33f9..6f5c46f86 100644
+--- a/core/src/emulator/sound/chips/tsfm/ym2203pair.h
++++ b/core/src/emulator/sound/chips/tsfm/ym2203pair.h
+@@ -433,6 +433,13 @@ public:
+         _chips[1]->ssg.updateState(bypassPrescaler);
+     }
+ 
++    /// Tick both SSG generators once for the per-channel outputs: the levels only (no pan sums, no DC blockers)
++    void updateLevels()
++    {
++        _chips[0]->ssg.updateStateLevels();
++        _chips[1]->ssg.updateStateLevels();
++    }
++
+     /// One SSG generator tick of the render loop with its two FM half-ticks interleaved (TSFM §6.2): half-tick
+     /// 1/2 at the cursor, the SSG writes timed up to it applied, both generators ticked, `onSsgTick(chip0, chip1)`
+     /// (the owner takes the new SSG levels), half-tick 2/2, the cursor advances one SSG tick (16 master clocks)
+-- 
+2.56.0
+
