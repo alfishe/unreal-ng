@@ -5,6 +5,14 @@
 #include "codecs/alasm/alasmcodec.h"
 #include "codecs/gens/genscodec.h"
 #include "codecs/asm80/asm80codec.h"
+#include "codecs/pasmo/pasmocodec.h"
+#include "codecs/z80asm/z80asmcodec.h"
+#include "codecs/zasm/zasmcodec.h"
+#include "codecs/fantasm/fantasmcodec.h"
+#include "codecs/zmac/zmaccodec.h"
+#include "codecs/rasm/rasmcodec.h"
+#include "codecs/specasm/specasmcodec.h"
+#include "codecs/odin/odincodec.h"
 #include "codecs/prometheus/prometheuscodec.h"
 #include "codecs/masm/masmcodec.h"
 #include "codecs/sjasmplus/sjasmpluscodec.h"
@@ -33,6 +41,14 @@ const CodecRegistry& CodecRegistry::Builtin()
         r.Add(std::make_unique<codecs::ZeusCodec>());
         r.Add(std::make_unique<codecs::XasCodec>());
         r.Add(std::make_unique<codecs::Asm80Codec>());
+        r.Add(std::make_unique<codecs::PasmoCodec>());
+        r.Add(std::make_unique<codecs::Z80asmCodec>());
+        r.Add(std::make_unique<codecs::ZasmCodec>());
+        r.Add(std::make_unique<codecs::FantasmCodec>());
+        r.Add(std::make_unique<codecs::ZmacCodec>());
+        r.Add(std::make_unique<codecs::RasmCodec>());
+        r.Add(std::make_unique<codecs::SpecasmCodec>());
+        r.Add(std::make_unique<codecs::OdinCodec>());
         r.Add(std::make_unique<codecs::PrometheusCodec>());
         return r;
     }();

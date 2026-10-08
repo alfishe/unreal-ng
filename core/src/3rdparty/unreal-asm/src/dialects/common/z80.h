@@ -11,6 +11,11 @@ namespace unrealasm::dialects::z80
 {
 /// A Z80 instruction mnemonic in lower case (ld, sli, inf ...)
 bool IsMnemonic(std::string_view lower);
+/// A mnemonic only the ZX Spectrum Next (Z80N) has: swapnib, mirror, test, bsla ... ldirx (ADD, PUSH and JP take extra forms
+/// there, but keep their Z80 names and are IsMnemonic)
+bool IsZ80nMnemonic(std::string_view lower);
+/// A sjasmplus directive line (DEVICE ZXSPECTRUMNEXT, OPT --zxnext[=cspect]) that turns the Z80N instructions on
+bool EnablesZ80n(std::string_view directive);
 /// A register name in lower case, normalized: ixh ixl iyh iyl for the halves (hx lx xh ...), af' with its apostrophe
 std::string NormalizeRegister(std::string_view lower);
 bool IsRegister(std::string_view normalized);

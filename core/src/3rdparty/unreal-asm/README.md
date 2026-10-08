@@ -16,6 +16,15 @@ Part of [unreal-ng](https://github.com/alfishe/unreal-ng); design: `docs/inprogr
   STORM and ZX-ASM frontends come next. Corpus and emulator checks: `tools/verification/unreal-asm/` in unreal-ng.
 - A6-A8: frontends for STORM, ZX-ASM, MASM, GENS, ZEUS, XAS and the PC cross assembler ASM80 (`asm80`, a text
   codec), pasmo and z88dk backends; `zxasm convert` of a TR-DOS / tape image or of a host directory as one project.
+- Z80N (ZX Spectrum Next): the sjasmplus frontend reads the Next mnemonics (`swapnib`, `nextreg`, `ldirx` ...) after
+  `DEVICE ZXSPECTRUMNEXT` / `OPT --zxnext` (or `zxasm convert --z80n`, `BackendOptions::z80n`, `SourceDocument::z80n`) and
+  never otherwise, since a classic source may use `test` or `mirror` as a label; the layout module sizes them; the
+  z88dk backend writes them for `z80asm -mz80n`, the pasmo backend as bytes (pasmo has no Z80N).
+- A9: frontends and codecs for the assemblers in use today: pasmo, z88dk z80asm, zasm, FantASM, zmac, rasm and Specasm's
+  `.s` text (one shared line engine, a `TextDialect` table each), the Odin document codec (`.odn`), Zeus' Next files through a
+  +3DOS container reader; the Z80N instructions across them. Checks against the real assemblers:
+  `tools/verification/unreal-asm/checks/` (`pasmocheck`, `z80asmcheck`, `zasmcheck`, `fantasmcheck`, `dialectcheck`, `specasmcheck`,
+  `z80nmatrix`). `docs/inprogress/2026-10-05-unreal-asm/research-modern-assemblers.md`.
 - A8: the symbol module (`include/unrealasm/symbols/`): model, index, store, the symbol codecs of every label file
   format, `symconv`; labels from sources (`symbols/fromsource.h`) with values from `layout.h`, a layout of the
   sjasmplus conversion equal to what sjasmplus assembles.

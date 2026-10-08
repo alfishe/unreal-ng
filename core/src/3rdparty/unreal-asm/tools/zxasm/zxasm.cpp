@@ -49,6 +49,7 @@ int Usage()
                  "       decode <file> [-o out] [--codec id] [--version v] [--codepage cp] |\n"
                  "       encode <file> --codec id [--version v] [-o out] [--codepage cp] [--line-end lf|crlf|cr] |\n"
                  "       check <file> [--codec id] [--version v] |\n"
+                 "       convert <file|dir|image> --to dialect [--from dialect] [--z80n] [-o out]   (--z80n: ZX Spectrum Next sources)\n"
                  "       files <image.trd|.tap|.tzx> (decode/detect/encoding/check take --file NAME[.T] for a file in an image)\n";
     return 2;
 }
@@ -87,6 +88,7 @@ struct Args
 {
     std::string command, file, output, codec, codePage, lineEnd, inner, version, to, from;
     bool show = false;
+    bool z80n = false;   // convert: the sources are for the ZX Spectrum Next (sjasmplus --zxnext)
 };
 
 bool Parse(int argc, char** argv, Args& args)
@@ -103,6 +105,11 @@ bool Parse(int argc, char** argv, Args& args)
             target = argv[++i];
             return true;
         };
+        if (a == "--z80n")
+        {
+            args.z80n = true;
+            continue;
+        }
         if (a == "--show")
         {
             args.show = true;
@@ -193,6 +200,18 @@ bool Unwrap(const Args& args, std::vector<uint8_t>& bytes, CatalogHints& hints)
             }
         std::cerr << "zxasm: no file " << args.inner << " in " << args.file << "\n";
         return false;
+    }
+    if (bytes.size() >= 128 && std::equal(bytes.begin(), bytes.begin() + 8, "PLUS3DOS"))
+    {
+        // a +3DOS file (the Next's .god, .asm ... saved by NextZXOS): the data after the 128-byte header
+        containers::Plus3dosFile plus3;
+        if (!containers::ReadPlus3dos(bytes, plus3, error))
+        {
+            std::cerr << "zxasm: " << error << "\n";
+            return false;
+        }
+        bytes = plus3.data;
+        return true;
     }
     if (!extension.empty() && extension[0] == '$')
     {
@@ -294,6 +313,7 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
     // Data files a source reads while assembling (ZX-ASM's LOADTAB table) come from the image as the assembler loads
     // them: the data and the rest of the last sector
     BackendOptions options;
+    options.z80n = args.z80n;
     options.dataFiles = [&files](const std::string& name) {
         const containers::TrdosFile* file = FindBinary(files, name);
         std::vector<uint8_t> bytes;
@@ -473,6 +493,7 @@ int ConvertDirectory(const Args& args, const CodecRegistry& registry)
     std::error_code made;
     std::filesystem::create_directories(std::filesystem::path(std::u8string(args.output.begin(), args.output.end())), made);
     BackendOptions options;
+    options.z80n = args.z80n;
     options.dataFiles = [&binaries](const std::string& name) {
         const auto found = binaries.find(Lower(name));
         return found == binaries.end() ? std::vector<uint8_t>{} : found->second;
@@ -606,7 +627,9 @@ int main(int argc, char** argv)
         DecodeResult decoded = codec->Decode(bytes, options);
         if (!args.from.empty())
             decoded.document.dialect = args.from;
-        const ConvertResult converted = Convert(decoded.document, args.to);
+        BackendOptions convertOptions;
+        convertOptions.z80n = args.z80n;
+        const ConvertResult converted = Convert(decoded.document, args.to, convertOptions);
         PrintDiagnostics(converted.diagnostics);
         // Written with the target's text codec when there is one (sjasmplus keeps the Spectrum code page for strings)
         std::vector<uint8_t> out;

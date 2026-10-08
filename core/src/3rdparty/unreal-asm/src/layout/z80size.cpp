@@ -200,10 +200,44 @@ constexpr std::string_view kOneByte[] = {"nop", "halt", "di", "ei", "exx", "rla"
 constexpr std::string_view kPrefixed[] = {"neg",  "rld",  "rrd", "ldi",  "ldir", "ldd",  "lddr", "cpi",  "cpir", "cpd", "cpdr",
                                           "ini",  "inir", "ind", "indr", "outi", "otir", "outd", "otdr", "reti", "retn"};
 
+/// The Z80N forms (ED-prefixed). The ones that spell like a Z80 instruction (ADD HL,A  ADD HL,nn  PUSH nn  JP (C)) have
+/// no Z80 form of that shape, so they are looked at first; the Next-only mnemonics reach here only in the Next mode.
+/// sjasmplus also takes the operand forms SWAPNIB A, MIRROR A, PIXELDN HL, PIXELAD HL, MUL DE
+int Z80nSize(const ir::Statement& s)
+{
+    const std::string& m = s.mnemonic;
+    const auto& ops = s.operands;
+    const auto is16 = [](const Operand& o) { return Is(o, Kind::Register, "hl") || Is(o, Kind::Register, "de") || Is(o, Kind::Register, "bc"); };
+    if (m == "swapnib" || m == "mirror")
+        return ops.empty() || (ops.size() == 1 && Is(ops[0], Kind::Register, "a")) ? 2 : 0;
+    if (m == "pixeldn" || m == "pixelad")
+        return ops.empty() || (ops.size() == 1 && Is(ops[0], Kind::Register, "hl")) ? 2 : 0;
+    if (m == "setae" || m == "outinb" || m == "ldix" || m == "ldws" || m == "lddx" || m == "ldirx" || m == "ldpirx" || m == "lddrx" ||
+        m == "ldirscale")
+        return ops.empty() ? 2 : 0;
+    if (m == "test")
+        return ops.size() == 1 && Value(ops[0]) ? 3 : 0;
+    if (m == "bsla" || m == "bsra" || m == "bsrl" || m == "bsrf" || m == "brlc")
+        return ops.size() == 2 && Is(ops[0], Kind::Register, "de") && Is(ops[1], Kind::Register, "b") ? 2 : 0;
+    if (m == "mul")
+        return (ops.size() == 2 && Is(ops[0], Kind::Register, "d") && Is(ops[1], Kind::Register, "e")) || (ops.size() == 1 && Is(ops[0], Kind::Register, "de")) ? 2 : 0;
+    if (m == "nextreg")
+        return ops.size() == 2 && Value(ops[0]) ? (Value(ops[1]) ? 4 : Is(ops[1], Kind::Register, "a") ? 3 : 0) : 0;
+    if (m == "add" && ops.size() == 2 && is16(ops[0]))
+        return Is(ops[1], Kind::Register, "a") ? 2 : Value(ops[1]) ? 4 : 0;
+    if (m == "push" && ops.size() == 1 && Value(ops[0]))
+        return 4;
+    if (m == "jp" && ops.size() == 1 && Is(ops[0], Kind::Indirect, "c"))
+        return 2;
+    return 0;
+}
+
 int SizeOf(const ir::Statement& s)
 {
     const std::string& m = s.mnemonic;
     const auto& ops = s.operands;
+    if (const int next = Z80nSize(s))
+        return next;
     for (std::string_view one : kOneByte)
         if (m == one)
             return ops.empty() ? 1 : 0;

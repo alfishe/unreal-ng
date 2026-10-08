@@ -32,6 +32,15 @@ unreal-asm/
                                 with sjasmplus against the file ALASM saved on the same disk
     crosscheck.py               the main sources of a set of images to sjasmplus and to pasmo / z88dk (--targets),
                                 each assembled, the bytes compared
+    pasmocheck.py               pasmo's own sources through the pasmo frontend: pasmo against sjasmplus / pasmo / z80asm builds
+    z80asmcheck.py              the cases of z88dk's z80asm test suite (z80asmcases.py) through the z80asm frontend
+    zasmcheck.py                zasm's Test and Examples folders against zasm
+    fantasmcheck.py             FantASM's tests against FantASM
+    dialectcheck.py             zmac (testdata/zmac) and rasm (decrunch routines) against the real assemblers
+    specasmcheck.py             Specasm programs: saimport + salink against the converted sjasmplus build
+    z80nmatrix.py               the 29 Z80N instructions in each assembler, bytes against sjasmplus
+    z80ncheck.py                the programs of a ZXSpectrumNextTests checkout built by sjasmplus (--zxnext=cspect), converted
+                                with `zxasm convert --z80n`, built again: the files written must be equal
     symcheck.py                 the labels the symbol module takes from sources (symconv source) against sjasmplus
                                 --sym over every main source of a set of images
     lstcheck.py                 the bytes of a sjasmplus listing against a memory dump, line by line (a converted

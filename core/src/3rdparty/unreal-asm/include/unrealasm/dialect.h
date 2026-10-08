@@ -45,6 +45,9 @@ struct BackendOptions
     std::map<std::string, int> definitions;
     /// The project's data files (ConvertProject hands it to the frontends; none: the sources alone)
     DataFileReader dataFiles;
+    /// The sources are written for the ZX Spectrum Next (sjasmplus --zxnext): the Z80N mnemonics are instructions in every
+    /// file, as when a file says DEVICE ZXSPECTRUMNEXT or OPT --zxnext
+    bool z80n = false;
 };
 
 /// A label of the source and the name the backend wrote it under (a reserved word renamed, a LOCAL block's label made

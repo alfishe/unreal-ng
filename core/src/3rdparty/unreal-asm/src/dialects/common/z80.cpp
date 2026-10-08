@@ -13,6 +13,12 @@ constexpr std::string_view kMnemonics[] = {
     "or", "otdr", "otir", "out", "outd", "outi", "pop", "push", "res", "ret", "reti", "retn", "rl", "rla", "rlc", "rlca", "rld",
     "rr", "rra", "rrc", "rrca", "rrd", "rst", "sbc", "scf", "set", "sla", "sli", "sll", "sra", "srl", "sub", "xor", "inf",
 };
+// The Z80N additions that have a mnemonic of their own (ADD / PUSH / JP forms of the Next reuse the Z80 names); they
+// are read only in the Next mode, since a classic source may well use TEST or MIRROR as a label or macro
+constexpr std::string_view kZ80nMnemonics[] = {
+    "swapnib", "mirror", "test", "bsla", "bsra", "bsrl", "bsrf", "brlc", "mul", "nextreg", "pixeldn", "pixelad", "setae", "outinb", "ldix",
+    "ldws", "lddx", "ldirx", "ldpirx", "lddrx", "ldirscale",
+};
 constexpr std::string_view kRegisters[] = {
     "a", "b", "c", "d", "e", "h", "l", "i", "r", "af", "af'", "bc", "de", "hl", "sp", "ix", "iy", "ixh", "ixl", "iyh", "iyl", "f",
 };
@@ -50,6 +56,22 @@ std::string Upper(std::string_view text)
 bool IsMnemonic(std::string_view lower)
 {
     return !lower.empty() && std::find(std::begin(kMnemonics), std::end(kMnemonics), lower) != std::end(kMnemonics);
+}
+
+bool IsZ80nMnemonic(std::string_view lower)
+{
+    return !lower.empty() && std::find(std::begin(kZ80nMnemonics), std::end(kZ80nMnemonics), lower) != std::end(kZ80nMnemonics);
+}
+
+bool EnablesZ80n(std::string_view directive)
+{
+    const std::string lower = Lower(directive);
+    const size_t word = lower.find_first_not_of(" \t");
+    if (word == std::string::npos)
+        return false;
+    if (lower.compare(word, 6, "device") == 0)
+        return lower.find("zxspectrumnext", word) != std::string::npos;
+    return lower.compare(word, 3, "opt") == 0 && lower.find("--zxnext", word) != std::string::npos;
 }
 
 std::string NormalizeRegister(std::string_view lower)

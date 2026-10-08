@@ -1,0 +1,19 @@
+; data directives and synonyms
+        org     0c000h
+        .org    0c000h
+        defb    1
+        db      2
+        byte    3
+        defm    "text"
+        ascii   "more"
+        defw    1,2
+        dw      3
+        word    4
+        defs    4
+        ds      2
+        ld      a,(table)
+table:  defb    9
+        phase   0
+inside: defw    inside
+        dephase
+        defw    $

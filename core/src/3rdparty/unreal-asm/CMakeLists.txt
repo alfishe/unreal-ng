@@ -50,6 +50,14 @@ add_library(unreal-asm STATIC
     src/codecs/masm/masmcodec.cpp
     src/codecs/gens/genscodec.cpp
     src/codecs/asm80/asm80codec.cpp
+    src/codecs/pasmo/pasmocodec.cpp
+    src/codecs/z80asm/z80asmcodec.cpp
+    src/codecs/zasm/zasmcodec.cpp
+    src/codecs/fantasm/fantasmcodec.cpp
+    src/codecs/zmac/zmaccodec.cpp
+    src/codecs/rasm/rasmcodec.cpp
+    src/codecs/specasm/specasmcodec.cpp
+    src/codecs/odin/odincodec.cpp
     src/codecs/prometheus/prometheuscodec.cpp
     src/codecs/prometheus/prometheustable.cpp
     src/codecs/zeus/zeuscodec.cpp
@@ -66,6 +74,17 @@ add_library(unreal-asm STATIC
     src/dialects/alasm/alasmfrontend.cpp
     src/dialects/gens/gensfrontend.cpp
     src/dialects/asm80/asm80frontend.cpp
+    src/dialects/common/textexpr.cpp
+    src/dialects/common/textfrontend.cpp
+    src/dialects/pasmo/pasmofrontend.cpp
+    src/dialects/z88dk/z80asmfrontend.cpp
+    src/dialects/zasm/zasmfrontend.cpp
+    src/dialects/fantasm/fantasmfrontend.cpp
+    src/dialects/zmac/zmacfrontend.cpp
+    src/dialects/rasm/rasmfrontend.cpp
+    src/dialects/specasm/specasmfrontend.cpp
+    src/dialects/odin/odinfrontend.cpp
+    src/dialects/zasm/zasmcompound.cpp
     src/dialects/prometheus/prometheusfrontend.cpp
     src/dialects/sjasmplus/sjasmplusbackend.cpp
     src/dialects/common/classicbackend.cpp
@@ -154,6 +173,13 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/gensfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/asm80frontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/prometheus_test.cpp
+        ${UNREAL_ASM_DIR}/tests/z80n_test.cpp
+        ${UNREAL_ASM_DIR}/tests/pasmofrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/z80asmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/zasmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/fantasmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/zmacrasmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/odinspecasm_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbol_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbolindex_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbolstore_test.cpp

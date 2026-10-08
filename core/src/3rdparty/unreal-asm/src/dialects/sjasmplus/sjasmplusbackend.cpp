@@ -138,7 +138,8 @@ struct Writer
         if (found != renames.end())
             return found->second;
         // A label defined in another file of the project gets the same rename there
-        return kReserved.count(z80::Lower(name)) || !IsValidLabel(name) ? SafeName(name) : name;
+        // (a sjasmplus source's own names are kept: sjasmplus accepted them, even "a" or "b" as STRUCT members)
+        return !sameDialect && (kReserved.count(z80::Lower(name)) || !IsValidLabel(name)) ? SafeName(name) : name;
     }
 
     std::string Hex(int64_t value, int digits) const
@@ -159,6 +160,8 @@ struct Writer
                 return "%" + bits;
             }
             case ir::NumberSpelling::Character:
+                if (e.text.size() == 1 && (static_cast<unsigned char>(e.text[0]) < 0x20 || static_cast<unsigned char>(e.text[0]) >= 0x7F))
+                    return std::to_string(e.value);   // a control character cannot stand in a quoted constant
                 if (e.text.size() == 1 && e.text != "'")
                     return "'" + e.text + "'";
                 if (e.text.size() == 1)
@@ -325,6 +328,13 @@ struct Writer
     static std::string Quote(const std::string& text, bool& ok)
     {
         ok = true;
+        // A control character cannot stand inside a quoted string in a source line (BEL, LF ...): those go as numbers
+        for (const char c : text)
+            if (static_cast<unsigned char>(c) < 0x20 || c == 0x7F)
+            {
+                ok = false;
+                return {};
+            }
         if (text.find('\'') == std::string::npos)
             return "'" + text + "'";
         if (text.find('"') == std::string::npos && text.find('\\') == std::string::npos)
@@ -473,6 +483,13 @@ struct Writer
             }
             case Statement::Kind::Instruction:
             {
+                // AND A,n of another dialect means AND n; sjasmplus reads AND A,n as AND A followed by AND n (without --syntax=a)
+                if (!sameDialect && s.operands.size() == 2 && s.operands[0].kind == Operand::Kind::Register && s.operands[0].text == "a" &&
+                    (s.mnemonic == "and" || s.mnemonic == "or" || s.mnemonic == "xor" || s.mnemonic == "cp" || s.mnemonic == "sub"))
+                {
+                    const std::string single = Operand_(s.operands[1]);
+                    return {z80::Upper(s.mnemonic) + " " + single};
+                }
                 const std::string ops = Operands(s.operands, true);
                 return {z80::Upper(s.mnemonic) + (ops.empty() ? "" : " " + ops)};
             }
@@ -653,7 +670,7 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
         if (!l.label.empty())
             used.insert(l.label);
     for (const std::string& name : used)
-        if (kReserved.count(z80::Lower(name)) || !IsValidLabel(name))
+        if (!w.sameDialect && (kReserved.count(z80::Lower(name)) || !IsValidLabel(name)))
         {
             std::string renamed = SafeName(name);
             while (used.count(renamed))
@@ -788,7 +805,7 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
             std::map<std::string, std::string> scope = nextBlock < blockRenames.size() ? blockRenames[nextBlock] : std::map<std::string, std::string>{};
             if (w.inMacro)
                 for (auto& [name, renamed] : scope)
-                    renamed = "." + name;   // inside a macro: sjasmplus' local labels, unique for every expansion
+                    renamed = "." + (!name.empty() && name[0] == '@' ? name.substr(1) : name);   // inside a macro: sjasmplus' local labels, unique for every expansion
             w.localScopes.push_back(std::move(scope));
             ++nextBlock;
         }

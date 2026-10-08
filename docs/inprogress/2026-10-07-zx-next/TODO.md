@@ -9,8 +9,12 @@ ZX Spectrum Next (`NEXT`): design only, written 2026-10-07. Plan: [phases.md](ph
 
 ## N1 status (2026-10-08)
 - [x] Library `core/src/3rdparty/unreal-next-z80/` (fork script, README, CMake glob, notices row); tests in `core/tests/3rdparty/unreal-next-z80/`
-- [ ] The V1 `Z80N` / `Z80Nc2` real-board programs on a bare host (acceptance), the FUSE vectors green in core-tests, A/B benchmark of a non-Next machine (must show zero)
-- [ ] Debugger disassembler and `unreal-asm` ZXN mode (Q10: in N1)
+- [x] The V1 `Z80N` / `Z80Nc2` real-board programs on a bare host (acceptance) and the FUSE vectors, both in core-tests (`UNREAL_NEXT_TESTS`)
+- [ ] A/B benchmark of a non-Next machine (must show zero)
+- [x] Debugger disassembler: opt-in `SetZ80nMode()`, 29 instructions with the table's sizes and T-states, `OF_BIGENDIAN` for `push nn`
+- [x] `unreal-asm` Z80N mode (2026-10-08): sjasmplus frontend (`DEVICE ZXSPECTRUMNEXT` / `OPT --zxnext` / `zxasm convert --z80n`), sizes in the layout module, z80asm (`-mz80n`) and pasmo (bytes) output; the 31 programs of ZXSpectrumNextTests built through sjasmplus -> unreal-asm -> sjasmplus give the same files (`tools/verification/unreal-asm/checks/z80ncheck.py`); all 29 instructions give the same bytes in sjasmplus, z80asm and pasmo form
+- [x] Assemblers that take the Next (2026-10-08): the matrix of 29 instructions across sjasmplus, z80asm, zasm, FantASM, the pasmo forks; frontends for pasmo, z80asm, zasm, FantASM, zmac, rasm, Specasm (.s), Odin (.odn) and Zeus on the Next (+3DOS): [research-modern-assemblers.md](../2026-10-05-unreal-asm/research-modern-assemblers.md)
+- [ ] SPED (Next distribution editor / assembler) and the closed tools: no format documentation here
 - [ ] The engine adapter `Z80NEngine` (N2)
 
 ## Remaining

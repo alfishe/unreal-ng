@@ -5,11 +5,20 @@
 #include "unrealasm/registry.h"
 
 #include "dialects/alasm/alasmfrontend.h"
+#include "dialects/common/z80.h"
 #include "dialects/storm/stormfrontend.h"
 #include "dialects/zxasm/zxasmfrontend.h"
 #include "dialects/xas/xasfrontend.h"
 #include "dialects/gens/gensfrontend.h"
 #include "dialects/asm80/asm80frontend.h"
+#include "dialects/pasmo/pasmofrontend.h"
+#include "dialects/z88dk/z80asmfrontend.h"
+#include "dialects/zasm/zasmfrontend.h"
+#include "dialects/fantasm/fantasmfrontend.h"
+#include "dialects/zmac/zmacfrontend.h"
+#include "dialects/rasm/rasmfrontend.h"
+#include "dialects/specasm/specasmfrontend.h"
+#include "dialects/odin/odinfrontend.h"
 #include "dialects/prometheus/prometheusfrontend.h"
 #include "dialects/tasm/tasmfrontend.h"
 #include "dialects/masm/masmfrontend.h"
@@ -35,6 +44,14 @@ const DialectRegistry& DialectRegistry::Builtin()
         r.Add(std::make_unique<dialects::ZeusFrontend>());
         r.Add(std::make_unique<dialects::GensFrontend>());
         r.Add(std::make_unique<dialects::Asm80Frontend>());
+        r.Add(std::make_unique<dialects::PasmoFrontend>());
+        r.Add(std::make_unique<dialects::Z80asmFrontend>());
+        r.Add(std::make_unique<dialects::ZasmFrontend>());
+        r.Add(std::make_unique<dialects::FantasmFrontend>());
+        r.Add(std::make_unique<dialects::ZmacFrontend>());
+        r.Add(std::make_unique<dialects::RasmFrontend>());
+        r.Add(std::make_unique<dialects::SpecasmFrontend>());
+        r.Add(std::make_unique<dialects::OdinFrontend>());
         r.Add(std::make_unique<dialects::PrometheusFrontend>());
         r.Add(std::make_unique<dialects::SjasmplusFrontend>());
         r.Add(std::make_unique<dialects::SjasmplusBackend>());
@@ -83,7 +100,13 @@ ConvertResult Convert(const SourceDocument& source, std::string_view targetDiale
                                       !frontend ? "no frontend for dialect '" + source.dialect + "'" : "no backend for dialect '" + std::string(targetDialect) + "'"});
         return result;
     }
-    FrontendResult parsed = frontend->Parse(source);
+    SourceDocument next;
+    if (options.z80n && !source.z80n)
+    {
+        next = source;
+        next.z80n = true;
+    }
+    FrontendResult parsed = frontend->Parse(options.z80n && !source.z80n ? next : source);
     BackendResult written = backend->Write(parsed.program, options);
     result.document = std::move(written.document);
     result.document.name = source.name;
@@ -124,6 +147,16 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
         named.push_back(f.document);
         named.back().name = f.name;
     }
+    // A sjasmplus project that enables the Z80N in one file (DEVICE ZXSPECTRUMNEXT, OPT --zxnext) has it on in all of them
+    bool projectZ80n = options.z80n;
+    for (const ProjectFile& f : files)
+        if (f.document.dialect == "sjasmplus")
+            for (const SourceLine& line : f.document.lines)
+                if (dialects::z80::EnablesZ80n(line.text))
+                    projectZ80n = true;
+    if (projectZ80n)
+        for (SourceDocument& d : named)
+            d.z80n = true;
     for (size_t k = 0; k < files.size(); ++k)
     {
         const IFrontend* frontend = registry.Frontend(files[k].document.dialect);
@@ -137,7 +170,7 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
         for (size_t n = 0; n < files.size(); ++n)
             if (n != k)
                 others.push_back(&named[n]);
-        FrontendResult parsed = frontend->ParseWithData(files[k].document, others, options.dataFiles);
+        FrontendResult parsed = frontend->ParseWithData(projectZ80n ? named[k] : files[k].document, others, options.dataFiles);
         notes[k] = std::move(parsed.diagnostics);
         // INCLUDE "pattern": the last project file whose name matches
         for (ir::Line& line : parsed.program.lines)

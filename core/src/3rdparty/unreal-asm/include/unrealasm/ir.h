@@ -157,5 +157,8 @@ struct Program
     /// What a comparison or a logical not gives when true: 1 (STORM), -1 (sjasmplus); 0 = not said (the source has no
     /// comparisons whose value is used: the target's own)
     int trueValue = 0;
+    /// The source is written for the ZX Spectrum Next: the Z80N mnemonics (swapnib, nextreg ...) are instructions. The
+    /// sjasmplus frontend sets it from DEVICE ZXSPECTRUMNEXT / OPT --zxnext (or SourceDocument::z80n)
+    bool z80n = false;
 };
 }  // namespace unrealasm::ir
