@@ -87,7 +87,8 @@ phase; master only after the owner's review.
     - [ ] XAS 9.07m not run; `USEL` / `MAKE` meaning not established (no source uses them, 9.10's help is packed)
     - [x] ZEUS 1.1 from the PHT 3.6 shell (2026-10-07): INCLUDE / PLACE of type C files equal to v7.E's; ADS 2.0 built by ZEUS 1.1 with `OPEN` (20155 bytes to a disk file) equal to its sjasmplus conversion (testdata `dialects/zeus/ADS20.bin`); `ImageProject` reads a file a source INCLUDEs that detection cannot tell (two lines) with the includer's codec (`zxasm convert`, `symconv source`)
   - [x] label tables in RAM (2026-10-07): ALASM 5.09 / 4.44 (page 3, records below a zero at #3DFF / #3F7F) and XAS 7.447 / 4.18 (page 6, 9-byte entries; 7.x two sorted lists under markers, 4.x one list from #0B16) found from dumps; scanners `symbols/live.h`, `symconv live`; STS keeps none of its own (it reads ALASM's) ([research-labeltables.md](research-labeltables.md))
-    - [ ] ALASM tables over one page, above 128K; ALASM 3.8c / 4.2 / 4.5; XAS 5.05 / 9.x, XAS above 128K; STS 5.x / 6.x; label files on disk (none seen)
+    - [x] more tables (2026-10-07): ALASM 3.8c (page 3) and 4.5 (page 6); ALASM 5.09 over two pages (#C0FB down, then the second page; 1800 labels on a Pentagon 512, overwritten on 128K); XAS 9.10 / 9.07m (7.x layout), 5.05 (one list, the scanner's 5.x), 7.447 on a Pentagon 512 (RAM 14); STS 6.2 shows XAS's labels (strings)
+    - [ ] ALASM 4.2; ALASM 4.x over two pages; XAS on a Pentagon 1024; STS 6.2's label mode run; label files on disk (none seen)
     - [ ] the emulator surface: copy the pages of a running machine, offer the candidates (S5)
 - [ ] A9 benchmarks, user docs
 - [ ] P2: memory bridge B0-B6 ([memory-bridge.md](memory-bridge.md)), design only for now
