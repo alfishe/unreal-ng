@@ -713,12 +713,35 @@ B A B A, load 10-14: mean paired difference -1.0 % to +0.1 %, within noise.
 The first prototype drew the tail in `MainLoop::OnFrameEnd`, after the frame's T had been rebased: `DrawTo` took
 the small T for a step back and the tail was lost - the frame's last step is the place.
 
-### 8.5 What remains
+### 8.5 The renderer by square segments (`SprinterVideoRenderer::DrawSpan`)
 
-After the idle-cycle fast-forward (profile of the same run): the CPU and the bus path (~40 %), the pixel renderer (~19 %),
-the screen catch-up on video RAM writes (~12 %), the frame end (~8 %). Next candidates: the INT question cached
-between source events for running (not halted) code, the screen catch-up on events instead of every step, the
-renderer per square (the INT question and the screen catch-up are done: sections 8.3, 8.4). General rules for such changes: [performance-guidelines.md](../../../guidelines/performance-guidelines.md).
+The span loop asked the per-pixel rules for every pixel: `GraphicsPen` worked out the source address again,
+`SymbolPen` read the attribute and the font byte again. It now goes by square segments: a graphics segment works
+out its source address once and steps it (`(line x 1024 + column + (sub >> shift)) & mask`), a symbol unit - the
+square, or one 8-pixel half of a 640 square, whose right half takes its bytes from Line2 - reads its Mode0, the
+attribute and the font byte once; the font latch is checked per pixel only inside a unit it covers. Plane B (ZX
+DLSS) stays per pixel. `PenAt`, `GraphicsPen` and `SymbolPen` keep the rules for one pixel (the debugger, tests).
+
+**Exactness:** `SprinterVideoRenderer_Test` draws random video RAM (every square kind, low-res, 640 halves with
+their own Line2, Spectrum cells) with random inputs (mode and text page, border, flash, HOLD, 320 / 312 lines, a
+font latch) in random span cuts, with and without plane B, against the per-pixel rules: every pixel equal.
+
+**Measured** (2026-10-09): `BM_SprinterRender_Logo` (the BIOS 3.04 logo frame, 736 x 288 in one go), A =
+`cfc87408c`, B = the change, A B A B B A, load 5-8: 549-558 us -> 261-263 us (2.1x). Demo frames with all the
+fast paths: DNTBLINK 1.55 -> 1.36-1.39 ms, ROTOZOOM 2.80 -> 2.54, PLASMA2 0.81 -> 0.62-0.63, BADAPPLE 1.21 -> 1.04
+(after / before runs of the same session, load 6-14).
+
+### 8.6 What remains
+
+Profile with sections 8.2-8.4 in (2026-10-09, DNTBLINK and ROTOZOOM, before 8.5): the instruction itself and its
+bus path (`Z84CpuStep` with `MemRead` / `MemWrite`, the overlay chain, the accelerator's per-access work) ~65 %;
+drawing at the catch-ups ~15 % (the pixel loop 8.5 since halved); the accelerator's `OnOpcodeFetch` on every fetch
+~5.6 %; per-step work that every machine pays - the analyzer-subscriber check in `RunInstructionStartHooks`
+(through `DebugManager` and a `unique_ptr`, ~2.5 %), the floppy controller's and the tape's per-step calls in
+`MainLoop::OnCPUStep` (~2.3 %, mostly a call that returns at once). Candidates: those per-step checks folded
+into flags read without a call (they help every machine: guidelines section 6); the Sprinter's own memory
+interface instead of the overlay chain; the bus agent called only when its state can change.
+General rules for such changes: [performance-guidelines.md](../../../guidelines/performance-guidelines.md).
 
 ## 9. Where the older design documents differ from the code
 
