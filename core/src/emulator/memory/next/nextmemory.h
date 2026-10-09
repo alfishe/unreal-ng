@@ -66,12 +66,15 @@ public:
     uint8_t AltRomRegister() const { return _alt; }
     uint8_t EffectiveRom() const;
     uint8_t AltPage() const;
+    /// The 48K BASIC ROM is what an opcode fetch at #0000 sees: ROM 3 / ROM 1 / ROM 0 by machine type, or the alternate
+    /// 48K ROM while the alternate ROM replaces reads
+    bool BasicRomVisible() const;
     /// #DFFD bits 0-3: the bank bits above #7FFD's three
     void SetExtendedBank(uint8_t value);
     uint8_t GetExtendedBank() const { return _dffd; }
 
     /// The slot table from the paging latches (#7FFD, #1FFD, #DFFD): 128K layout, the +3 all-RAM modes
-    void ApplyClassicPaging(uint8_t p7ffd, uint8_t p1ffd);
+    void ApplyClassicPaging(uint8_t p7ffd, uint8_t p1ffd, bool changeBank = true);
     /// region <Config mode and the boot ROM>
     /// The system area is the first 256K of the SRAM: Memory's ROM pages 0-15 (64K Spectrum ROMs at 0-3, DivMMC
     /// ROM, Multiface, alternate ROMs, DivMMC RAM). The boot ROM is not in it: it sits in the last ROM page
@@ -126,6 +129,7 @@ private:
     void SyncWindows();
 
     uint8_t _mmu[kSlots] = {};
+    bool _allRam = false;
     uint8_t _rom = 0;      ///< the ROM bits of the paging ports ({#1FFD bit 2, #7FFD bit 4})
     uint8_t _machineType = 2;
     uint8_t _alt = 0;

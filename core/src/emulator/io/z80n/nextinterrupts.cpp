@@ -2,6 +2,7 @@
 
 #include "nextinterrupts.h"
 
+#include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 
 NextInterruptSource::NextInterruptSource(EmulatorContext* context) : _context(context) {}
@@ -168,14 +169,24 @@ uint32_t NextInterruptSource::BaseT(uint32_t t) const
 
 /// The T-state (base, from the frame start) of the line interrupt: counter line N - 1 (target 0: the last line of
 /// the frame), the counter's origin placed so that the ULA interrupt sits at its (line, pixel clock)
+uint32_t NextInterruptSource::CounterOrigin() const
+{
+    const uint32_t intOffset = _timing.intLine * _timing.line + _timing.intHc / 2;
+    return (_timing.intStart + _timing.frame - intOffset % _timing.frame) % _timing.frame;
+}
+
 uint32_t NextInterruptSource::LineStartT() const
 {
     const uint32_t lines = _timing.frame / _timing.line;
     const uint32_t target = (static_cast<uint32_t>(_lineControl & 1) << 8) | _lineValue;
     const uint32_t counterLine = target == 0 ? lines - 1 : (target - 1) % lines;
-    const uint32_t intOffset = _timing.intLine * _timing.line + _timing.intHc / 2;
-    const uint32_t origin = (_timing.intStart + _timing.frame - intOffset % _timing.frame) % _timing.frame;
-    return (origin + counterLine * _timing.line) % _timing.frame;
+    return (CounterOrigin() + counterLine * _timing.line) % _timing.frame;
+}
+
+uint16_t NextInterruptSource::CurrentLine() const
+{
+    const uint32_t baseT = BaseT(_context->pCore->GetZ80()->t) % _timing.frame;
+    return static_cast<uint16_t>(((baseT + _timing.frame - CounterOrigin()) % _timing.frame) / _timing.line);
 }
 
 bool NextInterruptSource::PulseAt(uint32_t baseT, uint32_t start) const

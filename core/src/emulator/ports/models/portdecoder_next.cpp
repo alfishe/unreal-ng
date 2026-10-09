@@ -17,16 +17,7 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
     };
     _divMmc = std::make_unique<NextDivMmc>(&Mem(), _board.get());
-    _divMmc->isBasicRomPaged = [this]() {
-        // the 48K BASIC ROM: ROM 3 of the +3 family, ROM 1 of the 128K family, ROM 0 of the 48K
-        const uint8_t rom = Mem().GetRomSelect();
-        switch (_board->MachineType())
-        {
-            case 1: return rom == 0;
-            case 3: return rom == 3;
-            default: return rom == 1;
-        }
-    };
+    _divMmc->isBasicRomPaged = [this]() { return Mem().BasicRomVisible(); };
     _interrupts->SetPoller([this]() { _ctc.Advance(Now28()); });
     _board->SetInterrupts(_interrupts.get());
 }
@@ -376,7 +367,7 @@ void PortDecoder_Next::WriteMemoryMapping(uint8_t value)
         state.p7FFD = static_cast<uint8_t>((state.p7FFD & ~0x10) | ((value & 0x01) << 4));
     }
     state.p1FFD = p1ffd;
-    Mem().ApplyClassicPaging(state.p7FFD, state.p1FFD);
+    Mem().ApplyClassicPaging(state.p7FFD, state.p1FFD, (value & 0x08) != 0);
 }
 
 uint8_t PortDecoder_Next::ReadMemoryMapping() const

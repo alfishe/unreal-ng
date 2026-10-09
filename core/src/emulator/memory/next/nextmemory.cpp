@@ -200,6 +200,19 @@ uint8_t NextMemory::AltPage() const
     return alt48 ? 7 : 6;
 }
 
+bool NextMemory::BasicRomVisible() const
+{
+    if ((_alt & 0xC0) == 0x80)
+        return AltPage() == 7;
+    const uint8_t rom = EffectiveRom();
+    switch (_machineType)
+    {
+        case 1: return rom == 0;
+        case 3: return rom == 3;
+        default: return rom == 1;
+    }
+}
+
 void NextMemory::SetMachineType(uint8_t type)
 {
     if (type == _machineType)
@@ -383,6 +396,7 @@ void NextMemory::ResetMmu()
 {
     _rom = 0;
     _dffd = 0;
+    _allRam = false;
     for (unsigned s = 0; s < kSlots; s++)
     {
         _mmu[s] = kResetMmu[s];
@@ -413,30 +427,39 @@ void NextMemory::SetExtendedBank(uint8_t value)
     _dffd = value & 0x0F;
 }
 
-void NextMemory::ApplyClassicPaging(uint8_t p7ffd, uint8_t p1ffd)
+void NextMemory::ApplyClassicPaging(uint8_t p7ffd, uint8_t p1ffd, bool changeBank)
 {
-    // 16K banks per window; the 8K pages of bank b are 2b and 2b+1
-    uint8_t bank[4] = {kMmuRom, 5, 2, static_cast<uint8_t>(((_dffd & 0x0F) << 3) | (p7ffd & 7))};
-    bool rom0 = true;
-    if (p1ffd & 1)  // +3 special paging: all RAM
+    // The ports act on the ROM slots (0, 1) and the bank slots (6, 7); the slots in between keep what NR #52-#55 set,
+    // except that leaving the all-RAM mode puts them back. In all-RAM mode the ports own all eight slots
+    const bool allRam = (p1ffd & 1) != 0;
+    _rom = static_cast<uint8_t>((((p1ffd >> 2) & 1) << 1) | ((p7ffd >> 4) & 1));
+    if (allRam)
     {
+        // 16K banks per window; the 8K pages of bank b are 2b and 2b+1
         static const uint8_t cfg[4][4] = {{0, 1, 2, 3}, {4, 5, 6, 7}, {4, 5, 6, 3}, {4, 7, 6, 3}};
         const uint8_t* c = cfg[(p1ffd >> 1) & 3];
         for (unsigned w = 0; w < 4; w++)
-            bank[w] = c[w];
-        rom0 = false;
-    }
-    _rom = static_cast<uint8_t>((((p1ffd >> 2) & 1) << 1) | ((p7ffd >> 4) & 1));
-    for (unsigned w = 0; w < 4; w++)
-    {
-        if (w == 0 && rom0)
-            _mmu[0] = _mmu[1] = kMmuRom;
-        else
         {
-            _mmu[w * 2] = static_cast<uint8_t>(bank[w] * 2);
-            _mmu[w * 2 + 1] = static_cast<uint8_t>(bank[w] * 2 + 1);
+            _mmu[w * 2] = static_cast<uint8_t>(c[w] * 2);
+            _mmu[w * 2 + 1] = static_cast<uint8_t>(c[w] * 2 + 1);
         }
     }
+    else
+    {
+        _mmu[0] = _mmu[1] = kMmuRom;
+        if (_allRam)
+        {
+            for (unsigned s = 2; s < 6; s++)
+                _mmu[s] = kResetMmu[s];
+        }
+        if (changeBank || _allRam)
+        {
+            const uint8_t bank = static_cast<uint8_t>(((_dffd & 0x0F) << 3) | (p7ffd & 7));
+            _mmu[6] = static_cast<uint8_t>(bank * 2);
+            _mmu[7] = static_cast<uint8_t>(bank * 2 + 1);
+        }
+    }
+    _allRam = allRam;
     for (unsigned s = 0; s < kSlots; s++)
         MapSlot(s);
     SyncWindows();

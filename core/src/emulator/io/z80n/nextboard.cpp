@@ -22,6 +22,7 @@ void NextBoard::Reset(bool hard)
         _regs[0x06] = 0xA0;
         _regs[0x08] = 0x10;
         _regs[0x0A] = 0x01;
+        _regs[0x10] = 0x01;  // core id 1 (zxnext.vhd nr_10_coreid)
     }
     else
     {
@@ -102,6 +103,12 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return _video.PaletteControl();
         case 0x44:
             return _video.ReadPaletteValue9();
+        case 0x1E:
+            return _interrupts ? static_cast<uint8_t>(_interrupts->CurrentLine() >> 8) : 0;
+        case 0x1F:
+            return _interrupts ? static_cast<uint8_t>(_interrupts->CurrentLine() & 0xFF) : 0;
+        case 0x10:
+            return static_cast<uint8_t>((_regs[reg] & 0x1F) << 2);  // the core id; the DRIVE / M1 buttons read 0
         case 0x08:
             return static_cast<uint8_t>(_regs[reg] | 0x80);  // bit 7: port #7FFD is not locked
         default:
@@ -136,6 +143,10 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             return;
         case 0x1C:
             _video.WriteClipControl(value);
+            return;
+        case 0x10:
+            if (_memory->InConfigMode())  // the core id is writable in config mode only
+                _regs[reg] = value & 0x1F;
             return;
         case 0x40:
             _video.WritePaletteIndex(value);

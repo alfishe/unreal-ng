@@ -205,6 +205,7 @@ private:
 
     void OnInstruction(uint16_t pc)
     {
+        DrainNextRegWrites();  // before the MMU poll: the references log the NEXTREG write, then the slot change
         if (_mask & MMU)
             PollMmu(_prevPc);
         if (_mask & IRQ)

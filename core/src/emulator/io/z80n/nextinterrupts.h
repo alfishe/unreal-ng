@@ -63,6 +63,9 @@ public:
     /// A device (CTC channel, UART) requests an interrupt. Ignored while its enable bit is clear
     void Raise(Source source);
 
+    /// The counter line the beam is on now (NR #1E / #1F): the frame position from the ULA interrupt's place
+    uint16_t CurrentLine() const;
+
     bool HardwareMode() const { return (_control & 1) != 0; }
     uint16_t PendingMask() const { return _pending; }
     uint16_t InServiceMask() const { return _inService; }
@@ -77,6 +80,7 @@ public:
 private:
     uint32_t BaseT(uint32_t t) const;
     uint32_t LineStartT() const;
+    uint32_t CounterOrigin() const;
     bool Enabled(Source source) const;
     void Latch(uint32_t baseT);
     bool PulseAt(uint32_t baseT, uint32_t start) const;

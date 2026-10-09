@@ -107,3 +107,20 @@ jnext `state.txt`: HALT in the NextZXOS Welcome loop, IM 1, IFF on, MMU `FF FF 0
    listed above. A cheap check: `diff-traces.py ... ` prints the NR registers differing in the final dump.
 3. Run the other two references against ours too (`run-ref.sh zesarux|mame` already produce traces; the same NR #8C
    sequence is in both).
+
+## Second pass (2026-10-09, after the fixes)
+
+The merged-stream first difference against jnext (`diff-traces.py ... --skip-ports eb,e7 --ignore-regs 1e,1f`) moved
+from event 12 to event 594547 of about 643 000 (92 % of the boot trace equal). Fixed on the way, in this order:
+
+| Divergence | Cause | Fix |
+|:--|:--|:--|
+| the ROM restarted every ~19 frames | NR #8C alternate ROM missing | `NextMemory`: alt ROM pages 6 / 7, read replace or write through, locks, soft-reset nibble copy |
+| NR #05/#06/#08/#0A, #18-#1B, #40-#44 reads | not modeled | the table of registers.txt, hard / soft reset semantics after the VHDL, `NextVideoRegs` (clip windows, palettes) |
+| NR #08 bit 7, NR #10 core id, NR #1E / #1F | not modeled | NR #08 reads bit 7 = 1, NR #10 reads the core id (reset 1), the active line from the frame position |
+| `NEXTREG #8E` with bit 3 clear moved MMU 6 / 7 | the port logic rewrote all slots | the ports act on the ROM and bank slots only; leaving all-RAM restores slots 2-5 |
+| the ROM-3-only DivMMC entries | the alternate 48K ROM counts as ROM 3 while it replaces reads | `NextMemory::BasicRomVisible` |
+
+What is left at event 594547 is timing: the reference takes an interrupt (`RST $38` with the 48K ROM, the DivMMC automap
+entry) where ours does not at that moment; every later difference follows from it. The first screen (`Welcome to NextZXOS`)
+needs the video (N6): the strings "Welcome", "NextZXOS", "Browser" are in RAM page 8 in our run.
