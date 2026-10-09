@@ -127,6 +127,10 @@ phase; master only after the owner's review.
     - [ ] ALASM 4.2 (its ALM loader crashes to 48 BASIC on a Pentagon 128 and 512, 2026-10-08); ALASM 4.x over two pages; XAS on a Pentagon 1024; STS 6.2's label mode run; label files on disk (none seen)
     - [x] the emulator surface: copy the pages of a running machine, offer the candidates (S5, 2026-10-08: `symbols scan` / `import-live`)
 - [x] A9 benchmarks, user docs (2026-10-07): `unreal-asm-benchmarks` (codecs, dialects, symbol module), results in [test-and-benchmark-plan.md](test-and-benchmark-plan.md) §6 and [symbols/test-and-benchmark-plan.md](symbols/test-and-benchmark-plan.md) §6; the hot paths the profiles found fixed (XAS / ALASM / ZEUS keyword search, XAS's font, ASCII code points, the symbol index); user guide [docs/features/unreal-asm.md](../../features/unreal-asm.md)
-  - [ ] below target: decode with the version detected for ALASM / ZX-ASM / ZEUS / XAS (every version tried per line), ZEUS / XAS decode with the version given (each line encoded again for the canonical check), ALASM → sjasmplus 187 k lines/s
+  - [x] version detection and ALASM → sjasmplus (2026-10-09, [test-and-benchmark-plan.md](test-and-benchmark-plan.md) §6):
+    - Detection is 10.7x faster for ALASM (45.9 MB/s at load average ~30) and 6x for ZX-ASM (52.8 MB/s).
+    - ZEUS is 1.35-1.4x faster; ALASM → sjasmplus runs at 328 k lines/s.
+    - Every decode and conversion of the corpus is byte-identical to before.
+  - [ ] still below 50 MB/s: ZEUS decode (each line encoded again for the canonical check, 16-36 MB/s), XAS decode (the packer, 33 MB/s)
   - [x] `BM_Symbols_DisasmLine` A/B against the old LabelManager (2026-10-08): 13-28 % faster with 1k-60k labels, the address lookup 4-9 times faster ([symbols/test-and-benchmark-plan.md](symbols/test-and-benchmark-plan.md) §6)
 - [ ] P2: memory bridge B0-B6 ([memory-bridge.md](memory-bridge.md)), design only for now
