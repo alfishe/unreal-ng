@@ -157,19 +157,21 @@ its disk, 4.46 from `AL446SRC`.
 So a one-shot extract of an ALASM source is: read `#80CC`, page that RAM page, take `#C000 .. #C040 + word(#C021)`,
 decode with the `alasm` codec. A typed but unconfirmed line is missing until Enter.
 
-**TASM 4.12** (first findings; the page of the upper part is not yet tied to a variable):
+**TASM 4.12**:
 
 | Field | Where |
 |---|---|
 | the text | a **gap buffer**. The part before the cursor runs from the text start up to the gap start, in page 2 (`#8000` window): `#A6EE` up for SNAKE. The part after the cursor runs from the gap end to the top of the `#C000` window: page 6 on this run, up to `#FFFF` |
-| pointers | `#8F59` = the text start (`#A6EE`), `#8F5D` = the gap start, `#8F5F` = the gap end. After SNAKE loaded: `#A6EE` / `#FB0F` (the first line taken into the editor). After an edit of line 1 and Enter: `#A6FE` / `#FB19` (line 1 written back below, line 2 taken above) |
+| pointers | `#8F59` = the text start (`#A6EE`), `#8F5B` = the text top (`#FFFF`), `#8F5D` = the gap start, `#8F5F` = the gap end. Its initialization sets an empty text as start = gap start = `#A6EE`, gap end = top = `#FFFF`. After SNAKE loaded: `#A6EE` / `#FB0F` (the first line taken into the editor). After an edit of line 1 and Enter: `#A6FE` / `#FB19` (line 1 written back below, line 2 taken above) |
+| the upper part's page | the RAM page mapped at `#C000` while TASM edits (port `#7FFD`): page 6 on a Pentagon 128 |
+| the end | the upper part runs to the top pointer; the file's `FF FF` end record is added when it is saved |
 | the current line | expanded text in the editor's line buffer near `#928A` (page 2), not tokenized until it leaves the line |
 | a stale copy | Edit leaves the file's bytes at `#A6EE`; they stop being the text once the cursor moves (the gap) |
 
 A TASM extract therefore joins the lower part, the current line (encoded with the `tasm` codec from the line buffer)
 and the upper part.
 
-Still to do in B0: TASM's page of the upper part and its end marker, and a second TASM source.
+Still to do in B0: a second TASM source, and TASM 3.
 
 ## 9. Phases (P2, after A2-A4 and A8)
 
