@@ -932,6 +932,7 @@ struct CONFIG
 	char phoenix_rom_path[FILENAME_MAX];
 	char sprinter_rom_path[FILENAME_MAX];
 	char next_rom_path[FILENAME_MAX];
+	char next_boot_rom_path[FILENAME_MAX];  // the 8K boot ROM (cores/zxnext bootrom.vhd); empty = the bare personality
 
 #ifdef MOD_GSZ80
 	char gs_rom_path[FILENAME_MAX];

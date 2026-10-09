@@ -16,6 +16,8 @@ class INextRegHost
 public:
     virtual ~INextRegHost() = default;
     virtual void WriteNextReg(uint8_t reg, uint8_t value) = 0;
+    /// After every instruction, on the CPU's thread between two instructions: where a NEXTREG-requested reset runs
+    virtual void AfterInstruction() {}
 };
 
 /// @file z80nengine.h

@@ -52,6 +52,27 @@ public:
 
     /// The slot table from the paging latches (#7FFD, #1FFD, #DFFD): 128K layout, the +3 all-RAM modes
     void ApplyClassicPaging(uint8_t p7ffd, uint8_t p1ffd);
+    /// region <Config mode and the boot ROM>
+    /// The system area is the first 256K of the SRAM: Memory's ROM pages 0-15 (64K Spectrum ROMs at 0-3, DivMMC
+    /// ROM, Multiface, alternate ROMs, DivMMC RAM). The boot ROM is not in it: it sits in the last ROM page
+    static constexpr uint16_t kBootRomPage = MAX_ROM_PAGES - 1;
+    static constexpr uint16_t kSystemAreaPages = 16;
+    static constexpr uint32_t kBootRomSize = 0x2000;
+    /// Machine type 000 is config mode: the boot ROM (while enabled) and the NR #04 bank show at #0000 instead of
+    /// the personality ROM, and both are writable system memory
+    void SetConfigMode(bool on);
+    bool InConfigMode() const { return _configMode; }
+    void SetBootRomEnabled(bool on);
+    bool BootRomEnabled() const { return _bootRom; }
+    bool HasBootRom() const { return _bootRomLoaded; }
+    /// NR #04: the 16K SRAM bank (0-63) at #0000 in config mode; banks 0-15 are the system area, 16+ are RAM
+    void SetConfigBank(uint8_t bank);
+    uint8_t GetConfigBank() const { return _cfgBank; }
+    /// ROM loader hook: puts the boot ROM image in place when [ROM] NEXTBOOT names one, and then the machine
+    /// powers on in config mode with an empty system area
+    void OnRomLoaded(uint16_t imageBanks) override;
+    /// endregion
+
     /// Debugger / test pokes into the slot an address falls in (the base DirectWrite sees the 16K windows)
     void PokeSlot(uint16_t addr, uint8_t value);
     uint8_t PeekSlot(uint16_t addr) const;
@@ -64,11 +85,16 @@ protected:
 
 private:
     void MapSlot(unsigned slot);
+    void Remap();
     void SyncWindows();
 
     uint8_t _mmu[kSlots] = {};
     uint8_t _rom = 0;
     uint8_t _dffd = 0;
+    bool _configMode = false;
+    bool _bootRom = false;
+    bool _bootRomLoaded = false;
+    uint8_t _cfgBank = 0;
     uint32_t _readOff[kSlots] = {};
     uint32_t _writeOff[kSlots] = {};
     ttd::PhysPage _physPage[kSlots] = {};

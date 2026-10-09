@@ -1,15 +1,33 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #include "emulator/io/z80n/z80nengine.h"
 
 class NextMemory;
 
-/// The Next board's register file (NEXTREG space, ports #243B select / #253B data) for the skeleton machine:
-/// the identification registers read back what the board answers, the MMU registers #50-#57 are the memory's
-/// slot table, every other register stores its byte and reads it back until the device behind it exists
-/// (N3 onwards). The CPU's NEXTREG instructions arrive through INextRegHost.
+/// One register write as the board saw it (the NextREG golden sequence of the boot chain)
+struct NextRegWrite
+{
+    uint8_t reg;
+    uint8_t value;
+    uint16_t pc;
+};
+
+/// What the board asks of the machine around it: a reset (NR #02)
+class INextMachine
+{
+public:
+    virtual ~INextMachine() = default;
+    /// Runs between two instructions
+    virtual void PerformReset(bool hard) = 0;
+};
+
+/// The Next board's register file (NEXTREG space, ports #243B select / #253B data): the identification registers
+/// read back what the board answers, NR #02 / #03 / #04 are the reset, machine type (config mode) and config
+/// mapping, #50-#57 are the memory's slot table, every other register stores its byte and reads it back until
+/// the device behind it exists (N3 onwards). The CPU's NEXTREG instructions arrive through INextRegHost.
 class NextBoard : public INextRegHost
 {
 public:
@@ -19,13 +37,18 @@ public:
     static constexpr uint8_t kRegMachineType = 0x03;
     static constexpr uint8_t kRegConfigMapping = 0x04;
     static constexpr uint8_t kRegCpuSpeed = 0x07;
+    static constexpr uint8_t kRegPeripheral3 = 0x0A;  ///< bit 5: the SD card select swap
     static constexpr uint8_t kRegMmu0 = 0x50;  ///< #50-#57: MMU slot 0-7
     static constexpr uint8_t kMachineIdNext = 10;
-    static constexpr uint8_t kCoreVersion = 0x31;  ///< 3.1: what the register answers until a core is chosen
+    static constexpr uint8_t kRegCoreVersionSub = 0x0E;
+    static constexpr uint8_t kCoreVersion = 0x32;     ///< 3.02 ...
+    static constexpr uint8_t kCoreVersionSub = 0x03;  ///< ... .03: the FPGA sources the register map follows
 
     explicit NextBoard(NextMemory* memory) : _memory(memory) {}
+    void SetMachine(INextMachine* machine) { _machine = machine; }
 
-    void Reset();
+    /// Power-on (hard) or reset (soft) state of the registers, config mode and boot ROM
+    void Reset(bool hard);
 
     void SelectRegister(uint8_t reg) { _selected = reg; }
     uint8_t SelectedRegister() const { return _selected; }
@@ -34,11 +57,25 @@ public:
 
     uint8_t Read(uint8_t reg) const;
     void Write(uint8_t reg, uint8_t value);
+    /// Log every register write into `log` (null: off). The log is the caller's
+    void SetWriteLog(std::vector<NextRegWrite>* log, const uint16_t* pc) { _log = log; _pc = pc; }
+    /// The raw stored byte of a register (reports, tests)
+    uint8_t Stored(uint8_t reg) const { return _regs[reg]; }
 
     void WriteNextReg(uint8_t reg, uint8_t value) override { Write(reg, value); }
+    void AfterInstruction() override;
+
+    /// Machine type (NR #03 bits 2:0): 0 config mode, 1 48K, 2 128K, 3 +3, 4 Pentagon
+    uint8_t MachineType() const { return _regs[kRegMachineType] & 7; }
+    bool SdSwap() const { return (_regs[kRegPeripheral3] & 0x20) != 0; }
 
 private:
     NextMemory* _memory;
+    INextMachine* _machine = nullptr;
     uint8_t _selected = 0;
     uint8_t _regs[256] = {};
+    std::vector<NextRegWrite>* _log = nullptr;
+    const uint16_t* _pc = nullptr;
+    bool _resetPending = false;
+    bool _resetHard = false;
 };

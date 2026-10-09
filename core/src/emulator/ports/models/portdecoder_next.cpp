@@ -8,6 +8,7 @@
 PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spectrum128(context)
 {
     _board = std::make_unique<NextBoard>(&Mem());
+    _board->SetMachine(this);
 }
 
 PortDecoder_Next::~PortDecoder_Next()
@@ -27,7 +28,10 @@ void PortDecoder_Next::reset()
 
     Mem().ResetMmu();
     Mem().ApplyClassicPaging(0, 0);
-    _board->Reset();
+    _board->Reset(true);
+    _spiSelected = -1;
+    _spiRx = 0xFF;
+    _spiBusyUntil = 0;
 
     _screen->SetBorderColor(COLOR_WHITE);
     _screen->SetActiveScreen(SCREEN_NORMAL);
@@ -79,14 +83,19 @@ void PortDecoder_Next::Port_DFFD_Next(uint8_t value)
 
 uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
 {
-    if (port == kPortRegSelect || port == kPortRegData)
+    const uint8_t low = static_cast<uint8_t>(port);
+    if (port == kPortRegSelect || port == kPortRegData || low == kPortSpiData)
     {
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
-        disp.decodedPort = port;
+        disp.decodedPort = port == kPortRegSelect || port == kPortRegData ? port : kPortSpiData;
         disp.wasDecoded = true;
         disp.wasHandledInline = true;
-        const uint8_t result = port == kPortRegSelect ? _board->SelectedRegister() : _board->ReadSelected();
+        uint8_t result;
+        if (low == kPortSpiData)
+            result = SpiRead();
+        else
+            result = port == kPortRegSelect ? _board->SelectedRegister() : _board->ReadSelected();
         _lastPortDecoded = true;
         OnPortInComplete(port, result, pc, disp);
         return result;
@@ -101,7 +110,11 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     disp.wasDecoded = true;
     disp.wasHandledInline = true;
 
-    if (port == kPortRegSelect)
+    if (static_cast<uint8_t>(port) == kPortSpiSelect)
+        SpiSelect(value);
+    else if (static_cast<uint8_t>(port) == kPortSpiData)
+        SpiWrite(value);
+    else if (port == kPortRegSelect)
         _board->SelectRegister(value);
     else if (port == kPortRegData)
         _board->WriteSelected(value);
@@ -119,3 +132,92 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     disp.decodedPort = port;
     OnPortOutComplete(port, value, pc, disp);
 }
+
+/// region <Reset>
+
+void PortDecoder_Next::PerformReset(bool hard)
+{
+    Z80* z80 = _context->pCore->GetZ80();
+    // The reset restarts the CPU, not the frame: the video and interrupt timing keep running
+    const auto t = z80->t;
+    const auto tt = z80->tt;
+    z80->Reset();
+    z80->t = t;
+    z80->tt = tt;
+
+    EmulatorState& state = _context->emulatorState;
+    state.p7FFD = 0x00;
+    state.p1FFD = 0x00;
+    Mem().ResetMmu();
+    _board->Reset(hard);  // config mode and the boot ROM first: the slot table follows them
+    Mem().ApplyClassicPaging(0, 0);
+    _spiSelected = -1;
+    if (_engine)
+        _engine->InvalidateBoundary();
+}
+
+/// endregion
+
+/// region <SPI and the SD cards>
+
+uint64_t PortDecoder_Next::Clocks() const
+{
+    return static_cast<uint64_t>(_context->emulatorState.frame_counter) * _context->config.frame + _context->pCore->GetZ80()->t;
+}
+
+bool PortDecoder_Next::InsertSdCard(unsigned index, std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode)
+{
+    return _sd[index & 1].insert(std::move(media), mode);
+}
+
+bool PortDecoder_Next::InsertSdCard(unsigned index, const std::string& path, SdCardSpi::WriteMode mode)
+{
+    return _sd[index & 1].open(path, mode);
+}
+
+void PortDecoder_Next::SpiSelect(uint8_t value)
+{
+    // Active low; only these patterns select (esxDOS writes garbage in the upper bits). The swap bit exchanges
+    // the two lines. The Pi lines and the flash are decoded and ignored
+    int line = -1;
+    if (value == 0xFE)
+        line = _board->SdSwap() ? 1 : 0;
+    else if (value == 0xFD)
+        line = _board->SdSwap() ? 0 : 1;
+    if (line == _spiSelected)
+        return;
+    if (_spiSelected >= 0)
+        _sd[_spiSelected].select(false);
+    _spiSelected = line;
+    if (line >= 0)
+        _sd[line].select(true);
+}
+
+void PortDecoder_Next::SpiWrite(uint8_t value)
+{
+    const uint64_t now = Clocks();
+    if (now < _spiBusyUntil)
+    {
+        _spiTooFast++;
+        return;
+    }
+    _spiRx = _spiSelected >= 0 ? _sd[_spiSelected].exchange(value) : 0xFF;
+    _spiBusyUntil = now + kSpiByteClocks;
+}
+
+uint8_t PortDecoder_Next::SpiRead()
+{
+    const uint8_t result = _spiRx;
+    const uint64_t now = Clocks();
+    if (now < _spiBusyUntil)
+    {
+        _spiTooFast++;
+        return result;
+    }
+    // a read starts a transfer of #FF; its answer is what the next read returns
+    _spiRx = _spiSelected >= 0 ? _sd[_spiSelected].exchange(0xFF) : 0xFF;
+    _spiBusyUntil = now + kSpiByteClocks;
+    return result;
+}
+
+/// endregion

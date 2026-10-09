@@ -6,6 +6,10 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "common/filehelper.h"
+#include "common/modulelogger.h"
+
+#include <cstring>
 
 NextMemory::NextMemory(EmulatorContext* context) : Memory(context)
 {
@@ -70,13 +74,90 @@ void NextMemory::PokeSlot(uint16_t addr, uint8_t value)
 
 /// endregion
 
+/// region <Config mode and the boot ROM>
+
+void NextMemory::SetConfigMode(bool on)
+{
+    _configMode = on;
+    Remap();
+}
+
+void NextMemory::SetBootRomEnabled(bool on)
+{
+    _bootRom = on;
+    Remap();
+}
+
+void NextMemory::SetConfigBank(uint8_t bank)
+{
+    _cfgBank = bank & 0x3F;
+    Remap();
+}
+
+void NextMemory::Remap()
+{
+    for (unsigned s = 0; s < kSlots; s++)
+        MapSlot(s);
+    SyncWindows();
+}
+
+void NextMemory::OnRomLoaded([[maybe_unused]] uint16_t imageBanks)
+{
+    const std::string path = _context->config.next_boot_rom_path;
+    if (path.empty())
+        return;
+    std::string resolved = FileHelper::NormalizePath(path);
+    if (!FileHelper::FileExists(resolved))
+        resolved = FileHelper::PathCombine(FileHelper::GetExecutablePath(), resolved);
+    if (!FileHelper::FileExists(resolved))
+        resolved = FileHelper::PathCombine(FileHelper::GetResourcesPath(), path);
+    FILE* file = FileHelper::OpenFile(resolved, "rb");
+    if (!file)
+    {
+        MLOGERROR("NextMemory: boot ROM '%s' not found", path.c_str());
+        return;
+    }
+    uint8_t* page = ROMPageHostAddress(kBootRomPage);
+    std::memset(page, 0xFF, PAGE_SIZE);
+    const size_t size = std::fread(page, 1, kBootRomSize, file);
+    std::fclose(file);
+    if (size != kBootRomSize)
+    {
+        MLOGERROR("NextMemory: boot ROM '%s' is %zu bytes, expected %u", path.c_str(), size, kBootRomSize);
+        return;
+    }
+    // Power-on state of the real board: an empty system area (the firmware loads it), config mode, boot ROM on
+    for (unsigned p = 0; p < kSystemAreaPages; p++)
+        std::memset(ROMPageHostAddress(static_cast<uint8_t>(p)), 0xFF, PAGE_SIZE);
+    _bootRomLoaded = true;
+    _configMode = true;
+    _bootRom = true;
+    Remap();
+}
+
+/// endregion
+
 /// region <Slot table>
 
 void NextMemory::MapSlot(unsigned slot)
 {
     const uint8_t value = _mmu[slot];
     const uint32_t trash = static_cast<uint32_t>(TRASH_MEMORY_OFFSET);
-    if (value == kMmuRom)
+    if (value == kMmuRom && slot == 0 && _configMode && _bootRom && _bootRomLoaded)
+    {
+        // the boot ROM: read-only
+        _readOff[slot] = static_cast<uint32_t>(ROMPageHostAddress(kBootRomPage) - _memory);
+        _writeOff[slot] = trash;
+        _physPage[slot] = ttd::kPhysPageNone;
+    }
+    else if (value == kMmuRom && slot < 2 && _configMode)
+    {
+        // config mapping: NR #04's 16K SRAM bank, writable (the firmware loads the ROMs through it)
+        const uint8_t* mem = _cfgBank < kSystemAreaPages ? ROMPageHostAddress(_cfgBank) : RAMPageAddress(_cfgBank - kSystemAreaPages);
+        _readOff[slot] = _writeOff[slot] = static_cast<uint32_t>(mem + slot * kSlotSize - _memory);
+        _physPage[slot] = _cfgBank < kSystemAreaPages ? ttd::kPhysPageNone : static_cast<ttd::PhysPage>(_cfgBank - kSystemAreaPages);
+    }
+    else if (value == kMmuRom)
     {
         const uint8_t* rom = ROMPageHostAddress(_rom) + (slot & 1) * kSlotSize;
         _readOff[slot] = static_cast<uint32_t>(rom - _memory);

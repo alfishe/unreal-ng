@@ -122,6 +122,8 @@ void Z80NEngine::ExecuteStep()
     Enter();
     Z80nCpuStep(_cpu);
     Leave(wasHalted);
+    if (_nextRegHost)
+        _nextRegHost->AfterInstruction();
 }
 
 void Z80NEngine::AcknowledgeInterrupt(uint8_t vector)
