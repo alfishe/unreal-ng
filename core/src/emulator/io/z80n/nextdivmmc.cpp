@@ -8,6 +8,7 @@ void NextDivMmc::Reset()
 {
     _control = 0;
     _automap = false;
+    _buttonNmi = false;
     Publish();
 }
 
@@ -42,6 +43,8 @@ NextDivMmc::Hit NextDivMmc::Classify(uint16_t address) const
     const uint8_t timing = _board->Stored(kRegAutomapTiming);
     const uint8_t extra = _board->Stored(kRegAutomapExtra);
 
+    if (address == 0x0066)
+        return _buttonNmi ? Hit::Delayed : Hit::None;  // the NMI entry maps in only for the button's NMI, and is never hidden
     if (address < 0x40 && (address & 7) == 0)
     {
         const unsigned n = address >> 3;
@@ -80,6 +83,8 @@ void NextDivMmc::OnMachineM1(uint16_t address)
     {
         case Hit::Delayed:
         case Hit::Instant:
+            if (address == 0x0066)
+                _buttonNmi = false;  // automap_held takes the button over
             if (!_automap)
             {
                 _automap = true;

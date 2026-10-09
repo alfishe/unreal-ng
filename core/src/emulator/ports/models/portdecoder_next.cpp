@@ -658,3 +658,14 @@ void PortDecoder_Next::ApplyTiming(uint8_t timing)
 }
 
 /// endregion
+
+bool PortDecoder_Next::RequestBoardNmi()
+{
+    // zxnext.vhd: hotkey_drive and nr_06_divmmc_automap_en (bit 4) start nmi_divmmc; the state machine pulses /NMI once and the
+    // DivMMC's button latch maps its ROM in at the #0066 fetch. A press while the handler is in, or still on its way, is lost
+    // (nmi_activated). True = the board owns the request: no plain pulse from the caller
+    if (!(_board->Stored(0x06) & 0x10  /* NR #06 bit 4 */) || _divMmc->NmiHold())
+        return true;
+    _divMmc->PressButton();
+    return false;  // the caller pulses /NMI
+}

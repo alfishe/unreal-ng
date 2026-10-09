@@ -38,6 +38,13 @@ public:
     /// NR #09 bit 3 = 1 clears the sticky MAPRAM
     void ClearMapram();
 
+    /// The DRIVE button (divmmc.vhd button_nmi): the next M1 at #0066 maps the DivMMC in after the fetch, whatever NR #BB says.
+    /// The board pulses /NMI at the same time (PortDecoder_Next::RequestBoardNmi)
+    void PressButton() { _buttonNmi = true; }
+    /// disable_nmi_o: the handler is in (or on its way in), a second button press waits
+    bool NmiHold() const { return _automap || _buttonNmi; }
+    bool ButtonPending() const { return _buttonNmi; }
+
     bool Mapped() const { return _automap || (_control & 0x80) != 0; }
     bool Automapped() const { return _automap; }
     bool Mapram() const { return (_control & 0x40) != 0; }
@@ -55,4 +62,5 @@ private:
     NextBoard* _board;
     uint8_t _control = 0;
     bool _automap = false;
+    bool _buttonNmi = false;
 };

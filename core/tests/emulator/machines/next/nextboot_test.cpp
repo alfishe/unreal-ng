@@ -247,3 +247,32 @@ TEST(NextKempston_Test, PortOneFReadsZeroWithNothingPressed)
         EXPECT_EQ(ports->DecodePortIn(static_cast<uint16_t>((b << 8) | 0x1F), 0), 0x00) << "B = " << b;
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+// The DRIVE button (the host's NMI action): /NMI is pulsed and the DivMMC maps in at the #0066 fetch, NR #BB or not
+TEST(NextDriveButton_Test, NmiMapsTheDivMmcInAtTheEntry)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    PortDecoder_Next* ports = dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    NextDivMmc& divMmc = ports->DivMmc();
+    ports->Board().Write(0x0A, 0x10);  // the automap is on
+    ports->Board().Write(0xBB, 0x00);  // no extra entries
+
+    EXPECT_TRUE(ports->RequestBoardNmi()) << "the button is off (NR #06 bit 4): the board swallows the NMI";
+    ports->Board().Write(0x06, 0x10);
+    divMmc.BeforeMachineM1(0x0066);
+    divMmc.OnMachineM1(0x0066);
+    EXPECT_FALSE(divMmc.Mapped()) << "an M1 at #0066 without the button maps nothing";
+
+    EXPECT_FALSE(ports->RequestBoardNmi()) << "the caller pulses /NMI";
+    EXPECT_TRUE(divMmc.ButtonPending());
+    EXPECT_TRUE(ports->RequestBoardNmi()) << "a second press waits for the handler";
+    divMmc.BeforeMachineM1(0x0066);
+    EXPECT_FALSE(divMmc.Mapped()) << "the fetch of #0066 itself still comes from the ROM underneath";
+    divMmc.OnMachineM1(0x0066);
+    EXPECT_TRUE(divMmc.Mapped());
+    EXPECT_FALSE(divMmc.ButtonPending());
+    EXPECT_TRUE(ports->RequestBoardNmi()) << "the handler is in: no new NMI";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
