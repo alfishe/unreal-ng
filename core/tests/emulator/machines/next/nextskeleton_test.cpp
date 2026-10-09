@@ -16,6 +16,8 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/z80nengine.h"
 #include "emulator/memory/next/nextmemory.h"
+#include "emulator/io/z80n/nextregtable.h"
+#include "emulator/state/devicestate.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
 class NextSkeleton_Test : public ::testing::Test
@@ -253,6 +255,7 @@ TEST_F(NextSkeleton_Test, Nr8EIsThePagingPortsInOneRegister)
         Out(0x243B, reg);
         Out(0x253B, v);
     };
+    _ports->Board().SetMachineType(3);  // +3 type: the ROM number has two bits
     Out(0x7FFD, 0x00);  // (the test helper starts the 48K BASIC mode: ROM 1)
     Out(0x243B, 0x8E);
     EXPECT_EQ(In(0x253B), 0x08) << "reset: bank 0, normal paging, ROM 0, bit 3 reads 1";
@@ -332,4 +335,137 @@ TEST_F(NextSkeleton_Test, DivMmcMapsRomAndBankAndTheAutomapFollowsTheRegisters)
     EXPECT_TRUE(_ports->DivMmc().Mapram());
     nextreg(0x09, 0x08);  // NR #09 bit 3 clears it
     EXPECT_FALSE(_ports->DivMmc().Mapram());
+}
+
+// The register table (generated from the distribution's registers.txt) and the board's reset values from it
+TEST_F(NextSkeleton_Test, RegisterTableMatchesTheDocumentAndTheBoardResets)
+{
+    size_t count = 0;
+    const NextRegInfo* table = NextRegTable(count);
+    EXPECT_EQ(count, 145u);
+    ASSERT_NE(FindNextReg(0x50), nullptr);
+    EXPECT_STREQ(FindNextReg(0x50)->name, "MMU slot 0");
+    EXPECT_TRUE(FindNextReg(0x00)->readable);
+    EXPECT_FALSE(FindNextReg(0x00)->writable);
+    EXPECT_EQ(FindNextReg(0x14)->reset, 0xE3);
+    EXPECT_EQ(FindNextReg(0x4A)->reset, 0xE3);
+    EXPECT_EQ(FindNextReg(0xC4)->reset, 0x81);
+    EXPECT_EQ(FindNextReg(0xB8)->reset, 0x83);
+    EXPECT_EQ(FindNextReg(0xBB)->reset, 0xCD);
+    EXPECT_EQ(FindNextReg(0x7F)->reset, 0xFF);
+    EXPECT_EQ(FindNextReg(0xFE), nullptr);
+    // after a hard reset the board holds every table reset value (the registers a device owns answer for themselves)
+    for (size_t i = 0; i < count; i++)
+    {
+        const NextRegInfo& r = table[i];
+        if (!r.hasReset || r.number == 0x03 || (r.number >= 0x50 && r.number <= 0x57) || (r.number >= 0xC0 && r.number <= 0xCE) ||
+            r.number == 0x07 || r.number == 0x8E || r.number == 0x02 || r.number == 0x00 || r.number == 0x01 || r.number == 0x0E)
+            continue;
+        EXPECT_EQ(_ports->Board().Stored(r.number), r.reset) << "NR " << std::hex << int(r.number) << " " << r.name;
+    }
+    const std::string report = _ports->Board().DescribeRegisters();
+    EXPECT_NE(report.find("NR 50 RW MMU slot 0"), std::string::npos);
+    EXPECT_NE(report.find("NR 00 R- Machine ID"), std::string::npos);
+}
+
+// The reports (DeviceState::Next / NextRegs / NextMmu) behind /state/next, /state/next/regs, /state/next/mmu
+TEST_F(NextSkeleton_Test, ReportsDescribeTheMachine)
+{
+    StateNode next = DeviceState::Next(_context);
+    ASSERT_NE(next.find("available"), nullptr);
+    ASSERT_NE(next.find("machine"), nullptr);
+    EXPECT_EQ(next.find("mmu")->find("slots")->size(), 8u);
+    ASSERT_NE(next.find("divmmc"), nullptr);
+    ASSERT_NE(next.find("interrupts"), nullptr);
+    EXPECT_EQ(next.find("ctc")->size(), 4u);
+    StateNode regs = DeviceState::NextRegs(_context);
+    EXPECT_EQ(regs.find("registers")->size(), 145u);
+    StateNode mmu = DeviceState::NextMmu(_context);
+    EXPECT_EQ(mmu.find("slots")->size(), 8u);
+}
+
+// NR #8C: the alternate ROM (system pages 6 and 7) replaces the ROM for reads, or is written through the ROM area; the
+// lock bits pick the ROM whatever the paging ports say; the low nibble reaches the high one at a soft reset
+TEST_F(NextSkeleton_Test, AlternateRomAndLocks)
+{
+    auto nextreg = [&](uint8_t reg, uint8_t v) {
+        Out(0x243B, reg);
+        Out(0x253B, v);
+    };
+    Out(0x7FFD, 0x00);  // ROM 0 (128K editor): alt ROM 0 is system page 6
+    std::memset(_memory->ROMPageHostAddress(6), 0xA6, 0x4000);
+    std::memset(_memory->ROMPageHostAddress(7), 0xA7, 0x4000);
+    const uint8_t rom0 = _memory->PeekSlot(0x0100);
+    nextreg(0x8C, 0x80);
+    EXPECT_EQ(_memory->PeekSlot(0x0100), 0xA6) << "alt ROM replaces the ROM for reads";
+    _memory->SlotWriteFast(0x0100, 0x11);
+    EXPECT_EQ(_memory->ROMPageHostAddress(6)[0x100], 0xA6) << "and is not written";
+    Out(0x7FFD, 0x10);  // ROM 1: alt ROM 1 (48K)
+    EXPECT_EQ(_memory->PeekSlot(0x0100), 0xA7);
+    nextreg(0x8C, 0xC0);  // visible during writes only
+    EXPECT_NE(_memory->PeekSlot(0x0100), 0xA7) << "reads show the normal ROM";
+    _memory->SlotWriteFast(0x0100, 0x5C);
+    EXPECT_EQ(_memory->ROMPageHostAddress(7)[0x100], 0x5C) << "writes land in the alt ROM";
+    nextreg(0x8C, 0x00);
+    Out(0x243B, 0x8C);
+    EXPECT_EQ(In(0x253B), 0x00);
+    // locks (128K family: lock ROM 1 forces ROM 1, lock ROM 0 forces ROM 0 - bit 5 wins)
+    Out(0x7FFD, 0x00);
+    nextreg(0x8C, 0x20);
+    EXPECT_EQ(_memory->GetRomSelect(), 1);
+    nextreg(0x8C, 0x10);
+    Out(0x7FFD, 0x10);
+    EXPECT_EQ(_memory->GetRomSelect(), 0);
+    (void)rom0;
+}
+
+// NR #18-#1C clip windows and NR #40-#44 palettes: the registers the ROM reads back and restores (cosim first diff)
+TEST_F(NextSkeleton_Test, ClipWindowsAndPalettesReadBackAsWritten)
+{
+    auto nextreg = [&](uint8_t reg, uint8_t v) {
+        Out(0x243B, reg);
+        Out(0x253B, v);
+    };
+    auto read = [&](uint8_t reg) {
+        Out(0x243B, reg);
+        return In(0x253B);
+    };
+    // the clip index advances on writes, not on reads
+    EXPECT_EQ(read(0x18), 0x00);
+    EXPECT_EQ(read(0x18), 0x00);
+    nextreg(0x18, 10);
+    EXPECT_EQ(read(0x18), 0xFF) << "X2 is next";
+    nextreg(0x18, 200);
+    nextreg(0x18, 20);
+    nextreg(0x18, 180);
+    EXPECT_EQ(read(0x18), 10) << "the index wrapped to X1";
+    EXPECT_EQ(read(0x1C) & 3, 0);
+    EXPECT_EQ(read(0x1B), 0x00);
+    nextreg(0x1C, 0x08);  // reset the tilemap index
+    // the ULA palette: standard colours, bright white, write + auto-increment
+    nextreg(0x43, 0x00);
+    nextreg(0x40, 7);
+    EXPECT_EQ(read(0x41), 0xB6) << "white";
+    nextreg(0x40, 15);
+    EXPECT_EQ(read(0x41), 0xFF) << "bright white";
+    nextreg(0x40, 100);
+    nextreg(0x41, 0x1C);
+    EXPECT_EQ(read(0x40), 101) << "auto-increment after a write";
+    nextreg(0x40, 100);
+    EXPECT_EQ(read(0x41), 0x1C);
+    nextreg(0x43, 0x80);  // no auto-increment
+    nextreg(0x40, 5);
+    nextreg(0x41, 0x55);
+    EXPECT_EQ(read(0x40), 5);
+    nextreg(0x43, 0x00);
+    // 9-bit: two writes, the second carries the low blue bit
+    nextreg(0x40, 20);
+    nextreg(0x44, 0xE0);
+    nextreg(0x44, 0x01);
+    EXPECT_EQ(read(0x40), 21);
+    nextreg(0x40, 20);
+    EXPECT_EQ(read(0x41), 0xE0);
+    EXPECT_EQ(read(0x44), 0x01);
+    // NR #08 bit 7: port #7FFD not locked
+    EXPECT_EQ(read(0x08) & 0x80, 0x80);
 }

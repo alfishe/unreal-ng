@@ -326,6 +326,10 @@ public:
     // SprinterPortLookup in ports/models/sprinter/sprinterdevicestate.cpp)
     ADD_METHOD_TO(EmulatorAPI::getStateSprinter, "/api/v1/emulator/{id}/state/sprinter", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterActive, "/api/v1/emulator/state/sprinter", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNext, "/api/v1/emulator/{id}/state/next", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextActive, "/api/v1/emulator/state/next", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextRegs, "/api/v1/emulator/{id}/state/next/regs", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextMmu, "/api/v1/emulator/{id}/state/next/mmu", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterPorts, "/api/v1/emulator/{id}/state/sprinter/ports", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterPortLookup, "/api/v1/emulator/{id}/state/sprinter/ports/lookup", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterText, "/api/v1/emulator/{id}/state/sprinter/text", drogon::Get);
@@ -1160,6 +1164,13 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void getStateTsConfTsu(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateNext(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void getStateNextActive(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void getStateNextRegs(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
+    void getStateNextMmu(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
     void getStateSprinter(const drogon::HttpRequestPtr& req,
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateSprinterActive(const drogon::HttpRequestPtr& req,

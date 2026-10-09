@@ -1,0 +1,19 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -166,14 +166,8 @@
+ # ship the empty gitlink — packaging/README.md "Submodule gotcha"), no git
+ # installed, or -DGIT_SUBMODULE=OFF. add_subdirectory's own error mentions
+ # neither submodules nor a remedy, so diagnose it here (GH #152).
+-if(NOT EXISTS "${CMAKE_SOURCE_DIR}/third_party/spdlog/CMakeLists.txt")
+-    message(FATAL_ERROR
+-        "third_party/spdlog is empty — jnext needs this git submodule to build.\n"
+-        "From a git checkout:   git submodule update --init --recursive\n"
+-        "From a source archive: use jnext-<version>-src.zip from the release page; "
+-        "GitHub's auto-generated source archives do not include submodule content.")
+-endif()
+-add_subdirectory(third_party/spdlog EXCLUDE_FROM_ALL)
++# cosim: the submodule is absent in the reference clone; use the system spdlog
++find_package(spdlog REQUIRED)
+ 
+ # ZOT TZX/TAP player by antirez — MIT License.
+ add_subdirectory(third_party/zot EXCLUDE_FROM_ALL)

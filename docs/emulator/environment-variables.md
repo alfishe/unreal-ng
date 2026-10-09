@@ -200,6 +200,11 @@ run with `--gtest_also_run_disabled_tests`). Runs a program on a Profi as a user
 | `PROFI_TRACE` | number of steps | Instruction trace after the frames. |
 | `PROFI_WATCH`, `PROFI_WATCH_RECT`, `PROFI_WATCH_PAGES` | set, `col,row,w,h`, hex pages (`6,3A`) | Steps until a hi-res screen area changes, printing PC and registers. |
 | `PROFI_DUMP`, `PROFI_DUMP_PAGES`, `PROFI_DUMP_RAM`, `PROFI_DUMP_MEM` | set, file prefix, file, file | Dumps registers / screen pages / all RAM / the 64K view at the end. |
+| `UNREAL_NEXT_FIRMWARE` | folder path (`testdata/machines/zxnext/card`) | The SD card folder of the ZX Spectrum Next firmware tests (TBBLUE.FW, `machines/next`, `nextzxos`, ...): another distribution's tree instead of the one in the repository. | `core/tests/emulator/machines/next/nextfirmware_test.cpp` |
+| `UNREAL_NEXT_HUNT` | frames (unset: tests skip) | Runs the personality-ROM bring-up hunts (`NextFirmware_Test.PersonalityRomStallHunt` / `PersonalityRomRestartHunt`): frames to run after the firmware's soft reset; they print the registers and ports the ROM uses to stderr. | `core/tests/emulator/machines/next/nextfirmware_test.cpp` |
+| `UNREAL_NEXT_DUMP` | folder path | With the stall hunt: writes the ULA screen, the Layer 2 banks and RAM page 7 as raw files there (scratch conversion to PNG). | `core/tests/emulator/machines/next/nextfirmware_test.cpp` |
+| `UNREAL_NEXT_COSIM` | folder path (unset: test skips) | `NextCosim_Test`: writes the boot trace in the co-simulation format (`tools/verification/next-cosim/trace-format.md`) to that folder; with `UNREAL_NEXT_FIRMWARE` the card. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
+| `UNREAL_NEXT_COSIM_FRAMES` | frames (1500) | Length of the co-simulation run. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
 
 ## 6. Benchmarks and verification tools
 

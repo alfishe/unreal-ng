@@ -1,7 +1,6 @@
 // ZX Spectrum Next: the real boot chain on the emulated Z80 - the boot ROM from the FPGA sources loads TBBLUE.FW
-// from a FAT16 card over SPI and jumps to #6000. The firmware is the SpecNext team's, so it is not in the
-// repository: point UNREAL_NEXT_FIRMWARE at a folder with the card layout (TBBLUE.FW and machines/next/...);
-// without it the tests skip. Design: design-boot-and-firmware.md section 2, research-fpga-vhdl.md section 14.
+// from a FAT16 card over SPI and jumps to #6000. The card is testdata/machines/zxnext/card (the collection's
+// cards/sn-test-card); UNREAL_NEXT_FIRMWARE points the tests at another distribution's folder. Design: design-boot-and-firmware.md section 2, research-fpga-vhdl.md section 14.
 
 #include "stdafx.h"
 #include "pch.h"
@@ -18,6 +17,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -27,6 +27,17 @@
 #include "emulator/io/storage/hostfolder/hostfolderfat.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/models/portdecoder_next.h"
+
+namespace
+{
+/// The card folder: UNREAL_NEXT_FIRMWARE when set (another distribution), else testdata/machines/zxnext/card
+std::filesystem::path CardFolder()
+{
+    if (const char* folder = std::getenv("UNREAL_NEXT_FIRMWARE"))
+        return folder;
+    return TestPathHelper::FindProjectRoot() / "testdata/machines/zxnext/card";
+}
+}  // namespace
 
 class NextFirmware_Test : public ::testing::Test
 {
@@ -39,9 +50,9 @@ protected:
 
     void SetUp() override
     {
-        const char* folder = std::getenv("UNREAL_NEXT_FIRMWARE");
-        if (!folder || !std::filesystem::exists(std::filesystem::path(folder) / "TBBLUE.FW"))
-            GTEST_SKIP() << "UNREAL_NEXT_FIRMWARE does not point to a folder with TBBLUE.FW";
+        const std::filesystem::path folder = CardFolder();
+        if (!std::filesystem::exists(folder / "TBBLUE.FW"))
+            GTEST_SKIP() << "no card with TBBLUE.FW: " << folder;
 
         _emulator = EmulatorTestHelper::CreateStandardEmulator(
             "NEXT", LoggerLevel::LogError, RamPowerOn::Zero,
@@ -152,10 +163,10 @@ TEST_F(NextFirmware_Test, FirmwareWritesTheRegistersAndSoftResetsIntoThePersonal
     EXPECT_FALSE(_memory->InConfigMode());
     EXPECT_FALSE(_memory->BootRomEnabled());
     EXPECT_EQ(_ports->Board().MachineType(), 3);
-    const std::vector<uint8_t> rom = ReadFile(std::filesystem::path(std::getenv("UNREAL_NEXT_FIRMWARE")) / "machines/next/enNextZX.rom");
+    const std::vector<uint8_t> rom = ReadFile(CardFolder() / "machines/next/enNextZX.rom");
     ASSERT_EQ(rom.size(), 65536u);
     EXPECT_EQ(std::memcmp(_memory->ROMPageHostAddress(0), rom.data(), 4 * 16384), 0) << "the personality ROM is in the system area";
-    const std::vector<uint8_t> divmmc = ReadFile(std::filesystem::path(std::getenv("UNREAL_NEXT_FIRMWARE")) / "machines/next/enNxtmmc.rom");
+    const std::vector<uint8_t> divmmc = ReadFile(CardFolder() / "machines/next/enNxtmmc.rom");
     ASSERT_EQ(divmmc.size(), 8192u);
     // DivMMC ROM: SRAM #010000 = the first half of ROM page 4
     EXPECT_EQ(std::memcmp(_memory->ROMPageHostAddress(4), divmmc.data(), 8192), 0) << "the DivMMC ROM";
@@ -217,6 +228,30 @@ TEST_F(NextFirmware_Test, PersonalityRomStallHunt)
     }
     for (auto& [k, n] : wr)
         std::fprintf(stderr, " %02X=%02X x%u", k >> 8, k & 0xFF, n);
+    if (const char* dump = std::getenv("UNREAL_NEXT_DUMP"))
+    {
+        // the ULA screen (RAM bank 5 -> 16K page 5) and the Layer 2 banks (16K pages 8-10) as raw files for scratch conversion
+        std::ofstream ula(std::string(dump) + "/ula.bin", std::ios::binary);
+        ula.write(reinterpret_cast<const char*>(_memory->RAMPageAddress(5)), 0x1B00);
+        std::ofstream l2(std::string(dump) + "/l2.bin", std::ios::binary);
+        for (unsigned bank = 8; bank < 13; bank++)
+            l2.write(reinterpret_cast<const char*>(_memory->RAMPageAddress(static_cast<uint16_t>(bank))), 0x4000);
+        std::ofstream ram7(std::string(dump) + "/ram7.bin", std::ios::binary);
+        ram7.write(reinterpret_cast<const char*>(_memory->RAMPageAddress(7)), 0x4000);
+    }
+    {
+        // where does the text of the welcome screen stand: every RAM page, plain ASCII
+        const char* needles[] = {"Welcome", "NextZXOS", "Browser", "Tape Loader", "Calculator"};
+        for (const char* needle : needles)
+            for (uint16_t page = 0; page < 128; page++)
+            {
+                const uint8_t* ram = _memory->RAMPageAddress(page);
+                const size_t n = std::strlen(needle);
+                for (size_t i = 0; i + n <= 0x4000; i++)
+                    if (std::memcmp(ram + i, needle, n) == 0)
+                        std::fprintf(stderr, "\nfound '%s' in RAM page %u offset %04zX", needle, page, i);
+            }
+    }
     std::fprintf(stderr, "\npc histogram (top):");
     std::vector<std::pair<uint32_t, uint16_t>> top;
     for (auto& [p, n] : pcHist)

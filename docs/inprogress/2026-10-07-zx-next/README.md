@@ -58,6 +58,7 @@ something that can be shipped and checked from every automation surface.
 | [design-integration.md](design-integration.md) | where the Next's code goes: the `unreal-next-z80` library, one interface for z80 / z84c15 / z80n, the engine adapter, what stays out of shared code |
 | [research-fpga-vhdl.md](research-fpga-vhdl.md) | the FPGA VHDL and the tbblue firmware read in N0: timing, contention, memory map, ports, tilemap, Layer 2, sprites, copper, DMA, interrupts, boot chain, test corpus |
 | [research-other-emulators.md](research-other-emulators.md) | MAME, jnext, ZEsarUX, CSpect: what each models and how it is built |
+| [research-cosim-first-diff.md](research-cosim-first-diff.md) | the co-simulation tools (`tools/verification/next-cosim`) and the first diff of the real boot against jnext: NR #8C AltROM missing |
 | [research-sources.md](research-sources.md) | every source with link, revision read and what it is good for |
 | [TODO.md](TODO.md) | status marker, what is done and what is open |
 

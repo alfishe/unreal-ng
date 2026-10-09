@@ -26,7 +26,7 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 
 ## P2-P4 status (2026-10-08)
 - [x] P2 memory-model micro-benchmark ([PoC 024](../../../tools/poc/024-next-memory-model/README.md)): D6 confirmed
-- [x] P3 boot chain (`f63eb2684`): the real boot ROM -> `TBBLUE.FW` from a FAT16 card -> the golden NextREG sequence -> soft reset into the personality ROM; `NextFirmware_Test` needs `UNREAL_NEXT_FIRMWARE`
+- [x] P3 boot chain (`f63eb2684`): the real boot ROM -> `TBBLUE.FW` from a FAT16 card -> the golden NextREG sequence -> soft reset into the personality ROM; `NextFirmware_Test` runs on `testdata/machines/zxnext/card`
 - [ ] P3 left: SPI flash (the firmware's core-version read passes only because NR #01/#0E answer 3.02.03), DivMMC automap on the Next, keyboard-driven menu
 - [x] P4 `DivMmcPaging` + UnoDOS 3.141 on the 48K machine (`DivMmcUnoDos_Test`)
 - [ ] P4 left: TTD blob for the device, the `divmmc` slot card, reset of the device with the machine, the "ROM 3 only" automap condition of the +2A/+3, the Next backend over the slot table (N9)

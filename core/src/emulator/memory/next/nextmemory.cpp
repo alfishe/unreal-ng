@@ -172,6 +172,48 @@ void NextMemory::SetDivMmcView(const DivMmcView& view)
     Remap();
 }
 
+uint8_t NextMemory::EffectiveRom() const
+{
+    const bool lock1 = (_alt & 0x20) != 0;
+    const bool lock0 = (_alt & 0x10) != 0;
+    switch (_machineType)
+    {
+        case 1:
+            return 0;
+        case 3:
+            return (lock1 || lock0) ? static_cast<uint8_t>((lock1 << 1) | lock0) : _rom;
+        default:
+            return (lock1 || lock0) ? static_cast<uint8_t>(lock1) : static_cast<uint8_t>(_rom & 1);
+    }
+}
+
+/// Alt ROM 0 (128K) is the 16K page 6 of the system area, alt ROM 1 (48K) page 7
+uint8_t NextMemory::AltPage() const
+{
+    const bool lock1 = (_alt & 0x20) != 0;
+    const bool lock0 = (_alt & 0x10) != 0;
+    bool alt48;
+    if (_machineType == 1)
+        alt48 = !(!lock1 && lock0);
+    else
+        alt48 = (lock1 || lock0) ? lock1 : ((_rom & 1) != 0);
+    return alt48 ? 7 : 6;
+}
+
+void NextMemory::SetMachineType(uint8_t type)
+{
+    if (type == _machineType)
+        return;
+    _machineType = type;
+    Remap();
+}
+
+void NextMemory::SetAltRomRegister(uint8_t value)
+{
+    _alt = value;
+    Remap();
+}
+
 void NextMemory::SetContentionRule(uint8_t timing)
 {
     _contentionRule = timing;
@@ -267,6 +309,7 @@ void NextMemory::MapSlot(unsigned slot)
         _readOff[slot] = static_cast<uint32_t>(mem - _memory);
         _writeOff[slot] = writable ? _readOff[slot] : trash;
         _physPage[slot] = ttd::kPhysPageNone;
+        _kind[slot] = (slot == 0 && !_divView.bank3AtZero) ? "divmmc rom" : "divmmc ram";
     }
     else if (value == kMmuRom && bootRomHere)
     {
@@ -274,6 +317,7 @@ void NextMemory::MapSlot(unsigned slot)
         _readOff[slot] = static_cast<uint32_t>(ROMPageHostAddress(kBootRomPage) - _memory);
         _writeOff[slot] = trash;
         _physPage[slot] = ttd::kPhysPageNone;
+        _kind[slot] = "boot rom";
     }
     else if (value == kMmuRom && slot < 2 && _configMode)
     {
@@ -281,24 +325,44 @@ void NextMemory::MapSlot(unsigned slot)
         const uint8_t* mem = _cfgBank < kSystemAreaPages ? ROMPageHostAddress(_cfgBank) : RAMPageAddress(_cfgBank - kSystemAreaPages);
         _readOff[slot] = _writeOff[slot] = static_cast<uint32_t>(mem + slot * kSlotSize - _memory);
         _physPage[slot] = _cfgBank < kSystemAreaPages ? ttd::kPhysPageNone : static_cast<ttd::PhysPage>(_cfgBank - kSystemAreaPages);
+        _kind[slot] = "config bank";
     }
     else if (value == kMmuRom)
     {
-        const uint8_t* rom = ROMPageHostAddress(_rom) + (slot & 1) * kSlotSize;
+        const uint8_t* rom = ROMPageHostAddress(EffectiveRom()) + (slot & 1) * kSlotSize;
         _readOff[slot] = static_cast<uint32_t>(rom - _memory);
         _writeOff[slot] = trash;
         _physPage[slot] = ttd::kPhysPageNone;
+        _kind[slot] = "rom";
+        if (_alt & 0x80)
+        {
+            // the alternate ROM (system page 6 / 7): replaces the ROM for reads, or is written through the ROM area
+            const uint8_t* alt = ROMPageHostAddress(AltPage()) + (slot & 1) * kSlotSize;
+            const uint32_t altOff = static_cast<uint32_t>(alt - _memory);
+            if (_alt & 0x40)
+            {
+                _writeOff[slot] = altOff;
+                _kind[slot] = "rom (alt rom written)";
+            }
+            else
+            {
+                _readOff[slot] = altOff;
+                _kind[slot] = "alt rom";
+            }
+        }
     }
     else if (value < kRamPages8K && (value >> 1) < MAX_RAM_PAGES)
     {
         const uint8_t* ram = RAMPageAddress(value >> 1) + (value & 1) * kSlotSize;
         _readOff[slot] = _writeOff[slot] = static_cast<uint32_t>(ram - _memory);
         _physPage[slot] = static_cast<ttd::PhysPage>(value >> 1);
+        _kind[slot] = "ram";
     }
     else
     {
         _readOff[slot] = _writeOff[slot] = trash;
         _physPage[slot] = ttd::kPhysPageNone;
+        _kind[slot] = "unmapped";
     }
 }
 

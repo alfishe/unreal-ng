@@ -346,6 +346,55 @@ void EmulatorAPI::getStateTsConfTsu(const HttpRequestPtr& req, std::function<voi
 }
 
 
+/// region <Next>
+
+/// @brief GET /api/v1/emulator/{id}/state/next - the ZX Spectrum Next (DeviceState::Next); "available": false elsewhere
+void EmulatorAPI::getStateNext(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::Next(emulator->GetContext()), callback);
+}
+
+void EmulatorAPI::getStateNextActive(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    auto emulator = getEmulatorWithGlobalSelection();
+    if (!emulator)
+    {
+        const size_t count = EmulatorManager::GetInstance()->GetEmulatorIds().size();
+        return ReplyNotFound(MultipleEmulatorsMessage(count, "/api/v1/emulator/{id}/state/next"), callback,
+                             count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
+    }
+    getStateNext(req, std::move(callback), emulator->GetId());
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/regs - every NextREG with access, value and reset (the next_regs report)
+void EmulatorAPI::getStateNextRegs(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextRegs(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/mmu - the eight 8K slots (the next_mmu report)
+void EmulatorAPI::getStateNextMmu(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextMmu(emulator->GetContext()), callback);
+}
+
+/// endregion </Next>
+
 /// region <Sprinter>
 
 /// @brief GET /api/v1/emulator/{id}/state/sprinter - the Sprinter Sp2000 (DeviceState::Sprinter); 404 on other machines

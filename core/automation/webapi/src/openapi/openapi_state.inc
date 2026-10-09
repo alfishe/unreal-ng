@@ -153,6 +153,46 @@
     paths["/api/v1/emulator/{id}/state/fdc"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/fdc"]["get"]["responses"]["200"]["description"] = "Get Beta Disk WD1793 state";
 
+    {
+        struct NextRoute
+        {
+            const char* path;
+            const char* summary;
+            const char* description;
+            bool withId;
+        };
+        const NextRoute routes[] = {
+            {"/api/v1/emulator/{id}/state/next", "Get ZX Spectrum Next machine state",
+             "The ZX Spectrum Next (model NEXT): machine (machine type and frame family, CPU clock and speed ratio, config mode "
+             "and boot ROM, contention), mmu (the eight 8K slots), divmmc (#E3, automap and its NextREGs), interrupts (pulse or "
+             "hardware IM2, enables, pending, in service), ctc (four channels), spi (the SD cards), rtc. "
+             "\"available\": false on other machines.", true},
+            {"/api/v1/emulator/state/next", "Get ZX Spectrum Next machine state (active emulator)",
+             "Same as /api/v1/emulator/{id}/state/next for the only or selected emulator.", false},
+            {"/api/v1/emulator/{id}/state/next/regs", "Get the NextREG table",
+             "Every NextREG of the distribution's register table (registers.txt v2.4): number, name, access, value and the "
+             "reset value where the document gives one for the whole byte.", true},
+            {"/api/v1/emulator/{id}/state/next/mmu", "Get the Next MMU slots",
+             "The eight 8K slots: MMU value, address range, what they show (ram, rom, boot rom, config bank, divmmc rom/ram), "
+             "the ROM select, the config mode / bank and the paging latches.", true},
+        };
+        for (const NextRoute& r : routes)
+        {
+            paths[r.path]["get"]["summary"] = r.summary;
+            paths[r.path]["get"]["tags"].append("Machine State");
+            paths[r.path]["get"]["description"] = r.description;
+            if (r.withId)
+            {
+                paths[r.path]["get"]["parameters"][0]["name"] = "id";
+                paths[r.path]["get"]["parameters"][0]["in"] = "path";
+                paths[r.path]["get"]["parameters"][0]["required"] = true;
+                paths[r.path]["get"]["parameters"][0]["schema"]["type"] = "string";
+            }
+            paths[r.path]["get"]["responses"]["200"]["description"] = "Next report";
+            paths[r.path]["get"]["responses"]["404"]["description"] = "Emulator not found";
+        }
+    }
+
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["summary"] = "Get IDE board state";
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["tags"].append("Disk State");
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["description"] =

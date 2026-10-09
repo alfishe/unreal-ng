@@ -212,6 +212,17 @@ struct SprinterPortQuery
     int direction = -1;  ///< 1 = read (IN), 0 = write (OUT), -1 = both
 };
 StateNode Sprinter(EmulatorContext* context);
+
+/// ZX Spectrum Next (built beside the Next code, ports/models/portdecoder_next_state.cpp; "available": false on other
+/// machines):
+/// - `Next()`: machine type and frame family, speed, config mode / boot ROM, the eight MMU slots (value, address range,
+///   what they show), the paging latches, DivMMC (#E3, automap), interrupts (mode, enables, pending, in service), the CTC
+///   channels, the SPI cards, the RTC, contention
+/// - `NextRegs()`: every NextREG of the table with its access, value and reset (the `next_regs` report)
+/// - `NextMmu()`: the slots alone (the `next_mmu` report)
+StateNode Next(EmulatorContext* context);
+StateNode NextRegs(EmulatorContext* context);
+StateNode NextMmu(EmulatorContext* context);
 StateNode SprinterPaging(EmulatorContext* context);
 /// The text of the picture's text squares (80 x 32: BIOS SETUP, DSS) from the mode table - the
 /// Sprinter has no ZX screen to OCR; graphics squares read as spaces

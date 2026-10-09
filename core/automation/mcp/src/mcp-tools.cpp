@@ -1456,7 +1456,7 @@ void RegisterInspectState(ToolRegistry& registry)
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "profi", "isa", "network", "mouse",
-                               "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text",
+                               "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
                                "audio_multisound", "audio_midi"})
@@ -1647,7 +1647,7 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
                     aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "profi" && aspect != "isa" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
-                    aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
+                    aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "next" && aspect != "next_regs" && aspect != "next_mmu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
@@ -2010,6 +2010,18 @@ void RegisterInspectState(ToolRegistry& registry)
                             // Core DeviceState::TsConf via the WebAPI; 404 = not a TS-Conf machine
                             steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, "/state/tsconf"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu")
+                        {
+                            // Core DeviceState::Next / NextRegs / NextMmu via the WebAPI ("available": false elsewhere)
+                            const std::string path = aspect == "next" ? "/state/next" : aspect == "next_regs" ? "/state/next/regs" : "/state/next/mmu";
+                            steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -2586,6 +2598,24 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << value["port_map"]["ext_ports"].asString() << ", extended map "
                                         << (value["port_map"]["extended_map"].asBool() ? "open" : "closed") << ", 8255 control #"
                                         << std::hex << value["ppi8255"]["control"].asInt() << std::dec;
+                            }
+                            else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[" << aspect << "] " << value["description"].asString();
+                                else if (aspect == "next")
+                                    out << "\n[next] type " << value["machine"]["machine_type"].asInt() << " (" << value["machine"]["timing"].asString()
+                                        << " timing), " << value["machine"]["cpu_clock_hz"].asDouble() / 1e6 << " MHz, "
+                                        << (value["machine"]["config_mode"].asBool() ? "config mode" : "running") << ", interrupts "
+                                        << value["interrupts"]["mode"].asString() << ", DivMMC " << (value["divmmc"]["mapped"].asBool() ? "mapped" : "out");
+                                else if (aspect == "next_mmu")
+                                {
+                                    out << "\n[next_mmu]";
+                                    for (const auto& slot : value["slots"])
+                                        out << " " << slot["mmu"].asString() << ":" << slot["kind"].asString();
+                                }
+                                else
+                                    out << "\n[next_regs] " << value["registers"].size() << " registers";
                             }
                             else if (aspect == "tsconf_tsu")
                             {

@@ -2,8 +2,10 @@
 
 #include <cstdint>
 #include <map>
+#include <string>
 #include <vector>
 
+#include "emulator/io/z80n/nextvideoregs.h"
 #include "emulator/io/z80n/z80nengine.h"
 
 class NextMemory;
@@ -50,6 +52,7 @@ public:
     static constexpr uint8_t kRegMachineType = 0x03;
     static constexpr uint8_t kRegConfigMapping = 0x04;
     static constexpr uint8_t kRegCpuSpeed = 0x07;
+    static constexpr uint8_t kRegAltRom = 0x8C;
     static constexpr uint8_t kRegMemoryMapping = 0x8E;
     static constexpr uint8_t kRegPeripheral2 = 0x08;
     static constexpr uint8_t kRegPeripheral4 = 0x09;  ///< bit 6: contention disable
@@ -86,12 +89,17 @@ public:
     /// The raw stored byte of a register (reports, tests)
     uint8_t Stored(uint8_t reg) const { return _regs[reg]; }
 
+    /// The `next_regs` report: one line per register of the table with its value and reset
+    std::string DescribeRegisters() const;
+
     void WriteNextReg(uint8_t reg, uint8_t value) override { Write(reg, value); }
     void AfterInstruction() override;
 
     /// Machine type (NR #03 bits 2:0): 0 config mode, 1 48K, 2 128K, 3 +3, 4 Pentagon
     /// The bare personality's machine type (no firmware chooses it): 1 48K, 2 128K, 3 +3, 4 Pentagon
-    void SetMachineType(uint8_t type) { _regs[kRegMachineType] = static_cast<uint8_t>((_regs[kRegMachineType] & 0xF8) | (type & 7)); }
+    void SetMachineType(uint8_t type);
+    NextVideoRegs& Video() { return _video; }
+    const NextVideoRegs& Video() const { return _video; }
     uint8_t MachineType() const { return _regs[kRegMachineType] & 7; }
     /// The frame family in effect (NR #03 bits 6:4 once written, else the machine type)
     uint8_t Timing() const { return _timing; }
@@ -99,6 +107,7 @@ public:
 
 private:
     NextMemory* _memory;
+    NextVideoRegs _video;
     NextInterruptSource* _interrupts = nullptr;
     INextMachine* _machine = nullptr;
     uint8_t _selected = 0;

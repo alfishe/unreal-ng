@@ -55,7 +55,17 @@ public:
     uint8_t GetMmu(unsigned slot) const { return _mmu[slot & 7]; }
     /// The 16K ROM (0..3) behind MMU value 255
     void SetRomSelect(uint8_t rom);
-    uint8_t GetRomSelect() const { return _rom; }
+    /// The 16K ROM the slots show (0-3): the machine type and the NR #8C locks decide it from the paging ports' ROM bits
+    uint8_t GetRomSelect() const { return EffectiveRom(); }
+    /// The machine type (NR #03 bits 2:0: 1 48K, 2 128K, 3 +3, 4 Pentagon): it decides how the ROM bits and locks combine
+    void SetMachineType(uint8_t type);
+    /// NR #8C (register byte as written; bits 3:0 take effect after a soft reset): bit 7 alt ROM on, 6 visible during
+    /// writes only (the alt ROM is writable and reads show the normal ROM), 5 / 4 lock ROM 1 / ROM 0. Alt ROM 0 (128K) is
+    /// system page 6, alt ROM 1 (48K) page 7
+    void SetAltRomRegister(uint8_t value);
+    uint8_t AltRomRegister() const { return _alt; }
+    uint8_t EffectiveRom() const;
+    uint8_t AltPage() const;
     /// #DFFD bits 0-3: the bank bits above #7FFD's three
     void SetExtendedBank(uint8_t value);
     uint8_t GetExtendedBank() const { return _dffd; }
@@ -102,6 +112,8 @@ public:
     uint8_t PeekSlot(uint16_t addr) const;
     /// Physical 8K address (offset in the buffer) behind a CPU address, for reports
     uint32_t SlotReadOffset(unsigned slot) const { return _readOff[slot & 7]; }
+    /// What a slot shows: "ram", "rom", "boot rom", "config bank", "divmmc rom", "divmmc ram", "unmapped"
+    const char* SlotKind(unsigned slot) const { return _kind[slot & 7]; }
     /// endregion
 
 protected:
@@ -114,13 +126,16 @@ private:
     void SyncWindows();
 
     uint8_t _mmu[kSlots] = {};
-    uint8_t _rom = 0;
+    uint8_t _rom = 0;      ///< the ROM bits of the paging ports ({#1FFD bit 2, #7FFD bit 4})
+    uint8_t _machineType = 2;
+    uint8_t _alt = 0;
     uint8_t _dffd = 0;
     DivMmcView _divView;
     bool _configMode = false;
     bool _bootRom = false;
     bool _bootRomLoaded = false;
     uint8_t _cfgBank = 0;
+    const char* _kind[kSlots] = {};
     uint32_t _readOff[kSlots] = {};
     uint32_t _writeOff[kSlots] = {};
     ttd::PhysPage _physPage[kSlots] = {};

@@ -1,0 +1,282 @@
+--- /dev/null
++++ b/src/mame/sinclair/next/cosim_trace.h
+@@ -0,0 +1,150 @@
++// Co-simulation trace sink (unreal-ng tools/verification/next-cosim). Not part of upstream jnext.
++// One text line per event, see trace-format.md:  <seq> <KIND> <addr> <value> <pc>
++// Everything is driven by environment variables; with COSIM_TRACE unset every hook is a single mask test.
++#pragma once
++
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++#include <utility>
++#include <vector>
++
++namespace cosim {
++
++enum Kind : uint32_t { NRW = 1, NRR = 2, POUT = 4, PIN = 8, MMU = 16, IRQ = 32, PCS = 64, FRM = 128 };
++
++struct State {
++    FILE* f = nullptr;
++    uint64_t seq = 0;
++    uint32_t mask = 0;          // enabled kinds (0 = tracing off)
++    uint16_t pc = 0;            // PC of the instruction being executed
++    uint64_t frame = 0;         // completed frames
++    uint32_t pcsEvery = 0;      // PC sample every N instructions (0 = off)
++    uint64_t pcsCount = 0;
++    std::vector<std::pair<uint64_t, uint64_t>> windows;  // [first, last) frames with a PCS per instruction
++    bool inWindow = false;
++    bool portSkip[256] = {};    // low port byte to leave out (SPI data is noisy)
++    long dumpFrame = -1;        // frame count after which the state dump is written
++    std::string dumpDir;
++    uint8_t mmu[8] = {};        // last reported MMU slots
++    bool mmuInit = false;
++
++    State()
++    {
++        const char* path = std::getenv("COSIM_TRACE");
++        const char* dump = std::getenv("COSIM_DUMP");
++        if (const char* fr = std::getenv("COSIM_FRAMES"))
++            dumpFrame = std::atol(fr);
++        if (dump)
++            dumpDir = dump;
++        if (!path || !*path)
++            return;
++        f = std::fopen(path, "w");
++        if (!f)
++            return;
++        std::setvbuf(f, nullptr, _IOFBF, 1 << 20);
++        mask = NRW | NRR | POUT | PIN | MMU | IRQ | FRM;
++        if (const char* k = std::getenv("COSIM_KINDS")) {
++            mask = 0;
++            std::string s(k);
++            const char* names[] = {"NRW", "NRR", "POUT", "PIN", "MMU", "IRQ", "PCS", "FRM"};
++            for (int i = 0; i < 8; i++)
++                if (s.find(names[i]) != std::string::npos)
++                    mask |= 1u << i;
++        }
++        if (const char* p = std::getenv("COSIM_PCS"))
++            pcsEvery = static_cast<uint32_t>(std::atol(p));
++        if (pcsEvery)
++            mask |= PCS;
++        if (const char* w = std::getenv("COSIM_PCWIN")) {  // "start:count,start:count"
++            std::string s(w);
++            size_t i = 0;
++            while (i < s.size()) {
++                size_t c = s.find(':', i), e = s.find(',', i);
++                if (e == std::string::npos)
++                    e = s.size();
++                if (c != std::string::npos && c < e) {
++                    uint64_t a = std::strtoull(s.c_str() + i, nullptr, 10);
++                    uint64_t n = std::strtoull(s.c_str() + c + 1, nullptr, 10);
++                    windows.push_back({a, a + n});
++                }
++                i = e + 1;
++            }
++            if (!windows.empty())
++                mask |= PCS;
++        }
++        if (const char* sk = std::getenv("COSIM_PORT_SKIP")) {  // "eb,e7"
++            std::string s(sk);
++            size_t i = 0;
++            while (i < s.size()) {
++                size_t e = s.find(',', i);
++                if (e == std::string::npos)
++                    e = s.size();
++                portSkip[std::strtoul(s.c_str() + i, nullptr, 16) & 0xFF] = true;
++                i = e + 1;
++            }
++        }
++    }
++    ~State()
++    {
++        if (f)
++            std::fclose(f);
++    }
++};
++
++inline State g;
++
++inline bool on(Kind k) { return (g.mask & k) != 0; }
++
++inline void nr(bool write, uint8_t reg, uint8_t val)
++{
++    std::fprintf(g.f, "%llu %s %02X %02X %04X\n", static_cast<unsigned long long>(g.seq++), write ? "NRW" : "NRR", reg, val, g.pc);
++}
++
++// Ports 0x243B / 0x253B are reported as NRW / NRR only
++inline void port(bool write, uint16_t p, uint8_t val)
++{
++    if (p == 0x243B || p == 0x253B || g.portSkip[p & 0xFF])
++        return;
++    std::fprintf(g.f, "%llu %s %04X %02X %04X\n", static_cast<unsigned long long>(g.seq++), write ? "POUT" : "PIN", p, val, g.pc);
++}
++
++inline void irq(uint8_t vec, uint16_t pcBefore)
++{
++    std::fprintf(g.f, "%llu IRQ %02X %02X %04X\n", static_cast<unsigned long long>(g.seq++), vec, 0, pcBefore);
++}
++
++inline void mmuSlot(int slot, uint8_t page)
++{
++    std::fprintf(g.f, "%llu MMU %d %02X %04X\n", static_cast<unsigned long long>(g.seq++), slot, page, g.pc);
++}
++
++inline void pcs(uint16_t pcv)
++{
++    std::fprintf(g.f, "%llu PCS %04X 00 %04X\n", static_cast<unsigned long long>(g.seq++), pcv, pcv);
++}
++
++inline void frame()
++{
++    g.frame++;
++    g.inWindow = false;
++    for (auto& w : g.windows)
++        if (g.frame >= w.first && g.frame < w.second)
++            g.inWindow = true;
++    if (g.mask & FRM)
++        std::fprintf(g.f, "%llu FRM %llu 00 %04X\n", static_cast<unsigned long long>(g.seq++), static_cast<unsigned long long>(g.frame), g.pc);
++}
++
++// Called once per instruction before it executes
++inline void instruction(uint16_t pcv)
++{
++    g.pc = pcv;
++    if (g.mask & PCS) {
++        if (g.inWindow || (g.pcsEvery && (++g.pcsCount % g.pcsEvery) == 0))
++            pcs(pcv);
++    }
++}
++
++}  // namespace cosim
+--- a/src/mame/sinclair/next/specnext.cpp
++++ b/src/mame/sinclair/next/specnext.cpp
+@@ -17,6 +17,9 @@
+ **********************************************************************/
+ 
+ #include "emu.h"
++#include "video.h"
++
++#include "cosim_trace.h"
+ 
+ #include "../screen_ula.h"
+ #include "../spec128.h"
+@@ -421,6 +424,12 @@
+ 	u8 m_port_eff7_data;
+ 	u8 m_port_e7_reg;
+ 	u8 m_nr_register;
++	memory_passthrough_handler m_cosim_io_r;
++	memory_passthrough_handler m_cosim_io_w;
++	memory_passthrough_handler m_cosim_m1;
++	void cosim_pc() { cosim::g.pc = m_maincpu->pcbase(); }
++	void cosim_slot(u8 bank, u16 sram_a21_a13);
++	void cosim_dump();
+ 	u8 m_port_e3_reg;
+ 	bool m_divmmc_delayed_check;
+ 
+@@ -684,6 +693,7 @@
+ 	const bool is_rom = (bank >> 1) == 0;
+ 	if (m_bootrom_en && is_rom)
+ 	{
++		if (cosim::g.mask & cosim::MMU) cosim_slot(bank, 0);
+ 		m_bank_boot_rom->set_entry(m_nr_10_coreid > 0 ? 1 : 0);
+ 		return views[bank].get().select(2);
+ 	}
+@@ -880,6 +890,7 @@
+ 		}
+ 		else // read cycle
+ 		{
++			if (cosim::g.mask & cosim::MMU) cosim_slot(bank, sram_A21_A13);
+ 			if (sram_A21_A13 < m_ram_pages)
+ 			{
+ 				if (!sram_active && !sram_mem_hide_n && (sram_bank5 || sram_bank7))
+@@ -2832,8 +2843,47 @@
+ 	update_dma_delay();
+ }
+ 
++void specnext_state::cosim_slot(u8 bank, u16 a)
++{
++	const u8 page = (a >= 0x20 && a < 0x20 + 0xe0) ? (a - 0x20) : 0xff;
++	static u8 seen = 0;
++	const bool first = !BIT(seen, bank);
++	seen |= 1 << bank;
++	if (first || cosim::g.mmu[bank] != page)
++	{
++		cosim::g.mmu[bank] = page;
++		cosim_pc();
++		cosim::mmuSlot(bank, page);
++	}
++}
++
++void specnext_state::cosim_dump()
++{
++	if (cosim::g.dumpDir.empty()) return;
++	if (cosim::g.f) std::fflush(cosim::g.f);
++	FILE* d = std::fopen((cosim::g.dumpDir + "/state.txt").c_str(), "w");
++	if (d)
++	{
++		std::fprintf(d, "emulator mame\nframes %llu\n", static_cast<unsigned long long>(cosim::g.frame));
++		std::fprintf(d, "regs PC=%04X SP=%04X AF=%04X BC=%04X DE=%04X HL=%04X AF2=%04X BC2=%04X DE2=%04X HL2=%04X IX=%04X IY=%04X I=%02X R=%02X IM=%d IFF1=%d IFF2=%d HALT=%d\n",
++			unsigned(m_maincpu->state_int(Z80_PC)), unsigned(m_maincpu->state_int(Z80_SP)), unsigned(m_maincpu->state_int(Z80_AF)), unsigned(m_maincpu->state_int(Z80_BC)), unsigned(m_maincpu->state_int(Z80_DE)), unsigned(m_maincpu->state_int(Z80_HL)),
++			unsigned(m_maincpu->state_int(Z80_AF2)), unsigned(m_maincpu->state_int(Z80_BC2)), unsigned(m_maincpu->state_int(Z80_DE2)), unsigned(m_maincpu->state_int(Z80_HL2)), unsigned(m_maincpu->state_int(Z80_IX)), unsigned(m_maincpu->state_int(Z80_IY)),
++			unsigned(m_maincpu->state_int(Z80_I)), unsigned(m_maincpu->state_int(Z80_R)), int(m_maincpu->state_int(Z80_IM)), int(m_maincpu->state_int(Z80_IFF1)), int(m_maincpu->state_int(Z80_IFF2)), int(m_maincpu->state_int(Z80_HALT)));
++		for (int i = 0; i < 8; i++)
++			std::fprintf(d, "mmu %d %02X\n", i, cosim::g.mmu[i]);
++		for (int i = 0; i < 256; i++)
++			std::fprintf(d, "nr %02X %02X\n", i, m_next_regs.read_byte(i));
++		std::fclose(d);
++	}
++	machine().video().save_active_screen_snapshots();
++	machine().schedule_exit();
++}
++
+ INTERRUPT_GEN_MEMBER(specnext_state::on_vblank)
+ {
++	if (cosim::g.dumpFrame >= 0 && cosim::g.frame == static_cast<uint64_t>(cosim::g.dumpFrame)) cosim_dump();
++	cosim_pc();
++	cosim::frame();
+ 	m_tiles->control_w(m_nr_6b_tm_control); // TODO (1): Santa's Pressie, The Next War
+ 
+ 	const bool tmp = ~m_io_video.read_safe(0) & 1;
+@@ -3268,8 +3318,8 @@
+ 	map(0x163b, 0x163b).rw(FUNC(specnext_state::uart_reg_r<2>), FUNC(specnext_state::uart_reg_w<2>));
+ 	map(0x243b, 0x243b).lrw8(NAME([this]() { return m_nr_register; })
+ 		, NAME([this](u8 data) { m_nr_register = data; }));
+-	map(0x253b, 0x253b).lrw8(NAME([this]() { return m_next_regs.read_byte(m_nr_register); })
+-		, NAME([this](u8 data) { m_next_regs.write_byte(m_nr_register, data); }));
++	map(0x253b, 0x253b).lrw8(NAME([this]() { u8 v = m_next_regs.read_byte(m_nr_register); if (cosim::g.mask & cosim::NRR) { cosim_pc(); cosim::nr(false, m_nr_register, v); } return v; })
++		, NAME([this](u8 data) { if (cosim::g.mask & cosim::NRW) { cosim_pc(); cosim::nr(true, m_nr_register, data); } m_next_regs.write_byte(m_nr_register, data); }));
+ 	map(0x303b, 0x303b).lrw8(NAME([this]() {
+ 		return port_sprite_io_en() ? m_sprites->status_r() : 0x00;
+ 	}), NAME([this](u8 data) {
+@@ -3440,6 +3490,13 @@
+ 
+ 	m_regs_map->space(AS_PROGRAM).specific(m_next_regs);
+ 
++	if (cosim::g.mask & cosim::PIN)
++		m_cosim_io_r = m_maincpu->space(AS_IO).install_read_tap(0x0000, 0xffff, "cosim_r", [this](offs_t offset, u8 &data, u8 mem_mask) { if (!machine().side_effects_disabled()) { cosim_pc(); cosim::port(false, offset, data); } });
++	if (cosim::g.mask & cosim::POUT)
++		m_cosim_io_w = m_maincpu->space(AS_IO).install_write_tap(0x0000, 0xffff, "cosim_w", [this](offs_t offset, u8 &data, u8 mem_mask) { if (!machine().side_effects_disabled()) { cosim_pc(); cosim::port(true, offset, data); } });
++	if (cosim::g.mask & cosim::PCS)
++		m_cosim_m1 = m_maincpu->space(AS_OPCODES).install_read_tap(0x0000, 0xffff, "cosim_m1", [](offs_t offset, u8 &data, u8 mem_mask) { cosim::instruction(offset); });
++
+ 	for (int addr = 0; addr < m_ram->size(); ++addr)
+ 		m_ram->pointer()[addr] = machine().rand();
+ 
+@@ -4149,11 +4206,11 @@
+ 	m_maincpu->set_io_map(&specnext_state::map_io);
+ 	m_maincpu->set_vblank_int("screen", FUNC(specnext_state::on_vblank));
+ 	m_maincpu->set_irq_acknowledge_callback(NAME([](device_t &, int){ return 0xff; }));
+-	m_maincpu->out_nextreg_cb().set([this](offs_t offset, u8 data) { m_next_regs.write_byte(offset, data); });
+-	m_maincpu->in_nextreg_cb().set([this](offs_t offset) { return m_next_regs.read_byte(offset); });
++	m_maincpu->out_nextreg_cb().set([this](offs_t offset, u8 data) { if (cosim::g.mask & cosim::NRW) { cosim_pc(); cosim::nr(true, offset, data); } m_next_regs.write_byte(offset, data); });
++	m_maincpu->in_nextreg_cb().set([this](offs_t offset) { u8 v = m_next_regs.read_byte(offset); if (cosim::g.mask & cosim::NRR) { cosim_pc(); cosim::nr(false, offset, v); } return v; });
+ 	m_maincpu->out_retn_seen_cb().set(FUNC(specnext_state::leave_nmi));
+ 	m_maincpu->busack_cb().set(m_dma, FUNC(specnext_dma_device::bai_w));
+-	m_maincpu->irqack_cb().set([this](int) { m_screen->update_now(); });
++	m_maincpu->irqack_cb().set([this](int) { if (cosim::g.mask & cosim::IRQ) { cosim_pc(); cosim::irq(0, cosim::g.pc); } m_screen->update_now(); });
+ 
+ 	SPECNEXT_IM2(config, m_im2_line);
+ 	m_im2_line->irq_callback().set(FUNC(specnext_state::irq_w));

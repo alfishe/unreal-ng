@@ -1,0 +1,322 @@
+--- /dev/null
++++ b/cosim_trace.h
+@@ -0,0 +1,28 @@
++/* Co-simulation trace sink (unreal-ng tools/verification/next-cosim). Not part of upstream ZEsarUX.
++   One text line per event, see trace-format.md:  <seq> <KIND> <addr> <value> <pc>
++   Driven by environment variables; with COSIM_TRACE unset every hook is one mask test.
++   The implementation lives at the end of machines/tbblue.c */
++#ifndef COSIM_TRACE_H
++#define COSIM_TRACE_H
++
++#include <stdio.h>
++
++#define COSIM_NRW  1
++#define COSIM_NRR  2
++#define COSIM_POUT 4
++#define COSIM_PIN  8
++#define COSIM_MMU  16
++#define COSIM_IRQ  32
++#define COSIM_PCS  64
++#define COSIM_FRM  128
++
++extern unsigned int cosim_mask;
++extern unsigned int cosim_pc;
++
++void cosim_nr(int write,unsigned int reg,unsigned int val);
++void cosim_port(int write,unsigned int port,unsigned int val);
++void cosim_irq(unsigned int vec);
++void cosim_instruction(unsigned int pc);
++void cosim_frame(void);
++
++#endif
+--- a/machines/tbblue.c
++++ b/machines/tbblue.c
+@@ -25,6 +25,7 @@
+ 
+ #include "cpu.h"
+ #include "tbblue.h"
++#include "cosim_trace.h"
+ #include "mem128.h"
+ #include "debug.h"
+ #include "contend.h"
+@@ -5504,6 +5505,7 @@
+ //tbblue_last_register
+ void tbblue_set_value_port(z80_byte value)
+ {
++    if (cosim_mask&COSIM_NRW) cosim_nr(1,tbblue_last_register,value);
+     tbblue_set_value_port_position(tbblue_last_register,value);
+ }
+ 
+@@ -5730,6 +5732,11 @@
+ 
+ z80_byte tbblue_get_value_port(void)
+ {
++    if (cosim_mask&COSIM_NRR) {
++        z80_byte v=tbblue_get_value_port_register(tbblue_last_register);
++        cosim_nr(0,tbblue_last_register,v);
++        return v;
++    }
+     return tbblue_get_value_port_register(tbblue_last_register);
+ }
+ 
+@@ -9003,3 +9010,154 @@
+     audio_valor_enviar_sonido_derecho=v;
+ 
+ }
++
++
++/* ---- co-simulation trace sink (unreal-ng tools/verification/next-cosim), see cosim_trace.h ---- */
++#include "cosim_trace.h"
++
++unsigned int cosim_mask=0;
++unsigned int cosim_pc=0;
++static FILE *cosim_f=NULL;
++static unsigned long long cosim_seq=0;
++static unsigned long long cosim_frame_no=0;
++static unsigned int cosim_pcs_every=0;
++static unsigned long long cosim_pcs_count=0;
++static int cosim_in_window=0;
++static unsigned long long cosim_win_a[16],cosim_win_n[16];
++static int cosim_nwin=0;
++static unsigned char cosim_port_skip[256];
++static long cosim_dump_frame=-1;
++static char cosim_dump_dir[1024];
++static unsigned char cosim_mmu_last[8];
++static int cosim_mmu_init=0;
++
++__attribute__((constructor)) static void cosim_init(void)
++{
++    const char *path=getenv("COSIM_TRACE");
++    const char *s;
++    if ((s=getenv("COSIM_FRAMES"))) cosim_dump_frame=atol(s);
++    if ((s=getenv("COSIM_DUMP"))) snprintf(cosim_dump_dir,sizeof(cosim_dump_dir),"%s",s);
++    if (!path || !*path) return;
++    cosim_f=fopen(path,"w");
++    if (!cosim_f) return;
++    setvbuf(cosim_f,NULL,_IOFBF,1<<20);
++    cosim_mask=COSIM_NRW|COSIM_NRR|COSIM_POUT|COSIM_PIN|COSIM_MMU|COSIM_IRQ|COSIM_FRM;
++    if ((s=getenv("COSIM_KINDS"))) {
++        cosim_mask=0;
++        if (strstr(s,"NRW")) cosim_mask|=COSIM_NRW;
++        if (strstr(s,"NRR")) cosim_mask|=COSIM_NRR;
++        if (strstr(s,"POUT")) cosim_mask|=COSIM_POUT;
++        if (strstr(s,"PIN")) cosim_mask|=COSIM_PIN;
++        if (strstr(s,"MMU")) cosim_mask|=COSIM_MMU;
++        if (strstr(s,"IRQ")) cosim_mask|=COSIM_IRQ;
++        if (strstr(s,"PCS")) cosim_mask|=COSIM_PCS;
++        if (strstr(s,"FRM")) cosim_mask|=COSIM_FRM;
++    }
++    if ((s=getenv("COSIM_PCS"))) cosim_pcs_every=(unsigned int)atol(s);
++    if (cosim_pcs_every) cosim_mask|=COSIM_PCS;
++    if ((s=getenv("COSIM_PCWIN"))) {   /* "start:count,start:count" */
++        while (*s && cosim_nwin<16) {
++            char *end;
++            unsigned long long a=strtoull(s,&end,10);
++            unsigned long long n;
++            if (*end!=':') break;
++            n=strtoull(end+1,&end,10);
++            cosim_win_a[cosim_nwin]=a; cosim_win_n[cosim_nwin]=n; cosim_nwin++;
++            if (*end!=',') break;
++            s=end+1;
++        }
++        if (cosim_nwin) cosim_mask|=COSIM_PCS;
++    }
++    if ((s=getenv("COSIM_PORT_SKIP"))) {   /* "eb,e7" low port bytes in hex */
++        while (*s) {
++            char *end;
++            unsigned long v=strtoul(s,&end,16);
++            cosim_port_skip[v&255]=1;
++            if (*end!=',') break;
++            s=end+1;
++        }
++    }
++}
++
++void cosim_nr(int write,unsigned int reg,unsigned int val)
++{
++    fprintf(cosim_f,"%llu %s %02X %02X %04X\n",cosim_seq++,write?"NRW":"NRR",reg&255,val&255,cosim_pc&0xFFFF);
++}
++
++/* ports 0x243B / 0x253B are reported as NRW / NRR only */
++void cosim_port(int write,unsigned int port,unsigned int val)
++{
++    port&=0xFFFF;
++    if (port==0x243B || port==0x253B || cosim_port_skip[port&255]) return;
++    fprintf(cosim_f,"%llu %s %04X %02X %04X\n",cosim_seq++,write?"POUT":"PIN",port,val&255,cosim_pc&0xFFFF);
++}
++
++void cosim_irq(unsigned int vec)
++{
++    fprintf(cosim_f,"%llu IRQ %02X 00 %04X\n",cosim_seq++,vec&255,reg_pc&0xFFFF);
++}
++
++static unsigned int cosim_slot_page(int s)
++{
++    long off=(long)(tbblue_memory_paged[s]-memoria_spectrum);
++    if (off>=0x40000 && off<0x40000+TBBLUE_MAX_SRAM_8KB_BLOCKS*8192) return (unsigned int)((off-0x40000)>>13);
++    return 0xFF;
++}
++
++/* called before every instruction: the MMU changes of the previous one are attributed to its PC */
++void cosim_instruction(unsigned int pc)
++{
++    int s;
++    if (cosim_mask&COSIM_MMU) {
++        for (s=0;s<8;s++) {
++            unsigned int p=cosim_slot_page(s);
++            if (!cosim_mmu_init || cosim_mmu_last[s]!=p) {
++                cosim_mmu_last[s]=(unsigned char)p;
++                fprintf(cosim_f,"%llu MMU %d %02X %04X\n",cosim_seq++,s,p,cosim_pc&0xFFFF);
++            }
++        }
++        cosim_mmu_init=1;
++    }
++    cosim_pc=pc;
++    if (cosim_mask&COSIM_PCS) {
++        if (cosim_in_window || (cosim_pcs_every && (++cosim_pcs_count % cosim_pcs_every)==0))
++            fprintf(cosim_f,"%llu PCS %04X 00 %04X\n",cosim_seq++,pc&0xFFFF,pc&0xFFFF);
++    }
++}
++
++static void cosim_dump_state(void)
++{
++    char name[1100];
++    FILE *d;
++    int i;
++    if (!cosim_dump_dir[0]) return;
++    if (cosim_f) fflush(cosim_f);
++    snprintf(name,sizeof(name),"%s/state.txt",cosim_dump_dir);
++    d=fopen(name,"w");
++    if (d) {
++        fprintf(d,"emulator zesarux\nframes %llu\n",cosim_frame_no);
++        fprintf(d,"regs PC=%04X SP=%04X AF=%04X BC=%04X DE=%04X HL=%04X AF2=%04X BC2=%04X DE2=%04X HL2=%04X IX=%04X IY=%04X I=%02X R=%02X IM=%d IFF1=%d IFF2=%d HALT=%d\n",
++            reg_pc,reg_sp,REG_AF,BC,DE,HL,REG_AF_SHADOW,REG_BC_SHADOW,REG_DE_SHADOW,REG_HL_SHADOW,reg_ix,reg_iy,reg_i,(reg_r&127)|(reg_r_bit7&128),im_mode,iff1.v,iff2.v,z80_halt_signal.v);
++        for (i=0;i<8;i++) fprintf(d,"mmu %d %02X\n",i,cosim_slot_page(i));
++        for (i=0;i<256;i++) fprintf(d,"nr %02X %02X\n",i,tbblue_get_value_port_register((z80_byte)i));
++        fclose(d);
++    }
++    snprintf(name,sizeof(name),"%s/screen.bmp",cosim_dump_dir);
++    save_screen(name);
++}
++
++/* called at the end of every video frame (core_spectrum_fin_frame_pantalla) */
++void cosim_frame(void)
++{
++    int i;
++    if (cosim_dump_frame>=0 && cosim_frame_no==(unsigned long long)cosim_dump_frame) {
++        cosim_dump_state();
++        if (cosim_f) fflush(cosim_f);
++        exit(0);
++    }
++    cosim_frame_no++;
++    cosim_in_window=0;
++    for (i=0;i<cosim_nwin;i++)
++        if (cosim_frame_no>=cosim_win_a[i] && cosim_frame_no<cosim_win_a[i]+cosim_win_n[i]) cosim_in_window=1;
++    if (cosim_mask&COSIM_FRM) fprintf(cosim_f,"%llu FRM %llu 00 %04X\n",cosim_seq++,cosim_frame_no,cosim_pc&0xFFFF);
++}
+--- a/cpus/z80_codpred.c
++++ b/cpus/z80_codpred.c
+@@ -20,6 +20,7 @@
+ */
+ 
+ //para memcpy de ldir hack
++#include "cosim_trace.h"
+ #include <string.h>
+ 
+ #include "cpu.h"
+@@ -1634,6 +1635,7 @@
+ 		//tbblue_set_register_port(registro);
+ 		//tbblue_set_value_port(valor);
+ 
++                if (cosim_mask&COSIM_NRW) cosim_nr(1,registro,valor);
+                 tbblue_set_value_port_position(registro,valor);
+                 //if (puerto==TBBLUE_REGISTER_PORT) tbblue_set_register_port(value);
+                 //if (puerto==TBBLUE_VALUE_PORT) tbblue_set_value_port(value);
+@@ -1649,6 +1651,7 @@
+ 
+                 //tbblue_set_register_port(registro);
+                 //tbblue_set_value_port(reg_a);
++                if (cosim_mask&COSIM_NRW) cosim_nr(1,registro,reg_a);
+                 tbblue_set_value_port_position(registro,reg_a);
+         }
+         else invalid_opcode_ed("237 146");
+--- a/operaciones.c
++++ b/operaciones.c
+@@ -19,6 +19,7 @@
+ 
+ */
+ 
++#include "cosim_trace.h"
+ #include "cpu.h"
+ #include "operaciones.h"
+ #include "debug.h"
+@@ -6908,8 +6909,17 @@
+ 
+ 
+ //Devuelve valor puerto para maquinas Spectrum
++static z80_byte lee_puerto_spectrum_no_time_cosim(z80_byte puerto_h,z80_byte puerto_l);
++
+ z80_byte lee_puerto_spectrum_no_time(z80_byte puerto_h,z80_byte puerto_l)
+ {
++    z80_byte v=lee_puerto_spectrum_no_time_cosim(puerto_h,puerto_l);
++    if (cosim_mask&COSIM_PIN) cosim_port(0,value_8_to_16(puerto_h,puerto_l),v);
++    return v;
++}
++
++static z80_byte lee_puerto_spectrum_no_time_cosim(z80_byte puerto_h,z80_byte puerto_l)
++{
+ 
+ 	debug_fired_in=1;
+ 	//extern z80_byte in_port_ay(z80_int puerto);
+@@ -8886,8 +8896,16 @@
+ }
+ 
+ 
++static void out_port_spectrum_no_time_cosim(z80_int puerto,z80_byte value);
++
+ void out_port_spectrum_no_time(z80_int puerto,z80_byte value)
+ {
++    if (cosim_mask&COSIM_POUT) cosim_port(1,puerto,value);
++    out_port_spectrum_no_time_cosim(puerto,value);
++}
++
++static void out_port_spectrum_no_time_cosim(z80_int puerto,z80_byte value)
++{
+ 
+     //if (reg_pc>16383) printf("out_port_spectrum_no_time port %04XH value %02XH PC after=0x%x\n",puerto,value,reg_pc);
+ 
+--- a/cores/core_spectrum.c
++++ b/cores/core_spectrum.c
+@@ -24,6 +24,7 @@
+ */
+ 
+ 
++#include "cosim_trace.h"
+ #include <stdlib.h>
+ #include <stdio.h>
+ #include <string.h>
+@@ -379,6 +380,7 @@
+ 
+ void core_spectrum_fin_frame_pantalla(void)
+ {
++    cosim_frame();
+ 	//Siguiente frame de pantalla
+     timer_get_elapsed_core_frame_post();
+ 
+@@ -881,6 +883,7 @@
+         //}
+ 
+ 
++        if (cosim_mask&COSIM_IRQ) cosim_irq(0);
+         push_valor(reg_pc,PUSH_VALUE_TYPE_MASKABLE_INTERRUPT);
+ 
+         reg_r++;
+@@ -1009,6 +1012,8 @@
+     }
+ 
+ 
++    if (!core_refetch && (cosim_mask&(COSIM_PCS|COSIM_MMU))) cosim_instruction(reg_pc);
++    else if (!core_refetch) cosim_pc=reg_pc;
+     int t_estados_antes_opcode=t_estados;
+     core_refetch=0;
+ 
