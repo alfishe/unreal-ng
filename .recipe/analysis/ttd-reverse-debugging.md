@@ -184,7 +184,8 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/coverage/summary?kind=executed" \
 The engine stores every recorded memory at every checkpoint. These two read that store; the machine stays where it is. Use them when the question is "what was in it then" rather than "who wrote it":
 
 - `space` is `ram`, `ramN` (machine RAM page N), or any memory the session records, by name or alias: `vram` / `sprinter.vram`, `cache` / `sprinter.fastram`, `neogs.ram`, `neogs.flash`, `gs.ram`, `moonsound.wave`, `evo.flash`, and so on. `GET /memory/regions` lists them.
-- Both read checkpoint boundaries (frame starts). `at_frame` names the checkpoint read, the newest at or before the frame asked. For a point inside a frame, seek.
+- Both read checkpoint boundaries (frame starts) by default. `at_frame` names the checkpoint read, the newest at or before the frame asked.
+- memory-at takes `tinframe` for a point inside the frame, on `ram`, `ramN`, `vram` and `cache`. It applies the frame's writes up to that point from the write journal; without the journal it builds the journal for that one frame by replay. The bytes are what a seek to frame:tinframe shows, and the machine does not move. Other memories refuse `tinframe` (their writes are not journaled): seek there.
 
 ```bash
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/memory-at" -H 'Content-Type: application/json' \

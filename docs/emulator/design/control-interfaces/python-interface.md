@@ -816,7 +816,7 @@ Methods of `Emulator` (breakpoints fire while debug mode is on; what stops where
 id = emu.bp(0x8000)                 # execution breakpoint, returns its id (-1 when refused)
 id = emu.bp(0x8000, to=0x80FF)      # a range #8000-#80FF (one check per access, however many ranges)
 id = emu.bp(0x0038, hits="50")      # stop on the 50th hit only; ">=50" from the 50th on, "%50" every 50th
-id = emu.bp(0xC000, page="ram32")   # physical: RAM page 32, offset #0000, in whatever slot shows it ("rom3", "cache0")
+id = emu.bp(0xC000, page="ram32")   # physical: RAM page 32, offset #0000, in whatever slot shows it ("rom3", "cache0"; "vram1" = the Sprinter's video RAM #4000-#7FFF, read / write watchpoints)
 id = emu.bp(0xC000, page="ram32", slot_only=True)  # only through slot 3 (#C000)
 id = emu.bp_read(0x4000)            # memory read; the same keyword arguments
 id = emu.bp_write(0x4000, to=0x57FF)  # memory write: the screen bitmap
@@ -1333,7 +1333,7 @@ scan = emu.ttd_coverage_scan(kind='executed', addr_from=0x0038, addr_to=0x0040,
 scan = emu.ttd_coverage_scan(kind='written', space='vram', addr_from=0x4805, addr_to=0x4805)
 
 # A memory at a past checkpoint, and what changed between two - from the store, no seek
-at = emu.ttd_memory_at('ram5', frame=150, offset=0x1C78, length=2)
+at = emu.ttd_memory_at('ram5', frame=150, offset=0x1C78, length=2)   # tinframe=T: a point inside the frame (ram, vram, cache)
 # {'space': 'ram', 'offset': 89208, 'length': 2, 'frame': 150, 'at_frame': 150, 'exact': True, 'hex': '6500'}
 diff = emu.ttd_memory_diff('neogs.ram', from_frame=150, to_frame=600)
 # {'space': 'neogs.ram', 'changed_bytes': 812, 'ranges': [{'offset': 4096, 'length': 64}, ...], 'truncated': False, ...}

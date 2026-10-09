@@ -98,6 +98,10 @@ struct BreakpointDescriptor
     uint8_t page = 0xFF;                     // Page number (ROM 0-63 or RAM 0-255)
     MemoryBankModeEnum pageType = BANK_RAM;  // Memory type: BANK_ROM, BANK_RAM, or BANK_CACHE
     uint16_t bankOffset = 0xFFFF;            // Offset within the page (0-0x3FFF)
+    // A watchpoint on a page of another memory space ("vram5": the Sprinter's video RAM, ttdphyspage.h virtual
+    // pages): offsets (z80address & #3FFF)..(end & #3FFF) of that page, matched only by that memory's hooks
+    // (HandleSpaceAccess), never by CPU addresses. 0xFFFF: none
+    uint16_t spacePage = 0xFFFF;
 
     bool active = true;   // Breakpoint can be temporarily disabled
     bool hidden = false;  // Internal/temporary breakpoint (e.g. step-over, step-out, traps)
@@ -129,7 +133,8 @@ struct BreakpointHotState
     uint8_t hasWrite = 0;    // 1 if any active write breakpoint exists
     uint8_t hasPortIn = 0;   // 1 if any active port-in breakpoint exists
     uint8_t hasPortOut = 0;  // 1 if any active port-out breakpoint exists
-    uint8_t _padding[3] = {0, 0, 0};
+    uint8_t hasSpace = 0;    // 1 if any active watchpoint on another memory space exists (the Sprinter's video RAM)
+    uint8_t _padding[2] = {0, 0};
 
     // "There may be a breakpoint here": one bit per CPU address per kind (8 KB each, L1-sized). A physical
     // breakpoint marks its offsets in all four slots (globalbits, design §6): a set bit can be a false
@@ -154,6 +159,7 @@ struct BreakpointSpec
     uint8_t page = 0;
     MemoryBankModeEnum pageType = BANK_RAM;
     bool slotOnly = false;             // physical, only through the slot of `address`
+    uint16_t spacePage = 0xFFFF;       // a page of another memory space ("vram5"); `address` & #3FFF is the offset
     uint16_t portMask = 0xFFFF;        // ports only
     BreakpointHitModeEnum hitMode = BRK_HIT_ALWAYS;
     uint32_t hitTarget = 0;
@@ -318,6 +324,10 @@ public:
     /// number decimal or as 0x.. / #.. / $... False with the reason in `error` for anything else. JSON
     /// carries the same as {kind, page}
     static bool ParsePageSpec(const std::string& text, uint8_t& page, MemoryBankModeEnum& pageType, std::string& error);
+    /// A breakpoint's page as the surfaces write it, into the spec: a machine page (ParsePageSpec) or a page of
+    /// another memory space, "vram0".."vram15" (the Sprinter's video RAM: offsets of that 16 KB page, read and
+    /// write watchpoints, matched through the graphics windows and the accelerator)
+    static bool ParsePageInto(const std::string& text, BreakpointSpec& spec, std::string& error);
     /// "ram32" for a breakpoint bound to a page, "" for one that matches the address in any page
     static std::string PageSpecName(const BreakpointDescriptor& breakpoint);
     /// "ram", "rom" or "cache": the protocol's page kind
@@ -423,6 +433,14 @@ public:
             return BRK_INVALID;
         return ResolveMemory(BRK_KIND_READ, readAddress);
     }
+    /// An access to a page of another memory space (its own hooks, not the CPU's address): the watchpoint that
+    /// stops, or BRK_INVALID. `offset` is in the 16 KB page
+    uint16_t HandleSpaceAccess(uint16_t spacePage, uint16_t offset, bool write)
+    {
+        if (!_hotState.hasSpace)
+            return BRK_INVALID;
+        return ResolveSpace(spacePage, offset, write);
+    }
     uint16_t HandleMemoryWrite(uint16_t writeAddress)
     {
         if (!_hotState.hasWrite || !_hotState.MemoryBit(BRK_KIND_WRITE, writeAddress))
@@ -456,6 +474,7 @@ protected:
 
     /// A filter "maybe": the candidates of the CPU address and of the page the slot shows; the slot filter,
     /// the hit policy (counting), the TTD-replay suppression. The id of the first candidate that stops
+    uint16_t ResolveSpace(uint16_t spacePage, uint16_t offset, bool write);
     uint16_t ResolveMemory(int kind, uint16_t address);
     uint16_t ResolvePort(int direction, uint16_t port);
     /// Walks one candidate set: counts every candidate that matches, returns the first that stops (or

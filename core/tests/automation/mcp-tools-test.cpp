@@ -3449,10 +3449,12 @@ TEST_F(McpTools_Test, TimeTravel_MemoryAtMemoryDiffAndCoverageSpace)
     args["frame"] = 7;
     args["offset"] = "0x4805";
     args["length"] = 2;
+    args["tinframe"] = 25000;
     mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
     ASSERT_FALSE(result.isError) << result.text;
     const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/memory-at");
     ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["tinframe"].asUInt(), 25000u) << "a point inside the frame reaches the WebAPI (it was dropped)";
     EXPECT_EQ(call->body["space"].asString(), "vram");
     EXPECT_EQ(call->body["offset"].asString(), "0x4805");
     EXPECT_EQ(call->body["frame"].asUInt(), 7u);
@@ -3501,5 +3503,8 @@ TEST_F(McpTools_Test, TimeTravel_MemoryAtMemoryDiffAndCoverageSpace)
     args["action"] = "memory_diff";
     args["from_frame"] = 1;
     EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "no to_frame";
+    args["to_frame"] = 2;
+    args["tinframe"] = 100;
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "memory_diff takes no tinframe";
     EXPECT_EQ(_caller->calls.size(), calls);
 }

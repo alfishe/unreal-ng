@@ -3,8 +3,8 @@
 // A card is saved mid-transfer and the blob loaded into a second card; both
 // then run on and must stay identical: the SD card's protocol, the decoder's
 // FIFO and minimp3 state, the DMA modules' phase and FIFOs all travel in the
-// blob. The card RAM and the flash are not in the blob (large memories are not
-// snapshotted in TTD v1 - they wait for TTD v2 memory regions): the test copies
+// blob. The card RAM and the flash are not in the blob (the engine records them as
+// regions 4 and 5; v1 records neither): the test copies
 // them itself, standing in for those regions, so the blob is checked for
 // everything else. The replay through the TTD engine itself is in
 // debugger/ttd/ttdneogs_test.cpp.

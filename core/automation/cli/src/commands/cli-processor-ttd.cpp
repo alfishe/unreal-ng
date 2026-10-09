@@ -354,7 +354,7 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "    [--access write|read|execute|io]  (default: write)" << NEWLINE;
     ss << "    [--value V] [--pc-from X] [--pc-to Y]" << NEWLINE;
     ss << "    [--before-frame F] [--before-tin T] [--space ram|vram|cache]" << NEWLINE;
-    ss << "  ttd memory-at --space S --frame F [--offset O] [--length N]   (alias: mat)" << NEWLINE;
+    ss << "  ttd memory-at --space S --frame F [--tinframe T] [--offset O] [--length N]   (alias: mat)" << NEWLINE;
     ss << "                                   A memory at a past checkpoint, without seeking (S: ram, ramN, or a" << NEWLINE;
     ss << "                                   region: vram, cache, neogs.ram, ... - memory regions lists them)" << NEWLINE;
     ss << "  ttd memory-diff --space S --from F1 --to F2 [--limit N]       (alias: mdiff)" << NEWLINE;
@@ -1397,6 +1397,7 @@ void CLIProcessor::HandleTTDMemoryAt(const ClientSession& session, EmulatorConte
     const bool diff = args[0] == "memory-diff" || args[0] == "mdiff";
     static const std::map<std::string, std::string> flags = {
         {"--space", "space"}, {"--frame", "frame"},       {"--offset", "offset"}, {"--length", "length"},
+        {"--tinframe", "tinframe"}, {"--tstate", "tinframe"},
         {"--from", "from_frame"}, {"--to", "to_frame"},   {"--limit", "limit"}};
     std::map<std::string, std::string> options;
     for (size_t i = 1; i < args.size(); ++i)
@@ -1411,7 +1412,7 @@ void CLIProcessor::HandleTTDMemoryAt(const ClientSession& session, EmulatorConte
         session.SendResponse("Error: " + reply.message + NEWLINE +
                              (reply.error == ttd::TTDControlError::BadRequest
                                   ? std::string(diff ? "Usage: ttd memory-diff --space S --from F1 --to F2 [--limit N]"
-                                                     : "Usage: ttd memory-at --space S --frame F [--offset O] [--length N]") +
+                                                     : "Usage: ttd memory-at --space S --frame F [--tinframe T] [--offset O] [--length N]") +
                                         NEWLINE
                                   : std::string()));
         return;
@@ -1432,6 +1433,7 @@ void CLIProcessor::HandleTTDMemoryAt(const ClientSession& session, EmulatorConte
     {
         const std::string& hex = b.find("hex")->s;
         ss << b.find("space")->s << " at frame " << b.find("at_frame")->i
+           << (b.find("tinframe")->i ? " t=" + std::to_string(b.find("tinframe")->i) : std::string())
            << (b.find("exact")->b ? "" : " (the checkpoint at or before frame " + std::to_string(b.find("frame")->i) + ")")
            << ":" << NEWLINE;
         const int64_t offset = b.find("offset")->i;

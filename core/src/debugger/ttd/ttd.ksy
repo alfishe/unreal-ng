@@ -554,7 +554,9 @@ types:
           PeripheralId enum value (see ttdserializable.h): 0 TurboSound, 1 BetaDisk,
           2 Tape, 3 Covox, 4 TSFM, 5 GeneralSound, 6 ScorpionProfROM, 7 KempstonMouse,
           8 AtmPaging, 9 ProfiPaging (Profi: 16-entry palette, pDFFD latch, front-panel switches),
-          10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (card state; RAM and flash in the blob until v2 regions),
+          10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (card registers and device state only: a v1 session does
+          not record the card RAM or the flash; the engine's session records them as regions 4 neogs.ram and
+          5 neogs.flash, engine/ttdsession.ksy),
           13 Plus3Paging, 14 Upd765 (+3 floppy controller),
           15 EvoSdCard (ZX-Evo Z-Controller + SD card protocol state),
           16 TsConfPaging (TSConf machine state), 17 AtaChannel (IDE board: channel, both units, adapter latches; a second channel appended on the Sprinter),
@@ -582,7 +584,8 @@ types:
           netstate::Tail follows when reserved[0] bit 1 is set, since 2026-10-08),
           28 SprinterVideoRam (u1 version 1, then the 256 KB video RAM; a whole-array blob until TTD v2
           memory regions), 29 Z84C15 (u1 version 2, then the Z84C15's on-chip block, 227 bytes: z84c15_blob below; version 1, 171 bytes with the timer-only CTC, is not restored),
-          30 SprinterFastRam (u1 version 1, then the 64 KB fast RAM; whole-array blob until v2 regions),
+          30 SprinterFastRam (u1 version 1, then the 64 KB fast RAM: v1's whole-array blob; the engine records
+          the fast RAM as region 7 sprinter.fastram and the blob as the version byte only),
           31 SprinterInput (sprinter_input_blob below: the AT keyboard's byte stream and the serial mouse),
           32 SprinterCovoxBlaster, 33 SprinterIsa (the ISA slots: u1 version 1, u1 the whole #9FBD latch, u1 x 2
           the card kind fitted in slot 1 / 2 - 0 none, 1 zxbus, 2 ram, 3 ne2000, 4 el3c509b, 5 sprinteresp,

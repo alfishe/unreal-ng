@@ -1349,6 +1349,9 @@ public:
     /// @brief Read-only access to a timeline entry (bounds-checked).
     /// Returns nullptr if idx is out of range.
     const TTDCheckpoint* GetCheckpoint(size_t idx) const;
+    /// Where a checkpoint's CPU stands in machine time: its frame boundary plus
+    /// the last instruction's overshoot (a frame's writes are after it)
+    uint64_t CheckpointStartT(const TTDCheckpoint& cp) const;
 
 
     /// @brief Last capture / restore timings (benchmark harness, BM-2 / BM-6).
@@ -2041,9 +2044,6 @@ private:
     /// The segments as they stand: the open one ends at the current position,
     /// and the ring's evicted records are no longer covered
     std::vector<TTDJournalSegment> JournalSegments() const;
-    /// Where a checkpoint's CPU stands in machine time: its frame boundary plus
-    /// the last instruction's overshoot (a frame's writes are after it)
-    uint64_t CheckpointStartT(const TTDCheckpoint& cp) const;
     /// One segment from the session's first checkpoint to its last
     bool JournalCoversSession(const std::vector<TTDJournalSegment>& segments) const;
     /// See TTDSessionInfo::lastDropReason
