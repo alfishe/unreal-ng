@@ -163,6 +163,10 @@ public:
     void Poll();
     /// The channels were changed from outside (a state restore): recompute when Poll has work next
     void Refresh() { UpdateNextDue(); }
+    /// The clock (SetClock units) of the earliest zero count Poll still has to turn into an interrupt request
+    /// (a channel with its interrupt enabled), UINT64_MAX with none. Before it, Poll changes nothing; it may lie
+    /// in the past until the next Poll
+    uint64_t NextDue() const { return _nextDue; }
 
 private:
     uint64_t Now() const { return _clock ? _clock() : 0; }
@@ -419,6 +423,15 @@ public:
     /// The watchdog: running and its timeout clock (for tests and debuggers; at the current system clock rate)
     bool WatchdogRunning() const { return _wdtRunning; }
     uint64_t WatchdogDeadline() const;
+
+    /// The clock now (SetClock's function), in its units
+    uint64_t Clock() const { return Now(); }
+    /// The earliest clock (Clock() units) at which the chip may act on its own: IntPending turn true or /WDTOUT
+    /// fire, with no register access, no Receive, no acknowledge and no RETI in between - the next zero count of
+    /// an interrupting CTC channel, the watchdog's timeout while a handler is connected and it has not fired.
+    /// UINT64_MAX: nothing is due (the SIO and the PIO request only after an access or a Receive). May lie in
+    /// the past (then ask IntPending now). A host that runs a halted CPU's idle cycles in one go stops there
+    uint64_t NextEventClock() const;
 
     /// region <State (snapshots, time travel)>
     /// Everything the chip carries from one instruction to the next besides the

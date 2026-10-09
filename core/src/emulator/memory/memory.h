@@ -365,6 +365,14 @@ public:
     /// The fast read ignores isExecution (no per-access tracking there), so
     /// the parameter is marked maybe_unused
     virtual uint8_t MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution);
+    /// A halted CPU's idle opcode fetch at `addr` through the fast read, repeated: true when it reads a byte and
+    /// nothing else (an engine may then run such fetches in one go, Z84C15Engine). A model whose read has a side
+    /// effect in some window (a bus cycle on a card) answers false there
+    virtual bool RepeatFetchIsPure(uint16_t addr) const
+    {
+        (void)addr;
+        return true;
+    }
     virtual uint8_t MemoryReadDebug(uint16_t addr, bool isExecution);
     void MemoryWriteFast(uint16_t addr, uint8_t value);
     void MemoryWriteDebug(uint16_t addr, uint8_t value);

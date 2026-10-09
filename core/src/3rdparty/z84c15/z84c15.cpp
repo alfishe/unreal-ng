@@ -3,6 +3,8 @@
 
 #include "z84c15.h"
 
+#include <algorithm>
+
 #include "z84cpu-internal.h"
 
 namespace Z84Lib
@@ -221,6 +223,14 @@ uint64_t Z84C15::WatchdogDeadline() const
     if (_wdtClocksBefore >= period)
         return _wdtStart;
     return _wdtStart + Detail::MulDivCeil(period - _wdtClocksBefore, ctc.SystemClockNum(), ctc.SystemClockDen());
+}
+
+uint64_t Z84C15::NextEventClock() const
+{
+    uint64_t due = ctc.NextDue();
+    if (_watchdogHandler && _wdtRunning && !_wdtFired)
+        due = std::min(due, WatchdogDeadline());
+    return due;
 }
 
 void Z84C15::ClearWatchdog()

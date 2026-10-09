@@ -109,6 +109,8 @@ public:
 
     /// region <IZ84BusAgent>
     void OnOpcodeFetch(uint16_t addr, uint8_t opcode) override;
+    /// OnOpcodeFetch(opcode) would leave every latch as it is
+    bool RepeatFetchIsInert(uint16_t addr, uint8_t opcode) const override;
     uint8_t OnRead(uint16_t addr, uint8_t value) override;
     uint8_t BeforeWrite(uint16_t addr, uint8_t value) override;
     void AfterWrite(uint16_t addr, uint8_t value) override;

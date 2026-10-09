@@ -65,6 +65,8 @@ public:
     /// region <Model overrides>
 public:
     uint8_t MemoryReadFast(uint16_t addr, bool isExecution) override;
+    /// Not in the ISA view: a CPU read there is an ISA cycle
+    bool RepeatFetchIsPure(uint16_t addr) const override { return !_anyRedirect || _redirect[addr >> 14] != ReadRedirect::Isa; }
     uint8_t MemoryReadDebug(uint16_t addr, bool isExecution) override;
 
     /// The decoder that owns the PLD state (null before it exists: the windows

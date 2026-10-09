@@ -122,6 +122,34 @@ bool SprinterIntSource::IsIntAsserted(uint32_t t)
     return pulse >= 0 && pulse != _ackedPulse;
 }
 
+uint32_t SprinterIntSource::NextAssertT(uint32_t t)
+{
+    // IsIntAsserted(t) was false: no keyboard INT, no CBL request, every pulse covering t acknowledged. The list
+    // is ascending and covers this frame (the engine never runs past the frame end)
+    if (_keyboardInt)
+        return t;
+    const uint32_t multiplier = Multiplier();
+    const uint32_t raster = t / multiplier;
+    uint32_t next = UINT32_MAX;  // base T-state
+    if (_cbl)
+        next = _cbl->NextIntT();
+    for (uint32_t start : Positions())
+    {
+        if (start > raster)
+        {
+            next = std::min(next, start);
+            break;
+        }
+    }
+    if (next == UINT32_MAX)
+        return UINT32_MAX;
+    if (next <= raster)
+        return t;
+    // The first CPU clock whose base T-state reaches `next`
+    const uint64_t clock = static_cast<uint64_t>(next) * multiplier;
+    return clock < UINT32_MAX ? static_cast<uint32_t>(clock) : UINT32_MAX;
+}
+
 uint8_t SprinterIntSource::AcknowledgeInterrupt(uint32_t t)
 {
     _keyboardInt = false;  // one flip-flop for every PLD source

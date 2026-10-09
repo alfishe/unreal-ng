@@ -1317,6 +1317,12 @@ protected:
 public:
     void handleFrameStart();
     void handleStep();
+    /// handleStep would not act at this step: asleep, or idle with the motor off (it only counts toward sleep).
+    /// A CPU engine may then run idle steps without it (Z80::IdleStepsInert)
+    bool IsStepInert() const
+    {
+        return _sleeping || (_state == S_IDLE && _motorTimeoutTStates <= 0);
+    }
     void handleFrameEnd();
     /// endregion </Emulation events>
 

@@ -60,6 +60,8 @@ public:
     /// region <IInterruptSource>
     bool IsIntAsserted(uint32_t t) override;
     uint8_t AcknowledgeInterrupt(uint32_t t) override;
+    /// The next pulse start of the frame or the Covox-Blaster's next request, whichever comes first
+    uint32_t NextAssertT(uint32_t t) override;
     /// endregion </IInterruptSource>
 
     /// The keyboard interrupt (ALL_MODE bits 0 and 3, MAME on_kbd_data): a byte

@@ -82,6 +82,30 @@ void SprinterAccelerator::OnOpcodeFetch([[maybe_unused]] uint16_t addr, uint8_t 
     _state.prefix = (opcode == 0xCB || opcode == 0xDD || opcode == 0xED || opcode == 0xFD) ? 1 : 0;
 }
 
+bool SprinterAccelerator::RepeatFetchIsInert([[maybe_unused]] uint16_t addr, uint8_t opcode) const
+{
+    // OnOpcodeFetch step by step, comparing instead of storing
+    if (_state.blocked && _state.reti)
+        return false;
+    const bool prefixed = _state.prefix != 0;
+    if (!IsEnabled())
+    {
+        if (_state.mode != 0 || _state.dir != 0)
+            return false;  // CheckEnabled clears them
+    }
+    else if (!prefixed && (opcode & 0xC0) == 0x40 && ((opcode >> 3) & 0x07) == (opcode & 0x07))
+    {
+        const uint8_t mode = opcode & 0x07;
+        if (_state.mode != mode || _state.dir != kDir[mode])
+            return false;
+    }
+    const uint8_t fn = (!prefixed && (opcode & 0xC0) == 0x80) ? static_cast<uint8_t>(~(opcode >> 3) & 0x07) : 0;
+    const uint8_t reti = (_state.edSeen && opcode == 0x4D) ? 1 : 0;
+    const uint8_t edSeen = opcode == 0xED ? 1 : 0;
+    const uint8_t prefix = (opcode == 0xCB || opcode == 0xDD || opcode == 0xED || opcode == 0xFD) ? 1 : 0;
+    return _state.fn == fn && _state.reti == reti && _state.edSeen == edSeen && _state.prefix == prefix;
+}
+
 void SprinterAccelerator::OnInterruptAcknowledge()
 {
     // ACC_BLK at the end of the acknowledge M1 (/IORQ low): blocked, unless a RETI was latched by the

@@ -150,6 +150,8 @@ public:
     /// #3D13 (ToBios3D13), where the port table's "DOS on" half answers
     void BeforeMachineM1(uint16_t address) override;
     void OnMachineM1(uint16_t address) override { (void)address; }
+    /// BeforeMachineM1 would not move the DOS signal
+    bool RepeatM1IsInert(uint16_t address) const override;
     /// endregion
 
     /// region <IMachineStepHook: PLD-driven CPU resets, the loader watchdog>
@@ -182,6 +184,8 @@ public:
     void CollectMemoryRegions(std::vector<IDeviceMemoryRegion*>& out) override { out.push_back(&_vramRegion); }
     SprinterIntSource& GetIntSource() { return _intSource; }
     Z84Lib::Z84C15& GetZ84() { return _z84; }
+    /// The Z84C15 engine the CPU runs on (null before the Z80 exists)
+    Z84C15Engine* GetCpuEngine() { return _cpuEngine.get(); }
     SprinterInput& GetInput() { return _input; }
     /// The two ISA-8 slots (Sprinter ISA tdd §4): window 3 in ISA mode reaches them, code #1B writes the latch
     SprinterIsaBus& GetIsaBus() { return _isaBus; }

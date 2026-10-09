@@ -32,6 +32,14 @@ public:
     virtual void AfterWrite(uint16_t addr, uint8_t value) = 0;
     /// The CPU accepted an INT: its acknowledge cycle (M1 with /IORQ), before the pushes
     virtual void OnInterruptAcknowledge() = 0;
+    /// Another opcode fetch of `opcode` at `addr` now would change nothing in the agent (a halted CPU's repeated
+    /// idle fetch may then run without it). Default: false - every fetch reaches the agent
+    virtual bool RepeatFetchIsInert(uint16_t addr, uint8_t opcode) const
+    {
+        (void)addr;
+        (void)opcode;
+        return false;
+    }
 
     /// false: the engine skips OnRead / BeforeWrite / AfterWrite (an idle agent costs one test per access)
     bool watchData = false;
@@ -108,6 +116,13 @@ public:
     /// The board's interrupt observer (null = none)
     void SetInterruptObserver(IZ84InterruptObserver* observer) { _observer = observer; }
 
+    /// A halted CPU's idle cycles in one go (RunIdleCycles): on by default; off runs one per step (comparison
+    /// tests, diagnosis)
+    void SetIdleCyclesInOneGo(bool on) { _idleInOneGo = on; }
+    bool IdleCyclesInOneGo() const { return _idleInOneGo; }
+    /// Idle cycles run as arithmetic since the engine was created (tests, diagnosis)
+    uint64_t IdleCyclesRunInOneGo() const { return _idleCyclesInOneGo; }
+
     Z84Lib::Z84C15& Chip() { return _chip; }
     const Z84Lib::Z84C15& Chip() const { return _chip; }
 
@@ -130,6 +145,27 @@ private:
     private:
         Z84C15Engine& _engine;
     };
+
+    /// region <Idle cycles in one go>
+    /// A halted CPU's idle M1 cycles (the byte after the HALT, again and again) up to the next moment something
+    /// may happen: Z80::idleSkipLimit, the frame end, the next T at which an interrupt source may assert (asked
+    /// for real there, as every boundary would ask it). The cycles are the ones a step each would run - their
+    /// T-states (the host's waits by the start phase) and one R tick each - without the per-step work around
+    /// them, run only while every party says another such cycle changes nothing but time: the CPU's per-step
+    /// jobs (Z80::IdleStepsInert), the board's M1 hook, the bus agent, the chip's wait generator, the memory and
+    /// the bus overlays. Worked example (dontBlink at 21 MHz, EI : HALT at #0216 waiting for CTC 3): ~45 000
+    /// idle cycles a frame become a few real ones (learning the 6-clock wait phases) and ~200 checks
+    void RunIdleCycles();
+    /// The idle fetch of `opcode` at `fetch` repeats with no effect but time; `period`: its length depends on
+    /// the start clock modulo this
+    bool IdleFetchIsPure(uint16_t fetch, uint8_t opcode, uint32_t& period) const;
+    /// After the sources said "no INT" at `t`: the first boundary that must ask again (> t, <= stop)
+    uint32_t NextCheckT(uint32_t t, uint32_t stop);
+    /// The chip's clock (Z84C15::Clock) at host T `t`
+    uint64_t ChipClockAt(uint32_t t);
+    /// Phases (CPU clocks) an idle cycle's length may depend on, at most
+    static constexpr uint32_t kMaxIdlePeriod = 64;
+    /// endregion </Idle cycles in one go>
 
     /// Host -> library before a step or an acknowledge: T and, when the host changed it, the boundary
     void Enter();
@@ -155,4 +191,7 @@ private:
     IZ84InterruptObserver* _observer = nullptr;
     uint8_t _boundarySeen = Z80_BOUNDARY_NONE;  ///< the boundary the host last got from the library
     uint8_t _vector = 0xFF;                     ///< the data bus byte of the acknowledge in progress
+    uint8_t _lastM1Value = 0;                   ///< the byte the last opcode fetch read (a halted CPU's idle fetch)
+    bool _idleInOneGo = true;
+    uint64_t _idleCyclesInOneGo = 0;
 };

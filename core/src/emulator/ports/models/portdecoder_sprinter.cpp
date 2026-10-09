@@ -853,6 +853,18 @@ void PortDecoder_Sprinter::BeforeMachineM1(uint16_t address)
     }
 }
 
+bool PortDecoder_Sprinter::RepeatM1IsInert(uint16_t address) const
+{
+    // BeforeMachineM1's two edges: on outside #0000-#3FFF, off at #3Dxx with #7FFD bit 4
+    if (_pld.configState != SprinterConfigState::Configured)
+        return true;
+    if (address >= 0x4000)
+        return _pld.dos != 0;
+    if ((address & 0xFF00) == 0x3D00)
+        return !(_pld.dos && (_pld.pn & 0x10));
+    return true;
+}
+
 void PortDecoder_Sprinter::OnMachineFrameRollover([[maybe_unused]] uint32_t frameLength)
 {
     if (_pld.configState == SprinterConfigState::Loading && !_pld.resetPending && SprinterPldConfig::OnFrame(_pld))

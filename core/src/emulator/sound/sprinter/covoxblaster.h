@@ -124,6 +124,28 @@ public:
             Advance(t);
         return _s.intPending != 0;
     }
+    /// The base T-state from which IntRequested may return true while nothing is written to the CBL: the play
+    /// tick whose count crosses into the next half of the ring (CNT bit 6 falling); 0: requested now; UINT32_MAX:
+    /// no request comes by itself (the INT or the CBL off)
+    uint32_t NextIntT() const
+    {
+        if (!(_s.control & kControlInt))
+            return UINT32_MAX;
+        if (_s.intPending)
+            return 0;
+        if (!(_s.control & kControlCbl))
+            return UINT32_MAX;  // IntRequested does not advance: the request stays as it is
+        const uint8_t step = (_s.control & kControlStereo) ? 2 : 1;
+        uint8_t cnt = _s.cnt;
+        for (uint32_t tick = 0; tick < 256; tick++)
+        {
+            const uint8_t before = cnt;
+            cnt = static_cast<uint8_t>(cnt + step);
+            if ((before & 0x40) && !(cnt & 0x40))
+                return _s.nextTick + tick * TickTstates(_s.control);
+        }
+        return UINT32_MAX;
+    }
     /// The PLD's INT acknowledge (vector #FF): the request ends, CBL_WA starts the half to fill
     void Acknowledge(uint32_t t);
     /// endregion
