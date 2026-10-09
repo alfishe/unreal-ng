@@ -409,6 +409,12 @@ struct View
   record again. While the `user` set is off, `UpdateLabel` edits the owning set in place.
 - `ClearAllLabels` empties the store.
 - Sets: `GetSymbolSets`, `GetSymbolIndex`, `SetSymbolSetEnabled`, `SetSymbolSetPriority`, `DropSymbolSet`.
+- Files with a report: `ImportSymbols(path, SymbolImportRequest)` and `ExportSymbols(path, SymbolExportRequest)`
+  (`symbolfiles.h`). An import gives the format, score, set, counts, conflicts and diagnostics. Without set, space,
+  base or policy an import is `LoadLabels`; with one of them the records are merged into a set. A record's aliases
+  show as labels too.
+- Surfaces: `SymbolControl` (`symbolcontrol.h`) is the one layer the WebAPI, CLI, MCP, Lua and Python call. See
+  `.recipe/analysis/symbols-import-export.md`.
 - `ToLabel(symbol)` / `FromLabel(label, base)` convert between the two forms. `ToLabel` gives:
   - the CPU address (a page symbol in its window);
   - the page as bank and bank offset;

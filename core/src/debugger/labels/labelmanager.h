@@ -25,6 +25,12 @@ struct Symbol;
 struct SymbolSet;
 }
 
+// Symbol files with a report (symbolfiles.h: the surfaces' import / export, symbols/tdd.md section 8)
+struct SymbolImportRequest;
+struct SymbolImportResult;
+struct SymbolExportRequest;
+struct SymbolExportResult;
+
 /// @brief Structure representing a single label with address and type information
 struct Label
 {
@@ -143,6 +149,13 @@ public:
     std::vector<std::shared_ptr<Label>> GetAllLabels() const;
     size_t GetLabelCount() const;
 
+    // Symbol files with a report (symbolfiles.h)
+    SymbolImportResult ImportSymbols(const std::string& path, const SymbolImportRequest& request);
+    SymbolExportResult ExportSymbols(const std::string& path, const SymbolExportRequest& request) const;
+    /// The codec a file would be read with: by `format`, else by the extension, else detected (null with the reason)
+    static const unrealasm::symbols::ISymbolCodec* CodecForFile(const std::string& path, const std::vector<uint8_t>& bytes,
+                                                                const std::string& format, int& score, std::string& reason);
+
     // Symbol sets (the store behind the labels)
     static constexpr const char* USER_SET = "user";
     static constexpr int USER_SET_PRIORITY = 1000000;
@@ -163,7 +176,10 @@ protected:
     // Label files through the symbol module's codecs (unreal-asm, docs/inprogress/2026-10-05-unreal-asm/symbols/)
     static std::string CodecForExtension(const std::string& extension);
     bool ReadLabelFile(const std::string& path, std::vector<uint8_t>& bytes) const;
-    bool ImportWith(const unrealasm::symbols::ISymbolCodec& codec, const std::vector<uint8_t>& bytes, const std::string& path);
+    /// The symbols the labels show, in the order they are placed (a name's last record; aliases before their name),
+    /// of the enabled sets or of `only`
+    static std::vector<std::pair<const unrealasm::symbols::Symbol*, std::string>> Resolve(
+        const std::vector<unrealasm::symbols::SymbolSet>& sets, const std::vector<std::string>* only = nullptr);
     static unrealasm::symbols::Symbol ToSymbol(const Label& label);
     void Rebuild();
     void Flush() const;

@@ -1,0 +1,118 @@
+// Symbol files and sets through SymbolControl (core/src/debugger/labels/symbolcontrol.h): every surface answers with
+// the same fields. A set id holds a path (file:/x/game.sym), so it travels in the body / query.
+
+paths["/api/v1/symbols/formats"]["get"]["summary"] = "Symbol file formats";
+paths["/api/v1/symbols/formats"]["get"]["description"] = "Every symbol codec: id, title, family (text, script, native), extensions, pages (holds page symbols), comment.";
+paths["/api/v1/symbols/formats"]["get"]["tags"].append("Symbols");
+paths["/api/v1/symbols/formats"]["get"]["responses"]["200"]["description"] = "{formats: [...]}";
+
+paths["/api/v1/emulator/{id}/symbols/formats"]["get"]["summary"] = "Symbol file formats";
+paths["/api/v1/emulator/{id}/symbols/formats"]["get"]["description"] = "Same as GET /api/v1/symbols/formats.";
+paths["/api/v1/emulator/{id}/symbols/formats"]["get"]["tags"].append("Symbols");
+paths["/api/v1/emulator/{id}/symbols/formats"]["get"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/symbols/formats"]["get"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/symbols/formats"]["get"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/symbols/formats"]["get"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/formats"]["get"]["responses"]["200"]["description"] = "{formats: [...]}";
+
+paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["summary"] = "Detect a symbol file format";
+paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["description"] = "The codecs that could read the file by score, the one LabelManager would choose (by the extension first) and why.";
+paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["tags"].append("Symbols");
+paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["parameters"][1]["name"] = "path";
+paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["parameters"][1]["in"] = "query";
+paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["parameters"][1]["required"] = true;
+paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["parameters"][1]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["parameters"][1]["description"] = "The symbol file";
+paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["responses"]["200"]["description"] = "{path, candidates: [{format, score}], format, score, reason}";
+paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["responses"]["400"]["description"] = "No path or the file cannot be read";
+
+paths["/api/v1/emulator/{id}/symbols/sets"]["get"]["summary"] = "List symbol sets";
+paths["/api/v1/emulator/{id}/symbols/sets"]["get"]["description"] = "The sets of the main CPU: user (AddLabel / UpdateLabel), one per loaded file, named sets. A higher priority wins by name; equal priorities: the later set.";
+paths["/api/v1/emulator/{id}/symbols/sets"]["get"]["tags"].append("Symbols");
+paths["/api/v1/emulator/{id}/symbols/sets"]["get"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/symbols/sets"]["get"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/symbols/sets"]["get"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/symbols/sets"]["get"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/sets"]["get"]["responses"]["200"]["description"] = "{sets: [{id, title, origin: {kind, where}, priority, enabled, symbols, case}], labels}";
+
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["summary"] = "Switch a symbol set on / off or change its priority";
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["description"] = "Body: id and enabled and / or priority.";
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["tags"].append("Symbols");
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["id"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["id"]["description"] = "The set id (GET /symbols/sets)";
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["enabled"]["type"] = "boolean";
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["enabled"]["description"] = "Show the set's labels";
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["priority"]["type"] = "integer";
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["priority"]["description"] = "Higher wins (user: 1000000, files: 100 up by load order)";
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("id");
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["responses"]["200"]["description"] = "{set, labels}";
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["responses"]["400"]["description"] = "Bad option";
+paths["/api/v1/emulator/{id}/symbols/sets"]["put"]["responses"]["404"]["description"] = "No such set";
+
+paths["/api/v1/emulator/{id}/symbols/sets"]["delete"]["summary"] = "Drop a symbol set";
+paths["/api/v1/emulator/{id}/symbols/sets"]["delete"]["description"] = "Query: id.";
+paths["/api/v1/emulator/{id}/symbols/sets"]["delete"]["tags"].append("Symbols");
+paths["/api/v1/emulator/{id}/symbols/sets"]["delete"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/symbols/sets"]["delete"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/symbols/sets"]["delete"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/symbols/sets"]["delete"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/sets"]["delete"]["parameters"][1]["name"] = "id";
+paths["/api/v1/emulator/{id}/symbols/sets"]["delete"]["parameters"][1]["in"] = "query";
+paths["/api/v1/emulator/{id}/symbols/sets"]["delete"]["parameters"][1]["required"] = true;
+paths["/api/v1/emulator/{id}/symbols/sets"]["delete"]["parameters"][1]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/sets"]["delete"]["parameters"][1]["description"] = "The set id";
+paths["/api/v1/emulator/{id}/symbols/sets"]["delete"]["responses"]["200"]["description"] = "{dropped, labels}";
+paths["/api/v1/emulator/{id}/symbols/sets"]["delete"]["responses"]["404"]["description"] = "No such set";
+
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["summary"] = "Import a symbol file";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["description"] = "Without set / space / base / policy the file becomes a set of its own above the files loaded before (a reload replaces it), as /symbols/load. With one of them its records are normalized (DT-1) and merged into the set by the policy (DT-2).";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["tags"].append("Symbols");
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["description"] = "The symbol file";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["format"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["format"]["description"] = "A codec id (GET /symbols/formats); default: by the extension, else detected";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["set"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["set"]["description"] = "The target set (made when missing)";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["space"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["space"]["description"] = "Records without a space of their own go here: cpu:main, rom0, ram3, cache0, const, port";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["base"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["base"]["description"] = "Added to every offset (number: decimal, 0x, #, $)";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["policy"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["policy"]["description"] = "both (an alias for a second name, default), keep, replace, fail";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("path");
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["responses"]["200"]["description"] = "{path, format, score, set, records, added, aliased, updated, skipped, conflicts: [{type, name, other, old, new, line, resolution}], diagnostics: [{severity, line, message}], labels}";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["responses"]["400"]["description"] = "Bad option, unreadable file, unknown format";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["responses"]["409"]["description"] = "policy fail stopped at a conflict: nothing changed (conflicts listed)";
+
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["summary"] = "Export symbols";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["description"] = "The labels as they show (or the named sets' resolved symbols) in one file; the native format writes the sets themselves.";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["tags"].append("Symbols");
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["description"] = "The target file";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["format"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["format"]["description"] = "A codec id; default: by the extension";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["sets"]["type"] = "array";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["sets"]["description"] = "Set ids (an array or a comma list); default: every enabled set";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["pages"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["pages"]["description"] = "A page symbol in a format without pages (DT-4): fold (default), comment, drop";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("path");
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["sets"]["items"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["responses"]["200"]["description"] = "{path, format, written, diagnostics}";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["responses"]["400"]["description"] = "Bad option, no format for the extension, write failed";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["responses"]["404"]["description"] = "A named set does not exist";

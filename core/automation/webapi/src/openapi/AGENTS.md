@@ -26,6 +26,7 @@ openapi/
 ├── openapi_interpreter.inc # CLI/Lua/Python interpreters
 ├── openapi_keyboard.inc   # Keyboard injection
 ├── openapi_labels.inc     # Labels/symbols management
+├── openapi_symbols.inc    # Symbol files in every format, symbol sets (SymbolControl)
 ├── openapi_lifecycle.inc  # Emulator create/start/stop
 ├── openapi_porttrace.inc  # I/O port tracing
 ├── openapi_vdac2.inc      # TS-Conf VDAC2 card (FT812): bus capture

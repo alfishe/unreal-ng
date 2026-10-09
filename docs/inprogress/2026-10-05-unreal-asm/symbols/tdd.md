@@ -247,7 +247,7 @@ The current calls stay as they are (FR-12). New ones:
 
 | Surface | Import | Export | Formats | Sets |
 |---|---|---|---|---|
-| WebAPI | `POST /symbols/import {path \| disk \| base64, format, set, space, base, policy}`; `POST /symbols/import/live {scanner, at}` | `POST /symbols/export {path \| (download), format, sets, filter, names}` | `GET /symbols/formats` | `GET /symbols/sets`, `PUT /symbols/sets/{id} {enabled, priority}`, `DELETE /symbols/sets/{id}` |
+| WebAPI | `POST /symbols/import {path \| disk \| base64, format, set, space, base, policy}`; `POST /symbols/import/live {scanner, at}` | `POST /symbols/export {path \| (download), format, sets, filter, names}` | `GET /symbols/formats` | `GET /symbols/sets`, `PUT /symbols/sets {id, enabled, priority}`, `DELETE /symbols/sets?id=` (a set id holds a path, so not in the URL path) |
 | CLI | `symbols import <file\|disk:A/F.A> [--format f] [--set s] [--page ram3] [--base n] [--policy p]`, `symbols import --live alasm [--at ram6:#0000]` | `symbols export <file> --format f [--sets a,b] [--page ...]` | `symbols formats` | `symbols sets`, `symbols set <id> on\|off`, `symbols drop <id>` |
 | MCP | `manage_symbols` actions `import`, `import_live` | `export` | `formats` | `sets`, `set_enable`, `drop` |
 | Lua | `symbols_import{...}` | `symbols_export{...}` | `symbols_formats()` | `symbols_sets()`, ... |
@@ -255,7 +255,12 @@ The current calls stay as they are (FR-12). New ones:
 | Qt | Label editor: Import... (format auto / list, page, policy; the report with conflicts) | Export... (format list, sets, the rename list) | — | a "Sets" tab: enable, priority, drop |
 
 All surfaces call one function each in the facade (`LabelManager::ImportSymbols / ExportSymbols / Formats / Sets`),
-which returns the same report structure (`StateNode`), so every surface answers with the same fields. The OpenAPI
+which returns the same report structure (`StateNode`), so every surface answers with the same fields.
+
+Built (2026-10-08): `SymbolControl` (`core/src/debugger/labels/symbolcontrol.h`) has the verbs `formats`, `detect`,
+`sets`, `import`, `export`, `set` and `drop`, with the TTDControl pattern (a verb, options by name, a reply with an
+error code and a StateNode body). The WebAPI, CLI, MCP, Lua and Python call it. Import takes a `path` only so far:
+`disk`, `base64`, the live scan, export's `filter` / `names` and the Qt dialogs are still to come. The OpenAPI
 gets a `symbols` tag; the recipe is `.recipe/analysis/symbols-import-export.md`.
 
 ## 9. Memory and speed budget

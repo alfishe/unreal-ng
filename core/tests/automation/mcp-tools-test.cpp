@@ -1878,6 +1878,49 @@ TEST_F(McpTools_Test, ManageSymbols_List_GetsLabels)
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/labels"));
 }
 
+TEST_F(McpTools_Test, ManageSymbols_SetsImportExport_MapToTheSymbolRoutes)
+{
+    for (const char* route : {"GET /api/v1/emulator/emu-1/symbols/sets", "GET /api/v1/emulator/emu-1/symbols/formats",
+                              "PUT /api/v1/emulator/emu-1/symbols/sets", "POST /api/v1/emulator/emu-1/symbols/import",
+                              "POST /api/v1/emulator/emu-1/symbols/export", "DELETE /api/v1/emulator/emu-1/symbols/sets?id=file%3A%2Fx%2Fa.sym"})
+        _caller->routes[route] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "sets";
+    RunTool(*_registry, "manage_symbols", args, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/symbols/sets"));
+
+    Json::Value import;
+    import["action"] = "import";
+    import["path"] = "/x/a.sym";
+    import["set"] = "game";
+    import["policy"] = "replace";
+    RunTool(*_registry, "manage_symbols", import, *_caller);
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/symbols/import");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["set"].asString(), "game");
+    EXPECT_EQ(call->body["policy"].asString(), "replace");
+
+    Json::Value change;
+    change["action"] = "set_enable";
+    change["id"] = "file:/x/a.sym";
+    change["enabled"] = false;
+    RunTool(*_registry, "manage_symbols", change, *_caller);
+    call = _caller->Last("PUT", "/api/v1/emulator/emu-1/symbols/sets");
+    ASSERT_NE(call, nullptr);
+    EXPECT_FALSE(call->body["enabled"].asBool());
+
+    Json::Value drop;
+    drop["action"] = "drop";
+    drop["id"] = "file:/x/a.sym";
+    RunTool(*_registry, "manage_symbols", drop, *_caller);
+    EXPECT_TRUE(_caller->Saw("DELETE", "/api/v1/emulator/emu-1/symbols/sets?id=file%3A%2Fx%2Fa.sym"));
+
+    Json::Value missing;
+    missing["action"] = "export";
+    EXPECT_TRUE(RunTool(*_registry, "manage_symbols", missing, *_caller).isError);
+}
+
 TEST_F(McpTools_Test, CaptureMedia_ScreenDigest_GetsDigestEndpoint)
 {
     Json::Value response;

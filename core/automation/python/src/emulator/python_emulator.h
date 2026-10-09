@@ -43,6 +43,7 @@
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/labels/labelmanager.h>
+#include "debugger/labels/symbolcontrol.h"
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
@@ -209,6 +210,34 @@ inline std::string TtdOptionTextPy(const pybind11::handle& o)
     if (py::isinstance<py::bool_>(o))
         return o.cast<bool>() ? "true" : "false";
     return py::str(o).cast<std::string>();
+}
+
+/// One symbol verb through SymbolControl: keyword arguments as options (a list as a comma list), the reply's body; a
+/// refusal adds ok = False and error = the message
+inline pybind11::object SymbolsPy(Emulator& emulator, const std::string& verb, std::map<std::string, std::string> options,
+                                  const pybind11::kwargs& kwargs)
+{
+    namespace py = pybind11;
+    for (const auto& [key, value] : kwargs)
+    {
+        std::string text;
+        if (py::isinstance<py::list>(value) || py::isinstance<py::tuple>(value))
+        {
+            for (const auto& item : value)
+                text += (text.empty() ? "" : ",") + py::str(item).cast<std::string>();
+        }
+        else
+            text = TtdOptionTextPy(value);
+        options[py::str(key).cast<std::string>()] = text;
+    }
+    const SymbolReply reply = SymbolControl(emulator.GetContext()).Execute({verb, std::move(options)});
+    StateNode value = reply.body;
+    if (!reply.Ok())
+    {
+        value["ok"] = false;
+        value["error"] = reply.message;
+    }
+    return StateNodeToPy(value);
 }
 
 /// A coverage query's answer; a bad argument raises ValueError
@@ -2123,6 +2152,25 @@ namespace PythonBindings
                 LabelManager* lm = ctx->pDebugManager->GetLabelManager();
                 return lm && lm->SaveLabels(path);
             }, "Save symbols to file", py::arg("path"))
+            // Symbol files and sets through SymbolControl (the same verbs, checks and fields as the WebAPI, CLI, MCP
+            // and Lua); options as keyword arguments, a list for sets; a refusal: ok = False, error = why
+            .def("symbols_formats", [](Emulator& self) { return SymbolsPy(self, "formats", {}, py::kwargs()); },
+                 "Symbol file formats")
+            .def("symbols_detect", [](Emulator& self, const std::string& path) { return SymbolsPy(self, "detect", {{"path", path}}, py::kwargs()); },
+                 "Which symbol format a file is", py::arg("path"))
+            .def("symbols_sets", [](Emulator& self) { return SymbolsPy(self, "sets", {}, py::kwargs()); },
+                 "Symbol sets: user, one per loaded file, named")
+            .def("symbols_import", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) {
+                return SymbolsPy(self, "import", {{"path", path}}, kwargs);
+            }, "Import a symbol file (format=, set=, space=, base=, policy=)", py::arg("path"))
+            .def("symbols_export", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) {
+                return SymbolsPy(self, "export", {{"path", path}}, kwargs);
+            }, "Export symbols (format=, sets=[...], pages=)", py::arg("path"))
+            .def("symbols_set", [](Emulator& self, const std::string& id, const py::kwargs& kwargs) {
+                return SymbolsPy(self, "set", {{"id", id}}, kwargs);
+            }, "Switch a symbol set on / off or change its priority (enabled=, priority=)", py::arg("id"))
+            .def("symbols_drop", [](Emulator& self, const std::string& id) { return SymbolsPy(self, "drop", {{"id", id}}, py::kwargs()); },
+                 "Remove a symbol set", py::arg("id"))
 
             // Disassembly
             .def("disasm", [](Emulator& self, int address, int count) -> py::list {

@@ -89,6 +89,16 @@ phase; master only after the owner's review.
   - [x] LabelManager: a `.map` whose content is z80asm's goes to `z88dk-map` (2026-10-07; golden `z88dk-labels.map`)
   - [x] S4 name rules (DT-3 / DT-4), IDA, Ghidra, MAME, CSpect; `symconv` (2026-10-06): every codec writes through `Prepare` (renames reported and commented, `--pages fold|comment|drop`); `cspect-map` and `unreal-l` byte for byte against sjasmplus' `CSPECTMAP` / `LABELSLIST`; `ghidra` checked in Ghidra 12.1.4 headless; `ida-idc` / `ida-python` checked in IDA 9.2 headless both ways (IDA 9.3 is not installed; 9.1 and 7.0 are), `mame` from MAME 0.289's source (its `-debugger none` runs no script); `tools/symconv`
   - [ ] S5 surfaces, bundles + manifest, recipe
+    - [x] surfaces (2026-10-08):
+      - `SymbolControl` verbs `formats` / `detect` / `sets` / `import` / `export` / `set` / `drop` (the TTDControl pattern).
+      - `LabelManager::ImportSymbols` / `ExportSymbols` with a report: format, score, set, counts, conflicts, diagnostics.
+      - Merging into a named set with space / base / policy; aliases show as labels.
+      - WebAPI `/symbols/{formats,detect,sets,import,export}` with OpenAPI tag "Symbols"; CLI `symbols <verb>` (`--json`); MCP `manage_symbols` actions `formats` / `detect` / `sets` / `set_enable` / `drop` / `import` / `export`; Lua `symbols_*`; Python `emu.symbols_*`.
+      - Recipe `.recipe/analysis/symbols-import-export.md`.
+      - Checked live on an instance: WebAPI, CLI and Lua. Python is checked by compiling only (this build has Python off).
+    - [ ] bundles + manifest (`data/symbols/manifest.json` by ROM page SHA-256), shipped with the binaries
+    - [ ] page-aware address lookup (the mapped page wins at its window)
+    - [ ] import from a disk image / base64; the live scan surface; Qt import / export dialogs and a "Sets" tab
   - [x] S6-S9 labels from sources (2026-10-07): `SymbolsFromProject` (`symbols/fromsource.h`) for TASM, ALASM, STORM, ZX-ASM and sjasmplus projects; values from `layout::Layout` over the sjasmplus conversion (instruction sizes, passes, `IF` / `DUP` / `WHILE` / macros / `DISP` / `INCLUDE` / `INCBIN`, sjasmplus' symbol table through the passes); the backend records the names it writes (`LabelName`); `symconv source`; the sjasmplus frontend reads `$$$`; equal to sjasmplus 1.24's `--sym` on every instruction form, the layout probe, five oracle projects and the collection (`tools/verification/unreal-asm/checks/symcheck.py`: 511 of 530 main sources, 67 264 labels; the 19 others read FRAMES or hit a sjasmplus quirk) ([symbols/formats.md](symbols/formats.md) §4.1)
   - [x] frontends for GENS, MASM, ZEUS, XAS (2026-10-07): their projects convert to sjasmplus and their labels come through `SymbolsFromProject`
     - [x] `masm` frontend, MASM 1.x (MASM → sjasmplus) (2026-10-07, branch `asm-masm`): a program with every construct, an INCBIN and MASM 1.1's own source (11688 bytes) equal to what MASM 1.1 built in the emulator; its 711 labels through `SymbolsFromProject`; MASM 2.0 / 3.0 `MAC` / `IF` / `BANK` ... unknown, kept as text ([research-masm-to-sjasmplus.md](research-masm-to-sjasmplus.md)); recipe `.recipe/assemblers/masm.md'

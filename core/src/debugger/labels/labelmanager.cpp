@@ -1,4 +1,5 @@
 #include "labelmanager.h"
+#include "symbolfiles.h"
 
 #include <algorithm>
 #include <cctype>
@@ -65,7 +66,7 @@ bool FindOwner(const std::vector<SymbolSet>& sets, const std::string& name, size
         for (size_t j = sets[i].symbols.size(); j-- > 0;)
         {
             const Symbol& s = sets[i].symbols[j];
-            if (s.name == name && LabelManager::ToLabel(s))
+            if ((s.name == name || std::find(s.aliases.begin(), s.aliases.end(), name) != s.aliases.end()) && LabelManager::ToLabel(s))
             {
                 // the same priority: the later set wins, as in Rebuild
                 found = true;
@@ -91,13 +92,24 @@ SymbolSet UserSet(const unrealasm::symbols::SymbolStore& store)
     return set;
 }
 
-// Removes the name's records from the user set; true when there were any
+// Removes the name's records (and the name from other records' aliases) from a set; true when there were any
 bool EraseName(SymbolSet& set, const std::string& name)
 {
     const auto it = std::remove_if(set.symbols.begin(), set.symbols.end(), [&](const Symbol& s) { return s.name == name; });
-    const bool erased = it != set.symbols.end();
+    bool erased = it != set.symbols.end();
     set.symbols.erase(it, set.symbols.end());
+    for (Symbol& s : set.symbols)
+    {
+        const auto alias = std::remove(s.aliases.begin(), s.aliases.end(), name);
+        erased = erased || alias != s.aliases.end();
+        s.aliases.erase(alias, s.aliases.end());
+    }
     return erased;
+}
+
+bool HasLabelTraits(const Symbol& s)
+{
+    return std::any_of(s.traits.begin(), s.traits.end(), [](const std::string& t) { return t.compare(0, 6, "label.") == 0; });
 }
 }  // namespace
 
@@ -437,17 +449,45 @@ bool LabelManager::DropSymbolSet(const std::string& id)
     return true;
 }
 
-// @brief The labels of the enabled sets: by priority (a later set first among equals), each set's records in order; a
-// name shows its last record, an address the last label placed at it
+// @brief Sets by priority (a later set first among equals), each set's records in order, a record's aliases before its
+// name; a name shows its last record. Records without a main CPU address show nowhere
+std::vector<std::pair<const unrealasm::symbols::Symbol*, std::string>> LabelManager::Resolve(const std::vector<SymbolSet>& sets,
+                                                                                            const std::vector<std::string>* only)
+{
+    std::vector<const SymbolSet*> order;
+    for (const SymbolSet& set : sets)
+        if (only ? std::find(only->begin(), only->end(), set.id) != only->end() : set.enabled)
+            order.push_back(&set);
+    std::stable_sort(order.begin(), order.end(), [](const SymbolSet* a, const SymbolSet* b) { return a->priority < b->priority; });
+
+    std::vector<std::pair<const Symbol*, std::string>> placed;
+    std::unordered_map<std::string, size_t> last;
+    for (const SymbolSet* set : order)
+        for (const Symbol& symbol : set->symbols)
+        {
+            if (!unrealasm::symbols::CpuAddress(symbol))
+                continue;
+            for (const std::string& alias : symbol.aliases)
+            {
+                last[alias] = placed.size();
+                placed.emplace_back(&symbol, alias);
+            }
+            last[symbol.name] = placed.size();
+            placed.emplace_back(&symbol, symbol.name);
+        }
+    std::vector<std::pair<const Symbol*, std::string>> shown;
+    shown.reserve(last.size());
+    for (size_t i = 0; i < placed.size(); i++)
+        if (last[placed[i].second] == i)
+            shown.push_back(std::move(placed[i]));
+    return shown;
+}
+
+// @brief The labels of the enabled sets (Resolve): a name shows its last record, an address the last label placed at it
 void LabelManager::Rebuild()
 {
     Flush();
     const auto index = _store->Index();
-    std::vector<const SymbolSet*> order;
-    for (const SymbolSet& set : index->Sets())
-        if (set.enabled)
-            order.push_back(&set);
-    std::stable_sort(order.begin(), order.end(), [](const SymbolSet* a, const SymbolSet* b) { return a->priority < b->priority; });
 
     // The user set (or the one AddLabel makes) comes last: a new name there needs no rebuild
     const SymbolSet* user = nullptr;
@@ -467,24 +507,13 @@ void LabelManager::Rebuild()
     }
     _userOnTop = !userOff && (user ? user->priority > above : USER_SET_PRIORITY > above);
 
-    std::vector<std::shared_ptr<Label>> labels;
-    std::unordered_map<std::string, size_t> last;
-    for (const SymbolSet* set : order)
-        for (const Symbol& symbol : set->symbols)
-            if (auto label = ToLabel(symbol))
-            {
-                last[label->name] = labels.size();
-                labels.push_back(std::make_shared<Label>(std::move(*label)));
-            }
-
     auto view = std::make_shared<View>();
-    view->byAddress.reserve(last.size());
-    for (size_t i = 0; i < labels.size(); i++)
+    for (const auto& [symbol, name] : Resolve(index->Sets()))
     {
-        if (last[labels[i]->name] != i)
-            continue;
-        view->byName.emplace(labels[i]->name, labels[i]);
-        view->byAddress[labels[i]->address] = labels[i];
+        auto label = std::make_shared<Label>(*ToLabel(*symbol));
+        label->name = name;
+        view->byName.emplace(name, label);
+        view->byAddress[label->address] = std::move(label);
     }
     _view = std::move(view);
 }
@@ -516,36 +545,8 @@ void LabelManager::Notify()
 // @return false if the file could not be opened or parsed
 bool LabelManager::LoadLabels(const std::string& path)
 {
-    if (path.empty())
-        return false;
-    std::vector<uint8_t> bytes;
-    if (!ReadLabelFile(path, bytes))
-        return false;
     // The extension decides as it always did (.map, .sym, .vice, .s / .asm, .z88); other files by their content
-    std::string extension = FileHelper::ToFsPath(path).extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
-    if (!extension.empty() && extension[0] == '.')
-        extension.erase(0, 1);
-    const auto& registry = unrealasm::symbols::SymbolCodecRegistry::Builtin();
-    const unrealasm::symbols::ISymbolCodec* codec = registry.Find(CodecForExtension(extension));
-    // z80asm writes its map (-m) as .map too: its content says so
-    if (extension == "map")
-    {
-        const auto detected = registry.Detect(bytes, extension);
-        if (detected.chosen && detected.chosen->Info().id == "z88dk-map")
-            codec = detected.chosen;
-    }
-    if (!codec)
-    {
-        const auto detected = registry.Detect(bytes, extension);
-        codec = detected.chosen;
-        if (!codec)
-        {
-            LOGERROR("Unsupported label file format: %s (%s)", path.c_str(), detected.reason.c_str());
-            return false;
-        }
-    }
-    return ImportWith(*codec, bytes, path);
+    return ImportSymbols(path, {}).ok;
 }
 
 // @brief Load labels from a map file
@@ -554,8 +555,9 @@ bool LabelManager::LoadLabels(const std::string& path)
 // @return false if the file could not be opened or parsed
 bool LabelManager::LoadMapFile(const std::string& path)
 {
-    std::vector<uint8_t> bytes;
-    return ReadLabelFile(path, bytes) && ImportWith(*unrealasm::symbols::SymbolCodecRegistry::Builtin().Find("unreal-map"), bytes, path);
+    SymbolImportRequest request;
+    request.format = "unreal-map";
+    return ImportSymbols(path, request).ok;
 }
 
 // @brief Load labels from a symbol file
@@ -564,8 +566,179 @@ bool LabelManager::LoadMapFile(const std::string& path)
 // @return false if the file could not be opened or parsed
 bool LabelManager::LoadSymFile(const std::string& path)
 {
+    SymbolImportRequest request;
+    request.format = "simple-sym";
+    return ImportSymbols(path, request).ok;
+}
+
+// @brief Reads a symbol file into the store. Without a set, space, base or policy the file is a set of its own above
+// the files loaded before (a file loaded again replaces its set; inside a file a later name or address wins, as
+// LoadLabels always did); with one of them its records are normalized and merged into the set (DT-1, DT-2)
+SymbolImportResult LabelManager::ImportSymbols(const std::string& path, const SymbolImportRequest& request)
+{
+    using namespace unrealasm::symbols;
+    SymbolImportResult result;
     std::vector<uint8_t> bytes;
-    return ReadLabelFile(path, bytes) && ImportWith(*unrealasm::symbols::SymbolCodecRegistry::Builtin().Find("simple-sym"), bytes, path);
+    if (path.empty() || !ReadLabelFile(path, bytes))
+    {
+        result.message = "Cannot read the symbol file: " + path;
+        return result;
+    }
+    std::string reason;
+    const ISymbolCodec* codec = CodecForFile(path, bytes, request.format, result.score, reason);
+    if (!codec)
+    {
+        LOGERROR("%s", reason.c_str());
+        result.message = reason;
+        return result;
+    }
+    result.format = codec->Info().id;
+    SymbolDecodeResult decoded = codec->Decode(bytes);
+    for (const auto& d : decoded.diagnostics)
+        LOGDEBUG("%s line %u: %s", path.c_str(), d.line, d.message.c_str());
+    if (!decoded.ok)
+    {
+        LOGERROR("Failed to read label file %s as %s", path.c_str(), result.format.c_str());
+        result.message = "Failed to read " + path + " as " + result.format;
+        result.report.diagnostics = std::move(decoded.diagnostics);
+        return result;
+    }
+    for (const SymbolSet& set : decoded.file.sets)
+        result.records += set.symbols.size();
+
+    Flush();
+    const std::string title = FileHelper::ToFsPath(path).filename().string();
+    if (request.set.empty() && !request.space && request.base == 0 && !request.policy)
+    {
+        const bool several = decoded.file.sets.size() > 1;
+        std::vector<SymbolSet> sets;
+        for (SymbolSet& set : decoded.file.sets)
+        {
+            SymbolSet file = std::move(set);
+            if (file.title.empty())
+                file.title = title;
+            file.id = "file:" + path + (several ? "#" + file.id : std::string());
+            file.origin.kind = "file";
+            file.origin.where = path;
+            file.priority = _nextFilePriority++;
+            file.enabled = true;
+            sets.push_back(std::move(file));
+        }
+        result.report.set = sets.empty() ? "file:" + path : sets.front().id;
+        result.report.added = result.records;
+        result.report.diagnostics = std::move(decoded.diagnostics);
+        result.report.ok = true;
+        _store->PutSets(std::move(sets));
+    }
+    else
+    {
+        ImportOptions options;
+        options.set = request.set.empty() ? "file:" + path : request.set;
+        options.title = title;
+        options.origin.kind = "file";
+        options.origin.where = path;
+        options.space = request.space;
+        options.base = request.base;
+        options.policy = request.policy.value_or(MergePolicy::Both);
+        const bool existed = _store->GetSet(options.set).has_value();
+        std::vector<Symbol> records;
+        records.reserve(result.records);
+        for (SymbolSet& set : decoded.file.sets)
+            std::move(set.symbols.begin(), set.symbols.end(), std::back_inserter(records));
+        result.report = _store->Import(std::move(records), options);
+        result.report.diagnostics.insert(result.report.diagnostics.begin(), decoded.diagnostics.begin(), decoded.diagnostics.end());
+        if (!result.report.ok)
+            result.message = "A conflict stopped the merge (policy fail): nothing changed";
+        else if (!existed)
+            _store->SetPriority(options.set, _nextFilePriority++);
+    }
+    Rebuild();
+    Notify();
+    result.ok = result.report.ok;
+    return result;
+}
+
+// @brief Writes symbols in a format: the labels as they show (the given sets' when `sets` names some) as one set, or
+// for the native format the sets themselves (every set when none is named)
+SymbolExportResult LabelManager::ExportSymbols(const std::string& path, const SymbolExportRequest& request) const
+{
+    using namespace unrealasm::symbols;
+    SymbolExportResult result;
+    const auto& registry = SymbolCodecRegistry::Builtin();
+    const ISymbolCodec* codec = nullptr;
+    if (!request.format.empty())
+        codec = registry.Find(request.format);
+    else
+    {
+        std::string extension = FileHelper::ToFsPath(path).extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+        if (!extension.empty() && extension[0] == '.')
+            extension.erase(0, 1);
+        codec = registry.Find(CodecForExtension(extension));
+        for (size_t i = 0; !codec && !extension.empty() && i < registry.All().size(); i++)
+        {
+            const auto& extensions = registry.All()[i]->Info().extensions;
+            if (std::find(extensions.begin(), extensions.end(), extension) != extensions.end())
+                codec = registry.All()[i].get();
+        }
+    }
+    if (!codec)
+    {
+        result.message = request.format.empty() ? "No symbol format for the extension of " + path + ": name one"
+                                                : "Unknown symbol format: " + request.format;
+        return result;
+    }
+    result.format = codec->Info().id;
+
+    Flush();
+    const std::vector<SymbolSet> sets = _store->Sets();
+    for (const std::string& id : request.sets)
+        if (std::none_of(sets.begin(), sets.end(), [&](const SymbolSet& set) { return set.id == id; }))
+        {
+            result.message = "No symbol set: " + id;
+            return result;
+        }
+    SymbolFile file;
+    if (codec->Info().family == Family::Native)
+    {
+        for (const SymbolSet& set : sets)
+            if (request.sets.empty() || std::find(request.sets.begin(), request.sets.end(), set.id) != request.sets.end())
+                file.sets.push_back(set);
+    }
+    else
+    {
+        file.sets.emplace_back();
+        std::vector<Symbol>& symbols = file.sets[0].symbols;
+        for (const auto& [symbol, name] : Resolve(sets, request.sets.empty() ? nullptr : &request.sets))
+        {
+            // A label set by hand as the label shows it; a file's record as the file had it
+            Symbol s = HasLabelTraits(*symbol) ? ToSymbol(*ToLabel(*symbol)) : *symbol;
+            s.name = name;
+            s.aliases.clear();
+            symbols.push_back(std::move(s));
+        }
+        std::stable_sort(symbols.begin(), symbols.end(),
+                         [](const Symbol& a, const Symbol& b) { return CpuAddress(a).value_or(0) < CpuAddress(b).value_or(0); });
+    }
+    SymbolEncodeOptions options;
+    options.unrepresentable = request.pages;
+    SymbolEncodeResult encoded = codec->Encode(file, options);
+    result.diagnostics = std::move(encoded.diagnostics);
+    result.written = encoded.written;
+    if (!encoded.ok)
+    {
+        result.message = "Cannot write the symbols as " + result.format;
+        return result;
+    }
+    std::ofstream out(FileHelper::ToFsPath(path), std::ios::binary);
+    out.write(reinterpret_cast<const char*>(encoded.bytes.data()), static_cast<std::streamsize>(encoded.bytes.size()));
+    if (!out.good())
+    {
+        result.message = "Cannot write " + path;
+        return result;
+    }
+    result.ok = true;
+    return result;
 }
 
 // @brief Save all labels to a file in the specified format
@@ -635,37 +808,55 @@ bool LabelManager::ReadLabelFile(const std::string& path, std::vector<uint8_t>& 
     return true;
 }
 
-// @brief Decodes a label file with a codec into a set of its own above the files loaded before (a file loaded again
-// replaces its set); inside a file a later name or address wins, as before
-bool LabelManager::ImportWith(const unrealasm::symbols::ISymbolCodec& codec, const std::vector<uint8_t>& bytes, const std::string& path)
+// @brief The codec for a file: the format named; else the codec LabelManager has always picked for the extension (a
+// .map whose content is z80asm's goes to z88dk-map); else the one detection chooses
+const unrealasm::symbols::ISymbolCodec* LabelManager::CodecForFile(const std::string& path, const std::vector<uint8_t>& bytes,
+                                                                   const std::string& format, int& score, std::string& reason)
 {
-    auto decoded = codec.Decode(bytes);
-    for (const auto& d : decoded.diagnostics)
-        LOGDEBUG("%s line %u: %s", path.c_str(), d.line, d.message.c_str());
-    if (!decoded.ok)
+    using namespace unrealasm::symbols;
+    const auto& registry = SymbolCodecRegistry::Builtin();
+    if (!format.empty())
     {
-        LOGERROR("Failed to read label file %s as %s", path.c_str(), codec.Info().id.c_str());
-        return false;
+        const ISymbolCodec* codec = registry.Find(format);
+        if (!codec)
+        {
+            reason = "Unknown symbol format: " + format + " (formats:";
+            for (const auto& c : registry.All())
+                reason += " " + c->Info().id;
+            reason += ")";
+            return nullptr;
+        }
+        score = 100;
+        return codec;
     }
-    const bool several = decoded.file.sets.size() > 1;
-    std::vector<SymbolSet> sets;
-    for (SymbolSet& set : decoded.file.sets)
+    std::string extension = FileHelper::ToFsPath(path).extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+    if (!extension.empty() && extension[0] == '.')
+        extension.erase(0, 1);
+    const ISymbolCodec* codec = registry.Find(CodecForExtension(extension));
+    // z80asm writes its map (-m) as .map too: its content says so
+    if (extension == "map")
     {
-        SymbolSet file = std::move(set);
-        if (file.title.empty())
-            file.title = FileHelper::ToFsPath(path).filename().string();
-        file.id = "file:" + path + (several ? "#" + file.id : std::string());
-        file.origin.kind = "file";
-        file.origin.where = path;
-        file.priority = _nextFilePriority++;
-        file.enabled = true;
-        sets.push_back(std::move(file));
+        const auto detected = registry.Detect(bytes, extension);
+        if (detected.chosen && detected.chosen->Info().id == "z88dk-map")
+            codec = detected.chosen;
     }
-    Flush();
-    _store->PutSets(std::move(sets));
-    Rebuild();
-    Notify();
-    return true;
+    if (codec)
+    {
+        Probe probe;
+        probe.bytes = std::span<const uint8_t>(bytes.data(), std::min(bytes.size(), SymbolCodecRegistry::kProbeBytes));
+        probe.extension = extension;
+        score = codec->Detect(probe);
+        return codec;
+    }
+    const auto detected = registry.Detect(bytes, extension);
+    if (!detected.chosen)
+    {
+        reason = "Unsupported label file format: " + path + " (" + detected.reason + ")";
+        return nullptr;
+    }
+    score = detected.candidates.empty() ? 0 : detected.candidates.front().score;
+    return detected.chosen;
 }
 
 // @brief A symbol as a label: the CPU address (a page symbol at its window), the page as bank + bank offset, the kind
@@ -726,6 +917,7 @@ unrealasm::symbols::Symbol LabelManager::FromLabel(const Label& label, const unr
     using namespace unrealasm::symbols;
     Symbol s = base;
     s.name = label.name;
+    s.aliases.clear();
     s.location = {};
     s.window = -1;
     if (label.bank != UINT16_MAX)
