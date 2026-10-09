@@ -1,0 +1,340 @@
+  100 ;UNISPRITE. (C) 1989,WLODEK BLACK, MOSCOW.
+  110 ;---------
+  120 ; CALLING: LD HL,<ADDR. OF SPRITE ATTR.TABLE>
+  130 ; CALL SPRPUT OR CALL SPRDEL
+  140 ; RETURN PARAMETERS: CARRY FLAG=1 - OK, =0 (NC) - ERROR;
+  150 ; OLDX,OLDY = NEW COORDS.
+  160 ;-----------------------
+  170 ; STRUCTURE OF SPRITE ATTRIBUTE TABLE:
+  180 ; DEFB XSPR - 0...255 FROM LEFT SIDE OF SCREEN - "X" COORD.;
+  190 ; DEFB YSPR - 0...191 FROM TOP OF SCREEN; "Y" COORD.;
+  200 ; DEFB XSIZE - HORIZONTAL SIZE IN CHAR POSITIONS (NOT POINTS);
+  210 ; DEFB YSIZE - VERTICAL SIZE IN LINES OR POINTS (NOT CHARS);
+  220 ; DEFW SPRGEN - ADDRESS OF SPRITE GENERATOR TABLE
+  230 ; SPR.GEN.TABLE IS BYTES OF SPRITE FROM LEFT TO RIGHT AND FROM 
+  240 ; TOP TO DOWN SIMPLY.
+  250 ; DEFW BUFPHN - ADDR. OF BUFFER OF OLD SCREEN PICTURE;
+  260 ; DEFW BUFSPR - ADDR. OF BUFFER FOR "RR (HL)" OF SPRITE;
+  270 ; DEFB OLDX
+  280 ; DEFB OLDY - IF SPRITE IS PUTED "OK", THERE ARE ITS NEW COORDS
+  290 ; SIZES OF BUFFERS MUST BE >=XSIZE*YSIZE.
+  300 ; SET XSPR AND YSPR BEFORE "CALL" AND DON'T TAKE ANOTHER PARAMS
+  310 ;--------------------------
+  320 SPRPUT JR   SAVPHN
+  330 SPRDEL JP   SPRCLR
+  340 SAVPHN DI
+  350        PUSH IX
+  360        PUSH HL
+  370        POP  IX
+  380        LD   A,(IX+0)
+  390        AND  %11111000
+  400        RRCA
+  410        RRCA
+  420        RRCA
+  430        LD   (XPOS),A
+  440        ADD  A,(IX+2)
+  450        CP   33
+  460        JP   NC,SPRERR
+  470        LD   A,(IX+1)
+  480        CP   192
+  490        JP   NC,SPRERR
+  500        CCF
+  510        RLA
+  520        LD   C,A
+  530        LD   B,0
+  540        RL   B
+  550        LD   HL,VRAMT
+  560        ADD  HL,BC
+  570        LD   (YVRAM),HL
+  580        LD   A,(IX+1)
+  590        ADD  A,(IX+3)
+  600        CCF
+  610        JP   NC,SPRERR
+  620        CP   192
+  630        JP   NC,SPRERR
+  640        LD   A,(IX+3)
+  650        LD   (COUSVY),A
+  660        LD   E,(IX+6)
+  670        LD   D,(IX+7)
+  680 SAVPH1 LD   HL,(YVRAM)
+  690        LD   C,(HL)
+  700        INC  HL
+  710        LD   B,(HL)
+  720        LD   A,(XPOS)
+  730        LD   L,A
+  740        LD   H,0
+  750        ADD  HL,BC
+  760        LD   C,(IX+2)
+  770        LD   B,0
+  780        LDIR
+  790        LD   HL,(YVRAM)
+  800        INC  HL
+  810        INC  HL
+  820        LD   (YVRAM),HL
+  830        LD   A,(COUSVY)
+  840        DEC  A
+  850        LD   (COUSVY),A
+  860        JR   NZ,SAVPH1
+  870 ROTSPR LD   E,(IX+3)
+  880        LD   D,0
+  890        LD   B,(IX+2)
+  900        LD   HL,0
+  910 ROTSP1 ADD  HL,DE
+  920        DJNZ ROTSP1
+  930        LD   C,L
+  940        LD   B,H
+  950        LD   E,(IX+8)
+  960        LD   D,(IX+9)
+  970        LD   L,(IX+4)
+  980        LD   H,(IX+5)
+  990        LDIR
+ 1000        LD   A,(IX+0)
+ 1010        AND  %111
+ 1020        JR   Z,PUTSPR
+ 1030        LD   D,A
+ 1040 ROTSP4 LD   L,(IX+8)
+ 1050        LD   H,(IX+9)
+ 1060        LD   E,(IX+3)
+ 1070 ROTSP3 LD   B,(IX+2)
+ 1080        OR   A
+ 1090 ROTSP2 RR   (HL)
+ 1100        INC  HL
+ 1110        DJNZ ROTSP2
+ 1120        DEC  E
+ 1130        JR   NZ,ROTSP3
+ 1140        DEC  D
+ 1150        JR   NZ,ROTSP4
+ 1160 PUTSPR LD   C,(IX+1)
+ 1170        LD   B,0
+ 1180        OR   A
+ 1190        RL   C
+ 1200        RL   B
+ 1210        LD   HL,VRAMT
+ 1220        ADD  HL,BC
+ 1230        LD   (YVRAM),HL
+ 1240        LD   L,(IX+8)
+ 1250        LD   H,(IX+9)
+ 1260        LD   (BFSPOI),HL
+ 1270        LD   L,(IX+6)
+ 1280        LD   H,(IX+7)
+ 1290        LD   (PHNPOI),HL
+ 1300        LD   A,(IX+3)
+ 1310        LD   (NUMLIN),A
+ 1320 PUTLIN LD   HL,(YVRAM)
+ 1330        LD   C,(HL)
+ 1340        INC  HL
+ 1350        LD   B,(HL)
+ 1360        LD   A,(XPOS)
+ 1370        LD   L,A
+ 1380        LD   H,0
+ 1390        ADD  HL,BC
+ 1400        LD   (VRMPOI),HL
+ 1410        XOR  A
+ 1420        LD   (LPIX),A
+ 1430        LD   A,(IX+2)
+ 1440        DEC  A
+ 1450        LD   (RPIX),A
+ 1460 PUTL1  LD   HL,(BFSPOI)
+ 1470        LD   A,(LPIX)
+ 1480        LD   C,A
+ 1490        LD   B,0
+ 1500        ADD  HL,BC
+ 1510        XOR  A
+ 1520        CP   (HL)
+ 1530        JR   NZ,PUTL2
+ 1540        LD   A,(LPIX)
+ 1550        INC  A
+ 1560        LD   (LPIX),A
+ 1570        JR   PUTL1
+ 1580 PUTL2  LD   D,(HL)
+ 1590        LD   HL,(PHNPOI)
+ 1600        ADD  HL,BC
+ 1610        LD   E,(HL)
+ 1620        LD   HL,(VRMPOI)
+ 1630        ADD  HL,BC
+ 1640        LD   B,8
+ 1650 PUTL3  RLC  D
+ 1660        JR   C,PUTL4
+ 1670        RLC  E
+ 1680        RLA
+ 1690        DJNZ PUTL3
+ 1700        JR   PUTL6
+ 1710 PUTL4  RES  0,A
+ 1720 PUTL5  RLA
+ 1730        RLC  D
+ 1740        DJNZ PUTL5
+ 1750 PUTL6  LD   (HL),A
+ 1760 FINDR1 LD   A,(LPIX)
+ 1770        LD   HL,RPIX
+ 1780        CP   (HL)
+ 1790        JR   NC,ENDLIN
+ 1800        LD   C,(HL)
+ 1810        LD   B,0
+ 1820        LD   HL,(BFSPOI)
+ 1830        ADD  HL,BC
+ 1840        XOR  A
+ 1850        CP   (HL)
+ 1860        JR   NZ,PUTR1
+ 1870        LD   A,(RPIX)
+ 1880        DEC  A
+ 1890        LD   (RPIX),A
+ 1900        LD   C,A
+ 1910        JR   FINDR1
+ 1920 PUTR1  LD   D,(HL)
+ 1930        LD   HL,(PHNPOI)
+ 1940        ADD  HL,BC
+ 1950        LD   E,(HL)
+ 1960        LD   HL,(VRMPOI)
+ 1970        ADD  HL,BC
+ 1980        LD   B,8
+ 1990 PUTR2  RRC  D
+ 2000        JR   C,PUTR3
+ 2010        RRC  E
+ 2020        RRA
+ 2030        DJNZ PUTR2
+ 2040        JR   PUTR5
+ 2050 PUTR3  RES  7,A
+ 2060 PUTR4  RRA
+ 2070        RRC  D
+ 2080        DJNZ PUTR4
+ 2090 PUTR5  LD   (HL),A
+ 2100 ASKLIN LD   HL,RPIX
+ 2110        DEC  (HL)
+ 2120        LD   A,(LPIX)
+ 2130        CP   (HL)
+ 2140        JR   NC,ENDLIN
+ 2150        LD   C,(HL)
+ 2160        LD   B,0
+ 2170        LD   HL,(VRMPOI)
+ 2180        ADD  HL,BC
+ 2190        EX   DE,HL
+ 2200        LD   HL,(BFSPOI)
+ 2210        ADD  HL,BC
+ 2220        LDI
+ 2230        JR   ASKLIN
+ 2240 ENDLIN LD   C,(IX+2)
+ 2250        LD   B,0
+ 2260        LD   HL,(BFSPOI)
+ 2270        ADD  HL,BC
+ 2280        LD   (BFSPOI),HL
+ 2290        LD   HL,(PHNPOI)
+ 2300        ADD  HL,BC
+ 2310        LD   (PHNPOI),HL
+ 2320        LD   HL,(YVRAM)
+ 2330        INC  HL
+ 2340        INC  HL
+ 2350        LD   (YVRAM),HL
+ 2360        LD   HL,NUMLIN
+ 2370        DEC  (HL)
+ 2380        JP   NZ,PUTLIN
+ 2390        LD   A,(IX+0)
+ 2400        LD   (IX+10),A
+ 2410        LD   A,(IX+1)
+ 2420        LD   (IX+11),A
+ 2430        POP  IX
+ 2440        SCF
+ 2450        RET
+ 2460 SPRCLR DI
+ 2470        PUSH IX
+ 2480        PUSH HL
+ 2490        POP  IX
+ 2500 LDPHN  LD   A,(IX+10)
+ 2510        AND  %11111000
+ 2520        RRCA
+ 2530        RRCA
+ 2540        RRCA
+ 2550        LD   (XPOS),A
+ 2560        LD   C,(IX+11)
+ 2570        LD   B,0
+ 2580        OR   A
+ 2590        RL   C
+ 2600        RL   B
+ 2610        LD   HL,VRAMT
+ 2620        ADD  HL,BC
+ 2630        LD   (YVRAM),HL
+ 2640        LD   A,(IX+3)
+ 2650        LD   (COUSVY),A
+ 2660        LD   E,(IX+6)
+ 2670        LD   D,(IX+7)
+ 2680 LDPHN1 LD   HL,(YVRAM)
+ 2690        LD   C,(HL)
+ 2700        INC  HL
+ 2710        LD   B,(HL)
+ 2720        LD   A,(XPOS)
+ 2730        LD   L,A
+ 2740        LD   H,0
+ 2750        ADD  HL,BC
+ 2760        LD   C,(IX+2)
+ 2770        LD   B,0
+ 2780        EX   DE,HL
+ 2790        LDIR
+ 2800        EX   DE,HL
+ 2810        LD   HL,(YVRAM)
+ 2820        INC  HL
+ 2830        INC  HL
+ 2840        LD   (YVRAM),HL
+ 2850        LD   A,(COUSVY)
+ 2860        DEC  A
+ 2870        LD   (COUSVY),A
+ 2880        JR   NZ,LDPHN1
+ 2890 SPRERR POP  IX
+ 2900        RET
+ 2910 YVRAM  DEFW VRAMT
+ 2920 COUSVY DEFB 1
+ 2930 XPOS   DEFB 1
+ 2940 BFSPOI DEFW 0
+ 2950 PHNPOI DEFW 0
+ 2960 VRMPOI DEFW 0
+ 2970 NUMLIN DEFB 1
+ 2980 LPIX   DEFB 2
+ 2990 RPIX   DEFB 2
+ 3000        DEFB 0,0
+ 3010 VRAMT  DEFW 16384,16640,16896,17152
+ 3020        DEFW 17408,17664,17920,18176
+ 3030        DEFW 16416,16672,16928,17184
+ 3040        DEFW 17440,17696,17952,18208
+ 3050        DEFW 16448,16704,16960,17216
+ 3060        DEFW 17472,17728,17984,18240
+ 3070        DEFW 16480,16736,16992,17248
+ 3080        DEFW 17504,17760,18016,18272
+ 3090        DEFW 16512,16768,17024,17280
+ 3100        DEFW 17536,17792,18048,18304
+ 3110        DEFW 16544,16800,17056,17312
+ 3120        DEFW 17568,17824,18080,18336
+ 3130        DEFW 16576,16832,17088,17344
+ 3140        DEFW 17600,17856,18112,18368
+ 3150        DEFW 16608,16864,17120,17376
+ 3160        DEFW 17632,17888,18144,18400
+ 3170        DEFW 18432,18688,18944,19200
+ 3180        DEFW 19456,19712,19968,20224
+ 3190        DEFW 18464,18720,18976,19232
+ 3200        DEFW 19488,19744,20000,20256
+ 3210        DEFW 18496,18752,19008,19264
+ 3220        DEFW 19520,19776,20032,20288
+ 3230        DEFW 18528,18784,19040,19296
+ 3240        DEFW 19552,19808,20064,20320
+ 3250        DEFW 18560,18816,19072,19328
+ 3260        DEFW 19584,19840,20096,20352
+ 3270        DEFW 18592,18848,19104,19360
+ 3280        DEFW 19616,19872,20128,20384
+ 3290        DEFW 18624,18880,19136,19392
+ 3300        DEFW 19648,19904,20160,20416
+ 3310        DEFW 18656,18912,19168,19424
+ 3320        DEFW 19680,19936,20192,20448
+ 3330        DEFW 20480,20736,20992,21248
+ 3340        DEFW 21504,21760,22016,22272
+ 3350        DEFW 20512,20768,21024,21280
+ 3360        DEFW 21536,21792,22048,22304
+ 3370        DEFW 20544,20800,21056,21312
+ 3380        DEFW 21568,21824,22080,22336
+ 3390        DEFW 20576,20832,21088,21344
+ 3400        DEFW 21600,21856,22112,22368
+ 3410        DEFW 20608,20864,21120,21376
+ 3420        DEFW 21632,21888,22144,22400
+ 3430        DEFW 20640,20896,21152,21408
+ 3440        DEFW 21664,21920,22176,22432
+ 3450        DEFW 20672,20928,21184,21440
+ 3460        DEFW 21696,21952,22208,22464
+ 3470        DEFW 20704,20960,21216,21472
+ 3480        DEFW 21728,21984,22240,22496
+ 3490        DEFW 0

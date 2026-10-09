@@ -37,6 +37,7 @@ const Sample kSamples[] = {
     {"ZeusRoutines__ZeusScrolling.bin", "ZeusRoutines__ZeusScrolling", "1983", 135},
     {"ZeusRoutines__ZeusSelect.bin", "ZeusRoutines__ZeusSelect", "1983", 179},
     {"typed-zeus1983-PROBE.bin", "typed-zeus1983-PROBE", "1983", 28},   // typed into ZEUS 1983: every tokenizer rule
+    {"ZSPL216M__t;Z.$C", "ZSPL216M__t;Z", "1983", 105},   // on the disk of Zeus Plus 2.16 Max (type C at 28500)
     {"PRIMUS29__PRI.DOC.$C", "PRIMUS29__PRI.DOC", "primus", 311},   // Primus 2.9's manual in its own format: Russian letters
     {"typed-primus29-PROBE.bin", "typed-primus29-PROBE", "primus", 26},   // Primus 2.9's text buffer: L.X, L?Z, L$V words
 };

@@ -21,6 +21,7 @@ SHA-256).
 | ZEUS (GG, "ZEUS with B-disk v20.04.96") | `archives/ZEUS_GG.zip` → `ZEUS_GG.SCL` (`ZEUS.B` + `ZEUS.C`) | `PENTAGON` | `RUN "ZEUS"` from TR-DOS | `DB DM DS DW`, `INCBIN` |
 | ZEUS 1.1 beta (YRIC, MIPh&T 1993; the ZEUS of PHT 3.6 and of the ADS 2.0 sources) | `PHT_ZEUS.LZH` → `zeus.$c` (hobeta, CODE 57344,6775) | `PENTAGON` in 48 BASIC | `RANDOMIZE USR 57344` | `DB DM DS DW`, `INCLUDE PLACE` |
 | ZEUS v7.E (ZKSoft) | `archives/ZEUS72ZK.zip` → `ZEUS72ZK.SCL` (`ZEUSv7.E.B`) | `PENTAGON` | `RUN "ZEUSv7.E"` from TR-DOS | as 1.1 |
+| ZEUS 2.2 (Daniel'96; SI Soft'91), 3.0 (= ZEUS 128, Stars of Keladan'95), 3.1 (ZEUS+, H.S.O.'93), Zeus Pro 2.01, Zeus Plus 2.16 Max | `archives/` (vtrd.in) | `PENTAGON` | their BASIC loaders from TR-DOS (not run here) | 1983 (compared in their code; their files read as `1983`) |
 | Primus Assembler 2.9 (Trunov, 1994; a ZEUS clone) | [PRIMUS29.ZIP](https://vtrd.in/system/PRIMUS29.ZIP) → `PRIMUS29.SCL` (`P_AS_2.9.B`, `PRI.ASS`, `PRI.DOC`) | `PENTAGON` | `RUN "P_AS_2.9"` from TR-DOS; it loads the text file `PRI.ASS` names (`PRI.DOC`) | 1983 with `DISK` for `DISP`; Russian letters |
 
 The language is the same everywhere (manual: `archives/zxdb/Zeus.txt`, section 5) except where the table below
