@@ -4226,19 +4226,22 @@ namespace PythonBindings
                py::arg("pcs"))
 
             .def("ttd_coverage_probe", [](Emulator& self, uint64_t frame, const std::string& kindStr,
-                                          uint16_t addrFrom, uint16_t addrTo, py::object pageObj) -> py::object {
+                                          uint32_t addrFrom, uint32_t addrTo, py::object pageObj, py::object spaceObj) -> py::object {
                 std::map<std::string, std::string> options{{"frame", std::to_string(frame)}, {"kind", kindStr},
                                                            {"addr_from", std::to_string(addrFrom)},
                                                            {"addr_to", std::to_string(addrTo)}};
                 if (!pageObj.is_none())
                     options["phys_page"] = TtdOptionTextPy(pageObj);
+                if (!spaceObj.is_none())
+                    options["space"] = py::str(spaceObj).cast<std::string>();   // vram / cache: offsets in that memory
                 return TtdCoveragePy(TtdRunPy(self, "coverage-probe", options));
             }, "Was the address range touched in this frame (coverage index)",
-                py::arg("frame") = 0, py::arg("kind") = "executed", py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none())
+                py::arg("frame") = 0, py::arg("kind") = "executed", py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none(),
+                py::arg("space") = py::none())
 
             .def("ttd_coverage_scan", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj,
-                                         const std::string& kindStr, uint16_t addrFrom, uint16_t addrTo,
-                                         py::object pageObj, size_t limit) -> py::object {
+                                         const std::string& kindStr, uint32_t addrFrom, uint32_t addrTo,
+                                         py::object pageObj, size_t limit, py::object spaceObj) -> py::object {
                 std::map<std::string, std::string> options{
                     {"from_frame", std::to_string(fromFrame)}, {"kind", kindStr},
                     {"addr_from", std::to_string(addrFrom)},   {"addr_to", std::to_string(addrTo)},
@@ -4247,10 +4250,45 @@ namespace PythonBindings
                     options["to_frame"] = TtdOptionTextPy(toFrameObj);
                 if (!pageObj.is_none())
                     options["phys_page"] = TtdOptionTextPy(pageObj);
+                if (!spaceObj.is_none())
+                    options["space"] = py::str(spaceObj).cast<std::string>();
                 return TtdCoveragePy(TtdRunPy(self, "coverage-scan", options));
             }, "Frames in from_frame..to_frame that touched the address range (coverage index)",
                 py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("kind") = "executed",
-                py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none(), py::arg("limit") = 200)
+                py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none(), py::arg("limit") = 200,
+                py::arg("space") = py::none())
+
+            // A memory at a past checkpoint and what changed between two, from the store (no seek). A bad
+            // argument raises ValueError; a refusal (no history, backend v1) is a dict with error
+            .def("ttd_memory_at", [](Emulator& self, const std::string& space, uint64_t frame, py::object offsetObj,
+                                     uint32_t length) -> py::object {
+                std::map<std::string, std::string> options{
+                    {"space", space}, {"frame", std::to_string(frame)}, {"length", std::to_string(length)}};
+                if (!offsetObj.is_none())
+                    options["offset"] = TtdOptionTextPy(offsetObj);
+                const ttd::TTDReply reply = TtdRunPy(self, "memory-at", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "A memory as it was at the checkpoint at or before frame: {space, offset, length, at_frame, exact, hex}",
+                py::arg("space"), py::arg("frame"), py::arg("offset") = py::none(), py::arg("length") = 256)
+
+            .def("ttd_memory_diff", [](Emulator& self, const std::string& space, uint64_t fromFrame, uint64_t toFrame,
+                                       uint64_t limit) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "memory-diff", {{"space", space}, {"from_frame", std::to_string(fromFrame)},
+                                                                           {"to_frame", std::to_string(toFrame)},
+                                                                           {"limit", std::to_string(limit)}});
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "The byte ranges of a memory that differ between two checkpoints: {changed_bytes, ranges: [{offset, length}]}",
+                py::arg("space"), py::arg("from_frame"), py::arg("to_frame"), py::arg("limit") = 100)
 
             .def("ttd_coverage_summary", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj,
                                             py::object kindObj, uint64_t bucketSize, size_t limit) -> py::object {

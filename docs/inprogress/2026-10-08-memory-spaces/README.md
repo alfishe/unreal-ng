@@ -1,6 +1,6 @@
 # Memory spaces on every automation surface
 
-Status: design, 2026-10-08. Owner request: "нужно ли как-то менять automation planes, чтобы иметь доступ ко всем возможностям и градациям памяти; если да - дизайн, делаем".
+Status: steps 1-3 done 2026-10-08 (one registry, MCP `memory_access`; one address form; TTD over spaces); steps 4-5 open. Owner request: "нужно ли как-то менять automation planes, чтобы иметь доступ ко всем возможностям и градациям памяти; если да - дизайн, делаем".
 
 ## 1. The problem
 
@@ -98,3 +98,31 @@ Every region in the list carries:
 5. **Docs and recipes.** The command reference, the interface docs, `.recipe/analysis/ttd-reverse-debugging.md`, and a memory-spaces recipe.
 
 Each step lands on its own, with its tests, mutants and docs.
+
+## 6. Done
+
+**Step 1 (2026-10-08).**
+- `DeviceMemory` lists every memory the engine records: `TtdRegionMemory` views over `ITTDRegionSource::TTDRegions`, from a registry of its own (`RegisterMachinePeripherals`).
+- Canonical names come with the old ones as aliases, and the list shows `aliases` and `ttd_region`.
+- The views are writable where the bytes are restored plainly and the dirty marks are the device's own. VDAC2 is read-only: its marks live in its serializer.
+- MCP has the `memory_access` tool (regions / read / write / save / load, space `cpu` or a region).
+- Found on the way: listing a device's regions bound its dirty tracker again, which cleared it. `EndToolEdit` lists them, so a debugger edit during a recording dropped the device memory written since the last checkpoint (NeoGS / GS RAM, MoonSound, EEPROMs, flash) from the recording. `TTDRegionTracker::Bind` keeps the marks for the same memory now (`DeviceMemoryTtd_Test.AToolEditDuringARecordingKeepsTheDevicesUnsavedWrites`).
+- Mutants caught: Bind resetting, the view's missing mark, the alias match.
+
+**Step 2 (2026-10-08).**
+- A region is a space of the search and of the windowed read (`MemorySearch::ParseSpace`, `MemoryRead::Bytes`): any name that is not `cpu`, `ram` or a page spec. That covers `mem_find` / `find --space` / `POST /memory/find` / MCP `find_bytes`, `mem_read_bytes`, snapshot windows (`vram:0x2A345:3`) and `memory save space:addr:len`. A match is named by region and offset.
+- WebAPI `/memory/page/cache/{n}` reads and writes the fast RAM pages. A POST to an unknown type is refused: before, it fell through to the ROM page pointer and, with the protection off, wrote ROM.
+- Lua's positional `ttd_find_last` takes `space` as its last argument.
+- GDB has `monitor regions`, `monitor mem <space:offset> [len]` and `monitor ttd findlast <w|r|x> <space:offset>` (`gdbmonitormemory.h`).
+- Mutants caught: the match's region name, a region parsed as a page, the region read's clip, the GDB space.
+
+**Step 3 (2026-10-08).**
+- The `space` of find-last, coverage-probe and coverage-scan is resolved in one place (`TrackedSpace`): `ram`, `vram` / `sprinter.vram`, `cache` / `sprinter.fastram`. Any other memory is refused, with a pointer to memory-at.
+- Coverage answers name `space`, `offset_from` and `offset_to`.
+- New verbs, on every surface:
+  - `memory-at` (space, frame, offset, length): the newest checkpoint at or before the frame, from the engine's store, with no seek.
+  - `memory-diff` (space, from_frame, to_frame, limit): the pieces whose versions differ, then a byte compare into ranges.
+  - Both take `ram`, `ramN`, or any recorded memory by name or alias, and are engine-only (v1: 501).
+- Surfaces: WebAPI `POST /ttd/memory-at` and `/ttd/memory-diff`; CLI `ttd memory-at` / `mat` and `ttd memory-diff` / `mdiff`; Lua `ttd_memory_at{}` / `ttd_memory_diff{}`; Python `ttd_memory_at()` / `ttd_memory_diff()`; MCP `time_travel` `memory_at` / `memory_diff`; the `space` of coverage on all of them.
+- Mutants caught: the checkpoint choice, the coverage page, the space mapping, the ramN base.
+

@@ -326,4 +326,7 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   out of test machines unless asked (`TestSound::DefaultMidiBank`, `MultiSoundSlotCard_Test.ShippedDefaultBankLoadsWithoutAnOverride`); GS 1.05b ROM as `data/rom/gs105b.rom` done in MS-2 (README-ROMS entry)
 - [x] Owner question (2026-10-06): should the card's SSG rows run the AY character chain (punch, room crossfeed) the
   socket's chips run? Decided 2026-10-07: yes, done (above)
-- [ ] Later: SAM-6 host MIDI output, SAM-7 Dream-native banks research
+- [ ] Later: SAM-6 host MIDI output, SAM-7 Dream-native banks research (format reverse-engineered, POC reader /
+  converter, integration proposal and owner questions: [sam7-dream-banks.md](sam7-dream-banks.md))
+- [ ] BURAN (Serdaco DreamBlaster bank) as the shipped default bank: owner's candidate (2026-10-08, sounds better
+  than GMBK5X128; [sam7-dream-banks.md](sam7-dream-banks.md) §9.7)

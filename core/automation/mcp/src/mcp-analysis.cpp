@@ -64,7 +64,8 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
     schema["properties"]["space"]["type"] = "string";
     schema["properties"]["space"]["description"] =
         "find_bytes address space: \"cpu\" (default, what is paged in now), \"ram\" (every RAM page; matches as page + "
-        "offset) or one page (\"ram5\", \"rom2\", \"cache0\"; start / end are offsets in it)";
+        "offset), one page (\"ram5\", \"rom2\", \"cache0\"; start / end are offsets in it) or a device memory region by "
+        "name or alias (\"vram\", \"neogs.ram\", \"tsconf.cram\"; memory_access regions lists them)";
     schema["properties"]["mask_hex"]["type"] = "string";
     schema["properties"]["mask_hex"]["description"] =
         "find_bytes mask as hex bytes, as long as the pattern: 1 bits must match (replaces the ?? wildcards)";

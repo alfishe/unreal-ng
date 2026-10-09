@@ -433,6 +433,35 @@ void EmulatorAPI::portEventsTTD(const HttpRequestPtr& req,
         RespondTTD(id, "port-events", std::move(options), callback);
 }
 
+/// @brief POST /api/v1/emulator/{id}/ttd/memory-at
+///
+/// A memory at a past checkpoint from the engine's store, without seeking (memory-spaces design, step 3).
+/// Body: { "space": "ram" | "ramN" | a region name or alias ("sprinter.vram", "vram", "neogs.ram", ...), "frame",
+///         "offset" (default 0), "length" (default 256, at most 65536) }
+/// Response: { "space" (the engine's region), "offset", "length", "frame", "at_frame" (the checkpoint read, the
+///             newest at or before frame), "exact", "hex" }
+void EmulatorAPI::memoryAtTTD(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "memory-at", std::move(options), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ttd/memory-diff
+///
+/// The bytes of a memory that differ between two checkpoints (memory-spaces design, step 3).
+/// Body: { "space", "from_frame", "to_frame", "limit" (ranges, default 100) }
+/// Response: { "space", "from_frame", "to_frame", "at_from", "at_to", "changed_bytes", "ranges": [{offset, length}],
+///             "truncated" }
+void EmulatorAPI::memoryDiffTTD(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "memory-diff", std::move(options), callback);
+}
+
 void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
                                 std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const

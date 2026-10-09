@@ -208,9 +208,7 @@ zones), so the unit tests need no external file (as built: fingerprints in the l
 | SAM-4 | Effects (reverb, chorus, EQ) and render modes | M |
 | SAM-5 | Verification against FluidSynth, bank corpus, golden digests | M |
 | SAM-6 (later) | Host MIDI output (CoreMIDI / WinMM / ALSA) as an alternative sink; DLS loader | M |
-| SAM-7 (research) | **Dream-native banks** (`.DXB` / `.B16`, header `Bank`): Dream's own GM banks GMBK5X128 / GMBK5X64 and the Serdaco DreamBlaster banks are in `testdata/midi/` with Dream's bank maps and the MakeRom guide. If the format can be read (reverse engineering from the files and the guides), an `ISoundBank` for it brings Dream's own samples and instrument parameters - the closest available approach to the chip's sound. The SAM2695's CleanWave ROM itself is not among them. **License:** these banks are
-licensed for use on DreamBlaster cards only, so they are never shipped or committed; the loader reads a bank the user
-supplies (like a ROM), and the research only studies the file format for interoperability | M-L |
+| SAM-7 (research) | **Dream-native banks** (`.DXB` / `.B16`, header `Bank`): Dream's own GM banks GMBK5X128 / GMBK5X64 and the Serdaco DreamBlaster banks are in `testdata/midi/` with Dream's bank maps and the MakeRom guide. If the format can be read (reverse engineering from the files and the guides), an `ISoundBank` for it brings Dream's own samples and instrument parameters - the closest available approach to the chip's sound. The SAM2695's CleanWave ROM itself is not among them. The loader reads a bank file the user supplies (like a ROM). Research done 2026-10-08: [sam7-dream-banks.md](sam7-dream-banks.md) (format, POC in `tools/poc/024-dream-banks`, phases D-1..D-5, owner questions) | M-L |
 
 ## 9. Sources
 

@@ -19,7 +19,8 @@ class TsConfTableRegion final : public IDeviceMemoryRegion
 public:
     TsConfTableRegion(PortDecoder_TSConf& decoder, bool cram) : _decoder(decoder), _cram(cram) {}
 
-    const char* Name() const override { return _cram ? "cram" : "sfile"; }
+    const char* Name() const override { return _cram ? "tsconf.cram" : "tsconf.sfile"; }
+    const char* Aliases() const override { return _cram ? "cram" : "sfile"; }
     const char* Description() const override
     {
         return _cram ? "TS-Conf palette: 256 colors, word n at offset 2n, low byte first (bits 14-10 R, 9-5 G, 4-0 B, "

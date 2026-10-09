@@ -625,6 +625,63 @@
         "TTD engine not available in this build";
 
     // =====================================================================
+    // POST /ttd/memory-at, /ttd/memory-diff - a memory at a past checkpoint, and what changed (memory spaces)
+    // =====================================================================
+    {
+        const char* kAt = "/api/v1/emulator/{id}/ttd/memory-at";
+        const char* kDiff = "/api/v1/emulator/{id}/ttd/memory-diff";
+        for (const char* route : {kAt, kDiff})
+        {
+            Json::Value& op = paths[route]["post"];
+            op["tags"].append("Time-Travel Debug");
+            op["parameters"][0]["name"] = "id";
+            op["parameters"][0]["in"] = "path";
+            op["parameters"][0]["required"] = true;
+            op["parameters"][0]["schema"]["type"] = "string";
+            op["requestBody"]["required"] = true;
+            Json::Value& body = op["requestBody"]["content"]["application/json"]["schema"];
+            body["type"] = "object";
+            body["properties"]["space"]["type"] = "string";
+            body["properties"]["space"]["description"] =
+                "ram, ramN (machine RAM page N), or a memory region by name or alias (GET /memory/regions: "
+                "sprinter.vram / vram, sprinter.fastram / cache, neogs.ram, gs.ram, moonsound.wave, evo.flash, ...)";
+            body["required"].append("space");
+            op["responses"]["400"]["description"] = "Missing or bad option, a memory the session does not record, a frame "
+                                                    "before the first checkpoint";
+            op["responses"]["404"]["description"] = "No recorded history, or the instance is not found";
+            op["responses"]["501"]["description"] = "Backend v1 (no piece store)";
+        }
+        Json::Value& at = paths[kAt]["post"];
+        at["summary"] = "Read a memory as it was at a past checkpoint, without seeking";
+        at["description"] =
+            "Bytes of any memory the session records (machine RAM, the Sprinter's video and fast RAM, sound card RAM and "
+            "flash, VDAC2, EEPROMs ...) at the newest checkpoint at or before 'frame', from the engine's store: the "
+            "machine does not move. at_frame names the checkpoint read, exact whether it is the frame asked for.";
+        Json::Value& atBody = at["requestBody"]["content"]["application/json"]["schema"];
+        atBody["properties"]["frame"]["type"] = "integer";
+        atBody["properties"]["offset"]["type"] = "string";
+        atBody["properties"]["offset"]["description"] = "Byte offset in the space (number, 0x.., #..), default 0";
+        atBody["properties"]["length"]["type"] = "integer";
+        atBody["properties"]["length"]["description"] = "Bytes, 1..65536, default 256 (clipped at the memory's end)";
+        atBody["required"].append("frame");
+        at["responses"]["200"]["description"] = "{space, offset, length, frame, at_frame, exact, hex}";
+        Json::Value& diff = paths[kDiff]["post"];
+        diff["summary"] = "What changed in a memory between two checkpoints";
+        diff["description"] =
+            "The byte ranges of a memory that differ between the checkpoints at or before from_frame and to_frame (the "
+            "pieces whose stored versions differ, compared byte by byte). ramN compares that page only.";
+        Json::Value& diffBody = diff["requestBody"]["content"]["application/json"]["schema"];
+        diffBody["properties"]["from_frame"]["type"] = "integer";
+        diffBody["properties"]["to_frame"]["type"] = "integer";
+        diffBody["properties"]["limit"]["type"] = "integer";
+        diffBody["properties"]["limit"]["description"] = "Ranges reported, default 100 (the rest set truncated)";
+        diffBody["required"].append("from_frame");
+        diffBody["required"].append("to_frame");
+        diff["responses"]["200"]["description"] =
+            "{space, from_frame, to_frame, at_from, at_to, changed_bytes, ranges: [{offset, length}], truncated}";
+    }
+
+    // =====================================================================
     // POST /ttd/port-events — "when did the program ..." over the port journals
     // =====================================================================
     paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["summary"] =
@@ -771,6 +828,12 @@
     paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][1]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][1]["description"] =
         "Frame number to probe (emulator-absolute frame index)";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][2]["name"] = "space";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][2]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["parameters"][2]["description"] =
+        "ram (default), vram (the Sprinter's video RAM) or cache (its fast RAM): addr_from / addr_to are then "
+        "offsets in that memory, inside one 16 KB page; the answer names space, offset_from, offset_to";
 
     // =====================================================================
     // GET /ttd/coverage/scan — scan matching frames for address range
@@ -785,6 +848,12 @@
     paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"][1]["name"] = "space";
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"][1]["description"] =
+        "ram (default), vram (the Sprinter's video RAM) or cache (its fast RAM): addr_from / addr_to are then "
+        "offsets in that memory, inside one 16 KB page; the answer names space, offset_from, offset_to";
 
     // =====================================================================
     // GET /ttd/coverage/summary — activity heatmap across frame intervals

@@ -34,11 +34,14 @@ protected:
 TEST_F(TsConfMemoryRegions_Test, BothTablesAreListed)
 {
     const std::vector<IDeviceMemoryRegion*> regions = DeviceMemory::Regions(_context);
-    ASSERT_EQ(regions.size(), 4u) << "cram, sfile; the ZX-Evo clock's cmos and eeprom";
-    EXPECT_STREQ(regions[0]->Name(), "cram");
-    EXPECT_STREQ(regions[1]->Name(), "sfile");
-    EXPECT_STREQ(regions[2]->Name(), "cmos");
-    EXPECT_STREQ(regions[3]->Name(), "eeprom");
+    ASSERT_EQ(regions.size(), 5u) << "cram, sfile; the ZX-Evo clock's cmos and eeprom; the ROM chip time travel records";
+    EXPECT_STREQ(regions[0]->Name(), "tsconf.cram");
+    EXPECT_STREQ(regions[1]->Name(), "tsconf.sfile");
+    EXPECT_STREQ(regions[2]->Name(), "rtc.cmos");
+    EXPECT_STREQ(regions[3]->Name(), "evo-avr.eeprom");
+    EXPECT_STREQ(regions[4]->Name(), "evo.flash");
+    EXPECT_EQ(DeviceMemory::Find(_context, "sfile"), regions[1]) << "the short names stay aliases";
+    EXPECT_EQ(DeviceMemory::Find(_context, "eeprom"), regions[3]);
     EXPECT_EQ(regions[0]->Size(), 512u);
     EXPECT_EQ(regions[1]->Size(), 512u);
     EXPECT_EQ(DeviceMemory::Find(_context, "CRAM"), regions[0]);

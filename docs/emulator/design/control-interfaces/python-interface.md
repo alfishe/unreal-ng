@@ -203,7 +203,7 @@ class Emulator:
         """Select the BIOS (3.04 / 3.06 / 3.07 / a file) and start options; loads at the reset"""
 
     def memory_regions(self) -> dict:
-        """Device memory regions (the Sprinter's 'vram'; TS-Conf 'cram' and 'sfile'; 'cmos' with a CMOS clock; ZX-Evo 'eeprom')"""
+        """Device memory regions: 'sprinter.vram' ('vram'), 'tsconf.cram' / 'tsconf.sfile', 'rtc.cmos', 'evo-avr.eeprom', and every memory time travel records ('neogs.ram', 'gs.ram', 'moonsound.wave', 'evo.flash', ...); aliases accepted"""
 
     def region_read(self, name, offset=0, length=256) -> bytes: ...
     def region_write(self, name, offset, data) -> int:
@@ -1329,6 +1329,15 @@ scan = emu.ttd_coverage_scan(kind='executed', addr_from=0x0038, addr_to=0x0040,
 #  'matching_frames': 3, 'scanned_frames': 183, 'truncated': False,
 #  'covered_from': 18, 'covered_to': 197, 'index_available': True}
 
+# The Sprinter's video RAM by its own offsets (space='vram' / 'cache': offsets inside one 16 KB page)
+scan = emu.ttd_coverage_scan(kind='written', space='vram', addr_from=0x4805, addr_to=0x4805)
+
+# A memory at a past checkpoint, and what changed between two - from the store, no seek
+at = emu.ttd_memory_at('ram5', frame=150, offset=0x1C78, length=2)
+# {'space': 'ram', 'offset': 89208, 'length': 2, 'frame': 150, 'at_frame': 150, 'exact': True, 'hex': '6500'}
+diff = emu.ttd_memory_diff('neogs.ram', from_frame=150, to_frame=600)
+# {'space': 'neogs.ram', 'changed_bytes': 812, 'ranges': [{'offset': 4096, 'length': 64}, ...], 'truncated': False, ...}
+
 summary = emu.ttd_coverage_summary(from_frame=1, to_frame=500, kind=None, bucket_size=50, limit=100)
 # {'from_frame': 1, 'to_frame': 500, 'covered_from': 18, 'covered_to': 497,
 #  'bucket_size': 50, 'bucket_count': 10, 'index_available': True,
@@ -1363,7 +1372,7 @@ snap = emu.debug_snapshot(disasm=21, stack=8, memory=["cpu:0x8000:256", "ram5:0:
 # snap["seq"], snap["consistency"], snap["regs"]["special"]["pc"], snap["prev_regs"], snap["disasm"][0]["mnemonic"],
 # snap["memory"][0]["bytes"] (bytes); ValueError with the reason when refused
 emu.mem_find("C3", space="ram")      # every RAM page: matches as page {kind, page} + offset
-emu.mem_find("C3 00 80", space="ram5", end=0x3FFF)   # one page (offsets), also "rom2", "cache0"
+emu.mem_find("C3 00 80", space="ram5", end=0x3FFF)   # one page (offsets), also "rom2", "cache0", or a region by name ("vram", "neogs.ram": offsets in it)
 emu.mem_find("21 00 40", mask="FF FF F0")             # 1 bits must match
 # Result: {space, count, truncated, matches: [{address | page, offset, context_start, context}]};
 # context = 4 bytes before, the match, 4 after; {"error": "..."} when refused

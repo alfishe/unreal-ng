@@ -296,6 +296,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDCoverage(session, context, args);
     }
+    else if (subcommand == "memory-at" || subcommand == "mat" || subcommand == "memory-diff" || subcommand == "mdiff")
+    {
+        HandleTTDMemoryAt(session, context, args);
+    }
     else if (subcommand == "help" || subcommand == "?")
     {
         ShowTTDHelp(session);
@@ -349,7 +353,12 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd find-last --addr <A>         Reverse search: find last access at address" << NEWLINE;
     ss << "    [--access write|read|execute|io]  (default: write)" << NEWLINE;
     ss << "    [--value V] [--pc-from X] [--pc-to Y]" << NEWLINE;
-    ss << "    [--before-frame F] [--before-tin T]" << NEWLINE;
+    ss << "    [--before-frame F] [--before-tin T] [--space ram|vram|cache]" << NEWLINE;
+    ss << "  ttd memory-at --space S --frame F [--offset O] [--length N]   (alias: mat)" << NEWLINE;
+    ss << "                                   A memory at a past checkpoint, without seeking (S: ram, ramN, or a" << NEWLINE;
+    ss << "                                   region: vram, cache, neogs.ram, ... - memory regions lists them)" << NEWLINE;
+    ss << "  ttd memory-diff --space S --from F1 --to F2 [--limit N]       (alias: mdiff)" << NEWLINE;
+    ss << "                                   The bytes of a memory that differ between two checkpoints" << NEWLINE;
     ss << "  ttd port-events <event> [arg] [option=value ...]   (alias: pe)" << NEWLINE;
     ss << "                                   When did the program ... - from the port journals, no replay:" << NEWLINE;
     ss << "    key [KEY]       saw a key down (KEY: a, enter, space, caps, symbol...; none: any key)" << NEWLINE;
@@ -1308,6 +1317,7 @@ void CLIProcessor::HandleTTDCoverage(const ClientSession& session, EmulatorConte
         {"--from", "addr_from"},      {"--addr-from", "addr_from"}, {"-a", "addr_from"},
         {"--to", "addr_to"},          {"--addr-to", "addr_to"},  {"-b", "addr_to"},
         {"--page", "phys_page"},      {"--phys-page", "phys_page"}, {"-p", "phys_page"},
+        {"--space", "space"},
         {"--limit", "limit"},         {"-l", "limit"},           {"--bucket", "bucket_size"},
         {"--bucket-size", "bucket_size"}};
     std::map<std::string, std::string> options;
@@ -1340,8 +1350,13 @@ void CLIProcessor::HandleTTDCoverage(const ClientSession& session, EmulatorConte
     }
     else if (sub == "probe")
     {
-        ss << "Frame " << b.find("frame")->i << " kind=" << b.find("kind")->s << " range=[" << b.find("addr_from")->s
-           << ".." << b.find("addr_to")->s << "]: " << (b.find("touched")->b ? "TOUCHED" : "NOT touched") << NEWLINE;
+        // A range in another memory (--space vram / cache) by its offsets
+        const bool space = b.find("space") != nullptr;
+        ss << "Frame " << b.find("frame")->i << " kind=" << b.find("kind")->s
+           << (space ? " space=" + b.find("space")->s : std::string()) << " range=["
+           << (space ? b.find("offset_from")->s : b.find("addr_from")->s) << ".."
+           << (space ? b.find("offset_to")->s : b.find("addr_to")->s) << "]: " << (b.find("touched")->b ? "TOUCHED" : "NOT touched")
+           << NEWLINE;
     }
     else if (sub == "scan")
     {
@@ -1370,6 +1385,64 @@ void CLIProcessor::HandleTTDCoverage(const ClientSession& session, EmulatorConte
                << " exec=" << bucket.find("executed_distinct")->i << " write=" << bucket.find("written_distinct")->i
                << " read=" << bucket.find("read_distinct")->i << (bucket.find("has_keyframe")->b ? " [I-frame]" : "")
                << NEWLINE;
+    }
+    session.SendResponse(ss.str());
+}
+
+/// `ttd memory-at --space S --frame F [--offset O] [--length N]` and `ttd memory-diff --space S --from F1 --to F2
+/// [--limit N]`: a memory at a past checkpoint, and what changed between two (the engine's store, no seek)
+void CLIProcessor::HandleTTDMemoryAt(const ClientSession& session, EmulatorContext* context,
+                                     const std::vector<std::string>& args)
+{
+    const bool diff = args[0] == "memory-diff" || args[0] == "mdiff";
+    static const std::map<std::string, std::string> flags = {
+        {"--space", "space"}, {"--frame", "frame"},       {"--offset", "offset"}, {"--length", "length"},
+        {"--from", "from_frame"}, {"--to", "to_frame"},   {"--limit", "limit"}};
+    std::map<std::string, std::string> options;
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        const auto flag = flags.find(args[i]);
+        if (flag != flags.end() && i + 1 < args.size())
+            options[flag->second] = args[++i];
+    }
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({diff ? "memory-diff" : "memory-at", options});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE +
+                             (reply.error == ttd::TTDControlError::BadRequest
+                                  ? std::string(diff ? "Usage: ttd memory-diff --space S --from F1 --to F2 [--limit N]"
+                                                     : "Usage: ttd memory-at --space S --frame F [--offset O] [--length N]") +
+                                        NEWLINE
+                                  : std::string()));
+        return;
+    }
+    const StateNode& b = reply.body;
+    std::ostringstream ss;
+    if (diff)
+    {
+        ss << b.find("space")->s << ": " << b.find("changed_bytes")->i << " bytes differ between frame "
+           << b.find("at_from")->i << " and frame " << b.find("at_to")->i << NEWLINE;
+        for (const StateNode& r : b.find("ranges")->items)
+            ss << "  0x" << std::hex << std::uppercase << std::setw(5) << std::setfill('0') << r.find("offset")->i << std::dec
+               << " +" << r.find("length")->i << NEWLINE;
+        if (b.find("truncated")->b)
+            ss << "  ... (more: --limit)" << NEWLINE;
+    }
+    else
+    {
+        const std::string& hex = b.find("hex")->s;
+        ss << b.find("space")->s << " at frame " << b.find("at_frame")->i
+           << (b.find("exact")->b ? "" : " (the checkpoint at or before frame " + std::to_string(b.find("frame")->i) + ")")
+           << ":" << NEWLINE;
+        const int64_t offset = b.find("offset")->i;
+        for (size_t i = 0; i < hex.size(); i += 32)
+        {
+            ss << "  0x" << std::hex << std::uppercase << std::setw(5) << std::setfill('0') << offset + static_cast<int64_t>(i / 2)
+               << std::dec << ":";
+            for (size_t j = i; j < std::min(i + 32, hex.size()); j += 2)
+                ss << " " << hex.substr(j, 2);
+            ss << NEWLINE;
+        }
     }
     session.SendResponse(ss.str());
 }

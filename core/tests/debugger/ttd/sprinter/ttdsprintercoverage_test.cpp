@@ -9,6 +9,7 @@
 // then a few hundred recorded frames compared twice - seconds per workload.
 
 #include <fstream>
+#include <map>
 #include <set>
 #include <iterator>
 
@@ -500,42 +501,49 @@ TEST_F(TTDSprinterShipped_Test, CovoxBlaster_TheRingPlaysWhileTheHostRefillsIt)
 /// write journal (the answer from the journal) and without it (from replay), the search finds the writing instructions
 class TTDSprinterSpaces_Test : public TTDSprinterMachine_Test, public ::testing::WithParamInterface<bool>
 {
+protected:
+    /// The program above, recorded for 6 frames (the journal on with the parameter); `atBoundary` looks at every
+    /// recorded boundary
+    void RecordTheProgram(const std::function<void()>& atBoundary = {})
+    {
+        PowerOn(true);
+        Skip(150);
+        RunToBoundary();
+        const uint8_t code[] = {
+            0xF3,                    // DI
+            0x3E, 0x50, 0xD3, 0xA2,  // LD A,#50 : OUT (#A2),A    window 1: graphics page #50
+            0x3E, 0x12, 0xD3, 0x89,  // LD A,#12 : OUT (#89),A    PORT_Y
+            0xDB, 0xFB,              // IN A,(#FB)                 window 0: fast RAM
+            // loop (#800B):
+            0x14,                    // INC D
+            0x7A,                    // LD A,D
+            0x32, 0x05, 0x40,        // #800D LD (#4005),A         video RAM #4805
+            0x32, 0x23, 0x01,        // #8010 LD (#0123),A         fast RAM
+            0x3A, 0x06, 0x48,        // #8013 LD A,(#4806)         a read of video RAM #4806 (written by nobody)
+            0x21, 0x00, 0x41,        // LD HL,#4100
+            0x52, 0x1E, 0x04, 0x49,  // LD D,D : LD E,4 : LD C,C   the accelerator: length 4, fill
+            0x77, 0x40,              // #801D LD (HL),A : LD B,B   video RAM #4900-#4903
+            0x21, 0x00, 0x91,        // LD HL,#9100
+            0x52, 0x1E, 0x04, 0x49,  // LD D,D : LD E,4 : LD C,C
+            0x77, 0x40,              // #8026 LD (HL),A : LD B,B   RAM #9100-#9103
+            0x06, 0x00, 0x10, 0xFE,  // LD B,0 : DJNZ $
+            0x18, 0xDD};             // JR loop
+        for (size_t i = 0; i < sizeof code; i++)
+            _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), code[i]);
+        _z80->pc = 0x8000;
+        _z80->iff1 = _z80->iff2 = 0;
+        _z80->halted = 0;   // the BIOS may sit in HALT
+
+        ASSERT_TRUE(_ttd->SetEnableWriteJournal(GetParam()));
+        StartRecording();
+        Record(6, {}, atBoundary);
+        _ttd->StopRecording();
+    }
 };
 
 TEST_P(TTDSprinterSpaces_Test, FindLastNamesTheWriterOfAVideoAndAFastRamByte)
 {
-    PowerOn(true);
-    Skip(150);
-    RunToBoundary();
-    const uint8_t code[] = {
-        0xF3,                    // DI
-        0x3E, 0x50, 0xD3, 0xA2,  // LD A,#50 : OUT (#A2),A    window 1: graphics page #50
-        0x3E, 0x12, 0xD3, 0x89,  // LD A,#12 : OUT (#89),A    PORT_Y
-        0xDB, 0xFB,              // IN A,(#FB)                 window 0: fast RAM
-        // loop (#800B):
-        0x14,                    // INC D
-        0x7A,                    // LD A,D
-        0x32, 0x05, 0x40,        // #800D LD (#4005),A         video RAM #4805
-        0x32, 0x23, 0x01,        // #8010 LD (#0123),A         fast RAM
-        0x3A, 0x06, 0x48,        // #8013 LD A,(#4806)         a read of video RAM #4806 (written by nobody)
-        0x21, 0x00, 0x41,        // LD HL,#4100
-        0x52, 0x1E, 0x04, 0x49,  // LD D,D : LD E,4 : LD C,C   the accelerator: length 4, fill
-        0x77, 0x40,              // #801D LD (HL),A : LD B,B   video RAM #4900-#4903
-        0x21, 0x00, 0x91,        // LD HL,#9100
-        0x52, 0x1E, 0x04, 0x49,  // LD D,D : LD E,4 : LD C,C
-        0x77, 0x40,              // #8026 LD (HL),A : LD B,B   RAM #9100-#9103
-        0x06, 0x00, 0x10, 0xFE,  // LD B,0 : DJNZ $
-        0x18, 0xDD};             // JR loop
-    for (size_t i = 0; i < sizeof code; i++)
-        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), code[i]);
-    _z80->pc = 0x8000;
-    _z80->iff1 = _z80->iff2 = 0;
-    _z80->halted = 0;   // the BIOS may sit in HALT
-
-    ASSERT_TRUE(_ttd->SetEnableWriteJournal(GetParam()));
-    StartRecording();
-    Record(6);
-    _ttd->StopRecording();
+    ASSERT_NO_FATAL_FAILURE(RecordTheProgram());
     const SprinterPldState& pld = _decoder->GetPldState();
     ASSERT_EQ(pld.portY, 0x12);
     ASSERT_EQ(pld.Cell(SprinterCode::Page1), 0x50);
@@ -592,6 +600,77 @@ TEST_P(TTDSprinterSpaces_Test, FindLastNamesTheWriterOfAVideoAndAFastRamByte)
         ASSERT_TRUE(none.Ok()) << none.message;
         EXPECT_FALSE(none.body.find("found")->b) << space;
     }
+}
+
+// The contents of the video and fast RAM at a past checkpoint (memory-at) and what changed between two (memory-diff),
+// from the engine's store without moving the machine; the coverage index answers for a video RAM byte (space)
+TEST_P(TTDSprinterSpaces_Test, MemoryAtMemoryDiffAndCoverageReadTheSpaces)
+{
+    std::map<uint64_t, uint8_t> seen;   // video RAM #4805 at every recorded boundary
+    ASSERT_NO_FATAL_FAILURE(RecordTheProgram([&] { seen[Frame()] = _decoder->GetVideoRam().Read(0x4805); }));
+    ASSERT_GE(seen.size(), 4u);
+    const uint64_t now = Frame();
+    auto run = [&](const char* verb, std::map<std::string, std::string> options) {
+        return ttd::TTDControl(_context).Execute({verb, std::move(options)});
+    };
+
+    // Each boundary's byte, from the store; the machine stays where it is
+    for (const auto& [frame, value] : seen)
+    {
+        const ttd::TTDReply at = run("memory-at", {{"space", "vram"}, {"offset", "0x4805"}, {"length", "2"},
+                                                   {"frame", std::to_string(frame)}});
+        ASSERT_TRUE(at.Ok()) << at.message;
+        EXPECT_EQ(at.body.find("space")->s, "sprinter.vram");
+        EXPECT_TRUE(at.body.find("exact")->b);
+        char expected[3];
+        std::snprintf(expected, sizeof expected, "%02X", value);
+        EXPECT_EQ(at.body.find("hex")->s.substr(0, 2), expected) << "frame " << frame;
+    }
+    EXPECT_EQ(Frame(), now) << "memory-at does not seek";
+
+    // Between the first and the last boundary: the CPU's byte and nothing else in the video RAM (the accelerator fills
+    // #4900-#4903 with the byte the program read from #4806, which nobody writes)
+    const uint64_t first = seen.begin()->first;
+    const uint64_t last = seen.rbegin()->first;
+    const ttd::TTDReply diff = run("memory-diff", {{"space", "sprinter.vram"}, {"from_frame", std::to_string(first)},
+                                                   {"to_frame", std::to_string(last)}});
+    ASSERT_TRUE(diff.Ok()) << diff.message;
+    std::vector<std::pair<int64_t, int64_t>> ranges;
+    for (const StateNode& r : diff.body.find("ranges")->items)
+        ranges.emplace_back(r.find("offset")->i, r.find("length")->i);
+    EXPECT_EQ(ranges, (std::vector<std::pair<int64_t, int64_t>>{{0x4805, 1}}));
+    EXPECT_EQ(diff.body.find("changed_bytes")->i, 1);
+    const ttd::TTDReply cache = run("memory-diff", {{"space", "cache"}, {"from_frame", std::to_string(first)},
+                                                    {"to_frame", std::to_string(last)}});
+    ASSERT_TRUE(cache.Ok()) << cache.message;
+    const uint32_t cacheOffset = (_decoder->GetPldState().romRg & 0x03) * 0x4000u + 0x123;
+    ASSERT_EQ(cache.body.find("ranges")->items.size(), 1u);
+    EXPECT_EQ(cache.body.find("ranges")->items[0].find("offset")->i, cacheOffset);
+    EXPECT_EQ(cache.body.find("space")->s, "sprinter.fastram");
+
+    // The coverage index by the video RAM's address: #4805 written in every frame, #4806 only read
+    const ttd::TTDReply written = run("coverage-scan", {{"kind", "written"}, {"space", "vram"}, {"addr_from", "0x4805"},
+                                                        {"addr_to", "0x4805"}});
+    ASSERT_TRUE(written.Ok()) << written.message;
+    EXPECT_GE(written.body.find("matching_frames")->i, 4);
+    EXPECT_EQ(written.body.find("space")->s, "vram");
+    EXPECT_EQ(written.body.find("offset_from")->s, "0x04805");
+    const ttd::TTDReply read = run("coverage-probe", {{"frame", std::to_string(last - 1)}, {"kind", "read"}, {"space", "vram"},
+                                                      {"addr_from", "0x4806"}, {"addr_to", "0x4806"}});
+    ASSERT_TRUE(read.Ok()) << read.message;
+    EXPECT_TRUE(read.body.find("touched")->b) << "read through the window";
+    const ttd::TTDReply notWritten = run("coverage-probe", {{"frame", std::to_string(last - 1)}, {"kind", "written"},
+                                                            {"space", "vram"}, {"addr_from", "0x4806"}, {"addr_to", "0x4806"}});
+    ASSERT_TRUE(notWritten.Ok()) << notWritten.message;
+    EXPECT_FALSE(notWritten.body.find("touched")->b);
+
+    // Refusals say why
+    EXPECT_EQ(run("memory-at", {{"space", "nope"}, {"frame", "0"}}).error, ttd::TTDControlError::BadRequest);
+    const uint64_t start = _ttd->GetCheckpoint(0)->time.frame;
+    EXPECT_EQ(run("memory-at", {{"space", "vram"}, {"frame", std::to_string(start - 1)}}).error, ttd::TTDControlError::BadRequest)
+        << "before the first checkpoint";
+    EXPECT_EQ(run("coverage-scan", {{"space", "neogs.ram"}, {"addr_from", "0"}}).error, ttd::TTDControlError::BadRequest)
+        << "no accesses recorded there";
 }
 
 INSTANTIATE_TEST_SUITE_P(Journal, TTDSprinterSpaces_Test, ::testing::Bool(),

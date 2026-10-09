@@ -397,7 +397,7 @@ reference: [command-interface.md](./command-interface.md).
 | `stepout` | Run until the current subroutine returns to its caller. |
 | `skip_until <pc>` | Fast-forward until PC reaches the target (breakpoints skipped, bounded budget). |
 | (run control) | `step`, `steps`, `stepover`, `stepout`, `skip_until` and every `run_*` answer "Error: Run-control held by <surface>" while another surface (a GDB client) holds the run-control claim. |
-| `find <pattern>` | Search memory for a byte pattern, `??` = any byte (`--space cpu\|ram\|ram5\|rom2\|cache0`, `--mask`, `--from`, `--to`, `--align`, `--max`). |
+| `find <pattern>` | Search memory for a byte pattern, `??` = any byte (`--space cpu\|ram\|ram5\|rom2\|cache0\|<region>`, `--mask`, `--from`, `--to`, `--align`, `--max`). |
 | `out <port> <value>` | A debugger's port write through the machine's decoder, like a CPU OUT (paging, TS-Conf registers, AY, border): no breakpoints, no device waits, a TTD tool edit; paused, stopped or running. Numbers: `0x13AF`, `#13AF`, `13AFh` or decimal. |
 | `pchist [depth]` / `pchist on\|off` | PC history: the newest instructions the CPU started, each with its window's page (`C000  ram32`), newest first; the first read starts recording; `debug-snapshot --pchist N` adds it to a snapshot. |
 | `debug-wait [since] [--timeout ms]` | Wait until something a debugger shows changes (a stop, a run start, a tool edit) or the timeout (default 10000 ms, at most 60000) passes: `Changed: seq 43, paused at breakpoint #3 (8000)` or `No change: seq 42, running`. |

@@ -22,6 +22,7 @@
 #include "debugger/ttd/ttdprobe.h"
 #include "debugger/ttd/ttdrecordingfolders.h"
 #include "emulator/emulator.h"
+#include "emulator/memory/devicememory.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/mainloop.h"
 #include "emulator/notifications.h"
@@ -189,6 +190,30 @@ void AddSearchWindow(StateNode& body, const TTDSearchWindow& window)
 }
 
 /// An address-sized number (decimal, 0x.., #.., $..) no larger than @p max
+bool ParseUpTo(const std::string& text, uint64_t max, uint64_t& out);
+
+/// The `space` of find-last and the coverage queries: the machine's RAM (Z80 addresses, the default), or a memory
+/// whose accesses time travel records by its own addresses (ttdphyspage.h). Empty: all good; otherwise the 400 text
+std::string TrackedSpace(const TTDRequest& request, TTDMemorySpace& space)
+{
+    space = TTDMemorySpace::Ram;
+    const std::string* text = Option(request, "space");
+    if (!text)
+        return "";
+    std::string name = *text;
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (name == "ram" || name == "cpu")
+        return "";
+    if (name == "vram" || name == "sprinter.vram")
+        space = TTDMemorySpace::Vram;
+    else if (name == "cache" || name == "sprinter.fastram")
+        space = TTDMemorySpace::Cache;
+    else
+        return "space '" + *text + "': time travel records no accesses to it (spaces with accesses: ram, vram = "
+               "sprinter.vram, cache = sprinter.fastram); its contents at a checkpoint: memory-at, memory-diff";
+    return "";
+}
+
 bool ParseUpTo(const std::string& text, uint64_t max, uint64_t& out)
 {
     return ParseU64(text, out) && out <= max;
@@ -273,6 +298,12 @@ private:
     TTDReply CoverageProbe(const TTDRequest& request);
     TTDReply CoverageScan(const TTDRequest& request);
     TTDReply CoverageSummary(const TTDRequest& request);
+    TTDReply MemoryAt(const TTDRequest& request);
+    TTDReply MemoryDiff(const TTDRequest& request);
+    /// The engine's region a memory name means (a region name or alias, "ram", "ramN"), the byte offset of the
+    /// name's start in it, and the checkpoint at or before `frame`. Empty: all good; otherwise the reply to send
+    std::optional<TTDReply> ResolveRegionAt(const std::string& name, uint64_t frame, uint32_t& region, uint32_t& base,
+                                            size_t& index);
     TTDReply FileInfo(const TTDRequest& request);
     TTDReply Dump(const TTDRequest& request);
     TTDReply Load(const TTDRequest& request);
@@ -342,7 +373,7 @@ const std::vector<std::string>& TTDControl::Verbs()
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
         "markers", "bookmarks", "bookmark-add", "bookmark-delete",
         "port-events", "find-last", "reverse-continue", "coverage-probe", "coverage-scan", "coverage-summary",
-        "file-info", "dump", "load", "export-clip"};
+        "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
     return verbs;
 }
 
@@ -364,8 +395,10 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"find-last", {"addr", "addr_from", "addr_to", "access", "value", "pc_from", "pc_to", "phys_page", "space",
                        "before_frame", "before_tin", "before"}},
         {"reverse-continue", {"pcs"}},
-        {"coverage-probe", {"frame", "kind", "addr_from", "addr_to", "phys_page"}},
-        {"coverage-scan", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "limit"}},
+        {"coverage-probe", {"frame", "kind", "addr_from", "addr_to", "phys_page", "space"}},
+        {"coverage-scan", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "space", "limit"}},
+        {"memory-at", {"space", "offset", "length", "frame"}},
+        {"memory-diff", {"space", "from_frame", "to_frame", "limit"}},
         {"coverage-summary", {"from_frame", "to_frame", "kind", "bucket_size", "limit"}},
         {"file-info", {"path"}},
         {"dump", {"path"}},
@@ -480,6 +513,10 @@ TTDReply TTDControlBackend<S>::Run(const std::string& verb, const TTDRequest& re
         return Load(request);
     if (verb == "export-clip")
         return ExportClip(request);
+    if (verb == "memory-at")
+        return MemoryAt(request);
+    if (verb == "memory-diff")
+        return MemoryDiff(request);
     return Fail(TTDControlError::Internal, "verb '" + verb + "' has no implementation");
 }
 
@@ -1178,15 +1215,8 @@ TTDReply TTDControlBackend<S>::FindLast(const TTDRequest& request)
     // 256 KB video RAM), "cache" (its 64 KB fast RAM). There addr / addr_from / addr_to are offsets in that memory,
     // a range inside one 16 KB page (time travel keys such a byte by a page of its space and the offset in it)
     TTDMemorySpace space = TTDMemorySpace::Ram;
-    if (const std::string* spaceText = Option(request, "space"))
-    {
-        if (*spaceText == "vram")
-            space = TTDMemorySpace::Vram;
-        else if (*spaceText == "cache")
-            space = TTDMemorySpace::Cache;
-        else if (*spaceText != "ram")
-            return Fail(TTDControlError::BadRequest, "space must be ram, vram or cache");
-    }
+    if (const std::string spaceError = TrackedSpace(request, space); !spaceError.empty())
+        return Fail(TTDControlError::BadRequest, spaceError);
     const uint64_t addrMax = space == TTDMemorySpace::Ram ? 0xFFFF : uint64_t(kSpacePages) * kSpacePageBytes - 1;
     uint64_t from = 0;
     uint64_t to = addrMax;
@@ -1386,11 +1416,38 @@ std::string Hex4(uint16_t v)
 /// The coverage queries' shared options: kind, an address range, a physical page.
 /// Empty string: all good; otherwise the 400 message
 std::string CoverageRange(const TTDRequest& request, TTDCoverageKind& kind, uint16_t& addrFrom, uint16_t& addrTo,
-                          std::optional<PhysPage>& page)
+                          std::optional<PhysPage>& page, TTDMemorySpace& space)
 {
     uint64_t n = 0;
     if (const std::string* k = Option(request, "kind"); k && !TTDCoverageKindFromString(*k, kind))
         return "Invalid kind: '" + *k + "' (expected executed, written or read)";
+    if (std::string err = TrackedSpace(request, space); !err.empty())
+        return err;
+    if (space != TTDMemorySpace::Ram)
+    {
+        // Offsets in the space, inside one 16 KB page: its virtual page and the low 14 bits (ttdphyspage.h)
+        const uint64_t last = uint64_t(kSpacePages) * kSpacePageBytes - 1;
+        uint64_t from = 0;
+        uint64_t to = 0;
+        const std::string* f = Option(request, "addr_from");
+        const std::string* t = Option(request, "addr_to");
+        if (!f && !t)
+            return std::string("space ") + SpaceName(space) + " needs addr_from and addr_to (offsets in it)";
+        if (Option(request, "phys_page"))
+            return "phys_page names a RAM page: not with space " + std::string(SpaceName(space));
+        if ((f && !ParseUpTo(*f, last, from)) || (t && !ParseUpTo(*t, last, to)))
+            return "Invalid addr_from / addr_to: offsets 0.." + std::to_string(last);
+        if (!f)
+            from = to - to % kSpacePageBytes;
+        if (!t)
+            to = from - from % kSpacePageBytes + kSpacePageBytes - 1;
+        if (from > to || from / kSpacePageBytes != to / kSpacePageBytes)
+            return std::string("a ") + SpaceName(space) + " range lies inside one 16 KB page, from <= to";
+        page = SpacePage(space, static_cast<uint32_t>(from));
+        addrFrom = static_cast<uint16_t>(from % kSpacePageBytes);
+        addrTo = static_cast<uint16_t>(to % kSpacePageBytes);
+        return "";
+    }
     if (const std::string* t = Option(request, "addr_from"))
     {
         if (!ParseUpTo(*t, 0xFFFF, n))
@@ -1412,6 +1469,25 @@ std::string CoverageRange(const TTDRequest& request, TTDCoverageKind& kind, uint
         page = static_cast<PhysPage>(n);
     }
     return "";
+}
+
+/// The page a coverage answer names: a RAM page (phys_page), or the space and its offsets (another memory)
+void AddCoverageSpace(StateNode& body, TTDMemorySpace space, const std::optional<PhysPage>& page, uint16_t addrFrom,
+                      uint16_t addrTo)
+{
+    if (!page)
+        return;
+    if (space == TTDMemorySpace::Ram)
+    {
+        body["phys_page"] = static_cast<unsigned>(*page);
+        return;
+    }
+    char text[16];
+    body["space"] = SpaceName(space);
+    std::snprintf(text, sizeof text, "0x%05X", static_cast<unsigned>(SpaceOffset(*page, addrFrom)));
+    body["offset_from"] = text;
+    std::snprintf(text, sizeof text, "0x%05X", static_cast<unsigned>(SpaceOffset(*page, addrTo)));
+    body["offset_to"] = text;
 }
 
 /// from_frame / to_frame / limit of scan and summary; to_frame defaults to the session's end
@@ -1445,7 +1521,8 @@ TTDReply TTDControlBackend<S>::CoverageProbe(const TTDRequest& request)
     uint16_t addrFrom = 0;
     uint16_t addrTo = 0xFFFF;
     std::optional<PhysPage> page;
-    if (const std::string err = CoverageRange(request, kind, addrFrom, addrTo, page); !err.empty())
+    TTDMemorySpace space = TTDMemorySpace::Ram;
+    if (const std::string err = CoverageRange(request, kind, addrFrom, addrTo, page, space); !err.empty())
         return Fail(TTDControlError::BadRequest, err);
 
     TTDReply reply;
@@ -1453,8 +1530,7 @@ TTDReply TTDControlBackend<S>::CoverageProbe(const TTDRequest& request)
     reply.body["kind"] = TTDCoverageKindToString(kind);
     reply.body["addr_from"] = Hex4(addrFrom);
     reply.body["addr_to"] = Hex4(addrTo);
-    if (page)
-        reply.body["phys_page"] = static_cast<unsigned>(*page);
+    AddCoverageSpace(reply.body, space, page, addrFrom, addrTo);
     const TTDCoverageProbeResult res = _manager ? _manager->QueryCoverageProbe(frame, kind, addrFrom, addrTo, page)
                                                 : TTDCoverageProbeResult{};
     reply.body["touched"] = res.touched;
@@ -1472,9 +1548,10 @@ TTDReply TTDControlBackend<S>::CoverageScan(const TTDRequest& request)
     uint64_t fromFrame = 0;
     uint64_t toFrame = _manager ? _manager->ReadSessionInfo().currentEndFrame : 0;
     size_t limit = 200;
+    TTDMemorySpace space = TTDMemorySpace::Ram;
     std::string err = CoverageWindow(request, fromFrame, toFrame, limit);
     if (err.empty())
-        err = CoverageRange(request, kind, addrFrom, addrTo, page);
+        err = CoverageRange(request, kind, addrFrom, addrTo, page, space);
     if (!err.empty())
         return Fail(TTDControlError::BadRequest, err);
 
@@ -1482,8 +1559,7 @@ TTDReply TTDControlBackend<S>::CoverageScan(const TTDRequest& request)
     reply.body["kind"] = TTDCoverageKindToString(kind);
     reply.body["addr_from"] = Hex4(addrFrom);
     reply.body["addr_to"] = Hex4(addrTo);
-    if (page)
-        reply.body["phys_page"] = static_cast<unsigned>(*page);
+    AddCoverageSpace(reply.body, space, page, addrFrom, addrTo);
     const TTDCoverageScanResult res =
         _manager ? _manager->QueryCoverageScan(fromFrame, toFrame, kind, addrFrom, addrTo, page, limit)
                  : TTDCoverageScanResult{};
@@ -1805,4 +1881,236 @@ void TTDControlBackend<S>::NotifyFrameRefresh()
 }
 
 /// endregion </Machine thread discipline>
+/// region <Memory at a checkpoint>
+
+template <class S>
+std::optional<TTDReply> TTDControlBackend<S>::ResolveRegionAt(const std::string& name, uint64_t frame, uint32_t& region,
+                                                              uint32_t& base, size_t& index)
+{
+    if constexpr (!std::is_same<S, TimeTravelController>::value)
+    {
+        (void)name, (void)frame, (void)region, (void)base, (void)index;
+        return Fail(TTDControlError::NotAvailable, "memory-at and memory-diff read the engine's store (backend engine)");
+    }
+    else
+    {
+        const TimeTravelEngine& engine = _manager->GetEngine();
+        if (engine.CheckpointCount() <= engine.FirstCheckpoint())
+            return Fail(TTDControlError::NotFound, "no recorded history");
+
+        // The name: "ram" / "ramN" (machine RAM, page N at N x 16 KB), a region by name or alias (the registry
+        // every surface lists), or an engine region's own name (a loaded session's)
+        std::string wanted = name;
+        std::transform(wanted.begin(), wanted.end(), wanted.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        base = 0;
+        std::string engineName = wanted;
+        if (wanted.size() > 3 && wanted.compare(0, 3, "ram") == 0 &&
+            wanted.find_first_not_of("0123456789", 3) == std::string::npos)
+        {
+            engineName = "ram";
+            base = static_cast<uint32_t>(std::stoul(wanted.substr(3))) * 0x4000u;
+        }
+        else if (wanted == "cache")
+            engineName = "sprinter.fastram";
+        else if (IDeviceMemoryRegion* known = DeviceMemory::Find(_context, wanted); known && known->TtdRegion())
+            engineName = known->TtdRegion();
+        const std::vector<TTDRegionDesc>& regions = engine.Regions();
+        std::string names;
+        region = UINT32_MAX;
+        for (uint32_t r = 0; r < regions.size(); ++r)
+        {
+            if (regions[r].id >= TTDRegionId::DeviceStateFirst)
+                continue;   // device states are not memories
+            names += (names.empty() ? "" : ", ") + regions[r].name;
+            if (regions[r].name == engineName)
+                region = r;
+        }
+        if (region == UINT32_MAX)
+            return Fail(TTDControlError::BadRequest,
+                        "space '" + name + "' is not a memory this session records (it records: " + names + ")");
+        if (base >= regions[region].bytes)
+            return Fail(TTDControlError::BadRequest, "space '" + name + "': past the recorded RAM");
+
+        // The newest checkpoint at or before the frame
+        index = SIZE_MAX;
+        for (size_t i = engine.FirstCheckpoint(); i < engine.CheckpointCount(); ++i)
+            if (const TTDEngineCheckpoint* cp = engine.Checkpoint(i); cp && cp->position.frame <= frame)
+                index = i;
+        if (index == SIZE_MAX)
+            return Fail(TTDControlError::BadRequest,
+                        "frame " + std::to_string(frame) + " is before the first checkpoint (frame " +
+                            std::to_string(engine.Checkpoint(engine.FirstCheckpoint())->position.frame) + ")");
+        return std::nullopt;
+    }
+}
+
+template <class S>
+TTDReply TTDControlBackend<S>::MemoryAt(const TTDRequest& request)
+{
+    const std::string* space = Option(request, "space");
+    const std::string* frameText = Option(request, "frame");
+    uint64_t frame = 0;
+    uint64_t offset = 0;
+    uint64_t length = 256;
+    if (!space || !frameText)
+        return Fail(TTDControlError::BadRequest, "memory-at needs space and frame (offset, length optional)");
+    if (!ParseU64(*frameText, frame))
+        return Fail(TTDControlError::BadRequest, "Invalid frame: '" + *frameText + "'");
+    if (const std::string* t = Option(request, "offset"); t && !ParseUpTo(*t, 0xFFFFFFFFull, offset))
+        return Fail(TTDControlError::BadRequest, "Invalid offset: '" + *t + "'");
+    if (const std::string* t = Option(request, "length"); t && (!ParseUpTo(*t, 65536, length) || length == 0))
+        return Fail(TTDControlError::BadRequest, "Invalid length: 1..65536");
+    if constexpr (!std::is_same<S, TimeTravelController>::value)
+        return Fail(TTDControlError::NotAvailable, "memory-at reads the engine's store (backend engine)");
+    else
+    {
+        if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+            return refusal;
+        PauseAndConfirm();
+        uint32_t region = 0;
+        uint32_t base = 0;
+        size_t index = 0;
+        if (std::optional<TTDReply> refused = ResolveRegionAt(*space, frame, region, base, index))
+            return *refused;
+        const TimeTravelEngine& engine = _manager->GetEngine();
+        const TTDRegionDesc& desc = engine.Regions()[region];
+        const uint64_t at = base + offset;
+        if (at >= desc.bytes)
+            return Fail(TTDControlError::BadRequest, "offset past the end of " + desc.name + " (" + std::to_string(desc.bytes) + " bytes)");
+        length = std::min<uint64_t>(length, desc.bytes - at);
+        std::vector<uint8_t> bytes(size_t(desc.pieces) * kTTDPieceSize);
+        std::vector<uint8_t> present;
+        const TTDRestoreResult restored = engine.RestoreRegion(index, region, bytes.data(), &present);
+        if (!restored.Ok())
+            return Fail(TTDControlError::Internal, desc.name + ": " + restored.message);
+        for (uint64_t p = at / kTTDPieceSize; p <= (at + length - 1) / kTTDPieceSize; ++p)
+            if (p < present.size() && !present[p])
+                return Fail(TTDControlError::NotFound, desc.name + " offset " + std::to_string(p * kTTDPieceSize) +
+                                                           ": the session had not recorded it by then");
+        TTDReply reply;
+        reply.body["space"] = desc.name;
+        reply.body["offset"] = at;
+        reply.body["length"] = length;
+        reply.body["frame"] = frame;
+        reply.body["at_frame"] = engine.Checkpoint(index)->position.frame;
+        reply.body["exact"] = engine.Checkpoint(index)->position.frame == frame;
+        std::string hex;
+        hex.reserve(size_t(length) * 2);
+        static const char kHex[] = "0123456789ABCDEF";
+        for (uint64_t i = 0; i < length; ++i)
+        {
+            hex += kHex[bytes[at + i] >> 4];
+            hex += kHex[bytes[at + i] & 0x0F];
+        }
+        reply.body["hex"] = hex;
+        return reply;
+    }
+}
+
+template <class S>
+TTDReply TTDControlBackend<S>::MemoryDiff(const TTDRequest& request)
+{
+    const std::string* space = Option(request, "space");
+    const std::string* fromText = Option(request, "from_frame");
+    const std::string* toText = Option(request, "to_frame");
+    uint64_t fromFrame = 0;
+    uint64_t toFrame = 0;
+    uint64_t limit = 100;
+    if (!space || !fromText || !toText)
+        return Fail(TTDControlError::BadRequest, "memory-diff needs space, from_frame and to_frame (limit optional)");
+    if (!ParseU64(*fromText, fromFrame) || !ParseU64(*toText, toFrame))
+        return Fail(TTDControlError::BadRequest, "from_frame and to_frame are frame numbers");
+    if (const std::string* t = Option(request, "limit"); t && (!ParseU64(*t, limit) || limit == 0))
+        return Fail(TTDControlError::BadRequest, "Invalid limit: '" + *t + "' (expected integer >= 1)");
+    if constexpr (!std::is_same<S, TimeTravelController>::value)
+        return Fail(TTDControlError::NotAvailable, "memory-diff reads the engine's store (backend engine)");
+    else
+    {
+        if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+            return refusal;
+        PauseAndConfirm();
+        uint32_t region = 0;
+        uint32_t base = 0;
+        size_t fromIndex = 0;
+        size_t toIndex = 0;
+        if (std::optional<TTDReply> refused = ResolveRegionAt(*space, fromFrame, region, base, fromIndex))
+            return *refused;
+        if (std::optional<TTDReply> refused = ResolveRegionAt(*space, toFrame, region, base, toIndex))
+            return *refused;
+        const TimeTravelEngine& engine = _manager->GetEngine();
+        const TTDRegionDesc& desc = engine.Regions()[region];
+        // "ramN" compares that page only; any other name the whole memory
+        const uint64_t first = base;
+        const uint64_t end = base ? std::min<uint64_t>(base + 0x4000, desc.bytes) : desc.bytes;
+
+        // Pieces whose stored versions differ, then their bytes
+        std::vector<uint32_t> candidates;
+        for (uint32_t p = static_cast<uint32_t>(first / kTTDPieceSize); p < (end + kTTDPieceSize - 1) / kTTDPieceSize; ++p)
+            if (engine.VersionAt(fromIndex, region, p) != engine.VersionAt(toIndex, region, p))
+                candidates.push_back(p);
+        TTDReply reply;
+        reply.body["space"] = desc.name;
+        reply.body["from_frame"] = fromFrame;
+        reply.body["to_frame"] = toFrame;
+        reply.body["at_from"] = engine.Checkpoint(fromIndex)->position.frame;
+        reply.body["at_to"] = engine.Checkpoint(toIndex)->position.frame;
+        uint64_t changed = 0;
+        bool truncated = false;
+        StateNode ranges = StateNode::Array();
+        if (!candidates.empty())
+        {
+            std::vector<uint8_t> before(size_t(desc.pieces) * kTTDPieceSize);
+            std::vector<uint8_t> after(before.size());
+            const TTDRestoreResult a = engine.RestoreRegion(fromIndex, region, before.data());
+            const TTDRestoreResult b = engine.RestoreRegion(toIndex, region, after.data());
+            if (!a.Ok() || !b.Ok())
+                return Fail(TTDControlError::Internal, desc.name + ": " + (a.Ok() ? b.message : a.message));
+            uint64_t runStart = 0;
+            uint64_t runLength = 0;
+            auto close = [&]() {
+                if (!runLength)
+                    return;
+                if (ranges.items.size() < limit)
+                {
+                    StateNode range = StateNode::Object();
+                    range["offset"] = runStart - base;
+                    range["length"] = runLength;
+                    ranges.push(range);
+                }
+                else
+                    truncated = true;
+                runLength = 0;
+            };
+            uint32_t previous = UINT32_MAX;
+            for (uint32_t p : candidates)
+            {
+                if (previous != UINT32_MAX && p != previous + 1)
+                    close();
+                previous = p;
+                const uint64_t lo = std::max<uint64_t>(uint64_t(p) * kTTDPieceSize, first);
+                const uint64_t hi = std::min<uint64_t>(uint64_t(p + 1) * kTTDPieceSize, end);
+                for (uint64_t i = lo; i < hi; ++i)
+                {
+                    if (before[i] == after[i])
+                    {
+                        close();
+                        continue;
+                    }
+                    ++changed;
+                    if (!runLength)
+                        runStart = i;
+                    ++runLength;
+                }
+            }
+            close();
+        }
+        reply.body["changed_bytes"] = changed;
+        reply.body["ranges"] = ranges;
+        reply.body["truncated"] = truncated;
+        return reply;
+    }
+}
+
+/// endregion </Memory at a checkpoint>
+
 }  // namespace ttd

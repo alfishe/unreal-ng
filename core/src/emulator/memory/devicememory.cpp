@@ -5,6 +5,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <map>
+#include <memory>
+#include <mutex>
 
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
@@ -12,9 +15,146 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/io/rtc/rtcaccess.h"
+#include "debugger/ttd/engine/ttdregiontracker.h"
+#include "debugger/ttd/ttdmachineperipherals.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/memory/memorymap.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/state/devicestate.h"
+
+namespace
+{
+/// A memory the time-travel engine records, seen through the registry: read straight from the device; written
+/// straight to the bytes (no device side effects), marking the region's dirty piece for a recording. Read-only
+/// when the device restores the memory through its own path, or when its dirty marks live in a serializer of the
+/// registry this view was taken from rather than in the device (the write could not be recorded)
+class TtdRegionMemory final : public IDeviceMemoryRegion
+{
+public:
+    TtdRegionMemory(const ttd::TTDDeviceRegion& r, bool writable)
+        : _name(r.desc.name), _memory(r.desc.memory), _size(r.desc.bytes), _writable(writable),
+          _tracker(r.compareEachCapture ? nullptr : r.tracker)
+    {
+        _description = "Device memory recorded by time travel (" + _name + "), read straight from the device" +
+                       (_writable ? std::string("; writes go to the bytes, without device side effects")
+                                  : std::string("; read-only here: the device keeps it through its own path"));
+    }
+
+    bool Same(const ttd::TTDDeviceRegion& r) const
+    {
+        return _name == r.desc.name && _memory == r.desc.memory && _size == r.desc.bytes;
+    }
+
+    const char* Name() const override { return _name.c_str(); }
+    const char* Description() const override { return _description.c_str(); }
+    const char* TtdRegion() const override { return _name.c_str(); }
+    uint32_t Size() const override { return _size; }
+    uint32_t PageSize() const override { return std::min<uint32_t>(16 * 1024, _size); }
+    bool Writable() const override { return _writable; }
+    const char* WritePath() const override { return _writable ? "the bytes directly (no device side effects)" : "none"; }
+    uint8_t Read(uint32_t offset) const override { return offset < _size ? _memory[offset] : 0xFF; }
+    void Write(uint32_t offset, uint8_t value) override
+    {
+        if (!_writable || offset >= _size)
+            return;
+        _memory[offset] = value;
+        if (_tracker)
+            _tracker->Mark(offset);
+    }
+
+private:
+    std::string _name;
+    std::string _description;
+    uint8_t* _memory;
+    uint32_t _size;
+    bool _writable;
+    ttd::TTDRegionTracker* _tracker;
+};
+
+/// Per machine: the views handed out (kept until the machine goes: a caller may hold a pointer), the current ones
+struct TtdViews
+{
+    std::vector<std::unique_ptr<TtdRegionMemory>> all;
+    std::vector<TtdRegionMemory*> current;
+};
+std::mutex g_viewsMutex;
+std::map<EmulatorContext*, TtdViews> g_views;
+
+std::string Lower(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
+/// Whether `wanted` (lower case) is the region's name or one of its aliases
+bool Answers(const IDeviceMemoryRegion& region, const std::string& wanted)
+{
+    if (wanted == Lower(region.Name()))
+        return true;
+    const std::string aliases = region.Aliases() ? region.Aliases() : "";
+    size_t start = 0;
+    while (start <= aliases.size())
+    {
+        const size_t end = std::min(aliases.find(',', start), aliases.size());
+        if (end > start && Lower(aliases.substr(start, end - start)) == wanted)
+            return true;
+        start = end + 1;
+    }
+    return false;
+}
+
+/// The engine's regions this machine has, as registry views; `declared` regions that name a TTD region hide it
+void AppendTtdRegions(EmulatorContext* context, std::vector<IDeviceMemoryRegion*>& regions)
+{
+    std::vector<std::string> covered;
+    for (const IDeviceMemoryRegion* region : regions)
+        if (region->TtdRegion())
+            covered.emplace_back(region->TtdRegion());
+
+    // A registry of its own (MachineStateTransfer does the same): it lists the devices' regions without touching
+    // a session's registry; listing a device's regions is side-effect free (a tracker bound again keeps its marks)
+    ttd::TTDPeripheralRegistry registry;
+    std::vector<std::unique_ptr<ttd::TTDSerializable>> owned;
+    if (!ttd::RegisterMachinePeripherals(context, registry, owned))
+        return;
+    std::vector<std::pair<ttd::TTDDeviceRegion, bool>> found;
+    for (ttd::ITTDRegionSource* source : registry.RegionSources())
+    {
+        std::vector<ttd::TTDDeviceRegion> device;
+        source->TTDRegions(device);
+        const auto* serializable = dynamic_cast<const ttd::TTDSerializable*>(source);
+        const bool ownedHere = std::any_of(owned.begin(), owned.end(),
+                                           [&](const auto& o) { return o.get() == serializable; });
+        for (const ttd::TTDDeviceRegion& r : device)
+        {
+            if (!r.desc.memory || r.desc.bytes == 0 ||
+                std::find(covered.begin(), covered.end(), r.desc.name) != covered.end())
+                continue;
+            // Writable: restored as plain bytes, and its dirty marks (if any) are the device's own
+            const bool writable = !r.desc.restorePiece && (r.compareEachCapture || !r.tracker || !ownedHere);
+            found.emplace_back(r, writable);
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(g_viewsMutex);
+    TtdViews& views = g_views[context];
+    views.current.clear();
+    for (const auto& [r, writable] : found)
+    {
+        TtdRegionMemory* view = nullptr;
+        for (const auto& v : views.all)
+            if (v->Same(r) && v->Writable() == writable)
+                view = v.get();
+        if (!view)
+        {
+            views.all.push_back(std::make_unique<TtdRegionMemory>(r, writable));
+            view = views.all.back().get();
+        }
+        views.current.push_back(view);
+        regions.push_back(view);
+    }
+}
+}  // namespace
 
 namespace DeviceMemory
 {
@@ -25,20 +165,26 @@ std::vector<IDeviceMemoryRegion*> Regions(EmulatorContext* context)
     if (context && context->pPortDecoder)
     {
         context->pPortDecoder->CollectMemoryRegions(regions);
-        // The machine's CMOS clock, whichever board carries it: "cmos" (and the ZX-Evo "eeprom")
+        // The machine's CMOS clock, whichever board carries it: "rtc.cmos" (and the ZX-Evo "evo-avr.eeprom")
         if (Ds12887* rtc = RtcAccess::Find(context))
             rtc->CollectMemoryRegions(regions);
+        AppendTtdRegions(context, regions);
     }
     return regions;
 }
 
+void Forget(EmulatorContext* context)
+{
+    std::lock_guard<std::mutex> lock(g_viewsMutex);
+    g_views.erase(context);
+}
+
 IDeviceMemoryRegion* Find(EmulatorContext* context, const std::string& name, std::string* error)
 {
-    std::string wanted = name;
-    std::transform(wanted.begin(), wanted.end(), wanted.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const std::string wanted = Lower(name);
     const std::vector<IDeviceMemoryRegion*> regions = Regions(context);
     for (IDeviceMemoryRegion* region : regions)
-        if (wanted == region->Name())
+        if (Answers(*region, wanted))
             return region;
     if (error)
     {
@@ -228,6 +374,17 @@ StateNode MemoryRegions(EmulatorContext* context)
     {
         StateNode n = StateNode::Object();
         n["name"] = region->Name();
+        StateNode aliases = StateNode::Array();
+        const std::string text = region->Aliases() ? region->Aliases() : "";
+        for (size_t start = 0; start < text.size();)
+        {
+            const size_t end = std::min(text.find(',', start), text.size());
+            if (end > start)
+                aliases.push(text.substr(start, end - start));
+            start = end + 1;
+        }
+        n["aliases"] = aliases;
+        n["ttd_region"] = region->TtdRegion() ? StateNode(std::string(region->TtdRegion())) : StateNode();
         n["description"] = region->Description();
         n["size"] = static_cast<uint64_t>(region->Size());
         n["size_hex"] = StringHelper::Format("0x%X", region->Size());
@@ -238,8 +395,8 @@ StateNode MemoryRegions(EmulatorContext* context)
         list.push(n);
     }
     ret["regions"] = list;
-    ret["note"] = "memory a device owns outside the CPU's RAM / ROM pages: read / write by name "
-                  "(/memory/region/{name}, CLI memory region, region_read / region_write)";
+    ret["note"] = "memory a device owns outside the CPU's RAM / ROM pages, and every memory time travel records: "
+                  "read / write by name or alias (/memory/region/{name}, CLI memory region, region_read / region_write)";
     return ret;
 }
 
