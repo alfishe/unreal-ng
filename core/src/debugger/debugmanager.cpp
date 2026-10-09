@@ -125,11 +125,6 @@ std::unique_ptr<Z80Disassembler>& DebugManager::GetDisassembler()
     return _disassembler;
 }
 
-AnalyzerManager* DebugManager::GetAnalyzerManager()
-{
-    return _analyzerManager.get();
-}
-
 DebugKeyboardManager* DebugManager::GetKeyboardManager()
 {
     return _keyboardManager;

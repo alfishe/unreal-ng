@@ -58,7 +58,8 @@ public:
     LabelManager* GetLabelManager();
     ListingParser* GetListingParser();
     std::unique_ptr<Z80Disassembler>& GetDisassembler();
-    AnalyzerManager* GetAnalyzerManager();
+    /// Inline: Z80::RunInstructionStartHooks asks it at every instruction (the CPU-step subscribers)
+    AnalyzerManager* GetAnalyzerManager() { return _analyzerManager.get(); }
     DebugKeyboardManager* GetKeyboardManager();
     DebugMouseManager* GetMouseManager();
     DebugJoystickManager* GetJoystickManager();

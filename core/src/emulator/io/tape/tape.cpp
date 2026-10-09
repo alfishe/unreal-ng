@@ -752,11 +752,8 @@ void Tape::handleFrameStart()
     }
 }
 
-void Tape::handleStep()
+void Tape::handleStepPlaying()
 {
-    if (!_tapeStarted)
-        return;
-
     Z80& cpu = *_context->pCore->GetZ80();
     const uint32_t tState = cpu.t;
     uint64_t clockCount = ClockCount();

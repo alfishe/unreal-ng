@@ -3547,13 +3547,9 @@ void WD1793::handleFrameStart()
     // Nothing to do here
 }
 
-void WD1793::handleStep()
+void WD1793::handleStepAwake()
 {
-    // Skip processing if sleeping - major CPU optimization when FDD is idle
-    if (_sleeping)
-    {
-        return;
-    }
+    // Asleep: handleStep returned already - major CPU optimization when FDD is idle
 
     // Idle with the motor off: nothing the FSM could advance on. Commands
     // arrive through the port handlers (which run process() themselves),
