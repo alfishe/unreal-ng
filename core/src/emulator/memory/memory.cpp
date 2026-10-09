@@ -2277,6 +2277,16 @@ ttd::PhysPage Memory::TtdSpacePageOfBank(uint8_t bank) const
     return ttd::SpacePage(ttd::TTDMemorySpace::Cache, static_cast<uint32_t>(offset));
 }
 
+void Memory::CheckSpaceWatch(ttd::PhysPage page, uint16_t offset, uint16_t addr, bool write)
+{
+    if (!_feature_breakpoints_enabled || !_context->pDebugManager || !_context->pEmulator)
+        return;
+    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+    const uint16_t id = brk.HandleSpaceAccess(page, offset, write);
+    if (id != BRK_INVALID)
+        _context->pEmulator->OnBreakpointHit(id, addr, write ? BreakpointHitKind::MemoryWrite : BreakpointHitKind::MemoryRead);
+}
+
 void Memory::TtdNoteAccess(ttd::PhysPage page, uint16_t addr, uint8_t value, bool write)
 {
     if (page == ttd::kPhysPageNone)

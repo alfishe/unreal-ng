@@ -46,13 +46,12 @@ bool CLIProcessor::ParseBreakpointArgs(const std::vector<std::string>& args, siz
         const bool hasValue = i + 1 < args.size();
         if (a == "--page")
         {
-            if (!hasValue || !BreakpointManager::ParsePageSpec(args[++i], spec.page, spec.pageType, error))
+            if (!hasValue || !BreakpointManager::ParsePageInto(args[++i], spec, error))
             {
                 if (error.empty())
-                    error = "--page needs a page: ramN, romN or cacheN (e.g. --page ram5)";
+                    error = "--page needs a page: ramN, romN, cacheN or vramN (e.g. --page ram5)";
                 return false;
             }
-            spec.hasPage = true;
         }
         else if (a == "--slot-only")
             spec.slotOnly = true;

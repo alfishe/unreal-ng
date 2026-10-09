@@ -105,6 +105,14 @@ namespace
 /// matches the address in any page
 Json::Value BreakpointPageJson(const BreakpointDescriptor& bp)
 {
+    if (bp.spacePage != 0xFFFF)
+    {
+        // A page of the Sprinter's video RAM (vramN): offsets of that 16 KB page
+        Json::Value page;
+        page["kind"] = "vram";
+        page["page"] = bp.spacePage - 0x110;
+        return page;
+    }
     if (bp.matchType != BRK_MATCH_BANK_ADDR)
         return Json::Value(Json::nullValue);
     Json::Value page;
@@ -121,7 +129,7 @@ Json::Value BreakpointJson(const BreakpointDescriptor& bp)
     j["address"] = bp.z80address;
     if (bp.isRange)
         j["address_end"] = bp.z80addressEnd;
-    if (bp.matchType == BRK_MATCH_BANK_ADDR)
+    if (bp.matchType == BRK_MATCH_BANK_ADDR || bp.spacePage != 0xFFFF)
     {
         j["page"] = BreakpointPageJson(bp);
         j["slot_only"] = bp.slotOnly;
@@ -1088,12 +1096,11 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
     if (body.isMember("page") && !body["page"].isNull())
     {
         std::string pageError;
-        if (!BreakpointManager::ParsePageSpec(BreakpointPageText(body["page"]), spec.page, spec.pageType, pageError))
+        if (!BreakpointManager::ParsePageInto(BreakpointPageText(body["page"]), spec, pageError))
         {
             badRequest(pageError);
             return;
         }
-        spec.hasPage = true;
     }
     spec.slotOnly = body.get("slot_only", false).asBool();
     if (body.isMember("port_mask") && !body["port_mask"].isNull())

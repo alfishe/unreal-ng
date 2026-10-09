@@ -232,6 +232,12 @@ uint8_t SprinterMemory::MemoryReadDebug(uint16_t addr, bool isExecution)
         if (_redirect[addr >> 14] == ReadRedirect::Isa)
             return IsaRead(addr);
         const uint8_t redirected = Redirect(addr, value);
+        if (_redirect[addr >> 14] == ReadRedirect::Graphics && !isExecution)
+        {
+            const uint32_t videoAddr = _pld->portY * 1024u + (addr & 0x3FF);
+            CheckSpaceWatch(ttd::SpacePage(ttd::TTDMemorySpace::Vram, videoAddr), static_cast<uint16_t>(videoAddr & 0x3FFF), addr,
+                            false);
+        }
         // A data read of the video RAM through a graphics window: named by the video RAM's own address
         if (_redirect[addr >> 14] == ReadRedirect::Graphics && !isExecution && _feature_ttd_enabled &&
             (_context->ttdProbe.IsArmed() || _context->ttdCoverageActive))
@@ -318,10 +324,13 @@ void SprinterMemory::OnWrite(uint16_t addr, uint8_t value)
             }
             if (_vram)
                 _vram->Write(videoAddr, value);
-            // Time travel names the byte by the video RAM's own address: "who wrote video RAM #12345"
+            // Time travel names the byte by the video RAM's own address: "who wrote video RAM #12345"; so does a
+            // watchpoint on a video RAM page (vramN)
             if (_feature_ttd_enabled)
                 TtdNoteAccess(ttd::SpacePage(ttd::TTDMemorySpace::Vram, videoAddr), static_cast<uint16_t>(videoAddr & 0x3FFF),
                               value, true);
+            CheckSpaceWatch(ttd::SpacePage(ttd::TTDMemorySpace::Vram, videoAddr), static_cast<uint16_t>(videoAddr & 0x3FFF), addr,
+                            true);
             return;
         }
         case BankAction::Isa:

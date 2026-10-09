@@ -994,7 +994,8 @@ void RegisterControlExecution(ToolRegistry& registry)
         "counted (bp_list shows hit_count)";
     schema["properties"]["page"]["type"] = "string";
     schema["properties"]["page"]["description"] =
-        "Optional for bp_add of execution / read / write: 'ram32', 'rom3' or 'cache0' - a physical breakpoint on that "
+        "Optional for bp_add of execution / read / write: 'ram32', 'rom3', 'cache0' or (read / write) 'vram1' (the "
+        "Sprinter's video RAM page, the address its offset) - a physical breakpoint on that "
         "page at offset address & #3FFF, through whatever slot shows the page (slot_only: only through the slot of "
         "address)";
     schema["properties"]["note"]["type"] = "string";

@@ -27,6 +27,13 @@ whatever slot shows the page: code a TS-Conf or 128K program pages into `#C000` 
 the next, RAM 5 that a 128K shows at `#4000` and, when paged in, at `#C000`. `slot_only` keeps it to the
 slot of `address`. A page the machine does not have is refused.
 
+**On the Sprinter's video RAM.** `vram0`..`vram15` (`{"kind":"vram","page":1}`) names a 16 KB page of the
+256 KB video RAM, which the CPU never sees at a fixed address: a read or write watchpoint there fires
+when a graphics window (or the accelerator) touches that byte, whatever `PORT_Y` and window it went through. The
+address is the offset in the page: `wp 0x0805 w --page vram1` is video RAM `#4805`. The stop names the CPU
+address of the access. Execution breakpoints are refused there. The fast RAM needs nothing new: it is the
+`cache0`..`cache3` pages.
+
 **Masked ports.** `port_mask`: the breakpoint matches every port where `(port & mask) == (address &
 mask)`. A Spectrum decodes ports partly, so `#FE` with mask `#00FF` catches the keyboard read whatever
 the high byte.

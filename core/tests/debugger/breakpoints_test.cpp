@@ -1547,3 +1547,14 @@ TEST_F(BreakpointMatching_Test, ManyOverlappingRangesShareCandidateSets)
 }
 
 /// endregion </Hot-path matching>
+
+// The list shows a low address with its leading zeros: the type column's std::left padded #0038 as "3800" before
+TEST_F(BreakpointManager_test, ListShowsALowAddressWithLeadingZeros)
+{
+    _brkManager->AddExecutionBreakpoint(0x0038);
+    _brkManager->AddMemWriteBreakpoint(0x5C78);
+    const std::string list = _brkManager->GetBreakpointListAsString();
+    EXPECT_NE(list.find("0x0038"), std::string::npos) << list;
+    EXPECT_EQ(list.find("0x3800"), std::string::npos) << list;
+    EXPECT_NE(list.find("0x5C78"), std::string::npos) << list;
+}

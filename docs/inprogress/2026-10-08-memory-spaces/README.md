@@ -1,6 +1,6 @@
 # Memory spaces on every automation surface
 
-Status: steps 1-3 done 2026-10-08 (one registry, MCP `memory_access`; one address form; TTD over spaces); steps 4-5 open. Owner request: "нужно ли как-то менять automation planes, чтобы иметь доступ ко всем возможностям и градациям памяти; если да - дизайн, делаем".
+Status: done 2026-10-08 (steps 1-5: one registry, MCP `memory_access`; one address form; TTD over spaces; video RAM watchpoints; docs and recipes). Owner request: "нужно ли как-то менять automation planes, чтобы иметь доступ ко всем возможностям и градациям памяти; если да - дизайн, делаем".
 
 ## 1. The problem
 
@@ -125,4 +125,16 @@ Each step lands on its own, with its tests, mutants and docs.
   - Both take `ram`, `ramN`, or any recorded memory by name or alias, and are engine-only (v1: 501).
 - Surfaces: WebAPI `POST /ttd/memory-at` and `/ttd/memory-diff`; CLI `ttd memory-at` / `mat` and `ttd memory-diff` / `mdiff`; Lua `ttd_memory_at{}` / `ttd_memory_diff{}`; Python `ttd_memory_at()` / `ttd_memory_diff()`; MCP `time_travel` `memory_at` / `memory_diff`; the `space` of coverage on all of them.
 - Mutants caught: the checkpoint choice, the coverage page, the space mapping, the ramN base.
+
+**Step 4 (2026-10-08).**
+- The fast RAM already had watchpoints: `cache0`..`cache3` page breakpoints.
+- New: `vram0`..`vram15` pages of the Sprinter's video RAM (`BreakpointManager::ParsePageInto`; JSON `{"kind":"vram","page":n}`) take read and write watchpoints on offsets of that 16 KB page.
+- They are kept out of the CPU filters (`spacePage`, `hasSpace`) and matched by the video RAM's hooks: writes and reads through a graphics window, and the accelerator's stores (`Memory::CheckSpaceWatch`).
+- The stop names the CPU address. Every surface that takes a page takes them (WebAPI, CLI `--page vram1`, Lua, Python, MCP `bp_add page`).
+- Not covered: DeZog / GDB watchpoints (Z80 view only, as for the other physical pages).
+- Mutants caught: the hot flag, both hooks, the key that keeps them apart from a CPU address, the offset check.
+
+**Step 5 (2026-10-08).**
+- Recipes: `memory-search-map-and-regions.md` (the whole region list, regions as spaces), `ttd-reverse-debugging.md` (memory-at / memory-diff, find-last space), `breakpoints-and-events.md` (vram pages).
+- The interface docs and OpenAPI follow each step.
 

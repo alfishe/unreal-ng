@@ -19,6 +19,7 @@
 #include "emulator/io/ide/ata/atapicdrom.h"
 #include "_helpers/cdtestdisc.h"
 #include "_helpers/scratchfolder.h"
+#include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "ttdsprintermachine.h"
 
@@ -504,7 +505,8 @@ class TTDSprinterSpaces_Test : public TTDSprinterMachine_Test, public ::testing:
 protected:
     /// The program above, recorded for 6 frames (the journal on with the parameter); `atBoundary` looks at every
     /// recorded boundary
-    void RecordTheProgram(const std::function<void()>& atBoundary = {})
+    /// The program, loaded at #8000 on a booted machine, the CPU about to run it (nothing recorded)
+    void LoadTheProgram()
     {
         PowerOn(true);
         Skip(150);
@@ -534,6 +536,11 @@ protected:
         _z80->iff1 = _z80->iff2 = 0;
         _z80->halted = 0;   // the BIOS may sit in HALT
 
+    }
+
+    void RecordTheProgram(const std::function<void()>& atBoundary = {})
+    {
+        ASSERT_NO_FATAL_FAILURE(LoadTheProgram());
         ASSERT_TRUE(_ttd->SetEnableWriteJournal(GetParam()));
         StartRecording();
         Record(6, {}, atBoundary);
@@ -671,6 +678,65 @@ TEST_P(TTDSprinterSpaces_Test, MemoryAtMemoryDiffAndCoverageReadTheSpaces)
         << "before the first checkpoint";
     EXPECT_EQ(run("coverage-scan", {{"space", "neogs.ram"}, {"addr_from", "0"}}).error, ttd::TTDControlError::BadRequest)
         << "no accesses recorded there";
+}
+
+// A watchpoint on a video RAM page (vram1: offsets #4000-#7FFF of the video RAM): the write through the graphics
+// window at #4005 (video RAM #4805) stops the run after that instruction; the read of #4806 stops a read watchpoint;
+// nothing else in the page is touched, so a watchpoint on #4807 never fires
+TEST_P(TTDSprinterSpaces_Test, AVideoRamWatchpointStopsTheWriterAndTheReader)
+{
+    ASSERT_NO_FATAL_FAILURE(LoadTheProgram());
+    _emulator->GetFeatureManager()->setFeature(Features::kBreakpoints, true);
+    _context->pMemory->UpdateFeatureCache();
+    BreakpointManager& brk = *_emulator->GetBreakpointManager();
+    auto watch = [&](uint8_t access, uint16_t offset) {
+        BreakpointSpec spec;
+        spec.type = BRK_MEMORY;
+        spec.access = access;
+        spec.address = offset;
+        std::string error;
+        EXPECT_TRUE(BreakpointManager::ParsePageInto("vram1", spec, error)) << error;
+        const uint16_t id = brk.AddBreakpoint(spec, error);
+        EXPECT_NE(id, BRK_INVALID) << error;
+        return id;
+    };
+    const uint16_t never = watch(BRK_MEM_WRITE | BRK_MEM_READ, 0x0807);
+    const uint16_t written = watch(BRK_MEM_WRITE, 0x0805);
+    _emulator->RunNCPUCycles(200, false);
+    Emulator::BreakpointStop stop = _emulator->LastDirectStop();
+    ASSERT_TRUE(stop.hit) << "the write through the window";
+    EXPECT_EQ(stop.breakpointId, written);
+    EXPECT_EQ(stop.kind, BreakpointHitKind::MemoryWrite);
+    EXPECT_EQ(stop.address, 0x4005) << "the CPU address of the access";
+    EXPECT_EQ(_z80->pc, 0x8010) << "after LD (#4005),A";
+    EXPECT_NE(brk.GetBreakpointListAsString().find("in vram1"), std::string::npos) << brk.GetBreakpointListAsString();
+
+    brk.RemoveBreakpointByID(written);
+    const uint16_t read = watch(BRK_MEM_READ, 0x0806);
+    _emulator->RunNCPUCycles(200, false);
+    stop = _emulator->LastDirectStop();
+    ASSERT_TRUE(stop.hit) << "the read through the window";
+    EXPECT_EQ(stop.breakpointId, read);
+    EXPECT_EQ(stop.kind, BreakpointHitKind::MemoryRead);
+    EXPECT_EQ(_z80->pc, 0x8016) << "after LD A,(#4806)";
+    EXPECT_EQ(brk.GetBreakpointById(never)->hitCount, 0u);
+
+    // A CPU address breakpoint of the same number is another breakpoint: #0807 in the Z80 view is not the video RAM
+    BreakpointSpec cpu;
+    cpu.type = BRK_MEMORY;
+    cpu.access = BRK_MEM_WRITE | BRK_MEM_READ;
+    cpu.address = 0x0807;
+    std::string error;
+    const uint16_t cpuId = brk.AddBreakpoint(cpu, error);
+    EXPECT_NE(cpuId, BRK_INVALID) << error;
+    EXPECT_NE(cpuId, never) << "not merged with the video RAM watchpoint";
+    // Refusals: execution, a range across pages, a page past the video RAM
+    BreakpointSpec bad;
+    bad.type = BRK_MEMORY;
+    bad.access = BRK_MEM_EXECUTE;
+    ASSERT_TRUE(BreakpointManager::ParsePageInto("vram2", bad, error));
+    EXPECT_EQ(brk.AddBreakpoint(bad, error), BRK_INVALID);
+    EXPECT_FALSE(BreakpointManager::ParsePageInto("vram16", bad, error));
 }
 
 INSTANTIATE_TEST_SUITE_P(Journal, TTDSprinterSpaces_Test, ::testing::Bool(),

@@ -646,7 +646,7 @@ stops where: [.recipe/analysis/breakpoints-and-events.md](../../../../.recipe/an
 id = bp(0x8000)                -- execution breakpoint, returns its id (-1 when refused)
 id = bp(0x8000, {to=0x80FF})   -- a range #8000-#80FF (one check per access, however many ranges)
 id = bp(0x0038, {hits=50})     -- stop on the 50th hit only; '>=50' from the 50th on, '%50' every 50th
-id = bp(0xC000, "ram32")       -- physical: RAM page 32, offset #0000, in whatever slot shows it ("rom3", "cache0")
+id = bp(0xC000, "ram32")       -- physical: RAM page 32, offset #0000, in whatever slot shows it ("rom3", "cache0"; "vram1" = the Sprinter's video RAM #4000-#7FFF, read / write watchpoints)
 id = bp(0xC000, {page="ram32", slot_only=true})  -- only through slot 3 (#C000)
 id = bp_read(0x4000)           -- memory read; the same options
 id = bp_write(0x4000, {to=0x57FF})  -- memory write: the screen bitmap

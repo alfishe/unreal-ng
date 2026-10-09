@@ -258,6 +258,9 @@ public:
     /// its Z80 address: the write journal, the access probe and the coverage index, as MemoryWriteDebug /
     /// MemoryReadDebug do for the CPU's RAM accesses. `write` false: a read
     void TtdNoteAccess(ttd::PhysPage page, uint16_t addr, uint8_t value, bool write);
+    /// A watchpoint on a page of another memory space (the Sprinter's video RAM, "vramN"): the access at `offset`
+    /// of that page, made through the CPU address `addr`, stops the run like a CPU-address watchpoint
+    void CheckSpaceWatch(ttd::PhysPage page, uint16_t offset, uint16_t addr, bool write);
 
     /// @brief Does the active model have a TR-DOS (Beta Disk) ROM?
     ///
