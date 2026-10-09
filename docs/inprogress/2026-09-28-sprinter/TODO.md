@@ -413,7 +413,9 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   - [~] The sound cards (NeoGS command poll loop, the AY slot's second chip): looked at, not changed - small gains
     against the exactness or a change of the output
     ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.7)
-  - [ ] A Sprinter memory interface instead of the overlay chain (~10 % of a frame is the overlay machinery)
+  - [x] The memory bus in one call instead of the overlay chain (`IZ84FastBus`, `SprinterMemory::FusedRead` /
+    `FusedWrite`): exact, -5.5 % to -11 % per frame
+    ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.8)
   - [ ] A Sprinter frame benchmark without a disk image (the CTC `EI : HALT` program of `SprinterIdleCycles_Test`
     plus accelerator fills)
 - Renderer speed: by square segments since 2026-10-09 (the source address, attribute and font byte once per

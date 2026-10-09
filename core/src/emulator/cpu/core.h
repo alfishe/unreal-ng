@@ -104,6 +104,7 @@ protected:
     HostBusOverlay* _busOverlays[HostBusOverlayChain::kMaxOverlays] = {};
     size_t _busOverlayCount = 0;
     HostBusOverlay* _busOverlay = nullptr;  // what Memory calls: none, the only overlay, or _busOverlayChain
+    uint32_t _memIfGeneration = 0;           // GetMemoryInterfaceGeneration
     HostBusOverlayChain _busOverlayChain;
     void UpdateEffectiveBusOverlay();  // under _memIfMutex
     /// endregion </Fields>
@@ -186,6 +187,11 @@ public:
     void ClearBusOverlays();
     bool IsBusOverlayInstalled(const HostBusOverlay* overlay) const;
     size_t GetBusOverlayCount() const { return _busOverlayCount; }
+    /// The installed overlays in install order (index < GetBusOverlayCount())
+    HostBusOverlay* GetBusOverlayAt(size_t index) const { return index < _busOverlayCount ? _busOverlays[index] : nullptr; }
+    /// Bumped whenever the memory interface is selected again (an overlay added or removed, debug mode, contention):
+    /// a fused bus path checks it before each access and revalidates when it moved
+    uint32_t GetMemoryInterfaceGeneration() const { return _memIfGeneration; }
     /// What the memory interface calls: nullptr, the only overlay, or the
     /// chain that forwards to all of them
     HostBusOverlay* GetBusOverlay() const { return _busOverlay; }

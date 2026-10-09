@@ -45,7 +45,7 @@ static_assert(int{Z80_BOUNDARY_PREFIX_DD} == int{Z84CpuBoundaryPrefixDd} && int{
 /// endregion </Register file layout contract>
 
 Z84C15Engine::Z84C15Engine(EmulatorContext* context, Z80* cpu, Z84Lib::Z84C15& chip)
-    : _z80(cpu), _memory(context->pMemory), _chip(chip), _state(&context->emulatorState)
+    : _z80(cpu), _memory(context->pMemory), _core(context->pCore), _chip(chip), _state(&context->emulatorState)
 {
     Z84CPU* core = _chip.Cpu();
     Z84CpuAttachRegisterFile(core, reinterpret_cast<Z84CpuRegisterFile*>(&_z80->pc));
@@ -326,7 +326,7 @@ uint8_t Z84C15Engine::MemRead(Z84CPU* cpu, uint16_t addr, Z84CpuAccessKind kind,
         // fetch through MemoryReadM1, board logic at the refresh edge
         if (z.machineM1Hook)
             z.NotifyMachineM1Before(addr);
-        value = (e._memory->*z.MemIf->MemoryReadM1)(addr, true);
+        value = e.UseFastBus() ? e._fastBus->Read(addr, true) : (e._memory->*z.MemIf->MemoryReadM1)(addr, true);
         e._lastM1Value = value;
         if (z.machineM1Hook)
             z.NotifyMachineM1(addr);
@@ -335,7 +335,8 @@ uint8_t Z84C15Engine::MemRead(Z84CPU* cpu, uint16_t addr, Z84CpuAccessKind kind,
     }
     else
     {
-        value = (e._memory->*z.MemIf->MemoryRead)(addr, kind == Z84CpuAccessOperand);
+        const bool isExecution = kind == Z84CpuAccessOperand;
+        value = e.UseFastBus() ? e._fastBus->Read(addr, isExecution) : (e._memory->*z.MemIf->MemoryRead)(addr, isExecution);
         if (e._agent && e._agent->watchData)
             value = e._agent->OnRead(addr, value);
     }
@@ -355,7 +356,10 @@ void Z84C15Engine::MemWrite(Z84CPU* cpu, uint16_t addr, uint8_t value, void* use
     IZ84BusAgent* agent = (e._agent && e._agent->watchData) ? e._agent : nullptr;
     if (agent)
         value = agent->BeforeWrite(addr, value);
-    (e._memory->*z.MemIf->MemoryWrite)(addr, value);
+    if (e.UseFastBus())
+        e._fastBus->Write(addr, value);
+    else
+        (e._memory->*z.MemIf->MemoryWrite)(addr, value);
     if (agent)
         agent->AfterWrite(addr, value);
     if (z.busTraceHook)

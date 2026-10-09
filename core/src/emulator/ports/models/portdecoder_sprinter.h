@@ -380,6 +380,19 @@ private:
     SprinterInput _input{_context, _z84, _intSource, _pld};
     /// The Z84C15 as the CPU's engine (created once the Z80 exists, installed by InstallHooks)
     std::unique_ptr<Z84C15Engine> _cpuEngine;
+    /// The engine's fused bus: this machine's memory in one call per access (SprinterMemory::FusedRead / FusedWrite)
+    class FastBus final : public IZ84FastBus
+    {
+    public:
+        explicit FastBus(PortDecoder_Sprinter& owner) : _owner(owner) {}
+        bool Matches() override;
+        uint8_t Read(uint16_t addr, bool isExecution) override;
+        void Write(uint16_t addr, uint8_t value) override;
+
+    private:
+        PortDecoder_Sprinter& _owner;
+    };
+    FastBus _fastBus{*this};
     SprinterMemory* _sprinterMemory = nullptr;
     std::unique_ptr<SprinterWaits> _waits;
     std::unique_ptr<SprinterOrigWaits> _origWaits;

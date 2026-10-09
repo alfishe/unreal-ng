@@ -623,6 +623,24 @@ void PortDecoder_Sprinter::InstallHooks()
         _waits = std::make_unique<SprinterWaits>(z80);
     if (!_origWaits)
         _origWaits = std::make_unique<SprinterOrigWaits>(z80);
+    if (_sprinterMemory)
+        _sprinterMemory->SetWaitOverlays(_waits.get(), _origWaits.get());
+    _cpuEngine->SetFastBus(&_fastBus);
+}
+
+bool PortDecoder_Sprinter::FastBus::Matches()
+{
+    return _owner._sprinterMemory && _owner._sprinterMemory->FusedBusMatches();
+}
+
+uint8_t PortDecoder_Sprinter::FastBus::Read(uint16_t addr, bool isExecution)
+{
+    return _owner._sprinterMemory->FusedRead(addr, isExecution);
+}
+
+void PortDecoder_Sprinter::FastBus::Write(uint16_t addr, uint8_t value)
+{
+    _owner._sprinterMemory->FusedWrite(addr, value);
 }
 
 void PortDecoder_Sprinter::RefreshAccelerator()

@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "3rdparty/z84c15/z84c15.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 
 class EmulatorContext;
@@ -43,6 +44,20 @@ public:
 
     /// false: the engine skips OnRead / BeforeWrite / AfterWrite (an idle agent costs one test per access)
     bool watchData = false;
+};
+
+/// The board's memory bus in one call per access: what the CPU's memory interface (Z80::MemIf) does - the read with
+/// the board's redirects and the bus overlays after it, the write with its intercepts and waits - for the plain
+/// configurations it reproduces exactly (the Sprinter memory's fused read and write). The engine asks
+/// Matches whenever Core's memory interface generation moves and takes the memory interface while it says no (a
+/// card's overlay, the debug interface)
+class IZ84FastBus
+{
+public:
+    virtual ~IZ84FastBus() = default;
+    virtual bool Matches() = 0;
+    virtual uint8_t Read(uint16_t addr, bool isExecution) = 0;
+    virtual void Write(uint16_t addr, uint8_t value) = 0;
 };
 
 /// Board logic that watches the on-chip daisy chain's acknowledges and RETIs (observation: the Sprinter's ISA
@@ -113,6 +128,19 @@ public:
     /// The board's bus agent (null = none): opcode fetches, data accesses, INT acknowledges
     void SetBusAgent(IZ84BusAgent* agent) { _agent = agent; }
     IZ84BusAgent* GetBusAgent() const { return _agent; }
+    /// The board's fused bus (null = none: always the memory interface)
+    void SetFastBus(IZ84FastBus* bus)
+    {
+        _fastBus = bus;
+        _fastBusGeneration = ~0u;
+    }
+    /// The fused bus on (the default) or off (comparison tests, diagnosis)
+    void SetFastBusOn(bool on)
+    {
+        _fastBusOn = on;
+        _fastBusGeneration = ~0u;
+    }
+
     /// The board's interrupt observer (null = none)
     void SetInterruptObserver(IZ84InterruptObserver* observer) { _observer = observer; }
 
@@ -178,6 +206,20 @@ private:
     static constexpr uint32_t kMaxIdlePeriod = 64;
     /// endregion </Idle cycles in one go>
 
+    /// The fused bus may take this access: it matched the memory configuration of this generation
+    bool UseFastBus()
+    {
+        if (!_fastBus)
+            return false;
+        const uint32_t generation = _core->GetMemoryInterfaceGeneration();
+        if (generation != _fastBusGeneration) [[unlikely]]
+        {
+            _fastBusGeneration = generation;
+            _fastBusMatches = _fastBusOn && _fastBus->Matches();
+        }
+        return _fastBusMatches;
+    }
+
     /// Host -> library before a step or an acknowledge: T and, when the host changed it, the boundary
     void Enter();
     /// Library -> host after it: tt, the boundary, the decoded opcode, the HALT entry
@@ -195,6 +237,11 @@ private:
 
     Z80* _z80 = nullptr;
     Memory* _memory = nullptr;
+    Core* _core = nullptr;
+    IZ84FastBus* _fastBus = nullptr;
+    uint32_t _fastBusGeneration = ~0u;
+    bool _fastBusMatches = false;
+    bool _fastBusOn = true;
     Z84Lib::Z84C15& _chip;
     ChainSource _source{*this};
     IInterruptSource* _external = nullptr;

@@ -1,6 +1,7 @@
 // The Sprinter's fast paths - a halted CPU's idle cycles in one go (Z84C15Engine::RunIdleCycles), the INT question
-// answered from a kept "no" (ChainSource::IsIntAsserted) and the screen drawn on its own events instead of after every
-// step (ScreenSprinter::CatchesUpOnEvents) - change nothing: the same pictures, sound, registers (R included),
+// answered from a kept "no" (ChainSource::IsIntAsserted), the screen drawn on its own events instead of after every
+// step (ScreenSprinter::CatchesUpOnEvents) and the memory bus in one call (SprinterMemory::FusedRead / FusedWrite)
+// - change nothing: the same pictures, sound, registers (R included),
 // T-states and memory as one cycle per step asking every boundary and drawing after every step. Two machines run the same
 // thing, one with the fast paths off, and are compared at
 // every checkpoint, through every driver that allows it: RunNFrames, RunTStates chunks that end inside idle
@@ -138,6 +139,7 @@ protected:
         ASSERT_NE(run.engine, nullptr);
         run.engine->SetIdleCyclesInOneGo(inOneGo);
         run.engine->SetIntAnswerKept(inOneGo);
+        run.engine->SetFastBusOn(inOneGo);
         auto* screen = dynamic_cast<ScreenSprinter*>(run.context->pScreen);
         ASSERT_NE(screen, nullptr);
         screen->SetCatchUpOnEvents(inOneGo);

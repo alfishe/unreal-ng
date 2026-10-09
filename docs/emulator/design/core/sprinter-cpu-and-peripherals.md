@@ -755,13 +755,34 @@ Profile of DNTBLINK with the shipped sound cards (2026-10-09, 3.3 ms per frame u
   level 1, a period-0 tone and the noise toggle), so dropping it changes the sound slightly. Measured without it:
   2.34-2.37 -> 2.26-2.31 ms per frame (-2 to -4 %) - not worth a change of the output.
 
-### 8.8 What remains
+### 8.8 The memory bus in one call (`IZ84FastBus`, `SprinterMemory::FusedRead` / `FusedWrite`)
 
-The instruction and its bus path (`Z84CpuStep`, `Z84C15Engine::MemRead` / `MemWrite`) are the bulk. On the read
-side the overlay machinery - `Memory::MemoryReadOverlayM1`, `SprinterMemory::MemoryReadFast` and its redirect
-test, `HostBusOverlayChain`, `SprinterWaits` - is ~10 % of a ROTOZOOM frame; the accelerator's `OnOpcodeFetch` on
-every fetch ~5.6 %. Candidates: a Sprinter memory interface that does the bank read, the redirect and the turbo
-wait in one function; the bus agent called only when its latches can change.
+Every CPU memory access went through the memory interface: a member-function pointer to
+`Memory::MemoryReadOverlay[M1]`, the virtual `SprinterMemory::MemoryReadFast` (the bank read and the redirect
+test), then `HostBusOverlayChain` calling each overlay virtually - the write intercept on writes, the turbo or
+the original waits (`MemoryWaitOverlay::Wait`, the virtual `ExtraClocks`). The engine now takes a board's fused
+bus (`Z84C15Engine::SetFastBus`) for each access while the board says the memory configuration is one it
+reproduces exactly: `SprinterMemory::FusedBusMatches` accepts the plain memory interface with the installed
+overlays being its own in their install order - the write intercept, then the turbo or the original waits, each
+over the whole address space - and nothing else (a card's ZX-DMA overlay, the debug interface, contention: the
+memory interface as before). `FusedRead` / `FusedWrite` do the same steps in the same order (the read, the
+redirects, the wait by the overlay's rule; the store, the intercept, the wait), in one call. The engine asks
+again whenever `Core::GetMemoryInterfaceGeneration` moves (`SelectMemoryInterface` bumps it: an overlay added
+or removed, debug mode). `SetFastBusOn` turns it off for comparisons.
+
+**Exactness:** the two-machine tests (`SprinterIdleCycles_Test`, `SprinterFastPathsDemo_Test`) switch it with the
+other fast paths: equal.
+
+**Measured** (2026-10-09, all other fast paths on, the fused bus off / on alternating, load 28-39): DNTBLINK
+1.43-1.45 -> 1.28-1.29 ms per frame (-10.5 %), ROTOZOOM 2.70 -> 2.43 (-10 %), PLASMA2 0.66 -> 0.62 (-5.5 %),
+BADAPPLE 1.10-1.12 -> 0.98-0.99 (-11 %). The other machines keep their memory interface; they gain only the
+generation counter in `SelectMemoryInterface` (no per-access or per-step change).
+
+### 8.9 What remains
+
+The instruction itself (`Z84CpuStep`) and the board work per access: the accelerator's `OnOpcodeFetch` on every
+fetch (~5.6 %), the write intercept's video RAM path. Candidate: the bus agent called only when its latches can
+change.
 General rules for such changes: [performance-guidelines.md](../../../guidelines/performance-guidelines.md).
 
 ## 9. Where the older design documents differ from the code
