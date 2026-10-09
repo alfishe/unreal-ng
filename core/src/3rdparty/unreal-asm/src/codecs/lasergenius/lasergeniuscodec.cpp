@@ -75,8 +75,25 @@ const Combined kCombined[] = {
 constexpr uint8_t kFirstCombined = 0x82;
 constexpr size_t kCombinedCount = sizeof(kCombined) / sizeof(kCombined[0]);
 
-const char* const kUnary[] = {"*", "!", "^", "-"};   // #C7-#CA
-constexpr uint8_t kFirstUnary = 0xC7;
+// Prefix operators #C4-#CA: & ++ -- (Phoenix: address of, increment, decrement) and * ! ^ -
+const char* const kUnary[] = {"&", "++", "--", "*", "!", "^", "-"};
+constexpr uint8_t kFirstUnary = 0xC4;
+constexpr size_t kUnaryCount = sizeof(kUnary) / sizeof(kUnary[0]);
+// Phoenix (the hash extensions' compiled language): postfix ++ / --, assignment, function calls and array indexes
+constexpr uint8_t kPostIncrement = 0xCE, kPostDecrement = 0xCF;
+constexpr uint8_t kAssign = 0xD1, kArgumentComma = 0xD2, kCallOpen = 0xD3, kIndexOpen = 0xD4;
+constexpr uint8_t kCallClose = 0xCC, kCallCloseEmpty = 0xCD;
+constexpr uint8_t kHash = 0xF6;   // a "#" pseudo-op of the hash extensions, #F6 and its number
+const char* const kHashOps[] = {"", "DSE", "DUE", "UNTIL", "WHILE", "IF", "REPEAT", "ENDW", "ELSE", "ENDIF", "FNC",
+                                "BEGIN", "END", "PRM", "DS", "DI", "STACK", "RETURN", "LIB"};
+constexpr size_t kHashOpCount = sizeof(kHashOps) / sizeof(kHashOps[0]);
+const char* const kTypes[] = {"", "INT", "CHAR", "PINT", "PCHAR"};   // the byte after #DS #DI #FNC #PRM
+constexpr size_t kTypeCount = sizeof(kTypes) / sizeof(kTypes[0]);
+
+bool TakesType(uint8_t op)
+{
+    return op == 0x0A || op == 0x0D || op == 0x0E || op == 0x0F;   // FNC PRM DS DI
+}
 const char* const kBinary[] = {"+", "-", "*", "/", "%", "<=", ">=", "?=", "!=", "<<", ">>", "<", ">", "@<", "@>", "&&", "||", "&", "|", "^"};   // #D5-#E8
 constexpr uint8_t kFirstBinary = 0xD5;
 constexpr size_t kBinaryCount = sizeof(kBinary) / sizeof(kBinary[0]);
@@ -174,6 +191,20 @@ public:
                 return false;
             head = "\\" + name;
         }
+        else if (c == kHash)
+        {
+            if (!Has(2) || _b[_pos + 1] == 0 || _b[_pos + 1] >= kHashOpCount)
+                return false;
+            const uint8_t op = _b[_pos + 1];
+            head = std::string("#") + kHashOps[op];
+            _pos += 2;
+            if (TakesType(op))
+            {
+                if (!Has(1) || Peek() == 0 || Peek() >= kTypeCount)
+                    return false;
+                operands.push_back(kTypes[_b[_pos++]]);
+            }
+        }
         if (!head.empty())
         {
             while (Has(1) && OperandStart(Peek()))
@@ -232,7 +263,7 @@ private:
     static bool OperandStart(uint8_t c)
     {
         return (c >= kFirstRegister && c <= kLastIndirect) || c == kName || c == kString || c == kCharacter || c == kMacroParameter ||
-               c == kLocation || c == kStorage || c >= 0xF8 || (c >= kFirstUnary && c < kFirstUnary + 4) ||
+               c == kLocation || c == kStorage || c >= 0xF8 || (c >= kFirstUnary && c < kFirstUnary + kUnaryCount) ||
                c == kOpenBracket;
     }
 
@@ -269,10 +300,13 @@ private:
     bool Expression(std::string& out)
     {
         out.clear();
+        int open = 0;   // [ ] groups opened in this expression (an index's ] belongs to the index)
         for (;;)
         {
-            while (Has(1) && ((Peek() >= kFirstUnary && Peek() < kFirstUnary + 4) || Peek() == kOpenBracket))
+            while (Has(1) && ((Peek() >= kFirstUnary && Peek() < kFirstUnary + kUnaryCount) || Peek() == kOpenBracket))
             {
+                if (Peek() == kOpenBracket)
+                    ++open;
                 out += Peek() == kOpenBracket ? "[" : kUnary[Peek() - kFirstUnary];
                 ++_pos;
             }
@@ -280,18 +314,64 @@ private:
             if (!Atom(a))
                 return false;
             out += a;
-            while (Has(1) && Peek() == kCloseBracket)
+            // Phoenix: calls f(a,b), indexes x[i], postfix ++ --
+            while (Has(1))
+            {
+                if (Peek() == kCallOpen)
+                {
+                    ++_pos;
+                    out += "(";
+                    if (Has(1) && Peek() == kCallCloseEmpty)
+                    {
+                        ++_pos;
+                        out += ")";
+                        continue;
+                    }
+                    for (;;)
+                    {
+                        std::string argument;
+                        if (!Expression(argument) || !Has(1))
+                            return false;
+                        out += argument;
+                        const uint8_t next = _b[_pos++];
+                        if (next == kArgumentComma)
+                        {
+                            out += ",";
+                            continue;
+                        }
+                        if (next != kCallClose)
+                            return false;
+                        out += ")";
+                        break;
+                    }
+                }
+                else if (Peek() == kIndexOpen)
+                {
+                    ++_pos;
+                    std::string index;
+                    if (!Expression(index) || !Has(1) || Peek() != kCloseBracket)
+                        return false;
+                    ++_pos;
+                    out += "[" + index + "]";
+                }
+                else if (Peek() == kPostIncrement || Peek() == kPostDecrement)
+                    out += _b[_pos++] == kPostIncrement ? "++" : "--";
+                else
+                    break;
+            }
+            while (open > 0 && Has(1) && Peek() == kCloseBracket)
             {
                 out += "]";
                 ++_pos;
+                --open;
             }
-            if (Has(1) && Peek() >= kFirstBinary && Peek() < kFirstBinary + kBinaryCount)
+            if (Has(1) && ((Peek() >= kFirstBinary && Peek() < kFirstBinary + kBinaryCount) || Peek() == kAssign))
             {
-                out += kBinary[Peek() - kFirstBinary];
+                out += Peek() == kAssign ? "=" : kBinary[Peek() - kFirstBinary];
                 ++_pos;
                 continue;
             }
-            return true;
+            return open == 0;
         }
     }
 
@@ -493,6 +573,39 @@ public:
         Skip();
         if (AtEnd() || Peek() == ';')
             return Finish(start, error);
+        if (Peek() == '#' && _pos + 1 < _s.size() && std::isalpha(static_cast<unsigned char>(_s[_pos + 1])))
+        {
+            ++_pos;
+            const std::string word = Upper(Word());
+            for (size_t k = 1; k < kHashOpCount; ++k)
+                if (word == kHashOps[k])
+                {
+                    _out.push_back(kHash);
+                    _out.push_back(static_cast<uint8_t>(k));
+                    if (TakesType(static_cast<uint8_t>(k)))
+                    {
+                        Skip();
+                        const std::string type = Upper(Word());
+                        size_t t = 1;
+                        while (t < kTypeCount && type != kTypes[t])
+                            ++t;
+                        if (t == kTypeCount)
+                        {
+                            error = "#" + word + " takes a type (INT, CHAR, PINT, PCHAR)";
+                            return false;
+                        }
+                        _out.push_back(static_cast<uint8_t>(t));
+                        Skip();
+                        const bool comma = Peek() == ',';
+                        if (comma)
+                            ++_pos;
+                        return Operands(start, error, comma);
+                    }
+                    return Operands(start, error);
+                }
+            error = "unknown hash pseudo-op #" + word;
+            return false;
+        }
         if (Peek() == '*')
         {
             ++_pos;
@@ -633,9 +746,18 @@ private:
         return false;
     }
 
-    bool Operands(size_t start, std::string& error)
+    bool Operands(size_t start, std::string& error, bool afterComma = false)
     {
         bool first = true;
+        if (afterComma)
+        {
+            Skip();
+            if (AtEnd() || Peek() == ';')
+            {
+                error = "an operand expected after ','";
+                return false;
+            }
+        }
         for (;;)
         {
             Skip();
@@ -734,33 +856,104 @@ private:
 
     bool Expression(std::string& error)
     {
+        int open = 0;   // [ ] groups opened in this expression (an index's ] belongs to the index)
         for (;;)
         {
             Skip();
             for (;;)
             {
-                const char c = Peek();
-                if (c == '[')
-                    _out.push_back(kOpenBracket);
-                else if (c == '-' || c == '!' || c == '^' || c == '*')
+                // Prefix operators, the two-character ++ / -- first; "*" here is "contents of", "&" "address of"
+                size_t unary = kUnaryCount;
+                size_t length = 0;
+                for (size_t k = 0; k < kUnaryCount; ++k)
                 {
-                    // "*" alone at an operand's start is "contents of"; the others are the unary operators
-                    for (uint8_t k = 0; k < 4; ++k)
-                        if (c == kUnary[k][0])
-                            _out.push_back(static_cast<uint8_t>(kFirstUnary + k));
+                    const size_t n = std::strlen(kUnary[k]);
+                    if (n > length && _s.compare(_pos, n, kUnary[k]) == 0)
+                    {
+                        unary = k;
+                        length = n;
+                    }
                 }
+                if (Peek() == '[')
+                {
+                    _out.push_back(kOpenBracket);
+                    ++open;
+                    length = 1;
+                }
+                else if (unary < kUnaryCount)
+                    _out.push_back(static_cast<uint8_t>(kFirstUnary + unary));
                 else
                     break;
-                ++_pos;
+                _pos += length;
                 Skip();
             }
             if (!Atom(error))
                 return false;
             Skip();
-            while (Peek() == ']')
+            // Phoenix: calls f(a,b), indexes x[i], postfix ++ --
+            for (;;)
+            {
+                if (Peek() == '(')
+                {
+                    ++_pos;
+                    _out.push_back(kCallOpen);
+                    Skip();
+                    if (Peek() == ')')
+                    {
+                        ++_pos;
+                        _out.push_back(kCallCloseEmpty);
+                    }
+                    else
+                        for (;;)
+                        {
+                            if (!Expression(error))
+                                return false;
+                            Skip();
+                            if (Peek() == ',')
+                            {
+                                ++_pos;
+                                _out.push_back(kArgumentComma);
+                                continue;
+                            }
+                            if (Peek() != ')')
+                            {
+                                error = "')' expected after a function's arguments";
+                                return false;
+                            }
+                            ++_pos;
+                            _out.push_back(kCallClose);
+                            break;
+                        }
+                }
+                else if (Peek() == '[')
+                {
+                    ++_pos;
+                    _out.push_back(kIndexOpen);
+                    if (!Expression(error))
+                        return false;
+                    Skip();
+                    if (Peek() != ']')
+                    {
+                        error = "']' expected after an index";
+                        return false;
+                    }
+                    ++_pos;
+                    _out.push_back(kCloseBracket);
+                }
+                else if (_s.compare(_pos, 2, "++") == 0 || _s.compare(_pos, 2, "--") == 0)
+                {
+                    _out.push_back(_s[_pos] == '+' ? kPostIncrement : kPostDecrement);
+                    _pos += 2;
+                }
+                else
+                    break;
+                Skip();
+            }
+            while (open > 0 && Peek() == ']')
             {
                 _out.push_back(kCloseBracket);
                 ++_pos;
+                --open;
                 Skip();
             }
             size_t best = kBinaryCount;
@@ -775,7 +968,21 @@ private:
                 }
             }
             if (best == kBinaryCount)
+            {
+                // Phoenix' assignment (after the two-character operators that end in "=")
+                if (Peek() == '=')
+                {
+                    ++_pos;
+                    _out.push_back(kAssign);
+                    continue;
+                }
+                if (open > 0)
+                {
+                    error = "']' expected";
+                    return false;
+                }
                 return true;
+            }
             _out.push_back(static_cast<uint8_t>(kFirstBinary + best));
             _pos += bestLength;
         }

@@ -506,7 +506,7 @@ struct LineParser
         if (rest.empty())
             return;
         if (rest.front() == '{' && rest.back() == '}')
-            throw Failure{"a paragraph the codec kept as bytes (Phoenix, the hash extensions' language)"};
+            throw Failure{"a paragraph the codec kept as bytes"};
         // A label: a name and a colon (blanks allowed before the colon)
         {
             size_t k = 0;
@@ -532,6 +532,8 @@ struct LineParser
                 throw Failure{word + " takes one operand"};
             return ops[0];
         };
+        if (word[0] == '#')
+            throw Failure{"a Phoenix statement (the hash extensions' compiled language): not converted"};
         if (word[0] == '\\')
         {
             Statement s;

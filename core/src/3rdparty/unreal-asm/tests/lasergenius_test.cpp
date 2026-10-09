@@ -152,6 +152,28 @@ TEST(LaserGeniusCodec_Test, EveryTypedFormEncodesToWhatTheEditorStored)
     EXPECT_GT(forms, 800);
 }
 
+TEST(LaserGeniusCodec_Test, EveryTypedPhoenixFormEncodesToWhatTheEditorStored)
+{
+    // The hash extensions: #F6 pseudo-ops, types, = ++ -- & (address), calls f(a,b), indexes x[i]
+    std::istringstream in(ReadTestText("lasergenius/PHOENIX.forms.tsv"));
+    std::string row;
+    int forms = 0;
+    while (std::getline(in, row))
+    {
+        if (row.empty() || row.rfind("# ", 0) == 0)   // the forms themselves start with #
+            continue;
+        const size_t tab = row.find('\t');
+        ASSERT_NE(tab, std::string::npos) << row;
+        const std::string text = row.substr(0, tab);
+        std::vector<uint8_t> tokens;
+        std::string error;
+        ASSERT_TRUE(codecs::LaserGeniusCodec::EncodeStatement(text, tokens, error)) << text << ": " << error;
+        EXPECT_EQ(tokens, FromHex(row.substr(tab + 1))) << text;
+        ++forms;
+    }
+    EXPECT_GT(forms, 50);
+}
+
 TEST(LaserGeniusCodec_Test, DecodedText)
 {
     const codecs::LaserGeniusCodec codec;
@@ -211,10 +233,10 @@ TEST(LaserGeniusCodec_Test, DetectionAndPhoenix)
         EXPECT_EQ(r.chosen->Info().id, "lasergenius") << file;
     }
     const codecs::LaserGeniusCodec codec;
-    // Phoenix paragraphs are kept as bytes, with a warning each
+    // Phoenix statements decode like the assembler's (no paragraph kept as bytes)
     const DecodeResult d = codec.Decode(ReadTestData("lasergenius/SIEVE.PHX.lg"), {});
     ASSERT_TRUE(d.ok);
-    EXPECT_FALSE(d.diagnostics.empty());
+    EXPECT_TRUE(d.diagnostics.empty());
     // Not Laser Genius: zeros, text, another codec's file
     EXPECT_EQ(codec.Detect(std::vector<uint8_t>(512, 0), {}), 0);
     const std::string text = "10 LD A,2\n20 RET\n";

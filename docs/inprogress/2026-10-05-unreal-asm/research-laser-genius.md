@@ -7,7 +7,7 @@
 | **Assembler** | Laser Genius, assembler + editor + monitor / analyser + the Phoenix compiler ("hash extensions"), Oasis Software 1986 (Spectrum and Amstrad), [ZXDB 8330](https://spectrumcomputing.co.uk/entry/8330/ZX-Spectrum/Laser_Genius); the Beta Disk version 1.04 (MOA, 1992) |
 | **Sources of the rules** | the English manual [LaserGenius(EN).pdf](https://spectrumcomputing.co.uk/zxdb/sinclair/entries/0008330/LaserGenius(EN).pdf) (§1.3 statements, §2 commands, §4 the assembler, appendix D expressions); every token and every rule below checked in Laser Genius 1.04 running in unreal-ng |
 | **Corpus** | the examples of the Oasis tape ([LaserGenius.tzx.zip](https://spectrumcomputing.co.uk/pub/sinclair/utils/l/LaserGenius.tzx.zip), tape 2 side B: SIEVE.ASM, ELLIPSEASM, and the Phoenix SIEVE.PHX, ELLIPSEPHX, MPAFNCSPHX) and Kamasoft's sources ([LaserGenius(LGZdrojaky)(Kamasoft).tzx.zip](https://spectrumcomputing.co.uk/pub/sinclair/utils/l/LaserGenius(LGZdrojaky)(Kamasoft).tzx.zip): LIB.MAKER, MEANED, COMP, EDITOR); the Beta Disk version from [LG_1_04.ZIP](https://vtrd.in/system/LG_1_04.ZIP) |
-| **Result** | the nine files decode and encode back byte for byte, and from their text alone; 825 statement forms typed into Laser Genius encode to the tokens its editor stored; SIEVE.ASM, ELLIPSE.ASM, LIB.MAKER and an expression probe, converted to sjasmplus, assemble to the bytes Laser Genius built from them (5 157, 428, 977, 97 bytes) |
+| **Result** | the nine files (Phoenix ones included) decode and encode back byte for byte, and from their text alone; 825 statement forms typed into Laser Genius encode to the tokens its editor stored; SIEVE.ASM, ELLIPSE.ASM, LIB.MAKER and an expression probe, converted to sjasmplus, assemble to the bytes Laser Genius built from them (5 157, 428, 977, 97 bytes) |
 
 ## 1. Example first
 
@@ -42,8 +42,11 @@ A paragraph is `number (2 bytes) statements… #F7`. Numbers increase (0-65534).
 | `#2C-#7F` | mnemonics and pseudo-ops in the editor's table order: CCF … NEG, ELSE ENDC ENDM, DEC INC JP JR CALL ADC ADD SBC IN OUT EX LD ORG AND OR XOR SUB CP PUSH POP DJNZ RET BIT SET RES RLC RL RRC RR SLA SRA SRL IM RST, DB DEFB DEFM DW DEFW DL DEFL EQU DS DEFS PUT COND MACRO |
 | `#81` name | a macro call `\name` |
 | `#82-#C3` | a mnemonic with its first operand: JP cc, (`#82-#89`), JP (HL) (IX) (IY), JR cc, CALL cc, ADC/ADD/SBC A, and HL, ADD IX, IY, IN r, OUT (C), OUT (, EX DE, EX AF, EX (SP), LD (BC), … LD (IY+ LD (IY- LD (IX+ LD (IX- LD (, LD r, LD rr, LD I, LD R, LD SP, |
-| `#C7-#CA` | unary * (contents of) ! ^ (complement) - |
+| `#C4-#CA` | prefix & (address of) ++ -- (Phoenix) * (contents of) ! ^ (complement) - |
+| `#CC` `#CD` | Phoenix: the `)` of a call with arguments / of an empty call `f()` |
+| `#CE` `#CF` | Phoenix: postfix ++ -- |
 | `#CB` `#D0` | [ ] |
+| `#D1-#D4` | Phoenix: `=` (assignment), `,` between a call's arguments, `(` of a call, `[` of an index (closed by `#D0`) |
 | `#D5-#E8` | binary + - * / % <= >= ?= != << >> < > @< @> && \|\| & \| ^ |
 | `#E9` `#EA` | $ (the statement's address), . (where its bytes go) |
 | `#EB` c / `#EB #FD` n | a character constant "c" / "\n" |
@@ -54,6 +57,7 @@ A paragraph is `number (2 bytes) statements… #F7`. Numbers increase (0-65534).
 | `#F1` name | a label (`name:`) |
 | `#F2` name | a macro parameter `\name` |
 | `#F5` n | a directive `*name`, n = `#82` LIST … `#95` PROMPTS |
+| `#F6` n [t] | a hash extension pseudo-op `#name`: n = 1 DSE, 2 DUE, 3 UNTIL, 4 WHILE, 5 IF, 6 REPEAT, 7 ENDW, 8 ELSE, 9 ENDIF, `#0A` FNC, `#0B` BEGIN, `#0C` END, `#0D` PRM, `#0E` DS, `#0F` DI, `#10` STACK, `#11` RETURN, `#12` LIB; FNC / PRM / DS / DI are followed by the type t = 1 INT, 2 CHAR, 3 PINT, 4 PCHAR |
 | `#F7` | the end of the paragraph |
 | `#F8`/`#F9` | binary word / byte; `#FA`/`#FB` octal; `#FC`/`#FD` decimal; `#FE`/`#FF` hex |
 
@@ -61,8 +65,10 @@ The width follows the value (a byte form below 256) unless more digits were writ
 (the H form) is stored as `#FF`. Commas between operands are not stored: an operand followed by another operand is
 the next one (`DEFW start,$` is `77 EC … E9`).
 
-Phoenix statements (the compiler's language) use tokens this codec does not read (`#00-#04`, `#C4-#C6`, `#CC`,
-`#CD`, `#D1-#D4`, `#F6`): such a paragraph is decoded as `{hex bytes}`, kept, and reported.
+Phoenix statements (the hash extensions' compiled language) use the same token stream: `#F6` pseudo-ops and the
+operators above (typed into LG 1.04 with the hash extensions loaded: `testdata/lasergenius/PHOENIX.forms.tsv`, 59 forms).
+In a Phoenix expression `[ ]` group and `( )` only call functions (the manual's `y=(z=x*x)+x-20` is refused:
+"misplaced operand"); names that are registers (`a`, `b`, `c`, `d`, `f`, `z` …) or types (`pint`) are not names.
 
 ## 4. The language, as Laser Genius 1.04 assembles it
 
@@ -102,6 +108,6 @@ Laser Genius 1.04 Beta Disk (`L_G_ASS.` from `LG_1_04.SCL` on a Pentagon); the s
 
 | Item | Note |
 |---|---|
-| Phoenix | the hash extensions' tokens are not mapped; their paragraphs are kept as bytes |
+| Phoenix | decoded and encoded (byte-exact on SIEVE.PHX, ELLIPSE.PHX, MPAFNCS.PHX); the conversion reports its statements (a compiled language: no assembler equivalent) |
 | EDITOR (Kamasoft) | the tape ends inside the file (6144 of more bytes): the last paragraph is dropped with a warning |
 | The text form | `zxasm decode` writes one statement a line without the paragraph numbers (as for GENS / ZEUS); `zxasm encode` numbers each line as a paragraph (10, 20, …) |
