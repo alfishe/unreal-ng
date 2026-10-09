@@ -24,6 +24,12 @@ void NextBoard::Reset(bool hard)
         _regs[0x0A] = 0x01;
         _regs[0x10] = 0x01;  // core id 1 (zxnext.vhd nr_10_coreid)
     }
+    // the tilemap base addresses reset to #2C / #0C (the VHDL's signals; the register table has no reset value for them)
+    if (hard)
+    {
+        _regs[0x6E] = 0x2C;
+        _regs[0x6F] = 0x0C;
+    }
     else
     {
         // a soft reset keeps what the software and the firmware set (peripheral settings, ...) and resets the fields the
@@ -114,7 +120,7 @@ uint8_t NextBoard::Read(uint8_t reg) const
         case 0x75: case 0x76: case 0x77: case 0x78: case 0x79:
             return 0;  // write-only mirrors
         case 0x69:
-            return _video.ReadDisplayControl();
+            return static_cast<uint8_t>((_video.ReadDisplayControl() & ~0x40) | ((_machine && _machine->ShadowScreen()) ? 0x40 : 0));
         case 0x40:
             return _video.PaletteIndex();
         case 0x41:
@@ -129,10 +135,15 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return _interrupts ? static_cast<uint8_t>(_interrupts->CurrentLine() >> 8) : 0;
         case 0x1F:
             return _interrupts ? static_cast<uint8_t>(_interrupts->CurrentLine() & 0xFF) : 0;
+        case 0x09:
+            return static_cast<uint8_t>(_regs[reg] & ~0x08);  // bit 3 reads 0 (zxnext.vhd: mono & tie & '0' & hdmi & scanlines)
+        case 0x6E:
+        case 0x6F:
+            return static_cast<uint8_t>(_regs[reg] & 0xBF);  // bit 6 is not stored (base_7 & '0' & base)
         case 0x10:
             return static_cast<uint8_t>((_regs[reg] & 0x1F) << 2);  // the core id; the DRIVE / M1 buttons read 0
         case 0x08:
-            return static_cast<uint8_t>(_regs[reg] | 0x80);  // bit 7: port #7FFD is not locked
+            return static_cast<uint8_t>((_regs[reg] & 0x7F) | ((_machine && _machine->PagingLocked()) ? 0 : 0x80));  // bit 7: port #7FFD is not locked
         default:
             break;
     }
@@ -211,6 +222,8 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             return;
         case 0x69:
             _video.WriteDisplayControl(value);
+            if (_machine)
+                _machine->SetShadowScreen((value & 0x40) != 0);
             _regs[reg] = value;
             return;
         case 0x10:
@@ -277,6 +290,8 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             return;
         case kRegPeripheral2:
             _regs[reg] = value;
+            if ((value & 0x80) && _machine)
+                _machine->UnlockPaging();
             if (_machine)
                 _machine->SetContentionDisabled((value & 0x40) != 0);
             return;

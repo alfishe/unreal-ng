@@ -104,6 +104,15 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 - [x] `.nex` is a program of the Next like `.spg` is of TS-Conf: `Emulator::LoadSnapshot` (LoaderNex), `SnapshotLauncher::NeedOf` (model NEXT, 2048K, program only), media classification, the Qt file dialog / drag and drop / command line (`unreal-qt file.nex` starts the Next and runs it), `FileManager` category. Shown in the running app: `tm.nex` (img/unreal-qt-next-tilemap.png) and `scratch/soundnex/ay3.nex` - the master mix of the app measured through the automation (`audio_capture`): left rms 0.0266 = the 873 / 32768 of the test run, right silent (A channels are left in ABC), dominant 874 Hz; `/state/audio/covox` shows the three AYs' registers. The bare machine has no NextZXOS: programs that call the esxDOS API need `[NEXT] SdCard` and the boot to the menu first
 - Known: the generic video report of the app says 512x384 for the Next
 
+## Real-board suite V1 on the whole machine (2026-10-09)
+The 35 programs of `ZXSpectrumNextTests/release` (48K snapshots, results checked on real boards, photos in the repo) run on the NEXT machine with the state NextZXOS leaves (`#7FFD` = #30, core id 0, ULA palette of the 16 defaults); the same files on ZEsarUX are the second reference (`scratch/v1run.sh`-style loop: bring-up `UNREAL_NEX=<file.snx>`, `UNREAL_NEX_KEYS`). `NextRealBoard_Test` (UNREAL_NEXT_TESTS) pins what is decided:
+- [x] NextReg_defaults: no red cell (was 6): NR #08 bit 7 reads the inverse of the #7FFD lock (and writing 1 unlocks), NR #09 bit 3 reads 0, NR #6E / #6F bit 6 reads 0 and reset to #2C / #0C, ULA palette entries 32-255 repeat the 16 defaults after the firmware; core id 0 after the boot
+- [x] NextReg #69: 10 of 10 (was 7): bit 6 is bit 3 of #7FFD (shadow screen) both ways, the video state follows the copper per line
+- [x] Z80N: all rows OK at 28 MHz (also `!Z80Nc2`)
+- [x] LayersMixingHiRes: Timex hi-res attribute = bright | paper << 3 | ink through ULANext, border = paper colour
+- [ ] Open (ours differs from ZEsarUX, photo decides): Copper (flags need the copper at pixel resolution), Lmix_LxU / LmixLoRs / LmxHiCol (layer mixing), UlaScrol, SprDelay, Ula_Pal (border stripes), zilogDMA / dma (DMA timing), Chg8kBan (green border length: MAME ends at line ~196, ours ~227 - the contention of NEXTREG fetches), int_skip (ours shows OK where ZEsarUX shows ERR: ours follows the readme), z80bltst, linesIRQ
+- A NEX / SNA is loaded by NextZXOS with the 48K snapshot's `#7FFD` locked: nothing in the machine model is a 48K type lock (the VHDL: lock = bit 5 of #7FFD)
+
 ## Remaining
 - [x] Verification program: public suites collected and graded ([verification-program.md](verification-program.md)); esxDOS source availability checked ([esxdos-and-sd.md](esxdos-and-sd.md) section 1a)
 - [x] N0 second pass (2026-10-08): ULA / Timex / ULA+ / ULAnext, LoRes, palettes and the layer compositor, audio (AY x 3, DAC, mixer), CTC, UART, SPI, DivMMC, keyboard, ZEsarUX comparison: [research-fpga-vhdl.md](research-fpga-vhdl.md) sections 16-22; [esxdos-and-sd.md](esxdos-and-sd.md); [design-integration.md](design-integration.md)

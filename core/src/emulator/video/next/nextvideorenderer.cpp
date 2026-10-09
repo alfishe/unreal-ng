@@ -41,7 +41,9 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
     auto border = [&](Pixel& p) {
         if (fullInk)
             return;  // paper and border come from the fallback colour: transparent here
-        p.colour = regs.PaletteEntry(palette, (ulaNext ? 128 : 16) + in.border) & 0x1FF;
+        // Timex hi-res: the border takes the paper colour of port #FF (7 - ink), without the bright bit
+        const unsigned colour = (in.portFf & 7) == 6 ? 7 - ((in.portFf >> 3) & 7) : in.border;
+        p.colour = regs.PaletteEntry(palette, (ulaNext ? 128 : 16) + colour) & 0x1FF;
         p.opaque = true;
         p.border = true;
     };
@@ -98,14 +100,16 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
 
     if (timexMode == 6)
     {
-        // hi-res 512 x 192: the even bytes from screen 0, the odd from screen 1; ink = bits 5:3, paper the opposite
+        // hi-res 512 x 192: the even bytes from screen 0, the odd from screen 1. The attribute the ULA makes of the port is
+        // bright | paper (7 - ink) << 3 | ink, run through the same attribute decoding as any screen (ULANext included)
         const unsigned ink = (in.portFf >> 3) & 7;
+        const uint8_t attr = static_cast<uint8_t>(0x40 | ((7 - ink) << 3) | ink);
         for (unsigned xb = 0; xb < 32; xb++)
             for (unsigned half = 0; half < 2; half++)
             {
                 const uint8_t byte = screen[half * 0x2000 + bitmapRow + ((xb + (scrollX >> 3)) & 31)];
                 for (unsigned bit = 0; bit < 8; bit++)
-                    put((xb * 2 + half) * 8 + bit, ((byte >> (7 - bit)) & 1) ? static_cast<int>(ink) : static_cast<int>(16 + (7 - ink)));
+                    put((xb * 2 + half) * 8 + bit, index(((byte >> (7 - bit)) & 1) != 0, attr));
             }
         return;
     }

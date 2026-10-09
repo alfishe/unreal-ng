@@ -198,8 +198,37 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
             emulator->RunFrame(true);
         emulator->DisableTurboMode();
     }
+    // .sna / .snx (a 48K snapshot of the ZXSpectrumNextTests programs) go through the snapshot loader; UNREAL_NEX_TURBO=1 sets
+    // 28 MHz first (those programs start their tests by themselves when the board is already turbo)
+    const std::string loadName = path;
+    const bool snapshot = loadName.size() > 4 && (loadName.substr(loadName.size() - 4) == ".sna" || loadName.substr(loadName.size() - 4) == ".snx");
     LoaderNex loader(context);
-    ASSERT_TRUE(loader.LoadFile(path)) << loader.Error();
+    if (snapshot)
+    {
+        if (const char* turbo = std::getenv("UNREAL_NEX_TURBO"))
+            if (std::atoi(turbo))
+                dynamic_cast<PortDecoder_Next*>(context->pPortDecoder)->Board().Write(0x07, 0x03);
+        std::string sna = loadName;
+        if (sna.substr(sna.size() - 4) == ".snx")
+        {
+            sna = std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp") + "/nexrun.sna";
+            std::ifstream in(loadName, std::ios::binary);
+            std::ofstream out(sna, std::ios::binary);
+            out << in.rdbuf();
+        }
+        ASSERT_TRUE(emulator->LoadSnapshot(sna)) << "the snapshot loader refused " << loadName;
+        // The state the real-board programs were photographed in: after the boot into ZX48 mode - 48K machine type (7FFD locked),
+        // core id 0 (the firmware leaves it), the ULA palette filled with the 16 defaults
+        auto* decoder = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder);
+        // NextZXOS loads a 48K snapshot with #7FFD = #30 (ROM 48K, locked): the test programs unlock it through NR #08 bit 7
+        context->emulatorState.p7FFD = 0x30;
+        dynamic_cast<NextMemory*>(context->pMemory)->ApplyClassicPaging(0x30, 0);
+        decoder->Board().SetCoreId(0);
+        LoaderNex::FillUlaPalette(decoder->Board());
+
+    }
+    else
+        ASSERT_TRUE(loader.LoadFile(path)) << loader.Error();
     const char* frames = std::getenv("UNREAL_NEX_FRAMES");
     const int total = frames ? std::atoi(frames) : 200;
     // UNREAL_NEX_NRLOG: the NextREG writes of the run (register, value, pc) after the load, first 200 and the last distinct ones
@@ -215,13 +244,42 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
             decoder->SetPortLog(&portsIn, &portsOut);
     // no turbo: the picture is drawn as the beam passes, a turbo frame is not drawn
     // UNREAL_NEX_WAV=<file>: the final mix of the run (44.1 kHz stereo 16 bit), the frames after the load
+    // the picture follows the beam (borders, copper): the tests turn this per-line drawing off for speed, the app has it on
+    if (context->pFeatureManager)
+        context->pFeatureManager->setFeature(Features::kScreenHQ, true);
     const char* wavPath = std::getenv("UNREAL_NEX_WAV");
     if (wavPath && context->pFeatureManager)
         context->pFeatureManager->setFeature(Features::kSoundGeneration, true);
     static std::vector<int16_t> wav;
     wav.clear();
+    // UNREAL_NEX_KEYS="5@30:3,2@10:3": key (0-9 A-Z) pressed at frame @ for : frames (the test programs of the real-board suites
+    // are driven by single keys)
+    struct KeyPress { char key; int at, frames; };
+    std::vector<KeyPress> keys;
+    if (const char* spec = std::getenv("UNREAL_NEX_KEYS"))
+    {
+        std::string text = spec;
+        for (size_t pos = 0; pos < text.size();)
+        {
+            const size_t end = text.find(',', pos);
+            const std::string item = text.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+            const size_t at = item.find('@'), colon = item.find(':');
+            if (!item.empty() && at != std::string::npos)
+                keys.push_back({item[0], std::atoi(item.c_str() + at + 1), colon == std::string::npos ? 3 : std::atoi(item.c_str() + colon + 1)});
+            if (end == std::string::npos)
+                break;
+            pos = end + 1;
+        }
+    }
     for (int i = 0; i < total; i++)
     {
+        for (const KeyPress& k : keys)
+        {
+            if (i == k.at)
+                context->pKeyboard->PressKey(static_cast<ZXKeysEnum>(std::toupper(k.key)));
+            if (i == k.at + k.frames)
+                context->pKeyboard->ReleaseKey(static_cast<ZXKeysEnum>(std::toupper(k.key)));
+        }
         emulator->RunFrame(true);
         if (wavPath && context->pSoundManager)
         {

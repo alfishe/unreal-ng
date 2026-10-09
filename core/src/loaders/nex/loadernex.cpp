@@ -31,11 +31,22 @@ std::vector<unsigned> BankOrder()
 }
 }  // namespace
 
+void LoaderNex::FillUlaPalette(NextBoard& board)
+{
+    static const uint8_t kDefaultPalette[16] = {0x00, 0x02, 0xA0, 0xA2, 0x14, 0x16, 0xB4, 0xB6, 0x00, 0x03, 0xE0, 0xE7, 0x1C, 0x1F, 0xFC, 0xFF};
+    board.Write(0x43, 0);
+    for (unsigned first : {0u, 128u})  // the 16 defaults, eight times, in both halves
+    {
+        board.Write(0x40, static_cast<uint8_t>(first));
+        for (unsigned i = 0; i < 128; i++)
+            board.Write(0x41, kDefaultPalette[i & 15]);
+    }
+}
+
 /// nexload.asm, "Reset All registers": the video and sound registers a program starts from, the 16 default ULA colours
 /// repeated, identity palettes for Layer 2 and the sprites, transparency #E3, priorities SLU with the sprites on
 void LoaderNex::ResetRegisters(NextBoard& board)
 {
-    static const uint8_t kDefaultPalette[16] = {0x00, 0x02, 0xA0, 0xA2, 0x14, 0x16, 0xB4, 0xB6, 0x00, 0x03, 0xE0, 0xE7, 0x1C, 0x1F, 0xFC, 0xFF};
     auto nr = [&](uint8_t reg, uint8_t value) { board.Write(reg, value); };
     nr(0x62, 0);  // stop the copper
     nr(0x61, 0);
@@ -58,14 +69,8 @@ void LoaderNex::ResetRegisters(NextBoard& board)
     nr(0x2D, 0);
     nr(0x32, 0);
     nr(0x33, 0);
-    nr(0x43, 0);
     nr(0x42, 15);
-    for (unsigned first : {0u, 128u})  // the ULA palette: the 16 defaults, eight times, in both halves
-    {
-        nr(0x40, static_cast<uint8_t>(first));
-        for (unsigned i = 0; i < 128; i++)
-            nr(0x41, kDefaultPalette[i & 15]);
-    }
+    FillUlaPalette(board);
     for (uint8_t control : {uint8_t(0x10), uint8_t(0x20)})  // Layer 2, sprites: the identity
     {
         nr(0x43, control);

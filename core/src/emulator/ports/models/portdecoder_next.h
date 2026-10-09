@@ -46,6 +46,13 @@ public:
     void WriteMemoryMapping(uint8_t value) override;
     void ClearDivMmcMapram() override { _divMmc->ClearMapram(); }
     void StepDma() override;
+    bool PagingLocked() const override { return IsPagingLocked(); }  // #7FFD bit 5 (zxnext.vhd port_7ffd_locked)
+    bool ShadowScreen() const override { return (_context->emulatorState.p7FFD & 0x08) != 0; }
+    void SetShadowScreen(bool on) override
+    {
+        _context->emulatorState.p7FFD = static_cast<uint8_t>((_context->emulatorState.p7FFD & ~0x08) | (on ? 0x08 : 0));
+    }
+    void UnlockPaging() override { _context->emulatorState.p7FFD &= static_cast<uint8_t>(~0x20); }
     void AudioConfigChanged() override;
     void DacMirrorWrite(uint8_t reg, uint8_t value) override;
     NextAudio& Audio() { return *_audio; }

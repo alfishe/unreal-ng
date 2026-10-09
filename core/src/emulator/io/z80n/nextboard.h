@@ -41,6 +41,13 @@ public:
     virtual void ClearDivMmcMapram() = 0;
     /// Between two instructions: the DMA moves its bytes
     virtual void StepDma() {}
+    /// Port #7FFD is locked (48K machine type, or the lock bit): NR #08 bit 7 reads its inverse
+    virtual bool PagingLocked() const { return false; }
+    /// NR #08 bit 7 written as 1 clears the lock bit of #7FFD
+    virtual void UnlockPaging() {}
+    /// The shadow ULA screen is bit 3 of #7FFD; NR #69 bit 6 reads and writes that bit
+    virtual bool ShadowScreen() const { return false; }
+    virtual void SetShadowScreen(bool) {}
     /// NR #06 / #08 / #09 changed (the sound's AY / YM, turbosound, DAC, stereo)
     virtual void AudioConfigChanged() {}
     /// NR #2C / #2D / #2E: the DAC's NextREG mirrors
@@ -111,6 +118,8 @@ public:
     void SetMachineType(uint8_t type);
     NextSprites& Sprites() { return _sprites; }
     NextCopper& Copper() { return _copper; }
+    /// What the firmware leaves in NR #10 once the core is booted (the VHDL's power-on value is 1)
+    void SetCoreId(uint8_t id) { _regs[0x10] = id & 0x1F; }
     /// The CPU mapping of Layer 2 (port #123B, NR #12 / #13) into the memory's slot table
     void RefreshLayer2Mapping();
     NextVideoRegs& Video() { return _video; }

@@ -93,7 +93,7 @@ void ScreenNext::RenderLinesUpTo(unsigned lineExclusive)
         in.nr[r] = board.Stored(static_cast<uint8_t>(r));
     in.border = _state ? static_cast<uint8_t>(_state->pFE & 7) : 0;
     in.portFf = board.Video().PortFf();
-    in.shadowScreen = board.Video().ShadowAlias() || (_state && (_state->p7FFD & 0x08));
+    in.shadowScreen = _state && (_state->p7FFD & 0x08);
     in.layer2Enable = board.Video().Layer2Enabled();
     in.flash = _state && (_state->frame_counter & 0x10);
     uint32_t* fb = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
@@ -104,6 +104,11 @@ void ScreenNext::RenderLinesUpTo(unsigned lineExclusive)
         board.Copper().RunTo(CopperClock(LineEndT(_nextLine) - _rasterState.tstatesPerLine + _rasterState.screenLineAreaStart + 3));
         for (unsigned r = 0; r < 256; r++)
             in.nr[r] = board.Stored(static_cast<uint8_t>(r));
+        // what the copper (or a port write) may have changed since the line before
+        in.portFf = board.Video().PortFf();
+        in.shadowScreen = _state && (_state->p7FFD & 0x08);
+        in.layer2Enable = board.Video().Layer2Enabled();
+        in.border = _state ? static_cast<uint8_t>(_state->pFE & 7) : 0;
         NextVideoRenderer::RenderLine(in, _nextLine, row);
         std::memcpy(row + NextVideoRenderer::kWidth, row, NextVideoRenderer::kWidth * sizeof(uint32_t));  // every line twice
     }

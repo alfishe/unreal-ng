@@ -40,12 +40,16 @@ public:
     /// Put the program into the machine (a ZX Spectrum Next): memory, mapping, border, SP, PC
     bool Load(const std::vector<uint8_t>& image);
     bool LoadFile(const std::string& path);
+    /// nexload's register reset (palettes, clips, transparency, priorities, 28 MHz): also the state the boot leaves for the
+    /// real-board test programs
+    static void ResetRegisters(NextBoard& board);
+    /// The ULA palette as the firmware fills it: the 16 default colours repeated through all 256 entries
+    static void FillUlaPalette(NextBoard& board);
 
     const NexHeader& Header() const { return _header; }
     const std::string& Error() const { return _error; }
 
 private:
-    static void ResetRegisters(NextBoard& board);
     bool Fail(const std::string& why);
     static size_t ScreenBytes(const NexHeader& header, bool& ok);
 

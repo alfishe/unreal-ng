@@ -103,14 +103,17 @@ TEST_F(NextVideoRenderer_Test, TimexHiColourAndHiRes)
     EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Pal(0, 2));
     EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 2), Pal(0, 16 + 1));
 
-    // hi-res: 512 pixels, screen 0 then screen 1 byte per column; ink = bits 5:3 (here 5), paper 7 - ink
+    // hi-res: 512 pixels, screen 0 then screen 1 byte per column; ink = bits 5:3 (here 5), paper 7 - ink, both bright (the attribute
+    // is %01010101: LayersMixingHiRes.txt) - and the border is the paper colour
     _in.portFf = 6 | (5 << 3);
     Page(5)[0] = 0x80;       // pixel 0
     Page(5)[0x2000] = 0x01;  // pixel 15
     Render(NextVideoRenderer::kPaperTop);
-    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Pal(0, 5));
-    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 1), Pal(0, 16 + 2));
-    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 15), Pal(0, 5));
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft), Pal(0, 5 + 8));
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 1), Pal(0, 16 + 2 + 8));
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 15), Pal(0, 5 + 8));
+    Render(0);
+    EXPECT_EQ(Px(0), Pal(0, 16 + 2)) << "the border of hi-res is the paper colour without bright";
 }
 
 TEST_F(NextVideoRenderer_Test, UlaNextTakesInkAndPaperFromTheMask)
