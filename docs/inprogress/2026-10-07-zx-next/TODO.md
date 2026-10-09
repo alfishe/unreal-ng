@@ -124,6 +124,37 @@ No single emulator is the reference (MAME included): a difference is a defect on
 - For these the way forward is **targeted tests run on a real board** (the Z80N / NextReg programs already show the method): a program per question that prints a number and checks it, so a photo or a log from a board gives the answer. Proposed: (1) NEXTREG instruction cost under contention: a loop of N `NEXTREG n,n` at 3.5 MHz with contention on, border toggled at the loop edges, count lines in the picture (the number of lines of the loop at several code addresses - #6000 contended, #8000 not); (2) sprite renderer delay: one sprite line switched visible by the copper on line L, read back which line shows it; (3) DMA block height: 2918 bytes to port #FE at each timing code, count border rows
 - Consensus found so far (board photo + ZEsarUX or VHDL): NextReg defaults and read-back masks, NR #69 and its ports, Z80N, hi-res attribute / border, ULANext without flashing, LoRes keeps the ULA border, copper at pixel resolution, the line counter origin, ULA clip, DMA read-back bytes
 
+## CSpect release notes as a second checklist (2026-10-09)
+Sources: the CSpect itch.io page and devlog (3.0.15.2, 2.19.5.x), Mike Dailly's blog and the forum thread (2.15.1 - 2.19.x), the SpecNext wiki "CSpect: known bugs". CSpect is **not** a reference (owner's rule above): each line is a question to ask our implementation, and an item is closed only with board evidence or a second implementation. Every fix in the notes is a hint at a place where the hardware surprised an emulator author; the "known bugs" page is the reverse: where CSpect is *wrong*, so the board does the opposite.
+
+Hardware behaviours the notes mention (check ours):
+- [x] NR #6E / #6F power-up #2C / #0C (2.12.30, 2.16.6) - done
+- [x] Modes 6 / 7 ULA-tile order, blend B+L and B+L-5, ULA+tile stencil (2.18.0, 2.19.0.0) - done (N7)
+- [x] Layer 2 palette offset in 256 / 320 / 640 modes (2.12.30) - NR #70 bits 3:0
+- [x] Layer 2 banks in the full 2 MB, NR #12 / #13 (2.15.2); DMA ports #0B and #6B (2.17.0); copper at pixel resolution (2.19.2.0 "copper writes were not executing all CPU T-states")
+- [x] OTIR / OTDR / INIR / INDR flags when interrupted (3.4 "Z80 hardware bugs"): z80bltst is all green
+- [ ] Layer 2 clip with left > right / top > bottom: no crash, and **top > bottom renders nothing** (2.19.1.0) - add a unit test
+- [ ] Layer 2 640 mode clips properly in the lower screen; Layer 2 pixels in the border area (2.16.6, 2.19.3.0)
+- [ ] Timex hi-res and hi-colour ink / paper orders with and without ULANext, smooth scrolling (2.17.0, 2.19.0.3); ULA Y-scroll calculation, ULA last line (2.19.0.0 / .1)
+- [ ] Hi-res tilemap scroll speed (2.16.6)
+- [ ] CTC: timers always at 28 MHz whatever the CPU speed, cascading timers, interrupts disabled at the start of IM2 (2.16.3, 2.17.0) - we have `NextCtc`, compare each
+- [ ] Contended memory does not affect 7 / 14 / 28 MHz (2.17.0) - ours: check the contention path with NR #07 > 0
+- [ ] DivMMC direct paging NR #B8-#BB, NR #0A bit 2 disables the automap, a NEX load sets #B8-#BB to #82 #00 #00 #F0 and the automap off for NEX (2.15.2, 2.16.0) - our table has them; the NEX loader value and the NR #0A bit are not checked
+- [ ] AY reset through NR #06 bits 1:0 (2.19.4.2); AY stereo ABC / ACB / mono (2.19.2.0) - NextAudio pan
+- [ ] Multiface paged out on RETN (2.18.0) - only if we model Multiface on the Next
+- [ ] Sprites cleared on hard reset, memory cleared / ROMs reloaded; "ULA line always cleared if enabled" (2.19.5.2)
+- [ ] NR #02 hard reset (2.16.6) and the soft reset (the wiki: CSpect's differs from the board)
+- [ ] 3.0.x: **ULA overlay** - 24 KB more RAM through banks 10, 11 and 14, **overscroll** modes 320x256 / 640x256 / 256x192, "layer 2 banking conflicts" fixes: this is core 3.02.xx behaviour we do not have documented; find it in the VHDL (the `zxnext` ULA bank / overscan registers) before doing anything
+
+Where the wiki says CSpect is wrong, so the board does the opposite (our tests should assert the board side):
+- [ ] sprite collision bit exists on the board (ours sets it); sprites are one scanline delayed (the SprDelay question above); sprites in the border versus tiles in modes 3-5 are drawn "weirdly" by the hardware; sprite wrap-around of the 512x512 space
+- [ ] DMA: **setting the WR3 enable bit starts a transfer** on the board (CSpect does not); read-back registers (we match the zilogDMA board lines); Z80-DMA (#0B) mode
+- [ ] NR #09, #34, #41, #8E read-back (ours: #09 done, check the others against the VHDL)
+- [ ] Z80: `di : halt` must not loop waiting for an NMI (the DIHalt test: ours matches the photo); block instructions and prefixes must inhibit a masked interrupt correctly
+- [ ] Debugger step-over runs the interrupt handler often (CSpect's own, not ours)
+
+Not relevant to us (CSpect UI / plugin API / esxDOS emulation / assembler / DeZog / Boriel / printer plugin / NextZXOS streaming API).
+
 ## Remaining
 - [x] Verification program: public suites collected and graded ([verification-program.md](verification-program.md)); esxDOS source availability checked ([esxdos-and-sd.md](esxdos-and-sd.md) section 1a)
 - [x] N0 second pass (2026-10-08): ULA / Timex / ULA+ / ULAnext, LoRes, palettes and the layer compositor, audio (AY x 3, DAC, mixer), CTC, UART, SPI, DivMMC, keyboard, ZEsarUX comparison: [research-fpga-vhdl.md](research-fpga-vhdl.md) sections 16-22; [esxdos-and-sd.md](esxdos-and-sd.md); [design-integration.md](design-integration.md)
