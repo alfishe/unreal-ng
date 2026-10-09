@@ -199,7 +199,7 @@ TEST(MediaManager_Test, InsertFromAnImageFileAndAccessModes)
     missing.path = path + ".missing";
     EXPECT_EQ(manager.Insert("sd.test", missing).error, MediaError::UnreadableSource);
 
-    ASSERT_TRUE(manager.Eject("sd.test", {Disposition::Discard}).Ok());
+    ASSERT_TRUE(manager.Eject("sd.test", {.disposition = Disposition::Discard}).Ok());
     manager.UnregisterSlot("sd.test");
     std::remove(path.c_str());
 }
@@ -509,7 +509,7 @@ TEST(MediaManager_Test, ExportWritesTheGuestView)
     manager.SetApplyNowProbe([&running] { return !running; });
     EXPECT_EQ(manager.Export("sd.test", path).error, MediaError::NotSupported) << "a running machine is paused first";
     manager.SetApplyNowProbe(nullptr);
-    ASSERT_TRUE(manager.Eject("sd.test", {Disposition::Discard}).Ok());
+    ASSERT_TRUE(manager.Eject("sd.test", {.disposition = Disposition::Discard}).Ok());
     manager.UnregisterSlot("sd.test");
     std::remove(path.c_str());
 }
@@ -609,7 +609,7 @@ TEST(MediaManager_Test, FolderBecomesAFatVolumeAndStaysUntouched)
 
     exported.reset();
     std::remove(image.c_str());
-    ASSERT_TRUE(manager.Eject("sd.test", {Disposition::Discard}).Ok());
+    ASSERT_TRUE(manager.Eject("sd.test", {.disposition = Disposition::Discard}).Ok());
     manager.UnregisterSlot("sd.test");
 }
 

@@ -168,7 +168,7 @@ TEST_F(TTDAtaChannel_Test, WritesAreBarriersOncePerFrame)
     EXPECT_TRUE(ttd->IsRecording()) << "a guest write never ends the recording";
 
     // The media set is fixed while recording
-    EXPECT_EQ(manager.Eject("ide0.master", {Disposition::Discard}).error, MediaError::Recording);
+    EXPECT_EQ(manager.Eject("ide0.master", {.disposition = Disposition::Discard}).error, MediaError::Recording);
     ttd->StopRecording();
 }
 
