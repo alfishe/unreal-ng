@@ -14,6 +14,7 @@ PatternCategoryMap FileManager::_extensions =
     { "z80", SupportedFileCategoriesEnum::FileSnapshot },
     { "szx", SupportedFileCategoriesEnum::FileSnapshot },
     { "spg", SupportedFileCategoriesEnum::FileSnapshot },  // TS-Conf program (the TS-Conf machine only)
+    { "nex", SupportedFileCategoriesEnum::FileSnapshot },  // ZX Spectrum Next program (the Next only)
     { "rzx", SupportedFileCategoriesEnum::FileSnapshot },  // input recording, played from its start snapshot
 
     { "trd", SupportedFileCategoriesEnum::FileDisk },

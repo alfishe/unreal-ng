@@ -130,7 +130,7 @@ void MenuManager::createFileMenu()
 
     // Open Snapshot
     _openSnapshotAction = _fileMenu->addAction(tr("Open &Snapshot..."));
-    _openSnapshotAction->setStatusTip(tr("Load a snapshot file (.z80, .sna, .szx) or a TS-Conf program (.spg)"));
+    _openSnapshotAction->setStatusTip(tr("Load a snapshot file (.z80, .sna, .szx) a TS-Conf program (.spg) or a ZX Spectrum Next program (.nex)"));
     connect(_openSnapshotAction, &QAction::triggered, this, &MenuManager::openSnapshotRequested);
 
     // Open Tape

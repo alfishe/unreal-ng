@@ -31,6 +31,8 @@ struct NexHeader
 class LoaderNex
 {
 public:
+    static constexpr const char* kModel = "NEXT";  ///< the machine a NEX runs on
+    static constexpr int kRamKb = 2048;
     explicit LoaderNex(EmulatorContext* context) : _context(context) {}
 
     /// Parse the header of a NEX image; false with the reason in Error()

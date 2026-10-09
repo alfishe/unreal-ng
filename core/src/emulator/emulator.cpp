@@ -33,6 +33,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
 #include "loaders/snapshot/loader_sna.h"
+#include "loaders/nex/loadernex.h"
 #include "loaders/snapshot/loaderspg.h"
 #include "loaders/snapshot/szx/szxreader.h"
 #include "loaders/snapshot/szx/loaderszx.h"
@@ -1654,9 +1655,9 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
         return played.Ok();
     }
 
-    if (ext != "z80" && ext != "sna" && ext != "szx" && ext != "spg")
+    if (ext != "z80" && ext != "sna" && ext != "szx" && ext != "spg" && ext != "nex")
     {
-        MLOGERROR("Invalid snapshot format: {}. Expected .z80, .sna, .szx or .spg", ext.c_str());
+        MLOGERROR("Invalid snapshot format: {}. Expected .z80, .sna, .szx, .spg or .nex", ext.c_str());
         if (_context)
         {
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -1718,6 +1719,16 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
                 _lastSnapshotReport = loaderSpg.GetSnapshotReport();
                 if (!result)
                     error = loaderSpg.GetError();
+            }
+            else if (ext == "nex")
+            {
+                // ZX Spectrum Next program (loadernex.h): the Next machine only
+                LoaderNex loaderNex(_context);
+                result = loaderNex.LoadFile(absolutePath);
+                if (!result)
+                    error = loaderNex.Error();
+                else
+                    _lastSnapshotReport = snapshot::Report();
             }
             else if (ext == "szx")
             {
@@ -2460,8 +2471,8 @@ bool Emulator::EjectDisk(uint8_t drive, bool force, std::string* error)
 std::vector<std::string> Emulator::SupportedSnapshotExtensions()
 {
     // rzx: an input recording, opened as its start snapshot plus the playback;
-    // spg: a TS-Conf program (the TS-Conf machine only)
-    return {"sna", "z80", "szx", "spg", "rzx"};
+    // spg: a TS-Conf program (the TS-Conf machine only); nex: a ZX Spectrum Next program (the Next only)
+    return {"sna", "z80", "szx", "spg", "nex", "rzx"};
 }
 
 std::vector<std::string> Emulator::SupportedTapeExtensions()

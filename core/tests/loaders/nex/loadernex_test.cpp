@@ -24,6 +24,7 @@
 #include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/video/screen.h"
 #include "loaders/nex/loadernex.h"
+#include "loaders/snapshot/snapshotlauncher.h"
 
 namespace
 {
@@ -373,4 +374,18 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
         file.write(reinterpret_cast<const char*>(fb.memoryBuffer), fb.memoryBufferSize);
     }
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// The app opens a .nex like an .spg: a program of the Next only, so the launcher names the machine
+TEST(LoaderNexLauncher_Test, NeedOfNamesTheNextAndSnapshotExtensionsListIt)
+{
+    SnapshotLauncher::Need need;
+    std::string error;
+    ASSERT_TRUE(SnapshotLauncher::NeedOf("game.NEX", MM_PENTAGON, 128, need, error)) << error;
+    EXPECT_EQ(need.model, "NEXT");
+    EXPECT_EQ(need.ramKb, 2048u);
+    EXPECT_TRUE(need.programOnly);
+    EXPECT_TRUE(need.differs) << "a Pentagon is not a Next";
+    const auto extensions = Emulator::SupportedSnapshotExtensions();
+    EXPECT_NE(std::find(extensions.begin(), extensions.end(), "nex"), extensions.end());
 }

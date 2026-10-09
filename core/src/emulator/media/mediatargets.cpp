@@ -238,7 +238,7 @@ FileClass MediaTargets::Classify(const std::string& path)
         return set({FileKind::Rzx}, "rzx", "RZX! signature");
 
     // Files only their extension tells apart (no medium has these extensions)
-    if (ext == "sna" || ext == "z80" || ext == "szx" || ext == "spg")
+    if (ext == "sna" || ext == "z80" || ext == "szx" || ext == "spg" || ext == "nex")
         return set({FileKind::Snapshot}, ext, "extension ." + ext);
     if (ext == "rzx")
         return set({FileKind::Rzx}, ext, "extension .rzx");

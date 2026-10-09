@@ -83,6 +83,7 @@
 #define signals Q_SIGNALS
 #include "loaders/disk/loader_fdi.h"
 #include "loaders/rzx/rzxreader.h"
+#include "loaders/nex/loadernex.h"
 #include "loaders/snapshot/loaderspg.h"
 #include "loaders/snapshot/szx/loaderszx.h"
 #include "tape/tapeimportaudiodialog.h"  // tape-audio-bridge §7.3
@@ -2151,6 +2152,7 @@ void MainWindow::openSnapshotDialog()
                      buildFilterGroup(tr("Z80 Snapshots"), {"z80"}) + ";;" +
                      buildFilterGroup(tr("SZX Snapshots"), {"szx"}) + ";;" +
                      buildFilterGroup(tr("SPG Programs (TS-Conf)"), {"spg"}) + ";;" +
+                     buildFilterGroup(tr("NEX Programs (ZX Spectrum Next)"), {"nex"}) + ";;" +
                      buildFilterGroup(tr("RZX Recordings"), {"rzx"}) + ";;" +
                      tr("All Files (*)");
 
@@ -2383,6 +2385,11 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
             _nextEmulatorModel = LoaderSPG::kModel;
             _nextEmulatorRamKb = LoaderSPG::kRamKb;
         }
+        else if (category == FileSnapshot && filePath.toLower().endsWith(".nex"))
+        {
+            _nextEmulatorModel = LoaderNex::kModel;
+            _nextEmulatorRamKb = LoaderNex::kRamKb;
+        }
 
         toggleEmulatorStartStop();
         _nextEmulatorModel.clear();
@@ -2406,7 +2413,8 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
             // An SZX file names its machine, an SPG runs on TS-Conf only: another model is replaced by the one the file
             // needs first (as the Machine menu does, media follow). Choosing the file here is the explicit request, so
             // the window switches whatever the automation default is
-            if (_emulator && (filePath.toLower().endsWith(".szx") || filePath.toLower().endsWith(".spg")))
+            if (_emulator && (filePath.toLower().endsWith(".szx") || filePath.toLower().endsWith(".spg") ||
+                           filePath.toLower().endsWith(".nex")))
             {
                 EmulatorContext* runningContext = _emulator->GetContext();
                 if (!runningContext)

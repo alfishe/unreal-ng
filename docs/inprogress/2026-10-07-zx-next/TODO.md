@@ -100,6 +100,10 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 ## Layer 2 CPU mapping (port #123B), 2026-10-09
 - [x] `NextMemory::Layer2View`: bits 2:0 / 3 / 7:6 and the offset write (bit 4), the 16K banks of Layer 2 replace #0000-#3FFF (or #0000-#BFFF for segment 3) for reads and / or writes below the DivMMC and above the MMU; NR #12 / #13 refresh it
 
+## unreal-qt opens NEX files (2026-10-09)
+- [x] `.nex` is a program of the Next like `.spg` is of TS-Conf: `Emulator::LoadSnapshot` (LoaderNex), `SnapshotLauncher::NeedOf` (model NEXT, 2048K, program only), media classification, the Qt file dialog / drag and drop / command line (`unreal-qt file.nex` starts the Next and runs it), `FileManager` category. Shown in the running app: `tm.nex` (img/unreal-qt-next-tilemap.png) and `scratch/soundnex/ay3.nex` - the master mix of the app measured through the automation (`audio_capture`): left rms 0.0266 = the 873 / 32768 of the test run, right silent (A channels are left in ABC), dominant 874 Hz; `/state/audio/covox` shows the three AYs' registers. The bare machine has no NextZXOS: programs that call the esxDOS API need `[NEXT] SdCard` and the boot to the menu first
+- Known: the generic video report of the app says 512x384 for the Next
+
 ## Remaining
 - [x] Verification program: public suites collected and graded ([verification-program.md](verification-program.md)); esxDOS source availability checked ([esxdos-and-sd.md](esxdos-and-sd.md) section 1a)
 - [x] N0 second pass (2026-10-08): ULA / Timex / ULA+ / ULAnext, LoRes, palettes and the layer compositor, audio (AY x 3, DAC, mixer), CTC, UART, SPI, DivMMC, keyboard, ZEsarUX comparison: [research-fpga-vhdl.md](research-fpga-vhdl.md) sections 16-22; [esxdos-and-sd.md](esxdos-and-sd.md); [design-integration.md](design-integration.md)
