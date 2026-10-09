@@ -17,6 +17,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/cpu/z80.h"
+#include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/next/nextmemory.h"
@@ -212,8 +213,34 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
         if (auto* decoder = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder))
             decoder->SetPortLog(&portsIn, &portsOut);
     // no turbo: the picture is drawn as the beam passes, a turbo frame is not drawn
+    // UNREAL_NEX_WAV=<file>: the final mix of the run (44.1 kHz stereo 16 bit), the frames after the load
+    const char* wavPath = std::getenv("UNREAL_NEX_WAV");
+    if (wavPath && context->pFeatureManager)
+        context->pFeatureManager->setFeature(Features::kSoundGeneration, true);
+    static std::vector<int16_t> wav;
+    wav.clear();
     for (int i = 0; i < total; i++)
+    {
         emulator->RunFrame(true);
+        if (wavPath && context->pSoundManager)
+        {
+            const size_t n = context->pSoundManager->lastFrameSamples();
+            const int16_t* mix = context->pSoundManager->masterMix();
+            wav.insert(wav.end(), mix, mix + n * 2);
+        }
+    }
+    if (wavPath)
+    {
+        std::ofstream out(wavPath, std::ios::binary);
+        const uint32_t dataBytes = static_cast<uint32_t>(wav.size() * 2), rate = 44100, byteRate = rate * 4, riff = 36 + dataBytes, fmt = 16;
+        const uint16_t pcm = 1, channels = 2, align = 4, bits = 16;
+        out.write("RIFF", 4); out.write(reinterpret_cast<const char*>(&riff), 4); out.write("WAVEfmt ", 8);
+        out.write(reinterpret_cast<const char*>(&fmt), 4); out.write(reinterpret_cast<const char*>(&pcm), 2);
+        out.write(reinterpret_cast<const char*>(&channels), 2); out.write(reinterpret_cast<const char*>(&rate), 4);
+        out.write(reinterpret_cast<const char*>(&byteRate), 4); out.write(reinterpret_cast<const char*>(&align), 2);
+        out.write(reinterpret_cast<const char*>(&bits), 2); out.write("data", 4); out.write(reinterpret_cast<const char*>(&dataBytes), 4);
+        out.write(reinterpret_cast<const char*>(wav.data()), dataBytes);
+    }
     // UNREAL_NEX_NR="6B=00,15=1C": NextREG writes before the frame is taken (hex), to look at one layer
     if (const char* nr = std::getenv("UNREAL_NEX_NR"))
     {
@@ -306,6 +333,13 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
         for (unsigned i : {0u, 2u, 0xE3u, 0xFFu})
             std::cout << " " << std::hex << i << "=" << decoder->Board().Video().PaletteEntry(1, i);
         std::cout << std::dec << std::endl;
+        {
+            int peak = 0;
+            for (int i = 0; i < 1600; i++)
+                peak = std::max(peak, std::abs(int(decoder->Audio().AudioBuffer()[i])));
+            std::cout << "AUDIO peak " << peak << " had " << decoder->Audio().AudioHadSoundLastFrame() << " chip0 reg8 " << int(decoder->Audio().Chip(0)->readRegister(8)) << " reg0 " << int(decoder->Audio().Chip(0)->readRegister(0))
+                      << " lastFrameSamples " << context->pSoundManager->lastFrameSamples() << std::endl;
+        }
         std::cout << "PC " << std::hex << context->pCore->GetZ80()->pc << " sp " << context->pCore->GetZ80()->sp << " iff1 " << int(context->pCore->GetZ80()->iff1) << std::dec << std::endl;
         {
             Z80* z = context->pCore->GetZ80();

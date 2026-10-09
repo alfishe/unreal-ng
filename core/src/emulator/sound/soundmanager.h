@@ -700,6 +700,8 @@ public:
 
     /// Stereo sample pairs the last finished frame mixed (0 after a frame without host audio)
     size_t lastFrameSamples() const { return _lastFrameSamples; }
+    /// The master mix of the last finished frame (interleaved stereo, lastFrameSamples() pairs): diagnostics, tests, captures
+    const int16_t* masterMix() const { return _outBuffer; }
     /// What the TurboSound-slot device rendered in the last finished frame and its sample phase at that frame end, read
     /// before the mix (diagnostics and tests): at 1x the count is lastFrameSamples() and the phase samplePhase()
     size_t lastTurboSoundSamples() const { return _lastTurboSoundSamples; }

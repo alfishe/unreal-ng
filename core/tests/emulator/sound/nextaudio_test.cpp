@@ -137,11 +137,23 @@ TEST_F(NextAudio_Test, AFrameRendersTheThirdChipAndTheDacAndHonoursThePan)
         return peak;
     };
     render();  // the first frame anchors the time
-    EXPECT_GT(render(), 1000) << "the third AY is audible";
+    EXPECT_GT(render(), 300) << "the third AY is audible";
     _ports->DecodePortOut(0xFFFD, 0x9D, 0);  // chip 2: both sides off (bits 6:5 = 00)
-    EXPECT_EQ(render(), 0) << "panned out";
+    render();  // the high-pass settles after the DC step of the pan change
+    render();
+    EXPECT_LT(render(), 60) << "panned out";
     // the DAC alone: A = #FF, others #80 -> left level
     _ports->DecodePortOut(0xFFFD, 0xFD, 0);
     _ports->DecodePortOut(0x001F, 0xFF, 0);
-    EXPECT_GT(render(), 1000);
+    EXPECT_GT(render(), 1500) << "DAC A at #FF: (255 - 128) x 16 = 2032 on the left";
+}
+
+TEST_F(NextAudio_Test, BeeperRunsAtTheNextLevelsAndLeavesTheMixWhenTheSpeakerIsExcluded)
+{
+    Beeper& beeper = _context->pSoundManager->getBeeper();
+    EXPECT_EQ(beeper.levelFor(0x10) - beeper.levelFor(0x00), 2048) << "EAR";
+    EXPECT_EQ(beeper.levelFor(0x08) - beeper.levelFor(0x00), 512) << "MIC";
+    _ports->Board().Write(0x06, 0x40);  // NR #06 bit 6 with NR #08 bit 4: the beeper only goes to the speaker
+    _ports->Board().Write(0x08, 0x1A);
+    EXPECT_EQ(beeper.levelFor(0x10) - beeper.levelFor(0x00), 0);
 }

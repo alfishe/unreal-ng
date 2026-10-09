@@ -36,7 +36,10 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
 PortDecoder_Next::~PortDecoder_Next()
 {
     if (_context->pSoundManager && _audio)
+    {
         _context->pSoundManager->detachModelAudioSource(_audio.get());
+        _audio->ReleaseBeeperLevels();
+    }
     if (_context->pCore && _context->pCore->GetZ80() && _context->pCore->GetZ80()->machineM1Hook == _divMmc.get())
         _context->pCore->GetZ80()->machineM1Hook = nullptr;
     if (_context->pCore && _context->pCore->GetZ80())
@@ -332,7 +335,8 @@ void PortDecoder_Next::BindDma()
 void PortDecoder_Next::AudioConfigChanged()
 {
     const uint8_t nr06 = _board->Stored(0x06), nr08 = _board->Stored(0x08), nr09 = _board->Stored(0x09);
-    _audio->Configure((nr06 & 3) == 0, (nr08 & 0x02) != 0, (nr08 & 0x08) != 0, (nr08 & 0x20) != 0, static_cast<uint8_t>((nr09 >> 5) & 7));
+    _audio->Configure((nr06 & 3) == 0, (nr08 & 0x02) != 0, (nr08 & 0x08) != 0, (nr08 & 0x20) != 0, static_cast<uint8_t>((nr09 >> 5) & 7),
+                      (nr06 & 0x40) && (nr08 & 0x10));
 }
 
 /// NR #2C (B, left), #2D (A and D, mono), #2E (C, right): the DAC's NextREG mirrors

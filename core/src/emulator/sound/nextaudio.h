@@ -43,7 +43,11 @@ public:
 
     /// region <Configuration (NextREG)>
     /// NR #06 bits 1:0: 00 YM, 01 AY; NR #08 bit 1 turbosound, bit 3 DAC, bit 5 ACB; NR #09 bits 7:5 mono per chip
-    void Configure(bool ymMode, bool turboSound, bool dacEnabled, bool acb, uint8_t monoMask);
+    /// speakerExcluded: NR #06 bit 6 with NR #08 bit 4 - the beeper leaves the line mix (it only goes to the internal speaker)
+    void Configure(bool ymMode, bool turboSound, bool dacEnabled, bool acb, uint8_t monoMask, bool speakerExcluded);
+    /// The ULA beeper at the Next's levels: EAR 2048, MIC 512 (of 32768, audio_mixer.vhd); the standard beeper's circuit levels come back with it gone
+    void ApplyBeeperLevels();
+    void ReleaseBeeperLevels();
     /// endregion
 
     /// region <DAC>
@@ -81,10 +85,12 @@ private:
     bool _dacEnabled = true;
     bool _ym = true;
     bool _acb = false;
+    bool _speakerExcluded = false;
     uint8_t _monoMask = 0;
     std::array<uint8_t, 4> _dac{{0x80, 0x80, 0x80, 0x80}};
 
     std::function<double()> _now;
+    double _dcLeft = 0, _dcRight = 0;
     double _tickT = 0;         ///< absolute base T of the next generator tick
     double _frameStartT = 0;
     bool _timeKnown = false;
