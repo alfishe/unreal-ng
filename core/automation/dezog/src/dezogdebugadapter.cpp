@@ -1185,7 +1185,7 @@ bool DezogDebugAdapter::resolveHistoryIndex(Emulator& emulator, uint32_t index, 
 std::optional<dzrp::IDebugInterface::HistoryEntry> DezogDebugAdapter::getHistoryEntry(uint32_t index)
 {
     // STRATEGY: serve each entry from the TTD per-frame decode cache
-    // (TimeTravelManager::GetFrameCache) — O(1) after a one-time ~ms frame fill.
+    // (TimeTravelController::GetFrameCache) — O(1) after a one-time ~ms frame fill.
     // See docs/inprogress/2026-08-27-dezog-integration/reverse-debugging.md §5
     // ("Best strategy for DeZog"). To revert to seek-per-read, replace the
     // resolveHistoryIndex + GetFrameCache block with a SeekTo per index (doc §3).
