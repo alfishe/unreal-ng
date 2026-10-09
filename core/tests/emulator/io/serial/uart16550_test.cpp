@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <deque>
 #include <vector>
 
@@ -310,6 +311,51 @@ TEST_F(Uart16550_Test, StateRoundTripContinuesTheSameWay)
     EXPECT_EQ(a.GetView().bytesOut, b.GetView().bytesOut);
     for (int i = 0; i < 5; ++i)
         EXPECT_EQ(a.Read(kRbr, now + 6 * charT), b.Read(kRbr, now + 6 * charT));
+}
+
+/// The clocks are state only while a character is on a line: an idle port a peer clocks every frame saves the same
+/// bytes at every time (TTD stores nothing for it per frame), and a port restored from that state continues as the
+/// live one - sending across a clock restart
+TEST_F(Uart16550_Test, AnIdlePortSavesTheSameStateAsTimePasses)
+{
+    Uart16550 a = Make(Uart16550::Flavor::EvoAvr);
+    a.Write(kLcr, 0x03, now);
+    a.Write(kMcr, 0x02, now);
+    const uint64_t charT = a.CharacterT();
+    a.Write(kRbr, 0x41, now);
+    peer.toZx = {9};
+    a.Advance(now + 2 * charT);   // the byte out, the peer's byte starts
+    a.Advance(now + 4 * charT);   // and is in: the lines are idle
+    ASSERT_EQ(a.GetView().rxCount, 1);
+
+    Uart16550::State early{}, late{};   // zero-initialized: the padding compares too
+    a.SaveState(early);
+    a.Advance(now + 70000);
+    a.SaveState(late);
+    EXPECT_EQ(std::memcmp(&early, &late, sizeof(early)), 0) << "an idle port's state does not follow the clock";
+    EXPECT_EQ(late.lastNow, 0u);
+
+    ScriptPeer peerB;
+    Uart16550 b(Uart16550::DefaultParams(Uart16550::Flavor::EvoAvr), 3500000);
+    b.SetPeer(&peerB);
+    b.LoadState(late);
+    for (Uart16550* u : {&a, &b})
+    {
+        u->Advance(500);   // a machine reset: the counter starts again
+        u->Write(kRbr, 0x43, 500);
+        u->Advance(500 + charT / 2);
+        Uart16550::State busy{};
+        u->SaveState(busy);
+        EXPECT_EQ(busy.lastNow, 500 + charT / 2) << "a character on the line: the clocks are saved";
+        EXPECT_EQ(busy.txDoneAt, 500 + charT);
+        u->Advance(500 + charT);
+    }
+    Uart16550::State liveState{}, restored{};
+    a.SaveState(liveState);
+    b.SaveState(restored);
+    EXPECT_EQ(std::memcmp(&liveState, &restored, sizeof(liveState)), 0);
+    EXPECT_EQ(peer.fromZx.back(), 0x43);
+    EXPECT_EQ(peerB.fromZx, (std::vector<uint8_t>{0x43})) << "one character time from the restart, as the live port";
 }
 
 TEST_F(Uart16550_Test, TheLineFormatReachesThePeer)

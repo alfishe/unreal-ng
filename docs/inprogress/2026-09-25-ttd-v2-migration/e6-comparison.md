@@ -90,9 +90,10 @@ Status: measured 2026-10-09 on branch `ttd-engine` (engine backend, the controll
   - the ZX-Evo AVR volatile bytes (6.5 B/frame);
   - the Sprinter PLD (8 B/frame);
   - the VDAC2 card (13 B/frame);
-  - the ZiFi UART (6 B/frame).
+  - the ZiFi UART (6 B/frame; with a ZiFi peer, also the #xxEF port's 16550: 6.8 B/frame each).
 
   **Traced 2026-10-09** (TODO).
   - **Now time fields:** the VDAC2 card's raster clocks, the Sprinter PLD's INT pulse, the AVR's /WAIT cycles, WD1793's clocks and the Profi controller's time bases.
+  - **Saved as 0 while idle:** the 16550s' clocks (ZiFi line, #xxEF port), meaningful only while a character is on a line: 6.8 -> 0 B/frame each.
   - **Real state:** the rest - NeoGS CPU registers, MoonSound noise and LFO phases, TS-Conf cache words, the MCUs' registers and RAM.
 - **The Sprinter at its idle boot screen** rewrites 9.7 pieces of video RAM per frame (223 B/frame). That is the BIOS screen at work, not a capture artifact. The region is compared at each capture and stores only the pieces that changed.

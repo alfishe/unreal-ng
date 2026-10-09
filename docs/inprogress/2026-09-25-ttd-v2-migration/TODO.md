@@ -88,9 +88,11 @@ Found by the 2026-10-02 audit. Gaps 1–16 break replay in v1 today; each is fix
       - NeoGS: the GS Z80's registers and its frame phase;
       - MoonSound: the noise LFSR, and LFO phases wrapping every 8-13 frames - re-anchoring would cost more than it saves;
       - ATM2 KBC: the remainder `frac`, and the firmware's RAM tick counter (tried as a time field: no gain);
-      - ZiFi UART: not reached by the measuring machines.
+      - ZiFi UART: not reached by the measuring machines (measured later with a peer, see below: its clock is now saved as 0 while idle).
     - Test `Devices/TTDDeviceTimeFields_Test`, which catches each declaration removed.
-  - [ ] ZiFi UART (`device.zifi.uart`, 6 B per idle frame on TS-Conf in BM-9): not covered - the machines of the field-by-field measurement do not bring it up (the test runner's network policy), so there is no per-field data yet; measure it with ZiFi fitted and declare its clocks as time fields if they are
+  - [x] ZiFi UART (`device.zifi.uart`, 6 B per idle frame on TS-Conf in BM-9): not covered - the machines of the field-by-field measurement do not bring it up (the test runner's network policy), so there is no per-field data yet; measure it with ZiFi fitted and declare its clocks as time fields if they are **Done 2026-10-09:** measured with each ZiFi peer (`ZIFI-NATIVE,S3` as the shipped ts-conf config, `AT`, `loopback`); without one the line is never clocked and costs nothing. With a peer one field moves every frame: the 16550's `lastNow` (the time of its last `Advance`, 71,674-71,684 T-states a frame), and the same in the #xxEF port (`device.uart`, not in the BM-9 note): 6.8 B per idle frame each.
+    - **Not a time field:** the clock is a few T-states off the frame's end, so its residual from a line changes sign from frame to frame and all 8 bytes of it change (tried: 4.3-8.2 B per frame against 6.8). A variable-size state with time fields would also need the engine to keep its anchors apart: today its scratch and every read of the state take the whole declared region (16 MB for a serial port with a peer). Not needed by any device now.
+    - **Done instead:** `Uart16550::SaveState` saves `lastNow`, `txDoneAt` and `rxArriveAt` as 0 while no character is on a line (they are read only then); 0.0 B per idle frame for every 16550 + peer. Tests `Uart16550_Test.AnIdlePortSavesTheSameStateAsTimePasses`, `Devices/TTDDeviceTimeFields_Test` `TSL_zifi_uart` / `TSL_uart` (mutant caught: 6.8 B per frame).
 
 ## Phase 1 check ([phase-1-results.md](phase-1-results.md))
 
