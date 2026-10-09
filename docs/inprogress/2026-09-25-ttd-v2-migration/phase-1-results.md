@@ -29,7 +29,7 @@ All values are per recorded frame, over 600 frames, from the benchmark matrix ru
 
 - **Memory v1 does not record at all**: NeoGS RAM and flash, MoonSound wave RAM, the ZX-Evo AVR and SMUC EEPROMs. Their bytes, version records and capture work are left out of the comparison. The shipped configurations fit NeoGS and MoonSound, so this applies on most machines (about 99 bytes per frame; 29–59% of the engine's version records).
 - **Memory moving between streams**: v1 keeps the General Sound RAM, the Sprinter video and fast RAM and the VDAC2 memory inside device blobs, the engine as regions. Both sides are compared as sums.
-- **Fixed amounts, printed apart**: the engine's delta base (the latest contents of every region, to compute differences: 0.1–10 MB, most of it NeoGS's 4.5 MB) and its arena slack (at most one chunk). Neither grows with the history. Dropping the delta base for mostly-zero regions is open in the [TODO](TODO.md).
+- **Fixed amounts, printed apart**: the engine's delta base (the latest contents of every region, to compute differences: 0.1–10 MB, most of it NeoGS's 4.5 MB) and its arena slack (at most one chunk). Neither grows with the history. Since 2026-10-08 the delta base is sparse: a piece of one repeated byte keeps only its value (198.7 → 15.4 MB over the full matrix; [TODO](TODO.md)).
 
 ## Results
 

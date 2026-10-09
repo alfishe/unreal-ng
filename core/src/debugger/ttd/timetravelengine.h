@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
+#include "debugger/ttd/engine/ttddeltabase.h"
 #include "debugger/ttd/engine/ttddevicetable.h"
 #include "debugger/ttd/engine/ttdeventlog.h"
 #include "debugger/ttd/engine/ttdmediajournal.h"
@@ -625,9 +626,9 @@ private:
     std::vector<TTDSyncMiss> _syncMisses;
     uint64_t _lastCaptureNs = 0;
     std::vector<TTDRegionDesc> _regions;
-    /// Per region: its latest contents (allocated when the region's first
-    /// piece arrives), the base each new difference is computed against
-    std::vector<std::vector<uint8_t>> _deltaBase;
+    /// Per region: its latest contents, the base each new difference is
+    /// computed against (sparse: a uniform piece keeps only its value)
+    TTDDeltaBase _deltaBase;
     TTDFrameTable _frames;
     TTDPayloadStore _payloads;
     TTDEventLog _events{_payloads};   ///< after _payloads: it releases into it

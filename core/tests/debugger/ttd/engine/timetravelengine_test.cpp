@@ -1045,3 +1045,126 @@ TEST(TimeTravelEngine_DeviceState_Test, ALoadedSessionContinuesAVariableSizeStat
     ASSERT_TRUE(loaded.DeviceState(2, id, got));
     EXPECT_TRUE(got == state);
 }
+
+/// The delta base keeps a copy only of pieces that are not one repeated byte: a uniform piece (zeros, an erased
+/// flash's #FF) is its value, read through a shared page; a piece changes kind both ways; never set reads as zeros
+TEST(TTDDeltaBase_Test, UniformPiecesKeepOnlyTheirValue)
+{
+    TTDDeltaBase base;
+    base.Reset(2);
+    std::vector<uint8_t> mixed(kTTDPieceSize);
+    for (size_t i = 0; i < mixed.size(); ++i)
+        mixed[i] = static_cast<uint8_t>(i * 13 + 1);
+    const std::vector<uint8_t> ff(kTTDPieceSize, 0xFF);
+    const std::vector<uint8_t> zero(kTTDPieceSize, 0);
+
+    EXPECT_TRUE(base.Equals(1, 300, zero.data())) << "never set: zeros";
+    EXPECT_EQ(base.Set(0, 5, ff.data()), 0u);
+    EXPECT_EQ(base.Set(1, 7, mixed.data()), kTTDPieceSize);
+    EXPECT_EQ(base.StoredPieces(), 1u);
+    EXPECT_TRUE(base.Equals(0, 5, ff.data()));
+    EXPECT_TRUE(base.Equals(1, 7, mixed.data()));
+    EXPECT_EQ(base.Set(1, 7, base.Get(1, 7)), kTTDPieceSize) << "its own bytes";
+    EXPECT_TRUE(base.Equals(1, 7, mixed.data()));
+
+    // mixed -> uniform -> mixed
+    std::vector<uint8_t> almost(ff);
+    almost[kTTDPieceSize - 1] = 0xFE;
+    EXPECT_EQ(base.Set(1, 7, ff.data()), 0u);
+    EXPECT_EQ(base.StoredPieces(), 0u);
+    EXPECT_TRUE(base.Equals(1, 7, ff.data()));
+    EXPECT_EQ(base.Set(1, 7, almost.data()), kTTDPieceSize) << "one byte off is not uniform";
+    EXPECT_TRUE(base.Equals(1, 7, almost.data()));
+    EXPECT_LT(base.HeapBytes(), size_t(4) * kTTDPieceSize);
+}
+
+/// A large region of mostly uniform memory (zeros and #FF, like NeoGS's RAM and flash) costs the delta base its
+/// few pieces of real content, not its size; every checkpoint restores exactly, across baselines and after a resume
+/// from the past (which rebuilds the base from the stored versions)
+TEST(TimeTravelEngine_Test, AMostlyUniformRegionCostsTheDeltaBaseItsContentOnly)
+{
+    constexpr uint32_t kPieces = 512;   // 2 MB
+    std::vector<uint8_t> mem(size_t(kPieces) * kTTDPieceSize, 0);
+    auto fill = [&](uint32_t p, uint32_t seed) {
+        for (size_t i = 0; i < kTTDPieceSize; ++i)
+            mem[size_t(p) * kTTDPieceSize + i] = static_cast<uint8_t>((i * 31 + seed * 7) ^ (i >> 5));
+    };
+    for (uint32_t p = 0; p < 4; ++p)
+        fill(p, p);
+    std::memset(mem.data() + size_t(100) * kTTDPieceSize, 0xFF, size_t(100) * kTTDPieceSize);
+
+    TimeTravelEngine engine;
+    std::string err;
+    TTDRegionDesc r;
+    r.name = "big";
+    r.memory = mem.data();
+    r.pieces = kPieces;
+    r.bytes = mem.size();
+    TTDHistoryPolicy policy;
+    policy.segmentFrames = 4;   // baselines store every piece whole, from the delta base
+    engine.SetHistoryPolicy(policy);
+    ASSERT_TRUE(engine.BeginSession({r}, {}, err)) << err;
+
+    std::vector<std::vector<uint8_t>> expected;
+    auto capture = [&](uint64_t f, const std::vector<uint32_t>& changed) {
+        TTDFrameInput in;
+        in.position = {0, f, 0};
+        in.start = f * 70000;
+        for (uint32_t p : changed)
+            in.changed.push_back({0, p, mem.data() + size_t(p) * kTTDPieceSize});
+        ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+        expected.push_back(mem);
+    };
+    std::vector<uint32_t> all(kPieces);
+    for (uint32_t p = 0; p < kPieces; ++p)
+        all[p] = p;
+    capture(0, all);
+    for (uint64_t f = 1; f < 10; ++f)
+    {
+        std::vector<uint32_t> changed = {static_cast<uint32_t>(10 + f)};
+        fill(10 + static_cast<uint32_t>(f), static_cast<uint32_t>(f));
+        if (f == 4)
+        {
+            std::memset(mem.data() + size_t(2) * kTTDPieceSize, 0, kTTDPieceSize);   // content -> zeros
+            changed.push_back(2);
+        }
+        if (f == 5 || f == 7)
+        {
+            if (f == 5)
+                fill(150, 99);   // #FF -> content -> #FF
+            else
+                std::memset(mem.data() + size_t(150) * kTTDPieceSize, 0xFF, kTTDPieceSize);
+            changed.push_back(150);
+        }
+        capture(f, changed);
+    }
+    const TTDEngineHeapBreakdown heap = engine.HeapBreakdown();
+    EXPECT_LT(heap.deltaBase, size_t(128) << 10) << "about 13 pieces of content, not 2 MB";
+
+    auto expectRestores = [&](const char* when) {
+        std::vector<uint8_t> out(mem.size());
+        for (size_t i = 0; i < expected.size(); ++i)
+        {
+            ASSERT_TRUE(engine.RestoreRegion(i, 0, out.data()).Ok()) << when << " checkpoint " << i;
+            ASSERT_TRUE(out == expected[i]) << when << " checkpoint " << i;
+        }
+    };
+    expectRestores("recorded");
+
+    // Resume from frame 5: the base is rebuilt from that checkpoint's versions, then capture goes on
+    ASSERT_TRUE(engine.TruncateAfter(5, {0, 5, 0}, err)) << err;
+    expected.resize(6);
+    mem = expected[5];
+    for (uint64_t f = 6; f < 12; ++f)
+    {
+        std::vector<uint32_t> changed = {150, 3};
+        if (f % 2)
+            std::memset(mem.data() + size_t(150) * kTTDPieceSize, 0xFF, kTTDPieceSize);
+        else
+            fill(150, static_cast<uint32_t>(f));
+        fill(3, static_cast<uint32_t>(f + 40));
+        capture(f, changed);
+    }
+    expectRestores("after the resume");
+    EXPECT_LT(engine.HeapBreakdown().deltaBase, size_t(128) << 10);
+}
