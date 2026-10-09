@@ -150,7 +150,7 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
     // loaded into that running system: ROMs, DivMMC / esxDOS API, system variables are all there
     const char* boot = std::getenv("UNREAL_NEX_BOOT");
     const std::string card = boot ? boot : "";
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero, [&](CONFIG& config) {
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(std::getenv("UNREAL_NEX_MODEL") ? std::getenv("UNREAL_NEX_MODEL") : "NEXT", LoggerLevel::LogError, RamPowerOn::Zero, [&](CONFIG& config) {
         if (!card.empty())
         {
             std::strncpy(config.next_boot_rom_path, "rom/next/nextboot.rom", sizeof config.next_boot_rom_path - 1);
@@ -187,7 +187,7 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
     // A NEX is loaded into a running system: the 48K ROM has set up its system variables and channels. UNREAL_NEX_PREBOOT=0
     // loads into the bare machine instead
     const char* preboot = std::getenv("UNREAL_NEX_PREBOOT");
-    if (card.empty() && (!preboot || std::string(preboot) != "0"))
+    if (card.empty() && !std::getenv("UNREAL_NEX_MODEL") && (!preboot || std::string(preboot) != "0"))
     {
         context->emulatorState.p7FFD = 0x10;
         context->emulatorState.p1FFD = 0x04;
@@ -207,7 +207,8 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
     {
         if (const char* turbo = std::getenv("UNREAL_NEX_TURBO"))
             if (std::atoi(turbo))
-                dynamic_cast<PortDecoder_Next*>(context->pPortDecoder)->Board().Write(0x07, 0x03);
+                if (auto* next = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder))
+                    next->Board().Write(0x07, 0x03);
         std::string sna = loadName;
         if (sna.substr(sna.size() - 4) == ".snx")
         {
@@ -220,11 +221,14 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
         // The state the real-board programs were photographed in: after the boot into ZX48 mode - 48K machine type (7FFD locked),
         // core id 0 (the firmware leaves it), the ULA palette filled with the 16 defaults
         auto* decoder = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder);
-        // NextZXOS loads a 48K snapshot with #7FFD = #30 (ROM 48K, locked): the test programs unlock it through NR #08 bit 7
-        context->emulatorState.p7FFD = 0x30;
-        dynamic_cast<NextMemory*>(context->pMemory)->ApplyClassicPaging(0x30, 0);
-        decoder->Board().SetCoreId(0);
-        LoaderNex::FillUlaPalette(decoder->Board());
+        if (decoder)  // UNREAL_NEX_MODEL runs the same file on another machine: no Next set-up
+        {
+            // NextZXOS loads a 48K snapshot with #7FFD = #30 (ROM 48K, locked): the test programs unlock it through NR #08 bit 7
+            context->emulatorState.p7FFD = 0x30;
+            dynamic_cast<NextMemory*>(context->pMemory)->ApplyClassicPaging(0x30, 0);
+            decoder->Board().SetCoreId(0);
+            LoaderNex::FillUlaPalette(decoder->Board());
+        }
 
     }
     else
