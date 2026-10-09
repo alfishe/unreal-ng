@@ -110,7 +110,10 @@ The 35 programs of `ZXSpectrumNextTests/release` (48K snapshots, results checked
 - [x] NextReg #69: 10 of 10 (was 7): bit 6 is bit 3 of #7FFD (shadow screen) both ways, the video state follows the copper per line
 - [x] Z80N: all rows OK at 28 MHz (also `!Z80Nc2`)
 - [x] LayersMixingHiRes: Timex hi-res attribute = bright | paper << 3 | ink through ULANext, border = paper colour
-- [ ] Open (ours differs from ZEsarUX, photo decides): Copper (flags need the copper at pixel resolution), Lmix_LxU / LmixLoRs / LmxHiCol (layer mixing), UlaScrol, SprDelay, Ula_Pal (border stripes), zilogDMA / dma (DMA timing), Chg8kBan (green border length: MAME ends at line ~196, ours ~227 - the contention of NEXTREG fetches), int_skip (ours shows OK where ZEsarUX shows ERR: ours follows the readme), z80bltst, linesIRQ
+- [x] Copper at pixel resolution inside a line (Copper.snx flags as on the board photo): the pixels before a MOVE are drawn with the state before it; CPU video register writes flush the picture first
+- [x] The line counter of NR #1E / #1F and the line interrupt is the copper's cvc: 0 at the paper's first line and at the ULA pixel counter zero, plus NR #64 (was counted from the frame's vc 0): linesIRQ 2724 -> 300 px against ZEsarUX, LmixLoRs and LmxHiRes identical, L2Colour identical
+- [x] LoRes keeps the ULA border (a transparent-white border is the pink fallback, as the board shows); ULANext attributes do not flash (LmxHiCol now equals its expected miniatures and the board photo)
+- [ ] Open: UlaScrol, SprDelay, Ula_Pal (border stripes by attribute rows), zilogDMA / dma (DMA timing), Chg8kBan (green border ends ~31 lines later than MAME: contention of the NEXTREG fetches), z80bltst; int_skip: ours OK, ZEsarUX ERR (ours follows the readme)
 - A NEX / SNA is loaded by NextZXOS with the 48K snapshot's `#7FFD` locked: nothing in the machine model is a 48K type lock (the VHDL: lock = bit 5 of #7FFD)
 
 ## Remaining

@@ -71,7 +71,7 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
     auto index = [&](bool ink, uint8_t attr) -> int {
         unsigned bright = (attr >> 6) & 1;
         bool inkPixel = ink;
-        if ((attr & 0x80) && in.flash)
+        if ((attr & 0x80) && in.flash && !ulaNext)  // ULANext: the attribute is all colour index, no flashing
             inkPixel = !inkPixel;
         if (ulaNext)
         {
