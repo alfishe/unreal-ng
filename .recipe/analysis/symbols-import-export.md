@@ -126,6 +126,31 @@ range and name checks, and duplicates inside the file (the first wins). Then the
   page mapped at that window now. A CPU-view label placed later wins over every page. With no label of the mapped
   page, the last placed label shows, as at every other address.
 
+## Labels from a source
+
+A source can give its labels too. The source is assembled on the host, through its
+conversion laid out as sjasmplus does it (unreal-asm `symbols/fromsource.h`; the values equal what the original
+assembler computes). Every label comes with its value, kind and defining line, in a set `source:<path>:<main>` that
+is made again on every import. Any dialect with a frontend works: ALASM, TASM, STORM, ZX-ASM, XAS, MASM, GENS, ZEUS
+and sjasmplus itself.
+
+| `path` | The project |
+|--------|-------------|
+| a source file (`.asm`, a tokenized file) | the file alone |
+| a `.trd` / `.tap` / `.tzx` image, a hobeta `$X` file | every source in it; `main` picks the one to assemble (without it, an image with several sources is refused, and the reply lists them) |
+| `disk:A/NAME.T` | the disk in drive A, with NAME as the main source: INCLUDE and INCBIN files come from the same disk |
+
+```text
+manage_symbols {"action":"import_source","path":"disk:A/GSTUNNE4.H"}
+manage_symbols {"action":"import_source","path":"/abs/TheLink.trd","main":"GSTUNNE4"}
+POST /api/v1/emulator/{id}/symbols/import/source {path, main?, set?, policy?, generated?}
+symbols import-source disk:A/GSTUNNE4.H         symbols_import_source{path=...}    emu.symbols_import_source(path, main=...)
+```
+
+`complete: false` means that some labels got no value (an unresolved INCLUDE, an unknown construct); the diagnostics
+say which. `generated: true` also gives the labels the conversion adds. In Qt: the label editor's File > Import
+Labels from Source..., and the Disk files dialog's Import Labels for the selected source.
+
 ## Label tables in RAM (live scan)
 
 ALASM (3.8c, 4.4x, 4.5, 5.0x) and XAS (4.x, 5.05, 7.x, 9.x) keep their label table in RAM after assembling. `scan`

@@ -61,7 +61,7 @@ TEST_F(SymbolControl_Test, UnknownVerbsAndOptionsAreRefusedTheSameWay)
 {
     SymbolReply reply = Run("load");
     EXPECT_EQ(reply.HttpStatus(), 400);
-    EXPECT_NE(reply.message.find("verbs: formats, detect, sets, import, export, set, drop, scan, import-live"), std::string::npos)
+    EXPECT_NE(reply.message.find("verbs: formats, detect, sets, import, export, set, drop, scan, import-live, import-source"), std::string::npos)
         << reply.message;
 
     reply = Run("import", {{"path", "x.sym"}, {"page", "ram3"}});
@@ -226,6 +226,40 @@ TEST_F(SymbolControl_Test, ExportFiltersBySpaceRangeKindAndName)
     EXPECT_EQ(Run("export", {{"path", Scratch("x.sym")}, {"from", "#10000"}}).HttpStatus(), 400);
 }
 
+TEST_F(SymbolControl_Test, TheLabelsOfASourceComeWithTheirValues)
+{
+    const std::string disk = (TestPathHelper::FindProjectRoot() / "testdata" / "machines" / "pentagon1024sl" / "TheLink.trd").string();
+    // Several sources and no main: refused with the list
+    SymbolReply reply = Run("import-source", {{"path", disk}});
+    EXPECT_EQ(reply.HttpStatus(), 400);
+    ASSERT_NE(reply.body.find("sources"), nullptr);
+    EXPECT_GT(reply.body.find("sources")->items.size(), 10u);
+
+    reply = Run("import-source", {{"path", disk}, {"main", "GSTUNNE4"}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.find("dialect")->s, "alasm");
+    EXPECT_EQ(reply.body.find("set")->s, "source:" + disk + ":GSTUNNE4");
+    EXPECT_TRUE(reply.body.find("complete")->b);
+    EXPECT_GT(reply.body.find("records")->i, 100);
+    ASSERT_NE(_labels->GetLabelByName("GO"), nullptr);
+    EXPECT_EQ(_labels->GetLabelByName("GO")->address, 0x7800);
+
+    // Imported again: the set is made again, not doubled
+    const int64_t count = reply.body.find("labels")->i;
+    reply = Run("import-source", {{"path", disk}, {"main", "GSTUNNE4"}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.find("labels")->i, count);
+
+    // A text source of one file
+    const std::string text = Write("probe.asm", "        org #8000\nstart:  ld a,1\nloop:   jr loop\n");
+    reply = Run("import-source", {{"path", text}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(_labels->GetLabelByName("loop")->address, 0x8002);
+
+    EXPECT_EQ(Run("import-source", {{"path", disk}, {"main", "NOSUCH"}}).HttpStatus(), 400);
+    EXPECT_EQ(Run("import-source", {{"path", Scratch("none.asm")}}).HttpStatus(), 404);
+}
+
 TEST_F(SymbolControl_Test, DetectRanksTheCodecs)
 {
     const std::string path = Write("detect.sym", "8000 START\n");
@@ -250,6 +284,22 @@ TEST_F(SymbolControl_Test, AliasesShowAsLabels)
     ASSERT_TRUE(_labels->RemoveLabel("ENTRY"));
     EXPECT_EQ(_labels->GetLabelByName("ENTRY"), nullptr);
     EXPECT_NE(_labels->GetLabelByName("MAIN"), nullptr);
+}
+
+TEST(SymbolControl_Machine_Test, TheDiskInADriveIsTheSourcesProject)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("symbols-source-disk", "PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    ASSERT_TRUE(emulator->LoadDisk(TestPathHelper::GetTestDataPath("machines/pentagon1024sl/TheLink.trd"), 0));
+    EmulatorContext* context = emulator->GetContext();
+    context->pDebugManager->GetLabelManager()->ClearAllLabels();
+    const SymbolReply reply = SymbolControl(context).Execute({"import-source", {{"path", "disk:A/GSTUNNE4.H"}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.find("main")->s, "GSTUNNE4");
+    EXPECT_EQ(reply.body.find("set")->s, "source:disk:A/GSTUNNE4");
+    EXPECT_EQ(context->pDebugManager->GetLabelManager()->GetLabelByName("GO")->address, 0x7800);
+    manager->RemoveEmulator(emulator->GetUUID());
 }
 
 TEST(SymbolControl_Machine_Test, AnAssemblersLabelTableInRamImports)

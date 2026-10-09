@@ -594,6 +594,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::symbolExport, "/api/v1/emulator/{id}/symbols/export", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::symbolScan, "/api/v1/emulator/{id}/symbols/scan", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::symbolImportLive, "/api/v1/emulator/{id}/symbols/import/live", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::symbolImportSource, "/api/v1/emulator/{id}/symbols/import/source", drogon::Post);
     // Assembler sources through AsmControl (implementation: api/asm_api.cpp)
     ADD_METHOD_TO(EmulatorAPI::asmFormats, "/api/v1/asm/formats", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::asmDialects, "/api/v1/asm/dialects", drogon::Get);
@@ -1435,6 +1436,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                     const std::string& id) const;
     void symbolImportLive(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                           const std::string& id) const;
+    void symbolImportSource(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
     // Assembler sources (api/asm_api.cpp)
     void asmFormats(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void asmDialects(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;

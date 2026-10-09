@@ -57,6 +57,7 @@ private slots:
     void importSymbols();
     void exportSymbols();
     void scanLabelTables();
+    void importSourceLabels();
     void updateRecentFilesMenu();
     void loadFromFile(const QString& filePath);
     bool saveToFile(const QString& filePath);

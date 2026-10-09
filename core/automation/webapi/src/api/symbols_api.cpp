@@ -9,6 +9,7 @@
 ///   POST   /symbols/export {path, format?, sets? (array or "a,b"), pages?}
 ///   GET    /symbols/scan                 label tables of assemblers in RAM: the candidates
 ///   POST   /symbols/import/live {scanner?, page?, offset?, set?, policy?}
+///   POST   /symbols/import/source {path, main?, set?, policy?, generated?}   the labels a source defines, with values
 ///
 /// Every route turns its request into a SymbolControl verb: the verbs, their checks and their answers are shared with
 /// the CLI, MCP, Lua and Python (core/src/debugger/labels/symbolcontrol.h).
@@ -199,6 +200,15 @@ void EmulatorAPI::symbolImportLive(const HttpRequestPtr& req, std::function<void
     if (!OptionsFromJson(req, options, callback))
         return;
     RespondSymbols(id, "import-live", std::move(options), callback);
+}
+
+void EmulatorAPI::symbolImportSource(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    std::map<std::string, std::string> options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    RespondSymbols(id, "import-source", std::move(options), callback);
 }
 
 }  // namespace v1

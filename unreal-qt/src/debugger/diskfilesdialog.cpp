@@ -16,6 +16,7 @@
 #include <QVBoxLayout>
 
 #include "debugger/asm/asmcontrol.h"
+#include "debugger/labels/symbolcontrol.h"
 #include "emulator/emulator.h"
 
 namespace
@@ -99,10 +100,13 @@ DiskFilesDialog::DiskFilesDialog(Emulator* emulator, QWidget* parent) : QDialog(
     _open = new QPushButton(tr("&Open as Source"), this);
     _export = new QPushButton(tr("&Export as Text..."), this);
     _convert = new QPushButton(tr("&Convert to..."), this);
+    _labels = new QPushButton(tr("Import &Labels"), this);
+    _labels->setToolTip(tr("Assemble the source on the host (the disk as its project) and give the debugger its labels"));
     auto* close = new QPushButton(tr("Close"), this);
     buttons->addWidget(_open);
     buttons->addWidget(_export);
     buttons->addWidget(_convert);
+    buttons->addWidget(_labels);
     buttons->addStretch();
     buttons->addWidget(close);
     layout->addLayout(buttons);
@@ -116,6 +120,7 @@ DiskFilesDialog::DiskFilesDialog(Emulator* emulator, QWidget* parent) : QDialog(
     connect(_open, &QPushButton::clicked, this, &DiskFilesDialog::openSource);
     connect(_export, &QPushButton::clicked, this, &DiskFilesDialog::exportText);
     connect(_convert, &QPushButton::clicked, this, &DiskFilesDialog::convertTo);
+    connect(_labels, &QPushButton::clicked, this, &DiskFilesDialog::importLabels);
     connect(close, &QPushButton::clicked, this, &QDialog::accept);
 
     refresh();
@@ -168,6 +173,7 @@ void DiskFilesDialog::updateButtons()
     _open->setEnabled(source);
     _export->setEnabled(source);
     _convert->setEnabled(source);
+    _labels->setEnabled(source);
 }
 
 void DiskFilesDialog::openSource()
@@ -235,4 +241,22 @@ void DiskFilesDialog::convertTo()
         QMessageBox::warning(this, tr("Convert to"), QString::fromStdString(saved.message));
     else
         _status->setText(tr("%1 converted to %2: %3").arg(path, to, output));
+}
+
+void DiskFilesDialog::importLabels()
+{
+    const QString path = selectedPath();
+    if (path.isEmpty())
+        return;
+    const SymbolReply reply = SymbolControl(_emulator->GetContext()).Execute({"import-source", {{"path", path.toStdString()}}});
+    if (!reply.Ok())
+    {
+        QMessageBox::warning(this, tr("Import Labels"), QString::fromStdString(reply.message) + "\n" + Diagnostics(reply.body));
+        return;
+    }
+    const bool complete = reply.body.find("complete")->b;
+    _status->setText(tr("%1 labels of %2 imported into %3%4")
+                         .arg(reply.body.find("records")->i)
+                         .arg(QString::fromStdString(reply.body.find("main")->s), QString::fromStdString(reply.body.find("set")->s),
+                              complete ? QString() : tr(" (not every label got a value)")));
 }

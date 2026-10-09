@@ -160,3 +160,25 @@ paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["requestBody"]["conte
 paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["responses"]["200"]["description"] = "{candidate, set, records, added, aliased, updated, skipped, diagnostics, labels}";
 paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["responses"]["404"]["description"] = "No label table in RAM (or none matches)";
 paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["responses"]["409"]["description"] = "policy fail stopped at a conflict";
+
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["summary"] = "Import the labels a source defines";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["description"] = "The source is assembled on the host (its conversion laid out as sjasmplus does): every label with its value, kind and line goes into a set (default source:<path>:<main>, made again on every import). A path is a source file, a .trd / .tap / .tzx image or a hobeta file (main picks the source of an image), or disk:A/NAME.T (the disk in a drive as the project, NAME the main source).";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["tags"].append("Symbols");
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["description"] = "A source, an image, a hobeta file, or disk:A/NAME.T";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["main"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["main"]["description"] = "The main source of an image (default: the only one, or NAME of disk:A/NAME.T)";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["set"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["set"]["description"] = "Merge into this set instead";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["policy"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["policy"]["description"] = "both (default), keep, replace, fail";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["generated"]["type"] = "boolean";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["generated"]["description"] = "Also the labels the conversion adds or a macro defines once per expansion";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("path");
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["responses"]["200"]["description"] = "{path, main, dialect, sources, set, records, added, aliased, complete, diagnostics, labels}";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["responses"]["400"]["description"] = "Several sources and no main (sources listed), bad option";
+paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["responses"]["404"]["description"] = "No such file, disk or source";

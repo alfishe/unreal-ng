@@ -6,9 +6,13 @@
 // the source. The values are what the original assembler would compute: the conversion assembles to the bytes it
 // built (research-*-to-sjasmplus.md), and layout.h lays the converted text out as sjasmplus does.
 
+#include <cstdint>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "unrealasm/containers.h"
 #include "unrealasm/diagnostics.h"
 #include "unrealasm/dialect.h"
 #include "unrealasm/layout.h"
@@ -39,4 +43,26 @@ SourceSymbolsResult SymbolsFromProject(const std::vector<ProjectFile>& files, si
 
 /// The labels of one source that includes nothing
 SourceSymbolsResult SymbolsFromSource(const SourceDocument& source, const SourceSymbolsOptions& options = {});
+
+/// A project read from files: its sources (ImageProject: as `zxasm convert` takes an image) and the sizes of all its
+/// files under the names INCBIN gives them (NAME for type C, NAME.T, NAME.slack for the rest of the last sector)
+struct SourceProject
+{
+    std::vector<ProjectFile> sources;
+    std::vector<std::pair<std::string, uint64_t>> sizes;
+
+    /// The size of the file an INCBIN name (ALASM's * and ? wildcards) gives; the last match, as ALASM takes it
+    std::optional<uint64_t> Size(const std::string& wanted) const;
+};
+
+/// The project of an image's files (a TR-DOS disk, a tape, one hobeta file)
+SourceProject ProjectFromFiles(const std::vector<containers::TrdosFile>& files);
+/// A text file as the project's one source: a tokenized format when detection says so, else sjasmplus' dialect; named
+/// as INCLUDE would name it (no folder, no .asm)
+SourceProject ProjectFromText(const std::string& path, const std::vector<uint8_t>& bytes);
+/// The index of the source named `main`, or of the only one when `main` is empty; sources.size() with the reason
+/// (no such source; several, listed)
+size_t FindMainSource(const SourceProject& project, const std::string& main, std::string& error);
+/// SymbolsFromProject with the project's file sizes for INCBIN
+SourceSymbolsResult SymbolsFromSourceProject(const SourceProject& project, size_t main, SourceSymbolsOptions options = {});
 }  // namespace unrealasm::symbols

@@ -1916,6 +1916,16 @@ TEST_F(McpTools_Test, ManageSymbols_SetsImportExport_MapToTheSymbolRoutes)
     RunTool(*_registry, "manage_symbols", drop, *_caller);
     EXPECT_TRUE(_caller->Saw("DELETE", "/api/v1/emulator/emu-1/symbols/sets?id=file%3A%2Fx%2Fa.sym"));
 
+    _caller->routes["POST /api/v1/emulator/emu-1/symbols/import/source"] = {200, Json::Value(Json::objectValue)};
+    Json::Value fromSource;
+    fromSource["action"] = "import_source";
+    fromSource["path"] = "disk:A/GAME.H";
+    fromSource["main"] = "GAME";
+    RunTool(*_registry, "manage_symbols", fromSource, *_caller);
+    call = _caller->Last("POST", "/api/v1/emulator/emu-1/symbols/import/source");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["main"].asString(), "GAME");
+
     Json::Value missing;
     missing["action"] = "export";
     EXPECT_TRUE(RunTool(*_registry, "manage_symbols", missing, *_caller).isError);

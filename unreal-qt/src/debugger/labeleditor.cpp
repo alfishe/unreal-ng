@@ -126,6 +126,7 @@ void LabelEditor::setupUI()
     fileMenu->addAction(tr("&Import Symbols..."), this, &LabelEditor::importSymbols);
     fileMenu->addAction(tr("E&xport Symbols..."), this, &LabelEditor::exportSymbols);
     fileMenu->addAction(tr("Scan RAM for &Label Tables..."), this, &LabelEditor::scanLabelTables);
+    fileMenu->addAction(tr("Import Labels from &Source..."), this, &LabelEditor::importSourceLabels);
 
     fileMenu->addSeparator();
 
@@ -373,6 +374,34 @@ void LabelEditor::scanLabelTables()
     if (_setsPanel)
         _setsPanel->refresh();
     ShowSymbolReport(this, tr("Label Tables in RAM"), reply);
+}
+
+void LabelEditor::importSourceLabels()
+{
+    const QString path = QFileDialog::getOpenFileName(this, tr("Import Labels from Source"),
+                                                      QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
+                                                      tr("Sources and images (*.asm *.a80 *.s *.trd *.tap *.tzx *.$*);;All Files (*)"));
+    if (path.isEmpty())
+        return;
+    std::map<std::string, std::string> options{{"path", path.toStdString()}};
+    SymbolReply reply = SymbolControl(_labelManager).Execute({"import-source", options});
+    // An image with several sources: pick the main one
+    if (!reply.Ok() && reply.body.find("sources") && !reply.body.find("sources")->items.empty())
+    {
+        QStringList sources;
+        for (const StateNode& n : reply.body.find("sources")->items)
+            sources << QString::fromStdString(n.s);
+        bool ok = false;
+        const QString main = QInputDialog::getItem(this, tr("Import Labels from Source"), tr("Main source:"), sources, 0, false, &ok);
+        if (!ok)
+            return;
+        options["main"] = main.toStdString();
+        reply = SymbolControl(_labelManager).Execute({"import-source", options});
+    }
+    refreshLabelList();
+    if (_setsPanel)
+        _setsPanel->refresh();
+    ShowSymbolReport(this, tr("Import Labels from Source"), reply);
 }
 
 void LabelEditor::loadFromFile(const QString& filePath)

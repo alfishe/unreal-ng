@@ -2202,6 +2202,9 @@ namespace PythonBindings
                  "Text in a source format (codec=, version=, output=, start=)", py::arg("text"))
             .def("asm_convert", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) { return AsmPy(self, "convert", {{"path", path}}, kwargs); },
                  "A source in another dialect (to=, codec=, version=, from=, output=)", py::arg("path"))
+            .def("symbols_import_source", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) {
+                return SymbolsPy(self, "import-source", {{"path", path}}, kwargs);
+            }, "The labels a source defines, with values (main=, set=, policy=, generated=)", py::arg("path"))
             .def("symbols_scan", [](Emulator& self) { return SymbolsPy(self, "scan", {}, py::kwargs()); },
                  "Label tables of assemblers in RAM (ALASM, XAS): the candidates")
             .def("symbols_import_live", [](Emulator& self, const py::kwargs& kwargs) { return SymbolsPy(self, "import-live", {}, kwargs); },

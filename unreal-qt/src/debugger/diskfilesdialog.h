@@ -25,6 +25,7 @@ private slots:
     void openSource();
     void exportText();
     void convertTo();
+    void importLabels();
     void updateButtons();
 
 private:
@@ -37,5 +38,6 @@ private:
     QPushButton* _open = nullptr;
     QPushButton* _export = nullptr;
     QPushButton* _convert = nullptr;
+    QPushButton* _labels = nullptr;
     QLabel* _status = nullptr;
 };

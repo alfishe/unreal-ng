@@ -19,6 +19,8 @@
 ///   drop     id                                    remove a set
 ///   scan                                           label tables of assemblers in RAM (ALASM, XAS): the candidates
 ///   import-live [scanner page offset set policy]   read a label table (the best candidate, or the one named) into a set
+///   import-source path [main set policy generated]   the labels a source defines with their values (a source, an image,
+///                                                  a hobeta file, or disk:A/NAME.T: the disk in a drive as the project)
 ///
 /// @code
 ///   SymbolReply reply = SymbolControl(context).Execute({"import", {{"path", "game.sym"}, {"policy", "replace"}}});
@@ -88,6 +90,7 @@ private:
     SymbolReply Drop(const SymbolRequest& request);
     SymbolReply Scan();
     SymbolReply ImportLive(const SymbolRequest& request);
+    SymbolReply ImportSource(const SymbolRequest& request);
     /// The machine's RAM pages, copied at a coherent moment (false with the reason)
     bool CopyRam(std::vector<std::vector<uint8_t>>& pages, std::string& error) const;
 

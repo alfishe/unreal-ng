@@ -271,7 +271,8 @@ Built (2026-10-08): `SymbolControl` (`core/src/debugger/labels/symbolcontrol.h`)
 error code and a StateNode body). The WebAPI, CLI, MCP, Lua and Python call it. The live scan has its own verbs:
 `scan` and `import-live` (`GET /symbols/scan`, `POST /symbols/import/live`). Import takes a `path`, or `data` (base64) with a
 `name`. The Qt label editor has the Import / Export dialogs, a live-scan command and a "Sets" tab. Import reads
-`disk:A/NAME.T` as well; export filters by space, CPU address range, kind and name pattern (the renames are its
+`disk:A/NAME.T` as well; `import-source` gives the labels of a source with their values (`symbols/fromsource.h`, the
+disk in a drive as the project); export filters by space, CPU address range, kind and name pattern (the renames are its
 diagnostics). The OpenAPI
 gets a `symbols` tag; the recipe is `.recipe/analysis/symbols-import-export.md`.
 

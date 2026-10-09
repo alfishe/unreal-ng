@@ -15,6 +15,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "unrealasm/symbols/fromsource.h"
 #include "unrealasm/symbols/live.h"
 
 /// region <Errors and the reply>
@@ -233,7 +234,8 @@ SymbolControl::SymbolControl(LabelManager* labels) : _context(labels ? labels->G
 
 const std::vector<std::string>& SymbolControl::Verbs()
 {
-    static const std::vector<std::string> verbs = {"formats", "detect", "sets", "import", "export", "set", "drop", "scan", "import-live"};
+    static const std::vector<std::string> verbs = {"formats", "detect",      "sets", "import",       "export",
+                                                   "set",     "drop",        "scan", "import-live",  "import-source"};
     return verbs;
 }
 
@@ -249,6 +251,7 @@ const std::vector<std::string>& SymbolControl::OptionsFor(const std::string& ver
         {"drop", {"id"}},
         {"scan", {}},
         {"import-live", {"scanner", "page", "offset", "set", "policy"}},
+        {"import-source", {"path", "main", "set", "policy", "generated"}},
     };
     static const std::vector<std::string> none;
     const auto it = options.find(verb);
@@ -299,6 +302,8 @@ SymbolReply SymbolControl::Execute(const SymbolRequest& request)
         return Scan();
     if (verb == "import-live")
         return ImportLive(request);
+    if (verb == "import-source")
+        return ImportSource(request);
     return Drop(request);
 }
 
@@ -682,6 +687,104 @@ SymbolReply SymbolControl::ImportLive(const SymbolRequest& request)
     body["skipped"] = static_cast<uint64_t>(result.report.skipped);
     read.diagnostics.insert(read.diagnostics.end(), result.report.diagnostics.begin(), result.report.diagnostics.end());
     body["diagnostics"] = DiagnosticsValue(read.diagnostics);
+    body["labels"] = static_cast<uint64_t>(_labels->GetLabelCount());
+    if (!result.ok)
+        return Fail(SymbolControlError::Conflict, result.message, std::move(body));
+    SymbolReply reply;
+    reply.body = std::move(body);
+    return reply;
+}
+
+SymbolReply SymbolControl::ImportSource(const SymbolRequest& request)
+{
+    const std::string path = Option(request, "path");
+    if (path.empty())
+        return Fail(SymbolControlError::BadRequest, "'import-source' needs a path (a source, an image, a hobeta file or disk:A/NAME.T)");
+    std::string main = Option(request, "main");
+    SourceProject project;
+    std::string error;
+    if (DiskFileRef ref; ParseDiskFileRef(path, ref))
+    {
+        // The disk in a drive as the project; the file named is the main source unless main says otherwise
+        std::vector<unrealasm::containers::TrdosFile> files;
+        if (!ReadDiskFiles(_context, ref.drive, files, error))
+            return Fail(SymbolControlError::NotFound, error);
+        project = ProjectFromFiles(files);
+        if (main.empty())
+            main = ref.name;
+    }
+    else
+    {
+        std::ifstream in(FileHelper::ToFsPath(path), std::ios::binary);
+        if (!in.is_open())
+            return Fail(SymbolControlError::NotFound, "Cannot read " + path);
+        const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::string extension = FileHelper::ToFsPath(path).extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+        if (!extension.empty() && extension[0] == '.')
+            extension.erase(0, 1);
+        std::vector<unrealasm::containers::TrdosFile> files;
+        unrealasm::containers::TrdosFile one;
+        const bool image = (extension == "trd" && unrealasm::containers::ReadTrd(bytes, files, error)) ||
+                           ((extension == "tap" || extension == "tzx") && unrealasm::containers::ReadTape(bytes, files, error));
+        if (!image && extension.size() == 2 && extension[0] == '$' && unrealasm::containers::ReadHobeta(bytes, one, error))
+            files.push_back(one);
+        project = files.empty() ? ProjectFromText(path, bytes) : ProjectFromFiles(files);
+    }
+    const size_t at = FindMainSource(project, main, error);
+    if (at >= project.sources.size())
+    {
+        StateNode body = StateNode::Object();
+        body["sources"] = StateNode::Array();
+        for (const unrealasm::ProjectFile& f : project.sources)
+            body["sources"].items.emplace_back(f.name);
+        return Fail(project.sources.empty() ? SymbolControlError::NotFound : SymbolControlError::BadRequest, path + ": " + error, std::move(body));
+    }
+    SymbolImportRequest options;
+    options.set = Option(request, "set");
+    if (request.options.count("policy"))
+    {
+        MergePolicy policy = MergePolicy::Both;
+        if (!ParsePolicy(Option(request, "policy"), policy))
+            return Fail(SymbolControlError::BadRequest, "'policy' is one of both, keep, replace, fail: '" + Option(request, "policy") + "'");
+        options.policy = policy;
+    }
+    SourceSymbolsOptions sourceOptions;
+    if (request.options.count("generated"))
+    {
+        bool generated = true;
+        if (!ParseBool(Option(request, "generated"), generated))
+            return Fail(SymbolControlError::BadRequest, "'generated' is true or false");
+        sourceOptions.generated = generated;
+    }
+    const SourceSymbolsResult symbols = SymbolsFromSourceProject(project, at, sourceOptions);
+
+    // The source's own set (made again on every import) unless a set is named
+    const unrealasm::ProjectFile& source = project.sources[at];
+    DiskFileRef disk;
+    const std::string setId = ParseDiskFileRef(path, disk) ? std::string("source:disk:") + static_cast<char>('A' + disk.drive) + "/" + source.name
+                                                           : "source:" + path + ":" + source.name;
+    if (options.set.empty())
+        _labels->DropSymbolSet(setId);
+    Origin origin;
+    origin.kind = "source";
+    origin.where = path;
+    const SymbolImportResult result =
+        _labels->ImportRecords(symbols.set.symbols, options, setId, source.name + " (" + source.document.dialect + ")", origin);
+
+    StateNode body = StateNode::Object();
+    body["path"] = path;
+    body["main"] = source.name;
+    body["dialect"] = source.document.dialect;
+    body["sources"] = static_cast<uint64_t>(project.sources.size());
+    body["set"] = result.report.set;
+    body["records"] = static_cast<uint64_t>(symbols.set.symbols.size());
+    body["added"] = static_cast<uint64_t>(result.report.added);
+    body["aliased"] = static_cast<uint64_t>(result.report.aliased);
+    body["complete"] = symbols.ok;
+    unrealasm::Diagnostics diagnostics = symbols.diagnostics;
+    diagnostics.insert(diagnostics.end(), result.report.diagnostics.begin(), result.report.diagnostics.end());
+    body["diagnostics"] = DiagnosticsValue(diagnostics);
     body["labels"] = static_cast<uint64_t>(_labels->GetLabelCount());
     if (!result.ok)
         return Fail(SymbolControlError::Conflict, result.message, std::move(body));

@@ -81,52 +81,7 @@ void Print(const Diagnostics& diagnostics)
     }
 }
 
-/// ALASM's wildcards in an INCBIN name: * any run of characters, ? one (case-insensitive here: host names)
-bool Matches(std::string_view pattern, std::string_view name)
-{
-    auto lower = [](char c) { return static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c); };
-    if (pattern.empty())
-        return name.empty();
-    if (pattern[0] == '*')
-    {
-        for (size_t k = 0; k <= name.size(); ++k)
-            if (Matches(pattern.substr(1), name.substr(k)))
-                return true;
-        return false;
-    }
-    return !name.empty() && (pattern[0] == '?' || lower(pattern[0]) == lower(name[0])) && Matches(pattern.substr(1), name.substr(1));
-}
-
-/// A source project read from a file: an image's sources (as `zxasm convert` takes them) and the sizes of all its files
-/// under the names INCBIN gives them (NAME for type C, NAME.T, NAME.slack for the rest of the last sector)
-struct Project
-{
-    std::vector<ProjectFile> sources;
-    std::vector<std::pair<std::string, uint64_t>> sizes;
-
-    std::optional<uint64_t> Size(const std::string& wanted) const
-    {
-        std::optional<uint64_t> found;
-        for (const auto& [name, size] : sizes)
-            if (Matches(wanted, name))
-                found = size;   // the last match, as ALASM takes it
-        return found;
-    }
-};
-
-/// A text file as the project's one source: a tokenized format when detection says so, else sjasmplus' dialect
-void AddTextSource(Project& project, const std::string& name, const std::vector<uint8_t>& bytes)
-{
-    const CodecRegistry& registry = CodecRegistry::Builtin();
-    const DetectResult detected = registry.Detect(bytes, {});
-    const ISourceCodec* codec = detected.chosen;
-    if (!codec || codec->Info().family != CodecFamily::Tokenized)
-        codec = registry.Find("sjasmplus");
-    if (codec)
-        project.sources.push_back({name, codec->Decode(bytes, {}).document});
-}
-
-bool ReadProject(const std::string& path, const std::vector<uint8_t>& bytes, Project& project)
+bool ReadProject(const std::string& path, const std::vector<uint8_t>& bytes, SourceProject& project)
 {
     std::vector<containers::TrdosFile> files;
     std::string error;
@@ -136,29 +91,7 @@ bool ReadProject(const std::string& path, const std::vector<uint8_t>& bytes, Pro
     containers::TrdosFile one;
     if (!image && extension.size() == 2 && extension[0] == '$' && containers::ReadHobeta(bytes, one, error))
         files.push_back(one);
-    if (files.empty())
-    {
-        // A text source: named as INCLUDE would name it (no folder, no .asm)
-        const size_t slash = path.find_last_of("/\\");
-        std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
-        if (name.size() > 4 && Extension(name) == "asm")
-            name.resize(name.size() - 4);
-        AddTextSource(project, name, bytes);
-        return !project.sources.empty();
-    }
-    for (const containers::TrdosFile& f : files)
-    {
-        const std::string name = f.TrimmedName() + (f.type == 'C' ? std::string() : std::string(".") + f.type);
-        project.sizes.emplace_back(name, f.data.size());
-        project.sizes.emplace_back(f.TrimmedName() + "." + std::string(1, f.type), f.data.size());
-        project.sizes.emplace_back(name + ".slack", f.tail.size());
-        // A three-letter extension: the type and the two bytes of the start address ("Font4_3.fn1")
-        const char second = static_cast<char>(f.start & 0xFF), third = static_cast<char>(f.start >> 8);
-        if (second > ' ' && second < 0x7F && third > ' ' && third < 0x7F)
-            project.sizes.emplace_back(f.TrimmedName() + "." + std::string{f.type, second, third}, f.data.size());
-    }
-    // The sources, and the files they INCLUDE that detection could not tell (read like their includer)
-    project.sources = ImageProject(files);
+    project = files.empty() ? ProjectFromText(path, bytes) : ProjectFromFiles(files);
     return !project.sources.empty();
 }
 
@@ -362,35 +295,20 @@ int main(int argc, char** argv)
     }
     if (fromSource)
     {
-        Project project;
+        SourceProject project;
         if (!ReadProject(input, bytes, project))
         {
             std::cerr << "symconv: no assembler source in " << input << "\n";
             return 1;
         }
-        size_t at = 0;
-        if (!main.empty())
+        std::string error;
+        const size_t at = FindMainSource(project, main, error);
+        if (at == project.sources.size())
         {
-            at = project.sources.size();
-            for (size_t k = 0; k < project.sources.size(); ++k)
-                if (project.sources[k].name == main)
-                    at = k;
-            if (at == project.sources.size())
-            {
-                std::cerr << "symconv: no source " << main << " in " << input << "\n";
-                return 1;
-            }
+            std::cerr << "symconv: " << input << ": " << error << (main.empty() ? " (--main)" : "") << "\n";
+            return main.empty() ? 2 : 1;
         }
-        else if (project.sources.size() > 1)
-        {
-            std::cerr << "symconv: " << input << " holds several sources, pick one with --main:";
-            for (const ProjectFile& f : project.sources)
-                std::cerr << " " << f.name;
-            std::cerr << "\n";
-            return 2;
-        }
-        sourceOptions.layout.fileSize = [&project](const std::string& name) { return project.Size(name); };
-        const SourceSymbolsResult r = SymbolsFromProject(project.sources, at, sourceOptions);
+        const SourceSymbolsResult r = SymbolsFromSourceProject(project, at, sourceOptions);
         Print(r.diagnostics);
         SymbolFile file;
         file.sets.push_back(r.set);

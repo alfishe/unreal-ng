@@ -113,6 +113,7 @@ add_library(unreal-asm STATIC
     src/layout/z80size.cpp
     src/layout/layout.cpp
     src/symbols/fromsource/fromsource.cpp
+    src/symbols/fromsource/project.cpp
     src/symbols/live/live.cpp
     src/symbols/bundles/bundles.cpp
 )

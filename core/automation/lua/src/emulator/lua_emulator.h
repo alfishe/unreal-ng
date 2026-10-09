@@ -3020,6 +3020,9 @@ public:
         lua.set_function("asm_encode", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "encode", SymbolOptions(arg, "text")); });
         lua.set_function("asm_convert", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "convert", SymbolOptions(arg, "path")); });
         lua.set_function("symbols_scan", [this](sol::this_state ts) -> sol::object { return symbolsRun(ts, "scan", {}); });
+        lua.set_function("symbols_import_source", [this](sol::this_state ts, sol::object arg) -> sol::object {
+            return symbolsCall(ts, "import-source", arg, "path");
+        });
         lua.set_function("symbols_import_live", [this](sol::this_state ts, sol::optional<sol::table> opts) -> sol::object {
             return symbolsRun(ts, "import-live", opts ? SymbolOptions(sol::make_object(ts, *opts), "") : std::map<std::string, std::string>{});
         });

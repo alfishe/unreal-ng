@@ -17,6 +17,7 @@
 //   export       → POST /symbols/export {path, format?, sets?, pages?}
 //   scan         → GET  /symbols/scan
 //   import_live  → POST /symbols/import/live {scanner?, page?, offset?, set?, policy?}
+//   import_source → POST /symbols/import/source {path, main?, set?, policy?, generated?}
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
 
@@ -39,12 +40,14 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"load_labels", "list", "resolve", "load_listing", "source_at", "step_line", "run_to_line", "formats",
-                               "detect", "sets", "set_enable", "drop", "import", "export", "scan", "import_live"})
+                               "detect", "sets", "set_enable", "drop", "import", "export", "scan", "import_live",
+                               "import_source"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Symbol/source operation. Labels come from symbol files in any format (formats lists them); listings from "
+        "Symbol/source operation. Labels come from symbol files in any format (formats lists them), or from an assembler "
+        "source assembled on the host (import_source); listings from "
         "sjasmplus .lst files. import / export / sets / set_enable / drop work on the symbol sets: user (labels set by "
         "hand, wins), one per loaded file (a later load wins), named sets.";
     schema["properties"]["target"]["type"] = "string";
@@ -83,6 +86,10 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
     schema["properties"]["page"]["description"] = "import_live: the RAM page of the table (scan lists them)";
     schema["properties"]["offset"]["type"] = "integer";
     schema["properties"]["offset"]["description"] = "import_live: the table's first byte in the page";
+    schema["properties"]["main"]["type"] = "string";
+    schema["properties"]["main"]["description"] = "import_source: the main source of an image (default: the only one, or NAME of disk:A/NAME.T)";
+    schema["properties"]["generated"]["type"] = "boolean";
+    schema["properties"]["generated"]["description"] = "import_source: also the labels the conversion adds";
     schema["properties"]["id"]["type"] = "string";
     schema["properties"]["id"]["description"] = "set_enable / drop: the set id (sets lists them)";
     schema["properties"]["enabled"]["type"] = "boolean";
@@ -228,6 +235,21 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "import_source")
+            {
+                if (!args.isMember("path") || args["path"].asString().empty())
+                {
+                    done(ToolResult::Error("import_source requires 'path' (a source, an image, or disk:A/NAME.T)"));
+                    return;
+                }
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"path", "main", "set", "policy", "generated"})
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name].asString();
+                ResolveAndForward(args, "POST", "/symbols/import/source", &body, caller, "Labels of the source imported", done);
+                return;
+            }
+
             if (action == "formats" || action == "sets")
             {
                 ResolveAndForward(args, "GET", "/symbols/" + action, nullptr, caller, action == "formats" ? "Symbol formats" : "Symbol sets",
@@ -295,7 +317,7 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
 
             done(ToolResult::Error("Unknown action '" + action +
                                    "'. Valid: load_labels, list, resolve, load_listing, source_at, step_line, run_to_line, formats, "
-                                   "detect, sets, set_enable, drop, import, export, scan, import_live"));
+                                   "detect, sets, set_enable, drop, import, export, scan, import_live, import_source"));
         });
 }
 

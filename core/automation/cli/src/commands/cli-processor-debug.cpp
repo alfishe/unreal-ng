@@ -1515,6 +1515,7 @@ void CLIProcessor::HandleSymbols(const ClientSession& session, const std::vector
         ss << "  symbols export <file> [--format f] [--sets a,b] [--pages fold|comment|drop]" << NEWLINE;
         ss << "  symbols scan                    - Label tables of assemblers in RAM (ALASM, XAS)" << NEWLINE;
         ss << "  symbols import-live [--scanner s] [--page n] [--offset n] [--set s] [--policy p]" << NEWLINE;
+        ss << "  symbols import-source <source|image|disk:A/NAME.T> [--main NAME] [--set s] [--generated]  - labels of a source" << NEWLINE;
         ss << "  (add --json for the reply as JSON)" << NEWLINE;
         session.SendResponse(ss.str());
         return;
@@ -1523,7 +1524,7 @@ void CLIProcessor::HandleSymbols(const ClientSession& session, const std::vector
     const std::string& subcmd = args[0];
 
     if (subcmd == "formats" || subcmd == "detect" || subcmd == "sets" || subcmd == "set" || subcmd == "drop" ||
-        subcmd == "import" || subcmd == "export" || subcmd == "scan" || subcmd == "import-live")
+        subcmd == "import" || subcmd == "export" || subcmd == "scan" || subcmd == "import-live" || subcmd == "import-source")
     {
         HandleSymbolVerb(session, ctx, args);
         return;
@@ -1580,7 +1581,7 @@ void CLIProcessor::HandleSymbolVerb(const ClientSession& session, EmulatorContex
         else
             positional.push_back(args[i]);
     }
-    if ((verb == "detect" || verb == "import" || verb == "export") && !positional.empty())
+    if ((verb == "detect" || verb == "import" || verb == "export" || verb == "import-source") && !positional.empty())
         request.options["path"] = positional[0];
     if ((verb == "set" || verb == "drop") && !positional.empty())
         request.options["id"] = positional[0];
@@ -1666,6 +1667,10 @@ void CLIProcessor::HandleSymbolVerb(const ClientSession& session, EmulatorContex
             ss << c.find("scanner")->s << " " << c.find("version")->s << "  ram" << c.find("page")->i << " offset " << c.find("offset")->i
                << "  " << c.find("count")->i << " entries, score " << c.find("score")->i << NEWLINE;
     }
+    else if (verb == "import-source")
+        ss << "Imported " << number(body, "records") << " labels of " << text("main") << " (" << text("dialect") << ") into " << text("set")
+           << (body.find("complete") && body.find("complete")->b ? "" : " (not every label got a value)") << "; labels: " << number(body, "labels")
+           << NEWLINE;
     else if (verb == "import-live")
         ss << "Imported " << number(body, "records") << " labels from " << body.find("candidate")->find("scanner")->s << " ram"
            << body.find("candidate")->find("page")->i << " into " << text("set") << "; labels: " << number(body, "labels") << NEWLINE;
