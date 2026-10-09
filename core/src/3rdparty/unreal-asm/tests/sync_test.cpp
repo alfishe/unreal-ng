@@ -250,6 +250,10 @@ TEST(SyncSession_Test, TheBuildGivesTheLabelsOfTheLiveText)
     for (const symbols::Symbol& s : built.labels.symbols)
         key = key || s.name == "KEY";
     EXPECT_TRUE(key) << "KEY = [#5C08] of SNAKE";
+    // SNAKE's .IF inside DEFMAC is flat, as TASM reads it; the game it plays while assembling (keys, the screen)
+    // keeps its "=" values moving, so the layout does not settle (labels still move)
+    for (const Diagnostic& d : built.hints)
+        EXPECT_EQ(d.message.find("IF without ENDIF"), std::string::npos) << d.message;
 }
 
 TEST(SyncSession_Test, AHintPointsAtTheSourceLine)

@@ -46,6 +46,7 @@ tables in the binaries (research-tasm.md), and the oracles.
 | `PUSH` / `POP` take several registers | one instruction each |
 | `NV` / `V` are the conditions PO / PE; `LX HX LY HY`; `INF`; `SLI` | `PO` / `PE`, `IXL ...`, `IN F,(C)` |
 | 4.12: `.IF expr` compiles its first part when the value is 0 (`USE_MULT8=0` selects the code) | `IF (expr)==0` |
+| 4.12: the conditionals **do not nest** (checked 2026-10-09 with `testdata/dialects/tasm412/IFNEST`): one state, which `.IF` sets from its value even inside a skipped part, `.ELSE` inverts and `.ENDIF` clears; a second `.ENDIF` changes nothing. SNAKE relies on it (`.IF RABBIT` ended by the `.ENDIF` of the `.IF` after it) | sjasmplus blocks: a `.IF` while one is open closes it first (`ENDIF`), a `.ENDIF` with none open is dropped, a `.ELSE` with none open is `IF 0`; an open block ends before `ENDM` and at the end of the file; a macro body keeps its own state |
 | 4.12: `.LOCAL` starts a region; `...name` labels belong to it; inside a macro to each expansion | `__local<n>_name`; in a macro a LOCAL block (sjasmplus `.local_name`) |
 | 4.12: macro parameters `\0`…`\9` or `/0`…`/9`; `\c \n \s \r` walk the parameter text like ALASM's `\C \N \S \R` | named parameters; walking or gluing macros expanded at their calls |
 | 4.12: a label defined with `EQU` may be reassigned with `=` | every definition of such a name becomes `=` |
