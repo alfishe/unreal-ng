@@ -1363,7 +1363,7 @@ snap = emu.debug_snapshot(disasm=21, stack=8, memory=["cpu:0x8000:256", "ram5:0:
 # snap["seq"], snap["consistency"], snap["regs"]["special"]["pc"], snap["prev_regs"], snap["disasm"][0]["mnemonic"],
 # snap["memory"][0]["bytes"] (bytes); ValueError with the reason when refused
 emu.mem_find("C3", space="ram")      # every RAM page: matches as page {kind, page} + offset
-emu.mem_find("C3 00 80", space="ram5", end=0x3FFF)   # one page (offsets), also "rom2", "cache0"
+emu.mem_find("C3 00 80", space="ram5", end=0x3FFF)   # one page (offsets), also "rom2", "cache0", or a region by name ("vram", "neogs.ram": offsets in it)
 emu.mem_find("21 00 40", mask="FF FF F0")             # 1 bits must match
 # Result: {space, count, truncated, matches: [{address | page, offset, context_start, context}]};
 # context = 4 bytes before, the match, 4 after; {"error": "..."} when refused

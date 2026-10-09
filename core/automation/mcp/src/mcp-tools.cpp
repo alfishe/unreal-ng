@@ -1588,7 +1588,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["windows"]["type"] = "array";
     schema["properties"]["windows"]["items"]["type"] = "string";
     schema["properties"]["windows"]["description"] =
-        "'snapshot' memory windows '<space>:<address>:<length>' (space cpu | ram | ram5 | rom2 | cache0; at most 8, each "
+        "'snapshot' memory windows '<space>:<address>:<length>' (space cpu | ram | ram5 | rom2 | cache0 | a region name; at most 8, each "
         "at most 65536 bytes, returned as base64)";
     schema["properties"]["format"]["type"] = "string";
     schema["properties"]["format"]["default"] = "hexdump";

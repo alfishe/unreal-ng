@@ -611,7 +611,7 @@ page_write("ram", 5, 0x100, 0xFF)
 -- Block operations
 data = page_read_block("rom", 2, 0, 256)    -- Read 256 bytes from ROM page 2
 bytes = mem_read_bytes(0, 65536)            -- the whole CPU view as one Lua string (wraps at #FFFF)
-bytes = mem_read_bytes(0x1800, 768, "ram5") -- a page window ("ram5", "rom2", "cache0"; "ram" = all RAM pages)
+bytes = mem_read_bytes(0x1800, 768, "ram5") -- a page window ("ram5", "rom2", "cache0"; "ram" = all RAM pages; or a region: "sprinter.vram", "neogs.ram", ...)
 bytes, err = mem_read_bytes(0, 1, "ram9")   -- nil, "this machine has no page ram9"
 page_write_block("ram", 7, 0x1000, data)    -- Write block to RAM page 7
 
@@ -993,7 +993,7 @@ local r = ttd_reverse_continue({0x8000, 0x8010})
 
 ```lua
 -- Positional form: addr, access, value, pc_from, pc_to, before_frame, before_tin,
---                  phys_page, addr_from, addr_to
+--                  phys_page, addr_from, addr_to, space
 local r = ttd_find_last(0x5800, "write")
 -- Not while recording, and the access must be write, read, execute or io:
 -- otherwise { found = false, ok = false, error = "<why>" }
@@ -1140,7 +1140,7 @@ snap, err = debug_snapshot{disasm = 21, stack = 8, memory = {"cpu:0x8000:256", "
 -- snap.pages[1].kind, snap.stack.words, snap.time.frame, snap.disasm[1].mnemonic,
 -- snap.memory[1].bytes (a Lua string), snap.memory[2].error when a window cannot be read
 emu.mem_find("C3", nil, nil, 1, 64, "ram")         -- every RAM page: matches as page {kind, page} + offset
-emu.mem_find("C3 00 80", 0, 0x3FFF, 1, 64, "ram5") -- one page (offsets), also "rom2", "cache0"
+emu.mem_find("C3 00 80", 0, 0x3FFF, 1, 64, "ram5") -- one page (offsets), also "rom2", "cache0", or a region by name ("vram", "neogs.ram": offsets in it)
 emu.mem_find("21 00 40", nil, nil, 1, 64, "cpu", "FF FF F0")  -- mask: 1 bits must match
 -- Result: {space, count, truncated, matches = {{address | page, offset, context_start, context}}};
 -- context = 4 bytes before, the match, 4 after; {error = "..."} when refused

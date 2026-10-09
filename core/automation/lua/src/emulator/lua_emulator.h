@@ -4249,7 +4249,8 @@ public:
                                                    sol::optional<uint32_t> beforeTinOpt,
                                                    sol::optional<uint32_t> physPageOpt,
                                                    sol::optional<uint16_t> addrFromOpt,
-                                                   sol::optional<uint16_t> addrToOpt) -> sol::object {
+                                                   sol::optional<uint16_t> addrToOpt,
+                                                   sol::optional<std::string> spaceOpt) -> sol::object {
             std::map<std::string, std::string> options;
             if (firstArgOpt.is<sol::table>())
             {
@@ -4282,6 +4283,8 @@ public:
                     options["pc_to"] = std::to_string(*pcToOpt);
                 if (physPageOpt)
                     options["phys_page"] = std::to_string(*physPageOpt);
+                if (spaceOpt)
+                    options["space"] = *spaceOpt;   // "vram" / "cache": the address is an offset in that memory
                 if (beforeFrameOpt)
                 {
                     options["before_frame"] = std::to_string(*beforeFrameOpt);

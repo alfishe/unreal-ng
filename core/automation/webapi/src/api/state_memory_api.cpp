@@ -839,7 +839,12 @@ void EmulatorAPI::findMemory(const HttpRequestPtr& req, std::function<void(const
     for (const MemorySearchMatch& m : result.matches)
     {
         Json::Value match;
-        if (m.page < 0)
+        if (!m.region.empty())
+        {
+            match["region"] = m.region;
+            match["offset"] = StringHelper::Format("0x%05X", m.address);
+        }
+        else if (m.page < 0)
             match["address"] = StringHelper::Format("0x%04X", m.address);
         else
         {
@@ -1018,13 +1023,14 @@ void EmulatorAPI::readPage(const HttpRequestPtr& req, std::function<void(const H
 
     bool isROM = (type == "rom");
     bool isRAM = (type == "ram");
-    if (!isROM && !isRAM && ReadRegionPage(req, emulator->GetContext(), type, pageStr, callback))
+    const bool isCache = (type == "cache");   // the CPU's fast RAM pages (the Sprinter's), as page_read takes them
+    if (!isROM && !isRAM && !isCache && ReadRegionPage(req, emulator->GetContext(), type, pageStr, callback))
         return;  // a device memory region by name (/memory/page/vram/{n}: the Sprinter's video RAM)
-    if (!isROM && !isRAM)
+    if (!isROM && !isRAM && !isCache)
     {
         Json::Value error;
         error["error"] = "Bad Request";
-        error["message"] = "Type must be 'ram', 'rom' or a device memory region (GET /memory/regions)";
+        error["message"] = "Type must be 'ram', 'rom', 'cache' or a device memory region (GET /memory/regions)";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -1080,7 +1086,7 @@ void EmulatorAPI::readPage(const HttpRequestPtr& req, std::function<void(const H
         return;
     }
 
-    const uint64_t maxPage = isRAM ? MAX_RAM_PAGES - 1 : MAX_ROM_PAGES - 1;
+    const uint64_t maxPage = isRAM ? MAX_RAM_PAGES - 1 : isCache ? MAX_CACHE_PAGES - 1 : MAX_ROM_PAGES - 1;
     if (page > maxPage)
     {
         Json::Value error;
@@ -1094,7 +1100,9 @@ void EmulatorAPI::readPage(const HttpRequestPtr& req, std::function<void(const H
         return;
     }
 
-    uint8_t* pagePtr = isRAM ? memory->RAMPageAddress(static_cast<uint16_t>(page)) : memory->ROMPageHostAddress(static_cast<uint8_t>(page));
+    uint8_t* pagePtr = isCache ? (memory->CacheBase() ? memory->CacheBase() + page * PAGE_SIZE : nullptr)
+                       : isRAM ? memory->RAMPageAddress(static_cast<uint16_t>(page))
+                               : memory->ROMPageHostAddress(static_cast<uint8_t>(page));
     if (!pagePtr)
     {
         Json::Value error;
@@ -1190,8 +1198,21 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
     Memory* memory = emulator->GetMemory();
     bool isROM = (type == "rom");
     bool isRAM = (type == "ram");
-    if (!isROM && !isRAM && WriteRegionPage(req, emulator->GetContext(), type, pageStr, callback))
+    const bool isCache = (type == "cache");
+    if (!isROM && !isRAM && !isCache && WriteRegionPage(req, emulator->GetContext(), type, pageStr, callback))
         return;  // a device memory region by name (DeviceMemory::Write: the device's own write path)
+    if (!isROM && !isRAM && !isCache)
+    {
+        // Any other name wrote ROM pages before (the pointer below falls back to ROM)
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Type must be 'ram', 'rom', 'cache' or a device memory region (GET /memory/regions)";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
 
     if (isROM && s_romWriteProtected)
     {
@@ -1236,7 +1257,7 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
         callback(resp);
         return;
     }
-    const uint64_t maxWritePage = isRAM ? MAX_RAM_PAGES - 1 : MAX_ROM_PAGES - 1;
+    const uint64_t maxWritePage = isRAM ? MAX_RAM_PAGES - 1 : isCache ? MAX_CACHE_PAGES - 1 : MAX_ROM_PAGES - 1;
     if (page > maxWritePage)
     {
         Json::Value error;
@@ -1268,7 +1289,9 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
         return;
     }
 
-    uint8_t* pagePtr = isRAM ? memory->RAMPageAddress(static_cast<uint16_t>(page)) : memory->ROMPageHostAddress(static_cast<uint8_t>(page));
+    uint8_t* pagePtr = isCache ? (memory->CacheBase() ? memory->CacheBase() + page * PAGE_SIZE : nullptr)
+                       : isRAM ? memory->RAMPageAddress(static_cast<uint16_t>(page))
+                               : memory->ROMPageHostAddress(static_cast<uint8_t>(page));
     if (!pagePtr)
     {
         Json::Value error;

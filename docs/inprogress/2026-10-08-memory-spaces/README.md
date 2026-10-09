@@ -1,6 +1,6 @@
 # Memory spaces on every automation surface
 
-Status: step 1 done 2026-10-08 (one registry; MCP `memory_access`); steps 2-5 open. Owner request: "нужно ли как-то менять automation planes, чтобы иметь доступ ко всем возможностям и градациям памяти; если да - дизайн, делаем".
+Status: steps 1-2 done 2026-10-08 (one registry, MCP `memory_access`; one address form); steps 3-5 open. Owner request: "нужно ли как-то менять automation planes, чтобы иметь доступ ко всем возможностям и градациям памяти; если да - дизайн, делаем".
 
 ## 1. The problem
 
@@ -108,3 +108,11 @@ Each step lands on its own, with its tests, mutants and docs.
 - MCP has the `memory_access` tool (regions / read / write / save / load, space `cpu` or a region).
 - Found on the way: listing a device's regions bound its dirty tracker again, which cleared it. `EndToolEdit` lists them, so a debugger edit during a recording dropped the device memory written since the last checkpoint (NeoGS / GS RAM, MoonSound, EEPROMs, flash) from the recording. `TTDRegionTracker::Bind` keeps the marks for the same memory now (`DeviceMemoryTtd_Test.AToolEditDuringARecordingKeepsTheDevicesUnsavedWrites`).
 - Mutants caught: Bind resetting, the view's missing mark, the alias match.
+
+**Step 2 (2026-10-08).**
+- A region is a space of the search and of the windowed read (`MemorySearch::ParseSpace`, `MemoryRead::Bytes`): any name that is not `cpu`, `ram` or a page spec. That covers `mem_find` / `find --space` / `POST /memory/find` / MCP `find_bytes`, `mem_read_bytes`, snapshot windows (`vram:0x2A345:3`) and `memory save space:addr:len`. A match is named by region and offset.
+- WebAPI `/memory/page/cache/{n}` reads and writes the fast RAM pages. A POST to an unknown type is refused: before, it fell through to the ROM page pointer and, with the protection off, wrote ROM.
+- Lua's positional `ttd_find_last` takes `space` as its last argument.
+- GDB has `monitor regions`, `monitor mem <space:offset> [len]` and `monitor ttd findlast <w|r|x> <space:offset>` (`gdbmonitormemory.h`).
+- Mutants caught: the match's region name, a region parsed as a page, the region read's clip, the GDB space.
+

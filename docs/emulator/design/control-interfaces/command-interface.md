@@ -604,7 +604,7 @@ WebAPI `POST /memory/find`, Lua / Python `mem_find` and MCP `find_bytes`.
 
 | Flag | Default | Description |
 | :--- | :--- | :--- |
-| `--space <s>` | `cpu` | `cpu`: what the CPU sees now (0x0000-0xFFFF); `ram`: every RAM page, matches as page + offset; a page `ram5` / `rom2` / `cache0`: its offsets 0x0000-0x3FFF, mapped or not |
+| `--space <s>` | `cpu` | `cpu`: what the CPU sees now (0x0000-0xFFFF); `ram`: every RAM page, matches as page + offset; a page `ram5` / `rom2` / `cache0`: its offsets 0x0000-0x3FFF, mapped or not; or a device memory region by name or alias (`vram`, `neogs.ram`, `tsconf.cram` ...; `memory regions`), matches as region + offset |
 | `--mask <hex>` | none | As long as the pattern: 1 bits must match (replaces the wildcards) |
 | `--from <addr>` | start of the space | Search range start (`ram`: a linear offset over all pages) |
 | `--to <addr>` | end of the space | Search range end, inclusive |
