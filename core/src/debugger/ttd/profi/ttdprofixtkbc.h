@@ -28,6 +28,8 @@ public:
     std::string TTDDeviceName() const override { return "ProfiXtKbc"; }
     PeripheralId TTDPeripheralId() const override { return PeripheralId::ProfiXtKbc; }
     uint64_t TTDHashState() const override;
+    /// The clocks that advance with emulated time are time fields (the engine stores their residual from a line)
+    TTDDeviceDescriptor TTDDescribe() const override;
 
 private:
     ProfiXtKbc& _kbc;

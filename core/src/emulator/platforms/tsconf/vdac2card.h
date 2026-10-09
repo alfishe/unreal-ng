@@ -72,6 +72,11 @@
 #include "debugger/ttd/ttddisplayparticipant.h"
 #include "emulator/io/spi/spidevice.h"
 #include "emulator/platforms/tsconf/vdac2capture.h"
+
+namespace ttd
+{
+struct TTDTimeField;
+}
 #include "emulator/platforms/tsconf/vdac2control.h"
 #include "emulator/platform.h"
 
@@ -218,6 +223,8 @@ public:
     /// Fixed size for the card's lifetime
     size_t TtdStateSize() const;
     void TtdSaveState(uint8_t* dst) const;
+    /// The blob's absolute raster times (frameBase, position, nextEvent): time fields of the card's TTD state
+    static std::vector<ttd::TTDTimeField> TtdTimeFields();
     /// False when the blob is not this card's (version, or the chip refused its state)
     bool TtdLoadState(const uint8_t* src);
     /// The chip's memory regions (RAM_G, both display lists, REG, CMD, SPECIAL,

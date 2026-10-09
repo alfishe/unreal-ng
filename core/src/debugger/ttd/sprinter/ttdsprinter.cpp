@@ -1,3 +1,4 @@
+#include <cassert>
 #include "stdafx.h"
 
 #include "ttdsprinter.h"
@@ -148,6 +149,7 @@ void TTDSprinterPld::TTDSaveState(uint8_t* dst) const
     const SprinterIntSource& ints = d._intSource;
     w.U8(ints.ModePage());
     w.U16(ints.FrameLines());
+    assert(w.p - dst == kAckedPulseOffset && "TTDSprinterPld: the acked pulse is a declared time field");
     w.U64(static_cast<uint64_t>(ints.AckedPulse()));
     w.U8(ints.KeyboardIntLatched() ? 1 : 0);
 
@@ -230,6 +232,13 @@ void TTDSprinterPld::TTDLoadState(const uint8_t* src)
         context->pCore->GetZ80()->RecomputeFrameTiming();
 
     d.OnTtdStateLoaded();
+}
+
+TTDDeviceDescriptor TTDSprinterPld::TTDDescribe() const
+{
+    TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
+    d.timeFields = {{kAckedPulseOffset, 8}};
+    return d;
 }
 
 uint64_t TTDSprinterPld::TTDHashState() const

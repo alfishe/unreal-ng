@@ -32,6 +32,14 @@ public:
     std::string TTDDeviceName() const override { return "EvoAvrVolatile"; }
     PeripheralId TTDPeripheralId() const override { return PeripheralId::EvoAvrVolatile; }
     uint64_t TTDHashState() const override;
+    /// The /WAIT timing's absolute AVR cycles (loopResume at 4, eepromReadyAt at 12, u64) advance with emulated time:
+    /// time fields (measured 2026-10-09: loopResume moves every frame at an idle prompt)
+    TTDDeviceDescriptor TTDDescribe() const override
+    {
+        TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
+        d.timeFields = {{4, 8}, {12, 8}};
+        return d;
+    }
 
 private:
     EvoAvr& _avr;

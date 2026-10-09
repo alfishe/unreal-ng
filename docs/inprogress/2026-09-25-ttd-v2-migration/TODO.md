@@ -71,7 +71,20 @@ Found by the 2026-10-02 audit. Gaps 1–16 break replay in v1 today; each is fix
   - [ ] Step 2: telemetry streams with history, for an item with a consumer (an activity timeline in the TTD panel)
 - [x] 18 `ttd.ksy:532` NeoGS memory note **Done 2026-10-08:** the note said RAM and flash were in the blob; they never were (v1 records neither); the engine records them as regions 4 and 5. Fixed in `ttd.ksy`, the NeoGS serializer's comment and the NeoGS TTD test's header
 - [x] Fill the registry's Size and Variability columns from per-stream benchmark measurements **Done 2026-10-09:** BM-9 (`bm9_<region>_*`: size, first-capture bytes, steady bytes and versions per frame for every region and device state), the full matrix; 48 rows filled ([e6-comparison.md](e6-comparison.md))
-  - [ ] Device states changing every frame at an idle prompt beyond Q1's AY / TSFM: NeoGS, MoonSound, the ATM2 / Profi keyboard MCUs, TS-Conf state, ZX-Evo AVR volatile bytes, Sprinter PLD, VDAC2, ZiFi UART - trace the fields; time fields where they are time-derived
+  - [x] Device states changing every frame at an idle prompt beyond Q1's AY / TSFM: NeoGS, MoonSound, the ATM2 / Profi keyboard MCUs, TS-Conf state, ZX-Evo AVR volatile bytes, Sprinter PLD, VDAC2, ZiFi UART - trace the fields; time fields where they are time-derived **Done 2026-10-09:** traced byte by byte (each device's changing offsets and their per-frame steps, mapped to the serializers' fields).
+    - **New time fields** (bytes per idle frame, BM-9 full run):
+      - VDAC2 card `frameBase` / `position` / `nextEvent`: 13.3 → 0;
+      - Sprinter PLD's acked INT pulse: 8.4 → 0.9;
+      - ZX-Evo AVR's `loopResume` / `eepromReadyAt`: 6.5 → 1.7-2.1;
+      - WD1793 `_time` / `_lastTime` / the motor countdown: Sprinter 9.5 → 6.2, Profi 10.9 → 9.5;
+      - Profi XT KBC's time bases and MCU clock / instructions (as ATM2's): 42 → 34.
+    - **Real state, left as it is:**
+      - TS-Conf: CPU-cache copies of RAM words a handler increments;
+      - NeoGS: the GS Z80's registers and its frame phase;
+      - MoonSound: the noise LFSR, and LFO phases wrapping every 8-13 frames - re-anchoring would cost more than it saves;
+      - ATM2 KBC: the remainder `frac`, and the firmware's RAM tick counter (tried as a time field: no gain);
+      - ZiFi UART: not reached by the measuring machines.
+    - Test `Devices/TTDDeviceTimeFields_Test`, which catches each declaration removed.
 
 ## Phase 1 check ([phase-1-results.md](phase-1-results.md))
 

@@ -92,5 +92,7 @@ Status: measured 2026-10-09 on branch `ttd-engine` (engine backend, the controll
   - the VDAC2 card (13 B/frame);
   - the ZiFi UART (6 B/frame).
 
-  The cards and the TS-Conf, AVR and Sprinter entries are candidates for time fields: what changes in them at rest has not been traced field by field yet.
+  **Traced 2026-10-09** (TODO).
+  - **Now time fields:** the VDAC2 card's raster clocks, the Sprinter PLD's INT pulse, the AVR's /WAIT cycles, WD1793's clocks and the Profi controller's time bases.
+  - **Real state:** the rest - NeoGS CPU registers, MoonSound noise and LFO phases, TS-Conf cache words, the MCUs' registers and RAM.
 - **The Sprinter at its idle boot screen** rewrites 9.7 pieces of video RAM per frame (223 B/frame). That is the BIOS screen at work, not a capture artifact. The region is compared at each capture and stores only the pieces that changed.

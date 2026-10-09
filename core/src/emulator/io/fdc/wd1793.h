@@ -1393,6 +1393,10 @@ public:
     {
         ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
         d.instance = "betadisk";
+        // The controller's clocks advance with emulated time (the layout table in wd1793.cpp): _time at 22, _lastTime
+        // at 30, and the motor's countdown _motorTimeoutTStates at 114 - time fields (measured 2026-10-09: all three
+        // move every frame while the controller is clocked)
+        d.timeFields = {{22, 8}, {30, 8}, {114, 8}};
         return d;
     }
     /// endregion </TTDSerializable interface>
