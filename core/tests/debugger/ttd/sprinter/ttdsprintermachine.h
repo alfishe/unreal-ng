@@ -284,7 +284,9 @@ protected:
         // The picture of the frame that ended here (a seek itself draws nothing into the framebuffer)
         const auto screen = _screens.find(cp->time.frame);
         if (picture && screen != _screens.end())
+        {
             EXPECT_EQ(ScreenHash(), screen->second) << where << ": the picture differs";
+        }
     }
 
     /// Seek to checkpoint `from` and run forward through `frames` recorded frames (the journal

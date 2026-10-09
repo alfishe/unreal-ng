@@ -65,6 +65,7 @@ Query fields (combine freely; at least one criterion required):
 | `value` | the byte written/read, 0..255 |
 | `pc_from` / `pc_to` | restrict by the PC that performed the access |
 | `phys_page` | 0..255 (JSON number): only accesses to this physical RAM page |
+| `space` | `ram` (default) / `vram` / `cache`: the Sprinter's video RAM or fast RAM, the address fields then offsets in it (inside one 16 KB page) |
 | `before_frame` / `before_tin` | search at or before this point instead of the current position (`before_tin` only counts together with `before_frame`) |
 
 At least one of `addr`, `addr_from`, `addr_to`, `pc_from`, `pc_to`, `value`
@@ -82,6 +83,21 @@ Result — the most recent match in recorded history:
 ```
 
 `phys_page` is `null` when the access had no RAM page (ROM, I/O).
+The answer also carries `space` and `addr` - or, for `space: "vram"` /
+`"cache"`, `offset`.
+
+**Who drew this pixel on the Sprinter?** Its byte lives in the video RAM, not
+at a Z80 address (a graphics window shows it at `PORT_Y * 1024 + (addr & 0x3FF)`).
+Ask by the video RAM offset; the writer may be the CPU through the window or
+the accelerator, both answer with the instruction's PC:
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/find-last" -H 'Content-Type: application/json' \
+     -d '{"addr":"0x4805","space":"vram"}'
+# {"found":true,..,"pc":32781,"space":"vram","offset":18437,"phys_page":null,"access":"write"}
+```
+
+The fast RAM (`space: "cache"`, offsets 0..0xFFFF) works the same way.
 `found: false` ⇒ nobody touched it in the recorded window, or a replay
 barrier blocked the search — then the response also carries
 `"blocked": true` and `marker_frame`, `marker_tinframe`, `marker_kind`,

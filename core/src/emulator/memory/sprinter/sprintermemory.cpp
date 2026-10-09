@@ -164,7 +164,7 @@ void SprinterMemory::MapFastRamToBank(uint8_t bank, uint8_t fastRamPage)
     bank &= 3;
     _bank_mode[bank] = BANK_CACHE;
     _bank_read[bank] = _bank_write[bank] = CacheBase() + static_cast<size_t>(fastRamPage & (MAX_CACHE_PAGES - 1)) * PAGE_SIZE;
-    // Not a RAM page: TTD journals RAM pages only (fast RAM joins the TTD state in phase S7)
+    // Not a RAM page: time travel names a fast RAM byte by its own space (TtdPageOfBank, ttdphyspage.h)
     _bank_ram_page_cache[bank] = ttd::kPhysPageNone;
     UpdateSlotContention(bank);
     if (bank == 0)
@@ -231,7 +231,16 @@ uint8_t SprinterMemory::MemoryReadDebug(uint16_t addr, bool isExecution)
     {
         if (_redirect[addr >> 14] == ReadRedirect::Isa)
             return IsaRead(addr);
-        return Redirect(addr, value);
+        const uint8_t redirected = Redirect(addr, value);
+        // A data read of the video RAM through a graphics window: named by the video RAM's own address
+        if (_redirect[addr >> 14] == ReadRedirect::Graphics && !isExecution && _feature_ttd_enabled &&
+            (_context->ttdProbe.IsArmed() || _context->ttdCoverageActive))
+        {
+            const uint32_t videoAddr = _pld->portY * 1024u + (addr & 0x3FF);
+            TtdNoteAccess(ttd::SpacePage(ttd::TTDMemorySpace::Vram, videoAddr), static_cast<uint16_t>(videoAddr & 0x3FFF),
+                          redirected, false);
+        }
+        return redirected;
     }
     return value;
 }
@@ -255,6 +264,11 @@ void SprinterMemory::AcceleratorWrite(uint16_t addr, uint8_t value)
     MemoryWriteFast(addr, value);  // write-protected windows (graphics) store into the trash page
     if (_bank_ram_page_cache[bank] != ttd::kPhysPageNone)
         MarkRamPageEdited(static_cast<uint16_t>(_bank_ram_page_cache[bank]));
+    // The accelerator's stores are writes of the instruction that started them (its PC): the write journal and the
+    // probe see them as they see the CPU's (it reaches RAM windows only, AcceleratorReaches). A graphics window is a
+    // store into the trash page: OnWrite notes the video RAM byte instead
+    if (_feature_ttd_enabled && _action[bank] != BankAction::Graphics)
+        TtdNoteAccess(_bank_ram_page_cache[bank], addr, value, true);
     OnWrite(addr, value);
 }
 
@@ -304,6 +318,10 @@ void SprinterMemory::OnWrite(uint16_t addr, uint8_t value)
             }
             if (_vram)
                 _vram->Write(videoAddr, value);
+            // Time travel names the byte by the video RAM's own address: "who wrote video RAM #12345"
+            if (_feature_ttd_enabled)
+                TtdNoteAccess(ttd::SpacePage(ttd::TTDMemorySpace::Vram, videoAddr), static_cast<uint16_t>(videoAddr & 0x3FFF),
+                              value, true);
             return;
         }
         case BankAction::Isa:

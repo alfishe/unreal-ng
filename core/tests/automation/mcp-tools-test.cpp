@@ -2682,6 +2682,36 @@ TEST_F(McpTools_Test, TimeTravel_FindLast_ForwardsQueryAndReportsHit)
     EXPECT_NE(result.text.find("RAM page 5"), std::string::npos) << result.text;
 }
 
+/// space: find_last in the Sprinter's video / fast RAM - the space and the offset reach the WebAPI, the summary names
+/// the offset found
+TEST_F(McpTools_Test, TimeTravel_FindLast_ForwardsTheSpaceAndReportsTheOffset)
+{
+    Json::Value reply;
+    reply["found"] = true;
+    reply["frame"] = 3;
+    reply["tinframe"] = 100;
+    reply["pc"] = 0x800D;
+    reply["value"] = 9;
+    reply["phys_page"] = Json::Value();
+    reply["access"] = "write";
+    reply["space"] = "vram";
+    reply["offset"] = 0x4805;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/find-last"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "find_last";
+    args["addr"] = "0x4805";
+    args["space"] = "vram";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/find-last");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["space"].asString(), "vram");
+    EXPECT_EQ(call->body["addr"].asString(), "0x4805");
+    EXPECT_NE(result.text.find("vram offset 18437"), std::string::npos) << result.text;
+}
+
 /// port_events: "when did the program ..." - the event, its argument and the
 /// options reach POST /ttd/port-events (from_frame/to_frame as from/to), and
 /// the summary lists each hit with its time, PC, port, value and AY register

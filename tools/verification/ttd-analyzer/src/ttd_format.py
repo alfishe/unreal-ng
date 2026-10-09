@@ -1496,6 +1496,11 @@ def decode_journal_block(block: JournalBlock, payload: bytes) -> List[WriteRecor
     page_start = value_start + count
     io_start = page_start + count
     end = io_start + (count + 7) // 8
+    # An optional page-high column (bit 8 of the page: a page of another memory space, the Sprinter's video or fast
+    # RAM) follows the I/O bits in a block that has such a record
+    high_start = end if end + (count + 7) // 8 == len(raw) else None
+    if high_start is not None:
+        end += (count + 7) // 8
     if end != len(raw):
         raise TtdFormatError(
             f"journal block: columns for {count} records need {end} bytes, "
@@ -1514,7 +1519,8 @@ def decode_journal_block(block: JournalBlock, payload: bytes) -> List[WriteRecor
             is_io=bool((raw[io_start + i // 8] >> (i & 7)) & 1),
             m1pc=raw[m1pc_start + 2 * i] | (raw[m1pc_start + 2 * i + 1] << 8),
             value=raw[value_start + i],
-            phys_page=raw[page_start + i],
+            phys_page=raw[page_start + i] | (
+                ((raw[high_start + i // 8] >> (i & 7)) & 1) << 8 if high_start is not None else 0),
         ))
     if gt_pos != addr_start:
         raise TtdFormatError(

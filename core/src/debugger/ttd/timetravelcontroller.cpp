@@ -4534,7 +4534,7 @@ void TimeTravelController::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint
     rec.value    = newVal;
     // Journaled writes always have a RAM page (Memory gates on kPhysPageNone),
     // and RAM pages are 0..255, so the record's byte holds it exactly.
-    rec.physPage = static_cast<uint8_t>(physPage);
+    SetRecordPage(rec, physPage);
     (void)oldVal;  // Not stored in the compact 12-byte record (TDD §9.3)
 
     if (_writeJournal)
@@ -4676,7 +4676,7 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournal(uint64_t fromT, ui
             rec.isIo = 0;
             rec.m1pc = h.pc;
             rec.value = h.value;
-            rec.physPage = static_cast<uint8_t>(h.physPage);   // as the live journal stores it
+            SetRecordPage(rec, h.physPage);   // as the live journal stores it
             f.records.push_back(rec);
         }
         r.records += f.records.size();
@@ -4905,7 +4905,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
         if (rec.addr < q.addrFrom || rec.addr > q.addrTo) return false;
         if (q.hasValueFilter && rec.value != q.value) return false;
         if (q.hasPcFilter && (rec.m1pc < q.pcFrom || rec.m1pc > q.pcTo)) return false;
-        if (q.hasPhysPageFilter && rec.physPage != q.physPage) return false;   // bank-aware (TDD §9.4)
+        if (q.hasPhysPageFilter && RecordPage(rec) != q.physPage) return false;   // bank-aware (TDD §9.4)
         return true;
     };
 
@@ -4929,7 +4929,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
                     answer.time = TimePointAt(rec->globalT);
                     answer.pc = rec->m1pc;
                     answer.value = rec->value;
-                    answer.physPage = PhysPage{rec->physPage};
+                    answer.physPage = RecordPage(*rec);
                     answer.access = TTDAccessType::Write;
                     answer.addr = rec->addr;
                     reportWindow(answer.time, std::min(TimePointAt(beforeGlobalT), SessionEndPosition()));

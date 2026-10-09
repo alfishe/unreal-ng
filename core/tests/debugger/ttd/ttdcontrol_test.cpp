@@ -459,6 +459,18 @@ TEST_P(TTDControl_Test, ReverseQueriesCheckTheirCriteriaAndAddresses)
     EXPECT_EQ(Run("find-last", {{"addr", "#5C00"}, {"access", "poke"}}).error, TTDControlError::BadRequest);
     EXPECT_EQ(Run("find-last", {{"value", "256"}}).error, TTDControlError::BadRequest);
     EXPECT_EQ(Run("find-last", {{"addr", "$5C00"}, {"phys_page", "300"}}).error, TTDControlError::BadRequest);
+    // space: ram / vram / cache; offsets in another space reach its end (256 KB) and stay inside one 16 KB page
+    EXPECT_EQ(Run("find-last", {{"addr", "0"}, {"space", "rom"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("find-last", {{"addr", "0x40000"}, {"space", "vram"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("find-last", {{"addr_from", "0x3FFF"}, {"addr_to", "0x4000"}, {"space", "cache"}}).error,
+              TTDControlError::BadRequest);
+    EXPECT_EQ(Run("find-last", {{"value", "1"}, {"space", "vram"}}).error, TTDControlError::BadRequest) << "no offset";
+    EXPECT_EQ(Run("find-last", {{"addr", "5"}, {"space", "vram"}, {"phys_page", "5"}}).error, TTDControlError::BadRequest);
+    for (const auto& [space, addr] : {std::pair{"vram", "0x3FFFF"}, std::pair{"cache", "0x4000"}, std::pair{"ram", "0xFFFF"}})
+    {
+        const TTDReply r = Run("find-last", {{"addr", addr}, {"space", space}});
+        EXPECT_TRUE(r.Ok()) << space << " " << addr << ": " << r.message;
+    }
     EXPECT_EQ(Run("reverse-continue").error, TTDControlError::BadRequest);
     EXPECT_EQ(Run("reverse-continue", {{"pcs", "0x38,"}}).error, TTDControlError::BadRequest);
 

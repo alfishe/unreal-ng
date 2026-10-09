@@ -1233,6 +1233,10 @@ result = emu.ttd_find_last(
     phys_page=5                # 0..255: one physical RAM page (ValueError otherwise)
 )
 
+# The Sprinter's video RAM / fast RAM: space='vram' | 'cache', the address an offset in it
+result = emu.ttd_find_last(addr=0x4805, space='vram')
+# {'found': True, 'pc': 0x800D, 'space': 'vram', 'offset': 0x4805, 'phys_page': None, ...}
+
 # A replay barrier stopped the search before any match:
 # {'found': False, 'blocked': True, 'marker_frame': 4700, 'marker_tinframe': 0,
 #  'marker_kind': 'debugger_edit', 'marker_reason': 'Python memory write',
