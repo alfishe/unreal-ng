@@ -63,6 +63,7 @@ NNN-name/
 | 019 | [zxdlss-gigascreen](019-zxdlss-gigascreen/) | ZX DLSS GigaScreen de-flicker: reference recording (Across the Edge), clip extraction/export from TTD, effect map, quality oracle; Python POC → C++ prototype → integration |
 | 021 | [eve-accel](021-eve-accel/) | FT812 (VDAC2) renderer acceleration: line-parallel CPU, Metal compute (bit-exact), per-line vs per-frame dispatch, 256-subpixel AA vs the distance table, three emulation profiles; summary in `docs/inprogress/2026-10-01-tsconf-vdac2/acceleration-experiments.md` |
 | 023 | [steamdeck-client](023-steamdeck-client/README.md) | Steam Deck native client (SDL3 / SDL_GPU): one folder per experiment P-01…P-25 of `docs/inprogress/2026-10-08-steamdeck-client/poc-plan.md`, built in the steamrt4 SDK container, deployed to a Deck over SSH |
+| 024 | [dream-banks](024-dream-banks/README.md) | Dream SAM5000 compiled sound banks (.DXB / .B16): reverse-engineered reader, sample extraction, SF2 conversion for libsam2695, render comparison; spec in `docs/inprogress/2026-10-03-zx-multisound/sam7-dream-banks.md` |
 
 ---
 
