@@ -265,6 +265,7 @@ bool LoaderNex::Load(const std::vector<uint8_t>& image)
     z80->sp = _header.sp;
     z80->pc = _header.pc;
     z80->iff1 = z80->iff2 = 0;
+    z80->halted = 0;  // a CPU waiting in HALT (NextZXOS idles there) leaves it
     return true;
 }
 

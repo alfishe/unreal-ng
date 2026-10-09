@@ -164,6 +164,15 @@ const uint8_t* NextMemory::DivMmcRamBank(unsigned bank)
     return ROMPageHostAddress(static_cast<uint8_t>(8 + ((bank & 15) >> 1))) + ((bank & 1) ? kSlotSize : 0);
 }
 
+void NextMemory::SetLayer2View(const Layer2View& view)
+{
+    if (view.read == _l2View.read && view.write == _l2View.write && view.segment == _l2View.segment && view.bank == _l2View.bank &&
+        view.offset == _l2View.offset)
+        return;
+    _l2View = view;
+    Remap();
+}
+
 void NextMemory::SetDivMmcView(const DivMmcView& view)
 {
     if (view.mapped == _divView.mapped && view.bank3AtZero == _divView.bank3AtZero && view.bank == _divView.bank)
@@ -377,6 +386,29 @@ void NextMemory::MapSlot(unsigned slot)
         _physPage[slot] = ttd::kPhysPageNone;
         _kind[slot] = "unmapped";
     }
+    if (!(slot < 2 && _divView.mapped && !bootRomHere) && !bootRomHere)
+        ApplyLayer2(slot);
+}
+
+/// Layer 2 over the slot the MMU (or the ROM) would show: reads and writes separately
+void NextMemory::ApplyLayer2(unsigned slot)
+{
+    if (!_l2View.read && !_l2View.write)
+        return;
+    const bool all = _l2View.segment == 3;
+    if (!(slot < 2 || (all && slot < 6)))
+        return;
+    const unsigned bank16 = static_cast<unsigned>(_l2View.bank) + (all ? (slot >> 1) : _l2View.segment) + _l2View.offset;
+    if (bank16 >= MAX_RAM_PAGES)
+        return;
+    const uint32_t off = static_cast<uint32_t>(RAMPageAddress(static_cast<uint16_t>(bank16)) + (slot & 1) * kSlotSize - _memory);
+    if (_l2View.read)
+    {
+        _readOff[slot] = off;
+        _kind[slot] = "layer 2";
+    }
+    if (_l2View.write)
+        _writeOff[slot] = off;
 }
 
 void NextMemory::SyncWindows()

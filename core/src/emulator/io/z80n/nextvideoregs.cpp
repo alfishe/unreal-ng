@@ -28,6 +28,7 @@ void NextVideoRegs::Reset()
     _ulaNext = 0x07;
     _portFf = 0;
     _port123b = 0;
+    _l2Offset = 0;
     _shadowAlias = false;
     _haveFirst = false;
     // power-on palettes: the ULA's own colours (ink and paper), the others colour = index

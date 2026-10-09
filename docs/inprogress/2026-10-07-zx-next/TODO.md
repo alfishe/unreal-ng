@@ -83,6 +83,22 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 - [x] ULA clip window (NR #1A, with the border beside it), NR #68 bit 0 stencil, NR #15 modes 110 / 111 (additive / subtractive Layer 2 + ULA / tilemap by the blend bits NR #68 6:5); test04tilemap, test10tilemapper, stencil_test now identical to jnext
 - Open in the NEX hunt (jnext differs from the VHDL or the case is a moving picture): Layer 2 320x256 default clip (VHDL 191, jnext shows 255), animated demos (frame phase), uninitialised-RAM noise screens (tmHiRes, tmHiCol), timing screens (DMACopy, LDIRCopy, contention_test, floating_bus_test), V1.3 files
 
+## Cross-check against ZEsarUX (2026-10-09, owner: jnext alone is not trustworthy)
+`REF=zesarux tools/verification/next-cosim/nexcmp.sh file.nex 250` runs the same NEX on the patched ZEsarUX (`nexzesarux.sh`; its 704x608 window cropped to our 640x512 grid at (32,48), calibrated on tm.nex = 0 px). Over the 125 NEX files of the collection, ours is pixel-identical (<= 2000 px) to ZEsarUX on 42 and to jnext on 46; 28 agree with both. The points where jnext and the VHDL part ways:
+- ULA normal colour level: ZEsarUX (0,182,182) = ours = the firmware `DefaultPalette` (0xB6); jnext 219 is the outlier
+- Layer 2 320x256 default clip y2 = 191: ZEsarUX clips at 192 rows with the ULA below, like ours; jnext shows 256 rows
+- show512: ZEsarUX black background = ours; jnext magenta
+- DMACopy, LDIRCopy, contention_test, bbcbasic, palette_demo, tilemap_demo, tmNoStart, hott, empty, preserveNextRegs: ZEsarUX = ours exactly, jnext differs
+- plotit-lite and beast need the real system under them: a NEX is loaded by NextZXOS, so DivMMC / esxDOS API, the 48K ROM and system variables are there. `UNREAL_NEX_BOOT=<card>` boots the chain to the main menu first, then loads (the loader also leaves HALT); beast then matches ZEsarUX and jnext, plotit-lite runs its UI
+- Open where ZEsarUX differs from ours and jnext agrees with ours (loading screens of V1.1 files, a few demos): beanbros, TX-1696, lom, tmLoRes, bloaters, revivalsurvival - ZEsarUX's own NEX loader, not a video difference to chase
+
+## N4 (2026-10-09): audio, a Next-specific device
+- [x] `NextAudio` (core/src/emulator/sound/nextaudio.{h,cpp}): three AY / YM chips with chip select and pan through #FFFD (bit 7 + bits 4:2 = 111, chip bits 1:0, pan 6:5), ACB / mono per chip (NR #08 bit 5, NR #09 7:5), AY / YM (NR #06), turbosound enable (NR #08 bit 1); the four-channel DAC on every port of the VHDL (#1F #0F #4F #5F, #F1 #F3 #F9 #FB, #3F, #DF, #B3; gated by NR #84) and the NR #2C / #2D / #2E mirrors; generators on the AY clock (a tick per 16 base T-states, any CPU speed), levels per tick resampled to the frame; a model audio source in the mixer (one row "Next audio"); `ay-socket = none` in the Next config so the 128K TurboSound is not fitted
+- [ ] Not yet: the beeper level options of NR #06 / #08 (internal speaker exclusion), SpecDrum in turbosound level terms, I2S, per-chip rows and the AY chain / voicing of the standard sound stack (the device mixes plainly), the mixer gain of the sum (0.4 per chip) is a first guess, TTD blob, the sound report
+
+## Layer 2 CPU mapping (port #123B), 2026-10-09
+- [x] `NextMemory::Layer2View`: bits 2:0 / 3 / 7:6 and the offset write (bit 4), the 16K banks of Layer 2 replace #0000-#3FFF (or #0000-#BFFF for segment 3) for reads and / or writes below the DivMMC and above the MMU; NR #12 / #13 refresh it
+
 ## Remaining
 - [x] Verification program: public suites collected and graded ([verification-program.md](verification-program.md)); esxDOS source availability checked ([esxdos-and-sd.md](esxdos-and-sd.md) section 1a)
 - [x] N0 second pass (2026-10-08): ULA / Timex / ULA+ / ULAnext, LoRes, palettes and the layer compositor, audio (AY x 3, DAC, mixer), CTC, UART, SPI, DivMMC, keyboard, ZEsarUX comparison: [research-fpga-vhdl.md](research-fpga-vhdl.md) sections 16-22; [esxdos-and-sd.md](esxdos-and-sd.md); [design-integration.md](design-integration.md)

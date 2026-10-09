@@ -30,7 +30,20 @@ public:
     /// bit 6 the shadow ULA screen (an alias of #7FFD bit 3)
     void WritePortFf(uint8_t value) { _portFf = value & 0x3F; }
     uint8_t PortFf() const { return _portFf; }
-    void WritePort123b(uint8_t value) { _port123b = value; }
+    /// Port #123B: bit 4 = 0 sets the enable (1), write map (0), read map (2), shadow bank (3) and segment (7:6); bit 4 = 1
+    /// sets the bank offset (2:0) of the CPU mapping
+    void WritePort123b(uint8_t value)
+    {
+        if (value & 0x10)
+            _l2Offset = value & 7;
+        else
+            _port123b = value & 0xCF;
+    }
+    uint8_t Layer2Offset() const { return _l2Offset; }
+    bool Layer2MapWrite() const { return (_port123b & 0x01) != 0; }
+    bool Layer2MapRead() const { return (_port123b & 0x04) != 0; }
+    bool Layer2MapShadow() const { return (_port123b & 0x08) != 0; }
+    uint8_t Layer2MapSegment() const { return static_cast<uint8_t>(_port123b >> 6); }
     uint8_t Port123b() const { return _port123b; }
     void WriteDisplayControl(uint8_t value)
     {
@@ -73,6 +86,7 @@ private:
     uint8_t _ulaNext = 0x07;
     uint8_t _portFf = 0;
     uint8_t _port123b = 0;
+    uint8_t _l2Offset = 0;
     bool _shadowAlias = false;
     uint8_t _first = 0;
     bool _haveFirst = false;

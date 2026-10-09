@@ -55,6 +55,7 @@ void NextBoard::Reset(bool hard)
     _selected = 0;
     _resetPending = false;
     _video.Reset();
+    RefreshLayer2Mapping();
     if (hard)
     {
         _sprites.Reset();
@@ -143,6 +144,19 @@ uint8_t NextBoard::Read(uint8_t reg) const
 
 void NextBoard::Write(uint8_t reg, uint8_t value)
 {
+    // the sound follows NR #06 / #08 / #09 once their value is stored, whichever path stores it
+    struct AudioNotify
+    {
+        NextBoard* board;
+        uint8_t reg;
+        ~AudioNotify()
+        {
+            if ((reg == 0x06 || reg == 0x08 || reg == 0x09) && board->_machine)
+                board->_machine->AudioConfigChanged();
+        }
+    } audioNotify{this, reg};
+    if ((reg == 0x2C || reg == 0x2D || reg == 0x2E) && _machine)
+        _machine->DacMirrorWrite(reg, value);
     if (_log)
         _log->push_back({reg, value, _pc ? *_pc : uint16_t(0)});
     if (reg == kRegMachineId || reg == kRegCoreVersion || reg == kRegCoreVersionSub)
@@ -176,6 +190,11 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             return;
         case 0x64:
             _copper.WriteOffset(value);
+            return;
+        case 0x12:
+        case 0x13:
+            _regs[reg] = value;
+            RefreshLayer2Mapping();
             return;
         case 0x34:
             _regs[reg] = value;
@@ -274,6 +293,17 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             _regs[reg] = value;
             return;
     }
+}
+
+void NextBoard::RefreshLayer2Mapping()
+{
+    NextMemory::Layer2View view;
+    view.read = _video.Layer2MapRead();
+    view.write = _video.Layer2MapWrite();
+    view.segment = _video.Layer2MapSegment();
+    view.bank = static_cast<uint8_t>((_video.Layer2MapShadow() ? _regs[0x13] : _regs[0x12]) & 0x7F);
+    view.offset = _video.Layer2Offset();
+    _memory->SetLayer2View(view);
 }
 
 void NextBoard::AfterInstruction()

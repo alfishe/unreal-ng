@@ -10,10 +10,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "emulator/cpu/core.h"
+#include "emulator/io/keyboard/keyboard.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -142,13 +144,48 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
     const char* path = std::getenv("UNREAL_NEX");
     if (!path)
         GTEST_SKIP() << "UNREAL_NEX not set";
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    // UNREAL_NEX_BOOT=<card folder>: the real chain (boot ROM, TBBLUE.FW, NextZXOS to its main menu) first, then the NEX is
+    // loaded into that running system: ROMs, DivMMC / esxDOS API, system variables are all there
+    const char* boot = std::getenv("UNREAL_NEX_BOOT");
+    const std::string card = boot ? boot : "";
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero, [&](CONFIG& config) {
+        if (!card.empty())
+        {
+            std::strncpy(config.next_boot_rom_path, "rom/next/nextboot.rom", sizeof config.next_boot_rom_path - 1);
+            std::strncpy(config.next_sd_path, card.c_str(), sizeof config.next_sd_path - 1);
+        }
+    });
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
+    if (!card.empty())
+    {
+        Z80* z80 = context->pCore->GetZ80();
+        auto inked = [&]() {
+            const uint8_t* screen = context->pMemory->RAMPageAddress(5);
+            int n = 0;
+            for (int i = 0; i < 0x1800; i++)
+                n += screen[i] != 0 ? 1 : 0;
+            return n;
+        };
+        emulator->EnableTurboMode();
+        int waited = 0;
+        for (; waited < 3000 && !(z80->halted && inked() > 2000); waited++)
+            emulator->RunFrame(true);
+        ASSERT_LT(waited, 3000) << "NextZXOS did not reach its welcome screen";
+        for (int i = 0; i < 50; i++)
+            emulator->RunFrame(true);
+        context->pKeyboard->PressKey(ZXKEY_SPACE);
+        for (int i = 0; i < 8; i++)
+            emulator->RunFrame(true);
+        context->pKeyboard->ReleaseKey(ZXKEY_SPACE);
+        for (int i = 0; i < 150; i++)
+            emulator->RunFrame(true);
+        emulator->DisableTurboMode();
+    }
     // A NEX is loaded into a running system: the 48K ROM has set up its system variables and channels. UNREAL_NEX_PREBOOT=0
     // loads into the bare machine instead
     const char* preboot = std::getenv("UNREAL_NEX_PREBOOT");
-    if (!preboot || std::string(preboot) != "0")
+    if (card.empty() && (!preboot || std::string(preboot) != "0"))
     {
         context->emulatorState.p7FFD = 0x10;
         context->emulatorState.p1FFD = 0x04;
@@ -169,6 +206,11 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
     if (std::getenv("UNREAL_NEX_NRLOG"))
         if (auto* decoder = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder))
             decoder->Board().SetWriteLog(&nrLog, &logPc);
+    // UNREAL_NEX_PORTS: the ports the program wrote / read after the load (port: count, last value)
+    std::map<uint16_t, PortDecoder_Next::PortUse> portsOut, portsIn;
+    if (std::getenv("UNREAL_NEX_PORTS"))
+        if (auto* decoder = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder))
+            decoder->SetPortLog(&portsIn, &portsOut);
     // no turbo: the picture is drawn as the beam passes, a turbo frame is not drawn
     for (int i = 0; i < total; i++)
         emulator->RunFrame(true);
@@ -211,6 +253,17 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
         if (auto* decoder = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder))
             decoder->Board().SetWriteLog(nullptr, nullptr);
     }
+    for (const auto* log : {&portsOut, &portsIn})
+    {
+        if (log->empty())
+            continue;
+        std::cout << (log == &portsOut ? "PORTS OUT" : "PORTS IN") << ":";
+        unsigned shown = 0;
+        for (const auto& [port, use] : *log)
+            if (shown++ < 60)
+                std::cout << " " << std::hex << port << "x" << std::dec << use.count << "=" << std::hex << int(use.last);
+        std::cout << std::dec << std::endl;
+    }
     if (std::getenv("UNREAL_NEX_SPRITES"))
     {
         auto* decoder = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder);
@@ -236,6 +289,23 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
             std::cout << "DMA active " << d.Active() << " mode " << int(d.Mode()) << " prescaler " << int(d.Prescaler()) << " waiting " << d.Waiting() << " counter " << d.Counter() << " of " << d.BlockLength()
                       << " src " << std::hex << d.Source() << " dst " << d.Destination() << std::dec << std::endl;
         }
+        std::cout << "L2 port123b " << std::hex << int(decoder->Board().Video().Port123b()) << " offset " << int(decoder->Board().Video().Layer2Offset()) << " nr12 " << int(decoder->Board().Stored(0x12))
+                  << " nr13 " << int(decoder->Board().Stored(0x13)) << " nr69 " << int(decoder->Board().Video().ReadDisplayControl()) << " nr70 " << int(decoder->Board().Stored(0x70)) << std::dec << std::endl;
+        for (unsigned b = 9; b < 12; b++)
+        {
+            unsigned histogram[256] = {};
+            for (unsigned i = 0; i < 16384; i++)
+                histogram[context->pMemory->RAMPageAddress(static_cast<uint16_t>(b))[i]]++;
+            std::cout << "L2BANK " << b << ":";
+            for (unsigned v = 0; v < 256; v++)
+                if (histogram[v] > 200)
+                    std::cout << " " << std::hex << v << "x" << std::dec << histogram[v];
+            std::cout << std::endl;
+        }
+        std::cout << "L2PAL1 first entries:";
+        for (unsigned i : {0u, 2u, 0xE3u, 0xFFu})
+            std::cout << " " << std::hex << i << "=" << decoder->Board().Video().PaletteEntry(1, i);
+        std::cout << std::dec << std::endl;
         std::cout << "PC " << std::hex << context->pCore->GetZ80()->pc << " sp " << context->pCore->GetZ80()->sp << " iff1 " << int(context->pCore->GetZ80()->iff1) << std::dec << std::endl;
         {
             Z80* z = context->pCore->GetZ80();

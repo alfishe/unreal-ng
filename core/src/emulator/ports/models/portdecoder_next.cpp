@@ -26,10 +26,17 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     _divMmc->isBasicRomPaged = [this]() { return Mem().BasicRomVisible(); };
     _interrupts->SetPoller([this]() { _ctc.Advance(Now28()); });
     _board->SetInterrupts(_interrupts.get());
+    // The Next's own sound: three AYs and the DAC, mixed by SoundManager (the Spectrum 128 TurboSound stays silent)
+    _audio = std::make_unique<NextAudio>(_context);
+    _audio->SetTimeSource([this]() { return Now(); });
+    if (_context->pSoundManager)
+        _context->pSoundManager->attachModelAudioSource(_audio.get());
 }
 
 PortDecoder_Next::~PortDecoder_Next()
 {
+    if (_context->pSoundManager && _audio)
+        _context->pSoundManager->detachModelAudioSource(_audio.get());
     if (_context->pCore && _context->pCore->GetZ80() && _context->pCore->GetZ80()->machineM1Hook == _divMmc.get())
         _context->pCore->GetZ80()->machineM1Hook = nullptr;
     if (_context->pCore && _context->pCore->GetZ80())
@@ -52,6 +59,8 @@ void PortDecoder_Next::reset()
     InsertConfiguredCard();
     _board->Reset(true);
     _ctc.Reset();
+    _audio->Reset();
+    AudioConfigChanged();
     _dma.Reset();
     BindDma();
     _i2c.Reset();
@@ -132,6 +141,18 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     if (port == 0x123B)
     {
         const uint8_t value = _board->Video().Port123b();
+        _lastPortDecoded = true;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = port;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, value, pc, disp);
+        return value;
+    }
+    if ((port & 0xC002) == 0xC000 && !IsPort_DFFD_Next(port))  // #FFFD: the selected AY's register
+    {
+        const uint8_t value = _audio->ReadData();
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -247,9 +268,18 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     else if (static_cast<uint8_t>(port) == 0xFF)
         _board->Video().WritePortFf(value);  // the Timex screen mode (NR #69 bits 5:0 alias it)
     else if (port == 0x123B)
+        {
         _board->Video().WritePort123b(value);
+        _board->RefreshLayer2Mapping();
+        }
+    else if ((port & 0xC002) == 0xC000 && !IsPort_DFFD_Next(port))
+        _audio->WriteSelect(value);  // #FFFD
+    else if ((port & 0xC002) == 0x8000)
+        _audio->WriteData(value);    // #BFFD
     else if (port == 0x303B)
         _board->Sprites().WriteSlotSelect(value);
+    else if (WriteDacPort(port, value))
+        ;
     else if (static_cast<uint8_t>(port) == 0x6B)
         _dma.Write(value, false);
     else if (static_cast<uint8_t>(port) == 0x0B)
@@ -296,6 +326,49 @@ void PortDecoder_Next::BindDma()
     bus.readIo = [this](uint16_t port) { return DecodePortIn(port, 0); };
     bus.writeIo = [this](uint16_t port, uint8_t value) { DecodePortOut(port, value, 0); };
     _dma.SetBus(std::move(bus));
+}
+
+/// NR #06 / #08 / #09: the AY or YM chips, turbosound, the DAC, the stereo mix
+void PortDecoder_Next::AudioConfigChanged()
+{
+    const uint8_t nr06 = _board->Stored(0x06), nr08 = _board->Stored(0x08), nr09 = _board->Stored(0x09);
+    _audio->Configure((nr06 & 3) == 0, (nr08 & 0x02) != 0, (nr08 & 0x08) != 0, (nr08 & 0x20) != 0, static_cast<uint8_t>((nr09 >> 5) & 7));
+}
+
+/// NR #2C (B, left), #2D (A and D, mono), #2E (C, right): the DAC's NextREG mirrors
+void PortDecoder_Next::DacMirrorWrite(uint8_t reg, uint8_t value)
+{
+    if (reg == 0x2C)
+        _audio->WriteDac(1, value);
+    else if (reg == 0x2D)
+    {
+        _audio->WriteDac(0, value);
+        _audio->WriteDac(3, value);
+    }
+    else if (reg == 0x2E)
+        _audio->WriteDac(2, value);
+}
+
+/// The DAC ports of the VHDL (zxnext.vhd 2429-2435, 2658-2664), gated by NR #84
+bool PortDecoder_Next::WriteDacPort(uint16_t port, uint8_t value)
+{
+    const uint8_t low = static_cast<uint8_t>(port), en = _board->Stored(0x84);
+    const bool sd1 = en & 0x02, sd2 = en & 0x04, stereoAD = en & 0x08, stereoBC = en & 0x10, monoADfb = (en & 0x20) && !sd2, monoBC = en & 0x40, monoADdf = en & 0x80;
+    const bool mAD = (low == 0xFB && monoADfb) || (low == 0xDF && monoADdf);
+    const bool mBC = low == 0xB3 && monoBC;
+    const bool a = mAD || (low == 0x1F && sd1) || (low == 0xF1 && sd2) || (low == 0x3F && stereoAD);
+    const bool b = mBC || (low == 0x0F && (sd1 || stereoBC)) || (low == 0xF3 && sd2);
+    const bool c = mBC || (low == 0x4F && (sd1 || stereoBC)) || (low == 0xF9 && sd2);
+    const bool d = mAD || (low == 0x5F && (sd1 || stereoAD)) || (low == 0xFB && sd2);
+    if (a)
+        _audio->WriteDac(0, value);
+    if (b)
+        _audio->WriteDac(1, value);
+    if (c)
+        _audio->WriteDac(2, value);
+    if (d)
+        _audio->WriteDac(3, value);
+    return a || b || c || d;
 }
 
 /// Between two instructions: a DMA that holds the bus runs until it is done or waits for its prescaler (burst mode

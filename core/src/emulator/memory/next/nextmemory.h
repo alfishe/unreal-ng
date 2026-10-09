@@ -110,6 +110,20 @@ public:
     const DivMmcView& GetDivMmcView() const { return _divView; }
     /// endregion
 
+    /// region <Layer 2 CPU mapping (port #123B)>
+    /// Layer 2's 16K banks stand in for #0000-#3FFF (segments 0-2: bank + segment; 3: all of #0000-#BFFF, bank + A15:A14),
+    /// for reads and / or writes by the port's bits; the bank is NR #12 or the shadow NR #13, plus the offset. Below
+    /// the DivMMC's view, above the MMU
+    struct Layer2View
+    {
+        bool read = false, write = false;
+        uint8_t segment = 0;
+        uint8_t bank = 0;    ///< the 16K bank (NR #12 or #13)
+        uint8_t offset = 0;
+    };
+    void SetLayer2View(const Layer2View& view);
+    /// endregion
+
     /// Debugger / test pokes into the slot an address falls in (the base DirectWrite sees the 16K windows)
     void PokeSlot(uint16_t addr, uint8_t value);
     uint8_t PeekSlot(uint16_t addr) const;
@@ -124,6 +138,7 @@ protected:
 
 private:
     void MapSlot(unsigned slot);
+    void ApplyLayer2(unsigned slot);
     void Remap();
     const uint8_t* DivMmcRamBank(unsigned bank);
     void SyncWindows();
@@ -135,6 +150,7 @@ private:
     uint8_t _alt = 0;
     uint8_t _dffd = 0;
     DivMmcView _divView;
+    Layer2View _l2View;
     bool _configMode = false;
     bool _bootRom = false;
     bool _bootRomLoaded = false;

@@ -41,6 +41,10 @@ public:
     virtual void ClearDivMmcMapram() = 0;
     /// Between two instructions: the DMA moves its bytes
     virtual void StepDma() {}
+    /// NR #06 / #08 / #09 changed (the sound's AY / YM, turbosound, DAC, stereo)
+    virtual void AudioConfigChanged() {}
+    /// NR #2C / #2D / #2E: the DAC's NextREG mirrors
+    virtual void DacMirrorWrite(uint8_t, uint8_t) {}
 };
 
 /// The Next board's register file (NEXTREG space, ports #243B select / #253B data): the identification registers
@@ -107,6 +111,8 @@ public:
     void SetMachineType(uint8_t type);
     NextSprites& Sprites() { return _sprites; }
     NextCopper& Copper() { return _copper; }
+    /// The CPU mapping of Layer 2 (port #123B, NR #12 / #13) into the memory's slot table
+    void RefreshLayer2Mapping();
     NextVideoRegs& Video() { return _video; }
     const NextVideoRegs& Video() const { return _video; }
     uint8_t MachineType() const { return _regs[kRegMachineType] & 7; }

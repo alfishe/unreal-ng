@@ -6,6 +6,7 @@
 
 #include "emulator/io/z80n/nextboard.h"
 #include "emulator/io/z80n/nextdma.h"
+#include "emulator/sound/nextaudio.h"
 #include "emulator/io/z80n/nextctc.h"
 #include "emulator/io/z80n/nextdivmmc.h"
 #include "emulator/io/z80n/nexti2c.h"
@@ -45,6 +46,9 @@ public:
     void WriteMemoryMapping(uint8_t value) override;
     void ClearDivMmcMapram() override { _divMmc->ClearMapram(); }
     void StepDma() override;
+    void AudioConfigChanged() override;
+    void DacMirrorWrite(uint8_t reg, uint8_t value) override;
+    NextAudio& Audio() { return *_audio; }
     NextDma& Dma() { return _dma; }
     void BindDma();
     uint8_t ReadMemoryMapping() const override;
@@ -110,6 +114,8 @@ private:
     std::unique_ptr<NextDivMmc> _divMmc;
     NextCtc _ctc;
     NextDma _dma;
+    std::unique_ptr<NextAudio> _audio;
+    bool WriteDacPort(uint16_t port, uint8_t value);
     NextI2c _i2c;
     std::unique_ptr<Z80NEngine> _engine;
 };
