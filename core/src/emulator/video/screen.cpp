@@ -590,8 +590,9 @@ void Screen::SetVideoMode(VideoModeEnum mode)
             // ZX-compatible or extended mode (ATM ZX mode is M_ZX48) keep their
             // discrete, contention-free video logic.
             const MEM_MODEL model = _context ? _context->config.mem_model : MM_SPECTRUM48;
-            const bool ferranti = model == MM_SPECTRUM48 || model == MM_SPECTRUM128 || model == MM_PLUS2 ||
-                                  model == MM_PLUS2A || model == MM_PLUS3;
+            const bool ferranti = (model == MM_SPECTRUM48 || model == MM_SPECTRUM128 || model == MM_PLUS2 ||
+                                   model == MM_PLUS2A || model == MM_PLUS3 || model == MM_NEXT) &&
+                                  !_context->emulatorState.hw_contention_disabled;
             _rasterState.borderUpdateTStates = ferranti ? 4 : 1;
             _rasterState.contentionEnabled = ferranti;
             _rasterState.fetchType = ferranti ? ULA_FERRANTI : ULA_DISCRETE_LOGIC;
@@ -617,7 +618,8 @@ void Screen::SetVideoMode(VideoModeEnum mode)
         // +2A/+3: the Amstrad gate array, not the Ferranti ULA (its own pattern, contended pages 4-7 in any
         // slot, no I/O contention, #0FFD floating bus). The slots were mapped before this rule was known
         const MEM_MODEL model = _context->config.mem_model;
-        _context->pUlaContention->SetGateArray(model == MM_PLUS3 || model == MM_PLUS2A);
+        _context->pUlaContention->SetGateArray(model == MM_PLUS3 || model == MM_PLUS2A ||
+                                               (model == MM_NEXT && _context->emulatorState.ula_timing_class == 3));
         if (_context->pMemory)
             _context->pMemory->RefreshSlotContention();
 

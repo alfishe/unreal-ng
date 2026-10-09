@@ -6,6 +6,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/io/z80n/nexttiming.h"
 #include "emulator/sound/audio.h"
+#include "emulator/video/ulacontention.h"
 
 PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spectrum128(context)
 {
@@ -31,6 +32,7 @@ void PortDecoder_Next::reset()
     Mem().ResetMmu();
     Mem().ApplyClassicPaging(0, 0);
     _board->Reset(true);
+    ApplyTiming(_board->Timing());  // a reset starts the frame: nothing to wait for
     _spiSelected = -1;
     _spiRx = 0xFF;
     _spiBusyUntil = 0;
@@ -245,6 +247,8 @@ void PortDecoder_Next::SetCpuSpeed(uint8_t ratio)
 {
     // Applied at the frame boundary by Z80::ApplyQueuedFrequencyMultiplier (composed with the host speed control)
     _state->hw_turbo_ratio = ratio;
+    _ratio = ratio;
+    UpdateContention();
 }
 
 void PortDecoder_Next::SetMachineTiming(uint8_t timing)
@@ -255,6 +259,28 @@ void PortDecoder_Next::SetMachineTiming(uint8_t timing)
     // Before the first frame (reset) there is nothing to wait for
     if (_context->emulatorState.frame_counter == 0 && _context->pCore->GetZ80()->t == 0)
         ApplyTiming(timing);
+}
+
+void PortDecoder_Next::SetContentionDisabled(bool disabled)
+{
+    _nr08NoContention = disabled;
+    UpdateContention();
+}
+
+void PortDecoder_Next::UpdateContention()
+{
+    const uint8_t timing = _state->ula_timing_class;
+    const bool family = timing >= 1 && timing <= 3;  // the Pentagon has none
+    const bool off = _ratio > 1 || _nr08NoContention;
+    _state->hw_contention_disabled = off ? 1 : 0;
+    Mem().SetContentionRule(timing);
+    if (UlaContention* ula = _context->pUlaContention)
+    {
+        ula->SetContentionEnabled(family && !off);
+        ula->SetGateArray(timing == 3);
+    }
+    if (Core* core = _context->pCore)
+        core->SelectMemoryInterface();
 }
 
 void PortDecoder_Next::OnFrameEnd()
@@ -276,6 +302,7 @@ void PortDecoder_Next::ApplyTiming(uint8_t timing)
     config.frame_duration_us = CalculateFrameDurationUs(t.frame);
     _state->ula_timing_class = timing;
     _pendingTiming = 0;
+    UpdateContention();
 }
 
 /// endregion

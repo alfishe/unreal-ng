@@ -35,6 +35,7 @@ public:
     void PerformReset(bool hard) override;
     void SetCpuSpeed(uint8_t ratio) override;
     void SetMachineTiming(uint8_t timing) override;
+    void SetContentionDisabled(bool disabled) override;
     void OnFrameEnd() override;
 
     /// The SPI port pair #E7 (select) / #EB (data): one SD card per select line (NR #0A bit 5 swaps them)
@@ -57,6 +58,10 @@ private:
     void Port_DFFD_Next(uint8_t value);
 
     void ApplyTiming(uint8_t timing);
+    /// Contention follows the frame family, the speed (3.5 MHz only) and NR #08 bit 6
+    void UpdateContention();
+    bool _nr08NoContention = false;
+    uint8_t _ratio = 1;
     /// What the machine type allows: 48K has no paging ports, 128K / Pentagon no #1FFD, +3 all
     bool PagingAllowed(uint16_t port) const;
     uint8_t SpiRead();

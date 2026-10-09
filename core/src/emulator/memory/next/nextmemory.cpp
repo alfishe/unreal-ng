@@ -6,6 +6,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/video/ulacontention.h"
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
 
@@ -15,16 +16,72 @@ NextMemory::NextMemory(EmulatorContext* context) : Memory(context)
 {
     _fastIf = std::make_unique<MemoryInterface>(&Memory::MemoryReadFast, static_cast<MemoryWriteCallback>(&NextMemory::SlotWriteFast));
     _debugIf = std::make_unique<MemoryInterface>(&Memory::MemoryReadDebug, static_cast<MemoryWriteCallback>(&NextMemory::SlotWriteDebug));
+    _fastContendedIf = std::make_unique<MemoryInterface>(static_cast<MemoryReadCallback>(&NextMemory::SlotReadContendedFast),
+                                                         static_cast<MemoryWriteCallback>(&NextMemory::SlotWriteContendedFast));
+    _debugContendedIf = std::make_unique<MemoryInterface>(static_cast<MemoryReadCallback>(&NextMemory::SlotReadContendedDebug),
+                                                          static_cast<MemoryWriteCallback>(&NextMemory::SlotWriteContendedDebug));
     _toolReadRedirect = true;  // DirectReadFromZ80Memory asks the slot table
     ResetMmu();
 }
 
-MemoryInterface* NextMemory::ModelMemoryInterface(bool debug)
+MemoryInterface* NextMemory::ModelMemoryInterface(bool debug, bool contended)
 {
+    if (contended)
+        return debug ? _debugContendedIf.get() : _fastContendedIf.get();
     return debug ? _debugIf.get() : _fastIf.get();
 }
 
 /// region <Access>
+
+// The contended accesses: the wait of the video logic first, then the plain access (memorycontended.cpp has the
+// 16K-window version). No snow: the FPGA's ULA does not have it
+uint8_t NextMemory::SlotReadContendedFast(uint16_t addr, bool isExecution)
+{
+    if (_slotContended[addr >> 13])
+    {
+        _contentionCpu->InsertWaitStates(_contentionUla->DelayAt(_contentionCpu->AccessStartT()));
+        const uint8_t value = MemoryReadFast(addr, isExecution);
+        _contentionUla->LatchContendedByte(value);
+        return value;
+    }
+    return MemoryReadFast(addr, isExecution);
+}
+
+uint8_t NextMemory::SlotReadContendedDebug(uint16_t addr, bool isExecution)
+{
+    if (_slotContended[addr >> 13])
+    {
+        const uint8_t wait = _contentionUla->DelayAt(_contentionCpu->AccessStartT());
+        _contentionCpu->InsertWaitStates(wait);
+        _contentionUla->CountAccess(isExecution ? CONTENTION_FETCH : CONTENTION_READ, wait);
+        const uint8_t value = MemoryReadDebug(addr, isExecution);
+        _contentionUla->LatchContendedByte(value);
+        return value;
+    }
+    return MemoryReadDebug(addr, isExecution);
+}
+
+void NextMemory::SlotWriteContendedFast(uint16_t addr, uint8_t value)
+{
+    if (_slotContended[addr >> 13])
+    {
+        _contentionCpu->InsertWaitStates(_contentionUla->DelayAt(_contentionCpu->AccessStartT()));
+        _contentionUla->LatchContendedByte(value);
+    }
+    SlotWriteFast(addr, value);
+}
+
+void NextMemory::SlotWriteContendedDebug(uint16_t addr, uint8_t value)
+{
+    if (_slotContended[addr >> 13])
+    {
+        const uint8_t wait = _contentionUla->DelayAt(_contentionCpu->AccessStartT());
+        _contentionCpu->InsertWaitStates(wait);
+        _contentionUla->CountAccess(CONTENTION_WRITE, wait);
+        _contentionUla->LatchContendedByte(value);
+    }
+    SlotWriteDebug(addr, value);
+}
 
 uint8_t NextMemory::MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution)
 {
@@ -99,6 +156,43 @@ void NextMemory::Remap()
     for (unsigned s = 0; s < kSlots; s++)
         MapSlot(s);
     SyncWindows();
+}
+
+void NextMemory::SetContentionRule(uint8_t timing)
+{
+    _contentionRule = timing;
+    ApplyContentionFlags();
+}
+
+void NextMemory::RefreshSlotContention()
+{
+    ApplyContentionFlags();
+}
+
+/// The slot flags from the MMU values and the rule; the 16K flags of the ULA component (port contention reads the
+/// high byte of the address through them) are the OR of the halves
+void NextMemory::ApplyContentionFlags()
+{
+    for (unsigned s = 0; s < kSlots; s++)
+    {
+        const uint8_t v = _mmu[s];
+        bool contended = false;
+        if (v < 16)  // RAM banks 0-7 only
+        {
+            const unsigned bank = v >> 1;
+            switch (_contentionRule)
+            {
+                case 1: contended = bank == 5; break;
+                case 2: contended = (bank & 1) != 0; break;
+                case 3: contended = bank >= 4; break;
+                default: break;
+            }
+        }
+        _slotContended[s] = contended;
+    }
+    if (UlaContention* ula = _context ? _context->pUlaContention : nullptr)
+        for (unsigned w = 0; w < 4; w++)
+            ula->SetSlotContended(static_cast<uint8_t>(w), _slotContended[w * 2] || _slotContended[w * 2 + 1]);
 }
 
 void NextMemory::OnRomLoaded([[maybe_unused]] uint16_t imageBanks)
@@ -187,6 +281,7 @@ void NextMemory::SyncWindows()
         _bank_mode[w] = _mmu[lo] == kMmuRom ? BANK_ROM : BANK_RAM;
         _bank_ram_page_cache[w] = _physPage[lo];
     }
+    ApplyContentionFlags();
 }
 
 void NextMemory::ResetMmu()

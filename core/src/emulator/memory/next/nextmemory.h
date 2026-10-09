@@ -33,7 +33,17 @@ public:
     uint8_t MemoryReadDebug(uint16_t addr, bool isExecution) override;
     void SlotWriteFast(uint16_t addr, uint8_t value);
     void SlotWriteDebug(uint16_t addr, uint8_t value);
-    MemoryInterface* ModelMemoryInterface(bool debug) override;
+    /// The same with the video logic's wait in front of an access to a contended slot (UlaContention)
+    uint8_t SlotReadContendedFast(uint16_t addr, bool isExecution);
+    uint8_t SlotReadContendedDebug(uint16_t addr, bool isExecution);
+    void SlotWriteContendedFast(uint16_t addr, uint8_t value);
+    void SlotWriteContendedDebug(uint16_t addr, uint8_t value);
+
+    /// Which RAM banks the video logic shares memory with, by frame family (NR #03 timing): 1 = 48K (bank 5 only),
+    /// 2 = 128K / +2 (odd banks 1 3 5 7), 3 = +3 (banks 4-7), anything else none. Only banks 0-7 (MMU pages 0-15)
+    void SetContentionRule(uint8_t timing);
+    MemoryInterface* ModelMemoryInterface(bool debug, bool contended) override;
+    void RefreshSlotContention() override;
     uint8_t ToolReadRedirect(uint16_t addr, uint8_t normal) const override;
     /// endregion
 
@@ -100,4 +110,9 @@ private:
     ttd::PhysPage _physPage[kSlots] = {};
     std::unique_ptr<MemoryInterface> _fastIf;
     std::unique_ptr<MemoryInterface> _debugIf;
+    std::unique_ptr<MemoryInterface> _fastContendedIf;
+    std::unique_ptr<MemoryInterface> _debugContendedIf;
+    uint8_t _contentionRule = 0;
+    bool _slotContended[kSlots] = {};
+    void ApplyContentionFlags();
 };

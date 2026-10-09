@@ -353,7 +353,7 @@ public:
     /// A model whose memory is not four 16K windows supplies its own plain (Fast / Debug) interface here;
     /// Core::SelectMemoryInterface uses it instead of the stock one while no host bus overlay is installed.
     /// The default - no interface of its own
-    virtual MemoryInterface* ModelMemoryInterface([[maybe_unused]] bool debug) { return nullptr; }
+    virtual MemoryInterface* ModelMemoryInterface([[maybe_unused]] bool debug, [[maybe_unused]] bool contended) { return nullptr; }
 
 protected:
     /// The debug access bookkeeping that follows the byte (tracking, TTD, breakpoints): MemoryReadDebug /
@@ -457,7 +457,7 @@ public:
 
     /// Contention cache of a slot / of all four (after the machine's contention rule changed)
     void UpdateSlotContention(uint8_t slot);
-    void RefreshSlotContention();
+    virtual void RefreshSlotContention();
     void RecordROMPageSwitch();
     /// endregion </Service methods>
 

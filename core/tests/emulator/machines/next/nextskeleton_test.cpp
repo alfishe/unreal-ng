@@ -73,7 +73,7 @@ TEST_F(NextSkeleton_Test, ModelIsCreatableAndOwnsItsParts)
     EXPECT_EQ(_context->config.ramsize, 2048u);
     ASSERT_NE(_ports->Engine(), nullptr);
     EXPECT_TRUE(_ports->Engine()->IsInstalled());
-    EXPECT_EQ(_z80->MemIf, _memory->ModelMemoryInterface(_z80->isDebugMode)) << "the CPU runs on the 8-slot interface";
+    EXPECT_EQ(_z80->MemIf, _memory->ModelMemoryInterface(_z80->isDebugMode, _context->pCore->IsContentionEffective())) << "the CPU runs on the 8-slot interface";
 }
 
 TEST_F(NextSkeleton_Test, ResetSlotTable)
@@ -184,4 +184,62 @@ TEST_F(NextSkeleton_Test, Boots48KBasicFromTheBareRom)
     _z80->pc = 0;
     int frames = 0;
     EXPECT_TRUE(EmulatorTestHelper::RunUntilBASICReady(_emulator, 300, &frames)) << frames << " frames";
+}
+
+// N3b: the video logic's wait on the banks of the frame family, at 3.5 MHz only (research-fpga-vhdl.md section 2)
+namespace
+{
+// T-states the read of `addr` takes when it starts at frame T-state `t0`
+uint32_t ReadTime(Z80* z80, uint16_t addr, uint32_t t0)
+{
+    z80->t = t0;
+    z80->rd(addr);
+    return z80->t - t0;
+}
+
+// The start T-states in the paper window where the read of `addr` waits
+unsigned WaitingStarts(Z80* z80, uint16_t addr)
+{
+    unsigned n = 0;
+    for (uint32_t t0 = 16300; t0 < 17300; t0++)  // paper lines: the 128K raster starts them at 16188
+        n += ReadTime(z80, addr, t0) > ReadTime(z80, 0x0000, t0) ? 1 : 0;
+    return n;
+}
+}  // namespace
+
+TEST_F(NextSkeleton_Test, ContentionHitsTheOddBanksOfThe128KFamily)
+{
+    EXPECT_GT(WaitingStarts(_z80, 0x4000), 100u) << "bank 5";
+    EXPECT_EQ(WaitingStarts(_z80, 0x8000), 0u) << "bank 2";
+    EXPECT_EQ(WaitingStarts(_z80, 0xC000), 0u) << "bank 0";
+    Out(0x7FFD, 0x01);
+    EXPECT_GT(WaitingStarts(_z80, 0xC000), 100u) << "bank 1 is odd";
+}
+
+TEST_F(NextSkeleton_Test, Only48KBank5AndNothingAbove3_5MHz)
+{
+    Out(0x7FFD, 0x01);
+    Out(0x243B, 0x03);
+    Out(0x253B, 0x90);  // timing family 1 (48K)
+    _emulator->RunFrame(true);
+    ASSERT_EQ(_context->emulatorState.ula_timing_class, 1);
+    EXPECT_GT(WaitingStarts(_z80, 0x4000), 100u) << "bank 5";
+    EXPECT_EQ(WaitingStarts(_z80, 0xC000), 0u) << "48K timing: bank 1 is not contended";
+
+    Out(0x243B, 0x07);
+    Out(0x253B, 0x01);  // 7 MHz
+    EXPECT_EQ(WaitingStarts(_z80, 0x4000), 0u) << "no contention above 3.5 MHz";
+    Out(0x253B, 0x00);
+    EXPECT_GT(WaitingStarts(_z80, 0x4000), 100u);
+    Out(0x243B, 0x08);
+    Out(0x253B, 0x40);  // NR #08 bit 6: contention disabled
+    EXPECT_EQ(WaitingStarts(_z80, 0x4000), 0u);
+}
+
+TEST_F(NextSkeleton_Test, PentagonTimingHasNoContention)
+{
+    Out(0x243B, 0x03);
+    Out(0x253B, 0xC0);  // timing family 4
+    _emulator->RunFrame(true);
+    EXPECT_EQ(WaitingStarts(_z80, 0x4000), 0u);
 }

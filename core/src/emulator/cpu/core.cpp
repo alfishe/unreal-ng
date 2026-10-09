@@ -741,7 +741,7 @@ void Core::SelectMemoryInterface()
     // A model that maps memory its own way (slots of 8K) brings its plain interface; a host bus overlay still wins
     if (!_busOverlay)
     {
-        if (MemoryInterface* own = _memory->ModelMemoryInterface(debug))
+        if (MemoryInterface* own = _memory->ModelMemoryInterface(debug, contended))
             _z80->MemIf = own;
     }
 

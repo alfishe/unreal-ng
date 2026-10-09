@@ -19,6 +19,7 @@ void NextBoard::Reset(bool hard)
     if (_machine)
     {
         _machine->SetCpuSpeed(1);
+        _machine->SetContentionDisabled(false);
         _machine->SetMachineTiming(_timing);
     }
     _selected = 0;
@@ -95,6 +96,11 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             }
             return;
         }
+        case kRegPeripheral2:
+            _regs[reg] = value;
+            if (_machine)
+                _machine->SetContentionDisabled((value & 0x40) != 0);
+            return;
         case kRegCpuSpeed:
             _regs[reg] = value & 0x03;
             if (_machine)

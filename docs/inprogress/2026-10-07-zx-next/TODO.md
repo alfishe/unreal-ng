@@ -33,7 +33,8 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 
 ## N3 status (2026-10-08, uncommitted)
 - [x] N3a: NR #07 CPU speed (`hw_turbo_ratio`, 3.5-28 MHz, applied at the frame boundary), NR #03 machine type + frame family (48K / 128K / +3 / Pentagon, applied at the frame end through `EmulatorState::ula_timing_class` and the screen's per-frame mode detection), paging ports by machine type (48K none, 128K/Pentagon no #1FFD), SPI byte time in base units at any speed
-- [ ] N3b: contention per machine type at 3.5 MHz only (8K-slot predicate, banks 0-7, 48K bank 5 / 128K odd / +3 4-7), port contention, floating bus
+- [x] N3b (uncommitted): memory contention per frame family at 3.5 MHz only, from NR #03 timing, NR #07 and NR #08 bit 6: 8K-slot flags in `NextMemory` (banks 0-7; 48K bank 5, 128K odd banks, +3 banks 4-7, Pentagon none), contended slot interfaces, `Memory::ModelMemoryInterface(debug, contended)`, `RefreshSlotContention` virtual, `EmulatorState::hw_contention_disabled`; +3 uses the gate-array pattern. Tests in `NextSkeleton_Test`
+- [ ] N3b left: the Next's "previous hc cycle" phase (3-14 instead of 4-15), port contention by the 8K slot of the address high byte (the 16K flags are the OR of the halves), floating bus, the +3 WAIT-line form
 - [ ] N3c: 60 Hz (needs the 264-line raster, N6), NR table complete (reads/writes/reset values), line interrupt and `NextInterruptSource` pulse mode, NR #22/#23, timing tests of ZXSpectrumNextTests, A/B benchmark
 
 ## Remaining

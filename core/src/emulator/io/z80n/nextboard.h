@@ -26,6 +26,8 @@ public:
     virtual void SetCpuSpeed(uint8_t ratio) = 0;
     /// NR #03: the frame family (NextTiming) the video logic follows from the next frame
     virtual void SetMachineTiming(uint8_t timing) = 0;
+    /// NR #08 bit 6: the video memory contention is disabled
+    virtual void SetContentionDisabled(bool disabled) = 0;
 };
 
 /// The Next board's register file (NEXTREG space, ports #243B select / #253B data): the identification registers
@@ -41,6 +43,7 @@ public:
     static constexpr uint8_t kRegMachineType = 0x03;
     static constexpr uint8_t kRegConfigMapping = 0x04;
     static constexpr uint8_t kRegCpuSpeed = 0x07;
+    static constexpr uint8_t kRegPeripheral2 = 0x08;  ///< bit 6: contention disable
     static constexpr uint8_t kRegPeripheral3 = 0x0A;  ///< bit 5: the SD card select swap
     static constexpr uint8_t kRegMmu0 = 0x50;  ///< #50-#57: MMU slot 0-7
     static constexpr uint8_t kMachineIdNext = 10;
