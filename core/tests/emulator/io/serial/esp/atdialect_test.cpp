@@ -259,12 +259,14 @@ TEST_F(AtDialect_Test, TcpIp_PassiveReceiveAnnouncesOnceUntilRead)
     EXPECT_EQ(Read(), "+IPD,2\r\n") << "after the read: the total again";
 
     auto state = std::make_unique<netstate::EspModuleState>();
-    _esp->SaveState(*state);
+    netstate::Tail tail;
+    _esp->SaveState(*state, tail);
     auto copy = std::make_unique<AtModule>(_net.get(), Firmware::Esp8266At222);
     copy->SetClock([this]() { return _now; }, 3500000);
-    copy->LoadState(*state, nullptr);
+    copy->LoadState(*state, tail, nullptr);
     auto again = std::make_unique<netstate::EspModuleState>();
-    copy->SaveState(*again);
+    netstate::Tail againTail;
+    copy->SaveState(*again, againTail);
     EXPECT_EQ(state->firmware[224], again->firmware[224]) << "the owed +IPD survives a checkpoint";
     EXPECT_EQ(state->firmware[224], 1) << "link 0 owes a read";
 }

@@ -138,7 +138,8 @@ struct Writer
         if (found != renames.end())
             return found->second;
         // A label defined in another file of the project gets the same rename there
-        return kReserved.count(z80::Lower(name)) || !IsValidLabel(name) ? SafeName(name) : name;
+        // (a sjasmplus source's own names are kept: sjasmplus accepted them, even "a" or "b" as STRUCT members)
+        return !sameDialect && (kReserved.count(z80::Lower(name)) || !IsValidLabel(name)) ? SafeName(name) : name;
     }
 
     std::string Hex(int64_t value, int digits) const
@@ -159,6 +160,8 @@ struct Writer
                 return "%" + bits;
             }
             case ir::NumberSpelling::Character:
+                if (e.text.size() == 1 && (static_cast<unsigned char>(e.text[0]) < 0x20 || static_cast<unsigned char>(e.text[0]) >= 0x7F))
+                    return std::to_string(e.value);   // a control character cannot stand in a quoted constant
                 if (e.text.size() == 1 && e.text != "'")
                     return "'" + e.text + "'";
                 if (e.text.size() == 1)
@@ -248,8 +251,9 @@ struct Writer
                 }
                 const bool comparison = e.op == Op::Equal || e.op == Op::NotEqual || e.op == Op::Less || e.op == Op::Greater ||
                                         e.op == Op::LessEqual || e.op == Op::GreaterEqual;
-                if (comparison && trueValue == 1)
-                    return "-" + TrueIsOne(e);   // sjasmplus' true is -1
+                const bool logical = e.op == Op::LogicalAnd || e.op == Op::LogicalOr;
+                if ((comparison || logical) && trueValue == 1)
+                    return "-" + TrueIsOne(e);   // sjasmplus' true is -1 (also for && and ||: 2&&1 = -1)
                 if ((comparison || e.op == Op::Mod || e.op == Op::Shr) && wordBits == 16 && unsignedWords)
                 {
                     // 16-bit unsigned words (STORM: 0-1 is #FFFF, so #FFFF>>1 = #7FFF and 0-1>0): the operands masked
@@ -262,22 +266,20 @@ struct Writer
                     const bool zeroTest = comparison && ((e.args[1].kind == Expr::Kind::Number && e.args[1].value == 0) ||
                                                          (e.args[0].kind == Expr::Kind::Number && e.args[0].value == 0));
                     if (!zeroTest)
-                    {
-                        const int bits = wordBits;
-                        wordBits = 0;
-                        const std::string out = Print(Expr::Binary(e.op, mask(e.args[0]), e.op == Op::Shr ? e.args[1] : mask(e.args[1])));
-                        wordBits = bits;
-                        return out;
-                    }
+                        return Joined(e.op, mask(e.args[0]), e.op == Op::Shr ? e.args[1] : mask(e.args[1]));
                 }
                 if (e.op == Op::Div && wordBits == 16 && unsignedWords)
+                    return Joined(Op::Div, Masked16(e.args[0]), Masked16(e.args[1]));   // ALASM: unsigned 16-bit division
+                if ((e.op == Op::Div || e.op == Op::Mod) && wordBits == 16 && !unsignedWords)
                 {
-                    // ALASM: unsigned 16-bit division
-                    const int bits = wordBits;
-                    wordBits = 0;
-                    const std::string out = Print(Expr::Binary(Op::Div, Masked16(e.args[0]), Masked16(e.args[1])));
-                    wordBits = bits;
-                    return out;
+                    // GENS: 16-bit two's complement words, signed division (#8000/2 = #C000, 60000/2 = -2768)
+                    auto widen = [](const Expr& a) {
+                        if (a.kind == Expr::Kind::Number && a.value >= 0 && a.value <= 0x7FFF)
+                            return a;
+                        return Grouped(Expr::Binary(Op::Sub, Grouped(Expr::Binary(Op::Xor, Masked16(a), Expr::Number(0x8000, ir::NumberSpelling::Hex, 4))),
+                                                    Expr::Number(0x8000, ir::NumberSpelling::Hex, 4)));
+                    };
+                    return Joined(e.op, widen(e.args[0]), widen(e.args[1]));
                 }
                 const int p = Priority(e.op);
                 std::string left = Print(e.args[0]);
@@ -290,6 +292,20 @@ struct Writer
             }
         }
         return "?";
+    }
+
+    /// a op b with the operands printed under the same rules (an operation nested in a masked operand keeps its own
+    /// 16-bit treatment), only this operator written as it is
+    std::string Joined(Op op, const Expr& a, const Expr& b)
+    {
+        const int p = Priority(op);
+        std::string left = Print(a);
+        std::string right = Print(b);
+        if (a.kind == Expr::Kind::Binary && Priority(a.op) < p)
+            left = "(" + left + ")";
+        if (b.kind == Expr::Kind::Binary && Priority(b.op) <= p)
+            right = "(" + right + ")";
+        return left + Symbol(op) + right;
     }
 
     /// A comparison or logical not of a source whose true is 1, printed as sjasmplus' (true -1) in parentheses
@@ -313,6 +329,13 @@ struct Writer
     static std::string Quote(const std::string& text, bool& ok)
     {
         ok = true;
+        // A control character cannot stand inside a quoted string in a source line (BEL, LF ...): those go as numbers
+        for (const char c : text)
+            if (static_cast<unsigned char>(c) < 0x20 || c == 0x7F)
+            {
+                ok = false;
+                return {};
+            }
         if (text.find('\'') == std::string::npos)
             return "'" + text + "'";
         if (text.find('"') == std::string::npos && text.find('\\') == std::string::npos)
@@ -461,6 +484,13 @@ struct Writer
             }
             case Statement::Kind::Instruction:
             {
+                // AND A,n of another dialect means AND n; sjasmplus reads AND A,n as AND A followed by AND n (without --syntax=a)
+                if (!sameDialect && s.operands.size() == 2 && s.operands[0].kind == Operand::Kind::Register && s.operands[0].text == "a" &&
+                    (s.mnemonic == "and" || s.mnemonic == "or" || s.mnemonic == "xor" || s.mnemonic == "cp" || s.mnemonic == "sub"))
+                {
+                    const std::string single = Operand_(s.operands[1]);
+                    return {z80::Upper(s.mnemonic) + " " + single};
+                }
                 const std::string ops = Operands(s.operands, true);
                 return {z80::Upper(s.mnemonic) + (ops.empty() ? "" : " " + ops)};
             }
@@ -641,7 +671,7 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
         if (!l.label.empty())
             used.insert(l.label);
     for (const std::string& name : used)
-        if (kReserved.count(z80::Lower(name)) || !IsValidLabel(name))
+        if (!w.sameDialect && (kReserved.count(z80::Lower(name)) || !IsValidLabel(name)))
         {
             std::string renamed = SafeName(name);
             while (used.count(renamed))
@@ -776,13 +806,20 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
             std::map<std::string, std::string> scope = nextBlock < blockRenames.size() ? blockRenames[nextBlock] : std::map<std::string, std::string>{};
             if (w.inMacro)
                 for (auto& [name, renamed] : scope)
-                    renamed = "." + name;   // inside a macro: sjasmplus' local labels, unique for every expansion
+                    renamed = "." + (!name.empty() && name[0] == '@' ? name.substr(1) : name);   // inside a macro: sjasmplus' local labels, unique for every expansion
             w.localScopes.push_back(std::move(scope));
             ++nextBlock;
         }
         std::string label = l.label.empty() ? std::string() : w.Name(l.label);
         if (w.sameDialect && !l.label.empty() && l.label.find_first_not_of("0123456789") == std::string::npos)
             label = l.label;   // a sjasmplus temporary label (1, referred to as 1B / 1F)
+        if (!l.label.empty())
+        {
+            bool local = false;
+            for (const auto& scope : w.localScopes)
+                local = local || scope.count(l.label);
+            result.labels.push_back({l.sourceLine, l.label, label, local, w.inMacro});
+        }
         if (!label.empty() && redefinable.count(l.label))
         {
             bool defines = false;

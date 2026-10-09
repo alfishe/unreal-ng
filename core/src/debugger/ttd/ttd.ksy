@@ -561,21 +561,25 @@ types:
           18 Ds12887 (MC146818 / DS12887 clock: cells, address latch, time base;
           ATM3, Profi, Scorpion SMUC), 19 EvoPs2 (ZX-Evo AVR PS/2 keyboard: the
           16-byte scan code log, its pointers, the parser flags, the modifier
-          mask and the held keys), 20 ZxNetUsb (ZXNETUSB card ports, W5300
+          mask, the held keys and the F12 hold: down flag and its press time in
+          emulated microseconds - 56 bytes since 2026-10-07), 20 ZxNetUsb (ZXNETUSB card ports, W5300
           registers and socket states, unsent bytes, and journal references
           for the received bytes; the virtual network's guest-side tables -
-          netstate.h),
+          netstate.h; since 2026-10-08 a netstate::Tail follows when reserved[0] = 1: what the fixed
+          arrays do not hold and bytes received before the recording, netstatetail.h),
           21 EvoTurboCache (ZX-Evo at 14 MHz: the DRAM's code and data cache words, 6 bytes),
           22 EvoFontRam (ZX-Evo text-mode font RAM, 2 KB, and the glyph byte #0EBD reads: 2050 bytes),
           23 KempstonJoystick (Kempston joystick: u1 version, u1 state byte, active high; carried by
           machines whose decoder answers #1F - ATM3, Scorpion, TS-Conf),
           24 SerialPort (the 16550 on #xxEF - the ZX-Evo AVR's or a ZX-WiFi card's - and its peer:
-          netstate::SerialPort; without a peer only the header and the UART registers and FIFOs),
+          netstate::SerialPort; without a peer only the header and the UART registers and FIFOs; with a
+          peer a netstate::Tail follows when flags bit 1 is set, since 2026-10-08),
           25 SprinterPld (Sprinter Sp2000 PLD and decoder, sprinter_pld_blob below),
           26 Atm2Kbc (ATM Turbo 2+ keyboard controller: Atm2Kbc::State - the MCS-51 RAM, SFRs, PC, clock,
           interrupt and UART state, the board latches, the PS/2 keyboard model, the controller's time base),
           27 MachineSerialPeer (the peer on a machine serial port that is no 16550 on #xxEF - the ATM Turbo 2+
-          keyboard controller's RS-232, the ZX Profi v5's 8251: netstate::Com, the peer part only),
+          keyboard controller's RS-232, the ZX Profi v5's 8251: netstate::Com, the peer part only; a
+          netstate::Tail follows when reserved[0] bit 1 is set, since 2026-10-08),
           28 SprinterVideoRam (u1 version 1, then the 256 KB video RAM; a whole-array blob until TTD v2
           memory regions), 29 Z84C15 (u1 version 2, then the Z84C15's on-chip block, 227 bytes: z84c15_blob below; version 1, 171 bytes with the timer-only CTC, is not restored),
           30 SprinterFastRam (u1 version 1, then the 64 KB fast RAM; whole-array blob until v2 regions),

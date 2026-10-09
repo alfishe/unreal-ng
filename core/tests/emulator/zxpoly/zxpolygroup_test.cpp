@@ -4,7 +4,7 @@
 #include "_helpers/testpathhelper.h"
 #include "common/image/imagehelper.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
@@ -1172,7 +1172,7 @@ TEST_F(ZXPolyGroup_Test, TimeTravelIsRefusedOnEveryMember)
     CreateGroup("PENTAGON");
     for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
     {
-        ttd::TimeTravelManager* ttd = _group->GetContext(m)->pTimeTravelManager;
+        ttd::TimeTravelController* ttd = _group->GetContext(m)->pTimeTravelController;
         ASSERT_NE(ttd, nullptr);
         EXPECT_FALSE(ttd->StartRecording()) << "module " << m;
         EXPECT_FALSE(ttd->IsRecording()) << "module " << m;
@@ -1190,12 +1190,12 @@ TEST_F(ZXPolyGroup_Test, TimeTravelIsRefusedOnEveryMember)
     ASSERT_TRUE(_group->LoadZXP(TestPathHelper::GetTestDataPath("machines/zxpoly/zxp/Alien8.zxp"), &error)) << error;
     ASSERT_TRUE(_group->StartRecording(&error)) << error;
     for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
-        EXPECT_TRUE(_group->GetContext(m)->pTimeTravelManager->IsRecording()) << "module " << m;
+        EXPECT_TRUE(_group->GetContext(m)->pTimeTravelController->IsRecording()) << "module " << m;
     _group->RunFrames(2);
     _group->StopRecording();
     for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
     {
-        ttd::TimeTravelManager* ttd = _group->GetContext(m)->pTimeTravelManager;
+        ttd::TimeTravelController* ttd = _group->GetContext(m)->pTimeTravelController;
         EXPECT_FALSE(ttd->IsRecording()) << "module " << m;
         EXPECT_FALSE(ttd->StartRecording()) << "module " << m;
     }

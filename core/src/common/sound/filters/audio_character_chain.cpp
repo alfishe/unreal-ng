@@ -1,5 +1,6 @@
 #include "audio_character_chain.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <string>
@@ -41,12 +42,13 @@ void AudioCharacterChain::deriveRateCoefficients()
 
 void AudioCharacterChain::reset()
 {
-    _prevOutL = _prevOutR = 0;
-    _envL = _envR = 0;
-    _delayL.fill(0);
-    _delayR.fill(0);
-    _delayIdx = 0;
-    _roomLpL = _roomLpR = 0;
+    _roomDirty = true;   // clear unconditionally
+    clearPunchState();
+    clearRoomState();
+    _punchGain = 0.0f;
+    _roomGain = 0.0f;
+    _engaged = false;
+    _snapPending = true;
 }
 
 /// endregion </Setup>
@@ -306,23 +308,147 @@ void AudioCharacterChain::process(float* left, float* right, int32_t numSamples)
     }
 }
 
-void AudioCharacterChain::processInt16(int16_t* buffer, int32_t numSamples)
+namespace
 {
-    // Convert to float, process, convert back
-    // Note: For better performance, consider keeping internal float buffer
-    constexpr float toFloat = 1.0f / 32768.0f;
-    constexpr float toInt16 = 32767.0f;
+constexpr float kToFloat = 1.0f / 32768.0f;
+constexpr float kToInt16 = 32767.0f;
+
+inline int16_t ToInt16(float value)
+{
+    return static_cast<int16_t>(std::clamp(value, -32768.0f, 32767.0f));
+}
+}  // namespace
+
+void AudioCharacterChain::clearPunchState()
+{
+    _prevOutL = _prevOutR = 0;
+    _envL = _envR = 0;
+    _punchDirty = false;
+}
+
+void AudioCharacterChain::clearRoomState()
+{
+    if (!_roomDirty)
+        return;
+    _delayL.fill(0);
+    _delayR.fill(0);
+    _delayIdx = 0;
+    _roomLpL = _roomLpR = 0;
+    _roomDirty = false;
+}
+
+/// Punch switching on: the first difference starts from the current input
+/// (no step against a stale or zero previous sample), the envelope from rest
+void AudioCharacterChain::primePunch(const int16_t* buffer)
+{
+    _prevOutL = buffer[0] * kToFloat;
+    _prevOutR = buffer[1] * kToFloat;
+    _envL = _envR = 0;
+    _punchDirty = true;
+}
+
+/// Room switching on: the delay line and its lowpass hold the current input,
+/// so the delayed signal continues from it when the first real sample comes
+/// out of the line - never old audio, never a jump from zero
+void AudioCharacterChain::primeRoom(const int16_t* buffer)
+{
+    const float left = buffer[0] * kToFloat;
+    const float right = buffer[1] * kToFloat;
+    _delayL.fill(left);
+    _delayR.fill(right);
+    _delayIdx = 0;
+    _roomLpL = right;   // the left output takes the delayed right channel
+    _roomLpR = left;
+    _roomDirty = true;
+}
+
+void AudioCharacterChain::processEngaged(int16_t* buffer, int32_t numSamples)
+{
+    if (numSamples <= 0)
+        return;
+
+    const bool punchOn = _active && _punchEnabled;
+    const bool roomOn = _active && _roomEnabled;
+    const float punchTarget = punchOn ? 1.0f : 0.0f;
+    const float roomTarget = roomOn ? _roomLevel : 0.0f;
+
+    if (_snapPending)
+    {
+        // First call after reset(): the settings in force, no ramp
+        _snapPending = false;
+        _punchGain = punchTarget;
+        _roomGain = roomTarget;
+    }
+
+    // Effects that start in this call start from the current input
+    if (punchOn && _punchGain == 0.0f)
+        primePunch(buffer);
+    if (roomOn && _roomGain == 0.0f)
+        primeRoom(buffer);
+
+    if (_punchGain == punchTarget && _roomGain == roomTarget)
+    {
+        // Steady: the exact per-sample path, only the stages that are on
+        if (punchOn && roomOn)
+            processSteady<true, true>(buffer, numSamples);
+        else if (punchOn)
+            processSteady<true, false>(buffer, numSamples);
+        else if (roomOn)
+            processSteady<false, true>(buffer, numSamples);
+    }
+    else
+    {
+        const bool wetFrom = _punchGain != 0.0f || _roomGain != 0.0f;
+        const bool wetTo = punchOn || roomOn;
+        if (wetFrom != wetTo)
+        {
+            // The whole chain switches on or off: the effects run at their
+            // "on" setting and the frame crossfades between the untouched
+            // input and the processed signal - both ends match their steady
+            // paths exactly (the bypass is bit-exact, the processed path
+            // carries the int16 round trip)
+            processRamp(buffer, numSamples, std::max(_punchGain, punchTarget), std::max(_punchGain, punchTarget),
+                        std::max(_roomGain, roomTarget), std::max(_roomGain, roomTarget), wetFrom ? 1.0f : 0.0f,
+                        wetTo ? 1.0f : 0.0f);
+        }
+        else
+        {
+            // The chain stays on, one effect switches or the room level
+            // changes: that effect's weight ramps
+            processRamp(buffer, numSamples, _punchGain, punchTarget, _roomGain, roomTarget, 1.0f, 1.0f);
+        }
+    }
+
+    _punchGain = punchTarget;
+    _roomGain = roomTarget;
+    _engaged = punchOn || roomOn;
+
+    // Ramped out: forget the audio the effect holds, so switching it on later
+    // never replays it
+    if (!punchOn && _punchDirty)
+        clearPunchState();
+    if (!roomOn)
+        clearRoomState();
+}
+
+template <bool Punch, bool Room>
+void AudioCharacterChain::processSteady(int16_t* buffer, int32_t numSamples)
+{
+    if constexpr (Punch)
+        _punchDirty = true;
+    if constexpr (Room)
+        _roomDirty = true;
 
     for (int32_t i = 0; i < numSamples; i++)
     {
-        float left = buffer[i * 2] * toFloat;
-        float right = buffer[i * 2 + 1] * toFloat;
+        const float left = buffer[i * 2] * kToFloat;
+        const float right = buffer[i * 2 + 1] * kToFloat;
 
         float outL = left;
         float outR = right;
 
         // Punch enhancement
-        if (_punchEnabled)
+        if constexpr (Punch)
         {
             // Normalized first difference (plan C.1): rate-invariant punch
             float diffL = (outL - _prevOutL) * _diffNorm;
@@ -343,12 +469,12 @@ void AudioCharacterChain::processInt16(int16_t* buffer, int32_t numSamples)
         }
 
         // Room simulation
-        if (_roomEnabled)
+        if constexpr (Room)
         {
             _delayL[_delayIdx] = outL;
             _delayR[_delayIdx] = outR;
 
-            int delayedIdx = (_delayIdx - _roomDelay + MAX_DELAY) % MAX_DELAY;
+            const int delayedIdx = (_delayIdx - _roomDelay + MAX_DELAY) & (MAX_DELAY - 1);
             float delayedL = _delayR[delayedIdx];
             float delayedR = _delayL[delayedIdx];
 
@@ -358,12 +484,81 @@ void AudioCharacterChain::processInt16(int16_t* buffer, int32_t numSamples)
             outL += _roomLpL * _roomLevel;
             outR += _roomLpR * _roomLevel;
 
-            _delayIdx = (_delayIdx + 1) % MAX_DELAY;
+            _delayIdx = (_delayIdx + 1) & (MAX_DELAY - 1);
         }
 
         // Clamp and convert back to int16
-        buffer[i * 2] = static_cast<int16_t>(std::clamp(outL * toInt16, -32768.0f, 32767.0f));
-        buffer[i * 2 + 1] = static_cast<int16_t>(std::clamp(outR * toInt16, -32768.0f, 32767.0f));
+        buffer[i * 2] = ToInt16(outL * kToInt16);
+        buffer[i * 2 + 1] = ToInt16(outR * kToInt16);
+    }
+}
+
+/// One switch frame: the punch weight, the room level and the dry / wet
+/// weight move linearly from their old to their new values across the call
+/// (sample n at (n + 0.5) / numSamples, as VoicingStage crossfades)
+void AudioCharacterChain::processRamp(int16_t* buffer, int32_t numSamples, float punchFrom, float punchTo,
+                                      float roomFrom, float roomTo, float wetFrom, float wetTo)
+{
+    const bool punch = punchFrom != 0.0f || punchTo != 0.0f;
+    const bool room = roomFrom != 0.0f || roomTo != 0.0f;
+    if (punch)
+        _punchDirty = true;
+    if (room)
+        _roomDirty = true;
+
+    const float step = 1.0f / static_cast<float>(numSamples);
+    for (int32_t i = 0; i < numSamples; i++)
+    {
+        const float t = (static_cast<float>(i) + 0.5f) * step;
+        const float punchGain = punchFrom + (punchTo - punchFrom) * t;
+        const float roomGain = roomFrom + (roomTo - roomFrom) * t;
+        const float wet = wetFrom + (wetTo - wetFrom) * t;
+
+        const float dryL = buffer[i * 2];
+        const float dryR = buffer[i * 2 + 1];
+        const float left = dryL * kToFloat;
+        const float right = dryR * kToFloat;
+
+        float outL = left;
+        float outR = right;
+
+        if (punch)
+        {
+            const float diffL = (outL - _prevOutL) * _diffNorm;
+            const float diffR = (outR - _prevOutR) * _diffNorm;
+
+            const float magL = std::abs(diffL);
+            const float magR = std::abs(diffR);
+            _envL = (magL > _envL) ? magL * _attackEff + _envL * (1 - _attackEff) : _envL * _releaseEff;
+            _envR = (magR > _envR) ? magR * _attackEff + _envR * (1 - _attackEff) : _envR * _releaseEff;
+
+            outL += punchGain * (diffL * _edgeBlend + diffL * _envL * _transBoost);
+            outR += punchGain * (diffR * _edgeBlend + diffR * _envR * _transBoost);
+
+            _prevOutL = left;
+            _prevOutR = right;
+        }
+
+        if (room)
+        {
+            _delayL[_delayIdx] = outL;
+            _delayR[_delayIdx] = outR;
+
+            const int delayedIdx = (_delayIdx - _roomDelay + MAX_DELAY) & (MAX_DELAY - 1);
+            const float delayedL = _delayR[delayedIdx];
+            const float delayedR = _delayL[delayedIdx];
+
+            _roomLpL += _roomLpCoefEff * (delayedL - _roomLpL);
+            _roomLpR += _roomLpCoefEff * (delayedR - _roomLpR);
+
+            outL += _roomLpL * roomGain;
+            outR += _roomLpR * roomGain;
+
+            _delayIdx = (_delayIdx + 1) & (MAX_DELAY - 1);
+        }
+
+        buffer[i * 2] = ToInt16((1.0f - wet) * dryL + wet * (outL * kToInt16));
+        buffer[i * 2 + 1] = ToInt16((1.0f - wet) * dryR + wet * (outR * kToInt16));
     }
 }
 

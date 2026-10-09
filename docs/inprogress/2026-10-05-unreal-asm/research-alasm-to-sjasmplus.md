@@ -70,7 +70,7 @@ in the emulator where marked.
 | Macros: `\0`…`\9`; `\P` returns parameter 0 and shifts the numbering, `\R` restores it; `\C` is the symbol at the parameter pointer, `\N` moves it, `\S<c>` the text up to `<c>` (help, "MACRO") | named parameters `_arg0`…; a macro that glues a parameter to a name or uses `\P \R \C \N \S` is expanded at its calls |
 | A call may give fewer arguments than the macro uses, or more | empty arguments added; the macro declares as many parameters as its longest call (sjasmplus needs them to match) |
 | A label may be reassigned with `label=expr` later | its address definition is written `label=$`, its `EQU` as `=` (sjasmplus keeps both fixed otherwise) |
-| `IF0`, `IFN`; `DUP` / `EDUP`; `REPEAT` / `UNTIL0` (`UNTIL`) | `IF`; `DUP` / `EDUP`; a `WHILE` loop with a counter |
+| `IF0` (5.03 and later) and `IF` (the same code `#D3` before: ALASM 4.2's help "if the expression = 0, body 1"; **emulator**: ALASM 5.0) take the block on 0, `IFN` on not 0; `DUP` / `EDUP`; `REPEAT` / `UNTIL0` (`UNTIL`) | `IF (x)==0` / `IF x`; `DUP` / `EDUP`; a `WHILE` loop with a counter |
 | `DS n,a,b`: n times the pattern `a,b` (**emulator**: 8 bytes for `DS 4,#AA,#55`) | `DUP n` / `DB a,b` / `EDUP` |
 | `INCBIN "name",size` | `INCBIN "name",0,size` |
 | `ORG addr,page` and `{addr}` reads need memory pages | `DEVICE ZXSPECTRUM4096` added (ALASM's page numbers follow its memory driver: checked per project) |
@@ -104,6 +104,8 @@ Checked with sjasmplus 1.23.1 (documentation and probe sources):
 | | baba5 | BABAZX, BABAGS | 1 / 2: the disk's BABAGS was built from baba4 |
 | | hedge12 | HEDGEZX1, HEDGEZX2, HEDGEGS | 3 / 3 |
 | constructs sample | constructs | 67 bytes at `#6000` assembled by ALASM 5.09 in the emulator | equal |
+| ALASM 5.0 probe | `U50` | `IF` / `IFN` on a zero expression, `REPEAT` / `UNTIL`, `DD`, `JNZ`, `EXD`: 11 bytes, ALASM 5.0 | equal |
+| ALASM 5.05 probe | `U505` | `REPEAT` / `UNTIL`, `IF0`, `DD` with commas, `JNZ`, `JC`, `EXA`, `EXD`: 18 bytes, ALASM 5.05 | equal |
 
 The GSTUNNE4 unit (source, the files it includes, the files it `INCBIN`s, ALASM's two objects) is part of the
 library's test data (`testdata/dialects/thelink`); with `UNREAL_ASM_SJASMPLUS` set, `unreal-asm-tests` assembles
@@ -111,7 +113,8 @@ the converted unit and the constructs sample and compares them with ALASM's byte
 
 Bugs the oracle found on the way (all fixed): `?label` written as `IFDEF` (sjasmplus never took the branch:
 HEDGEGS 22 bytes short of labels); `\P` / `\R` not implemented (the last polygon of every KPOL took the wrong
-parameter); a value wholly in parentheses read as memory; signed division; register-named labels.
+parameter); a value wholly in parentheses read as memory; signed division; register-named labels; ALASM 4.x's `IF`
+taken as "not 0" (found 2026-10-08 with the 5.0 probe: it is `IF0`'s old name).
 
 ## 6. Round trip through the sjasmplus frontend
 
@@ -130,5 +133,5 @@ sources from 21 disks (the ALASM releases, Alone Coder's ACE, PT3 and CON source
 | TASM frontend | D-9 named TASM → sjasmplus as the first pair; ALASM came first because The Link gives binaries to compare with. TASM is the next frontend (A5b) |
 | Column of comments | the IR keeps no columns: comments are written from column 32 |
 | `?label` before the definition | ALASM is one pass: `?x` before `x` is defined says "not defined"; sjasmplus' `exist` sees the whole source |
-| ALASM's `DISPLAY` output | ALASM 5.09 printed `#004A end:` … `#004D` for `DISPLAY "end: ",/H,$` where sjasmplus prints `end: 0x603C`; not explained yet (no effect on the code) |
+| ALASM's `DISPLAY` output | checked in ALASM 5.09 (2026-10-07): during a pass ALASM prints a line counter `#NNNN` at each new screen line, and `DISPLAY` writes after it: texts as they are, numbers as `#` and four hex digits with no separator (`DISPLAY "b",$` gives `b#6001`, `DISPLAY "c",3+4` gives `c#0007`). The `#004A end:` seen before is the line counter and the text. Every switch (`/H`, `/h`, `/D`, `/A`, `/L`) in a file written by the codec was a syntax error (#00) there; one typed in 5.09's editor was not tried. sjasmplus prints numbers as `0x6001` (or decimal with `/D`) and has no `#` form, so the output cannot be made identical; it has no effect on the code |
 | Labels and IR | the IR node set is the union of ALASM and sjasmplus; the TASM, STORM and ZX-ASM frontends may add node kinds (D-7) |

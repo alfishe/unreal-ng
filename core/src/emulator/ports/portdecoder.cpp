@@ -979,15 +979,15 @@ uint32_t PortDecoder::ReadPagingLatch(PagingLatch latch, const EmulatorState& st
         case PagingLatch::P1FFD:  return state.p1FFD;
         case PagingLatch::PDFFD:  return state.pDFFD;
         case PagingLatch::PFDFD:  return state.pFDFD;
-        case PagingLatch::P7EFD:  return state.p7EFD;
+        case PagingLatch::P7EFD:  return state.scorpion.p7EFD;
         case PagingLatch::PEFF7:  return state.pEFF7;
         case PagingLatch::PFF77:  return state.pFF77;
-        case PagingLatch::AFE:    return state.aFE;
-        case PagingLatch::AFB:    return state.aFB;
-        case PagingLatch::PFFF7Window0: return state.pFFF7[0];
-        case PagingLatch::PFFF7Window1: return state.pFFF7[1];
-        case PagingLatch::PFFF7Window2: return state.pFFF7[2];
-        case PagingLatch::PFFF7Window3: return state.pFFF7[3];
+        case PagingLatch::AFE:    return state.atm.aFE;
+        case PagingLatch::AFB:    return state.atm.aFB;
+        case PagingLatch::PFFF7Window0: return state.atm.pFFF7[0];
+        case PagingLatch::PFFF7Window1: return state.atm.pFFF7[1];
+        case PagingLatch::PFFF7Window2: return state.atm.pFFF7[2];
+        case PagingLatch::PFFF7Window3: return state.atm.pFFF7[3];
         case PagingLatch::PFE:    return state.pFE;
         case PagingLatch::None:
         default:

@@ -148,6 +148,25 @@ TEST_P(TTDControl_Test, WithoutTimeTravelStatusAnswersIdleAndEveryOtherVerbIsNot
     EXPECT_EQ(start.message, "TTD engine not available in this build");
 }
 
+/// A start the recorder refuses says why (409 with the reason), not a quiet "started": false - a Sprinter with two
+/// UART cards was refused that way, unexplained, until 2026-10-08. Here: a configuration with no RAM page to record
+TEST_P(TTDControl_Test, ARefusedStartSaysWhy)
+{
+    const uint32_t ramsize = _context->config.ramsize;
+    _context->config.ramsize = 8;   // under one 16 KB page
+    TTDReply r = Run("start");
+    _context->config.ramsize = ramsize;
+    EXPECT_FALSE(r.Ok());
+    EXPECT_EQ(r.HttpStatus(), 409);
+    EXPECT_NE(r.message.find("the recording did not start: the machine reports no RAM pages to record"), std::string::npos)
+        << r.message;
+    EXPECT_FALSE(Bool(r, "started"));
+
+    r = Run("start");   // the next start that succeeds clears the reason
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_TRUE(Bool(r, "started"));
+}
+
 TEST_P(TTDControl_Test, StartStopAndStatusReportTheSession)
 {
     TTDReply r = Run("start", {{"journal", "true"}, {"history_limit_frames", "500"}});
@@ -440,6 +459,18 @@ TEST_P(TTDControl_Test, ReverseQueriesCheckTheirCriteriaAndAddresses)
     EXPECT_EQ(Run("find-last", {{"addr", "#5C00"}, {"access", "poke"}}).error, TTDControlError::BadRequest);
     EXPECT_EQ(Run("find-last", {{"value", "256"}}).error, TTDControlError::BadRequest);
     EXPECT_EQ(Run("find-last", {{"addr", "$5C00"}, {"phys_page", "300"}}).error, TTDControlError::BadRequest);
+    // space: ram / vram / cache; offsets in another space reach its end (256 KB) and stay inside one 16 KB page
+    EXPECT_EQ(Run("find-last", {{"addr", "0"}, {"space", "rom"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("find-last", {{"addr", "0x40000"}, {"space", "vram"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("find-last", {{"addr_from", "0x3FFF"}, {"addr_to", "0x4000"}, {"space", "cache"}}).error,
+              TTDControlError::BadRequest);
+    EXPECT_EQ(Run("find-last", {{"value", "1"}, {"space", "vram"}}).error, TTDControlError::BadRequest) << "no offset";
+    EXPECT_EQ(Run("find-last", {{"addr", "5"}, {"space", "vram"}, {"phys_page", "5"}}).error, TTDControlError::BadRequest);
+    for (const auto& [space, addr] : {std::pair{"vram", "0x3FFFF"}, std::pair{"cache", "0x4000"}, std::pair{"ram", "0xFFFF"}})
+    {
+        const TTDReply r = Run("find-last", {{"addr", addr}, {"space", space}});
+        EXPECT_TRUE(r.Ok()) << space << " " << addr << ": " << r.message;
+    }
     EXPECT_EQ(Run("reverse-continue").error, TTDControlError::BadRequest);
     EXPECT_EQ(Run("reverse-continue", {{"pcs", "0x38,"}}).error, TTDControlError::BadRequest);
 

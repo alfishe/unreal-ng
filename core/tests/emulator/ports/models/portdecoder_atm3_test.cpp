@@ -6,7 +6,7 @@
 #include "emulator/io/mouse/mousemanager.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediamanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/zcsdtesthelper.h"
@@ -148,8 +148,8 @@ TEST_F(PortDecoder_ATM3_Test, Reset)
     state.p7FFD = 0x12;
     state.pFF77 = 0x34;
     state.pEFF7 = 0x56;
-    state.pBF = 0x01;
-    state.atmMemSwapped = true;
+    state.evo.pBF = 0x01;
+    state.atm.memSwapped = true;
 
     // Reset
     _portDecoder->reset();
@@ -159,11 +159,11 @@ TEST_F(PortDecoder_ATM3_Test, Reset)
     EXPECT_EQ(state.p7FFD, 0x00);
     EXPECT_EQ(state.pEFF7, 0x00);
     EXPECT_EQ(state.pFF77, 0x34);
-    EXPECT_TRUE(state.atmMemSwapped);
+    EXPECT_TRUE(state.atm.memSwapped);
 
     // ATM3-specific registers
-    EXPECT_EQ(state.pBF, 0x00);
-    EXPECT_EQ(state.pBE, 0x00);
+    EXPECT_EQ(state.evo.pBF, 0x00);
+    EXPECT_EQ(state.evo.pBE, 0x00);
 }
 
 TEST_F(PortDecoder_ATM3_Test, ApplyBootROMDefaults_InheritedFromATM710)
@@ -176,14 +176,14 @@ TEST_F(PortDecoder_ATM3_Test, ApplyBootROMDefaults_InheritedFromATM710)
     _portDecoder->ApplyBootROMDefaults(RM_DOS);
 
     EXPECT_EQ(state.pFF77, 0x80 | 0x40 | 0x20 | 3);  // video mode 3 (ZX), INT gate on
-    EXPECT_EQ(state.pFFF7[0], 0x0100 | 1);
-    EXPECT_EQ(state.pFFF7[1], 0x0200 | 5);
-    EXPECT_EQ(state.pFFF7[2], 0x0200 | 2);
-    EXPECT_EQ(state.pFFF7[3], 0x0200 | 0);
+    EXPECT_EQ(state.atm.pFFF7[0], 0x0100 | 1);
+    EXPECT_EQ(state.atm.pFFF7[1], 0x0200 | 5);
+    EXPECT_EQ(state.atm.pFFF7[2], 0x0200 | 2);
+    EXPECT_EQ(state.atm.pFFF7[3], 0x0200 | 0);
 
     // Non-DOS boot: manager disabled (shared ATM behavior)
     _portDecoder->ApplyBootROMDefaults(RM_128);
-    EXPECT_EQ(state.aFF77, 0x0000);
+    EXPECT_EQ(state.atm.aFF77, 0x0000);
     EXPECT_EQ(state.pFF77, 0x00);
 }
 
@@ -247,31 +247,31 @@ TEST_F(PortDecoder_ATM3_Test, Port_37F7_Encoding_PreservesRAMType)
     state.p7FFD = 0x00;
 
     // Window 2 register (0xB7F7): type preserved, page = val ^ 0xFF
-    state.pFFF7[2] = 0x0205;  // RAM from FFF7, page 5
+    state.atm.pFFF7[2] = 0x0205;  // RAM from FFF7, page 5
     _portDecoder->DecodePortOut(0xB7F7, 0x00, 0x0000);
-    EXPECT_EQ(state.pFFF7[2], 0x02FF);  // RAM from FFF7, page 0xFF (4MB top page)
+    EXPECT_EQ(state.atm.pFFF7[2], 0x02FF);  // RAM from FFF7, page 0xFF (4MB top page)
 
     // ROM-from-7FFD type degrades to RAM (bit 8 cleared - the port always selects RAM)
-    state.pFFF7[0] = 0x0101;
+    state.atm.pFFF7[0] = 0x0101;
     _portDecoder->DecodePortOut(0x37F7, 0x00, 0x0000);
-    EXPECT_EQ(state.pFFF7[0], 0x00FF);
+    EXPECT_EQ(state.atm.pFFF7[0], 0x00FF);
 
     // Register set selection via 7FFD bit 4
     state.p7FFD = 0x10;
-    state.pFFF7[7] = 0x0200;
+    state.atm.pFFF7[7] = 0x0200;
     _portDecoder->DecodePortOut(0xF7F7, 0xF0, 0x0000);  // Window 3 of set 1
-    EXPECT_EQ(state.pFFF7[7], 0x020F);
+    EXPECT_EQ(state.atm.pFFF7[7], 0x020F);
 }
 
 TEST_F(PortDecoder_ATM3_Test, Port_37F7_MapsTopRAMPage)
 {
     EmulatorState& state = _context->emulatorState;
-    state.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
+    state.atm.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
     // CP/M mode (~cpm inactive): open the memory-manager gate via shaden
     // (original io.cpp: manager ports live inside the CF_DOSPORTS block)
-    state.pBF = 0x01;
+    state.evo.pBF = 0x01;
     state.p7FFD = 0x00;
-    state.pFFF7[1] = 0x0200;  // RAM from FFF7, page 0
+    state.atm.pFFF7[1] = 0x0200;  // RAM from FFF7, page 0
 
     // Window 1 <- RAM page 0xFF (val 0x00 inverts to 0xFF)
     _portDecoder->DecodePortOut(0x77F7, 0x00, 0x0000);
@@ -288,8 +288,8 @@ TEST_F(PortDecoder_ATM3_Test, NMI_ForcesTopRAMPageAtWindow0)
 
     // RM_DOS defaults latch cpm (aFF77.9): open the memory-manager gate via
     // shaden so the window write reaches the decoder (original io.cpp CF_DOSPORTS)
-    state.pBF = 0x01;
-    state.evoInNmi = true;
+    state.evo.pBF = 0x01;
+    state.evo.inNmi = true;
     state.p7FFD = 0x00;
     _portDecoder->DecodePortOut(0x3FF7, 0x7F, 0x0000);  // Any manager write re-runs the mapping
 
@@ -317,7 +317,7 @@ TEST_F(PortDecoder_ATM3_Test, Turbo_FF77Bit3_EFF7Bit4_MultiplierSelect)
 
     // Open the memory-manager gate: the first FF77 write latches cpm in
     // aFF77 (see Port_FF77_Out_ATM3), which would otherwise swallow the write
-    state.pBF = 0x01;
+    state.evo.pBF = 0x01;
 
     _portDecoder->DecodePortOut(0xFF77, 0x08, 0x0000);
     EXPECT_EQ(state.hw_turbo_ratio, 4) << "pFF77.3 set is 14 MHz";
@@ -327,13 +327,13 @@ TEST_F(PortDecoder_ATM3_Test, Turbo_FF77Bit3_EFF7Bit4_MultiplierSelect)
 
     // #EFF7 is written only outside shadow (zports.v:716 "EEF7 in shadow mode
     // is abandoned"): drop shaden and leave CP/M so the DOS line is off too
-    state.pBF = 0x00;
-    state.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
+    state.evo.pBF = 0x00;
+    state.atm.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
     state.flags &= ~CF_TRDOS;
     _portDecoder->DecodePortOut(0xEFF7, 0x10, 0x0000);
     EXPECT_EQ(state.hw_turbo_ratio, 1) << "pEFF7.4 locks 3.5 MHz";
 
-    state.pBF = 0x01;
+    state.evo.pBF = 0x01;
     _portDecoder->DecodePortOut(0xFF77, 0x08, 0x0000);
     EXPECT_EQ(state.hw_turbo_ratio, 4) << "pFF77.3 overrides the 3.5 MHz lock";
 
@@ -368,24 +368,24 @@ TEST_F(PortDecoder_ATM3_Test, PaletteFF_ManagerGate)
     EmulatorState& state = _context->emulatorState;
     state.flags = 0x00;
     state.border_attr = 0x00;
-    state.atmBorderBright = 0;
+    state.atm.borderBright = 0;
 
     // aFF77 = 0 at reset: gate open, pen2 clear
     _portDecoder->DecodePortOut(0x00FF, 0x00, 0x0000);
-    EXPECT_EQ(state.atmPalette[0], 0xFFFFFFFFu);
+    EXPECT_EQ(state.atm.palette[0], 0xFFFFFFFFu);
 
     // cpm set, shaden clear, no TR-DOS session -> blocked (pen2 also set -
     // the gate must close before the latch is even reached)
-    state.atmPalette[0] = 0x12345678;  // sentinel
-    state.aFF77 = PortDecoder_ATM3::ATM_AFF77_CPM | PortDecoder_ATM3::ATM_AFF77_PEN2;
+    state.atm.palette[0] = 0x12345678;  // sentinel
+    state.atm.aFF77 = PortDecoder_ATM3::ATM_AFF77_CPM | PortDecoder_ATM3::ATM_AFF77_PEN2;
     _portDecoder->DecodePortOut(0x00FF, 0x00, 0x0000);
-    EXPECT_EQ(state.atmPalette[0], 0x12345678u);
+    EXPECT_EQ(state.atm.palette[0], 0x12345678u);
 
     // shaden (pBF.0) reopens it - even with cpm still set
-    state.pBF = 0x01;
-    state.aFF77 = PortDecoder_ATM3::ATM_AFF77_CPM;
+    state.evo.pBF = 0x01;
+    state.atm.aFF77 = PortDecoder_ATM3::ATM_AFF77_CPM;
     _portDecoder->DecodePortOut(0x00FF, 0x00, 0x0000);
-    EXPECT_EQ(state.atmPalette[0], 0xFFFFFFFFu);
+    EXPECT_EQ(state.atm.palette[0], 0xFFFFFFFFu);
 }
 
 TEST_F(PortDecoder_ATM3_Test, Port_7FFD_LockOnlyWithEFF7Lockmem)
@@ -428,9 +428,9 @@ TEST_F(PortDecoder_ATM3_Test, PortBE_ReadbackRegisters_LegacyFpga)
     _context->config.atm.evo_legacy_fpga = 1;
     EmulatorState& state = _context->emulatorState;
     state.flags = 0x00;
-    state.aFF77 = 0x0000;  // manager open at reset
+    state.atm.aFF77 = 0x0000;  // manager open at reset
     state.border_attr = 0x04;
-    state.atmBorderBright = 1;  // cell = 4 | (1 << 3) = 12
+    state.atm.borderBright = 1;  // cell = 4 | (1 << 3) = 12
     _portDecoder->DecodePortOut(0x00FF, 0xA5, 0x0000);  // the palette cell 12 takes the color; #0D reads it back
     state.pEFF7 = 0x5A;
 
@@ -458,21 +458,21 @@ TEST_F(PortDecoder_ATM3_Test, PortBD_ReadbackRegisters_TrdemuFpga)
 TEST_F(PortDecoder_ATM3_Test, EvoRegisterTable_AllIndices)
 {
     EmulatorState& state = _context->emulatorState;
-    state.pFFF7[0] = 0x0305;  // ROM, page 5 from the register
-    state.pFFF7[1] = 0x0240;  // RAM, page 0x40 from the register
-    state.pFFF7[4] = 0x0100;  // ROM with dos7ffd (map 1)
-    state.pFFF7[5] = 0x0003;  // RAM with dos7ffd (map 1)
-    state.pFFF7[2] = 0x0200;
-    state.pFFF7[3] = 0x0200;
-    state.pFFF7[6] = 0x0200;
-    state.pFFF7[7] = 0x0200;
+    state.atm.pFFF7[0] = 0x0305;  // ROM, page 5 from the register
+    state.atm.pFFF7[1] = 0x0240;  // RAM, page 0x40 from the register
+    state.atm.pFFF7[4] = 0x0100;  // ROM with dos7ffd (map 1)
+    state.atm.pFFF7[5] = 0x0003;  // RAM with dos7ffd (map 1)
+    state.atm.pFFF7[2] = 0x0200;
+    state.atm.pFFF7[3] = 0x0200;
+    state.atm.pFFF7[6] = 0x0200;
+    state.atm.pFFF7[7] = 0x0200;
     state.p7FFD = 0x17;
     state.pEFF7 = 0x84;
-    state.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN2 | PortDecoder_ATM3::ATM_AFF77_PEN;  // A14=1, A9=0, A8=1
+    state.atm.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN2 | PortDecoder_ATM3::ATM_AFF77_PEN;  // A14=1, A9=0, A8=1
     state.pFF77 = 0x0B;                                                                // turbo + mode 3
     state.flags = CF_TRDOS;
-    state.pBD = 0x1234;
-    state.evoFddMask = 0x06;
+    state.evo.pBD = 0x1234;
+    state.evo.fddMask = 0x06;
 
     auto rd = [this](uint8_t index) { return _portDecoder->DecodePortIn(static_cast<uint16_t>((index << 8) | 0xBD), 0x0000); };
 
@@ -500,22 +500,22 @@ TEST_F(PortDecoder_ATM3_Test, BreakpointAddressWrites_BothTrees)
 {
     EmulatorState& state = _context->emulatorState;
 
-    state.pBD = 0x0000;
+    state.evo.pBD = 0x0000;
     _portDecoder->DecodePortOut(0x10BD, 0x34, 0x0000);
     _portDecoder->DecodePortOut(0x11BD, 0x12, 0x0000);
-    EXPECT_EQ(state.pBD, 0x1234);
+    EXPECT_EQ(state.evo.pBD, 0x1234);
     _portDecoder->DecodePortOut(0x00BD, 0x99, 0x0000);
-    EXPECT_EQ(state.pBD, 0x1234) << "#00BD is not a breakpoint register on the current tree";
+    EXPECT_EQ(state.evo.pBD, 0x1234) << "#00BD is not a breakpoint register on the current tree";
     _portDecoder->DecodePortOut(0xF0BD, 0x56, 0x0000);
-    EXPECT_EQ(state.pBD, 0x1256) << "A15..A13 are not decoded: #F0BD = #10BD";
+    EXPECT_EQ(state.evo.pBD, 0x1256) << "A15..A13 are not decoded: #F0BD = #10BD";
 
     _context->config.atm.evo_legacy_fpga = 1;
-    state.pBD = 0x0000;
+    state.evo.pBD = 0x0000;
     _portDecoder->DecodePortOut(0x00BD, 0x78, 0x0000);
     _portDecoder->DecodePortOut(0x01BD, 0x56, 0x0000);
-    EXPECT_EQ(state.pBD, 0x5678);
+    EXPECT_EQ(state.evo.pBD, 0x5678);
     _portDecoder->DecodePortOut(0x2ABD, 0x11, 0x0000);  // A8=0: low byte, rest undecoded
-    EXPECT_EQ(state.pBD, 0x5611);
+    EXPECT_EQ(state.evo.pBD, 0x5611);
     EXPECT_EQ(_portDecoder->DecodePortIn(0x10BE, 0x0000), 0x11) << "legacy readback #10BE / #11BE";
     EXPECT_EQ(_portDecoder->DecodePortIn(0x11BE, 0x0000), 0x56);
 }
@@ -527,15 +527,15 @@ TEST_F(PortDecoder_ATM3_Test, FddMask13BD_ReadWriteResetAndLegacyAbsent)
     EmulatorState& state = _context->emulatorState;
 
     _portDecoder->DecodePortOut(0x13BD, 0xFA, 0x0000);
-    EXPECT_EQ(state.evoFddMask, 0x0A);
+    EXPECT_EQ(state.evo.fddMask, 0x0A);
     EXPECT_EQ(_portDecoder->DecodePortIn(0x13BD, 0x0000), 0x0A) << "the ERS FPGA check writes %1010 and reads it back";
 
     _portDecoder->reset();
-    EXPECT_EQ(state.evoFddMask, 0x00);
+    EXPECT_EQ(state.evo.fddMask, 0x00);
 
     _context->config.atm.evo_legacy_fpga = 1;
     _portDecoder->DecodePortOut(0x13BD, 0x05, 0x0000);  // a breakpoint write on the legacy tree
-    EXPECT_EQ(state.evoFddMask, 0x00);
+    EXPECT_EQ(state.evo.fddMask, 0x00);
 }
 
 /// #xxBF reads back only the defined bits: 5..0 (bit 5 = 4:4:4 palette) on
@@ -543,7 +543,7 @@ TEST_F(PortDecoder_ATM3_Test, FddMask13BD_ReadWriteResetAndLegacyAbsent)
 TEST_F(PortDecoder_ATM3_Test, PortBF_ReadbackMasksUndefinedBits)
 {
     EmulatorState& state = _context->emulatorState;
-    state.pBF = 0xFF;
+    state.evo.pBF = 0xFF;
     EXPECT_EQ(_portDecoder->DecodePortIn(0x00BF, 0x0000), 0x3F);
     _context->config.atm.evo_legacy_fpga = 1;
     EXPECT_EQ(_portDecoder->DecodePortIn(0x00BF, 0x0000), 0x1F);
@@ -591,7 +591,7 @@ TEST_F(PortDecoder_ATM3_Test, GSHostPortsReachBaseDecodeThroughOverrides)
     // Manager gate open (aFF77=0 at reset): the x7F7/xx77/xFF7 group stays
     // hungry but must leave the GS family alone
     EmulatorState& state = _context->emulatorState;
-    state.aFF77 = 0x0000;
+    state.atm.aFF77 = 0x0000;
 
     EXPECT_EQ(_portDecoder->DecodePortIn(0x02B3, 0x0000), 0x4C) << "#02B3 read answers through key #00B3";
     EXPECT_EQ(gs.lastPort, 0x00B3);
@@ -628,9 +628,9 @@ namespace
     {
         // Shadow = TR-DOS (DOS line) or #BF bit 0. CP/M set (A9=1) keeps the DOS
         // line from being forced, PEN set keeps the pager on
-        state.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
+        state.atm.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
         state.flags &= ~CF_TRDOS;
-        state.pBF = on ? 0x01 : 0x00;
+        state.evo.pBF = on ? 0x01 : 0x00;
     }
 }  // namespace
 
@@ -790,10 +790,10 @@ TEST_F(PortDecoder_ATM3_Test, Eff7_WrittenOnlyOutsideShadow_WriteOnly)
     EXPECT_EQ(_portDecoder->DecodePortIn(0xEFF7, 0x0000), 0xFF) << "#EFF7 has no read path";
 
     SetShadow(state, true);
-    state.pFFF7[3] = 0x0000;
+    state.atm.pFFF7[3] = 0x0000;
     _portDecoder->DecodePortOut(0xEFF7, 0x00, 0x0000);
     EXPECT_EQ(state.pEFF7, 0x14) << "in shadow #EFF7 is ignored";
-    EXPECT_EQ(state.pFFF7[3], 0x033F) << "... and reaches pager window 3 instead (value 0 -> ROM, page 0x3F)";
+    EXPECT_EQ(state.atm.pFFF7[3], 0x033F) << "... and reaches pager window 3 instead (value 0 -> ROM, page 0x3F)";
 }
 
 /// The Gluk clock needs #EFF7 bit 7 outside shadow and is always on in shadow,
@@ -833,7 +833,7 @@ TEST_F(PortDecoder_ATM3_Test, Mapping_7FFDPageBits_1MegVs128KMode)
     _context->config.ramsize = 4096;
     SetShadow(state, false);
     state.p7FFD = 0xE3;          // bits 7:5 = 111, bits 2:0 = 011, map 0
-    state.pFFF7[3] = 0x0040;     // RAM, page bits from #7FFD, register page 0x40
+    state.atm.pFFF7[3] = 0x0040;     // RAM, page bits from #7FFD, register page 0x40
 
     state.pEFF7 = 0x00;
     _memory->UpdateZ80Banks();
@@ -852,14 +852,14 @@ TEST_F(PortDecoder_ATM3_Test, Mapping_Eff7Bit3_Ram0AtWindow0)
     _context->config.ramsize = 4096;
     SetShadow(state, false);
     state.p7FFD = 0x00;
-    state.pFFF7[0] = 0x0301;  // ROM page 1
+    state.atm.pFFF7[0] = 0x0301;  // ROM page 1
 
     state.pEFF7 = PortDecoder_ATM3::ATM_EFF7_ROCACHE;
     _memory->UpdateZ80Banks();
     EXPECT_EQ(_memory->GetMemoryBankMode(0), MemoryBankModeEnum::BANK_RAM);
     EXPECT_EQ(_memory->GetRAMPageForBank0(), 0);
 
-    state.aFF77 = PortDecoder_ATM3::ATM_AFF77_CPM;  // PEN off
+    state.atm.aFF77 = PortDecoder_ATM3::ATM_AFF77_CPM;  // PEN off
     _memory->UpdateZ80Banks();
     EXPECT_EQ(_memory->GetMemoryBankMode(0), MemoryBankModeEnum::BANK_ROM) << "pager off beats #EFF7 bit 3";
 }
@@ -983,7 +983,7 @@ TEST(ZXEvoSdCardTtd_Test, SdCardUnderTheCommonTtdRule)
     ASSERT_NE(decoder, nullptr);
     ASSERT_NE(context->pMediaManager, nullptr);
     EXPECT_TRUE(context->pMediaManager->HasSlot("sd.zc")) << "the ZX-Evo registers its SD slot";
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
 
     ASSERT_TRUE(decoder->InsertSdCard(PatternDisk(64), SdCardSpi::WriteMode::Session));
@@ -993,6 +993,7 @@ TEST(ZXEvoSdCardTtd_Test, SdCardUnderTheCommonTtdRule)
     SetShadow(context->emulatorState, false);
     decoder->DecodePortOut(0x0077, 0x00, 0);
     ASSERT_TRUE(SdInit(decoder, 0x0057));
+    context->emulatorState.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
     ttd->OnFrameBoundary();
     EXPECT_TRUE(ttd->IsRecording()) << "commands no longer end a recording";
 
@@ -1199,12 +1200,12 @@ TEST_F(PortDecoder_ATM3_Machine_Test, BorderPortsF6AndFC)
 
     _decoder->DecodePortOut(0x00F6, 0x05, 0x0000);
     EXPECT_EQ(state.border_attr, 0x05);
-    EXPECT_EQ(state.atmBorderBright, 1) << "#F6 has A3=0: bright border half";
+    EXPECT_EQ(state.atm.borderBright, 1) << "#F6 has A3=0: bright border half";
     EXPECT_EQ(state.pFE & 0x18, 0x10) << "#F6 must not touch beeper / MIC";
 
     _decoder->DecodePortOut(0x7FFC, 0x03, 0x0000);
     EXPECT_EQ(state.border_attr, 0x03);
-    EXPECT_EQ(state.atmBorderBright, 0);
+    EXPECT_EQ(state.atm.borderBright, 0);
     EXPECT_EQ(state.p7FFD, 0x03) << "#FC with A15=0 also writes #7FFD";
     EXPECT_EQ(state.pFE & 0x18, 0x10) << "#FC does not drive the beeper";
 }
@@ -1315,15 +1316,15 @@ protected:
         // Pager on, CP/M off (no forced DOS), shadow off; window 0 = ROM page 28
         // (BASIC48), windows 1-3 = RAM 5 / 2 / 0 - map 0
         EmulatorState& state = _context->emulatorState;
-        state.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
+        state.atm.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
         state.flags = 0;
-        state.pBF = 0;
+        state.evo.pBF = 0;
         state.p7FFD = 0;
         state.pEFF7 = PortDecoder_ATM3::ATM_EFF7_LOCKMEM;
-        state.pFFF7[0] = 0x300 | 28;
-        state.pFFF7[1] = 0x200 | 5;
-        state.pFFF7[2] = 0x200 | 2;
-        state.pFFF7[3] = 0x200 | 0;
+        state.atm.pFFF7[0] = 0x300 | 28;
+        state.atm.pFFF7[1] = 0x200 | 5;
+        state.atm.pFFF7[2] = 0x200 | 2;
+        state.atm.pFFF7[3] = 0x200 | 0;
         _memory->UpdateZ80Banks();
 
         _z80->pc = kReturnPc;
@@ -1382,7 +1383,7 @@ TEST_F(ZXEvoNmi_Test, BfEdgeNmiWaitsForIntThenEntersPageFF)
     EXPECT_EQ(_z80->t - t0, 11u + 4u) << "acknowledge (11T) + forced NOP M1 (4T)";
     EXPECT_EQ(static_cast<uint8_t>((_z80->r_low - r0) & 0x7F), 2) << "two refresh cycles: acknowledge + NOP";
     EXPECT_TRUE(NmiPageIn());
-    EXPECT_TRUE(_context->emulatorState.evoInNmi);
+    EXPECT_TRUE(_context->emulatorState.evo.inNmi);
     EXPECT_EQ(_z80->DirectRead(kStack - 1), kReturnPc >> 8);
     EXPECT_EQ(_z80->DirectRead(kStack - 2), kReturnPc & 0xFF);
 }
@@ -1401,7 +1402,7 @@ TEST_F(ZXEvoNmi_Test, ExitAfterTwoM1sRetnRunsFromPageFF)
     EXPECT_TRUE(NmiPageIn()) << "still in after the write";
     _z80->Z80Step(true);  // RETN (two M1s: ED, 45)
     EXPECT_EQ(_z80->pc, kReturnPc) << "RETN fetched from the NMI page";
-    EXPECT_FALSE(_context->emulatorState.evoInNmi);
+    EXPECT_FALSE(_context->emulatorState.evo.inNmi);
     EXPECT_EQ(_memory->GetMemoryBankMode(0), MemoryBankModeEnum::BANK_ROM);
     EXPECT_EQ(_memory->GetROMPage(), 28u);
 }
@@ -1419,7 +1420,7 @@ TEST_F(ZXEvoNmi_Test, ExitCountsM1sNotInstructions)
     EXPECT_TRUE(NmiPageIn());
     _z80->Z80Step(true);  // RET (M1 #2: fetched from #FF, page leaves at its refresh)
     EXPECT_EQ(_z80->pc, kReturnPc);
-    EXPECT_FALSE(_context->emulatorState.evoInNmi);
+    EXPECT_FALSE(_context->emulatorState.evo.inNmi);
 }
 
 /// NMI-3: the M1 breakpoint fires immediately (no INT wait) on every pass
@@ -1497,8 +1498,8 @@ TEST_F(ZXEvoNmi_Test, DosStaysOnInsideTheNmiPage)
     _z80->Z80Step(true);
     EXPECT_TRUE(state.flags & CF_TRDOS) << "the programmed window 0 is ROM: DOS stays on";
 
-    state.pFFF7[0] = 0x200 | 7;  // now program window 0 as RAM
-    state.evoInNmi = false;
+    state.atm.pFFF7[0] = 0x200 | 7;  // now program window 0 as RAM
+    state.evo.inNmi = false;
     _memory->UpdateZ80Banks();
     _z80->pc = 0x0000;
     _memory->RAMPageAddress(7)[0] = 0x00;
@@ -1542,14 +1543,14 @@ protected:
         // Pager on, CP/M off, palette-write mode off (A14 = 1); window 0 = the
         // DOS ROM page 29 (NEO-DOS), windows 1-3 = RAM 5 / 2 / 0; TR-DOS active
         EmulatorState& state = _context->emulatorState;
-        state.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM | PortDecoder_ATM3::ATM_AFF77_PEN2;
-        state.pBF = 0;
+        state.atm.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM | PortDecoder_ATM3::ATM_AFF77_PEN2;
+        state.evo.pBF = 0;
         state.p7FFD = 0;
         state.pEFF7 = PortDecoder_ATM3::ATM_EFF7_LOCKMEM;
-        state.pFFF7[0] = 0x300 | 29;
-        state.pFFF7[1] = 0x200 | 5;
-        state.pFFF7[2] = 0x200 | 2;
-        state.pFFF7[3] = 0x200 | 0;
+        state.atm.pFFF7[0] = 0x300 | 29;
+        state.atm.pFFF7[1] = 0x200 | 5;
+        state.atm.pFFF7[2] = 0x200 | 2;
+        state.atm.pFFF7[3] = 0x200 | 0;
         state.flags = CF_TRDOS;
         _memory->UpdateZ80Banks();
         ASSERT_TRUE(_decoder->IsManagerEnabled()) << "TR-DOS active = shadow";
@@ -1566,7 +1567,7 @@ protected:
             EmulatorManager::GetInstance()->RemoveEmulator(_emulator->GetId());
     }
 
-    uint8_t Trdemu() const { return _context->emulatorState.evoTrdemu; }
+    uint8_t Trdemu() const { return _context->emulatorState.evo.trdemu; }
     bool PageFEIn() const
     {
         return _memory->GetMemoryBankMode(0) == MemoryBankModeEnum::BANK_RAM && _memory->GetRAMPageForBank0() == 0xFE;
@@ -1579,7 +1580,7 @@ TEST_F(ZXEvoTrdemu_Test, MaskedDriveDeselectsTheChip)
 {
     EmulatorState& state = _context->emulatorState;
     state.flags = 0;
-    state.pBF = 0x01;  // shadow through #BF: no DOS, so no trap - only the chip select is under test
+    state.evo.pBF = 0x01;  // shadow through #BF: no DOS, so no trap - only the chip select is under test
     _memory->UpdateZ80Banks();
     _decoder->DecodePortOut(0x13BD, 0x02, 0x0000);  // drive B virtual
 
@@ -1613,9 +1614,9 @@ TEST_F(ZXEvoTrdemu_Test, TrapNeedsEveryCondition)
 {
     EmulatorState& state = _context->emulatorState;
     auto trapsOnStatusRead = [&]() {
-        state.evoTrdemu = 0;
+        state.evo.trdemu = 0;
         _decoder->DecodePortIn(0x001F, 0x0000);
-        return (state.evoTrdemu & PortDecoder_ATM3::kTrdemuPending) != 0;
+        return (state.evo.trdemu & PortDecoder_ATM3::kTrdemuPending) != 0;
     };
 
     _decoder->DecodePortOut(0x13BD, 0x01, 0x0000);  // drive A virtual
@@ -1626,17 +1627,17 @@ TEST_F(ZXEvoTrdemu_Test, TrapNeedsEveryCondition)
     EXPECT_FALSE(trapsOnStatusRead()) << "drive not masked";
     _decoder->DecodePortOut(0x13BD, 0x01, 0x0000);
 
-    state.aFF77 &= ~PortDecoder_ATM3::ATM_AFF77_PEN2;
+    state.atm.aFF77 &= ~PortDecoder_ATM3::ATM_AFF77_PEN2;
     EXPECT_FALSE(trapsOnStatusRead()) << "palette-write mode (#xx77 A14 = 0) blocks the trap";
-    state.aFF77 |= PortDecoder_ATM3::ATM_AFF77_PEN2;
+    state.atm.aFF77 |= PortDecoder_ATM3::ATM_AFF77_PEN2;
 
-    state.pFFF7[0] = 0x200 | 7;  // window 0 = RAM
+    state.atm.pFFF7[0] = 0x200 | 7;  // window 0 = RAM
     _memory->UpdateZ80Banks();
     EXPECT_FALSE(trapsOnStatusRead()) << "only code running from ROM in window 0 traps";
-    state.pFFF7[0] = 0x300 | 29;
+    state.atm.pFFF7[0] = 0x300 | 29;
 
     state.flags = 0;
-    state.pBF = 0x01;  // shadow still on, DOS off
+    state.evo.pBF = 0x01;  // shadow still on, DOS off
     _memory->UpdateZ80Banks();
     EXPECT_FALSE(trapsOnStatusRead()) << "the DOS signal is required";
 }
@@ -1648,7 +1649,7 @@ TEST_F(ZXEvoTrdemu_Test, SwapForNextFetchAndImmediateExit)
     ASSERT_EQ(_memory->ROMPageHostAddress(29)[0x1FDD], 0xDB) << "NEO-DOS #1FDD: IN A,(#1F)";
     _decoder->DecodePortOut(0x13BD, 0x01, 0x0000);
     _decoder->DecodePortOut(0x00FF, kDriveA, 0x0000);
-    _context->emulatorState.evoTrdemu = 0;
+    _context->emulatorState.evo.trdemu = 0;
 
     PageFE()[0x1FDF] = 0x00;  // NOP              (ROM has #E6 here)
     PageFE()[0x1FE0] = 0xD3;  // OUT (#BE),A
@@ -1680,7 +1681,7 @@ TEST_F(ZXEvoTrdemu_Test, TrappingIniCannotWritePageFE)
     ASSERT_EQ(_memory->ROMPageHostAddress(29)[0x3FEC], 0xED) << "NEO-DOS #3FEC: INI";
     _decoder->DecodePortOut(0x13BD, 0x01, 0x0000);
     _decoder->DecodePortOut(0x00FF, kDriveA, 0x0000);
-    _context->emulatorState.evoTrdemu = 0;
+    _context->emulatorState.evo.trdemu = 0;
 
     PageFE()[0x0100] = 0xAA;
     _z80->pc = 0x3FEC;
@@ -1698,19 +1699,19 @@ TEST_F(ZXEvoTrdemu_Test, TrappingIniCannotWritePageFE)
 TEST_F(ZXEvoTrdemu_Test, NmiOverTrdemuMapsPageFF)
 {
     EmulatorState& state = _context->emulatorState;
-    state.evoTrdemu = PortDecoder_ATM3::kTrdemuIn;
+    state.evo.trdemu = PortDecoder_ATM3::kTrdemuIn;
     _memory->UpdateZ80Banks();
     ASSERT_TRUE(PageFEIn());
 
-    state.evoInNmi = true;
+    state.evo.inNmi = true;
     _memory->UpdateZ80Banks();
     EXPECT_EQ(_memory->GetRAMPageForBank0(), 0xFF);
 
     _decoder->DecodePortOut(0x00BE, 0x00, 0x0000);
     EXPECT_EQ(Trdemu(), PortDecoder_ATM3::kTrdemuIn) << "inside an NMI #BE only ends the NMI";
 
-    state.evoInNmi = false;
-    state.pBE = 0;
+    state.evo.inNmi = false;
+    state.evo.pBE = 0;
     _memory->UpdateZ80Banks();
     EXPECT_TRUE(PageFEIn()) << "back to the trdemu page when the NMI page leaves";
 }
@@ -1722,7 +1723,7 @@ TEST_F(ZXEvoTrdemu_Test, RestoreBetweenTrapAndSwapStillSwaps)
 {
     _decoder->DecodePortOut(0x13BD, 0x01, 0x0000);
     _decoder->DecodePortOut(0x00FF, kDriveA, 0x0000);
-    _context->emulatorState.evoTrdemu = 0;
+    _context->emulatorState.evo.trdemu = 0;
     PageFE()[0x1FDF] = 0x00;  // NOP
     PageFE()[0x1FE0] = 0xD3;  // OUT (#BE),A
     PageFE()[0x1FE1] = 0xBE;
@@ -1741,7 +1742,7 @@ TEST_F(ZXEvoTrdemu_Test, RestoreBetweenTrapAndSwapStillSwaps)
     ASSERT_EQ(Trdemu(), 0);
     ASSERT_EQ(_z80->machineM1Hook, nullptr);
 
-    // Restore the way TimeTravelManager::RestoreCheckpoint does: serializers, then the paging decode
+    // Restore the way TimeTravelController::RestoreCheckpoint does: serializers, then the paging decode
     serializer.TTDLoadState(blob);
     _memory->UpdateZ80Banks();
     _z80->pc = 0x1FDF;
@@ -1944,7 +1945,7 @@ void OpenShadow(PortDecoder_ATM3* decoder, EmulatorState& state)
 {
     decoder->reset();
     decoder->ApplyBootROMDefaults(RM_DOS);
-    state.pBF = 0x01;
+    state.evo.pBF = 0x01;
 }
 
 constexpr uint16_t kBF7Window2 = 0x89F7;  // A15:A14 = window 2, A11:A10 = 10 (#xBF7), A8 = 1 (shadow)
@@ -2014,7 +2015,7 @@ TEST_F(PortDecoder_ATM3_Test, WriteProtect_Window0RamOverridesAreWritable)
     EXPECT_EQ(_memory->MemoryReadFast(0x0010, false), 0x66) << "RAM 0 over the ROM window";
 
     state.pEFF7 &= static_cast<uint8_t>(~PortDecoder_ATM3::ATM_EFF7_ROCACHE);
-    state.evoInNmi = true;
+    state.evo.inNmi = true;
     _memory->UpdateZ80Banks();
     _memory->MemoryWriteFast(0x0011, 0x77);
     EXPECT_EQ(_memory->MemoryReadFast(0x0011, false), 0x77) << "the NMI page";
@@ -2025,16 +2026,16 @@ TEST_F(PortDecoder_ATM3_Test, WriteProtect_ShadowOnlyAndResetClears)
 {
     EmulatorState& state = _context->emulatorState;
     OpenShadow(_portDecoder, state);
-    state.pBF = 0x00;
-    state.aFF77 = PortDecoder_ATM3::ATM_AFF77_CPM | PortDecoder_ATM3::ATM_AFF77_PEN;  // no shadow
+    state.evo.pBF = 0x00;
+    state.atm.aFF77 = PortDecoder_ATM3::ATM_AFF77_CPM | PortDecoder_ATM3::ATM_AFF77_PEN;  // no shadow
     _portDecoder->DecodePortOut(kBF7Window2, 0x01, 0x0000);
-    EXPECT_EQ(state.evoWrProt, 0x00);
+    EXPECT_EQ(state.evo.wrProt, 0x00);
 
     OpenShadow(_portDecoder, state);
     _portDecoder->DecodePortOut(kBF7Window2, 0x01, 0x0000);
-    ASSERT_NE(state.evoWrProt, 0x00);
+    ASSERT_NE(state.evo.wrProt, 0x00);
     _portDecoder->reset();
-    EXPECT_EQ(state.evoWrProt, 0x00);
+    EXPECT_EQ(state.evo.wrProt, 0x00);
 }
 
 namespace
@@ -2075,11 +2076,11 @@ TEST_F(PortDecoder_ATM3_Test, Palette444_LowBitsFromAddressHighByte)
 {
     EmulatorState& state = _context->emulatorState;
     OpenShadow(_portDecoder, state);
-    state.aFF77 = 0;  // pen2 clear: the palette gate is open
+    state.atm.aFF77 = 0;  // pen2 clear: the palette gate is open
     state.flags = 0;
     state.border_attr = 0x00;
-    state.atmBorderBright = 0;
-    state.pBF |= 0x20;
+    state.atm.borderBright = 0;
+    state.evo.pBF |= 0x20;
 
     const uint8_t datas[] = {0x00, 0xFF, 0x5A, 0xA5, 0x33, 0xC4, 0x01, 0x80};
     const uint8_t highs[] = {0x00, 0xFF, 0x13, 0xEC, 0xA5, 0x5A};
@@ -2087,9 +2088,9 @@ TEST_F(PortDecoder_ATM3_Test, Palette444_LowBitsFromAddressHighByte)
         for (uint8_t high : highs)
         {
             _portDecoder->DecodePortOut(static_cast<uint16_t>((high << 8) | 0xFF), data, 0x0000);
-            EXPECT_EQ(state.atmPalette[0], ExpectedPaletteColor(data, high, true))
+            EXPECT_EQ(state.atm.palette[0], ExpectedPaletteColor(data, high, true))
                 << "data=" << int(data) << " A15..A8=" << int(high);
-            EXPECT_EQ(_portDecoder->DecodePortIn(0x0DBD, 0x0000), ExpectedColorReadback(state.atmPalette[0], true))
+            EXPECT_EQ(_portDecoder->DecodePortIn(0x0DBD, 0x0000), ExpectedColorReadback(state.atm.palette[0], true))
                 << "readback data=" << int(data) << " A15..A8=" << int(high);
         }
 }
@@ -2099,15 +2100,15 @@ TEST_F(PortDecoder_ATM3_Test, Palette444_OffKeepsTheDdScheme)
 {
     EmulatorState& state = _context->emulatorState;
     OpenShadow(_portDecoder, state);
-    state.aFF77 = 0;  // pen2 clear: the palette gate is open
+    state.atm.aFF77 = 0;  // pen2 clear: the palette gate is open
     state.flags = 0;
     state.border_attr = 0x00;
-    state.atmBorderBright = 0;
+    state.atm.borderBright = 0;
 
     for (unsigned data = 0; data < 256; data++)
     {
         _portDecoder->DecodePortOut(0xA5FF, static_cast<uint8_t>(data), 0x0000);  // the high byte must not count
-        EXPECT_EQ(state.atmPalette[0], ExpectedPaletteColor(static_cast<uint8_t>(data), 0x00, false)) << data;
+        EXPECT_EQ(state.atm.palette[0], ExpectedPaletteColor(static_cast<uint8_t>(data), 0x00, false)) << data;
         EXPECT_EQ(_portDecoder->DecodePortIn(0x0DBD, 0x0000), static_cast<uint8_t>((data & 0xF3) | 0x0C)) << data;
     }
 }
@@ -2140,11 +2141,11 @@ protected:
         // Map 1 (#7FFD.4 = 1): window 0 = ROM with the dos7ffd bit, windows 1-3 = RAM
         _decoder->ApplyBootROMDefaults(RM_DOS);
         EmulatorState& state = _context->emulatorState;
-        state.pBF = 0x01;
-        state.pFFF7[4] = 0x0100;
-        state.pFFF7[5] = 0x0200 | 5;
-        state.pFFF7[6] = 0x0200 | 2;
-        state.pFFF7[7] = 0x0200 | 0;
+        state.evo.pBF = 0x01;
+        state.atm.pFFF7[4] = 0x0100;
+        state.atm.pFFF7[5] = 0x0200 | 5;
+        state.atm.pFFF7[6] = 0x0200 | 2;
+        state.atm.pFFF7[7] = 0x0200 | 0;
         state.p7FFD = 0x10;
         state.flags = CF_TRDOS;  // the DOS ROM is in already: its #3Dxx content is what the NOPs below replace
         _memory->UpdateZ80Banks();
@@ -2224,14 +2225,14 @@ TEST_F(PortDecoder_ATM3_Stall_Test, OnlyTheDosRomWindowOfMapOneStalls)
     EXPECT_EQ(NopTicks(0x7D00), plain) << "window 1 is RAM";
 
     // The same window as ROM with dos7ffd: stall at its #3D offset too
-    state.pFFF7[5] = 0x0100;
+    state.atm.pFFF7[5] = 0x0100;
     state.flags = CF_TRDOS;
     _memory->UpdateZ80Banks();
     _z80->DirectWrite(0x7D00, 0x00);
     EXPECT_EQ(NopTicks(0x7D00), plain + 128);
 
     // ROM from the register (no dos7ffd bit): the chip is not switched, nothing to wait for
-    state.pFFF7[5] = 0x0300 | 0x01;
+    state.atm.pFFF7[5] = 0x0300 | 0x01;
     state.flags = CF_TRDOS;
     _memory->UpdateZ80Banks();
     _z80->DirectWrite(0x7D00, 0x00);
@@ -2277,7 +2278,7 @@ protected:
         _decoder = dynamic_cast<PortDecoder_ATM3*>(_context->pPortDecoder);
         ASSERT_NE(_decoder, nullptr);
         _decoder->ApplyBootROMDefaults(RM_DOS);
-        _context->emulatorState.pBF = 0x01;  // the shadow ports (FDC, #xx77) answer
+        _context->emulatorState.evo.pBF = 0x01;  // the shadow ports (FDC, #xx77) answer
         _z80->iff1 = 0;
     }
 
@@ -2302,7 +2303,7 @@ TEST_F(PortDecoder_ATM3_Emu_Test, KeyboardPortBit5ReadsZeroBit7ReadsOne)
 /// FF-1: #FF reads {intrq, drq, 1, D4..D0 of the last write} on the current tree, all six bits on the legacy one
 TEST_F(PortDecoder_ATM3_Emu_Test, SystemPortReadsBackTheLastWrite)
 {
-    _context->emulatorState.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN2;  // palette writes off: #FF is the Beta128 port only
+    _context->emulatorState.atm.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN2;  // palette writes off: #FF is the Beta128 port only
     for (const uint8_t written : {0x00, 0x1F, 0x35, 0x0A, 0x20})
     {
         _decoder->DecodePortOut(0x00FF, written, 0x0000);
@@ -2331,13 +2332,13 @@ TEST_F(PortDecoder_ATM3_Emu_Test, ClockSelectTakesEffectAtTheNextM1)
     _decoder->DecodePortOut(0x0177, 0x0B, 0x0000);  // bit 3: 14 MHz
     EXPECT_EQ(state.hw_turbo_ratio, 4) << "selected";
     EXPECT_EQ(state.hw_turbo_ratio_applied, 2) << "not yet running at it";
-    EXPECT_EQ(state.evoTurboPending, 1);
+    EXPECT_EQ(state.evo.turboPending, 1);
     EXPECT_NE(_z80->machineM1Hook, nullptr) << "the hook is attached while the switch is pending";
 
     _z80->pc = 0x8000;
     _z80->Z80Step();  // the next M1
     EXPECT_EQ(state.hw_turbo_ratio_applied, 4);
-    EXPECT_EQ(state.evoTurboPending, 0);
+    EXPECT_EQ(state.evo.turboPending, 0);
     EXPECT_EQ(_z80->machineM1Hook, nullptr) << "and released again";
 }
 

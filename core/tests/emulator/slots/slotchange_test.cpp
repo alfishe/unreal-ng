@@ -17,7 +17,7 @@
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/config.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -204,32 +204,33 @@ TEST_F(SlotChange_Test, DryRunChangesNothingAndOptionsRestartToo)
     EXPECT_FALSE(EmulatorManager::GetInstance()->HasEmulator(oldId));
 }
 
-/// R-OP-7: no slot change while a user recording runs; the refusal names the session and nothing changes. Allowed
-/// again once the recording stopped
-TEST_F(SlotChange_Test, RefusedWhileTtdRecords)
+/// D42 (owner rule 2026-10-06): a slot change while a recording runs is not refused - it restarts the machine, which
+/// ends the session; the restarted machine does not record. A dry run plans it as usual
+TEST_F(SlotChange_Test, AppliedWhileTtdRecords)
 {
     std::shared_ptr<Emulator> old = Create("PENTAGON", {{"zxbus.1", "gs"}});
     ASSERT_NE(old, nullptr);
     old->GetFeatureManager()->setFeature(Features::kDebugMode, true);
     old->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
     old->GetContext()->pMemory->UpdateFeatureCache();
-    ttd::TimeTravelManager* ttd = old->GetContext()->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = old->GetContext()->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
     ASSERT_TRUE(ttd->StartRecording());
 
     SlotRequest dry = Plug("zxbus.next", "zxnetusb");
     dry.dryRun = true;
-    const SlotChangeResult refused = Change(old, Plug("zxbus.next", "zxnetusb"));
-    EXPECT_EQ(refused.status, SlotChangeStatus::Recording);
-    EXPECT_NE(refused.message.find("Cannot change the slot set while TTD is recording session #1"), std::string::npos)
-        << refused.message;
-    EXPECT_TRUE(refused.plan.recording);
-    EXPECT_EQ(refused.emulator, nullptr);
-    EXPECT_EQ(Change(old, dry).status, SlotChangeStatus::Recording) << "a dry run says so too";
-    EXPECT_EQ(FittedOf(*old), (std::vector<std::string>{"zxbus.1 = gs"}));
+    EXPECT_EQ(Change(old, dry).status, SlotChangeStatus::DryRun) << "a recording does not refuse the plan";
+    EXPECT_TRUE(ttd->IsRecording()) << "a dry run changes nothing";
 
-    ttd->StopRecording();
-    EXPECT_EQ(Change(old, dry).status, SlotChangeStatus::DryRun);
+    const std::string oldId = old->GetId();
+    const SlotChangeResult applied = Change(old, Plug("zxbus.next", "zxnetusb"));
+    old.reset();
+    ASSERT_TRUE(applied.Applied()) << applied.message;
+    EXPECT_FALSE(applied.plan.recording);
+    EXPECT_EQ(FittedOf(*applied.emulator), (std::vector<std::string>{"zxbus.1 = gs", "zxbus.2 = zxnetusb"}));
+    EXPECT_FALSE(EmulatorManager::GetInstance()->HasEmulator(oldId)) << "the recorded machine, and its session, are gone";
+    ASSERT_NE(applied.emulator->GetContext()->pTimeTravelController, nullptr);
+    EXPECT_FALSE(applied.emulator->GetContext()->pTimeTravelController->IsRecording()) << "no new session by itself";
 }
 
 /// A card that cannot be built at start: the restarted machine is not created, the old one stays with its slot set

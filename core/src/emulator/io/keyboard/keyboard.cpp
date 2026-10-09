@@ -213,19 +213,14 @@ size_t Keyboard::TTDStateSize() const
 
 void Keyboard::TTDSaveStateTo(std::vector<uint8_t>& out) const
 {
+    // The matrix only: the pressed-key counters count the host's held keys (several host keys can press one ZX key),
+    // which a replayed key event does not touch and a seek must not change - after a seek the user holds the keys
+    // they hold now (2026-10-08: a replay's blob lacked the counters a live run had). The pair count stays, 0
     out.clear();
-    out.reserve(kKeyboardTtdHeader + 2 * _keyboardPressedKeys.size());
+    out.reserve(kKeyboardTtdHeader);
     out.push_back(kKeyboardTtdVersion);
     out.insert(out.end(), _keyboardMatrixState, _keyboardMatrixState + 8);
-    out.push_back(static_cast<uint8_t>(std::min<size_t>(_keyboardPressedKeys.size(), 255)));
-    size_t pairs = 0;
-    for (const auto& [key, count] : _keyboardPressedKeys)   // std::map: key order, deterministic
-    {
-        if (pairs++ == 255)
-            break;
-        out.push_back(static_cast<uint8_t>(key));
-        out.push_back(count);
-    }
+    out.push_back(0);
 }
 
 void Keyboard::TTDSaveState(uint8_t* dst) const
@@ -243,10 +238,7 @@ void Keyboard::TTDLoadState(const uint8_t* src)
     if (!src || src[0] != kKeyboardTtdVersion)
         return;
     std::memcpy(_keyboardMatrixState, src + 1, 8);
-    _keyboardPressedKeys.clear();
-    const uint8_t pairs = src[9];
-    for (uint8_t i = 0; i < pairs; ++i)
-        _keyboardPressedKeys[static_cast<ZXKeysEnum>(src[kKeyboardTtdHeader + 2 * i])] = src[kKeyboardTtdHeader + 2 * i + 1];
+    // The host's pressed-key counters stay as they are (blobs before 2026-10-08 carry pairs after src[9]: ignored)
 }
 
 uint64_t Keyboard::TTDHashState() const

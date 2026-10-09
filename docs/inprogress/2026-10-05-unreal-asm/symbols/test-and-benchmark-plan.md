@@ -85,6 +85,22 @@ Runs follow the A/B procedure of [performance-guidelines.md](../../../guidelines
 
 ## 6. Results table (filled during S9)
 
+`unreal-asm-benchmarks` (the library's own target: the symbol module is part of `unreal-asm`, so the benchmarks live
+there rather than in `core-benchmarks`), 2026-10-07, Release, load average about 7. `BM_Symbols_DisasmLine` (the A/B
+against today's `LabelManager`) waits for S2b, when `LabelManager` sits on the index.
+
 | Benchmark | n | Result | Target | OK |
 |---|---|---|---|---|
-| | | | | |
+| `BM_Symbols_ImportSym` (simple-sym: detect, decode, index) | 100 000 | 37 ms | < 300 ms | yes |
+| `BM_Symbols_ImportSym` | 1 000 000 | 1.71 M lines/s | ≥ 1 M lines/s | yes |
+| `BM_Symbols_Tokenize` | lines | 4.7 M lines/s | ≥ 1 M lines/s | yes |
+| `BM_Symbols_IndexBuild` | 100 000 | 22.6 ms | < 30 ms | yes |
+| `BM_Symbols_LookupAt` | 100 000 | 57 ns | ≤ 100 ns | yes |
+| `BM_Symbols_LookupNearest` | 100 000 | 67 ns | ≤ 150 ns | yes |
+| `BM_Symbols_Export` unreal-map / sjasmplus-sym / native | 100 000 | 51 / 65 / 40 ms | < 200 ms | yes |
+| `BM_Symbols_LiveScan` (random pages + an ALASM table) | 4 MB | 72 ms | < 100 ms | yes |
+| `BM_Symbols_Layout` (labels from sources) | 600 lines | 443 k lines/s | — | — |
+
+Speed-ups (2026-10-07): the index searches a dense array of 64-bit keys (space, offset) and `At()` allocates
+nothing (195 to 57 ns at 100 000); the distinct address spaces are collected without one copy per symbol (index
+build 66 to 23 ms).

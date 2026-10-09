@@ -599,6 +599,15 @@ types:
         repeat-expr: segment_count.value
 
   write_block:
+    doc: |
+      Columns (EncodeWriteBlock): varint size of the time column, varint
+      first globalT, the varint time deltas, then per record u2 addresses,
+      u2 PCs, u1 values, u1 pages (low 8 bits), the I/O bits (1 bit per
+      record, LSB first) and - only in a block that has a page above 255 -
+      the page-high bits in the same layout: bit 8 of the page, set for a
+      virtual page of another memory space (0x110-0x11F the Sprinter's video
+      RAM, 0x120-0x12F its fast RAM; the address holds the offset in that
+      page). A block without the column has RAM pages only (all older ones)
     seq:
       - id: size
         type: vlq

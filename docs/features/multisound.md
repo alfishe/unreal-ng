@@ -182,6 +182,12 @@ The rows exist only while the card is fitted. The HUD shows one activity indicat
   balanced on a TSFM has a quieter AY part on the card, as on the real hardware.
 - **The AY tone voicing applies.** The SSG rows go through the same AY / SSG tone voicing as the socket's chips (the
   audio settings' "EQ profile", `[SOUND] AYVoicing`); the FM is not voiced.
+- **The AY punch and room settings apply.** With Sound HQ on, the SSG rows also go through the same AY character
+  chain as the socket's chips: `ay_punch` (sharper attacks) and `ay_room` (the headphone crossfeed, default -9 dB)
+  change the card's SSG exactly as they change an AY, TurboSound or TurboSound FM in the socket, live, on every
+  surface. Example: with `ay_room` at `9db` a tone on SSG channel A, which the board wires to the left only, is also
+  heard on the right, 2 ms later and 9 dB quieter; with `ay_room` at `off` the right stays silent. FM, SAA, SounDrive,
+  General Sound and MIDI are not affected.
 - **The stereo layout is fixed by the board.** SSG channel A is left, B is in the center (quieter), C is right (what
   the emulator calls ABC); `[AY] Stereo` does not change it. The General Sound is hard left / hard right (channels 1-2
   left, 3-4 right), with no cross-feed; SounDrive `#0F` / `#1F` are left, `#4F` / `#5F` right. FM, SAA and MIDI are
@@ -240,23 +246,33 @@ These are the real card's behavior, kept on purpose:
 
 ## Software to try
 
-Run as a user would, with the card fitted on a Pentagon unless noted (results of the first real-software pass,
-2026-10-05):
+Run as a user would, with the card fitted on a Pentagon unless noted (the real-software passes of 2026-10-05 and
+2026-10-06). "Same as" means the sound was compared with the same program on the separate card it replaces - the
+TurboSound FM in the AY socket, the classic General Sound, the SounDrive - and has the same spectrum and notes:
 
 | Program | Part of the card | What to expect |
 |---|---|---|
-| TFM Music Maker tunes and TurboSound FM demos (for example *Tech Support* from Moe-bius) | FM + SSG | FM and AY parts on both chips; also on a ZX-Evo |
+| TFM Music Maker tunes and TurboSound FM demos (for example *Tech Support* from Moe-bius, *shanson*, *Number 1*, the ZXAAA 2013 pack's intro) | FM + SSG | FM and AY parts on both chips, the FM the same as on a TurboSound FM; also on a ZX-Evo |
+| deNextPlayer 0.76 (TurboSound PT3 modules) | SSG | both AY parts the same tunes as on a TurboSound, 7.6 dB quieter and with the board's fixed stereo |
 | TEST SAA1099 (Azesmbog) | SAA | all eight test pages audible, left / right per voice |
-| SAA1099 E-Tracker music player (SAM Coupe E-Tracker tunes, TR-DOS adaptation by daniel/BDA) | SAA | plays from `RUN`; Enter = next tune, `1`-`4` = autoplay; checked by the owner in the 2026-10-05 demo |
-| VGMPLAY plugin of Wild Commander (TS-Conf) with SAA1099 and YM2203 VGM files | SAA; FM + SSG | the plugin starts the SAA clock itself; on a dual-SAA file it plays the first chip |
+| SAA1099 E-Tracker music player (SAM Coupe E-Tracker tunes, TR-DOS adaptation by daniel/BDA) | SAA | plays from `RUN`; Enter = next tune, `1`-`4` = autoplay; the notes are the ones the tune programs |
+| Wild Commander on TS-Conf: VGMPLAY (SAA1099 and YM2203 VGM), WPLAYER (`.TFC` TFM tunes, `.ETC` E-Tracker modules), GSPLAYER (`.MOD`, `.MID`) | FM + SSG, SAA, General Sound, MIDI | `.TFC` the same as on a TurboSound FM; `.ETC` the same tune as the E-Tracker disk; `.MOD` the same as on a General Sound; `.MID` through the card's chip (`-midi_chip=2`); VGMPLAY starts the SAA clock itself and plays the first chip of a dual-SAA file |
 | ZX MIDI Player v3 (UzixLS, the card's author) | MIDI | pick the TurboSound chip with the MIDI wire (chip 2 in the player's list = the card's first YM) as output; every note at 3.5 and 7 MHz, also on a ZX-Evo |
-| GSPLAYER plugin of Wild Commander, `.MID` files (TS-Conf, 14 MHz) | MIDI | MIDI through the card's chip (`-midi_chip=2`) |
+| Z-Player 5.0 | General Sound, MIDI | finds the General Sound (16 MHz, 1008 KB free); `.mid` files go to the card's synthesizer, every note of the file in order; MODs the same as on a General Sound. Driven by the Kempston mouse |
+| Z-Player 4.0 | General Sound | MODs the same as on a General Sound |
+| MIDIPIANO 1.11 | MIDI | choose TS chip 2; the keyboard plays a scale from Q (C3) on |
+| Sinty Snoki (`snake.tap`, a 128K MIDI game) | MIDI | its soundtrack through the 128K MIDI port reaches the card's synthesizer: after a reset the card's first YM chip, the MIDI one, is selected |
 | Mod Player v2.5 | General Sound | MODs with hard left / right channels |
 | Soundrive Player musicdisk (2000) | SounDrive | channels 0-1 left, 2-3 right |
+| X Ball Techno Opera (1996) | SSG, then SounDrive | the AY intro; Space starts the four-channel SounDrive part, the same as on a SounDrive card |
 | Ball Quest | SSG | plays; no click (see above) |
 
-Not yet checked: Z-Player 5, the other E-Tracker music disks (2-5), other GS / SAA / TSFM disks,
-and the MOD / TFC / E-Tracker plugins of Wild Commander. Reports welcome.
+Programs written for the ZXM-SoundCard (*Arcane Zone Part 2*, *Digit Cat*, the E-Tunes disk, *Kiss Me 2*, the
+LnxTracker Demo) never start the SAA clock: their SAA part is silent on the card, as on the real one (see Known
+behavior). The S98 player 0.59 is written for a TurboSound FM at ports `#7F3B` / `#7E3B`, not the card's. Not yet
+driven: the menus of Titanic, GS Music Player, GS-Player, Wild Player (it asks for a hard-disk or SD driver), The
+Link, Nedodemo (a black screen on a Pentagon, with a TurboSound FM too), TFM Instrument Editor, TSolitaire,
+Digital Player and Soundrive Music. Reports welcome.
 
 ## See also
 

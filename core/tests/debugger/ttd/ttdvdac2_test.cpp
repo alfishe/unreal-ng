@@ -27,7 +27,7 @@
 
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -61,7 +61,7 @@ class TTDVdac2_Test : public ::testing::Test
 protected:
     std::shared_ptr<Emulator> _emulator;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     Vdac2Card* _card = nullptr;
 
     void SetUp() override
@@ -69,7 +69,7 @@ protected:
         _emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("ttd-vdac2", "TSL-VDAC2", LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         auto* decoder = dynamic_cast<PortDecoder_TSConf*>(_context->pPortDecoder);
         ASSERT_NE(decoder, nullptr);
@@ -185,7 +185,7 @@ TEST_F(TTDVdac2_Test, SeekByFrameMatchesTheLiveRun)
     {
         SCOPED_TRACE(f);
         // By frame number: the picture at the end of the frame
-        ASSERT_TRUE(_ttd->SeekTo({f, 0}));
+        ASSERT_TRUE(_ttd->SeekTo(_ttd->FrameEndPosition(f)));   // by frame number: its end (D13)
         EXPECT_TRUE(Shown() == finalPicture.at(f)) << "the picture at the end of frame " << f;
 
         // At the live run's exact position: every byte of the card, the chip and its memory.
@@ -207,6 +207,37 @@ TEST_F(TTDVdac2_Test, SeekByFrameMatchesTheLiveRun)
         EXPECT_EQ(metrics.frame, live.metricsFrame) << "metrics block of that moment";
     }
     EXPECT_LE(inexact, 2) << "most positions must be reached exactly";
+}
+
+/// What the monitor shows (the UI, screenshots, the video wall read the present queue, not the
+/// framebuffer): after a seek the FT812 picture of that position, and a throwaway replay that composes
+/// nothing for the user (a frame-cache build) leaves it alone. Found with Zuma on 2026-10-08: the queue
+/// kept the picture from before the seek
+TEST_F(TTDVdac2_Test, TheMonitorShowsTheSeekedPicture)
+{
+    std::map<uint64_t, Moment> stateAt;
+    std::map<uint64_t, std::vector<uint32_t>> finalPicture;
+    Record(10, stateAt, finalPicture);
+    auto presented = [this]() {
+        std::vector<uint32_t> picture(Shown().size());
+        EXPECT_TRUE(_context->pScreen->CopyPresentedFramebuffer(reinterpret_cast<uint8_t*>(picture.data()),
+                                                                picture.size() * sizeof(uint32_t)));
+        return picture;
+    };
+
+    const uint64_t first = finalPicture.begin()->first + 1;
+    const uint64_t last = finalPicture.rbegin()->first;
+    for (uint64_t f : {last, first, first + 4, first + 1})
+    {
+        SCOPED_TRACE(f);
+        ASSERT_TRUE(_ttd->SeekTo(_ttd->FrameEndPosition(f)));
+        ASSERT_TRUE(presented() == finalPicture.at(f)) << "the monitor shows the picture at the end of frame " << f;
+        // Frame-cache builds replay whole frames (FT812 frames end in them) and show nothing; more
+        // of them than the present queue delays, so a frame they latched would reach the monitor
+        for (uint64_t other = first; other <= last; ++other)
+            ASSERT_NE(_ttd->GetFrameCache(other), nullptr);
+        EXPECT_TRUE(presented() == finalPicture.at(f)) << "still frame " << f << " after frame-cache builds";
+    }
 }
 
 /// Seek to a T-state inside a frame: the FT812 frame drawn up to there over its previous frame
@@ -266,7 +297,7 @@ TEST_F(TTDVdac2_Test, SavedSessionReplaysTheSame)
     for (uint64_t f = finalPicture.begin()->first + 1; f <= finalPicture.rbegin()->first; ++f)
     {
         SCOPED_TRACE(f);
-        ASSERT_TRUE(_ttd->SeekTo({f, 0}));
+        ASSERT_TRUE(_ttd->SeekTo(_ttd->FrameEndPosition(f)));   // by frame number: its end (D13)
         EXPECT_TRUE(Shown() == finalPicture.at(f));
         ASSERT_TRUE(_ttd->SeekTo({f, stateAt.at(f).t}));
         if (_context->pCore->GetZ80()->t != stateAt.at(f).t)
@@ -286,7 +317,8 @@ TEST_F(TTDVdac2_Test, HistoryLimitKeepsTheChipRight)
     std::map<uint64_t, std::vector<uint32_t>> finalPicture;
     Record(16, stateAt, finalPicture);
     const ttd::TTDSessionInfo info = _ttd->GetSessionInfo();
-    ASSERT_LE(info.checkpointCount, 6u);
+    ASSERT_GE(info.checkpointCount, 6u);
+    ASSERT_LE(info.checkpointCount, 6u + 1u) << "whole segments covering at least the window (one frame each here)";
     ASSERT_GT(info.evictedCheckpoints, 0u);
 
     std::stringstream file;
@@ -298,7 +330,7 @@ TEST_F(TTDVdac2_Test, HistoryLimitKeepsTheChipRight)
     for (uint64_t f = info.sessionStartFrame + 2; f <= info.currentEndFrame - 1; ++f)
     {
         SCOPED_TRACE(f);
-        ASSERT_TRUE(_ttd->SeekTo({f, 0}));
+        ASSERT_TRUE(_ttd->SeekTo(_ttd->FrameEndPosition(f)));   // by frame number: its end (D13)
         EXPECT_TRUE(Shown() == finalPicture.at(f));
         ASSERT_TRUE(_ttd->SeekTo({f, stateAt.at(f).t}));
         if (_context->pCore->GetZ80()->t != stateAt.at(f).t)
@@ -375,7 +407,7 @@ TEST_F(TTDVdac2_Test, PresentedMetricsFollowTheScreen)
     for (const auto& [frame, ft812Frame] : blockAtFrameEnd)
     {
         SCOPED_TRACE(frame);
-        ASSERT_TRUE(_ttd->SeekTo({frame, 0}));
+        ASSERT_TRUE(_ttd->SeekTo(_ttd->FrameEndPosition(frame)));   // a frame target: its end (D13)
         ASSERT_TRUE(_card->PresentedFrameMetrics(m));
         EXPECT_FALSE(m.inFlightKnown) << "a frame target shows a finished FT812 frame";
         EXPECT_EQ(m.frame, ft812Frame) << "the one that finished last by the end of the machine frame";

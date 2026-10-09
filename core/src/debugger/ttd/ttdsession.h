@@ -68,7 +68,8 @@ public:
     // State and status
     TTDSessionState GetState() const { return Call(TTDSessionState::Idle, [](auto& s) { return s.GetState(); }); }
     bool IsRecording() const { return Call(false, [](auto& s) { return s.IsRecording(); }); }
-    bool IsDebuggerLive() const { return Call(false, [](auto& s) { return s.IsDebuggerLive(); }); }
+    /// A background session (the black box, a debugger's history; v1: its DebuggerLive mode)
+    bool IsBackgroundSession() const { return Call(false, [](auto& s) { return s.IsBackgroundSession(); }); }
     TTDSessionInfo ReadSessionInfo() const { return Call(TTDSessionInfo{}, [](auto& s) { return s.ReadSessionInfo(); }); }
     TTDSessionInfo GetSessionInfo() const { return Call(TTDSessionInfo{}, [](auto& s) { return s.GetSessionInfo(); }); }
     TTDSessionInfo GetPublishedSessionInfo() const
@@ -99,8 +100,8 @@ public:
     {
         Do([maxFrames, maxBytes](auto& s) { s.SetHistoryLimit(maxFrames, maxBytes); });
     }
-    bool BeginDebuggerLiveHistory() { return Call(false, [](auto& s) { return s.BeginDebuggerLiveHistory(); }); }
-    void EndDebuggerLiveHistory() { Do([](auto& s) { s.EndDebuggerLiveHistory(); }); }
+    bool HoldBackgroundRecording() { return Call(false, [](auto& s) { return s.HoldBackgroundRecording(); }); }
+    void ReleaseBackgroundRecording() { Do([](auto& s) { s.ReleaseBackgroundRecording(); }); }
     void RecordExternalEvent(TTDExternalEventKind kind, const char* reason)
     {
         Do([&](auto& s) { s.RecordExternalEvent(kind, reason); });

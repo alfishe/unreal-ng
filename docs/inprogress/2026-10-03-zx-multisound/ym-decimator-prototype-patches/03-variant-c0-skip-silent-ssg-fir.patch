@@ -1,0 +1,124 @@
+From 182103b3612a34637e2d58d35247a11286e3a8e3 Mon Sep 17 00:00:00 2001
+From: Ilia Sharin <isharin@gmail.com>
+Date: Wed, 7 Oct 2026 09:24:29 -0400
+Subject: [PATCH 3/5] proto(sound): skip the FIR of a silent SSG channel in the
+ per-channel outputs
+
+Like the silent FM part: once a channel's whole window of fed levels is
+0.0 the FIR output is exactly +0.0, so it is not evaluated (the master
+consumes its phase through FilterDecimator::skipOutput). Bit-identical
+(quality harness A/B, golden digests). The run counters reset with the
+histories.
+
+Prototype variant (c0), docs/inprogress/2026-10-03-zx-multisound/ym-decimator-prototype.md
+---
+ .../common/sound/filters/filter_decimator.h   |  7 ++++
+ .../emulator/sound/chips/tsfm/ym2203pair.cpp  | 32 +++++++++++++++++--
+ .../emulator/sound/chips/tsfm/ym2203pair.h    |  4 +++
+ 3 files changed, 41 insertions(+), 2 deletions(-)
+
+diff --git a/core/src/common/sound/filters/filter_decimator.h b/core/src/common/sound/filters/filter_decimator.h
+index 8eb3e8a7f..e6db0c178 100644
+--- a/core/src/common/sound/filters/filter_decimator.h
++++ b/core/src/common/sound/filters/filter_decimator.h
+@@ -313,6 +313,13 @@ public:
+         }
+     }
+ 
++    /// Consume the output instant due now without evaluating the FIR (a caller that knows the output already: a
++    /// window of identical samples). A master's phase moves exactly as getOutput() moves it
++    void skipOutput()
++    {
++        (void)takeInstant();
++    }
++
+ private:
+     /// Where an output falls: the two coefficient rows around the instant, the weight between them and how many
+     /// whole input samples back from the newest one it lies
+diff --git a/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp b/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp
+index 57d08a4a1..5a18c101b 100644
+--- a/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp
++++ b/core/src/emulator/sound/chips/tsfm/ym2203pair.cpp
+@@ -57,6 +57,8 @@ void Ym2203Pair::reset()
+             _channels->fm[i].reset();
+             for (auto& d : _channels->ssg[i])
+                 d.reset();
++            for (int ch = 0; ch < 3; ch++)
++                _channels->ssgRun[i][ch] = 0;
+         }
+     }
+ }
+@@ -277,6 +279,8 @@ void Ym2203Pair::flushOutputStage()
+             _channels->fm[i].clearHistory();
+             for (auto& d : _channels->ssg[i])
+                 d.clearHistory();
++            for (int ch = 0; ch < 3; ch++)
++                _channels->ssgRun[i][ch] = 0;
+         }
+     }
+ }
+@@ -346,7 +350,12 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
+             {
+                 const double* levels = _chips[i]->ssg.left();  // per channel, before panning and DC removal
+                 for (int ch = 0; ch < 3; ch++)
++                {
+                     _channels->ssg[i][ch].feedSample(levels[ch]);
++                    size_t& run = _channels->ssgRun[i][ch];
++                    run = levels[ch] == _channels->ssgLast[i][ch] ? run + 1 : 1;
++                    _channels->ssgLast[i][ch] = levels[ch];
++                }
+             }
+             for (int i = 0; i < 2; i++)
+             {
+@@ -368,12 +377,31 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
+             {
+                 if (i == 0 && ch == 0)
+                     continue;
++                if (_channels->ssgRun[i][ch] >= _channels->ssg[i][ch].window() && _channels->ssgLast[i][ch] == 0.0)
++                {
++                    if (block.ssg[i][ch])
++                        block.ssg[i][ch][n] = static_cast<float>(_channels->ssgLast[i][ch]);
++                    continue;
++                }
+                 decimators[count] = &_channels->ssg[i][ch];
+                 targets[count++] = block.ssg[i][ch] ? &block.ssg[i][ch][n] : nullptr;
+             }
+         }
+-        decimators[count] = &master;
+-        targets[count++] = block.ssg[0][0] ? &block.ssg[0][0][n] : nullptr;
++        {
++            const int i = 0;
++            const int ch = 0;
++            if (_channels->ssgRun[i][ch] >= _channels->ssg[i][ch].window() && _channels->ssgLast[i][ch] == 0.0)
++            {
++                master.skipOutput();
++                if (block.ssg[0][0])
++                    block.ssg[0][0][n] = static_cast<float>(_channels->ssgLast[0][0]);
++            }
++            else
++            {
++                decimators[count] = &master;
++                targets[count++] = block.ssg[0][0] ? &block.ssg[0][0][n] : nullptr;
++            }
++        }
+         for (int i = 0; i < 2; i++)
+         {
+             if (fmZeroRun[i] >= fmDec[i].window())
+diff --git a/core/src/emulator/sound/chips/tsfm/ym2203pair.h b/core/src/emulator/sound/chips/tsfm/ym2203pair.h
+index 6f5c46f86..2a054044b 100644
+--- a/core/src/emulator/sound/chips/tsfm/ym2203pair.h
++++ b/core/src/emulator/sound/chips/tsfm/ym2203pair.h
+@@ -569,6 +569,10 @@ private:
+         // FM samples fed in a row that were zero (muted or silent FM): from fm[i].window() on, the FIR's output is
+         // exactly +0.0 and is not evaluated (render layer, not TTD state; 0 = evaluate)
+         size_t fmZeroRun[2] = {};
++        // SSG levels fed in a row that were identical (ssgLast): from ssg[i][ch].window() on, the output is that
++        // level (render layer, not TTD state; reset with the histories)
++        size_t ssgRun[2][3] = {};
++        double ssgLast[2][3] = {};
+     };
+     std::unique_ptr<ChannelOutputs> _channels;
+     size_t _channelRate = 44100;   // output rate of the per-channel streams (configureChannelOutputs)
+-- 
+2.56.0
+

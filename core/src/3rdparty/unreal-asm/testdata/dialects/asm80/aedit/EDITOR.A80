@@ -1,0 +1,1456 @@
+*L+
+;editor for Sprinter computer 
+;graphic mode 640x256
+;sources for Asm80Win assembler
+;free for usage
+
+;Part 1
+
+;Main block
+
+win0            equ     #82
+win1            equ     #A2
+win2            equ     #C2
+win3            equ     #E2
+port_y          equ     #89
+rgmod           equ     #c9
+
+
+
+                ORG     #8000-#200
+;Header of Sprinter's EXE file
+;컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴�
+                defm    "EXE"
+                defb    #00             ;Version of EXE file
+                defw    #0200,#0000     ;Displacement of 512 bytes a beginning of the program
+                defw    #0000           ;The size of the primary loader
+                defb    #00,#00,#00,#00 ;Reserved
+                defw    #0000           ;Reserved
+                defw    #8000           ;beginning of the program
+                defw    #8000           ;PC - start
+                defw    #BFFF           ;Stack point
+                defs    490,0
+;컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴�
+;Program
+                call    setpalette
+                call    set_vmode
+                ld      a,0
+                call    clear_screen
+                call    interrupt_on
+
+
+                ld      ix,main_window
+                call    windraw
+
+                ld      hl,test_
+                ld      de,#c000
+                ld      bc,105
+                ldir
+
+                call    print_cline
+                call    editor0         ;Call editor
+
+
+                call    interrupt_off
+                ret
+
+
+test_
+                defs    105," "
+
+
+
+
+;컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴
+;Variables of editors
+
+editor_vars     equ     $
+lines           defb    1       ;Quantity of text's lines
+free_lines      defb    155     ;How many lines may be placed else
+reserved_one    defb    0       ;Reserved
+line_first      defb    0       ;Number of first text line at the screen
+line_edit       defb    0       ;Number of text line with cursor
+line_edit_adr   defw    #c000   ;Addr. of edited text line
+cursor_adr      defw    #c000   ;Addr. of symbol under cursor
+cursor_y        defb    0       ;Y position of cursor
+cursor_x        defb    0       ;X position of cursor
+
+
+editor0
+                call    text_ref
+
+editor
+                ld      c,#31
+                rst     #10
+                jp      z,editor
+                cp      #1b
+                jp      z,editor_esc
+                cp      #08
+                jp      z,editor_bsp
+;                cp      #09
+;                jp      z,editor_tab
+                cp      #0d
+                jp      z,editor_ent
+;                jp      z,editor_ent
+;                bit     5,b
+;                jp      nz,editor_ctrl
+;                bit     4,b
+;                jp      nz,editor_alt
+
+                cp      31
+                jp      c,editor1
+                cp      242
+                jp      nc,editor1
+                call    insert_symbol
+                jp      editor
+
+
+
+editor1
+
+                ld      a,d
+                cp      #4f     ;Del
+                jp      z,editor_del
+;                cp      #1c
+;                jp      z,editor_caps
+                cp      #52
+                jp      z,editor_dn
+                cp      #54
+                jp      z,editor_lft
+                cp      #56
+                jp      z,editor_rgt
+                cp      #58
+                jp      z,editor_up
+
+                cp      #51
+                jp      z,editor_end
+
+                cp      #57
+                jp      z,editor_home
+
+
+                jp      editor
+
+editor_dn
+                ld      a,3
+                call    move_cursor
+                jp      editor
+
+editor_up
+                ld      a,2
+                call    move_cursor
+                jp      editor
+
+editor_lft
+                xor     a
+                call    move_cursor
+                jp      editor
+
+editor_rgt
+                ld      a,1
+                call    move_cursor
+                jp      editor
+
+
+editor_bsp
+
+                push    hl
+                push    de
+                push    bc
+                push    af
+
+
+
+                ld      a,(cursor_x)
+                or      a
+                jp      z,editor_bsp1
+
+                call    hide_cursor
+
+                ld      b,a
+                ld      a,105
+                sub     b
+                ld      b,0
+                ld      c,a
+                ld      hl,(cursor_adr)
+                push    hl
+                pop     de
+                dec     de
+                ld      hl,(cursor_adr)
+                ldir
+                ld      hl,(line_edit_adr)
+                ld      de,104
+                add     hl,de
+                ld      a,#20
+                ld      (hl),a
+                xor     a
+                call    move_cursor
+                call    print_cline
+
+editor_bsp1
+                call    unhide_cursor
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+                jp      editor
+
+editor_del
+
+                push    hl
+                push    de
+                push    bc
+                push    af
+
+
+
+                ld      a,(cursor_x)
+                cp      104
+                jp      z,editor_del1        ;If cursor at the end of the text line
+
+                call    hide_cursor
+
+                ld      b,a
+                ld      a,105
+                sub     b
+                ld      b,0
+                ld      c,a
+                ld      hl,(cursor_adr)
+                push    hl
+                pop     de
+                ld      hl,(cursor_adr)
+                inc     hl
+                ldir
+                ld      hl,(line_edit_adr)
+                ld      de,104
+                add     hl,de
+                ld      a,#20
+                ld      (hl),a
+                call    print_cline
+
+editor_del1
+                call    unhide_cursor
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+                jp      editor
+
+
+editor_home
+                push    af
+                push    hl
+                call    hide_cursor
+                xor     a
+                ld      (cursor_x),a
+                ld      hl,(line_edit_adr)
+                ld      (cursor_adr),hl
+                call    unhide_cursor
+                pop     hl
+                pop     af
+                jp      editor
+
+editor_end
+
+                push    hl
+                push    de
+                push    af
+
+                call    hide_cursor
+                ld      hl,(line_edit_adr)
+                ld      de,105
+                add     hl,de
+editor_end1
+                dec     hl
+                dec     de
+                ld      a,d
+                or      e
+                jr      z,editor_end2
+                ld      a,(hl)
+                cp      32
+                jr      z,editor_end1
+
+editor_end2
+                ld      a,e
+                inc     a
+                ld      (cursor_x),a
+                inc     hl
+                ld      (cursor_adr),hl
+
+                call    unhide_cursor
+
+                pop     af
+                pop     de
+                pop     hl
+                jp      editor
+
+
+
+editor_ent
+                call    hide_cursor
+                call    ins_line
+                ld      ix,editor_vars
+                xor     a
+                ld      (ix+10),a
+                ld      a,3
+                call    move_cursor
+
+                call    text_ref
+                call    unhide_cursor
+                jp      editor
+
+
+
+editor_ent_cut  defb    0
+
+;---- Exit from the editor
+editor_esc
+                ret
+
+
+;컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴
+;Subprograms of editor
+
+
+text_ref
+;Updating of a window of the text
+                call    hide_cursor
+                ld      ix,editor_vars
+                ld      c,(ix+3)
+                ld      b,0
+                ld      b,(ix+3)
+                inc     b
+                ld      a,(ix+0)
+                sub     b
+                jr      z,text_ref3
+                cp      25
+                jr      c,text_ref1
+                ld      a,25
+text_ref1
+                ld      c,(ix+3)
+                ld      b,0
+text_ref2
+                call    print_line
+                inc     b
+                inc     c
+                dec     a
+                or      a
+                jr      nz,text_ref2
+                call    unhide_cursor
+                ret
+
+text_ref3
+                ld      b,0
+                ld      c,0
+                call    print_line
+                call    unhide_cursor
+
+                ret
+
+vars_ref
+                ld      ix,editor_vars
+
+                ld      hl,#c000
+                ld      de,105
+                ld      a,(ix+4)
+                or      a
+                jr      z,vars_ref2
+                ld      b,a
+vars_ref1
+                add     hl,de
+                djnz    vars_ref1
+vars_ref2
+                ld      (ix+6),h
+                ld      (ix+5),l
+
+                ld      d,0
+                ld      e,(ix+10)
+                add     hl,de
+                ld      (ix+8),h
+                ld      (ix+7),l
+                ret
+
+
+
+
+
+
+nxt_line
+;Find next text line
+
+                push    de
+                push    af
+                ld      ix,editor_vars
+
+                ld      hl,#c000
+                ld      de,105
+                ld      a,(ix+4)
+                inc     a
+                ld      b,a
+nxt_line1
+                add     hl,de
+                djnz    nxt_line1
+
+
+                pop     af
+                pop     de
+                ret
+
+
+copy_eol
+;Copy of the text line part from cursor to the end of the text line
+                ld      ix,editor_vars
+                ld      h,(ix+8)
+                ld      l,(ix+7)
+                ld      de,buf
+                ld      a,105
+                sub     (ix+10)
+                ld      b,0
+                ld      c,a
+                push    bc
+                ldir
+                ld      h,(ix+8)
+                ld      l,(ix+7)
+                ld      d,h
+                ld      e,l
+                inc     de
+                ld      a,105
+                sub     (ix+10)
+                ld      b,0
+                ld      c,a
+                ld      a," "
+                ld      (hl),a
+                ldir
+                ld      b,(ix+9)
+                ld      c,(ix+4)
+                call    hide_cursor
+                call    c_line
+                call    print_line
+
+                call    hide_cursor
+
+                call    nxt_line
+                ld      d,h
+                ld      e,l
+                ld      hl,buf
+                pop     bc
+                ldir
+
+                ret
+
+
+
+
+
+ins_line
+;Move  forward  all lines after current line
+;Filling by free spaces
+
+                ld      ix,editor_vars
+                ld      a,(ix+0)
+
+                cp      1
+                jp      z,ins_line_fill
+                ld      (ins_line1-1),a
+
+
+                call    last_line
+                push    hl
+                ld      bc,105
+                add     hl,bc
+                ld      d,h
+                ld      e,l
+                pop     hl
+                ld      b,0
+ins_line1
+                push    bc
+                push    hl
+                push    de
+                ld      bc,105
+                ldir
+                pop     de
+                pop     hl
+                sub     hl,bc
+                sub     de,bc
+                pop     bc
+                djnz    ins_line1
+ins_line_fill
+                call    nxt_line
+                ld      d,h
+                ld      e,l
+                inc     de
+                ld      bc,104
+                ld      a," "
+                ld      (hl),a
+                ldir
+                inc     (ix+0)
+                call    vars_ref
+
+                call    copy_eol
+
+                ret
+
+
+prev_line
+;Calculate the address of the previous line, which address in HL
+                push    hl
+                ld      de,105
+                sub     hl,de
+                pop     hl
+                ret
+
+
+
+last_line
+;Calculate the address of the last line
+                push    af
+                push    de
+                ld      a,(lines)
+                dec     a
+                ld      hl,#c000
+                ld      de,105
+                or      a
+                jr      z,last_line2
+                ld      b,a
+last_line1
+                add     hl,de
+                djnz    last_line1
+last_line2
+                pop     de
+                pop     af
+                ret
+
+
+fill_line
+;Filling next line by free spaces
+                call    nxt_line
+                di
+                ld      d,d
+                ld      a,105
+                ld      b,b
+                ld      a," "
+                ld      c,c
+                ld      (hl),a
+                ld      b,b
+                ei
+                ret
+
+
+
+
+
+view_cursor
+                nop
+                ld      ix,editor_vars
+                push    hl
+                push    bc
+                push    af
+                ld      b,(ix+9)
+                ld      c,(ix+10)
+                call    coord_remake
+                call    open_video_mem
+                ld      a,b
+                ld      b,8
+view_cursor1
+                out     (port_y),a
+                inc     a
+                push    af
+                ld      a,(hl)
+                xor     %01110111
+                ld      (hl),a
+                pop     af
+                djnz    view_cursor1
+                call    close_video_mem
+                ld      a,(cursor_cond)
+                xor     #FF
+                ld      (cursor_cond),a
+                pop     af
+                pop     bc
+                pop     hl
+                ret
+cursor_cond     defb    0
+
+hide_cursor
+;Hides the cursor up to a repeat call of the subprogram
+                push    af
+                push    hl
+                ld      a,(cursor_cond)
+                cp      #FF
+                call    z,view_cursor
+                ld      hl,view_cursor
+                ld      a,201
+                ld      (hl),a
+                pop     hl
+                pop     af
+                ret
+unhide_cursor
+                push    af
+                push    hl
+                ld      hl,view_cursor
+                xor     a
+                ld      (hl),a
+                call    view_cursor
+                pop     hl
+                pop     af
+                ret
+
+
+
+
+print_cline
+;Print current line
+                call    clear_cline
+                ld      a,(line_edit)
+                ld      c,a
+                ld      a,(cursor_y)
+                ld      b,a
+                jp      print_line
+
+clear_cline
+;Clear current line 
+                ld      a,(cursor_y)
+                ld      b,a
+                jp      c_line
+
+clear_whole
+
+                push    af
+                push    bc
+                push    de
+                push    hl
+
+                call    hide_cursor
+                ld      b,200
+                ld      a,40
+                call    open_video_mem
+clear_whole1
+                out     (port_y),a
+                push    af
+                push    bc
+                ld      hl,#4002
+                ld      de,#4003
+                ld      bc,315
+                ld      a,%01110111
+                ld      (hl),a
+                ldir
+                pop     bc
+                pop     af
+                inc     a
+                djnz    clear_whole1
+                call    close_video_mem
+
+                call    unhide_cursor
+                pop     hl
+                pop     de
+                pop     bc
+                pop     af
+                ret
+
+
+scroll_down
+;B- Y position of begining line
+                push    hl
+                push    de
+                push    bc
+                push    af
+
+                call    hide_cursor
+                call    open_video_mem
+                di
+
+                ld      ix,sd_y_src
+                ld      h,0
+                ld      l,b
+                add     hl,hl
+                add     hl,hl
+                add     hl,hl
+                ld      de,40
+                add     hl,de
+                ld      a,l
+                ld      (ix+0),a
+                add     a,8
+                ld      (ix+1),a
+
+                ex      de,hl
+                ld      hl,200  ;231!!!
+                sub     hl,de
+                ld      (ix+2),l
+                ld      a,l
+                ld      (scroll_down1),a
+
+                ld      hl,#4002
+                ld      de,312
+scroll_down0
+                ld      a,(ix+0)
+                out     (port_y),a
+
+                ld      d,d
+                ld      a,0
+scroll_down1    equ     $-1
+                ld      a,a
+                ld      a,(hl)
+                ld      b,b
+                ld      a,(ix+1)
+                out     (port_y),a
+                ld      a,a
+                ld      (hl),a
+                ld      b,b
+                dec     de
+                inc     hl
+                ld      a,d
+                or      e
+                jr      nz,scroll_down0
+
+                call    clear_cline
+                call    close_video_mem
+                call    unhide_cursor
+                ei
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+                ret
+
+sd_y_src        defb    0       ;Position: Y of FROM
+sd_y_dst        defb    0       ;Y of TO
+sd_len          defb    0       ;Length of a vertical line
+
+scroll_up
+;B- Y position of begining line
+                push    hl
+                push    de
+                push    bc
+                push    af
+
+                call    hide_cursor
+                call    open_video_mem
+                di
+
+                ld      ix,su_y_src
+                ld      h,0
+                ld      l,b
+                add     hl,hl
+                add     hl,hl
+                add     hl,hl
+                ld      de,40
+                add     hl,de
+                ld      a,l
+                ld      (ix+0),a
+                add     a,8
+                ld      (ix+1),a
+
+                ex      de,hl
+                ld      hl,192  ;231!!!
+                sub     hl,de
+                ld      (ix+2),l
+                ld      a,l
+                ld      (scroll_up1),a
+
+                ld      hl,#4002
+                ld      de,312
+scroll_up0
+                ld      a,(ix+1)
+                out     (port_y),a
+
+                ld      d,d
+                ld      a,0
+scroll_up1      equ     $-1
+                ld      a,a
+                ld      a,(hl)
+                ld      b,b
+                ld      a,(ix+0)
+                out     (port_y),a
+                ld      a,a
+                ld      (hl),a
+                ld      b,b
+                dec     de
+                inc     hl
+                ld      a,d
+                or      e
+                jr      nz,scroll_up0
+
+                ld      b,24
+                call    c_line
+                call    close_video_mem
+                call    unhide_cursor
+                ei
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+                ret
+
+su_y_src        defb    0       ;Position: Y of FROM
+su_y_dst        defb    0       ;Y of TO
+su_len          defb    0       ;Length of a vertical line
+
+
+
+
+
+c_line
+                push    af
+                push    bc
+                push    de
+                push    hl
+                call    hide_cursor
+                call    open_video_mem
+
+                ld      h,0
+                ld      l,b
+                add     hl,hl
+                add     hl,hl
+                add     hl,hl
+                ld      de,40
+                add     hl,de
+                ld      a,l
+                ld      (c_line1b),a
+                ld      bc,312
+                di
+                ld      d,d
+                ld      a,8
+                ld      b,b
+
+c_line1a
+                ld      a,0
+c_line1b        equ     $-1
+                out     (port_y),a
+                ld      a,%01110111
+                ld      hl,#4002
+                ld      e,e
+                ld      (hl),a
+                ld      b,b
+                inc     hl
+                dec     bc
+                ld      a,b
+                or      c
+                jr      nz,c_line1a
+                ei
+
+                call    close_video_mem
+                call    unhide_cursor
+                pop     hl
+                pop     de
+                pop     bc
+                pop     af
+
+
+
+
+c_lineold
+;Clear line
+;B-number of  a line  (Y coord.)
+
+                push    af
+                push    bc
+                push    de
+                push    hl
+                call    hide_cursor
+                call    open_video_mem
+
+                ld      h,0
+                ld      l,b
+                add     hl,hl
+                add     hl,hl
+                add     hl,hl
+                ld      de,40
+                add     hl,de
+                ld      a,l
+                ld      b,8
+c_line1
+                push    bc
+                push    af
+                out     (port_y),a
+                ld      hl,#4002
+                ld      de,#4003
+                ld      bc,312
+                ld      a,%01110111
+                ld      (hl),a
+                ldir
+                pop     af
+                pop     bc
+                inc     a
+                djnz    c_line1
+
+                call    close_video_mem
+                call    unhide_cursor
+                pop     hl
+                pop     de
+                pop     bc
+                pop     af
+                ret
+
+
+
+
+
+
+
+print_line
+;Print a text line in the window of editor
+;C-number
+;B-Y at the screen
+                call    hide_cursor
+                push    hl
+                push    de
+                push    bc
+                push    af
+                ld      a,(lines)
+                cp      c
+                jr      c,print_line4   ;Exit if was put number of  unexistent line
+                ld      h,0
+                ld      l,b
+                add     hl,hl
+                add     hl,hl
+                add     hl,hl
+                ld      b,l
+                ld      a,40
+                add     a,b
+                ld      b,a
+                ld      hl,#c000
+                ld      de,105
+                ld      a,c
+                or      a
+                jr      z,print_line2
+print_line1
+                add     hl,de
+                dec     c
+                jr      nz,print_line1
+print_line2
+                push    hl
+                pop     iy
+
+                ld      hl,4
+                ld      c,0
+                ld      de,105
+print_line3
+                ld      a,(iy+0)
+                call    print
+                inc     hl
+                inc     hl
+                inc     hl
+                inc     hl
+                inc     hl
+                inc     hl
+
+                dec     de
+                inc     iy
+                ld      a,d
+                or      e
+                jr      nz,print_line3
+print_line4
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+                call    unhide_cursor
+                ret
+
+
+
+move_cursor
+;Cursor moving and changing of variables!
+                push    af
+                push    hl
+                push    de
+                call    hide_cursor
+                ld      ix,editor_vars
+                cp      0
+                jp      z,move_cur_lft
+                cp      1
+                jp      z,move_cur_rgt
+                cp      2
+                jp      z,move_cur_up
+                cp      3
+                jp      z,move_cur_dn
+                ret
+move_cur_lft
+                ld      a,(cursor_x)
+                or      a
+                jp      z,move_cursor1a
+                dec     a
+                ld      (cursor_x),a
+                ld      hl,(cursor_adr)
+                dec     hl
+                ld      (cursor_adr),hl
+                jp      move_cursor1a
+
+move_cur_rgt
+                ld      a,(cursor_x)
+                inc     a
+                cp      104
+                jp      z,move_cursor1a
+                ld      (cursor_x),a
+                ld      hl,(cursor_adr)
+                inc     hl
+                ld      (cursor_adr),hl
+                jp      move_cursor1a
+move_cur_up
+                ld      a,(ix+9)
+                and     a
+                jp      z,move_cur_up1  ;If cursor at the top of screen
+                                        ;Check- cursor at the first line?
+                     	           ;If not then  cursor move up,
+                            	    ;Recalculate addresses
+                dec     (ix+9)
+
+                dec     (ix+4)
+
+
+                jp      move_cursor1
+
+
+
+
+
+move_cur_up1
+                ld      a,(ix+4)
+                and     a
+                jp      z,move_cursor1a
+                ld      b,0
+                call    scroll_down
+                dec     (ix+4)
+
+                dec     (ix+3)
+                jp      move_cursor1
+
+
+
+move_cur_dn
+                ld      a,(ix+4)
+                ld      b,(ix+0)
+                dec     b
+                cp      b
+                jp      z,move_cursor1a
+
+                ld      a,(ix+9)        ;Cursor_y
+                cp      24              ;If cursor at the down of screen?
+                jp      nc,move_cur_dn1  ;If - yes
+                                        ;then check - cursor at the last line?
+                                ;If not at the last line  then cursor move down
+                                ;Recalculate addresses
+                inc     (ix+9)  ;If not at the down of screen
+
+                inc     (ix+4)
+
+
+                jp      move_cursor1
+
+
+move_cur_dn1
+                ld      a,(ix+4)
+                cp      (ix+0)
+                jr      z,move_cursor1a
+                ld      b,0
+                call    scroll_up
+                inc     (ix+4)
+
+                inc     (ix+3)
+
+move_cursor1
+                call    vars_ref
+
+                ld      b,(ix+9)
+                call    c_line
+                ld      c,(ix+4)
+                call    print_line
+
+                call    unhide_cursor
+                pop     de
+                pop     hl
+                pop     af
+                ret
+
+move_cursor1a
+                call    vars_ref
+                call    unhide_cursor
+                pop     de
+                pop     hl
+                pop     af
+                ret
+
+
+
+insert_symbol
+;Insert symbol in the current position
+;A - symbol
+                push    hl
+                push    de
+                push    bc
+                push    af
+
+                ld      (insert_symbol2),a
+                ld      a,(cursor_x)
+                cp      104
+                jp      z,insert_symbol1
+
+                call    hide_cursor
+
+                ld      a,(cursor_x)
+                ld      b,a
+                ld      a,105
+                sub     b
+                ld      hl,(cursor_adr)
+                ld      de,buf
+                ld      b,0
+                ld      c,a
+                push    hl
+                push    de
+                push    bc
+                ldir
+                pop     bc
+                pop     hl
+                pop     de
+                dec     bc
+                inc     de
+                ldir
+                ld      hl,(cursor_adr)
+                ld      a,0
+insert_symbol2  equ     $-1
+                ld      (hl),a
+                ld      a,1
+                call    move_cursor
+
+
+                call    print_cline
+
+insert_symbol1
+                call    unhide_cursor
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+                ret
+
+
+buf             defs    320," "
+
+
+
+
+
+coord_remake
+;Transform coordinates
+;B-y, C-x
+;Start coordinates:
+;HL- address of beginning position in a window
+;b- real Y coordinate for Y-port
+                push    af
+                ld      h,0
+                ld      l,b
+                add     hl,hl
+                add     hl,hl
+                add     hl,hl
+                ld      a,l
+                ld      l,40
+                add     a,l
+                ld      (coord_remake_x),a
+                ld      hl,#4002
+                ld      de,3
+                ld      b,c
+                ld      a,b
+                or      a
+                jp      z,coord_remake2
+coord_remake1
+                add     hl,de
+                djnz    coord_remake1
+coord_remake2
+                ld      a,(coord_remake_x)
+                ld      b,a
+                pop     af
+                ret
+
+
+
+
+
+coord_remake_x  defb    0
+
+
+open_text_mem
+                in      a,(win3)
+                ld      (close_text_mem+1),a
+                ld      a,6
+                out     (win3),a
+                ret
+
+close_text_mem
+                ld      a,0
+                out     (win3),a
+                ret
+
+
+
+
+
+
+;컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴�
+;Windows data
+
+
+
+main_window
+                defw    0               ;X
+                defb    0               ;Y
+                defw    640             ;Dx
+                defb    255             ;Dy
+                defw    main_header     ;Header
+                defb    0               ;SetUp
+                defw    0               ;Buffer of back screen (screen under the main screen)
+                defw    0               ;Block and memory page for the back screen
+                defw    main_win_obj    ;Window objects; 0 - no objects
+
+
+main_header     defm    "N a m e l e s s . t x t"
+                defb    0
+
+main_win_obj
+                defb    7               ;Text line of menu bar
+                defw    4
+                defb    15
+                defw    menubar_txt
+
+
+                defb    1
+                defw    4
+                defb    24
+                defw    18
+                defb    13
+                defw    new_file_spr
+
+
+                defb    1
+                defw    28
+                defb    24
+                defw    18
+                defb    13
+                defw    new_file_spr
+
+                defb    1
+                defw    52
+                defb    24
+                defw    18
+                defb    13
+                defw    new_file_spr
+
+                defb    1
+                defw    76
+                defb    24
+                defw    18
+                defb    13
+                defw    new_file_spr
+
+
+                defb    1
+                defw    100
+                defb    24
+                defw    18
+                defb    13
+                defw    new_file_spr
+
+
+                defb    1
+                defw    124
+                defb    24
+                defw    18
+                defb    13
+                defw    new_file_spr
+
+                defb    1
+                defw    148
+                defb    24
+                defw    18
+                defb    13
+                defw    new_file_spr
+
+                defb    1
+                defw    172
+                defb    24
+                defw    18
+                defb    13
+                defw    new_file_spr
+
+                defb    6
+                defw    2
+                defb    40
+                defw    636
+                defb    200
+
+
+                defb    #FF
+
+
+menubar_txt
+                defm    "F i l e    E d i t    I n s e r t    B l o c k    S e t u p    L i g h t    "
+                defm    "C o m p i l e    H e l p"
+                defb    0
+
+
+
+;Including of files
+*F c:\speccy\aedit\window.a80           ;Window interface
+*F c:\speccy\aedit\graphic.a80          ;Graphic (main subprograms)
+*F c:\speccy\aedit\setscr.a80           ;Other subprograms
+
+
+
+
+interrupt_off
+                di
+                ld      a,#3f
+                ld      i,a
+                im      1
+                ei
+                ret
+interrupt_on
+                di
+                ld      hl,interruption         ;Address of 'Interruption' subprogram
+                ld      (64*256+#FF),hl
+                ld      a,64
+                ld      (190*256+#FF),hl
+                ld      a,190
+                ld      i,a
+                im      2
+                xor     a
+                ld      (int_timer),a
+                ei
+                ret
+
+interruption
+                push    ix              ;Safe all registers
+                push    iy
+                push    hl
+                push    de
+                push    bc
+                push    af
+                ex      af,af'
+                exx
+                push    hl
+                push    de
+                push    bc
+                push    af
+                ex      af,af'
+                exx
+
+                rst     56              ;Standard interruption (program need it!)
+
+                ld      a,(int_timer)
+                inc     a
+                ld      (int_timer),a
+                cp      10
+                call    z,view_cursor
+
+                cp      20
+                call    z,view_cursor
+
+                cp      30
+                call    z,view_cursor
+                cp      40
+                call    z,view_cursor
+                cp      50
+                call    z,view_cursor
+
+                cp      50
+                call    z,int_timer_zero
+
+
+                ex      af,af'          ;Repairing all registers
+                exx
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+                ex      af,af'
+                exx
+                pop     af
+                pop     bc
+                pop     de
+                pop     hl
+                pop     iy
+                pop     ix
+                ret
+
+
+
+int_timer_zero
+                xor     a
+                ld      (int_timer),a
+                ret
+
+
+int_timer       defb    0
+
+
+
+
+h_mouse
+                push    bc
+                ld      c,#02
+                rst     #30
+                pop     bc
+                ret
+v_mouse
+                push    bc
+                ld      c,#01
+                rst     #30
+                pop     bc
+                ret
+m_ref
+                push    bc
+                ld      c,#83
+                rst     #30
+                pop     bc
+                ret
+
+
+
+
+
+
+check_box
+;16x10
+        defb    #BB,#BB,#BB,#BB,#BB,#BB,#BB,#77
+        defb    #bb,#00,#00,#00,#00,#00,#77,#77
+        defb    #bb,#00,#77,#77,#77,#77,#77,#77
+        defb    #bb,#00,#77,#77,#77,#77,#77,#77
+        defb    #bb,#00,#77,#77,#77,#77,#77,#77
+        defb    #bb,#00,#77,#77,#77,#77,#77,#77
+        defb    #bb,#00,#77,#77,#77,#77,#77,#77
+        defb    #bb,#00,#77,#77,#77,#77,#77,#77
+        defb    #bb,#77,#77,#77,#77,#77,#77,#77
+        defb    #77,#77,#77,#77,#77,#77,#77,#77
+
+cur_st
+        defb    #00,#00,#FF,#FF,#FF,#FF,#FF,#FF,#FF
+        defb    #00,#07,#00,#FF,#FF,#FF,#FF,#FF,#FF
+        defb    #00,#07,#07,#00,#FF,#FF,#FF,#FF,#FF
+        defb    #00,#07,#07,#07,#00,#FF,#FF,#FF,#FF
+        defb    #00,#07,#07,#07,#07,#00,#FF,#FF,#FF
+        defb    #00,#07,#07,#07,#07,#07,#00,#FF,#FF
+        defb    #00,#07,#07,#07,#07,#07,#07,#00,#FF
+        defb    #00,#07,#07,#07,#07,#07,#07,#07,#00
+        defb    #00,#07,#07,#07,#07,#00,#00,#00,#00
+        defb    #00,#07,#07,#00,#07,#07,#00,#FF,#FF
+        defb    #00,#07,#00,#FF,#00,#07,#07,#00,#FF
+        defb    #00,#00,#FF,#FF,#00,#07,#07,#00,#FF
+        defb    #00,#FF,#FF,#FF,#FF,#00,#07,#07,#00
+        defb    #FF,#FF,#FF,#FF,#FF,#FF,#00,#00,#FF
+
+;-------
+;Interface sprites
+new_file_spr
+        defb    #00,#00,#00,#00,#00,#00,#FF,#FF,#FF
+        defb    #00,#77,#77,#77,#77,#00,#00,#FF,#FF
+        defb    #00,#77,#77,#77,#77,#00,#77,#00,#FF
+        defb    #00,#77,#77,#77,#77,#00,#00,#00,#00
+        defb    #00,#77,#77,#77,#77,#77,#77,#77,#00
+        defb    #00,#77,#77,#77,#77,#77,#77,#77,#00
+        defb    #00,#77,#77,#77,#77,#77,#77,#77,#00
+        defb    #00,#77,#77,#77,#77,#77,#77,#77,#00
+        defb    #00,#77,#77,#77,#77,#77,#77,#77,#00
+        defb    #00,#77,#77,#77,#77,#77,#77,#77,#00
+        defb    #00,#77,#77,#77,#77,#77,#77,#77,#00
+        defb    #00,#77,#77,#77,#77,#77,#77,#77,#00
+        defb    #00,#00,#00,#00,#00,#00,#00,#00,#00
+
+

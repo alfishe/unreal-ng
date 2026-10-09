@@ -141,6 +141,12 @@ bool CodePointToByte(char32_t codePoint, CodePage codePage, uint8_t& out)
         }
         return false;
     }
+    // ASCII is itself in every single-byte page, except the three ZX Spectrum characters at #5E #60 #7F
+    if (codePoint < 0x80 && !(codePage == CodePage::ZxSpectrum && (codePoint == 0x5E || codePoint == 0x60 || codePoint == 0x7F)))
+    {
+        out = static_cast<uint8_t>(codePoint);
+        return true;
+    }
     const auto& map = ReverseTable(codePage);
     const auto it = map.find(codePoint);
     if (it == map.end())

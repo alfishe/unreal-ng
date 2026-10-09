@@ -56,6 +56,26 @@ another machine lives in `testdata/machines/<machine>/ttd/` (the script's
 `FIXTURE_OPTIONS`); `TTD_Corpus_Test` runs it on a fresh machine of its
 recorded model.
 
+## ZX-MultiSound sessions (recorded by the tests, not stored)
+
+Two more sessions belong to the corpus but are not in the repository (owner decision 2026-10-07: about 19 MB of
+fixtures for the two recorders): the tests record them in their own process on first use
+([`core/tests/_helpers/ttdmultisoundsessions.h`](../../core/tests/_helpers/ttdmultisoundsessions.h)), save them to the
+process's scratch folder, load them like the stored files and delete them when the process ends.
+
+| Session | Model | Starting point | Settle frames | Frames |
+|---|---|---|---|---|
+| `multisound-pentagon` | Pentagon 128K, ZX-MultiSound in `zxbus.1` (the slot set replaces the shipped one, so the socket keeps its plain AY) | [`../sound/multisound/ttd/allsources.sna`](../sound/multisound/ttd/allsources.sna): every source of the card - both YM2203 (FM + SSG), the SAA1099, the SounDrive DACs, a General Sound command, MIDI notes bit-banged into the SAM2695 (written by [`make-program.py`](../../tools/verification/multisound/ttd-fixture/make-program.py)) | 10 | 70 |
+| `multisound-zxevo` | ZX-Evo (`ATM3`), ZX-MultiSound in `zxbus.1` (the YM2149 leaves its socket) | the same program (it measures the CPU clock - the ZX-Evo starts at 7 MHz - and times its MIDI bits to it) | 10 | 70 |
+
+Recorded as `record_fixtures.py` records a fixture: a fresh machine, 44.1 kHz core rate, Sound HQ and Screen HQ on,
+the snapshot, the settle frames, then a recording with the write journal. Each is recorded twice per test process at
+most: by v1 for `TTD_Corpus_Test`, `TTDSessionFile_Test` and `TTDV1Feeder_Test`, by the engine for
+`TimeTravelControllerCorpus_Test`. 70 frames (71 checkpoints) instead of 300: the SAM2695's state (292 KB raw) changes
+in every checkpoint, and the corpus tests need 63 checkpoints. The tests build the replay machine from the session's
+header with the card in `zxbus.1` and the shipped default MIDI bank, which the sessions name
+(`core/tests/_helpers/ttdslotcards.h`). A change of the card or of the program needs no re-recording.
+
 ## Port-journal fixtures (`port-journals/`)
 
 Two real sessions with their port journals (every IN and OUT with its time
@@ -194,6 +214,13 @@ write journal has no checksum of its own, so a corrupt zstd frame is caught
 but a flipped byte that still decodes is not.
 
 ## Status
+
+2026-10-08: the Pentagon fixtures of both corpora (`*.ttd`, `engine/` but `tsconf_sprites` and `sprinter_boot`) and
+the port-journal fixtures re-recorded: with no tape image, #FE bit 6 now reads 0 on the Pentagon and follows the EAR
+output on the 128K (idle EAR per board, `docs/inprogress/2026-10-08-z80test-in-ear/`). In `expected.json`, Dizzy X's
+`key` / `in` answers changed only in the value read (bit 6); Green Beret's answers all moved, because the 128K reads
+the EAR level before playback starts and the load runs on a slightly different timeline. The TS-Conf and Sprinter
+fixtures replay unchanged and were left alone.
 
 2026-10-05: the engine corpus re-recorded after master's ZX-bus slots (the slot set is in the engine's configuration
 fingerprint). `record_fixtures.py` plugs the General Sound card into a ZX-bus slot when the shipped config fits none;

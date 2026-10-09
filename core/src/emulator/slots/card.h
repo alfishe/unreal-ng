@@ -55,9 +55,10 @@ struct CardMixerRow
 {
     AudioSourceType type = AudioSourceType::Custom;
     std::string name;
-    /// An AY / SSG row: SoundManager runs it through the AY / SSG tone voicing ([SOUND] AYVoicing), exactly like the
-    /// AY socket's chips (the card hands the row over writable through VoicedMixerBuffer)
-    bool ssgVoicing = false;
+    /// An AY / SSG row: SoundManager runs it through the AY / SSG tone voicing ([SOUND] AYVoicing) and the AY character
+    /// chain (punch, room; Sound HQ), exactly like the AY socket's chips (the card hands the row over writable through
+    /// SsgMixerBuffer)
+    bool ssgRow = false;
 };
 
 /// One time-travel device of a card (a card may carry several modules, each with its own blob)
@@ -141,15 +142,15 @@ public:
         (void)type;
         return nullptr;
     }
-    /// The writable buffer of a row declared ssgVoicing (the same one MixerBuffer returns), voiced in place by
-    /// SoundManager after FrameEnd; nullptr for any other row
-    virtual int16_t* VoicedMixerBuffer(AudioSourceType type)
+    /// The writable buffer of a row declared ssgRow (the same one MixerBuffer returns), voiced and run through the AY
+    /// character chain in place by SoundManager after FrameEnd; nullptr for any other row
+    virtual int16_t* SsgMixerBuffer(AudioSourceType type)
     {
         (void)type;
         return nullptr;
     }
     /// Changes whenever the card restarted its render layers (a TTD restore: its rows no longer continue the audio
-    /// before): the host's processing of the rows (the SSG voicing) restarts with them
+    /// before): the host's processing of the rows (the SSG voicing and character chain) restarts with them
     virtual uint64_t RenderEpoch() const
     {
         return 0;

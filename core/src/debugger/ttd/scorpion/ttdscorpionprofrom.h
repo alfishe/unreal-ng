@@ -13,7 +13,7 @@
 /// nothing about Scorpion — it only calls through TTDSerializable.
 ///
 /// What lives here and why it cannot live anywhere else:
-///   - plane_id (== EmulatorState::profrom_bank) is clocked by a GAL from
+///   - plane_id (== ScorpionState::profromBank) is clocked by a GAL from
 ///     READ addresses (#0100-#010F), not by any OUT, so it is not
 ///     reproducible from port latches — it depends on the whole read history.
 ///   - scorpionDosTrigger (DD50.1 magic button) is host-armed and released by
@@ -43,7 +43,7 @@ struct ScorpionProfROMState
     uint8_t p7EFD;               ///< Plane window-select latch
     uint8_t p1FFD;               ///< Service / RAM0 / RAM-bank latch
     uint8_t scorpionDosTrigger;  ///< DD50.1 magic-button trigger
-    /// Turbo+ flip-flop (EmulatorState::scorpion_turbo): set by an IN from the
+    /// Turbo+ flip-flop (ScorpionState::turbo): set by an IN from the
     /// #7FFD family, cleared by one from #1FFD. Not derivable from the clock in
     /// the chipset state: during the /INT pulse the clock drops to 3.5 MHz with
     /// the latch still set. Recordings made before it read 0 (turbo off)

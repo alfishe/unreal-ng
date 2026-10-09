@@ -1,0 +1,9 @@
+   11        ORG  50000
+   12 LAB    LD   A,2+3*4
+   13        LD   HL,LAB
+   14        DEFB 1,2,"A"
+   15        DEFW LAB,$
+   16        DEFM "HI"
+   17        DEFS 2
+   18        JR   LAB
+   19        RET

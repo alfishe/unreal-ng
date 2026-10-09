@@ -4,6 +4,7 @@
 #include <functional>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <set>
 
 #include "dialects/common/z80.h"
@@ -291,6 +292,8 @@ struct Writer
                 return "%" + bits;
             }
             case ir::NumberSpelling::Character:
+                if (e.text.size() == 1 && (static_cast<unsigned char>(e.text[0]) < 0x20 || static_cast<unsigned char>(e.text[0]) >= 0x7F))
+                    return std::to_string(e.value & 0xFF);   // a control character cannot stand in a quoted constant
                 if (e.text.size() == 1 && Z80asm())
                     return e.text == "'" ? "'\\''" : e.text == "\\" ? "'\\\\'" : "'" + e.text + "'";
                 if (e.text.size() == 1)
@@ -320,6 +323,13 @@ struct Writer
     {
         Expr g = Expr::Make(Expr::Kind::Group);
         g.args.push_back(Expr::Binary(Op::And, std::move(e), Expr::Number(0xFFFF, ir::NumberSpelling::Hex, 4)));
+        return g;
+    }
+
+    static Expr Masked8(Expr e)
+    {
+        Expr g = Expr::Make(Expr::Kind::Group);
+        g.args.push_back(Expr::Binary(Op::And, std::move(e), Expr::Number(0xFF, ir::NumberSpelling::Hex, 2)));
         return g;
     }
 
@@ -425,7 +435,8 @@ struct Writer
                 }
                 const bool comparison = e.op == Op::Equal || e.op == Op::NotEqual || e.op == Op::Less || e.op == Op::Greater ||
                                         e.op == Op::LessEqual || e.op == Op::GreaterEqual;
-                if (comparison && trueValue != 0 && trueValue != TargetTrue())
+                const bool logical = e.op == Op::LogicalAnd || e.op == Op::LogicalOr;
+                if ((comparison || logical) && trueValue != 0 && trueValue != TargetTrue())
                     return TrueIsOne(e);
                 if (Z80asm() && wordBits == 16 && unsignedWords && (comparison || e.op == Op::Div || e.op == Op::Mod || e.op == Op::Shr))
                 {
@@ -460,6 +471,31 @@ struct Writer
     }
 
     std::string Quote(const std::string& text) const
+    {
+        // A control character cannot stand inside a quoted string in a source line (LF, BEL ...): it goes as a number
+        // between the quoted runs, in the list the caller joins with commas
+        std::string out;
+        std::string run;
+        const auto flush = [&] {
+            if (!run.empty())
+                out += (out.empty() ? "" : ",") + QuoteRun(run);
+            run.clear();
+        };
+        for (const char c : text)
+        {
+            if (static_cast<unsigned char>(c) < 0x20 || c == 0x7F)
+            {
+                flush();
+                out += (out.empty() ? "" : ",") + std::to_string(static_cast<unsigned char>(c));
+            }
+            else
+                run += c;
+        }
+        flush();
+        return out.empty() ? QuoteRun("") : out;
+    }
+
+    std::string QuoteRun(const std::string& text) const
     {
         if (Z80asm())
         {
@@ -569,9 +605,76 @@ struct Writer
         return out;
     }
 
+    /// The Z80N instructions: z80asm (-mz80n) reads them by name, in its own spellings (SWAPNIB, MIRROR A, MUL D,E, PIXELDN
+    /// with no operand); pasmo has no Z80N, so it gets the bytes. LDIRSCALE (ED B6) is unknown to both
+    std::optional<std::vector<std::string>> Z80nText(const Statement& s)
+    {
+        const std::string& m = s.mnemonic;
+        const auto& ops = s.operands;
+        const auto reg = [&](size_t k, const char* name) { return k < ops.size() && ops[k].kind == Operand::Kind::Register && ops[k].text == name; };
+        const auto value = [&](size_t k) { return k < ops.size() && ops[k].kind == Operand::Kind::Immediate; };
+        int code = -1;
+        char layout = 'n';   // n none, b byte, w word (low first), W word (high first), B two bytes
+        std::string text;    // the z80asm spelling
+        if (m == "swapnib") code = 0x23, text = "SWAPNIB";
+        else if (m == "mirror") code = 0x24, text = "MIRROR A";
+        else if (m == "test") code = 0x27, layout = 'b', text = "TEST ";
+        else if (m == "bsla") code = 0x28, text = "BSLA DE,B";
+        else if (m == "bsra") code = 0x29, text = "BSRA DE,B";
+        else if (m == "bsrl") code = 0x2A, text = "BSRL DE,B";
+        else if (m == "bsrf") code = 0x2B, text = "BSRF DE,B";
+        else if (m == "brlc") code = 0x2C, text = "BRLC DE,B";
+        else if (m == "mul") code = 0x30, text = "MUL D,E";
+        else if (m == "add" && ops.size() == 2 && reg(1, "a") && (reg(0, "hl") || reg(0, "de") || reg(0, "bc")))
+            code = reg(0, "hl") ? 0x31 : reg(0, "de") ? 0x32 : 0x33, text = "ADD " + z80::Upper(ops[0].text) + ",A";
+        else if (m == "add" && ops.size() == 2 && value(1) && (reg(0, "hl") || reg(0, "de") || reg(0, "bc")))
+            code = reg(0, "hl") ? 0x34 : reg(0, "de") ? 0x35 : 0x36, layout = 'w', text = "ADD " + z80::Upper(ops[0].text) + ",";
+        else if (m == "push" && ops.size() == 1 && value(0)) code = 0x8A, layout = 'W', text = "PUSH ";
+        else if (m == "outinb") code = 0x90, text = "OUTINB";
+        else if (m == "nextreg" && ops.size() == 2 && value(0) && value(1)) code = 0x91, layout = 'B', text = "NEXTREG ";
+        else if (m == "nextreg" && ops.size() == 2 && value(0) && reg(1, "a")) code = 0x92, layout = 'b', text = "NEXTREG ";
+        else if (m == "pixeldn") code = 0x93, text = "PIXELDN";
+        else if (m == "pixelad") code = 0x94, text = "PIXELAD";
+        else if (m == "setae") code = 0x95, text = "SETAE";
+        else if (m == "jp" && ops.size() == 1 && ops[0].kind == Operand::Kind::Indirect && ops[0].text == "c") code = 0x98, text = "JP (C)";
+        else if (m == "ldix") code = 0xA4, text = "LDIX";
+        else if (m == "ldws") code = 0xA5, text = "LDWS";
+        else if (m == "lddx") code = 0xAC, text = "LDDX";
+        else if (m == "ldirscale") code = 0xB6;
+        else if (m == "ldirx") code = 0xB4, text = "LDIRX";
+        else if (m == "ldpirx") code = 0xB7, text = "LDPIRX";
+        else if (m == "lddrx") code = 0xBC, text = "LDDRX";
+        if (code < 0)
+            return std::nullopt;
+        // The operand spellings sjasmplus takes besides these (SWAPNIB A, PIXELDN HL, MUL DE) mean the same
+        if (Z80asm() && code != 0xB6)
+        {
+            if (layout == 'b' && code == 0x27)
+                text += Print(ops[0].expr);
+            else if (layout == 'w' || layout == 'W')
+                text += Print(ops[ops.size() - 1].expr);
+            else if (layout == 'B' || (layout == 'b' && code == 0x92))
+                text += Print(ops[0].expr) + (layout == 'B' ? "," + Print(ops[1].expr) : ",A");
+            return std::vector<std::string>{text};
+        }
+        const std::string head = "DB 237," + std::to_string(code);
+        if (layout == 'n')
+            return std::vector<std::string>{head};
+        if (layout == 'b' && code == 0x27)
+            return std::vector<std::string>{head + "," + Print(Masked8(ops[0].expr))};
+        if (layout == 'b' || layout == 'B')
+            return std::vector<std::string>{head + "," + Print(Masked8(ops[0].expr)) + (layout == 'B' ? "," + Print(Masked8(ops[1].expr)) : "")};
+        const std::string word = Print(Masked16(ops[ops.size() - 1].expr));
+        if (layout == 'W')
+            return std::vector<std::string>{head + ",(" + word + ")/256,(" + word + ")&255"};
+        return std::vector<std::string>{head + ",(" + word + ")&255,(" + word + ")/256"};
+    }
+
     std::vector<std::string> InstructionText(const Statement& s)
     {
         const std::string m = s.mnemonic;
+        if (auto next = Z80nText(s))
+            return *next;
         // pasmo knows neither IN F,(C) nor OUT (C),0: their bytes
         if (!Z80asm() && m == "in" && s.operands.size() == 2 && s.operands[0].kind == Operand::Kind::Register && s.operands[0].text == "f")
             return {"DB #ED,#70"};
@@ -806,7 +909,7 @@ struct Writer
                 displaced = false;
                 return {"@" + std::string(kDelta) + " DEFL 0"};
             case ir::DirectiveKind::Display: return {"@; DISPLAY " + Operands(s.operands)};
-            case ir::DirectiveKind::End: return {"END"};
+            case ir::DirectiveKind::End: return {Z80asm() ? "@; END" : "END"};
             case ir::DirectiveKind::IfUsed:
                 diagnostics.push_back({Severity::Warning, line, 0, "IFUSED " + s.text + ": " + TargetName() + " has no IFUSED; the block is assembled"});
                 return {"IF 1 ; unreal-asm: IFUSED " + s.text + " (" + TargetName() + " has none)"};
@@ -815,14 +918,68 @@ struct Writer
                 return {"@; unreal-asm: SAVEBIN \"" + s.text + "\"," + args()};
             case ir::DirectiveKind::Main: return {"@; MAIN \"" + s.text + "\" (the project's main source)"};
             case ir::DirectiveKind::Run: return {NotConverted("RUN " + args() + " (code called while assembling)")};
-            default: return {NotConverted(s.text.empty() ? "a directive" : s.text)};
+            default:
+                // OPT --zxnext / DEVICE ZXSPECTRUMNEXT: the Z80N is on in the target by other means (z80asm -mz80n; pasmo gets the bytes)
+                if (z80::EnablesZ80n(s.text))
+                    return {Z80asm() ? "; Z80N source: assemble with z80asm -mz80n" : "; Z80N source: its instructions are written as bytes"};
+                return {NotConverted(s.text.empty() ? "a directive" : s.text)};
         }
     }
 };
 }  // namespace
 
-BackendResult WriteClassic(const ir::Program& program, const BackendOptions& options, ClassicTarget target)
+/// Local labels (.loop) and qualified names (start.loop) exist in sjasmplus and its relatives; pasmo and z80asm have neither.
+/// Each becomes a plain name: a leading period takes the last ordinary label of the source before it, every other period
+/// is written as two underscores (macro bodies keep theirs: the backends make those unique per expansion)
+void RewriteDotNames(ir::Program& program)
 {
+    std::string scope = "L";
+    bool inMacro = false;
+    const auto rename = [&](const std::string& name) -> std::string {
+        if (name.empty() || name.find('.') == std::string::npos)
+            return name;
+        std::string out = name[0] == '.' ? scope + "__" + name.substr(1) : name;
+        for (size_t k = 0; k < out.size(); ++k)
+            if (out[k] == '.')
+                out.replace(k, 1, "__");
+        return out;
+    };
+    std::function<void(Expr&)> walk = [&](Expr& e) {
+        if (e.kind == Expr::Kind::Symbol && !inMacro)
+            e.text = rename(e.text);
+        for (Expr& a : e.args)
+            walk(a);
+    };
+    for (ir::Line& line : program.lines)
+    {
+        for (Statement& s : line.statements)
+            if (s.kind == Statement::Kind::Directive)
+            {
+                if (s.directive == ir::DirectiveKind::Macro)
+                    inMacro = true;
+                else if (s.directive == ir::DirectiveKind::EndMacro)
+                    inMacro = false;
+            }
+        if (!line.label.empty() && !inMacro)
+        {
+            if (line.label[0] != '.')
+                scope = line.label.find('.') == std::string::npos ? line.label : rename(line.label);
+            line.label = rename(line.label);
+        }
+        for (Statement& s : line.statements)
+        {
+            for (Expr& e : s.args)
+                walk(e);
+            for (Operand& o : s.operands)
+                walk(o.expr);
+        }
+    }
+}
+
+BackendResult WriteClassic(const ir::Program& input, const BackendOptions& options, ClassicTarget target)
+{
+    ir::Program program = input;
+    RewriteDotNames(program);
     BackendResult result;
     result.document.dialect = target == ClassicTarget::Z80asm ? "z88dk" : "pasmo";
     result.document.codePage = encoding::CodePage::Cp866;   // texts are program bytes: the Spectrum code page

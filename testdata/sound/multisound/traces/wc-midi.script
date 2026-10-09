@@ -1,0 +1,37 @@
+# Wild Commander GSPLAYER.WMF in MIDI mode playing music/mid/scale.mid through the card's MIDI line (YM2203 U4 port A)
+describe Real-program trace (CL-2): Wild Commander 1.11 RC7 GSPLAYER.WMF, MIDI player mode ("via multisound
+describe (ay-rs232/midi)", -midi_chip=2 = the #FE chip = U4), music/mid/scale.mid (generated: piano C major up and
+describe down) for about 4 s; the bytes are bit-banged at 31 250 baud on U4 port A bit 2 (R14)
+describe ts-conf config with zxbus.1 = multisound; SD card wc/wc-multisound.img; PC keys in Wild Commander
+machine ts-conf
+cpu 14
+sd wc/wc-multisound.img
+reset
+frames 400
+key pc.enter 3
+frames 30
+key pc.down 2
+key pc.down 2
+key pc.enter 3
+frames 30
+key pc.down 2
+key pc.down 2
+key pc.down 2
+key pc.down 2
+key pc.down 2
+key pc.down 2
+key pc.down 2
+key pc.down 2
+key pc.down 2
+key pc.down 2
+key pc.down 2
+key pc.down 2
+key pc.down 2
+key pc.down 2
+key pc.down 2
+key pc.down 2
+key pc.down 2
+key pc.enter 3
+frames 200
+screen
+save wc-midi

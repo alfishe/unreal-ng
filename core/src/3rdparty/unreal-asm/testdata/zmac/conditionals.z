@@ -1,0 +1,31 @@
+; conditional assembly
+        org     0
+debug   equ     1
+        if      debug
+        defb    1
+        else
+        defb    2
+        endif
+        if      0
+        defb    3
+        else
+        defb    4
+        endif
+        ifdef   debug
+        defb    5
+        endif
+        ifndef  nothing
+        defb    6
+        endif
+        ifeq    1,1
+        defb    7
+        endif
+        ifne    1,1
+        defb    8
+        endif
+        iflt    1,2
+        defb    9
+        endif
+        ifgt    1,2
+        defb    10
+        endif

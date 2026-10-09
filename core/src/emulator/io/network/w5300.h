@@ -28,6 +28,7 @@
 
 #include "common/network/nettypes.h"
 #include "emulator/io/network/netstate.h"
+#include "emulator/io/network/netstatetail.h"
 
 class VirtualNetwork;
 
@@ -105,8 +106,9 @@ public:
     // --- TTD state (netstate.h, network adapters TDD §6.3 option A) --------
 
     /// Registers, socket states, unsent bytes and references to the received
-    /// bytes. Returns false when something did not fit the limits
-    bool SaveState(netstate::Adapters& out) const;
+    /// bytes. What the fixed arrays cannot hold, and received bytes the journal
+    /// does not have (taken before the recording started), go to `tail`
+    void SaveState(netstate::Adapters& out, netstate::Tail& tail) const;
 
     /// Takes a received byte range from the TTD journal: fills `out` with
     /// `length` bytes of record `source` from `offset`; false when unknown
@@ -114,7 +116,7 @@ public:
 
     /// Restore from SaveState; received bytes come from `bytes`. Returns false
     /// when a referenced range could not be found (filled with zeros)
-    bool LoadState(const netstate::Adapters& in, const ByteSource& bytes);
+    bool LoadState(const netstate::Adapters& in, const netstate::Tail& tail, const ByteSource& bytes);
 
     // --- State for automation, debugging and tests -----------------------
 

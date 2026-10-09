@@ -12,7 +12,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/joystick/debugjoystickmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdinputjournal.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -31,7 +31,7 @@ protected:
     EmulatorContext* _context = nullptr;
     DebugJoystickManager* _manager = nullptr;
     Joystick* _joystick = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
 
     struct Sample
     {
@@ -54,7 +54,7 @@ protected:
         ASSERT_NE(_manager, nullptr);
         _joystick = _context->pJoystick;
         ASSERT_NE(_joystick, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
     }
 
     void TearDown() override

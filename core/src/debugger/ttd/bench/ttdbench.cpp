@@ -230,7 +230,7 @@ emulator.Reset();
                 ports->DecodePortOut(a.port, a.value, 0);
                 break;
             case SetupAction::Kind::AtmTurbo:
-                ports->DecodePortOut(static_cast<uint16_t>((state.aFF77 & 0xFF00) | 0x77),
+                ports->DecodePortOut(static_cast<uint16_t>((state.atm.aFF77 & 0xFF00) | 0x77),
                                      static_cast<uint8_t>(state.pFF77 | 0x08), 0);
                 break;
         }

@@ -156,6 +156,10 @@ AY / SSG generators @218.75 kHz → 5 Hz coupling high-pass → decimator → ch
 
 - **HQ and LQ alike.** Voicing is tonal balance, not an HQ effect: toggling *Sound HQ* or leaving
   turbo mode does not change it. It is not reset when HQ comes back.
+- **Reset on a time-travel restore.** Seeking in the time-travel history, returning to the live
+  state, a machine reset or a snapshot load clears the voicing's filter state and pre-roll history
+  (socket chips and card SSG rows alike), so nothing played before the jump leaks into the first
+  frame after it. The character chains are reset at the same point, the beeper's included.
 - **Not applied to** the beeper, Covox / SoundDrive, TSFM's FM channels, General Sound or
   MoonSound.
 - **Sound off / turbo without audio:** nothing is voiced.
@@ -214,13 +218,46 @@ every surface; applied at the next frame boundary):
 |:--|:--|:--|:--|:--|
 | `ay_voicing` | see [Profiles](#profiles) | `classic` | Tonal balance of the AY / SSG output | no |
 | `ay_punch` | `on` / `off` | `on` | Transient enhancement for the AY: a slight treble tilt plus a boost on note attacks, tuned gently for square waves. It was tuned by ear on Classic's bass; with Flat, unreal-qt shows a hint | yes |
-| `ay_room` | `off`, `15db`, `14db`, `13db`, `12db`, `9db`, `6db`, `3db`, `2db`, `1db` | `9db` | Headphone crossfeed: each ear also gets the other channel, delayed 3 ms and low-passed at 10 kHz, at the given level below the direct signal. Reduces fatigue from the hard left/right panning of ABC / ACB stereo. The default `9db` is a clear reduction; on very transient-heavy music `14db`–`15db` avoid the slight comb colouring stronger levels can add to fast attacks; `6db` and below approach mono (`1db` is almost mono); `off` keeps the full stereo separation | yes |
+| `ay_room` | `off`, `15db`, `14db`, `13db`, `12db`, `9db`, `6db`, `3db`, `2db`, `1db` | `9db` | Headphone crossfeed: each ear also gets the other channel, delayed 2 ms (no low-pass: the square wave's harmonics are kept), at the given level below the direct signal (see [Room delay per chip type](#room-delay-per-chip-type)). Reduces fatigue from the hard left/right panning of ABC / ACB stereo. The default `9db` is a clear reduction; on very transient-heavy music `14db`–`15db` avoid the slight comb coloring stronger levels can add to fast attacks; `6db` and below approach mono (`1db` is almost mono); `off` keeps the full stereo separation | yes |
 | `beeper_punch` | `on` / `off` | `off` | Attack enhancement for the beeper (digidrums, 1-bit music) | yes |
 
 Bool settings also accept `true` / `false` / `1` / `0` on input; the WebAPI returns JSON
 booleans for them. `ay_punch`, `ay_room` and `beeper_punch` have no ini key: they are runtime
 settings, persisted only by the GUI preference. Voicing always applies; punch and room apply
-only while *Sound HQ* is on.
+only while *Sound HQ* is on. All three apply to the AY / SSG chips in the AY socket (AY,
+TurboSound, TurboSound FM) and to the SSG rows of a ZX-MultiSound card in a ZX-bus slot
+(`MS SSG 1` / `MS SSG 2`, since 2026-10-07), never to FM, SAA, PCM or MIDI rows.
+
+### Room delay per chip type
+
+The room's delay and low-pass come from the chain's chip type (`AudioCharacterChain::ChipType`),
+the level from `ay_room`:
+
+| Chip type | Delay | Low-pass | Used by |
+|:--|:--|:--|:--|
+| `AY` | 2 ms (88 samples at 44.1 kHz, 96 at 48 kHz) | none | every chain in unreal-ng: the AY / SSG chips of the socket, the TSFM FM rows, the beeper, the ZX-MultiSound SSG rows |
+| `Paula` | 3 ms | one-pole, about 10 kHz | not used (kept from the Amiga project the chain was ported from) |
+
+With a 2 ms delay the crossfeed's comb notches sit at 250 Hz, 750 Hz, 1250 Hz and so on.
+
+### Switching and bypass
+
+- **Off means untouched.** A chain with punch and room off, or any chain while *Sound HQ* is
+  off, leaves the audio bit-for-bit as the chip produced it and does no per-sample work. The FM
+  and (by default) the beeper chains are always in this state.
+- **No click on a switch.** Turning punch or room on or off, changing the room level, or
+  toggling *Sound HQ* takes effect at the next frame boundary and ramps linearly across that one
+  frame (about 20 ms), like a voicing change.
+- **No old audio.** An effect that is switched on starts from the current input; once it has
+  ramped out, its delay line and envelope are cleared. A gap (sound off, turbo without audio,
+  a time-travel restore, a machine reset or snapshot load, a sample-rate change) clears every
+  chain, which then starts at the current settings without a ramp.
+
+Cost (A/B 2026-10-07, `dd64db70d` against the change, Apple Silicon, 44.1 kHz, two interleaved runs of ten rounds,
+load below 12 at every round start): `BM_AudioCharacterChain_Frame` per 882-sample call - off 1.58-1.65 µs ->
+0.05 µs (-97 %), punch 3.47-3.61 -> 3.21-3.37 µs (-7 %), room and punch + room unchanged within 1-2 %. The
+whole-machine `BM_TurboSoundFrame_*` (Pentagon TSFM, about 2.3 ms per frame) and `BM_MultiSoundFrame` (the card
+alone, no chain on that path) stay within the ±2 % noise in both runs, with effects on and off.
 
 The voicing and punch/room stack in this order: voicing → punch → room. For example, Headphones
 with punch on softens the highs first and then sharpens the attacks, so the result is less harsh
@@ -316,10 +353,12 @@ A profile is one row in the table in `FilterVoicing::profile()` plus one value i
 | `core/tests/common/filtervoicing_test.cpp` | Flat bypass; Classic vs its design curve and vs the real old `FilterDC` (per band, infrasonic energy, peak level); **every profile vs its analog design curve at every core rate (44.1–192 kHz)**; table rows in enum order; parsing (aliases, case); denormal flush |
 | `core/tests/common/voicingstage_test.cpp` | switch equals an ideal continuous crossfade (±2 LSB), no click, history rules, cross-thread requests |
 | `core/tests/emulator/sound/soundmanager_test.cpp` | configured default live from frame 1, HQ/LQ, not reset on HQ return, gaps, rate change, TSFM FM untouched, punch/room handoff |
+| `core/tests/common/audio_character_chain_test.cpp` | chain off / gated off is bit-identical; a switch ramps over one frame with no step above the signal's own; an effect switched on again (after effects off, HQ off, a reset, a rate change) replays nothing |
 | `core/tests/emulator/sound/soundcharactersettings_test.cpp` | the shared automation parser: defaults, round trips, accepted values in menu order, errors |
 | `core/tests/emulator/config_test.cpp` | `[SOUND] AYVoicing` parsing, the `classic` default |
 | `core/tests/emulator/recording/dsd_native_test.cpp` | DSD native mode applies the voicing |
 | `core/benchmarks/emulator/sound/filtervoicing_benchmark.cpp` | per-frame cost, switch-frame cost |
+| `core/benchmarks/emulator/sound/audio_character_chain_benchmark.cpp` | punch / room chain per frame: off, punch, room, both |
 
 Tests that check mixer arithmetic or the punch/room bypass exactly
 (`device_mixer_test`, `soundhq_chain_bypass_test`) pin `flat`.

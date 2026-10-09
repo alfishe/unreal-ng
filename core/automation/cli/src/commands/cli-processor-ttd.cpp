@@ -1102,7 +1102,7 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
         {"--addr", "addr"},       {"--addr-from", "addr_from"},   {"--addr-to", "addr_to"},
         {"--access", "access"},   {"--value", "value"},           {"--pc-from", "pc_from"},
         {"--pc-to", "pc_to"},     {"--phys-page", "phys_page"},   {"--before-frame", "before_frame"},
-        {"--before-tin", "before_tin"}};
+        {"--before-tin", "before_tin"}, {"--space", "space"}};
     std::map<std::string, std::string> options;
     for (size_t i = 1; i < args.size(); ++i)
     {
@@ -1121,7 +1121,7 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
                              (reply.error == ttd::TTDControlError::BadRequest
                                   ? std::string("Usage: ttd find-last [--addr <A> | --addr-from <F> --addr-to <T>] "
                                                 "[--access write|read|execute|io] [--value V] [--pc-from X] [--pc-to Y] "
-                                                "[--phys-page P] [--before-frame F] [--before-tin T]") +
+                                                "[--phys-page P] [--space ram|vram|cache] [--before-frame F] [--before-tin T]") +
                                         NEWLINE
                                   : std::string()));
         return;
@@ -1138,10 +1138,16 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
            << NEWLINE;
         ss << "  Value:    0x" << std::setw(2) << b.find("value")->i << NEWLINE;
         ss << "  PhysPage: " << std::dec;
-        if (b.find("phys_page")->kind == StateNode::Kind::Null)
+        const StateNode* offset = b.find("offset");   // --space vram / cache: the offset in that memory
+        if (offset)
+            ss << "none (" << b.find("space")->s << ")" << NEWLINE;
+        else if (b.find("phys_page")->kind == StateNode::Kind::Null)
             ss << "none (ROM / no RAM page)" << NEWLINE;
         else
             ss << b.find("phys_page")->i << NEWLINE;
+        if (offset)
+            ss << "  Offset:   " << b.find("space")->s << " 0x" << std::hex << std::uppercase << std::setw(5) << offset->i
+               << std::dec << NEWLINE;
         ss << "  Access:   " << b.find("access")->s << NEWLINE;
     }
     else if (b.find("blocked"))

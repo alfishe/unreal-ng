@@ -435,3 +435,38 @@ TEST_F(SnapshotSave_Test, ARunningEmulatorIsStoppedForTheSaveAndResumedAfterIt)
     std::remove(path.c_str());
     _emulator->Stop();
 }
+
+// Profi (v5 and v3): the 128K view exists while the window map is a Spectrum 128K, RAM page n being bank n. A 128K snapshot loaded
+// into it gives a file any plain 128K takes, with the same banks and #7FFD
+TEST_F(SnapshotSave_Test, AProfiInA128kLayoutSavesAFileAny128kTakes)
+{
+    for (const Machine& profi : {Machine{"PROFI", 0, "PROFI", 8}, Machine{"PROFI3", 0, "PROFI3", 8}})
+    {
+        if (_emulator)
+        {
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+            _emulator = nullptr;
+        }
+        _machine = profi;
+        _emulator = Create(profi);
+        ASSERT_NE(_emulator, nullptr);
+        _context = _emulator->GetContext();
+        ASSERT_TRUE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/action.sna"))) << profi.tag;
+
+        const snapshot::SaveFormats formats = _emulator->SnapshotSaveFormats();
+        ASSERT_TRUE(formats.viewAvailable) << profi.tag << ": " << formats.view;
+        EXPECT_EQ(formats.machine, "ZX Spectrum 128K") << profi.tag;
+
+        const std::string path = ScratchFile("z80");
+        ASSERT_TRUE(_emulator->SaveSnapshot(path)) << profi.tag << ": " << _emulator->LastSaveResult().text;
+        Emulator* plain = Create(kMachines[1]);
+        ASSERT_NE(plain, nullptr);
+        ASSERT_TRUE(plain->LoadSnapshot(path));
+        for (uint16_t bank = 0; bank < 8; bank++)
+            EXPECT_EQ(0, std::memcmp(_context->pMemory->RAMPageAddress(bank), plain->GetContext()->pMemory->RAMPageAddress(bank), 16384))
+                << profi.tag << " bank " << bank;
+        EXPECT_EQ(plain->GetContext()->emulatorState.p7FFD, _context->emulatorState.p7FFD) << profi.tag;
+        EmulatorTestHelper::CleanupEmulator(plain);
+        std::remove(path.c_str());
+    }
+}

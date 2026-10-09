@@ -370,8 +370,10 @@ public:
     void RestoreInputState(const InputState& state);
 
     /// region <TTD (PeripheralId::KeyboardMatrix)>
-    /// Blob: version, the 8 matrix rows, the number of pressed keys, then
-    /// (key, count) pairs in key order. Variable size: a few bytes with no key held
+    /// Blob: version, the 8 matrix rows, a pair count that is 0 (the host's
+    /// pressed-key counters are host state, not the machine's: 2026-10-08).
+    /// Blobs written before carry (key, count) pairs after it; they load the
+    /// matrix and leave the counters alone. Variable size kept for them
     size_t TTDStateSize() const override;
     void TTDSaveState(uint8_t* dst) const override;
     bool TTDVariableSize() const override { return true; }

@@ -64,6 +64,7 @@ matches; it names the recipe(s) for that action.
 | Running to a scanline / pixel / interrupt, frame and T-state stepping, step over / out | [analysis/execution-control-and-stepping.md](analysis/execution-control-and-stepping.md) | ttd-*, profilers |
 | Who calls a routine, hot opcodes, per-frame cost | [analysis/calltrace-and-opcode-profiler.md](analysis/calltrace-and-opcode-profiler.md) | port-trace |
 | Labels, symbols, sjasmplus listings, stepping by source line, assembling | [analysis/symbols-listings-and-source-stepping.md](analysis/symbols-listings-and-source-stepping.md) | everything else |
+| Running a Spectrum assembler (TASM, ALASM, STORM, ZX-ASM, GENS, MASM, ZEUS, XAS, PROMETHEUS, Laser Genius, Power Assembler, Primus; the PC cross assembler ASM80) in the machine; its sources, code and labels to and from the host | [assemblers/README.md](assemblers/README.md), then the one assembler's recipe | the other assemblers' recipes |
 | Which code ran / never ran, TR-DOS analyzer events | [analysis/code-coverage-and-analyzers.md](analysis/code-coverage-and-analyzers.md) | port-trace |
 | Searching, mapping or writing memory; named regions; ROM protect; writing a port (paging) | [analysis/memory-search-map-and-regions.md](analysis/memory-search-map-and-regions.md) | memory-counters unless you need access counts |
 | A debugger front end's redraw in one call; raw (binary) memory dumps | [analysis/debugger-snapshot.md](analysis/debugger-snapshot.md) | separate /registers + /disasm + /memory calls per redraw |
@@ -140,6 +141,24 @@ call.
 | [analysis/ttd-visual-inspection.md](analysis/ttd-visual-inspection.md) | Record once with TTD, then seek/step to any frame for guaranteed-stable inspection (registers, video aspect, per-frame screenshot) |
 | [analysis/sprinter-ttd.md](analysis/sprinter-ttd.md) | Sprinter time travel: what a checkpoint holds (PLD, Z84C15, VRAM, fast RAM, keyboard / mouse streams, floppy command), record / seek / dump on MCP, WebAPI, CLI |
 | [analysis/sprinter-mame-compare.md](analysis/sprinter-mame-compare.md) | Sprinter boot port trace against MAME's `sprinter` driver, access by access (port, value, PC, internal code); new MAME captures |
+
+### `assemblers/` — the Spectrum's own assemblers
+
+| Recipe | What it covers |
+|:--|:--|
+| [assemblers/README.md](assemblers/README.md) | What every assembler recipe shares: own instance, starting from a TR-DOS disk, inverted keyboards and Extend, sources between host and machine (folders as disks, `zxasm`, the assemblers' text import / export, disk export), code out, labels into the debugger with `symconv source` |
+| [assemblers/tasm.md](assemblers/tasm.md) | TASM 2.0 - 4.12: command line, editor, assemble, run, object save, symbol list, export to PC text, TASMHELP |
+| [assemblers/alasm.md](assemblers/alasm.md) | ALASM 3.8c - 5.09: word commands, Work / Assemble / sYmbol, the editor, eXport / impOrt of text |
+| [assemblers/storm.md](assemblers/storm.md) | STORM 1.0beta - 1.3i: BREAK and Extend commands, save Obj, eXport, the code after Quit |
+| [assemblers/zxasm.md](assemblers/zxasm.md) | ZX-ASM 2.4 - ZAsm 3.15: menus, drive D, Load / Assemble / Launch, the user's memory in RAM page 1 |
+| [assemblers/gens.md](assemblers/gens.md) | GENS4 / GENS3 (tape) and GENS4B (TR-DOS): put in memory, `G` from a tape image, `A`, `R` |
+| [assemblers/masm.md](assemblers/masm.md) | MASM 1.1 / 3.0: Work file, Assemble, code in RAM page 0 for `#C000` up |
+| [assemblers/prometheus.md](assemblers/prometheus.md) | PROMETHEUS 48K: installer, SS+letter commands, `LOAD :name` (the name is required), ASSEMBLY, saves to and from the host |
+| [assemblers/laser-genius.md](assemblers/laser-genius.md) | Laser Genius 1.04 (Beta Disk): loader questions, paragraph numbers, Y/N keys pressed once, `assem` after `PUT`, sources to and from the host |
+| [assemblers/power-assembler.md](assemblers/power-assembler.md) | Power Assembler 3.0 128K: the menu (SS then CS), CAPS LOCK on, the code in page 4, `$` ahead in instructions, texts to and from the host |
+| [assemblers/asm80.md](assemblers/asm80.md) | ASM80 / Asm80Win 2.02 (PC): asm80win.exe under wine or its host build, a directory project to sjasmplus, labels from the listing |
+| [assemblers/zeus.md](assemblers/zeus.md) | ZEUS 1983 (tape), 1.1, GG, v7.E: source in memory, `O`, `A`, INCLUDE / PLACE / INCBIN |
+| [assemblers/xas.md](assemblers/xas.md) | XAS 4.18 / 7.447: the file list, EXT commands, LTEXT / LCODE |
 
 ### `machines/` — per-model recipes
 

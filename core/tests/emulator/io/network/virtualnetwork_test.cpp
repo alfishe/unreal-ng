@@ -152,3 +152,34 @@ TEST_F(VirtualNetwork_Test, NoHostNoListener)
     _net->SetRemoteAccess(false);
     EXPECT_FALSE(_net->Config().remoteAccess);
 }
+
+/// TTD state-registry gap 16 (2026-10-08): tables longer than the blob's fixed arrays - 40 sockets (32 fit), 10
+/// guest servers (8), 20 DHCP leases (16) - go to the tail and come back whole
+TEST_F(VirtualNetwork_Test, TablesBeyondTheFixedArraysRestoreWhole)
+{
+    Make(VirtualNetworkConfig());
+    for (uint32_t i = 0; i < 40; ++i)
+        _net->Open(NetProto::Udp, &_guest, 1000 + i);
+    for (uint16_t port = 0; port < 10; ++port)
+        GuestServer(static_cast<uint16_t>(2000 + port));
+    for (uint8_t i = 0; i < 20; ++i)
+        _net->LeaseFor(DhcpServer::Mac{0x02, 0, 0, 0, 0, i});
+    ASSERT_GT(_net->Sockets().size(), static_cast<size_t>(netstate::kMaxNetSockets));
+    ASSERT_GT(_net->Listeners().size(), static_cast<size_t>(netstate::kMaxListeners));
+    ASSERT_GT(_net->Dhcp().Leases().size(), static_cast<size_t>(netstate::kMaxLeases));
+
+    auto state = std::make_unique<netstate::VirtualNetwork>();
+    netstate::Tail tail;
+    _net->SaveState(*state, tail);
+    EXPECT_FALSE(tail.Empty());
+
+    VirtualNetwork restored(nullptr, nullptr, VirtualNetworkConfig());
+    restored.LoadState(*state, tail, &_guest);
+    const auto sockets = _net->Sockets();
+    const auto back = restored.Sockets();
+    ASSERT_EQ(back.size(), sockets.size());
+    for (size_t i = 0; i < sockets.size(); ++i)
+        EXPECT_EQ(back[i].id, sockets[i].id) << i;
+    EXPECT_EQ(restored.Listeners().size(), _net->Listeners().size());
+    EXPECT_EQ(restored.Dhcp().Leases(), _net->Dhcp().Leases());
+}

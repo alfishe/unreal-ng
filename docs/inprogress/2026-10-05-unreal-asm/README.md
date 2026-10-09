@@ -34,6 +34,7 @@ own tests and a command-line tool; the emulator uses it through thin adapters.
 | [research-storm-to-sjasmplus.md](research-storm-to-sjasmplus.md) | STORM 1.3 → sjasmplus: several operands per instruction, postfix operators with priorities, built-in macros; STORM's own source and two programs assembled by STORM 1.3 in the emulator equal (phase A6) |
 | [research-zxasm-to-sjasmplus.md](research-zxasm-to-sjasmplus.md) | ZX-ASM → sjasmplus: left to right with postfix functions, macros whose parameters persist, IFUSED libraries, nested PHASE; four programs assembled by ZAsm 3.15 in the emulator equal (phase A6) |
 | [research-pasmo-backend.md](research-pasmo-backend.md) | IR → pasmo 0.5: pasmo's priorities, the displacement written out without PHASE, per-assembly EQU / DEFL; the oracle programs and the GS ROM equal through pasmo, 0 differences against sjasmplus on the corpus (phase A6) |
+| [research-modern-assemblers.md](research-modern-assemblers.md) | Z80N across the assemblers in use today; frontends for pasmo, z80asm, zasm, FantASM, zmac, rasm, Specasm, Odin, Zeus on the Next, their oracles and what they do not read (phase A9) |
 | [research-z88dk-backend.md](research-z88dk-backend.md) | IR → z88dk's z80asm: C's priorities on 32-bit words, a section per ORG, PHASE, the z80asm 2.3 workarounds; the oracle programs equal, 329 corpus sources equal to sjasmplus, the limits listed (phase A6) |
 | [research-tasm.md](research-tasm.md) | TASM 3 / 4: the stream, the token table, the canonical tokenizer, what the real TASM 3.2 files show (phase A2) |
 | [dialect-conversion.md](dialect-conversion.md) | The intermediate representation, frontend and backend plugins, the construct matrix, what cannot be converted, a worked ALASM → sjasmplus example |
@@ -71,4 +72,4 @@ compiled-in plugins; a neutral IR; TASM → sjasmplus first, sjasmplus the first
 
 Implementation on branch `unreal-asm` (master after the owner's review): A1-A4 the codecs of every version (text,
 sjasmplus, TASM, ALASM, ZX-ASM, STORM), A5 the IR with ALASM → sjasmplus conversion checked against ALASM's own
-binaries, A5b TASM → sjasmplus checked against the GS 1.04 ROM and TASM 4.12. Check scripts: `tools/unreal-asm/`. Progress per phase: [TODO.md](TODO.md).
+binaries, A5b TASM → sjasmplus checked against the GS 1.04 ROM and TASM 4.12. Check scripts: `tools/verification/unreal-asm/`. Progress per phase: [TODO.md](TODO.md).

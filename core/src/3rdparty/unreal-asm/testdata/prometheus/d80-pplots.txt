@@ -1,0 +1,233 @@
+
+         ent  $
+
+START    call MAKETAB
+         ei
+
+         ld   bc,0
+LOOP1    push bc
+LOOP2    push bc
+         call PLOT3
+         pop  bc
+         inc  c
+         jr   nz,LOOP2
+         pop  af
+         inc  a
+         cp   192
+         ld   b,a
+         jr   c,LOOP1
+
+CLEAR    ld   hl,0
+CLEAR2   push hl
+         call RANDOM
+         ld   a,h
+         cp   192
+         jr   c,CLEAR3
+         sub  128
+CLEAR3   ld   c,l
+         ld   b,a
+         call PLOT3
+         pop  hl
+         dec  hl
+         ld   a,h
+         or   l
+         jr   nz,CLEAR2
+
+NO_STARS equ  25
+
+STARS    ld   b,NO_STARS
+         ld   ix,SPACE
+STARS2   call RANDOM
+         ld   a,h
+         and  63
+         add  a,64
+         ld   (ix+0),l
+         ld   (ix+1),a
+         call RANDOM
+         ld   a,l
+         and  7
+         inc  a
+         ld   (ix+2),a
+         ld   de,3
+         add  ix,de
+         djnz STARS2
+         jr   STARS7
+
+STARS5   ld   ix,SPACE
+         ld   b,NO_STARS
+STARS4   push bc
+         ld   c,(ix+0)
+         ld   b,(ix+1)
+         call PLOT3
+         ld   de,3
+         add  ix,de
+         pop  bc
+         djnz STARS4
+
+STARS7   ld   ix,SPACE
+         ld   b,NO_STARS
+STARS3   push bc
+         ld   a,(ix+2)
+         ld   c,(ix+0)
+         add  a,c
+         ld   c,a
+         ld   (ix+0),a
+         ld   b,(ix+1)
+         call PLOT3
+         ld   de,3
+         add  ix,de
+         pop  bc
+         djnz STARS3
+         ld   a,0
+         out  (254),a
+         halt
+         ld   a,4
+         out  (254),a
+         call 8020
+         ret  nc
+         jr   STARS5
+
+PLOT3    ld   l,b
+         ld   h,SCRNADRS/512
+         add  hl,hl
+         ld   a,(hl)
+         inc  l
+         ld   h,(hl)
+         ld   l,a
+         ld   a,c
+         rrca
+         rrca
+         rrca
+         and  31
+         add  a,l
+         ld   l,a
+         ld   a,c
+         and  7
+         ld   c,a
+         ld   b,TABLE/256
+         ld   a,(bc)
+         xor  (hl)
+         ld   (hl),a
+         ret
+
+MAKETAB  ld   b,192
+         ld   de,16384
+         ld   hl,SCRNADRS
+MAKETAB2 ld   (hl),e
+         inc  hl
+         ld   (hl),d
+         inc  hl
+         ex   de,hl
+         call DOWNHL
+         ex   de,hl
+         djnz MAKETAB2
+         ret
+
+RANDOM   ld   de,0
+         ld   h,e
+         ld   l,253
+         ld   a,d
+         or   a
+         sbc  hl,de
+         sbc  a,0
+         sbc  hl,de
+         sbc  a,0
+         ld   e,a
+         ld   d,0
+         sbc  hl,de
+         jr   nc,AB
+         inc  hl
+AB       ld   (RANDOM+1),hl
+         ret
+
+LAST
+A0LEN    equ  $-START
+
+         org  LAST/512+1*512
+
+SCRNADRS defs 512
+
+TABLE    defb 128,64,32,16
+         defb 8,4,2,1
+
+SPACE    defs 3*NO_STARS
+
+PLOT1    ld   a,b
+         call #22B1
+         ld   b,a
+         inc  b
+         ld   a,1
+PLOT1A   rrca
+         djnz PLOT1A
+         xor  (hl)
+         ld   (hl),a
+         ret
+
+PLOT2    ld   a,b
+         and  a
+         rra
+         scf
+         rra
+         and  a
+         rra
+         xor  b
+         and  #F8
+         xor  b
+         ld   h,a
+         ld   a,c
+         rlca
+         rlca
+         rlca
+         xor  b
+         and  %11000111
+         xor  b
+         rlca
+         rlca
+         ld   l,a
+         ld   a,c
+         and  7
+
+         add  a,a
+         add  a,a
+         add  a,a
+         ld   b,a
+         ld   a,254
+         sub  b
+         ld   (CODE+1),a
+CODE     set  0,(hl)
+         ret
+
+UPHL     ld   a,h
+         dec  h
+         and  7
+         ret  nz
+         ld   a,l
+         sub  32
+         ld   l,a
+         ld   a,h
+         jr   c,UPHL2
+         add  a,8
+         ld   h,a
+UPHL2    cp   64
+         ret  nc
+         ld   h,87
+         ret
+
+
+DOWNHL   inc  h
+         ld   a,h
+         and  7
+         ret  nz
+         ld   a,l
+         add  a,32
+         ld   l,a
+         ld   a,h
+         jr   c,DOWNHL2
+         sub  8
+         ld   h,a
+DOWNHL2  cp   88
+         ret  c
+         ld   h,64
+         ret
+
+

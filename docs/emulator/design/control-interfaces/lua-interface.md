@@ -1010,6 +1010,9 @@ local r2 = ttd_find_last{
     before_tin = 0,
     phys_page = 5              -- 0..255: one physical RAM page
 }
+-- The Sprinter's video RAM / fast RAM: space = "vram" | "cache" (table form), addr = an offset in it
+local v = ttd_find_last{ addr = 0x4805, space = "vram" }
+-- --> { found = true, pc, space = "vram", offset = 0x4805, phys_page = nil, ... }
 -- --> { found = false }  (no match)  or
 --     { found = true, frame, tinframe, pc, value, phys_page, access }  or
 --     { found = false, blocked = true, marker_frame, marker_tinframe,

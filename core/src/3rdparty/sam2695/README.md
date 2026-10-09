@@ -351,6 +351,44 @@ datasheet's power-up values). Everything runs at the internal rate inside the co
   model uses it). The NRPN 375Fh voice accounting is the chip's in both modes (`Render.Modes`).
 - **Denormals.** Every value written into a feedback path passes (x + 1e-20) - 1e-20, which rounds anything
   below ~1e-27 to zero: no denormal circulates, on any CPU, deterministically.
+- **Idle effects.** An effect whose whole state is +0.0 (every bit clear: delay lines, filter memory) and whose
+  input block is all +0.0 computes +0.0 everywhere, so the block is skipped: only its write positions and LFO
+  phase move, by the n samples processing would have taken. Output and state are bit-identical to processing
+  (`SynthConfig::skipIdleEffects = false` processes every block; `Fx.IdleEffects*` render both ways and compare
+  every output bit and the state blob). Idle is derived, never serialized: true after power-up, a reset, an
+  effect switched off or a new reverb character (all clear the state) and after a load whose state is all
+  +0.0; the reverb, chorus and spatial line become idle again after a run of +0.0 writes as long as the line,
+  the equalizer when its filter memory is +0.0. `Describe()` reports the flags and the skipped blocks. In
+  practice the effects are idle until the first note with a send (the MultiSound card at rest) and after a
+  reset, and after every tail, which the tail floor ends.
+- **Tail floor.** Left alone, a tail would not always end in exact zeros: the tank reverbs (0-5), the
+  feedback delay (chorus 7), depending on the input the flanger (chorus 5), and the equalizer settle into a
+  limit cycle of the denormal guard's quantum (about 1e-27 in float, 1e-215 in double, 2e-27 at the output,
+  -530 dBFS) and would run forever (the card's ~4.5 % frame cost of the effects after every tune). The chip
+  is a fixed-point DSP, whose tails truncate to zero. So the model ends a tail at a floor: when a block
+  without input (all +0.0) leaves every value of the reverb's lines and filters, the chorus line or the
+  equalizer's memory below 2^-24 of full scale (-144 dBFS) in magnitude, those values become +0.0 (the
+  positions and LFO phases carry on), and the effect is idle from then on. The datasheet does not give the
+  DSP's word length; the family states 16-bit samples and RAM and up to 20-bit audio data (SAM2634 /
+  SAM2635), Dream's later DSP 24 bits (SAM5000): 2^-24 is half the LSB of a 24-bit word, the finest of these,
+  so a value below it is zero in any of them and a tail ends no earlier than the chip's could. It is 1 / 512
+  of the MultiSound card's 16-bit LSB. The rule is part of the model: it runs with `skipIdleEffects` on or
+  off, it is a function of the state (per-line runs of below-floor writes, derived again from the lines after
+  a load, confirmed by a scan before the cut), so a TTD restore cuts on the same block; the blob format is
+  unchanged. Measured: the output changes by at most 1.0e-7 (0.003 of a 16-bit LSB; the last non-zero output
+  sample before the cut is below the floor), the card's int16 MIDI row is identical on 17 played-and-stopped
+  scenarios (default effects, every reverb and every chorus program at full sends), where floors of 2^-19
+  (20 bits) and 2^-15 (16 bits) change 3 samples by 1 LSB. The spatial effect has no feedback and ends in
+  exact zeros by itself. Seconds from the note-off of a 0.2 s note at a full send until every effect is idle
+  (`Fx.TailsEndAtTheFloor`, 0.1 s steps; in brackets the program's own effect before the floor, "never" = the
+  limit cycle - the equalizer never went idle after a note then):
+
+  | Program | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+  |---------|---|---|---|---|---|---|---|---|
+  | Reverb  | 1.4 (never) | 2.0 (never) | 2.8 (never) | 4.3 (never) | 5.8 (never) | 4.6 (never) | 1.1 (3.6) | 8.0 (36) |
+  | Chorus  | 0.1 (0.1) | 0.1 (0.2) | 0.2 (0.3) | 0.1 (0.2) | 0.7 (3.2) | 1.0 (4.6) | 0.1 (0.1) | 1.0 (never) |
+
+  The equalizer alone (a dry note): 0.1 s (never). Reverb 4 is the GS default hall.
 - **Cost.** GeneralUser GS through the corpus GM test file: 25 s of audio in 474 ms with the effects, 426 ms dry
   (Apple M-series, one core).
 - **Not modeled:** the microphone input and its echo (MICIN is grounded on the MultiSound; their voice cost is).

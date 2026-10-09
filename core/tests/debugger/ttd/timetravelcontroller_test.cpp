@@ -909,6 +909,41 @@ TEST_F(TimeTravelController_Test, ASnapshotLoadEndsTheSession)
     EXPECT_TRUE(_controller->SeekTo({_controller->GetCheckpoint(2)->time.frame, 0}, &seek)) << "still browsable";
 }
 
+/// A load that is refused is not an operation: the plan decides first, the session ends only when the snapshot really goes in. A
+/// refused load (another model's SZX, an SPG on a machine that is not a TS-Conf, a file that is no snapshot, a bank the machine
+/// lacks) leaves the recording running and its history growing
+TEST_F(TimeTravelController_Test, ARefusedSnapshotLoadLeavesTheRecordingRunning)
+{
+    ASSERT_TRUE(_controller->StartRecording());
+    _b->RunNFrames(3, /*skipBreakpoints=*/true);
+    const size_t recorded = _controller->GetCheckpointCount();
+
+    const std::string garbage = TestPathHelper::GetUniqueTestScratchPath("d42-garbage.z80");
+    {
+        std::ofstream out(garbage, std::ios::binary);
+        out << "not a snapshot";
+    }
+    for (const std::string& file : {TestPathHelper::GetTestDataPath("loaders/szx/libspectrum/synth-48.szx"),
+                                    TestPathHelper::GetTestDataPath("machines/tsconf/spg/empty.spg"), garbage})
+    {
+        EXPECT_FALSE(_b->LoadSnapshot(file)) << file;
+        EXPECT_TRUE(_controller->IsRecording()) << file << ": a refused load does not end the session";
+        EXPECT_TRUE(_controller->GetSessionInfo().lastStopReason.empty()) << file;
+    }
+    _b->RunNFrames(2, /*skipBreakpoints=*/true);
+    EXPECT_TRUE(_controller->IsRecording());
+    EXPECT_GT(_controller->GetCheckpointCount(), recorded) << "the recording went on";
+    std::remove(garbage.c_str());
+
+    // ...while a load that goes in still ends it
+    const std::string good = TestPathHelper::GetUniqueTestScratchPath("d42-good.z80");
+    ASSERT_TRUE(_b->SaveSnapshot(good));
+    ASSERT_TRUE(_b->LoadSnapshot(good));
+    EXPECT_FALSE(_controller->IsRecording());
+    EXPECT_EQ(_controller->GetSessionInfo().lastStopReason, "snapshot-load");
+    std::remove(good.c_str());
+}
+
 /// The same rule for a recording paused for browsing, and for no recording at all (the history stays)
 TEST_F(TimeTravelController_Test, ASnapshotLoadEndsAPausedRecordingToo)
 {
@@ -1315,4 +1350,56 @@ TEST_F(TimeTravelController_Test, RecordingFoldersLiveAsLongAsTheirSession)
     _controller = std::make_unique<ttd::TimeTravelController>(_b->GetContext());
     _b->GetContext()->pTimeTravelHooks = _controller.get();
     _b->GetContext()->ttdWriteSink = _controller.get();
+}
+
+/// Owner decision 2026-10-07: a background recording (the black box, a
+/// debugger's history) refuses nothing. A tape load is allowed; it ends the
+/// session - the recording up to it stays in its folder - and the next session
+/// starts at the next frame
+TEST_F(TimeTravelController_Test, ABackgroundRecordingRefusesNothing)
+{
+    _controller->SetShadowRecordingRoot(TestPathHelper::GetUniqueTestScratchPath("ttd-background"));
+    _controller->SetBlackBox(true, 1);
+    ASSERT_TRUE(_controller->StartRecording());
+    EXPECT_TRUE(_controller->IsBackgroundSession());
+    _b->RunNFrames(3, /*skipBreakpoints=*/true);
+    const std::string before = _controller->ShadowRecordingFolder();
+    ASSERT_FALSE(before.empty());
+
+    EXPECT_EQ(_b->RecordingGuard(ttd::TTDGuardedAction::LoadTape), "");
+    std::string error;
+    ASSERT_TRUE(_b->LoadTape(TestPathHelper::GetTestDataPath("contention/halt2int-v3/halt2int.tap"), &error)) << error;
+    EXPECT_FALSE(_controller->IsRecording()) << "the tape ended the session";
+    EXPECT_EQ(_controller->GetSessionInfo().lastStopReason, "tape-load");
+    EXPECT_NE(ttd::TTDRecordingFolder::Open(before), nullptr) << "the recording up to the tape stays on disk";
+
+    _b->RunNFrames(1, /*skipBreakpoints=*/true);
+    EXPECT_TRUE(_controller->IsRecording()) << "the next session started at the frame boundary";
+    EXPECT_NE(_controller->ShadowRecordingFolder(), before);
+    _controller->SetBlackBox(false);
+}
+
+/// Owner decision 2026-10-07: a debugger (DeZog) uses the recording that runs -
+/// an explicit one stays explicit and protected and outlives the debugger -
+/// and with none starts a background one, which stops when the debugger leaves
+TEST_F(TimeTravelController_Test, ADebuggerUsesTheRecordingThatRuns)
+{
+    ASSERT_TRUE(_controller->StartRecording());
+    EXPECT_FALSE(_controller->IsBackgroundSession());
+    ASSERT_TRUE(_controller->HoldBackgroundRecording());
+    EXPECT_FALSE(_controller->IsBackgroundSession()) << "the user's recording stays explicit";
+    EXPECT_FALSE(_b->RecordingGuard(ttd::TTDGuardedAction::LoadTape).empty()) << "and protected";
+    _controller->ReleaseBackgroundRecording();
+    EXPECT_TRUE(_controller->IsRecording()) << "the user's recording outlives the debugger";
+    _controller->StopRecording();
+    _controller->InvalidateSession("test: the next case");
+
+    ASSERT_TRUE(_controller->HoldBackgroundRecording());
+    EXPECT_TRUE(_controller->IsRecording());
+    EXPECT_TRUE(_controller->IsBackgroundSession());
+    EXPECT_EQ(_b->RecordingGuard(ttd::TTDGuardedAction::LoadTape), "") << "a background recording refuses nothing";
+    _b->RunNFrames(2, /*skipBreakpoints=*/true);
+    _controller->ReleaseBackgroundRecording();
+    EXPECT_FALSE(_controller->IsRecording()) << "the debugger's recording stops with it";
+    EXPECT_GT(_controller->GetCheckpointCount(), 1u) << "its history kept";
 }

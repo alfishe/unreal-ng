@@ -25,6 +25,13 @@ public:
     std::string TTDDeviceName() const override { return "EvoPs2"; }
     PeripheralId TTDPeripheralId() const override { return PeripheralId::EvoPs2; }
     uint64_t TTDHashState() const override;
+    /// Layout 2 (2026-10-07): the F12 hold (down flag, press time in emulated microseconds) is part of the state
+    TTDDeviceDescriptor TTDDescribe() const override
+    {
+        TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
+        d.layoutVersion = 2;
+        return d;
+    }
 
 private:
     EvoAvr& _avr;

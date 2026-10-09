@@ -4139,8 +4139,12 @@ namespace PythonBindings
                                       uint32_t beforeTin,
                                       py::object physPageObj,
                                       py::object addrFromObj,
-                                      py::object addrToObj) -> py::object {
+                                      py::object addrToObj,
+                                      py::object spaceObj) -> py::object {
                 std::map<std::string, std::string> options{{"access", access}};
+                // space="vram" / "cache": addr / addr_from / addr_to are offsets in that memory
+                if (!spaceObj.is_none())
+                    options["space"] = py::str(spaceObj).cast<std::string>();
                 const std::pair<const char*, py::object*> fields[] = {
                     {"addr", &addrObj},     {"value", &valueObj},        {"pc_from", &pcFromObj},
                     {"pc_to", &pcToObj},    {"phys_page", &physPageObj}, {"addr_from", &addrFromObj},
@@ -4176,7 +4180,8 @@ namespace PythonBindings
                py::arg("before_tin") = 0,
                py::arg("phys_page") = py::none(),
                py::arg("addr_from") = py::none(),
-               py::arg("addr_to") = py::none())
+               py::arg("addr_to") = py::none(),
+               py::arg("space") = py::none())
 
             .def("ttd_step_instruction_back", [](Emulator& self) -> bool {
                 const ttd::TTDReply reply = TtdRunPy(self, "step-instruction", {{"dir", "back"}});

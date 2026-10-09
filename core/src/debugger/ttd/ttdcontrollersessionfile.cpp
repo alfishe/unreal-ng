@@ -10,6 +10,7 @@
 #include <iterator>
 #include <random>
 #include <sstream>
+#include <unordered_map>
 
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
@@ -19,9 +20,11 @@
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/ttddirtytracker.h"
 #include "debugger/ttd/ttddumpformat.h"
+#include "debugger/ttd/ttdperipheralregistry.h"
 #include "debugger/ttd/ttdsessionfacts.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/slots/slotmanager.h"
 
 namespace ttd
 {
@@ -192,6 +195,33 @@ std::unique_ptr<TimeTravelEngine> TimeTravelController::LoadEngineSession(const 
         return nullptr;
     }
     _modelRamPages = facts.modelRamPages;
+
+    // Slot-set guard (ZX-bus slots SL-5, on the engine since the slots' TTD follow-up): the cards the session
+    // recorded against this machine's, per slot position, with every difference listed - before the binding, which
+    // only asks that each recorded device has a live counterpart of its id (a session without a card would load
+    // where one is fitted, the live card's state kept; the socket's `ay` and `ts` boards share an id, the device
+    // table's instance names the board). Then the slot-built cards' and the board's own checks (the MultiSound's
+    // MIDI bank, the Sprinter's ISA population) read the baseline checkpoint's device states
+    if (_context && loaded->CheckpointCount() > loaded->FirstCheckpoint())
+    {
+        const SlotManager::TtdDeviceSet recorded = SlotManager::TtdDeviceSet::Of(loaded->Devices(), facts.notRecordedMask);
+        std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
+        std::vector<uint8_t> state;
+        for (const uint8_t id : recorded.ids)
+            if (loaded->DeviceStateAt(loaded->FirstCheckpoint(), id, state))
+                blobs.emplace(id, TTDPeripheralRegistry::EncodeBlob(id, state.data(), state.size()));
+        std::string why;
+        const bool matches =
+            _context->pSlotManager
+                ? _context->pSlotManager->TtdSessionMatches(recorded, blobs, _peripherals, why)
+                : SlotManager::TtdSessionMatchesWithoutSlots(_context, recorded, blobs, _peripherals, why);
+        if (!matches)
+        {
+            err = why;
+            return nullptr;
+        }
+    }
+
     std::string unbound;
     if (loaded->BindLive(LiveRegions(), _peripherals.DeviceEntries(), &unbound) != 0)
     {
@@ -251,7 +281,7 @@ void TimeTravelController::CommitLoadedSession(std::unique_ptr<TimeTravelEngine>
             TTDInputEvent in;
             TTDEventLog::ToInput(ev, in);
             in.time = at;
-            if (in.kind == TTDInputKind::NetEvent)
+            if (HasNetRecord(in.kind))
             {
                 TTDNetInput n;
                 TTDEventLog::UnpackNet(ev, n);

@@ -19,6 +19,13 @@ else()
 endif()
 option(UNREAL_ASM_TESTS "Build unreal-asm-tests" ${UNREAL_ASM_TESTS_DEFAULT})
 set(UNREAL_ASM_GOOGLETEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../lib/googletest" CACHE PATH "GoogleTest sources")
+# Benchmarks follow the emulator's BENCHMARKS switch when embedded (on every configure); standalone they are opt-in
+if (DEFINED BENCHMARKS)
+    set(UNREAL_ASM_BENCHMARKS ${BENCHMARKS})
+else()
+    option(UNREAL_ASM_BENCHMARKS "Build unreal-asm-benchmarks" OFF)
+endif()
+set(UNREAL_ASM_BENCHMARK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../lib/benchmark" CACHE PATH "Google Benchmark sources")
 
 if (MSVC)
     set(UNREAL_ASM_WARNINGS /W4)
@@ -42,6 +49,19 @@ add_library(unreal-asm STATIC
     src/codecs/storm/stormcodec.cpp
     src/codecs/masm/masmcodec.cpp
     src/codecs/gens/genscodec.cpp
+    src/codecs/asm80/asm80codec.cpp
+    src/codecs/pasmo/pasmocodec.cpp
+    src/codecs/z80asm/z80asmcodec.cpp
+    src/codecs/zasm/zasmcodec.cpp
+    src/codecs/fantasm/fantasmcodec.cpp
+    src/codecs/zmac/zmaccodec.cpp
+    src/codecs/rasm/rasmcodec.cpp
+    src/codecs/specasm/specasmcodec.cpp
+    src/codecs/odin/odincodec.cpp
+    src/codecs/prometheus/prometheuscodec.cpp
+    src/codecs/prometheus/prometheustable.cpp
+    src/codecs/lasergenius/lasergeniuscodec.cpp
+    src/codecs/pasm/pasmcodec.cpp
     src/codecs/zeus/zeuscodec.cpp
     src/codecs/xas/xascodec.cpp
     src/ir/expr.cpp
@@ -50,14 +70,34 @@ add_library(unreal-asm STATIC
     src/dialects/common/macros.cpp
     src/dialects/storm/stormfrontend.cpp
     src/dialects/zxasm/zxasmfrontend.cpp
+    src/dialects/xas/xasfrontend.cpp
     src/dialects/tasm/tasmfrontend.cpp
+    src/dialects/masm/masmfrontend.cpp
     src/dialects/alasm/alasmfrontend.cpp
+    src/dialects/gens/gensfrontend.cpp
+    src/dialects/asm80/asm80frontend.cpp
+    src/dialects/common/textexpr.cpp
+    src/dialects/common/textfrontend.cpp
+    src/dialects/pasmo/pasmofrontend.cpp
+    src/dialects/z88dk/z80asmfrontend.cpp
+    src/dialects/zasm/zasmfrontend.cpp
+    src/dialects/fantasm/fantasmfrontend.cpp
+    src/dialects/zmac/zmacfrontend.cpp
+    src/dialects/rasm/rasmfrontend.cpp
+    src/dialects/specasm/specasmfrontend.cpp
+    src/dialects/odin/odinfrontend.cpp
+    src/dialects/zasm/zasmcompound.cpp
+    src/dialects/prometheus/prometheusfrontend.cpp
+    src/dialects/lasergenius/lasergeniusfrontend.cpp
+    src/dialects/pasm/pasmfrontend.cpp
     src/dialects/sjasmplus/sjasmplusbackend.cpp
     src/dialects/common/classicbackend.cpp
     src/dialects/pasmo/pasmobackend.cpp
     src/dialects/z88dk/z88dkbackend.cpp
     src/dialects/sjasmplus/sjasmplusfrontend.cpp
+    src/dialects/zeus/zeusfrontend.cpp
     src/containers/trdos.cpp
+    src/containers/tape.cpp
     src/symbols/model/symbol.cpp
     src/symbols/model/symbolindex.cpp
     src/symbols/model/symbolstore.cpp
@@ -65,7 +105,15 @@ add_library(unreal-asm STATIC
     src/symbols/codecs/native/nativecodec.cpp
     src/symbols/codecs/text/textlines.cpp
     src/symbols/codecs/labelfiles/labelfilecodecs.cpp
+    src/symbols/codecs/text/tokenizer.cpp
+    src/symbols/codecs/crossasm/crossasmcodecs.cpp
+    src/symbols/codecs/script/scriptcodecs.cpp
+    src/symbols/model/namerules.cpp
     src/symbols/registry.cpp
+    src/layout/z80size.cpp
+    src/layout/layout.cpp
+    src/symbols/fromsource/fromsource.cpp
+    src/symbols/live/live.cpp
 )
 target_include_directories(unreal-asm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(unreal-asm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -75,6 +123,11 @@ target_compile_options(unreal-asm PRIVATE ${UNREAL_ASM_WARNINGS})
 add_executable(zxasm tools/zxasm/zxasm.cpp)
 target_link_libraries(zxasm PRIVATE unreal-asm)
 target_compile_options(zxasm PRIVATE ${UNREAL_ASM_WARNINGS})
+
+# Command-line tool: symconv, symbol files from any format to any format (symbols/tdd.md §10, S4)
+add_executable(symconv tools/symconv/symconv.cpp)
+target_link_libraries(symconv PRIVATE unreal-asm)
+target_compile_options(symconv PRIVATE ${UNREAL_ASM_WARNINGS})
 
 # Examples (decision D-14): small programs on the public API, built with the library
 foreach(example detect-encoding decode-encode read-hobeta convert-version convert-dialect)
@@ -112,17 +165,39 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/xascodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/stormfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/zxasmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/xasfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/pasmobackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/z88dkbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/trdos_test.cpp
+        ${UNREAL_ASM_DIR}/tests/tape_test.cpp
         ${UNREAL_ASM_DIR}/tests/dialects_test.cpp
         ${UNREAL_ASM_DIR}/tests/tasmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/masmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/zeusfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/gensfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/asm80frontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/prometheus_test.cpp
+        ${UNREAL_ASM_DIR}/tests/z80n_test.cpp
+        ${UNREAL_ASM_DIR}/tests/pasmofrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/z80asmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/zasmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/fantasmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/zmacrasmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/odinspecasm_test.cpp
+        ${UNREAL_ASM_DIR}/tests/lasergenius_test.cpp
+        ${UNREAL_ASM_DIR}/tests/pasm_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbol_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbolindex_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbolstore_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/json_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/nativecodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/labelfilecodecs_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/tokenizer_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/crossasmcodecs_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/namerules_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/scriptcodecs_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/fromsource_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/live_test.cpp
     )
     target_link_libraries(unreal-asm-tests PRIVATE unreal-asm gtest)
     target_include_directories(unreal-asm-tests PRIVATE ${UNREAL_ASM_DIR}/src ${UNREAL_ASM_DIR}/tests)
@@ -143,5 +218,34 @@ if (UNREAL_ASM_TESTS)
         unrealasm_add_tests()
     else()
         cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR} CALL unrealasm_add_tests)
+    endif()
+endif()
+
+# unreal-asm-benchmarks (test-and-benchmark-plan.md §5, symbols/test-and-benchmark-plan.md §5): defined at the end of
+# the top-level directory like the tests, so an emulator build with BENCHMARKS shares core/benchmarks' Google Benchmark
+function(unrealasm_add_benchmarks)
+    if (TARGET unreal-asm-benchmarks)
+        return()
+    endif()
+    if (NOT TARGET benchmark)
+        set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+        set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+        add_subdirectory(${UNREAL_ASM_BENCHMARK_DIR} ${CMAKE_BINARY_DIR}/unreal-asm-googlebenchmark EXCLUDE_FROM_ALL)
+    endif()
+    add_executable(unreal-asm-benchmarks EXCLUDE_FROM_ALL
+        ${UNREAL_ASM_DIR}/benchmarks/asm_benchmark.cpp
+        ${UNREAL_ASM_DIR}/benchmarks/symbols_benchmark.cpp
+    )
+    target_link_libraries(unreal-asm-benchmarks PRIVATE unreal-asm benchmark::benchmark_main)
+    target_include_directories(unreal-asm-benchmarks PRIVATE ${UNREAL_ASM_DIR}/src)
+    target_compile_definitions(unreal-asm-benchmarks PRIVATE UNREAL_ASM_TESTDATA_DIR="${UNREAL_ASM_DIR}/testdata")
+    target_compile_options(unreal-asm-benchmarks PRIVATE ${UNREAL_ASM_WARNINGS_LIST})
+endfunction()
+
+if (UNREAL_ASM_BENCHMARKS)
+    if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+        unrealasm_add_benchmarks()
+    else()
+        cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR} CALL unrealasm_add_benchmarks)
     endif()
 endif()

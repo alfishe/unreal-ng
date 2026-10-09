@@ -74,9 +74,10 @@ format to another (a separate tool does that), and the running machine is never 
 
    | Machine | The view |
    |---------|----------|
-   | **Sprinter** | In a ZX mode, banks read through the PLD cells #F0-#F7 in the Spectrum's order, so the file restores on any other 128K machine and back on a Sprinter. The file names the machine the launcher mode made: `SP.ZX`, `SPRINTER.ZX`, `ORIGIN.ZX` a 128K, `P128.ZX`, `PENT128.ZX` a Pentagon 128, `SC256.ZX`, `SCORPION.ZX` a Scorpion (a mode without #7FFD paging a 48K). At the DSS prompt or in the BIOS there is no view (`needs: zx_mode`); the 512 KB modes have none yet |
+   | **Sprinter** | In a ZX mode, banks read through the PLD cells #F0-#F7 in the Spectrum's order, so the file restores on any other 128K machine and back on a Sprinter. The file names the machine the launcher mode made: `SP.ZX`, `SPRINTER.ZX`, `ORIGIN.ZX` a 128K, `P128.ZX`, `PENT128.ZX` a Pentagon 128, `SC256.ZX`, `SCORPION.ZX` a Scorpion, a 512 KB mode (`P512.ZX`, `PENT512.ZX`) a Pentagon 512 with 32 banks (cells #F0-#FF and #D0-#DF; saved as .szx only) (a mode without #7FFD paging a 48K). At the DSS prompt or in the BIOS there is no view (`needs: zx_mode`) |
    | **TS-Conf**, **ATM Turbo 2+ / 3 / 4.50** | While the window map is a Spectrum 128K (ROM at #0000, RAM 5 and 2, the page #7FFD names at #C000): a snapshot load puts the machine there. In the machine's own mode there is none (`needs: mode:128k`). The file says a 128K |
-   | Profi, Kay and the other models | No view yet (`needs: capture_unsupported`) |
+   | **Profi** (v5, v3) | Like TS-Conf and the ATMs: while the window map is a Spectrum 128K (RAM page n is bank n); in its own modes (DOS, CP/M, the extended paging) there is none (`needs: mode:128k`). The file says a 128K |
+   | Kay, Quorum, LSY256, Phoenix, GMX, ZX Next | No view (`needs: capture_unsupported`): these models cannot be created yet |
 
 3. **Which formats.** Asked of the machine, right now: `snapshot formats` (CLI), `GET /snapshot/formats` (WebAPI), `snapshot_formats()`
    (Lua, Python), the Save Snapshot menu of the Qt window (items that cannot be used are disabled with the reason as their tip, and
@@ -113,7 +114,7 @@ SZX writes the paging through each model's decoder.
   Pentagon 128 / 512 / 1024 and Scorpion have one): a TS-Conf, ATM or Sprinter in a Spectrum 128K layout is saved as the 128K (or the
   Pentagon / Scorpion its Sprinter mode names); other states are refused with the reason ([above](#how-a-snapshot-is-saved)).
 - **SPG:** TS-Conf only (the Qt window and the automation launchers switch to it first; `switch_model=false` refuses).
-- **ZXP:** a ZX-Poly machine only (four modules).
+- **ZXP:** a ZX-Poly machine only (four modules), and a ZX-Poly takes nothing else: a SNA, Z80, SZX or SPG is refused there, and nothing is saved from a module.
 
 ## Test material
 

@@ -13,7 +13,7 @@
 
 #include "_helpers/scriptedhostnet.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/io/network/ethernet/etherlink3.h"
@@ -192,42 +192,28 @@ TEST_F(SprinterNetworkKit_Test, TtdReplaysTheFetchWithoutTheHost)
     FeatureManager* features = _emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
+    if (std::getenv("UNREAL_TTD_DIVERGENCE"))   // diagnosis: who wrote what, every write of the session
+    {
+        ttd->SetWriteJournalCapacity(size_t(1) << 30);
+        ttd->SetEnableWriteJournal(true);
+    }
     ASSERT_TRUE(ttd->StartRecording());
     std::string screen = Run("IFUP", 3000);
     ASSERT_EQ(ScreenCount("RESULT FAIL"), 0u) << screen;
     screen = Run("WGET http://example.test/g.bin -o C:\\G.BIN -y", 6000);
     ASSERT_EQ(ScreenCount("RESULT FAIL"), 0u) << screen;
     EmulatorTestHelper::RunFramesFast(_emulator.get(), 5);
+    ToBoundary();
+    const uint64_t endFrame = Frame();
+    const MachineState recorded = Recordable();
     ttd->StopRecording();
     ASSERT_GE(ttd->GetCheckpointCount(), 10u);
-
-    const size_t last = ttd->GetCheckpointCount() - 1;
-    const ttd::TTDCheckpoint* end = ttd->GetCheckpoint(last);
-    const uint64_t endFrame = end->time.frame;
-    const auto recorded = end->peripheralBlobs;
     ASSERT_EQ(recorded.count(static_cast<uint8_t>(ttd::PeripheralId::EthernetNics)), 1u);
 
     // No host at all now: a replay that asked it would get nothing
     _context->pVirtualNetwork->ReplaceHost(std::make_unique<FakeHostNet>());
-    ASSERT_TRUE(ttd->SeekTo({ttd->GetCheckpoint(0)->time.frame, 0}));
-    _emulator->DisableTurboMode();
-    while (Frame() < endFrame)
-        _emulator->RunNFrames(1, true);
-    std::unordered_map<uint8_t, std::vector<uint8_t>> live;
-    ttd->GetPeripheralRegistry().CaptureAll(live);
-    for (ttd::PeripheralId id : {ttd::PeripheralId::EthernetNics, ttd::PeripheralId::ZxNetUsb, ttd::PeripheralId::SprinterIsa})
-    {
-        const uint8_t key = static_cast<uint8_t>(id);
-        ASSERT_EQ(live.count(key), 1u) << int(key);
-        const std::vector<uint8_t> a = ttd::TTDPeripheralRegistry::DecodeBlob(key, live[key]);
-        const std::vector<uint8_t> b = ttd::TTDPeripheralRegistry::DecodeBlob(key, recorded.at(key));
-        ASSERT_EQ(a.size(), b.size()) << "device " << int(key);
-        size_t first = 0;
-        while (first < a.size() && a[first] == b[first])
-            ++first;
-        EXPECT_EQ(first, a.size()) << "device " << int(key) << " differs from byte " << first << " after the replay";
-    }
+    ExpectReplaysFromStartAndMiddle(endFrame, recorded);
 }
 
 // The Sprinter 3C509B Network Kit (testdata/machines/sprinter/network/el3c509b-0.1.2, release 0.1.2) with a 3Com
@@ -356,41 +342,23 @@ TEST_F(SprinterEl3Kit_Test, TtdReplaysTheFetchWithoutTheHost)
     FeatureManager* features = _emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_TRUE(ttd->StartRecording());
     std::string screen = Run("IFUP", 4000);
     ASSERT_EQ(ScreenCount("RESULT FAIL"), 0u) << screen;
     screen = Run("WGET http://example.test/g.bin -o C:\\G.BIN -y", 6000);
     ASSERT_EQ(ScreenCount("RESULT FAIL"), 0u) << screen;
     EmulatorTestHelper::RunFramesFast(_emulator.get(), 5);
+    ToBoundary();
+    const uint64_t endFrame = Frame();
+    const MachineState recorded = Recordable();
     ttd->StopRecording();
     ASSERT_GE(ttd->GetCheckpointCount(), 10u);
-
-    const size_t last = ttd->GetCheckpointCount() - 1;
-    const ttd::TTDCheckpoint* end = ttd->GetCheckpoint(last);
-    const uint64_t endFrame = end->time.frame;
-    const auto recorded = end->peripheralBlobs;
     ASSERT_EQ(recorded.count(static_cast<uint8_t>(ttd::PeripheralId::EthernetNics)), 1u);
 
+    // No host at all now: a replay that asked it would get nothing
     _context->pVirtualNetwork->ReplaceHost(std::make_unique<FakeHostNet>());
-    ASSERT_TRUE(ttd->SeekTo({ttd->GetCheckpoint(0)->time.frame, 0}));
-    _emulator->DisableTurboMode();
-    while (Frame() < endFrame)
-        _emulator->RunNFrames(1, true);
-    std::unordered_map<uint8_t, std::vector<uint8_t>> live;
-    ttd->GetPeripheralRegistry().CaptureAll(live);
-    for (ttd::PeripheralId id : {ttd::PeripheralId::EthernetNics, ttd::PeripheralId::ZxNetUsb, ttd::PeripheralId::SprinterIsa})
-    {
-        const uint8_t key = static_cast<uint8_t>(id);
-        ASSERT_EQ(live.count(key), 1u) << int(key);
-        const std::vector<uint8_t> a = ttd::TTDPeripheralRegistry::DecodeBlob(key, live[key]);
-        const std::vector<uint8_t> b = ttd::TTDPeripheralRegistry::DecodeBlob(key, recorded.at(key));
-        ASSERT_EQ(a.size(), b.size()) << "device " << int(key);
-        size_t first = 0;
-        while (first < a.size() && a[first] == b[first])
-            ++first;
-        EXPECT_EQ(first, a.size()) << "device " << int(key) << " differs from byte " << first << " after the replay";
-    }
+    ExpectReplaysFromStartAndMiddle(endFrame, recorded);
 }
 
 // The Sprinter ESP Network Kit (testdata/machines/sprinter/network/sprinter-esp-0.2.1, release 0.2.1) with the
@@ -556,51 +524,22 @@ TEST_F(SprinterEspKit_Test, TtdReplaysTheSessionWithoutTheHost)
     FeatureManager* features = _emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_TRUE(ttd->StartRecording());
     std::string screen = Run("NETUP", 4000);
     ASSERT_NE(screen.find("NETUP done."), std::string::npos) << screen << Exchanges();
     screen = Run("WGET http://example.test/g.bin -o C:\\G.BIN -y", 6000);
     ASSERT_NE(screen.find("Downloaded: 3000"), std::string::npos) << screen << Exchanges();
-    // The recorded state, taken at the same frame phase the replay ends in (after the frame's network work: a
-    // checkpoint is captured before it, when the UART has not caught up with the frame end yet)
     for (int f = 0; f < 5; ++f)
-        _emulator->RunNFrames(1, true);
+        ToBoundary();
     const uint64_t endFrame = Frame();
-    std::unordered_map<uint8_t, std::vector<uint8_t>> recordedRaw;
-    ttd->GetPeripheralRegistry().CaptureAll(recordedRaw);
+    const MachineState recorded = Recordable();
     ttd->StopRecording();
     ASSERT_GE(ttd->GetCheckpointCount(), 10u);
-    std::unordered_map<uint8_t, std::vector<uint8_t>> recorded;
-    for (auto& [key, blob] : recordedRaw)
-        recorded[key] = blob;
     ASSERT_EQ(recorded.count(static_cast<uint8_t>(ttd::PeripheralId::SlotSerial1)), 1u) << "blob 46: the card's UART + ESP";
 
     _context->pVirtualNetwork->ReplaceHost(std::make_unique<FakeHostNet>());
-    ASSERT_TRUE(ttd->SeekTo({ttd->GetCheckpoint(0)->time.frame, 0}));
-    _emulator->DisableTurboMode();
-    while (Frame() < endFrame)
-        _emulator->RunNFrames(1, true);
-    std::unordered_map<uint8_t, std::vector<uint8_t>> live;
-    ttd->GetPeripheralRegistry().CaptureAll(live);
-    for (ttd::PeripheralId id : {ttd::PeripheralId::SlotSerial1, ttd::PeripheralId::ZxNetUsb, ttd::PeripheralId::SprinterIsa,
-                                 ttd::PeripheralId::EthernetNics})
-    {
-        const uint8_t key = static_cast<uint8_t>(id);
-        ASSERT_EQ(live.count(key), 1u) << int(key);
-        const std::vector<uint8_t> a = ttd::TTDPeripheralRegistry::DecodeBlob(key, live[key]);
-        const std::vector<uint8_t> b = ttd::TTDPeripheralRegistry::DecodeBlob(key, recorded.at(key));
-        ASSERT_EQ(a.size(), b.size()) << "device " << int(key);
-        std::string diffs;
-        size_t count = 0;
-        for (size_t i = 0; i < a.size(); ++i)
-        {
-            if (a[i] != b[i] && count++ < 16)
-                diffs += " @" + std::to_string(i) + ":" + std::to_string(b[i]) + "->" + std::to_string(a[i]);
-        }
-        EXPECT_EQ(count, 0u) << "device " << int(key) << " differs in " << count << " bytes after the replay (recorded->replayed)"
-                             << diffs;
-    }
+    ExpectReplaysFromStartAndMiddle(endFrame, recorded);
 }
 
 // UNETESP.DLL (the kit's UNET interface, the Gopher browser's and network games' path) through its own smoke test:
@@ -696,7 +635,7 @@ TEST_F(SprinterBcTerm_Test, ReceivesTheEspsAnswerThroughTheIsaInterrupt)
     FeatureManager* features = _emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_TRUE(ttd->StartRecording());
 
     Dss("C:\\MODEM\\BCTERM.EXE");
@@ -726,48 +665,17 @@ TEST_F(SprinterBcTerm_Test, ReceivesTheEspsAnswerThroughTheIsaInterrupt)
     EXPECT_TRUE(ScreenHas("WIFI GOT IP")) << ScreenText();
     EXPECT_TRUE(ScreenHas("ATZ")) << ScreenText();
 
-    // The session replays from its first checkpoint: at the same frame boundary the card's UART + ESP blob and the ISA
-    // blob equal the live ones byte for byte. Both sides stop exactly at the boundary (RunTStates stops once the clock
-    // reaches the frame end, the frame closes with the instruction that crosses it; RunNFrames runs a little past it)
-    // and are captured after the frame's network work (a checkpoint is taken before it)
-    Z80* z80 = _context->pCore->GetZ80();
-    auto runToBoundary = [&]() {
-        const uint64_t frame = Frame();
-        for (int guard = 0; guard < 4 && Frame() == frame; guard++)
-            _emulator->RunTStates(z80->t < z80->_frameLimit ? z80->_frameLimit - z80->t : 1u, true);
-    };
+    // The session replays from its first checkpoint and from the middle one: at the same frame boundary every
+    // device and every memory region equal the live ones byte for byte
     for (int f = 0; f < 6; ++f)
-        runToBoundary();
+        ToBoundary();
     const uint64_t endFrame = Frame();
-    std::unordered_map<uint8_t, std::vector<uint8_t>> recorded;
-    ttd->GetPeripheralRegistry().CaptureAll(recorded);
+    const MachineState recorded = Recordable();
     ttd->StopRecording();
-    ASSERT_GE(ttd->GetCheckpointCount(), 2u);
     const uint64_t acksLive = c.acknowledged;
     const uint64_t servicesLive = c.serviceEnds;
-    ASSERT_TRUE(ttd->SeekTo({ttd->GetCheckpoint(0)->time.frame, 0}));
     _decoder->GetIsaBus().ClearJournal();
-    while (Frame() < endFrame)
-        runToBoundary();
-    std::unordered_map<uint8_t, std::vector<uint8_t>> live;
-    ttd->GetPeripheralRegistry().CaptureAll(live);
-    for (ttd::PeripheralId id : {ttd::PeripheralId::SlotSerial1, ttd::PeripheralId::SprinterIsa})
-    {
-        const uint8_t key = static_cast<uint8_t>(id);
-        ASSERT_EQ(live.count(key), 1u) << int(key);
-        const std::vector<uint8_t> x = ttd::TTDPeripheralRegistry::DecodeBlob(key, live[key]);
-        ASSERT_EQ(recorded.count(key), 1u) << int(key);
-        const std::vector<uint8_t> y = ttd::TTDPeripheralRegistry::DecodeBlob(key, recorded.at(key));
-        ASSERT_EQ(x.size(), y.size()) << "device " << int(key);
-        size_t count = 0;
-        std::string diffs;
-        for (size_t i = 0; i < x.size(); ++i)
-        {
-            if (x[i] != y[i] && count++ < 16)
-                diffs += " @" + std::to_string(i) + ":" + std::to_string(y[i]) + "->" + std::to_string(x[i]);
-        }
-        EXPECT_EQ(count, 0u) << "device " << int(key) << " differs after the replay (recorded->replayed)" << diffs;
-    }
+    ExpectReplaysFromStartAndMiddle(endFrame, recorded);
     // The replay took the interrupts again (the counters are observation: they count on)
     EXPECT_GT(c.acknowledged, acksLive) << "the replay's interrupts";
     EXPECT_NE(IrqJournal().find("INT acknowledged: PIO port B, IM 2 vector #00 -> table #B500"), std::string::npos)
@@ -839,112 +747,113 @@ protected:
 
     Z80* Cpu() { return _context->pCore->GetZ80(); }
 
-    /// Stop exactly at a frame boundary (both the live run and the replay, for blob comparisons)
-    void RunToBoundary()
+
+    /// The whole session: BC-Term finds the modem, dials, talks, escapes, hangs up; the recording replays
+    void DialTalkHangUpAndReplay()
     {
-        const uint64_t frame = Frame();
-        for (int guard = 0; guard < 4 && Frame() == frame; guard++)
-            _emulator->RunTStates(Cpu()->t < Cpu()->_frameLimit ? Cpu()->_frameLimit - Cpu()->t : 1u, true);
+        auto host = std::make_unique<ScriptedHostNet>();
+        ScriptedHostNet* scripted = host.get();
+        scripted->AddName("bbs.test", kBbs);
+        scripted->AddBanner({kBbs, 23}, kBanner);
+        ASSERT_NE(_context->pVirtualNetwork, nullptr) << "the modem's line needs the virtual network";
+        _context->pVirtualNetwork->ReplaceHost(std::move(host));
+
+        BootToPrompt();
+        FeatureManager* features = _emulator->GetFeatureManager();
+        features->setFeature(Features::kDebugMode, true);
+        features->setFeature(Features::kTimeTravel, true);
+        ttd::TimeTravelController* ttd = _context->pTimeTravelController;
+        ASSERT_TRUE(ttd->StartRecording());
+
+        Dss("C:\\MODEM\\BCTERM.EXE");
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 300);
+        Trace("started");
+        ASSERT_NE(Modem(), nullptr);
+        const PcSerialCard* card = _context->pCore->GetNetworkManager()->SerialCard("isa1");
+        EXPECT_EQ(card->Com().Uart().Baud(), 57600u) << "BC-Term's default rate on a 1.8432 MHz UART";
+        EXPECT_TRUE(card->Com().Uart().GetView().mcr & Uart16550::kMcrOut2) << "OUT2: the IRQ driver on";
+        const Z84Lib::Z84Pio::Port& b = _decoder->GetZ84().pio.GetPort(1);
+        ASSERT_EQ(b.mode, 3) << "BC-Term programs PIO port B in bit mode\n" << ScreenText();
+        EXPECT_EQ(Cpu()->im, 2);
+        ASSERT_FALSE(Modem()->RecentExchanges().empty()) << "BC-Term sent its init string\n" << ScreenText();
+        EXPECT_EQ(Modem()->RecentExchanges().front().command, "ATZ");
+        EXPECT_EQ(Modem()->RecentExchanges().front().result, "OK");
+        EXPECT_TRUE(ScreenHas("OK")) << ScreenText();
+
+        // Dial the phone book number: the name resolves, the banner server answers
+        Type("ATDT5551234");
+        Enter();
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Welcome to the Unreal BBS"); }, 500, 5);
+        Trace("connected");
+        EXPECT_TRUE(ScreenHas("CONNECT 57600")) << ScreenText();
+        ASSERT_TRUE(ScreenHas("Welcome to the Unreal BBS")) << ScreenText();
+        EXPECT_EQ(Modem()->GetMode(), HayesModemPeer::Mode::Online);
+        EXPECT_TRUE(card->Com().Uart().GetView().msr & Uart16550::kMsrDcd) << "DCD reached the UART";
+        const SprinterIsaBus::Counters& c = _decoder->GetIsaBus().GetCounters(0);
+        EXPECT_GE(c.acknowledged, 1u) << "the bytes came in through the PIO port B interrupt";
+        EXPECT_EQ(c.acknowledged, c.serviceEnds);
+
+        // Typed text goes to the BBS byte for byte; it echoes, the echo is on the screen
+        Type("hello unreal");
+        EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("hello unreal"); }, 300, 5);
+        EXPECT_TRUE(ScreenHas("hello unreal")) << ScreenText();
+        const uint16_t socket = Modem()->Link().Socket();
+        const std::vector<uint8_t> received = scripted->Received(socket);
+        EXPECT_EQ(std::string(received.begin(), received.end()), "hello unreal") << "what the BBS got";
+        EXPECT_EQ(card->Com().Uart().GetView().overruns, 0u);
+
+        // +++ after a second of silence, a second more: OK, the call held; ATH ends it
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 60);
+        Type("+++");
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 70);
+        Trace("escaped");
+        EXPECT_EQ(Modem()->GetMode(), HayesModemPeer::Mode::Escaped) << ScreenText();
+        Type("ATH");
+        Enter();
+        EmulatorTestHelper::RunFramesFast(_emulator.get(), 20);
+        Trace("hung-up");
+        EXPECT_EQ(Modem()->GetMode(), HayesModemPeer::Mode::Command);
+        EXPECT_FALSE(card->Com().Uart().GetView().msr & Uart16550::kMsrDcd) << "DCD dropped";
+        EXPECT_EQ(Modem()->LastResult(), "OK");
+
+        // Replay from the first checkpoint and from the middle one with no host at all: every device and every memory
+        // region at the same frame boundary
+        for (int f = 0; f < 3; ++f)
+            ToBoundary();
+        const uint64_t endFrame = Frame();
+        const MachineState recorded = Recordable();
+        ttd->StopRecording();
+        _context->pVirtualNetwork->ReplaceHost(std::make_unique<FakeHostNet>());
+        ExpectReplaysFromStartAndMiddle(endFrame, recorded);
+        EXPECT_TRUE(ScreenHas("Welcome to the Unreal BBS")) << "the replayed screen\n" << ScreenText();
     }
 };
 
 TEST_F(SprinterBcTermModem_Test, DialsTheBbsAndTalksThroughTheIsaInterrupt)
 {
-    auto host = std::make_unique<ScriptedHostNet>();
-    ScriptedHostNet* scripted = host.get();
-    scripted->AddName("bbs.test", kBbs);
-    scripted->AddBanner({kBbs, 23}, kBanner);
-    ASSERT_NE(_context->pVirtualNetwork, nullptr) << "the modem's line needs the virtual network";
-    _context->pVirtualNetwork->ReplaceHost(std::move(host));
+    DialTalkHangUpAndReplay();
+}
 
-    BootToPrompt();
-    FeatureManager* features = _emulator->GetFeatureManager();
-    features->setFeature(Features::kDebugMode, true);
-    features->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
-    ASSERT_TRUE(ttd->StartRecording());
-
-    Dss("C:\\MODEM\\BCTERM.EXE");
-    EmulatorTestHelper::RunFramesFast(_emulator.get(), 300);
-    Trace("started");
-    ASSERT_NE(Modem(), nullptr);
-    const PcSerialCard* card = _context->pCore->GetNetworkManager()->SerialCard("isa1");
-    EXPECT_EQ(card->Com().Uart().Baud(), 57600u) << "BC-Term's default rate on a 1.8432 MHz UART";
-    EXPECT_TRUE(card->Com().Uart().GetView().mcr & Uart16550::kMcrOut2) << "OUT2: the IRQ driver on";
-    const Z84Lib::Z84Pio::Port& b = _decoder->GetZ84().pio.GetPort(1);
-    ASSERT_EQ(b.mode, 3) << "BC-Term programs PIO port B in bit mode\n" << ScreenText();
-    EXPECT_EQ(Cpu()->im, 2);
-    ASSERT_FALSE(Modem()->RecentExchanges().empty()) << "BC-Term sent its init string\n" << ScreenText();
-    EXPECT_EQ(Modem()->RecentExchanges().front().command, "ATZ");
-    EXPECT_EQ(Modem()->RecentExchanges().front().result, "OK");
-    EXPECT_TRUE(ScreenHas("OK")) << ScreenText();
-
-    // Dial the phone book number: the name resolves, the banner server answers
-    Type("ATDT5551234");
-    Enter();
-    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("Welcome to the Unreal BBS"); }, 500, 5);
-    Trace("connected");
-    EXPECT_TRUE(ScreenHas("CONNECT 57600")) << ScreenText();
-    ASSERT_TRUE(ScreenHas("Welcome to the Unreal BBS")) << ScreenText();
-    EXPECT_EQ(Modem()->GetMode(), HayesModemPeer::Mode::Online);
-    EXPECT_TRUE(card->Com().Uart().GetView().msr & Uart16550::kMsrDcd) << "DCD reached the UART";
-    const SprinterIsaBus::Counters& c = _decoder->GetIsaBus().GetCounters(0);
-    EXPECT_GE(c.acknowledged, 1u) << "the bytes came in through the PIO port B interrupt";
-    EXPECT_EQ(c.acknowledged, c.serviceEnds);
-
-    // Typed text goes to the BBS byte for byte; it echoes, the echo is on the screen
-    Type("hello unreal");
-    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("hello unreal"); }, 300, 5);
-    EXPECT_TRUE(ScreenHas("hello unreal")) << ScreenText();
-    const uint16_t socket = Modem()->Link().Socket();
-    const std::vector<uint8_t> received = scripted->Received(socket);
-    EXPECT_EQ(std::string(received.begin(), received.end()), "hello unreal") << "what the BBS got";
-    EXPECT_EQ(card->Com().Uart().GetView().overruns, 0u);
-
-    // +++ after a second of silence, a second more: OK, the call held; ATH ends it
-    EmulatorTestHelper::RunFramesFast(_emulator.get(), 60);
-    Type("+++");
-    EmulatorTestHelper::RunFramesFast(_emulator.get(), 70);
-    Trace("escaped");
-    EXPECT_EQ(Modem()->GetMode(), HayesModemPeer::Mode::Escaped) << ScreenText();
-    Type("ATH");
-    Enter();
-    EmulatorTestHelper::RunFramesFast(_emulator.get(), 20);
-    Trace("hung-up");
-    EXPECT_EQ(Modem()->GetMode(), HayesModemPeer::Mode::Command);
-    EXPECT_FALSE(card->Com().Uart().GetView().msr & Uart16550::kMsrDcd) << "DCD dropped";
-    EXPECT_EQ(Modem()->LastResult(), "OK");
-
-    // Replay from the first checkpoint with no host at all: the same blobs at the same frame boundary
-    for (int f = 0; f < 3; ++f)
-        RunToBoundary();
-    const uint64_t endFrame = Frame();
-    std::unordered_map<uint8_t, std::vector<uint8_t>> recorded;
-    ttd->GetPeripheralRegistry().CaptureAll(recorded);
-    ttd->StopRecording();
-    ASSERT_GE(ttd->GetCheckpointCount(), 2u);
-    _context->pVirtualNetwork->ReplaceHost(std::make_unique<FakeHostNet>());
-    ASSERT_TRUE(ttd->SeekTo({ttd->GetCheckpoint(0)->time.frame, 0}));
-    while (Frame() < endFrame)
-        RunToBoundary();
-    std::unordered_map<uint8_t, std::vector<uint8_t>> live;
-    ttd->GetPeripheralRegistry().CaptureAll(live);
-    for (ttd::PeripheralId id : {ttd::PeripheralId::SlotSerial1, ttd::PeripheralId::SprinterIsa})
+// The modem in slot 1 and the SprinterESP in slot 2: two UART cards on one machine (slot1.uart, slot2.uart), recorded
+// and replayed together; BC-Term talks to the first 16550 it finds (slot 1), the ESP's state travels idle beside it
+class SprinterBcTermModemAndEsp_Test : public SprinterBcTermModem_Test
+{
+protected:
+    void ConfigureMachine(CONFIG& config) override
     {
-        const uint8_t key = static_cast<uint8_t>(id);
-        ASSERT_EQ(live.count(key), 1u) << int(key);
-        ASSERT_EQ(recorded.count(key), 1u) << int(key);
-        const std::vector<uint8_t> x = ttd::TTDPeripheralRegistry::DecodeBlob(key, live[key]);
-        const std::vector<uint8_t> y = ttd::TTDPeripheralRegistry::DecodeBlob(key, recorded.at(key));
-        ASSERT_EQ(x.size(), y.size()) << "device " << int(key);
-        size_t count = 0;
-        std::string diffs;
-        for (size_t i = 0; i < x.size(); ++i)
-        {
-            if (x[i] != y[i] && count++ < 16)
-                diffs += " @" + std::to_string(i) + ":" + std::to_string(y[i]) + "->" + std::to_string(x[i]);
-        }
-        EXPECT_EQ(count, 0u) << "device " << int(key) << " differs after the replay (recorded->replayed)" << diffs;
+        SprinterBcTermModem_Test::ConfigureMachine(config);
+        sprinterisa::SlotConfig& esp = config.sprinter.isa.slot[1];
+        esp.kind = static_cast<uint8_t>(sprinterisa::CardKind::SprinterEsp);
+        esp.base = sprinterisa::kSprinterEspBase;
+        esp.irq = sprinterisa::kSprinterEspIrq;
+        std::snprintf(esp.peer, sizeof(esp.peer), "AT");
     }
-    EXPECT_TRUE(ScreenHas("Welcome to the Unreal BBS")) << "the replayed screen\n" << ScreenText();
+};
+
+TEST_F(SprinterBcTermModemAndEsp_Test, DialsTheBbsWithTheEspInTheOtherSlot)
+{
+    DialTalkHangUpAndReplay();
+    const ttd::TimeTravelController* ttd = _context->pTimeTravelController;
+    EXPECT_NE(ttd->GetEngine().Devices().Find({ttd::TTDDeviceType::SerialPort, "slot1.uart"}), nullptr);
+    EXPECT_NE(ttd->GetEngine().Devices().Find({ttd::TTDDeviceType::SerialPort, "slot2.uart"}), nullptr);
 }

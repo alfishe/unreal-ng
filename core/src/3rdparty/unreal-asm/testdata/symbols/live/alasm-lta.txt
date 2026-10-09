@@ -1,0 +1,16 @@
+        ORG #6000
+START   LD A,1
+LOOP1   DJNZ LOOP1
+CONST   EQU #1234
+VeryLongLabelName01 NOP
+a_b$c   NOP
+        LOCAL
+LOC1    NOP
+        ENDL
+FWD     JP LATER
+LATER   RET
+        MACRO MAC1
+        NOP
+        ENDM
+        LD HL,UNDEF
+LAST    DB 1,2,3

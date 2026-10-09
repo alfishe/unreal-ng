@@ -130,7 +130,10 @@ protected:
     rzx::RzxSession& RzxSessionLocked();
     /// The common body of the snapshot loads: RZX stop, TTD guard, pause,
     /// `load`, frame restart, resume, NC_FILE_LOADED
-    bool LoadSnapshotStaged(const std::function<bool(std::string& error)>& load, const std::string& openedPath);
+    /// Pause, run `load` and restart the frame. `load` receives the options to plan with: the caller's, plus a beforeCommit that ends
+    /// the TTD recording session when (and only when) the plan has decided the snapshot will be committed
+    bool LoadSnapshotStaged(const std::function<bool(std::string& error, const snapshot::Options& planned)>& load,
+                            const std::string& openedPath, const snapshot::Options& options);
     /// What the snapshot pipeline did with the last load (empty before the first one)
     snapshot::Report _lastSnapshotReport;
     snapshot::SaveResult _lastSaveResult;
@@ -236,16 +239,23 @@ private:
 
     // Step-over synchronization
     AutoResetEvent _stepOverSyncEvent;
-    uint16_t _pendingStepOverBpId = 0;                  // Track active step-over breakpoint for cleanup
+    /// The step over's temporary breakpoint while its run is under way (0: none). Its cleanup (the breakpoint
+    /// removed, the breakpoints it deactivated back on, the feature flags restored) runs on the thread that claims
+    /// this id by exchanging it with 0: the emulation thread when the breakpoint fires (OnBreakpointHit), a control
+    /// thread when a step cancels it (after parking the machine), or the release. Before, a MessageCenter observer did
+    /// it on the dispatcher thread while the emulation thread still read the breakpoint map
+    /// (EmulatorStepOverObserver_Test.DestroyedEmulatorLeavesNoHandlerBehind crashed in GetBreakpointById)
+    std::atomic<uint16_t> _pendingStepOverBpId{0};
+    bool _stepOverRestoreDebugMode = false;             // feature flags to restore when the step over ends
+    bool _stepOverRestoreBreakpoints = false;
     /// A step over that steps across a CALL resumes the machine to a temporary breakpoint: the machine then runs
     /// paced to real time, but it is a debugger step and must be silent like every other step. The host output
     /// hold (reason DirectRun) lasts from that resume to the stop: the breakpoint, a cancel or any pause
     SoundManager::HostOutputHold _stepOverHostHold;
-    /// Id of the NC_EXECUTION_BREAKPOINT observer StepOver() registers; its handler captures this emulator and its
-    /// FeatureManager, so it must be unregistered before either goes away. Never from inside the handler (deadlock)
-    uint64_t _stepOverObserverId = 0;
-    void RemoveStepOverObserver();
     std::vector<uint16_t> _stepOverDeactivatedBps;      // Breakpoints deactivated during step-over
+    /// The cleanup of a step over whose breakpoint id this thread claimed; `restoreFeatures`: the run ended at its
+    /// breakpoint (a cancel leaves the flags to the step that cancels it, as before)
+    void FinishStepOver(uint16_t breakpointId, bool restoreFeatures);
 
     // Frame step target (persistent to prevent cumulative drift)
     unsigned _frameStepTargetPos = 0;                   // Target t-state position within frame

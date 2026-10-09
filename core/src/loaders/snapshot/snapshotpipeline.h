@@ -9,6 +9,7 @@
 ///   4. nobody intervened                -> the legacy commit, the code that commits today
 /// Design: docs/inprogress/2026-10-02-snapshot-pipeline/proposal.md section 4.4.
 
+#include <functional>
 #include <string>
 
 #include "loaders/snapshot/snapshotimage.h"
@@ -23,7 +24,17 @@ namespace snapshot
 struct Options
 {
     std::string commit;   ///< "" = let the plan decide, "legacy" = force today's commit, else a registered policy name
+    /// Called by the plan the moment it decides the snapshot WILL be committed (a Take or a Legacy decision, never a refusal),
+    /// before the loader writes anything. The emulator ends the TTD recording session here, so a load that is refused (a model
+    /// that does not fit, a bank the machine lacks, a Sprinter outside a ZX mode) never ends it
+    std::function<void()> beforeCommit;
 };
+
+/// Is this machine one of the four modules of a ZX-Poly group? A ZX-Poly runs its modules in lockstep: it takes a .zxp (all four
+/// modules) and nothing else (owner rule 2026-10-07): a single-machine snapshot is refused on load, and none is written on save
+bool IsZXPolyModule(const EmulatorContext& context);
+/// Why a snapshot of `format` ("sna", "z80", "szx", "spg") is refused on a ZX-Poly module (the text every surface shows)
+std::string ZXPolyRefusal(const std::string& format);
 
 /// The plan's answer
 struct Decision
@@ -47,6 +58,10 @@ class Pipeline
 {
 public:
     /// Fill `report` from the image and decide. The image is not changed (no transform verdict yet)
+    /// A decision that proceeds (Take, Legacy) also calls options.beforeCommit, once, before the caller writes anything
     static Decision Plan(const Image& image, EmulatorContext* context, const Options& options, Report& report);
+
+private:
+    static Decision PlanImpl(const Image& image, EmulatorContext* context, const Options& options, Report& report);
 };
 }  // namespace snapshot

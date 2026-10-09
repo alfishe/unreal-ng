@@ -77,7 +77,10 @@ The black box (the engine) is for "always on" recording: it keeps only the
 last minutes and never holds the machine at real speed - turbo or a host
 speed above 1x stops it first (history kept, `last_stop_reason:
 "acceleration"`), and it starts a new session once nothing accelerates. No
-acceleration lock below applies to it. Same on the other surfaces: CLI
+acceleration lock below applies to it, and it refuses no load: inserting a
+tape, a disk or another medium ends its session (the recording up to there
+stays in its folder) and the next one starts at the next frame. The same
+holds for the history DeZog starts for reverse debugging. Same on the other surfaces: CLI
 `ttd start --black-box --minutes 2`, Lua `ttd_start(false, true, 2)`, Python
 `emu.ttd_start(black_box=True, minutes=2)`; unreal-qt: Debug > Time Travel >
 Always Record. `GET /ttd/status` shows `black_box: true` and the folder its
@@ -94,7 +97,9 @@ answer). Switch it during the recording or build it afterwards:
 StartRecording **auto-enables** the `timetravel` and `debugmode` runtime
 features. On stop it turns `debugmode` back off if it was the one that
 enabled it; `timetravel` stays on. Idempotent: starting twice is a no-op
-(`already_active: true`).
+(`already_active: true`). A start the recorder refuses answers `409` with the reason
+(`"the recording did not start: device table: device uart (type 24) is registered twice"`,
+`"... the machine reports no RAM pages to record"`), every surface alike.
 
 While recording (and while the machine sits in `detached`) the
 **acceleration lock** holds: host speed forced to 1x (2x-16x refused),
@@ -241,9 +246,10 @@ instance and retry. After `load` the session is idle/browsable (use
 `loaded_from_file: true`, `source_path`, `captured_at_unix_ms`, plus the
 recording machine's `model_id`/`model_ram_pages`. The `.ttd` header pins a ROM signature:
 replaying against a different ROM set is refused, not silently wrong.
-The binary format is portable (Kaitai schema `core/src/debugger/ttd/ttd.ksy`;
-Python analyzer in `tools/verification/ttd-analyzer`), so captures outlive
-the process.
+The binary format is portable (the engine's session file, schema 2: Kaitai
+schema `core/src/debugger/ttd/engine/ttdsession.ksy`; Python analyzer in
+`tools/verification/ttd-analyzer`), so captures outlive the process. v1 files (`ttd.ksy`) are not loaded by the engine; the
+verification tools read and convert them.
 
 ### Inspect a file, search port journals, export a clip
 
@@ -314,7 +320,9 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   runs. A reset and a snapshot load keep the ended session's history (browsable,
   `last_stop_reason` `reset` / `snapshot-load`); a ROM reload, model switch,
   GS card switch or slot change is another machine and drops it
-  (`machine-change`). **No new session starts by itself**: turn the `ttdrestart`
+  (`machine-change`). A snapshot load that is refused (wrong model, no such
+  banks, not a snapshot) ends nothing: the session ends only when the load
+  goes ahead. **No new session starts by itself**: turn the `ttdrestart`
   feature on (`feature ttdrestart on`, off by default) and one starts at the next
   frame boundary; the black box always starts one. Do not look for the old
   "snapshot is part of the recording": it was removed on purpose.

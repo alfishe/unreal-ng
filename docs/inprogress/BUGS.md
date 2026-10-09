@@ -8,6 +8,35 @@
 
 ---
 
+2026-10-07
+## 🟢 [Fixed] #1: TTD engine - the VDAC2 (FT812) picture at a frame boundary differs from the live one for some frames
+* **Date Opened:** 2026-10-07
+* **Date Fixed:** 2026-10-07
+* **Commit ID:** see the commit "fix(ttd): the VDAC2 picture at a frame end on the engine"
+* **Found by:** moving `TTDVdac2_Test` onto the engine (Phase 5 Step 4b of the TTD v2 migration), 2026-10-07.
+
+### Description
+A seek to the end of a frame on a TS-Conf + VDAC2 machine showed, for some frames, the FT812 picture in flight (its
+top rows from the frame being drawn) instead of the finished one the live run showed; card state and chip memory
+were exact.
+
+### Root cause
+Two parts. (1) The controller composed a frame target as v1 did - the current frame run to its end - while D13 puts
+"frame N" at the boundary `{N+1, 0}`, and it never asked for a frame target at all. (2) After the first fix it asked
+by the landing position (`tInFrame == 0`), but a seek lands on the first instruction boundary at or after its target,
+a few T-states in: for those frames the in-flight rule composed the picture.
+
+### Fix
+A seek whose target is a frame boundary composes the frame that ended there, from its lead-in
+(`PresentPosition(target.tInFrame == 0)`, `ComposeDisplay(frameTarget, kEndedFrame)`); the clip export composes its
+own frame (`kCurrentFrame`). `TTDVdac2_Test` runs on the engine (6 / 6, the frame-number seeks go to
+`FrameEndPosition`; the history window allows whole segments); two mutants caught.
+
+### Requirements / Acceptance Criteria
+- [x] `TTDVdac2_Test` passes on the engine (the file left `ttdv1tests.h`).
+
+---
+
 2026-10-05
 ## 🟢 [Fixed] #1: Live border stays black when nothing wrote port #FE, while a TTD-composed picture fills it from #FE
 * **Date Opened:** 2026-10-05

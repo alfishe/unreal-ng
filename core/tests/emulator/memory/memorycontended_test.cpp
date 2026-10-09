@@ -6,7 +6,7 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/fusevectors.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -421,7 +421,7 @@ TEST(MemoryContendedDebugPath_Test, TtdReplaysCodeInContendedRamBitExact)
     ASSERT_NE(contended, nullptr);
     EmulatorContext* context = contended->GetContext();
     Z80* z80 = context->pCore->GetZ80();
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
 
     ASSERT_TRUE(ttd->StartRecording());

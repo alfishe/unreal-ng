@@ -17,8 +17,10 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/ttdv1tests.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdconfigcapture.h"
@@ -129,13 +131,29 @@ public:
     bool Ok() const { return _ok; }
     Emulator* Get() const { return _emulator.get(); }
     EmulatorContext* Context() const { return _emulator->GetContext(); }
-    ttd::TimeTravelManager* Ttd() const { return _emulator->GetContext()->pTimeTravelManager; }
+    ttd::TimeTravelController* Ttd() const { return _emulator->GetContext()->pTimeTravelController; }
+    /// The same controller under the name the slot TTD tests use
+    ttd::TimeTravelController* Controller() const { return Ttd(); }
 
 private:
     SoundCardScope _everySound;
     fs::path _path;
     std::unique_ptr<Emulator> _emulator;
     bool _ok = false;
+};
+
+/// Instances created in its scope record on the engine's controller (core-tests select v1 by default)
+class EngineBackend
+{
+public:
+    EngineBackend() : _was(Emulator::DefaultTimeTravelBackend())
+    {
+        Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::Engine);
+    }
+    ~EngineBackend() { Emulator::SetDefaultTimeTravelBackend(_was); }
+
+private:
+    Emulator::TimeTravelBackend _was;
 };
 
 /// A registry stand-in for one chip module (the SAA1099 two cards could carry)
@@ -273,7 +291,7 @@ TEST(TtdSlots_Test, SessionMismatchRefused)
         std::string err;
         EXPECT_FALSE(other.Ttd()->DeserializeSession(session, err));
         EXPECT_NE(err.find("slot set differs from the recording"), std::string::npos) << err;
-        EXPECT_NE(err.find("ay-socket: recorded tsfm, this machine ay / ts"), std::string::npos) << err;
+        EXPECT_NE(err.find("ay-socket: recorded tsfm, this machine ay"), std::string::npos) << err;
         EXPECT_NE(err.find("zxbus.1: recorded gs, this machine neogs"), std::string::npos) << err;
         EXPECT_NE(err.find("zxbus.2: recorded none, this machine moonsound"), std::string::npos) << err;
     }
@@ -289,12 +307,91 @@ TEST(TtdSlots_Test, SessionMismatchRefused)
     }
 }
 
+/// The AY socket's `ay` and `ts` boards share one blob id (TurboSound): a v1 file cannot tell them apart, so a side
+/// that does not know the board matches either. The live registry and the engine's device table name the board by
+/// the device's instance (`ay-socket.ts`), and there the two differ. Pure device sets
+TEST(TtdSlots_Test, SocketBoardsToldApartByTheInstance)
+{
+    const SlotManager::Result plan = PlanOf(MM_PENTAGON, {{"ay-socket", "ts"}});
+    auto withBoard = [](const char* board) {
+        SlotManager::TtdDeviceSet set = Devices({PeripheralId::TurboSound});
+        set.socketCard = board;
+        return set;
+    };
+    std::string why;
+    EXPECT_TRUE(SlotManager::TtdSlotSetMatches(plan, Devices({PeripheralId::TurboSound}), withBoard("ts"), why)) << why;
+    EXPECT_TRUE(SlotManager::TtdSlotSetMatches(plan, withBoard("ay"), Devices({PeripheralId::TurboSound}), why)) << why;
+    EXPECT_TRUE(SlotManager::TtdSlotSetMatches(plan, withBoard("ts"), withBoard("ts"), why)) << why;
+    why.clear();
+    EXPECT_FALSE(SlotManager::TtdSlotSetMatches(plan, withBoard("ts"), withBoard("ay"), why));
+    EXPECT_NE(why.find("ay-socket: recorded ts, this machine ay"), std::string::npos) << why;
+
+    // The registry against the plan: the board the instance names is the planned one
+    why.clear();
+    EXPECT_TRUE(SlotManager::TtdDevicesMatchPlan(plan, withBoard("ts"), why)) << why;
+    EXPECT_FALSE(SlotManager::TtdDevicesMatchPlan(plan, withBoard("ay"), why));
+    EXPECT_NE(why.find("ay-socket: the plan fits ts, the device is ay"), std::string::npos) << why;
+
+    // The device instance the socket's board registers under
+    EXPECT_EQ(SlotManager::TtdInstance(plan, SlotCardGroup::Socket, "TurboSound"), "ay-socket.ts");
+    EXPECT_EQ(SlotManager::TtdInstance(PlanOf(MM_PENTAGON, {{"ay-socket", "tsfm"}}), SlotCardGroup::Socket, "TSFM"),
+              "ay-socket.tsfm");
+    EXPECT_EQ(SlotManager::TtdInstance(PlanOf(MM_PENTAGON, {{"zxbus.1", "neogs"}}), SlotCardGroup::GeneralSound, "NeoGS"),
+              "zxbus.1.neogs");
+}
+
+/// The slot-set guard on the engine's session files (the application records on the engine): the socket's board
+/// from the device table's instance, a session without a card refused where one is fitted (the binding alone let it
+/// load, keeping the live card's state), the same slot set loads. Four machines and two 3-frame recordings (~90 ms:
+/// machine creation dominates)
+TEST(TtdSlots_Test, EngineSessionLoadRunsTheSlotSetGuard)
+{
+    EngineBackend engine;
+    auto record = [](const std::string& slots, std::stringstream& out) {
+        StagedMachine recorder("pentagon128k", slots);
+        ASSERT_TRUE(recorder.Ok());
+        ttd::TimeTravelController* controller = recorder.Controller();
+        ASSERT_NE(controller, nullptr) << "the machine records on the engine";
+        ASSERT_TRUE(controller->StartRecording());
+        EXPECT_EQ(controller->GetPeripheralRegistry().InstanceOf(PeripheralId::TurboSound), "ay-socket.ts");
+        EmulatorTestHelper::RunFramesFast(recorder.Get(), 3);
+        controller->StopRecording();
+        std::string err;
+        ASSERT_TRUE(controller->SerializeSession(out, err)) << err;
+    };
+    std::stringstream tsSession;
+    record("ay-socket = ts", tsSession);
+    ASSERT_FALSE(HasFatalFailure());
+
+    {
+        StagedMachine ay("pentagon128k", "ay-socket = ay\nzxbus.1 = gs");
+        ASSERT_TRUE(ay.Ok());
+        ASSERT_NE(ay.Controller(), nullptr);
+        tsSession.seekg(0);
+        std::string err;
+        EXPECT_FALSE(ay.Controller()->DeserializeSession(tsSession, err));
+        EXPECT_NE(err.find("slot set differs from the recording"), std::string::npos) << err;
+        EXPECT_NE(err.find("ay-socket: recorded ts, this machine ay"), std::string::npos) << err;
+        EXPECT_NE(err.find("zxbus.1: recorded none, this machine gs"), std::string::npos) << err;
+    }
+    {
+        StagedMachine same("pentagon128k", "ay-socket = ts");
+        ASSERT_TRUE(same.Ok());
+        ASSERT_NE(same.Controller(), nullptr);
+        tsSession.clear();
+        tsSession.seekg(0);
+        std::string err;
+        EXPECT_TRUE(same.Controller()->DeserializeSession(tsSession, err)) << err;
+    }
+}
+
 /// tdd.md §2.4: the cards that moved onto slots in SL-4 keep the blob ids and layouts the corpus was recorded with.
 /// The Pentagon fixture with TurboSound FM and the classic GS (testdata/ttd, recorded before the slots) loads into a
-/// machine planned from [SLOTS]; its slot cards' blobs carry the ids the live devices register under, each of the
+/// machine planned from [SLOTS] on v1; its slot cards' blobs carry the ids the live devices register under, each of the
 /// live device's state size. The engine names them by slot. ~40 ms: one machine and a real 300-frame fixture
 TEST(TtdSlots_Test, MigratedCardsKeepBlobIds)
 {
+    const ttdtest::V1Scope v1;   // the fixture is a v1 file, read by v1
     const fs::path fixture = TestPathHelper::FindProjectRoot() / "testdata/ttd/tsfm_tech_support.ttd";
     ttd::TTDFileInfo info;
     std::string err;
@@ -312,11 +409,11 @@ TEST(TtdSlots_Test, MigratedCardsKeepBlobIds)
     machine.Get()->GetFeatureManager()->setFeature(Features::kScreenHQ, true);
 
     std::ifstream in(fixture, std::ios::binary);
-    ASSERT_TRUE(machine.Ttd()->DeserializeSession(in, err)) << err;
-    const ttd::TTDCheckpoint* baseline = machine.Ttd()->GetCheckpoint(0);
+    ASSERT_TRUE(machine.Context()->pTimeTravelManager->DeserializeSession(in, err)) << err;
+    const ttd::TTDCheckpoint* baseline = machine.Context()->pTimeTravelManager->GetCheckpoint(0);
     ASSERT_NE(baseline, nullptr);
 
-    const ttd::TTDPeripheralRegistry& registry = machine.Ttd()->GetPeripheralRegistry();
+    const ttd::TTDPeripheralRegistry& registry = machine.Context()->pTimeTravelManager->GetPeripheralRegistry();
     const SlotManager* slotManager = machine.Context()->pSlotManager;
     ASSERT_NE(slotManager, nullptr);
     struct Card
@@ -453,24 +550,15 @@ TEST(TtdSlots_Test, RuntimePersonalitySwitchMovesThePlanAndTheFingerprint)
               std::string::npos);
 }
 
-/// R-OP-7: no slot change while a user recording runs, the refusal names the session; allowed once it stopped.
-/// One machine (~20 ms)
-TEST(TtdSlots_Test, RefusedWhileTtdRecords)
+/// D42 (owner rule 2026-10-06): a recording does not refuse a slot change - the change restarts the machine, which
+/// ends the session (SlotChange_Test.AppliedWhileTtdRecords). The guard has nothing to say while recording
+TEST(TtdSlots_Test, ARecordingDoesNotRefuseASlotChange)
 {
     StagedMachine machine("pentagon128k", "zxbus.1 = gs");
     ASSERT_TRUE(machine.Ok());
     const SlotManager* slotManager = machine.Context()->pSlotManager;
     ASSERT_NE(slotManager, nullptr);
-    EXPECT_EQ(slotManager->ChangeRefusal(), "");
-
     ASSERT_TRUE(machine.Ttd()->StartRecording());
-    const std::string refusal = slotManager->ChangeRefusal();
-    EXPECT_NE(refusal.find("Cannot change the slot set while TTD is recording session #1"), std::string::npos)
-        << refusal;
-    machine.Ttd()->StopRecording();
     EXPECT_EQ(slotManager->ChangeRefusal(), "");
-
-    ASSERT_TRUE(machine.Ttd()->StartRecording());
-    EXPECT_NE(slotManager->ChangeRefusal().find("session #2"), std::string::npos) << "a new recording, a new session";
     machine.Ttd()->StopRecording();
 }

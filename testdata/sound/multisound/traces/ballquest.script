@@ -1,0 +1,17 @@
+# Ball Quest (CC'06) title and in-game demo on a ZX-Evo (BaseConf, ATM graphics) with the card in a slot
+describe Real-program trace (CL-2): Ball Quest (BQ.TRD, "BQ   ATM"), its title music and the in-game demo; the game
+describe writes #F0-#F7 to #FFFD as YM register numbers, which the card (ctrlMask = pro) takes as control bytes
+describe (issue #11): FM unmuted and chip 0 selected for a moment
+describe ZX-Evo (atm3 config) with zxbus.1 = multisound; ERS: y (virtual drive B), Enter (TR-DOS boot), Enter (BQ ATM)
+machine atm3
+cpu 3.5
+disk tsfm/BQ.TRD
+frames 100
+key y 5
+frames 50
+key enter 5
+frames 100
+key enter 5
+frames 1300
+shot ballquest
+save ballquest

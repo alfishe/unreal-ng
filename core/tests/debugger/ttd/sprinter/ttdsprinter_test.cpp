@@ -25,6 +25,7 @@
 #include "3rdparty/z84c15/z84c15.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/ttdrecordedstate.h"
 #include "base/featuremanager.h"
 #include "common/filehelper.h"
 #include "debugger/debugmanager.h"
@@ -32,7 +33,7 @@
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/sprinter/ttdsprinter.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "debugger/ttd/ttdportsearch.h"
@@ -52,12 +53,14 @@
 #include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/sprinter/sprintermemory.h"
+#include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/sprinter/screensprinter.h"
 #include "emulator/machines/sprinter/sprinterdssmedia.h"
 #include "emulator/machines/sprinter/sprinterfixture.h"
+#include "ttdsprintermachine.h"
 #include "emulator/video/sprinter/sprintergamevideo.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfig.h"
 #include "emulator/ports/models/sprinter/sprinterpldgame.h"
@@ -341,249 +344,7 @@ TEST_F(TTDSprinter_Test, Registry_EveryDeclaredIdTravels)
 
 /// region <Exact restore on the real BIOS>
 
-/// The real machine (BIOS 3.04 selected explicitly) with TTD on. Not in turbo mode: the
-/// picture of every frame is compared
-class TTDSprinterMachine_Test : public ::testing::Test
-{
-protected:
-    EmulatorManager* _manager = nullptr;
-    std::shared_ptr<Emulator> _emulator;
-    EmulatorContext* _context = nullptr;
-    PortDecoder_Sprinter* _decoder = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
-    Z80* _z80 = nullptr;
-
-    /// The recorded run: the picture at every frame boundary, by frame
-    std::map<uint64_t, uint64_t> _screens;
-
-    void SetUp() override
-    {
-        if (!SprinterFixture::Rom304Available())
-            GTEST_SKIP() << "data/rom/sprinter/sp2k-3.04.rom not found";
-        _manager = EmulatorManager::GetInstance();
-        for (const auto& id : _manager->GetEmulatorIds())
-            _manager->RemoveEmulator(id);
-        _emulator = _manager->CreateEmulatorWithModelAndRAM("sprinter-ttd", "SPRINTER", 4096, LoggerLevel::LogError);
-        ASSERT_NE(_emulator, nullptr);
-        _context = _emulator->GetContext();
-        _decoder = dynamic_cast<PortDecoder_Sprinter*>(_context->pPortDecoder);
-        ASSERT_NE(_decoder, nullptr);
-        _ttd = _context->pTimeTravelManager;
-        ASSERT_NE(_ttd, nullptr);
-        _z80 = _context->pCore->GetZ80();
-        _decoder->GetRtc().SetFixedTime(1767268830);  // 2026-01-01 12:00:30 UTC
-        // Pinned to BIOS 3.04 (the shipped default is 3.06 Hotfix 2; its cold start is the corpus fixture
-        // testdata/machines/sprinter/ttd/boot.ttd, TTD_Corpus_Test)
-        ASSERT_TRUE(SprinterFixture::SelectBios(_context, "sp2k-3.04.rom"));  // PowerOn resets
-
-        FeatureManager* features = _emulator->GetFeatureManager();
-        features->setFeature(Features::kDebugMode, true);
-        features->setFeature(Features::kTimeTravel, true);
-        // The picture drawn whole at each frame end (cheaper than the beam-exact catch-up, and as exact for a
-        // comparison of one run against another); the low-quality sound path
-        features->setFeature(Features::kScreenHQ, false);
-        features->setFeature(Features::kSoundHQ, false);
-        _context->pMemory->UpdateFeatureCache();
-        _context->pSoundManager->UpdateFeatureCache();
-    }
-
-    void TearDown() override
-    {
-        _emulator.reset();
-        if (_manager)
-        {
-            for (const auto& id : _manager->GetEmulatorIds())
-                _manager->RemoveEmulator(id);
-        }
-    }
-
-    void PowerOn(bool fastStart)
-    {
-        _context->config.sprinter.fast_start = fastStart ? 1 : 0;
-        _emulator->Reset();
-    }
-
-    uint64_t Frame() const { return _context->emulatorState.frame_counter; }
-
-    /// Run to the next frame boundary exactly (the frame's checkpoint is taken there)
-    void RunToBoundary()
-    {
-        // RunTStates stops once the clock reaches the frame end; the frame closes with the instruction that crosses it
-        const uint64_t frame = Frame();
-        for (int guard = 0; guard < 4 && Frame() == frame; guard++)
-            _emulator->RunTStates(_z80->t < _z80->_frameLimit ? _z80->_frameLimit - _z80->t : 1u, true);
-        ASSERT_EQ(Frame(), frame + 1);
-    }
-
-    /// Frames without recording, the turbo mode on (nothing compared)
-    void Skip(int frames)
-    {
-        _emulator->EnableTurboMode();
-        _emulator->RunNFrames(static_cast<unsigned>(frames), true);
-        _emulator->DisableTurboMode();
-        RunToBoundary();
-    }
-
-    uint64_t ScreenHash() const
-    {
-        uint32_t* fb = nullptr;
-        size_t size = 0;
-        _context->pScreen->GetFramebufferData(&fb, &size);
-        return fb ? ttd::HashBytes(reinterpret_cast<const uint8_t*>(fb), size) : 0;
-    }
-
-    std::string ScreenText() const
-    {
-        const SprinterVideoRam& vram = _decoder->GetVideoRam();
-        std::string text;
-        for (uint8_t page = 0; page < 2; page++)
-            for (uint8_t b = 0; b < 32; b++)
-            {
-                for (uint8_t a = 0; a < 40; a++)
-                    for (uint8_t half = 0; half < 2; half++)
-                    {
-                        const uint8_t c = vram.Read((1u + 2u * a + half + 0x80u * page) * 1024u + 0x301 + 4u * b);
-                        text.push_back((c >= 0x20 && c < 0x7F) ? static_cast<char>(c) : ' ');
-                    }
-                text.push_back('\n');
-            }
-        return text;
-    }
-    bool ScreenHas(const std::string& needle) const { return ScreenText().find(needle) != std::string::npos; }
-
-    /// Start a recording at this boundary
-    void StartRecording()
-    {
-        _screens.clear();
-        ASSERT_TRUE(_ttd->StartRecording()) << "TTD refuses to record the Sprinter";
-        _screens[Frame()] = ScreenHash();
-    }
-
-    /// Record `frames` frames; `beforeFrame(i)` may give input (inside the frame too, with RunTStates)
-    /// and `atBoundary()` looks at every boundary
-    void Record(int frames, const std::function<void(int)>& beforeFrame = {}, const std::function<void()>& atBoundary = {})
-    {
-        for (int i = 0; i < frames && !HasFatalFailure(); i++)
-        {
-            if (beforeFrame)
-                beforeFrame(i);
-            RunToBoundary();
-            _screens[Frame()] = ScreenHash();
-            if (atBoundary)
-                atBoundary();
-        }
-    }
-
-    size_t IndexOfFrame(uint64_t frame) const
-    {
-        for (size_t i = 0; i < _ttd->GetCheckpointCount(); i++)
-            if (_ttd->GetCheckpoint(i)->time.frame == frame)
-                return i;
-        return SIZE_MAX;
-    }
-
-    /// The live machine against checkpoint `idx` of the recording: CPU, chipset, every device blob
-    /// (decoded), every RAM sub-page it holds, and the picture of that frame
-    void ExpectLiveMatchesCheckpoint(size_t idx, const std::string& where, bool allRam = false, bool picture = true)
-    {
-        const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(idx);
-        ASSERT_NE(cp, nullptr);
-        ASSERT_EQ(Frame(), cp->time.frame) << where;
-
-        const ttd::TTDCpuState cpu = ttd::CaptureCpuState(*static_cast<const Z80State*>(_z80));
-        EXPECT_EQ(std::memcmp(&cpu, &cp->cpu, sizeof(cpu)), 0)
-            << where << ": CPU differs (PC " << std::hex << cpu.pc << " vs " << cp->cpu.pc << ")";
-        const ttd::TTDChipsetState chipset = ttd::CaptureChipsetState(_context->emulatorState, static_cast<uint32_t>(_z80->t));
-        EXPECT_EQ(std::memcmp(&chipset, &cp->chipset, sizeof(chipset)), 0)
-            << where << ": chipset differs (t " << std::dec << ttd::GetChipsetCpuTInFrame(chipset) << " vs "
-            << ttd::GetChipsetCpuTInFrame(cp->chipset) << ")";
-
-        std::unordered_map<uint8_t, std::vector<uint8_t>> live;
-        _ttd->GetPeripheralRegistry().CaptureAll(live);
-        EXPECT_EQ(live.size(), cp->peripheralBlobs.size()) << where << ": device sets differ";
-        for (const auto& [id, blob] : cp->peripheralBlobs)
-        {
-            const auto it = live.find(id);
-            ASSERT_NE(it, live.end()) << where << ": device " << int(id) << " missing";
-            const std::vector<uint8_t> expected = ttd::TTDPeripheralRegistry::DecodeBlob(id, blob);
-            const std::vector<uint8_t> actual = ttd::TTDPeripheralRegistry::DecodeBlob(id, it->second);
-            ASSERT_EQ(actual.size(), expected.size()) << where << ": device " << int(id);
-            size_t first = 0;
-            while (first < expected.size() && actual[first] == expected[first])
-                first++;
-            EXPECT_EQ(first, expected.size()) << where << ": device " << int(id) << " differs from byte " << first;
-        }
-
-        // RAM: the sub-pages this checkpoint stored anew (all of them on request: 4 MB to decode)
-        const ttd::TTDCheckpoint* prev = idx > 0 && !allRam ? _ttd->GetCheckpoint(idx - 1) : nullptr;
-        std::vector<uint8_t> page(4096);
-        for (size_t p = 0; p < cp->ramPages.size(); p++)
-            for (uint32_t sub = 0; sub < 4; sub++)
-            {
-                const uint32_t slot = cp->ramPages[p].pageSlots[sub];
-                if (slot == ttd::TTDPageRef::kNeverTouched)
-                    continue;
-                if (prev && p < prev->ramPages.size() && prev->ramPages[p].pageSlots[sub] == slot)
-                    continue;
-                ASSERT_TRUE(_ttd->GetPageStore().GetPage(slot, page.data()));
-                const uint8_t* ram = _context->pMemory->RAMPageAddress(static_cast<uint16_t>(p)) + sub * 4096;
-                ASSERT_EQ(std::memcmp(ram, page.data(), 4096), 0) << where << ": RAM page " << p << " sub-page " << sub;
-            }
-
-        // The picture of the frame that ended here (a seek itself draws nothing into the framebuffer)
-        const auto screen = _screens.find(cp->time.frame);
-        if (picture && screen != _screens.end())
-            EXPECT_EQ(ScreenHash(), screen->second) << where << ": the picture differs";
-    }
-
-    /// Seek to checkpoint `from` and run forward through `frames` recorded frames (the journal
-    /// plays the input): every boundary must be the recorded one
-    void ExpectExactReplay(size_t from, size_t frames, const std::string& what)
-    {
-        const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(from);
-        ASSERT_NE(cp, nullptr) << what;
-        ASSERT_TRUE(_ttd->SeekTo({cp->time.frame, 0})) << what;
-        ExpectLiveMatchesCheckpoint(from, what + ": the restore", true, false);
-        const size_t last = std::min(_ttd->GetCheckpointCount() - 1, from + frames);
-        for (size_t idx = from + 1; idx <= last && !HasFailure(); idx++)
-        {
-            RunToBoundary();
-            ExpectLiveMatchesCheckpoint(idx, what + ": frame " + std::to_string(idx - from) + " after the restore", idx == last);
-        }
-    }
-
-    /// The decoded blob of `id` in checkpoint `idx`
-    std::vector<uint8_t> BlobOf(size_t idx, ttd::PeripheralId id) const
-    {
-        const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(idx);
-        const auto it = cp->peripheralBlobs.find(static_cast<uint8_t>(id));
-        return it == cp->peripheralBlobs.end() ? std::vector<uint8_t>() : ttd::TTDPeripheralRegistry::DecodeBlob(static_cast<uint8_t>(id), it->second);
-    }
-
-    DebugKeyboardManager* Keys() const { return _context->pDebugManager->GetKeyboardManager(); }
-    DebugMouseManager* MouseManager() const { return _context->pDebugManager->GetMouseManager(); }
-
-    /// SETUP's IDE probe, not recorded, in turbo mode: F4 for every unit that never answers (an empty
-    /// channel without the empty-channel fix), as the user presses it, until the boot starts
-    void SkipIdeProbe()
-    {
-        _emulator->EnableTurboMode();
-        for (int i = 0; i < 4 && !ScreenHas("Start from"); i++)
-        {
-            EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return ScreenHas("[Press F4") || ScreenHas("Start from"); }, 800, 2);
-            if (ScreenHas("[Press F4"))
-            {
-                Keys()->PressKey("f4");
-                _emulator->RunNFrames(3, true);
-                Keys()->ReleaseKey("f4");
-                _emulator->RunNFrames(3, true);
-            }
-        }
-        _emulator->DisableTurboMode();
-        ASSERT_TRUE(ScreenHas("Start from")) << ScreenText();
-        RunToBoundary();
-    }
-};
+// TTDSprinterMachine_Test: ttdsprintermachine.h (shared with ttdsprintercoverage_test.cpp)
 
 /// Recording a Sprinter starts (it was refused until S7) and its checkpoints carry every
 /// Sprinter blob; a session survives a dump and a load into a fresh machine
@@ -595,12 +356,18 @@ TEST_F(TTDSprinterMachine_Test, RecordsWithEverySprinterBlob)
     Record(3);
     _ttd->StopRecording();
     ASSERT_GE(_ttd->GetCheckpointCount(), 4u);
-    const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(3);
+    // The video and fast RAM are the engine's regions; their devices keep the rest of their state
     for (ttd::PeripheralId id : {ttd::PeripheralId::SprinterPld, ttd::PeripheralId::Ds12887, ttd::PeripheralId::SprinterVideoRam,
                                  ttd::PeripheralId::Z84C15, ttd::PeripheralId::SprinterFastRam, ttd::PeripheralId::SprinterInput,
                                  ttd::PeripheralId::BetaDisk, ttd::PeripheralId::Wd1793Context, ttd::PeripheralId::KempstonMouse,
                                  ttd::PeripheralId::SprinterIsa, ttd::PeripheralId::EthernetNics})
-        EXPECT_EQ(cp->peripheralBlobs.count(static_cast<uint8_t>(id)), 1u) << "id " << int(id);
+        EXPECT_FALSE(BlobOf(3, id).empty()) << "id " << int(id);
+    for (ttd::TTDRegionId region : {ttd::TTDRegionId::SprinterVideoRam, ttd::TTDRegionId::SprinterFastRam})
+    {
+        const auto& regions = _ttd->GetEngine().Regions();
+        EXPECT_TRUE(std::any_of(regions.begin(), regions.end(), [&](const ttd::TTDRegionDesc& r) { return r.id == region; }))
+            << "region " << int(region);
+    }
     ExpectExactReplay(0, 3, "a few frames of BIOS POST");
 }
 
@@ -802,6 +569,72 @@ TEST_F(TTDSprinterMachine_Test, ExactRestore_MidIdeSector)
     ASSERT_GT(midSector, 0u) << "no frame boundary fell into an IDE sector";
 
     ExpectExactReplay(midSector, 40, "from the middle of an IDE sector");
+    std::remove(path.c_str());
+}
+
+/// A recording that writes the hard disk and reads it back replays from its start (a seek, then the machine runs on
+/// through the recorded history): every sector read comes from the read journal, not from the image - which holds the
+/// recording's last state by then (the copy already there). Until 2026-10-08 the run after a seek read the image and
+/// left the recording where DSS read the directory. SYSTEM.BAT makes a directory (DSS's built-in MD writes the
+/// root directory and a cluster) and lists the root (DIR reads them back).
+/// Boot-bound: DSS from the disk and the batch (a few hundred frames), replayed once from the start
+TEST_F(TTDSprinterMachine_Test, AReplayAfterASeekReadsTheRecordedSectorsNotTheImage)
+{
+    const std::vector<uint8_t> floppy = [] {
+        std::vector<uint8_t> bytes;
+        const std::string path = TestPathHelper::GetTestDataPath("machines/sprinter/dss_1_62_92.img");
+        FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f)
+            return bytes;
+        bytes.resize(1474560);
+        if (std::fread(bytes.data(), 1, bytes.size(), f) != bytes.size())
+            bytes.clear();
+        std::fclose(f);
+        return bytes;
+    }();
+    if (floppy.size() != 1474560u)
+        GTEST_SKIP() << "testdata/machines/sprinter/dss_1_62_92.img is missing";
+    const std::vector<uint8_t> loader(floppy.begin() + 512, floppy.begin() + 4 * 512);
+    const std::string bat = "md newdir\r\ndir\r\n";
+    std::vector<uint8_t> disk = BuildDssHdd(loader, {{"SYSTEM  DOS", FloppyRootFile(floppy, "SYSTEM  DOS")},
+                                                           {"SYSTEM  EXE", FloppyRootFile(floppy, "SYSTEM  EXE")},
+                                                           {"SYSTEM  BAT", std::vector<uint8_t>(bat.begin(), bat.end())}});
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("ttd-sprinter-hdd-write.img");
+    ASSERT_TRUE(FileHelper::SaveBufferToFile(path, disk.data(), disk.size()));
+
+    PowerOn(true);
+    MediaSource source;
+    source.path = path;
+    InsertOptions options;
+    options.immediate = true;
+    options.access = AccessMode::Session;
+    ASSERT_TRUE(_context->pMediaManager->Insert("ide0.master", source, options).Ok());
+    ASSERT_NO_FATAL_FAILURE(SkipIdeProbe());
+
+    StartRecording();
+    bool typed = false;
+    for (int i = 0; i < 3000 && !typed && !HasFatalFailure(); i++)
+        Record(1, {}, [&] { typed = ScreenHas("NEWDIR") && ScreenText().rfind("C:\\>") > ScreenText().find("NEWDIR"); });
+    Record(60);
+    _ttd->StopRecording();
+    ASSERT_TRUE(typed) << ScreenText();
+    const auto info = _context->pMediaManager->Info("ide0.master");
+    ASSERT_TRUE(info.has_value());
+    ASSERT_TRUE(info->dirty) << "MD wrote the disk\n" << ScreenText();
+
+    // Before running on, a throwaway replay elsewhere (a frame-cache build of a later frame): the run continues from
+    // checkpoint 0's place in the journals, not from where that replay left them
+    const uint64_t later = _ttd->GetCheckpoint(_ttd->GetCheckpointCount() - 5)->time.frame;
+    ExpectExactReplay(0, _ttd->GetCheckpointCount() - 1, "the recording that wrote the disk, from its start",
+                      [&] { ASSERT_NE(_ttd->GetFrameCache(later), nullptr); });
+
+    // Recording on from a past point leaves the recorded history: its sectors are not played any more
+    ASSERT_TRUE(_ttd->ResumeRecordingFrom({_ttd->GetCheckpoint(10)->time.frame, 0}));
+    for (const ttd::TimeTravelEngine* engine : {_ttd->GetReplaySource(), &_ttd->GetEngine()})
+        if (engine)
+            EXPECT_NE(engine->MediaReads().GetMode(), ttd::TTDMediaJournal::Mode::Play)
+                << "the new branch reads the disk, not the old recording's sectors";
+    _ttd->StopRecording();
     std::remove(path.c_str());
 }
 
@@ -1191,3 +1024,83 @@ TEST_F(TTDSprinterMachine_Test, GameModule_ReplaysBitExactWithAnyRendering)
         ExpectLiveMatchesCheckpoint(idx, "Game, ScreenHQ on: frame " + std::to_string(idx), false, false);
     }
 }
+
+/// The video RAM is the engine's region: a restore writes its bytes back directly, and the region's
+/// after-restore call rebuilds the pens' color cache from them. With every pen repainted live after the
+/// recording, a seek composes the recorded picture: the replay it composes from draws with the restored pens
+TEST_F(TTDSprinterMachine_Test, ASeekRebuildsThePensFromTheRestoredVideoRam)
+{
+    PowerOn(true);
+    Skip(5);
+    StartRecording();
+    Record(3);
+    _ttd->StopRecording();
+    ASSERT_GE(_ttd->GetCheckpointCount(), 3u);
+
+    // The live machine repaints every pen (all three components flipped)
+    SprinterVideoRam& vram = _decoder->GetVideoRam();
+    for (uint32_t pen = 0; pen < SprinterVideoRam::kPens; pen++)
+        for (uint32_t c = 0; c < 3; c++)
+        {
+            const uint32_t address = SprinterVideoRam::PenAddress(pen) + c;
+            vram.Write(address, static_cast<uint8_t>(~vram.Read(address)));
+        }
+
+    const uint64_t frame = _ttd->GetCheckpoint(2)->time.frame;
+    ASSERT_TRUE(_ttd->SeekTo({frame, 0}));
+    ASSERT_NE(_screens.find(frame), _screens.end());
+    EXPECT_EQ(ScreenHash(), _screens.at(frame)) << "the composed picture uses the restored pens";
+}
+
+/// Every ISA population records and replays whole (owner request 2026-10-08: TTD of the whole Sprinter with its ISA
+/// cards): the network cards (NE2000, 3C509B), the UART cards (SprinterESP, the Hayes modem, SprinterSerial with
+/// both channels) in either slot and together, the ZX-bus adapter, empty slots. BIOS POST frames are recorded and
+/// replayed from the first checkpoint and from the middle one: CPU, chipset, every recorded device, every memory
+/// region and the picture equal the recording at every boundary. Two UART cards once made the device table refuse the
+/// recording (both named "uart"). Over 50 ms: BIOS POST frames and two replays, about 0.1 s per population
+class TTDSprinterIsa_Test : public TTDSprinterShipped_Test,
+                            public ::testing::WithParamInterface<std::pair<const char*, const char*>>
+{
+protected:
+    void ConfigureMachine(CONFIG& config) override
+    {
+        SprinterBios::Options options;
+        std::string error;
+        ASSERT_TRUE(SprinterBios::IsaSlotFromString(GetParam().first, 0, options, error)) << error;
+        ASSERT_TRUE(SprinterBios::IsaSlotFromString(GetParam().second, 1, options, error)) << error;
+        ASSERT_TRUE(SprinterBios::ApplyToConfig(config, options, error)) << error;
+    }
+};
+
+TEST_P(TTDSprinterIsa_Test, RecordsAndReplaysEveryCard)
+{
+    PowerOn(true);
+    Skip(5);
+    StartRecording();
+    Record(8);
+    _ttd->StopRecording();
+    ASSERT_GE(_ttd->GetCheckpointCount(), 9u);
+    ExpectExactReplay(0, 8, std::string(GetParam().first) + " + " + GetParam().second + " from the start");
+    ExpectExactReplay(4, 4, std::string(GetParam().first) + " + " + GetParam().second + " from the middle");
+
+    // Each UART on the cards is its own device
+    auto uarts = [](const char* card) { return std::strcmp(card, "dual16552") == 0 ? 2 : std::strcmp(card, "sprinteresp") == 0 ||
+                                                                                    std::strcmp(card, "modem") == 0 ? 1 : 0; };
+    const ttd::TTDDeviceTable& devices = _ttd->GetEngine().Devices();
+    const char* names[2][2] = {{"slot1.uart", "slot1.uart2"}, {"slot2.uart", "slot2.uart2"}};
+    for (int slot = 0; slot < 2; slot++)
+    {
+        const int count = uarts(slot == 0 ? GetParam().first : GetParam().second);
+        for (int ch = 0; ch < 2; ch++)
+            EXPECT_EQ(devices.Find({ttd::TTDDeviceType::SerialPort, names[slot][ch]}) != nullptr, ch < count)
+                << names[slot][ch];
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(Populations, TTDSprinterIsa_Test,
+                         ::testing::Values(std::make_pair("zxbus", "ne2000"), std::make_pair("ne2000", "el3c509b"),
+                                           std::make_pair("el3c509b", "ne2000"), std::make_pair("sprinteresp", "modem"),
+                                           std::make_pair("modem", "sprinteresp"), std::make_pair("dual16552", "dual16552"),
+                                           std::make_pair("dual16552", "sprinteresp"), std::make_pair("ne2000", "ne2000"),
+                                           std::make_pair("zxbus", "zxbus"), std::make_pair("none", "none")),
+                         [](const auto& info) { return std::string(info.param.first) + "_" + info.param.second; });

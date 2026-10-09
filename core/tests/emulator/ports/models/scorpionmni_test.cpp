@@ -32,7 +32,7 @@ protected:
     /// (the fixture has no Emulator wrapper - Core + decoder only)
     void PressMagicButton()
     {
-        _context->emulatorState.scorpionDosTrigger = 1;
+        _context->emulatorState.scorpion.dosTrigger = 1;
         _memory->UpdateZ80Banks();
         _core->GetZ80()->RequestNonMaskedInterrupt();
     }
@@ -61,7 +61,7 @@ TEST_F(ScorpionMni_Test, MagicButtonForcesTrdDosAndVectors)
     EXPECT_EQ(z80->pc, 0x0066u) << "NMI vector";
     EXPECT_EQ(_context->emulatorState.p1FFD, 0x10) << "#1FFD untouched - bit 1 NOT forced by the button";
     EXPECT_EQ(_context->emulatorState.p7FFD, 0x10) << "#7FFD untouched";
-    EXPECT_EQ(_context->emulatorState.scorpionDosTrigger, 1) << "trigger stays armed - the vector fetch is below #4000";
+    EXPECT_EQ(_context->emulatorState.scorpion.dosTrigger, 1) << "trigger stays armed - the vector fetch is below #4000";
     EXPECT_EQ(BankTag(0x0000), 0xC3) << "TR-DOS (page 3) forced at #0000";
     EXPECT_EQ(BankTag(0xC000), 0x48) << "RAM bank 8 still at #C000";
     EXPECT_TRUE(_context->emulatorState.flags & CF_DOSPORTS) << "FDC ports are on the bus while armed";
@@ -119,7 +119,7 @@ TEST_F(ScorpionMni_Test, VectorExecutesTrdDosCode)
 
     EXPECT_EQ(_core->GetZ80()->pc, 0xC3C3u) << "TR-DOS page code redirected execution";
     EXPECT_TRUE(_core->GetZ80()->nmi_in_progress) << "still inside the NMI handler";
-    EXPECT_EQ(_context->emulatorState.scorpionDosTrigger, 1) << "fetches below #4000 keep the trigger armed";
+    EXPECT_EQ(_context->emulatorState.scorpion.dosTrigger, 1) << "fetches below #4000 keep the trigger armed";
 }
 
 /// @brief The trigger releases on the first instruction fetch from >= #4000 -
@@ -135,16 +135,16 @@ TEST_F(ScorpionMni_Test, TriggerReleasesOnUpperHalfRead)
     ASSERT_EQ(BankTag(0x0000), 0xC3);
 
     _memory->MemoryWriteFast(0x4000, 0x5A);  // NMI pushes land in the upper half too
-    EXPECT_EQ(_context->emulatorState.scorpionDosTrigger, 1) << "writes never release the trigger";
+    EXPECT_EQ(_context->emulatorState.scorpion.dosTrigger, 1) << "writes never release the trigger";
     EXPECT_EQ(BankTag(0x0000), 0xC3) << "page 3 still forced after the write";
 
     _memory->MemoryReadFast(0xC001, false);  // the #0814 operand read of LD HL,(#C001)
-    EXPECT_EQ(_context->emulatorState.scorpionDosTrigger, 1) << "data reads never release DD50.1 - the NMI chain survives #0814";
+    EXPECT_EQ(_context->emulatorState.scorpion.dosTrigger, 1) << "data reads never release DD50.1 - the NMI chain survives #0814";
     EXPECT_EQ(BankTag(0x0000), 0xC3) << "page 3 still forced after the data read";
 
     uint8_t served = _memory->MemoryReadFast(0x4000, true);
 
-    EXPECT_EQ(_context->emulatorState.scorpionDosTrigger, 0) << "the >= #4000 instruction fetch released DD50.1";
+    EXPECT_EQ(_context->emulatorState.scorpion.dosTrigger, 0) << "the >= #4000 instruction fetch released DD50.1";
     EXPECT_EQ(BankTag(0x0000), 0xC1) << "#0000 back to the latched ROM1 selection";
     EXPECT_EQ(served, 0x5A) << "the release fetch read through the plain RAM mapping (the byte written earlier)";
 }
@@ -161,7 +161,7 @@ TEST_F(ScorpionMni_Test, ServiceLatchOutranksTheTrigger)
 
     EXPECT_EQ(BankTag(0x0000), 0xC2) << "service page wins over the armed trigger";
     EXPECT_EQ(_context->emulatorState.p1FFD, 0x12) << "latch untouched by the button";
-    EXPECT_EQ(_context->emulatorState.scorpionDosTrigger, 1) << "trigger armed regardless";
+    EXPECT_EQ(_context->emulatorState.scorpion.dosTrigger, 1) << "trigger armed regardless";
 
     ASSERT_TRUE(AcceptNmi());
     EXPECT_EQ(_core->GetZ80()->pc, 0x0066u) << "NMI vectors into the service page";
@@ -180,7 +180,7 @@ TEST_F(ScorpionMni_Test, RamAtZeroIsOverriddenWhileArmed)
 
     _memory->MemoryReadFast(0x4000, true);  // release strobe (M1 fetch)
 
-    EXPECT_EQ(_context->emulatorState.scorpionDosTrigger, 0);
+    EXPECT_EQ(_context->emulatorState.scorpion.dosTrigger, 0);
     EXPECT_EQ(BankTag(0x0000), 0x40) << "RAM bank 0 returns to #0000 after the release";
 }
 
@@ -200,11 +200,11 @@ TEST(ScorpionMniEmulator_Test, RequestMniArmsTriggerAndForcesTrdDos)
     uint8_t trdosFirstByte = memory->base_dos_rom[0];
     uint8_t basic128FirstByte = memory->base_128_rom[0];
 
-    EXPECT_EQ(context->emulatorState.scorpionDosTrigger, 0);
+    EXPECT_EQ(context->emulatorState.scorpion.dosTrigger, 0);
 
     emulator->RequestMNI();
 
-    EXPECT_EQ(context->emulatorState.scorpionDosTrigger, 1) << "DD50.1 armed";
+    EXPECT_EQ(context->emulatorState.scorpion.dosTrigger, 1) << "DD50.1 armed";
     EXPECT_FALSE(context->emulatorState.p1FFD & 0x02) << "the #1FFD latch is NOT written by the button";
     EXPECT_EQ(memory->DirectReadFromZ80Memory(0x0000), trdosFirstByte)
         << "the real TR-DOS ROM is mapped at #0000";
@@ -216,7 +216,7 @@ TEST(ScorpionMniEmulator_Test, RequestMniArmsTriggerAndForcesTrdDos)
 
     memory->MemoryReadFast(0x4000, true);  // the release strobe (M1 fetch)
 
-    EXPECT_EQ(context->emulatorState.scorpionDosTrigger, 0) << "trigger released by the upper-half fetch";
+    EXPECT_EQ(context->emulatorState.scorpion.dosTrigger, 0) << "trigger released by the upper-half fetch";
     EXPECT_EQ(memory->DirectReadFromZ80Memory(0x0000), basic128FirstByte)
         << "BASIC 128 returns to #0000 after the release";
 
@@ -237,7 +237,7 @@ TEST(ScorpionMniEmulator_Test, RequestNmiLeavesLatchesAlone)
     emulator->RequestNMI();
 
     EXPECT_FALSE(context->emulatorState.p1FFD & 0x02) << "plain NMI does not page the monitor";
-    EXPECT_EQ(context->emulatorState.scorpionDosTrigger, 0) << "plain NMI does not arm the DOS trigger";
+    EXPECT_EQ(context->emulatorState.scorpion.dosTrigger, 0) << "plain NMI does not arm the DOS trigger";
 
     z80->t = 100;
     z80->boundary = Z80_BOUNDARY_NONE;
@@ -271,16 +271,16 @@ TEST(ScorpionMniEmulator_Test, ProfRomMagicButtonSelectsQuadrantZero)
     const uint8_t q1Trdos = memory->ROMPageHostAddress(ROM_QUADRANT_PAGES + 3)[0];  // quadrant 1, page 3
 
     // Park the machine in plane 1 (what the firmware does after the menu timeout)
-    state.profrom_bank = 1;
-    state.p7EFD = 0x00;
+    state.scorpion.profromBank = 1;
+    state.scorpion.p7EFD = 0x00;
     memory->UpdateZ80Banks();
     ASSERT_EQ(memory->base_dos_rom[0], q1Trdos) << "precondition: quadrant 1 resolved";
 
     emulator->RequestMNI();
 
-    EXPECT_EQ(state.profrom_bank, 0) << "the button selects quadrant 0";
-    EXPECT_EQ(state.p7EFD, 0) << "the #7EFD window latch is cleared with it";
-    EXPECT_EQ(state.scorpionDosTrigger, 1) << "DD50.1 armed";
+    EXPECT_EQ(state.scorpion.profromBank, 0) << "the button selects quadrant 0";
+    EXPECT_EQ(state.scorpion.p7EFD, 0) << "the #7EFD window latch is cleared with it";
+    EXPECT_EQ(state.scorpion.dosTrigger, 1) << "DD50.1 armed";
     EXPECT_EQ(memory->DirectReadFromZ80Memory(0x0000), q0Trdos)
         << "#0000 maps quadrant-0 TR-DOS, not the plane-1 page";
 

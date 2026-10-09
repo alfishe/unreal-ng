@@ -313,10 +313,15 @@ void SoundChip_TurboSound::handleStep()
                 }
 
                 // Get decimated output per chip
-                float c0L = _chip0->decimatorLeft().getOutput();
-                float c0R = _chip0->decimatorRight().getOutput();
-                float c1L = _chip1->decimatorLeft().getOutput();
-                float c1R = _chip1->decimatorRight().getOutput();
+                // One pass over the taps for the four decimators fed in lockstep (FilterDecimator::getOutputs)
+                FilterDecimator* decimators[4] = {&_chip0->decimatorLeft(), &_chip0->decimatorRight(),
+                                                  &_chip1->decimatorLeft(), &_chip1->decimatorRight()};
+                double values[4];
+                FilterDecimator::getOutputs(decimators, 4, values);
+                float c0L = static_cast<float>(values[0]);
+                float c0R = static_cast<float>(values[1]);
+                float c1L = static_cast<float>(values[2]);
+                float c1R = static_cast<float>(values[3]);
 
                 // Store per-chip buffers for registry-driven capture
                 _chip0Buffer[_ayBufferIndex]     = static_cast<int16_t>(c0L * INT16_MAX);
@@ -657,6 +662,7 @@ void SoundChip_TurboSound::TTDSaveState(uint8_t* dst) const
 void SoundChip_TurboSound::TTDLoadState(const uint8_t* src)
 {
     const uint8_t* cur = src;
+    ++_renderEpoch;   // the host's character chains restart (ITurboSoundDevice::renderEpoch)
 
     uint8_t currentIdx = *cur++;
 

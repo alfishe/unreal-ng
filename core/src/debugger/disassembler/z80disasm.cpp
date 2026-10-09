@@ -2563,7 +2563,8 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>
     {
         uint8_t loByte = result.operandBytes[0];
         uint8_t hiByte = result.operandBytes[1];
-        result.wordOperand = static_cast<uint16_t>((hiByte << 8) | loByte);
+        result.wordOperand = (opcode.flags & OF_BIGENDIAN) ? static_cast<uint16_t>((loByte << 8) | hiByte)
+                                                           : static_cast<uint16_t>((hiByte << 8) | loByte);
     }
 
     // Indexed (IX/IY+d) instructions always carry the signed displacement as the first operand byte.
@@ -2660,6 +2661,42 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>
     return result;
 }
 
+// Z80N additions (ED prefix). Sizes and T-states follow table.specnext.dev; the conditional ones carry the
+// repeat (met) and final (not met) cost. Opcode ED B6 (LDIRSCALE) is not in the official set and stays unknown.
+const std::pair<uint8_t, OpCode> Z80Disassembler::z80nOpcodes[] =
+{
+    { 0x23, { OF_NONE, 8, 0, 0, "swapnib" } },
+    { 0x24, { OF_NONE, 8, 0, 0, "mirror a" } },
+    { 0x27, { OF_MBYTE, 11, 0, 0, "test :1" } },
+    { 0x28, { OF_NONE, 8, 0, 0, "bsla de,b" } },
+    { 0x29, { OF_NONE, 8, 0, 0, "bsra de,b" } },
+    { 0x2A, { OF_NONE, 8, 0, 0, "bsrl de,b" } },
+    { 0x2B, { OF_NONE, 8, 0, 0, "bsrf de,b" } },
+    { 0x2C, { OF_NONE, 8, 0, 0, "brlc de,b" } },
+    { 0x30, { OF_NONE, 8, 0, 0, "mul d,e" } },
+    { 0x31, { OF_NONE, 8, 0, 0, "add hl,a" } },
+    { 0x32, { OF_NONE, 8, 0, 0, "add de,a" } },
+    { 0x33, { OF_NONE, 8, 0, 0, "add bc,a" } },
+    { 0x34, { OF_MWORD, 16, 0, 0, "add hl,:2" } },
+    { 0x35, { OF_MWORD, 16, 0, 0, "add de,:2" } },
+    { 0x36, { OF_MWORD, 16, 0, 0, "add bc,:2" } },
+    { 0x8A, { OF_MWORD | OF_BIGENDIAN, 23, 0, 0, "push :2" } },
+    { 0x90, { OF_IO, 16, 0, 0, "outinb" } },
+    { 0x91, { OF_MWORD | OF_IO, 20, 0, 0, "nextreg :1,:1" } },   // two operand bytes: register, value
+    { 0x92, { OF_MBYTE | OF_IO, 17, 0, 0, "nextreg :1,a" } },
+    { 0x93, { OF_NONE, 8, 0, 0, "pixeldn" } },
+    { 0x94, { OF_NONE, 8, 0, 0, "pixelad" } },
+    { 0x95, { OF_NONE, 8, 0, 0, "setae" } },
+    { 0x98, { OF_JUMP | OF_INDIRECT, 13, 0, 0, "jp (c)" } },
+    { 0xA4, { OF_BLOCK, 16, 0, 0, "ldix" } },
+    { 0xA5, { OF_BLOCK, 14, 0, 0, "ldws" } },
+    { 0xAC, { OF_BLOCK, 16, 0, 0, "lddx" } },
+    { 0xB4, { OF_BLOCK | OF_VAR_T, 0, 21, 16, "ldirx" } },
+    { 0xB7, { OF_BLOCK | OF_VAR_T, 0, 21, 16, "ldpirx" } },
+    { 0xBC, { OF_BLOCK | OF_VAR_T, 0, 21, 16, "lddrx" } },
+};
+const size_t Z80Disassembler::z80nOpcodesCount = sizeof(z80nOpcodes) / sizeof(z80nOpcodes[0]);
+
 OpCode Z80Disassembler::getOpcode(uint16_t prefix, uint8_t fetchByte)
 {
     OpCode opcode;
@@ -2676,6 +2713,17 @@ OpCode Z80Disassembler::getOpcode(uint16_t prefix, uint8_t fetchByte)
             break;
         case 0x00ED:
             opcode = edOpcodes[fetchByte];
+            if (_z80nMode)
+            {
+                for (size_t i = 0; i < z80nOpcodesCount; i++)
+                {
+                    if (z80nOpcodes[i].first == fetchByte)
+                    {
+                        opcode = z80nOpcodes[i].second;
+                        break;
+                    }
+                }
+            }
             break;
         case 0x00FD:
             opcode = fdOpcodes[fetchByte];
@@ -2806,7 +2854,7 @@ std::string Z80Disassembler::formatMnemonic(const DecodedInstruction& decoded)
                     {
                         uint8_t loByte = decoded.operandBytes[pos++];
                         uint16_t hiByte = decoded.operandBytes[pos++];
-                        uint16_t value = hiByte << 8 | loByte;
+                        uint16_t value = (decoded.opcode.flags & OF_BIGENDIAN) ? (loByte << 8 | hiByte) : (hiByte << 8 | loByte);
                         values.push_back(value);
                     }
                     break;

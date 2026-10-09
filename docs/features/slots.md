@@ -94,9 +94,15 @@ the slots with the same id on the new machine with their unsaved writes. A remov
 (the NeoGS SD card `sd.ngs`) refuses the change until the request says what to do with them: `--media save` or
 `--media discard`. The reply names the new id (`restart.emulatorId`) and where the media went.
 
-**Refused** without changing anything: while a TTD recording runs (the recording's devices are fixed); when the
-machine cannot take the card (a fixed built-in uses its ports, the bus lacks a signal and no adapter connects it);
-when the new set would not create a machine (two cards in conflict).
+**Refused** without changing anything: when the machine cannot take the card (a fixed built-in uses its ports, the
+bus lacks a signal and no adapter connects it); when the new set would not create a machine (two cards in conflict).
+A TTD recording does not stop the change: changing the machine ends the recording (its history stays loadable when it
+was a black box) and the restarted machine records again only by its own settings. Only the old time-travel
+implementation (`UNREAL_TTD_BACKEND=v1`) refuses the change while it records, naming the recording.
+
+**What a restart keeps besides the cards:** the network settings and the firmware choices made through them - the
+ZX-Evo AVR (`avr_firmware`, `[EVO] Avr=`) and the ATM Turbo 2+ keyboard controller (`kbc_firmware`, `[ATM] Kbc=`) -
+as the machine runs with them.
 
 ## The General Sound personality
 

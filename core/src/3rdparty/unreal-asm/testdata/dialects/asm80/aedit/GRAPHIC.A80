@@ -1,0 +1,521 @@
+;Part 2. Graphic samples. Subprograms of low level.
+
+;Print string (text line) at the screen
+;IY- addr. of the text line
+;HL-x
+;b-y,c- colour
+pline
+		ld	(plinex),hl
+		ld	a,c
+		cp	#ff
+		jr	z,pline
+		rlca
+		rlca
+		rlca
+		rlca
+		or	c
+		ld	(printcol),a
+pline1
+		ld	a,(IY)
+		cp	0
+		ret	z
+		cp	#16
+		jp	z,plinecoor
+		cp	#0d
+		jp	z,pline_cr
+		cp	#0A
+		jp	z,pline_lf
+		cp	#17
+		jp	z,pline_tab
+		call	print
+		inc	hl
+		inc	hl
+		inc	hl
+		inc	hl
+
+		inc	IY
+		jp	pline1
+
+
+
+
+pline_tab
+		push	bc
+		ld	b,24
+pline_tab1
+		inc     hl
+		djnz	pline_tab1
+		pop	bc
+		jp	pline1
+
+pline_lf
+		inc	b
+		inc	b
+		inc	b
+		inc	b
+		inc	b
+		inc	b
+		inc	b
+		inc	b
+
+		inc	IY
+		jp	pline1
+
+pline_cr
+		ld	hl,(plinex)
+		inc	IY
+		jp	pline1
+
+plinecoor
+		inc	IY
+		ld	a,(IY)
+		ld	b,a
+		ld	a,(IY+1)
+		ld	l,a
+		ld	a,(IY+2)
+		ld	h,a
+		inc	IY
+		inc	IY
+		inc	IY
+		jp	pline1
+
+
+
+
+
+plinex		defw	0
+
+
+
+print_tab
+;Print to symbol positions 
+;B-y. C - x
+;A - symbol
+;Colour - last
+
+		push	af
+		push	bc
+		ld	b,c
+		ld	hl,0
+		ld	de,6
+print_tab1
+		add	hl,de
+		djnz	pline_tab1
+		pop	bc
+		ld	c,#ff
+		pop	af
+		jp	print
+
+
+
+
+
+;Print to the screen (Pixels coordinates).
+;6x8 pixels
+print
+;HL-x
+;B-y
+;C-colour, #FF - no change
+;A-symbol
+
+		push	ix
+		push	hl
+		push	de
+		push	bc
+		push	af
+		ld	ix,printchar
+		ld	(ix),a
+		srl	h
+		rr	l
+		ld	(ix+1),l
+		ld	(ix+2),h
+		ld	(ix+3),b
+		bit	7,c
+		call	z,prncolor_change
+		call	open_video_mem
+		ld	a,(ix)
+		ld	h,0
+		ld	l,a
+		add	hl,hl
+		add	hl,hl
+		add	hl,hl
+		ex	de,hl
+		ld	hl,font
+		add	hl,de
+		ld	(ix+4),l
+		ld	(ix+5),h
+; Loop of 8 pixels at the screen
+		ld	a,8
+print_lines
+		push	af
+		ld	d,(ix+2)
+		ld	e,(ix+1)
+		ld	hl,#4000
+		add	hl,de
+		ld	(pcuradr),hl
+		ld	(pcuradr1),hl
+		ld	a,(ix+3)
+		out	(port_y),a
+		ld	l,(ix+4)
+		ld	h,(ix+5)
+		ld	a,(hl)
+		ld	c,a
+		ld	a,3
+print_point
+		push	af
+		ld	hl,(pcuradr1)
+		ld	a,(hl)
+		sla	c
+		jr	nc,ppoint1
+		and	%00001111
+		ld	b,(ix+6)
+		push	af
+		ld	a,b
+		and	%11110000
+		ld	b,a
+		pop	af
+		or	b
+ppoint1
+		sla	c
+		jr	nc,ppoint2
+		and	%11110000
+		ld	b,(ix+6)
+		push	af
+		ld	a,b
+		and	%00001111
+		ld	b,a
+		pop	af
+		or	b
+ppoint2
+		ld	(hl),a
+		inc	hl
+		ld	(pcuradr1),hl
+		pop	af
+		dec	a
+		jp	nz,print_point
+		ld	a,(ix+3)
+		inc	a
+		ld	(ix+3),a
+		ld	h,(ix+5)
+		ld	l,(ix+4)
+		inc	hl
+		ld	(ix+5),h
+		ld	(ix+4),l
+		ld	hl,(pcuradr)
+		ld	(pcuradr1),hl
+		pop	af
+		dec	a
+		jp	nz,print_lines
+		pop	af
+		pop	bc
+		pop	de
+		pop	hl
+		pop	ix
+
+		ret
+
+prncolor_change
+		ld	a,c
+		rlca
+		rlca
+		rlca
+		rlca
+		or	c
+		ld	(ix+6),a
+		ret
+
+
+
+pcuradr		defw	0
+pcuradr1	defw	0
+printchar	defb	0
+printx		defw	0
+printy		defb	0
+printfnt	defw	0
+printcol	defb	0
+
+
+
+
+;Paint the point (dot).
+set_point
+;HL-x D-y, E-colour
+
+		push	hl
+		push	de
+
+		push	de
+		ld	a,e
+		sla	e
+		sla	e
+		sla	e
+		sla	e
+		or	e
+		ld	(modcolor),a
+		pop	de
+		ld	a,d
+		ld	(pointy),a
+		push	hl
+		srl	h
+		rr	l
+		ld	(movex),hl
+		pop	hl
+		bit	0,l
+		jp	z,set_point_p
+		jp	set_point_np
+set_point_p
+		ld	a,%11110000
+		ld	(set_point_cm),a
+		xor	#ff
+		ld	(set_point_sm),a
+		jp	set_point_put
+
+
+set_point_np
+		ld	a,%00001111
+		ld	(set_point_cm),a
+		xor	#ff
+		ld	(set_point_sm),a
+		jp	set_point_put
+
+
+
+set_point_put
+
+		call	open_video_mem
+		ld	a,(pointy)
+		out	(port_y),a
+		ld	hl,(movex)
+		ld	d,h
+		ld	e,l
+		ld	hl,#4000
+		add	hl,de
+		ld	a,(hl)
+		and	0
+set_point_sm	equ	$-1
+		ld	e,a
+		ld	a,(modcolor)
+		and	0
+set_point_cm	equ	$-1
+		or	e
+		ld	(hl),a
+		call 	close_video_mem
+		pop	de
+		pop	hl
+
+		ret
+
+modcolor	defb	0
+pointy		defb	0
+movex		defw	0
+
+;Paint horizontal line
+horline
+		call	open_video_mem
+
+		push	de
+		ld	d,h
+		ld	e,l
+		ld	hl,#4000
+		srl	d
+		rr	e
+		add	hl,de
+		pop	de
+		ld	a,d
+		out	(port_y),a
+		ld	a,e
+		sla	a
+		sla	a
+		sla	a
+		sla	a
+		or	e
+		ld	(hl),a
+		ld	d,h
+		ld	e,l
+		inc	de
+		srl	b
+		rr	c
+		ldir
+
+		call	close_video_mem
+		ret
+
+
+
+
+
+verline
+;HL-x, D-y, E-colour, B-length
+		call	set_point
+		inc	d
+		djnz	verline
+		ret
+
+
+box
+;HL-x,D-y,E-colour, BC-length, A-height
+		push	af
+		push	hl
+		push	de
+		push	bc
+		call	horline
+		pop	bc
+		pop	de
+		pop	hl
+		pop	af
+		push	af
+		push	hl
+		push	de
+		push	bc
+		add	a,d
+		ld	d,a
+		call	horline
+		pop	bc
+		pop	de
+		pop	hl
+		pop	af
+		push	af
+		push	hl
+		push	de
+		push	bc
+		ld	b,a
+		call	verline
+		pop	bc
+		pop	de
+		pop	hl
+		pop	af
+		add	hl,bc
+		ld	b,a
+		call	verline
+		ret
+
+
+
+fbox
+;HL-x,D-y,E-colour, BC-length, A-height
+		push	ix
+		call	open_video_mem
+		ld	ix,box_x
+;Loading of variables
+		res	0,c
+		srl	b
+		rr	c
+		ld	(ix+3),c
+		ld	(ix+4),b
+		res	0,l
+		srl	h
+		rr	l
+		ld	(ix+1),h
+		ld	(ix),l
+		ld	(ix+2),d
+		ld	(ix+5),a
+		ld	a,e
+		rlca
+		rlca
+		rlca
+		rlca
+		or	e
+		ld	(ix+6),a
+
+fbox1
+		ld	a,(ix+2)
+		out 	(port_y),a
+		inc	a
+		ld	(ix+2),a
+		ld	d,(ix+1)
+		ld	e,(ix)
+		ld	hl,#4000
+		add	hl,de
+		ld	d,h
+		ld	e,l
+		inc	de
+		ld	b,(ix+4)
+		ld	c,(ix+3)
+		ld	a,(ix+6)
+		ld	(hl),a
+		ldir
+		ld	a,(ix+5)
+		dec	a
+		jr	z,fbox2
+		ld	(ix+5),a
+		jp	fbox1
+fbox2
+		pop	ix
+		call	close_video_mem
+		ret
+
+box_x		defw	0	;+0 +1
+box_y		defb	0	;+2
+box_l		defw	0	;+3 +4
+box_h		defb	0	;+5
+box_c		defb	0	;+6
+
+
+putspr
+;HL-x, D-y, E-empty, BC-length, A - height, iy - address
+		call	open_video_mem1
+		ld	(spr_adr),iy
+		ld	iy,spr_cox
+		srl	h
+		rr	l
+		ld	(iy),l
+		ld	(iy+1),h
+		srl	b
+		rr	c
+		ld	(iy+4),b
+		ld	(iy+3),c
+		ld	(iy+2),d
+		ld	(iy+5),a
+
+putspr1
+		ld	a,(iy+2)
+		out	(port_y),a
+		ld	d,(iy+1)
+		ld	hl,#4000
+		ld	d,(iy+1)
+		ld	e,(iy)
+		add	hl,de
+		ld	d,h
+		ld	e,l
+		ld	hl,(spr_adr)
+		ld	b,(iy+4)
+		ld	c,(iy+3)
+
+		ldir
+		ld	(spr_adr),hl
+		ld	a,(spr_hei)
+		dec	a
+		ret	z
+		ld	(spr_hei),a
+		ld	a,(iy+2)
+		inc	a
+		ld	(iy+2),a
+		jp	putspr1
+		call	close_video_mem
+		ret
+
+
+
+spr_cox		defw	0	;+0 +1
+spr_coy		defb	0	;+2
+spr_len		defw	0	;+3 +4
+spr_hei		defb	0	;+5
+spr_adr		defw	0	;+6 +7
+
+
+
+getspr
+		ret
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,17 +1,7 @@
 #include "emulatorcontext.h"
 
 #include "common/modulelogger.h"
-#include "emulator/video/atm/atmfont.h"
 #include "stdafx.h"
-
-/// The built-in font is stored row * 256 + code; the FPGA's font RAM is addressed code * 8 + row
-void EmulatorState::InitAtmFont()
-{
-    for (unsigned code = 0; code < 256; code++)
-        for (unsigned row = 0; row < 8; row++)
-            atmFontRam[code * 8 + row] = ATM_FONT[row * 256 + code];
-    atmFontByte = 0xFF;
-}
 
 /// region <Constructors / destructors>
 
@@ -28,8 +18,8 @@ EmulatorContext::EmulatorContext(LoggerLevel level)
 
     // The ATM palette must carry the standard ZX colors, not the value-init
     // black - the extended video modes render through it before any #FF write
-    this->emulatorState.InitAtmPalette();
-    this->emulatorState.InitAtmFont();
+    this->emulatorState.atm.InitPalette();
+    this->emulatorState.atm.InitFont();
 
     // Initialize all pointer members to nullptr for safety
     pModuleLogger = nullptr;

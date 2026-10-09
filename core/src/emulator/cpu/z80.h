@@ -735,7 +735,7 @@ public:
     ///
     /// The effective multiplier composes the host speed control
     /// (next_z80_frequency_multiplier) with the Scorpion hardware turbo
-    /// state (hw_turbo_ratio, driven by the model decoder - Scorpion: scorpion_turbo,
+    /// state (hw_turbo_ratio, driven by the model decoder - Scorpion: scorpion.turbo,
     /// hardware-reference 13). Called once per frame start by BeginFrame, so
     /// the scaled INT window / frame limit are always derived from the
     /// applied value.

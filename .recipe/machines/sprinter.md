@@ -421,7 +421,7 @@ load_software {"path":"scratch/action.sna"}                 # in a mode: Take
 
 Not restored (listed as *ignored* in the report): `#1FFD` of a +2A/+3 snapshot (the Sprinter's `#1FFD` is the Scorpion's),
 
-A ZX mode also **saves**: `snapshot/save` (or `snapshot formats` first) takes the Spectrum banks through the PLD cells #F0-#F7 in the Spectrum's order and names the machine by the launcher mode (`SP.ZX`, `SPRINTER.ZX`, `ORIGIN.ZX`: a 128K; `P128.ZX`, `PENT128.ZX`: a Pentagon 128; `SC256.ZX`, `SCORPION.ZX`: a Scorpion), so the file restores on any machine of that kind and back on a Sprinter. At the DSS prompt or in the BIOS the save is refused (`needs: zx_mode`); the 512 KB modes have no view yet. See [load-snapshot.md](../media/load-snapshot.md#save-a-snapshot).
+A ZX mode also **saves**: `snapshot/save` (or `snapshot formats` first) takes the Spectrum banks through the PLD cells #F0-#F7 in the Spectrum's order and names the machine by the launcher mode (`SP.ZX`, `SPRINTER.ZX`, `ORIGIN.ZX`: a 128K; `P128.ZX`, `PENT128.ZX`: a Pentagon 128; `SC256.ZX`, `SCORPION.ZX`: a Scorpion), so the file restores on any machine of that kind and back on a Sprinter. At the DSS prompt or in the BIOS the save is refused (`needs: zx_mode`); a 512 KB mode (`P512.ZX`, `PENT512.ZX`) is a Pentagon 512 with 32 banks (cells #F0-#FF and #D0-#DF), so only `.szx` can hold it. See [load-snapshot.md](../media/load-snapshot.md#save-a-snapshot).
 `#EFF7`, the TR-DOS paging flag of an SNA 128 (the Sprinter's TR-DOS follows its own M1 trap rule), the interrupt shadow
 after EI. Checked live: `action.sna` (a starfield demo) runs on the Sprinter's BIOS ZX mode as on a Pentagon 128.
 

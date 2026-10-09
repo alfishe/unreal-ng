@@ -15,6 +15,7 @@
 #include "emulator/ports/models/sprinter/sprinterinput.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfiguration.h"
 #include "emulator/ports/models/sprinter/sprinterpldstate.h"
+#include "emulator/ports/models/sprinter/sprinterstatetransferhost.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/sprinter/covoxblaster.h"
 #include "emulator/video/sprinter/sprinterintsource.h"
@@ -170,6 +171,8 @@ public:
 
     /// region <PLD state and parts>
 public:
+    /// A Spectrum state moves into / out of the ZX mode the machine runs, behind its PLD cells (MachineStateTransfer)
+    const IStateTransferHost* GetStateTransferHost() const override { return &SprinterStateTransferHost::Instance(); }
     SprinterPldState& GetPldState() { return _pld; }
     const SprinterPldState& GetPldState() const { return _pld; }
     SprinterVideoRam& GetVideoRam() { return _vram; }

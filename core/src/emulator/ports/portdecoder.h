@@ -40,6 +40,7 @@ namespace snapshot
 class ISnapshotCommitPolicy;
 class ISnapshotCapturePolicy;
 }
+class IStateTransferHost;
 class Memory;
 class Screen;
 class Beeper;
@@ -1319,6 +1320,10 @@ public:
     /// Give the machine a policy (a decoder does it in its constructor; tests with a fake). Not owned: the policy
     /// must outlive its use, a machine's own policy lives as long as the decoder
     void SetSnapshotPolicy(snapshot::ISnapshotCommitPolicy* policy) { _snapshotPolicy = policy; }
+
+    /// A machine that holds a Spectrum state inside a running mode of its own (a Sprinter in a ZX mode): the banks behind its own
+    /// mapping, no reset to receive a state (MachineStateTransfer). nullptr = a plain machine
+    virtual const IStateTransferHost* GetStateTransferHost() const { return nullptr; }
 
     /// The save side (P6): how this machine shows its 128K view to a snapshot. nullptr = the default rule for the model
     /// (snapshotcapture.cpp): the Spectrum models as they are, TS-Conf and the ATMs by their live window map

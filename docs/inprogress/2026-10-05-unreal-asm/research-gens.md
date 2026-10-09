@@ -105,7 +105,8 @@ number is kept in the line's attributes (`GensCodec::LineNumber`).
 | Devpac +3 (GENP3, GENP351, GENS4, GENS451) | `HiSoftDevpac.dsk.zip` | — | four copies of the routine |
 | Opus Devpac | `HiSoftDevpac.opd.zip` | — | two copies |
 | GENS4B (TR-DOS, V4.1) | `MONSGENS.LZH` → `GENS4B.$C` (start 30000) | 12174 | body offset `#0CAA` |
-| GENS4++ (TR-DOS) | vtrd `GENS4TF.ZIP` | 12407 | `#0F87` |
+| GENS4++ = GENS v4.3t (Rus, Alexander Yanchurkin 1991; TR-DOS) | vtrd `GENS4TF.ZIP` | 12407 | `#0F87`; checked in the emulator (§8.1) |
+| Gens v4.1 128K (Wlodek Black 1993; TR-DOS) | vtrd `G4-128K.ZIP` (`gens4rd.C`, start 30000) | 12174 | its disk holds the GENS source `UNISPR&` (340 lines, type C at 37066): byte-exact and canonical as version 2 |
 | gens4edi (Edit-Gens System 1996) | vtrd `GENS+EDT.ZIP`, zxdb `Edit-GensSystemV1.0.trd.zip` | 12174 | `#0CAA` |
 | VK Devpac 7.8 (Racunari 1985) | `VKDevpac7.8.tap.zip` | 20192 | `#360B` |
 
@@ -144,7 +145,7 @@ Testdata `gens/` (`*.txt` = the expected listing, number and text):
 
 The KLUG BBS archive: [klug_bbs.7z](https://yadi.sk/d/N_p56RIHWU15Gw). The T-command include files (one typed in
 GENS4, one saved by GENS3) were checked with the reference decoder; the codec reads one text block (a TR-DOS file or
-a tape data block) and leaves T's multi-block files to a tape container (TODO).
+a tape data block) and leaves T's multi-block files to the tape container (`containers::ReadTape`, 2026-10-07: the lines of every block joined).
 
 All 8 files byte-exact; the GENS2-4 rule (§3) applied to the listed text reproduces every real and typed line (1713);
 the crafted lines with more than two TABs or `#80`+ bytes keep their stored bytes in the line attributes.
@@ -169,6 +170,16 @@ and `RANDOMIZE USR 26000`). Tape saves were captured by putting `JR $` at the RO
 GENS4B (TR-DOS, 51 columns) was started on a Pentagon with TR-DOS but its disk `G` crashed in
 this session; its stored format is the same code (§3), and the five TR-DOS corpus files decode and
 list correctly in the tape GENS4.
+
+### 8.1 GENS v4.3t (2026-10-08)
+
+`GENS4tf` from `GENS4TF.SCL` (Pentagon, `RUN "GENS4tf"`): a Russian menu, the GENS2-4 text format. Commands take the
+file name in the command line (`P11,19,PROBE` saves lines 11-19; a missing name answers `имя файла?`, "file name?",
+and returns to the prompt). The text is saved as **type A with start 0** (GENS4B: type C at the text's address); a
+probe typed there decodes and encodes back byte for byte (`testdata/gens/typed-gens43t-PROBE.$A`). `A,,OBJ` assembles
+to the disk file `OBJ` (type C at the ORG, memory untouched; plain `A` stops after pass 1 asking for the name): the
+19 bytes equal the probe's sjasmplus conversion except `DEFS 2`, where GENS 4.3t writes what its output buffer held
+(`#49 #49`, the `I` of the `DEFM "HI"` before).
 
 ## 9. Open questions
 

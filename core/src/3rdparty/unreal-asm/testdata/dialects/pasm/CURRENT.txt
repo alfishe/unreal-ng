@@ -1,0 +1,14 @@
+        ORG #6000
+        JP $
+        LD HL,$
+        LD BC,($)
+        LD IX,$
+        JR $
+        DW $
+        LD ($),A
+        LD ($),HL
+        LD ($),DE
+        LD HL,($)
+        CALL $
+        LD (IY+2),#12
+        NOP

@@ -73,7 +73,7 @@ std::string TimeTravelController::VisitComposedFrames(uint64_t fromFrame, uint64
         f.p7FFD = _context->emulatorState.p7FFD;
         f.border = _context->emulatorState.pFE & 0b0000'0111;
         f.activeScreen = screen->GetActiveScreen();
-        ComposeDisplay(/*frameTarget=*/true);
+        ComposeDisplay(/*frameTarget=*/true, kCurrentFrame);   // positioned at its start: this frame to its end
 
         uint32_t* fb = nullptr;
         size_t fbSize = 0;

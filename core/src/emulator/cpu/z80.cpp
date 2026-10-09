@@ -353,11 +353,22 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     }
 
     // TR-DOS disk autostart: one-shot rewrite of the cold-start RUN "boot" line into RUN "<name>".
-    // Only armed for a single-BASIC-program autostart; one compare per instruction otherwise
+    // Only armed for a single-BASIC-program autostart; one compare per instruction otherwise. While
+    // TTD records (a black box restarted after the autostart's reset) the rewrite is an edit with
+    // its bytes, so a replay repeats it; a replay never runs the hook itself (state-registry gap 16)
     if (pc == DiskAutostart::COMMAND_LOOP_ENTRY && _context->pDiskAutostart != nullptr &&
         _context->pDiskAutostart->IsArmed())
     {
-        _context->pDiskAutostart->HandleCommandLoopHook(*this);
+        ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+        if (!ttd || !ttd->IsReplayActive())
+        {
+            const bool recorded = ttd && ttd->IsRecording();
+            if (recorded)
+                ttd->BeginToolEdit();
+            const bool rewritten = _context->pDiskAutostart->HandleCommandLoopHook(*this);
+            if (recorded)
+                ttd->EndToolEdit(rewritten ? "disk autostart" : nullptr);
+        }
     }
 
     // Fast disk loading trap (Layer B ROM $3FEC INI sector drain loop trap).

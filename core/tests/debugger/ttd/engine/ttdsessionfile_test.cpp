@@ -8,8 +8,9 @@
 /// unreachable part, a file cut short loads its complete parts, and a loaded
 /// session is read-only.
 ///
-/// Decodes every checkpoint of the corpus twice: an acceptance check of a few
-/// seconds, not a unit test.
+/// The corpus's ZX-MultiSound sessions are recorded in the test process first
+/// (ttdmultisoundsessions.h). Decodes every checkpoint of the corpus twice: an
+/// acceptance check of a few seconds, not a unit test.
 
 #include <gtest/gtest.h>
 
@@ -27,6 +28,8 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/gsslot.h"
+#include "_helpers/ttdmultisoundsessions.h"
+#include "_helpers/ttdslotcards.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testwaithelper.h"
@@ -46,7 +49,8 @@ namespace
 namespace fs = std::filesystem;
 using namespace ttd;
 
-std::vector<fs::path> CorpusFiles()
+/// The stored v1 sessions (testdata/ttd, its port journals, testdata/machines/<machine>/ttd)
+std::vector<fs::path> StoredFiles()
 {
     std::vector<fs::path> files;
     const fs::path root = TestPathHelper::FindProjectRoot() / "testdata";
@@ -60,6 +64,15 @@ std::vector<fs::path> CorpusFiles()
                 if (entry.path().extension() == ".ttd")
                     files.push_back(entry.path());
     std::sort(files.begin(), files.end());
+    return files;
+}
+
+/// The whole v1 corpus: the stored sessions and the ZX-MultiSound ones, recorded by v1 in this process
+std::vector<fs::path> CorpusFiles()
+{
+    std::vector<fs::path> files = StoredFiles();
+    for (const fs::path& recorded : ttdtest::MultiSoundSessions(ttdtest::SessionRecorder::V1))
+        files.push_back(recorded);
     return files;
 }
 
@@ -156,13 +169,9 @@ protected:
         ASSERT_TRUE(ReadTTDFileInfo(file.string(), info, err)) << err;
         if (_emulator)
             EmulatorTestHelper::CleanupEmulator(_emulator);
-        // The card the session was recorded with, fitted at creation: the shipped 48K / 128K / +2 / +2A / +3 and
-        // Profi configs have no GS since 2026-10-04 (owner decision), and a switch cannot fill an empty slot
-        {
-            GeneralSoundFitScope fit(info.machine.generalSound);
-            _emulator = EmulatorTestHelper::CreateStandardEmulator(info.machine.model, LoggerLevel::LogError);
-        }
-        ASSERT_NE(_emulator, nullptr);
+        // The machine the session was recorded on: its General Sound card and its slot-built cards (ttdslotcards.h)
+        _emulator = ttdtest::CreateRecordedMachine(info.machine, err);
+        ASSERT_NE(_emulator, nullptr) << err;
         EmulatorContext* context = _emulator->GetContext();
         _v1 = context->pTimeTravelManager;
         _emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
@@ -174,12 +183,12 @@ protected:
         ASSERT_TRUE(bench::FeedV1Session(*_v1, engine, err)) << err;
     }
 
-    /// The largest session of the corpus
+    /// The largest stored session of the corpus
     fs::path Largest()
     {
         fs::path best;
         uintmax_t size = 0;
-        for (const fs::path& f : CorpusFiles())
+        for (const fs::path& f : StoredFiles())
             if (fs::file_size(f) > size)
             {
                 size = fs::file_size(f);
@@ -339,7 +348,7 @@ TEST_F(TTDSessionFile_Test, AFileCutShortLoadsItsCompleteParts)
 TEST_F(TTDSessionFile_Test, ALoadedSessionIsReadOnly)
 {
     TimeTravelEngine original;
-    ASSERT_NO_FATAL_FAILURE(Feed(CorpusFiles().front(), original));
+    ASSERT_NO_FATAL_FAILURE(Feed(StoredFiles().front(), original));
     const std::vector<uint8_t> bytes = Save(original);
     TimeTravelEngine loaded;
     TTDMemorySource source(bytes);

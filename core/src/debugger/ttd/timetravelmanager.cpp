@@ -149,10 +149,12 @@ bool TimeTravelManager::StartRecording()
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (_state == TTDSessionState::Recording)
         return true;  // Idempotent
+    _lastStartError.clear();
 
     if (!_unavailableReason.empty())
     {
         MLOGWARNING("TimeTravelManager::StartRecording — refused: %s", _unavailableReason.c_str());
+        _lastStartError = _unavailableReason;
         return false;
     }
 
@@ -170,6 +172,7 @@ bool TimeTravelManager::StartRecording()
     {
         MLOGWARNING("TimeTravelManager::StartRecording — missing dependencies (context=%p memory=%p tracker=%p)",
                     (void*)_context, (void*)_memory, (void*)_dirtyTracker);
+        _lastStartError = "the machine is not ready (no context, memory or dirty tracker)";
         return false;
     }
 
@@ -238,6 +241,7 @@ bool TimeTravelManager::StartRecording()
         {
             MLOGERROR("TimeTravelManager::StartRecording - refusing to record: %s",
                       registrationError.c_str());
+            _lastStartError = registrationError;
             return refuse();
         }
     }
@@ -288,6 +292,7 @@ bool TimeTravelManager::StartRecording()
         MLOGWARNING("TimeTravelManager::StartRecording — implausible modelRamPages=%u, refusing to start",
                     static_cast<unsigned>(_modelRamPages));
         _modelRamPages = 0;
+        _lastStartError = "the machine reports no RAM pages to record";
         return refuse();
     }
 
@@ -1796,6 +1801,9 @@ void TimeTravelManager::RestoreCheckpoint(const TTDCheckpoint& cp)
     // RestoreChipsetState is a pure field copy into emulatorState. It does
     // NOT re-run the port decoder — that's the next sub-step.
     RestoreChipsetState(chipsetState, &_context->emulatorState);
+    // The audio timeline jumps: the host-side post-processing (voicing, character chains) restarts
+    if (_context->pSoundManager)
+        _context->pSoundManager->onStateRestored();
 
     // The CPU's in-frame position (the frame-end overshoot) - before the
     // peripherals load, so devices rebuild their timelines around the
@@ -5431,9 +5439,8 @@ bool TimeTravelManager::DeserializeSessionImpl(std::istream& in, std::string& er
         if (_context->pSlotManager)
             matches = _context->pSlotManager->TtdSessionMatches(blobs, notRecordedMask, _peripherals, why);
         else
-            matches = SlotManager::TtdSlotSetMatches({}, SlotManager::TtdDeviceSet::Of(blobs, notRecordedMask),
-                                                     SlotManager::TtdDeviceSet::Of(_peripherals), why) &&
-                      (!_context->pPortDecoder || _context->pPortDecoder->TtdSessionMatches(blobs, why));
+            matches = SlotManager::TtdSessionMatchesWithoutSlots(
+                _context, SlotManager::TtdDeviceSet::Of(blobs, notRecordedMask), blobs, _peripherals, why);
         if (!matches)
         {
             err = why;
@@ -5861,7 +5868,7 @@ void TimeTravelManager::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t
     rec.value    = newVal;
     // Journaled writes always have a RAM page (Memory gates on kPhysPageNone),
     // and RAM pages are 0..255, so the record's byte holds it exactly.
-    rec.physPage = static_cast<uint8_t>(physPage);
+    SetRecordPage(rec, physPage);
     (void)oldVal;  // Not stored in the compact 12-byte record (TDD §9.3)
 
     if (_writeJournal)
@@ -6002,7 +6009,7 @@ TTDJournalBuildResult TimeTravelManager::BuildWriteJournal(uint64_t fromT, uint6
             rec.isIo = 0;
             rec.m1pc = h.pc;
             rec.value = h.value;
-            rec.physPage = static_cast<uint8_t>(h.physPage);   // as the live journal stores it
+            SetRecordPage(rec, h.physPage);   // as the live journal stores it
             f.records.push_back(rec);
         }
         r.records += f.records.size();
@@ -6235,7 +6242,7 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
         if (rec.addr < q.addrFrom || rec.addr > q.addrTo) return false;
         if (q.hasValueFilter && rec.value != q.value) return false;
         if (q.hasPcFilter && (rec.m1pc < q.pcFrom || rec.m1pc > q.pcTo)) return false;
-        if (q.hasPhysPageFilter && rec.physPage != q.physPage) return false;   // bank-aware (TDD §9.4)
+        if (q.hasPhysPageFilter && RecordPage(rec) != q.physPage) return false;   // bank-aware (TDD §9.4)
         return true;
     };
 
@@ -6259,7 +6266,7 @@ TimeTravelManager::FindLastAccess(const TTDSearchQuery& q,
                     answer.time = TimePointOf(rec->globalT, frameT);
                     answer.pc = rec->m1pc;
                     answer.value = rec->value;
-                    answer.physPage = PhysPage{rec->physPage};
+                    answer.physPage = RecordPage(*rec);
                     answer.access = TTDAccessType::Write;
                     answer.addr = rec->addr;
                     reportWindow(answer.time, std::min(TimePointOf(beforeGlobalT, frameT), SessionEndPosition()));
@@ -7301,6 +7308,9 @@ void TimeTravelManager::RestoreLiveState(const LiveStateSnapshot& snap)
         z80->SetNmiPending(snap.cpu.nmi_pending != 0);
     }
     RestoreChipsetState(snap.chipset, &_context->emulatorState);
+    // The audio timeline jumps: the host-side post-processing (voicing, character chains) restarts
+    if (_context->pSoundManager)
+        _context->pSoundManager->onStateRestored();
     if (z80)
     {
         z80->t = snap.z80TInFrame;

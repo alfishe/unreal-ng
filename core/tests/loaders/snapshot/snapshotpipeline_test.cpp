@@ -485,8 +485,8 @@ TEST(SnapshotAtm_Test, TheMemoryManagerIsOnAndLaidOutLikeA128k)
         ASSERT_TRUE(emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/across-the-edge-second.sna"))) << model;
         const EmulatorState& state = emulator->GetContext()->emulatorState;
         Memory& memory = *emulator->GetContext()->pMemory;
-        EXPECT_NE(state.aFF77 & 0x100, 0) << model << ": the manager (PEN) is on";
-        EXPECT_NE(state.aFF77 & 0x200, 0) << model << ": ~CPM set, TR-DOS is not forced";
+        EXPECT_NE(state.atm.aFF77 & 0x100, 0) << model << ": the manager (PEN) is on";
+        EXPECT_NE(state.atm.aFF77 & 0x200, 0) << model << ": ~CPM set, TR-DOS is not forced";
         EXPECT_EQ(state.flags & CF_TRDOS, 0) << model;
         EXPECT_EQ(memory.GetRAMPageForBank(1), 5u) << model;
         EXPECT_EQ(memory.GetRAMPageForBank(2), 2u) << model;
@@ -498,8 +498,8 @@ TEST(SnapshotAtm_Test, TheMemoryManagerIsOnAndLaidOutLikeA128k)
     Emulator* atm450 = EmulatorTestHelper::CreateStandardEmulator("ATM450", LoggerLevel::LogError, RamPowerOn::Zero);
     ASSERT_NE(atm450, nullptr);
     ASSERT_TRUE(atm450->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/across-the-edge-second.sna")));
-    EXPECT_NE(atm450->GetContext()->emulatorState.aFE & 0x80, 0) << "ROM at #0000";
-    EXPECT_EQ(atm450->GetContext()->emulatorState.aFB & 0x80, 0) << "not the system ROM (CPSYS off)";
+    EXPECT_NE(atm450->GetContext()->emulatorState.atm.aFE & 0x80, 0) << "ROM at #0000";
+    EXPECT_EQ(atm450->GetContext()->emulatorState.atm.aFB & 0x80, 0) << "not the system ROM (CPSYS off)";
     EmulatorTestHelper::CleanupEmulator(atm450);
 }
 
@@ -580,4 +580,154 @@ TEST(SnapshotRomLatch_Test, TheRomTheSnapshotSelectedSurvivesABankRecompute)
             EmulatorTestHelper::CleanupEmulator(emulator);
         }
     }
+}
+
+// The plan announces a commit exactly once, and only when the snapshot WILL be committed: the emulator ends a TTD recording
+// session from it, so a refused load must never fire it
+class SnapshotBeforeCommit_Test : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
+        ASSERT_NE(_emulator, nullptr);
+        _options.beforeCommit = [this] { _announced++; };
+    }
+    void TearDown() override { EmulatorTestHelper::CleanupEmulator(_emulator); }
+
+    Emulator* _emulator = nullptr;
+    snapshot::Options _options;
+    int _announced = 0;
+};
+
+TEST_F(SnapshotBeforeCommit_Test, AGoodLoadAnnouncesTheCommitOnce)
+{
+    for (const char* file : {"loaders/sna/action.sna", "loaders/z80/dizzyx.z80", "loaders/szx/libspectrum/synth-pentagon.szx"})
+    {
+        _announced = 0;
+        EXPECT_TRUE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(file), {}, _options)) << file;
+        EXPECT_EQ(_announced, 1) << file;
+    }
+}
+
+TEST_F(SnapshotBeforeCommit_Test, ARefusedLoadNeverAnnouncesIt)
+{
+    // an SZX of another model (the loader's own rule, now judged by the plan), an SPG on a machine that is not a TS-Conf
+    for (const char* file : {"loaders/szx/libspectrum/synth-48.szx", "loaders/szx/libspectrum/synth-128.szx",
+                             "machines/tsconf/spg/empty.spg"})
+    {
+        EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath(file), {}, _options)) << file;
+        EXPECT_EQ(_announced, 0) << file << ": the load was refused, nothing was announced";
+        EXPECT_TRUE(_emulator->LastSnapshotReport().refused) << file;
+        EXPECT_FALSE(_emulator->LastSnapshotReport().reason.empty()) << file;
+    }
+    // the refusals carry what would work
+    EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("machines/tsconf/spg/empty.spg"), {}, _options));
+    EXPECT_EQ(_emulator->LastSnapshotReport().needs, "model:TSL");
+    EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/szx/libspectrum/synth-128.szx"), {}, _options));
+    EXPECT_EQ(_emulator->LastSnapshotReport().needs, "model:128k");
+    EXPECT_EQ(_announced, 0);
+
+    // a file that is no snapshot at all fails before the plan
+    const std::string garbage = TestPathHelper::GetUniqueTestScratchPath("garbage.sna");
+    {
+        std::ofstream out(garbage, std::ios::binary);
+        out << "not a snapshot";
+    }
+    EXPECT_FALSE(_emulator->LoadSnapshot(garbage, {}, _options));
+    EXPECT_EQ(_announced, 0);
+    std::remove(garbage.c_str());
+}
+
+TEST_F(SnapshotBeforeCommit_Test, TheCallersChoiceOfLegacyIsJudgedByThePlanToo)
+{
+    _options.commit = "legacy";
+    EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("machines/tsconf/spg/empty.spg"), {}, _options));
+    EXPECT_EQ(_announced, 0);
+    EXPECT_FALSE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/szx/libspectrum/synth-128.szx"), {}, _options));
+    EXPECT_EQ(_announced, 0);
+    EXPECT_TRUE(_emulator->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/action.sna"), {}, _options));
+    EXPECT_EQ(_announced, 1);
+}
+
+// inspect (the dry plan) never announces
+TEST_F(SnapshotBeforeCommit_Test, InspectNeverAnnouncesIt)
+{
+    StateNode inspected;
+    std::string error;
+    ASSERT_TRUE(_emulator->InspectSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/action.sna"), _options, inspected, error)) << error;
+    EXPECT_EQ(_announced, 0);
+}
+
+// A ZX-Poly takes a .zxp and nothing else (owner rule 2026-10-07): the four modules run in lockstep, so a snapshot of one machine
+// means nothing there. Refused on load with the reason, nothing written on save, a module never replaced by another model
+class SnapshotZXPoly_Test : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        std::string error;
+        _master = EmulatorManager::GetInstance()->CreateZXPolyMachine("zxpoly-snapshot", "128K", "", &error);
+        ASSERT_TRUE(_master) << error;
+        _plain = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
+        ASSERT_NE(_plain, nullptr);
+    }
+    void TearDown() override
+    {
+        for (const auto& id : EmulatorManager::GetInstance()->GetEmulatorIds())
+            EmulatorManager::GetInstance()->RemoveEmulator(id);
+    }
+
+    std::shared_ptr<Emulator> _master;
+    Emulator* _plain = nullptr;
+};
+
+TEST_F(SnapshotZXPoly_Test, EverySingleMachineSnapshotIsRefusedWithTheReason)
+{
+    for (const char* file : {"loaders/sna/action.sna", "loaders/z80/dizzyx.z80", "loaders/szx/libspectrum/synth-128.szx",
+                             "machines/tsconf/spg/empty.spg"})
+    {
+        EXPECT_FALSE(_master->LoadSnapshot(TestPathHelper::GetTestDataPath(file))) << file;
+        const snapshot::Report& report = _master->LastSnapshotReport();
+        EXPECT_TRUE(report.refused) << file;
+        EXPECT_EQ(report.needs, "format:zxp") << file;
+        EXPECT_NE(report.reason.find("ZX-Poly"), std::string::npos) << report.reason;
+        EXPECT_NE(report.reason.find(".zxp"), std::string::npos) << "it says what is taken";
+    }
+    // the same file loads on a single machine
+    EXPECT_TRUE(_plain->LoadSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/action.sna")));
+
+    // inspect says so before a load is tried
+    StateNode inspected;
+    std::string error;
+    ASSERT_TRUE(_master->InspectSnapshot(TestPathHelper::GetTestDataPath("loaders/sna/action.sna"), {}, inspected, error)) << error;
+    EXPECT_FALSE(inspected.find("would_load")->b);
+}
+
+TEST_F(SnapshotZXPoly_Test, TheLauncherNeverReplacesAModule)
+{
+    SnapshotLoadRequest request;
+    request.emulatorId = _master->GetId();
+    request.path = TestPathHelper::GetTestDataPath("machines/tsconf/spg/empty.spg");   // would switch a single machine to TS-Conf
+    request.switchModel = true;
+    const SnapshotLoadResult result = SnapshotLauncher::Load(request);
+    EXPECT_FALSE(result.ok);
+    EXPECT_FALSE(result.modelSwitched);
+    EXPECT_NE(result.message.find("ZX-Poly"), std::string::npos) << result.message;
+    EXPECT_NE(EmulatorManager::GetInstance()->GetEmulator(_master->GetId()), nullptr) << "the module is still there";
+}
+
+TEST_F(SnapshotZXPoly_Test, NoSnapshotIsSavedFromAModule)
+{
+    const snapshot::SaveFormats formats = _master->SnapshotSaveFormats();
+    EXPECT_FALSE(formats.viewAvailable);
+    for (const snapshot::FormatStatus& status : formats.formats)
+    {
+        EXPECT_FALSE(status.available) << snapshot::ToText(status.format);
+        EXPECT_EQ(status.needs, "zxpoly");
+        EXPECT_NE(status.reason.find("ZX-Poly"), std::string::npos) << status.reason;
+    }
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("zxpoly-save.sna");
+    EXPECT_FALSE(_master->SaveSnapshot(path));
+    EXPECT_FALSE(std::ifstream(path).good());
 }

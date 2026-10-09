@@ -41,7 +41,7 @@ Windows `cmd`: `set UNREAL_WEBAPI_PORT=8190` and then the command on the next li
   `UNREAL_SLOTS_TEST` belong to the build wrappers (machine-wide job slots), `UNREAL_SLOTS_FITTED_UPDATE` /
   `UNREAL_SLOTS_MATRIX_UPDATE` to the expansion-slot tests (they rewrite files).
 - **Port switches:** the six server ports each have their own variable. To run a second instance beside a
-  first one, move all of them (example in [`tools/unreal-asm/README.md`](../../tools/unreal-asm/README.md)).
+  first one, move all of them (example in [`tools/verification/unreal-asm/README.md`](../../tools/verification/unreal-asm/README.md)).
 
 ## 1. The application at run time
 
@@ -108,9 +108,11 @@ CMake reads a few standard variables while configuring: `VCPKG_ROOT` (Windows de
 | `UNREAL_SPRINTER_HDD_MEDIA` | path (`sp_hdd_media.img` next to the system disk) | Data disk for drive D in the Flex Navigator test. | `sprinter_boot_test.cpp:1565` |
 | `UNREAL_SPRINTER_HDD_VHD` | path to `sp_disk1.vhd` (skipped) | DSS 1.62 boot from a ZXMAK2 VHD image. | `sprinter_boot_test.cpp:984` |
 | `UNREAL_SPRINTER_HDD_CHD` | path to `sp_hdd_sys.chd` (skipped) | DSS 1.71 boot straight from the MAME CHD image. | `sprinter_boot_test.cpp:1055` |
+| `UNREAL_TTD_DIVERGENCE` | any value (unset) | Diagnosis in the Sprinter DSS session tests: the network kits record with a whole-session write journal, and before the replay checks the first checkpoint where a replay from the start leaves the recording is printed - the CPU, every device and memory region that differ, the first port-journal divergence, sync misses, the media read cursors and the first memory write of the frame before that differs. | `core/tests/emulator/machines/sprinter/sprinterzxsession.h` (`FirstDivergence`), `sprinternetworkkit_test.cpp` |
 | `UNREAL_SPRINTER_ZX_BIOS` | path to a BIOS image (the repository's 3.06) | Another BIOS for the Sprinter ZX-mode session tests (exploration). | `core/tests/emulator/machines/sprinter/sprinterzxsession.h:156` |
 | `UNREAL_SPRINTER_ZX_FULLSTART` | set / unset (fast start) | Runs the Sprinter's full firmware start in the ZX-mode tests. | `sprinterzxsession.h:173` |
 | `UNREAL_SPRINTER_NGS_FLASH` | path to a NeoGS flash image (built-in) | Uses another NeoGS firmware in the ProPlay sound tests (comparison with MAME). | `core/tests/emulator/machines/sprinter/sprintergeneralsound_test.cpp:314` |
+| `UNREAL_NEXT_TESTS` | a ZXSpectrumNextTests folder with `release/!Z80N.snx` and `release/!Z80Nc2.snx` (tests skipped) | Real-board acceptance of the Z80N CPU library: runs the two programs (checked on real boards) on a bare host and expects no `ERR` result. Sub-second. | `core/tests/3rdparty/unreal-next-z80/z80nrealboard_test.cpp` |
 | `UNREAL_CHDMAN` | path to MAME's `chdman` (skipped) | Checks that `chdman` accepts the CHD files we write. | `core/tests/emulator/io/storage/chd/chdwriter_test.cpp:228` ([`chd.md`](../file-formats/disk-images/chd.md)) |
 | `COEMU_OUT`, `COEMU_PROGRAM`, `COEMU_MACHINES`, `COEMU_MAX_FRAMES` | out folder, program base path, machine list (`48k`), frames (60000) | The co-emulation runner test; skipped without the first two. Set by `tools/verification/coemu/unreal-ng/run.sh`. | `core/tests/emulator/coemurunner_test.cpp:85` |
 
@@ -228,8 +230,8 @@ The last three are in the shared bench code, so they also act in `core-tests`' `
 |---|---|---|---|
 | `UNREAL_API_URL` | URL (`http://localhost:8090`) | Emulator the WebAPI pytest suite talks to. | `tools/verification/webapi/src/conftest.py:13` ([README](../../tools/verification/webapi/README.md)) |
 | `UNREAL_WEBAPI_URL` | URL (`http://127.0.0.1:8090`) | Emulator the Wireshark capture plugin talks to. | `tools/wireshark/unreal-ng-extcap.py:26` ([README](../../tools/wireshark/README.md)) |
-| `UNREAL_ASM_EMULATOR_URL` | URL (`http://localhost:8095`) | Emulator the assembler tools talk to. | `tools/unreal-asm/emulator.py:17` |
-| `UNREAL_ASM_ZXASM`, `UNREAL_ASM_SJASMPLUS`, `UNREAL_ASM_PASMO`, `UNREAL_ASM_Z80ASM` | binary paths (names on `PATH`; in `unreal-asm-tests` the tests skip) | External assemblers for the cross-checks, in `tools/unreal-asm/*.py` and in `unreal-asm-tests`. | `tools/unreal-asm/crosscheck.py:115`, `core/src/3rdparty/unreal-asm/tests/*_test.cpp` ([README](../../core/src/3rdparty/unreal-asm/README.md)) |
+| `UNREAL_ASM_EMULATOR_URL` | URL (default `http://localhost:<--port>`, port 8090) | Emulator the assembler scripts talk to (another host); `--port` is enough on this one. | `tools/verification/unreal-asm/lib/emulator.py` |
+| `UNREAL_ASM_ZXASM`, `UNREAL_ASM_SJASMPLUS`, `UNREAL_ASM_PASMO`, `UNREAL_ASM_Z80ASM` | binary paths (names on `PATH`; in `unreal-asm-tests` the tests skip) | External assemblers for the cross-checks, in `tools/verification/unreal-asm/*/*.py` and in `unreal-asm-tests`. | `tools/verification/unreal-asm/checks/crosscheck.py:115`, `core/src/3rdparty/unreal-asm/tests/*_test.cpp` ([README](../../core/src/3rdparty/unreal-asm/README.md)) |
 | `UNREAL_TTD_PERIPHERAL_HEADER` | header path (the repository's `ttdserializable.h`) | Where the TTD analyzer reads device ids from, when run outside the tree. | `tools/verification/ttd-analyzer/src/ttd_format.py:216` |
 | `UNREAL_BUILD` | build folder (`cmake-build-agent-release`) | Build with `core-tests` for the co-emulation runner. | `tools/verification/coemu/unreal-ng/run.sh:8` |
 | `PROGRAM`, `OUT`, `MAX_FRAMES` | program base path (the contention probe), out folder, frames (60000) | Co-emulation harness: what to run, where results go, when to give up. | `tools/verification/coemu/common/common.sh:23` |

@@ -361,7 +361,7 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"bookmark-add", {"label", "frame", "tinframe"}},
         {"bookmark-delete", {"label"}},
         {"port-events", {"*"}},
-        {"find-last", {"addr", "addr_from", "addr_to", "access", "value", "pc_from", "pc_to", "phys_page",
+        {"find-last", {"addr", "addr_from", "addr_to", "access", "value", "pc_from", "pc_to", "phys_page", "space",
                        "before_frame", "before_tin", "before"}},
         {"reverse-continue", {"pcs"}},
         {"coverage-probe", {"frame", "kind", "addr_from", "addr_to", "phys_page"}},
@@ -676,6 +676,13 @@ TTDReply TTDControlBackend<S>::Start(const TTDRequest& request)
     reply.body["history_limit_frames"] = info.historyLimitFrames;
     reply.body["history_limit_bytes"] = info.historyLimitBytes;
     reply.body["black_box"] = BlackBoxOf(_manager);
+    if (!ok)
+    {
+        // A refusal says why (a device table that does not build, a machine not ready): 409 with the reason
+        const std::string& why = _manager->LastStartError();
+        return Fail(TTDControlError::Conflict,
+                    "the recording did not start: " + (why.empty() ? std::string("see the log") : why), reply.body);
+    }
     return reply;
 }
 
@@ -1167,26 +1174,61 @@ TTDReply TTDControlBackend<S>::FindLast(const TTDRequest& request)
     };
     uint64_t n = 0;
     std::string err;
+    // space: the machine's RAM (Z80 addresses, the default) or another memory's own addresses - "vram" (the Sprinter's
+    // 256 KB video RAM), "cache" (its 64 KB fast RAM). There addr / addr_from / addr_to are offsets in that memory,
+    // a range inside one 16 KB page (time travel keys such a byte by a page of its space and the offset in it)
+    TTDMemorySpace space = TTDMemorySpace::Ram;
+    if (const std::string* spaceText = Option(request, "space"))
+    {
+        if (*spaceText == "vram")
+            space = TTDMemorySpace::Vram;
+        else if (*spaceText == "cache")
+            space = TTDMemorySpace::Cache;
+        else if (*spaceText != "ram")
+            return Fail(TTDControlError::BadRequest, "space must be ram, vram or cache");
+    }
+    const uint64_t addrMax = space == TTDMemorySpace::Ram ? 0xFFFF : uint64_t(kSpacePages) * kSpacePageBytes - 1;
+    uint64_t from = 0;
+    uint64_t to = addrMax;
     if (addr)
     {
-        if (!(err = number(addr, "addr", 0xFFFF, n)).empty())
+        if (!(err = number(addr, "addr", addrMax, n)).empty())
             return Fail(TTDControlError::BadRequest, err);
-        q.addrFrom = q.addrTo = static_cast<uint16_t>(n);
+        from = to = n;
     }
     else
     {
         if (addrFrom)
         {
-            if (!(err = number(addrFrom, "addr_from", 0xFFFF, n)).empty())
+            if (!(err = number(addrFrom, "addr_from", addrMax, n)).empty())
                 return Fail(TTDControlError::BadRequest, err);
-            q.addrFrom = static_cast<uint16_t>(n);
+            from = n;
         }
         if (addrTo)
         {
-            if (!(err = number(addrTo, "addr_to", 0xFFFF, n)).empty())
+            if (!(err = number(addrTo, "addr_to", addrMax, n)).empty())
                 return Fail(TTDControlError::BadRequest, err);
-            q.addrTo = static_cast<uint16_t>(n);
+            to = n;
         }
+    }
+    if (space == TTDMemorySpace::Ram)
+    {
+        q.addrFrom = static_cast<uint16_t>(from);
+        q.addrTo = static_cast<uint16_t>(to);
+    }
+    else
+    {
+        if (!addr && !addrFrom && !addrTo)
+            return Fail(TTDControlError::BadRequest, std::string("space ") + SpaceName(space) + " needs addr, or addr_from and addr_to");
+        if (from / kSpacePageBytes != to / kSpacePageBytes)
+            return Fail(TTDControlError::BadRequest, std::string("a ") + SpaceName(space) +
+                                                         " range must lie inside one 16 KB page (#xx000-#xx3FFF steps)");
+        if (Option(request, "phys_page"))
+            return Fail(TTDControlError::BadRequest, "phys_page names a RAM page: not with space " + std::string(SpaceName(space)));
+        q.physPage = SpacePage(space, static_cast<uint32_t>(from));
+        q.hasPhysPageFilter = true;
+        q.addrFrom = static_cast<uint16_t>(from % kSpacePageBytes);
+        q.addrTo = static_cast<uint16_t>(to % kSpacePageBytes);
     }
     if (const std::string* access = Option(request, "access"))
     {
@@ -1255,9 +1297,18 @@ TTDReply TTDControlBackend<S>::FindLast(const TTDRequest& request)
         reply.body["tinframe"] = static_cast<unsigned>(found->time.tInFrame);
         reply.body["pc"] = static_cast<unsigned>(found->pc);
         reply.body["value"] = static_cast<unsigned>(found->value);
-        // null = the access had no RAM page (ROM, cache, I/O)
-        reply.body["phys_page"] = found->physPage == kPhysPageNone ? StateNode() : StateNode(static_cast<unsigned>(found->physPage));
+        // null = the access had no RAM page (ROM, I/O, another memory space)
+        const TTDMemorySpace foundSpace = SpaceOfPage(found->physPage);
+        reply.body["phys_page"] = found->physPage == kPhysPageNone || foundSpace != TTDMemorySpace::Ram
+                                      ? StateNode()
+                                      : StateNode(static_cast<unsigned>(found->physPage));
         reply.body["access"] = TTDAccessTypeToString(found->access);
+        // Where: the Z80 address, or the offset in another memory space (space vram / cache)
+        reply.body["space"] = SpaceName(foundSpace);
+        if (foundSpace == TTDMemorySpace::Ram)
+            reply.body["addr"] = static_cast<unsigned>(found->addr);
+        else
+            reply.body["offset"] = static_cast<unsigned>(SpaceOffset(found->physPage, found->addr));
     }
     else
     {

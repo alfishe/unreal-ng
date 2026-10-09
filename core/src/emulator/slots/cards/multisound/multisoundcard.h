@@ -43,9 +43,11 @@
 #include <vector>
 
 #include "emulator/slots/cards/multisound/multisoundanalog.h"
+#include "emulator/slots/cards/multisound/multisoundbustrace.h"
 #include "emulator/slots/cards/multisound/multisounddacs.h"
 #include "emulator/slots/cards/multisound/multisoundlogic.h"
 #include "emulator/slots/cards/multisound/multisoundmixer.h"
+#include "emulator/sound/chips/gs/gsbusobserver.h"
 #include "emulator/sound/chips/gs/gsprofile.h"
 #include "emulator/sound/chips/saa1099/saa1099.h"
 #include "emulator/sound/midi/midiline.h"
@@ -152,7 +154,7 @@ struct MultiSoundCardReport
     uint64_t time = 0;                  ///< the latest time the card was driven to
 };
 
-class MultiSoundCard : private IGSHostClock, private IGSDacSink
+class MultiSoundCard : private IGSHostClock, private IGSDacSink, private IGSBusObserver
 {
 public:
     static constexpr const char* kCardId = "multisound";
@@ -195,7 +197,11 @@ public:
     bool Iorqge(uint16_t port) const { return _logic.Iorqge(port); }
 
     /// Every M1 cycle (opcode, prefix, interrupt acknowledge): the ROM-fetch lock of the SAA and SounDrive ports
-    void M1(uint16_t address) { _logic.OnM1(address); }
+    void M1(uint16_t address)
+    {
+        _logic.OnM1(address);
+        _lastM1 = address;
+    }
 
     /// An I/O write cycle at time t
     void Out(uint16_t port, uint8_t value, uint64_t t);
@@ -211,6 +217,11 @@ public:
         bool drives = false;
         return Peek(port, drives);
     }
+
+    /// The bus trace (multisoundbustrace.h): every host and GS bus cycle from now on goes to `trace`; nullptr stops it.
+    /// The receiver must outlive the card or be removed first
+    void SetBusTrace(IMultiSoundBusTrace* trace);
+    IMultiSoundBusTrace* BusTrace() const { return _trace; }
 
     /// Bus /RESET at time t: the CPLD reset branches, both YM2203, the SAA1099, the GS (CPU, mailbox, volumes), the
     /// DACs and the SAM2695 with its MIDI line (all share the board reset)
@@ -294,6 +305,11 @@ private:
     void GsSample(uint64_t time, int channel, uint8_t value) override { _dacs.GsSample(_frameBase + time, channel, value); }
     void GsVolume(uint64_t time, int channel, uint8_t volume) override { _dacs.GsVolume(_frameBase + time, channel, volume); }
 
+    // IGSBusObserver (only while a bus trace is set): GS times are frame-relative, the trace's absolute
+    void GsPortCycle(uint64_t time, uint8_t port, uint8_t value, bool write) override;
+    void GsDacFetch(uint64_t time, uint16_t address, uint8_t value) override;
+    void TraceHost(MultiSoundBusEvent::Kind kind, uint16_t port, uint8_t value, bool drives, uint64_t t) const;
+
     void ApplyControl(uint64_t t);
     void LoadMidiBank();
     void RenderYm(size_t frames, uint64_t t);
@@ -322,6 +338,10 @@ private:
     std::string _bankName;
     std::string _bankSource;
     std::string _bankError;
+
+    // Bus trace (not state)
+    IMultiSoundBusTrace* _trace = nullptr;
+    uint16_t _lastM1 = 0;
 
     // Time
     uint64_t _now = 0;              // latest time the card was driven to

@@ -54,7 +54,7 @@ public:
     void FrameEnd(size_t samples) override;
     void SetOutputRate(uint32_t rate) override;
     void MixerRows(std::vector<CardMixerRow>& out) const override;
-    int16_t* VoicedMixerBuffer(AudioSourceType type) override;
+    int16_t* SsgMixerBuffer(AudioSourceType type) override;
     uint64_t RenderEpoch() const override { return _card.RenderEpoch(); }
     bool SetFmTrimDb(double db) override;
     bool FmTrimDb(double& db) const override;
@@ -102,6 +102,11 @@ public:
         _origin = origin;
         _last = last;
     }
+    /// The mixer's frame-start sample phase (SoundManager::samplePhase): how many samples the frames have, so how
+    /// many the card renders. Part of the card's blob: a machine without a board AY device (a ZX-Evo, whose YM2149
+    /// the card takes out of its socket) has nothing else that puts it back after a seek
+    uint64_t MixerSamplePhase() const;
+    void AdoptMixerSamplePhase(uint64_t phase);
 
     /// The time-travel devices (tests)
     MultiSoundCardTtd& CardTtd()

@@ -10,7 +10,7 @@
 #include "base/featuremanager.h"
 #include "debugger/analyzers/basic-lang/basicencoder.h"
 #include "debugger/ttd/machinestatehash.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -636,7 +636,7 @@ TEST_F(TapeLoading_Integration_Test, TTDRoundTripAcrossFastLoad)
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
     Memory* memory = context->pMemory;
-    ttd::TimeTravelManager* ttdMgr = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttdMgr = context->pTimeTravelController;
     ASSERT_NE(ttdMgr, nullptr);
 
     // Same enable dance as the TTD fixtures: debug mode + time travel, then
@@ -683,12 +683,12 @@ TEST_F(TapeLoading_Integration_Test, TTDRoundTripAcrossFastLoad)
     EXPECT_TRUE(fm->isEnabled(Features::kTurboTape));
     ASSERT_GT(ttdMgr->GetCheckpointCount(), 0u) << "Session recorded no checkpoints";
 
-    ttd::TimeTravelManager::TTDSeekResult result;
+    ttd::TimeTravelController::TTDSeekResult result;
     EXPECT_TRUE(ttdMgr->SeekTo({frameBefore, 0}, &result));
-    EXPECT_EQ(result.haltReason, ttd::TimeTravelManager::TTDSeekHaltReason::Target);
+    EXPECT_EQ(result.haltReason, ttd::TimeTravelController::TTDSeekHaltReason::Target);
 
     EXPECT_TRUE(ttdMgr->SeekTo({frameAfter, 0}, &result));
-    EXPECT_EQ(result.haltReason, ttd::TimeTravelManager::TTDSeekHaltReason::Target);
+    EXPECT_EQ(result.haltReason, ttd::TimeTravelController::TTDSeekHaltReason::Target);
 
     EmulatorTestHelper::CleanupEmulator(emulator);
     MessageCenter::DisposeDefaultMessageCenter();

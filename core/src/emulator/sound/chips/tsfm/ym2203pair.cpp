@@ -305,6 +305,7 @@ void Ym2203Pair::configureChannelOutputs(size_t rate, FilterDecimator::Quality q
         }
         _channels->fm[i].configure(double(rate), quality, false, fmRate);
         _channels->fm[i].attachMaster(master);
+        _channels->fmZeroRun[i] = 0;
     }
 }
 
@@ -320,6 +321,17 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
 
     FilterDecimator& master = _channels->ssg[0][0];
     FilterDecimator* const fmDec = _channels->fm;
+    size_t* const fmZeroRun = _channels->fmZeroRun;
+    // A muted or silent FM part feeds zeros, a silent SSG channel level 0.0: a decimator's output is exactly +0.0
+    // once its whole window is zero (FilterDecimator::window), so the FIR is skipped - the same output for a
+    // fraction of the cost (frame-cost profile 2026-10-06: the two FM FIRs were 12 % of an idle card frame; the
+    // SSG skip is measured in ym-decimator-prototype.md)
+    auto feedFm = [&](int i)
+    {
+        const double v = fmEnabled ? _chips[i]->out.hold : 0.0;
+        fmDec[i].feedSample(v);
+        fmZeroRun[i] = v == 0.0 ? fmZeroRun[i] + 1 : 0;
+    };
     for (size_t n = 0; n < frames; n++)
     {
         while (!master.hasOutput())
@@ -327,7 +339,7 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
             for (int i = 0; i < 2; i++)
             {
                 consumeWords(*_chips[i], _renderT);
-                fmDec[i].feedSample(fmEnabled ? _chips[i]->out.hold : 0.0);
+                feedFm(i);
             }
             applySsgWrites(_renderT);
             updateState(true);
@@ -335,35 +347,65 @@ size_t Ym2203Pair::renderChannels(size_t frames, const Ym2203ChannelBlock& block
             {
                 const double* levels = _chips[i]->ssg.left();  // per channel, before panning and DC removal
                 for (int ch = 0; ch < 3; ch++)
+                {
                     _channels->ssg[i][ch].feedSample(levels[ch]);
+                    size_t& run = _channels->ssgZeroRun[i][ch];
+                    run = levels[ch] == 0.0 ? run + 1 : 0;
+                }
             }
             for (int i = 0; i < 2; i++)
             {
                 consumeWords(*_chips[i], _renderT + 8);
-                fmDec[i].feedSample(fmEnabled ? _chips[i]->out.hold : 0.0);
+                feedFm(i);
             }
             _renderT += 16;
         }
 
-        // Slaves first (a slave takes the output instant from the master's phase, before or after the master
-        // consumed it alike)
+        // All eight at one output instant; the order does not matter (a slave takes the instant from the master's
+        // phase, before or after the master consumed it alike). A silent channel - SSG or FM - outputs +0.0 once its
+        // whole window is zero (FilterDecimator::window); the others share one pass per design
+        // (FilterDecimator::getOutputs: the SSG decimators their coefficient rows, the FM ones theirs)
+        FilterDecimator* decimators[8];
+        float* targets[8];
+        size_t count = 0;
+        auto evaluate = [&](FilterDecimator& d, float* row)
+        {
+            decimators[count] = &d;
+            targets[count++] = row ? &row[n] : nullptr;
+        };
         for (int i = 0; i < 2; i++)
         {
-            const float fm = static_cast<float>(fmDec[i].getOutput());
-            if (block.fm[i])
-                block.fm[i][n] = fm;
             for (int ch = 0; ch < 3; ch++)
             {
-                if (i == 0 && ch == 0)
+                FilterDecimator& d = _channels->ssg[i][ch];
+                float* row = block.ssg[i][ch];
+                if (_channels->ssgZeroRun[i][ch] < d.window())
+                {
+                    evaluate(d, row);
                     continue;
-                const float v = static_cast<float>(_channels->ssg[i][ch].getOutput());
-                if (block.ssg[i][ch])
-                    block.ssg[i][ch][n] = v;
+                }
+                d.skipOutput();   // the master's phase moves as getOutput moves it
+                if (row)
+                    row[n] = 0.0f;
             }
         }
-        const float a0 = static_cast<float>(master.getOutput());
-        if (block.ssg[0][0])
-            block.ssg[0][0][n] = a0;
+        for (int i = 0; i < 2; i++)
+        {
+            if (fmZeroRun[i] < fmDec[i].window())
+            {
+                evaluate(fmDec[i], block.fm[i]);
+                continue;
+            }
+            if (block.fm[i])
+                block.fm[i][n] = 0.0f;
+        }
+        double values[8];
+        FilterDecimator::getOutputs(decimators, count, values);
+        for (size_t k = 0; k < count; k++)
+        {
+            if (targets[k])
+                *targets[k] = static_cast<float>(values[k]);
+        }
     }
     return frames;
 }

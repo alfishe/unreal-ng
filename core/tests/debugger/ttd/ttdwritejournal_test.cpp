@@ -616,3 +616,36 @@ TEST(TTDWriteJournal_Test, CorruptSectionSizesAreRefusedBeforeAllocating)
     EXPECT_FALSE(load(patched(kCompressedSizeAt, 0xFFFFFFFFu)));
     EXPECT_FALSE(load(patched(kRawSizeAt, 0xFFFFFFFFu)));
 }
+
+/// Pages of another memory space (ttdphyspage.h: the Sprinter's video and fast RAM) keep bit 8 through a block; a
+/// block of RAM pages only has no page-high column, so blocks written before it read the same
+TEST(TTDWriteJournal_Compression_Test, PagesOfAnotherSpaceRoundTripAndRamOnlyBlocksKeepTheirLayout)
+{
+    std::vector<TTDWriteRecord> recs;
+    for (uint32_t i = 0; i < 21; i++)
+    {
+        TTDWriteRecord r = MakeRec(100 + i, static_cast<uint16_t>(0x1000 + i), static_cast<uint8_t>(i), 0x8000);
+        SetRecordPage(r, i % 3 == 0 ? SpacePage(TTDMemorySpace::Vram, 0x12345 + i)
+                         : i % 3 == 1 ? SpacePage(TTDMemorySpace::Cache, 0x4000 * (i & 3))
+                                      : static_cast<PhysPage>(i == 20 ? kPhysPageNone : i));
+        recs.push_back(r);
+    }
+    std::vector<TTDWriteRecord> back;
+    ASSERT_TRUE(DecodeWriteBlock(EncodeWriteBlock(recs.data(), 21), 21, back));
+    for (uint32_t i = 0; i < 21; i++)
+        EXPECT_EQ(RecordPage(back[i]), RecordPage(recs[i])) << "record " << i;
+    EXPECT_EQ(RecordPage(back[0]), kVramPageBase + 4);
+    EXPECT_EQ(SpaceOffset(RecordPage(back[0]), back[0].addr & 0x3FFF), 0x10000u + 0x1000u) << "page 4 of the video RAM";
+    EXPECT_EQ(RecordPage(back[20]), 0xFFu) << "no page: the 0xFF a record always had";
+
+    // RAM pages only: the block is the layout before the column (the I/O bits end it)
+    std::vector<TTDWriteRecord> ram(recs.begin(), recs.end());
+    for (TTDWriteRecord& r : ram)
+        SetRecordPage(r, 7);
+    const std::vector<uint8_t> withHigh = EncodeWriteBlock(recs.data(), 21);
+    const std::vector<uint8_t> plain = EncodeWriteBlock(ram.data(), 21);
+    EXPECT_EQ(withHigh.size(), plain.size() + 3) << "3 bytes of page-high bits for 21 records";
+    ASSERT_TRUE(DecodeWriteBlock(plain, 21, back));
+    for (const TTDWriteRecord& r : back)
+        EXPECT_EQ(RecordPage(r), 7u);
+}

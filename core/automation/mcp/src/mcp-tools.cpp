@@ -3028,7 +3028,20 @@ void RegisterInspectState(ToolRegistry& registry)
                                         out << "\n  " << slot["slot"].asString() << " = " << slot["card"].asString();
                                         if (!slot["options"].asString().empty())
                                             out << " [" << slot["options"].asString() << "]";
+                                        if (slot.isMember("host"))
+                                            out << " on " << slot["bus"].asString() << " (behind "
+                                                << slot["adapter"].asString() << ")";
                                         out << " fit " << slot["fit"].asString() << ", " << slot["state"].asString();
+                                    }
+                                    // The board's own slots (the Sprinter's ISA slots, SL-8)
+                                    for (const Json::Value& slot : value["machineSlots"])
+                                    {
+                                        out << "\n  machine slot " << slot["slot"].asString() << " = "
+                                            << slot["card"].asString() << " (" << slot["name"].asString() << ", "
+                                            << slot["source"].asString() << ")";
+                                        if (slot.isMember("hostsBus"))
+                                            out << " hosts " << slot["hostsBus"].asString() << ": "
+                                                << slot["hostedCard"].asString();
                                     }
                                     for (const Json::Value& builtIn : value["builtIns"])
                                         out << "\n  built-in " << builtIn["id"].asString() << ": " << builtIn["state"].asString();
@@ -3907,7 +3920,16 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "one of its segment files: the segments are joined); export_clip: the clip's directory (created if missing). Resolved by "
         "the emulator process (its machine and working directory)";
     schema["properties"]["addr"]["type"] = "string";
-    schema["properties"]["addr"]["description"] = "find_last: single Z80 address (integer, '0x5800', '#5800' or '$5800')";
+    schema["properties"]["addr"]["description"] =
+        "find_last: single Z80 address (integer, '0x5800', '#5800' or '$5800'); with space vram / cache an offset in "
+        "that memory";
+    schema["properties"]["space"]["type"] = "string";
+    schema["properties"]["space"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* space : {"ram", "vram", "cache"})
+        schema["properties"]["space"]["enum"].append(space);
+    schema["properties"]["space"]["description"] =
+        "find_last: the memory searched - ram (Z80 addresses, default), vram (the Sprinter's 256 KB video RAM) or "
+        "cache (its 64 KB fast RAM); for vram / cache addr / addr_from / addr_to are offsets inside one 16 KB page";
     schema["properties"]["access"]["type"] = "string";
     schema["properties"]["access"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* access : {"write", "read", "execute", "io"})
@@ -4156,7 +4178,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 }
                 // Address / value / PC fields go through verbatim: the WebAPI
                 // parses numbers and "0x.."/"#.."/"$.." strings with range checks
-                for (const char* field : {"addr", "addr_from", "addr_to", "value", "pc_from", "pc_to", "access"})
+                for (const char* field : {"addr", "addr_from", "addr_to", "value", "pc_from", "pc_to", "access", "space"})
                 {
                     if (args.isMember(field))
                     {
@@ -4383,6 +4405,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             if (!b["phys_page"].isNull())
                             {
                                 text += ", RAM page " + std::to_string(b["phys_page"].asUInt());
+                            }
+                            if (b.isMember("offset"))
+                            {
+                                text += ", " + b["space"].asString() + " offset " + std::to_string(b["offset"].asUInt());
                             }
                             return text + "." + FormatSearchWindow(b) + " Seek to that frame/tinframe to inspect the machine there.";
                         }

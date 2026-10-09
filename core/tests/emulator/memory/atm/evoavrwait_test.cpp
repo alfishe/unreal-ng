@@ -134,9 +134,9 @@ protected:
             _avr = &atm3->GetEvoAvr();
             // Outside shadow (TR-DOS off, #BF shaden off, CP/M and the pager on): #BFF7 after #EFF7 bit 7
             EmulatorState& state = _context->emulatorState;
-            state.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
+            state.atm.aFF77 = PortDecoder_ATM3::ATM_AFF77_PEN | PortDecoder_ATM3::ATM_AFF77_CPM;
             state.flags &= ~CF_TRDOS;
-            state.pBF = 0x00;
+            state.evo.pBF = 0x00;
         }
         ASSERT_NE(_avr, nullptr);
     }

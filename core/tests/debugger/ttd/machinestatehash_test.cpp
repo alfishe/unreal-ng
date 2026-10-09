@@ -127,14 +127,7 @@ EmulatorState MakeCanonicalState(uint16_t seed)
     s.pFDFD = static_cast<uint8_t>(seed + 0x07);
     s.p1FFD = static_cast<uint8_t>(seed + 0x08);
     s.pFF77 = static_cast<uint8_t>(seed + 0x09);
-    s.p7EFD = static_cast<uint8_t>(seed + 0x0A);
-    s.p78FD = static_cast<uint8_t>(seed + 0x0B);
-    s.p7AFD = static_cast<uint8_t>(seed + 0x0C);
-    s.p7CFD = static_cast<uint8_t>(seed + 0x0D);
-    s.gmx_config = static_cast<uint8_t>(seed + 0x0E);
-    s.gmx_magic_shift = static_cast<uint8_t>(seed + 0x0F);
-    s.p00 = static_cast<uint8_t>(seed + 0x10);
-    s.p80FD = static_cast<uint8_t>(seed + 0x11);
+    s.scorpion.p7EFD = static_cast<uint8_t>(seed + 0x0A);
     s.border_attr = static_cast<uint8_t>(seed + 0x12);
     s.t_states = seed * 0x1000ULL;
     s.frame_counter = seed;

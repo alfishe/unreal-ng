@@ -373,7 +373,9 @@ void Vdac2Card::OnChipFrame()
         return;  // nothing new was drawn: the Screen keeps its last frame
 
     ConvertFrameToPicture();
-    if (Screen* screen = _context ? _context->pScreen : nullptr)
+    // Not from a throwaway TTD replay (it composes a position's picture and publishes it itself): a latch there
+    // would push frames nobody asked to see into the present queue, as MainLoop's native latch gate explains
+    if (Screen* screen = _context ? _context->pScreen : nullptr; screen && !(_context && _context->ttdReplayActive))
         screen->LatchExternalFrame();
     _latchedFrames++;
     if (_measureAlways.load())

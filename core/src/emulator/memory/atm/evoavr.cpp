@@ -2,7 +2,6 @@
 
 #include "evoavr.h"
 
-#include <chrono>
 #include <cstring>
 #include <fstream>
 
@@ -14,9 +13,10 @@ namespace
 {
     constexpr uint8_t kExtensionFirst = 0xF0;
 
-    /// atx.h PWROFF_KEY_TIME: F12 held longer than this is the ATX power-off
+    /// atx.h PWROFF_KEY_TIME: F12 held longer than this is the ATX power-off. The AVR counts it on its own
+    /// timer, so it is emulated time: a replay and a turbo run decide the same way the recording did
     /// (not emulated); a shorter press-and-release soft-resets the Z80
-    constexpr auto kF12PowerOff = std::chrono::seconds(5);
+    constexpr uint64_t kF12PowerOffMicros = 5'000'000;
 }  // namespace
 
 EvoAvr::EvoAvr() : Ds12887(256)
@@ -194,16 +194,17 @@ void EvoAvr::OnPcKey(PcKey key, bool pressed)
     {
         if (pressed)
         {
-            if (!_f12Down)
+            if (!_ps2.f12Down)
             {
-                _f12Down = true;
-                _f12Press = std::chrono::steady_clock::now();
+                _ps2.f12Down = 1;
+                _ps2.f12PressMicros = _emulatedClock ? _emulatedClock() : 0;
             }
         }
-        else if (_f12Down)
+        else if (_ps2.f12Down)
         {
-            _f12Down = false;
-            if (std::chrono::steady_clock::now() - _f12Press < kF12PowerOff && _resetHandler)
+            _ps2.f12Down = 0;
+            const uint64_t now = _emulatedClock ? _emulatedClock() : 0;
+            if (now - _ps2.f12PressMicros < kF12PowerOffMicros && _resetHandler)
                 _resetHandler(/*hardReset=*/false);
         }
     }

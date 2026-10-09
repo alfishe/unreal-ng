@@ -146,10 +146,12 @@ bool TimeTravelController::StartRecording()
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     if (_state == TTDSessionState::Recording)
         return true;  // Idempotent
+    _lastStartError.clear();
 
     if (!_unavailableReason.empty())
     {
         MLOGWARNING("TimeTravelController::StartRecording — refused: %s", _unavailableReason.c_str());
+        _lastStartError = _unavailableReason;
         return false;
     }
 
@@ -160,6 +162,9 @@ bool TimeTravelController::StartRecording()
     _stoppedEndValid = false;
     // The machine's ROM set: the engine's configuration and restore checks compare with it
     _replayRomSignature = ComputeRomSignature();
+
+    // A background session (the black box, a debugger's history) holds no lock and refuses nothing
+    _backgroundSession = BackgroundWanted();
 
     // The black box keeps its window (D29): the last N minutes of frames
     if (_blackBox)
@@ -180,6 +185,7 @@ bool TimeTravelController::StartRecording()
     {
         MLOGWARNING("TimeTravelController::StartRecording — missing dependencies (context=%p memory=%p tracker=%p)",
                     (void*)_context, (void*)_memory, (void*)_dirtyTracker);
+        _lastStartError = "the machine is not ready (no context, memory or dirty tracker)";
         return false;
     }
 
@@ -249,6 +255,7 @@ bool TimeTravelController::StartRecording()
         {
             MLOGERROR("TimeTravelController::StartRecording - refusing to record: %s",
                       registrationError.c_str());
+            _lastStartError = registrationError;
             return refuse();
         }
     }
@@ -297,6 +304,7 @@ bool TimeTravelController::StartRecording()
         MLOGWARNING("TimeTravelController::StartRecording — implausible modelRamPages=%u, refusing to start",
                     static_cast<unsigned>(_modelRamPages));
         _modelRamPages = 0;
+        _lastStartError = "the machine reports no RAM pages to record";
         return refuse();
     }
 
@@ -341,6 +349,7 @@ bool TimeTravelController::StartRecording()
         _lastStopReason = "capture-failed";
         if (wasRunning && emu)
             emu->Resume(false);
+        _lastStartError = "the engine did not take the baseline checkpoint";
         return false;
     }
     _blobBytes += BlobBytes(baseline);
@@ -458,52 +467,38 @@ void TimeTravelController::StopRecording()
         emu->Resume(false);
 }
 
-bool TimeTravelController::BeginDebuggerLiveHistory()
+bool TimeTravelController::HoldBackgroundRecording()
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    _debuggerHold = true;
+    if (_state == TTDSessionState::Recording || _recordingPaused)
+        return true;   // the recording that runs, explicit or background, serves the debugger
     if (_state == TTDSessionState::Detached)
     {
-        MLOGWARNING("TimeTravelController::BeginDebuggerLiveHistory — refused: session is Detached "
+        MLOGWARNING("TimeTravelController::HoldBackgroundRecording — refused: a stopped session is being browsed "
                     "(return to the present or ResumeRecordingFrom first)");
         return false;
     }
-
-    if (_recordMode == TTDRecordMode::DebuggerLive && _state == TTDSessionState::Recording)
-        return true;  // Already live-debugging.
-
-    const bool wasRecording = _state == TTDSessionState::Recording;
-
-    // Adopt an existing live recording; otherwise append to retained
-    // history when it is continuable (ResumeRecordingLive refuses on an
-    // unrecorded gap), else fall back to a fresh StartRecording baseline —
-    // a gapped/empty timeline is unreachable from the present anyway.
-    bool ok = wasRecording || (!_timeline.empty() && ResumeRecordingLive());
+    // Go on after the retained history when it is continuable (ResumeRecordingLive refuses on an unrecorded gap),
+    // else a fresh session: a gapped or empty timeline is unreachable from the present anyway
+    _backgroundSession = true;
+    bool ok = !_timeline.empty() && ResumeRecordingLive();
     if (!ok)
-    {
         ok = StartRecording();
-        if (!ok)
-            return false;
-    }
-
-    _recordMode = TTDRecordMode::DebuggerLive;
-    MLOGINFO("TimeTravelController::BeginDebuggerLiveHistory — live history active "
-             "(adopted existing recording: %s, timeline: %zu checkpoints)",
-             wasRecording ? "yes" : "no", _timeline.size());
-    return true;
+    MLOGINFO("TimeTravelController::HoldBackgroundRecording — background history %s (timeline: %zu checkpoints)",
+             ok ? "active" : "unavailable", _timeline.size());
+    return ok;
 }
 
-void TimeTravelController::EndDebuggerLiveHistory()
+void TimeTravelController::ReleaseBackgroundRecording()
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
-    if (_recordMode != TTDRecordMode::DebuggerLive)
-        return;  // Idempotent
-
-    _recordMode = TTDRecordMode::Session;
-    // Keeps the timeline: StopRecording transitions Recording → Idle with
-    // history retained, so the scrubber and .ttd flows can take over.
-    StopRecording();
-    MLOGINFO("TimeTravelController::EndDebuggerLiveHistory — timeline retained with %zu checkpoints",
-             _timeline.size());
+    if (!_debuggerHold)
+        return;   // Idempotent
+    _debuggerHold = false;
+    // A background recording the black box does not keep stops; the timeline stays
+    if (_backgroundSession && !_blackBox && (_state == TTDSessionState::Recording || _recordingPaused))
+        StopRecording();
 }
 
 void TimeTravelController::InvalidateSession(const char* reason)
@@ -596,9 +591,29 @@ void TimeTravelController::EngageCaptureFeatures()
     }
 }
 
+void TimeTravelController::StopHistoryPlayback()
+{
+    if (!_replayEngine)
+        return;
+    if (_replayEngine->MediaReads().GetMode() == TTDMediaJournal::Mode::Play)
+        _replayEngine->MediaReads().Stop();
+    if (_replayEngine->BusVectors().GetMode() == TTDPortJournal::Mode::Play)
+        _replayEngine->BusVectors().Stop();
+    if (_context && (_context->ttdPortReads == _replayEngine->BusReadsForPlayback() ||
+                     _context->ttdPortWrites == _replayEngine->BusWritesForPlayback()))
+        SyncPortJournalHook();   // the CPU's IN / OUT hooks back on the controller's own journals
+}
+
 void TimeTravelController::SetState(TTDSessionState next)
 {
+    const bool leavesHistory = _state == TTDSessionState::Detached && next != TTDSessionState::Detached;
     _state = next;
+    if (leavesHistory && !_inReplayMode)
+    {
+        // Off the recorded history: sectors, interrupt vectors and IN results are live again
+        StopHistoryPlayback();
+        SyncMediaReadJournal();
+    }
     SyncCoverageSink();
     if (next == TTDSessionState::Recording)
         EngageRecordingLock();
@@ -677,7 +692,7 @@ void TimeTravelController::EngageRecordingLock()
 
     // Devices with a host-time dependence (the RTC) switch to emulated time
     // here, before StartRecording captures its baseline - a black box too
-    _accelerationLocked = !_blackBox;
+    _accelerationLocked = !_backgroundSession;
     if (!_accelerationLocked)
     {
         _peripherals.NotifyRecording(true);
@@ -1149,10 +1164,10 @@ TTDHeapBreakdown TimeTravelController::GetHeapBreakdown() const
 std::string TimeTravelController::RecordingGuard(TTDGuardedAction action) const
 {
     // Only a recording the user started is protected - also while it is paused
-    // for browsing (D8): it goes on from where it paused. A debugger's live
-    // history (DebuggerLive, DeZog) is a rolling background history: any
-    // outside change drops it and the debugger restarts it on the next resume or step.
-    if (!(IsRecording() || _recordingPaused) || IsDebuggerLive())
+    // for browsing (D8): it goes on from where it paused. A background one (the
+    // black box, a debugger's history) refuses nothing: the change ends its
+    // session and the next one starts at once (OnLoad, owner 2026-10-07)
+    if (!(IsRecording() || _recordingPaused) || _backgroundSession)
         return {};
 
     switch (action)
@@ -1214,7 +1229,7 @@ void TimeTravelController::OnFrameBoundary()
     if (_restartPending && _state == TTDSessionState::Idle)
     {
         _restartPending = false;
-        if ((_blackBox || RestartFeatureOn()) && StartRecording())
+        if ((BackgroundWanted() || RestartFeatureOn()) && StartRecording())
             MLOGINFO("TimeTravelController: a new session started after the previous one ended");
         return;
     }
@@ -1224,7 +1239,7 @@ void TimeTravelController::OnFrameBoundary()
     // ------------------------------------------------------------------
     if (_state == TTDSessionState::Recording)
     {
-        // A DebuggerLive paused-browse build is invalidated the moment
+        // A paused-browse build (a debugger browsing while recording) is invalidated the moment
         // execution advances past the frame it decoded — entries for the
         // cached frame would be incomplete. In Session mode this is a
         // harmless no-op: browse scopes never cross a live boundary (the
@@ -1383,7 +1398,7 @@ bool TimeTravelController::AccelerationActive() const
 
 void TimeTravelController::OnAccelerationChanging(bool accelerating)
 {
-    if (!_blackBox)
+    if (!_backgroundSession)
         return;
     if (accelerating)
     {
@@ -1413,7 +1428,7 @@ void TimeTravelController::OnConfigurationChange(TTDConfigChangeKind kind, const
     // handles the recording)
     if (kind == TTDConfigChangeKind::SpeedMultiplier)
     {
-        if (!_blackBox)
+        if (!_backgroundSession)
             InvalidateSession(reason);
         return;
     }
@@ -1443,7 +1458,7 @@ bool TimeTravelController::RestartFeatureOn() const
 void TimeTravelController::EndSessionImpl(const char* reason, bool keepHistory)
 {
     const bool wasRecording = _state == TTDSessionState::Recording || _recordingPaused;
-    const bool blackBoxRecorded = _blackBox && (wasRecording || _blackBoxSuspended);
+    const bool blackBoxRecorded = _backgroundSession && (wasRecording || _blackBoxSuspended);
     if (wasRecording)
         StopRecording();   // cleanly: the machine parked, the features it switched on back off
     if (blackBoxRecorded)
@@ -1454,7 +1469,8 @@ void TimeTravelController::EndSessionImpl(const char* reason, bool keepHistory)
         InvalidateSession(reason);
     _lastStopReason = keepHistory ? reason : "machine-change";
     _blackBoxSuspended = false;
-    _restartPending = blackBoxRecorded || (wasRecording && RestartFeatureOn());
+    // A second end before the restart (a disk autostart: the disk load, then its reset) keeps it due
+    _restartPending = _restartPending || (blackBoxRecorded && BackgroundWanted()) || (wasRecording && RestartFeatureOn());
     if (_restartPending)
         MLOGINFO("TimeTravelController: '%s' ended the session; a new one starts at the next frame", reason);
 }
@@ -1467,9 +1483,19 @@ bool TimeTravelController::CutAtFrameStart(uint64_t frame) const
 void TimeTravelController::OnLoad(TTDLoadKind kind, const char* reason)
 {
     // A snapshot load ends the session like a reset (D42); a medium (tape, disk) drops it
-    if (kind == TTDLoadKind::Snapshot && !IsDebuggerLive())   // a debugger's rolling history is dropped by any outside change
+    if (kind == TTDLoadKind::Snapshot)
     {
         EndSession(reason);
+        return;
+    }
+    // A background recording (the black box, a debugger's history) is not
+    // protected (owner 2026-10-07): the medium ends its session - the recording
+    // up to here stays in its folder - and the next one starts at the next frame
+    if (_backgroundSession &&
+        (_state == TTDSessionState::Recording || _recordingPaused || _blackBoxSuspended))
+    {
+        EndSessionForMachineChange(reason);
+        _lastStopReason = reason;
         return;
     }
     InvalidateSession(reason);
@@ -1676,6 +1702,9 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
 
     // --- Chipset port latches + counters (a pure field copy into emulatorState) ---
     RestoreChipsetState(engineCp->chipset, &_context->emulatorState);
+    // The audio timeline jumps: the host-side post-processing (voicing, character chains) restarts
+    if (_context->pSoundManager)
+        _context->pSoundManager->onStateRestored();
 
     // The CPU's in-frame position (the frame-end overshoot), then the frame geometry
     // (frame limit, INT window) from the restored multiplier
@@ -2163,11 +2192,25 @@ void TimeTravelController::ServiceInput()
                 TTDInputEvent in;
                 TTDEventLog::ToInput(ev, in);
                 TTDNetInput net;
-                const bool isNet = in.kind == TTDInputKind::NetEvent;
+                const bool isNet = HasNetRecord(in.kind);
                 if (isNet)
                 {
                     TTDEventLog::UnpackNet(ev, net);
                     net.payloadLength = static_cast<uint32_t>(_replayEngine->Payloads().Bytes(ev.payload).size());
+                    // The input journal's record of the same bytes (both hold the session's inputs in
+                    // order): a device keeps its number, not the bytes, and a restore reads them there
+                    const auto& journalEvents = _inputJournal.Events();
+                    while (_inputCursor < journalEvents.size() && !HasNetRecord(journalEvents[_inputCursor].kind))
+                        ++_inputCursor;
+                    if (_inputCursor < journalEvents.size())
+                    {
+                        if (const TTDNetInput* recorded = _inputJournal.NetOf(journalEvents[_inputCursor]))
+                        {
+                            net.journalIndex = journalEvents[_inputCursor].netIndex;
+                            net.payloadOffset = recorded->payloadOffset;
+                        }
+                        ++_inputCursor;
+                    }
                 }
                 ApplyInputEvent(in, InputDevicesOf(_context), isNet ? &net : nullptr,
                                 isNet && net.payloadLength ? _replayEngine->Payloads().Bytes(ev.payload).data() : nullptr);
@@ -2837,9 +2880,13 @@ bool TimeTravelController::SeekTo(const TTDTimePoint& target, TTDSeekResult* out
     // position shows what the beam drew up to it, as a live machine has it
     // there: at a frame's start that is the previous frame's final picture.
     // "Frame N" asks for frame N's end (D13), which shows frame N's picture
-    // with the machine state that goes with it
+    // with the machine state that goes with it. At a frame boundary that is
+    // the finished frame, also for a device drawing on its own clock (the
+    // FT812 composes it from its lead-in frames), as a live machine shows it
+    // The target decides, not the landing: a seek lands on the first
+    // instruction boundary at or after it, a few T-states into the frame
     if (ok || result.haltReason == TTDSeekHaltReason::ExternalEvent)
-        PresentPosition(false);
+        PresentPosition(ok && target.tInFrame == 0);
 
     return ok;
 }
@@ -3220,7 +3267,7 @@ void TimeTravelController::RunToFrameEnd()
         _context->pEmulator->RunTStates(frameTStates - startT, /*skipBreakpoints=*/true);
 }
 
-void TimeTravelController::ComposeDisplay(bool frameTarget)
+void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame)
 {
     if (!_context || !_context->pEmulator || !_context->pCore || !_context->pScreen || _timeline.empty())
         return;
@@ -3275,16 +3322,20 @@ void TimeTravelController::ComposeDisplay(bool frameTarget)
     ITTDDisplayParticipant* participant = _context->pTtdDisplayParticipant;
     if (frameTarget)
     {
-        // The frame's final picture: its own T-states, start to end. A device
-        // picture (VDAC2) runs on its own frame clock: its frame that finished
-        // last may have started before this frame, so replay from earlier
+        // At a frame boundary (D13): the final picture of the frame that ended
+        // here, its own T-states start to end. A device picture (VDAC2) runs on
+        // its own frame clock: its frame that finished last may have started
+        // before that frame, so replay from earlier
+        const uint64_t ended = targetFrame == kCurrentFrame ? frame
+                               : targetFrame == kEndedFrame ? (frame > 0 ? frame - 1 : 0)
+                                                            : targetFrame;
         const uint64_t leadIn = participant ? participant->TTDLeadInFrames() : 0;
-        const uint64_t from = frame > leadIn ? frame - leadIn : 0;
+        const uint64_t from = ended > leadIn ? ended - leadIn : 0;
         if (const TTDCheckpoint* cp = checkpointAtOrBefore(from))
         {
             RestoreCheckpointForReplay(*cp);
             paintStaticBase();
-            runUntilFrame(frame);
+            runUntilFrame(ended);
             RunToFrameEnd();
         }
     }
@@ -3607,7 +3658,7 @@ bool TimeTravelController::ResumeRecordingLive()
     // stopped, those frames have no checkpoints and no journaled writes —
     // replaying across the gap from the older checkpoint would silently
     // produce wrong state, so the caller must wipe and StartRecording
-    // instead (exactly the pre-DebuggerLive behavior).
+    // instead (a fresh session).
     const TTDTimePoint present = CurrentPosition();
     const TTDTimePoint recordedEnd = _timeline.back().time;
     if (present.frame != recordedEnd.frame)
@@ -4357,6 +4408,17 @@ TimeTravelController::SelfTestResult TimeTravelController::CaptureRestoreSelfTes
         result.notes = "a session holds history: the self-test runs without one";
         return result;
     }
+    // The machine's RAM size and serializers, as a recording sets them up:
+    // the engine begins the capture's session with them
+    _modelRamPages = ResolveModelRamPages();
+    std::string registrationError;
+    if (_modelRamPages == 0 || _modelRamPages > MAX_RAM_PAGES || !RegisterModelPeripherals(&registrationError))
+    {
+        result.notes = "cannot set up the machine's capture: " +
+                       (registrationError.empty() ? std::string("no RAM size") : registrationError);
+        _modelRamPages = 0;
+        return result;
+    }
 
     // Hash the live architectural state before capture. The RAM digest is
     // included so any missed page restoration shows up here.
@@ -4472,7 +4534,7 @@ void TimeTravelController::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint
     rec.value    = newVal;
     // Journaled writes always have a RAM page (Memory gates on kPhysPageNone),
     // and RAM pages are 0..255, so the record's byte holds it exactly.
-    rec.physPage = static_cast<uint8_t>(physPage);
+    SetRecordPage(rec, physPage);
     (void)oldVal;  // Not stored in the compact 12-byte record (TDD §9.3)
 
     if (_writeJournal)
@@ -4614,7 +4676,7 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournal(uint64_t fromT, ui
             rec.isIo = 0;
             rec.m1pc = h.pc;
             rec.value = h.value;
-            rec.physPage = static_cast<uint8_t>(h.physPage);   // as the live journal stores it
+            SetRecordPage(rec, h.physPage);   // as the live journal stores it
             f.records.push_back(rec);
         }
         r.records += f.records.size();
@@ -4843,7 +4905,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
         if (rec.addr < q.addrFrom || rec.addr > q.addrTo) return false;
         if (q.hasValueFilter && rec.value != q.value) return false;
         if (q.hasPcFilter && (rec.m1pc < q.pcFrom || rec.m1pc > q.pcTo)) return false;
-        if (q.hasPhysPageFilter && rec.physPage != q.physPage) return false;   // bank-aware (TDD §9.4)
+        if (q.hasPhysPageFilter && RecordPage(rec) != q.physPage) return false;   // bank-aware (TDD §9.4)
         return true;
     };
 
@@ -4867,7 +4929,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
                     answer.time = TimePointAt(rec->globalT);
                     answer.pc = rec->m1pc;
                     answer.value = rec->value;
-                    answer.physPage = PhysPage{rec->physPage};
+                    answer.physPage = RecordPage(*rec);
                     answer.access = TTDAccessType::Write;
                     answer.addr = rec->addr;
                     reportWindow(answer.time, std::min(TimePointAt(beforeGlobalT), SessionEndPosition()));
@@ -5826,6 +5888,19 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out)
     out.portReadCursor = _portReads.Cursor();
     out.portWriteMode = _portWrites.GetMode();
     out.portWriteCursor = _portWrites.Cursor();
+    if (_replayEngine)
+    {
+        out.busReadMode = _replayEngine->BusReads().GetMode();
+        out.busReadCursor = _replayEngine->BusReads().Cursor();
+        out.busWriteMode = _replayEngine->BusWrites().GetMode();
+        out.busWriteCursor = _replayEngine->BusWrites().Cursor();
+        out.busVectorMode = _replayEngine->BusVectors().GetMode();
+        out.busVectorCursor = _replayEngine->BusVectors().Cursor();
+        out.mediaReadMode = _replayEngine->MediaReads().GetMode();
+        out.mediaReadCursor = _replayEngine->MediaReads().Cursor();
+    }
+    out.portReadHook = _context->ttdPortReads;
+    out.portWriteHook = _context->ttdPortWrites;
 
     out.hasKeyboard = _context->pKeyboard != nullptr;
     if (out.hasKeyboard)
@@ -5886,6 +5961,9 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
         z80->SetNmiPending(snap.cpu.nmi_pending != 0);
     }
     RestoreChipsetState(snap.chipset, &_context->emulatorState);
+    // The audio timeline jumps: the host-side post-processing (voicing, character chains) restarts
+    if (_context->pSoundManager)
+        _context->pSoundManager->onStateRestored();
     if (z80)
     {
         z80->t = snap.z80TInFrame;
@@ -5916,7 +5994,20 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
     UpdateInputWorkFlag();
     _portReads.RestorePosition(snap.portReadMode, snap.portReadCursor);
     _portWrites.RestorePosition(snap.portWriteMode, snap.portWriteCursor);
-    SyncPortJournalHook();
+    if (_replayEngine)
+    {
+        // The engine's journals where the caller had them (a machine on the recorded history keeps playing them)
+        _replayEngine->BusReadsMutable().RestorePosition(snap.busReadMode, snap.busReadCursor);
+        _replayEngine->BusWritesMutable().RestorePosition(snap.busWriteMode, snap.busWriteCursor);
+        _replayEngine->BusVectors().RestorePosition(snap.busVectorMode, snap.busVectorCursor);
+        if (snap.mediaReadMode == TTDMediaJournal::Mode::Play)
+            _replayEngine->MediaReads().StartPlayback(snap.mediaReadCursor);
+        else
+            _replayEngine->MediaReads().Stop();
+    }
+    _context->ttdPortReads = snap.portReadHook;
+    _context->ttdPortWrites = snap.portWriteHook;
+    SyncMediaReadJournal();
 
     if (snap.hasKeyboard && _context->pKeyboard)
         _context->pKeyboard->RestoreInputState(snap.keyboard);
@@ -5949,14 +6040,13 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
 const TTDFrameCache* TimeTravelController::GetFrameCache(uint64_t frame)
 {
     // Never build a cache during live recording — the accelerator is a
-    // replay-scope facility only. Exception: DebuggerLive while the
-    // emulator is paused (reverse-debugging.md §6) — the emulator thread is
+    // replay-scope facility only. Exception: a recording while the
+    // emulator is paused (a debugger browsing its history, reverse-debugging.md §6) — the emulator thread is
     // parked, the build replays under EnterReplayMode (journaling muted) and
     // round-trips live state exactly, so debugger history browsing must not
     // stop the recording to look at it.
     if (_state == TTDSessionState::Recording &&
-        !(_recordMode == TTDRecordMode::DebuggerLive && _context && _context->pEmulator &&
-          _context->pEmulator->IsPaused()))
+        !(_context && _context->pEmulator && _context->pEmulator->IsPaused()))
     {
         return nullptr;
     }
@@ -5989,10 +6079,10 @@ const TTDFrameCache* TimeTravelController::GetFrameCache(uint64_t frame)
     // The build replays through SeekToInternal, which transitions the
     // session to Detached (TDD §4.2). A cache build is a transparent
     // facility, NOT a state transition: restore the caller's session state
-    // so a DebuggerLive browse (Recording while paused, §6) keeps recording,
+    // so a debugger's browse (Recording while paused, §6) keeps recording,
     // and a Session-mode browse stays Detached exactly as before. Without
     // this restore every browse stranded the manager in Detached while the
-    // capture was still live — BeginDebuggerLiveHistory then refused and
+    // capture was still live — the debugger's history hold then refused and
     // history silently died at the first browse.
     const TTDSessionState stateBeforeBuild = _state;
 

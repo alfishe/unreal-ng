@@ -55,8 +55,8 @@ surface - WebAPI `settings/<name>`, CLI `setting <name>`, Lua / Python
 | Setting | Values (default first) | Notes |
 |---|---|---|
 | `ay_voicing` | `classic` (default, alias `legacy`) \| `headphones` \| `flat` \| `warm` \| `tv` \| `small_speaker` | Tonal balance of the AY / SSG output, HQ and LQ. `flat` for analysis; also `[SOUND] AYVoicing=` in `unreal.ini` |
-| `ay_punch` | `on` \| `off` | AY transient enhancement, Sound HQ only |
-| `ay_room` | `9db` \| `off` \| `15db` ... `1db` | Headphone crossfeed level, Sound HQ only |
+| `ay_punch` | `on` \| `off` | AY transient enhancement, Sound HQ only; also the ZX-MultiSound card's SSG rows |
+| `ay_room` | `9db` \| `off` \| `15db` ... `1db` | Headphone crossfeed level, Sound HQ only; also the ZX-MultiSound card's SSG rows |
 | `beeper_punch` | `off` \| `on` | Beeper attack enhancement, Sound HQ only |
 
 What each profile sounds like, its curve and when to pick it:

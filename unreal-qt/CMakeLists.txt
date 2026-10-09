@@ -605,6 +605,12 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/journalspanslider_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/journalspanslider.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/journalspanslider.h"
+        # The TTD panel: the Advanced row's recording options, Build Journal only where it is missing
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/ttdwidget_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tintedsvgicon.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tintedsvgicon.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/statusbarvideomode_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/statusbarvideomode.h"
@@ -670,6 +676,7 @@ if (TESTS)
     target_link_libraries(unreal-qt-tests PRIVATE
         unrealng::core
         Qt6::Widgets
+        Qt6::Svg
         QHexView
         gtest
     )

@@ -1,0 +1,86 @@
+
+         ent  $
+
+MAINLOOP call SCANNER
+         call SHOWKEYS
+
+         call 8020
+         jr   c,MAINLOOP
+         ret
+
+SHOWKEYS ld   hl,KEYBOARD
+         ld   ix,22528+33
+         ld   b,4
+SHOW1    ld   c,10
+SHOW0    ld   a,(hl)
+         inc  hl
+         ld   (ix+0),a
+         ld   (ix+1),a
+         ld   (ix+32),a
+         ld   (ix+33),a
+         inc  ix
+         inc  ix
+         inc  ix
+         dec  c
+         jr   nz,SHOW0
+         ld   de,66
+         add  ix,de
+         djnz SHOW1
+         ret
+
+
+SCANNER  ld   hl,PORTTAB
+         ld   ix,KEYBOARD
+         ld   e,4
+         ld   c,254
+
+SCAN1    ld   b,(hl)
+         inc  hl
+         push hl
+         ld   d,5
+         ld   hl,BITTAB
+
+SCAN2    in   a,(c)
+         cpl
+         and  (hl)
+         inc  hl
+         jr   z,SCAN2B
+         ld   a,255
+SCAN2B   ld   (ix+0),a
+         inc  ix
+         dec  d
+         jr   nz,SCAN2
+
+         pop  hl
+         ld   b,(hl)
+         inc  hl
+         push hl
+         ld   d,5
+         ld   hl,BITTAB+4
+
+SCAN3    in   a,(c)
+         cpl
+         and  (hl)
+         dec  hl
+         jr   z,SCAN3B
+         ld   a,255
+SCAN3B   ld   (ix+0),a
+         inc  ix
+         dec  d
+         jr   nz,SCAN3
+
+         pop  hl
+         dec  e
+         jr   nz,SCAN1
+         ret
+
+
+PORTTAB  defb 247,239
+         defb 251,223
+         defb 253,191
+         defb 254,127
+
+BITTAB   defb 1,2,4,8,16
+
+KEYBOARD defs 8*5
+

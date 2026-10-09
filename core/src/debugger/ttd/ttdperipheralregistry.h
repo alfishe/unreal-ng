@@ -96,6 +96,13 @@ public:
     /// Get registered device by ID (nullptr if not registered).
     TTDSerializable* GetDevice(PeripheralId id) const;
 
+    /// The engine's instance name given at registration for @p id ("ay-socket.ts"); "" when none was given
+    std::string InstanceOf(PeripheralId id) const
+    {
+        const auto it = _instances.find(static_cast<uint8_t>(id));
+        return it != _instances.end() ? it->second : std::string();
+    }
+
     /// Capture all registered peripherals to the blob map.
     /// @param outBlobs Output map of peripheral ID → serialized state
     void CaptureAll(std::unordered_map<uint8_t, std::vector<uint8_t>>& outBlobs) const;

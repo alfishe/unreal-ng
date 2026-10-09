@@ -426,7 +426,7 @@ TEST(DeviceStateScreen_Test, ModeReportFollowsTheActiveMode)
         // ATM 4.50: the mode is the low address byte of the last #FE write (OUT #BE = 640x200), no #FF77
         ScreenMachine m("ATM450");
         ASSERT_NE(m.context, nullptr);
-        m.context->emulatorState.aFE = 0xBE;
+        m.context->emulatorState.atm.aFE = 0xBE;
         m.Redetect();
         const StateNode r = DeviceState::ScreenMode(m.context);
         EXPECT_EQ(At(r, "video_mode").s, "ATMHR");
@@ -435,7 +435,7 @@ TEST(DeviceStateScreen_Test, ModeReportFollowsTheActiveMode)
         EXPECT_TRUE(At(At(r, "afe"), "rom_at_0000").b);
         EXPECT_EQ(r.find("ff77"), nullptr) << "the 4.50 board has no #FF77";
 
-        m.context->emulatorState.aFE = 0x9E;  // EGA 320x200x16
+        m.context->emulatorState.atm.aFE = 0x9E;  // EGA 320x200x16
         m.Redetect();
         EXPECT_EQ(At(DeviceState::ScreenMode(m.context), "video_mode").s, "ATM16");
     }

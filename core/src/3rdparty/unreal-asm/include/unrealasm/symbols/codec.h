@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "unrealasm/diagnostics.h"
+#include "unrealasm/symbols/namerules.h"
 #include "unrealasm/symbols/symbol.h"
 
 namespace unrealasm::symbols
@@ -28,6 +29,9 @@ struct CodecInfo
     std::string title;
     Family family = Family::Text;
     std::vector<std::string> extensions;   ///< usual extensions without the dot, lower case (detection hint)
+    NameRules rules;                       ///< what names the format takes (DT-3)
+    bool pages = false;                    ///< holds page symbols (else DT-4 applies)
+    std::string comment;                   ///< what starts a comment line ("" = the format has none)
 };
 
 struct Probe
@@ -46,6 +50,7 @@ struct SymbolDecodeResult
 struct SymbolEncodeOptions
 {
     std::string lineEnd = "\n";
+    Unrepresentable unrepresentable = Unrepresentable::Fold;   ///< a page symbol in a format without pages (DT-4)
 };
 
 struct SymbolEncodeResult
@@ -55,6 +60,15 @@ struct SymbolEncodeResult
     Diagnostics diagnostics;    ///< what the format could not hold, renames
     bool ok = false;
 };
+
+/// A file made ready for a format: names by its rules (DT-3), page symbols by the options (DT-4); `header` holds the
+/// comment lines (renames, commented symbols) the codec writes first, already with the format's comment prefix
+struct PreparedFile
+{
+    SymbolFile file;
+    std::vector<std::string> header;
+};
+PreparedFile Prepare(const SymbolFile& file, const CodecInfo& info, const SymbolEncodeOptions& options, Diagnostics& diagnostics);
 
 class ISymbolCodec
 {

@@ -1,7 +1,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/scorpion/ttdscorpionprofrom.h"
 #include "emulator/ports/models/scorpionfixture.h"
 
@@ -17,15 +17,16 @@ class TtdScorpionPaging_Test : public ScorpionMachineFixture
 {
 protected:
     /// Record one checkpoint with the machine as it is, then stop
-    uint64_t CaptureCheckpoint(ttd::TimeTravelManager& ttd)
+    uint64_t CaptureCheckpoint(ttd::TimeTravelController& ttd)
     {
+        _context->emulatorState.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
         ttd.OnFrameBoundary();
         const uint64_t frame = _context->emulatorState.frame_counter;
         ttd.StopRecording();
         return frame;
     }
 
-    bool SeekToFrame(ttd::TimeTravelManager& ttd, uint64_t frame)
+    bool SeekToFrame(ttd::TimeTravelController& ttd, uint64_t frame)
     {
         ttd::TTDTimePoint target;
         target.frame = frame;
@@ -39,7 +40,7 @@ TEST_F(TtdScorpionPaging_Test, PlainScorpionRecordingCarriesModelState)
 {
     ASSERT_EQ(_context->config.mem_model, MM_SCORP);
 
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
     EXPECT_TRUE(ttd.GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::ScorpionProfROM))
         << "MM_SCORP recording has no serializer for #1FFD / the magic-button trigger";
@@ -49,7 +50,7 @@ TEST_F(TtdScorpionPaging_Test, PlainScorpionRecordingCarriesModelState)
 /// #1FFD bit 4 selects the high RAM bank at #C000: a seek must map it back
 TEST_F(TtdScorpionPaging_Test, SeekRestoresHighRamBankFrom1FFD)
 {
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
 
     WritePort(0x7FFD, 0x03);                 // bank 3 ...
@@ -69,7 +70,7 @@ TEST_F(TtdScorpionPaging_Test, SeekRestoresHighRamBankFrom1FFD)
 /// #1FFD bit 0 maps RAM page 0 at #0000 above every ROM selection
 TEST_F(TtdScorpionPaging_Test, SeekRestoresRamAtZeroFrom1FFD)
 {
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
 
     WritePort(0x1FFD, 0x01);
@@ -87,7 +88,7 @@ TEST_F(TtdScorpionPaging_Test, SeekRestoresRamAtZeroFrom1FFD)
 /// The other direction: recorded with ROM at #0000, live machine has RAM there
 TEST_F(TtdScorpionPaging_Test, SeekClearsRamAtZeroSetAfterTheCheckpoint)
 {
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
 
     ASSERT_TRUE(ScorpionIsRomTag(BankTag(0x0000)));
@@ -105,13 +106,13 @@ TEST_F(TtdScorpionPaging_Test, SeekClearsRamAtZeroSetAfterTheCheckpoint)
 /// The magic-button trigger is host-armed, not port-derived: it must round-trip too
 TEST_F(TtdScorpionPaging_Test, SeekRestoresMagicButtonTrigger)
 {
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
-    ASSERT_EQ(_context->emulatorState.scorpionDosTrigger, 0);
+    ASSERT_EQ(_context->emulatorState.scorpion.dosTrigger, 0);
     const uint64_t frame = CaptureCheckpoint(ttd);
 
-    _context->emulatorState.scorpionDosTrigger = 1;
+    _context->emulatorState.scorpion.dosTrigger = 1;
 
     ASSERT_TRUE(SeekToFrame(ttd, frame));
-    EXPECT_EQ(_context->emulatorState.scorpionDosTrigger, 0);
+    EXPECT_EQ(_context->emulatorState.scorpion.dosTrigger, 0);
 }

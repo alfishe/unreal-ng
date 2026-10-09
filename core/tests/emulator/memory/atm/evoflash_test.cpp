@@ -675,7 +675,7 @@ CHIPID  DW 0
         EXPECT_EQ(Rom(page, 0x2345), 0xFF) << "erased page " << page;
     EXPECT_EQ(Rom(3, 0x3FFF), page3) << "the sector before";
     EXPECT_EQ(Rom(8, 0x0000), page8) << "the sector after";
-    EXPECT_EQ(_context->emulatorState.pBF & 0x02, 0) << "evoflash closes the write enable";
+    EXPECT_EQ(_context->emulatorState.evo.pBF & 0x02, 0) << "evoflash closes the write enable";
     EXPECT_FALSE(_context->pCore->IsBusOverlayInstalled(&Flash()));
 }
 

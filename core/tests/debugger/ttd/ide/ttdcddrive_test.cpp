@@ -16,7 +16,7 @@
 #include "_helpers/scratchfolder.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/ide/ttdcddrive.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -35,7 +35,7 @@ namespace
     protected:
         Emulator* _emulator = nullptr;
         EmulatorContext* _context = nullptr;
-        ttd::TimeTravelManager* _ttd = nullptr;
+        ttd::TimeTravelController* _ttd = nullptr;
         std::unique_ptr<ScratchFolder> _folder;
 
         void SetUp() override
@@ -44,7 +44,7 @@ namespace
             ASSERT_NE(_emulator, nullptr);
             _context = _emulator->GetContext();
             _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
-            _ttd = _context->pTimeTravelManager;
+            _ttd = _context->pTimeTravelController;
             _folder = std::make_unique<ScratchFolder>("ttd-cd");
             MediaSource source;
             source.path = cdtest::WriteMusicDisc(_folder->Path(), 1, 3, 16, cdtest::MusicLayout::Mixed);
@@ -92,7 +92,7 @@ TEST_F(TTDCdDrive_Test, RegisteredOnlyWithACdDrive)
     Emulator* pentagon = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
     ASSERT_NE(pentagon, nullptr);
     pentagon->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* other = pentagon->GetContext()->pTimeTravelManager;
+    ttd::TimeTravelController* other = pentagon->GetContext()->pTimeTravelController;
     ASSERT_TRUE(other->StartRecording());
     EXPECT_TRUE(other->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::AtaChannel));
     EXPECT_FALSE(other->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::CdDrive));

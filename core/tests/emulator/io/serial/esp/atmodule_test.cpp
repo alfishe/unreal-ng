@@ -396,19 +396,20 @@ TEST_F(AtModule_Test, StateCarriesTheZxLine)
     line.stopBits = 2;
     _esp->OnLineSettings(line);
     auto state = std::make_unique<netstate::EspModuleState>();
-    _esp->SaveState(*state);
+    netstate::Tail tail;
+    _esp->SaveState(*state, tail);
 
     auto copy = std::make_unique<AtModule>(_net.get(), EspModule::Chip::Esp8266);
     copy->SetClock([this]() { return _now; }, 3500000);
     copy->OnLineSettings(SerialLine());
-    copy->LoadState(*state, nullptr);
+    copy->LoadState(*state, tail, nullptr);
     EXPECT_TRUE(copy->ZxLine() == line);
 
     state->zxLineFormat = 0;   // recorded before the field existed: the live line stays
     auto old = std::make_unique<AtModule>(_net.get(), EspModule::Chip::Esp8266);
     old->SetClock([this]() { return _now; }, 3500000);
     old->OnLineSettings(SerialLine());
-    old->LoadState(*state, nullptr);
+    old->LoadState(*state, tail, nullptr);
     EXPECT_TRUE(old->ZxLine() == SerialLine());
 }
 
@@ -419,11 +420,12 @@ TEST_F(AtModule_Test, StateRoundTrip)
     Cmd("AT+CIPDINFO=1");
     Read();
     auto state = std::make_unique<netstate::EspModuleState>();
-    _esp->SaveState(*state);
+    netstate::Tail tail;
+    _esp->SaveState(*state, tail);
     auto copy = std::make_unique<AtModule>(_net.get(), EspModule::Chip::Esp8266);
     copy->SetClock([this]() { return _now; }, 3500000);
     copy->OnLineSettings(SerialLine());
-    copy->LoadState(*state, nullptr);
+    copy->LoadState(*state, tail, nullptr);
     for (char c : std::string("AT+CIPMUX?\r\n"))
         copy->Transmit(static_cast<uint8_t>(c));
     _now += 100000;
@@ -567,17 +569,19 @@ TEST_F(AtModule_Test, PinsAndPresetSettingsSurviveTheStateRoundTrip)
     Read();
     _esp->SetFlashPin(true);
     auto state = std::make_unique<netstate::EspModuleState>();
-    _esp->SaveState(*state);
+    netstate::Tail tail;
+    _esp->SaveState(*state, tail);
     auto copy = std::make_unique<AtModule>(_net.get(), EspModule::Firmware::Esp8266At222);
     copy->SetClock([this]() { return _now; }, 3500000);
-    copy->LoadState(*state, nullptr);
+    copy->LoadState(*state, tail, nullptr);
     EXPECT_TRUE(copy->FlashPinLow());
     EXPECT_FALSE(copy->SysStore());
     EXPECT_EQ(copy->ManualDns(0), NetIp(9, 9, 9, 9));
 
     _esp->SetResetPin(true);   // the session settings go with the reset; the pin state stays in the blob
-    _esp->SaveState(*state);
-    copy->LoadState(*state, nullptr);
+    tail.Clear();
+    _esp->SaveState(*state, tail);
+    copy->LoadState(*state, tail, nullptr);
     EXPECT_TRUE(copy->ResetHeld());
     EXPECT_TRUE(copy->SysStore());
 }

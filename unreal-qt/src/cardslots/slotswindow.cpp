@@ -12,10 +12,10 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
-#include <QListWidget>
 #include <QPushButton>
+#include <QSplitter>
+#include <QTableWidget>
 #include <QTimer>
-#include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -59,82 +59,93 @@ SlotsWindow::SlotsWindow(QWidget* parent) : QWidget(parent)
 void SlotsWindow::buildUi()
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setSpacing(12);
+    layout->setSpacing(8);
 
     _machineLabel = new QLabel(this);
     _machineLabel->setStyleSheet("font-weight: bold; font-size: 14px;");
     layout->addWidget(_machineLabel);
 
-    auto* builtInsHeader = new QHBoxLayout();
-    _builtInsToggle = new QToolButton(this);
-    _builtInsToggle->setArrowType(Qt::DownArrow);
-    _builtInsToggle->setAutoRaise(true);
-    _builtInsToggle->setToolTip(tr("Show/hide built-in devices"));
-    builtInsHeader->addWidget(_builtInsToggle);
-    auto* builtInsLabel = new QLabel(tr("Built-in Devices"), this);
-    builtInsLabel->setStyleSheet("font-weight: bold;");
-    builtInsHeader->addWidget(builtInsLabel);
-    builtInsHeader->addStretch(1);
-    layout->addLayout(builtInsHeader);
+    auto* splitter = new QSplitter(Qt::Vertical, this);
+    layout->addWidget(splitter, 1);
 
-    _builtInsTree = new QTreeWidget(this);
-    _builtInsTree->setHeaderHidden(true);
-    _builtInsTree->setColumnCount(2);
-    _builtInsTree->header()->setStretchLastSection(true);
-    _builtInsTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    _builtInsTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    _builtInsTree->setRootIsDecorated(false);
-    _builtInsTree->setMaximumHeight(120);
-    layout->addWidget(_builtInsTree);
+    _infoTree = new QTreeWidget(splitter);
+    _infoTree->setColumnCount(5);
+    _infoTree->setHeaderLabels({tr("Bus / Slot"), tr("Card"), tr("Options"), tr("Fit"), tr("State")});
+    _infoTree->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    _infoTree->header()->setStretchLastSection(true);
+    _infoTree->setRootIsDecorated(true);
+    _infoTree->setIndentation(16);
+    _infoTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    _infoTree->setSelectionMode(QAbstractItemView::NoSelection);
 
-    connect(_builtInsToggle, &QToolButton::clicked, this, [this]() {
-        bool visible = !_builtInsTree->isVisible();
-        _builtInsTree->setVisible(visible);
-        _builtInsToggle->setArrowType(visible ? Qt::DownArrow : Qt::RightArrow);
-    });
+    auto* bottomPanel = new QWidget(splitter);
+    auto* bottomLayout = new QVBoxLayout(bottomPanel);
+    bottomLayout->setContentsMargins(0, 8, 0, 0);
+    bottomLayout->setSpacing(8);
+
+    _machineSlotsLabel = new QLabel(tr("Board Slots"), bottomPanel);
+    _machineSlotsLabel->setStyleSheet("font-weight: bold;");
+    _machineSlotsLabel->setToolTip(tr("Cards of the machine's own slots, set in its configuration ([ISA]); not changed "
+                                      "from this window"));
+    bottomLayout->addWidget(_machineSlotsLabel);
+    _machineSlotsTree = new QTreeWidget(bottomPanel);
+    _machineSlotsTree->setHeaderHidden(true);
+    _machineSlotsTree->setColumnCount(3);
+    _machineSlotsTree->setRootIsDecorated(false);
+    _machineSlotsTree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    _machineSlotsTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    _machineSlotsTree->header()->setStretchLastSection(true);
+    _machineSlotsTree->setMaximumHeight(80);
+    bottomLayout->addWidget(_machineSlotsTree);
+    _machineSlotsLabel->hide();
+    _machineSlotsTree->hide();
 
     auto* slotsHeader = new QHBoxLayout();
-    auto* slotsLabel = new QLabel(tr("Expansion Slots"), this);
+    auto* slotsLabel = new QLabel(tr("Expansion Slots"), bottomPanel);
     slotsLabel->setStyleSheet("font-weight: bold;");
     slotsHeader->addWidget(slotsLabel);
     slotsHeader->addStretch(1);
-    _addButton = new QPushButton("+", this);
+    _addButton = new QPushButton("+", bottomPanel);
     _addButton->setFixedWidth(30);
     _addButton->setToolTip(tr("Add a new slot"));
-    _removeButton = new QPushButton("-", this);
+    _removeButton = new QPushButton("-", bottomPanel);
     _removeButton->setFixedWidth(30);
     _removeButton->setToolTip(tr("Remove selected slot"));
-    _configButton = new QPushButton("...", this);
-    _configButton->setFixedWidth(30);
-    _configButton->setToolTip(tr("Configure selected slot"));
     slotsHeader->addWidget(_addButton);
     slotsHeader->addWidget(_removeButton);
-    slotsHeader->addWidget(_configButton);
-    layout->addLayout(slotsHeader);
+    bottomLayout->addLayout(slotsHeader);
 
-    _slotsList = new QListWidget(this);
-    _slotsList->setSelectionMode(QAbstractItemView::SingleSelection);
-    _slotsList->setAlternatingRowColors(true);
-    layout->addWidget(_slotsList, 1);
+    _slotsTable = new QTableWidget(bottomPanel);
+    _slotsTable->setColumnCount(3);
+    _slotsTable->setHorizontalHeaderLabels({tr("Slot"), tr("Card"), QString()});
+    _slotsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    _slotsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    _slotsTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
+    _slotsTable->horizontalHeader()->resizeSection(2, 36);
+    _slotsTable->verticalHeader()->setVisible(false);
+    _slotsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    _slotsTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    _slotsTable->setAlternatingRowColors(true);
+    _slotsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    bottomLayout->addWidget(_slotsTable, 1);
 
-    auto* bottomLayout = new QHBoxLayout();
-    bottomLayout->addStretch(1);
-    _undoButton = new QPushButton(tr("Undo"), this);
+    auto* buttonRow = new QHBoxLayout();
+    buttonRow->addStretch(1);
+    _undoButton = new QPushButton(tr("Undo"), bottomPanel);
     _undoButton->setEnabled(false);
-    bottomLayout->addWidget(_undoButton);
-    layout->addLayout(bottomLayout);
+    buttonRow->addWidget(_undoButton);
+    bottomLayout->addLayout(buttonRow);
+
+    splitter->setSizes({300, 200});
 
     connect(_addButton, &QPushButton::clicked, this, &SlotsWindow::onAddSlot);
     connect(_removeButton, &QPushButton::clicked, this, &SlotsWindow::onRemoveSlot);
-    connect(_configButton, &QPushButton::clicked, this, [this]() {
-        onConfigureSlot(_slotsList->currentRow());
-    });
     connect(_undoButton, &QPushButton::clicked, this, &SlotsWindow::undoLast);
-    connect(_slotsList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
-        onConfigureSlot(_slotsList->row(item));
+    connect(_slotsTable, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+        onConfigureSlot(row);
     });
 
-    resize(400, 500);
+    resize(760, 600);
 }
 
 void SlotsWindow::setBinding(EmulatorBinding* binding)
@@ -210,76 +221,88 @@ void SlotsWindow::refresh()
     if (!ok)
     {
         _machineLabel->setText(tr("No machine"));
-        _builtInsTree->clear();
-        _slotsList->clear();
+        _infoTree->clear();
+        _slotsTable->setRowCount(0);
+        _machineSlotsTree->clear();
+        _machineSlotsLabel->hide();
+        _machineSlotsTree->hide();
         return;
     }
 
     _machineLabel->setText(Q(Text(report.find("model"))));
-    fillBuiltIns(report);
+    fillInfoTree(report);
+    fillMachineSlots(report);
     fillSlots(report);
 
     SlotManager* manager = context->pSlotManager;
     _catalog = manager ? SlotControl::Catalog(manager->Snapshot()) : StateNode::Array();
 }
 
-void SlotsWindow::fillBuiltIns(const StateNode& report)
+void SlotsWindow::fillInfoTree(const StateNode& report)
 {
-    _builtInsTree->clear();
+    _infoTree->clear();
+    std::map<std::string, QTreeWidgetItem*> buses;
 
-    std::map<std::string, std::string> replacements;
-    if (const StateNode* slotsNode = report.find("slots"))
+    if (const StateNode* list = report.find("buses"))
     {
-        for (const StateNode& slot : slotsNode->items)
+        for (const StateNode& bus : list->items)
         {
-            const StateNode* replaces = slot.find("replaces");
-            if (replaces)
+            auto* item = new QTreeWidgetItem(_infoTree);
+            const std::string id = Text(bus.find("id"));
+            item->setText(0, Q(id));
+            item->setText(1, Q(Text(bus.find("kind"))));
+            item->setText(4, tr("arbitration %1").arg(Q(Text(bus.find("arbitration")))));
+            const StateNode* retrofit = bus.find("retrofit");
+            if (retrofit && retrofit->b)
             {
-                for (const StateNode& r : replaces->items)
-                {
-                    const std::string replacedId = Text(&r);
-                    const std::string cardName = Text(slot.find("name"));
-                    const std::string slotId = Text(slot.find("slot"));
-                    replacements[replacedId] = cardName + " (" + slotId + ")";
-                }
+                item->setText(3, tr("retrofitted"));
+                item->setToolTip(0, Q(Text(bus.find("retrofitNote"))));
             }
+            item->setExpanded(true);
+            buses[id] = item;
         }
     }
 
+    if (const StateNode* list = report.find("slots"))
+    {
+        for (const StateNode& slot : list->items)
+        {
+            const std::string id = Text(slot.find("slot"));
+            const std::string busId = id.substr(0, id.find('.'));
+            QTreeWidgetItem* parent = buses.count(busId) ? buses[busId] : nullptr;
+            auto* item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(_infoTree);
+            item->setText(0, Q(id));
+            item->setText(1, Q(Text(slot.find("card"))));
+            item->setToolTip(1, Q(Text(slot.find("name"))));
+            item->setText(2, Q(Text(slot.find("options"))));
+            const std::string adapter = Text(slot.find("adapter"));
+            item->setText(3, Q(Text(slot.find("fit"))) + (adapter.empty() ? QString() : tr(" behind %1").arg(Q(adapter))));
+            item->setText(4, Q(Text(slot.find("state"))));
+            const std::string reason = Text(slot.find("reason"));
+            if (!reason.empty())
+                item->setToolTip(4, Q(reason));
+        }
+    }
+
+    auto* builtIns = new QTreeWidgetItem(_infoTree);
+    builtIns->setText(0, tr("Built-in devices"));
+    builtIns->setExpanded(true);
     if (const StateNode* list = report.find("builtIns"))
     {
         for (const StateNode& builtIn : list->items)
         {
-            auto* item = new QTreeWidgetItem(_builtInsTree);
-            const std::string id = Text(builtIn.find("id"));
-            const std::string name = Text(builtIn.find("name"));
-            const std::string state = Text(builtIn.find("state"));
-
-            item->setText(0, Q(name.empty() ? id : name));
-
-            if (replacements.count(id))
-            {
-                item->setText(1, tr("replaced by %1").arg(Q(replacements[id])));
-                item->setForeground(1, QColor(180, 120, 0));
-                item->setIcon(0, style()->standardIcon(QStyle::SP_MessageBoxWarning));
-            }
-            else if (state == "active")
-            {
-                item->setText(1, tr("active"));
-                item->setForeground(1, QColor(0, 128, 0));
-            }
-            else
-            {
-                item->setText(1, Q(state));
-                item->setForeground(1, QColor(128, 128, 128));
-            }
+            auto* item = new QTreeWidgetItem(builtIns);
+            item->setText(0, Q(Text(builtIn.find("id"))));
+            item->setText(1, Q(Text(builtIn.find("name"))));
+            item->setText(3, Q(Text(builtIn.find("kind"))));
+            item->setText(4, Q(Text(builtIn.find("state"))));
         }
     }
 }
 
 void SlotsWindow::fillSlots(const StateNode& report)
 {
-    _slotsList->clear();
+    _slotsTable->setRowCount(0);
 
     if (const StateNode* list = report.find("slots"))
     {
@@ -290,25 +313,82 @@ void SlotsWindow::fillSlots(const StateNode& report)
             const std::string cardName = Text(slot.find("name"));
             const std::string options = Text(slot.find("options"));
 
-            auto* item = new QListWidgetItem(_slotsList);
-            item->setData(Qt::UserRole, Q(slotId));
-            item->setData(Qt::UserRole + 1, Q(cardId));
-            item->setData(Qt::UserRole + 2, Q(options));
+            const int row = _slotsTable->rowCount();
+            _slotsTable->insertRow(row);
 
+            auto* slotItem = new QTableWidgetItem(Q(slotId));
+            slotItem->setData(Qt::UserRole, Q(slotId));
+            slotItem->setData(Qt::UserRole + 1, Q(cardId));
+            slotItem->setData(Qt::UserRole + 2, Q(options));
+            _slotsTable->setItem(row, 0, slotItem);
+
+            QString cardText;
             if (cardId.empty())
             {
-                item->setText(Q(slotId) + ": " + tr("(empty)"));
-                item->setForeground(QColor(128, 128, 128));
+                cardText = tr("(empty)");
             }
             else
             {
-                QString display = Q(slotId) + ": " + Q(cardName.empty() ? cardId : cardName);
-                item->setText(display);
-                if (!options.empty())
-                    item->setToolTip(Q(options));
+                cardText = Q(cardName.empty() ? cardId : cardName);
+                const std::string host = Text(slot.find("host"));
+                if (!host.empty())
+                    cardText += tr(" (on %1)").arg(Q(Text(slot.find("bus"))));
             }
+
+            auto* cardItem = new QTableWidgetItem(cardText);
+            if (cardId.empty())
+                cardItem->setForeground(QColor(128, 128, 128));
+            if (!options.empty())
+                cardItem->setToolTip(Q(options));
+            _slotsTable->setItem(row, 1, cardItem);
+
+            auto* configBtn = new QPushButton("...", _slotsTable);
+            configBtn->setFixedSize(30, 24);
+            connect(configBtn, &QPushButton::clicked, this, [this, row]() {
+                onConfigureSlot(row);
+            });
+            _slotsTable->setCellWidget(row, 2, configBtn);
         }
     }
+}
+
+void SlotsWindow::fillMachineSlots(const StateNode& report)
+{
+    _machineSlotsTree->clear();
+    const StateNode* list = report.find("machineSlots");
+    const bool any = list != nullptr && list->size() > 0;
+    _machineSlotsLabel->setVisible(any);
+    _machineSlotsTree->setVisible(any);
+    if (!any)
+        return;
+    for (const StateNode& slot : list->items)
+    {
+        auto* item = new QTreeWidgetItem(_machineSlotsTree);
+        item->setText(0, Q(Text(slot.find("slot"))));
+        item->setText(1, Q(Text(slot.find("name"))));
+        const std::string hosts = Text(slot.find("hostsBus"));
+        const std::string details = Text(slot.find("details"));
+        item->setText(2, !hosts.empty() ? tr("hosts %1: %2").arg(Q(hosts), Q(Text(slot.find("hostedCard"))))
+                                        : Q(details));
+        item->setToolTip(0, tr("from %1").arg(Q(Text(slot.find("source")))));
+    }
+}
+
+QString SlotsWindow::slotsText() const
+{
+    QStringList lines;
+    for (int i = 0; i < _slotsTable->rowCount(); i++)
+    {
+        const QString slot = _slotsTable->item(i, 0)->text();
+        const QString card = _slotsTable->item(i, 1)->text();
+        lines << slot + ": " + card;
+    }
+    for (int i = 0; i < _machineSlotsTree->topLevelItemCount(); i++)
+    {
+        const QTreeWidgetItem* item = _machineSlotsTree->topLevelItem(i);
+        lines << "board " + item->text(0) + " | " + item->text(1) + " | " + item->text(2);
+    }
+    return lines.join('\n');
 }
 
 void SlotsWindow::onAddSlot()
@@ -328,18 +408,23 @@ void SlotsWindow::onAddSlot()
 
     QTimer::singleShot(200, this, [this]() {
         refresh();
-        if (_slotsList->count() > 0)
+        if (_slotsTable->rowCount() > 0)
         {
-            _slotsList->setCurrentRow(_slotsList->count() - 1);
-            onConfigureSlot(_slotsList->count() - 1);
+            const int lastRow = _slotsTable->rowCount() - 1;
+            _slotsTable->selectRow(lastRow);
+            onConfigureSlot(lastRow);
         }
     });
 }
 
 void SlotsWindow::onRemoveSlot()
 {
-    auto* item = _slotsList->currentItem();
-    if (!item || !_controller)
+    const int row = _slotsTable->currentRow();
+    if (row < 0 || !_controller)
+        return;
+
+    auto* item = _slotsTable->item(row, 0);
+    if (!item)
         return;
 
     const std::string slotId = item->data(Qt::UserRole).toString().toStdString();
@@ -351,10 +436,13 @@ void SlotsWindow::onRemoveSlot()
 
 void SlotsWindow::onConfigureSlot(int row)
 {
-    if (row < 0 || row >= _slotsList->count())
+    if (row < 0 || row >= _slotsTable->rowCount())
         return;
 
-    auto* item = _slotsList->item(row);
+    auto* item = _slotsTable->item(row, 0);
+    if (!item)
+        return;
+
     const std::string slotId = item->data(Qt::UserRole).toString().toStdString();
     const std::string cardId = item->data(Qt::UserRole + 1).toString().toStdString();
     const std::string options = item->data(Qt::UserRole + 2).toString().toStdString();
@@ -452,7 +540,8 @@ std::string SlotsWindow::nextFreeSlot() const
         for (const StateNode& bus : buses->items)
         {
             const std::string id = Text(bus.find("id"));
-            if (id != "ay-socket")
+            // A hosted bus (the ZX-bus adapter's) is reached through its host slot, not as "<bus>.next"
+            if (id != "ay-socket" && Text(bus.find("host")).empty())
                 return id + ".next";
         }
     }

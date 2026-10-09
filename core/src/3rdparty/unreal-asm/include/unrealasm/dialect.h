@@ -4,6 +4,7 @@
 // frontend parses a decoded source of its dialect into the IR, a backend writes the IR as a source of its dialect;
 // Convert chains them. Each reports what it could not convert.
 
+#include <functional>
 #include <map>
 #include <set>
 #include <memory>
@@ -11,12 +12,18 @@
 #include <string_view>
 #include <vector>
 
+#include "unrealasm/containers.h"
 #include "unrealasm/diagnostics.h"
 #include "unrealasm/document.h"
 #include "unrealasm/ir.h"
 
 namespace unrealasm
 {
+/// The bytes of a data file a source reads while it is assembled (ZX-ASM's LOADTAB table), by the name the source gives
+/// (the drive dropped): the file's data and the rest of its last sector, as the assembler loads it; empty when the
+/// project has no such file
+using DataFileReader = std::function<std::vector<uint8_t>(const std::string& name)>;
+
 struct FrontendResult
 {
     ir::Program program;
@@ -36,6 +43,22 @@ struct BackendOptions
     /// How often each name is defined in the files of the project (ConvertProject fills it; pasmo needs DEFL for a name
     /// defined twice, EQU for one defined once)
     std::map<std::string, int> definitions;
+    /// The project's data files (ConvertProject hands it to the frontends; none: the sources alone)
+    DataFileReader dataFiles;
+    /// The sources are written for the ZX Spectrum Next (sjasmplus --zxnext): the Z80N mnemonics are instructions in every
+    /// file, as when a file says DEVICE ZXSPECTRUMNEXT or OPT --zxnext
+    bool z80n = false;
+};
+
+/// A label of the source and the name the backend wrote it under (a reserved word renamed, a LOCAL block's label made
+/// unique): how a value found in the written text is given back to the source's label
+struct LabelName
+{
+    uint32_t line = 0;           ///< the source line defining it (ir::Line::sourceLine)
+    std::string source;          ///< as the source writes it
+    std::string written;         ///< as the backend wrote it
+    bool local = false;          ///< a label of a LOCAL block (ALASM, TASM's DEFMAC)
+    bool inMacro = false;        ///< defined in a macro body: one per expansion, no single value
 };
 
 struct BackendResult
@@ -45,6 +68,7 @@ struct BackendResult
     std::map<std::string, int> macroParams;   ///< the macros this file defines
     std::set<std::string> ifUsedNames;        ///< the labels this file tests with IFUSED / IFNUSED
     std::map<std::string, int> definitions;   ///< how often this file defines each name
+    std::vector<LabelName> labels;            ///< every label line of the program (backends that keep names fill it)
 };
 
 class IFrontend
@@ -59,6 +83,13 @@ public:
     {
         (void)project;
         return Parse(source);
+    }
+    /// As ParseInProject, with the project's data files (a dialect that reads one while assembling)
+    virtual FrontendResult ParseWithData(const SourceDocument& source, const std::vector<const SourceDocument*>& project,
+                                         const DataFileReader& dataFiles) const
+    {
+        (void)dataFiles;
+        return ParseInProject(source, project);
     }
 };
 
@@ -104,6 +135,7 @@ struct ProjectFile
 struct ProjectResult
 {
     std::vector<ProjectFile> files;   ///< converted, in the same order; names unchanged
+    std::vector<std::vector<LabelName>> labels;   ///< per file (same order): its labels as the backend wrote them
     Diagnostics diagnostics;          ///< each prefixed with the file name
     bool ok = false;
 };
@@ -111,4 +143,10 @@ struct ProjectResult
 /// Every source of a project in the target dialect: INCLUDE wildcards resolve against the project's names (the last
 /// matching one, as ALASM does), macros defined in one file are known to the others
 ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_view targetDialect, const BackendOptions& options = {});
+
+/// The sources among the files of a TR-DOS image as one project, named as INCLUDE names them (a name saved again:
+/// NAME~2, NAME~3 ...): every file the codec detection takes for a tokenized source, and every file such a source
+/// INCLUDEs that detection could not tell (a source of two lines), read with the codec and version of the source that
+/// INCLUDEs it
+std::vector<ProjectFile> ImageProject(const std::vector<containers::TrdosFile>& files);
 }  // namespace unrealasm

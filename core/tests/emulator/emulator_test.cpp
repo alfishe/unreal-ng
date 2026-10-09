@@ -25,7 +25,7 @@
 #include "_helpers/testtiminghelper.h"
 #include "_helpers/testwaithelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include <memory>
 #include <thread>
 #include "emulator/notifications.h"
@@ -1059,9 +1059,13 @@ TEST_F(EmulatorHostAudioResume_Test, StepOverASoundingSubroutineIsSilent)
     EXPECT_EQ(_sound->hostOutputHolds(SoundManager::HostHoldReason::DirectRun), 0);
 }
 
-/// StepOver registers a handler on the shared BREAKPOINT topic that captures its emulator and FeatureManager. It must
-/// be gone with the emulator: a breakpoint event of another instance with a colliding id used to reach the dead
-/// handler, which locked the destroyed FeatureManager's mutex and aborted the process
+/// A step over across a CALL resumes the machine to a temporary breakpoint. Its end (the breakpoint removed, the
+/// deactivated ones back, the feature flags restored) runs on the emulation thread when the breakpoint fires: it
+/// used to run in a MessageCenter observer on the dispatcher thread, which (1) outlived a destroyed emulator and (2)
+/// erased from the breakpoint map while the emulation thread read it - the machine stopped right after the step
+/// over runs `JR $` across the still-armed breakpoint, and GetBreakpointById crashed on the emulation thread. No
+/// handler is registered any more; the temporary breakpoint is gone when the step ends, and stopping the machine
+/// while the step runs is safe. (~10 ms: two short paced runs)
 TEST(EmulatorStepOverObserver_Test, DestroyedEmulatorLeavesNoHandlerBehind)
 {
     MessageCenter& center = MessageCenter::DefaultMessageCenter();
@@ -1074,13 +1078,27 @@ TEST(EmulatorStepOverObserver_Test, DestroyedEmulatorLeavesNoHandlerBehind)
         for (size_t i = 0; i < sizeof(program); i++)
             emulator->GetContext()->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
         emulator->GetContext()->pMemory->DirectWriteToZ80Memory(0x8010, 0xC9);  // RET
+        BreakpointManager* breakpoints = emulator->GetBreakpointManager();
+        ASSERT_NE(breakpoints, nullptr);
         emulator->DebugOn();
         emulator->StartAsync();
         emulator->Pause();
+        const size_t breakpointsBefore = breakpoints->GetBreakpointsCount();
+
+        // A step over that reaches its breakpoint: the machine parks after the CALL, the temporary breakpoint gone
         emulator->GetZ80State()->pc = 0x8001;  // the CALL
         emulator->GetZ80State()->sp = 0xFF00;
-        emulator->StepOver();  // registers the handler, resumes to the temporary breakpoint
-        EXPECT_GT(center.ObserverCount(NC_EXECUTION_BREAKPOINT), observersBefore) << "StepOver registered no handler: the test checks nothing";
+        emulator->StepOver();
+        EXPECT_EQ(center.ObserverCount(NC_EXECUTION_BREAKPOINT), observersBefore) << "a step over registers no handler";
+        ASSERT_TRUE(TestWait::For([&] { return emulator->IsPaused() && emulator->GetZ80State()->pc == 0x8004; },
+                                  std::chrono::seconds(5)))
+            << "the step over did not stop after the CALL, pc " << emulator->GetZ80State()->pc;
+        EXPECT_EQ(breakpoints->GetBreakpointsCount(), breakpointsBefore) << "the temporary breakpoint outlived the step";
+
+        // A step over the machine is stopped in the middle of (the crash): the stop and the release clean up
+        emulator->GetZ80State()->pc = 0x8001;
+        emulator->GetZ80State()->sp = 0xFF00;
+        emulator->StepOver();
         emulator->Stop();
         EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
     }
@@ -1095,7 +1113,7 @@ TEST(EmulatorHostAudioTTD_Test, SeekThenResumeIsHeardAgain)
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
     SoundManager* sound = context->pSoundManager;
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
     FeatureManager* features = emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);

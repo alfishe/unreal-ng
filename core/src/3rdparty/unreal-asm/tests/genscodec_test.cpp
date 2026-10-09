@@ -34,6 +34,8 @@ const Sample kSamples[] = {
     {"typed-gens3-P-PROBE.bin", "typed-gens3-P-PROBE", 9, true},  // typed into GENS3, saved with P (the data block)
     {"typed-gens4-P-PROBE4.bin", "typed-gens4-P-PROBE4", 9, true},
     {"crafted-gens3-P-PROBE1.bin", "crafted-gens3-P-PROBE1", 8, false},   // many TABs, #7F-#FF, loaded and saved by GENS3
+    {"G4-128K__UNISPR&.$C", "G4-128K__UNISPR&", 340, true},       // on the disk of Gens 4.1 128K (Wlodek Black, 1993)
+    {"typed-gens43t-PROBE.$A", "typed-gens43t-PROBE", 9, true},   // typed into GENS 4.3t (Rus), saved with P: type A, start 0
 };
 
 struct Input

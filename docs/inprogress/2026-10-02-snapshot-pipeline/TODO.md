@@ -203,3 +203,39 @@ Qt window (P7); the debugger UI of the capture view.
   for; owner question Q7 (a plain SNA / Z80 on a ZX-Poly group) is separate and stays open.
 - Tests: `tsconfprogramsnapshot_test.cpp` (the machine's policy decides, the machine follows a changed image, another machine refuses, a
   Spectrum snapshot declines, legacy), `LoaderZXPGroup_Test` (planned then committed; one refusing module touches nothing).
+
+## P11 notes (2026-10-07): a refused load does not end the TTD session
+
+The TTD rule (D42) ends the recording session when a snapshot is loaded. It used to end it when the load was CALLED, so a load that was
+then refused (another model's SZX, an SPG on a Pentagon, a corrupt file) had already stopped the recording of a machine that never
+changed. Now `snapshot::Options::beforeCommit` is called by `Pipeline::Plan` once, at the moment the plan decides to commit (a Take or a
+Legacy decision), before the loader writes anything; `Emulator::LoadSnapshotStaged` ends the session there (`OnLoad(Snapshot)`).
+A file that fails before the plan (unreadable, corrupt) never reaches it.
+
+Two refusals used to come AFTER the plan, inside the legacy commit, and would have ended the session first: they moved into the plan
+(`LegacyWillRefuse`): an SZX saved on another model than the running one (the loader's own `LoaderSZX::Suits` rule, `needs: model:<short>`)
+and an SPG on a machine whose policy does not take it (`needs: model:TSL`). The commits keep their own checks as a second line.
+Tests: `SnapshotBeforeCommit_Test` (announced once on a good load, never on a refusal, legacy judged too, inspect never),
+`ARefusedSnapshotLoadLeavesTheRecordingRunning`.
+Open: a media load (tape, disk) is still refused while recording, unchanged.
+
+## P12 notes (2026-10-07): owner decisions Q7 and Q8
+
+- **Q7: a ZX-Poly takes a .zxp and nothing else.** `snapshot::IsZXPolyModule` (the machine is a member of a ZX-Poly group): the plan
+  refuses every other format with `needs: format:zxp` (the reason: `snapshot::ZXPolyRefusal`), which also covers `inspect` and the
+  automation surfaces; `SnapshotLauncher::Load` never replaces a module by another model; the Qt window refuses an SZX / SPG
+  before it would switch the model, and a SNA / Z80 through the plan (message box with the reason); a save from a module is refused
+  for every format (`needs: zxpoly`). A .zxp load into the group itself (the module images carry `format: zxp`) is unchanged.
+- **Q8: the state transfer is not merged with anything.** It stays `MachineStateTransfer`. Rule: it works wherever that is physically
+  possible. See the matrix in `docs/features/automation.md`: what works today, what is expected next (ATM family among themselves,
+  a 128K into a Sprinter ZX mode), what never works (TS-Conf state, ZX-Poly modules).
+
+## P13 notes (2026-10-07): Profi and the Sprinter's 512 KB modes get a save view
+
+- **Profi v5 / v3:** the decoder installs `snapshot::WindowMapCapture` (the view while the live window map is a Spectrum 128K, RAM page n = bank
+  n), as TS-Conf and the ATMs do. Checked: a 128K snapshot loaded into a Profi saves as a .z80 any plain 128K loads back bank for bank.
+- **Sprinter 512 KB modes** (CNF bit 7: P512.ZX, PENT512.ZX): a Pentagon 512 with 32 banks. Bank n sits behind the cell window 3 shows for it
+  (`ComputePg3`): #F0-#F7 / #F8-#FF for banks 0-15 as before, #D0-#D7 for 16-23, #D8-#DF for 24-31. Only .szx holds 32 banks (`needs:
+  format:szx` for the others), restored on a Pentagon 512 with the same banks and #7FFD.
+- **Kay, Quorum, LSY256, Phoenix, GMX, ZX Next** stay `capture_unsupported`: the models cannot be created yet, so there is no layout to read
+  and no machine to test against. Each needs its own rule when it becomes creatable.

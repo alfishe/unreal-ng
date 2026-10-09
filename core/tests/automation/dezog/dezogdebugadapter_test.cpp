@@ -726,7 +726,7 @@ TEST_F(DezogDebugAdapter_test, ReadFull64KMatchesMemory)
 /// region <Instruction history (TTD reverse debugging)>
 
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 
 class DezogHistory_test : public DezogEmulatorFixture
 {
@@ -747,7 +747,7 @@ protected:
         _adapter->removeBreakpoint(id);
     }
 
-    ttd::TimeTravelManager* ttd() { return _emulator->GetContext()->pTimeTravelManager; }
+    ttd::TimeTravelController* ttd() { return _emulator->GetContext()->pTimeTravelController; }
 };
 
 TEST_F(DezogHistory_test, AvailableButNotRecordingUntilSessionOpens)
@@ -1004,7 +1004,7 @@ TEST_F(DezogHistory_test, HistorySurvivesBrowseAndStopCycles)
     runToJp(3);  // ~9 recorded instructions before any browse
 
     ASSERT_TRUE(_adapter->getHistoryEntry(8).has_value());  // deep pre-browse entry
-    EXPECT_TRUE(ttd()->IsDebuggerLive());
+    EXPECT_TRUE(ttd()->IsBackgroundSession());
     EXPECT_TRUE(ttd()->IsRecording());  // browsing must not stop the capture
     const size_t checkpointsBefore = ttd()->GetCheckpointCount();
 
@@ -1198,15 +1198,17 @@ TEST_F(DezogHistory_test, UnrecordedGapFallsBackToFreshSession)
     runToJp(2);
 
     // runToJp executes only a handful of instructions inside ONE frame (just
-    // the baseline checkpoint); free-run while recording is still active to
-    // cross frame boundaries and accrue a multi-checkpoint timeline.
-    freeRunFrames(10);
+    // the baseline checkpoint); run while recording is still active to cross
+    // frame boundaries and accrue a multi-checkpoint timeline. Not a turbo
+    // free run: turbo ends the debugger's background recording (it steps
+    // aside for an acceleration, owner decision 2026-10-07)
+    _emulator->RunNFrames(10, /*skipBreakpoints=*/true);
 
     const size_t checkpointsBefore = ttd()->GetCheckpointCount();
     EXPECT_GT(checkpointsBefore, 1u);
 
     // Host-side resume (adapter not involved - it would auto-restart capture)
-    ttd::TimeTravelManager* mgr = ttd();
+    ttd::TimeTravelController* mgr = ttd();
     mgr->StopRecording();
     freeRunFrames(10);
 
@@ -1217,7 +1219,7 @@ TEST_F(DezogHistory_test, UnrecordedGapFallsBackToFreshSession)
     // starting fresh (baseline only) instead of appending across the gap.
     _adapter->onSessionOpened();
     EXPECT_TRUE(mgr->IsRecording());
-    EXPECT_TRUE(mgr->IsDebuggerLive());
+    EXPECT_TRUE(mgr->IsBackgroundSession());
     EXPECT_LT(mgr->GetCheckpointCount(), checkpointsBefore);
     _adapter->resume();
 }

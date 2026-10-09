@@ -25,7 +25,7 @@
 #include "emulator/media/mediamanager.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/soundmanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "base/featuremanager.h"
 
 using namespace ata;
@@ -605,9 +605,9 @@ TEST_P(IdeControllerCd_Test, PlaysAudioOnTheBoard)
     EXPECT_EQ(player->PeekHeadSample() / 588, 166u + 10ull * context->config.frame * 44100 / 3500000 / 588) << board;
 
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
-    EXPECT_TRUE(context->pTimeTravelManager->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::CdDrive)) << board;
-    context->pTimeTravelManager->StopRecording();
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
+    EXPECT_TRUE(context->pTimeTravelController->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::CdDrive)) << board;
+    context->pTimeTravelController->StopRecording();
 
     // The guest ejects (START STOP UNIT LoEj): the play stops and, at the frame boundary, the slot is
     // empty as after a user's eject - on every board, through the shared media manager

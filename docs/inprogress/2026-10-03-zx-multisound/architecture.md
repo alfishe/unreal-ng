@@ -329,18 +329,29 @@ Every row's calibration and why:
 | Row | Calibration (1.0 = INT16_MAX) | Board weight | Level vs the TSFM | Why |
 |---|---|---|---|---|
 | MS FM 1 / 2 | 0.30 x 10^(TSFM_FmTrimDb / 20) = 0.7033 at 7.4 dB | 1.000 | equal (0.0 dB) | the YM3014B is the TSFM's; the 7.4 dB is the TSFM board measurement (an emulator calibration, shared) |
-| MS SSG 1 / 2 | 0.30 per channel (the emulator's SSG channel at volume 15, the TSFM's) | A, C 0.417; B 0.213 | -7.6 dB (A, C) | hardware: the MultiSound sums SSG A / C through 24 k and B through 47 k against the FM's 10 k (R13, R14, R16, R17 vs R18); the TSFM gives SSG and FM equal weights. Measured -7.75 dB at every voicing preset: a 0.15 dB rendering residual of the two SSG paths (the card's per-channel decimators and coupling vs the TSFM's mixed stream; same units, same pan 0.9 / 3 for A), not a calibration |
+| MS SSG 1 / 2 | 0.30 per channel (the emulator's SSG channel at volume 15, the TSFM's) | A, C 0.417; B 0.213 | -7.6 dB (A, C) | hardware: the MultiSound sums SSG A / C through 24 k and B through 47 k against the FM's 10 k (R13, R14, R16, R17 vs R18); the TSFM gives SSG and FM equal weights. Measured -7.60 dB (within 0.01 dB) at every voicing preset with the AY room and punch off. With the room on (default -9 dB) the left rows are -7.75 dB apart: the room crossfeed returns the 0.1 of SSG A that the emulator's ABC pan law puts on the TSFM's right to its left, 2 ms late (+0.14 dB at the 427 Hz test tone, pitch dependent); the card's A has nothing on the right, so the room leaves its left alone and puts 0.35 of A on its right. Since 2026-10-07 both boards' SSG rows run the same character chain (`Ym2203PairBoardsLevel_Test.SsgRatioIsTheSchematicWeightAndTheChainActsAlikeOnBothBoards`) |
 | MS PCM | 2.5 V per DAC channel x 0.7033 / 1.25 V (volts against the YM3014B's +-1.25 V at the default trim) | 0.208 | - | hardware (schematic), placed against the FM in volts; the user's FM trim does not move it |
 | MS SAA | module units (unmeasured absolute level) | 0.833 | - | hardware weight; absolute SAA level unmeasured |
 | MS MIDI | module units (+-1.0) | 1.000 | - | hardware weight; absolute SAM2695 level unmeasured |
 
-**AY / SSG tone voicing (2026-10-05, after master 7bbc2eaaa):** the card's `MS SSG 1` / `MS SSG 2` rows run through the
-same AY / SSG tone voicing as the AY socket's chips (`[SOUND] AYVoicing`, the audio settings' voicing on every
-surface): `CardMixerRow::ssgVoicing` marks them, `SoundManager` keeps one `VoicingStage` per such row next to
-`_ayVoicing0` / `_ayVoicing1` and treats it the same way - the configured profile at attach, `setAYVoicing` requests
-(click-free crossfade at the next frame), `reset()`, `setup` on a rate change, history invalidated in a gap (turbo
-without audio, sound off) - and voices the row in place after the card's `FrameEnd` (`ICard::VoicedMixerBuffer`), so
-captures and the mix see the voiced row, as for the board. FM, SAA, PCM and MIDI rows are not voiced (FM is not on
+**AY / SSG tone voicing (2026-10-05, after master 7bbc2eaaa) and AY character chain (2026-10-07):** the card's
+`MS SSG 1` / `MS SSG 2` rows run through the same AY / SSG tone voicing and then the same AY character chain (punch,
+room crossfeed) as the AY socket's chips: `CardMixerRow::ssgRow` marks them, `SoundManager` keeps one
+`CardSsgRow` per such row - a `VoicingStage` next to `_ayVoicing0` / `_ayVoicing1` and an `AudioCharacterChain` next
+to `_ayChain0` / `_ayChain1` - and treats them the same way:
+
+- voicing: the configured profile at attach, `setAYVoicing` requests (click-free crossfade at the next frame),
+  `reset()`, `setup` on a rate change, history invalidated in a gap (turbo without audio, sound off); HQ and LQ alike;
+- chain (owner decision 2026-10-07): the socket chains' settings at attach (chip type AY, AY punch preset, punch,
+  room), the same live requests (`setAYPunch` / `setAYRoomMode`: `ay_punch` / `ay_room` on every surface, applied at
+  the next frame boundary in `applyCharacterRequests`), `syncAYChainSettings`, `setup` on a rate change, Sound HQ
+  only (skipped while HQ is off or sound is off, cleared when HQ returns, like the socket chains);
+- both restart (`reset`) when the card restarts its render layers (`ICard::RenderEpoch`: a TTD restore), so the rows
+  after a restore do not depend on what played before it (`TtdMultiSound_Test.RoundTripMidTune` stays bit-exact).
+
+The row is processed in place after the card's `FrameEnd` (`ICard::SsgMixerBuffer`), so captures and the mix see it
+as the socket's chips are seen. With punch and room off the chain still takes the row through its int16 round trip
+(x 32767 / 32768, truncated: at most 1 LSB), as it does for the socket's chips. FM, SAA, PCM and MIDI rows are not voiced (FM is not on
 the board either). `[AY] Stereo` is **not** applied to the card: its A left / B centre / C right is the board's
 resistor wiring, not a setting. `Ym2203PairBoardsLevel_Test` holds the SSG relation (the schematic's -7.6 dB) at the
 Flat, Classic and Headphones presets and checks the FM rows do not move with the voicing on either board.

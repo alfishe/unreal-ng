@@ -130,7 +130,8 @@ std::string StringLiteral(std::string_view t, size_t& i)
         {
             const char e = t[i + 1];
             i += 2;
-            switch (e)
+            // sjasmplus reads the letters in either case (\A and \a are both 7)
+            switch (e >= 'A' && e <= 'Z' ? static_cast<char>(e + 32) : e)
             {
                 case 'n': out.push_back('\n'); break;
                 case 'r': out.push_back('\r'); break;
@@ -138,10 +139,15 @@ std::string StringLiteral(std::string_view t, size_t& i)
                 case '0': out.push_back('\0'); break;
                 case 'a': out.push_back('\a'); break;
                 case 'b': out.push_back('\b'); break;
+                case 'd': out.push_back('\x7F'); break;
                 case 'e': out.push_back('\x1B'); break;
                 case 'f': out.push_back('\f'); break;
                 case 'v': out.push_back('\v'); break;
-                default: out.push_back(e); break;   // \\ \" \' and any other character as itself
+                case '\\': case '"': case '\'': case '?': out.push_back(e); break;
+                default:   // an unknown escape stays a backslash followed by the character (sjasmplus warns)
+                    out.push_back('\\');
+                    --i;
+                    break;
             }
             continue;
         }
@@ -240,8 +246,13 @@ struct ExpressionParser
         {
             if (Peek(1) == '$')
             {
+                if (Peek(2) == '$' && !IsLabelChar(Peek(3)))
+                {
+                    i += 3;   // $$$: where the code goes while DISP is active
+                    return Expr::Make(Expr::Kind::CurrentPhysical);
+                }
                 if (Peek(2) == '$' || IsLabelChar(Peek(2)))
-                    throw Failure{"$$$ / $$label have no counterpart"};
+                    throw Failure{"$$label has no counterpart"};
                 i += 2;
                 return Expr::Make(Expr::Kind::CurrentPage);
             }
@@ -434,6 +445,7 @@ struct Context
     uint32_t line = 0;
     Diagnostics& diagnostics;
     std::set<std::string>& macros;
+    bool z80n = false;   ///< the Next mode is on from this line on
 
     Expr Parse(std::string_view text) const { return ParseExpression(text, line, diagnostics); }
 
@@ -679,7 +691,7 @@ Statement ParseStatement(const std::string& text, std::string& label, const Cont
     }
 
     const std::string mnemonic = z80::Lower(word);
-    if (z80::IsMnemonic(mnemonic))
+    if (z80::IsMnemonic(mnemonic) || (c.z80n && z80::IsZ80nMnemonic(mnemonic)))
     {
         s.kind = Statement::Kind::Instruction;
         s.mnemonic = mnemonic;
@@ -706,6 +718,7 @@ FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
     result.program.dialect = "sjasmplus";
     result.program.trueValue = -1;   // sjasmplus' comparisons give -1
     std::set<std::string> macros;
+    bool z80n = source.z80n;   // the Next mode: the project enables it, or DEVICE ZXSPECTRUMNEXT / OPT --zxnext below
     bool inBlock = false;   // inside /* ... */
     uint32_t number = 0;
     for (const SourceLine& sourceLine : source.lines)
@@ -785,17 +798,23 @@ FrontendResult SjasmplusFrontend::Parse(const SourceDocument& source) const
                 ++k;
         }
         const std::string rest = Trim(std::string_view(text).substr(k));
-        Context c{number, result.diagnostics, macros};
+        Context c{number, result.diagnostics, macros, z80n};
         if (!rest.empty())
         {
             // "label=expr" and "label = expr": one statement, the ':' inside belongs to nothing else
             const std::vector<std::string> parts = rest[0] == '=' ? std::vector<std::string>{rest} : Split(rest, ':');
             for (const std::string& part : parts)
                 if (!part.empty())
+                {
                     line.statements.push_back(ParseStatement(part, line.label, c));
+                    const Statement& parsed = line.statements.back();
+                    if (parsed.kind == Statement::Kind::Directive && z80::EnablesZ80n(parsed.text))
+                        z80n = true;
+                }
         }
         result.program.lines.push_back(std::move(line));
     }
+    result.program.z80n = z80n;
     return result;
 }
 }  // namespace unrealasm::dialects

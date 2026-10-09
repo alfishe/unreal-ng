@@ -17,7 +17,7 @@
 #include "base/featuremanager.h"
 #include "debugger/ttd/network/ttdserialport.h"
 #include "debugger/ttd/network/ttdzxnetusb.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -49,9 +49,46 @@ struct CardPorts
 std::vector<uint8_t> StateBlob(const ZxNetUsb& card)
 {
     auto state = std::make_unique<netstate::Adapters>();
-    card.SaveState(*state);
+    netstate::Tail tail;
+    card.SaveState(*state, tail);
     const auto* p = reinterpret_cast<const uint8_t*>(state.get());
-    return std::vector<uint8_t>(p, p + sizeof(*state));
+    std::vector<uint8_t> blob(p, p + sizeof(*state));
+    if (!tail.Empty())
+        tail.AppendTo(blob);
+    return blob;
+}
+
+/// What the program sees of socket 0: its registers and every byte it can read from RX_FIFOR (read through the
+/// ports, so the socket is drained afterwards). A blob comparison cannot see an item its own serializer left out
+struct SocketSeen
+{
+    uint8_t ir = 0;
+    uint32_t rsr = 0;
+    size_t backlog = 0;
+    uint32_t txFree = 0;
+    std::vector<uint8_t> rx;
+    bool operator==(const SocketSeen& o) const
+    {
+        return ir == o.ir && rsr == o.rsr && backlog == o.backlog && txFree == o.txFree && rx == o.rx;
+    }
+};
+
+SocketSeen SeeAndDrainSocket0(ZxNetUsb* card)
+{
+    SocketSeen seen;
+    const W5300::SocketView v = card->Chip().GetSocket(0);
+    seen.ir = v.ir;
+    seen.rsr = v.rxReceived;
+    seen.backlog = v.tcpBacklog;
+    seen.txFree = v.txFree;
+    CardPorts ports{card};
+    ports.Select(0);
+    for (uint32_t i = 0; i < seen.rsr; i += 2)
+    {
+        seen.rx.push_back(ports.In(0x30));
+        seen.rx.push_back(ports.In(0x31));
+    }
+    return seen;
 }
 }  // namespace
 
@@ -62,9 +99,11 @@ std::vector<uint8_t> BothBlobs(EmulatorContext* context)
 {
     ttd::TTDZxNetUsb network(context);
     ttd::TTDSerialPort serial(context);
-    std::vector<uint8_t> b(network.TTDStateSize() + serial.TTDStateSize());
-    network.TTDSaveState(b.data());
-    serial.TTDSaveState(b.data() + network.TTDStateSize());
+    std::vector<uint8_t> b;
+    std::vector<uint8_t> s;
+    network.TTDSaveStateTo(b);   // variable size: what the state needs, not the maximum
+    serial.TTDSaveStateTo(s);
+    b.insert(b.end(), s.begin(), s.end());
     return b;
 }
 }  // namespace
@@ -76,7 +115,7 @@ protected:
     {
         Emulator* emulator = nullptr;
         EmulatorContext* context = nullptr;
-        ttd::TimeTravelManager* ttd = nullptr;
+        ttd::TimeTravelController* ttd = nullptr;
         FakeHostNet* host = nullptr;
 
         bool Create()
@@ -85,7 +124,7 @@ protected:
             if (!emulator)
                 return false;
             context = emulator->GetContext();
-            ttd = context->pTimeTravelManager;
+            ttd = context->pTimeTravelController;
             FeatureManager* features = emulator->GetFeatureManager();
             features->setFeature(Features::kDebugMode, true);
             features->setFeature(Features::kTimeTravel, true);
@@ -241,6 +280,63 @@ TEST_F(TTDZxNetUsb_Test, SeekRestoresBufferedBytesFromTheJournal)
 
 /// The file keeps the network inputs: loaded into a fresh instance, the
 /// session replays to the same chip state
+/// TTD state-registry gap 16 (2026-10-08): a state beyond the fixed arrays - hundreds of receive packets, a
+/// backlog of TCP chunks, 2000 bytes written and not sent - goes into the blob's tail and a seek restores it whole
+TEST_F(TTDZxNetUsb_Test, AStateBeyondTheFixedArraysRestoresWhole)
+{
+    _rec.Connect();
+    ASSERT_TRUE(_rec.ttd->StartRecording());
+    _rec.emulator->RunNFrames(1);
+
+    const uint16_t id = _rec.host->Last("connect")->socket;
+    for (int i = 0; i < 300; ++i)
+        _rec.host->Push(NetEventType::Data, id, NetEventStatus::Ok, {}, std::vector<uint8_t>(40, static_cast<uint8_t>(i)));
+    CardPorts ports{_rec.context->pZxNetUsb};
+    ports.Select(0);
+    for (int i = 0; i < 1000; ++i)   // 2000 bytes into TX_FIFOR, no SEND
+    {
+        ports.Out(0x2E, static_cast<uint8_t>(i));
+        ports.Out(0x2F, static_cast<uint8_t>(i >> 3));
+    }
+    // The host's data is taken at the next frame boundary, after that boundary's checkpoint: compare one later
+    _rec.emulator->RunNFrames(2);
+    const uint64_t at = _rec.context->emulatorState.frame_counter;
+    ASSERT_GT(StateBlob(*_rec.context->pZxNetUsb).size(), sizeof(netstate::Adapters)) << "past the fixed arrays";
+    const W5300::SocketView v = _rec.context->pZxNetUsb->Chip().GetSocket(0);
+    ASSERT_GT(v.tcpBacklog, 0u) << "a backlog of TCP chunks";
+    const SocketSeen live = SeeAndDrainSocket0(_rec.context->pZxNetUsb);
+    _rec.emulator->RunNFrames(2);
+    _rec.ttd->StopRecording();
+
+    ASSERT_TRUE(_rec.ttd->SeekTo({at, 0}));
+    EXPECT_TRUE(SeeAndDrainSocket0(_rec.context->pZxNetUsb) == live) << "the checkpoint restores the whole socket";
+}
+
+/// TTD state-registry gap 16 (2026-10-08): bytes received before the recording started are not in the
+/// journal; the checkpoint holds them inline, and a seek to the session's start restores them
+TEST_F(TTDZxNetUsb_Test, BytesReceivedBeforeTheRecordingRestore)
+{
+    _rec.Connect();
+    const uint16_t id = _rec.host->Last("connect")->socket;
+    _rec.host->Push(NetEventType::Data, id, NetEventStatus::Ok, {}, std::vector<uint8_t>(300, 'Q'));
+    _rec.emulator->RunNFrames(1);
+    ASSERT_GT(_rec.Rsr(), 0u) << "unread bytes before the recording";
+
+    ASSERT_TRUE(_rec.ttd->StartRecording());
+    const uint64_t start = _rec.ttd->GetCheckpoint(0)->time.frame;
+    _rec.emulator->RunNFrames(1);
+    const SocketSeen live = SeeAndDrainSocket0(_rec.context->pZxNetUsb);   // read at the session's second boundary
+    const uint64_t at = _rec.context->emulatorState.frame_counter;
+    ASSERT_GT(at, start);
+    _rec.emulator->RunNFrames(2);
+    _rec.ttd->StopRecording();
+
+    ASSERT_TRUE(_rec.ttd->SeekTo({at, 0}));
+    const SocketSeen seen = SeeAndDrainSocket0(_rec.context->pZxNetUsb);
+    EXPECT_EQ(seen.rsr, live.rsr);
+    EXPECT_TRUE(seen.rx == live.rx) << "the bytes from before the recording come back";
+}
+
 TEST_F(TTDZxNetUsb_Test, LoadedSessionReplaysTheNetworkInputs)
 {
     uint64_t before = 0, afterFirst = 0, end = 0;
@@ -268,7 +364,7 @@ class TTDComPort_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FakeHostNet* _host = nullptr;
 
     void SetUp() override
@@ -276,7 +372,7 @@ protected:
         _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
@@ -380,7 +476,7 @@ TEST(TTDComPortName_Test, TheNameLookupReplaysFromTheJournal)
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     FeatureManager* features = emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);
@@ -440,7 +536,7 @@ TEST(TTDEspModule_Test, ReplayWithoutTheHostRebuildsTheModule)
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     FeatureManager* features = emulator->GetFeatureManager();
     features->setFeature(Features::kDebugMode, true);
     features->setFeature(Features::kTimeTravel, true);

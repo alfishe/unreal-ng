@@ -66,8 +66,8 @@ Screen::Screen(EmulatorContext* context)
     // opaque. The previous 0x00RRGGBB defaults were transparent AND R/B-swapped,
     // which showed as green-only garbage (green survives both errors).
     // ATM extended modes render through the programmable palette held in
-    // EmulatorState.atmPalette (port #FF writes; defaults equal this ZX table,
-    // see InitAtmPalette), so they stay reprogrammable exactly like hardware.
+    // EmulatorState::atm.palette (port #FF writes; defaults equal this ZX table,
+    // see AtmState::InitPalette), so they stay reprogrammable exactly like hardware.
     static const uint32_t defaultPalette[16] = {
         0xFF000000,  // 0: Black
         0xFFC72200,  // 1: Blue
@@ -340,7 +340,7 @@ Screen::ModeSelection Screen::DetectModeATM1(const EmulatorState& state) const
     VideoModeEnum mode = M_ZX48;
     RasterModeEnum rasterMode = R_256_192;
 
-    const uint8_t atmMode = (state.aFE >> 5) & 3;
+    const uint8_t atmMode = (state.atm.aFE >> 5) & 3;
     if (atmMode != FF77_ZX)
     {
         rasterMode = R_320_200;
@@ -440,7 +440,7 @@ Screen::ModeSelection Screen::DetectModeProfi(const EmulatorState& state) const
 // keeps its current/legacy mode selection
 Screen::ModeSelection Screen::DetectModeGMX(const EmulatorState& state) const
 {
-    if (state.p7EFD & 0x08)
+    if (state.scorpion.p7EFD & 0x08)
         return { M_GMX, R_320_200 };
 
     return { _vid.mode, R_256_192 };
@@ -700,10 +700,10 @@ videomap::VideoLatches Screen::CaptureVideoLatches() const
         l.pEFF7 = _state->pEFF7;
         l.pFF77 = _state->pFF77;
         l.pDFFD = _state->pDFFD;
-        l.aFE = _state->aFE;
+        l.aFE = _state->atm.aFE;
         l.pFE = _state->pFE;
         l.borderAttr = _state->border_attr;
-        l.atmBorderBright = _state->atmBorderBright;
+        l.atmBorderBright = _state->atm.borderBright;
     }
     CaptureFamilyLatches(l);
     return l;
@@ -1309,11 +1309,14 @@ void Screen::LatchFramebuffer()
 
 void Screen::FlushAndPresentFramebuffer()
 {
-    if (_framebuffer.memoryBuffer == nullptr)
+    // What the monitor shows: the external picture (VDAC2's FT812) while one is active
+    const bool external = IsExternalPictureActive();
+    const FramebufferDescriptor& shown = external ? _external : _framebuffer;
+    if (shown.memoryBuffer == nullptr)
         return;
 
     std::lock_guard<std::mutex> lock(_presentMutex);
-    if (_presentSlots[0] == nullptr || _presentBufferSize != _framebuffer.memoryBufferSize)
+    if (_presentSlots[0] == nullptr || _presentBufferSize != shown.memoryBufferSize)
         return;
 
     // Empty the delay line, then make the freshly rendered frame its only
@@ -1321,12 +1324,12 @@ void Screen::FlushAndPresentFramebuffer()
     // configured delay to what exists (zero) and serves this frame; once
     // playback resumes the queue refills on its own.
     _presentLatchCounter = 0;
-    VideoUtils::CopyFrameBuffer(_presentSlots[0], _framebuffer.memoryBuffer, _presentBufferSize);
-    if (_planeBEnabled)
+    VideoUtils::CopyFrameBuffer(_presentSlots[0], shown.memoryBuffer, _presentBufferSize);
+    if (_planeBEnabled && !external)   // plane B belongs to the ZX raster
         _presentPlaneB[0].assign(_planeB.begin(), _planeB.end());
     else
         _presentPlaneB[0].clear();
-    _presentSlotGeometry[0] = DescribeNativeFrame();
+    _presentSlotGeometry[0] = external ? DescribeExternalFrame() : DescribeNativeFrame();
     _presentSlotSerial[0] = ++_presentSerial;
     _presentSlotWindow[0] = TemporalWindow{};  // never submitted: the effect restarts below
     _presentSlotProcessed[0] = false;
@@ -1780,7 +1783,7 @@ ScreenState Screen::DescribeScreenState() const
     s.pEFF7 = state.pEFF7;
     s.pDFFD = state.pDFFD;
     s.pFF77 = state.pFF77;
-    s.aFE = state.aFE;
+    s.aFE = state.atm.aFE;
     s.shadowScreenCapable = HasShadowScreen(s.model);
     s.activeRamPage = GetVideoRAMPage(s.model, s.p7FFD);
     s.activeScreen = s.activeRamPage == 7 ? 1 : 0;

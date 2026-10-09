@@ -64,6 +64,24 @@ StateNode SlotNode(const SlotManager::Slot& slot, const SlotPlanner& planner, bo
         node["name"] = "empty AY socket";
     }
     node["adapter"] = slot.entry.adapter;
+    // The bus the card sits on: the slot's bus, or - behind an adapter - the adapter's own bus, hosted by the slot
+    // (the Sprinter's ISA to ZX-bus adapter: `isa.1 = neogs` is on the ZX-bus `isa.1.zxbus`, SL-8)
+    const AdapterDef* adapter = slot.entry.adapter.empty() ? nullptr : planner.FindAdapter(slot.entry.adapter);
+    if (adapter != nullptr)
+    {
+        node["bus"] = slot.entry.slot + "." + Describe(adapter->cardSide).id;
+        node["busKind"] = Describe(adapter->cardSide).id;
+        node["host"] = slot.entry.slot;
+    }
+    else
+    {
+        const size_t dot = slot.entry.slot.rfind('.');
+        node["bus"] = dot == std::string::npos ? slot.entry.slot : slot.entry.slot.substr(0, dot);
+        if (card != nullptr)
+        {
+            node["busKind"] = Describe(card->bus).id;
+        }
+    }
     node["fit"] = FitName(slot.fit);
     node["state"] = slot.entry.disabled                                     ? "disabled"
                     : networkOff && slot.group == SlotCardGroup::Network ? "feature network off"
@@ -160,7 +178,46 @@ StateNode Slots(EmulatorContext* context)
         b["note"] = bus.note;
         buses.push(std::move(b));
     }
+    // A card in a slot of the machine's own that hosts a bus (the ZX-bus adapter): that bus, hosted by the slot
+    for (const SlotManager::MachineSlot& machineSlot : result.machineSlots)
+    {
+        if (machineSlot.hosts.empty())
+        {
+            continue;
+        }
+        StateNode b = StateNode::Object();
+        b["id"] = machineSlot.slot + "." + machineSlot.hosts;
+        b["kind"] = machineSlot.hosts;
+        b["host"] = machineSlot.slot;
+        b["arbitration"] = Describe(Arbitration::None).id;   // behind the ISA window no device competes
+        b["physicalSlots"] = 1;
+        b["retrofit"] = false;
+        b["note"] = "the " + machineSlot.name + " in " + machineSlot.slot + " (" + machineSlot.source +
+                    "): its card is the [SLOTS] entry " + machineSlot.slot;
+        buses.push(std::move(b));
+    }
     node["buses"] = std::move(buses);
+
+    // The machine's own slots (the Sprinter's ISA slots, SL-8): the board's cards, configured in its own section
+    StateNode machineSlots = StateNode::Array();
+    for (const SlotManager::MachineSlot& machineSlot : result.machineSlots)
+    {
+        StateNode m = StateNode::Object();
+        m["slot"] = machineSlot.slot;
+        m["bus"] = machineSlot.bus;
+        m["card"] = machineSlot.card;
+        m["name"] = machineSlot.name;
+        m["source"] = machineSlot.source;
+        m["details"] = machineSlot.details;
+        if (!machineSlot.hosts.empty())
+        {
+            m["hostsBus"] = machineSlot.slot + "." + machineSlot.hosts;
+            const SlotManager::Slot* hosted = result.FindSlot(machineSlot.slot);
+            m["hostedCard"] = hosted != nullptr ? hosted->entry.card : std::string("none");
+        }
+        machineSlots.push(std::move(m));
+    }
+    node["machineSlots"] = std::move(machineSlots);
 
     const bool networkOff = context->pFeatureManager != nullptr && !context->pFeatureManager->isEnabled(Features::kNetwork);
     StateNode slotList = StateNode::Array();

@@ -20,7 +20,7 @@
 #include "emulator/io/sprinter/isa/sprinterisabus.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
 #include "emulator/state/devicestate.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/io/network/vnet/ethernetgateway.h"
 
 class SprinterNetwork_Test : public ::testing::Test
@@ -136,17 +136,20 @@ TEST_F(SprinterNetwork_Test, Journal_NamesTheRegisters)
     EXPECT_EQ(entries->items[1].find("cpu_address")->s, "#C307");
 }
 
+// The legacy [NETWORK] Card=ZXNETUSB becomes a slot behind the ISA ZX-bus adapter; the adapter passes the General
+// Sound's ports only (ZX-bus slots SL-8), so the slot plan leaves the card out and its report says why
 TEST_F(SprinterNetwork_Test, ZxBusCardsAreRefusedWithTheReason)
 {
     Create([](CONFIG& config) { config.network.card = 1; });
     EXPECT_EQ(_context->pZxNetUsb, nullptr);
-    const StateNode net = DeviceState::Network(_context);
-    const StateNode* notes = net.find("not_fitted");
-    ASSERT_NE(notes, nullptr);
-    bool found = false;
-    for (const StateNode& n : notes->items)
-        found |= n.s.find("no ZX-Bus") != std::string::npos;
-    EXPECT_TRUE(found);
+    const StateNode slots = DeviceState::Slots(_context);
+    const StateNode* entries = slots.find("slots");
+    ASSERT_NE(entries, nullptr);
+    std::string reason;
+    for (const StateNode& slot : entries->items)
+        if (slot.find("card") && slot.find("card")->s == "zxnetusb" && slot.find("reason"))
+            reason = slot.find("reason")->s;
+    EXPECT_NE(reason.find("passes the General Sound's ports only"), std::string::npos) << reason;
 }
 
 TEST_F(SprinterNetwork_Test, OtherPopulations)
@@ -537,7 +540,7 @@ TEST_F(SprinterNetwork_Test, Bridge_FramesFromTheLanAreJournaledInputs)
     ASSERT_EQ(host->stations.size(), 1u) << "the adapter keeps the card's frames";
     EXPECT_EQ(host->stations[0][5], 0x02);
 
-    ttd::TimeTravelManager* ttm = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttm = _context->pTimeTravelController;
     ASSERT_NE(ttm, nullptr);
     ASSERT_TRUE(ttm->StartRecording());
     std::vector<uint8_t> frame(60, 0x5A);
@@ -570,6 +573,19 @@ TEST_F(SprinterNetwork_Test, Bridge_FramesFromTheLanAreJournaledInputs)
     }
     EXPECT_TRUE(journaled) << "a frame from the LAN is an outside input";
     ttm->StopRecording();
+
+    // The engine holds each frame with its bytes: a replay and a saved session deliver them again
+    size_t engineFrames = 0;
+    const ttd::TimeTravelEngine& engine = ttm->GetEngine();
+    for (size_t i = 0; i < engine.Events().Count(); ++i)
+    {
+        const ttd::TTDEvent& ev = engine.Events().At(i);
+        if (static_cast<uint16_t>(ev.kind) != static_cast<uint16_t>(ttd::TTDInputKind::NetFrame))
+            continue;
+        EXPECT_EQ(engine.Payloads().Bytes(ev.payload).size(), frame.size()) << "frame " << engineFrames;
+        ++engineFrames;
+    }
+    EXPECT_EQ(engineFrames, 2u);
 
     const StateNode report = DeviceState::Network(_context);
     const StateNode* gateway = report.find("ethernet_gateway");

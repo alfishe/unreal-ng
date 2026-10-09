@@ -200,10 +200,11 @@ inline uint32_t Crc32C(const uint8_t* src, size_t size, uint32_t seed = 0)
         return seed;
     }
 
-#if defined(__SSE4_2__) || defined(__x86_64__) && defined(__CRC32__)
-    // Hardware-accelerated path (x86 SSE4.2 / x86_64).
-    // We use intrinsics if available; otherwise fall through to software.
-    #if defined(__GNUC__) || defined(__clang__)
+    // One path is compiled: x86 SSE4.2 builtins, AArch64 CRC instructions, or the table. All three give
+    // the same CRC32C. (A build with -msse4.2 / -march=x86-64-v2+ used to compile the x86 path AND the
+    // table fallback into one scope: "redeclaration of crc".)
+#if (defined(__SSE4_2__) || (defined(__x86_64__) && defined(__CRC32__))) && (defined(__GNUC__) || defined(__clang__))
+    // Hardware-accelerated path (x86 SSE4.2 / x86_64)
     uint32_t crc = ~seed;
     // Process 8 bytes at a time when possible
     size_t i = 0;
@@ -218,10 +219,7 @@ inline uint32_t Crc32C(const uint8_t* src, size_t size, uint32_t seed = 0)
         ++i;
     }
     return ~crc;
-    #endif
-#endif
-
-#if defined(__aarch64__) && defined(__ARM_FEATURE_CRC32)
+#elif defined(__aarch64__) && defined(__ARM_FEATURE_CRC32)
     uint32_t crc = ~seed;
     size_t i = 0;
     while (i + 8 <= size) {

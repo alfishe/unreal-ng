@@ -474,7 +474,9 @@ Statement ParseStatement(const std::string& word, const std::string& rest, Diagn
             case ir::DirectiveKind::If:
             {
                 Expr cond = ops.empty() ? Expr::Number(0) : ParseExpression(rest);
-                if (word == "IF0")
+                // IF0 (5.03 and later) and IF (the same code #D3 before 5.03; ALASM 4.2's help: "if the expression = 0,
+                // body 1 is compiled") take the block when the expression is 0
+                if (word == "IF0" || word == "IF")
                 {
                     Expr group = Expr::Make(Expr::Kind::Group);
                     group.args.push_back(std::move(cond));
@@ -591,12 +593,15 @@ void ParseLine(const std::string& text, uint32_t number, std::set<std::string>& 
     }
     while (!t.empty() && t.back() == ' ')
         t.pop_back();
-    // "+" / "-": assembled once (ALASM marks; a converted source assembles them every time)
-    const size_t first = t.find_first_not_of(' ');
-    if (first != std::string::npos && (t[first] == '+' || t[first] == '-') && first + 1 < t.size() && t[first + 1] != ' ' &&
-        !std::isdigit(static_cast<unsigned char>(t[first + 1])))
+    // "+" / "-" in column 0: assembled once (the help; checked in ALASM 5.09: "+       LD A,1" and "+LBL    LD D,4"
+    // assemble, LBL being a label; a "-" read from the disk is a "+" again; an indented "+" is a syntax error). A
+    // converted source assembles them every time
+    if (t.size() > 1 && (t[0] == '+' || t[0] == '-') && !std::isdigit(static_cast<unsigned char>(t[1])))
     {
-        t[first] = ' ';
+        if (t[1] == ' ')
+            t[0] = ' ';
+        else
+            t.erase(0, 1);
         result.diagnostics.push_back({Severity::Info, number, 0, "an assemble-once (+/-) line: assembled every time after conversion"});
     }
     size_t i = 0;

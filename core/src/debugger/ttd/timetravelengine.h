@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
+#include "debugger/ttd/engine/ttddeltabase.h"
 #include "debugger/ttd/engine/ttddevicetable.h"
 #include "debugger/ttd/engine/ttdeventlog.h"
 #include "debugger/ttd/engine/ttdmediajournal.h"
@@ -337,6 +338,9 @@ public:
     const TTDMediaJournal& MediaReads() const { return _mediaReads; }
     const TTDPortJournal& BusReads() const { return _busReads; }
     const TTDPortJournal& BusWrites() const { return _busWrites; }
+    /// The bus journals' positions, for a caller that puts a replay's position back (a throwaway replay)
+    TTDPortJournal& BusReadsMutable() { return _busReads; }
+    TTDPortJournal& BusWritesMutable() { return _busWrites; }
     /// A replay reads the bus journals from these cursors (a checkpoint's):
     /// reads hand the CPU the recorded values, writes are checked
     void PlayBus(uint64_t readCursor, uint64_t writeCursor, uint64_t vectorCursor = 0)
@@ -484,6 +488,14 @@ public:
     /// issues are listed; the message counts the rest
     TTDRestoreResult CheckSession() const;
 
+    /// The state device @p id (its v1 id) holds at checkpoint @p index, without
+    /// restoring anything (a load's guards read the baseline's); false when the
+    /// checkpoint holds none or it fails its integrity check
+    bool DeviceStateAt(size_t index, uint8_t id, std::vector<uint8_t>& out) const
+    {
+        return ReadDeviceState(index, id, out) == DeviceStateRead::Ok;
+    }
+
     /// Tests only: damage the stored version of @p piece of @p region at
     /// checkpoint @p index (one flipped bit)
     bool DamageForTesting(size_t index, uint32_t region, uint32_t piece)
@@ -590,6 +602,11 @@ private:
     /// Per region: where the last laid-out state ended (4 + its length); kExtentUnknown: the whole region
     std::vector<uint32_t> _deviceExtent;
     static constexpr uint32_t kExtentUnknown = 0xFFFFFFFFu;
+    /// Per region: a variable-size device state without time fields. Its scratch and delta base cover the pieces
+    /// the state reached, not the largest size (a network adapter declares 64 MiB and usually uses a few KiB)
+    std::vector<uint8_t> _growsWithState;
+    /// `v` covering pieces [0, pieces): a growing region's buffer grows to them, any other is the whole region
+    void CoverPieces(uint32_t region, std::vector<uint8_t>& v, uint32_t pieces) const;
     /// A time field's line, kept per device region and field while recording
     struct TimeLine
     {
@@ -609,9 +626,9 @@ private:
     std::vector<TTDSyncMiss> _syncMisses;
     uint64_t _lastCaptureNs = 0;
     std::vector<TTDRegionDesc> _regions;
-    /// Per region: its latest contents (allocated when the region's first
-    /// piece arrives), the base each new difference is computed against
-    std::vector<std::vector<uint8_t>> _deltaBase;
+    /// Per region: its latest contents, the base each new difference is
+    /// computed against (sparse: a uniform piece keeps only its value)
+    TTDDeltaBase _deltaBase;
     TTDFrameTable _frames;
     TTDPayloadStore _payloads;
     TTDEventLog _events{_payloads};   ///< after _payloads: it releases into it

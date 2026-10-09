@@ -47,25 +47,23 @@ Phase numbers refer to [tdd.md](tdd.md) §10.
 | `native` | native | ● | ● | JSON with `"format": "unreal-symbols"` | done (S1) | S1 |
 | `unreal-map` | text | ● | ● | lines `[ROMn:\|RAMn:]HHHH  NAME  (TYPE) ; comment`, often a `---` banner; a bank prefix or a `(TYPE)` sets it apart | done (S2) | S2 |
 | `simple-sym` | text | ● | ● | lines `HHHH NAME [(TYPE)] [; comment]` (also `sos.l`); the extension tells it from the other `HHHH NAME` formats | done (S2) | S2 |
-| `unreal-l` | text | ● | ● | lines `HHHH name` (the linear RAM address: page `HHHH >> 14`) / `PP:HHHH name` (RAM page `PP`); RAM pages only (checked in Unreal's `MON_LABELS::load`) | done (S2) | S2 |
+| `unreal-l` | text | ● | ● | lines `HHHH name` (the linear RAM address: page `HHHH >> 14`) / `PP:HHHH name` (RAM page `PP`); RAM pages only (checked in Unreal's `MON_LABELS::load`); writes what sjasmplus' `LABELSLIST` writes, byte for byte | done (S2) | S2 |
 | `vice` | text | ● | ● | lines `al C:HHHH .name` | done (S2) | S2 |
 | `sjasm-equ` | text | ● | ● | lines `NAME EQU $HHHH ; (TYPE)` (also reads sjasmplus' `NAME: EQU 0x0000HHHH`) | done (S2) | S2 |
-| `z88dk-defc` | text | ● | ● | lines `DEFC name = $HHHH ; (TYPE)` (what LabelManager read) | done (S2) | S2 |
-| `z88dk-map` | text | ● | ● | lines `name = $HHHH ; ...` **verify** the field list against z88dk's current output | new | S3 |
-| `sjasmplus-sym` | text | ● | ● | lines `NAME: EQU 0x0000HHHH` **verify** (`--sym`, `--exp`) | new | S3 |
-| `sjasmplus-sld` | text | ● | ● | first line `\|SLD.data.version\|N`, then `\|`-separated records **verify** the field order per SLD version | new | S3 |
-| `sjasmplus-lst` | text | ● | ● | the `ListingParser` grammar; labels are the lines that define one | existing (`ListingParser`) | S3 |
-| `pasmo` | text | ● | ● | lines `NAME EQU 0HHHHH` **verify** the option and form | new | S3 |
-| `ida-python` | script | ● | ● | — | new | S4 |
-| `ida-idc` | script | ● | ● | `set_name(` / `MakeName(` lines | new | S4 |
-| `ghidra` | script / text | ● | ● | lines `name address [type]` for Ghidra's symbol-import script **verify** | new | S4 |
-| `mame` | script | ● | ● | — (debugger command file: `comadd HHHH,name`) **verify** | new | S4 |
-| `cspect-map` | text | ● | ● | sjasmplus `--cspectmap` output **verify** | new | S4 |
-| `tasm` | tokenized source | ● | ● | TR-DOS type `A` / `.$A`; line records `[len][bytes][trailer]`, tokens `#80-#F0`, `#0A n` = n spaces, `#FF` end (owner's 2012 converter; **verify** the trailer byte and TASM 3 vs 4 tables) | prior art | S6 |
-| `alasm` | tokenized + live | ● | ● | after research | research | S7 |
-| `xas` | tokenized + live | ● | ● | after research | research | S8 |
-| `storm`, `gens`, `masm`, `zxasm` | tokenized | ● | ● | after research | research | S9 |
-| `sts` (labels kept by the STS monitor) | live | ● | ● | after research | research | S9 |
+| `z88dk-defc` | text | ● | ● | lines `DEFC name = $HHHH ; (TYPE)` (what LabelManager read); writes z80asm `-g`'s layout (the name 31 wide), byte for byte | done (S2) | S2 |
+| `z88dk-map` | text | ● | ● | z80asm `-m` (and `-s`, section-relative): `name` 31 wide, ` = $HHHH ; type, scope, def, module, section, file:line` (z88dk 2.3 `symtab1.c`), source order; written back byte for byte | done (S3) | S3 |
+| `sjasmplus-sym` | text | ● | ● | lines `NAME: EQU 0x0000HHHH` (`--sym`, `--exp`), sorted by name; checked on sjasmplus 1.24 output, written back byte for byte | done (S3) | S3 |
+| `sjasmplus-sld` | text | ● | ● | first line `\|SLD.data.version\|1`, then `file\|line\|deffile\|defline\|page\|value\|type\|data` (sjasmplus documentation, version 1); `L` lines give module / main / local and traits (`+equ`, `+local`), `T` lines mark code, `Z` the page size | done (S3) | S3 |
+| `sjasmplus-lst` | text | ● | ● | the listing: a line defining a label gives its address (the source starts 18 characters after the address), `EQU` with a plain number its value, `MODULE` / `ENDMODULE` the prefix; no pages | done (S3) | S3 |
+| `pasmo` | text | ● | ● | lines `NAME<TAB>[<TAB>]EQU 0HHHHH` (the third command-line argument; `--public` writes only PUBLIC names), sorted by name; a PROC's LOCAL label is named by pasmo (`00000000`); checked on pasmo 0.5.5, written back byte for byte | done (S3) | S3 |
+| `ida-python` | script | ● | ● | `import idc` / `idc.set_name(0xHHHH, "name", idc.SN_NOWARN)`, `idc.set_cmt(...)` for comments; reads the IDC forms too. Checked in IDA 9.2 headless (idat, a 64K Z80 image): names and comments land | done (S4) | S4 |
+| `ida-idc` | script | ● | ● | `#include <idc.idc>`, `static main()`, `set_name(0xHHHH, "name", SN_NOWARN);`; reads `MakeName`, `MakeNameEx`, `MakeComm`, `ida_name.set_name` too. Checked in IDA 9.2 headless: names and comments land; IDA's own IDC dump of the database reads back (`testdata/symbols/ida/`); IDA keeps one name per address, so two page symbols folded to one address are reported | done (S4) | S4 |
+| `ghidra` | script / text | ● | ● | System.map lines `hhhh T name` (or `hhhh name`) for the `LinuxSystemMapImportScript` that ships with Ghidra 12 (the old `ImportSymbolsScript.py` is gone with Jython): `T` / `t` make a function, `D` data, `A` a constant, `l` (ours) a local label; checked in Ghidra 12.1.4 headless: every label lands, functions only at code | done (S4) | S4 |
+| `mame` | script | ● | ● | debugger commands `comadd HHHH,name[ - comment]` (MAME has comments, no labels; `,` and `;` are its separators); from MAME 0.289's `debugcmd.cpp` / help: its `-debugger none` does not run a script, so no headless check | done (S4) | S4 |
+| `cspect-map` | text | ● | ● | sjasmplus' `CSPECTMAP` directive: `HHHHHHHH LLLLLLLL TT NAME` (address, physical address, 00 label / 01 EQU / 02 DEFL / 03 ROM or no device / 04 STRUCT), names in capitals, a local label `PARENT@LOCAL`; checked on sjasmplus 1.24 output, written back byte for byte | done (S4) | S4 |
+| sources of `tasm`, `alasm`, `storm`, `zxasm`, `masm` (1.x), `zeus`, `gens`, `xas`, `sjasmplus` | tokenized source / text | ● | – | the library's source codecs ([../source-formats.md](../source-formats.md)) and dialect frontends; values by the layout of §4.1 (`SymbolsFromProject`, `symconv source`) | done (2026-10-07) | S6-S9 |
+| `alasm`, `xas` label tables | live | ● | – | ALASM 4.4x / 5.0x: page 3, records below a zero byte; XAS 4.x / 7.x: page 6, 9-byte entries ([../research-labeltables.md](../research-labeltables.md)); `symbols/live.h`, `symconv live` | done (2026-10-07) | S7-S8 |
+| `sts` (labels kept by the STS monitor) | live | – | – | STS 7 has no table of its own: it reads ALASM's ([../research-labeltables.md](../research-labeltables.md) §3); STS 5.x / 6.x not examined | researched | S9 |
 
 Tools without a symbol format in this table (for example Fuse) are not targets until someone asks; the registry
 makes adding one a single file.
@@ -91,12 +89,19 @@ tools decide.
 
 | Target | Allowed | First char | Case | Max length | Reserved |
 |---|---|---|---|---|---|
-| native, unreal-map, simple-sym, unreal-l | any printable except blank | any | kept | none | none |
-| sjasmplus / sjasm / pasmo | `A-Z a-z 0-9 _ . ? ! # @` **verify** | letter, `_`, `.` (local) | kept | none | instructions, registers, directives |
-| z88dk | C identifier + `_` | letter, `_` | kept | none | — |
-| VICE | **verify** | `.` prefix written by the exporter | kept | — | — |
-| IDA | C identifier + `@ $ ? .` **verify** | not a digit | kept | 511 **verify** | — |
-| Ghidra | no blanks **verify** | — | kept | — | — |
+| native | anything but a line break | any | kept | none | none |
+| unreal-map, simple-sym, unreal-l, ghidra | no blank (and no `;` in our map formats) | any | kept | none | none |
+| sjasmplus, sjasm, CSpect | `A-Z a-z 0-9 _ . ? ! # @` (`.` joins module, label and local label) | letter, `_`, `.`, `@` | kept (CSpect: capitals) | none | instructions, registers, conditions |
+| pasmo | `A-Z a-z 0-9 _ ? @ .` | letter, `_ ? @ .` | kept | none | instructions, registers, operators, directives |
+| z88dk | C identifier | letter, `_` | kept | none | instructions, registers, `ASMPC`, its directives |
+| VICE | `A-Z a-z 0-9 _` (the writer adds the `.`) | letter, `_` | kept | none | none |
+| IDA | C identifier + `@ $ ? .` | not a digit | kept | 511 | none |
+| MAME | anything but `,` and `;` | any | kept | none | none |
+
+A name a format cannot take is changed by DT-3 (`src/symbols/model/namerules.cpp`) and the change is reported and, where
+the format has comments, written as a comment line at the top. A name read from the target format itself is written
+back as that format wrote it (pasmo's `00000000` for a PROC's local label). A page symbol in a format without pages
+follows `--pages fold|comment|drop` (DT-4, default fold).
 
 ## 4. Tokenized ZX assemblers: research plan
 
@@ -115,11 +120,39 @@ flags, link to the next entry), and how the source refers to labels.
 ### 4.1 A source is not a label table
 
 A tokenized **source** file holds label *names* and the lines that define them, but not their addresses: those exist
-only after the assembler ran. A source codec therefore gives, per label: name, defining line, kind (from `EQU` /
-`DEFB` / an instruction), and a value only where the line itself says it (`EQU 24`). With `--assemble` the
-detokenized text goes through the core's two-pass `Z80TextAssembler`, whose symbol table supplies the addresses (and
-reports what it could not assemble: macros, includes it cannot reach). A **label table** (in RAM after assembling,
-or saved by the assembler) has the addresses directly.
+only after the assembler ran. A **label table** (in RAM after assembling, or saved by the assembler) has the
+addresses directly.
+
+**As implemented (2026-10-07, `symbols/fromsource.h`, `layout.h`).** The addresses come from a **layout** of the
+source's sjasmplus conversion, not from the core's `Z80TextAssembler` (which has no macros, `IF`, `DISP`, `INCLUDE` or
+local labels, so it cannot take real TASM / ALASM projects):
+
+1. A project of another dialect (TASM, ALASM, STORM, ZX-ASM) is converted with `ConvertProject` to sjasmplus: the
+   conversion whose output assembles to the bytes the original assembler built (research-*-to-sjasmplus.md). The
+   backend records, for every label line, the name it wrote (`LabelName`: a reserved word renamed, a LOCAL block's
+   label suffixed `__Ln`, a label in a macro body).
+2. `layout::Layout` walks the sjasmplus text as sjasmplus does, without producing bytes: the size of every instruction
+   form (sjasmplus' fake instructions and its multi-operand forms included), `ORG` / `DISP` / `ENT`, `DB` / `DW` /
+   `DS` / `DZ` / `DC` / `DD` / `ALIGN`, `INCLUDE`, `INCBIN` (the caller gives the file sizes), `IF` / `IFDEF` /
+   `IFUSED` / `ELSE`, `DUP`, `WHILE`, macros (named parameters substituted as sjasmplus does, local labels private to
+   each expansion), `MODULE`, temporary labels; expressions in 32 bits with C's rules and true = -1. The symbol table
+   lives through the passes as in sjasmplus (an unknown name is 0 until defined, which TASM's `IF PASS` relies on);
+   the passes repeat until no label moves.
+3. The laid-out labels get their names in the source back through the backend's record, with the source file and
+   line, the kind (code / data from what follows the label, const for `EQU` / `=`, local for a LOCAL block's label)
+   and the page an `ORG address,page` named. Labels in a block an `IF` leaves out are reported, not given a value.
+   A sjasmplus project is laid out directly (full names `module.label.local`).
+
+Checked against sjasmplus 1.24's `--sym` for the same text: every instruction form (599), the layout rules
+(`testdata/symbols/fromsource/probe.asm`), five projects whose bytes equal the original assemblers' (General Sound ROM
+1.04 in TASM 4.0: 927 labels, The Link's GSTUNNE4 in ALASM: 202, STORM 1.3, ZAsm 3.15 and TASM 4.12 programs), and
+the collection's disks with `tools/verification/unreal-asm/checks/symcheck.py`: of 117 TASM / ALASM / STORM / ZX-ASM images, 530 main
+sources sjasmplus assembles, 511 give the same names and values (67 264 labels); the other 19 are ALASM 5.09's
+examples that draw random numbers from FRAMES (`{#5C77}`, the device memory sjasmplus starts with, rewritten every
+pass: 15) and a sjasmplus quirk (a forward reference to a macro's local label leaves an entry of value 0 under the
+enclosing label: 4). The layout reads `{address}` from what `DB` / `DW` / `DS` wrote and warns for other bytes; a
+program that runs while it assembles (ALASM's SNAKE) is stopped after 8M lines in a pass. Command line:
+`symconv source <image.trd | file.$X | file.asm> [--main NAME] --to <codec>`.
 
 ### 4.2 Research
 

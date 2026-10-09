@@ -5,6 +5,7 @@
 #include <functional>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <set>
 
 #include "dialects/common/macros.h"
@@ -663,6 +664,8 @@ struct LineParser
     std::set<std::string>& macros;
     FrontendResult& result;
     int localRegion = 0;
+    // .PAGE n (4.05): the code of the next ORGs at #C000 and up goes to RAM page n (checked in TASM 4.12)
+    std::optional<Expr> page{};
     bool inMacro = false;                      // inside DEFMAC: ...labels are local to each expansion
     const std::set<std::string>* referenced = nullptr;   // names the source uses as operands
     const std::set<std::string>* labels = nullptr;       // names defined in column 0
@@ -769,6 +772,20 @@ struct LineParser
                 const std::string word = t.substr(i, j - i);
                 while (j < t.size() && t[j] == ' ')
                     ++j;
+                if (z80::Upper(word) == ".PAGE" || z80::Upper(word) == ".RUN")
+                {
+                    // .PAGE n: kept for the ORGs that follow (ORG address,page); .RUN address (4.11) only sets where
+                    // TASM's Run command starts the code: no counterpart, kept as a comment
+                    const std::string operand = t.substr(j);
+                    if (z80::Upper(word) == ".PAGE")
+                        page = p.Parse(operand);
+                    else
+                        result.diagnostics.push_back({Severity::Info, number, 0, ".RUN " + operand + " (TASM's Run address) kept as a comment"});
+                    line.comment = " " + z80::Upper(word) + " " + operand + (line.hasComment ? ";" + line.comment : std::string());
+                    line.hasComment = true;
+                    result.program.lines.push_back(std::move(line));
+                    return;
+                }
                 if (z80::Upper(word) == ".LOCAL")
                 {
                     // A new region for ...labels; the labels are renamed, nothing is left to write
@@ -783,6 +800,14 @@ struct LineParser
                     macros.insert(s.text);
                 if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Other)
                     result.diagnostics.push_back({Severity::Warning, number, 0, "TASM directive " + word + " kept as text"});
+                if (s.kind == Statement::Kind::Directive && s.directive == ir::DirectiveKind::Org && page && s.args.size() == 1)
+                {
+                    // TASM puts the code in the page only at #C000 and up ("ORG must be above #C000")
+                    if (s.args[0].kind == Expr::Kind::Number && s.args[0].value >= 0xC000)
+                        s.args.push_back(*page);
+                    else if (s.args[0].kind != Expr::Kind::Number)
+                        result.diagnostics.push_back({Severity::Warning, number, 0, "ORG after .PAGE with an address not known here: the page is not attached"});
+                }
                 if (s.kind == Statement::Kind::Directive && (s.directive == ir::DirectiveKind::Org || s.directive == ir::DirectiveKind::Disp))
                 {
                     EndPhase(line);

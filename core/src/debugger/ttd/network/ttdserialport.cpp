@@ -26,17 +26,27 @@ TTDSerialPort::TTDSerialPort(EmulatorContext* context, std::function<ComPort*()>
         _size = sizeof(netstate::SerialPort);
 }
 
-void TTDSerialPort::TTDSaveState(uint8_t* dst) const
+void TTDSerialPort::TTDSaveStateTo(std::vector<uint8_t>& out) const
 {
     netstate::SerialPort& state = *_scratch;
     std::memset(&state, 0, sizeof(state));
     state.version = netstate::kSerialPortVersion;
+    _tail.Clear();
     if (const ComPort* com = _port ? _port() : nullptr)
-    {
-        if (!com->SaveState(state.com))
-            state.incomplete = 1;
-    }
-    std::memcpy(dst, &state, _size);
+        com->SaveState(state.com, _tail);
+    const bool tail = HasPeer() && !_tail.Empty();   // the short blob has no peer, so nothing for a tail
+    state.flags = tail ? netstate::kSerialPortHasTail : 0;
+    const uint8_t* fixed = reinterpret_cast<const uint8_t*>(&state);
+    out.assign(fixed, fixed + _size);
+    if (tail)
+        _tail.AppendTo(out);
+}
+
+void TTDSerialPort::TTDSaveState(uint8_t* dst) const
+{
+    std::vector<uint8_t> blob;
+    TTDSaveStateTo(blob);
+    std::memcpy(dst, blob.data(), blob.size());
 }
 
 void TTDSerialPort::TTDLoadState(const uint8_t* src)
@@ -51,8 +61,10 @@ void TTDSerialPort::TTDLoadState(const uint8_t* src)
         return;
     if (_size < sizeof(netstate::SerialPort))
         state.com.peerKind = 0;   // the short blob: the UART only
+    const netstate::Tail tail =
+        HasPeer() && (state.flags & netstate::kSerialPortHasTail) ? netstate::Tail::Read(src + _size) : netstate::Tail();
 
-    // Received bytes come from the TTD journal (option A)
+    // Received bytes come from the TTD journal (option A), or inline from the tail
     const ttd::TTDInputJournal* journal =
         _context->pTimeTravelHooks ? &_context->pTimeTravelHooks->InputJournal() : nullptr;
     ComPort::ByteSource bytes = [journal](uint32_t source, uint32_t offset, uint32_t length, std::vector<uint8_t>& out) {
@@ -67,14 +79,13 @@ void TTDSerialPort::TTDLoadState(const uint8_t* src)
         out.assign(payload + offset, payload + offset + length);
         return true;
     };
-    const bool complete = state.com.present && com->LoadState(state.com, bytes);
-    if ((!complete || state.incomplete) && _context->pModuleLogger)
+    const bool complete = state.com.present && com->LoadState(state.com, tail, bytes);
+    if (!complete && _context->pModuleLogger)
     {
         ModuleLogger* _logger = _context->pModuleLogger;
         const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_DEBUGGER;
         const uint16_t _SUBMODULE = 0x0000;
-        MLOGWARNING("TTD %s: the serial port state was restored incompletely (%s)", _name.c_str(),
-                    state.incomplete ? "it did not fit the checkpoint limits" : "received bytes missing from the journal");
+        MLOGWARNING("TTD %s: received bytes the checkpoint refers to are missing from the journal", _name.c_str());
     }
 }
 

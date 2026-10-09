@@ -3,7 +3,7 @@
 
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/scorpion/ttdscorpionprofrom.h"
 #include "emulator/ports/models/scorpionfixture.h"
 
@@ -16,7 +16,7 @@
 
 /// @brief TTD serialization of the Scorpion ProfROM quadrant state.
 ///
-/// profrom_bank is a read-strobe state machine: it depends on the whole read
+/// scorpion.profromBank is a read-strobe state machine: it depends on the whole read
 /// history, so it cannot be rebuilt from the port latches on restore. That is
 /// why it lives in a model-specific TTDSerializable rather than in the common
 /// TTDChipsetState — the TTD framework itself knows nothing about Scorpion.
@@ -37,7 +37,7 @@ protected:
         // The read strobe is only armed while the service ROM window is
         // visible at #0000 (#1FFD bit 1).
         WritePort(0x1FFD, 0x02);
-        EXPECT_EQ(_context->emulatorState.profrom_bank, 0);
+        EXPECT_EQ(_context->emulatorState.scorpion.profromBank, 0);
     }
 };
 
@@ -47,18 +47,18 @@ TEST_F(TtdScorpionProfRom_Test, RoundTripCarriesQuadrant)
     SetUpProf(4);
 
     FastRead(0x0104);              // S=1: Q0 -> Q3
-    ASSERT_EQ(_context->emulatorState.profrom_bank, 3);
+    ASSERT_EQ(_context->emulatorState.scorpion.profromBank, 3);
 
     ttd::TTDScorpionProfROM serializer(_context);
     uint8_t capturedState[sizeof(ttd::ScorpionProfROMState)] = {};
     serializer.TTDSaveState(capturedState);
-    EXPECT_EQ(capturedState[0], 3);  // profrom_bank
+    EXPECT_EQ(capturedState[0], 3);  // scorpion.profromBank
 
     FastRead(0x0108);              // S=2: Q3 -> Q1
-    ASSERT_EQ(_context->emulatorState.profrom_bank, 1);
+    ASSERT_EQ(_context->emulatorState.scorpion.profromBank, 1);
 
     serializer.TTDLoadState(capturedState);
-    EXPECT_EQ(_context->emulatorState.profrom_bank, 3);
+    EXPECT_EQ(_context->emulatorState.scorpion.profromBank, 3);
 }
 
 /// The divergence hash must separate two states that differ only by quadrant.
@@ -84,7 +84,7 @@ TEST_F(TtdScorpionProfRom_Test, StateHashDistinguishesQuadrants)
 
     uint64_t hashQ0 = hashOfCurrentState();
 
-    _context->emulatorState.profrom_bank = 2;  // same port latches, other quadrant
+    _context->emulatorState.scorpion.profromBank = 2;  // same port latches, other quadrant
     uint64_t hashQ2 = hashOfCurrentState();
 
     EXPECT_NE(hashQ0, hashQ2);
@@ -138,8 +138,8 @@ TEST_F(TtdScorpionProfRom_Test, RoundTripCarriesPlaneSelectAndServiceLatches)
     WritePort(0x7EFD, 0x10);       // select a non-zero plane window
     FastRead(0x0104);              // advance the GAL state within it
 
-    const uint8_t planeBefore = _context->emulatorState.profrom_bank;
-    const uint8_t p7EFDBefore = _context->emulatorState.p7EFD;
+    const uint8_t planeBefore = _context->emulatorState.scorpion.profromBank;
+    const uint8_t p7EFDBefore = _context->emulatorState.scorpion.p7EFD;
     const uint8_t p1FFDBefore = _context->emulatorState.p1FFD;
     ASSERT_NE(planeBefore, 0);
     ASSERT_NE(p7EFDBefore, 0);
@@ -149,17 +149,17 @@ TEST_F(TtdScorpionProfRom_Test, RoundTripCarriesPlaneSelectAndServiceLatches)
     serializer.TTDSaveState(blob);
 
     // Scribble over every field the blob owns.
-    _context->emulatorState.profrom_bank = 0;
-    _context->emulatorState.p7EFD = 0;
+    _context->emulatorState.scorpion.profromBank = 0;
+    _context->emulatorState.scorpion.p7EFD = 0;
     _context->emulatorState.p1FFD = 0;
-    _context->emulatorState.scorpionDosTrigger = 1;
+    _context->emulatorState.scorpion.dosTrigger = 1;
 
     serializer.TTDLoadState(blob);
 
-    EXPECT_EQ(_context->emulatorState.profrom_bank, planeBefore);
-    EXPECT_EQ(_context->emulatorState.p7EFD, p7EFDBefore);
+    EXPECT_EQ(_context->emulatorState.scorpion.profromBank, planeBefore);
+    EXPECT_EQ(_context->emulatorState.scorpion.p7EFD, p7EFDBefore);
     EXPECT_EQ(_context->emulatorState.p1FFD, p1FFDBefore);
-    EXPECT_EQ(_context->emulatorState.scorpionDosTrigger, 0);
+    EXPECT_EQ(_context->emulatorState.scorpion.dosTrigger, 0);
 }
 
 /// rom_page is an observation of the live paging chain, not stored state. It
@@ -175,7 +175,7 @@ TEST_F(TtdScorpionProfRom_Test, RomPageReflectsLivePaging)
     ttd::ScorpionProfROMState blob{};
     serializer.TTDSaveState(reinterpret_cast<uint8_t*>(&blob));
     EXPECT_EQ(blob.rom_page, 2);
-    EXPECT_EQ(blob.plane_id, _context->emulatorState.profrom_bank);
+    EXPECT_EQ(blob.plane_id, _context->emulatorState.scorpion.profromBank);
 }
 
 /// #1FFD bit 0 latches RAM at #0000 — there is no ROM page there at all, and
@@ -223,25 +223,25 @@ TEST_F(TtdScorpionProfRom_Test, HashRespondsToEveryCarriedField)
 
     const uint64_t base = serializer.TTDHashState();
 
-    state.profrom_bank ^= 0x01;
+    state.scorpion.profromBank ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), base) << "plane_id not hashed";
-    state.profrom_bank ^= 0x01;
+    state.scorpion.profromBank ^= 0x01;
 
-    state.p7EFD ^= 0x10;
+    state.scorpion.p7EFD ^= 0x10;
     EXPECT_NE(serializer.TTDHashState(), base) << "p7EFD not hashed";
-    state.p7EFD ^= 0x10;
+    state.scorpion.p7EFD ^= 0x10;
 
     state.p1FFD ^= 0x02;
     EXPECT_NE(serializer.TTDHashState(), base) << "p1FFD not hashed";
     state.p1FFD ^= 0x02;
 
-    state.scorpionDosTrigger ^= 0x01;
+    state.scorpion.dosTrigger ^= 0x01;
     EXPECT_NE(serializer.TTDHashState(), base) << "scorpionDosTrigger not hashed";
-    state.scorpionDosTrigger ^= 0x01;
+    state.scorpion.dosTrigger ^= 0x01;
 
-    state.scorpion_turbo ^= 0x01;
-    EXPECT_NE(serializer.TTDHashState(), base) << "scorpion_turbo not hashed";
-    state.scorpion_turbo ^= 0x01;
+    state.scorpion.turbo ^= 0x01;
+    EXPECT_NE(serializer.TTDHashState(), base) << "scorpion.turbo not hashed";
+    state.scorpion.turbo ^= 0x01;
 
     EXPECT_EQ(serializer.TTDHashState(), base) << "hash is not a pure function of state";
 }
@@ -262,20 +262,20 @@ TEST_F(TtdScorpionProfRom_Test, RegistryCaptureAllRestoresPlaneAndLatches)
 
     WritePort(0x7EFD, 0x10);
     FastRead(0x0104);
-    const uint8_t planeBefore = _context->emulatorState.profrom_bank;
-    const uint8_t p7EFDBefore = _context->emulatorState.p7EFD;
+    const uint8_t planeBefore = _context->emulatorState.scorpion.profromBank;
+    const uint8_t p7EFDBefore = _context->emulatorState.scorpion.p7EFD;
 
     std::unordered_map<uint8_t, std::vector<uint8_t>> blobs;
     registry.CaptureAll(blobs);
     ASSERT_EQ(blobs.count(static_cast<uint8_t>(ttd::PeripheralId::ScorpionProfROM)), 1u);
 
-    _context->emulatorState.profrom_bank = 0;
-    _context->emulatorState.p7EFD = 0;
+    _context->emulatorState.scorpion.profromBank = 0;
+    _context->emulatorState.scorpion.p7EFD = 0;
 
     registry.RestoreAll(blobs);
 
-    EXPECT_EQ(_context->emulatorState.profrom_bank, planeBefore);
-    EXPECT_EQ(_context->emulatorState.p7EFD, p7EFDBefore);
+    EXPECT_EQ(_context->emulatorState.scorpion.profromBank, planeBefore);
+    EXPECT_EQ(_context->emulatorState.scorpion.p7EFD, p7EFDBefore);
 }
 
 /// A blob for a device this build has no serializer for must be ignored, not
@@ -291,9 +291,9 @@ TEST_F(TtdScorpionProfRom_Test, RegistryIgnoresBlobsForUnregisteredDevices)
     blobs[static_cast<uint8_t>(ttd::PeripheralId::ScorpionProfROM)] =
         std::vector<uint8_t>(64, 0xCD);
 
-    const uint8_t planeBefore = _context->emulatorState.profrom_bank;
+    const uint8_t planeBefore = _context->emulatorState.scorpion.profromBank;
     EXPECT_NO_FATAL_FAILURE(registry.RestoreAll(blobs));
-    EXPECT_EQ(_context->emulatorState.profrom_bank, planeBefore);
+    EXPECT_EQ(_context->emulatorState.scorpion.profromBank, planeBefore);
 }
 
 // ---------------------------------------------------------------------------
@@ -307,7 +307,7 @@ TEST_F(TtdScorpionProfRom_Test, RecordingRegistersTheScorpionSerializer)
 {
     SetUpProf(4);
 
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     EXPECT_FALSE(ttd.GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::ScorpionProfROM))
         << "serializers must be session-scoped, not constructed eagerly";
 
@@ -328,7 +328,7 @@ TEST_F(TtdScorpionProfRom_Test, RestartingRecordingDoesNotDuplicateSerializers)
 {
     SetUpProf(4);
 
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
     const size_t afterFirst = ttd.GetPeripheralRegistry().Count();
     ttd.StopRecording();
@@ -345,20 +345,17 @@ TEST_F(TtdScorpionProfRom_Test, CaptureRestoreSelfTestCoversProfRomState)
 {
     SetUpProf(16);
 
-    ttd::TimeTravelManager ttd(_context);
-    ASSERT_TRUE(ttd.StartRecording());
+    ttd::TimeTravelController ttd(_context);   // the self-test runs without a session
 
     // Drive the state off its power-on values first, so a serializer that
     // silently captured nothing would still be caught.
     WritePort(0x7EFD, 0x10);
     FastRead(0x0104);
-    ASSERT_NE(_context->emulatorState.profrom_bank, 0);
+    ASSERT_NE(_context->emulatorState.scorpion.profromBank, 0);
 
     const auto result = ttd.CaptureRestoreSelfTest();
     EXPECT_TRUE(result.pre_post_match)
         << "capture/restore diverged: " << result.notes;
-
-    ttd.StopRecording();
 }
 
 /// A seek must put the plane and the paging that follows from it back exactly.
@@ -368,15 +365,17 @@ TEST_F(TtdScorpionProfRom_Test, SeekRestoresPlaneAndResultingRomPage)
 {
     SetUpProf(16);
 
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
 
     WritePort(0x7EFD, 0x10);
     FastRead(0x0104);
 
     ttd::TTDScorpionProfROM probe(_context);
-    const uint8_t planeAtCapture = _context->emulatorState.profrom_bank;
+    const uint8_t planeAtCapture = _context->emulatorState.scorpion.profromBank;
     const uint8_t pageAtCapture  = probe.CurrentRomPage();
+
+    _context->emulatorState.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
 
     ttd.OnFrameBoundary();
     ASSERT_GE(ttd.GetCheckpointCount(), 1u);
@@ -388,14 +387,14 @@ TEST_F(TtdScorpionProfRom_Test, SeekRestoresPlaneAndResultingRomPage)
     FastRead(0x0108);
     FastRead(0x0104);
     WritePort(0x7EFD, 0x00);
-    ASSERT_NE(_context->emulatorState.profrom_bank, planeAtCapture);
+    ASSERT_NE(_context->emulatorState.scorpion.profromBank, planeAtCapture);
 
     ttd::TTDTimePoint target;
     target.frame = frame;
     target.tInFrame = 0;
     ASSERT_TRUE(ttd.SeekTo(target));
 
-    EXPECT_EQ(_context->emulatorState.profrom_bank, planeAtCapture);
+    EXPECT_EQ(_context->emulatorState.scorpion.profromBank, planeAtCapture);
     EXPECT_EQ(probe.CurrentRomPage(), pageAtCapture)
         << "plane restored but the paging chain was not rebuilt from it";
 }
@@ -410,11 +409,12 @@ TEST_F(TtdScorpionProfRom_Test, SessionRoundTripPreservesModelBlobs)
 {
     SetUpProf(16);
 
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
     WritePort(0x7EFD, 0x10);
     FastRead(0x0104);
-    const uint8_t planeAtCapture = _context->emulatorState.profrom_bank;
+    const uint8_t planeAtCapture = _context->emulatorState.scorpion.profromBank;
+    _context->emulatorState.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
     ttd.OnFrameBoundary();
     ASSERT_GE(ttd.GetCheckpointCount(), 1u);
     ttd.StopRecording();
@@ -424,7 +424,7 @@ TEST_F(TtdScorpionProfRom_Test, SessionRoundTripPreservesModelBlobs)
     ASSERT_TRUE(ttd.SerializeSession(out, err)) << err;
 
     // Load into a second manager on the same machine.
-    ttd::TimeTravelManager reloaded(_context);
+    ttd::TimeTravelController reloaded(_context);
     std::istringstream in(out.str(), std::ios::binary);
     ASSERT_TRUE(reloaded.DeserializeSession(in, err)) << err;
     ASSERT_EQ(reloaded.GetCheckpointCount(), ttd.GetCheckpointCount());
@@ -432,17 +432,18 @@ TEST_F(TtdScorpionProfRom_Test, SessionRoundTripPreservesModelBlobs)
     // Move the live plane away, then seek the reloaded session back.
     FastRead(0x0108);
     WritePort(0x7EFD, 0x00);
-    ASSERT_NE(_context->emulatorState.profrom_bank, planeAtCapture);
+    ASSERT_NE(_context->emulatorState.scorpion.profromBank, planeAtCapture);
 
-    const ttd::TTDCheckpoint* first = reloaded.GetCheckpoint(0);
-    ASSERT_NE(first, nullptr);
+    // The checkpoint of the frame boundary (the baseline before it holds the power-on plane)
+    const ttd::TTDCheckpoint* captured = reloaded.GetCheckpoint(reloaded.GetCheckpointCount() - 1);
+    ASSERT_NE(captured, nullptr);
 
     ttd::TTDTimePoint target;
-    target.frame = first->time.frame;
+    target.frame = captured->time.frame;
     target.tInFrame = 0;
     ASSERT_TRUE(reloaded.SeekTo(target));
 
-    EXPECT_EQ(_context->emulatorState.profrom_bank, planeAtCapture)
+    EXPECT_EQ(_context->emulatorState.scorpion.profromBank, planeAtCapture)
         << "model blobs did not survive serialization";
 }
 
@@ -453,8 +454,9 @@ TEST_F(TtdScorpionProfRom_Test, SessionFromDifferentRomSetIsRejected)
 {
     SetUpProf(16);
 
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
+    _context->emulatorState.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
     ttd.OnFrameBoundary();
     ttd.StopRecording();
 
@@ -466,7 +468,7 @@ TEST_F(TtdScorpionProfRom_Test, SessionFromDifferentRomSetIsRejected)
     // count changes the bundle contents, hence the signature).
     ASSERT_TRUE(LoadSyntheticRom(4));
 
-    ttd::TimeTravelManager reloaded(_context);
+    ttd::TimeTravelController reloaded(_context);
     std::istringstream in(out.str(), std::ios::binary);
     EXPECT_FALSE(reloaded.DeserializeSession(in, err))
         << "a session recorded against another ROM set must not load";
@@ -479,8 +481,9 @@ TEST_F(TtdScorpionProfRom_Test, SessionFromSameRomSetLoads)
 {
     SetUpProf(16);
 
-    ttd::TimeTravelManager ttd(_context);
+    ttd::TimeTravelController ttd(_context);
     ASSERT_TRUE(ttd.StartRecording());
+    _context->emulatorState.frame_counter++;   // the frame ends as in emulation: its counter first, then the boundary
     ttd.OnFrameBoundary();
     ttd.StopRecording();
 
@@ -488,7 +491,7 @@ TEST_F(TtdScorpionProfRom_Test, SessionFromSameRomSetLoads)
     std::string err;
     ASSERT_TRUE(ttd.SerializeSession(out, err)) << err;
 
-    ttd::TimeTravelManager reloaded(_context);
+    ttd::TimeTravelController reloaded(_context);
     std::istringstream in(out.str(), std::ios::binary);
     EXPECT_TRUE(reloaded.DeserializeSession(in, err)) << err;
 }

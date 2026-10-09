@@ -17,15 +17,18 @@
 #include "_helpers/soundcardscope.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdconfigcapture.h"
 #include "emulator/config.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/io/keyboard/atm2kbc.h"
+#include "emulator/io/sprinter/isa/isaslotconfig.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/io/network/virtualnetwork.h"
 #include "emulator/io/serial/comport.h"
+#include "emulator/io/serial/uart16550.h"
 #include "emulator/memory/memory.h"
 #include "emulator/slots/slotchange.h"
 #include "emulator/slots/slotcontrol.h"
@@ -266,24 +269,27 @@ TEST_F(SlotControl_Test, GsPersonalityIsASlotReplace)
     EXPECT_NE(refused.message.find("no General Sound card is fitted"), std::string::npos) << refused.message;
 }
 
-/// R-OP-7 through the surfaces' layer: status recording, 409, the session named
-TEST_F(SlotControl_Test, RecordingRefusesChanges)
+/// D42 through the surfaces' layer: a plug while a recording runs is applied, 200, and ends the session with the
+/// machine it restarts
+TEST_F(SlotControl_Test, ARecordingDoesNotRefuseChanges)
 {
     std::shared_ptr<Emulator> emulator = Create("PENTAGON", {{"zxbus.1", "gs"}});
     ASSERT_NE(emulator, nullptr);
     emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
     emulator->GetContext()->pMemory->UpdateFeatureCache();
-    ttd::TimeTravelManager* ttd = emulator->GetContext()->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = emulator->GetContext()->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
     ASSERT_TRUE(ttd->StartRecording());
+    const std::string id = emulator->GetId();
+    emulator.reset();
 
-    const SlotControlReply refused = Run(Request("plug", emulator->GetId(), "zxbus.next", "zxnetusb"));
-    EXPECT_EQ(refused.status, "recording");
-    EXPECT_EQ(refused.httpStatus, 409);
-    EXPECT_NE(refused.message.find("TTD is recording session #1"), std::string::npos) << refused.message;
-    EXPECT_TRUE(Field(Field(refused.body, "plan"), "recording").b);
-    ttd->StopRecording();
+    const SlotControlReply applied = Run(Request("plug", id, "zxbus.next", "zxnetusb"));
+    EXPECT_EQ(applied.status, "applied") << applied.message;
+    EXPECT_EQ(applied.httpStatus, 200);
+    EXPECT_FALSE(Field(Field(applied.body, "plan"), "recording").b);
+    ASSERT_NE(applied.emulator, nullptr);
+    EXPECT_FALSE(applied.emulator->GetContext()->pTimeTravelController->IsRecording());
 }
 
 /// Malformed requests are 400 / 404 with the reason; nothing is planned
@@ -503,19 +509,22 @@ TEST_F(SlotControl_Test, NetworkSettingsWithoutCardChangeStayInPlace)
     edge.replaceIfIncompatible = true;
     EXPECT_EQ(Run(edge).status, "dry-run");
 
-    // R-OP-7: refused while TTD records, the card change and the in-place settings alike
+    // R-OP-7: the in-place settings are fixed while TTD records; the card change (D42) restarts the machine and so
+    // ends the session instead of being refused
     emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
     emulator->GetContext()->pMemory->UpdateFeatureCache();
-    ttd::TimeTravelManager* ttd = emulator->GetContext()->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = emulator->GetContext()->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
     ASSERT_TRUE(ttd->StartRecording());
-    const SlotControlReply card = Run(NetworkRequest(id, {{"card", "none"}}));
-    EXPECT_EQ(card.status, "recording") << card.message;
-    EXPECT_EQ(card.httpStatus, 409);
     const SlotControlReply hosts = Run(NetworkRequest(id, {{"hosts", "b.test=10.0.2.9"}}));
     EXPECT_EQ(hosts.status, "recording") << hosts.message;
-    ttd->StopRecording();
+    EXPECT_TRUE(ttd->IsRecording());
+    emulator.reset();
+    const SlotControlReply card = Run(NetworkRequest(id, {{"card", "none"}}));
+    EXPECT_EQ(card.status, "applied") << card.message;
+    ASSERT_NE(card.emulator, nullptr);
+    EXPECT_FALSE(card.emulator->GetContext()->pTimeTravelController->IsRecording());
 }
 
 /// The running [NETWORK] settings are configuration, not machine state (owner decision 2026-10-05): a slot restart
@@ -571,6 +580,119 @@ TEST_F(SlotControl_Test, SlotRestartCarriesTheRunningNetworkSettings)
     ASSERT_EQ(undone.status, "applied") << undone.message;
     EXPECT_STREQ(undone.emulator->GetContext()->config.network.hosts, "carry.test=10.0.2.55");
     EXPECT_EQ(undone.emulator->GetContext()->config.network.card & NetworkManager::kZxBusCards, 0);
+}
+
+/// The firmware choices of the network settings are configuration too (owner decision 2026-10-06): `avr_firmware`
+/// ([EVO] Avr=, the ZX-Evo's AVR) and `kbc_firmware` ([ATM] Kbc=, the ATM Turbo 2+ keyboard controller, with its
+/// [ROM] ATM2KBC= image) survive a slot restart as the [NETWORK] settings do. Two machines, two restarts (~60 ms)
+TEST_F(SlotControl_Test, SlotRestartCarriesTheFirmwareChoices)
+{
+    std::shared_ptr<Emulator> evo = Create("ATM3", {});
+    ASSERT_NE(evo, nullptr);
+    const std::string evoId = evo->GetId();
+    ASSERT_NE(evo->GetContext()->config.atm.evo_avr, static_cast<uint8_t>(Uart16550::AvrFirmware::Base2011Apr));
+    evo.reset();
+    const SlotControlReply avr = Run(NetworkRequest(evoId, {{"avr_firmware", "base2011-04"}}));
+    ASSERT_EQ(avr.status, "accepted") << avr.message;
+    const SlotControlReply evoPlug = Run(Request("plug", evoId, "zxbus.next", "gs"));
+    ASSERT_EQ(evoPlug.status, "applied") << evoPlug.message;
+    ASSERT_NE(evoPlug.emulator, nullptr);
+    EXPECT_NE(evoPlug.emulator->GetId(), evoId) << "a restart";
+    EXPECT_EQ(evoPlug.emulator->GetContext()->config.atm.evo_avr,
+              static_cast<uint8_t>(Uart16550::AvrFirmware::Base2011Apr));
+
+    std::shared_ptr<Emulator> atm = Create("ATM710", {});
+    ASSERT_NE(atm, nullptr);
+    const std::string atmId = atm->GetId();
+    ASSERT_NE(atm->GetContext()->config.atm.kbc_firmware, static_cast<uint8_t>(Atm2Kbc::Firmware::V22At7));
+    atm.reset();
+    const SlotControlReply kbc = Run(NetworkRequest(atmId, {{"kbc_firmware", "v22-7"}}));
+    ASSERT_EQ(kbc.status, "accepted") << kbc.message;
+    SlotControlRequest atmRequest = Request("plug", atmId, "ay-socket", "ts");
+    atmRequest.replaceIfIncompatible = true;   // the TurboSound board in place of the AY
+    const SlotControlReply atmPlug = Run(atmRequest);
+    ASSERT_EQ(atmPlug.status, "applied") << atmPlug.message;
+    ASSERT_NE(atmPlug.emulator, nullptr);
+    EXPECT_EQ(atmPlug.emulator->GetContext()->config.atm.kbc_firmware,
+              static_cast<uint8_t>(Atm2Kbc::Firmware::V22At7));
+    EXPECT_STREQ(atmPlug.emulator->GetContext()->config.atm.kbc_rom_path, "") << "the preset's image, as chosen";
+}
+
+/// SL-8: the Sprinter's ISA slots are the machine's own slots, filled by [ISA]: the slot report lists them
+/// (machineSlots), the ZX-bus adapter in one hosts a ZX-bus (a bus with a host), and the General Sound behind it is
+/// listed on that ZX-bus. A ZX-bus card needs the adapter in its ISA slot: a plug into the NE2000's slot is refused,
+/// and the GS sits on the adapter of the slot the slot set names. ~100 ms: three Sprinter machines are built (their
+/// creation dominates; the refusals cost nothing)
+TEST_F(SlotControl_Test, SprinterIsaSlotsInTheReport)
+{
+    const Lines gsOnIsa1 = {{"isa.1", "neogs"}, {"isa.1.adapter", "sprinter-isa-zxbus"}, {"isa.1.fit", "unrealistic"}};
+    std::shared_ptr<Emulator> emulator = Create("SPRINTER", gsOnIsa1);
+    ASSERT_NE(emulator, nullptr);
+    const StateNode report = DeviceState::Slots(emulator->GetContext());
+
+    std::vector<std::string> machineSlots;
+    for (const StateNode& slot : Field(report, "machineSlots").items)
+        machineSlots.push_back(Field(slot, "slot").s + " = " + Field(slot, "card").s + " (" + Field(slot, "source").s +
+                               ")" + (slot.find("hostsBus") ? " hosts " + Field(slot, "hostsBus").s + ": " +
+                                                                  Field(slot, "hostedCard").s
+                                                            : std::string()));
+    EXPECT_EQ(machineSlots, (std::vector<std::string>{"isa.1 = zxbus ([ISA] Slot1) hosts isa.1.zxbus: neogs",
+                                                      "isa.2 = ne2000 ([ISA] Slot2)"}));
+    EXPECT_EQ(Field(Field(report, "machineSlots").items[1], "details").s, "RTL8019AS, #300, IRQ 3");
+
+    bool hostedBus = false;
+    for (const StateNode& bus : Field(report, "buses").items)
+        if (Field(bus, "id").s == "isa.1.zxbus")
+        {
+            hostedBus = true;
+            EXPECT_EQ(Field(bus, "kind").s, "zxbus");
+            EXPECT_EQ(Field(bus, "host").s, "isa.1");
+        }
+    EXPECT_TRUE(hostedBus) << "the adapter's ZX-bus is a bus of the report";
+    const StateNode& gs = Field(report, "slots").items.at(0);
+    EXPECT_EQ(Field(gs, "slot").s, "isa.1");
+    EXPECT_EQ(Field(gs, "card").s, "neogs");
+    EXPECT_EQ(Field(gs, "bus").s, "isa.1.zxbus");
+    EXPECT_EQ(Field(gs, "busKind").s, "zxbus");
+    EXPECT_EQ(Field(gs, "host").s, "isa.1");
+
+    // isa.2 holds the NE2000: a ZX-bus card cannot go there
+    SlotControlRequest plug = Request("plug", emulator->GetId(), "isa.2", "gs");
+    plug.adapter = "sprinter-isa-zxbus";
+    plug.replaceIfIncompatible = true;
+    const SlotControlReply refused = Run(plug);
+    EXPECT_NE(refused.status, "applied") << refused.message;
+    EXPECT_NE(refused.message.find("isa.2 holds NE2000 Ethernet ([ISA] Slot2), not the ZX-bus adapter"),
+              std::string::npos)
+        << refused.message;
+
+    // The adapter passes the General Sound's ports only: another ZX-bus card behind it waits for ISA phase I5
+    SlotControlRequest moon = Request("plug", emulator->GetId(), "isa.1", "moonsound");
+    moon.adapter = "sprinter-isa-zxbus";
+    moon.replaceIfIncompatible = true;
+    const SlotControlReply notPassed = Run(moon);
+    EXPECT_NE(notPassed.status, "applied") << notPassed.message;
+    EXPECT_NE(notPassed.message.find("passes the General Sound's ports only"), std::string::npos) << notPassed.message;
+
+    // Both slots hold the adapter, the slot set puts the GS in isa.2: it sits on the second adapter
+    std::string error;
+    std::shared_ptr<Emulator> both = EmulatorManager::GetInstance()->CreateEmulatorWithModel(
+        "", "SPRINTER", LoggerLevel::LogError, &error, [](CONFIG& config) {
+            config.sprinter.isa.slot[0].kind = static_cast<uint8_t>(sprinterisa::CardKind::ZxBus);
+            config.sprinter.isa.slot[1].kind = static_cast<uint8_t>(sprinterisa::CardKind::ZxBus);
+            SlotConfig slotConfig;
+            ParseSlotsSection({{"isa.2", "gs"}, {"isa.2.adapter", "sprinter-isa-zxbus"}, {"isa.2.fit", "unrealistic"}},
+                              slotConfig);
+            SlotManager::UseSlots(slotConfig, config);
+        });
+    ASSERT_NE(both, nullptr) << error;
+    _ids.push_back(both->GetId());
+    const StateNode isa = DeviceState::Isa(both->GetContext());
+    const StateNode& slots = Field(isa, "slots");
+    ASSERT_EQ(slots.items.size(), 2u);
+    EXPECT_NE(Field(Field(slots.items[0], "zx_bus"), "empty").s.find("ISA slot 2 ([SLOTS] isa.2)"), std::string::npos)
+        << "the GS is not on the first adapter";
+    EXPECT_EQ(Field(Field(slots.items[1], "zx_bus"), "cards").items.size(), 1u) << "the GS sits on the second";
 }
 
 /// The runtime feature `network` is a power switch of the network devices (owner decision 2026-10-05): with it off a

@@ -356,6 +356,12 @@ scrubbing across frame boundaries warrants it.
 
 ## 6. Live history: non-destructive browse/resume (design — 2026-08-30)
 
+> **On the TTD engine (2026-10-07, [engine decision 43](../2026-09-25-ttd-v2-migration/engine-decisions.md)):** the
+> separate DebuggerLive mode below is v1's. On the engine DeZog uses the recording that runs - an explicit one stays
+> explicit - or starts a background recording (`HoldBackgroundRecording`), the kind the black box is: it refuses
+> nothing (a media change, turbo, a host speed above 1x end its session, the next starts at once) and stops when the
+> session closes (`ReleaseBackgroundRecording`). Browsing while it records is the paused frame-cache build, as here.
+
 Status: **design agreed, NOT yet implemented.** Post-review decision
 (2026-08-30): implemented as a **separate DebuggerLive recording mode**
 (6.3) — the existing session mode stays byte-identical. Fixes the reported

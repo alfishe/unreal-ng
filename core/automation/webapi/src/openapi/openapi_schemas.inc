@@ -1215,11 +1215,19 @@
     schemas["TTDFindLastRequest"]["properties"]["phys_page"]["description"] =
         "Physical RAM page 0..255 (JSON number only; 400 otherwise). Pins the search to one page, so a banked "
         "address does not answer with another page's access.";
+    schemas["TTDFindLastRequest"]["properties"]["space"]["type"] = "string";
+    schemas["TTDFindLastRequest"]["properties"]["space"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* space : {"ram", "vram", "cache"})
+        schemas["TTDFindLastRequest"]["properties"]["space"]["enum"].append(space);
+    schemas["TTDFindLastRequest"]["properties"]["space"]["description"] =
+        "The memory searched: ram (default, Z80 addresses), vram (the Sprinter's 256 KB video RAM) or cache (its "
+        "64 KB fast RAM). For vram / cache, addr / addr_from / addr_to are offsets in that memory, inside one 16 KB "
+        "page; not with phys_page.";
 
     schemas["TTDFindLastResponse"]["type"] = "object";
     schemas["TTDFindLastResponse"]["description"] =
         "Response from POST /ttd/find-last. On a hit: found true plus frame, tinframe, pc, value, phys_page, "
-        "access. No match: found false. A replay barrier (marker) stopped the search before any match: found "
+        "access, space, and addr (space ram) or offset (space vram / cache). No match: found false. A replay barrier (marker) stopped the search before any match: found "
         "false, blocked true, marker_frame, marker_tinframe, marker_kind, marker_reason.";
     schemas["TTDFindLastResponse"]["properties"]["found"]["type"] = "boolean";
     schemas["TTDFindLastResponse"]["properties"]["frame"]["type"] = "integer";
@@ -1234,7 +1242,16 @@
     schemas["TTDFindLastResponse"]["properties"]["phys_page"]["format"] = "uint16";
     schemas["TTDFindLastResponse"]["properties"]["phys_page"]["nullable"] = true;
     schemas["TTDFindLastResponse"]["properties"]["phys_page"]["description"] =
-        "Physical RAM page 0..255 of the access; null when it had no RAM page (ROM, cache, I/O)";
+        "Physical RAM page 0..255 of the access; null when it had no RAM page (ROM, I/O, space vram / cache)";
+    schemas["TTDFindLastResponse"]["properties"]["space"]["type"] = "string";
+    schemas["TTDFindLastResponse"]["properties"]["space"]["description"] = "ram, vram or cache: where the byte is";
+    schemas["TTDFindLastResponse"]["properties"]["addr"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["addr"]["format"] = "uint16";
+    schemas["TTDFindLastResponse"]["properties"]["addr"]["description"] = "The Z80 address accessed (space ram)";
+    schemas["TTDFindLastResponse"]["properties"]["offset"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["offset"]["format"] = "uint32";
+    schemas["TTDFindLastResponse"]["properties"]["offset"]["description"] =
+        "The offset in the video / fast RAM (space vram / cache)";
     schemas["TTDFindLastResponse"]["properties"]["access"]["type"] = "string";
     schemas["TTDFindLastResponse"]["properties"]["blocked"]["type"] = "boolean";
     schemas["TTDFindLastResponse"]["properties"]["marker_frame"]["type"] = "integer";

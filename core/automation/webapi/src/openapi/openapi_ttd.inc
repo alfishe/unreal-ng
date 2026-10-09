@@ -43,7 +43,8 @@
         "Begins recording. Captures the baseline checkpoint at the current "
         "frame, transitions the session to state=\"recording\", and starts "
         "per-frame checkpoint capture. Idempotent: returns already_active=true "
-        "if recording was already in progress.\n\n"
+        "if recording was already in progress. A start the recorder refuses is a 409 whose message gives the reason "
+        "(\"the recording did not start: ...\").\n\n"
         "**Optional JSON body:**\n"
         "- `journal`: also record the write journal (default false). \"Who wrote this address last\" then answers "
         "at once; without it the search replays one frame (same answer, slower). It can be switched at any moment "
@@ -533,8 +534,9 @@
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["tags"].append("Time-Travel Debug");
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["description"] =
         "Serializes the current TTD session to a .ttd binary file at the "
-        "given filesystem path. The file format is documented in "
-        "ttd_dump_format.h (schema v3 with embedded write journal).";
+        "given filesystem path: the engine's session file (schema 2, Kaitai "
+        "schema core/src/debugger/ttd/engine/ttdsession.ksy); on v1 "
+        "(UNREAL_TTD_BACKEND=v1) v1's format (ttd.ksy).";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["required"] = true;

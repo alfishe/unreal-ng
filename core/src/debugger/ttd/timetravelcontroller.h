@@ -118,6 +118,8 @@ public:
     /// Idempotent: calling while already Recording is a no-op.
     /// @return true if recording was started (or was already active).
     bool StartRecording();
+    /// Why the last StartRecording() refused (empty after a start that succeeded): the automation surfaces report it
+    const std::string& LastStartError() const { return _lastStartError; }
 
     /// @brief Make time travel unavailable for this instance, with the reason a
     /// user sees: StartRecording (and the debugger live history built on it)
@@ -144,10 +146,11 @@ public:
     bool HasHistory() const override { return !_timeline.empty(); }
     const TTDInputJournal& InputJournal() const override { return _inputJournal; }
 
-    /// @brief Whether `action` may run now. While a user recording runs, every
-    /// TTDGuardedAction is refused - stop the recording first. A debugger's
-    /// live history (DebuggerLive) is not protected: an outside change drops it
-    /// and the debugger restarts it.
+    /// @brief Whether `action` may run now. While an explicit recording runs
+    /// (one the user started), a media change is refused - stop the recording
+    /// first. A background recording (the black box, a debugger's history) is
+    /// not protected: the change ends its session, the next one starts at once
+    /// (owner decision 2026-10-07).
     /// @return empty when allowed; otherwise the reason, one sentence a user can
     /// act on. Every automation surface shows it verbatim, and the core paths
     /// that perform the action refuse with it too.
@@ -165,26 +168,21 @@ public:
     inline bool IsRecording() const override { return _state.load(std::memory_order_acquire) == TTDSessionState::Recording; }
 
     inline TTDSessionState GetState() const override { return _state.load(std::memory_order_acquire); }
-    inline TTDRecordMode GetRecordMode() const { return _recordMode; }
-    inline bool IsDebuggerLive() const { return _recordMode == TTDRecordMode::DebuggerLive; }
+    /// The current session is a background one (the black box, a debugger's
+    /// history): it holds no lock and refuses nothing; an outside change ends it
+    inline bool IsBackgroundSession() const { return _backgroundSession; }
 
-    /// @brief Enter DebuggerLive mode (debugger session live history).
-    ///
-    /// Adopts whatever recording state exists instead of wiping:
-    ///  - already Recording (a Session-mode start hijacked by an attach):
-    ///    keep the timeline, just switch the mode flag;
-    ///  - Idle with history and no unrecorded gap: ResumeRecordingLive()
-    ///    (append after the recorded end);
-    ///  - Idle empty or gapped: fresh StartRecording-style baseline.
-    ///
-    /// @return true when recording is active in DebuggerLive mode on
-    ///         return.
-    bool BeginDebuggerLiveHistory();
+    /// @brief A debugger needs a history (DeZog, owner decision 2026-10-07): the
+    /// recording that runs is used - an explicit one stays explicit; with none,
+    /// a background recording starts (it goes on after the retained history
+    /// when it can, as a fresh session otherwise). Idempotent: called on every
+    /// resume and step. False while browsing a stopped session (Detached).
+    bool HoldBackgroundRecording();
 
-    /// @brief Leave DebuggerLive mode. Recording stops, the timeline is
-    ///        KEPT as normal Idle-with-history for the scrubber/.ttd
-    ///        flows. Idempotent (no-op when not in DebuggerLive).
-    void EndDebuggerLiveHistory();
+    /// @brief The debugger is gone: a background recording it started stops
+    /// (history kept, as for the scrubber and the .ttd flows) unless the black
+    /// box keeps it. Idempotent
+    void ReleaseBackgroundRecording();
 
     /// @brief The session summary, computed from the live session structures.
     ///
@@ -1068,7 +1066,7 @@ private:
     /// and the operations built on it, StepForwardInstruction). Internal
     /// restores during search, reverse execution and frame-cache builds never
     /// reach it, so they cannot touch the display.
-    /// @param frameTarget true when the user positioned by frame number
+    /// @param frameTarget true at a frame boundary: the frame that ended there
     void PresentPosition(bool frameTarget);
 
     /// @brief Flush the video delay line and post NC_VIDEO_FRAME_REFRESH so
@@ -1512,8 +1510,10 @@ private:
     /// @brief Compose the picture for the current position (display rule,
     /// docs/inprogress/2026-09-28-ttd-positioning-and-display/design.md §3).
     ///
-    /// - Frame target (positioned by frame number): the frame's FINAL
-    ///   picture — its own T-states replayed from its checkpoint to its end.
+    /// - Frame target: a frame's FINAL picture — its own T-states replayed
+    ///   from its checkpoint to its end. @p frame: the frame that ended at the
+    ///   current position (a frame boundary, D13: "frame N" is {N+1, 0});
+    ///   the clip export passes the current frame instead (kCurrentFrame).
     /// - Time target (frame f, T-state T): what the beam rendered from the
     ///   start of f up to T, over frame f-1's final picture for the part not
     ///   drawn yet — exactly the framebuffer of a live machine paused there.
@@ -1523,7 +1523,9 @@ private:
     /// the composed pixels are written. Machine state is never changed.
     /// Checkpoint restores themselves never paint (ResyncScreenState), so
     /// this is the only place that decides what a TTD position shows.
-    void ComposeDisplay(bool frameTarget);
+    static constexpr uint64_t kEndedFrame = UINT64_MAX;     ///< ComposeDisplay: the frame that ended here
+    static constexpr uint64_t kCurrentFrame = UINT64_MAX - 1;   ///< ComposeDisplay: the current frame to its end
+    void ComposeDisplay(bool frameTarget, uint64_t frame = kEndedFrame);
 
     /// @brief Replay the rest of the current frame up to its end through the
     /// normal CPU/video pipeline (the frame-end processing runs, so the
@@ -1653,6 +1655,18 @@ private:
         uint64_t portReadCursor = 0;
         TTDPortJournal::Mode portWriteMode = TTDPortJournal::Mode::Off;
         uint64_t portWriteCursor = 0;
+        /// The replay engine's journals as the machine plays them (a machine on the recorded history after a seek
+        /// runs from them; a throwaway replay starts them elsewhere) and the hooks the CPU and the media read through
+        TTDPortJournal::Mode busReadMode = TTDPortJournal::Mode::Off;
+        uint64_t busReadCursor = 0;
+        TTDPortJournal::Mode busWriteMode = TTDPortJournal::Mode::Off;
+        uint64_t busWriteCursor = 0;
+        TTDPortJournal::Mode busVectorMode = TTDPortJournal::Mode::Off;
+        uint64_t busVectorCursor = 0;
+        TTDMediaJournal::Mode mediaReadMode = TTDMediaJournal::Mode::Off;
+        uint64_t mediaReadCursor = 0;
+        TTDPortJournal* portReadHook = nullptr;
+        TTDPortJournal* portWriteHook = nullptr;
         /// Keyboard matrix + counters: journal playback inside a sandbox
         /// replay presses/releases keys on the live device.
         Keyboard::InputState keyboard{};
@@ -1740,8 +1754,8 @@ private:
     /// recording relies on); GetSessionInfo no longer hashes the ROM per call
     uint64_t _liveRomSignature = 0;
 
-    /// Recording mode (Session vs DebuggerLive). See TTDRecordMode.
-    TTDRecordMode _recordMode = TTDRecordMode::Session;
+    bool _debuggerHold = false;        ///< HoldBackgroundRecording: a debugger wants a history
+    bool _backgroundSession = false;   ///< the session started as a background one (the black box, a debugger)
 
     /// The recorded timeline. Appended only on the emulator thread.
     std::vector<TTDCheckpoint> _timeline;
@@ -1807,6 +1821,9 @@ private:
     MediaReadAdapter _mediaReads{*this};
     /// Point the media manager at the journal the session now needs (recording, replaying, none)
     void SyncMediaReadJournal();
+    /// Stop the replay engine's journals the machine plays on the recorded history (sectors, interrupt vectors, the
+    /// CPU's IN / OUT hooks): it leaves the history (a resume, a reset, a new recording)
+    void StopHistoryPlayback();
     std::map<uint8_t, std::vector<uint8_t>> _toolEditBefore;   ///< device states when a tool edit began
     bool _toolEditOpen = false;
     TTDTimePoint _toolEditAt{};   ///< where the edit began: its event's time (a trap's instruction boundary)
@@ -2033,6 +2050,7 @@ private:
     std::string _lastDropReason;
     /// See TTDSessionInfo::lastStopReason
     std::string _lastStopReason;
+    std::string _lastStartError;   ///< LastStartError()
     std::string _unavailableReason;    // see SetUnavailableReason
     /// Position at StopRecording, to tell whether the machine ran before a live resume
     uint64_t _recordingStoppedAtT = 0;
@@ -2108,7 +2126,9 @@ private:
 
     bool _recordingLockEngaged = false;
     uint8_t _savedHostSpeedMultiplier = 1;  // restored on release
-    bool _accelerationLocked = false;       // this session's lock covers acceleration (not a black box)
+    bool _accelerationLocked = false;       // this session's lock covers acceleration (not a background one)
+    /// A new session now would be a background one: the black box is on, or a debugger holds a history
+    bool BackgroundWanted() const { return _blackBox || _debuggerHold; }
     bool _blackBox = false;                 // SetBlackBox
     uint32_t _recordingNumber = 0;          // recordings this instance started (RecordingSessionLabel)
     /// DeZog-forced RAM windows 1/2 (no latch describes them): beside each checkpoint, re-applied after the banks

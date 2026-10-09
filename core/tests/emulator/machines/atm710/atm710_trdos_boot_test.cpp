@@ -247,7 +247,7 @@ TEST_F(ATM710TrdosBoot_Test, MenuTRDOSBootsClassicTRDOS)
         [&] {
             return DecodeZXRows(context, (state.p7FFD & 0x08) ? 7 : 5, 0, 10).find("TR-DOS Ver 5.03") !=
                        std::string::npos &&
-                   (state.pFF77 & 7) == 3 && state.aFF77 == 0xFF77 && state.pFF77 == 0xAB &&
+                   (state.pFF77 & 7) == 3 && state.atm.aFF77 == 0xFF77 && state.pFF77 == 0xAB &&
                    (state.flags & CF_SETDOSROM) && !(state.flags & CF_TRDOS);
         },
         400);
@@ -262,7 +262,7 @@ TEST_F(ATM710TrdosBoot_Test, MenuTRDOSBootsClassicTRDOS)
     EXPECT_EQ(state.pFF77 & 7, 3) << "BIOS activation would show video mode 6";
 
     // Settled hardware state, byte-identical to the ZXMAK2 boot.szx reference
-    EXPECT_EQ(state.aFF77, 0xFF77);
+    EXPECT_EQ(state.atm.aFF77, 0xFF77);
     EXPECT_EQ(state.pFF77, 0xAB);
 
     // TR-DOS session closed cleanly: tracker re-armed, no sticky session

@@ -122,4 +122,60 @@ bool ReadTrd(std::span<const uint8_t> image, std::vector<TrdosFile>& out, std::s
     }
     return true;
 }
+
+namespace
+{
+constexpr size_t kPlus3dosHeader = 128;
+}
+
+bool ReadPlus3dos(std::span<const uint8_t> bytes, Plus3dosFile& out, std::string& error)
+{
+    static const char magic[] = "PLUS3DOS";
+    if (bytes.size() < kPlus3dosHeader || !std::equal(magic, magic + 8, bytes.begin()) || bytes[8] != 0x1A)
+    {
+        error = "not a +3DOS file (no PLUS3DOS header)";
+        return false;
+    }
+    uint8_t sum = 0;
+    for (size_t i = 0; i < 127; ++i)
+        sum = static_cast<uint8_t>(sum + bytes[i]);
+    if (sum != bytes[127])
+    {
+        error = "+3DOS header checksum mismatch";
+        return false;
+    }
+    out = {};
+    const uint32_t total = bytes[11] | (bytes[12] << 8) | (bytes[13] << 16) | (static_cast<uint32_t>(bytes[14]) << 24);
+    out.type = bytes[15];
+    out.length = static_cast<uint16_t>(bytes[16] | (bytes[17] << 8));
+    out.start = static_cast<uint16_t>(bytes[18] | (bytes[19] << 8));
+    const size_t end = std::min<size_t>(total > kPlus3dosHeader ? total : bytes.size(), bytes.size());
+    out.data.assign(bytes.begin() + kPlus3dosHeader, bytes.begin() + static_cast<std::ptrdiff_t>(std::max(end, kPlus3dosHeader)));
+    out.tail.assign(bytes.begin() + static_cast<std::ptrdiff_t>(std::max(end, kPlus3dosHeader)), bytes.end());
+    return true;
+}
+
+std::vector<uint8_t> WritePlus3dos(const Plus3dosFile& file)
+{
+    std::vector<uint8_t> out(kPlus3dosHeader, 0);
+    const char magic[] = "PLUS3DOS";
+    std::copy(magic, magic + 8, out.begin());
+    out[8] = 0x1A;
+    out[9] = 1;
+    out[10] = 0;
+    const uint32_t total = static_cast<uint32_t>(kPlus3dosHeader + file.data.size());
+    for (int i = 0; i < 4; ++i)
+        out[11 + i] = static_cast<uint8_t>(total >> (8 * i));
+    out[15] = file.type;
+    out[16] = static_cast<uint8_t>(file.data.size());
+    out[17] = static_cast<uint8_t>(file.data.size() >> 8);
+    out[18] = static_cast<uint8_t>(file.start);
+    out[19] = static_cast<uint8_t>(file.start >> 8);
+    uint8_t sum = 0;
+    for (size_t i = 0; i < 127; ++i)
+        sum = static_cast<uint8_t>(sum + out[i]);
+    out[127] = sum;
+    out.insert(out.end(), file.data.begin(), file.data.end());
+    return out;
+}
 }  // namespace unrealasm::containers

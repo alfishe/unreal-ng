@@ -13,7 +13,7 @@
 #include "_helpers/scratchfolder.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/ide/ttdatachannel.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/ide/idecontroller.h"
@@ -98,7 +98,7 @@ namespace
 
 TEST_F(TTDAtaChannel_Test, RegisteredOnMachinesWithABoard)
 {
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     ASSERT_TRUE(ttd->StartRecording());
     EXPECT_TRUE(ttd->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::AtaChannel));
     ttd->StopRecording();
@@ -106,7 +106,7 @@ TEST_F(TTDAtaChannel_Test, RegisteredOnMachinesWithABoard)
     Emulator* spectrum = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
     ASSERT_NE(spectrum, nullptr);
     spectrum->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
-    ttd::TimeTravelManager* other = spectrum->GetContext()->pTimeTravelManager;
+    ttd::TimeTravelController* other = spectrum->GetContext()->pTimeTravelController;
     ASSERT_TRUE(other->StartRecording());
     EXPECT_FALSE(other->GetPeripheralRegistry().IsRegistered(ttd::PeripheralId::AtaChannel)) << "no IDE board";
     other->StopRecording();
@@ -144,7 +144,7 @@ TEST_F(TTDAtaChannel_Test, BlobContinuesATransfer)
 /// per frame and keeps it running
 TEST_F(TTDAtaChannel_Test, WritesAreBarriersOncePerFrame)
 {
-    ttd::TimeTravelManager* ttd = _context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
     MediaManager& manager = *_context->pMediaManager;
     ASSERT_TRUE(ttd->StartRecording());
     const size_t before = ttd->GetExternalEvents().Size();

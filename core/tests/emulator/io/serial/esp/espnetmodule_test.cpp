@@ -4,6 +4,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstring>
+#include <deque>
 #include <memory>
 #include <vector>
 
@@ -424,23 +427,194 @@ TEST_F(EspnetModule_Test, StateRoundTripContinuesTheSameWay)
     _net->Pump();
     Expect(EspnetModule::kConnect);
 
-    // Bytes the journal would hold: a TTD byte source over a copy
-    const std::vector<uint8_t> journal = {'a', 'b', 'c'};
+    // The bytes did not come from a journal: they ride inline in the tail
     auto state = std::make_unique<netstate::EspModuleState>();
-    ASSERT_FALSE(_esp->SaveState(*state)) << "the bytes did not come from a journal: references are incomplete";
+    netstate::Tail tail;
+    _esp->SaveState(*state, tail);
+    EXPECT_FALSE(tail.Empty()) << "unjournaled bytes go into the tail";
 
     // Restore into a second module and compare what READ gives
-    auto copy = std::make_unique<EspnetModule>(_net.get(), EspModule::Chip::Esp32);
-    copy->SetClock([this]() { return _now; }, 3500000);
-    copy->OnLineSettings(SerialLine());
+    auto restore = [this](const netstate::EspModuleState& st, const netstate::Tail& t, const EspStack::ByteSource& bytes) {
+        auto copy = std::make_unique<EspnetModule>(_net.get(), EspModule::Chip::Esp32);
+        copy->SetClock([this]() { return _now; }, 3500000);
+        copy->OnLineSettings(SerialLine());
+        EXPECT_TRUE(copy->LoadState(st, t, bytes));
+        return copy;
+    };
+    auto copy = restore(*state, tail, nullptr);
+    EXPECT_EQ(copy->Stack().GetSlot(s).state, EspStack::State::Tcp);
+    const auto& rx = copy->Stack().GetSlot(s).rx;
+    ASSERT_EQ(rx.size(), 3u);
+    EXPECT_EQ(std::string({static_cast<char>(rx[0].value), static_cast<char>(rx[1].value), static_cast<char>(rx[2].value)}), "abc");
+    EXPECT_EQ(copy->Ip(), _esp->Ip());
+
+    // The same bytes by journal reference: a TTD byte source over a copy
+    const std::vector<uint8_t> journal = {'a', 'b', 'c'};
     netstate::EspModuleState& st = *state;
     st.stack.slotStates[s].rxRuns = 1;
     st.stack.slotStates[s].rx[0] = {1, 0, 3};
-    ASSERT_TRUE(copy->LoadState(st, [&](uint32_t, uint32_t offset, uint32_t length, std::vector<uint8_t>& out) {
+    copy = restore(st, netstate::Tail(), [&](uint32_t, uint32_t offset, uint32_t length, std::vector<uint8_t>& out) {
         out.assign(journal.begin() + offset, journal.begin() + offset + length);
         return true;
-    }));
-    EXPECT_EQ(copy->Stack().GetSlot(s).state, EspStack::State::Tcp);
+    });
     EXPECT_EQ(copy->Stack().GetSlot(s).rx.size(), 3u);
-    EXPECT_EQ(copy->Ip(), _esp->Ip());
+}
+
+namespace
+{
+uint8_t JournalByte(uint32_t source, uint32_t offset)
+{
+    return static_cast<uint8_t>(source * 29 + offset * 3);
+}
+
+/// A journaled byte or, with source 0, one received before the recording
+EspStack::RxByte Byte(uint32_t source, uint32_t offset, uint8_t unjournaled)
+{
+    return {source ? JournalByte(source, offset) : unjournaled, source, source ? offset : 0u};
+}
+
+bool SameBytes(const std::deque<EspStack::RxByte>& a, const std::deque<EspStack::RxByte>& b)
+{
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](const auto& x, const auto& y) {
+               return x.value == y.value && x.source == y.source && x.offset == y.offset;
+           });
+}
+}  // namespace
+
+/// A socket stack's TTD state past the blob's arrays comes back whole: a slot with more unread runs than
+/// netstate::kEspRuns, more datagrams than kEspDatagrams (journaled, received before the recording, spread over
+/// two records), more queued clients than kEspPending each with more runs than kEspPendingRuns, more sockets to
+/// close than kEspClose. References go through the journal, the rest through the tail
+TEST_F(EspnetModule_Test, AStackStateBeyondTheFixedArraysRestoresWhole)
+{
+    EspStack stack(_net.get(), netstate::kEspSlots);
+    EspStack::Slot tcp;
+    tcp.state = EspStack::State::Tcp;
+    for (uint32_t i = 0; i < 3u * netstate::kEspRuns; ++i)
+        tcp.rx.push_back(Byte(i % 2 ? i + 1 : 0, 3, static_cast<uint8_t>(i ^ 0xA5)));
+    stack.RestoreSlot(0, tcp);
+
+    EspStack::Slot udp;
+    udp.state = EspStack::State::Udp;
+    for (uint32_t d = 0; d < netstate::kEspDatagrams + 6u; ++d)
+    {
+        EspStack::Datagram dg;
+        dg.from = {0x0A000000u + d, static_cast<uint16_t>(1000 + d)};
+        for (uint32_t i = 0; i < 5; ++i)
+        {
+            const uint32_t source = d % 3 == 0 ? 0 : d % 3 == 1 ? 100 + d : 100 + d + (i >= 3 ? 1 : 0);
+            dg.data.push_back(Byte(source, i, static_cast<uint8_t>(d * 5 + i)));
+        }
+        udp.datagrams.push_back(std::move(dg));
+    }
+    stack.RestoreSlot(1, udp);
+
+    EspStack::Slot server;
+    server.state = EspStack::State::Listen;
+    for (uint32_t p = 0; p < netstate::kEspPending + 3u; ++p)
+    {
+        EspStack::Pending pd;
+        pd.vnetId = static_cast<uint16_t>(500 + p);
+        pd.peer = {0xC0000200u + p, static_cast<uint16_t>(4000 + p)};
+        pd.finSeen = p % 2 == 1;
+        for (uint32_t i = 0; i < netstate::kEspPendingRuns + 4u; ++i)
+            pd.rx.push_back(Byte(i % 3 ? 2000 + p * 100 + i : 0, 7, static_cast<uint8_t>(p + i)));
+        server.pending.push_back(std::move(pd));
+    }
+    stack.RestoreSlot(2, server);
+
+    auto state = std::make_unique<netstate::EspStackState>();
+    netstate::Tail tail;
+    stack.SaveState(*state, tail);
+    // Sockets to close at the frame boundary: no API queues 20 of them, so the blob carries them (16 fixed, 4 in the tail)
+    state->closeCount = netstate::kEspClose;
+    for (uint16_t c = 0; c < netstate::kEspClose; ++c)
+        state->closeLater[c] = static_cast<uint16_t>(300 + c);
+    for (uint16_t c = netstate::kEspClose; c < netstate::kEspClose + 4; ++c)
+    {
+        const uint16_t id = static_cast<uint16_t>(300 + c);
+        tail.Add(netstate::Tail::List::EspClose, 0, c, &id, sizeof(id));
+    }
+
+    EspStack copy(_net.get(), netstate::kEspSlots);
+    const EspStack::ByteSource journal = [](uint32_t source, uint32_t offset, uint32_t length, std::vector<uint8_t>& out) {
+        out.clear();
+        for (uint32_t i = 0; i < length; ++i)
+            out.push_back(JournalByte(source, offset + i));
+        return true;
+    };
+    EXPECT_TRUE(copy.LoadState(*state, tail, journal));
+
+    EXPECT_TRUE(SameBytes(copy.GetSlot(0).rx, tcp.rx)) << copy.GetSlot(0).rx.size() << " of " << tcp.rx.size();
+    const auto& datagrams = copy.GetSlot(1).datagrams;
+    ASSERT_EQ(datagrams.size(), udp.datagrams.size());
+    for (size_t d = 0; d < datagrams.size(); ++d)
+    {
+        EXPECT_EQ(datagrams[d].from.addr, udp.datagrams[d].from.addr) << "datagram " << d;
+        EXPECT_EQ(datagrams[d].from.port, udp.datagrams[d].from.port) << "datagram " << d;
+        std::vector<uint8_t> got, want;
+        for (const auto& b : datagrams[d].data)
+            got.push_back(b.value);
+        for (const auto& b : udp.datagrams[d].data)
+            want.push_back(b.value);
+        EXPECT_EQ(got, want) << "datagram " << d;
+    }
+    const auto& pending = copy.GetSlot(2).pending;
+    ASSERT_EQ(pending.size(), server.pending.size());
+    for (size_t p = 0; p < pending.size(); ++p)
+    {
+        EXPECT_EQ(pending[p].vnetId, server.pending[p].vnetId) << "client " << p;
+        EXPECT_EQ(pending[p].peer.addr, server.pending[p].peer.addr) << "client " << p;
+        EXPECT_EQ(pending[p].finSeen, server.pending[p].finSeen) << "client " << p;
+        EXPECT_TRUE(SameBytes(pending[p].rx, server.pending[p].rx)) << "client " << p;
+    }
+
+    // The sockets to close: saved again, all 20 in order
+    auto again = std::make_unique<netstate::EspStackState>();
+    netstate::Tail againTail;
+    copy.SaveState(*again, againTail);
+    std::vector<uint16_t> closes(again->closeLater, again->closeLater + again->closeCount);
+    againTail.ForEach(netstate::Tail::List::EspClose, 0, [&](uint32_t, const uint8_t* data, uint32_t size) {
+        uint16_t id = 0;
+        if (size == sizeof(id))
+            std::memcpy(&id, data, sizeof(id));
+        closes.push_back(id);
+    });
+    ASSERT_EQ(closes.size(), netstate::kEspClose + 4u);
+    for (size_t c = 0; c < closes.size(); ++c)
+        EXPECT_EQ(closes[c], 300 + c) << "close " << c;
+}
+
+/// The module's own buffers past the blob's arrays: bytes from the ZX beyond kEspRxBytes, replies beyond
+/// kEspOutBytes. A blob carrying them (the fixed part full, the rest in the tail) loads them and saves them again
+TEST_F(EspnetModule_Test, ModuleBuffersBeyondTheFixedArraysRoundTrip)
+{
+    auto state = std::make_unique<netstate::EspModuleState>();
+    netstate::Tail tail;
+    _esp->SaveState(*state, tail);
+    std::vector<uint8_t> rx(netstate::kEspRxBytes + 300), out(netstate::kEspOutBytes + 500);
+    for (size_t i = 0; i < rx.size(); ++i)
+        rx[i] = static_cast<uint8_t>(i * 3);
+    for (size_t i = 0; i < out.size(); ++i)
+        out[i] = static_cast<uint8_t>(i * 5 + 1);
+    state->rxLength = netstate::kEspRxBytes;
+    std::memcpy(state->rx, rx.data(), netstate::kEspRxBytes);
+    tail.AddBytes(netstate::Tail::List::EspRx, 0, 0, rx.data() + netstate::kEspRxBytes, 300);
+    state->outLength = netstate::kEspOutBytes;
+    std::memcpy(state->out, out.data(), netstate::kEspOutBytes);
+    tail.AddBytes(netstate::Tail::List::EspOut, 0, 0, out.data() + netstate::kEspOutBytes, 500);
+
+    auto copy = std::make_unique<EspnetModule>(_net.get(), EspModule::Chip::Esp32);
+    copy->SetClock([this]() { return _now; }, 3500000);
+    ASSERT_TRUE(copy->LoadState(*state, tail, nullptr));
+    auto again = std::make_unique<netstate::EspModuleState>();
+    netstate::Tail againTail;
+    copy->SaveState(*again, againTail);
+    std::vector<uint8_t> rxBack(again->rx, again->rx + again->rxLength), outBack(again->out, again->out + again->outLength);
+    if (const std::vector<uint8_t>* rest = againTail.Find(netstate::Tail::List::EspRx, 0, 0))
+        rxBack.insert(rxBack.end(), rest->begin(), rest->end());
+    if (const std::vector<uint8_t>* rest = againTail.Find(netstate::Tail::List::EspOut, 0, 0))
+        outBack.insert(outBack.end(), rest->begin(), rest->end());
+    EXPECT_EQ(rxBack, rx);
+    EXPECT_EQ(outBack, out);
 }

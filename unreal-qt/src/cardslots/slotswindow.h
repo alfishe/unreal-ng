@@ -5,6 +5,7 @@
  * Layout:
  *   - Machine header (model name)
  *   - Built-in devices (collapsible, shows active/replaced state)
+ *   - Board slots (the machine's own, the Sprinter's ISA slots from [ISA]; read-only, shown when the machine has them)
  *   - Expansion slots list with +/- buttons and "..." for configuration popup
  *   - Undo button
  */
@@ -20,11 +21,10 @@
 
 class EmulatorBinding;
 class QLabel;
-class QListWidget;
-class QListWidgetItem;
 class QPushButton;
+class QTableWidget;
 class QTimer;
-class QToolButton;
+class QSplitter;
 class QTreeWidget;
 class SlotChangeController;
 class SlotConfigDialog;
@@ -47,6 +47,9 @@ public:
     void removeChosen();
     void setChosenOptions();
     void undoLast();
+    /// The expansion slots list and the board slots as lines (tests): "<slot list row>" per slot, then
+    /// "board <slot> | <card> | <what it hosts or its details>" per board slot
+    QString slotsText() const;
 
 signals:
     void visibilityChanged(bool visible);
@@ -58,8 +61,9 @@ protected:
 private:
     void buildUi();
     void refresh();
-    void fillBuiltIns(const StateNode& report);
+    void fillInfoTree(const StateNode& report);
     void fillSlots(const StateNode& report);
+    void fillMachineSlots(const StateNode& report);
     void onAddSlot();
     void onRemoveSlot();
     void onConfigureSlot(int row);
@@ -77,12 +81,12 @@ private:
     StateNode _catalog;
 
     QLabel* _machineLabel = nullptr;
-    QToolButton* _builtInsToggle = nullptr;
-    QTreeWidget* _builtInsTree = nullptr;
-    QListWidget* _slotsList = nullptr;
+    QTreeWidget* _infoTree = nullptr;          ///< Read-only: buses, slots, cards, options, fit, state
+    QTableWidget* _slotsTable = nullptr;
+    QLabel* _machineSlotsLabel = nullptr;      ///< "Board Slots": the machine's own slots (the Sprinter's ISA slots)
+    QTreeWidget* _machineSlotsTree = nullptr;
     QPushButton* _addButton = nullptr;
     QPushButton* _removeButton = nullptr;
-    QPushButton* _configButton = nullptr;
     QPushButton* _undoButton = nullptr;
 
     /// Test state - simulates the old form-based selection

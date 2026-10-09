@@ -748,7 +748,7 @@ TEST_F(FullDecodeClaim_ATM3_Test, Claimed_OwnPortsUnaffected)
     RegisterMoonSoundClaims(_portDecoder, &_card);
 
     FunnelOut(_portDecoder, 0x00BF, 0x01);
-    EXPECT_EQ(_context->emulatorState.pBF, 0x01);
+    EXPECT_EQ(_context->emulatorState.evo.pBF, 0x01);
 
     uint8_t sdResult = FunnelIn(_portDecoder, 0x0057);
     EXPECT_EQ(sdResult, 0xFF) << "Z-Controller with no SD image reads back 'no card'";

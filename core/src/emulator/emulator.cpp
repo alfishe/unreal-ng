@@ -83,9 +83,6 @@ Emulator::~Emulator()
 {
     MLOGDEBUG("Emulator::~Emulator()");
 
-    // The step-over handler captures this emulator and its FeatureManager: unregister before they are destroyed
-    RemoveStepOverObserver();
-
     // Clean up FeatureManager BEFORE Release(), because Release() deletes _context.
     // Accessing _context->pFeatureManager after Release() is a use-after-free.
     if (_featureManager)
@@ -492,22 +489,12 @@ void Emulator::ReleaseNoGuard()
 
     // The step-over audio hold must not outlive the sound manager it points to
     _stepOverHostHold.Release();
-    RemoveStepOverObserver();
 
-    // Cleanup any pending step-over operation (orphan cleanup)
-    if (_pendingStepOverBpId != 0 && _breakpointManager)
+    // Cleanup any pending step-over operation (orphan cleanup; the emulation thread is stopped by now)
+    if (const uint16_t pending = _pendingStepOverBpId.exchange(0))
     {
-        MLOGDEBUG("Emulator::ReleaseNoGuard - Cleaning up orphaned step-over breakpoint ID %d", _pendingStepOverBpId);
-        _breakpointManager->RemoveBreakpointByID(_pendingStepOverBpId);
-        
-        // Reactivate any deactivated breakpoints
-        for (uint16_t bpId : _stepOverDeactivatedBps)
-        {
-            _breakpointManager->ActivateBreakpoint(bpId);
-        }
-        
-        _pendingStepOverBpId = 0;
-        _stepOverDeactivatedBps.clear();
+        MLOGDEBUG("Emulator::ReleaseNoGuard - Cleaning up orphaned step-over breakpoint ID %d", pending);
+        FinishStepOver(pending, false);
     }
 
     // Release debug manager (and related components)
@@ -1165,7 +1152,7 @@ void Emulator::RequestMNI()
                 window->Reset(state);
         }
 
-        state.scorpionDosTrigger = 1;
+        state.scorpion.dosTrigger = 1;
         _context->pMemory->UpdateZ80Banks();
     }
     else if (IsProfiModel(config.mem_model))
@@ -1682,13 +1669,13 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
     // The file the user opened: a temporary image is reported as the file it came from
     const std::string openedPath = reportedPath.empty() ? absolutePath : reportedPath;
     return LoadSnapshotStaged(
-        [&](std::string& error) {
+        [&](std::string& error, const snapshot::Options& planned) {
             bool result = false;
             if (ext == "sna")
             {
                 /// region <Load SNA snapshot>
                 LoaderSNA loaderSna(_context, absolutePath);
-                loaderSna.SetOptions(options);
+                loaderSna.SetOptions(planned);
                 result = loaderSna.load();
                 _lastSnapshotReport = loaderSna.GetSnapshotReport();
 
@@ -1707,7 +1694,7 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
             {
                 /// region <Load Z80 snapshot>
                 LoaderZ80 loaderZ80(_context, absolutePath);
-                loaderZ80.SetOptions(options);
+                loaderZ80.SetOptions(planned);
                 result = loaderZ80.load();
                 _lastSnapshotReport = loaderZ80.GetSnapshotReport();
 
@@ -1726,7 +1713,7 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
             {
                 // TS-Conf SDK program (loaderspg.h): the TS-Conf machine only
                 LoaderSPG loaderSpg(_context, absolutePath);
-                loaderSpg.SetOptions(options);
+                loaderSpg.SetOptions(planned);
                 result = loaderSpg.load();
                 _lastSnapshotReport = loaderSpg.GetSnapshotReport();
                 if (!result)
@@ -1736,7 +1723,7 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
             {
                 /// region <Load SZX snapshot>
                 LoaderSZX loaderSzx(_context, absolutePath);
-                loaderSzx.SetOptions(options);
+                loaderSzx.SetOptions(planned);
                 result = loaderSzx.load();
                 _lastSnapshotReport = loaderSzx.GetSnapshotReport();
                 if (result)
@@ -1749,7 +1736,7 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
                 error = "the " + ext + " loader refused '" + absolutePath + "'";
             return result;
         },
-        openedPath);
+        openedPath, options);
 }
 
 bool Emulator::LoadSnapshotData(const std::vector<uint8_t>& data, const std::string& extension,
@@ -1770,8 +1757,9 @@ bool Emulator::LoadSnapshotData(const std::vector<uint8_t>& data, const std::str
         return false;
     }
     MLOGINFO("Loading %s snapshot from memory (%zu bytes) for '%s'", ext.c_str(), data.size(), reportedPath.c_str());
-    return LoadSnapshotStaged([&](std::string& error) { return ApplySnapshotData(data, ext, error, options); },
-                              reportedPath);
+    return LoadSnapshotStaged(
+        [&](std::string& error, const snapshot::Options& planned) { return ApplySnapshotData(data, ext, error, planned); },
+        reportedPath, options);
 }
 
 bool Emulator::ApplySnapshotData(const std::vector<uint8_t>& data, const std::string& extension, std::string& error,
@@ -1844,7 +1832,8 @@ bool Emulator::ApplySnapshotData(const std::vector<uint8_t>& data, const std::st
     return false;
 }
 
-bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error)>& load, const std::string& openedPath)
+bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error, const snapshot::Options& planned)>& load,
+                                  const std::string& openedPath, const snapshot::Options& options)
 {
     // Another snapshot replaces the machine an RZX playback runs on: it ends
     // first (the playback's own start snapshot loads with the player out)
@@ -1879,12 +1868,17 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error)>&
     std::string error;
     bool result = false;
     ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
-    auto runLoad = [&]() { result = load(error); };
-
-    // TTD (D42): a snapshot load ENDS the recording session, like a reset (the history of this machine stays browsable;
-    // a new session starts only by the `ttdrestart` feature). Nothing is refused
-    if (ttd)
-        ttd->OnLoad(ttd::TTDLoadKind::Snapshot, "snapshot-load");
+    // TTD (D42): a snapshot load ENDS the recording session, like a reset (the history of this machine stays browsable; a new
+    // session starts only by the `ttdrestart` feature). Nothing is refused - but the session ends only when the load really goes
+    // ahead: the plan calls beforeCommit once it has decided to commit, so a refused load leaves the recording running
+    snapshot::Options planned = options;
+    planned.beforeCommit = [&]() {
+        if (options.beforeCommit)
+            options.beforeCommit();
+        if (ttd)
+            ttd->OnLoad(ttd::TTDLoadKind::Snapshot, "snapshot-load");
+    };
+    auto runLoad = [&]() { result = load(error, planned); };
     runLoad();
     // The loader reset the machine and replaced its state (ports, memory,
     // registers): start the frame again from the loaded state, so devices
@@ -2076,7 +2070,9 @@ bool Emulator::InspectSnapshot(const std::string& path, const snapshot::Options&
 
     // The plan asks its questions and writes nothing
     snapshot::Report plan;
-    const snapshot::Decision decision = snapshot::Pipeline::Plan(image, _context, options, plan);
+    snapshot::Options dryRun = options;
+    dryRun.beforeCommit = nullptr;   // a dry plan commits nothing: it announces nothing
+    const snapshot::Decision decision = snapshot::Pipeline::Plan(image, _context, dryRun, plan);
     result = StateNode::Object();
     result["path"] = absolutePath;
     result["image"] = snapshot::ToStateNode(image);
@@ -2546,13 +2542,23 @@ Emulator::DiskSaveResult Emulator::SaveDisk(uint8_t drive, const std::string& pa
 
 // region Controlled flow
 
-void Emulator::RemoveStepOverObserver()
+void Emulator::FinishStepOver(uint16_t breakpointId, bool restoreFeatures)
 {
-    if (_stepOverObserverId != 0)
+    if (_breakpointManager)
     {
-        MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_EXECUTION_BREAKPOINT, _stepOverObserverId);
-        _stepOverObserverId = 0;
+        _breakpointManager->RemoveBreakpointByID(breakpointId);
+        for (uint16_t bpId : _stepOverDeactivatedBps)
+        {
+            _breakpointManager->ActivateBreakpoint(bpId);
+        }
     }
+    _stepOverDeactivatedBps.clear();
+    if (restoreFeatures && _featureManager)
+    {
+        _featureManager->setFeature(Features::kDebugMode, _stepOverRestoreDebugMode);
+        _featureManager->setFeature(Features::kBreakpoints, _stepOverRestoreBreakpoints);
+    }
+    _stepOverHostHold.Release();  // the stepped run is over: audio follows the machine's pace again
 }
 
 void Emulator::CancelPendingStepOver()
@@ -2561,19 +2567,20 @@ void Emulator::CancelPendingStepOver()
     if (!_featureManager || !_featureManager->isEnabled(Features::kDebugMode))
         return;
 
-    if (_pendingStepOverBpId != 0 && _breakpointManager)
+    if (_pendingStepOverBpId.load() != 0)
     {
-        MLOGDEBUG("Emulator::CancelPendingStepOver - Removing orphaned step-over breakpoint ID %d", _pendingStepOverBpId);
-        _breakpointManager->RemoveBreakpointByID(_pendingStepOverBpId);
-
-        // Reactivate any breakpoints that were deactivated during the step-over
-        for (uint16_t bpId : _stepOverDeactivatedBps)
+        // The run to the temporary breakpoint may still be under way: park the machine before touching the
+        // breakpoints its thread reads (the step that cancels pauses it anyway)
+        if (IsRunning() && !IsPaused())
         {
-            _breakpointManager->ActivateBreakpoint(bpId);
+            Pause();
+            WaitForPauseConfirmation();
         }
-
-        _pendingStepOverBpId = 0;
-        _stepOverDeactivatedBps.clear();
+        if (const uint16_t pending = _pendingStepOverBpId.exchange(0))
+        {
+            MLOGDEBUG("Emulator::CancelPendingStepOver - Removing orphaned step-over breakpoint ID %d", pending);
+            FinishStepOver(pending, false);
+        }
     }
     _stepOverHostHold.Release();
 }
@@ -2587,6 +2594,17 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
         const BreakpointDescriptor* bp = brk.GetBreakpointById(breakpointId);
         hidden = bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints");
+    }
+
+    // The step over's temporary breakpoint ends its run here, on the emulation thread that reads the breakpoints:
+    // removed before the machine parks, so nothing else changes the breakpoint set under a running CPU
+    uint16_t expected = breakpointId;
+    const bool stepOverDone = breakpointId != 0 && _pendingStepOverBpId.compare_exchange_strong(expected, 0);
+    if (stepOverDone)
+    {
+        MLOGDEBUG("Emulator::OnBreakpointHit - step over done at breakpoint ID %d", breakpointId);
+        FinishStepOver(breakpointId, true);
+        hidden = true;
     }
 
     if (IsDirectStepping())
@@ -2620,6 +2638,8 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
 
     MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_BREAKPOINT,
                                                new BreakpointTriggeredPayload(GetId(), breakpointId, address, hidden));
+    if (stepOverDone)
+        MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_CPU_STEP);   // the debugger's "step completed"
     WaitWhilePaused();
     return false;
 }
@@ -3190,8 +3210,8 @@ void Emulator::StepOver()
         return;
     }
 
-    // A handler left by an earlier step over has done its work: drop it before registering the next one
-    RemoveStepOverObserver();
+    // An earlier step over still under way (its breakpoint not reached): end it before this one starts
+    CancelPendingStepOver();
 
     uint16_t currentPC = z80->pc;
 
@@ -3260,64 +3280,15 @@ void Emulator::StepOver()
         RunSingleCPUCycle(true);
         return;
     }
-    // Store tracking state for orphan cleanup
-    _pendingStepOverBpId = stepOverBreakpointID;
-    _stepOverDeactivatedBps = deactivatedBreakpoints;
-
     // Save original feature states
-    bool originalDebugMode = fm->isEnabled(Features::kDebugMode);
-    bool originalBreakpoints = fm->isEnabled(Features::kBreakpoints);
+    _stepOverRestoreDebugMode = fm->isEnabled(Features::kDebugMode);
+    _stepOverRestoreBreakpoints = fm->isEnabled(Features::kBreakpoints);
     fm->setFeature(Features::kDebugMode, true);
     fm->setFeature(Features::kBreakpoints, true);
 
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-
-    // Lambda captures this pointer to clear tracking state
-    auto breakpoint_handler = [this, bpManager, stepOverBreakpointID, fm, originalDebugMode,
-                              originalBreakpoints](int /*id*/, Message* message) mutable {
-        if (!message || !message->obj)
-            return;
-
-        auto payload = static_cast<SimpleNumberPayload*>(message->obj);
-        uint16_t triggeredBreakpointID = static_cast<uint16_t>(payload->_payloadNumber);
-
-        // The topic is shared by all emulator instances and breakpoint IDs are per instance: ignore other instances
-        if (auto tagged = dynamic_cast<BreakpointTriggeredPayload*>(payload))
-        {
-            if (!(tagged->emulatorId == unreal::UUID(GetId())))
-                return;
-        }
-
-        if (triggeredBreakpointID == stepOverBreakpointID)
-        {
-            MLOGDEBUG("Emulator::StepOver() - cleanup for breakpoint ID %d", stepOverBreakpointID);
-            
-            // Remove breakpoint
-            bpManager->RemoveBreakpointByID(stepOverBreakpointID);
-            
-            // Reactivate deactivated breakpoints
-            for (uint16_t deactivatedId : _stepOverDeactivatedBps)
-            {
-                bpManager->ActivateBreakpoint(deactivatedId);
-            }
-            
-            // Restore feature flags
-            fm->setFeature(Features::kDebugMode, originalDebugMode);
-            fm->setFeature(Features::kBreakpoints, originalBreakpoints);
-
-            // Clear tracking state
-            _pendingStepOverBpId = 0;
-            _stepOverDeactivatedBps.clear();
-            _stepOverHostHold.Release();  // the stepped run is over: audio follows the machine's pace again
-
-            // Notify observers that step has completed
-            MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_CPU_STEP);
-            
-            MLOGDEBUG("Emulator::StepOver() - cleanup complete");
-        }
-    };
-
-    _stepOverObserverId = messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, breakpoint_handler);
+    // Tracking state: OnBreakpointHit ends the step on the emulation thread when this breakpoint fires
+    _stepOverDeactivatedBps = deactivatedBreakpoints;
+    _pendingStepOverBpId = stepOverBreakpointID;
 
     // Resume execution - returns immediately (non-blocking). The run to the temporary breakpoint is a step: its
     // sound stays off (host output hold) until it stops; taken before Resume so its reconcile sees the hold's run

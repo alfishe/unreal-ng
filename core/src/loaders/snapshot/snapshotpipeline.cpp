@@ -2,8 +2,12 @@
 
 #include <algorithm>
 
+#include "emulator/config.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/zxpoly/zxpolygroup.h"
+#include "loaders/snapshot/szx/loaderszx.h"
 
 namespace snapshot
 {
@@ -79,7 +83,54 @@ bool DoesNotFit(const Image& image, const EmulatorContext& context, Report& repo
                   "ram:" + std::to_string((highest + 1) * 16) + "K");
     return true;
 }
+
+/// The legacy commit refuses these, after the plan: say so IN the plan, so nothing is announced as "going to commit" first. An SPG
+/// (physical addresses) needs a machine whose policy takes it; an SZX needs the machine it was saved on (the loader's own rule)
+bool LegacyWillRefuse(const Image& image, EmulatorContext& context, Report& report)
+{
+    if (image.memoryModel == MemoryModel::Physical)
+    {
+        ISnapshotCommitPolicy* policy = context.pPortDecoder ? context.pPortDecoder->GetSnapshotPolicy() : nullptr;
+        if (policy && policy->Examine(image, context).kind == Verdict::Kind::Take)
+            return false;
+        report.commit = "none";
+        report.verdicts.push_back("this program runs on the TS-Conf machine only");
+        report.Refuse("an SPG program runs on the TS-Conf machine (model TSL) only", "model:TSL");
+        return true;
+    }
+    if (image.format == "szx" && image.rawMachineId.rfind("szx ", 0) == 0)
+    {
+        szx::Machine machine;
+        std::string ignored;
+        if (!szx::MachineFor(static_cast<uint8_t>(std::stoul(image.rawMachineId.substr(4))), machine, ignored))
+            return false;   // an id this emulator does not know: the loader's own error says it
+        const CONFIG& config = context.config;
+        if (LoaderSZX::Suits(config.mem_model, config.ramsize, machine))
+            return false;
+        const TMemModel* wanted = Config::FindModelByEnum(machine.model);
+        report.commit = "none";
+        report.verdicts.push_back("fit check: the SZX was saved on another model");
+        report.Refuse("the snapshot was saved on a " + szx::DescribeModel(machine.model, machine.ramKb) + ", the running machine is a " +
+                          szx::DescribeModel(config.mem_model, config.ramsize) + ": create a " +
+                          szx::DescribeModel(machine.model, machine.ramKb) + " to load it",
+                      wanted ? std::string("model:") + wanted->ShortName : std::string("model"));
+        return true;
+    }
+    return false;
+}
 }  // namespace
+
+bool IsZXPolyModule(const EmulatorContext& context)
+{
+    return !context.emulatorId.isNil() && EmulatorManager::GetInstance()->GetZXPolyGroup(context.emulatorId.toString()) != nullptr;
+}
+
+std::string ZXPolyRefusal(const std::string& format)
+{
+    return "this machine is a ZX-Poly: its four modules run in lockstep, so only a .zxp snapshot (all four modules) can be loaded into "
+           "it; a ." + format + " snapshot is the state of one machine. Open the .zxp with File > Open ZX-Poly, or load the ." + format +
+           " on a single machine";
+}
 
 bool Decision::Commit(const Image& image, EmulatorContext& context, Report& report) const
 {
@@ -94,6 +145,15 @@ bool Decision::Commit(const Image& image, EmulatorContext& context, Report& repo
 
 Decision Pipeline::Plan(const Image& image, EmulatorContext* context, const Options& options, Report& report)
 {
+    const Decision decision = PlanImpl(image, context, options, report);
+    // The plan has decided to commit: nothing has been written yet, and this is the last moment before it is
+    if (decision.Proceeds() && options.beforeCommit)
+        options.beforeCommit();
+    return decision;
+}
+
+Decision Pipeline::PlanImpl(const Image& image, EmulatorContext* context, const Options& options, Report& report)
+{
     report.format = image.format;
     report.machineHint = image.machineHint;
     report.warnings.insert(report.warnings.end(), image.warnings.begin(), image.warnings.end());
@@ -107,9 +167,20 @@ Decision Pipeline::Plan(const Image& image, EmulatorContext* context, const Opti
         return {Decision::Action::Refuse, nullptr};
     }
 
+    // 0b. A ZX-Poly module takes a .zxp only: the four modules run in lockstep, so a snapshot of one machine has no meaning there
+    if (context && image.format != "zxp" && IsZXPolyModule(*context))
+    {
+        report.commit = "none";
+        report.verdicts.push_back("a ZX-Poly module takes a .zxp only");
+        report.Refuse(ZXPolyRefusal(image.format), "format:zxp");
+        return {Decision::Action::Refuse, nullptr};
+    }
+
     // 1. The caller's choice
     if (options.commit == "legacy")
     {
+        if (context && LegacyWillRefuse(image, *context, report))
+            return {Decision::Action::Refuse, nullptr};
         report.commit = "legacy";
         report.verdicts.push_back("caller asked for the legacy commit");
         return {};
@@ -155,6 +226,8 @@ Decision Pipeline::Plan(const Image& image, EmulatorContext* context, const Opti
     }
 
     // 4. Nobody intervened
+    if (context && LegacyWillRefuse(image, *context, report))
+        return {Decision::Action::Refuse, nullptr};
     report.commit = "legacy";
     report.verdicts.push_back("no caller, machine or fit-check intervention: legacy commit");
     return {};

@@ -320,10 +320,21 @@ protected:
     /// Per-frame cache: turbo mode with audio not requested and no recording in progress
     bool _synthesisSuppressed = false;
 
-    /// True while the character chains (punch / room) were skipped on the last
-    /// frame because HQ is off. When HQ comes back the chains' delay lines and
-    /// envelopes are reset before their first use, so no stale audio replays.
-    bool _chainsBypassed = false;
+    /// A gap in the chains' stream (sound off, turbo without audio): the next
+    /// frame with audio resets every character chain first, so no delay line or
+    /// envelope replays audio from before the gap. Sound HQ is not a gap: it
+    /// gates the chains (AudioCharacterChain::setActive), which ramp out / in
+    bool _chainsGap = false;
+    /// The TurboSound device and its render epoch the AY / FM chains run in: a
+    /// TTD restore (or another device) resets them
+    const ITurboSoundDevice* _chainsDevice = nullptr;
+    uint64_t _chainsDeviceEpoch = 0;
+    /// Reset every character chain (socket AY / FM, beeper, the cards' SSG rows)
+    void resetCharacterChains();
+    /// Reset every AY / SSG voicing stage (socket chips, the cards' SSG rows): filter state and pre-roll history
+    void resetVoicing();
+    /// Set by onStateRestored(), taken by the next frame with audio
+    std::atomic<bool> _stateRestored{false};
 
     /// endregion </Fields>
 
@@ -438,6 +449,11 @@ public:
     /// sample count and the device's rendered count stay equal. Left behind,
     /// the mixer kept its pre-seek phase and read one never-rendered (zero)
     /// sample every few frames for the rest of the session
+    /// The machine state was restored (TTD checkpoint, return to the live state): the host-side post-processing of
+    /// every row (character chains, AY / SSG voicing) restarts on the next frame with audio, so no filter history,
+    /// delay line or envelope from the timeline that was left leaks into the restored one. Any thread
+    void onStateRestored();
+
     void adoptSamplePhase(uint64_t tstateRatePhase)
     {
         _sampleAccumulator = tstateRatePhase;
@@ -599,7 +615,7 @@ public:
     AudioCharacterChain& getAYChain() { return _ayChain0; }
     AudioCharacterChain& getBeeperChain() { return _beeperChain; }
 
-    // Apply AY chain settings to both chips
+    // Apply AY chain settings to both chips (and the slot cards' SSG rows)
     void syncAYChainSettings();
 
     /// region <Sound character settings (thread-safe, applied at the next frame boundary)>
@@ -620,12 +636,20 @@ public:
     {
         return chip == 1 ? _ayVoicing1 : _ayVoicing0;
     }
-    /// The voicing stage of a slot card's SSG row (nullptr for a row that is not voiced)
+    /// The voicing stage of a slot card's SSG row (nullptr for a row that is not an SSG row)
     const VoicingStage* getCardVoicingStage(AudioSourceType type) const
     {
-        for (const CardVoicing& v : _cardVoicing)
+        for (const CardSsgRow& v : _cardSsgRows)
             if (v.type == type)
                 return v.stage.get();
+        return nullptr;
+    }
+    /// The AY character chain (punch, room) of a slot card's SSG row (nullptr for a row that is not an SSG row)
+    const AudioCharacterChain* getCardCharacterChain(AudioSourceType type) const
+    {
+        for (const CardSsgRow& v : _cardSsgRows)
+            if (v.type == type)
+                return v.chain.get();
         return nullptr;
     }
 
@@ -764,16 +788,21 @@ private:
     // Cards the slots build themselves (ZX-bus slots card.h; the ZX-MultiSound): SlotManager owns them, the mixer
     // drives their frames and mixes their rows
     std::vector<ICard*> _slotCards;
-    /// AY / SSG tone voicing of the slot cards' SSG rows (CardMixerRow::ssgVoicing): one stage per row, set up,
-    /// requested, reset and invalidated together with the AY socket's _ayVoicing0 / _ayVoicing1
-    struct CardVoicing
+    /// The slot cards' SSG rows (CardMixerRow::ssgRow) get what the AY socket's chips get: the AY / SSG tone voicing
+    /// (one stage per row, set up, requested, reset and invalidated together with _ayVoicing0 / _ayVoicing1) and then
+    /// the AY character chain (punch, room: configured, set up, reset and gated together with _ayChain0 /
+    /// _ayChain1, Sound HQ only). Both restart when the card restarts its render layers (a TTD restore)
+    struct CardSsgRow
     {
         ICard* card = nullptr;
         AudioSourceType type = AudioSourceType::Custom;
         std::unique_ptr<VoicingStage> stage;
-        uint64_t renderEpoch = 0;   // the card's ICard::RenderEpoch the stage runs in
+        std::unique_ptr<AudioCharacterChain> chain;
+        uint64_t renderEpoch = 0;   // the card's ICard::RenderEpoch the stage and the chain run in
     };
-    std::vector<CardVoicing> _cardVoicing;
+    std::vector<CardSsgRow> _cardSsgRows;
+    /// A card row's chain takes the socket chains' settings (chip type, punch preset, punch, room)
+    void configureCardChain(AudioCharacterChain& chain) const;
     // Why a row is silent by hardware ("shadowed by zxbus.1"): reported with the row, empty for most
     std::vector<std::pair<AudioSourceType, std::string>> _deviceStates;
     const int16_t* slotCardBuffer(AudioSourceType type) const;

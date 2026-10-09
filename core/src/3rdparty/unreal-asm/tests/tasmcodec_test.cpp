@@ -208,6 +208,14 @@ TEST(TasmCodec_Test, DetectionByCatalogAndByStream)
     CatalogHints code = file.Hints();
     code.type = 's';
     EXPECT_LT(codec.Detect(file.data, code), 50);
+    // A code file (type C, start #8000) whose bytes happen to walk as TASM lines: not taken for TASM text (TASM 3 / 4 /
+    // 5 save type A; TASM 2.0's type C files are text with its own start). Checked on the collection's 587 images: every
+    // file detection gives to tasm is a type A file with a TASM start
+    code.type = 'C';
+    code.start = 0x8000;
+    EXPECT_LT(codec.Detect(file.data, code), CodecRegistry::kMinScore);
+    const DetectResult asCode = CodecRegistry::Builtin().Detect(file.data, code);
+    EXPECT_TRUE(asCode.chosen == nullptr || asCode.chosen->Info().id != "tasm");
 }
 
 TEST(TasmCodec_Test, ConversionBetweenVersions)

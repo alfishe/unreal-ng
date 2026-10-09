@@ -289,6 +289,8 @@ void MultiSoundCard::Out(uint16_t port, uint8_t value, uint64_t t)
                 break;
         }
     }
+    if (_trace) [[unlikely]]
+        TraceHost(MultiSoundBusEvent::Kind::HostOut, port, value, false, t);
 }
 
 void MultiSoundCard::ApplyControl(uint64_t t)
@@ -313,22 +315,72 @@ uint8_t MultiSoundCard::In(uint16_t port, uint64_t t, bool& drives)
     _now = std::max(_now, t);
     const MultiSoundReadResult result = _logic.Read(port);
     drives = result.Drives();
+    uint8_t value = 0xFF;
     switch (result.source)
     {
         case MultiSoundReadResult::Source::YmStatus:
             _ym->syncTo(t);
-            return _ym->readStatus(result.chip);
+            value = _ym->readStatus(result.chip);
+            break;
         case MultiSoundReadResult::Source::YmRegister:
             _ym->syncTo(t);
-            return _ym->readData(result.chip);
+            value = _ym->readData(result.chip);
+            break;
         case MultiSoundReadResult::Source::GsOutput:
-            return _gs->portDeviceInMethod(GeneralSoundCard::PORT_DATA);
+            value = _gs->portDeviceInMethod(GeneralSoundCard::PORT_DATA);
+            break;
         case MultiSoundReadResult::Source::GsStatus:
-            return _gs->portDeviceInMethod(GeneralSoundCard::PORT_COMMAND);
+            value = _gs->portDeviceInMethod(GeneralSoundCard::PORT_COMMAND);
+            break;
         case MultiSoundReadResult::Source::None:
             break;
     }
-    return 0xFF;
+    if (_trace) [[unlikely]]
+        TraceHost(MultiSoundBusEvent::Kind::HostIn, port, value, drives, t);
+    return value;
+}
+
+void MultiSoundCard::SetBusTrace(IMultiSoundBusTrace* trace)
+{
+    _trace = trace;
+    _gs->setBusObserver(trace != nullptr ? static_cast<IGSBusObserver*>(this) : nullptr);
+}
+
+void MultiSoundCard::TraceHost(MultiSoundBusEvent::Kind kind, uint16_t port, uint8_t value, bool drives, uint64_t t) const
+{
+    MultiSoundBusEvent event;
+    event.kind = kind;
+    event.drives = drives;
+    event.value = value;
+    event.address = port;
+    event.m1 = _lastM1;
+    event.time = t;
+    _trace->OnMultiSoundBus(event);
+}
+
+void MultiSoundCard::GsPortCycle(uint64_t time, uint8_t port, uint8_t value, bool write)
+{
+    if (_trace == nullptr)
+        return;
+    MultiSoundBusEvent event;
+    event.kind = write ? MultiSoundBusEvent::Kind::GsOut : MultiSoundBusEvent::Kind::GsIn;
+    event.drives = !write;
+    event.value = value;
+    event.address = port;
+    event.time = _frameBase + time;
+    _trace->OnMultiSoundBus(event);
+}
+
+void MultiSoundCard::GsDacFetch(uint64_t time, uint16_t address, uint8_t value)
+{
+    if (_trace == nullptr)
+        return;
+    MultiSoundBusEvent event;
+    event.kind = MultiSoundBusEvent::Kind::GsDacFetch;
+    event.value = value;
+    event.address = address;
+    event.time = _frameBase + time;
+    _trace->OnMultiSoundBus(event);
 }
 
 uint8_t MultiSoundCard::Peek(uint16_t port, bool& drives) const
@@ -381,6 +433,9 @@ void MultiSoundCard::BusReset(uint64_t t)
         _fmMuteChanges.push_back({t, _logic.Latches().fmMuted});
     else
         _fmMuteChanges.back() = {t, _logic.Latches().fmMuted};
+
+    if (_trace) [[unlikely]]
+        TraceHost(MultiSoundBusEvent::Kind::BusReset, 0, 0, false, t);
 }
 
 /// endregion </Bus>
@@ -392,12 +447,16 @@ void MultiSoundCard::FrameStart(uint64_t t, uint64_t frameTicks)
     _now = std::max(_now, t);
     _frameBase = t;
     _frameTicks = frameTicks;
+    if (_trace) [[unlikely]]
+        TraceHost(MultiSoundBusEvent::Kind::FrameStart, 0, 0, false, t);
     _gs->handleFrameStart();
 }
 
 size_t MultiSoundCard::FrameEnd(uint64_t t, size_t frames)
 {
     _now = std::max(_now, t);
+    if (_trace) [[unlikely]]
+        TraceHost(MultiSoundBusEvent::Kind::FrameEnd, 0, 0, false, t);
 
     if (frames == 0)
     {

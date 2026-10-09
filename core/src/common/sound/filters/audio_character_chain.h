@@ -28,12 +28,36 @@
 /// Reduces headphone fatigue from hard L-R panning (AY ABC/ACB, Amiga LRRL).
 /// Unlike traditional crossfeed (bs2b) which uses 600Hz lowpass (head shadow),
 /// this uses:
-/// - 3ms delay (early reflection timing, not ITD)
-/// - 10kHz lowpass (air absorption, preserves HF clarity)
-/// - Levels from -15dB to -9dB
+/// - an early-reflection delay (not ITD): 2ms for ChipType::AY (every chain
+///   in unreal-ng), 3ms for ChipType::Paula
+/// - Paula: ~10kHz lowpass (air absorption); AY: no lowpass (the square
+///   wave's harmonics are kept)
+/// - Levels from -15dB to -1dB
 ///
 /// On transient-heavy music, use -14dB or -15dB. Higher levels cause audible
-/// comb filtering (notches at 167Hz, 500Hz, 833Hz...) on fast attacks.
+/// comb filtering (2ms: notches at 250Hz, 750Hz, 1250Hz...) on fast attacks.
+///
+/// ## Bypass and live switching
+///
+/// With every effect off (or the chain inactive: Sound HQ off) processInt16()
+/// returns at once: the buffer is not touched - no float round trip, no
+/// per-sample work. The decision is taken per call (one frame) from a few
+/// flags, nothing is allocated.
+///
+/// Switching an effect on or off (or changing the room level) while audio
+/// plays is click-free: the next call (the frame boundary) ramps linearly
+/// across that frame from the old to the new setting - the same one-frame
+/// linear crossfade VoicingStage uses for profile changes. When the whole
+/// chain turns on or off, the frame crossfades between the untouched input
+/// and the processed signal, so both ends match their steady paths exactly.
+///
+/// An effect never replays old audio: when it turns on it starts from the
+/// current input (punch: previous sample = the frame's first sample, envelope
+/// 0; room: the delay line and its lowpass hold the frame's first sample), and
+/// when it has ramped out its state is cleared. reset() (a gap: sound off,
+/// turbo without audio, TTD restore, machine reset) and setup() (a rate
+/// change) clear everything; the first call afterwards takes the current
+/// settings at once, without a ramp.
 ///
 /// ## Usage
 ///
@@ -94,8 +118,23 @@ public:
     /// @param sampleRate Output sample rate (e.g. 44100, 48000)
     void setup(double sampleRate);
 
-    /// Reset all filter states (call on song change, etc.)
+    /// Reset all filter states (a gap in the stream: song change, sound off,
+    /// TTD restore...). The next processInt16() call takes the settings at
+    /// once (no ramp): the stream is discontinuous there anyway
     void reset();
+
+    /// Host gate (Sound HQ): an inactive chain ramps every effect out over one
+    /// frame and then passes audio untouched; becoming active ramps them back
+    /// in from a clean state. Applied at the next processInt16() call
+    void setActive(bool active) { _active = active; }
+    bool isActive() const { return _active; }
+
+    /// True when the next processInt16() call leaves the buffer untouched
+    /// (no effect on, none ramping out)
+    bool isBypassed() const
+    {
+        return !_engaged && !(_active && (_punchEnabled || _roomEnabled));
+    }
     /// endregion </Setup>
 
     /// region <Punch Configuration>
@@ -140,12 +179,43 @@ public:
     /// @param numSamples Number of samples to process
     void process(float* left, float* right, int32_t numSamples);
 
-    /// Process stereo int16 samples in-place
-    /// Converts to float internally, processes, converts back
+    /// Process stereo int16 samples in-place (one frame per call)
+    /// Bypassed (see isBypassed()): returns at once, the buffer is untouched.
+    /// Otherwise converts to float internally, processes, converts back
     /// @param buffer Interleaved L-R-L-R stereo buffer
     /// @param numSamples Number of stereo sample pairs
-    void processInt16(int16_t* buffer, int32_t numSamples);
+    void processInt16(int16_t* buffer, int32_t numSamples)
+    {
+        if (isBypassed())
+        {
+            _snapPending = false;   // the settings in force now are the ones a later switch ramps from
+            return;
+        }
+        processEngaged(buffer, numSamples);
+    }
     /// endregion </Processing>
+
+private:
+    void processEngaged(int16_t* buffer, int32_t numSamples);
+    template <bool Punch, bool Room>
+    void processSteady(int16_t* buffer, int32_t numSamples);
+    void processRamp(int16_t* buffer, int32_t numSamples, float punchFrom, float punchTo, float roomFrom,
+                     float roomTo, float wetFrom, float wetTo);
+
+    void clearPunchState();
+    void clearRoomState();
+    void primePunch(const int16_t* buffer);
+    void primeRoom(const int16_t* buffer);
+
+    // Applied state at the end of the last processed call (what the next
+    // switch ramps from): punch weight 0 / 1, room level 0 .. _roomLevel
+    bool _active = true;
+    bool _engaged = false;          // _punchGain != 0 || _roomGain != 0
+    bool _snapPending = true;       // after reset(): take the settings without a ramp
+    float _punchGain = 0.0f;
+    float _roomGain = 0.0f;
+    bool _punchDirty = false;       // the punch followers hold audio
+    bool _roomDirty = false;        // the delay line / lowpass hold audio
 
 private:
     double _sampleRate = 44100.0;
@@ -181,16 +251,17 @@ private:
 
     /// region <Room simulation state>
     // Room simulation: delayed opposite-channel bleed with gentle LP
-    // - roomDelay: 3ms (early reflection, not ITD)
+    // - roomDelay: 2ms AY / 3ms Paula (early reflection, not ITD)
     // - roomLpCoef: ~10kHz LP (air absorption, not head shadow)
     // - roomLevel: -15dB to -9dB crossfeed level
     RoomMode _roomMode = RoomMode::Off;
     bool _roomEnabled = false;
     float _roomLevel = 0.0f;    // Linear level (0.178 = -15dB, 0.35 = -9dB)
-    int _roomDelay = 0;         // Delay in samples (3ms * sampleRate)
+    int _roomDelay = 0;         // Delay in samples (2ms AY / 3ms Paula * sampleRate)
     float _roomLpCoef = 0.0f;   // One-pole LP coefficient (~0.7 for 10kHz)
 
     static constexpr int MAX_DELAY = 1024;  // 0.003s x 192kHz = 576; was 512 (overflowed at >=176.4kHz)
+    static_assert((MAX_DELAY & (MAX_DELAY - 1)) == 0, "the delay index wraps with a mask");
     std::array<float, MAX_DELAY> _delayL{};  // Left channel delay line
     std::array<float, MAX_DELAY> _delayR{};  // Right channel delay line
     int _delayIdx = 0;                       // Current position in delay line

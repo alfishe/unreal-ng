@@ -2,7 +2,10 @@
 
 **Status:** design drafted 2026-10-03; owner decisions Q1-Q8 recorded; SL-0 research done; SL-1 (reference data + pure plan engine) committed on branch `zx-bus-slots`; SL-2 (port claim table, serving the existing full-decode observers) committed; branch merged with master (TTD v2 engine) 2026-10-04; SL-3 (rule migration) built 2026-10-04; merged with master `e378c483a` and SL-4 (cards on slots, `[SLOTS]`, shipped configs converted) committed 2026-10-04; the first slot-built card (ZX-MultiSound, MS-4) committed 2026-10-04 (`cdac570ec`..`dcaf21a18`); SL-5 (TTD) committed on branch `slots-ttd` (`29250c546`) and merged into `zx-bus-slots` 2026-10-04; owner decision Q8 (conflicting configs refuse the machine), slot-built cards under TTD (MultiSound MS-5) and the quiet-machine A/B rerun built 2026-10-05; SL-6 (slot changes applied
 by a restart, the model switch carrying the slot set, the General Sound personality on the plan) built 2026-10-05; SL-7
-(the surfaces, Qt, recipe, user doc) built 2026-10-05 (not committed). PLAN row #82.
+(the surfaces, Qt, recipe, user doc) built 2026-10-05; everything up to SL-7 on master since 2026-10-05. The TTD
+follow-ups that waited for the engine (TTD Phase 5), the firmware carry, SL-8 (the Sprinter's ISA slots in the report,
+the ZX-bus adapter as a bus host) and the step-over race fix built 2026-10-06 on branch `slots-remainder`
+([tdd.md](tdd.md) §17). PLAN row #82.
 Prerequisite of the [ZX-MultiSound](../2026-10-03-zx-multisound/TODO.md).
 
 ## Documents
@@ -112,12 +115,25 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
   the engine's device table and checked against the plan at registration; one slot-set guard on load replacing the
   TurboSound / GS guards and serving the Sprinter ISA check; the registry refuses a second device under a held id;
   `ChangeRefusal()` names the recording session (R-OP-7). Corpus, bench gate, CoreGolden unchanged
-  - [ ] owner: the session id in the R-OP-7 refusal is a per-instance recording number (`#n, started at frame f`):
-    v1 sessions have none; switch to the v2 session UUID with Phase 5?
+  - [x] the session id in the R-OP-7 refusal (2026-10-06, checked in the code of TTD Phase 5): the engine never
+    refuses a slot change - a change of the machine ends its session (owner rule 2026-10-05,
+    `TimeTravelController::RecordingGuard` answers "" for `ChangeSlots`, `EndSessionForMachineChange`); only v1 (the
+    core-tests' backend, `UNREAL_TTD_BACKEND=v1`) still refuses, and v1 sessions have no id. The engine has no session
+    identity to name either: the UUID in its file header is drawn anew for every file written (`ttd dump`, each black
+    box segment). The refusal keeps `#n, started at frame f`; the recipe says what happens on the engine
+    ([tdd.md](tdd.md) §17.1)
   - [ ] the guard is symmetric now (a session without a card no longer loads where one is fitted): owner check
-  - [ ] two instances of one module (MultiSound + GS / SAA cards): needs the v1 per-id checkpoint gone (TTD Phase 5);
-    until then the planner refuses them as a conflict (Q8; `TtdMultiSound_Test.TwoInstancesOfOneModuleRefusedByThePlanner`),
-    and the MultiSound's own GS records under id 60, so a GS card next to a card with its GS switched off is fine
+  - [ ] two instances of one module: still not recordable after TTD Phase 5 (checked 2026-10-06, [tdd.md](tdd.md)
+    §17.2). The engine's device table is keyed by `{type, instance}` and its file keeps a state region per table entry,
+    but everything between the live devices and that table is keyed by the v1 id: the registry (one device per id),
+    the capture (`TTDFrameInput::deviceStates`, `LastCaptureState(id)`), the device state regions
+    (`_deviceRegionOf[legacyId]`), the restore (`ReadDeviceState(index, id)`), the binding of a loaded session
+    (`BindLive` matches on `legacyId`) and the device memory regions (one `TTDRegionId` per device type: two
+    MultiSounds would list region 17 twice). The planner's refusals are not TTD rules: a shared function is D1 (two
+    cards on the same ports) and stays. What does reach TTD: two MultiSounds with disjoint DIP switches (no shared
+    function, no shared port) are planned and built, and recording is refused naming both
+    (`TtdMultiSound_Test.TwoCardsWithDisjointDipsRefuseRecordingNamingBoth`). Lifting it is an engine change (keys
+    instead of v1 ids in those six places, region ids per instance) - TTD work, not slots work
   - [x] the GS runtime switch leaves the plan (and the fingerprint) naming the configured personality until SL-6 -
     closed by SL-6: the switch moves the plan's GS slot and the fingerprint, `TtdDevicesMatchPlan` checks the personality
 - [x] SL-6 apply by restart (model-switch path), media carried over, model switch, GS personality switch moved onto it
@@ -135,9 +151,10 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
     new machine's own configured cards (as built); removals are not carried
   - [x] Q10 decided 2026-10-05: the explicit personality switch on every surface moves to the restart in SL-7 (done:
     WebAPI, CLI, MCP, Lua, Python, Qt); the in-place switch stays only for the `gs_lightweight` feature
-  - [ ] side note (not slots): `EmulatorStepOverObserver_Test.DestroyedEmulatorLeavesNoHandlerBehind` segfaults alone
-    within 40 repeats (`BreakpointManager::GetBreakpointById` on the emulation thread while the test stops the machine);
-    it cost one `core-tests` shard once during SL-6
+  - [x] side note (not slots): `EmulatorStepOverObserver_Test.DestroyedEmulatorLeavesNoHandlerBehind` segfaulted -
+    fixed 2026-10-06: the step over's end ran in a MessageCenter observer on the dispatcher thread and erased the
+    temporary breakpoint while the emulation thread looked breakpoints up; it runs on the emulation thread now
+    ([tdd.md](tdd.md) §17.5, `68e8d54b8`; 200 / 200 repeats, a segfault in iteration 41 before)
 - [x] SL-7 five automation surfaces + OpenAPI + Qt slot window + recipe + user doc (2026-10-05, working tree of
   `zx-bus-slots`, not committed; [tdd.md](tdd.md) §15): `SlotControl` behind WebAPI `/slots` (+ OpenAPI tag `Slots`),
   CLI `slots`, MCP `slots_*` / aspect `slots`, Lua / Python `slots_*`, create-time `"slots"`, the model switch's carry
@@ -158,7 +175,20 @@ master (one conflict, `portin_benchmark.cpp`, both sides kept; [tdd.md](tdd.md) 
   - [x] owner decision 2026-10-05: the runtime feature `network` stays a power switch; the slot report's state of a
     fitted ZX-bus network card says `feature network off` while it is off - done 2026-10-05 ([tdd.md](tdd.md) §16,
     `SlotControl_Test.NetworkFeatureOffShowsInTheSlotState`)
-  - [ ] owner question: `avr_firmware` / `kbc_firmware` (keys of the network settings, but `[EVO] Avr=` / `[ATM] Kbc=`,
-    not `[NETWORK]`) are not carried across a slot restart. Carry them too? Recommendation: yes (a chosen firmware is
-    configuration as well); left out until decided because the decision named `[NETWORK]`
-- [ ] SL-8 Sprinter ISA slots in the report; ZX-bus adapter as a bus host (ISA I5)
+  - [x] owner decision 2026-10-06: `avr_firmware` / `kbc_firmware` (`[EVO] Avr=`, `[ATM] Kbc=` with `[ROM] ATM2KBC=`)
+    are configuration and survive every slot restart like `[NETWORK]` (2026-10-06,
+    `SlotControl_Test.SlotRestartCarriesTheFirmwareChoices`)
+- [x] TTD follow-ups of TTD Phase 5 (2026-10-06, [tdd.md](tdd.md) §17.1-§17.3): the socket's `ay` and `ts` boards
+  told apart by the engine's device instance (`ay-socket.ay` / `ay-socket.ts`); the slot-set guard on the engine's
+  session load (it ran only on v1's load: on the application a session without a card loaded where one is fitted, and
+  the MultiSound's MIDI bank and the Sprinter's ISA population were not compared)
+- [x] SL-8 Sprinter ISA slots in the report; the ZX-bus adapter as a bus host (2026-10-06, [tdd.md](tdd.md) §17.4):
+  `machineSlots` (the board's cards from `[ISA]`), the adapter's ZX-bus `isa.N.zxbus` among the buses with its host,
+  the GS behind it on that bus; a ZX-bus card needs the adapter in its ISA slot (plan and creation); the GS sits on
+  the adapter of the slot the slot set names; every surface and the Qt Slots window
+  - [ ] ISA phase I5 proper: the adapter passes the General Sound's ports only (`IsaZxBusAdapter::GsPort`); other
+    ZX-bus cards behind it (MoonSound, the MultiSound, network cards) need the adapter to hand its cycles to the claim
+    table instead ([Sprinter ISA TODO](../2026-10-02-sprinter-isa/TODO.md) I5). Until then the plan fits only a
+    General Sound card (`gs`, `gs-lw`, `neogs`) behind it and names I5 for the others
+  - [ ] ISA cards themselves are not slot changes: they stay `[ISA] SlotN` (create options `"sprinter"`), reported
+    but not planned

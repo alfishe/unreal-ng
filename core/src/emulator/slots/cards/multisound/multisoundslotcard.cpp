@@ -28,8 +28,8 @@ constexpr struct
     AudioSourceType type;
     MultiSoundRow row;
     const char* name;
-    bool ssgVoicing;   // the AY / SSG tone voicing, as for the AY socket's chips (not the [AY] Stereo panning: the
-                       // card's ABC is its board wiring)
+    bool ssgRow;   // the AY / SSG tone voicing and character chain (punch, room), as for the AY socket's chips (not
+                   // the [AY] Stereo panning: the card's ABC is its board wiring)
 } kRows[] = {
     { AudioSourceType::MultiSoundSsg1, MultiSoundRow::Ssg1, "MS SSG 1", true },
     { AudioSourceType::MultiSoundSsg2, MultiSoundRow::Ssg2, "MS SSG 2", true },
@@ -138,6 +138,17 @@ uint64_t MultiSoundSlotCard::Position() const
     return std::max(_last, now);
 }
 
+uint64_t MultiSoundSlotCard::MixerSamplePhase() const
+{
+    return (_context != nullptr && _context->pSoundManager != nullptr) ? _context->pSoundManager->samplePhase() : 0;
+}
+
+void MultiSoundSlotCard::AdoptMixerSamplePhase(uint64_t phase)
+{
+    if (_context != nullptr && _context->pSoundManager != nullptr)
+        _context->pSoundManager->adoptSamplePhase(phase);
+}
+
 void MultiSoundSlotCard::TrackM1()
 {
     Z80* z80 = (_context != nullptr && _context->pCore != nullptr) ? _context->pCore->GetZ80() : nullptr;
@@ -209,11 +220,11 @@ void MultiSoundSlotCard::SetOutputRate(uint32_t rate)
     _card.SetOutputRate(rate);
 }
 
-int16_t* MultiSoundSlotCard::VoicedMixerBuffer(AudioSourceType type)
+int16_t* MultiSoundSlotCard::SsgMixerBuffer(AudioSourceType type)
 {
     for (const auto& row : kRows)
     {
-        if (row.type == type && row.ssgVoicing)
+        if (row.type == type && row.ssgRow)
             return _card.MutableRow(row.row);
     }
     return nullptr;
@@ -235,7 +246,7 @@ void MultiSoundSlotCard::MixerRows(std::vector<CardMixerRow>& out) const
 {
     for (const auto& row : kRows)
     {
-        out.push_back({ row.type, row.name, row.ssgVoicing });
+        out.push_back({ row.type, row.name, row.ssgRow });
     }
 }
 

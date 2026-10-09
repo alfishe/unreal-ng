@@ -14,6 +14,7 @@
 #include "emulator/sound/chips/gs/gsmodulereplay.h"
 #include "emulator/sound/chips/gs/gsmailbox.h"
 #include "emulator/sound/chips/gs/gsprofile.h"
+#include "emulator/sound/chips/gs/gsbusobserver.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/ports/portdecoder.h"
 #include "common/modulelogger.h"
@@ -200,6 +201,9 @@ public:
     /// old value; the sink is not told (the board already has the write)
     void sharedVolumeWrite(int channel, uint8_t volume);
 
+    /// The board's bus trace (MultiSound profile only): every GS port cycle and DAC fetch, nullptr = off
+    void setBusObserver(IGSBusObserver* observer) { _busObserver = observer; }
+
     /// Bus /RESET of a board with its own host clock (GSProfile::hostClock):
     /// the power-on reset (reset()) at the host's now. The card's time 0 is
     /// anchored to the host's current tact and the rest of the host frame is
@@ -335,6 +339,7 @@ private:
     uint8_t gsIn(uint16_t port);
     void gsOut(uint16_t port, uint8_t value);
     uint8_t gsInMultiSound(uint16_t port);
+    uint8_t gsInMultiSoundDecode(uint16_t port);
     void gsOutMultiSound(uint16_t port, uint8_t value);
     void volumeWrite(uint16_t port, uint8_t value);  // ports 6-9 (own mix or DAC sink)
 
@@ -460,6 +465,7 @@ private:
     // Diagnostics: always-on counters + opt-in structured trace (gsporttrace.h)
     GSActivityCounters _activityCounters;
     GSPortTraceRecorder _portTrace;
+    IGSBusObserver* _busObserver = nullptr;
     uint32_t currentFrameNumber() const;
     void traceEvent(GSTraceSide side, uint16_t port, uint8_t value, bool isOut, uint8_t channel = 0, uint8_t extraFlags = 0);
 };
