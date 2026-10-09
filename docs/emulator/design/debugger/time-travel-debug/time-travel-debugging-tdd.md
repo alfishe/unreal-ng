@@ -1122,7 +1122,8 @@ struct TTDWriteRecord            // 12 bytes
     uint64_t globalT : 40;       // ~9 years of t-states — ample for a session
     uint64_t addr    : 16;       // Z80 address
     uint64_t isIo    : 1;        // Port OUT vs memory write
-    uint64_t pad     : 7;
+    uint64_t pageHigh: 1;        // Bit 8 of the page: another memory space (2026-10-08)
+    uint64_t pad     : 6;
     uint16_t m1pc;               // PC of the writing instruction
     uint8_t  value;
     uint8_t  physPage;           // Physical page (disambiguates banked writes)
@@ -1151,6 +1152,8 @@ Two findings decide the representation:
 
 Keys must be `(physical page, offset)` rather than Z80 addresses, or banking produces false hits — the same reason the search predicate needs a `physPage` filter (9.4).
 
+**Memory spaces (2026-10-08).** Some memories are not RAM pages: the Sprinter's 256 KB video RAM (written and read through a graphics window, at `PORT_Y * 1024 + (addr & 0x3FF)`) and its 64 KB fast RAM. The journal, the probe and the coverage index name their bytes by a *virtual page* above every RAM page (`ttdphyspage.h`: video RAM 0x110-0x11F, fast RAM 0x120-0x12F) and the offset within that 16 KB page in the address field. A record stores bit 8 of the page in `pageHigh`; a write block adds a page-high column only when it holds such a record, so older blocks decode unchanged. `kPhysPageNone` stays 0xFF in a record. The accelerator's stores are recorded with the PC of the instruction that started them.
+
 > **Container.** The coverage index, the write journal and the timeline are
 > separate streams with different natural chunk sizes, and the current file
 > layout has no way to add or skip one. See
@@ -1161,7 +1164,7 @@ Keys must be `(physical page, offset)` rather than Z80 addresses, or banking pro
 
 The search predicate accepts optional filters, mirroring `BreakpointDescriptor` semantics: match on written value, on writer PC range, on physical page (bank-aware, using `physPage`). Execute-search ("when was address A last executed") uses the journal's M1 record variant or falls back to replay with an execute probe.
 
-**Status.** All four are implemented in `TTDSearchQuery`. The `physPage` filter (`hasPhysPageFilter` / `physPage`) applies on both paths — the journal predicate and the replay probe — and is exposed as `phys_page` on WebAPI, Python and Lua, and as `--phys-page` on the CLI. Without it an address query on a banked machine answers with writes to whatever page happened to be mapped at the time, which is rarely the page the caller meant. Port (`Io`) accesses have no page and are never constrained by the filter.
+**Status.** All four are implemented in `TTDSearchQuery`. The `physPage` filter (`hasPhysPageFilter` / `physPage`) applies on both paths — the journal predicate and the replay probe — and is exposed as `phys_page` on WebAPI, Python and Lua, and as `--phys-page` on the CLI. A `space` option (`ram` / `vram` / `cache`) turns the address fields into offsets in another memory and sets the filter to its virtual page (one 16 KB page per query); the answer carries `space` and `offset` (WebAPI, MCP, CLI `--space`, Lua, Python). Without it an address query on a banked machine answers with writes to whatever page happened to be mapped at the time, which is rarely the page the caller meant. Port (`Io`) accesses have no page and are never constrained by the filter.
 
 Probe hits now carry a real page for every access type. Reads and instruction fetches previously reported page 0 unconditionally; both resolve the mapped bank now, which is also what makes `TTDM1Record::physPage` meaningful — reverse breakpoints can tell "PC 0xC000 with page 3 banked in" apart from the same address reached under a different page. Code fetched from ROM reports `kPhysPageNone` (0xFF).
 

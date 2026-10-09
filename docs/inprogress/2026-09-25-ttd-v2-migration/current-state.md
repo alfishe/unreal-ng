@@ -140,6 +140,7 @@ live model, checkpoint ordering, reserved bytes, checksums.
 | Gap | Effect |
 |---|---|
 | ~~**RAM page 255 on 4 MB machines**~~ — **fixed 2026-09-27** (16-bit `ttd::PhysPage`, sentinel `0xFFFF`) | Was: never marked dirty or journaled; changes appeared only at the next key frame; coverage lumped it with ROM |
+| ~~**Sprinter video RAM and fast RAM in reverse queries**~~ — **fixed 2026-10-08** (memory spaces: virtual pages 0x110.. / 0x120.., `find-last space=vram\|cache`) | Was: the journal and the probe saw RAM pages only; "who wrote this pixel" had no answer |
 | Keyboard matrix, joystick | Replay starts from the live host keyboard state |
 | Input journal, external-event markers — in the **file** | A loaded session replays inside a frame without the recorded keys and crosses tape/disk barriers silently |
 | Disk and tape image contents | By design: loads invalidate the session; disk writes are barriers (lost on save, see above) |
