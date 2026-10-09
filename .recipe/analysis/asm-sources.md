@@ -97,7 +97,7 @@ A refusal does not raise: the table / dict has `ok = false` and `error` = the me
 ## The source an assembler holds in RAM (asm-synchronizer)
 
 The source an assembler is editing in the machine can be read without saving it to a disk first. ALASM (3.8c, 4.42-4.46,
-4.5, 5.00-5.09), TASM (3.0, 3.2, 4.0, 4.4, 4.12), XAS (4.18, 5.05, 7.43c, 7.447, 9.07m, 9.10) STORM 1.3, ZAsm 3.15 and MASM 1.1 are recognized (phase Y0 of `docs/inprogress/2026-10-05-unreal-asm/asm-synchronizer.md`). The RAM is
+4.5, 5.00-5.09), TASM (3.0, 3.2, 4.0, 4.4, 4.12), XAS (4.18, 5.05, 7.43c, 7.447, 9.07m, 9.10) STORM (1.0beta, 1.3), ZAsm 3.15 and MASM 1.1 are recognized (phase Y0 of `docs/inprogress/2026-10-05-unreal-asm/asm-synchronizer.md`). The RAM is
 copied at a coherent moment, and the guest is never written. The text comes out as the file the assembler's own SAVE
 would write: a line being edited in TASM is in it. ALASM keeps a line out of the text until Enter; the status says
 `typing` then.

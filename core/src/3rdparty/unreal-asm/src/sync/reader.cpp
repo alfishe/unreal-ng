@@ -334,26 +334,28 @@ SyncDescriptor Xas(const std::string& id, const std::string& codecVersion, uint1
     return d;
 }
 
-/// STORM 1.2 / 1.3 (asm-synchronizer.md §7.8): the text in RAM page 6 at #C000: the end pointer, the name, an #FF
-/// sentinel, the file from #C00B up to the #FF the end pointer follows. The line under the cursor joins the text when
-/// the cursor leaves it. Identified by its entry code at #8000, the same in 1.3 and 1.3i (packed on its disk)
-SyncDescriptor Storm13()
+/// STORM (asm-synchronizer.md §7.8): the text in RAM page 6 at #C000: the end pointer, (1.2 / 1.3: the name, an #FF
+/// sentinel at #C00A, the file from #C00B; 1.0beta: the #FF at #C002, the file from #C003) up to the #FF the end pointer
+/// follows. The line under the cursor joins the text when the cursor leaves it. Identified by its entry code at #8000,
+/// the same in every version, and the address it loads at #8027 (#87xx in 1.3 / 1.3i, #85xx in 1.0beta)
+SyncDescriptor Storm(const std::string& id, const std::string& title, const std::string& codecVersion, uint16_t base, char loadHigh)
 {
     SyncDescriptor d;
-    d.id = "storm-1.3";
-    d.title = "STORM 1.3";
+    d.id = id;
+    d.title = title;
     d.codec = "storm";
-    d.version = "1.3";
+    d.version = codecVersion;
     d.extension = "C";
-    d.identify = {{0x8000, std::string("\xFD\x21\x3A\x5C\xED\x56\xFB\x2A\x3D\x5C\x01\xFC\x5F\xB7\xED\x42\x28\x02\xCF\x03\x09\xF9\x76\xF3", 24)}};
+    d.identify = {{0x8000, std::string("\xFD\x21\x3A\x5C\xED\x56\xFB\x2A\x3D\x5C\x01\xFC\x5F\xB7\xED\x42\x28\x02\xCF\x03\x09\xF9\x76\xF3", 24)},
+                  {0x8028, std::string(1, loadHigh)}};
     d.pages = PageIdRule::MappedAtC000;
     d.family = LayoutFamily::FileImage;
-    d.fileImage.base = 0x0B;
+    d.fileImage.base = base;
     d.fileImage.headerSize = 0;
-    d.fileImage.signatureAt = 0x0A;
+    d.fileImage.signatureAt = static_cast<uint16_t>(base - 1);
     d.fileImage.signature = std::string("\xFF", 1);
     d.fileImage.nameAt = 0x02;
-    d.fileImage.nameLength = 8;
+    d.fileImage.nameLength = base == 0x0B ? 8 : 0;
     d.fileImage.lengthFromPointer = true;
     d.fileImage.pointerAt = 0x00;
     d.fileImage.endSentinel = 0xFF;
@@ -522,7 +524,8 @@ const std::vector<SyncDescriptor>& Descriptors()
         Xas("7.447", "7.43", 0x9B00, "by Max Petrov & Creator v7.44"),
         Xas("9.07m", "9.07m", 0xB8EA, "XAS 9.07 ReCompiled by Mythos"),
         Xas("9.10", "9.10", 0xB912, "XAS by Max Petrov,64sm by STS"),
-        Storm13(),
+        Storm("storm-1.3", "STORM 1.3", "1.3", 0x0B, '\x87'),
+        Storm("storm-1.0b", "STORM 1.0beta", "1.0", 0x03, '\x85'),
         Zasm315(),
         Masm11(),
         TasmGap("4.0", "TASM 4.0 (XL Design)", "4.0", {0x9859, "TASM4.0>"}, 0x8DD0, 0x91AC),
