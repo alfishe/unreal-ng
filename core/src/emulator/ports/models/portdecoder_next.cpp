@@ -170,6 +170,19 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, value, pc, disp);
         return value;
     }
+    if (low == 0x1F)
+    {
+        // Kempston joystick 1: built into the board (zxnext.vhd port_1f_lsb), 000FUDLR active high, 0 with nothing pressed
+        const uint8_t value = Default_Port_KempstonJoystick_In();
+        _lastPortDecoded = true;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = port;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, value, pc, disp);
+        return value;
+    }
     if (low == 0x6B || low == 0x0B)
     {
         const uint8_t value = _dma.Read();

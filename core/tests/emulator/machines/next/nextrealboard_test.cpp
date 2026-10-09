@@ -135,3 +135,21 @@ TEST_F(NextRealBoard_Test, Z80NInstructionsAllPass)
     EXPECT_EQ(errRows, 0u);
     EXPECT_GT(okRows, 0u);
 }
+
+// Z80 block instruction flags (F of INIR / INDR / OTxR / LDxR / CPxR interrupted by IM2): the program colours a mismatch red. It
+// reads the Kempston port #1F, which the Next has built in (0 with nothing pressed); on a machine without one it skips itself
+TEST_F(NextRealBoard_Test, BlockInstructionFlagsInterruptedByImTwoMatchTheBoard)
+{
+    if (!Run("z80bltst.sna", 500))
+        GTEST_SKIP() << "UNREAL_NEXT_TESTS (a ZXSpectrumNextTests clone with release/z80bltst.sna) is not set";
+    unsigned red = 0, green = 0;
+    for (unsigned y = 64; y < 400; y++)
+        for (unsigned x = 64; x < 576; x++)
+        {
+            const uint32_t p = Pixel(x, y);
+            red += (p == 0xFF0000FF || p == 0xFF0000B6) ? 1 : 0;   // R G B A bytes: bright red (255,0,0) / red (182,0,0)
+            green += (p == 0xFF00B600) ? 1 : 0;                     // green (0,182,0)
+        }
+    EXPECT_EQ(red, 0u) << "red = a flag byte differs from the one the NMOS board shows";
+    EXPECT_GT(green, 100u);
+}

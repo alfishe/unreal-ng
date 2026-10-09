@@ -235,3 +235,15 @@ TEST(NextSpritePorts_Test, UploadThroughThePortDecoder)
     EXPECT_EQ(ports->DecodePortIn(0x303B, 0), 0x00);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+// The Kempston joystick is built into the Next: #1F answers 0 with nothing pressed (not the floating bus)
+TEST(NextKempston_Test, PortOneFReadsZeroWithNothingPressed)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    PortDecoder_Next* ports = dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    for (int b = 16; b >= 1; b--)
+        EXPECT_EQ(ports->DecodePortIn(static_cast<uint16_t>((b << 8) | 0x1F), 0), 0x00) << "B = " << b;
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

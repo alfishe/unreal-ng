@@ -46,6 +46,7 @@ public:
     void WriteMemoryMapping(uint8_t value) override;
     void ClearDivMmcMapram() override { _divMmc->ClearMapram(); }
     void StepDma() override;
+    bool HasKempstonJoystick() const override { return true; }
     bool PagingLocked() const override { return IsPagingLocked(); }  // #7FFD bit 5 (zxnext.vhd port_7ffd_locked)
     bool ShadowScreen() const override { return (_context->emulatorState.p7FFD & 0x08) != 0; }
     void SetShadowScreen(bool on) override
