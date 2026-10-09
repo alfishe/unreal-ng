@@ -52,6 +52,8 @@ void PortDecoder_Next::reset()
     InsertConfiguredCard();
     _board->Reset(true);
     _ctc.Reset();
+    _dma.Reset();
+    BindDma();
     _i2c.Reset();
     _divMmc->Reset();
     if (Z80* z80 = _context->pCore->GetZ80(); z80 && !z80->machineM1Hook)
@@ -130,6 +132,18 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     if (port == 0x123B)
     {
         const uint8_t value = _board->Video().Port123b();
+        _lastPortDecoded = true;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = port;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, value, pc, disp);
+        return value;
+    }
+    if (low == 0x6B || low == 0x0B)
+    {
+        const uint8_t value = _dma.Read();
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -236,6 +250,10 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         _board->Video().WritePort123b(value);
     else if (port == 0x303B)
         _board->Sprites().WriteSlotSelect(value);
+    else if (static_cast<uint8_t>(port) == 0x6B)
+        _dma.Write(value, false);
+    else if (static_cast<uint8_t>(port) == 0x0B)
+        _dma.Write(value, true);
     else if (static_cast<uint8_t>(port) == 0x57)
         _board->Sprites().WriteAttribute(value);
     else if (static_cast<uint8_t>(port) == 0x5B)
@@ -267,6 +285,44 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     }
     disp.decodedPort = port;
     OnPortOutComplete(port, value, pc, disp);
+}
+
+/// The DMA reads and writes through the Z80's view of memory and the port decoder
+void PortDecoder_Next::BindDma()
+{
+    NextDma::Bus bus;
+    bus.readMemory = [this](uint16_t address) { return _context->pMemory->DirectReadFromZ80Memory(address); };
+    bus.writeMemory = [this](uint16_t address, uint8_t value) { _context->pMemory->DirectWriteToZ80Memory(address, value); };
+    bus.readIo = [this](uint16_t port) { return DecodePortIn(port, 0); };
+    bus.writeIo = [this](uint16_t port, uint8_t value) { DecodePortOut(port, value, 0); };
+    _dma.SetBus(std::move(bus));
+}
+
+/// Between two instructions: a DMA that holds the bus runs until it is done or waits for its prescaler (burst mode
+/// releases the bus then); the CPU is held for two of its clocks per byte
+void PortDecoder_Next::StepDma()
+{
+    if (!_dma.Active())
+        return;
+    unsigned moved = 0;
+    while (_dma.Active())
+    {
+        const unsigned n = _dma.Run(256, Now28());
+        if (n == 0)
+            break;
+        moved += n;
+        if (_dma.Waiting())
+            break;
+    }
+    if (moved == 0)
+        return;
+    Z80* z80 = _context->pCore->GetZ80();
+    for (unsigned cycles = moved * 2; cycles;)
+    {
+        const unsigned chunk = cycles > 200 ? 200 : cycles;
+        z80->InsertWaitStates(static_cast<uint8_t>(chunk));
+        cycles -= chunk;
+    }
 }
 
 /// region <Reset>

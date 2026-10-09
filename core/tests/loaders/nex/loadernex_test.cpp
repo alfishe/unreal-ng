@@ -172,6 +172,49 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
         for (int i = 0; i < 2; i++)
             emulator->RunFrame(true);
     }
+    if (std::getenv("UNREAL_NEX_SPRITES"))
+    {
+        auto* decoder = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder);
+        for (unsigned i = 0; i < 4; i++)
+        {
+            std::cout << "SPRITE " << i << ":";
+            for (unsigned b = 0; b < 5; b++)
+                std::cout << " " << std::hex << int(decoder->Board().Sprites().Attribute(i, b));
+            std::cout << std::endl;
+        }
+        {
+            unsigned nonzero = 0, first = 99999;
+            for (unsigned i = 0; i < 16384; i++)
+                if (decoder->Board().Sprites().PatternByte(i))
+                {
+                    nonzero++;
+                    first = std::min(first, i);
+                }
+            std::cout << "PATTERN nonzero " << nonzero << " first " << first << std::endl;
+        }
+        {
+            const NextDma& d = decoder->Dma();
+            std::cout << "DMA active " << d.Active() << " mode " << int(d.Mode()) << " prescaler " << int(d.Prescaler()) << " waiting " << d.Waiting() << " counter " << d.Counter() << " of " << d.BlockLength()
+                      << " src " << std::hex << d.Source() << " dst " << d.Destination() << std::dec << std::endl;
+        }
+        std::cout << "PC " << std::hex << context->pCore->GetZ80()->pc << " sp " << context->pCore->GetZ80()->sp << " iff1 " << int(context->pCore->GetZ80()->iff1) << std::dec << std::endl;
+        {
+            Z80* z = context->pCore->GetZ80();
+            const uint16_t target = static_cast<uint16_t>(context->pMemory->DirectReadFromZ80Memory(z->ix + 4) | (context->pMemory->DirectReadFromZ80Memory(z->ix + 5) << 8));
+            std::cout << "WAITLINE target " << target << " hl " << z->hl << " ix " << z->ix << " speed " << int(decoder->Board().Stored(7)) << std::endl;
+        }
+        std::cout << "STACK";
+        for (unsigned i = 0; i < 12; i += 2)
+        {
+            const uint16_t sp = context->pCore->GetZ80()->sp + i;
+            std::cout << " " << std::hex << (context->pMemory->DirectReadFromZ80Memory(sp) | (context->pMemory->DirectReadFromZ80Memory(sp + 1) << 8));
+        }
+        std::cout << std::dec << std::endl;
+        std::cout << "PATTERN0:";
+        for (unsigned i = 0x680; i < 0x680 + 48; i++)
+            std::cout << " " << std::hex << int(decoder->Board().Sprites().PatternByte(i));
+        std::cout << std::dec << std::endl;
+    }
     if (const char* out = std::getenv("UNREAL_NEX_OUT"))
     {
         std::ofstream ram(std::string(out) + "/ram.bin", std::ios::binary);  // the 64K the Z80 sees

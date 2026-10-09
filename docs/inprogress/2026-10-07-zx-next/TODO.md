@@ -74,6 +74,11 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 - [x] `tools/verification/next-cosim/nexcmp.sh <file.nex> [frames]` runs a NEX on jnext and on us and counts pixels differing by more than 40 per channel; `nexside.sh` makes a side-by-side. Over the 125 NEX files of the collection: 37 identical, ~25 within 1000 px; the rest = blend modes, stencil, tilemap/Layer 2 CPU windows, port #123B mapping, timing-dependent demos, V1.3 files (jnext needs --experimental-nex-v1.3)
 - Known divergence: jnext shows the global-transparency colour in places where the real nexload leaves a black ULA entry (index 24 = 0x00 after the register reset); ours follows nexload.asm
 
+## N8 (2026-10-09): DMA
+- [x] `NextDma`: WR0-WR6 sequencer, ports #6B (zxnDMA) and #0B (Z80-DMA compatible), memory / I/O ports with increment / decrement / fixed, continuous and burst modes, prescaler (875 kHz steps in 28 MHz clocks), auto restart, read mask and read sequence; `PortDecoder_Next::StepDma` runs between instructions and holds the CPU (two clocks per byte) until the block is done or a prescaler wait releases the bus
+- [ ] Not yet: the exact per-byte timing (2-4 clocks by the port timing bytes, contention on the read), DMA-on-interrupt (`dma_delay`), NR #82 / #85 port gates, the pulse of the DMA interrupt, bus arbitration with the expansion bus
+- jnext comparison: DMAFill, zxnext_dma_sample, test03sprite identical; DMACopy / LDIRCopy 6932 px (a timing screen)
+
 ## Remaining
 - [x] Verification program: public suites collected and graded ([verification-program.md](verification-program.md)); esxDOS source availability checked ([esxdos-and-sd.md](esxdos-and-sd.md) section 1a)
 - [x] N0 second pass (2026-10-08): ULA / Timex / ULA+ / ULAnext, LoRes, palettes and the layer compositor, audio (AY x 3, DAC, mixer), CTC, UART, SPI, DivMMC, keyboard, ZEsarUX comparison: [research-fpga-vhdl.md](research-fpga-vhdl.md) sections 16-22; [esxdos-and-sd.md](esxdos-and-sd.md); [design-integration.md](design-integration.md)

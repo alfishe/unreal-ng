@@ -39,6 +39,8 @@ public:
     virtual uint8_t ReadMemoryMapping() const = 0;
     /// NR #09 bit 3 = 1: the DivMMC's sticky MAPRAM is cleared
     virtual void ClearDivMmcMapram() = 0;
+    /// Between two instructions: the DMA moves its bytes
+    virtual void StepDma() {}
 };
 
 /// The Next board's register file (NEXTREG space, ports #243B select / #253B data): the identification registers

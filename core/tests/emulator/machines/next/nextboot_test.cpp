@@ -214,3 +214,24 @@ TEST(NextConfigCard_Test, SdCardFolderOfTheConfigIsInsertedAtReset)
     EXPECT_GT(ports->SdCard(0).sizeBytes(), 1024u * 1024u);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+// The sprite ports through the decoder: #303B selects, #57 writes attributes, #5B patterns (any high byte), #303B reads the status
+TEST(NextSpritePorts_Test, UploadThroughThePortDecoder)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    PortDecoder_Next* ports = dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    ports->DecodePortOut(0x303B, 0x02, 0);   // sprite 2, pattern 2
+    ports->DecodePortOut(0x0057, 0x11, 0);
+    ports->DecodePortOut(0x0157, 0x22, 0);   // the high byte does not matter
+    ports->DecodePortOut(0xF05B, 0x77, 0);
+    ports->DecodePortOut(0xEF5B, 0x88, 0);
+    NextBoard& board = ports->Board();
+    EXPECT_EQ(board.Sprites().Attribute(2, 0), 0x11);
+    EXPECT_EQ(board.Sprites().Attribute(2, 1), 0x22);
+    EXPECT_EQ(board.Sprites().PatternByte(2 * 0x100), 0x77) << "pattern 2 starts at #200";
+    EXPECT_EQ(board.Sprites().PatternByte(2 * 0x100 + 1), 0x88);
+    EXPECT_EQ(ports->DecodePortIn(0x303B, 0), 0x00);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

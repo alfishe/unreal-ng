@@ -278,6 +278,8 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
 
 void NextBoard::AfterInstruction()
 {
+    if (_machine)
+        _machine->StepDma();
     if (!_resetPending)
         return;
     _resetPending = false;

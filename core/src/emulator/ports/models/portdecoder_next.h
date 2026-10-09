@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "emulator/io/z80n/nextboard.h"
+#include "emulator/io/z80n/nextdma.h"
 #include "emulator/io/z80n/nextctc.h"
 #include "emulator/io/z80n/nextdivmmc.h"
 #include "emulator/io/z80n/nexti2c.h"
@@ -43,6 +44,9 @@ public:
     void SetContentionDisabled(bool disabled) override;
     void WriteMemoryMapping(uint8_t value) override;
     void ClearDivMmcMapram() override { _divMmc->ClearMapram(); }
+    void StepDma() override;
+    NextDma& Dma() { return _dma; }
+    void BindDma();
     uint8_t ReadMemoryMapping() const override;
     void OnFrameEnd() override;
 
@@ -105,6 +109,7 @@ private:
     std::unique_ptr<NextInterruptSource> _interrupts;
     std::unique_ptr<NextDivMmc> _divMmc;
     NextCtc _ctc;
+    NextDma _dma;
     NextI2c _i2c;
     std::unique_ptr<Z80NEngine> _engine;
 };
