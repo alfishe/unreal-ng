@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iterator>
@@ -14,7 +15,9 @@
 #include "common/modulelogger.h"
 #include "common/filehelper.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/memory.h"
 #include "stdafx.h"
+#include "unrealasm/symbols/bundles.h"
 #include "unrealasm/symbols/codec.h"
 #include "unrealasm/symbols/store.h"
 
@@ -140,7 +143,11 @@ bool LabelManager::AddLabel(const std::string& name, uint16_t z80Address, uint16
     Symbol base;
     base.provenance.importer = "user";
     Symbol symbol = FromLabel(label, base);
-    if (_userOnTop && !_view->byName.count(name))
+    // The view alone takes it when nothing of another page shares the address (else the mapping list is rebuilt)
+    const auto occupied = _view->byAddress.find(z80Address);
+    const bool plainAddress = occupied == _view->byAddress.end() ||
+                              (bank == UINT16_MAX && occupied->second->bank == UINT16_MAX && !_view->shared.count(z80Address));
+    if (_userOnTop && plainAddress && !_view->byName.count(name))
     {
         // A new name at the end of the top set: it shows by its name and is the last label placed at its address
         auto shown = std::make_shared<Label>(std::move(label));
@@ -217,8 +224,30 @@ void LabelManager::ClearAllLabels()
 // @return std::shared_ptr<Label> Pointer to the label if found, nullptr otherwise
 std::shared_ptr<Label> LabelManager::GetLabelByZ80Address(uint16_t address) const
 {
+    // Labels of several pages at one address: the mapped page's
+    if (!_view->shared.empty())
+    {
+        const auto shared = _view->shared.find(address);
+        if (shared != _view->shared.end())
+            if (auto label = MappedAt(shared->second, address))
+                return label;
+    }
     auto it = _view->byAddress.find(address);
     return it != _view->byAddress.end() ? it->second : nullptr;
+}
+
+std::shared_ptr<Label> LabelManager::MappedAt(const std::vector<View::Paged>& labels, uint16_t address) const
+{
+    Memory* memory = _context ? _context->pMemory : nullptr;
+    if (!memory)
+        return nullptr;
+    const uint8_t window = static_cast<uint8_t>(address >> 14);
+    const bool rom = memory->IsWindowRom(window);
+    const uint16_t page = rom ? memory->GetROMPageForBank(window) : memory->GetRAMPageForBank(window);
+    for (auto it = labels.rbegin(); it != labels.rend(); ++it)
+        if (it->label->bank == UINT16_MAX || (it->label->bank == page && it->rom == rom))
+            return it->label;
+    return nullptr;
 }
 
 // @brief Find a label by its name
@@ -508,14 +537,100 @@ void LabelManager::Rebuild()
     _userOnTop = !userOff && (user ? user->priority > above : USER_SET_PRIORITY > above);
 
     auto view = std::make_shared<View>();
+    std::unordered_map<uint16_t, std::vector<View::Paged>> atAddress;
+    bool pages = false;
     for (const auto& [symbol, name] : Resolve(index->Sets()))
     {
         auto label = std::make_shared<Label>(*ToLabel(*symbol));
         label->name = name;
         view->byName.emplace(name, label);
-        view->byAddress[label->address] = std::move(label);
+        view->byAddress[label->address] = label;
+        pages = pages || label->bank != UINT16_MAX;
+        atAddress[label->address].push_back({label, symbol->location.space.kind == unrealasm::symbols::SpaceKind::Rom});
     }
+    // Only where labels of different pages meet does the mapping decide
+    if (pages)
+        for (auto& [address, labels] : atAddress)
+            if (labels.size() > 1 && std::any_of(labels.begin(), labels.end(), [&](const View::Paged& p) {
+                    return p.label->bank != labels.front().label->bank || p.rom != labels.front().rom;
+                }))
+                view->shared.emplace(address, std::move(labels));
     _view = std::move(view);
+}
+
+std::vector<std::string> LabelManager::ApplyBundles(const std::string& folder, const std::vector<std::string>& pageSha256)
+{
+    using namespace unrealasm::symbols;
+    std::vector<std::string> applied;
+    const std::filesystem::path root = FileHelper::ToFsPath(folder);
+    std::error_code ec;
+    if (folder.empty() || !std::filesystem::exists(root / "manifest.json", ec))
+        return applied;
+    std::vector<uint8_t> bytes;
+    if (!ReadLabelFile((root / "manifest.json").string(), bytes))
+        return applied;
+    BundleManifest manifest;
+    std::string error;
+    if (!ParseManifest(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), manifest, error))
+    {
+        LOGWARNING("Symbol bundles: %s", error.c_str());
+        return applied;
+    }
+
+    Flush();
+    const std::vector<BundleHit> hits = MatchBundles(manifest, pageSha256);
+    const std::vector<SymbolSet> before = _store->Sets();
+    bool changed = false;
+    for (const SymbolSet& set : before)
+        if (set.origin.kind == "bundle" &&
+            std::none_of(hits.begin(), hits.end(), [&](const BundleHit& hit) { return hit.set == set.id; }))
+            changed = _store->Drop(set.id) || changed;
+    for (const BundleHit& hit : hits)
+    {
+        if (std::any_of(before.begin(), before.end(), [&](const SymbolSet& set) { return set.id == hit.set; }))
+        {
+            applied.push_back(hit.set);
+            continue;
+        }
+        const std::string path = (root / FileHelper::ToFsPath(hit.bundle->file)).string();
+        std::vector<uint8_t> file;
+        int score = 0;
+        std::string reason;
+        if (!ReadLabelFile(path, file))
+            continue;
+        const ISymbolCodec* codec = CodecForFile(path, file, "", score, reason);
+        SymbolDecodeResult decoded = codec ? codec->Decode(file) : SymbolDecodeResult{};
+        if (!decoded.ok)
+        {
+            LOGWARNING("Symbol bundle %s: cannot read %s", hit.bundle->id.c_str(), hit.bundle->file.c_str());
+            continue;
+        }
+        std::vector<Symbol> records;
+        for (SymbolSet& set : decoded.file.sets)
+            for (Symbol& symbol : set.symbols)
+                if (std::find(hit.bundle->except.begin(), hit.bundle->except.end(), symbol.name) == hit.bundle->except.end())
+                    records.push_back(std::move(symbol));
+        ImportOptions options;
+        options.set = hit.set;
+        options.title = hit.bundle->title.empty() ? hit.bundle->file : hit.bundle->title;
+        options.origin.kind = "bundle";
+        options.origin.where = hit.bundle->file;
+        options.policy = MergePolicy::Replace;
+        AddressSpace space;
+        if (!hit.space.empty() && AddressSpace::Parse(hit.space, space))
+            options.space = space;
+        const ImportReport report = _store->Import(std::move(records), options);
+        _store->SetPriority(hit.set, BUNDLE_PRIORITY);
+        LOGDEBUG("Symbol bundle %s: %zu symbols as %s", hit.bundle->id.c_str(), report.added, hit.set.c_str());
+        applied.push_back(hit.set);
+        changed = true;
+    }
+    if (changed)
+    {
+        Rebuild();
+        Notify();
+    }
+    return applied;
 }
 
 // @brief The labels AddLabel only put in the view join the user set

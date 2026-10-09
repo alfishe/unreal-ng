@@ -171,6 +171,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E
         copy_directory ${DATA_PATH}/rom ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom
+        copy_directory ${DATA_PATH}/symbols ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/symbols
     )
 
     # Copy all test ROM files to /rom sub-folder

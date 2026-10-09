@@ -96,8 +96,12 @@ phase; master only after the owner's review.
       - WebAPI `/symbols/{formats,detect,sets,import,export}` with OpenAPI tag "Symbols"; CLI `symbols <verb>` (`--json`); MCP `manage_symbols` actions `formats` / `detect` / `sets` / `set_enable` / `drop` / `import` / `export`; Lua `symbols_*`; Python `emu.symbols_*`.
       - Recipe `.recipe/analysis/symbols-import-export.md`.
       - Checked live on an instance: WebAPI, CLI and Lua. Python is checked by compiling only (this build has Python off).
-    - [ ] bundles + manifest (`data/symbols/manifest.json` by ROM page SHA-256), shipped with the binaries
-    - [ ] page-aware address lookup (the mapped page wins at its window)
+    - [x] bundles + manifest (2026-10-08):
+      - `data/symbols/manifest.json` by ROM page SHA-256 (`unrealasm/symbols/bundles.h`: `ParseManifest`, `MatchBundles`).
+      - `LabelManager::ApplyBundles`, called by `Emulator::ApplySymbolBundles` at start and on a ROM reload. Each bundle becomes a set `bundle:<id>` at priority 50; bundles that no longer match are dropped; one switched off stays off.
+      - Bundles: the 48K ROM, the 48 BASIC in 128K ROM 1, the 128K ROM 0, the 48K / 128K system variables, Sprinter BIOS 3.04 pages 0 / 8 / #C.
+      - `data/symbols` ships next to `rom/` in every build and package. `UNREAL_SYMBOL_BUNDLES=0` turns bundles off.
+    - [x] page-aware address lookup (2026-10-08): where labels of several pages meet, the page mapped at the window wins (a CPU-view label placed later wins over all)
     - [ ] import from a disk image / base64; the live scan surface; Qt import / export dialogs and a "Sets" tab
   - [x] S6-S9 labels from sources (2026-10-07): `SymbolsFromProject` (`symbols/fromsource.h`) for TASM, ALASM, STORM, ZX-ASM and sjasmplus projects; values from `layout::Layout` over the sjasmplus conversion (instruction sizes, passes, `IF` / `DUP` / `WHILE` / macros / `DISP` / `INCLUDE` / `INCBIN`, sjasmplus' symbol table through the passes); the backend records the names it writes (`LabelName`); `symconv source`; the sjasmplus frontend reads `$$$`; equal to sjasmplus 1.24's `--sym` on every instruction form, the layout probe, five oracle projects and the collection (`tools/verification/unreal-asm/checks/symcheck.py`: 511 of 530 main sources, 67 264 labels; the 19 others read FRAMES or hit a sjasmplus quirk) ([symbols/formats.md](symbols/formats.md) §4.1)
   - [x] frontends for GENS, MASM, ZEUS, XAS (2026-10-07): their projects convert to sjasmplus and their labels come through `SymbolsFromProject`

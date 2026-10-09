@@ -415,6 +415,12 @@ struct View
   show as labels too.
 - Surfaces: `SymbolControl` (`symbolcontrol.h`) is the one layer the WebAPI, CLI, MCP, Lua and Python call. See
   `.recipe/analysis/symbols-import-export.md`.
+- Bundles: `ApplyBundles(folder, pageSha256)` imports the label files of `data/symbols/manifest.json` that match the
+  machine's ROM pages as sets `bundle:<id>` (priority 50, below every file). The emulator calls it at start and after
+  a ROM reload.
+- Paging: where labels of different pages share a CPU address, the view keeps all of them (`View::shared`), and
+  `GetLabelByZ80Address` returns the one whose page is mapped at the window now (`Memory::IsWindowRom`,
+  `GetROMPageForBank`, `GetRAMPageForBank`). A label without a page, placed later, wins over all of them.
 - `ToLabel(symbol)` / `FromLabel(label, base)` convert between the two forms. `ToLabel` gives:
   - the CPU address (a page symbol in its window);
   - the page as bank and bank offset;

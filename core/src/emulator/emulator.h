@@ -653,6 +653,9 @@ public:
     /// stops TTD recording first; the reload invalidates the TTD session as LoadROM does
     void RequestRomReload() { _romReloadPending = true; }
     bool RomReloadPending() const { return _romReloadPending; }
+    /// The symbol bundles (data/symbols/manifest.json, in the resources or next to the executable) that match the
+    /// loaded ROM pages go into the label manager as sets of origin "bundle"; UNREAL_SYMBOL_BUNDLES=0 turns it off
+    void ApplySymbolBundles();
 
     // Debug methods
     void DebugOn();

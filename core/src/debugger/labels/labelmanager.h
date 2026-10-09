@@ -76,6 +76,14 @@ protected:
     {
         std::map<std::string, std::shared_ptr<Label>> byName;
         std::unordered_map<uint16_t, std::shared_ptr<Label>> byAddress;   // the last one placed at the address
+        // Addresses where labels of different pages meet (ROM 0 and ROM 1 at #0000): every label there in placement
+        // order, with whether its page is a ROM page; the one of the page mapped now wins
+        struct Paged
+        {
+            std::shared_ptr<Label> label;
+            bool rom = false;
+        };
+        std::unordered_map<uint16_t, std::vector<Paged>> shared;
     };
     std::unique_ptr<unrealasm::symbols::SymbolStore> _store;
     std::shared_ptr<View> _view;
@@ -165,6 +173,14 @@ public:
     bool SetSymbolSetPriority(const std::string& id, int priority);
     bool DropSymbolSet(const std::string& id);
 
+    // Symbol bundles (symbols/tdd.md section 7): label files shipped for known ROMs, data/symbols/manifest.json
+    static constexpr int BUNDLE_PRIORITY = 50;
+    /// The bundles of `folder`'s manifest.json that match the machine's ROM pages (`pageSha256`: the hex SHA-256 of
+    /// each 16 KB page, by page number): each one a set "bundle:<id>" of origin "bundle" below every loaded file.
+    /// Bundle sets that no longer match are dropped; one already there stays as it is (switched off stays off).
+    /// Returns the bundle sets now in the store
+    std::vector<std::string> ApplyBundles(const std::string& folder, const std::vector<std::string>& pageSha256);
+
     /// A symbol as the label it shows (the CPU address, the page as bank + bank offset, the kind or the file's own type
     /// word, "code" when none; the "label.*" traits keep what a label set by hand has beyond that); nullopt when the
     /// symbol has no main CPU address
@@ -183,6 +199,8 @@ protected:
     static unrealasm::symbols::Symbol ToSymbol(const Label& label);
     void Rebuild();
     void Flush() const;
+    /// Of the labels at a shared address the last placed one of the page mapped at its window now (or of no page)
+    std::shared_ptr<Label> MappedAt(const std::vector<View::Paged>& labels, uint16_t address) const;
     static void Notify();
     /// endregion </Methods>
 };

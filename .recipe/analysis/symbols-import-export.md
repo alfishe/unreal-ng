@@ -120,5 +120,22 @@ range and name checks, and duplicates inside the file (the first wins). Then the
   diagnostic, and it is a comment line in the file when the format has comments.
 - `labels/resolve` and `/disasm` see the resolved labels only. A label in a switched-off set, or one shadowed by a
   higher set, does not show. `sets` gives each set's symbol count.
-- Address lookup is not yet aware of paging. Two page symbols at the same CPU address (ROM 0 and ROM 1 at `#0000`)
-  show the higher-priority one.
+- Where labels of several pages share a CPU address (ROM 0 and ROM 1 at `#0000`), the address shows the label of the
+  page mapped at that window now. A CPU-view label placed later wins over every page. With no label of the mapped
+  page, the last placed label shows, as at every other address.
+
+## Bundles
+
+The emulator ships label files for known ROMs (`data/symbols/`, next to `rom/` in every build and package). The list
+is in `data/symbols/manifest.json`: each bundle has the SHA-256 of the 16 KB ROM page it belongs to. At the start of
+each instance, and after a ROM reload, the bundles whose page is loaded become sets `bundle:<id>` (origin `bundle`,
+priority 50, below every loaded file). Bundles that no longer match are dropped. Today's bundles:
+
+- the 48K ROM (`rom:48k`), and the 48 BASIC in the 128K's ROM 1 (`rom:48k-in-128`, without the 48K's `spare` label);
+- the 128K editor ROM 0 (`rom:128k-rom0`);
+- the 48K and 128K system variables;
+- Sprinter BIOS 3.04 ROM pages 0, 8 and #C.
+
+A bundle set switched off stays off while the instance runs. `UNREAL_SYMBOL_BUNDLES=0` turns bundles off. To add a
+bundle, put the file in `data/symbols/` and add an entry with the page's SHA-256 (`shasum -a 256` of the 16 KB page).
+Use `"space": "rom"` when the file's addresses are page offsets of whatever page matched.

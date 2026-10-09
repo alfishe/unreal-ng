@@ -241,6 +241,15 @@ scans every page when the rule does not hold.
 code already computes for its signatures): it imports the matching bundles as sets with origin `bundle` and drops
 bundle sets whose ROM is gone. A user can switch a bundle set off; that choice is remembered.
 
+Built (2026-10-08):
+- The manifest takes `match.page_sha256` (a list), an optional `match.page`, `space` (`"rom"` = the page that matched),
+  `except` (names left out) and `note`.
+- `MatchBundles` gives a bundle with space `rom` once per matching page; any other bundle once.
+- `LabelManager::ApplyBundles` imports each match as `bundle:<id>` at priority 50 and drops the stale ones.
+- The emulator calls it when an instance starts and after a ROM reload (`Emulator::ApplySymbolBundles`), with the page
+  hashes from `ROM::CalculateSignature`.
+- The switched-off choice lasts while the instance runs; keeping it between sessions is still to come.
+
 ## 8. Surfaces
 
 The current calls stay as they are (FR-12). New ones:

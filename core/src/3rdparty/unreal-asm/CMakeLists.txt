@@ -114,6 +114,7 @@ add_library(unreal-asm STATIC
     src/layout/layout.cpp
     src/symbols/fromsource/fromsource.cpp
     src/symbols/live/live.cpp
+    src/symbols/bundles/bundles.cpp
 )
 target_include_directories(unreal-asm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(unreal-asm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -190,6 +191,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/symbols/symbolindex_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbolstore_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/json_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/bundles_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/nativecodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/labelfilecodecs_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/tokenizer_test.cpp
