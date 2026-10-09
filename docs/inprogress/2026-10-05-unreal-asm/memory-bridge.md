@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-05 |
-| **Status** | Design only, priority **P2** (owner, 2026-10-05): no code until the codecs (A2-A4) and symbols (A8) exist |
+| **Status** | Design, priority **P2** (owner, 2026-10-05): no code until the codecs (A2-A4) and symbols (A8) exist. They exist (2026-10-09); B0 research (memory descriptors) under way, §8 |
 | **Builds on** | the source codecs ([source-formats.md](source-formats.md)), the IR and dialect plugins ([dialect-conversion.md](dialect-conversion.md)), the symbol module ([symbols/](symbols/README.md)), the emulator's memory, TTD and debugger |
 
 ## 1. The idea in one example
@@ -136,7 +136,42 @@ flowchart TD
 | CLI, Lua, Python | `asm live ...`, `asm_live_*` |
 | Qt | a "Live source" panel: the decoded source, hints in the margin, build status; labels in the debugger |
 
-## 8. Phases (P2, after A2-A4 and A8)
+## 8. B0 results (2026-10-09)
+
+Found on an own unreal-ng instance (Pentagon 128). Each assembler was started from its disk and a known source loaded,
+then the RAM pages were read and compared before and after an edit. ALASM's own sources were used as well: 5.09 from
+its disk, 4.46 from `AL446SRC`.
+
+**ALASM 4.44 and 5.09** (the same layout; 4.46's source shows it too):
+
+| Field | Where |
+|---|---|
+| identification | `ALASM v4.44` / `ALASM v5.09` at `#BE06` (page 2, the always-mapped `#8000` window; the title the program prints) |
+| system variables | `#80BF` (ALASM addresses them as `IX+n`, `IX = #80BF`) |
+| current text's page | `IX+#0D` = `#80CC`: the memory driver's page id (`#C6` in 5.09's 512K build, `#06` in 4.44; the low three bits are port `#7FFD` bits 0-2, so RAM page 6 on a 128K) |
+| the text | that page from `#C000`, **the same bytes as the file on disk**: the 64-byte header (name at `#C000`, `T_SIZE` at `#C021` = the length after the header, `T_STR` at `#C023` = the address of the current line, `T_OPT` at `#C027` = changed when not 0, the signature at `#C028`), then the lines. The source is `#C000` to `#C040 + T_SIZE`: fibo 344 bytes and AL444nfo 6315 bytes were byte-identical to their files |
+| the line being typed | not in the page until Enter: `IX+#0C` bit 0 says the current line is modified; Enter writes it into the page, `T_SIZE` and `T_STR` move, `T_OPT` turns non-zero (5.09: 41) |
+| several texts | one page per text (`paGe n` switches, `IX+#0D` follows) |
+| label table | page 3 (`symbols/live.h`, research-labeltables.md) |
+
+So a one-shot extract of an ALASM source is: read `#80CC`, page that RAM page, take `#C000 .. #C040 + word(#C021)`,
+decode with the `alasm` codec. A typed but unconfirmed line is missing until Enter.
+
+**TASM 4.12** (first findings; the page of the upper part is not yet tied to a variable):
+
+| Field | Where |
+|---|---|
+| the text | a **gap buffer**. The part before the cursor runs from the text start up to the gap start, in page 2 (`#8000` window): `#A6EE` up for SNAKE. The part after the cursor runs from the gap end to the top of the `#C000` window: page 6 on this run, up to `#FFFF` |
+| pointers | `#8F59` = the text start (`#A6EE`), `#8F5D` = the gap start, `#8F5F` = the gap end. After SNAKE loaded: `#A6EE` / `#FB0F` (the first line taken into the editor). After an edit of line 1 and Enter: `#A6FE` / `#FB19` (line 1 written back below, line 2 taken above) |
+| the current line | expanded text in the editor's line buffer near `#928A` (page 2), not tokenized until it leaves the line |
+| a stale copy | Edit leaves the file's bytes at `#A6EE`; they stop being the text once the cursor moves (the gap) |
+
+A TASM extract therefore joins the lower part, the current line (encoded with the `tasm` codec from the line buffer)
+and the upper part.
+
+Still to do in B0: TASM's page of the upper part and its end marker, and a second TASM source.
+
+## 9. Phases (P2, after A2-A4 and A8)
 
 | Phase | Work |
 |---|---|

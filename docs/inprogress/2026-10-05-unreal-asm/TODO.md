@@ -138,4 +138,7 @@ phase; master only after the owner's review.
     - Every decode and conversion of the corpus is byte-identical to before.
   - [ ] still below 50 MB/s: ZEUS decode (each line encoded again for the canonical check, 16-36 MB/s), XAS decode (the packer, 33 MB/s)
   - [x] `BM_Symbols_DisasmLine` A/B against the old LabelManager (2026-10-08): 13-28 % faster with 1k-60k labels, the address lookup 4-9 times faster ([symbols/test-and-benchmark-plan.md](symbols/test-and-benchmark-plan.md) §6)
-- [ ] P2: memory bridge B0-B6 ([memory-bridge.md](memory-bridge.md)), design only for now
+- [ ] P2: memory bridge B0-B6 ([memory-bridge.md](memory-bridge.md))
+  - [x] B0 ALASM 4.44 / 5.09 (2026-10-09): the text page id at `#80CC`; the page is the file's bytes (`#C000 .. #C040 + word(#C021)`); identification `ALASM v…` at `#BE06`
+  - [ ] B0 TASM 4.12: gap buffer found (`#8F59` start, `#8F5D` gap start, `#8F5F` gap end, current line in the buffer near `#928A`); the upper part's page and end still open
+  - [ ] B1-B6 (code): waits for an owner go-ahead (P2)
