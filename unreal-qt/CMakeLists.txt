@@ -650,6 +650,9 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/diskfilesdialog_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/diskfilesdialog.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/diskfilesdialog.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/livesourcewindow_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/livesourcewindow.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/livesourcewindow.h"
         # The label editor's Sets tab (symbols S5)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/symbolsetspanel_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolsetspanel.cpp"

@@ -130,6 +130,9 @@ so the disassembly shows them at once. The set stays after `sync_unwatch`; `mana
 (`asm_sync_found`, `asm_sync_changed`, `asm_sync_built`, `asm_sync_lost`). CLI: `asm sync watch`, `asm sync hints`,
 `asm sync unwatch`. Lua / Python: `asm_sync_watch{...}`, `asm_sync_hints()`, `asm_sync_unwatch()`.
 
+In Qt: the debugger's **Live source** button opens a window with the text of the last build (the guest's cursor line
+highlighted, errors and warnings on their lines and in a list), the status, and Watch / Extract... / Convert....
+
 `state: none` (404) means that no known assembler is in RAM. `ambiguous` (400) means that two identify alike: give
 `assembler`. `inconsistent` means that the pointers did not add up at that moment (the guest was mid-update): ask again.
 

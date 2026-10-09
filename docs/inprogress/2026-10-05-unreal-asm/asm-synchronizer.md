@@ -453,6 +453,19 @@ Status: **Y1 built (2026-10-09)** (§4.3):
 Checked live on TASM 4.12: a line typed at the end, `MYLBL CALL nowhere`, appeared as the label `mylbl` after the next
 build. The hint `unknown symbol NOWHERE` pointed at its line (105).
 
+Status: **Y2 built (2026-10-09)**. The debugger's toolbar has a "Live source" button, which opens `LiveSourceWindow`
+(`unreal-qt/src/debugger/livesourcewindow.h`). The window has:
+
+- the text of the last build, read-only, with the guest's cursor line in blue and lines with errors in red and with
+  warnings in yellow;
+- the hints in a list (a double click shows the line);
+- a status line: the assembler, the build number, labels, errors and warnings, a line being typed, the cursor line;
+- the buttons Watch, Extract... (the assembler's file or text) and Convert... (another dialect).
+
+The window polls `AsmSyncService` every 300 ms; it copies no memory, since the service's worker does that. It starts a
+watch when none runs and stops that one again when it closes. A watch started elsewhere (the automation) stays on. The
+window finds its instance by id, so it never reaches a destroyed one. Test: unreal-qt-tests `LiveSourceWindow_Test`.
+
 | Phase | Work | Ends with |
 |---|---|---|
 | Y0 | Descriptor model, probe, the three readers, `SyncControl` `status` / `probe` / `extract`, ALASM 5.x / 4.4x and TASM 4.12, WebAPI + CLI + MCP | UC-1 / UC-2 for ALASM and TASM 4.12 |

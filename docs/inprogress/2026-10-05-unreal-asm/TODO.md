@@ -152,7 +152,7 @@ phase; master only after the owner's review.
     - [x] Y0 follow-up (2026-10-09): ALASM 3.8c, 4.42, 4.43, 4.45, 4.46, 4.5, 5.00, 5.05, 5.07, 5.08 descriptors, each with its dumps (the title address differs per build; 3.8c is recognized by `3.8c Written by`; 4.43 has no typing bit); 4.2 stays out (its loader crashes)
     - [x] Y1 hash poller + debounce, worker build (codec → IR → layout), hints, the live symbol set `live:sync:*`; Lua / Python (2026-10-09): `unrealasm/sync/session.h` (SyncSession, std only), `AsmSyncService` in DebugManager, `sync-watch` / `unwatch` / `hints` on every surface, WebSocket topic `asm_sync`; hints on the source's lines through `SourceLine::origin` (asm-synchronizer.md §4.3); checked live on TASM 4.12
     - [x] TASM `.IF` inside a `DEFMAC` body gave "IF without ENDIF" (SNAKE line 62) (2026-10-09): TASM 4.12's conditionals do not nest (checked in the emulator, `testdata/dialects/tasm412/IFNEST`); the frontend now writes them as flat sjasmplus blocks (research-tasm-to-sjasmplus.md). SNAKE still does not settle: the game it plays while assembling keeps its `=` values moving
-    - [ ] Y2 the Qt "Live source" dock
+    - [x] Y2 the Qt "Live source" window (2026-10-09): the debugger's "Live source" button, `LiveSourceWindow` (text of the last build, cursor line, hints on their lines and in a list, status, Watch / Extract / Convert); unreal-qt-tests `LiveSourceWindow_Test`
     - [ ] Y3 128K assemblers: XAS, STORM, ZX-ASM / ZAsm, MASM, TASM 4.0 / 4.4 / 3.x / 2.0, ALASM 3.8c / 4.42 / 5.0 / 5.05 (research + descriptor + golden dumps each, §7)
     - [ ] Y4 48K assemblers: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
