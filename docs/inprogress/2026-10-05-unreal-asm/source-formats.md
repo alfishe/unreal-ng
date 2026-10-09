@@ -59,7 +59,7 @@ upper case where the assembler shows upper case).
 | R3 | Compare the file with the references' layouts; resolve conflicts (ALASM `#96`, `#9F`); find what the references do not say | `research-<codec>.md` in this folder |
 | R4 | Screen captures of the assembler showing the probe source (OCR of the emulator screen) | the expected decoded text |
 | R5 | Assemble the probe in the assembler; keep the binary | the binary oracle for dialect conversion |
-| R7 | (P2, for the [memory bridge](memory-bridge.md)) the assembler's memory management: where its source buffer, pointers, pages and label table live, per version | `research-<codec>.md` §memory |
+| R7 | (P2, for the [asm-synchronizer](asm-synchronizer.md)) the assembler's memory management: where its source buffer, pointers, pages and label table live, per version | `research-<codec>.md` §memory |
 | R6 | Golden corpus `core/src/3rdparty/unreal-asm/testdata/<codec>/` (D-14): probe files, real-world sources (L5 data, P5 sample, disks of the collection), expected text, binaries | tests |
 
 ## 4. Format conversions planned first
