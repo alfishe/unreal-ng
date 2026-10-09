@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "debugger/pchistory/pchistory.h"
+#include "debugger/asm/sync/asmsyncservice.h"
 
 #include "debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -27,6 +28,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     _listing = new ListingParser(_context);
     _analyzerManager = std::make_unique<AnalyzerManager>(_context);
     _pcHistory = std::make_unique<PcHistory>(_context);
+    _asmSync = std::make_unique<AsmSyncService>(_context);
     
     // Keyboard injection manager for automation
     _keyboardManager = new DebugKeyboardManager(_context);
@@ -58,6 +60,7 @@ DebugManager::~DebugManager()
     // AnalyzerManager::~AnalyzerManager() deactivates every analyzer, which releases their
     // breakpoints through BreakpointManager - so it must go before _breakpoints is deleted
     // (as a unique_ptr member it would otherwise be destroyed after this body has run).
+    _asmSync.reset();   // its worker publishes into _labels: stopped first
     _commandTyper.reset();
     _analyzerManager.reset();
     _editorMonitor = nullptr;

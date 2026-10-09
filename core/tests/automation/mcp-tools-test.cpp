@@ -1990,6 +1990,25 @@ TEST_F(McpTools_Test, AsmSource_SyncActionsMapToTheSyncRoutes)
     ASSERT_NE(call, nullptr);
     EXPECT_EQ(call->body["as"].asString(), "dialect");
     EXPECT_EQ(call->body["to"].asString(), "sjasmplus");
+
+    for (const char* route : {"POST /api/v1/emulator/emu-1/asm/sync/watch", "DELETE /api/v1/emulator/emu-1/asm/sync/watch",
+                              "GET /api/v1/emulator/emu-1/asm/sync/hints"})
+        _caller->routes[route] = {200, Json::Value(Json::objectValue)};
+    Json::Value watch;
+    watch["action"] = "sync_watch";
+    watch["interval"] = 100;
+    RunTool(*_registry, "asm_source", watch, *_caller);
+    call = _caller->Last("POST", "/api/v1/emulator/emu-1/asm/sync/watch");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["interval"].asString(), "100");
+    Json::Value hints;
+    hints["action"] = "sync_hints";
+    RunTool(*_registry, "asm_source", hints, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/asm/sync/hints"));
+    Json::Value unwatch;
+    unwatch["action"] = "sync_unwatch";
+    RunTool(*_registry, "asm_source", unwatch, *_caller);
+    EXPECT_TRUE(_caller->Saw("DELETE", "/api/v1/emulator/emu-1/asm/sync/watch"));
 }
 
 TEST_F(McpTools_Test, CaptureMedia_ScreenDigest_GetsDigestEndpoint)

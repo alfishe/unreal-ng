@@ -148,9 +148,10 @@ phase; master only after the owner's review.
 - [ ] P2: asm-synchronizer ([asm-synchronizer.md](asm-synchronizer.md), TDD 2026-10-09; was "memory bridge"). Both directions between the host and an assembler running in the emulator; about 95 days in all; the code waits for an owner go-ahead (P2)
   - [x] research: ALASM 4.44 / 5.09 and TASM 4.12 memory layouts verified live (2026-10-09)
   - Part A, guest → host (about 40 days; §11-§12):
-    - [x] Y0 descriptors, probe, the three readers (file image, gap buffer, linear), `SyncControl` status / probe / extract; ALASM 5.09 / 4.44, TASM 4.12; WebAPI, CLI, MCP (2026-10-09): `unrealasm/sync.h`, golden dumps `testdata/sync` (9 sessions, each byte-identical to the assembler's own save), `sync-*` verbs of AsmControl; checked live on TASM 4.12 and ALASM 4.44
-    - [ ] Y0 follow-up: ALASM 5.0 / 5.05 / 5.07 / 5.08 / 4.43 / 4.45 / 4.46 / 4.5 descriptors (each build keeps its title elsewhere: a dump each); Lua / Python `asm_sync_*` (Y1 lists them)
-    - [ ] Y1 hash poller + debounce, worker build (codec → IR → layout), hints, the live symbol set `live:sync:*`; Lua / Python (about 4 days more)
+    - [x] Y0 descriptors, probe, the three readers (file image, gap buffer, linear), `SyncControl` status / probe / extract; ALASM 5.09 / 4.44, TASM 4.12; WebAPI, CLI, MCP (2026-10-09): `unrealasm/sync/reader.h`, golden dumps `testdata/sync` (9 sessions, each byte-identical to the assembler's own save), `sync-*` verbs of AsmControl; checked live on TASM 4.12 and ALASM 4.44
+    - [ ] Y0 follow-up: ALASM 5.0 / 5.05 / 5.07 / 5.08 / 4.43 / 4.45 / 4.46 / 4.5 descriptors (each build keeps its title elsewhere: a dump each)
+    - [x] Y1 hash poller + debounce, worker build (codec → IR → layout), hints, the live symbol set `live:sync:*`; Lua / Python (2026-10-09): `unrealasm/sync/session.h` (SyncSession, std only), `AsmSyncService` in DebugManager, `sync-watch` / `unwatch` / `hints` on every surface, WebSocket topic `asm_sync`; hints on the source's lines through `SourceLine::origin` (asm-synchronizer.md §4.3); checked live on TASM 4.12
+    - [ ] layout: TASM `.IF` inside a `DEFMAC` body gives "IF without ENDIF" (SNAKE line 62, also in `symconv source`), so SNAKE's labels are incomplete
     - [ ] Y2 the Qt "Live source" dock
     - [ ] Y3 128K assemblers: XAS, STORM, ZX-ASM / ZAsm, MASM, TASM 4.0 / 4.4 / 3.x / 2.0, ALASM 3.8c / 4.42 / 5.0 / 5.05 (research + descriptor + golden dumps each, §7)
     - [ ] Y4 48K assemblers: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM

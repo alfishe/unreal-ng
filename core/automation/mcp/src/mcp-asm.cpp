@@ -11,6 +11,9 @@
 //   sync_status  → GET  /asm/sync?assembler=        the assembler running in the machine and its text (asm-synchronizer)
 //   sync_probe   → POST /asm/sync/probe
 //   sync_extract → POST /asm/sync/extract {assembler?, as?, to?, codepage?, output?}
+//   sync_watch   → POST /asm/sync/watch {assembler?, interval?, quiet?, as?, to?, output?}
+//   sync_unwatch → DELETE /asm/sync/watch
+//   sync_hints   → GET  /asm/sync/hints
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
 
@@ -30,12 +33,14 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"formats", "dialects", "files", "detect", "decode", "encode", "convert", "sync_status", "sync_probe", "sync_extract"})
+    for (const char* action : {"formats", "dialects", "files", "detect", "decode", "encode", "convert", "sync_status", "sync_probe", "sync_extract",
+                               "sync_watch", "sync_unwatch", "sync_hints"})
         schema["properties"]["action"]["enum"].append(action);
     schema["properties"]["action"]["description"] =
         "Assembler source operation: the tokenized formats of ZX Spectrum assemblers (ALASM, TASM, ZX-ASM, STORM, MASM, GENS, ZEUS, "
         "XAS, Laser Genius, ...) and text dialects; decode to text, encode text, convert between dialects (to sjasmplus, pasmo, z88dk). sync_*: the source an "
-        "assembler running in the machine holds in RAM (ALASM 5.09 / 4.44, TASM 4.12), read as its own SAVE would write it.";
+        "assembler running in the machine holds in RAM (ALASM 5.09 / 4.44, TASM 4.12), read as its own SAVE would write it; sync_watch keeps its labels (symbol set live:sync:<assembler>) and hints up to date "
+        "while the user types.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     const auto text = [&](const char* name, const char* description) {
@@ -57,7 +62,11 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
     text("from", "convert: the source dialect when the codec does not tell (the text codec)");
     text("drive", "files: A-D (default A)");
     text("assembler", "sync_*: the assembler when two identify (alasm-5.09, alasm-4.44, tasm-4.12)");
-    text("as", "sync_extract: text (default), file (the assembler's own format) or dialect (with to)");
+    text("as", "sync_extract / sync_watch: text (default), file (the assembler's own format) or dialect (with to)");
+    schema["properties"]["interval"]["type"] = "integer";
+    schema["properties"]["interval"]["description"] = "sync_watch: ms between looks at the text (default 250)";
+    schema["properties"]["quiet"]["type"] = "integer";
+    schema["properties"]["quiet"]["description"] = "sync_watch: ms a change must stay before it is built (default 500)";
     schema["properties"]["start"]["type"] = "integer";
     schema["properties"]["start"]["description"] = "encode to a disk: the catalog start field (default: what the format needs)";
     schema["properties"]["z80n"]["type"] = "boolean";
@@ -101,17 +110,28 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
                                   nullptr, caller, "Assembler in RAM", done);
                 return;
             }
-            if (action == "sync_probe" || action == "sync_extract")
+            if (action == "sync_unwatch")
+            {
+                ResolveAndForward(args, "DELETE", "/asm/sync/watch", nullptr, caller, "Assembler in RAM: unwatch", done);
+                return;
+            }
+            if (action == "sync_hints")
+            {
+                ResolveAndForward(args, "GET", "/asm/sync/hints", nullptr, caller, "Assembler in RAM: hints", done);
+                return;
+            }
+            if (action == "sync_probe" || action == "sync_extract" || action == "sync_watch")
             {
                 Json::Value body(Json::objectValue);
-                for (const char* name : {"assembler", "as", "to", "codepage", "output"})
+                for (const char* name : {"assembler", "as", "to", "codepage", "output", "interval", "quiet"})
                     if (args.isMember(name) && !args[name].isNull())
                         body[name] = args[name].asString();
                 ResolveAndForward(args, "POST", "/asm/sync/" + action.substr(5), &body, caller, "Assembler in RAM: " + action.substr(5), done);
                 return;
             }
             done(ToolResult::Error("Unknown action '" + action +
-                                   "'. Valid: formats, dialects, files, detect, decode, encode, convert, sync_status, sync_probe, sync_extract"));
+                                   "'. Valid: formats, dialects, files, detect, decode, encode, convert, sync_status, sync_probe, sync_extract, sync_watch, "
+                                   "sync_unwatch, sync_hints"));
         });
 }
 

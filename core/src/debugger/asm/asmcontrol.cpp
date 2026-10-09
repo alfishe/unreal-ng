@@ -321,7 +321,7 @@ AsmControl::AsmControl(EmulatorContext* context) : _context(context) {}
 const std::vector<std::string>& AsmControl::Verbs()
 {
     static const std::vector<std::string> verbs = {"formats", "dialects", "files", "detect", "decode", "encode", "convert",
-                                                   "sync-status", "sync-probe", "sync-extract"};
+                                                   "sync-status", "sync-probe", "sync-extract", "sync-watch", "sync-unwatch", "sync-hints"};
     return verbs;
 }
 

@@ -8,12 +8,17 @@
 #include <string>
 
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testwaithelper.h"
 #include "common/base64.h"
 #include "debugger/asm/asmcontrol.h"
+#include "debugger/debugmanager.h"
+#include "debugger/labels/labelmanager.h"
+#include "unrealasm/symbols/symbol.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/memory/memory.h"
+#include "debugger/asm/sync/asmsyncservice.h"
 
 /// The asm-synchronizer's verbs (asm-synchronizer.md §8, phase Y0) on a machine whose RAM holds a dumped assembler
 /// session (unreal-asm testdata/sync): the pages are written into Memory directly, no guest code runs
@@ -136,4 +141,51 @@ TEST_F(SyncControl_Test, TheFileGoesToTheHostAsTheAssemblerSavesIt)
     ASSERT_TRUE(reply.Ok()) << reply.message;
     EXPECT_FALSE(reply.body.find("editor")->b) << "the command line: every line is in the text";
     EXPECT_TRUE(ReadBytes(out) == ReadBytes(SyncData("tasm412-command") / "SNAKE.A"));
+}
+
+// The watch (phase Y1): the worker reads the text, builds it after the pause, publishes its labels
+
+TEST_F(SyncControl_Test, TheWatchPublishesTheLabelsAndFollowsAChange)
+{
+    // Boot-bound worker: the waits are on its builds (interval 50 ms, no quiet period)
+    LoadSession(_context, "tasm412-top");
+    AsmReply reply = SyncRun(_context, "sync-watch", {{"interval", "50"}, {"quiet", "0"}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_TRUE(reply.body.find("watching")->b);
+    EXPECT_EQ(SyncRun(_context, "sync-watch", {{"interval", "5"}}).HttpStatus(), 400);
+    EXPECT_EQ(SyncRun(_context, "sync-watch", {{"as", "dialect"}}).HttpStatus(), 400);
+
+    const auto generation = [&]() {
+        const AsmReply hints = SyncRun(_context, "sync-hints");
+        return hints.Ok() ? hints.body.find("generation")->i : 0;
+    };
+    ASSERT_TRUE(TestWait::For([&] { return generation() >= 1; })) << "the first build";
+    reply = SyncRun(_context, "sync-hints");
+    EXPECT_EQ(reply.body.find("assembler")->s, "tasm-4.12");
+    EXPECT_EQ(reply.body.find("set")->s, "live:sync:tasm-4.12");
+    EXPECT_GT(reply.body.find("labels")->i, 10);
+
+    LabelManager* labels = _context->pDebugManager->GetLabelManager();
+    ASSERT_NE(labels->GetLabelByName("KEY"), nullptr) << "SNAKE's KEY, from the live set";
+    bool found = false;
+    for (const auto& set : labels->GetSymbolSets())
+        if (set.id == "live:sync:tasm-4.12")
+        {
+            found = true;
+            EXPECT_EQ(set.priority, AsmSyncService::kLabelPriority);
+        }
+    EXPECT_TRUE(found);
+
+    // The guest edits: the next look sees the change, the next build follows
+    const int64_t before = generation();
+    LoadSession(_context, "tasm412-typing");
+    EXPECT_TRUE(TestWait::For([&] { return generation() > before; })) << "a build after the change";
+    reply = SyncRun(_context, "sync-status");
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_TRUE(reply.body.find("watch")->find("watching")->b);
+
+    reply = SyncRun(_context, "sync-unwatch");
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_FALSE(reply.body.find("watching")->b);
+    EXPECT_NE(labels->GetLabelByName("KEY"), nullptr) << "the labels stay after the watch";
 }

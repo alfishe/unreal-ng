@@ -51,6 +51,23 @@ uint32_t SourceLineNumber(const ProjectFile& file, uint32_t line)
     return line;
 }
 
+/// A layout diagnostic ("file:line: message", the line of the converted text) on the source line it was written from
+void PointToSource(Diagnostic& d, const std::vector<ProjectFile>& files, const std::vector<ProjectFile>& converted)
+{
+    for (size_t k = 0; k < converted.size() && k < files.size(); ++k)
+    {
+        const std::string prefix = converted[k].name + ":" + std::to_string(d.line) + ": ";
+        if (d.message.rfind(prefix, 0) != 0 || d.line < 1 || d.line > converted[k].document.lines.size())
+            continue;
+        const uint32_t origin = converted[k].document.lines[d.line - 1].origin;
+        if (origin == 0)
+            return;
+        d.line = SourceLineNumber(files[k], origin);
+        d.message = files[k].name + ":" + std::to_string(d.line) + ": " + d.message.substr(prefix.size());
+        return;
+    }
+}
+
 void Keep(Diagnostics& into, const Diagnostics& from, Severity least)
 {
     for (const Diagnostic& d : from)
@@ -87,6 +104,9 @@ SourceSymbolsResult SymbolsFromProject(const std::vector<ProjectFile>& files, si
     else
         laidOut = files;
     layout::LayoutResult laid = layout::Layout(laidOut, main, options.layout);
+    if (converted)
+        for (Diagnostic& d : laid.diagnostics)
+            PointToSource(d, files, laidOut);
     Keep(result.diagnostics, laid.diagnostics, Severity::Info);
 
     std::map<std::string, const layout::Label*> byName;

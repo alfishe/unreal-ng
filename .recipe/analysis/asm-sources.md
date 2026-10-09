@@ -115,6 +115,21 @@ asm_source {"action":"sync_extract","as":"file","output":"disk:A/COPY.H"}   # th
 | WebAPI | `GET /emulator/{id}/asm/sync?assembler=`, `POST /asm/sync/probe`, `POST /asm/sync/extract {assembler?, as: text \| file \| dialect, to?, codepage?, output?}` |
 | CLI | `asm sync [status]`, `asm sync probe`, `asm sync extract [--as text\|file\|dialect] [--to d] [--output f]` |
 
+**Watch** (live labels and hints while the user types in the guest):
+
+```text
+asm_source {"action":"sync_watch"}                                    # interval 250 ms, quiet 500 ms
+asm_source {"action":"sync_watch","as":"dialect","to":"sjasmplus","output":"scratch/live.asm"}   # the host file follows
+asm_source {"action":"sync_hints"}                                    # the last build: labels, hints with source lines
+asm_source {"action":"sync_unwatch"}
+```
+
+The labels of each build become the symbol set `live:sync:<assembler>` (priority 900000: above files, below `user`),
+so the disassembly shows them at once. The set stays after `sync_unwatch`; `manage_symbols drop` removes it. WebAPI:
+`POST` / `DELETE /emulator/{id}/asm/sync/watch`, `GET /asm/sync/hints`; WebSocket topic `asm_sync`
+(`asm_sync_found`, `asm_sync_changed`, `asm_sync_built`, `asm_sync_lost`). CLI: `asm sync watch`, `asm sync hints`,
+`asm sync unwatch`. Lua / Python: `asm_sync_watch{...}`, `asm_sync_hints()`, `asm_sync_unwatch()`.
+
 `state: none` (404) means that no known assembler is in RAM. `ambiguous` (400) means that two identify alike: give
 `assembler`. `inconsistent` means that the pointers did not add up at that moment (the guest was mid-update): ask again.
 

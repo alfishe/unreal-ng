@@ -42,6 +42,7 @@ protected:
     class EditorMonitor* _editorMonitor = nullptr;
     std::unique_ptr<class CommandTyper> _commandTyper;
     std::unique_ptr<class PcHistory> _pcHistory;
+    std::unique_ptr<class AsmSyncService> _asmSync;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -67,6 +68,8 @@ public:
     CommandTyper* GetCommandTyper() { return _commandTyper.get(); }
     /// The PC history ring (pchistory.h): off until a debugger arms it
     PcHistory* GetPcHistory() { return _pcHistory.get(); }
+    /// The asm-synchronizer's watch (debugger/asm/sync/asmsyncservice.h): no thread until a watch starts
+    AsmSyncService* GetAsmSyncService() { return _asmSync.get(); }
 
     /// endregion </Properties>
 

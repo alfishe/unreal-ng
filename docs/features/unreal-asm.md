@@ -140,8 +140,16 @@ asm sync extract --as dialect --to sjasmplus --output live.asm
 The same is `asm_source` `sync_status` / `sync_extract` in MCP and `GET /asm/sync` in the WebAPI
 ([.recipe/analysis/asm-sources.md](../../.recipe/analysis/asm-sources.md#the-source-an-assembler-holds-in-ram-asm-synchronizer)).
 The machine's memory is copied between two frames and never written. A line you are typing in TASM is part of the
-text. ALASM keeps the line under the cursor apart until Enter, and the status says so. More assemblers and a live
-follow mode with labels are planned
+text. ALASM keeps the line under the cursor apart until Enter, and the status says so.
+
+`asm sync watch` keeps following the source while you type in the guest. Half a second after you stop typing, the
+source is built on the host:
+
+- its labels show in the debugger at once (the symbol set `live:sync:<assembler>`);
+- `asm sync hints` lists the errors with their line numbers, for example `line 105: unknown symbol NOWHERE`;
+- with `--output`, a host file (text, the assembler's format or sjasmplus) is written again after each build.
+
+`asm sync unwatch` stops the watch. More assemblers are planned
 ([asm-synchronizer](../inprogress/2026-10-05-unreal-asm/asm-synchronizer.md)).
 
 ## Speed

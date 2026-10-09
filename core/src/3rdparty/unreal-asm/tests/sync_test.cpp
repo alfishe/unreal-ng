@@ -9,7 +9,8 @@
 #include "symbols/io/json.h"
 #include "testdata.h"
 #include "unrealasm/registry.h"
-#include "unrealasm/sync.h"
+#include "unrealasm/sync/reader.h"
+#include "unrealasm/sync/session.h"
 
 using namespace unrealasm;
 using namespace unrealasm::sync;
@@ -192,4 +193,89 @@ TEST(Sync_Test, TheLinearReaderCopiesFromStartToEndAndAddsTheMarker)
 
     std::vector<uint8_t> out;
     EXPECT_FALSE(machine.Read(0xBFFF, 2, out)) << "#C000 is in a window whose page was not copied";
+}
+
+// The watch (phase Y1): a change is built once typing has paused; the build gives the labels and the hints
+
+TEST(SyncSession_Test, AChangeIsBuiltAfterThePauseAndOnlyOnce)
+{
+    SyncSession session;
+    const Dump loaded = Load("alasm509-loaded");
+    TickResult tick = session.Tick(loaded.machine, 1000);
+    EXPECT_EQ(tick.event, TickEvent::Found);
+    ASSERT_NE(session.Descriptor(), nullptr);
+    EXPECT_EQ(session.Descriptor()->id, "alasm-5.09");
+    EXPECT_FALSE(session.TakeBuild(1200)) << "still inside the quiet period";
+    std::optional<BuildInput> input = session.TakeBuild(1500);
+    ASSERT_TRUE(input);
+    EXPECT_EQ(input->generation, 1u);
+    EXPECT_FALSE(session.TakeBuild(9000)) << "nothing changed since";
+
+    EXPECT_EQ(session.Tick(loaded.machine, 2000).event, TickEvent::None);
+    // Typing a line ALASM keeps apart does not change the text; Enter does
+    EXPECT_EQ(session.Tick(Load("alasm509-typing").machine, 2500).event, TickEvent::None);
+    const Dump edited = Load("alasm509-edited");
+    EXPECT_EQ(session.Tick(edited.machine, 3000).event, TickEvent::Changed);
+    EXPECT_EQ(session.Tick(edited.machine, 3400).event, TickEvent::None);
+    EXPECT_FALSE(session.TakeBuild(3400));
+    input = session.TakeBuild(3500);
+    ASSERT_TRUE(input);
+    EXPECT_EQ(input->generation, 2u);
+    EXPECT_TRUE(input->file == edited.expected);
+
+    // The assembler gone: lost, and found again afterwards
+    const std::vector<uint8_t> zero(0x4000, 0);
+    MachineView empty;
+    empty.windows = {-1, 5, 2, 6};
+    empty.ram = {{2, zero}, {5, zero}, {6, zero}};
+    EXPECT_EQ(session.Tick(empty, 4000).event, TickEvent::Lost);
+    EXPECT_EQ(session.Descriptor(), nullptr);
+    EXPECT_TRUE(session.NeedsAllPages());
+    EXPECT_EQ(session.Tick(edited.machine, 5000).event, TickEvent::Found);
+    EXPECT_FALSE(session.NeedsAllPages());
+    EXPECT_EQ(session.TextPages(), std::vector<int>{6});
+}
+
+TEST(SyncSession_Test, TheBuildGivesTheLabelsOfTheLiveText)
+{
+    SyncSession session;
+    session.Tick(Load("tasm412-typing").machine, 0);
+    const std::optional<BuildInput> input = session.TakeBuild(1000);
+    ASSERT_TRUE(input);
+    const BuildResult built = SyncSession::Build(*input);
+    ASSERT_TRUE(built.decoded);
+    EXPECT_EQ(built.document.lines.size(), 104u);
+    EXPECT_FALSE(built.labels.symbols.empty());
+    bool key = false;
+    for (const symbols::Symbol& s : built.labels.symbols)
+        key = key || s.name == "KEY";
+    EXPECT_TRUE(key) << "KEY = [#5C08] of SNAKE";
+}
+
+TEST(SyncSession_Test, AHintPointsAtTheSourceLine)
+{
+    // TASM text with an undefined name on its third line, as the TASM codec writes it
+    const ISourceCodec* tasm = CodecRegistry::Builtin().Find("tasm");
+    ASSERT_NE(tasm, nullptr);
+    SourceDocument document = SourceDocument::FromText("        ORG     30000\n; a comment\nSTART   LD      HL,MISSING\n        RET", "tasm");
+    EncodeOptions options;
+    options.subversion = "4.12";
+    const EncodeResult encoded = tasm->Encode(document, options);
+    ASSERT_TRUE(encoded.ok);
+    BuildInput input;
+    input.descriptor = FindDescriptor("tasm-4.12");
+    input.file = encoded.bytes;
+    input.generation = 7;
+    const BuildResult built = SyncSession::Build(input);
+    ASSERT_TRUE(built.decoded);
+    EXPECT_EQ(built.generation, 7u);
+    EXPECT_FALSE(built.complete);
+    bool found = false;
+    for (const Diagnostic& d : built.hints)
+        if (d.message.find("MISSING") != std::string::npos)
+        {
+            found = true;
+            EXPECT_EQ(d.line, 3u) << d.message;
+        }
+    EXPECT_TRUE(found) << "the undefined name is reported";
 }

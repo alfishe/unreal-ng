@@ -35,6 +35,8 @@ void CLIProcessor::HandleAsm(const ClientSession& session, const std::vector<std
             ss << "  asm sync [status] [--assembler a]       - the assembler running in the machine and its text" << NEWLINE;
             ss << "  asm sync probe                        - every assembler that identifies in RAM" << NEWLINE;
             ss << "  asm sync extract [--as text|file|dialect] [--to d] [--output file|disk:A/NAME.T]" << NEWLINE;
+            ss << "  asm sync watch [--interval ms] [--quiet ms] [--as ..] [--to d] [--output f] - live labels and hints" << NEWLINE;
+            ss << "  asm sync unwatch | asm sync hints     - stop the watch; the last build's hints" << NEWLINE;
             ss << "  (a path is a host file or disk:A/NAME.T; --file NAME.T picks a file in a .trd / .tap; --json)" << NEWLINE;
             session.SendResponse(ss.str());
             return;
@@ -154,6 +156,25 @@ void CLIProcessor::HandleAsm(const ClientSession& session, const std::vector<std
     }
     else if (verb == "sync-extract")
         ss << text("text");
+    else if (verb == "sync-watch" || verb == "sync-unwatch")
+    {
+        ss << (body.find("watching")->b ? "Watching" : "Not watching") << ": " << text("state");
+        if (!text("assembler").empty() && text("assembler") != "-")
+            ss << " (" << text("assembler") << ")";
+        ss << ", " << number("builds") << " builds" << NEWLINE;
+    }
+    else if (verb == "sync-hints")
+    {
+        ss << "Build " << number("generation") << " of " << text("assembler") << ": " << number("labels") << " labels in " << text("set")
+           << (body.find("complete")->b ? "" : " (not every label has a value)") << NEWLINE;
+        for (const StateNode& h : body.find("hints")->items)
+            if (h.find("severity")->s != "info")
+                ss << "  line " << h.find("line")->i << " " << h.find("severity")->s << ": " << h.find("message")->s << NEWLINE;
+        if (!text("output_error").empty() && text("output_error") != "-")
+            ss << "Output: " << text("output_error") << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
     else if (verb == "encode")
         ss << number("bytes") << " bytes as " << text("format") << " " << text("version")
            << (body.find("output") ? " written to " + text("output") : std::string(" (give --output to write them)")) << NEWLINE;

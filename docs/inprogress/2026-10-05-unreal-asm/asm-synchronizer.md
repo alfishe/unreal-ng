@@ -109,6 +109,36 @@ a watch is armed, so with the synchronizer off it costs nothing. The memory path
 - The worker owns the snapshot; a newer snapshot cancels the build by a generation counter.
 - Publishing the symbol set goes through `LabelManager` (its own locking); the WebSocket event through MessageCenter.
 
+### 4.3 As built (Y0-Y1, 2026-10-09)
+
+**Where it lives** (owner decision, 2026-10-09). The synchronizer is a subproject of unreal-asm, and the emulator
+only adapts it:
+
+| Part | Place | What |
+|---|---|---|
+| readers | `unrealasm/sync/reader.h`, `src/sync/reader.cpp` | descriptors, probe, the three layout families (Y0) |
+| session | `unrealasm/sync/session.h`, `src/sync/session.cpp` | `SyncSession`: Tick (who is there, the text, a change by the hash of the live file), TakeBuild (after the quiet period), Build (codec → sjasmplus conversion → layout → labels and hints). Standard library only, no threads, no clock: the caller gives the time |
+| adapter | `core/src/debugger/asm/sync/asmsyncservice.h` | `AsmSyncService`, one per instance, owned by `DebugManager`: the worker thread, the coherent copy, publishing |
+| surface | `core/src/debugger/asm/sync/synccontrol.h` | `SyncControl` behind AsmControl's `sync-*` verbs: WebAPI, CLI, MCP, Lua, Python |
+
+**What differs from the drawing above.**
+
+- **No frame-end subscription.** The worker wakes every `interval` ms (default 250), so the quiet period is the
+  same in turbo. The thread exists only while a watch is on.
+- **What is copied.** A look copies the pages the CPU sees plus the text's page (at most five 16 KB pages), every page
+  while no assembler is known yet. It does not copy the text region alone.
+- **What counts as a change.** The hash (FNV-1a) is of the live file, so the cursor and the screen do not count as a
+  change.
+- **No cancellation.** The build runs on the same worker, after the look that found the text quiet. A change made
+  during a build is seen at the next look, so nothing needs cancelling.
+- **Locking.** `LabelManager` has no lock of its own. The worker publishes the way the WebAPI threads import, by
+  replacing the set `live:sync:<assembler>` at priority 900000: above every loaded file, below `user`.
+- **Notifications.** The MessageCenter topic is `NC_ASM_SYNC` (payload `AsmSyncPayload`). The WebSocket topic
+  `asm_sync` carries `asm_sync_found`, `asm_sync_changed`, `asm_sync_built`, `asm_sync_lost` and `asm_sync_ambiguous`.
+- **Hints on the source's lines.** The sjasmplus backend now records, for every line it writes, the source line it
+  came from (`SourceLine::origin`). `SymbolsFromProject` uses that to report the layout's messages on the source's
+  lines, so `symconv source` and `import-source` gain it too.
+
 ## 5. Generic algorithms
 
 ### 5.1 Page ids
@@ -402,13 +432,25 @@ AsmControl.
 
 Status: **Y0 built (2026-10-09)**:
 
-- the library part is `unrealasm/sync.h` (descriptors, probe, the three readers), tested on golden dumps
+- the library part is `unrealasm/sync/reader.h` (descriptors, probe, the three readers), tested on golden dumps
   (`testdata/sync`, made by `tools/verification/unreal-asm/emulator/sync-dumps.py`);
 - the emulator part is `SyncControl` (`core/src/debugger/asm/sync/synccontrol.h`), reached through AsmControl's
   `sync-*` verbs;
 - surfaces: WebAPI `GET /asm/sync`, `POST /asm/sync/probe` / `extract`; CLI `asm sync`; MCP `asm_source` `sync_*`;
 - descriptors: ALASM 5.09, ALASM 4.44, TASM 4.12. The other versions of §7.2 / §7.3 need their dumps, because the title
   address differs per build.
+
+Status: **Y1 built (2026-10-09)** (§4.3):
+
+- the watch: `sync-watch`, `sync-unwatch`, `sync-hints`;
+- WebAPI `POST` / `DELETE /asm/sync/watch`, `GET /asm/sync/hints`;
+- CLI `asm sync watch` / `unwatch` / `hints`;
+- MCP `sync_watch` / `sync_unwatch` / `sync_hints`;
+- Lua and Python `asm_sync_*`;
+- WebSocket topic `asm_sync`.
+
+Checked live on TASM 4.12: a line typed at the end, `MYLBL CALL nowhere`, appeared as the label `mylbl` after the next
+build. The hint `unknown symbol NOWHERE` pointed at its line (105).
 
 | Phase | Work | Ends with |
 |---|---|---|

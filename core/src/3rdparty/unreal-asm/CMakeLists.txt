@@ -116,7 +116,8 @@ add_library(unreal-asm STATIC
     src/symbols/fromsource/project.cpp
     src/symbols/live/live.cpp
     src/symbols/bundles/bundles.cpp
-    src/sync/sync.cpp
+    src/sync/reader.cpp
+    src/sync/session.cpp
 )
 target_include_directories(unreal-asm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(unreal-asm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
