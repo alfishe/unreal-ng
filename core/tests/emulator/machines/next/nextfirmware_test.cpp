@@ -22,6 +22,8 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/keyboard/keyboard.h"
+#include "emulator/video/screen.h"
 #include "emulator/io/storage/fat/fatsynthvolume.h"
 #include "emulator/io/storage/hostfolder/foldersnapshot.h"
 #include "emulator/io/storage/hostfolder/hostfolderfat.h"
@@ -199,6 +201,15 @@ TEST_F(NextFirmware_Test, PersonalityRomStallHunt)
                     resetAt = f;
         if (resetAt >= 0)
             pcHist[_z80->pc & 0xFFF0]++;
+        // UNREAL_NEXT_SPACE=<frames after the reset>: hold SPACE for 8 frames from there (the welcome screen's "start")
+        if (const char* at = std::getenv("UNREAL_NEXT_SPACE"); at && resetAt >= 0)
+        {
+            const int start = resetAt + std::atoi(at);
+            if (f == start)
+                _context->pKeyboard->PressKey(ZXKEY_SPACE);
+            if (f == start + 8)
+                _context->pKeyboard->ReleaseKey(ZXKEY_SPACE);
+        }
     }
     std::fprintf(stderr, "soft reset at frame %d of %d, pc=%04X sp=%04X iff=%d im=%d halted=%d mmu:", resetAt, total, _z80->pc, _z80->sp,
                  _z80->iff1, _z80->im, _z80->halted);
@@ -232,10 +243,18 @@ TEST_F(NextFirmware_Test, PersonalityRomStallHunt)
     {
         // the ULA screen (RAM bank 5 -> 16K page 5) and the Layer 2 banks (16K pages 8-10) as raw files for scratch conversion
         std::ofstream ula(std::string(dump) + "/ula.bin", std::ios::binary);
-        ula.write(reinterpret_cast<const char*>(_memory->RAMPageAddress(5)), 0x1B00);
+        ula.write(reinterpret_cast<const char*>(_memory->RAMPageAddress(5)), 0x4000);
         std::ofstream l2(std::string(dump) + "/l2.bin", std::ios::binary);
         for (unsigned bank = 8; bank < 13; bank++)
             l2.write(reinterpret_cast<const char*>(_memory->RAMPageAddress(static_cast<uint16_t>(bank))), 0x4000);
+        {
+            // the emulator's own frame as RGBA with a small header (width, height) for scratch conversion
+            const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
+            std::ofstream out(std::string(dump) + "/frame.rgba", std::ios::binary);
+            const uint32_t dims[2] = {fb.width, fb.height};
+            out.write(reinterpret_cast<const char*>(dims), sizeof dims);
+            out.write(reinterpret_cast<const char*>(fb.memoryBuffer), fb.memoryBufferSize);
+        }
         std::ofstream ram7(std::string(dump) + "/ram7.bin", std::ios::binary);
         ram7.write(reinterpret_cast<const char*>(_memory->RAMPageAddress(7)), 0x4000);
     }
@@ -299,4 +318,61 @@ TEST_F(NextFirmware_Test, PersonalityRomRestartHunt)
         }
         prev = _z80->pc;
     }
+}
+
+// The first user-visible milestone (A4): the real chain reaches the NextZXOS "Welcome" screen, SPACE starts the OS and
+// its main menu is drawn in the ULA screen (RAM bank 5): Browser, Command Line, NextBASIC, ... , the memory size of
+// 1792K and the date of the DS1307. The golden is the 6912 bytes of that screen (testdata/machines/zxnext/menu-ula.bin),
+// checked by eye against the jnext screenshot of the same boot. Boot-bound: ~800 frames at 28 MHz
+TEST_F(NextFirmware_Test, NextZxosMainMenuIsDrawn)
+{
+    std::vector<NextRegWrite> log;
+    uint16_t pcMirror = 0;
+    _ports->Board().SetWriteLog(&log, &pcMirror);
+    int frames = 0;
+    bool reset = false;
+    for (; frames < 3000 && !reset; frames++)
+    {
+        _emulator->RunFrame(true);
+        pcMirror = _z80->pc;
+        for (const NextRegWrite& w : log)
+            reset |= w.reg == 0x02 && (w.value & 3);
+    }
+    ASSERT_TRUE(reset);
+    const std::vector<uint8_t> golden = ReadFile(TestPathHelper::FindProjectRoot() / "testdata/machines/zxnext/menu-ula.bin");
+    ASSERT_EQ(golden.size(), 6912u);
+    auto differs = [&]() {
+        const uint8_t* screen = _memory->RAMPageAddress(5);
+        size_t different = 0;
+        for (size_t i = 0; i < golden.size(); i++)
+            different += screen[i] != golden[i] ? 1 : 0;
+        return different;
+    };
+    // the welcome screen: the ROM sits in its key wait (HALT, interrupts on) with the text drawn
+    auto inked = [&]() {
+        const uint8_t* screen = _memory->RAMPageAddress(5);
+        int n = 0;
+        for (int i = 0; i < 0x1800; i++)
+            n += screen[i] != 0 ? 1 : 0;
+        return n;
+    };
+    int waited = 0;
+    for (; waited < 1500 && !(_z80->halted && inked() > 2000); waited++)  // the welcome text inks ~2700 bytes
+        _emulator->RunFrame(true);
+    ASSERT_LT(waited, 1500) << "no welcome screen";
+    for (int i = 0; i < 50; i++)
+        _emulator->RunFrame(true);
+    _context->pKeyboard->PressKey(ZXKEY_SPACE);
+    for (int i = 0; i < 8; i++)
+        _emulator->RunFrame(true);
+    _context->pKeyboard->ReleaseKey(ZXKEY_SPACE);
+    // the menu: check every 25 frames, stop at the first match
+    size_t different = differs();
+    for (int i = 0; i < 40 && different != 0; i++)
+    {
+        for (int f = 0; f < 25; f++)
+            _emulator->RunFrame(true);
+        different = differs();
+    }
+    EXPECT_EQ(different, 0u) << "bytes of the ULA screen that differ from the menu";
 }

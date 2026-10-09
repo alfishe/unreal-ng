@@ -46,6 +46,13 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 - [ ] The personality ROM with the full card (TBBLUE.FW + nextzxos + sys + dot): runs through palette, layer clip and esxDOS calls (`RST 8`), then loops: first diff against a reference emulator from the co-simulation tooling (agent task, tools/verification/next-cosim)
 - [ ] UART skeleton (no peers), DMA, NMI button / stackless NMI, Multiface
 
+## A4 reached (2026-10-09): the NextZXOS main menu
+- [x] The real chain (boot ROM -> TBBLUE.FW -> personality ROM -> NextZXOS) on `testdata/machines/zxnext/card` reaches the
+  "Welcome to NextZXOS!" screen and, after SPACE, the main menu (Browser, Command Line, NextBASIC, Calculator, Guide, More...,
+  1792K, the DS1307 date): `NextFirmware_Test.NextZxosMainMenuIsDrawn` (golden = the 6912 bytes of the ULA screen, checked
+  by eye against the jnext screenshot). The ZX renderer already draws it (the OS uses the standard ULA screen);
+  picture: [img/nextzxos-main-menu.png](img/nextzxos-main-menu.png). Border colour and the Next's own layers are N6/N7.
+
 ## Remaining
 - [x] Verification program: public suites collected and graded ([verification-program.md](verification-program.md)); esxDOS source availability checked ([esxdos-and-sd.md](esxdos-and-sd.md) section 1a)
 - [x] N0 second pass (2026-10-08): ULA / Timex / ULA+ / ULAnext, LoRes, palettes and the layer compositor, audio (AY x 3, DAC, mixer), CTC, UART, SPI, DivMMC, keyboard, ZEsarUX comparison: [research-fpga-vhdl.md](research-fpga-vhdl.md) sections 16-22; [esxdos-and-sd.md](esxdos-and-sd.md); [design-integration.md](design-integration.md)
