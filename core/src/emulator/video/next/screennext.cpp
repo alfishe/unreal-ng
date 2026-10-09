@@ -97,11 +97,7 @@ void ScreenNext::RenderLinesUpTo(unsigned lineExclusive)
     in.layer2Enable = board.Video().Layer2Enabled();
     in.flash = _state && (_state->frame_counter & 0x10);
     uint32_t* fb = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
-    for (; _nextLine < lineExclusive; _nextLine++)
-    {
-        uint32_t* row = fb + static_cast<size_t>(_nextLine) * 2 * NextVideoRenderer::kWidth;
-        // the copper has run up to the left of the line's paper before the line is drawn
-        board.Copper().RunTo(CopperClock(LineEndT(_nextLine) - _rasterState.tstatesPerLine + _rasterState.screenLineAreaStart + 3));
+    auto refresh = [&]() {
         for (unsigned r = 0; r < 256; r++)
             in.nr[r] = board.Stored(static_cast<uint8_t>(r));
         // what the copper (or a port write) may have changed since the line before
@@ -109,7 +105,34 @@ void ScreenNext::RenderLinesUpTo(unsigned lineExclusive)
         in.shadowScreen = _state && (_state->p7FFD & 0x08);
         in.layer2Enable = board.Video().Layer2Enabled();
         in.border = _state ? static_cast<uint8_t>(_state->pFE & 7) : 0;
-        NextVideoRenderer::RenderLine(in, _nextLine, row);
+    };
+    uint32_t segment[NextVideoRenderer::kWidth];
+    for (; _nextLine < lineExclusive; _nextLine++)
+    {
+        uint32_t* row = fb + static_cast<size_t>(_nextLine) * 2 * NextVideoRenderer::kWidth;
+        // x = 0 of the grid line, in copper time: the paper's left edge minus the 32 pixels of border
+        const uint32_t lineStart = LineEndT(_nextLine) - _rasterState.tstatesPerLine;
+        const uint64_t t0 = CopperClock(lineStart + _rasterState.screenLineAreaStart - 16);
+        NextCopper& copper = board.Copper();
+        copper.RunTo(t0);  // everything before the line
+        // The copper writes inside the line change the picture from the pixel it reaches: the pixels before are drawn with
+        // the state before the write
+        unsigned fromX = 0;
+        auto draw = [&](unsigned toX) {
+            if (toX <= fromX)
+                return;
+            refresh();
+            NextVideoRenderer::RenderLine(in, _nextLine, segment);
+            std::memcpy(row + fromX * 2, segment + fromX * 2, (toX - fromX) * 2 * sizeof(uint32_t));
+            fromX = toX;
+        };
+        if (copper.Mode() != 0)
+        {
+            copper.SetBeforeWrite([&](uint64_t t) { draw(static_cast<unsigned>(std::min<uint64_t>((t > t0 ? t - t0 : 0) / 4, 320))); });
+            copper.RunTo(t0 + 320 * 4);
+            copper.SetBeforeWrite(nullptr);
+        }
+        draw(320);
         std::memcpy(row + NextVideoRenderer::kWidth, row, NextVideoRenderer::kWidth * sizeof(uint32_t));  // every line twice
     }
 }

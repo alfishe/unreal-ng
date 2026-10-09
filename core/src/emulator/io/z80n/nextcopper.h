@@ -23,6 +23,8 @@ public:
 
     void SetWriter(WriteFn writer) { _write = std::move(writer); }
     void SetNow(NowFn now) { _now = std::move(now); }
+    /// Called with the copper time of a MOVE just before it writes (the screen draws the pixels the old state made first)
+    void SetBeforeWrite(std::function<void(uint64_t)> hook) { _beforeWrite = std::move(hook); }
     /// 7 MHz counts per line and lines per frame of the machine timing
     void SetGeometry(unsigned hcPerLine, unsigned linesPerFrame);
     void Reset();
@@ -66,4 +68,5 @@ private:
     uint64_t _frameClocks = 448ull * 312 * 4;
     WriteFn _write;
     NowFn _now;
+    std::function<void(uint64_t)> _beforeWrite;
 };

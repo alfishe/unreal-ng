@@ -135,10 +135,13 @@ void NextCopper::RunSegment(uint64_t end)
         }
         const uint8_t reg = static_cast<uint8_t>((instruction >> 8) & 0x7F);
         const uint8_t value = static_cast<uint8_t>(instruction & 0xFF);
+        const uint64_t at = _t;
         _pc = (_pc + 1) & 0x3FF;
         _t++;
         if (reg != 0)
         {
+            if (_beforeWrite)
+                _beforeWrite(at);
             if (_write)
                 _write(reg, value);
             _pending = true;
