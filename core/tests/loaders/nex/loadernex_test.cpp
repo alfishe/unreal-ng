@@ -1,0 +1,163 @@
+// The NEX loader (core/src/loaders/nex/loadernex.h) on synthetic files, and a bring-up run of any NEX file:
+// UNREAL_NEX=<file> [UNREAL_NEX_FRAMES=200] [UNREAL_NEX_OUT=<folder>] runs it on the NEXT machine and writes the frame
+// (frame.rgba: width, height, RGBA) there for scratch conversion and comparison with a reference emulator.
+
+#include "stdafx.h"
+#include "pch.h"
+
+#include <gtest/gtest.h>
+
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <vector>
+
+#include "_helpers/emulatortesthelper.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/memory/next/nextmemory.h"
+#include "emulator/video/screen.h"
+#include "loaders/nex/loadernex.h"
+
+namespace
+{
+std::vector<uint8_t> MakeNex(const char* version, uint8_t screenFlags, size_t screenBytes, const std::vector<std::pair<unsigned, std::vector<uint8_t>>>& banks,
+                             uint16_t pc, uint16_t sp, uint8_t border, uint8_t entryBank)
+{
+    std::vector<uint8_t> image(512, 0);
+    std::memcpy(image.data(), "Next", 4);
+    std::memcpy(image.data() + 4, version, 4);
+    image[9] = static_cast<uint8_t>(banks.size());
+    image[10] = screenFlags;
+    image[11] = border;
+    image[12] = sp & 0xFF;
+    image[13] = sp >> 8;
+    image[14] = pc & 0xFF;
+    image[15] = pc >> 8;
+    image[139] = entryBank;
+    for (const auto& b : banks)
+        image[18 + b.first] = 1;
+    image.resize(image.size() + screenBytes, 0xEE);
+    // the file's bank order: 5, 2, 0, 1, 3, 4, 6, ...
+    std::vector<unsigned> order = {5, 2, 0, 1, 3, 4};
+    for (unsigned b = 6; b < 112; b++)
+        order.push_back(b);
+    for (unsigned bank : order)
+        for (const auto& b : banks)
+            if (b.first == bank)
+            {
+                std::vector<uint8_t> data = b.second;
+                data.resize(0x4000, 0);
+                image.insert(image.end(), data.begin(), data.end());
+            }
+    return image;
+}
+}  // namespace
+
+class LoaderNex_Test : public ::testing::Test
+{
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    Z80* _z80 = nullptr;
+
+    void SetUp() override
+    {
+        _emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+        ASSERT_NE(_emulator, nullptr);
+        _context = _emulator->GetContext();
+        _z80 = _context->pCore->GetZ80();
+    }
+    void TearDown() override
+    {
+        if (_emulator)
+            EmulatorTestHelper::CleanupEmulator(_emulator);
+    }
+};
+
+TEST_F(LoaderNex_Test, BanksGoToTheirRamPagesAndTheEntryBankToSlot3)
+{
+    // bank 0 holds the program at #C000 (the entry bank); bank 5 a marker at #4000; bank 9 a marker
+    std::vector<uint8_t> program = {0x3E, 0x55,        // LD A,#55
+                                    0x32, 0x00, 0x80,  // LD (#8000),A
+                                    0x18, 0xFE};       // JR $
+    std::vector<uint8_t> bank5(1, 0x77);
+    std::vector<uint8_t> bank9(1, 0x99);
+    const auto image = MakeNex("V1.2", 0, 0, {{0, program}, {5, bank5}, {9, bank9}}, 0xC000, 0xBFF0, 3, 0);
+    LoaderNex loader(_context);
+    ASSERT_TRUE(loader.Load(image)) << loader.Error();
+    auto* memory = dynamic_cast<NextMemory*>(_context->pMemory);
+    EXPECT_EQ(memory->RAMPageAddress(5)[0], 0x77);
+    EXPECT_EQ(memory->RAMPageAddress(9)[0], 0x99);
+    EXPECT_EQ(memory->PeekSlot(0x4000), 0x77) << "bank 5 is at #4000";
+    EXPECT_EQ(memory->PeekSlot(0xC000), 0x3E) << "the entry bank is at #C000";
+    EXPECT_EQ(_z80->pc, 0xC000);
+    EXPECT_EQ(_z80->sp, 0xBFF0);
+    EXPECT_EQ(_context->emulatorState.pFE & 7, 3);
+    for (int i = 0; i < 4; i++)
+        _z80->EngineStep();
+    EXPECT_EQ(memory->PeekSlot(0x8000), 0x55);
+}
+
+TEST_F(LoaderNex_Test, LoadingScreenBlocksAreSkippedByTheirSizes)
+{
+    std::vector<uint8_t> program = {0x3E, 0x66, 0x32, 0x00, 0x80, 0x18, 0xFE};
+    // V1.1 with a Layer 2 screen: a palette block (512) and the screen (49152); the bank follows
+    {
+        const auto image = MakeNex("V1.1", 1, 512 + 49152, {{0, program}}, 0xC000, 0xBFF0, 0, 0);
+        LoaderNex loader(_context);
+        ASSERT_TRUE(loader.Load(image)) << loader.Error();
+        for (int i = 0; i < 4; i++)
+            _z80->EngineStep();
+        EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x8000), 0x66);
+    }
+    // a ULA screen (6912) carries no palette; with the no-palette flag Layer 2 has none either
+    for (auto [flags, bytes] : {std::pair<uint8_t, size_t>{2, 6912}, std::pair<uint8_t, size_t>{129, 49152}})
+    {
+        const auto image = MakeNex("V1.2", flags, bytes, {{0, program}}, 0xC000, 0xBFF0, 0, 0);
+        LoaderNex loader(_context);
+        ASSERT_TRUE(loader.Load(image)) << loader.Error() << " flags " << int(flags);
+        EXPECT_EQ(dynamic_cast<NextMemory*>(_context->pMemory)->PeekSlot(0xC000), 0x3E) << "flags " << int(flags);
+    }
+}
+
+TEST_F(LoaderNex_Test, RefusesWhatIsNotNex)
+{
+    LoaderNex loader(_context);
+    EXPECT_FALSE(loader.Load(std::vector<uint8_t>(600, 0)));
+    EXPECT_FALSE(loader.Error().empty());
+    auto image = MakeNex("V9.9", 0, 0, {}, 0, 0, 0, 0);
+    EXPECT_FALSE(loader.Load(image));
+    auto truncated = MakeNex("V1.2", 0, 0, {{0, {1}}}, 0, 0, 0, 0);
+    truncated.resize(600);
+    EXPECT_FALSE(loader.Load(truncated)) << "the file ends inside a bank";
+}
+
+// Bring-up: run a NEX file and write the frame
+TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
+{
+    const char* path = std::getenv("UNREAL_NEX");
+    if (!path)
+        GTEST_SKIP() << "UNREAL_NEX not set";
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    LoaderNex loader(context);
+    ASSERT_TRUE(loader.LoadFile(path)) << loader.Error();
+    const char* frames = std::getenv("UNREAL_NEX_FRAMES");
+    const int total = frames ? std::atoi(frames) : 200;
+    emulator->EnableTurboMode();
+    for (int i = 0; i < total; i++)
+        emulator->RunFrame(true);
+    if (const char* out = std::getenv("UNREAL_NEX_OUT"))
+    {
+        const FramebufferDescriptor& fb = context->pScreen->GetFramebufferDescriptor();
+        std::ofstream file(std::string(out) + "/frame.rgba", std::ios::binary);
+        const uint32_t dims[2] = {fb.width, fb.height};
+        file.write(reinterpret_cast<const char*>(dims), sizeof dims);
+        file.write(reinterpret_cast<const char*>(fb.memoryBuffer), fb.memoryBufferSize);
+    }
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

@@ -58,6 +58,10 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 - [ ] N6b: sprites, tilemap, copper, blend modes (N7); border stripes inside a line; ULA+; Radastan; the Layer 2 CPU mapping of port #123B (read / write windows, shadow bank); ULA half-pixel scroll
 - [ ] The Next border colour of the welcome screen (grey = the palette's paper entry of the border) is drawn; the bright-border and flash details are not compared with a reference yet
 
+## NEX loader (2026-10-09)
+- [x] `loaders/nex/LoaderNex` (V1.0-V1.3 sizes: palette / screen blocks skipped by flags, banks in file order 5,2,0,1,3,4,6.., entry bank in slot 3, border, SP, PC); 3 synthetic tests + `UNREAL_NEX=<file>` bring-up run (frame.rgba)
+- [ ] First check: `tilemap/tm.nex` on jnext shows the tilemap; ours shows the ULA only - the tilemap is N7. Reference screenshots: `jnext --headless --silent --sdcard cosim-cards/full.img --sdcard-readonly --delayed-screenshot f.png --delayed-screenshot-frames N file.nex`
+
 ## Remaining
 - [x] Verification program: public suites collected and graded ([verification-program.md](verification-program.md)); esxDOS source availability checked ([esxdos-and-sd.md](esxdos-and-sd.md) section 1a)
 - [x] N0 second pass (2026-10-08): ULA / Timex / ULA+ / ULAnext, LoRes, palettes and the layer compositor, audio (AY x 3, DAC, mixer), CTC, UART, SPI, DivMMC, keyboard, ZEsarUX comparison: [research-fpga-vhdl.md](research-fpga-vhdl.md) sections 16-22; [esxdos-and-sd.md](esxdos-and-sd.md); [design-integration.md](design-integration.md)

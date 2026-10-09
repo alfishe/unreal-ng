@@ -204,6 +204,7 @@ run with `--gtest_also_run_disabled_tests`). Runs a program on a Profi as a user
 | `UNREAL_NEXT_HUNT` | frames (unset: tests skip) | Runs the personality-ROM bring-up hunts (`NextFirmware_Test.PersonalityRomStallHunt` / `PersonalityRomRestartHunt`): frames to run after the firmware's soft reset; they print the registers and ports the ROM uses to stderr. | `core/tests/emulator/machines/next/nextfirmware_test.cpp` |
 | `UNREAL_NEXT_DUMP` | folder path | With the stall hunt: writes the ULA screen, the Layer 2 banks and RAM page 7 as raw files there (scratch conversion to PNG). | `core/tests/emulator/machines/next/nextfirmware_test.cpp` |
 | `UNREAL_NEXT_SPACE` | frames after the soft reset | With the stall hunt: holds SPACE for 8 frames from there (the NextZXOS welcome screen's "start"). | `core/tests/emulator/machines/next/nextfirmware_test.cpp` |
+| `UNREAL_NEX` | path to a `.nex` | `LoaderNexRun_Test`: runs the file on the NEXT machine (`UNREAL_NEX_FRAMES`, default 200; `UNREAL_NEX_OUT` = folder for `frame.rgba`). | `core/tests/loaders/nex/loadernex_test.cpp` |
 | `UNREAL_NEXT_COSIM` | folder path (unset: test skips) | `NextCosim_Test`: writes the boot trace in the co-simulation format (`tools/verification/next-cosim/trace-format.md`) to that folder; with `UNREAL_NEXT_FIRMWARE` the card. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
 | `UNREAL_NEXT_COSIM_FRAMES` | frames (1500) | Length of the co-simulation run. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
 
