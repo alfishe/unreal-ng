@@ -67,6 +67,13 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 - [x] `tilemap/tm.nex` on jnext vs ours: identical but the ULA normal-colour level (jnext 6/7, ours 5/7 = the firmware's `DefaultPalette` 0xB6 etc., nexload.asm:728) - jnext deviates, ours follows the firmware
 - Bring-up lesson: a turbo frame is not drawn (the picture comes from the beam passing), so frame comparisons run without turbo
 
+## N7b (2026-10-09): sprites, copper, NEX loader screens
+- [x] `NextSprites` (128 x 5 attribute bytes, 16K patterns, ports #303B / #57 / #5B, NR #34-#39 / #75-#79 with the tie bit, 8 / 4-bit patterns, mirror / rotate / scale, composite and unified relative sprites, collision and too-many flags from a 1792-cycle line budget (estimate), zero-on-top, over-border + clip) and the three-layer order SLU..ULS with the border exception
+- [x] `NextCopper` (NR #60-#64, 28 MHz, paper-relative raster, mode 11 restart, vertical offset); `ScreenNext` runs it to each line's paper start, so MOVEs show from the line they are in
+- [x] NEX loader: nexload's register reset (palettes, clips, transparency, priorities), loading screens (Layer 2 banks 9-11, ULA, LoRes, HiRes, HiColour, V1.3 big Layer 2) with their display modes
+- [x] `tools/verification/next-cosim/nexcmp.sh <file.nex> [frames]` runs a NEX on jnext and on us and counts pixels differing by more than 40 per channel; `nexside.sh` makes a side-by-side. Over the 125 NEX files of the collection: 37 identical, ~25 within 1000 px; the rest = blend modes, stencil, tilemap/Layer 2 CPU windows, port #123B mapping, timing-dependent demos, V1.3 files (jnext needs --experimental-nex-v1.3)
+- Known divergence: jnext shows the global-transparency colour in places where the real nexload leaves a black ULA entry (index 24 = 0x00 after the register reset); ours follows nexload.asm
+
 ## Remaining
 - [x] Verification program: public suites collected and graded ([verification-program.md](verification-program.md)); esxDOS source availability checked ([esxdos-and-sd.md](esxdos-and-sd.md) section 1a)
 - [x] N0 second pass (2026-10-08): ULA / Timex / ULA+ / ULAnext, LoRes, palettes and the layer compositor, audio (AY x 3, DAC, mixer), CTC, UART, SPI, DivMMC, keyboard, ZEsarUX comparison: [research-fpga-vhdl.md](research-fpga-vhdl.md) sections 16-22; [esxdos-and-sd.md](esxdos-and-sd.md); [design-integration.md](design-integration.md)

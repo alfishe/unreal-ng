@@ -139,6 +139,18 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, value, pc, disp);
         return value;
     }
+    if (port == 0x303B)
+    {
+        const uint8_t value = _board->Sprites().ReadStatus();
+        _lastPortDecoded = true;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = port;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, value, pc, disp);
+        return value;
+    }
     if (low == 0xFF && (_board->Stored(NextBoard::kRegPeripheral2) & 0x04))  // NR #08 bit 2: #FF reads the Timex mode
     {
         const uint8_t value = _board->Video().PortFf();
@@ -222,6 +234,12 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         _board->Video().WritePortFf(value);  // the Timex screen mode (NR #69 bits 5:0 alias it)
     else if (port == 0x123B)
         _board->Video().WritePort123b(value);
+    else if (port == 0x303B)
+        _board->Sprites().WriteSlotSelect(value);
+    else if (static_cast<uint8_t>(port) == 0x57)
+        _board->Sprites().WriteAttribute(value);
+    else if (static_cast<uint8_t>(port) == 0x5B)
+        _board->Sprites().WritePattern(value);
     else if (static_cast<uint8_t>(port) == kPortSpiSelect)
         SpiSelect(value);
     else if (static_cast<uint8_t>(port) == kPortSpiData)
@@ -472,6 +490,7 @@ void PortDecoder_Next::UpdateContention()
 
 void PortDecoder_Next::OnFrameEnd()
 {
+    _board->Copper().Sync();  // a frame no line was drawn for (turbo) still runs the copper
     if (_pendingTiming && _pendingTiming != _state->ula_timing_class)
         ApplyTiming(_pendingTiming);
 }

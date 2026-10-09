@@ -31,6 +31,9 @@ public:
     void FillBorderWithColor(uint8_t color) override;
     /// endregion
 
+    /// Copper time (28 MHz clocks from the first paper line) of a T-state of the frame
+    uint64_t CopperClock(uint32_t tstate) const;
+
     /// The T-state (base, from the frame start) at which visible line `y` (0-255) is complete
     uint32_t LineEndT(unsigned y) const;
 
@@ -42,4 +45,5 @@ private:
     mutable PortDecoder_Next* _decoder = nullptr;
     unsigned _nextLine = 0;
     uint8_t _lastTimingClass = 2;
+    bool _copperBound = false;
 };

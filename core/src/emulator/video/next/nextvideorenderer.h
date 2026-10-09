@@ -7,11 +7,12 @@
 ///
 /// The frame is 640 x 256 sub-pixels: the 320 x 256 visible grid of the 7 MHz pixel clock (a 32-pixel border
 /// around the 256 x 192 paper), every normal pixel doubled, so the 512-pixel Timex hi-res mode and Layer 2's 640 x 256
-/// mode have a sub-pixel each. The tilemap is drawn here; sprites and the blend modes are N7; a transparent line stands in for them.
+/// mode have a sub-pixel each. The tilemap and the sprites are drawn here; the blend modes are N7; a transparent line stands in for them.
 /// The renderer reads state only: the caller builds NextVideoInputs for the moment the line is drawn.
 
 #include <cstdint>
 
+#include "emulator/io/z80n/nextsprites.h"
 #include "emulator/io/z80n/nextvideoregs.h"
 
 struct NextVideoInputs
@@ -20,6 +21,7 @@ struct NextVideoInputs
     const uint8_t* ram = nullptr;
     uint16_t ramPages = 0;
     const NextVideoRegs* regs = nullptr;  ///< palettes, clip windows
+    NextSprites* sprites = nullptr;       ///< drawn from here (its collision / overtime flags are set by drawing)
     uint8_t nr[256] = {};                 ///< the stored NextREG bytes (scrolls, layer control, timex port alias, ...)
     uint8_t border = 0;                   ///< port #FE bits 2:0
     uint8_t portFf = 0;                   ///< the Timex port (NR #69 bits 5:0 alias it)
@@ -47,11 +49,13 @@ private:
     {
         uint16_t colour = 0;  ///< 9 bits, bit 9: Layer 2 priority
         bool opaque = false;
+        bool border = false;    ///< ULA: the border colour
         bool below = false;     ///< tilemap: the ULA pixel is above this one
         bool textMode = false;  ///< tilemap: text mode (transparent by the global colour, not by index)
     };
     static void UlaLine(const NextVideoInputs& in, unsigned y, Pixel* line);
     static void LoResLine(const NextVideoInputs& in, unsigned y, Pixel* line);
+    static void SpriteLine(const NextVideoInputs& in, unsigned y, Pixel* line);
     static void TilemapLine(const NextVideoInputs& in, unsigned y, Pixel* line);
     static void Layer2Line(const NextVideoInputs& in, unsigned y, Pixel* line);
 };

@@ -58,6 +58,16 @@ uint32_t ScreenNext::LineEndT(unsigned y) const
     return _rasterState.topBorderAreaStart + (16 + y + 1) * perLine;
 }
 
+uint64_t ScreenNext::CopperClock(uint32_t tstate) const
+{
+    // The copper's lines count from the first paper line; its horizontal 0 is 11 pixels before the first paper pixel
+    const uint32_t perLine = _rasterState.tstatesPerLine;
+    const uint64_t frame7 = static_cast<uint64_t>(_rasterState.maxFrameTiming) * 2;
+    const uint64_t origin7 = (static_cast<uint64_t>(_rasterState.screenAreaStart / perLine) * perLine + _rasterState.screenLineAreaStart) * 2;
+    const uint64_t t7 = (static_cast<uint64_t>(tstate) * 2 + frame7 + 11 - origin7 % frame7) % frame7;
+    return t7 * 4;
+}
+
 void ScreenNext::RenderLinesUpTo(unsigned lineExclusive)
 {
     PortDecoder_Next* decoder = Decoder();
@@ -68,10 +78,17 @@ void ScreenNext::RenderLinesUpTo(unsigned lineExclusive)
         return;
 
     NextBoard& board = decoder->Board();
+    if (!_copperBound)
+    {
+        board.Copper().SetNow([this]() { return CopperClock(GetCurrentTstate()); });
+        _copperBound = true;
+    }
+    board.Copper().SetGeometry(_rasterState.tstatesPerLine * 2, _rasterState.maxFrameTiming / _rasterState.tstatesPerLine);
     NextVideoInputs in;
     in.ram = _context->pMemory->RAMPageAddress(0);
     in.ramPages = MAX_RAM_PAGES;
     in.regs = &board.Video();
+    in.sprites = &board.Sprites();
     for (unsigned r = 0; r < 256; r++)
         in.nr[r] = board.Stored(static_cast<uint8_t>(r));
     in.border = _state ? static_cast<uint8_t>(_state->pFE & 7) : 0;
@@ -83,6 +100,10 @@ void ScreenNext::RenderLinesUpTo(unsigned lineExclusive)
     for (; _nextLine < lineExclusive; _nextLine++)
     {
         uint32_t* row = fb + static_cast<size_t>(_nextLine) * 2 * NextVideoRenderer::kWidth;
+        // the copper has run up to the left of the line's paper before the line is drawn
+        board.Copper().RunTo(CopperClock(LineEndT(_nextLine) - _rasterState.tstatesPerLine + _rasterState.screenLineAreaStart + 3));
+        for (unsigned r = 0; r < 256; r++)
+            in.nr[r] = board.Stored(static_cast<uint8_t>(r));
         NextVideoRenderer::RenderLine(in, _nextLine, row);
         std::memcpy(row + NextVideoRenderer::kWidth, row, NextVideoRenderer::kWidth * sizeof(uint32_t));  // every line twice
     }

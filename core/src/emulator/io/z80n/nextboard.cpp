@@ -55,6 +55,11 @@ void NextBoard::Reset(bool hard)
     _selected = 0;
     _resetPending = false;
     _video.Reset();
+    if (hard)
+    {
+        _sprites.Reset();
+        _copper.Reset();
+    }
     if (_interrupts)
         _interrupts->Reset();
     const bool config = type == 0;
@@ -93,6 +98,20 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return _video.ReadClip(reg - 0x18);
         case 0x1C:
             return _video.ReadClipControl();
+        case 0x34:
+            return _sprites.ReadMirrorSprite();
+        case 0x61:
+            return _copper.ReadAddressLow();
+        case 0x62:
+            return _copper.ReadControl();
+        case 0x64:
+            return _copper.ReadOffset();
+        case 0x60:
+        case 0x63:
+            return 0;
+        case 0x35: case 0x36: case 0x37: case 0x38: case 0x39:
+        case 0x75: case 0x76: case 0x77: case 0x78: case 0x79:
+            return 0;  // write-only mirrors
         case 0x69:
             return _video.ReadDisplayControl();
         case 0x40:
@@ -142,6 +161,31 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
     {
         case 0x18: case 0x19: case 0x1A: case 0x1B:
             _video.WriteClip(reg - 0x18, value);
+            return;
+        case 0x60:
+            _copper.WriteData(value);
+            return;
+        case 0x61:
+            _copper.WriteAddressLow(value);
+            return;
+        case 0x62:
+            _copper.WriteControl(value);
+            return;
+        case 0x63:
+            _copper.WriteWord(value);
+            return;
+        case 0x64:
+            _copper.WriteOffset(value);
+            return;
+        case 0x34:
+            _regs[reg] = value;
+            _sprites.WriteMirrorSprite(value, (_regs[0x09] & 0x10) != 0);
+            return;
+        case 0x35: case 0x36: case 0x37: case 0x38: case 0x39:
+            _sprites.WriteMirrorAttribute(reg - 0x35, value, false, (_regs[0x09] & 0x10) != 0);
+            return;
+        case 0x75: case 0x76: case 0x77: case 0x78: case 0x79:
+            _sprites.WriteMirrorAttribute(reg - 0x75, value, true, (_regs[0x09] & 0x10) != 0);
             return;
         case 0x1C:
             _video.WriteClipControl(value);

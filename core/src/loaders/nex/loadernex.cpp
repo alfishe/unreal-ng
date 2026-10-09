@@ -8,6 +8,7 @@
 
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/z80n/nextboard.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/video/screen.h"
@@ -29,6 +30,54 @@ std::vector<unsigned> BankOrder()
     return order;
 }
 }  // namespace
+
+/// nexload.asm, "Reset All registers": the video and sound registers a program starts from, the 16 default ULA colours
+/// repeated, identity palettes for Layer 2 and the sprites, transparency #E3, priorities SLU with the sprites on
+void LoaderNex::ResetRegisters(NextBoard& board)
+{
+    static const uint8_t kDefaultPalette[16] = {0x00, 0x02, 0xA0, 0xA2, 0x14, 0x16, 0xB4, 0xB6, 0x00, 0x03, 0xE0, 0xE7, 0x1C, 0x1F, 0xFC, 0xFF};
+    auto nr = [&](uint8_t reg, uint8_t value) { board.Write(reg, value); };
+    nr(0x62, 0);  // stop the copper
+    nr(0x61, 0);
+    nr(0x07, 0x03);  // 28 MHz
+    nr(0x12, 9);
+    nr(0x13, 12);
+    nr(0x14, 0xE3);
+    nr(0x15, 0x01);
+    nr(0x16, 0);
+    nr(0x17, 0);
+    nr(0x1C, 0x0F);
+    for (uint8_t window = 0x18; window <= 0x1B; window++)
+    {
+        const bool tilemap = window == 0x1B;
+        nr(window, 0);
+        nr(window, tilemap ? 159 : 255);
+        nr(window, 0);
+        nr(window, tilemap ? 255 : 191);
+    }
+    nr(0x2D, 0);
+    nr(0x32, 0);
+    nr(0x33, 0);
+    nr(0x43, 0);
+    nr(0x42, 15);
+    for (unsigned first : {0u, 128u})  // the ULA palette: the 16 defaults, eight times, in both halves
+    {
+        nr(0x40, static_cast<uint8_t>(first));
+        for (unsigned i = 0; i < 128; i++)
+            nr(0x41, kDefaultPalette[i & 15]);
+    }
+    for (uint8_t control : {uint8_t(0x10), uint8_t(0x20)})  // Layer 2, sprites: the identity
+    {
+        nr(0x43, control);
+        nr(0x40, 0);
+        for (unsigned i = 0; i < 256; i++)
+            nr(0x41, static_cast<uint8_t>(i));
+    }
+    nr(0x43, 0);
+    nr(0x4A, 0);
+    nr(0x4B, 0xE3);
+    board.Video().WritePort123b(0);
+}
 
 bool LoaderNex::Fail(const std::string& why)
 {
@@ -105,14 +154,91 @@ bool LoaderNex::Load(const std::vector<uint8_t>& image)
     if (!memory || !decoder)
         return Fail("NEX files run on the ZX Spectrum Next");
 
+    // The loader's register reset (nexload.asm "Reset All registers"), unless the file asks to keep them
+    if (!_header.keepRegisters)
+        ResetRegisters(decoder->Board());
+
     // The machine as the loader leaves it: ROM in slots 0-1, banks 5 and 2 below, the entry bank at #C000; the
     // registers reset unless the file asks to keep them
-    if (!_header.keepRegisters)
-        decoder->PerformReset(false);
     memory->ResetMmu();
     _context->emulatorState.p7FFD = 0x10;
     _context->emulatorState.p1FFD = 0x04;
     memory->ApplyClassicPaging(0x10, 0x04);  // ROM 3, the 48K BASIC ROM: RST 16 and the font at #3D00 work
+
+    // The loading screens (nexload.asm): a palette block, then the screens in the order Layer 2, ULA, LoRes, HiRes, HiColour
+    // and the V1.3 big Layer 2; each leaves its display mode set. They are drawn into the banks the loader uses (Layer 2
+    // 9-11, the ULA screen in bank 5) before the file's own banks replace them
+    {
+        const uint8_t sf = _header.screenFlags;
+        const bool v13 = _header.version == "V1.3";
+        NextBoard& board = decoder->Board();
+        auto show = [&](uint8_t port123b, uint8_t nr15, uint8_t portFf) {
+            board.Video().WritePort123b(port123b);
+            board.Write(0x15, nr15);
+            board.Video().WritePortFf(portFf);
+        };
+        size_t at = kHeaderSize;
+        bool palette = !(sf & kScreenNoPalette);
+        if (palette && !v13 && (sf & (kScreenUla | kScreenHiRes | kScreenHiColour)))
+            palette = false;
+        if (palette && (sf & (kScreenLayer2 | kScreenLoRes | kScreenExt2)) && at + 512 <= image.size())
+        {
+            board.Write(0x43, (sf & kScreenLoRes) ? 0x01 : (v13 && _header.screenFlags2 == 3 ? 0x30 : 0x10));
+            board.Write(0x40, 0);
+            for (unsigned i = 0; i < 256; i++)
+            {
+                board.Write(0x44, image[at + i * 2]);
+                board.Write(0x44, image[at + i * 2 + 1] & 1);
+            }
+            board.Write(0x43, 0);
+            at += 512;
+        }
+        auto block = [&](size_t size, auto&& place) {
+            if (at + size > image.size())
+                return false;
+            place(image.data() + at);
+            at += size;
+            return true;
+        };
+        if (sf & kScreenLayer2)
+            if (block(49152, [&](const uint8_t* d) {
+                    for (unsigned b = 0; b < 3; b++)
+                        std::memcpy(memory->RAMPageAddress(static_cast<uint16_t>(9 + b)), d + b * kBankSize, kBankSize);
+                }))
+                show(0x02, 0x01, 0x00);
+        if (sf & kScreenUla)
+            if (block(6912, [&](const uint8_t* d) { std::memcpy(memory->RAMPageAddress(5), d, 6912); }))
+                show(0x00, 0x01, 0x00);
+        auto halves = [&](const uint8_t* d) {  // two reads of 6144, at #4000 and #6000: the 2048 between are not touched
+            std::memcpy(memory->RAMPageAddress(5), d, 6144);
+            std::memcpy(memory->RAMPageAddress(5) + 0x2000, d + 6144, 6144);
+        };
+        if (sf & kScreenLoRes)
+            if (block(12288, halves))
+                show(0x00, 0x01 | 0x80, 0x03);
+        if (sf & kScreenHiRes)
+            if (block(12288, halves))
+                show(0x00, 0x01, static_cast<uint8_t>((image[138] & 0x38) | 0x06));
+        if (sf & kScreenHiColour)
+            if (block(12288, halves))
+                show(0x00, 0x01, 0x02);
+        if ((sf & kScreenExt2) && (_header.screenFlags2 == 1 || _header.screenFlags2 == 2))
+        {
+            const bool is320 = _header.screenFlags2 == 1;
+            if (block(kBigLayer2, [&](const uint8_t* d) {
+                    for (unsigned b = 0; b < 5; b++)
+                        std::memcpy(memory->RAMPageAddress(static_cast<uint16_t>(9 + b)), d + b * kBankSize, kBankSize);
+                }))
+            {
+                board.Write(0x1C, 0x01);
+                for (uint8_t v : {uint8_t(0), uint8_t(159), uint8_t(0), uint8_t(255)})
+                    board.Write(0x18, v);
+                board.Write(0x70, static_cast<uint8_t>((image[138] & 0x0F) | (is320 ? 0x10 : 0x20)));
+                board.Write(0x12, 9);
+                board.Write(0x69, 0x80);
+            }
+        }
+    }
 
     // The banks, in the file's order
     for (unsigned bank : BankOrder())

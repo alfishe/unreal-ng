@@ -11,6 +11,7 @@
 #include <vector>
 
 class EmulatorContext;
+class NextBoard;
 
 struct NexHeader
 {
@@ -42,6 +43,7 @@ public:
     const std::string& Error() const { return _error; }
 
 private:
+    static void ResetRegisters(NextBoard& board);
     bool Fail(const std::string& why);
     static size_t ScreenBytes(const NexHeader& header, bool& ok);
 

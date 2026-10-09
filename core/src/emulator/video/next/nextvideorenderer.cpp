@@ -43,6 +43,7 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
             return;  // paper and border come from the fallback colour: transparent here
         p.colour = regs.PaletteEntry(palette, (ulaNext ? 128 : 16) + in.border) & 0x1FF;
         p.opaque = true;
+        p.border = true;
     };
     const bool inPaperRows = y >= kPaperTop && y < kPaperTop + 192;
     if (!inPaperRows)
@@ -334,27 +335,48 @@ void NextVideoRenderer::TilemapLine(const NextVideoInputs& in, unsigned y, Pixel
     }
 }
 
+/// Sprites: one grid line from the engine, two sub-pixels per pixel, the sprite palette (NR #43 bit 3 picks the second)
+void NextVideoRenderer::SpriteLine(const NextVideoInputs& in, unsigned y, Pixel* line)
+{
+    if (!in.sprites)
+        return;
+    NextSprites::Pixel grid[NextSprites::kGridWidth];
+    in.sprites->DrawLine(y, in.nr[0x15], *in.regs, grid, in.nr[0x4B]);
+    const unsigned palette = (in.regs->PaletteControl() & 0x08) ? 6 : 2;
+    for (unsigned x = 0; x < NextSprites::kGridWidth; x++)
+    {
+        if (!grid[x].opaque)
+            continue;
+        for (unsigned s = 0; s < 2; s++)
+        {
+            Pixel& p = line[x * 2 + s];
+            p.colour = in.regs->PaletteEntry(palette, grid[x].index);
+            p.opaque = true;
+        }
+    }
+}
+
 void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32_t* out)
 {
     Pixel ula[kW];
     Pixel layer2[kW];
     Pixel tiles[kW];
+    Pixel sprites[kW];
     if (in.nr[0x15] & 0x80)
         LoResLine(in, y, ula);
     else
         UlaLine(in, y, ula);
     Layer2Line(in, y, layer2);
     TilemapLine(in, y, tiles);
+    SpriteLine(in, y, sprites);
 
     // A pixel the layer paints is transparent when its 8 MSBs equal the global transparency colour (NR #14)
     const unsigned transparent = in.nr[0x14];
     auto visible = [&](const Pixel& p) { return p.opaque && ((p.colour >> 1) & 0xFF) != transparent; };
 
-    // NR #15 bits 4:2: 000 SLU, 001 LSU, 010 SUL, 011 LUS, 100 USL, 101 ULS; the blend modes (110, 111) draw as SLU.
-    // Sprites are N7: only the order of Layer 2 and the ULA matters here
+    // NR #15 bits 4:2, top layer first: 000 SLU, 001 LSU, 010 SUL, 011 LUS, 100 USL, 101 ULS; the blend modes (110,
+    // 111) draw as SLU. In LUS / USL / ULS the ULA border over a transparent tilemap does not hide a sprite
     const unsigned order = (in.nr[0x15] >> 2) & 7;
-    static const bool kLayer2AboveUla[8] = {true, true, false, true, false, false, true, true};
-    const bool l2AboveUla = kLayer2AboveUla[order];
     const uint16_t fallback = Nine(in.nr[0x4A]);
     for (unsigned x = 0; x < kW; x++)
     {
@@ -373,15 +395,30 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
         const Pixel& u = merged;
         const Pixel& l = layer2[x];
         const bool lv = visible(l);
+        const Pixel& sp = sprites[x];
+        const bool sv = sp.opaque;
+        const bool borderException = ula[x].border && !tv && sv;
+        const bool ue = uv && !(order >= 3 && order <= 5 && borderException);
         uint16_t colour = fallback;
         if (lv && (l.colour & 0x200))
             colour = l.colour;  // a Layer 2 priority colour is above everything
-        else if (lv && uv)
-            colour = l2AboveUla ? l.colour : u.colour;
-        else if (lv)
-            colour = l.colour;
-        else if (uv)
-            colour = u.colour;
+        else
+        {
+            // the three layers in the order of NR #15, top first: 'S' sprites, 'L' Layer 2, 'U' ULA + tilemap
+            static const char* const kOrders[8] = {"SLU", "LSU", "SUL", "LUS", "USL", "ULS", "SLU", "SLU"};
+            for (const char* layer = kOrders[order]; *layer; layer++)
+            {
+                if (*layer == 'S' && sv)
+                    colour = sp.colour;
+                else if (*layer == 'L' && lv)
+                    colour = l.colour;
+                else if (*layer == 'U' && ue)
+                    colour = u.colour;
+                else
+                    continue;
+                break;
+            }
+        }
         out[x] = Rgba(colour & 0x1FF);
     }
 }

@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "emulator/io/z80n/nextcopper.h"
+#include "emulator/io/z80n/nextsprites.h"
 #include "emulator/io/z80n/nextvideoregs.h"
 #include "emulator/io/z80n/z80nengine.h"
 
@@ -63,7 +65,10 @@ public:
     static constexpr uint8_t kCoreVersion = 0x32;     ///< 3.02 ...
     static constexpr uint8_t kCoreVersionSub = 0x03;  ///< ... .03: the FPGA sources the register map follows
 
-    explicit NextBoard(NextMemory* memory) : _memory(memory) {}
+    explicit NextBoard(NextMemory* memory) : _memory(memory)
+    {
+        _copper.SetWriter([this](uint8_t reg, uint8_t value) { Write(reg, value); });
+    }
     void SetMachine(INextMachine* machine) { _machine = machine; }
     void SetInterrupts(NextInterruptSource* interrupts) { _interrupts = interrupts; }
 
@@ -98,6 +103,8 @@ public:
     /// Machine type (NR #03 bits 2:0): 0 config mode, 1 48K, 2 128K, 3 +3, 4 Pentagon
     /// The bare personality's machine type (no firmware chooses it): 1 48K, 2 128K, 3 +3, 4 Pentagon
     void SetMachineType(uint8_t type);
+    NextSprites& Sprites() { return _sprites; }
+    NextCopper& Copper() { return _copper; }
     NextVideoRegs& Video() { return _video; }
     const NextVideoRegs& Video() const { return _video; }
     uint8_t MachineType() const { return _regs[kRegMachineType] & 7; }
@@ -108,6 +115,8 @@ public:
 private:
     NextMemory* _memory;
     NextVideoRegs _video;
+    NextSprites _sprites;
+    NextCopper _copper;
     NextInterruptSource* _interrupts = nullptr;
     INextMachine* _machine = nullptr;
     uint8_t _selected = 0;

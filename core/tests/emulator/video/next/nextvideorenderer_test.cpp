@@ -349,3 +349,136 @@ TEST_F(NextTilemap_Test, TextModeTilesAreOneBitPerPixel)
 }
 
 // endregion
+
+// region <Sprites>
+
+class NextSprites_Test : public NextVideoRenderer_Test
+{
+protected:
+    NextSprites _sprites;
+    void SetUp() override
+    {
+        NextVideoRenderer_Test::SetUp();
+        _sprites.Reset();
+        _in.sprites = &_sprites;
+        _in.nr[0x15] = 0x01;  // sprites on, SLU
+        _in.nr[0x4B] = 0x00;  // the transparent index (unwritten pattern bytes are 0)
+        _in.nr[0x68] = 0x80;  // no ULA: sprites over the fallback colour
+    }
+    /// Attributes through port #57 for one sprite: x, y (grid coordinates), the pattern, flags of byte 2
+    void Sprite(unsigned slot, unsigned x, unsigned y, unsigned pattern, uint8_t byte2 = 0, uint8_t byte4 = 0, bool fifth = false)
+    {
+        _sprites.WriteSlotSelect(static_cast<uint8_t>(slot));
+        _sprites.WriteAttribute(x & 0xFF);
+        _sprites.WriteAttribute(y & 0xFF);
+        _sprites.WriteAttribute(static_cast<uint8_t>(byte2 | ((x >> 8) & 1)));
+        _sprites.WriteAttribute(static_cast<uint8_t>(0x80 | (fifth ? 0x40 : 0) | pattern));
+        if (fifth)
+            _sprites.WriteAttribute(static_cast<uint8_t>(byte4 | ((y >> 8) & 1)));
+    }
+    void Pattern(unsigned number, unsigned offset, uint8_t value)
+    {
+        _sprites.WriteSlotSelect(static_cast<uint8_t>(number & 0x3F));
+        for (unsigned i = 0; i < offset; i++)
+            _sprites.WritePattern(0);  // advance to the byte
+        _sprites.WritePattern(value);
+    }
+    uint32_t SpritePal(unsigned index) { return NextVideoRenderer::Rgba(_regs.PaletteEntry(2, index) & 0x1FF); }
+};
+
+TEST_F(NextSprites_Test, EightBitPatternAtTheGridPositionWithTransparentIndex)
+{
+    // pattern 0: byte 0 = colour 5, byte 1 = the transparent index (0), byte 2 = colour 6
+    _sprites.WriteSlotSelect(0);
+    _sprites.WritePattern(5);
+    _sprites.WritePattern(0);
+    _sprites.WritePattern(6);
+    Sprite(0, 100, 50, 0);
+    Render(50);
+    EXPECT_EQ(Px(200), SpritePal(5)) << "x = 100 on the grid is 200 sub-pixels";
+    EXPECT_EQ(Px(201), SpritePal(5));
+    EXPECT_EQ(Px(202), NextVideoRenderer::Rgba((0xE3 << 1) | 1)) << "the transparent index shows what is below (the fallback)";
+    EXPECT_EQ(Px(204), SpritePal(6));
+    Render(49);
+    EXPECT_NE(Px(200), SpritePal(5)) << "above the sprite";
+}
+
+TEST_F(NextSprites_Test, MirrorRotateAndScale)
+{
+    _sprites.WriteSlotSelect(0);
+    _sprites.WritePattern(1);                      // (0,0)
+    for (int i = 0; i < 15; i++) _sprites.WritePattern(0);
+    _sprites.WritePattern(2);                      // (0,1) is at byte 16: first of row 1
+    Sprite(0, 100, 50, 0, 0x08);                   // x mirror: pixel (0,0) lands on the right edge
+    Render(50);
+    EXPECT_EQ(Px((100 + 15) * 2), SpritePal(1));
+    Sprite(0, 100, 50, 0, 0x04);                   // y mirror: row 0 shows row 15 (empty): nothing at the left edge
+    Render(50);
+    EXPECT_NE(Px(200), SpritePal(1));
+    Render(65);                                    // row 15 of the picture = pattern row 0
+    EXPECT_EQ(Px(200), SpritePal(1));
+    Sprite(0, 100, 50, 0, 0x02);                   // rotate (with the x mirror it implies): pattern row 1 becomes column 14 of line 0
+    Render(50);
+    EXPECT_EQ(Px((100 + 14) * 2), SpritePal(2));
+    Sprite(0, 100, 50, 0, 0, 0x08 | 0x02, true);   // 5th byte: x scale 2x (bits 4:3 = 01), y scale 2x (bits 2:1 = 01)
+    Render(50);
+    EXPECT_EQ(Px(200), SpritePal(1));
+    EXPECT_EQ(Px(203), SpritePal(1)) << "a scaled pixel is two grid pixels wide";
+    EXPECT_NE(Px(204), SpritePal(1));
+    Render(51);
+    EXPECT_EQ(Px(200), SpritePal(1)) << "and two lines high";
+}
+
+TEST_F(NextSprites_Test, FourBitPatternAndPaletteOffset)
+{
+    _sprites.WriteSlotSelect(0);
+    _sprites.WritePattern(0x31);  // 4-bit pattern 0: pixels 3, 1
+    Sprite(0, 100, 50, 0, 0x20, 0x80, true);  // palette offset 2, 4-bit
+    Render(50);
+    EXPECT_EQ(Px(200), SpritePal((2 << 4) | 3));
+    EXPECT_EQ(Px(202), SpritePal((2 << 4) | 1));
+}
+
+TEST_F(NextSprites_Test, RelativeSpriteFollowsItsAnchor)
+{
+    _sprites.WriteSlotSelect(0);
+    _sprites.WritePattern(7);
+    Sprite(0, 100, 50, 0, 0, 0x00, true);          // an anchor (4-bit off, unified off)
+    // relative: x +20, y +3, pattern 0 (A4 bits 7:6 = 01)
+    _sprites.WriteSlotSelect(1);
+    _sprites.WriteAttribute(20);
+    _sprites.WriteAttribute(3);
+    _sprites.WriteAttribute(0);
+    _sprites.WriteAttribute(0xC0);  // visible + fifth byte
+    _sprites.WriteAttribute(0x40);  // relative
+    Render(53);
+    EXPECT_EQ(Px((100 + 20) * 2), SpritePal(7)) << "the relative sprite is at anchor + (20, 3)";
+}
+
+TEST_F(NextSprites_Test, CollisionAndStatusPort)
+{
+    _sprites.WriteSlotSelect(0);
+    _sprites.WritePattern(1);
+    Sprite(0, 100, 50, 0);
+    Sprite(1, 100, 50, 0);
+    EXPECT_EQ(_sprites.ReadStatus(), 0);
+    Render(50);
+    EXPECT_EQ(_sprites.ReadStatus(), 1) << "two sprites on one pixel: collision";
+    EXPECT_EQ(_sprites.ReadStatus(), 0) << "a read clears it";
+}
+
+TEST_F(NextSprites_Test, LayerOrderPutsTheSpriteBelowLayer2OrAboveTheUla)
+{
+    _in.nr[0x68] = 0x00;
+    _sprites.WriteSlotSelect(0);
+    _sprites.WritePattern(5);
+    Sprite(0, 100, 80, 0);
+    const unsigned y = 80;
+    Render(y);
+    EXPECT_EQ(Px(200), SpritePal(5)) << "SLU: the sprite is on top";
+    _in.nr[0x15] = 0x01 | (4 << 2);  // USL: the ULA (paper, opaque) above the sprite
+    Render(y);
+    EXPECT_NE(Px(200), SpritePal(5));
+}
+
+// endregion
