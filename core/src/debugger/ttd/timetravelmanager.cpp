@@ -946,7 +946,7 @@ TimeTravelManager::SessionOperation::~SessionOperation()
         // executing a recording (an operation that resumed a recording
         // machine itself - StartRecording - published before it did)
         Emulator* emu = _manager._context ? _manager._context->pEmulator : nullptr;
-        const bool recordingMachineRuns = emu && emu->IsRunning() && !emu->IsPaused() &&
+        const bool recordingMachineRuns = emu && emu->IsRunning() && !emu->IsEmulationParked() &&
                                           _manager._state.load() == TTDSessionState::Recording;
         if (!_locked || (_manager._operationDepth == 1 && !recordingMachineRuns))
             _manager.PublishSessionInfo();
@@ -1251,8 +1251,8 @@ void TimeTravelManager::OnFrameBoundary()
     //
     // This runs on the thread driving the frame (called from
     // MainLoop::CompleteFrame, the boundary of every run path). Emulator::Pause() is
-    // safe to call here — it just sets the _isPaused flag, which the
-    // MainLoop checks at the top of its next iteration.
+    // safe to call here: it submits the pause to the execution arbiter without waiting (on the loop's thread the
+    // priority lane; on a direct run's thread it applies after the run), and the loop parks at its next check.
     // ------------------------------------------------------------------
     // A throwaway replay (ComposeDisplay, frame-cache builds) crossing the
     // session end is not execution running into unrecorded territory; it

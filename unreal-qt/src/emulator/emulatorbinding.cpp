@@ -4,6 +4,7 @@
  */
 
 #include "emulatorbinding.h"
+#include <optional>
 
 #include <QDebug>
 #include <QMetaObject>
@@ -16,33 +17,22 @@
 
 namespace
 {
-/// Pause() -> op -> Resume() bracket, same contract as the CLI/WebAPI tape
-/// handlers (design §7.1). Pause only when actually running; resume exactly
-/// then. RAII so an early return can never leave the emulator parked.
+/// The CPU held around every mutating tape / media operation of this surface (Emulator::CpuHold). RAII, so
+/// an early return cannot leave it held.
 class EmulatorPauseBracket
 {
 public:
+    // The CPU held for the operation (Emulator::CpuHold, execution arbiter): nothing executes meanwhile, the
+    // pause is left as it was, nothing is broadcast. Before: Pause() + a 10 ms sleep + Resume(), which lifted a
+    // pause somebody else asked for meanwhile
     explicit EmulatorPauseBracket(Emulator* emulator)
-        : _emulator(emulator), _wasRunning(emulator && emulator->IsRunning() && !emulator->IsPaused())
     {
-        if (_wasRunning)
-        {
-            _emulator->Pause();
-            QThread::msleep(10);  // Give emulator time to pause
-        }
-    }
-
-    ~EmulatorPauseBracket()
-    {
-        if (_wasRunning)
-        {
-            _emulator->Resume();
-        }
+        if (emulator)
+            _hold.emplace(*emulator, "gui");
     }
 
 private:
-    Emulator* _emulator;
-    bool _wasRunning;
+    std::optional<Emulator::CpuHold> _hold;
 };
 }  // namespace
 

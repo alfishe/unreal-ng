@@ -969,11 +969,9 @@ BasicEncoder::InjectionResult BasicEncoder::injectTo128K(Emulator* emulator, con
     // We run 2 frames per character to allow ROM to process the keypress.
     // Pause once for entire injection, then resume. Avoids repeated pause/resume overhead.
 
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning)
-    {
-        emulator->Pause(false);  // Pause without broadcasting
-    }
+    // The CPU held for the whole injection (Emulator::CpuHold): the steps below run inside it, the pause is left as it
+    // was, nothing is broadcast
+    Emulator::CpuHold hold(*emulator, "basic injection");
 
     for (char c : command)
     {
@@ -994,10 +992,6 @@ BasicEncoder::InjectionResult BasicEncoder::injectTo128K(Emulator* emulator, con
         }
     }
 
-    if (wasRunning)
-    {
-        emulator->Resume(false);  // Resume without broadcasting
-    }
 
     result.success = true;
     result.message = "[128K BASIC] Injected: " + command;
@@ -1186,10 +1180,11 @@ static bool LeaveMenuIntoBasicEditor(Emulator* emulator, Memory* memory, BasicEn
         }
     }
 
-    // Restore running state if emulator was running before injection
+    // Restore running state if emulator was running before injection. RunNFrames() paused it with a broadcast,
+    // so the resume broadcasts too (a silent resume only ends a silent pause: execution arbiter)
     if (wasRunning)
     {
-        emulator->Resume(false);  // Resume without broadcasting
+        emulator->Resume();
     }
 
     return state == BasicEncoder::BasicState::Basic128K || state == BasicEncoder::BasicState::Basic48K;
@@ -1307,10 +1302,11 @@ BasicEncoder::InjectionResult BasicEncoder::runCommand(Emulator* emulator, const
             // correctly picks up the command.
             injectEnterPhysical(emulator);
 
-            // Restore running state if emulator was running before injection
+            // Restore running state if emulator was running before injection (RunNFrames() paused it with a
+            // broadcast; a silent resume only ends a silent pause)
             if (wasRunning)
             {
-                emulator->Resume(false);  // Resume without broadcasting
+                emulator->Resume();
             }
         }
         else

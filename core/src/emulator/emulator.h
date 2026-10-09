@@ -14,7 +14,10 @@
 #include <random>
 #include <shared_mutex>
 #include <string>
+#include <thread>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "base/featuremanager.h"
 #include "common/autoresetevent.h"
@@ -25,6 +28,7 @@
 #include "emulator/config.h"
 #include "emulator/video/screen.h"  // For DisplayViewport
 #include "emulator/cpu/core.h"
+#include "emulator/execution/executionarbiter.h"
 #include "emulator/mainloop.h"
 #include "emulatorcontext.h"
 #include "emulator/notifications.h"
@@ -206,6 +210,13 @@ private:
 
     private:
         Emulator& _emulator;
+        /// The CPU for this run (execution arbiter, design §6 X2): a driving command. Outermost, it parks the main
+        /// loop and applies the pause ("stepping leaves the machine paused"); nothing else is served meanwhile - a
+        /// Resume() or a silent pause from another thread waits for its end. Nested (a step inside a silent pause,
+        /// on the loop's own thread) it is inline and leaves the intent alone
+        execution::HoldToken _hold;
+        /// This scope is a new driver of the Z80 (not nested in one that already drives)
+        bool _driver = false;
         /// The host audio hold this direct run takes (reason DirectRun): it is not paced to real time, so its
         /// frames must not reach the speakers sped up. Taken after the depth marks the run active, released before
         /// it unmarks it, so Resume's reconcile never sees this hold without its run
@@ -213,12 +224,29 @@ private:
     };
 
     // Emulator state
-    // _pauseWaitMutex guards _isPaused transitions so the parked CPU thread's
-    // CV predicate (WaitWhilePaused) can never miss a Pause/Resume/Stop flip;
-    // _resumeCV wakes it in microseconds instead of the legacy 20 ms poll.
-    mutable std::mutex _pauseWaitMutex;
-    std::condition_variable _resumeCV;
-    volatile bool _isPaused = false;
+    /// Decides whether the Z80 executes: intents (pause / run), commands that hold the CPU, the main loop's parking
+    /// (docs/inprogress/2026-10-09-execution-arbiter/design.md). Pause() / Resume() are its compat front
+    execution::ExecutionArbiter _arbiter;
+    /// Compat (design §6 X1): a silent Pause(false) ... Resume(false) pair on one thread is one hold of the CPU.
+    /// Per thread, a stack: the pairs may nest
+    std::mutex _compatHoldsMutex;
+    std::unordered_map<std::thread::id, std::vector<execution::HoldToken>> _compatHolds;
+    /// StartAsync submitted the start's Run intent for the Start() its thread runs
+    bool _startIntentSubmitted = false;
+    /// The breakpoint cause of each Pause edge, by edge seq: taken at the edge (gate), posted with its broadcast
+    std::mutex _edgeCausesMutex;
+    std::vector<std::pair<uint64_t, BreakpointStop>> _edgeCauses;
+    void BeginCompatHold();
+    void EndCompatHold();
+    void ReleaseCompatHolds();
+    /// At the moment an intent edge applies, before the machine can run (under the arbiter's lock)
+    void OnIntentEdgeGate(const execution::IntentEdge& edge, bool parked);
+    /// After it applied, outside the lock: state and broadcasts
+    void OnIntentEdge(const execution::IntentEdge& edge);
+    /// Threads executing this machine's Z80 right now: the main loop between its parks, or a direct run. More than
+    /// one is a bug (the one the arbiter removed); counted, logged, asserted by the tests
+    std::atomic<int> _activeDrivers{0};
+    std::atomic<uint64_t> _driverViolations{0};
     std::atomic<bool> _isRunning{false};  // Atomic to support idempotent Stop()
     // Serializes Stop(): a caller that loses the _isRunning CAS below must still
     // block until the thread that won it has actually joined, not just signaled.
@@ -740,6 +768,39 @@ public:
     // Status methods
     bool IsRunning();
     bool IsPaused();
+    /// The execution arbiter (intents, commands, parking): the one place that decides whether the Z80 executes
+    execution::ExecutionArbiter& GetArbiter() { return _arbiter; }
+    /// One relaxed load: the main loop must park at this instruction boundary (Z80FrameCycle, MainLoop::Run)
+    bool ShouldPark() const { return _arbiter.ShouldYield(); }
+    /// A thread starts / stops executing the Z80 (MainLoop around a frame, a direct run). Two at once is a violation
+    void DriverEnter();
+    void DriverLeave();
+    /// Moments two threads executed the Z80 at once (0 on a correct run)
+    uint64_t DriverViolations() const { return _driverViolations.load(std::memory_order_relaxed); }
+    /// The machine's state may be changed from this thread right now: not running, paused, or this thread holds the
+    /// CPU (a CpuHold, a direct run, the emulation thread itself)
+    bool CanMutateNow();
+
+    /// The CPU held for a piece of work that changes the machine (execution arbiter command, design §6 X3): the main
+    /// loop parked, no direct run on another thread, nothing else served meanwhile. It never changes the pause and
+    /// never broadcasts - a Pause() or Resume() asked meanwhile queues and applies after it. Nested holds (this thread
+    /// already holds the CPU) are free. Replaces the "if running: Pause(); sleep; ...; Resume()" brackets
+    class CpuHold
+    {
+    public:
+        CpuHold(Emulator& emulator, const char* tag,
+                std::chrono::milliseconds timeout = std::chrono::seconds(5));
+        ~CpuHold();
+        CpuHold(const CpuHold&) = delete;
+        CpuHold& operator=(const CpuHold&) = delete;
+        /// False when the CPU was not handed over in time (logged): the work then runs as the old bracket did
+        bool Held() const { return _held; }
+
+    private:
+        Emulator& _emulator;
+        execution::HoldToken _token;
+        bool _held = false;
+    };
 
     /// True when no emulation thread is drawing: not running, or paused and confirmed parked (the pause loop
     /// was reached, not merely requested). Then the frame buffers and registers are safe to read from another

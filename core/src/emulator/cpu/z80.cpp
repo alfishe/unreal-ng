@@ -1059,15 +1059,13 @@ void Z80::Z80FrameCycle()
     // Cover whole frame (control by effective t-states)
     while (t < _frameLimit)
     {
-        // Mid-frame pause park. Pause() is otherwise observed only at frame
-        // boundaries (MainLoop::Run), so an in-flight frame - which under
-        // turbo/debug-mode or TTD recording can take hundreds of milliseconds -
-        // would delay the park and its confirmation until the frame completes.
-        // One volatile read per instruction keeps the unpaused hot path cheap;
-        // WaitWhilePaused parks + confirms and wakes on Resume()/Stop() via CV.
-        // Everything the loop reads lives in members, so work done while parked
-        // (a TTD restore, stepping from another thread) is picked up here
-        if (Emulator* emulator = _context->pEmulator; emulator && emulator->IsPaused())
+        // Mid-frame park. The execution arbiter asks for it (a pause, or a command that needs the CPU still), and
+        // the frame-end check alone would delay it until the frame completes - which under turbo/debug-mode or TTD
+        // recording can take hundreds of milliseconds. One relaxed atomic load per instruction (ShouldPark, inline)
+        // keeps the running hot path cheap; WaitWhilePaused parks and wakes when the machine may run again.
+        // Everything the loop reads lives in members, so work done while parked (a TTD restore, stepping from
+        // another thread) is picked up here
+        if (Emulator* emulator = _context->pEmulator; emulator && emulator->ShouldPark())
             emulator->WaitWhilePaused();
 
         StepInstruction();

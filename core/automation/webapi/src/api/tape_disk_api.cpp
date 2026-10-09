@@ -2,6 +2,7 @@
 // Generated: 2026-01-08
 
 #include "../emulator_api.h"
+#include <optional>
 #include "../common/upload_helper.h"
 
 #include <debugger/media/sectorwrite.h>
@@ -388,11 +389,9 @@ void EmulatorAPI::playTape(const HttpRequestPtr& req,
     }
     
     // Thread-safe play
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    // The CPU held for the operation (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*emulator, "webapi media");
     
     // Parse-once (idempotent); paused -> resume the frozen position IN PLACE
     // (FR-6), otherwise start at the consumption cursor
@@ -407,9 +406,7 @@ void EmulatorAPI::playTape(const HttpRequestPtr& req,
         }
     }
     
-    if (wasRunning) {
-        emulator->Resume();
-    }
+    hold.reset();
     
     Json::Value ret;
     ret["status"] = played ? "success" : "error";
@@ -457,17 +454,13 @@ void EmulatorAPI::stopTape(const HttpRequestPtr& req,
     }
     
     // Thread-safe stop
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    // The CPU held for the operation (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*emulator, "webapi media");
     
     context->pTape->stopTape();
     
-    if (wasRunning) {
-        emulator->Resume();
-    }
+    hold.reset();
     
     Json::Value ret;
     ret["status"] = "success";
@@ -512,19 +505,15 @@ void EmulatorAPI::rewindTape(const HttpRequestPtr& req,
     }
     
     // Thread-safe rewind
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    // The CPU held for the operation (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*emulator, "webapi media");
     
     // Rewind keeps the image and catalog (FR-5) — unlike stop/eject
     context->pTape->EnsureImageLoaded();
     context->pTape->RewindToStart();
     
-    if (wasRunning) {
-        emulator->Resume();
-    }
+    hold.reset();
     
     Json::Value ret;
     ret["status"] = "success";
@@ -570,17 +559,13 @@ void EmulatorAPI::getTape(const HttpRequestPtr& req,
     }
     
     // Thread-safe snapshot: the first EnsureImageLoaded() mutates tape state
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    // The CPU held for the operation (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*emulator, "webapi media");
     
     Json::Value ret = buildTapeSnapshot(context);
     
-    if (wasRunning) {
-        emulator->Resume();
-    }
+    hold.reset();
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
@@ -645,11 +630,9 @@ void EmulatorAPI::getTapeBlock(const HttpRequestPtr& req,
         return;
     }
     
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    // The CPU held for the operation (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*emulator, "webapi media");
     
     Json::Value ret;
     HttpStatusCode code = HttpStatusCode::k200OK;
@@ -676,9 +659,7 @@ void EmulatorAPI::getTapeBlock(const HttpRequestPtr& req,
         ret["preview_hex"] = hex;
     }
     
-    if (wasRunning) {
-        emulator->Resume();
-    }
+    hold.reset();
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     resp->setStatusCode(code);
@@ -734,11 +715,9 @@ void EmulatorAPI::seekTape(const HttpRequestPtr& req,
         return;
     }
     
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    // The CPU held for the operation (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*emulator, "webapi media");
     
     Json::Value ret;
     HttpStatusCode code = HttpStatusCode::k200OK;
@@ -757,9 +736,7 @@ void EmulatorAPI::seekTape(const HttpRequestPtr& req,
         ret["cursor"] = snapshot["cursor"];
     }
     
-    if (wasRunning) {
-        emulator->Resume();
-    }
+    hold.reset();
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     resp->setStatusCode(code);
@@ -800,11 +777,9 @@ void EmulatorAPI::pauseTape(const HttpRequestPtr& req,
         return;
     }
     
-    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-    if (wasRunning) {
-        emulator->Pause();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    // The CPU held for the operation (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*emulator, "webapi media");
     
     Json::Value ret;
     HttpStatusCode code = HttpStatusCode::k200OK;
@@ -823,9 +798,7 @@ void EmulatorAPI::pauseTape(const HttpRequestPtr& req,
         ret["message"] = "Tape paused (play resumes in place)";
     }
     
-    if (wasRunning) {
-        emulator->Resume();
-    }
+    hold.reset();
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     resp->setStatusCode(code);

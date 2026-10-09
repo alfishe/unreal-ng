@@ -361,34 +361,22 @@ protected:
         return reply;
     }
 
-    /// Pause() -> op -> Resume() bracket shared by the mutating tape
-    /// bindings (same contract as the CLI/WebAPI handlers, design §7.1):
-    /// pause only when actually running, resume exactly then. RAII so an
-    /// early return can never leave the emulator parked.
+    /// The CPU held around every mutating tape / media operation of this surface (Emulator::CpuHold). RAII, so
+    /// an early return cannot leave it held.
     class EmulatorPauseBracket
     {
     public:
+        // The CPU held for the operation (Emulator::CpuHold, execution arbiter): nothing executes meanwhile, the
+        // pause is left as it was, nothing is broadcast. Before: Pause() + a 10 ms sleep + Resume(), which lifted a
+        // pause somebody else asked for meanwhile
         explicit EmulatorPauseBracket(Emulator* emulator)
-            : _emulator(emulator), _wasRunning(emulator && emulator->IsRunning() && !emulator->IsPaused())
         {
-            if (_wasRunning)
-            {
-                _emulator->Pause();
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));  // Give emulator time to pause
-            }
-        }
-
-        ~EmulatorPauseBracket()
-        {
-            if (_wasRunning)
-            {
-                _emulator->Resume();
-            }
+            if (emulator)
+                _hold.emplace(*emulator, "lua");
         }
 
     private:
-        Emulator* _emulator;
-        bool _wasRunning;
+        std::optional<Emulator::CpuHold> _hold;
     };
     /// endregion </Fields>
 
@@ -5620,13 +5608,12 @@ public:
                 const bool featureWasOff = fm && !fm->isEnabled(Features::kRecording);
                 if (featureWasOff) fm->setFeature(Features::kRecording, true);
 
-                const bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-                if (wasRunning) emulator->Pause();
-
-                const bool started = rm->StartRecording(filename, format, audio, static_cast<uint32_t>(videoBitrate),
-                                                        static_cast<uint32_t>(audioBitrate));
-
-                if (wasRunning) emulator->Resume();
+                bool started = false;
+                {
+                    Emulator::CpuHold hold(*emulator, "lua recording");  // no frame mid-start; the pause stays
+                    started = rm->StartRecording(filename, format, audio, static_cast<uint32_t>(videoBitrate),
+                                                 static_cast<uint32_t>(audioBitrate));
+                }
 
                 if (!started)
                 {

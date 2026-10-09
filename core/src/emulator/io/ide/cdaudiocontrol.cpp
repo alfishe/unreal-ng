@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+#include <optional>
+
 #include "cdaudiocontrol.h"
 
 #include <algorithm>
@@ -102,16 +104,12 @@ namespace
     template <typename F>
     void Parked(EmulatorContext* context, F&& change)
     {
+        // The CPU held for the change (Emulator::CpuHold); the pause is left as it was
         Emulator* emulator = context ? context->pEmulator : nullptr;
-        const bool park = emulator && emulator->IsRunning() && !emulator->IsPaused();
-        if (park)
-        {
-            emulator->Pause(false);
-            emulator->WaitForPauseConfirmation(1000);
-        }
+        std::optional<Emulator::CpuHold> hold;
+        if (emulator)
+            hold.emplace(*emulator, "cd audio");
         change();
-        if (park)
-            emulator->Resume(false);
     }
 }  // namespace
 

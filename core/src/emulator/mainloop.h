@@ -14,6 +14,12 @@
 #include "emulator/emulatorcontext.h"
 #include "stdafx.h"
 
+class Emulator;
+namespace execution
+{
+class ExecutionArbiter;
+}
+
 class MainLoop : public Observer
 {
     /// region <ModuleLogger definitions for Module/Submodule>
@@ -34,9 +40,6 @@ protected:
 
     volatile bool _isRunning = false;
     volatile bool _stopRequested = false;
-    std::atomic<bool> _isPausedConfirmed{false};  // Set by Z80 thread when actually paused
-    std::condition_variable _pauseCV;              // Signaled when pause is confirmed
-    std::mutex _pauseMutex;                        // Protects pause state
     std::atomic<std::thread::id> _runThreadId{};   // Thread currently executing Run() (emulation thread)
 
 
@@ -164,6 +167,8 @@ public:
 
 public:
     void Run(volatile bool& exit);
+    /// Park at a boundary until the execution arbiter lets the machine run (false: stop)
+    bool Park(Emulator* emulator, execution::ExecutionArbiter* arbiter);
     void Stop();
 
     /// @brief CPU core access for debugger/automation port I/O.
@@ -172,27 +177,12 @@ public:
     ///       memory access via Emulator::GetMemory().
     Core* GetCPU() const { return _cpu; }
 
-    /// @brief Returns true when the emulation thread has actually parked in the pause loop
-    /// (Emulator::Pause() only sets a flag; the current frame still finishes executing)
-    bool IsPauseConfirmed() const { return _isPausedConfirmed.load(std::memory_order_acquire); }
+    /// @brief Nothing executes the machine: the loop parked (a pause, or a command holding the CPU), or no loop
+    bool IsPauseConfirmed() const;
 
-    /// @brief Block until the emulation thread confirms it parked in the pause loop
-    /// @param timeoutMs Maximum time to wait, in milliseconds
-    /// @return true if pause was confirmed within the timeout
-    /// @note Safe to call from any thread. When called from the emulation thread itself
-    ///       (e.g. a breakpoint handler pausing mid-frame) it returns immediately -
-    ///       no frame can be in flight concurrently with the caller in that case.
-    ///       May time out legitimately when execution is paused inside a frame
-    ///       (e.g. breakpoint hit), since the pause loop is only reached at frame end.
+    /// @brief Block until nothing executes the machine (Emulator::WaitForPauseConfirmation)
+    /// @return true if parked within the timeout; true at once from the emulation thread itself
     bool WaitForPauseConfirmation(uint32_t timeoutMs);
-
-    /// @brief Confirm the pause from the CPU thread itself when it parks mid-frame
-    /// @note Used by Emulator::WaitWhilePaused(): when the CPU parks inside a frame
-    ///       (breakpoint/watchpoint handler or the per-instruction pause check in
-    ///       Z80FrameCycle), Run()'s frame-end park/confirm path is unreachable
-    ///       above it. Confirming on MainLoop's behalf lets WaitForPauseConfirmation()
-    ///       callers observe the park immediately instead of burning their timeout.
-    void ConfirmPauseFromCpu();
 
     /// @brief The caller is the emulator loop's own thread
     /// Run `work` on the emulation thread between two frames (from that thread itself: at once). True when it ran
@@ -205,13 +195,6 @@ public:
         return _runThreadId.load(std::memory_order_acquire) == std::this_thread::get_id();
     }
 
-    /// @brief Eagerly drop a (possibly) stale pause confirmation
-    /// @note Called from Emulator::Resume()/Stop() right after un-parking the CPU
-    ///       thread. Without this, a Pause() issued immediately after Resume()
-    ///       could consume a stale "parked" confirmation from the previous park
-    ///       and return while the emulation thread is already executing the next
-    ///       frame - two Z80 drivers at once.
-    void InvalidatePauseConfirmation();
 
 protected:
     void RunFrame();

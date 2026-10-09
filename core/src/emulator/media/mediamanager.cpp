@@ -1367,7 +1367,8 @@ bool MediaManager::CanApplyNow() const
     if (_applyNowProbe)
         return _applyNowProbe();
     Emulator* emulator = _context ? _context->pEmulator : nullptr;
-    return emulator == nullptr || !emulator->IsRunning() || emulator->IsPaused();
+    // Not running, paused and parked, or the caller holds the CPU (Emulator::CpuHold: LoadDisk, LoadTape, ...)
+    return emulator == nullptr || emulator->CanMutateNow();
 }
 
 MediaResult MediaManager::CheckRecording(bool endRecording)
