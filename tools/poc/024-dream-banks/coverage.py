@@ -11,7 +11,7 @@
     coverage.py pitch  --render R --bank L=X.sf2 ... [--programs 0-127] [--keys 36,48,...]
                                                rendered pitch per program and key vs equal temperament (cents)
 
-BANK is a .dxb / .b16 (parsed directly) or a .sf2. Write every output under scratch/.
+BANK is a .dxb / .b16 (parsed directly) or a .sf2.
 """
 import argparse
 import json
@@ -491,7 +491,7 @@ def main():
         s = sub.add_parser(name)
         s.add_argument('--render')
         s.add_argument('--bank', action='append', default=[])
-        s.add_argument('--out', default='scratch/sam7/coverage')
+        s.add_argument('--out', default='coverage')
         s.set_defaults(fn=fn)
         if name == 'drums':
             s.add_argument('--kit', type=int, default=0)

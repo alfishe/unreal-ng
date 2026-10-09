@@ -13,8 +13,6 @@ What is carried over (confidence in the doc):
     amplitude envelope    -> attack / decay / sustain / release (approximate rate mapping)
     exclusive groups      -> exclusiveClass on drum zones
 What is not: filter, LFOs, pitch / filter envelopes, velocity curves, key tables, the two level words, effects sends.
-
-The output is a derivative of a licensed bank: write it under scratch/ and never distribute it.
 """
 import argparse
 import math
@@ -257,7 +255,7 @@ def ParseEdits(bank, args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('bank')
-    ap.add_argument('--out', required=True, help='output .sf2 (keep it under scratch/)')
+    ap.add_argument('--out', required=True, help='output .sf2')
     ap.add_argument('--level-field', choices=['block', 'tail'],
                     help='EXPERIMENT: turn an undecoded level byte pair into initialAttenuation (unconfirmed)')
     ap.add_argument('--level-step', type=float, default=0.375, help='dB per level step for --level-field')
@@ -273,7 +271,7 @@ def main():
     bank = DreamBank(args.bank)
     bld = Builder(bank, args.level_field, args.level_step)
     bld.Build(ParseEdits(bank, args))
-    WriteSf2(bld, args.out, 'Dream bank conversion (local use only): ' + bank.header['copyright'])
+    WriteSf2(bld, args.out, 'Dream bank conversion: ' + bank.header['copyright'])
     print('%d presets, %d samples, %d splits without a decoded sample block -> %s' % (
         len(bld.presets), len(bld.sampleList), bld.skipped, args.out))
 

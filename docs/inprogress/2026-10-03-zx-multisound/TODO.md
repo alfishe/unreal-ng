@@ -328,3 +328,5 @@ owner accepted the later rebase conflict in `soundchip_turbosoundfm.h`.
   socket's chips run? Decided 2026-10-07: yes, done (above)
 - [ ] Later: SAM-6 host MIDI output, SAM-7 Dream-native banks research (format reverse-engineered, POC reader /
   converter, integration proposal and owner questions: [sam7-dream-banks.md](sam7-dream-banks.md))
+- [ ] BURAN (Serdaco DreamBlaster bank) as the shipped default bank: owner's candidate (2026-10-08, sounds better
+  than GMBK5X128; [sam7-dream-banks.md](sam7-dream-banks.md) §9.7)

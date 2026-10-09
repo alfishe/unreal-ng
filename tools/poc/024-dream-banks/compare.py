@@ -11,10 +11,10 @@ Writes a test MIDI (a C major scale and one held note per instrument, a few drum
     release      ms after note-off until the RMS drops 40 dB below its level at note-off
     distance     mean dB difference of 1/3-octave band levels (60 Hz..16 kHz) between two banks, same note
 
-Every output (MIDI, WAV, JSON, Markdown) goes to --out (keep it under scratch/).
+Every output (MIDI, WAV, JSON, Markdown) goes to --out.
 
-    python3 compare.py --render <build>/bin/sam2695render --out scratch/sam7/compare \
-        --bank dream=scratch/sam7/gmbk5x128-203.sf2 --bank gugs=data/midi/generaluser-gs.sf2 \
+    python3 compare.py --render <build>/bin/sam2695render --out compare \
+        --bank dream=gmbk5x128-203.sf2 --bank gugs=data/midi/generaluser-gs.sf2 \
         --bank sam2695sf2=testdata/midi/dream-sam2695-sf2/sam2695.sf2
 """
 import argparse

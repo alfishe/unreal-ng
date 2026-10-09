@@ -18,7 +18,7 @@ B16. The remaining audible tuning difference in "Dream On" (Rock Organ about +20
 Doom drums per hit are as loud as GeneralUser's; the converted Dream guitars are 9 dB louder, which is the bank's
 balance as far as decoded (§9.5). Rock Organ: user-side `--recenter 19` workaround (§9.6).
 
-## 1. Inputs and licensing
+## 1. Inputs
 
 | Bank file (repo-relative, untracked) | Origin | Notes |
 |---|---|---|
@@ -27,11 +27,6 @@ balance as far as decoded (§9.5). Rock Organ: user-side `--recenter 19` workaro
 | `testdata/midi/dreamblaster-gud/GUD_104.DXB` | Serdaco | GeneralUser GS 1.44 samples, hand-tuned |
 | `testdata/midi/dreamblaster-unofficial-hummtaro/*` | community conversions (16 files: GXSCC, Roland GM, Yamaha GM, MT-32, OPL-3, ESFM, ...) | some with their source SF2 elsewhere in `testdata/midi/` |
 | `testdata/midi/dream-sam2695-sf2/sam2695.sf2` | community SF2 approximation of the SAM2695 ("Reyna SE / 2695 SF2") | shares no PCM with the GMBK banks (0 of 806 samples found) |
-
-Dream and Serdaco banks are licensed for DreamBlaster cards only. Nothing from them is in the repository: no bytes,
-no samples, no converted banks. This document quotes only small structural excerpts (headers, table words). The POC
-writes every extraction and conversion under `scratch/`. A core loader would read a bank the user supplies, the
-same way the emulator reads a ROM image, and would never ship one.
 
 Public information: none on the compiled format. Serdaco states that "the spec for the compiled dream banks is
 proprietary" and that only the Dream 5000 SDK bank compiler produces them; Awave Studio 12.4 reads and writes the
@@ -316,7 +311,7 @@ fills an SF2. The bank's SHA-256 identity and the save-state refusal of another 
 | Phase | Content | Size |
 |---|---|---|
 | D-1 | `DreamBank::LoadFile / LoadMemory` in libsam2695: header, hole, page table, programs, variations, kits, exclusive groups, instruments, sample block, pitch, loops, one-shot; approximate amplitude envelope; `BankError` values for bad magic / truncation / unparsed splits (skip and warn) | M (2-3 days) |
-| D-2 | Tests without licensed data: a synthetic DXB writer in the test suite (tiny image: header, one program, one kit, a sine sample) plus golden renders; optional local-only test that runs when `testdata/midi/dream-gmbk5x/` exists | S-M |
+| D-2 | Tests: a synthetic DXB writer in the test suite (tiny image: header, one program, one kit, a sine sample) plus golden renders; optional local-only test that runs when `testdata/midi/dream-gmbk5x/` exists | S-M |
 | D-3 | Emulator wiring: the `[MIDI] Bank=` setting accepts `.dxb` / `.b16` next to `.sf2`; docs: the user supplies the bank, never shipped | S |
 | D-4 (research) | Decode the parameter stream: filter, LFOs, second / third envelope, keyboard tables, level pairs. Needs controlled ground truth (see Q2) | L, open-ended |
 | D-5 | Voice-model extensions for what D-4 finds (segment envelopes, filter modes, key tables), behind a bank-type switch so SF2 playback stays bit-identical | M-L |
@@ -328,8 +323,7 @@ fills an SF2. The bank's SHA-256 identity and the save-state refusal of another 
 | Q1 | Is a Dream-bank mode with exact samples / splits / pitch but approximate envelopes and no filter worth landing (D-1..D-3), or only after D-4? | Land D-1..D-3 as an experimental, opt-in bank type: it already plays Dream's CleanWave-5000 samples, which is closer to the chip family than any SF2, and the approximation is documented. |
 | Q2 | D-4 needs ground truth. Options: (a) Awave Studio (commercial) to write .XDB sources from an SF2 with controlled parameters, compiled by the Dream 5000 SDK (Serdaco, price on request); (b) a DreamBlaster X2 / X16 to record reference audio; (c) statistics on more source-paired banks (slow, imprecise). | (b) a DreamBlaster X2 recording set is the most useful single item (it also answers "how close to the real chip"); (a) only if the SDK becomes available. Without either, stop at the approximation. |
 | Q3 | Bank versions to support: DXB 2014..2019 compilers and B16. | Both: they share every structure; the cost is the hole and the old instrument header (already handled). |
-| Q4 | Licensing posture: loader reads a user-supplied bank like a ROM, nothing shipped, no bank-derived data in tests or CI. | Keep it exactly so; the SAM2695's own CleanWave ROM remains unavailable, the GMBK banks are its 5000-series relatives, not the chip's ROM. |
-| Q5 | Variation 127 holds an MT-32 map (128 programs) and kit 127 the MT-32 kit in Dream's and the community banks. Expose an MT-32 mode for the card? | Not now; note it for the MT-32 work if it ever comes. |
+| Q4 | Variation 127 holds an MT-32 map (128 programs) and kit 127 the MT-32 kit in Dream's and the community banks. Expose an MT-32 mode for the card? | Not now; note it for the MT-32 work if it ever comes. |
 
 ## 8. References
 
@@ -556,7 +550,7 @@ the decoding.
 
 User-side workaround (not a claim about the hardware): `tosf2.py --replace`, `--layer`, `--recenter`. Candidates for
 program 19, rendered pitch (cents) at keys 48 / 55 / 60 / 62 / 63 / 64 / 65 / 67 / 72, and the Dream On organ part
-(channel 5) loudness; renders in `scratch/sam7/organ-*.wav`:
+(channel 5) loudness:
 
 | Candidate | Pitch per key | Keys 60-67: mean / max abs | Organ part LUFS (full song) |
 |---|---|---|---|
@@ -577,5 +571,13 @@ program 19, rendered pitch (cents) at keys 48 / 55 / 60 / 62 / 63 / 64 / 65 / 67
 
 Recommendation: `--recenter 19`. It keeps Dream's own organ (same samples, layer detune, level within 0.1 dB) and
 moves it into the same tuning band as GeneralUser's organ. Rotary Organ (C0 8) is the in-family alternative if a
-different timbre is acceptable. Output: `scratch/sam7/gmbk5x128-203-organfix.sf2` (no drum change: §9.5 found no
-data basis for one).
+different timbre is acceptable.
+
+### 9.7 BURAN: candidate for the shipped default bank (owner, 2026-10-08)
+
+The owner listened to `BURAN11.DXB` converted with `tosf2.py` (`zxmidip3.trd`, the same songs as §9.2 and §9.4) next
+to GMBK5X128 2.03: BURAN sounds clearly better. Owner decision: BURAN is the **candidate to replace or join the
+shipped default bank** (`data/midi/`, today GeneralUser GS 2.0.3).
+
+To use it: `python3 tools/poc/024-dream-banks/tosf2.py <BURAN11.DXB> --out <buran.sf2>`, then point `[MIDI] Bank=`
+at the SF2.

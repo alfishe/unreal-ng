@@ -12,12 +12,6 @@ pitch decoded and validated on all 24 bank files in `testdata/midi/`; envelopes 
 keyboard tables not decoded. Coverage and tuning audit with converter fixes (drums at fixed pitch, one-shots):
 2026-10-08.
 
-## Licensing
-
-Dream and Serdaco banks are licensed for DreamBlaster cards only. The bank files stay untracked in
-`testdata/midi/`; this folder holds code only. Write every output (JSON, WAV, SF2, renders) under `scratch/`, which
-is git-ignored, and never commit or share it.
-
 ## Files
 
 | File | What |
@@ -40,13 +34,13 @@ python3 $P/dreambank.py info $B                    # header, counts, decoded spl
 python3 $P/dreambank.py programs $B --map testdata/midi/dream-gmbk5x/GMBK5X128_203.pdf
 python3 $P/dreambank.py selfcheck testdata/midi/dream-gmbk5x/*.DXB testdata/midi/dream-gmbk5x/*.B16
 python3 $P/dreambank.py pitchcheck $B              # loops at their decoded root vs equal temperament
-python3 $P/dreambank.py dump $B --out scratch/sam7/gmbk203.json
-python3 $P/dreambank.py extract $B --out scratch/sam7/wav-gmbk203        # WAV + 'smpl' loop chunk
+python3 $P/dreambank.py dump $B --out gmbk203.json
+python3 $P/dreambank.py extract $B --out wav-gmbk203        # WAV + 'smpl' loop chunk
 
-python3 $P/tosf2.py $B --out scratch/sam7/gmbk5x128-203.sf2
+python3 $P/tosf2.py $B --out gmbk5x128-203.sf2
 tools/build/build.sh sam2695render
-python3 $P/compare.py --render cmake-build-agent-release/bin/sam2695render --out scratch/sam7/compare \
-    --bank dream=scratch/sam7/gmbk5x128-203.sf2 \
+python3 $P/compare.py --render cmake-build-agent-release/bin/sam2695render --out compare \
+    --bank dream=gmbk5x128-203.sf2 \
     --bank gugs=data/midi/generaluser-gs.sf2 \
     --bank sam2695sf2=testdata/midi/dream-sam2695-sf2/sam2695.sf2
 ```
@@ -56,7 +50,7 @@ python3 $P/compare.py --render cmake-build-agent-release/bin/sam2695render --out
 User-side workarounds and experiments in `tosf2.py` (not claims about the hardware):
 
 ```bash
-python3 $P/tosf2.py $B --out scratch/sam7/gmbk5x128-203-organfix.sf2 --recenter 19   # recommended organ fix
+python3 $P/tosf2.py $B --out gmbk5x128-203-organfix.sf2 --recenter 19   # recommended organ fix
 python3 $P/tosf2.py $B --out X.sf2 --replace 19=self:19:8        # program 19 from variation 8 of the same bank
 python3 $P/tosf2.py $B --out X.sf2 --replace 19=testdata/midi/dreamblaster-buran/BURAN11.DXB:19
 python3 $P/tosf2.py $B --out X.sf2 --layer 19=0                  # keep only layer 0
@@ -70,13 +64,13 @@ Coverage and tuning audit:
 ```bash
 R=cmake-build-agent-release/bin/sam2695render
 SONGS=testdata/sound/multisound/software/wc/wc-sdcard/MUSIC/MID
-python3 $P/coverage.py banks $B scratch/sam7/gmbk5x128-203.sf2 data/midi/generaluser-gs.sf2
+python3 $P/coverage.py banks $B gmbk5x128-203.sf2 data/midi/generaluser-gs.sf2
 python3 $P/coverage.py drums --render $R --kit 0 --gate 0.05 \
-    --bank dream=scratch/sam7/gmbk5x128-203.sf2 --bank gugs=data/midi/generaluser-gs.sf2
+    --bank dream=gmbk5x128-203.sf2 --bank gugs=data/midi/generaluser-gs.sf2
 python3 $P/coverage.py song $SONGS/DoomE1M1.mid --bank-dxb $B --render $R \
-    --bank dream=scratch/sam7/gmbk5x128-203.sf2 --bank gugs=data/midi/generaluser-gs.sf2
+    --bank dream=gmbk5x128-203.sf2 --bank gugs=data/midi/generaluser-gs.sf2
 python3 $P/coverage.py pitch --render $R --programs 0-127 \
-    --bank dream=scratch/sam7/gmbk5x128-203.sf2 --bank gugs=data/midi/generaluser-gs.sf2
+    --bank dream=gmbk5x128-203.sf2 --bank gugs=data/midi/generaluser-gs.sf2
 ```
 
 ## Results

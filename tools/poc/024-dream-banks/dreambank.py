@@ -2,9 +2,7 @@
 """Reader for Dream SAM5000 compiled sound banks (.DXB for DreamBlaster X2/X3, .B16 for X16).
 
 Reverse-engineered from the bank files (no public specification exists). The layout, the field meanings and how
-each was confirmed are in docs/inprogress/2026-10-03-zx-multisound/sam7-dream-banks.md. The banks are licensed
-for DreamBlaster cards only: this tool reads a bank the user supplies and writes everything it extracts under
-scratch/ - never into the repository.
+each was confirmed are in docs/inprogress/2026-10-03-zx-multisound/sam7-dream-banks.md.
 
 Units: a bank is an image of 16-bit little-endian words. Every address in the file is a word address in that image.
 
@@ -653,7 +651,7 @@ def main():
     s.set_defaults(fn=CmdDump)
     s = sub.add_parser('extract')
     s.add_argument('bank')
-    s.add_argument('--out', required=True, help='output directory (keep it under scratch/)')
+    s.add_argument('--out', required=True, help='output directory')
     s.add_argument('--program', type=int, help='only this program (0-based)')
     s.add_argument('--limit', type=int, default=0)
     s.set_defaults(fn=CmdExtract)
