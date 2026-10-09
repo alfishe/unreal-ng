@@ -374,6 +374,56 @@ TEST_P(TTDControl_Test, SeekStepAndResumeReportWhereTheMachineIs)
     EXPECT_EQ(Str(r, "state"), "recording");
 }
 
+/// Every verb that moves the machine through the history says how exactly its position came back, and status says
+/// it while detached. On the engine a replay on other settings is not bit-exact and names them (v1 keeps no engine
+/// check: exact)
+TEST_P(TTDControl_Test, MovingVerbsAndStatusReportTheCheck)
+{
+    Record(6);
+    ASSERT_TRUE(Run("stop").Ok());
+    const uint64_t first = Info().sessionStartFrame;
+    auto statusOf = [](const TTDReply& r) {
+        const StateNode* check = r.body.find("check");
+        return check ? check->find("status")->s : std::string("<missing>");
+    };
+
+    TTDReply r = Run("seek", {{"frame", std::to_string(first + 2)}, {"tinframe", "1000"}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    ASSERT_NE(r.body.find("check"), nullptr) << "a seek says how exactly its position came back";
+    EXPECT_EQ(statusOf(r), "exact");
+    EXPECT_TRUE(r.body.find("check")->find("issues")->items.empty());
+    for (const auto& [verb, options] : std::vector<std::pair<std::string, std::map<std::string, std::string>>>{
+             {"step-forward", {}}, {"step-back", {}}, {"step-instruction", {{"dir", "back"}}},
+             {"reverse-step", {{"count", "1"}}}, {"reverse-continue", {{"pcs", "0"}}}})
+    {
+        r = Run(verb, options);
+        ASSERT_TRUE(r.Ok()) << verb << ": " << r.message;
+        EXPECT_EQ(statusOf(r), "exact") << verb;
+    }
+    EXPECT_EQ(statusOf(Run("status")), "exact") << "detached: status says it too";
+
+    if (GetParam())
+    {
+        // Another decimator: a replay inside a frame runs on other settings
+        CONFIG& config = _context->config;
+        config.sound.decimatorHighFidelity = !config.sound.decimatorHighFidelity;
+        r = Run("seek", {{"frame", std::to_string(first + 3)}, {"tinframe", "1000"}});
+        const TTDReply status = Run("status");
+        config.sound.decimatorHighFidelity = !config.sound.decimatorHighFidelity;
+        ASSERT_TRUE(r.Ok()) << r.message;
+        EXPECT_EQ(statusOf(r), "not_bit_exact");
+        ASSERT_NE(r.body.find("check"), nullptr);
+        const std::vector<StateNode>& issues = r.body.find("check")->find("issues")->items;
+        ASSERT_EQ(issues.size(), 1u);
+        EXPECT_EQ(issues[0].find("kind")->s, "configuration_differs");
+        EXPECT_EQ(issues[0].find("detail")->s.rfind("sound.decimator_high_fidelity", 0), 0u) << issues[0].find("detail")->s;
+        EXPECT_EQ(statusOf(status), "not_bit_exact");
+    }
+
+    ASSERT_TRUE(Run("resume").Ok());
+    EXPECT_EQ(Run("status").body.find("check"), nullptr) << "recording again: no position to judge";
+}
+
 TEST_P(TTDControl_Test, InstructionStepsCheckTheirArguments)
 {
     Record(4);

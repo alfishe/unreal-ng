@@ -956,7 +956,10 @@ ttd_seek(4823, 14982)            -- seek to (frame, tinframe); ttd_seek(4823, 0)
 -- --> { reached = true, arrived_at = {frame = 4823, tinframe = 14982},
 --       halt_reason = "target",          -- "target" | "external_event" | "out_of_range"
 --       blocking_marker = {frame, tinframe, kind, reason},  -- only for external_event
---       state = "detached" }
+--       state = "detached",
+--       check = {status = "exact", message = "", issues = {}} }  -- "not_bit_exact": other settings or a
+--                                         -- medium written since, each issue {kind, severity, device, detail}
+-- ttd_status() carries check while detached (the boolean step functions: read it there)
 -- The machine stays paused at the target; ttd_resume() records again and runs it.
 -- While recording: { reached = false, ok = false, error = "<why>" }
 

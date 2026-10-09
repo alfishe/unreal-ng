@@ -518,7 +518,33 @@
     schemas["TTDTimePoint"]["properties"]["frame"]["format"] = "uint64";
     schemas["TTDTimePoint"]["properties"]["tinframe"]["type"] = "integer";
     schemas["TTDTimePoint"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDCheck"]["type"] = "object";
+    schemas["TTDCheck"]["description"] =
+        "How exactly the position the machine was moved to came back (engine decision D7): the settings it was "
+        "recorded with and the media it read, against this machine. In the reply of every verb that moves the "
+        "machine through the history (seek, step-back, step-forward, step-instruction, reverse-step, "
+        "reverse-continue) and in status while detached. not_bit_exact: the state is the recorded one, but a "
+        "replay from it may differ (another configuration, a medium written since).";
+    schemas["TTDCheck"]["properties"]["status"]["type"] = "string";
+    for (const char* v : {"exact", "not_bit_exact", "degraded", "damaged"})
+        schemas["TTDCheck"]["properties"]["status"]["enum"].append(v);
+    schemas["TTDCheck"]["properties"]["message"]["type"] = "string";
+    schemas["TTDCheck"]["properties"]["message"]["description"] = "Every issue in one sentence; empty when exact";
+    schemas["TTDCheck"]["properties"]["issues"]["type"] = "array";
+    schemas["TTDCheck"]["properties"]["issues"]["items"]["type"] = "object";
+    schemas["TTDCheck"]["properties"]["issues"]["items"]["properties"]["kind"]["type"] = "string";
+    for (const char* v : {"device_missing_state", "device_not_present", "layout_unsupported", "size_mismatch",
+                          "device_set_differs", "firmware_differs", "configuration_differs", "data_damaged",
+                          "after_restore_failed", "media_version_differs"})
+        schemas["TTDCheck"]["properties"]["issues"]["items"]["properties"]["kind"]["enum"].append(v);
+    schemas["TTDCheck"]["properties"]["issues"]["items"]["properties"]["severity"]["type"] = "string";
+    schemas["TTDCheck"]["properties"]["issues"]["items"]["properties"]["device"]["type"] = "string";
+    schemas["TTDCheck"]["properties"]["issues"]["items"]["properties"]["device"]["description"] =
+        "The device instance; empty for a machine-wide issue (settings, media)";
+    schemas["TTDCheck"]["properties"]["issues"]["items"]["properties"]["detail"]["type"] = "string";
+
     schemas["TTDStatusResponse"]["type"] = "object";
+    schemas["TTDStatusResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
     schemas["TTDStatusResponse"]["description"] =
         "Snapshot of the TTD recorder session for the requested emulator instance";
     schemas["TTDStatusResponse"]["properties"]["state"]["type"] = "string";
@@ -868,6 +894,7 @@
             "labels get a 404.";
 
     schemas["TTDSeekResponse"]["type"] = "object";
+    schemas["TTDSeekResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
     schemas["TTDSeekResponse"]["description"] =
         "Response from POST /ttd/seek. reached=true only when the engine "
         "arrived at the requested target. halt_reason explains why the "
@@ -926,6 +953,7 @@
     // POST /ttd/step-back and /ttd/step-forward share this response.
     // ---------------------------------------------------------------------
     schemas["TTDStepResponse"]["type"] = "object";
+    schemas["TTDStepResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
     schemas["TTDStepResponse"]["description"] =
         "Response from POST /ttd/step-back and /ttd/step-forward. stepped=false "
         "when the step would move outside the recorded timeline; frame and "
@@ -1283,6 +1311,7 @@
     schemas["TTDStepInstructionRequest"]["properties"]["dir"]["default"] = "back";
 
     schemas["TTDStepInstructionResponse"]["type"] = "object";
+    schemas["TTDStepInstructionResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
     schemas["TTDStepInstructionResponse"]["description"] =
         "Response from POST /ttd/step-instruction.";
     schemas["TTDStepInstructionResponse"]["properties"]["stepped"]["type"] = "boolean";
@@ -1307,6 +1336,7 @@
         "Number of T-states to step back (lands at nearest M1 <= target).";
 
     schemas["TTDReverseStepResponse"]["type"] = "object";
+    schemas["TTDReverseStepResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
     schemas["TTDReverseStepResponse"]["description"] =
         "Response from POST /ttd/reverse-step.";
     schemas["TTDReverseStepResponse"]["properties"]["reached"]["type"] = "boolean";
@@ -1333,6 +1363,7 @@
     schemas["TTDReverseContinueRequest"]["required"].append("pcs");
 
     schemas["TTDReverseContinueResponse"]["type"] = "object";
+    schemas["TTDReverseContinueResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
     schemas["TTDReverseContinueResponse"]["description"] =
         "Response from POST /ttd/reverse-continue. blocked_by_marker is present only when a replay barrier "
         "(marker) was met; matched is then false if it stopped the search before a match.";

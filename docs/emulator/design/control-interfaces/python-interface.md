@@ -1167,7 +1167,10 @@ emu.ttd_seek(frame=4823, tinframe=14982)    # (frame, tinframe); tinframe=0 is t
 #     'arrived_at': {'frame': 4823, 'tinframe': 14982},
 #     'halt_reason': 'target',              # 'target' | 'external_event' | 'out_of_range'
 #     'blocking_marker': {...},             # only for external_event: frame, tinframe, kind, reason
-#     'state': 'detached'}
+#     'state': 'detached',
+#     'check': {'status': 'exact', 'message': '', 'issues': []}}  # 'not_bit_exact': other settings or a
+#                                           # medium written since; each issue {kind, severity, device, detail}
+# ttd_status() carries 'check' while detached (the boolean step methods: read it there)
 # The machine stays paused at the target; emu.ttd_resume() records again and runs it.
 # While recording: {'reached': False, 'error': '<why>', 'state': 'recording'}
 

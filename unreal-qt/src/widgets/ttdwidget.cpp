@@ -592,6 +592,17 @@ void TtdWidget::updateTelemetry()
                 .arg(devices.isEmpty() ? tr("none") : devices.join(QStringLiteral(", ")));
         tooltip = tooltip.isEmpty() ? machine : tooltip + QStringLiteral("\n\n") + machine;
     }
+    // How exactly the position the machine stands on came back (other settings, a medium written since): in the
+    // line while browsing, the reasons first in the tooltip
+    if (isDetached && info.lastCheck.status != ttd::TTDRestoreStatus::Exact)
+    {
+        static const char* const kCheckNames[] = {QT_TR_NOOP("Exact"), QT_TR_NOOP("Not bit-exact"), QT_TR_NOOP("Degraded"),
+                                                  QT_TR_NOOP("Damaged")};
+        const QString name = tr(kCheckNames[static_cast<uint8_t>(info.lastCheck.status) & 3]);
+        provenanceStr += tr(" | %1").arg(name);
+        const QString reasons = tr("This position: %1 - %2").arg(name, QString::fromStdString(info.lastCheck.message));
+        tooltip = tooltip.isEmpty() ? reasons : reasons + QStringLiteral("\n\n") + tooltip;
+    }
     _statusLabel->setToolTip(tooltip);
 
     const bool scrubberWasVisible = _scrubberContainer->isVisible();

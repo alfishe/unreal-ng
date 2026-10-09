@@ -2811,6 +2811,23 @@ is a 409 / `Error:` with the same sentence as a seek.
 | `external_event` | Stopped at an external-event marker between the restore checkpoint and the target. The marker is reported (`blocking_marker` in WebAPI/Lua/Python) rather than crossed silently. |
 | `out_of_range` | Target is outside the recorded session. Also returned when a seek is refused because the session is recording. |
 
+#### TTD Position Check
+
+How exactly the position came back (engine decision D7). Every verb that moves the machine through
+the history - `seek`, `step-back`, `step-forward`, `step-instruction`, `reverse-step`, `reverse-continue` - answers with
+`check`, and `status` carries it while the session is `detached`:
+
+| Field | Meaning |
+| :--- | :--- |
+| `status` | `exact`; `not_bit_exact`: the state is the recorded one, but the replay to the target ran on other settings (`configuration_differs`, the setting named in `detail`) or a medium was written since the checkpoint and cannot go back (`media_version_differs`); `degraded` / `damaged`: part of the state could not be restored / failed its integrity check |
+| `message` | every issue in one sentence; empty when exact |
+| `issues` | `{kind, severity, device, detail}` per issue (`device` empty for settings and media) |
+
+The CLI prints nothing extra when the position is exact, otherwise `Not exact (<status>):` and one line per issue
+under the seek or step line; `ttd status` shows `Position check:` while detached. MCP `time_travel` appends
+`Not exact (<status>): <message>.` to its summary. The Qt TTD panel shows the status in its line while browsing and
+the reasons first in its tooltip.
+
 #### TTD Session Rules
 
 These rules live in the core, so every surface (CLI, WebAPI/MCP, Lua, Python, GDB, Qt UI) sees the same behavior.

@@ -84,6 +84,24 @@ static std::string FormatSearchWindow(const StateNode& body)
     return ss.str();
 }
 
+/// How exactly the position came back (a TTDControl reply's "check"): nothing when exact, otherwise the status and
+/// one line per issue (other settings, a medium written since)
+static std::string FormatCheck(const StateNode& body)
+{
+    const StateNode* check = body.find("check");
+    if (!check || check->find("status")->s == "exact")
+        return {};
+    std::stringstream ss;
+    ss << "  Not exact (" << check->find("status")->s << "):" << CLIProcessor::NEWLINE;
+    for (const StateNode& issue : check->find("issues")->items)
+    {
+        const std::string& device = issue.find("device")->s;
+        ss << "    " << issue.find("kind")->s << ": " << (device.empty() ? "" : device + ": ") << issue.find("detail")->s
+           << CLIProcessor::NEWLINE;
+    }
+    return ss.str();
+}
+
 namespace
 {
 
@@ -410,6 +428,14 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
     if (!info.recordedBy.empty())
         ss << "  Recorded by:            " << info.recordedBy << NEWLINE;
     ss << "  State:                  " << ttd::TTDSessionStateToString(info.state) << NEWLINE;
+    if (info.state == ttd::TTDSessionState::Detached)
+    {
+        // How exactly the position the machine stands on came back
+        ss << "  Position check:         " << ttd::TTDRestoreStatusName(info.lastCheck.status);
+        if (!info.lastCheck.message.empty())
+            ss << " - " << info.lastCheck.message;
+        ss << NEWLINE;
+    }
     ss << "  Session start frame:    " << info.sessionStartFrame << NEWLINE;
     ss << "  Current end frame:      " << info.currentEndFrame << NEWLINE;
     ss << "  Checkpoint count:       " << info.checkpointCount << NEWLINE;
@@ -754,6 +780,7 @@ void CLIProcessor::HandleTTDSeek(const ClientSession& session, EmulatorContext* 
     }
     if (!bookmarkLabel.empty())
         ss << "  (bookmark '" << bookmarkLabel << "')" << NEWLINE;
+    ss << FormatCheck(b);
     session.SendResponse(ss.str());
 }
 
@@ -862,7 +889,7 @@ void CLIProcessor::HandleTTDStepBack(const ClientSession& session, EmulatorConte
     {
         std::stringstream ss;
         ss << "TTD: Stepped back to (frame=" << reply.body.find("frame")->i << ", tInFrame=" << reply.body.find("tinframe")->i
-           << ")" << NEWLINE;
+           << ")" << NEWLINE << FormatCheck(reply.body);
         session.SendResponse(ss.str());
     }
     else
@@ -883,7 +910,7 @@ void CLIProcessor::HandleTTDStepForward(const ClientSession& session, EmulatorCo
     {
         std::stringstream ss;
         ss << "TTD: Stepped forward to (frame=" << reply.body.find("frame")->i << ", tInFrame=" << reply.body.find("tinframe")->i
-           << ")" << NEWLINE;
+           << ")" << NEWLINE << FormatCheck(reply.body);
         session.SendResponse(ss.str());
     }
     else
@@ -1202,7 +1229,7 @@ void CLIProcessor::HandleTTDStepInstruction(const ClientSession& session, Emulat
     {
         std::stringstream ss;
         ss << "TTD: Stepped " << (forward ? "forward" : "back") << " to (frame=" << reply.body.find("frame")->i
-           << ", tInFrame=" << reply.body.find("tinframe")->i << ")" << NEWLINE;
+           << ", tInFrame=" << reply.body.find("tinframe")->i << ")" << NEWLINE << FormatCheck(reply.body);
         session.SendResponse(ss.str());
     }
     else
@@ -1243,7 +1270,7 @@ void CLIProcessor::HandleTTDReverseStep(const ClientSession& session, EmulatorCo
             ss << "TTD: Stepped back " << options["count"] << " instruction" << (options["count"] == "1" ? "" : "s")
                << " to ";
         ss << "(frame=" << reply.body.find("frame")->i << ", tInFrame=" << reply.body.find("tinframe")->i << ")"
-           << NEWLINE;
+           << NEWLINE << FormatCheck(reply.body);
         session.SendResponse(ss.str());
     }
     else
@@ -1292,7 +1319,7 @@ void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, Emulat
     {
         ss << "TTD: Reverse-continue found no match (reached session start)" << NEWLINE;
     }
-    ss << FormatSearchWindow(b);
+    ss << FormatSearchWindow(b) << FormatCheck(b);
     session.SendResponse(ss.str());
 }
 

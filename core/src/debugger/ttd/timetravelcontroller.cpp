@@ -794,6 +794,7 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
 {
     TTDSessionInfo info;
     info.state = _state;
+    info.lastCheck = _lastEngineCheck;
     info.checkpointCount    = _timeline.size();
     // The engine's piece store (Phase 5, C4a): its arena, the compressed
     // pieces in it, and the distinct 4 KB versions it holds - the most direct
