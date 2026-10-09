@@ -77,7 +77,7 @@ Status: measured 2026-10-09 on branch `ttd-engine` (engine backend, the controll
   - In memory, the totals are 0.78–1.11 of the model.
   - Memory pieces, the write journal and coverage are within 0.9–1.0, except Across the Edge's journal at 0.64: the matrix's snapshot plays another part of the demo than E6's session.
 - **Device state is below the model** (0.58–0.65). Phase 2's time fields and changed-ranges encoding did better than E6's "changed blob, XOR" assumption.
-- **Two streams are above the model, both fixed costs per checkpoint:**
+- **Two streams are above the model, both fixed costs per checkpoint.** Looked at 2026-10-09: the "reference tables" figure includes the piece store's version table (28 B per stored version), which E6 did not model - the tables alone are 166 B per frame against 143. The checkpoint record's extra (position, journal cursors, region list) is real; reducing either was judged not worth it (TODO).
   - Reference tables: 3.1× on 128K machines, 413 B per frame against 143.
   - CPU + chipset: 2.4–2.9×, about 400 B per frame against E6's 168 B, which was not delta-coded either.
   - They are 1.2–1.7 MB per minute: small next to the journal on active content, but most of an idle recording. Open in the [TODO](TODO.md).

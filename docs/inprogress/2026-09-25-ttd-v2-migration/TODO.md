@@ -37,7 +37,12 @@ Design: [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md).
   - [x] Each region keeps a delta-base copy of its memory (the engine's working memory, fixed: 2.3 MB for VDAC2): look at dropping it for regions whose pieces are mostly zero **Done 2026-10-08:** the delta base is sparse (`engine/ttddeltabase.h`): a piece of one repeated byte (zeros, an erased flash's #FF) keeps only that value, read through one shared page per value. Full matrix, 600 frames, engine only: the delta base summed over the 46 cases 198.7 MB → 15.4 MB (TSL-VDAC2 10.3 → 0.9 MB, ZX-Evo / ATM3 8.1 → 0.7 MB, Sprinter 7.0 → 0.8 MB); recorded bytes unchanged; capture time median ratio p50 0.95, p99 0.82 (host load 11-22). Tests `TTDDeltaBase_Test`, `AMostlyUniformRegionCostsTheDeltaBaseItsContentOnly`; 4 mutants caught
   - [x] ZX-Evo AVR and Scorpion SMUC EEPROMs (duplicate of the line above and gap 10: d24390f70, test `EepromsAreRegionsOfEveryCheckpoint`)
 - [x] Phase check: D33 on the matrix, bytes per stream against the E6 model **Now:** D33 done (phase-1-results.md); the per-stream comparison against the E6 model is open **Done 2026-10-09:** [e6-comparison.md](e6-comparison.md) - totals 0.78-1.11 of the model in memory; memory pieces, journal, coverage on the model; device state 0.6 of it; reference tables (3.1x) and CPU + chipset (2.4x) above it (below); the file 0.14-0.42 of E6's file model
-  - [ ] Reference tables 3.1x and the checkpoint's CPU + chipset record 2.4x E6's model (about 400 B per frame each on a 128K): the fixed cost of an idle recording; look at delta-coding the core and smaller table blocks
+  - [x] Reference tables 3.1x and the checkpoint's CPU + chipset record 2.4x E6's model (about 400 B per frame each on a 128K): the fixed cost of an idle recording; look at delta-coding the core and smaller table blocks **Looked at 2026-10-09, closed without a change (owner decision):**
+    - **Measured** on Pentagon idle, per checkpoint: reference tables 166 B, close to E6's 143; the piece store's version table 381 B (8.3 versions of 28 B, plus a std::vector's spare capacity); the checkpoint record 409 B (288 B of struct: CPU 48 + chipset 120 = E6's 168, plus position, journal cursors and two vectors; and one heap block of region entries, 4.4 of 24 B).
+    - **What "3.1x" meant:** the benchmark's `bm3_page_refs_bpf` adds the version table, which E6's model does not have.
+    - **Tried:** a chunked version table, without the doubled spare capacity, saving 3.5-6% of an idle recording's memory over a minute.
+    - **Estimated, not done:** a pooled, compact region list, about 5%.
+    - Neither is worth its change.
 
 ## State registry gaps ([state-registry.md](state-registry.md#gaps))
 
