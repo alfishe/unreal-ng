@@ -68,7 +68,19 @@ struct FileImageParams
     uint16_t lengthField = 0;       ///< offset of the 16-bit length in the header
     uint16_t signatureAt = 0;       ///< offset of the header's signature
     std::string signature;
-    uint16_t changedField = 0;      ///< offset of the "changed since saved" byte (0 = none); SAVE writes it as 0
+    uint16_t changedField = 0;      ///< offset of the "changed since saved" byte (0 = none); SAVE clears changedMask in it
+    uint8_t changedMask = 0xFF;
+    uint8_t nameLength = 8;         ///< the text's name at the header's start (0 = none)
+    /// No length field (lengthField unused): the text ends at the first endByte from textOffset; SAVE writes whole
+    /// 256-byte sectors from memory when wholeSectors (XAS)
+    bool lengthFromEnd = false;
+    uint16_t textOffset = 0;
+    uint8_t endByte = 0;
+    bool wholeSectors = false;
+    /// Header bytes SAVE rewrites from the editor's own state (cursor line and column): the reader leaves them as the
+    /// memory holds them, so a live file differs from the next save there and only there
+    uint16_t editorStateAt = 0;
+    uint16_t editorStateLength = 0;
 };
 
 struct GapBufferParams
@@ -117,7 +129,7 @@ struct SyncDescriptor
 };
 
 /// Every built-in descriptor (asm-synchronizer.md §7), each checked with golden dumps: ALASM 3.8c, 4.42-4.46, 4.5,
-/// 5.00-5.09, TASM 4.12
+/// 5.00-5.09, TASM 4.12, XAS 4.18, 5.05, 7.43c, 7.447, 9.07m, 9.10
 const std::vector<SyncDescriptor>& Descriptors();
 const SyncDescriptor* FindDescriptor(const std::string& id);
 

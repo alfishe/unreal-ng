@@ -9,6 +9,8 @@ save the text itself and keep the file. The synchronizer's reader must give that
                                                                  # a line being typed, at the command line
     sync-dumps.py alasm <disk> <out-dir> --boot NAME --source NAME --tag TAG [--help-key] [--no-loaded]
                                                                  # any other ALASM build: TAG-typing, TAG-edited
+    sync-dumps.py xas <disk-with-PROBE.X> <out-dir> --boot NAME --list-keys right[,down...] --tag TAG
+                                                                 # XAS: TAG-typing, TAG-edited (the text at #C000)
 
 Each case is a folder <out-dir>/<assembler>-<case>/ with machine.json (the RAM page mapped at each 16 KB window, the
 pages kept, the file expected, the editor state), page<N>.bin per kept page and the expected file. A case whose text
@@ -64,6 +66,42 @@ def dump(emu, out, case, pages, expected_name, expected, state):
 
 def finish(out, case, expected_name, expected):
     open(os.path.join(out, case, expected_name), 'wb').write(expected)
+
+
+def saved_sectors(emu, name, type_):
+    """The last catalog entry NAME.T as whole sectors (XAS leaves the length field 0 and writes whole sectors)"""
+    import base64
+    entries = [f for f in emu.get('/disk/A/catalog').get('files', []) if f['name'].strip() == name and f['type'] == type_]
+    if not entries:
+        raise SystemExit(f'{name}.{type_} not on the disk')
+    f = entries[-1]
+    data = b''
+    for k in range(f['sectors']):
+        track, sector = divmod(f['first_track'] * 16 + f['first_sector'] + k, 16)
+        data += base64.b64decode(emu.get(f'/disk/A/sector/{track // 2}/{track % 2}/{sector + 1}')['data_base64'])
+    return data
+
+
+def xas(emu, args):
+    """XAS: the source PROBE.X on the disk, chosen in the file list with --list-keys; the text lives at #C000"""
+    emu.insert_disk(args.disk)
+    emu.run_trdos(args.boot, wait=8)
+    for key in filter(None, args.list_keys.split(',')):
+        emu.tap(key)
+        time.sleep(0.3)
+    emu.tap('enter')                           # load
+    time.sleep(3)
+    loaded = saved_sectors(emu, 'PROBE', 'X')
+    pages = [2, windows(emu)[3]]
+    emu.type('        nop')                    # a line on the screen row, not packed into the text until Enter
+    dump(emu, args.out, f'{args.tag}-typing', pages, 'PROBE.X', loaded, {'editor': True, 'typing': True})
+    emu.tap('enter')
+    time.sleep(1)
+    dump(emu, args.out, f'{args.tag}-edited', pages, 'PROBE.X', None, {'editor': True, 'typing': False})
+    extend(emu, 's')                           # Save text NAME: Enter keeps the name
+    emu.tap('enter')
+    time.sleep(4)
+    finish(args.out, f'{args.tag}-edited', 'PROBE.X', saved_sectors(emu, 'PROBE', 'X'))
 
 
 def saved(emu, name, type_):
@@ -162,7 +200,7 @@ def tasm412(emu, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas'])
     parser.add_argument('disk')
     parser.add_argument('out')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
@@ -171,6 +209,7 @@ def main():
     parser.add_argument('--tag', help='alasm: the case folder prefix (alasm446 ...)')
     parser.add_argument('--help-key', action='store_true', help='alasm: a key closes a help screen at the start (3.8c)')
     parser.add_argument('--no-loaded', action='store_true', help='alasm: no case right after loading')
+    parser.add_argument('--list-keys', default='right', help='xas: the cursor keys that reach PROBE in the file list')
     args = parser.parse_args()
     args.disk = os.path.abspath(args.disk)
     emu = Emulator(port=args.port, model='PENTAGON')
@@ -178,6 +217,8 @@ def main():
         tasm412(emu, args)
     elif args.assembler == 'alasm':
         alasm(emu, args, 'other')
+    elif args.assembler == 'xas':
+        xas(emu, args)
     else:
         alasm(emu, args, args.assembler[5:])
     emu.stop_recording()

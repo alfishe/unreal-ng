@@ -67,7 +67,20 @@ const Case kCases[] = {
     {"alasm445-typing", "alasm-4.45"}, {"alasm445-edited", "alasm-4.45"},  {"alasm443-typing", "alasm-4.43"},
     {"alasm443-edited", "alasm-4.43"}, {"alasm442-typing", "alasm-4.42"},  {"alasm442-edited", "alasm-4.42"},
     {"alasm38c-typing", "alasm-3.8c"}, {"alasm38c-edited", "alasm-3.8c"},
+    {"xas418-typing", "xas-4.18"},     {"xas418-edited", "xas-4.18"},      {"xas505-typing", "xas-5.05"},
+    {"xas505-edited", "xas-5.05"},     {"xas505se-typing", "xas-5.05"},    {"xas505se-edited", "xas-5.05"},
+    {"xas743c-typing", "xas-7.43c"},   {"xas743c-edited", "xas-7.43c"},    {"xas7447-typing", "xas-7.447"},
+    {"xas7447-edited", "xas-7.447"},   {"xas907m-typing", "xas-9.07m"},    {"xas910-typing", "xas-9.10"},
 };
+
+/// The file without the header bytes SAVE rewrites from the editor's state (XAS: the cursor line and column)
+std::vector<uint8_t> WithoutEditorState(std::vector<uint8_t> file, const SyncDescriptor& d)
+{
+    const FileImageParams& p = d.fileImage;
+    for (size_t k = p.editorStateAt; k < size_t(p.editorStateAt) + p.editorStateLength && k < file.size(); ++k)
+        file[k] = 0;
+    return file;
+}
 }  // namespace
 
 TEST(Sync_Test, EveryDumpGivesTheFileTheAssemblerSaved)
@@ -81,7 +94,8 @@ TEST(Sync_Test, EveryDumpGivesTheFileTheAssemblerSaved)
         const SyncText text = ReadText(dump.machine, *descriptor);
         ASSERT_TRUE(text.ok) << (text.diagnostics.empty() ? text.state : text.diagnostics.back().message);
         EXPECT_EQ(text.file.size(), dump.expected.size());
-        EXPECT_TRUE(text.file == dump.expected) << "the live file differs from the saved one";
+        EXPECT_TRUE(WithoutEditorState(text.file, *descriptor) == WithoutEditorState(dump.expected, *descriptor))
+            << "the live file differs from the saved one";
         EXPECT_EQ(text.typing, dump.typing && descriptor->typing.rule == TypingRule::NotInText && descriptor->typing.flagMask);
         if (descriptor->family == LayoutFamily::GapBuffer)
         {

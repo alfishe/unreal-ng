@@ -55,10 +55,14 @@ SyncText ReadFileImage(const MachineView& machine, const SyncDescriptor& d)
 {
     SyncText text;
     const FileImageParams& p = d.fileImage;
-    const std::optional<uint8_t> id = machine.Byte(p.pageIdAt);
-    if (!id)
-        return Inconsistent(text, "the page id at #" + Hex(p.pageIdAt, 4) + " is not in the memory copied");
-    for (const int candidate : PagesForId(machine, d.pages, *id))
+    std::optional<uint8_t> id;
+    if (d.pages == PageIdRule::Port7FFD)
+    {
+        id = machine.Byte(p.pageIdAt);
+        if (!id)
+            return Inconsistent(text, "the page id at #" + Hex(p.pageIdAt, 4) + " is not in the memory copied");
+    }
+    for (const int candidate : PagesForId(machine, d.pages, id.value_or(0)))
     {
         const symbols::MemoryPage* page = machine.Page(candidate);
         if (!page || page->bytes.size() < kPage)
@@ -68,17 +72,28 @@ SyncText ReadFileImage(const MachineView& machine, const SyncDescriptor& d)
             !std::equal(p.signature.begin(), p.signature.end(), bytes.begin() + p.signatureAt,
                         [](char a, uint8_t b) { return static_cast<uint8_t>(a) == b; }))
             continue;
-        const size_t length = p.headerSize + (bytes[p.lengthField] | (bytes[p.lengthField + 1u] << 8));
+        size_t length = 0;
+        if (p.lengthFromEnd)
+        {
+            const auto end = std::find(bytes.begin() + p.textOffset, bytes.end(), p.endByte);
+            if (end == bytes.end())
+                return Inconsistent(text, "no end of text in page " + std::to_string(candidate));
+            length = static_cast<size_t>(end - bytes.begin()) + 1;
+            if (p.wholeSectors)
+                length = std::min<size_t>((length + 255) / 256 * 256, bytes.size());
+        }
+        else
+            length = p.headerSize + (bytes[p.lengthField] | (bytes[p.lengthField + 1u] << 8));
         if (length > bytes.size())
             return Inconsistent(text, "the text in page " + std::to_string(candidate) + " is longer than the page");
         text.page = candidate;
         text.file.assign(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(length));
         if (p.changedField)
         {
-            text.changed = text.file[p.changedField] != 0;
-            text.file[p.changedField] = 0;   // SAVE writes the file as saved
+            text.changed = (text.file[p.changedField] & p.changedMask) != 0;
+            text.file[p.changedField] &= static_cast<uint8_t>(~p.changedMask);   // SAVE writes the file as saved
         }
-        size_t nameLength = 8;
+        size_t nameLength = p.nameLength;
         while (nameLength > 0 && text.file[nameLength - 1] == ' ')
             --nameLength;
         text.name.assign(text.file.begin(), text.file.begin() + static_cast<std::ptrdiff_t>(nameLength));
@@ -86,7 +101,7 @@ SyncText ReadFileImage(const MachineView& machine, const SyncDescriptor& d)
         text.state = "ok";
         return text;
     }
-    return Inconsistent(text, "no text header in the page the id #" + Hex(*id, 2) + " names");
+    return Inconsistent(text, id ? "no text header in the page the id #" + Hex(*id, 2) + " names" : std::string("no text header at #C000"));
 }
 
 // GapBuffer ---------------------------------------------------------------------------------------------------------
@@ -232,6 +247,37 @@ SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion
     return d;
 }
 
+/// XAS (asm-synchronizer.md §7.11): the file as it is at #C000 of the page mapped there, edited in place; the line
+/// on the screen row is packed into the text on Enter. Identified by the title a new text gets, kept in the code
+SyncDescriptor Xas(const std::string& id, const std::string& codecVersion, uint16_t titleAt, const std::string& title)
+{
+    SyncDescriptor d;
+    d.id = "xas-" + id;
+    d.title = "XAS " + id;
+    d.codec = "xas";
+    d.version = codecVersion;
+    d.extension = "X";
+    d.identify = {{titleAt, title}};
+    d.pages = PageIdRule::MappedAtC000;
+    d.family = LayoutFamily::FileImage;
+    d.fileImage.base = 0;
+    d.fileImage.headerSize = 36;
+    d.fileImage.signatureAt = 35;   // the start sentinel
+    d.fileImage.signature = std::string("\x01", 1);
+    d.fileImage.changedField = 34;
+    d.fileImage.changedMask = 0x80;
+    d.fileImage.nameLength = 0;
+    d.fileImage.lengthFromEnd = true;
+    d.fileImage.textOffset = 36;
+    d.fileImage.endByte = 0x00;
+    d.fileImage.wholeSectors = true;
+    d.fileImage.editorStateAt = 29;
+    d.fileImage.editorStateLength = 6;
+    d.typing = {TypingRule::NotInText, 0, 0};
+    d.labelScanner = "xas-table";
+    return d;
+}
+
 SyncDescriptor Tasm412()
 {
     SyncDescriptor d;
@@ -315,6 +361,12 @@ const std::vector<SyncDescriptor>& Descriptors()
         Alasm("4.43", "4.5", 0x9E1B, "", false),
         Alasm("4.42", "4.42", 0x9E2F),
         Alasm("3.8c", "3.8", 0x9951, "3.8c\r Written by"),
+        Xas("4.18", "4.18", 0xB51A, "XAS by Max Petrov (HPM) 3.091"),
+        Xas("5.05", "5.05", 0xB601, "XAS by Max Petrov (HPM) 5.05 "),   // 5.05 and 5.05SE alike
+        Xas("7.43c", "7.43c", 0xB961, "by Max Petrov & Creator v7.43"),
+        Xas("7.447", "7.43", 0x9B00, "by Max Petrov & Creator v7.44"),
+        Xas("9.07m", "9.07m", 0xB8EA, "XAS 9.07 ReCompiled by Mythos"),
+        Xas("9.10", "9.10", 0xB912, "XAS by Max Petrov,64sm by STS"),
         Tasm412(),
     };
     return descriptors;
