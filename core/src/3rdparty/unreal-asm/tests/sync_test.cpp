@@ -73,7 +73,22 @@ const Case kCases[] = {
     {"xas7447-edited", "xas-7.447"},   {"xas907m-typing", "xas-9.07m"},    {"xas910-typing", "xas-9.10"},
     {"storm13-typing", "storm-1.3"},   {"storm13-edited", "storm-1.3"},    {"storm13i-typing", "storm-1.3"},
     {"storm13i-edited", "storm-1.3"},
+    {"zasm315-typing", "zasm-3.15"},   {"zasm315-edited", "zasm-3.15"},    {"zasm315-big", "zasm-3.15"},
 };
+
+/// The saved file without the editor-state first line SAVE adds (ZAsm's ";!...")
+std::vector<uint8_t> WithoutStateLine(std::vector<uint8_t> file, const SyncDescriptor& d)
+{
+    const std::string& prefix = d.linear.stateLine;
+    if (d.family == LayoutFamily::Linear && !prefix.empty() && file.size() >= prefix.size() &&
+        std::equal(prefix.begin(), prefix.end(), file.begin()))
+    {
+        const auto end = std::find(file.begin(), file.end(), uint8_t('\r'));
+        if (end != file.end())
+            file.erase(file.begin(), end + 1);
+    }
+    return file;
+}
 
 /// The file without the header bytes SAVE rewrites from the editor's state (XAS: the cursor line and column)
 std::vector<uint8_t> WithoutEditorState(std::vector<uint8_t> file, const SyncDescriptor& d)
@@ -95,8 +110,9 @@ TEST(Sync_Test, EveryDumpGivesTheFileTheAssemblerSaved)
         ASSERT_NE(descriptor, nullptr);
         const SyncText text = ReadText(dump.machine, *descriptor);
         ASSERT_TRUE(text.ok) << (text.diagnostics.empty() ? text.state : text.diagnostics.back().message);
-        EXPECT_EQ(text.file.size(), dump.expected.size());
-        EXPECT_TRUE(WithoutEditorState(text.file, *descriptor) == WithoutEditorState(dump.expected, *descriptor))
+        const std::vector<uint8_t> expected = WithoutStateLine(dump.expected, *descriptor);
+        EXPECT_EQ(text.file.size(), expected.size());
+        EXPECT_TRUE(WithoutEditorState(text.file, *descriptor) == WithoutEditorState(expected, *descriptor))
             << "the live file differs from the saved one";
         EXPECT_EQ(text.typing, dump.typing && descriptor->typing.rule == TypingRule::NotInText && descriptor->typing.flagMask);
         if (descriptor->family == LayoutFamily::GapBuffer)

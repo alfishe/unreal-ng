@@ -83,6 +83,13 @@ File panel keys (manual): CS+7 into the file list, CS+6 / CS+7 cursor, CS+5 / CS
 copy the name into the input line, SPACE mark, SS+8 delete, SS+6 rename, SS+R reread, SS+I disk info, SS+L filter,
 CS+SPACE cancel. Input lines: CS+1 Rus / Lat, CS+2 caps, SS+W insert / overwrite, SS+ENTER clear, CS+6 history.
 
+## The text in memory (ZAsm 3.15)
+
+The editor's buffer runs from `(#8829)` to `(#8837)`, from `#884C` in page 2 on; its part above `#C000` lives in RAM
+page 6. COMMAND (Extend) then SS+`2` saves it under its name with a first line `;!top,line,...` (the editor's
+position) that loading takes out; COMMAND `2` asks for a name, `3` loads, `S` searches. The asm-synchronizer reads the
+buffer without a save ([asm-sources.md](../analysis/asm-sources.md#the-source-an-assembler-holds-in-ram-asm-synchronizer)).
+
 ## WebAPI
 
 `tools/verification/unreal-asm/emulator/assemble-in-emulator.py zasm315 <ZASM315.trd> <source.$a> <address> <length> <out.bin> [--extra

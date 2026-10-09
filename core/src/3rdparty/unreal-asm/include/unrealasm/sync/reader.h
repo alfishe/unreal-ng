@@ -108,6 +108,10 @@ struct LinearParams
     uint16_t fixedStart = 0;
     uint16_t endAt = 0;             ///< CPU address of the end pointer (exclusive)
     std::string end;                ///< the end marker the file has after the text
+    int upperPage = -1;             ///< the RAM page the text's part from #C000 is in (-1 = the one mapped there)
+    /// SAVE writes a first line starting with this (the editor's position, ZAsm's ";!") that the editor takes out on
+    /// loading: the live file is without it ("" = none)
+    std::string stateLine;
 };
 
 struct TypingParams
@@ -135,7 +139,7 @@ struct SyncDescriptor
 };
 
 /// Every built-in descriptor (asm-synchronizer.md §7), each checked with golden dumps: ALASM 3.8c, 4.42-4.46, 4.5,
-/// 5.00-5.09, TASM 4.12, XAS 4.18, 5.05, 7.43c, 7.447, 9.07m, 9.10, STORM 1.3
+/// 5.00-5.09, TASM 4.12, XAS 4.18, 5.05, 7.43c, 7.447, 9.07m, 9.10, STORM 1.3, ZAsm 3.15
 const std::vector<SyncDescriptor>& Descriptors();
 const SyncDescriptor* FindDescriptor(const std::string& id);
 

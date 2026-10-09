@@ -13,6 +13,8 @@ save the text itself and keep the file. The synchronizer's reader must give that
                                                                  # XAS: TAG-typing, TAG-edited (the text at #C000)
     sync-dumps.py storm <disk-with-NAME.C> <out-dir> --boot NAME --source NAME --tag TAG
                                                                  # STORM: TAG-typing, TAG-edited (page 6 from #C00B)
+    sync-dumps.py zasm <ZASM315.trd> <out-dir> --source ovlib --big service --tag zasm315
+                                                                 # ZAsm 3.15: TAG-typing, TAG-edited, TAG-big
 
 Each case is a folder <out-dir>/<assembler>-<case>/ with machine.json (the RAM page mapped at each 16 KB window, the
 pages kept, the file expected, the editor state), page<N>.bin per kept page and the expected file. A case whose text
@@ -132,6 +134,46 @@ def storm(emu, args):
     finish(args.out, f'{args.tag}-edited', f'{args.source}.C', saved(emu, args.source, 'C'))
 
 
+def zasm(emu, args):
+    """ZAsm 3.15: File / Load; COMMAND (Extend) SS+2 saves under the name (with a ";!" editor-state first line). The
+    text runs from (#8829) to (#8837); its part above #C000 is in RAM page 6"""
+    def start():
+        emu.insert_disk(args.disk)
+        emu.run_trdos('boot', wait=15)
+        emu.tap('enter')                       # "No Disk!" (it starts on drive D): Retry, drive A
+        emu.tap('a')
+        time.sleep(6)
+
+    def load(name):
+        emu.tap('enter')                       # File
+        time.sleep(2)
+        emu.tap('enter')                       # Load
+        time.sleep(3)
+        emu.type(name)                         # as stored: ZAsm keeps the case
+        emu.tap('enter')
+        time.sleep(3)
+
+    start()
+    load(args.big)
+    dump(emu, args.out, f'{args.tag}-big', [2, 5, 6], f'{args.big}.a', saved(emu, args.big, 'a'), {'editor': True, 'typing': False})
+    start()
+    load(args.source)
+    loaded = saved(emu, args.source, 'a')
+    pages = [2, 5, 6]
+    emu.type(' nop')
+    dump(emu, args.out, f'{args.tag}-typing', pages, f'{args.source}.a', loaded, {'editor': True, 'typing': True})
+    emu.tap('enter')
+    emu.tap('down')
+    time.sleep(1)
+    dump(emu, args.out, f'{args.tag}-edited', pages, f'{args.source}.a', None, {'editor': True, 'typing': False})
+    emu.post('/keyboard/combo', {'keys': ['cs', 'ss'], 'frames': 6})   # COMMAND:
+    emu.idle()
+    time.sleep(0.8)
+    emu.post('/keyboard/combo', {'keys': ['ss', '2'], 'frames': 4})    # Save Changes
+    time.sleep(4)
+    finish(args.out, f'{args.tag}-edited', f'{args.source}.a', saved(emu, args.source, 'a'))
+
+
 def saved(emu, name, type_):
     data = emu.read_disk_file(name, type_)
     if data is None:
@@ -228,7 +270,7 @@ def tasm412(emu, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm'])
     parser.add_argument('disk')
     parser.add_argument('out')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
@@ -238,6 +280,7 @@ def main():
     parser.add_argument('--help-key', action='store_true', help='alasm: a key closes a help screen at the start (3.8c)')
     parser.add_argument('--no-loaded', action='store_true', help='alasm: no case right after loading')
     parser.add_argument('--list-keys', default='right', help='xas: the cursor keys that reach PROBE in the file list')
+    parser.add_argument('--big', help='zasm: a long text (over #C000) for a loaded case')
     args = parser.parse_args()
     args.disk = os.path.abspath(args.disk)
     emu = Emulator(port=args.port, model='PENTAGON')
@@ -249,6 +292,8 @@ def main():
         xas(emu, args)
     elif args.assembler == 'storm':
         storm(emu, args)
+    elif args.assembler == 'zasm':
+        zasm(emu, args)
     else:
         alasm(emu, args, args.assembler[5:])
     emu.stop_recording()

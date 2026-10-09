@@ -314,6 +314,10 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | research | two sessions (3.10, 4.20 on a Pentagon 512); start / end pointers by the edit-and-diff method; the text list of ZAsm |
 | family | `Linear` |
 | **Work** | **2 d** (three generations) |
+| **Verified: ZAsm 3.15** (2026-10-09, dumps `testdata/sync/zasm315-*`) | one buffer from `(#8829)` to `(#8837)` (a table at `#8829`: the start, the cursor line, marks, the end), starting at `#884C` in page 2. Its part from `#C000` is in RAM page 6, which ZAsm maps only while it needs it, so the reader takes page 6 for it whatever is mapped. A typed line joins the buffer on Enter (`NotInText`) |
+| SAVE | COMMAND (Extend) SS+`2` saves under the name. It writes the buffer after a first line `;!top,line,col,...` with the editor's position, which loading takes out again. The live file is the buffer without that line (the tests compare without it) |
+| identification | the resident code at `#8000` (24 bytes): ZAsm unpacks itself, and above the buffer there is no fixed code |
+| **Built** | descriptor `zasm-3.15`; checked live on `service.a` (18959 bytes over two pages: 160 labels; the hints name the INCLUDE not in the project, Y5). 3.0 / 3.01 / 3.10, Lite 1.07 and ZAsm 3.2x-4.20 (512K, several texts) are not covered yet |
 
 ### 7.10 ZX-ASM 2.4-2.6
 

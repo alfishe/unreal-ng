@@ -208,10 +208,13 @@ SyncText ReadGapBuffer(const MachineView& machine, const SyncDescriptor& d)
 
 // Linear ------------------------------------------------------------------------------------------------------------
 
-SyncText ReadLinear(const MachineView& machine, const SyncDescriptor& d)
+SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
 {
     SyncText text;
     const LinearParams& p = d.linear;
+    MachineView machine = mapped;
+    if (p.upperPage >= 0)
+        machine.windows[3] = p.upperPage;   // the text's upper part, whatever the program maps at #C000 just now
     const std::optional<uint16_t> start = p.startAt ? machine.Word(p.startAt) : std::optional<uint16_t>(p.fixedStart);
     const std::optional<uint16_t> end = machine.Word(p.endAt);
     if (!start || !end)
@@ -313,6 +316,28 @@ SyncDescriptor Storm13()
     return d;
 }
 
+/// ZAsm 3.15 (asm-synchronizer.md §7.9): one buffer from (#8829) to (#8837), its part above #C000 in RAM page 6; a
+/// typed line joins it on Enter. SAVE puts the editor's position as a ";!" first line, which loading takes out.
+/// Identified by its resident code at #8000 (the program unpacks itself; above the buffer is no fixed code)
+SyncDescriptor Zasm315()
+{
+    SyncDescriptor d;
+    d.id = "zasm-3.15";
+    d.title = "ZAsm 3.15";
+    d.codec = "zxasm";
+    d.version = "3.15";
+    d.extension = "a";
+    d.identify = {{0x8000, std::string("\x12\xCB\x13\xC9\x7A\x1F\xCB\x1B\xCB\x1A\xC9\xCB\x03\xC9\xCB\x0B\xC9\x5A\x16\x00\xC9\x7A\x2F\x57", 24)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.startAt = 0x8829;
+    d.linear.endAt = 0x8837;
+    d.linear.upperPage = 6;
+    d.linear.stateLine = ";!";
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 SyncDescriptor Tasm412()
 {
     SyncDescriptor d;
@@ -403,6 +428,7 @@ const std::vector<SyncDescriptor>& Descriptors()
         Xas("9.07m", "9.07m", 0xB8EA, "XAS 9.07 ReCompiled by Mythos"),
         Xas("9.10", "9.10", 0xB912, "XAS by Max Petrov,64sm by STS"),
         Storm13(),
+        Zasm315(),
         Tasm412(),
     };
     return descriptors;
