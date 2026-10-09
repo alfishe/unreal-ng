@@ -439,7 +439,7 @@ j, err = sprinter_pld_journal{kinds="cnf,port_1ffd", source="live"}  -- who chan
 sprinter_pld_journal_control{enabled=true, clear=true}            -- switch / clear the PLD journal
 bios = sprinter_bios()            -- BIOS images (file, alias, crc32, present, loaded, selected, known_issues), loaded, known_issues, reload_pending, options
 r, err = sprinter_bios_select{bios="3.06", fast_start=false, reset=true}  -- the image loads at the reset (now unless reset=false)
-regs = memory_regions()           -- device memory regions: {name="vram", size=262144, pages=16, ...} on the Sprinter; "cram" / "sfile" (512 bytes each) on TS-Conf; "cmos" on every machine with a CMOS clock; "eeprom" (4 KiB) on ZX-Evo
+regs = memory_regions()           -- device memory regions: {name="sprinter.vram", aliases={"vram"}, ttd_region="sprinter.vram", size=262144, pages=16, ...} on the Sprinter; "tsconf.cram" / "tsconf.sfile" (512 bytes each) on TS-Conf; "rtc.cmos" with a CMOS clock; "evo-avr.eeprom" (4 KiB) on ZX-Evo; and every memory time travel records ("neogs.ram", "gs.ram", "moonsound.wave", "evo.flash", ...). Old short names still work
 bytes, err = region_read("vram", 0x17F0, 3)     -- table of bytes; region_write("vram", 0x17F0, "0000A8") / {0,0,0xA8}
 ok, err = region_save("vram", "vram.bin")       -- region_load("vram", "vram.bin" [, offset])
 ch = video_changes(2)             -- video change log: frames[] {start, writes[] (t, line, t_in_line, pc, changes), tables}

@@ -1,6 +1,6 @@
 # Memory spaces on every automation surface
 
-Status: design, 2026-10-08. Owner request: "нужно ли как-то менять automation planes, чтобы иметь доступ ко всем возможностям и градациям памяти; если да - дизайн, делаем".
+Status: step 1 done 2026-10-08 (one registry; MCP `memory_access`); steps 2-5 open. Owner request: "нужно ли как-то менять automation planes, чтобы иметь доступ ко всем возможностям и градациям памяти; если да - дизайн, делаем".
 
 ## 1. The problem
 
@@ -98,3 +98,13 @@ Every region in the list carries:
 5. **Docs and recipes.** The command reference, the interface docs, `.recipe/analysis/ttd-reverse-debugging.md`, and a memory-spaces recipe.
 
 Each step lands on its own, with its tests, mutants and docs.
+
+## 6. Done
+
+**Step 1 (2026-10-08).**
+- `DeviceMemory` lists every memory the engine records: `TtdRegionMemory` views over `ITTDRegionSource::TTDRegions`, from a registry of its own (`RegisterMachinePeripherals`).
+- Canonical names come with the old ones as aliases, and the list shows `aliases` and `ttd_region`.
+- The views are writable where the bytes are restored plainly and the dirty marks are the device's own. VDAC2 is read-only: its marks live in its serializer.
+- MCP has the `memory_access` tool (regions / read / write / save / load, space `cpu` or a region).
+- Found on the way: listing a device's regions bound its dirty tracker again, which cleared it. `EndToolEdit` lists them, so a debugger edit during a recording dropped the device memory written since the last checkpoint (NeoGS / GS RAM, MoonSound, EEPROMs, flash) from the recording. `TTDRegionTracker::Bind` keeps the marks for the same memory now (`DeviceMemoryTtd_Test.AToolEditDuringARecordingKeepsTheDevicesUnsavedWrites`).
+- Mutants caught: Bind resetting, the view's missing mark, the alias match.

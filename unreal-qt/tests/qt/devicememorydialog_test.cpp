@@ -44,8 +44,11 @@ TEST_F(DeviceMemoryDialog_Test, TypedBytesReachTheTsConfPalette)
     auto* view = dialog.findChild<QHexView*>();
     ASSERT_NE(regions, nullptr);
     ASSERT_NE(view, nullptr);
-    ASSERT_EQ(regions->count(), 4);  // cram, sfile, cmos, eeprom
-    EXPECT_EQ(regions->currentData().toString(), "cram");
+    // cram, sfile, cmos, eeprom, then the memories time travel records (the sound cards fitted, the ROM chip)
+    ASSERT_GE(regions->count(), 4);
+    EXPECT_EQ(regions->currentData().toString(), "tsconf.cram");
+    EXPECT_EQ(regions->itemData(3).toString(), "evo-avr.eeprom");
+    EXPECT_GE(regions->findData(QStringLiteral("evo.flash")), 4) << "the ZX-Evo ROM chip is listed too";
     ASSERT_NE(view->getDocument(), nullptr);
     EXPECT_EQ(view->getDocument()->length(), 512);
 

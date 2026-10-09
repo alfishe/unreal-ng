@@ -88,6 +88,7 @@ void DeviceMemoryDialog::reload()
     _loading = true;
     QHexDocument* document = QHexDocument::fromMemory<QMemoryBuffer>(_shown, _hexView);
     _hexView->setDocument(document);
+    _hexView->setReadOnly(!region->Writable());   // a time-travel view the device keeps itself (VDAC2)
     connect(document, &QHexDocument::changed, this, &DeviceMemoryDialog::documentChanged);
     _loading = false;
 }

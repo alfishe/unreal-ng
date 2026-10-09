@@ -1556,8 +1556,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "PLD load, F12, Ctrl+Alt+Del, resets (pld_journal_kinds = 'cnf,port_1ffd' filters; pld_journal_source = 'ttd' "
         "reads the TTD recording's OUTs to those codes instead); "
         "all unavailable on other machines. 'memory_region' = bytes of a device memory region outside the CPU's pages "
-        "(region, default 'vram' = the Sprinter's 256 KB video RAM; address = offset, size = byte count; list: invoke_api "
-        "GET /api/v1/emulator/{id}/memory/regions; write: POST /memory/region/{name} {offset, hex}). 'video_changes' = "
+        "(region, default 'vram' = the Sprinter's 256 KB video RAM; address = offset, size = byte count; list, write, "
+        "save, load: the memory_access tool). 'video_changes' = "
         "the video change log of every machine: latch changes (mode, #7FFD, border, #FF77, the Sprinter's RGMOD / HOLD / "
         "PORT_Y / ALL_MODE / frame height) with frame T, beam line, PC, and the palette / mode table writes per frame. "
         "'audio_mixer' = the per-device mixer (source key, muted, solo, volume, gain_db, peak, active; set: invoke_api "
@@ -4643,6 +4643,207 @@ void RegisterTimeTravel(ToolRegistry& registry)
 namespace
 {
 
+namespace
+{
+/// "1234", "0x4D2", "#4D2", "$4D2"
+bool ParseAddressText(const std::string& text, uint32_t& value)
+{
+    std::string t = text;
+    int base = 10;
+    if (!t.empty() && (t[0] == '#' || t[0] == '$'))
+        t = t.substr(1), base = 16;
+    else if (t.size() > 2 && t[0] == '0' && (t[1] == 'x' || t[1] == 'X'))
+        t = t.substr(2), base = 16;
+    if (t.empty() || t.size() > 8)
+        return false;
+    char* end = nullptr;
+    const unsigned long v = std::strtoul(t.c_str(), &end, base);
+    if (!end || *end)
+        return false;
+    value = static_cast<uint32_t>(v);
+    return true;
+}
+
+/// "A8 00 FF" / "A800FF"
+bool ParseHexText(const std::string& text, std::vector<uint8_t>& out)
+{
+    std::string digits;
+    for (char c : text)
+        if (!std::isspace(static_cast<unsigned char>(c)) && c != ',')
+            digits += c;
+    if (digits.empty() || digits.size() % 2 || !std::all_of(digits.begin(), digits.end(), [](char c) {
+            return std::isxdigit(static_cast<unsigned char>(c)) != 0;
+        }))
+        return false;
+    for (size_t i = 0; i < digits.size(); i += 2)
+        out.push_back(static_cast<uint8_t>(std::strtoul(digits.substr(i, 2).c_str(), nullptr, 16)));
+    return true;
+}
+}  // namespace
+
+/// memory_access: every memory of the machine by name (memory-spaces design, step 1): the Z80 view ("cpu") and the
+/// device memory regions - the ones machines declare (Sprinter video RAM, TS-Conf CRAM / SFILE, the CMOS) and every
+/// memory time travel records (NeoGS RAM and flash, General Sound RAM, MoonSound wave memory, VDAC2, EEPROMs,
+/// ZX-Evo flash). Regions by canonical name or alias, as GET /memory/regions lists them
+void RegisterMemoryAccess(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["action"]["type"] = "string";
+    for (const char* action : {"regions", "read", "write", "save", "load"})
+        schema["properties"]["action"]["enum"].append(action);
+    schema["properties"]["action"]["description"] =
+        "regions: list the machine's memories (name, aliases, size, writable, ttd_region); read / write bytes; save "
+        "to / load from a file on the emulator's machine (regions only)";
+    schema["properties"]["space"]["type"] = "string";
+    schema["properties"]["space"]["default"] = "cpu";
+    schema["properties"]["space"]["description"] =
+        "cpu (the Z80 address space through the current banking) or a region name / alias from 'regions' "
+        "(sprinter.vram / vram, neogs.ram, gs.ram, moonsound.wave, tsconf.cram, rtc.cmos, evo.flash, ...)";
+    schema["properties"]["offset"]["type"] = "string";
+    schema["properties"]["offset"]["description"] = "Z80 address (cpu) or offset in the region: number, '0x..' or '#..'";
+    schema["properties"]["length"]["type"] = "integer";
+    schema["properties"]["length"]["default"] = 128;
+    schema["properties"]["length"]["description"] = "read: bytes (max 65536); save: bytes, 0 = to the end";
+    schema["properties"]["hex"]["type"] = "string";
+    schema["properties"]["hex"]["description"] = "write: the bytes as hex ('A8 00 FF' or 'A800FF')";
+    schema["properties"]["format"]["type"] = "string";
+    schema["properties"]["format"]["description"] = "read: hex (default) or sparse (runs of one byte folded)";
+    schema["properties"]["path"]["type"] = "string";
+    schema["properties"]["path"]["description"] = "save / load: the file on the emulator's machine";
+    schema["properties"]["target"]["type"] = "string";
+    schema["properties"]["target"]["default"] = "auto";
+    schema["required"].append("action");
+
+    registry.Register(
+        "memory_access",
+        "Read and write every memory of the machine by name: the Z80 view (space 'cpu') and device memories outside "
+        "the CPU's pages - the Sprinter's video RAM, TS-Conf CRAM / SFILE, the CMOS, and every memory time travel "
+        "records (NeoGS RAM and flash, General Sound RAM, MoonSound wave memory, VDAC2, EEPROMs, ZX-Evo flash). "
+        "'regions' lists them with their aliases and whether they are writable. Writes are debugger edits (recorded "
+        "by time travel).",
+        std::move(schema),
+        [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
+            const std::string action = args["action"].asString();
+            const std::string space = args.isMember("space") && args["space"].isString() ? args["space"].asString() : "cpu";
+            const bool cpu = space == "cpu";
+            std::string offset = "0";
+            if (args.isMember("offset"))
+                offset = args["offset"].isString() ? args["offset"].asString() : std::to_string(args["offset"].asUInt());
+            const unsigned length = args.isMember("length") && args["length"].isIntegral() ? args["length"].asUInt() : 128u;
+            if (action != "regions" && action != "read" && action != "write" && action != "save" && action != "load")
+            {
+                done(ToolResult::Error("memory_access: action must be regions, read, write, save or load"));
+                return;
+            }
+            if (cpu && (action == "save" || action == "load"))
+            {
+                done(ToolResult::Error("memory_access: save / load take a region (space); the Z80 view: invoke_api "
+                                       "GET /memory/read/{address}"));
+                return;
+            }
+            if (action == "write" && !(args.isMember("hex") && args["hex"].isString()))
+            {
+                done(ToolResult::Error("memory_access: write needs 'hex'"));
+                return;
+            }
+            if ((action == "save" || action == "load") && !(args.isMember("path") && args["path"].isString()))
+            {
+                done(ToolResult::Error("memory_access: " + action + " needs 'path'"));
+                return;
+            }
+            const std::string format = args.isMember("format") && args["format"].asString() == "sparse" ? "sparse" : "hex";
+            // The Z80 view's write: the WebAPI takes data bytes and a numeric address
+            std::vector<uint8_t> bytes;
+            uint32_t address = 0;
+            if (cpu && action == "write" &&
+                (!ParseHexText(args["hex"].asString(), bytes) || !ParseAddressText(offset, address) || address > 0xFFFF))
+            {
+                done(ToolResult::Error("memory_access: bad 'hex' or 'offset' (a Z80 address 0..0xFFFF)"));
+                return;
+            }
+            TargetResolver::ResolveFromArgs(args, caller, [=, &caller](bool ok, const std::string& id) {
+                if (!ok)
+                {
+                    done(ToolResult::Error(id));
+                    return;
+                }
+                if (action == "regions")
+                {
+                    CallAndSummarize("GET", Endpoint(id, "/memory/regions"), nullptr, caller, [](const Json::Value& b) {
+                        std::string text;
+                        for (const Json::Value& r : b["regions"])
+                        {
+                            text += (text.empty() ? "" : ", ") + r["name"].asString();
+                            if (r["aliases"].isArray() && !r["aliases"].empty())
+                                text += " (" + r["aliases"][0].asString() + ")";
+                            text += " " + r["size_hex"].asString() + (r["writable"].asBool() ? "" : " read-only");
+                        }
+                        return text.empty() ? std::string("No device memories on this machine (space 'cpu' still works).")
+                                            : "Memories: " + text + ".";
+                    }, done);
+                    return;
+                }
+                if (cpu)
+                {
+                    if (action == "read")
+                    {
+                        CallAndSummarize("GET",
+                                         Endpoint(id, "/memory/read/" + offset + "?length=" + std::to_string(length) +
+                                                          (format == "sparse" ? "&format=sparse" : "")),
+                                         nullptr, caller,
+                                         [length](const Json::Value&) { return "Read " + std::to_string(length) + " bytes of the Z80 view."; },
+                                         done);
+                        return;
+                    }
+                    auto body = std::make_shared<Json::Value>();
+                    (*body)["address"] = address;
+                    for (uint8_t b : bytes)
+                        (*body)["data"].append(b);
+                    CallAndSummarize("POST", Endpoint(id, "/memory/write"), body.get(), caller,
+                                     [n = bytes.size()](const Json::Value&) { return "Wrote " + std::to_string(n) + " bytes."; },
+                                     done);
+                    return;
+                }
+                const std::string path = Endpoint(id, "/memory/region/" + UrlEncodeSegment(space));
+                if (action == "read")
+                {
+                    CallAndSummarize("GET", path + "?offset=" + offset + "&length=" + std::to_string(length) + "&format=" + format,
+                                     nullptr, caller,
+                                     [space, length](const Json::Value& b) {
+                                         return "Read " + std::to_string(length) + " bytes of " + b["region"].asString() +
+                                                " at " + b["offset"].asString() + ".";
+                                     },
+                                     done);
+                    return;
+                }
+                auto body = std::make_shared<Json::Value>();
+                (*body)["offset"] = offset;
+                if (action == "write")
+                    (*body)["hex"] = args["hex"].asString();
+                else
+                {
+                    (*body)["action"] = action;
+                    (*body)["path"] = args["path"].asString();
+                    if (action == "save" && args.isMember("length"))
+                        (*body)["length"] = length;
+                }
+                CallAndSummarize("POST", path, body.get(), caller,
+                                 [action](const Json::Value& b) {
+                                     if (action == "write")
+                                         return "Wrote " + std::to_string(b["bytes_written"].asUInt64()) + " bytes to " +
+                                                b["region"].asString() + ".";
+                                     if (action == "save")
+                                         return "Saved " + std::to_string(b["length"].asUInt64()) + " bytes of " +
+                                                b["region"].asString() + " to " + b["path"].asString() + ".";
+                                     return "Loaded " + std::to_string(b["bytes_written"].asUInt64()) + " bytes into " +
+                                            b["region"].asString() + ".";
+                                 },
+                                 done);
+            });
+        });
+}
+
 void RegisterRzxPlayback(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -4811,6 +5012,9 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
 
     // rzx_playback: RZX input recordings (play / stop / status)
     RegisterRzxPlayback(*registry);
+
+    // memory_access: every memory by name - the Z80 view and the device memory regions
+    RegisterMemoryAccess(*registry);
 
     // Phase 2 — smart tools
     RegisterManageSymbols(*registry);

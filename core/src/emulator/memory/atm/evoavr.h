@@ -229,7 +229,9 @@ protected:
     {
     public:
         explicit EepromRegion(std::array<uint8_t, kEepromSize>& eeprom) : _eeprom(eeprom) {}
-        const char* Name() const override { return "eeprom"; }
+        const char* Name() const override { return "evo-avr.eeprom"; }
+        const char* Aliases() const override { return "eeprom"; }
+        const char* TtdRegion() const override { return "evo-avr.eeprom"; }
         const char* Description() const override
         {
             return "ZX-Evo AVR EEPROM, 4 KiB, battery-backed (the guest sees 16 bytes of it at a time through the "

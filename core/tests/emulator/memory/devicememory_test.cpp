@@ -25,21 +25,27 @@ class DeviceMemory_Test : public SprinterFixture
 TEST_F(DeviceMemory_Test, SprinterListsItsVideoRam)
 {
     const std::vector<IDeviceMemoryRegion*> regions = DeviceMemory::Regions(_context);
-    ASSERT_EQ(regions.size(), 2u) << "vram, then the CMOS clock's cmos";
-    EXPECT_STREQ(regions[0]->Name(), "vram");
-    EXPECT_STREQ(regions[1]->Name(), "cmos");
+    ASSERT_EQ(regions.size(), 3u) << "vram, the CMOS clock's cmos, then the fast RAM time travel records";
+    EXPECT_STREQ(regions[0]->Name(), "sprinter.vram");
+    EXPECT_STREQ(regions[1]->Name(), "rtc.cmos");
+    EXPECT_STREQ(regions[2]->Name(), "sprinter.fastram");
     EXPECT_EQ(regions[0]->Size(), 256u * 1024u);
-    EXPECT_EQ(DeviceMemory::Find(_context, "VRAM"), regions[0]) << "names are case-insensitive";
+    EXPECT_EQ(regions[2]->Size(), 64u * 1024u);
+    EXPECT_EQ(DeviceMemory::Find(_context, "VRAM"), regions[0]) << "aliases, case-insensitive";
+    EXPECT_EQ(DeviceMemory::Find(_context, "Sprinter.VRAM"), regions[0]);
 
     const StateNode list = DeviceState::MemoryRegions(_context);
     const StateNode* items = Member(list, "regions");
     ASSERT_NE(items, nullptr);
-    ASSERT_EQ(items->items.size(), 2u);
+    ASSERT_EQ(items->items.size(), 3u);
     EXPECT_EQ(Member(items->items[0], "pages")->i, 16);
+    EXPECT_EQ(Member(items->items[0], "aliases")->items.at(0).s, "vram");
+    EXPECT_EQ(Member(items->items[0], "ttd_region")->s, "sprinter.vram");
+    EXPECT_EQ(Member(items->items[1], "ttd_region")->kind, StateNode::Kind::Null) << "the CMOS is device state, no region";
 
     std::string error;
     EXPECT_EQ(DeviceMemory::Find(_context, "gsram", &error), nullptr);
-    EXPECT_NE(error.find("regions: vram, cmos"), std::string::npos) << error;
+    EXPECT_NE(error.find("regions: sprinter.vram, rtc.cmos, sprinter.fastram"), std::string::npos) << error;
 }
 
 // A write goes through SprinterVideoRam::Write: the pen follows the palette bytes
@@ -83,7 +89,8 @@ TEST_F(DeviceMemory_Test, SaveAndLoadRoundTrip)
 TEST_F(DeviceMemory_Test, CliRendersRegions)
 {
     const std::string list = CliMemoryRegion::Text(_context, {"regions"});
-    EXPECT_NE(list.find("vram"), std::string::npos) << list;
+    EXPECT_NE(list.find("  sprinter.vram (vram)  262144 bytes, 16 pages of 16384"), std::string::npos) << list;
+    EXPECT_NE(list.find("  sprinter.fastram      65536 bytes"), std::string::npos) << "names padded to the longest: " << list;
     EXPECT_NE(CliMemoryRegion::Text(_context, {"region", "write", "vram", "0x10", "AB", "CD"}).find("Wrote 2 bytes"),
               std::string::npos);
     const std::string dump = CliMemoryRegion::Text(_context, {"region", "read", "vram", "0x10", "2"});
