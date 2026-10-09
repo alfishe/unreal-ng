@@ -15,6 +15,8 @@ save the text itself and keep the file. The synchronizer's reader must give that
                                                                  # STORM: TAG-typing, TAG-edited (page 6 from #C00B)
     sync-dumps.py zasm <ZASM315.trd> <out-dir> --source ovlib --big service --tag zasm315
                                                                  # ZAsm 3.15: TAG-typing, TAG-edited, TAG-big
+    sync-dumps.py masm <disk-with-NAME.a first> <out-dir> --source NAME --tag masm11
+                                                                 # MASM 1.1: TAG-typing, TAG-edited, TAG-menu
 
 Each case is a folder <out-dir>/<assembler>-<case>/ with machine.json (the RAM page mapped at each 16 KB window, the
 pages kept, the file expected, the editor state), page<N>.bin per kept page and the expected file. A case whose text
@@ -174,6 +176,38 @@ def zasm(emu, args):
     finish(args.out, f'{args.tag}-edited', f'{args.source}.a', saved(emu, args.source, 'a'))
 
 
+def masm(emu, args):
+    """MASM 1.1: W takes the first source, E edits; SS+Enter saves from the editor, EXT Q goes back to the menu. The
+    edited case is taken in the editor (the cursor line out of the text), the menu case after leaving it"""
+    emu.insert_disk(args.disk)
+    emu.run_trdos('MASM 1.1', wait=8)
+    emu.tap('enter')                           # past the title
+    emu.tap('w')
+    time.sleep(2)
+    emu.tap('enter')
+    time.sleep(3)
+    emu.tap('e', 8)
+    time.sleep(1.5)
+    loaded = saved(emu, args.source, 'a')
+    pages = [2, 5, windows(emu)[3]]
+    emu.type(' nop')
+    dump(emu, args.out, f'{args.tag}-typing', pages, f'{args.source}.a', loaded, {'editor': True, 'typing': True})
+    emu.tap('enter')
+    for _ in range(3):
+        emu.tap('down')
+    time.sleep(1)
+    dump(emu, args.out, f'{args.tag}-edited', pages, f'{args.source}.a', None, {'editor': True, 'typing': False})
+    emu.post('/keyboard/combo', {'keys': ['symbol', 'enter'], 'frames': 4})   # SS+Enter: save
+    time.sleep(4)
+    edited = saved(emu, args.source, 'a')
+    finish(args.out, f'{args.tag}-edited', f'{args.source}.a', edited)
+    emu.post('/keyboard/combo', {'keys': ['caps', 'symbol'], 'frames': 4})   # EXT
+    time.sleep(0.5)
+    emu.tap('q')
+    time.sleep(1)
+    dump(emu, args.out, f'{args.tag}-menu', pages, f'{args.source}.a', edited, {'editor': False, 'typing': False})
+
+
 def saved(emu, name, type_):
     data = emu.read_disk_file(name, type_)
     if data is None:
@@ -270,7 +304,7 @@ def tasm412(emu, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'masm'])
     parser.add_argument('disk')
     parser.add_argument('out')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
@@ -294,6 +328,8 @@ def main():
         storm(emu, args)
     elif args.assembler == 'zasm':
         zasm(emu, args)
+    elif args.assembler == 'masm':
+        masm(emu, args)
     else:
         alasm(emu, args, args.assembler[5:])
     emu.stop_recording()

@@ -74,6 +74,7 @@ const Case kCases[] = {
     {"storm13-typing", "storm-1.3"},   {"storm13-edited", "storm-1.3"},    {"storm13i-typing", "storm-1.3"},
     {"storm13i-edited", "storm-1.3"},
     {"zasm315-typing", "zasm-3.15"},   {"zasm315-edited", "zasm-3.15"},    {"zasm315-big", "zasm-3.15"},
+    {"masm11-typing", "masm-1.1"},     {"masm11-edited", "masm-1.1"},      {"masm11-menu", "masm-1.1"},
 };
 
 /// The saved file without the editor-state first line SAVE adds (ZAsm's ";!...")

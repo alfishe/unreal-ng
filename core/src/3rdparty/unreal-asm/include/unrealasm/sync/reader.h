@@ -100,6 +100,12 @@ struct GapBufferParams
     uint16_t lineBufferLength = 0;
     encoding::CodePage lineCodePage = encoding::CodePage::Cp866;
     std::string end;                ///< the end record SAVE adds
+    /// Without a line count (MASM): a fixed start and top (top 0 = #10000, the end marker inside the text), and the
+    /// editor known by a non-zero byte in its line buffer; in the editor the cursor line is out of the text, its
+    /// last version the length-framed record that ends at the gap end
+    uint16_t fixedStart = 0;
+    uint16_t editorFlagAt = 0;
+    uint16_t editorFlagLength = 0;
 };
 
 struct LinearParams

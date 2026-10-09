@@ -350,6 +350,11 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | research | the end pointer (edit-and-diff); 2.0 / 3.0 are packed (read after they unpacked) |
 | family | `Linear` from the known start |
 | **Work** | **1.5 d** |
+| **Verified: 1.1** (2026-10-09, dumps `testdata/sync/masm11-*`) | not linear: a gap buffer. The text starts at `#970B`; `(#96CC)` is the gap start, `(#96CE)` the gap end, and the part after the gap runs up to `#FFFF`, where the file's `#FF` end lies. Lines are records `n`, body, `n`. In the editor (`E`) the cursor line is out of the text: its last version is the record that ends at the gap end. After EXT `Q` the menu has it back before the gap |
+| editor or menu | the editor's 31-byte line buffer at `#851A` is blank-padded text in the editor and zeros in the menu: a non-zero byte there means the editor |
+| SAVE | SS+Enter in the editor (or `S` in the menu) writes the text closed up; the live file equals it in both states |
+| identification | the prompt `MASM128> ` at `#85B1` (below the text; the title `MASTER ASSEMBLER* v1.1` at `#9B49` lies where a long text goes) |
+| **Built** | descriptor `masm-1.1`; checked live. The 1.0 demo, 1.3, 2.0 and 3.0 are not covered yet |
 
 ### 7.13 GENS 3 / GENS 4 (and GENS4B on TR-DOS)
 

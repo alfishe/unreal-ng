@@ -160,10 +160,48 @@ bool EncodeLine(const SyncDescriptor& d, const std::string& line, std::vector<ui
     return true;
 }
 
+/// MASM's gap buffer: [fixed start, gap start) + [gap end, #10000), and in the editor the cursor line's record that
+/// ends at the gap end
+SyncText ReadGapBufferFixed(const MachineView& machine, const SyncDescriptor& d)
+{
+    SyncText text;
+    const GapBufferParams& p = d.gapBuffer;
+    const auto gapStart = machine.Word(p.gapStart), gapEnd = machine.Word(p.gapEnd);
+    std::vector<uint8_t> flag;
+    if (!gapStart || !gapEnd || !machine.Read(p.editorFlagAt, p.editorFlagLength, flag))
+        return Inconsistent(text, "the text pointers are not in the memory copied");
+    if (!(p.fixedStart <= *gapStart && *gapStart <= *gapEnd))
+        return Inconsistent(text, "the text pointers are out of order: #" + Hex(*gapStart, 4) + " #" + Hex(*gapEnd, 4));
+    text.editor = std::any_of(flag.begin(), flag.end(), [](uint8_t b) { return b != 0; });
+    uint32_t upperFrom = *gapEnd;
+    if (text.editor)
+    {
+        // The cursor line's record [n] body [n] ends at the gap end
+        const std::optional<uint8_t> n = machine.Byte(static_cast<uint16_t>(*gapEnd - 1));
+        if (!n || *gapEnd < uint32_t(*n) + 2 || uint32_t(*gapEnd) - *n - 2 < *gapStart ||
+            machine.Byte(static_cast<uint16_t>(*gapEnd - *n - 2)) != n)
+            return Inconsistent(text, "no line record before the gap end #" + Hex(*gapEnd, 4));
+        upperFrom = *gapEnd - *n - 2u;
+    }
+    std::vector<uint8_t> lower, upper;
+    if (!machine.Read(p.fixedStart, static_cast<size_t>(*gapStart - p.fixedStart), lower) ||
+        !machine.Read(static_cast<uint16_t>(upperFrom), static_cast<size_t>(0x10000 - upperFrom), upper))
+        return Inconsistent(text, "the text lies in a page that was not copied");
+    if (upper.empty() || upper.back() != static_cast<uint8_t>(p.end.empty() ? 0xFF : p.end.back()))
+        return Inconsistent(text, "the text does not end with its end marker at #FFFF");
+    text.file = std::move(lower);
+    text.file.insert(text.file.end(), upper.begin(), upper.end());
+    text.ok = true;
+    text.state = "ok";
+    return text;
+}
+
 SyncText ReadGapBuffer(const MachineView& machine, const SyncDescriptor& d)
 {
     SyncText text;
     const GapBufferParams& p = d.gapBuffer;
+    if (p.editorFlagLength)
+        return ReadGapBufferFixed(machine, d);
     const auto start = machine.Word(p.start), top = machine.Word(p.top);
     const auto gapStart = machine.Word(p.gapStart), gapEnd = machine.Word(p.gapEnd), total = machine.Word(p.lineCount);
     if (!start || !top || !gapStart || !gapEnd || !total)
@@ -338,6 +376,29 @@ SyncDescriptor Zasm315()
     return d;
 }
 
+/// MASM 1.1 (asm-synchronizer.md §7.12): the text from #970B; while it is edited a gap at (#96CC)-(#96CE), the part
+/// after it up to #FFFF (the #FF end inside the text). Identified by its prompt in the code below the text
+SyncDescriptor Masm11()
+{
+    SyncDescriptor d;
+    d.id = "masm-1.1";
+    d.title = "MASM 1.1";
+    d.codec = "masm";
+    d.version = "1.1";
+    d.extension = "a";
+    d.identify = {{0x85B1, "MASM128> "}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::GapBuffer;
+    d.gapBuffer.fixedStart = 0x970B;
+    d.gapBuffer.gapStart = 0x96CC;
+    d.gapBuffer.gapEnd = 0x96CE;
+    d.gapBuffer.editorFlagAt = 0x851A;
+    d.gapBuffer.editorFlagLength = 31;
+    d.gapBuffer.end = std::string("\xFF", 1);
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 SyncDescriptor Tasm412()
 {
     SyncDescriptor d;
@@ -429,6 +490,7 @@ const std::vector<SyncDescriptor>& Descriptors()
         Xas("9.10", "9.10", 0xB912, "XAS by Max Petrov,64sm by STS"),
         Storm13(),
         Zasm315(),
+        Masm11(),
         Tasm412(),
     };
     return descriptors;
