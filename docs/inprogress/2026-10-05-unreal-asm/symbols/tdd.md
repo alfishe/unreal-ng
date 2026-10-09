@@ -268,8 +268,9 @@ which returns the same report structure (`StateNode`), so every surface answers 
 
 Built (2026-10-08): `SymbolControl` (`core/src/debugger/labels/symbolcontrol.h`) has the verbs `formats`, `detect`,
 `sets`, `import`, `export`, `set` and `drop`, with the TTDControl pattern (a verb, options by name, a reply with an
-error code and a StateNode body). The WebAPI, CLI, MCP, Lua and Python call it. Import takes a `path` only so far:
-`disk`, `base64`, the live scan, export's `filter` / `names` and the Qt dialogs are still to come. The OpenAPI
+error code and a StateNode body). The WebAPI, CLI, MCP, Lua and Python call it. The live scan has its own verbs:
+`scan` and `import-live` (`GET /symbols/scan`, `POST /symbols/import/live`). Import takes a `path`, or `data` (base64) with a
+`name`; `disk`, export's `filter` / `names` and the Qt dialogs are still to come. The OpenAPI
 gets a `symbols` tag; the recipe is `.recipe/analysis/symbols-import-export.md`.
 
 ## 9. Memory and speed budget

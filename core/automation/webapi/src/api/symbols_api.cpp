@@ -5,8 +5,10 @@
 ///   GET    /symbols/sets                 the symbol sets and the label count
 ///   PUT    /symbols/sets   {id, enabled?, priority?}
 ///   DELETE /symbols/sets?id=
-///   POST   /symbols/import {path, format?, set?, space?, base?, policy?}
+///   POST   /symbols/import {path | data (base64) + name, format?, set?, space?, base?, policy?}
 ///   POST   /symbols/export {path, format?, sets? (array or "a,b"), pages?}
+///   GET    /symbols/scan                 label tables of assemblers in RAM: the candidates
+///   POST   /symbols/import/live {scanner?, page?, offset?, set?, policy?}
 ///
 /// Every route turns its request into a SymbolControl verb: the verbs, their checks and their answers are shared with
 /// the CLI, MCP, Lua and Python (core/src/debugger/labels/symbolcontrol.h).
@@ -181,6 +183,22 @@ void EmulatorAPI::symbolExport(const HttpRequestPtr& req, std::function<void(con
     if (!OptionsFromJson(req, options, callback))
         return;
     RespondSymbols(id, "export", std::move(options), callback);
+}
+
+void EmulatorAPI::symbolScan(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                             const std::string& id) const
+{
+    (void)req;
+    RespondSymbols(id, "scan", {}, callback);
+}
+
+void EmulatorAPI::symbolImportLive(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    std::map<std::string, std::string> options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    RespondSymbols(id, "import-live", std::move(options), callback);
 }
 
 }  // namespace v1

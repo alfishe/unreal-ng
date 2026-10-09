@@ -692,13 +692,21 @@ bool LabelManager::LoadSymFile(const std::string& path)
 SymbolImportResult LabelManager::ImportSymbols(const std::string& path, const SymbolImportRequest& request)
 {
     using namespace unrealasm::symbols;
-    SymbolImportResult result;
     std::vector<uint8_t> bytes;
     if (path.empty() || !ReadLabelFile(path, bytes))
     {
+        SymbolImportResult result;
         result.message = "Cannot read the symbol file: " + path;
         return result;
     }
+    return ImportSymbolBytes(bytes, path, request);
+}
+
+SymbolImportResult LabelManager::ImportSymbolBytes(const std::vector<uint8_t>& bytes, const std::string& path,
+                                                   const SymbolImportRequest& request, const std::string& originKind)
+{
+    using namespace unrealasm::symbols;
+    SymbolImportResult result;
     std::string reason;
     const ISymbolCodec* codec = CodecForFile(path, bytes, request.format, result.score, reason);
     if (!codec)
@@ -732,14 +740,14 @@ SymbolImportResult LabelManager::ImportSymbols(const std::string& path, const Sy
             SymbolSet file = std::move(set);
             if (file.title.empty())
                 file.title = title;
-            file.id = "file:" + path + (several ? "#" + file.id : std::string());
-            file.origin.kind = "file";
+            file.id = originKind + ":" + path + (several ? "#" + file.id : std::string());
+            file.origin.kind = originKind;
             file.origin.where = path;
             file.priority = _nextFilePriority++;
             file.enabled = true;
             sets.push_back(std::move(file));
         }
-        result.report.set = sets.empty() ? "file:" + path : sets.front().id;
+        result.report.set = sets.empty() ? originKind + ":" + path : sets.front().id;
         result.report.added = result.records;
         result.report.diagnostics = std::move(decoded.diagnostics);
         result.report.ok = true;
@@ -747,26 +755,47 @@ SymbolImportResult LabelManager::ImportSymbols(const std::string& path, const Sy
     }
     else
     {
-        ImportOptions options;
-        options.set = request.set.empty() ? "file:" + path : request.set;
-        options.title = title;
-        options.origin.kind = "file";
-        options.origin.where = path;
-        options.space = request.space;
-        options.base = request.base;
-        options.policy = request.policy.value_or(MergePolicy::Both);
-        const bool existed = _store->GetSet(options.set).has_value();
         std::vector<Symbol> records;
         records.reserve(result.records);
         for (SymbolSet& set : decoded.file.sets)
             std::move(set.symbols.begin(), set.symbols.end(), std::back_inserter(records));
-        result.report = _store->Import(std::move(records), options);
-        result.report.diagnostics.insert(result.report.diagnostics.begin(), decoded.diagnostics.begin(), decoded.diagnostics.end());
-        if (!result.report.ok)
-            result.message = "A conflict stopped the merge (policy fail): nothing changed";
-        else if (!existed)
-            _store->SetPriority(options.set, _nextFilePriority++);
+        Origin origin;
+        origin.kind = originKind;
+        origin.where = path;
+        SymbolImportResult merged = ImportRecords(std::move(records), request, originKind + ":" + path, title, origin);
+        merged.format = result.format;
+        merged.score = result.score;
+        merged.records = result.records;
+        merged.report.diagnostics.insert(merged.report.diagnostics.begin(), decoded.diagnostics.begin(), decoded.diagnostics.end());
+        return merged;
     }
+    Rebuild();
+    Notify();
+    result.ok = result.report.ok;
+    return result;
+}
+
+SymbolImportResult LabelManager::ImportRecords(std::vector<unrealasm::symbols::Symbol> records, const SymbolImportRequest& request,
+                                               const std::string& defaultSet, const std::string& title,
+                                               const unrealasm::symbols::Origin& origin)
+{
+    using namespace unrealasm::symbols;
+    SymbolImportResult result;
+    result.records = records.size();
+    Flush();
+    ImportOptions options;
+    options.set = request.set.empty() ? defaultSet : request.set;
+    options.title = title;
+    options.origin = origin;
+    options.space = request.space;
+    options.base = request.base;
+    options.policy = request.policy.value_or(MergePolicy::Both);
+    const bool existed = _store->GetSet(options.set).has_value();
+    result.report = _store->Import(std::move(records), options);
+    if (!result.report.ok)
+        result.message = "A conflict stopped the merge (policy fail): nothing changed";
+    else if (!existed)
+        _store->SetPriority(options.set, _nextFilePriority++);
     Rebuild();
     Notify();
     result.ok = result.report.ok;

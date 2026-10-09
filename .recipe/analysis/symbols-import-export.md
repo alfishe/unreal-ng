@@ -48,7 +48,7 @@ manage_symbols {"action":"export","path":"scratch/all.usym.json","format":"nativ
 | GET | `/api/v1/emulator/{id}/symbols/sets` | |
 | PUT | `/api/v1/emulator/{id}/symbols/sets` | `{id, enabled?, priority?}` |
 | DELETE | `/api/v1/emulator/{id}/symbols/sets` | `?id=` |
-| POST | `/api/v1/emulator/{id}/symbols/import` | `{path, format?, set?, space?, base?, policy?}` |
+| POST | `/api/v1/emulator/{id}/symbols/import` | `{path \| data (base64) + name, format?, set?, space?, base?, policy?}` |
 | POST | `/api/v1/emulator/{id}/symbols/export` | `{path, format?, sets? (array or "a,b"), pages?}` |
 
 A set id holds a path, so it travels in the body or the query, never in the URL path.
@@ -100,6 +100,7 @@ A refusal does not raise: the table / dict has `ok = false` and `error` = the me
 
 | Option | Verb | Meaning |
 |--------|------|---------|
+| `data`, `name` | import | The file itself as base64 instead of `path` (a client on another host); `name` gives its extension (the format) and the set `upload:<name>`. |
 | `format` | import, export | A codec id from `formats`. Import default: by the extension (`.map .sym .vice .s .asm .z88` as `symbols load` always did; a z80asm `.map` goes to `z88dk-map`), else detected. Export default: by the extension. |
 | `set` | import | Merge into this set (made when missing) instead of the file's own set. |
 | `space` | import | Records without a page of their own go here: `cpu:main` (default), `rom0`, `ram3`, `cache0`, `const`, `port`; another CPU's: `gs.rom0`. |
@@ -124,6 +125,29 @@ range and name checks, and duplicates inside the file (the first wins). Then the
   page mapped at that window now. A CPU-view label placed later wins over every page. With no label of the mapped
   page, the last placed label shows, as at every other address.
 
+## Label tables in RAM (live scan)
+
+ALASM (3.8c, 4.4x, 4.5, 5.0x) and XAS (4.x, 5.05, 7.x, 9.x) keep their label table in RAM after assembling. `scan`
+copies the machine's RAM pages at a coherent moment and lists the tables it finds, best first. `import-live` reads one
+of them into a set: the best one by default, or the one that `scanner` / `page` / `offset` name. The set is
+`live:<scanner>@ram<page>:#<offset>`, origin `live`. Macro names and labels used but never defined are left out, and
+each kind left out is reported.
+
+```text
+manage_symbols {"action":"scan"}
+manage_symbols {"action":"import_live"}
+manage_symbols {"action":"import_live","scanner":"xas-table","page":6,"set":"xas","policy":"replace"}
+```
+
+```text
+GET  /api/v1/emulator/{id}/symbols/scan          -> {pages, candidates: [{scanner, version, page, offset, end, count, score}]}
+POST /api/v1/emulator/{id}/symbols/import/live   {scanner?, page?, offset?, set?, policy?}
+symbols scan | symbols import-live [--scanner s] [--page n] [--offset n] [--set s] [--policy p]
+symbols_scan() / symbols_import_live{...}        emu.symbols_scan() / emu.symbols_import_live(...)
+```
+
+Where each assembler keeps its table: `docs/inprogress/2026-10-05-unreal-asm/research-labeltables.md`.
+
 ## Bundles
 
 The emulator ships label files for known ROMs (`data/symbols/`, next to `rom/` in every build and package). The list
@@ -131,8 +155,10 @@ is in `data/symbols/manifest.json`: each bundle has the SHA-256 of the 16 KB ROM
 each instance, and after a ROM reload, the bundles whose page is loaded become sets `bundle:<id>` (origin `bundle`,
 priority 50, below every loaded file). Bundles that no longer match are dropped. Today's bundles:
 
-- the 48K ROM (`rom:48k`), and the 48 BASIC in the 128K's ROM 1 (`rom:48k-in-128`, without the 48K's `spare` label);
-- the 128K editor ROM 0 (`rom:128k-rom0`);
+- the 48K ROM (`rom:48k`), and the 48 BASIC in the 128K's ROM 1 and in Pentagon's "48 for 128" (`rom:48k-in-128`,
+  without the 48K's `spare` label);
+- the 128K editor ROM 0 (`rom:128k-rom0`), and Pentagon's version with TR-DOS in the menu
+  (`rom:128k-rom0-trdos-menu`, without the four labels in its changed #3BEC-#3C1F);
 - the 48K and 128K system variables;
 - Sprinter BIOS 3.04 ROM pages 0, 8 and #C.
 

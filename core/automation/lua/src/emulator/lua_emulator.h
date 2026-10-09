@@ -2986,13 +2986,18 @@ public:
         // Symbol files and sets through SymbolControl (the same verbs, checks and fields as the WebAPI, CLI, MCP and
         // Python): symbols_import("f.sym") or symbols_import{path=..., format=, set=, space=, base=, policy=},
         // symbols_export{path=..., format=, sets={...}, pages=}, symbols_sets(), symbols_set(id, {enabled=, priority=}),
-        // symbols_drop(id), symbols_formats(), symbols_detect(path). A refusal: the table has ok = false, error = why
+        // symbols_drop(id), symbols_formats(), symbols_detect(path), symbols_scan(), symbols_import_live{scanner=, page=,
+        // offset=, set=, policy=}. A refusal: the table has ok = false, error = why
         lua.set_function("symbols_formats", [this](sol::this_state ts) -> sol::object { return symbolsRun(ts, "formats", {}); });
         lua.set_function("symbols_sets", [this](sol::this_state ts) -> sol::object { return symbolsRun(ts, "sets", {}); });
         lua.set_function("symbols_detect", [this](sol::this_state ts, sol::object arg) -> sol::object { return symbolsCall(ts, "detect", arg, "path"); });
         lua.set_function("symbols_import", [this](sol::this_state ts, sol::object arg) -> sol::object { return symbolsCall(ts, "import", arg, "path"); });
         lua.set_function("symbols_export", [this](sol::this_state ts, sol::object arg) -> sol::object { return symbolsCall(ts, "export", arg, "path"); });
         lua.set_function("symbols_drop", [this](sol::this_state ts, sol::object arg) -> sol::object { return symbolsCall(ts, "drop", arg, "id"); });
+        lua.set_function("symbols_scan", [this](sol::this_state ts) -> sol::object { return symbolsRun(ts, "scan", {}); });
+        lua.set_function("symbols_import_live", [this](sol::this_state ts, sol::optional<sol::table> opts) -> sol::object {
+            return symbolsRun(ts, "import-live", opts ? SymbolOptions(sol::make_object(ts, *opts), "") : std::map<std::string, std::string>{});
+        });
         lua.set_function("symbols_set", [this](sol::this_state ts, sol::object id, sol::optional<sol::table> opts) -> sol::object {
             std::map<std::string, std::string> options;
             if (opts)

@@ -13,7 +13,7 @@
 struct StateNode;
 struct BreakpointSpec;
 class BreakpointManager;
-class LabelManager;
+class EmulatorContext;
 
 /**
  * @brief Session context for a client connection
@@ -160,7 +160,7 @@ private:
     void HandleLabel(const ClientSession& session, const std::vector<std::string>& args);
     void HandleLabels(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSymbols(const ClientSession& session, const std::vector<std::string>& args);
-    void HandleSymbolVerb(const ClientSession& session, LabelManager* labelMgr, const std::vector<std::string>& args);
+    void HandleSymbolVerb(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
 
     // Assembler and source-listing commands
     void HandleAssemble(const ClientSession& session, const std::vector<std::string>& args);

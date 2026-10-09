@@ -13,8 +13,10 @@
 //   sets         → GET  /symbols/sets
 //   set_enable   → PUT  /symbols/sets {id, enabled?, priority?}
 //   drop         → DELETE /symbols/sets?id=
-//   import       → POST /symbols/import {path, format?, set?, space?, base?, policy?}
+//   import       → POST /symbols/import {path | data + name, format?, set?, space?, base?, policy?}
 //   export       → POST /symbols/export {path, format?, sets?, pages?}
+//   scan         → GET  /symbols/scan
+//   import_live  → POST /symbols/import/live {scanner?, page?, offset?, set?, policy?}
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
 
@@ -37,7 +39,7 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"load_labels", "list", "resolve", "load_listing", "source_at", "step_line", "run_to_line", "formats",
-                               "detect", "sets", "set_enable", "drop", "import", "export"})
+                               "detect", "sets", "set_enable", "drop", "import", "export", "scan", "import_live"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -49,6 +51,10 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] = "File path for load_labels / load_listing / detect / import / export";
+    schema["properties"]["data"]["type"] = "string";
+    schema["properties"]["data"]["description"] = "import: the symbol file itself as base64 instead of a path (a client on another host)";
+    schema["properties"]["name"]["type"] = "string";
+    schema["properties"]["name"]["description"] = "import with data: the file's name (its extension picks the format; the set is upload:<name>)";
     schema["properties"]["format"]["type"] = "string";
     schema["properties"]["format"]["description"] = "import / export: a symbol format id (formats); default: by the extension, else detected";
     schema["properties"]["set"]["type"] = "string";
@@ -67,6 +73,12 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
     schema["properties"]["sets"]["description"] = "export: only these set ids (default: every enabled set)";
     schema["properties"]["pages"]["type"] = "string";
     schema["properties"]["pages"]["description"] = "export: page symbols in a format without pages: fold (default), comment, drop";
+    schema["properties"]["scanner"]["type"] = "string";
+    schema["properties"]["scanner"]["description"] = "import_live: alasm-table or xas-table (default: the best candidate of scan)";
+    schema["properties"]["page"]["type"] = "integer";
+    schema["properties"]["page"]["description"] = "import_live: the RAM page of the table (scan lists them)";
+    schema["properties"]["offset"]["type"] = "integer";
+    schema["properties"]["offset"]["description"] = "import_live: the table's first byte in the page";
     schema["properties"]["id"]["type"] = "string";
     schema["properties"]["id"]["description"] = "set_enable / drop: the set id (sets lists them)";
     schema["properties"]["enabled"]["type"] = "boolean";
@@ -191,6 +203,25 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "scan")
+            {
+                ResolveAndForward(args, "GET", "/symbols/scan", nullptr, caller, "Label tables in RAM", done);
+                return;
+            }
+
+            if (action == "import_live")
+            {
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"scanner", "set", "policy"})
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name].asString();
+                for (const char* name : {"page", "offset"})
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name].asString();
+                ResolveAndForward(args, "POST", "/symbols/import/live", &body, caller, "Label table imported", done);
+                return;
+            }
+
             if (action == "formats" || action == "sets")
             {
                 ResolveAndForward(args, "GET", "/symbols/" + action, nullptr, caller, action == "formats" ? "Symbol formats" : "Symbol sets",
@@ -235,14 +266,16 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
 
             if (action == "import" || action == "export")
             {
-                if (!args.isMember("path") || args["path"].asString().empty())
+                const bool upload = action == "import" && args.isMember("data") && !args["data"].asString().empty();
+                if (!upload && (!args.isMember("path") || args["path"].asString().empty()))
                 {
-                    done(ToolResult::Error(action + " requires 'path'"));
+                    done(ToolResult::Error(action + (action == "import" ? " requires 'path' or 'data'" : " requires 'path'")));
                     return;
                 }
                 Json::Value body;
-                body["path"] = args["path"].asString();
-                const std::vector<const char*> names = action == "import" ? std::vector<const char*>{"format", "set", "space", "base", "policy"}
+                if (!upload)
+                    body["path"] = args["path"].asString();
+                const std::vector<const char*> names = action == "import" ? std::vector<const char*>{"data", "name", "format", "set", "space", "base", "policy"}
                                                                          : std::vector<const char*>{"format", "pages"};
                 for (const char* name : names)
                     if (args.isMember(name) && !args[name].isNull())
@@ -256,7 +289,7 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
 
             done(ToolResult::Error("Unknown action '" + action +
                                    "'. Valid: load_labels, list, resolve, load_listing, source_at, step_line, run_to_line, formats, "
-                                   "detect, sets, set_enable, drop, import, export"));
+                                   "detect, sets, set_enable, drop, import, export, scan, import_live"));
         });
 }
 

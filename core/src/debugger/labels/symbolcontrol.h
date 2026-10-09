@@ -13,10 +13,12 @@
 ///   formats                    the symbol codecs: id, title, family, extensions, pages, comment
 ///   detect   path              the codecs that could read the file, by score, and the one chosen
 ///   sets                       the symbol sets: id, title, origin, priority, enabled, symbols; the label count
-///   import   path [format set space base policy]   read a file into the store (LabelManager::ImportSymbols)
+///   import   path | data name [format set space base policy]   a file (or its bytes as base64) into the store
 ///   export   path [format sets pages]              write symbols (LabelManager::ExportSymbols)
 ///   set      id [enabled priority]                 switch a set on / off, change its priority
 ///   drop     id                                    remove a set
+///   scan                                           label tables of assemblers in RAM (ALASM, XAS): the candidates
+///   import-live [scanner page offset set policy]   read a label table (the best candidate, or the one named) into a set
 ///
 /// @code
 ///   SymbolReply reply = SymbolControl(context).Execute({"import", {{"path", "game.sym"}, {"policy", "replace"}}});
@@ -84,6 +86,11 @@ private:
     SymbolReply Export(const SymbolRequest& request);
     SymbolReply Set(const SymbolRequest& request);
     SymbolReply Drop(const SymbolRequest& request);
+    SymbolReply Scan();
+    SymbolReply ImportLive(const SymbolRequest& request);
+    /// The machine's RAM pages, copied at a coherent moment (false with the reason)
+    bool CopyRam(std::vector<std::vector<uint8_t>>& pages, std::string& error) const;
 
+    EmulatorContext* _context = nullptr;
     LabelManager* _labels = nullptr;
 };

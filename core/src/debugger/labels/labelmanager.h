@@ -21,6 +21,7 @@ namespace unrealasm::symbols
 class ISymbolCodec;
 class SymbolIndex;
 class SymbolStore;
+struct Origin;
 struct Symbol;
 struct SymbolSet;
 }
@@ -159,10 +160,20 @@ public:
 
     // Symbol files with a report (symbolfiles.h)
     SymbolImportResult ImportSymbols(const std::string& path, const SymbolImportRequest& request);
+    /// A symbol file's bytes (an upload): `name` gives the extension, the set id (<originKind>:<name>) and the title
+    SymbolImportResult ImportSymbolBytes(const std::vector<uint8_t>& bytes, const std::string& name, const SymbolImportRequest& request,
+                                         const std::string& originKind = "file");
     SymbolExportResult ExportSymbols(const std::string& path, const SymbolExportRequest& request) const;
+    /// Records from elsewhere (a label table in RAM) normalized and merged into `request.set` (else `defaultSet`, made
+    /// when missing at the next file priority) by the policy (default "both")
+    SymbolImportResult ImportRecords(std::vector<unrealasm::symbols::Symbol> records, const SymbolImportRequest& request,
+                                     const std::string& defaultSet, const std::string& title, const unrealasm::symbols::Origin& origin);
     /// The codec a file would be read with: by `format`, else by the extension, else detected (null with the reason)
     static const unrealasm::symbols::ISymbolCodec* CodecForFile(const std::string& path, const std::vector<uint8_t>& bytes,
                                                                 const std::string& format, int& score, std::string& reason);
+
+    /// The emulator the labels belong to (the live scan copies its RAM)
+    EmulatorContext* GetContext() const { return _context; }
 
     // Symbol sets (the store behind the labels)
     static constexpr const char* USER_SET = "user";

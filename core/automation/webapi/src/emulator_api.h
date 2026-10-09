@@ -592,6 +592,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::symbolSetDrop, "/api/v1/emulator/{id}/symbols/sets", drogon::Delete);
     ADD_METHOD_TO(EmulatorAPI::symbolImport, "/api/v1/emulator/{id}/symbols/import", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::symbolExport, "/api/v1/emulator/{id}/symbols/export", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::symbolScan, "/api/v1/emulator/{id}/symbols/scan", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::symbolImportLive, "/api/v1/emulator/{id}/symbols/import/live", drogon::Post);
     // endregion Labels/Symbols
 
     // region Source Listing (implementation: api/debug_api.cpp)
@@ -1424,6 +1426,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                       const std::string& id) const;
     void symbolExport(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                       const std::string& id) const;
+    void symbolScan(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+    void symbolImportLive(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
     void resolveLabel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                       const std::string& id) const;
 

@@ -2171,6 +2171,10 @@ namespace PythonBindings
             }, "Switch a symbol set on / off or change its priority (enabled=, priority=)", py::arg("id"))
             .def("symbols_drop", [](Emulator& self, const std::string& id) { return SymbolsPy(self, "drop", {{"id", id}}, py::kwargs()); },
                  "Remove a symbol set", py::arg("id"))
+            .def("symbols_scan", [](Emulator& self) { return SymbolsPy(self, "scan", {}, py::kwargs()); },
+                 "Label tables of assemblers in RAM (ALASM, XAS): the candidates")
+            .def("symbols_import_live", [](Emulator& self, const py::kwargs& kwargs) { return SymbolsPy(self, "import-live", {}, kwargs); },
+                 "Read a label table from RAM into a set (scanner=, page=, offset=, set=, policy=)")
 
             // Disassembly
             .def("disasm", [](Emulator& self, int address, int count) -> py::list {

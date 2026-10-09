@@ -10,7 +10,10 @@
 #include "debugger/debugmanager.h"
 #include "debugger/labels/labelmanager.h"
 #include "debugger/labels/symbolfiles.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/memory.h"
+#include "unrealasm/symbols/live.h"
 
 /// region <Errors and the reply>
 
@@ -128,6 +131,40 @@ bool ParseBool(std::string text, bool& out)
     return false;
 }
 
+/// Standard or URL-safe base64, padding and blanks optional; false on any other character
+bool DecodeBase64(const std::string& text, std::vector<uint8_t>& out)
+{
+    out.clear();
+    uint32_t buffer = 0;
+    int bits = 0;
+    for (char c : text)
+    {
+        int value;
+        if (c >= 'A' && c <= 'Z')
+            value = c - 'A';
+        else if (c >= 'a' && c <= 'z')
+            value = c - 'a' + 26;
+        else if (c >= '0' && c <= '9')
+            value = c - '0' + 52;
+        else if (c == '+' || c == '-')
+            value = 62;
+        else if (c == '/' || c == '_')
+            value = 63;
+        else if (c == '=' || c == ' ' || c == '\n' || c == '\r' || c == '\t')
+            continue;
+        else
+            return false;
+        buffer = (buffer << 6) | static_cast<uint32_t>(value);
+        bits += 6;
+        if (bits >= 8)
+        {
+            bits -= 8;
+            out.push_back(static_cast<uint8_t>(buffer >> bits));
+        }
+    }
+    return true;
+}
+
 std::vector<std::string> SplitList(const std::string& text)
 {
     std::vector<std::string> items;
@@ -181,11 +218,11 @@ StateNode DiagnosticsValue(const unrealasm::Diagnostics& diagnostics)
     return list;
 }
 
-std::string LocationText(const Location& location)
+/// At least four upper-case hex digits
+std::string Hex4(uint32_t value)
 {
     static const char* digits = "0123456789ABCDEF";
     std::string hex;
-    uint32_t value = location.offset;
     do
     {
         hex.insert(hex.begin(), digits[value & 0xF]);
@@ -193,7 +230,12 @@ std::string LocationText(const Location& location)
     } while (value);
     while (hex.size() < 4)
         hex.insert(hex.begin(), '0');
-    return location.space.Format() + ":#" + hex;
+    return hex;
+}
+
+std::string LocationText(const Location& location)
+{
+    return location.space.Format() + ":#" + Hex4(location.offset);
 }
 
 StateNode SetValue(const SymbolSet& set)
@@ -213,17 +255,17 @@ StateNode SetValue(const SymbolSet& set)
 
 /// region <Construction and dispatch>
 
-SymbolControl::SymbolControl(EmulatorContext* context)
+SymbolControl::SymbolControl(EmulatorContext* context) : _context(context)
 {
     if (context && context->pDebugManager)
         _labels = context->pDebugManager->GetLabelManager();
 }
 
-SymbolControl::SymbolControl(LabelManager* labels) : _labels(labels) {}
+SymbolControl::SymbolControl(LabelManager* labels) : _context(labels ? labels->GetContext() : nullptr), _labels(labels) {}
 
 const std::vector<std::string>& SymbolControl::Verbs()
 {
-    static const std::vector<std::string> verbs = {"formats", "detect", "sets", "import", "export", "set", "drop"};
+    static const std::vector<std::string> verbs = {"formats", "detect", "sets", "import", "export", "set", "drop", "scan", "import-live"};
     return verbs;
 }
 
@@ -233,10 +275,12 @@ const std::vector<std::string>& SymbolControl::OptionsFor(const std::string& ver
         {"formats", {}},
         {"detect", {"path"}},
         {"sets", {}},
-        {"import", {"path", "format", "set", "space", "base", "policy"}},
+        {"import", {"path", "data", "name", "format", "set", "space", "base", "policy"}},
         {"export", {"path", "format", "sets", "pages"}},
         {"set", {"id", "enabled", "priority"}},
         {"drop", {"id"}},
+        {"scan", {}},
+        {"import-live", {"scanner", "page", "offset", "set", "policy"}},
     };
     static const std::vector<std::string> none;
     const auto it = options.find(verb);
@@ -283,6 +327,10 @@ SymbolReply SymbolControl::Execute(const SymbolRequest& request)
         return Export(request);
     if (verb == "set")
         return Set(request);
+    if (verb == "scan")
+        return Scan();
+    if (verb == "import-live")
+        return ImportLive(request);
     return Drop(request);
 }
 
@@ -359,8 +407,13 @@ SymbolReply SymbolControl::Sets()
 SymbolReply SymbolControl::Import(const SymbolRequest& request)
 {
     const std::string path = Option(request, "path");
-    if (path.empty())
-        return Fail(SymbolControlError::BadRequest, "'import' needs a path");
+    const bool upload = request.options.count("data") > 0;
+    if (path.empty() == !upload)
+        return Fail(SymbolControlError::BadRequest, "'import' needs a path or data (the file as base64), not both");
+    std::vector<uint8_t> bytes;
+    if (upload && !DecodeBase64(Option(request, "data"), bytes))
+        return Fail(SymbolControlError::BadRequest, "'data' is no base64");
+    const std::string name = upload ? (Option(request, "name").empty() ? std::string("upload") : Option(request, "name")) : path;
     SymbolImportRequest options;
     options.format = Option(request, "format");
     options.set = Option(request, "set");
@@ -387,9 +440,9 @@ SymbolReply SymbolControl::Import(const SymbolRequest& request)
         options.policy = policy;
     }
 
-    const SymbolImportResult result = _labels->ImportSymbols(path, options);
+    const SymbolImportResult result = upload ? _labels->ImportSymbolBytes(bytes, name, options, "upload") : _labels->ImportSymbols(path, options);
     StateNode body = StateNode::Object();
-    body["path"] = path;
+    body["path"] = name;
     body["format"] = result.format.empty() ? StateNode() : StateNode(result.format);
     body["score"] = result.score;
     body["set"] = result.report.set.empty() ? StateNode() : StateNode(result.report.set);
@@ -499,6 +552,143 @@ SymbolReply SymbolControl::Drop(const SymbolRequest& request)
     SymbolReply reply;
     reply.body["dropped"] = id;
     reply.body["labels"] = static_cast<uint64_t>(_labels->GetLabelCount());
+    return reply;
+}
+
+namespace
+{
+StateNode CandidateValue(const LiveCandidate& c)
+{
+    StateNode value = StateNode::Object();
+    value["scanner"] = c.scanner;
+    value["version"] = c.version;
+    value["page"] = static_cast<unsigned>(c.page);
+    value["offset"] = static_cast<uint64_t>(c.offset);
+    value["end"] = static_cast<uint64_t>(c.end);
+    value["count"] = static_cast<uint64_t>(c.count);
+    value["score"] = c.score;
+    if (c.lowerPage >= 0)
+    {
+        value["lower_page"] = c.lowerPage;
+        value["split"] = static_cast<uint64_t>(c.split);
+    }
+    return value;
+}
+
+MemoryView ViewOf(const std::vector<std::vector<uint8_t>>& pages)
+{
+    MemoryView view;
+    for (size_t i = 0; i < pages.size(); i++)
+        view.pages.push_back({static_cast<uint16_t>(i), std::span<const uint8_t>(pages[i])});
+    return view;
+}
+}  // namespace
+
+bool SymbolControl::CopyRam(std::vector<std::vector<uint8_t>>& pages, std::string& error) const
+{
+    if (!_context || !_context->pMemory)
+    {
+        error = "the label table scan needs a machine (no memory)";
+        return false;
+    }
+    const uint32_t count = std::min<uint32_t>(_context->config.ramsize / 16, MAX_RAM_PAGES);
+    if (count == 0)
+    {
+        error = "the machine reports no RAM pages";
+        return false;
+    }
+    pages.assign(count, std::vector<uint8_t>(PAGE_SIZE));
+    Memory* memory = _context->pMemory;
+    const auto copy = [&]() {
+        for (uint32_t i = 0; i < count; i++)
+            if (const uint8_t* page = memory->RAMPageAddress(static_cast<uint16_t>(i)))
+                std::copy(page, page + PAGE_SIZE, pages[i].begin());
+    };
+    if (_context->pEmulator)
+    {
+        if (_context->pEmulator->RunAtCoherentMoment(copy, 2000) == Emulator::CoherentMoment::Busy)
+        {
+            error = "no coherent moment to copy the RAM within 2 s (another client is stepping the machine)";
+            return false;
+        }
+    }
+    else
+        copy();
+    return true;
+}
+
+SymbolReply SymbolControl::Scan()
+{
+    std::vector<std::vector<uint8_t>> pages;
+    std::string error;
+    if (!CopyRam(pages, error))
+        return Fail(SymbolControlError::NotAvailable, error);
+    SymbolReply reply;
+    reply.body["pages"] = static_cast<uint64_t>(pages.size());
+    reply.body["candidates"] = StateNode::Array();
+    for (const LiveCandidate& c : FindLabelTables(ViewOf(pages)))
+        reply.body["candidates"].items.push_back(CandidateValue(c));
+    return reply;
+}
+
+SymbolReply SymbolControl::ImportLive(const SymbolRequest& request)
+{
+    std::vector<std::vector<uint8_t>> pages;
+    std::string error;
+    if (!CopyRam(pages, error))
+        return Fail(SymbolControlError::NotAvailable, error);
+    int64_t page = -1;
+    int64_t offset = -1;
+    if (request.options.count("page") && !ParseNumber(Option(request, "page"), page))
+        return Fail(SymbolControlError::BadRequest, "'page' is no number: '" + Option(request, "page") + "'");
+    if (request.options.count("offset") && !ParseNumber(Option(request, "offset"), offset))
+        return Fail(SymbolControlError::BadRequest, "'offset' is no number: '" + Option(request, "offset") + "'");
+    SymbolImportRequest options;
+    options.set = Option(request, "set");
+    if (request.options.count("policy"))
+    {
+        MergePolicy policy = MergePolicy::Both;
+        if (!ParsePolicy(Option(request, "policy"), policy))
+            return Fail(SymbolControlError::BadRequest, "'policy' is one of both, keep, replace, fail: '" + Option(request, "policy") + "'");
+        options.policy = policy;
+    }
+
+    const MemoryView view = ViewOf(pages);
+    const std::vector<LiveCandidate> candidates = FindLabelTables(view);
+    const std::string scanner = Option(request, "scanner");
+    const auto chosen = std::find_if(candidates.begin(), candidates.end(), [&](const LiveCandidate& c) {
+        return (scanner.empty() || c.scanner == scanner) && (page < 0 || c.page == page) && (offset < 0 || c.offset == offset);
+    });
+    if (chosen == candidates.end())
+        return Fail(SymbolControlError::NotFound, candidates.empty() ? "no label table in RAM (scanners: ALASM, XAS)"
+                                                                     : "no label table in RAM matches scanner / page / offset");
+    LiveReadResult read = ReadLabelTable(view, *chosen);
+    if (!read.ok)
+        return Fail(SymbolControlError::BadRequest, "the label table at ram" + std::to_string(chosen->page) + " could not be read");
+
+    const std::string where = "ram" + std::to_string(chosen->page) + ":#" + Hex4(chosen->offset);
+    Origin origin;
+    origin.kind = "live";
+    origin.where = where;
+    const std::string title = read.set.title.empty() ? chosen->scanner + " " + chosen->version + " at " + where : read.set.title;
+    SymbolImportResult result =
+        _labels->ImportRecords(std::move(read.set.symbols), options, "live:" + chosen->scanner + "@" + where, title, origin);
+
+    StateNode body = StateNode::Object();
+    body["candidate"] = CandidateValue(*chosen);
+    body["set"] = result.report.set;
+    body["records"] = static_cast<uint64_t>(result.records);
+    body["added"] = static_cast<uint64_t>(result.report.added);
+    body["aliased"] = static_cast<uint64_t>(result.report.aliased);
+    body["updated"] = static_cast<uint64_t>(result.report.updated);
+    body["skipped"] = static_cast<uint64_t>(result.report.skipped);
+    read.diagnostics.insert(read.diagnostics.end(), result.report.diagnostics.begin(), result.report.diagnostics.end());
+    body["diagnostics"] = DiagnosticsValue(read.diagnostics);
+    body["labels"] = static_cast<uint64_t>(_labels->GetLabelCount());
+    if (!result.ok)
+        return Fail(SymbolControlError::Conflict, result.message, std::move(body));
+    SymbolReply reply;
+    reply.body = std::move(body);
     return reply;
 }
 

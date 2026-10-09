@@ -4,12 +4,17 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <sstream>
 #include <string>
 
 #include "_helpers/testpathhelper.h"
+#include "debugger/debugmanager.h"
 #include "debugger/labels/labelmanager.h"
 #include "debugger/labels/symbolcontrol.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/memory/memory.h"
 #include "unrealasm/symbols/symbol.h"
 
 /// The symbol verbs every surface calls (symbols/tdd.md section 8): options, refusals, the reply's fields
@@ -56,14 +61,15 @@ TEST_F(SymbolControl_Test, UnknownVerbsAndOptionsAreRefusedTheSameWay)
 {
     SymbolReply reply = Run("load");
     EXPECT_EQ(reply.HttpStatus(), 400);
-    EXPECT_NE(reply.message.find("verbs: formats, detect, sets, import, export, set, drop"), std::string::npos) << reply.message;
+    EXPECT_NE(reply.message.find("verbs: formats, detect, sets, import, export, set, drop, scan, import-live"), std::string::npos)
+        << reply.message;
 
     reply = Run("import", {{"path", "x.sym"}, {"page", "ram3"}});
     EXPECT_EQ(reply.HttpStatus(), 400);
     EXPECT_NE(reply.message.find("has no option 'page'"), std::string::npos) << reply.message;
     EXPECT_EQ(reply.ToValue().find("error")->s, "Bad Request");
 
-    EXPECT_EQ(Run("import").message, "'import' needs a path");
+    EXPECT_EQ(Run("import").message, "'import' needs a path or data (the file as base64), not both");
     EXPECT_EQ(Run("import", {{"path", "x.sym"}, {"policy", "merge"}}).HttpStatus(), 400);
     EXPECT_EQ(Run("import", {{"path", "x.sym"}, {"space", "ram"}}).HttpStatus(), 400);
     EXPECT_EQ(Run("export", {{"path", "x.sym"}, {"pages", "keep"}}).HttpStatus(), 400);
@@ -186,6 +192,20 @@ TEST_F(SymbolControl_Test, ExportWritesTheLabelsOrTheNamedSets)
     EXPECT_EQ(Run("export", {{"path", Scratch("x.unknownext")}}).HttpStatus(), 400);
 }
 
+TEST_F(SymbolControl_Test, AnUploadedFileImportsFromItsBase64)
+{
+    // "8000 START\n9000 LOOP\n" as base64, with the name that picks the format
+    SymbolReply reply = Run("import", {{"data", "ODAwMCBTVEFSVAo5MDAwIExPT1AK"}, {"name", "game.sym"}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.find("format")->s, "simple-sym");
+    EXPECT_EQ(reply.body.find("set")->s, "upload:game.sym");
+    EXPECT_EQ(_labels->GetLabelByName("LOOP")->address, 0x9000);
+    EXPECT_EQ(_labels->GetSymbolSets()[0].origin.kind, "upload");
+
+    EXPECT_EQ(Run("import", {{"data", "!!"}, {"name", "x.sym"}}).message, "'data' is no base64");
+    EXPECT_EQ(Run("import", {{"data", "AA=="}, {"path", "x.sym"}}).HttpStatus(), 400);
+}
+
 TEST_F(SymbolControl_Test, DetectRanksTheCodecs)
 {
     const std::string path = Write("detect.sym", "8000 START\n");
@@ -210,4 +230,50 @@ TEST_F(SymbolControl_Test, AliasesShowAsLabels)
     ASSERT_TRUE(_labels->RemoveLabel("ENTRY"));
     EXPECT_EQ(_labels->GetLabelByName("ENTRY"), nullptr);
     EXPECT_NE(_labels->GetLabelByName("MAIN"), nullptr);
+}
+
+TEST(SymbolControl_Machine_Test, AnAssemblersLabelTableInRamImports)
+{
+    // ALASM 5.09's table, dumped from RAM page 3 after it assembled (unreal-asm testdata/symbols/live)
+    const std::filesystem::path live = TestPathHelper::FindProjectRoot() / "core" / "src" / "3rdparty" / "unreal-asm" / "testdata" /
+                                       "symbols" / "live";
+    std::ifstream in(live / "alasm509-lta-ram3.bin", std::ios::binary);
+    const std::vector<uint8_t> dump((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    ASSERT_EQ(dump.size(), 0x4000u);
+    size_t expected = 0;
+    {
+        std::ifstream list(live / "alasm509-lta.expected.txt");
+        std::string line;
+        while (std::getline(list, line))
+        {
+            std::istringstream fields(line);
+            std::string name, value, mark;
+            fields >> name >> value >> mark;
+            expected += !name.empty() && mark.empty();
+        }
+    }
+
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("symbols-live", "PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    std::copy(dump.begin(), dump.end(), context->pMemory->RAMPageAddress(3));
+    context->pDebugManager->GetLabelManager()->ClearAllLabels();
+
+    SymbolReply reply = SymbolControl(context).Execute({"scan", {}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    const auto& candidates = reply.body.find("candidates")->items;
+    ASSERT_FALSE(candidates.empty());
+    EXPECT_EQ(candidates[0].find("scanner")->s, "alasm-table");
+    EXPECT_EQ(candidates[0].find("page")->i, 3);
+    EXPECT_EQ(candidates[0].find("offset")->i, 0x3D8A);
+
+    reply = SymbolControl(context).Execute({"import-live", {}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.find("set")->s, "live:alasm-table@ram3:#3D8A");
+    EXPECT_EQ(static_cast<size_t>(reply.body.find("records")->i), expected);
+    EXPECT_EQ(static_cast<size_t>(reply.body.find("labels")->i), expected);
+
+    EXPECT_EQ(SymbolControl(context).Execute({"import-live", {{"scanner", "xas-table"}}}).HttpStatus(), 404);
+    manager->RemoveEmulator(emulator->GetUUID());
 }

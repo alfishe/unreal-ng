@@ -1513,6 +1513,8 @@ void CLIProcessor::HandleSymbols(const ClientSession& session, const std::vector
         ss << "  symbols drop <id>               - Remove a set" << NEWLINE;
         ss << "  symbols import <file> [--format f] [--set s] [--space ram3] [--base n] [--policy both|keep|replace|fail]" << NEWLINE;
         ss << "  symbols export <file> [--format f] [--sets a,b] [--pages fold|comment|drop]" << NEWLINE;
+        ss << "  symbols scan                    - Label tables of assemblers in RAM (ALASM, XAS)" << NEWLINE;
+        ss << "  symbols import-live [--scanner s] [--page n] [--offset n] [--set s] [--policy p]" << NEWLINE;
         ss << "  (add --json for the reply as JSON)" << NEWLINE;
         session.SendResponse(ss.str());
         return;
@@ -1521,9 +1523,9 @@ void CLIProcessor::HandleSymbols(const ClientSession& session, const std::vector
     const std::string& subcmd = args[0];
 
     if (subcmd == "formats" || subcmd == "detect" || subcmd == "sets" || subcmd == "set" || subcmd == "drop" ||
-        subcmd == "import" || subcmd == "export")
+        subcmd == "import" || subcmd == "export" || subcmd == "scan" || subcmd == "import-live")
     {
-        HandleSymbolVerb(session, labelMgr, args);
+        HandleSymbolVerb(session, ctx, args);
         return;
     }
 
@@ -1560,7 +1562,7 @@ void CLIProcessor::HandleSymbols(const ClientSession& session, const std::vector
 
 // symbols formats | detect | sets | set | drop | import | export: SymbolControl's verbs (the same checks and fields as
 // the WebAPI, MCP, Lua and Python); positional arguments and --name value options, --json prints the reply as is
-void CLIProcessor::HandleSymbolVerb(const ClientSession& session, LabelManager* labelMgr, const std::vector<std::string>& args)
+void CLIProcessor::HandleSymbolVerb(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args)
 {
     const std::string& verb = args[0];
     SymbolRequest request{verb, {}};
@@ -1590,7 +1592,7 @@ void CLIProcessor::HandleSymbolVerb(const ClientSession& session, LabelManager* 
             request.options["enabled"] = positional[1];
     }
 
-    const SymbolReply reply = SymbolControl(labelMgr).Execute(request);
+    const SymbolReply reply = SymbolControl(context).Execute(request);
     if (json)
     {
         session.SendResponse(StateNodeToJsonText(reply.ToValue()) + NEWLINE);
@@ -1655,6 +1657,18 @@ void CLIProcessor::HandleSymbolVerb(const ClientSession& session, LabelManager* 
     }
     else if (verb == "export")
         ss << "Exported " << number(body, "written") << " symbols to " << text("path") << " as " << text("format") << NEWLINE;
+    else if (verb == "scan")
+    {
+        const auto& candidates = body.find("candidates")->items;
+        if (candidates.empty())
+            ss << "No label table in " << number(body, "pages") << " RAM pages" << NEWLINE;
+        for (const StateNode& c : candidates)
+            ss << c.find("scanner")->s << " " << c.find("version")->s << "  ram" << c.find("page")->i << " offset " << c.find("offset")->i
+               << "  " << c.find("count")->i << " entries, score " << c.find("score")->i << NEWLINE;
+    }
+    else if (verb == "import-live")
+        ss << "Imported " << number(body, "records") << " labels from " << body.find("candidate")->find("scanner")->s << " ram"
+           << body.find("candidate")->find("page")->i << " into " << text("set") << "; labels: " << number(body, "labels") << NEWLINE;
     if (const StateNode* diagnostics = body.find("diagnostics"))
         for (const StateNode& d : diagnostics->items)
             ss << "  " << d.find("severity")->s << " line " << d.find("line")->i << ": " << d.find("message")->s << NEWLINE;

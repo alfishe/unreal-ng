@@ -91,7 +91,10 @@ paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"][
 paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["base"]["description"] = "Added to every offset (number: decimal, 0x, #, $)";
 paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["policy"]["type"] = "string";
 paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["policy"]["description"] = "both (an alias for a second name, default), keep, replace, fail";
-paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("path");
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["data"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["data"]["description"] = "The symbol file as base64 instead of a path (an upload; the set is upload:<name>)";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["name"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["name"]["description"] = "With data: the file name (its extension picks the format)";
 paths["/api/v1/emulator/{id}/symbols/import"]["post"]["responses"]["200"]["description"] = "{path, format, score, set, records, added, aliased, updated, skipped, conflicts: [{type, name, other, old, new, line, resolution}], diagnostics: [{severity, line, message}], labels}";
 paths["/api/v1/emulator/{id}/symbols/import"]["post"]["responses"]["400"]["description"] = "Bad option, unreadable file, unknown format";
 paths["/api/v1/emulator/{id}/symbols/import"]["post"]["responses"]["409"]["description"] = "policy fail stopped at a conflict: nothing changed (conflicts listed)";
@@ -116,3 +119,34 @@ paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"][
 paths["/api/v1/emulator/{id}/symbols/export"]["post"]["responses"]["200"]["description"] = "{path, format, written, diagnostics}";
 paths["/api/v1/emulator/{id}/symbols/export"]["post"]["responses"]["400"]["description"] = "Bad option, no format for the extension, write failed";
 paths["/api/v1/emulator/{id}/symbols/export"]["post"]["responses"]["404"]["description"] = "A named set does not exist";
+
+paths["/api/v1/emulator/{id}/symbols/scan"]["get"]["summary"] = "Find label tables of assemblers in RAM";
+paths["/api/v1/emulator/{id}/symbols/scan"]["get"]["description"] = "Copies the RAM pages at a coherent moment and runs the scanners (ALASM 4.4x / 5.0x, XAS 4.x / 7.x) on the copy: the tables found, best first.";
+paths["/api/v1/emulator/{id}/symbols/scan"]["get"]["tags"].append("Symbols");
+paths["/api/v1/emulator/{id}/symbols/scan"]["get"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/symbols/scan"]["get"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/symbols/scan"]["get"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/symbols/scan"]["get"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/scan"]["get"]["responses"]["200"]["description"] = "{pages, candidates: [{scanner, version, page, offset, end, count, score, lower_page?, split?}]}";
+paths["/api/v1/emulator/{id}/symbols/scan"]["get"]["responses"]["503"]["description"] = "No machine memory, or no coherent moment within 2 s";
+
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["summary"] = "Import an assembler's label table from RAM";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["description"] = "Reads the best candidate (or the one scanner / page / offset name) into a set (default live:<scanner>@ram<page>:#<offset>, origin live).";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["tags"].append("Symbols");
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["scanner"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["scanner"]["description"] = "alasm-table or xas-table";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["page"]["type"] = "integer";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["page"]["description"] = "The RAM page of the table";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["offset"]["type"] = "integer";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["offset"]["description"] = "The table's first byte in the page";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["set"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["set"]["description"] = "The target set";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["policy"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["policy"]["description"] = "both (default), keep, replace, fail";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["responses"]["200"]["description"] = "{candidate, set, records, added, aliased, updated, skipped, diagnostics, labels}";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["responses"]["404"]["description"] = "No label table in RAM (or none matches)";
+paths["/api/v1/emulator/{id}/symbols/import/live"]["post"]["responses"]["409"]["description"] = "policy fail stopped at a conflict";

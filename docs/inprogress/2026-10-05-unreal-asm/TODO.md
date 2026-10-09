@@ -99,10 +99,16 @@ phase; master only after the owner's review.
     - [x] bundles + manifest (2026-10-08):
       - `data/symbols/manifest.json` by ROM page SHA-256 (`unrealasm/symbols/bundles.h`: `ParseManifest`, `MatchBundles`).
       - `LabelManager::ApplyBundles`, called by `Emulator::ApplySymbolBundles` at start and on a ROM reload. Each bundle becomes a set `bundle:<id>` at priority 50; bundles that no longer match are dropped; one switched off stays off.
-      - Bundles: the 48K ROM, the 48 BASIC in 128K ROM 1, the 128K ROM 0, the 48K / 128K system variables, Sprinter BIOS 3.04 pages 0 / 8 / #C.
+      - Bundles: the 48K ROM; the 48 BASIC in 128K ROM 1 and Pentagon's "48 for 128"; the 128K ROM 0 and Pentagon's version with TR-DOS in the menu; the 48K / 128K system variables; Sprinter BIOS 3.04 pages 0 / 8 / #C.
       - `data/symbols` ships next to `rom/` in every build and package. `UNREAL_SYMBOL_BUNDLES=0` turns bundles off.
     - [x] page-aware address lookup (2026-10-08): where labels of several pages meet, the page mapped at the window wins (a CPU-view label placed later wins over all)
-    - [ ] import from a disk image / base64; the live scan surface; Qt import / export dialogs and a "Sets" tab
+    - [x] the live scan surface (2026-10-08):
+      - `SymbolControl` verbs `scan` (the RAM pages copied at a coherent moment, every scanner's candidates) and `import-live` (the best candidate or the one named, into `live:<scanner>@ram<page>:#<offset>`).
+      - WebAPI `GET /symbols/scan`, `POST /symbols/import/live`; CLI `symbols scan` / `import-live`; MCP `scan` / `import_live`; Lua / Python `symbols_scan` / `symbols_import_live`.
+      - Checked live on a Pentagon with ALASM 5.09's dumped page 3.
+    - [x] import of an upload (2026-10-08): `data` (base64) + `name` instead of `path`, set `upload:<name>` (WebAPI, MCP, Lua, Python)
+    - [ ] import of a file on a disk image (`disk:A/F.A`); Qt import / export dialogs and a "Sets" tab
+    - [ ] the bundle set switched off remembered between sessions
   - [x] S6-S9 labels from sources (2026-10-07): `SymbolsFromProject` (`symbols/fromsource.h`) for TASM, ALASM, STORM, ZX-ASM and sjasmplus projects; values from `layout::Layout` over the sjasmplus conversion (instruction sizes, passes, `IF` / `DUP` / `WHILE` / macros / `DISP` / `INCLUDE` / `INCBIN`, sjasmplus' symbol table through the passes); the backend records the names it writes (`LabelName`); `symconv source`; the sjasmplus frontend reads `$$$`; equal to sjasmplus 1.24's `--sym` on every instruction form, the layout probe, five oracle projects and the collection (`tools/verification/unreal-asm/checks/symcheck.py`: 511 of 530 main sources, 67 264 labels; the 19 others read FRAMES or hit a sjasmplus quirk) ([symbols/formats.md](symbols/formats.md) §4.1)
   - [x] frontends for GENS, MASM, ZEUS, XAS (2026-10-07): their projects convert to sjasmplus and their labels come through `SymbolsFromProject`
     - [x] `masm` frontend, MASM 1.x (MASM → sjasmplus) (2026-10-07, branch `asm-masm`): a program with every construct, an INCBIN and MASM 1.1's own source (11688 bytes) equal to what MASM 1.1 built in the emulator; its 711 labels through `SymbolsFromProject`; MASM 2.0 / 3.0 `MAC` / `IF` / `BANK` ... unknown, kept as text ([research-masm-to-sjasmplus.md](research-masm-to-sjasmplus.md)); recipe `.recipe/assemblers/masm.md'
@@ -118,7 +124,7 @@ phase; master only after the owner's review.
   - [x] label tables in RAM (2026-10-07): ALASM 5.09 / 4.44 (page 3, records below a zero at #3DFF / #3F7F) and XAS 7.447 / 4.18 (page 6, 9-byte entries; 7.x two sorted lists under markers, 4.x one list from #0B16) found from dumps; scanners `symbols/live.h`, `symconv live`; STS keeps none of its own (it reads ALASM's) ([research-labeltables.md](research-labeltables.md))
     - [x] more tables (2026-10-07): ALASM 3.8c (page 3) and 4.5 (page 6); ALASM 5.09 over two pages (#C0FB down, then the second page; 1800 labels on a Pentagon 512, overwritten on 128K); XAS 9.10 / 9.07m (7.x layout), 5.05 (one list, the scanner's 5.x), 7.447 on a Pentagon 512 (RAM 14); STS 6.2 shows XAS's labels (strings)
     - [ ] ALASM 4.2 (its ALM loader crashes to 48 BASIC on a Pentagon 128 and 512, 2026-10-08); ALASM 4.x over two pages; XAS on a Pentagon 1024; STS 6.2's label mode run; label files on disk (none seen)
-    - [ ] the emulator surface: copy the pages of a running machine, offer the candidates (S5)
+    - [x] the emulator surface: copy the pages of a running machine, offer the candidates (S5, 2026-10-08: `symbols scan` / `import-live`)
 - [x] A9 benchmarks, user docs (2026-10-07): `unreal-asm-benchmarks` (codecs, dialects, symbol module), results in [test-and-benchmark-plan.md](test-and-benchmark-plan.md) §6 and [symbols/test-and-benchmark-plan.md](symbols/test-and-benchmark-plan.md) §6; the hot paths the profiles found fixed (XAS / ALASM / ZEUS keyword search, XAS's font, ASCII code points, the symbol index); user guide [docs/features/unreal-asm.md](../../features/unreal-asm.md)
   - [ ] below target: decode with the version detected for ALASM / ZX-ASM / ZEUS / XAS (every version tried per line), ZEUS / XAS decode with the version given (each line encoded again for the canonical check), ALASM → sjasmplus 187 k lines/s
   - [x] `BM_Symbols_DisasmLine` A/B against the old LabelManager (2026-10-08): 13-28 % faster with 1k-60k labels, the address lookup 4-9 times faster ([symbols/test-and-benchmark-plan.md](symbols/test-and-benchmark-plan.md) §6)
