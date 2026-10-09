@@ -15,6 +15,8 @@ save the text itself and keep the file. The synchronizer's reader must give that
                                                                  # STORM: TAG-typing, TAG-edited (page 6 from #C00B)
     sync-dumps.py zasm <ZASM315.trd> <out-dir> --source ovlib --big service --tag zasm315
                                                                  # ZAsm 3.15: TAG-typing, TAG-edited, TAG-big
+    sync-dumps.py zasm <disk, source first> <out-dir> --boot ZASM3.10 --list-load --source tx_macro --big-disk <disk,
+                  big text first> --big ide --tag zasm310        # ZX-ASM 3.10: no drive D question, files from the list
     sync-dumps.py masm <disk-with-NAME.a first> <out-dir> --source NAME --tag masm11
                                                                  # MASM 1.1: TAG-typing, TAG-edited, TAG-menu
     sync-dumps.py tasm <disk-with-NAME.A> <out-dir> --boot NAME --source NAME --tag TAG [--as-typed]
@@ -141,26 +143,34 @@ def storm(emu, args):
 def zasm(emu, args):
     """ZAsm 3.15: File / Load; COMMAND (Extend) SS+2 saves under the name (with a ";!" editor-state first line). The
     text runs from (#8829) to (#8837); its part above #C000 is in RAM page 6"""
-    def start():
-        emu.insert_disk(args.disk)
-        emu.run_trdos('boot', wait=15)
-        emu.tap('enter')                       # "No Disk!" (it starts on drive D): Retry, drive A
-        emu.tap('a')
-        time.sleep(6)
+    def start(disk):
+        emu.insert_disk(disk)
+        emu.run_trdos(args.boot or 'boot', wait=15)
+        if not args.list_load:
+            emu.tap('enter')                   # "No Disk!" (it starts on drive D): Retry, drive A
+            emu.tap('a')
+            time.sleep(6)
 
     def load(name):
         emu.tap('enter')                       # File
         time.sleep(2)
         emu.tap('enter')                       # Load
         time.sleep(3)
-        emu.type(name)                         # as stored: ZAsm keeps the case
+        if args.list_load:                     # the first file of the list (3.10 types capitals into the name)
+            emu.post('/keyboard/combo', {'keys': ['cs', '7'], 'frames': 4})
+            time.sleep(0.5)
+            emu.post('/keyboard/combo', {'keys': ['cs', 'enter'], 'frames': 4})
+            time.sleep(0.5)
+        else:
+            emu.type(name)                     # as stored: ZAsm keeps the case
         emu.tap('enter')
-        time.sleep(3)
+        time.sleep(4)
 
-    start()
+    start(args.big_disk or args.disk)
     load(args.big)
-    dump(emu, args.out, f'{args.tag}-big', [2, 5, 6], f'{args.big}.a', saved(emu, args.big, 'a'), {'editor': True, 'typing': False})
-    start()
+    dump(emu, args.out, f'{args.tag}-big', [2, 5, 6], f'{args.big}.{args.big_type}', saved(emu, args.big, args.big_type),
+         {'editor': True, 'typing': False})
+    start(args.disk)
     load(args.source)
     loaded = saved(emu, args.source, 'a')
     pages = [2, 5, 6]
@@ -349,6 +359,9 @@ def main():
     parser.add_argument('--no-loaded', action='store_true', help='alasm: no case right after loading')
     parser.add_argument('--list-keys', default='right', help='xas: the cursor keys that reach PROBE in the file list')
     parser.add_argument('--big', help='zasm: a long text (over #C000) for a loaded case')
+    parser.add_argument('--big-disk', help='zasm: the disk for the long text (default: the same)')
+    parser.add_argument('--big-type', default='a', help='zasm: the long text\'s TR-DOS type')
+    parser.add_argument('--list-load', action='store_true', help='zasm: load the first file of the list (3.10)')
     parser.add_argument('--as-typed', action='store_true', help='tasm: type the name as stored (a keyboard not inverted)')
     args = parser.parse_args()
     args.disk = os.path.abspath(args.disk)

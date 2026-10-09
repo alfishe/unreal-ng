@@ -128,7 +128,7 @@ scan. Details:
 
 ## The source in the running machine
 
-The debugger reads the source that ALASM (3.8c, 4.42-4.46, 4.5, 5.00-5.09), TASM (3.0, 3.2, 4.0, 4.4, 4.12), XAS (4.18-9.10) STORM (1.0beta, 1.3), ZAsm 3.15 or MASM 1.1 is editing in the machine, with no need to save
+The debugger reads the source that ALASM (3.8c, 4.42-4.46, 4.5, 5.00-5.09), TASM (3.0, 3.2, 4.0, 4.4, 4.12), XAS (4.18-9.10) STORM (1.0beta, 1.3), ZX-ASM 3.10 / ZAsm 3.15 or MASM 1.1 is editing in the machine, with no need to save
 it to a disk first. You get it as text, as the file the assembler's own SAVE would write, or converted to sjasmplus,
 pasmo or z88dk:
 

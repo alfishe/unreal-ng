@@ -435,6 +435,26 @@ SyncDescriptor TasmGap(const std::string& version, const std::string& title, con
     return d;
 }
 
+/// ZX-ASM 3.10 (asm-synchronizer.md §7.9): the layout of 3.15 with its table at #868F: the start, then the end at
+/// #869E; the part above #C000 in RAM page 6; no ";!" line on SAVE
+SyncDescriptor Zxasm310()
+{
+    SyncDescriptor d;
+    d.id = "zasm-3.10";
+    d.title = "ZX-ASM 3.10";
+    d.codec = "zxasm";
+    d.version = "3.0";
+    d.extension = "a";
+    d.identify = {{0x816C, std::string("\xC8\x00\xC8\x00\xDB\x6B\xC0\x00\x00\x0A\x0A\x8E\x00\x20\x80\x17\x00\x20\x01\x8F\x00\xF3\xFD\xE5", 24)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.startAt = 0x868F;
+    d.linear.endAt = 0x869E;
+    d.linear.upperPage = 6;
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 SyncDescriptor Tasm412()
 {
     SyncDescriptor d;
@@ -527,6 +547,7 @@ const std::vector<SyncDescriptor>& Descriptors()
         Storm("storm-1.3", "STORM 1.3", "1.3", 0x0B, '\x87'),
         Storm("storm-1.0b", "STORM 1.0beta", "1.0", 0x03, '\x85'),
         Zasm315(),
+        Zxasm310(),
         Masm11(),
         TasmGap("4.0", "TASM 4.0 (XL Design)", "4.0", {0x9859, "TASM4.0>"}, 0x8DD0, 0x91AC),
         TasmGap("4.4", "TASM 4.4 (KVA)", "4.0", {0x9859, "TASM4.4>"}, 0x8DD0, 0x91AC),
