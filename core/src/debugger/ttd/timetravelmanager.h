@@ -55,6 +55,7 @@
 #include <string>
 #include <thread>
 
+#include "emulator/execution/executionarbiter.h"
 #include "emulator/platform.h"       // PlatformModulesEnum, MAX_RAM_PAGES
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard::InputState (display sandbox)
 #include "common/modulelogger.h"    // ModuleLogger
@@ -1694,7 +1695,8 @@ private:
         const TimeTravelManager& _manager;
         Kind _kind;
         bool _locked = false;
-        bool _parked = false;
+        /// The CPU held for the operation (a running machine executing an active session): execution arbiter
+        execution::HoldToken _hold;
     };
     bool OnMachineThread() const;
     mutable std::recursive_mutex _controlMutex;

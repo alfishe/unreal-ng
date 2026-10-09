@@ -1,5 +1,7 @@
 #include "emulator/rzx/rzxsession.h"
 
+#include <optional>
+
 #include <atomic>
 #include <cctype>
 #include <filesystem>
@@ -262,20 +264,16 @@ namespace rzx
 
         // The machine stays still from the snapshot load to the hooks: no
         // instruction may run live in between
-        const bool wasRunning = _emulator.IsRunning() && !_emulator.IsPaused();
-        if (wasRunning)
-        {
-            _emulator.Pause(false);
-            _emulator.WaitForPauseConfirmation(1000);
-        }
+        // The CPU held (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+        std::optional<Emulator::CpuHold> hold;
+        hold.emplace(_emulator, "rzx play");
 
         // A previous playback ends first (its player may still be installed)
         Uninstall();
 
         if (!LoadStartSnapshot(start, sourcePath, result))
         {
-            if (wasRunning)
-                _emulator.Resume(false);
+            hold.reset();
             PostEvent("failed", result.message);
             return result;
         }
@@ -286,8 +284,7 @@ namespace rzx
         {
             result.error = PlayError::BadFile;
             result.message = error;
-            if (wasRunning)
-                _emulator.Resume(false);
+            hold.reset();
             PostEvent("failed", error);
             return result;
         }
@@ -323,8 +320,7 @@ namespace rzx
         _player->MaybeKeyframe();
 
         PostEvent("started", _file->hasCreator ? "recorded with " + _file->creator.name : std::string());
-        if (wasRunning)
-            _emulator.Resume(false);
+        hold.reset();
         return result;
     }
 
@@ -391,12 +387,9 @@ namespace rzx
         if (!IsActive())
             return false;
 
-        const bool wasRunning = _emulator.IsRunning() && !_emulator.IsPaused();
-        if (wasRunning)
-        {
-            _emulator.Pause(false);
-            _emulator.WaitForPauseConfirmation(1000);
-        }
+        // The CPU held (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+        std::optional<Emulator::CpuHold> hold;
+        hold.emplace(_emulator, "rzx stop");
         {
             std::lock_guard<std::mutex> lock(_mutex);
             if (_player)
@@ -409,8 +402,7 @@ namespace rzx
         if (ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks)
             ttd->NoteReplaySource(ttd::TTDReplaySource::LiveInput);
         PostEvent("stopped", reason);
-        if (wasRunning)
-            _emulator.Resume(false);
+        hold.reset();
         return true;
     }
 
@@ -461,12 +453,9 @@ namespace rzx
             return false;
         }
 
-        const bool wasRunning = _emulator.IsRunning() && !_emulator.IsPaused();
-        if (wasRunning)
-        {
-            _emulator.Pause(false);
-            _emulator.WaitForPauseConfirmation(1000);
-        }
+        // The CPU held (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
+        std::optional<Emulator::CpuHold> hold;
+        hold.emplace(_emulator, "rzx seek");
 
         bool ok = true;
         const bool forward = player->IsPlaying() && frame >= player->FramesDone();
@@ -507,8 +496,7 @@ namespace rzx
 
         if (ok)
             PostEvent("seek", "frame " + std::to_string(player->FramesDone()));
-        if (wasRunning)
-            _emulator.Resume(false);
+        hold.reset();
         return ok;
     }
 

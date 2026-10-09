@@ -1,5 +1,7 @@
 #include "memory.h"
 
+#include <optional>
+
 #include <atomic>
 #include <cassert>
 #include <cstring>
@@ -2077,26 +2079,17 @@ void Memory::UpdateFeatureCache()
                 return;
             }
             
-            // CRITICAL: Pause emulator before memory migration to prevent race conditions
-            // The Z80 thread would access stale bank pointers during reallocation
+            // CRITICAL: the CPU held for the migration (Emulator::CpuHold, execution arbiter): the Z80 thread would
+            // access stale bank pointers during the reallocation, and a UI refresh would read memory being
+            // reallocated. A hold never broadcasts and leaves the pause as it was
             Emulator* emulator = _context->pEmulator;
-            bool wasRunning = emulator && emulator->IsRunning() && !emulator->IsPaused();
-            
-            LOGDEBUG("Memory::UpdateFeatureCache - SharedMemory toggle: requested=%s, current=%s, emulator=%p, wasRunning=%s",
+            LOGDEBUG("Memory::UpdateFeatureCache - SharedMemory toggle: requested=%s, current=%s, emulator=%p",
                     sharedMemoryRequested ? "ON" : "OFF",
                     _feature_sharedmemory_enabled ? "ON" : "OFF",
-                    (void*)emulator,
-                    wasRunning ? "YES" : "NO");
-            
-            if (wasRunning)
-            {
-                LOGDEBUG("Memory::UpdateFeatureCache - Pausing emulator before migration (silent)");
-                // Use silent pause (broadcast=false) to avoid triggering UI updates during migration
-                // UI refresh during migration would access memory being reallocated
-                emulator->Pause(false);
-                // MainLoop::Pause() now waits for Z80 thread to confirm it's paused via CV
-                LOGDEBUG("Memory::UpdateFeatureCache - Emulator paused, proceeding with migration");
-            }
+                    (void*)emulator);
+            std::optional<Emulator::CpuHold> hold;
+            if (emulator)
+                hold.emplace(*emulator, "shared memory migration");
 
             if (sharedMemoryRequested && !_feature_sharedmemory_enabled)
             {
@@ -2181,16 +2174,10 @@ void Memory::UpdateFeatureCache()
                 _feature_sharedmemory_enabled = false;
             }
             
-            // Resume emulator after migration completes
-            if (wasRunning)
-            {
-                // Memory barrier ensures all pointer updates are visible to all CPU cores
-                // before Z80 thread resumes execution (critical for ARM's weak memory model)
-                std::atomic_thread_fence(std::memory_order_seq_cst);
-                
-                // Use silent resume (broadcast=false) to match silent pause
-                emulator->Resume(false);
-            }
+            // The CPU handed back after the migration. The barrier makes every pointer update visible to all CPU
+            // cores before the Z80 thread runs again (ARM's weak memory model); the hold's mutex orders it too
+            std::atomic_thread_fence(std::memory_order_seq_cst);
+            hold.reset();
         }
 
         // Update memory access tracker if it exists

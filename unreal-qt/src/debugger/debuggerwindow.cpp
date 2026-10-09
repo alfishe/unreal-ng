@@ -568,6 +568,18 @@ void DebuggerWindow::updateState()
         return;
     }
 
+    // A refresh queued by a step's end (cpuStepComplete) or a frame can run while the machine is being removed (an
+    // automation 'destroy' right after a 'run_frames'): its memory is freed under the disassembler (seen as a SIGSEGV
+    // in Z80Disassembler with a null Memory). The lease keeps the removal from freeing anything until this refresh
+    // ends, and is refused once the removal has begun
+    Emulator::ContextLease lease;
+    if (_emulator)
+    {
+        lease = _emulator->LeaseContext();
+        if (!lease)
+            return;
+    }
+
     // Skip heavy UI updates while emulator is running to avoid race conditions
     // and excessive CPU usage (frameRefresh fires at 50fps during recording)
     if (_emulator && !_emulator->IsPaused())

@@ -182,9 +182,23 @@ Part of [README.md](README.md). Phases from [design.md](design.md) §6.
   - **Fix.** The hold is taken first, so saves take turns: 18 runs out of 18 clean afterwards.
   - **How it was narrowed down.** A temporary op mask; snapshot save + load was the only op that failed. The race was
     not the mid-frame park: with frame-end parking for commands it still failed.
-- [ ] **Still on the X1 compat (correct, not yet explicit):** the silent pairs in TTD (`StartRecording`,
-  `StopRecording`, `SwitchWriteJournal`, `SessionOperation`, `ResumeRecordingLive`, both backends), `RzxSession`,
-  `Memory` (shared-memory migration), `ModelSwitch`, `MachineStateTransfer`.
+- [x] **The last silent pairs are explicit holds now.** No `Pause(false)` / `Resume(false)` is left outside
+  `Emulator`; the compat stays until X6 for any caller that is still missed.
+  - TTD, both backends: `StartRecording`, `StopRecording`, `SwitchWriteJournal`, `ResumeRecordingLive` use
+    `std::optional<CpuHold>`; `SessionOperation` keeps a `HoldToken`. Each is taken under the same condition as the
+    compat (a running, unpaused machine), so a TTD operation never waits for the CPU that a direct run on another
+    thread holds while that run waits for the TTD control mutex.
+  - `RzxSession` `Play` / `Stop` / `Seek`, the shared-memory migration, `ModelSwitch`.
+  - `MachineStateTransfer` holds both machines, in the order of their ids.
+  - MainWindow's `Pause(false)` before `Stop()` is gone (Stop parks and joins by itself).
+- [x] **Found by the GUI repro after the change: an old race in the Qt debugger, fixed.** Six runs of six SPRINTERs
+  each: one unreal-qt crash in three to four runs.
+  - **Symptom.** A SIGSEGV in `Z80Disassembler` with a null `Memory`. `DebuggerWindow::updateState`, queued by a
+    step's end (`cpuStepComplete`), ran while an automation `destroy` released the machine.
+  - **Fix.** The refresh holds `Emulator::LeaseContext()`, so the removal frees nothing until the refresh ends and the
+    lease is refused once the removal has begun. Six runs of six afterwards: 36 out of 36 booted, no crash.
+  - **For comparison**, the pre-arbiter build in the same flow: no crash in 6 runs, but about half of the second and
+    later SPRINTERs ended anywhere in the BIOS (the original bug).
 - [ ] **Front ends:** their own origins, the claim inside the arbiter, DeZog close / TTD `resume` owner-only (X4).
 - [x] **A/B of the hot path again** (the per-instruction check changed in X3).
   - **Setup.** A = master `328f867a3`, B = the branch; Release builds; 20 rounds (ABAB... then BABA...).

@@ -10,6 +10,8 @@
 /// CPU/chipset are field-copied via the helpers in ttdcheckpoint.cpp.
 
 #include "timetravelcontroller.h"
+
+#include <optional>
 #include "ttddisplayparticipant.h"
 
 #include "timetravelengine.h"
@@ -196,11 +198,10 @@ bool TimeTravelController::StartRecording()
     Emulator* emu = _context->pEmulator;
     // On the machine's own thread (a black box around turbo tape's warp) it is not running a frame now
     const bool wasRunning = !OnMachineThread() && emu && emu->IsRunning() && !emu->IsPaused();
+    // The CPU held while the session changes (Emulator::CpuHold): invisible, the pause is left as it was
+    std::optional<Emulator::CpuHold> cpuHold;
     if (wasRunning)
-    {
-        emu->Pause(false);
-        emu->WaitForPauseConfirmation(1000);
-    }
+        cpuHold.emplace(*emu, "ttd");
 
     // One time base for the session: the host's wall time now, at the
     // machine's emulated time now. Every real-time clock anchors at it (their
@@ -238,8 +239,7 @@ bool TimeTravelController::StartRecording()
         }
         _toggledDebugModeOn = false;
         _toggledTimeTravelOn = false;
-        if (wasRunning && emu)
-            emu->Resume(false);
+        cpuHold.reset();
         return false;
     };
 
@@ -347,8 +347,7 @@ bool TimeTravelController::StartRecording()
         SetState(TTDSessionState::Recording);
         StopRecording();
         _lastStopReason = "capture-failed";
-        if (wasRunning && emu)
-            emu->Resume(false);
+        cpuHold.reset();
         _lastStartError = "the engine did not take the baseline checkpoint";
         return false;
     }
@@ -381,8 +380,7 @@ bool TimeTravelController::StartRecording()
 
     // Resume the emulator if we paused it. The recording OnFrameBoundary
     // hook will now see dirty bits being set correctly.
-    if (wasRunning && emu)
-        emu->Resume(false);
+    cpuHold.reset();
 
     return true;
 }
@@ -412,11 +410,10 @@ void TimeTravelController::StopRecording()
     // 7.2). From the machine's own thread the wait returns at once.
     Emulator* emu = _context ? _context->pEmulator : nullptr;
     const bool wasRunning = !OnMachineThread() && emu && emu->IsRunning() && !emu->IsPaused();
+    // The CPU held while the session changes (Emulator::CpuHold): invisible, the pause is left as it was
+    std::optional<Emulator::CpuHold> cpuHold;
     if (wasRunning)
-    {
-        emu->Pause(false);
-        emu->WaitForPauseConfirmation(1000);
-    }
+        cpuHold.emplace(*emu, "ttd");
 
     // Compress whatever coverage is still accumulating (see above)
     _coverageIndex.FlushOpenBlocks();
@@ -463,8 +460,7 @@ void TimeTravelController::StopRecording()
 
     PublishSessionInfo();
 
-    if (wasRunning && emu)
-        emu->Resume(false);
+    cpuHold.reset();
 }
 
 bool TimeTravelController::HoldBackgroundRecording()
@@ -917,14 +913,12 @@ bool TimeTravelController::SwitchWriteJournal(bool enable)
 {
     Emulator* emu = _context ? _context->pEmulator : nullptr;
     const bool wasRunning = emu && emu->IsRunning() && !emu->IsPaused();
+    // The CPU held while the session changes (Emulator::CpuHold): invisible, the pause is left as it was
+    std::optional<Emulator::CpuHold> cpuHold;
     if (wasRunning)
-    {
-        emu->Pause(false);
-        emu->WaitForPauseConfirmation(1000);
-    }
+        cpuHold.emplace(*emu, "ttd");
     const bool ok = SetEnableWriteJournal(enable);
-    if (wasRunning)
-        emu->Resume(false);
+    cpuHold.reset();
     return ok;
 }
 
@@ -954,9 +948,8 @@ TimeTravelController::SessionOperation::SessionOperation(const TimeTravelControl
     Emulator* emu = _manager._context ? _manager._context->pEmulator : nullptr;
     if (emu && _manager._state.load() != TTDSessionState::Idle && emu->IsRunning() && !emu->IsPaused())
     {
-        emu->Pause(false);
-        emu->WaitForPauseConfirmation(1000);
-        _parked = true;
+        _hold = emu->GetArbiter().BeginHold(execution::Requester{execution::Origin::Ttd, {}}, "ttd session operation",
+                                               execution::Clock::now() + std::chrono::seconds(5));
     }
 }
 
@@ -974,10 +967,10 @@ TimeTravelController::SessionOperation::~SessionOperation()
         if (!_locked || (_manager._operationDepth == 1 && !recordingMachineRuns))
             _manager.PublishSessionInfo();
     }
-    if (_parked)
+    if (_hold.Valid())
     {
         if (Emulator* emu = _manager._context ? _manager._context->pEmulator : nullptr)
-            emu->Resume(false);
+            emu->GetArbiter().EndHold(_hold);
     }
     if (_locked)
     {
@@ -3688,11 +3681,10 @@ bool TimeTravelController::ResumeRecordingLive()
     // (defensive; the debugger browse/leave flow calls this while paused).
     Emulator* emu = _context->pEmulator;
     const bool wasRunning = emu && emu->IsRunning() && !emu->IsPaused();
+    // The CPU held while the session changes (Emulator::CpuHold): invisible, the pause is left as it was
+    std::optional<Emulator::CpuHold> cpuHold;
     if (wasRunning)
-    {
-        emu->Pause(false);
-        emu->WaitForPauseConfirmation(1000);
-    }
+        cpuHold.emplace(*emu, "ttd");
 
     EngageCaptureFeatures();
 
@@ -3725,8 +3717,7 @@ bool TimeTravelController::ResumeRecordingLive()
     // Published while the machine is still parked (it records once resumed)
     PublishSessionInfo();
 
-    if (wasRunning && emu)
-        emu->Resume(false);
+    cpuHold.reset();
 
     return true;
 }

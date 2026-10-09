@@ -2262,10 +2262,7 @@ void MainWindow::startZXPoly(const QString& filePath, const QString& requestedMo
     if (_emulator)
     {
         if (_emulator->IsRunning())
-        {
-            _emulator->Pause(false);
-            _emulator->Stop();
-        }
+            _emulator->Stop();  // parks and joins the emulation thread itself
         releaseEmulator();
     }
 
