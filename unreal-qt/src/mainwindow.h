@@ -115,6 +115,7 @@ private slots:
 #endif
     void handleMessageScreenRefresh(int id, Message* message);
     void handleVideoModeChanged(int id, Message* message);
+    void handleSystemReset(int id, Message* message);
     void handleFileOpenRequest(int id, Message* message);
     void handleEmulatorStateChanged(int id, Message* message);
     void handleEmulatorInstanceDestroyed(int id, Message* message);

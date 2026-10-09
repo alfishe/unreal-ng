@@ -9,6 +9,7 @@
 #include <QVBoxLayout>
 
 #include "debugger/labels/symbolcontrol.h"
+#include "debugger/symbolbundlepreferences.h"
 
 namespace
 {
@@ -119,6 +120,8 @@ void SymbolSetsPanel::onItemChanged(int row, int column)
     const SymbolReply reply = SymbolControl(_labelManager).Execute(request);
     if (!reply.Ok())
         QMessageBox::warning(this, tr("Symbol Sets"), QString::fromStdString(reply.message));
+    else if (column == ColumnOn)
+        SymbolBundlePreferences::Save(id.toStdString(), request.options["enabled"] == "true");  // a bundle stays off between sessions
     refresh();
     emit setsChanged();
 }
