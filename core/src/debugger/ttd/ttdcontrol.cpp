@@ -397,7 +397,7 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"reverse-continue", {"pcs"}},
         {"coverage-probe", {"frame", "kind", "addr_from", "addr_to", "phys_page", "space"}},
         {"coverage-scan", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "space", "limit"}},
-        {"memory-at", {"space", "offset", "length", "frame"}},
+        {"memory-at", {"space", "offset", "length", "frame", "tinframe"}},
         {"memory-diff", {"space", "from_frame", "to_frame", "limit"}},
         {"coverage-summary", {"from_frame", "to_frame", "kind", "bucket_size", "limit"}},
         {"file-info", {"path"}},
@@ -1960,6 +1960,9 @@ TTDReply TTDControlBackend<S>::MemoryAt(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest, "Invalid offset: '" + *t + "'");
     if (const std::string* t = Option(request, "length"); t && (!ParseUpTo(*t, 65536, length) || length == 0))
         return Fail(TTDControlError::BadRequest, "Invalid length: 1..65536");
+    uint64_t tin = 0;
+    if (const std::string* t = Option(request, "tinframe"); t && !ParseUpTo(*t, UINT32_MAX, tin))
+        return Fail(TTDControlError::BadRequest, "Invalid tinframe: '" + *t + "'");
     if constexpr (!std::is_same<S, TimeTravelController>::value)
         return Fail(TTDControlError::NotAvailable, "memory-at reads the engine's store (backend engine)");
     else
@@ -1978,11 +1981,64 @@ TTDReply TTDControlBackend<S>::MemoryAt(const TTDRequest& request)
         if (at >= desc.bytes)
             return Fail(TTDControlError::BadRequest, "offset past the end of " + desc.name + " (" + std::to_string(desc.bytes) + " bytes)");
         length = std::min<uint64_t>(length, desc.bytes - at);
+        // A point inside the frame (tinframe): the frame's checkpoint, then the frame's writes up to that point
+        // from the write journal (built for this frame by replay when it does not cover it). The memories whose
+        // writes are journaled: machine RAM, the Sprinter's video and fast RAM
+        const bool inside = tin > 0;
+        const TTDMemorySpace journaled = desc.name == "ram"                ? TTDMemorySpace::Ram
+                                         : desc.name == "sprinter.vram"    ? TTDMemorySpace::Vram
+                                         : desc.name == "sprinter.fastram" ? TTDMemorySpace::Cache
+                                                                           : static_cast<TTDMemorySpace>(0xFF);
+        if (inside && (static_cast<uint8_t>(journaled) == 0xFF || engine.Checkpoint(index)->position.frame != frame))
+            return Fail(TTDControlError::BadRequest,
+                        static_cast<uint8_t>(journaled) == 0xFF
+                            ? "tinframe: inside a frame memory-at reads ram, vram and cache (their writes are journaled); " +
+                                  desc.name + " is read at a frame start (or seek there)"
+                            : "tinframe: frame " + std::to_string(frame) + " has no checkpoint of its own (history thinned); seek there");
+        std::vector<TTDWriteRecord> writes;
+        if (inside)
+        {
+            // From where the frame's checkpoint stands: its CPU may start a little past the frame boundary (the
+            // instruction that crossed it belongs to the frame before)
+            uint64_t from = _manager->GlobalT({frame, 0});
+            for (size_t i = 0; i < _manager->GetCheckpointCount(); ++i)
+                if (const TTDCheckpoint* cp = _manager->GetCheckpoint(i); cp && cp->time.frame == frame)
+                    from = _manager->CheckpointStartT(*cp);
+            const uint64_t to = _manager->GlobalT({frame, static_cast<uint32_t>(tin)});
+            auto covered = [&] {
+                for (const TTDJournalSegment& seg : engine.Writes().Segments())
+                    if (seg.from <= from && seg.to >= to)
+                        return true;
+                return false;
+            };
+            if (!covered())
+            {
+                const TTDJournalBuildResult built = _manager->BuildWriteJournalFrames(frame, frame, {});
+                if (!built.ok || !covered())
+                    return Fail(TTDControlError::Conflict, "tinframe: the frame's writes could not be rebuilt (" +
+                                                               (built.error.empty() ? std::string("a replay barrier") : built.error) +
+                                                               "); seek there instead");
+            }
+            engine.Writes().ForEach([&](const TTDWriteRecord& rec) {
+                if (!rec.isIo && rec.globalT > from && rec.globalT <= to)
+                    writes.push_back(rec);
+            });
+        }
         std::vector<uint8_t> bytes(size_t(desc.pieces) * kTTDPieceSize);
         std::vector<uint8_t> present;
         const TTDRestoreResult restored = engine.RestoreRegion(index, region, bytes.data(), &present);
         if (!restored.Ok())
             return Fail(TTDControlError::Internal, desc.name + ": " + restored.message);
+        for (const TTDWriteRecord& rec : writes)
+        {
+            const PhysPage page = RecordPage(rec);
+            if (page == kPhysPageNone || SpaceOfPage(page) != journaled)
+                continue;
+            const uint64_t at = journaled == TTDMemorySpace::Ram ? uint64_t(page) * 0x4000 + (rec.addr & 0x3FFF)
+                                                                  : SpaceOffset(page, rec.addr);
+            if (at < bytes.size())
+                bytes[at] = rec.value;
+        }
         for (uint64_t p = at / kTTDPieceSize; p <= (at + length - 1) / kTTDPieceSize; ++p)
             if (p < present.size() && !present[p])
                 return Fail(TTDControlError::NotFound, desc.name + " offset " + std::to_string(p * kTTDPieceSize) +
@@ -1992,6 +2048,7 @@ TTDReply TTDControlBackend<S>::MemoryAt(const TTDRequest& request)
         reply.body["offset"] = at;
         reply.body["length"] = length;
         reply.body["frame"] = frame;
+        reply.body["tinframe"] = tin;
         reply.body["at_frame"] = engine.Checkpoint(index)->position.frame;
         reply.body["exact"] = engine.Checkpoint(index)->position.frame == frame;
         std::string hex;

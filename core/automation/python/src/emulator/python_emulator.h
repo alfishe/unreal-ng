@@ -4261,9 +4261,10 @@ namespace PythonBindings
             // A memory at a past checkpoint and what changed between two, from the store (no seek). A bad
             // argument raises ValueError; a refusal (no history, backend v1) is a dict with error
             .def("ttd_memory_at", [](Emulator& self, const std::string& space, uint64_t frame, py::object offsetObj,
-                                     uint32_t length) -> py::object {
+                                     uint32_t length, uint32_t tinframe) -> py::object {
                 std::map<std::string, std::string> options{
-                    {"space", space}, {"frame", std::to_string(frame)}, {"length", std::to_string(length)}};
+                    {"space", space}, {"frame", std::to_string(frame)}, {"length", std::to_string(length)},
+                    {"tinframe", std::to_string(tinframe)}};
                 if (!offsetObj.is_none())
                     options["offset"] = TtdOptionTextPy(offsetObj);
                 const ttd::TTDReply reply = TtdRunPy(self, "memory-at", options);
@@ -4274,7 +4275,8 @@ namespace PythonBindings
                     value["error"] = reply.message;
                 return StateNodeToPy(value);
             }, "A memory as it was at the checkpoint at or before frame: {space, offset, length, at_frame, exact, hex}",
-                py::arg("space"), py::arg("frame"), py::arg("offset") = py::none(), py::arg("length") = 256)
+                py::arg("space"), py::arg("frame"), py::arg("offset") = py::none(), py::arg("length") = 256,
+                py::arg("tinframe") = 0)
 
             .def("ttd_memory_diff", [](Emulator& self, const std::string& space, uint64_t fromFrame, uint64_t toFrame,
                                        uint64_t limit) -> py::object {

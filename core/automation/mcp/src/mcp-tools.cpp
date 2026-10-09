@@ -3906,7 +3906,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["tinframe"]["type"] = "integer";
     schema["properties"]["tinframe"]["description"] =
         "T-states within 'frame' for seek / resume / bookmark_add (default 0). A seek without it lands at the frame's end "
-        "on the engine (the frame's final state and picture); give 0 for the frame's start";
+        "on the engine (the frame's final state and picture); give 0 for the frame's start. memory_at: a point inside "
+        "'frame' (default 0 = the frame's start; ram, vram and cache only: the frame's writes up to it are applied)";
     schema["properties"]["count"]["type"] = "integer";
     schema["properties"]["count"]["description"] = "reverse_step: number of instructions to step back (give count OR tstates)";
     schema["properties"]["tstates"]["type"] = "integer";
@@ -4185,9 +4186,14 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     return;
                 }
                 (*body)["space"] = args["space"];
-                for (const char* field : {"frame", "offset", "length", "from_frame", "to_frame", "limit"})
+                for (const char* field : {"frame", "tinframe", "offset", "length", "from_frame", "to_frame", "limit"})
                     if (args.isMember(field))
                         (*body)[field] = args[field];
+                if (!at && args.isMember("tinframe"))
+                {
+                    done(ToolResult::Error("Action 'memory_diff' compares frame starts: it takes no 'tinframe'"));
+                    return;
+                }
             }
             else if (action == "find_last")
             {
@@ -4424,6 +4430,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         std::string text = std::to_string(b["length"].asUInt64()) + " bytes of " + b["space"].asString() +
                                            " at offset " + std::to_string(b["offset"].asUInt64()) + " as at frame " +
                                            std::to_string(b["at_frame"].asUInt64()) +
+                                           (b["tinframe"].asUInt64() ? " t=" + std::to_string(b["tinframe"].asUInt64()) : std::string()) +
                                            (b["exact"].asBool() ? "" : " (the checkpoint before the frame asked)") + ": ";
                         return text + (hex.size() > 128 ? hex.substr(0, 128) + "... (full in the data)" : hex);
                     }, done);

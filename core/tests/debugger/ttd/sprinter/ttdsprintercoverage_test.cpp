@@ -739,5 +739,46 @@ TEST_P(TTDSprinterSpaces_Test, AVideoRamWatchpointStopsTheWriterAndTheReader)
     EXPECT_FALSE(BreakpointManager::ParsePageInto("vram16", bad, error));
 }
 
+// memory-at inside a frame (tinframe): the frame's checkpoint and its writes up to that point - the video RAM byte
+// the program rewrites every loop and the RAM the accelerator fills read as a seek to the same point shows them.
+// Without the journal the frame's writes are rebuilt by replay, and the machine stays where it was
+TEST_P(TTDSprinterSpaces_Test, MemoryAtInsideAFrameMatchesASeekThere)
+{
+    ASSERT_NO_FATAL_FAILURE(RecordTheProgram());
+    const uint64_t frame = _ttd->GetCheckpoint(3)->time.frame;
+    const uint64_t here = Frame();
+    std::vector<std::pair<uint32_t, std::string>> asked;
+    for (uint32_t tin : {1000u, 25000u, 60000u, 90000u})
+    {
+        const ttd::TTDReply at = ttd::TTDControl(_context).Execute(
+            {"memory-at", {{"space", "vram"}, {"offset", "0x4805"}, {"length", "1"}, {"frame", std::to_string(frame)},
+                           {"tinframe", std::to_string(tin)}}});
+        ASSERT_TRUE(at.Ok()) << at.message;
+        EXPECT_EQ(at.body.find("tinframe")->i, tin);
+        const ttd::TTDReply ram = ttd::TTDControl(_context).Execute(
+            {"memory-at", {{"space", "ram"}, {"offset", std::to_string(_context->pMemory->GetRAMPageForBank2() * 0x4000u + 0x1100)},
+                           {"length", "1"}, {"frame", std::to_string(frame)}, {"tinframe", std::to_string(tin)}}});
+        ASSERT_TRUE(ram.Ok()) << ram.message;
+        asked.emplace_back(tin, at.body.find("hex")->s + ram.body.find("hex")->s);
+    }
+    EXPECT_EQ(Frame(), here) << "memory-at moves nothing";
+    std::set<std::string> distinct;
+    for (const auto& [tin, hex] : asked)
+    {
+        distinct.insert(hex);
+        ASSERT_TRUE(_ttd->SeekTo({frame, tin}));
+        char seen[8];
+        std::snprintf(seen, sizeof seen, "%02X%02X", _decoder->GetVideoRam().Read(0x4805),
+                      _context->pMemory->DirectReadFromZ80Memory(0x9100));
+        EXPECT_EQ(hex, seen) << "frame " << frame << " t=" << tin;
+    }
+    EXPECT_GE(distinct.size(), 3u) << "the byte changes inside the frame";
+
+    // Other memories are read at frame starts only; tinframe there is refused, not ignored
+    EXPECT_EQ(ttd::TTDControl(_context).Execute({"memory-at", {{"space", "rtc.cmos"}, {"frame", std::to_string(frame)},
+                                                               {"tinframe", "100"}}}).error,
+              ttd::TTDControlError::BadRequest);
+}
+
 INSTANTIATE_TEST_SUITE_P(Journal, TTDSprinterSpaces_Test, ::testing::Bool(),
                          [](const auto& info) { return info.param ? "FromTheJournal" : "FromReplay"; });
