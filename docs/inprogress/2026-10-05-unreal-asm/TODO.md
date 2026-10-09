@@ -160,7 +160,8 @@ phase; master only after the owner's review.
       - [x] STORM 1.3 / 1.3i (2026-10-09): page 6 from `#C00B` to the `#FF` before `(#C000)` (§7.8)
       - [x] ZAsm 3.15 (2026-10-09): `(#8829)`-`(#8837)`, the part above `#C000` in page 6, SAVE's `;!` position line (§7.9)
       - [x] MASM 1.1 (2026-10-09): a gap buffer from `#970B` (`(#96CC)` / `(#96CE)`, up to `#FFFF`), the editor known by its line buffer at `#851A` (§7.12)
-      - [ ] ZX-ASM 3.0 / 3.01 / 3.10, Lite 1.07, ZAsm 3.2x-4.20, ZX-ASM 2.x, MASM 1.0 demo / 1.3 / 2.0 / 3.0, TASM 4.0 / 4.4 / 3.x / 2.0, STORM 1.0beta
+      - [x] TASM 4.0 / 4.4 / 3.0 / 3.2 (2026-10-09): 4.12's gap buffer (pointers `#8DD0` / `#8910`), the editor known by the tail of its line buffer (§7.6, §7.7)
+      - [ ] ZX-ASM 3.0 / 3.01 / 3.10, Lite 1.07, ZAsm 3.2x-4.20, ZX-ASM 2.x, MASM 1.0 demo / 1.3 / 2.0 / 3.0, TASM 3.5 / 2.0, STORM 1.0beta
     - [ ] Y4 48K assemblers: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):

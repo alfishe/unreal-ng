@@ -17,6 +17,8 @@ save the text itself and keep the file. The synchronizer's reader must give that
                                                                  # ZAsm 3.15: TAG-typing, TAG-edited, TAG-big
     sync-dumps.py masm <disk-with-NAME.a first> <out-dir> --source NAME --tag masm11
                                                                  # MASM 1.1: TAG-typing, TAG-edited, TAG-menu
+    sync-dumps.py tasm <disk-with-NAME.A> <out-dir> --boot NAME --source NAME --tag TAG [--as-typed]
+                                                                 # TASM 4.0 / 4.4 / 3.x: TAG-typing, TAG-edited, TAG-command
 
 Each case is a folder <out-dir>/<assembler>-<case>/ with machine.json (the RAM page mapped at each 16 KB window, the
 pages kept, the file expected, the editor state), page<N>.bin per kept page and the expected file. A case whose text
@@ -208,6 +210,38 @@ def masm(emu, args):
     dump(emu, args.out, f'{args.tag}-menu', pages, f'{args.source}.a', edited, {'editor': False, 'typing': False})
 
 
+def tasm_other(emu, args):
+    """TASM without a line count (4.0 ...): W names the work file (--as-typed: the keyboard is not inverted), E edits,
+    Extend Q leaves the editor, S saves. A line being typed is not in the text; the edited case is taken after Enter
+    and two steps down, the command case after leaving the editor"""
+    emu.insert_disk(args.disk)
+    emu.run_trdos(args.boot, wait=10)
+    emu.tap('enter')                           # past the title
+    time.sleep(1)
+    emu.tap('w')
+    emu.type(args.source if args.as_typed else inverted(args.source))
+    emu.tap('enter')
+    time.sleep(3)
+    emu.tap('e')
+    time.sleep(2)
+    loaded = saved(emu, args.source, 'A')
+    pages = [2, 5, windows(emu)[3]]
+    emu.type('zz')
+    dump(emu, args.out, f'{args.tag}-typing', pages, f'{args.source}.A', loaded, {'editor': True, 'typing': True})
+    emu.tap('enter')
+    emu.tap('down')
+    emu.tap('down')
+    time.sleep(1)
+    dump(emu, args.out, f'{args.tag}-edited', pages, f'{args.source}.A', None, {'editor': True, 'typing': False})
+    extend(emu, 'q')
+    dump(emu, args.out, f'{args.tag}-command', pages, f'{args.source}.A', None, {'editor': False, 'typing': False})
+    emu.tap('s')
+    time.sleep(4)
+    edited = saved(emu, args.source, 'A')
+    finish(args.out, f'{args.tag}-edited', f'{args.source}.A', edited)
+    finish(args.out, f'{args.tag}-command', f'{args.source}.A', edited)
+
+
 def saved(emu, name, type_):
     data = emu.read_disk_file(name, type_)
     if data is None:
@@ -304,7 +338,7 @@ def tasm412(emu, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'masm'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'masm', 'tasm'])
     parser.add_argument('disk')
     parser.add_argument('out')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
@@ -315,6 +349,7 @@ def main():
     parser.add_argument('--no-loaded', action='store_true', help='alasm: no case right after loading')
     parser.add_argument('--list-keys', default='right', help='xas: the cursor keys that reach PROBE in the file list')
     parser.add_argument('--big', help='zasm: a long text (over #C000) for a loaded case')
+    parser.add_argument('--as-typed', action='store_true', help='tasm: type the name as stored (a keyboard not inverted)')
     args = parser.parse_args()
     args.disk = os.path.abspath(args.disk)
     emu = Emulator(port=args.port, model='PENTAGON')
@@ -330,6 +365,8 @@ def main():
         zasm(emu, args)
     elif args.assembler == 'masm':
         masm(emu, args)
+    elif args.assembler == 'tasm':
+        tasm_other(emu, args)
     else:
         alasm(emu, args, args.assembler[5:])
     emu.stop_recording()

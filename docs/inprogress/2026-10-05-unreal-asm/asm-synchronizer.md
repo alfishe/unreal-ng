@@ -286,6 +286,9 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Knowledge** | unknown; their files share 4.12's format family (`[n] body [n]` records, `FF FF`), so a gap buffer is likely |
 | research | the same edit-and-diff session as 4.12; find the pointers by the text start's value |
 | **Work** | **1 d** |
+| **Verified** (2026-10-09, dumps `tasm40-*`, `tasm44-*`) | the gap buffer of 4.12 with its four pointers at `#8DD0` (start, top, gap start, gap end; the upper part in the page at `#C000`, page 6). No line count: the editor shows in the tail of its 128-byte line buffer (`#91AC`, 32 bytes): blank padded in the editor, zeros at the command line. In the editor the cursor line is out of the text and its last version is the record that ends at the gap end (as in MASM); a line being typed is not in the text (`NotInText`) |
+| identification | the prompt `TASM4.0>` / `TASM4.4>` at `#9859` |
+| **Built** | descriptors `tasm-4.0`, `tasm-4.4` (codec version 4.0) |
 
 ### 7.7 TASM 3.x and 2.0
 
@@ -293,6 +296,9 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 |---|---|
 | **Knowledge** | unknown; 2.0 is plain text with editor tabs; 3.x tokenized |
 | **Work** | **1.5 d** (both) |
+| **Verified: 3.0, 3.2** (2026-10-09, dumps `tasm30-*`, `tasm32-*`) | the same gap buffer with the pointers at `#8910`; the line buffer at `#8C22`, its tail `#8C82` (32 bytes) the editor flag. Identified by `TASM2.0 source file: ` at `#9721` (3.0) and `TASM2.0 file: ` at `#9728` (3.2) |
+| **Built** | descriptors `tasm-3.0`, `tasm-3.2` (codec version 3) |
+| open | 3.5 ("FLASHVERSION", pointers also at `#8910`) shows no editor flag in its line buffer; 2.0 (plain text) not looked at |
 
 ### 7.8 STORM 1.2 / 1.3 (1.0 beta)
 
