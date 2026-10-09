@@ -85,6 +85,7 @@ Found by the 2026-10-02 audit. Gaps 1–16 break replay in v1 today; each is fix
       - ATM2 KBC: the remainder `frac`, and the firmware's RAM tick counter (tried as a time field: no gain);
       - ZiFi UART: not reached by the measuring machines.
     - Test `Devices/TTDDeviceTimeFields_Test`, which catches each declaration removed.
+  - [ ] ZiFi UART (`device.zifi.uart`, 6 B per idle frame on TS-Conf in BM-9): not covered - the machines of the field-by-field measurement do not bring it up (the test runner's network policy), so there is no per-field data yet; measure it with ZiFi fitted and declare its clocks as time fields if they are
 
 ## Phase 1 check ([phase-1-results.md](phase-1-results.md))
 
