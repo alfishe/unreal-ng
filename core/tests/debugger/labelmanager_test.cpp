@@ -13,6 +13,7 @@
 #include "emulator/emulatorcontext.h"
 #include "pch.h"
 #include "_helpers/testpathhelper.h"
+#include "unrealasm/symbols/symbol.h"
 
 namespace
 {
@@ -541,4 +542,176 @@ TEST_F(LabelManager_test, LoadLabelsMatchesGolden)
         const std::string expected((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         EXPECT_EQ(dump, expected) << name;
     }
+}
+
+// ============================================================================
+// The symbol store behind the labels: sets, priorities, the Label view
+// ============================================================================
+
+namespace
+{
+std::string WriteSym(const std::string& name, const std::string& text)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath(name);
+    std::ofstream(path, std::ios::binary) << text;
+    return path;
+}
+
+bool SameLabel(const Label& a, const Label& b)
+{
+    return a.name == b.name && a.address == b.address && a.bank == b.bank && a.bankOffset == b.bankOffset && a.bankType == b.bankType &&
+           a.type == b.type && a.module == b.module && a.comment == b.comment && a.active == b.active;
+}
+}  // namespace
+
+TEST_F(LabelManager_test, EachFileIsASetAndALaterLoadWins)
+{
+    ScopedTestFile first(WriteSym("first.sym", "8000 SHARED\n8010 ONLY_FIRST\n"));
+    ScopedTestFile second(WriteSym("second.sym", "9000 SHARED\n9010 ONLY_SECOND\n"));
+    ASSERT_TRUE(_labelManager->LoadLabels(first));
+    ASSERT_TRUE(_labelManager->LoadLabels(second));
+
+    const auto sets = _labelManager->GetSymbolSets();
+    ASSERT_EQ(sets.size(), 2u);
+    EXPECT_EQ(sets[0].id, "file:" + first.path());
+    EXPECT_LT(sets[0].priority, sets[1].priority);
+
+    EXPECT_EQ(_labelManager->GetLabelCount(), 3u);
+    EXPECT_EQ(_labelManager->GetLabelByName("SHARED")->address, 0x9000);
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8000), nullptr) << "the shadowed record shows nowhere";
+
+    // The earlier file above: its record shows
+    ASSERT_TRUE(_labelManager->SetSymbolSetPriority("file:" + first.path(), 1000));
+    EXPECT_EQ(_labelManager->GetLabelByName("SHARED")->address, 0x8000);
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x9000), nullptr);
+
+    // A set switched off hides its labels; dropped, they are gone
+    ASSERT_TRUE(_labelManager->SetSymbolSetEnabled("file:" + first.path(), false));
+    EXPECT_EQ(_labelManager->GetLabelByName("ONLY_FIRST"), nullptr);
+    EXPECT_EQ(_labelManager->GetLabelByName("SHARED")->address, 0x9000);
+    ASSERT_TRUE(_labelManager->DropSymbolSet("file:" + second.path()));
+    EXPECT_EQ(_labelManager->GetLabelCount(), 0u);
+    EXPECT_FALSE(_labelManager->DropSymbolSet("no-such-set"));
+}
+
+TEST_F(LabelManager_test, AFileLoadedAgainReplacesItsSet)
+{
+    ScopedTestFile file(WriteSym("reload.sym", "8000 OLD_NAME\n"));
+    ASSERT_TRUE(_labelManager->LoadLabels(file));
+    std::ofstream(file.path(), std::ios::binary) << "8000 NEW_NAME\n";
+    ASSERT_TRUE(_labelManager->LoadLabels(file));
+    EXPECT_EQ(_labelManager->GetSymbolSets().size(), 1u);
+    EXPECT_EQ(_labelManager->GetLabelByName("OLD_NAME"), nullptr);
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8000)->name, "NEW_NAME");
+}
+
+TEST_F(LabelManager_test, UserLabelsWinOverFilesAndEditsSurviveAReload)
+{
+    ScopedTestFile file(WriteSym("user.sym", "8000 START\n8100 LOOP\n"));
+    ASSERT_TRUE(_labelManager->LoadLabels(file));
+    ASSERT_TRUE(_labelManager->AddLabel("START", 0x8001, UINT16_MAX, UINT16_MAX, "data"));
+    ASSERT_TRUE(_labelManager->LoadLabels(file));
+    EXPECT_EQ(_labelManager->GetLabelByName("START")->address, 0x8001);
+
+    Label edited = *_labelManager->GetLabelByName("LOOP");
+    edited.address = 0x8102;
+    edited.comment = "moved";
+    ASSERT_TRUE(_labelManager->UpdateLabel(edited));
+    ASSERT_TRUE(_labelManager->LoadLabels(file));
+    EXPECT_EQ(_labelManager->GetLabelByName("LOOP")->address, 0x8102);
+    EXPECT_EQ(_labelManager->GetLabelByName("LOOP")->comment, "moved");
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8100), nullptr);
+
+    // The file's own records stay under the user set: switching it off shows them again
+    const auto sets = _labelManager->GetSymbolSets();
+    const auto user = std::find_if(sets.begin(), sets.end(), [](const auto& set) { return set.id == LabelManager::USER_SET; });
+    ASSERT_NE(user, sets.end());
+    EXPECT_EQ(user->priority, LabelManager::USER_SET_PRIORITY);
+    EXPECT_EQ(user->symbols.size(), 2u);
+    ASSERT_TRUE(_labelManager->SetSymbolSetEnabled(LabelManager::USER_SET, false));
+    EXPECT_EQ(_labelManager->GetLabelByName("START")->address, 0x8000);
+    EXPECT_EQ(_labelManager->GetLabelByName("LOOP")->address, 0x8100);
+}
+
+TEST_F(LabelManager_test, RemoveLabelTakesTheNameFromEverySet)
+{
+    ScopedTestFile file(WriteSym("remove.sym", "8000 START\n"));
+    ASSERT_TRUE(_labelManager->LoadLabels(file));
+    ASSERT_TRUE(_labelManager->AddLabel("START", 0x8001, UINT16_MAX, UINT16_MAX));
+    ASSERT_TRUE(_labelManager->RemoveLabel("START"));
+    EXPECT_EQ(_labelManager->GetLabelByName("START"), nullptr);
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8000), nullptr);
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8001), nullptr);
+}
+
+TEST_F(LabelManager_test, AddressShowsTheLastLabelPlacedAndKeepsTheOthers)
+{
+    ASSERT_TRUE(_labelManager->AddLabel("FIRST", 0x8000, UINT16_MAX, UINT16_MAX));
+    ASSERT_TRUE(_labelManager->AddLabel("SECOND", 0x8000, UINT16_MAX, UINT16_MAX));
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8000)->name, "SECOND");
+    ASSERT_TRUE(_labelManager->AddLabel("FIRST", 0x8000, UINT16_MAX, UINT16_MAX));
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8000)->name, "FIRST");
+    ASSERT_TRUE(_labelManager->RemoveLabel("FIRST"));
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8000)->name, "SECOND");
+    // A name added again leaves its old address
+    ASSERT_TRUE(_labelManager->AddLabel("SECOND", 0x9000, UINT16_MAX, UINT16_MAX));
+    EXPECT_EQ(_labelManager->GetLabelByZ80Address(0x8000), nullptr);
+
+    // Both names of one address are saved
+    ASSERT_TRUE(_labelManager->AddLabel("ALIAS", 0x9000, UINT16_MAX, UINT16_MAX));
+    ScopedTestFile saved(TestPathHelper::GetUniqueTestScratchPath("aliases.sym"));
+    ASSERT_TRUE(_labelManager->SaveLabels(saved));
+    _labelManager->ClearAllLabels();
+    ASSERT_TRUE(_labelManager->LoadLabels(saved));
+    EXPECT_EQ(_labelManager->GetLabelCount(), 2u);
+}
+
+TEST_F(LabelManager_test, EveryLabelSurvivesTheStore)
+{
+    // Labels a symbol cannot say by itself: a bank offset beyond the page, an address outside the page's window, a ROM
+    // bank type above #4000, an empty type, a type in capitals, bank #FF
+    std::vector<Label> labels(7);
+    labels[0].name = "OFFSET";
+    labels[0].address = 0x1234, labels[0].bank = 0, labels[0].bankOffset = 0x5678, labels[0].type = "code";
+    labels[1].name = "WINDOW";
+    labels[1].address = 0xC010, labels[1].bank = 3, labels[1].bankOffset = 0x0020, labels[1].type = "data";
+    labels[2].name = "ROM_HIGH";
+    labels[2].address = 0x8000, labels[2].bankType = BANK_ROM, labels[2].type = "const";
+    labels[3].name = "NO_TYPE";
+    labels[3].address = 0x4000;
+    labels[4].name = "CAPITALS";
+    labels[4].address = 0x0038, labels[4].bankType = BANK_ROM, labels[4].type = "CODE";
+    labels[5].name = "BANK_FF";
+    labels[5].address = 0xC000, labels[5].bank = 0xFF, labels[5].bankOffset = 0, labels[5].type = "bss", labels[5].active = false;
+    labels[6].name = "NO_OFFSET";
+    labels[6].address = 0xC123, labels[6].bank = 7, labels[6].type = "code", labels[6].module = "M", labels[6].comment = "c";
+    for (const Label& label : labels)
+    {
+        const auto back = LabelManager::ToLabel(LabelManager::FromLabel(label, {}));
+        ASSERT_TRUE(back.has_value()) << label.name;
+        EXPECT_TRUE(SameLabel(*back, label)) << label.name;
+    }
+}
+
+TEST_F(LabelManager_test, LabelsAddedOneByOneMatchARebuild)
+{
+    // AddLabel of a new name only adds to the view; a rebuild from the store must show the same
+    ScopedTestFile file(WriteSym("under.sym", "8000 FILE_A\n8002 FILE_B\n"));
+    ASSERT_TRUE(_labelManager->LoadLabels(file));
+    const std::vector<std::pair<std::string, uint16_t>> added = {{"U1", 0x8000}, {"U2", 0x8001}, {"U3", 0x8001}, {"FILE_B", 0x9000}, {"U4", 0x8002}};
+    for (const auto& [name, address] : added)
+        ASSERT_TRUE(_labelManager->AddLabel(name, address, UINT16_MAX, UINT16_MAX));
+    const auto byAddress = [&]() {
+        std::string out;
+        for (uint16_t a : {0x8000, 0x8001, 0x8002, 0x9000})
+            out += (_labelManager->GetLabelByZ80Address(a) ? _labelManager->GetLabelByZ80Address(a)->name : "-") + ",";
+        return out;
+    };
+    const std::string labels = DumpLabels(*_labelManager);
+    const std::string addresses = byAddress();
+    EXPECT_EQ(addresses, "U1,U3,U4,FILE_B,");
+
+    ASSERT_TRUE(_labelManager->SetSymbolSetPriority(LabelManager::USER_SET, LabelManager::USER_SET_PRIORITY));
+    EXPECT_EQ(DumpLabels(*_labelManager), labels);
+    EXPECT_EQ(byAddress(), addresses);
 }

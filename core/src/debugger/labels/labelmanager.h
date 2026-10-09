@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <filesystem>
+#include <unordered_map>
 #include "emulator/platform.h"
 #include "emulator/memory/memory.h"
 
@@ -18,7 +19,10 @@ class EmulatorContext;
 namespace unrealasm::symbols
 {
 class ISymbolCodec;
+class SymbolIndex;
+class SymbolStore;
 struct Symbol;
+struct SymbolSet;
 }
 
 /// @brief Structure representing a single label with address and type information
@@ -58,11 +62,23 @@ protected:
     /// region <Fields>
 protected:
     EmulatorContext* _context = nullptr;
-    
-    // Maps for quick lookup in both directions
-    std::map<uint16_t, std::shared_ptr<Label>> _labelsByZ80Address;
-    std::map<std::string, std::shared_ptr<Label>> _labelsByName;
-    
+
+    // The labels live in the main CPU's symbol store (symbols/architecture.md section 8): the set "user" holds what
+    // AddLabel / UpdateLabel make and wins over every file; each loaded file is a set of its own, a later load above an
+    // earlier one. The Label objects are a view of the resolved symbols, rebuilt after every change.
+    struct View
+    {
+        std::map<std::string, std::shared_ptr<Label>> byName;
+        std::unordered_map<uint16_t, std::shared_ptr<Label>> byAddress;   // the last one placed at the address
+    };
+    std::unique_ptr<unrealasm::symbols::SymbolStore> _store;
+    std::shared_ptr<View> _view;
+    int _nextFilePriority = 100;
+    // AddLabel of a new name while the user set is on top only adds to the view; its records join the user set at the
+    // next use of the store (Flush), so a script adding labels one by one does not rebuild the view each time
+    mutable std::vector<unrealasm::symbols::Symbol> _pendingUser;
+    bool _userOnTop = true;
+
     // File format detection and parsing helpers
 public:
     enum class FileFormat
@@ -126,13 +142,31 @@ public:
     // Utility methods
     std::vector<std::shared_ptr<Label>> GetAllLabels() const;
     size_t GetLabelCount() const;
-    
+
+    // Symbol sets (the store behind the labels)
+    static constexpr const char* USER_SET = "user";
+    static constexpr int USER_SET_PRIORITY = 1000000;
+    std::vector<unrealasm::symbols::SymbolSet> GetSymbolSets() const;
+    std::shared_ptr<const unrealasm::symbols::SymbolIndex> GetSymbolIndex() const;
+    bool SetSymbolSetEnabled(const std::string& id, bool enabled);
+    bool SetSymbolSetPriority(const std::string& id, int priority);
+    bool DropSymbolSet(const std::string& id);
+
+    /// A symbol as the label it shows (the CPU address, the page as bank + bank offset, the kind or the file's own type
+    /// word, "code" when none; the "label.*" traits keep what a label set by hand has beyond that); nullopt when the
+    /// symbol has no main CPU address
+    static std::optional<Label> ToLabel(const unrealasm::symbols::Symbol& symbol);
+    /// A label as a symbol the store keeps (`base` gives the fields a label does not have); ToLabel gives it back as is
+    static unrealasm::symbols::Symbol FromLabel(const Label& label, const unrealasm::symbols::Symbol& base);
+
 protected:
     // Label files through the symbol module's codecs (unreal-asm, docs/inprogress/2026-10-05-unreal-asm/symbols/)
     static std::string CodecForExtension(const std::string& extension);
     bool ReadLabelFile(const std::string& path, std::vector<uint8_t>& bytes) const;
     bool ImportWith(const unrealasm::symbols::ISymbolCodec& codec, const std::vector<uint8_t>& bytes, const std::string& path);
-    bool AddSymbol(const unrealasm::symbols::Symbol& symbol);
     static unrealasm::symbols::Symbol ToSymbol(const Label& label);
+    void Rebuild();
+    void Flush() const;
+    static void Notify();
     /// endregion </Methods>
 };

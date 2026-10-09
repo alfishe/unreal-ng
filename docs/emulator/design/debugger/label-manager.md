@@ -384,13 +384,43 @@ public:
 
 ### Internal Storage
 
+The labels live in the main CPU's symbol store (`unrealasm::symbols::SymbolStore`, the unreal-asm symbol module,
+`docs/inprogress/2026-10-05-unreal-asm/symbols/architecture.md` section 8). `LabelManager` is the facade over it:
+
+| Set | What it holds | Priority |
+|-----|---------------|----------|
+| `user` | what `AddLabel` and `UpdateLabel` make | `USER_SET_PRIORITY` (1 000 000): wins over every file |
+| `file:<path>` | one per loaded file (a native file with several sets: `file:<path>#<set id>`) | 100, 101, ...: a later load wins; loading the same path again replaces its set and moves it up |
+
+The `Label` objects are a view of the resolved symbols, rebuilt after every change:
+
 ```cpp
-// Dual-map structure for O(1) lookup in both directions
-std::map<uint16_t, std::shared_ptr<Label>> _labelsByZ80Address;
-std::map<std::string, std::shared_ptr<Label>> _labelsByName;
+struct View
+{
+    std::map<std::string, std::shared_ptr<Label>> byName;              // the name's record in the highest set
+    std::unordered_map<uint16_t, std::shared_ptr<Label>> byAddress;    // the last label placed at the address
+};
 ```
 
-**Limitation**: Current address map stores only one label per address. Bank-aware lookup requires scanning all labels.
+- Sets are taken by priority (a later set first among equal ones), each set's records in order. A name shows its last
+  record, and an address shows the last label placed at it. A label that a higher set shadows by name shows nowhere.
+- `RemoveLabel` takes the name out of every set. `UpdateLabel` writes the edit into the `user` set and leaves the
+  file's own record under it, so reloading the file keeps the edit and switching the `user` set off shows the file's
+  record again. While the `user` set is off, `UpdateLabel` edits the owning set in place.
+- `ClearAllLabels` empties the store.
+- Sets: `GetSymbolSets`, `GetSymbolIndex`, `SetSymbolSetEnabled`, `SetSymbolSetPriority`, `DropSymbolSet`.
+- `ToLabel(symbol)` / `FromLabel(label, base)` convert between the two forms. `ToLabel` gives:
+  - the CPU address (a page symbol in its window);
+  - the page as bank and bank offset;
+  - the kind, or the file's own type word, as the type ("code" when the file gave none);
+  - the bank type by the address (ROM below `#4000`).
+
+  A field set by hand that this rule cannot give back is kept as a `label.<field>=<value>` trait, so every label
+  survives the store as it was. Examples: a bank offset beyond the page, a ROM bank type above `#4000`, an empty type.
+- `SaveLabels` writes every label by address. Names that share an address each get their own line.
+
+Before the store (until 2026-10-08), two maps held the labels: one by name and one by address. That kept one label per
+address, left a stale entry when a name moved, and dropped the other names of an address when one was removed.
 
 ### Notifications
 
@@ -693,9 +723,9 @@ struct Breakpoint {
 | Operation | Complexity |
 |-----------|------------|
 | Lookup by name | O(log n) |
-| Lookup by address | O(log n) |
-| Add label | O(log n) |
-| Remove label | O(log n) |
+| Lookup by address | O(1) average (hash map of the view) |
+| Add / update / remove label | O(n): the store publishes a new index and the view is rebuilt |
+| Load a file | O(n log n): one set, one rebuild |
 | Get all labels | O(n) |
 | Filter by module | O(n) |
 | Filter by bank | O(n) |

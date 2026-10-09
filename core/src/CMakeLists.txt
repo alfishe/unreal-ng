@@ -301,8 +301,9 @@ endif()
 
 # Link gif (ScreenCapture). PRIVATE: no public core header includes gif.h
 target_link_libraries(${PROJECT_NAME} PRIVATE gif)
-# The symbol module of unreal-asm reads and writes the label files (LabelManager is its facade)
-target_link_libraries(${PROJECT_NAME} PRIVATE unreal-asm)
+# The symbol module of unreal-asm reads and writes the label files (LabelManager is its facade); public, as the
+# facade hands out its symbol sets
+target_link_libraries(${PROJECT_NAME} PUBLIC unreal-asm)
 
 # Link libopl4 (MoonSound / YMF278B synthesis). PRIVATE: only core sources
 # include opl4 headers or call the library — public headers such as

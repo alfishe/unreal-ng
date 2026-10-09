@@ -76,7 +76,14 @@ phase; master only after the owner's review.
 - [ ] A8 symbols on the library (symbols S1-S5), branch `unreal-asm-a8`
   - [x] S1 model, index, store, normalization + merge policies, the native `*.usym.json` codec and the symbol codec registry (2026-10-06): `include/unrealasm/symbols/`, `src/symbols/`; the library is std-only as a whole, so it is the `symbols-std-only` check; 13 tests (round trip identity, unknown members kept, DT-1 / DT-2 cases, index snapshots)
   - [x] S2 the five existing `LabelManager` formats + `unreal-l` as codecs (2026-10-06): `unreal-map`, `simple-sym`, `unreal-l`, `vice`, `sjasm-equ`, `z88dk-defc`, each decode + encode; `LabelManager` loads and saves through them (core links `unreal-asm`); golden dumps (`testdata/debugger/labels/`): all 11 files of `data/symbols` load as before; fixed on the way: a CPU-view label's bank is "any" (65535, was 255 for SYM / VICE / SJASM / Z88DK), `#FFFF` loads, `al 1234` reads `#1234` (was `#34`), VICE's dot and sjasmplus' colon are syntax, lower-case `defc` reads, sjasm comments kept, an unknown bank prefix is a CPU address (reported); `SaveLabels` writes MAP / VICE / SJASM / Z88DK in their own formats (all wrote the SYM body before)
-  - [ ] S2b the per-CPU `SymbolStore` behind `LabelManager` (sets, priorities; `Label` a view of `Symbol`): needed by the S5 surfaces
+  - [x] S2b the per-CPU `SymbolStore` behind `LabelManager` (2026-10-08):
+    - Sets: the set `user` (what `AddLabel` / `UpdateLabel` make, priority 1 000 000) and one set per loaded file (a later load above; loading a path again replaces its set).
+    - `Label` is a view of `Symbol`, rebuilt on change. `label.*` traits keep what a hand-made label has beyond the derivation rule.
+    - Set API: `GetSymbolSets`, `GetSymbolIndex`, `SetSymbolSetEnabled` / `Priority`, `DropSymbolSet`.
+    - Every old test and golden dump is unchanged; 7 new tests.
+    - Fixed: a name that moves leaves no stale address entry; removing one of two names at an address keeps the other; `SaveLabels` writes every name of an address.
+    - Core links `unreal-asm` publicly.
+    - [docs/emulator/design/debugger/label-manager.md](../../emulator/design/debugger/label-manager.md) "Internal Storage".
   - [x] S3 tokenizer; sjasmplus `.sym` / `.sld` / `.lst`, pasmo (2026-10-06): golden files written by sjasmplus 1.24 and pasmo 0.5.5 (`testdata/symbols/`); `.sym` and pasmo files written back byte for byte, SLD keeps pages, kinds, scopes and source lines, the listing gives the same names and values as `--sym`
   - [x] z88dk `z80asm` `.map` (`z88dk-map`) and `-g` / `-s` (2026-10-06): golden files from z88dk 2.3, `.map` and `.def` written back byte for byte; the model gains `section`, `exported` and `traits` (z88dk scope / def, SLD's `+used`)
   - [x] LabelManager: a `.map` whose content is z80asm's goes to `z88dk-map` (2026-10-07; golden `z88dk-labels.map`)
@@ -100,5 +107,5 @@ phase; master only after the owner's review.
     - [ ] the emulator surface: copy the pages of a running machine, offer the candidates (S5)
 - [x] A9 benchmarks, user docs (2026-10-07): `unreal-asm-benchmarks` (codecs, dialects, symbol module), results in [test-and-benchmark-plan.md](test-and-benchmark-plan.md) §6 and [symbols/test-and-benchmark-plan.md](symbols/test-and-benchmark-plan.md) §6; the hot paths the profiles found fixed (XAS / ALASM / ZEUS keyword search, XAS's font, ASCII code points, the symbol index); user guide [docs/features/unreal-asm.md](../../features/unreal-asm.md)
   - [ ] below target: decode with the version detected for ALASM / ZX-ASM / ZEUS / XAS (every version tried per line), ZEUS / XAS decode with the version given (each line encoded again for the canonical check), ALASM → sjasmplus 187 k lines/s
-  - [ ] `BM_Symbols_DisasmLine` A/B against today's LabelManager: with S2b
+  - [x] `BM_Symbols_DisasmLine` A/B against the old LabelManager (2026-10-08): 13-28 % faster with 1k-60k labels, the address lookup 4-9 times faster ([symbols/test-and-benchmark-plan.md](symbols/test-and-benchmark-plan.md) §6)
 - [ ] P2: memory bridge B0-B6 ([memory-bridge.md](memory-bridge.md)), design only for now

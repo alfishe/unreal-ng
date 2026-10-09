@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <iterator>
@@ -14,6 +15,7 @@
 #include "emulator/emulatorcontext.h"
 #include "stdafx.h"
 #include "unrealasm/symbols/codec.h"
+#include "unrealasm/symbols/store.h"
 
 // @file labelmanager.cpp
 // @brief Implementation of the LabelManager class for managing debug symbols and labels
@@ -28,6 +30,7 @@
 // @brief Construct a new LabelManager instance
 // @param context Pointer to the emulator context
 LabelManager::LabelManager(EmulatorContext* context)
+    : _store(std::make_unique<unrealasm::symbols::SymbolStore>()), _view(std::make_shared<View>())
 {
     _context = context;
     _logger = _context->pModuleLogger;
@@ -45,6 +48,59 @@ LabelManager::~LabelManager()
 
 /// region <Label management>
 
+namespace
+{
+using unrealasm::symbols::Symbol;
+using unrealasm::symbols::SymbolSet;
+
+// The set and the place of the symbol a name shows (the highest-priority enabled set, its last record of the name)
+bool FindOwner(const std::vector<SymbolSet>& sets, const std::string& name, size_t& set, size_t& index)
+{
+    bool found = false;
+    int best = 0;
+    for (size_t i = 0; i < sets.size(); i++)
+    {
+        if (!sets[i].enabled || (found && sets[i].priority < best))
+            continue;
+        for (size_t j = sets[i].symbols.size(); j-- > 0;)
+        {
+            const Symbol& s = sets[i].symbols[j];
+            if (s.name == name && LabelManager::ToLabel(s))
+            {
+                // the same priority: the later set wins, as in Rebuild
+                found = true;
+                best = sets[i].priority;
+                set = i;
+                index = j;
+                break;
+            }
+        }
+    }
+    return found;
+}
+
+SymbolSet UserSet(const unrealasm::symbols::SymbolStore& store)
+{
+    if (auto set = store.GetSet(LabelManager::USER_SET))
+        return std::move(*set);
+    SymbolSet set;
+    set.id = LabelManager::USER_SET;
+    set.title = "User labels";
+    set.origin.kind = "user";
+    set.priority = LabelManager::USER_SET_PRIORITY;
+    return set;
+}
+
+// Removes the name's records from the user set; true when there were any
+bool EraseName(SymbolSet& set, const std::string& name)
+{
+    const auto it = std::remove_if(set.symbols.begin(), set.symbols.end(), [&](const Symbol& s) { return s.name == name; });
+    const bool erased = it != set.symbols.end();
+    set.symbols.erase(it, set.symbols.end());
+    return erased;
+}
+}  // namespace
+
 bool LabelManager::AddLabel(const std::string& name, uint16_t z80Address, uint16_t bank, uint16_t bankOffset,
                             const std::string& type, const std::string& module, const std::string& comment, bool active)
 {
@@ -53,30 +109,46 @@ bool LabelManager::AddLabel(const std::string& name, uint16_t z80Address, uint16
         return false;
     }
 
-    // Create a new label
-    auto label = std::make_shared<Label>();
-    label->name = name;
-    label->address = z80Address;
-    label->bank = bank;
-    label->bankOffset = bankOffset;
-    label->type = type;
-    label->module = module;
-    label->comment = comment;
-    label->active = active;
+    Label label;
+    label.name = name;
+    label.address = z80Address;
+    label.bank = bank;
+    label.bankOffset = bankOffset;
+    label.type = type;
+    label.module = module;
+    label.comment = comment;
+    label.active = active;
 
     // If address is in ROM area (below 0x4000)
     if (z80Address < 0x4000)
     {
-        label->setBankTypeROM();
+        label.setBankTypeROM();
     }
 
-    // Add to all lookup maps
-    _labelsByZ80Address[z80Address] = label;
-    _labelsByName[name] = label;
+    Symbol base;
+    base.provenance.importer = "user";
+    Symbol symbol = FromLabel(label, base);
+    if (_userOnTop && !_view->byName.count(name))
+    {
+        // A new name at the end of the top set: it shows by its name and is the last label placed at its address
+        auto shown = std::make_shared<Label>(std::move(label));
+        _view->byName.emplace(name, shown);
+        _view->byAddress[z80Address] = std::move(shown);
+        _pendingUser.push_back(std::move(symbol));
+    }
+    else
+    {
+        // A name added again moves to the end: the last label placed at an address is the one its address shows
+        Flush();
+        SymbolSet user = UserSet(*_store);
+        EraseName(user, name);
+        user.symbols.push_back(std::move(symbol));
+        _store->PutSets({std::move(user)});
+        Rebuild();
+    }
 
     // Notify about the new label
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.Post(NC_LABEL_CHANGED, nullptr, true);
+    Notify();
 
     return true;
 }
@@ -87,21 +159,22 @@ bool LabelManager::AddLabel(const std::string& name, uint16_t z80Address, uint16
 // @return false if no label with the given name exists
 bool LabelManager::RemoveLabel(const std::string& name)
 {
-    auto it = _labelsByName.find(name);
-    if (it == _labelsByName.end())
+    if (!_view->byName.count(name))
     {
         return false;
     }
 
-    std::shared_ptr<Label> label = it->second;
-
-    // Remove from all maps
-    _labelsByZ80Address.erase(label->address);
-    _labelsByName.erase(it);
+    // The name goes from every set, as a label removed is gone whatever file it came from
+    Flush();
+    std::vector<SymbolSet> changed;
+    for (SymbolSet& set : _store->Sets())
+        if (EraseName(set, name))
+            changed.push_back(std::move(set));
+    _store->PutSets(std::move(changed));
+    Rebuild();
 
     // Notify about the removed label
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.Post(NC_LABEL_CHANGED, nullptr, true);
+    Notify();
 
     return true;
 }
@@ -112,10 +185,12 @@ bool LabelManager::RemoveLabel(const std::string& name)
 void LabelManager::ClearAllLabels()
 {
     // Check if we have any labels before clearing
-    bool hadLabels = !_labelsByName.empty();
+    bool hadLabels = !_view->byName.empty();
 
-    _labelsByZ80Address.clear();
-    _labelsByName.clear();
+    _pendingUser.clear();
+    _store->Clear();
+    _nextFilePriority = 100;
+    Rebuild();
 
     // Notify about clearing all labels if there were any
     if (hadLabels)
@@ -130,8 +205,8 @@ void LabelManager::ClearAllLabels()
 // @return std::shared_ptr<Label> Pointer to the label if found, nullptr otherwise
 std::shared_ptr<Label> LabelManager::GetLabelByZ80Address(uint16_t address) const
 {
-    auto it = _labelsByZ80Address.find(address);
-    return it != _labelsByZ80Address.end() ? it->second : nullptr;
+    auto it = _view->byAddress.find(address);
+    return it != _view->byAddress.end() ? it->second : nullptr;
 }
 
 // @brief Find a label by its name
@@ -139,8 +214,8 @@ std::shared_ptr<Label> LabelManager::GetLabelByZ80Address(uint16_t address) cons
 // @return std::shared_ptr<Label> Pointer to the label if found, nullptr otherwise
 std::shared_ptr<Label> LabelManager::GetLabelByName(const std::string& name) const
 {
-    auto it = _labelsByName.find(name);
-    return it != _labelsByName.end() ? it->second : nullptr;
+    auto it = _view->byName.find(name);
+    return it != _view->byName.end() ? it->second : nullptr;
 }
 
 // @brief Get all labels in the manager
@@ -148,7 +223,7 @@ std::shared_ptr<Label> LabelManager::GetLabelByName(const std::string& name) con
 std::vector<std::shared_ptr<Label>> LabelManager::GetAllLabels() const
 {
     std::vector<std::shared_ptr<Label>> result;
-    for (const auto& pair : _labelsByName)
+    for (const auto& pair : _view->byName)
     {
         result.push_back(pair.second);
     }
@@ -159,13 +234,13 @@ std::vector<std::shared_ptr<Label>> LabelManager::GetAllLabels() const
 // @return size_t Number of labels currently managed
 size_t LabelManager::GetLabelCount() const
 {
-    return _labelsByName.size();
+    return _view->byName.size();
 }
 
 std::vector<std::shared_ptr<Label>> LabelManager::GetAllLabelsAtAddress(uint16_t address) const
 {
     std::vector<std::shared_ptr<Label>> result;
-    for (const auto& pair : _labelsByName)
+    for (const auto& pair : _view->byName)
     {
         if (pair.second->address == address)
             result.push_back(pair.second);
@@ -176,7 +251,7 @@ std::vector<std::shared_ptr<Label>> LabelManager::GetAllLabelsAtAddress(uint16_t
 std::vector<std::shared_ptr<Label>> LabelManager::GetLabelsByModule(const std::string& module) const
 {
     std::vector<std::shared_ptr<Label>> result;
-    for (const auto& pair : _labelsByName)
+    for (const auto& pair : _view->byName)
     {
         if (pair.second->module == module)
             result.push_back(pair.second);
@@ -188,7 +263,7 @@ std::vector<std::shared_ptr<Label>> LabelManager::GetLabelsByBank(uint16_t bank,
     std::optional<MemoryBankModeEnum> bankType) const
 {
     std::vector<std::shared_ptr<Label>> result;
-    for (const auto& pair : _labelsByName)
+    for (const auto& pair : _view->byName)
     {
         if (pair.second->bank == bank)
         {
@@ -202,7 +277,7 @@ std::vector<std::shared_ptr<Label>> LabelManager::GetLabelsByBank(uint16_t bank,
 std::vector<std::shared_ptr<Label>> LabelManager::GetLabelsByType(const std::string& type) const
 {
     std::vector<std::shared_ptr<Label>> result;
-    for (const auto& pair : _labelsByName)
+    for (const auto& pair : _view->byName)
     {
         if (pair.second->type == type)
             result.push_back(pair.second);
@@ -213,7 +288,7 @@ std::vector<std::shared_ptr<Label>> LabelManager::GetLabelsByType(const std::str
 std::vector<std::shared_ptr<Label>> LabelManager::GetLabelsInRange(uint16_t fromAddr, uint16_t toAddr) const
 {
     std::vector<std::shared_ptr<Label>> result;
-    for (const auto& pair : _labelsByName)
+    for (const auto& pair : _view->byName)
     {
         uint16_t addr = pair.second->address;
         if (addr >= fromAddr && addr <= toAddr)
@@ -239,7 +314,7 @@ std::vector<std::shared_ptr<Label>> LabelManager::GetLabelsInRange(uint16_t from
 std::vector<std::shared_ptr<Label>> LabelManager::GetLabels(const LabelFilter& filter) const
 {
     std::vector<std::shared_ptr<Label>> result;
-    for (const auto& pair : _labelsByName)
+    for (const auto& pair : _view->byName)
     {
         const auto& label = pair.second;
 
@@ -270,47 +345,168 @@ std::vector<std::shared_ptr<Label>> LabelManager::GetLabels(const LabelFilter& f
     return result;
 }
 
+// @brief Changes a label in place; the edited label goes to the user set (a file's own record stays under it, so a
+// reload of the file keeps the edit)
 bool LabelManager::UpdateLabel(const Label& updatedLabel)
 {
-    auto it = _labelsByName.find(updatedLabel.name);
-    if (it == _labelsByName.end())
+    Flush();
+    const std::vector<SymbolSet> sets = _store->Sets();
+    size_t owner = 0;
+    size_t index = 0;
+    if (!FindOwner(sets, updatedLabel.name, owner, index))
     {
         // Label with this name does not exist, cannot update
         _logger->Warning(_MODULE, _SUBMODULE, "UpdateLabel failed: Label '%s' not found.", updatedLabel.name.c_str());
         return false;
     }
 
-    std::shared_ptr<Label> existingLabel = it->second;
+    const Symbol& existing = sets[owner].symbols[index];
+    const std::optional<Label> existingLabel = ToLabel(existing);
 
-    // Store old addresses for map updates
-    uint16_t oldZ80Address = existingLabel->address;
+    // Update label properties (name is the key, so it's not changed here; the bank type stays)
+    Label label = updatedLabel;
+    label.bankType = existingLabel->bankType;
 
-    // Update label properties (name is the key, so it's not changed here)
-    existingLabel->address = updatedLabel.address;
-    existingLabel->bank = updatedLabel.bank;
-    existingLabel->bankOffset = updatedLabel.bankOffset;
-    existingLabel->type = updatedLabel.type;
-    existingLabel->module = updatedLabel.module;
-    existingLabel->comment = updatedLabel.comment;
-    existingLabel->active = updatedLabel.active;
-
-    // Update Z80 address map if address changed
-    if (existingLabel->address != oldZ80Address)
+    // The edit goes to the user set (in the file's own set while the user set is off); a label at a new address moves
+    // to the end: the last one placed at an address shows there
+    const auto userSet = _store->GetSet(USER_SET);
+    const bool inPlace = sets[owner].id == USER_SET || (userSet && !userSet->enabled);
+    SymbolSet target = inPlace ? sets[owner] : UserSet(*_store);
+    Symbol symbol = FromLabel(label, existing);
+    if (inPlace && label.address == existingLabel->address)
+        target.symbols[index] = std::move(symbol);
+    else
     {
-        _labelsByZ80Address.erase(oldZ80Address);
-        _labelsByZ80Address[existingLabel->address] = existingLabel;
+        EraseName(target, label.name);
+        target.symbols.push_back(std::move(symbol));
     }
+    _store->PutSets({std::move(target)});
+    Rebuild();
 
-    _logger->Debug(_MODULE, _SUBMODULE, "Label '%s' updated successfully.", existingLabel->name.c_str());
+    _logger->Debug(_MODULE, _SUBMODULE, "Label '%s' updated successfully.", label.name.c_str());
 
     // Notify about the updated label
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.Post(NC_LABEL_CHANGED, nullptr, true);
+    Notify();
 
     return true;
 }
 
 /// endregion </Label management>
+
+/// region <Symbol sets>
+
+std::vector<unrealasm::symbols::SymbolSet> LabelManager::GetSymbolSets() const
+{
+    Flush();
+    return _store->Sets();
+}
+
+std::shared_ptr<const unrealasm::symbols::SymbolIndex> LabelManager::GetSymbolIndex() const
+{
+    Flush();
+    return _store->Index();
+}
+
+bool LabelManager::SetSymbolSetEnabled(const std::string& id, bool enabled)
+{
+    Flush();
+    if (!_store->SetEnabled(id, enabled))
+        return false;
+    Rebuild();
+    Notify();
+    return true;
+}
+
+bool LabelManager::SetSymbolSetPriority(const std::string& id, int priority)
+{
+    Flush();
+    if (!_store->SetPriority(id, priority))
+        return false;
+    Rebuild();
+    Notify();
+    return true;
+}
+
+bool LabelManager::DropSymbolSet(const std::string& id)
+{
+    Flush();
+    if (!_store->Drop(id))
+        return false;
+    Rebuild();
+    Notify();
+    return true;
+}
+
+// @brief The labels of the enabled sets: by priority (a later set first among equals), each set's records in order; a
+// name shows its last record, an address the last label placed at it
+void LabelManager::Rebuild()
+{
+    Flush();
+    const auto index = _store->Index();
+    std::vector<const SymbolSet*> order;
+    for (const SymbolSet& set : index->Sets())
+        if (set.enabled)
+            order.push_back(&set);
+    std::stable_sort(order.begin(), order.end(), [](const SymbolSet* a, const SymbolSet* b) { return a->priority < b->priority; });
+
+    // The user set (or the one AddLabel makes) comes last: a new name there needs no rebuild
+    const SymbolSet* user = nullptr;
+    int above = std::numeric_limits<int>::min();
+    bool userOff = false;
+    for (const SymbolSet& set : index->Sets())
+    {
+        if (set.id == USER_SET)
+        {
+            if (set.enabled)
+                user = &set;
+            else
+                userOff = true;
+        }
+        else if (set.enabled)
+            above = std::max(above, set.priority);
+    }
+    _userOnTop = !userOff && (user ? user->priority > above : USER_SET_PRIORITY > above);
+
+    std::vector<std::shared_ptr<Label>> labels;
+    std::unordered_map<std::string, size_t> last;
+    for (const SymbolSet* set : order)
+        for (const Symbol& symbol : set->symbols)
+            if (auto label = ToLabel(symbol))
+            {
+                last[label->name] = labels.size();
+                labels.push_back(std::make_shared<Label>(std::move(*label)));
+            }
+
+    auto view = std::make_shared<View>();
+    view->byAddress.reserve(last.size());
+    for (size_t i = 0; i < labels.size(); i++)
+    {
+        if (last[labels[i]->name] != i)
+            continue;
+        view->byName.emplace(labels[i]->name, labels[i]);
+        view->byAddress[labels[i]->address] = labels[i];
+    }
+    _view = std::move(view);
+}
+
+// @brief The labels AddLabel only put in the view join the user set
+void LabelManager::Flush() const
+{
+    if (_pendingUser.empty())
+        return;
+    SymbolSet user = UserSet(*_store);
+    std::move(_pendingUser.begin(), _pendingUser.end(), std::back_inserter(user.symbols));
+    _pendingUser.clear();
+    _store->PutSets({std::move(user)});
+}
+
+void LabelManager::Notify()
+{
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_LABEL_CHANGED, nullptr, true);
+}
+
+/// endregion </Symbol sets>
 
 /// region <File operations>
 
@@ -392,7 +588,10 @@ bool LabelManager::SaveLabels(const std::string& path, FileFormat format) const
     const auto* codec = unrealasm::symbols::SymbolCodecRegistry::Builtin().Find(id);
     unrealasm::symbols::SymbolFile file;
     file.sets.emplace_back();
-    for (const auto& [address, label] : _labelsByZ80Address)
+    // Every label by address (names sharing an address each get their line)
+    std::vector<std::shared_ptr<Label>> labels = GetAllLabels();
+    std::stable_sort(labels.begin(), labels.end(), [](const auto& a, const auto& b) { return a->address < b->address; });
+    for (const auto& label : labels)
         file.sets[0].symbols.push_back(ToSymbol(*label));
     const auto encoded = codec->Encode(file, {});
     for (const auto& d : encoded.diagnostics)
@@ -436,10 +635,11 @@ bool LabelManager::ReadLabelFile(const std::string& path, std::vector<uint8_t>& 
     return true;
 }
 
-// @brief Decodes a label file with a codec and adds its symbols in file order (a later name or address wins, as before)
+// @brief Decodes a label file with a codec into a set of its own above the files loaded before (a file loaded again
+// replaces its set); inside a file a later name or address wins, as before
 bool LabelManager::ImportWith(const unrealasm::symbols::ISymbolCodec& codec, const std::vector<uint8_t>& bytes, const std::string& path)
 {
-    const auto decoded = codec.Decode(bytes);
+    auto decoded = codec.Decode(bytes);
     for (const auto& d : decoded.diagnostics)
         LOGDEBUG("%s line %u: %s", path.c_str(), d.line, d.message.c_str());
     if (!decoded.ok)
@@ -447,33 +647,127 @@ bool LabelManager::ImportWith(const unrealasm::symbols::ISymbolCodec& codec, con
         LOGERROR("Failed to read label file %s as %s", path.c_str(), codec.Info().id.c_str());
         return false;
     }
-    for (const auto& set : decoded.file.sets)
-        for (const auto& symbol : set.symbols)
-            AddSymbol(symbol);
+    const bool several = decoded.file.sets.size() > 1;
+    std::vector<SymbolSet> sets;
+    for (SymbolSet& set : decoded.file.sets)
+    {
+        SymbolSet file = std::move(set);
+        if (file.title.empty())
+            file.title = FileHelper::ToFsPath(path).filename().string();
+        file.id = "file:" + path + (several ? "#" + file.id : std::string());
+        file.origin.kind = "file";
+        file.origin.where = path;
+        file.priority = _nextFilePriority++;
+        file.enabled = true;
+        sets.push_back(std::move(file));
+    }
+    Flush();
+    _store->PutSets(std::move(sets));
+    Rebuild();
+    Notify();
     return true;
 }
 
 // @brief A symbol as a label: the CPU address (a page symbol at its window), the page as bank + bank offset, the kind
-// (or the file's own type word) as the type, "code" when the file gave none
-bool LabelManager::AddSymbol(const unrealasm::symbols::Symbol& symbol)
+// (or the file's own type word) as the type, "code" when the file gave none; the bank type by the address (ROM below
+// #4000); the "label.*" traits FromLabel left override each field
+std::optional<Label> LabelManager::ToLabel(const unrealasm::symbols::Symbol& symbol)
 {
     using unrealasm::symbols::SpaceKind;
     const auto address = unrealasm::symbols::CpuAddress(symbol);
     if (!address)
-        return false;
-    uint16_t bank = UINT16_MAX;
-    uint16_t bankOffset = UINT16_MAX;
+        return std::nullopt;
+    Label label;
+    label.name = symbol.name;
+    label.address = *address;
     const SpaceKind kind = symbol.location.space.kind;
     if (kind == SpaceKind::Rom || kind == SpaceKind::Ram || kind == SpaceKind::Cache)
     {
-        bank = symbol.location.space.page;
-        bankOffset = static_cast<uint16_t>(symbol.location.offset & (PAGE_SIZE - 1));
+        label.bank = symbol.location.space.page;
+        label.bankOffset = static_cast<uint16_t>(symbol.location.offset & (PAGE_SIZE - 1));
     }
-    std::string type = symbol.kind != unrealasm::symbols::SymbolKind::Unknown ? std::string(unrealasm::symbols::KindName(symbol.kind))
-                                                                                 : symbol.provenance.type;
-    if (type.empty())
-        type = "code";
-    return AddLabel(symbol.name, *address, bank, bankOffset, type, symbol.module, symbol.comment, symbol.enabled);
+    label.type = symbol.kind != unrealasm::symbols::SymbolKind::Unknown ? std::string(unrealasm::symbols::KindName(symbol.kind))
+                                                                         : symbol.provenance.type;
+    if (label.type.empty())
+        label.type = "code";
+    label.module = symbol.module;
+    label.comment = symbol.comment;
+    label.active = symbol.enabled;
+    label.bankType = label.address < 0x4000 ? BANK_ROM : BANK_RAM;
+    for (const std::string& trait : symbol.traits)
+    {
+        if (trait.compare(0, 6, "label.") != 0)
+            continue;
+        const size_t eq = trait.find('=');
+        if (eq == std::string::npos)
+            continue;
+        const std::string key = trait.substr(6, eq - 6);
+        const std::string value = trait.substr(eq + 1);
+        const auto number = [&]() { return static_cast<uint16_t>(std::strtoul(value.c_str(), nullptr, 16)); };
+        if (key == "address")
+            label.address = number();
+        else if (key == "bank")
+            label.bank = number();
+        else if (key == "bankOffset")
+            label.bankOffset = number();
+        else if (key == "bankType")
+            label.bankType = value == "rom" ? BANK_ROM : BANK_RAM;
+        else if (key == "type")
+            label.type = value;
+    }
+    return label;
+}
+
+// @brief A label as a stored symbol: the page (ROM / RAM by its bank type) when it has a bank, else the CPU view; the
+// type as a kind when it is one's exact name, else the type word; what ToLabel would not give back is kept as
+// "label.<field>=<value>" traits (numbers in hex)
+unrealasm::symbols::Symbol LabelManager::FromLabel(const Label& label, const unrealasm::symbols::Symbol& base)
+{
+    using namespace unrealasm::symbols;
+    Symbol s = base;
+    s.name = label.name;
+    s.location = {};
+    s.window = -1;
+    if (label.bank != UINT16_MAX)
+    {
+        const bool cache = base.location.space.kind == SpaceKind::Cache;
+        s.location.space.kind = cache ? SpaceKind::Cache : label.isROM() ? SpaceKind::Rom : SpaceKind::Ram;
+        s.location.space.page = label.bank;
+        s.location.offset = (label.bankOffset != UINT16_MAX ? label.bankOffset : label.address) & (PAGE_SIZE - 1);
+        s.window = label.address >> 14;
+    }
+    else
+        s.location.offset = label.address;
+    if (!ParseKind(label.type, s.kind) || KindName(s.kind) != label.type)
+    {
+        s.kind = SymbolKind::Unknown;
+        s.provenance.type = label.type;
+    }
+    else
+        s.provenance.type.clear();
+    s.module = label.module;
+    s.comment = label.comment;
+    s.enabled = label.active;
+    s.traits.erase(std::remove_if(s.traits.begin(), s.traits.end(), [](const std::string& t) { return t.compare(0, 6, "label.") == 0; }),
+                   s.traits.end());
+
+    const std::optional<Label> shown = ToLabel(s);
+    const auto hex = [](unsigned value) {
+        std::ostringstream out;
+        out << std::hex << std::uppercase << value;
+        return out.str();
+    };
+    if (!shown || shown->address != label.address)
+        s.traits.push_back("label.address=" + hex(label.address));
+    if (shown && shown->bank != label.bank)
+        s.traits.push_back("label.bank=" + hex(label.bank));
+    if (shown && shown->bankOffset != label.bankOffset)
+        s.traits.push_back("label.bankOffset=" + hex(label.bankOffset));
+    if (!shown || (shown->bankType == BANK_ROM) != label.isROM())
+        s.traits.push_back(std::string("label.bankType=") + (label.isROM() ? "rom" : "ram"));
+    if (shown && shown->type != label.type)
+        s.traits.push_back("label.type=" + label.type);
+    return s;
 }
 
 // @brief A label as a symbol: a label with a bank is a page symbol (ROM / RAM by its bank type), else the CPU view
