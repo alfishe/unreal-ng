@@ -205,9 +205,9 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | | |
 |---|---|
 | **Knowledge** | **verified live** (2026-10-09) and in ALASM 5.09's own sources (`Al50.H`, `Vars.H`) |
-| identification | `ALASM v5.09` (5.07, 5.08 likewise) at `#BE06`, page 2 |
+| identification | `ALASM v5.09` at `#97C5` (page 2). The copy at `#BE00` is a screen line buffer the editor overwrites, so it does not identify (Y0, 2026-10-09; the research note said `#BE06`) |
 | pages | `Port7FFD` (its driver ids: `#C6` = the text in the 512K build; `SRCstart EQU #26` in the 1024K build) |
-| family | `FileImage`. The page id of the current text is at `IX+#0D` = `#80CC` (`IX = #80BF`). The page from `#C000` holds the file: `T_NAME` `#C000`, `T_SIZE` `#C021` (the length after the 64-byte header), `T_STR` `#C023` (current line address), `T_OPT` `#C027` (changed), `T_SURE` `#C028`. The live file is `#C000 .. #C040 + word(#C021)`; fibo was byte-identical to its file |
+| family | `FileImage`. The page id of the current text is at `IX+#0D` = `#80CC` (`IX = #80BF`). The page from `#C000` holds the file: `T_NAME` `#C000`, `T_SIZE` `#C021` (the length after the 64-byte header), `T_STR` `#C023` (current line address), `T_OPT` `#C027` (changed), `T_SURE` `#C028`. The live file is `#C000 .. #C040 + word(#C021)` with `T_OPT` written as 0, as SAVE writes it (Y0: SNAKE loaded, typing and edited were byte-identical to ALASM's own saves) |
 | typing | `NotInText`: `IX+#0C` bit 0 = the current line is modified; Enter writes it |
 | project | one text per page: a scan of the RAM pages for headers with the signature at `+#28` gives every text in memory with its name; `IX+#0A` = the page INCLUDE loads into |
 | labels | page 3 (`#43` / `#C3`), `alasm-table` scanner; `IX+#2E` bit 7 = compiled |
@@ -224,7 +224,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 
 | | |
 |---|---|
-| **Knowledge** | **verified live** for 4.44 (text page id `#06` at `#80CC`, AL444nfo byte-identical, `ALASM v4.44` at `#BE06`); 4.46's source (`AL446SRC`, `Al44.H`) has the same `sysvars` at `#80BF` and the same `T_*` fields |
+| **Knowledge** | **verified live** for 4.44 (text page id `#06` at `#80CC`, AL444nfo byte-identical loaded and edited, `ALASM v4.44` at `#9E7E`; `#BE00` is overwritten in the editor as in 5.09); 4.46's source (`AL446SRC`, `Al44.H`) has the same `sysvars` at `#80BF` and the same `T_*` fields. The title's address differs per build: every further version needs its dump |
 | differences | 4.4x label table ends at `#3F7F` (5.x `#3DFF`); 4.5 keeps its table in page 6 |
 | **Work** | descriptor rows for 4.43, 4.45, 4.46, 4.5, a 4.5 dump: **0.5 d** |
 
@@ -241,11 +241,11 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | | |
 |---|---|
 | **Knowledge** | **verified live** (2026-10-09, SNAKE) |
-| identification | to be fixed: the title string in the code (R7 step: search page 2 / `#C000` for `TASM 4.12`) |
+| identification | `TASM128>` at `#9CDD` and `Import TASM3.0 source file: ` at `#A394` (4.0 has no import) |
 | pages | lower part in page 2 (`#8000` window); upper part `MappedAtC000` (page 6 on a Pentagon 128) |
-| family | `GapBuffer`: `#8F59` text start (`#A6EE`), `#8F5B` top (`#FFFF`), `#8F5D` gap start, `#8F5F` gap end; the initialization makes an empty text start = gap start, gap end = top |
-| typing | `InLineBuffer`: the current line as expanded text in the line buffer near `#928A`; the reader encodes it with the `tasm` codec (version 4.12) and puts it into the gap |
-| end | the file's `FF FF` end record is added by SAVE: the reader appends it |
+| family | `GapBuffer`: `#8F59` text start (`#A6EE`), `#8F5B` top (`#FFFF`, exclusive), `#8F5D` gap start, `#8F5F` gap end. Lines are records `n`, `n` bytes, `n`. `#94D9` counts the lines (the cursor's line included), `#94CE` is the cursor's line |
+| typing | `InLineBuffer`: in the editor the cursor's line is only in the line buffer, 128 bytes of blank-padded text at `#928A` (`#930A` holds a packed copy that lags). Whether the editor holds it: the records before and after the gap add up to `#94D9` (the command line: Quit put it back and moved the gap to the end) or to one less (the editor). The reader encodes the buffer with the `tasm` codec (4.12, CP866) and puts it at the gap. No flag in memory tells the modes apart; this count does (checked on four dumps: top, middle, typing, command line) |
+| end | the file's `FF FF` end record is added by SAVE: the reader appends it (the bytes at the gap start are no guide: after Enter on the last line they can read `FF FF` in the editor too) |
 | caveat | Edit leaves a stale copy of the file at the text start; only the pointers count |
 | **Work** | identification, the line buffer's exact address and length, the gap reader, golden dumps (cursor at the top, in the middle, at the end, mid-typing): **1.5 d** |
 
@@ -399,6 +399,16 @@ AsmControl.
 | surfaces | AsmControl-style unit tests of `SyncControl`; MCP routing; a Qt widget test of the dock |
 
 ## 11. Phases
+
+Status: **Y0 built (2026-10-09)**:
+
+- the library part is `unrealasm/sync.h` (descriptors, probe, the three readers), tested on golden dumps
+  (`testdata/sync`, made by `tools/verification/unreal-asm/emulator/sync-dumps.py`);
+- the emulator part is `SyncControl` (`core/src/debugger/asm/sync/synccontrol.h`), reached through AsmControl's
+  `sync-*` verbs;
+- surfaces: WebAPI `GET /asm/sync`, `POST /asm/sync/probe` / `extract`; CLI `asm sync`; MCP `asm_source` `sync_*`;
+- descriptors: ALASM 5.09, ALASM 4.44, TASM 4.12. The other versions of §7.2 / §7.3 need their dumps, because the title
+  address differs per build.
 
 | Phase | Work | Ends with |
 |---|---|---|

@@ -94,6 +94,30 @@ emu.asm_encode("START LD A,1\n RET\n", codec="alasm", output="disk:A/PROBE.H")
 
 A refusal does not raise: the table / dict has `ok = false` and `error` = the message.
 
+## The source an assembler holds in RAM (asm-synchronizer)
+
+The source an assembler is editing in the machine can be read without saving it to a disk first. ALASM 5.09, ALASM
+4.44 and TASM 4.12 are recognized (phase Y0 of `docs/inprogress/2026-10-05-unreal-asm/asm-synchronizer.md`). The RAM is
+copied at a coherent moment, and the guest is never written. The text comes out as the file the assembler's own SAVE
+would write: a line being edited in TASM is in it. ALASM keeps a line out of the text until Enter; the status says
+`typing` then.
+
+```text
+asm_source {"action":"sync_status"}                                   # assembler, text name, page, editor / typing / changed
+asm_source {"action":"sync_probe"}                                    # every assembler that identifies, with a score
+asm_source {"action":"sync_extract"}                                  # the text
+asm_source {"action":"sync_extract","as":"dialect","to":"sjasmplus","output":"scratch/live.asm"}
+asm_source {"action":"sync_extract","as":"file","output":"disk:A/COPY.H"}   # the assembler's own format, onto the disk
+```
+
+| Surface | Calls |
+|---------|-------|
+| WebAPI | `GET /emulator/{id}/asm/sync?assembler=`, `POST /asm/sync/probe`, `POST /asm/sync/extract {assembler?, as: text \| file \| dialect, to?, codepage?, output?}` |
+| CLI | `asm sync [status]`, `asm sync probe`, `asm sync extract [--as text\|file\|dialect] [--to d] [--output f]` |
+
+`state: none` (404) means that no known assembler is in RAM. `ambiguous` (400) means that two identify alike: give
+`assembler`. `inconsistent` means that the pointers did not add up at that moment (the guest was mid-update): ask again.
+
 ## Pitfalls
 
 - `convert` handles one file. A project whose sources INCLUDE each other converts as a whole with

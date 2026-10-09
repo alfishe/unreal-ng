@@ -9,6 +9,7 @@
 #include "common/base64.h"
 #include "common/filehelper.h"
 #include "debugger/asm/diskfiles.h"
+#include "debugger/asm/sync/synccontrol.h"
 #include "unrealasm/codec.h"
 #include "unrealasm/containers.h"
 #include "unrealasm/dialect.h"
@@ -319,7 +320,8 @@ AsmControl::AsmControl(EmulatorContext* context) : _context(context) {}
 
 const std::vector<std::string>& AsmControl::Verbs()
 {
-    static const std::vector<std::string> verbs = {"formats", "dialects", "files", "detect", "decode", "encode", "convert"};
+    static const std::vector<std::string> verbs = {"formats", "dialects", "files", "detect", "decode", "encode", "convert",
+                                                   "sync-status", "sync-probe", "sync-extract"};
     return verbs;
 }
 
@@ -335,6 +337,8 @@ const std::vector<std::string>& AsmControl::OptionsFor(const std::string& verb)
         {"convert", {"path", "data", "name", "file", "to", "codec", "version", "from", "z80n", "output"}},
     };
     static const std::vector<std::string> none;
+    if (verb.rfind("sync-", 0) == 0)
+        return SyncControl::OptionsFor(verb.substr(5));
     const auto it = options.find(verb);
     return it != options.end() ? it->second : none;
 }
@@ -377,6 +381,12 @@ AsmReply AsmControl::Execute(const AsmRequest& request)
         return Decode(normalized);
     if (verb == "encode")
         return Encode(normalized);
+    if (verb.rfind("sync-", 0) == 0)
+    {
+        if (!_context)
+            return Fail(AsmControlError::BadRequest, "'" + verb + "' needs an emulator instance");
+        return SyncControl(_context).Execute(verb.substr(5), normalized);
+    }
     return Convert(normalized);
 }
 

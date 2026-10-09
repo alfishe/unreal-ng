@@ -22,12 +22,17 @@ D-4 codecs and format conversion first, dialect conversion plugins after. No cod
 
 Design on master; development in a fresh worktree from master (branch `unreal-asm`); a commit after each green
 phase; master only after the owner's review.
-- [ ] symbol module proposals P-2 … P-7 ([symbols/goals-and-requirements.md](symbols/goals-and-requirements.md) §3.2); S1 implements P-2 (`*.usym.json`) and P-4 (`both` + report) as recommended, the owner may still change them
+- [x] symbol module proposals P-2 … P-7 accepted as recommended (owner, 2026-10-09; [symbols/goals-and-requirements.md](symbols/goals-and-requirements.md) §3.1)
 
 ## Phases ([tdd.md](tdd.md) §8)
 
 - [x] Prior-art survey, local and public ([prior-art.md](prior-art.md))
-- [ ] A0 review round 1 of every document
+- [x] A0 review round 1 of every document (2026-10-09, owner: as proposed):
+  - P-2…P-7 recorded as decisions ([symbols/goals-and-requirements.md](symbols/goals-and-requirements.md) §3.1).
+  - "As built" tables in [architecture.md](architecture.md) §9 and [symbols/architecture.md](symbols/architecture.md) §9: no `core/src/debugger/symbols/` folder; the adapters went into `SymbolControl`, `LabelManager` and `core/src/debugger/asm/diskfiles.h`.
+  - Status brought up to date in both READMEs and both phase tables; the tool paths (`core/src/3rdparty/unreal-asm/tools/symconv`) and the user guide (`docs/features/unreal-asm.md`, no `symbols.md` / `asm-sources.md`) corrected.
+  - The debugger additions' E7 closed (the live scans).
+  - The research documents' open points match this TODO (MASM 2.0, TASM 5.5, XAS `USEL` / `MAKE`).
 - [x] A1 skeleton, document model, encoding detectors and code page tables (D-13), `text` codec, sjasmplus text codec (D-10), registry, detection (2026-10-05, branch `unreal-asm`): `core/src/3rdparty/unreal-asm` with the `zxasm` CLI, two examples and the text / sjasmplus corpus (D-14); 22 tests in `unreal-asm-tests` (run by `test-parallel`); byte-exact round trip of every corpus file (CP866 / KOI8-R / CP1251 / UTF-8 × LF / CRLF / CR, BOM, no final break, mixed ends, invalid bytes); detector: KOI8-R 75 vs 13, CP1251 72 vs 16, CP866 98
 - [x] A2 `tasm3`, `tasm4` (research first: [research-tasm.md](research-tasm.md)), sub-version conversion (2026-10-05, branch `unreal-asm`): hobeta / TR-DOS containers, `zxasm` reads `.$X` / `.trd --file`, writes `.$X`; example `read-hobeta`; testdata `tasm3/` (two real TASM 3.2 files + expected text); 34 tests; byte-exact round trip, the canonical tokenizer alone reproduces TASM 3.2's bytes, TASM 3 → 4 → 3 exact
   - [x] TASM every version (2026-10-05, branch `unreal-asm`): `3` (3.0-3.5), `4.0` (4.0 XLD / 4.4 KVA), `4.12` (direct blank counts); tables from each binary; 127 real sources (24 / 91 / 12) byte-exact, canonical 99.78 %; tokenizer: keywords everywhere, `"x"` constants literal ([research-tasm.md](research-tasm.md))
@@ -143,7 +148,8 @@ phase; master only after the owner's review.
 - [ ] P2: asm-synchronizer ([asm-synchronizer.md](asm-synchronizer.md), TDD 2026-10-09; was "memory bridge"). Both directions between the host and an assembler running in the emulator; about 95 days in all; the code waits for an owner go-ahead (P2)
   - [x] research: ALASM 4.44 / 5.09 and TASM 4.12 memory layouts verified live (2026-10-09)
   - Part A, guest → host (about 40 days; §11-§12):
-    - [ ] Y0 descriptors, probe, the three readers (file image, gap buffer, linear), `SyncControl` status / probe / extract; ALASM 5.x / 4.4x, TASM 4.12; WebAPI, CLI, MCP (first cut, about 6 days)
+    - [x] Y0 descriptors, probe, the three readers (file image, gap buffer, linear), `SyncControl` status / probe / extract; ALASM 5.09 / 4.44, TASM 4.12; WebAPI, CLI, MCP (2026-10-09): `unrealasm/sync.h`, golden dumps `testdata/sync` (9 sessions, each byte-identical to the assembler's own save), `sync-*` verbs of AsmControl; checked live on TASM 4.12 and ALASM 4.44
+    - [ ] Y0 follow-up: ALASM 5.0 / 5.05 / 5.07 / 5.08 / 4.43 / 4.45 / 4.46 / 4.5 descriptors (each build keeps its title elsewhere: a dump each); Lua / Python `asm_sync_*` (Y1 lists them)
     - [ ] Y1 hash poller + debounce, worker build (codec → IR → layout), hints, the live symbol set `live:sync:*`; Lua / Python (about 4 days more)
     - [ ] Y2 the Qt "Live source" dock
     - [ ] Y3 128K assemblers: XAS, STORM, ZX-ASM / ZAsm, MASM, TASM 4.0 / 4.4 / 3.x / 2.0, ALASM 3.8c / 4.42 / 5.0 / 5.05 (research + descriptor + golden dumps each, §7)

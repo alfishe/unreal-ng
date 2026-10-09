@@ -127,3 +127,49 @@ paths["/api/v1/emulator/{id}/asm/convert"]["post"]["requestBody"]["content"]["ap
 paths["/api/v1/emulator/{id}/asm/convert"]["post"]["responses"]["200"]["description"] = "{source, format, version, from, to, lines, diagnostics, text | output}";
 paths["/api/v1/emulator/{id}/asm/convert"]["post"]["responses"]["404"]["description"] = "No such file, format or dialect";
 paths["/api/v1/emulator/{id}/asm/convert"]["post"]["responses"]["422"]["description"] = "The conversion failed";
+
+// The source an assembler holds in RAM (core/src/debugger/asm/sync/synccontrol.h, asm-synchronizer.md)
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["summary"] = "The assembler running in the machine";
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["description"] = "Which assembler holds a source in RAM (ALASM 5.09 / 4.44, TASM 4.12), where its text is and the editor state: a line in the editor, a line being typed, changed since saved. The RAM is copied at a coherent moment; the guest is not written.";
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["tags"].append("Assembler Sources");
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][1]["name"] = "assembler";
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][1]["in"] = "query";
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][1]["required"] = false;
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][1]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][1]["description"] = "A descriptor id (alasm-5.09, alasm-4.44, tasm-4.12) when two identify";
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["responses"]["200"]["description"] = "{assembler, title, format, version, family, state, name, page, bytes, lines, current_line, editor, typing, changed, diagnostics}";
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["responses"]["404"]["description"] = "No known assembler in RAM {state: none, candidates}";
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["responses"]["400"]["description"] = "Two identify alike {state: ambiguous, candidates}: give assembler";
+
+paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["summary"] = "Probe RAM for assemblers";
+paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["description"] = "Every assembler descriptor that identifies, best first (100: its text reads; 60: identified, the text does not read now).";
+paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["tags"].append("Assembler Sources");
+paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["responses"]["200"]["description"] = "{candidates: [{assembler, title, score, reason}], descriptors}";
+
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["summary"] = "Extract the source from RAM";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["description"] = "The source the assembler holds, as text, as the file its own SAVE would write (base64 or output), or converted to another dialect.";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["tags"].append("Assembler Sources");
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["assembler"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["assembler"]["description"] = "A descriptor id when two identify";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["as"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["as"]["description"] = "text (default), file or dialect";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["to"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["to"]["description"] = "With as: dialect, the target dialect (dialects)";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["codepage"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["codepage"]["description"] = "With as: text, the code page to read with";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["output"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["output"]["description"] = "A host file or disk:A/NAME.T (as: file writes the assembler type)";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["responses"]["200"]["description"] = "The status fields plus {text | data | output} (and the decode / convert fields)";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["responses"]["422"]["description"] = "The text does not read now (state: inconsistent) or the conversion failed";

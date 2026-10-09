@@ -18,6 +18,8 @@
 ///   decode   source [codec version codepage output]            the text (UTF-8)
 ///   encode   text | input  codec [version codepage lineend output start]   the bytes in a format
 ///   convert  source to [codec version from z80n output]        the source in another dialect
+///   sync-status / sync-probe / sync-extract   the source an assembler running in the machine holds in RAM
+///                                            (sync/synccontrol.h, asm-synchronizer.md)
 
 #include <cstdint>
 #include <map>

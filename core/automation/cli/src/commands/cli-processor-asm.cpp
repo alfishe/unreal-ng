@@ -8,8 +8,16 @@
 #include <emulator/emulator.h>
 #include <emulator/state/statenodejson.h>
 
-void CLIProcessor::HandleAsm(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleAsm(const ClientSession& session, const std::vector<std::string>& rawArgs)
 {
+    // asm sync <status|probe|extract> ...: the verbs sync-status, sync-probe, sync-extract
+    std::vector<std::string> args = rawArgs;
+    if (!args.empty() && args[0] == "sync")
+    {
+        const std::string action = args.size() > 1 && args[1].compare(0, 2, "--") != 0 ? args[1] : "status";
+        args.erase(args.begin(), args.begin() + (args.size() > 1 && args[1] == action ? 2 : 1));
+        args.insert(args.begin(), "sync-" + action);
+    }
     const auto& verbs = AsmControl::Verbs();
     if (args.empty() || std::find(verbs.begin(), verbs.end(), args[0]) == verbs.end())
     {
@@ -24,6 +32,9 @@ void CLIProcessor::HandleAsm(const ClientSession& session, const std::vector<std
             ss << "  asm decode <path> [--codec c] [--version v] [--output file]" << NEWLINE;
             ss << "  asm encode <text-file> --codec c [--version v] [--output file|disk:A/NAME.T]" << NEWLINE;
             ss << "  asm convert <path> --to dialect [--codec c] [--from d] [--output file]" << NEWLINE;
+            ss << "  asm sync [status] [--assembler a]       - the assembler running in the machine and its text" << NEWLINE;
+            ss << "  asm sync probe                        - every assembler that identifies in RAM" << NEWLINE;
+            ss << "  asm sync extract [--as text|file|dialect] [--to d] [--output file|disk:A/NAME.T]" << NEWLINE;
             ss << "  (a path is a host file or disk:A/NAME.T; --file NAME.T picks a file in a .trd / .tap; --json)" << NEWLINE;
             session.SendResponse(ss.str());
             return;
@@ -116,6 +127,33 @@ void CLIProcessor::HandleAsm(const ClientSession& session, const std::vector<std
         else
             ss << text("text");
     }
+    else if (verb == "sync-probe")
+    {
+        if (body.find("candidates")->items.empty())
+            ss << "No known assembler in RAM" << NEWLINE;
+        for (const StateNode& c : body.find("candidates")->items)
+            ss << c.find("assembler")->s << "  " << c.find("score")->i << "  " << c.find("reason")->s << NEWLINE;
+    }
+    else if (verb == "sync-status" || (verb == "sync-extract" && !body.find("text")))
+    {
+        ss << text("title") << " (" << text("assembler") << "): " << text("state") << ", text '" << text("name") << "', " << number("bytes")
+           << " bytes";
+        if (body.find("page") && body.find("page")->i >= 0)
+            ss << " in page " << number("page");
+        if (body.find("editor") && body.find("editor")->b)
+            ss << ", in the editor at line " << body.find("current_line")->i + 1 << " of " << number("lines");
+        if (body.find("typing") && body.find("typing")->b)
+            ss << ", a line being typed (not in the text yet)";
+        if (body.find("changed") && body.find("changed")->b)
+            ss << ", changed since saved";
+        ss << NEWLINE;
+        if (body.find("output"))
+            ss << "Written to " << text("output") << NEWLINE;
+        else if (body.find("data"))
+            ss << "The file as base64 (give --output to write it): " << text("data").size() << " characters" << NEWLINE;
+    }
+    else if (verb == "sync-extract")
+        ss << text("text");
     else if (verb == "encode")
         ss << number("bytes") << " bytes as " << text("format") << " " << text("version")
            << (body.find("output") ? " written to " + text("output") : std::string(" (give --output to write them)")) << NEWLINE;

@@ -1964,6 +1964,34 @@ TEST_F(McpTools_Test, AsmSource_ActionsMapToTheAsmRoutes)
     EXPECT_TRUE(RunTool(*_registry, "asm_source", bad, *_caller).isError);
 }
 
+TEST_F(McpTools_Test, AsmSource_SyncActionsMapToTheSyncRoutes)
+{
+    for (const char* route : {"GET /api/v1/emulator/emu-1/asm/sync?assembler=tasm-4.12", "POST /api/v1/emulator/emu-1/asm/sync/probe",
+                              "POST /api/v1/emulator/emu-1/asm/sync/extract"})
+        _caller->routes[route] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value status;
+    status["action"] = "sync_status";
+    status["assembler"] = "tasm-4.12";
+    RunTool(*_registry, "asm_source", status, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/asm/sync?assembler=tasm-4.12"));
+
+    Json::Value probe;
+    probe["action"] = "sync_probe";
+    RunTool(*_registry, "asm_source", probe, *_caller);
+    EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/asm/sync/probe"));
+
+    Json::Value extract;
+    extract["action"] = "sync_extract";
+    extract["as"] = "dialect";
+    extract["to"] = "sjasmplus";
+    RunTool(*_registry, "asm_source", extract, *_caller);
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/asm/sync/extract");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["as"].asString(), "dialect");
+    EXPECT_EQ(call->body["to"].asString(), "sjasmplus");
+}
+
 TEST_F(McpTools_Test, CaptureMedia_ScreenDigest_GetsDigestEndpoint)
 {
     Json::Value response;

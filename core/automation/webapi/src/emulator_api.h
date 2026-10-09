@@ -600,6 +600,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::asmDialects, "/api/v1/asm/dialects", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::asmFiles, "/api/v1/emulator/{id}/asm/files", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::asmVerb, "/api/v1/emulator/{id}/asm/{verb}", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::asmSyncStatus, "/api/v1/emulator/{id}/asm/sync", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::asmSync, "/api/v1/emulator/{id}/asm/sync/{action}", drogon::Post);
     // endregion Labels/Symbols
 
     // region Source Listing (implementation: api/debug_api.cpp)
@@ -1445,6 +1447,11 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                   const std::string& id) const;
     void asmVerb(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                  const std::string& id, const std::string& verb) const;
+    /// The source an assembler holds in RAM (asm-synchronizer): GET status, POST probe / extract
+    void asmSyncStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+    void asmSync(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                 const std::string& id, const std::string& action) const;
     void resolveLabel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                       const std::string& id) const;
 

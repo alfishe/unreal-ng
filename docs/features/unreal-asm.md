@@ -126,6 +126,24 @@ file on the disk) imports with Import..., and ALASM's or XAS's table in RAM afte
 scan. Details:
 [.recipe/analysis/symbols-import-export.md](../../.recipe/analysis/symbols-import-export.md#labels-from-a-source).
 
+## The source in the running machine
+
+The debugger reads the source that ALASM 5.09, ALASM 4.44 or TASM 4.12 is editing in the machine, with no need to save
+it to a disk first. You get it as text, as the file the assembler's own SAVE would write, or converted to sjasmplus,
+pasmo or z88dk:
+
+```text
+asm sync                                  # which assembler, its text, where the cursor is
+asm sync extract --as dialect --to sjasmplus --output live.asm
+```
+
+The same is `asm_source` `sync_status` / `sync_extract` in MCP and `GET /asm/sync` in the WebAPI
+([.recipe/analysis/asm-sources.md](../../.recipe/analysis/asm-sources.md#the-source-an-assembler-holds-in-ram-asm-synchronizer)).
+The machine's memory is copied between two frames and never written. A line you are typing in TASM is part of the
+text. ALASM keeps the line under the cursor apart until Enter, and the status says so. More assemblers and a live
+follow mode with labels are planned
+([asm-synchronizer](../inprogress/2026-10-05-unreal-asm/asm-synchronizer.md)).
+
 ## Speed
 
 `unreal-asm-benchmarks` (configure with `-DBENCHMARKS=ON`, build the target) measures the codecs, the conversion and
