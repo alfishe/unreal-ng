@@ -339,6 +339,8 @@ void PortDecoder_Next::BindDma()
     bus.writeMemory = [this](uint16_t address, uint8_t value) { _context->pMemory->DirectWriteToZ80Memory(address, value); };
     bus.readIo = [this](uint16_t port) { return DecodePortIn(port, 0); };
     bus.writeIo = [this](uint16_t port, uint8_t value) { DecodePortOut(port, value, 0); };
+    // the CPU is held: its clock runs on with every access of the transfer, so a port write lands at its own moment
+    bus.advance = [this](unsigned clocks) { _context->pCore->GetZ80()->InsertWaitStates(static_cast<uint8_t>(clocks)); };
     _dma.SetBus(std::move(bus));
 }
 
@@ -392,24 +394,10 @@ void PortDecoder_Next::StepDma()
 {
     if (!_dma.Active())
         return;
-    unsigned moved = 0;
     while (_dma.Active())
     {
-        const unsigned n = _dma.Run(256, Now28());
-        if (n == 0)
+        if (_dma.Run(256, Now28()) == 0 || _dma.Waiting())
             break;
-        moved += n;
-        if (_dma.Waiting())
-            break;
-    }
-    if (moved == 0)
-        return;
-    Z80* z80 = _context->pCore->GetZ80();
-    for (unsigned cycles = moved * 2; cycles;)
-    {
-        const unsigned chunk = cycles > 200 ? 200 : cycles;
-        z80->InsertWaitStates(static_cast<uint8_t>(chunk));
-        cycles -= chunk;
     }
 }
 

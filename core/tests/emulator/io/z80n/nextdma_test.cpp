@@ -59,7 +59,7 @@ TEST_F(NextDma_Test, ContinuousMemoryCopyMovesTheBlockAndEndsWithTheStatusBit)
     Send({0xBF});  // read the status byte
     const uint8_t status = _dma.Read();
     EXPECT_EQ(status & 0x20, 0) << "end of block: bit 5 low";
-    EXPECT_EQ(status & 1, 1) << "at least one byte moved";
+    EXPECT_EQ(status & 1, 0) << "bit 0 (a byte moved) is never set by the core (the board reads 1A / 3A: zilogDMA.txt)";
 }
 
 TEST_F(NextDma_Test, FixedSourceFillsAndDecrementRunsBackwards)

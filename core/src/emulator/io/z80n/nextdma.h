@@ -24,6 +24,8 @@ public:
         std::function<void(uint16_t, uint8_t)> writeMemory;
         std::function<uint8_t(uint16_t)> readIo;
         std::function<void(uint16_t, uint8_t)> writeIo;
+        /// CPU clocks the transfer takes before the next access (the read, then the write cycles of the port timing bytes)
+        std::function<void(unsigned)> advance;
     };
 
     void SetBus(Bus bus) { _bus = std::move(bus); }
@@ -65,6 +67,7 @@ private:
         R4b0, R4b1,
         R6Mask
     };
+    static unsigned Cycles(uint8_t timing);
     void Command(uint8_t value);
     void Load();
     void AdvanceReadSequence(int after);

@@ -113,6 +113,13 @@ void NextDma::Write(uint8_t value, bool z80Compatible)
     }
 }
 
+/// Clocks of one port access by its timing byte (bits 1:0): 4, 3, 2, 4
+unsigned NextDma::Cycles(uint8_t timing)
+{
+    static const unsigned kCycles[4] = {4, 3, 2, 4};
+    return kCycles[timing & 3];
+}
+
 void NextDma::Command(uint8_t value)
 {
     _seq = Seq::Idle;
@@ -177,7 +184,7 @@ uint8_t NextDma::Read()
     uint8_t result = 0;
     switch (_readSeq)
     {
-        case 0: result = static_cast<uint8_t>((_endOfBlock ? 0x00 : 0x20) | 0x1A | (_atLeastOne ? 1 : 0)); break;
+        case 0: result = static_cast<uint8_t>((_endOfBlock ? 0x00 : 0x20) | 0x1A); break;  // bit 0 (a byte was moved) is never set by the core: 1A / 3A on the board
         case 1: result = _counter & 0xFF; break;
         case 2: result = _counter >> 8; break;
         case 3: result = (_aToB ? _src : _dst) & 0xFF; break;
@@ -222,6 +229,8 @@ unsigned NextDma::Run(unsigned maxBytes, uint64_t now28)
     while (moved < maxBytes && _transferring)
     {
         uint8_t data = 0xFF;
+        if (_bus.advance)
+            _bus.advance(Cycles(_aToB ? _portATiming : _portBTiming));
         if (srcIo)
         {
             if (_bus.readIo)
@@ -229,6 +238,8 @@ unsigned NextDma::Run(unsigned maxBytes, uint64_t now28)
         }
         else if (_bus.readMemory)
             data = _bus.readMemory(_src);
+        if (_bus.advance)
+            _bus.advance(Cycles(_aToB ? _portBTiming : _portATiming));
         if (dstIo)
         {
             if (_bus.writeIo)
