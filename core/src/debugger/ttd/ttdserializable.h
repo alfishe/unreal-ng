@@ -56,7 +56,7 @@ enum class PeripheralId : uint8_t
     ProfiPaging = 9,      // Profi 1024: #DFFD latch, hi-res palette
     MoonSound  = 10,      // ZXM-MoonSound (YMF278B / OPL4): Tier A chip + host latches
     GeneralSoundLightweight = 11, // GS lightweight personality (in-tree mod player, no coprocessor)
-    NeoGS = 12,           // NeoGS card (neogs-tdd.md §7.4): registers and devices; RAM and flash wait for TTD v2 regions
+    NeoGS = 12,           // NeoGS card (neogs-tdd.md §7.4): registers and devices; RAM and flash are engine regions 4 and 5
     Plus3Paging = 13,     // +2A/+3 #1FFD latch (ROM high bit, all-RAM modes, motor)
     Upd765 = 14,          // +3 uPD765A floppy controller (drives ride the BetaDisk blob)
     EvoSdCard = 15,       // ZX-Evo Z-Controller + SD card protocol state (not the card's sectors: storage-manager TTD rule)

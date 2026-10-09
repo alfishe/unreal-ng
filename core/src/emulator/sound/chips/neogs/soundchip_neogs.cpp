@@ -1407,8 +1407,8 @@ void SoundChip_NeoGS::serializeDeviceState(uint8_t* dst, bool machineVisibleOnly
 size_t SoundChip_NeoGS::TTDStateSize() const
 {
     // Registers and device state only. The card RAM (2-4 MB) and the flash
-    // (512 KB) are not in TTD v1 checkpoints: large memories wait for TTD v2
-    // memory regions. A restore therefore keeps the live card memory
+    // (512 KB) are the engine's regions 4 and 5 (TTDRegions below); a v1
+    // session does not record them, so a v1 restore keeps the live card memory
     return TTD_DEVICE_STATE_END;
 }
 
