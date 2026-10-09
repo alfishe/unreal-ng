@@ -20,19 +20,23 @@ import argparse
 import math
 import struct
 
-from dreambank import BankError, DreamBank, EffectiveRanges, EnvelopeToSf2, PITCH_C, S16
+from dreambank import FIXED_KEY, BankError, DreamBank, EffectiveRanges, EnvelopeToSf2, PITCH_C, S16
 
-G = {'pan': 17, 'attackVolEnv': 34, 'decayVolEnv': 36, 'sustainVolEnv': 37, 'releaseVolEnv': 38,
+G = {'startAddrsOffset': 0, 'startAddrsCoarseOffset': 4, 'scaleTuning': 56, 'pan': 17, 'attackVolEnv': 34, 'decayVolEnv': 36, 'sustainVolEnv': 37, 'releaseVolEnv': 38,
      'instrument': 41, 'keyRange': 43, 'velRange': 44, 'coarseTune': 51, 'fineTune': 52, 'sampleID': 53,
      'sampleModes': 54, 'exclusiveClass': 57, 'overridingRootKey': 58, 'initialAttenuation': 48}
 SF2_RATE = 44100
 
 
-def Tuning(pitch):
-    """Root key + coarse + fine for a sample declared at SF2_RATE so that the split's pitch word is honored."""
+def Tuning(pitch, fixed=False):
+    """Root key + coarse + fine for a sample declared at SF2_RATE so that the split's pitch word is honored.
+    Fixed-pitch splits get scaleTuning 0: the pitch is then coarse + fine relative to the recorded rate."""
     rootf = 12 * math.log2(SF2_RATE) - S16(pitch) / 256.0 - PITCH_C
-    root = max(0, min(127, int(round(rootf))))
-    total = root - rootf                 # semitones to add (coarse + fine)
+    if fixed:
+        root, total = 60, FIXED_KEY - rootf
+    else:
+        root = max(0, min(127, int(round(rootf))))
+        total = root - rootf                 # semitones to add (coarse + fine)
     coarse = int(round(total))
     fine = int(round((total - coarse) * 100))
     return root, coarse, fine
@@ -47,7 +51,7 @@ class Builder:
         self.skipped = 0
 
     def Sample(self, d):
-        key = (d['start'], d['loopStart'], d['end'])
+        key = (d['windowStart'], d['loopStart'], d['end'])
         if key not in self.samples:
             self.samples[key] = len(self.sampleList)
             self.sampleList.append(d)
@@ -69,12 +73,20 @@ class Builder:
                 if not d:
                     self.skipped += 1
                     continue
-                root, coarse, fine = Tuning(d['pitch'])
+                root, coarse, fine = Tuning(d['pitch'], d['fixedPitch'])
                 env = EnvelopeToSf2((rec.get('tail') or {}).get('ampEnvelope'))
+                # Drum splits keep their note-off release: the release rates are tailored per drum (cymbals ~4 s,
+                # toms ~1.5 s, snares ~0.1 s), which only makes sense if note-off is honored; one-shot samples end
+                # on their own anyway.
                 g = {G['keyRange']: (klo, khi), G['velRange']: (vlo, vhi), G['overridingRootKey']: root,
                      G['sampleModes']: 0 if d['oneShot'] else 1,
                      G['attackVolEnv']: env['attack'], G['decayVolEnv']: env['decay'],
                      G['sustainVolEnv']: env['sustainCb'], G['releaseVolEnv']: env['release']}
+                if d['fixedPitch']:
+                    g[G['scaleTuning']] = 0
+                off = d['start'] - d['windowStart']    # playback starts inside the looped region
+                if off:
+                    g[G['startAddrsCoarseOffset']], g[G['startAddrsOffset']] = divmod(off, 32768)
                 if coarse:
                     g[G['coarseTune']] = coarse
                 if fine:
@@ -126,7 +138,7 @@ def WriteSf2(builder, path, name):
     smpl = bytearray()
     shdr = []
     for i, d in enumerate(builder.sampleList):
-        pcm = b.Pcm(d['start'], d['end'])
+        pcm = b.Pcm(d['windowStart'], d['end'])
         start = len(smpl) // 2
         smpl += pcm.astype('<i2').tobytes()
         end = len(smpl) // 2
@@ -134,7 +146,7 @@ def WriteSf2(builder, path, name):
         if d['oneShot']:
             ls, le = start, end
         else:
-            ls, le = start + (d['loopStart'] - d['start']), end
+            ls, le = start + (d['loopStart'] - d['windowStart']), end
         shdr.append(struct.pack('<20sIIIIIBbHH', ('S%05d' % i).encode(), start, end, ls, le, SF2_RATE, 60, 0, 0, 1))
     shdr.append(struct.pack('<20sIIIIIBbHH', b'EOS', 0, 0, 0, 0, 0, 0, 0, 0, 0))
     phdr, pbag, pgen, inst, ibag, igen = [], [], [], [], [], []

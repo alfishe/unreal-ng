@@ -11,6 +11,11 @@ the amplitude envelope is mapped approximately, the rest is not decoded. A conve
 SF2-shaped model libsam2695 plays; renders through libsam2695 are pitch-exact (median 0.9 cents on Dream's own
 GMBK5X128 loops) with approximate envelopes and no filter.
 
+**Update (coverage and tuning audit, §9):** every GM program, variation, kit and kit note of every bank listed;
+two converter bugs found and fixed (drums played key-tracked instead of at fixed pitch, one-shot samples looped),
+which were the "missing drums" in the Doom E1M1 demo. All 24 banks now decode 100 % of their splits except 2 in one
+B16. The remaining audible tuning difference in "Dream On" (Rock Organ about +20 cents) is in the bank data.
+
 ## 1. Inputs and licensing
 
 | Bank file (repo-relative, untracked) | Origin | Notes |
@@ -163,15 +168,16 @@ Sample block (10 words; a rare variant of 12 words puts the end before the level
 
 | Word | Field | Confidence, how |
 |---|---|---|
-| -1 | parameter word with bit 7 set (`0x81`, `0x82`, `0x91`, `0xC1`, `0xE1` ...; high byte a signed value) | unknown meaning, used as an anchor |
+| -1 | parameter word with bit 7 set (`0x81`, `0x82`, `0x91`, `0xC1`, `0xE1` ...; high byte a signed value). **Bit 5 = fixed pitch** (the key is ignored, see below); bit 6 is set on every drum and on percussive effect programs (meaning unknown) | bit 5: confirmed (§3.5 fixed pitch, §9.2); rest unknown, used as an anchor |
 | 0 | **pitch**: signed, 1/256 semitone: `pitch / 256 = 12 log2(rate) - rootKey - 120.384`, i.e. at note `n` the sample plays at `2^((n + pitch/256 + 120.384) / 12)` samples per second | confirmed: GXSCC 256 splits one constant (-120.384), GUD 121 splits at 11 rates, slope 1 in log2(rate); identical in DXB and B16 |
-| 1 | bit 6 = address bit 24 for all three addresses (banks over 16 M words); low 6 bits a small signed value (fine tune?) | bit 6: confirmed (GUD: with it the bit-6 splits land exactly on their SF2 samples, without it they land in unrelated sample data); low bits: unknown |
-| 2-3 | loop start - 1: `w2 << 8 | w3 >> 8`; low byte of w3 is always 1 | confirmed (GXSCC full loops, GUD: loop start equal to the SF2 loop start, or 3 / 8 samples earlier where the compiler moved it) |
+| 1 | bits 6-9 = address bits 24-27 for all three addresses (banks over 16 M words); low 6 bits a small signed value | bit 6: confirmed (GUD: with it the bit-6 splits land exactly on their SF2 samples, without it they land in unrelated sample data); bits 7-8: confirmed on MT-32.b16 (227 MB: its last 2 splits decode only with them); low bits: unknown (not a fine tune: the pitch word already carries the tuning, §9.4) |
+| 2-3 | loop start - 1: `w2 << 8 | w3 >> 8`; low byte of w3 is always 1. The loop start can lie before the sample start (808 hi-hat, Reverse Cymbal, a few GUD splits): the split then starts inside its looped region | confirmed (GXSCC: 1018 of 1018 melodic loops exact, GUD: loop start equal to the SF2 loop start, or 3 / 8 samples earlier where the compiler moved it) |
 | 4 | 0 (BURAN: small values) | unknown |
 | 5-6 | sample start: `w6 << 8 | (w5 & 0xFF)`; high byte of w5 mostly 0 | confirmed (start is preceded by a `0x0000` separator word) |
 | 7 | level pair, two bytes that differ by about 1 (`e6e7`, `f6f7`), rising with the key across splits | likely a level / attenuation; scale unknown |
 | 8-9 | end = last sample of the loop: `w9 << 8 | (w8 & 0xFF)` | confirmed (= SF2 loop end - 1) |
-| one-shot | loop start one word before the sample start (it points at the separator) | likely: 175 splits in the OPL-3 banks, all on percussive sounds; the end is followed by zero words |
+| one-shot | loop start equal to the sample start, or one word before it (the separator): the sample plays once | confirmed: 431 of 450 such GUD splits use GeneralUser samples that are not looped in the source, all 38 GXSCC drums are one-shots in their source, and a real whole-sample loop is stored one word later (GXSCC 1018 / 1018); the OPL-3 banks use the second form (175 splits) |
+| fixed pitch | bit 5 of word -1: the split plays at `2^((61.1 + pitch/256 + 120.384) / 12)` samples per second whatever the key | confirmed: every Dream / Serdaco drum carries it; their decoded roots cluster at 61.1 (GMBK5X128 2.03: 66 kit notes, IQR 0.6 semitone) and the kick, snare and hi-hat spectra at that rate peak at 61-82 Hz, 200 Hz and 12 kHz, i.e. recorded pitch; with key tracking the kick would sound at 15 Hz. The constant 61.1 is empirical |
 
 Envelope blocks follow `7f0e xx06 LLRR` (two amplitude words and a second level pair). An envelope is a start word
 (`0000` or `7f00`) followed by segment words `level << 8 | rate` and ends with a release word `0x60rr`:
@@ -221,18 +227,21 @@ All 24 bank files parse; the self-check passes on all of them.
 
 | Bank | Version | Checksum | MB | Hole | Records / variations | Kits | Splits decoded | Samples |
 |---|---|---|---|---|---|---|---|---|
-| GMBK5X128_203.DXB | 2.03 | ok | 14.7 | 0x80000 | 397 / 269 | 10 | 3368 / 3380 | 853 |
-| GMBK5X128.DXB (2015) | - | n/a | 13.3 | 0 | 268 / 140 | 10 | 2499 / 2507 | 856 |
-| GMBK5X64.DXB | - | n/a | 7.9 | 0 | 127 / 0 | 1 | 892 / 893 | 441 |
-| GMBK5X128-V2.03.B16 | 2.03 | ok | 15.6 | 0 | 397 / 269 | 10 | 3371 / 3380 | 885 |
-| BURAN11.DXB | 1.1 | ok | 47.2 | 0x80000 | 256 / 128 | 10 | 4332 / 4352 | 882 |
-| BURAN-v1.00.B16 | 1.00 | ok | 54.3 | 0 | 256 / 128 | 10 | 4377 / 4399 | 903 |
-| GUD_104.DXB | 1.04 | ok | 36.9 | 0x80000 | 128 / 0 | 9 | 2471 / 2485 | 866 |
-| 17 community banks (GXSCC, Roland GM, Yamaha GM, OPL-3, MT-32, ESFM, UltraSound, ...) | 0.1..2.0 | ok | 0.2..505 | both | | 0..10 | 100 % except the two MT-32 banks (4 of 6 246 undecoded) | |
+| GMBK5X128_203.DXB | 2.03 | ok | 14.7 | 0x80000 | 397 / 269 | 10 | 3380 / 3380 | 860 |
+| GMBK5X128.DXB (2015) | - | n/a | 13.3 | 0 | 268 / 140 | 10 | 2507 / 2507 | 860 |
+| GMBK5X64.DXB | - | n/a | 7.9 | 0 | 127 / 0 | 1 | 893 / 893 | 442 |
+| GMBK5X128-V2.03.B16 | 2.03 | ok | 15.6 | 0 | 397 / 269 | 10 | 3380 / 3380 | 890 |
+| BURAN11.DXB | 1.1 | ok | 47.2 | 0x80000 | 256 / 128 | 10 | 4352 / 4352 | 893 |
+| BURAN-v1.00.B16 | 1.00 | ok | 54.3 | 0 | 256 / 128 | 10 | 4397 / 4399 | 914 |
+| GUD_104.DXB | 1.04 | ok | 36.9 | 0x80000 | 128 / 0 | 9 | 2485 / 2485 | 877 |
+| 17 community banks (GXSCC, Roland GM, Yamaha GM, OPL-3, MT-32, ESFM, UltraSound, ...) | 0.1..2.0 | ok | 0.2..505 | both | | 0..10 | 100 % | |
+
+The two undecoded splits (BURAN-v1.00.B16, Timpani variation 127 and program 81, one shared record) insert an
+extra address pair before the level word; they are skipped. Table numbers after the coverage-audit fixes (§9).
 
 Pitch decoding on Dream's own bank (no source available): every looped sample of the sustained families
 (organs, strings, ensembles, brass, reeds, pipes) played at its decoded root key, autocorrelation pitch against
-equal temperament: **GMBK5X128 2.03: 157 loops, median 0.9 cents, 99 % within 25 cents**; GMBK5X64: 156 loops,
+equal temperament: **GMBK5X128 2.03: 155 loops, median 0.9 cents, 99 % within 25 cents**; GMBK5X64: 156 loops,
 0.9 cents, 98 %; BURAN 1.1: 347 loops, 2.1 cents, 97 %.
 
 ### 4.1 Renders through libsam2695
@@ -267,7 +276,7 @@ Conversion fidelity (same samples on both sides):
 
 | Pair | Melodic spectral distance | Pitch | Envelope |
 |---|---|---|---|
-| GXSCC GM.dxb converted vs its source GXSCC_gm_033.sf2 | 0.0 dB | identical (14.5 vs 14.6 cents, the source's own detune) | decay 3 dB less over 1.25 s, release 180 vs 205 ms |
+| GXSCC GM.dxb converted vs its source GXSCC_gm_033.sf2 | 0.0 dB (drums 0.0 dB since the one-shot fix, 15.9 dB before) | identical (14.5 vs 14.6 cents, the source's own detune) | decay 3 dB less over 1.25 s, release 180 vs 205 ms |
 | GUD_104.DXB converted vs GeneralUser GS 1.44 | 3.4 dB | within a few cents | close on most notes; GUD was hand-tuned, so differences are partly intended |
 
 ## 5. What the libsam2695 voice model lacks for Dream data
@@ -329,3 +338,147 @@ fills an SF2. The bank's SHA-256 identity and the save-state refusal of another 
   `DreamBlaster X16 MIDI Specs.pdf` (NRPN map, DXP addresses), bank maps in `testdata/midi/dream-gmbk5x/`
 - Serdaco, [Converting SF2 soundfonts to X2 DreamBlaster soundbanks](https://serdaco.com/downloads/X2/X2_Documentation/Converting%20SF2%20soundfonts%20to%20X2%20DreamBlaster%20soundbanks.pdf) (SDK tool chain, XDB / XDI / XDD sources)
 - DOS Days, [Software Wavetables part 3](https://www.dosdays.co.uk/topics/software_wavetables_pt3.php) (DXB described as proprietary, SDK-only)
+
+## 9. Coverage and tuning audit
+
+Triggered by the owner's demo (ZX MIDI Player 3 on a Pentagon + MultiSound, `zxmidip3.trd`, two emulator instances:
+GeneralUser GS 2.0.3 vs the converted GMBK5X128 2.03): "the Dream bank sounds simpler but era-appropriate; in the
+Doom melody some drum instruments are missing" and "Dream On sounds out of tune". Tool:
+`tools/poc/024-dream-banks/coverage.py` (`banks`, `drums`, `song`, `pitch`).
+
+### 9.1 Coverage per bank
+
+GM programs present in bank 0; GS variations (C0 1-126) and MT-32 map (C0 127) present; GS kits present; kit 0
+notes mapped. Dream banks are parsed directly; "→ SF2" rows are the converted files; the last two rows are the
+reference SF2s. Counts are after the fixes in §9.3.
+
+| Bank | GM programs | Variations | MT-32 map | Kits (GS numbers) | Kit 0: GM notes 35-81 | Kit 0: notes 27-87 | Splits skipped |
+|---|---|---|---|---|---|---|---|
+| GMBK5X128_203.DXB | 128 / 128 | 141 | 128 | 0 8 16 24 25 32 40 48 56 127 | 47 / 47 | 61 / 61 | 0 |
+| GMBK5X128.DXB (2015) | 128 / 128 | 137 | 3 | 0 8 16 24 25 32 40 48 56 127 | 47 / 47 | 61 / 61 | 0 |
+| GMBK5X64.DXB | 127 / 128 (no 56 Orchestra Hit) | 0 | 0 | 0 | 47 / 47 | 61 / 61 | 0 |
+| GMBK5X128-V2.03.B16 | 128 / 128 | 141 | 128 | 0 8 16 24 25 32 40 48 56 127 | 47 / 47 | 61 / 61 | 0 |
+| GUD_104.DXB | 128 / 128 | 0 | 0 | 0 8 16 24 25 32 40 48 56 | 47 / 47 | 61 / 61 | 0 |
+| BURAN11.DXB | 128 / 128 | 0 | 128 | 0 8 16 24 25 32 40 48 56 127 | 47 / 47 | 61 / 61 | 0 |
+| BURAN-v1.00.B16 | 128 / 128 | 0 | 128 | 0 8 16 24 25 32 40 48 56 127 | 47 / 47 | 61 / 61 | 2 melodic |
+| Roland GM, Yamaha GM (.dxb and .b16) | 128 / 128 | 98 | 128 | all 10 | 47 / 47 | 61 / 61 | 0 |
+| GXSCC, UltraSound, WT_22KHZ (.dxb / .b16) | 128 / 128 | 0 | 128 (WT_22KHZ, UltraSound, GXSCC) | 0 127 | 47 / 47 | 61 / 61 | 0 |
+| OPL-3 FM 48M / 64M / 128M | 128 / 128 | 0 | 128 | 0 127 | 42 / 47 | 42 / 61 | 0 |
+| ESFM.b16, SonicImp.dxb | 128 / 128 | 0 | 128 / 0 | 0 127 / 0 | 47 / 47 | 47 / 61 | 0 |
+| MT-32.b16, MT-32 Stereo.b16 | 128 / 128 | 0 | 128 | 0 127 | 46 / 47 | 46 / 61 | 0 |
+| Old Upright Piano.DXB | 4 (single-instrument bank) | 0 | 0 | none | - | - | 0 |
+| gmbk5x128-203 → SF2 | 128 / 128 | 141 | 128 | 0 8 16 24 25 32 40 48 56 127 | 47 / 47 | 61 / 61 | - |
+| gmbk5x128 (2015) → SF2, gmbk64 → SF2, gud104 → SF2, buran11 → SF2 | same as their sources | | | | | | - |
+| data/midi/generaluser-gs.sf2 | 128 / 128 | 146 | 0 (falls back to C0 0) | 0 1 2 8 16 24 25 26 32 40 48 56 127 | 47 / 47 | 61 / 61 | - |
+| sam2695.sf2 | 128 / 128 | 60 | 0 | 0 16 | 47 / 47 | 47 / 61 | - |
+
+Missing kit notes (GM range 35-81, then GS-extended 27-34 / 82-87):
+
+| Bank | Kit | Missing GM notes | Missing GS-extended notes | Cause |
+|---|---|---|---|---|
+| all Dream / Serdaco / Roland / Yamaha banks and GeneralUser GS | 56 SFX | 35-38 | 27-34, 85-87 | none: the GS SFX set spans 39-84 |
+| GMBK5X128 (both), GMBK B16 | 127 MT-32 | - | 27-34 | none: the MT-32 kit starts at 35 |
+| GUD_104, BURAN (DXB and B16) | 24 Electronic | - | (21, 22, 25, 26 point at an empty instrument) | in the bank |
+| OPL-3 FM banks | 0, 127 | 77-81 | 27-34, 82-87 | in the bank |
+| MT-32.b16, MT-32 Stereo.b16 | 0 / 127 | 74 / 52-53, 55, 57-59, 74 | 27-34 (+82-87 kit 0) | in the bank (empty instruments, as in the MT-32) |
+| ESFM.b16, SonicImp.dxb, sam2695.sf2 | 0 | - | 27-34, 82-87 | in the bank |
+
+No GMBK5X128 gap explains a missing drum: Dream's 2.03 bank has every kit note that GeneralUser GS has, and Dream's
+map (`GMBK5X128_203.pdf`, drum set table) lists the same ranges.
+
+### 9.2 Doom E1M1 (`DoomE1M1.mid`, one of the 22 songs of `zxmidip3.trd`)
+
+The 22 songs are also on the WC SD-card folder `testdata/sound/multisound/software/wc/wc-sdcard/MUSIC/MID/`.
+
+| Channel | C0 | Program | Notes | In GMBK5X128 2.03 |
+|---|---|---|---|---|
+| 1 | 0 | 31 Distortion Guitar | keys 40-79, 656 notes | present |
+| 2 | 0 | 30 Overdriven Guitar | keys 40-83, 712 notes | present |
+| 3 | 0 | 35 Picked Bass | keys 28-40, 262 notes | present |
+| 10 | 0 | kit 0 | 36 (224), 38 (12), 40 (171), 41 (29), 45 (2), 46 (112), 47 (2), 49 (18), 50 (2), 51 (58), 53 (52), 57 (20) | all 12 notes mapped |
+
+Gates are short (median 16 ms for 38, 32-95 ms for the rest). Each drum note rendered alone with the song's own
+timing (`coverage.py song`), audible energy (content above 40 Hz) per hit and spectral centroid:
+
+| Note | Name | Hits | Before the fix: dB / Hz | After: dB / Hz | GeneralUser GS: dB / Hz | Pitch before the fix (semitones from recorded) |
+|---|---|---|---|---|---|---|
+| 36 | Bass Drum 1 | 224 | -42.8 / 981 | -39.0 / 3377 | -39.6 / 2416 | -25.6 |
+| 38 | Acoustic Snare | 12 | -49.0 / 1658 | -48.9 / 5877 | -44.6 / 3427 | -23.7 |
+| 40 | Electric Snare | 171 | -39.9 / 2400 | -43.1 / 6706 | -43.4 / 3810 | -21.6 |
+| 41 | Low Floor Tom | 29 | -41.2 / 1977 | -41.0 / 4954 | -42.8 / 2074 | -21.8 |
+| 45 | Low Tom | 2 | -44.5 / 2647 | -45.3 / 4741 | -43.1 / 1528 | -16.8 |
+| 46 | Open Hi-Hat | 112 | -50.0 / 4857 | -55.5 / 9487 | -57.5 / 9273 | -15.1 |
+| 47 | Low-Mid Tom | 2 | -46.3 / 3047 | -46.9 / 4615 | -44.0 / 1257 | -14.0 |
+| 49 | Crash Cymbal 1 | 18 | -52.7 / 3076 | -51.8 / 5616 | -54.7 / 5243 | -12.1 |
+| 50 | High Tom | 2 | -46.1 / 3867 | -46.6 / 5073 | -45.5 / 1666 | -9.1 |
+| 51 | Ride Cymbal 1 | 58 | -46.6 / 5617 | -47.4 / 9196 | -56.4 / 6868 | -9.9 |
+| 53 | Ride Bell | 52 | -44.6 / 6951 | -46.3 / 9860 | -50.2 / 6454 | -8.1 |
+| 57 | Crash Cymbal 2 | 20 | -53.8 / 4713 | -53.7 / 5655 | -55.7 / 5751 | -3.7 |
+
+Cause: **(b) converter bug.** Every Dream drum split carries the fixed-pitch bit (§3.5); `tosf2.py` ignored it, so
+libsam2695 transposed each drum by (note - 61.1) semitones: the kick 25 semitones down to about 15 Hz (inaudible), the
+snares 22-24 down (a dull thud), toms 9-22, hi-hats and cymbals 4-15 down. In addition one-shots (loop start =
+sample start) were written as whole-sample loops, so short drums (hand clap, electric snare) repeated for up to 2.8 s.
+Not a cause: the kit mapping (all notes present), libsam2695's kit selection (channel 10 plays bank 128 by program,
+missing kits fall back to kit 0), exclusive classes (hi-hat group 42/44/46 only), the key-range convention (checked
+against GeneralUser: 739 of 865 zones with the same high key also have the same low key, 15 differ by one, the rest
+are hand edits), velocity ranges (all drum splits 0-127).
+
+After the fix the Dream drums sit in the same level range as GeneralUser's and their brightness is that of real
+drums (kick, snare and hi-hat sample spectra at the played rate peak at 61-82 Hz, about 200 Hz and 12 kHz). They are
+shorter than GeneralUser's (`coverage.py drums`, 50 ms gate: snares 0.07-0.08 s vs 0.26-0.36 s, toms 0.4-0.5 s vs
+1.1-3 s): cause (a), GMBK5X128's drum samples are short (kick 68 ms, snare 138 ms at the recorded rate) and their
+release rates are fast; that is the bank, not the conversion.
+
+Drum note-off: Dream's drum envelopes have per-drum release rates (cymbals about 4 s, toms about 1.5 s, snares about
+0.1 s), which only matter if note-off is honored, so the converter keeps note-off (as libsam2695 does for SF2 drums).
+
+### 9.3 Fixes (commit on `sam7-dream-banks`)
+
+| Fix | Before | After |
+|---|---|---|
+| fixed-pitch bit (word -1 bit 5) → SF2 `scaleTuning 0`, coarse / fine = 61.1 - root | drums transposed by (note - 61.1) semitones | drums at recorded pitch |
+| loop start = sample start → one-shot (`sampleModes 0`) | 40 melodic and 445 drum splits of GMBK5X128 2.03 looped the whole sample | one-shot; GXSCC drums vs their source SF2: 15.9 dB → 0.0 dB spectral distance |
+| loop start before the sample start → real loop, playback starts inside it (SF2 `startAddrsOffset`) | 12 splits of GMBK5X128 2.03 undecoded (8 melodic, 4 drum: TR-808 closed hi-hat 42, Reverse Cymbal program 120, ...) | decoded; GMBK5X128 2.03 now has all 128 programs (120 Reverse Cymbal was missing) and 128 MT-32 entries |
+| address bits 25-27 (ext word bits 7-9) | 4 splits of the MT-32 banks undecoded | decoded |
+
+### 9.4 Tuning audit ("Dream On", then all GM programs)
+
+`coverage.py pitch`: each program rendered through `sam2695render --dry` at keys 36, 48, 55, 60, 67, 72, 84 (Dream On
+programs: 36..72 in 10 steps covering their split edges), autocorrelation pitch 150-600 ms after the onset, cents
+from equal temperament.
+
+| "Dream On" channel | Program | Keys used | Dream (before = after the fix), cents | GeneralUser GS, cents |
+|---|---|---|---|---|
+| 1 | 28 Clean Guitar | 43-77 | -1..0 (one +15 at key 36, outside the song) | +1..+19 |
+| 2 | 31 Distortion Guitar | 36-63 | -5..+10 | -3..+9 |
+| 3 | 36 Fretless Bass | 24-53 | -3 | -4..+5 |
+| 4 | 18 Percussive Organ | 63-92 | -3..0 | +2..+11 |
+| 5 | 19 Rock Organ | 60-67 | **+16..+26** | -1..+6 |
+
+All 128 programs: Dream 793 notes, median |error| 1.5 cents, 91 % within 10 cents; GeneralUser GS 779 notes,
+2.4 cents, 88 %. Programs with a systematic offset over 12 cents: Dream 19 Rock Organ (+20), 46 Pizzicato (-13),
+48 Timpani (-46), 97 FX Rain (+27), 125 Telephone (+39); GeneralUser 10 Glockenspiel (+84), 15 Tubular Bells (+56),
+16 Dulcimer (+19), 78 Shakuhachi (+23), 91 Polysynth (+13), 114 Agogo (-18), 122 Breath (+21) (inharmonic or noisy
+sounds measure poorly with autocorrelation).
+
+The fixes did not change any melodic pitch (the Dream On rows are identical before and after). The conversion
+checks out:
+
+- sign, rounding, coarse / fine split: libsam2695 computes `scaleTuning (key - root) + 100 coarse + fine`; the
+  converter sets root = round(rootf), coarse + fine = root - rootf; rendered pitch matches a direct resampling
+  emulation of the same splits (Rock Organ key 60: +14 emulated, +16 rendered, both layers mixed);
+- sample rate: every converted sample is declared at 44 100 Hz with originalPitch 60 and pitchCorrection 0; the
+  zone's overridingRootKey and tunings carry the pitch word, so nothing is applied twice;
+- key-range off-by-one: none (see §9.2);
+- per-split tuning: the pitch word already contains it. GUD vs GeneralUser 1.44, 402 splits whose source zone has a
+  fine tune of 5 cents or more: Dream root minus GeneralUser root = -0.88 x fineTune + 6 (r = -0.89), i.e. the
+  compiler folded the fine tune into the pitch word; no separate tuning field is missing;
+- layer detune is real data: Honky-Tonk's two layers differ by 0x10 / 256 semitone (6 cents), Crystal by 9 cents.
+
+Rock Organ (the "out of tune" part in "Dream On"): two layers. Below key 61 they use two different samples with the
+same pitch word; layer 0's sample sounds +5.6 cents, layer 1's +27 cents at the decoded root. From key 61 both layers
+use layer 1's sample with pitch words 23.8 cents apart (+14 and +37 cents). The mix measures +16..+26 cents. Cause:
+**(a) the bank data as decoded** - the pitch words and the samples are reproduced exactly. Whether a real SAM5000
+plays this organ in tune (some undecoded field such as the `ff00` / `a000` / `af00` stream word that differs between
+the layers) cannot be settled without a recording of the hardware (owner question Q2).

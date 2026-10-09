@@ -33,6 +33,12 @@ import numpy as np
 # GeneralUser GS 1.44 (121 splits at 11 different sample rates: slope 1 in log2(rate) confirmed).
 PITCH_C = 120.384
 
+# Fixed-pitch splits (bit 5 of the word before the pitch word: every Dream drum, a few effect sounds) ignore the key.
+# They play as if the key were FIXED_KEY. Empirical: the decoded roots of the kit splits cluster at 61.1 (GMBK5X128
+# 2.03, 66 notes, IQR 0.6) and 61.09 for the GeneralUser 44.1 kHz drums in GUD_104, i.e. 61.1 plays a 44.1 kHz drum
+# sample at its recorded pitch.
+FIXED_KEY = 61.1
+
 GM_NAMES = [
     'Acoustic Grand Piano', 'Bright Acoustic Piano', 'Electric Grand Piano', 'Honky-tonk Piano', 'Electric Piano 1',
     'Electric Piano 2', 'Harpsichord', 'Clavinet', 'Celesta', 'Glockenspiel', 'Music Box', 'Vibraphone', 'Marimba',
@@ -236,7 +242,7 @@ class DreamBank:
         v = self.Words(a + k - 1, 13)
         pre, v = v[0], v[1:]
         ext = v[1]
-        hi = (1 << 24) if ext & 0x40 else 0          # address bit 24 (banks over 16 M words)
+        hi = ((ext >> 6) & 0xF) << 24                # address bits 24-27 (banks over 16 M words)
         ls = hi + ((v[2] << 8) | (v[3] >> 8))        # loop start - 1
         st = hi + ((v[6] << 8) | (v[5] & 0xFF))
         if alt:   # rare variant (BURAN/GUD, about 1 %): end before the level word, then a second end address
@@ -259,7 +265,7 @@ class DreamBank:
                 if d['lsLowByte'] != 1 or not (d['pre'] & 0x80):
                     continue
                 st, ls, en = d['start'], d['loopStart'], d['end']
-                if not (st > 0x100 and st <= en and st - 8 <= ls <= en + 1 and en - st < (1 << 22)):
+                if not (st > 0x100 and st <= en and ls <= en + 1 and en - st < (1 << 22) and st - ls < (1 << 16)):
                     continue
                 if en >= self.size or (d['end2'] is not None and abs(d['end2'] - en) >= (1 << 20)):
                     continue
@@ -273,7 +279,15 @@ class DreamBank:
             if best and best[0] >= 2:
                 break
         if best:
-            best[1]['oneShot'] = best[1]['loopStart'] < best[1]['start']
+            # A loop that starts at (or before) the sample start is the compiler's encoding of "no loop": 431 of 450
+            # such splits in GUD_104 use GeneralUser samples that are not looped (sampleModes 0) in the source, all
+            # 38 GXSCC drums too. Real whole-sample loops are stored starting one word later (GXSCC: 1018 of 1018).
+            # A loop that starts well before the start (808 hi-hat and Reverse Cymbal in GMBK5X128 2.03, GUD 90) is a
+            # real loop: the split starts inside its looped region. windowStart is where the sample data begins.
+            d0 = best[1]
+            d0['oneShot'] = d0['start'] - 1 <= d0['loopStart'] <= d0['start']
+            d0['windowStart'] = min(d0['start'], d0['loopStart'])
+            best[1]['fixedPitch'] = bool(best[1]['pre'] & 0x20)
         return best[1] if best else None
 
     def _Tail(self, a):
@@ -504,8 +518,8 @@ def CmdExtract(args):
         rootf = RootFromPitch(d['pitch'])
         root = int(round(rootf))
         rate = 2 ** ((root + S16(d['pitch']) / 256.0 + PITCH_C) / 12)   # pitch-exact rate for an integer root
-        pcm = b.Pcm(d['start'], d['end'])
-        loop = None if d['oneShot'] else (d['loopStart'] - d['start'], d['end'] - d['start'])
+        pcm = b.Pcm(d['windowStart'], d['end'])
+        loop = None if d['oneShot'] else (d['loopStart'] - d['windowStart'], d['end'] - d['windowStart'])
         tag = ('p%03d-v%03d' % (p, v)) if kind == 'melodic' else ('kit%03d-n%s' % (v, '-'.join(map(str, p[:3]))))
         name = '%s-l%d-s%02d-%06x.wav' % (tag, li, si, d['start'])
         WriteWav(os.path.join(args.out, name), pcm, round(rate), loop, max(0, min(127, root)))
@@ -611,8 +625,7 @@ def CmdPitchCheck(args):
                 if not d or d['oneShot'] or d['start'] in seen:
                     continue
                 seen.add(d['start'])
-                pcm = b.Pcm(d['start'], d['end']).astype(float)
-                loop = pcm[d['loopStart'] - d['start']:]
+                loop = b.Pcm(d['loopStart'], d['end']).astype(float)
                 seg = np.tile(loop, int(np.ceil(8000 / len(loop))))[:8000] if len(loop) < 8000 else loop[:8000]
                 f0 = LoopF0(seg, 44100.0)
                 if not f0 or not f0 > 0:

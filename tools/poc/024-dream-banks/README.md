@@ -9,7 +9,8 @@ for phase SAM-7 of the MultiSound card ([tdd-libsam2695.md](../../../docs/inprog
 
 **Status (2026-10-08):** container, program / variation / drum-kit maps, instruments, splits, samples, loops and
 pitch decoded and validated on all 24 bank files in `testdata/midi/`; envelopes approximate; filter, LFOs and
-keyboard tables not decoded.
+keyboard tables not decoded. Coverage and tuning audit with converter fixes (drums at fixed pitch, one-shots):
+2026-10-08.
 
 ## Licensing
 
@@ -24,6 +25,7 @@ is git-ignored, and never commit or share it.
 | `dreambank.py` | reader + command-line tool: `info`, `programs [--map PDF]`, `dump`, `extract`, `pitchcheck`, `selfcheck` |
 | `tosf2.py` | experimental Dream bank -> SF2 converter (the model libsam2695's `ISoundBank` holds) |
 | `compare.py` | renders one MIDI file through `sam2695render --dry` with several banks; pitch, centroid, envelope, spectral distance |
+| `coverage.py` | coverage audit: `banks` (GM programs, variations, GS kits, kit notes per bank, Dream or SF2), `drums` (every kit note rendered alone), `song` (what a MIDI file uses, checked against a Dream bank, drum part rendered note by note), `pitch` (rendered pitch per program and key) |
 
 Python 3.9+ with numpy. `compare.py` imports `tools/verification/sam2695/smfwrite.py` and needs the
 `sam2695render` binary (`tools/build/build.sh sam2695render`).
@@ -51,22 +53,40 @@ python3 $P/compare.py --render cmake-build-agent-release/bin/sam2695render --out
 
 `programs --map` reads the PDF through `pdftotext -layout` (poppler).
 
+Coverage and tuning audit:
+
+```bash
+R=cmake-build-agent-release/bin/sam2695render
+SONGS=testdata/sound/multisound/software/wc/wc-sdcard/MUSIC/MID
+python3 $P/coverage.py banks $B scratch/sam7/gmbk5x128-203.sf2 data/midi/generaluser-gs.sf2
+python3 $P/coverage.py drums --render $R --kit 0 --gate 0.05 \
+    --bank dream=scratch/sam7/gmbk5x128-203.sf2 --bank gugs=data/midi/generaluser-gs.sf2
+python3 $P/coverage.py song $SONGS/DoomE1M1.mid --bank-dxb $B --render $R \
+    --bank dream=scratch/sam7/gmbk5x128-203.sf2 --bank gugs=data/midi/generaluser-gs.sf2
+python3 $P/coverage.py pitch --render $R --programs 0-127 \
+    --bank dream=scratch/sam7/gmbk5x128-203.sf2 --bank gugs=data/midi/generaluser-gs.sf2
+```
+
 ## Results
 
 Self-check (`selfcheck` over all 24 files): every check passes. Per file: header sizes consistent, the hole size
 (words 2-3) equal to image size minus file size, 16-bit checksum zero where present, all programs mapped, kit note
-ranges sane, sample block decoded for 99.4..100 % of the splits, sample data smooth 16-bit PCM.
+ranges sane, sample block decoded for 99.95..100 % of the splits, sample data smooth 16-bit PCM.
 
 | Check | Result |
 |---|---|
-| splits with a decoded sample block | GMBK5X128 2.03: 3368 / 3380; BURAN 1.1: 4332 / 4352; GUD 1.04: 2471 / 2485; 15 of 17 community banks 100 % |
+| splits with a decoded sample block | 100 % in 23 of 24 banks; BURAN-v1.00.B16: 4397 / 4399 |
 | variations vs Dream's bank map | GMBK5X128 2015: 101 / 101 listed variations present; 2.03: 103 / 105 (the 2 misses are a map row shifted by one program); 269 variations incl. 128 MT-32 = the map's count |
-| pitch word (`pitchcheck`) | GMBK5X128 2.03: 157 loops, median 0.9 cents; GMBK5X64: 156 loops, 0.9 cents; BURAN 1.1: 347 loops, 2.1 cents |
+| pitch word (`pitchcheck`) | GMBK5X128 2.03: 155 loops, median 0.9 cents; GMBK5X64: 156 loops, 0.9 cents; BURAN 1.1: 347 loops, 2.1 cents |
 | GXSCC GM.dxb -> SF2 vs its source SF2, rendered by libsam2695 | 0.0 dB spectral distance on melodic notes, same pitch; envelopes approximate (decay 3 dB short over 1.25 s) |
 | GUD_104.DXB -> SF2 vs GeneralUser GS 1.44 | 3.4 dB spectral distance (GUD is hand-tuned) |
 | GMBK5X128 2.03 -> SF2 vs GeneralUser GS vs sam2695.sf2 | three different sample sets: 8.4..9.7 dB apart; pitch errors 0.4..10 cents for all three |
 
-Full tables: [sam7-dream-banks.md](../../../docs/inprogress/2026-10-03-zx-multisound/sam7-dream-banks.md) §4.
+| coverage (`coverage.py banks`) | GMBK5X128 2.03 and its SF2: 128 / 128 GM programs, 141 variations, 128 MT-32 entries, all 10 GS kits, kit 0 notes 27-87 complete; gaps only where the bank itself has none (SFX kit 35-38, OPL-3 kit 77-81, empty MT-32 kit notes) |
+| Doom E1M1 drums (`coverage.py song`) | all 12 notes present; before the fix they were transposed down 4-26 semitones (fixed-pitch bit ignored) and one-shots looped: fixed, now level and brightness of GeneralUser GS's drums |
+| tuning (`coverage.py pitch`, all programs, 7 keys) | Dream median 1.5 cents (91 % within 10), GeneralUser GS 2.4 cents (88 %); "Dream On" Rock Organ +16..+26 cents is in the bank data (detuned layers) |
+
+Full tables: [sam7-dream-banks.md](../../../docs/inprogress/2026-10-03-zx-multisound/sam7-dream-banks.md) §4 and §9.
 
 ## Limits
 
@@ -74,5 +94,6 @@ Full tables: [sam7-dream-banks.md](../../../docs/inprogress/2026-10-03-zx-multis
   (percussive vs sustained) and roughly right in time, not exact.
 - Filter, LFOs, the second envelope, keyboard tables and the level words are not decoded, so brightness and
   velocity response follow the raw samples.
-- About 0.5 % of the splits in the Dream / Serdaco banks use a layout the sample-block finder does not recognize;
-  they are skipped with a count.
+- 2 splits (one record) in BURAN-v1.00.B16 use a layout the sample-block finder does not recognize; skipped with a
+  count.
+- Fixed-pitch splits play at an empirical reference key of 61.1; the exact constant of the hardware is not known.
