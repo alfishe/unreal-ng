@@ -31,6 +31,18 @@ constexpr char32_t kPrimusLetters[] = {U'Ю', U'Б', U'Ц', U'Д', U'Ф', U'Г',
                                        U'У', U'Ж', U'Ь', U'Ы', U'З', U'Ш', U'Э', U'Щ', U'Ч', U'Ъ'};
 constexpr uint16_t kPrimusTextStart = 33364;   // where Primus keeps the text: the start of its files
 
+/// Word characters: 1983 and GG letters and digits; PHT digits and #3C-#7E; Primus also ? . @ _ $ (it keeps L.X whole)
+bool IsWordRule(uint8_t c, std::string_view version)
+{
+    if (c >= '0' && c <= '9')
+        return true;
+    if (version == "pht")
+        return c >= 0x3C && c <= 0x7E;
+    if (version == "primus" && (c == '?' || c == '.' || c == '@' || c == '_' || c == '$'))
+        return true;
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
 std::vector<std::string_view> BuildTable(const std::string& version)
 {
     std::vector<std::string_view> t(k1983.begin(), k1983.end());
@@ -56,6 +68,7 @@ struct TableIndex
 {
     std::vector<std::string_view> names;
     std::array<std::vector<uint8_t>, 256> byFirst;
+    std::array<bool, 256> word{};   ///< IsWord of the version, by byte
 };
 
 const TableIndex& Indexed(const std::string& version)
@@ -66,6 +79,8 @@ const TableIndex& Indexed(const std::string& version)
         for (size_t k = 0; k < out.size(); ++k)
         {
             out[k].names = BuildTable(ids[k]);
+            for (int c = 0; c < 256; ++c)
+                out[k].word[static_cast<size_t>(c)] = IsWordRule(static_cast<uint8_t>(c), ids[k]);
             for (size_t i = 0; i < out[k].names.size(); ++i)
                 if (!out[k].names[i].empty())
                     out[k].byFirst[static_cast<uint8_t>(out[k].names[i][0])].push_back(static_cast<uint8_t>(i));
@@ -78,18 +93,6 @@ const TableIndex& Indexed(const std::string& version)
 const std::vector<std::string_view>& Table(const std::string& version)
 {
     return Indexed(version).names;
-}
-
-/// Word characters: 1983 and GG letters and digits; PHT digits and #3C-#7E; Primus also ? . @ _ $ (it keeps L.X whole)
-bool IsWord(uint8_t c, const std::string& version)
-{
-    if (c >= '0' && c <= '9')
-        return true;
-    if (version == "pht")
-        return c >= 0x3C && c <= 0x7E;
-    if (version == "primus" && (c == '?' || c == '.' || c == '@' || c == '_' || c == '$'))
-        return true;
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
 }
 
 struct Record
@@ -150,6 +153,7 @@ std::string ZeusCodec::DecodeBody(std::span<const uint8_t> body, const std::stri
 {
     const std::vector<std::string_view>& table = Table(version);
     std::string text;
+    text.reserve(body.size() * 2);
     for (size_t i = 0; i < body.size(); ++i)
     {
         const uint8_t c = body[i];
@@ -159,7 +163,9 @@ std::string ZeusCodec::DecodeBody(std::span<const uint8_t> body, const std::stri
             text.append(n == 0 ? 256 : n, ' ');
             continue;
         }
-        if (c >= 0x80 && static_cast<size_t>(c - 0x80) < table.size())
+        if (c < 0x80 && c != 0x5E && c != 0x60 && c != 0x7F)
+            text.push_back(static_cast<char>(c));   // ASCII is itself in the Spectrum set but for those three
+        else if (c >= 0x80 && static_cast<size_t>(c - 0x80) < table.size())
             text += table[c - 0x80];
         else if (version == "primus" && c >= kPrimusFirstLetter)
             utf8::Append(text, kPrimusLetters[c - kPrimusFirstLetter]);
@@ -172,12 +178,14 @@ std::string ZeusCodec::DecodeBody(std::span<const uint8_t> body, const std::stri
 bool ZeusCodec::EncodeBody(const std::string& text, const std::string& version, std::vector<uint8_t>& body, std::string& error)
 {
     body.clear();
-    std::vector<uint8_t> buf;
-    std::string spectrum = text;
-    if (version == "primus")
+    thread_local std::vector<uint8_t> buf;   // kept between calls: every line is encoded again to check it
+    thread_local std::string spectrum;
+    spectrum.clear();
+    // Primus with Russian letters in the text (none below #80): those are mapped first
+    const bool primus = version == "primus" && std::any_of(text.begin(), text.end(), [](char c) { return static_cast<uint8_t>(c) >= 0x80; });
+    if (primus)
     {
         // Primus' Russian letters to the code points that stand for their bytes in the Spectrum set
-        spectrum.clear();
         const std::span<const uint8_t> in(reinterpret_cast<const uint8_t*>(text.data()), text.size());
         for (size_t k = 0; k < in.size();)
         {
@@ -197,7 +205,8 @@ bool ZeusCodec::EncodeBody(const std::string& text, const std::string& version, 
             k += n;
         }
     }
-    if (!encoding::FromUtf8(spectrum, encoding::CodePage::ZxSpectrum, buf, error))
+    buf.clear();
+    if (!encoding::FromUtf8(primus ? std::string_view(spectrum) : std::string_view(text), encoding::CodePage::ZxSpectrum, buf, error))
         return false;
     for (const uint8_t c : buf)
         if (c == 0)
@@ -205,7 +214,9 @@ bool ZeusCodec::EncodeBody(const std::string& text, const std::string& version, 
             error = "a zero byte ends a ZEUS line";
             return false;
         }
-    const std::vector<std::string_view>& table = Table(version);
+    const TableIndex& index = Indexed(version);
+    const std::vector<std::string_view>& table = index.names;
+    const auto isWord = [&](uint8_t b) { return index.word[b]; };
     const size_t end = buf.size();
     buf.resize(end + 40, ' ');   // the screen line is padded with blanks
     size_t i = 0;
@@ -239,12 +250,12 @@ bool ZeusCodec::EncodeBody(const std::string& text, const std::string& version, 
         blanks = 0;
         // The first keyword of the table that matches wins
         size_t hit = table.size();
-        for (const uint8_t k : Indexed(version).byFirst[c])
+        for (const uint8_t k : index.byFirst[c])
         {
             const std::string_view kw = table[k];
             if (i + kw.size() > buf.size() || !std::equal(kw.begin(), kw.end(), buf.begin() + static_cast<std::ptrdiff_t>(i)))
                 continue;
-            if (kw.back() == ' ' || i + kw.size() >= buf.size() || !IsWord(buf[i + kw.size()], version))
+            if (kw.back() == ' ' || i + kw.size() >= buf.size() || !isWord(buf[i + kw.size()]))
             {
                 hit = k;
                 break;
@@ -256,16 +267,16 @@ bool ZeusCodec::EncodeBody(const std::string& text, const std::string& version, 
             i += table[hit].size();
             continue;
         }
-        if (IsWord(c, version))
+        if (isWord(c))
         {
-            while (i < end && IsWord(buf[i], version))
+            while (i < end && isWord(buf[i]))
                 body.push_back(buf[i++]);
             continue;
         }
         body.push_back(c);
         ++i;
         if (c == '"' || c == '#')
-            while (i < end && IsWord(buf[i], version))
+            while (i < end && isWord(buf[i]))
                 body.push_back(buf[i++]);
     }
     return true;
