@@ -10,6 +10,7 @@ and later a media hub and a debugger companion for a desktop instance.
 | File | Topic |
 |---|---|
 | [goals-and-requirements.md](goals-and-requirements.md) | **Start here.** Problem, market check, goals, non-goals, personas, use cases, functional and non-functional requirements, phases, acceptance, open questions |
+| [ux-design-brief.md](ux-design-brief.md) | **Brief for the UX design agent**: every feature (ids), flows with press budgets, per-screen specs, Steam Deck compliance (Valve requirements + Game Mode conventions), visual tokens, prototype tech spec, acceptance checklist |
 | [ux.md](ux.md) | Screens and navigation: library shelf, game card, in-game, quick menu, radial menu, on-screen keyboards, mapping editor, suspend / resume, media hub, companion; button map; ASCII mock-ups |
 | [architecture.md](architecture.md) | Process and threads, component view, input stack, profile store and signature detection, persistence, power events, packaging (mermaid component, thread and sequence diagrams) |
 | [rendering.md](rendering.md) | The fastest native render path: SDL3 GPU on Vulkan / RADV, display-locked emulation, present modes, latency budget, scaling and CRT pass, UI overlay, 50 Hz panel |

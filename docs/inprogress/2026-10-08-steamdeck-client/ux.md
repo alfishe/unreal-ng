@@ -5,6 +5,7 @@
 | **Date** | 2026-10-08 |
 | **Status** | Design, for review |
 | **Requirements** | [goals-and-requirements.md](goals-and-requirements.md) |
+| **Superseded for design work by** | [ux-design-brief.md](ux-design-brief.md) (the brief wins where they differ; this file keeps the first sketches) |
 
 Mock-ups are drawn on a 1280×800 grid (1 character ≈ 16 px). They show layout and hierarchy, not
 final art.
