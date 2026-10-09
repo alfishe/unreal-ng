@@ -396,13 +396,14 @@ TEST(Keyboard_Ps2_Test, TheRouteIsSetByName)
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
-/// TTD (PeripheralId::KeyboardMatrix): the matrix and the pressed-key counts
-/// round-trip; with no key held the blob is a few bytes
-TEST_F(Keyboard_Test, TtdStateRoundTripsMatrixAndCounts)
+/// TTD (PeripheralId::KeyboardMatrix): the matrix round-trips; the host's pressed-key counts are host state - not in
+/// the blob, left alone by a restore (a replayed key event changes the matrix only, and after a seek the user holds the
+/// keys they hold now). A blob from before 2026-10-08 with (key, count) pairs loads its matrix and ignores them
+TEST_F(Keyboard_Test, TtdStateRoundTripsTheMatrixNotTheHostCounts)
 {
     std::vector<uint8_t> idle;
     _keyboard->TTDSaveStateTo(idle);
-    EXPECT_EQ(idle.size(), 10u) << "version, 8 rows, no pairs";
+    EXPECT_EQ(idle.size(), 10u) << "version, 8 rows, a zero pair count";
 
     // Two host keys held on A (the counts the event path keeps), SPACE once
     Keyboard::InputState held{};
@@ -414,17 +415,28 @@ TEST_F(Keyboard_Test, TtdStateRoundTripsMatrixAndCounts)
 
     std::vector<uint8_t> blob;
     _keyboard->TTDSaveStateTo(blob);
-    EXPECT_EQ(blob.size(), 14u) << "two (key, count) pairs";
+    EXPECT_EQ(blob.size(), 10u) << "the counts are not in the blob";
     const uint64_t hash = _keyboard->TTDHashState();
 
-    _keyboard->RestoreInputState(Keyboard::InputState{{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, {}});
+    // Another matrix and other host counts live: the restore brings the matrix back, the counts stay
+    const std::map<ZXKeysEnum, uint8_t> hostNow = {{ZXKEY_Q, 1}};
+    _keyboard->RestoreInputState(Keyboard::InputState{{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, hostNow});
     EXPECT_NE(_keyboard->TTDHashState(), hash);
-
     _keyboard->TTDLoadState(blob.data());
     EXPECT_EQ(_keyboard->TTDHashState(), hash);
-    const Keyboard::InputState back = _keyboard->CaptureInputState();
+    Keyboard::InputState back = _keyboard->CaptureInputState();
     EXPECT_EQ(std::memcmp(back.matrix, held.matrix, sizeof(held.matrix)), 0);
-    EXPECT_EQ(back.pressedKeys, held.pressedKeys);
+    EXPECT_EQ(back.pressedKeys, hostNow) << "the host's counts are not restored";
     EXPECT_EQ(_keyboard->HandlePortIn(0xFDFE) & 0x01, 0x00) << "A down";
     EXPECT_EQ(_keyboard->HandlePortIn(0x7FFE) & 0x01, 0x00) << "SPACE down";
+
+    // An old blob: matrix, two pairs
+    std::vector<uint8_t> old = blob;
+    old[9] = 2;
+    old.insert(old.end(), {static_cast<uint8_t>(ZXKEY_A), 2, static_cast<uint8_t>(ZXKEY_SPACE), 1});
+    _keyboard->RestoreInputState(Keyboard::InputState{{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, hostNow});
+    _keyboard->TTDLoadState(old.data());
+    back = _keyboard->CaptureInputState();
+    EXPECT_EQ(std::memcmp(back.matrix, held.matrix, sizeof(held.matrix)), 0) << "the old blob's matrix";
+    EXPECT_EQ(back.pressedKeys, hostNow) << "its pairs ignored";
 }
