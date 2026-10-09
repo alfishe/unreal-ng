@@ -62,6 +62,11 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 - [x] `loaders/nex/LoaderNex` (V1.0-V1.3 sizes: palette / screen blocks skipped by flags, banks in file order 5,2,0,1,3,4,6.., entry bank in slot 3, border, SP, PC); 3 synthetic tests + `UNREAL_NEX=<file>` bring-up run (frame.rgba)
 - [ ] First check: `tilemap/tm.nex` on jnext shows the tilemap; ours shows the ULA only - the tilemap is N7. Reference screenshots: `jnext --headless --silent --sdcard cosim-cards/full.img --sdcard-readonly --delayed-screenshot f.png --delayed-screenshot-frames N file.nex`
 
+## N7a (2026-10-09): tilemap
+- [x] `NextVideoRenderer::TilemapLine`: 40 / 80 columns, 8 / 16-bit map entries (NR #6B bit 5), text mode, 512 mode, x / y mirror, rotate, palette offset, per-tile "ULA over", NR #6B bit 0 (ULA on top), index transparency NR #4C, scroll NR #2F-#31, clip window 3, bank 5 / 7 bases NR #6E / #6F; the ULA and the tilemap merge into one layer before Layer 2 (the stencil mode NR #68 bit 0 is not done)
+- [x] `tilemap/tm.nex` on jnext vs ours: identical but the ULA normal-colour level (jnext 6/7, ours 5/7 = the firmware's `DefaultPalette` 0xB6 etc., nexload.asm:728) - jnext deviates, ours follows the firmware
+- Bring-up lesson: a turbo frame is not drawn (the picture comes from the beam passing), so frame comparisons run without turbo
+
 ## Remaining
 - [x] Verification program: public suites collected and graded ([verification-program.md](verification-program.md)); esxDOS source availability checked ([esxdos-and-sd.md](esxdos-and-sd.md) section 1a)
 - [x] N0 second pass (2026-10-08): ULA / Timex / ULA+ / ULAnext, LoRes, palettes and the layer compositor, audio (AY x 3, DAC, mixer), CTC, UART, SPI, DivMMC, keyboard, ZEsarUX comparison: [research-fpga-vhdl.md](research-fpga-vhdl.md) sections 16-22; [esxdos-and-sd.md](esxdos-and-sd.md); [design-integration.md](design-integration.md)

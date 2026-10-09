@@ -230,15 +230,121 @@ void NextVideoRenderer::Layer2Line(const NextVideoInputs& in, unsigned y, Pixel*
     }
 }
 
+/// The tilemap (NR #6B-#6F, #2F-#31, #4C): 40 or 80 columns of 8 x 8 tiles of 4-bit pixels (or 1-bit text tiles) read
+/// from bank 5 / 7 at 256-byte offsets, scrolled and wrapped, with mirror / rotate / palette offset per tile
+void NextVideoRenderer::TilemapLine(const NextVideoInputs& in, unsigned y, Pixel* line)
+{
+    const uint8_t control = in.nr[0x6B];
+    if (!(control & 0x80))
+        return;
+    const NextVideoRegs& regs = *in.regs;
+    if (y < regs.Clip(3, 2) || y > regs.Clip(3, 3))
+        return;
+    const bool wide = (control & 0x40) != 0;  // 80 columns
+    const bool noFlags = (control & 0x20) != 0;
+    const bool text = (control & 0x08) != 0;
+    const bool mode512 = (control & 0x02) != 0;
+    const bool ulaOnTop = (control & 0x01) != 0;
+    const unsigned palette = (control & 0x10) ? 7 : 3;
+    const unsigned transparentIndex = in.nr[0x4C] & 0x0F;
+    const unsigned scrollX = in.nr[0x30] | ((in.nr[0x2F] & 3) << 8);
+    const unsigned scrollY = in.nr[0x31];
+    auto vram = [&](uint8_t base, unsigned offset) -> uint8_t {
+        const unsigned page = (base & 0x80) ? 7 : 5;
+        const size_t address = static_cast<size_t>(page) * 0x4000 + ((static_cast<size_t>(base & 0x3F) * 256 + offset) & 0x3FFF);
+        return address < static_cast<size_t>(in.ramPages) * 0x4000 ? in.ram[address] : 0;
+    };
+    const unsigned columns = wide ? 80 : 40;
+    const unsigned wrap = wide ? 640 : 320;
+    const unsigned absY = (y + scrollY) & 0xFF;
+    const unsigned tileRow = absY >> 3, pixelY = absY & 7;
+    const unsigned x1 = regs.Clip(3, 0) * 2, x2 = regs.Clip(3, 1) * 2 + 1;
+    int cachedColumn = -1;
+    unsigned paletteOffset = 0;
+    bool rotate = false, xMirror = false, yMirror = false, below = false;
+    unsigned tile = 0;
+    uint8_t textRow = 0, row[4] = {};
+    for (unsigned sx = 0; sx < kW; sx++)
+    {
+        const unsigned px320 = sx >> 1;
+        if (px320 < x1 || px320 > x2)
+            continue;
+        const unsigned tx = wide ? sx : px320;
+        const unsigned absX = (tx + scrollX) % wrap;
+        const unsigned column = absX >> 3, pixelX = absX & 7;
+        if (static_cast<int>(column) != cachedColumn)
+        {
+            cachedColumn = static_cast<int>(column);
+            const unsigned entry = (tileRow * columns + column) * (noFlags ? 1 : 2);
+            tile = vram(in.nr[0x6E], entry);
+            const uint8_t attr = noFlags ? in.nr[0x6C] : vram(in.nr[0x6E], entry + 1);
+            bool ulaOver;
+            if (text)
+            {
+                paletteOffset = (attr >> 1) & 0x7F;
+                xMirror = yMirror = rotate = false;
+                ulaOver = (attr & 1) != 0;
+            }
+            else
+            {
+                paletteOffset = (attr >> 4) & 0x0F;
+                xMirror = (attr & 0x08) != 0;
+                yMirror = (attr & 0x04) != 0;
+                rotate = (attr & 0x02) != 0;
+                ulaOver = (attr & 1) != 0;
+            }
+            if (mode512)
+            {
+                tile |= (attr & 1) ? 0x100 : 0;
+                ulaOver = false;
+            }
+            below = ulaOnTop ? false : (ulaOver || mode512);
+            if (text)
+                textRow = vram(in.nr[0x6F], tile * 8 + pixelY);
+            else if (!rotate)
+            {
+                const unsigned py = yMirror ? 7 - pixelY : pixelY;
+                for (unsigned i = 0; i < 4; i++)
+                    row[i] = vram(in.nr[0x6F], tile * 32 + py * 4 + i);
+            }
+        }
+        unsigned pixel;
+        if (text)
+            pixel = (textRow >> (7 - pixelX)) & 1;
+        else
+        {
+            const unsigned px = (xMirror ^ rotate) ? 7 - pixelX : pixelX;
+            const unsigned py = yMirror ? 7 - pixelY : pixelY;
+            if (!rotate)
+                pixel = (px & 1) ? (row[px >> 1] & 0x0F) : (row[px >> 1] >> 4);
+            else  // the tile turned a quarter: rows and columns swap
+            {
+                const uint8_t byte = vram(in.nr[0x6F], tile * 32 + px * 4 + (py >> 1));
+                pixel = (py & 1) ? (byte & 0x0F) : (byte >> 4);
+            }
+        }
+        if (!text && pixel == transparentIndex)
+            continue;
+        const unsigned index = text ? ((paletteOffset << 1) | (pixel & 1)) : ((paletteOffset << 4) | (pixel & 0x0F));
+        Pixel& p = line[sx];
+        p.colour = regs.PaletteEntry(palette, index & 0xFF);
+        p.opaque = true;
+        p.below = below;
+        p.textMode = text;
+    }
+}
+
 void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32_t* out)
 {
     Pixel ula[kW];
     Pixel layer2[kW];
+    Pixel tiles[kW];
     if (in.nr[0x15] & 0x80)
         LoResLine(in, y, ula);
     else
         UlaLine(in, y, ula);
     Layer2Line(in, y, layer2);
+    TilemapLine(in, y, tiles);
 
     // A pixel the layer paints is transparent when its 8 MSBs equal the global transparency colour (NR #14)
     const unsigned transparent = in.nr[0x14];
@@ -252,9 +358,20 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
     const uint16_t fallback = Nine(in.nr[0x4A]);
     for (unsigned x = 0; x < kW; x++)
     {
-        const Pixel& u = ula[x];
+        // the ULA and the tilemap merge into one layer first: a tile pixel wins unless it is marked below the ULA
+        // (text mode tiles are transparent by the global colour) and the ULA pixel is opaque
+        const Pixel& t = tiles[x];
+        const bool tv = t.opaque && !(t.textMode && ((t.colour >> 1) & 0xFF) == transparent);
+        const bool ulaVisible = visible(ula[x]);
+        Pixel merged = ula[x];
+        bool uv = ulaVisible;
+        if (tv && (!t.below || !ulaVisible))
+        {
+            merged = t;
+            uv = true;
+        }
+        const Pixel& u = merged;
         const Pixel& l = layer2[x];
-        const bool uv = visible(u);
         const bool lv = visible(l);
         uint16_t colour = fallback;
         if (lv && (l.colour & 0x200))

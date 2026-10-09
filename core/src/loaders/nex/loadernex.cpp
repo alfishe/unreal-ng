@@ -110,7 +110,9 @@ bool LoaderNex::Load(const std::vector<uint8_t>& image)
     if (!_header.keepRegisters)
         decoder->PerformReset(false);
     memory->ResetMmu();
-    memory->ApplyClassicPaging(0, 0);
+    _context->emulatorState.p7FFD = 0x10;
+    _context->emulatorState.p1FFD = 0x04;
+    memory->ApplyClassicPaging(0x10, 0x04);  // ROM 3, the 48K BASIC ROM: RST 16 and the font at #3D00 work
 
     // The banks, in the file's order
     for (unsigned bank : BankOrder())

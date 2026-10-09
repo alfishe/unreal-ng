@@ -243,3 +243,109 @@ TEST_F(NextVideoRenderer_Test, TransparencyOrderPriorityAndFallback)
     Render(NextVideoRenderer::kPaperTop);
     EXPECT_EQ(Px(left), NextVideoRenderer::Rgba(static_cast<uint16_t>((0x1D << 1) | 1))) << "fallback, low blue bit = B1 | B0";
 }
+
+// region <Tilemap>
+
+class NextTilemap_Test : public NextVideoRenderer_Test
+{
+protected:
+    // map at bank 5 offset #4000 - 16K wraps, so use offset #1000 (NR #6E = 0x10), definitions at #2000 (NR #6F = 0x20)
+    void SetUp() override
+    {
+        NextVideoRenderer_Test::SetUp();
+        _in.nr[0x6B] = 0x80;  // enabled, 40 columns, 16-bit map entries
+        _in.nr[0x6E] = 0x10;
+        _in.nr[0x6F] = 0x20;
+        _in.nr[0x4C] = 0x0F;  // transparent index
+        _in.nr[0x68] = 0x80;  // no ULA, so the tilemap is the only layer
+    }
+    uint8_t* Map() { return Page(5) + 0x1000; }
+    uint8_t* Defs() { return Page(5) + 0x2000; }
+};
+
+TEST_F(NextTilemap_Test, TilePixelsComeFromTheDefinitionWithPaletteOffsetAndIndexTransparency)
+{
+    Map()[0] = 1;          // tile 1 at column 0 row 0
+    Map()[1] = 0x30;       // palette offset 3
+    Defs()[32 + 0] = 0x2F; // line 0 of tile 1: pixel 0 = 2, pixel 1 = 15 (transparent)
+    Render(0);
+    EXPECT_EQ(Px(0), Pal(3, (3 << 4) | 2)) << "a tile pixel is two sub-pixels wide";
+    EXPECT_EQ(Px(1), Pal(3, (3 << 4) | 2));
+    EXPECT_NE(Px(2), Pal(3, (3 << 4) | 15)) << "index 15 is transparent: the fallback shows";
+}
+
+TEST_F(NextTilemap_Test, MirrorsAndRotate)
+{
+    Defs()[0] = 0x12;      // tile 0 line 0: pixels 0..7 = 1,2,0,0,0,0,0,0
+    Defs()[4 * 7] = 0x34;  // line 7: 3,4 at the left
+    Map()[1] = 0x08;       // x mirror: pixel 0 of the tile is at screen pixel 7
+    Render(0);
+    EXPECT_EQ(Px(14), Pal(3, 1));
+    EXPECT_EQ(Px(12), Pal(3, 2));
+    Map()[1] = 0x04;       // y mirror: line 0 shows line 7
+    Render(0);
+    EXPECT_EQ(Px(0), Pal(3, 3));
+    EXPECT_EQ(Px(2), Pal(3, 4));
+    // rotate: rows and columns of the tile swap, and the picture is mirrored in x (the turn is a quarter)
+    Map()[1] = 0x02;
+    Defs()[0] = 0;
+    Defs()[4 * 7] = 0;
+    Defs()[28] = 0x50;     // tile row 7, column 0 = 5
+    Render(0);
+    EXPECT_EQ(Px(0), Pal(3, 5)) << "line 0, pixel 0 of the turned tile = tile row 7, column 0";
+}
+
+TEST_F(NextTilemap_Test, ScrollWrapsAndNoFlagsModeUsesTheDefaultAttribute)
+{
+    _in.nr[0x6B] = 0xA0;  // enabled + 8-bit map entries
+    _in.nr[0x6C] = 0x50;  // default attribute: palette offset 5
+    Map()[0] = 0;
+    Map()[1] = 1;         // the entries are one byte now: tile 1 in column 1
+    Defs()[32] = 0x70;
+    Render(0);
+    EXPECT_EQ(Px(16), Pal(3, (5 << 4) | 7));
+    _in.nr[0x30] = 8;     // scroll X by one tile
+    Render(0);
+    EXPECT_EQ(Px(0), Pal(3, (5 << 4) | 7));
+    _in.nr[0x31] = 8;     // scroll Y by one row: line 0 shows map row 1 (empty tiles -> tile 0, a transparent index 0? no: index 0)
+    Render(0);
+    EXPECT_NE(Px(0), Pal(3, (5 << 4) | 7));
+}
+
+TEST_F(NextTilemap_Test, UlaAboveWhenTheTileSaysSoAndTextModeUsesTheGlobalTransparency)
+{
+    _in.nr[0x68] = 0x00;  // the ULA is on
+    Page(5)[0] = 0x80;
+    Page(5)[0x1800] = 0x0A;  // ink red
+    Defs()[0] = 0x10;
+    Map()[1] = 0x01;      // ULA over this tile
+    const unsigned y = NextVideoRenderer::kPaperTop;
+    const unsigned x = NextVideoRenderer::kPaperLeft;
+    // the tile map covers the screen's top-left; paper (64, 32) is tile column 4 row 4: put the tile there
+    unsigned entry = (4 * 40 + 4) * 2;
+    Map()[entry] = 0;
+    Map()[entry + 1] = 0x01;
+    Defs()[0] = 0x10;
+    Render(y);
+    EXPECT_EQ(Px(x), Pal(0, 2)) << "the ULA pixel is above a 'ULA over' tile";
+    Map()[entry + 1] = 0x00;
+    Render(y);
+    EXPECT_EQ(Px(x), Pal(3, 1)) << "otherwise the tile is above the ULA";
+    // the tilemap off: the ULA again
+    _in.nr[0x6B] = 0x00;
+    Render(y);
+    EXPECT_EQ(Px(x), Pal(0, 2));
+}
+
+TEST_F(NextTilemap_Test, TextModeTilesAreOneBitPerPixel)
+{
+    _in.nr[0x6B] = 0x88;  // enabled + text
+    Defs()[8 * 65] = 0x80;  // character 'A' (65): row 0 has the leftmost pixel
+    Map()[0] = 65;
+    Map()[1] = 0x06;      // palette offset 3 (bits 7:1)
+    Render(0);
+    EXPECT_EQ(Px(0), Pal(3, (3 << 1) | 1));
+    EXPECT_EQ(Px(2), Pal(3, (3 << 1) | 0));
+}
+
+// endregion

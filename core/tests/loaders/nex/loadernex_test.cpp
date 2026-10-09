@@ -18,6 +18,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/next/nextmemory.h"
+#include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/video/screen.h"
 #include "loaders/nex/loadernex.h"
 
@@ -148,11 +149,37 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
     ASSERT_TRUE(loader.LoadFile(path)) << loader.Error();
     const char* frames = std::getenv("UNREAL_NEX_FRAMES");
     const int total = frames ? std::atoi(frames) : 200;
-    emulator->EnableTurboMode();
+    // no turbo: the picture is drawn as the beam passes, a turbo frame is not drawn
     for (int i = 0; i < total; i++)
         emulator->RunFrame(true);
+    // UNREAL_NEX_NR="6B=00,15=1C": NextREG writes before the frame is taken (hex), to look at one layer
+    if (const char* nr = std::getenv("UNREAL_NEX_NR"))
+    {
+        auto* decoder = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder);
+        std::string list = nr;
+        for (size_t at = 0; at < list.size();)
+        {
+            const size_t end = list.find(',', at);
+            const std::string item = list.substr(at, end == std::string::npos ? std::string::npos : end - at);
+            const size_t eq = item.find('=');
+            if (decoder && eq != std::string::npos)
+                decoder->Board().Write(static_cast<uint8_t>(std::stoul(item.substr(0, eq), nullptr, 16)),
+                                       static_cast<uint8_t>(std::stoul(item.substr(eq + 1), nullptr, 16)));
+            if (end == std::string::npos)
+                break;
+            at = end + 1;
+        }
+        for (int i = 0; i < 2; i++)
+            emulator->RunFrame(true);
+    }
     if (const char* out = std::getenv("UNREAL_NEX_OUT"))
     {
+        std::ofstream ram(std::string(out) + "/ram.bin", std::ios::binary);  // the 64K the Z80 sees
+        for (unsigned a = 0; a < 0x10000; a++)
+        {
+            const char b = static_cast<char>(context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(a)));
+            ram.write(&b, 1);
+        }
         const FramebufferDescriptor& fb = context->pScreen->GetFramebufferDescriptor();
         std::ofstream file(std::string(out) + "/frame.rgba", std::ios::binary);
         const uint32_t dims[2] = {fb.width, fb.height};
