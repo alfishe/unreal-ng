@@ -681,7 +681,8 @@ void MenuManager::createMachineMenu()
         MM_PROFI,         // Profi v5 1024K (design: docs/inprogress/2026-09-21-profi)
         MM_PROFI3,        // Profi v3 512K (design: docs/inprogress/2026-10-01-profi-v3-v5)
         MM_TSL,           // ZX-Evo TS-Conf, 4096K (design: docs/inprogress/2026-09-27-tsconf)
-        MM_SPRINTER       // Peters Plus Sprinter Sp2000, 4096K (design: docs/inprogress/2026-09-28-sprinter)
+        MM_SPRINTER,      // Peters Plus Sprinter Sp2000, 4096K (design: docs/inprogress/2026-09-28-sprinter)
+        MM_NEXT           // ZX Spectrum Next, 2048K (design: docs/inprogress/2026-10-07-zx-next); the real boot chain with [NEXT] SdCard
     };
 
     for (const auto& model : models)

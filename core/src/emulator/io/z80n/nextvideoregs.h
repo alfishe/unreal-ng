@@ -25,6 +25,27 @@ public:
     uint8_t Clip(unsigned window, unsigned coordinate) const { return _clip[window][coordinate & 3]; }
     /// endregion
 
+    /// region <Display ports>
+    /// Port #FF (Timex) and NR #69 bits 5:0 are one latch; port #123B bit 1 and NR #69 bit 7 the Layer 2 enable; NR #69
+    /// bit 6 the shadow ULA screen (an alias of #7FFD bit 3)
+    void WritePortFf(uint8_t value) { _portFf = value & 0x3F; }
+    uint8_t PortFf() const { return _portFf; }
+    void WritePort123b(uint8_t value) { _port123b = value; }
+    uint8_t Port123b() const { return _port123b; }
+    void WriteDisplayControl(uint8_t value)
+    {
+        _portFf = value & 0x3F;
+        _shadowAlias = (value & 0x40) != 0;
+        _port123b = static_cast<uint8_t>((_port123b & ~0x02) | ((value & 0x80) ? 0x02 : 0));
+    }
+    uint8_t ReadDisplayControl() const
+    {
+        return static_cast<uint8_t>(((_port123b & 0x02) ? 0x80 : 0) | (_shadowAlias ? 0x40 : 0) | _portFf);
+    }
+    bool Layer2Enabled() const { return (_port123b & 0x02) != 0; }
+    bool ShadowAlias() const { return _shadowAlias; }
+    /// endregion
+
     /// region <Palettes>
     void WritePaletteIndex(uint8_t value);
     uint8_t PaletteIndex() const { return _index; }
@@ -50,6 +71,9 @@ private:
     uint8_t _index = 0;
     uint8_t _control = 0;
     uint8_t _ulaNext = 0x07;
+    uint8_t _portFf = 0;
+    uint8_t _port123b = 0;
+    bool _shadowAlias = false;
     uint8_t _first = 0;
     bool _haveFirst = false;
 };

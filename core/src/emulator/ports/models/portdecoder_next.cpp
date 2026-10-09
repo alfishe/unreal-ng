@@ -5,6 +5,12 @@
 #include "common/modulelogger.h"
 #include "emulator/cpu/core.h"
 #include "emulator/io/z80n/nexttiming.h"
+#include <filesystem>
+
+#include "common/filehelper.h"
+#include "emulator/io/storage/fat/fatsynthvolume.h"
+#include "emulator/io/storage/hostfolder/foldersnapshot.h"
+#include "emulator/io/storage/hostfolder/hostfolderfat.h"
 #include "emulator/sound/audio.h"
 #include "emulator/video/ulacontention.h"
 
@@ -43,6 +49,7 @@ void PortDecoder_Next::reset()
 
     Mem().ResetMmu();
     Mem().ApplyClassicPaging(0, 0);
+    InsertConfiguredCard();
     _board->Reset(true);
     _ctc.Reset();
     _i2c.Reset();
@@ -120,6 +127,30 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, value, pc, disp);
         return value;
     }
+    if (port == 0x123B)
+    {
+        const uint8_t value = _board->Video().Port123b();
+        _lastPortDecoded = true;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = port;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, value, pc, disp);
+        return value;
+    }
+    if (low == 0xFF && (_board->Stored(NextBoard::kRegPeripheral2) & 0x04))  // NR #08 bit 2: #FF reads the Timex mode
+    {
+        const uint8_t value = _board->Video().PortFf();
+        _lastPortDecoded = true;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = port;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, value, pc, disp);
+        return value;
+    }
     if (low == NextDivMmc::kPort)
     {
         const uint8_t value = _divMmc->ReadPort();
@@ -187,6 +218,10 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         _i2c.Write(port, value);
     else if (static_cast<uint8_t>(port) == NextDivMmc::kPort)
         _divMmc->WritePort(value);
+    else if (static_cast<uint8_t>(port) == 0xFF)
+        _board->Video().WritePortFf(value);  // the Timex screen mode (NR #69 bits 5:0 alias it)
+    else if (port == 0x123B)
+        _board->Video().WritePort123b(value);
     else if (static_cast<uint8_t>(port) == kPortSpiSelect)
         SpiSelect(value);
     else if (static_cast<uint8_t>(port) == kPortSpiData)
@@ -217,6 +252,40 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 }
 
 /// region <Reset>
+
+/// [NEXT] SdCard: a folder is presented as a FAT16 card (HostFolderFat, writes kept in the session), a file as a raw image
+void PortDecoder_Next::InsertConfiguredCard()
+{
+    const std::string path = _context->config.next_sd_path;
+    if (path.empty() || _sd[0].present())
+        return;
+    std::string resolved = FileHelper::NormalizePath(path);
+    if (!FileHelper::FileExists(resolved) && !std::filesystem::exists(resolved))
+        resolved = FileHelper::PathCombine(FileHelper::GetResourcesPath(), path);
+    std::error_code ec;
+    if (std::filesystem::is_directory(resolved, ec))
+    {
+        FolderSnapshot snapshot;
+        FolderScanOptions scan;
+        std::string error;
+        if (!FolderSnapshot::Scan(resolved, scan, snapshot, &error))
+        {
+            MLOGERROR("PortDecoder_Next: SD card folder '%s': %s", path.c_str(), error.c_str());
+            return;
+        }
+        FatVolumeOptions options;
+        std::vector<std::string> report;
+        auto card = HostFolderFat::Build(snapshot, options, &error, &report);
+        if (!card)
+        {
+            MLOGERROR("PortDecoder_Next: SD card folder '%s' does not fit a FAT16 card: %s", path.c_str(), error.c_str());
+            return;
+        }
+        _sd[0].insert(std::move(card), SdCardSpi::WriteMode::Session);
+    }
+    else if (!_sd[0].open(resolved, SdCardSpi::WriteMode::Session))
+        MLOGERROR("PortDecoder_Next: SD card image '%s' not found", path.c_str());
+}
 
 void PortDecoder_Next::PerformReset(bool hard)
 {

@@ -131,12 +131,14 @@ TEST_F(DivMmcPaging_Test, AutomapEntriesMapInAfterTheFetchAndOffAreaMapsOut)
 
 TEST_F(DivMmcPaging_Test, TrDosEntryMapsInInstantly)
 {
-    // the firmware byte at #3D00 is the opcode the CPU executes: a NOP
-    _firmware[0x3D00] = 0x00;
-    ASSERT_TRUE(_div->LoadRom(_firmware, sizeof _firmware));
+    // the opcode at #3D00 is the board's: #2000-#3FFF is the RAM bank (offset #1D00), INC A in bank 0 (the Spectrum
+    // ROM has the font's blank glyph there: NOPs)
+    _div->RamBank(0)[0x1D00] = 0x3C;
     _z80->pc = 0x3D00;
+    _z80->a = 0x10;
     _z80->Z80Step();
-    EXPECT_EQ(_z80->pc, 0x3D01) << "the opcode came from the board (the Spectrum ROM has no NOP there)";
+    EXPECT_EQ(_z80->pc, 0x3D01);
+    EXPECT_EQ(_z80->a, 0x11) << "the opcode came from the board";
     EXPECT_TRUE(_div->Automapped());
 }
 

@@ -251,7 +251,7 @@ Screen::ModeSelection Screen::DetectVideoMode(MEM_MODEL model) const
         case MM_PLUS3:
             return DetectModeZX128(state);
         case MM_NEXT:
-            return DetectModeByTimingClass(state);
+            return { M_NEXT, R_256_192 };
         case MM_PENTAGON:
             return DetectModePentagon(state);
         case MM_ATM450:
@@ -291,19 +291,6 @@ Screen::ModeSelection Screen::DetectModeScorpion(const EmulatorState& /*state*/)
 Screen::ModeSelection Screen::DetectModeZX128(const EmulatorState& /*state*/) const
 {
     return { M_ZX128, R_256_192 };
-}
-
-Screen::ModeSelection Screen::DetectModeByTimingClass(const EmulatorState& state) const
-{
-    switch (state.ula_timing_class)
-    {
-        case 1:
-            return { M_ZX48, R_256_192 };
-        case 4:
-            return { M_PENTAGON128K, R_256_192 };
-        default:
-            return { M_ZX128, R_256_192 };
-    }
 }
 
 // Pentagon 128K: user-forced overscan (UI toggle) must survive the per-frame
@@ -592,7 +579,8 @@ void Screen::SetVideoMode(VideoModeEnum mode)
             const MEM_MODEL model = _context ? _context->config.mem_model : MM_SPECTRUM48;
             const bool ferranti = (model == MM_SPECTRUM48 || model == MM_SPECTRUM128 || model == MM_PLUS2 ||
                                    model == MM_PLUS2A || model == MM_PLUS3 || model == MM_NEXT) &&
-                                  !_context->emulatorState.hw_contention_disabled;
+                                  !_context->emulatorState.hw_contention_disabled &&
+                                  !(model == MM_NEXT && _context->emulatorState.ula_timing_class == 4);  // the Pentagon family has none
             _rasterState.borderUpdateTStates = ferranti ? 4 : 1;
             _rasterState.contentionEnabled = ferranti;
             _rasterState.fetchType = ferranti ? ULA_FERRANTI : ULA_DISCRETE_LOGIC;
@@ -978,6 +966,7 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         case M_TSTX:
         case M_TSZX:
         case M_SPRINTER:  // Sprinter (ScreenSprinter)
+        case M_NEXT:      // ZX Spectrum Next (ScreenNext)
             break;
         default:
             MLOGWARNING("AllocateFramebuffer: Unknown video mode");
@@ -1639,6 +1628,12 @@ const RasterDescriptor& Screen::GetTimingDescriptor(VideoModeEnum mode) const
                                 _context != nullptr && _context->config.mem_model == MM_ATM3;
     if (mode == M_P384)
         return rasterDescriptors[M_PENTAGON128K];
+    if (mode == M_NEXT)
+    {
+        // the beam runs the frame family NR #03 chose (EmulatorState::ula_timing_class): 1 = 48K, 4 = Pentagon, else 128K
+        const uint8_t family = _state ? _state->ula_timing_class : 2;
+        return rasterDescriptors[family == 1 ? M_ZX48 : (family == 4 ? M_PENTAGON128K : M_ZX128)];
+    }
 
     // ATM Turbo 2 v4.50: 308-line raster, the 4 missing lines are vertical blank before the
     // visible area (frame and window placement unchanged). Inferred from the system ROM's
@@ -1773,6 +1768,7 @@ const VideoModeInfo& Screen::GetVideoModeInfo(VideoModeEnum mode)
         case M_ATMTX:
         case M_ATMTL:   return atmText;
         case M_SPRINTER: return sprinter;
+        case M_NEXT: return zx;
         // ZX-layout modes; TSConf / GMX / Timex are not emulated yet and report
         // the ZX format until their renderers define one
         default:        return zx;
@@ -1952,6 +1948,9 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
             break;
         case M_SPRINTER:
             result = "Sprinter";
+            break;
+        case M_NEXT:
+            result = "Next";
             break;
         default:
             result = "Unknown";
@@ -2485,6 +2484,7 @@ std::string Screen::GetVideoVideoModeName(VideoModeEnum mode)
         "Profi 512x240",        // M_PROFIHR
         "TSConf ZX",            // M_TSZX
         "Sprinter",             // M_SPRINTER
+        "ZX Spectrum Next",     // M_NEXT
     };
     static_assert(std::size(videoModeName) == M_MAX, "videoModeName array size mismatch with VideoModeEnum");
 

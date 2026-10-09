@@ -70,6 +70,8 @@ enum VideoModeEnum : uint8_t
 
     M_SPRINTER,  // Sprinter Sp2000: per-square modes from the video RAM mode table (ScreenSprinter)
 
+    M_NEXT,  // ZX Spectrum Next: layers composed per line into 640x256 (ScreenNext); the beam follows the ZX family of NR #03
+
     M_MAX
 };
 
@@ -581,6 +583,11 @@ public:
         // vSync + vBlank only make maxFrameTiming 320 x 224; ScreenSprinter sets the zones
         // and the 312-line frame itself
         {736, 288, 640, 256, 48, 16, 448, 64, 16, 16, 16},  // M_SPRINTER
+        // M_NEXT (ScreenNext): the 320x256 visible grid of the 7 MHz pixel clock at two sub-pixels each (the 512-pixel Timex
+        // hi-res and Layer 2's 640x256 get one each) with every line twice (the 4:3 picture of the 320x256 grid): the
+        // 512x384 paper at (64, 64). The beam timing is the ZX family's (GetTimingDescriptor); the fields after the
+        // sizes are not used for the drawing
+        {640, 512, 512, 384, 64, 64, 448, 64, 32, 8, 16},  // M_NEXT
     };
 
     // Default color table: 0RRrrrGG gggBBbbb
@@ -698,8 +705,6 @@ protected:
     /// mode + raster decision based on the current emulator port state
     ModeSelection DetectModeZX48(const EmulatorState& state) const;
     ModeSelection DetectModeZX128(const EmulatorState& state) const;
-    /// The family a board selected at run time (EmulatorState::ula_timing_class)
-    ModeSelection DetectModeByTimingClass(const EmulatorState& state) const;
     ModeSelection DetectModePentagon(const EmulatorState& state) const;
     ModeSelection DetectModeATM1(const EmulatorState& state) const;
     ModeSelection DetectModeATM2(const EmulatorState& state) const;

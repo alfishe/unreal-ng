@@ -542,6 +542,7 @@ bool Config::ParseConfig(IniFile& inimanager)
     CopyStringValue(inimanager.GetValue(rom, "SPRINTER", nullptr), config.sprinter_rom_path, sizeof config.sprinter_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "NEXT", nullptr), config.next_rom_path, sizeof config.next_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "NEXTBOOT", nullptr), config.next_boot_rom_path, sizeof config.next_boot_rom_path);
+    CopyStringValue(inimanager.GetValue("NEXT", "SdCard", nullptr), config.next_sd_path, sizeof config.next_sd_path);
 #ifdef MOD_GSZ80
     // General Sound firmware ROM ([ROM] GS). Defaults to the shipped 32 KB
     // gs105a.rom (data/rom) so a fitted card always has firmware even when a

@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -197,4 +198,19 @@ TEST_F(NextBoot_Test, MachineTypeDecidesThePagingPorts)
     NextReg(0x02, 0x01);
     _z80->Z80Step();
     EXPECT_EQ(_ports->Board().MachineType(), 1);
+}
+
+// [NEXT] SdCard: a folder in the config becomes card 0 (a FAT16 card of HostFolderFat) when the machine starts
+TEST(NextConfigCard_Test, SdCardFolderOfTheConfigIsInsertedAtReset)
+{
+    const std::string folder = (TestPathHelper::FindProjectRoot() / "testdata/machines/zxnext/card").string();
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero, [&](CONFIG& config) {
+        std::strncpy(config.next_sd_path, folder.c_str(), sizeof config.next_sd_path - 1);
+    });
+    ASSERT_NE(emulator, nullptr);
+    PortDecoder_Next* ports = dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    EXPECT_TRUE(ports->SdCard(0).present());
+    EXPECT_GT(ports->SdCard(0).sizeBytes(), 1024u * 1024u);
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }

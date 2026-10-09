@@ -53,6 +53,11 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
   by eye against the jnext screenshot). The ZX renderer already draws it (the OS uses the standard ULA screen);
   picture: [img/nextzxos-main-menu.png](img/nextzxos-main-menu.png). Border colour and the Next's own layers are N6/N7.
 
+## N6a (2026-10-09): the Next picture
+- [x] `NextVideoRenderer` (ULA standard / Timex hi-colour / hi-res / ULANext, LoRes, Layer 2 at 256x192 / 320x256 / 640x256 with scroll, clip and palette offset, 9-bit palettes, global transparency, layer order SLU...ULS, Layer 2 priority colours, fallback colour) and `ScreenNext` (mode `M_NEXT`, a 640x512 frame = the 320x256 grid at two sub-pixels with every line twice, drawn line by line; the beam is the ZX family of NR #03); `[NEXT] SdCard` (folder or image) and `[ROM] NEXTBOOT` make the machine boot the real chain in the app; Qt machine menu entry
+- [ ] N6b: sprites, tilemap, copper, blend modes (N7); border stripes inside a line; ULA+; Radastan; the Layer 2 CPU mapping of port #123B (read / write windows, shadow bank); ULA half-pixel scroll
+- [ ] The Next border colour of the welcome screen (grey = the palette's paper entry of the border) is drawn; the bright-border and flash details are not compared with a reference yet
+
 ## Remaining
 - [x] Verification program: public suites collected and graded ([verification-program.md](verification-program.md)); esxDOS source availability checked ([esxdos-and-sd.md](esxdos-and-sd.md) section 1a)
 - [x] N0 second pass (2026-10-08): ULA / Timex / ULA+ / ULAnext, LoRes, palettes and the layer compositor, audio (AY x 3, DAC, mixer), CTC, UART, SPI, DivMMC, keyboard, ZEsarUX comparison: [research-fpga-vhdl.md](research-fpga-vhdl.md) sections 16-22; [esxdos-and-sd.md](esxdos-and-sd.md); [design-integration.md](design-integration.md)

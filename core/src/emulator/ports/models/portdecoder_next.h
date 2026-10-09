@@ -78,6 +78,7 @@ private:
     void Port_1FFD_Next(uint8_t value);
     void Port_DFFD_Next(uint8_t value);
 
+    void InsertConfiguredCard();
     void ApplyTiming(uint8_t timing);
     /// Contention follows the frame family, the speed (3.5 MHz only) and NR #08 bit 6
     void UpdateContention();

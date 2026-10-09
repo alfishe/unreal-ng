@@ -93,6 +93,8 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return _video.ReadClip(reg - 0x18);
         case 0x1C:
             return _video.ReadClipControl();
+        case 0x69:
+            return _video.ReadDisplayControl();
         case 0x40:
             return _video.PaletteIndex();
         case 0x41:
@@ -143,6 +145,10 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             return;
         case 0x1C:
             _video.WriteClipControl(value);
+            return;
+        case 0x69:
+            _video.WriteDisplayControl(value);
+            _regs[reg] = value;
             return;
         case 0x10:
             if (_memory->InConfigMode())  // the core id is writable in config mode only

@@ -23,6 +23,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"
+#include "emulator/video/next/nextvideorenderer.h"
 #include "emulator/video/screen.h"
 #include "emulator/io/storage/fat/fatsynthvolume.h"
 #include "emulator/io/storage/hostfolder/foldersnapshot.h"
@@ -375,4 +376,17 @@ TEST_F(NextFirmware_Test, NextZxosMainMenuIsDrawn)
         different = differs();
     }
     EXPECT_EQ(different, 0u) << "bytes of the ULA screen that differ from the menu";
+
+    // ScreenNext drew it: a 640 x 512 frame (the 320 x 256 grid, lines doubled) with the highlighted "Browser" bar in cyan
+    const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
+    ASSERT_EQ(fb.width, 640u);
+    ASSERT_EQ(fb.height, 512u);
+    const NextVideoRegs& video = _ports->Board().Video();
+    const uint32_t cyan = NextVideoRenderer::Rgba(video.PaletteEntry(0, 5));
+    const uint32_t brightCyan = NextVideoRenderer::Rgba(video.PaletteEntry(0, 13));
+    const uint32_t* pixels = reinterpret_cast<const uint32_t*>(fb.memoryBuffer);
+    size_t bar = 0;
+    for (size_t i = 0; i < size_t(fb.width) * fb.height; i++)
+        bar += (pixels[i] == cyan || pixels[i] == brightCyan) ? 1 : 0;
+    EXPECT_GT(bar, 2000u) << "the highlighted menu entry";
 }
