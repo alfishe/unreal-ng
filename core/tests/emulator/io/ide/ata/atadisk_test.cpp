@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -497,4 +498,25 @@ TEST(AtaDiskProfi_Test, GeometryFromTheProfiHiddHeader)
     EXPECT_EQ(disk.DefaultGeometry().sectors, 32u);
     disk.AttachMedium(karabas, {});
     EXPECT_EQ(disk.DefaultGeometry().sectors, 63u) << "other boards: the standard CHS for the size (16 x 63 here too)";
+}
+
+// The activity count (the IDE LED: host-side telemetry) counts the blocks the machine moves now; while a time-travel
+// replay re-runs recorded history it counts nothing, so a seek does not blink the LED (state registry §5)
+TEST_F(AtaDisk_Test, ActivityIsNotCountedWhileReplaying)
+{
+    std::atomic<uint64_t> activity{0};
+    bool replaying = false;
+    _disk->SetActivityCounter(&activity, &replaying);
+    SelectLba(5, 2);
+    _channel.WriteRegister(StatusCommand, Command::ReadSectors);
+    ReadBlock();
+    EXPECT_EQ(activity.load(), 1u) << "a block moved live";
+    replaying = true;
+    ReadBlock();
+    EXPECT_EQ(activity.load(), 1u) << "a replayed block is not activity";
+    replaying = false;
+    SelectLba(9, 1);
+    _channel.WriteRegister(StatusCommand, Command::WriteSectors);
+    WriteBlock(0x5A);
+    EXPECT_EQ(activity.load(), 2u) << "a write moved live";
 }

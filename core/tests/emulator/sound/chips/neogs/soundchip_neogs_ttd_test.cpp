@@ -193,3 +193,28 @@ TEST(SoundChip_NeoGS_Ttd, Mp3DmaSnapshotsContinueIdentically)
         EXPECT_EQ(b.chip->mp3Decoder()->bytesReceived(), a.chip->mp3Decoder()->bytesReceived());
     }
 }
+
+// The HUD's activity latches (telemetry) after a restore: the restored ZX-DMA byte counts are the ones "seen", so the
+// first frame after it reports what that frame moves - nothing here - not the difference to the counts before the
+// restore (state registry §5: "one false LED pulse" after every seek)
+TEST(SoundChip_NeoGS_Ttd, ARestoreLeavesNoFalseActivityPulse)
+{
+    NeoGSConfig config;
+    config.mp3Support = NGSMP3SupportKind::None;
+    Card a(config);
+    a.frame();
+    std::vector<uint8_t> blob = a.save();
+    // The recording's card had moved 1000 bytes by then (bytesRead, NeoGSZxDma state offset 29, little endian)
+    const uint64_t moved = 1000;
+    for (int i = 0; i < 8; i++)
+        blob[SoundChip_NeoGS::TTD_ZX_OFFSET + 29 + i] = static_cast<uint8_t>(moved >> (8 * i));
+
+    Card b(config);
+    b.frame();
+    b.chip->TTDLoadState(blob.data());
+    ASSERT_EQ(b.chip->zxDma().bytesRead(), moved) << "the counts are restored";
+    EXPECT_FALSE(b.chip->hadHostTransferActivityLastFrame()) << "nothing ran since the restore";
+    b.frame();
+    EXPECT_FALSE(b.chip->hadHostTransferActivityLastFrame()) << "the frame after the restore moved nothing";
+    EXPECT_FALSE(b.chip->hadDmaActivityLastFrame());
+}

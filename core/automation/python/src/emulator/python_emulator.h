@@ -43,6 +43,8 @@
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/labels/labelmanager.h>
+#include "debugger/labels/symbolcontrol.h"
+#include "debugger/asm/asmcontrol.h"
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
@@ -209,6 +211,51 @@ inline std::string TtdOptionTextPy(const pybind11::handle& o)
     if (py::isinstance<py::bool_>(o))
         return o.cast<bool>() ? "true" : "false";
     return py::str(o).cast<std::string>();
+}
+
+/// One symbol verb through SymbolControl: keyword arguments as options (a list as a comma list), the reply's body; a
+/// refusal adds ok = False and error = the message
+inline pybind11::object SymbolsPy(Emulator& emulator, const std::string& verb, std::map<std::string, std::string> options,
+                                  const pybind11::kwargs& kwargs)
+{
+    namespace py = pybind11;
+    for (const auto& [key, value] : kwargs)
+    {
+        std::string text;
+        if (py::isinstance<py::list>(value) || py::isinstance<py::tuple>(value))
+        {
+            for (const auto& item : value)
+                text += (text.empty() ? "" : ",") + py::str(item).cast<std::string>();
+        }
+        else
+            text = TtdOptionTextPy(value);
+        options[py::str(key).cast<std::string>()] = text;
+    }
+    const SymbolReply reply = SymbolControl(emulator.GetContext()).Execute({verb, std::move(options)});
+    StateNode value = reply.body;
+    if (!reply.Ok())
+    {
+        value["ok"] = false;
+        value["error"] = reply.message;
+    }
+    return StateNodeToPy(value);
+}
+
+/// One assembler-source verb through AsmControl: keyword arguments as options; a refusal adds ok = False and error
+inline pybind11::object AsmPy(Emulator& emulator, const std::string& verb, std::map<std::string, std::string> options,
+                              const pybind11::kwargs& kwargs)
+{
+    namespace py = pybind11;
+    for (const auto& [key, value] : kwargs)
+        options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+    const AsmReply reply = AsmControl(emulator.GetContext()).Execute({verb, std::move(options)});
+    StateNode value = reply.body;
+    if (!reply.Ok())
+    {
+        value["ok"] = false;
+        value["error"] = reply.message;
+    }
+    return StateNodeToPy(value);
 }
 
 /// A coverage query's answer; a bad argument raises ValueError
@@ -2123,6 +2170,45 @@ namespace PythonBindings
                 LabelManager* lm = ctx->pDebugManager->GetLabelManager();
                 return lm && lm->SaveLabels(path);
             }, "Save symbols to file", py::arg("path"))
+            // Symbol files and sets through SymbolControl (the same verbs, checks and fields as the WebAPI, CLI, MCP
+            // and Lua); options as keyword arguments, a list for sets; a refusal: ok = False, error = why
+            .def("symbols_formats", [](Emulator& self) { return SymbolsPy(self, "formats", {}, py::kwargs()); },
+                 "Symbol file formats")
+            .def("symbols_detect", [](Emulator& self, const std::string& path) { return SymbolsPy(self, "detect", {{"path", path}}, py::kwargs()); },
+                 "Which symbol format a file is", py::arg("path"))
+            .def("symbols_sets", [](Emulator& self) { return SymbolsPy(self, "sets", {}, py::kwargs()); },
+                 "Symbol sets: user, one per loaded file, named")
+            .def("symbols_import", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) {
+                return SymbolsPy(self, "import", {{"path", path}}, kwargs);
+            }, "Import a symbol file (format=, set=, space=, base=, policy=)", py::arg("path"))
+            .def("symbols_export", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) {
+                return SymbolsPy(self, "export", {{"path", path}}, kwargs);
+            }, "Export symbols (format=, sets=[...], pages=)", py::arg("path"))
+            .def("symbols_set", [](Emulator& self, const std::string& id, const py::kwargs& kwargs) {
+                return SymbolsPy(self, "set", {{"id", id}}, kwargs);
+            }, "Switch a symbol set on / off or change its priority (enabled=, priority=)", py::arg("id"))
+            .def("symbols_drop", [](Emulator& self, const std::string& id) { return SymbolsPy(self, "drop", {{"id", id}}, py::kwargs()); },
+                 "Remove a symbol set", py::arg("id"))
+            // Assembler sources through AsmControl: options as keyword arguments; a path is a host file or "disk:A/NAME.T"
+            .def("asm_formats", [](Emulator& self) { return AsmPy(self, "formats", {}, py::kwargs()); }, "Assembler source formats")
+            .def("asm_dialects", [](Emulator& self) { return AsmPy(self, "dialects", {}, py::kwargs()); }, "Dialects convert reads and writes")
+            .def("asm_files", [](Emulator& self, const std::string& drive) { return AsmPy(self, "files", {{"drive", drive}}, py::kwargs()); },
+                 "The files on a disk with their formats", py::arg("drive") = "A")
+            .def("asm_detect", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) { return AsmPy(self, "detect", {{"path", path}}, kwargs); },
+                 "Which format a source is", py::arg("path"))
+            .def("asm_decode", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) { return AsmPy(self, "decode", {{"path", path}}, kwargs); },
+                 "A source as text (codec=, version=, codepage=, output=)", py::arg("path"))
+            .def("asm_encode", [](Emulator& self, const std::string& text, const py::kwargs& kwargs) { return AsmPy(self, "encode", {{"text", text}}, kwargs); },
+                 "Text in a source format (codec=, version=, output=, start=)", py::arg("text"))
+            .def("asm_convert", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) { return AsmPy(self, "convert", {{"path", path}}, kwargs); },
+                 "A source in another dialect (to=, codec=, version=, from=, output=)", py::arg("path"))
+            .def("symbols_import_source", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) {
+                return SymbolsPy(self, "import-source", {{"path", path}}, kwargs);
+            }, "The labels a source defines, with values (main=, set=, policy=, generated=)", py::arg("path"))
+            .def("symbols_scan", [](Emulator& self) { return SymbolsPy(self, "scan", {}, py::kwargs()); },
+                 "Label tables of assemblers in RAM (ALASM, XAS): the candidates")
+            .def("symbols_import_live", [](Emulator& self, const py::kwargs& kwargs) { return SymbolsPy(self, "import-live", {}, kwargs); },
+                 "Read a label table from RAM into a set (scanner=, page=, offset=, set=, policy=)")
 
             // Disassembly
             .def("disasm", [](Emulator& self, int address, int count) -> py::list {

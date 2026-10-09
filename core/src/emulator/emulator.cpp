@@ -20,6 +20,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "debugger/labels/labelmanager.h"
 #include <atomic>
 #include <cstdlib>
 
@@ -289,6 +290,10 @@ bool Emulator::Init()
             result = true;
         }
     }
+
+    // The labels of the known ROMs the machine runs (symbol bundles)
+    if (result)
+        ApplySymbolBundles();
 
     // Create TTD manager (per parent TDD §10.2). Always constructed; the
     // per-frame capture cost is gated by the cached _feature_ttd_enabled
@@ -1038,7 +1043,10 @@ void Emulator::Reset(bool hardReset)
     {
         ROM& rom = *_core->GetROM();
         if (rom.LoadROM())
+        {
             rom.CalculateSignatures();
+            ApplySymbolBundles();
+        }
         else
             MLOGERROR("Emulator::Reset - the selected ROM could not be loaded");
         if (_context && _context->pTimeTravelHooks)
@@ -3738,3 +3746,23 @@ std::string Emulator::GetStatistics()
 
 
 // endregion
+
+void Emulator::ApplySymbolBundles()
+{
+    const char* setting = std::getenv("UNREAL_SYMBOL_BUNDLES");
+    if (setting && std::string(setting) == "0")
+        return;
+    if (!_context || !_context->pDebugManager || !_context->pMemory || !_core || !_core->GetROM())
+        return;
+    LabelManager* labels = _context->pDebugManager->GetLabelManager();
+    if (!labels)
+        return;
+    ROM& rom = *_core->GetROM();
+    std::vector<std::string> pages;
+    for (uint8_t i = 0; i < rom.GetROMBanksLoaded(); i++)
+        pages.push_back(rom.CalculateSignature(_context->pMemory->ROMPageHostAddress(i), PAGE_SIZE));
+    std::string folder = FileHelper::PathCombine(FileHelper::GetResourcesPath(), "symbols");
+    if (!FileHelper::FileExists(FileHelper::PathCombine(folder, "manifest.json")))
+        folder = FileHelper::PathCombine(FileHelper::GetExecutablePath(), "symbols");
+    labels->ApplyBundles(folder, pages);
+}

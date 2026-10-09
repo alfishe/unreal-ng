@@ -1862,7 +1862,10 @@ void TimeTravelController::EnterReplayMode()
     // ticks keep running, only the host boundary is held). Taken after the flag is set, so a resume reconcile
     // never sees the hold without its replay; the user's master mute is not touched
     if (_context->pSoundManager)
+    {
         _replayHostHold = SoundManager::HostOutputHold(_context->pSoundManager, SoundManager::HostHoldReason::TtdReplay);
+        _context->pSoundManager->beginReplayTelemetry();   // replayed spans do not count again
+    }
 
     // The replay observers - the access probe, the frame-cache capture, the
     // dirty marks a mid-frame resume needs - live on the debug memory path.
@@ -1894,6 +1897,8 @@ void TimeTravelController::ExitReplayMode()
 
     // The hold goes first, then the flag (see EnterReplayMode)
     _replayHostHold.Release();
+    if (_context->pSoundManager)
+        _context->pSoundManager->endReplayTelemetry();
     _context->ttdReplayActive = false;
     _inReplayMode = false;
     if (_context->pMediaManager)
@@ -3016,6 +3021,11 @@ void TimeTravelController::PublishSeekedFrame()
         MLOGERROR("TimeTravelController::PublishSeekedFrame — MessageCenter post failed: %s",
                   e.what());
     }
+
+    // 3. The audio activity indicators (telemetry): the machine stands paused at the target, so nothing plays -
+    // the LEDs and HUD nudges the replay or the run before the seek lit go dark, as on a pause
+    if (_context->pSoundManager)
+        _context->pSoundManager->onEmulatorPaused();
 }
 
 

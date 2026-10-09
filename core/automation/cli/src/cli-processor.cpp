@@ -149,7 +149,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // Assembler and source-listing commands
                         {"assemble", &CLIProcessor::HandleAssemble},  // Assemble Z80 text into memory
-                        {"asm", &CLIProcessor::HandleAssemble},      // Alias for assemble
+                        {"asm", &CLIProcessor::HandleAsm},           // Assembler sources (asm decode ...), else assemble
                         {"listing", &CLIProcessor::HandleListing},    // Source-listing navigation
 
                         // Analysis commands (screen digest, beam, frame cost, analyzers)

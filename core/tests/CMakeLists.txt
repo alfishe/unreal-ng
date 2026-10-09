@@ -212,6 +212,7 @@ if (NOT TARGET ${PROJECT_NAME})
             ${ROOT_DIR}/core/automation/mcp/src/mcp-router.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-resources.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-symbols.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-asm.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-analysis.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-media.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-slots.cpp
@@ -343,6 +344,8 @@ if (NOT TARGET ${PROJECT_NAME})
             "${DATA_PATH}/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${DATA_PATH}/symbols" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/symbols"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${DATA_PATH}/midi" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory

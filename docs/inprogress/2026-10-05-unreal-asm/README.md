@@ -41,7 +41,7 @@ own tests and a command-line tool; the emulator uses it through thin adapters.
 | [prior-art.md](prior-art.md) | Existing converters and tools, local and public, compared; nothing is vendored |
 | [tdd.md](tdd.md) | Library layout, namespaces, interfaces (`ISourceCodec`, `IDialectFrontend`, `IDialectBackend`), registry, CLI, emulator adapters, phases |
 | [test-and-benchmark-plan.md](test-and-benchmark-plan.md) | Oracles (byte-exact round trips, the original assembler in the emulator, binary equality after conversion), corpus, tests, benchmarks |
-| [memory-bridge.md](memory-bridge.md) | **P2, design only**: sources straight from the emulated machine's memory (per-assembler memory descriptors), export and conversion, background builds with hints, real-time labels |
+| [asm-synchronizer.md](asm-synchronizer.md) | **P2, TDD**: both directions between the host and an assembler running in the emulator: extract its source from RAM (live labels, hints, convert), and inject a host source (sjasmplus → IR → retro backend) into its memory or a snapshot; per-assembler layouts, effort estimate |
 | [symbols/](symbols/README.md) | The symbol module: one symbol model, symbol file codecs (sjasmplus, z88dk, VICE, IDA, Ghidra, ...), live label tables, ROM bundles |
 
 ## In one picture

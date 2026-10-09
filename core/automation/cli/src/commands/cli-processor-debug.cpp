@@ -8,6 +8,8 @@
 #include <debugger/debugmanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
+#include <debugger/labels/symbolcontrol.h>
+#include <emulator/state/statenodejson.h>
 #include <debugger/listing/listingparser.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -1503,11 +1505,30 @@ void CLIProcessor::HandleSymbols(const ClientSession& session, const std::vector
         ss << "  symbols save <file>             - Save symbols to file" << NEWLINE;
         ss << "  symbols clear                   - Clear all symbols" << NEWLINE;
         ss << "  symbols info                    - Show symbol count" << NEWLINE;
+        ss << "  symbols formats                 - Symbol file formats" << NEWLINE;
+        ss << "  symbols detect <file>           - Which format a file is" << NEWLINE;
+        ss << "  symbols sets                    - Symbol sets: user, one per file, named" << NEWLINE;
+        ss << "  symbols set <id> on|off         - Show / hide a set's labels" << NEWLINE;
+        ss << "  symbols set <id> priority <n>   - Higher wins (user 1000000, files 100+)" << NEWLINE;
+        ss << "  symbols drop <id>               - Remove a set" << NEWLINE;
+        ss << "  symbols import <file> [--format f] [--set s] [--space ram3] [--base n] [--policy both|keep|replace|fail]" << NEWLINE;
+        ss << "  symbols export <file> [--format f] [--sets a,b] [--pages fold|comment|drop]" << NEWLINE;
+        ss << "  symbols scan                    - Label tables of assemblers in RAM (ALASM, XAS)" << NEWLINE;
+        ss << "  symbols import-live [--scanner s] [--page n] [--offset n] [--set s] [--policy p]" << NEWLINE;
+        ss << "  symbols import-source <source|image|disk:A/NAME.T> [--main NAME] [--set s] [--generated]  - labels of a source" << NEWLINE;
+        ss << "  (add --json for the reply as JSON)" << NEWLINE;
         session.SendResponse(ss.str());
         return;
     }
 
     const std::string& subcmd = args[0];
+
+    if (subcmd == "formats" || subcmd == "detect" || subcmd == "sets" || subcmd == "set" || subcmd == "drop" ||
+        subcmd == "import" || subcmd == "export" || subcmd == "scan" || subcmd == "import-live" || subcmd == "import-source")
+    {
+        HandleSymbolVerb(session, ctx, args);
+        return;
+    }
 
     if (subcmd == "load" && args.size() >= 2)
     {
@@ -1538,6 +1559,125 @@ void CLIProcessor::HandleSymbols(const ClientSession& session, const std::vector
     {
         session.SendResponse("Unknown subcommand: " + subcmd + NEWLINE);
     }
+}
+
+// symbols formats | detect | sets | set | drop | import | export: SymbolControl's verbs (the same checks and fields as
+// the WebAPI, MCP, Lua and Python); positional arguments and --name value options, --json prints the reply as is
+void CLIProcessor::HandleSymbolVerb(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args)
+{
+    const std::string& verb = args[0];
+    SymbolRequest request{verb, {}};
+    bool json = false;
+    std::vector<std::string> positional;
+    for (size_t i = 1; i < args.size(); i++)
+    {
+        if (args[i] == "--json")
+            json = true;
+        else if (args[i].size() > 2 && args[i].compare(0, 2, "--") == 0)
+        {
+            const std::string name = args[i].substr(2);
+            request.options[name] = i + 1 < args.size() ? args[++i] : std::string();
+        }
+        else
+            positional.push_back(args[i]);
+    }
+    if ((verb == "detect" || verb == "import" || verb == "export" || verb == "import-source") && !positional.empty())
+        request.options["path"] = positional[0];
+    if ((verb == "set" || verb == "drop") && !positional.empty())
+        request.options["id"] = positional[0];
+    if (verb == "set" && positional.size() >= 2)
+    {
+        if (positional[1] == "priority")
+            request.options["priority"] = positional.size() >= 3 ? positional[2] : std::string();
+        else
+            request.options["enabled"] = positional[1];
+    }
+
+    const SymbolReply reply = SymbolControl(context).Execute(request);
+    if (json)
+    {
+        session.SendResponse(StateNodeToJsonText(reply.ToValue()) + NEWLINE);
+        return;
+    }
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+
+    const StateNode& body = reply.body;
+    const auto text = [&](const char* key) {
+        const StateNode* n = body.find(key);
+        return n && n->kind == StateNode::Kind::String ? n->s : std::string("-");
+    };
+    const auto number = [&](const StateNode& node, const char* key) {
+        const StateNode* n = node.find(key);
+        return n ? std::to_string(n->i) : std::string("0");
+    };
+    std::stringstream ss;
+    if (verb == "formats")
+    {
+        for (const StateNode& f : body.find("formats")->items)
+        {
+            std::string extensions;
+            for (const StateNode& e : f.find("extensions")->items)
+                extensions += (extensions.empty() ? "" : " ") + e.s;
+            ss << f.find("id")->s << "  " << f.find("title")->s << "  [" << f.find("family")->s << "] " << extensions << NEWLINE;
+        }
+    }
+    else if (verb == "detect")
+    {
+        ss << "Format: " << text("format") << " (score " << number(body, "score") << ")" << NEWLINE;
+        for (const StateNode& c : body.find("candidates")->items)
+            ss << "  " << c.find("format")->s << "  " << number(c, "score") << NEWLINE;
+    }
+    else if (verb == "sets")
+    {
+        for (const StateNode& set : body.find("sets")->items)
+            ss << (set.find("enabled")->b ? "on  " : "off ") << set.find("priority")->i << "  " << set.find("id")->s << "  ("
+               << set.find("symbols")->i << " symbols)" << NEWLINE;
+        ss << "Labels: " << number(body, "labels") << NEWLINE;
+    }
+    else if (verb == "set")
+    {
+        const StateNode& set = *body.find("set");
+        ss << set.find("id")->s << ": " << (set.find("enabled")->b ? "on" : "off") << ", priority " << set.find("priority")->i
+           << "; labels: " << number(body, "labels") << NEWLINE;
+    }
+    else if (verb == "drop")
+        ss << "Dropped " << text("dropped") << "; labels: " << number(body, "labels") << NEWLINE;
+    else if (verb == "import")
+    {
+        ss << "Imported " << text("path") << " as " << text("format") << " into " << text("set") << ": " << number(body, "records")
+           << " records, " << number(body, "added") << " added, " << number(body, "aliased") << " aliases, "
+           << number(body, "updated") << " updated, " << number(body, "skipped") << " skipped; labels: " << number(body, "labels")
+           << NEWLINE;
+        for (const StateNode& c : body.find("conflicts")->items)
+            ss << "  conflict line " << c.find("line")->i << ": " << c.find("name")->s << " " << c.find("old")->s << " -> "
+               << c.find("new")->s << " (" << c.find("resolution")->s << ")" << NEWLINE;
+    }
+    else if (verb == "export")
+        ss << "Exported " << number(body, "written") << " symbols to " << text("path") << " as " << text("format") << NEWLINE;
+    else if (verb == "scan")
+    {
+        const auto& candidates = body.find("candidates")->items;
+        if (candidates.empty())
+            ss << "No label table in " << number(body, "pages") << " RAM pages" << NEWLINE;
+        for (const StateNode& c : candidates)
+            ss << c.find("scanner")->s << " " << c.find("version")->s << "  ram" << c.find("page")->i << " offset " << c.find("offset")->i
+               << "  " << c.find("count")->i << " entries, score " << c.find("score")->i << NEWLINE;
+    }
+    else if (verb == "import-source")
+        ss << "Imported " << number(body, "records") << " labels of " << text("main") << " (" << text("dialect") << ") into " << text("set")
+           << (body.find("complete") && body.find("complete")->b ? "" : " (not every label got a value)") << "; labels: " << number(body, "labels")
+           << NEWLINE;
+    else if (verb == "import-live")
+        ss << "Imported " << number(body, "records") << " labels from " << body.find("candidate")->find("scanner")->s << " ram"
+           << body.find("candidate")->find("page")->i << " into " << text("set") << "; labels: " << number(body, "labels") << NEWLINE;
+    if (const StateNode* diagnostics = body.find("diagnostics"))
+        for (const StateNode& d : diagnostics->items)
+            ss << "  " << d.find("severity")->s << " line " << d.find("line")->i << ": " << d.find("message")->s << NEWLINE;
+    session.SendResponse(ss.str());
 }
 
 // HandleStepOut — run until the current subroutine returns (mirrors the WebAPI

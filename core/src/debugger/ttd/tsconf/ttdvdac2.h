@@ -68,6 +68,7 @@ public:
     std::string TTDDeviceName() const override { return "Vdac2"; }
     PeripheralId TTDPeripheralId() const override { return PeripheralId::Vdac2; }
     uint64_t TTDHashState() const override;
+    TTDDeviceDescriptor TTDDescribe() const override;
 
 private:
     Vdac2Card& _card;

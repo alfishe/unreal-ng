@@ -87,7 +87,7 @@ Runs follow the A/B procedure of [performance-guidelines.md](../../../guidelines
 
 `unreal-asm-benchmarks` (the library's own target: the symbol module is part of `unreal-asm`, so the benchmarks live
 there rather than in `core-benchmarks`), 2026-10-07, Release, load average about 7. `BM_Symbols_DisasmLine` (the A/B
-against today's `LabelManager`) waits for S2b, when `LabelManager` sits on the index.
+against the old `LabelManager`) is below the table.
 
 | Benchmark | n | Result | Target | OK |
 |---|---|---|---|---|
@@ -98,6 +98,26 @@ against today's `LabelManager`) waits for S2b, when `LabelManager` sits on the i
 | `BM_Symbols_LookupAt` | 100 000 | 57 ns | ≤ 100 ns | yes |
 | `BM_Symbols_LookupNearest` | 100 000 | 67 ns | ≤ 150 ns | yes |
 | `BM_Symbols_Export` unreal-map / sjasmplus-sym / native | 100 000 | 51 / 65 / 40 ms | < 200 ms | yes |
+
+`BM_Symbols_DisasmLine` and `BM_Symbols_LabelLookup` (`core-benchmarks`, `core/benchmarks/debugger/labels_benchmark.cpp`),
+2026-10-08, Release. They compare `LabelManager` on the store (S2b) with the two maps it had before. One line is a
+CALL / JP / LD (nn) disassembled with label resolution: the line's own address and its operand are looked up. The N
+labels are spread over the 64K, and one operand in four hits a label. The same file was built against both versions and
+run in interleaved rounds (old, new, new, old; median of 5 repetitions each). The load average was about 21, so only
+the ratios matter:
+
+| Benchmark | N | Old maps | Store + view | Change |
+|---|---|---|---|---|
+| `BM_Symbols_DisasmLine` | 0 | 366 / 373 ns | 364 / 366 ns | = |
+| `BM_Symbols_DisasmLine` | 1 000 | 436 / 452 ns | 389 / 383 ns | -13 % |
+| `BM_Symbols_DisasmLine` | 10 000 | 502 / 517 ns | 397 / 391 ns | -23 % |
+| `BM_Symbols_DisasmLine` | 60 000 | 578 / 593 ns | 416 / 434 ns | -28 % |
+| `BM_Symbols_LabelLookup` | 1 000 | 14.1 / 14.0 ns | 3.5 / 3.6 ns | -75 % |
+| `BM_Symbols_LabelLookup` | 10 000 | 54 / 52 ns | 5.6 / 5.7 ns | -89 % |
+| `BM_Symbols_LabelLookup` | 60 000 | 127 / 103 ns | 17 / 20 ns | -84 % |
+
+The view's address lookup is a hash map, where the old one was a `std::map`. Adding labels one by one does not rebuild
+the view: a new name goes straight into it, and its record joins the user set at the next use of the store.
 | `BM_Symbols_LiveScan` (random pages + an ALASM table) | 4 MB | 72 ms | < 100 ms | yes |
 | `BM_Symbols_Layout` (labels from sources) | 600 lines | 443 k lines/s | — | — |
 

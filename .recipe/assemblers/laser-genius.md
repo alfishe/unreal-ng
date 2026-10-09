@@ -86,5 +86,7 @@ zxasm decode lg.trd --file PROBEALL.C -o probe.txt   # a file SAVEd on disk (the
 - **No code without PUT**, and PUT only between `low` and `table` (`stats`).
 - **Division by a word of `#8000` or more is wrong** in Laser Genius (`#8000/#FFFF` = `#5555`); the conversion
   computes it right.
-- **Phoenix (`.PHX`) files** load as Laser Genius text; the codec keeps their paragraphs as bytes, the conversion
-  reports them.
+- **Phoenix (`.PHX`) files** decode like the assembler's (the `#` pseudo-ops of the hash extensions); the conversion
+  reports their statements (no assembler equivalent). Typing Phoenix needs the hash extensions loaded (the loader's
+  second question: y); then the text starts at `#77AC` and its end pointer is `(#ADA1)`; register names (`a`, `z`)
+  are not variable names there.

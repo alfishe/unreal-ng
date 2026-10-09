@@ -1246,3 +1246,31 @@ TEST(Ym2203PairBoardsLevel_Test, SsgRatioIsTheSchematicWeightAndTheChainActsAlik
 
 /// endregion </Render-cursor invariant on both boards>
 #endif // UNREALNG_HAVE_SAM2695
+
+// The key-on mirror the state report shows (fmKeyOn: the last #28 mask per channel) is not chip state: a restored pair
+// derives it from its restored envelopes, so the report after a seek shows the keys of that position (state registry
+// §5: "wrong in the state report")
+TEST_F(Ym2203Pair_Test, TtdRestoreDerivesTheKeyOnMirror)
+{
+    Ym2203Pair a(_context, RatioConfig());
+    a.syncTo(0);
+    ProgramFmNote(a, 0);
+    a.syncTo(5000);
+    const uint8_t keyed = a.chip(0)->fmKeyOn[2];
+    ASSERT_NE(keyed, 0) << "the note keys channel 3";
+    std::vector<uint8_t> on(a.TTDStateSize());
+    a.TTDSaveState(on.data());
+
+    Reg(a, 0, 0x28, 0x02);   // key off, channel 3
+    a.syncTo(10000);
+    ASSERT_EQ(a.chip(0)->fmKeyOn[2], 0);
+    std::vector<uint8_t> off(a.TTDStateSize());
+    a.TTDSaveState(off.data());
+
+    Ym2203Pair b(_context, RatioConfig());
+    b.TTDLoadState(on.data(), 5000);
+    EXPECT_EQ(b.chip(0)->fmKeyOn[2], keyed) << "keyed where the blob was taken";
+    EXPECT_EQ(b.chip(0)->fmKeyOn[0], 0);
+    b.TTDLoadState(off.data(), 10000);
+    EXPECT_EQ(b.chip(0)->fmKeyOn[2], 0) << "released where the second blob was taken";
+}

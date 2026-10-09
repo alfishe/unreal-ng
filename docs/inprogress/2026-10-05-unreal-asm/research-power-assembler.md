@@ -38,6 +38,8 @@ text codec). A disk's PASM files are taken into a project (`zxasm convert image.
 | `$` in a `DB` / `DW` item is the item's address | `DW #1234,LAB,$` | `$+offset` per item |
 | `$` in an instruction is what PASM has put when it reads the operand: the first of two operands is read before the opcode (`LD ($),A`, `LD ($),HL`, `LD ($),DE`: the instruction's address), the others after it (`JP $`, `JR $`, `DJNZ $`, `CALL $`, `LD HL,$`, `LD HL,($)`: +1; `LD BC,($)` (ED) and `LD IX,$` (DD): +2). The help's examples rely on it (`JR Z,$+3` skips a two-byte instruction) | probe (CURRENT) | `$+1` / `$+2` where PASM's `$` is ahead |
 | a byte operand out of range is an error ("Value out of range"), the compilation stops | `LD (IX+1),$` | sjasmplus refuses it too |
+| only `+ - * /`: `&` and `|` are syntax errors | `LD A,#F0&#3C`, `LD A,#F0|#0F` | — |
+| a byte operand computed from `$` by subtraction is refused ("Value out of range": `LD A,$-#6000`, even `LD A,$-#5FF0`), as if the range were checked before `$` has its value; `$/256` passes (`#60`), 16-bit operands work (`LD HL,$-#6000` = 1) | probes PG, PJ, PI | such lines cannot be in a PASM source |
 | `ORG` once, at the start ("Bad ORG" after other lines); without `ORG` the code goes to 24576 | the help, probe | `IF $==0` / `ORG 24576` / `ENDIF` in a text without `ORG` (an ITXT text goes on from its includer) |
 | `ENT` (no operand): the run address; `EQU` | the help | a comment; `EQU` |
 | `ITXT name` / `IBIN name`: a text / code file of the current drive read while compiling, the name the first 8 characters after the blank | `ITXT LIB1` + `IBIN DAT` | `INCLUDE "name.asm"` / `INCBIN "name"` |
@@ -61,6 +63,5 @@ PASM 3.0 on a Pentagon 128 (`RUN "PASM3.0"` from the TR-DOS disk made from `PASM
 
 | Item | Note |
 |---|---|
-| `& |` and other operators | not in the help; not tried |
-| `$` in `LD (IX+d),n` | the shift for `n` not checked (the probe's `$` did not fit a byte) |
+| `$` in `LD (IX+d),n` | not measurable: a byte operand made from `$` is refused unless it is `$/256` (which gives `#60` for both the displacement and `n`) |
 | PASM 2.5 (48K) | not found |

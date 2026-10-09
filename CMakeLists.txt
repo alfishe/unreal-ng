@@ -457,6 +457,7 @@ if (BUILD_QT_APPS)
             # (unreal-qt POST_BUILD already copies to bin/unreal-qt.app, but cp -a may miss if POST_BUILD ran before copy)
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/symbols" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/symbols"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/midi" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/midi"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/boot" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/boot"
@@ -465,6 +466,7 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/html"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/symbols" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/symbols"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/midi" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/midi"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/boot" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/boot"
@@ -472,6 +474,7 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -DDEST="${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/configs" -P "${CMAKE_SOURCE_DIR}/cmake/ExtractConfigImages.cmake"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/symbols" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/symbols"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/midi" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/midi"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/boot" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/boot"
@@ -575,6 +578,8 @@ if (BUILD_QT_APPS)
                 "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/symbols" "${SUITE_STAGING_DIR}/symbols"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/midi" "${SUITE_STAGING_DIR}/midi"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -693,6 +698,8 @@ if (BUILD_QT_APPS)
                 "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/symbols" "${SUITE_STAGING_DIR}/symbols"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/midi" "${SUITE_STAGING_DIR}/midi"
             COMMAND ${CMAKE_COMMAND} -E copy_directory

@@ -165,7 +165,7 @@ holds the final 28-line probe) and confirmed in the disassembly.
 | `#E5` in a file | INCLUDE (PHT, v7.E) or INCBIN (GG): undecidable from bytes |
 | Disk save commands of each TR-DOS port | not run; their files are the same block (start..`#FF #FF`) |
 | ZEUS 128 | runs as several overlays (`zeus.res`, `zeus.dis` …) with the 1983 table in `zeus.exe`; the 128K source paging was not examined |
-| Primus' `#E6`-`#EA` | not produced by its keyboard table; kept as bytes |
+| Primus' `#E5`-`#EA` | listed as `z { | } ~ ©` (its font from `#EB` = glyph `#80` downwards: the glyphs `#7A`-`#7F`; checked by putting the bytes into its text buffer); not produced by its keyboard table; the codec keeps them as bytes |
 | Other ZEUS ports | vtrd.in lists no more besides Primus; ZEUSD1_0 (a decompiler writing ZEUS sources, its `tab.C` holds tokenized templates) and ZEUSTOT2 (ZEUS→TASM) are tools, not sources |
 
 Sources: [Zeus manual (ZXDB)](https://spectrumcomputing.co.uk/pub/sinclair/games-info/z/Zeus.txt),

@@ -64,6 +64,8 @@ matches; it names the recipe(s) for that action.
 | Running to a scanline / pixel / interrupt, frame and T-state stepping, step over / out | [analysis/execution-control-and-stepping.md](analysis/execution-control-and-stepping.md) | ttd-*, profilers |
 | Who calls a routine, hot opcodes, per-frame cost | [analysis/calltrace-and-opcode-profiler.md](analysis/calltrace-and-opcode-profiler.md) | port-trace |
 | Labels, symbols, sjasmplus listings, stepping by source line, assembling | [analysis/symbols-listings-and-source-stepping.md](analysis/symbols-listings-and-source-stepping.md) | everything else |
+| Symbol files in every format (import / export / detect), symbol sets and priorities | [analysis/symbols-import-export.md](analysis/symbols-import-export.md) | everything else |
+| Assembler sources: the files of a disk with their formats, decode, encode (onto the disk too), convert to sjasmplus / pasmo / z88dk | [analysis/asm-sources.md](analysis/asm-sources.md) | everything else |
 | Running a Spectrum assembler (TASM, ALASM, STORM, ZX-ASM, GENS, MASM, ZEUS, XAS, PROMETHEUS, Laser Genius, Power Assembler, Primus; the PC cross assembler ASM80) in the machine; its sources, code and labels to and from the host | [assemblers/README.md](assemblers/README.md), then the one assembler's recipe | the other assemblers' recipes |
 | Which code ran / never ran, TR-DOS analyzer events | [analysis/code-coverage-and-analyzers.md](analysis/code-coverage-and-analyzers.md) | port-trace |
 | Searching, mapping or writing memory; named regions; ROM protect; writing a port (paging) | [analysis/memory-search-map-and-regions.md](analysis/memory-search-map-and-regions.md) | memory-counters unless you need access counts |

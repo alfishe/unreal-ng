@@ -7,8 +7,9 @@
 // #FF / #FE hex, #F9 / #F8 binary, #FB / #FA octal); names end with bit 7 on the last character; operators #C7-#E8;
 // commas and closing parentheses are not stored. Comments run to #F0. A file on disk starts with #AF, the length, the
 // address of the text and four characters of the name; on tape the blocks of 2048 bytes are joined (containers/tape).
-// Phoenix statements (the hash extensions' language) use tokens this codec does not know: the rest of such a
-// paragraph is kept as a raw line.
+// Phoenix statements (the hash extensions' compiled language) are the same stream: #F6 pseudo-ops with a type, = ++ --
+// & (address of), calls f(a,b) and indexes x[i]. A paragraph with tokens this codec does not know is kept as a raw
+// line.
 
 #include <cstdint>
 #include <span>

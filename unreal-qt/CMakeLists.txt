@@ -374,6 +374,8 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${DATA_PATH}/symbols" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/symbols"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${DATA_PATH}/midi" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/midi"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
@@ -429,6 +431,7 @@ if(APPLE)
         # 3. Inject Resources before signing
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/fonts" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/rom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/symbols" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/symbols"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/midi" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/testrom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/boot" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/boot"
@@ -466,6 +469,7 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/fonts" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/rom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/symbols" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/symbols"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/midi" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/testrom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/boot" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/boot"
@@ -497,6 +501,7 @@ if(WIN32)
         # Copy only necessary resources
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/UnrealNG/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/UnrealNG/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/symbols" "${CMAKE_BINARY_DIR}/packages/UnrealNG/symbols"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/midi" "${CMAKE_BINARY_DIR}/packages/UnrealNG/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/boot" "${CMAKE_BINARY_DIR}/packages/UnrealNG/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/UnrealNG/configs"
@@ -521,6 +526,7 @@ if(UNIX AND NOT APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal-qt" "${CMAKE_BINARY_DIR}/packages/unreal-qt"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/fonts"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/symbols" "${CMAKE_BINARY_DIR}/packages/symbols"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/midi" "${CMAKE_BINARY_DIR}/packages/midi"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/boot" "${CMAKE_BINARY_DIR}/packages/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/configs" "${CMAKE_BINARY_DIR}/packages/configs"
@@ -640,6 +646,14 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/disksectordialog_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/disksectordialog.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/disksectordialog.h"
+        # The debugger's Disk files dialog (unreal-asm A7)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/diskfilesdialog_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/diskfilesdialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/diskfilesdialog.h"
+        # The label editor's Sets tab (symbols S5)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/symbolsetspanel_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolsetspanel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolsetspanel.h"
         # The debugger's PC history dialog (debugger additions tdd §7)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/pchistorydialog_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorydialog.cpp"

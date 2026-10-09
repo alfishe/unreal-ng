@@ -90,6 +90,7 @@ private slots:
     void portOut();
     void showDeviceMemory();
     void showDiskSector();
+    void showDiskFiles();
     void showPcHistory();
     void showBreakpointManager();
     void showLabelManager();
@@ -161,6 +162,7 @@ private:
     QAction* portOutAction;
     QAction* deviceMemoryAction;
     QAction* diskSectorAction;
+    QAction* diskFilesAction;
     QAction* pcHistoryAction;
     QAction* breakpointsAction;
     QAction* labelsAction;

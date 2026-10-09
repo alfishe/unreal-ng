@@ -1510,6 +1510,12 @@ void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
     _audio.setLevels(_outL, _outR);
     _audio.clear();
     _frameHadActivity = false;
+    // The activity latches (telemetry, not machine state): the byte counts as they are now are the ones "seen", so
+    // the next frame end reports what that frame moves, not the difference to the counts before the restore (a
+    // false Transfer / DMA pulse after every seek)
+    _dmaBytesSeen = _dma.bytesMoved();
+    _zxDmaBytesSeen = _zx.bytesRead() + _zx.bytesWritten();
+    _dmaWasActive = _zxDmaWasActive = _mp3WasActive = _wasActive = false;
     reschedule();
 }
 

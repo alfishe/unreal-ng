@@ -176,6 +176,14 @@ through the media manager, honoring write protection and the image's modified fl
 shared function per operation for the surfaces (WebAPI + OpenAPI tag `asm`, CLI `asm ...`, MCP tool `asm_source`,
 Lua / Python `asm_*`, Qt disk browser actions). The symbol module's adapters: [symbols/tdd.md](symbols/tdd.md) §3, §7.
 
+Built (2026-10-09):
+- `core/src/debugger/asm/diskfiles.h`: reads `disk:A/NAME.T` through the library's `ReadTrd` over the image's sectors
+  (the catalog hints and sector slack as zxasm sees them). It writes a catalog entry as TR-DOS does.
+- `core/src/debugger/asm/asmcontrol.h`: the shared verbs.
+- WebAPI `/asm/*`, CLI `asm <verb>`, MCP `asm_source`, Lua / Python `asm_*`.
+- The Qt debugger's "Disk files" dialog.
+- `convert` takes one file; projects convert with the standalone `zxasm convert <image>`.
+
 ## 8. Phases
 
 | Phase | Work | Ends with |

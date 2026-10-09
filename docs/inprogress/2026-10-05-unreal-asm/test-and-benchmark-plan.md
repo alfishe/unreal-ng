@@ -84,3 +84,31 @@ the version given (`DecodeOptions::subversion`, what a caller that knows it pays
 Speed-ups the profiles led to (2026-10-07): keyword tables of XAS, ALASM and ZEUS built once per version and
 searched by first character; XAS's font read backwards once (it scanned 240 glyphs per character); an ASCII fast path
 in `CodePointToByte`. XAS decode went from 1.5 to 33 MB/s, encode from 8 to 51; ZEUS encode from 20 to 71.
+
+Version detection and conversion (2026-10-09). The same benchmarks were built before and after and run in interleaved
+rounds. The load average was 16-40, so the absolute figures are a floor and the ratios are what counts:
+
+| Benchmark | Before | After | Change |
+|---|---|---|---|
+| Decode, version detected: alasm | 4.3 MB/s | 45.9 MB/s | x10.7 |
+| Decode, version detected: zxasm | 8.8 MB/s | 52.8 MB/s | x6.0 |
+| Decode, version detected: zeus | 12.2 MB/s | 16.5 MB/s | x1.35 |
+| Decode, version given: zeus | 25.8 MB/s | 36.1 MB/s | x1.4 |
+| Convert to sjasmplus: alasm | 170 k lines/s | 328 k lines/s | x1.9 (target met) |
+| Decode: xas | 30 MB/s | unchanged | the packer's own work; buffer reuse gained under 5 %, not kept |
+
+How:
+- **ALASM.** The versions differ in a few mnemonic codes only. A line whose mnemonic byte is none of them, and whose bytes
+  hold none of their spellings as a word, counts alike for every version and cannot change the choice, so it is not
+  decoded at all. The other lines decode once per spelling of their mnemonic byte.
+- **ALASM to sjasmplus.** Macro arguments were tried as operands and the failures thrown. The expression parser now has
+  a soft mode that sets a flag instead.
+- **ZX-ASM.** 2.x (no tokens) is counted over the plain text lines. 3.0, Lite and 3.15 are counted over the lines that
+  tell them apart, where a late keyword appears as a token or in the bytes. The lines they read alike are checked only
+  while 2.x could still tie.
+- **ZEUS.** The word-character tables and the keyword index are built once, and EncodeBody reuses its buffers.
+  `FromUtf8` has an ASCII fast path.
+
+Every decode was compared before and after, for 1578 sources from 673 disk images of the collection and the test data,
+and so was every conversion (235 images). All of them are byte-identical. ZEUS (re-encoding each line for the canonical
+check) and XAS (the packer) stay below 50 MB/s.

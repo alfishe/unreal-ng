@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <filesystem>
+#include <unordered_map>
 #include "emulator/platform.h"
 #include "emulator/memory/memory.h"
 
@@ -18,8 +19,18 @@ class EmulatorContext;
 namespace unrealasm::symbols
 {
 class ISymbolCodec;
+class SymbolIndex;
+class SymbolStore;
+struct Origin;
 struct Symbol;
+struct SymbolSet;
 }
+
+// Symbol files with a report (symbolfiles.h: the surfaces' import / export, symbols/tdd.md section 8)
+struct SymbolImportRequest;
+struct SymbolImportResult;
+struct SymbolExportRequest;
+struct SymbolExportResult;
 
 /// @brief Structure representing a single label with address and type information
 struct Label
@@ -58,11 +69,31 @@ protected:
     /// region <Fields>
 protected:
     EmulatorContext* _context = nullptr;
-    
-    // Maps for quick lookup in both directions
-    std::map<uint16_t, std::shared_ptr<Label>> _labelsByZ80Address;
-    std::map<std::string, std::shared_ptr<Label>> _labelsByName;
-    
+
+    // The labels live in the main CPU's symbol store (symbols/architecture.md section 8): the set "user" holds what
+    // AddLabel / UpdateLabel make and wins over every file; each loaded file is a set of its own, a later load above an
+    // earlier one. The Label objects are a view of the resolved symbols, rebuilt after every change.
+    struct View
+    {
+        std::map<std::string, std::shared_ptr<Label>> byName;
+        std::unordered_map<uint16_t, std::shared_ptr<Label>> byAddress;   // the last one placed at the address
+        // Addresses where labels of different pages meet (ROM 0 and ROM 1 at #0000): every label there in placement
+        // order, with whether its page is a ROM page; the one of the page mapped now wins
+        struct Paged
+        {
+            std::shared_ptr<Label> label;
+            bool rom = false;
+        };
+        std::unordered_map<uint16_t, std::vector<Paged>> shared;
+    };
+    std::unique_ptr<unrealasm::symbols::SymbolStore> _store;
+    std::shared_ptr<View> _view;
+    int _nextFilePriority = 100;
+    // AddLabel of a new name while the user set is on top only adds to the view; its records join the user set at the
+    // next use of the store (Flush), so a script adding labels one by one does not rebuild the view each time
+    mutable std::vector<unrealasm::symbols::Symbol> _pendingUser;
+    bool _userOnTop = true;
+
     // File format detection and parsing helpers
 public:
     enum class FileFormat
@@ -126,13 +157,61 @@ public:
     // Utility methods
     std::vector<std::shared_ptr<Label>> GetAllLabels() const;
     size_t GetLabelCount() const;
-    
+
+    // Symbol files with a report (symbolfiles.h)
+    SymbolImportResult ImportSymbols(const std::string& path, const SymbolImportRequest& request);
+    /// A symbol file's bytes (an upload): `name` gives the extension, the set id (<originKind>:<name>) and the title
+    SymbolImportResult ImportSymbolBytes(const std::vector<uint8_t>& bytes, const std::string& name, const SymbolImportRequest& request,
+                                         const std::string& originKind = "file");
+    SymbolExportResult ExportSymbols(const std::string& path, const SymbolExportRequest& request) const;
+    /// Records from elsewhere (a label table in RAM) normalized and merged into `request.set` (else `defaultSet`, made
+    /// when missing at the next file priority) by the policy (default "both")
+    SymbolImportResult ImportRecords(std::vector<unrealasm::symbols::Symbol> records, const SymbolImportRequest& request,
+                                     const std::string& defaultSet, const std::string& title, const unrealasm::symbols::Origin& origin);
+    /// The codec a file would be read with: by `format`, else by the extension, else detected (null with the reason)
+    static const unrealasm::symbols::ISymbolCodec* CodecForFile(const std::string& path, const std::vector<uint8_t>& bytes,
+                                                                const std::string& format, int& score, std::string& reason);
+
+    /// The emulator the labels belong to (the live scan copies its RAM)
+    EmulatorContext* GetContext() const { return _context; }
+
+    // Symbol sets (the store behind the labels)
+    static constexpr const char* USER_SET = "user";
+    static constexpr int USER_SET_PRIORITY = 1000000;
+    std::vector<unrealasm::symbols::SymbolSet> GetSymbolSets() const;
+    std::shared_ptr<const unrealasm::symbols::SymbolIndex> GetSymbolIndex() const;
+    bool SetSymbolSetEnabled(const std::string& id, bool enabled);
+    bool SetSymbolSetPriority(const std::string& id, int priority);
+    bool DropSymbolSet(const std::string& id);
+
+    // Symbol bundles (symbols/tdd.md section 7): label files shipped for known ROMs, data/symbols/manifest.json
+    static constexpr int BUNDLE_PRIORITY = 50;
+    /// The bundles of `folder`'s manifest.json that match the machine's ROM pages (`pageSha256`: the hex SHA-256 of
+    /// each 16 KB page, by page number): each one a set "bundle:<id>" of origin "bundle" below every loaded file.
+    /// Bundle sets that no longer match are dropped; one already there stays as it is (switched off stays off).
+    /// Returns the bundle sets now in the store
+    std::vector<std::string> ApplyBundles(const std::string& folder, const std::vector<std::string>& pageSha256);
+
+    /// A symbol as the label it shows (the CPU address, the page as bank + bank offset, the kind or the file's own type
+    /// word, "code" when none; the "label.*" traits keep what a label set by hand has beyond that); nullopt when the
+    /// symbol has no main CPU address
+    static std::optional<Label> ToLabel(const unrealasm::symbols::Symbol& symbol);
+    /// A label as a symbol the store keeps (`base` gives the fields a label does not have); ToLabel gives it back as is
+    static unrealasm::symbols::Symbol FromLabel(const Label& label, const unrealasm::symbols::Symbol& base);
+
 protected:
     // Label files through the symbol module's codecs (unreal-asm, docs/inprogress/2026-10-05-unreal-asm/symbols/)
     static std::string CodecForExtension(const std::string& extension);
     bool ReadLabelFile(const std::string& path, std::vector<uint8_t>& bytes) const;
-    bool ImportWith(const unrealasm::symbols::ISymbolCodec& codec, const std::vector<uint8_t>& bytes, const std::string& path);
-    bool AddSymbol(const unrealasm::symbols::Symbol& symbol);
+    /// The symbols the labels show, in the order they are placed (a name's last record; aliases before their name),
+    /// of the enabled sets or of `only`
+    static std::vector<std::pair<const unrealasm::symbols::Symbol*, std::string>> Resolve(
+        const std::vector<unrealasm::symbols::SymbolSet>& sets, const std::vector<std::string>* only = nullptr);
     static unrealasm::symbols::Symbol ToSymbol(const Label& label);
+    void Rebuild();
+    void Flush() const;
+    /// Of the labels at a shared address the last placed one of the page mapped at its window now (or of no page)
+    std::shared_ptr<Label> MappedAt(const std::vector<View::Paged>& labels, uint16_t address) const;
+    static void Notify();
     /// endregion </Methods>
 };

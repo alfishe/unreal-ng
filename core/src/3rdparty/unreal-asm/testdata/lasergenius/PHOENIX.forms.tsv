@@ -1,0 +1,60 @@
+# Laser Genius 1.04 (Beta Disk) with the hash extensions, typed into its editor in unreal-ng: a Phoenix statement as typed, TAB, the tokens it stored
+nop	33
+#DUE x=1	f6 02 ec f8 d1 fd 01
+#DSE x=y=0	f6 01 ec f8 d1 ec f9 d1 fd 00
+xcoord: #DS INT,10	f1 78 63 6f 6f 72 e4 f6 0e 01 fd 0a
+#DSE xcoord[1]=100	f6 01 ec 78 63 6f 6f 72 e4 d4 fd 01 d0 d1 fd 64
+#DSE y=square(x+1)	f6 01 ec f9 d1 ec 73 71 75 61 72 e5 d3 ec f8 d5 fd 01 cc
+#DSE bprint(scale*xcoord[count],10)	f6 01 ec 62 70 72 69 6e f4 d3 ec 73 63 61 6c e5 d7 ec 78 63 6f 6f 72 e4 d4 ec 63 6f 75 6e f4 d0 d2 fd 0a cc
+begin: #DI CHAR,"There was\0"	f1 62 65 67 69 ee f6 0f 02 ed 54 68 65 72 65 20 77 61 73 fd 00 00
+rewrite: #DS CHAR,80	f1 72 65 77 72 69 74 e5 f6 0e 02 fd 50
+pstr: #DS PCHAR,1	f1 70 73 74 f2 f6 0e 04 fd 01
+#DUE pstr=&begin	f6 02 ec 70 73 74 f2 d1 c4 ec 62 65 67 69 ee
+#WHILE *pstr!=0	f6 04 c7 ec 70 73 74 f2 dd fd 00
+#DUE *pspc=*pstr	f6 02 c7 ec 70 73 70 e3 d1 c7 ec 70 73 74 f2
+#ENDW	f6 07
+#DUE pspc++	f6 02 ec 70 73 70 e3 ce
+#DUE pspc--	f6 02 ec 70 73 70 e3 cf
+#DUE ++x	f6 02 c5 ec f8
+#DUE --x	f6 02 c6 ec f8
+#WHILE *pspc++=*pstr++	f6 04 c7 ec 70 73 70 e3 ce d1 c7 ec 70 73 74 f2 ce
+oneint: #DI INT,#1234	f1 6f 6e 65 69 6e f4 f6 0f 01 fe 34 12
+twos: #DI INT,1,2,3	f1 74 77 6f f3 f6 0f 01 fd 01 fd 02 fd 03
+sumsq: #FNC INT	f1 73 75 6d 73 f1 f6 0a 01
+f2: #FNC CHAR	f1 66 b2 f6 0a 02
+f3: #FNC PINT	f1 66 b3 f6 0a 03
+f4: #FNC PCHAR	f1 66 b4 f6 0a 04
+x: #PRM INT	f1 f8 f6 0d 01
+y: #PRM CHAR	f1 f9 f6 0d 02
+#BEGIN	f6 0b
+#END	f6 0c
+#RETURN	f6 11
+#IF x>y	f6 05 ec f8 e1 ec f9
+#ELSE	f6 08
+#ENDIF	f6 09
+#REPEAT	f6 06
+#UNTIL x	f6 03 ec f8
+#STACK	f6 10
+#STACK #8000	f6 10 fe 00 80
+#LIB	f6 12
+#DUE x=!y	f6 02 ec f8 d1 c8 ec f9
+#DUE x=^y	f6 02 ec f8 d1 c9 ec f9
+#DUE x=-y	f6 02 ec f8 d1 ca ec f9
+#DUE x="A"	f6 02 ec f8 d1 eb 41
+#DUE x=$	f6 02 ec f8 d1 e9
+nop	33
+#DUE x="A"	f6 02 ec f8 d1 eb 41
+#DUE x=$	f6 02 ec f8 d1 e9
+#DSE yy=[zz=xx*xx]+xx-20	f6 01 ec 79 f9 d1 cb ec 7a fa d1 ec 78 f8 d7 ec 78 f8 d0 d5 ec 78 f8 d6 fd 14
+pi2: #DS PINT,1	f1 70 69 b2 f6 0e 03 fd 01
+#DSE ff()	f6 01 ec 66 e6 d3 cd
+#DUE aa&&bb||cc	f6 02 ec 61 e1 e4 ec 62 e2 e5 ec 63 e3
+#DUE aa&bb|cc^dd	f6 02 ec 61 e1 e6 ec 62 e2 e7 ec 63 e3 e8 ec 64 e4
+#DUE xx=aa?=bb	f6 02 ec 78 f8 d1 ec 61 e1 dc ec 62 e2
+#DUE xx=aa!=bb	f6 02 ec 78 f8 d1 ec 61 e1 dd ec 62 e2
+#DUE xx=aa<<2	f6 02 ec 78 f8 d1 ec 61 e1 de fd 02
+#DUE xx=aa@>3	f6 02 ec 78 f8 d1 ec 61 e1 e3 fd 03
+#DUE xx=aa%3	f6 02 ec 78 f8 d1 ec 61 e1 d9 fd 03
+#DUE xx=aa/bb-cc	f6 02 ec 78 f8 d1 ec 61 e1 d8 ec 62 e2 d6 ec 63 e3
+#DUE xx=aa>=bb	f6 02 ec 78 f8 d1 ec 61 e1 db ec 62 e2
+#DUE xx=aa<bb	f6 02 ec 78 f8 d1 ec 61 e1 e0 ec 62 e2

@@ -132,6 +132,11 @@ symbols load <file>     # Load symbol file (.sld/.sym/.map)
 symbols save <file>     # Save symbols to file
 symbols clear           # Clear all symbols
 symbols info            # Show symbol count
+symbols formats | detect <file> | sets            # formats, a file's format, the symbol sets
+symbols import <file> [--format f] [--set s] [--space ram3] [--base n] [--policy p]
+symbols export <file> [--format f] [--sets a,b] [--pages fold|comment|drop]
+symbols set <id> on|off | priority <n>; symbols drop <id>   # .recipe/analysis/symbols-import-export.md
+asm files [A-D] | detect <path> | decode <path> | encode <text-file> --codec c | convert <path> --to d   # .recipe/analysis/asm-sources.md
 ```
 
 #### Media Operations
@@ -314,6 +319,14 @@ Interactive documentation available at `/api/swagger`
 | POST | `/api/v1/emulator/{id}/symbols/load` | Load symbol file |
 | GET | `/api/v1/emulator/{id}/labels/resolve` | Resolve label/expression to address |
 | POST | `/api/v1/emulator/{id}/symbols/save` | Save symbols to file |
+| GET | `/api/v1/emulator/{id}/symbols/formats` | Symbol file formats (also `/api/v1/symbols/formats`) |
+| GET | `/api/v1/emulator/{id}/symbols/detect?path=` | Which format a symbol file is |
+| GET / PUT / DELETE | `/api/v1/emulator/{id}/symbols/sets` | Symbol sets; `{id, enabled, priority}`; `?id=` |
+| POST | `/api/v1/emulator/{id}/symbols/import` | Import a symbol file `{path, format, set, space, base, policy}` |
+| POST | `/api/v1/emulator/{id}/symbols/export` | Export symbols `{path, format, sets, pages}` |
+| GET | `/api/v1/asm/formats`, `/api/v1/asm/dialects` | Assembler source formats; the dialects convert reads and writes |
+| GET | `/api/v1/emulator/{id}/asm/files?drive=A` | The files on a disk with their source formats |
+| POST | `/api/v1/emulator/{id}/asm/{detect,decode,encode,convert}` | Assembler sources: a host file, `disk:A/NAME.T` or base64 in, text / a file / the disk out |
 
 #### Assembler & Source Listings
 | Method | Endpoint | Description |

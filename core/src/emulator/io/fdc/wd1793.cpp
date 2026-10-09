@@ -4417,6 +4417,9 @@ void WD1793::TTDLoadState(const uint8_t* src)
     // Registers were replaced wholesale — force a post so observers resync
     _fdcNotifyCacheValid = false;
     notifyFdcStateChanged();
+    // The drive, its motor and track came back too: the status bar and the HUD follow them (deduplicated against
+    // what was last posted, so the restores inside a search post nothing new)
+    notifyFDDStateChanged();
 }
 
 /// endregion </TTDSerializable>

@@ -474,6 +474,20 @@ void Ym2203Pair::loadChipState(int index, const uint8_t*& cur)
     ymfm::ymfm_saved_state state(c.ttdScratch, /*saving=*/false);
     c.fm.save_restore(state);
 
+    // The key-on mirror (the state report's, not chip state) as the restored envelopes have it: an operator is
+    // keyed while its envelope is not releasing. 0x28 mask bits are S1, S2, S3, S4; operator numbers run in
+    // register order S1, S3, S2, S4
+    static const int kMaskBit[4] = {0, 2, 1, 3};
+    for (uint32_t ch = 0; ch < 3; ch++)
+    {
+        uint8_t mask = 0;
+        if (auto* channel = c.fm.fmEngine().debug_channel(ch))
+            for (uint32_t opnum = 0; opnum < 4; opnum++)
+                if (auto* op = channel->debug_operator(opnum); op && op->debug_eg_state() != ymfm::EG_RELEASE)
+                    mask = static_cast<uint8_t>(mask | (1u << kMaskBit[(op->opoffs() - ch) / 4 & 3]));
+        c.fmKeyOn[ch] = mask;
+    }
+
     c.ssg.TTDLoadState(cur);
     cur += c.ssg.TTDStateSize();
 }

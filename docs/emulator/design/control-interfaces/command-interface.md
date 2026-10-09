@@ -1036,6 +1036,19 @@ Labels provide symbolic names for memory addresses, enabling human-readable debu
 | `symbols save <file>` | | `<path>` | Save all symbols to file in SLD format. |
 | `symbols clear` | | | Clear all labels from memory. |
 | `symbols info` | | | Display label count and loaded symbol file info. |
+| `symbols formats` | | | List the symbol file formats (codec id, title, family, extensions). |
+| `symbols detect <file>` | | `<path>` | Which format a file is: the candidates by score and the one chosen. |
+| `symbols sets` | | | List the symbol sets (`user`, one per loaded file, named): on / off, priority, symbol count. |
+| `symbols set <id> on\|off` / `priority <n>` | | `<id>` | Show / hide a set's labels, or change its priority (higher wins). |
+| `symbols drop <id>` | | `<id>` | Remove a symbol set. |
+| `symbols import <file>` | | `<path> [--format f] [--set s] [--space p] [--base n] [--policy both\|keep\|replace\|fail]` | Import a symbol file with a report. Without options it is `symbols load`; with them the records merge into a set. |
+| `symbols export <file>` | | `<path> [--format f] [--sets a,b] [--pages fold\|comment\|drop]` | Write the labels (or the named sets) in a format. `--json` on any `symbols` verb prints the reply as JSON. |
+| `asm formats` / `asm dialects` | | | The assembler source formats with their versions; the dialects `asm convert` reads and writes. |
+| `asm files [A-D]` | | `[drive]` | The files on the disk in a drive, each with the source format detected. |
+| `asm detect <path>` | | `<path>` | Which format a source is (a host file, `disk:A/NAME.T`, or `--file NAME.T` in a .trd / .tap). |
+| `asm decode <path>` | | `<path> [--codec c] [--version v] [--codepage cp] [--output f]` | The source as text. |
+| `asm encode <text-file>` | | `<file> --codec c [--version v] [--output f\|disk:A/NAME.T] [--start n]` | Text in a source format, to a host file or onto the disk. |
+| `asm convert <path>` | | `<path> --to dialect [--codec c] [--from d] [--z80n] [--output f]` | The source in another dialect (sjasmplus, pasmo, z88dk). `asm <addr> <code>` still assembles, as `assemble`. |
 
 **Label Structure**:
 - `name`: Unique symbolic identifier

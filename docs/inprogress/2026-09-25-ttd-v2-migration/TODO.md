@@ -37,7 +37,12 @@ Design: [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md).
   - [x] Each region keeps a delta-base copy of its memory (the engine's working memory, fixed: 2.3 MB for VDAC2): look at dropping it for regions whose pieces are mostly zero **Done 2026-10-08:** the delta base is sparse (`engine/ttddeltabase.h`): a piece of one repeated byte (zeros, an erased flash's #FF) keeps only that value, read through one shared page per value. Full matrix, 600 frames, engine only: the delta base summed over the 46 cases 198.7 MB → 15.4 MB (TSL-VDAC2 10.3 → 0.9 MB, ZX-Evo / ATM3 8.1 → 0.7 MB, Sprinter 7.0 → 0.8 MB); recorded bytes unchanged; capture time median ratio p50 0.95, p99 0.82 (host load 11-22). Tests `TTDDeltaBase_Test`, `AMostlyUniformRegionCostsTheDeltaBaseItsContentOnly`; 4 mutants caught
   - [x] ZX-Evo AVR and Scorpion SMUC EEPROMs (duplicate of the line above and gap 10: d24390f70, test `EepromsAreRegionsOfEveryCheckpoint`)
 - [x] Phase check: D33 on the matrix, bytes per stream against the E6 model **Now:** D33 done (phase-1-results.md); the per-stream comparison against the E6 model is open **Done 2026-10-09:** [e6-comparison.md](e6-comparison.md) - totals 0.78-1.11 of the model in memory; memory pieces, journal, coverage on the model; device state 0.6 of it; reference tables (3.1x) and CPU + chipset (2.4x) above it (below); the file 0.14-0.42 of E6's file model
-  - [ ] Reference tables 3.1x and the checkpoint's CPU + chipset record 2.4x E6's model (about 400 B per frame each on a 128K): the fixed cost of an idle recording; look at delta-coding the core and smaller table blocks
+  - [x] Reference tables 3.1x and the checkpoint's CPU + chipset record 2.4x E6's model (about 400 B per frame each on a 128K): the fixed cost of an idle recording; look at delta-coding the core and smaller table blocks **Looked at 2026-10-09, closed without a change (owner decision):**
+    - **Measured** on Pentagon idle, per checkpoint: reference tables 166 B, close to E6's 143; the piece store's version table 381 B (8.3 versions of 28 B, plus a std::vector's spare capacity); the checkpoint record 409 B (288 B of struct: CPU 48 + chipset 120 = E6's 168, plus position, journal cursors and two vectors; and one heap block of region entries, 4.4 of 24 B).
+    - **What "3.1x" meant:** the benchmark's `bm3_page_refs_bpf` adds the version table, which E6's model does not have.
+    - **Tried:** a chunked version table, without the doubled spare capacity, saving 3.5-6% of an idle recording's memory over a minute.
+    - **Estimated, not done:** a pooled, compact region list, about 5%.
+    - Neither is worth its change.
 
 ## State registry gaps ([state-registry.md](state-registry.md#gaps))
 
@@ -57,10 +62,35 @@ Found by the 2026-10-02 audit. Gaps 1–16 break replay in v1 today; each is fix
 - [x] 14 ESP module `_zxLine`
 - [x] 15 ZX-Evo F12 timer on emulated time (2026-10-07): the AVR measures the F12 hold on the machine's clock (`EmulatedMicroseconds`), and the hold is in the EvoPs2 state (layout 2, 56 bytes), so a seek between press and release decides as the recording did. Test `EvoAvr_Test.F12HoldIsMeasuredInEmulatedTime` (mutant caught). Both TS-Conf fixtures re-recorded; the recorder empties the SD slot and turns ZiFi off for them (the shipped config gained both, the corpus machine has neither)
 - [x] 16 Edge cases: NMI pending, the +3 floating-bus byte and the RZX playback position (2026-10-04, Phase 3 Step 2) done; disk autostart, "incomplete" network state open **Disk autostart done (2026-10-07):** the name hook's rewrite of the cold-start line is an edit with its bytes while TTD records, and a replay never runs the hook; found on the way: a disk autostart (its disk load, then its reset) cancelled the black box's pending restart - a second session end now keeps it due. Test `DiskAutostart_Boot_Test.TheNameHookIsARecordedEditOfTheBlackBox` (two mutants caught). **Network state done (2026-10-08):** blobs keep their fixed part. What does not fit, and bytes received before the recording, go into a tail written only when needed (`netstatetail.h`). Covered: the ZXNETUSB adapters, the 16550 + peer ports, the machine serial peer and the ESP module and stack. The engine sizes a variable-size state's buffers by what it reaches (a 64 MiB declaration had cost 136 MB). Tests (mutants caught): `TTDZxNetUsb_Test.AStateBeyondTheFixedArraysRestoresWhole`, `TTDZxNetUsb_Test.BytesReceivedBeforeTheRecordingRestore`, `VirtualNetwork_Test.TablesBeyondTheFixedArraysRestoreWhole`, `SerialPeer_Test.AStreamStateBeyondTheFixedArraysRestoresWhole`, `ComPort_Test.TtdStateRestoresAnEchoQueueLongerThanTheFixedArray`, `Atm2KbcSerial_Test.TtdBlobKeepsAnEchoQueueLongerThanTheFixedArray`, `EspnetModule_Test.AStackStateBeyondTheFixedArraysRestoresWhole`, `EspnetModule_Test.ModuleBuffersBeyondTheFixedArraysRoundTrip`, `TimeTravelEngine_DeviceState_Test.AVariableSizeStateHoldsMemoryByItsSize`, `TimeTravelEngine_DeviceState_Test.ALoadedSessionContinuesAVariableSizeState`
-- [ ] 17 Telemetry streams (decision 35), starting with the VDAC2 line-budget metrics if emulation does not read them
+- [ ] 17 Telemetry streams (decision 35), starting with the VDAC2 line-budget metrics if emulation does not read them **Owner decision 2026-10-09: correctness first, streams later.**
+  - [x] Step 1 (2026-10-09): every telemetry the registry flagged is right after a seek, nothing recorded:
+    - the IDE LED does not count a replay;
+    - WD1793's restore posts the drive / motor state;
+    - NeoGS takes the restored DMA counts as seen (no false pulse);
+    - the GS activity counters are kept across a replay;
+    - the TSFM key-on mirror is derived from the restored envelopes;
+    - the audio indicators go dark after a seek.
+
+    VDAC2's metrics stay in the chip state (decided 2026-10-03). Tests: `AtaDisk_Test.ActivityIsNotCountedWhileReplaying`, `WD1793_Test.TtdRestoreRepublishesTheDriveState`, `SoundChip_NeoGS_Ttd.ARestoreLeavesNoFalseActivityPulse`, `Ym2203Pair_Test.TtdRestoreDerivesTheKeyOnMirror`, `DeviceMemoryTtd_Test.ASeekNeitherCountsReplayedActivityNorLeavesIndicatorsLit`; 6 mutants caught
+  - [ ] Media change counters: replayed guest writes still count (`MediaManager::NoteWrite` is not gated by the replay) and move the version stamp the TTD media check compares - look at it with the media versions
+  - [ ] Step 2: telemetry streams with history, for an item with a consumer (an activity timeline in the TTD panel)
 - [x] 18 `ttd.ksy:532` NeoGS memory note **Done 2026-10-08:** the note said RAM and flash were in the blob; they never were (v1 records neither); the engine records them as regions 4 and 5. Fixed in `ttd.ksy`, the NeoGS serializer's comment and the NeoGS TTD test's header
 - [x] Fill the registry's Size and Variability columns from per-stream benchmark measurements **Done 2026-10-09:** BM-9 (`bm9_<region>_*`: size, first-capture bytes, steady bytes and versions per frame for every region and device state), the full matrix; 48 rows filled ([e6-comparison.md](e6-comparison.md))
-  - [ ] Device states changing every frame at an idle prompt beyond Q1's AY / TSFM: NeoGS, MoonSound, the ATM2 / Profi keyboard MCUs, TS-Conf state, ZX-Evo AVR volatile bytes, Sprinter PLD, VDAC2, ZiFi UART - trace the fields; time fields where they are time-derived
+  - [x] Device states changing every frame at an idle prompt beyond Q1's AY / TSFM: NeoGS, MoonSound, the ATM2 / Profi keyboard MCUs, TS-Conf state, ZX-Evo AVR volatile bytes, Sprinter PLD, VDAC2, ZiFi UART - trace the fields; time fields where they are time-derived **Done 2026-10-09:** traced byte by byte (each device's changing offsets and their per-frame steps, mapped to the serializers' fields).
+    - **New time fields** (bytes per idle frame, BM-9 full run):
+      - VDAC2 card `frameBase` / `position` / `nextEvent`: 13.3 → 0;
+      - Sprinter PLD's acked INT pulse: 8.4 → 0.9;
+      - ZX-Evo AVR's `loopResume` / `eepromReadyAt`: 6.5 → 1.7-2.1;
+      - WD1793 `_time` / `_lastTime` / the motor countdown: Sprinter 9.5 → 6.2, Profi 10.9 → 9.5;
+      - Profi XT KBC's time bases and MCU clock / instructions (as ATM2's): 42 → 34.
+    - **Real state, left as it is:**
+      - TS-Conf: CPU-cache copies of RAM words a handler increments;
+      - NeoGS: the GS Z80's registers and its frame phase;
+      - MoonSound: the noise LFSR, and LFO phases wrapping every 8-13 frames - re-anchoring would cost more than it saves;
+      - ATM2 KBC: the remainder `frac`, and the firmware's RAM tick counter (tried as a time field: no gain);
+      - ZiFi UART: not reached by the measuring machines.
+    - Test `Devices/TTDDeviceTimeFields_Test`, which catches each declaration removed.
+  - [ ] ZiFi UART (`device.zifi.uart`, 6 B per idle frame on TS-Conf in BM-9): not covered - the machines of the field-by-field measurement do not bring it up (the test runner's network policy), so there is no per-field data yet; measure it with ZiFi fitted and declare its clocks as time fields if they are
 
 ## Phase 1 check ([phase-1-results.md](phase-1-results.md))
 

@@ -20,6 +20,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/devicememorydialog.h"
 #include "debugger/disksectordialog.h"
+#include "debugger/diskfilesdialog.h"
 #include "debugger/pchistorydialog.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/labeleditor.h"
@@ -133,6 +134,9 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     diskSectorAction = new QAction("Disk sector", this);
     diskSectorAction->setToolTip("View and edit a floppy sector's data field (CRC recalculated, the image counts as modified)");
     toolBar->addAction(diskSectorAction);
+    diskFilesAction = new QAction("Disk files", this);
+    diskFilesAction->setToolTip("The files on a disk with their source formats: open an assembler source as text, export it, convert it");
+    toolBar->addAction(diskFilesAction);
     pcHistoryAction = new QAction("PC history", this);
     pcHistoryAction->setToolTip("The newest instructions the CPU started, with their window's page (starts recording)");
     toolBar->addAction(pcHistoryAction);
@@ -162,6 +166,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     connect(portOutAction, &QAction::triggered, this, &DebuggerWindow::portOut);
     connect(deviceMemoryAction, &QAction::triggered, this, &DebuggerWindow::showDeviceMemory);
     connect(diskSectorAction, &QAction::triggered, this, &DebuggerWindow::showDiskSector);
+    connect(diskFilesAction, &QAction::triggered, this, &DebuggerWindow::showDiskFiles);
     connect(pcHistoryAction, &QAction::triggered, this, &DebuggerWindow::showPcHistory);
     connect(labelsAction, &QAction::triggered, this, &DebuggerWindow::showLabelManager);
     connect(breakpointsAction, &QAction::triggered, this, &DebuggerWindow::showBreakpointManager);
@@ -1258,6 +1263,15 @@ void DebuggerWindow::showDiskSector()
     if (!_emulator) return;
 
     DiskSectorDialog dialog(_emulator, this);
+    dialog.exec();
+    updateState();
+}
+
+void DebuggerWindow::showDiskFiles()
+{
+    if (!_emulator) return;
+
+    DiskFilesDialog dialog(_emulator, this);
     dialog.exec();
     updateState();
 }

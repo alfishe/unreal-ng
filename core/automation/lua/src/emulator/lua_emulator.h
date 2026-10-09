@@ -52,6 +52,8 @@
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
+#include "debugger/labels/symbolcontrol.h"
+#include "debugger/asm/asmcontrol.h"
 #include <debugger/ttd/timetravelmanager.h>
 #include <debugger/ttd/machinestatehash.h>
 #include <debugger/ttd/ttdfileinfo.h>
@@ -207,6 +209,70 @@ protected:
         if (o.get_type() == sol::type::number)
             return std::to_string(static_cast<long long>(o.as<double>()));
         return o.is<std::string>() ? o.as<std::string>() : std::string();
+    }
+
+    /// A Lua argument as SymbolControl options: a string is `firstKey`, a table gives each key (a list of strings is a
+    /// comma list, as sets = {"a", "b"})
+    static std::map<std::string, std::string> SymbolOptions(const sol::object& arg, const std::string& firstKey)
+    {
+        std::map<std::string, std::string> options;
+        if (arg.is<std::string>() && !firstKey.empty())
+            options[firstKey] = arg.as<std::string>();
+        else if (arg.get_type() == sol::type::table)
+            for (const auto& [key, value] : arg.as<sol::table>())
+            {
+                if (!key.is<std::string>())
+                    continue;
+                if (value.get_type() == sol::type::table)
+                {
+                    std::string list;
+                    for (const auto& item : value.as<sol::table>())
+                        if (item.second.is<std::string>())
+                            list += (list.empty() ? "" : ",") + item.second.as<std::string>();
+                    options[key.as<std::string>()] = list;
+                }
+                else
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            }
+        return options;
+    }
+
+    sol::object symbolsRun(sol::this_state ts, const std::string& verb, std::map<std::string, std::string> options) const
+    {
+        Emulator* emulator = effectiveEmulator();
+        SymbolReply reply;
+        if (!emulator)
+        {
+            reply.error = SymbolControlError::NotAvailable;
+            reply.message = "no emulator";
+        }
+        else
+            reply = SymbolControl(emulator->GetContext()).Execute({verb, std::move(options)});
+        StateNode value = reply.body;
+        if (!reply.Ok())
+        {
+            value["ok"] = false;
+            value["error"] = reply.message;
+        }
+        return StateNodeToLua(ts, value);
+    }
+
+    sol::object asmRun(sol::this_state ts, const std::string& verb, std::map<std::string, std::string> options) const
+    {
+        Emulator* emulator = effectiveEmulator();
+        const AsmReply reply = AsmControl(emulator ? emulator->GetContext() : nullptr).Execute({verb, std::move(options)});
+        StateNode value = reply.body;
+        if (!reply.Ok())
+        {
+            value["ok"] = false;
+            value["error"] = reply.message;
+        }
+        return StateNodeToLua(ts, value);
+    }
+
+    sol::object symbolsCall(sol::this_state ts, const std::string& verb, const sol::object& arg, const std::string& firstKey) const
+    {
+        return symbolsRun(ts, verb, SymbolOptions(arg, firstKey));
     }
 
     /// A seek's answer as a table: the reply's fields; a refused seek has reached = false
@@ -2929,6 +2995,47 @@ public:
             if (!ctx || !ctx->pDebugManager) return false;
             LabelManager* lm = ctx->pDebugManager->GetLabelManager();
             return lm && lm->SaveLabels(path);
+        });
+
+        // Symbol files and sets through SymbolControl (the same verbs, checks and fields as the WebAPI, CLI, MCP and
+        // Python): symbols_import("f.sym") or symbols_import{path=..., format=, set=, space=, base=, policy=},
+        // symbols_export{path=..., format=, sets={...}, pages=}, symbols_sets(), symbols_set(id, {enabled=, priority=}),
+        // symbols_drop(id), symbols_formats(), symbols_detect(path), symbols_scan(), symbols_import_live{scanner=, page=,
+        // offset=, set=, policy=}. A refusal: the table has ok = false, error = why
+        lua.set_function("symbols_formats", [this](sol::this_state ts) -> sol::object { return symbolsRun(ts, "formats", {}); });
+        lua.set_function("symbols_sets", [this](sol::this_state ts) -> sol::object { return symbolsRun(ts, "sets", {}); });
+        lua.set_function("symbols_detect", [this](sol::this_state ts, sol::object arg) -> sol::object { return symbolsCall(ts, "detect", arg, "path"); });
+        lua.set_function("symbols_import", [this](sol::this_state ts, sol::object arg) -> sol::object { return symbolsCall(ts, "import", arg, "path"); });
+        lua.set_function("symbols_export", [this](sol::this_state ts, sol::object arg) -> sol::object { return symbolsCall(ts, "export", arg, "path"); });
+        lua.set_function("symbols_drop", [this](sol::this_state ts, sol::object arg) -> sol::object { return symbolsCall(ts, "drop", arg, "id"); });
+        // Assembler sources through AsmControl (the same verbs and fields as the WebAPI, CLI, MCP, Python and the Qt disk
+        // browser): asm_formats(), asm_dialects(), asm_files("A"), asm_detect(path), asm_decode(path) or asm_decode{path=,
+        // codec=, version=, output=}, asm_encode{text= | input=, codec=, version=, output=}, asm_convert{path=, to=, ...}.
+        // A path is a host file or "disk:A/NAME.T". A refusal: ok = false, error = why
+        lua.set_function("asm_formats", [this](sol::this_state ts) -> sol::object { return asmRun(ts, "formats", {}); });
+        lua.set_function("asm_dialects", [this](sol::this_state ts) -> sol::object { return asmRun(ts, "dialects", {}); });
+        lua.set_function("asm_files", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "files", SymbolOptions(arg, "drive")); });
+        lua.set_function("asm_detect", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "detect", SymbolOptions(arg, "path")); });
+        lua.set_function("asm_decode", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "decode", SymbolOptions(arg, "path")); });
+        lua.set_function("asm_encode", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "encode", SymbolOptions(arg, "text")); });
+        lua.set_function("asm_convert", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "convert", SymbolOptions(arg, "path")); });
+        lua.set_function("symbols_scan", [this](sol::this_state ts) -> sol::object { return symbolsRun(ts, "scan", {}); });
+        lua.set_function("symbols_import_source", [this](sol::this_state ts, sol::object arg) -> sol::object {
+            return symbolsCall(ts, "import-source", arg, "path");
+        });
+        lua.set_function("symbols_import_live", [this](sol::this_state ts, sol::optional<sol::table> opts) -> sol::object {
+            return symbolsRun(ts, "import-live", opts ? SymbolOptions(sol::make_object(ts, *opts), "") : std::map<std::string, std::string>{});
+        });
+        lua.set_function("symbols_set", [this](sol::this_state ts, sol::object id, sol::optional<sol::table> opts) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (opts)
+                options = SymbolOptions(sol::make_object(ts, *opts), "");
+            if (id.is<std::string>())
+                options["id"] = id.as<std::string>();
+            else
+                for (auto& [key, value] : SymbolOptions(id, "id"))
+                    options[key] = value;
+            return symbolsRun(ts, "set", std::move(options));
         });
 
         // Disassembly

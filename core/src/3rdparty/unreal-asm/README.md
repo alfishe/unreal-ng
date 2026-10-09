@@ -27,7 +27,8 @@ Part of [unreal-ng](https://github.com/alfishe/unreal-ng); design: `docs/inprogr
   `z80nmatrix`). `docs/inprogress/2026-10-05-unreal-asm/research-modern-assemblers.md`.
 - A8: the symbol module (`include/unrealasm/symbols/`): model, index, store, the symbol codecs of every label file
   format, `symconv`; labels from sources (`symbols/fromsource.h`) with values from `layout.h`, a layout of the
-  sjasmplus conversion equal to what sjasmplus assembles.
+  sjasmplus conversion equal to what sjasmplus assembles; symbol bundles (`symbols/bundles.h`: the manifest of label
+  files for known ROM pages by SHA-256).
 
 ## Layout
 

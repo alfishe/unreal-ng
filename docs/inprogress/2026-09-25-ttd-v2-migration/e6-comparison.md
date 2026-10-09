@@ -77,7 +77,7 @@ Status: measured 2026-10-09 on branch `ttd-engine` (engine backend, the controll
   - In memory, the totals are 0.78–1.11 of the model.
   - Memory pieces, the write journal and coverage are within 0.9–1.0, except Across the Edge's journal at 0.64: the matrix's snapshot plays another part of the demo than E6's session.
 - **Device state is below the model** (0.58–0.65). Phase 2's time fields and changed-ranges encoding did better than E6's "changed blob, XOR" assumption.
-- **Two streams are above the model, both fixed costs per checkpoint:**
+- **Two streams are above the model, both fixed costs per checkpoint.** Looked at 2026-10-09: the "reference tables" figure includes the piece store's version table (28 B per stored version), which E6 did not model - the tables alone are 166 B per frame against 143. The checkpoint record's extra (position, journal cursors, region list) is real; reducing either was judged not worth it (TODO).
   - Reference tables: 3.1× on 128K machines, 413 B per frame against 143.
   - CPU + chipset: 2.4–2.9×, about 400 B per frame against E6's 168 B, which was not delta-coded either.
   - They are 1.2–1.7 MB per minute: small next to the journal on active content, but most of an idle recording. Open in the [TODO](TODO.md).
@@ -92,5 +92,7 @@ Status: measured 2026-10-09 on branch `ttd-engine` (engine backend, the controll
   - the VDAC2 card (13 B/frame);
   - the ZiFi UART (6 B/frame).
 
-  The cards and the TS-Conf, AVR and Sprinter entries are candidates for time fields: what changes in them at rest has not been traced field by field yet.
+  **Traced 2026-10-09** (TODO).
+  - **Now time fields:** the VDAC2 card's raster clocks, the Sprinter PLD's INT pulse, the AVR's /WAIT cycles, WD1793's clocks and the Profi controller's time bases.
+  - **Real state:** the rest - NeoGS CPU registers, MoonSound noise and LFO phases, TS-Conf cache words, the MCUs' registers and RAM.
 - **The Sprinter at its idle boot screen** rewrites 9.7 pieces of video RAM per frame (223 B/frame). That is the BIOS screen at work, not a capture artifact. The region is compared at each capture and stores only the pieces that changed.

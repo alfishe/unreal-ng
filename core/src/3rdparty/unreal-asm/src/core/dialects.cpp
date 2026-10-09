@@ -82,6 +82,22 @@ const IBackend* DialectRegistry::Backend(std::string_view dialect) const
     return nullptr;
 }
 
+std::vector<std::string> DialectRegistry::FrontendDialects() const
+{
+    std::vector<std::string> out;
+    for (const auto& f : _frontends)
+        out.emplace_back(f->Dialect());
+    return out;
+}
+
+std::vector<std::string> DialectRegistry::BackendDialects() const
+{
+    std::vector<std::string> out;
+    for (const auto& b : _backends)
+        out.emplace_back(b->Dialect());
+    return out;
+}
+
 void DialectRegistry::Add(std::unique_ptr<IFrontend> frontend)
 {
     _frontends.push_back(std::move(frontend));

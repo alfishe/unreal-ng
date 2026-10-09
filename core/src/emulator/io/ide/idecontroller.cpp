@@ -86,7 +86,7 @@ void IdeController::BuildUnit(int unit)
     else
         device = std::make_unique<AtaDisk>();
     AtaDevice& unitDevice = *device;
-    unitDevice.SetActivityCounter(&_activity);
+    unitDevice.SetActivityCounter(&_activity, _context ? &_context->ttdReplayActive : nullptr);
     _channels[channel].SetUnit(position, std::move(device));
 
     auto slot = std::make_unique<IdeUnitSlot>(_context, IdeUnitSlot::IdFor(channel, position), unitDevice, config);
