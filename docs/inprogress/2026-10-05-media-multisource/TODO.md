@@ -53,9 +53,14 @@ PLAN.md row **#95**.
 - [ ] Owner's check on macOS / Windows before master: the Qt flatten dialog (partitioned write-back too), `HostTrash`
   (Recycle Bin, `~/.Trash`), the C10e journal's positional I/O
 - [ ] Follow-up after C0-C9: library extraction and unification, phases X0-X13 ([library-extraction/](library-extraction/README.md)), PLAN.md row **#96**
-- [ ] **P2** ACC-C5, the NedoOS half (owner request 2026-10-05): NedoOS lists the contents of a composite CD on the
+- [ ] **P2, blocked upstream** ACC-C5, the NedoOS half (owner request 2026-10-05): NedoOS lists the contents of a composite CD on the
   ZX-Evo's ATAPI drive. Needs NedoOS's CD / ISO 9660 driver in the test fixtures (`testdata/machines/zxevo/nedoos/`);
   the ERS boot of `AUTORUN.ZX` already covers the drive path ([phases/c5-iso.md](phases/c5-iso.md) §9)
+  Checked 2026-10-09 against the NedoOS fork `alfishe/NedoOS` at `a750349`: NedoOS has no ISO 9660 and no ATAPI data
+  reads. The kernel's IDE driver (`src/kernel/fatfsdrv.asm`, `readidentIDE`) sees the ATAPI signature `0xEB14` and marks
+  the drive not ready; sector I/O is ATA READ `0x20` only; the drive letters are FAT and TR-DOS (`src/nedoos_en.md`). The
+  only CD program, `cdplay.com`, sends audio packets (TOC, PLAY MSF, PAUSE, STOP) to the slave drive. Nothing to test
+  until NedoOS gets an ATAPI READ(10) driver, an ISO 9660 layer and a drive letter for it.
 - [ ] **P2** DSS 1.71.66 MKDIR corrupts a `BuildDssHdd` disk (found 2026-10-06 while moving ACC-C3 to the newest DSS,
   whose shell has REN / DEL / ECHO but no COPY and no redirection). On BIOS 3.06 HF2, a plain session image (no
   composite): `mkdir c:\acc` writes LBA 160-220, the first clusters of SYSTEM.DOS, and `cd \acc` + `dir` answers
