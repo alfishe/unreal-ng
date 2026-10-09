@@ -145,6 +145,20 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
+    // A NEX is loaded into a running system: the 48K ROM has set up its system variables and channels. UNREAL_NEX_PREBOOT=0
+    // loads into the bare machine instead
+    const char* preboot = std::getenv("UNREAL_NEX_PREBOOT");
+    if (!preboot || std::string(preboot) != "0")
+    {
+        context->emulatorState.p7FFD = 0x10;
+        context->emulatorState.p1FFD = 0x04;
+        dynamic_cast<NextMemory*>(context->pMemory)->ApplyClassicPaging(0x10, 0x04);
+        context->pCore->GetZ80()->pc = 0;
+        emulator->EnableTurboMode();
+        for (int i = 0; i < 100; i++)
+            emulator->RunFrame(true);
+        emulator->DisableTurboMode();
+    }
     LoaderNex loader(context);
     ASSERT_TRUE(loader.LoadFile(path)) << loader.Error();
     const char* frames = std::getenv("UNREAL_NEX_FRAMES");
