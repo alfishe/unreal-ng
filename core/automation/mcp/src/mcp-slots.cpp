@@ -228,8 +228,9 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "write-back: refuse (default) when a host file changed since the build, or keep-both (the guest's version as "
         "'name (guest).ext')";
     schema["properties"]["journal"]["description"] =
-        "insert / swap of a medium written in session access: replay (default) a session journal left by a crash "
-        "(<source>.usession), discard it unread, or off (no journal next to the medium this time)";
+        "insert / swap of a medium written in session access: replay a session journal left by a crash "
+        "(<source>.usession) and keep one, discard it unread and start a new one, or off (no journal next to the "
+        "medium). Left out: [MEDIA] SessionJournal (off by default)";
     schema["properties"]["vhd"]["description"] =
         "save / export / flatten of a block medium to a new .vhd: fixed (default) or dynamic (only the 2 MiB blocks "
         "holding data are stored)";

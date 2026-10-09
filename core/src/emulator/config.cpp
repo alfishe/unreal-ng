@@ -1049,6 +1049,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 		session.flushSeconds = settings.sessionFlushSeconds.value_or(session.flushSeconds);
 		session.syncSeconds = settings.sessionSyncSeconds.value_or(session.syncSeconds);
 		session.journal = settings.sessionJournal.value_or(session.journal);
+		session.ioThreads = settings.sessionIoThreads.value_or(session.ioThreads);
 		session.spillFolder = settings.spillFolder.value_or(std::string());
 		SessionWriteMap::SetDefaults(session);
 	}

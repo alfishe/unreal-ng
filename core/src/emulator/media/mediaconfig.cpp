@@ -60,7 +60,8 @@ namespace
     bool IsSetting(const std::string& key)
     {
         return key == "sessionmemorylimit" || key == "sessionarenakib" || key == "sessionflushseconds" ||
-               key == "sessionsyncseconds" || key == "sessionjournal" || key == "spillfolder";
+               key == "sessionsyncseconds" || key == "sessionjournal" || key == "sessioniothreads" ||
+               key == "spillfolder";
     }
 
     MediaSetEntry& EntryFor(std::vector<MediaSetEntry>& entries, const std::string& slotId)
@@ -249,6 +250,13 @@ MediaSettings MediaConfig::SettingsFromIni(const IniFile& ini, const std::string
                 settings.sessionJournal = false;
             else
                 bad("on or off");
+        }
+        else if (key == "sessioniothreads")
+        {
+            if (ParseUnsigned(value, number) && number <= 4)
+                settings.sessionIoThreads = static_cast<uint32_t>(number);
+            else
+                bad("threads, 1 to 4 (0: a quarter of the cores)");
         }
         else if (key == "spillfolder" && !value.empty())
         {

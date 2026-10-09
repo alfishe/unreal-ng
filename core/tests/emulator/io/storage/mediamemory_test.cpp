@@ -156,7 +156,8 @@ TEST(SessionMemory_Test, NewSessionsTakeTheDefaults)
     EXPECT_EQ(plain.arenaBytes, 1024u * 1024);
     EXPECT_EQ(plain.flushSeconds, 30u);
     EXPECT_EQ(plain.syncSeconds, 30u);
-    EXPECT_TRUE(plain.journal);
+    EXPECT_FALSE(plain.journal) << "lean by default (c10e §9): [MEDIA] SessionJournal = on or journal: replay";
+    EXPECT_EQ(plain.ioThreads, 1u) << "one journal writer thread by default";
     EXPECT_FALSE(old.journal) << "the test runner keeps journals away from test data";
 
     SessionSettings changed = old;

@@ -143,12 +143,15 @@ A medium in `session` access (folders, CHDs, composites, blank media, any image 
 
 - **In memory**, up to `[MEDIA] SessionMemoryLimit` (16 MiB), in arenas of `SessionArenaKiB` (1 MiB) whose pages go
   back to the system when they are freed.
-- **In a journal** next to the source: `<image>.usession`, `<folder>.usession`, `<descriptor>.usession`. When the
-  arenas pass the limit, the oldest one moves there; every write reaches it at most `SessionFlushSeconds` (30 s)
+- **Past the limit**, by default (`SessionJournal = off`, the lean setting unreal-qt ships with): the oldest arena
+  moves to a temp file in `SpillFolder`, gone with the medium. Nothing is written while the writes fit in memory.
+- **In a journal** next to the source, with `SessionJournal = on` or an insert's `journal: replay`:
+  `<image>.usession`, `<folder>.usession`, `<descriptor>.usession`. When the arenas pass the limit, the oldest one
+  moves there; every write reaches it at most `SessionFlushSeconds` (30 s)
   after it was made, and it is synced to the disk every `SessionSyncSeconds` (30 s).
-- **Off the emulation thread**: the journal is written and synced by a few I/O threads shared by every emulator
-  instance of the process; the emulation only waits for the disk when it falls behind the guest by half the limit.
-- **After a crash** of the emulator (or an exit with unsaved writes) the next insert of the same medium replays the
+- **Off the emulation thread**: the journal is written and synced by I/O threads shared by every emulator
+  instance of the process (`SessionIoThreads`, one by default); the emulation only waits for the disk when it falls behind the guest by half the limit.
+- **After a crash** of the emulator (or an exit with unsaved writes), with a journal, the next insert of the same medium replays the
   journal: the medium comes back dirty with the guest's writes, and the report says
   `session journal disk.img.usession replayed: N sector(s) ...`. At most the last `SessionFlushSeconds` of writes are
   lost. A composite's journal replaces its `.delta` (the journal holds everything since that insert).
@@ -175,7 +178,8 @@ SessionMemoryLimit  = 16       ; MiB in memory per session; 0: no limit
 SessionArenaKiB     = 1024     ; the unit of a flush (64 ... 16384, a power of two)
 SessionFlushSeconds = 30       ; 0: only when the limit is passed
 SessionSyncSeconds  = 30       ; 0: never fsync
-SessionJournal      = on
+SessionJournal      = off      ; on: a journal next to each medium, replayed after a crash
+SessionIoThreads    = 1        ; journal writer threads; 0: a quarter of the cores, 1 to 4
 SpillFolder         = /var/tmp
 ```
 
