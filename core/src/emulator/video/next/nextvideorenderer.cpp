@@ -402,10 +402,10 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
     Pixel layer2[kW];
     Pixel tiles[kW];
     Pixel sprites[kW];
+    // LoRes replaces the paper of the ULA, whose border stays
+    UlaLine(in, y, ula);
     if (in.nr[0x15] & 0x80)
         LoResLine(in, y, ula);
-    else
-        UlaLine(in, y, ula);
     ApplyUlaClip(in, y, ula);
     Layer2Line(in, y, layer2);
     TilemapLine(in, y, tiles);

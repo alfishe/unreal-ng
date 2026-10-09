@@ -65,6 +65,8 @@ public:
 
     /// The counter line the beam is on now (NR #1E / #1F): the frame position from the ULA interrupt's place
     uint16_t CurrentLine() const;
+    /// NR #64: the counter starts at this value at the paper's first line
+    void SetCounterOffset(uint8_t offset) { _counterOffset = offset; }
 
     bool HardwareMode() const { return (_control & 1) != 0; }
     uint16_t PendingMask() const { return _pending; }
@@ -87,7 +89,7 @@ private:
     uint16_t Blocked() const;
 
     EmulatorContext* _context;
-    NextTiming _timing = {70908, 228, 1845, 36, 1, 128};
+    NextTiming _timing = {70908, 228, 1845, 36, 1, 128, 64, 136};
     uint8_t _control = 0;
     uint8_t _nmiReturn[2] = {};
     uint8_t _enable0 = 0x81;
@@ -96,6 +98,7 @@ private:
     uint8_t _dma[3] = {};
     uint8_t _lineControl = 0;
     uint8_t _lineValue = 0;
+    uint8_t _counterOffset = 0;
     uint16_t _pending = 0;
     uint16_t _inService = 0;
     uint32_t _lastT = 0;

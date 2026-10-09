@@ -167,12 +167,17 @@ uint32_t NextInterruptSource::BaseT(uint32_t t) const
     return t / multiplier;
 }
 
-/// The T-state (base, from the frame start) of the line interrupt: counter line N - 1 (target 0: the last line of
-/// the frame), the counter's origin placed so that the ULA interrupt sits at its (line, pixel clock)
+/// The T-state (base, from the frame start) where the line counter (copper vertical counter cvc of zxula_timing.vhd) is 0:
+/// it counts from the paper's first line, steps at the ULA's pixel counter zero (11 pixels before the paper's first pixel)
+/// and starts at the copper offset NR #64. The frame's (vc 0, hc 0) is placed so that the ULA interrupt sits at its
+/// (line, pixel clock)
 uint32_t NextInterruptSource::CounterOrigin() const
 {
     const uint32_t intOffset = _timing.intLine * _timing.line + _timing.intHc / 2;
-    return (_timing.intStart + _timing.frame - intOffset % _timing.frame) % _timing.frame;
+    const uint32_t vcZero = (_timing.intStart + _timing.frame - intOffset % _timing.frame) % _timing.frame;
+    const uint32_t cvcZero = _timing.minVactive * _timing.line + (_timing.minHactive - 11) / 2;
+    const uint32_t offset = (_counterOffset % (_timing.frame / _timing.line)) * _timing.line;
+    return (vcZero + cvcZero + _timing.frame - offset) % _timing.frame;
 }
 
 uint32_t NextInterruptSource::LineStartT() const

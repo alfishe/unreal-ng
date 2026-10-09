@@ -399,6 +399,19 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
             std::cout << "AUDIO peak " << peak << " had " << decoder->Audio().AudioHadSoundLastFrame() << " chip0 reg8 " << int(decoder->Audio().Chip(0)->readRegister(8)) << " reg0 " << int(decoder->Audio().Chip(0)->readRegister(0))
                       << " lastFrameSamples " << context->pSoundManager->lastFrameSamples() << std::endl;
         }
+        if (std::getenv("UNREAL_NEX_COPPER"))
+        {
+            std::cout << "COPPER mode " << int(decoder->Board().Copper().Mode()) << " pc " << decoder->Board().Copper().Pc() << ":";
+            for (unsigned i = 0; i < 40; i++)
+            {
+                const uint16_t w = decoder->Board().Copper().Instruction(i);
+                if (w & 0x8000)
+                    std::cout << " W(" << std::dec << (w & 0x1FF) << "," << ((w >> 9) & 0x3F) << ")";
+                else
+                    std::cout << " M(" << std::hex << ((w >> 8) & 0x7F) << "=" << (w & 0xFF) << ")";
+            }
+            std::cout << std::dec << std::endl;
+        }
         std::cout << "PC " << std::hex << context->pCore->GetZ80()->pc << " sp " << context->pCore->GetZ80()->sp << " iff1 " << int(context->pCore->GetZ80()->iff1) << std::dec << std::endl;
         {
             Z80* z = context->pCore->GetZ80();

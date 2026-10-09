@@ -166,6 +166,8 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
                 board->_machine->AudioConfigChanged();
         }
     } audioNotify{this, reg};
+    if (_beforeCpuWrite && !_copperWrite)
+        _beforeCpuWrite();
     if ((reg == 0x2C || reg == 0x2D || reg == 0x2E) && _machine)
         _machine->DacMirrorWrite(reg, value);
     if (_log)
@@ -201,6 +203,9 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             return;
         case 0x64:
             _copper.WriteOffset(value);
+            _regs[reg] = value;
+            if (_interrupts)
+                _interrupts->SetCounterOffset(value);
             return;
         case 0x12:
         case 0x13:

@@ -18,6 +18,11 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
 {
     _board = std::make_unique<NextBoard>(&Mem());
     _board->SetMachine(this);
+    // the picture follows the beam: a video register written by the program applies from the line the beam is on
+    _board->SetBeforeCpuWrite([this]() {
+        if (_context->pScreen)
+            _context->pScreen->UpdateScreen();
+    });
     _interrupts = std::make_unique<NextInterruptSource>(_context);
     _ctc.onInterrupt = [this](unsigned channel) {
         _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
@@ -269,9 +274,15 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     else if (static_cast<uint8_t>(port) == NextDivMmc::kPort)
         _divMmc->WritePort(value);
     else if (static_cast<uint8_t>(port) == 0xFF)
-        _board->Video().WritePortFf(value);  // the Timex screen mode (NR #69 bits 5:0 alias it)
+    {
+        if (_context->pScreen)
+            _context->pScreen->UpdateScreen();
+        _board->Video().WritePortFf(value);
+    }  // the Timex screen mode (NR #69 bits 5:0 alias it)
     else if (port == 0x123B)
         {
+        if (_context->pScreen)
+            _context->pScreen->UpdateScreen();
         _board->Video().WritePort123b(value);
         _board->RefreshLayer2Mapping();
         }

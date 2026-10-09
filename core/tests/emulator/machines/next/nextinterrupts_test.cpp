@@ -71,14 +71,16 @@ TEST_F(NextInterrupts_Test, LineInterruptPulsesAtItsLine)
 {
     NextReg(0x23, 100);
     NextReg(0x22, 0x02 | 0x04);  // line interrupt on, ULA off, value 100: counter line 99
-    // the counter's origin puts the ULA interrupt (line 1, pixel clock 128) at 1845: 1845 - 292 = 1553
-    const uint32_t t = 1553 + 99 * 228;
+    // the frame's (vc 0, hc 0) puts the ULA interrupt (line 1, pixel clock 128) at 1845: 1845 - 292 = 1553; the counter is 0 at the
+    // paper's first line (vc 64) and at the ULA pixel counter zero (hc 136 - 11): 1553 + 64 * 228 + 62
+    const uint32_t origin = (1553 + 64 * 228 + 62) % 70908;
+    const uint32_t t = (origin + 99 * 228) % 70908;
     EXPECT_FALSE(_int->IsIntAsserted(t - 1));
     EXPECT_TRUE(_int->IsIntAsserted(t));
     EXPECT_FALSE(_int->IsIntAsserted(t + 36));
     NextReg(0x23, 0);  // target 0: the last line of the frame
     NextReg(0x22, 0x02 | 0x04);
-    const uint32_t last = (1553 + 310 * 228) % 70908;
+    const uint32_t last = (origin + 310 * 228) % 70908;
     EXPECT_TRUE(_int->IsIntAsserted(last));
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -80,9 +81,15 @@ public:
 
     explicit NextBoard(NextMemory* memory) : _memory(memory)
     {
-        _copper.SetWriter([this](uint8_t reg, uint8_t value) { Write(reg, value); });
+        _copper.SetWriter([this](uint8_t reg, uint8_t value) {
+            _copperWrite = true;
+            Write(reg, value);
+            _copperWrite = false;
+        });
     }
     void SetMachine(INextMachine* machine) { _machine = machine; }
+    /// Called before a NextREG write of the CPU (not of the copper): the screen draws the lines the beam has passed with the old state
+    void SetBeforeCpuWrite(std::function<void()> hook) { _beforeCpuWrite = std::move(hook); }
     void SetInterrupts(NextInterruptSource* interrupts) { _interrupts = interrupts; }
 
     /// Power-on (hard) or reset (soft) state of the registers, config mode and boot ROM
@@ -140,6 +147,8 @@ private:
     uint8_t _regs[256] = {};
     std::map<uint8_t, uint32_t>* _readCounts = nullptr;
     std::vector<NextRegWrite>* _log = nullptr;
+    std::function<void()> _beforeCpuWrite;
+    bool _copperWrite = false;
     const uint16_t* _pc = nullptr;
     uint8_t _timing = 2;
     bool _resetPending = false;
