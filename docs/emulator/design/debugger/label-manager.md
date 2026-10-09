@@ -452,6 +452,17 @@ Observers (disassembler, UI) refresh their display when this fires.
 
 **LabelEditor columns**: Name, Address, Bank, Bank Offset, RAM/ROM, Type, Module, Comment
 
+The label editor has two tabs. **Labels** shows the labels as they resolve. **Sets** (`SymbolSetsPanel`) lists the
+symbol sets behind them, with an On box, an editable Priority, the set id, title, origin and symbol count, and a
+button to drop a set. The File menu adds three commands:
+
+- **Import Symbols...** picks the format (auto or a codec), the target set, the space, the base and the merge policy
+  (`SymbolImportOptionsDialog`).
+- **Export Symbols...** picks the format, the sets and what becomes of page symbols (`SymbolExportOptionsDialog`).
+- **Scan RAM for Label Tables...** imports the label table of an ALASM or XAS in RAM.
+
+All of them go through `SymbolControl`. The report (counts, conflicts, diagnostics) is shown in a message box.
+
 ## Improvements Required
 
 ### 1. Filtering API (Core)

@@ -107,7 +107,8 @@ phase; master only after the owner's review.
       - WebAPI `GET /symbols/scan`, `POST /symbols/import/live`; CLI `symbols scan` / `import-live`; MCP `scan` / `import_live`; Lua / Python `symbols_scan` / `symbols_import_live`.
       - Checked live on a Pentagon with ALASM 5.09's dumped page 3.
     - [x] import of an upload (2026-10-08): `data` (base64) + `name` instead of `path`, set `upload:<name>` (WebAPI, MCP, Lua, Python)
-    - [ ] import of a file on a disk image (`disk:A/F.A`); Qt import / export dialogs and a "Sets" tab
+    - [x] Qt (2026-10-08): the label editor's File menu has Import Symbols... (format, set, space, base, policy), Export Symbols... (format, sets, pages) and Scan RAM for Label Tables...; a "Sets" tab (On, Priority, drop; `SymbolSetsPanel`, unreal-qt-tests `SymbolSetsPanel_Test`)
+    - [ ] import of a file on a disk image (`disk:A/F.A`)
     - [ ] the bundle set switched off remembered between sessions
   - [x] S6-S9 labels from sources (2026-10-07): `SymbolsFromProject` (`symbols/fromsource.h`) for TASM, ALASM, STORM, ZX-ASM and sjasmplus projects; values from `layout::Layout` over the sjasmplus conversion (instruction sizes, passes, `IF` / `DUP` / `WHILE` / macros / `DISP` / `INCLUDE` / `INCBIN`, sjasmplus' symbol table through the passes); the backend records the names it writes (`LabelName`); `symconv source`; the sjasmplus frontend reads `$$$`; equal to sjasmplus 1.24's `--sym` on every instruction form, the layout probe, five oracle projects and the collection (`tools/verification/unreal-asm/checks/symcheck.py`: 511 of 530 main sources, 67 264 labels; the 19 others read FRAMES or hit a sjasmplus quirk) ([symbols/formats.md](symbols/formats.md) §4.1)
   - [x] frontends for GENS, MASM, ZEUS, XAS (2026-10-07): their projects convert to sjasmplus and their labels come through `SymbolsFromProject`

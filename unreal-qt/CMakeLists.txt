@@ -646,6 +646,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/disksectordialog_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/disksectordialog.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/disksectordialog.h"
+        # The label editor's Sets tab (symbols S5)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/symbolsetspanel_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolsetspanel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolsetspanel.h"
         # The debugger's PC history dialog (debugger additions tdd §7)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/pchistorydialog_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorydialog.cpp"

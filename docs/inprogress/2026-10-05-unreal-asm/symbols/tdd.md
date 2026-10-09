@@ -270,7 +270,8 @@ Built (2026-10-08): `SymbolControl` (`core/src/debugger/labels/symbolcontrol.h`)
 `sets`, `import`, `export`, `set` and `drop`, with the TTDControl pattern (a verb, options by name, a reply with an
 error code and a StateNode body). The WebAPI, CLI, MCP, Lua and Python call it. The live scan has its own verbs:
 `scan` and `import-live` (`GET /symbols/scan`, `POST /symbols/import/live`). Import takes a `path`, or `data` (base64) with a
-`name`; `disk`, export's `filter` / `names` and the Qt dialogs are still to come. The OpenAPI
+`name`. The Qt label editor has the Import / Export dialogs, a live-scan command and a "Sets" tab. Still to come: `disk`,
+and export's `filter` / `names`. The OpenAPI
 gets a `symbols` tag; the recipe is `.recipe/analysis/symbols-import-export.md`.
 
 ## 9. Memory and speed budget
