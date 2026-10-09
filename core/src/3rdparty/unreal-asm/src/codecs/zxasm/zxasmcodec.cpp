@@ -309,19 +309,105 @@ std::string ZxasmCodec::DetectVersion(std::span<const uint8_t> bytes, const Cata
             lines.push_back(bytes.subspan(start, i - start));
             start = i + 1;
         }
-    std::vector<size_t> exact;
+    std::vector<size_t> exact(allowed.size(), 0);
     std::vector<uint8_t> again;
     std::string error;
-    for (const std::string& id : allowed)
-    {
-        size_t count = 0;
-        for (const auto& line : lines)
+    const auto checkText = [&](std::span<const uint8_t> line, const std::string& text, const std::string& id) {
+        const bool raw = text.find("\xEF\x9C") != std::string::npos;   // U+F700-U+F73F: a control code or unknown keyword
+        return !raw && EncodeLine(text, id, again, error) && std::equal(again.begin(), again.end(), line.begin(), line.end());
+    };
+    const auto check = [&](std::span<const uint8_t> line, const std::string& id) { return checkText(line, DecodeLine(line, id), id); };
+    // A line of plain text (no byte below #20 but blank runs) reads the same in every version; any other byte below #20
+    // is a control code to 2.x, which has no tokens
+    const auto plainText = [](std::span<const uint8_t> line) {
+        for (size_t i = 0; i < line.size(); ++i)
         {
-            const std::string text = DecodeLine(line, id);
-            const bool raw = text.find("\xEF\x9C") != std::string::npos;   // U+F700-U+F73F: a control code or unknown keyword
-            count += !raw && EncodeLine(text, id, again, error) && std::equal(again.begin(), again.end(), line.begin(), line.end());
+            if (line[i] == kBlankRun && i + 1 < line.size())
+                ++i;
+            else if (line[i] < 0x20)
+                return false;
         }
-        exact.push_back(count);
+        return true;
+    };
+    // The tokenized versions differ only in the keywords at the end of the table (3.0 has 166, Lite 170, 3.15 173): a
+    // line with none of those, as a token or as a word, reads and writes alike in all of them, so one stands for all
+    const size_t fewest = std::min_element(kVersions.begin() + 1, kVersions.end(), [](const Version& a, const Version& b) { return a.keywords < b.keywords; })->keywords;
+    std::array<bool, 256> lateFirst{};
+    for (size_t k = fewest; k < kKeywords.size(); ++k)
+        lateFirst[static_cast<uint8_t>(kKeywords[k][0])] = true;
+    const auto lateKeyword = [&](std::span<const uint8_t> line) {
+        for (size_t i = 0; i + 1 < line.size(); ++i)
+            if (line[i] >= 0x02 && line[i] <= 0x05 && line[i + 1] >= 0x20 && static_cast<size_t>(line[i + 1] - 0x20) >= fewest)
+                return true;
+        // The late keywords anywhere in the bytes, in any case (a superset of where the editor would match them)
+        const auto lower = [](uint8_t a) { return static_cast<uint8_t>(a >= 'A' && a <= 'Z' ? a + 32 : a); };
+        for (size_t i = 0; i < line.size(); ++i)
+        {
+            const uint8_t c = lower(line[i]);
+            if (!lateFirst[c])
+                continue;
+            for (size_t k = fewest; k < kKeywords.size(); ++k)
+            {
+                const std::string_view name = kKeywords[k];
+                if (static_cast<uint8_t>(name[0]) != c || i + name.size() > line.size())
+                    continue;
+                size_t j = 1;
+                while (j < name.size() && lower(line[i + j]) == static_cast<uint8_t>(name[j]))
+                    ++j;
+                if (j == name.size())
+                    return true;
+            }
+        }
+        return false;
+    };
+    // First the exact counts of 2.x (plain text lines only) and of each tokenized version over the lines that tell them
+    // apart; the lines they read alike add the same to all of them, which matters only against 2.x: those are counted
+    // only while 2.x could still tie, and no further than it takes to rule that out
+    std::vector<size_t> alikeLines;
+    for (size_t l = 0; l < lines.size(); ++l)
+    {
+        const auto& line = lines[l];
+        const bool alike = !lateKeyword(line);
+        const bool plain = plainText(line);
+        const std::string text = plain ? DecodeLine(line, allowed.front()) : std::string();
+        for (size_t v = 0; v < allowed.size(); ++v)
+        {
+            if (FindVersion(allowed[v])->keywords == 0)
+                exact[v] += plain && checkText(line, text, allowed[v]);
+            else if (!alike)
+                exact[v] += plain ? checkText(line, text, allowed[v]) : check(line, allowed[v]);
+        }
+        if (alike)
+            alikeLines.push_back(l);
+    }
+    size_t plainCount = 0, tokenBest = 0;
+    const std::string* firstTokenized = nullptr;
+    bool hasPlain = false;
+    for (size_t v = 0; v < allowed.size(); ++v)
+    {
+        if (FindVersion(allowed[v])->keywords == 0)
+            plainCount = exact[v], hasPlain = true;
+        else
+        {
+            tokenBest = std::max(tokenBest, exact[v]);
+            if (!firstTokenized)
+                firstTokenized = &allowed[v];
+        }
+    }
+    if (firstTokenized)
+    {
+        size_t shared = 0;
+        for (const size_t l : alikeLines)
+        {
+            if (hasPlain && tokenBest + shared > plainCount)
+                break;   // 2.x can no longer tie: the rest adds alike to the tokenized versions and changes nothing
+            if (!hasPlain)
+                break;   // no 2.x to compare with: the alike lines change nothing among the tokenized versions
+            shared += check(lines[l], *firstTokenized);
+        }
+        for (size_t v = 0; v < allowed.size(); ++v)
+            if (FindVersion(allowed[v])->keywords > 0)
+                exact[v] += shared;
     }
     const size_t best = *std::max_element(exact.begin(), exact.end());
     std::string chosen;
