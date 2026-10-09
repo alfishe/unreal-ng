@@ -8,7 +8,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdlib>
+#include <map>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -157,4 +159,109 @@ TEST_F(NextFirmware_Test, FirmwareWritesTheRegistersAndSoftResetsIntoThePersonal
     ASSERT_EQ(divmmc.size(), 8192u);
     // DivMMC ROM: SRAM #010000 = the first half of ROM page 4
     EXPECT_EQ(std::memcmp(_memory->ROMPageHostAddress(4), divmmc.data(), 8192), 0) << "the DivMMC ROM";
+}
+
+// Bring-up: run the personality ROM after the firmware's soft reset and list what it asks of the machine. Not a
+// gate (prints to stderr): UNREAL_NEXT_HUNT=<frames> runs it
+TEST_F(NextFirmware_Test, PersonalityRomStallHunt)
+{
+    const char* hunt = std::getenv("UNREAL_NEXT_HUNT");
+    if (!hunt)
+        GTEST_SKIP() << "UNREAL_NEXT_HUNT not set";
+    std::vector<NextRegWrite> log;
+    uint16_t pcMirror = 0;
+    std::map<uint8_t, uint32_t> nrReads;
+    std::map<uint16_t, PortDecoder_Next::PortUse> inLog, outLog;
+    _ports->Board().SetWriteLog(&log, &pcMirror);
+    _ports->Board().SetReadCounts(&nrReads);
+    _ports->SetPortLog(&inLog, &outLog);
+    int resetAt = -1;
+    const int total = std::atoi(hunt);
+    std::map<uint16_t, uint32_t> pcHist;
+    for (int f = 0; f < total; f++)
+    {
+        _emulator->RunFrame(true);
+        pcMirror = _z80->pc;
+        if (resetAt < 0)
+            for (const NextRegWrite& w : log)
+                if (w.reg == 0x02 && (w.value & 3))
+                    resetAt = f;
+        if (resetAt >= 0)
+            pcHist[_z80->pc & 0xFFF0]++;
+    }
+    std::fprintf(stderr, "soft reset at frame %d of %d, pc=%04X sp=%04X iff=%d im=%d halted=%d mmu:", resetAt, total, _z80->pc, _z80->sp,
+                 _z80->iff1, _z80->im, _z80->halted);
+    for (unsigned i = 0; i < 8; i++)
+        std::fprintf(stderr, " %02X", _memory->GetMmu(i));
+    std::fprintf(stderr, " rom=%d type=%d bytes@pc-8:", _memory->GetRomSelect(), _ports->Board().MachineType());
+    for (int k = -8; k < 16; k++)
+        std::fprintf(stderr, " %02X", _memory->PeekSlot(static_cast<uint16_t>(_z80->pc + k)));
+    std::fprintf(stderr, "\nNR reads:");
+    for (auto& [r, n] : nrReads)
+        std::fprintf(stderr, " %02X x%u", r, n);
+    std::fprintf(stderr, "\nunhandled IN:");
+    for (auto& [p, u] : inLog)
+        std::fprintf(stderr, " %04X x%u(=%02X)", p, u.count, u.last);
+    std::fprintf(stderr, "\nunhandled OUT:");
+    for (auto& [p, u] : outLog)
+        std::fprintf(stderr, " %04X x%u(=%02X)", p, u.count, u.last);
+    std::fprintf(stderr, "\nNR writes after reset (distinct):");
+    std::map<uint16_t, uint32_t> wr;
+    bool after = false;
+    for (const NextRegWrite& w : log)
+    {
+        if (w.reg == 0x02 && (w.value & 3))
+            after = true;
+        else if (after)
+            wr[static_cast<uint16_t>(w.reg << 8 | w.value)]++;
+    }
+    for (auto& [k, n] : wr)
+        std::fprintf(stderr, " %02X=%02X x%u", k >> 8, k & 0xFF, n);
+    std::fprintf(stderr, "\npc histogram (top):");
+    std::vector<std::pair<uint32_t, uint16_t>> top;
+    for (auto& [p, n] : pcHist)
+        top.push_back({n, p});
+    std::sort(top.rbegin(), top.rend());
+    for (size_t i = 0; i < top.size() && i < 8; i++)
+        std::fprintf(stderr, " %04X x%u", top[i].second, top[i].first);
+    std::fprintf(stderr, "\n");
+}
+
+// Where does the personality ROM restart from? Single-steps after the soft reset and reports the instructions that
+// landed on #0000 (UNREAL_NEXT_HUNT set)
+TEST_F(NextFirmware_Test, PersonalityRomRestartHunt)
+{
+    if (!std::getenv("UNREAL_NEXT_HUNT"))
+        GTEST_SKIP() << "UNREAL_NEXT_HUNT not set";
+    std::vector<NextRegWrite> log;
+    uint16_t pcMirror = 0;
+    _ports->Board().SetWriteLog(&log, &pcMirror);
+    for (int f = 0; f < 3000; f++)
+    {
+        _emulator->RunFrame(true);
+        pcMirror = _z80->pc;
+        bool reset = false;
+        for (const NextRegWrite& w : log)
+            reset |= w.reg == 0x02 && (w.value & 3);
+        if (reset)
+            break;
+    }
+    // now inside the personality: report every arrival in the early init (#0000-#013F) from far away
+    int arrivals = 0;
+    uint16_t prev = _z80->pc;
+    for (long i = 0; i < 12'000'000 && arrivals < 8; i++)
+    {
+        _z80->EngineStep();
+        if (_z80->pc < 0x0140 && prev >= 0x0200 && (_z80->pc < 0x08 || _z80->pc > 0x40))
+        {
+            std::fprintf(stderr, "arrival #%04X from #%04X step %ld sp=%04X ret=%02X%02X rom=%d mmu0=%02X mmu1=%02X bytes@prev:", _z80->pc, prev, i,
+                         _z80->sp, _memory->PeekSlot(static_cast<uint16_t>(_z80->sp + 1)), _memory->PeekSlot(_z80->sp), _memory->GetRomSelect(),
+                         _memory->GetMmu(0), _memory->GetMmu(1));
+            for (int k = 0; k < 4; k++)
+                std::fprintf(stderr, " %02X", _memory->PeekSlot(static_cast<uint16_t>(prev + k)));
+            std::fprintf(stderr, "\n");
+            arrivals++;
+        }
+        prev = _z80->pc;
+    }
 }

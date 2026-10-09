@@ -7,6 +7,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
+
 #include "_helpers/emulatortesthelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -242,4 +244,92 @@ TEST_F(NextSkeleton_Test, PentagonTimingHasNoContention)
     Out(0x253B, 0xC0);  // timing family 4
     _emulator->RunFrame(true);
     EXPECT_EQ(WaitingStarts(_z80, 0x4000), 0u);
+}
+
+// NR #8E carries the paging ports' state in one register (registers.txt); a write acts as if by the port writes
+TEST_F(NextSkeleton_Test, Nr8EIsThePagingPortsInOneRegister)
+{
+    auto nextreg = [&](uint8_t reg, uint8_t v) {
+        Out(0x243B, reg);
+        Out(0x253B, v);
+    };
+    Out(0x7FFD, 0x00);  // (the test helper starts the 48K BASIC mode: ROM 1)
+    Out(0x243B, 0x8E);
+    EXPECT_EQ(In(0x253B), 0x08) << "reset: bank 0, normal paging, ROM 0, bit 3 reads 1";
+    nextreg(0x8E, 0x01);  // ROM select: #7FFD bit 4
+    EXPECT_EQ(_memory->GetRomSelect(), 1);
+    nextreg(0x8E, 0x02);  // #1FFD bit 2
+    EXPECT_EQ(_memory->GetRomSelect(), 2);
+    nextreg(0x8E, 0x03);
+    EXPECT_EQ(_memory->GetRomSelect(), 3);
+    EXPECT_EQ(_memory->GetMmu(6), 0) << "bit 3 clear: the RAM bank is not touched";
+    nextreg(0x8E, 0x08 | 0x30);  // change the RAM bank: #7FFD bits 2:0 = 3
+    EXPECT_EQ(_memory->GetMmu(6), 6);
+    EXPECT_EQ(_memory->GetMmu(7), 7);
+    nextreg(0x8E, 0x08 | 0x80 | 0x30);  // #DFFD bit 0: bank 8 + 3
+    EXPECT_EQ(_memory->GetMmu(6), 22);
+    Out(0x243B, 0x8E);
+    EXPECT_EQ(In(0x253B) & 0xF8, 0x80 | 0x30 | 0x08);
+    // special paging (bit 2): all RAM, configuration in bits 1:0 -> #1FFD bits 2 and 1
+    nextreg(0x8E, 0x04 | 0x01);
+    EXPECT_EQ(_memory->GetMmu(0), 8) << "banks 4 5 6 3: slot 0 is bank 4";
+}
+
+// The Next's DivMMC (esxdos-and-sd.md section 3): #E3 shows the ROM and a RAM bank at #0000-#3FFF, MAPRAM is sticky,
+// the automap follows NR #B8-#BB and NR #0A bit 4
+TEST_F(NextSkeleton_Test, DivMmcMapsRomAndBankAndTheAutomapFollowsTheRegisters)
+{
+    auto nextreg = [&](uint8_t reg, uint8_t v) {
+        Out(0x243B, reg);
+        Out(0x253B, v);
+    };
+    Out(0x7FFD, 0x00);
+    // the system area holds the DivMMC ROM (page 4) and RAM (pages 8-15): the firmware's job, here a pattern
+    uint8_t* rom = _memory->ROMPageHostAddress(4);
+    std::memset(rom, 0xD1, 0x2000);
+    rom[0x100] = 0x42;
+    std::memset(_memory->ROMPageHostAddress(8), 0x00, 0x4000);  // bank 0 and 1
+    const uint8_t spectrumRom = _memory->PeekSlot(0x0100);
+
+    Out(0xE3, 0x80 | 0x01);  // CONMEM, bank 1
+    EXPECT_EQ(_memory->PeekSlot(0x0100), 0x42) << "the DivMMC ROM";
+    _memory->SlotWriteFast(0x2000, 0x77);
+    EXPECT_EQ(_memory->ROMPageHostAddress(8)[0x2000], 0x77) << "bank 1 is the second half of system page 8";
+    _memory->SlotWriteFast(0x0100, 0x00);
+    EXPECT_EQ(_memory->PeekSlot(0x0100), 0x42) << "the ROM is read-only";
+    Out(0xE3, 0x00);
+    EXPECT_EQ(_memory->PeekSlot(0x0100), spectrumRom);
+
+    // automap: off until NR #0A bit 4
+    uint8_t code[] = {0xCF};  // RST 8
+    _memory->PokeSlot(0x8000, code[0]);
+    _z80->pc = 0x8000;
+    _z80->sp = 0xBF00;
+    _z80->EngineStep();
+    _z80->EngineStep();
+    EXPECT_FALSE(_ports->DivMmc().Automapped()) << "NR #0A bit 4 is clear";
+    nextreg(0x0A, 0x10);
+    // #0008 is valid only with the 48K ROM paged: ROM 1 of the 128K family
+    _z80->pc = 0x8000;
+    _z80->sp = 0xBF00;
+    _z80->EngineStep();  // RST 8 -> pc #0008
+    _z80->EngineStep();  // the opcode at #0008
+    EXPECT_FALSE(_ports->DivMmc().Automapped()) << "ROM 0 is paged: the #0008 entry is ROM-3-only";
+    nextreg(0xB9, 0x03);  // #0000 and #0008 always valid
+    _z80->pc = 0x8000;
+    _z80->sp = 0xBF00;
+    _z80->EngineStep();
+    _z80->EngineStep();
+    EXPECT_TRUE(_ports->DivMmc().Automapped());
+    EXPECT_EQ(_memory->PeekSlot(0x0100), 0x42);
+    _z80->pc = 0x1FF8;
+    _z80->EngineStep();
+    EXPECT_FALSE(_ports->DivMmc().Automapped()) << "the off-area maps out";
+
+    // MAPRAM: bank 3 at #0000, read-only, and the sticky bit survives a write of 0
+    Out(0xE3, 0x40 | 0x03);
+    Out(0xE3, 0x00);
+    EXPECT_TRUE(_ports->DivMmc().Mapram());
+    nextreg(0x09, 0x08);  // NR #09 bit 3 clears it
+    EXPECT_FALSE(_ports->DivMmc().Mapram());
 }

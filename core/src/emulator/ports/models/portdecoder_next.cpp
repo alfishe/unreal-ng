@@ -12,10 +12,31 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
 {
     _board = std::make_unique<NextBoard>(&Mem());
     _board->SetMachine(this);
+    _interrupts = std::make_unique<NextInterruptSource>(_context);
+    _ctc.onInterrupt = [this](unsigned channel) {
+        _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
+    };
+    _divMmc = std::make_unique<NextDivMmc>(&Mem(), _board.get());
+    _divMmc->isBasicRomPaged = [this]() {
+        // the 48K BASIC ROM: ROM 3 of the +3 family, ROM 1 of the 128K family, ROM 0 of the 48K
+        const uint8_t rom = Mem().GetRomSelect();
+        switch (_board->MachineType())
+        {
+            case 1: return rom == 0;
+            case 3: return rom == 3;
+            default: return rom == 1;
+        }
+    };
+    _interrupts->SetPoller([this]() { _ctc.Advance(Now28()); });
+    _board->SetInterrupts(_interrupts.get());
 }
 
 PortDecoder_Next::~PortDecoder_Next()
 {
+    if (_context->pCore && _context->pCore->GetZ80() && _context->pCore->GetZ80()->machineM1Hook == _divMmc.get())
+        _context->pCore->GetZ80()->machineM1Hook = nullptr;
+    if (_context->pCore && _context->pCore->GetZ80())
+        _context->pCore->GetZ80()->SetInterruptSource(nullptr);
     _engine.reset();  // gives the CPU back to the native interpreter
 }
 
@@ -32,6 +53,12 @@ void PortDecoder_Next::reset()
     Mem().ResetMmu();
     Mem().ApplyClassicPaging(0, 0);
     _board->Reset(true);
+    _ctc.Reset();
+    _i2c.Reset();
+    _divMmc->Reset();
+    if (Z80* z80 = _context->pCore->GetZ80(); z80 && !z80->machineM1Hook)
+        z80->machineM1Hook = _divMmc.get();
+    _context->pCore->GetZ80()->SetInterruptSource(_interrupts.get());
     ApplyTiming(_board->Timing());  // a reset starts the frame: nothing to wait for
     _spiSelected = -1;
     _spiRx = 0xFF;
@@ -88,6 +115,44 @@ void PortDecoder_Next::Port_DFFD_Next(uint8_t value)
 uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
 {
     const uint8_t low = static_cast<uint8_t>(port);
+    if (low == NextCtc::kPortLow && (port >> 11) == 0x03)
+    {
+        // CTC: A15:A11 = 00011, A10:A8 the channel (4-7 are not implemented)
+        const unsigned channel = (port >> 8) & 7;
+        const uint8_t value = channel < NextCtc::kChannels ? _ctc.Read(channel, Now28()) : 0xFF;
+        _lastPortDecoded = channel < NextCtc::kChannels;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = port;
+        disp.wasDecoded = _lastPortDecoded;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, value, pc, disp);
+        return value;
+    }
+    if (low == NextDivMmc::kPort)
+    {
+        const uint8_t value = _divMmc->ReadPort();
+        _lastPortDecoded = true;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = port;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, value, pc, disp);
+        return value;
+    }
+    if (port == NextI2c::kPortScl || port == NextI2c::kPortSda)
+    {
+        const uint8_t value = _i2c.Read(port);
+        _lastPortDecoded = true;
+        PortDecodeDisposition disp;
+        disp.decodeRuleIndex = PortTraceRule::kNoTable;
+        disp.decodedPort = port;
+        disp.wasDecoded = true;
+        disp.wasHandledInline = true;
+        OnPortInComplete(port, value, pc, disp);
+        return value;
+    }
     if (port == kPortRegSelect || port == kPortRegData || low == kPortSpiData)
     {
         PortDecodeDisposition disp;
@@ -104,7 +169,14 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, result, pc, disp);
         return result;
     }
-    return PortDecoder_Spectrum128::DecodePortIn(port, pc);
+    const uint8_t value = PortDecoder_Spectrum128::DecodePortIn(port, pc);
+    if (_inLog && !_lastPortDecoded)
+    {
+        PortUse& use = (*_inLog)[port];
+        use.count++;
+        use.last = value;
+    }
+    return value;
 }
 
 void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
@@ -114,7 +186,17 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     disp.wasDecoded = true;
     disp.wasHandledInline = true;
 
-    if (static_cast<uint8_t>(port) == kPortSpiSelect)
+    if (static_cast<uint8_t>(port) == NextCtc::kPortLow && (port >> 11) == 0x03)
+    {
+        const unsigned channel = (port >> 8) & 7;
+        if (channel < NextCtc::kChannels)
+            _ctc.Write(channel, value, Now28());
+    }
+    else if (port == NextI2c::kPortScl || port == NextI2c::kPortSda)
+        _i2c.Write(port, value);
+    else if (static_cast<uint8_t>(port) == NextDivMmc::kPort)
+        _divMmc->WritePort(value);
+    else if (static_cast<uint8_t>(port) == kPortSpiSelect)
         SpiSelect(value);
     else if (static_cast<uint8_t>(port) == kPortSpiData)
         SpiWrite(value);
@@ -131,6 +213,12 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     else
     {
         PortDecoder_Spectrum128::DecodePortOut(port, value, pc);
+        if (_outLog && !IsPort_FE(port) && !IsPort_7FFD(port) && (port & 0xC002) != 0xC000 && (port & 0xC002) != 0x8000)
+        {
+            PortUse& use = (*_outLog)[port];
+            use.count++;
+            use.last = value;
+        }
         return;
     }
     disp.decodedPort = port;
@@ -163,6 +251,11 @@ void PortDecoder_Next::PerformReset(bool hard)
 /// endregion
 
 /// region <SPI and the SD cards>
+
+uint64_t PortDecoder_Next::Now28() const
+{
+    return static_cast<uint64_t>(Now() * 8.0);
+}
 
 double PortDecoder_Next::Now() const
 {
@@ -261,6 +354,40 @@ void PortDecoder_Next::SetMachineTiming(uint8_t timing)
         ApplyTiming(timing);
 }
 
+/// NR #8E (registers.txt): 7 = #DFFD bit 0, 6:4 = #7FFD bits 2:0, 3 = change the RAM bank, 2 = #1FFD bit 0 (special
+/// all-RAM paging); normal paging: 1:0 = #1FFD bit 2, #7FFD bit 4; all-RAM: 1:0 = #1FFD bit 2, bit 1. A write acts
+/// as if by the port writes, always on the ROM / all-RAM part, on the RAM bank only with bit 3
+void PortDecoder_Next::WriteMemoryMapping(uint8_t value)
+{
+    EmulatorState& state = *_state;
+    if (value & 0x08)
+    {
+        state.p7FFD = static_cast<uint8_t>((state.p7FFD & ~0x07) | ((value >> 4) & 0x07));
+        Mem().SetExtendedBank(static_cast<uint8_t>((Mem().GetExtendedBank() & ~0x01) | (value >> 7)));
+    }
+    uint8_t p1ffd = static_cast<uint8_t>(state.p1FFD & ~0x07);
+    if (value & 0x04)
+    {
+        p1ffd = static_cast<uint8_t>(p1ffd | 0x01 | ((value & 0x02) << 1) | ((value & 0x01) << 1));
+    }
+    else
+    {
+        p1ffd = static_cast<uint8_t>(p1ffd | ((value & 0x02) << 1));
+        state.p7FFD = static_cast<uint8_t>((state.p7FFD & ~0x10) | ((value & 0x01) << 4));
+    }
+    state.p1FFD = p1ffd;
+    Mem().ApplyClassicPaging(state.p7FFD, state.p1FFD);
+}
+
+uint8_t PortDecoder_Next::ReadMemoryMapping() const
+{
+    const EmulatorState& state = *_state;
+    uint8_t value = static_cast<uint8_t>(((Mem().GetExtendedBank() & 1) << 7) | ((state.p7FFD & 7) << 4) | 0x08 | ((state.p1FFD & 1) << 2));
+    value |= static_cast<uint8_t>((state.p1FFD & 0x04) >> 1);
+    value |= (state.p1FFD & 1) ? static_cast<uint8_t>((state.p1FFD >> 1) & 1) : static_cast<uint8_t>((state.p7FFD >> 4) & 1);
+    return value;
+}
+
 void PortDecoder_Next::SetContentionDisabled(bool disabled)
 {
     _nr08NoContention = disabled;
@@ -301,6 +428,7 @@ void PortDecoder_Next::ApplyTiming(uint8_t timing)
     config.intlen = t.intLength;
     config.frame_duration_us = CalculateFrameDurationUs(t.frame);
     _state->ula_timing_class = timing;
+    _interrupts->SetGeometry(t);
     _pendingTiming = 0;
     UpdateContention();
 }

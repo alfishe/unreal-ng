@@ -83,6 +83,20 @@ public:
     void OnRomLoaded(uint16_t imageBanks) override;
     /// endregion
 
+    /// region <DivMMC>
+    /// The DivMMC's view of #0000-#3FFF (decode priority: boot ROM, Multiface, DivMMC, Layer 2, MMU, config bank, ROM).
+    /// Its ROM is the first 8K of SRAM #010000 (system area page 4) and its 16 RAM banks of 8K start at #020000
+    /// (pages 8-15); the firmware puts the ROM image there (enNxtmmc.rom). Not mapped: no effect
+    struct DivMmcView
+    {
+        bool mapped = false;
+        bool bank3AtZero = false;  ///< MAPRAM: RAM bank 3 stands in for the ROM, read-only
+        uint8_t bank = 0;
+    };
+    void SetDivMmcView(const DivMmcView& view);
+    const DivMmcView& GetDivMmcView() const { return _divView; }
+    /// endregion
+
     /// Debugger / test pokes into the slot an address falls in (the base DirectWrite sees the 16K windows)
     void PokeSlot(uint16_t addr, uint8_t value);
     uint8_t PeekSlot(uint16_t addr) const;
@@ -96,11 +110,13 @@ protected:
 private:
     void MapSlot(unsigned slot);
     void Remap();
+    const uint8_t* DivMmcRamBank(unsigned bank);
     void SyncWindows();
 
     uint8_t _mmu[kSlots] = {};
     uint8_t _rom = 0;
     uint8_t _dffd = 0;
+    DivMmcView _divView;
     bool _configMode = false;
     bool _bootRom = false;
     bool _bootRomLoaded = false;

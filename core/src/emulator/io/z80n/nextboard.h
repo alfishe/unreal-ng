@@ -1,11 +1,13 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <vector>
 
 #include "emulator/io/z80n/z80nengine.h"
 
 class NextMemory;
+class NextInterruptSource;
 
 /// One register write as the board saw it (the NextREG golden sequence of the boot chain)
 struct NextRegWrite
@@ -28,6 +30,11 @@ public:
     virtual void SetMachineTiming(uint8_t timing) = 0;
     /// NR #08 bit 6: the video memory contention is disabled
     virtual void SetContentionDisabled(bool disabled) = 0;
+    /// NR #8E: the Spectrum 128K memory mapping as the paging ports #7FFD / #DFFD / #1FFD carry it
+    virtual void WriteMemoryMapping(uint8_t value) = 0;
+    virtual uint8_t ReadMemoryMapping() const = 0;
+    /// NR #09 bit 3 = 1: the DivMMC's sticky MAPRAM is cleared
+    virtual void ClearDivMmcMapram() = 0;
 };
 
 /// The Next board's register file (NEXTREG space, ports #243B select / #253B data): the identification registers
@@ -43,7 +50,9 @@ public:
     static constexpr uint8_t kRegMachineType = 0x03;
     static constexpr uint8_t kRegConfigMapping = 0x04;
     static constexpr uint8_t kRegCpuSpeed = 0x07;
-    static constexpr uint8_t kRegPeripheral2 = 0x08;  ///< bit 6: contention disable
+    static constexpr uint8_t kRegMemoryMapping = 0x8E;
+    static constexpr uint8_t kRegPeripheral2 = 0x08;
+    static constexpr uint8_t kRegPeripheral4 = 0x09;  ///< bit 6: contention disable
     static constexpr uint8_t kRegPeripheral3 = 0x0A;  ///< bit 5: the SD card select swap
     static constexpr uint8_t kRegMmu0 = 0x50;  ///< #50-#57: MMU slot 0-7
     static constexpr uint8_t kMachineIdNext = 10;
@@ -53,19 +62,27 @@ public:
 
     explicit NextBoard(NextMemory* memory) : _memory(memory) {}
     void SetMachine(INextMachine* machine) { _machine = machine; }
+    void SetInterrupts(NextInterruptSource* interrupts) { _interrupts = interrupts; }
 
     /// Power-on (hard) or reset (soft) state of the registers, config mode and boot ROM
     void Reset(bool hard);
 
     void SelectRegister(uint8_t reg) { _selected = reg; }
     uint8_t SelectedRegister() const { return _selected; }
-    uint8_t ReadSelected() const { return Read(_selected); }
+    uint8_t ReadSelected() const
+    {
+        if (_readCounts)
+            (*_readCounts)[_selected]++;
+        return Read(_selected);
+    }
     void WriteSelected(uint8_t value) { Write(_selected, value); }
 
     uint8_t Read(uint8_t reg) const;
     void Write(uint8_t reg, uint8_t value);
     /// Log every register write into `log` (null: off). The log is the caller's
     void SetWriteLog(std::vector<NextRegWrite>* log, const uint16_t* pc) { _log = log; _pc = pc; }
+    /// Count the registers read (null: off): which registers the software looks at
+    void SetReadCounts(std::map<uint8_t, uint32_t>* counts) { _readCounts = counts; }
     /// The raw stored byte of a register (reports, tests)
     uint8_t Stored(uint8_t reg) const { return _regs[reg]; }
 
@@ -82,9 +99,11 @@ public:
 
 private:
     NextMemory* _memory;
+    NextInterruptSource* _interrupts = nullptr;
     INextMachine* _machine = nullptr;
     uint8_t _selected = 0;
     uint8_t _regs[256] = {};
+    std::map<uint8_t, uint32_t>* _readCounts = nullptr;
     std::vector<NextRegWrite>* _log = nullptr;
     const uint16_t* _pc = nullptr;
     uint8_t _timing = 2;

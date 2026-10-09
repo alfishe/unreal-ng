@@ -158,6 +158,20 @@ void NextMemory::Remap()
     SyncWindows();
 }
 
+const uint8_t* NextMemory::DivMmcRamBank(unsigned bank)
+{
+    // SRAM #020000 + bank x 8K: system area pages 8-15, two banks to a 16K page
+    return ROMPageHostAddress(static_cast<uint8_t>(8 + ((bank & 15) >> 1))) + ((bank & 1) ? kSlotSize : 0);
+}
+
+void NextMemory::SetDivMmcView(const DivMmcView& view)
+{
+    if (view.mapped == _divView.mapped && view.bank3AtZero == _divView.bank3AtZero && view.bank == _divView.bank)
+        return;
+    _divView = view;
+    Remap();
+}
+
 void NextMemory::SetContentionRule(uint8_t timing)
 {
     _contentionRule = timing;
@@ -237,7 +251,24 @@ void NextMemory::MapSlot(unsigned slot)
 {
     const uint8_t value = _mmu[slot];
     const uint32_t trash = static_cast<uint32_t>(TRASH_MEMORY_OFFSET);
-    if (value == kMmuRom && slot == 0 && _configMode && _bootRom && _bootRomLoaded)
+    const bool bootRomHere = slot == 0 && _configMode && _bootRom && _bootRomLoaded;
+    if (slot < 2 && _divView.mapped && !bootRomHere)
+    {
+        // DivMMC: slot 0 the ROM (or RAM bank 3 with MAPRAM), slot 1 the selected RAM bank
+        const uint8_t* mem;
+        bool writable = false;
+        if (slot == 0)
+            mem = _divView.bank3AtZero ? DivMmcRamBank(3) : ROMPageHostAddress(4);
+        else
+        {
+            mem = DivMmcRamBank(_divView.bank);
+            writable = !(_divView.bank3AtZero && _divView.bank == 3);
+        }
+        _readOff[slot] = static_cast<uint32_t>(mem - _memory);
+        _writeOff[slot] = writable ? _readOff[slot] : trash;
+        _physPage[slot] = ttd::kPhysPageNone;
+    }
+    else if (value == kMmuRom && bootRomHere)
     {
         // the boot ROM: read-only
         _readOff[slot] = static_cast<uint32_t>(ROMPageHostAddress(kBootRomPage) - _memory);

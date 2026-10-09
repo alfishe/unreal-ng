@@ -37,6 +37,15 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 - [ ] N3b left: the Next's "previous hc cycle" phase (3-14 instead of 4-15), port contention by the 8K slot of the address high byte (the 16K flags are the OR of the halves), floating bus, the +3 WAIT-line form
 - [ ] N3c: 60 Hz (needs the 264-line raster, N6), NR table complete (reads/writes/reset values), line interrupt and `NextInterruptSource` pulse mode, NR #22/#23, timing tests of ZXSpectrumNextTests, A/B benchmark
 
+## N3c / N5 / N9 start (2026-10-09, uncommitted)
+- [x] `NextInterruptSource`: pulse mode (ULA + line, NR #22/#23), hardware IM2 mode (14 sources, NR #C0 vector/mode, #C4-#C6 enables, #C8-#CA status/clear, RETI, nesting)
+- [x] `NextCtc` (4 channels, 28 MHz, /16 /256, chain, counter mode) and `NextI2c` + DS1307 (ports #103B/#113B)
+- [x] NR #8E (paging ports in one register), NR #01/#0E core version, NR #B8-#BB reset values
+- [x] `NextDivMmc`: #E3, automap by NR #B8-#BB and #0A bit 4 on the M1 hook, the memory view in `NextMemory` (DivMMC ROM = system page 4, RAM banks = pages 8-15)
+- [ ] NR table from `registers.txt` (distribution docs, `documents/nextzxos-distribution-docs/extra-hw/io-port-system/`) as data: the rest of the registers, alt ROM NR #8C, mapping modes NR #8F
+- [ ] The personality ROM with the full card (TBBLUE.FW + nextzxos + sys + dot): runs through palette, layer clip and esxDOS calls (`RST 8`), then loops: first diff against a reference emulator from the co-simulation tooling (agent task, tools/verification/next-cosim)
+- [ ] UART skeleton (no peers), DMA, NMI button / stackless NMI, Multiface
+
 ## Remaining
 - [x] Verification program: public suites collected and graded ([verification-program.md](verification-program.md)); esxDOS source availability checked ([esxdos-and-sd.md](esxdos-and-sd.md) section 1a)
 - [x] N0 second pass (2026-10-08): ULA / Timex / ULA+ / ULAnext, LoRes, palettes and the layer compositor, audio (AY x 3, DAC, mixer), CTC, UART, SPI, DivMMC, keyboard, ZEsarUX comparison: [research-fpga-vhdl.md](research-fpga-vhdl.md) sections 16-22; [esxdos-and-sd.md](esxdos-and-sd.md); [design-integration.md](design-integration.md)

@@ -1,9 +1,14 @@
 #pragma once
 #include "stdafx.h"
 
+#include <map>
 #include <memory>
 
 #include "emulator/io/z80n/nextboard.h"
+#include "emulator/io/z80n/nextctc.h"
+#include "emulator/io/z80n/nextdivmmc.h"
+#include "emulator/io/z80n/nexti2c.h"
+#include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/io/z80n/z80nengine.h"
 #include "emulator/io/sdcard/sdcardspi.h"
 #include "emulator/memory/next/nextmemory.h"
@@ -36,6 +41,9 @@ public:
     void SetCpuSpeed(uint8_t ratio) override;
     void SetMachineTiming(uint8_t timing) override;
     void SetContentionDisabled(bool disabled) override;
+    void WriteMemoryMapping(uint8_t value) override;
+    void ClearDivMmcMapram() override { _divMmc->ClearMapram(); }
+    uint8_t ReadMemoryMapping() const override;
     void OnFrameEnd() override;
 
     /// The SPI port pair #E7 (select) / #EB (data): one SD card per select line (NR #0A bit 5 swaps them)
@@ -45,14 +53,27 @@ public:
     SdCardSpi& SdCard(unsigned index) { return _sd[index & 1]; }
     bool InsertSdCard(unsigned index, std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode);
     bool InsertSdCard(unsigned index, const std::string& path, SdCardSpi::WriteMode mode);
+    /// Ports no part of the machine answered (the bring-up list): raw port -> {count, last value}, in and out
+    struct PortUse
+    {
+        uint32_t count = 0;
+        uint8_t last = 0;
+    };
+    void SetPortLog(std::map<uint16_t, PortUse>* in, std::map<uint16_t, PortUse>* out) { _inLog = in; _outLog = out; }
     /// Accesses that began before the previous byte was done and were ignored, as on the board
     uint32_t SpiTooFastCount() const { return _spiTooFast; }
 
     NextBoard& Board() { return *_board; }
+    NextInterruptSource& Interrupts() { return *_interrupts; }
+    NextCtc& Ctc() { return _ctc; }
+    NextDivMmc& DivMmc() { return *_divMmc; }
+    NextI2c& I2c() { return _i2c; }
+    /// The 28 MHz system clock since the machine started
+    uint64_t Now28() const;
     Z80NEngine* Engine() { return _engine.get(); }
 
 private:
-    NextMemory& Mem() { return *static_cast<NextMemory*>(_context->pMemory); }
+    NextMemory& Mem() const { return *static_cast<NextMemory*>(_context->pMemory); }
     void Port_7FFD_Next(uint16_t port, uint8_t value, uint16_t pc);
     void Port_1FFD_Next(uint8_t value);
     void Port_DFFD_Next(uint8_t value);
@@ -71,6 +92,8 @@ private:
     double Now() const;
     double SpeedRatio() const { return _state->hw_turbo_ratio_applied ? _state->hw_turbo_ratio_applied : 1.0; }
 
+    std::map<uint16_t, PortUse>* _inLog = nullptr;
+    std::map<uint16_t, PortUse>* _outLog = nullptr;
     SdCardSpi _sd[2];
     uint8_t _pendingTiming = 0;  ///< applied at the frame end
     int _spiSelected = -1;
@@ -78,5 +101,9 @@ private:
     double _spiBusyUntil = 0;
     uint32_t _spiTooFast = 0;
     std::unique_ptr<NextBoard> _board;
+    std::unique_ptr<NextInterruptSource> _interrupts;
+    std::unique_ptr<NextDivMmc> _divMmc;
+    NextCtc _ctc;
+    NextI2c _i2c;
     std::unique_ptr<Z80NEngine> _engine;
 };

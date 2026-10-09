@@ -2,6 +2,7 @@
 
 #include "nextboard.h"
 
+#include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/memory/next/nextmemory.h"
 
 void NextBoard::Reset(bool hard)
@@ -12,6 +13,11 @@ void NextBoard::Reset(bool hard)
     for (uint8_t& r : _regs)
         r = 0;
     _regs[kRegMachineType] = type;
+    // reset values of the DivMMC automap registers (esxdos-and-sd.md section 3.2)
+    _regs[0xB8] = 0x83;
+    _regs[0xB9] = 0x01;
+    _regs[0xBA] = 0x00;
+    _regs[0xBB] = 0xCD;
     if (type >= 1 && type <= 4)
         _timing = type;
     else if (hard)
@@ -24,6 +30,8 @@ void NextBoard::Reset(bool hard)
     }
     _selected = 0;
     _resetPending = false;
+    if (_interrupts)
+        _interrupts->Reset();
     const bool config = type == 0;
     _memory->SetConfigBank(0);
     _memory->SetConfigMode(config);
@@ -43,6 +51,8 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return kCoreVersionSub;
         case kRegResetType:
             return 0;  // power on
+        case kRegMemoryMapping:
+            return _machine ? _machine->ReadMemoryMapping() : _regs[reg];
         case kRegCpuSpeed:
             return static_cast<uint8_t>((_regs[reg] & 3) | ((_regs[reg] & 3) << 4));  // programmed | actual
         default:
@@ -50,6 +60,9 @@ uint8_t NextBoard::Read(uint8_t reg) const
     }
     if (reg >= kRegMmu0 && reg < kRegMmu0 + NextMemory::kSlots)
         return _memory->GetMmu(reg - kRegMmu0);
+    uint8_t value;
+    if (_interrupts && _interrupts->ReadNr(reg, value))
+        return value;
     return _regs[reg];
 }
 
@@ -62,6 +75,11 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
     if (reg >= kRegMmu0 && reg < kRegMmu0 + NextMemory::kSlots)
     {
         _memory->SetMmu(reg - kRegMmu0, value);
+        return;
+    }
+    if (_interrupts && _interrupts->WriteNr(reg, value))
+    {
+        _regs[reg] = value;
         return;
     }
     switch (reg)
@@ -96,6 +114,15 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             }
             return;
         }
+        case kRegPeripheral4:
+            _regs[reg] = value;
+            if ((value & 0x08) && _machine)
+                _machine->ClearDivMmcMapram();
+            return;
+        case kRegMemoryMapping:
+            if (_machine)
+                _machine->WriteMemoryMapping(value);
+            return;
         case kRegPeripheral2:
             _regs[reg] = value;
             if (_machine)

@@ -12,6 +12,8 @@ struct NextTiming
     uint32_t line;
     uint32_t intStart;
     uint32_t intLength;
+    uint32_t intLine;  ///< the counter line and pixel clock (7 MHz domain) of the ULA interrupt, zxula_timing.vhd c_int_v / c_int_h
+    uint32_t intHc;
 };
 
 inline bool NextTimingFor(uint8_t timing, NextTiming& out)
@@ -19,16 +21,16 @@ inline bool NextTimingFor(uint8_t timing, NextTiming& out)
     switch (timing)
     {
         case 1:
-            out = {69888, 224, 1811, 32};
+            out = {69888, 224, 1811, 32, 0, 116};
             return true;
         case 2:
-            out = {70908, 228, 1845, 36};
+            out = {70908, 228, 1845, 36, 1, 128};
             return true;
         case 3:
-            out = {70908, 228, 1845, 32};
+            out = {70908, 228, 1845, 32, 1, 126};
             return true;
         case 4:
-            out = {71680, 224, 71635, 32};
+            out = {71680, 224, 71635, 32, 319, 439};
             return true;
         default:
             return false;
