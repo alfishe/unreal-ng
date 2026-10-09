@@ -103,5 +103,7 @@ A refusal does not raise: the table / dict has `ok = false` and `error` = the me
   Pass `version` to read as one of them.
 - A file written to a disk lives in the emulator's copy of the image. Save the disk (media panel or `media save`) to
   keep it.
-- Symbols from a source (labels with values): `symconv source` (the standalone tool), or decode / convert and then
-  assemble with sjasmplus. A label file on the disk imports with `manage_symbols import` and `path: disk:A/NAME.T`.
+- Symbols from a source (labels with values) go into the debugger with `manage_symbols import_source` and
+  `path: disk:A/NAME.T` (or the Disk files dialog's Import Labels). The values are computed from the text, from `ORG` on;
+  see [symbols-import-export.md](symbols-import-export.md#labels-from-a-source). A label file on the disk imports with
+  `manage_symbols import`. On the host: `symconv source` (the standalone tool).

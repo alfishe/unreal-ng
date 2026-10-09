@@ -89,6 +89,43 @@ The debugger loads any of the text formats with `manage_symbols load_labels` / `
 ([.recipe/analysis/symbols-listings-and-source-stepping.md](../../.recipe/analysis/symbols-listings-and-source-stepping.md));
 a `.map` written by z80asm is recognized by its content.
 
+### Labels from a source in the debugger
+
+The debugger can take the labels straight from a source, with no label file:
+
+- In the Disk files dialog, select the source and press **Import Labels**.
+- Or in the label editor, choose **File > Import Labels from Source...** and pick a source file or an image. When an
+  image holds several sources, a list asks which one is the main source.
+- From scripts: `manage_symbols import_source` (MCP), `POST /symbols/import/source`, `symbols import-source <path>`
+  (CLI), `symbols_import_source` (Lua), `emu.symbols_import_source` (Python).
+
+**Where the values come from.** No assembler runs. The source is read as the assembler reads it:
+
+- The address starts at `ORG`.
+- Every instruction moves it by its length; `DB`, `DW`, `DS`, `ALIGN` and `INCBIN` by their sizes; `DISP` / `PHASE`
+  change it the way they do in the assembler.
+- The passes repeat until no label moves.
+
+The values are the ones the assembler's label table would hold after assembling the project. On real disks they
+match sjasmplus for 511 of 530 sources; the rest draw random numbers while they assemble, or hit a sjasmplus quirk.
+Each label comes with its kind (code, data, constant), the file and line that define it, and the RAM page that
+`ORG address,page` named.
+
+**A source on a disk** is a project: the files it INCLUDEs and the files whose size INCBIN takes come from the same
+disk. The disk is read as the emulator holds it now, unsaved edits included.
+
+**Importing again** replaces the source's labels and does not add copies. The labels sit in their own set
+(`source:disk:A/NAME`), which the label editor's Sets tab can switch off or drop.
+
+**When the result is incomplete**, the report says which labels got no value and why. Typical causes are a missing
+INCLUDE file and a label inside a block an `IF` leaves out. A missing INCBIN file counts as empty, so the labels after
+it are short by its size.
+
+**If you have the assembler's own table, use it instead.** A label file it wrote (sjasmplus `--sym`, a `.map`, a label
+file on the disk) imports with Import..., and ALASM's or XAS's table in RAM after assembling imports with the live
+scan. Details:
+[.recipe/analysis/symbols-import-export.md](../../.recipe/analysis/symbols-import-export.md#labels-from-a-source).
+
 ## Speed
 
 `unreal-asm-benchmarks` (configure with `-DBENCHMARKS=ON`, build the target) measures the codecs, the conversion and

@@ -151,6 +151,38 @@ symbols import-source disk:A/GSTUNNE4.H         symbols_import_source{path=...} 
 say which. `generated: true` also gives the labels the conversion adds. In Qt: the label editor's File > Import
 Labels from Source..., and the Disk files dialog's Import Labels for the selected source.
 
+### Where the values come from
+
+No assembler runs. The values are computed from the text, the way the assembler computes them:
+
+- The location counter starts at `ORG`.
+- It moves by the length of every instruction and by `DB` / `DW` / `DS` / `ALIGN`, by `INCBIN` (the size of the
+  named file), and by `DISP` / `PHASE`.
+- Passes repeat until no label moves.
+
+The result equals the label table the assembler would hold after assembling the same project. This was checked
+against sjasmplus' `--sym` on 530 sources from real disks: 511 match exactly. The others draw random numbers from
+FRAMES while they assemble, or hit a sjasmplus quirk. A label at `#C000-#FFFF` under `ORG address,page` goes to that
+RAM page. An `EQU` is a constant.
+
+### Source or the assembler's own table
+
+| You have | Use |
+|----------|-----|
+| a label file the assembler wrote (sjasmplus `--sym`, a `.map`, a label file on the disk) | `import`: the assembler's own numbers |
+| ALASM / XAS in the machine, after assembling | `import_live` ([below](#label-tables-in-ram-live-scan)): the table in RAM |
+| only the source (a tokenized file on a disk, an `.asm`) | `import_source` |
+
+### Pitfalls
+
+- An INCBIN file that is not in the project counts as empty, and a diagnostic says so. The labels after it are short
+  by the file's size. Put the file on the same disk or image.
+- `disk:A/...` reads the disk as the emulator holds it now, unsaved edits included. A source edited in the
+  assembler and not saved to the disk is not seen (that is the asm-synchronizer's job, not built yet).
+- Importing the same source again replaces its set. With `set` given, the labels merge into that set and an older
+  import is not removed.
+- Labels inside a block an `IF` leaves out get no value and are reported.
+
 ## Label tables in RAM (live scan)
 
 ALASM (3.8c, 4.4x, 4.5, 5.0x) and XAS (4.x, 5.05, 7.x, 9.x) keep their label table in RAM after assembling. `scan`

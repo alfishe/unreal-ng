@@ -276,6 +276,56 @@ disk in a drive as the project); export filters by space, CPU address range, kin
 diagnostics). The OpenAPI
 gets a `symbols` tag; the recipe is `.recipe/analysis/symbols-import-export.md`.
 
+### 8.1 import-source: labels from a source (built 2026-10-09)
+
+**What the values are.** No assembler runs, in the emulator or on the host, and no label table is read: the values
+are computed from the text. The project is converted to sjasmplus (for a dialect other than sjasmplus) and laid out
+the way sjasmplus lays it out. The location counter starts at `ORG` and moves with `DISP` / `PHASE`, `DS`, `ALIGN`,
+`INCBIN` (the size of the named file) and the length of every instruction form. Passes repeat until no label moves.
+The result equals the label table the original assembler would hold after assembling the same project. The rules,
+what was checked against sjasmplus 1.24's `--sym` and the known differences are in [formats.md](formats.md) §4.1.
+
+A label table an assembler wrote (sjasmplus `--sym`, a `.map`, a label file on the disk) is not this path: it is a
+symbol file and goes through `import`. ALASM's or XAS's table in RAM after assembling goes through `import-live`
+(§4.3). Those are the assembler's own numbers. `import-source` is for a project that has only its source.
+
+**Data flow** (`SymbolControl::ImportSource`, `core/src/debugger/labels/symbolcontrol.cpp`):
+
+1. `path` names the project:
+   - `disk:A/NAME.T`: `ReadDiskFiles` (`core/src/debugger/asm/diskfiles.h`) reads every live file of the disk
+     image in the drive, as the emulator holds it (unsaved writes included), then `ProjectFromFiles`. `main`
+     defaults to NAME.
+   - a host `.trd` / `.tap` / `.tzx`: `ReadTrd` / `ReadTape`, then `ProjectFromFiles`.
+   - a hobeta `$X`: `ReadHobeta`, then `ProjectFromFiles` over that one file.
+   - anything else: `ProjectFromText` (a tokenized format when detection says so, else sjasmplus' dialect).
+2. `FindMainSource` picks the source to assemble. An image with several sources and no `main` is refused with 400
+   and `body.sources`, the list a client picks from (the Qt label editor shows it in a list). An image with no
+   source gives 404.
+3. `SymbolsFromSourceProject` (`unrealasm/symbols/fromsource.h`) lays it out. The other files of the project are
+   what INCLUDE reaches and what INCBIN measures (`SourceProject::sizes`, ALASM's `*` / `?` wildcards).
+4. A label whose `ORG address,page` named a page and whose value is in `#C000-#FFFF` goes to that RAM page. A label
+   defined by `EQU` / `=` is a constant. Every other label goes to the CPU view.
+5. `LabelManager::ImportRecords` merges the records with origin kind `source` (`where` = `path`). The set id is
+   `source:disk:A/<main>` or `source:<path>:<main>`, and that set is dropped first. A second import of the same
+   source therefore replaces its labels and does not add copies. With `set` given, the records merge into that set
+   and nothing is dropped. `policy` is the merge policy of `import`.
+
+**Reply.** `path`, `main`, `dialect`, `sources` (the project's source count), `set`, `records`, `added`, `aliased`,
+`complete`, `diagnostics`, `labels`. `complete` is false when some label got no value: a missing INCLUDE file, a
+construct the layout does not know, a label in a block an `IF` leaves out, a pass that did not settle. The layout's
+diagnostics say which. A missing INCBIN file counts as empty and is a diagnostic, so the labels after it can be off
+by its size. `generated: true` also returns the labels the conversion adds and the per-expansion labels of macros,
+under their sjasmplus names.
+
+**Surfaces.** `POST /symbols/import/source`, CLI `symbols import-source <path> [--main M]`, MCP `manage_symbols`
+`import_source`, Lua `symbols_import_source`, Python `emu.symbols_import_source`. In Qt: the Disk files dialog's
+Import Labels, and the label editor's File > Import Labels from Source.... Tests:
+`SymbolControl_Test.TheLabelsOfASourceComeWithTheirValues`, `SymbolControl_Machine_Test.TheDiskInADriveIsTheSourcesProject`,
+`fromsource_test.cpp`.
+
+**Not yet.** Following a source that changes in the guest's RAM while it is edited, and reading the label table an
+assembler keeps in RAM next to that source: [asm-synchronizer](../asm-synchronizer.md).
+
 ## 9. Memory and speed budget
 
 | Item | Size |
