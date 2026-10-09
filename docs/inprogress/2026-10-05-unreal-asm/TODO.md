@@ -156,7 +156,7 @@ phase; master only after the owner's review.
     - [ ] Y3 128K assemblers: XAS, STORM, ZX-ASM / ZAsm, MASM, TASM 4.0 / 4.4 / 3.x / 2.0, ALASM 3.8c / 4.42 / 5.0 / 5.05 (research + descriptor + golden dumps each, §7)
       - [x] ALASM 3.8c / 4.42 / 5.0 / 5.05 (with the Y0 follow-up)
       - [x] XAS 4.18, 5.05 / 5.05SE, 7.43c, 7.447, 9.07m, 9.10 (2026-10-09): the text at `#C000` of page 3, whole sectors to the `#00` end, header bytes 29-34 the editor state SAVE rewrites (§7.11)
-      - [ ] XAS 9.07m / 9.10: SAVE writes nothing to the disk in unreal-ng (the header in memory is updated): their own disk code or an emulator bug?
+      - [ ] XAS 9.07m / 9.10: SAVE writes nothing to the disk in unreal-ng. Port trace (2026-10-09, `.recipe/analysis/port-trace.md`): 9.10 reads the catalog (`#80`, ~39 frames a sector), then issues Write Sector `#A0` for the file's sector on side 1 (system register `#2C`, track 6, sector 4); the TR-DOS loop at `#3FCA` polls `#FF` 39 frames without DRQ, INTRQ comes with status `#00`, no byte goes to `#7F`, and XAS sends `#D0`. XAS 7.447 on side 0 (`#3C`) gets DRQ at once and writes its 256 bytes in the same frame. A WD1793 emulation issue (write on side 1, or the sector search timing): to be taken up in the FDC work, with this trace as the test case
       - [x] STORM 1.3 / 1.3i (2026-10-09): page 6 from `#C00B` to the `#FF` before `(#C000)` (§7.8)
       - [x] ZAsm 3.15 (2026-10-09): `(#8829)`-`(#8837)`, the part above `#C000` in page 6, SAVE's `;!` position line (§7.9)
       - [x] MASM 1.1 (2026-10-09): a gap buffer from `#970B` (`(#96CC)` / `(#96CE)`, up to `#FFFF`), the editor known by its line buffer at `#851A` (§7.12)
