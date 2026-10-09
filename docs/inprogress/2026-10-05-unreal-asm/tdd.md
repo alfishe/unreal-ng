@@ -197,4 +197,7 @@ Built (2026-10-09):
 | A6 | `alasm`, `storm`, `zxasm` frontends; `pasmo`, `z88dk` backends; research codecs `xas`, `masm`, `gens3`, `zeus`, `ads` (queued at lower priority, D-8: none dropped) | per pair / codec |
 | A7 | Emulator adapters and surfaces; Qt disk browser actions; recipe `.recipe/analysis/asm-sources.md` | live checks |
 | A8 | Symbols on the library ([symbols/tdd.md](symbols/tdd.md) phases S1-S5 re-based; tokenized label tables come from the source codecs) | symbol acceptance |
-| A9 | Benchmarks, results; docs `docs/features/asm-sources.md` | numbers meet NFR-1, NFR-2 |
+| A9 | Benchmarks, results; docs `docs/features/unreal-asm.md` | numbers meet NFR-1, NFR-2 |
+
+Status (review round A0, 2026-10-09): A0-A9 done; what is left is in [TODO.md](TODO.md) (binaries not found, two
+decode paths below 50 MB/s). The next phases are the [asm-synchronizer](asm-synchronizer.md)'s Y0-Y5 and Z0-Z5.

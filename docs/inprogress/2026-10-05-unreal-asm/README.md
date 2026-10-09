@@ -68,8 +68,15 @@ flowchart LR
 Design (2026-10-05). Decided (D-1…D-12, [goals-and-requirements.md](goals-and-requirements.md) §3): the library and
 its place; one codec per format, decode and encode; nothing vendored; TASM 3 / 4 first, every other codec queued;
 compiled-in plugins; a neutral IR; TASM → sjasmplus first, sjasmplus the first output target; UTF-8 on the host; the
-`zxasm` CLI. Still open: the symbol module's P-2…P-7 ([TODO.md](TODO.md)).
+`zxasm` CLI; the symbol module's P-2…P-7 as recommended (2026-10-09).
 
-Implementation on branch `unreal-asm` (master after the owner's review): A1-A4 the codecs of every version (text,
-sjasmplus, TASM, ALASM, ZX-ASM, STORM), A5 the IR with ALASM → sjasmplus conversion checked against ALASM's own
-binaries, A5b TASM → sjasmplus checked against the GS 1.04 ROM and TASM 4.12. Check scripts: `tools/verification/unreal-asm/`. Progress per phase: [TODO.md](TODO.md).
+Built and on master (A1-A9, review round A0 2026-10-09):
+
+- the codecs of every version of the catalog's formats;
+- the IR with frontends for every dialect and the sjasmplus, pasmo and z88dk backends, each conversion checked
+  against the bytes the original assembler built;
+- the emulator surfaces (`AsmControl`, the disk adapter, the Qt Disk files dialog);
+- the symbol module ([symbols/README.md](symbols/README.md#status));
+- benchmarks; the user guide [docs/features/unreal-asm.md](../../features/unreal-asm.md).
+
+Next: the [asm-synchronizer](asm-synchronizer.md). Check scripts: `tools/verification/unreal-asm/`. Progress per phase: [TODO.md](TODO.md).
