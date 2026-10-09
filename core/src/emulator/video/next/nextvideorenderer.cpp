@@ -356,6 +356,42 @@ void NextVideoRenderer::SpriteLine(const NextVideoInputs& in, unsigned y, Pixel*
     }
 }
 
+/// The ULA clip window (NR #1A, in paper pixels): what it excludes is transparent, and a window that leaves out the
+/// first or last column / row takes the border beside / above it as well
+void NextVideoRenderer::ApplyUlaClip(const NextVideoInputs& in, unsigned y, Pixel* line)
+{
+    const NextVideoRegs& regs = *in.regs;
+    const unsigned x1 = regs.Clip(2, 0), x2 = regs.Clip(2, 1), y1 = regs.Clip(2, 2), y2 = regs.Clip(2, 3);
+    if (x1 == 0 && x2 >= 255 && y1 == 0 && y2 >= 191)
+        return;  // the default window: nothing is clipped
+    auto clear = [&](unsigned from, unsigned to) {
+        for (unsigned x = from; x < to && x < kW; x++)
+            line[x] = Pixel();
+    };
+    const bool inRows = y >= kPaperTop && y < kPaperTop + 192;
+    if (!inRows)
+    {
+        const bool above = y < kPaperTop;
+        const bool clipRow = above ? (y1 > 0) : (y2 < 191 || y1 > y2 || y1 >= 192);
+        if (clipRow)
+            clear(0, kW);
+        return;
+    }
+    const unsigned py = y - kPaperTop;
+    if (py < y1 || py > y2)
+    {
+        clear(0, kW);
+        return;
+    }
+    for (unsigned px = 0; px < 256; px++)
+        if (px < x1 || px > x2)
+            clear(kPaperLeft + px * 2, kPaperLeft + px * 2 + 2);
+    if (x1 > 0)
+        clear(0, kPaperLeft);
+    if (x2 < 255 || x1 > x2)
+        clear(kPaperLeft + 512, kW);
+}
+
 void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32_t* out)
 {
     Pixel ula[kW];
@@ -366,6 +402,7 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
         LoResLine(in, y, ula);
     else
         UlaLine(in, y, ula);
+    ApplyUlaClip(in, y, ula);
     Layer2Line(in, y, layer2);
     TilemapLine(in, y, tiles);
     SpriteLine(in, y, sprites);
@@ -374,10 +411,17 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
     const unsigned transparent = in.nr[0x14];
     auto visible = [&](const Pixel& p) { return p.opaque && ((p.colour >> 1) & 0xFF) != transparent; };
 
-    // NR #15 bits 4:2, top layer first: 000 SLU, 001 LSU, 010 SUL, 011 LUS, 100 USL, 101 ULS; the blend modes (110,
-    // 111) draw as SLU. In LUS / USL / ULS the ULA border over a transparent tilemap does not hide a sprite
+    // NR #15 bits 4:2, top layer first: 000 SLU, 001 LSU, 010 SUL, 011 LUS, 100 USL, 101 ULS; modes 110 / 111 blend
+    // Layer 2 with the ULA / tilemap. In LUS / USL / ULS the ULA border over a transparent tilemap does not hide a sprite
     const unsigned order = (in.nr[0x15] >> 2) & 7;
     const uint16_t fallback = Nine(in.nr[0x4A]);
+    // NR #68 bit 0: stencil (the ULA and tilemap pixels AND together), bits 6:5: the blend of modes 110 / 111
+    const bool stencilMode = (in.nr[0x68] & 0x01) && (in.nr[0x6B] & 0x80) && !(in.nr[0x68] & 0x80);
+    const unsigned blend = (in.nr[0x68] >> 5) & 3;
+    auto r3 = [](uint16_t c) { return static_cast<unsigned>((c >> 6) & 7); };
+    auto g3 = [](uint16_t c) { return static_cast<unsigned>((c >> 3) & 7); };
+    auto b2 = [](uint16_t c) { return static_cast<unsigned>((c >> 1) & 3); };
+    auto pack = [](unsigned r, unsigned g, unsigned b) { return static_cast<uint16_t>((r << 6) | (g << 3) | (b << 1) | (b ? 1 : 0)); };
     for (unsigned x = 0; x < kW; x++)
     {
         // the ULA and the tilemap merge into one layer first: a tile pixel wins unless it is marked below the ULA
@@ -387,7 +431,14 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
         const bool ulaVisible = visible(ula[x]);
         Pixel merged = ula[x];
         bool uv = ulaVisible;
-        if (tv && (!t.below || !ulaVisible))
+        if (stencilMode)
+        {
+            uv = ulaVisible && tv;
+            merged.opaque = uv;
+            if (uv)
+                merged.colour = pack(r3(ula[x].colour) & r3(t.colour), g3(ula[x].colour) & g3(t.colour), b2(ula[x].colour) & b2(t.colour));
+        }
+        else if (tv && (!t.below || !ulaVisible))
         {
             merged = t;
             uv = true;
@@ -400,12 +451,93 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
         const bool borderException = ula[x].border && !tv && sv;
         const bool ue = uv && !(order >= 3 && order <= 5 && borderException);
         uint16_t colour = fallback;
-        if (lv && (l.colour & 0x200))
+        const bool l2Priority = lv && (l.colour & 0x200);
+        if (order >= 6)
+        {
+            // Layer 2 added to / subtracted from the "mix" layer (the ULA, the tilemap or the stencil, by the blend
+            // bits), with the tile or the ULA above or below it
+            const bool below = t.below;
+            Pixel mixRgb, mixTop, mixBot;  // opaque = not transparent
+            switch (blend)
+            {
+                case 0:
+                    mixRgb = ula[x];
+                    mixRgb.opaque = ulaVisible;
+                    mixTop = t;
+                    mixTop.opaque = tv && !below;
+                    mixBot = t;
+                    mixBot.opaque = tv && below;
+                    break;
+                case 2:
+                    mixRgb = u;
+                    mixRgb.opaque = uv;
+                    break;
+                case 3:
+                    mixRgb = t;
+                    mixRgb.opaque = tv;
+                    mixTop = ula[x];
+                    mixTop.opaque = ulaVisible && below;
+                    mixBot = ula[x];
+                    mixBot.opaque = ulaVisible && !below;
+                    break;
+                default:
+                    if (below)
+                    {
+                        mixTop = ula[x];
+                        mixTop.opaque = ulaVisible;
+                        mixBot = t;
+                        mixBot.opaque = tv;
+                    }
+                    else
+                    {
+                        mixTop = t;
+                        mixTop.opaque = tv;
+                        mixBot = ula[x];
+                        mixBot.opaque = ulaVisible;
+                    }
+                    break;
+            }
+            const unsigned lr = lv ? r3(l.colour) : 0, lg = lv ? g3(l.colour) : 0, lb = lv ? b2(l.colour) : 0;
+            const unsigned mr = mixRgb.opaque ? r3(mixRgb.colour) : 0, mg = mixRgb.opaque ? g3(mixRgb.colour) : 0,
+                           mb = mixRgb.opaque ? b2(mixRgb.colour) : 0;
+            unsigned rs = lr + mr, gs = lg + mg, bs = lb + mb;
+            uint16_t mixer;
+            if (order == 6)
+                mixer = pack(rs > 7 ? 7 : rs, gs > 7 ? 7 : gs, bs > 3 ? 3 : bs);
+            else
+            {
+                if (mixRgb.opaque)
+                {
+                    auto sub = [](unsigned v) -> unsigned {
+                        if (v <= 4)
+                            return 0;
+                        if (((v >> 2) & 3) == 3)
+                            return 7;
+                        return (v + 0x0B) & 0x0F;
+                    };
+                    rs = sub(rs);
+                    gs = sub(gs);
+                    bs = sub(bs);
+                }
+                mixer = pack(rs & 7, gs & 7, bs & 3);
+            }
+            if (l2Priority)
+                colour = mixer;
+            else if (mixTop.opaque)
+                colour = mixTop.colour;
+            else if (sv)
+                colour = sp.colour;
+            else if (mixBot.opaque)
+                colour = mixBot.colour;
+            else if (lv)
+                colour = mixer;
+        }
+        else if (l2Priority)
             colour = l.colour;  // a Layer 2 priority colour is above everything
         else
         {
             // the three layers in the order of NR #15, top first: 'S' sprites, 'L' Layer 2, 'U' ULA + tilemap
-            static const char* const kOrders[8] = {"SLU", "LSU", "SUL", "LUS", "USL", "ULS", "SLU", "SLU"};
+            static const char* const kOrders[6] = {"SLU", "LSU", "SUL", "LUS", "USL", "ULS"};
             for (const char* layer = kOrders[order]; *layer; layer++)
             {
                 if (*layer == 'S' && sv)

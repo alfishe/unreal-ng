@@ -55,6 +55,7 @@ private:
     };
     static void UlaLine(const NextVideoInputs& in, unsigned y, Pixel* line);
     static void LoResLine(const NextVideoInputs& in, unsigned y, Pixel* line);
+    static void ApplyUlaClip(const NextVideoInputs& in, unsigned y, Pixel* line);
     static void SpriteLine(const NextVideoInputs& in, unsigned y, Pixel* line);
     static void TilemapLine(const NextVideoInputs& in, unsigned y, Pixel* line);
     static void Layer2Line(const NextVideoInputs& in, unsigned y, Pixel* line);

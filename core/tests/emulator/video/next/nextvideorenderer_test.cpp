@@ -482,3 +482,77 @@ TEST_F(NextSprites_Test, LayerOrderPutsTheSpriteBelowLayer2OrAboveTheUla)
 }
 
 // endregion
+
+// region <ULA clip, stencil, blend>
+
+class NextCompose_Test : public NextVideoRenderer_Test
+{
+protected:
+    void WritePalette(unsigned control, unsigned index, uint8_t rrrgggbb)
+    {
+        _regs.WritePaletteControl(static_cast<uint8_t>(control));
+        _regs.WritePaletteIndex(static_cast<uint8_t>(index));
+        _regs.WritePaletteValue8(rrrgggbb);
+        _regs.WritePaletteControl(0);
+    }
+};
+
+TEST_F(NextCompose_Test, UlaClipWindowMakesWhatItExcludesTransparentIncludingTheBorderBesideIt)
+{
+    _in.nr[0x4A] = 0x1C;  // green fallback
+    _in.border = 2;
+    Render(NextVideoRenderer::kPaperTop + 10);
+    EXPECT_EQ(Px(10), Pal(0, 16 + 2)) << "no clip: the red border";
+    _regs.WriteClipControl(0x02);  // the ULA's window index to 0 (bit 1)
+    for (uint8_t v : {uint8_t(100), uint8_t(200), uint8_t(0), uint8_t(191)})
+        _regs.WriteClip(2, v);
+    Render(NextVideoRenderer::kPaperTop + 10);
+    const uint32_t fallback = NextVideoRenderer::Rgba(static_cast<uint16_t>((0x1C << 1) | 0));
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 2 * 50), fallback) << "left of the window: transparent";
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft + 2 * 150), Pal(0, 16)) << "inside: the paper (black, the attribute is 0)";
+    EXPECT_EQ(Px(10), fallback) << "the left border goes with the clipped left side";
+    EXPECT_EQ(Px(630), fallback) << "and the right one";
+}
+
+TEST_F(NextCompose_Test, StencilAndsTheUlaAndTheTilemapChannels)
+{
+    // ULA paper white (index 16 + 7), a tile pixel of index 1 coloured 0b110'101'10, stencil on
+    WritePalette(0x30, 1, 0xB6);  // tilemap palette 1st: entry 1 = 101 101 10
+    _in.nr[0x6B] = 0x81;          // tilemap on, tile above
+    _in.nr[0x68] = 0x01;          // stencil
+    _in.nr[0x6E] = 0x10;
+    _in.nr[0x6F] = 0x20;
+    _in.nr[0x4C] = 0x0F;
+    const unsigned entry = (4 * 40 + 4) * 2;
+    Page(5)[0x1000 + entry] = 0;
+    Page(5)[0x1000 + entry + 1] = 0;
+    Page(5)[0x2000] = 0x10;  // tile 0 row 0: pixel 0 = 1
+    Page(5)[0x1800] = 0x38;  // paper white
+    Render(NextVideoRenderer::kPaperTop);
+    const uint16_t tile = _regs.PaletteEntry(3, 1), white = _regs.PaletteEntry(0, 16 + 7);
+    const auto r = [](uint16_t c) { return (c >> 6) & 7; };
+    const auto g = [](uint16_t c) { return (c >> 3) & 7; };
+    EXPECT_EQ(Px(NextVideoRenderer::kPaperLeft) & 0xFF, NextVideoRenderer::Rgba((r(tile) & r(white)) << 6 | (g(tile) & g(white)) << 3 | (((tile >> 1) & 3) & ((white >> 1) & 3)) << 1) & 0xFF)
+        << "stencil: the red channel is the AND of both";
+}
+
+TEST_F(NextCompose_Test, AdditiveBlendMixesLayer2WithTheUlaAndClamps)
+{
+    _in.layer2Enable = true;
+    _in.nr[0x15] = 6 << 2;  // mode 110: additive
+    _in.nr[0x14] = 0xE3;
+    WritePalette(0x10, 0x81, 0x24);   // Layer 2 pixel colour: 001 001 00
+    Page(8)[0] = 0x81;
+    _in.nr[0x68] = 0x00;
+    Page(5)[0] = 0x80;
+    Page(5)[0x1800] = 0x00 | 0x08 | 0x01;  // ULA ink blue (1) paper black... pixel 0 = ink
+    Render(NextVideoRenderer::kPaperTop);
+    const uint16_t ula = _regs.PaletteEntry(0, 1), l2 = _regs.PaletteEntry(1, 0x81);
+    const unsigned expected = std::min(7u, ((ula >> 6) & 7u) + ((l2 >> 6) & 7u));
+    const uint32_t px = Px(NextVideoRenderer::kPaperLeft);
+    const uint32_t want = NextVideoRenderer::Rgba(static_cast<uint16_t>((expected << 6) | (std::min(7u, ((ula >> 3) & 7u) + ((l2 >> 3) & 7u)) << 3) |
+                                                  (std::min(3u, ((ula >> 1) & 3u) + ((l2 >> 1) & 3u)) << 1) | 0));
+    EXPECT_EQ(px & 0x0000FFFF, want & 0x0000FFFF) << "red and green channels add";
+}
+
+// endregion

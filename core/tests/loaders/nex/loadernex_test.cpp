@@ -149,6 +149,12 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
     ASSERT_TRUE(loader.LoadFile(path)) << loader.Error();
     const char* frames = std::getenv("UNREAL_NEX_FRAMES");
     const int total = frames ? std::atoi(frames) : 200;
+    // UNREAL_NEX_NRLOG: the NextREG writes of the run (register, value, pc) after the load, first 200 and the last distinct ones
+    std::vector<NextRegWrite> nrLog;
+    uint16_t logPc = 0;
+    if (std::getenv("UNREAL_NEX_NRLOG"))
+        if (auto* decoder = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder))
+            decoder->Board().SetWriteLog(&nrLog, &logPc);
     // no turbo: the picture is drawn as the beam passes, a turbo frame is not drawn
     for (int i = 0; i < total; i++)
         emulator->RunFrame(true);
@@ -171,6 +177,25 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
         }
         for (int i = 0; i < 2; i++)
             emulator->RunFrame(true);
+    }
+    if (!nrLog.empty())
+    {
+        std::cout << "NRLOG " << nrLog.size() << " writes:";
+        const char* filter = std::getenv("UNREAL_NEX_NRLOG");  // "1" = everything, else a list of registers (hex, comma separated)
+        std::string wanted = filter;
+        unsigned shown = 0;
+        for (size_t i = 0; i < nrLog.size() && shown < 300; i++)
+        {
+            char one[8];
+            std::snprintf(one, sizeof one, ",%x,", nrLog[i].reg);
+            if (wanted != "1" && (',' + wanted + ',').find(one) == std::string::npos)
+                continue;
+            std::cout << " " << std::hex << int(nrLog[i].reg) << "=" << int(nrLog[i].value);
+            shown++;
+        }
+        std::cout << std::dec << std::endl;
+        if (auto* decoder = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder))
+            decoder->Board().SetWriteLog(nullptr, nullptr);
     }
     if (std::getenv("UNREAL_NEX_SPRITES"))
     {

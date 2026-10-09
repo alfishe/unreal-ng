@@ -79,6 +79,10 @@ real firmware chain; no Next video, audio, DMA or DivMMC yet.
 - [ ] Not yet: the exact per-byte timing (2-4 clocks by the port timing bytes, contention on the read), DMA-on-interrupt (`dma_delay`), NR #82 / #85 port gates, the pulse of the DMA interrupt, bus arbitration with the expansion bus
 - jnext comparison: DMAFill, zxnext_dma_sample, test03sprite identical; DMACopy / LDIRCopy 6932 px (a timing screen)
 
+## N7c (2026-10-09): ULA clip, stencil, blend modes
+- [x] ULA clip window (NR #1A, with the border beside it), NR #68 bit 0 stencil, NR #15 modes 110 / 111 (additive / subtractive Layer 2 + ULA / tilemap by the blend bits NR #68 6:5); test04tilemap, test10tilemapper, stencil_test now identical to jnext
+- Open in the NEX hunt (jnext differs from the VHDL or the case is a moving picture): Layer 2 320x256 default clip (VHDL 191, jnext shows 255), animated demos (frame phase), uninitialised-RAM noise screens (tmHiRes, tmHiCol), timing screens (DMACopy, LDIRCopy, contention_test, floating_bus_test), V1.3 files
+
 ## Remaining
 - [x] Verification program: public suites collected and graded ([verification-program.md](verification-program.md)); esxDOS source availability checked ([esxdos-and-sd.md](esxdos-and-sd.md) section 1a)
 - [x] N0 second pass (2026-10-08): ULA / Timex / ULA+ / ULAnext, LoRes, palettes and the layer compositor, audio (AY x 3, DAC, mixer), CTC, UART, SPI, DivMMC, keyboard, ZEsarUX comparison: [research-fpga-vhdl.md](research-fpga-vhdl.md) sections 16-22; [esxdos-and-sd.md](esxdos-and-sd.md); [design-integration.md](design-integration.md)
