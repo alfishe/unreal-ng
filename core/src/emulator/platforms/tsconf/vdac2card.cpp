@@ -873,6 +873,7 @@ void Vdac2Card::ReadFrameMetrics(Vdac2Control::FrameMetrics& out, bool, bool) { 
 bool Vdac2Card::PresentedFrameMetrics(Vdac2Control::FrameMetrics&) const { return false; }
 void Vdac2Card::select(bool) {}
 uint8_t Vdac2Card::exchange(uint8_t) { return 0xFF; }
+std::vector<ttd::TTDTimeField> Vdac2Card::TtdTimeFields() { return {}; }
 size_t Vdac2Card::TtdStateSize() const { return 0; }
 void Vdac2Card::TtdSaveState(uint8_t*) const {}
 bool Vdac2Card::TtdLoadState(const uint8_t*) { return false; }
