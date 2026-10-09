@@ -44,6 +44,12 @@ public:
 
     /// false: the engine skips OnRead / BeforeWrite / AfterWrite (an idle agent costs one test per access)
     bool watchData = false;
+    /// true: OnOpcodeFetch of an opcode whose fetchMatters entry is false would change nothing, so the engine skips
+    /// the call (an idle agent costs one test per opcode fetch). The agent keeps it current; anything that changes
+    /// its state from outside clears it (always call) until the agent sets it again
+    bool fetchQuiet = false;
+    /// 256 entries: the opcodes that may change the agent even while fetchQuiet (null: every fetch is called)
+    const bool* fetchMatters = nullptr;
 };
 
 /// The board's memory bus in one call per access: what the CPU's memory interface (Z80::MemIf) does - the read with
@@ -140,6 +146,10 @@ public:
         _fastBusOn = on;
         _fastBusGeneration = ~0u;
     }
+
+    /// Opcode fetches the bus agent says change nothing (IZ84BusAgent::fetchQuiet) skipped: on by default; off calls
+    /// it for every fetch (comparison tests, diagnosis)
+    void SetFetchFilterOn(bool on) { _fetchFilterOn = on; }
 
     /// The board's interrupt observer (null = none)
     void SetInterruptObserver(IZ84InterruptObserver* observer) { _observer = observer; }
@@ -242,6 +252,7 @@ private:
     uint32_t _fastBusGeneration = ~0u;
     bool _fastBusMatches = false;
     bool _fastBusOn = true;
+    bool _fetchFilterOn = true;
     Z84Lib::Z84C15& _chip;
     ChainSource _source{*this};
     IInterruptSource* _external = nullptr;

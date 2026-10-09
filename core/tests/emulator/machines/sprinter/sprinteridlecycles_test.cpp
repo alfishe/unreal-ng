@@ -140,6 +140,7 @@ protected:
         run.engine->SetIdleCyclesInOneGo(inOneGo);
         run.engine->SetIntAnswerKept(inOneGo);
         run.engine->SetFastBusOn(inOneGo);
+        run.engine->SetFetchFilterOn(inOneGo);
         auto* screen = dynamic_cast<ScreenSprinter*>(run.context->pScreen);
         ASSERT_NE(screen, nullptr);
         screen->SetCatchUpOnEvents(inOneGo);

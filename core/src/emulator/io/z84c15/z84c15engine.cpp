@@ -330,8 +330,8 @@ uint8_t Z84C15Engine::MemRead(Z84CPU* cpu, uint16_t addr, Z84CpuAccessKind kind,
         e._lastM1Value = value;
         if (z.machineM1Hook)
             z.NotifyMachineM1(addr);
-        if (e._agent)
-            e._agent->OnOpcodeFetch(addr, value);
+        if (IZ84BusAgent* agent = e._agent; agent && !(agent->fetchQuiet && e._fetchFilterOn && !agent->fetchMatters[value]))
+            agent->OnOpcodeFetch(addr, value);
     }
     else
     {

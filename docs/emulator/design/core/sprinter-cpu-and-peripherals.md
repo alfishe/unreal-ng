@@ -778,11 +778,25 @@ other fast paths: equal.
 BADAPPLE 1.10-1.12 -> 0.98-0.99 (-11 %). The other machines keep their memory interface; they gain only the
 generation counter in `SelectMemoryInterface` (no per-access or per-step change).
 
-### 8.9 What remains
+### 8.9 The accelerator's quiet opcode fetches skipped (`IZ84BusAgent::fetchQuiet`, `fetchMatters`)
 
-The instruction itself (`Z84CpuStep`) and the board work per access: the accelerator's `OnOpcodeFetch` on every
-fetch (~5.6 %), the write intercept's video RAM path. Candidate: the bus agent called only when its latches can
-change.
+The engine called the bus agent's `OnOpcodeFetch` (virtual) on every M1. While no latch a fetch reads is set - no
+mode, no FN, no prefix, ED or RETI latch (`SprinterAccelerator::RefreshFetchQuiet`) - a fetch changes nothing
+unless its opcode is a same-register LD r,r or HALT (ACC_MODE), an ALU opcode (FN_ACC) or a prefix: the agent's
+256-entry `fetchMatters` table. The engine skips the call for the others. The agent sets `fetchQuiet` after each
+fetch, a reset and a disable; mutable access to its state (`State()`, a TTD restore) clears it until the next fetch.
+`SetFetchFilterOn` turns it off for comparisons. `SprinterAccelerator_Test.QuietFetch_OutsideTheTableChangesNothing`
+fetches every opcode outside the table from the quiet state (accelerator on and off, ACC_BLK set or not): not a
+byte of the state changes; the two-machine tests switch it with the other fast paths.
+
+**Measured** (2026-10-09, alternating, load 26-57): ROTOZOOM 2.38 -> 2.27-2.29 ms per frame (-4.5 %), DNTBLINK
+1.27 -> 1.25 (-1 %), PLASMA2 and BADAPPLE within noise (their accelerator is often in a mode, or the ALU opcodes
+set FN).
+
+### 8.10 What remains
+
+The instruction itself (`Z84CpuStep`), the engine's per-access glue (`Publish` / `Absorb`) and the write
+intercept's video RAM path with its screen catch-ups.
 General rules for such changes: [performance-guidelines.md](../../../guidelines/performance-guidelines.md).
 
 ## 9. Where the older design documents differ from the code
