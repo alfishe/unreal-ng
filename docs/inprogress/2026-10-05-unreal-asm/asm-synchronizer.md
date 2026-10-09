@@ -302,6 +302,9 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | research | which page holds `#C000` while STORM runs (it unpacks to `#6F19`-`#BFFF`); confirm live |
 | family | `FileImage`-like: `[#C00B, (#C000))` |
 | **Work** | **1 d** |
+| **Verified** (2026-10-09, dumps `testdata/sync/storm13*`, `storm13i*`) | the text is in RAM page 6 at `#C000` while STORM edits. `(#C000)` points one past an `#FF` that ends the text; SAVE (BREAK, `S`, Enter keeps the name) writes `[#C00B, (#C000) - 1)`, so the live file is those bytes. The line under the cursor joins the text when the cursor leaves it, and a line made by Enter joins it then too (`NotInText`; no flag shows it). The name is at `#C002` |
+| identification | the packed program unpacks its entry code at `#8000` (24 bytes, the same in 1.3 and 1.3i) |
+| **Built** | descriptor `storm-1.3` (1.3 and 1.3i); checked live (a watch built 13 labels). 1.0beta (text from `#C003`) is not covered |
 
 ### 7.9 ZX-ASM 3.0 / 3.01 / 3.10, ZX ASM Lite 1.07, ZAsm 3.15-4.20
 

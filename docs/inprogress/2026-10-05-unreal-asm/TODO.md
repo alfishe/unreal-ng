@@ -157,7 +157,8 @@ phase; master only after the owner's review.
       - [x] ALASM 3.8c / 4.42 / 5.0 / 5.05 (with the Y0 follow-up)
       - [x] XAS 4.18, 5.05 / 5.05SE, 7.43c, 7.447, 9.07m, 9.10 (2026-10-09): the text at `#C000` of page 3, whole sectors to the `#00` end, header bytes 29-34 the editor state SAVE rewrites (§7.11)
       - [ ] XAS 9.07m / 9.10: SAVE writes nothing to the disk in unreal-ng (the header in memory is updated): their own disk code or an emulator bug?
-      - [ ] STORM, ZX-ASM / ZAsm, MASM, TASM 4.0 / 4.4 / 3.x / 2.0
+      - [x] STORM 1.3 / 1.3i (2026-10-09): page 6 from `#C00B` to the `#FF` before `(#C000)` (§7.8)
+      - [ ] ZX-ASM / ZAsm, MASM, TASM 4.0 / 4.4 / 3.x / 2.0, STORM 1.0beta
     - [ ] Y4 48K assemblers: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):

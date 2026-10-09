@@ -67,36 +67,44 @@ SyncText ReadFileImage(const MachineView& machine, const SyncDescriptor& d)
         const symbols::MemoryPage* page = machine.Page(candidate);
         if (!page || page->bytes.size() < kPage)
             continue;
-        const auto bytes = page->bytes.subspan(p.base);
-        if (bytes.size() < p.headerSize ||
+        const auto bytes = page->bytes;
+        if (bytes.size() < size_t(p.base) + p.headerSize || bytes.size() < size_t(p.signatureAt) + p.signature.size() ||
             !std::equal(p.signature.begin(), p.signature.end(), bytes.begin() + p.signatureAt,
                         [](char a, uint8_t b) { return static_cast<uint8_t>(a) == b; }))
             continue;
         size_t length = 0;
         if (p.lengthFromEnd)
         {
-            const auto end = std::find(bytes.begin() + p.textOffset, bytes.end(), p.endByte);
+            const auto end = std::find(bytes.begin() + p.base + p.textOffset, bytes.end(), p.endByte);
             if (end == bytes.end())
                 return Inconsistent(text, "no end of text in page " + std::to_string(candidate));
-            length = static_cast<size_t>(end - bytes.begin()) + 1;
+            length = static_cast<size_t>(end - bytes.begin()) - p.base + 1;
             if (p.wholeSectors)
-                length = std::min<size_t>((length + 255) / 256 * 256, bytes.size());
+                length = std::min<size_t>((length + 255) / 256 * 256, bytes.size() - p.base);
+        }
+        else if (p.lengthFromPointer)
+        {
+            const uint32_t end = bytes[p.pointerAt] | (bytes[p.pointerAt + 1u] << 8);
+            const uint32_t first = kPage * 3 + p.base;   // the text's CPU address at #C000
+            if (end <= first || end > kPage * 4 || bytes[end - kPage * 3 - 1] != p.endSentinel)
+                return Inconsistent(text, "the end pointer #" + Hex(end, 4) + " does not end the text in page " + std::to_string(candidate));
+            length = end - first - 1;
         }
         else
-            length = p.headerSize + (bytes[p.lengthField] | (bytes[p.lengthField + 1u] << 8));
-        if (length > bytes.size())
+            length = p.headerSize + (bytes[p.base + p.lengthField] | (bytes[p.base + p.lengthField + 1u] << 8));
+        if (size_t(p.base) + length > bytes.size())
             return Inconsistent(text, "the text in page " + std::to_string(candidate) + " is longer than the page");
         text.page = candidate;
-        text.file.assign(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(length));
+        text.file.assign(bytes.begin() + p.base, bytes.begin() + p.base + static_cast<std::ptrdiff_t>(length));
         if (p.changedField)
         {
             text.changed = (text.file[p.changedField] & p.changedMask) != 0;
             text.file[p.changedField] &= static_cast<uint8_t>(~p.changedMask);   // SAVE writes the file as saved
         }
         size_t nameLength = p.nameLength;
-        while (nameLength > 0 && text.file[nameLength - 1] == ' ')
+        while (nameLength > 0 && bytes[p.nameAt + nameLength - 1] == ' ')
             --nameLength;
-        text.name.assign(text.file.begin(), text.file.begin() + static_cast<std::ptrdiff_t>(nameLength));
+        text.name.assign(bytes.begin() + p.nameAt, bytes.begin() + p.nameAt + static_cast<std::ptrdiff_t>(nameLength));
         text.ok = true;
         text.state = "ok";
         return text;
@@ -278,6 +286,33 @@ SyncDescriptor Xas(const std::string& id, const std::string& codecVersion, uint1
     return d;
 }
 
+/// STORM 1.2 / 1.3 (asm-synchronizer.md §7.8): the text in RAM page 6 at #C000: the end pointer, the name, an #FF
+/// sentinel, the file from #C00B up to the #FF the end pointer follows. The line under the cursor joins the text when
+/// the cursor leaves it. Identified by its entry code at #8000, the same in 1.3 and 1.3i (packed on its disk)
+SyncDescriptor Storm13()
+{
+    SyncDescriptor d;
+    d.id = "storm-1.3";
+    d.title = "STORM 1.3";
+    d.codec = "storm";
+    d.version = "1.3";
+    d.extension = "C";
+    d.identify = {{0x8000, std::string("\xFD\x21\x3A\x5C\xED\x56\xFB\x2A\x3D\x5C\x01\xFC\x5F\xB7\xED\x42\x28\x02\xCF\x03\x09\xF9\x76\xF3", 24)}};
+    d.pages = PageIdRule::MappedAtC000;
+    d.family = LayoutFamily::FileImage;
+    d.fileImage.base = 0x0B;
+    d.fileImage.headerSize = 0;
+    d.fileImage.signatureAt = 0x0A;
+    d.fileImage.signature = std::string("\xFF", 1);
+    d.fileImage.nameAt = 0x02;
+    d.fileImage.nameLength = 8;
+    d.fileImage.lengthFromPointer = true;
+    d.fileImage.pointerAt = 0x00;
+    d.fileImage.endSentinel = 0xFF;
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 SyncDescriptor Tasm412()
 {
     SyncDescriptor d;
@@ -367,6 +402,7 @@ const std::vector<SyncDescriptor>& Descriptors()
         Xas("7.447", "7.43", 0x9B00, "by Max Petrov & Creator v7.44"),
         Xas("9.07m", "9.07m", 0xB8EA, "XAS 9.07 ReCompiled by Mythos"),
         Xas("9.10", "9.10", 0xB912, "XAS by Max Petrov,64sm by STS"),
+        Storm13(),
         Tasm412(),
     };
     return descriptors;

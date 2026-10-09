@@ -88,6 +88,13 @@ STORM's own `imporT` reads plain text from the disk (unknown lines are marked as
 FILE.$T ...]` runs the whole sequence (BREAK L, BREAK A, BREAK Q, the bytes read in BASIC). The calls are those of
 [tasm.md](tasm.md#webapi) with `RUN "STORM1.3"` and the keys above.
 
+## The text in memory
+
+While STORM edits, the text is in RAM page 6 at `#C000`: the end pointer, the name at `#C002`, an `#FF` at `#C00A`,
+the file from `#C00B` up to the `#FF` before the end pointer. BREAK `S` (Enter keeps the name) saves exactly those
+bytes; the asm-synchronizer reads them without a save
+([asm-sources.md](../analysis/asm-sources.md#the-source-an-assembler-holds-in-ram-asm-synchronizer)).
+
 ## Pitfalls
 
 - **The code is not in memory while STORM runs**: read it after BREAK Q.

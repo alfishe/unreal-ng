@@ -71,6 +71,8 @@ const Case kCases[] = {
     {"xas505-edited", "xas-5.05"},     {"xas505se-typing", "xas-5.05"},    {"xas505se-edited", "xas-5.05"},
     {"xas743c-typing", "xas-7.43c"},   {"xas743c-edited", "xas-7.43c"},    {"xas7447-typing", "xas-7.447"},
     {"xas7447-edited", "xas-7.447"},   {"xas907m-typing", "xas-9.07m"},    {"xas910-typing", "xas-9.10"},
+    {"storm13-typing", "storm-1.3"},   {"storm13-edited", "storm-1.3"},    {"storm13i-typing", "storm-1.3"},
+    {"storm13i-edited", "storm-1.3"},
 };
 
 /// The file without the header bytes SAVE rewrites from the editor's state (XAS: the cursor line and column)

@@ -11,6 +11,8 @@ save the text itself and keep the file. The synchronizer's reader must give that
                                                                  # any other ALASM build: TAG-typing, TAG-edited
     sync-dumps.py xas <disk-with-PROBE.X> <out-dir> --boot NAME --list-keys right[,down...] --tag TAG
                                                                  # XAS: TAG-typing, TAG-edited (the text at #C000)
+    sync-dumps.py storm <disk-with-NAME.C> <out-dir> --boot NAME --source NAME --tag TAG
+                                                                 # STORM: TAG-typing, TAG-edited (page 6 from #C00B)
 
 Each case is a folder <out-dir>/<assembler>-<case>/ with machine.json (the RAM page mapped at each 16 KB window, the
 pages kept, the file expected, the editor state), page<N>.bin per kept page and the expected file. A case whose text
@@ -102,6 +104,32 @@ def xas(emu, args):
     emu.tap('enter')
     time.sleep(4)
     finish(args.out, f'{args.tag}-edited', 'PROBE.X', saved_sectors(emu, 'PROBE', 'X'))
+
+
+def storm(emu, args):
+    """STORM: BREAK L loads (the keyboard is in BIG mode: lower case arrives as capitals), BREAK S saves; a line joins
+    the text when the cursor leaves it, so the edited case is taken after Enter and a step down"""
+    emu.insert_disk(args.disk)
+    emu.run_trdos(args.boot, wait=12)
+    emu.tap('break')
+    emu.tap('l')
+    emu.type(args.source.lower())
+    emu.tap('enter')
+    time.sleep(3)
+    loaded = saved(emu, args.source, 'C')
+    pages = [2, windows(emu)[3]]
+    emu.type(' nop')
+    dump(emu, args.out, f'{args.tag}-typing', pages, f'{args.source}.C', loaded, {'editor': True, 'typing': True})
+    emu.tap('enter')
+    emu.tap('down')
+    time.sleep(1)
+    dump(emu, args.out, f'{args.tag}-edited', pages, f'{args.source}.C', None, {'editor': True, 'typing': False})
+    emu.tap('break')
+    emu.tap('s')
+    time.sleep(1)
+    emu.tap('enter')                           # the name it loaded
+    time.sleep(4)
+    finish(args.out, f'{args.tag}-edited', f'{args.source}.C', saved(emu, args.source, 'C'))
 
 
 def saved(emu, name, type_):
@@ -200,7 +228,7 @@ def tasm412(emu, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm'])
     parser.add_argument('disk')
     parser.add_argument('out')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
@@ -219,6 +247,8 @@ def main():
         alasm(emu, args, 'other')
     elif args.assembler == 'xas':
         xas(emu, args)
+    elif args.assembler == 'storm':
+        storm(emu, args)
     else:
         alasm(emu, args, args.assembler[5:])
     emu.stop_recording()
