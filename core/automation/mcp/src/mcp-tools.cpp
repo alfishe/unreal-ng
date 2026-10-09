@@ -21,6 +21,7 @@
 #include "mcp-slots.h"
 #include "mcp-router.h"
 #include "mcp-symbols.h"
+#include "mcp-asm.h"
 #include "mcp-tool-utils.h"
 
 #include <algorithm>
@@ -5074,6 +5075,7 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
 
     // Phase 2 — smart tools
     RegisterManageSymbols(*registry);
+    RegisterAsmSource(*registry);
     RegisterDebugCode(*registry);
     RegisterAnalyzePerformance(*registry);
     RegisterCaptureMedia(*registry);

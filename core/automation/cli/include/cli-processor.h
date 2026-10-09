@@ -164,6 +164,7 @@ private:
 
     // Assembler and source-listing commands
     void HandleAssemble(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleAsm(const ClientSession& session, const std::vector<std::string>& args);
     void HandleListing(const ClientSession& session, const std::vector<std::string>& args);
 
     // Analysis command handlers (screen digest, beam, frame cost, analyzers)

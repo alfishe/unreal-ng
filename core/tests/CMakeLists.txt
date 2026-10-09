@@ -212,6 +212,7 @@ if (NOT TARGET ${PROJECT_NAME})
             ${ROOT_DIR}/core/automation/mcp/src/mcp-router.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-resources.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-symbols.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-asm.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-analysis.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-media.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-slots.cpp

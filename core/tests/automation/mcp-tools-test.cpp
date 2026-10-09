@@ -1921,6 +1921,39 @@ TEST_F(McpTools_Test, ManageSymbols_SetsImportExport_MapToTheSymbolRoutes)
     EXPECT_TRUE(RunTool(*_registry, "manage_symbols", missing, *_caller).isError);
 }
 
+TEST_F(McpTools_Test, AsmSource_ActionsMapToTheAsmRoutes)
+{
+    for (const char* route : {"GET /api/v1/asm/formats", "GET /api/v1/emulator/emu-1/asm/files?drive=B", "POST /api/v1/emulator/emu-1/asm/convert"})
+        _caller->routes[route] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value formats;
+    formats["action"] = "formats";
+    RunTool(*_registry, "asm_source", formats, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/asm/formats"));
+
+    Json::Value files;
+    files["action"] = "files";
+    files["drive"] = "B";
+    RunTool(*_registry, "asm_source", files, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/asm/files?drive=B"));
+
+    Json::Value convert;
+    convert["action"] = "convert";
+    convert["path"] = "disk:A/GAME.H";
+    convert["to"] = "sjasmplus";
+    convert["z80n"] = true;
+    RunTool(*_registry, "asm_source", convert, *_caller);
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/asm/convert");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["path"].asString(), "disk:A/GAME.H");
+    EXPECT_EQ(call->body["to"].asString(), "sjasmplus");
+    EXPECT_EQ(call->body["z80n"].asString(), "true");
+
+    Json::Value bad;
+    bad["action"] = "assemble";
+    EXPECT_TRUE(RunTool(*_registry, "asm_source", bad, *_caller).isError);
+}
+
 TEST_F(McpTools_Test, CaptureMedia_ScreenDigest_GetsDigestEndpoint)
 {
     Json::Value response;

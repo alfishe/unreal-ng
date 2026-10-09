@@ -70,7 +70,12 @@ phase; master only after the owner's review.
   - [x] codec `gens`, versions GENS1 / GENS2-4 (2026-10-06): five real sources and GENS3 / GENS4 saves byte-exact, the editor's compression reproduces every real and typed line; testdata `gens/` ([research-gens.md](research-gens.md))
   - [x] codec `zeus`, versions 1983 / GG / PHT (2026-10-06): ADS 2.0 sources (the "ads" format), ZEUS v7.E help, ZXDB Zeus Routines and a typed probe byte-exact, tokenizer 4062 / 4062 lines; testdata `zeus/` ([research-zeus.md](research-zeus.md))
   - [x] codec `xas`, versions 4.18 / 5.05 / 7.43 / 7.43c / 9.07m / 9.10 (2026-10-06): all 18 XAS sources found byte-exact with their sector slack, packer 4794 / 4913 lines (the rest XASCII's lower case); `CatalogHints::slack`, hobeta / TRD readers accept a length beyond the sectors; line numbers of GENS / ZEUS in `SourceLine::number`; testdata `xas/` ([research-xas.md](research-xas.md))
-- [ ] A7 emulator adapters and surfaces, Qt disk browser, recipe
+- [x] A7 emulator adapters and surfaces, Qt disk browser, recipe (2026-10-09):
+  - `core/src/debugger/asm/`: `diskfiles` reads and writes `disk:A/NAME.T` through the library's TR-DOS reader and a TR-DOS-style catalog write (write protection honored, the image left modified, at a coherent moment). `AsmControl` has the verbs formats / dialects / files / detect / decode / encode / convert; a source is a host file (an image with `file`, hobeta, +3DOS), a disk file or base64.
+  - WebAPI `/asm/*` (OpenAPI tag "Assembler Sources"); CLI `asm <verb>` (`asm <addr> <code>` still assembles); the MCP tool `asm_source`; Lua / Python `asm_*`.
+  - Qt: the debugger's "Disk files" dialog (open as source, export as text, convert to ...).
+  - `manage_symbols import` reads `disk:A/NAME.T`. The library gains `DialectRegistry::FrontendDialects` / `BackendDialects`.
+  - Recipe `.recipe/analysis/asm-sources.md`.
   - [x] the assembler automation scripts moved to [tools/verification/unreal-asm/](../../../tools/verification/unreal-asm/README.md) (lib / emulator / checks, 2026-10-08): the emulator's WebAPI port is a parameter (`--port`, default 8090); `--ram 512` for ZAsm 3.2x+; a new instance is resumed before keys are typed
   - [x] a tape (TAP / TZX) container (2026-10-07): `ReadTapeBlocks` / `ReadTape` (TAP; TZX standard, turbo and pure data blocks, the others skipped), files named by their headers; GENS P saves, GENS T include files (header type 4, the lines of all blocks joined, stale bytes dropped), ZEUS tape saves; `zxasm files / decode --file / convert` and `symconv source` take .tap / .tzx; testdata `tape/`
 - [ ] A8 symbols on the library (symbols S1-S5), branch `unreal-asm-a8`
@@ -108,7 +113,7 @@ phase; master only after the owner's review.
       - Checked live on a Pentagon with ALASM 5.09's dumped page 3.
     - [x] import of an upload (2026-10-08): `data` (base64) + `name` instead of `path`, set `upload:<name>` (WebAPI, MCP, Lua, Python)
     - [x] Qt (2026-10-08): the label editor's File menu has Import Symbols... (format, set, space, base, policy), Export Symbols... (format, sets, pages) and Scan RAM for Label Tables...; a "Sets" tab (On, Priority, drop; `SymbolSetsPanel`, unreal-qt-tests `SymbolSetsPanel_Test`)
-    - [ ] import of a file on a disk image (`disk:A/F.A`)
+    - [x] import of a file on a disk in a drive (`disk:A/NAME.T`, 2026-10-09, through A7's disk adapter)
     - [ ] the bundle set switched off remembered between sessions
   - [x] S6-S9 labels from sources (2026-10-07): `SymbolsFromProject` (`symbols/fromsource.h`) for TASM, ALASM, STORM, ZX-ASM and sjasmplus projects; values from `layout::Layout` over the sjasmplus conversion (instruction sizes, passes, `IF` / `DUP` / `WHILE` / macros / `DISP` / `INCLUDE` / `INCBIN`, sjasmplus' symbol table through the passes); the backend records the names it writes (`LabelName`); `symconv source`; the sjasmplus frontend reads `$$$`; equal to sjasmplus 1.24's `--sym` on every instruction form, the layout probe, five oracle projects and the collection (`tools/verification/unreal-asm/checks/symcheck.py`: 511 of 530 main sources, 67 264 labels; the 19 others read FRAMES or hit a sjasmplus quirk) ([symbols/formats.md](symbols/formats.md) §4.1)
   - [x] frontends for GENS, MASM, ZEUS, XAS (2026-10-07): their projects convert to sjasmplus and their labels come through `SymbolsFromProject`

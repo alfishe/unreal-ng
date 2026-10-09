@@ -81,11 +81,12 @@ WebAPI's thread calls `run()`), and `stopMCP()` runs **after** `stopWebAPI()`.
 | `search_api` | keyword search over the OpenAPI spec (scored), optional `auto_invoke` |
 | `invoke_api` | direct WebAPI call with `{id}` target substitution |
 
-### Phase 2 (4 more)
+### Phase 2 (smart tools)
 
 | Tool | Purpose |
 |:--|:--|
-| `manage_symbols` | load_labels / list / resolve / load_listing / source_at / step_line / run_to_line (sjasmplus `.lst` support) |
+| `manage_symbols` | load_labels / list / resolve / load_listing / source_at / step_line / run_to_line (sjasmplus `.lst` support); symbol files and sets: formats / detect / import / export / sets / set_enable / drop, label tables in RAM: scan / import_live ([.recipe/analysis/symbols-import-export.md](../../../.recipe/analysis/symbols-import-export.md)) |
+| `asm_source` | sources of ZX Spectrum assemblers: formats / dialects / files (the disk in a drive, each file's format) / detect / decode / encode / convert; a path is a host file or `disk:A/NAME.T` ([.recipe/analysis/asm-sources.md](../../../.recipe/analysis/asm-sources.md)) |
 | `debug_code` | disassemble / assemble (`Z80TextAssembler`) / find_bytes / trace (calltrace sessions) / porttrace |
 | `analyze_performance` | coverage_* (executed-address map + gaps), frame_cost, profiler suites (calltrace/porttrace/memory), vdac2_line_budget / vdac2_line_budget_set (TS-Conf VDAC2: FT812 per-line cost against the line period via `/vdac2/metrics`; `lines`, `in_flight`, `margin`, `measure_always`) |
 | `capture_media` | screenshot (`area` `full` default = the whole frame with border / `screen` = the working picture; `format` `png` default / `gif`; `source` `presented` default / `live` (the frame as drawn now); `path` or `filename` to save; the answer carries the frame geometry: `frame`, `screen_window`, `crop`), screen_digest, record_video (GIF; `every_nth:"auto"` samples the digest quantum), audio_capture (RMS/peak/dominant-Hz, WAV), temporal_status / temporal_set (ZX DLSS de-flicker via GET / PUT `/video/temporal`; `algorithm` = name or `"off"`; summary names the video / audio delay it causes), vdac2_capture_start / _stop / _status (TS-Conf VDAC2 card: FT812 bus to an .evr replay stream via `/vdac2/capture/*`; `filename` = the file), framebuffer (raw pixels: `format` rgba / index, base64 data with `include_image`); audio_capture takes `source` (a mixer key) |

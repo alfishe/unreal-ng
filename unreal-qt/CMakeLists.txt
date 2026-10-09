@@ -646,6 +646,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/disksectordialog_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/disksectordialog.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/disksectordialog.h"
+        # The debugger's Disk files dialog (unreal-asm A7)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/diskfilesdialog_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/diskfilesdialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/diskfilesdialog.h"
         # The label editor's Sets tab (symbols S5)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/symbolsetspanel_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/symbolsetspanel.cpp"
