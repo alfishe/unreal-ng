@@ -128,7 +128,7 @@ scan. Details:
 
 ## The source in the running machine
 
-The debugger reads the source that ALASM 5.09, ALASM 4.44 or TASM 4.12 is editing in the machine, with no need to save
+The debugger reads the source that ALASM (3.8c, 4.42-4.46, 4.5, 5.00-5.09) or TASM 4.12 is editing in the machine, with no need to save
 it to a disk first. You get it as text, as the file the assembler's own SAVE would write, or converted to sjasmplus,
 pasmo or z88dk:
 

@@ -1,0 +1,17 @@
+{
+  "windows": [
+    -1,
+    5,
+    2,
+    6
+  ],
+  "pages": [
+    2,
+    6
+  ],
+  "expected": "AL443nfo.H",
+  "state": {
+    "editor": true,
+    "typing": true
+  }
+}

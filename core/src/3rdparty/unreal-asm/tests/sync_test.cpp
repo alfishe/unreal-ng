@@ -60,6 +60,13 @@ const Case kCases[] = {
     {"alasm444-loaded", "alasm-4.44"}, {"alasm444-edited", "alasm-4.44"},
     {"tasm412-top", "tasm-4.12"},      {"tasm412-middle", "tasm-4.12"},   {"tasm412-typing", "tasm-4.12"},
     {"tasm412-command", "tasm-4.12"},
+    {"alasm508-typing", "alasm-5.08"}, {"alasm508-edited", "alasm-5.08"}, {"alasm507-typing", "alasm-5.07"},
+    {"alasm507-edited", "alasm-5.07"}, {"alasm505-typing", "alasm-5.05"}, {"alasm505-edited", "alasm-5.05"},
+    {"alasm50-typing", "alasm-5.00"},  {"alasm50-edited", "alasm-5.00"},   {"alasm45-typing", "alasm-4.5"},
+    {"alasm45-edited", "alasm-4.5"},   {"alasm446-typing", "alasm-4.46"},  {"alasm446-edited", "alasm-4.46"},
+    {"alasm445-typing", "alasm-4.45"}, {"alasm445-edited", "alasm-4.45"},  {"alasm443-typing", "alasm-4.43"},
+    {"alasm443-edited", "alasm-4.43"}, {"alasm442-typing", "alasm-4.42"},  {"alasm442-edited", "alasm-4.42"},
+    {"alasm38c-typing", "alasm-3.8c"}, {"alasm38c-edited", "alasm-3.8c"},
 };
 }  // namespace
 
@@ -75,7 +82,7 @@ TEST(Sync_Test, EveryDumpGivesTheFileTheAssemblerSaved)
         ASSERT_TRUE(text.ok) << (text.diagnostics.empty() ? text.state : text.diagnostics.back().message);
         EXPECT_EQ(text.file.size(), dump.expected.size());
         EXPECT_TRUE(text.file == dump.expected) << "the live file differs from the saved one";
-        EXPECT_EQ(text.typing, dump.typing && descriptor->typing.rule == TypingRule::NotInText);
+        EXPECT_EQ(text.typing, dump.typing && descriptor->typing.rule == TypingRule::NotInText && descriptor->typing.flagMask);
         if (descriptor->family == LayoutFamily::GapBuffer)
         {
             EXPECT_EQ(text.editor, dump.editor) << "the line buffer belongs in the file only in the editor";

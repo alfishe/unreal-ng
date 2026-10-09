@@ -205,8 +205,10 @@ SyncText ReadLinear(const MachineView& machine, const SyncDescriptor& d)
 
 // Descriptors -------------------------------------------------------------------------------------------------------
 
-/// The title is looked for where the code keeps it; #BE00 also holds it, but the editor uses that place as a buffer
-SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion, uint16_t titleAt)
+/// The title is looked for where the code keeps it (each build elsewhere); #BE00 also holds it, but the editor uses
+/// that place as a buffer. `typingFlag` false: the build keeps no "line modified" bit at IX+#0C (4.43)
+SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion, uint16_t titleAt, std::string title = "",
+                     bool typingFlag = true)
 {
     SyncDescriptor d;
     d.id = "alasm-" + version;
@@ -214,7 +216,7 @@ SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion
     d.codec = "alasm";
     d.version = codecVersion;
     d.extension = "H";
-    d.identify = {{titleAt, "ALASM v" + version}};
+    d.identify = {{titleAt, title.empty() ? "ALASM v" + version : title}};
     d.pages = PageIdRule::Port7FFD;
     d.family = LayoutFamily::FileImage;
     // IX = #80BF: IX+#0D the page of the current text; the text from #C000 of it is the file (asm-synchronizer.md §7.1)
@@ -225,7 +227,7 @@ SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion
     d.fileImage.signatureAt = 0x28;
     d.fileImage.signature = std::string("\xF3\x76\xC7\xDD\xFD\xED\xB0\xD9", 8);
     d.fileImage.changedField = 0x27;
-    d.typing = {TypingRule::NotInText, 0x80CB, 0x01};   // IX+#0C bit 0: the current line is modified
+    d.typing = {TypingRule::NotInText, 0x80CB, static_cast<uint8_t>(typingFlag ? 0x01 : 0x00)};   // IX+#0C bit 0: the line is modified
     d.labelScanner = "alasm-table";
     return d;
 }
@@ -300,8 +302,19 @@ std::optional<uint16_t> MachineView::Word(uint16_t address) const
 const std::vector<SyncDescriptor>& Descriptors()
 {
     static const std::vector<SyncDescriptor> descriptors = {
-        Alasm("5.09", "5.07", 0x97C5),   // verified with dumps (testdata/sync); 5.0-5.08, 4.43-4.5 need theirs
+        // Each checked with dumps (testdata/sync): the text, the file it saves, the title where the editor leaves it
+        Alasm("5.09", "5.07", 0x97C5),
+        Alasm("5.08", "5.07", 0x97CA),
+        Alasm("5.07", "5.07", 0x97BC),
+        Alasm("5.05", "5.05", 0x97BC),
+        Alasm("5.00", "5.0", 0x9E22),
+        Alasm("4.5", "4.5", 0x9E06),
+        Alasm("4.46", "4.44", 0x9E6E),
+        Alasm("4.45", "4.44", 0x9E53),
         Alasm("4.44", "4.44", 0x9E7E),
+        Alasm("4.43", "4.5", 0x9E1B, "", false),
+        Alasm("4.42", "4.42", 0x9E2F),
+        Alasm("3.8c", "3.8", 0x9951, "3.8c\r Written by"),
         Tasm412(),
     };
     return descriptors;

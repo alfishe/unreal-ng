@@ -247,8 +247,8 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 
 | | |
 |---|---|
-| **Knowledge** | inferred, not checked: the same file format as 5.07-5.09; 5.05's own sources are in the collection (`alasm/wdc/alasm505.zip`) and can confirm the variables |
-| **Work** | confirm `#80CC`, the identification string's address (5.05's title differs) and the header: **0.5 d** |
+| **Knowledge** | **verified** (2026-10-09, dumps `testdata/sync/alasm50-*`, `alasm505-*`, `alasm507-*`, `alasm508-*`): the same `sysvars` (`#80CC`, `IX+#0C` bit 0) and file image as 5.09. Titles: `ALASM v5.00` at `#9E22`, `v5.05` and `v5.07` at `#97BC`, `v5.08` at `#97CA`, `v5.09` at `#97C5` |
+| **Built** | descriptors `alasm-5.00`, `-5.05`, `-5.07`, `-5.08` (codec tables 5.0, 5.05, 5.07) |
 
 ### 7.3 ALASM 4.4x and 4.5 (4.43-4.46, 4.5)
 
@@ -256,15 +256,15 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 |---|---|
 | **Knowledge** | **verified live** for 4.44 (text page id `#06` at `#80CC`, AL444nfo byte-identical loaded and edited, `ALASM v4.44` at `#9E7E`; `#BE00` is overwritten in the editor as in 5.09); 4.46's source (`AL446SRC`, `Al44.H`) has the same `sysvars` at `#80BF` and the same `T_*` fields. The title's address differs per build: every further version needs its dump |
 | differences | 4.4x label table ends at `#3F7F` (5.x `#3DFF`); 4.5 keeps its table in page 6 |
-| **Work** | descriptor rows for 4.43, 4.45, 4.46, 4.5, a 4.5 dump: **0.5 d** |
+| **Verified** (2026-10-09, dumps `alasm443-*`, `alasm445-*`, `alasm446-*`, `alasm45-*`) | the same `sysvars` and file image. Titles: `ALASM v4.43` `#9E1B`, `v4.45` `#9E53`, `v4.46` `#9E6E`, `v4.5` `#9E06`. 4.5 keeps the text in page 1 (id `#09`). 4.43 has no "line modified" bit at `IX+#0C`: its status cannot say `typing`, the text is right |
+| **Built** | descriptors `alasm-4.43` (codec table 4.5), `-4.45`, `-4.46` (4.44), `-4.5` |
 
 ### 7.4 ALASM 3.8c, 4.2, 4.42
 
 | | |
 |---|---|
-| **Knowledge** | unknown in memory; the file format is the same family (header with the signature at `+#28`) |
-| research | find `sysvars` (search the code page for the text page id after loading two texts in two pages); 4.2's ALM loader crashes on a Pentagon (TODO), so 4.2 may stay out |
-| **Work** | **1 d** (3.8c, 4.42; 4.2 only if it starts) |
+| **Verified** (2026-10-09, dumps `alasm38c-*`, `alasm442-*`) | 3.8c and 4.42 keep the same `sysvars` at `#80BF` and the same file image. 4.42's title `ALASM v4.42` is at `#9E2F`. 3.8c has no "ALASM v" title; it is recognized by `3.8c\r Written by` at `#9951` |
+| **Built** | descriptors `alasm-4.42`, `alasm-3.8c` (codec table 3.8). 4.2 stays out: its ALM loader crashes on a Pentagon |
 
 ### 7.5 TASM 4.12
 
@@ -437,8 +437,9 @@ Status: **Y0 built (2026-10-09)**:
 - the emulator part is `SyncControl` (`core/src/debugger/asm/sync/synccontrol.h`), reached through AsmControl's
   `sync-*` verbs;
 - surfaces: WebAPI `GET /asm/sync`, `POST /asm/sync/probe` / `extract`; CLI `asm sync`; MCP `asm_source` `sync_*`;
-- descriptors: ALASM 5.09, ALASM 4.44, TASM 4.12. The other versions of §7.2 / §7.3 need their dumps, because the title
-  address differs per build.
+- descriptors: ALASM 5.09, ALASM 4.44, TASM 4.12; later the same day every other ALASM in the collection: 3.8c, 4.42,
+  4.43, 4.45, 4.46, 4.5, 5.00, 5.05, 5.07, 5.08 (§7.2-§7.4). Each has its dumps, because the title address differs per
+  build.
 
 Status: **Y1 built (2026-10-09)** (§4.3):
 

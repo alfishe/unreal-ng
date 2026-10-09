@@ -7,6 +7,8 @@ save the text itself and keep the file. The synchronizer's reader must give that
     sync-dumps.py alasm444 <al444.trd> <out-dir> [--port P]      # AL444nfo.H: loaded, edited
     sync-dumps.py tasm412  <tasm412.trd> <out-dir> [--port P]    # SNAKE.A: the cursor at the top, in the middle,
                                                                  # a line being typed, at the command line
+    sync-dumps.py alasm <disk> <out-dir> --boot NAME --source NAME --tag TAG [--help-key] [--no-loaded]
+                                                                 # any other ALASM build: TAG-typing, TAG-edited
 
 Each case is a folder <out-dir>/<assembler>-<case>/ with machine.json (the RAM page mapped at each 16 KB window, the
 pages kept, the file expected, the editor state), page<N>.bin per kept page and the expected file. A case whose text
@@ -71,27 +73,41 @@ def saved(emu, name, type_):
     return data[1]
 
 
+def inverted(name):
+    """What to type for a name: the keyboard is inverted, lower case arrives as capitals"""
+    return ''.join(c.lower() if c.isupper() else c.upper() for c in name)
+
+
 def alasm(emu, args, version):
-    name, typed = ('SNAKE', 'wsnake') if version == '509' else ('AL444nfo', 'wal444NFO')
+    if version == '509':
+        name, boot, prefix = 'SNAKE', 'alasm64', 'alasm509'
+    elif version == '444':
+        name, boot, prefix = 'AL444nfo', 'al64_444', 'alasm444'
+    else:
+        name, boot, prefix = args.source, args.boot, args.tag
     emu.insert_disk(args.disk)
-    emu.run_trdos('alasm64' if version == '509' else 'al64_444')
-    emu.type(typed)                            # the keyboard is inverted: lower case arrives as capitals
+    emu.run_trdos(boot)
+    if args.help_key:
+        emu.tap('enter')                       # 3.8c shows a help screen first: one key closes it
+        time.sleep(1)
+    emu.type('w' + inverted(name))
     emu.tap('enter')
     time.sleep(3)
     text_page = emu.read(0x80CC, 1)[0] & 7     # IX+#0D: the driver's page id, low bits = port #7FFD
     pages = [2, text_page]
-    prefix = f'alasm{version}'
-    dump(emu, args.out, f'{prefix}-loaded', pages, f'{name}.H', None, {'editor': False, 'typing': False})
+    if not args.no_loaded:
+        dump(emu, args.out, f'{prefix}-loaded', pages, f'{name}.H', None, {'editor': False, 'typing': False})
     emu.type('s')
     emu.tap('enter')
     time.sleep(4)
     loaded = saved(emu, name, 'H')
-    finish(args.out, f'{prefix}-loaded', f'{name}.H', loaded)
+    if not args.no_loaded:
+        finish(args.out, f'{prefix}-loaded', f'{name}.H', loaded)
     emu.type('e')
     emu.tap('enter')
     time.sleep(2)
     emu.type('        NOP')
-    if version == '509':                       # a line not entered yet: not in the text, the file before it
+    if version != '444':                       # a line not entered yet: not in the text, the file before it
         dump(emu, args.out, f'{prefix}-typing', pages, f'{name}.H', loaded, {'editor': True, 'typing': True})
     emu.tap('enter')
     time.sleep(1)
@@ -146,15 +162,22 @@ def tasm412(emu, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm'])
     parser.add_argument('disk')
     parser.add_argument('out')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
+    parser.add_argument('--boot', help='alasm: the BASIC program that starts it')
+    parser.add_argument('--source', help='alasm: the H file on its disk to load')
+    parser.add_argument('--tag', help='alasm: the case folder prefix (alasm446 ...)')
+    parser.add_argument('--help-key', action='store_true', help='alasm: a key closes a help screen at the start (3.8c)')
+    parser.add_argument('--no-loaded', action='store_true', help='alasm: no case right after loading')
     args = parser.parse_args()
     args.disk = os.path.abspath(args.disk)
     emu = Emulator(port=args.port, model='PENTAGON')
     if args.assembler == 'tasm412':
         tasm412(emu, args)
+    elif args.assembler == 'alasm':
+        alasm(emu, args, 'other')
     else:
         alasm(emu, args, args.assembler[5:])
     emu.stop_recording()

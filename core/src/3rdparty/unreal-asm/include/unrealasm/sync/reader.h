@@ -116,7 +116,8 @@ struct SyncDescriptor
     std::string labelScanner;       ///< the symbols/live.h scanner of its label table ("" = none)
 };
 
-/// Every built-in descriptor (asm-synchronizer.md §7), each checked with golden dumps: ALASM 5.09, 4.44, TASM 4.12
+/// Every built-in descriptor (asm-synchronizer.md §7), each checked with golden dumps: ALASM 3.8c, 4.42-4.46, 4.5,
+/// 5.00-5.09, TASM 4.12
 const std::vector<SyncDescriptor>& Descriptors();
 const SyncDescriptor* FindDescriptor(const std::string& id);
 
