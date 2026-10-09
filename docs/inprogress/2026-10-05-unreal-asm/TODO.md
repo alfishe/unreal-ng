@@ -139,6 +139,6 @@ phase; master only after the owner's review.
     - Every decode and conversion of the corpus is byte-identical to before.
   - [ ] still below 50 MB/s: ZEUS decode (each line encoded again for the canonical check, 16-36 MB/s), XAS decode (the packer, 33 MB/s)
   - [x] `BM_Symbols_DisasmLine` A/B against the old LabelManager (2026-10-08): 13-28 % faster with 1k-60k labels, the address lookup 4-9 times faster ([symbols/test-and-benchmark-plan.md](symbols/test-and-benchmark-plan.md) §6)
-- [ ] P2: asm-synchronizer ([asm-synchronizer.md](asm-synchronizer.md), TDD 2026-10-09; was "memory bridge"); about 40 days in all, 6 for the first cut
+- [ ] P2: asm-synchronizer ([asm-synchronizer.md](asm-synchronizer.md), TDD 2026-10-09; was "memory bridge"), both directions: guest → host (extract, live labels, hints) about 40 days, host → guest (sjasmplus → IR → retro backend → inject into memory / a snapshot) about 60; both about 95; ALASM both ways first, about 14
   - [x] research: ALASM 4.44 / 5.09 and TASM 4.12 memory layouts verified live (2026-10-09)
-  - [ ] Y0-Y5 (code): waits for an owner go-ahead (P2)
+  - [ ] Y0-Y5, Z0-Z5 (code): waits for an owner go-ahead (P2)
