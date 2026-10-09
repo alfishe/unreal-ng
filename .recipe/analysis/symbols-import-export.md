@@ -220,6 +220,10 @@ priority 50, below every loaded file). Bundles that no longer match are dropped.
 - the 48K and 128K system variables;
 - Sprinter BIOS 3.04 ROM pages 0, 8 and #C.
 
-A bundle set switched off stays off while the instance runs. `UNREAL_SYMBOL_BUNDLES=0` turns bundles off. To add a
+A bundle set switched off stays off while the instance runs. In the Qt GUI, a bundle switched off in the label
+editor's Sets tab stays off in later sessions too: unreal-qt remembers it in its settings (`Symbols/DisabledBundles`)
+and switches it off again on the machines the GUI starts, also after a reset. Switching it on in the Sets tab forgets
+it. Instances started through WebAPI, CLI or MCP keep every bundle on, and the core keeps no such state.
+`UNREAL_SYMBOL_BUNDLES=0` turns bundles off. To add a
 bundle, put the file in `data/symbols/` and add an entry with the page's SHA-256 (`shasum -a 256` of the 16 KB page).
 Use `"space": "rom"` when the file's addresses are page offsets of whatever page matched.

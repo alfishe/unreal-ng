@@ -811,9 +811,13 @@ void Uart16550::SaveState(State& out) const
     out.avrRelease = 0;   // the wait moved to the board AVR (EvoAvrWait): kept for the blob layout
     std::memcpy(out.rx, _rx.data(), kMaxRx);
     std::memcpy(out.tx, _tx.data(), kMaxTx);
-    out.txDoneAt = _txDoneAt;
-    out.rxArriveAt = _rxArriveAt;
-    out.lastNow = _lastNow;
+    // The clocks matter only while a character is on a line: txDoneAt while the transmitter is busy, rxArriveAt
+    // while a character arrives, lastNow (the clock-restart check and Rebase) while either is. Otherwise they are
+    // saved as 0, which loads to the same behavior: a port a peer clocks every frame keeps an unchanged state while
+    // idle (TTD: 6.8 B per idle frame each before, measured 2026-10-09 on a TS-Conf with ZiFi)
+    out.txDoneAt = _txBusy ? _txDoneAt : 0;
+    out.rxArriveAt = _rxInFlight ? _rxArriveAt : 0;
+    out.lastNow = _txBusy || _rxInFlight ? _lastNow : 0;
     out.bytesIn = _bytesIn;
     out.bytesOut = _bytesOut;
     out.overruns = _overruns;

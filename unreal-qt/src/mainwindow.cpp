@@ -52,6 +52,7 @@
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/symbolbundlepreferences.h"
 #include "emulator/filemanager.h"
 #include "emulator/hostkeyboardmenu.h"
 #include "emulator/keyboardmanager.h"
@@ -2012,6 +2013,22 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
     }
 
     _lastFrameCount = frameCount;
+}
+
+void MainWindow::handleSystemReset(int id, Message* message)
+{
+    // NC_SYSTEM_RESET: a reset may have read another ROM (the Sprinter's BIOS chosen at runtime) and with it made
+    // other symbol bundles; the ones the user switched off stay off. The notification names no instance: the window's
+    // own is checked on the GUI thread, which owns _emulator
+    (void)id;
+    (void)message;
+    QMetaObject::invokeMethod(
+        this,
+        [this]() {
+            if (_emulator && _emulatorOrigin == EmulatorOrigin::CreatedByGui && _emulator->GetDebugManager())
+                SymbolBundlePreferences::ApplySaved(_emulator->GetDebugManager()->GetLabelManager());
+        },
+        Qt::QueuedConnection);
 }
 
 void MainWindow::handleVideoModeChanged(int id, Message* message)
@@ -4548,6 +4565,9 @@ void MainWindow::subscribeToPerEmulatorEvents()
 
     ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
     messageCenter.AddObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
+
+    ObserverCallbackMethod resetCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleSystemReset);
+    messageCenter.AddObserver(NC_SYSTEM_RESET, observerInstance, resetCallback);
 }
 
 void MainWindow::unsubscribeFromPerEmulatorEvents()
@@ -4567,6 +4587,9 @@ void MainWindow::unsubscribeFromPerEmulatorEvents()
 
     ObserverCallbackMethod modeCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleVideoModeChanged);
     messageCenter.RemoveObserver(NC_VIDEO_MODE_CHANGED, observerInstance, modeCallback);
+
+    ObserverCallbackMethod resetCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleSystemReset);
+    messageCenter.RemoveObserver(NC_SYSTEM_RESET, observerInstance, resetCallback);
 }
 
 void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
@@ -4683,6 +4706,9 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
         EmulatorContext* soundContext = _emulator->GetContext();
         if (soundContext && soundContext->pSoundManager)
             SoundCharacterPreferences::ApplySaved(*soundContext->pSoundManager);
+        // The symbol bundles the user switched off stay off (handleSystemReset repeats it for a ROM chosen later)
+        if (_emulator->GetDebugManager())
+            SymbolBundlePreferences::ApplySaved(_emulator->GetDebugManager()->GetLabelManager());
     }
 
     // === BINDING SEQUENCE (single canonical order) ===

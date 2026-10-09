@@ -248,7 +248,12 @@ Built (2026-10-08):
 - `LabelManager::ApplyBundles` imports each match as `bundle:<id>` at priority 50 and drops the stale ones.
 - The emulator calls it when an instance starts and after a ROM reload (`Emulator::ApplySymbolBundles`), with the page
   hashes from `ROM::CalculateSignature`.
-- The switched-off choice lasts while the instance runs; keeping it between sessions is still to come.
+- The switched-off choice lasts while the instance runs. Between sessions it is the GUI's (owner decision,
+  2026-10-09: the core knows nothing of it). unreal-qt keeps the switched-off bundle set ids in its QSettings
+  (`Symbols/DisabledBundles`, `unreal-qt/src/debugger/symbolbundlepreferences.h`). The Sets tab saves a bundle's
+  switch there. MainWindow switches the saved ones off again on an instance the GUI created, when it adopts it and
+  after each `NC_SYSTEM_RESET` (a reset may read another ROM and make new bundle sets). An instance created through
+  automation keeps every bundle on, as with the GUI's saved sound character.
 
 ## 8. Surfaces
 

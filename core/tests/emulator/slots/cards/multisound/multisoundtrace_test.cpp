@@ -354,6 +354,22 @@ public:
         return h;
     }
 
+    /// RMS level of a row in dB per block of `block` stereo frames: the fingerprint of a float synthesizer, whose
+    /// samples differ in the last bits between libm / compiler (glibc vs Apple libm, FP contraction), so no digest
+    std::vector<double> LevelsDb(MultiSoundRow row, size_t block) const
+    {
+        const std::vector<int16_t>& v = Row(row);
+        std::vector<double> levels;
+        for (size_t b = 0; (b + 1) * block * 2 <= v.size(); b++)
+        {
+            double sum = 0.0;
+            for (size_t i = b * block * 2; i < (b + 1) * block * 2; i++)
+                sum += static_cast<double>(v[i]) * v[i];
+            levels.push_back(10.0 * std::log10(sum / static_cast<double>(block * 2) + 1e-20));
+        }
+        return levels;
+    }
+
     /// RMS of one side of a row
     double Rms(MultiSoundRow row, int side) const
     {
@@ -721,7 +737,15 @@ TEST(MultiSoundTrace_Test, WcMidiPlayerReplaysOnTheCard)
     EXPECT_GT(replay.Rms(MultiSoundRow::Midi, 0), 200.0);
     ExpectSilent(replay, {MultiSoundRow::Fm1, MultiSoundRow::Fm2, MultiSoundRow::Ssg1, MultiSoundRow::Ssg2,
                           MultiSoundRow::Saa, MultiSoundRow::Pcm});
-    EXPECT_DIGEST(replay, MultiSoundRow::Midi, 0x97A893ABC5276531);
+    // no digest: the synthesizer is float, its samples differ in the last bits between libm / compilers (the macOS
+    // golden failed under gcc); the level per 32768-frame block agrees to 0.01 dB on both
+    const std::vector<double> levels = replay.LevelsDb(MultiSoundRow::Midi, 32768);
+    const std::vector<double> golden = { -200.0, -200.0, -200.0, -200.0, -200.0, -200.0, -200.0, -200.0, -200.0, -200.0,
+                                         -200.0, -200.0, -200.0, -200.0, -200.0, -200.0, -200.0, -200.0, -200.0, -200.0,
+                                         60.34, 61.87, 60.76, 60.80, 61.88 };
+    ASSERT_EQ(levels.size(), golden.size());
+    for (size_t i = 0; i < golden.size(); i++)
+        EXPECT_NEAR(levels[i], golden[i], 0.1) << "block " << i;
 }
 
 /// endregion </Wild Commander plugins>
