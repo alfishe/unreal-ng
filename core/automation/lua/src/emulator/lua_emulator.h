@@ -4352,6 +4352,20 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("coverage-summary", options)));
         });
 
+        // A memory at a past checkpoint and what changed between two, from the store (no seek):
+        // ttd_memory_at{space = "vram", frame = F, offset = 0x4805, length = 16}
+        // ttd_memory_diff{space = "ram5", from_frame = F1, to_frame = F2, limit = 100}
+        for (const char* verb : {"memory-at", "memory-diff"})
+        {
+            const std::string name = std::string("ttd_") + (verb[7] == 'a' ? "memory_at" : "memory_diff");
+            lua.set_function(name, [this, verb](sol::this_state ts, sol::table argsTable) -> sol::object {
+                std::map<std::string, std::string> options;
+                for (const auto& [key, value] : argsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+                return StateNodeToLua(ts, TtdScriptValue(TtdRun(verb, options)));
+            });
+        }
+
         // ====================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI:
         // step out, skip until, memory find, screen digest, beam, frame cost,

@@ -179,6 +179,24 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/coverage/summary?kind=executed" \
   "no", just "unknown"
 - Use scan to shortlist frames, then `seek` to them and inspect
 
+### memory-at / memory-diff — any memory at a past checkpoint, without seeking
+
+The engine stores every recorded memory at every checkpoint. These two read that store; the machine stays where it is. Use them when the question is "what was in it then" rather than "who wrote it":
+
+- `space` is `ram`, `ramN` (machine RAM page N), or any memory the session records, by name or alias: `vram` / `sprinter.vram`, `cache` / `sprinter.fastram`, `neogs.ram`, `neogs.flash`, `gs.ram`, `moonsound.wave`, `evo.flash`, and so on. `GET /memory/regions` lists them.
+- Both read checkpoint boundaries (frame starts). `at_frame` names the checkpoint read, the newest at or before the frame asked. For a point inside a frame, seek.
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/memory-at" -H 'Content-Type: application/json' \
+     -d '{"space":"ram5","offset":"0x1C78","length":2,"frame":150}'
+# {"space":"ram","offset":89208,"length":2,"frame":150,"at_frame":150,"exact":true,"hex":"6500"}
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/memory-diff" -H 'Content-Type: application/json' \
+     -d '{"space":"neogs.ram","from_frame":150,"to_frame":600,"limit":20}'
+# {"changed_bytes":812,"ranges":[{"offset":4096,"length":64},...],"truncated":false,...}
+```
+
+A typical chain: memory-diff narrows "what changed between two frames" to a few ranges. find-last (`space` for video / fast RAM) or reverse-continue then names the instruction behind one of them. MCP: `time_travel` `memory_at` / `memory_diff`. CLI: `ttd memory-at` / `ttd memory-diff`. Lua: `ttd_memory_at{...}`. Python: `emu.ttd_memory_at(...)`.
+
 ## Workflow: crash post-mortem (summary)
 
 1. Record through the crash in development mode

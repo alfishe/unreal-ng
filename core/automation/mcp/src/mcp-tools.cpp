@@ -3830,7 +3830,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "reverse_continue", "find_last", "port_events", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary",
-                               "history_limit", "journal_on", "journal_off", "journal_build", "export_clip"})
+                               "history_limit", "journal_on", "journal_off", "journal_build", "export_clip",
+                               "memory_at", "memory_diff"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -3928,8 +3929,14 @@ void RegisterTimeTravel(ToolRegistry& registry)
     for (const char* space : {"ram", "vram", "cache"})
         schema["properties"]["space"]["enum"].append(space);
     schema["properties"]["space"]["description"] =
-        "find_last: the memory searched - ram (Z80 addresses, default), vram (the Sprinter's 256 KB video RAM) or "
-        "cache (its 64 KB fast RAM); for vram / cache addr / addr_from / addr_to are offsets inside one 16 KB page";
+        "find_last / coverage_probe / coverage_scan: the memory searched - ram (Z80 addresses, default), vram (the "
+        "Sprinter's 256 KB video RAM) or cache (its 64 KB fast RAM); for vram / cache addr / addr_from / addr_to are "
+        "offsets inside one 16 KB page. memory_at / memory_diff (required): ram, ramN, or any memory the session "
+        "records by name or alias (sprinter.vram / vram, cache, neogs.ram, gs.ram, moonsound.wave, evo.flash ...)";
+    schema["properties"]["offset"]["type"] = "string";
+    schema["properties"]["offset"]["description"] = "memory_at: byte offset in the space (number, '0x..', '#..'), default 0";
+    schema["properties"]["length"]["type"] = "integer";
+    schema["properties"]["length"]["description"] = "memory_at: bytes, default 256, at most 65536";
     schema["properties"]["access"]["type"] = "string";
     schema["properties"]["access"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* access : {"write", "read", "execute", "io"})
@@ -4167,6 +4174,20 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 }
                 (*body)["pcs"] = pcs;
             }
+            else if (action == "memory_at" || action == "memory_diff")
+            {
+                const bool at = action == "memory_at";
+                if (!args["space"].isString() || (at ? !args.isMember("frame") : !(args.isMember("from_frame") && args.isMember("to_frame"))))
+                {
+                    done(ToolResult::Error(at ? "Action 'memory_at' requires 'space' and 'frame' (offset, length optional)"
+                                              : "Action 'memory_diff' requires 'space', 'from_frame' and 'to_frame'"));
+                    return;
+                }
+                (*body)["space"] = args["space"];
+                for (const char* field : {"frame", "offset", "length", "from_frame", "to_frame", "limit"})
+                    if (args.isMember(field))
+                        (*body)[field] = args[field];
+            }
             else if (action == "find_last")
             {
                 if (!args.isMember("addr") && !args.isMember("addr_from") && !args.isMember("addr_to") && !args.isMember("pc_from") &&
@@ -4395,6 +4416,31 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         return text + "." + FormatSearchWindow(b);
                     }, done);
                 }
+                else if (action == "memory_at")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/memory-at"), body.get(), caller, [](const Json::Value& b) {
+                        const std::string hex = b["hex"].asString();
+                        std::string text = std::to_string(b["length"].asUInt64()) + " bytes of " + b["space"].asString() +
+                                           " at offset " + std::to_string(b["offset"].asUInt64()) + " as at frame " +
+                                           std::to_string(b["at_frame"].asUInt64()) +
+                                           (b["exact"].asBool() ? "" : " (the checkpoint before the frame asked)") + ": ";
+                        return text + (hex.size() > 128 ? hex.substr(0, 128) + "... (full in the data)" : hex);
+                    }, done);
+                }
+                else if (action == "memory_diff")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/memory-diff"), body.get(), caller, [](const Json::Value& b) {
+                        std::string text = b["space"].asString() + ": " + std::to_string(b["changed_bytes"].asUInt64()) +
+                                           " bytes differ between frame " + std::to_string(b["at_from"].asUInt64()) +
+                                           " and frame " + std::to_string(b["at_to"].asUInt64());
+                        std::string ranges;
+                        for (const Json::Value& r : b["ranges"])
+                            if (ranges.size() < 200)
+                                ranges += (ranges.empty() ? "" : ", ") + std::to_string(r["offset"].asUInt64()) + "+" +
+                                          std::to_string(r["length"].asUInt64());
+                        return text + (ranges.empty() ? "." : " (offset+length: " + ranges + ").");
+                    }, done);
+                }
                 else if (action == "find_last")
                 {
                     CallAndSummarize("POST", Endpoint(id, "/ttd/find-last"), body.get(), caller, [](const Json::Value& b) {
@@ -4528,6 +4574,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 else if (action == "coverage_probe")
                 {
                     std::string query = "/ttd/coverage/probe?";
+                    if (args.isMember("space")) query += "space=" + UrlEncodeSegment(args["space"].asString()) + "&";
                     if (args.isMember("frame")) query += "frame=" + std::to_string(args["frame"].asUInt64()) + "&";
                     if (args.isMember("kind")) query += "kind=" + UrlEncodeSegment(args["kind"].asString()) + "&";
                     if (args.isMember("addr_from")) query += "addr_from=" + UrlEncodeSegment(args["addr_from"].asString()) + "&";
@@ -4550,6 +4597,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 else if (action == "coverage_scan")
                 {
                     std::string query = "/ttd/coverage/scan?";
+                    if (args.isMember("space")) query += "space=" + UrlEncodeSegment(args["space"].asString()) + "&";
                     if (args.isMember("from_frame")) query += "from_frame=" + std::to_string(args["from_frame"].asUInt64()) + "&";
                     if (args.isMember("to_frame")) query += "to_frame=" + std::to_string(args["to_frame"].asUInt64()) + "&";
                     if (args.isMember("kind")) query += "kind=" + UrlEncodeSegment(args["kind"].asString()) + "&";

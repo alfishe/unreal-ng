@@ -1,6 +1,6 @@
 # Memory spaces on every automation surface
 
-Status: steps 1-2 done 2026-10-08 (one registry, MCP `memory_access`; one address form); steps 3-5 open. Owner request: "нужно ли как-то менять automation planes, чтобы иметь доступ ко всем возможностям и градациям памяти; если да - дизайн, делаем".
+Status: steps 1-3 done 2026-10-08 (one registry, MCP `memory_access`; one address form; TTD over spaces); steps 4-5 open. Owner request: "нужно ли как-то менять automation planes, чтобы иметь доступ ко всем возможностям и градациям памяти; если да - дизайн, делаем".
 
 ## 1. The problem
 
@@ -115,4 +115,14 @@ Each step lands on its own, with its tests, mutants and docs.
 - Lua's positional `ttd_find_last` takes `space` as its last argument.
 - GDB has `monitor regions`, `monitor mem <space:offset> [len]` and `monitor ttd findlast <w|r|x> <space:offset>` (`gdbmonitormemory.h`).
 - Mutants caught: the match's region name, a region parsed as a page, the region read's clip, the GDB space.
+
+**Step 3 (2026-10-08).**
+- The `space` of find-last, coverage-probe and coverage-scan is resolved in one place (`TrackedSpace`): `ram`, `vram` / `sprinter.vram`, `cache` / `sprinter.fastram`. Any other memory is refused, with a pointer to memory-at.
+- Coverage answers name `space`, `offset_from` and `offset_to`.
+- New verbs, on every surface:
+  - `memory-at` (space, frame, offset, length): the newest checkpoint at or before the frame, from the engine's store, with no seek.
+  - `memory-diff` (space, from_frame, to_frame, limit): the pieces whose versions differ, then a byte compare into ranges.
+  - Both take `ram`, `ramN`, or any recorded memory by name or alias, and are engine-only (v1: 501).
+- Surfaces: WebAPI `POST /ttd/memory-at` and `/ttd/memory-diff`; CLI `ttd memory-at` / `mat` and `ttd memory-diff` / `mdiff`; Lua `ttd_memory_at{}` / `ttd_memory_diff{}`; Python `ttd_memory_at()` / `ttd_memory_diff()`; MCP `time_travel` `memory_at` / `memory_diff`; the `space` of coverage on all of them.
+- Mutants caught: the checkpoint choice, the coverage page, the space mapping, the ramN base.
 

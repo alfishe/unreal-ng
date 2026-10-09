@@ -549,6 +549,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::dumpTTD, "/api/v1/emulator/{id}/ttd/dump", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::loadTTD, "/api/v1/emulator/{id}/ttd/load", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::findLastTTD, "/api/v1/emulator/{id}/ttd/find-last", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::memoryAtTTD, "/api/v1/emulator/{id}/ttd/memory-at", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::memoryDiffTTD, "/api/v1/emulator/{id}/ttd/memory-diff", drogon::Post);
     // D40 - the write journal on demand: switch it, build it by replay
     ADD_METHOD_TO(EmulatorAPI::journalTTD, "/api/v1/emulator/{id}/ttd/journal", drogon::Get, drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::buildJournalTTD, "/api/v1/emulator/{id}/ttd/journal/build", drogon::Post);
@@ -1661,6 +1663,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void loadTTD(const drogon::HttpRequestPtr& req,
                  std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void findLastTTD(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void memoryAtTTD(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void memoryDiffTTD(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void journalTTD(const drogon::HttpRequestPtr& req,
                     std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;

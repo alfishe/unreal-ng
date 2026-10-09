@@ -839,5 +839,43 @@ TEST_P(TTDControl_Test, ARestartedBlackBoxLeavesItsRecordingToLoad)
     EXPECT_FALSE(FileHelper::FileExists(marker)) << "an explicit session's folder goes with it";
 }
 
+// memory-at / memory-diff: a memory at a past checkpoint and what changed between two, from the engine's store. On
+// the 128K ROM's frame interrupt FRAMES (#5C78, RAM page 5 offset #1C78) counts up every frame.
+// Boot-bound: the ROM reaches BASIC (interrupts on) in about 100 frames, run before the recording in the turbo mode
+TEST_P(TTDControl_Test, MemoryAtAndMemoryDiffReadTheStore)
+{
+    _emulator->EnableTurboMode();
+    _emulator->RunNFrames(120, /*skipBreakpoints=*/true);
+    _emulator->DisableTurboMode();
+    Record(4);
+    ASSERT_TRUE(Run("stop").Ok());
+    const std::string first = std::to_string(Info().sessionStartFrame);
+    const std::string last = std::to_string(Info().currentEndFrame);
+    const TTDReply at = Run("memory-at", {{"space", "ram5"}, {"offset", "0x1C78"}, {"length", "1"}, {"frame", first}});
+    if (!GetParam())
+    {
+        EXPECT_EQ(at.error, TTDControlError::NotAvailable) << "v1 has no piece store";
+        return;
+    }
+    ASSERT_TRUE(at.Ok()) << at.message;
+    EXPECT_EQ(Str(at, "space"), "ram");
+    EXPECT_EQ(at.body.find("offset")->i, 5 * 0x4000 + 0x1C78) << "page 5 of the machine RAM";
+    const TTDReply end = Run("memory-at", {{"space", "ram5"}, {"offset", "0x1C78"}, {"length", "1"}, {"frame", last}});
+    ASSERT_TRUE(end.Ok()) << end.message;
+    EXPECT_NE(Str(at, "hex"), Str(end, "hex")) << "FRAMES counted on";
+
+    const TTDReply diff = Run("memory-diff", {{"space", "ram5"}, {"from_frame", first}, {"to_frame", last}});
+    ASSERT_TRUE(diff.Ok()) << diff.message;
+    bool frames = false;
+    for (const StateNode& r : diff.body.find("ranges")->items)
+        frames = frames || (r.find("offset")->i <= 0x1C78 && r.find("offset")->i + r.find("length")->i > 0x1C78);
+    EXPECT_TRUE(frames) << "FRAMES is among the changed bytes of page 5";
+    EXPECT_EQ(Run("memory-diff", {{"space", "ram5"}, {"from_frame", first}, {"to_frame", first}}).body.find("changed_bytes")->i, 0);
+
+    EXPECT_EQ(Run("memory-at", {{"frame", first}}).error, TTDControlError::BadRequest) << "no space";
+    EXPECT_EQ(Run("memory-at", {{"space", "ram5"}, {"frame", first}, {"length", "0"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("memory-at", {{"space", "ram5"}, {"frame", first}, {"offset", "0x4000000"}}).error, TTDControlError::BadRequest);
+}
+
 INSTANTIATE_TEST_SUITE_P(Backends, TTDControl_Test, ::testing::Values(false, true),
                          [](const ::testing::TestParamInfo<bool>& info) { return info.param ? "Controller" : "V1"; });

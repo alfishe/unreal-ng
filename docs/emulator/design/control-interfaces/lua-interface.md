@@ -1105,6 +1105,15 @@ local scan = ttd_coverage_scan{kind = "executed", addr_from = 0x0038, addr_to = 
 --   matching_frames = 3, scanned_frames = 183, truncated = false,
 --   covered_from = 18, covered_to = 197, index_available = true }
 
+-- The Sprinter's video RAM by its own offsets (space = "vram" / "cache": inside one 16 KB page)
+local written = ttd_coverage_scan{kind = "written", space = "vram", addr_from = 0x4805, addr_to = 0x4805}
+
+-- A memory at a past checkpoint, and what changed between two - from the store, no seek
+local at = ttd_memory_at{space = "ram5", frame = 150, offset = 0x1C78, length = 2}
+-- { space = "ram", offset = 89208, length = 2, frame = 150, at_frame = 150, exact = true, hex = "6500" }
+local diff = ttd_memory_diff{space = "neogs.ram", from_frame = 150, to_frame = 600}
+-- { space = "neogs.ram", changed_bytes = ..., ranges = { {offset = 4096, length = 64}, ... }, truncated = false }
+
 local summary = ttd_coverage_summary{from_frame = 1, to_frame = 500, bucket_size = 50, limit = 100}
 -- { from_frame = 1, to_frame = 500, covered_from = 18, covered_to = 497,
 --   bucket_size = 50, bucket_count = 10, index_available = true,

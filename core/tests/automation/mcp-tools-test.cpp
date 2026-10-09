@@ -3430,3 +3430,76 @@ TEST_F(McpTools_Test, MemoryAccess_ReachesRegionsAndTheZ80View)
         EXPECT_TRUE(RunTool(*_registry, "memory_access", bad, *_caller).isError) << bad.toStyledString();
     EXPECT_EQ(_caller->calls.size(), calls) << "refused before the WebAPI";
 }
+
+/// time_travel memory_at / memory_diff: a memory at a past checkpoint and what changed, through POST /ttd/memory-at
+/// and /ttd/memory-diff; coverage_scan passes space; missing options never reach the WebAPI
+TEST_F(McpTools_Test, TimeTravel_MemoryAtMemoryDiffAndCoverageSpace)
+{
+    Json::Value at;
+    at["space"] = "sprinter.vram";
+    at["offset"] = 0x4805;
+    at["length"] = 2;
+    at["at_frame"] = 7;
+    at["exact"] = true;
+    at["hex"] = "39AA";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/memory-at"] = {200, at};
+    Json::Value args;
+    args["action"] = "memory_at";
+    args["space"] = "vram";
+    args["frame"] = 7;
+    args["offset"] = "0x4805";
+    args["length"] = 2;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/memory-at");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["space"].asString(), "vram");
+    EXPECT_EQ(call->body["offset"].asString(), "0x4805");
+    EXPECT_EQ(call->body["frame"].asUInt(), 7u);
+    EXPECT_NE(result.text.find("2 bytes of sprinter.vram at offset 18437 as at frame 7: 39AA"), std::string::npos) << result.text;
+
+    Json::Value diff;
+    diff["space"] = "ram";
+    diff["changed_bytes"] = 3;
+    diff["at_from"] = 1;
+    diff["at_to"] = 9;
+    Json::Value range;
+    range["offset"] = 0x1C78;
+    range["length"] = 3;
+    diff["ranges"].append(range);
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/memory-diff"] = {200, diff};
+    args = Json::Value();
+    args["action"] = "memory_diff";
+    args["space"] = "ram5";
+    args["from_frame"] = 1;
+    args["to_frame"] = 9;
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("3 bytes differ between frame 1 and frame 9 (offset+length: 7288+3)"), std::string::npos)
+        << result.text;
+
+    Json::Value scan;
+    scan["index_available"] = true;
+    scan["frames"] = Json::Value(Json::arrayValue);
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/coverage/scan?space=vram&kind=written&addr_from=0x4805&addr_to=0x4805"] =
+        {200, scan};
+    args = Json::Value();
+    args["action"] = "coverage_scan";
+    args["space"] = "vram";
+    args["kind"] = "written";
+    args["addr_from"] = "0x4805";
+    args["addr_to"] = "0x4805";
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/ttd/coverage/scan?space=vram&kind=written&addr_from=0x4805&addr_to=0x4805"));
+
+    const size_t calls = _caller->calls.size();
+    args = Json::Value();
+    args["action"] = "memory_at";
+    args["space"] = "vram";
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "no frame";
+    args["action"] = "memory_diff";
+    args["from_frame"] = 1;
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "no to_frame";
+    EXPECT_EQ(_caller->calls.size(), calls);
+}
