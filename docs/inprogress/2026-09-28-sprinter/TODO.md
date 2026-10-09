@@ -406,8 +406,9 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
     the chip and the PLD's sources): exact (`SprinterIdleCycles_Test`), -4 % to -10 % per frame on four demos
     ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.3); the
     prototype's drift was `CovoxBlaster::Acknowledge` not reaching `t` first
-  - [ ] Screen catch-up on events instead of every step (`MainLoop::OnCPUStep` -> `DrawTo`, ~12 %); a prototype
-    lost the frame's tail
+  - [x] The screen drawn on its own events, the tail on the frame's last step (`Screen::CatchesUpOnEvents`): exact
+    on four demos (`SprinterFastPathsDemo_Test`), -8 % to -17 % per frame
+    ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.4)
   - [ ] A Sprinter frame benchmark without a disk image (the CTC `EI : HALT` program of `SprinterIdleCycles_Test`
     plus accelerator fills)
 - Renderer speed (naive v1): `BM_SprinterRender_Logo` 512 µs per frame against 46 µs for the TS-Conf

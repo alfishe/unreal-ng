@@ -1,6 +1,7 @@
-// The Sprinter engine's fast paths - a halted CPU's idle cycles in one go (Z84C15Engine::RunIdleCycles) and the INT
-// question answered from a kept "no" (ChainSource::IsIntAsserted) - change nothing: the same pictures, sound,
-// registers (R included), T-states and memory as one cycle per step asking every boundary. Two machines run the same
+// The Sprinter's fast paths - a halted CPU's idle cycles in one go (Z84C15Engine::RunIdleCycles), the INT question
+// answered from a kept "no" (ChainSource::IsIntAsserted) and the screen drawn on its own events instead of after every
+// step (ScreenSprinter::CatchesUpOnEvents) - change nothing: the same pictures, sound, registers (R included),
+// T-states and memory as one cycle per step asking every boundary and drawing after every step. Two machines run the same
 // thing, one with the fast paths off, and are compared at
 // every checkpoint, through every driver that allows it: RunNFrames, RunTStates chunks that end inside idle
 // stretches, and MainLoop's frame (the GUI's run).
@@ -25,6 +26,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -33,6 +35,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/z84c15/z84c15engine.h"
 #include "emulator/sound/sprinter/covoxblaster.h"
+#include "emulator/video/sprinter/screensprinter.h"
 #include "sprinterzxsession.h"
 
 namespace
@@ -135,6 +138,9 @@ protected:
         ASSERT_NE(run.engine, nullptr);
         run.engine->SetIdleCyclesInOneGo(inOneGo);
         run.engine->SetIntAnswerKept(inOneGo);
+        auto* screen = dynamic_cast<ScreenSprinter*>(run.context->pScreen);
+        ASSERT_NE(screen, nullptr);
+        screen->SetCatchUpOnEvents(inOneGo);
     }
 
     /// Reset; pages 5 and 7 power up random (Memory::RandomizeMemoryContent): the same start for both machines
@@ -291,64 +297,90 @@ TEST_F(SprinterIdleCycles_Test, BusyCtcLoop_RunsAsAskingEveryBoundary)
     ExpectSameTrace(perStep, fast);
 }
 
-// deMarche's dontBlink (C:\DEMOS\DNTBLINK) with the shipped sound cards: the CTC tick, the frame INT, the accelerator,
-// the Covox-Blaster streaming from the hard disk, the AY and the NeoGS - started by SYSTEM.BAT, no key typed
-TEST_F(SprinterIdleCycles_Test, DontBlink_RunsAsOneCyclePerStep)
+// Sprinter demos from the MAME pack's system disk (C:\DEMOS), each started by SYSTEM.BAT with the shipped sound cards:
+// boot and load in turbo (the CPU compared), then 200 frames at normal speed through every driver
+class SprinterFastPathsDemo_Test : public SprinterIdleCycles_Test
 {
-    const char* path = std::getenv("UNREAL_SPRINTER_HDD");
-    if (!path || !FileHelper::FileExists(path))
-        GTEST_SKIP() << "UNREAL_SPRINTER_HDD (the raw sp_hdd_sys.img) not set";
-    SoundCardScope shippedSound;
-
-    auto start = [&](Run& run, const char* id, bool inOneGo) {
-        Create(run, id, inOneGo);
-        ASSERT_FALSE(HasFatalFailure());
-        MediaSource source;
-        source.path = path;
-        InsertOptions options;
-        options.immediate = true;
-        options.access = AccessMode::Session;
-        const auto result = run.context->pMediaManager->Insert("ide0.master", source, options);
-        ASSERT_TRUE(result.Ok()) << result.message;
-        // SYSTEM.BAT runs the demo (same length: the session copy is written, the image stays as it is)
-        Medium* medium = run.context->pMediaManager->GetMedium("ide0.master");
-        ASSERT_NE(medium, nullptr);
-        FatInPlace disk(*medium->Block());
-        ASSERT_TRUE(disk.Open());
-        std::vector<uint8_t> bat;
-        ASSERT_TRUE(disk.Read("/SYSTEM.BAT", bat));
-        std::string text = "@echo off\r\ncd \\demos\\dntblink\r\ndntblink\r\nrem ";
-        ASSERT_LT(text.size() + 2, bat.size());
-        text.append(bat.size() - text.size() - 2, ' ');
-        text += "\r\n";
-        ASSERT_TRUE(disk.Overwrite("/SYSTEM.BAT", std::vector<uint8_t>(text.begin(), text.end())));
-        Reset(run);
-        run.emulator->EnableTurboMode();
-    };
-    Run perStep;
-    Run inOneGo;
-    start(perStep, "sprinter-dontblink-per-step", false);
-    if (HasFatalFailure())
-        return;
-    start(inOneGo, "sprinter-dontblink-in-one-go", true);
-    if (HasFatalFailure())
-        return;
-
-    // DSS boots and the demo loads (turbo, no sound): the CPU compared every 50 frames. Not the picture: turbo
-    // renders only the frames the host's clock lets it (MainLoop's render decimation), which differs between runs
-    for (int block = 0; block < 24; block++)
+protected:
+    void RunDemo(const std::string& name, int loadFrames)
     {
-        EmulatorTestHelper::RunFramesFast(perStep.emulator.get(), 50);
-        EmulatorTestHelper::RunFramesFast(inOneGo.emulator.get(), 50);
-        ASSERT_EQ(CpuHash(inOneGo.context), CpuHash(perStep.context)) << "CPU differs after " << 50 * (block + 1) << " frames";
-    }
-    perStep.emulator->DisableTurboMode();
-    inOneGo.emulator->DisableTurboMode();
-    Drive(perStep, 100);
-    Drive(inOneGo, 100);
+        const char* path = std::getenv("UNREAL_SPRINTER_HDD");
+        if (!path || !FileHelper::FileExists(path))
+            GTEST_SKIP() << "UNREAL_SPRINTER_HDD (the raw sp_hdd_sys.img) not set";
+        SoundCardScope shippedSound;
 
-    auto* decoder = dynamic_cast<PortDecoder_Sprinter*>(inOneGo.context->pPortDecoder);
-    EXPECT_GT(decoder->GetCovoxBlaster().State().ringWrites, 100000u) << "the music streams from the disk";
-    EXPECT_GT(inOneGo.engine->IdleCyclesRunInOneGo(), 100u * 20000u) << "the demo waits in HALT most of a frame";
-    ExpectSameTrace(perStep, inOneGo);
+        auto start = [&](Run& run, const char* id, bool inOneGo) {
+            Create(run, id, inOneGo);
+            ASSERT_FALSE(HasFatalFailure());
+            MediaSource source;
+            source.path = path;
+            InsertOptions options;
+            options.immediate = true;
+            options.access = AccessMode::Session;
+            const auto result = run.context->pMediaManager->Insert("ide0.master", source, options);
+            ASSERT_TRUE(result.Ok()) << result.message;
+            // SYSTEM.BAT runs the demo (same length: the session copy is written, the image stays as it is)
+            Medium* medium = run.context->pMediaManager->GetMedium("ide0.master");
+            ASSERT_NE(medium, nullptr);
+            FatInPlace disk(*medium->Block());
+            ASSERT_TRUE(disk.Open());
+            std::vector<uint8_t> bat;
+            ASSERT_TRUE(disk.Read("/SYSTEM.BAT", bat));
+            std::string text = "@echo off\r\ncd \\demos\\" + name + "\r\n" + name + "\r\nrem ";
+            ASSERT_LT(text.size() + 2, bat.size());
+            text.append(bat.size() - text.size() - 2, ' ');
+            text += "\r\n";
+            ASSERT_TRUE(disk.Overwrite("/SYSTEM.BAT", std::vector<uint8_t>(text.begin(), text.end())));
+            Reset(run);
+            run.emulator->EnableTurboMode();
+        };
+        Run perStep;
+        Run fast;
+        start(perStep, "sprinter-demo-per-step", false);
+        if (HasFatalFailure())
+            return;
+        start(fast, "sprinter-demo-fast", true);
+        if (HasFatalFailure())
+            return;
+
+        // DSS boots and the demo loads (turbo, no sound): the CPU compared every 50 frames. Not the picture: turbo
+        // renders only the frames the host's clock lets it (MainLoop's render decimation), which differs between runs
+        for (int block = 0; block < loadFrames / 50; block++)
+        {
+            EmulatorTestHelper::RunFramesFast(perStep.emulator.get(), 50);
+            EmulatorTestHelper::RunFramesFast(fast.emulator.get(), 50);
+            ASSERT_EQ(CpuHash(fast.context), CpuHash(perStep.context)) << "CPU differs after " << 50 * (block + 1) << " frames";
+        }
+        perStep.emulator->DisableTurboMode();
+        fast.emulator->DisableTurboMode();
+        Drive(perStep, 100);
+        Drive(fast, 100);
+        ExpectSameTrace(perStep, fast);
+
+        // The demo ran: its pictures move
+        std::set<uint64_t> pictures;
+        for (size_t i = 0; i < fast.trace.size(); i += 3)
+            pictures.insert(fast.trace[i]);
+        EXPECT_GT(pictures.size(), 10u) << "the demo moves";
+        _fast = fast.engine;
+        _ringWrites = dynamic_cast<PortDecoder_Sprinter*>(fast.context->pPortDecoder)->GetCovoxBlaster().State().ringWrites;
+    }
+
+    Z84C15Engine* _fast = nullptr;
+    uint64_t _ringWrites = 0;
+};
+
+// deMarche's dontBlink: the CTC tick, the frame INT, the accelerator, the Covox-Blaster streaming from the hard disk
+TEST_F(SprinterFastPathsDemo_Test, DontBlink)
+{
+    RunDemo("dntblink", 1200);
+    if (HasFatalFailure() || IsSkipped())
+        return;
+    EXPECT_GT(_ringWrites, 100000u) << "the music streams from the disk";
+    EXPECT_GT(_fast->IdleCyclesRunInOneGo(), 100u * 20000u) << "the demo waits in HALT most of a frame";
 }
+
+// Busy demos: graphics every frame, little HALT
+TEST_F(SprinterFastPathsDemo_Test, Rotozoom) { RunDemo("rotozoom", 700); }
+TEST_F(SprinterFastPathsDemo_Test, Plasma2) { RunDemo("plasma2", 700); }
+TEST_F(SprinterFastPathsDemo_Test, BadApple) { RunDemo("badapple", 700); }

@@ -680,12 +680,45 @@ rounds alternating, load 9-14): 94-99.9 % of the boundaries answered from the ke
 A first version read the counts through calls (an out-of-line `StateVersion`, a virtual for the board): ROTOZOOM
 and PLASMA2 got 3-5 % slower - their chip has no interrupt enabled, so the plain question is already cheap.
 
-### 8.4 What remains
+### 8.4 The screen drawn on its own events (`Screen::CatchesUpOnEvents`)
+
+`MainLoop::OnCPUStep` drew the screen after every step: on the Sprinter `DrawTo` the step's few pixels, with the
+inputs rebuilt each time (59 000 calls a frame on DNTBLINK, 7 pixels each). Every input of the Sprinter's picture
+already has a catch-up that draws the beam up to the moment before it changes (section 3.5): the video RAM's
+before-change listener (palette and mode table included), `CatchUpToBorderLatch`, the decoder's `CatchUpScreen` at
+HOLD, RGMOD and `#7FFD` bit 3. So `ScreenSprinter::CatchesUpOnEvents` says so, and MainLoop - which reads it at
+the frame start next to the turbo render decimation - draws such a screen only on the frame's last step (the
+tail); a classic screen keeps the per-step call, behind the same one flag test as before. Where something looks
+mid-frame the picture is drawn up to the beam too: at the end of a direct run (`DirectStepScope`) and when the
+machine parks on a pause (`WaitWhilePaused`). Not while a configuration's beam-ordered picture runs (Game: its
+state advances with every catch-up). `SetCatchUpOnEvents` turns it off for comparisons.
+
+**Exactness:** `SprinterIdleCycles_Test` and `SprinterFastPathsDemo_Test` (DNTBLINK, ROTOZOOM, PLASMA2, BADAPPLE
+with the shipped sound cards) compare all three fast paths on against all off; the pictures are equal at every
+checkpoint.
+
+**Measured** (2026-10-09, the other two fast paths on in both, host CPU per frame, rounds alternating, load 9-14):
+
+| Demo | Per step | On events | |
+|---|---|---|---|
+| DNTBLINK | 1.85-1.88 ms | 1.55-1.56 ms | -17 % |
+| ROTOZOOM | 3.38-3.41 ms | 2.78-2.83 ms | -17 % |
+| PLASMA2 | 0.87-0.89 ms | 0.81 ms | -8 % |
+| BADAPPLE | 1.40-1.43 ms | 1.21 ms | -15 % |
+
+The per-step call for the classic screens stays one flag test (`MainLoop::_stepScreen` replaces `_renderThisFrame`
+there): `BM_HostFrame_{48K,Pentagon,Scorpion}_{Fast,Debug}`, A = `cfc87408c`, B = the change, rounds A B A B A B
+B A B A, load 10-14: mean paired difference -1.0 % to +0.1 %, within noise.
+
+The first prototype drew the tail in `MainLoop::OnFrameEnd`, after the frame's T had been rebased: `DrawTo` took
+the small T for a step back and the tail was lost - the frame's last step is the place.
+
+### 8.5 What remains
 
 After the idle-cycle fast-forward (profile of the same run): the CPU and the bus path (~40 %), the pixel renderer (~19 %),
 the screen catch-up on video RAM writes (~12 %), the frame end (~8 %). Next candidates: the INT question cached
 between source events for running (not halted) code, the screen catch-up on events instead of every step, the
-renderer per square (the INT question is done: section 8.3). General rules for such changes: [performance-guidelines.md](../../../guidelines/performance-guidelines.md).
+renderer per square (the INT question and the screen catch-up are done: sections 8.3, 8.4). General rules for such changes: [performance-guidelines.md](../../../guidelines/performance-guidelines.md).
 
 ## 9. Where the older design documents differ from the code
 

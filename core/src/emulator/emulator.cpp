@@ -1486,6 +1486,9 @@ void Emulator::WaitWhilePaused()
     // park). The caller executes the machine, so it may read the session
     if (_context && _context->pTimeTravelHooks)
         _context->pTimeTravelHooks->OnMachineParking();
+    // The picture up to the beam for whoever looks while parked (Screen::CatchesUpOnEvents)
+    if (Screen* screen = _context ? _context->pScreen : nullptr; screen && screen->CatchesUpOnEvents())
+        screen->UpdateScreen();
     NoteDebugChange();   // a stop (a breakpoint's park inside the frame) the debugger snapshot's seq counts
 
     std::unique_lock<std::mutex> lock(_pauseWaitMutex);
@@ -2746,6 +2749,9 @@ Emulator::DirectStepScope::~DirectStepScope()
             _emulator._lastStop.reason = _emulator._directStop.hit ? DebugStop::Reason::Breakpoint : DebugStop::Reason::Step;
             _emulator._lastStop.breakpoint = _emulator._directStop;
         }
+        // What the run left mid-frame on a screen that catches up on its own events (Screen::CatchesUpOnEvents)
+        if (Screen* screen = _emulator._context ? _emulator._context->pScreen : nullptr; screen && screen->CatchesUpOnEvents())
+            screen->UpdateScreen();
         _emulator.NoteDebugChange();   // the direct run stopped
         // The GUI's one refresh, now it may read; the payload says whether a breakpoint ended the run
         auto* payload = new CpuStepPayload(_emulator.GetId());

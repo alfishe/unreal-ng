@@ -761,6 +761,11 @@ public:
     uint32_t GetTstatesPerLine() const { return _rasterState.tstatesPerLine; }
 
     virtual void UpdateScreen() = 0;
+    /// Every change of what the picture shows calls this screen's own catch-up before it lands (video RAM, palette,
+    /// border, mode registers): the per-step UpdateScreen is then needed only on the frame's last step (it draws
+    /// the tail) and where something looks mid-frame (the end of a direct run, a pause). MainLoop reads it at the
+    /// frame start. Default false: the classic screens draw from the per-step call
+    virtual bool CatchesUpOnEvents() const { return false; }
     virtual void DrawPeriod(uint32_t fromTstate, uint32_t toTstate);
     virtual void Draw(uint32_t tstate);
 

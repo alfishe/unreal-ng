@@ -132,6 +132,10 @@ protected:
     /// frame-refresh notification). Machine-time work (CPU, tape, FDC, TTD,
     /// analyzers, keyboard) always runs, keeping turbo timing invariant.
     bool _renderThisFrame = true;
+    /// From _renderThisFrame and Screen::CatchesUpOnEvents at the frame start: the screen is drawn after every step
+    /// (the classic screens), or only on the frame's last step (a screen that catches up on its own events)
+    bool _stepScreen = true;
+    bool _tailScreen = false;
     /// True while the previous frame rendered. A rendered frame that follows
     /// one or more skipped frames needs Screen::ResetPrevTstate() so DrawPeriod
     /// starts the beam at t=0 instead of a stale end-of-frame position.
