@@ -244,7 +244,7 @@ const std::vector<std::string>& SymbolControl::OptionsFor(const std::string& ver
         {"detect", {"path"}},
         {"sets", {}},
         {"import", {"path", "data", "name", "format", "set", "space", "base", "policy"}},
-        {"export", {"path", "format", "sets", "pages"}},
+        {"export", {"path", "format", "sets", "pages", "space", "from", "to", "kinds", "name"}},
         {"set", {"id", "enabled", "priority"}},
         {"drop", {"id"}},
         {"scan", {}},
@@ -475,6 +475,23 @@ SymbolReply SymbolControl::Export(const SymbolRequest& request)
         else
             return Fail(SymbolControlError::BadRequest, "'pages' is one of fold, comment, drop: '" + pages + "'");
     }
+    if (request.options.count("space"))
+    {
+        AddressSpace space;
+        if (!AddressSpace::Parse(Option(request, "space"), space))
+            return Fail(SymbolControlError::BadRequest, "'space' is no address space: '" + Option(request, "space") + "'");
+        options.space = space.Format();
+    }
+    for (const char* bound : {"from", "to"})
+        if (request.options.count(bound))
+        {
+            int64_t value = 0;
+            if (!ParseNumber(Option(request, bound), value) || value < 0 || value > 0xFFFF)
+                return Fail(SymbolControlError::BadRequest, std::string("'") + bound + "' is no CPU address: '" + Option(request, bound) + "'");
+            (std::string(bound) == "from" ? options.from : options.to) = static_cast<int32_t>(value);
+        }
+    options.kinds = SplitList(Option(request, "kinds"));
+    options.name = Option(request, "name");
     const SymbolExportResult result = _labels->ExportSymbols(path, options);
     StateNode body = StateNode::Object();
     body["path"] = path;

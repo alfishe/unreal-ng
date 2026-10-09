@@ -116,6 +116,16 @@ paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"][
 paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["pages"]["description"] = "A page symbol in a format without pages (DT-4): fold (default), comment, drop";
 paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("path");
 paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["sets"]["items"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["space"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["space"]["description"] = "Only symbols of this space (ram3, rom0, cpu:main ...)";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["from"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["from"]["description"] = "Only CPU addresses from this one";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["to"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["to"]["description"] = "Only CPU addresses up to this one";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["kinds"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["kinds"]["description"] = "Only these kinds, a comma list (code, data, const ... or a file's own type word)";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["name"]["type"] = "string";
+paths["/api/v1/emulator/{id}/symbols/export"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["name"]["description"] = "A name pattern: * any run, ? one character";
 paths["/api/v1/emulator/{id}/symbols/export"]["post"]["responses"]["200"]["description"] = "{path, format, written, diagnostics}";
 paths["/api/v1/emulator/{id}/symbols/export"]["post"]["responses"]["400"]["description"] = "Bad option, no format for the extension, write failed";
 paths["/api/v1/emulator/{id}/symbols/export"]["post"]["responses"]["404"]["description"] = "A named set does not exist";

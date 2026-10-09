@@ -842,12 +842,60 @@ SymbolExportResult LabelManager::ExportSymbols(const std::string& path, const Sy
             result.message = "No symbol set: " + id;
             return result;
         }
+    // The filters: space, CPU address range, kind (or the file's own type word), name pattern
+    const auto matchName = [](const std::string& pattern, const std::string& name) {
+        size_t p = 0, n = 0, star = std::string::npos, mark = 0;
+        while (n < name.size())
+        {
+            if (p < pattern.size() && (pattern[p] == '?' || pattern[p] == name[n]))
+            {
+                ++p;
+                ++n;
+            }
+            else if (p < pattern.size() && pattern[p] == '*')
+            {
+                star = p++;
+                mark = n;
+            }
+            else if (star != std::string::npos)
+            {
+                p = star + 1;
+                n = ++mark;
+            }
+            else
+                return false;
+        }
+        while (p < pattern.size() && pattern[p] == '*')
+            ++p;
+        return p == pattern.size();
+    };
+    const auto passes = [&](const Symbol& s, const std::string& name) {
+        if (!request.space.empty() && s.location.space.Format() != request.space)
+            return false;
+        if (request.from >= 0 || request.to >= 0)
+        {
+            const auto address = CpuAddress(s);
+            if (!address || (request.from >= 0 && *address < request.from) || (request.to >= 0 && *address > request.to))
+                return false;
+        }
+        if (!request.kinds.empty())
+        {
+            const std::string kind = s.kind != SymbolKind::Unknown ? std::string(KindName(s.kind)) : s.provenance.type;
+            if (std::find(request.kinds.begin(), request.kinds.end(), kind) == request.kinds.end())
+                return false;
+        }
+        return request.name.empty() || matchName(request.name, name);
+    };
     SymbolFile file;
     if (codec->Info().family == Family::Native)
     {
         for (const SymbolSet& set : sets)
             if (request.sets.empty() || std::find(request.sets.begin(), request.sets.end(), set.id) != request.sets.end())
+            {
                 file.sets.push_back(set);
+                auto& symbols = file.sets.back().symbols;
+                symbols.erase(std::remove_if(symbols.begin(), symbols.end(), [&](const Symbol& s) { return !passes(s, s.name); }), symbols.end());
+            }
     }
     else
     {
@@ -855,6 +903,8 @@ SymbolExportResult LabelManager::ExportSymbols(const std::string& path, const Sy
         std::vector<Symbol>& symbols = file.sets[0].symbols;
         for (const auto& [symbol, name] : Resolve(sets, request.sets.empty() ? nullptr : &request.sets))
         {
+            if (!passes(*symbol, name))
+                continue;
             // A label set by hand as the label shows it; a file's record as the file had it
             Symbol s = HasLabelTraits(*symbol) ? ToSymbol(*ToLabel(*symbol)) : *symbol;
             s.name = name;

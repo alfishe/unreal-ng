@@ -36,6 +36,12 @@ struct SymbolExportRequest
     std::string format;                      // a codec id; "" = by the extension
     std::vector<std::string> sets;           // empty = the labels as they show (every enabled set)
     unrealasm::symbols::Unrepresentable pages = unrealasm::symbols::Unrepresentable::Fold;
+    // Filters (symbols/tdd.md section 6): only the symbols that pass all of them
+    std::string space;                       // a space spelling: "ram3", "rom0", "cpu:main" ... ("" = any)
+    int32_t from = -1;                       // the CPU address range, inclusive (-1 = open)
+    int32_t to = -1;
+    std::vector<std::string> kinds;          // "code", "data", "const" ... or a file's own type word (empty = any)
+    std::string name;                        // a name pattern: * any run, ? one character ("" = any)
 };
 struct SymbolExportResult
 {

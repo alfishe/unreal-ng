@@ -49,7 +49,7 @@ manage_symbols {"action":"export","path":"scratch/all.usym.json","format":"nativ
 | PUT | `/api/v1/emulator/{id}/symbols/sets` | `{id, enabled?, priority?}` |
 | DELETE | `/api/v1/emulator/{id}/symbols/sets` | `?id=` |
 | POST | `/api/v1/emulator/{id}/symbols/import` | `{path \| data (base64) + name, format?, set?, space?, base?, policy?}` |
-| POST | `/api/v1/emulator/{id}/symbols/export` | `{path, format?, sets? (array or "a,b"), pages?}` |
+| POST | `/api/v1/emulator/{id}/symbols/export` | `{path, format?, sets? (array or "a,b"), pages?, space?, from?, to?, kinds?, name?}` |
 
 A set id holds a path, so it travels in the body or the query, never in the URL path.
 
@@ -73,7 +73,7 @@ symbols import <file> [--format f] [--set s] [--space ram3] [--base n] [--policy
 symbols set <id> on|off
 symbols set <id> priority <n>
 symbols drop <id>
-symbols export <file> [--format f] [--sets a,b] [--pages fold|comment|drop]
+symbols export <file> [--format f] [--sets a,b] [--pages fold|comment|drop] [--space s] [--from a] [--to a] [--kinds k] [--name pattern]
 ```
 
 Add `--json` to any of them for the reply as JSON (the WebAPI's fields).
@@ -107,6 +107,7 @@ A refusal does not raise: the table / dict has `ok = false` and `error` = the me
 | `base` | import | Added to every offset (decimal, `0x`, `#`, `$`, `h`). |
 | `policy` | import | How a merge treats a record that collides with the set: `both` (a second name for a place becomes an alias; a name that moves keeps its old place; default), `keep`, `replace`, `fail` (nothing changes, HTTP 409 with the conflicts). |
 | `sets` | export | Only these set ids. Default: the labels as they show. The native format writes the sets themselves (every set by default). |
+| `space`, `from`, `to`, `kinds`, `name` | export | Filters: only symbols of a space (`ram3`), a CPU address range (`from` / `to`, inclusive), kinds (a comma list: `code`, `data`, `const`, ... or a file's own type word), a name pattern (`*` any run, `?` one character). |
 | `pages` | export | A page symbol in a format without pages: `fold` (written at its CPU address, default), `comment`, `drop`. |
 | `enabled`, `priority` | set | Show / hide a set's labels; move it up or down. |
 

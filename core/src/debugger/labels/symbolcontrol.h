@@ -14,7 +14,7 @@
 ///   detect   path              the codecs that could read the file, by score, and the one chosen
 ///   sets                       the symbol sets: id, title, origin, priority, enabled, symbols; the label count
 ///   import   path | data name [format set space base policy]   a file (or its bytes as base64) into the store
-///   export   path [format sets pages]              write symbols (LabelManager::ExportSymbols)
+///   export   path [format sets pages space from to kinds name]   write symbols, filtered (LabelManager::ExportSymbols)
 ///   set      id [enabled priority]                 switch a set on / off, change its priority
 ///   drop     id                                    remove a set
 ///   scan                                           label tables of assemblers in RAM (ALASM, XAS): the candidates

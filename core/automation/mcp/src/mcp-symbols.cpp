@@ -53,14 +53,12 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
     schema["properties"]["path"]["description"] = "File path for load_labels / load_listing / detect / import / export";
     schema["properties"]["data"]["type"] = "string";
     schema["properties"]["data"]["description"] = "import: the symbol file itself as base64 instead of a path (a client on another host)";
-    schema["properties"]["name"]["type"] = "string";
-    schema["properties"]["name"]["description"] = "import with data: the file's name (its extension picks the format; the set is upload:<name>)";
     schema["properties"]["format"]["type"] = "string";
     schema["properties"]["format"]["description"] = "import / export: a symbol format id (formats); default: by the extension, else detected";
     schema["properties"]["set"]["type"] = "string";
     schema["properties"]["set"]["description"] = "import: merge into this set (made when missing) instead of the file's own set";
     schema["properties"]["space"]["type"] = "string";
-    schema["properties"]["space"]["description"] = "import: records without a page go here (cpu:main, rom0, ram3, cache0, const, port)";
+    schema["properties"]["space"]["description"] = "import: records without a page go here; export: only symbols of this space (cpu:main, rom0, ram3, cache0, const, port)";
     schema["properties"]["base"]["type"] = "string";
     schema["properties"]["base"]["description"] = "import: added to every offset (decimal, 0x, #, $)";
     schema["properties"]["policy"]["type"] = "string";
@@ -71,6 +69,12 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
     schema["properties"]["sets"]["type"] = "array";
     schema["properties"]["sets"]["items"]["type"] = "string";
     schema["properties"]["sets"]["description"] = "export: only these set ids (default: every enabled set)";
+    schema["properties"]["from"]["type"] = "string";
+    schema["properties"]["from"]["description"] = "export: only CPU addresses from this one (decimal, 0x, #, $)";
+    schema["properties"]["to"]["type"] = "string";
+    schema["properties"]["to"]["description"] = "export: only CPU addresses up to this one";
+    schema["properties"]["kinds"]["type"] = "string";
+    schema["properties"]["kinds"]["description"] = "export: only these kinds, a comma list (code, data, const, entry ... or a file's own type word)";
     schema["properties"]["pages"]["type"] = "string";
     schema["properties"]["pages"]["description"] = "export: page symbols in a format without pages: fold (default), comment, drop";
     schema["properties"]["scanner"]["type"] = "string";
@@ -86,7 +90,9 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
     schema["properties"]["priority"]["type"] = "integer";
     schema["properties"]["priority"]["description"] = "set_enable: higher wins (user 1000000, files 100 and up)";
     schema["properties"]["name"]["type"] = "string";
-    schema["properties"]["name"]["description"] = "Label name for resolve (exactly one of name/address)";
+    schema["properties"]["name"]["description"] =
+        "resolve: the label name (exactly one of name/address); export: a name pattern (* any run, ? one character); import with "
+        "data: the file's name";
     schema["properties"]["address"]["type"] = "string";
     schema["properties"]["address"]["description"] = "Address for resolve / source_at — integer or \"0x…\" hex string";
     schema["properties"]["clear"]["type"] = "boolean";
@@ -276,7 +282,7 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                 if (!upload)
                     body["path"] = args["path"].asString();
                 const std::vector<const char*> names = action == "import" ? std::vector<const char*>{"data", "name", "format", "set", "space", "base", "policy"}
-                                                                         : std::vector<const char*>{"format", "pages"};
+                                                                         : std::vector<const char*>{"format", "pages", "space", "from", "to", "kinds", "name"};
                 for (const char* name : names)
                     if (args.isMember(name) && !args[name].isNull())
                         body[name] = args[name].asString();

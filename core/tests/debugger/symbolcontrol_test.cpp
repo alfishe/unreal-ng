@@ -206,6 +206,26 @@ TEST_F(SymbolControl_Test, AnUploadedFileImportsFromItsBase64)
     EXPECT_EQ(Run("import", {{"data", "AA=="}, {"path", "x.sym"}}).HttpStatus(), 400);
 }
 
+TEST_F(SymbolControl_Test, ExportFiltersBySpaceRangeKindAndName)
+{
+    const std::string file = Write("filter.map", "4000 SCREEN (DATA)\n8000 MAIN (CODE)\n8010 MAIN_LOOP (CODE)\n9000 TABLE (DATA)\n");
+    ASSERT_TRUE(Run("import", {{"path", file}}).Ok());
+    const auto written = [&](std::map<std::string, std::string> options) {
+        options["path"] = Scratch("filtered.sym");
+        const SymbolReply reply = Run("export", options);
+        EXPECT_TRUE(reply.Ok()) << reply.message;
+        return reply.Ok() ? reply.body.find("written")->i : -1;
+    };
+    EXPECT_EQ(written({}), 4);
+    EXPECT_EQ(written({{"from", "#8000"}, {"to", "0x8FFF"}}), 2);
+    EXPECT_EQ(written({{"kinds", "data"}}), 2);
+    EXPECT_EQ(written({{"name", "MAIN*"}}), 2);
+    EXPECT_EQ(written({{"name", "?ABLE"}, {"kinds", "data,code"}}), 1);
+    EXPECT_EQ(written({{"space", "cpu:main"}}), 4);
+    EXPECT_EQ(written({{"space", "ram3"}}), 0);
+    EXPECT_EQ(Run("export", {{"path", Scratch("x.sym")}, {"from", "#10000"}}).HttpStatus(), 400);
+}
+
 TEST_F(SymbolControl_Test, DetectRanksTheCodecs)
 {
     const std::string path = Write("detect.sym", "8000 START\n");
