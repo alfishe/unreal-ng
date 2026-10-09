@@ -4,6 +4,8 @@
 
 #include "common/modulelogger.h"
 #include "emulator/cpu/core.h"
+#include "emulator/io/z80n/nexttiming.h"
+#include "emulator/sound/audio.h"
 
 PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spectrum128(context)
 {
@@ -55,7 +57,7 @@ void PortDecoder_Next::Port_7FFD_Next(uint16_t port, uint8_t value, uint16_t pc)
 {
     (void)port;
     (void)pc;
-    if (IsPagingLocked())
+    if (IsPagingLocked() || !PagingAllowed(port))
         return;
     const uint8_t screenNumber = (value & 0x08) >> 3;
     const uint8_t prevScreenNumber = (_state->p7FFD & 0x08) >> 3;
@@ -67,7 +69,7 @@ void PortDecoder_Next::Port_7FFD_Next(uint16_t port, uint8_t value, uint16_t pc)
 
 void PortDecoder_Next::Port_1FFD_Next(uint8_t value)
 {
-    if (IsPagingLocked())
+    if (IsPagingLocked() || !PagingAllowed(0x1FFD))
         return;
     _state->p1FFD = value;
     Mem().ApplyClassicPaging(_state->p7FFD, _state->p1FFD);
@@ -75,7 +77,7 @@ void PortDecoder_Next::Port_1FFD_Next(uint8_t value)
 
 void PortDecoder_Next::Port_DFFD_Next(uint8_t value)
 {
-    if (IsPagingLocked())
+    if (IsPagingLocked() || !PagingAllowed(0xDFFD))
         return;
     Mem().SetExtendedBank(value);
     Mem().ApplyClassicPaging(_state->p7FFD, _state->p1FFD);
@@ -160,9 +162,10 @@ void PortDecoder_Next::PerformReset(bool hard)
 
 /// region <SPI and the SD cards>
 
-uint64_t PortDecoder_Next::Clocks() const
+double PortDecoder_Next::Now() const
 {
-    return static_cast<uint64_t>(_context->emulatorState.frame_counter) * _context->config.frame + _context->pCore->GetZ80()->t;
+    const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1u;
+    return static_cast<double>(_state->t_states) + static_cast<double>(_context->pCore->GetZ80()->t) / multiplier;
 }
 
 bool PortDecoder_Next::InsertSdCard(unsigned index, std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode)
@@ -195,20 +198,20 @@ void PortDecoder_Next::SpiSelect(uint8_t value)
 
 void PortDecoder_Next::SpiWrite(uint8_t value)
 {
-    const uint64_t now = Clocks();
+    const double now = Now();
     if (now < _spiBusyUntil)
     {
         _spiTooFast++;
         return;
     }
     _spiRx = _spiSelected >= 0 ? _sd[_spiSelected].exchange(value) : 0xFF;
-    _spiBusyUntil = now + kSpiByteClocks;
+    _spiBusyUntil = now + kSpiByteClocks / SpeedRatio();
 }
 
 uint8_t PortDecoder_Next::SpiRead()
 {
     const uint8_t result = _spiRx;
-    const uint64_t now = Clocks();
+    const double now = Now();
     if (now < _spiBusyUntil)
     {
         _spiTooFast++;
@@ -216,8 +219,63 @@ uint8_t PortDecoder_Next::SpiRead()
     }
     // a read starts a transfer of #FF; its answer is what the next read returns
     _spiRx = _spiSelected >= 0 ? _sd[_spiSelected].exchange(0xFF) : 0xFF;
-    _spiBusyUntil = now + kSpiByteClocks;
+    _spiBusyUntil = now + kSpiByteClocks / SpeedRatio();
     return result;
+}
+
+/// endregion
+
+/// region <Speed, machine type and frame timing>
+
+bool PortDecoder_Next::PagingAllowed(uint16_t port) const
+{
+    switch (_board->MachineType())
+    {
+        case 1:
+            return false;  // 48K: no paging ports
+        case 2:
+        case 4:
+            return port != 0x1FFD;  // 128K / Pentagon: no #1FFD
+        default:
+            return true;
+    }
+}
+
+void PortDecoder_Next::SetCpuSpeed(uint8_t ratio)
+{
+    // Applied at the frame boundary by Z80::ApplyQueuedFrequencyMultiplier (composed with the host speed control)
+    _state->hw_turbo_ratio = ratio;
+}
+
+void PortDecoder_Next::SetMachineTiming(uint8_t timing)
+{
+    _pendingTiming = timing;
+    if (!_context->config.frame || timing == _state->ula_timing_class)
+        return;
+    // Before the first frame (reset) there is nothing to wait for
+    if (_context->emulatorState.frame_counter == 0 && _context->pCore->GetZ80()->t == 0)
+        ApplyTiming(timing);
+}
+
+void PortDecoder_Next::OnFrameEnd()
+{
+    if (_pendingTiming && _pendingTiming != _state->ula_timing_class)
+        ApplyTiming(_pendingTiming);
+}
+
+void PortDecoder_Next::ApplyTiming(uint8_t timing)
+{
+    NextTiming t;
+    if (!NextTimingFor(timing, t))
+        return;
+    CONFIG& config = _context->config;
+    config.frame = t.frame;
+    config.t_line = t.line;
+    config.intstart = t.intStart;
+    config.intlen = t.intLength;
+    config.frame_duration_us = CalculateFrameDurationUs(t.frame);
+    _state->ula_timing_class = timing;
+    _pendingTiming = 0;
 }
 
 /// endregion

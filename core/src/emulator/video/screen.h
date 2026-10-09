@@ -698,6 +698,8 @@ protected:
     /// mode + raster decision based on the current emulator port state
     ModeSelection DetectModeZX48(const EmulatorState& state) const;
     ModeSelection DetectModeZX128(const EmulatorState& state) const;
+    /// The family a board selected at run time (EmulatorState::ula_timing_class)
+    ModeSelection DetectModeByTimingClass(const EmulatorState& state) const;
     ModeSelection DetectModePentagon(const EmulatorState& state) const;
     ModeSelection DetectModeATM1(const EmulatorState& state) const;
     ModeSelection DetectModeATM2(const EmulatorState& state) const;

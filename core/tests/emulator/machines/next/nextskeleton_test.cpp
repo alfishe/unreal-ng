@@ -83,6 +83,7 @@ TEST_F(NextSkeleton_Test, ResetSlotTable)
 
 TEST_F(NextSkeleton_Test, PagingPortsRewriteTheSlots)
 {
+    _ports->Board().SetMachineType(3);  // +3: every paging port exists
     Out(0x7FFD, 0x03);  // RAM bank 3, ROM 0
     ExpectSlots({255, 255, 10, 11, 4, 5, 6, 7}, "7FFD = 3");
     Out(0xDFFD, 0x01);  // bank bits above: 8 + 3 = 11
@@ -96,6 +97,7 @@ TEST_F(NextSkeleton_Test, PagingPortsRewriteTheSlots)
 
 TEST_F(NextSkeleton_Test, RomSelectIsFromBit2AndBit4)
 {
+    _ports->Board().SetMachineType(3);
     const uint8_t* rom[4];
     for (int r = 0; r < 4; r++)
         rom[r] = _memory->ROMPageHostAddress(static_cast<uint8_t>(r));

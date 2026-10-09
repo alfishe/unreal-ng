@@ -147,3 +147,54 @@ TEST_F(NextBoot_Test, SpiAccessBeforeTheByteIsDoneIsIgnored)
     Out(0xEB, 0x00);
     EXPECT_EQ(_ports->SpiTooFastCount(), 1u);
 }
+
+// N3: NR #07 sets the CPU clock (applied at the frame boundary, composed with the host speed), NR #03 the machine type
+// and the frame family (applied at the frame end), and the machine type decides which paging ports exist
+TEST_F(NextBoot_Test, CpuSpeedRegisterSetsTheClockMultiplier)
+{
+    NextReg(0x07, 0x03);  // 28 MHz
+    EXPECT_EQ(_context->emulatorState.hw_turbo_ratio, 8);
+    Out(0x243B, 0x07);
+    EXPECT_EQ(In(0x253B), 0x33) << "programmed speed and the speed in effect";
+    _emulator->RunFrame(true);
+    EXPECT_EQ(_context->emulatorState.current_z80_frequency, 28'000'000u) << "7 x 4 of the 3.5 MHz base, with the host at 1x";
+    NextReg(0x07, 0x00);
+    _emulator->RunFrame(true);
+    EXPECT_EQ(_context->emulatorState.current_z80_frequency, 3'500'000u);
+}
+
+TEST_F(NextBoot_Test, MachineTimingChangesTheFrameAtTheFrameEnd)
+{
+    NextReg(0x03, 0x00);
+    NextReg(0x03, 0x92);  // config mode: 128K machine type, timing family 1 (48K) allowed by bit 7
+    EXPECT_FALSE(_memory->InConfigMode());
+    EXPECT_EQ(_context->config.frame, 70908u) << "not before the frame end";
+    _emulator->RunFrame(true);
+    EXPECT_EQ(_context->config.frame, 69888u);
+    EXPECT_EQ(_context->emulatorState.ula_timing_class, 1);
+    NextReg(0x03, 0xC0);  // Pentagon timing family
+    _emulator->RunFrame(true);
+    EXPECT_EQ(_context->config.frame, 71680u);
+    NextReg(0x03, 0xB0);  // +3
+    _emulator->RunFrame(true);
+    EXPECT_EQ(_context->config.frame, 70908u);
+    EXPECT_EQ(_context->config.intlen, 32u);
+}
+
+TEST_F(NextBoot_Test, MachineTypeDecidesThePagingPorts)
+{
+    NextReg(0x03, 0x00);
+    NextReg(0x03, 0x01);  // 48K
+    Out(0x7FFD, 0x13);
+    Out(0x1FFD, 0x05);
+    EXPECT_EQ(_memory->GetMmu(6), 0) << "no paging in a 48K machine";
+    NextReg(0x02, 0x01);  // a soft reset keeps the machine type
+    _z80->Z80Step();
+    NextReg(0x03, 0x00);  // the personality's own write: timing only, the type stays
+    EXPECT_EQ(_ports->Board().MachineType(), 1);
+
+    // 128K: #7FFD works, #1FFD does not
+    NextReg(0x02, 0x01);
+    _z80->Z80Step();
+    EXPECT_EQ(_ports->Board().MachineType(), 1);
+}

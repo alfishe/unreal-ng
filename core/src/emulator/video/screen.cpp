@@ -249,8 +249,9 @@ Screen::ModeSelection Screen::DetectVideoMode(MEM_MODEL model) const
         case MM_PLUS2:
         case MM_PLUS2A:
         case MM_PLUS3:
-        case MM_NEXT:
             return DetectModeZX128(state);
+        case MM_NEXT:
+            return DetectModeByTimingClass(state);
         case MM_PENTAGON:
             return DetectModePentagon(state);
         case MM_ATM450:
@@ -290,6 +291,19 @@ Screen::ModeSelection Screen::DetectModeScorpion(const EmulatorState& /*state*/)
 Screen::ModeSelection Screen::DetectModeZX128(const EmulatorState& /*state*/) const
 {
     return { M_ZX128, R_256_192 };
+}
+
+Screen::ModeSelection Screen::DetectModeByTimingClass(const EmulatorState& state) const
+{
+    switch (state.ula_timing_class)
+    {
+        case 1:
+            return { M_ZX48, R_256_192 };
+        case 4:
+            return { M_PENTAGON128K, R_256_192 };
+        default:
+            return { M_ZX128, R_256_192 };
+    }
 }
 
 // Pentagon 128K: user-forced overscan (UI toggle) must survive the per-frame

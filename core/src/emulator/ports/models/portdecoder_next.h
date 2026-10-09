@@ -33,11 +33,14 @@ public:
 
     /// INextMachine: NR #02. Runs between two instructions
     void PerformReset(bool hard) override;
+    void SetCpuSpeed(uint8_t ratio) override;
+    void SetMachineTiming(uint8_t timing) override;
+    void OnFrameEnd() override;
 
     /// The SPI port pair #E7 (select) / #EB (data): one SD card per select line (NR #0A bit 5 swaps them)
     static constexpr uint16_t kPortSpiSelect = 0x00E7;
     static constexpr uint16_t kPortSpiData = 0x00EB;
-    static constexpr uint64_t kSpiByteClocks = 16;
+    static constexpr double kSpiByteClocks = 16.0;  ///< CPU clocks per byte at any speed
     SdCardSpi& SdCard(unsigned index) { return _sd[index & 1]; }
     bool InsertSdCard(unsigned index, std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode);
     bool InsertSdCard(unsigned index, const std::string& path, SdCardSpi::WriteMode mode);
@@ -53,15 +56,21 @@ private:
     void Port_1FFD_Next(uint8_t value);
     void Port_DFFD_Next(uint8_t value);
 
+    void ApplyTiming(uint8_t timing);
+    /// What the machine type allows: 48K has no paging ports, 128K / Pentagon no #1FFD, +3 all
+    bool PagingAllowed(uint16_t port) const;
     uint8_t SpiRead();
     void SpiWrite(uint8_t value);
     void SpiSelect(uint8_t value);
-    uint64_t Clocks() const;
+    /// Time in 3.5 MHz T-states since the machine started (the frame's own t is in CPU clocks of the current speed)
+    double Now() const;
+    double SpeedRatio() const { return _state->hw_turbo_ratio_applied ? _state->hw_turbo_ratio_applied : 1.0; }
 
     SdCardSpi _sd[2];
+    uint8_t _pendingTiming = 0;  ///< applied at the frame end
     int _spiSelected = -1;
     uint8_t _spiRx = 0xFF;
-    uint64_t _spiBusyUntil = 0;
+    double _spiBusyUntil = 0;
     uint32_t _spiTooFast = 0;
     std::unique_ptr<NextBoard> _board;
     std::unique_ptr<Z80NEngine> _engine;

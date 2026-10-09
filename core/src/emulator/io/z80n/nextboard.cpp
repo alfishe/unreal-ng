@@ -12,6 +12,15 @@ void NextBoard::Reset(bool hard)
     for (uint8_t& r : _regs)
         r = 0;
     _regs[kRegMachineType] = type;
+    if (type >= 1 && type <= 4)
+        _timing = type;
+    else if (hard)
+        _timing = 2;
+    if (_machine)
+    {
+        _machine->SetCpuSpeed(1);
+        _machine->SetMachineTiming(_timing);
+    }
     _selected = 0;
     _resetPending = false;
     const bool config = type == 0;
@@ -33,6 +42,8 @@ uint8_t NextBoard::Read(uint8_t reg) const
             return kCoreVersionSub;
         case kRegResetType:
             return 0;  // power on
+        case kRegCpuSpeed:
+            return static_cast<uint8_t>((_regs[reg] & 3) | ((_regs[reg] & 3) << 4));  // programmed | actual
         default:
             break;
     }
@@ -74,8 +85,21 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             }
             else
                 _regs[reg] = static_cast<uint8_t>((_regs[reg] & 0x07) | (value & 0xF8));
+            // The timing: bits 6:4 when bit 7 allows, else the machine type chosen in config mode
+            const uint8_t wanted = (value & 0x80) ? static_cast<uint8_t>((value >> 4) & 7) : static_cast<uint8_t>(_regs[reg] & 7);
+            if (wanted >= 1 && wanted <= 4 && wanted != _timing)
+            {
+                _timing = wanted;
+                if (_machine)
+                    _machine->SetMachineTiming(_timing);
+            }
             return;
         }
+        case kRegCpuSpeed:
+            _regs[reg] = value & 0x03;
+            if (_machine)
+                _machine->SetCpuSpeed(static_cast<uint8_t>(1u << (value & 3)));
+            return;
         case kRegConfigMapping:
             _regs[reg] = value & 0x3F;
             _memory->SetConfigBank(value);

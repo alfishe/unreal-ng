@@ -22,6 +22,10 @@ public:
     virtual ~INextMachine() = default;
     /// Runs between two instructions
     virtual void PerformReset(bool hard) = 0;
+    /// NR #07: the CPU clock as a multiple of 3.5 MHz (1, 2, 4, 8)
+    virtual void SetCpuSpeed(uint8_t ratio) = 0;
+    /// NR #03: the frame family (NextTiming) the video logic follows from the next frame
+    virtual void SetMachineTiming(uint8_t timing) = 0;
 };
 
 /// The Next board's register file (NEXTREG space, ports #243B select / #253B data): the identification registers
@@ -66,7 +70,11 @@ public:
     void AfterInstruction() override;
 
     /// Machine type (NR #03 bits 2:0): 0 config mode, 1 48K, 2 128K, 3 +3, 4 Pentagon
+    /// The bare personality's machine type (no firmware chooses it): 1 48K, 2 128K, 3 +3, 4 Pentagon
+    void SetMachineType(uint8_t type) { _regs[kRegMachineType] = static_cast<uint8_t>((_regs[kRegMachineType] & 0xF8) | (type & 7)); }
     uint8_t MachineType() const { return _regs[kRegMachineType] & 7; }
+    /// The frame family in effect (NR #03 bits 6:4 once written, else the machine type)
+    uint8_t Timing() const { return _timing; }
     bool SdSwap() const { return (_regs[kRegPeripheral3] & 0x20) != 0; }
 
 private:
@@ -76,6 +84,7 @@ private:
     uint8_t _regs[256] = {};
     std::vector<NextRegWrite>* _log = nullptr;
     const uint16_t* _pc = nullptr;
+    uint8_t _timing = 2;
     bool _resetPending = false;
     bool _resetHard = false;
 };
