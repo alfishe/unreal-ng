@@ -246,7 +246,8 @@ uint32_t MeasuredFrames(const Case& c, const Options& options)
 /// Run the measured frames; per-frame wall time (and capture time when an
 /// engine records) in microseconds
 void RunFrames(Emulator& emulator, const Case& c, const Options& options, Engine* engine,
-               std::vector<double>& frameUs, std::vector<double>* captureUs, CaptureWork* work = nullptr)
+               std::vector<double>& frameUs, std::vector<double>* captureUs, CaptureWork* work = nullptr,
+               std::vector<RegionStat>* afterFirstFrame = nullptr)
 {
     ITimeTravelHooks* ttd = emulator.GetContext()->pTimeTravelHooks;   // whichever records
     const uint32_t frames = MeasuredFrames(c, options);
@@ -282,6 +283,10 @@ void RunFrames(Emulator& emulator, const Case& c, const Options& options, Engine
             captureUs->push_back(static_cast<double>(engine->LastCaptureNs()) / 1000.0);
         if (engine && work)
             *work += engine->LastCaptureWork();
+        // The regions as the first frame left them: the first capture stores every piece once, the steady
+        // rate (BM-9) is what comes after
+        if (engine && afterFirstFrame && f == 0)
+            *afterFirstFrame = engine->RegionStats();
         if (engine && slowFrames)
         {
             const CaptureWork w = engine->LastCaptureWork();
@@ -479,6 +484,26 @@ private:
 /// frame (PR-1 on the engine alone). Wired onto the machine the way
 /// Emulator::Init wires it (hooks, write sink, pTimeTravelController); the
 /// machine owns it
+namespace
+{
+std::vector<RegionStat> RegionStatsOf(const TimeTravelEngine& engine)
+{
+    std::vector<RegionStat> out;
+    for (uint32_t r = 0; r < engine.Regions().size(); ++r)
+    {
+        const TTDRegionDesc& d = engine.Regions()[r];
+        RegionStat s;
+        s.name = d.name;
+        s.bytes = d.bytes;
+        s.pieces = d.pieces;
+        s.payload = engine.RegionPayloadBytes(r);
+        s.versions = engine.RegionVersionCount(r);
+        out.push_back(s);
+    }
+    return out;
+}
+}  // namespace
+
 class EngineController final : public Engine
 {
 public:
@@ -536,6 +561,8 @@ public:
     }
 
     uint32_t FrameSpan() const override { return _ctl ? _ctl->FrameSpan() : 0; }
+
+    std::vector<RegionStat> RegionStats() const override { return RegionStatsOf(_ctl->GetEngine()); }
 
     StreamBytes Bytes() const override
     {
@@ -710,6 +737,8 @@ public:
     uint64_t FirstFrame() const override { return _engine.Frames().FirstFrame(); }
     uint64_t LastFrame() const override { return _engine.Frames().LastFrame(); }
     uint32_t FrameSpan() const override { return _recorder.FrameSpan(); }
+
+    std::vector<RegionStat> RegionStats() const override { return RegionStatsOf(_engine); }
 
     StreamBytes Bytes() const override
     {
@@ -1127,7 +1156,8 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         std::vector<double> frameUs;
         std::vector<double> captureUs;
         CaptureWork work;
-        RunFrames(*emulator, c, options, &engine, frameUs, &captureUs, &work);
+        std::vector<RegionStat> afterFirstFrame;
+        RunFrames(*emulator, c, options, &engine, frameUs, &captureUs, &work, &afterFirstFrame);
         engine.Stop();
         if (!engine.LastError().empty() || engine.Checkpoints() == 0)
         {
@@ -1189,6 +1219,21 @@ Result RunCase(Engine& engine, const Case& c, const Options& options)
         // BM-4 split: where the session heap goes, per recorded frame
         for (const auto& [part, bytes] : engine.HeapParts())
             m["bm4_heap_" + part + "_bpf"] = static_cast<double>(bytes) / n;
+        // BM-9: every region of the engine - its size, stored bytes and versions per recorded frame
+        // (the steady rate: after the first frame, which stores every piece once)
+        for (const RegionStat& r : engine.RegionStats())
+        {
+            m["bm9_" + r.name + "_bytes"] = static_cast<double>(r.bytes);
+            m["bm9_" + r.name + "_bpf"] = static_cast<double>(r.payload) / n;
+            m["bm9_" + r.name + "_vpf"] = static_cast<double>(r.versions) / n;
+            for (const RegionStat& first : afterFirstFrame)
+                if (first.name == r.name && n > 1)
+                {
+                    m["bm9_" + r.name + "_first_bytes"] = static_cast<double>(first.payload);
+                    m["bm9_" + r.name + "_steady_bpf"] = static_cast<double>(r.payload - first.payload) / (n - 1);
+                    m["bm9_" + r.name + "_steady_vpf"] = static_cast<double>(r.versions - first.versions) / (n - 1);
+                }
+        }
         // Proof the configuration ran as named: the hardware turbo in effect at the end
         m["turbo_ratio"] = static_cast<double>(emulator->GetContext()->emulatorState.hw_turbo_ratio);
 
