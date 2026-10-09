@@ -15,10 +15,13 @@
 #include "_helpers/soundcardscope.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/devicememory.h"
 #include "emulator/memory/memory.h"
+#include "emulator/sound/soundmanager.h"
 #include "emulator/state/devicestate.h"
 
 class DeviceMemoryTtd_Test : public ::testing::Test
@@ -107,4 +110,40 @@ TEST_F(DeviceMemoryTtd_Test, AToolEditDuringARecordingKeepsTheDevicesUnsavedWrit
     EXPECT_EQ(Read("neogs.ram", at, 4), before) << "the start of the recording: the old bytes";
     ASSERT_TRUE(ttd->SeekTo({lastFrame, 0}));
     EXPECT_EQ(Read("neogs.ram", at, 4), written) << "the write is in the recording";
+}
+
+// Telemetry and a seek (state registry §5). The NeoGS firmware runs every frame, so its activity counters (session
+// totals the automation reports) grow; a seek inside a frame replays recorded history and must not count it again.
+// After the seek the machine stands paused: the audio activity indicators are dark
+TEST_F(DeviceMemoryTtd_Test, ASeekNeitherCountsReplayedActivityNorLeavesIndicatorsLit)
+{
+    FeatureManager* features = _emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    features->setFeature(Features::kTimeTravel, true);
+    _context->pMemory->UpdateFeatureCache();
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
+    GeneralSoundCard* gs = _context->pSoundManager->getGeneralSound();
+    ASSERT_NE(gs, nullptr) << "the NeoGS card";
+    // A beeper tone while recording: DI; loop: LD A,#10 : OUT (#FE),A : XOR A : OUT (#FE),A : JR loop
+    const uint8_t beep[] = {0xF3, 0x3E, 0x10, 0xD3, 0xFE, 0xAF, 0xD3, 0xFE, 0x18, 0xF7};
+    for (size_t i = 0; i < sizeof beep; i++)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), beep[i]);
+    Z80* z80 = _context->pCore->GetZ80();
+    z80->pc = 0x8000;
+    z80->halted = 0;
+    ASSERT_TRUE(ttd->StartRecording());
+    _emulator->RunNFrames(4);
+    ttd->StopRecording();
+    const uint64_t steps = gs->getActivityCounters().cpuSteps;
+    ASSERT_GT(steps, 0u) << "the card's CPU runs";
+    bool lit = false;
+    for (const AudioDeviceInfo& device : _context->pSoundManager->devices())
+        lit = lit || device.activeRecently;
+    ASSERT_TRUE(lit) << "the beeper played";
+
+    const uint64_t frame = ttd->GetCheckpoint(1)->time.frame;
+    ASSERT_TRUE(ttd->SeekTo({frame, 30000}));   // inside the frame: a replay
+    EXPECT_EQ(gs->getActivityCounters().cpuSteps, steps) << "the replayed frame is not counted again";
+    for (const AudioDeviceInfo& device : _context->pSoundManager->devices())
+        EXPECT_FALSE(device.activeRecently) << device.name << ": paused at the target, nothing plays";
 }

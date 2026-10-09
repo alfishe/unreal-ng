@@ -128,12 +128,12 @@ None of these is read back by emulation. Each becomes an optional frame-boundary
 | Item | Machines | Stream v1 | Stream engine | Class | Size | Variability | Status | Source |
 |---|---|---|---|---|---|---|---|---|
 | VDAC2 line-budget metrics of the last frame | TSL-VDAC2 | inside id 43 | stays in the chip's state (see note) | T | | | decided 2026-10-03 | `EveSaveState` |
-| IDE activity LED | IDE | — | telemetry stream | T | | | wrong after a seek | `io/ide/idecontroller.h:97` |
-| WD1793 published drive / motor state | Beta | — | telemetry stream | T | | | stale after a seek | `wd1793.cpp:4398` |
-| NeoGS DMA and MP3 activity | NeoGS | partly in id 12 | telemetry stream | T | | | one false LED pulse | `soundchip_neogs.cpp:853-856` |
-| GS activity counters | GS | — | telemetry stream | T | | | | `GSActivityCounters` |
-| TSFM key-on flags (state report) | TSFM | — | telemetry stream | T | | | wrong in the state report | `soundchip_turbosoundfm.h:117`; `state/devicestate.cpp:237` |
-| Audio activity indicators, "had sound last frame" (Covox, beeper, CBL) | all | — | telemetry stream | T | | | | |
+| IDE activity LED | IDE | — | telemetry stream | T | | | correct after a seek (2026-10-09): a replay does not count | `io/ide/idecontroller.h:112`; `ata/atadevice.cpp` (not counted while `ttdReplayActive`) |
+| WD1793 published drive / motor state | Beta | — | telemetry stream | T | | | correct after a seek (2026-10-09): the restore posts the drive state | `wd1793.cpp` `TTDLoadState` -> `notifyFDDStateChanged` |
+| NeoGS DMA and MP3 activity | NeoGS | partly in id 12 | telemetry stream | T | | | correct after a seek (2026-10-09): the restore takes the counts as seen | `soundchip_neogs.cpp` `TTDLoadState` |
+| GS activity counters | GS | — | telemetry stream | T | | | correct after a seek (2026-10-09): kept across a replay | `SoundManager::beginReplayTelemetry` / `endReplayTelemetry` |
+| TSFM key-on flags (state report) | TSFM | — | telemetry stream | T | | | correct after a seek (2026-10-09): derived from the restored envelopes | `tsfm/ym2203pair.cpp` `loadChipState` |
+| Audio activity indicators, "had sound last frame" (Covox, beeper, CBL) | all | — | telemetry stream | T | | | correct after a seek (2026-10-09): dark after it, as on a pause | `TimeTravelController::PublishSeekedFrame` |
 | SD card blocks read / written, last command | ATM3, TSL | inside id 15 | telemetry stream | T | | | stored today, harmless | |
 | Socket and virtual-network byte counters, `VirtualNetwork` activity | network | partly inside id 20 | telemetry stream | T | | | stored today, harmless | |
 | Covox-Blaster ring writes, INT requests | Sprinter | inside id 32 | telemetry stream | T | | | stored today, harmless | |
@@ -142,7 +142,7 @@ None of these is read back by emulation. Each becomes an optional frame-boundary
 | Contention statistics, screen switch count | all | — | telemetry stream | T | | | | `UlaContention`, `Screen::_screenSwitchCount` |
 | Port activity summary, port trace | all | — | telemetry stream | T | | | | `PortDecoder::_activitySummary` |
 | ROM / RAM switch trackers, opcode profiler, call trace, memory access tracker | all | — (own buffers) | telemetry streams | T | | | | |
-| Media change counters | all | — | telemetry stream | T | | | show live media | `MediaManager` |
+| Media change counters | all | — | telemetry stream | T | | | show live media; replayed guest writes still count (open, TODO) | `MediaManager` |
 | RZX desyncs, drift | RZX | — | telemetry stream | T | | | | `rzx/rzxplayer.h` |
 | ESP module log | ESP | — | telemetry stream | T | | | | `EspModule::_log` |
 

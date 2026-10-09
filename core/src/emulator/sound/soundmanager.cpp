@@ -484,6 +484,22 @@ void SoundManager::onEmulatorPaused()
     _activityIndicators.stop(_context->emulatorId);
 }
 
+void SoundManager::beginReplayTelemetry()
+{
+    if (_gs && !_gsCountersBeforeReplay)
+        _gsCountersBeforeReplay = _gs->getActivityCounters();
+}
+
+void SoundManager::endReplayTelemetry()
+{
+    if (_gs && _gsCountersBeforeReplay)
+    {
+        _gs->resetActivityCounters();
+        _gs->accumulateActivityCounters(*_gsCountersBeforeReplay);
+    }
+    _gsCountersBeforeReplay.reset();
+}
+
 const AudioFrameDescriptor& SoundManager::getAudioBufferDescriptor()
 {
     return _beeperAudioDescriptor;

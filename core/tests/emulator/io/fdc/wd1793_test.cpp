@@ -4837,3 +4837,25 @@ TEST_F(WD1793_Test, FDD_StateNotification_PostedOnChangeOnly)
     ASSERT_TRUE(waitForFddStates(4));
     EXPECT_FALSE(g_fddStates.back().motorOn);
 }
+
+// A time-travel restore brings back the drive, its motor and track, and posts them (NC_FDD_STATE_CHANGED): the status
+// bar and the HUD show the restored drive, not the one before the seek (state registry §5: "stale after a seek")
+TEST_F(WD1793_Test, TtdRestoreRepublishesTheDriveState)
+{
+    WD1793CUT fdc(_context);
+    DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
+    fdc.getDrive()->insertDisk(&diskImage);
+    fdc._selectedDrive->setMotor(true);
+    fdc.notifyFDDStateChanged();
+    ASSERT_TRUE(fdc._publishedFddState.motorOn);
+    std::vector<uint8_t> blob(fdc.TTDStateSize());
+    fdc.TTDSaveState(blob.data());
+
+    fdc._selectedDrive->setMotor(false);
+    fdc.notifyFDDStateChanged();
+    ASSERT_FALSE(fdc._publishedFddState.motorOn) << "the live run stopped the motor and said so";
+
+    fdc.TTDLoadState(blob.data());
+    EXPECT_TRUE(fdc._selectedDrive->getMotor());
+    EXPECT_TRUE(fdc._publishedFddState.motorOn) << "the restored motor is posted";
+}
