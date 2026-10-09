@@ -398,6 +398,16 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   the static count); the CPU emulation approach, the origin of the wait rule and the PLD wait on
   Z84C15 port writes (pending `research-cpu-z84c15.md`); the unacknowledged INT length (PLD 32-64 T,
   MAME 32 T).
+- Emulation speed (profile 2026-10-09, DNTBLINK at 21 MHz: 82 % of the steps were idle cycles of a halted CPU):
+  - [x] Idle cycles in one go (`Z84C15Engine::RunIdleCycles`, branch `sprinter-halt-skip`): exact against one cycle
+    per step (`SprinterIdleCycles_Test`), DNTBLINK 5.6 -> 2.4 ms per frame
+    ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.2)
+  - [ ] The INT question cached between source events for running code (the daisy-chain walk per instruction,
+    ~20 % of a running frame); a prototype missed an invalidation (the PC drifted)
+  - [ ] Screen catch-up on events instead of every step (`MainLoop::OnCPUStep` -> `DrawTo`, ~12 %); a prototype
+    lost the frame's tail
+  - [ ] A Sprinter frame benchmark without a disk image (the CTC `EI : HALT` program of `SprinterIdleCycles_Test`
+    plus accelerator fills)
 - Renderer speed (naive v1): `BM_SprinterRender_Logo` 512 µs per frame against 46 µs for the TS-Conf
   setup screen. Idea for the backlog: cache decoded squares (MAME's tilemap: the mode bytes and the
   source address once per square, invalidated by video RAM writes into the mode table or the
