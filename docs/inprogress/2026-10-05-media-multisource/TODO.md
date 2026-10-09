@@ -46,7 +46,9 @@ PLAN.md row **#95**.
   (store only written / non-zero sectors: a FAT32 volume is >= 32 MiB, 256 MiB with 4 KiB clusters, nearly all
   zeros), images held in memory instead of on disk where it pays, and packing back efficiently on save / flatten
   (S1-S4): skip zero and unchanged runs, sparse output files, compact VHD / CHD. Design first, in phases/
-- [ ] Benchmarks and charts C1-C8 with the results table filled in ([test-and-benchmark-plan.md](test-and-benchmark-plan.md) §5.5)
+- [x] Benchmarks and charts C1-C8 with the results table filled in ([test-and-benchmark-plan.md](test-and-benchmark-plan.md) §5.5,
+  [benchmarks/README.md](benchmarks/README.md)): every NFR met after the C11 fixes (host-file memory, the merge's keys,
+  an allocation per boot-sector read)
 - [x] User docs (`docs/features/media.md`) and recipe [`.recipe/media/compose-media.md`](../../../.recipe/media/compose-media.md)
 - [ ] Owner's check on macOS / Windows before master: the Qt flatten dialog (partitioned write-back too), `HostTrash`
   (Recycle Bin, `~/.Trash`), the C10e journal's positional I/O

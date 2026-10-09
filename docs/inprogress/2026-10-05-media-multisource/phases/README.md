@@ -20,3 +20,4 @@ the phase lands. The phase table is in [tdd.md](../tdd.md) §13; the tests per p
 | C10 | [c10-sparse-memory.md](c10-sparse-memory.md) | done: C10a zero runs + sparse memory, C10b dynamic VHD; C10c measured (images stay streamed); §8 full-disk and RAM findings |
 | C10d | [c10d-session-spill.md](c10d-session-spill.md) | done: session writes bounded in RAM (128 MiB), the rest spilled to disk; streamed deltas |
 | C10e | [c10e-session-journal.md](c10e-session-journal.md) | done (benchmark sweep pending): 1 MiB arenas, 16 MiB in memory, 30 s flush, a recoverable journal next to the medium (off by default since the master merge: §9) |
+| C11 | [../benchmarks/README.md](../benchmarks/README.md) | done: benchmarks and charts C1-C8, the NFR table; host-file memory 47.6 -> 17.4 MiB at 100 K entries, a 64-layer build 1.8 -> 1.33 s, no allocation per read |

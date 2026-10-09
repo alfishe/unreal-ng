@@ -152,6 +152,7 @@ private:
     const Run* FindRun(uint64_t cluster) const;
 
     FatVolumeOptions _options;
+    std::array<uint8_t, 11> _labelName{};  ///< the label as the boot sector stores it, made once (no allocation per read)
     std::string _description;
     std::shared_ptr<const FileTree> _tree;
     std::shared_ptr<SourcePool> _pool;

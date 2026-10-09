@@ -227,7 +227,10 @@ the M1 ACC tests) or a file the guest writes, read back with `FatVolumeReader`.
 
 ### 5.1 Binary, running, rules
 
-- File: `core/benchmarks/emulator/io/compose_benchmark.cpp` (Google Benchmark, `-DBENCHMARKS=ON`).
+- File: `core/benchmarks/emulator/io/compose_benchmark.cpp` (Google Benchmark, `-DBENCHMARKS=ON`). As built, the
+  families are named `ComposeScaleBuild`, `ComposeScaleBuildIso`, `ComposeLayersRead`, `ComposeFragmented`,
+  `ComposeMode`, `ComposeGraftVsRebuild`, `ComposeAttribute`, `ComposeFlatten`, `ComposeSessionRead`; the commands
+  that ran them are in [benchmarks/README.md](benchmarks/README.md) §1.
 - Run on a quiet machine, without lowered priority, per AGENTS.md:
   ```bash
   cmake -S . -B cmake-build-agent-release -G Ninja -DBENCHMARKS=ON   # once
@@ -297,19 +300,24 @@ and date in its footer, and log scales where noted.
 | **C7** flatten and attribution | changed sectors (log) / format | ms / MB/s | attribution; img, vhd, chd, compact | attribution sub-linear thanks to subtree skipping; img ≥ 80% raw copy (NFR-P8, P9) |
 | **C8** change-layer cost | changed sectors (log) | ns / sector | hit, miss | log growth of `std::map`; input to H1 |
 
-### 5.5 Results (filled in as phases land)
+### 5.5 Results (measured 2026-10-09)
+
+Charts, every number behind them, the A/B and how to run it: [benchmarks/README.md](benchmarks/README.md).
 
 | NFR | Target | Measured | Commit | Chart |
 |---|---|---|---|---|
-| NFR-P1 parity data / metadata | ≤ 1.10× / ≤ 1.05× | — | — | C5 |
-| NFR-P2 64 layers vs 1 | ≤ 1.15× | — | — | C2 |
-| NFR-P3 allocations per read | 0 | — | — | — |
-| NFR-P5 build 100 K entries | ≤ 1.5 s | — | — | C1 |
-| NFR-P6 graft independent of base | flat | — | — | C6 |
-| NFR-P7 non-composite media | no change (noise band) | — | — | A/B table |
-| NFR-P8 flatten img | ≥ 80% raw copy | — | — | C7 |
-| NFR-P9 attribution 10 K / 100 K | ≤ 500 ms | — | — | C7 |
-| NFR-M2 memory 100 K entries | ≤ 32 MiB | — | — | C4 |
+| NFR-P1 parity data / metadata | ≤ 1.10× / ≤ 1.05× | 1.03× sequential, 0.98× random / 0.94× (`c1f` against `hff`) | `418acc90` + C11 | C5 |
+| NFR-P2 64 layers vs 1 | ≤ 1.15× | 1.00× (the worst of sequential, random, metadata) | same | C2 |
+| NFR-P3 allocations per read | 0 | 0 (`ComposeReadAllocations_Test`: five kinds of composite, with and without a session) | same | — |
+| NFR-P5 build 100 K entries | ≤ 1.5 s | 366 ms (1 layer) … 1 331 ms (64 layers), the folder scan included | same | C1 |
+| NFR-P6 graft independent of base | flat | 1.17 / 1.40 / 3.03 ms at 1 K / 10 K / 100 K base entries (rebuild: 3.7 / 17 / 104 ms) | same | C6 |
+| NFR-P7 non-composite media | no change (noise band) | inside the noise band on 11 benchmarks (RawImage, CHD, Z-Controller SD); base `37171597` | same | A/B table |
+| NFR-P8 flatten img | ≥ 80% raw copy | 125% | same | C7 |
+| NFR-P9 attribution 10 K / 100 K | ≤ 500 ms | 12 / 84 ms (up to 100 K changed sectors) | same | C7 |
+| NFR-M2 memory 100 K entries | ≤ 32 MiB | 16.6 MiB (rebuild; 19.6 MiB ISO; 42 MiB over 64 layers) | same | C4 |
+
+The first run missed NFR-M2 (47.6 MiB) and NFR-P5 at 64 layers (1.8 s); the changes that fixed them are in
+[benchmarks/README.md](benchmarks/README.md) §3.
 
 ## 6. Tooling to add
 

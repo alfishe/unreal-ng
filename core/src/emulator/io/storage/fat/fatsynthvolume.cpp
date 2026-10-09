@@ -91,6 +91,8 @@ bool FatSynthVolume::Init(std::shared_ptr<const FileTree> tree, std::shared_ptr<
                           uint64_t sourceIdentity, std::string description, std::string* error, std::vector<std::string>* report)
 {
     _options = options;
+    const FatShortName labelName = FatNameMapper::ShortNameFromText(options.label, /*isLabel*/ true, options.codePage);
+    std::copy(labelName.begin(), labelName.end(), _labelName.begin());
     _description = std::move(description);
     _tree = std::move(tree);
     _pool = std::move(pool);
@@ -795,7 +797,7 @@ void FatSynthVolume::BuildBootSector(uint8_t* s, bool) const
     Put16(s + 26, 255);  // heads
     Put32(s + 28, static_cast<uint32_t>(_volumeStart));  // hidden sectors
 
-    const FatShortName label = FatNameMapper::ShortNameFromText(_options.label, true, _options.codePage);
+    const auto& label = _labelName;
     uint8_t* ext = fat32 ? s + 64 : s + 36;
     if (fat32)
     {

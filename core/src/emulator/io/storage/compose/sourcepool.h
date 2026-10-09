@@ -8,11 +8,14 @@
 /// NFR-M3 / NFR-M4.
 
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <list>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 class IBlockDevice;
@@ -43,7 +46,10 @@ public:
     size_t DeviceCount() const { return _devices.size(); }
     size_t HostFileCount() const { return _hostFiles.size(); }
     /// A host file as the folder scan saw it (S4 conflict checks)
-    const std::filesystem::path& HostPath(uint32_t file) const { return _hostFiles[file].path; }
+    std::filesystem::path HostPath(uint32_t file) const
+    {
+        return std::filesystem::path(_folders[_hostFiles[file].folder]) / _hostFiles[file].name;
+    }
     uint64_t HostSize(uint32_t file) const { return _hostFiles[file].size; }
     size_t OpenStreams() const { return _open.size(); }
 
@@ -51,11 +57,15 @@ public:
     const std::vector<std::string>& Warnings() const { return _warnings; }
 
 private:
+    /// A file's folder is shared with its siblings, and only its name is kept; folders are kept as strings:
+    /// a std::filesystem::path costs a few hundred bytes (its parsed components), the bulk of a 100 K-file
+    /// composite (NFR-M2)
     struct HostFile
     {
-        std::filesystem::path path;
-        uint64_t size = 0;
+        std::filesystem::path::string_type name;
+        uint32_t folder = 0;
         bool warned = false;
+        uint64_t size = 0;
     };
     struct OpenFile
     {
@@ -64,6 +74,9 @@ private:
     };
 
     std::vector<HostFile> _hostFiles;
+    using NativeView = std::basic_string_view<std::filesystem::path::value_type>;
+    std::deque<std::filesystem::path::string_type> _folders;  ///< a deque: the index's views stay valid
+    std::unordered_map<NativeView, uint32_t> _folderIndex;
     std::vector<std::shared_ptr<IBlockDevice>> _devices;
     std::vector<std::string> _deviceKeys;
     std::list<OpenFile> _open;  ///< most recently used first
