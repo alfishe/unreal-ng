@@ -259,20 +259,86 @@ TEST(NextDriveButton_Test, NmiMapsTheDivMmcInAtTheEntry)
     ports->Board().Write(0x0A, 0x10);  // the automap is on
     ports->Board().Write(0xBB, 0x00);  // no extra entries
 
-    EXPECT_TRUE(ports->RequestBoardNmi()) << "the button is off (NR #06 bit 4): the board swallows the NMI";
+    EXPECT_FALSE(ports->GenerateDriveNmi()) << "the button is off (NR #06 bit 4): the board swallows the NMI";
     ports->Board().Write(0x06, 0x10);
     divMmc.BeforeMachineM1(0x0066);
     divMmc.OnMachineM1(0x0066);
     EXPECT_FALSE(divMmc.Mapped()) << "an M1 at #0066 without the button maps nothing";
 
-    EXPECT_FALSE(ports->RequestBoardNmi()) << "the caller pulses /NMI";
+    EXPECT_TRUE(ports->GenerateDriveNmi()) << "the board pulses /NMI";
     EXPECT_TRUE(divMmc.ButtonPending());
-    EXPECT_TRUE(ports->RequestBoardNmi()) << "a second press waits for the handler";
+    EXPECT_FALSE(ports->GenerateDriveNmi()) << "a second press waits for the handler";
     divMmc.BeforeMachineM1(0x0066);
     EXPECT_FALSE(divMmc.Mapped()) << "the fetch of #0066 itself still comes from the ROM underneath";
     divMmc.OnMachineM1(0x0066);
     EXPECT_TRUE(divMmc.Mapped());
     EXPECT_FALSE(divMmc.ButtonPending());
-    EXPECT_TRUE(ports->RequestBoardNmi()) << "the handler is in: no new NMI";
+    EXPECT_FALSE(ports->GenerateDriveNmi()) << "the handler is in: no new NMI";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// A RETN ends the DivMMC's automap (zxnext.vhd divmmc_retn_seen): NextZXOS starts a snapshot with it, and the esxDOS ROM must not
+// stay in #0000-#3FFF under the program
+TEST(NextDivMmcRetn_Test, RetnLeavesTheAutomap)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    PortDecoder_Next* ports = dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    NextDivMmc& divMmc = ports->DivMmc();
+    ports->Board().Write(0x0A, 0x10);  // the automap is on
+    ports->Board().Write(0xB8, 0x01);  // the entry #0000 maps in after its fetch
+    divMmc.OnMachineM1(0x0000);
+    ASSERT_TRUE(divMmc.Automapped());
+    ports->OnRetn();
+    EXPECT_FALSE(divMmc.Automapped());
+    EXPECT_FALSE(divMmc.Mapped());
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// NR #02 bits 1:0 tell the software how the last reset happened (zxnext.vhd nr_02_reset_type): 00 power on, 10 after the first soft
+// reset, 01 after the next ones. NextZXOS restarts a snapshot with a soft reset and reads this to see that it is the second pass
+TEST(NextResetType_Test, ReadsHowTheLastResetHappened)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    PortDecoder_Next* ports = dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    NextBoard& board = ports->Board();
+    EXPECT_EQ(board.Read(0x02) & 3, 0);
+    board.Write(0x02, 0x01);
+    board.AfterInstruction();
+    EXPECT_EQ(board.Read(0x02) & 3, 2);
+    board.Write(0x02, 0x01);
+    board.AfterInstruction();
+    EXPECT_EQ(board.Read(0x02) & 3, 1);
+    board.Write(0x02, 0x01);
+    board.AfterInstruction();
+    EXPECT_EQ(board.Read(0x02) & 3, 1);
+    board.Write(0x02, 0x02);  // a hard reset: the core starts again
+    board.AfterInstruction();
+    EXPECT_EQ(board.Read(0x02) & 3, 0);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// NR #02 bit 2 written 1 is the same NMI as the DRIVE button (zxnext.vhd nmi_gen_nr_divmmc): NextZXOS enters its esxDOS code with it.
+// The bit reads 1 once the NMI was generated and until it is written 0
+TEST(NextDriveNmiByNextReg_Test, WritingNr02Bit2StartsTheNmi)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    PortDecoder_Next* ports = dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    NextBoard& board = ports->Board();
+    board.Write(0x0A, 0x10);
+    board.Write(0x02, 0x04);
+    EXPECT_EQ(board.Read(0x02) & 4, 0) << "the button is off (NR #06 bit 4): no NMI, the bit stays 0";
+    EXPECT_FALSE(ports->DivMmc().ButtonPending());
+    board.Write(0x06, 0x10);
+    board.Write(0x02, 0x04);
+    EXPECT_NE(board.Read(0x02) & 4, 0);
+    EXPECT_TRUE(ports->DivMmc().ButtonPending());
+    board.Write(0x02, 0x00);
+    EXPECT_EQ(board.Read(0x02) & 4, 0);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

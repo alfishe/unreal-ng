@@ -1,5 +1,5 @@
 // ZX Spectrum Next co-simulation: the real firmware boot on this emulator, written as the common trace of
-// tools/verification/next-cosim (trace-format.md) so diff-traces.py can compare it with jnext / ZEsarUX / MAME.
+// tools/machines/next/cosim (trace-format.md) so diff-traces.py can compare it with jnext / ZEsarUX / MAME.
 //
 // Not a gate. Skipped unless both variables are set:
 //   UNREAL_NEXT_FIRMWARE  a card folder (TBBLUE.FW, machines/next/..., optionally nextzxos/ ...), as in

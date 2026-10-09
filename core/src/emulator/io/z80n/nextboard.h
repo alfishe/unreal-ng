@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "emulator/io/z80n/nextcopper.h"
+#include "emulator/io/z80n/nextregjournal.h"
 #include "emulator/io/z80n/nextsprites.h"
 #include "emulator/io/z80n/nextvideoregs.h"
 #include "emulator/io/z80n/z80nengine.h"
@@ -53,6 +54,13 @@ public:
     virtual void AudioConfigChanged() {}
     /// NR #2C / #2D / #2E: the DAC's NextREG mirrors
     virtual void DacMirrorWrite(uint8_t, uint8_t) {}
+    /// A RETN completed: the DivMMC drops its automap and the button latch
+    virtual void OnRetn() {}
+    /// NR #02 bit 2 written 1 (by the CPU or the copper): the DRIVE button's NMI. True when the board took it (NR #06 bit 4 on, no
+    /// handler running); NR #02 bit 2 then reads 1 until it is written 0
+    virtual bool GenerateDriveNmi() { return false; }
+    /// NR #02 bit 3 written 1: the M1 button's NMI (the Multiface; NextZXOS starts snapshots with it)
+    virtual bool GenerateMultifaceNmi() { return false; }
 };
 
 /// The Next board's register file (NEXTREG space, ports #243B select / #253B data): the identification registers
@@ -103,7 +111,11 @@ public:
             (*_readCounts)[_selected]++;
         return Read(_selected);
     }
-    void WriteSelected(uint8_t value) { Write(_selected, value); }
+    void WriteSelected(uint8_t value)
+    {
+        SourceScope scope(this, NextRegSource::Port);
+        Write(_selected, value);
+    }
 
     uint8_t Read(uint8_t reg) const;
     void Write(uint8_t reg, uint8_t value);
@@ -111,14 +123,27 @@ public:
     void SetWriteLog(std::vector<NextRegWrite>* log, const uint16_t* pc) { _log = log; _pc = pc; }
     /// Count the registers read (null: off): which registers the software looks at
     void SetReadCounts(std::map<uint8_t, uint32_t>* counts) { _readCounts = counts; }
+    /// The write journal (design-nextreg-journal.md). The clock fills frame, T and PC of an event (the board does not know the CPU)
+    NextRegJournal& Journal() { return _journal; }
+    const NextRegJournal& Journal() const { return _journal; }
+    void SetJournalClock(std::function<void(uint32_t& frame, uint32_t& t, uint16_t& pc)> clock) { _journalClock = std::move(clock); }
     /// The raw stored byte of a register (reports, tests)
     uint8_t Stored(uint8_t reg) const { return _regs[reg]; }
 
     /// The `next_regs` report: one line per register of the table with its value and reset
     std::string DescribeRegisters() const;
 
-    void WriteNextReg(uint8_t reg, uint8_t value) override { Write(reg, value); }
+    void WriteNextReg(uint8_t reg, uint8_t value) override
+    {
+        SourceScope scope(this, NextRegSource::NextReg);
+        Write(reg, value);
+    }
     void AfterInstruction() override;
+    void OnRetn() override
+    {
+        if (_machine)
+            _machine->OnRetn();
+    }
 
     /// Machine type (NR #03 bits 2:0): 0 config mode, 1 48K, 2 128K, 3 +3, 4 Pentagon
     /// The bare personality's machine type (no firmware chooses it): 1 48K, 2 128K, 3 +3, 4 Pentagon
@@ -141,6 +166,16 @@ private:
     NextVideoRegs _video;
     NextSprites _sprites;
     NextCopper _copper;
+    NextRegJournal _journal;
+    std::function<void(uint32_t&, uint32_t&, uint16_t&)> _journalClock;
+    NextRegSource _source = NextRegSource::Internal;
+    struct SourceScope
+    {
+        NextBoard* board;
+        NextRegSource saved;
+        SourceScope(NextBoard* b, NextRegSource s) : board(b), saved(b->_source) { b->_source = s; }
+        ~SourceScope() { board->_source = saved; }
+    };
     NextInterruptSource* _interrupts = nullptr;
     INextMachine* _machine = nullptr;
     uint8_t _selected = 0;
@@ -152,5 +187,6 @@ private:
     const uint16_t* _pc = nullptr;
     uint8_t _timing = 2;
     bool _resetPending = false;
+    uint8_t _resetType = 4;  ///< zxnext.vhd nr_02_reset_type, power on '100'
     bool _resetHard = false;
 };

@@ -1,8 +1,8 @@
 #pragma once
 // Co-simulation trace sink for the ZX Spectrum Next tests: writes the common event format of
-// tools/verification/next-cosim/trace-format.md - one line "<seq> <KIND> <addr> <value> <pc>" per NextREG write /
+// tools/machines/next/cosim/trace-format.md - one line "<seq> <KIND> <addr> <value> <pc>" per NextREG write /
 // read, port read / write, MMU slot change, interrupt acceptance, frame end and (optionally) PC sample - so a run of
-// this emulator can be diffed against jnext / ZEsarUX / MAME (tools/verification/next-cosim/diff-traces.py).
+// this emulator can be diffed against jnext / ZEsarUX / MAME (tools/machines/next/cosim/diff-traces.py).
 //
 // Test-only and read-only: it rides on hooks the CPU and the board already have (Z80::busTraceHook,
 // Z80::m1TraceHook, NextBoard::SetWriteLog), so with no sink attached nothing in the emulator costs anything extra.

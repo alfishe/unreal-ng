@@ -11,7 +11,7 @@ NextREG file, DMA, contention, interrupts) is not here: the library calls the ho
   acknowledge through the callbacks. A host adapter written for `z84c15` is written for this library with the prefix renamed
   (`Z84Cpu*` -> `Z80nCpu*`). MIT license - see `LICENSE`. `Z80nCpuVersion()` reports `0.5.0-z80n.1`.
 - **Public header:** `z80ncpu.h` (C API, prefix `Z80nCpu`). Nothing outside this folder includes anything else.
-- **Re-deriving:** `tools/machines/next/forkz80n.py` copies the core files of the z84c15 fork under the new names (the renames
+- **Re-deriving:** `tools/machines/next/z80n-fork/forkz80n.py` copies the core files of the z84c15 fork under the new names (the renames
   below); the hand edits of the next table are then redone. Upstream fixes to unreal-z80 reach this library through the z84c15
   fork.
 

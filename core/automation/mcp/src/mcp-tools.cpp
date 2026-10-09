@@ -1456,7 +1456,7 @@ void RegisterInspectState(ToolRegistry& registry)
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "profi", "isa", "network", "mouse",
-                               "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "sprinter", "sprinter_ports", "sprinter_text",
+                               "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
                                "audio_multisound", "audio_midi"})
@@ -1534,7 +1534,12 @@ void RegisterInspectState(ToolRegistry& registry)
         "(idle/recording/detached), recorded frame range, checkpoint count, current position (use the time_travel tool to act on it). "
         "'tsconf' = the TS-Conf machine (memory map, video, TSU summary, interrupts, DMA, clock, SD), 'tsconf_tsu' = its TSU "
         "objects for debug views (tile layers, all 85 sprite descriptors decoded, the 256 CRAM cells); both unavailable on "
-        "other machines. 'sprinter' = the Sprinter Sp2000 (PLD configuration and module, CNF map / DOS / PN5, the four "
+        "other machines. 'next' / 'next_regs' / 'next_mmu' = the ZX Spectrum Next (machine, CPU clock, DivMMC, interrupts, CTC, SPI; "
+        "the NextREG table; the eight 8K MMU slots), 'next_reg_journal' = who wrote which NextREG and when (frame, T, PC) through the "
+        "NEXTREG instruction, port #253B or the copper - the writes the port trace and the TTD I/O journal cannot see; off by "
+        "default (invoke_api POST /api/v1/emulator/{id}/next/reg-journal {enabled:true, clear:true}; nr_journal_regs = '07,02', "
+        "nr_journal_sources = 'nextreg,copper', nr_journal_since, nr_journal_limit); "
+        "'sprinter' = the Sprinter Sp2000 (PLD configuration and module, CNF map / DOS / PN5, the four "
         "windows with physical page and kind, ALL_MODE / PORT_Y / RGMOD / HOLD, the cells #C0-#FF, turbo, frame "
         "length, a video summary of the mode table, the Z84C15 with the keyboard FIFO, the floppy density latch, BIOS "
         "images), 'sprinter_ports' = its decoded port table for the current map / DOS / PN5 (code, name, address "
@@ -1567,6 +1572,16 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["pld_journal_kinds"]["description"] =
         "'sprinter_pld_journal': comma list of kinds (port_table, cnf, clock, port_7ffd, port_1ffd, all_mode, rgmod, hold, "
         "frame_lines, pld_load, pld_configured, f12, ctrl_alt_del, reset); empty = all";
+    schema["properties"]["nr_journal_regs"]["type"] = "string";
+    schema["properties"]["nr_journal_regs"]["description"] =
+        "'next_reg_journal' (who wrote which NextREG, through the NEXTREG instruction, port #253B or the copper; off by default - "
+        "POST /api/v1/emulator/{id}/next/reg-journal {enabled:true} via invoke_api): comma list of register numbers, hex (07,02)";
+    schema["properties"]["nr_journal_sources"]["type"] = "string";
+    schema["properties"]["nr_journal_sources"]["description"] = "'next_reg_journal': comma list: nextreg, port, copper, internal";
+    schema["properties"]["nr_journal_since"]["type"] = "integer";
+    schema["properties"]["nr_journal_since"]["description"] = "'next_reg_journal': events after this seq";
+    schema["properties"]["nr_journal_limit"]["type"] = "integer";
+    schema["properties"]["nr_journal_limit"]["description"] = "'next_reg_journal': the newest N matches (default 40)";
     schema["properties"]["pld_journal_source"]["type"] = "string";
     schema["properties"]["pld_journal_source"]["description"] = "'sprinter_pld_journal': live (default) or ttd (the recording)";
     schema["properties"]["region"]["type"] = "string";
@@ -1647,7 +1662,7 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
                     aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "profi" && aspect != "isa" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
-                    aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "next" && aspect != "next_regs" && aspect != "next_mmu" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
+                    aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "next" && aspect != "next_regs" && aspect != "next_mmu" && aspect != "next_reg_journal" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
@@ -1684,6 +1699,16 @@ void RegisterInspectState(ToolRegistry& registry)
                 pldQuery += "&kinds=" + args["pld_journal_kinds"].asString();
             if (args.isMember("pld_journal_source") && args["pld_journal_source"].isString())
                 pldQuery += "&source=" + args["pld_journal_source"].asString();
+            // The NextREG write journal query (next_reg_journal)
+            std::string nrQuery = "?limit=40";
+            if (args.isMember("nr_journal_regs") && args["nr_journal_regs"].isString())
+                nrQuery += "&regs=" + args["nr_journal_regs"].asString();
+            if (args.isMember("nr_journal_sources") && args["nr_journal_sources"].isString())
+                nrQuery += "&sources=" + args["nr_journal_sources"].asString();
+            if (args.isMember("nr_journal_since") && args["nr_journal_since"].isIntegral())
+                nrQuery += "&since=" + std::to_string(args["nr_journal_since"].asUInt64());
+            if (args.isMember("nr_journal_limit") && args["nr_journal_limit"].isIntegral())
+                nrQuery += "&limit=" + std::to_string(args["nr_journal_limit"].asUInt64());
             const bool hasScreenArg = args.isMember("screen");
             const int screenArg = hasScreenArg ? args["screen"].asInt() : -1;
             // The snapshot's memory windows (GET /debug/snapshot?memory=...)
@@ -1697,7 +1722,7 @@ void RegisterInspectState(ToolRegistry& registry)
 
             TargetResolver::ResolveFromArgs(
                 args, caller,
-                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, hasScreenArg, screenArg, region, pldQuery, snapshotWindows, &caller, done, progress](
+                [aspects, address, hasAddress, size, count, includeImage, format, view, minRun, maxBlocks, hasScreenArg, screenArg, region, pldQuery, nrQuery, snapshotWindows, &caller, done, progress](
                     bool ok, const std::string& idOrError) {
                     if (!ok)
                     {
@@ -2016,10 +2041,13 @@ void RegisterInspectState(ToolRegistry& registry)
                                 });
                             });
                         }
-                        else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu")
+                        else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal")
                         {
-                            // Core DeviceState::Next / NextRegs / NextMmu via the WebAPI ("available": false elsewhere)
-                            const std::string path = aspect == "next" ? "/state/next" : aspect == "next_regs" ? "/state/next/regs" : "/state/next/mmu";
+                            // Core DeviceState::Next / NextRegs / NextMmu / NextRegJournalReport via the WebAPI ("available": false elsewhere)
+                            const std::string path = aspect == "next"            ? "/state/next"
+                                                     : aspect == "next_regs"    ? "/state/next/regs"
+                                                     : aspect == "next_reg_journal" ? "/state/next/reg-journal" + nrQuery
+                                                                                : "/state/next/mmu";
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
@@ -2599,7 +2627,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << (value["port_map"]["extended_map"].asBool() ? "open" : "closed") << ", 8255 control #"
                                         << std::hex << value["ppi8255"]["control"].asInt() << std::dec;
                             }
-                            else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu")
+                            else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal")
                             {
                                 if (value.isMember("available") && !value["available"].asBool())
                                     out << "\n[" << aspect << "] " << value["description"].asString();
@@ -2608,6 +2636,15 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << " timing), " << value["machine"]["cpu_clock_hz"].asDouble() / 1e6 << " MHz, "
                                         << (value["machine"]["config_mode"].asBool() ? "config mode" : "running") << ", interrupts "
                                         << value["interrupts"]["mode"].asString() << ", DivMMC " << (value["divmmc"]["mapped"].asBool() ? "mapped" : "out");
+                                else if (aspect == "next_reg_journal")
+                                {
+                                    out << "\n[next_reg_journal] " << (value["enabled"].asBool() ? "on" : "OFF (POST /next/reg-journal {enabled:true})")
+                                        << ", " << value["size"].asUInt64() << " held, " << value["evicted"].asUInt64() << " evicted";
+                                    for (const auto& e : value["events"])
+                                        out << "\n  #" << e["seq"].asUInt64() << " f" << e["frame"].asUInt64() << " pc " << e["pc"].asString() << " "
+                                            << e["source"].asString() << " NR" << e["reg"].asString() << " " << e["previous"].asString() << " -> "
+                                            << e["value"].asString() << (e.isMember("decoded") ? "  (" + e["decoded"].asString() + ")" : "");
+                                }
                                 else if (aspect == "next_mmu")
                                 {
                                     out << "\n[next_mmu]";

@@ -11,6 +11,15 @@ class Memory;
 /// The machine's side of the NEXTREG instructions: `NEXTREG n,A` and `NEXTREG n,nn` write NextREG n without a port cycle and
 /// without touching the select latch (design-core.md section 3). Called in the middle of the instruction; the machine may
 /// rebuild its slot table or change the CPU speed there, and the engine takes the clock back afterwards
+/// Where the stackless NMI keeps the return address (NR #C2 / #C3)
+class INmiReturnStore
+{
+public:
+    virtual ~INmiReturnStore() = default;
+    virtual void StoreNmiReturn(uint8_t low, uint8_t high) = 0;
+    virtual uint16_t LoadNmiReturn() const = 0;
+};
+
 class INextRegHost
 {
 public:
@@ -18,6 +27,8 @@ public:
     virtual void WriteNextReg(uint8_t reg, uint8_t value) = 0;
     /// After every instruction, on the CPU's thread between two instructions: where a NEXTREG-requested reset runs
     virtual void AfterInstruction() {}
+    /// A RETN completed (ED 45 and its aliases): z80_retn_seen of zxnext.vhd - the DivMMC leaves its automap
+    virtual void OnRetn() {}
 };
 
 /// @file z80nengine.h
@@ -53,6 +64,8 @@ public:
     /// The host's registers were replaced from outside (a TTD restore): its boundary is pushed to the library at the next step
     void InvalidateBoundary() { _boundarySeen = 0xFF; }
 
+    /// NR #C0 bit 3: the NMI acknowledge writes no stack, the return address goes to `store`; RETN reads it back from there
+    void SetStacklessNmi(bool on, INmiReturnStore* store);
     /// The machine that handles NEXTREG instructions (null: they are dropped)
     void SetNextRegHost(INextRegHost* host) { _nextRegHost = host; }
 
@@ -79,12 +92,16 @@ private:
     static void PortOut(Z80nCPU* cpu, uint16_t port, uint8_t value, void* user);
     static uint8_t IntVector(Z80nCPU* cpu, void* user);
     static void Reti(Z80nCPU* cpu, void* user);
+    static void Retn(Z80nCPU* cpu, void* user);
+    static void NmiStore(Z80nCPU* cpu, uint8_t low, uint8_t high, void* user);
+    static uint16_t NmiLoad(Z80nCPU* cpu, void* user);
     static void NextReg(Z80nCPU* cpu, uint8_t reg, uint8_t value, void* user);
 
     Z80* _z80 = nullptr;
     Memory* _memory = nullptr;
     Z80nCPU* _cpu = nullptr;
     INextRegHost* _nextRegHost = nullptr;
+    INmiReturnStore* _nmiStore = nullptr;
     uint8_t _boundarySeen = Z80_BOUNDARY_NONE;  ///< the boundary the host last got from the library
     uint8_t _vector = 0xFF;                     ///< the data bus byte of the acknowledge in progress
 };

@@ -427,6 +427,9 @@ GET  /api/v1/emulator/{id}/memory/region/{name} ?offset=&length=&format=hex|data
 POST /api/v1/emulator/{id}/memory/region/{name} {"offset", "hex"|"data"} write through the device's path; {"action": "save"|"load", "path", ...}
 GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + host_output (held, holders / holds_taken by reason, stale_holds_cleared, frames_delivered / _audible / _held) + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
 PUT  /api/v1/emulator/{id}/audio/mixer/{source} {"muted", "solo", "volume" | "gain_db"} - one device (master: muted); POST too
+GET  /api/v1/emulator/{id}/state/next         ZX Spectrum Next (also /state/next/regs, /state/next/mmu): machine type and timing, CPU clock, DivMMC, interrupts, CTC, SPI, the NextREG table, the 8K MMU slots
+GET  /api/v1/emulator/{id}/state/next/reg-journal ?regs=07,02&sources=nextreg,port,copper,internal&since=&from=&to=&limit= - who wrote which NextREG, when (frame, T, PC), through the NEXTREG instruction, port #253B or the copper; value, previous, name, decoded (NR #02 / #03 / #07)
+POST /api/v1/emulator/{id}/next/reg-journal   {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the NextREG write journal
 GET  /api/v1/emulator/{id}/state/sprinter      Sprinter Sp2000 (also /state/sprinter/ports[/lookup], /text): PLD, windows, registers, clock + waits, video, accelerator, sound, Z84C15, BIOS
 GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), picture_mode / picture_mixed / picture_brief, HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]
 GET  /api/v1/emulator/{id}/state/sprinter/palette ?k=0-7|all|used - pens (n, rgb "#RRGGBB" = R, G, B as video RAM holds them, vram address)

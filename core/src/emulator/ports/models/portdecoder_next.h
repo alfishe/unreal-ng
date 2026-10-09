@@ -9,6 +9,7 @@
 #include "emulator/sound/nextaudio.h"
 #include "emulator/io/z80n/nextctc.h"
 #include "emulator/io/z80n/nextdivmmc.h"
+#include "emulator/io/z80n/nextmultiface.h"
 #include "emulator/io/z80n/nexti2c.h"
 #include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/io/z80n/z80nengine.h"
@@ -46,8 +47,11 @@ public:
     void WriteMemoryMapping(uint8_t value) override;
     void ClearDivMmcMapram() override { _divMmc->ClearMapram(); }
     void StepDma() override;
+    void OnRetn() override;
+    bool GenerateMultifaceNmi() override;
     /// The DRIVE button (F10 on the board; the host's NMI action): NR #06 bit 4 enables it, one NMI at a time
     bool RequestBoardNmi() override;
+    bool GenerateDriveNmi() override;
     bool HasKempstonJoystick() const override { return true; }
     bool PagingLocked() const override { return IsPagingLocked(); }  // #7FFD bit 5 (zxnext.vhd port_7ffd_locked)
     bool ShadowScreen() const override { return (_context->emulatorState.p7FFD & 0x08) != 0; }
@@ -85,6 +89,7 @@ public:
     NextInterruptSource& Interrupts() { return *_interrupts; }
     NextCtc& Ctc() { return _ctc; }
     NextDivMmc& DivMmc() { return *_divMmc; }
+    NextMultiface& Multiface() { return *_multiface; }
     NextI2c& I2c() { return _i2c; }
     /// The 28 MHz system clock since the machine started
     uint64_t Now28() const;
@@ -122,6 +127,23 @@ private:
     std::unique_ptr<NextBoard> _board;
     std::unique_ptr<NextInterruptSource> _interrupts;
     std::unique_ptr<NextDivMmc> _divMmc;
+    std::unique_ptr<NextMultiface> _multiface;
+    /// Both devices watch the M1 cycles (the Multiface first: its memory has priority)
+    struct M1Chain final : IMachineM1Hook
+    {
+        NextMultiface* multiface = nullptr;
+        NextDivMmc* divMmc = nullptr;
+        void BeforeMachineM1(uint16_t address) override
+        {
+            multiface->BeforeMachineM1(address);
+            divMmc->BeforeMachineM1(address);
+        }
+        void OnMachineM1(uint16_t address) override
+        {
+            multiface->OnMachineM1(address);
+            divMmc->OnMachineM1(address);
+        }
+    } _m1Chain;
     NextCtc _ctc;
     NextDma _dma;
     std::unique_ptr<NextAudio> _audio;

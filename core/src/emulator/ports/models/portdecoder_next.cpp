@@ -24,11 +24,26 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
             _context->pScreen->UpdateScreen();
     });
     _interrupts = std::make_unique<NextInterruptSource>(_context);
+    _interrupts->onStacklessNmi = [this](bool on) {
+        if (_engine)
+            _engine->SetStacklessNmi(on, _interrupts.get());
+    };
     _ctc.onInterrupt = [this](unsigned channel) {
         _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
     };
+    _board->SetJournalClock([this](uint32_t& frame, uint32_t& t, uint16_t& pc) {
+        frame = static_cast<uint32_t>(_context->emulatorState.frame_counter);
+        if (Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+        {
+            t = z80->t;
+            pc = z80->m1_pc;
+        }
+    });
     _divMmc = std::make_unique<NextDivMmc>(&Mem(), _board.get());
     _divMmc->isBasicRomPaged = [this]() { return Mem().BasicRomVisible(); };
+    _multiface = std::make_unique<NextMultiface>(&Mem(), _board.get(), &_context->emulatorState);
+    _m1Chain.multiface = _multiface.get();
+    _m1Chain.divMmc = _divMmc.get();
     _interrupts->SetPoller([this]() { _ctc.Advance(Now28()); });
     _board->SetInterrupts(_interrupts.get());
     // The Next's own sound: three AYs and the DAC, mixed by SoundManager (the Spectrum 128 TurboSound stays silent)
@@ -73,8 +88,9 @@ void PortDecoder_Next::reset()
     BindDma();
     _i2c.Reset();
     _divMmc->Reset();
+    _multiface->Reset();
     if (Z80* z80 = _context->pCore->GetZ80(); z80 && !z80->machineM1Hook)
-        z80->machineM1Hook = _divMmc.get();
+        z80->machineM1Hook = &_m1Chain;
     _context->pCore->GetZ80()->SetInterruptSource(_interrupts.get());
     ApplyTiming(_board->Timing());  // a reset starts the frame: nothing to wait for
     _spiSelected = -1;
@@ -132,6 +148,21 @@ void PortDecoder_Next::Port_DFFD_Next(uint8_t value)
 uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
 {
     const uint8_t low = static_cast<uint8_t>(port);
+    if (low == _multiface->EnablePort() || low == _multiface->DisablePort())
+    {
+        uint8_t mfValue = 0xFF;
+        if (_multiface->PortRead(low, port, mfValue))  // the Multiface drives this read
+        {
+            _lastPortDecoded = true;
+            PortDecodeDisposition disp;
+            disp.decodeRuleIndex = PortTraceRule::kNoTable;
+            disp.decodedPort = port;
+            disp.wasDecoded = true;
+            disp.wasHandledInline = true;
+            OnPortInComplete(port, mfValue, pc, disp);
+            return mfValue;
+        }
+    }
     if (low == NextCtc::kPortLow && (port >> 11) == 0x03)
     {
         // CTC: A15:A11 = 00011, A10:A8 the channel (4-7 are not implemented)
@@ -271,6 +302,8 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    if (static_cast<uint8_t>(port) == _multiface->EnablePort() || static_cast<uint8_t>(port) == _multiface->DisablePort())
+        _multiface->PortWrite(static_cast<uint8_t>(port));  // the other devices on the port see the write too
     PortDecodeDisposition disp;
     disp.decodeRuleIndex = PortTraceRule::kNoTable;
     disp.wasDecoded = true;
@@ -659,13 +692,40 @@ void PortDecoder_Next::ApplyTiming(uint8_t timing)
 
 /// endregion
 
+bool PortDecoder_Next::GenerateDriveNmi()
+{
+    // zxnext.vhd: hotkey_drive / nmi_sw_gen_divmmc, and nr_06_button_drive_nmi_en (NR #06 bit 4), with no Multiface session; the
+    // state machine pulses /NMI once and the DivMMC's button latch maps its ROM in at the #0066 fetch. A request while the
+    // handler is in, or still on its way, is lost (nmi_activated)
+    if (!(_board->Stored(0x06) & 0x10) || _divMmc->NmiHold() || _multiface->IsActive())
+        return false;
+    _divMmc->PressButton();
+    _context->pCore->GetZ80()->RequestNonMaskedInterrupt();
+    return true;
+}
+
+bool PortDecoder_Next::GenerateMultifaceNmi()
+{
+    // zxnext.vhd nmi_assert_mf: NR #06 bit 3 (the M1 button's enable), and CONMEM off (port #E3 bit 7) and no DivMMC handler
+    if (!(_board->Stored(0x06) & 0x08) || (_divMmc->ReadPort() & 0x80) || _divMmc->NmiHold() || _multiface->NmiHold())
+        return false;
+    _multiface->PressButton();
+    _context->pCore->GetZ80()->RequestNonMaskedInterrupt();
+    return true;
+}
+
+void PortDecoder_Next::OnRetn()
+{
+    // divmmc_retn_seen = z80_retn_seen and not mf_is_active (the Multiface's session ends first)
+    const bool multifaceActive = _multiface->IsActive();
+    _multiface->OnRetn();
+    if (!multifaceActive)
+        _divMmc->OnRetn();
+}
+
 bool PortDecoder_Next::RequestBoardNmi()
 {
-    // zxnext.vhd: hotkey_drive and nr_06_divmmc_automap_en (bit 4) start nmi_divmmc; the state machine pulses /NMI once and the
-    // DivMMC's button latch maps its ROM in at the #0066 fetch. A press while the handler is in, or still on its way, is lost
-    // (nmi_activated). True = the board owns the request: no plain pulse from the caller
-    if (!(_board->Stored(0x06) & 0x10  /* NR #06 bit 4 */) || _divMmc->NmiHold())
-        return true;
-    _divMmc->PressButton();
-    return false;  // the caller pulses /NMI
+    // The DRIVE button (F10 on the board, the host's NMI action): the board owns the request, no plain pulse from the caller
+    GenerateDriveNmi();
+    return true;
 }

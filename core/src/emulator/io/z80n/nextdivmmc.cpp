@@ -12,6 +12,16 @@ void NextDivMmc::Reset()
     Publish();
 }
 
+void NextDivMmc::OnRetn()
+{
+    _buttonNmi = false;
+    if (_automap)
+    {
+        _automap = false;
+        Publish();
+    }
+}
+
 void NextDivMmc::Publish()
 {
     NextMemory::DivMmcView view;
@@ -35,6 +45,8 @@ void NextDivMmc::ClearMapram()
 
 NextDivMmc::Hit NextDivMmc::Classify(uint16_t address) const
 {
+    if (_memory->MultifaceActive())
+        return Hit::None;  // zxnext.vhd: while the Multiface memory is in, sram_pre_override is "000" - the DivMMC's automap is not active
     if (!(_board->Stored(NextBoard::kRegPeripheral3) & 0x10))
         return Hit::None;  // NR #0A bit 4: the automap is off
     const bool rom3 = isBasicRomPaged && isBasicRomPaged();

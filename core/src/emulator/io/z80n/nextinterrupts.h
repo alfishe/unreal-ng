@@ -14,13 +14,23 @@
 #include <functional>
 
 #include "emulator/cpu/z80.h"
+#include "emulator/io/z80n/z80nengine.h"
 #include "emulator/io/z80n/nexttiming.h"
 
 class EmulatorContext;
 
-class NextInterruptSource final : public IInterruptSource
+class NextInterruptSource final : public IInterruptSource, public INmiReturnStore
 {
 public:
+    /// NR #C0 bit 3 changed (also at a reset: off): the engine switches the stackless NMI
+    std::function<void(bool)> onStacklessNmi;
+    void StoreNmiReturn(uint8_t low, uint8_t high) override
+    {
+        _nmiReturn[0] = low;
+        _nmiReturn[1] = high;
+    }
+    uint16_t LoadNmiReturn() const override { return static_cast<uint16_t>(_nmiReturn[0] | (_nmiReturn[1] << 8)); }
+
     enum Source : uint8_t
     {
         kLine = 0,

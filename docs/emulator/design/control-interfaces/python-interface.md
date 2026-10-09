@@ -190,6 +190,23 @@ class Emulator:
         """The ZX (Spectrum) mode: active, config (options with evidence, best_match file and confidence), launcher
         (its .ZX text in RAM), clock, frame / INT, rom, ports (#7FFD / #1FFD / #01FD ... decodes, ttd_query)"""
 
+    def next_state(self) -> dict:
+        """The ZX Spectrum Next: machine (type, timing, cpu_clock_hz, speed_ratio), mmu, divmmc, interrupts, ctc, spi; available=False elsewhere"""
+
+    def next_regs(self) -> dict:
+        """The NextREG table: number, name, access, value, reset"""
+
+    def next_mmu(self) -> dict:
+        """The eight 8K MMU slots and the paging latches"""
+
+    def next_reg_journal(self, regs=None, sources=None, since=None, from_frame=None, to_frame=None, limit=None) -> dict:
+        """Who wrote which NextREG (regs='07,02'), through the NEXTREG instruction, port #253B or the copper
+        (sources='nextreg,port,copper,internal'): events (seq, frame, t, pc, source, reg, name, value, previous, decoded).
+        Off by default - next_reg_journal_control(enabled=True) first; raises ValueError on a bad option"""
+
+    def next_reg_journal_control(self, enabled=None, clear=False, capacity=0) -> dict:
+        """Switch, clear or resize (capacity=N) the NextREG write journal"""
+
     def sprinter_pld_journal(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None, source="live") -> dict:
         """Who changed the PLD setup: events (frame, t, pc, kind, port, value, text); source='ttd' reads the recording"""
 

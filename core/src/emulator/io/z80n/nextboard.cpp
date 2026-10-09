@@ -15,6 +15,7 @@ void NextBoard::Reset(bool hard)
     const uint8_t type = hard ? (_memory->HasBootRom() ? 0 : 2) : MachineType();
     if (hard)
     {
+        _resetType = 4;  // power on
         for (uint8_t& r : _regs)
             r = 0;
         // the power-on settings of zxnext.vhd: joystick 1 Kempston + scandoubler, the hotkeys, the internal speaker, mouse DPI
@@ -87,7 +88,9 @@ uint8_t NextBoard::Read(uint8_t reg) const
         case kRegCoreVersionSub:
             return kCoreVersionSub;
         case kRegResetType:
-            return 0;  // power on
+            // bit 7 the expansion bus reset, bits 3:2 the NMI requests as written, bits 1:0 how the last reset happened (the VHDL's
+            // nr_02_reset_type: 0 power on, then 2, then 1 for the soft resets that follow)
+            return static_cast<uint8_t>((_regs[reg] & 0x8C) | (_resetType & 3));
         case kRegAltRom:
             return _memory->AltRomRegister();
         case kRegMemoryMapping:
@@ -155,6 +158,14 @@ uint8_t NextBoard::Read(uint8_t reg) const
 
 void NextBoard::Write(uint8_t reg, uint8_t value)
 {
+    if (_journal.Enabled()) [[unlikely]]
+    {
+        uint32_t frame = 0, t = 0;
+        uint16_t pc = 0;
+        if (_journalClock)
+            _journalClock(frame, t, pc);
+        _journal.Record(frame, t, pc, _copperWrite ? NextRegSource::Copper : _source, reg, value, _regs[reg]);
+    }
     // the sound follows NR #06 / #08 / #09 once their value is stored, whichever path stores it
     struct AudioNotify
     {
@@ -256,7 +267,15 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
                 _resetPending = true;
                 _resetHard = (value & 0x02) != 0;
             }
-            _regs[reg] = value & 0xF8;  // bits 7:3 are held (ESP bus reset, ...)
+            {
+                // bit 7 the expansion bus reset is held; bits 3:2 read 1 once their NMI was generated and until written 0
+                uint8_t generated = _regs[reg] & 0x0C & value;
+                if ((value & 0x04) && _machine && _machine->GenerateDriveNmi())
+                    generated |= 0x04;
+                if ((value & 0x08) && _machine && _machine->GenerateMultifaceNmi())
+                    generated |= 0x08;
+                _regs[reg] = static_cast<uint8_t>((value & 0x80) | generated);
+            }
             return;
         case kRegMachineType:
         {
@@ -333,6 +352,12 @@ void NextBoard::AfterInstruction()
     if (!_resetPending)
         return;
     _resetPending = false;
+    if (!_resetHard)
+        {
+        // zxnext.vhd: '0' & t(2) & (t(1) or t(0))
+        const unsigned t2 = (_resetType >> 2) & 1, t1 = (_resetType >> 1) & 1, t0 = _resetType & 1;
+        _resetType = static_cast<uint8_t>((t2 << 1) | (t1 | t0));
+    }
     if (_machine)
         _machine->PerformReset(_resetHard);
 }

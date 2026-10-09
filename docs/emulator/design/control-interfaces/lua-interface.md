@@ -435,6 +435,9 @@ vid, err = sprinter_video{page=1, all=false, squares=false}  -- the mode table: 
 pal, err = sprinter_palette(4)    -- palettes (0-7, "all", default "used"): pens n / rgb "#RRGGBB" (R,G,B as stored) / vram
 ring = sprinter_sound_ring()      -- the Covox-Blaster ring: rows (16 words, [ ] playing, < > next write), words[256]
 zx = sprinter_zx_mode()           -- the ZX mode: active, config.best_match.file ("SP.ZX"), options, clock, frame.int, rom, ports; sprinter_zx_mode(false) skips the RAM search
+n = next_state()                  -- the ZX Spectrum Next: machine (type, timing, cpu_clock_hz, speed_ratio), mmu, divmmc, interrupts, ctc, spi; next_regs() the NextREG table, next_mmu() the 8K slots; available=false on other machines
+next_reg_journal_control{enabled=true, clear=true, capacity=65536}  -- switch (off by default) / clear / resize the NextREG write journal
+j, err = next_reg_journal{regs="07,02", sources="nextreg,copper", since=0, from=0, to=999, limit=50}  -- who wrote which NextREG: events {seq, frame, t, pc, source, reg, name, value, previous, decoded}; the NEXTREG instruction and the copper make no port cycle, so the port trace never sees them
 j, err = sprinter_pld_journal{kinds="cnf,port_1ffd", source="live"}  -- who changed the PLD setup: events {frame, t, pc, kind, port, value, text}; source="ttd": the recording
 sprinter_pld_journal_control{enabled=true, clear=true}            -- switch / clear the PLD journal
 bios = sprinter_bios()            -- BIOS images (file, alias, crc32, present, loaded, selected, known_issues), loaded, known_issues, reload_pending, options

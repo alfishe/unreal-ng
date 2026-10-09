@@ -15,6 +15,8 @@ void NextInterruptSource::SetGeometry(const NextTiming& timing)
 void NextInterruptSource::Reset()
 {
     _control = 0;
+    if (onStacklessNmi)
+        onStacklessNmi(false);
     _nmiReturn[0] = _nmiReturn[1] = 0;
     _enable0 = 0x81;  // the ULA interrupt and the expansion bus INT
     _enableCtc = _enableUart = 0;
@@ -38,6 +40,8 @@ bool NextInterruptSource::WriteNr(uint8_t reg, uint8_t value)
             return true;
         case kRegControl:
             _control = value & 0xE9;  // vector 7:5, stackless NMI 3, mode 0
+            if (onStacklessNmi)
+                onStacklessNmi((_control & 0x08) != 0);
             if (!HardwareMode())
                 _pending = _inService = 0;
             return true;

@@ -15,6 +15,7 @@
 #include <sstream>
 
 #include "cli-processor.h"
+#include "cli-next-format.h"
 #include "cli-sprinter-format.h"
 #include <emulator/state/devicestate.h>
 
@@ -64,6 +65,11 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  cdaudio        - CD drives' audio: disc, tracks, status, head, volume, mixer row" << NEWLINE;
         ss << "  tsconf         - TS-Conf machine: memory map, video, TSU, interrupts, DMA, clock, SD" << NEWLINE;
         ss << "  tsconf tsu     - TS-Conf TSU objects (tile layers, 85 sprites) and the 256 CRAM cells" << NEWLINE;
+        ss << "  next           - ZX Spectrum Next: machine, CPU clock, DivMMC, interrupts, CTC, SPI" << NEWLINE;
+        ss << "  next regs      - the NextREG table: value and reset of every register" << NEWLINE;
+        ss << "  next mmu       - the eight 8K MMU slots and the paging latches" << NEWLINE;
+        ss << "  next journal [regs=07,02] [sources=nextreg,port,copper,internal] [since=N] [from=F] [to=F] [limit=N] | on | off | clear" << NEWLINE;
+        ss << "                 - who wrote which NextREG, when (frame, T, PC), through the NEXTREG instruction, port #253B or the copper" << NEWLINE;
         ss << "  sprinter       - Sprinter Sp2000: PLD, windows, cells, clock + waits, video, accelerator, sound, Z84C15, floppy, BIOS" << NEWLINE;
         ss << "  sprinter ports [map=0-3] [dos=0|1] [pn5=0|1] [rw=r|w|rw] - the decoded port table (page #40)" << NEWLINE;
         ss << "  sprinter port <hex> [rw=r|w] [map=..] [dos=..] [pn5=..]  - one port: index, code, name" << NEWLINE;
@@ -100,6 +106,8 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  state cdaudio        - Show the CD drives' audio state" << NEWLINE;
         ss << "  state tsconf         - Show the TS-Conf machine state (also: ts)" << NEWLINE;
         ss << "  state tsconf tsu     - Show the TSU objects and the palette (debug views)" << NEWLINE;
+        ss << "  state next           - Show the ZX Spectrum Next machine state (also: zxn)" << NEWLINE;
+        ss << "  state next journal on - Record NextREG writes; then `state next journal regs=02` shows who reset the machine" << NEWLINE;
         ss << "  state sprinter       - Show the Sprinter machine state (also: sp)" << NEWLINE;
         ss << "  state sprinter ports map=0 dos=0 rw=w - Show the OUT half of map 0 with TR-DOS off" << NEWLINE;
         ss << "  state sprinter port 21BC rw=w         - Which device answers OUT (#21BC)" << NEWLINE;
@@ -236,6 +244,11 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         std::stringstream ts;
         ts << "TS-Conf" << NEWLINE << "=======" << NEWLINE << DeviceState::ToText(DeviceState::TsConf(context));
         session.SendResponse(ts.str());
+        return;
+    }
+    else if (subsystem == "next" || subsystem == "zxn")
+    {
+        session.SendResponse(CliNext::StateText(context, args, NEWLINE));
         return;
     }
     else if (subsystem == "sprinter" || subsystem == "sp")

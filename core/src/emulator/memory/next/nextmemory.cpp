@@ -181,6 +181,14 @@ void NextMemory::SetDivMmcView(const DivMmcView& view)
     Remap();
 }
 
+void NextMemory::SetMultifaceActive(bool active)
+{
+    if (active == _mfActive)
+        return;
+    _mfActive = active;
+    Remap();
+}
+
 uint8_t NextMemory::EffectiveRom() const
 {
     const bool lock1 = (_alt & 0x20) != 0;
@@ -316,7 +324,16 @@ void NextMemory::MapSlot(unsigned slot)
     const uint8_t value = _mmu[slot];
     const uint32_t trash = static_cast<uint32_t>(TRASH_MEMORY_OFFSET);
     const bool bootRomHere = slot == 0 && _configMode && _bootRom && _bootRomLoaded;
-    if (slot < 2 && _divView.mapped && !bootRomHere)
+    if (slot < 2 && _mfActive && !bootRomHere)
+    {
+        // Multiface (zxnext.vhd: sram address #014000 + A13, the ROM half read-only, no DivMMC / Layer 2 / MMU override)
+        const uint8_t* mem = ROMPageHostAddress(5) + slot * kSlotSize;
+        _readOff[slot] = static_cast<uint32_t>(mem - _memory);
+        _writeOff[slot] = slot == 1 ? _readOff[slot] : trash;
+        _physPage[slot] = ttd::kPhysPageNone;
+        _kind[slot] = slot == 0 ? "multiface rom" : "multiface ram";
+    }
+    else if (slot < 2 && _divView.mapped && !bootRomHere)
     {
         // DivMMC: slot 0 the ROM (or RAM bank 3 with MAPRAM), slot 1 the selected RAM bank
         const uint8_t* mem;
@@ -386,7 +403,7 @@ void NextMemory::MapSlot(unsigned slot)
         _physPage[slot] = ttd::kPhysPageNone;
         _kind[slot] = "unmapped";
     }
-    if (!(slot < 2 && _divView.mapped && !bootRomHere) && !bootRomHere)
+    if (!(slot < 2 && (_divView.mapped || _mfActive) && !bootRomHere) && !bootRomHere)
         ApplyLayer2(slot);
 }
 

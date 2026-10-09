@@ -208,7 +208,7 @@ run with `--gtest_also_run_disabled_tests`). Runs a program on a Profi as a user
 | `UNREAL_NEX` | path to a `.nex` | `LoaderNexRun_Test`: runs the file on the NEXT machine (`UNREAL_NEX_FRAMES`, default 200; `UNREAL_NEX_OUT` = folder for `frame.rgba`). | `core/tests/loaders/nex/loadernex_test.cpp` |
 | `UNREAL_NEX_NR` | `6B=00,15=1C` | `LoaderNexRun_Test`: NextREG writes (hex) before the frame is taken, to look at one layer. | `core/tests/loaders/nex/loadernex_test.cpp` |
 | `UNREAL_NEX_SPRITES` | any | `LoaderNexRun_Test`: prints sprite 0-3 attributes, pattern RAM use, the DMA state, the PC and the stack at the end. | `core/tests/loaders/nex/loadernex_test.cpp` |
-| `UNREAL_NEXT_COSIM` | folder path (unset: test skips) | `NextCosim_Test`: writes the boot trace in the co-simulation format (`tools/verification/next-cosim/trace-format.md`) to that folder; with `UNREAL_NEXT_FIRMWARE` the card. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
+| `UNREAL_NEXT_COSIM` | folder path (unset: test skips) | `NextCosim_Test`: writes the boot trace in the co-simulation format (`tools/machines/next/cosim/trace-format.md`) to that folder; with `UNREAL_NEXT_FIRMWARE` the card. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
 | `UNREAL_NEXT_COSIM_FRAMES` | frames (1500) | Length of the co-simulation run. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
 
 ## 6. Benchmarks and verification tools

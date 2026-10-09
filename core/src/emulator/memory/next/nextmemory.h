@@ -108,6 +108,9 @@ public:
     };
     void SetDivMmcView(const DivMmcView& view);
     const DivMmcView& GetDivMmcView() const { return _divView; }
+    /// The Multiface: its 8K ROM and 8K RAM (system area page 5, SRAM #014000) stand in for slots 0 and 1, above the DivMMC
+    void SetMultifaceActive(bool active);
+    bool MultifaceActive() const { return _mfActive; }
     /// endregion
 
     /// region <Layer 2 CPU mapping (port #123B)>
@@ -150,6 +153,7 @@ private:
     uint8_t _alt = 0;
     uint8_t _dffd = 0;
     DivMmcView _divView;
+    bool _mfActive = false;
     Layer2View _l2View;
     bool _configMode = false;
     bool _bootRom = false;

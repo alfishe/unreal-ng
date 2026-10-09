@@ -49,6 +49,7 @@ Z80NEngine::Z80NEngine(EmulatorContext* context, Z80* cpu) : _z80(cpu), _memory(
     Z80nCpuSetPortBus(_cpu, &PortIn, this, &PortOut, this);
     Z80nCpuSetIntVectorFn(_cpu, &IntVector, this);
     Z80nCpuSetRetiFn(_cpu, &Reti, this);
+    Z80nCpuSetRetnFn(_cpu, &Retn, this);
     Z80nCpuSetNextRegFn(_cpu, &NextReg, this);
 }
 
@@ -210,6 +211,32 @@ void Z80NEngine::Reti(Z80nCPU*, void* user)
     Z80NEngine& e = *static_cast<Z80NEngine*>(user);
     if (IInterruptSource* source = e._z80->GetInterruptSource())
         source->OnReti();
+}
+
+void Z80NEngine::SetStacklessNmi(bool on, INmiReturnStore* store)
+{
+    _nmiStore = store;
+    Z80nCpuSetStacklessNmi(_cpu, on && store ? 1 : 0, &NmiStore, &NmiLoad, this);
+}
+
+void Z80NEngine::NmiStore(Z80nCPU*, uint8_t low, uint8_t high, void* user)
+{
+    Z80NEngine& e = *static_cast<Z80NEngine*>(user);
+    if (e._nmiStore)
+        e._nmiStore->StoreNmiReturn(low, high);
+}
+
+uint16_t Z80NEngine::NmiLoad(Z80nCPU*, void* user)
+{
+    Z80NEngine& e = *static_cast<Z80NEngine*>(user);
+    return e._nmiStore ? e._nmiStore->LoadNmiReturn() : 0;
+}
+
+void Z80NEngine::Retn(Z80nCPU*, void* user)
+{
+    Z80NEngine& e = *static_cast<Z80NEngine*>(user);
+    if (e._nextRegHost)
+        e._nextRegHost->OnRetn();
 }
 
 void Z80NEngine::NextReg(Z80nCPU* cpu, uint8_t reg, uint8_t value, void* user)

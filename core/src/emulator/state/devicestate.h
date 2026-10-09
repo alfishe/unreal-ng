@@ -40,6 +40,8 @@ struct Options;
 ///   phase, main status register, the command in hand with its C H R N,
 ///   result bytes, ST0-ST2 decoded, SPECIFY times, the four units' cylinder
 ///   and seek state, and drives A and B.
+struct NextRegJournalQuery;  // emulator/io/z80n/nextregjournal.h
+
 namespace DeviceState
 {
 StateNode Ay(EmulatorContext* context);
@@ -223,6 +225,13 @@ StateNode Sprinter(EmulatorContext* context);
 StateNode Next(EmulatorContext* context);
 StateNode NextRegs(EmulatorContext* context);
 StateNode NextMmu(EmulatorContext* context);
+/// The NextREG write journal (`next_reg_journal`, /state/next/reg-journal; design-nextreg-journal.md): who wrote which register,
+/// when (frame, T, PC) and through which door (nextreg instruction, port #253B, copper, internal). The query is the journal's own
+/// (`regs`, `sources`, `since`, `from`, `to`, `limit`)
+StateNode NextRegJournalReport(EmulatorContext* context, const NextRegJournalQuery& query);
+/// Switch the journal on / off (`enable` 1 / 0, -1 = keep), clear it, and / or resize the ring (`capacity` > 0; the content is
+/// dropped); replies with the journal's state
+StateNode NextRegJournalControl(EmulatorContext* context, int enable, bool clear, size_t capacity = 0);
 StateNode SprinterPaging(EmulatorContext* context);
 /// The text of the picture's text squares (80 x 32: BIOS SETUP, DSS) from the mode table - the
 /// Sprinter has no ZX screen to OCR; graphics squares read as spaces

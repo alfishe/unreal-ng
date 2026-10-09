@@ -295,3 +295,38 @@ TEST_F(Z80NEngine_Test, RetiReachesTheInterruptSource)
     EXPECT_EQ(_z80->pc, 0x1234);
     EXPECT_EQ(source.retis, 1);
 }
+
+// Stackless NMI (NR #C0 bit 3): the acknowledge writes no stack, the return address goes to the store (NR #C2 / #C3), SP still falls by
+// 2; RETN reads the address back from the store - and what the machine changed in it in between (the Multiface ROM sets the address
+// it restores to)
+TEST_F(Z80NEngine_Test, StacklessNmiKeepsTheReturnAddressInTheStore)
+{
+    struct Store : INmiReturnStore
+    {
+        void StoreNmiReturn(uint8_t low, uint8_t high) override { value = static_cast<uint16_t>(low | (high << 8)); stores++; }
+        uint16_t LoadNmiReturn() const override { return value; }
+        uint16_t value = 0;
+        int stores = 0;
+    } store;
+    _engine->SetStacklessNmi(true, &store);
+
+    Load(0x0066, {0xED, 0x45});  // the NMI handler: RETN
+    _z80->pc = 0x8123;
+    _z80->sp = 0xC000;
+    _memory->DirectWriteToZ80Memory(0xBFFE, 0x77);
+    _memory->DirectWriteToZ80Memory(0xBFFF, 0x66);
+    _z80->iff1 = _z80->iff2 = 1;
+    _z80->t = 1000;
+    _engine->AcknowledgeNmi();
+    EXPECT_EQ(_z80->pc, 0x0066);
+    EXPECT_EQ(_z80->sp, 0xBFFE);
+    EXPECT_EQ(store.stores, 1);
+    EXPECT_EQ(store.value, 0x8123) << "the return address is in the store";
+    EXPECT_EQ(_memory->DirectReadFromZ80Memory(0xBFFE), 0x77) << "and not on the stack";
+    EXPECT_EQ(_memory->DirectReadFromZ80Memory(0xBFFF), 0x66);
+
+    store.value = 0x9000;  // the handler changed where to return
+    _z80->EngineStep();    // RETN
+    EXPECT_EQ(_z80->pc, 0x9000);
+    EXPECT_EQ(_z80->sp, 0xC000);
+}

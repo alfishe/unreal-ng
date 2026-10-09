@@ -44,6 +44,8 @@ public:
     /// disable_nmi_o: the handler is in (or on its way in), a second button press waits
     bool NmiHold() const { return _automap || _buttonNmi; }
     bool ButtonPending() const { return _buttonNmi; }
+    /// A RETN went by (zxnext.vhd divmmc_retn_seen; the Multiface is not modelled): the automap and the button latch are cleared
+    void OnRetn();
 
     bool Mapped() const { return _automap || (_control & 0x80) != 0; }
     bool Automapped() const { return _automap; }

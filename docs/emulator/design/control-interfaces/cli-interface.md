@@ -121,6 +121,7 @@ state screen            Screen state: video mode, active screen + RAM pages, con
 state screen verbose    + per-screen RAM page and Z80 mapping, decoded #7FFD
 state screen mode       Video mode: picture format, memory layout, #EFF7/#DFFD/#FF77
 state screen flash      FLASH phase and timing
+state next [regs|mmu|journal [regs=07,02] [sources=nextreg,port,copper,internal] [since=N] [from=F] [to=F] [limit=N] | journal on|off|clear]  ZX Spectrum Next: machine, the NextREG table, the 8K slots, the NextREG write journal (who wrote which register, when, through which door; off by default)
 state sprinter [ports|port <hex>|text|video|palette [k]|ring|bios [<name> ...]]  Sprinter Sp2000 reports; bios <3.04|3.06|3.07|file> selects
 memory regions          Device memory regions (the Sprinter's video RAM "vram", the TS-Conf palette "cram" and sprite table "sfile", the CMOS clock's "cmos", the ZX-Evo AVR's "eeprom"); memory region read|write|save|load <name> ...
 mixer [<source> [muted=0|1] [solo=0|1] [volume=0..1] [gain_db=..]]  Per-device audio mixer (beeper, ay1, covox, gs, ...)

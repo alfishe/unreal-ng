@@ -72,6 +72,7 @@
 #include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
+#include <emulator/io/z80n/nextregjournal.h>
 #include <emulator/video/screendigest.h>
 #include <base/featuremanager.h>
 #ifdef ENABLE_RECORDING
@@ -3327,6 +3328,69 @@ public:
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::SprinterZxMode(emulator->GetContext(), deep.value_or(true)));
+        });
+        // next_state() / next_regs() / next_mmu(): the ZX Spectrum Next reports (DeviceState::Next / NextRegs / NextMmu;
+        // available=false on other machines)
+        lua.set_function("next_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::Next(emulator->GetContext()));
+        });
+        lua.set_function("next_regs", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextRegs(emulator->GetContext()));
+        });
+        lua.set_function("next_mmu", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextMmu(emulator->GetContext()));
+        });
+        // next_reg_journal([{regs="07,02", sources="nextreg,copper", since=N, from=F, to=F, limit=N}]): who wrote which NextREG,
+        // when (frame, T, PC) and through which door (DeviceState::NextRegJournalReport); nil + error on a bad option.
+        // Off by default: next_reg_journal_control({enabled=true}) first
+        lua.set_function("next_reg_journal", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options)
+                    return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            NextRegJournalQuery query;
+            std::string error;
+            if (!NextRegJournalQueryFromStrings(text("regs"), text("sources"), text("since"), text("from"), text("to"), text("limit"),
+                                                query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextRegJournalReport(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_reg_journal_control({enabled=true|false, clear=true, capacity=N}): switch / clear / resize the NextREG journal
+        lua.set_function("next_reg_journal_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            bool clear = false;
+            size_t capacity = 0;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+                sol::object c = (*options)["clear"];
+                if (c.get_type() == sol::type::boolean)
+                    clear = c.as<bool>();
+                sol::object n = (*options)["capacity"];
+                if (n.get_type() == sol::type::number)
+                    capacity = static_cast<size_t>(n.as<long long>());
+            }
+            return StateNodeToLua(s, DeviceState::NextRegJournalControl(emulator->GetContext(), enable, clear, capacity));
         });
         // sprinter_pld_journal([{kinds="cnf,port_1ffd", since=N, from=F, to=F, limit=N, source="live"|"ttd"}]): who
         // changed the PLD setup, when (DeviceState::SprinterJournal); nil + error on a bad option

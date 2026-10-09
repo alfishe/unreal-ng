@@ -9,6 +9,7 @@
 #include "common/stringhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/z80n/nextregjournal.h"
 #include "emulator/io/z80n/nextregtable.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
@@ -109,6 +110,100 @@ StateNode NextRegs(EmulatorContext* context)
     }
     n["registers"] = std::move(regs);
     return n;
+}
+
+namespace
+{
+/// What the few registers whose bits matter most mean as written
+std::string DecodeWrite(uint8_t reg, uint8_t value)
+{
+    switch (reg)
+    {
+        case 0x02:
+        {
+            std::string text;
+            if (value & 0x02) text += "hard reset ";
+            if (value & 0x01) text += "soft reset ";
+            if (value & 0x04) text += "drive NMI ";
+            if (value & 0x08) text += "multiface NMI ";
+            if (value & 0x80) text += "bus reset ";
+            return text.empty() ? "no request" : text.substr(0, text.size() - 1);
+        }
+        case 0x03:
+            return StringHelper::Format("machine type %u, timing %u", value & 7u, (value >> 4) & 7u);
+        case 0x07:
+            return StringHelper::Format("CPU speed %s", (const char*[]){"3.5 MHz", "7 MHz", "14 MHz", "28 MHz"}[value & 3]);
+        default:
+            return "";
+    }
+}
+
+StateNode EventNode(const NextRegWriteEvent& e, const NextRegInfo* table, size_t count)
+{
+    StateNode n = StateNode::Object();
+    n["seq"] = static_cast<uint64_t>(e.seq);
+    n["frame"] = static_cast<uint64_t>(e.frame);
+    n["t"] = static_cast<uint64_t>(e.t);
+    n["pc"] = StringHelper::Format("0x%04X", e.pc);
+    n["source"] = NextRegSourceName(e.source);
+    n["reg"] = Hex8(e.reg);
+    for (size_t i = 0; i < count; i++)
+        if (table[i].number == e.reg)
+        {
+            n["name"] = table[i].name;
+            break;
+        }
+    n["value"] = Hex8(e.value);
+    n["previous"] = Hex8(e.previous);
+    const std::string decoded = DecodeWrite(e.reg, e.value);
+    if (!decoded.empty())
+        n["decoded"] = decoded;
+    return n;
+}
+
+StateNode JournalState(const NextRegJournal& journal)
+{
+    StateNode n = StateNode::Object();
+    n["available"] = true;
+    n["enabled"] = journal.Enabled();
+    n["size"] = static_cast<uint64_t>(journal.Size());
+    n["capacity"] = static_cast<uint64_t>(journal.Capacity());
+    n["evicted"] = journal.Evicted();
+    n["last_seq"] = journal.LastSeq();
+    return n;
+}
+}  // namespace
+
+StateNode NextRegJournalReport(EmulatorContext* context, const NextRegJournalQuery& query)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    const NextRegJournal& journal = decoder->Board().Journal();
+    StateNode n = JournalState(journal);
+    size_t count;
+    const NextRegInfo* table = NextRegTable(count);
+    StateNode events = StateNode::Array();
+    for (const NextRegWriteEvent& e : journal.Query(query))
+        events.push(EventNode(e, table, count));
+    n["events"] = std::move(events);
+    n["now"] = StringHelper::Format("frame %llu", static_cast<unsigned long long>(context->emulatorState.frame_counter));
+    return n;
+}
+
+StateNode NextRegJournalControl(EmulatorContext* context, int enable, bool clear, size_t capacity)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    NextRegJournal& journal = decoder->Board().Journal();
+    if (capacity > 0)
+        journal.SetCapacity(capacity);
+    if (clear)
+        journal.Clear();
+    if (enable >= 0)
+        journal.SetEnabled(enable != 0);
+    return JournalState(journal);
 }
 
 StateNode Next(EmulatorContext* context)

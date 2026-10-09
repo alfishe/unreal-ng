@@ -18,6 +18,7 @@
 #include <emulator/ports/models/sprinter/sprinterbios.h>
 #include <emulator/sound/midi/midicontrol.h>
 #include <emulator/state/devicestate.h>
+#include <emulator/io/z80n/nextregjournal.h>
 #include <json/json.h>
 
 #include <cstdio>
@@ -369,6 +370,44 @@ void EmulatorAPI::getStateNextActive(const HttpRequestPtr& req, std::function<vo
                              count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
     }
     getStateNext(req, std::move(callback), emulator->GetId());
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/reg-journal?regs=&sources=&since=&from=&to=&limit= - who wrote which NextREG, when and
+/// through which door (DeviceState::NextRegJournalReport)
+void EmulatorAPI::getStateNextRegJournal(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                         const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextRegJournalQuery query;
+    std::string error;
+    if (!NextRegJournalQueryFromStrings(req->getParameter("regs"), req->getParameter("sources"), req->getParameter("since"),
+                                        req->getParameter("from"), req->getParameter("to"), req->getParameter("limit"), query,
+                                        error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextRegJournalReport(emulator->GetContext(), query), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/next/reg-journal {"enabled": true|false, "clear": true, "capacity": N} - switch, clear or
+/// resize the NextREG write journal (DeviceState::NextRegJournalControl)
+void EmulatorAPI::postNextRegJournal(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto body = req->getJsonObject();
+    int enable = -1;
+    bool clear = false;
+    size_t capacity = 0;
+    if (body && body->isMember("enabled"))
+        enable = (*body)["enabled"].asBool() ? 1 : 0;
+    if (body && body->isMember("clear"))
+        clear = (*body)["clear"].asBool();
+    if (body && body->isMember("capacity"))
+        capacity = static_cast<size_t>((*body)["capacity"].asUInt64());
+    ReplyState(DeviceState::NextRegJournalControl(emulator->GetContext(), enable, clear, capacity), callback);
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/next/regs - every NextREG with access, value and reset (the next_regs report)

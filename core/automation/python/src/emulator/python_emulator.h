@@ -94,6 +94,7 @@
 #include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
+#include <emulator/io/z80n/nextregjournal.h>
 #include "../bindings/python_porttrace.h"
 #include "../bindings/python_vdac2.h"
 
@@ -2684,6 +2685,35 @@ namespace PythonBindings
                "Sprinter ZX (Spectrum) mode: active, the launcher configuration (each .ZX option from the hardware, the "
                "launcher's text in RAM), best-matching mode file with confidence, clock (CNF request, F12, MHz), frame / INT, "
                "ROMs by CRC, the decode of #7FFD / #1FFD / #01FD / #xxFD / #FE / #1F; deep=False skips the whole-RAM search")
+            .def("next_state", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::Next(self.GetContext())); },
+               "ZX Spectrum Next machine state (machine type, CPU clock, DivMMC, interrupts, CTC, SPI); available=False elsewhere")
+            .def("next_regs", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextRegs(self.GetContext())); },
+               "The NextREG table: number, name, access, value, reset")
+            .def("next_mmu", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextMmu(self.GetContext())); },
+               "The eight 8K MMU slots and the paging latches")
+            .def("next_reg_journal", [](Emulator& self, py::object regs, py::object sources, py::object since, py::object from_frame,
+                                        py::object to_frame, py::object limit) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextRegJournalQuery query;
+                std::string error;
+                if (!NextRegJournalQueryFromStrings(text(regs), text(sources), text(since), text(from_frame), text(to_frame),
+                                                    text(limit), query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextRegJournalReport(self.GetContext(), query));
+            }, py::arg("regs") = py::none(), py::arg("sources") = py::none(), py::arg("since") = py::none(),
+               py::arg("from_frame") = py::none(), py::arg("to_frame") = py::none(), py::arg("limit") = py::none(),
+               "NextREG write journal: who wrote which register (regs='07,02'), through the NEXTREG instruction, port #253B or "
+               "the copper (sources='nextreg,port,copper,internal'), with frame, T, PC, value and previous; off by default - "
+               "next_reg_journal_control(enabled=True) first")
+            .def("next_reg_journal_control", [](Emulator& self, py::object enabled, bool clear, size_t capacity) -> py::object {
+                const int enable = enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0);
+                return StateNodeToPy(DeviceState::NextRegJournalControl(self.GetContext(), enable, clear, capacity));
+            }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
+               "Switch (enabled=True/False), clear or resize (capacity=N) the NextREG write journal")
             .def("sprinter_pld_journal", [](Emulator& self, py::object kinds, py::object since, py::object from_frame,
                                             py::object to_frame, py::object limit, const std::string& source) -> py::object {
                 auto text = [](const py::object& value) -> std::string {
