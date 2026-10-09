@@ -402,8 +402,10 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   - [x] Idle cycles in one go (`Z84C15Engine::RunIdleCycles`, branch `sprinter-halt-skip`): exact against one cycle
     per step (`SprinterIdleCycles_Test`), DNTBLINK 5.6 -> 2.4 ms per frame
     ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.2)
-  - [ ] The INT question cached between source events for running code (the daisy-chain walk per instruction,
-    ~20 % of a running frame); a prototype missed an invalidation (the PC drifted)
+  - [x] The INT question from a kept "no" between source events (`ChainSource::IsIntAsserted`, change counts in
+    the chip and the PLD's sources): exact (`SprinterIdleCycles_Test`), -4 % to -10 % per frame on four demos
+    ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.3); the
+    prototype's drift was `CovoxBlaster::Acknowledge` not reaching `t` first
   - [ ] Screen catch-up on events instead of every step (`MainLoop::OnCPUStep` -> `DrawTo`, ~12 %); a prototype
     lost the frame's tail
   - [ ] A Sprinter frame benchmark without a disk image (the CTC `EI : HALT` program of `SprinterIdleCycles_Test`

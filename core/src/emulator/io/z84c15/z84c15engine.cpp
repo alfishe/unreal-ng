@@ -45,7 +45,7 @@ static_assert(int{Z80_BOUNDARY_PREFIX_DD} == int{Z84CpuBoundaryPrefixDd} && int{
 /// endregion </Register file layout contract>
 
 Z84C15Engine::Z84C15Engine(EmulatorContext* context, Z80* cpu, Z84Lib::Z84C15& chip)
-    : _z80(cpu), _memory(context->pMemory), _chip(chip)
+    : _z80(cpu), _memory(context->pMemory), _chip(chip), _state(&context->emulatorState)
 {
     Z84CPU* core = _chip.Cpu();
     Z84CpuAttachRegisterFile(core, reinterpret_cast<Z84CpuRegisterFile*>(&_z80->pc));
@@ -401,8 +401,34 @@ void Z84C15Engine::Reti(Z84CPU*, void* user)
 
 bool Z84C15Engine::ChainSource::IsIntAsserted(uint32_t t)
 {
-    const bool chip = _engine._chip.IntPending();
-    const bool board = _engine._external && _engine._external->IsIntAsserted(t);
+    Z84C15Engine& e = _engine;
+    KeptNo& kept = e._intKept;
+    // A kept "no": nothing the answer depends on changed and no source event came since it was asked. Asked at every
+    // instruction boundary, so the test is a few compares; the sources' own work (the daisy-chain walk, the pulse
+    // list, the chip clock) runs only when an answer may have changed
+    if (kept.valid && t < kept.until && e._chip.StateVersion() == kept.chipVersion &&
+        (!e._external || e._external->changeCount == kept.boardVersion) && e._state->frame_counter == kept.frame &&
+        e._state->current_z80_frequency_multiplier == kept.multiplier)
+    {
+        e._intAnswersKept++;
+        return false;
+    }
+
+    const bool chip = e._chip.IntPending();
+    const bool board = e._external && e._external->IsIntAsserted(t);
+    e._intAnswersAsked++;
+    kept.valid = false;
+    if (!chip && !board && e._intKeptOn && (!e._external || e._external->countsChanges))
+    {
+        // Versions after the question (it may poll: the CTC's zero counts, the watchdog), the bound before the frame
+        // end (the frame's T rebases there)
+        kept.until = e.NextCheckT(t, e._z80->_frameLimit);
+        kept.chipVersion = e._chip.StateVersion();
+        kept.boardVersion = e._external ? e._external->changeCount : 0;
+        kept.frame = e._state->frame_counter;
+        kept.multiplier = e._state->current_z80_frequency_multiplier;
+        kept.valid = kept.until > t + 1;  // a bound at the next boundary saves nothing
+    }
     return chip || board;
 }
 

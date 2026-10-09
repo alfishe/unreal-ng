@@ -7,6 +7,7 @@ namespace Z84Lib
 
 void Z84Pio::Reset()
 {
+    _version++;  // StateVersion
     for (Port& port : _port)
     {
         const uint8_t inputs = port.inputs;
@@ -31,6 +32,7 @@ uint8_t Z84Pio::ReadData(uint8_t p) const
 
 void Z84Pio::SetInputs(uint8_t p, uint8_t value)
 {
+    _version++;  // StateVersion
     _port[p & 1].inputs = value;
     Evaluate(p);
 }
@@ -39,6 +41,7 @@ void Z84Pio::SetInputs(uint8_t p, uint8_t value)
 /// condition; a request on the edge where it becomes true
 void Z84Pio::Evaluate(uint8_t p)
 {
+    _version++;  // StateVersion
     Port& port = _port[p & 1];
     if (port.mode != 3)
     {
@@ -56,6 +59,7 @@ void Z84Pio::Evaluate(uint8_t p)
 
 void Z84Pio::WriteControl(uint8_t p, uint8_t value)
 {
+    _version++;  // StateVersion
     Port& port = _port[p & 1];
     if (port.next == 1)
     {
@@ -102,6 +106,7 @@ void Z84Pio::WriteControl(uint8_t p, uint8_t value)
 
 uint8_t Z84Pio::Read(uint8_t port)
 {
+    _version++;  // StateVersion
     const uint8_t p = (port >> 1) & 1;
     if (port & 1)
         return 0xFF;  // control registers are write-only
@@ -110,6 +115,7 @@ uint8_t Z84Pio::Read(uint8_t port)
 
 void Z84Pio::Write(uint8_t port, uint8_t value)
 {
+    _version++;  // StateVersion
     const uint8_t p = (port >> 1) & 1;
     if (port & 1)
         WriteControl(p, value);

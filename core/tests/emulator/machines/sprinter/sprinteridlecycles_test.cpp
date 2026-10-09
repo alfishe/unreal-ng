@@ -1,6 +1,7 @@
-// A halted Sprinter CPU's idle cycles in one go (Z84C15Engine::RunIdleCycles): the machine runs exactly as with one
-// idle M1 cycle per step - the same pictures, sound, registers (R included), T-states and memory - while most idle
-// cycles become arithmetic. Two machines run the same thing, one with the fast-forward off, and are compared at
+// The Sprinter engine's fast paths - a halted CPU's idle cycles in one go (Z84C15Engine::RunIdleCycles) and the INT
+// question answered from a kept "no" (ChainSource::IsIntAsserted) - change nothing: the same pictures, sound,
+// registers (R included), T-states and memory as one cycle per step asking every boundary. Two machines run the same
+// thing, one with the fast paths off, and are compared at
 // every checkpoint, through every driver that allows it: RunNFrames, RunTStates chunks that end inside idle
 // stretches, and MainLoop's frame (the GUI's run).
 //
@@ -68,6 +69,12 @@ const std::vector<uint8_t> kMain = {
     0x76,              // #801F HALT
     0x18, 0xFD,        // #8020 JR #801F
 };
+/// The same start, then a busy loop instead of the HALT: the INT question at every boundary of running code
+const std::vector<uint8_t> kBusyTail = {
+    0x21, 0x00, 0x89,  // #801F LD HL,#8900
+    0x34,              // #8022 INC (HL)
+    0x18, 0xFD,        // #8023 JR #8022
+};
 const std::vector<uint8_t> kHandler = {
     0xF5,              // #8282 PUSH AF
     0xE5,              // PUSH HL
@@ -114,7 +121,7 @@ protected:
         }
     }
 
-    /// A Sprinter on the shipped BIOS (fast start), the fast-forward on or off
+    /// A Sprinter on the shipped BIOS (fast start), the fast paths on or off
     void Create(Run& run, const char* id, bool inOneGo)
     {
         run.emulator = _manager->CreateEmulatorWithModelAndRAM(id, "SPRINTER", 4096, LoggerLevel::LogError);
@@ -127,6 +134,7 @@ protected:
         run.engine = decoder->GetCpuEngine();
         ASSERT_NE(run.engine, nullptr);
         run.engine->SetIdleCyclesInOneGo(inOneGo);
+        run.engine->SetIntAnswerKept(inOneGo);
     }
 
     /// Reset; pages 5 and 7 power up random (Memory::RandomizeMemoryContent): the same start for both machines
@@ -138,7 +146,7 @@ protected:
     }
 
     /// The BIOS start with no disk, then the program at #8000
-    void StartProgram(Run& run, const char* id, bool inOneGo)
+    void StartProgram(Run& run, const char* id, bool inOneGo, bool busy = false)
     {
         Create(run, id, inOneGo);
         if (HasFatalFailure())
@@ -155,6 +163,11 @@ protected:
         Memory* memory = run.context->pMemory;
         for (size_t i = 0; i < kMain.size(); i++)
             memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), kMain[i]);
+        if (busy)
+        {
+            for (size_t i = 0; i < kBusyTail.size(); i++)
+                memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x801F + i), kBusyTail[i]);
+        }
         for (uint16_t i = 0; i <= 0x100; i++)
             memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8100 + i), 0x82);
         for (size_t i = 0; i < kHandler.size(); i++)
@@ -253,6 +266,29 @@ TEST_F(SprinterIdleCycles_Test, HaltedCtcLoop_RunsAsOneCyclePerStep)
     EXPECT_EQ(perStep.engine->IdleCyclesRunInOneGo(), 0u);
     EXPECT_GT(inOneGo.engine->IdleCyclesRunInOneGo() - before, 150u * 30000u) << "about 35 000 idle cycles in each of ~185 frames";
     ExpectSameTrace(perStep, inOneGo);
+}
+
+// Running code (no HALT): the INT question at every boundary answered from the kept "no" between source events
+TEST_F(SprinterIdleCycles_Test, BusyCtcLoop_RunsAsAskingEveryBoundary)
+{
+    Run perStep;
+    Run fast;
+    StartProgram(perStep, "sprinter-busy-per-step", false, true);
+    if (HasFatalFailure())
+        return;
+    StartProgram(fast, "sprinter-busy-fast", true, true);
+    if (HasFatalFailure())
+        return;
+
+    const uint64_t keptBefore = fast.engine->IntAnswersKept();
+    Drive(perStep, 120);
+    Drive(fast, 120);
+
+    EXPECT_GT(Counter(perStep), 2000u) << "the CTC 3 handler runs about 16 times a frame";
+    EXPECT_EQ(Counter(fast), Counter(perStep));
+    EXPECT_EQ(perStep.engine->IntAnswersKept(), 0u);
+    EXPECT_GT(fast.engine->IntAnswersKept() - keptBefore, 150u * 12000u) << "most of ~15 000 boundaries a frame answered from the kept no";
+    ExpectSameTrace(perStep, fast);
 }
 
 // deMarche's dontBlink (C:\DEMOS\DNTBLINK) with the shipped sound cards: the CTC tick, the frame INT, the accelerator,

@@ -129,9 +129,17 @@ public:
 
     uint8_t Vector() const { return _vector; }
     /// The interrupt vector base as a state restore sets it (Z84C15::LoadState)
-    void SetVector(uint8_t vector) { _vector = vector; }
+    void SetVector(uint8_t vector)
+    {
+        _version++;
+        _vector = vector;
+    }
     const ChannelState& GetChannel(uint8_t channel) const { return _ch[channel & 3]; }
-    ChannelState& Channel(uint8_t channel) { return _ch[channel & 3]; }
+    ChannelState& Channel(uint8_t channel)
+    {
+        _version++;
+        return _ch[channel & 3];
+    }
 
     /// region <Time base and inputs (the board's wiring)>
     /// The clock in units (monotonic)
@@ -168,7 +176,12 @@ public:
     /// in the past until the next Poll
     uint64_t NextDue() const { return _nextDue; }
 
+    /// Bumped by every change that is not a function of time alone (register accesses, Receive, inputs,
+    /// mutable access to the state): a host may keep a "no interrupt" answer while it stays the same
+    uint32_t Version() const { return _version; }
+
 private:
+    uint32_t _version = 0;
     uint64_t Now() const { return _clock ? _clock() : 0; }
     /// The channel as it stands at `now`: a triggered timer whose edge came is running from that edge
     ChannelState Effective(uint8_t channel, uint64_t now) const;
@@ -271,7 +284,11 @@ public:
     void Write(uint8_t port, uint8_t value);
 
     const Channel& GetChannel(uint8_t ch) const { return _ch[ch & 1]; }
-    Channel& ChannelState(uint8_t ch) { return _ch[ch & 1]; }
+    Channel& ChannelState(uint8_t ch)
+    {
+        _version++;
+        return _ch[ch & 1];
+    }
 
     /// Bytes the guest transmits (channel, byte)
     void SetTransmitSink(std::function<void(uint8_t, uint8_t)> sink) { _transmit = std::move(sink); }
@@ -284,7 +301,12 @@ public:
     /// WR0 command 7 on channel A (Return from interrupt): ends the SIO's highest service
     std::function<void()> onReturnFromInt;
 
+    /// Bumped by every change that is not a function of time alone (register accesses, Receive, inputs,
+    /// mutable access to the state): a host may keep a "no interrupt" answer while it stays the same
+    uint32_t Version() const { return _version; }
+
 private:
+    uint32_t _version = 0;
     static constexpr uint8_t kOverrunLatch = 0x01;
     /// The flag of FIFO entry `index` in Channel::overrun
     static constexpr uint8_t EntryFlag(uint8_t index) { return static_cast<uint8_t>(0x02u << index); }
@@ -336,10 +358,19 @@ public:
     void Write(uint8_t port, uint8_t value);
 
     const Port& GetPort(uint8_t p) const { return _port[p & 1]; }
-    Port& PortState(uint8_t p) { return _port[p & 1]; }
+    Port& PortState(uint8_t p)
+    {
+        _version++;
+        return _port[p & 1];
+    }
     void SetInputs(uint8_t p, uint8_t value);
 
+    /// Bumped by every change that is not a function of time alone (register accesses, Receive, inputs,
+    /// mutable access to the state): a host may keep a "no interrupt" answer while it stays the same
+    uint32_t Version() const { return _version; }
+
 private:
+    uint32_t _version = 0;
     uint8_t ReadData(uint8_t p) const;
     void WriteControl(uint8_t p, uint8_t value);
     void Evaluate(uint8_t p);
@@ -432,6 +463,10 @@ public:
     /// UINT64_MAX: nothing is due (the SIO and the PIO request only after an access or a Receive). May lie in
     /// the past (then ask IntPending now). A host that runs a halted CPU's idle cycles in one go stops there
     uint64_t NextEventClock() const;
+    /// The chip's change count: CTC, SIO, PIO and the system block together (their Version()), the acknowledge,
+    /// RETI, a state load and a watchdog timeout. While it and the time-driven events (NextEventClock) stay put,
+    /// IntPending's answer stays put - a host may cache a "no"
+    uint32_t StateVersion() const { return _version + ctc.Version() + sio.Version() + pio.Version(); }
 
     /// region <State (snapshots, time travel)>
     /// Everything the chip carries from one instruction to the next besides the
@@ -466,6 +501,7 @@ public:
     Z84SystemRegs system;
 
 private:
+    uint32_t _version = 0;
     /// One daisy-chain source: device 0 CTC (channels 0-3), 1 SIO (A Rx, B Rx), 2 PIO (A, B)
     struct Source
     {

@@ -641,10 +641,51 @@ only a per-frame scope and a per-step store in `RunNFrames` / `RunTStates`. `BM_
 {Fast,Debug}`, A = `22e79acfd`, B = the change, rounds A B A B A B B A B A, load 16-25: mean paired difference
 -1.1 % to -0.2 %, minimums -0.7 % to 0.0 % - within noise, no cost.
 
-**What remains** after it (profile of the same run): the CPU and the bus path (~40 %), the pixel renderer (~19 %),
+### 8.3 The INT question from a kept "no" (`ChainSource::IsIntAsserted`)
+
+`ProcessInterrupts` asks the interrupt source at every instruction boundary; on the Sprinter that is the chip's
+daisy chain (with a CTC interrupt enabled: the clock read, the 8-entry order, the walk) and the PLD's sources (the
+pulse list, the Covox-Blaster). After a "no" from both, the engine keeps it for the boundaries before the next
+moment a source may assert (`NextCheckT`, the same lower bounds as section 8.2), while nothing it depends on
+changed. A change is not tracked by calls at the places that make it but by counts inside the sources:
+
+| Count | Bumped by | Code |
+|---|---|---|
+| `Z84C15::StateVersion` | every register access of the CTC, SIO, PIO and system block, `Receive`, the PIO's inputs, mutable access to a sub-device's state, the acknowledge, RETI, a state load, a watchdog timeout | `Z84Ctc` / `Z84Sio` / `Z84Pio::Version`, `z84c15.h` |
+| `IInterruptSource::changeCount` (Sprinter: `SprinterIntSource`) | the keyboard INT latch, the acknowledge, the mode page, the frame height, a mode-table INT byte, a reset or restore; the Covox-Blaster's control and data writes, acknowledge, frame end and mutable access (`CovoxBlaster::SetChangeCounter` points them at the same count) | `sprinterintsource.*`, `covoxblaster.*` |
+
+The kept answer also holds the frame and the clock multiplier. The check is a few loads and compares, no call:
+the counts are plain fields. A source without a count (`countsChanges` false) is asked at every boundary, as before.
+`SetIntAnswerKept` turns it off for comparisons.
+
+One laziness had to go with it: `CovoxBlaster::Acknowledge` returned early when no request was pending, without
+reaching `t` first. Asked at every boundary the source was always caught up; answered from a kept "no" it was not,
+and an acknowledge of a CTC interrupt (the PLD presets its INT flip-flop on any acknowledge) missed a CBL request
+raised by a play tick just before - the request then came as an extra interrupt later. It now reaches `t` first
+(also more exact in the one corner the old code had: a keyboard INT latched at a CBL tick).
+
+**Exactness:** `SprinterIdleCycles_Test` compares both fast paths on against both off: the halted CTC loop, a busy
+loop (`INC (HL) : JR`, running code with the CTC interrupt), and DNTBLINK with the shipped sound cards.
+
+**Measured** (2026-10-09, the idle-cycle fast-forward on in both, the kept answer off / on, host CPU per frame,
+rounds alternating, load 9-14): 94-99.9 % of the boundaries answered from the kept "no".
+
+| Demo | Off | On | |
+|---|---|---|---|
+| DNTBLINK (`dont_blink_test1`) | 1.99-2.01 ms | 1.87-1.91 ms | -5.5 % |
+| ROTOZOOM (busy, no CTC interrupt) | 3.62-3.65 ms | 3.44 ms | -5.5 % |
+| PLASMA2 | 0.90-0.94 ms | 0.88 ms | -4 % |
+| BADAPPLE | 1.65 ms | 1.44-1.51 ms | -10 % |
+
+A first version read the counts through calls (an out-of-line `StateVersion`, a virtual for the board): ROTOZOOM
+and PLASMA2 got 3-5 % slower - their chip has no interrupt enabled, so the plain question is already cheap.
+
+### 8.4 What remains
+
+After the idle-cycle fast-forward (profile of the same run): the CPU and the bus path (~40 %), the pixel renderer (~19 %),
 the screen catch-up on video RAM writes (~12 %), the frame end (~8 %). Next candidates: the INT question cached
 between source events for running (not halted) code, the screen catch-up on events instead of every step, the
-renderer per square. General rules for such changes: [performance-guidelines.md](../../../guidelines/performance-guidelines.md).
+renderer per square (the INT question is done: section 8.3). General rules for such changes: [performance-guidelines.md](../../../guidelines/performance-guidelines.md).
 
 ## 9. Where the older design documents differ from the code
 

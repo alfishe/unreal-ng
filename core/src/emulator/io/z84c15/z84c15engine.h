@@ -123,6 +123,17 @@ public:
     /// Idle cycles run as arithmetic since the engine was created (tests, diagnosis)
     uint64_t IdleCyclesRunInOneGo() const { return _idleCyclesInOneGo; }
 
+    /// The INT question answered from a kept "no" (ChainSource::IsIntAsserted): on by default; off asks the sources
+    /// at every boundary (comparison tests, diagnosis)
+    void SetIntAnswerKept(bool on)
+    {
+        _intKeptOn = on;
+        _intKept.valid = false;
+    }
+    /// Boundaries answered from the kept "no", and the times it was refilled (tests, diagnosis)
+    uint64_t IntAnswersKept() const { return _intAnswersKept; }
+    uint64_t IntAnswersAsked() const { return _intAnswersAsked; }
+
     Z84Lib::Z84C15& Chip() { return _chip; }
     const Z84Lib::Z84C15& Chip() const { return _chip; }
 
@@ -194,4 +205,21 @@ private:
     uint8_t _lastM1Value = 0;                   ///< the byte the last opcode fetch read (a halted CPU's idle fetch)
     bool _idleInOneGo = true;
     uint64_t _idleCyclesInOneGo = 0;
+
+    /// A "no" from both the chip and the board, valid for boundaries before `until` while nothing it depends on
+    /// changed: the chip's and the board's change counts, the frame, the clock multiplier
+    struct KeptNo
+    {
+        bool valid = false;
+        uint32_t until = 0;
+        uint32_t chipVersion = 0;
+        uint32_t boardVersion = 0;
+        uint64_t frame = 0;
+        uint32_t multiplier = 0;
+    };
+    const EmulatorState* _state = nullptr;
+    bool _intKeptOn = true;
+    KeptNo _intKept;
+    uint64_t _intAnswersKept = 0;
+    uint64_t _intAnswersAsked = 0;
 };

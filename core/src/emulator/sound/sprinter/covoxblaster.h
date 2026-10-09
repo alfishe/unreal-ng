@@ -158,7 +158,15 @@ public:
     /// Base T-states between play ticks for a control byte
     static uint32_t TickTstates(uint8_t control) { return kStepTstates * (kDivider[control & 0x0F] + 1u); }
 
-    CovoxBlasterState& State() { return _s; }
+    CovoxBlasterState& State()
+    {
+        ++*_changes;  // mutable access (a state restore)
+        return _s;
+    }
+    /// The counter bumped by every change that is not a function of time alone (the bus writes, the acknowledge,
+    /// a reset, mutable access to the state, a frame end): IntRequested's answer stays put while it does, up to
+    /// NextIntT. The INT source it feeds points it at its own (IInterruptSource::changeCount); null: its own
+    void SetChangeCounter(uint32_t* counter) { _changes = counter ? counter : &_ownChanges; }
     const CovoxBlasterState& State() const { return _s; }
     /// TTD restore: the state as a whole; the audio stream restarts from the restored levels
     void RestoreState(const CovoxBlasterState& state);
@@ -189,6 +197,8 @@ private:
 
     EmulatorContext* _context = nullptr;
     CovoxBlasterState _s{};
+    uint32_t _ownChanges = 0;
+    uint32_t* _changes = &_ownChanges;
 
     AudioFrameDescriptor _audioDescriptor;
     int16_t* const _buffer = reinterpret_cast<int16_t*>(_audioDescriptor.memoryBuffer);

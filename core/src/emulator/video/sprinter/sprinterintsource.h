@@ -67,16 +67,24 @@ public:
     /// The keyboard interrupt (ALL_MODE bits 0 and 3, MAME on_kbd_data): a byte
     /// from the keyboard arrived. The PLD's one INT flip-flop holds it until the
     /// acknowledge (PLD SP2_1K30.TDF INT_X), which answers #FF like the frame INT
-    void LatchKeyboardInt() { _keyboardInt = true; }
+    void LatchKeyboardInt()
+    {
+        changeCount++;
+        _keyboardInt = true;
+    }
     bool KeyboardIntLatched() const { return _keyboardInt; }
 
     /// The Covox-Blaster's half-ring request (PLD CBL_INT, ORed into INT_X): its own flip-flop,
     /// cleared by the same acknowledge (vector #FF)
-    void SetCovoxBlaster(CovoxBlaster* cbl) { _cbl = cbl; }
+    void SetCovoxBlaster(CovoxBlaster* cbl);
 
     /// The mode table changed (a blank + INT byte, RGMOD bit 0, the frame length):
     /// the INT list is rebuilt at the next query
-    void Invalidate() { _dirty = true; }
+    void Invalidate()
+    {
+        changeCount++;
+        _dirty = true;
+    }
     /// RGMOD bit 0 and the frame height (320 or 312 lines)
     void SetModePage(uint8_t page);
     void SetFrameLines(uint16_t lines);
@@ -92,6 +100,7 @@ public:
     int64_t AckedPulse() const { return _ackedPulse; }
     void RestoreState(uint8_t modePage, uint16_t frameLines, int64_t ackedPulse, bool keyboardInt)
     {
+        changeCount++;
         _modePage = modePage & 1;
         _frameLines = frameLines;
         _ackedPulse = ackedPulse;

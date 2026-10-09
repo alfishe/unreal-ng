@@ -11,10 +11,20 @@
 SprinterIntSource::SprinterIntSource(EmulatorContext* context, const SprinterVideoRam& vram)
     : _context(context), _vram(vram)
 {
+    countsChanges = true;
+}
+
+void SprinterIntSource::SetCovoxBlaster(CovoxBlaster* cbl)
+{
+    changeCount++;
+    _cbl = cbl;
+    if (_cbl)
+        _cbl->SetChangeCounter(&changeCount);  // its changes count as this source's
 }
 
 void SprinterIntSource::Reset()
 {
+    changeCount++;  // IInterruptSource::changeCount
     _ackedPulse = -1;
     _keyboardInt = false;
     _dirty = true;
@@ -22,6 +32,7 @@ void SprinterIntSource::Reset()
 
 void SprinterIntSource::SetModePage(uint8_t page)
 {
+    changeCount++;  // IInterruptSource::changeCount
     page &= 1;
     if (page != _modePage)
     {
@@ -32,6 +43,7 @@ void SprinterIntSource::SetModePage(uint8_t page)
 
 void SprinterIntSource::SetFrameLines(uint16_t lines)
 {
+    changeCount++;  // IInterruptSource::changeCount
     if (lines != _frameLines)
     {
         _frameLines = lines;
@@ -152,6 +164,7 @@ uint32_t SprinterIntSource::NextAssertT(uint32_t t)
 
 uint8_t SprinterIntSource::AcknowledgeInterrupt(uint32_t t)
 {
+    changeCount++;  // IInterruptSource::changeCount
     _keyboardInt = false;  // one flip-flop for every PLD source
     if (_cbl)
         _cbl->Acknowledge(t / Multiplier());  // CBL_INT: preset by the acknowledge (/IORQ and /M1)

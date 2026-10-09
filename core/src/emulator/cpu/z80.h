@@ -356,6 +356,11 @@ public:
     /// the source is asked again there. Returning `t` (the default) means "unknown: ask at every boundary".
     /// Lets an engine run a halted CPU's idle cycles in one go (Z84C15Engine)
     virtual uint32_t NextAssertT(uint32_t t) { return t; }
+    /// A change count of everything IsIntAsserted reads besides the time, kept by sources with countsChanges: while
+    /// it stays the same (and the frame, the clock multiplier), a "no" holds up to NextAssertT. A plain field, read
+    /// at every boundary without a call. A source without it (countsChanges false) is asked at every boundary
+    uint32_t changeCount = 0;
+    bool countsChanges = false;
     /// The source wants OnWait for every stretch of the CPU clock (Z80::AddWaitStates / AddWaitTicks): a pulse
     /// that counts only CPU clocks without /WAIT (TS-Conf's frame INT). Asked once, in SetInterruptSource;
     /// a source that does not need it costs the other machines nothing
