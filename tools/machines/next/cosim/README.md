@@ -34,7 +34,7 @@ demand by `run-ref.sh` from the folder when the folder is newer.
 ### Provision the cards
 
 ```bash
-tools/verification/next-cosim/provision-cards.sh /Volumes/TB4-4Tb/Projects/emulators/tbblue-dist \
+tools/machines/next/cosim/provision-cards.sh /Volumes/TB4-4Tb/Projects/emulators/tbblue-dist \
     /Volumes/TB4-4Tb/Projects/Test/unreal-ng/scratch/wt-next-p2/scratch/nextcard
 ```
 
@@ -53,7 +53,7 @@ Host used: macOS 15.8 (Darwin 24.6), arm64, Apple clang 17, CMake 4.0.3, Ninja 1
 | MAME | 0.289 (clone `f43983b62edf`, 2026-09-23) | | `specnext` - MAME reduced to `src/mame/sinclair/next/specnext.cpp` (4 machines: `tbblue`, `specnext_ks1/2/3`) | `sdl3 python3`; first build ~20 min on 10 cores |
 
 ```bash
-tools/verification/next-cosim/build-ref.sh all        # or: jnext | zesarux | mame   (--clean as 2nd arg starts over)
+tools/machines/next/cosim/build-ref.sh all        # or: jnext | zesarux | mame   (--clean as 2nd arg starts over)
 ```
 
 What the script does: copies the clone (`/Volumes/TB4-4Tb/Projects/emulators/github/<name>`) to
@@ -102,7 +102,7 @@ Writing new patches: copy the tree as `build-ref.sh` does, edit the copy, and `d
 ## Running
 
 ```bash
-R=tools/verification/next-cosim
+R=tools/machines/next/cosim
 $R/run-ref.sh jnext   full 1500 /tmp/cosim/jnext      # trace.txt state.txt screen.png run.log
 $R/run-ref.sh zesarux full 1500 /tmp/cosim/zesarux
 $R/run-ref.sh mame    full 1500 /tmp/cosim/mame

@@ -1,7 +1,7 @@
 --- /dev/null
 +++ b/src/mame/sinclair/next/cosim_trace.h
 @@ -0,0 +1,150 @@
-+// Co-simulation trace sink (unreal-ng tools/verification/next-cosim). Not part of upstream jnext.
++// Co-simulation trace sink (unreal-ng tools/machines/next/cosim). Not part of upstream jnext.
 +// One text line per event, see trace-format.md:  <seq> <KIND> <addr> <value> <pc>
 +// Everything is driven by environment variables; with COSIM_TRACE unset every hook is a single mask test.
 +#pragma once

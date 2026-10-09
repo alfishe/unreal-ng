@@ -72,7 +72,8 @@ matches; it names the recipe(s) for that action.
 | Reading raw sectors, tracks, catalog of a loaded disk | [media/disk-sector-and-catalog-inspection.md](media/disk-sector-and-catalog-inspection.md) | tape, snapshot |
 | Per-device volume, mute, solo, recording a sound source | [peripherals/audio-mixer-and-capture.md](peripherals/audio-mixer-and-capture.md) | the card recipes unless the card matters |
 | Watching port I/O | [analysis/port-trace.md](analysis/port-trace.md) | ttd-*, memory-counters |
-| Capturing the VDAC2 card's FT812 bus (an .evr replay stream) | [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | port-trace |
+| Capturing the VDAC2 card's FT812 bus (an .evr replay stream) | [machines/next.md](machines/next.md) | ZX Spectrum Next: create on a card, drive NextZXOS's menu and Browser, the NextREG write journal (who wrote which register - the NEXTREG instruction and the copper make no port cycle), how NextZXOS starts a snapshot (Multiface NMI, stackless NMI, RETN to a ROM `RET`), the real-board test programs |
+| [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | port-trace |
 | Counting/mapping memory access | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
 | Recording a video (with sound) of a run | [media/video-recording.md](media/video-recording.md) | everything else |
 | Debugging a visual/screen bug | [analysis/ttd-visual-inspection.md](analysis/ttd-visual-inspection.md) + [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | everything else until you have a reproducible frame |

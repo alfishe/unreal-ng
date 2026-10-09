@@ -1,7 +1,7 @@
 #!/bin/bash
 # usage: side.sh file.nex [frames] -> /tmp/claude-501/cmp/side.png (ours | reference)
 cd "$(dirname "$0")/../../.."
-tools/verification/next-cosim/nexcmp.sh "$1" ${2:-250}
+tools/machines/next/cosim/nexcmp.sh "$1" ${2:-250}
 python3 -c "
 from PIL import Image
 a=Image.open('/tmp/claude-501/cmp/ours_last.png'); r=Image.open('/tmp/claude-501/cmp/ref_last.png')

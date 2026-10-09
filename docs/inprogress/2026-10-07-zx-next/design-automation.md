@@ -15,6 +15,7 @@ in `DeviceState` (the way `sprinterdevicestate.cpp` does).
 | `next_ports` | port decoder: describe(port, read/write), enable word state | N2 |
 | `next_video` | layer enables, order, resolution, scroll/clip, palette selections, raster hc/vc, copper state | N6 |
 | `next_sprites`, `next_palette`, `next_copper` | attributes/patterns, palettes, copper list disassembly + position | N7 |
+| `next_reg_journal` | who wrote which NextREG, when (frame, T, PC), through the NEXTREG instruction / port #253B / the copper - [design-nextreg-journal.md](design-nextreg-journal.md); WebAPI, OpenAPI, MCP, CLI `state next journal`, Lua, Python | **done 2026-10-09** |
 | `next_dma`, `next_ctc`, `next_im2` | device state | N5, N8 |
 | `next_spi`, `next_divmmc`, `next_uart`, `next_i2c` | device state | N5, N9 |
 | `next_boot` | boot ROM / firmware / personality, config mode | N9 |

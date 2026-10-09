@@ -1,0 +1,130 @@
+# Recipe: ZX Spectrum Next
+
+The Next is a Z80N (Z80 + NEXTREG, MUL, ...) at 3.5 / 7 / 14 / 28 MHz with 2 MB RAM, a 256-register control file ("NextREG"),
+layered video (ULA, Layer 2, tilemap, 128 sprites, a copper), three AY chips, a DMA, a DivMMC with an SD card, and a Multiface-style
+NMI. Its software is NextZXOS, loaded by the firmware (`TBBLUE.FW`) from the SD card; the emulator runs that real chain.
+
+Ground truth: [docs/inprogress/2026-10-07-zx-next/](../../docs/inprogress/2026-10-07-zx-next/README.md) (`design.md`,
+`TODO.md` for the status, `design-nextreg-journal.md` for the register journal), the port decoder
+[portdecoder_next.h](../../core/src/emulator/ports/models/portdecoder_next.h), the reports
+[portdecoder_next_state.cpp](../../core/src/emulator/ports/models/portdecoder_next_state.cpp). Scripts:
+[tools/machines/next/](../../tools/machines/next/README.md).
+
+> **How to use the sections:** [MCP](#mcp-preferred) is preferred; the [WebAPI](#webapi) section has the same steps as curl and
+> as the Python scripts under `tools/machines/next/`. Policy: [_common/transports.md](../_common/transports.md).
+
+Outputs below are real, from a build of 2026-10-09, trimmed.
+
+## MCP (preferred)
+
+### 1. Create the machine on a card
+
+The machine boots the real chain only when the model's config names the boot ROM and a card (folder or image):
+`configs/next/unreal.ini` - `[ROM] NEXTBOOT=rom/next/nextboot.rom` and `[NEXT] SdCard=<folder>`. A card folder needs `TBBLUE.FW`,
+`machines/next/*` (the personality ROMs, `menu.def`, `keymap.bin`), `nextzxos/`, `sys/`, `dot/` - about 3 MB (the repository's
+`testdata/machines/zxnext/card` is a starting point; the full NextZXOS distribution works as it is). Without them the machine
+starts in the bare personality (128K ROM, no SD).
+
+```text
+emulator_manage {"action":"create","model":"NEXT","ram_power_on":"zero"}
+#   → {"id":"dbd6edec-...","message":"Emulator created and started"}
+```
+
+NextZXOS reaches its menu **about 6 seconds** after the reset at normal speed (measured: `reset` to the key-wait loop `#0C8F`
+5.6 s). Do not enable `turbo`: it only makes the picture stutter.
+
+```text
+invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/state/next"}
+#   → machine {"cpu_clock_hz":28000000,"speed_ratio":8,"machine_type":3,"timing":"+3", ...}, divmmc {...}, mmu {...}, spi {...}
+```
+
+NextZXOS runs its menus, Browser and editor at **28 MHz** (the guide says so: "the operating system runs at the maximum speed when
+possible"); the "3.5MHz >" in its menu is the speed it gives user programs. The status bar shows the real clock.
+
+### 2. Drive the menu and the Browser
+
+The keyboard tools press real keys. SPACE leaves the welcome page, `B` opens the Browser, `H` searches by name, ENTER opens a
+directory or runs the file under the cursor, EDIT goes up, BREAK backs out. Wait for the machine to be idle between keys (the
+CPU halted at `#0C8F`: `inspect_state registers` shows `halted: true, pc: 3215`).
+
+```text
+type_input {"action":"tap","key":"space","frames":6}
+type_input {"action":"tap","key":"b","frames":6}
+type_input {"action":"tap","key":"h","frames":6}
+type_input {"action":"type","text":"tests","delay_frames":5}
+type_input {"action":"tap","key":"enter","frames":6}      # accept the search
+type_input {"action":"tap","key":"enter","frames":6}      # open the directory
+```
+
+`tools/machines/next/browser-drive/drive.py` does this with the waits: `drive.py boot space browser go:tests go:base go:copper enter`.
+
+### 3. Who wrote this register? (the NextREG journal)
+
+The port trace, port breakpoints and the TTD I/O journal see port cycles only; the `NEXTREG` instruction and the copper write
+registers without one. The NextREG journal sees every write. It is off by default.
+
+```text
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/reg-journal","body":{"enabled":true,"clear":true}}
+#   → {"available":true,"capacity":65536,"enabled":true,"evicted":0,"last_seq":0,"size":0}
+... run the program ...
+inspect_state {"aspects":["next_reg_journal"],"nr_journal_regs":"02,07","nr_journal_limit":6}
+#   → [next_reg_journal] on, 3371 held, 0 evicted
+#       #4 f1214 pc 0x3DBD nextreg NR0x07 0x00 -> 0x03  (CPU speed 28 MHz)
+#       #422 f1217 pc 0x099C port NR0x07 0x03 -> 0x00  (CPU speed 3.5 MHz)
+#       #2308 f1222 pc 0x0AB6 port NR0x02 0x00 -> 0x08  (multiface NMI)
+invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/state/next/reg-journal?regs=02,03&sources=nextreg,port&limit=20"}
+```
+
+`source` says the door: `nextreg` (the instruction), `port` (`OUT #253B`), `copper`, `internal`. The same report is `state next
+journal` on the CLI, `next_reg_journal{...}` in Lua, `emu.next_reg_journal(...)` in Python.
+
+### 4. Starting a snapshot (`.snx`, `.sna`, `.z80`) from the Browser
+
+NextZXOS starts a snapshot in a way worth knowing, because every piece must be exact or the screen stays black:
+
+1. the OS loads the file, builds a register image, and writes **NR #02 = 8** - the Multiface NMI (NR #06 bit 3 on); the code after
+   the `OUT` is a `NOP` and the Multiface ROM checks that the NMI returned to `#0AB8` / `#0AB9`;
+2. NR #C0 bit 3 is on (**stackless NMI**): the return address goes to NR #C2 / #C3, not the stack; the CPU reads it back at `RETN`;
+3. the Multiface ROM (system page 5, `enNextMf.rom`) is at `#0000-#1FFF`, its RAM at `#2000-#3FFF`, from the fetch at `#0066` to
+   the `RETN`; **the DivMMC's automap is inactive while it is in**;
+4. the ROM sets the machine to 48K mode (`#7FFD` = `#30`), restores the registers and **NR #C2/#C3 = `#2313`** - a `RET` of the 48K
+   ROM - so the `RETN` lands on `RET`, which pops the snapshot's PC from its stack.
+
+```text
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/feature/debugmode","body":{"enabled":true}}   # breakpoints need it
+control_execution {"action":"bp_add","address":2742,"page":"rom2"}      # the OUT of NR #02 (ROM page 2 - an address alone also hits ROM 0)
+... run the Browser entry ...
+control_execution {"action":"step"}  ×2
+#   → pc 0x0AB8, then pc 0x0066 with slot 0 = "multiface rom", NR #C2/#C3 = #B8 #0A
+```
+
+### 5. The real-board test programs
+
+`tools/machines/next/browser-drive/suite.py --card <card>` runs every program of `tests/<area>/<test>/` the way a person does (reset,
+Browser, run) and photographs the result beside the board photograph; `tools/machines/next/realboard/run-all.py` runs them straight
+through the snapshot loader with automatic verdicts for the four programs that paint their own pass / fail.
+
+## WebAPI
+
+The same steps; ids come from `GET /api/v1/emulator`.
+
+```bash
+BASE=http://localhost:8090/api/v1/emulator; ID=$(curl -s $BASE | jq -r '.emulators[0].id')
+curl -s -X POST $BASE/$ID/next/reg-journal -H 'Content-Type: application/json' -d '{"enabled":true,"clear":true,"capacity":262144}'
+curl -s "$BASE/$ID/state/next/reg-journal?regs=02&limit=5" | jq '.events[] | {seq,frame,pc,source,value,decoded}'
+curl -s -X POST $BASE/$ID/keyboard/tap -H 'Content-Type: application/json' -d '{"key":"enter","frames":6}'
+curl -s -X POST $BASE/$ID/step                                  # one instruction (debug mode on)
+curl -s "$BASE/$ID/capture/screen" | jq -r .data | base64 -d > screen.png
+```
+
+## Pitfalls
+
+- `turbo` (the feature) is not a speed-up here; leave it off.
+- Execution breakpoints are silent unless the `debugmode` feature is on; an address alone matches in every ROM page - add `page`
+  (`rom2`, `rom5`, `ram5`).
+- The Browser remembers the directory it was last in (the card is the user's NextZXOS state): press EDIT to the root first
+  (`drive.py root`).
+- NextZXOS writes to the card folder (browser preferences, `autoexec.1st` renamed by the welcome page): keep a pristine copy.
+- `screenshot` files go where the *server* process runs; with `filename` prefixes the path may be URL-encoded into one file name.
+- A black screen after starting a snapshot is almost always the NMI chain of section 4: check the journal for the `NR #02`
+  write, the DivMMC mapping (`state/next` `divmmc.mapped`) and where `NR #C2/#C3` point.

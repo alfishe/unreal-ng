@@ -227,7 +227,7 @@ Components (names follow the naming rules, no underscores):
 | `NextDivMmc` | `#E3`, mapping decision, automap latch, entry-point table from NR `#B8-#BB`, NMI button, RETN reset | pure logic with a `MapState` result consumed by the slot-table rebuild; table-driven from the VHDL rules |
 | `NextSpi` | `#E7` select decode with swap, `#EB` exchange, 16-clock rule, per-card `SdCardSpi` | reuses `SdCardSpi` unchanged; select bits for the Pi and the flash are decoded and ignored (the flash write path stays closed) |
 | slots | `sd.next0`, `sd.next1`, `required` on the first | media manager unchanged |
-| `NextBootRom` | the 8K boot ROM, extracted from the VHDL by `tools/machines/next/extract-bootrom.py`; the image is committed as `data/rom/next/nextboot.rom` (owner decision 2026-10-08) | `bootrom_en` rule |
+| `NextBootRom` | the 8K boot ROM, extracted from the VHDL by `tools/machines/next/fpga-extract/extract-bootrom.py`; the image is committed as `data/rom/next/nextboot.rom` (owner decision 2026-10-08) | `bootrom_en` rule |
 | M1 hook chain | the automap needs the previous-M1 decision; the machine already has `machineM1Hook`: the Next installs one observer that serves the DivMMC, the Multiface and the stackless NMI | the shared-code isolation rule: the hook interface is generic |
 
 ## 8. How we test it

@@ -1,7 +1,7 @@
 --- /dev/null
 +++ b/cosim_trace.h
 @@ -0,0 +1,28 @@
-+/* Co-simulation trace sink (unreal-ng tools/verification/next-cosim). Not part of upstream ZEsarUX.
++/* Co-simulation trace sink (unreal-ng tools/machines/next/cosim). Not part of upstream ZEsarUX.
 +   One text line per event, see trace-format.md:  <seq> <KIND> <addr> <value> <pc>
 +   Driven by environment variables; with COSIM_TRACE unset every hook is one mask test.
 +   The implementation lives at the end of machines/tbblue.c */
@@ -65,7 +65,7 @@
  }
 +
 +
-+/* ---- co-simulation trace sink (unreal-ng tools/verification/next-cosim), see cosim_trace.h ---- */
++/* ---- co-simulation trace sink (unreal-ng tools/machines/next/cosim), see cosim_trace.h ---- */
 +#include "cosim_trace.h"
 +
 +unsigned int cosim_mask=0;

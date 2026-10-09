@@ -1,6 +1,6 @@
 # Co-simulation: first diff of the real boot, jnext vs unreal-ng
 
-**Date:** 2026-10-09 · part of [README.md](README.md) · tools: `tools/verification/next-cosim/` (README there)
+**Date:** 2026-10-09 · part of [README.md](README.md) · tools: `tools/machines/next/cosim/` (README there)
 
 Question: why does the personality ROM (`enNextZX.rom`, started by the real `TBBLUE.FW` from the FAT card) restart every
 ~19 frames instead of reaching the NextZXOS menu on our emulator?
