@@ -53,6 +53,18 @@ python3 $P/compare.py --render cmake-build-agent-release/bin/sam2695render --out
 
 `programs --map` reads the PDF through `pdftotext -layout` (poppler).
 
+User-side workarounds and experiments in `tosf2.py` (not claims about the hardware):
+
+```bash
+python3 $P/tosf2.py $B --out scratch/sam7/gmbk5x128-203-organfix.sf2 --recenter 19   # recommended organ fix
+python3 $P/tosf2.py $B --out X.sf2 --replace 19=self:19:8        # program 19 from variation 8 of the same bank
+python3 $P/tosf2.py $B --out X.sf2 --replace 19=testdata/midi/dreamblaster-buran/BURAN11.DXB:19
+python3 $P/tosf2.py $B --out X.sf2 --layer 19=0                  # keep only layer 0
+python3 $P/tosf2.py $B --out X.sf2 --level-field tail            # EXPERIMENT: unconfirmed level bytes as attenuation
+```
+
+Program numbers in these options are GM numbers (1-128).
+
 Coverage and tuning audit:
 
 ```bash
@@ -84,6 +96,8 @@ ranges sane, sample block decoded for 99.95..100 % of the splits, sample data sm
 
 | coverage (`coverage.py banks`) | GMBK5X128 2.03 and its SF2: 128 / 128 GM programs, 141 variations, 128 MT-32 entries, all 10 GS kits, kit 0 notes 27-87 complete; gaps only where the bank itself has none (SFX kit 35-38, OPL-3 kit 77-81, empty MT-32 kit notes) |
 | Doom E1M1 drums (`coverage.py song`) | all 12 notes present; before the fix they were transposed down 4-26 semitones (fixed-pitch bit ignored) and one-shots looped: fixed, now level and brightness of GeneralUser GS's drums |
+| Doom drum loudness (BS.1770) | per hit the Dream drums are as loud as GeneralUser's (median +2.8 dB); the Dream guitars are 9 dB louder, so the drums sit 6.5 dB under the melody (GeneralUser: +1.1 dB); no decoded level field explains it, no gain added |
+| Rock Organ | +20 cents is Dream's data (same in all three GM banks; layer means of the other 129 multi-layer instruments are centered); `--recenter 19` gives +3.7 cents mean at the Dream On keys |
 | tuning (`coverage.py pitch`, all programs, 7 keys) | Dream median 1.5 cents (91 % within 10), GeneralUser GS 2.4 cents (88 %); "Dream On" Rock Organ +16..+26 cents is in the bank data (detuned layers) |
 
 Full tables: [sam7-dream-banks.md](../../../docs/inprogress/2026-10-03-zx-multisound/sam7-dream-banks.md) §4 and §9.

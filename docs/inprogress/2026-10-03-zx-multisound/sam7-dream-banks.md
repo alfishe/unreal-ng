@@ -15,6 +15,8 @@ GMBK5X128 loops) with approximate envelopes and no filter.
 two converter bugs found and fixed (drums played key-tracked instead of at fixed pitch, one-shot samples looped),
 which were the "missing drums" in the Doom E1M1 demo. All 24 banks now decode 100 % of their splits except 2 in one
 B16. The remaining audible tuning difference in "Dream On" (Rock Organ about +20 cents) is in the bank data.
+Doom drums per hit are as loud as GeneralUser's; the converted Dream guitars are 9 dB louder, which is the bank's
+balance as far as decoded (§9.5). Rock Organ: user-side `--recenter 19` workaround (§9.6).
 
 ## 1. Inputs and licensing
 
@@ -482,3 +484,98 @@ use layer 1's sample with pitch words 23.8 cents apart (+14 and +37 cents). The 
 **(a) the bank data as decoded** - the pitch words and the samples are reproduced exactly. Whether a real SAM5000
 plays this organ in tune (some undecoded field such as the `ff00` / `a000` / `af00` stream word that differs between
 the layers) cannot be settled without a recording of the hardware (owner question Q2).
+
+### 9.5 Drum loudness in Doom ("audible but quieter than with the standard bank")
+
+Loudness per ITU-R BS.1770 (K-weighting, 400 ms blocks, gated integrated loudness; momentary maximum per hit), each
+bank rendered through `sam2695render --dry`.
+
+Per hit (each kit-0 note alone at the song's median velocity, 60 ms gate): the Dream drums are **not** quieter.
+
+| Note | Velocity | Dream: peak dBFS / K-weighted 50 / 100 / 300 ms LUFS / momentary max | GeneralUser GS | Momentary difference |
+|---|---|---|---|---|
+| 36 Bass Drum 1 | 120 | -20.3 / -27.0 / -29.9 / -34.6 / -35.9 | -22.2 / -29.0 / -31.3 / -36.1 / -37.3 | +1.4 |
+| 38 Acoustic Snare | 83 | -27.3 / -35.6 / -38.3 / -43.1 / -44.3 | -27.1 / -34.4 / -37.1 / -41.8 / -43.1 | -1.3 |
+| 40 Electric Snare | 121 | -21.1 / -29.4 / -32.1 / -36.8 / -38.1 | -21.7 / -29.9 / -31.9 / -36.5 / -37.8 | -0.3 |
+| 41 Low Floor Tom | 93 | -24.2 / -34.8 / -36.2 / -40.0 / -41.2 | -29.7 / -36.3 / -37.9 / -41.8 / -42.9 | +1.7 |
+| 45 Low Tom | 93 | -23.9 / -34.8 / -36.2 / -40.0 / -41.2 | -29.0 / -34.5 / -36.2 / -39.8 / -41.0 | -0.2 |
+| 46 Open Hi-Hat | 72 | -33.3 / -43.1 / -44.4 / -48.0 / -49.1 | -38.1 / -47.8 / -47.4 / -49.6 / -50.6 | +1.4 |
+| 47 Low-Mid Tom | 85 | -25.7 / -36.6 / -37.8 / -41.6 / -42.8 | -30.2 / -35.2 / -36.7 / -40.3 / -41.5 | -1.4 |
+| 49 Crash Cymbal 1 | 70 | -34.8 / -49.5 / -44.7 / -43.7 / -44.5 | -35.0 / -47.2 / -44.9 / -46.1 / -47.0 | +2.5 |
+| 50 High Tom | 91 | -24.5 / -35.6 / -36.7 / -41.0 / -42.3 | -28.3 / -35.9 / -37.5 / -41.2 / -42.4 | +0.1 |
+| 51 Ride Cymbal 1 | 112 | -21.4 / -35.9 / -36.8 / -39.6 / -40.7 | -32.1 / -46.0 / -48.1 / -51.2 / -52.1 | +11.4 |
+| 53 Ride Bell | 124 | -20.7 / -31.7 / -33.5 / -37.6 / -38.9 | -29.9 / -38.5 / -39.6 / -42.4 / -43.4 | +4.6 |
+| 57 Crash Cymbal 2 | 58 | -38.6 / -52.8 / -48.1 / -47.9 / -48.9 | -39.9 / -50.4 / -49.5 / -51.7 / -52.6 | +3.7 |
+
+All kit-0 notes 27-87: Dream minus GeneralUser momentary maximum, median +2.8 dB (IQR +0.6..+7.3).
+
+The balance is what differs. Doom rendered as drum channel only, melodic channels only, and full:
+
+| Bank | Drums LUFS | Melodic LUFS | Drums - melodic | Full LUFS |
+|---|---|---|---|---|
+| Dream (converter before the drum fix) | -33.1 | -26.8 | -6.3 | -25.9 |
+| Dream (current) | -33.3 | -26.8 | -6.5 | -26.0 |
+| GeneralUser GS | -34.5 | -35.7 | +1.1 | -32.6 |
+| Dream + sample-block level pair as attenuation (0.375 dB / step, experiment) | -38.1 | -31.4 | -6.7 | -30.6 |
+| Dream + L/R level pair as attenuation (0.375 dB / step, experiment) | -35.3 | -31.1 | -4.2 | -29.8 |
+
+The drum bus is as loud as GeneralUser's (-33.3 vs -34.5 LUFS). The two distorted guitars and the bass are 9 dB
+louder in the converted Dream bank, because GeneralUser attenuates them and the converter applies no level at all.
+
+Where it comes from:
+
+- (a) samples: Dream's drum samples are short (kick 68 ms, snare 138 ms) but peak-normalized; per hit they are as
+  loud as GeneralUser's or louder. Not the cause.
+- (b) undecoded level words, tested against GUD / GeneralUser 1.44 (same samples, GeneralUser's zone
+  initialAttenuation as reference, 1 228 zones): the sample-block level pair correlates with GeneralUser's gain at
+  r = 0.42 (0.41 within presets, slope 0.3-0.6 dB per step); the L/R pair after `7f0e` correlates at r = 0.40 and
+  encodes pan (left minus right byte vs GeneralUser pan: r = -0.51, about 22 steps for pan 25 %, i.e. about 0.35 dB
+  per step); the `xx06` byte correlates at r = 0.25 and is not a MIDI-style volume. None is strong enough to call
+  decoded (GUD was hand-tuned, so part of the scatter is intended), and applying either level pair keeps the
+  drums 4-7 dB under the guitars. The fields stay "likely level, scale unconfirmed"; `tosf2.py --level-field
+  block|tail` writes them as initialAttenuation for experiments only.
+- (c) conversion: no initialAttenuation is written (a deliberate gap, see b); the velocity curve is SF2's default
+  in both banks (libsam2695 applies the same modulators to both); the Doom guitars' two layers are centered and
+  summed, as their L/R level pairs say (`ebeb`, `dfdf`); the drum envelopes reach full level (attack `1fe3`).
+- (d) libsam2695: channel 10 volume, expression and drum-part level defaults are the same for both banks.
+
+Conclusion: the drum-vs-guitar balance is the Dream bank's balance as far as it is decoded. No gain was added.
+Settling it needs the level scale, which needs the hardware recording of owner question Q2 (or the SDK).
+
+### 9.6 Rock Organ ("still out of tune; replace it?")
+
+Is the +20 cents intended? All 130 multi-layer instruments of GMBK5X128 2.03 with two or more measurable layers,
+each layer's loop pitch at its decoded root: the layer mean is centered (median -0.3 cents; |mean| over 8 cents on
+only 8 instruments, most of them inharmonic sounds where the measure is unreliable: Crystal, Fantasia), and the
+layer spread is small (median 3.3 cents). Rock Organ (layers +6 and +33 cents) is an outlier, and the same pitch
+words and samples are in all three Dream GM banks (GMBK5X128 2015, 2.03, GMBK5X64), so it is Dream's data, not a
+compiler accident of one version. No candidate field recenters it: no byte of the parameter stream before the
+sample block correlates with the per-split pitch error (largest |r| = 0.10 over 2 428 splits), and on GUD vs
+GeneralUser the pitch word already absorbs the source fine tune (§9.4). Without a field, there is nothing to fix in
+the decoding.
+
+User-side workaround (not a claim about the hardware): `tosf2.py --replace`, `--layer`, `--recenter`. Candidates for
+program 19, rendered pitch (cents) at keys 48 / 55 / 60 / 62 / 63 / 64 / 65 / 67 / 72, and the Dream On organ part
+(channel 5) loudness; renders in `scratch/sam7/organ-*.wav`:
+
+| Candidate | Pitch per key | Keys 60-67: mean / max abs | Organ part LUFS (full song) |
+|---|---|---|---|
+| current (GMBK5X128 2.03 program 19) | +24 +18 +16 +24 +25 +26 +26 +25 +22 | +23.8 / 26.2 | -25.7 (-17.4) |
+| GMBK5X128 2015 program 19 | identical to current | +23.8 / 26.2 | -25.7 |
+| GMBK5X64 program 19 | identical to current | +23.8 / 26.2 | -25.7 |
+| BURAN 1.1 program 19 | +1 +6 +3 +2 +6 +6 +6 +6 +7 | +5.1 / 6.5 | -27.8 |
+| GUD 1.04 program 19 | same as BURAN | +5.1 / 6.5 | -27.8 |
+| C0 8 Rotary Organ | -4 -4 +6 -2 -2 -3 -4 -4 -3 | -1.8 / 5.7 | -27.9 |
+| C0 16 Rotary Organ Slow | -4 -4 -2 -2 -2 -3 -4 -4 -3 | -3.0 / 4.4 | -29.2 |
+| C0 24 Rotary Organ Fast | +6 +6 +6 -3 -3 -3 -4 -5 -0 | -2.2 / 5.8 | -20.4 |
+| program 18 Percussive Organ | -2 -0 -0 -0 -0 -0 -0 -0 -0 | -0.2 / 0.2 | -29.7 |
+| program 17 Drawbar Organ | -1 (all keys) | -0.7 / 0.8 | -22.6 |
+| layer 0 only | +6 +6 +6 +8 +10 +11 +12 +11 +7 | +9.5 / 11.6 | -27.4 |
+| layer 1 only | +33 +28 +29 +32 +34 +35 +36 +35 +31 | +33.5 / 35.6 | -26.4 |
+| **both layers recentered (-19.8 cents)** | +4 -2 -4 +4 +5 +6 +6 +5 +2 | **+3.7 / 6.2** | **-25.8** |
+| GeneralUser GS program 19 (reference) | -1 +6 +1 +1 +5 +5 +5 +5 +6 | +3.8 / 5.4 | -34.0 (-27.4) |
+
+Recommendation: `--recenter 19`. It keeps Dream's own organ (same samples, layer detune, level within 0.1 dB) and
+moves it into the same tuning band as GeneralUser's organ. Rotary Organ (C0 8) is the in-family alternative if a
+different timbre is acceptable. Output: `scratch/sam7/gmbk5x128-203-organfix.sf2` (no drum change: §9.5 found no
+data basis for one).
