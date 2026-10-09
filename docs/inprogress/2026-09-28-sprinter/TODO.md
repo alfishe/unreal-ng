@@ -409,6 +409,11 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   - [x] The screen drawn on its own events, the tail on the frame's last step (`Screen::CatchesUpOnEvents`): exact
     on four demos (`SprinterFastPathsDemo_Test`), -8 % to -17 % per frame
     ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.4)
+  - [x] The per-step checks of the analyzer, the floppy controller and the tape inline (all machines, `9715951d2`)
+  - [~] The sound cards (NeoGS command poll loop, the AY slot's second chip): looked at, not changed - small gains
+    against the exactness or a change of the output
+    ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.7)
+  - [ ] A Sprinter memory interface instead of the overlay chain (~10 % of a frame is the overlay machinery)
   - [ ] A Sprinter frame benchmark without a disk image (the CTC `EI : HALT` program of `SprinterIdleCycles_Test`
     plus accelerator fills)
 - Renderer speed: by square segments since 2026-10-09 (the source address, attribute and font byte once per

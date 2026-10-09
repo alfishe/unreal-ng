@@ -731,16 +731,37 @@ font latch) in random span cuts, with and without plane B, against the per-pixel
 fast paths: DNTBLINK 1.55 -> 1.36-1.39 ms, ROTOZOOM 2.80 -> 2.54, PLASMA2 0.81 -> 0.62-0.63, BADAPPLE 1.21 -> 1.04
 (after / before runs of the same session, load 6-14).
 
-### 8.6 What remains
+### 8.6 The per-step checks every machine pays
 
-Profile with sections 8.2-8.4 in (2026-10-09, DNTBLINK and ROTOZOOM, before 8.5): the instruction itself and its
-bus path (`Z84CpuStep` with `MemRead` / `MemWrite`, the overlay chain, the accelerator's per-access work) ~65 %;
-drawing at the catch-ups ~15 % (the pixel loop 8.5 since halved); the accelerator's `OnOpcodeFetch` on every fetch
-~5.6 %; per-step work that every machine pays - the analyzer-subscriber check in `RunInstructionStartHooks`
-(through `DebugManager` and a `unique_ptr`, ~2.5 %), the floppy controller's and the tape's per-step calls in
-`MainLoop::OnCPUStep` (~2.3 %, mostly a call that returns at once). Candidates: those per-step checks folded
-into flags read without a call (they help every machine: guidelines section 6); the Sprinter's own memory
-interface instead of the overlay chain; the bus agent called only when its state can change.
+The analyzer-subscriber check in `RunInstructionStartHooks` went through an out-of-line
+`DebugManager::GetAnalyzerManager`; `WD1793::handleStep` and `Tape::handleStep` were calls that return at once
+while the controller sleeps or the tape is stopped. All three are inline tests now (`9715951d2`):
+`BM_HostFrame_48K_*` -1.4 % in every round, the other classic frames and the Sprinter logo frame -0.1 % to -1.1 %.
+
+### 8.7 The sound cards: looked at, not changed
+
+Profile of DNTBLINK with the shipped sound cards (2026-10-09, 3.3 ms per frame under the profiler): the NeoGS
+12.6 %, the AY slot 8.3 %, the decimators ~3 %.
+
+- **NeoGS.** The card's CPU is not halted: the firmware polls for a host command in a six-instruction loop -
+  `#026E IN A,(#04) : RRCA : JR C,#0295 : LD A,(#4084) : OR A : JR Z,#026E` - nearly all of its 69.6 million
+  steps in the run. An exact fast-forward of such a loop (an iteration that returns to its head with the same
+  registers and no bus side effect repeats until something changes) has to stop at every card event, and the
+  events are dense: a DAC side every 1 600 ticks (75 kHz), the timer every 3 200, against an iteration of 250-500
+  ticks. One to three iterations saved per window, with the side-effect bookkeeping of the reads (the status read
+  latches `_ready` once, `#6000-#7FFF` reads are the DAC capture, flash reads are timed) - not worth it.
+- **AY.** The cost is the HQ rendering of the samples (generator ticks and the FIR decimators), not the per-step
+  call. The slot renders its second chip in single-AY mode too; it is not silent at zero registers (volume 0 is
+  level 1, a period-0 tone and the noise toggle), so dropping it changes the sound slightly. Measured without it:
+  2.34-2.37 -> 2.26-2.31 ms per frame (-2 to -4 %) - not worth a change of the output.
+
+### 8.8 What remains
+
+The instruction and its bus path (`Z84CpuStep`, `Z84C15Engine::MemRead` / `MemWrite`) are the bulk. On the read
+side the overlay machinery - `Memory::MemoryReadOverlayM1`, `SprinterMemory::MemoryReadFast` and its redirect
+test, `HostBusOverlayChain`, `SprinterWaits` - is ~10 % of a ROTOZOOM frame; the accelerator's `OnOpcodeFetch` on
+every fetch ~5.6 %. Candidates: a Sprinter memory interface that does the bank read, the redirect and the turbo
+wait in one function; the bus agent called only when its latches can change.
 General rules for such changes: [performance-guidelines.md](../../../guidelines/performance-guidelines.md).
 
 ## 9. Where the older design documents differ from the code
