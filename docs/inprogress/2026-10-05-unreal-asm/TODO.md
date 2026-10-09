@@ -115,6 +115,7 @@ phase; master only after the owner's review.
     - [x] Qt (2026-10-08): the label editor's File menu has Import Symbols... (format, set, space, base, policy), Export Symbols... (format, sets, pages) and Scan RAM for Label Tables...; a "Sets" tab (On, Priority, drop; `SymbolSetsPanel`, unreal-qt-tests `SymbolSetsPanel_Test`)
     - [x] import of a file on a disk in a drive (`disk:A/NAME.T`, 2026-10-09, through A7's disk adapter)
     - [x] export filters (2026-10-09): `space`, `from` / `to` (CPU address range), `kinds`, `name` (a `*` / `?` pattern) on every surface
+    - [ ] labels from sources in the emulator: `SymbolsFromProject` (`symconv source`) is not reachable from LabelManager / SymbolControl; an `import` of a source or a disk project (`path: disk:A/GSTUNNE4.H`, `--main`) should give the debugger its labels with values (about 1.5 days)
     - [ ] the bundle set switched off remembered between sessions (needs the owner's choice of where the emulator keeps such user state)
   - [x] S6-S9 labels from sources (2026-10-07): `SymbolsFromProject` (`symbols/fromsource.h`) for TASM, ALASM, STORM, ZX-ASM and sjasmplus projects; values from `layout::Layout` over the sjasmplus conversion (instruction sizes, passes, `IF` / `DUP` / `WHILE` / macros / `DISP` / `INCLUDE` / `INCBIN`, sjasmplus' symbol table through the passes); the backend records the names it writes (`LabelName`); `symconv source`; the sjasmplus frontend reads `$$$`; equal to sjasmplus 1.24's `--sym` on every instruction form, the layout probe, five oracle projects and the collection (`tools/verification/unreal-asm/checks/symcheck.py`: 511 of 530 main sources, 67 264 labels; the 19 others read FRAMES or hit a sjasmplus quirk) ([symbols/formats.md](symbols/formats.md) §4.1)
   - [x] frontends for GENS, MASM, ZEUS, XAS (2026-10-07): their projects convert to sjasmplus and their labels come through `SymbolsFromProject`
@@ -139,6 +140,20 @@ phase; master only after the owner's review.
     - Every decode and conversion of the corpus is byte-identical to before.
   - [ ] still below 50 MB/s: ZEUS decode (each line encoded again for the canonical check, 16-36 MB/s), XAS decode (the packer, 33 MB/s)
   - [x] `BM_Symbols_DisasmLine` A/B against the old LabelManager (2026-10-08): 13-28 % faster with 1k-60k labels, the address lookup 4-9 times faster ([symbols/test-and-benchmark-plan.md](symbols/test-and-benchmark-plan.md) §6)
-- [ ] P2: asm-synchronizer ([asm-synchronizer.md](asm-synchronizer.md), TDD 2026-10-09; was "memory bridge"), both directions: guest → host (extract, live labels, hints) about 40 days, host → guest (sjasmplus → IR → retro backend → inject into memory / a snapshot) about 60; both about 95; ALASM both ways first, about 14
+- [ ] P2: asm-synchronizer ([asm-synchronizer.md](asm-synchronizer.md), TDD 2026-10-09; was "memory bridge"). Both directions between the host and an assembler running in the emulator; about 95 days in all; the code waits for an owner go-ahead (P2)
   - [x] research: ALASM 4.44 / 5.09 and TASM 4.12 memory layouts verified live (2026-10-09)
-  - [ ] Y0-Y5, Z0-Z5 (code): waits for an owner go-ahead (P2)
+  - Part A, guest → host (about 40 days; §11-§12):
+    - [ ] Y0 descriptors, probe, the three readers (file image, gap buffer, linear), `SyncControl` status / probe / extract; ALASM 5.x / 4.4x, TASM 4.12; WebAPI, CLI, MCP (first cut, about 6 days)
+    - [ ] Y1 hash poller + debounce, worker build (codec → IR → layout), hints, the live symbol set `live:sync:*`; Lua / Python (about 4 days more)
+    - [ ] Y2 the Qt "Live source" dock
+    - [ ] Y3 128K assemblers: XAS, STORM, ZX-ASM / ZAsm, MASM, TASM 4.0 / 4.4 / 3.x / 2.0, ALASM 3.8c / 4.42 / 5.0 / 5.05 (research + descriptor + golden dumps each, §7)
+    - [ ] Y4 48K assemblers: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
+    - [ ] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
+  - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):
+    - [ ] Z0 `retrobackend` core + ALASM backend + the file image writer + inject on WebAPI / CLI / MCP, checked by ALASM assembling the injected text
+    - [ ] Z1 snapshots: inject into an existing one; the ALASM idle template (Z0 + Z1 about 10 days)
+    - [ ] Z2 push watch (host file → inject on save), Inject in the Qt dock
+    - [ ] Z3 backends + writers + templates: TASM, XAS, STORM, ZX-ASM, MASM
+    - [ ] Z4 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
+    - [ ] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE)
+  - First cuts: ALASM both ways about 14 days; + TASM 4.12 about 20; + watch / push watch, hints, live labels, Qt dock about 27
