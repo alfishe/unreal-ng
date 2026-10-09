@@ -467,13 +467,13 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithUnsupportedRamReportsReason)
 
 TEST_F(EmulatorManager_Test, CreateEmulatorWithNonCreatableModelReportsReason)
 {
-    // A non-creatable model (e.g. NEXT): whichever guard fires first,
+    // A non-creatable model (e.g. GMX): whichever guard fires first,
     // the caller must learn WHICH model failed and why
     std::string error;
-    auto emulator = _manager->CreateEmulatorWithModel("", "NEXT", LoggerLevel::LogWarning, &error);
+    auto emulator = _manager->CreateEmulatorWithModel("", "GMX", LoggerLevel::LogWarning, &error);
 
     EXPECT_EQ(emulator, nullptr);
-    EXPECT_NE(error.find("NEXT"), std::string::npos) << "reason was: " << error;
+    EXPECT_NE(error.find("GMX"), std::string::npos) << "reason was: " << error;
     EXPECT_FALSE(error.empty());
 }
 

@@ -501,6 +501,9 @@ constexpr MachineDef kMachines[] = {
       .sources = kProfiSources },
     { .model = MM_PROFI3, .name = "PROFI3", .variant = "Profi v3.2", .buses = kProfiBuses, .builtIns = kProfi3BuiltIns,
       .sources = kProfi3Sources },
+    // The bare personality (N2): the 128K board's buses and built-ins until the Next's own devices exist
+    { .model = MM_NEXT, .name = "NEXT", .variant = "ZX Spectrum Next (bare personality: 128K board)",
+      .buses = kSpectrum128Buses, .builtIns = kSpectrum128BuiltIns, .sources = kSpectrum128Sources },
     { .model = MM_SPRINTER, .name = "SPRINTER", .variant = "Peters Plus Sprinter Sp2000", .buses = kSprinterBuses,
       .builtIns = kSprinterBuiltIns, .sources = kSprinterSources },
 };

@@ -645,6 +645,7 @@ uint8_t Tape::handlePortIn([[maybe_unused]] uint16_t port)
             case MM_SPECTRUM48:
             case MM_SPECTRUM128:
             case MM_PLUS2:
+            case MM_NEXT:
                 result = (prevPortValue & 0b0001'0000) ? 0b0100'0000 : 0;
                 break;
             default:

@@ -99,6 +99,30 @@ fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
 ttd 0:77 1:72 2:34 3:21 7:20 8:85 10:216 12:137 17:50 26:83 35:52 36:16 56:22 notRecorded 0
+== next
+model 16
+mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
+turbosound 2 fm
+gs none
+covox none
+network.card 0 comport 0
+port 001F FFFF/001F Registered peripheral device
+port 003F FFFF/003F Registered peripheral device
+port 005F FFFF/005F Registered peripheral device
+port 007F FFFF/007F Registered peripheral device
+port 00FE 0001/0000 Keyboard / Beeper / Border / MIC+EAR
+port 00FF FFFF/00FF Registered peripheral device
+port 1FFD F002/1000 Special paging, ROM select bit 2
+port 243B FFFF/243B NEXTREG select
+port 253B FFFF/253B NEXTREG data
+port 7FFD C002/4000 Memory paging (RAM bank, shadow screen, ROM)
+port BFFD C002/8000 AY / TurboSound data
+port DFFD F002/D000 Extended RAM bank (bits 0-3 above #7FFD's three)
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+ttd 1:72 2:34 4:107 7:20 35:52 56:22 notRecorded 0
 == pentagon128k
 model 0
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]

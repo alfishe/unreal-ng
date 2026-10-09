@@ -150,6 +150,9 @@ std::string ROM::GetROMFilename()
         case MM_SPRINTER:
             result = config.sprinter_rom_path;
             break;
+        case MM_NEXT:
+            result = config.next_rom_path;
+            break;
         case MM_GMX:
             assert("Not implemented");
             break;
@@ -305,6 +308,15 @@ bool ROM::LoadROM()
 			memory.base_128_rom = nullptr;
 			memory.base_sys_rom = nullptr;
 			romname = config.sprinter_rom_path;
+			break;
+	    case MM_NEXT:
+			// Bare personality: four 16K ROMs picked by {#1FFD bit 2, #7FFD bit 4} like the +3's; the roles
+			// follow the +3 order (128 editor, 128 syntax checker, +3DOS, 48 BASIC). NextMemory maps them itself
+			memory.base_128_rom = memory.ROMPageHostAddress(0);
+			memory.base_sos_rom = memory.ROMPageHostAddress(3);
+			memory.base_dos_rom = nullptr;
+			memory.base_sys_rom = nullptr;
+			romname = config.next_rom_path;
 			break;
 	    case MM_GMX:
             assert("Not implemented");

@@ -298,23 +298,11 @@ uint8_t Memory::MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution)
     return result;
 }
 
-// Implementation memory read method
-/// Used from: Z80::DbgMemIf
-/// \param addr 16-bit address in Z80 memory space
-/// \return Byte read from Z80 memory
-uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
+/// The debug read's bookkeeping after the byte is fetched: access tracking, TTD coverage and probe, read
+/// breakpoints. physPage is the RAM page behind addr (kPhysPageNone for ROM). Shared with the derivatives that
+/// map memory their own way (NextMemory)
+void Memory::ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, ttd::PhysPage physPage)
 {
-    /// region <MemoryReadFast functionality>
-
-    // Determine CPU bank (from address bits 14 and 15)
-    uint8_t bank = (addr >> 14) & 0b0000'0011;
-    uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
-
-    // Read byte from  the correspondent memory bank mapped to global memory buffer
-    uint8_t result = *(_bank_read[bank] + addressInBank);
-
-    /// endregion </MemoryReadFast functionality>
-
     /// region <Memory access tracking>
     if (_memoryAccessTracker != nullptr)
     {
@@ -337,7 +325,7 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
     if (!isExecution && _context->ttdCoverageActive && _context->ttdCoverage != nullptr)
     {
         _context->ttdCoverage->Record(ttd::TTDCoverageKind::Read,
-                                      ttd::MakeCoverageKey(GetPhysPageForZ80Address(addr), addr));
+                                      ttd::MakeCoverageKey(physPage, addr));
     }
 
     // Phase 4 — access probe hot-path check for Read access type (§9.2).
@@ -349,7 +337,7 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
         // Resolve the bank behind `addr` so a read watchpoint can be scoped to
         // one physical page. Reads used to report page 0 unconditionally, which
         // made every hit on a banked address indistinguishable.
-        const ttd::PhysPage readPhysPage = GetPhysPageForZ80Address(addr);
+        const ttd::PhysPage readPhysPage = physPage;
         if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Read, result, pc, readPhysPage))
         {
             const auto& st = _context->emulatorState;
@@ -375,6 +363,26 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
         }
     }
     /// endregion </Read breakpoint logic>
+}
+
+// Implementation memory read method
+/// Used from: Z80::DbgMemIf
+/// \param addr 16-bit address in Z80 memory space
+/// \return Byte read from Z80 memory
+uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
+{
+    /// region <MemoryReadFast functionality>
+
+    // Determine CPU bank (from address bits 14 and 15)
+    uint8_t bank = (addr >> 14) & 0b0000'0011;
+    uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
+
+    // Read byte from  the correspondent memory bank mapped to global memory buffer
+    uint8_t result = *(_bank_read[bank] + addressInBank);
+
+    /// endregion </MemoryReadFast functionality>
+
+    ReadDebugEffects(addr, result, isExecution, GetPhysPageForZ80Address(addr));
 
     return result;
 }
@@ -393,27 +401,10 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
     *(_bank_write[bank] + addressInBank) = value;
 }
 
-/// Implementation memory write method (debug path with TTD/breakpoint hooks).
-/// Used from Z80::DbgMemIf. Optimized for hot-path performance:
-///   - Cached RAM page lookup via _bank_ram_page_cache[] (avoids pointer arithmetic)
-///   - Single TTD feature check guards all TTD-related logic
-///   - pCore pointer cached once at entry
-///
-/// \param addr 16-bit address in Z80 memory space
-/// \param value 8-bit value to write into Z80 memory
-void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
+/// The debug write's bookkeeping after the byte is stored: memory tracking, TTD dirty page / journal / probe,
+/// video flag, write breakpoints. physPage is the 16K RAM page behind addr (kPhysPageNone for ROM)
+void Memory::WriteDebugEffects(uint16_t addr, uint8_t value, ttd::PhysPage physPage)
 {
-    /// region <MemoryWriteFast functionality>
-
-    // Determine CPU bank (from address bits 14 and 15)
-    const uint8_t bank = (addr >> 14) & 0b0000'0011;
-    const uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
-
-    // Write byte to the correspondent memory bank cell
-    *(_bank_write[bank] + addressInBank) = value;
-
-    /// endregion </MemoryWriteFast functionality>
-
     // Cache pCore pointer once — used by multiple features below.
     // Safe: pCore is set during Init() and never null during emulation.
     Core* const core = _context->pCore;
@@ -428,7 +419,6 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     // TTD hot path — single feature gate for all TTD logic.
     // Uses cached RAM page number to avoid expensive GetRAMPageForBank() call.
     // physPage is kPhysPageNone for ROM/Cache banks (no TTD tracking needed).
-    const ttd::PhysPage physPage = _bank_ram_page_cache[bank];
     if (_feature_ttd_enabled && physPage != ttd::kPhysPageNone)
     {
         // Dirty-page tracking (parent TDD §6.2): single OR into bitmap
@@ -478,6 +468,30 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
         }
     }
     /// endregion </Write breakpoint logic>
+}
+
+/// Implementation memory write method (debug path with TTD/breakpoint hooks).
+/// Used from Z80::DbgMemIf. Optimized for hot-path performance:
+///   - Cached RAM page lookup via _bank_ram_page_cache[] (avoids pointer arithmetic)
+///   - Single TTD feature check guards all TTD-related logic
+///   - pCore pointer cached once at entry
+///
+/// \param addr 16-bit address in Z80 memory space
+/// \param value 8-bit value to write into Z80 memory
+void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
+{
+    /// region <MemoryWriteFast functionality>
+
+    // Determine CPU bank (from address bits 14 and 15)
+    const uint8_t bank = (addr >> 14) & 0b0000'0011;
+    const uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
+
+    // Write byte to the correspondent memory bank cell
+    *(_bank_write[bank] + addressInBank) = value;
+
+    /// endregion </MemoryWriteFast functionality>
+
+    WriteDebugEffects(addr, value, _bank_ram_page_cache[bank]);
 }
 
 /// endregion /<Memory access implementation methods>

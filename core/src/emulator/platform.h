@@ -931,6 +931,7 @@ struct CONFIG
 	char lsy_rom_path[FILENAME_MAX];
 	char phoenix_rom_path[FILENAME_MAX];
 	char sprinter_rom_path[FILENAME_MAX];
+	char next_rom_path[FILENAME_MAX];
 
 #ifdef MOD_GSZ80
 	char gs_rom_path[FILENAME_MAX];

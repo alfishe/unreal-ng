@@ -597,7 +597,7 @@ TEST(SlotPlanner_Test, MalformedRequestsRefused)
     // to an AY interface, and the shipped 48K config fits one): a socket board is planned, not refused
     EXPECT_TRUE(Planner().Plan(MM_SPECTRUM48, {}, Plug("", "ts", "", true)).allowed) << "48K retrofitted AY socket";
     EXPECT_TRUE(Planner().Plan(MM_SPECTRUM48, {}, Plug("ay-socket", "gs", "", true)).hardRefusal) << "bus card";
-    EXPECT_TRUE(Planner().Plan(MM_NEXT, {}, Plug("zxbus.1", "gs", "", true)).hardRefusal) << "not a creatable model";
+    EXPECT_TRUE(Planner().Plan(MM_NEXT, {}, Plug("zxbus.1", "gs", "", true)).hardRefusal) << "the Next has no zxbus.1 (its bare personality is the 128K board)";
 }
 
 TEST(SlotPlanner_Test, OptionsParseAndFormat)

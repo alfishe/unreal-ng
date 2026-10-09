@@ -350,6 +350,19 @@ public:
     void MemoryWriteFast(uint16_t addr, uint8_t value);
     void MemoryWriteDebug(uint16_t addr, uint8_t value);
 
+    /// A model whose memory is not four 16K windows supplies its own plain (Fast / Debug) interface here;
+    /// Core::SelectMemoryInterface uses it instead of the stock one while no host bus overlay is installed.
+    /// The default - no interface of its own
+    virtual MemoryInterface* ModelMemoryInterface([[maybe_unused]] bool debug) { return nullptr; }
+
+protected:
+    /// The debug access bookkeeping that follows the byte (tracking, TTD, breakpoints): MemoryReadDebug /
+    /// MemoryWriteDebug call these, and so does a derivative with its own mapping
+    void ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, ttd::PhysPage physPage);
+    void WriteDebugEffects(uint16_t addr, uint8_t value, ttd::PhysPage physPage);
+
+public:
+
     /// The inner access (Fast / Debug, contended or not), then the bus overlay
     /// for addresses in its window: the video logic's wait comes first, as on
     /// the bus, then the overlay decides what the CPU gets. Only reachable
