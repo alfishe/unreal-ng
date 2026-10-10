@@ -11,7 +11,7 @@
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/ttd/machinestatehash.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttddumpformat.h"
 #include "emulator/cpu/core.h"
@@ -44,15 +44,12 @@ using ttd::TTDExternalEvent;
 using ttd::TTDExternalEventKind;
 using ttd::TTDInputEvent;
 using ttd::TTDInputKind;
-using SeekHaltReason = ttd::TimeTravelManager::TTDSeekHaltReason;
-using SeekResult = ttd::TimeTravelManager::TTDSeekResult;
+using SeekHaltReason = ttd::TimeTravelController::TTDSeekHaltReason;
+using SeekResult = ttd::TimeTravelController::TTDSeekResult;
 
 constexpr uint16_t kPollerAddress = 0x8000;
 constexpr uint16_t kPollerLog = 0x9000;
 constexpr int kBootFrames = 150;
-
-/// Header offset of the u16 flags field (magic 4 + schema_version 2)
-constexpr size_t kFlagsOffset = 6;
 
 struct Point
 {
@@ -85,56 +82,6 @@ bool SamePoint(const Point& a, const Point& b)
     return a.frame == b.frame && a.tInFrame == b.tInFrame && std::memcmp(&a.cpu, &b.cpu, sizeof(a.cpu)) == 0 &&
            a.ramHash == b.ramHash && std::memcmp(a.matrix, b.matrix, sizeof(a.matrix)) == 0 && a.mouseX == b.mouseX &&
            a.mouseY == b.mouseY;
-}
-
-/// Bytes the two replay-input sections take at the end of a file written for
-/// these journals (ttddumpformat.h layouts)
-size_t ReplayInputSectionBytes(const std::vector<TTDInputEvent>& inputs, const std::vector<TTDExternalEvent>& markers)
-{
-    size_t bytes = 4 + inputs.size() * ttd::dump::kInputEventRecordSize + 4;
-    for (const TTDExternalEvent& m : markers)
-        bytes += 8 + 4 + 1 + 1 + std::min<size_t>(strnlen(m.reason, sizeof(m.reason)), 63);
-    return bytes;
-}
-
-/// Bytes the port-journal section (bit 8) takes at the very end of the
-/// session's file: the replay-input sections sit right before it
-size_t PortJournalBytes(const ttd::TimeTravelManager& ttd)
-{
-    if (!ttd.GetSessionInfo().portJournalActive)
-        return 0;
-    std::vector<uint64_t> reads;
-    std::vector<uint64_t> writes;
-    for (size_t i = 0; i < ttd.GetSessionInfo().checkpointCount; i++)
-    {
-        reads.push_back(ttd.GetCheckpoint(i)->portReadCursor);
-        writes.push_back(ttd.GetCheckpoint(i)->portWriteCursor);
-    }
-    std::ostringstream out;
-    std::string err;
-    EXPECT_TRUE(ttd.GetPortReadJournal().Serialize(out, reads, err)) << err;
-    EXPECT_TRUE(ttd.GetPortWriteJournal().Serialize(out, writes, err)) << err;
-    return out.str().size();
-}
-
-/// What an older writer produced for the same session: bits 6-8 clear, no
-/// trailing sections (the replay inputs and the port journals after them)
-std::string StripReplayInputs(const std::string& file, size_t sectionBytes, size_t portJournalBytes)
-{
-    std::string old = file.substr(0, file.size() - portJournalBytes - sectionBytes);
-    uint16_t flags = 0;
-    std::memcpy(&flags, old.data() + kFlagsOffset, sizeof(flags));
-    flags &= static_cast<uint16_t>(~(ttd::dump::kFlagsHasInputJournal | ttd::dump::kFlagsHasExternalEvents |
-                                     ttd::dump::kFlagsHasPortJournals));
-    std::memcpy(&old[kFlagsOffset], &flags, sizeof(flags));
-    return old;
-}
-
-uint16_t FlagsOf(const std::string& file)
-{
-    uint16_t flags = 0;
-    std::memcpy(&flags, file.data() + kFlagsOffset, sizeof(flags));
-    return flags;
 }
 
 void ExpectSameInputs(const std::vector<TTDInputEvent>& actual, const std::vector<TTDInputEvent>& expected)
@@ -176,7 +123,7 @@ protected:
     {
         Emulator* emulator = nullptr;
         EmulatorContext* context = nullptr;
-        ttd::TimeTravelManager* ttd = nullptr;
+        ttd::TimeTravelController* ttd = nullptr;
 
         bool Create()
         {
@@ -184,7 +131,7 @@ protected:
             if (!emulator)
                 return false;
             context = emulator->GetContext();
-            ttd = context->pTimeTravelManager;
+            ttd = context->pTimeTravelController;
             FeatureManager* features = emulator->GetFeatureManager();
             features->setFeature(Features::kDebugMode, true);
             features->setFeature(Features::kTimeTravel, true);
@@ -380,8 +327,6 @@ TEST_F(TimeTravelManager_SavedInputs_Test, EveryInputKindAndMarkerFieldSurvivesT
     ASSERT_GE(markers.size(), 5u);
 
     const std::string file = _rec.Save();
-    EXPECT_EQ(FlagsOf(file) & ttd::dump::kFlagsHasInputJournal, ttd::dump::kFlagsHasInputJournal);
-    EXPECT_EQ(FlagsOf(file) & ttd::dump::kFlagsHasExternalEvents, ttd::dump::kFlagsHasExternalEvents);
 
     std::string err;
     ASSERT_TRUE(_play.Load(file, &err)) << err;
@@ -393,14 +338,11 @@ TEST_F(TimeTravelManager_SavedInputs_Test, EveryInputKindAndMarkerFieldSurvivesT
     EXPECT_EQ(info.externalEventCount, markers.size());
     EXPECT_TRUE(info.inputHistoryComplete);
 
-    // The loaded session saves to the same replay-input sections
+    // The loaded session saves the same inputs and markers again
     const std::string again = _play.Save();
-    const size_t sectionBytes = ReplayInputSectionBytes(inputs, markers);
-    const size_t fileTail = PortJournalBytes(*_rec.ttd) + sectionBytes;
-    const size_t againTail = PortJournalBytes(*_play.ttd) + sectionBytes;
-    ASSERT_GE(file.size(), fileTail);
-    ASSERT_GE(again.size(), againTail);
-    EXPECT_EQ(again.substr(again.size() - againTail, sectionBytes), file.substr(file.size() - fileTail, sectionBytes));
+    ASSERT_TRUE(_play.Load(again, &err)) << err;
+    ExpectSameInputs(_play.ttd->GetInputJournal().Events(), inputs);
+    ExpectSameMarkers(_play.ttd->GetExternalEvents().SnapshotEvents(), markers);
 }
 
 TEST_F(TimeTravelManager_SavedInputs_Test, EmptyJournalsAreWrittenSoAQuietSessionLoadsComplete)
@@ -411,8 +353,6 @@ TEST_F(TimeTravelManager_SavedInputs_Test, EmptyJournalsAreWrittenSoAQuietSessio
     ASSERT_EQ(_rec.ttd->GetInputJournal().Size(), 0u);
 
     const std::string file = _rec.Save();
-    EXPECT_NE(FlagsOf(file) & ttd::dump::kFlagsHasInputJournal, 0);
-    EXPECT_NE(FlagsOf(file) & ttd::dump::kFlagsHasExternalEvents, 0);
 
     std::string err;
     ASSERT_TRUE(_play.Load(file, &err)) << err;
@@ -420,33 +360,6 @@ TEST_F(TimeTravelManager_SavedInputs_Test, EmptyJournalsAreWrittenSoAQuietSessio
     EXPECT_EQ(info.inputEventCount, 0u);
     EXPECT_EQ(info.externalEventCount, 0u);
     EXPECT_TRUE(info.inputHistoryComplete) << "no input happened - the history is complete, not unknown";
-}
-
-TEST_F(TimeTravelManager_SavedInputs_Test, OlderFileWithoutTheSectionsLoadsButReportsIncompleteHistory)
-{
-    ASSERT_TRUE(_rec.ttd->StartRecording());
-    _rec.emulator->RunNFrames(2);
-    _rec.context->pDebugManager->GetKeyboardManager()->PressKey(ZXKEY_A);
-    _rec.emulator->RunNFrames(2);
-    _rec.ttd->StopRecording();
-
-    const std::string file = _rec.Save();
-    const std::string old = StripReplayInputs(file,
-                                              ReplayInputSectionBytes(_rec.ttd->GetInputJournal().Events(),
-                                                                      _rec.ttd->GetExternalEvents().SnapshotEvents()),
-                                              PortJournalBytes(*_rec.ttd));
-    std::string err;
-    ASSERT_TRUE(_play.Load(old, &err)) << err;
-    const auto info = _play.ttd->GetSessionInfo();
-    EXPECT_FALSE(info.inputHistoryComplete);
-    EXPECT_EQ(info.inputEventCount, 0u);
-    EXPECT_EQ(info.checkpointCount, _rec.ttd->GetSessionInfo().checkpointCount) << "the rest of the session is intact";
-
-    // A fresh recording in the same instance is complete again
-    ASSERT_TRUE(_play.ttd->StartRecording());
-    _play.emulator->RunNFrames(1);
-    _play.ttd->StopRecording();
-    EXPECT_TRUE(_play.ttd->GetSessionInfo().inputHistoryComplete);
 }
 
 // ---------------------------------------------------------------------------
@@ -477,32 +390,6 @@ TEST_F(TimeTravelManager_SavedInputs_Test, LoadedSessionReplaysTheRecordedInputE
     EXPECT_EQ(PollerLogEntries(_play.context), PollerLogEntries(_rec.context));
 }
 
-/// The same file without the sections - what the writer produced before - does
-/// not reproduce the recording: the negative control that makes the test above
-/// meaningful. The port-read journal goes too: it holds every keyboard read
-/// and would reproduce the poller's view alone
-/// (timetravelmanager_portjournal_test.cpp)
-TEST_F(TimeTravelManager_SavedInputs_Test, FileWithoutTheInputJournalDivergesOnReplay)
-{
-    uint64_t startFrame = 0;
-    Point recorded;
-    RecordPollerSession(startFrame, recorded);
-    if (HasFatalFailure())
-        return;
-
-    const std::string file = _rec.Save();
-    const std::string old = StripReplayInputs(file,
-                                              ReplayInputSectionBytes(_rec.ttd->GetInputJournal().Events(),
-                                                                      _rec.ttd->GetExternalEvents().SnapshotEvents()),
-                                              PortJournalBytes(*_rec.ttd));
-    std::string err;
-    ASSERT_TRUE(_play.Load(old, &err)) << err;
-    ASSERT_TRUE(_play.ttd->SeekTo({startFrame, 0}));
-    _play.RunTo(recorded);
-    EXPECT_FALSE(SamePoint(Observe(_play.context), recorded));
-    EXPECT_EQ(PollerLogEntries(_play.context), 0u) << "without the journal the poller sees no key at all";
-}
-
 /// Replay barriers keep stopping seeks after a save and a load: the seek halts
 /// at the marker, with its kind, reason and time, exactly as in the recording
 /// instance
@@ -521,6 +408,9 @@ TEST_F(TimeTravelManager_SavedInputs_Test, LoadedSessionKeepsItsReplayBarriers)
     SeekResult live;
     EXPECT_FALSE(_rec.ttd->SeekTo(behind, &live));
     ASSERT_EQ(live.haltReason, SeekHaltReason::ExternalEvent);
+    EXPECT_EQ(live.blockingMarker.time, markerAt) << "the seek names the marker it stopped at";
+    EXPECT_EQ(live.blockingMarker.kind, TTDExternalEventKind::DebuggerEdit);
+    EXPECT_STREQ(live.blockingMarker.reason, "test poke");
 
     const std::string file = _rec.Save();
     std::string err;
@@ -532,142 +422,4 @@ TEST_F(TimeTravelManager_SavedInputs_Test, LoadedSessionKeepsItsReplayBarriers)
     EXPECT_EQ(loaded.blockingMarker.kind, TTDExternalEventKind::DebuggerEdit);
     EXPECT_STREQ(loaded.blockingMarker.reason, "test poke");
     EXPECT_EQ(loaded.arrivedAt, live.arrivedAt);
-}
-
-// ---------------------------------------------------------------------------
-// Damaged sections fail the load and leave the live session alone
-// ---------------------------------------------------------------------------
-
-class TimeTravelManager_SavedInputsDamage_Test : public TimeTravelManager_SavedInputs_Test
-{
-protected:
-    std::string _file;
-    size_t _inputStart = 0;   // offset of the input-journal section
-    size_t _markerStart = 0;  // offset of the external-event section
-
-    void SetUp() override
-    {
-        TimeTravelManager_SavedInputs_Test::SetUp();
-        ASSERT_TRUE(_rec.ttd->StartRecording());
-        _rec.emulator->RunNFrames(1);
-        auto* keys = _rec.context->pDebugManager->GetKeyboardManager();
-        keys->PressKey(ZXKEY_A);
-        _rec.emulator->RunNCPUCycles(500);
-        keys->ReleaseKey(ZXKEY_A);
-        _rec.ttd->RecordExternalEvent(TTDExternalEventKind::TapeControl, "Tape play");
-        _rec.emulator->RunNFrames(1);
-        _rec.ttd->StopRecording();
-        std::string err;
-        ASSERT_TRUE(_rec.ttd->AddBookmark({1, 0}, "b", &err)) << err;
-
-        const auto inputs = _rec.ttd->GetInputJournal().Events();
-        const auto markers = _rec.ttd->GetExternalEvents().SnapshotEvents();
-        ASSERT_EQ(inputs.size(), 2u);
-        ASSERT_EQ(markers.size(), 1u);
-        _file = _rec.Save();
-        _inputStart = _file.size() - PortJournalBytes(*_rec.ttd) - ReplayInputSectionBytes(inputs, markers);
-        _markerStart = _inputStart + 4 + inputs.size() * ttd::dump::kInputEventRecordSize;
-
-        // The instance the damaged files are loaded into holds a session of
-        // its own, which a failed load must leave untouched
-        ASSERT_TRUE(_play.ttd->StartRecording());
-        _play.emulator->RunNFrames(4);
-        _play.ttd->StopRecording();
-    }
-
-    void ExpectRefused(const std::string& damaged, const std::string& messagePart)
-    {
-        const auto before = _play.ttd->GetSessionInfo();
-        std::string err;
-        EXPECT_FALSE(_play.Load(damaged, &err));
-        EXPECT_NE(err.find(messagePart), std::string::npos) << "error was: " << err;
-        const auto after = _play.ttd->GetSessionInfo();
-        EXPECT_EQ(after.checkpointCount, before.checkpointCount) << "a failed load changed the live session";
-        EXPECT_EQ(after.loadedFromFile, before.loadedFromFile);
-    }
-
-    template <typename T>
-    void Put(std::string& file, size_t offset, T value)
-    {
-        std::memcpy(&file[offset], &value, sizeof(value));
-    }
-};
-
-TEST_F(TimeTravelManager_SavedInputsDamage_Test, IntactFileLoads)
-{
-    std::string err;
-    EXPECT_TRUE(_play.Load(_file, &err)) << err;
-}
-
-TEST_F(TimeTravelManager_SavedInputsDamage_Test, TruncatedInputJournalFailsTheLoad)
-{
-    ExpectRefused(_file.substr(0, _inputStart + 4 + 10), "input event");
-}
-
-TEST_F(TimeTravelManager_SavedInputsDamage_Test, TruncatedExternalEventsFailTheLoad)
-{
-    ExpectRefused(_file.substr(0, _markerStart + 4 + 6), "external event");
-}
-
-TEST_F(TimeTravelManager_SavedInputsDamage_Test, ImplausibleCountsFailTheLoad)
-{
-    std::string damaged = _file;
-    Put<uint32_t>(damaged, _inputStart, ttd::dump::kMaxInputEvents + 1);
-    ExpectRefused(damaged, "implausible input event count");
-
-    damaged = _file;
-    Put<uint32_t>(damaged, _markerStart, ttd::dump::kMaxExternalEvents + 1);
-    ExpectRefused(damaged, "implausible external event count");
-}
-
-TEST_F(TimeTravelManager_SavedInputsDamage_Test, UnknownInputKindFailsTheLoad)
-{
-    std::string damaged = _file;
-    Put<uint8_t>(damaged, _inputStart + 4 + 12, 0xEE);  // first event's kind byte
-    ExpectRefused(damaged, "unknown kind");
-}
-
-TEST_F(TimeTravelManager_SavedInputsDamage_Test, InvalidPressedByteFailsTheLoad)
-{
-    std::string damaged = _file;
-    Put<uint8_t>(damaged, _inputStart + 4 + 14, 2);  // first event's pressed byte
-    ExpectRefused(damaged, "pressed byte");
-}
-
-TEST_F(TimeTravelManager_SavedInputsDamage_Test, EventsOutOfTimeOrderFailTheLoad)
-{
-    std::string damaged = _file;
-    // The second input event moved to frame 0, before the first
-    Put<uint64_t>(damaged, _inputStart + 4 + ttd::dump::kInputEventRecordSize, 0);
-    Put<uint32_t>(damaged, _inputStart + 4 + ttd::dump::kInputEventRecordSize + 8, 0);
-    ExpectRefused(damaged, "earlier than the one before it");
-}
-
-TEST_F(TimeTravelManager_SavedInputsDamage_Test, OverlongMarkerReasonFailsTheLoad)
-{
-    std::string damaged = _file;
-    Put<uint8_t>(damaged, _markerStart + 4 + 13, 64);  // first marker's reason_len
-    ExpectRefused(damaged, "reason length");
-}
-
-TEST_F(TimeTravelManager_SavedInputsDamage_Test, UnknownMarkerKindIsKeptAsABarrier)
-{
-    std::string damaged = _file;
-    Put<uint8_t>(damaged, _markerStart + 4 + 12, 0x77);  // a kind a newer writer may add
-    std::string err;
-    ASSERT_TRUE(_play.Load(damaged, &err)) << err;
-    const auto markers = _play.ttd->GetExternalEvents().SnapshotEvents();
-    ASSERT_EQ(markers.size(), 1u);
-    EXPECT_EQ(static_cast<uint8_t>(markers[0].kind), 0x77);
-}
-
-/// A damaged bookmark section used to be skipped (bookmarks are advisory),
-/// but the replay inputs now follow it: the load must fail rather than read
-/// them from an unknown position
-TEST_F(TimeTravelManager_SavedInputsDamage_Test, DamagedBookmarksBeforeTheReplayInputsFailTheLoad)
-{
-    std::string damaged = _file;
-    // One bookmark "b": u32 count, u64 frame, u32 tInFrame, u8 label_len, 'b'
-    Put<uint8_t>(damaged, _inputStart - 2, 0);  // label_len 0 is invalid
-    ExpectRefused(damaged, "bookmarks section");
 }

@@ -30,7 +30,9 @@
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/engine/ttdcontainer.h"
+#include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/ttddumpformat.h"
 #include "debugger/ttd/ttdfileinfo.h"
 #include "debugger/ttd/ttdserializable.h"
@@ -44,15 +46,6 @@ namespace
 /// A model with a General Sound slot card fitted from boot (as ttdgeneralsoundswitch_test)
 constexpr const char* kGsCapableModel = "ATM710";
 
-/// Byte offset of the peripheral mask (formerly reserved) in a header whose
-/// emulator id is idLen bytes long: magic 4, schema 2, flags 2, model 1, RAM
-/// page bound 2, struct sizes 2 + 2, ROM signature 8, capture time 8, id
-/// length 1, id, session state 1, start 8, end 8, page slots 4, checkpoints 4
-size_t MaskOffset(size_t idLen)
-{
-    return 4 + 2 + 2 + 1 + 2 + 2 + 2 + 8 + 8 + 1 + idLen + 1 + 8 + 8 + 4 + 4;
-}
-
 }  // namespace
 
 class TTDFileInfo_Test : public ::testing::Test
@@ -61,14 +54,14 @@ protected:
     SoundCardScope _soundCards;   // keep the General Sound card the config fits
     Emulator* emulator = nullptr;
     EmulatorContext* context = nullptr;
-    ttd::TimeTravelManager* ttdm = nullptr;
+    ttd::TimeTravelController* ttdm = nullptr;
 
     void SetUp() override
     {
         emulator = EmulatorTestHelper::CreateStandardEmulator(kGsCapableModel, LoggerLevel::LogError);
         ASSERT_NE(emulator, nullptr) << "ATM710 not provisionable in this build";
         context = emulator->GetContext();
-        ttdm = context->pTimeTravelManager;
+        ttdm = context->pTimeTravelController;
         ASSERT_NE(ttdm, nullptr);
         FeatureManager* fm = emulator->GetFeatureManager();
         fm->setFeature(Features::kDebugMode, true);
@@ -93,14 +86,13 @@ protected:
         return out.str();
     }
 
+    /// The recorded devices: the engine's device table, as the session file's facts state them
     uint64_t BaselineMask() const
     {
         uint64_t mask = 0;
-        const ttd::TTDCheckpoint* cp = ttdm->GetCheckpoint(0);
-        if (!cp)
-            return 0;
-        for (const auto& blob : cp->peripheralBlobs)
-            mask |= uint64_t(1) << blob.first;
+        for (const ttd::TTDDeviceEntry& device : ttdm->GetEngine().Devices().Entries())
+            if (const uint8_t id = static_cast<uint8_t>(device.descriptor.legacyId); id < 64)
+                mask |= uint64_t(1) << id;
         return mask;
     }
 };
@@ -115,9 +107,7 @@ TEST_F(TTDFileInfo_Test, HeaderMaskAndFieldsMatchTheRecording)
     std::istringstream in(bytes, std::ios::binary);
     ASSERT_TRUE(ttd::ReadTTDFileInfo(in, info, err)) << err;
 
-    EXPECT_EQ(info.schemaVersion, ttd::dump::kSchemaVersion);
-    EXPECT_NE(info.flags & ttd::dump::kFlagsHasPeripheralMask, 0);
-    EXPECT_TRUE(info.peripheralsFromHeader);
+    EXPECT_EQ(info.schemaVersion, ttd::kContainerSchema) << "the engine's session file";
     EXPECT_EQ(info.machine.peripheralMask, BaselineMask());
     EXPECT_NE(info.machine.peripheralMask, 0u) << "every model fits at least the Kempston mouse";
     EXPECT_EQ(info.machine.modelId, static_cast<uint8_t>(context->config.mem_model));
@@ -129,37 +119,6 @@ TEST_F(TTDFileInfo_Test, HeaderMaskAndFieldsMatchTheRecording)
     EXPECT_TRUE(info.hasInputJournal);
     EXPECT_TRUE(info.hasExternalEvents);
     EXPECT_EQ(info.machine.peripherals.size(), static_cast<size_t>(std::popcount(info.machine.peripheralMask)));
-}
-
-TEST_F(TTDFileInfo_Test, FileWithoutMaskIsWalkedToTheFirstCheckpoint)
-{
-    std::string bytes = RecordSession();
-    ttd::TTDFileInfo fromHeader;
-    std::string err;
-    {
-        std::istringstream in(bytes, std::ios::binary);
-        ASSERT_TRUE(ttd::ReadTTDFileInfo(in, fromHeader, err)) << err;
-    }
-
-    // As a file written before the mask existed: flag clear, bytes zero
-    uint16_t flags = 0;
-    std::memcpy(&flags, &bytes[6], 2);
-    flags &= static_cast<uint16_t>(~ttd::dump::kFlagsHasPeripheralMask);
-    std::memcpy(&bytes[6], &flags, 2);
-    const size_t off = MaskOffset(fromHeader.emulatorId.size());
-    ASSERT_LE(off + 8, bytes.size());
-    std::memset(&bytes[off], 0, 8);
-
-    ttd::TTDFileInfo walked;
-    std::istringstream in(bytes, std::ios::binary);
-    ASSERT_TRUE(ttd::ReadTTDFileInfo(in, walked, err)) << err;
-    EXPECT_FALSE(walked.peripheralsFromHeader);
-    EXPECT_EQ(walked.machine.peripheralMask, fromHeader.machine.peripheralMask);
-    EXPECT_EQ(walked.machine.generalSound, fromHeader.machine.generalSound);
-
-    // The loader accepts the old layout too
-    std::istringstream load(bytes, std::ios::binary);
-    EXPECT_TRUE(ttdm->DeserializeSession(load, err)) << err;
 }
 
 TEST_F(TTDFileInfo_Test, SessionMachineIsTheSameLiveInTheFileAndLoaded)
@@ -177,6 +136,7 @@ TEST_F(TTDFileInfo_Test, SessionMachineIsTheSameLiveInTheFileAndLoaded)
     EXPECT_EQ(info.machine.romSignature, live.romSignature);
     EXPECT_EQ(info.machine.model, live.model);
 
+    ttdm->StopRecording();   // a load replaces the session: the engine refuses one while recording
     std::istringstream load(bytes, std::ios::binary);
     ASSERT_TRUE(ttdm->DeserializeSession(load, err)) << err;
     const ttd::TTDSessionInfo loaded = ttdm->GetSessionInfo();

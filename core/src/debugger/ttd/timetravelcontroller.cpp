@@ -502,7 +502,7 @@ void TimeTravelController::InvalidateSession(const char* reason)
     _lastDropReason = reason ? reason : "";
     _recordingPaused = false;
 
-    _timeline.clear();
+    _timeline = {};   // its capacity too: without a session the session's memory is zero
     _blobBytes = 0;
     _dirtyScratch.clear();
     ReleaseModelPeripherals();  // serializers are session-scoped, like the timeline
@@ -1100,6 +1100,9 @@ size_t TimeTravelController::EstimateSessionHeapBytes() const
 TTDHeapBreakdown TimeTravelController::GetHeapBreakdown() const
 {
     TTDHeapBreakdown h;
+    // No session: nothing is held for one (the engine object's fixed tables are not session memory)
+    if (_timeline.empty() && !_engine->IsSessionOpen())
+        return h;
 
     // The engine (Phase 5, C4a): its piece store, reference tables and
     // capture state; checkpoints with the frame table; device state is in its
@@ -3133,6 +3136,13 @@ bool TimeTravelController::SeekToInternal(const TTDTimePoint& target, TTDSeekRes
                 outResult->reached = false;
                 outResult->arrivedAt = TTDTimePoint{cp.time.frame, at};
                 outResult->haltReason = TTDSeekHaltReason::ExternalEvent;
+                // The marker the replay stops at, as recorded: its kind and reason (a loaded session's too)
+                for (const TTDExternalEvent& m : _externalEvents.SnapshotEvents())
+                    if (m.time == outResult->arrivedAt)
+                    {
+                        outResult->blockingMarker = m;
+                        break;
+                    }
             }
             return false;
         }
@@ -3977,11 +3987,14 @@ void TimeTravelController::CheckEngineCheckpoint(size_t index, bool forReplay)
 
 void TimeTravelController::SetReplaySource(TimeTravelEngine* engine)
 {
+    // Null: the session's own engine (a seek always has one to restore from)
+    if (!engine)
+        engine = _engine.get();
     _replayEngine = engine;
     _lastEngineCheck = {};
-    if (!engine)
-        return;
     _replayRomSignature = ComputeRomSignature();
+    if (engine == _engine.get())
+        return;   // the session's own engine is this machine's
     // A session fed from a file holds no live pointers: bind it to this machine
     std::string unbound;
     if (engine->BindLive(LiveRegions(), _peripherals.DeviceEntries(), &unbound) != 0)

@@ -274,7 +274,7 @@ Design: [phase-5-switchover-tdd.md](phase-5-switchover-tdd.md).
 
 ## Phase 6 — Cleanup
 
-- [ ] Delete `TimeTravelManager` (keep the v1 file reader for verification), retire the proof-of-concept readers, TDD truth pass, move this folder to DONE **Soak first (owner decision 2026-10-08):** the engine runs as the default for at least two weeks before v1 goes, so not before 2026-10-22; v1's code does not get in the way meanwhile **Prepared 2026-10-09:** [phase-6-inventory.md](phase-6-inventory.md) - every v1 dependency with its action; 21 test files moved to the engine ahead, leftover includes removed, zxdlss reads engine files; 28 behavior test files to adapt to the engine's rules, two questions for the owner
+- [ ] Delete `TimeTravelManager` (keep the v1 file reader for verification), retire the proof-of-concept readers, TDD truth pass, move this folder to DONE **Soak first (owner decision 2026-10-08):** the engine runs as the default for at least two weeks before v1 goes, so not before 2026-10-22; v1's code does not get in the way meanwhile **Prepared 2026-10-09:** [phase-6-inventory.md](phase-6-inventory.md) - every v1 dependency with its action; 49 test files moved to the engine ahead (21, then the 28 written to v1's rules, 2026-10-09), leftover includes removed, zxdlss reads engine files, the port-journal fixtures converted; 18 files stay on v1 (oracles, v1's internals); owner decisions: nothing kept for v1
 
 ## Later
 

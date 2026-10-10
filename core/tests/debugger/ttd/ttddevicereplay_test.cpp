@@ -11,7 +11,8 @@
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/machinestatehash.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/cpu/core.h"
@@ -98,7 +99,7 @@ protected:
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
 
     void SetUp() override
     {
@@ -106,7 +107,7 @@ protected:
         _emulator->SetCustomConfigPath(EmulatorTestHelper::StageTurboSoundKindConfig(GetParam()));
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
@@ -252,10 +253,13 @@ TEST_P(TTD_DeviceReplay_Test, CovoxIdleDecayReplaysOnTheRecordedFrame)
     _ttd->StopRecording();
 
     constexpr uint8_t kCovox = static_cast<uint8_t>(ttd::PeripheralId::Covox);
+    // The Covox state at checkpoint @p idx, as the engine holds it
     const auto covoxAt = [&](size_t idx)
     {
-        const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(idx);
-        return ttd::TTDPeripheralRegistry::DecodeBlob(kCovox, cp->peripheralBlobs.at(kCovox));
+        const ttd::TimeTravelEngine& engine = _ttd->GetEngine();
+        std::vector<uint8_t> state;
+        EXPECT_TRUE(engine.DeviceState(engine.FirstCheckpoint() + idx, kCovox, state)) << "checkpoint " << idx;
+        return state;
     };
 
     // Find the recorded decay: the first checkpoint whose channel-3 latch is centered

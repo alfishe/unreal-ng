@@ -33,7 +33,7 @@ v1-only types to check when deleting: `TTDCheckpoint`'s v1 fields (`portReadCurs
 references), the v1 page store (`ttdcodecpagestore`), the v1 dirty tracker, `ttddumpformat.h` (the v1 file
 format), `ttdv1events.h` (the v1 event feed), `ttdwritejournal` as v1's ring.
 
-## 3. Tests still on v1 (`core/tests/_helpers/ttdv1tests.h`, 46 files)
+## 3. Tests still on v1 (`core/tests/_helpers/ttdv1tests.h`, 18 files)
 
 ### 3.1 Oracles: the engine checked against v1 (10 files)
 
@@ -53,49 +53,30 @@ They do not compile against the controller - v1's page store (`GetPageStore`), i
 `ttdseekexhaustive` and `ttdfullrestore` for behavior tests worth porting (the engine has equivalents for most:
 `ttdresume` → `TTDControl_Test` resume, `ttdseekexhaustive` → the engine's seek tests).
 
-### 3.3 Behavior tests whose expectations are v1's (28 files): adapt to the engine
+### 3.3 Behavior tests written to v1's rules: moved to the engine (2026-10-09, 28 files)
 
-On the controller they compile; these fail, mostly because the engine behaves differently by design:
-- a seek while recording pauses the recording and runs (D8) - v1 refused it;
-- an external-event marker (tape, disk write) is no barrier: the engine's journals carry the data (Phase 3) - v1
-  stopped there;
-- a frame alone is the frame's end on the engine (D13);
-- tests reaching into v1's checkpoint blobs (`peripheralBlobs`) or v1's port journal gate.
+All 28 run against the engine's controller now (344 tests) and left `ttdv1tests.h`; 18 files stay there (§3.1, §3.2).
+Their expectations follow the engine's rules:
+- a seek, step, reverse query or find-last while recording pauses the recording and runs (D8) - v1 refused;
+- tape and disk markers are crossed (the journals carry the data); a debugger edit without its bytes, a reset and an
+  unclassified marker still stop a seek - the barrier tests use those;
+- a frame's final picture is its end (D13): a seek to `{f, 0}` shows frame f-1's;
+- the write journal is the engine's write index (`_helpers/ttdwriterecords.h`: the ring holds one frame);
+- the history limit drops whole segments (decision 41): up to an eighth of the window more is kept;
+- one checkpoint per frame: a test that calls `OnFrameBoundary` by hand moves the frame counter first;
+- device states and RAM at a checkpoint come from the engine (`DeviceState`, `RestoreRegion`), not v1's blobs and pages;
+- the two port-journal fixtures read in the engine's format (`testdata/ttd/port-journals/engine/`, converted once by
+  `ConvertV1Session`, which now writes the controller's facts; the file searches answer `expected.json` exactly).
+Tests of v1's file layout (cut sections, flipped header flags) are gone; the container's integrity has its own tests.
 
-| File | Tests | On the engine |
-|---|---|---|
-| `timetravelmanager_display_test.cpp` | 8 | 5 pass, 3 fail |
-| `timetravelmanager_historylimit_test.cpp` | 3 | 1 pass, 2 fail |
-| `timetravelmanager_journalcapacity_test.cpp` | 1 | 0 pass, 1 fail |
-| `timetravelmanager_journalsegments_test.cpp` | 9 | 8 pass; `BuildingTheWholeSessionEqualsTheRecordedJournal` crashes: it reads v1's write ring (`GetWriteJournal()`), which the controller does not keep with the journal off (built records go to the engine's write index) |
-| `timetravelmanager_portjournal_test.cpp` | 18 | 11 pass, 7 fail |
-| `timetravelmanager_publishedinfo_test.cpp` | 5 | 4 pass, 1 fail |
-| `timetravelmanager_regeneratewrites_test.cpp` | 2 | 0 pass, 2 fail |
-| `timetravelmanager_rzxplayback_test.cpp` | 5 | 1 pass, 3 fail |
-| `timetravelmanager_savedinputs_test.cpp` | 16 | crashes (an exception or abort on the first test) |
-| `timetravelmanager_turboclock_test.cpp` | 5 | 0 pass, 1 fail |
-| `ttdautomationcontract_test.cpp` | 20 | 18 pass, 2 fail |
-| `ttdbookmarks_test.cpp` | 26 | 25 pass, 1 fail |
-| `ttddevicereplay_test.cpp` | 3 | 3 pass, 1 fail |
-| `ttddivergencecorpus_test.cpp` | 6 | 2 pass, 4 fail |
-| `ttdexternalevents_test.cpp` | 41 | 39 pass, 2 fail |
-| `ttdexternaleventshooks_test.cpp` | 12 | 11 pass, 1 fail |
-| `ttdfileinfo_test.cpp` | 7 | 4 pass, 3 fail |
-| `ttdfindlastall_test.cpp` | 20 | 17 pass, 3 fail |
-| `ttdlifecyclestress_test.cpp` | 6 | 4 pass, 2 fail |
-| `ttdmodelpagebounds_test.cpp` | 4 | 24 pass, 8 fail |
-| `ttdpage255_test.cpp` | 9 | 7 pass, 2 fail |
-| `ttdrestore_test.cpp` | 10 | crashes (an exception or abort on the first test) |
-| `ttdreverseexecutor_test.cpp` | 28 | 25 pass, 3 fail |
-| `ttdseek_test.cpp` | 29 | 28 pass, 1 fail |
-| `ttdstatusendpoint_test.cpp` | 9 | 6 pass, 3 fail |
-| `ttdstepinstruction_test.cpp` | 7 | 5 pass, 2 fail |
-| `ttdsubsystemrestore_test.cpp` | 8 | crashes (an exception or abort on the first test) |
-| `ttdwritejournale2e_test.cpp` | 9 | 3 pass, 6 fail |
-
-
-Each needs its expectations rewritten for the engine (or the test dropped where it only checks v1's rule); a
-failure that is not one of the reasons above is a bug to look at. The three that crash need a look first.
+Found on the way and fixed in the engine's controller:
+- **A seek stopped at a barrier named no marker** (`blockingMarker` empty: kind unknown, no reason), live and loaded
+  - so WebAPI / CLI / MCP reported an anonymous `blocking_marker`. It is the recorded marker now.
+- **Memory after a session ends:** the piece store kept its 64 KB arena chunk and the session's tables their
+  capacity, and status reported about 80 KB with no session. A store nobody shares is cleared when the session ends;
+  without a session the session's memory is 0 (as B7 states).
+- **`SetReplaySource(nullptr)`** left the controller without a replay engine (the next seek crashed); null is the
+  session's own engine now.
 
 ## 4. Benchmarks and tools
 
@@ -107,12 +88,13 @@ failure that is not one of the reasons above is a bug to look at. The three that
 | `tools/verification/zxdlss` | the v1 branch for v1 files (§1) | drop the branch, or keep v1 files readable through a converter |
 | `tools/poc/010-ttd-gui`, `01-ttd-compression`, `010-ttd-compression`, `011-ttd-v2-capture-analysis` | proofs of concept on v1 data | retire (Phase 6) |
 
-## 5. Questions for the owner (before 2026-10-22)
+## 5. Owner decisions (2026-10-09)
 
-1. **The v1 file reader "kept for verification"** (TODO, Phase 6). Its users today: the v1 feeder (the oracle tests
-   and the benchmark read v1 fixtures through it), zxdlss for old files, the Python analyzer (independent of the
-   C++ reader). Options: keep a minimal v1 reader that converts a v1 file into an engine session (the feeder without
-   v1's manager), or convert the v1 fixtures once (`testdata/ttd/*.ttd`, `testdata/ttd/port-journals/`,
-   `testdata/machines/*/ttd/`) and drop v1 files entirely.
-2. **The oracle tests (§3.1)**: keep their engine-side assertions against recorded expectations, or rely on the
-   engine's own suites and the engine corpus.
+Nothing is kept for v1: every artifact moves to the engine ("v1 goes, everything is on v2").
+
+1. **No v1 file reader after the deletion.** The v1 fixtures are converted to the engine's format once, now, while v1
+   can still read them (`testdata/ttd/*.ttd`, `testdata/ttd/port-journals/`, `testdata/machines/*/ttd/`; seven are
+   in `testdata/ttd/engine/` already). zxdlss's v1 branch, the v1 feeder and the Python analyzer's v1 parser go
+   with v1.
+2. **The oracle tests lose their v1 side.** What they assert of the engine stays, against the converted fixtures or
+   recorded expectations; a check that only compares with v1 goes.

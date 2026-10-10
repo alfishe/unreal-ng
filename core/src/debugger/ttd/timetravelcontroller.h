@@ -262,10 +262,9 @@ public:
     TimeTravelEngine& GetEngine() { return *_engine; }
     const TimeTravelEngine& GetEngine() const { return *_engine; }
 
-    /// Phase 3 A/B: seeks restore from @p engine's checkpoints and replay its
-    /// event log and bus journals instead of v1's (null: v1's own data). The
-    /// engine must hold the same session (the shadow engine, or a v1 file fed
-    /// into one). The replay itself runs as v1's does
+    /// Seeks restore from @p engine's checkpoints and replay its event log and
+    /// bus journals (a session fed into another engine, tests). Null: the
+    /// session's own engine, the default
     void SetReplaySource(TimeTravelEngine* engine);
     TimeTravelEngine* GetReplaySource() const { return _replayEngine; }
     /// The settings and media check of the last restore from the replay
