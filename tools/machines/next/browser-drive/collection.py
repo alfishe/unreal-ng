@@ -183,7 +183,7 @@ def main():
             header_sigs.setdefault(tuple(target[:i + 1]), header_sig(machine))
         png = os.path.join(args.out, '%03d-%s.png' % (n, re.sub(r'[^A-Za-z0-9]+', '_', t['title'])[:40]))
         reach(machine, folder, parts[-1])
-        if parts[-1].lower().endswith('.tap') and args.tap_speed:
+        if parts[-1].lower().endswith('.tap'):
             # SYMBOL SHIFT + ENTER in the Browser opens the TAP loader's options for this game (a game started once is remembered
             # and starts straight away next time, so the menu is only there on the first run or through this chord)
             machine.call('/%s/keyboard/combo' % machine.id, {'keys': ['sym_shift', 'enter'], 'frames': 6})
