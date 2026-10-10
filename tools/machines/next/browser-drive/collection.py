@@ -65,7 +65,7 @@ def main():
     parser.add_argument('--start', type=int, default=0)
     parser.add_argument('--limit', type=int, default=10 ** 9)
     parser.add_argument('--match')
-    parser.add_argument('--keys', default='enter,space,1', help='keys tapped one second apart after the first picture (a title screen waits for one); empty = none')
+    parser.add_argument('--keys', default='enter,space,1', help='keys tried one at a time after the first picture until the picture changes (a title screen waits for one); empty = none')
     args = parser.parse_args()
     from PIL import Image, ImageDraw
     index = args.index or os.path.join(args.card, 'collection', 'index.tsv')
@@ -121,7 +121,10 @@ def main():
         time.sleep(args.wait)
         state = machine.call('/%s/state/next' % machine.id)
         regs = machine.call('/%s/registers' % machine.id)
-        idle = regs['interrupt']['halted'] and regs['special']['pc'] == 0x0C8F
+        # A BASIC program waiting for a key sits in the same key-wait loop (#0C8F) as the Browser does, so for .bas the loop says nothing:
+        # those titles are judged by what is on the screen (NextZXOS grey paper) after the start keys
+        is_basic = parts[-1].lower().endswith('.bas')
+        idle = (not is_basic) and regs['interrupt']['halted'] and regs['special']['pc'] == 0x0C8F
         png = os.path.join(args.out, '%03d-%s.png' % (n, re.sub(r'[^A-Za-z0-9]+', '_', t['title'])[:40]))
         data = json.load(urllib.request.urlopen('%s/%s/capture/screen' % (machine.base, machine.id)))
         with open(png, 'wb') as f:
@@ -144,14 +147,26 @@ def main():
             moves = changed(im, grab()) > 0.001  # animates by itself
             after = im
             if args.keys:
+                # one key at a time, the next only if the picture did not change: a title screen takes any key, and a key that is not
+                # needed can end a BASIC program (SPACE + something is BREAK), so the keys are not stacked
                 for key in args.keys.split(','):
                     machine.tap(key)
-                    time.sleep(1.0)
-                time.sleep(4.0)
+                    time.sleep(2.5)
+                    after = grab()
+                    if changed(im, after) > 0.001:
+                        break
+                time.sleep(3.0)
                 after = grab()
             reacts = changed(im, after) > 0.001
             regs2 = machine.call('/%s/registers' % machine.id)
-            back = regs2['interrupt']['halted'] and regs2['special']['pc'] == 0x0C8F
+            if is_basic:
+                counts = {}
+                for px in after.getdata():
+                    counts[px] = counts.get(px, 0) + 1
+                top, n_top = max(counts.items(), key=lambda kv: kv[1])
+                back = top == (182, 182, 182) and n_top > 0.6 * (after.size[0] * after.size[1])  # NextZXOS's own screen
+            else:
+                back = regs2['interrupt']['halted'] and regs2['special']['pc'] == 0x0C8F
             life = ('moves ' if moves else 'static ') + ('reacts ' if reacts else 'no-reaction ') + ('BACK-IN-OS' if back else 'running')
             after.save(png.replace('.png', '-keys.png'))
             if back:
