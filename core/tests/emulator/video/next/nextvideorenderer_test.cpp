@@ -277,6 +277,20 @@ TEST_F(NextTilemap_Test, TilePixelsComeFromTheDefinitionWithPaletteOffsetAndInde
     EXPECT_NE(Px(2), Pal(3, (3 << 4) | 15)) << "index 15 is transparent: the fallback shows";
 }
 
+// zxnext.vhd: the video side of bank 7 is an 8K BRAM (page #0E) addressed by bits 12:0 ("ULA BANK 7 (8k only due to limited bram resources)").
+// Mapscroll 3 writes its map through MMU page 14 at offset 0 and points NR #6E at #A0 (bank 7, offset #2000): the picture needs the wrap
+TEST_F(NextTilemap_Test, Bank7MapOffsetWrapsInTheEightKilobyteBram)
+{
+    _in.nr[0x6E] = 0x80 | 0x20;  // bank 7, offset #2000 -> BRAM #0000
+    Page(7)[0] = 1;              // tile 1 at column 0 row 0 (first half of bank 7)
+    Page(7)[1] = 0x30;
+    Page(7)[0x2000] = 2;         // what a 16K bank would have at #2000: must NOT be used
+    Defs()[32] = 0x2F;
+    Defs()[64] = 0x4F;
+    Render(0);
+    EXPECT_EQ(Px(0), Pal(3, (3 << 4) | 2));
+}
+
 TEST_F(NextTilemap_Test, MirrorsAndRotate)
 {
     Defs()[0] = 0x12;      // tile 0 line 0: pixels 0..7 = 1,2,0,0,0,0,0,0

@@ -276,6 +276,31 @@ TEST_F(NextSkeleton_Test, NextRegStreamInContendedBank5TakesTheSixCycleWaits)
     EXPECT_DOUBLE_EQ(stream(0xC000), 20.0) << "bank 0: no waits";
 }
 
+// zxnext.vhd 3171-3181: at 28 MHz each CPU read cycle that reaches the SRAM waits one clock (a NOP: 5 clocks, not 4); the bank 7 BRAM page
+// (#0E) has its own read port and does not; at 14 MHz nobody waits
+TEST_F(NextSkeleton_Test, At28MHzSramReadsWaitOneClockAndBank7DoesNot)
+{
+    auto nops = [&](uint8_t mmu6, uint8_t speed) {
+        Out(0x243B, 0x07);
+        Out(0x253B, speed);
+        Out(0x243B, 0x56);
+        Out(0x253B, mmu6);
+        _emulator->RunFrame(true);  // the speed applies at a frame start
+        for (unsigned i = 0; i < 200; i++)
+            _memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0xC000 + i), 0x00);
+        _z80->pc = 0xC000;
+        const uint32_t t0 = _z80->t;
+        for (unsigned i = 0; i < 100; i++)
+            _z80->EngineStep();
+        return static_cast<double>(_z80->t - t0);
+    };
+    const double sram = nops(0x00, 3);
+    const double bram = nops(0x0E, 3);
+    EXPECT_NEAR(sram / bram, 5.0 / 4.0, 0.01) << "sram " << sram << " bram " << bram;
+    const double mid = nops(0x00, 2);
+    EXPECT_NEAR(mid / bram, 1.0, 0.01) << "14 MHz: 4 clocks per NOP, no waits";
+}
+
 TEST_F(NextSkeleton_Test, PentagonTimingHasNoContention)
 {
     Out(0x243B, 0x03);

@@ -145,7 +145,7 @@ void NextVideoRenderer::LoResLine(const NextVideoInputs& in, unsigned y, Pixel* 
     {
         const unsigned sx = ((px + scrollX) & 255) / 2;  // 128 columns
         const unsigned address = (row < 48 ? 0x0000 : 0x2000) + (row % 48) * 128 + sx;
-        const unsigned idx = (screen[address] + offset) & 0xFF;
+        const unsigned idx = (screen[in.shadowScreen ? (address & 0x1FFF) : address] + offset) & 0xFF;  // bank 7 is the 8K BRAM
         Pixel& a = line[kPaperLeft + px * 2];
         a.colour = regs.PaletteEntry(palette, idx) & 0x1FF;
         a.opaque = true;
@@ -255,8 +255,11 @@ void NextVideoRenderer::TilemapLine(const NextVideoInputs& in, unsigned y, Pixel
     const unsigned scrollX = in.nr[0x30] | ((in.nr[0x2F] & 3) << 8);
     const unsigned scrollY = in.nr[0x31];
     auto vram = [&](uint8_t base, unsigned offset) -> uint8_t {
-        const unsigned page = (base & 0x80) ? 7 : 5;
-        const size_t address = static_cast<size_t>(page) * 0x4000 + ((static_cast<size_t>(base & 0x3F) * 256 + offset) & 0x3FFF);
+        // zxnext.vhd: "ULA BANK 7 (8k only due to limited bram resources)" - the video side of bank 7 is the 8K BRAM of page #0E, addressed
+        // by bits 12:0, so a map placed at #2000 of bank 7 reads (and a CPU write through MMU page #0E lands) at #0000
+        const bool bank7 = (base & 0x80) != 0;
+        const unsigned page = bank7 ? 7 : 5;
+        const size_t address = static_cast<size_t>(page) * 0x4000 + ((static_cast<size_t>(base & 0x3F) * 256 + offset) & (bank7 ? 0x1FFF : 0x3FFF));
         return address < static_cast<size_t>(in.ramPages) * 0x4000 ? in.ram[address] : 0;
     };
     const unsigned columns = wide ? 80 : 40;

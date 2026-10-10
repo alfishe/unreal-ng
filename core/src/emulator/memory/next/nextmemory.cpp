@@ -26,7 +26,7 @@ NextMemory::NextMemory(EmulatorContext* context) : Memory(context)
 
 MemoryInterface* NextMemory::ModelMemoryInterface(bool debug, bool contended)
 {
-    if (contended)
+    if (contended || _sramWait28)  // the 28 MHz read waits ride on the contended accesses
         return debug ? _debugContendedIf.get() : _fastContendedIf.get();
     return debug ? _debugIf.get() : _fastIf.get();
 }
@@ -44,6 +44,8 @@ uint8_t NextMemory::SlotReadContendedFast(uint16_t addr, bool isExecution)
         _contentionUla->LatchContendedByte(value);
         return value;
     }
+    if (_sramWait28 && _slotSramWait[addr >> 13])
+        _contentionCpu->InsertWaitStates(1);
     return MemoryReadFast(addr, isExecution);
 }
 
@@ -58,6 +60,8 @@ uint8_t NextMemory::SlotReadContendedDebug(uint16_t addr, bool isExecution)
         _contentionUla->LatchContendedByte(value);
         return value;
     }
+    if (_sramWait28 && _slotSramWait[addr >> 13])
+        _contentionCpu->InsertWaitStates(1);
     return MemoryReadDebug(addr, isExecution);
 }
 
@@ -413,6 +417,10 @@ void NextMemory::MapSlot(unsigned slot)
     }
     if (!(slot < 2 && (_divView.mapped || _mfActive) && !bootRomHere) && !bootRomHere)
         ApplyLayer2(slot);
+    // the 28 MHz read wait: everything but the boot ROM, unmapped slots (sram_pre_active = 0) and the bank 7 BRAM page (#0E)
+    const char* kind = _kind[slot];
+    _slotSramWait[slot] = std::strcmp(kind, "boot rom") != 0 && std::strcmp(kind, "unmapped") != 0 &&
+                          !(std::strcmp(kind, "ram") == 0 && value == 0x0E);
 }
 
 /// Layer 2 over the slot the MMU (or the ROM) would show: reads and writes separately

@@ -694,6 +694,7 @@ void PortDecoder_Next::UpdateContention()
     const bool off = _ratio > 1 || _nr08NoContention;
     _state->hw_contention_disabled = off ? 1 : 0;
     Mem().SetContentionRule(timing);
+    Mem().SetSramWait28(_ratio == 8);
     if (UlaContention* ula = _context->pUlaContention)
     {
         ula->SetContentionEnabled(family && !off);

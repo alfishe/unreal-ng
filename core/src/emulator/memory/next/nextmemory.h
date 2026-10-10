@@ -42,6 +42,11 @@ public:
     /// Which RAM banks the video logic shares memory with, by frame family (NR #03 timing): 1 = 48K (bank 5 only),
     /// 2 = 128K / +2 (odd banks 1 3 5 7), 3 = +3 (banks 4-7), anything else none. Only banks 0-7 (MMU pages 0-15)
     void SetContentionRule(uint8_t timing);
+    /// zxnext.vhd 3171-3181: at 28 MHz (NR #07 = 3) every CPU read cycle that reaches the SRAM (or bank 5) gets one wait clock. The
+    /// bank 7 BRAM page (#0E), unmapped slots and the boot ROM do not. Writes, refresh and I/O never wait. Set by the port decoder on a speed change
+    void SetSramWait28(bool on) { _sramWait28 = on; }
+    bool SramWait28() const { return _sramWait28; }
+    bool SlotWaitsAt28(unsigned slot) const { return _slotSramWait[slot]; }
     MemoryInterface* ModelMemoryInterface(bool debug, bool contended) override;
     void RefreshSlotContention() override;
     uint8_t ToolReadRedirect(uint16_t addr, uint8_t normal) const override;
@@ -171,5 +176,7 @@ private:
     std::unique_ptr<MemoryInterface> _debugContendedIf;
     uint8_t _contentionRule = 0;
     bool _slotContended[kSlots] = {};
+    bool _sramWait28 = false;
+    bool _slotSramWait[kSlots] = {};  // the slot's read reaches the SRAM (MapSlot)
     void ApplyContentionFlags();
 };

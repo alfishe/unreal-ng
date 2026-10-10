@@ -24,6 +24,14 @@ and where only arithmetic exists (no board numbers) the item stays marked "arith
 | Line interrupt | `int_line` at `hc_ula = 255` of the row before the target | at the row start | 128 T into that row | `LineInterruptPulsesAtItsLine` |
 | `NEXTREG` bus shape | `t80n_mcode.vhd` X"91" / X"92": the trailing cycles are MREQ/RD reads (`NoRead = 0`); `Z80N_dout_o` rises with the first one | idle cycles, write 3 T late | contended reads, write at +14 T (`n,v`) / +11 T (`n,A`) | `Z80nOpcodes_Test.NextregCallsTheHostWithoutAPortCycle`, `NextSkeleton_Test.NextRegStreamInContendedBank5TakesTheSixCycleWaits` |
 
+| 28 MHz SRAM read wait | `zxnext.vhd` 3171-3181: +1 clock per CPU read that reaches the SRAM or bank 5; not bank 7 BRAM (page #0E), unmapped slots, boot ROM; writes / I/O / refresh never | none | `NextMemory::SetSramWait28`, rides on the contended interface | `At28MHzSramReadsWaitOneClockAndBank7DoesNot` |
+| Video bank 7 = 8K BRAM | `zxnext.vhd` "ULA BANK 7 (8k only ...)": video address bits 12:0, page #0E | tilemap / LoRes read 16K of bank 7 | wraps at 8K | `NextTilemap_Test.Bank7MapOffsetWrapsInTheEightKilobyteBram` |
+
+Mapscroll 3 (`demos/tech-demo`, seedy1812) is the case for the last row: it writes its map through MMU page 14 at offset 0 and points NR #6E at #A0
+(bank 7, offset #2000), so only the 8K wrap shows the map. After the fix one of our frames equals the author's README screenshot pixel for
+pixel (the ULA showing bank 5's tile data right of and below the clipped tilemap window is the demo's own look: `nextreg $68` ULA-off is commented out
+in its source).
+
 ## Changing8kBank (the contention-ON timing test)
 
 Port-traced on the emulator (`OUT #FE` start / end of the green border), through the Browser, contention ON / OFF:
@@ -43,7 +51,6 @@ nothing. There are no real-board numbers; this item stays "arithmetic" until a b
 
 | Item | RTL | Note |
 |:--|:--|:--|
-| 28 MHz SRAM read wait | `zxnext.vhd` 3171-3181: +1 clock per SRAM read at `cpu_speed = 11` | jnext has it; 1000 NOPs: 5000 clocks vs our 4000 |
 | INT pulse in CPU clocks | counted on the CPU clock | ours is in base T scaled by the speed, 8x too long at 28 MHz |
 | CPU speed change | latched within the instruction | ours at the next frame start |
 | 60 Hz timing | `zxula_timing.vhd` 216-308 | NR #05 bit 2 ignored |
