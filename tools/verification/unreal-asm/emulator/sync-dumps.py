@@ -19,6 +19,7 @@ save the text itself and keep the file. The synchronizer's reader must give that
     sync-dumps.py lasergenius <LG_1_04 disk with TEST.C> <out-dir> --source TEST --save-as SAVE --tag lg104
     sync-dumps.py prometheus <prometheus-48.tap> <out-dir> --model 48K --tag prom48   # the expected file from SAVE's ROM call
     sync-dumps.py pasm <PASM3_0 disk with TEST.C> <out-dir> --source TEST --tag pasm30   # each case's file from P
+    sync-dumps.py gens4b <disk with gens4b.C and TEST.C> <out-dir> --source TEST --tag gens4b
     sync-dumps.py masm <disk with t1.a> <out-dir> --boot m2 --source t1 --menu-save --tag masm20   # MASM 2.0 (3.0: TSM)
     sync-dumps.py masmdemo <SpFon_15.Trd> <out-dir> --source T1 --tag masm10   # MASM 1.0 demo: the text typed in
     sync-dumps.py xas <disk-with-PROBE.X> <out-dir> --boot NAME --list-keys right[,down...] --tag TAG
@@ -424,6 +425,44 @@ def gens(emu, args):
     finish(args.out, f'{args.tag}-edited', f'{args.source}.{kind}', saved(emu, args.save_as, kind))
 
 
+def gens4b(emu, args):
+    """GENS4B 4.1 (MOA B-Disk, CODE 30000): it calls TR-DOS through #3D13 and needs TR-DOS's system variables, and it
+    has no loader of its own. From 48K BASIC: RANDOMIZE USR 15616 (TR-DOS makes its variables), LOAD "gens4b" CODE
+    30000 at the A> prompt, RETURN (back to 48K BASIC), RANDOMIZE USR 30000 (docs/disasm/software/gens4b). G,,1:NAME
+    loads, I25,1 inserts, P1,9999,1:NAME saves (type C)"""
+    emu.insert_disk(args.disk)
+    emu.post('/reset')
+    time.sleep(3)
+    emu.ensure_running()
+    for _ in range(3):                         # the Pentagon menu: 48 BASIC
+        emu.tap('down')
+    emu.tap('enter')
+    time.sleep(2)
+    emu.ensure_running()
+    for command in ('RANDOMIZE USR 15616', 'LOAD "gens4b" CODE 30000', 'RETURN', 'RANDOMIZE USR 30000'):
+        emu.post('/basic/run', {'command': command})
+        time.sleep(3)
+    emu.type(f'G,,1:{args.source}')
+    emu.tap('enter')
+    time.sleep(4)
+    loaded = saved(emu, args.source, 'C')
+    pages = [0, 2, 5]
+    emu.type('I25,1')
+    emu.tap('enter')
+    time.sleep(1)
+    emu.type(' nop')
+    dump(emu, args.out, f'{args.tag}-typing', pages, f'{args.source}.C', loaded, {'editor': True, 'typing': True})
+    emu.tap('enter')
+    time.sleep(0.5)
+    emu.post('/keyboard/combo', {'keys': ['caps', '1'], 'frames': 4})   # EDIT: the insert ends
+    time.sleep(1)
+    dump(emu, args.out, f'{args.tag}-edited', pages, f'{args.source}.C', None, {'editor': True, 'typing': False})
+    emu.type(f'P1,9999,1:{args.save_as}')
+    emu.tap('enter')
+    time.sleep(4)
+    finish(args.out, f'{args.tag}-edited', f'{args.source}.C', saved(emu, args.save_as, 'C'))
+
+
 def genstape(emu, args):
     """GENS from tape on a 48K (GENS4 at 26000, GENS3 at 25444): the code block of --disk (a TAP) whose length is
     --code-length is written at --at and started; --source (a GENS file) goes on a tape and G,, loads it. No save:
@@ -797,7 +836,7 @@ def tasm412(emu, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'masmdemo', 'tasm', 'gens', 'genstape', 'zeus', 'lasergenius', 'prometheus', 'pasm'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'masmdemo', 'tasm', 'gens', 'genstape', 'zeus', 'lasergenius', 'prometheus', 'pasm', 'gens4b'])
     parser.add_argument('disk')
     parser.add_argument('out')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
@@ -844,6 +883,8 @@ def main():
             zasm(emu, args)
         elif args.assembler == 'masm':
             masm(emu, args)
+        elif args.assembler == 'gens4b':
+            gens4b(emu, args)
         elif args.assembler == 'pasm':
             pasm(emu, args)
         elif args.assembler == 'prometheus':
