@@ -1727,12 +1727,13 @@ private:
     ///   - parks the machine while a session is active (Recording: its thread
     ///     appends to the timeline and journals; Detached: it replays them),
     ///     and resumes it afterwards if it parked it here;
-    ///   - after a Change, the outermost operation publishes the summary.
-    /// An Idle session is not touched by a running machine, so it is not parked.
+    ///   - after a Change or a Configure, the outermost operation publishes the summary.
+    /// An Idle session is not touched by a running machine, so it is not parked - except for a Configure: the
+    /// settings it writes (the black box, a restart due) are read at every frame boundary, whatever the state.
     class SessionOperation
     {
     public:
-        enum class Kind : uint8_t { Read, Change };
+        enum class Kind : uint8_t { Read, Change, Configure };
         SessionOperation(const TimeTravelController& manager, Kind kind);
         ~SessionOperation();
         SessionOperation(const SessionOperation&) = delete;
