@@ -127,6 +127,21 @@ uint64_t Medium::ContentId() const
     return _block ? _block->ContentId() : 0;
 }
 
+uint64_t Medium::VolumeId() const
+{
+    if (_session)
+        return _session->Base().ContentId();
+    if (_block && _block->ContentId() != 0)
+        return _block->ContentId();
+    uint64_t id = 0xcbf29ce484222325ULL;
+    for (char c : _sourceKey)
+    {
+        id ^= static_cast<uint8_t>(c);
+        id *= 0x100000001b3ULL;
+    }
+    return id;
+}
+
 std::string Medium::Describe() const
 {
     if (_block)

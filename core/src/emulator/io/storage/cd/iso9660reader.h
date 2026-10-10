@@ -22,6 +22,8 @@ struct IsoDirEntry
     std::string isoName;    ///< the ISO 9660 name as recorded ("README.TXT;1")
     bool isDirectory = false;
     bool hidden = false;    ///< the "existence" flag
+    bool associated = false;   ///< an associated file (flag bit 2: Apple resource forks and the like)
+    bool interleaved = false;  ///< recorded interleaved (file unit size or gap set): its blocks are not contiguous
     uint64_t size = 0;      ///< all sections together
     int64_t mtimeUtc = 0;   ///< the recording date, UTC
     /// Where the bytes are: (block, bytes) per section, in order (several for a multi-extent file)

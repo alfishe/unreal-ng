@@ -255,6 +255,8 @@ bool Iso9660Reader::List(const IsoDirEntry& directory, std::vector<IsoDirEntry>&
                 entry.name = _useJoliet ? WithoutVersion(entry.isoName) : WithoutVersion(raw);
                 entry.isDirectory = (flags & 0x02) != 0;
                 entry.hidden = (flags & 0x01) != 0;
+                entry.associated = (flags & 0x04) != 0;
+                entry.interleaved = r[26] != 0 || r[27] != 0;
                 entry.size = bytes;
                 entry.mtimeUtc = RecordDate(r + 18);
                 entry.sections.push_back({extent, bytes});

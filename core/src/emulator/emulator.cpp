@@ -2109,10 +2109,9 @@ bool Emulator::LoadTape(const std::string& path, std::string* error)
     // TTD v1 (P1.6): tape insertion is a session-invalidating event in v1
     // (parent TDD §4.2 + §5 row 3 — tape *insertion/start/stop* commands
     // invalidate; only playback position is checkpointed). Refused while recording.
+    // The session ends only once the tape is in (MediaManager::Insert): a file that fails to load keeps it
     if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadTape, error))
         return false;
-    if (_context->pTimeTravelHooks)
-        _context->pTimeTravelHooks->OnLoad(ttd::TTDLoadKind::Tape, "tape-load");
 
     // The format registry probes and loads (every TapeLoaderRegistry format,
     // a folder built into a TZX); the swap happens with the emulator thread
@@ -2123,6 +2122,7 @@ bool Emulator::LoadTape(const std::string& path, std::string* error)
     InsertOptions options;
     options.immediate = true;
     options.disposition = Disposition::Discard;  // a tape is never written: nothing to lose
+    options.ttdReason = "tape-load";
 
     MediaResult inserted;
     {
@@ -2238,16 +2238,14 @@ bool Emulator::CreateBlankDisk(uint8_t drive, BlankDiskFormat format, uint8_t cy
     blank.type = MediaSourceType::Blank;
     auto medium = std::make_unique<Medium>(blank, AccessMode::Session, BlankDiskFormatName(format), std::move(image));
 
-    if (_context->pTimeTravelHooks)
-        _context->pTimeTravelHooks->OnLoad(ttd::TTDLoadKind::DiskCreate, "disk-create");
-
-    // The swap happens with the CPU held, at once (no swap delay)
+    // The swap happens with the CPU held, at once (no swap delay); the media manager tells TTD (ttdReason)
     MediaResult inserted;
     {
         CpuHold hold(*this, "disk create");
         InsertOptions options;
         options.immediate = true;
         options.disposition = Disposition::Discard;  // a load always replaced the disk, writes and all
+        options.ttdReason = "disk-create";
         inserted = _context->pMediaManager->Insert(slotId, std::move(medium), options);
     }
     if (!inserted.Ok())
@@ -2299,12 +2297,10 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
     }
 
     // TTD v1 (P1.6): disk image swap teleports FDC + media state
-    // (parent TDD §4.2 + §12.2). Refused while recording; otherwise drop the
-    // session before the loader runs.
+    // (parent TDD §4.2 + §12.2). Refused while recording; otherwise the
+    // session ends once the disk is in (MediaManager::Insert): a disk that fails to load keeps it.
     if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadDisk, error))
         return false;
-    if (_context->pTimeTravelHooks)
-        _context->pTimeTravelHooks->OnLoad(ttd::TTDLoadKind::Disk, "disk-load");
 
     // The format registry probes and loads; the swap happens with the emulator
     // thread parked, at once (no swap delay: the caller expects the disk in)
@@ -2314,6 +2310,7 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
     InsertOptions options;
     options.immediate = true;
     options.disposition = Disposition::Discard;  // a load always replaced the disk, writes and all
+    options.ttdReason = "disk-load";
 
     MediaResult inserted;
     {

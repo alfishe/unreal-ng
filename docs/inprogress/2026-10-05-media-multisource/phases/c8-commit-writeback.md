@@ -15,7 +15,7 @@ unless this document says otherwise. FR-50 to FR-54 in [goals-and-requirements.m
 `media flatten <slot> --strategy flat|delta|commit|write-back [path] [--plan] [--force] [--on-conflict refuse|keep-both]`
 runs the named strategy; it never goes through DT-9 (that is `save`). `--plan` reports what would be written and
 writes nothing. `save --strategy commit|write-back` runs the same code (DT-9: an explicit strategy wins; an eject's
-save still falls back to a delta, D-8). Every surface gets the verb through `MediaControl` (CLI, WebAPI, MCP, Lua,
+save fell back to a delta, D-8; since 2026-10-09 it runs `writes.save` and falls back only when that fails). Every surface gets the verb through `MediaControl` (CLI, WebAPI, MCP, Lua,
 Python).
 
 ## 2. C8a: S3

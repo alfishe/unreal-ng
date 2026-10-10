@@ -7,9 +7,10 @@
 /// the sources. The result is an ordinary block medium (session / read-only
 /// access layer, TTD tap) that every slot takes like any other.
 ///
-/// Phase C2 builds folder layers into a rebuilt FAT16 / FAT32 volume. FAT image
-/// layers (C3), graft (C4), ISO (C5) and partitions (C7) fail with
-/// NotSupported naming the phase.
+/// Layers are host folders, FAT images (or one of their partitions) and ISO
+/// images; the target is a rebuilt FAT16 / FAT32 volume, a graft onto a FAT
+/// image at the bottom (its unread directories read lazily, C4b), an ISO 9660
+/// CD, or a partitioned disk of passthrough and composed partitions (C7).
 /// Design: docs/inprogress/2026-10-05-media-multisource/architecture.md §4,
 /// tdd.md §11; target file system: fs-compatibility.md §6 (DT-6).
 

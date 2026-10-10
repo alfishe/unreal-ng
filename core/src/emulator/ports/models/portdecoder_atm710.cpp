@@ -108,8 +108,11 @@ void PortDecoder_ATM710::OnFrameEnd()
 
 PortDecoder_ATM710::~PortDecoder_ATM710()
 {
-    if (_kbc && _keyboard && _keyboard->GetPs2Sink() == _kbc.get())
-        _keyboard->SetPs2Sink(nullptr);
+    // Core::Release deletes the keyboard before the decoder and clears pKeyboard first: the cached _keyboard
+    // may be freed already, the context's pointer says whether it is still there (as the other decoders do)
+    Keyboard* keyboard = _context->pKeyboard;
+    if (_kbc && keyboard && keyboard->GetPs2Sink() == _kbc.get())
+        keyboard->SetPs2Sink(nullptr);
     if (_turboRamWaitsInstalled && _context->pCore)
         _context->pCore->RemoveBusOverlay(_turboRamOverlay.get());
     MLOGDEBUG("PortDecoder_ATM710::~PortDecoder_ATM710()");

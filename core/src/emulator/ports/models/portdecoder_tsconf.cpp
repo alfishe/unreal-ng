@@ -139,7 +139,8 @@ PortDecoder_TSConf::~PortDecoder_TSConf()
             z80->SetMachineStepHook(nullptr);
     }
 
-    if (_tsMemory)
+    // Core::Release deletes the memory before the decoder (and clears pMemory first): then there is nothing to detach
+    if (_tsMemory && _context->pMemory == _tsMemory)
     {
         _tsMemory->AttachState(nullptr);
         _tsMemory->AttachFlash(nullptr);

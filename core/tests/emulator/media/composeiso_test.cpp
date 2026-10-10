@@ -143,6 +143,42 @@ TEST(ComposeIso_Test, IsoLayerIntoFat)
     EXPECT_EQ(FatRead(reader, "/G/Elite.trd"), std::string(7000, 'e'));
 }
 
+/// An interleaved file is not one run of blocks per section, and an associated file shares its name with the
+/// real one: both are left out with a report line rather than read wrong
+TEST(ComposeIso_Test, InterleavedAndAssociatedFilesSkipped)
+{
+    Sources s;
+    IsoImageBuilder iso;
+    iso.joliet = false;  // the ISO 9660 records are the ones read (Joliet would be read instead)
+    iso.Add("/GOOD.TXT", "good");
+    iso.Add("/INTER.TXT", std::string(5000, 'i'));
+    iso.Add("/ASSOC.TXT", "fork");
+    std::vector<uint8_t> bytes = iso.Build();
+    const auto mark = [&bytes](const std::string& isoName, size_t offset, uint8_t value) {
+        const auto at = std::search(bytes.begin(), bytes.end(), isoName.begin(), isoName.end());
+        ASSERT_NE(at, bytes.end()) << isoName;
+        bytes[static_cast<size_t>(at - bytes.begin()) - 33 + offset] = value;  // the name starts at byte 33 of the record
+    };
+    mark("INTER.TXT;1", 26, 1);    // file unit size: interleaved
+    mark("ASSOC.TXT;1", 25, 0x04); // flags: associated
+    std::ofstream(s.root.Path() / "odd.iso", std::ios::binary).write(reinterpret_cast<const char*>(bytes.data()),
+                                                                    static_cast<std::streamsize>(bytes.size()));
+    std::unique_ptr<IBlockDevice> volume;
+    CompositeInfo info;
+    const MediaResult result = s.Build("version: 1\ntarget: {free: 1MiB}\nlayers: [{source: {iso: odd.iso}}]\n", volume, info);
+    ASSERT_TRUE(result.Ok()) << result.message;
+    const auto has = [&result](const std::string& text) {
+        return std::any_of(result.report.begin(), result.report.end(), [&text](const std::string& l) { return l.find(text) != std::string::npos; });
+    };
+    EXPECT_TRUE(has("INTER.TXT: skipped, recorded interleaved"));
+    EXPECT_TRUE(has("ASSOC.TXT: skipped, an associated file"));
+    FatVolumeReader reader;
+    ASSERT_TRUE(reader.Open(*volume));
+    EXPECT_EQ(FatRead(reader, "/GOOD.TXT"), "good");
+    FatDirEntryInfo entry;
+    EXPECT_FALSE(reader.Stat("/INTER.TXT", entry));
+}
+
 /// The slot's kind and the target's must agree; graft is for FAT images
 TEST(ComposeIso_Test, KindMismatches)
 {

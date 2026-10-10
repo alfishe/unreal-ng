@@ -14,6 +14,9 @@
     schemas["EmulatorInfo"]["properties"]["is_running"]["type"] = "boolean";
     schemas["EmulatorInfo"]["properties"]["is_paused"]["type"] = "boolean";
     schemas["EmulatorInfo"]["properties"]["is_debug"]["type"] = "boolean";
+    schemas["EmulatorInfo"]["properties"]["symbolic_id"]["type"] = "string";
+    schemas["EmulatorInfo"]["properties"]["symbolic_id"]["description"] =
+        "The name given at create / start (\"symbolic_id\"), empty when none was given";
     // Machine identity block (P0-1): every lifecycle response carries it
     // ZX-Poly block: present only when the instance is a module of a ZX-Poly group
     schemas["EmulatorInfo"]["properties"]["zxpoly"]["type"] = "object";

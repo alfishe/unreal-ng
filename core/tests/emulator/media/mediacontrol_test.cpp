@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -15,9 +16,13 @@
 #include "_helpers/fatguest.h"
 #include "_helpers/scratchfolder.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testwaithelper.h"
+#include "3rdparty/message-center/messagecenter.h"
 #include "common/filehelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/io/storage/memorydisk.h"
 #include "emulator/io/storage/sessionwritemap.h"
@@ -376,6 +381,20 @@ TEST_F(MediaControl_Test, DetachedMediaAreListedExportedAndDiscarded)
 TEST_F(MediaControl_Test, ReplyShape)
 {
     Create("PENTAGON");
+    // The media notifications name their emulator and the volume, as the slot reply does
+    std::atomic<uint64_t> insertedVolume{0};
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    const unreal::UUID emulatorId = _context->emulatorId;
+    struct Observing
+    {
+        MessageCenter& mc;
+        uint64_t id;
+        ~Observing() { mc.RemoveObserverById(NC_MEDIA_INSERTED, id); }
+    } observing{mc, mc.AddObserver(NC_MEDIA_INSERTED, [&insertedVolume, emulatorId](int, Message* message) {
+                    auto* payload = message ? dynamic_cast<MediaSlotPayload*>(message->obj) : nullptr;
+                    if (payload && payload->emulatorId == emulatorId && payload->slotId == "fdd.b")
+                        insertedVolume = payload->volumeId;
+                })};
     ASSERT_TRUE(Run(Request("insert", "B", Fixture("testdata/loaders/trd/EyeAche.trd"))).result.Ok());
 
     const MediaReply info = Run(Request("info", "b"));
@@ -394,6 +413,12 @@ TEST_F(MediaControl_Test, ReplyShape)
     EXPECT_EQ(slot->find("aliases")->items.front().s, "B");
     EXPECT_EQ(slot->find("medium")->find("format")->s, "trd");
     EXPECT_EQ(slot->find("medium")->find("access")->s, "session");
+    const std::string volume = slot->find("medium")->find("volumeId")->s;
+    EXPECT_EQ(volume.size(), 16u) << volume;
+    EXPECT_TRUE(TestWait::For([&insertedVolume] { return insertedVolume.load() != 0; }));
+    char expected[17];
+    std::snprintf(expected, sizeof(expected), "%016llx", static_cast<unsigned long long>(insertedVolume.load()));
+    EXPECT_EQ(volume, expected) << "the notification names the volume the reply shows";
 
     const MediaReply bad = Run(Request("info", "Q"));
     const std::string json = bad.ToJson();
@@ -620,6 +645,18 @@ TEST_F(MediaControl_Test, CompositeInsertLayersAndRescan)
     FatVolumeReader rescanned;
     ASSERT_TRUE(rescanned.Open(*manager.GetMedium("sd.zc")->Block()));
     EXPECT_TRUE(rescanned.ReadFile("/new.txt", data)) << "the new host file is on the rebuilt volume";
+    reply = Run(Request("rescan", "sd"));
+    ASSERT_TRUE(reply.result.Ok()) << reply.result.message;
+    EXPECT_NE(std::find_if(reply.result.report.begin(), reply.result.report.end(),
+                           [](const std::string& l) { return l.find("unchanged") != std::string::npos; }),
+              reply.result.report.end())
+        << "the same sources: nothing to rebuild (DT-16)";
+
+    // D-8: the save policy of a disposition goes with save
+    EXPECT_EQ(Run(Request("eject", "sd", {}, {{"strategy", "delta"}})).result.error, MediaError::BadRequest);
+    EXPECT_EQ(Run(Request("eject", "sd", {}, {{"save", ""}, {"strategy", "zip"}})).result.error, MediaError::BadRequest);
+    EXPECT_EQ(Run(Request("rescan", "sd", {}, {{"save", ""}, {"strict", "maybe"}})).result.error, MediaError::BadRequest);
+    EXPECT_EQ(Run(Request("rescan", "sd", {}, {{"save", ""}, {"discard", ""}})).result.error, MediaError::BadRequest);
 
     EXPECT_EQ(Run(Request("layers", "A")).result.error, MediaError::NotSupported);
     EXPECT_EQ(Run(Request("changes", "A")).result.error, MediaError::NotSupported) << "a floppy";

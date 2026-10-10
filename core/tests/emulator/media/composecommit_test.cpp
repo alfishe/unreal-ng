@@ -177,6 +177,25 @@ TEST_P(ComposeCommit_Test, CommitWritesWhatTheGuestSees)
         EXPECT_TRUE(_spill.Spilled()) << "the guest's writes were committed from a spill file";
 }
 
+TEST_P(ComposeCommit_Test, CommitRemovesTheSessionDelta)
+{
+    ASSERT_TRUE(InsertComposite().Ok());
+    GuestWrites();
+    ASSERT_TRUE(_manager.Save("ide0.master", {}).Ok()) << "S2: the session into the delta";
+    const auto delta = _folder.Path() / "disk.ucompose.yaml.delta";
+    ASSERT_TRUE(std::filesystem::exists(delta));
+    {
+        FatGuest guest(*_slot.attached->Block());
+        ASSERT_TRUE(guest.Create("/MORE.TXT", std::vector<uint8_t>(100, 'm')));
+        _manager.ApplyPending();
+    }
+    const MediaResult committed = _manager.Save("ide0.master", Commit());
+    ASSERT_TRUE(committed.Ok()) << committed.message;
+    EXPECT_FALSE(std::filesystem::exists(delta)) << "the base holds the delta's writes now: no stale delta left";
+    EXPECT_TRUE(std::any_of(committed.report.begin(), committed.report.end(),
+                            [](const std::string& l) { return l.find(".delta removed") != std::string::npos; }));
+}
+
 TEST_P(ComposeCommit_Test, Refusals)
 {
     // A rebuild is not a graft

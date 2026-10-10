@@ -45,6 +45,9 @@ namespace
 {
     namespace fs = std::filesystem;
 
+    /// Recover's note for a directory the guest removed that still holds host files
+    constexpr const char* kKeptNotEmpty = ": kept, it holds host files the guest did not see";
+
     std::string Upper(std::string text)
     {
         std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
@@ -267,8 +270,23 @@ namespace
                 Add(WriteBackStep::Kind::Whiteout, p, owner, {}, "not under the layer's mount");
                 return;
             }
-            if (!directory && !Gate(p, *host))
+            if (directory)
+            {
+                // The guest saw the directory empty; the host's may hold files the guest never saw (excluded, or
+                // made since the build). Its files go one by one under the policy; the directory goes last, and
+                // only when empty (a directory kept so is reported)
+                Add(WriteBackStep::Kind::Remove, p, owner, *host, "rmdir: removed once empty");
                 return;
+            }
+            const auto gated = Gate(p, *host);
+            if (!gated)
+                return;
+            if (*gated != *host)
+            {
+                // keep-both: the host's file changed since the build; the guest deleted its own copy, the host's stays
+                Add(WriteBackStep::Kind::Note, p, owner, *host, "changed on the host since the build: kept (keep-both)");
+                return;
+            }
             if (l->onDelete == DeletePolicy::Trash)
             {
                 Add(WriteBackStep::Kind::Trash, p, owner, *host, "onDelete: trash");
@@ -518,6 +536,12 @@ MediaResult WriteBack::Apply(Medium& medium, const ComposeDescriptor& d, const W
         return MediaResult::Fail(MediaError::IoError, "write-back stopped part way (" + done + "): inserting the descriptor again finishes it");
     MediaResult result = MediaResult::Success();
     result.report.push_back("write-back: " + std::to_string(plan.steps.size()) + " step(s) done");
+    // Directories kept because they still hold host files
+    for (size_t at = done.find("; "); at != std::string::npos; at = done.find("; ", at + 2))
+    {
+        const size_t end = done.find("; ", at + 2);
+        result.report.push_back(done.substr(at + 2, end == std::string::npos ? std::string::npos : end - at - 2));
+    }
     return result;
 }
 
@@ -561,6 +585,7 @@ std::string WriteBack::Recover(const fs::path& descriptorFile)
 
     // Each step is done when it can be: a repeat finds it done already
     std::vector<std::string> failed;
+    std::vector<std::string> kept;  // directories the guest removed that still hold host files
     std::vector<std::string> whiteouts;
     std::vector<std::pair<std::string, std::string>> attributes;  // path, bits
     // Removes last, the deepest first: a directory goes once its files went
@@ -595,7 +620,12 @@ std::string WriteBack::Recover(const fs::path& descriptorFile)
         else if (f[0] == "remove")
         {
             if (fs::is_directory(to, ec))
-                fs::remove(to, ec);  // only when empty
+            {
+                if (fs::is_empty(to, ec))
+                    fs::remove(to, ec);
+                else if (!ec)
+                    kept.push_back(f[2]);
+            }
             else
                 fs::remove(to, ec);
         }
@@ -653,5 +683,8 @@ std::string WriteBack::Recover(const fs::path& descriptorFile)
     if (!failed.empty())
         return FileHelper::FromFsPath(journalPath.filename()) + ": " + failed.front();
     fs::remove(journalPath, ec);
-    return FileHelper::FromFsPath(journalPath.filename()) + ": an interrupted write-back was completed";
+    std::string done = FileHelper::FromFsPath(journalPath.filename()) + ": an interrupted write-back was completed";
+    for (const std::string& k : kept)
+        done += "; " + k + kKeptNotEmpty;
+    return done;
 }

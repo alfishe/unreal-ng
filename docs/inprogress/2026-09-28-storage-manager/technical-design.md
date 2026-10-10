@@ -587,7 +587,9 @@ says save, discard or keep, and a kept one is a detached medium of the new machi
 | Topic | Payload |
 |---|---|
 | `NC_MEDIA_INSERTED` / `NC_MEDIA_EJECTED` | slot id, kind, source description, access |
-| `NC_MEDIA_DIRTY` | slot id, changed units (sectors / tracks), first dirty only (not per write) |
+| every `NC_MEDIA_*` | `emulatorId` (always: the context's id), slot id, `volumeId` (`Medium::VolumeId`: a block medium's content id under its session, else a hash of its source key; the same as `list` / `info` `volumeId`) |
+| `NC_MEDIA_DIRTY` | slot id, changed units (sectors / tracks), first dirty only (not per write); `onRelease`: what closing the emulator does with the changes (multi-source D-8) |
+| `NC_MEDIA_CLEAN` | slot id: the unsaved changes are gone (saved, discarded, written back); an eject posts `NC_MEDIA_EJECTED` instead |
 | `NC_MEDIA_SAVED` / `NC_MEDIA_EXPORTED` | slot id, path |
 | `NC_MEDIA_ACTIVITY` | per frame, the slots that read / wrote in it (activity LEDs, WinUAE `gui_flicker_led`) |
 

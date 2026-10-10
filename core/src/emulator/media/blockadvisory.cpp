@@ -60,15 +60,16 @@ std::optional<FatType> ClassifyFatVbr(const std::array<uint8_t, IBlockDevice::kS
         return std::nullopt;
     uint16_t rootEntries = 0;
     std::memcpy(&rootEntries, &sector[17], 2);
-    uint16_t totalSectors = 0;
-    std::memcpy(&totalSectors, &sector[19], 2);
+    uint16_t totalSectors16 = 0;
+    std::memcpy(&totalSectors16, &sector[19], 2);
+    uint32_t totalSectors = totalSectors16;
+    if (totalSectors == 0)
+        std::memcpy(&totalSectors, &sector[32], 4);  // a volume over 32 MiB keeps its size in the 32-bit field
     uint8_t sectorsPerCluster = sector[13];
     if (rootEntries != 0 && sectorsPerCluster != 0 && totalSectors != 0)
     {
-        // FAT12 has under 4085 clusters; the media this build deals with starts at FAT16
-        const uint32_t dataSectors = totalSectors - sector[14] - 2 * sector[22] - rootEntries * 32 / 512;
-        if (dataSectors / sectorsPerCluster < 4085)
-            return std::nullopt;
+        // FAT12 (under 4085 clusters) and FAT16: the FAT16 family, the one a slot's fsCompatibility names
+        // (a FAT32-only slot refuses both; the composites count FAT12 so too)
         return FatType::Fat16;
     }
     if (rootEntries == 0 && sectorsPerCluster != 0)

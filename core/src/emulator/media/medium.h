@@ -65,6 +65,7 @@ public:
     void SetCd(CdImage* cd) { _cd = cd; }
     /// The session change layer (block media with Session access), nullptr otherwise
     SessionWriteMap* Session() { return _session; }
+    const SessionWriteMap* Session() const { return _session; }
     /// The replay hold on a write-through block stack (FR-20), nullptr otherwise
     HostWriteHold* Hold() { return _hold; }
     void SetHostWriteHold(HostWriteHold* hold) { _hold = hold; }
@@ -112,6 +113,9 @@ public:
     /// How many units (block sectors / floppy tracks) differ from the source
     uint64_t ChangedUnits() const;
     uint64_t ContentId() const;
+    /// The volume's identity, the same whatever the guest wrote since the insert: a block medium's content id
+    /// under its session, else a hash of SourceKey(). Notifications and slot lists carry it
+    uint64_t VolumeId() const;
     /// The unsaved changes for people: "1 track: 3 sectors", "1 track: whole",
     /// "5 tracks: 20 sectors total", "48 sectors"; empty when clean.
     /// Emulation thread, or while the machine is not running

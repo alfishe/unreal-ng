@@ -1,6 +1,6 @@
 # C2 — descriptor, composite media, `compose` / `layers`
 
-**Status:** done 2026-10-05 (commit 9e82f1cd). Phase C2 of [tdd.md](../tdd.md) §13. Exit: ACC-C1,
+**Status:** done 2026-10-05 (commit 9e82f1cd). Phase C2 of [tdd.md](../tdd.md) §14. Exit: ACC-C1,
 ACC-C2.
 
 ## 1. As built

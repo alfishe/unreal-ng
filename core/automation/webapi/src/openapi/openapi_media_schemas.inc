@@ -93,6 +93,15 @@
     schemas["MediaMedium"]["properties"]["dirty"]["type"] = "boolean";
     schemas["MediaMedium"]["properties"]["dirtyUnits"]["type"] = "integer";
     schemas["MediaMedium"]["properties"]["dirtyUnits"]["description"] = "Changed sectors (block) or tracks (floppy)";
+    schemas["MediaMedium"]["properties"]["volumeId"]["type"] = "string";
+    schemas["MediaMedium"]["properties"]["volumeId"]["description"] =
+        "The medium's volume, 16 hex digits: the same whatever the guest wrote since the insert (the media "
+        "notifications carry it too)";
+    schemas["MediaMedium"]["properties"]["onRelease"]["type"] = "string";
+    schemas["MediaMedium"]["properties"]["onRelease"]["description"] =
+        "Unsaved changes only: what closing the emulator does with them. A composite's writes.save: delta, commit, "
+        "write-back (saved), discard (dropped), ask (a GUI asks; else a delta). Other media: journal (kept for the "
+        "next insert) or lost";
     schemas["MediaMedium"]["properties"]["changes"]["type"] = "string";
     schemas["MediaMedium"]["properties"]["changes"]["description"] =
         "The unsaved changes for people: '1 track: 3 sectors', '1 track: whole', '5 tracks: 20 sectors total', '48 sectors'";

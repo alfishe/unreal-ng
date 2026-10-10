@@ -32,6 +32,7 @@ protected:
 
     void Build(MEM_MODEL model, uint32_t ramKB, uint32_t frame, int ff77 = -1)
     {
+        _core.reset();  // a second Build: the old core releases into its own context, before that context goes
         _context = std::make_unique<EmulatorContext>(LoggerLevel::LogError);
         _context->config.mem_model = model;
         _context->config.ramsize = ramKB;

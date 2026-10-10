@@ -1,0 +1,2 @@
+# The patches carry the CRLF line ends of the NedoOS sources they apply to
+*.patch -text

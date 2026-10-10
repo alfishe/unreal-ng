@@ -148,7 +148,18 @@ bool EncodeLine(const SyncDescriptor& d, const std::string& line, std::vector<ui
     EncodeOptions options;
     options.subversion = d.version;
     EncodeResult encoded = codec->Encode(document, options);
+    // A header the codec writes before the lines (MASM 2.0 FF, 3.0 FF lo hi FF): what an empty document gets before
+    // the end record
+    SourceDocument empty = document;
+    empty.lines.clear();
+    const EncodeResult framing = codec->Encode(empty, options);
     const std::string& end = d.gapBuffer.end;
+    if (framing.ok && framing.bytes.size() > end.size() && encoded.bytes.size() >= framing.bytes.size())
+    {
+        const size_t header = framing.bytes.size() - end.size();
+        if (std::equal(framing.bytes.begin(), framing.bytes.begin() + static_cast<std::ptrdiff_t>(header), encoded.bytes.begin()))
+            encoded.bytes.erase(encoded.bytes.begin(), encoded.bytes.begin() + static_cast<std::ptrdiff_t>(header));
+    }
     if (!encoded.ok || encoded.bytes.size() < end.size() ||
         !std::equal(end.begin(), end.end(), encoded.bytes.end() - static_cast<std::ptrdiff_t>(end.size()),
                     [](char a, uint8_t b) { return static_cast<uint8_t>(a) == b; }))
@@ -179,7 +190,32 @@ SyncText ReadGapBufferFixed(const MachineView& machine, const SyncDescriptor& d)
                                       Hex(*gapEnd, 4) + " #" + Hex(top, 4));
     text.editor = std::any_of(flag.begin(), flag.end(), [](uint8_t b) { return b != 0; });
     uint32_t upperFrom = *gapEnd;
-    if (text.editor)
+    std::vector<uint8_t> current;
+    if (text.editor && p.nextLineAt)
+    {
+        // The cursor line is in the line buffer as text; the text goes on at the next line
+        const std::optional<uint16_t> next = machine.Word(p.nextLineAt);
+        std::vector<uint8_t> buffer;
+        if (!next || *next < *gapEnd || !machine.Read(p.lineBuffer, p.lineBufferLength, buffer))
+            return Inconsistent(text, "the line after the cursor or the line buffer is not in the memory copied");
+        const auto stop = std::find(buffer.begin(), buffer.end(), uint8_t(0));
+        buffer.erase(stop, buffer.end());
+        while (!buffer.empty() && buffer.back() == ' ')
+            buffer.pop_back();
+        std::string error;
+        if (!EncodeLine(d, encoding::ToUtf8(buffer, p.lineCodePage), current, error))
+            return Inconsistent(text, error);
+        upperFrom = *next;
+    }
+    else if (text.editor && p.recordAtGapStart)
+    {
+        const std::optional<uint8_t> n = machine.Byte(static_cast<uint16_t>(*gapStart));
+        if (!n || uint32_t(*gapStart) + *n + 2 > *gapEnd ||
+            machine.Byte(static_cast<uint16_t>(*gapStart + *n + 1)) != n ||
+            !machine.Read(static_cast<uint16_t>(*gapStart), size_t(*n) + 2, current))
+            return Inconsistent(text, "no line record at the gap start #" + Hex(*gapStart, 4));
+    }
+    else if (text.editor)
     {
         // The cursor line's record [n] body [n] ends at the gap end
         const std::optional<uint8_t> n = machine.Byte(static_cast<uint16_t>(*gapEnd - 1));
@@ -195,6 +231,7 @@ SyncText ReadGapBufferFixed(const MachineView& machine, const SyncDescriptor& d)
     if (p.endInText && (upper.empty() || upper.back() != static_cast<uint8_t>(p.end.empty() ? 0xFF : p.end.back())))
         return Inconsistent(text, "the text does not end with its end marker at #FFFF");
     text.file = std::move(lower);
+    text.file.insert(text.file.end(), current.begin(), current.end());
     text.file.insert(text.file.end(), upper.begin(), upper.end());
     if (!p.endInText)
         text.file.insert(text.file.end(), p.end.begin(), p.end.end());
@@ -387,6 +424,32 @@ SyncDescriptor Zasm315()
 
 /// MASM 1.1 and 1.3 (asm-synchronizer.md §7.12; the same layout and prompt): the text from #970B; while it is edited a gap at (#96CC)-(#96CE), the part
 /// after it up to #FFFF (the #FF end inside the text). Identified by its prompt in the code below the text
+/// MASM 1.0 demo (asm-synchronizer.md §7.12, Spectrofon #15): 1.1's gap buffer from #913A with (#8663) / (#8665);
+/// in the editor the cursor line's record is at the gap start, and the tail of the line buffer (#8600, blank padded in
+/// the editor, zeros in the menu) tells the editor. Identified by its prompt at #88B5
+SyncDescriptor Masm10Demo()
+{
+    SyncDescriptor d;
+    d.id = "masm-1.0-demo";
+    d.title = "MASM 1.0 demo";
+    d.codec = "masm";
+    d.version = "1.0";
+    d.extension = "a";
+    d.identify = {{0x88B5, std::string("MASM128>\0", 9)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::GapBuffer;
+    d.gapBuffer.fixedStart = 0x913A;
+    d.gapBuffer.endInText = true;
+    d.gapBuffer.gapStart = 0x8663;
+    d.gapBuffer.gapEnd = 0x8665;
+    d.gapBuffer.editorFlagAt = 0x8600;
+    d.gapBuffer.editorFlagLength = 32;
+    d.gapBuffer.recordAtGapStart = true;
+    d.gapBuffer.end = std::string("\xFF", 1);
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 SyncDescriptor Masm11()
 {
     SyncDescriptor d;
@@ -404,6 +467,41 @@ SyncDescriptor Masm11()
     d.gapBuffer.gapEnd = 0x96CE;
     d.gapBuffer.editorFlagAt = 0x851A;
     d.gapBuffer.editorFlagLength = 31;
+    d.gapBuffer.end = std::string("\xFF", 1);
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
+/// MASM 2.0 / 3.0 (asm-synchronizer.md §7.12): a gap buffer from the address its files carry (#94DA / #9123) to
+/// #FFFF, lines ended by 00. The gap start, the editor flag and the gap end are operands its code rewrites (the gap
+/// closing routine LD DE,gs / LD HL,linebuf / LD A,flag / ... / LD HL,ge); while the flag is set the cursor line is in
+/// the line buffer as text and the text goes on at the word nextLineAt
+SyncDescriptor Masm2(const std::string& id, const std::string& title, const std::string& codecVersion, Signature identify,
+                     uint16_t fixedStart, uint16_t routine, uint16_t lineBuffer, uint16_t nextLineAt)
+{
+    SyncDescriptor d;
+    d.id = id;
+    d.title = title;
+    d.codec = "masm";
+    d.version = codecVersion;
+    d.extension = "a";
+    d.identify = {identify};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::GapBuffer;
+    d.gapBuffer.fixedStart = fixedStart;
+    d.gapBuffer.endInText = true;
+    d.gapBuffer.gapStart = static_cast<uint16_t>(routine + 1);      // LD DE,nn
+    d.gapBuffer.editorFlagAt = static_cast<uint16_t>(routine + 7);  // LD A,n
+    d.gapBuffer.editorFlagLength = 1;
+    d.gapBuffer.gapEnd = static_cast<uint16_t>(routine + 13);       // LD HL,nn
+    d.gapBuffer.lineBuffer = lineBuffer;
+    d.gapBuffer.lineBufferLength = 64;
+    d.gapBuffer.nextLineAt = nextLineAt;
+    if (codecVersion == "3.0")
+    {
+        d.gapBuffer.editorStateAt = 1;      // FF lo hi FF: the cursor line SAVE writes
+        d.gapBuffer.editorStateLength = 2;
+    }
     d.gapBuffer.end = std::string("\xFF", 1);
     d.typing = {TypingRule::NotInText, 0, 0};
     return d;
@@ -644,6 +742,9 @@ const std::vector<SyncDescriptor>& Descriptors()
         ZxAsm2("zasm-2.6", "ZX-ASM 2.6", 0x8000,
                "\xCD\x2E\x61\x38\x65\xFE\x5F\x28\x61\x23\xFE\x23\x28\x35\xFE\x25\x28\x1B\xFE\x22\x28\x08\xFE\x24", 0x6003),
         Masm11(),
+        Masm10Demo(),
+        Masm2("masm-2.0", "MASM 2.0 TURBO", "2.0", {0x80E0, std::string("MASM2.0>\0", 9)}, 0x94DA, 0x92C6, 0x89D1, 0x929F),
+        Masm2("masm-3.0", "MASM 3.0 MACRO", "3.0", {0x80D3, std::string("MASM128>\0", 9)}, 0x9123, 0x8C24, 0x864F, 0x8BFD),
         TasmGap("4.0", "TASM 4.0 (XL Design)", "4.0", {0x9859, "TASM4.0>"}, 0x8DD0, 0x91AC),
         TasmGap("4.4", "TASM 4.4 (KVA)", "4.0", {0x9859, "TASM4.4>"}, 0x8DD0, 0x91AC),
         TasmGap("3.0", "TASM 3.0 (Rst7)", "3", {0x9721, "TASM2.0 source file: "}, 0x8910, 0x8C82),

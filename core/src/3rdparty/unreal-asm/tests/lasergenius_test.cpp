@@ -244,6 +244,25 @@ TEST(LaserGeniusCodec_Test, DetectionAndPhoenix)
     EXPECT_EQ(codec.Detect(ReadTestData("prometheus/d80-pfill1.bin"), {}), 0);
 }
 
+// A file that ends inside a token: a paragraph the codec keeps as bytes (SkipRaw) stepped over the end of the data by
+// a token's operand bytes and read past it (AddressSanitizer: heap-buffer-overflow in Detect on any disk's files).
+// Every token byte, alone and before every second byte, as the last bytes of a buffer of exactly that size
+TEST(LaserGeniusCodec_Test, DataEndingInsideATokenIsNotReadPast)
+{
+    const codecs::LaserGeniusCodec codec;
+    for (int token = 0x80; token <= 0xFF; ++token)
+    {
+        const std::vector<uint8_t> alone{0x01, 0x00, static_cast<uint8_t>(token)};
+        EXPECT_GE(codec.Detect(alone, {}), 0);
+        EXPECT_GE(codec.Decode(alone, {}).diagnostics.size(), 0u);
+        for (int next = 0; next <= 0xFF; ++next)
+        {
+            const std::vector<uint8_t> pair{0x01, 0x00, static_cast<uint8_t>(token), static_cast<uint8_t>(next)};
+            EXPECT_GE(codec.Detect(pair, {}), 0);
+        }
+    }
+}
+
 // --- The frontend ---------------------------------------------------------------------------------------------------
 
 TEST(LaserGeniusFrontend_Test, Expressions)

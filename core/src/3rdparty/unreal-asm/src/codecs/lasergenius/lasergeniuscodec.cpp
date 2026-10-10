@@ -1,5 +1,6 @@
 #include "codecs/lasergenius/lasergeniuscodec.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 
@@ -530,7 +531,8 @@ size_t SkipRaw(std::span<const uint8_t> b, size_t pos, size_t end)
         else if (c == kCharacter)
             pos += pos < end && b[pos] == 0xFD ? 2 : 1;
     }
-    return pos;
+    // A token's operand bytes step over the end of data that ends inside it: the paragraph ends at the data's end
+    return std::min(pos, end);
 }
 
 std::string RawText(std::span<const uint8_t> bytes)

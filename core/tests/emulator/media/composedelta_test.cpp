@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -12,6 +13,10 @@
 #include "_helpers/fatguest.h"
 #include "_helpers/scratchfolder.h"
 #include "_helpers/sessionspillguard.h"
+#include "_helpers/testwaithelper.h"
+#include "3rdparty/message-center/messagecenter.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "emulator/io/storage/fat/fatvolumereader.h"
 #include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/media/mediamanager.h"
@@ -195,7 +200,7 @@ TEST_P(ComposeDelta_Test, TruncatedFileRefused)
 }
 
 // DT-9: an explicit strategy wins; flat needs a path; writes.save names the default (commit needs a graft); an
-// eject's save falls back to a delta for commit and write-back (D-8)
+// eject's save runs it too, and keeps the writes as a delta when it fails (D-8)
 TEST_P(ComposeDelta_Test, StrategyFollowsDt9)
 {
     ASSERT_TRUE(Insert().Ok());
@@ -219,8 +224,176 @@ TEST_P(ComposeDelta_Test, StrategyFollowsDt9)
     EXPECT_TRUE(_manager.Save("sd.zc", delta).Ok());
     std::filesystem::remove(DeltaFile());
     GuestWrites("/MORE.TXT");
-    ASSERT_TRUE(Eject(Disposition::Save).Ok()) << "an eject saves a delta instead (D-8)";
+    const MediaResult ejected = Eject(Disposition::Save);
+    ASSERT_TRUE(ejected.Ok()) << ejected.message;
+    EXPECT_TRUE(Has(ejected.report, "commit failed (")) << Join(ejected.report);
+    EXPECT_TRUE(Has(ejected.report, "the writes are kept as a session delta")) << Join(ejected.report);
     EXPECT_TRUE(std::filesystem::exists(DeltaFile()));
+}
+
+// D-8: a medium that leaves follows writes.save: discard drops the writes, ask keeps them as a delta (the GUI asks
+// before), and the eject's own strategy wins over the descriptor
+TEST_P(ComposeDelta_Test, EjectFollowsWritesSave)
+{
+    Descriptor("writes: {save: discard}\n");
+    ASSERT_TRUE(Insert().Ok());
+    GuestWrites("/NEW.TXT");
+    EXPECT_EQ(_manager.Save("sd.zc", {}).error, MediaError::BadRequest) << "a plain save of discard keeps nothing";
+    const MediaResult dropped = Eject(Disposition::Save);
+    ASSERT_TRUE(dropped.Ok()) << dropped.message;
+    EXPECT_TRUE(Has(dropped.report, "dropped (writes.save: discard)")) << Join(dropped.report);
+    EXPECT_FALSE(std::filesystem::exists(DeltaFile()));
+
+    ASSERT_TRUE(Insert().Ok());
+    GuestWrites("/NEW.TXT");
+    EjectOptions own;
+    own.disposition = Disposition::Save;
+    own.strategy = "delta";
+    ASSERT_TRUE(_manager.Eject("sd.zc", own).Ok());
+    EXPECT_TRUE(std::filesystem::exists(DeltaFile())) << "the eject's strategy wins";
+    std::filesystem::remove(DeltaFile());
+
+    Descriptor("writes: {save: ask}\n");
+    ASSERT_TRUE(Insert().Ok());
+    GuestWrites("/NEW.TXT");
+    ASSERT_TRUE(Eject(Disposition::Save).Ok());
+    EXPECT_TRUE(std::filesystem::exists(DeltaFile())) << "ask without a GUI: a delta";
+}
+
+// D-8: strict refuses instead of the delta fallback; the medium and its writes stay
+TEST_P(ComposeDelta_Test, StrictEjectRefusesAFailedCommit)
+{
+    Descriptor("writes: {save: commit}\n");
+    ASSERT_TRUE(Insert().Ok());
+    GuestWrites("/NEW.TXT");
+    EjectOptions strict;
+    strict.disposition = Disposition::Save;
+    strict.strict = true;
+    const MediaResult refused = _manager.Eject("sd.zc", strict);
+    EXPECT_EQ(refused.error, MediaError::BadRequest) << refused.message;
+    EXPECT_FALSE(std::filesystem::exists(DeltaFile()));
+    ASSERT_NE(_slot.attached, nullptr);
+    EXPECT_TRUE(_manager.Info("sd.zc")->dirty);
+}
+
+// D-8: the manager going away saves each composite by its policy (on when the emulator runs; off in this runner)
+TEST_P(ComposeDelta_Test, ReleaseSavesByPolicy)
+{
+    ASSERT_TRUE(Insert().Ok());
+    GuestWrites("/NEW.TXT");
+    const std::vector<std::string> lines = _manager.SaveByPolicyOnRelease();
+    ASSERT_EQ(lines.size(), 1u) << Join(lines);
+    EXPECT_TRUE(Has(lines, "sd.zc: saved by writes.save delta")) << Join(lines);
+    EXPECT_TRUE(std::filesystem::exists(DeltaFile()));
+    EXPECT_FALSE(_manager.Info("sd.zc")->dirty);
+    std::filesystem::remove(DeltaFile());
+
+    // The destructor does it when the switch is on
+    {
+        DeltaSlot slot;
+        MediaManager manager(nullptr);
+        manager.RegisterSlot(slot);
+        MediaSource source;
+        source.path = FileHelper::FromFsPath(_descriptor);
+        ASSERT_TRUE(manager.Insert("sd.zc", source, {}).Ok());
+        FatGuest guest(*slot.attached->Block());
+        ASSERT_TRUE(guest.Create("/MORE.TXT", std::vector<uint8_t>(700, 'g')));
+        MediaManager::SetSaveOnRelease(true);
+    }
+    MediaManager::SetSaveOnRelease(false);
+    EXPECT_TRUE(std::filesystem::exists(DeltaFile()));
+}
+
+// D-8 for GUIs: NC_MEDIA_DIRTY says what closing would do (onRelease), NC_MEDIA_CLEAN when that is moot; Unsaved()
+// is the query a window asks before it closes
+TEST_P(ComposeDelta_Test, UnsavedSaysWhatReleaseDoes)
+{
+    Descriptor("writes: {save: ask}\n");
+    ASSERT_TRUE(Insert().Ok());
+    EXPECT_TRUE(_manager.Unsaved().empty());
+
+    const std::string source = FileHelper::FromFsPath(_descriptor);
+    std::atomic<int> dirty{0};
+    std::atomic<int> clean{0};
+    std::string dirtyOnRelease;
+    std::atomic<uint64_t> dirtyVolume{0};
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    auto observe = [&](std::atomic<int>& counter, bool keep) {
+        return [&counter, &dirtyOnRelease, &dirtyVolume, &source, keep](int, Message* message) {
+            auto* payload = message ? dynamic_cast<MediaSlotPayload*>(message->obj) : nullptr;
+            if (!payload || payload->source != source)
+                return;
+            if (keep)
+            {
+                dirtyOnRelease = payload->onRelease;
+                dirtyVolume = payload->volumeId;
+            }
+            counter++;
+        };
+    };
+    struct Observing
+    {
+        MessageCenter& mc;
+        uint64_t dirtyId;
+        uint64_t cleanId;
+        ~Observing()
+        {
+            mc.RemoveObserverById(NC_MEDIA_DIRTY, dirtyId);
+            mc.RemoveObserverById(NC_MEDIA_CLEAN, cleanId);
+        }
+    } observing{mc, mc.AddObserver(NC_MEDIA_DIRTY, observe(dirty, true)), mc.AddObserver(NC_MEDIA_CLEAN, observe(clean, false))};
+
+    MediaManager::SetSaveOnRelease(true);
+    GuestWrites("/NEW.TXT");
+    const std::vector<SlotInfo> unsaved = _manager.Unsaved();
+    MediaManager::SetSaveOnRelease(false);
+    ASSERT_EQ(unsaved.size(), 1u);
+    EXPECT_EQ(unsaved[0].onRelease, "ask");
+    EXPECT_EQ(_manager.Unsaved().at(0).onRelease, "lost") << "this runner saves nothing on release";
+    EXPECT_TRUE(TestWait::ForAtLeast(dirty, 1));
+    EXPECT_EQ(dirtyOnRelease, "ask");
+    EXPECT_NE(unsaved[0].volumeId, 0u);
+    EXPECT_EQ(dirtyVolume.load(), unsaved[0].volumeId) << "the notification and the query name the same volume";
+
+    SaveOptions delta;
+    delta.strategy = "delta";
+    ASSERT_TRUE(_manager.Save("sd.zc", delta).Ok());
+    EXPECT_TRUE(_manager.Unsaved().empty());
+    EXPECT_TRUE(TestWait::ForAtLeast(clean, 1));
+}
+
+// DT-16: a rescan over unchanged sources leaves the medium (writes and all); changed sources need a disposition
+TEST_P(ComposeDelta_Test, RescanFollowsDt16)
+{
+    ASSERT_TRUE(Insert().Ok());
+    GuestWrites("/NEW.TXT");
+    const MediaResult unchanged = _manager.Rescan("sd.zc");
+    ASSERT_TRUE(unchanged.Ok()) << unchanged.message;
+    EXPECT_TRUE(Has(unchanged.report, "unchanged")) << Join(unchanged.report);
+    EXPECT_TRUE(_manager.Info("sd.zc")->dirty);
+    EXPECT_TRUE(Exists("/NEW.TXT"));
+
+    _folder.File("sys/HOST.TXT", "host");
+    EXPECT_EQ(_manager.Rescan("sd.zc").error, MediaError::Dirty) << "the writes cannot follow a rebuild";
+    EXPECT_TRUE(Exists("/NEW.TXT"));
+
+    RescanOptions save;
+    save.disposition = Disposition::Save;
+    const MediaResult saved = _manager.Rescan("sd.zc", save);
+    ASSERT_TRUE(saved.Ok()) << saved.message;
+    EXPECT_TRUE(Has(saved.report, "session delta:")) << Join(saved.report);
+    EXPECT_TRUE(std::filesystem::exists(DeltaFile()));
+    EXPECT_TRUE(Exists("/HOST.TXT"));
+    std::filesystem::remove(DeltaFile());
+
+    GuestWrites("/MORE.TXT");
+    _folder.File("sys/HOST2.TXT", "host");
+    RescanOptions discard;
+    discard.disposition = Disposition::Discard;
+    ASSERT_TRUE(_manager.Rescan("sd.zc", discard).Ok());
+    EXPECT_TRUE(Exists("/HOST2.TXT"));
+    EXPECT_FALSE(Exists("/MORE.TXT"));
+    EXPECT_FALSE(_manager.Info("sd.zc")->dirty);
 }
 
 TEST_P(ComposeDelta_Test, InlineDescriptorHasNoDeltaFile)

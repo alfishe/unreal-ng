@@ -244,6 +244,40 @@ TEST_P(ComposeWriteBack_Test, ConflictsRefuseOrKeepBoth)
     EXPECT_EQ(Text(_folder.Path() / "work/TOOL (guest).TXT"), "g");
 }
 
+TEST_P(ComposeWriteBack_Test, KeepBothKeepsAHostFileTheGuestDeleted)
+{
+    Insert();
+    _folder.File("work/OLD.TXT", "edited on the host", 1767272400);  // changed after the build
+    ASSERT_TRUE(Guest().Delete("/WORK/OLD.TXT"));
+    const MediaResult refused = WriteBack();
+    EXPECT_EQ(refused.error, MediaError::Dirty) << refused.message;
+    const MediaResult both = WriteBack(false, /*keepBoth*/ true);
+    ASSERT_TRUE(both.Ok()) << both.message;
+    EXPECT_TRUE(Has(both.report, "kept (keep-both)")) << Join(both.report);
+    EXPECT_EQ(Text(_folder.Path() / "work/OLD.TXT"), "edited on the host") << "the host's changed file is never deleted";
+}
+
+TEST_P(ComposeWriteBack_Test, RmdirKeepsAFolderWithHostFiles)
+{
+    _folder.File("work/SUB/IN.TXT", "in");
+    _folder.File("work/GONE/X.TXT", "x");
+    Insert();
+    _folder.File("work/SUB/HOST.TXT", "made on the host after the build");
+    {
+        FatGuest g = Guest();
+        ASSERT_TRUE(g.Delete("/WORK/SUB/IN.TXT"));
+        ASSERT_TRUE(g.Rmdir("/WORK/SUB"));
+        ASSERT_TRUE(g.Delete("/WORK/GONE/X.TXT"));
+        ASSERT_TRUE(g.Rmdir("/WORK/GONE"));
+    }
+    const MediaResult result = WriteBack();
+    ASSERT_TRUE(result.Ok()) << result.message;
+    EXPECT_FALSE(std::filesystem::exists(_folder.Path() / "work/SUB/IN.TXT"));
+    EXPECT_TRUE(std::filesystem::exists(_folder.Path() / "work/SUB/HOST.TXT")) << "a file the guest never saw stays";
+    EXPECT_TRUE(Has(result.report, "kept, it holds host files")) << Join(result.report);
+    EXPECT_FALSE(std::filesystem::exists(_folder.Path() / "work/GONE")) << "an emptied folder goes";
+}
+
 TEST_P(ComposeWriteBack_Test, PlanWritesNothing)
 {
     Insert("trash");

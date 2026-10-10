@@ -12,6 +12,7 @@
 #include "_helpers/ttdv1tests.h"
 #include "common/filehelper.h"
 #include "emulator/io/storage/sessionwritemap.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/memory/atm/evoflash.h"
 
 /// Tests share one process-wide EmulatorManager. An instance a test leaves
@@ -65,6 +66,9 @@ int main(int argc, char **argv)
   PinTimeZone();
   // Session journals (<image>.usession) never land next to test data: a test that wants one says journal: replay
   SessionWriteMap::OverrideJournalDefault(false);
+  // Nor session deltas: a composite's writes are saved by writes.save when its emulator goes (D-8); a test that
+  // checks that turns it on
+  MediaManager::SetSaveOnRelease(false);
   // The engine records, as in the application; v1's own tests select v1 (TtdBackendListener below)
   Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::Engine);
   ::testing::InitGoogleTest(&argc, argv);

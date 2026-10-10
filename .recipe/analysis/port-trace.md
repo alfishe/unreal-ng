@@ -200,3 +200,7 @@ coverage, PC attribution ("who hammers port X").
 - **Beta128 gating**: TR-DOS paged-in accesses can be suppressed by the
   `beta128_gated` counter — compare `total_produced` vs `events` before
   assuming the disk controller was silent.
+- **No `IN #7F` data bytes on a TR-DOS sector read**: not a filter problem. `INI` / `INIR` are traced byte by
+  byte, but the `fastdisk` feature (on by default) traps the ROM's sector loop at `#3FEC` and moves the whole
+  sector in one step, so only the command / status traffic (`#1F`, `#FF`) is left. For the data bytes:
+  `PUT /feature/fastdisk {"enabled":false}` before the capture (a TTD recording turns it off by itself).

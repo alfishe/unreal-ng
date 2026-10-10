@@ -933,7 +933,8 @@ TimeTravelController::SessionOperation::SessionOperation(const TimeTravelControl
     // running machine: park it for the operation. Already paused - by the
     // caller, an outer operation or a breakpoint - nothing to do
     Emulator* emu = _manager._context ? _manager._context->pEmulator : nullptr;
-    if (emu && _manager._state.load() != TTDSessionState::Idle && emu->IsRunning() && !emu->IsPaused())
+    const bool touched = _kind == Kind::Configure || _manager._state.load() != TTDSessionState::Idle;
+    if (emu && touched && emu->IsRunning() && !emu->IsPaused())
     {
         _hold = emu->GetArbiter().BeginHold(execution::Requester{execution::Origin::Ttd, {}}, "ttd session operation",
                                                execution::Clock::now() + std::chrono::seconds(5));
@@ -942,7 +943,7 @@ TimeTravelController::SessionOperation::SessionOperation(const TimeTravelControl
 
 TimeTravelController::SessionOperation::~SessionOperation()
 {
-    if (_kind == Kind::Change)
+    if (_kind != Kind::Read)
     {
         // The outermost operation publishes, and only where reading the live
         // session is safe: on the machine's thread, or with no machine
@@ -1359,6 +1360,8 @@ uint64_t TimeTravelController::BlackBoxFrames() const
 
 void TimeTravelController::SetBlackBoxMinutes(uint32_t minutes)
 {
+    // The UI's thread: the machine reads the window at its boundaries
+    const SessionOperation op{*this, SessionOperation::Kind::Configure};
     _blackBoxMinutes = minutes ? minutes : 5;
     if (_blackBox && _state == TTDSessionState::Recording)
         SetHistoryLimit(BlackBoxFrames(), 0);
@@ -1366,6 +1369,8 @@ void TimeTravelController::SetBlackBoxMinutes(uint32_t minutes)
 
 void TimeTravelController::SetBlackBox(bool on, uint32_t minutes)
 {
+    // The UI's thread: the machine reads these at every frame boundary (a restart due, an acceleration's end)
+    const SessionOperation op{*this, SessionOperation::Kind::Configure};
     _blackBox = on;
     _blackBoxMinutes = minutes ? minutes : 5;
     _blackBoxSuspended = false;

@@ -148,6 +148,32 @@ TEST(ComposePartitions_Test, Fat16AndFat32OnOneDisk)
 
 // A graft over an image partition, placed second: its volume is cut out of the image's coordinates, and its boot
 // sector names its new start
+/// The slot's file systems hold for a partition passed through as it is: a FAT32 partition is refused by a
+/// FAT16-only slot (Sprinter, Profi IDE), a FAT16 one is not
+TEST(ComposePartitions_Test, PassthroughPartitionFollowsTheSlotsFileSystems)
+{
+    Disk d;
+    d.MakeImage();
+    {
+        ScratchFolder files("compose-partitions-fat32");
+        files.File("BIG.TXT", "fat32");
+        const FatSourceImage image = FolderToFatDisk(files.Path(), FatType::Fat32, CodePage::Cp866, /*mbr*/ true);
+        ASSERT_TRUE(image.ok()) << image.error;
+        ASSERT_TRUE(SaveSparse(image, d.root.Path() / "big.img"));
+    }
+    CompositeBuildOptions fat16Only;
+    fat16Only.allowedFs = {FatType::Fat16};
+    std::unique_ptr<IBlockDevice> volume;
+    CompositeInfo info;
+    const MediaResult refused = CompositeMediumFactory::Build(
+        d.Descriptor("version: 1\npartitions:\n  - {name: big, source: {image: big.img, partition: 1}}\n"), fat16Only, volume, info);
+    EXPECT_EQ(refused.error, MediaError::BadRequest);
+    EXPECT_NE(refused.message.find("fat32"), std::string::npos) << refused.message;
+    const MediaResult fat16 = CompositeMediumFactory::Build(
+        d.Descriptor("version: 1\npartitions:\n  - {name: dos, source: {image: dos.img, partition: 1}}\n"), fat16Only, volume, info);
+    EXPECT_TRUE(fat16.Ok()) << fat16.message;
+}
+
 TEST(ComposePartitions_Test, GraftOverAnImagePartition)
 {
     Disk d;

@@ -1,0 +1,67 @@
+diff --git a/src/kernel/fatfsdrv.asm b/src/kernel/fatfsdrv.asm
+index cb9348f..0cc03de 100644
+--- a/src/kernel/fatfsdrv.asm
++++ b/src/kernel/fatfsdrv.asm
+@@ -333,10 +333,19 @@ waitDRQmaxtime=$+1
+        ;cp 0
+        ;ret z
+ 	in a,(C)
++	bit 7,a ;BSY
++	jr nz,waitDRQ0
++	bit 0,a ;ERR: the command was aborted (an ATAPI device given an ATA command): no DRQ will come
++	jr nz,waitDRQerr
+ 	and 0x88
+ 	cp 0x08
+ 	jr nz,waitDRQ0 ;ожидание готовности передачи данных
++	and a ;NC: DRQ
+         ret
++waitDRQerr
++	scf ;C: the command was aborted
++        ret
++
+ 
+ readsectorsIDE
+ ;b+a=head+device
+@@ -355,6 +364,7 @@ readsectorsIDE
+ 	exa  
+ 	ld a,0x20
+         call sendcmd_waitDRQ
++	jp c,ldaff ;aborted (ATAPI unit, bad LBA): error, not a hang
+ 	exa  
+ readsectorsIDE0
+ 	exa  
+@@ -386,6 +396,7 @@ writesectorsIDE
+ 	exa  
+ 	ld a,0x30
+         call sendcmd_waitDRQ
++	jp c,ldaff ;aborted: error, not a hang
+ 	exa
+ writesectorsIDE0
+ 	exa  
+@@ -502,7 +513,7 @@ LL7c06	;ei
+ 	bit 7,a
+ 	jr nz,LL7c06
+ 	and a
+-	jr z,ldaff
++	jr z,identsig ;00h: an ATAPI unit after a reset may show no DRDY; its signature tells
+ 	inc a
+ 	jr z,ldaff
+ 	xor a
+@@ -537,6 +548,17 @@ LL7c3c	ld bc,hddcyllo
+ 	sbc hl,de
+ 	ld a,0x01
+ 	ret z
++	jr ldaff
++identsig
++	ld bc,hddcyllo
++	in e,(C)
++	ld bc,hddcylhi
++	in d,(C)
++	ld hl,0xeb14 ;the ATAPI signature (cyl hi:lo), set by the reset
++	and a
++	sbc hl,de
++	ld a,0x01 ;1: an ATAPI unit, as the IDENTIFY path reports it
++	ret z
+ ldaff	
+         ld a,0xff
+ 	ret  
