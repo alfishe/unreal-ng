@@ -369,6 +369,40 @@ TEST_F(McpDispatcher_Test, DebugCodeDisassemble_BadAddressIsAnError)
     EXPECT_NE(response["result"]["content"][0]["text"].asString().find("address must be"), std::string::npos);
 }
 
+// inspect_state takes the address as debug_code does: "0x11CB" threw "Value is not convertible to UInt". A mnemonic that
+// names its target label itself gets no "-> label" note
+TEST_F(McpDispatcher_Test, InspectStateDisasm_HexStringAddress)
+{
+    Json::Value body;
+    body["address"] = 0x0005;
+    Json::Value jump;
+    jump["address"] = 0x0005;
+    jump["bytes"] = "C3CB11";
+    jump["mnemonic"] = "jp START-NEW (#11CB)";
+    jump["size"] = 3;
+    jump["target"] = 0x11CB;
+    jump["targetLabel"] = "START-NEW";
+    body["instructions"].append(jump);
+    _caller->routes["GET /api/v1/emulator/emu-1/disasm?count=1&address=5"] = {200, body};
+
+    Json::Value params;
+    params["name"] = "inspect_state";
+    params["arguments"]["aspects"].append("disasm");
+    params["arguments"]["address"] = "0x0005";
+    params["arguments"]["count"] = "1";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    ASSERT_FALSE(response["result"].isMember("isError")) << response.toStyledString();
+    const std::string text = response["result"]["content"][0]["text"].asString();
+    EXPECT_NE(text.find("0005  C3 CB 11      jp START-NEW (#11CB)"), std::string::npos) << text;
+    EXPECT_EQ(text.find("; -> START-NEW"), std::string::npos) << text;
+
+    params["arguments"]["address"] = "zz";
+    response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    EXPECT_TRUE(response["result"]["isError"].asBool());
+    EXPECT_NE(response["result"]["content"][0]["text"].asString().find("address (0-65535)"), std::string::npos);
+}
+
 TEST_F(McpDispatcher_Test, ToolsCall_UnknownTool_IsInvalidParams)
 {
     Json::Value params;

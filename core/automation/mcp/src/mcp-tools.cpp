@@ -1731,8 +1731,9 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["region"]["description"] = "'memory_region': the region name (GET /memory/regions)";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
-    schema["properties"]["address"]["type"] = "integer";
-    schema["properties"]["address"]["description"] = "Start address for 'memory' and 'disasm' (defaults: 0 and current PC)";
+    schema["properties"]["address"]["type"] = "string";   // as debug_code: an integer works too
+    schema["properties"]["address"]["description"] =
+        "Start address for 'memory' and 'disasm' - integer or \"0x…\" / \"$…\" hex string (defaults: 0 and current PC)";
     schema["properties"]["size"]["type"] = "integer";
     schema["properties"]["size"]["default"] = 64;
     schema["properties"]["size"]["description"] = "Byte count for 'memory' (max 4096)";
@@ -1817,12 +1818,22 @@ void RegisterInspectState(ToolRegistry& registry)
                 }
             }
 
-            unsigned address = args.isMember("address") ? args["address"].asUInt() : 0u;
+            // Agents write addresses in hex ("0x11CB", "$11CB") as debug_code takes them: asUInt() threw on a string
+            const Json::Value addressArg = args.isMember("address") ? NumericOrHex(args["address"]) : Json::Value(0u);
+            const Json::Value sizeArg = args.isMember("size") ? NumericOrHex(args["size"]) : Json::Value(64u);
+            const Json::Value countArg = args.isMember("count") ? NumericOrHex(args["count"]) : Json::Value(8u);
+            if (!addressArg.isUInt() || addressArg.asUInt() > 0xFFFF || !sizeArg.isUInt() || !countArg.isUInt())
+            {
+                done(ToolResult::Error("address (0-65535), size and count are numbers: an integer or a \"0x…\" / \"$…\" / "
+                                       "decimal string"));
+                return;
+            }
+            unsigned address = addressArg.asUInt();
             const bool hasAddress = args.isMember("address");
-            unsigned size = args.isMember("size") ? args["size"].asUInt() : 64u;
+            unsigned size = sizeArg.asUInt();
             if (size < 1) size = 1;
             if (size > 4096) size = 4096;
-            unsigned count = args.isMember("count") ? args["count"].asUInt() : 8u;
+            unsigned count = countArg.asUInt();
             if (count < 1) count = 1;
             if (count > 256) count = 256;
             bool includeImage = args.isMember("include_image") && args["include_image"].asBool();

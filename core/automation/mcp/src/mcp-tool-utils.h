@@ -165,7 +165,8 @@ inline std::string FormatDisasmListing(const Json::Value& body)
         bytes.resize(std::max<size_t>(bytes.size(), 12), ' ');
         std::string mnemonic = line["mnemonic"].asString();
         std::string note;
-        if (line.isMember("targetLabel"))
+        // The mnemonic names a label itself ("jp START-NEW (#11CB)"); "rst #38" does not
+        if (line.isMember("targetLabel") && mnemonic.find(line["targetLabel"].asString()) == std::string::npos)
             note = "-> " + line["targetLabel"].asString();
         if (line.isMember("effectiveAddress"))
         {

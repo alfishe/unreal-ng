@@ -455,8 +455,9 @@ def check_mcp(mcp_url, target, report):
     else:
         report.ok('mcp')
 
+    # The address as a hex string, as agents write it (it threw "Value is not convertible to UInt")
     status, body = mcp_call(mcp_url, 'inspect_state', {'aspects': ['registers', 'disasm'], 'target': target,
-                                                       'address': BASE, 'count': 8})
+                                                       'address': f'0x{BASE:04X}', 'count': 8})
     text = '\n'.join(c.get('text', '') for c in body.get('result', {}).get('content', [])) if body else ''
     if len([line for line in text.splitlines() if re.match(r'[0-9A-F]{4}  ', line)]) >= 8:
         report.ok('mcp')
