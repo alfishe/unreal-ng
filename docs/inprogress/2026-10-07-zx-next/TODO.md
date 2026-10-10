@@ -204,7 +204,12 @@ Done: DMA last-byte prescaler wait, auto-restart keeps the end-of-block flag, co
 (hard and soft) per the dma.vhd reset block, DMA cycles skip #6B/#0B, mode latch on reads, status bit 0, NR #CC/#CE read masks, DMA delay
 (NR #CC-#CE), SPI waits for DMA to #EB, CTC interrupts in the pulse mode, Pentagon INT pulse 36, line interrupt 128 T into the row.
 
-Open (arithmetic only, no board numbers): NEXTREG n,v has 6 MREQ cycles in the RTL (t80n_mcode.vhd 1668-1688; ours 4) - Changing8kBank
-ON would be ~61 lines, ours ~48; 28 MHz SRAM read wait (+1 clock per read, zxnext.vhd 3171-3181); INT pulse in CPU clocks (not base T) at
+Done later the same day: NEXTREG n,v / n,A have 2 / 2 trailing MREQ reads in the RTL (t80n_mcode.vhd 1668-1712, NoRead = 0), so they are
+contended memory cycles; the write is driven at the start of the first (+14 T, +11 T). Changing8kBank on the emulator, port-traced (OUT #FE
+start/end of the green): contention ON 56817 T, OFF 42671 T, difference 14146 T = 62.0 lines (RTL arithmetic 61.4, the old 4-cycle model
+47.7). The program's own logic agrees: 2048 NEXTREG x 20 T + 128 DJNZ = 42.6 kT uncontended (OFF), and the ON frame still fits the 311-line
+frame. There are no real-board numbers; MAME has no contention (its two photos are identical).
+
+Open (arithmetic only, no board numbers): 28 MHz SRAM read wait (+1 clock per read, zxnext.vhd 3171-3181); INT pulse in CPU clocks (not base T) at
 turbo; CPU speed change applied at the next frame; NEXTREG write lands 3 T late; 60 Hz timing; NR03 timing decode (bit 3, lock, 101-111);
 NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.

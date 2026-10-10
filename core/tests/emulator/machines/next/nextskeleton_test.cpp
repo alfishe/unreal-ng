@@ -7,6 +7,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include <cstring>
 
 #include "_helpers/emulatortesthelper.h"
@@ -238,6 +240,40 @@ TEST_F(NextSkeleton_Test, Only48KBank5AndNothingAbove3_5MHz)
     Out(0x243B, 0x08);
     Out(0x253B, 0x40);  // NR #08 bit 6: contention disabled
     EXPECT_EQ(WaitingStarts(_z80, 0x4000), 0u);
+}
+
+// t80n_mcode.vhd X"91": NEXTREG n,v is 6 memory cycles (2 M1, 2 operand, 2 trailing reads with NoRead = 0), all stretched by the +3 gate
+// array in bank 5: a stream of them in a paper row takes up to 48 T per instruction (20 T + 28 T of waits), against 20 T in an uncontended bank.
+// This is the Changing8kBank board test's loop (the same stream measured on the emulator: ON - OFF = 14146 T of 42671 T).
+TEST_F(NextSkeleton_Test, NextRegStreamInContendedBank5TakesTheSixCycleWaits)
+{
+    Out(0x243B, 0x03);
+    Out(0x253B, 0xB0);  // timing +3
+    _emulator->RunFrame(true);
+    ASSERT_EQ(_context->emulatorState.ula_timing_class, 3);
+    auto stream = [&](uint16_t base) {
+        for (unsigned i = 0; i < 40; i++)
+        {
+            _memory->DirectWriteToZ80Memory(static_cast<uint16_t>(base + i * 4), 0xED);
+            _memory->DirectWriteToZ80Memory(static_cast<uint16_t>(base + i * 4 + 1), 0x91);
+            _memory->DirectWriteToZ80Memory(static_cast<uint16_t>(base + i * 4 + 2), 0x7F);  // a register nothing reacts to
+            _memory->DirectWriteToZ80Memory(static_cast<uint16_t>(base + i * 4 + 3), 0x00);
+        }
+        _z80->pc = base;
+        _z80->t = 17000;  // inside the paper rows (+3 raster)
+        for (unsigned i = 0; i < 10; i++)  // settle into the cadence
+            _z80->EngineStep();
+        uint32_t longest = 0;
+        for (unsigned i = 0; i < 20; i++)  // instructions inside the 128 T window of a row
+        {
+            const uint32_t t0 = _z80->t;
+            _z80->EngineStep();
+            longest = std::max(longest, _z80->t - t0);
+        }
+        return static_cast<double>(longest);
+    };
+    EXPECT_NEAR(stream(0x6000), 48.0, 2.5) << "bank 5: six contended cycles (four would give 40)";
+    EXPECT_DOUBLE_EQ(stream(0xC000), 20.0) << "bank 0: no waits";
 }
 
 TEST_F(NextSkeleton_Test, PentagonTimingHasNoContention)
