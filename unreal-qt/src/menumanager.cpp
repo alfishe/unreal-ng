@@ -1331,6 +1331,13 @@ void MenuManager::applyPlatformSpecificSettings()
 
 void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
 {
+    // Leased for the whole update, the helpers below included: an automation thread may remove the instance or
+    // switch its model meanwhile (2026-10-10: a WebAPI model switch freed the WD1793 this read). A retiring
+    // instance shows as none
+    const Emulator::ContextLease lease = activeEmulator ? activeEmulator->LeaseContext() : Emulator::ContextLease{};
+    if (!lease)
+        activeEmulator = nullptr;
+
     // Store weak reference to active emulator (for future queries)
     _activeEmulator = activeEmulator;
 
