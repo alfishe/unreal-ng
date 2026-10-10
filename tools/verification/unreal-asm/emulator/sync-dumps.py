@@ -192,7 +192,7 @@ def masm(emu, args):
     """MASM 1.1: W takes the first source, E edits; SS+Enter saves from the editor, EXT Q goes back to the menu. The
     edited case is taken in the editor (the cursor line out of the text), the menu case after leaving it"""
     emu.insert_disk(args.disk)
-    emu.run_trdos('MASM 1.1', wait=8)
+    emu.run_trdos(args.boot or 'MASM 1.1', wait=8)
     emu.tap('enter')                           # past the title
     emu.tap('w')
     time.sleep(2)
