@@ -21,6 +21,7 @@
 #include "loaders/snapshot/szx/szxreader.h"
 #include "loaders/snapshot/szx/szxwriter.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "emulator/coordinator/ports.h"
 
 namespace rzx
 {
@@ -356,19 +357,26 @@ namespace rzx
             return false;
         }
 
-        // A snapshot replaces the machine: not while TTD records, a stopped
-        // history is dropped (as for any snapshot load)
-        ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
-        if (ttd && ttd->IsRecording())
+        // A snapshot replaces the machine: a machine operation, a snapshot load to the rules (D42, D43): the TTD
+        // session ends at the change, its history stays
+        coordinator::MachineOp op;
+        op.kind = coordinator::OpKind::RzxRestore;
+        op.summary = "snapshot block (" + extension + ")";
+        op.sessionReason = "rzx-snapshot";
+        auto apply = [&](coordinator::OpStage& stage) {
+            stage.CommitPoint();
+            if (_emulator.ApplySnapshotData(bytes, extension, stage.error))
+                return true;
+            error = stage.error;
+            return false;
+        };
+        const coordinator::OpResult applied = coordinator::RunCommit(_context->pMachineOps, std::move(op), apply);
+        if (!applied.Ok())
         {
-            error = "a TTD recording runs: the recording's snapshot block cannot be applied";
+            if (error.empty())
+                error = applied.reason;
             return false;
         }
-        if (ttd)
-            ttd->OnLoad(ttd::TTDLoadKind::RzxSnapshot, "rzx-snapshot");
-
-        if (!_emulator.ApplySnapshotData(bytes, extension, error))
-            return false;
 
         // The loaders reset the CPU: the playback keeps the frame INT masked
         Z80& cpu = *_context->pCore->GetZ80();
@@ -444,15 +452,6 @@ namespace rzx
         if (frame > total)
             frame = total;
 
-        // A seek back replaces the machine like a snapshot load: refused while
-        // TTD records, a stopped TTD history is dropped
-        ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
-        if (ttd && ttd->IsRecording())
-        {
-            error = "a TTD recording runs: stop it before seeking the RZX playback";
-            return false;
-        }
-
         // The CPU held (Emulator::CpuHold): the pause is left as it was, nothing is broadcast
         std::optional<Emulator::CpuHold> hold;
         hold.emplace(_emulator, "rzx seek");
@@ -471,15 +470,30 @@ namespace rzx
             }
             else
             {
-                if (ttd)
-                    ttd->OnLoad(ttd::TTDLoadKind::RzxSeek, "rzx-seek");
+                // A seek back replaces the machine: a machine operation, a snapshot load to the rules (D42, D43):
+                // the TTD session ends at the change, its history stays. Forward the playback just plays on
                 const Keyframe copy = *keyframe;  // the store may thin while playing on
-                Uninstall();
-                ok = RestoreState(copy.state, error) && player->SeekCursor(copy.cursor);
-                if (ok)
-                    Install();
-                else if (error.empty())
-                    error = "the keyframe did not restore";
+                coordinator::MachineOp op;
+                op.kind = coordinator::OpKind::RzxRestore;
+                op.summary = "seek to frame " + std::to_string(frame);
+                op.sessionReason = "rzx-seek";
+                auto restore = [&](coordinator::OpStage& stage) {
+                    stage.CommitPoint();
+                    Uninstall();
+                    if (RestoreState(copy.state, stage.error) && player->SeekCursor(copy.cursor))
+                    {
+                        Install();
+                        return true;
+                    }
+                    if (stage.error.empty())
+                        stage.error = "the keyframe did not restore";
+                    return false;
+                };
+                const coordinator::OpResult restored =
+                    coordinator::RunCommit(_context->pMachineOps, std::move(op), restore);
+                ok = restored.Ok();
+                if (!ok)
+                    error = restored.reason;
             }
         }
 

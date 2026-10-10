@@ -121,7 +121,8 @@ Defects (each worth fixing on its own, before any redesign). **Status 2026-10-10
 3. **A tape or disk load ends the session before the insert can fail**, and the insert then signals the TTD a
    second time (`emulator.cpp:2209-2238` vs `mediamanager.cpp:1373-1391`).
 4. **Inconsistent refusals**: network, IDE drive kind, RZX and NeoGS SD eject refuse during a background session
-   (black box) where every other operation does not (D43).
+   (black box) where every other operation does not (D43). **Fixed 2026-10-10 (M2):** each is a policy cell, owner
+   decisions in requirements §6, architecture §11.3.
 5. **The controller's destructor leaves `MediaManager::_readJournal` and `ttdVectors` pointing at it**
    (`timetravelcontroller.cpp:117-129`; the media manager is deleted later, `emulator.cpp:528-583`).
 6. **Debug mode has four writers**; the replay sets `isDebugMode` behind FeatureManager, and a feature change during

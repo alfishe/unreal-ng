@@ -69,7 +69,8 @@ struct Emulator::AutostartRequest
 };
 
 /// The emulator's side of the coordinator: the machine thread (the execution arbiter's CPU hold), the clock, and
-/// the owner of the operations that replace the machine state (reset, autostart, snapshot load)
+/// the owner of the operations that replace the machine state (reset, autostart, snapshot load) and of those a
+/// subsystem carries out itself (network settings, an IDE unit's drive, an RZX restore: coordinator::RunCommit)
 class Emulator::CoordinatorPorts : public coordinator::IMachineThread,
                                    public coordinator::IMachineClock,
                                    public coordinator::IOpOwner
@@ -126,6 +127,15 @@ public:
                 return _emulator.AutostartNow(*std::any_cast<AutostartRequest*>(op.payload), stage);
             case coordinator::OpKind::SnapshotLoad:
                 return _emulator.LoadSnapshotNow(*std::any_cast<SnapshotRequest*>(op.payload), stage);
+            case coordinator::OpKind::NetworkChange:
+            case coordinator::OpKind::IdeDriveKind:
+            case coordinator::OpKind::RzxRestore:
+                // The subsystem's own change (coordinator::RunCommit): the network manager, the IDE controller, the
+                // RZX session; they have no owner of their own, the rules and the log are the coordinator's
+                if (const coordinator::OpCommit* commit = std::any_cast<coordinator::OpCommit>(&op.payload))
+                    return (*commit)(stage);
+                stage.error = std::string("no change given for '") + coordinator::OpKindName(op.kind) + "'";
+                return false;
             default:
                 stage.error = std::string("the emulator does not do '") + coordinator::OpKindName(op.kind) + "'";
                 return false;
@@ -1113,7 +1123,9 @@ void Emulator::WireCoordinator()
     using coordinator::OpKind;
     _coordinator->SetMachine(_coordinatorPorts.get(), _coordinatorPorts.get());
     _coordinator->SetSession(_ttdSessionPort.get());
-    for (OpKind kind : {OpKind::Reset, OpKind::Autostart, OpKind::SnapshotLoad})
+    _context->pMachineOps = _coordinator.get();
+    for (OpKind kind : {OpKind::Reset, OpKind::Autostart, OpKind::SnapshotLoad, OpKind::NetworkChange,
+                        OpKind::IdeDriveKind, OpKind::RzxRestore})
         _coordinator->Own(kind, _coordinatorPorts.get());
     if (MediaManager* media = _context ? _context->pMediaManager : nullptr)
     {

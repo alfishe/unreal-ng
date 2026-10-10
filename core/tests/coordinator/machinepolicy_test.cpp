@@ -45,6 +45,21 @@ Expected ExpectedCell(OpKind kind, MachineMode mode, bool endRecording)
             if (mode == MachineMode::Recording)
                 return {true, SessionEffect::None, false, false};   // no "end the recording" for a discard today
             return {false, SessionEffect::MediaChanged, !live, false};
+        // D43 (owner 2026-10-10): fixed while a recording the user started runs and in the recorded past; the black
+        // box ends its session as for a medium
+        case OpKind::NetworkChange:
+        case OpKind::IdeDriveKind:
+        {
+            const bool idekind = kind == OpKind::IdeDriveKind;
+            if (mode == MachineMode::Live)
+                return {false, SessionEffect::None, idekind, false};
+            if (mode == MachineMode::BlackBox)
+                return {false, SessionEffect::MediaChanged, true, false};
+            return {true, SessionEffect::None, false, false};
+        }
+        // D43: an RZX restore is a snapshot load
+        case OpKind::RzxRestore:
+            return {false, SessionEffect::EndKeepHistory, true, false};
         case OpKind::Count:
             break;
     }
@@ -91,6 +106,19 @@ TEST(MachinePolicy_Test, MediaRefusalsSayWhatTheSurfacesSaidBefore)
     op.kind = OpKind::DiskCreate;
     op.media = MediaClass::Disk;
     EXPECT_EQ(Decide(op, MachineMode::Recording).reason.rfind("Cannot create a disk while TTD is recording", 0), 0u);
+}
+
+TEST(MachinePolicy_Test, NetworkAndIdeRefusalsSayWhyAndHowLong)
+{
+    MachineOp op;
+    op.kind = OpKind::NetworkChange;
+    EXPECT_EQ(Decide(op, MachineMode::Recording).reason,
+              "a TTD recording is running: the network settings are fixed until it stops");
+    EXPECT_NE(Decide(op, MachineMode::Detached).reason.find("recorded history"), std::string::npos);
+    op.kind = OpKind::IdeDriveKind;
+    EXPECT_EQ(Decide(op, MachineMode::Recording).reason,
+              "a TTD recording runs: the machine's hardware is fixed until it stops");
+    EXPECT_NE(Decide(op, MachineMode::Replaying).reason.find("recorded history"), std::string::npos);
 }
 
 TEST(MachinePolicy_Test, EveryKindAndModeHasAName)

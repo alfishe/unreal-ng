@@ -254,9 +254,9 @@ behaviour, read from the code, and pins it with a test walking every cell; later
 | Media insert / eject / discard | Refuse; from M3 RecordAsEvent, each op its own event (Q4) | EndSession(drop) | EndSession(drop) |
 | ROM, GS card | EndSession(drop) | EndSession(drop) | EndSession(drop) |
 | Speed, turbo | Refuse (lock) | black box steps aside, restarts | Invalidate |
-| Network card, IDE drive kind | Refuse | Refuse today; Allow per D43 (M2) | Refuse |
+| Network settings, IDE drive kind | Refuse | EndSession(drop) (D43, M2) | Refuse |
 | Tool edit (any surface) | RecordAsEvent | RecordAsEvent | Refuse |
-| RZX seek / snapshot | Refuse | Refuse today; per D43 (M2) | EndSession(drop) |
+| RZX seek back / snapshot block | EndSession(keep) | EndSession(keep) (D43, M2) | EndSession(keep) |
 | Timeline seek | pause recording (D8), seek | same | seek |
 | Timeline cut | — | — | cut (§8), resume recording |
 
@@ -471,8 +471,32 @@ Tests: `MachinePolicy_Test` (every cell), `MachineCoordinator_Test` (the lifecyc
   client thread, each GDB session thread, the DeZog snapshot restore, every WebAPI request (a pre-handling advice:
   `webapi`, or `mcp` when the request carries `X-Unreal-Source: mcp`, which the MCP server's client sends). The
   emulator's own threads stay `unknown`.
-- Still open in M2: the D43 cells with the owner (network, IDE drive kind, RZX, NeoGS SD); `SwitchModel` (WebAPI
-  snapshot transfer) asks TTD until model switches join the coordinator (M6).
+- Still open in M2: `SwitchModel` (WebAPI snapshot transfer) asks TTD until model switches join the coordinator (M6).
+
+### 11.3 M2, the D43 cells as built (2026-10-10)
+
+Owner decisions: [requirements.md §6](requirements.md#6-owner-decisions). The four raw `IsRecording()` refusals are
+gone; each is a row of the policy table or the media rows:
+
+| Operation | Kind | Live | Recording | Black box | Replaying / detached |
+|---|---|---|---|---|---|
+| Network settings (`NetworkManager::RequestChange`) | `NetworkChange` | allowed | refused | EndSession(drop) | refused |
+| IDE unit's drive (`IdeController::SetUnitKind`) | `IdeDriveKind` | allowed (held) | refused | EndSession(drop) | refused |
+| RZX snapshot block, seek back (`RzxSession`) | `RzxRestore` | EndSession(keep) | EndSession(keep) | EndSession(keep) | EndSession(keep) |
+| NeoGS SD insert / eject | `MediaInsert` / `MediaEject` | media rows | | | |
+
+- `coordinator::RunCommit` (ports.h): a subsystem hands its change to the coordinator as an `OpCommit`; the emulator
+  owns these kinds and calls it as the Commit; it marks the commit point before its first change. Without a
+  coordinator (a bare context in a unit test) the change runs alone. The subsystems reach the coordinator through
+  `EmulatorContext::pMachineOps`, set in `WireCoordinator`.
+- `RemoteAccess` alone is no operation (it moves the host listeners only). A forward RZX seek plays on: no
+  operation. NeoGS keeps its replay input guard (`ttdReplayActive`: a TTD re-execution owns the machine).
+- The slot control's network reply says `recording` when the coordinator's mode is a recording the user started or
+  the recorded past.
+
+Tests: `MachinePolicy_Test` (every cell, the sentences), `CoordinatorEmulator_Test` (network refused / ends the black
+box, `RemoteAccess` free; an IDE unit's drive; an RZX seek back during a recording ends it and keeps the history),
+`NeoGSMedia_Test` (the black box ends at an SD change).
 
 Tests: `MachineCoordinator_Test` (a source from the thread, a scope, another thread; `Ask` logs a refusal with its
 source and nothing else), `CoordinatorEmulator_Test` (a surface's question on a real machine: same sentence, logged),

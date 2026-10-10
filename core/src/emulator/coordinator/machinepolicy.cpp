@@ -37,9 +37,15 @@ constexpr Cell kRefuse{Action::Refuse, SessionEffect::None};
 //   in every mode; the machine is held; reset and autostart then tell TTD the machine left the recorded timeline;
 // - media: refused while a recording the user started runs (RecordingGuard), unless the caller ends it; everywhere
 //   else the TTD media rule (OnLoad(Media)): a background session ends, a kept history goes.
+// D43 cells (owner 2026-10-10, M2):
+// - network settings, an IDE unit's drive: refused while a recording the user started runs and in the recorded past
+//   (replay, detached); the black box ends its session as for a medium; live: nothing for TTD (a host-side setting,
+//   RemoteAccess alone, is no operation: it changes nothing the machine sees);
+// - an RZX playback's snapshot block or seek back: a snapshot load (D42).
 // Live, Recording, BlackBox, Replaying, Detached
 constexpr SessionEffect kKeep = SessionEffect::EndKeepHistory;
 constexpr SessionEffect kMedia = SessionEffect::MediaChanged;
+constexpr SessionEffect kNone = SessionEffect::None;
 constexpr std::array<Row, static_cast<size_t>(OpKind::Count)> kTable{{
     {OpKind::Reset, true, true, {Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep)}},
     {OpKind::Autostart, true, true, {Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep)}},
@@ -48,6 +54,9 @@ constexpr std::array<Row, static_cast<size_t>(OpKind::Count)> kTable{{
     {OpKind::MediaEject, false, false, {Allow(kMedia), kMediaRecording, Allow(kMedia), Allow(kMedia), Allow(kMedia)}},
     {OpKind::MediaDiscard, false, false, {Allow(kMedia), kRefuse, Allow(kMedia), Allow(kMedia), Allow(kMedia)}},
     {OpKind::DiskCreate, false, false, {Allow(kMedia), kMediaRecording, Allow(kMedia), Allow(kMedia), Allow(kMedia)}},
+    {OpKind::NetworkChange, false, false, {Allow(kNone), kRefuse, Allow(kMedia), kRefuse, kRefuse}},
+    {OpKind::IdeDriveKind, true, false, {Allow(kNone), kRefuse, Allow(kMedia), kRefuse, kRefuse}},
+    {OpKind::RzxRestore, true, false, {Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep)}},
 }};
 
 constexpr bool RowsInKindOrder()
@@ -59,8 +68,17 @@ constexpr bool RowsInKindOrder()
 }
 static_assert(RowsInKindOrder(), "machinepolicy: one row per OpKind, in the enum's order");
 
-std::string RefusalText(const MachineOp& op)
+std::string RefusalText(const MachineOp& op, MachineMode mode)
 {
+    const bool past = mode == MachineMode::Replaying || mode == MachineMode::Detached;
+    if (op.kind == OpKind::NetworkChange)
+        return past ? "the machine is in recorded history (a TTD replay or a point in the past): the network settings "
+                      "are fixed until it is live again"
+                    : "a TTD recording is running: the network settings are fixed until it stops";
+    if (op.kind == OpKind::IdeDriveKind)
+        return past ? "the machine is in recorded history (a TTD replay or a point in the past): its hardware is fixed "
+                      "until it is live again"
+                    : "a TTD recording runs: the machine's hardware is fixed until it stops";
     if (op.kind == OpKind::DiskCreate)
         return "Cannot create a disk while TTD is recording: a new medium would drop the recorded history. Create it "
                "before starting the recording, or stop the recording first.";
@@ -95,7 +113,7 @@ PolicyDecision Decide(const MachineOp& op, MachineMode mode)
     if (cell.action == Action::Refuse || (cell.action == Action::RefuseUnlessEnd && !op.endRecording))
     {
         d.refused = true;
-        d.reason = RefusalText(op);
+        d.reason = RefusalText(op, mode);
         return d;
     }
     d.effect = cell.effect;

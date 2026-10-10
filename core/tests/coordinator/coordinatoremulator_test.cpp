@@ -16,9 +16,12 @@
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/coordinator/machinecoordinator.h"
+#include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/floppydriveslot.h"
+#include "emulator/io/ide/idecontroller.h"
+#include "emulator/io/network/networkmanager.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
 
@@ -230,4 +233,121 @@ TEST_F(CoordinatorEmulator_Test, AnEmptySlotsEjectIsNoOperation)
         << "nothing leaves: allowed while recording, as before";
     EXPECT_TRUE(Logged().empty());
     EXPECT_TRUE(_ttd->IsRecording());
+}
+
+// D43 (owner 2026-10-10): the network settings and an IDE unit's drive are fixed while a recording the user started
+// runs; the black box ends its session as for a medium; an RZX restore is a snapshot load
+
+TEST_F(CoordinatorEmulator_Test, TheNetworkSettingsAreFixedWhileARecordingTheUserStartedRuns)
+{
+    NetworkManager* network = _emulator->GetContext()->pCore->GetNetworkManager();
+    ASSERT_NE(network, nullptr);
+    NetworkManager::Change timeout;
+    timeout.connectTimeoutMs = 5000;
+    NetworkManager::Change listeners;
+    listeners.remoteAccess = true;
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+
+    Mark();
+    std::string error;
+    EXPECT_FALSE(network->RequestChange(timeout, error));
+    EXPECT_EQ(error, "a TTD recording is running: the network settings are fixed until it stops");
+    EXPECT_TRUE(network->RequestChange(listeners, error)) << "the listeners' address: nothing the machine sees";
+    EXPECT_TRUE(_ttd->IsRecording());
+    const auto log = Logged();
+    ASSERT_EQ(log.size(), 1u) << "a host-side setting is no machine operation";
+    EXPECT_EQ(log[0].kind, OpKind::NetworkChange);
+    EXPECT_EQ(log[0].status, OpStatus::Refused);
+    EXPECT_EQ(log[0].mode, MachineMode::Recording);
+    EXPECT_EQ(log[0].detail, error);
+}
+
+TEST_F(CoordinatorEmulator_Test, TheBlackBoxEndsAtANetworkChange)
+{
+    NetworkManager* network = _emulator->GetContext()->pCore->GetNetworkManager();
+    ASSERT_NE(network, nullptr);
+    NetworkManager::Change timeout;
+    timeout.connectTimeoutMs = 5000;
+    _ttd->SetBlackBox(true, 1);
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    ASSERT_EQ(_emulator->MachineOps().Mode(), MachineMode::BlackBox);
+
+    Mark();
+    std::string error;
+    ASSERT_TRUE(network->RequestChange(timeout, error)) << error;
+    const auto log = Logged();
+    ASSERT_EQ(log.size(), 1u);
+    EXPECT_EQ(log[0].kind, OpKind::NetworkChange);
+    EXPECT_EQ(log[0].status, OpStatus::Done);
+    EXPECT_EQ(log[0].mode, MachineMode::BlackBox);
+    EXPECT_EQ(log[0].effect, SessionEffect::MediaChanged);
+    EXPECT_EQ(log[0].detail, "") << "the change marks its commit point";
+    EXPECT_EQ(_ttd->GetSessionInfo().lastStopReason, "network-change");
+}
+
+TEST_F(CoordinatorEmulator_Test, AnIdeUnitsDriveFollowsTheSameRule)
+{
+    IdeController* ide = _emulator->GetContext()->pIdeController;
+    ASSERT_NE(ide, nullptr);
+    ASSERT_EQ(ide->KindOf(1), IdeController::UnitKind::Disk);
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+
+    Mark();
+    std::string error;
+    EXPECT_FALSE(ide->SetUnitKind(1, IdeController::UnitKind::Cdrom, &error));
+    EXPECT_EQ(error, "a TTD recording runs: the machine's hardware is fixed until it stops");
+    EXPECT_EQ(ide->KindOf(1), IdeController::UnitKind::Disk);
+    _ttd->StopRecording();
+
+    _ttd->SetBlackBox(true, 1);
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    ASSERT_EQ(_emulator->MachineOps().Mode(), MachineMode::BlackBox);
+    ASSERT_TRUE(ide->SetUnitKind(1, IdeController::UnitKind::Cdrom, &error)) << error;
+    EXPECT_EQ(ide->KindOf(1), IdeController::UnitKind::Cdrom);
+    EXPECT_EQ(_ttd->GetSessionInfo().lastStopReason, "ide-drive-kind");
+
+    const auto log = Logged();
+    ASSERT_EQ(log.size(), 2u);
+    EXPECT_EQ(log[0].kind, OpKind::IdeDriveKind);
+    EXPECT_EQ(log[0].status, OpStatus::Refused);
+    EXPECT_EQ(log[1].status, OpStatus::Done);
+    EXPECT_EQ(log[1].mode, MachineMode::BlackBox);
+    EXPECT_EQ(log[1].effect, SessionEffect::MediaChanged);
+    EXPECT_EQ(log[1].summary, "ide0.slave cdrom");
+}
+
+TEST_F(CoordinatorEmulator_Test, AnRzxSeekBackIsASnapshotLoad)
+{
+    // Its own machine: an RZX recording plays on a 48K
+    EmulatorTestHelper::CleanupEmulator(_emulator);
+    _emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+    ASSERT_NE(_emulator, nullptr);
+    _emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    _emulator->GetContext()->pMemory->UpdateFeatureCache();
+    _ttd = _emulator->GetContext()->pTimeTravelController;
+    const rzx::PlayResult played = _emulator->PlayRzx(Data("loaders/rzx/archive/ericfloaters.rzx"));
+    ASSERT_TRUE(played.Ok()) << played.message;
+    _emulator->RunNFrames(30, /*skipBreakpoints=*/true);
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(5, /*skipBreakpoints=*/true);
+    ASSERT_EQ(_emulator->MachineOps().Mode(), MachineMode::Recording);
+
+    Mark();
+    std::string error;
+    ASSERT_TRUE(_emulator->SeekRzx(10, &error)) << error;
+    const auto log = Logged();
+    ASSERT_EQ(log.size(), 1u);
+    EXPECT_EQ(log[0].kind, OpKind::RzxRestore);
+    EXPECT_EQ(log[0].status, OpStatus::Done);
+    EXPECT_EQ(log[0].mode, MachineMode::Recording);
+    EXPECT_EQ(log[0].effect, SessionEffect::EndKeepHistory);
+    EXPECT_EQ(log[0].summary, "seek to frame 10");
+    EXPECT_FALSE(_ttd->IsRecording());
+    EXPECT_TRUE(_ttd->HasHistory()) << "D42: the history of the same machine stays browsable";
+    EXPECT_EQ(_ttd->GetSessionInfo().lastStopReason, "rzx-seek");
 }
