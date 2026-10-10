@@ -185,6 +185,7 @@ private:
     int _retries = 0;
     bool _clearing = true;
     int _clearKeys = 0;
+    int _settleFrames = 0;      ///< frames the next byte has waited for the editor mode to allow it
     bool _sawIdle = false;
     bool _reportShown = false;  ///< the idle seen is ReportShown: the line empties itself
     bool _sawTaken = false;

@@ -23,6 +23,9 @@ public:
     /// Standard BASIC program start address for 48K Spectrum
     static constexpr uint16_t DEFAULT_PROG_START = 0x5CCB;  // Just after system variables
     
+    /// The lowest keyword token (SPECTRUM on the 128K; 48K keywords start at RND, 0xA5)
+    static constexpr uint8_t TOKEN_FIRST_48K = 0xA3;
+
     /// Line terminator
     static constexpr uint8_t LINE_END = 0x0D;
     
