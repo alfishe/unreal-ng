@@ -16,6 +16,7 @@ save the text itself and keep the file. The synchronizer's reader must give that
     sync-dumps.py genstape <DEVPAC_4.TAP> <out-dir> --source t.gens --tag gens4 --model 48K    # GENS4 (GENS3: --at 25444 --code-length 8355)
     sync-dumps.py zeus <ZEUS.TAP | zeus.$c | ZEUS_GG.SCL | ZEUS72ZK.SCL> <out-dir> --build 1983 --model 48K --source z.bin --tag zeus1983
     sync-dumps.py zeus <PRIMUS29 disk, the source as PRI.DOC> <out-dir> --build primus --source - --tag primus29
+    sync-dumps.py lasergenius <LG_1_04 disk with TEST.C> <out-dir> --source TEST --save-as SAVE --tag lg104
     sync-dumps.py masm <disk with t1.a> <out-dir> --boot m2 --source t1 --menu-save --tag masm20   # MASM 2.0 (3.0: TSM)
     sync-dumps.py masmdemo <SpFon_15.Trd> <out-dir> --source T1 --tag masm10   # MASM 1.0 demo: the text typed in
     sync-dumps.py xas <disk-with-PROBE.X> <out-dir> --boot NAME --list-keys right[,down...] --tag TAG
@@ -533,6 +534,37 @@ def zeus(emu, args):
     dump(emu, args.out, f'{args.tag}-typing', pages, 'SOURCE.Z', source, {'editor': True, 'typing': True})
 
 
+def lasergenius(emu, args):
+    """Laser Genius 1.04 Beta: L_G_ASS. from TR-DOS, 1 ENTER, the loader's questions (tool-kit y, hash n, disk d) each
+    with ENTER; load "NAME", a numbered paragraph typed, ENTER, save "SAVE" (the file: #AF header + paragraphs)"""
+    emu.insert_disk(args.disk)
+    emu.run_trdos('L_G_ASS.', wait=6)
+    emu.tap('1')
+    emu.tap('enter')
+    time.sleep(4)
+    for key in ('y', 'n', 'd'):
+        emu.tap(key)
+        emu.tap('enter')
+        time.sleep(3)
+    time.sleep(6)
+    emu.type(f'load "{args.source}"')
+    emu.tap('enter')
+    time.sleep(5)
+    loaded = saved(emu, args.source, 'C')
+    pages = [0, 2, 5]
+    name = f'{args.source}.C'
+    dump(emu, args.out, f'{args.tag}-loaded', pages, name, loaded, {'editor': True, 'typing': False})
+    emu.type('50 nop')
+    dump(emu, args.out, f'{args.tag}-typing', pages, name, loaded, {'editor': True, 'typing': True})
+    emu.tap('enter')
+    time.sleep(1)
+    dump(emu, args.out, f'{args.tag}-edited', pages, name, None, {'editor': True, 'typing': False})
+    emu.type(f'save "{args.save_as}"')
+    emu.tap('enter')
+    time.sleep(5)
+    finish(args.out, f'{args.tag}-edited', name, saved(emu, args.save_as, 'C'))
+
+
 def tasm_other(emu, args):
     """TASM without a line count (4.0 ...): W names the work file (--as-typed: the keyboard is not inverted), E edits,
     Extend Q leaves the editor, S saves. A line being typed is not in the text; the edited case is taken after Enter
@@ -662,7 +694,7 @@ def tasm412(emu, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'masmdemo', 'tasm', 'gens', 'genstape', 'zeus'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'masmdemo', 'tasm', 'gens', 'genstape', 'zeus', 'lasergenius'])
     parser.add_argument('disk')
     parser.add_argument('out')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
@@ -707,6 +739,8 @@ def main():
             zasm(emu, args)
         elif args.assembler == 'masm':
             masm(emu, args)
+        elif args.assembler == 'lasergenius':
+            lasergenius(emu, args)
         elif args.assembler == 'zeus':
             zeus(emu, args)
         elif args.assembler == 'genstape':

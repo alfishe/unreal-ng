@@ -48,6 +48,11 @@ characters). Add it to the TRD (`zxdisk.py add`), insert the disk, `load "NAME"`
 Typing works too: one paragraph a line (`10 nop`, `20 ld a,7`, …) with ENTER after each; a line the editor took
 moves the end of the text, `(#A973)`, so a script knows when to type the next.
 
+The text in memory: the paragraphs and `FF FF` from `#7F2E` to `(#A973)` (with the hash extensions the end word is
+`#ADA1`); `save` writes them without the `FF FF`, after the `#AF` header. The asm-synchronizer reads it live
+(descriptor `lasergenius-1.04`, without the hash extensions; asm-synchronizer.md §7.16). The loader's first menu is a
+BASIC INPUT: `1` then ENTER.
+
 ## Assemble and read the code
 
 Laser Genius stores code only after a `PUT`; `stats` shows the free range (`low` `#68D2` to `table` `#7F22` in

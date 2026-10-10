@@ -345,6 +345,16 @@ SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
             k = static_cast<size_t>(cr - text.file.begin()) + 1;
         }
     }
+    if (p.laserGeniusFile)
+    {
+        if (text.file.size() < 2 || text.file[text.file.size() - 1] != 0xFF || text.file[text.file.size() - 2] != 0xFF)
+            return Inconsistent(text, "the text does not end with FF FF");
+        text.file.resize(text.file.size() - 2);
+        const auto length = static_cast<uint16_t>(text.file.size());
+        const std::vector<uint8_t> header = {0xAF, static_cast<uint8_t>(length & 0xFF), static_cast<uint8_t>(length >> 8),
+                                             static_cast<uint8_t>(*start & 0xFF), static_cast<uint8_t>(*start >> 8), ' ', ' ', ' ', ' '};
+        text.file.insert(text.file.begin(), header.begin(), header.end());
+    }
     text.file.insert(text.file.end(), p.end.begin(), p.end.end());
     text.ok = true;
     text.state = "ok";
@@ -651,6 +661,29 @@ SyncDescriptor Gens(const std::string& id, const std::string& title, Signature i
     return d;
 }
 
+/// Laser Genius 1.04 Beta (asm-synchronizer.md §7.16): paragraphs from #7F2E to (#A973) (without the hash
+/// extensions; (#ADA1) with them), then FF FF; the disk file adds its #AF header. Identified by its title
+SyncDescriptor LaserGenius()
+{
+    SyncDescriptor d;
+    d.id = "lasergenius-1.04";
+    d.title = "Laser Genius 1.04 (Beta Disk)";
+    d.codec = "lasergenius";
+    d.version = "";
+    d.extension = "C";
+    d.identify = {{0xAC00, std::string("\xA9\xCD\x79\xAF\xE5\x2A\xDA\xA9\x06\x2A\xCB\x7E\x23\x20\x02\x10\xF9\x22\xDA\xA9\xE1\xE5\x2A\x32", 24)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.fixedStart = 0x7F2E;
+    d.linear.endAt = 0xA973;
+    d.linear.upperPage = 0;
+    d.linear.laserGeniusFile = true;
+    d.linear.editorStateAt = 5;
+    d.linear.editorStateLength = 4;
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 /// ZEUS (asm-synchronizer.md §7.14): the text where "o" put it, records [number] tokens 00, then FF FF; the start
 /// word and, after it, the end word (the address of the last FF). 1983, 1.1 and GG keep them at #FD00, v7.E at #FAAB
 SyncDescriptor Zeus(const std::string& id, const std::string& title, const std::string& codecVersion, uint16_t signatureAt,
@@ -831,6 +864,7 @@ const std::vector<SyncDescriptor>& Descriptors()
                      "\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF\x72\x73\x74\x75\x66\x68\x63\x7E\x7B\x7D\x5C\x79", 0x68FB),
         Zxasm310(),
         Zxasm30(),
+        LaserGenius(),
         Zeus("zeus-1983", "ZEUS 1983 (Crystal)", "1983", 0xE028,
              "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x20\x20\x20\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C"),
         Zeus("zeus-1.1", "ZEUS 1.1 beta (PHT)", "pht", 0xE020,

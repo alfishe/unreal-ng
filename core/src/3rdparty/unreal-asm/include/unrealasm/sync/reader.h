@@ -134,6 +134,11 @@ struct LinearParams
     /// GENS: records [number lo] [number hi] text #0D; while a line is typed in, the editor marks the line it goes
     /// before with bit 7 of the number's high byte (numbers stay below 32768): the live file has it clear
     bool clearLineMark = false;
+    /// Laser Genius: the text ends with FF FF in memory; its disk file is #AF, the length, the start, four characters
+    /// of the name (filled with blanks: SAVE names it, an editor state), then the paragraphs without the FF FF
+    bool laserGeniusFile = false;
+    uint16_t editorStateAt = 0;     ///< bytes of the file SAVE fills (masked by the tests)
+    uint16_t editorStateLength = 0;
 };
 
 struct TypingParams

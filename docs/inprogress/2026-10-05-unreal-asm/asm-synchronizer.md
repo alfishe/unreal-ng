@@ -410,6 +410,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Knowledge** | paragraphs from the address STATS calls `file` (`#7F2E` in 1.04 Beta), then `FF FF`; the end in `(#A973)` without the hash extensions and `(#ADA1)` with them loaded (the Phoenix typing helper of A6 uses both) |
 | family | `Linear`: `[#7F2E, (end))` + `FF FF`; the end pointer chosen by the hash extensions' presence (a signature) |
 | **Work** | **1 d** (the two configurations, Phoenix statements in the build) |
+| **Verified: without the hash extensions** (2026-10-10, dumps `lg104-*`) | the text in memory is the paragraphs and `FF FF` from `#7F2E` to `(#A973)`; the disk file drops the `FF FF` and adds the header `#AF`, the length, `#7F2E` and four characters of the name SAVE gives (an editor state: the reader fills blanks, the tests mask them) (`laserGeniusFile`). A paragraph typed is out of the text until ENTER. The loader's menu is a BASIC INPUT: `1` needs ENTER. Identified by 24 bytes of its code at `#AC00`. Descriptor `lasergenius-1.04`. With the hash extensions (end `(#ADA1)`, the code moved) not covered yet |
 
 ### 7.17 PROMETHEUS
 
