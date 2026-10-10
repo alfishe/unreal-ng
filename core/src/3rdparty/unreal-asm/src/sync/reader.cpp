@@ -455,6 +455,26 @@ SyncDescriptor Zxasm310()
     return d;
 }
 
+/// ZX ASM 3.0 (asm-synchronizer.md §7.9): the same buffer from #894F (the start of its saved files), the table in
+/// page 5: the start at #61C6, the end at #61C8; the part above #C000 in RAM page 6. Saved as type C
+SyncDescriptor Zxasm30()
+{
+    SyncDescriptor d;
+    d.id = "zasm-3.0";
+    d.title = "ZX ASM 3.0";
+    d.codec = "zxasm";
+    d.version = "3.0";
+    d.extension = "C";
+    d.identify = {{0x8000, std::string("\x57\xCD\x38\x79\xCD\xE0\x7A\xD4\xCD\x77\x82\x57\x3A\xB6\x7B\xFE\x01\xCC\xD3\x77\xB7\x28\x13\x3A", 24)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.startAt = 0x61C6;
+    d.linear.endAt = 0x61C8;
+    d.linear.upperPage = 6;
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 SyncDescriptor Tasm412()
 {
     SyncDescriptor d;
@@ -548,6 +568,7 @@ const std::vector<SyncDescriptor>& Descriptors()
         Storm("storm-1.0b", "STORM 1.0beta", "1.0", 0x03, '\x85'),
         Zasm315(),
         Zxasm310(),
+        Zxasm30(),
         Masm11(),
         TasmGap("4.0", "TASM 4.0 (XL Design)", "4.0", {0x9859, "TASM4.0>"}, 0x8DD0, 0x91AC),
         TasmGap("4.4", "TASM 4.4 (KVA)", "4.0", {0x9859, "TASM4.4>"}, 0x8DD0, 0x91AC),

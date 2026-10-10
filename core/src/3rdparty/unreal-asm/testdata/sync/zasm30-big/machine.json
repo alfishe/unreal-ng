@@ -1,0 +1,18 @@
+{
+  "windows": [
+    -1,
+    5,
+    2,
+    6
+  ],
+  "pages": [
+    2,
+    5,
+    6
+  ],
+  "expected": "ReadMe.C",
+  "state": {
+    "editor": true,
+    "typing": false
+  }
+}
