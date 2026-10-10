@@ -1613,8 +1613,11 @@ void Emulator::OnIntentEdge(const execution::IntentEdge& edge)
 
         // No more handleFrameEnd calls will arrive until the machine runs again - a device mid-playback at this
         // exact instant (GS in particular: see SoundManager::onEmulatorPaused) would otherwise keep reporting
-        // "active" for as long as the pause lasts, with nothing left to clear it
-        if (_context && _context->pSoundManager)
+        // "active" for as long as the pause lasts, with nothing left to clear it.
+        // This edge comes on the pausing thread while the loop may still finish its frame (handleFrameEnd): a
+        // running loop clears the sound itself when it parks (MainLoop::Park); here only with no loop to do it, or
+        // one already parked
+        if (_context && _context->pSoundManager && (!_isRunning || !_mainloop || _arbiter.IsParked()))
             _context->pSoundManager->onEmulatorPaused();
 
         SetState(StatePaused);
