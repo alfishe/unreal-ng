@@ -143,7 +143,6 @@ phase; master only after the owner's review.
     - Detection is 10.7x faster for ALASM (45.9 MB/s at load average ~30) and 6x for ZX-ASM (52.8 MB/s).
     - ZEUS is 1.35-1.4x faster; ALASM → sjasmplus runs at 328 k lines/s.
     - Every decode and conversion of the corpus is byte-identical to before.
-  - [ ] still below 50 MB/s: ZEUS decode (each line encoded again for the canonical check, 16-36 MB/s), XAS decode (the packer, 33 MB/s)
   - [x] `BM_Symbols_DisasmLine` A/B against the old LabelManager (2026-10-08): 13-28 % faster with 1k-60k labels, the address lookup 4-9 times faster ([symbols/test-and-benchmark-plan.md](symbols/test-and-benchmark-plan.md) §6)
 - [ ] P2: asm-synchronizer ([asm-synchronizer.md](asm-synchronizer.md), TDD 2026-10-09; was "memory bridge"). Both directions between the host and an assembler running in the emulator; about 95 days in all; the code waits for an owner go-ahead (P2)
   - [x] research: ALASM 4.44 / 5.09 and TASM 4.12 memory layouts verified live (2026-10-09)
@@ -167,7 +166,8 @@ phase; master only after the owner's review.
       - [x] ZAsm Lite 1.07 (2026-10-09): 3.2x's layout with the table at `#859D` (§7.9)
       - [x] ZAsm 3.3.51, 3.3.Final, 3.80.4, 4.20 (2026-10-09): 3.2x's layout, each with its own table (§7.9)
       - [x] ZAsm 3.3.02 (2026-10-09): traced: its default drive is D, the dialog's A covers one file; two answers A reach the menu (§7.9)
-      - [ ] ZAsm 3.4.x, 4.0x8, 4.x64, several texts at once (3.2x and later), ZX-ASM 2.x, MASM 1.0 demo / 2.0 / 3.0, TASM 3.5 / 2.0
+      - [x] ZAsm 3.4, x64.1, 4.0x8, 4.x64 (2026-10-10): the same layout, each with its own table (§7.9)
+      - [ ] ZAsm: several texts at once (3.2x and later), ZX-ASM 2.x, MASM 1.0 demo / 2.0 / 3.0, TASM 3.5 / 2.0
     - [ ] Y4 48K assemblers: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):

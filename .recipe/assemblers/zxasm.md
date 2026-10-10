@@ -24,6 +24,10 @@ manuals (`ide.txt`, `edit.txt`, `compile.txt`) are on its disks (UTF-8 copies in
 | 3.3.02 (2019) | `zxpk-68036-Z33_02/Z33_02.trd` | `boot` | needs `PENTAGON` 512K: load, edit, save; asks for the drive once per file until the menu (below) |
 | 3.3.51 | `zxart-421760/Z33_51.trd` | `boot` | needs `PENTAGON` 512K: load, edit, save |
 | 3.80.4 | `zxart-310045/ZASM3_84.trd` | `boot` | needs `PENTAGON` 512K: load, edit, save |
+| 3.4 (`Z34_04`, 2019) | `zxart-310044/ZXTA34X.trd` | `boot` | needs `PENTAGON` 512K: load, edit, save |
+| x64.1 | `zxart-249322/ZASM64_1.trd` | `boot` | needs `PENTAGON` 512K: load, edit, save |
+| 4.0x8 (2024) | `zxart-513423/Z4_0x8b.trd` | `boot` | needs `PENTAGON` 512K: load, edit, save; no settings file, drive D built in (below) |
+| 4.x64 (2025) | `zxart-572140/Z4_x64.trd` | `boot` | needs `PENTAGON` 512K: load, edit, save; Russian menus, a date dialog at start (below) |
 
 Sources: 2.x saves plain text (type `C`), 3.0 type `C` start 35151, 3.10 and later type `a` with the extension `sm`
 (`NAME.asm` in ZAsm's own naming). `zxasm encode --codec zxasm --version 3.15` (3.15-4.20; `2` for 2.4-2.6, `3.0` for 3.0-3.10, `lite`
@@ -94,7 +98,7 @@ The drives a ZAsm 3.15+ uses come from the **settings file on its disk**, not fr
 (`ZAsm3.15 s`, `z33.02 s`, `z33.51 s`, ...), byte +3 "System drive" (where ZAsm runs from) and +4 "Overlays drive",
 ASCII `A`-`E` (3.15 keeps them at offset `#24`; layout in
 [research-zxasm.md](../../docs/inprogress/2026-10-05-unreal-asm/research-zxasm.md#31-the-settings-file-type-s)). The
-shipped 3.15, 3.3.02, 3.3.51 and x64 say **`DD`**: the author works in Shalaev's DOS emulator and kept the overlays on
+shipped 3.15, 3.3.02, 3.3.51, x64.1 and 4.x64 say **`DD`** (3.4 says `AA`; 4.0x8 has no settings file and uses D): the author works in Shalaev's DOS emulator and kept the overlays on
 another disk, a RAM disk once (his ReadMe, zx-pk.ru thread 29356 page 4: "I use Shalaev's emulator exclusively"). With
 no drive D the program says "No Disk" and the drive picked in the dialog covers **the file being loaded only**. To
 remove the question: Options / SetUp, "System drive" and "Overlays drive" A, Options / Save_setup (the setup overlay's
@@ -109,7 +113,9 @@ SaveSet rewrites the file); or patch bytes +3 / +4 of the `s` file to `A` (the i
 | Lite 1.07 | 512K | none (the menu at once) |
 | 3.3.02 | 512K | `enter`, `a`, `~3`, `enter`, `a`, `~3`, `space`, `~3`: it loads every overlay as a file from the overlays drive, so it asks again for the next file (`FONT4.f` read from A, then drive D again: port trace 2026-10-09) |
 | 3.3.51 | 512K | `enter`, `a`, `~6`, `space`, `~4` (one "No Disk": its overlays are one `OVERLAYS.t` catalogue) |
-| 3.3.Final, 3.80.4, 4.20 | 512K | `space`, `~4` |
+| 3.3.Final, 3.80.4, 3.4, x64.1, 4.20 | 512K | `space`, `~4` |
+| 4.0x8 | 512K | `space`, `~5`, `space`, `~3` ("*** ERROR *** Press any key": its built-in drive D); then before every load File (`enter`), Drive (`d`), `a`: the menu stays open, `l` opens Load |
+| 4.x64 | 512K | `~10`, `space`, `~4`, CS+SPACE, `~3`: its "Нет диска!" ("No disk!", Повтор / Отмена) has no drive list, so the dump disks carry its settings file `ZASM4x64.S` (type `S`, start `#5445`) with bytes +3 / +4 `AA` instead of the shipped `DD`; the key past its picture opens the "Сегодня" (today) date dialog, CS+SPACE closes it; menus in Russian (Файл / Загрузить = File / Load, same keys) |
 
 On a 128K machine the 512K versions stop on their picture with a red border (a `DI : HALT` after the memory test,
 `BC` = `#7FFD`); 3.3.02's red border on 512K is its own picture. The "No Disk" here is the emulator answering
@@ -135,6 +141,10 @@ a fixed RAM page. Words just before the start word follow the cursor and the scr
 | 3.3.51 | `#84FC` / `#84FE` | `#8514` | page 30 | the same |
 | 3.3.Final | `#8401` / `#8403` | `#841A` | page 30 | the same |
 | 3.80.4 | `#6D02` / `#6D04` (page 5) | `#8198` | page 30 | the same |
+| 3.4 | `#8520` / `#8522` | `#8536` | page 30 | the same |
+| x64.1 | `#852D` / `#852F` | `#853A` | page 30 | the same |
+| 4.0x8 | `#692B` / `#692D` (page 5) | `#8201` | page 30 | the same |
+| 4.x64 | `#6929` / `#692B` (page 5) | `#8201` | page 30 | the same |
 | 4.20 | `#68FB` / `#68FD` (page 5) | `#8201` | page 30 | the same |
 
 COMMAND `2` asks for a name, `3` loads, `S` searches. The asm-synchronizer reads the buffer without a save

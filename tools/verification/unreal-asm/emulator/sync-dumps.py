@@ -27,7 +27,10 @@ save the text itself and keep the file. The synchronizer's reader must give that
     sync-dumps.py zasm <disk, ovlib first> <out-dir> --ram 512 --start enter,a,~6,space,~4 --list-load --upper 30
                   --source ovlib --big-disk <disk, BigRead first> --big BigRead --big-type t --tag zasm3351
                                                                  # ZAsm 3.3.51 (3.3.Final, 3.80.4, 4.20: --start space,~4;
-                                                                 # 3.3.02: --start enter,a,~3,enter,a,~3,space,~3)
+                                                                 # 3.3.02: --start enter,a,~3,enter,a,~3,space,~3;
+                                                                 # 4.0x8: --start space,~5,space,~3
+                                                                 #   --load-keys enter,~3,d,~3,a,~4,l,~4;
+                                                                 # 4.x64: --start ~10,space,~4,cs+space,~3)
     sync-dumps.py masm <disk-with-NAME.a first> <out-dir> --source NAME --tag masm11
                                                                  # MASM 1.1: TAG-typing, TAG-edited, TAG-menu
     sync-dumps.py tasm <disk-with-NAME.A> <out-dir> --boot NAME --source NAME --tag TAG [--as-typed]
@@ -154,16 +157,23 @@ def storm(emu, args):
 def zasm(emu, args):
     """ZAsm 3.15: File / Load; COMMAND (Extend) SS+2 saves under the name (with a ";!" editor-state first line). The
     text runs from (#8829) to (#8837); its part above #C000 is in RAM page 6"""
+    def keys(sequence):
+        """Comma-separated keys; cs+space presses them together; ~N waits N seconds"""
+        for key in filter(None, sequence.split(',')):
+            if key.startswith('~'):
+                time.sleep(float(key[1:]))
+            elif '+' in key:
+                emu.post('/keyboard/combo', {'keys': key.split('+'), 'frames': 4})
+                time.sleep(0.5)
+            else:
+                emu.tap(key)
+                time.sleep(0.5)
+
     def start(disk):
         emu.insert_disk(disk)
         emu.run_trdos(args.boot or 'boot', wait=15)
-        if args.start:                         # keys past the title / the drive question; ~N waits N seconds
-            for key in filter(None, args.start.split(',')):
-                if key.startswith('~'):
-                    time.sleep(float(key[1:]))
-                else:
-                    emu.tap(key)
-                    time.sleep(0.5)
+        if args.start:                         # keys past the title / the drive question
+            keys(args.start)
         elif args.key_start:                   # 3.2x: the title waits for a key
             emu.tap('space')
             time.sleep(3)
@@ -173,10 +183,13 @@ def zasm(emu, args):
             time.sleep(6)
 
     def load(name):
-        emu.tap('enter')                       # File
-        time.sleep(2)
-        emu.tap('enter')                       # Load
-        time.sleep(3)
+        if args.load_keys:                     # 4.0x8: File, Drive A, then L (the menu stays open)
+            keys(args.load_keys)
+        else:
+            emu.tap('enter')                   # File
+            time.sleep(2)
+            emu.tap('enter')                   # Load
+            time.sleep(3)
         if args.list_load:                     # the first file of the list (3.10 types capitals into the name)
             emu.post('/keyboard/combo', {'keys': ['cs', '7'], 'frames': 4})
             time.sleep(0.5)
@@ -396,6 +409,7 @@ def main():
     parser.add_argument('--big-type', help='zasm: the long text\'s TR-DOS type (default: --type)')
     parser.add_argument('--ram', type=int, help='the machine\'s RAM in KB (default: 128)')
     parser.add_argument('--start', help='zasm: the keys after the boot, comma-separated; ~N waits N seconds')
+    parser.add_argument('--load-keys', help='zasm: the keys from the menu to the Load panel (default: File, Load)')
     parser.add_argument('--key-start', action='store_true', help='zasm: a key past the title, no drive question (3.2x)')
     parser.add_argument('--upper', type=int, default=6, help='zasm: the RAM page of the text above #C000')
     parser.add_argument('--type', default='a', help='zasm: the sources\' TR-DOS type')
