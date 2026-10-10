@@ -71,6 +71,7 @@ const Case kCases[] = {
     {"xas505-edited", "xas-5.05"},     {"xas505se-typing", "xas-5.05"},    {"xas505se-edited", "xas-5.05"},
     {"xas743c-typing", "xas-7.43c"},   {"xas743c-edited", "xas-7.43c"},    {"xas7447-typing", "xas-7.447"},
     {"xas7447-edited", "xas-7.447"},   {"xas907m-typing", "xas-9.07m"},    {"xas910-typing", "xas-9.10"},
+    {"xas907m-edited", "xas-9.07m"},   {"xas910-edited", "xas-9.10"},
     {"storm13-typing", "storm-1.3"},   {"storm13-edited", "storm-1.3"},    {"storm13i-typing", "storm-1.3"},
     {"storm13i-edited", "storm-1.3"},     {"storm10b-typing", "storm-1.0b"},  {"storm10b-edited", "storm-1.0b"},
     {"zasm315-typing", "zasm-3.15"},   {"zasm315-edited", "zasm-3.15"},    {"zasm315-big", "zasm-3.15"},
