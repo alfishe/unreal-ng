@@ -6,6 +6,8 @@ test skips itself when the NEXT model is not creatable. The report values themse
 parameters are parsed, the status codes are right and a write changes the machine.
 """
 
+import base64
+import struct
 import time
 
 import pytest
@@ -93,6 +95,130 @@ class TestNextReports:
             api_client.delete_emulator(emulator_id)
 
 
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def png_header(data):
+    """(width, height, bit depth, colour type) of a PNG; colour type 6 = RGBA"""
+    assert data[:8] == PNG_SIGNATURE, "not a PNG"
+    width, height, depth, colour = struct.unpack(">IIBB", data[16:26])
+    return width, height, depth, colour
+
+
+def wait_for_layer_frame(api_client, emulator_id, layer="ula", seconds=5.0):
+    """The layer record answers 409 no-frame until a frame has been drawn; poll until it does"""
+    deadline = time.time() + seconds
+    while True:
+        response = get(api_client, emulator_id, f"/capture/screen?layer={layer}")
+        if response.status_code == 200 or time.time() > deadline:
+            return response
+        time.sleep(0.1)
+
+
+class TestNextLayerCapture:
+    """Per-layer capture of a Next frame (design-layer-capture.md): the routes, the layer words, PNG with alpha, the 400 / 409 answers and the
+    switch. The pixels are asserted by the core tests (core/tests/emulator/video/next/nextlayercapture_test.cpp and nextlayerimage_test.cpp)."""
+
+    def test_the_video_report_carries_the_record(self, api_client, next_emulator):
+        record = get(api_client, next_emulator, "/state/next/video").json()["layer_capture"]
+        assert record["enabled"] is True, "on by default"
+        assert set(record) >= {"enabled", "frames", "last_frame", "bytes"}
+
+    def test_a_layer_is_a_png_with_alpha(self, api_client, next_emulator):
+        for layer in ("ula", "layer2", "tilemap", "sprites", "ids"):
+            response = wait_for_layer_frame(api_client, next_emulator, layer)
+            assert response.status_code == 200, (layer, response.text)
+            body = response.json()
+            assert body["layer"] == layer and body["format"] == "png" and body["alpha"] is True
+            assert (body["width"], body["height"]) == (640, 512)
+            data = base64.b64decode(body["data"])
+            width, height, depth, colour = png_header(data)
+            assert (width, height) == (640, 512), "the geometry of capture/screen"
+            # the encoder picks the smallest PNG that holds the pixels: RGBA (colour type 6) or a palette (3) whose tRNS chunk carries the alpha
+            assert colour in (0, 3, 6), (layer, colour)  # grey for a single-colour image
+            if layer in ("layer2", "tilemap", "sprites"):  # nothing paints on a bare machine: the alpha is in the file
+                assert colour == 6 or b"tRNS" in data, (layer, colour)
+            assert body["frame"]["sequence"] >= 1
+        assert "legend" in body and body["legend"][0]["name"] == "fallback", "the ids image carries its legend"
+
+    def test_raw_bytes_and_flattened_alpha(self, api_client, next_emulator):
+        assert wait_for_layer_frame(api_client, next_emulator).status_code == 200
+        raw = get(api_client, next_emulator, "/capture/screen?layer=tilemap&format=rgba").json()
+        assert raw["format"] == "rgba"
+        assert len(base64.b64decode(raw["data"])) == 640 * 512 * 4
+        flat = get(api_client, next_emulator, "/capture/screen?layer=tilemap&format=rgba&alpha=false").json()
+        pixels = base64.b64decode(flat["data"])
+        assert all(pixels[i] == 255 for i in range(3, len(pixels), 4 * 997)), "alpha=false: every pixel opaque"
+
+    def test_all_layers_of_one_frame(self, api_client, next_emulator):
+        assert wait_for_layer_frame(api_client, next_emulator).status_code == 200
+        response = get(api_client, next_emulator, "/capture/next-layers")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert set(body["layers"]) == {"ula", "layer2", "tilemap", "sprites", "ids"}
+        assert len(body["legend"]) == 8
+        assert png_header(base64.b64decode(body["layers"]["ula"]["data"]))[:2] == (640, 512)
+        assert get(api_client, next_emulator, "/capture/next-layers?format=gif").status_code == 400
+
+    def test_bad_words_are_400(self, api_client, next_emulator):
+        for query in ("layer=layer3", "layer=ula&format=gif", "layer=ula&alpha=maybe", "layer=ula&area=screen"):
+            assert get(api_client, next_emulator, f"/capture/screen?{query}").status_code == 400, query
+
+    def test_composed_is_the_ordinary_screenshot(self, api_client, next_emulator):
+        response = get(api_client, next_emulator, "/capture/screen?layer=composed")
+        assert response.status_code in (200, 409)  # 409 = no presented frame yet, the ordinary answer
+        if response.status_code == 200:
+            assert "layer" not in response.json()
+
+    def test_the_switch(self, api_client, next_emulator):
+        assert wait_for_layer_frame(api_client, next_emulator).status_code == 200
+        off = post(api_client, next_emulator, "/next/layer-capture", {"enabled": False})
+        assert off.status_code == 200 and off.json()["enabled"] is False
+        refused = get(api_client, next_emulator, "/capture/screen?layer=ula")
+        assert refused.status_code == 409 and refused.json()["kind"] == "layer-capture-off", refused.text
+        assert get(api_client, next_emulator, "/capture/next-layers").status_code == 409
+        on = post(api_client, next_emulator, "/next/layer-capture", {"enabled": True})
+        assert on.status_code == 200 and on.json()["enabled"] is True
+        assert wait_for_layer_frame(api_client, next_emulator).status_code == 200, "a frame after the switch"
+        report = post(api_client, next_emulator, "/next/layer-capture", {})
+        assert report.status_code == 200 and report.json()["frames"] >= 1
+        assert post(api_client, next_emulator, "/next/layer-capture", {"enabled": "yes"}).status_code == 400
+
+    def test_the_pixel_inspector(self, api_client, next_emulator):
+        assert wait_for_layer_frame(api_client, next_emulator).status_code == 200
+        response = get(api_client, next_emulator, "/state/next/pixel?x=100&y=100&sx=1")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["ok"] is True and body["pixel"]["x"] == 100 and body["pixel"]["y"] == 100 and body["pixel"]["subpixel"] == 1
+        assert body["winner"]["layer"] in ("ula", "border", "layer2", "tilemap", "sprite", "blend", "stencil", "fallback")
+        assert set(body["layers"]) == {"ula", "layer2", "tilemap", "sprites"}
+        for layer in body["layers"].values():
+            assert set(layer) >= {"opaque", "rgb9", "wins", "why", "source"}
+        assert body["layers"]["ula"]["source"]["kind"] in ("paper", "paper_hicolour", "paper_hires", "lores", "border", "disabled")
+        assert body["colour"]["rgb"].startswith("#") and body["layer_order"]
+        # the same pixel as the layer image says: the winner of the ids image is the winner here
+        for query in ("x=320&y=0", "x=0&y=256", "x=-1&y=0", "x=1", "y=1", "x=1&y=1&sx=2", "x=zz&y=1"):
+            assert get(api_client, next_emulator, f"/state/next/pixel?{query}").status_code == 400, query
+        assert post(api_client, next_emulator, "/next/layer-capture", {"enabled": False}).status_code == 200
+        refused = get(api_client, next_emulator, "/state/next/pixel?x=1&y=1")
+        assert refused.status_code == 409 and refused.json()["error"] == "Conflict", refused.text
+        assert post(api_client, next_emulator, "/next/layer-capture", {"enabled": True}).status_code == 200
+
+    def test_another_machine_has_no_layers(self, api_client):
+        response = api_client.create_and_start_emulator(model="48K")
+        emulator_id = response["id"]
+        try:
+            refused = get(api_client, emulator_id, "/capture/screen?layer=ula")
+            assert refused.status_code == 409 and refused.json()["kind"] == "not-next", refused.text
+            assert get(api_client, emulator_id, "/capture/next-layers").status_code == 409
+            assert post(api_client, emulator_id, "/next/layer-capture", {"enabled": True}).status_code == 409
+            assert get(api_client, emulator_id, "/state/next/pixel?x=1&y=1").status_code == 409
+            assert get(api_client, emulator_id, "/capture/screen?layer=layer3").status_code == 400
+        finally:
+            api_client.stop_emulator(emulator_id)
+            api_client.delete_emulator(emulator_id)
+
+
 class TestNextInterpreters:
     """The report bindings of the Python and Lua planes on a live NEXT. They are verification tests, not core tests: the core library
     does not link either interpreter, and the plane is only real inside unreal-qt / unreal-cli."""
@@ -127,6 +253,36 @@ except ValueError:
     pass
 else:
     raise AssertionError('a bad door must raise ValueError')
+
+# per-layer capture (design-layer-capture.md)
+state = emu.next_layer_capture_control()
+assert state['enabled'] is True and 'frames' in state and 'bytes' in state, state
+shot = emu.capture_screen_layer('tilemap')
+if not shot['success']:
+    assert shot['kind'] == 'no-frame', shot   # a frame has not completed yet: the only allowed refusal
+else:
+    assert shot['layer'] == 'tilemap' and shot['width'] == 640 and shot['height'] == 512 and shot['alpha'] is True, shot
+    assert shot['frame']['sequence'] >= 1 and len(shot['data']) > 100, shot
+    ids = emu.capture_screen_layer('ids', 'rgba')
+    assert ids['success'] and len(ids['legend']) == 8 and ids['format'] == 'rgba', ids
+bad = emu.capture_screen_layer('layer3')
+assert bad['success'] is False and bad['kind'] == 'bad-parameter', bad
+off = emu.next_layer_capture_control(False)
+assert off['enabled'] is False, off
+assert emu.capture_screen_layer('ula')['kind'] == 'layer-capture-off'
+try:
+    emu.next_pixel(1, 1)
+except RuntimeError:
+    pass
+else:
+    raise AssertionError('next_pixel with the capture off must raise RuntimeError')
+assert emu.next_layer_capture_control(True)['enabled'] is True
+try:
+    emu.next_pixel(320, 0)
+except ValueError:
+    pass
+else:
+    raise AssertionError('x = 320 must raise ValueError')
 print('NEXT-PY-OK')
 """
         resp = api_client.exec_python(code)
@@ -153,6 +309,31 @@ local w = assert(next_nextreg_write(0x4C, 5, "nextreg"))
 assert(w.after == "0x05", "write")
 local ok, err = next_nextreg_write(0x4C, 5, "nonsense")
 assert(ok == nil and err ~= nil, "bad door must be nil + error")
+
+-- per-layer capture (design-layer-capture.md)
+local state = assert(next_layer_capture_control())
+assert(state.enabled == true and state.bytes ~= nil, "layer capture state")
+local shot, why = capture_screen_layer("tilemap")
+if shot == nil then
+    assert(why:find("no frame") ~= nil, "the only allowed refusal is: no frame yet, got " .. tostring(why))
+else
+    assert(shot.layer == "tilemap" and shot.width == 640 and shot.height == 512 and shot.alpha == true, "layer image")
+    assert(shot.frame.sequence >= 1 and #shot.data > 100, "layer data")
+    local ids = assert(capture_screen_layer("ids", {format = "rgba"}))
+    assert(#ids.legend == 8 and #ids.data == 640 * 512 * 4, "ids image")
+end
+local bad, badWhy = capture_screen_layer("layer3")
+assert(bad == nil and badWhy:find("Unknown layer") ~= nil, "bad layer")
+assert(next_layer_capture_control({enabled = false}).enabled == false, "switch off")
+local refused, refusedWhy = capture_screen_layer("ula")
+assert(refused == nil and refusedWhy:find("Layer capture is off") ~= nil, "off refusal")
+local pixel = next_pixel(100, 100)
+assert(pixel == nil or (pixel.layers.ula.source.kind ~= nil and pixel.winner.layer ~= nil), "pixel")
+local badPixel, badPixelWhy = next_pixel(320, 0)
+assert(badPixel == nil and badPixelWhy:find("x must be 0%-319") ~= nil, "bad pixel")
+local offPixel, offWhy = next_pixel(1, 1)
+assert(offPixel == nil and offWhy:find("Layer capture is off") ~= nil, "off pixel")
+assert(next_layer_capture_control({enabled = true}).enabled == true, "switch on")
 print("NEXT-LUA-OK")
 """
         resp = api_client.exec_lua(code)

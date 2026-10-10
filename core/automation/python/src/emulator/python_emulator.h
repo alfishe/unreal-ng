@@ -32,6 +32,7 @@
 #include <tapeaudio/tapeaudioimporter.h>
 #include <tapeaudio/tapeaudiorenderer.h>
 #include <emulator/video/screen.h>
+#include <emulator/video/next/nextlayerimage.h>
 #include <emulator/sound/soundcharactersettings.h>
 #include <emulator/sound/chips/neogs/neogsmedia.h>
 #include <emulator/memory/atm/evoflashrequest.h>
@@ -2638,6 +2639,62 @@ namespace PythonBindings
                py::arg("format") = "png", py::arg("full") = py::none(), py::arg("area") = "", py::arg("path") = "",
                py::arg("source") = "")
             
+            .def("capture_screen_layer", [](Emulator& self, const std::string& layer, const std::string& format, py::object alpha,
+                                             const std::string& path) -> py::dict {
+                py::dict result;
+                const NextLayer::Result shot = NextLayer::Request(self.GetContext(), layer, format,
+                                                                  alpha.is_none() ? std::string() : (alpha.cast<bool>() ? "true" : "false"), path);
+                if (shot.status != NextLayer::Status::Ok)
+                {
+                    result["success"] = false;
+                    result["error"] = shot.message;
+                    result["kind"] = NextLayer::StatusName(shot.status);
+                    return result;
+                }
+                result["success"] = true;
+                result["layer"] = NextLayer::KindName(shot.kind);
+                result["format"] = shot.rgba ? "rgba" : "png";
+                result["alpha"] = shot.alpha;
+                result["width"] = shot.width;
+                result["height"] = shot.height;
+                result["size"] = shot.size;
+                py::dict frame;
+                frame["sequence"] = shot.sequence;
+                frame["frame_number"] = shot.frameCounter;
+                result["frame"] = frame;
+                if (shot.kind == NextLayer::Kind::Ids)
+                {
+                    py::list legend;
+                    for (unsigned id = 0; id < NextLayer::kIdCount; id++)
+                    {
+                        py::dict entry;
+                        const uint32_t c = NextLayer::IdColour(id);
+                        char colour[8];
+                        std::snprintf(colour, sizeof colour, "#%02X%02X%02X", c & 0xFF, (c >> 8) & 0xFF, (c >> 16) & 0xFF);
+                        entry["id"] = id;
+                        entry["name"] = NextLayer::IdName(id);
+                        entry["colour"] = std::string(colour);
+                        legend.append(entry);
+                    }
+                    result["legend"] = legend;
+                }
+                if (!shot.savedFile.empty())
+                    result["file"] = shot.savedFile;
+                else
+                    result["data"] = NextLayer::Base64(shot.bytes);
+                return result;
+            }, py::arg("layer"), py::arg("format") = "png", py::arg("alpha") = py::none(), py::arg("path") = "",
+               "ONE LAYER of the last completed frame of a ZX Spectrum Next (design-layer-capture.md): 'ula' (with the border and LoRes), "
+               "'layer2', 'tilemap', 'sprites' - a PNG with alpha 0 where the layer does not paint (format='rgba': the raw bytes; "
+               "alpha=False: flattened onto the fallback colour) - or 'ids' (each pixel coloured by the layer that won it, legend in "
+               "the answer). 640 x 512, the geometry of capture_screen(). Returns a dict like capture_screen (base64 'data' or 'file'); "
+               "success=False with kind 'not-next' / 'layer-capture-off' / 'no-frame' / 'bad-parameter' otherwise")
+            .def("next_layer_capture_control", [](Emulator& self, py::object enabled) -> py::object {
+                return StateNodeToPy(DeviceState::NextLayerCaptureControl(self.GetContext(), enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0)));
+            }, py::arg("enabled") = py::none(),
+               "Switch (enabled=True/False) or report the per-layer record of the Next screen (on by default; takes effect at the next frame "
+               "start): available, enabled, frames, last_frame, bytes")
+
             // Audio state
             .def("audio_is_muted", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
@@ -2913,6 +2970,24 @@ namespace PythonBindings
             }, py::arg("from_index") = py::none(), py::arg("count") = py::none(), py::arg("all") = false,
                "The 128 sprite attributes decoded (the visible ones of the page; all=True lists every one), switches, collision flags (not "
                "cleared), pattern memory summary")
+            .def("next_pixel", [](Emulator& self, int x, int y, py::object sx) -> py::object {
+                NextPixelQuery query;
+                std::string error;
+                if (!NextPixelQueryFromStrings(std::to_string(x), std::to_string(y), sx.is_none() ? std::string() : std::to_string(sx.cast<int>()), query, error))
+                    throw py::value_error(error);
+                const StateNode report = DeviceState::NextPixel(self.GetContext(), query);
+                const StateNode* available = report.find("available");
+                if (available && available->kind == StateNode::Kind::Bool && !available->b)
+                    throw py::value_error("This machine is not a ZX Spectrum Next");
+                const StateNode* ok = report.find("ok");
+                if (ok && ok->kind == StateNode::Kind::Bool && !ok->b)
+                    throw std::runtime_error(report.find("message") ? report.find("message")->s : std::string("no frame"));
+                return StateNodeToPy(report);
+            }, py::arg("x"), py::arg("y"), py::arg("sx") = py::none(),
+               "The pixel inspector of the last captured Next frame (design-layer-capture.md): x 0-319, y 0-255, sx the sub-pixel 0 or 1. "
+               "Returns winner {layer, id}, colour {rgb9, rgb}, layer_order and per layer (ula, layer2, tilemap, sprites) opaque, rgb9, wins, why "
+               "and source (where the pixel byte came from). ValueError for a bad coordinate or another machine, RuntimeError with the layer "
+               "capture off or before the first frame")
             .def("next_nextreg_write", [](Emulator& self, int reg, int value, const std::string& door) -> py::object {
                 if (reg < 0 || reg > 255 || value < 0 || value > 255)
                     throw py::value_error("reg and value must be 0..255");

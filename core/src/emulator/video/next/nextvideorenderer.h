@@ -14,6 +14,7 @@
 
 #include "emulator/io/z80n/nextsprites.h"
 #include "emulator/io/z80n/nextvideoregs.h"
+#include "emulator/video/next/nextlayerframe.h"
 
 struct NextVideoInputs
 {
@@ -28,6 +29,9 @@ struct NextVideoInputs
     bool shadowScreen = false;            ///< the ULA reads bank 7 instead of 5 (#7FFD bit 3 / NR #69 bit 6)
     bool layer2Enable = false;            ///< port #123B bit 1 / NR #69 bit 7
     bool flash = false;                   ///< the FLASH attribute phase
+    /// When non-null RenderLine also stores the four layer rows, the winner and the sprite number of each pixel here
+    /// (design-layer-capture.md); null: nothing is recorded and the line is drawn as before
+    const NextLayer::LineSink* layerOut = nullptr;
 };
 
 class NextVideoRenderer
@@ -41,22 +45,24 @@ public:
     /// Draw line `y` (0..255) into `out` (kWidth RGBA pixels, bytes R G B A)
     static void RenderLine(const NextVideoInputs& in, unsigned y, uint32_t* out);
 
+    /// Append to `frame`'s line table the register state `in` holds for the stretch [fromX, toX) (sub-pixels) of grid line y: what the pixel
+    /// inspector needs to recompute where a pixel came from. Called by ScreenNext before each segment it draws
+    static void RecordSegment(NextLayer::Frame& frame, unsigned y, unsigned fromX, unsigned toX, const NextVideoInputs& in);
+
     /// A 9-bit colour (RRRGGGBBb) as RGBA bytes
     static uint32_t Rgba(uint16_t colour9);
 
 private:
-    struct Pixel
-    {
-        uint16_t colour = 0;  ///< 9 bits, bit 9: Layer 2 priority
-        bool opaque = false;
-        bool border = false;    ///< ULA: the border colour
-        bool below = false;     ///< tilemap: the ULA pixel is above this one
-        bool textMode = false;  ///< tilemap: text mode (transparent by the global colour, not by index)
-    };
+    using Pixel = NextLayer::Pixel;
+    static void DrawLayers(const NextVideoInputs& in, unsigned y, Pixel* ula, Pixel* layer2, Pixel* tiles, Pixel* sprites,
+                           uint8_t* spriteNumbers);
     static void UlaLine(const NextVideoInputs& in, unsigned y, Pixel* line);
     static void LoResLine(const NextVideoInputs& in, unsigned y, Pixel* line);
     static void ApplyUlaClip(const NextVideoInputs& in, unsigned y, Pixel* line);
-    static void SpriteLine(const NextVideoInputs& in, unsigned y, Pixel* line);
+    static void SpriteLine(const NextVideoInputs& in, unsigned y, Pixel* line, uint8_t* numbers);
+    template <bool kRecord>
+    static void ComposeLine(const NextVideoInputs& in, const Pixel* ula, const Pixel* layer2, const Pixel* tiles, const Pixel* sprites,
+                            const uint8_t* spriteNumbers, uint32_t* out);
     static void TilemapLine(const NextVideoInputs& in, unsigned y, Pixel* line);
     static void Layer2Line(const NextVideoInputs& in, unsigned y, Pixel* line);
 };

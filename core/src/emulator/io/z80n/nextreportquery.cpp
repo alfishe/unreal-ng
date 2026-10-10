@@ -220,3 +220,36 @@ bool NextSpritesQueryFromStrings(const std::string& from, const std::string& cou
     }
     return true;
 }
+
+bool NextPixelQueryFromStrings(const std::string& x, const std::string& y, const std::string& sx, NextPixelQuery& query, std::string& error)
+{
+    uint32_t value = 0;
+    if (x.empty() || y.empty())
+    {
+        error = "x and y are required: x is 0-319 (a pixel of the 320 x 256 grid), y 0-255";
+        return false;
+    }
+    if (!ParseCount(x, 319, value))
+    {
+        error = "x must be 0-319 (decimal, or hex with 0x / #), got '" + x + "'";
+        return false;
+    }
+    query.x = value;
+    if (!ParseCount(y, 255, value))
+    {
+        error = "y must be 0-255 (decimal, or hex with 0x / #), got '" + y + "'";
+        return false;
+    }
+    query.y = value;
+    query.sub = 0;
+    if (!sx.empty())
+    {
+        if (!ParseCount(sx, 1, value))
+        {
+            error = "sx must be 0 or 1 (the left or right sub-pixel), got '" + sx + "'";
+            return false;
+        }
+        query.sub = value;
+    }
+    return true;
+}

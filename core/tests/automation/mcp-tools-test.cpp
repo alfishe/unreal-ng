@@ -1006,7 +1006,8 @@ TEST_F(McpTools_Test, InspectState_NextReportAspects_UseTheirRoutesAndQueries)
                           Case{"next_ports", "/api/v1/emulator/emu-1/state/next/ports?port=6B&access=w"},
                           Case{"next_nextreg", "/api/v1/emulator/emu-1/state/next/nextreg?reg=07&changed=true"},
                           Case{"next_copper", "/api/v1/emulator/emu-1/state/next/copper?from=16&count=8&raw=true"},
-                          Case{"next_sprites", "/api/v1/emulator/emu-1/state/next/sprites?from=16&count=8&all=true"}})
+                          Case{"next_sprites", "/api/v1/emulator/emu-1/state/next/sprites?from=16&count=8&all=true"},
+                          Case{"next_pixel", "/api/v1/emulator/emu-1/state/next/pixel?x=105&y=87&sx=1"}})
     {
         _caller->calls.clear();
         Json::Value report;
@@ -1024,6 +1025,9 @@ TEST_F(McpTools_Test, InspectState_NextReportAspects_UseTheirRoutesAndQueries)
         args["nr_count"] = "8";
         args["nr_raw"] = true;
         args["nr_all"] = true;
+        args["nr_x"] = "105";
+        args["nr_y"] = "87";
+        args["nr_sx"] = "1";
         mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
         ASSERT_FALSE(result.isError) << c.aspect << ": " << result.text;
         EXPECT_TRUE(_caller->Saw("GET", c.path)) << c.aspect;
@@ -1130,9 +1134,9 @@ TEST_F(McpTools_Test, InspectState_SchemaListsTheNextReportAspectsAndParameters)
     std::string aspects;
     for (const Json::Value& a : schema["properties"]["aspects"]["items"]["enum"])
         aspects += a.asString() + " ";
-    for (const char* aspect : {"next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites"})
+    for (const char* aspect : {"next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel"})
         EXPECT_NE(aspects.find(aspect), std::string::npos) << aspect;
-    for (const char* parameter : {"nr_palette", "nr_range", "nr_port", "nr_access", "nr_reg", "nr_changed", "nr_from", "nr_count", "nr_raw", "nr_all"})
+    for (const char* parameter : {"nr_palette", "nr_range", "nr_port", "nr_access", "nr_reg", "nr_changed", "nr_from", "nr_count", "nr_raw", "nr_all", "nr_x", "nr_y", "nr_sx"})
         EXPECT_TRUE(schema["properties"].isMember(parameter)) << parameter;
 }
 
@@ -3851,4 +3855,119 @@ TEST(McpRequestPath_Test, RawCharactersAreStillEscaped)
 {
     EXPECT_EQ(mcp::PrepareRequestPath("/symbols/lookup?address=#5800"), "/symbols/lookup?address=%235800");
     EXPECT_EQ(mcp::PrepareRequestPath("/x?name=a+b c"), "/x?name=a%2Bb%20c");
+}
+
+// capture_media screenshot with layer (design-layer-capture.md): the words go to the route, the answer says which layer of which Next frame
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_ForwardsTheLayerAndAlphaAndNamesTheFrame)
+{
+    Json::Value body;
+    body["status"] = "success";
+    body["layer"] = "ids";
+    body["format"] = "png";
+    body["alpha"] = false;
+    body["width"] = 640;
+    body["height"] = 512;
+    body["size"] = 321;
+    body["frame"]["sequence"] = 42;
+    body["frame"]["frame_number"] = 1234;
+    body["legend"][0]["id"] = 0;
+    body["legend"][0]["name"] = "fallback";
+    body["legend"][0]["colour"] = "#404040";
+    body["legend"][1]["id"] = 5;
+    body["legend"][1]["name"] = "sprite";
+    body["legend"][1]["colour"] = "#FF3030";
+    body["data"] = "iVBORw0KGgo=";
+    const std::string route = "/api/v1/emulator/emu-1/capture/screen?layer=ids&alpha=false";
+    _caller->routes["GET " + route] = {200, body};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["layer"] = "ids";
+    args["alpha"] = false;
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", route));
+    EXPECT_NE(result.text.find("layer ids of Next frame #42"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("layer ids of Next frame #42, opaque"), std::string::npos) << "the ids image has no alpha: " << result.text;
+    EXPECT_NE(result.text.find("5=sprite(#FF3030)"), std::string::npos) << "the legend of the ids image is in the text: " << result.text;
+    EXPECT_FALSE(result.structured.isMember("data"));
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_ALayerRefusalIsAnErrorWithItsReason)
+{
+    Json::Value refusal;
+    refusal["error"] = "Conflict";
+    refusal["message"] = "Layer capture is off: switch it on";
+    refusal["kind"] = "layer-capture-off";
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen?layer=tilemap"] = {409, refusal};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["layer"] = "tilemap";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("Layer capture is off"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_NextPixelAspect_SummarizesTheWinnerAndEachLayersReason)
+{
+    Json::Value report;
+    report["available"] = true;
+    report["ok"] = true;
+    report["pixel"]["x"] = 105;
+    report["pixel"]["y"] = 87;
+    report["pixel"]["subpixel"] = 0;
+    report["winner"]["layer"] = "sprite";
+    report["colour"]["rgb"] = "#FF0000";
+    report["layer_order"] = "SLU";
+    report["layers"]["ula"]["opaque"] = true;
+    report["layers"]["ula"]["rgb"] = "#000000";
+    report["layers"]["ula"]["why"] = "layer order SLU: sprite above ula";
+    report["layers"]["layer2"]["opaque"] = false;
+    report["layers"]["layer2"]["why"] = "Layer 2 disabled (port #123B bit 1 / NR #69 bit 7)";
+    report["layers"]["tilemap"]["opaque"] = false;
+    report["layers"]["tilemap"]["why"] = "tilemap disabled (NR #6B bit 7)";
+    report["layers"]["sprites"]["opaque"] = true;
+    report["layers"]["sprites"]["rgb"] = "#FF0000";
+    report["layers"]["sprites"]["why"] = "wins (layer order SLU)";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/pixel?x=105&y=87"] = {200, report};
+    Json::Value args;
+    args["aspects"].append("next_pixel");
+    args["nr_x"] = "105";
+    args["nr_y"] = "87";
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[next_pixel] (105,87) sub 0: sprite #FF0000, layer order SLU"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ula: painted #000000 - layer order SLU: sprite above ula"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("layer2: - - Layer 2 disabled"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("sprites: painted #FF0000 - wins (layer order SLU)"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_ALayerWithoutAlphaSaysItIsFlattened)
+{
+    Json::Value body;
+    body["status"] = "success";
+    body["layer"] = "tilemap";
+    body["format"] = "rgba";
+    body["alpha"] = false;
+    body["width"] = 640;
+    body["height"] = 512;
+    body["size"] = 1310720;
+    body["frame"]["sequence"] = 7;
+    body["data"] = "AAAA";
+    const std::string route = "/api/v1/emulator/emu-1/capture/screen?format=rgba&layer=tilemap&alpha=false";
+    _caller->routes["GET " + route] = {200, body};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["layer"] = "tilemap";
+    args["alpha"] = false;
+    args["format"] = "rgba";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", route));
+    EXPECT_NE(result.text.find("layer tilemap of Next frame #7, flattened"), std::string::npos) << result.text;
 }

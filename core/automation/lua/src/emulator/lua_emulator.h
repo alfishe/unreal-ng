@@ -7,6 +7,7 @@
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/video/screenshotter.h"
+#include "emulator/video/next/nextlayerimage.h"
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
@@ -1369,6 +1370,76 @@ public:
             sol::variadic_results out;
             out.push_back(t);
             return out;
+        });
+        // capture_screen_layer(layer [, {format = "png"|"rgba", alpha = true|false, path = "file"}]): ONE LAYER of the last completed frame of a ZX
+        // Spectrum Next (design-layer-capture.md): "ula" (with the border and LoRes), "layer2", "tilemap", "sprites" - alpha 0 where the layer
+        // does not paint - or "ids" (every pixel coloured by the layer that won it). 640 x 512, the geometry of screenshot(). Returns
+        // {layer, format, alpha, width, height, size, frame = {sequence, frame_number}, data = the PNG (or the raw RGBA bytes) as a string,
+        // or `file`, legend = {{id, name, colour}...} for ids}; nil, error when the machine is not a Next, the capture is off
+        // (next_layer_capture_control{enabled = true}) or no frame was completed yet
+        lua.set_function("capture_screen_layer", [this](sol::this_state s, const std::string& layer, sol::optional<sol::table> opts) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string format, alpha, path;
+            if (opts)
+            {
+                format = opts->get_or<std::string>("format", "");
+                path = opts->get_or<std::string>("path", "");
+                sol::object a = (*opts)["alpha"];
+                if (a.get_type() == sol::type::boolean)
+                    alpha = a.as<bool>() ? "true" : "false";
+            }
+            const NextLayer::Result shot = NextLayer::Request(emulator->GetContext(), layer, format, alpha, path);
+            if (shot.status != NextLayer::Status::Ok) return mouseError(s, shot.message);
+            sol::state_view view(s);
+            sol::table t = view.create_table();
+            t["layer"] = NextLayer::KindName(shot.kind);
+            t["format"] = shot.rgba ? "rgba" : "png";
+            t["alpha"] = shot.alpha;
+            t["width"] = shot.width;
+            t["height"] = shot.height;
+            t["size"] = shot.size;
+            sol::table frame = view.create_table();
+            frame["sequence"] = shot.sequence;
+            frame["frame_number"] = shot.frameCounter;
+            t["frame"] = frame;
+            if (shot.kind == NextLayer::Kind::Ids)
+            {
+                sol::table legend = view.create_table();
+                for (unsigned id = 0; id < NextLayer::kIdCount; id++)
+                {
+                    sol::table entry = view.create_table();
+                    const uint32_t c = NextLayer::IdColour(id);
+                    char colour[8];
+                    std::snprintf(colour, sizeof colour, "#%02X%02X%02X", c & 0xFF, (c >> 8) & 0xFF, (c >> 16) & 0xFF);
+                    entry["id"] = id;
+                    entry["name"] = NextLayer::IdName(id);
+                    entry["colour"] = std::string(colour);
+                    legend[id + 1] = entry;
+                }
+                t["legend"] = legend;
+            }
+            if (!shot.savedFile.empty())
+                t["file"] = shot.savedFile;
+            else
+                t["data"] = std::string(shot.bytes.begin(), shot.bytes.end());
+            sol::variadic_results out;
+            out.push_back(t);
+            return out;
+        });
+        // next_layer_capture_control([{enabled = true|false}]): switch the per-layer record of the Next screen (on by default; takes effect at
+        // the next frame start); returns {available, enabled, frames, last_frame, bytes}. No argument: only report
+        lua.set_function("next_layer_capture_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+            }
+            return StateNodeToLua(s, DeviceState::NextLayerCaptureControl(emulator->GetContext(), enable));
         });
         lua.set_function("memory_regions", [this](sol::this_state s) -> sol::object {
             Emulator* emulator = effectiveEmulator();
@@ -3636,6 +3707,28 @@ public:
                 return mouseError(s, error);
             sol::variadic_results out;
             out.push_back(StateNodeToLua(s, DeviceState::NextSprites(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_pixel(x, y [, sx]): the pixel inspector of the last captured Next frame (DeviceState::NextPixel; design-layer-capture.md): x 0-319,
+        // y 0-255, sx the sub-pixel 0 | 1. Returns {frame, pixel, winner = {layer, id}, colour = {rgb9, rgb}, layer_order, layers = {ula, layer2,
+        // tilemap, sprites: {opaque, rgb9, wins, why, source}}}; nil + error on a bad coordinate, on another machine, with the capture off or
+        // before the first frame
+        lua.set_function("next_pixel", [this](sol::this_state s, int64_t x, int64_t y, sol::optional<int64_t> sx) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            NextPixelQuery query;
+            std::string error;
+            if (!NextPixelQueryFromStrings(std::to_string(x), std::to_string(y), sx ? std::to_string(*sx) : std::string(), query, error))
+                return mouseError(s, error);
+            const StateNode report = DeviceState::NextPixel(emulator->GetContext(), query);
+            const StateNode* available = report.find("available");
+            if (available && available->kind == StateNode::Kind::Bool && !available->b)
+                return mouseError(s, "This machine is not a ZX Spectrum Next");
+            const StateNode* ok = report.find("ok");
+            if (ok && ok->kind == StateNode::Kind::Bool && !ok->b)
+                return mouseError(s, report.find("message") ? report.find("message")->s : std::string("no frame"));
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, report));
             return out;
         });
         // next_nextreg_write(reg, value [, door]): write a NextREG through the board's write choke point (NextRegWriteControl); door = "nextreg"

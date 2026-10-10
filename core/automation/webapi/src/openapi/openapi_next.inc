@@ -66,6 +66,20 @@
              {{"from", "first sprite, 0-127; default 0"},
               {"count", "how many sprites of the page, 1-128; default 128"},
               {"all", "true: list the invisible ones too"}}},
+            {"/api/v1/emulator/{id}/state/next/pixel", "Which layer draws this pixel",
+             "The pixel inspector (core DeviceState::NextPixel; design-layer-capture.md): for the grid pixel x 0-319, y 0-255 (sub-pixel sx 0 | 1) "
+             "of the LAST CAPTURED frame: `winner` (layer ula | border | layer2 | tilemap | sprite | blend | stencil | fallback, id), the composed "
+             "`colour` (rgb9, rgb), `layer_order`, and per layer (ula, layer2, tilemap, sprites) `opaque`, `rgb9`, `wins`, `why` (why it lost "
+             "or did not paint: transparent (index 15), clipped (NR #1A window), disabled, layer order LSU: sprite above, below the ULA (tile "
+             "attribute bit 0), ...) and `source` - where the pixel byte came from: the ULA bitmap / attribute byte, the tile number and its "
+             "definition byte, the Layer 2 byte, the sprite number and its pattern byte. Winner, colours and opacity are exact (recorded while "
+             "the frame was drawn, copper included); the addresses are recomputed from the register state of the line segment, the bytes read "
+             "from the memory now. CLI `state next pixel <x> <y>`, Lua next_pixel(), Python next_pixel(), MCP aspect next_pixel. 409 when "
+             "the machine is not a Next, the layer capture is off or no frame has been completed yet.",
+             "NextPixelReport",
+             {{"x", "grid pixel 0-319 (decimal, 0x / # hex); required"},
+              {"y", "grid line 0-255; required"},
+              {"sx", "sub-pixel 0 (left, default) or 1 (right) of the grid pixel"}}},
             {"/api/v1/emulator/{id}/state/next/nextreg", "Read a NextREG without side effects",
              "One register (`reg`): value as a read returns it, the stored byte, access, reset value and decoded bits for NR #02 / #03 / #07; "
              "or the whole table (only the registers that differ from their reset with changed=true). The select latch, palette indexes and "
@@ -98,6 +112,8 @@
             get["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = std::string("#/components/schemas/") + r.schema;
             get["responses"]["400"]["description"] = "Bad query parameter";
             get["responses"]["404"]["description"] = "Emulator not found, or not a ZX Spectrum Next";
+            if (std::string(r.path).find("/state/next/pixel") != std::string::npos)
+                get["responses"]["409"]["description"] = "Not a ZX Spectrum Next, the layer capture is off or no frame has been completed yet";
         }
 
         const char* kNextRegCtl = "/api/v1/emulator/{id}/next/nextreg";
@@ -134,4 +150,29 @@
         post["responses"]["404"]["description"] = "Emulator not found";
         post["responses"]["409"]["description"] = "Not a ZX Spectrum Next";
         post["responses"]["503"]["description"] = "No coherent moment within 500 ms (the emulator is being stepped)";
+
+        // The per-layer record of the Next screen (design-layer-capture.md)
+        Json::Value& layerPost = paths["/api/v1/emulator/{id}/next/layer-capture"]["post"];
+        layerPost["summary"] = "Switch the per-layer record of the Next screen";
+        layerPost["tags"].append("Machine State");
+        layerPost["description"] =
+            "The Next screen records the layers of every frame it draws (the four layers, the winner of each pixel, the register state of every "
+            "line segment) in two sets of buffers, so /capture/screen?layer=, /capture/next-layers and the pixel inspector answer from the last "
+            "completed frame. On by default (ini [NEXT] LayerCapture=on|off; the measured cost is about 4 % of a frame); this switches it at "
+            "runtime and takes effect at the next frame start. Body {\"enabled\": true|false}; an empty body or {} only reports. Answers "
+            "enabled, frames (completed since it was switched on), last_frame (the emulator frame counter of the last one) and bytes held. "
+            "CLI `next layer-capture [on|off]`, Lua next_layer_capture_control(), Python next_layer_capture_control(). 409 when the machine is not a Next.";
+        layerPost["parameters"][0]["name"] = "id";
+        layerPost["parameters"][0]["in"] = "path";
+        layerPost["parameters"][0]["required"] = true;
+        layerPost["parameters"][0]["schema"]["type"] = "string";
+        Json::Value& layerBody = layerPost["requestBody"]["content"]["application/json"]["schema"];
+        layerBody["type"] = "object";
+        layerBody["properties"]["enabled"]["type"] = "boolean";
+        layerBody["properties"]["enabled"]["description"] = "true: record every frame; false: stop and free the buffers";
+        layerPost["responses"]["200"]["description"] = "The state of the record";
+        layerPost["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/NextLayerCaptureState";
+        layerPost["responses"]["400"]["description"] = "'enabled' is not a boolean";
+        layerPost["responses"]["404"]["description"] = "Emulator not found";
+        layerPost["responses"]["409"]["description"] = "Not a ZX Spectrum Next";
     }
