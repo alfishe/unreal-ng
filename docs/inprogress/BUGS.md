@@ -8,6 +8,127 @@
 
 ---
 
+2026-10-10
+## 🟢 [Fixed] #1: Removing a running TS-Conf or ATM Turbo 2+ instance writes into freed memory (heap damage, a later crash elsewhere)
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** fa8b68fbe
+* **Found by:** an automation agent's crash while creating and deleting instances through the WebAPI (macOS report
+  2026-10-10: `free_tiny` in `VideoWriteLog::BeginFrame` on another emulator thread); confirmed with AddressSanitizer.
+
+### Description
+Deleting instances corrupted the heap; the crash came later, in an unrelated `free` of another running instance.
+
+### Root cause
+`Core::Release` deletes the keyboard and the memory before the port decoder. `~PortDecoder_TSConf` detached from the
+`TsConfMemory` it cached and `~PortDecoder_ATM710` cleared the PS/2 sink on the keyboard it cached: both freed already.
+
+### Fix
+Both destructors take the context's pointer, which `Core` clears before it deletes the part (as the other decoders do).
+
+### Requirements / Acceptance Criteria
+- [x] `EmulatorManager_Test.EveryModelCanBeRemovedWhileRunning` (every creatable model created, run, removed while
+  running next to a running 48K) is clean under ASan; it reported both before.
+
+## 🟢 [Fixed] #2: Laser Genius detection reads past data that ends inside a token
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** 7d40cd730
+* **Found by:** a full `core-tests` run under AddressSanitizer (heap-buffer-overflow in `LaserGeniusCodec::Detect`).
+
+### Description
+`Detect` runs on every file of a disk (asm files, symbol import from a disk's sources): a file ending inside a token
+was read beyond its buffer.
+
+### Root cause
+`SkipRaw` steps over a token's operand bytes and returned a stop past the data's end; `RawText` read up to it.
+
+### Fix
+`SkipRaw` ends at the data's end.
+
+### Requirements / Acceptance Criteria
+- [x] `LaserGeniusCodec_Test.DataEndingInsideATokenIsNotReadPast` (every token byte, alone and before every second
+  byte, at the end of an exact-size buffer): failed under ASan before; all `unreal-asm-tests` clean under ASan.
+
+## 🟢 [Fixed] #3: GIF writer indexes past its r/g/b array on pictures with few colors; the same frame can encode differently
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** dc0b47c9f
+* **Found by:** a full `core-tests` run under AddressSanitizer (stack-buffer-overflow in `GifGetClosestPaletteColor`).
+
+### Description
+Every frame with fewer colors than the palette (every ZX screen in a 256-color GIF) read the k-d tree's garbage nodes.
+
+### Root cause
+`GifSplitPalette` returns from a subtree without pixels before it fills the node; `GifWriteFrame` builds its palettes
+on the stack, so those nodes kept whatever the stack held: a split component above 2 indexed `comps[3]`, garbage leaf
+colors could be picked.
+
+### Fix
+`GifMakePalette` zeroes the palette first (a local change to the vendored gif-h).
+
+### Requirements / Acceptance Criteria
+- [x] `Gif_Test.APaletteOfAFewColorsHasEveryNodeFilled` (palette prefilled with 0xFF) failed before, passes now; Gif
+  tests clean under ASan.
+
+## 🟢 [Fixed] #4: TTD with a shadow engine erases its whole timeline every frame and reads the empty front
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** 53325eb5b
+* **Found by:** a `core-tests` run under AddressSanitizer (container-overflow in `GlobalT` from `SyncTimelineFront`).
+
+### Description
+Tests and benchmarks that attach a shadow engine (`SetShadowEngine`) ran on undefined behavior; production is not
+affected (there the shadow engine is the controller's own).
+
+### Root cause
+`SyncTimelineFront` trims the timeline to what the controller's engine holds; that engine never opens a session while
+a shadow engine takes the captures, so "nothing held" erased every checkpoint, then `_timeline.front()` was read.
+
+### Fix
+A closed engine holds no history to follow: `SyncTimelineFront` returns.
+
+### Requirements / Acceptance Criteria
+- [x] `TimeTravelManager_Screenshot_Test` checks the timeline keeps its 51 checkpoints (0 before); TTD tests clean
+  under ASan.
+
+## 🟢 [Fixed] #5: Qt debugger crashes in the disassembler while the debug manager is not available
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** d2e4f3f84
+* **Found by:** two macOS crash reports of unreal-qt on 2026-10-09 (`disassembleSingleCommandWithRuntime`, fault at 0x18).
+
+### Description
+`DebuggerWindow::updateState` -> `DisassemblerWidget::refresh` crashed with `this == nullptr`.
+
+### Root cause
+`getNextCommandAddress` (and `getPreviousCommandAddress` through it) dereferenced `getDisassembler()`, an empty
+`unique_ptr` while the debug manager is not available; `setDisassemblerAddress` already checked it.
+
+### Fix
+The same check in `getNextCommandAddress`.
+
+### Requirements / Acceptance Criteria
+- [x] Build clean. No automated test: the Qt debugger widgets have no test harness.
+
+## 🟢 [Fixed] #6: The WebAPI instance list and status do not show `symbolic_id`
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** 206ff1b8f
+* **Found by:** checking the agent cleanup recipe against a live instance (`symbolic_id` was null in `GET /emulator`).
+
+### Description
+A script naming its instances at create could not find its leftovers by name: only the create / start answer had it.
+
+### Fix
+`GET /api/v1/emulator` and `GET /api/v1/emulator/{id}` carry `symbolic_id` (empty when none); OpenAPI `EmulatorInfo`
+documents it; MCP `emulator_manage list` passes it through.
+
+### Requirements / Acceptance Criteria
+- [x] Checked live: named and unnamed instances in the list, the status, OpenAPI and MCP.
+
+---
+
 2026-10-07
 ## 🟢 [Fixed] #1: TTD engine - the VDAC2 (FT812) picture at a frame boundary differs from the live one for some frames
 * **Date Opened:** 2026-10-07
