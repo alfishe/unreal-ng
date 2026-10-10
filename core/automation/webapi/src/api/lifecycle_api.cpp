@@ -312,6 +312,7 @@ void EmulatorAPI::get(const HttpRequestPtr& req, std::function<void(const HttpRe
         {
             Json::Value emuInfo;
             emuInfo["id"] = id;
+            emuInfo["symbolic_id"] = emulator->GetSymbolicId();
             emuInfo["state"] = stateToString(emulator->GetState());
             emuInfo["is_running"] = emulator->IsRunning();
             emuInfo["is_paused"] = emulator->IsPaused();
@@ -622,6 +623,7 @@ void EmulatorAPI::getEmulator(const HttpRequestPtr& req, std::function<void(cons
 
     Json::Value ret;
     ret["id"] = id;
+    ret["symbolic_id"] = emulator->GetSymbolicId();
     ret["state"] = stateToString(emulator->GetState());
     ret["is_running"] = emulator->IsRunning();
     ret["is_paused"] = emulator->IsPaused();

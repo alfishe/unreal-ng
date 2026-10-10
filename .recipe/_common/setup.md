@@ -163,7 +163,9 @@ Notes agents trip over:
 - **Instances have no owner and no expiry**: nothing removes them but `DELETE`. A script that creates one
   deletes it on every exit path (bash `trap 'curl -s -X DELETE "$BASE/emulator/$EMU_ID"' EXIT`, Python
   `try/finally`), and keeps the ids it created: other sessions may have instances on the same app, so never
-  clean up by deleting everything in `GET /api/v1/emulator`.
+  clean up by deleting everything in `GET /api/v1/emulator`. Name them at create (`{"symbolic_id":"<task>-<n>"}`):
+  the list and `GET /api/v1/emulator/{id}` show `symbolic_id`, so a leftover is recognised as yours
+  (`jq '.emulators[] | select(.symbolic_id | startswith("<task>-")) | .id'`).
 
 ### 6. Run control (needed by later recipes)
 
