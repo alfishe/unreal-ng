@@ -96,6 +96,7 @@ def main():
     parser.add_argument('--start', type=int, default=0)
     parser.add_argument('--limit', type=int, default=10 ** 9)
     parser.add_argument('--match')
+    parser.add_argument('--ext', help='only titles whose main file has this extension (tap, bas, nex, sna, snx)')
     parser.add_argument('--keys', default='enter,space,1', help='keys tried one at a time after the first picture until the picture changes (a title screen waits for one); empty = none')
     args = parser.parse_args()
     from PIL import Image, ImageDraw
@@ -116,6 +117,8 @@ def main():
         if args.only_category and category not in args.only_category:
             continue
         if args.match and args.match.lower() not in t['title'].lower():
+            continue
+        if args.ext and not t['main_file'].lower().endswith('.' + args.ext.lower()):
             continue
         parts = t['main_file'].split('/')
         host = os.path.join(root, *parts)
@@ -173,6 +176,12 @@ def main():
             header_sigs.setdefault(tuple(target[:i + 1]), header_sig(machine))
         reach(machine, folder, parts[-1])
         machine.tap('enter')  # run the main file
+        if parts[-1].lower().endswith('.tap'):
+            # NextZXOS's TAP loader asks "To begin loading, select mode: 1 128K, 0 USR0, 4 48K, P Pentagon, N Next/+3": a tape is
+            # run in the Next's own mode (N), then given time to load
+            time.sleep(3.0)
+            machine.tap('n')
+            time.sleep(args.wait)
         time.sleep(args.wait)
         state = machine.call('/%s/state/next' % machine.id)
         regs = machine.call('/%s/registers' % machine.id)
