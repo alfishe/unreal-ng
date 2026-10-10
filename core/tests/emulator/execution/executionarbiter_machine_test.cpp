@@ -5,6 +5,7 @@
 #include "pch.h"
 
 #include <atomic>
+#include <optional>
 #include <thread>
 
 #include "_helpers/emulatortesthelper.h"
@@ -52,21 +53,23 @@ protected:
 
 }  // namespace
 
-/// The bug that led to the arbiter, without its GUI: one thread does silent Pause(false) / Resume(false) pairs (the
-/// GUI's write-journal switch on adoption), another pauses and steps frames (automation's pause + run_frames). Before,
-/// a silent resume landing inside the step unparked the main loop: it ran frames alongside RunNFrames (a SPRINTER
-/// boot then ended anywhere). Now the silent pair is a hold of the CPU that never touches the pause
+/// The bug that led to the arbiter, without its GUI: one thread holds the CPU briefly, again and again (the GUI's
+/// write-journal switch on adoption; a silent Pause(false) / Resume(false) pair before the arbiter), another pauses and
+/// steps frames (automation's pause + run_frames). Before, a silent resume landing inside the step unparked the main
+/// loop: it ran frames alongside RunNFrames (a SPRINTER boot then ended anywhere). Now the silent pair is a hold of the
+/// CPU that never touches the pause
 // 20 rounds: on master (before the arbiter) this failed 10 runs out of 10; a run here takes about 50 ms
-TEST_F(ExecutionArbiterMachine_Test, SilentPairsOnAnotherThreadNeverResumeAStep)
+TEST_F(ExecutionArbiterMachine_Test, CpuHoldsOnAnotherThreadNeverResumeAStep)
 {
     std::atomic<bool> stop{false};
     std::atomic<int> pairs{0};
     std::thread journalSwitch([&]() {
         while (!stop.load())
         {
-            _emulator->Pause(false);
-            std::this_thread::yield();
-            _emulator->Resume(false);
+            {
+                Emulator::CpuHold hold(*_emulator, "ttd.journal");  // what the silent pair became
+                std::this_thread::yield();
+            }
             pairs.fetch_add(1);
         }
     });
@@ -85,12 +88,13 @@ TEST_F(ExecutionArbiterMachine_Test, SilentPairsOnAnotherThreadNeverResumeAStep)
     journalSwitch.join();
 }
 
-/// A pause asked for while another thread holds the CPU silently is queued, not lost: it applies when the hold ends
-TEST_F(ExecutionArbiterMachine_Test, APauseDuringASilentPauseSurvivesItsResume)
+/// A pause asked for while another thread holds the CPU is queued, not lost: it applies when the hold ends
+TEST_F(ExecutionArbiterMachine_Test, APauseDuringACpuHoldSurvivesItsEnd)
 {
     ASSERT_FALSE(_emulator->IsPaused());
-    _emulator->Pause(false);
-    EXPECT_FALSE(_emulator->IsPaused()) << "a silent pause is not a pause: it is invisible";
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*_emulator, "silent work");
+    EXPECT_FALSE(_emulator->IsPaused()) << "a hold is not a pause: it is invisible";
     EXPECT_TRUE(_emulator->IsEmulationParked());
 
     std::atomic<bool> paused{false};
@@ -99,7 +103,7 @@ TEST_F(ExecutionArbiterMachine_Test, APauseDuringASilentPauseSurvivesItsResume)
         paused = true;
     });
     EXPECT_TRUE(TestWait::For([&]() { return _emulator->GetArbiter().GetSnapshot().queue.size() == 1; }));
-    _emulator->Resume(false);
+    hold.reset();
     automation.join();
     EXPECT_TRUE(_emulator->IsPaused());
     const uint64_t frame = Frame(_emulator);
@@ -109,30 +113,33 @@ TEST_F(ExecutionArbiterMachine_Test, APauseDuringASilentPauseSurvivesItsResume)
     EXPECT_TRUE(TestWait::For([&]() { return Frame(_emulator) > frame; }));
 }
 
-/// A silent pair inside a silent pair, and a step inside a silent pair, leave the intent alone
-TEST_F(ExecutionArbiterMachine_Test, StepsAndNestedPairsInsideASilentPairKeepTheMachineRunning)
+/// A hold inside a hold, and a step inside a hold, leave the intent alone
+TEST_F(ExecutionArbiterMachine_Test, StepsAndNestedHoldsInsideACpuHoldKeepTheMachineRunning)
 {
-    _emulator->Pause(false);
-    _emulator->Pause(false);
-    const uint64_t before = Frame(_emulator);
-    _emulator->RunNFrames(1);
-    EXPECT_EQ(Frame(_emulator), before + 1);
-    _emulator->Resume(false);
-    _emulator->Resume(false);
+    uint64_t before = 0;
+    {
+        Emulator::CpuHold outer(*_emulator, "outer");
+        Emulator::CpuHold inner(*_emulator, "inner");
+        before = Frame(_emulator);
+        _emulator->RunNFrames(1);
+        EXPECT_EQ(Frame(_emulator), before + 1);
+    }
     EXPECT_FALSE(_emulator->IsPaused()) << "the step inside the hold did not leave a pause behind";
     EXPECT_TRUE(TestWait::For([&]() { return Frame(_emulator) > before + 2; })) << "running again";
 }
 
-/// Stop() right after a silent pause (MainWindow's model rebuild) ends the hold; the machine starts again cleanly
-TEST_F(ExecutionArbiterMachine_Test, StopEndsAnOpenSilentPause)
+/// Stop() while this thread holds the CPU (ModelSwitch stops the old machine inside its hold): the loop exits, the hold
+/// ends after the stop, and the machine starts again cleanly
+TEST_F(ExecutionArbiterMachine_Test, StopWhileHoldingTheCpu)
 {
-    _emulator->Pause(false);
-    _emulator->Stop();
+    {
+        Emulator::CpuHold hold(*_emulator, "model switch");
+        _emulator->Stop();
+    }
     EXPECT_FALSE(_emulator->GetArbiter().GetSnapshot().serving.has_value());
     _emulator->StartAsync();
     const uint64_t frame = Frame(_emulator);
     EXPECT_TRUE(TestWait::For([&]() { return Frame(_emulator) > frame; }));
-    _emulator->Resume(false);  // the pair's end, after the stop: nothing left to end
     EXPECT_FALSE(_emulator->IsPaused());
 }
 

@@ -21,6 +21,8 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "base/featuremanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 
 using namespace std::chrono_literals;
 
@@ -30,6 +32,11 @@ namespace
 uint64_t Frame(Emulator* emulator)
 {
     return emulator->GetContext()->emulatorState.frame_counter;
+}
+
+bool DeviceStateProbe(Emulator* emulator)
+{
+    return emulator->IsPaused() || emulator->IsEmulationParked() || emulator->GetArbiter().GetSnapshot().edges > 0;
 }
 
 uint32_t EnvU32(const char* name, uint32_t fallback)
@@ -70,11 +77,12 @@ std::vector<std::string> RunMachineScenario(uint32_t seed)
                     case 0: emulator->Pause(); break;
                     case 1: emulator->Resume(); break;
                     case 2:
-                        // A silent pair around a short piece of work (the TTD / media brackets)
-                        emulator->Pause(false);
+                        // A hold around a short piece of work (the TTD / media brackets)
+                    {
+                        Emulator::CpuHold hold(*emulator, "fuzz.hold");
                         for (int i = static_cast<int>(rng() % 20); i > 0; --i)
                             std::this_thread::yield();
-                        emulator->Resume(false);
+                    }
                         break;
                     case 3:
                     {
@@ -227,8 +235,9 @@ TEST(ExecutionArbiterMachineFuzz_Test, CommandsFromOtherThreadsNeverReachIntoASt
                         std::this_thread::yield();
                         memory->DirectWriteToZ80Memory(23672, frames);
                     });
-                    emulator->Pause(false);  // a silent pair as well (the machine is paused: the compat no-op)
-                    emulator->Resume(false);
+                    {
+                        Emulator::CpuHold hold(*emulator, "noise.hold");  // a hold as well
+                    }
                 }
             });
         emulator->RunNFrames(40);
@@ -243,4 +252,99 @@ TEST(ExecutionArbiterMachineFuzz_Test, CommandsFromOtherThreadsNeverReachIntoASt
     EXPECT_EQ(runFrom(3), quiet) << "a command from another thread changed the machine during the step";
     EXPECT_EQ(emulator->DriverViolations(), 0u);
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// The mode matrix (design §8.3), TTD: the same mix while one thread records - start, write-journal switch on / off,
+/// stop, in a seeded order. These are the paths the bug ran through (the GUI's journal switch on adoption) and that X3
+/// turned into CPU holds. Checked: no second driver, every counted RunNFrames(k) exact, no hang.
+/// Boot-bound: each seed starts a Pentagon (turbo) with TTD on, about 100 ms; 3 seeds by default
+TEST(ExecutionArbiterMachineFuzz_Test, TtdRecordingUnderConcurrentControl)
+{
+    const char* one = std::getenv("UNREAL_EXEC_FUZZ_SEED");
+    const uint32_t first = one ? EnvU32("UNREAL_EXEC_FUZZ_SEED", 0) : 1;
+    const uint32_t count = one ? 1 : std::min<uint32_t>(EnvU32("UNREAL_EXEC_FUZZ_ITERATIONS", 3), 200);
+    for (uint32_t seed = first; seed < first + count; ++seed)
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr);
+        emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+        emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+        emulator->GetContext()->pMemory->UpdateFeatureCache();
+        ttd::TimeTravelController* ttdc = emulator->GetContext()->pTimeTravelController;
+        if (!ttdc)
+        {
+            EmulatorTestHelper::CleanupEmulator(emulator);
+            GTEST_SKIP() << "the TTD engine is not the backend (UNREAL_TTD_BACKEND=v1)";
+        }
+        emulator->EnableTurboMode();
+        emulator->StartAsync();
+        TestWait::For([&]() { return Frame(emulator) > 1; });
+
+        std::atomic<int> frameErrors{0};
+        std::atomic<int> finished{0};
+        const int threads = 3;
+        std::vector<std::thread> workers;
+        for (int t = 0; t < threads; ++t)
+            workers.emplace_back([&, t]() {
+                std::mt19937 rng(seed * 104729u + static_cast<uint32_t>(t));
+                const execution::Requester who{execution::Origin::WebApi, {}};
+                for (int op = 0; op < 25; ++op)
+                {
+                    if (t == 0)
+                    {
+                        // The recorder
+                        switch (rng() % 4)
+                        {
+                            case 0: ttdc->StartRecording(); break;
+                            case 1: ttdc->SwitchWriteJournal(true); break;
+                            case 2: ttdc->SwitchWriteJournal(false); break;
+                            default: ttdc->StopRecording(); break;
+                        }
+                        continue;
+                    }
+                    switch (rng() % 6)
+                    {
+                        case 0: emulator->Pause(who); break;
+                        case 1: emulator->Resume(who); break;
+                        case 2:
+                        {
+                            execution::CommandOptions driving;
+                            driving.drivesZ80 = true;
+                            execution::HoldToken hold = emulator->GetArbiter().BeginHold(
+                                who, "fuzz.count", execution::Clock::now() + std::chrono::seconds(5), nullptr, driving);
+                            const unsigned frames = 1 + rng() % 2;
+                            const uint64_t before = Frame(emulator);
+                            emulator->RunNFrames(frames);
+                            if (hold.Valid() && Frame(emulator) - before != frames)
+                                frameErrors.fetch_add(1);
+                            emulator->GetArbiter().EndHold(hold);
+                            break;
+                        }
+                        case 3:
+                        {
+                            Emulator::CpuHold hold(*emulator, "fuzz.hold");
+                            std::this_thread::yield();
+                            break;
+                        }
+                        case 4: emulator->RunTStates(1 + rng() % 20000); break;
+                        default: (void)DeviceStateProbe(emulator); break;
+                    }
+                }
+                finished.fetch_add(1);
+            });
+        if (!TestWait::For([&]() { return finished.load() == threads; }, 15000ms))
+        {
+            std::fprintf(stderr, "ExecutionArbiterMachineFuzz TTD seed %u: hang - unrecoverable, exiting\n", seed);
+            std::fflush(stderr);
+            std::_Exit(1);
+        }
+        for (auto& w : workers)
+            w.join();
+        ttdc->StopRecording();
+        EXPECT_EQ(frameErrors.load(), 0) << "seed " << seed;
+        EXPECT_EQ(emulator->DriverViolations(), 0u) << "seed " << seed;
+        emulator->Pause();
+        EXPECT_TRUE(emulator->WaitForPauseConfirmation(1000)) << "seed " << seed;
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
 }

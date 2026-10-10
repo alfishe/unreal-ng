@@ -229,18 +229,11 @@ private:
     /// Decides whether the Z80 executes: intents (pause / run), commands that hold the CPU, the main loop's parking
     /// (docs/inprogress/2026-10-09-execution-arbiter/design.md). Pause() / Resume() are its compat front
     execution::ExecutionArbiter _arbiter;
-    /// Compat (design §6 X1): a silent Pause(false) ... Resume(false) pair on one thread is one hold of the CPU.
-    /// Per thread, a stack: the pairs may nest
-    std::mutex _compatHoldsMutex;
-    std::unordered_map<std::thread::id, std::vector<execution::HoldToken>> _compatHolds;
     /// StartAsync submitted the start's Run intent for the Start() its thread runs
     bool _startIntentSubmitted = false;
     /// The breakpoint cause of each Pause edge, by edge seq: taken at the edge (gate), posted with its broadcast
     std::mutex _edgeCausesMutex;
     std::vector<std::pair<uint64_t, BreakpointStop>> _edgeCauses;
-    void BeginCompatHold();
-    void EndCompatHold();
-    void ReleaseCompatHolds();
     /// At the moment an intent edge applies, before the machine can run (under the arbiter's lock)
     void OnIntentEdgeGate(const execution::IntentEdge& edge, bool parked);
     /// After it applied, outside the lock: state and broadcasts
@@ -465,8 +458,8 @@ public:
 
     void Start();
     void StartAsync();
-    void Pause(bool broadcast = true);   // broadcast=false for internal operations (won't trigger UI updates)
-    void Resume(bool broadcast = true);  // broadcast=false for internal operations (won't trigger UI updates)
+    void Pause();   // a pause with the Internal origin; a surface uses Pause(Requester); a still CPU: CpuHold
+    void Resume();  // a run with the Internal origin; a surface uses Resume(Requester)
     /// A pause asked by a surface (execution arbiter intent): GUI, WebAPI, CLI, scripts, GDB, DeZog, TTD. The origin
     /// is kept with the pause (who set it) and broadcast with it
     execution::Result Pause(const execution::Requester& requester, const std::string& reason = "pause");

@@ -1249,40 +1249,11 @@ void Emulator::StartAsync()
     });
 }
 
-/// @brief Pauses emulator execution
-/// 
-/// Pauses the Z80 emulation thread. When paused, the emulator stops executing
-/// instructions but remains in memory and can be resumed.
-///
-/// @param broadcast If true (default), broadcasts StatePaused to UI and listeners.
-///                  If false, performs a "silent" pause without triggering UI updates.
-///
-/// @note Use broadcast=false for internal operations where:
-///       - Memory is being reallocated (shared memory migration)
-///       - State is temporarily inconsistent and UI refresh would crash
-///       - You want an atomic pause/operation/resume without visible state flicker
-///
-/// @warning Silent pause (broadcast=false) should always be paired with silent resume.
-///          The UI will not know the emulator was paused, so don't leave it paused.
-///
-/// @example
-///   // User-initiated pause (shows in debugger):
-///   emulator->Pause();  // or Pause(true)
-///   
-///   // Internal pause for memory migration (invisible to UI):
-///   emulator->Pause(false);
-///   // ... perform migration ...
-///   emulator->Resume(false);
-void Emulator::Pause(bool broadcast)
+/// @brief A pause with the Internal origin (execution arbiter intent, broadcast as StatePaused). A surface passes
+/// its own origin: Pause(Requester, reason). To keep the machine still for a piece of work without pausing it, hold
+/// the CPU instead (Emulator::CpuHold): invisible, and it never lifts a pause somebody else asked for
+void Emulator::Pause()
 {
-    // Silent: hold the CPU until the matching Resume(false) on this thread. The intent is untouched, so a pause
-    // somebody else asks for meanwhile survives the Resume(false) (the bug that led to the arbiter)
-    if (!broadcast)
-    {
-        if (_isRunning && _mainloop)
-            BeginCompatHold();
-        return;
-    }
     Pause(execution::Requester{execution::Origin::Internal, {}});
 }
 
@@ -1321,32 +1292,10 @@ execution::Result Emulator::Pause(const execution::Requester& requester, const s
     return result;
 }
 
-/// @brief Resumes emulator execution after pause
-/// 
-/// Resumes the Z80 emulation thread from a paused state. The emulator continues
-/// executing from where it was paused.
-///
-/// @param broadcast If true (default), broadcasts StateResumed to UI and listeners.
-///                  If false, performs a "silent" resume without triggering UI updates.
-///
-/// @note Use broadcast=false for internal operations where:
-///       - Memory was just reallocated and you used silent pause
-///       - You want seamless resume without UI state flicker
-///       - The pause was for an internal atomic operation (not user-initiated)
-///
-/// @warning Must match the pause mode: if Pause(false) was called, use Resume(false).
-///          Mismatched broadcast flags can leave UI in inconsistent state.
-///
-/// @see Emulator::Pause
-void Emulator::Resume(bool broadcast)
+/// @brief A run with the Internal origin (execution arbiter intent, broadcast as StateResumed). A surface passes its
+/// own origin: Resume(Requester, onlyIfOwner)
+void Emulator::Resume()
 {
-    // Silent: ends this thread's hold from Pause(false). Never lifts a pause: that is an intent somebody asked for
-    if (!broadcast)
-    {
-        if (_mainloop)
-            EndCompatHold();
-        return;
-    }
     Resume(execution::Requester{execution::Origin::Internal, {}});
 }
 
@@ -1411,56 +1360,6 @@ void Emulator::DriverEnter()
 void Emulator::DriverLeave()
 {
     _activeDrivers.fetch_sub(1, std::memory_order_acq_rel);
-}
-
-void Emulator::BeginCompatHold()
-{
-    // The old no-op: already paused (the caller saw that too and will not call Resume(false))
-    if (IsPaused())
-        return;
-    execution::Result result;
-    execution::HoldToken token = _arbiter.BeginHold(execution::Requester{execution::Origin::Internal, {}},
-                                                    "silent pause", execution::Clock::now() + std::chrono::seconds(5),
-                                                    &result);
-    if (!token.Valid())
-    {
-        // Busy for 5 s (another hold that never ends) or stopping: proceed as the old silent pause did on timeout
-        MLOGWARNING("Emulator::Pause(false) - the CPU was not handed over (%s, %s); proceeding without it",
-                    execution::OutcomeName(result.outcome), result.detail.c_str());
-        return;
-    }
-    std::lock_guard<std::mutex> lock(_compatHoldsMutex);
-    _compatHolds[std::this_thread::get_id()].push_back(std::move(token));
-}
-
-void Emulator::EndCompatHold()
-{
-    execution::HoldToken token;
-    {
-        std::lock_guard<std::mutex> lock(_compatHoldsMutex);
-        const auto it = _compatHolds.find(std::this_thread::get_id());
-        if (it == _compatHolds.end() || it->second.empty())
-            return;  // no Pause(false) of this thread to end (it found the machine paused, or Stop() ended it)
-        token = std::move(it->second.back());
-        it->second.pop_back();
-        if (it->second.empty())
-            _compatHolds.erase(it);
-    }
-    _arbiter.EndHold(token);
-}
-
-void Emulator::ReleaseCompatHolds()
-{
-    std::vector<execution::HoldToken> tokens;
-    {
-        std::lock_guard<std::mutex> lock(_compatHoldsMutex);
-        for (auto& [thread, stack] : _compatHolds)
-            for (auto it = stack.rbegin(); it != stack.rend(); ++it)
-                tokens.push_back(std::move(*it));
-        _compatHolds.clear();
-    }
-    for (execution::HoldToken& token : tokens)
-        _arbiter.EndHold(token);
 }
 
 void Emulator::OnIntentEdgeGate(const execution::IntentEdge& edge, bool parked)
@@ -1641,10 +1540,8 @@ void Emulator::Stop()
         _asyncThread = nullptr;
     }
 
-    // The loop has left (or never started): phase stopped, commands run at once from now on. Silent pairs whose
-    // Resume(false) never came (a Pause(false) right before Stop()) end here
+    // The loop has left (or never started): phase stopped, commands run at once from now on
     _arbiter.DetachMainLoop();
-    ReleaseCompatHolds();
 
     // Clear remaining state
     _stopRequested = false;

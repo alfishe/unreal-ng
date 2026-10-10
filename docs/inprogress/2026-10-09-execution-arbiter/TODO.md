@@ -300,8 +300,23 @@ showed the same address.
   stays the trap for the next occurrence: a nonzero violation count would point at the arbiter, a zero one elsewhere
   (the CHD reader, the BIOS's own timing).
 
-## X6
+## X6: the compat goes; TTD in the fuzz matrix
 
-- [ ] Remove `Pause(bool)` / `Resume(bool)`: callers pass an origin, silent pairs are `CpuHold`s.
-- [ ] The rest of the mode matrix (design §8.3): ZX-Poly groups, TTD recording / replay and RZX in the machine fuzz.
-- [ ] Abort of a long direct run from the priority lane (`HoldToken::Aborted()` read by the `Run*` loops).
+- [x] **`Pause(bool)` / `Resume(bool)` are gone**, and with them the X1 compat: the per-thread hold stack,
+  `BeginCompatHold` / `EndCompatHold` / `ReleaseCompatHolds`.
+  - `Pause()` / `Resume()` are intents with the Internal origin; a surface passes its own (`Pause(Requester)`).
+  - A still CPU for a piece of work is `Emulator::CpuHold`; no `Pause(false)` was left outside the arbiter's own
+    tests.
+  - The tests that modelled the silent pair use `CpuHold` (`CpuHoldsOnAnotherThreadNeverResumeAStep`,
+    `APauseDuringACpuHoldSurvivesItsEnd`, `StepsAndNestedHoldsInsideACpuHoldKeepTheMachineRunning`,
+    `StopWhileHoldingTheCpu`).
+- [x] **The mode matrix, TTD: `ExecutionArbiterMachineFuzz_Test.TtdRecordingUnderConcurrentControl`.**
+  - **Setup:** a running Pentagon with debug mode and TTD on.
+  - **Load:** one thread starts and stops recordings and switches the write journal on and off (the bug's path);
+    two others pause, resume, hold the CPU, run counted `RunNFrames(k)` and `RunTStates`.
+  - **Checks:** no second driver, every counted step exact, no hang.
+  - **Result:** all machine fuzz tests, 6 processes × 30 seeds in parallel: all clean.
+- [ ] **Still open:**
+  - ZX-Poly groups and RZX playback in the fuzz matrix;
+  - abort of a long direct run from the priority lane. Deferred: a pause during `run_frames` waits for its end, as
+    before the arbiter. Aborting it would change the API's behaviour and needs its own decision.
