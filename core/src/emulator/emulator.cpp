@@ -29,6 +29,8 @@
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdinputapply.h"
+#include "debugger/ttd/ttdsessionport.h"
+#include "emulator/coordinator/machinecoordinator.h"
 #include "emulator/notifications.h"
 #include "emulator/tstaterunbudget.h"
 #include "emulator/media/mediamanager.h"
@@ -46,6 +48,99 @@ static std::mutex g_ttdRecordingRootMutex;
 static std::string g_ttdRecordingRoot;
 
 /// region <Constructors / Destructors>
+
+/// A snapshot load as the coordinator carries it
+struct Emulator::SnapshotRequest
+{
+    const std::function<bool(std::string& error, const snapshot::Options& planned)>* load = nullptr;
+    const snapshot::Options* options = nullptr;
+    std::string error;
+    bool loaded = false;
+};
+
+/// A disk autostart as the coordinator carries it
+struct Emulator::AutostartRequest
+{
+    DiskImage* image = nullptr;
+    DiskAutostart* autostart = nullptr;
+    DiskAutostart::Plan plan;
+    bool started = false;
+};
+
+/// The emulator's side of the coordinator: the machine thread (the execution arbiter's CPU hold), the clock, and
+/// the owner of the operations that replace the machine state (reset, autostart, snapshot load)
+class Emulator::CoordinatorPorts : public coordinator::IMachineThread,
+                                   public coordinator::IMachineClock,
+                                   public coordinator::IOpOwner
+{
+public:
+    explicit CoordinatorPorts(Emulator& emulator) : _emulator(emulator) {}
+
+    bool OnMachineThread() const override { return _emulator._arbiter.IsLoopThread(); }
+
+    bool Park(const char* tag) override
+    {
+        auto hold = std::make_unique<CpuHold>(_emulator, tag);
+        if (!hold->Held())
+            return false;   // timed out (logged): the operation goes on as the old brackets did
+        Holds().emplace_back(this, std::move(hold));
+        return true;
+    }
+
+    void Unpark() override
+    {
+        // The newest hold of this emulator on this thread: parks nest, each Unpark ends the last
+        auto& holds = Holds();
+        for (auto it = holds.rbegin(); it != holds.rend(); ++it)
+            if (it->first == this)
+            {
+                holds.erase(std::next(it).base());
+                return;
+            }
+    }
+
+    coordinator::MachineTime Now() const override
+    {
+        coordinator::MachineTime time;
+        if (EmulatorContext* context = _emulator._context)
+        {
+            time.frame = context->emulatorState.frame_counter;
+            if (Z80* cpu = context->pCore ? context->pCore->GetZ80() : nullptr)
+                time.tInFrame = static_cast<uint32_t>(cpu->t);
+        }
+        time.wallMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                std::chrono::system_clock::now().time_since_epoch())
+                                                .count());
+        return time;
+    }
+
+    bool Commit(const coordinator::MachineOp& op, coordinator::OpStage& stage) override
+    {
+        switch (op.kind)
+        {
+            case coordinator::OpKind::Reset:
+                _emulator.ResetNow(std::any_cast<bool>(op.payload), stage);
+                return true;
+            case coordinator::OpKind::Autostart:
+                return _emulator.AutostartNow(*std::any_cast<AutostartRequest*>(op.payload), stage);
+            case coordinator::OpKind::SnapshotLoad:
+                return _emulator.LoadSnapshotNow(*std::any_cast<SnapshotRequest*>(op.payload), stage);
+            default:
+                stage.error = std::string("the emulator does not do '") + coordinator::OpKindName(op.kind) + "'";
+                return false;
+        }
+    }
+
+private:
+    /// The CPU holds this thread took through Park, newest last
+    static std::vector<std::pair<const CoordinatorPorts*, std::unique_ptr<CpuHold>>>& Holds()
+    {
+        thread_local std::vector<std::pair<const CoordinatorPorts*, std::unique_ptr<CpuHold>>> holds;
+        return holds;
+    }
+
+    Emulator& _emulator;
+};
 
 Emulator::Emulator(LoggerLevel level) : Emulator("", level) {}
 
@@ -75,6 +170,12 @@ Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
         // Create FeatureManager and assign to context
         _featureManager = new FeatureManager(_context);
         _context->pFeatureManager = _featureManager;
+
+        // The machine state coordinator comes before every participant and goes after them
+        _coordinator = std::make_unique<coordinator::MachineCoordinator>();
+        _coordinatorPorts = std::make_unique<CoordinatorPorts>(*this);
+        _ttdSessionPort = std::make_unique<ttd::TTDSessionPort>(_context);
+        WireCoordinator();
 
         MLOGDEBUG("Emulator::Emulator(symbolicId='%s', level=%d) - Instance created with UUID: %s", symbolicId.c_str(),
                   level, _emulatorId.c_str());
@@ -197,6 +298,7 @@ bool Emulator::Init()
         // Peripherals register their media slots while Core initializes
         if (_context->pMediaManager == nullptr)
             _context->pMediaManager = new MediaManager(_context);
+        WireCoordinator();
 
         _core = new Core(_context);
         if (_core && _core->Init())
@@ -518,6 +620,8 @@ void Emulator::ReleaseNoGuard()
 
     // Release TTD manager. The manager's destructor releases all page-store
     // refs held by the timeline before the page store itself goes away.
+    // The coordinator's session port reads the hooks and the context: unlinked before both go
+    _coordinator->SetSession(nullptr);
     _context->pTimeTravelHooks = nullptr;
     if (_context->pTimeTravelController)
     {
@@ -586,6 +690,8 @@ void Emulator::ReleaseNoGuard()
     // After Core: its peripherals have unregistered their slots
     if (_context->pMediaManager != nullptr)
     {
+        _coordinator->Disown(&_context->pMediaManager->OpOwner());
+        _context->pMediaManager->SetMachineOps(nullptr);
         delete _context->pMediaManager;
         _context->pMediaManager = nullptr;
     }
@@ -942,37 +1048,79 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
         return result;
     }
 
-    // Prepare + reset run with the CPU held (image and machine state are edited); the pause is left as it was
-    CpuHold hold(*this, "disk autostart");
-
-    DiskAutostart::Plan plan = autostart->Prepare(*image);
-    const bool start = plan.action == DiskAutostart::Action::Boot || plan.action == DiskAutostart::Action::BootNamed ||
-                       plan.action == DiskAutostart::Action::BootCommander ||
-                       plan.action == DiskAutostart::Action::BootGenerated;
-
-    if (start)
+    // Prepare + reset run with the CPU held (image and machine state are edited); the pause is left as it was. The
+    // coordinator ends the recording session when the machine really boots (D42, as Reset()); a disk with nothing
+    // to boot changes nothing
+    AutostartRequest request;
+    request.image = image;
+    request.autostart = autostart;
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::Autostart;
+    op.summary = path;
+    op.sessionReason = "autostart";
+    op.payload = &request;
+    const coordinator::OpResult done = _coordinator->Run(std::move(op));
+    if (done.status == coordinator::OpStatus::Refused)
     {
-        // Same rule as Reset(): the recording session ends (TTD D42)
-        if (_context->pTimeTravelHooks)
-            _context->pTimeTravelHooks->EndSession("autostart");
-
-        autostart->Disarm();
-        _core->Reset(RM_DOS);  // Quick reset straight into TR-DOS: PC = 0 with the DOS ROM active
-        RestartFrame();        // Frame 0 starts at the reset state (see Reset())
-        if (_context->pTimeTravelHooks)
-            _context->pTimeTravelHooks->OnMachineReset();
-        if (plan.action == DiskAutostart::Action::BootNamed)
-            autostart->Arm(plan.bootName);
+        report(done.reason, false, true);
+        return result;
     }
 
-    result.started = start;
-    report(plan.message, start, plan.action == DiskAutostart::Action::Unsupported);
+    result.started = request.started;
+    report(request.plan.message, request.started, request.plan.action == DiskAutostart::Action::Unsupported);
     return result;
+}
+
+bool Emulator::AutostartNow(AutostartRequest& request, coordinator::OpStage& stage)
+{
+    CpuHold hold(*this, "disk autostart");   // nested in the coordinator's hold (free)
+    request.plan = request.autostart->Prepare(*request.image);
+    const DiskAutostart::Action action = request.plan.action;
+    request.started = action == DiskAutostart::Action::Boot || action == DiskAutostart::Action::BootNamed ||
+                      action == DiskAutostart::Action::BootCommander || action == DiskAutostart::Action::BootGenerated;
+    if (!request.started)
+    {
+        stage.NoChange();
+        return true;
+    }
+
+    stage.CommitPoint();
+    request.autostart->Disarm();
+    _core->Reset(RM_DOS);  // Quick reset straight into TR-DOS: PC = 0 with the DOS ROM active
+    RestartFrame();        // Frame 0 starts at the reset state (see Reset())
+    if (action == DiskAutostart::Action::BootNamed)
+        request.autostart->Arm(request.plan.bootName);
+    return true;
 }
 
 // endregion Disk autostart
 
 // region Regular workflow
+
+void Emulator::WireCoordinator()
+{
+    using coordinator::OpKind;
+    _coordinator->SetMachine(_coordinatorPorts.get(), _coordinatorPorts.get());
+    _coordinator->SetSession(_ttdSessionPort.get());
+    for (OpKind kind : {OpKind::Reset, OpKind::Autostart, OpKind::SnapshotLoad})
+        _coordinator->Own(kind, _coordinatorPorts.get());
+    if (MediaManager* media = _context ? _context->pMediaManager : nullptr)
+    {
+        for (OpKind kind : {OpKind::MediaInsert, OpKind::MediaEject, OpKind::MediaDiscard, OpKind::DiskCreate})
+            _coordinator->Own(kind, &media->OpOwner());
+        media->SetMachineOps(_coordinator.get());
+    }
+}
+
+coordinator::IMachineOps& Emulator::MachineOps()
+{
+    return *_coordinator;
+}
+
+const coordinator::OperationLog& Emulator::GetOperationLog() const
+{
+    return _coordinator->Log();
+}
 
 void Emulator::Reset(bool hardReset)
 {
@@ -980,34 +1128,27 @@ void Emulator::Reset(bool hardReset)
     if (IsRzxPlaying())
         StopRzx();
 
-    // The CPU held for the reset (a Z80 thread executing ROM code during the reset would leave an inconsistent
-    // state). The pause is left as it was: a running machine runs on from the reset, a paused one stays paused
+    // The coordinator holds the CPU (a Z80 thread executing ROM code during the reset would leave an inconsistent
+    // state), ends the TTD session at the commit point (D42) and tells it the machine left the recorded timeline
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::Reset;
+    op.summary = hardReset ? "hard" : "soft";
+    op.sessionReason = "reset";
+    op.payload = hardReset;
+    _coordinator->Run(std::move(op));
+}
+
+void Emulator::ResetNow(bool hardReset, coordinator::OpStage& stage)
+{
+    // Nested in the coordinator's hold (free). The pause is left as it was: a running machine runs on from the
+    // reset, a paused one stays paused
     CpuHold hold(*this, "reset");
 
-    // TTD: Reset must NEVER touch the recorded timeline. The recorded
-    // history is the user's property — they should be able to replay it
-    // at any time, regardless of live emulator state.
-    //
-    // If recording is active, we must STOP it first. Otherwise _core->Reset()
-    // would teleport frame_counter back to 0, and the next OnFrameBoundary
-    // would append a checkpoint at frame 0 to a timeline that already has
-    // checkpoints at higher frame numbers — breaking the sorted invariant
-    // and corrupting every future seek.
-    //
-    // StopRecording() transitions Recording → Idle while retaining the
-    // timeline. The user can seek, replay, or resume from any captured
-    // point. After _core->Reset() runs, the live emulator is at frame 0
-    // with fresh state, but the timeline is untouched.
-    //
-    // See parent TDD §4.2 (StopRecording retains history) and §5.1
-    // (markers are for nondeterministic INPUT events, not for state
-    // teleports that happen AFTER recording stops).
-    // D42: the reset ENDS the recording session (a new one only by the `ttdrestart` feature)
-    if (_context && _context->pTimeTravelHooks)
-        _context->pTimeTravelHooks->EndSession("reset");
+    // TTD: the reset ENDS the recording session (D42; a new one only by the `ttdrestart` feature) before the live
+    // state is teleported: _core->Reset() would move frame_counter back to 0, and the next OnFrameBoundary would
+    // append a checkpoint at frame 0 to a timeline that already has later ones. The history is kept, browsable
+    stage.CommitPoint();
 
-    // Now perform reset while paused (safe, no race condition).
-    // The live emulator state is teleported; the TTD timeline is not.
     if (_context && _context->pDiskAutostart)
         _context->pDiskAutostart->Disarm();  // A user reset cancels a pending autostart hook
 
@@ -1049,11 +1190,6 @@ void Emulator::Reset(bool hardReset)
 
     // The interrupted frame is abandoned: frame 0 starts at the reset state
     RestartFrame();
-
-    // A machine seeked into recorded history leaves it (the timeline is kept)
-    if (_context && _context->pTimeTravelHooks)
-        _context->pTimeTravelHooks->OnMachineReset();
-
 }
 
 void Emulator::RequestNMI()
@@ -1790,31 +1926,18 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error, c
     if (IsRzxPlaying())
         StopRzx();
 
-    // The CPU held for the load: the loader never resets CPU/memory/screen state while a frame is still executing
-    // (that race corrupted the framebuffer when a WebAPI 'pause' was immediately followed by 'snapshot/load'). The
-    // pause is left as it was: a running machine runs the loaded state
-    CpuHold hold(*this, "snapshot load");
-
-    std::string error;
-    bool result = false;
-    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
-    // TTD (D42): a snapshot load ENDS the recording session, like a reset (the history of this machine stays browsable; a new
-    // session starts only by the `ttdrestart` feature). Nothing is refused - but the session ends only when the load really goes
-    // ahead: the plan calls beforeCommit once it has decided to commit, so a refused load leaves the recording running
-    snapshot::Options planned = options;
-    planned.beforeCommit = [&]() {
-        if (options.beforeCommit)
-            options.beforeCommit();
-        if (ttd)
-            ttd->OnLoad(ttd::TTDLoadKind::Snapshot, "snapshot-load");
-    };
-    auto runLoad = [&]() { result = load(error, planned); };
-    runLoad();
-    // The loader reset the machine and replaced its state (ports, memory,
-    // registers): start the frame again from the loaded state, so devices
-    // and the video raster take their frame bases from it
-    if (result)
-        RestartFrame();
+    // The coordinator holds the CPU for the load and ends the TTD session at the commit point (LoadSnapshotNow)
+    SnapshotRequest request;
+    request.load = &load;
+    request.options = &options;
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::SnapshotLoad;
+    op.summary = openedPath;
+    op.sessionReason = "snapshot-load";
+    op.payload = &request;
+    const coordinator::OpResult done = _coordinator->Run(std::move(op));
+    const std::string error = done.Ok() || !request.error.empty() ? request.error : done.reason;
+    const bool result = done.Ok() && request.loaded;
     if (!result && !error.empty())
         MLOGERROR("Snapshot load failed: %s", error.c_str());
 
@@ -1830,6 +1953,35 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error, c
     }
 
     return result;
+}
+
+bool Emulator::LoadSnapshotNow(SnapshotRequest& request, coordinator::OpStage& stage)
+{
+    // The CPU held for the load (nested in the coordinator's hold): the loader never resets CPU/memory/screen state
+    // while a frame is still executing (that race corrupted the framebuffer when a WebAPI 'pause' was immediately
+    // followed by 'snapshot/load'). The pause is left as it was: a running machine runs the loaded state
+    CpuHold hold(*this, "snapshot load");
+
+    // TTD (D42): a snapshot load ENDS the recording session, like a reset (the history of this machine stays browsable; a new
+    // session starts only by the `ttdrestart` feature). Nothing is refused - but the session ends only when the load really goes
+    // ahead: the plan calls beforeCommit once it has decided to commit - the operation's commit point - so a refused load
+    // leaves the recording running
+    const snapshot::Options& options = *request.options;
+    snapshot::Options planned = options;
+    planned.beforeCommit = [&]() {
+        if (options.beforeCommit)
+            options.beforeCommit();
+        stage.CommitPoint();
+    };
+    request.loaded = (*request.load)(request.error, planned);
+    // The loader reset the machine and replaced its state (ports, memory,
+    // registers): start the frame again from the loaded state, so devices
+    // and the video raster take their frame bases from it
+    if (request.loaded)
+        RestartFrame();
+    else
+        stage.error = request.error.empty() ? "the snapshot was not loaded" : request.error;
+    return request.loaded;
 }
 
 rzx::RzxSession& Emulator::RzxSessionLocked()
@@ -2106,12 +2258,9 @@ bool Emulator::LoadTape(const std::string& path, std::string* error)
         return fail("file not found: '" + path + "'");
     }
 
-    // TTD v1 (P1.6): tape insertion is a session-invalidating event in v1
-    // (parent TDD §4.2 + §5 row 3 — tape *insertion/start/stop* commands
-    // invalidate; only playback position is checkpointed). Refused while recording.
-    // The session ends only once the tape is in (MediaManager::Insert): a file that fails to load keeps it
-    if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadTape, error))
-        return false;
+    // A new tape is a media change (the coordinator's rules, in MediaManager::Insert): refused while a recording the
+    // user started runs, before the file is opened; otherwise the session ends once the tape is in: a file that
+    // fails to load keeps it
 
     // The format registry probes and loads (every TapeLoaderRegistry format,
     // a folder built into a TZX); the swap happens with the emulator thread
@@ -2123,6 +2272,7 @@ bool Emulator::LoadTape(const std::string& path, std::string* error)
     options.immediate = true;
     options.disposition = Disposition::Discard;  // a tape is never written: nothing to lose
     options.ttdReason = "tape-load";
+    options.refusalWording = coordinator::MediaClass::Tape;
 
     MediaResult inserted;
     {
@@ -2133,6 +2283,9 @@ bool Emulator::LoadTape(const std::string& path, std::string* error)
     for (const std::string& line : inserted.report)
         MLOGWARNING("LoadTape: %s", line.c_str());
 
+    // Refused by the rules: nothing was opened or loaded (no load to report), as before
+    if (inserted.error == MediaError::Recording)
+        return fail(inserted.message);
     MessageCenter::DefaultMessageCenter().Post(NC_FILE_LOADED,
                                                new FileLoadedPayload(_context->emulatorId, "tape", resolvedPath, inserted.Ok()));
     if (!inserted.Ok())
@@ -2230,9 +2383,8 @@ bool Emulator::CreateBlankDisk(uint8_t drive, BlankDiskFormat format, uint8_t cy
     cylinders = spec.cylinders;
     sides = spec.sides;
 
-    // TTD: a new medium changes what the FDC reads, like a disk swap. Refused while recording.
-    if (!RecordingAllows(*this, ttd::TTDGuardedAction::CreateDisk, error))
-        return false;
+    // A new medium changes what the FDC reads, like a disk swap: refused while a recording the user started runs
+    // (the coordinator's rules, in MediaManager::Insert)
 
     MediaSource blank;
     blank.type = MediaSourceType::Blank;
@@ -2246,6 +2398,8 @@ bool Emulator::CreateBlankDisk(uint8_t drive, BlankDiskFormat format, uint8_t cy
         options.immediate = true;
         options.disposition = Disposition::Discard;  // a load always replaced the disk, writes and all
         options.ttdReason = "disk-create";
+        options.opKind = coordinator::OpKind::DiskCreate;
+        options.refusalWording = coordinator::MediaClass::Disk;
         inserted = _context->pMediaManager->Insert(slotId, std::move(medium), options);
     }
     if (!inserted.Ok())
@@ -2296,11 +2450,9 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
         return fail("file not found: '" + path + "'");
     }
 
-    // TTD v1 (P1.6): disk image swap teleports FDC + media state
-    // (parent TDD §4.2 + §12.2). Refused while recording; otherwise the
-    // session ends once the disk is in (MediaManager::Insert): a disk that fails to load keeps it.
-    if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadDisk, error))
-        return false;
+    // A disk swap teleports FDC + media state: refused while a recording the user started runs, before the file is
+    // opened (the coordinator's rules, in MediaManager::Insert); otherwise the session ends once the disk is in: a
+    // disk that fails to load keeps it
 
     // The format registry probes and loads; the swap happens with the emulator
     // thread parked, at once (no swap delay: the caller expects the disk in)
@@ -2311,6 +2463,7 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
     options.immediate = true;
     options.disposition = Disposition::Discard;  // a load always replaced the disk, writes and all
     options.ttdReason = "disk-load";
+    options.refusalWording = coordinator::MediaClass::Disk;
 
     MediaResult inserted;
     {
@@ -2321,6 +2474,9 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
     for (const std::string& line : inserted.report)
         MLOGWARNING("LoadDisk: %s", line.c_str());
 
+    // Refused by the rules: nothing was opened or loaded (no load to report), as before
+    if (inserted.error == MediaError::Recording)
+        return fail(inserted.message);
     MessageCenter::DefaultMessageCenter().Post(NC_FILE_LOADED,
                                                new FileLoadedPayload(_context->emulatorId, "disk", resolvedPath, inserted.Ok()));
     if (!inserted.Ok())

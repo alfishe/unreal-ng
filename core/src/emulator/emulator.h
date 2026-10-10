@@ -43,6 +43,15 @@ class BreakpointManager;
 namespace ttd
 {
 enum class TTDGuardedAction : uint8_t;  // debugger/ttd/timetravelmanager.h
+class TTDSessionPort;                   // debugger/ttd/ttdsessionport.h
+}
+
+namespace coordinator  // emulator/coordinator/
+{
+class MachineCoordinator;
+class IMachineOps;
+class OperationLog;
+class OpStage;
 }
 
 /// region <Types>
@@ -140,6 +149,22 @@ protected:
                             const std::string& openedPath, const snapshot::Options& options);
     /// What the snapshot pipeline did with the last load (empty before the first one)
     snapshot::Report _lastSnapshotReport;
+
+    // The machine state coordinator (docs/inprogress/2026-10-09-machine-state-coordinator/): every operation on the
+    // whole machine goes through it. Created with the emulator, before every participant; WireCoordinator links it
+    class CoordinatorPorts;   ///< the emulator's ports: the machine thread, the clock, the owner of its own operations
+    struct SnapshotRequest;
+    struct AutostartRequest;
+    std::unique_ptr<coordinator::MachineCoordinator> _coordinator;
+    std::unique_ptr<CoordinatorPorts> _coordinatorPorts;
+    std::unique_ptr<ttd::TTDSessionPort> _ttdSessionPort;
+    /// Every link between the coordinator and the participants, in one place (architecture §3.3). Called again when
+    /// a participant arrives (the media manager in Init); owners already linked are left as they are
+    void WireCoordinator();
+    /// The emulator's own operations, run by the coordinator (stage: where the TTD session effect lands)
+    void ResetNow(bool hardReset, coordinator::OpStage& stage);
+    bool AutostartNow(AutostartRequest& request, coordinator::OpStage& stage);
+    bool LoadSnapshotNow(SnapshotRequest& request, coordinator::OpStage& stage);
     snapshot::SaveResult _lastSaveResult;
 
     // Control flow
@@ -436,6 +461,12 @@ public:
 
     /// Realtime device/ring monitoring state (nullptr = no device attached)
     const AudioDeviceDescriptor* GetAudioDeviceDescriptor() const;
+
+    /// The machine state coordinator: run an operation on the whole machine, ask whether it would be refused (the
+    /// reason every surface shows), the machine's mode
+    coordinator::IMachineOps& MachineOps();
+    /// The last operations on this machine: who did what, at which frame, with which result (always on)
+    const coordinator::OperationLog& GetOperationLog() const;
 
     // Emulator control cycle
     void Reset(bool hardReset = false);
