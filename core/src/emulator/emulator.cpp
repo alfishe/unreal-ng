@@ -605,6 +605,13 @@ void Emulator::ReleaseNoGuard()
     if (!_context)
         return;
 
+    // Host input first: its handlers run on the message center's thread and reach the debug manager, the TTD
+    // controller, the main loop and the core's devices - all deleted below. Detaching waits for a handler in progress
+    if (_context->pKeyboard)
+        _context->pKeyboard->DetachHostInput();
+    if (_context->pMouseManager)
+        _context->pMouseManager->DetachHostInput();
+
     // The step-over audio hold must not outlive the sound manager it points to
     _stepOverHostHold.Release();
 

@@ -419,6 +419,35 @@ TEST_F(DebugMouseManager_Test, FeatureFlagControlsPresence)
     EXPECT_TRUE(_mouse->IsPresent());
 }
 
+/// Host input keeps arriving on the message center's thread while the emulator is released: the handlers reach the
+/// debug manager, the TTD controller and the core's devices, so they are detached before any of those goes (TSan / ASan
+/// catch the old order: ~DebugManager and Core::Release against MouseManager::OnMouseMove and InputDevicesOf)
+TEST_F(DebugMouseManager_Test, HostInputDuringRelease_StopsBeforeTheMachineGoes)
+{
+    ASSERT_TRUE(EnableRecording());
+    const std::string id = _emulator->GetId();
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+
+    std::atomic<bool> stop{false};
+    std::thread poster([&] {
+        for (int i = 0; i < 20000 && !stop.load(); ++i)
+        {
+            mc.Post(MC_MOUSE_MOVE, MouseEvent::Move(1, 1, id));
+            mc.Post(MC_KEY_PRESSED, new KeyboardEvent(ZXKEY_Q, KEY_PRESSED, id));
+            mc.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_Q, KEY_RELEASED, id));
+            std::this_thread::yield();
+        }
+    });
+    // Release while the handlers are busy, not before the first one ran
+    EXPECT_TRUE(TestWait::For([&] { return _mouse->GetX() != Mouse::RESET_X; }));  // not ASSERT: join the poster
+
+    _emulator->Release();
+    stop = true;
+    poster.join();
+    delete _emulator;
+    _emulator = nullptr;
+}
+
 /// endregion </Device>
 
 /// region <Keyboard journal fixes>
