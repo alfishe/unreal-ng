@@ -123,3 +123,13 @@ TEST_F(BitHelper_Test, CountSetBits16)
         EXPECT_EQ(resultValue, 15);
     }
 }
+
+// BUGS.md 2026-10-10 #13: GetFirstSetBitPosition(0) gives 0xFF, and IsBitSet shifted by it (undefined)
+TEST_F(BitHelper_Test, IsBitSetPastTheFieldIsNotSet)
+{
+    EXPECT_FALSE(BitHelper::IsBitSet(uint16_t{0xFFFF}, 0xFF));
+    EXPECT_FALSE(BitHelper::IsBitSet(uint16_t{0xFFFF}, 16));
+    EXPECT_TRUE(BitHelper::IsBitSet(uint16_t{0x8000}, 15));
+    EXPECT_TRUE(BitHelper::IsBitSet(uint32_t{0x8000'0000}, 31));
+    EXPECT_FALSE(BitHelper::IsBitSet(uint32_t{0x7FFF'FFFF}, 31));
+}

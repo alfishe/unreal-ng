@@ -203,8 +203,9 @@ Emulator::~Emulator()
         _featureManager = nullptr;
     }
 
-    // Ensure resources are released if Release() wasn't called explicitly
-    if (_initialized.load(std::memory_order_acquire))
+    // Ensure resources are released if Release() wasn't called explicitly. A machine that never finished
+    // Init (a failed create, an exception out of a device) still owns its context and what Init built
+    if (_initialized.load(std::memory_order_acquire) || _context != nullptr)
     {
         Release();
     }
@@ -324,8 +325,6 @@ bool Emulator::Init()
                 _initError = _core->GetInitError();
             MLOGERROR("Emulator::Init - CPU system core (or main peripheral devices) creation failed%s%s",
                       _initError.empty() ? "" : ": ", _initError.c_str());
-            if (!_initError.empty())
-                return false;
         }
     }
 
@@ -438,76 +437,80 @@ bool Emulator::Init()
 
     /// region <Sanity checks>
 
-    if (!_context)
+    // A failed step is released below; the checks are for a machine that claims to be complete
+    if (result)
     {
-        std::string error = "Context was not created";
-        throw std::logic_error(error);
-    }
+        if (!_context)
+        {
+            std::string error = "Context was not created";
+            throw std::logic_error(error);
+        }
 
-    if (!_config)
-    {
-        std::string error = "Config was not created";
-        throw std::logic_error(error);
-    }
+        if (!_config)
+        {
+            std::string error = "Config was not created";
+            throw std::logic_error(error);
+        }
 
-    if (!_core)
-    {
-        std::string error = "CPU was not created";
-        throw std::logic_error(error);
-    }
+        if (!_core)
+        {
+            std::string error = "CPU was not created";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pCore)
-    {
-        std::string error = "_context->pCore not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pCore)
+        {
+            std::string error = "_context->pCore not available";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pMemory)
-    {
-        std::string error = "_context->pMemory not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pMemory)
+        {
+            std::string error = "_context->pMemory not available";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pScreen)
-    {
-        std::string error = "_context->pScreen not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pScreen)
+        {
+            std::string error = "_context->pScreen not available";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pKeyboard)
-    {
-        std::string error = "_context->pKeyboard not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pKeyboard)
+        {
+            std::string error = "_context->pKeyboard not available";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pTape)
-    {
-        std::string error = "_context->pTape not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pTape)
+        {
+            std::string error = "_context->pTape not available";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pBetaDisk)
-    {
-        std::string error = "_context->pBetaDisk not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pBetaDisk)
+        {
+            std::string error = "_context->pBetaDisk not available";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pPortDecoder)
-    {
-        std::string error = "_context->pPortDecoder not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pPortDecoder)
+        {
+            std::string error = "_context->pPortDecoder not available";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pSoundManager)
-    {
-        std::string error = "_context->pSoundManager not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pSoundManager)
+        {
+            std::string error = "_context->pSoundManager not available";
+            throw std::logic_error(error);
+        }
 
-    if (_isDebug && !_context->pDebugManager)
-    {
-        std::string error = "_context->pDebugManager not available";
-        throw std::logic_error(error);
+        if (_isDebug && !_context->pDebugManager)
+        {
+            std::string error = "_context->pDebugManager not available";
+            throw std::logic_error(error);
+        }
     }
 
     /// endregion </Sanity checks>
@@ -1121,6 +1124,19 @@ coordinator::IMachineOps& Emulator::MachineOps()
 const coordinator::OperationLog& Emulator::GetOperationLog() const
 {
     return _coordinator->Log();
+}
+
+std::string Emulator::AskMediaChange(MediaChange change, uint8_t drive, const std::string& what)
+{
+    // The op the change itself runs (MediaManager::InsertOp: slot, file, refusal wording), so the answer and the log
+    // entry are the ones the change would give
+    coordinator::MachineOp op;
+    const bool tape = change == MediaChange::LoadTape;
+    op.kind = change == MediaChange::CreateDisk ? coordinator::OpKind::DiskCreate : coordinator::OpKind::MediaInsert;
+    op.media = tape ? coordinator::MediaClass::Tape : coordinator::MediaClass::Disk;
+    op.summary = (tape ? std::string(TapeSlot::kId) : FloppyDriveSlot::IdFor(drive)) + " " +
+                 (change == MediaChange::CreateDisk ? std::string("<blank>") : what);
+    return _coordinator->Ask(std::move(op)).reason;
 }
 
 void Emulator::Reset(bool hardReset)

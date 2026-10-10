@@ -118,9 +118,11 @@ int QuickDropTarget(const MediaPlan& plan)
 }
 
 // B9: the core refuses actions that would destroy a TTD recording; tell the user why instead of failing silently
-bool RefusedWhileRecording(QWidget* parent, const Emulator& emulator, ttd::TTDGuardedAction action)
+// (asked of the machine state coordinator, which logs the refusal as the Qt UI's)
+bool RefusedWhileRecording(QWidget* parent, Emulator& emulator, Emulator::MediaChange change, uint8_t drive,
+                           const std::string& what)
 {
-    const std::string refusal = emulator.RecordingGuard(action);
+    const std::string refusal = emulator.AskMediaChange(change, drive, what);
     if (refusal.empty())
         return false;
     QMessageBox::warning(parent, QObject::tr("TTD Recording Active"), QString::fromStdString(refusal));
@@ -2724,11 +2726,11 @@ void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass
     {
         case FileKind::Floppy:
         {
-            if (RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadDisk))
-                return;
             // fdd.a .. fdd.d. Quick reset into TR-DOS only from drive A of a running machine;
             // paused or stopped machines just mount
             const uint8_t drive = static_cast<uint8_t>(target.slotId.back() - 'a');
+            if (RefusedWhileRecording(this, *_emulator, Emulator::MediaChange::LoadDisk, drive, file))
+                return;
             const bool autostart = target.autostart && _autostartDisks && !mountOnly &&
                                    (freshlyStarted || (_emulator->IsRunning() && !_emulator->IsPaused()));
             std::string error;
@@ -2749,7 +2751,7 @@ void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass
         }
         case FileKind::Tape:
         {
-            if (RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadTape))
+            if (RefusedWhileRecording(this, *_emulator, Emulator::MediaChange::LoadTape, 0, file))
                 return;
             std::string error;
             if (!_emulator->LoadTape(file, &error))
@@ -3577,7 +3579,7 @@ void MainWindow::handleImportAudioTapeRequested()
     // rides the same LoadTape path as File → Open Tape
     TapeImportAudioDialog dialog(this);
     connect(&dialog, &TapeImportAudioDialog::insertRequested, this, [this](const QString& path) {
-        if (_emulator && RefusedWhileRecording(this, *_emulator, ttd::TTDGuardedAction::LoadTape))
+        if (_emulator && RefusedWhileRecording(this, *_emulator, Emulator::MediaChange::LoadTape, 0, path.toStdString()))
             return;
         if (_emulator)
         {

@@ -15,15 +15,15 @@ This means that **every API change** requires **manual updates** to the OpenAPI 
 
 ## Current Status
 
-✅ **Coverage** - 239 of 239 registered paths documented (100%, verification script)  
-✅ **Modular Organization** - 26 domain-specific `.inc` files  
+✅ **Coverage** - 375 of 375 registered paths documented (100%, verification script)  
+✅ **Modular Organization** - 53 domain-specific `.inc` files  
 ✅ **Complete Schemas** - 30+ response schemas defined  
 ✅ **Organized Tags** - 23 feature-based categories  
 ✅ **Automated Verification** - Coverage test script available
 
-**Last Updated:** 2026-09-28  
-**Registered Routes:** 261 `ADD_METHOD_TO` registrations, 239 unique paths (across `emulator_api.h` and `interpreter_api.h`)  
-**OpenAPI Paths:** 244 (includes 5 planned profiler endpoints, marked `[Planned]` and `x-planned: true`)
+**Last Updated:** 2026-10-10  
+**Registered Routes:** 410 `ADD_METHOD_TO` registrations, 375 unique paths (across `emulator_api.h` and `interpreter_api.h`)  
+**OpenAPI Paths:** 384 (includes 5 planned profiler endpoints, marked `[Planned]` and `x-planned: true`)
 
 ## Code Organization
 

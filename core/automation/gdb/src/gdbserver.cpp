@@ -13,6 +13,7 @@
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
+#include <emulator/coordinator/machineop.h>
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/ttd/ttdsession.h>
 #include <debugger/ttd/ttdexternalevents.h>
@@ -234,6 +235,7 @@ void GDBServer::acceptLoop()
 
 void GDBServer::handleClient(int clientSocket)
 {
+    coordinator::SetThreadSource(coordinator::OpSource::Gdb);   // the operation log names this session's operations
     auto session = std::make_unique<GDBSession>(clientSocket);
     session->setAutoAttach(_autoAttach);
 
@@ -883,12 +885,12 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                 }
                 else if (Emulator::IsTapeExtension(ext))
                 {
-                    refusal = _emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape);
+                    refusal = _emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, path);
                     ok = refusal.empty() && _emulator->LoadTape(path);
                 }
                 else if (ext == "trd" || ext == "scl" || ext == "fdi")
                 {
-                    refusal = _emulator->RecordingGuard(ttd::TTDGuardedAction::LoadDisk);
+                    refusal = _emulator->AskMediaChange(Emulator::MediaChange::LoadDisk, 0, path);
                     ok = refusal.empty() && _emulator->LoadDisk(path);
                 }
                 else

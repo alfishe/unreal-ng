@@ -11,6 +11,16 @@
 
 /// region <Constructors / destructors>
 
+namespace
+{
+std::atomic<size_t> g_liveContexts{0};
+}
+
+size_t EmulatorContext::LiveCount()
+{
+    return g_liveContexts.load();
+}
+
 /// Default constructor with LogTrace default logging level
 EmulatorContext::EmulatorContext() : EmulatorContext(LoggerLevel::LogTrace) {}
 
@@ -69,6 +79,8 @@ EmulatorContext::EmulatorContext(LoggerLevel level)
     {
         throw std::runtime_error("EmulatorContext::EmulatorContext() - Unable to initialize ModuleLogger");
     }
+
+    g_liveContexts.fetch_add(1);
 }
 
 /// Constructor registering reference to parent Emulator object
@@ -79,6 +91,7 @@ EmulatorContext::EmulatorContext(Emulator* emulator, LoggerLevel level) : Emulat
 
 EmulatorContext::~EmulatorContext()
 {
+    g_liveContexts.fetch_sub(1);
     DeviceMemory::Forget(this);   // the registry's views of this machine's memories
     if (pModuleLogger != nullptr)
     {

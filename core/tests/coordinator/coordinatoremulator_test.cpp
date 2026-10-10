@@ -114,6 +114,44 @@ TEST_F(CoordinatorEmulator_Test, ATapeDuringARecordingIsRefusedAndLoggedBeforeIt
     EXPECT_EQ(log[0].detail, would.reason);
 }
 
+TEST_F(CoordinatorEmulator_Test, ASurfaceThatAsksFirstGetsTheSameRefusalAndTheLogNamesIt)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+
+    // A surface asks before its own preparation (an upload, a dialog): the sentence LoadTape / LoadDisk /
+    // CreateBlankDisk give, logged under the asking thread's source
+    coordinator::SourceScope scope(coordinator::OpSource::WebApi);
+    Mark();
+    const std::string tape = _emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, "game.tzx");
+    const std::string disk = _emulator->AskMediaChange(Emulator::MediaChange::LoadDisk, 1, "game.trd");
+    const std::string blank = _emulator->AskMediaChange(Emulator::MediaChange::CreateDisk, 0);
+    std::string error;
+    EXPECT_FALSE(_emulator->LoadTape(Garbage("asked.tzx"), &error));
+    EXPECT_EQ(tape, error);
+    EXPECT_NE(disk.find("insert a disk"), std::string::npos) << disk;
+    EXPECT_NE(blank.find("create a disk"), std::string::npos) << blank;
+
+    const auto log = Logged();
+    ASSERT_EQ(log.size(), 4u) << "every refusal is in the log, the ones a surface asked for too";
+    for (const OperationLogEntry& e : log)
+    {
+        EXPECT_EQ(e.status, OpStatus::Refused);
+        EXPECT_EQ(e.source, coordinator::OpSource::WebApi);
+        EXPECT_EQ(e.mode, MachineMode::Recording);
+    }
+    EXPECT_EQ(log[0].summary, "tape game.tzx");
+    EXPECT_EQ(log[1].summary, FloppyDriveSlot::IdFor(1) + " game.trd");
+    EXPECT_EQ(log[2].kind, OpKind::DiskCreate);
+    EXPECT_TRUE(_ttd->IsRecording());
+
+    // Live: nothing to refuse, nothing logged
+    _ttd->StopRecording();
+    Mark();
+    EXPECT_EQ(_emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, "game.tzx"), "");
+    EXPECT_TRUE(Logged().empty());
+}
+
 TEST_F(CoordinatorEmulator_Test, TheBlackBoxEndsAtATapeLoadAndTheLogSaysSo)
 {
     _ttd->SetBlackBox(true, 1);

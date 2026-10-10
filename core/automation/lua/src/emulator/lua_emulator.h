@@ -1987,7 +1987,7 @@ public:
         lua.set_function("tape_load", [this](const std::string& path) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return {false, "no emulator"};
-            if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
+            if (std::string refusal = emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, path); !refusal.empty())
                 return {false, refusal};
             std::string reason;
             const bool loaded = emulator->LoadTape(path, &reason);

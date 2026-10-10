@@ -319,6 +319,72 @@ TEST_F(MachineCoordinator_Test, TheLogKeepsTimeSourceAndSummary)
     EXPECT_EQ(e.time.tInFrame, 7u);
 }
 
+TEST_F(MachineCoordinator_Test, AnOperationWithoutASourceTakesTheOneItsThreadAskedIn)
+{
+    MachineOp op = Op(OpKind::MediaInsert);
+    op.source = OpSource::Unknown;
+    {
+        SourceScope scope(OpSource::Lua);
+        coordinator.Run(op);
+        op.source = OpSource::Cli;   // a named source wins over the thread's
+        coordinator.Run(op);
+        op.source = OpSource::Unknown;
+    }
+    EXPECT_EQ(CurrentSource(), OpSource::Unknown) << "the scope gave the previous source back";
+    coordinator.Run(op);
+    std::thread other([&] {
+        SetThreadSource(OpSource::WebApi);
+        coordinator.Run(op);
+    });
+    other.join();
+    EXPECT_EQ(CurrentSource(), OpSource::Unknown) << "another thread's source is its own";
+
+    const auto log = coordinator.Log().Entries();
+    ASSERT_EQ(log.size(), 4u);
+    EXPECT_EQ(log[0].source, OpSource::Lua);
+    EXPECT_EQ(log[1].source, OpSource::Cli);
+    EXPECT_EQ(log[2].source, OpSource::Unknown);
+    EXPECT_EQ(log[3].source, OpSource::WebApi);
+}
+
+TEST_F(MachineCoordinator_Test, AskLogsARefusalWithItsSourceAndNothingElse)
+{
+    SourceScope scope(OpSource::Qt);
+    MachineOp op = Op(OpKind::MediaInsert);
+    op.source = OpSource::Unknown;
+    op.summary = "tape game.tzx";
+    op.media = MediaClass::Tape;
+
+    // A yes: nothing logged, nothing parked, the owner only asked
+    EXPECT_TRUE(coordinator.Ask(op).Ok());
+    EXPECT_TRUE(coordinator.Log().Entries().empty());
+    EXPECT_TRUE(calls.Take().empty());
+
+    // The rules refuse: logged like Run's refusal, the sentence Run would give
+    session.mode = MachineMode::Recording;
+    const OpResult would = coordinator.WouldRefuse(op);
+    const OpResult asked = coordinator.Ask(op);
+    EXPECT_EQ(asked.status, OpStatus::Refused);
+    EXPECT_EQ(asked.reason, would.reason);
+    EXPECT_GT(asked.logSeq, 0u);
+
+    // The owner refuses
+    session.mode = MachineMode::Live;
+    owner.refusal = "no deck";
+    EXPECT_EQ(coordinator.Ask(op).reason, "no deck");
+
+    EXPECT_TRUE(calls.Take().empty()) << "Ask parks nothing and runs no owner step";
+    const auto log = coordinator.Log().Entries();
+    ASSERT_EQ(log.size(), 2u);
+    EXPECT_EQ(log[0].status, OpStatus::Refused);
+    EXPECT_EQ(log[0].source, OpSource::Qt);
+    EXPECT_EQ(log[0].mode, MachineMode::Recording);
+    EXPECT_EQ(log[0].summary, "tape game.tzx");
+    EXPECT_EQ(log[0].detail, would.reason);
+    EXPECT_EQ(log[0].effect, SessionEffect::None);
+    EXPECT_EQ(log[1].detail, "no deck");
+}
+
 TEST_F(MachineCoordinator_Test, OperationsFromManyThreadsRunOneAtATime)
 {
     // No call log here: the fakes count; each thread runs parked and unparked operations

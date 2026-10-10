@@ -473,21 +473,23 @@ operation may run now, what it does to a TTD session, and logs the outcome. The 
 
 Each operation: `seq` (1, 2, ... never reused), the frame and T-state when it finished, the host wall time, `kind`
 (`reset`, `autostart`, `snapshot-load`, `media-insert`, `media-eject`, `media-discard`, `disk-create`), `source`
-(the surface that asked; `unknown` until the surfaces name themselves), the machine `mode` the rules saw (`live`,
+(the surface that asked: `qt`, `webapi`, `mcp`, `cli`, `lua`, `python`, `gdb`, `dezog`; `unknown` for the emulator's
+own threads), the machine `mode` the rules saw (`live`,
 `recording`, `black-box`, `replaying`, `detached`), `status` (`done`; `refused` - nothing happened, `detail` is the
 reason every surface shows; `failed` - the owner could not do it, `detail` is the error), `effect` on the TTD
 session (`none`, `end-keep-history`, `media-changed`, `stop-then-media-changed`), `summary` (soft / hard, the
 snapshot path, the slot and the medium) and `detail` (`no change` when there was nothing to do). The report also
-carries the current `mode`, `last_seq` and `capacity`.
+carries the current `mode`, `last_seq` and `capacity`. Every refusal is logged, also the ones a surface gets when it
+asks before preparing a change itself (an upload, a file dialog): the same sentence, under that surface's name.
 
 Example (a tape refused while a recording runs, then the recording stopped and the tape loaded):
 
 ```
 > ops
 Operations (mode live, last #3, 3 shown, ring of 1024):
-  #1  frame 812 t 0  reset soft  done  [recording, unknown]  ttd: end-keep-history
-  #2  frame 950 t 41210  media-insert tape /games/elite.tzx  refused  [recording, unknown]  - Cannot insert a tape while TTD is recording: ...
-  #3  frame 1130 t 7  media-insert tape /games/elite.tzx  done  [live, unknown]  ttd: media-changed
+  #1  frame 812 t 0  reset soft  done  [recording, cli]  ttd: end-keep-history
+  #2  frame 950 t 41210  media-insert tape /games/elite.tzx  refused  [recording, webapi]  - Cannot insert a tape while TTD is recording: ...
+  #3  frame 1130 t 7  media-insert tape /games/elite.tzx  done  [live, qt]  ttd: media-changed
 ```
 
 The same report is WebAPI `GET /api/v1/emulator/{id}/operations[?since=&limit=]`, Lua `operations(since, limit)`,

@@ -122,6 +122,26 @@ struct OpResult
     bool Ok() const { return status == OpStatus::Done; }
 };
 
+/// Who asks from this thread: the innermost SourceScope, else the thread's source (SetThreadSource), else Unknown.
+/// Run, WouldRefuse and Ask take it for an operation that names no source: each surface marks its own thread (an
+/// interpreter, a debugger session, the CLI client) or request (the WebAPI) once instead of every call site
+OpSource CurrentSource();
+/// This thread's source until set again (a surface's own thread at its start, the WebAPI per request)
+void SetThreadSource(OpSource source);
+
+/// The source of the operations asked for in a scope on this thread; the previous one comes back at its end
+class SourceScope
+{
+public:
+    explicit SourceScope(OpSource source);
+    ~SourceScope();
+    SourceScope(const SourceScope&) = delete;
+    SourceScope& operator=(const SourceScope&) = delete;
+
+private:
+    OpSource _previous;
+};
+
 const char* OpKindName(OpKind kind);
 const char* OpSourceName(OpSource source);
 const char* MachineModeName(MachineMode mode);

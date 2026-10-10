@@ -1,6 +1,5 @@
 #include <base/featuremanager.h>
 #include <optional>
-#include <debugger/ttd/timetravelmanager.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/io/tape/tapecatalog.h>
@@ -280,8 +279,8 @@ void CLIProcessor::HandleTapeLoad(const ClientSession& session, std::shared_ptr<
 
     std::string filepath = args[1];
 
-    // TTD refuses a tape insert while recording (it would drop the history)
-    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
+    // The coordinator refuses a tape insert while TTD records (it would drop the history); the refusal is logged
+    if (const std::string refusal = emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, filepath); !refusal.empty())
     {
         session.SendResponse("Error: " + refusal + NEWLINE);
         return;

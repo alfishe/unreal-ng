@@ -189,7 +189,6 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     [[maybe_unused]] EmulatorState& state = _context->emulatorState;
     [[maybe_unused]] TEMP& temporary = _context->temporary;
     [[maybe_unused]] Memory& memory = *_context->pMemory;
-    [[maybe_unused]] Emulator& emulator = *_context->pEmulator;
 
     /// region  <Ports logic>
 
@@ -288,7 +287,9 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
             if (!isAnalyzerBreakpoint)
             {
                 // Pause and park, or during a direct run stop before this instruction
-                if (emulator.OnBreakpointHit(breakpointID, pc, BreakpointHitKind::Execute))
+                // A bare Core (tests) has no emulator to stop
+                Emulator* emulator = _context->pEmulator;
+                if (emulator && emulator->OnBreakpointHit(breakpointID, pc, BreakpointHitKind::Execute))
                     return true;
             }
         }
@@ -426,7 +427,6 @@ void Z80::Z80Step(bool skipBreakpoints)
     [[maybe_unused]] EmulatorState& state = _context->emulatorState;
     [[maybe_unused]] TEMP& temporary = _context->temporary;
     [[maybe_unused]] Memory& memory = *_context->pMemory;
-    [[maybe_unused]] Emulator& emulator = *_context->pEmulator;
 
     // Boundary state describes the boundary BEFORE this step (it already
     // decided INT/NMI acceptance in ProcessInterrupts); this step's own

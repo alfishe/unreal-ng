@@ -113,6 +113,7 @@ void WebApiClient::Call(const std::string& method, const std::string& path, cons
     req->setMethod(httpMethod);
     if (const std::string session = Session(); !session.empty())
         req->addHeader("X-Unreal-Session", session);
+    req->addHeader("X-Unreal-Source", "mcp");   // the operation log names the MCP server, not the WebAPI
 
     // 120s timeout: long run_frames requests may take a while
     (*holder)->sendRequest(req, [this, callback](drogon::ReqResult result, const drogon::HttpResponsePtr& resp) {
@@ -165,6 +166,7 @@ void WebApiClient::CallRaw(const std::string& method, const std::string& path,
     req->setMethod(httpMethod);
     if (const std::string session = Session(); !session.empty())
         req->addHeader("X-Unreal-Session", session);
+    req->addHeader("X-Unreal-Source", "mcp");   // the operation log names the MCP server, not the WebAPI
 
     (*holder)->sendRequest(req, [this, callback](drogon::ReqResult result, const drogon::HttpResponsePtr& resp) {
         if (result != drogon::ReqResult::Ok || !resp)

@@ -97,6 +97,22 @@ MachineMode MachineCoordinator::ModeLocked() const
 OpResult MachineCoordinator::WouldRefuse(const MachineOp& op) const
 {
     std::shared_lock<std::shared_mutex> ports(_portsMutex);
+    return WouldRefuseLocked(op);
+}
+
+OpResult MachineCoordinator::Ask(MachineOp op)
+{
+    if (op.source == OpSource::Unknown)
+        op.source = CurrentSource();
+    std::shared_lock<std::shared_mutex> ports(_portsMutex);
+    OpResult result = WouldRefuseLocked(op);
+    if (result.status == OpStatus::Refused)
+        result = Finish(op, ModeLocked(), OpStatus::Refused, std::move(result.reason), SessionEffect::None);
+    return result;
+}
+
+OpResult MachineCoordinator::WouldRefuseLocked(const MachineOp& op) const
+{
     OpResult result;
     const PolicyDecision d = Decide(op, ModeLocked());
     const size_t index = static_cast<size_t>(op.kind);
@@ -115,6 +131,8 @@ OpResult MachineCoordinator::WouldRefuse(const MachineOp& op) const
 
 OpResult MachineCoordinator::Run(MachineOp op)
 {
+    if (op.source == OpSource::Unknown)
+        op.source = CurrentSource();
     IMachineThread* thread = nullptr;
     {
         std::shared_lock<std::shared_mutex> ports(_portsMutex);

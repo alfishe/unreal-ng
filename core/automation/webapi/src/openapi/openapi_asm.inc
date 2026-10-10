@@ -128,6 +128,33 @@ paths["/api/v1/emulator/{id}/asm/convert"]["post"]["responses"]["200"]["descript
 paths["/api/v1/emulator/{id}/asm/convert"]["post"]["responses"]["404"]["description"] = "No such file, format or dialect";
 paths["/api/v1/emulator/{id}/asm/convert"]["post"]["responses"]["422"]["description"] = "The conversion failed";
 
+// The route registered for the four entries above: one POST dispatches any AsmControl verb with the JSON body's scalar
+// members as its options (the per-verb entries above document each verb's fields and answer)
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["summary"] = "Run an assembler-source verb";
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["description"] = "Runs AsmControl verb with the JSON body's members as options (numbers, strings, true / false; null is absent). detect, decode, encode and convert are documented as their own paths; formats, dialects and files (option drive) answer as their GET routes; sync-* verbs as /asm/sync/{action}. An option the verb does not take is 400.";
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["tags"].append("Assembler Sources");
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["parameters"][1]["name"] = "verb";
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["parameters"][1]["in"] = "path";
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["parameters"][1]["required"] = true;
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["parameters"][1]["description"] = "The verb (case-insensitive)";
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["parameters"][1]["schema"]["type"] = "string";
+for (const char* verb : {"detect", "decode", "encode", "convert", "formats", "dialects", "files", "sync-status", "sync-probe",
+                         "sync-extract", "sync-watch", "sync-unwatch", "sync-hints"})
+    paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["parameters"][1]["schema"]["enum"].append(verb);
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["requestBody"]["required"] = false;
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["requestBody"]["content"]["application/json"]["schema"]["description"] = "The verb's options as scalar members (see the per-verb paths)";
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["responses"]["200"]["description"] = "The verb's answer";
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["responses"]["400"]["description"] = "Unknown verb, an option the verb does not take, or a member that is an object or array {error, message}";
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["responses"]["404"]["description"] = "Emulator not found, or (per verb) no such file, format or dialect";
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["responses"]["409"]["description"] = "encode: the disk is write-protected or full";
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["responses"]["422"]["description"] = "The bytes are no source of the format, or the encode / conversion failed";
+paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["responses"]["503"]["description"] = "The emulator is shutting down";
+
 // The source an assembler holds in RAM (core/src/debugger/asm/sync/synccontrol.h, asm-synchronizer.md)
 paths["/api/v1/emulator/{id}/asm/sync"]["get"]["summary"] = "The assembler running in the machine";
 paths["/api/v1/emulator/{id}/asm/sync"]["get"]["description"] = "Which assembler holds a source in RAM (ALASM 5.09 / 4.44, TASM 4.12), where its text is and the editor state: a line in the editor, a line being typed, changed since saved. The RAM is copied at a coherent moment; the guest is not written.";
@@ -144,6 +171,31 @@ paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][1]["description"] =
 paths["/api/v1/emulator/{id}/asm/sync"]["get"]["responses"]["200"]["description"] = "{assembler, title, format, version, family, state, name, page, bytes, lines, current_line, editor, typing, changed, diagnostics}";
 paths["/api/v1/emulator/{id}/asm/sync"]["get"]["responses"]["404"]["description"] = "No known assembler in RAM {state: none, candidates}";
 paths["/api/v1/emulator/{id}/asm/sync"]["get"]["responses"]["400"]["description"] = "Two identify alike {state: ambiguous, candidates}: give assembler";
+
+// The route registered for the POST entries below (probe, extract, watch): verb sync-<action> with the JSON body's
+// scalar members as its options
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["summary"] = "Run an assembler-in-RAM action";
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["description"] = "Runs AsmControl verb sync-<action> with the JSON body's members as options. probe, extract and watch are documented as their own paths; status (option assembler) and hints answer as their GET routes, unwatch as DELETE /asm/sync/watch. An option the action does not take is 400.";
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["tags"].append("Assembler Sources");
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["parameters"][1]["name"] = "action";
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["parameters"][1]["in"] = "path";
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["parameters"][1]["required"] = true;
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["parameters"][1]["description"] = "The action (case-insensitive)";
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["parameters"][1]["schema"]["type"] = "string";
+for (const char* action : {"probe", "extract", "watch", "status", "unwatch", "hints"})
+    paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["parameters"][1]["schema"]["enum"].append(action);
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["requestBody"]["required"] = false;
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["requestBody"]["content"]["application/json"]["schema"]["description"] = "The action's options as scalar members (see the per-action paths)";
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["responses"]["200"]["description"] = "The action's answer";
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["responses"]["400"]["description"] = "Unknown action or option, a member that is an object or array, a bad as / project, or two assemblers identify alike (give assembler)";
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["responses"]["404"]["description"] = "Emulator not found, no known assembler in RAM, no such assembler, or hints before a build";
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["responses"]["422"]["description"] = "extract: the text does not read now (state: inconsistent) or the conversion failed";
+paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["responses"]["503"]["description"] = "The emulator is shutting down";
 
 paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["summary"] = "Probe RAM for assemblers";
 paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["description"] = "Every assembler descriptor that identifies, best first (100: its text reads; 60: identified, the text does not read now).";
