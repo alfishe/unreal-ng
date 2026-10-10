@@ -514,9 +514,11 @@ TEST_F(ExecutionArbiterMachine_Test, ReadingTheVideoLogDuringADirectRunNeverRead
         memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
     _emulator->GetContext()->pCore->GetZ80()->pc = 0x8000;
 
+    std::atomic<bool> started{false};
     std::atomic<bool> done{false};
     std::atomic<int> reads{0};
     std::thread reader([&]() {
+        started = true;
         while (!done.load())
         {
             const StateNode report = DeviceState::VideoChanges(_emulator->GetContext(), 2);
@@ -524,7 +526,15 @@ TEST_F(ExecutionArbiterMachine_Test, ReadingTheVideoLogDuringADirectRunNeverRead
             reads++;
         }
     });
-    // Until the reader has read a few times (a starved reader thread may start late), at most 40 frames
+    // The frames run only once the reader is in its loop: under a full parallel run the thread could start after
+    // the 40 frames had gone and never read (reads == 0, the test's flake, not the arbiter's)
+    if (!TestWait::For([&] { return started.load(); }))
+    {
+        done = true;
+        reader.join();
+        FAIL() << "the reader thread did not start";
+    }
+    // Until the reader has read a few times, at most 40 frames
     for (int i = 0; i < 40 && (i < 4 || reads.load() < 3); i++)
         _emulator->RunNFrames(1, true);
     done = true;

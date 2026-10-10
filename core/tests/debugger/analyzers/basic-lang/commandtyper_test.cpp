@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <functional>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "_helpers/romeditortesthelper.h"
 #include "_helpers/testpathhelper.h"
@@ -183,6 +185,55 @@ TEST_P(CommandTyperKeyword_Test, UntypableTextIsRefused)
     EXPECT_EQ(r.bytesTyped, 0u);
 }
 
+/// The body of the first program line (after its number and length, to the #0D) as the ROM stored it
+static std::vector<uint8_t> FirstLineBody(const std::function<uint8_t(uint16_t)>& peek)
+{
+    const uint16_t prog = static_cast<uint16_t>(peek(0x5C53) | (peek(0x5C54) << 8));
+    std::vector<uint8_t> body;
+    for (uint16_t a = static_cast<uint16_t>(prog + 4); body.size() < 256; a++)
+    {
+        body.push_back(peek(a));
+        if (body.back() == 0x0D)
+            break;
+    }
+    return body;
+}
+
+static std::string HexBytes(const std::vector<uint8_t>& bytes)
+{
+    std::ostringstream out;
+    for (const uint8_t b : bytes)
+        out << std::hex << std::uppercase << (b < 16 ? "0" : "") << int(b) << ' ';
+    return out.str();
+}
+
+/// The TR-DOS idiom from BASIC: keywords are keys on the 48K editor, so the line holds no blanks around them.
+/// A blank after `REM :` is what TR-DOS takes for the command token at #3D03 and does nothing ("0 OK").
+/// Boot-bound like every test here (the editor boots from reset)
+TEST_P(CommandTyperKeyword_Test, TrDosIdiomIsStoredWithoutBlanks)
+{
+    Ready();
+    ASSERT_FALSE(HasFatalFailure());
+
+    const std::vector<uint8_t> expected = {0xF9, 0xC0, '1', '5', '6', '1', '9', 0x0E, 0x00, 0x00, 0x03, 0x3D, 0x00,
+                                           ':', 0xEA, ':', 0xEF, '"', 'x', '"', 0xAF, 0x0D};
+    const auto peek = [this](uint16_t address) { return SysVar(address); };
+
+    for (const char* line : {"10 RANDOMIZE USR 15619: REM : LOAD \"x\" CODE", "10 RANDOMIZE USR 15619:REM:LOAD \"x\" CODE"})
+    {
+        const CommandTyper::Result r = Run(line);
+        ASSERT_EQ(r.outcome, Outcome::Stored) << line << "\n" << Describe(r);
+        RunFrames(5);  // the editor finishes moving the line in after the point that tells it was stored
+        const std::vector<uint8_t> body = FirstLineBody(peek);
+        const uint16_t prog = static_cast<uint16_t>(peek(0x5C53) | (peek(0x5C54) << 8));
+        std::vector<uint8_t> head;
+        for (uint16_t a = prog; a < prog + 8; a++)
+            head.push_back(peek(a));
+        EXPECT_EQ(body, expected) << line << "\n  stored:   " << HexBytes(body) << "\n  expected: " << HexBytes(expected)
+                                  << "\n  PROG " << prog << ": " << HexBytes(head);
+    }
+}
+
 TEST_P(CommandTyper_Test, RunningProgramIsBusy)
 {
     Ready();
@@ -322,4 +373,37 @@ TEST_P(CommandTyperMenu_Test, CommandFromAMenuHighlightedBelow)
     const CommandTyper::Result r = typer->GetResult();
     EXPECT_EQ(r.outcome, Outcome::Started) << CommandTyper::FailureName(r.failure) << " " << r.message;
     EXPECT_EQ(r.editor, ExpectedEditor());
+}
+
+/// The idiom run as a direct command from 48K BASIC on a machine with TR-DOS: the catalogue appears
+class CommandTyperTrDosIdiom_Test : public CommandTyper_Test
+{
+};
+
+INSTANTIATE_TEST_SUITE_P(Editors, CommandTyperTrDosIdiom_Test, ::testing::Values("Pentagon-48BASIC"),
+                         RomEditorFixture::ParamName);
+
+/// Boot-bound (the editor boots from reset) and disk-bound (TR-DOS reads the catalogue)
+TEST_P(CommandTyperTrDosIdiom_Test, CatThroughUsr15619)
+{
+    Ready();
+    ASSERT_FALSE(HasFatalFailure());
+    ASSERT_TRUE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath("loaders/trd/zx-format8.trd"), 0));
+
+    const CommandTyper::Result r = Run("RANDOMIZE USR 15619: REM : CAT");
+    EXPECT_TRUE(CommandTyper::Succeeded(r)) << Describe(r);
+    RunUntil([&] { return ScreenHas("Free"); }, 400);
+    EXPECT_TRUE(ScreenHas("Free")) << "TR-DOS did not list the disk\n" << Screen();
+}
+
+/// A BASIC statement at the A> prompt: TR-DOS has no such command, and the failure says what to do instead
+TEST_P(CommandTyperTrDos_Test, BasicStatementAtThePromptNamesTheWayOut)
+{
+    Ready();
+    ASSERT_FALSE(HasFatalFailure());
+    ASSERT_TRUE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath("loaders/trd/zx-format8.trd"), 0));
+
+    const CommandTyper::Result r = Run("RANDOMIZE USR 30000");
+    EXPECT_EQ(r.failure, Failure::TrDosRejected) << Describe(r);
+    EXPECT_NE(r.message.find("RETURN to BASIC"), std::string::npos) << Describe(r);
 }

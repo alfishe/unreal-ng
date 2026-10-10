@@ -8,7 +8,12 @@
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["description"] =
         "Every breakpoint: id, type, address, the access flags, active, note, group; address_end for a range; page "
         "({kind, page}) and slot_only for a physical one; port_mask for a masked port; hit_mode, hit_target and the "
-        "live hit_count.";
+        "live hit_count. The user's breakpoints only: the ones the BASIC typer, the debugger adapters and steps own "
+        "are left out unless all=true (then with owner and hidden).";
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][1]["name"] = "all";
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][1]["schema"]["type"] = "boolean";
     paths["/api/v1/emulator/{id}/breakpoints"]["get"]["responses"]["200"]["description"] = "List of breakpoints";
 
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["summary"] = "Add breakpoint";
@@ -37,6 +42,8 @@
     paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["description"] =
+        "Removes the user's breakpoints; the ones the BASIC typer, the debugger adapters and steps own stay.";
     paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["responses"]["200"]["description"] = "All breakpoints cleared";
 
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["summary"] = "Remove specific breakpoint";

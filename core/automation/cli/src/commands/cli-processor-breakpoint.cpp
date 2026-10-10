@@ -345,7 +345,7 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
 
     if (option == "all")
     {
-        bpManager->ClearBreakpoints();
+        bpManager->ClearUserBreakpoints();
         session.SendResponse("All breakpoints cleared\n");
 
         // Notify UI components that breakpoints have changed

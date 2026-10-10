@@ -35,7 +35,7 @@ void CLIProcessor::HandleAsm(const ClientSession& session, const std::vector<std
             ss << "  asm sync [status] [--assembler a]       - the assembler running in the machine and its text" << NEWLINE;
             ss << "  asm sync probe                        - every assembler that identifies in RAM" << NEWLINE;
             ss << "  asm sync extract [--as text|file|dialect] [--to d] [--output file|disk:A/NAME.T]" << NEWLINE;
-            ss << "  asm sync watch [--interval ms] [--quiet ms] [--as ..] [--to d] [--output f] - live labels and hints" << NEWLINE;
+            ss << "  asm sync watch [--interval ms] [--quiet ms] [--as ..] [--to d] [--output f] [--project disk:A|none|folder] - live labels and hints" << NEWLINE;
             ss << "  asm sync unwatch | asm sync hints     - stop the watch; the last build's hints" << NEWLINE;
             ss << "  (a path is a host file or disk:A/NAME.T; --file NAME.T picks a file in a .trd / .tap; --json)" << NEWLINE;
             session.SendResponse(ss.str());

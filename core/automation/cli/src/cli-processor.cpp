@@ -83,6 +83,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"list", &CLIProcessor::HandleList},
                         {"select", &CLIProcessor::HandleSelect},
                         {"reset", &CLIProcessor::HandleReset},
+                        {"ops", &CLIProcessor::HandleOps},        // Operation log (machine state coordinator)
                         {"nmi", &CLIProcessor::HandleNmi},    // Pulse the NMI line
                         {"mni", &CLIProcessor::HandleMni},    // Scorpion magic button (NMI + service monitor)
                         {"switch", &CLIProcessor::HandleSwitch},  // Front-panel switches (Profi TURBO)
@@ -633,6 +634,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  zxpoly start <model> [file] [--ram-power-on random|zero] - Start a ZX-Poly machine (4 synchronized <model>s; file: .zxp/.prom/disk)" << NEWLINE;
     oss << "  zxpoly status [id|index]    - ZX-Poly group status (modules, registers, lock, video mode, lockstep)" << NEWLINE;
     oss << "  reset [id|index]    - Reset the emulator (auto-select if only one, or by ID/index)" << NEWLINE;
+    oss << "  ops [n|all] | ops since <seq> [n] - Operation log: reset, snapshot, media changes, refusals (newest 20)" << NEWLINE;
     oss << "  pause [id|index]    - Pause emulation (auto-select if only one, or by ID/index)" << NEWLINE;
     oss << "  switch [turbo|cpm [on|off]] - Front-panel switches (Profi TURBO, v5 CP/M; recorded by TTD like a key)" << NEWLINE;
     oss << "  resume [id|index]   - Resume emulation (auto-select if only one, or by ID/index)" << NEWLINE;

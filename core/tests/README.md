@@ -20,6 +20,9 @@ This document outlines the testing practices, conventions, and guidelines used i
 14. [Building and Running Tests](#building-and-running-tests)
 15. [Test Speed & Determinism](#test-speed--determinism)
 
+Memory / thread / lifetime bugs (AddressSanitizer, ThreadSanitizer, leaks, stress) and turning their findings into
+regression tests: [`docs/testing/sanitizers.md`](../../docs/testing/sanitizers.md).
+
 ---
 
 ## Best Practices Summary

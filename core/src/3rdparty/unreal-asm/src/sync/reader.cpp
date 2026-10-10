@@ -51,6 +51,65 @@ std::vector<int> PagesForId(const MachineView& machine, PageIdRule rule, uint8_t
     return pages;
 }
 
+/// The text a FileImage layout keeps in one page: 1 read, 0 no text header there, -1 a header but the text does not read
+int ReadFileImageInPage(const MachineView& machine, const SyncDescriptor& d, int candidate, SyncText& text)
+{
+    const FileImageParams& p = d.fileImage;
+    const symbols::MemoryPage* page = machine.Page(candidate);
+    if (!page || page->bytes.size() < kPage)
+        return 0;
+    const auto bytes = page->bytes;
+    if (bytes.size() < size_t(p.base) + p.headerSize || bytes.size() < size_t(p.signatureAt) + p.signature.size() ||
+        !std::equal(p.signature.begin(), p.signature.end(), bytes.begin() + p.signatureAt,
+                    [](char a, uint8_t b) { return static_cast<uint8_t>(a) == b; }))
+        return 0;
+    size_t length = 0;
+    if (p.lengthFromEnd)
+    {
+        const auto end = std::find(bytes.begin() + p.base + p.textOffset, bytes.end(), p.endByte);
+        if (end == bytes.end())
+        {
+            Inconsistent(text, "no end of text in page " + std::to_string(candidate));
+            return -1;
+        }
+        length = static_cast<size_t>(end - bytes.begin()) - p.base + 1;
+        if (p.wholeSectors)
+            length = std::min<size_t>((length + 255) / 256 * 256, bytes.size() - p.base);
+    }
+    else if (p.lengthFromPointer)
+    {
+        const uint32_t end = bytes[p.pointerAt] | (bytes[p.pointerAt + 1u] << 8);
+        const uint32_t first = kPage * 3 + p.base;   // the text's CPU address at #C000
+        if (end <= first || end > kPage * 4 || bytes[end - kPage * 3 - 1] != p.endSentinel)
+        {
+            Inconsistent(text, "the end pointer #" + Hex(end, 4) + " does not end the text in page " + std::to_string(candidate));
+            return -1;
+        }
+        length = end - first - 1;
+    }
+    else
+        length = p.headerSize + (bytes[p.base + p.lengthField] | (bytes[p.base + p.lengthField + 1u] << 8));
+    if (size_t(p.base) + length > bytes.size())
+    {
+        Inconsistent(text, "the text in page " + std::to_string(candidate) + " is longer than the page");
+        return -1;
+    }
+    text.page = candidate;
+    text.file.assign(bytes.begin() + p.base, bytes.begin() + p.base + static_cast<std::ptrdiff_t>(length));
+    if (p.changedField)
+    {
+        text.changed = (text.file[p.changedField] & p.changedMask) != 0;
+        text.file[p.changedField] &= static_cast<uint8_t>(~p.changedMask);   // SAVE writes the file as saved
+    }
+    size_t nameLength = p.nameLength;
+    while (nameLength > 0 && bytes[p.nameAt + nameLength - 1] == ' ')
+        --nameLength;
+    text.name.assign(bytes.begin() + p.nameAt, bytes.begin() + p.nameAt + static_cast<std::ptrdiff_t>(nameLength));
+    text.ok = true;
+    text.state = "ok";
+    return 1;
+}
+
 SyncText ReadFileImage(const MachineView& machine, const SyncDescriptor& d)
 {
     SyncText text;
@@ -63,52 +122,8 @@ SyncText ReadFileImage(const MachineView& machine, const SyncDescriptor& d)
             return Inconsistent(text, "the page id at #" + Hex(p.pageIdAt, 4) + " is not in the memory copied");
     }
     for (const int candidate : PagesForId(machine, d.pages, id.value_or(0)))
-    {
-        const symbols::MemoryPage* page = machine.Page(candidate);
-        if (!page || page->bytes.size() < kPage)
-            continue;
-        const auto bytes = page->bytes;
-        if (bytes.size() < size_t(p.base) + p.headerSize || bytes.size() < size_t(p.signatureAt) + p.signature.size() ||
-            !std::equal(p.signature.begin(), p.signature.end(), bytes.begin() + p.signatureAt,
-                        [](char a, uint8_t b) { return static_cast<uint8_t>(a) == b; }))
-            continue;
-        size_t length = 0;
-        if (p.lengthFromEnd)
-        {
-            const auto end = std::find(bytes.begin() + p.base + p.textOffset, bytes.end(), p.endByte);
-            if (end == bytes.end())
-                return Inconsistent(text, "no end of text in page " + std::to_string(candidate));
-            length = static_cast<size_t>(end - bytes.begin()) - p.base + 1;
-            if (p.wholeSectors)
-                length = std::min<size_t>((length + 255) / 256 * 256, bytes.size() - p.base);
-        }
-        else if (p.lengthFromPointer)
-        {
-            const uint32_t end = bytes[p.pointerAt] | (bytes[p.pointerAt + 1u] << 8);
-            const uint32_t first = kPage * 3 + p.base;   // the text's CPU address at #C000
-            if (end <= first || end > kPage * 4 || bytes[end - kPage * 3 - 1] != p.endSentinel)
-                return Inconsistent(text, "the end pointer #" + Hex(end, 4) + " does not end the text in page " + std::to_string(candidate));
-            length = end - first - 1;
-        }
-        else
-            length = p.headerSize + (bytes[p.base + p.lengthField] | (bytes[p.base + p.lengthField + 1u] << 8));
-        if (size_t(p.base) + length > bytes.size())
-            return Inconsistent(text, "the text in page " + std::to_string(candidate) + " is longer than the page");
-        text.page = candidate;
-        text.file.assign(bytes.begin() + p.base, bytes.begin() + p.base + static_cast<std::ptrdiff_t>(length));
-        if (p.changedField)
-        {
-            text.changed = (text.file[p.changedField] & p.changedMask) != 0;
-            text.file[p.changedField] &= static_cast<uint8_t>(~p.changedMask);   // SAVE writes the file as saved
-        }
-        size_t nameLength = p.nameLength;
-        while (nameLength > 0 && bytes[p.nameAt + nameLength - 1] == ' ')
-            --nameLength;
-        text.name.assign(bytes.begin() + p.nameAt, bytes.begin() + p.nameAt + static_cast<std::ptrdiff_t>(nameLength));
-        text.ok = true;
-        text.state = "ok";
-        return text;
-    }
+        if (ReadFileImageInPage(machine, d, candidate, text) != 0)
+            return text;
     return Inconsistent(text, id ? "no text header in the page the id #" + Hex(*id, 2) + " names" : std::string("no text header at #C000"));
 }
 
@@ -436,6 +451,7 @@ SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion
     d.extension = "H";
     d.identify = {{titleAt, title.empty() ? "ALASM v" + version : title}};
     d.pages = PageIdRule::Port7FFD;
+    d.textsPerPage = true;
     d.family = LayoutFamily::FileImage;
     // IX = #80BF: IX+#0D the page of the current text; the text from #C000 of it is the file (asm-synchronizer.md §7.1)
     d.fileImage.pageIdAt = 0x80CC;
@@ -1010,6 +1026,22 @@ const SyncDescriptor* FindDescriptor(const std::string& id)
         if (d.id == id)
             return &d;
     return nullptr;
+}
+
+std::vector<SyncText> ReadOtherTexts(const MachineView& machine, const SyncDescriptor& descriptor, int exceptPage)
+{
+    std::vector<SyncText> texts;
+    if (!descriptor.textsPerPage || descriptor.family != LayoutFamily::FileImage)
+        return texts;
+    for (const symbols::MemoryPage& page : machine.ram)
+    {
+        if (static_cast<int>(page.page) == exceptPage)
+            continue;
+        SyncText text;
+        if (ReadFileImageInPage(machine, descriptor, page.page, text) == 1)
+            texts.push_back(std::move(text));
+    }
+    return texts;
 }
 
 SyncText ReadText(const MachineView& machine, const SyncDescriptor& descriptor)

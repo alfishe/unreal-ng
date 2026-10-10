@@ -8,6 +8,8 @@
 
 #include "webapi-client.h"
 
+#include "mcp-tool-utils.h"
+
 #include <drogon/HttpClient.h>
 #include <drogon/HttpAppFramework.h>
 
@@ -17,6 +19,21 @@
 
 namespace mcp
 {
+
+/// region <Helpers>
+
+namespace
+{
+    /// The tools build the path with its query already percent-encoded: drogon must not encode it
+    /// again (PrepareRequestPath)
+    void SetRequestPath(const drogon::HttpRequestPtr& req, const std::string& path)
+    {
+        req->setPathEncode(false);
+        req->setPath(PrepareRequestPath(path));
+    }
+}
+
+/// endregion </Helpers>
 
 /// region <WebApiClient>
 
@@ -68,7 +85,7 @@ void WebApiClient::Call(const std::string& method, const std::string& path, cons
     {
         req = drogon::HttpRequest::newHttpRequest();
     }
-    req->setPath(path);
+    SetRequestPath(req, path);
 
     drogon::HttpMethod httpMethod;
     if (method == "GET")
@@ -132,7 +149,7 @@ void WebApiClient::CallRaw(const std::string& method, const std::string& path,
     }
 
     auto req = drogon::HttpRequest::newHttpRequest();
-    req->setPath(path);
+    SetRequestPath(req, path);
     req->setBody(std::string(reinterpret_cast<const char*>(body.data()), body.size()));
     req->setContentTypeCode(drogon::CT_APPLICATION_OCTET_STREAM);
 

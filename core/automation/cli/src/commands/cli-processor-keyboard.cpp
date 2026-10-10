@@ -342,7 +342,11 @@ void CLIProcessor::HandleKeyType(const ClientSession& session, EmulatorContext* 
         return;
     }
 
-    kbdMgr->TypeText(text);
+    if (!kbdMgr->TypeText(text).empty())
+    {
+        session.SendResponse(std::string("Error: no key types some characters of the text; nothing typed.") + NEWLINE);
+        return;
+    }
     session.SendResponse(std::string("Typing: \"") + text + "\"" + NEWLINE);
 }
 

@@ -88,6 +88,7 @@ private:
     void HandleSelect(const ClientSession& session, const std::vector<std::string>& args);
     void HandleReset(const ClientSession& session, const std::vector<std::string>& args);
     void HandleNmi(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleOps(const ClientSession& session, const std::vector<std::string>& args);  // operation log
     void HandleMni(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSwitch(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePause(const ClientSession& session, const std::vector<std::string>& args);

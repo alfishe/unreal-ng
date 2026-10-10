@@ -67,6 +67,36 @@ void operator delete[](void* p, size_t) noexcept
 {
     operator delete(p);
 }
+
+// The nothrow forms too: libstdc++ allocates temporary buffers (std::stable_sort) with them and frees through the
+// plain delete above. Left to the runtime, AddressSanitizer saw its operator new paired with this free and reported
+// alloc-dealloc-mismatch on every sort (Linux; docs/testing/sanitizers.md)
+void* operator new(size_t size, const std::nothrow_t&) noexcept
+{
+    try
+    {
+        return operator new(size);
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
+}
+
+void* operator new[](size_t size, const std::nothrow_t&) noexcept
+{
+    return operator new(size, std::nothrow);
+}
+
+void operator delete(void* p, const std::nothrow_t&) noexcept
+{
+    operator delete(p);
+}
+
+void operator delete[](void* p, const std::nothrow_t&) noexcept
+{
+    operator delete(p);
+}
 #endif
 
 namespace HeapCounter

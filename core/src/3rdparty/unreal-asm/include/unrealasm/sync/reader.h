@@ -172,6 +172,7 @@ struct SyncDescriptor
     LinearParams linear;
     TypingParams typing;
     std::string labelScanner;       ///< the symbols/live.h scanner of its label table ("" = none)
+    bool textsPerPage = false;      ///< the assembler keeps one text per page, each with its header (ALASM): a project's other texts
 };
 
 /// Every built-in descriptor (asm-synchronizer.md §7), each checked with golden dumps: ALASM 3.8c, 4.42-4.46, 4.5,
@@ -196,6 +197,10 @@ struct SyncText
 };
 
 SyncText ReadText(const MachineView& machine, const SyncDescriptor& descriptor);
+
+/// The other texts a layout keeps one per page (descriptor.textsPerPage: ALASM), every page of the copy but
+/// `exceptPage` (the live text's): their files and names, for a project's INCLUDEs (asm-synchronizer.md §5.4)
+std::vector<SyncText> ReadOtherTexts(const MachineView& machine, const SyncDescriptor& descriptor, int exceptPage);
 
 struct ProbeCandidate
 {

@@ -190,6 +190,32 @@ The machine still runs then: registers read now are not the paused ones. `?wait=
 #### Stop Emulator
 **Endpoint**: `POST /api/v1/emulators/{id}/stop`  
 
+#### Operation Log
+**Endpoint**: `GET /api/v1/emulator/{id}/operations[?since=<seq>&limit=<n>]`  
+**Description**: The machine's operation log (the machine state coordinator's, always on, the last 1024): reset,
+disk autostart, snapshot load, media insert / eject / discard, blank disk - with refusals. `since`: only entries
+after that seq (pass the previous answer's `last_seq` to poll); `limit`: only the newest N (absent or 0: all kept).
+400 when either is not a non-negative integer, 404 for an unknown emulator. Fields: [command-interface.md, Operation
+log](./command-interface.md). The same report is CLI `ops`, Lua / Python `operations()`, MCP `emulator_manage`
+`operations`.
+
+**Response**:
+```json
+{
+  "mode": "live",
+  "last_seq": 3,
+  "capacity": 1024,
+  "entries": [
+    {"seq": 2, "frame": 950, "t_in_frame": 41210, "wall_ms": 1791612034211, "kind": "media-insert",
+     "source": "unknown", "mode": "recording", "status": "refused", "effect": "none",
+     "summary": "tape /games/elite.tzx", "detail": "Cannot insert a tape while TTD is recording: ..."},
+    {"seq": 3, "frame": 1130, "t_in_frame": 7, "wall_ms": 1791612040873, "kind": "media-insert",
+     "source": "unknown", "mode": "live", "status": "done", "effect": "media-changed",
+     "summary": "tape /games/elite.tzx", "detail": ""}
+  ]
+}
+```
+
 ### 5. Create Emulator
 **Endpoint**: `POST /api/v1/emulator/create` (also `POST /api/v1/emulator/start` = create + start)  
 **Description**: Create new emulator instance. **Strict semantics**: a requested model this build cannot instantiate fails with `400` and a reason — there is NO silent fallback to a default 48K machine.  

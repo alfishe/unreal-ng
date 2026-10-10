@@ -189,3 +189,29 @@ TEST_F(SyncControl_Test, TheWatchPublishesTheLabelsAndFollowsAChange)
     EXPECT_FALSE(reply.body.find("watching")->b);
     EXPECT_NE(labels->GetLabelByName("KEY"), nullptr) << "the labels stay after the watch";
 }
+
+TEST_F(SyncControl_Test, TheWatchTakesTheProjectFromAHostFolder)
+{
+    // Y5 (asm-synchronizer.md §5.4): a host folder joins the project of every build; a bad item is refused
+    const std::filesystem::path folder = TestPathHelper::GetUniqueTestScratchPath("asm-sync-project");
+    std::filesystem::create_directories(folder);
+    std::ofstream(folder / "lib.asm") << "VALUE   EQU 1234\n";
+    std::ofstream(folder / "font.bin", std::ios::binary) << std::string(64, '\0');
+
+    EXPECT_EQ(SyncRun(_context, "sync-watch", {{"project", "nowhere-at-all"}}).HttpStatus(), 400);
+    EXPECT_EQ(SyncRun(_context, "sync-watch", {{"project", "disk:Z"}}).HttpStatus(), 400);
+
+    LoadSession(_context, "tasm412-top");
+    AsmReply reply = SyncRun(_context, "sync-watch", {{"interval", "50"}, {"quiet", "0"}, {"project", "none," + folder.string()}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    const auto generation = [&]() {
+        const AsmReply hints = SyncRun(_context, "sync-hints");
+        return hints.Ok() ? hints.body.find("generation")->i : 0;
+    };
+    ASSERT_TRUE(TestWait::For([&] { return generation() >= 1; })) << "the first build";
+    reply = SyncRun(_context, "sync-hints");
+    ASSERT_NE(reply.body.find("project"), nullptr);
+    EXPECT_EQ(reply.body.find("project")->i, 1) << "lib.asm; font.bin is a size for INCBIN only";
+    SyncRun(_context, "sync-unwatch");
+    std::filesystem::remove_all(folder);
+}

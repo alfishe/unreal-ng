@@ -21,6 +21,8 @@
 
 #include "cli-processor.h"
 #include "automation.h"
+#include "../../../operationsstatus.h"
+#include "cli-ops.h"
 
 #include <functional>
 #include <optional>
@@ -571,6 +573,27 @@ void CLIProcessor::HandleNmi(const ClientSession& session, const std::vector<std
 
     emulator->RequestNMI();
     session.SendResponse("NMI requested\n");
+}
+
+// HandleOps - `ops [n|all]`, `ops since <seq> [n]`: the operation log of the selected emulator (the machine state
+// coordinator's: reset, autostart, snapshot load, media changes, refusals included). Mirrors GET
+// /api/v1/emulator/{id}/operations (the same OperationsStatus report)
+void CLIProcessor::HandleOps(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'list' to see available emulators.");
+        return;
+    }
+    uint64_t since = 0;
+    uint64_t limit = 0;
+    if (!CliOps::ParseArgs(args, since, limit))
+    {
+        session.SendResponse(CliOps::kUsage);
+        return;
+    }
+    session.SendResponse(OperationsStatus::Text(emulator.get(), since, static_cast<size_t>(limit)) + NEWLINE);
 }
 
 // HandleMni - the Scorpion "magic button": page the Shadow Monitor, then NMI

@@ -254,10 +254,12 @@ public:
     void TypeTRDOSCommand(const std::string& keyword, const std::string& argument);
     
     /// Type text string with automatic modifier handling
-    /// Handles uppercase (CAPS+letter) and symbols (SYM+key)
+    /// Handles uppercase (CAPS+letter), symbols (SYM+key) and line ends
+    /// ('\n', '\r' and "\r\n" press ENTER once)
     /// @param text ASCII text to type
     /// @param charDelayFrames Frames between each character
-    void TypeText(const std::string& text, uint16_t charDelayFrames = DEFAULT_WAIT_FRAMES);
+    /// @return The characters no key types, in order; when there are any, nothing is queued
+    std::string TypeText(const std::string& text, uint16_t charDelayFrames = DEFAULT_WAIT_FRAMES);
     
     /// BASIC commands are typed by CommandTyper (debugger/analyzers/basic-lang),
     /// which knows the editor's mode and proves every key on the ROM

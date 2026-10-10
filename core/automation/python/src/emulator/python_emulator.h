@@ -92,6 +92,7 @@
 #include <debugger/ttd/ttdexternalevents.h>
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
+#include "../../../operationsstatus.h"
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/sprinter/isa/isaaccess.h>
 #include <emulator/io/network/traffic/trafficaccess.h>
@@ -2005,7 +2006,7 @@ namespace PythonBindings
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return;
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-                if (bpm) bpm->ClearBreakpoints();
+                if (bpm) bpm->ClearUserBreakpoints();
             }, "Clear all breakpoints")
             .def("bp_enable", [](Emulator& self, uint16_t id) -> bool {
                 auto* ctx = self.GetContext();
@@ -3966,9 +3967,9 @@ namespace PythonBindings
             .def("key_type", [](Emulator& self, const std::string& text, uint16_t charDelayFrames) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
-                ctx->pDebugManager->GetKeyboardManager()->TypeText(text, charDelayFrames);
-                return true;
-            }, "Type text with auto modifier handling", py::arg("text"), py::arg("delay_frames") = 2)
+                // false: a character no key types, nothing typed
+                return ctx->pDebugManager->GetKeyboardManager()->TypeText(text, charDelayFrames).empty();
+            }, "Type text with auto modifier handling (False: a character no key types, nothing typed)", py::arg("text"), py::arg("delay_frames") = 2)
             .def("key_trdos_command", [](Emulator& self, const std::string& keyword, const std::string& argument) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
@@ -4987,6 +4988,12 @@ namespace PythonBindings
         .def("video_text", [](Emulator& self, unsigned layer) -> py::object {
             return StateNodeToPy(DeviceState::VideoText(self.GetContext(), layer));
         }, "Text grid of a text mode (ATM / ZX-Evo)", py::arg("layer") = 0)
+        // The operation log (machine state coordinator): reset, snapshot load, media changes, refusals included - the
+        // OperationsStatus report every interface returns. since: entries after that seq; limit: the newest N (0: all)
+        .def("operations", [](Emulator& self, uint64_t since, uint64_t limit) -> py::object {
+            return StateNodeToPy(OperationsStatus::Report(&self, since, static_cast<size_t>(limit)));
+        }, py::arg("since") = 0, py::arg("limit") = 0,
+           "Operation log: reset, snapshot load, media changes, refusals; {mode, last_seq, capacity, entries[]}")
         // Temporal effects (ZX DLSS de-flicker): status and switch, the TemporalStatus report every interface returns
         .def("video_temporal", [](Emulator& self) -> py::object {
             return StateNodeToPy(TemporalStatus::Report(self.GetContext()));

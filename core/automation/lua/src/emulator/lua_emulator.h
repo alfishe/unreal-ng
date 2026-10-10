@@ -45,6 +45,7 @@
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
+#include "../../../operationsstatus.h"
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/debugmanager.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
@@ -1970,8 +1971,8 @@ public:
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
-            ctx->pDebugManager->GetKeyboardManager()->TypeText(text, delayFrames.value_or(2));
-            return true;
+            // false: a character no key types, nothing typed
+            return ctx->pDebugManager->GetKeyboardManager()->TypeText(text, delayFrames.value_or(2)).empty();
         });
 
         lua.set_function("key_release_all", [this]() {
@@ -2783,7 +2784,7 @@ public:
             auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            if (bpm) bpm->ClearBreakpoints();
+            if (bpm) bpm->ClearUserBreakpoints();
         });
 
         lua.set_function("bp_enable", [this](uint16_t id) -> bool {
@@ -5198,6 +5199,13 @@ public:
         lua.set_function("video_text", [this](sol::this_state s, sol::optional<unsigned> layer) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::VideoText(ctx, layer.value_or(0)));
+        });
+        // The operation log (machine state coordinator): reset, snapshot load, media changes, refusals included - the
+        // OperationsStatus report every interface returns. since: entries after that seq; limit: the newest N (0: all)
+        lua.set_function("operations", [this](sol::this_state s, sol::optional<uint64_t> since,
+                                               sol::optional<uint64_t> limit) -> sol::object {
+            return StateNodeToLua(s, OperationsStatus::Report(effectiveEmulator(), since.value_or(0),
+                                                              static_cast<size_t>(limit.value_or(0))));
         });
         // Temporal effects (ZX DLSS de-flicker): status and switch, the TemporalStatus report every interface returns
         lua.set_function("video_temporal", [this](sol::this_state s) -> sol::object {

@@ -19,8 +19,11 @@
 #   --image REF       image (default: ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04)
 #   --type TYPE       CMAKE_BUILD_TYPE (default: Release, like CI)
 #   --clean           remove the build directory first
+#   --sanitize LIST   build with -fsanitize=LIST (address,undefined | thread | ...);
+#                     own build directory, ASAN_/LSAN_/UBSAN_/TSAN_OPTIONS passed in,
+#                     SYS_PTRACE granted (LeakSanitizer needs it). docs/testing/sanitizers.md
 #
-# Build output goes to scratch/linux-<arch>-<type>/ (git-ignored); remove it
+# Build output goes to scratch/linux-<arch>-<type>[-san-<list>]/ (git-ignored); remove it
 # when done: rm -rf scratch/linux-*
 #
 # Note: lib/googletest and lib/benchmark must be real submodule checkouts
@@ -39,6 +42,7 @@ CLEAN=0
 CORES="$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
 JOBS=$(( CORES / 2 )); JOBS=$(( JOBS < 1 ? 1 : JOBS ))
 CPUS=""
+SANITIZE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -50,7 +54,8 @@ while [ $# -gt 0 ]; do
     --image) IMAGE="$2"; shift 2 ;;
     --type) TYPE="$2"; shift 2 ;;
     --clean) CLEAN=1; shift ;;
-    -h|--help) sed -n '2,25p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    --sanitize) SANITIZE="$2"; shift 2 ;;
+    -h|--help) sed -n '2,31p' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *) TARGET="$1"; shift ;;
   esac
@@ -73,6 +78,14 @@ done
 [ -n "$CPUS" ] || CPUS="$JOBS"
 
 BUILDDIR="scratch/linux-$PLATFORM-$TYPE"
+SANITIZER_ARGS=()
+if [ -n "$SANITIZE" ]; then
+  BUILDDIR="$BUILDDIR-san-${SANITIZE//,/-}"
+  SANITIZER_ARGS=(--cap-add SYS_PTRACE -e SANITIZE="$SANITIZE")
+  for v in ASAN_OPTIONS LSAN_OPTIONS UBSAN_OPTIONS TSAN_OPTIONS; do
+    [ -n "${!v:-}" ] && SANITIZER_ARGS+=(-e "$v=${!v}")
+  done
+fi
 [ "$CLEAN" = 1 ] && rm -rf "$ROOT/$BUILDDIR"
 
 # Git worktrees: their .git file points at the main repository's .git by absolute path
@@ -89,13 +102,21 @@ esac
 # ${MOUNTS[@]+...}: an empty array under set -u fails in macOS's bash 3.2
 docker run --rm --platform "linux/$PLATFORM" --cpus "$CPUS" \
   -v "$ROOT":/src -w /src/unreal-qt ${MOUNTS[@]+"${MOUNTS[@]}"} -e GIT_OPTIONAL_LOCKS=0 \
+  ${SANITIZER_ARGS[@]+"${SANITIZER_ARGS[@]}"} \
   --tmpfs /scratch-tmp:exec,size=4g -e UNREAL_TEST_SCRATCH_DIR=/scratch-tmp \
   -e TYPE="$TYPE" -e TARGET="$TARGET" -e JOBS="$JOBS" \
   -e BUILDDIR="/src/$BUILDDIR" -e RUNTESTS="$RUNTESTS" -e FILTER="$FILTER" \
   "$IMAGE" bash -c '
     set -e
     git config --global --add safe.directory "*"
-    cmake -S . -B "$BUILDDIR" -G Ninja -DCMAKE_BUILD_TYPE="$TYPE" -DTESTS=ON
+    SAN=()
+    if [ -n "${SANITIZE:-}" ]; then
+      # gcc reports false maybe-uninitialized inside libstdc++ (<regex>) once the sanitizers instrument it
+      F="-fsanitize=$SANITIZE -fno-omit-frame-pointer -Wno-error=maybe-uninitialized"
+      SAN=("-DCMAKE_C_FLAGS=$F" "-DCMAKE_CXX_FLAGS=$F" "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=$SANITIZE"
+           "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=$SANITIZE")
+    fi
+    cmake -S . -B "$BUILDDIR" -G Ninja -DCMAKE_BUILD_TYPE="$TYPE" -DTESTS=ON ${SAN[@]+"${SAN[@]}"}
     cmake --build "$BUILDDIR" --target "$TARGET" -j "$JOBS"
     if [ "$RUNTESTS" = 1 ]; then
       # From the binary directory: the tests open testdata/ and rom/ relative to it (the

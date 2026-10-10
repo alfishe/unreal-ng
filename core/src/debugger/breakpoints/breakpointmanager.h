@@ -244,6 +244,13 @@ public:
 public:
     void ClearBreakpoints();
 
+    /// A breakpoint a user or a client set (owner interactive, not hidden). The others belong to their
+    /// owners - analyzers (the BASIC typer's ROM control points), DeZog, step-over traps - and a user's
+    /// list or clear must not show or remove them: clearing the typer's points under it stalls typing
+    static bool IsUserBreakpoint(const BreakpointDescriptor& descriptor);
+    /// Removes the user breakpoints only (IsUserBreakpoint); the owned ones stay
+    void ClearUserBreakpoints();
+
     uint16_t AddBreakpoint(BreakpointDescriptor* descriptor);
     /// The one entry every surface uses (debugger protocol fields): validates the spec against this machine
     /// (range order, a physical range inside one page, the page exists, masks only on ports, a hit target

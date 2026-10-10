@@ -236,7 +236,9 @@ TEST(Screenshotter_Test, SaveToWritesTheSameBytesAndCreatesTheFolders)
     std::filesystem::remove_all(std::filesystem::path(options.saveTo).parent_path().parent_path());
     const ScreenshotResult saved = Screenshotter::Render(frame, options);
     ASSERT_TRUE(saved.ok) << saved.errorMessage;
-    EXPECT_EQ(saved.savedFile, options.saveTo);
+    // The reply names the file by its absolute path (a relative saveTo resolves against the emulator's directory)
+    EXPECT_TRUE(std::filesystem::path(saved.savedFile).is_absolute()) << saved.savedFile;
+    EXPECT_EQ(std::filesystem::path(saved.savedFile), std::filesystem::absolute(options.saveTo).lexically_normal());
     EXPECT_TRUE(saved.bytes.empty()) << "saved to a file: the bytes are not also returned";
     EXPECT_EQ(saved.encodedSize, inMemory.bytes.size());
 

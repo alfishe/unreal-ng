@@ -191,6 +191,8 @@ paths["/api/v1/emulator/{id}/asm/sync/watch"]["post"]["requestBody"]["content"][
 paths["/api/v1/emulator/{id}/asm/sync/watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["as"]["description"] = "The output: text (default), file or dialect";
 paths["/api/v1/emulator/{id}/asm/sync/watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["to"]["type"] = "string";
 paths["/api/v1/emulator/{id}/asm/sync/watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["to"]["description"] = "With as: dialect, the target dialect";
+paths["/api/v1/emulator/{id}/asm/sync/watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["project"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["project"]["description"] = "Where the sources the text INCLUDEs come from, comma-separated: disk:A-D (a drive's disk), none, a host folder (default disk:A; the disk wins over the folder)";
 paths["/api/v1/emulator/{id}/asm/sync/watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["output"]["type"] = "string";
 paths["/api/v1/emulator/{id}/asm/sync/watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["output"]["description"] = "Written after every build: a host file or disk:A/NAME.T";
 paths["/api/v1/emulator/{id}/asm/sync/watch"]["post"]["responses"]["200"]["description"] = "{watching, state, assembler, options, ticks, builds, text, error}";

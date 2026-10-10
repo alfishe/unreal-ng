@@ -126,7 +126,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"create", "switch_model", "list", "list_models", "server", "status", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy",
+    for (const char* action : {"create", "switch_model", "list", "list_models", "server", "status", "operations", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy",
                                "transfer_state",
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
                                "gs_switch_personality", "gs_dump_module", "gs_sd_insert", "gs_sd_eject", "gs_flash_save",
@@ -141,7 +141,9 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "Lifecycle operation. 'create' makes a new running instance (fails with a reason on models this build "
         "cannot create — no silent fallback); 'list' shows all instances with their machine identity; "
         "'list_models' enumerates hardware models with creatable flags; 'server' reports the build fingerprint "
-        "and models_creatable; 'status' reports one instance's details. 'switch_model' replaces the target with "
+        "and models_creatable; 'status' reports one instance's details; 'operations' its operation log (who reset, "
+        "loaded a snapshot, inserted / ejected media, when, with which result - refusals included; 'since' / 'limit'). "
+        "'switch_model' replaces the target with "
         "a new instance of 'model' (new id; the machine state is lost, the media follow into the same slots with "
         "their unsaved writes; media with unsaved writes the new model has no slot for need 'stranded'; a ZX-Poly "
         "configuration name as 'model' switches to that machine). 'transfer_state' copies the target's running "
@@ -257,6 +259,11 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "multiloader disk (.trd/.scl; needs a model with TR-DOS)";
     schema["properties"]["value"]["type"] = "integer";
     schema["properties"]["value"]["description"] = "Byte value (0-255) required by gs_send_command and gs_send_data";
+    schema["properties"]["since"]["type"] = "integer";
+    schema["properties"]["since"]["description"] =
+        "operations: only entries after this seq (the last_seq of a previous answer)";
+    schema["properties"]["limit"]["type"] = "integer";
+    schema["properties"]["limit"]["description"] = "operations: only the newest N entries (default 20; 0: every entry kept)";
     schema["properties"]["personality"]["type"] = "string";
     schema["properties"]["personality"]["description"] =
         "Required by gs_switch_personality: 'z80'|'lle' for the Z80 coprocessor card, 'ngs'|'neogs' for NeoGS, 'lw'|'lightweight' for the "
@@ -411,6 +418,41 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 if (action == "status")
                 {
                     ForwardCall("GET", Endpoint(id), nullptr, caller, "Status of " + id, done);
+                }
+                else if (action == "operations")
+                {
+                    const uint64_t since = args.isMember("since") ? args["since"].asUInt64() : 0;
+                    const uint64_t limit = args.isMember("limit") ? args["limit"].asUInt64() : 20;
+                    const std::string path = Endpoint(id, "/operations") + "?since=" + std::to_string(since) +
+                                             "&limit=" + std::to_string(limit);
+                    caller.Call("GET", path, nullptr, [id, done](int status, Json::Value body) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error(status == 0 ? "WebAPI unreachable"
+                                                               : "HTTP " + std::to_string(status) + ": " +
+                                                                     DescribeErrorBody(body)));
+                            return;
+                        }
+                        // One line per operation, oldest first; the full entries go to structuredContent
+                        std::string text = "Operations of " + id + " (mode " + body["mode"].asString() + ", last #" +
+                                           body["last_seq"].asString() + "):";
+                        if (body["entries"].empty())
+                            text += " none";
+                        for (const Json::Value& e : body["entries"])
+                        {
+                            text += "\n#" + e["seq"].asString() + " frame " + e["frame"].asString() + " " +
+                                    e["kind"].asString();
+                            if (!e["summary"].asString().empty())
+                                text += " " + e["summary"].asString();
+                            text += " " + e["status"].asString() + " [" + e["mode"].asString() + ", " +
+                                    e["source"].asString() + "]";
+                            if (e["effect"].asString() != "none")
+                                text += " ttd: " + e["effect"].asString();
+                            if (!e["detail"].asString().empty())
+                                text += " - " + e["detail"].asString();
+                        }
+                        done(ToolResult::Ok(text, std::move(body)));
+                    });
                 }
                 else if (action == "rom_flash_status")
                 {
@@ -3517,7 +3559,7 @@ void RegisterTypeInput(ToolRegistry& registry)
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Input operation. 'type' sends text (auto-shift); 'tap' presses a key for N frames; 'combo' presses several keys at once; "
+        "Input operation. 'type' sends text (auto-shift; a line end presses ENTER; a character no key types refuses the text); 'tap' presses a key for N frames; 'combo' presses several keys at once; "
         "'route' sets where keys go (route = auto | matrix | ps2 | both: the ZX matrix, the PS/2 keyboard controller of a ZX-Evo / "
         "ATM Turbo 2+, both); 'status' shows it.";
     schema["properties"]["route"]["type"] = "string";

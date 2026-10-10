@@ -446,7 +446,34 @@ void EmulatorAPI::keyType(const HttpRequestPtr& req, std::function<void(const Ht
         return;
     }
 
-    context->pDebugManager->GetKeyboardManager()->TypeText(text, delayFrames);
+    const std::string untypeable = context->pDebugManager->GetKeyboardManager()->TypeText(text, delayFrames);
+    if (!untypeable.empty())
+    {
+        // Nothing was queued: name each character so the caller can fix the text
+        std::string list;
+        Json::Value chars(Json::arrayValue);
+        for (const char c : untypeable)
+        {
+            static const char* hex = "0123456789ABCDEF";
+            const auto code = static_cast<unsigned char>(c);
+            std::string item = "#";
+            item += hex[code >> 4];
+            item += hex[code & 0x0F];
+            chars.append(item);
+            list += (list.empty() ? "" : ", ") + item;
+        }
+
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "no key types these characters, nothing was typed: " + list;
+        error["untypeable"] = chars;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
 
     Json::Value ret;
     ret["success"] = true;

@@ -1,6 +1,8 @@
 #include "synccontrol.h"
 
+#include <cctype>
 #include <cstdlib>
+#include <filesystem>
 
 #include "debugger/asm/sync/asmsyncservice.h"
 #include "debugger/asm/sync/syncshared.h"
@@ -103,7 +105,7 @@ const std::vector<std::string>& SyncControl::OptionsFor(const std::string& verb)
         {"status", {"assembler"}},
         {"probe", {}},
         {"extract", {"assembler", "as", "to", "codepage", "output"}},
-        {"watch", {"assembler", "interval", "quiet", "as", "to", "output"}},
+        {"watch", {"assembler", "interval", "quiet", "as", "to", "output", "project"}},
         {"unwatch", {}},
         {"hints", {}},
     };
@@ -141,6 +143,30 @@ AsmReply SyncControl::Execute(const std::string& verb, const AsmRequest& request
         if (!ParseMs(request, "interval", 50, options.intervalMs, failure) || !ParseMs(request, "quiet", 0, options.quietMs, failure))
             return failure;
         options.output = Option(request, "output");
+        if (request.options.count("project"))
+        {
+            // project: disk:A..disk:D, none, or a host folder; comma-separated (the disk in drive A by default)
+            options.projectDrive = -1;
+            std::string list = Option(request, "project");
+            size_t from = 0;
+            while (from <= list.size())
+            {
+                size_t comma = list.find(',', from);
+                if (comma == std::string::npos)
+                    comma = list.size();
+                const std::string item = list.substr(from, comma - from);
+                if (item.size() == 6 && item.compare(0, 5, "disk:") == 0 && std::toupper(static_cast<unsigned char>(item[5])) >= 'A' &&
+                    std::toupper(static_cast<unsigned char>(item[5])) <= 'D')
+                    options.projectDrive = std::toupper(static_cast<unsigned char>(item[5])) - 'A';
+                else if (item == "none" || item.empty())
+                    ;
+                else if (std::filesystem::is_directory(item))
+                    options.projectDir = item;
+                else
+                    return Fail(AsmControlError::BadRequest, "'project' takes disk:A-D, none or a folder: '" + item + "'");
+                from = comma + 1;
+            }
+        }
         if (request.options.count("as"))
             options.as = Option(request, "as");
         options.to = Option(request, "to");

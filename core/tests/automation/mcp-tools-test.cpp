@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "mcp-tool-utils.h"
 #include "mcp-tools.h"
 #include "target-resolver.h"
 
@@ -236,6 +237,57 @@ TEST_F(McpTools_Test, EmulatorManage_CreateAndSwitchModel_ForwardRamPowerOn)
     const auto* switched = _caller->Last("POST", "/api/v1/emulator/emu-1/model");
     ASSERT_NE(switched, nullptr);
     EXPECT_EQ(switched->body["ram_power_on"].asString(), "random");
+}
+
+TEST_F(McpTools_Test, EmulatorManage_Operations_GetsTheLogWithOneLinePerOperation)
+{
+    Json::Value body;
+    body["mode"] = "recording";
+    body["last_seq"] = 7;
+    body["capacity"] = 1024;
+    Json::Value refused;
+    refused["seq"] = 7;
+    refused["frame"] = 120;
+    refused["kind"] = "media-insert";
+    refused["summary"] = "tape game.tzx";
+    refused["status"] = "refused";
+    refused["mode"] = "recording";
+    refused["source"] = "webapi";
+    refused["effect"] = "none";
+    refused["detail"] = "Cannot insert a tape while TTD is recording";
+    body["entries"].append(refused);
+    _caller->routes["GET /api/v1/emulator/emu-1/operations?since=0&limit=20"] = {200, body};
+
+    Json::Value args;
+    args["action"] = "operations";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Operations of emu-1 (mode recording, last #7):"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("#7 frame 120 media-insert tape game.tzx refused [recording, webapi] - Cannot insert a "
+                               "tape while TTD is recording"),
+              std::string::npos)
+        << result.text;
+    EXPECT_EQ(result.structured["entries"][0]["kind"].asString(), "media-insert");
+}
+
+TEST_F(McpTools_Test, EmulatorManage_Operations_PassesSinceAndLimit)
+{
+    Json::Value body;
+    body["mode"] = "live";
+    body["last_seq"] = 42;
+    body["entries"] = Json::Value(Json::arrayValue);
+    _caller->routes["GET /api/v1/emulator/emu-1/operations?since=40&limit=0"] = {200, body};
+
+    Json::Value args;
+    args["action"] = "operations";
+    args["since"] = 40;
+    args["limit"] = 0;
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/operations?since=40&limit=0"));
+    EXPECT_NE(result.text.find("last #42): none"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, EmulatorManage_ZXPolyStatus_GetsGroupEndpoint)
@@ -3784,4 +3836,19 @@ TEST_F(McpTools_Test, TimeTravel_MemoryAtMemoryDiffAndCoverageSpace)
     args["tinframe"] = 100;
     EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "memory_diff takes no tinframe";
     EXPECT_EQ(_caller->calls.size(), calls);
+}
+
+// The loopback client sends the path the tools built: their percent-encoding is kept, not
+// encoded a second time (a screenshot "scratch/a.png" was saved as "scratch%2Fa.png")
+TEST(McpRequestPath_Test, EncodedQueryIsSentAsBuilt)
+{
+    const std::string path = "/api/v1/emulator/id/capture/screen?path=" + mcp::UrlEncodeSegment("scratch/a b.png") + "&area=screen";
+
+    EXPECT_EQ(mcp::PrepareRequestPath(path), "/api/v1/emulator/id/capture/screen?path=scratch%2Fa%20b.png&area=screen");
+}
+
+TEST(McpRequestPath_Test, RawCharactersAreStillEscaped)
+{
+    EXPECT_EQ(mcp::PrepareRequestPath("/symbols/lookup?address=#5800"), "/symbols/lookup?address=%235800");
+    EXPECT_EQ(mcp::PrepareRequestPath("/x?name=a+b c"), "/x?name=a%2Bb%20c");
 }
