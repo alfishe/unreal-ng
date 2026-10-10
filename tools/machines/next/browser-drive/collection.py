@@ -6,13 +6,14 @@
 
 The collection folder (<card>/collection/{games,demos}/<genre>/<Title>/, built by the collection builder with an index.tsv whose
 `main_file` column is `games/<genre>/<Title>/<file>`) is walked the way a person walks it: reset, boot, Browser, directory by
-directory, ENTER on the main file. A directory or file name is found by the shortest unique prefix typed into the Browser's
+directory (only the part of the path that differs from the previous title's folder: EDIT up, then down; from the card root for the
+first title and after any title that did not show a picture), ENTER on the main file. A directory or file name is found by the shortest unique prefix typed into the Browser's
 search (H); names that begin with a character the search cannot type are reached by counting down from the top of the listing.
 For each title the report keeps: the picture after `--wait` seconds, whether the machine is still in NextZXOS (idle at the key-wait
 loop = nothing started), the CPU clock and the DivMMC mapping. Writes <out>/<NNN>-<title>.png, <out>/sheet-<category>.png and
 <out>/report.md (a title that did not start is listed first).
 """
-import argparse, base64, csv, json, os, re, sys, time, urllib.request
+import argparse, base64, csv, io, json, os, re, sys, time, urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from drive import Machine  # noqa: E402
@@ -64,6 +65,7 @@ def main():
     parser.add_argument('--start', type=int, default=0)
     parser.add_argument('--limit', type=int, default=10 ** 9)
     parser.add_argument('--match')
+    parser.add_argument('--keys', default='enter,space,1', help='keys tapped one second apart after the first picture (a title screen waits for one); empty = none')
     args = parser.parse_args()
     from PIL import Image, ImageDraw
     index = args.index or os.path.join(args.card, 'collection', 'index.tsv')
@@ -74,6 +76,7 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     rows, sheets = [], {}
     done = 0
+    position = None  # the Browser's directory, as names from the card root; None = unknown (resync from the root)
     for n, t in enumerate(titles):
         if n < args.start or done >= args.limit:
             continue
@@ -94,26 +97,27 @@ def main():
         machine.idle(2)
         machine.tap('b')
         machine.idle(2.5)
-        machine.root()
-        folder = root
-        # root of the card: collection/ is a directory
-        reach_ok = True
-        for part in ['collection'] + parts:
-            try:
-                parent = os.path.dirname(folder) if False else folder
-            except Exception:
-                pass
-        # walk: the card root first (reach "collection"), then each part inside the previous directory
-        walk = [('collection', args.card)] + [(p, None) for p in parts]
-        folder = args.card
-        for i, (name, _) in enumerate(walk):
+        # The Browser reopens in the directory it was last in (the title's own folder), so walk only the difference: EDIT up to the
+        # common ancestor, then down. The card root is the starting point only for the first title and after anything went wrong
+        target = ['collection'] + parts[:-1]  # the directory of the main file, from the card root
+        if position is None:
+            machine.root()
+            position = []
+        common = 0
+        while common < min(len(position), len(target)) and position[common] == target[common]:
+            common += 1
+        for _ in range(len(position) - common):
+            machine.tap('edit')
+            machine.idle(0.6)
+        folder = os.path.join(args.card, *target[:common])
+        for name in target[common:]:
             reach(machine, folder, name)
-            last = i == len(walk) - 1
             machine.tap('enter')
-            if not last:
-                machine.idle(1.2)
-                folder = os.path.join(folder, name)
-            time.sleep(0.3)
+            machine.idle(1.2)
+            folder = os.path.join(folder, name)
+        position = target  # (until the verdict says otherwise)
+        reach(machine, folder, parts[-1])
+        machine.tap('enter')  # run the main file
         time.sleep(args.wait)
         state = machine.call('/%s/state/next' % machine.id)
         regs = machine.call('/%s/registers' % machine.id)
@@ -125,9 +129,38 @@ def main():
         im = Image.open(png).convert('RGB')
         flat = len(set(im.getdata())) <= 2
         verdict = 'IN NEXTZXOS' if idle else ('flat' if flat else 'picture')
+        # Loading is not enough: a program that runs sits on its title screen until a key. Watch it move on its own, then press the
+        # start keys and see whether the picture changes, whether it stays alive, and what the CPU does
+        life = ''
+        if not idle:
+            def grab():
+                d = json.load(urllib.request.urlopen('%s/%s/capture/screen' % (machine.base, machine.id)))
+                return Image.open(io.BytesIO(base64.b64decode(d['data']))).convert('RGB')
+
+            def changed(a, b):
+                pa, pb = a.getdata(), b.getdata()
+                return sum(1 for x, y in zip(pa, pb) if x != y) / max(1, len(pa))
+            time.sleep(1.0)
+            moves = changed(im, grab()) > 0.001  # animates by itself
+            after = im
+            if args.keys:
+                for key in args.keys.split(','):
+                    machine.tap(key)
+                    time.sleep(1.0)
+                time.sleep(4.0)
+                after = grab()
+            reacts = changed(im, after) > 0.001
+            regs2 = machine.call('/%s/registers' % machine.id)
+            back = regs2['interrupt']['halted'] and regs2['special']['pc'] == 0x0C8F
+            life = ('moves ' if moves else 'static ') + ('reacts ' if reacts else 'no-reaction ') + ('BACK-IN-OS' if back else 'running')
+            after.save(png.replace('.png', '-keys.png'))
+            if back:
+                verdict = 'IN NEXTZXOS'
+        if verdict != 'picture':
+            position = None  # something may have gone wrong: the next title starts from the root again
         rows.append((n, category, t['title'], verdict, '%g MHz' % (state['machine']['cpu_clock_hz'] / 1e6),
                      'DivMMC in' if state['divmmc']['mapped'] else 'DivMMC out'))
-        print('%3d %-28s %-34s %-12s %s' % (n, category, t['title'][:34], verdict, rows[-1][4]), flush=True)
+        print('%3d %-28s %-34s %-12s %s  %s' % (n, category, t['title'][:34], verdict, rows[-1][4], life), flush=True)
         cell = Image.new('RGB', (326, 262), (40, 40, 40))
         cell.paste(im.resize((320, 256)), (3, 3))
         ImageDraw.Draw(cell).text((6, 6), '%d %s' % (n, t['title'][:40]), fill=(255, 255, 0))
