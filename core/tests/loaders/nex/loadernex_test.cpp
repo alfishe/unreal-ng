@@ -128,6 +128,60 @@ TEST_F(LoaderNex_Test, LoadingScreenBlocksAreSkippedByTheirSizes)
     }
 }
 
+// V1.3 (ped7g's NEXLOAD2 test files tilescreen.nex, t320x256.nex, t640x256.nex): the tilemap screen's NextREG values, the copper block
+// after the screens and the first bank's file offset. Without them the banks were read 2048 bytes early and the tilemap showed its
+// power-on registers
+TEST_F(LoaderNex_Test, V13TilemapScreenSetsTheTilemapRegistersFromTheHeader)
+{
+    std::vector<uint8_t> program = {0x18, 0xFE};
+    auto image = MakeNex("V1.3", 64, 512, {{0, program}, {5, {1, 2, 3}}}, 0xC000, 0xBFF0, 0, 0);  // ext. screen: a palette block only
+    image[152] = 3;                                                                               // tilemap screen
+    image[154] = 0x83;                                                                            // NR #6B: 40x32, 512 tiles, on
+    image[155] = 0x11;                                                                            // NR #6C
+    image[156] = 0x40;                                                                            // NR #6E: map at #4000
+    image[157] = 0x4A;                                                                            // NR #6F: tiles at #4A00
+    LoaderNex loader(_context);
+    ASSERT_TRUE(loader.Load(image)) << loader.Error();
+    const NextBoard& board = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder)->Board();
+    EXPECT_EQ(board.Stored(0x6B), 0x83);
+    EXPECT_EQ(board.Stored(0x6C), 0x11);
+    EXPECT_EQ(board.Stored(0x6E), 0x40);
+    EXPECT_EQ(board.Stored(0x6F), 0x4A);
+    EXPECT_EQ(dynamic_cast<NextMemory*>(_context->pMemory)->RAMPageAddress(5)[2], 3) << "bank 5 holds the tilemap data";
+}
+
+TEST_F(LoaderNex_Test, V13CopperBlockIsLoadedAndTheBanksStartAtTheirFileOffset)
+{
+    std::vector<uint8_t> program = {0x3E, 0x44, 0x32, 0x00, 0x80, 0x18, 0xFE};
+    auto image = MakeNex("V1.3", 0, 2048, {{0, program}}, 0xC000, 0xBFF0, 0, 0);
+    image[153] = 1;  // HASCOPPERCODE: 2048 bytes after the (here absent) screens
+    image[144] = 0x00;
+    image[145] = 0x0A;  // BANKSOFFSET = 512 + 2048
+    image[512] = 0x80;  // the copper's first instruction: WAIT line 5, column 0
+    image[513] = 0x05;
+    image[514] = 0x12;  // the second: MOVE #12, #34
+    image[515] = 0x34;
+    LoaderNex loader(_context);
+    ASSERT_TRUE(loader.Load(image)) << loader.Error();
+    auto* memory = dynamic_cast<NextMemory*>(_context->pMemory);
+    EXPECT_EQ(memory->PeekSlot(0xC000), 0x3E) << "the bank is where BANKSOFFSET says, not inside the copper block";
+    NextBoard& board = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder)->Board();
+    EXPECT_EQ(board.Copper().Instruction(0), 0x8005);
+    EXPECT_EQ(board.Copper().Instruction(1), 0x1234);
+    EXPECT_EQ(board.Copper().Mode(), 1) << "started from the first instruction";
+}
+
+TEST_F(LoaderNex_Test, V13BanksOffsetSkipsWhateverLiesBetween)
+{
+    std::vector<uint8_t> program = {0x3E, 0x44, 0x18, 0xFE};
+    auto image = MakeNex("V1.3", 0, 700, {{0, program}}, 0xC000, 0xBFF0, 0, 0);  // 700 bytes of a block this loader does not know
+    image[144] = 0xBC;
+    image[145] = 0x04;  // 512 + 700 = 1212 = 0x04BC
+    LoaderNex loader(_context);
+    ASSERT_TRUE(loader.Load(image)) << loader.Error();
+    EXPECT_EQ(dynamic_cast<NextMemory*>(_context->pMemory)->PeekSlot(0xC000), 0x3E);
+}
+
 TEST_F(LoaderNex_Test, RefusesWhatIsNotNex)
 {
     LoaderNex loader(_context);

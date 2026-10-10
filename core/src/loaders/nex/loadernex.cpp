@@ -20,6 +20,8 @@ constexpr size_t kBankSize = 0x4000;
 constexpr uint8_t kScreenLayer2 = 1, kScreenUla = 2, kScreenLoRes = 4, kScreenHiRes = 8, kScreenHiColour = 16, kScreenExt2 = 64,
                   kScreenNoPalette = 128;
 constexpr size_t kBigLayer2 = 81920;
+constexpr size_t kCopperBlock = 2048;
+constexpr unsigned kTilemapRegisters[4] = {0x6B, 0x6C, 0x6E, 0x6F};
 
 /// The file's bank order: 5, 2, 0, 1, 3, 4, 6, 7, 8 ... 111
 std::vector<unsigned> BankOrder()
@@ -109,6 +111,13 @@ bool LoaderNex::Parse(const std::vector<uint8_t>& image, NexHeader& header)
     header.keepRegisters = image[134];
     header.entryBank = image[139];
     header.screenFlags2 = image.size() > 152 ? image[152] : 0;
+    if (header.version == "V1.3")
+    {
+        header.banksOffset = static_cast<uint32_t>(image[144] | (image[145] << 8) | (image[146] << 16) | (static_cast<uint32_t>(image[147]) << 24));
+        header.hasCopperCode = image[153] != 0;
+        for (unsigned i = 0; i < 4; i++)
+            header.tilemapConfig[i] = image[154 + i];
+    }
     return true;
 }
 
@@ -142,6 +151,8 @@ size_t LoaderNex::ScreenBytes(const NexHeader& h, bool& ok)
         else if (h.screenFlags2 != 3)
             ok = false;  // an extended screen of an unknown kind
     }
+    if (h.hasCopperCode)
+        bytes += kCopperBlock;
     return bytes;
 }
 
@@ -227,6 +238,14 @@ bool LoaderNex::Load(const std::vector<uint8_t>& image)
         if (sf & kScreenHiColour)
             if (block(12288, halves))
                 show(0x00, 0x01, 0x02);
+        if ((sf & kScreenExt2) && _header.screenFlags2 == 3)
+        {
+            // nexload2 LoadScr_showTiles: the tilemap screen is the program's own bank 5 (no data block); the file names the
+            // control, default attribute, map and tile base registers, then NR #15 and the display control as for the ULA
+            for (unsigned i = 0; i < 4; i++)
+                board.Write(static_cast<uint8_t>(kTilemapRegisters[i]), _header.tilemapConfig[i]);
+            show(0x00, 0x01, 0x00);
+        }
         if ((sf & kScreenExt2) && (_header.screenFlags2 == 1 || _header.screenFlags2 == 2))
         {
             const bool is320 = _header.screenFlags2 == 1;
@@ -245,11 +264,35 @@ bool LoaderNex::Load(const std::vector<uint8_t>& image)
         }
     }
 
+    // V1.3: the copper block after the last screen (nexload2 LoadCopperBlock): the 2048 bytes into the copper memory, then the copper
+    // starts from its first instruction
+    if (_header.hasCopperCode)
+    {
+        NextBoard& board = decoder->Board();
+        const size_t at = kHeaderSize + ScreenBytes(_header, sized) - kCopperBlock;
+        if (at + kCopperBlock > image.size())
+            return Fail("NEX: the file ends inside the copper block");
+        board.Write(0x62, 0);
+        board.Write(0x61, 0);
+        for (size_t i = 0; i < kCopperBlock; i++)
+            board.Write(0x63, image[at + i]);
+        board.Write(0x62, 0x40);
+    }
+
     // The banks, in the file's order
+    unsigned firstBank = 0xFFFF;
+    for (unsigned bank : BankOrder())
+        if (_header.banksPresent[bank])
+        {
+            firstBank = bank;
+            break;
+        }
     for (unsigned bank : BankOrder())
     {
         if (!_header.banksPresent[bank])
             continue;
+        if (_header.banksOffset >= kHeaderSize && bank == firstBank)
+            offset = _header.banksOffset;  // V1.3: the file says where the banks start
         if (offset + kBankSize > image.size())
             return Fail("NEX: the file ends inside bank " + std::to_string(bank));
         if (bank >= MAX_RAM_PAGES)

@@ -4,7 +4,10 @@
 /// @brief The ZX Spectrum Next NEX loader: a self-contained program (the wiki's "NEX file format", versions V1.0 -
 /// V1.3 sizes) put into RAM the way NextZXOS's nexload does: the 16K banks in the file order 5, 2, 0, 1, 3, 4, 6 ...,
 /// the entry bank in slot 3, the border, SP and PC. The loading screens (a palette block and up to six screen blocks
-/// before the banks) are read past, not shown: the program draws its own.
+/// before the banks) are put on the display as nexload does; V1.3 adds the tilemap screen (byte 152 = 3: the NextREG values of
+/// bytes 154-157), a 2048-byte copper block (byte 153) and the first bank's file offset (bytes 144-147), which a loader that knows
+/// the version uses instead of summing the block sizes. NEXLOAD of the NextZXOS distribution refuses V1.3 ("Please update to the
+/// latest .nexload version"); the V1.3 files of ped7g's NEXLOAD2 run through here.
 
 #include <cstdint>
 #include <string>
@@ -25,6 +28,9 @@ struct NexHeader
     uint8_t entryBank = 0;
     uint8_t keepRegisters = 0;  ///< byte 134: 1 = keep the NextREG state, 0 = reset the machine
     uint8_t screenFlags2 = 0;
+    bool hasCopperCode = false;      ///< V1.3 byte 153: a 2048-byte copper block follows the last screen
+    uint8_t tilemapConfig[4] = {};   ///< V1.3 bytes 154-157: NextREG #6B, #6C, #6E, #6F for the tilemap screen (byte 152 = 3)
+    uint32_t banksOffset = 0;        ///< V1.3 bytes 144-147: where the first bank starts (0 in V1.0 - V1.2)
     bool banksPresent[112] = {};
 };
 
