@@ -8,6 +8,8 @@ docker/linux/build.sh                     # build core-tests, host-native archit
 docker/linux/build.sh --test              # ...and run the tests
 docker/linux/build.sh --platform amd64    # force x86_64 (emulated on Apple Silicon, slow)
 docker/linux/build.sh --filter '*FatName*' --test
+docker/linux/build.sh --tsan --test --filter 'ExecutionArbiter*'   # ThreadSanitizer (-DSANITIZE=thread)
+docker/linux/build.sh --asan --test        # AddressSanitizer + UBSan; any list: --sanitize LIST
 docker/linux/build.sh --help
 ```
 

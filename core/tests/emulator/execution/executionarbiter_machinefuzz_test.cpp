@@ -23,6 +23,9 @@
 #include "emulator/memory/memory.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/rzx/rzxsession.h"
+#include "emulator/zxpoly/zxpolygroup.h"
 
 using namespace std::chrono_literals;
 
@@ -347,4 +350,253 @@ TEST(ExecutionArbiterMachineFuzz_Test, TtdRecordingUnderConcurrentControl)
         EXPECT_TRUE(emulator->WaitForPauseConfirmation(1000)) << "seed " << seed;
         EmulatorTestHelper::CleanupEmulator(emulator);
     }
+}
+
+namespace
+{
+/// The control threads of the ZX-Poly / RZX matrices: pauses, resumes, holds, direct runs on the machine
+void ControlOp(Emulator* emulator, std::mt19937& rng, const execution::Requester& who, bool exactFrames,
+               std::atomic<int>& frameErrors)
+{
+    switch (rng() % 6)
+    {
+        case 0: emulator->Pause(who); break;
+        case 1: emulator->Resume(who); break;
+        case 2:
+        {
+            execution::CommandOptions driving;
+            driving.drivesZ80 = true;
+            execution::HoldToken hold = emulator->GetArbiter().BeginHold(
+                who, "fuzz.count", execution::Clock::now() + std::chrono::seconds(5), nullptr, driving);
+            const unsigned frames = 1 + rng() % 2;
+            const uint64_t before = Frame(emulator);
+            emulator->RunNFrames(frames);
+            if (exactFrames && hold.Valid() && Frame(emulator) - before != frames)
+            {
+                frameErrors.fetch_add(1);
+                std::fprintf(stderr, "frame error: before %llu after %llu, ran %u, paused %d\n",
+                             static_cast<unsigned long long>(before), static_cast<unsigned long long>(Frame(emulator)),
+                             frames, emulator->IsPaused() ? 1 : 0);
+            }
+            emulator->GetArbiter().EndHold(hold);
+            break;
+        }
+        case 3:
+        {
+            Emulator::CpuHold hold(*emulator, "fuzz.hold");
+            std::this_thread::yield();
+            break;
+        }
+        case 4: emulator->RunTStates(1 + rng() % 20000); break;
+        default: (void)DeviceStateProbe(emulator); break;
+    }
+}
+
+uint32_t SeedCount()
+{
+    return std::getenv("UNREAL_EXEC_FUZZ_SEED") ? 1 : std::min<uint32_t>(EnvU32("UNREAL_EXEC_FUZZ_ITERATIONS", 3), 200);
+}
+
+uint32_t FirstSeed()
+{
+    return std::getenv("UNREAL_EXEC_FUZZ_SEED") ? EnvU32("UNREAL_EXEC_FUZZ_SEED", 0) : 1;
+}
+}  // namespace
+
+/// ZX-Poly in the matrix (design §8.3): a running group (the master's loop runs the three slaves) driven at once by
+/// one thread through the group (recording, its stop / seek / resume, keys, parallel slaves) and two through the
+/// master's control (pauses, resumes, holds, direct runs counted exactly). Never two drivers on any module, every
+/// counted run exact, no hang
+TEST(ExecutionArbiterMachineFuzz_Test, ZXPolyGroupUnderConcurrentControl)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    const uint32_t first = FirstSeed();
+    for (uint32_t seed = first; seed < first + SeedCount(); ++seed)
+    {
+        std::string error;
+        std::shared_ptr<Emulator> master = manager->CreateZXPolyMachine(
+            "zxpoly-fuzz-" + std::to_string(seed), "PENTAGON",
+            TestPathHelper::GetTestDataPath("machines/zxpoly/zxp/Alien8.zxp"), &error);
+        ASSERT_TRUE(master) << error;
+        ZXPolyGroup* group = manager->GetZXPolyGroup(master->GetId());
+        ASSERT_NE(group, nullptr);
+        for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+            group->GetInstance(m)->EnableTurboMode();
+        if (!master->IsRunning())
+            master->StartAsync();
+        TestWait::For([&]() { return Frame(master.get()) > 1; });
+
+        std::atomic<int> frameErrors{0};
+        std::atomic<int> finished{0};
+        const int threads = 3;
+        std::vector<std::thread> workers;
+        for (int t = 0; t < threads; ++t)
+            workers.emplace_back([&, t]() {
+                std::mt19937 rng(seed * 15485863u + static_cast<uint32_t>(t));
+                const execution::Requester who{t == 1 ? execution::Origin::WebApi : execution::Origin::Gui, {}};
+                for (int op = 0; op < 25; ++op)
+                {
+                    if (t == 0)
+                    {
+                        // The group's own operations
+                        switch (rng() % 7)
+                        {
+                            case 0: group->StartRecording(); break;
+                            case 1: group->StopRecording(); break;
+                            case 2:
+                            {
+                                const uint64_t now = Frame(master.get());
+                                group->SeekToFrame(now > 4 ? now - 1 - rng() % 4 : now);
+                                break;
+                            }
+                            case 3: group->ResumeRecording(); break;
+                            case 4:
+                                group->PressKey(ZXKEY_SPACE);
+                                group->ReleaseKey(ZXKEY_SPACE);
+                                break;
+                            case 5: group->SetParallelSlaves(rng() % 2 == 0); break;
+                            default: (void)group->GetStatus(); break;
+                        }
+                        continue;
+                    }
+                    ControlOp(master.get(), rng, who, true, frameErrors);
+                }
+                finished.fetch_add(1);
+            });
+        if (!TestWait::For([&]() { return finished.load() == threads; }, 20000ms))
+        {
+            std::fprintf(stderr, "ExecutionArbiterMachineFuzz ZX-Poly seed %u: hang - unrecoverable, exiting\n", seed);
+            std::fflush(stderr);
+            std::_Exit(1);
+        }
+        for (auto& w : workers)
+            w.join();
+        group->StopRecording();
+        EXPECT_EQ(frameErrors.load(), 0) << "seed " << seed;
+        for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+            EXPECT_EQ(group->GetInstance(m)->DriverViolations(), 0u) << "seed " << seed << ", module " << m;
+        master->Pause();
+        const std::string id = master->GetId();
+        master.reset();
+        EXPECT_TRUE(manager->RemoveEmulator(id));
+    }
+}
+
+/// RZX playback in the matrix: a running 48K playing a recording, one thread through the playback (play, stop, seek,
+/// status) and two through the control. Never two drivers, no hang (a direct run under a playback ends a little
+/// past its frame boundary: frames are not counted here)
+TEST(ExecutionArbiterMachineFuzz_Test, RzxPlaybackUnderConcurrentControl)
+{
+    const std::string rzx =
+        (TestPathHelper::FindProjectRoot() / "testdata" / "loaders" / "rzx" / "archive" / "garfield.rzx").string();
+    const uint32_t first = FirstSeed();
+    for (uint32_t seed = first; seed < first + SeedCount(); ++seed)
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr);
+        emulator->EnableTurboMode();
+        const rzx::PlayResult played = emulator->PlayRzx(rzx);
+        ASSERT_TRUE(played.Ok()) << played.message;
+        emulator->StartAsync();
+        TestWait::For([&]() { return Frame(emulator) > 1; });
+
+        std::atomic<int> frameErrors{0};
+        std::atomic<int> finished{0};
+        const int threads = 3;
+        std::vector<std::thread> workers;
+        for (int t = 0; t < threads; ++t)
+            workers.emplace_back([&, t]() {
+                std::mt19937 rng(seed * 32452843u + static_cast<uint32_t>(t));
+                const execution::Requester who{t == 1 ? execution::Origin::WebApi : execution::Origin::Gui, {}};
+                for (int op = 0; op < 25; ++op)
+                {
+                    if (t == 0)
+                    {
+                        switch (rng() % 5)
+                        {
+                            case 0: emulator->StopRzx(); break;
+                            case 1: (void)emulator->PlayRzx(rzx); break;
+                            case 2: emulator->SeekRzx(rng() % 200); break;
+                            default: (void)emulator->GetRzxStatus(); break;
+                        }
+                        continue;
+                    }
+                    ControlOp(emulator, rng, who, false, frameErrors);
+                }
+                finished.fetch_add(1);
+            });
+        if (!TestWait::For([&]() { return finished.load() == threads; }, 20000ms))
+        {
+            std::fprintf(stderr, "ExecutionArbiterMachineFuzz RZX seed %u: hang - unrecoverable, exiting\n", seed);
+            std::fflush(stderr);
+            std::_Exit(1);
+        }
+        for (auto& w : workers)
+            w.join();
+        emulator->StopRzx();
+        EXPECT_EQ(emulator->DriverViolations(), 0u) << "seed " << seed;
+        emulator->Pause();
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+}
+
+/// Probe (not in the default run): RunNFrames on a ZX-Poly master from one thread, group operations in between
+TEST(ExecutionArbiterMachineFuzz_Test, DISABLED_ZXPolyMasterRunNFramesIsExactSingleThreaded)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::string error;
+    std::shared_ptr<Emulator> master = manager->CreateZXPolyMachine(
+        "zxpoly-probe", "PENTAGON", TestPathHelper::GetTestDataPath("machines/zxpoly/zxp/Alien8.zxp"), &error);
+    ASSERT_TRUE(master) << error;
+    ZXPolyGroup* group = manager->GetZXPolyGroup(master->GetId());
+    for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+        group->GetInstance(m)->EnableTurboMode();
+    if (!master->IsRunning())
+        master->StartAsync();
+    TestWait::For([&]() { return Frame(master.get()) > 1; });
+    std::mt19937 rng(7);
+    int errors = 0;
+    for (int i = 0; i < 3000; i++)
+    {
+        switch (rng() % 8)
+        {
+            case 6:
+                group->PressKey(ZXKEY_SPACE);
+                group->ReleaseKey(ZXKEY_SPACE);
+                break;
+            case 7: group->SetParallelSlaves(rng() % 2 == 0); break;
+            case 0: group->StartRecording(); break;
+            case 1: group->StopRecording(); break;
+            case 2: { const uint64_t now = Frame(master.get()); group->SeekToFrame(now > 4 ? now - 1 - rng() % 4 : now); break; }
+            case 3: group->ResumeRecording(); break;
+            case 4:
+            {
+                // Let the loop run on from where the group left it (after a seek: the detached replay)
+                const uint64_t from = Frame(master.get());
+                master->Resume(execution::Requester{execution::Origin::Gui, {}});
+                TestWait::For([&]() { return master->IsPaused() || Frame(master.get()) > from + 3; }, 2000ms);
+                break;
+            }
+            default: break;
+        }
+        execution::CommandOptions driving;
+        driving.drivesZ80 = true;
+        execution::HoldToken hold = master->GetArbiter().BeginHold(
+            execution::Requester{execution::Origin::WebApi, {}}, "probe", execution::Clock::now() + std::chrono::seconds(5),
+            nullptr, driving);
+        const unsigned frames = 1 + rng() % 2;
+        const uint64_t before = Frame(master.get());
+        master->RunNFrames(frames);
+        if (hold.Valid() && Frame(master.get()) - before != frames && ++errors < 10)
+            std::fprintf(stderr, "probe %d: before %llu after %llu ran %u, ttd state %d\n", i, (unsigned long long)before,
+                         (unsigned long long)Frame(master.get()), frames,
+                         static_cast<int>(master->GetContext()->pTimeTravelController->GetState()));
+        master->GetArbiter().EndHold(hold);
+    }
+    EXPECT_EQ(errors, 0);
+    group->StopRecording();
+    master->Pause();
+    const std::string id = master->GetId();
+    master.reset();
+    manager->RemoveEmulator(id);
 }

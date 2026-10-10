@@ -43,7 +43,10 @@ ASan finds use-after-free, heap / stack / global overflows, use-after-scope, con
 known-size array, signed overflow, invalid shifts, misaligned access). Cost: ~2x CPU, ~3x memory; the tests still run
 in minutes.
 
-One-time configure, then build with the usual wrapper (the build directory is separate; nothing else changes):
+One-time configure, then build with the usual wrapper (the build directory is separate; nothing else changes). The
+script is a shortcut for the CMake option `-DSANITIZE=<list>` (`cmake/Sanitize.cmake`: compile and link flags for every
+target; `address,undefined`, `thread`, ...; MSVC takes `address` only), which any configure of the tree or of a
+standalone `core/tests` accepts:
 
 ```bash
 tools/sanitize/configure.sh asan                                   # -> cmake-build-asan (address,undefined)
@@ -277,9 +280,11 @@ ASan, to the teardown use-after-free and the DDCB write into a removed CPU.
 ```bash
 ASAN_OPTIONS=detect_leaks=1:halt_on_error=0 docker/linux/build.sh --sanitize address,undefined \
     --type RelWithDebInfo --test --filter 'EmulatorManager_Test.*:Z80_Test.*'
+docker/linux/build.sh --tsan --type RelWithDebInfo --test --filter 'ExecutionArbiter*'   # --asan: address,undefined
 ```
 
-`--sanitize` builds into `scratch/linux-<arch>-<type>-san-<list>/`, passes `ASAN_/LSAN_/UBSAN_/TSAN_OPTIONS` from
+`--sanitize` (or `--asan` / `--tsan`) configures with `-DSANITIZE=<list>` and builds into
+`scratch/linux-<arch>-<type>-san-<list>/`, passes `ASAN_/LSAN_/UBSAN_/TSAN_OPTIONS` from
 the host, and grants `SYS_PTRACE` (LeakSanitizer stops the threads through ptrace). gcc reports false
 `maybe-uninitialized` inside libstdc++ `<regex>` once instrumented; the script keeps that one warning from failing the
 build. A full build takes ~30 minutes at 6 jobs. Remove the build directories when done (`rm -rf scratch/linux-*`).
