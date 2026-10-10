@@ -11,6 +11,7 @@ save the text itself and keep the file. The synchronizer's reader must give that
                                                                  # any other ALASM build: TAG-typing, TAG-edited
     sync-dumps.py zasm2 <disk> <out-dir> --boot ZXASM2.4 --source a2.4_p --big a2.4_1 --tag zasm24
                                                                  # ZX-ASM 2.4 / 2.5 (ZXASM2.5) / 2.6 (boot): plain text, type C
+    sync-dumps.py masm <disk with t1.a> <out-dir> --boot m2 --source t1 --menu-save --tag masm20   # MASM 2.0 (3.0: TSM)
     sync-dumps.py xas <disk-with-PROBE.X> <out-dir> --boot NAME --list-keys right[,down...] --tag TAG
                                                                  # XAS: TAG-typing, TAG-edited (the text at #C000)
     sync-dumps.py storm <disk-with-NAME.C> <out-dir> --boot NAME --source NAME --tag TAG
@@ -279,8 +280,9 @@ def zasm2(emu, args):
 
 
 def masm(emu, args):
-    """MASM 1.1: W takes the first source, E edits; SS+Enter saves from the editor, EXT Q goes back to the menu. The
-    edited case is taken in the editor (the cursor line out of the text), the menu case after leaving it"""
+    """MASM 1.1 / 1.3 (2.0 / 3.0 with --menu-save: S at the prompt): W takes the first source, E edits; SS+Enter saves
+    from the editor, EXT Q goes back to the menu. The edited case is taken in the editor (the cursor line out of the
+    text), the menu case after leaving it"""
     emu.insert_disk(args.disk)
     emu.run_trdos(args.boot or 'MASM 1.1', wait=8)
     emu.tap('enter')                           # past the title
@@ -292,6 +294,38 @@ def masm(emu, args):
     time.sleep(1.5)
     loaded = saved(emu, args.source, 'a')
     pages = [2, 5, windows(emu)[3]]
+    if args.menu_save:
+        # 2.0 / 3.0: the cursor line goes into the line buffer while it is typed in and out of the text, so the
+        # typing case's file is the one the program writes after EXT Q puts the line back; no save in the editor
+        def to_menu_and_save(case_names):
+            emu.post('/keyboard/combo', {'keys': ['caps', 'symbol'], 'frames': 4})   # EXT
+            time.sleep(0.5)
+            emu.tap('q')
+            time.sleep(1)
+            if 'menu' in case_names:
+                dump(emu, args.out, f'{args.tag}-menu', pages, f'{args.source}.a', None, {'editor': False, 'typing': False})
+            emu.tap('s')
+            time.sleep(2)
+            emu.tap('enter')                   # the work file's name
+            time.sleep(4)
+            written = saved(emu, args.source, 'a')
+            for case in case_names:
+                finish(args.out, f'{args.tag}-{case}', f'{args.source}.a', written)
+
+        emu.type(' nop')
+        dump(emu, args.out, f'{args.tag}-typing', pages, f'{args.source}.a', None, {'editor': True, 'typing': True})
+        to_menu_and_save(['typing'])
+        emu.tap('e', 8)                        # back to the editor
+        time.sleep(1.5)
+        emu.tap('down')
+        emu.type(' ld a,b')
+        emu.tap('enter')
+        for _ in range(3):
+            emu.tap('down')
+        time.sleep(1)
+        dump(emu, args.out, f'{args.tag}-edited', pages, f'{args.source}.a', None, {'editor': True, 'typing': False})
+        to_menu_and_save(['edited', 'menu'])
+        return
     emu.type(' nop')
     dump(emu, args.out, f'{args.tag}-typing', pages, f'{args.source}.a', loaded, {'editor': True, 'typing': True})
     emu.tap('enter')
@@ -457,7 +491,7 @@ def main():
     parser.add_argument('--key-start', action='store_true', help='zasm: a key past the title, no drive question (3.2x)')
     parser.add_argument('--upper', type=int, default=6, help='zasm: the RAM page of the text above #C000')
     parser.add_argument('--type', default='a', help='zasm: the sources\' TR-DOS type')
-    parser.add_argument('--menu-save', action='store_true', help='zasm: save from the main menu, no drive question (3.0)')
+    parser.add_argument('--menu-save', action='store_true', help='zasm: save from the main menu, no drive question (3.0); masm: save at the prompt (2.0 / 3.0)')
     parser.add_argument('--list-load', action='store_true', help='zasm: load the first file of the list (3.10)')
     parser.add_argument('--as-typed', action='store_true', help='tasm: type the name as stored (a keyboard not inverted)')
     args = parser.parse_args()

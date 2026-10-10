@@ -80,7 +80,13 @@ invoke_api {"target":"EMU_ID","method":"GET","path":"/api/v1/emulator/{id}/disk/
 
 ## The text in memory (MASM 1.1)
 
-The text starts at `#970B`. While it is edited MASM keeps a gap: `(#96CC)` is the gap start, `(#96CE)` the gap end,
+2.0 and 3.0 (found in their code: asm-synchronizer.md §7.12): the same gap buffer from the address their files carry
+(2.0 `#94DA`, 3.0 `#9123`) to `#FFFF`, lines ended by `00`; the gap start, the editor flag and the gap end are
+operands of the gap-closing routine (2.0 `#92C6`+1 / +7 / +13, 3.0 `#8C24`+1 / +7 / +13). While a line is typed in it
+is only in the line buffer (2.0 `#89D1`, 3.0 `#864F`, text); the text after it starts at `(#929F)` / `(#8BFD)`. Their
+editor has no save: EXT `Q`, then `S`, ENTER at the prompt.
+
+1.1 / 1.3: the text starts at `#970B`. While it is edited MASM keeps a gap: `(#96CC)` is the gap start, `(#96CE)` the gap end,
 and the rest runs up to `#FFFF`, where the file's `#FF` end lies. In the editor the cursor line is out of the text (its
 record ends at the gap end); after EXT `Q` it is back. The asm-synchronizer reads both states
 ([asm-sources.md](../analysis/asm-sources.md#the-source-an-assembler-holds-in-ram-asm-synchronizer)).
@@ -141,8 +147,8 @@ MASM's own source, 11688 bytes).
 |---|---|---|---|
 | 1.0 demo | Spectrofon #15 (`SpFon_15.Trd`, boot `MASMdemo`) | `RUN "MASMdemo"`, any key | started (2026-10-07): the menu has no `W`; neither `W` nor `G` loaded a file, text typed in its editor arrives in lower case (no tokens) and `A` assembled nothing; no `DOWN` / `UP` / `SYSTEM` / `STOPKEY` |
 | 1.3 | `MASM1_3.SCL`, boot `MASMv1.3` | `RUN "MASMv1.3"`, any key, `W`, Enter, `A` | run (2026-10-07): assembles as 1.1 (`DOWN HL` the same bytes); the binary differs from 1.1 in 5 bytes (the version text) |
-| 2.0 TURBO | `MASM2_0D.SCL`, boot `m2` | `RUN "m2"`, any key, `W`, Enter | the editor works; `A` (menu, or Extend + `A` in the editor) returns without a word: this copy has no compiler ("Necessary file(s) absent!" in its binary) |
-| 3.0 MACRO | `MASM30M.SCL`, boot `TSM` | `RUN "TSM"`, any key, `G` (merge file: the list, Enter), `A` | run: `BANK n`, `BORDER n`, `CLS [a]` emit fixed code; `NAME MAC` ... `ENDM` is skipped (nothing calls it: a word in the command field is a label, so `NAME` there gives error 3); `IF` stops with "!?Unknown error?!", `ENDIF` does nothing, `ELSE` jumps into the menu: research-masm-to-sjasmplus.md §4 |
+| 2.0 TURBO | `MASM2_0D.SCL`, boot `m2` | `RUN "m2"`, any key, `W`, Enter | the editor works and saves (EXT `Q`, `S`, Enter); its sources are not 1.1's (`FF`, lines ended by `00`: `zxasm encode --codec masm --version 2.0`); `A` (menu, or Extend + `A` in the editor) returns without a word: this copy has no compiler ("Necessary file(s) absent!" in its binary) |
+| 3.0 MACRO | `MASM30M.SCL`, boot `TSM` | `RUN "TSM"`, any key, `G` (merge file: the list, Enter), `A`; `W` works too | the editor saves as 2.0 (sources `FF lo hi FF` + 2.0's lines, `--version 3.0`); run: `BANK n`, `BORDER n`, `CLS [a]` emit fixed code; `NAME MAC` ... `ENDM` is skipped (nothing calls it: a word in the command field is a label, so `NAME` there gives error 3); `IF` stops with "!?Unknown error?!", `ENDIF` does nothing, `ELSE` jumps into the menu: research-masm-to-sjasmplus.md §4 |
 
 ## Pitfalls
 

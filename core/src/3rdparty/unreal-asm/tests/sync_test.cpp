@@ -92,6 +92,8 @@ const Case kCases[] = {
     {"zasm26-typing", "zasm-2.6"}, {"zasm26-edited", "zasm-2.6"}, {"zasm26-big", "zasm-2.6"},
     {"zasm30-typing", "zasm-3.0"},     {"zasm30-edited", "zasm-3.0"},      {"zasm30-big", "zasm-3.0"},
     {"masm11-typing", "masm-1.1"},     {"masm11-edited", "masm-1.1"},      {"masm11-menu", "masm-1.1"},
+    {"masm20-typing", "masm-2.0"},     {"masm20-edited", "masm-2.0"},      {"masm20-menu", "masm-2.0"},
+    {"masm30-typing", "masm-3.0"},     {"masm30-edited", "masm-3.0"},      {"masm30-menu", "masm-3.0"},
     {"masm13-typing", "masm-1.1"},     {"masm13-edited", "masm-1.1"},      {"masm13-menu", "masm-1.1"},
     {"tasm40-typing", "tasm-4.0"},     {"tasm40-edited", "tasm-4.0"},      {"tasm40-command", "tasm-4.0"},
     {"tasm44-typing", "tasm-4.4"},     {"tasm44-edited", "tasm-4.4"},      {"tasm44-command", "tasm-4.4"},
@@ -116,8 +118,10 @@ std::vector<uint8_t> WithoutStateLine(std::vector<uint8_t> file, const SyncDescr
 /// The file without the header bytes SAVE rewrites from the editor's state (XAS: the cursor line and column)
 std::vector<uint8_t> WithoutEditorState(std::vector<uint8_t> file, const SyncDescriptor& d)
 {
-    const FileImageParams& p = d.fileImage;
-    for (size_t k = p.editorStateAt; k < size_t(p.editorStateAt) + p.editorStateLength && k < file.size(); ++k)
+    const bool gap = d.family == LayoutFamily::GapBuffer;
+    const size_t at = gap ? d.gapBuffer.editorStateAt : d.fileImage.editorStateAt;
+    const size_t length = gap ? d.gapBuffer.editorStateLength : d.fileImage.editorStateLength;
+    for (size_t k = at; k < at + length && k < file.size(); ++k)
         file[k] = 0;
     return file;
 }
@@ -140,7 +144,9 @@ TEST(Sync_Test, EveryDumpGivesTheFileTheAssemblerSaved)
         EXPECT_EQ(text.typing, dump.typing && descriptor->typing.rule == TypingRule::NotInText && descriptor->typing.flagMask);
         if (descriptor->family == LayoutFamily::GapBuffer)
         {
-            EXPECT_EQ(text.editor, dump.editor) << "the line buffer belongs in the file only in the editor";
+            // MASM 2.0 / 3.0 take the cursor line out of the text only while it is typed in
+            const bool lineOut = descriptor->gapBuffer.nextLineAt ? dump.typing : dump.editor;
+            EXPECT_EQ(text.editor, lineOut) << "the line buffer belongs in the file only in the editor";
         }
 
         // The live file is what the codec reads
