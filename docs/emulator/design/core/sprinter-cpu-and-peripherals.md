@@ -797,7 +797,43 @@ byte of the state changes; the two-machine tests switch it with the other fast p
 1.27 -> 1.25 (-1 %), PLASMA2 and BADAPPLE within noise (their accelerator is often in a mode, or the ALU opcodes
 set FN).
 
-### 8.10 What remains
+### 8.10 Measuring: `BM_SprinterDemo_*`
+
+The benchmark `core/benchmarks/emulator/machines/sprinter_demo_benchmark.cpp` measures the Sprinter under a real
+heavy load. The full description is in [its README](../../../../core/benchmarks/emulator/machines/README.md): the
+disk, the start, the measured stretch, the settings and the comparison method. It has four demos from the system disk (DNTBLINK, ROTOZOOM, PLASMA2, BADAPPLE), each run two ways:
+- **bare**: no GS, no MoonSound, one AY, as in the core tests;
+- **shipped sound**: the sound cards of the shipped config (NeoGS, AY).
+
+How it runs:
+- The disk is inserted in session mode, so the image file is never written.
+- The session copy of `SYSTEM.BAT` is rewritten to start the demo (`FatInPlace`).
+- DSS boots and the demo loads in turbo.
+- Each iteration is then one `MainLoop` frame at the real speed, with the fast paths on, as in the GUI.
+- Without `UNREAL_SPRINTER_HDD` (the raw `sp_hdd_sys.img`) every case reports an error and is skipped.
+
+```bash
+UNREAL_SPRINTER_HDD=.../sp_hdd_sys.img core-benchmarks --benchmark_filter=BM_SprinterDemo
+```
+
+Apple M3 Max, 2026-10-09, master `a5101b964`, host CPU per frame (the frame is 20.48 ms):
+
+| Demo | Bare | Shipped sound |
+|---|---|---|
+| DNTBLINK | 1.28 ms | 1.64 ms |
+| ROTOZOOM | 2.32 ms | 2.96 ms |
+| PLASMA2 | 0.60 ms | 0.93 ms |
+| BADAPPLE | 1.00 ms | 1.29 ms |
+
+**Comparing two builds.**
+- Build each in its own worktree.
+- Interleave the runs: A, B, B, A and so on, several rounds. A single pair is not enough: the machine is
+  often loaded.
+- Compare the minimum and the paired differences.
+- Check exactness separately, with the two-machine tests (`SprinterIdleCycles_Test`,
+  `SprinterFastPathsDemo_Test`). The benchmark measures only time.
+
+### 8.11 What remains
 
 The instruction itself (`Z84CpuStep`), the engine's per-access glue (`Publish` / `Absorb`) and the write
 intercept's video RAM path with its screen catch-ups.
