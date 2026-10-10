@@ -119,7 +119,8 @@ bool EmulatorContext::TakeRunControl(const UUID& owner, const std::string& surfa
 }
 
 bool EmulatorContext::TakeRunControl(const UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
-                                     const std::string& client, std::chrono::milliseconds lease)
+                                     const std::string& client, std::chrono::milliseconds lease,
+                                     const std::string& peer)
 {
     // A nil owner UUID is a programming error — surfaces must call UUID::Generate()
     // once at startup and reuse the value.
@@ -163,6 +164,7 @@ bool EmulatorContext::TakeRunControl(const UUID& owner, const std::string& surfa
                 _runControlClaim.owner = owner;
                 _runControlClaim.surfaceLabel = surfaceLabel;
                 _runControlClaim.client = client;
+                _runControlClaim.peer = peer;
                 _runControlClaim.sinceMs = NowEpochMs();
                 _runControlClaim.lease = lease;
                 _runControlClaim.lastActivity = now;
@@ -211,6 +213,7 @@ void EmulatorContext::ReleaseRunControl(const UUID& owner)
         _runControlClaim.owner.clear();
         _runControlClaim.surfaceLabel.clear();
         _runControlClaim.client.clear();
+        _runControlClaim.peer.clear();
     }
     PostRunControlChanged("released", label, client, owner.toString());
 }
@@ -235,6 +238,7 @@ bool EmulatorContext::RevokeRunControl(const std::string& by)
         _runControlClaim.owner.clear();
         _runControlClaim.surfaceLabel.clear();
         _runControlClaim.client.clear();
+        _runControlClaim.peer.clear();
     }
     // Its direct run (if one is under way) ends at the next instruction; the call answers revoked_by_user
     if (pEmulator)
@@ -293,6 +297,7 @@ void EmulatorContext::ExpireIdleRunControl() const
         mutableClaim.owner.clear();
         mutableClaim.surfaceLabel.clear();
         mutableClaim.client.clear();
+        mutableClaim.peer.clear();
     }
     LOGINFO("Run control session of %s %s expired (idle lease)", label.c_str(), client.c_str());
     PostRunControlChanged("expired", label, client, ownerText);
@@ -333,6 +338,7 @@ EmulatorContext::RunControlState EmulatorContext::GetRunControlState() const
         state.surfaceLabel = _runControlClaim.surfaceLabel;
         state.ownerUuid = _runControlClaim.owner.toString();
         state.client = _runControlClaim.client;
+        state.peer = _runControlClaim.peer;
         state.sinceMs = _runControlClaim.sinceMs;
         state.leaseMs = static_cast<uint32_t>(_runControlClaim.lease.count());
     }

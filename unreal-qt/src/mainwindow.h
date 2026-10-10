@@ -121,6 +121,10 @@ private slots:
     void handleEmulatorInstanceDestroyed(int id, Message* message);
     void handleEmulatorInstanceCreated(int id, Message* message);
     void handleEmulatorSelectionChanged(int id, Message* message);
+    /// An automation session took, released or lost control of an emulator (any thread): the guard re-reads it
+    void handleRunControlChanged(int id, Message* message);
+    /// The toolbar's Take Back Control and the HUD's REMOTE indicator follow the guard
+    void updateRemoteControlUi();
     void openFileDialog();
     void openSnapshotDialog();
     void openZXPolyDialog();
@@ -452,6 +456,11 @@ private:
     DockingManager* _dockingManager = nullptr;
     MenuManager* _menuManager = nullptr;
     ToolBarManager* _toolBarManager = nullptr;
+    /// Automation sessions (execution arbiter design §6a): who holds the machine, the GUI locked meanwhile
+    class RemoteControlGuard* _remoteControl = nullptr;
+    class QShortcut* _fullScreenShortcut = nullptr;
+    bool _hudShownForRemoteControl = false;
+    QString _remoteControlAnnounced;  // the session the "Remote control" toast was shown for  // the HUD was off and is shown for the session
     TtdWidget* _ttdWidget = nullptr;
     int _lastTtdWidgetHeight = 0;
     bool _adjustingTtdHeight = false;

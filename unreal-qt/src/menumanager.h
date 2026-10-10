@@ -83,6 +83,8 @@ public:
     QAction* overscanAction() const { return _overscanAction; }  // Pentagon only (hidden otherwise)
     QAction* mediaPanelAction() const { return _mediaPanelAction; }
     QMenu* viewMenu() const { return _viewMenu; }
+    QMenu* runMenu() const { return _runMenu; }
+    QAction* exitAction() const { return _exitAction; }
 #ifdef ENABLE_RECORDING
     QAction* videoRecordingAction() const { return _videoRecordingAction; }
     QAction* videoRecordingDialogAction() const { return _videoRecordingDialogAction; }

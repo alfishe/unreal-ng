@@ -1,4 +1,5 @@
 #include "breakpointdialog.h"
+#include "emulator/remotecontrolguard.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -515,6 +516,8 @@ void BreakpointDialog::editBreakpoint()
 
 void BreakpointDialog::deleteBreakpoint()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     QList<QTableWidgetItem*> selectedItems = _breakpointTable->selectedItems();
     if (selectedItems.isEmpty())
         return;
@@ -545,6 +548,8 @@ void BreakpointDialog::deleteBreakpoint()
 
 void BreakpointDialog::toggleBreakpoint()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     QList<QTableWidgetItem*> selectedItems = _breakpointTable->selectedItems();
     if (selectedItems.isEmpty())
         return;

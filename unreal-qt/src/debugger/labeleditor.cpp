@@ -1,4 +1,5 @@
 #include "labeleditor.h"
+#include "emulator/remotecontrolguard.h"
 
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -307,6 +308,8 @@ void LabelEditor::saveAsLabels()
 
 void LabelEditor::importSymbols()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     const QString path = QFileDialog::getOpenFileName(this, tr("Import Symbols"),
                                                       QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation), tr("All Files (*)"));
     if (path.isEmpty())
@@ -339,6 +342,8 @@ void LabelEditor::exportSymbols()
 
 void LabelEditor::scanLabelTables()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     const SymbolReply scan = SymbolControl(_labelManager).Execute({"scan", {}});
     if (!scan.Ok())
     {
@@ -378,6 +383,8 @@ void LabelEditor::scanLabelTables()
 
 void LabelEditor::importSourceLabels()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     const QString path = QFileDialog::getOpenFileName(this, tr("Import Labels from Source"),
                                                       QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
                                                       tr("Sources and images (*.asm *.a80 *.s *.trd *.tap *.tzx *.$*);;All Files (*)"));
@@ -406,6 +413,8 @@ void LabelEditor::importSourceLabels()
 
 void LabelEditor::loadFromFile(const QString& filePath)
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     if (!_labelManager)
     {
         QString errorMsg = tr("Error: Label manager is not initialized.");
@@ -635,6 +644,8 @@ void LabelEditor::populateLabelTable()
 
 void LabelEditor::deleteLabel()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     if (!_labelManager)
     {
         _statusBar->showMessage(tr("Error: Label manager is not initialized"), 3000);
@@ -693,6 +704,8 @@ void LabelEditor::onLabelDoubleClicked(QTableWidgetItem* item)
 
 void LabelEditor::addLabel()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     if (!_labelManager)
     {
         _statusBar->showMessage(tr("Error: Label manager is not initialized"), 3000);
@@ -748,6 +761,8 @@ void LabelEditor::addLabel()
 
 void LabelEditor::editLabel()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     if (!_labelManager)
     {
         _statusBar->showMessage(tr("Error: Label manager is not initialized"), 3000);

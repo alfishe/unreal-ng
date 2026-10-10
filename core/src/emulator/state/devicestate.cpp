@@ -2440,6 +2440,7 @@ StateNode Execution(EmulatorContext* context)
         StateNode session = StateNode::Object();
         session["surface"] = rc.surfaceLabel;
         session["client"] = rc.client;
+        session["peer"] = rc.peer;
         session["owner"] = rc.ownerUuid;
         session["since_ms"] = rc.sinceMs;
         session["lease_ms"] = rc.leaseMs;

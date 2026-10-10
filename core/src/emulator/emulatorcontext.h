@@ -357,6 +357,7 @@ public:
         std::string surfaceLabel;  // "gdb", "webapi", "qt-timeline", "lua", "cli", ... for error/UI
         std::string ownerUuid;     // String form for diagnostics / JSON responses
         std::string client;        // the client's own name (an automation session), if it gave one
+        std::string peer;          // where the client connects from (host:port), empty for an in-process script
         int64_t sinceMs = 0;       // when the claim was taken (system clock, ms since the epoch)
         uint32_t leaseMs = 0;      // idle lease of an HTTP session (0: ends with its connection / explicitly)
         /// Clients in their re-take cooldown after the user took control back: "label/client" -> seconds left
@@ -365,9 +366,10 @@ public:
 
     /// Automation sessions (execution arbiter design §6a, X7): the claim is also the session an automation client
     /// opens explicitly. `client`: the client's name (also the key of its re-take cooldown); `lease`: an
-    /// HTTP session ends after that long without a request of it (TouchRunControl), 0 = no lease
+    /// HTTP session ends after that long without a request of it (TouchRunControl), 0 = no lease; `peer`: where the
+    /// client connects from ("192.168.1.5:51234"; empty for an in-process script) - the GUI shows it to the user
     bool TakeRunControl(const UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
-                        const std::string& client, std::chrono::milliseconds lease);
+                        const std::string& client, std::chrono::milliseconds lease, const std::string& peer = {});
     /// The user takes control back at the GUI: the session ends, its direct run (if one is under way) is aborted at the
     /// next instruction, its owner is refused from now on (IsRunControlRevoked: revoked_by_user), and the same client
     /// cannot take control again for the cooldown (revoked_cooldown) unless the user allows it (AllowRunControlRetake)
@@ -408,6 +410,7 @@ private:
         UUID owner;                   // Nil UUID = unclaimed
         std::string surfaceLabel;
         std::string client;
+        std::string peer;
         int64_t sinceMs = 0;
         std::chrono::milliseconds lease{0};
         std::chrono::steady_clock::time_point lastActivity{};

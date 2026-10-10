@@ -1,4 +1,5 @@
 #include "disksectordialog.h"
+#include "emulator/remotecontrolguard.h"
 
 #include <QComboBox>
 #include <QHBoxLayout>
@@ -106,6 +107,8 @@ void DiskSectorDialog::load()
 
 void DiskSectorDialog::documentChanged()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     QHexDocument* document = _hexView->getDocument();
     if (_loading || !document || !_emulator)
         return;

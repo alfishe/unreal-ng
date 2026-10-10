@@ -461,7 +461,7 @@ GET  /api/v1/emulator/{id}/state/profi         ZX Profi board chips: port_map, p
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
 GET  /api/v1/emulator/{id}/state/execution     Execution arbiter: phase, intent and who set it, main loop, the command holding the CPU, queue, claim, counters, driver_violations
 POST /api/v1/emulator/{id}/control/session     Open an automation session {client, surface webapi|mcp, lease_seconds 60}: returns session (send it as X-Unreal-Session); 409 held_by_other / revoked_cooldown (retry: false)
-GET  /api/v1/emulator/{id}/control/session     Who holds run control, since when, clients in a re-take cooldown
+GET  /api/v1/emulator/{id}/control/session     Who holds run control (surface, client, peer: where it connects from), since when, clients in a re-take cooldown
 DELETE /api/v1/emulator/{id}/control/session   End the session in X-Unreal-Session
      (any request with X-Unreal-Session of a session the user took back at the GUI: 409 revoked_by_user, retry: false - stop, do not retry)
 GET  /api/v1/emulator/{id}/state/network       Network adapters: card ports, W5300 registers and sockets, virtual network (leases, sockets, guest servers, counters, recent activity), expansion slots (slots[]: a UART card's uart / peer / esp or modem - a Hayes modem's mode, call, DCD / RI / DSR / CTS, settings, counters, journal; SprinterSerial's second UART in channel_b), a serial port's modem peer in com.modem; 404 without an adapter

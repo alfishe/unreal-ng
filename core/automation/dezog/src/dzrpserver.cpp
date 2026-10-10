@@ -138,6 +138,7 @@ void Server::acceptLoop()
         char clientIp[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &clientAddr.sin_addr, clientIp, sizeof(clientIp));
         std::cout << "[DZRP] Client connected from " << clientIp << "\n";
+        m_debug->onClientConnected(PeerAddressOf(clientSock));
 
         {
             std::lock_guard<std::mutex> lock(m_sessionMutex);
@@ -176,6 +177,11 @@ void Server::sessionLoop(SOCKET clientSocket)
         int pollResult = waitForSocketRead(clientSocket, 100);
         if (pollResult < 0)
             break;
+        if (m_debug->controlTakenBack())
+        {
+            tellControlTakenBack();
+            return;
+        }
         if (pollResult == 0)
             continue;
 
@@ -777,6 +783,15 @@ Response Server::handleWriteState(const Command& cmd)
     }
 
     return resp;
+}
+
+void Server::tellControlTakenBack()
+{
+    const IDebugInterface::Registers regs = m_debug->getRegisters();
+    notifyPause(BreakReason::OTHER, regs.pc, 0,
+                "revoked_by_user: the user took control back at the emulator's GUI; this debug session has ended. "
+                "Do not reconnect without asking the user.");
+    std::cout << "[DZRP] The user took control back: closing the session\n";
 }
 
 void Server::notifyPause(BreakReason reason, uint16_t addr, uint8_t bank,

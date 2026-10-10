@@ -121,6 +121,9 @@ private:
 
     // Execution control
     std::string handleContinue();
+    /// The user took control back from this session at the GUI (execution arbiter design §6a): true when it did and
+    /// the packet runs, steps or writes - the client gets the reason on its console and an error (E5E), once per packet
+    bool RefuseAfterTakeBack(const std::string& packet);
     std::string handleStep();
     std::string handleInterrupt();
 

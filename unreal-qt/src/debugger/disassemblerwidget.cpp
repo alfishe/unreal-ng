@@ -1,4 +1,5 @@
 #include "disassemblerwidget.h"
+#include "emulator/remotecontrolguard.h"
 
 // Column widths for disassembly output
 constexpr int BREAKPOINT_COL_WIDTH = 3;  // [ ]
@@ -947,6 +948,8 @@ void DisassemblerWidget::updateBreakpointHighlighting()
 
 void DisassemblerWidget::toggleBreakpointAtAddress(uint16_t address)
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     BreakpointManager* bpManager = getBreakpointManager();
     if (!bpManager)
         return;

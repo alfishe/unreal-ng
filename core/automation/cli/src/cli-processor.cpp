@@ -893,7 +893,8 @@ void CLIProcessor::HandleSession(const ClientSession& session, const std::vector
         const std::string client = args.size() > 1 ? args[1] : std::string("cli");
         const unreal::UUID owner = unreal::UUID::Generate();
         std::string reason;
-        if (!context->TakeRunControl(owner, "cli", &reason, client, std::chrono::milliseconds(0)))
+        if (!context->TakeRunControl(owner, "cli", &reason, client, std::chrono::milliseconds(0),
+                                     PeerAddressOf(session.GetSocket())))
         {
             session.SendResponse("Error: " + reason + " (do not retry)" + NEWLINE);
             return;

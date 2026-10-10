@@ -14,6 +14,8 @@
 
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <string>
 
 namespace mcp
 {
@@ -45,6 +47,10 @@ public:
 
 private:
     std::unique_ptr<ToolRegistry> _registry;
+    /// The client's name from initialize (clientInfo: "claude-code 2.1"): an automation session it opens without a
+    /// name of its own shows the user this
+    mutable std::mutex _clientMutex;
+    mutable std::string _clientName;
 };
 
 /// endregion </McpDispatcher>

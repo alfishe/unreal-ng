@@ -689,6 +689,22 @@ void HudModel::setChangedCallback(std::function<void()> callback)
     _changedCallback = std::move(callback);
 }
 
+void HudModel::setAlwaysShownPrefix(std::string prefix)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _alwaysShownPrefix = std::move(prefix);
+    publishLocked();
+}
+
+bool HudModel::AlwaysShownLocked(const HudElement& element) const
+{
+    if (_alwaysShownPrefix.empty())
+        return false;
+    const std::string indicator = "ind/" + _alwaysShownPrefix;
+    return element.id.compare(0, indicator.size(), indicator) == 0 ||
+           element.dedupKey.compare(0, _alwaysShownPrefix.size(), _alwaysShownPrefix) == 0;
+}
+
 void HudModel::setCategoryFilter(std::function<bool(const char*)> filter)
 {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -795,25 +811,33 @@ void HudModel::publishLocked()
     snapshot->toastPosition = _toastPosition;
     snapshot->indicatorPosition = _indicatorPosition;
 
-    if (_enabled.load(std::memory_order_relaxed))
+    // HUD off: only the always-shown elements (the automation session's), if any
+    const bool all = _enabled.load(std::memory_order_relaxed);
+    if (all || !_alwaysShownPrefix.empty())
     {
+        auto shown = [this, all](const HudElement& element) { return all || AlwaysShownLocked(element); };
+
         // 1. Augmented background / picture elements
         for (const auto& aug : _augmentations)
         {
-            snapshot->elements.push_back(aug);
+            if (shown(aug))
+                snapshot->elements.push_back(aug);
         }
 
         // 2. Indicators (active only)
         for (const auto& ind : _indicators)
         {
-            if (ind.state != HudState::Off)
+            if (ind.state != HudState::Off && shown(ind))
             {
                 snapshot->elements.push_back(ind);
             }
         }
 
         // 3. Toasts: priority descending, then age ascending
-        std::vector<HudElement> sortedToasts = _toasts;
+        std::vector<HudElement> sortedToasts;
+        for (const auto& toast : _toasts)
+            if (shown(toast))
+                sortedToasts.push_back(toast);
         std::stable_sort(sortedToasts.begin(), sortedToasts.end(), [](const HudElement& a, const HudElement& b) {
             if (static_cast<uint8_t>(a.priority) != static_cast<uint8_t>(b.priority))
                 return static_cast<uint8_t>(a.priority) > static_cast<uint8_t>(b.priority);

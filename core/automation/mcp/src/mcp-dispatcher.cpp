@@ -94,6 +94,15 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
     {
         Json::Value result;
         const std::string clientVersion = params.get("protocolVersion", "").asString();
+        if (params.isMember("clientInfo") && params["clientInfo"].isObject())
+        {
+            std::string name = params["clientInfo"].get("name", "").asString();
+            const std::string version = params["clientInfo"].get("version", "").asString();
+            if (!version.empty())
+                name += " " + version;
+            std::lock_guard<std::mutex> lock(_clientMutex);
+            _clientName = name;
+        }
         result["protocolVersion"] = IsSupportedProtocolVersion(clientVersion) ? clientVersion : std::string(kProtocolVersion);
 
         Json::Value tools;
@@ -166,6 +175,12 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
         // copy of the arguments alive until the result callback fires so that
         // handlers may safely capture `args` by reference in callback chains.
         auto argumentsCopy = std::make_shared<Json::Value>(arguments);
+        if (name == "control_execution" && argumentsCopy->isObject() && !argumentsCopy->isMember("_mcp_client"))
+        {
+            std::lock_guard<std::mutex> lock(_clientMutex);
+            if (!_clientName.empty())
+                (*argumentsCopy)["_mcp_client"] = _clientName;
+        }
         try
         {
             tool->handler(*argumentsCopy, caller, [argumentsCopy, id, done, &caller](ToolResult result) {

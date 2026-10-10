@@ -1,12 +1,21 @@
 #include "toolbarmanager.h"
 
 #include <QMainWindow>
+#include <QApplication>
+#include <QDateTime>
+#include <QFontDatabase>
+#include <QLabel>
+#include <QHBoxLayout>
+#include <QLayout>
+#include <QToolButton>
+#include <QMenu>
 #include <QPainter>
 #include <QRadialGradient>
 #include <QSettings>
 #include <QSvgRenderer>
 #include <QTimer>
 #include <QToolTip>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 
@@ -30,6 +39,24 @@ constexpr const char* kMouseGateKey = "Input/HostMouseEnabled";
 constexpr const char* kMouseMatchKey = "Input/MouseMatchesHostPointer";
 
 }
+
+namespace
+{
+/// The antenna icon in one colour (the bar's text colour)
+QPixmap RemoteIconPixmap(const QColor& color)
+{
+    const qreal dpr = qApp ? qApp->devicePixelRatio() : 1.0;
+    QPixmap pixmap(QSize(18, 18) * dpr);
+    pixmap.setDevicePixelRatio(dpr);
+    pixmap.fill(Qt::transparent);
+    QSvgRenderer renderer(QStringLiteral(":/icons/remote.svg"));
+    QPainter painter(&pixmap);
+    renderer.render(&painter, QRectF(0, 0, 18, 18));
+    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    painter.fillRect(QRectF(0, 0, 18, 18), color);
+    return pixmap;
+}
+}  // namespace
 
 ToolBarManager::ToolBarManager(MainWindow* mainWindow, MenuManager* menuManager, QObject* parent)
     : QObject(parent), _mainWindow(mainWindow), _menuManager(menuManager)
@@ -141,6 +168,73 @@ ToolBarManager::ToolBarManager(MainWindow* mainWindow, MenuManager* menuManager,
         view->addAction(_mouseMatchMenuAction);
     }
 
+    // ---- Automation session: who holds the machine, and taking control back -------------------------
+    // A bar of its own under the toolbar: a row of its own never overflows into the toolbar's ">>" menu
+    _takeBackAction = new QAction(tr("Take Back Control"), this);
+    _takeBackAction->setStatusTip(tr("End the automation session: its client is told you took control back"));
+    connect(_takeBackAction, &QAction::triggered, this, &ToolBarManager::takeBackControlRequested);
+    _allowAgainAction = new QAction(tr("Allow Automation Again"), this);
+    _allowAgainAction->setStatusTip(tr("Let the client you took control back from take it again now (otherwise it is "
+                                       "refused for a while)"));
+    connect(_allowAgainAction, &QAction::triggered, this, &ToolBarManager::allowRetakeRequested);
+    _dismissAction = new QAction(tr("Dismiss"), this);
+    connect(_dismissAction, &QAction::triggered, this, [this]() {
+        _remoteDismissed = true;
+        _remoteBar->setVisible(false);
+    });
+
+    _remoteBar = new QToolBar(tr("Remote Control"), mainWindow);
+    _remoteBar->setObjectName(QStringLiteral("remoteControlBar"));
+    _remoteBar->setMovable(false);
+    _remoteBar->setFloatable(false);
+    _remoteBar->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    _remoteBar->toggleViewAction()->setVisible(false);
+    // One row widget with its own layout: the icon, the line and the buttons share one vertical centre (a
+    // toolbar's own layout places each item by itself)
+    auto* row = new QWidget(_remoteBar);
+    row->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    auto* rowLayout = new QHBoxLayout(row);
+    rowLayout->setContentsMargins(6, 0, 4, 0);
+    rowLayout->setSpacing(6);
+    // The line in the system's fixed-pitch font (every platform has one): the ticking time keeps its width; 14 %
+    // above the toolbar's text, read at a glance
+    const QFont buttonFont = _remoteBar->font();  // the buttons keep the toolbar's own font
+    QFont barFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    barFont.setPointSizeF(buttonFont.pointSizeF() * 1.14);
+    _remoteIcon = new QLabel(row);
+    _remoteLabel = new QLabel(row);
+    _remoteLabel->setTextFormat(Qt::PlainText);
+    _remoteLabel->setFont(barFont);
+    rowLayout->addWidget(_remoteIcon, 0, Qt::AlignVCenter);
+    rowLayout->addWidget(_remoteLabel, 0, Qt::AlignVCenter);
+    rowLayout->addStretch(1);
+    for (QAction* action : {_takeBackAction, _allowAgainAction, _dismissAction})
+    {
+        auto* button = new QToolButton(row);
+        button->setDefaultAction(action);
+        button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        button->setFont(buttonFont);
+        rowLayout->addWidget(button, 0, Qt::AlignVCenter);
+        _remoteButtons.append({button, action});
+    }
+    _remoteBar->addWidget(row);
+    _remoteTick = new QTimer(this);
+    _remoteTick->setInterval(1000);
+    connect(_remoteTick, &QTimer::timeout, this, &ToolBarManager::updateRemoteElapsed);
+    // The tick runs only while the bar is seen: hidden (the session ended, dismissed, the window closing) stops it
+    connect(_remoteBar, &QToolBar::visibilityChanged, this, &ToolBarManager::updateRemoteTick);
+    mainWindow->addToolBarBreak(Qt::TopToolBarArea);
+    mainWindow->addToolBar(Qt::TopToolBarArea, _remoteBar);
+    _remoteBar->setVisible(false);
+
+    if (QMenu* run = _menuManager->runMenu())
+    {
+        run->addSeparator();
+        run->addAction(_takeBackAction);
+        run->addAction(_allowAgainAction);
+    }
+    setRemoteControl(false, QString(), QString(), false, 0);
+
     // Breathing LED timer for active recording feedback (Apple-style breathing LED)
     _breathingTimer = new QTimer(this);
     _breathingTimer->setInterval(33); // ~30 FPS
@@ -150,6 +244,83 @@ ToolBarManager::ToolBarManager(MainWindow* mainWindow, MenuManager* menuManager,
     connect(_menuManager, &MenuManager::toolBarToggled, this, &ToolBarManager::setVisibleByUser);
 
     updateState(nullptr);
+}
+
+void ToolBarManager::setRemoteControl(bool active, const QString& brief, const QString& details, bool cooldowns,
+                                      qint64 sinceMs)
+{
+    _remoteSinceMs = active ? sinceMs : 0;
+    // The accent (the system's selection colour) while a session holds the machine; the plain window colour after
+    const QString buttons = QStringLiteral(
+        "QToolButton { border: 1px solid palette(mid); border-radius: 4px; background: palette(button); "
+        "color: palette(button-text); padding: 2px 12px; margin: 3px 4px; }");
+    const QPalette palette = _remoteBar->palette();
+    if (active)
+    {
+        _takenBackFrom.clear();
+        _remoteDismissed = false;
+        _remoteBar->setStyleSheet(QStringLiteral("QToolBar#remoteControlBar { background: palette(highlight); "
+                                                 "border: none; padding: 2px; } "
+                                                 "QLabel { color: palette(highlighted-text); } ") +
+                                  buttons);
+        _remoteIcon->setPixmap(RemoteIconPixmap(palette.color(QPalette::HighlightedText)));
+        _remoteBrief = brief;
+        _remoteLabel->setToolTip(details);
+    }
+    else if (cooldowns && !_takenBackFrom.isEmpty())
+    {
+        _remoteBar->setStyleSheet(QStringLiteral("QToolBar#remoteControlBar { background: palette(window); "
+                                                 "border-bottom: 1px solid palette(mid); padding: 2px; } ") +
+                                  buttons);
+        _remoteIcon->setPixmap(RemoteIconPixmap(palette.color(QPalette::WindowText)));
+        _remoteBrief.clear();
+        _remoteLabel->setText(tr("Control taken back from %1").arg(_takenBackFrom));
+        _remoteLabel->setToolTip(tr("It was told so, and may not take control again for a while unless you allow it"));
+    }
+    else
+        _takenBackFrom.clear();
+    _takeBackAction->setVisible(active);
+    _takeBackAction->setEnabled(active);
+    _allowAgainAction->setVisible(!active && cooldowns);
+    _dismissAction->setVisible(!active);
+    for (const auto& [button, action] : _remoteButtons)
+        button->setVisible(action->isVisible());
+    _remoteBar->setVisible(active || (cooldowns && !_takenBackFrom.isEmpty() && !_remoteDismissed));
+    updateRemoteElapsed();
+    updateRemoteTick();
+}
+
+void ToolBarManager::updateRemoteElapsed()
+{
+    if (_remoteSinceMs <= 0)
+        return;
+    // H:MM:SS since the session took control (hours past a day keep counting)
+    const qint64 seconds = std::max<qint64>(0, (QDateTime::currentMSecsSinceEpoch() - _remoteSinceMs) / 1000);
+    const QString elapsed = QStringLiteral("%1:%2:%3")
+                                .arg(seconds / 3600, 2, 10, QLatin1Char('0'))
+                                .arg((seconds / 60) % 60, 2, 10, QLatin1Char('0'))
+                                .arg(seconds % 60, 2, 10, QLatin1Char('0'));
+    _remoteLabel->setText(_remoteBrief + QLatin1Char(' ') + elapsed);
+}
+
+void ToolBarManager::updateRemoteTick()
+{
+    const bool ticking = _remoteSinceMs > 0 && _remoteBar->isVisible();
+    if (ticking && !_remoteTick->isActive())
+        _remoteTick->start();
+    else if (!ticking)
+        _remoteTick->stop();
+}
+
+void ToolBarManager::noteControlTakenBack(const QString& who)
+{
+    _takenBackFrom = who;
+    _remoteDismissed = false;
+}
+
+QList<QObject*> ToolBarManager::remoteControlWidgets() const
+{
+    return {_remoteBar};
 }
 
 void ToolBarManager::updateState(std::shared_ptr<Emulator> activeEmulator)

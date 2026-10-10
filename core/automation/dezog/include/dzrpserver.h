@@ -96,6 +96,12 @@ public:
     virtual void onSessionOpened() {}
     virtual void onSessionClosed() {}
 
+    // Automation sessions (execution arbiter design §6a): a client connected from `peer` ("host:port") - the GUI shows
+    // the user where the debugger is; controlTakenBack: the user took control back at the GUI, the server tells the
+    // client why (NTF_PAUSE with the reason) and drops the connection
+    virtual void onClientConnected(const std::string& /*peer*/) {}
+    virtual bool controlTakenBack() const { return false; }
+
     // Blocks up to timeoutMs for a debug target to exist (the host UI may
     // still be creating its emulator when DeZog connects). Returns false when
     // no target appeared. The default never blocks; real adapters poll their
@@ -175,6 +181,8 @@ private:
 
     // Command handlers
     Response handleInit(const Command& cmd);
+    /// The user took control back at the GUI: NTF_PAUSE with the reason (DeZog shows it), the session then closes
+    void tellControlTakenBack();
     Response handleClose(const Command& cmd);
     Response handleGetRegisters(const Command& cmd);
     Response handleSetRegister(const Command& cmd);

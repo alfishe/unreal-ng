@@ -1050,8 +1050,12 @@ void RegisterControlExecution(ToolRegistry& registry)
                 {
                     Json::Value body;
                     body["surface"] = "mcp";
-                    body["client"] = args.isMember("client") ? args["client"].asString() : std::string("mcp agent");
+                    body["client"] = args.isMember("client")        ? args["client"].asString()
+                                     : args.isMember("_mcp_client") ? args["_mcp_client"].asString()
+                                                                    : std::string("mcp agent");
                     body["lease_seconds"] = args.isMember("lease_seconds") ? args["lease_seconds"].asUInt() : 60u;
+                    if (args.isMember("_peer"))
+                        body["peer"] = args["_peer"].asString();
                     caller.Call("POST", Endpoint(id, "/control/session"), &body, [&caller, done](int status, Json::Value reply) {
                         if (status == 200 && reply.isMember("session"))
                         {

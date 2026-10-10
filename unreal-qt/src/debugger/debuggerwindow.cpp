@@ -1,4 +1,5 @@
 #include "debuggerwindow.h"
+#include "emulator/remotecontrolguard.h"
 
 #include <QBoxLayout>
 #include <QColor>
@@ -1235,6 +1236,8 @@ void DebuggerWindow::waitInterrupt()
 
 void DebuggerWindow::portOut()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     if (!_emulator) return;
 
     bool ok;

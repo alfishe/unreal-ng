@@ -36,6 +36,7 @@ Json::Value SessionJson(const EmulatorContext::RunControlState& state, const std
     {
         out["surface"] = state.surfaceLabel;
         out["client"] = state.client;
+        out["peer"] = state.peer;
         out["since_ms"] = static_cast<Json::Int64>(state.sinceMs);
         out["lease_seconds"] = state.leaseMs / 1000;
     }
@@ -74,11 +75,16 @@ void EmulatorAPI::postControlSession(const HttpRequestPtr& req, std::function<vo
     if (surface != "webapi" && surface != "mcp")
         surface = "webapi";
     const uint32_t leaseSeconds = json && json->isMember("lease_seconds") ? (*json)["lease_seconds"].asUInt() : 60u;
+    // Where the client is: the HTTP peer; the MCP server (loopback) passes its own client's
+    std::string peer = req->getPeerAddr().toIpPort();
+    if (surface == "mcp" && json && json->isMember("peer") && !(*json)["peer"].asString().empty())
+        peer = (*json)["peer"].asString();
 
     EmulatorContext* context = emulator->GetContext();
     const unreal::UUID session = unreal::UUID::Generate();
     std::string reason;
-    if (!context->TakeRunControl(session, surface, &reason, client, std::chrono::milliseconds(uint64_t(leaseSeconds) * 1000)))
+    if (!context->TakeRunControl(session, surface, &reason, client, std::chrono::milliseconds(uint64_t(leaseSeconds) * 1000),
+                                 peer))
     {
         Json::Value error;
         error["error"] = reason.rfind("revoked_cooldown", 0) == 0 ? "revoked_cooldown" : "held_by_other";

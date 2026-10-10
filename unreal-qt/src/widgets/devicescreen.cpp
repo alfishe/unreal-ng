@@ -1,4 +1,5 @@
 #include "devicescreen.h"
+#include "emulator/remotecontrolguard.h"
 #include "crtfilter.h"
 
 #include <QDebug>
@@ -379,6 +380,10 @@ void DeviceScreen::keyPressEvent(QKeyEvent* event)
         return;
 
     // Don't react on auto-repeat
+    // An automation session holds the machine: no keys from the GUI (releases still go: nothing stays held)
+    if (RemoteControlGuard::InputBlocked(_emulator.get()))
+        return;
+
     if (!event->isAutoRepeat())
     {
         // Two messages: the ZX key for the matrix, the physical key for a PS/2 machine
@@ -411,6 +416,12 @@ void DeviceScreen::keyReleaseEvent(QKeyEvent* event)
 
 void DeviceScreen::mousePressEvent(QMouseEvent* event)
 {
+    // An automation session holds the machine: no capture, no clicks from the GUI
+    if (RemoteControlGuard::InputBlocked(_emulator.get()))
+    {
+        event->accept();
+        return;
+    }
     if (_mouseCapture && _mouseCapture->handleMousePress(event))
         event->accept();
     else

@@ -1370,3 +1370,37 @@ TEST_F(HudModel_Test, EventMapping_AudioActivity_NeoGSDmaAndTransfers)
     EXPECT_TRUE(WaitForCondition([&] { return value("ind/ngszx").empty(); }));
     EXPECT_EQ(value("ind/ngsdma"), "NeoGS DMA");
 }
+
+// Automation sessions (execution arbiter X7c): turned off, the HUD still shows the session's indicator and toasts
+// (the always-shown prefix) and nothing else; turned on, everything
+TEST_F(HudModel_Test, AlwaysShownElementsShowWithTheHudTurnedOff)
+{
+    HudModel model(nullptr);
+    model.setAlwaysShownPrefix("remote");
+    model.setIndicator("speed", HudState::Active, "TURBO");
+    model.setIndicator("remote", HudState::Active, "DeZog (ZRCP)", {}, "remote");
+    HudToastRequest session;
+    session.title = "Remote control";
+    session.dedupKey = "remote-control";
+    model.notify(session);
+    HudToastRequest other;
+    other.title = "Disk inserted";
+    model.notify(other);
+
+    model.onFeatureChanged(false);
+    auto snap = model.snapshot();
+    ASSERT_NE(snap, nullptr);
+    std::vector<std::string> titles;
+    for (const auto& el : snap->elements)
+        titles.push_back(el.id.rfind("ind/", 0) == 0 ? el.id : el.title);
+    EXPECT_EQ(titles.size(), 2u);
+    EXPECT_NE(std::find(titles.begin(), titles.end(), "ind/remote"), titles.end());
+    EXPECT_NE(std::find(titles.begin(), titles.end(), "Remote control"), titles.end());
+
+    model.onFeatureChanged(true);
+    EXPECT_EQ(model.snapshot()->elements.size(), 4u);
+
+    model.setAlwaysShownPrefix({});
+    model.onFeatureChanged(false);
+    EXPECT_TRUE(model.snapshot()->elements.empty());
+}

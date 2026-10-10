@@ -1,4 +1,5 @@
 #include "breakpointgroupdialog.h"
+#include "emulator/remotecontrolguard.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -91,6 +92,8 @@ void BreakpointGroupDialog::populateGroupList()
 
 void BreakpointGroupDialog::addGroup()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     bool ok;
     QString groupName = QInputDialog::getText(this, "Add Group", 
                                              "Enter new group name:", 
@@ -133,6 +136,8 @@ void BreakpointGroupDialog::addGroup()
 
 void BreakpointGroupDialog::renameGroup()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     QListWidgetItem* currentItem = _groupList->currentItem();
     if (!currentItem)
         return;
@@ -185,6 +190,8 @@ void BreakpointGroupDialog::renameGroup()
 
 void BreakpointGroupDialog::deleteGroup()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     QListWidgetItem* currentItem = _groupList->currentItem();
     if (!currentItem)
         return;

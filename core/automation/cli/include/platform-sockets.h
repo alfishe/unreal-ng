@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 // Platform-specific socket implementation
 #ifdef _WIN32
 // Windows socket headers
@@ -287,4 +289,28 @@ inline int waitForSocketRead(SOCKET sock, int timeoutMs)
     pfd.revents = 0;
     return poll(&pfd, 1, timeoutMs);
 #endif
+}
+
+// Where a connected socket's client is: "192.168.1.5:51234" ("[::1]:51234" for IPv6), empty when unknown. The GUI
+// shows it to the user while the client holds the emulator's run control (execution arbiter design §6a)
+inline std::string PeerAddressOf(SOCKET sock)
+{
+    sockaddr_storage address{};
+    socklen_t length = sizeof(address);
+    if (getpeername(sock, reinterpret_cast<sockaddr*>(&address), &length) != 0)
+        return {};
+    char host[INET6_ADDRSTRLEN] = {};
+    if (address.ss_family == AF_INET)
+    {
+        const auto* v4 = reinterpret_cast<const sockaddr_in*>(&address);
+        inet_ntop(AF_INET, &v4->sin_addr, host, sizeof(host));
+        return std::string(host) + ":" + std::to_string(ntohs(v4->sin_port));
+    }
+    if (address.ss_family == AF_INET6)
+    {
+        const auto* v6 = reinterpret_cast<const sockaddr_in6*>(&address);
+        inet_ntop(AF_INET6, &v6->sin6_addr, host, sizeof(host));
+        return "[" + std::string(host) + "]:" + std::to_string(ntohs(v6->sin6_port));
+    }
+    return "local socket";
 }

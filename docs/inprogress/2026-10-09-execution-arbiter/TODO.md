@@ -355,11 +355,62 @@ showed the same address.
   - `McpDispatcher_Test.TakeControlKeepsTheSessionAndReleaseControlDropsIt` and
     `ARevokedSessionTurnsTheResultIntoAStopError`;
   - `ExecutionArbiterMachine_Test.AScriptSessionStopsWithControlRevoked`.
-- [ ] **unreal-qt.** Toolbar indicator and the Take back control action; every control action disabled while a
-  session is open; HUD status / nudge; a message on take-back.
+- [x] **unreal-qt (X7c), `RemoteControlGuard`:**
+  - **Lock, cascaded to every widget of every window** (the debugger, its dialogs, the label manager included):
+    - controls (actions, shortcuts, buttons, sliders, combo and spin boxes) are disabled;
+    - editors (line / text edits, hex views) turn read-only, and item views stop editing; scrolling, selecting
+      and copying stay;
+    - an application event filter swallows what custom widgets act on: double clicks, keys other than
+      navigation / copy / find, drops;
+    - a dialog or context menu shown during the session is locked as it shows;
+    - the places that change breakpoints, labels, symbol sets, ports and sectors refuse via
+      `RemoteControlGuard::Refuse` (a tooltip says why): disassembler toggle, breakpoint dialog / editor / groups,
+      label editor add / edit / delete / load / import / scan, symbol sets on / priority / drop, Port OUT, sector
+      write.
+    Exempt: Take Back Control, Allow Automation Again, full screen, Exit.
+  - **Restore.** The guard gives back only what it disabled, and the windows' own enablement rules apply again.
+  - **Re-lock.** A 250 ms pass while locked catches re-enabled controls and dialogs opened later; it also notices an
+    idle session's lease running out.
+  - **Input.** The machine gets no key presses, clicks or mouse capture from the GUI; a captured mouse is
+    released. A drop or a file-open is refused with a toast.
+  - **The remote-control bar** (owner-reviewed 2026-10-10): a row of its own under the toolbar (never overflows),
+    the system accent colour; the antenna icon, "Remote control: DeZog (ZRCP) · 127.0.0.1 · 00:01:23" in the
+    system fixed-pitch font at 1.14x (the time ticks once a second; the timer runs only while the bar shows a
+    session), Take Back Control in the toolbar's font; one row layout, one vertical centre. After a take-back:
+    the window colour, "Control taken back from ...", Allow Automation Again, Dismiss. Both actions are also in
+    the Run menu; the full address and time in the tooltip.
+  - **HUD:** one of its own indicators (the antenna, the client's name), a toast when a session starts (who, from
+    where) and on take-back. Turned off in the settings, the HUD shows only the session's elements
+    (`HudModel::setAlwaysShownPrefix("remote")`); turned on, everything as set plus the session.
+  - **Who:** every session carries its peer (`TakeRunControl(..., peer)`, the execution report's `session.peer`):
+    the WebAPI's HTTP peer, the MCP agent's (with its `initialize` clientInfo as the default name), the CLI / GDB /
+    DeZog / ZRCP socket peer; scripts are local. DeZog over DZRP / ZRCP takes run control on connect
+    ("DeZog (DZRP)" / "DeZog (ZRCP)"); after a take-back DZRP sends NTF_PAUSE with the reason, ZRCP an error line,
+    then both close the connection.
+  - **Allow Automation Again** shows while a client is in its re-take cooldown.
+  - **Tests.** `RemoteControlGuard_Test` (Qt): the lock, the exempt controls and views, re-lock, restore;
+    take-back with the signal, cooldown, allow-again; the cascade (editors, tables, swallowed input, looking keys
+    pass, a window shown during the session, Refuse, all given back).
+- [x] **GDB.** After a take-back, the packets that run, step or write (`c` `s` `vCont` `b` `G` `P` `M` `X`) get
+  the reason as an `O` console packet and `E5E`; reads and detach stay. A waiting continue ends.
+  `GdbSessionTakeBack_Test` (socketpair).
+- [x] **Checked live** in unreal-qt (offscreen):
+  - WebAPI session: pause, `run_frames` and resume pass; `run_frames` without the header gets 409;
+  - an idle lease of 5 s ends the session;
+  - the CLI `session take` shows as `cli` and ends when the connection closes;
+  - no crash with the lock running.
+- [x] **GDB / DeZog / ZRCP are remote control too** (owner decision 2026-10-10): the GUI shows the adapter and the
+  host it connects from.
+- [x] **Checked live** by the owner in unreal-qt, every kind (WebAPI, MCP, CLI, Lua, GDB, DeZog, ZRCP), with and
+  without GPU acceleration; the take-back answered the client `revoked_by_user`, its re-take `revoked_cooldown`.
+  Python was not in that build (`ENABLE_PYTHON_AUTOMATION=OFF`).
+- [ ] **Unexplained crash:** an unreal-qt with 5 machines (launched 2026-10-09 23:32, not the demo; maybe a GUI
+  campaign process left running) died at 00:14 on heap corruption in `videomap::VideoWriteLog::BeginFrame`
+  (`free_tiny`, two emulator threads in `BeginFrame` at once). The binary is gone; next: a long multi-SPRINTER run
+  under ASan.
 - [x] **No retry, no rush back:** `revoked_by_user` with `retry: false`, the MCP stop error and server
   instructions, Python / Lua `ControlRevoked`, the CLI message, the recipe rule, the server's per-client re-take
-  cooldown (X7a). The GUI's "allow again" comes in X7c.
+  cooldown (X7a), the GUI's Allow Automation Again (X7c).
 - [ ] **Tests.** Revoke during a long `run_frames` (it returns aborted, the session's next call gets
   `revoked_by_user`; a re-take within the cooldown is refused, after "allow again" it works); idle lease expiry; GDB socket close; Qt: actions disabled and enabled
   again, the HUD status set and cleared.

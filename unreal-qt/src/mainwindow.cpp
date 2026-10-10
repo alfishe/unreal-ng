@@ -93,6 +93,8 @@
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
+#include "emulator/mousecapturecontroller.h"
+#include "emulator/remotecontrolguard.h"
 
 namespace
 {
@@ -181,6 +183,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // (works even when menu bar is hidden in fullscreen mode).
     // Cmd+F on macOS, Ctrl+F elsewhere (Qt::CTRL maps to Cmd on macOS)
     auto* fullScreenShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
+    _fullScreenShortcut = fullScreenShortcut;
     fullScreenShortcut->setContext(Qt::ApplicationShortcut);
     connect(fullScreenShortcut, &QShortcut::activated, this, &MainWindow::handleFullScreenShortcut);
 
@@ -487,6 +490,41 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_toolBarManager, &ToolBarManager::startOrResumeRequested, this, &MainWindow::handleStartOrResumeRequested);
     connect(_toolBarManager, &ToolBarManager::pauseRequested, this, &MainWindow::handlePauseEmulator);
     connect(_toolBarManager, &ToolBarManager::restartRequested, this, &MainWindow::handleRestartRequested);
+    // Automation sessions: everything is locked while one holds the machine, except taking control back and the
+    // view (full screen) and leaving the application
+    _remoteControl = new RemoteControlGuard(this);
+    _remoteControl->exempt(_toolBarManager->takeBackAction());
+    _remoteControl->exempt(_toolBarManager->allowAgainAction());
+    _remoteControl->exempt(_menuManager->fullScreenAction());
+    _remoteControl->exempt(_menuManager->exitAction());
+    _remoteControl->exempt(_fullScreenShortcut);
+    for (QObject* widget : _toolBarManager->remoteControlWidgets())
+        _remoteControl->exempt(widget);
+    connect(_toolBarManager, &ToolBarManager::takeBackControlRequested, _remoteControl, &RemoteControlGuard::takeBack);
+    connect(_toolBarManager, &ToolBarManager::allowRetakeRequested, _remoteControl, &RemoteControlGuard::allowAgain);
+    connect(_remoteControl, &RemoteControlGuard::sessionChanged, this, [this](bool active) {
+        updateRemoteControlUi();
+        if (!active)
+            updateMenuStates();  // the controls the lock gave back follow the machine's state again
+    });
+    connect(_remoteControl, &RemoteControlGuard::controlTakenBack, this, [this](const QString& who) {
+        if (_toolBarManager)
+            _toolBarManager->noteControlTakenBack(who);
+        updateRemoteControlUi();
+        if (statusBar())
+            statusBar()->showMessage(tr("Control taken back from %1").arg(who), 10000);
+        if (!_hudModel)
+            return;
+        HudToastRequest toast;
+        toast.title = tr("Control taken back").toStdString();
+        toast.icon = "remote";
+        toast.body = tr("%1 was told and may not take control again for a while (the toolbar: Allow Automation "
+                        "Again)")
+                         .arg(who)
+                         .toStdString();
+        toast.dedupKey = "remote-control";
+        _hudModel->notify(toast);
+    });
     connect(_toolBarManager, &ToolBarManager::ttdToggled, this, &MainWindow::handleTtdToggled);
 #ifdef ENABLE_RECORDING
     connect(_toolBarManager, &ToolBarManager::recordingToggled, this, &MainWindow::handleVideoRecordingToggled);
@@ -613,6 +651,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     ObserverCallbackMethod selectionCallback =
         static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorSelectionChanged);
     messageCenter.AddObserver(NC_EMULATOR_SELECTION_CHANGED, observerInstance, selectionCallback);
+
+    ObserverCallbackMethod runControlCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleRunControlChanged);
+    messageCenter.AddObserver(NC_RUN_CONTROL_CHANGED, observerInstance, runControlCallback);
 
     qDebug() << "MainWindow: Subscribed to global instance lifecycle events";
 
@@ -2641,6 +2683,20 @@ void MainWindow::refuseFile(const QString& filePath, const QString& reason, Load
 
 void MainWindow::dropFiles(const QStringList& paths, bool mountOnly)
 {
+    // Under an automation session the machine takes nothing from the GUI (execution arbiter design §6a)
+    if (_remoteControl && _remoteControl->active())
+    {
+        if (_hudModel)
+        {
+            HudToastRequest toast;
+            toast.title = tr("Under remote control").toStdString();
+            toast.body = tr("An automation session controls this emulator: take control back first").toStdString();
+            toast.dedupKey = "remote-control-refused";
+            _hudModel->notify(toast);
+        }
+        return;
+    }
+
     if (paths.isEmpty())
         return;
     if (paths.size() == 1 || !_emulator)
@@ -3954,6 +4010,9 @@ void MainWindow::updateMenuStates()
     {
         _statusBarManager->setActiveEmulator(_emulator);
     }
+    // Last: the lock covers what the refresh above enabled
+    if (_remoteControl)
+        _remoteControl->setEmulator(_emulator);
 }
 
 void MainWindow::handleStatusBarToggled(bool visible)
@@ -4543,6 +4602,71 @@ void MainWindow::unsubscribeFromMessageBus()
     ObserverCallbackMethod selectionCallback =
         static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorSelectionChanged);
     messageCenter.RemoveObserver(NC_EMULATOR_SELECTION_CHANGED, observerInstance, selectionCallback);
+
+    ObserverCallbackMethod runControlCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleRunControlChanged);
+    messageCenter.RemoveObserver(NC_RUN_CONTROL_CHANGED, observerInstance, runControlCallback);
+}
+
+void MainWindow::handleRunControlChanged(int id, Message* message)
+{
+    Q_UNUSED(id);
+    Q_UNUSED(message);
+    if (_remoteControl)
+        QMetaObject::invokeMethod(_remoteControl, "refresh", Qt::QueuedConnection);
+}
+
+void MainWindow::updateRemoteControlUi()
+{
+    if (!_remoteControl)
+        return;
+    const bool active = _remoteControl->active();
+    // A session starts: one toast says who and from where
+    const QString who = _remoteControl->who();
+    if (active && who != _remoteControlAnnounced && _hudModel)
+    {
+        HudToastRequest toast;
+        toast.title = tr("Remote control").toStdString();
+        toast.body = tr("%1 controls the emulator. Take control back from the toolbar").arg(who).toStdString();
+        toast.icon = "remote";
+        toast.dedupKey = "remote-control";
+        _hudModel->notify(toast);
+    }
+    _remoteControlAnnounced = active ? who : QString();
+    if (_toolBarManager)
+        _toolBarManager->setRemoteControl(active, _remoteControl->brief(), _remoteControl->describe(),
+                                          _remoteControl->hasCooldowns(), _remoteControl->sinceMs());
+    // The HUD shows the session whatever the user's HUD setting: turned off, it shows only the session (its
+    // indicator and toasts), a few seconds past the end so the take-back toast is seen; turned on, everything as set
+    // plus the session
+    if (active && !_hudOverlayVisible && _hudWrapper)
+    {
+        _hudShownForRemoteControl = true;
+        _hudWrapper->setVisible(true);
+    }
+    else if (!active && _hudShownForRemoteControl)
+    {
+        _hudShownForRemoteControl = false;
+        QTimer::singleShot(6000, this, [this]() {
+            if (_remoteControl && _remoteControl->active())
+                return;
+            if (_hudWrapper)
+                _hudWrapper->setVisible(_hudOverlayVisible);
+        });
+    }
+    if (_hudModel)
+    {
+        if (active)
+        {
+            // One of the HUD's own indicators: the antenna and the client's name (where from: the toast, the toolbar)
+            _hudModel->setIndicator("remote", HudState::Active, _remoteControl->name().toStdString(), {}, "remote");
+        }
+        else
+            _hudModel->clearIndicator("remote");
+    }
+    // A captured mouse goes back to the user: the machine takes nothing from the GUI meanwhile
+    if (active && _screenWrapper && _screenWrapper->mouseCapture() && _screenWrapper->mouseCapture()->isCaptured())
+        _screenWrapper->mouseCapture()->release();
 }
 
 void MainWindow::subscribeToPerEmulatorEvents()
@@ -4816,7 +4940,9 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
             return HudSettingsDialog::isCategoryEnabled(QString::fromUtf8(categoryId));
         });
 
+        _hudModel->setAlwaysShownPrefix("remote");  // the automation session's indicator and toasts
         _hudWrapper->setModel(_hudModel);
+        updateRemoteControlUi();
 
         // Restore HUD visibility from session state (not from emulator defaults)
         if (_emulator->GetContext() && _emulator->GetContext()->pFeatureManager)
