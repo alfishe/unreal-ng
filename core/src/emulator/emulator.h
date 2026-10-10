@@ -168,7 +168,7 @@ protected:
     snapshot::SaveResult _lastSaveResult;
 
     // Control flow
-    volatile bool _stopRequested = false;
+    std::atomic<bool> _stopRequested{false};  // Stop() on any thread, the loop polls it
 
     /// Direct stepping (RunNFrames, RunTStates, RunUntil*, ...) drives the Z80 on the caller's thread while
     /// the emulation thread is parked. A GUI that reads the machine (debugger, memory views) must not do so

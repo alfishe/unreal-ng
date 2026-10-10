@@ -63,7 +63,7 @@ MainLoop::~MainLoop()
 //
 // Main emulator loop. Processes all events and executes CPU and video cycles
 //
-void MainLoop::Run(volatile bool& stopRequested)
+void MainLoop::Run(const std::atomic<bool>& stopRequested)
 {
     if (_cpu == nullptr || _context == nullptr)
     {
@@ -237,7 +237,7 @@ void MainLoop::Run(volatile bool& stopRequested)
             // against WASAPI's 10 ms pulls and caused steady underruns
             // ("ring errors ... dequeue=N" growing) - see
             // TimeHelper::WaitUntilPrecise and SoundAdaptivity.AVLatencyBudget
-            TimeHelper::WaitUntilPrecise(_nextFrameTime, [&stopRequested] { return (bool)stopRequested; });
+            TimeHelper::WaitUntilPrecise(_nextFrameTime, [&stopRequested] { return stopRequested.load(); });
         }
         else
         {

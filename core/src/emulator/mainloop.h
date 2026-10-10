@@ -38,8 +38,8 @@ protected:
     Screen* _screen = nullptr;
     SoundManager* _soundManager = nullptr;
 
-    volatile bool _isRunning = false;
-    volatile bool _stopRequested = false;
+    std::atomic<bool> _isRunning{false};
+    std::atomic<bool> _stopRequested{false};
     std::atomic<std::thread::id> _runThreadId{};   // Thread currently executing Run() (emulation thread)
 
 
@@ -166,7 +166,7 @@ public:
     /// endregion </Constructors / destructors>
 
 public:
-    void Run(volatile bool& exit);
+    void Run(const std::atomic<bool>& exit);
     /// Park at a boundary until the execution arbiter lets the machine run (false: stop)
     bool Park(Emulator* emulator, execution::ExecutionArbiter* arbiter);
     void Stop();

@@ -94,6 +94,10 @@ public:
     /// mouse input from its group, at frame boundaries
     void SetHostInputGated(bool gated);
 
+    /// Stop taking the front end's MC_MOUSE_* events for good: the handlers reach the debug manager and the TTD
+    /// controller, so the emulator detaches them before those go. Waits for a handler in progress (RemoveObserver)
+    void DetachHostInput();
+
     // Message center callbacks (the desktop front end)
     void OnMouseMove(int id, Message* message);
     void OnMouseButton(int id, Message* message);
@@ -110,4 +114,5 @@ private:
     uint8_t _hostPressed = 0;
     uint8_t _automationPressed = 0;
     bool _hostInputGated = false;
+    bool _hostInputDetached = false;  // DetachHostInput: the owner's thread only
 };
