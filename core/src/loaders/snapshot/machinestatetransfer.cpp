@@ -1218,7 +1218,7 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
         return report;
     }
 
-    const std::string guard = target.RecordingGuard(ttd::TTDGuardedAction::SwitchModel);
+    const std::string guard = target.AskModelSwitch("state from " + source.GetId());
     if (!guard.empty())
     {
         report.reason = guard;

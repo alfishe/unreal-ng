@@ -471,7 +471,7 @@ Tests: `MachinePolicy_Test` (every cell), `MachineCoordinator_Test` (the lifecyc
   client thread, each GDB session thread, the DeZog snapshot restore, every WebAPI request (a pre-handling advice:
   `webapi`, or `mcp` when the request carries `X-Unreal-Source: mcp`, which the MCP server's client sends). The
   emulator's own threads stay `unknown`.
-- Still open in M2: `SwitchModel` (WebAPI snapshot transfer) asks TTD until model switches join the coordinator (M6).
+- Model switches and state transfers: see §11.4.
 
 ### 11.3 M2, the D43 cells as built (2026-10-10)
 
@@ -497,6 +497,16 @@ gone; each is a row of the policy table or the media rows:
 Tests: `MachinePolicy_Test` (every cell, the sentences), `CoordinatorEmulator_Test` (network refused / ends the black
 box, `RemoteAccess` free; an IDE unit's drive; an RZX seek back during a recording ends it and keeps the history),
 `NeoGSMedia_Test` (the black box ends at an SD change).
+
+### 11.4 M2, model switches asked of the coordinator (2026-10-10)
+
+A model switch (a snapshot of another model, `SnapshotLauncher`) and a machine state transfer (WebAPI
+`.../snapshot/transfer`, `MachineStateTransfer::Transfer`) no longer ask TTD: they ask the coordinator,
+`Emulator::AskModelSwitch` -> `IMachineOps::Ask` with kind `ModelSwitch`. The rules allow it in every mode (a change
+of the machine itself ends the session, owner rule 2026-10-05); TTD v1 still refuses it while recording (D26), as the
+emulator's owner refusal - it goes with v1. A refusal is logged with its source; a yes is not: the switch replaces
+the instance and its coordinator (Q1), it does not run through `Run`. Test: `CoordinatorEmulator_Test` (the engine
+says yes, v1 refuses and the log has it). No surface asks TTD's `RecordingGuard` any more.
 
 Tests: `MachineCoordinator_Test` (a source from the thread, a scope, another thread; `Ask` logs a refusal with its
 source and nothing else), `CoordinatorEmulator_Test` (a surface's question on a real machine: same sentence, logged),

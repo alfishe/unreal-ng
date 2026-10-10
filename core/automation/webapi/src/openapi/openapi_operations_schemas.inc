@@ -12,7 +12,7 @@
         field("wall_ms", "integer", "Host wall clock, ms since the Unix epoch");
         field("kind", "string",
               "reset, autostart, snapshot-load, media-insert, media-eject, media-discard, disk-create, network-change, "
-              "ide-drive-kind, rzx-restore");
+              "ide-drive-kind, rzx-restore, model-switch (refused only: a switch replaces the instance)");
         field("source", "string", "Who asked: qt, webapi, cli, lua, python, gdb, dezog, mcp, machine, core, test, unknown");
         field("mode", "string", "Machine mode the rules saw: live, recording, black-box, replaying, detached");
         field("status", "string", "done, refused (nothing happened), failed (the owner could not do it)");

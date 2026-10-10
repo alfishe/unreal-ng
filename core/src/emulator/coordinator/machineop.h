@@ -27,6 +27,8 @@ enum class OpKind : uint8_t
     NetworkChange,  ///< the network settings change: the network devices are fitted again (D43, M2)
     IdeDriveKind,   ///< an empty IDE unit gets another drive: hard disk, CD-ROM, CompactFlash (D43, M2)
     RzxRestore,     ///< an RZX playback replaces the machine: its snapshot block, a seek back (D43, M2)
+    ModelSwitch,    ///< another model replaces the instance, or another machine's state moves in (D26): asked only
+                    ///< (IMachineOps::Ask) - the switch replaces the instance and its coordinator (Q1)
 
     Count
 };

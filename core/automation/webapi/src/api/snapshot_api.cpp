@@ -2,7 +2,6 @@
 /// @date 08.01.2026
 /// @brief WebAPI Snapshot control endpoints
 
-#include <debugger/ttd/timetravelmanager.h>
 #include <drogon/HttpResponse.h>
 #include <emulator/emulator.h>
 #include <emulator/config.h>
@@ -525,8 +524,8 @@ void EmulatorAPI::transferState(const HttpRequestPtr& req, std::function<void(co
             return;
         }
 
-        // TTD refuses this while recording: answer why instead of a bare failure
-        if (const std::string refusal = target->RecordingGuard(ttd::TTDGuardedAction::SwitchModel); !refusal.empty())
+        // The coordinator refuses this (TTD v1 while recording): answer why instead of a bare failure, logged
+        if (const std::string refusal = target->AskModelSwitch("state from " + id); !refusal.empty())
         {
             SendError(callback, HttpStatusCode::k409Conflict, "Conflict", refusal);
             return;

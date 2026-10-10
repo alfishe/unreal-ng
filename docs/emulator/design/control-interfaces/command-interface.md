@@ -474,7 +474,7 @@ drive and an RZX playback's snapshot block or seek back; more operations join it
 
 Each operation: `seq` (1, 2, ... never reused), the frame and T-state when it finished, the host wall time, `kind`
 (`reset`, `autostart`, `snapshot-load`, `media-insert`, `media-eject`, `media-discard`, `disk-create`,
-`network-change`, `ide-drive-kind`, `rzx-restore`), `source`
+`network-change`, `ide-drive-kind`, `rzx-restore`, `model-switch` - a refused model switch or state transfer), `source`
 (the surface that asked: `qt`, `webapi`, `mcp`, `cli`, `lua`, `python`, `gdb`, `dezog`; `unknown` for the emulator's
 own threads), the machine `mode` the rules saw (`live`,
 `recording`, `black-box`, `replaying`, `detached`), `status` (`done`; `refused` - nothing happened, `detail` is the

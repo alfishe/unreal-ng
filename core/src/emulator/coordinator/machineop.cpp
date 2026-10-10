@@ -41,6 +41,7 @@ const char* OpKindName(OpKind kind)
         case OpKind::NetworkChange: return "network-change";
         case OpKind::IdeDriveKind: return "ide-drive-kind";
         case OpKind::RzxRestore: return "rzx-restore";
+        case OpKind::ModelSwitch: return "model-switch";
         case OpKind::Count: break;
     }
     return "unknown";

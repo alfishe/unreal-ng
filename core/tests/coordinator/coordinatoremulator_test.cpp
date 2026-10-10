@@ -15,6 +15,7 @@
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/coordinator/machinecoordinator.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
@@ -350,4 +351,33 @@ TEST_F(CoordinatorEmulator_Test, AnRzxSeekBackIsASnapshotLoad)
     EXPECT_FALSE(_ttd->IsRecording());
     EXPECT_TRUE(_ttd->HasHistory()) << "D42: the history of the same machine stays browsable";
     EXPECT_EQ(_ttd->GetSessionInfo().lastStopReason, "rzx-seek");
+}
+
+TEST_F(CoordinatorEmulator_Test, AModelSwitchIsAskedOfTheCoordinatorAndARefusalIsLogged)
+{
+    // The engine: a change of the machine itself ends the session, never refused (owner rule 2026-10-05)
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    Mark();
+    EXPECT_EQ(_emulator->AskModelSwitch("to TSL"), "");
+    EXPECT_TRUE(Logged().empty()) << "a yes is not logged: the switch replaces the instance and its log";
+    _ttd->StopRecording();
+
+    // TTD v1 refuses it while recording (D26): the emulator's owner refusal, logged with the sentence
+    EmulatorContext* context = _emulator->GetContext();
+    ASSERT_NE(context->pTimeTravelManager, nullptr);
+    ttd::ITimeTravelHooks* engine = context->pTimeTravelHooks;
+    context->pTimeTravelHooks = context->pTimeTravelManager;
+    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    const std::string refusal = _emulator->AskModelSwitch("to TSL");
+    context->pTimeTravelManager->StopRecording();
+    context->pTimeTravelHooks = engine;
+
+    EXPECT_NE(refusal.find("model"), std::string::npos) << refusal;
+    const auto log = Logged();
+    ASSERT_EQ(log.size(), 1u);
+    EXPECT_EQ(log[0].kind, OpKind::ModelSwitch);
+    EXPECT_EQ(log[0].status, OpStatus::Refused);
+    EXPECT_EQ(log[0].summary, "to TSL");
+    EXPECT_EQ(log[0].detail, refusal);
 }

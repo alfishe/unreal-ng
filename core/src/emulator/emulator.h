@@ -493,6 +493,10 @@ public:
     /// a refusal is logged with the caller's source and the sentence the operation itself gives. For a surface about
     /// to prepare the change (an upload, a staged file, a dialog). @p drive: the floppy drive; @p what: the file
     std::string AskMediaChange(MediaChange change, uint8_t drive = 0, const std::string& what = {});
+    /// Why replacing this machine by another model, or moving another machine's state into it, would be refused right
+    /// now (empty: it would go ahead), asked of the machine state coordinator (a refusal is logged). @p what: for the
+    /// log ("to TSL", "state from <id>")
+    std::string AskModelSwitch(const std::string& what);
 
     // Emulator control cycle
     void Reset(bool hardReset = false);

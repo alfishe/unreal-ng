@@ -116,6 +116,15 @@ public:
         return time;
     }
 
+    /// A model switch or a state transfer: the TTD v1 backend refuses it while recording (D26); the engine never
+    /// does (a change of the machine itself ends the session). Goes with v1
+    std::string Refusal(const coordinator::MachineOp& op) const override
+    {
+        if (op.kind == coordinator::OpKind::ModelSwitch)
+            return _emulator.RecordingGuard(ttd::TTDGuardedAction::SwitchModel);
+        return {};
+    }
+
     bool Commit(const coordinator::MachineOp& op, coordinator::OpStage& stage) override
     {
         switch (op.kind)
@@ -1125,7 +1134,7 @@ void Emulator::WireCoordinator()
     _coordinator->SetSession(_ttdSessionPort.get());
     _context->pMachineOps = _coordinator.get();
     for (OpKind kind : {OpKind::Reset, OpKind::Autostart, OpKind::SnapshotLoad, OpKind::NetworkChange,
-                        OpKind::IdeDriveKind, OpKind::RzxRestore})
+                        OpKind::IdeDriveKind, OpKind::RzxRestore, OpKind::ModelSwitch})
         _coordinator->Own(kind, _coordinatorPorts.get());
     if (MediaManager* media = _context ? _context->pMediaManager : nullptr)
     {
@@ -1143,6 +1152,14 @@ coordinator::IMachineOps& Emulator::MachineOps()
 const coordinator::OperationLog& Emulator::GetOperationLog() const
 {
     return _coordinator->Log();
+}
+
+std::string Emulator::AskModelSwitch(const std::string& what)
+{
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::ModelSwitch;
+    op.summary = what;
+    return _coordinator->Ask(std::move(op)).reason;
 }
 
 std::string Emulator::AskMediaChange(MediaChange change, uint8_t drive, const std::string& what)

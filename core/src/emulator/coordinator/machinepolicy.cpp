@@ -42,6 +42,9 @@ constexpr Cell kRefuse{Action::Refuse, SessionEffect::None};
 //   (replay, detached); the black box ends its session as for a medium; live: nothing for TTD (a host-side setting,
 //   RemoteAccess alone, is no operation: it changes nothing the machine sees);
 // - an RZX playback's snapshot block or seek back: a snapshot load (D42).
+// A model switch or a machine state transfer: allowed in every mode, a change of the machine itself ends the session
+// (owner rule 2026-10-05); the TTD v1 backend still refuses it while recording, as its owner's refusal (the
+// emulator's), until v1 is deleted.
 // Live, Recording, BlackBox, Replaying, Detached
 constexpr SessionEffect kKeep = SessionEffect::EndKeepHistory;
 constexpr SessionEffect kMedia = SessionEffect::MediaChanged;
@@ -57,6 +60,7 @@ constexpr std::array<Row, static_cast<size_t>(OpKind::Count)> kTable{{
     {OpKind::NetworkChange, false, false, {Allow(kNone), kRefuse, Allow(kMedia), kRefuse, kRefuse}},
     {OpKind::IdeDriveKind, true, false, {Allow(kNone), kRefuse, Allow(kMedia), kRefuse, kRefuse}},
     {OpKind::RzxRestore, true, false, {Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep)}},
+    {OpKind::ModelSwitch, false, false, {Allow(kNone), Allow(kNone), Allow(kNone), Allow(kNone), Allow(kNone)}},
 }};
 
 constexpr bool RowsInKindOrder()

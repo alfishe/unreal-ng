@@ -60,6 +60,9 @@ Expected ExpectedCell(OpKind kind, MachineMode mode, bool endRecording)
         // D43: an RZX restore is a snapshot load
         case OpKind::RzxRestore:
             return {false, SessionEffect::EndKeepHistory, true, false};
+        // A change of the machine itself ends the session (owner rule 2026-10-05): the rules never refuse it
+        case OpKind::ModelSwitch:
+            return {false, SessionEffect::None, false, false};
         case OpKind::Count:
             break;
     }
