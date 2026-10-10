@@ -207,6 +207,28 @@ class Emulator:
     def next_reg_journal_control(self, enabled=None, clear=False, capacity=0) -> dict:
         """Switch, clear or resize (capacity=N) the NextREG write journal"""
 
+    def next_dma(self) -> dict:
+        """The Next DMA as programmed and running (mode zxn / z80, ports a / b, direction, burst, prescaler, counter, src / dst with
+        src_kind / dst_kind, holds_bus, status byte); reading it does not advance its read sequence; available=False elsewhere"""
+
+    def next_video(self) -> dict:
+        """Layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster (hc, vc, frame_t), timing"""
+
+    def next_palette(self, palette=None, range=None) -> dict:
+        """The 9-bit palettes: palette=0..7 | 'sprites_1' | 'all' (default the selected one), range='0-15'; entries (index, rgb9,
+        red, green, blue, priority); no palette index moves; ValueError on a bad option"""
+
+    def next_ports(self, port=None, access='r') -> dict:
+        """The internal port enable word (NR #82-#85) and, with port (int or hex text), which device answers a read ('r') or write ('w'):
+        device, enabled, enabled_by, enforced, side_effect"""
+
+    def next_nextreg(self, reg=None, changed=False) -> dict:
+        """One NextREG without side effects (reg=7 or '07'): value, stored, access, reset, decoded; all of them without reg"""
+
+    def next_nextreg_write(self, reg, value, door='nextreg') -> dict:
+        """Write a NextREG through the board's write choke point (door 'nextreg', 'port' or 'internal'); {ok, reg, value, previous,
+        after, door, moment}; ValueError for a bad argument, RuntimeError when it is not a Next or no coherent moment came"""
+
     def sprinter_pld_journal(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None, source="live") -> dict:
         """Who changed the PLD setup: events (frame, t, pc, kind, port, value, text); source='ttd' reads the recording"""
 

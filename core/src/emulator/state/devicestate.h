@@ -41,6 +41,9 @@ struct Options;
 ///   result bytes, ST0-ST2 decoded, SPECIFY times, the four units' cylinder
 ///   and seek state, and drives A and B.
 struct NextRegJournalQuery;  // emulator/io/z80n/nextregjournal.h
+struct NextPaletteQuery;     // emulator/io/z80n/nextreportquery.h
+struct NextPortsQuery;
+struct NextRegReadQuery;
 
 namespace DeviceState
 {
@@ -232,6 +235,19 @@ StateNode NextRegJournalReport(EmulatorContext* context, const NextRegJournalQue
 /// Switch the journal on / off (`enable` 1 / 0, -1 = keep), clear it, and / or resize the ring (`capacity` > 0; the content is
 /// dropped); replies with the journal's state
 StateNode NextRegJournalControl(EmulatorContext* context, int enable, bool clear, size_t capacity = 0);
+/// The Next's debugger reports (docs/inprogress/2026-10-07-zx-next/design-automation-coverage.md; built in
+/// ports/models/portdecoder_next_reports.cpp). None of them has a side effect on the machine (R3): they read the models' state,
+/// never a port - no DMA read-sequence step, no palette / copper auto-increment, no select-latch change.
+/// `next_dma`: the DMA programmed through WR0-WR6 and its running state (zxn / z80 mode, ports A and B, direction, counters, the status byte)
+StateNode NextDma(EmulatorContext* context);
+/// `next_video`: layer order and enables, ULA / Timex / LoRes, Layer 2, tilemap, sprites switches, clip windows, transparency, raster
+StateNode NextVideo(EmulatorContext* context);
+/// `next_palette`: the 9-bit palettes (the selected one, one by `palette`, or all eight) over a range of entries
+StateNode NextPalette(EmulatorContext* context, const NextPaletteQuery& query);
+/// `next_ports`: the internal-port enable word (NR #82-#85) and, when asked, which device answers a port read / write
+StateNode NextPorts(EmulatorContext* context, const NextPortsQuery& query);
+/// `next_nextreg`: one register (value as a read returns it, the stored byte, reset, decoded bits) or all of them
+StateNode NextRegRead(EmulatorContext* context, const NextRegReadQuery& query);
 StateNode SprinterPaging(EmulatorContext* context);
 /// The text of the picture's text squares (80 x 32: BIOS SETUP, DSS) from the mode table - the
 /// Sprinter has no ZX screen to OCR; graphics squares read as spaces

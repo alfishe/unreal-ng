@@ -68,6 +68,11 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  next           - ZX Spectrum Next: machine, CPU clock, DivMMC, interrupts, CTC, SPI" << NEWLINE;
         ss << "  next regs      - the NextREG table: value and reset of every register" << NEWLINE;
         ss << "  next mmu       - the eight 8K MMU slots and the paging latches" << NEWLINE;
+        ss << "  next dma       - the DMA as programmed and running (no side effect on its read sequence)" << NEWLINE;
+        ss << "  next video     - layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, raster" << NEWLINE;
+        ss << "  next palette [palette=selected|0-7|name|all] [range=0-255] - the 9-bit palettes" << NEWLINE;
+        ss << "  next ports [port=6B] [access=r|w] - the internal port enable word; which device answers a port" << NEWLINE;
+        ss << "  next nextreg [reg=07] [changed=true] - one NextREG with decoded bits, or all (no side effect)" << NEWLINE;
         ss << "  next journal [regs=07,02] [sources=nextreg,port,copper,internal] [since=N] [from=F] [to=F] [limit=N] | on | off | clear" << NEWLINE;
         ss << "                 - who wrote which NextREG, when (frame, T, PC), through the NEXTREG instruction, port #253B or the copper" << NEWLINE;
         ss << "  sprinter       - Sprinter Sp2000: PLD, windows, cells, clock + waits, video, accelerator, sound, Z84C15, floppy, BIOS" << NEWLINE;
@@ -1235,3 +1240,16 @@ void CLIProcessor::HandleStateAudioChannels(const ClientSession& session, Emulat
 /// endregion </Audio State Commands>
 
 /// endregion </State Inspection Commands>
+
+// HandleNext - next nextreg <reg> <value> [nextreg|port|internal]: write a NextREG through the board's write choke point (core
+// NextRegWriteControl, the WebAPI POST /next/nextreg); any other word is a `state next` subcommand (`next dma`, `next video` ...)
+void CLIProcessor::HandleNext(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("No emulator selected.") + NEWLINE);
+        return;
+    }
+    session.SendResponse(CliNext::NextCommand(emulator.get(), args, NEWLINE));
+}

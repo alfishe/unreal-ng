@@ -3,7 +3,9 @@
 // Split into modular .inc files - 2026-02-07
 
 #include <drogon/HttpResponse.h>
+#include <initializer_list>
 #include <json/json.h>
+#include <string>
 
 #include "emulator_api.h"
 
@@ -42,6 +44,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_settings.inc"
 #include "openapi/openapi_features.inc"
 #include "openapi/openapi_state.inc"
+#include "openapi/openapi_next.inc"
 #include "openapi/openapi_cdaudio.inc"
 #include "openapi/openapi_memoryregion.inc"
 #include "openapi/openapi_moonsound.inc"
@@ -76,6 +79,7 @@ void buildSchemas(Json::Value& schemas)
 #include "openapi/openapi_media_schemas.inc"
 #include "openapi/openapi_slots_schemas.inc"
 #include "openapi/openapi_joystick_schemas.inc"
+#include "openapi/openapi_next_schemas.inc"
 #include "openapi/openapi_ttdfile_schemas.inc"
 #include "openapi/openapi_temporal_schemas.inc"
 }

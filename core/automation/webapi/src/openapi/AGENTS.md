@@ -36,6 +36,7 @@ openapi/
 ├── openapi_settings.inc   # Configuration settings
 ├── openapi_memoryregion.inc # Device memory regions (the Sprinter's video RAM): list, read, write, save, load
 ├── openapi_moonsound.inc  # MoonSound (OPL4) state reports
+├── openapi_next.inc       # ZX Spectrum Next debugger reports + the NextREG write (the older Next routes are in openapi_state.inc) + openapi_next_schemas.inc
 ├── openapi_rtc.inc        # CMOS clock report + cell read / write
 ├── openapi_profi.inc      # ZX Profi board chips (8255, 8253, 8251, port map)
 ├── openapi_isa.inc        # ISA slots (Sprinter): report + cycles

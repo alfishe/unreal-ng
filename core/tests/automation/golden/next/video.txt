@@ -1,0 +1,105 @@
+available: true
+layer_order:
+  value: 5
+  name: ULS
+  raw_nr_15: 0x15
+lores: false
+ula:
+  enabled: true
+  mode: hicolour
+  port_ff: 0x02
+  shadow: false
+  scroll_x: 0
+  scroll_y: 0
+  clip:
+    x1: 0
+    x2: 255
+    y1: 0
+    y2: 191
+  palette: 1
+  ulanext: false
+  ulanext_format: 0x07
+  stencil: false
+  ulaplus: false
+lores_layer:
+  enabled: false
+  radastan: false
+  palette_offset: 0
+  scroll_x: 0
+  scroll_y: 0
+layer2:
+  enabled: true
+  resolution: 256x192x8
+  bank: 9
+  shadow_bank: 11
+  palette_offset: 0
+  palette: 1
+  scroll_x: 0
+  scroll_y: 0
+  clip:
+    x1: 0
+    x2: 255
+    y1: 0
+    y2: 191
+  cpu_map:
+    write: false
+    read: false
+    shadow: false
+    segment: 0
+    bank_offset: 0
+tilemap:
+  enabled: true
+  columns: 40
+  attributes_in_map: false
+  palette: 1
+  text: false
+  mode512: false
+  on_top: false
+  control: 0xA0
+  map_base: 0xA0
+  map_bank: 7
+  map_offset: 0x2000
+  map_wraps_8k: true
+  tile_base: 0x0C
+  tile_bank: 5
+  tile_offset: 0x0C00
+  tile_wraps_8k: false
+  default_attribute: 0x00
+  transparent_index: 15
+  scroll_x: 0
+  scroll_y: 0
+  clip:
+    x1: 0
+    x2: 159
+    y1: 0
+    y2: 255
+sprites:
+  enabled: true
+  over_border: false
+  clip_over_border: false
+  zero_on_top: false
+  clip:
+    x1: 0
+    x2: 255
+    y1: 0
+    y2: 191
+transparency:
+  global: 0xE3
+  fallback: 0xE3
+  sprites: 0xE3
+palettes:
+  selected: 0
+  control: 0x00
+raster:
+  frame: 0
+  frame_t: 3
+  tstates_per_line: 228
+  vc: 0
+  hc: 6
+  frame_tstates: 70908
+  line_interrupt: false
+  int_line: 0
+  current_line: 239
+timing:
+  family: 128K
+  hz: 50

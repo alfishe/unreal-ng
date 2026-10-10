@@ -430,6 +430,12 @@ PUT  /api/v1/emulator/{id}/audio/mixer/{source} {"muted", "solo", "volume" | "ga
 GET  /api/v1/emulator/{id}/state/next         ZX Spectrum Next (also /state/next/regs, /state/next/mmu): machine type and timing, CPU clock, DivMMC, interrupts, CTC, SPI, the NextREG table, the 8K MMU slots
 GET  /api/v1/emulator/{id}/state/next/reg-journal ?regs=07,02&sources=nextreg,port,copper,internal&since=&from=&to=&limit= - who wrote which NextREG, when (frame, T, PC), through the NEXTREG instruction, port #253B or the copper; value, previous, name, decoded (NR #02 / #03 / #07)
 POST /api/v1/emulator/{id}/next/reg-journal   {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the NextREG write journal
+GET  /api/v1/emulator/{id}/state/next/dma    the Next DMA as programmed and running (mode zxn|z80, ports a/b, direction, burst, prescaler, counters, src/dst + src_kind/dst_kind, holds_bus, status); no side effect on its read sequence
+GET  /api/v1/emulator/{id}/state/next/video  layer order, ULA/Layer 2/tilemap/sprites switches, clip windows, transparency, raster, timing
+GET  /api/v1/emulator/{id}/state/next/palette ?palette=selected|0-7|name|all&range=0-255 - the 9-bit palettes; no palette index moves
+GET  /api/v1/emulator/{id}/state/next/ports  ?port=6B&access=r|w - the internal port enable word (NR #82-#85) and which device answers the port
+GET  /api/v1/emulator/{id}/state/next/nextreg ?reg=07&changed=true - one NextREG with decoded bits, or all; no side effect
+POST /api/v1/emulator/{id}/next/nextreg      {"reg": "07", "value": "03", "door": "nextreg|port|internal"} - write a NextREG through the board's write choke point where nothing else drives the machine (400 bad body, 409 not a Next, 503 no coherent moment in 500 ms)
 GET  /api/v1/emulator/{id}/state/sprinter      Sprinter Sp2000 (also /state/sprinter/ports[/lookup], /text): PLD, windows, registers, clock + waits, video, accelerator, sound, Z84C15, BIOS
 GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), picture_mode / picture_mixed / picture_brief, HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]
 GET  /api/v1/emulator/{id}/state/sprinter/palette ?k=0-7|all|used - pens (n, rgb "#RRGGBB" = R, G, B as video RAM holds them, vram address)

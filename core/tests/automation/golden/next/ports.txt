@@ -1,0 +1,185 @@
+available: true
+describe:
+  port: 0x253B
+  access: write
+  device: NextREG data
+  decoded_by: A15:A0 = #253B
+  enabled: true
+  side_effect: writes the register selected by #243B through the board's single write choke point; the NextREG journal sees it as source port
+enable_word:
+  value: 0xFFFFFFFF
+  nr_82: 0xFF
+  nr_83: 0xFF
+  nr_84: 0xFF
+  nr_85: 0xFF
+  restored_by: soft reset
+  bits:
+    [0]
+      bit: 0
+      nr: 0x82
+      ports: #FF
+      enabled: true
+      enforced: false
+    [1]
+      bit: 1
+      nr: 0x82
+      ports: #7FFD
+      enabled: true
+      enforced: false
+    [2]
+      bit: 2
+      nr: 0x82
+      ports: #DFFD
+      enabled: true
+      enforced: false
+    [3]
+      bit: 3
+      nr: 0x82
+      ports: #1FFD
+      enabled: true
+      enforced: false
+    [4]
+      bit: 4
+      nr: 0x82
+      ports: +3 floating bus
+      enabled: true
+      enforced: false
+    [5]
+      bit: 5
+      nr: 0x82
+      ports: #6B zxnDMA
+      enabled: true
+      enforced: false
+    [6]
+      bit: 6
+      nr: 0x82
+      ports: #1F Kempston / MD 1
+      enabled: true
+      enforced: false
+    [7]
+      bit: 7
+      nr: 0x82
+      ports: #37 Kempston / MD 2
+      enabled: true
+      enforced: false
+    [8]
+      bit: 8
+      nr: 0x83
+      ports: #E3 DivMMC control
+      enabled: true
+      enforced: false
+    [9]
+      bit: 9
+      nr: 0x83
+      ports: Multiface (two variable ports)
+      enabled: true
+      enforced: true
+    [10]
+      bit: 10
+      nr: 0x83
+      ports: #103B, #113B I2C
+      enabled: true
+      enforced: false
+    [11]
+      bit: 11
+      nr: 0x83
+      ports: #E7, #EB SPI
+      enabled: true
+      enforced: false
+    [12]
+      bit: 12
+      nr: 0x83
+      ports: #133B, #143B, #153B, #163B UART
+      enabled: true
+      enforced: false
+    [13]
+      bit: 13
+      nr: 0x83
+      ports: #FADF, #FBDF, #FFDF mouse
+      enabled: true
+      enforced: false
+    [14]
+      bit: 14
+      nr: 0x83
+      ports: #57, #5B, #303B sprites
+      enabled: true
+      enforced: false
+    [15]
+      bit: 15
+      nr: 0x83
+      ports: #123B Layer 2
+      enabled: true
+      enforced: false
+    [16]
+      bit: 16
+      nr: 0x84
+      ports: #FFFD, #BFFD AY
+      enabled: true
+      enforced: false
+    [17]
+      bit: 17
+      nr: 0x84
+      ports: #0F, #1F, #4F, #5F DAC (Soundrive mode 1)
+      enabled: true
+      enforced: true
+    [18]
+      bit: 18
+      nr: 0x84
+      ports: #F1, #F3, #F9, #FB DAC (Soundrive mode 2)
+      enabled: true
+      enforced: true
+    [19]
+      bit: 19
+      nr: 0x84
+      ports: #3F, #5F DAC (Profi Covox stereo)
+      enabled: true
+      enforced: true
+    [20]
+      bit: 20
+      nr: 0x84
+      ports: #0F, #4F DAC (Covox stereo)
+      enabled: true
+      enforced: true
+    [21]
+      bit: 21
+      nr: 0x84
+      ports: #FB DAC mono (Pentagon / ATM)
+      enabled: true
+      enforced: true
+    [22]
+      bit: 22
+      nr: 0x84
+      ports: #B3 DAC mono (GS Covox)
+      enabled: true
+      enforced: true
+    [23]
+      bit: 23
+      nr: 0x84
+      ports: #DF DAC mono (SpecDrum), Kempston alias
+      enabled: true
+      enforced: true
+    [24]
+      bit: 24
+      nr: 0x85
+      ports: #BF3B, #FF3B ULA+
+      enabled: true
+      enforced: false
+    [25]
+      bit: 25
+      nr: 0x85
+      ports: #0B Z80 DMA
+      enabled: true
+      enforced: false
+    [26]
+      bit: 26
+      nr: 0x85
+      ports: #EFF7 Pentagon 1024 memory
+      enabled: true
+      enforced: false
+    [27]
+      bit: 27
+      nr: 0x85
+      ports: #183B-#1F3B Z80 CTC
+      enabled: true
+      enforced: false
+note: enforced = the emulator gates the ports by that bit; the other ports decode regardless of the enable word

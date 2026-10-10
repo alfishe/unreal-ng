@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 struct NextRegInfo
 {
@@ -20,3 +21,7 @@ struct NextRegInfo
 
 const NextRegInfo* NextRegTable(size_t& count);
 const NextRegInfo* FindNextReg(uint8_t number);
+
+/// What the few registers whose bits matter most mean for a value (#02 reset bits, #03 machine type, #07 CPU speed); empty for the
+/// others. The journal and the register report print it so a reader needs no table
+std::string NextRegDecode(uint8_t reg, uint8_t value);

@@ -332,6 +332,12 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateNextMmu, "/api/v1/emulator/{id}/state/next/mmu", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateNextRegJournal, "/api/v1/emulator/{id}/state/next/reg-journal", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNextRegJournal, "/api/v1/emulator/{id}/next/reg-journal", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextDma, "/api/v1/emulator/{id}/state/next/dma", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextVideo, "/api/v1/emulator/{id}/state/next/video", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextPalette, "/api/v1/emulator/{id}/state/next/palette", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextPorts, "/api/v1/emulator/{id}/state/next/ports", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextNextReg, "/api/v1/emulator/{id}/state/next/nextreg", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postNextNextReg, "/api/v1/emulator/{id}/next/nextreg", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterPorts, "/api/v1/emulator/{id}/state/sprinter/ports", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterPortLookup, "/api/v1/emulator/{id}/state/sprinter/ports/lookup", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterText, "/api/v1/emulator/{id}/state/sprinter/text", drogon::Get);
@@ -1201,6 +1207,18 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void postNextRegJournal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                             const std::string& id) const;
+    void getStateNextDma(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
+    void getStateNextVideo(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
+    void getStateNextPalette(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id) const;
+    void getStateNextPorts(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
+    void getStateNextNextReg(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id) const;
+    void postNextNextReg(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
     void getStateSprinter(const drogon::HttpRequestPtr& req,
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateSprinterActive(const drogon::HttpRequestPtr& req,

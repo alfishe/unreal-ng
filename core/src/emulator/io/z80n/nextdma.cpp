@@ -218,7 +218,7 @@ uint8_t NextDma::Read()
     uint8_t result = 0;
     switch (_readSeq)
     {
-        case 0: result = static_cast<uint8_t>((_endOfBlock ? 0x00 : 0x20) | 0x1A | ((_transferring && _atLeastOne) ? 1 : 0)); break;  // bit 0: a byte was moved while the DMA is not idle (a burst / prescaler wait; the board reads 1A / 3A after a block)
+        case 0: result = StatusByte(); break;  // bit 0: a byte was moved while the DMA is not idle (a burst / prescaler wait; the board reads 1A / 3A after a block)
         case 1: result = _counter & 0xFF; break;
         case 2: result = _counter >> 8; break;
         case 3: result = (_aToB ? _src : _dst) & 0xFF; break;

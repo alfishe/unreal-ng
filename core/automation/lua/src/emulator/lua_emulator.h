@@ -74,7 +74,10 @@
 #include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
+#include <common/stringhelper.h>
+#include <debugger/ports/nextregwrite.h>
 #include <emulator/io/z80n/nextregjournal.h>
+#include <emulator/io/z80n/nextreportquery.h>
 #include <emulator/video/screendigest.h>
 #include <base/featuremanager.h>
 #ifdef ENABLE_RECORDING
@@ -3507,6 +3510,88 @@ public:
                     capacity = static_cast<size_t>(n.as<long long>());
             }
             return StateNodeToLua(s, DeviceState::NextRegJournalControl(emulator->GetContext(), enable, clear, capacity));
+        });
+        // next_dma() / next_video(): the Next's DMA and video layers (DeviceState::NextDma / NextVideo; no side effect on the machine)
+        lua.set_function("next_dma", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextDma(emulator->GetContext()));
+        });
+        lua.set_function("next_video", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextVideo(emulator->GetContext()));
+        });
+        // next_palette([{palette="sprites_1"|0-7|"all", range="0-15"}]): the 9-bit palettes (DeviceState::NextPalette); nil + error on a bad option
+        lua.set_function("next_palette", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options) return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number) return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string) return value.as<std::string>();
+                return std::string();
+            };
+            NextPaletteQuery query;
+            std::string error;
+            if (!NextPaletteQueryFromStrings(text("palette"), text("range"), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextPalette(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_ports([port [, "r"|"w"]]): the internal port enable word and which device answers `port` (a number is the port, a string is hex text)
+        lua.set_function("next_ports", [this](sol::this_state s, sol::optional<sol::object> port, sol::optional<std::string> access) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string portText;
+            if (port && port->get_type() == sol::type::number)
+                portText = StringHelper::Format("%llx", static_cast<unsigned long long>(port->as<long long>()));
+            else if (port && port->get_type() == sol::type::string)
+                portText = port->as<std::string>();
+            NextPortsQuery query;
+            std::string error;
+            if (!NextPortsQueryFromStrings(portText, access.value_or(""), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextPorts(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_nextreg([reg [, changed]]): one NextREG with decoded bits, or all of them, without side effects (a number is the register)
+        lua.set_function("next_nextreg", [this](sol::this_state s, sol::optional<sol::object> reg, sol::optional<bool> changed) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string regText;
+            if (reg && reg->get_type() == sol::type::number)
+                regText = StringHelper::Format("%llx", static_cast<unsigned long long>(reg->as<long long>()));
+            else if (reg && reg->get_type() == sol::type::string)
+                regText = reg->as<std::string>();
+            NextRegReadQuery query;
+            std::string error;
+            if (!NextRegReadQueryFromStrings(regText, changed.value_or(false) ? "true" : "", query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextRegRead(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_nextreg_write(reg, value [, door]): write a NextREG through the board's write choke point (NextRegWriteControl); door = "nextreg"
+        // (default, the NEXTREG instruction), "port" or "internal"; returns the reply table, or nil + error
+        lua.set_function("next_nextreg_write", [this](sol::this_state s, int64_t reg, int64_t value, sol::optional<std::string> door) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            if (reg < 0 || reg > 255 || value < 0 || value > 255)
+                return mouseError(s, "reg and value must be 0..255");
+            NextRegWriteControl::Door which = NextRegWriteControl::Door::NextReg;
+            if (!NextRegWriteControl::ParseDoor(door.value_or(""), which))
+                return mouseError(s, "door must be nextreg, port or internal");
+            const NextRegWriteControl::Result result =
+                NextRegWriteControl::Write(emulator, static_cast<uint8_t>(reg), static_cast<uint8_t>(value), which, "lua");
+            if (!result.ok)
+                return mouseError(s, result.error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, NextRegWriteControl::ToState(result)));
+            return out;
         });
         // sprinter_pld_journal([{kinds="cnf,port_1ffd", since=N, from=F, to=F, limit=N, source="live"|"ttd"}]): who
         // changed the PLD setup, when (DeviceState::SprinterJournal); nil + error on a bad option

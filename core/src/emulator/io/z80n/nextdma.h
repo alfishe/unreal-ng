@@ -67,6 +67,28 @@ public:
     bool Waiting() const { return _waiting; }
     /// endregion
 
+    /// region <Const view for the next_dma report: nothing here steps the sequencer or the read sequence (design-automation-coverage.md R3)>
+    struct PortView
+    {
+        uint16_t address = 0;
+        bool io = false;
+        uint8_t step = 1;    ///< 0 decrement, 1 increment, 2 / 3 fixed (WR1 / WR2 bits 5:4)
+        uint8_t timing = 1;  ///< the timing byte, bits 1:0 (4, 3, 2, 4 clocks)
+    };
+    PortView PortA() const { return {_portAAddress, _portAIsIo, _portAMode, _portATiming}; }
+    PortView PortB() const { return {_portBAddress, _portBIsIo, _portBMode, _portBTiming}; }
+    bool AToB() const { return _aToB; }
+    bool Z80Compatible() const { return _z80Compat; }  ///< the last access came through port #0B
+    bool CeWait() const { return _ceWait; }
+    uint8_t ReadMask() const { return _readMask; }
+    uint8_t ReadSequenceIndex() const { return _readSeq; }  ///< which of the 7 values the next read returns
+    /// The byte a read returns while the read sequence is at the status (what Read() computes first, without stepping anything)
+    uint8_t StatusByte() const
+    {
+        return static_cast<uint8_t>((_endOfBlock ? 0x00 : 0x20) | 0x1A | ((_transferring && _atLeastOne) ? 1 : 0));
+    }
+    /// endregion
+
 private:
     enum class Seq : uint8_t
     {

@@ -114,30 +114,6 @@ StateNode NextRegs(EmulatorContext* context)
 
 namespace
 {
-/// What the few registers whose bits matter most mean as written
-std::string DecodeWrite(uint8_t reg, uint8_t value)
-{
-    switch (reg)
-    {
-        case 0x02:
-        {
-            std::string text;
-            if (value & 0x02) text += "hard reset ";
-            if (value & 0x01) text += "soft reset ";
-            if (value & 0x04) text += "drive NMI ";
-            if (value & 0x08) text += "multiface NMI ";
-            if (value & 0x80) text += "bus reset ";
-            return text.empty() ? "no request" : text.substr(0, text.size() - 1);
-        }
-        case 0x03:
-            return StringHelper::Format("machine type %u, timing %u", value & 7u, (value >> 4) & 7u);
-        case 0x07:
-            return StringHelper::Format("CPU speed %s", (const char*[]){"3.5 MHz", "7 MHz", "14 MHz", "28 MHz"}[value & 3]);
-        default:
-            return "";
-    }
-}
-
 StateNode EventNode(const NextRegWriteEvent& e, const NextRegInfo* table, size_t count)
 {
     StateNode n = StateNode::Object();
@@ -155,7 +131,7 @@ StateNode EventNode(const NextRegWriteEvent& e, const NextRegInfo* table, size_t
         }
     n["value"] = Hex8(e.value);
     n["previous"] = Hex8(e.previous);
-    const std::string decoded = DecodeWrite(e.reg, e.value);
+    const std::string decoded = NextRegDecode(e.reg, e.value);
     if (!decoded.empty())
         n["decoded"] = decoded;
     return n;

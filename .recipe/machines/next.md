@@ -13,7 +13,7 @@ Ground truth: [docs/inprogress/2026-10-07-zx-next/](../../docs/inprogress/2026-1
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred; the [WebAPI](#webapi) section has the same steps as curl and
 > as the Python scripts under `tools/machines/next/`. Policy: [_common/transports.md](../_common/transports.md).
 
-Outputs below are real, from a build of 2026-10-09, trimmed.
+Outputs below are real, from a build of 2026-10-09 (sections 3b: 2026-10-10), trimmed.
 
 ## MCP (preferred)
 
@@ -77,6 +77,102 @@ invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/state/next/reg-journal?
 
 `source` says the door: `nextreg` (the instruction), `port` (`OUT #253B`), `copper`, `internal`. The same report is `state next
 journal` on the CLI, `next_reg_journal{...}` in Lua, `emu.next_reg_journal(...)` in Python.
+
+### 3b. What did the program configure? (the debugger reports)
+
+Guessing from port traces and one register at a time found the DMA writing into ROM, the tilemap reading bank 7 as 16K and a card
+that answers as SDSC. Seven reports show the state at once; **none of them has a side effect on the machine** (reading the DMA does
+not step its read sequence, reading a palette does not move the index, a register read does not touch the select latch).
+
+```text
+inspect_state {"aspects":["next_dma","next_video","next_palette","next_ports","next_nextreg"],
+               "nr_palette":"sprites_1","nr_range":"0-3","nr_port":"6B","nr_access":"w","nr_reg":"07"}
+invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/state/next/dma"}                  # also /video /palette /ports /nextreg
+```
+
+CLI (`state next ...`, `next dma` is the same), Lua `next_dma()`, Python `emu.next_dma()`. The outputs below are real: they are produced by
+the core test `CliNextReports_Test.RecipeStory` (`UNREAL_PRINT_NEXT_RECIPE=1 core-tests --gtest_filter=CliNextReports_Test.RecipeStory`) -
+a program that copies 256 bytes from `#8000` into the ROM at `#0100` through the DMA, puts the tilemap in bank 7, and a disabled port.
+
+**`next_dma`** - the copy into the ROM is visible as `dst_kind: rom` before the first byte moves:
+
+```text
+$ state next dma
+mode: zxn                  # the port the last access used: #6B = zxn, #0B = z80
+enabled: false             # WR6 ENABLE not given yet
+burst: continuous
+status: 0x3A               # the byte the next read of the read sequence returns
+a:  address 0x8000, type memory, step inc, timing 1
+b:  address 0x0100, type memory, step inc, timing 1
+direction: a_to_b
+block_length: 256
+counter: 0
+src: 0x8000   (src_kind: ram)
+dst: 0x0100   (dst_kind: rom)       # <- the past find: a transfer into ROM
+holds_bus: false    dma_delay: false
+interrupt_enables: nr_cc 0x00, nr_cd 0x00, nr_ce 0x00
+```
+
+**`next_video`** - layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, raster. The tilemap base `#A0` is bank 7 at 8K
+offset `#2000`: the video side of bank 7 is an 8K RAM, so the map is read from `#0000` of the bank (`map_wraps_8k: true`):
+
+```text
+$ state next video          (excerpt)
+layer_order: value 2, name SUL, raw_nr_15 0x08
+ula: enabled true, mode standard, port_ff 0x00, clip 0,255,0,191
+layer2: enabled false, resolution 256x192x8, bank 8, shadow_bank 11
+tilemap: enabled true, columns 40, control 0xA0, map_base 0xA0, map_bank 7, map_offset 0x2000, map_wraps_8k true,
+         tile_base 0x0C, tile_bank 5, tile_offset 0x0C00, transparent_index 15
+raster: frame 0, frame_t 3, tstates_per_line 228, vc 0, hc 6, int_line 0, current_line 239
+timing: family 128K, hz 50
+```
+
+**`next_palette`** - the eight 9-bit palettes (`ula_1 layer2_1 sprites_1 tilemap_1 ula_2 layer2_2 sprites_2 tilemap_2`), the selected one
+(NR `#43`), the index, the transparent indexes; `palette=` and `range=` choose:
+
+```text
+$ state next palette sprites_1 0-3
+Palette ula_1 selected, index 0, auto-increment on
+transparent: global 0xE3, sprites 0xE3, tilemap 15, fallback 0xE3
+
+[2] sprites_1
+  0	0x000  R0 G0 B0
+  1	0x003  R0 G0 B3
+  2	0x005  R0 G0 B5
+  3	0x007  R0 G0 B7
+```
+
+**`next_ports`** - which device answers a port, and whether NR `#82`-`#85` switch it off. `enforced` tells whether the emulator gates the
+port by that bit (today the DAC ports and the Multiface; the other ports decode regardless of the enable word):
+
+```text
+$ state next ports 6B w          (after NR #82 <- #DF)
+Port 0x006B write: DMA (zxnDMA)
+  decoded by: A7:A0 = #6B
+  enabled: off (NR 0x82 bit 5, gated by the emulator: off)
+  side effect: the next byte of the DMA's WR0-WR6 sequence; the zxn mode latch is set
+
+Internal port enable word 0xFFFFFFDF (NR #82-#85; restored by soft reset)
+  bit 0  NR0x82  on  #FF  (not gated)
+  ...
+```
+
+**`next_nextreg` and the write** - one register with decoded bits, no side effects; the write goes through the board's single write choke
+point, so the journal sees it. `door` is `nextreg` (the `NEXTREG` instruction: the select latch stays), `port` (`OUT #243B`, `OUT #253B`) or `internal`:
+
+```text
+$ next nextreg 07 03                       # POST /api/v1/emulator/{id}/next/nextreg {"reg":"07","value":"03","door":"nextreg"}
+NR #07 <- #03 (was #00, reads #33) through nextreg (stopped)
+$ state next nextreg 07
+reg: 0x07   name: CPU Speed   access: RW   value: 0x33   stored: 0x03   reset: 0x00   decoded: CPU speed 28 MHz
+$ state next journal regs=07
+NextREG journal on: 1 event(s) of 1 held, 0 evicted
+#1 frame 0 T 3 PC 0x0000 nextreg NR0x07 0x00 -> 0x03  CPU Speed (CPU speed 28 MHz)
+```
+
+The write runs where nothing else drives the machine (paused, or between two frames of a running one) and answers 409 on a machine that is
+not a Next. The JSON of every report is the same tree as the text (`GET .../state/next/dma` and so on; the OpenAPI manifest lists the
+query parameters).
 
 ### 4. Starting a snapshot (`.snx`, `.sna`, `.z80`) from the Browser
 

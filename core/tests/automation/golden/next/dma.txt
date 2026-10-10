@@ -1,0 +1,36 @@
+available: true
+mode: zxn
+enabled: false
+transferring: false
+waiting: false
+end_of_block: false
+auto_restart: true
+ce_wait: true
+burst: burst
+prescaler: 64
+read_mask: 0x7F
+read_seq: 0
+status: 0x3A
+a:
+  address: 0x8000
+  type: memory
+  step: inc
+  timing: 1
+b:
+  address: 0x00FE
+  type: io
+  step: fixed
+  timing: 2
+direction: a_to_b
+block_length: 256
+counter: 0
+src: 0x8000
+dst: 0x00FE
+src_kind: ram
+holds_bus: false
+wait_until_28: 0
+dma_delay: false
+interrupt_enables:
+  nr_cc: 0x00
+  nr_cd: 0x00
+  nr_ce: 0x00

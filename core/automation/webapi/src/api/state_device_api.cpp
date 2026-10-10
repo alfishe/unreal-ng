@@ -18,7 +18,9 @@
 #include <emulator/ports/models/sprinter/sprinterbios.h>
 #include <emulator/sound/midi/midicontrol.h>
 #include <emulator/state/devicestate.h>
+#include <debugger/ports/nextregwrite.h>
 #include <emulator/io/z80n/nextregjournal.h>
+#include <emulator/io/z80n/nextreportquery.h>
 #include <json/json.h>
 
 #include <cstdio>
@@ -26,6 +28,7 @@
 
 #include "../emulator_api.h"
 #include "../common/statenode_json.h"
+#include "common/stringhelper.h"
 
 using namespace drogon;
 
@@ -408,6 +411,103 @@ void EmulatorAPI::postNextRegJournal(const HttpRequestPtr& req, std::function<vo
     if (body && body->isMember("capacity"))
         capacity = static_cast<size_t>((*body)["capacity"].asUInt64());
     ReplyState(DeviceState::NextRegJournalControl(emulator->GetContext(), enable, clear, capacity), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/dma - the DMA programmed and running (DeviceState::NextDma; no side effect on the read sequence)
+void EmulatorAPI::getStateNextDma(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextDma(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/video - layers, ULA / Layer 2 / tilemap / sprites switches, clip windows, raster
+/// (DeviceState::NextVideo)
+void EmulatorAPI::getStateNextVideo(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::NextVideo(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/palette?palette=&range= - the 9-bit palettes (DeviceState::NextPalette)
+void EmulatorAPI::getStateNextPalette(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                      const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextPaletteQuery query;
+    std::string error;
+    if (!NextPaletteQueryFromStrings(req->getParameter("palette"), req->getParameter("range"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextPalette(emulator->GetContext(), query), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/ports?port=&access= - the internal port enable word and, with `port`, which device
+/// answers a read / write (DeviceState::NextPorts)
+void EmulatorAPI::getStateNextPorts(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextPortsQuery query;
+    std::string error;
+    if (!NextPortsQueryFromStrings(req->getParameter("port"), req->getParameter("access"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextPorts(emulator->GetContext(), query), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/nextreg?reg=&changed= - one NextREG with its decoded bits, or all (DeviceState::NextRegRead)
+void EmulatorAPI::getStateNextNextReg(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                      const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextRegReadQuery query;
+    std::string error;
+    if (!NextRegReadQueryFromStrings(req->getParameter("reg"), req->getParameter("changed"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextRegRead(emulator->GetContext(), query), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/next/nextreg {"reg": 7, "value": 3, "door": "nextreg"|"port"|"internal"} - write a NextREG through
+/// the board's single write choke point, where nothing else drives the machine (NextRegWriteControl): 400 bad body, 409 not a Next,
+/// 503 no coherent moment
+void EmulatorAPI::postNextNextReg(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    auto body = req->getJsonObject();
+    if (!body || !body->isMember("reg") || !body->isMember("value"))
+        return ReplyNotFound("Request must contain 'reg' and 'value'", callback, HttpStatusCode::k400BadRequest);
+    // a JSON number is the value itself, a string is hex text ("07", "0x07", "#07")
+    auto text = [](const Json::Value& v) { return v.isString() ? v.asString() : (v.isIntegral() ? StringHelper::Format("%x", v.asUInt()) : std::string()); };
+    uint8_t reg = 0, value = 0;
+    std::string error;
+    if (!NextRegWriteControl::Parse(text((*body)["reg"]), text((*body)["value"]), reg, value, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    NextRegWriteControl::Door door = NextRegWriteControl::Door::NextReg;
+    if (body->isMember("door") && !NextRegWriteControl::ParseDoor((*body)["door"].asString(), door))
+        return ReplyNotFound("door must be nextreg, port or internal", callback, HttpStatusCode::k400BadRequest);
+    const NextRegWriteControl::Result result = NextRegWriteControl::Write(emulator.get(), reg, value, door, "webapi");
+    if (result.notNext)
+        return ReplyNotFound(result.error, callback, HttpStatusCode::k409Conflict);
+    if (result.busy)
+        return ReplyNotFound(result.error, callback, HttpStatusCode::k503ServiceUnavailable);
+    if (!result.ok)
+        return ReplyNotFound(result.error, callback, HttpStatusCode::k500InternalServerError);
+    ReplyState(NextRegWriteControl::ToState(result), callback);
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/next/regs - every NextREG with access, value and reset (the next_regs report)

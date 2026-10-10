@@ -1,0 +1,7 @@
+available: true
+selected: 0x15
+reg: 0x15
+name: Sprite and Layers System
+access: RW
+value: 0x05
+stored: 0x05

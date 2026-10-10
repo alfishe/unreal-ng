@@ -127,6 +127,7 @@ private:
     void HandleFind(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDebugSnapshot(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePortOut(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleNext(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDebugWait(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePcHistory(const ClientSession& session, const std::vector<std::string>& args);
     /// Another surface holds run control: answers the claim message and returns true (tdd §5, F5)

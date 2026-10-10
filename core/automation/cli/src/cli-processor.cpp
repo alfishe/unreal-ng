@@ -111,6 +111,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"net", &CLIProcessor::HandleNetwork},
                         {"find", &CLIProcessor::HandleFind},  // Search Z80 memory for a byte pattern
                         {"debug-snapshot", &CLIProcessor::HandleDebugSnapshot},  // One coherent debugger snapshot (DebugSnapshot)
+                        {"next", &CLIProcessor::HandleNext},  // ZX Spectrum Next: write a NextREG (NextRegWriteControl), `next dma` ...
                         {"out", &CLIProcessor::HandlePortOut},  // A debugger's port write through the decoder (PortWrite)
                         {"debug-wait", &CLIProcessor::HandleDebugWait},  // Long-poll on the debugger snapshot's seq
                         {"pchist", &CLIProcessor::HandlePcHistory},      // PC history with pages (PcHistory)
@@ -619,6 +620,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  memory <addr> - View memory at address" << NEWLINE;
     oss << "  find <hex-pattern, ?? = any> [--space S] [--mask HEX] [--from N] [--to N] [--align 1|2] [--max N] - Search memory" << NEWLINE;
     oss << "  debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]... [--pchist N] - Registers, pages, time, code, stack, memory, PC history at one moment" << NEWLINE;
+    oss << "  next nextreg <reg> <value> [nextreg|port|internal] - ZX Spectrum Next: write a NextREG through the board's write choke point (the journal sees it); `next dma|video|palette|ports|nextreg` read the reports" << NEWLINE;
     oss << "  out <port> <value> - Write a port like a CPU OUT (paging, TS-Conf registers); no breakpoints, a TTD tool edit" << NEWLINE;
     oss << "  pchist [depth] | pchist on|off - PC history: the newest instructions with their window's page" << NEWLINE;
     oss << "  debug-wait [since] [--timeout ms] - Wait until something a debugger shows changes (a stop, a run start, an edit)" << NEWLINE;
