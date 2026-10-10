@@ -205,6 +205,9 @@ A GUI handler queued before an instance is removed runs after its context is fre
 stress finds them does not converge; a structural answer is a developer decision (lease at the binding / refresh entry
 points, or the GUI unbinding before the core frees the context).
 
+Design: [2026-10-10-gui-instance-lifetime](2026-10-10-gui-instance-lifetime/README.md) (gap analysis, proposal,
+test plan, roadmap). Decided 2026-10-10: retire at removal, free at the last owner, every wait bounded.
+
 ### Repro
 ASan unreal-qt with the stress script (8 workers creating / reading / switching / deleting instances, 2 running
 neighbours) for 15 minutes.
