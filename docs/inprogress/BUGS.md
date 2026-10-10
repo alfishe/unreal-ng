@@ -209,6 +209,37 @@ points, or the GUI unbinding before the core frees the context).
 ASan unreal-qt with the stress script (8 workers creating / reading / switching / deleting instances, 2 running
 neighbours) for 15 minutes.
 
+
+## 🔴 [Open] #12: A failed instance creation leaks the half-built instance
+* **Date Opened:** 2026-10-10
+* **Found by:** macOS `leaks --atExit` and LeakSanitizer (Linux, Docker) on `EmulatorManager_Test.CreateEmulatorWith*`
+  (docs/testing/sanitizers.md §9).
+
+### Description
+`CreateEmulatorWithModel` for an unknown model, an unsupported RAM size or a non-creatable model returns null and
+leaves the `Emulator` it started building: its `Config`, `EmulatorContext` and module loggers (`leaks`: `ROOT LEAK
+<Config>`, `ROOT CYCLE <EmulatorContext>`; LSan: ~700 KB indirect from `Emulator::Emulator` / `Emulator::Init`).
+Every failed WebAPI / CLI create leaks again.
+
+### Repro
+`MallocStackLogging=1 leaks --atExit -- ./core-tests --gtest_filter='EmulatorManager_Test.CreateEmulatorWith*'`
+(from the build's `bin/`).
+
+## 🔴 [Open] #13: Undefined behavior in product code (UBSan baseline)
+* **Date Opened:** 2026-10-10
+* **Found by:** a full `core-tests` run on the `address,undefined` build (docs/testing/sanitizers.md §2).
+
+### Description
+- `modulelogger.cpp:434`: `_settings.submodules[module]` read with `module == 12` on a 12-element array (a module id
+  without its row).
+- `bithelper.h:18`: `IsBitSet(value, 255)` shifts by 255 - `GetFirstSetBitPosition(0)` returns 255.
+- `soundchip_turbosound.cpp`, `soundchip_turbosoundfm.cpp`: float samples converted to `short` out of range (no clamp).
+- `loader_scl.cpp`: misaligned `uint32_t` loads from the image buffer.
+- `z80.cpp:192`, `z80.cpp:429`: a reference bound to a null `Emulator` (reached from tests that build a bare `Core`).
+
+### Repro
+`tools/sanitize/configure.sh asan`, build `core-tests`, run it, `grep -h "runtime error"`.
+
 ---
 
 2026-10-07

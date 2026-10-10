@@ -24,7 +24,8 @@ tools/build/slot.sh --status         # who holds which slot right now
 
 `build.sh` / `test.sh` already apply the rules from `AGENTS.md`: half the logical cores
 for `-j`, lowered priority (`nice 10`), build directory `cmake-build-agent-release`
-(override with `BUILD_DIR`, cores with `UNREAL_JOBS`).
+(override with `BUILD_DIR`, cores with `UNREAL_JOBS`; sanitizer builds: `tools/sanitize/configure.sh asan|tsan`, then
+`BUILD_DIR=$PWD/cmake-build-asan tools/build/build.sh core-tests` - [`docs/testing/sanitizers.md`](../../docs/testing/sanitizers.md)).
 
 `build.sh` also **re-runs the CMake configure step before every build**, and configures a
 missing build directory from scratch (`-G Ninja -DTESTS=ON`). Sources are globbed, so a file

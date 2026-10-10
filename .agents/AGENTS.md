@@ -80,6 +80,13 @@ tools/build/test.sh --gtest_filter='*Foo*'  # build + run filtered
 - Use `tools/build/build.sh core-tests` explicitly, or
 - Use `tools/build/test.sh` (it builds `core-tests` automatically)
 
+## Memory, thread and lifetime bugs
+
+Use-after-free, heap corruption, races, deadlocks, leaks: [`docs/testing/sanitizers.md`](docs/testing/sanitizers.md)
+(ASan + UBSan / TSan builds via `tools/sanitize/configure.sh`, the WebAPI stress `tools/sanitize/stress_round.sh`,
+`leaks`, hang sampling, crash reports via `tools/sanitize/ips_stacks.py`). A crash in `free`/`malloc` is heap damage
+done earlier: reproduce under ASan, do not patch the crashing frame.
+
 ## WebAPI Testing
 
 See [`.recipe/testing/webapi-verification.md`](.recipe/testing/webapi-verification.md).
@@ -100,4 +107,4 @@ Models list: `GET /api/v1/emulator/models`. Per-machine recipes: [`.recipe/machi
 - **Performance**: Hot-path changes need A/B benchmarks. See `docs/guidelines/performance-guidelines.md`
 - **Cross-platform**: Zero warnings on gcc/clang/mingw/msvc. See `docs/guidelines/cross-platform-compatibility.md`
 - **Coding**: See `docs/guidelines/coding-guidelines.md`
-- **Environment variables**: all of them in [`docs/emulator/environment-variables.md`](../docs/emulator/environment-variables.md); a new variable gets a row there
+- **Environment variables**: all of them in [`docs/emulator/environment-variables.md`](docs/emulator/environment-variables.md); a new variable gets a row there
