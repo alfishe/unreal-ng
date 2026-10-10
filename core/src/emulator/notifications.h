@@ -503,6 +503,8 @@ public:
     std::string source;   // source path or description; empty after an eject
     std::string access;   // "readonly", "session", "writethrough"
     std::string path;     // NC_MEDIA_EXPORTED / NC_MEDIA_SAVED: the file written
+    uint64_t volumeId = 0;  // the medium's volume (Medium::VolumeId; SlotInfo::volumeId), 0 after it left
+    std::string onRelease;  // unsaved changes: what closing the emulator does with them (SlotInfo::onRelease)
 
     MediaSlotPayload(const std::string& id, std::string slot, std::string mediaKind, std::string mediaSource,
                      std::string accessMode)

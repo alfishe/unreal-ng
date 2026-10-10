@@ -32,9 +32,10 @@ media {"action":"flatten","slot":"hd","strategy":"commit","plan":true}  # what a
 media {"action":"flatten","slot":"sd","strategy":"write-back","plan":true}  # guest files back into writable folder layers
 media {"action":"changes","slot":"hd"}   # the guest's unsaved writes as file operations, with their layers
 media {"action":"eject","slot":"B","discard":true}
+media {"action":"eject","slot":"sd","save":true,"strategy":"write-back","onConflict":"keep-both"}  # a composite by a named strategy as it leaves
 media {"action":"info","slot":"A"}                                   # one slot: medium, access, dirty state (a CD: the disc's tracks)
 media {"action":"formats","kind":"floppy"}                           # accepted extensions per kind: floppy, tape, block, optical
-media {"action":"rescan","slot":"sd"}                                # re-read a host folder after it changed (refused while dirty)
+media {"action":"rescan","slot":"sd"}                                # re-read a host folder / composite: "unchanged" keeps the writes; changed sources + writes need save / export / discard
 media {"action":"create","slot":"B","format":"plus3"}                # blank floppy; a block slot needs "size" (bytes, multiple of 512, up to 128 GiB; memory holds at most [MEDIA] SessionMemoryLimit of what the guest writes, the rest goes to a spill file)
 media {"action":"protect","slot":"A","on":true}                      # the write-protect switch
 media {"action":"insert","slot":"ide0.master","path":"/discs/game.iso","device":"cdrom"}  # an empty IDE unit becomes a CD-ROM drive (device: disk | cdrom | cf)
@@ -61,6 +62,10 @@ media {"action":"insert","slot":"ide0.master","path":"/music/album","device":"cd
   descriptor restores it ("session restored"). A delta written over other sources (a host file changed since) is not
   applied: the report names the layer, and a new `save` over it needs `force`. A damaged delta is renamed
   `*.delta.bad`. `strategy: flat` with a path writes one image instead (as `export`, then the slot holds that image).
+- A composite that leaves (eject / swap / insert / rescan with `save`, the emulator closing) is saved by
+  `writes.save`: `delta` (default), `commit`, `write-back`, `discard` (dropped), `ask` (a delta outside the GUI). The
+  request's `strategy` / `onConflict` win. A commit or write-back that fails keeps the writes as a delta (the report
+  says why); `strict: true` refuses instead and the medium stays.
 - A partitioned disk (`*.ucompose.yaml` with `partitions:` instead of `layers:`): each entry is a passthrough
   `{source: {image: x.img, partition: 1}}` or a composition `{fs: fat16, size: 64MiB, compose: {build: graft,
   layers: [...]}}`; partitions are 1 MiB aligned, more than four go logical. The first source MBR's boot code is

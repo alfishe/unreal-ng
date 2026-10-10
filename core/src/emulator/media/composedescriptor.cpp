@@ -853,10 +853,10 @@ namespace
                 {
                     const auto v = String(child, at);
                     const std::string s = v ? Lower(*v) : "";
-                    if (s == "flat" || s == "delta" || s == "commit" || s == "write-back")
+                    if (s == "flat" || s == "delta" || s == "commit" || s == "write-back" || s == "discard" || s == "ask")
                         _d.writes.save = s;
                     else if (v)
-                        Report(at, "expected flat, delta, commit or write-back, got '" + *v + "'");
+                        Report(at, "expected flat, delta, commit, write-back, discard or ask, got '" + *v + "'");
                 }
                 else if (key == "upper")
                 {

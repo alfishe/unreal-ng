@@ -1,6 +1,6 @@
 # C5 — ISO 9660: ISO images as layers, ISO targets, boot carry-over (D-6)
 
-**Status:** done 2026-10-05: C5a (as-built notes in §9) and C5b (§10). Phase C5 of [tdd.md](../tdd.md) §13 (§7 there is the outline). Exit: ACC-C5,
+**Status:** done 2026-10-05: C5a (as-built notes in §9) and C5b (§10). Phase C5 of [tdd.md](../tdd.md) §14 (§7 there is the outline). Exit: ACC-C5,
 [fs-compatibility.md](../fs-compatibility.md) S-7, S-8. The phase lands in two commits:
 
 | Part | Scope |

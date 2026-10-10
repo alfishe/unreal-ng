@@ -116,6 +116,7 @@ private slots:
     void handleMessageScreenRefresh(int id, Message* message);
     void handleVideoModeChanged(int id, Message* message);
     void handleSystemReset(int id, Message* message);
+    void handleMediaChangesState(int id, Message* message);
     void handleFileOpenRequest(int id, Message* message);
     void handleEmulatorStateChanged(int id, Message* message);
     void handleEmulatorInstanceDestroyed(int id, Message* message);
@@ -293,6 +294,11 @@ private:
     // Subscribe/unsubscribe from per-emulator-instance events
     void subscribeToPerEmulatorEvents();
     void unsubscribeFromPerEmulatorEvents();
+    /// The title's unsaved mark ([*]): some medium of this window's emulator has unsaved changes
+    void updateUnsavedMediaMark();
+    /// Before the emulator goes: media whose changes the policy leaves to the user (writes.save: ask, or changes
+    /// that would be lost) get a question. False: the user cancelled, the emulator stays (D-8)
+    bool confirmUnsavedMedia();
 
     // Bind audio callback to emulator (audio device runs continuously)
     void bindEmulatorAudio(std::shared_ptr<Emulator> emulator);

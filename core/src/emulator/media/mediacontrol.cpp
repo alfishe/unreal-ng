@@ -19,6 +19,7 @@
 #include <cctype>
 #include <cstdio>
 #include <limits>
+#include <optional>
 #include <set>
 
 #include "common/filehelper.h"
@@ -172,7 +173,38 @@ namespace
     }
 
     const std::vector<std::string> kInsertOptions = {"access", "format", "fs", "codepage", "free", "wp", "kind", "device",
-                                                     "save", "export", "discard", "end_recording", "async", "immediate", "journal"};
+                                                     "save", "export", "discard", "strategy", "onConflict", "strict",
+                                                     "end_recording", "async", "immediate", "journal"};
+
+    /// The save policy of a disposition (D-8): `strategy`, `onConflict`, `strict` (they go with `save`)
+    struct SavePolicy
+    {
+        std::string strategy;
+        bool keepBoth = false;
+        bool strict = false;
+    };
+
+    MediaResult ParseSavePolicy(const std::map<std::string, std::string>& options, SavePolicy& policy)
+    {
+        if (auto it = options.find("strategy"); it != options.end())
+        {
+            policy.strategy = Lower(Trim(it->second));
+            if (policy.strategy != "delta" && policy.strategy != "commit" && policy.strategy != "write-back" &&
+                policy.strategy != "discard" && policy.strategy != "ask")
+                return MediaResult::Fail(MediaError::BadRequest, "strategy '" + it->second +
+                                                                     "': expected delta, commit, write-back, discard or ask");
+        }
+        if (auto it = options.find("onConflict"); it != options.end())
+        {
+            const std::string v = Lower(Trim(it->second));
+            if (v != "refuse" && v != "keep-both")
+                return MediaResult::Fail(MediaError::BadRequest, "onConflict '" + it->second + "': expected refuse or keep-both");
+            policy.keepBoth = v == "keep-both";
+        }
+        if (auto it = options.find("strict"); it != options.end() && !ParseBool(it->second, policy.strict))
+            return MediaResult::Fail(MediaError::BadRequest, "option 'strict': expected true or false, got '" + it->second + "'");
+        return MediaResult::Success();
+    }
 
     /// The parked emulator: a save or export reads the medium while the guest
     /// cannot write to it (the same thing SaveDisk does)
@@ -285,12 +317,13 @@ const std::vector<std::string>& MediaControl::OptionsFor(const std::string& verb
         {"targets", {}},
         {"insert", kInsertOptions},
         {"swap", kInsertOptions},
-        {"eject", {"save", "export", "discard", "end_recording", "async"}},
+        {"eject", {"save", "export", "discard", "strategy", "onConflict", "strict", "end_recording", "async"}},
         {"save", {"retarget", "compression", "compact", "fs", "size", "vhd", "strategy", "force", "plan", "onConflict"}},
         {"export", {"compression", "parent", "compact", "fs", "size", "vhd"}},
         {"discard", {"async"}},
-        {"rescan", {"async"}},
-        {"create", {"format", "cylinders", "sides", "size", "save", "export", "discard", "end_recording", "async"}},
+        {"rescan", {"save", "export", "discard", "strategy", "onConflict", "strict", "async"}},
+        {"create", {"format", "cylinders", "sides", "size", "save", "export", "discard", "strategy", "onConflict", "strict",
+                    "end_recording", "async"}},
         {"protect", {"on"}},
         {"compose", {"fs", "codepage", "free"}},
         {"layers", {}},
@@ -610,6 +643,11 @@ StateNode MediaControl::SlotValue(const SlotInfo& info)
         medium["dirty"] = info.dirty;
         medium["dirtyUnits"] = info.changedUnits;
         medium["changes"] = info.changes;
+        if (info.dirty)
+            medium["onRelease"] = info.onRelease;  // what closing the emulator does with the changes (D-8)
+        char volume[17];
+        std::snprintf(volume, sizeof(volume), "%016llx", static_cast<unsigned long long>(info.volumeId));
+        medium["volumeId"] = std::string(volume);  // hex: a 64-bit id does not survive a JSON double
         slot["medium"] = medium;
     }
     else
@@ -838,6 +876,11 @@ MediaResult MediaControl::ApplyDisposition(const std::string& slotId, const Opti
         return MediaResult::Fail(MediaError::BadRequest, "say one of save, export or discard");
     if (exportTo && Trim(exportIt->second).empty())
         return MediaResult::Fail(MediaError::BadRequest, "export needs a path");
+    SavePolicy policy;
+    if (MediaResult r = ParseSavePolicy(options, policy); !r.Ok())
+        return r;
+    if (!save && (options.count("strategy") || options.count("onConflict") || options.count("strict")))
+        return MediaResult::Fail(MediaError::BadRequest, "strategy, onConflict and strict go with save");
 
     const auto info = _manager->Info(slotId);
     if (!info || !info->present || !info->dirty)
@@ -851,12 +894,19 @@ MediaResult MediaControl::ApplyDisposition(const std::string& slotId, const Opti
     if (save || exportTo)
     {
         // Written with the guest parked; the slot then holds a clean medium (save)
-        // or a copy exists (export), so the swap itself may drop the writes
+        // or a copy exists (export), so the swap itself may drop the writes.
+        // A save follows the policy as the medium leaves (D-8)
+        SaveOptions saveOptions;
+        saveOptions.disposition = true;
+        saveOptions.strategy = policy.strategy;
+        saveOptions.keepBoth = policy.keepBoth;
+        saveOptions.strict = policy.strict;
         ParkedEmulator parked(_context);
-        const MediaResult written = save ? _manager->Save(slotId) : _manager->Export(slotId, Trim(exportIt->second));
+        MediaResult written = save ? _manager->Save(slotId, saveOptions) : _manager->Export(slotId, Trim(exportIt->second));
         if (!written.Ok())
             return written;
         remaining = Disposition::Discard;
+        return written;  // its report goes into the reply
     }
     return MediaResult::Success();
 }
@@ -982,14 +1032,16 @@ MediaReply MediaControl::Insert(const MediaRequest& request, bool swap)
     if (auto it = o.find("format"); it != o.end())
         source.formatHint = Lower(Trim(it->second));
 
-    if (MediaResult r = ApplyDisposition(reply.slot, o, options.disposition); !r.Ok())
+    MediaResult decided = ApplyDisposition(reply.slot, o, options.disposition);
+    if (!decided.Ok())
     {
-        reply.result = r;
+        reply.result = decided;
         return reply;
     }
     options.cancelRequested = request.cancelRequested;
     options.onProgress = request.onProgress;
     reply.result = _manager->Insert(reply.slot, source, options);
+    reply.result.report.insert(reply.result.report.begin(), decided.report.begin(), decided.report.end());
     Finish(reply, o);
     return reply;
 }
@@ -1006,12 +1058,14 @@ MediaReply MediaControl::Eject(const MediaRequest& request)
     if (MediaResult r = Flag(request.options, "end_recording", end); !r.Ok())
         return Fail(r.error, r.message);
     options.endRecording = end;
-    if (MediaResult r = ApplyDisposition(reply.slot, request.options, options.disposition); !r.Ok())
+    MediaResult decided = ApplyDisposition(reply.slot, request.options, options.disposition);
+    if (!decided.Ok())
     {
-        reply.result = r;
+        reply.result = decided;
         return reply;
     }
     reply.result = _manager->Eject(reply.slot, options);
+    reply.result.report.insert(reply.result.report.begin(), decided.report.begin(), decided.report.end());
     Finish(reply, request.options);
     return reply;
 }
@@ -1162,8 +1216,44 @@ MediaReply MediaControl::Rescan(const MediaRequest& request)
     reply.result = ResolveSelector(*_manager, request.selector, reply.slot);
     if (!reply.result.Ok())
         return reply;
-    reply.result = _manager->Rescan(reply.slot);
-    Finish(reply, request.options);
+    const Options& o = request.options;
+    RescanOptions options;
+    bool save = false;
+    bool discard = false;
+    if (MediaResult r = Flag(o, "save", save); !r.Ok())
+        return Fail(r.error, r.message);
+    if (MediaResult r = Flag(o, "discard", discard); !r.Ok())
+        return Fail(r.error, r.message);
+    auto exportIt = o.find("export");
+    if (static_cast<int>(save) + static_cast<int>(discard) + static_cast<int>(exportIt != o.end()) > 1)
+        return Fail(MediaError::BadRequest, "say one of save, export or discard");
+    SavePolicy policy;
+    if (MediaResult r = ParseSavePolicy(o, policy); !r.Ok())
+        return Fail(r.error, r.message);
+    if (!save && (o.count("strategy") || o.count("onConflict") || o.count("strict")))
+        return Fail(MediaError::BadRequest, "strategy, onConflict and strict go with save");
+    if (exportIt != o.end())
+    {
+        options.disposition = Disposition::Export;
+        options.exportPath = Trim(exportIt->second);
+        if (options.exportPath.empty())
+            return Fail(MediaError::BadRequest, "export needs a path");
+    }
+    else if (save)
+        options.disposition = Disposition::Save;
+    else if (discard)
+        options.disposition = Disposition::Discard;
+    options.strategy = policy.strategy;
+    options.keepBoth = policy.keepBoth;
+    options.strict = policy.strict;
+    {
+        // A save or an export reads the medium while the guest cannot write to it
+        std::optional<ParkedEmulator> parked;
+        if (save || exportIt != o.end())
+            parked.emplace(_context);
+        reply.result = _manager->Rescan(reply.slot, options);
+    }
+    Finish(reply, o);
     return reply;
 }
 
@@ -1228,12 +1318,14 @@ MediaReply MediaControl::Create(const MediaRequest& request)
     if (MediaResult r = Flag(o, "end_recording", end); !r.Ok())
         return Fail(r.error, r.message);
     options.endRecording = end;
-    if (MediaResult r = ApplyDisposition(reply.slot, o, options.disposition); !r.Ok())
+    MediaResult decided = ApplyDisposition(reply.slot, o, options.disposition);
+    if (!decided.Ok())
     {
-        reply.result = r;
+        reply.result = decided;
         return reply;
     }
     reply.result = _manager->Insert(reply.slot, std::move(medium), options);
+    reply.result.report.insert(reply.result.report.begin(), decided.report.begin(), decided.report.end());
     Finish(reply, o);
     return reply;
 }

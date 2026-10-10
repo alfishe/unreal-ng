@@ -77,7 +77,7 @@ on a +3) is `unknown-slot`, never drive A.
 | `save` | slot, path? | write the medium back into its file, or to `path` (it then stands for that file): a floppy in its format; a hard disk or card's changed sectors into a raw / HDF / HDI / VHD file, a [CHD](../file-formats/disk-images/chd.md) written again; a [composite](#composite-media-several-sources-in-one-disk) without a path: its session delta file |
 | `export` | slot, path | write a copy of the medium as it is now; the medium keeps its unsaved writes. A hard disk or card goes to a raw image (zero sectors not written: sparse where the host can), a VHD for a `.vhd` path (fixed by default, `vhd: dynamic` for a sparse one), or a CHD for a `.chd` path. Free space a composite or a sparse image knows to be zeros is skipped without being read |
 | `discard` | slot | drop the unsaved writes (a floppy is opened again from its file) |
-| `rescan` | slot | build a folder medium again after the host folder changed (refused while dirty) |
+| `rescan` | slot | build a folder or composite medium again after its sources changed; sources that give the same volume leave it as it is ("unchanged", unsaved writes kept). Unsaved writes over changed sources need `save`, `export <path>` or `discard`: they cannot follow a rebuild |
 | `create` | slot | a blank floppy (`format`, `cylinders`, `sides`) or card (`size`); a blank card or hard disk holds memory only for what the guest writes (64 KiB chunks) |
 | `protect` | slot, `on` | the slot's write-protect switch |
 | `compose` | descriptor | build a [composite](#composite-media-several-sources-in-one-disk) (`*.ucompose.yaml`, or its JSON text) without inserting it: the layout and the report |
@@ -102,14 +102,15 @@ on a +3) is `unknown-slot`, never drive A.
 | `size` | bytes, a multiple of 512, up to 128 GiB | — | create (cards, hard disks) |
 | `wp` | bool | false | insert, swap |
 | `journal` | `replay`, `discard`, `off` | `[MEDIA] SessionJournal` (`replay` when on) | insert, swap: a session journal left next to the medium by a crash ([below](#where-session-writes-are-kept)) |
-| `save`, `export <path>`, `discard` | disposition | none | insert, swap, eject, create |
+| `save`, `export <path>`, `discard` | disposition | none | insert, swap, eject, create, rescan. `save` of a composite follows its `writes.save` (below) |
+| `strategy`, `onConflict`, `strict` | as for `save`; `strategy` also `discard`, `ask` | the descriptor's `writes.save` | insert, swap, eject, create, rescan with `save`: how a composite's writes are saved as it leaves. A `commit` / `write-back` that fails keeps the writes as a session delta and says so; `strict: true` refuses instead (the medium stays) |
 | `retarget` | bool | true | save: a disk TRD cannot hold goes to `<name>.udi` |
 | `compression` | `none`, `default` (lzma, zlib, huff, flac), or up to four of `zlib`, `lzma`, `huff`, `flac`, `zstd` | the source CHD's codecs, else `default` | save, export of a hard disk or card to a `.chd` |
 | `parent` | a CHD file | — | export to a `.chd`: a child of that CHD (only the hunks that differ are stored) |
 | `vhd` | `fixed`, `dynamic` | `fixed` | save to a path, export, flatten `flat` of a hard disk or card to a `.vhd`: `dynamic` stores only the 2 MiB blocks that hold data (a dynamic VHD in a slot is written in place: a new block goes at the end) |
 | `compact` | bool | false | save, export of a FAT disk or card: write the merged volume laid out again (every file contiguous, deleted data and lost clusters gone, label / MBR / boot code kept); `save` with `compact` needs a path |
 | `fs`, `size` | `fat16` / `fat32`; bytes or `64MiB` | the volume's; the medium's | save, export with `compact`: convert, resize (a FAT12 floppy needs `fs`) |
-| `strategy` | `delta`, `flat`, `commit`, `write-back` | a path: `flat`; none: the descriptor's `writes.save`, else `delta` | save of a composite (`commit` and `write-back`: a later phase) |
+| `strategy` | `delta`, `flat`, `commit`, `write-back` | a path: `flat`; none: the descriptor's `writes.save`, else `delta` | save and flatten of a composite: `commit` into the graft base (S3), `write-back` into the writable folders (S4). A `writes.save: ask` saves a delta; `discard` refuses (a save keeps nothing) |
 | `force` | bool | false | save of a composite as `delta` over a delta written over other sources; `commit` although the guest's file system has lost clusters or cross-links |
 | `plan` | bool | false | save, flatten with `strategy: commit` or `write-back`: what would be written, nothing written |
 | `onConflict` | `refuse`, `keep-both` | `refuse` | write-back: a host file changed since the build is a conflict; `keep-both` writes the guest's as `name (guest).ext` |
@@ -349,7 +350,9 @@ layers:
   - {name: dss,   source: {image: dss.img}}                # a FAT image (or {image: x.img, partition: 1})
   - {name: util,  source: {folder: ~/zx/util}, mount: /UTIL}
   - {name: games, source: {iso: games.iso}, from: /GAMES, mount: /GAMES, exclude: ["*.txt"]}
-writes: {save: delta}                     # what `save` does without a path; delta: <descriptor>.delta
+writes: {save: delta}                     # what `save` does without a path, on eject / swap with save, and when
+                                         # the emulator closes: delta (<descriptor>.delta), commit, write-back,
+                                         # flat, discard (drop them), ask (the GUI asks; a delta elsewhere)
 ```
 
 | Topic | Rule |
@@ -361,7 +364,9 @@ writes: {save: delta}                     # what `save` does without a path; del
 | **Unsaved writes** | `media changes` lists them as file operations with their layers. `save` without a path writes them to `<descriptor>.delta` (S2) and the medium is clean; the next insert of the same descriptor restores them ("session restored"). A delta written over other sources (a host file changed since) is not applied: the report names the layer, and saving over it needs `force`. A damaged delta is renamed `*.delta.bad`. `save` with a path (or `strategy: flat`) writes one image and the slot then holds it; `export` writes one and leaves the composite as it is |
 | **Commit (S3)** | `flatten <slot> --strategy commit` writes a graft's re-encoded sectors, its grafted files and the guest's writes into the base image (raw, HDF, HDI or fixed VHD; not a CHD, and not while another slot uses it). The old sectors go to `<image>.ujournal` first; if the commit is cut short, the next open of the image puts them back. The sectors are streamed in order (a commit holds no list of them in memory, whatever the session's size). Afterwards the slot holds the base image; the descriptor is not changed |
 | **Write-back (S4)** | `flatten <slot> --strategy write-back` carries the guest's file changes into the folder layers marked `writable: true`: a file of such a layer is rewritten in place, a file of a read-only layer (an image, an ISO, a read-only folder) is copied up into the upper layer (`writes.upper`, else the topmost writable one), new files go where their directory is. A delete follows the owner layer's `onDelete`: `keep` (the default: the host file stays, the path is hidden from the next build through `<descriptor>.whiteout`), `move` (into `deletedFolder`), `trash` (the host's trash: the Recycle Bin on Windows, `~/.Trash` on macOS, the freedesktop.org trash on Linux), `delete`, or `ignore`. Attribute changes (read-only, hidden, system) go to `<descriptor>.attributes` (`RH<TAB>/PATH`; `-` for none), never to the host files, and apply at every build. On a partitioned disk each composed partition is written back into its own layers (the sidecars name the partition: `work:/PATH`); a change on a passthrough partition is a plan error (commit or flatten it instead). A host file changed since the build is a conflict (`onConflict`). The steps are journaled in `<descriptor>.writeback`, and the slot is rebuilt from the layers |
-| **Rescan** | `rescan` builds the composite again from its sources (refused while there are unsaved writes) |
+| **Leaving the slot** | An eject or swap with `save`, and the emulator closing (the application exits, the machine is recreated), save the writes as `writes.save` says (`delta` by default; `discard` drops them; `ask` saves a delta, the GUI's eject asks first). A `commit` or `write-back` that fails keeps them as a session delta instead, with the reason in the report; `strict: true` on the eject refuses instead. The eject's own `strategy` wins over the descriptor |
+| **Closing with unsaved changes** | `list` / `info` give each dirty medium's `onRelease`: what closing the emulator does with its changes (`delta`, `commit`, `write-back`, `discard`, `ask`; other media `journal` or `lost`). The desktop app marks its title (`*`) while any medium has unsaved changes, and on close (or a ZX-Poly switch) asks only about `ask` composites (the strategy dialog) and media whose changes would be lost (Save... / Close Without Saving / Cancel); the rest go by their policy. Other front ends: the `NC_MEDIA_DIRTY` / `NC_MEDIA_CLEAN` notifications (each names its `emulatorId` and the `volumeId`, the same id `list` / `info` show as 16 hex digits), and `MediaManager::Unsaved()` before they close |
+| **Rescan** | `rescan` builds the composite again from its sources. When they give the same volume (the same content id) nothing happens and the unsaved writes stay. Otherwise unsaved writes need `save` (by the policy; a commit or write-back changes the sources first, then the rebuild sees them), `export <path>` or `discard`; a delta saved there is not applied to the rebuilt volume, it was written over other sources |
 
 ### Which file system a slot takes
 

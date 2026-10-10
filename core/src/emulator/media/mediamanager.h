@@ -62,6 +62,11 @@ struct InsertOptions
     /// A dirty medium already in the slot: what happens to its writes
     Disposition disposition = Disposition::None;
     std::string exportPath;            ///< Disposition::Export
+    /// Disposition::Save of a composite (D-8): its strategy (empty: the descriptor's writes.save), onConflict
+    /// keep-both, and strict (a failed commit / write-back refuses instead of keeping the writes as a delta)
+    std::string strategy;
+    bool keepBoth = false;
+    bool strict = false;
 
     /// Folder volumes only (BUGS.md #3): forwarded to OpenRequest so a caller
     /// scanning off the UI thread (the GUI's async insert worker) can abort a
@@ -78,6 +83,19 @@ struct EjectOptions
     Disposition disposition = Disposition::None;
     std::string exportPath;     ///< Disposition::Export
     bool endRecording = false;  ///< end a TTD recording instead of refusing
+    std::string strategy;       ///< Disposition::Save of a composite (D-8), as InsertOptions
+    bool keepBoth = false;
+    bool strict = false;
+};
+
+/// A rescan of a folder or composite (DT-16): what happens to unsaved writes when the sources changed
+struct RescanOptions
+{
+    Disposition disposition = Disposition::None;  ///< None refuses with "dirty" (only when the sources changed)
+    std::string exportPath;                       ///< Disposition::Export
+    std::string strategy;                         ///< Disposition::Save of a composite (D-8), as InsertOptions
+    bool keepBoth = false;
+    bool strict = false;
 };
 
 struct SaveOptions
@@ -90,10 +108,14 @@ struct SaveOptions
     std::optional<uint64_t> size;  ///< compact: total bytes
     std::string vhd;               ///< a new .vhd file: fixed (default) or dynamic (BlockWriteOptions)
     /// Composites (DT-9): flat (needs a path) | delta | commit | write-back; empty: a path means flat,
-    /// no path the descriptor's writes.save (delta when it names none)
+    /// no path the descriptor's writes.save (delta when it names none; ask saves a delta too, discard drops the
+    /// writes of a medium that leaves)
     std::string strategy;
     bool force = false;          ///< delta: write over a delta that was made over other sources
-    bool disposition = false;    ///< set by an eject / insert disposition (D-8: commit / write-back fall back to delta)
+    /// The medium leaves its slot (an eject / swap / rescan disposition, the emulator going away): the policy
+    /// runs as for a plain save, and a strategy that fails keeps the writes as a session delta instead (D-8)
+    bool disposition = false;
+    bool strict = false;         ///< disposition: a failed strategy refuses (the medium stays) instead of the delta
     bool plan = false;           ///< commit / write-back: report what would be written, write nothing
     bool keepBoth = false;       ///< write-back: a host file changed since the build gets "name (guest).ext" next to it
 };
@@ -143,6 +165,11 @@ struct SlotInfo
     uint64_t changedUnits = 0;
     std::string changes;          ///< the unsaved changes for people ("1 track: 3 sectors")
     bool writeProtect = false;
+    /// Unsaved changes only (else empty): what closing the emulator does with them (D-8). A composite's policy:
+    /// "delta", "commit", "write-back" (they are saved), "discard" (dropped), "ask" (a GUI asks the user; without
+    /// one a delta). Other media: "journal" (their session journal keeps them for the next insert) or "lost"
+    std::string onRelease;
+    uint64_t volumeId = 0;        ///< Medium::VolumeId: matches the notifications' MediaSlotPayload::volumeId
 };
 
 class IMediaReadJournal;
@@ -190,9 +217,11 @@ public:
     MediaResult Save(const std::string& slotId, const SaveOptions& options = {}, SaveOutcome* outcome = nullptr);
     /// The slot's write-protect switch
     MediaResult SetWriteProtect(const std::string& slotId, bool on);
-    /// Build a folder medium again from its folder (host files changed).
-    /// Refused while it has unsaved writes
-    MediaResult Rescan(const std::string& slotId);
+    /// Build a folder or composite medium again from its sources (host files changed), DT-16. Sources that give
+    /// the same content id leave the medium as it is ("unchanged", writes kept). Otherwise unsaved writes need a
+    /// disposition (they cannot follow a rebuild: clusters move); a save follows the policy, then the medium is
+    /// built again
+    MediaResult Rescan(const std::string& slotId, const RescanOptions& options = {});
     /// Media whose slot went away, keyed by that slot's id (add-on removed)
     std::vector<SlotInfo> Detached() const;
     /// Increases with every change of slots, media or dirty state: a polling
@@ -263,6 +292,19 @@ public:
     /// without a running main loop). nullptr restores the emulator's state
     void SetApplyNowProbe(std::function<bool()> probe) { _applyNowProbe = std::move(probe); }
 
+    /// The manager going away (the emulator closes, the application exits, a model switch that recreates the
+    /// emulator) saves every composite's unsaved writes by its writes.save policy (D-8): delta by default and for
+    /// ask, nothing for discard, commit / write-back with the delta fallback. On by default; the test runner turns
+    /// it off so no test leaves a .delta next to its fixtures
+    static void SetSaveOnRelease(bool on) { _saveOnRelease = on; }
+    static bool SaveOnRelease() { return _saveOnRelease; }
+    /// What the save on release did, one line per composite (logged as well)
+    std::vector<std::string> SaveByPolicyOnRelease();
+    /// The media with unsaved changes, attached and detached, each with its onRelease: what a GUI asks about
+    /// before it closes the emulator ("ask" and "lost"). A query, not a notification: the answer is needed before
+    /// the close goes on, and Message Center delivers on its own thread
+    std::vector<SlotInfo> Unsaved() const;
+
 private:
     struct SlotState
     {
@@ -282,9 +324,12 @@ private:
 
     bool CanApplyNow() const;
     SlotInfo Describe(const std::string& slotId, const SlotState& state) const;
+    /// Open `source` the way the slot takes it (its FS matrix, its session journal): Insert and Rescan
+    MediaResult OpenForSlot(const std::string& slotId, const MediaSource& source, const InsertOptions& options,
+                            std::unique_ptr<Medium>& medium);
     /// A dirty medium leaving its slot (or detached): apply the disposition first
     MediaResult ApplyDisposition(const std::string& slotId, Medium& medium, Disposition disposition,
-                                 const std::string& exportPath);
+                                 const std::string& exportPath, const SaveOptions& save);
     MediaResult SaveMedium(const std::string& slotId, Medium& medium, IMediaSlot* slot, const SaveOptions& options,
                            SaveOutcome* outcome);
     MediaResult ExportMedium(const std::string& slotId, Medium& medium, const std::string& path,
@@ -321,12 +366,16 @@ private:
     /// A medium leaves for good. `keepJournal`: the emulator goes with its unsaved writes (they stay in the journal
     /// for the next insert); an eject or a swap decided about them already (a disposition), so its journal goes
     static void Retire(std::unique_ptr<Medium> medium, bool keepJournal = false);
+    /// SlotInfo::onRelease of a medium with unsaved changes
+    static std::string OnReleaseOf(const Medium& medium);
     /// A medium written in `session` access gets its journal `<source>.usession` (replayed, discarded or off as
     /// `choice` says); the outcome goes into its report
     static void AttachJournal(Medium& medium, const MediaSource& source, JournalChoice choice);
 
     EmulatorContext* _context = nullptr;
     std::function<bool()> _applyNowProbe;
+    bool _releasing = false;  ///< the destructor saves by policy: nothing executes any more
+    static inline std::atomic<bool> _saveOnRelease{true};
     mutable std::recursive_mutex _mutex;
     std::map<std::string, SlotState> _slots;
     bool _holdHostWrites = false;

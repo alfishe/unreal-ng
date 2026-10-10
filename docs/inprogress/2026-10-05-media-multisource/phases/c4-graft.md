@@ -1,6 +1,6 @@
 # C4 — graft: upper layers written into a FAT image base
 
-**Status:** done 2026-10-05 (design first, as-built notes in §8). Phase C4 of [tdd.md](../tdd.md) §13 (§6 there is the outline this document
+**Status:** done 2026-10-05 (design first, as-built notes in §8). Phase C4 of [tdd.md](../tdd.md) §14 (§6 there is the outline this document
 completes). Exit: ACC-C3 (read side), [fs-compatibility.md](../fs-compatibility.md) S-3, S-4 (with C5 for the ISO
 part), S-10 fallback.
 
