@@ -48,11 +48,14 @@ public:
     /// What Run would answer about refusing @p op, without side effects (status Done: it would go ahead;
     /// sessionEffect: what the session would see)
     OpResult WouldRefuse(const MachineOp& op) const override;
+    /// WouldRefuse for a surface that asks before its own preparation; a refusal is logged like Run's
+    OpResult Ask(MachineOp op) override;
     MachineMode Mode() const override;
     const OperationLog& Log() const { return _log; }
 
 private:
     MachineMode ModeLocked() const;
+    OpResult WouldRefuseLocked(const MachineOp& op) const;
     OpResult Finish(const MachineOp& op, MachineMode mode, OpStatus status, std::string detail,
                     SessionEffect applied);
 

@@ -140,9 +140,12 @@ The operation log names every reset, disk autostart, snapshot load and media cha
 refused call answered:
 
 ```bash
-curl -s "$BASE/emulator/$ID/operations?limit=5" | jq '.entries[] | {seq, frame, kind, summary, status, mode, effect, detail}'
+curl -s "$BASE/emulator/$ID/operations?limit=5" | jq '.entries[] | {seq, frame, kind, summary, source, status, mode, effect, detail}'
 # poll for what is new: ?since=<last_seq of the previous answer>
 ```
+
+`source` says who asked (`qt`, `webapi`, `mcp`, `cli`, `lua`, `python`, `gdb`, `dezog`): a session ended by a reset
+from the UI while your script recorded shows up as `qt`.
 
 MCP: `emulator_manage` `{"action":"operations","limit":5}`; CLI `ops 5`; Lua / Python `operations()`.
 

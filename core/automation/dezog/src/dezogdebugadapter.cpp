@@ -7,6 +7,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "emulator/coordinator/machineop.h"
 #include "debugger/ttd/ttdsession.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "emulator/cpu/z80.h"
@@ -775,6 +776,7 @@ bool DezogDebugAdapter::restoreSnapshotBytes(Emulator& emulator, const std::vect
         std::ofstream out(path, std::ios::binary);
         out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     }
+    coordinator::SourceScope source(coordinator::OpSource::DeZog);   // the operation log names who loaded it
     bool ok = emulator.LoadSnapshot(path.string());
     std::error_code ec;
     std::filesystem::remove(path, ec);

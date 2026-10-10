@@ -111,6 +111,9 @@ public:
     virtual OpResult Run(MachineOp op) = 0;
     /// What Run would answer about refusing @p op, without side effects
     virtual OpResult WouldRefuse(const MachineOp& op) const = 0;
+    /// The same question from a surface about to prepare the operation itself (a file dialog, an upload, a staged
+    /// file): a refusal is logged like Run's, so every refusal is in the log; a yes is not (Run logs the operation)
+    virtual OpResult Ask(MachineOp op) = 0;
     virtual MachineMode Mode() const = 0;
 };
 }  // namespace coordinator

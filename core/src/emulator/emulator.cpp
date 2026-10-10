@@ -1123,6 +1123,19 @@ const coordinator::OperationLog& Emulator::GetOperationLog() const
     return _coordinator->Log();
 }
 
+std::string Emulator::AskMediaChange(MediaChange change, uint8_t drive, const std::string& what)
+{
+    // The op the change itself runs (MediaManager::InsertOp: slot, file, refusal wording), so the answer and the log
+    // entry are the ones the change would give
+    coordinator::MachineOp op;
+    const bool tape = change == MediaChange::LoadTape;
+    op.kind = change == MediaChange::CreateDisk ? coordinator::OpKind::DiskCreate : coordinator::OpKind::MediaInsert;
+    op.media = tape ? coordinator::MediaClass::Tape : coordinator::MediaClass::Disk;
+    op.summary = (tape ? std::string(TapeSlot::kId) : FloppyDriveSlot::IdFor(drive)) + " " +
+                 (change == MediaChange::CreateDisk ? std::string("<blank>") : what);
+    return _coordinator->Ask(std::move(op)).reason;
+}
+
 void Emulator::Reset(bool hardReset)
 {
     // A reset leaves the recorded path: an RZX playback ends first

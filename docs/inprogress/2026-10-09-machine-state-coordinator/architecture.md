@@ -82,6 +82,7 @@ public:
     OpResult Run(const MachineOp&);                 // any thread; blocks until done, refused or failed
     OpTicket Submit(const MachineOp&);              // any thread; lands at the next frame boundary (F5)
     OpResult WouldRefuse(const MachineOp&) const;   // no side effects; same reason as Run (F3)
+    OpResult Ask(const MachineOp&);                 // WouldRefuse for a surface about to prepare; logs a refusal
     MachineMode Mode() const;                       // published copy (§5)
     const OperationLog& Log() const;                // §7
 
@@ -161,6 +162,7 @@ class IMachineOps {                    // the coordinator, as surfaces and compo
 public:
     virtual OpResult Run(MachineOp) = 0;
     virtual OpResult WouldRefuse(const MachineOp&) const = 0;
+    virtual OpResult Ask(MachineOp) = 0;   // a surface's question before its own preparation; a refusal is logged
     virtual MachineMode Mode() const = 0;
 };
 ```
@@ -455,6 +457,26 @@ applies at once, with the machine held, instead of at the next frame boundary.
 Tests: `MachinePolicy_Test` (every cell), `MachineCoordinator_Test` (the lifecycle with fakes, threads),
 `OperationLog_Test`, `CoordinatorWiring_Test` (includes), `MediaOwnerContract_Test` (the media owner against
 `IOpOwner`), `CoordinatorEmulator_Test` (a real machine: reset, snapshot, tape, discard, eject).
+
+### 11.2 M2, first part as built (2026-10-10)
+
+- **Every refusal is logged.** The surfaces no longer ask TTD (`RecordingGuard`) before a tape load, a disk load or a
+  blank disk: they ask the coordinator, `Emulator::AskMediaChange` -> `IMachineOps::Ask` (the rules and the owner, as
+  `WouldRefuse`; a refusal is logged like `Run`'s, with the same sentence; a yes is not logged, `Run` logs the
+  operation). WebAPI tape / disk load and create (409), CLI `tape load`, Lua `tape_load`, Python `tape_load` /
+  `disk_create`, the GDB monitor load and Qt (drop, open, audio import) ask before their own preparation; a surface
+  without one calls the operation and `Run` refuses it.
+- **The log names the source.** `coordinator::SetThreadSource` / `SourceScope` (thread-local); `Run` and `Ask` take
+  it for an operation that names none. Marked: the Qt main thread, the Lua and Python interpreter threads, each CLI
+  client thread, each GDB session thread, the DeZog snapshot restore, every WebAPI request (a pre-handling advice:
+  `webapi`, or `mcp` when the request carries `X-Unreal-Source: mcp`, which the MCP server's client sends). The
+  emulator's own threads stay `unknown`.
+- Still open in M2: the D43 cells with the owner (network, IDE drive kind, RZX, NeoGS SD); `SwitchModel` (WebAPI
+  snapshot transfer) asks TTD until model switches join the coordinator (M6).
+
+Tests: `MachineCoordinator_Test` (a source from the thread, a scope, another thread; `Ask` logs a refusal with its
+source and nothing else), `CoordinatorEmulator_Test` (a surface's question on a real machine: same sentence, logged),
+`test_api_operations.py` (sources over WebAPI / Lua / Python, a refused `tape/load` logged).
 
 ## 12. Postponed
 

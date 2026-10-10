@@ -12,6 +12,7 @@
 
 #include "common/threadhelper.h"
 #include "common/session_helper.h"
+#include "emulator/coordinator/machineop.h"
 #include "emulator/emulatormanager.h"
 #include "emulator_api.h"        // Triggers auto-registration for API handlers
 #include "emulator_websocket.h"  // Triggers auto-registration for WebSocket handlers
@@ -260,7 +261,7 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
             }
             else
             {
-                resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-Unreal-Session");
+                resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-Unreal-Session, X-Unreal-Source");
             }
 
             // Add caching for preflight requests (24 hours)
@@ -293,6 +294,13 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
             }
         }
         return {};
+    });
+
+    // The operation log names who asked (machine state coordinator): a handler runs on the thread this advice ran
+    // on, so the request marks its thread; the MCP server calls the WebAPI and says so in X-Unreal-Source
+    app.registerPreHandlingAdvice([](const drogon::HttpRequestPtr& req) {
+        coordinator::SetThreadSource(req->getHeader("X-Unreal-Source") == "mcp" ? coordinator::OpSource::Mcp
+                                                                                : coordinator::OpSource::WebApi);
     });
 
     // Add CORS headers to all responses

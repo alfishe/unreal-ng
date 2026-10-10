@@ -468,6 +468,17 @@ public:
     coordinator::IMachineOps& MachineOps();
     /// The last operations on this machine: who did what, at which frame, with which result (always on)
     const coordinator::OperationLog& GetOperationLog() const;
+    /// A media change a surface asks about before it prepares the change itself (AskMediaChange)
+    enum class MediaChange : uint8_t
+    {
+        LoadTape,
+        LoadDisk,
+        CreateDisk
+    };
+    /// Why @p change would be refused right now (empty: it would go ahead), asked of the machine state coordinator:
+    /// a refusal is logged with the caller's source and the sentence the operation itself gives. For a surface about
+    /// to prepare the change (an upload, a staged file, a dialog). @p drive: the floppy drive; @p what: the file
+    std::string AskMediaChange(MediaChange change, uint8_t drive = 0, const std::string& what = {});
 
     // Emulator control cycle
     void Reset(bool hardReset = false);

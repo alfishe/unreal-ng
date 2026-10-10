@@ -1560,7 +1560,7 @@ namespace PythonBindings
                 Emulator::BlankDiskFormat parsed = Emulator::BlankDiskFormat::Auto;
                 if (drive < 0 || drive > 3 || !Emulator::ParseBlankDiskFormat(format, parsed)) return false;
                 if (cylinders < 0 || cylinders > 255 || sides < 0 || sides > 255) return false;
-                if (std::string refusal = self.RecordingGuard(ttd::TTDGuardedAction::CreateDisk); !refusal.empty())
+                if (std::string refusal = self.AskMediaChange(Emulator::MediaChange::CreateDisk, static_cast<uint8_t>(drive)); !refusal.empty())
                     throw std::runtime_error(refusal);  // TTD is recording: RuntimeError with the reason
                 return self.CreateBlankDisk(static_cast<uint8_t>(drive), parsed, static_cast<uint8_t>(cylinders),
                                             static_cast<uint8_t>(sides));
@@ -1668,7 +1668,7 @@ namespace PythonBindings
 
             // Tape operations
             .def("tape_load", [](Emulator& self, const std::string& path) -> bool {
-                if (std::string refusal = self.RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
+                if (std::string refusal = self.AskMediaChange(Emulator::MediaChange::LoadTape, 0, path); !refusal.empty())
                     throw std::runtime_error(refusal);  // TTD is recording: RuntimeError with the reason
                 return self.LoadTape(path);
             }, "Load tape file (RuntimeError while TTD records)", py::arg("path"))

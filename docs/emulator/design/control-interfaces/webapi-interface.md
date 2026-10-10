@@ -197,7 +197,9 @@ disk autostart, snapshot load, media insert / eject / discard, blank disk - with
 after that seq (pass the previous answer's `last_seq` to poll); `limit`: only the newest N (absent or 0: all kept).
 400 when either is not a non-negative integer, 404 for an unknown emulator. Fields: [command-interface.md, Operation
 log](./command-interface.md). The same report is CLI `ops`, Lua / Python `operations()`, MCP `emulator_manage`
-`operations`.
+`operations`. An operation asked for over the WebAPI is logged with source `webapi`; a request with the header
+`X-Unreal-Source: mcp` (the MCP server sends it) with `mcp`. A tape / disk load or blank disk refused while TTD
+records (409) is logged too.
 
 **Response**:
 ```json
@@ -207,10 +209,10 @@ log](./command-interface.md). The same report is CLI `ops`, Lua / Python `operat
   "capacity": 1024,
   "entries": [
     {"seq": 2, "frame": 950, "t_in_frame": 41210, "wall_ms": 1791612034211, "kind": "media-insert",
-     "source": "unknown", "mode": "recording", "status": "refused", "effect": "none",
+     "source": "webapi", "mode": "recording", "status": "refused", "effect": "none",
      "summary": "tape /games/elite.tzx", "detail": "Cannot insert a tape while TTD is recording: ..."},
     {"seq": 3, "frame": 1130, "t_in_frame": 7, "wall_ms": 1791612040873, "kind": "media-insert",
-     "source": "unknown", "mode": "live", "status": "done", "effect": "media-changed",
+     "source": "qt", "mode": "live", "status": "done", "effect": "media-changed",
      "summary": "tape /games/elite.tzx", "detail": ""}
   ]
 }

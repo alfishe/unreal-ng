@@ -2,6 +2,31 @@
 
 namespace coordinator
 {
+namespace
+{
+thread_local OpSource t_source = OpSource::Unknown;
+}  // namespace
+
+OpSource CurrentSource()
+{
+    return t_source;
+}
+
+void SetThreadSource(OpSource source)
+{
+    t_source = source;
+}
+
+SourceScope::SourceScope(OpSource source) : _previous(t_source)
+{
+    t_source = source;
+}
+
+SourceScope::~SourceScope()
+{
+    t_source = _previous;
+}
+
 const char* OpKindName(OpKind kind)
 {
     switch (kind)

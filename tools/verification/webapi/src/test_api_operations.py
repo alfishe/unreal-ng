@@ -81,3 +81,43 @@ print("OPS_LUA_OK")
         resp = api_client.exec_lua(code)
         assert resp["success"] is True, resp
         assert "OPS_LUA_OK" in resp["output"], resp
+
+    def test_each_surface_is_named_as_the_source(self, api_client, active_emulator):
+        """The operation log says who asked: the WebAPI per request, Lua / Python by their interpreter thread"""
+        emu_id = active_emulator
+        before = api_client.get_operations(emu_id)["last_seq"]
+        api_client.reset_emulator(emu_id)
+        sources = ["webapi"]
+        if api_client.get_lua_status().get("available", False):
+            resp = api_client.exec_lua(f"emu_get('{emu_id}'):reset(false)")
+            assert resp["success"] is True, resp
+            sources.append("lua")
+        if api_client.get_python_status().get("available", False):
+            resp = api_client.exec_python(f"import unreal_emulator as ue\nue.emu_get('{emu_id}').reset(False)")
+            assert resp["success"] is True, resp
+            sources.append("python")
+
+        entries = api_client.get_operations(emu_id, since=before)["entries"]
+        assert [(e["kind"], e["source"]) for e in entries] == [("reset", s) for s in sources]
+
+    def test_a_tape_refused_while_recording_is_logged(self, api_client, active_emulator):
+        """tape/load during a TTD recording: 409 with the coordinator's sentence, and the refusal is in the log"""
+        emu_id = active_emulator
+        api_client.ttd_start(emu_id)
+        try:
+            assert api_client.get_operations(emu_id)["mode"] == "recording"
+            before = api_client.get_operations(emu_id)["last_seq"]
+            resp = api_client.session.post(api_client._url(f"/api/v1/emulator/{emu_id}/tape/load"),
+                                           json={"path": "refused-while-recording.tzx"})
+            assert resp.status_code == 409, resp.text
+            message = resp.json()["message"]
+
+            entries = api_client.get_operations(emu_id, since=before)["entries"]
+            assert len(entries) == 1, entries
+            entry = entries[0]
+            assert (entry["kind"], entry["status"], entry["source"], entry["mode"]) == \
+                ("media-insert", "refused", "webapi", "recording")
+            assert entry["summary"].startswith("tape ") and entry["summary"].endswith("refused-while-recording.tzx")
+            assert entry["detail"] == message
+        finally:
+            api_client.ttd_stop(emu_id)

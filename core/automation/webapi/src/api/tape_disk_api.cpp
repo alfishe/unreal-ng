@@ -6,7 +6,6 @@
 #include "../common/upload_helper.h"
 
 #include <debugger/media/sectorwrite.h>
-#include <debugger/ttd/timetravelmanager.h>
 #include <base/featuremanager.h>
 #include <drogon/HttpResponse.h>
 #include <drogon/utils/Utilities.h>
@@ -271,7 +270,7 @@ void EmulatorAPI::loadTape(const HttpRequestPtr& req,
     }
 
     // TTD refuses this while recording: answer why instead of a bare failure
-    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
+    if (const std::string refusal = emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, path); !refusal.empty())
     {
         Json::Value error;
         error["error"] = "Conflict";
@@ -1204,7 +1203,7 @@ void EmulatorAPI::importTapeAudio(const HttpRequestPtr& req,
     std::string insertRefusal;
     if (insertRequested)
     {
-        insertRefusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape);
+        insertRefusal = emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, outputPath);
         if (insertRefusal.empty())
             inserted = emulator->LoadTape(outputPath);
         else
@@ -1315,7 +1314,7 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
             autostart = (req->getHeader("X-Autostart") == "true");
     }
     // TTD refuses this while recording: answer why instead of a bare failure
-    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadDisk); !refusal.empty())
+    if (const std::string refusal = emulator->AskMediaChange(Emulator::MediaChange::LoadDisk, driveNum, path); !refusal.empty())
     {
         Json::Value error;
         error["error"] = "Conflict";
@@ -1436,7 +1435,7 @@ void EmulatorAPI::createDisk(const HttpRequestPtr& req,
     }
 
     // TTD refuses this while recording: answer why instead of a bare failure
-    if (const std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::CreateDisk); !refusal.empty())
+    if (const std::string refusal = emulator->AskMediaChange(Emulator::MediaChange::CreateDisk, driveNum); !refusal.empty())
     {
         Json::Value error;
         error["error"] = "Conflict";

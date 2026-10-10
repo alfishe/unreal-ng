@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "common/threadhelper.h"
+#include "emulator/coordinator/machineop.h"
 
 // Use the platform-agnostic functions from platform_sockets.h
 
@@ -416,6 +417,7 @@ std::unique_ptr<CLIProcessor> AutomationCLI::createProcessor()
 void AutomationCLI::handleClientConnection(SOCKET clientSocket)
 {
     ThreadHelper::setThreadName("cli-client");
+    coordinator::SetThreadSource(coordinator::OpSource::Cli);   // the operation log names this client's operations
 
     // Buffer to store the current line of input
     std::string lineBuffer;

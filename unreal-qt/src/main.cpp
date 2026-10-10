@@ -15,6 +15,7 @@
 #include <emulator/startupcleanup.h>
 #include "debugger/ttd/ttdrecordingfolders.h"
 #include "emulator/emulator.h"
+#include "emulator/coordinator/machineop.h"
 
 int fontID = -1;
 
@@ -98,6 +99,7 @@ void unregisterFonts()
 int main(int argc, char *argv[])
 {
     ThreadHelper::setThreadName("qt-main");
+    coordinator::SetThreadSource(coordinator::OpSource::Qt);   // the operation log names the UI's operations
     // Windows: no EcoQoS when another window has the foreground (the sound stuttered)
     ThreadHelper::disableProcessPowerThrottling();
 
