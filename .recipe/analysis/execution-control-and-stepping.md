@@ -43,6 +43,10 @@ the values depend on the model.)
   handler; whether it waits is unconfirmed): pause first and check `state` is `paused`
   before the first step.
 - `resume` after those calls continues from exactly where the run stopped.
+- **`pause` behind another client's command** (its `run_frames`, a step) is queued and answers at once
+  `202 {"status": "queued", "waiting_for": ...}`: the machine still runs that command, its registers are not the
+  paused ones yet. Use `POST /pause?wait=true` when you need the pause in force (`200 success`; `202 busy` after
+  30 s, still queued). MCP `control_execution pause` says the same and then attaches no registers.
 - **Host audio**: a direct run is not paced to real time, so the speakers get nothing while it runs
   (`GET /audio/mixer` -> `host_output.holders.direct_run` is `1`, `frames_held` grows); every device
   still computes its samples, captures and recordings get them. The hold ends with the run, also

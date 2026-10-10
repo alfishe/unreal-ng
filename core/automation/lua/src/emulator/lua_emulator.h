@@ -714,9 +714,10 @@ public:
             // Lifecycle control
             "start", &Emulator::Start,
             "stop", &Emulator::Stop,
-            "pause", [](Emulator& self) {
+            "pause", [](Emulator& self) -> std::string {
                 execution::script::Check(self, execution::Origin::Lua);
-                self.Pause(execution::script::RequesterOf(self, execution::Origin::Lua), "lua");
+                return execution::script::PauseStatus(
+                    self.Pause(execution::script::RequesterOf(self, execution::Origin::Lua), "lua"));
             },
             "resume", [](Emulator& self) {
                 execution::script::Check(self, execution::Origin::Lua);

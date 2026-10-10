@@ -718,6 +718,17 @@ bool ExecutionArbiter::HoldsCpu() const
            (_loopAttached && _loopThread == self);
 }
 
+std::optional<std::string> ExecutionArbiter::ServingCommand() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!_serving || _servingThread == std::this_thread::get_id())
+        return std::nullopt;
+    // A direct run is Internal: its tag says enough ("run_frames")
+    if (_serving->requester.origin == Origin::Internal)
+        return "'" + _serving->tag + "'";
+    return "'" + _serving->tag + "' (" + OriginName(_serving->requester.origin) + ")";
+}
+
 Snapshot ExecutionArbiter::GetSnapshot() const
 {
     std::lock_guard<std::mutex> lock(_mutex);

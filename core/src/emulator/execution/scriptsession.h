@@ -106,6 +106,23 @@ inline void Check(Emulator& emulator, Origin origin)
     }
 }
 
+/// A script's pause, said: "paused", "queued: behind 'run_frames' (webapi) ..." (it applies when that ends) or
+/// "refused: <why>"
+inline std::string PauseStatus(const Result& result)
+{
+    switch (result.outcome)
+    {
+        case Outcome::Applied:
+        case Outcome::Coalesced:
+            return "paused";
+        case Outcome::Pending:
+        case Outcome::Busy:
+            return "queued: " + result.detail;
+        default:
+            return "refused: " + result.detail;
+    }
+}
+
 /// Who asks, for the execution arbiter: the script's session when it holds control, else the surface alone
 inline Requester RequesterOf(Emulator& emulator, Origin origin)
 {

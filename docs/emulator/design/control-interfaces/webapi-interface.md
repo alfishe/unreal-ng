@@ -169,6 +169,18 @@ Content-Type: application/json
 }
 ```
 
+Behind a command another client runs (`run_frames`, a step), the pause is **queued**: it applies when that
+command ends (a pause never aborts one). The answer says so at once, `202`:
+```json
+{
+  "status": "queued",
+  "message": "The pause is queued behind 'run_frames' (webapi): the pause applies when it ends. Add ?wait=true to wait for it",
+  "waiting_for": "queued behind 'run_frames' (webapi): the pause applies when it ends"
+}
+```
+The machine still runs then: registers read now are not the paused ones. `?wait=true` (30 s) or `?wait=<ms>`
+(up to 60 s) waits for the pause: `200 success` when it applied, `202 busy` when the wait ran out (still queued).
+
 #### Resume Emulator
 **Endpoint**: `POST /api/v1/emulators/{id}/resume`  
 

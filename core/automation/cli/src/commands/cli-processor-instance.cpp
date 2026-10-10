@@ -687,10 +687,15 @@ void CLIProcessor::HandlePause(const ClientSession& session, const std::vector<s
 
     // Pause the emulator - this will trigger MessageCenter notifications
     // that the GUI will respond to (enabling/disabling buttons)
-    emulator->Pause(CliRequester(emulator->GetContext()), "cli");
+    const execution::Result result = emulator->Pause(CliRequester(emulator->GetContext()), "cli");
 
-    // Confirm to the user
-    session.SendResponse("Emulation paused. Use 'resume' to continue execution.");
+    // Say what happened: behind a running command the pause is queued (it applies when that ends)
+    if (result.outcome == execution::Outcome::Pending)
+        session.SendResponse("Pause " + result.detail + ".");
+    else if (result.outcome == execution::Outcome::Refused)
+        session.SendResponse("Error: pause refused - " + result.detail);
+    else
+        session.SendResponse("Emulation paused. Use 'resume' to continue execution.");
 }
 
 // HandleResume - lines 846-877

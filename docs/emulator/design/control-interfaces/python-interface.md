@@ -307,6 +307,10 @@ class Emulator:
         default 'none'; network_state()['zifi'] shows the API registers and both rings). Applied at the next frame
         boundary; the card is fitted again, so every connection closes. ValueError with the reason"""
 
+    def pause(self) -> str:
+        """Pause: 'paused' (in force), 'queued: behind <command>' (another client's command runs; the pause applies
+        when it ends), or 'refused: <why>'"""
+
     def take_control(self, client: str = "python") -> None:
         """Open an automation session: hold run control. The user sees it at the GUI and can take it back; from then on
         control calls (pause, resume, step*, run_*) raise ControlRevoked - stop, do not retry, do not take control

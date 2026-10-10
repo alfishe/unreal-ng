@@ -1113,6 +1113,14 @@ void RegisterControlExecution(ToolRegistry& registry)
                             done(ToolResult::Error("Pause failed (HTTP " + std::to_string(status) + "): " + DescribeErrorBody(body)));
                             return;
                         }
+                        // Queued behind a running command: the machine still runs; its registers now would mislead
+                        if (body.get("status", "").asString() != "success")
+                        {
+                            const std::string message = body.get("message", "The pause is queued").asString();
+                            done(ToolResult::Ok(message + " Call pause again or inspect_state when it has applied.",
+                                                std::move(body)));
+                            return;
+                        }
                         // Append register snapshot — meaningful right after a pause
                         caller.Call("GET", Endpoint(id, "/registers"), nullptr, [body, done](int regStatus, Json::Value registers) mutable {
                             if (regStatus == 200)

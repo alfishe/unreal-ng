@@ -952,6 +952,26 @@ bool EmulatorManager::PauseEmulator(const std::string& emulatorId, execution::Or
     return PauseEmulator(emulatorId, execution::Requester{origin, {}});
 }
 
+execution::Result EmulatorManager::PauseEmulatorWithResult(const std::string& emulatorId,
+                                                           const execution::Requester& requester,
+                                                           std::chrono::milliseconds wait)
+{
+    std::shared_ptr<Emulator> emulator;
+    {
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
+        auto it = _emulators.find(emulatorId);
+        if (it != _emulators.end())
+            emulator = it->second;
+    }
+    if (!emulator)
+        return execution::Result{execution::Outcome::Refused, 0, execution::Intent::Pause, "no such emulator"};
+    if (!emulator->IsRunning())
+        return execution::Result{execution::Outcome::Refused, 0, execution::Intent::Pause, "not running"};
+    // Not "already paused" from the flag: a direct run (run_frames) drives a paused machine - Pause() says queued
+    // behind it then
+    return wait.count() > 0 ? emulator->PauseAndWait(requester, wait) : emulator->Pause(requester);
+}
+
 bool EmulatorManager::PauseEmulator(const std::string& emulatorId, const execution::Requester& requester)
 {
     // The instance is taken under the lock; the pause (which waits for the park, up to 500 ms) runs outside it

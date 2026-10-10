@@ -1421,11 +1421,42 @@ execution::Result Emulator::Pause(const execution::Requester& requester, const s
     if (_arbiter.HoldsCpu())
         return ticket.Peek();
 
-    // In order with every other request; then the park. Pause() means "no more emulated writes" to its callers
-    // (tests, snapshot loading), so it waits for both, briefly: a request behind a long command stays queued and
-    // applies when that ends
-    const execution::Result result = ticket.Wait(std::chrono::milliseconds(500));
-    _arbiter.WaitParked(execution::Clock::now() + std::chrono::milliseconds(500));
+    // Behind a command another thread serves (a direct run, a hold): queued, it applies when that ends. Waiting would
+    // only wait for the command (a pause never aborts one): say so at once, naming it
+    if (const std::optional<std::string> command = _arbiter.ServingCommand())
+    {
+        execution::Result queued = ticket.Peek();
+        if (queued.outcome == execution::Outcome::Pending)
+        {
+            queued.detail = "queued behind " + *command + ": the pause applies when it ends";
+            return queued;
+        }
+    }
+    // Nothing ahead: in order with every other request, then the park - milliseconds, 5 s for a starved host
+    const auto deadline = execution::Clock::now() + std::chrono::seconds(5);
+    const execution::Result result = ticket.Wait(deadline);
+    _arbiter.WaitParked(deadline);
+    return result;
+}
+
+execution::Result Emulator::PauseAndWait(const execution::Requester& requester, std::chrono::milliseconds budget,
+                                         const std::string& reason)
+{
+    if (!_isRunning || !_mainloop)
+        return execution::Result{execution::Outcome::Refused, 0, execution::Intent::Pause, "not running"};
+    if (_arbiter.IsLoopThread() || _arbiter.HoldsCpu())
+        return Pause(requester, reason);  // waiting here would only wait for this thread's own work
+    execution::Ticket ticket =
+        _arbiter.SubmitIntent(execution::Intent::Pause, requester, execution::IntentOptions{reason, false});
+    execution::Result result = ticket.Wait(execution::Clock::now() + budget);
+    if (result.outcome == execution::Outcome::Pending)
+    {
+        // Still behind a command: it stays queued and applies when that ends
+        result.outcome = execution::Outcome::Busy;
+        result.detail = "still queued after " + std::to_string(budget.count()) + " ms behind " + result.detail;
+        return result;
+    }
+    _arbiter.WaitParked(execution::Clock::now() + std::chrono::seconds(5));
     return result;
 }
 
@@ -2761,7 +2792,7 @@ void Emulator::RestartFrame()
 
 void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "step");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
     ResetLineStepAnchor();
@@ -2777,7 +2808,7 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
 }
 
-Emulator::DirectStepScope::DirectStepScope(Emulator& emulator) : _emulator(emulator)
+Emulator::DirectStepScope::DirectStepScope(Emulator& emulator, const char* tag) : _emulator(emulator)
 {
     // A running machine: take the CPU first - park the loop, pause (outermost), and keep everybody else out until
     // the run ends. Not running (a fixture, a ZX-Poly slave its master steps): nothing else drives it
@@ -2787,7 +2818,7 @@ Emulator::DirectStepScope::DirectStepScope(Emulator& emulator) : _emulator(emula
         execution::CommandOptions options;
         options.drivesZ80 = true;
         options.pauseFirst = true;
-        _hold = _emulator._arbiter.BeginHold(execution::Requester{execution::Origin::Internal, {}}, "direct run",
+        _hold = _emulator._arbiter.BeginHold(execution::Requester{execution::Origin::Internal, {}}, tag,
                                              execution::Clock::now() + std::chrono::seconds(5), &result, options);
         if (!_hold.Valid())
             LOGWARNING("Emulator - a direct run did not get the CPU (%s, %s); running anyway",
@@ -2865,7 +2896,7 @@ Emulator::DirectStepScope::~DirectStepScope()
 
 unsigned Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "steps");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
     ResetLineStepAnchor();
@@ -2891,7 +2922,7 @@ unsigned Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
 
 void Emulator::RunFrame(bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_frame");
     CancelPendingStepOver();
     ResetLineStepAnchor();
 
@@ -2942,7 +2973,7 @@ void Emulator::RunFrame(bool skipBreakpoints)
 
 void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_frames");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
@@ -2993,7 +3024,7 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 
 void Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_tstates");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
     ResetLineStepAnchor();
@@ -3050,7 +3081,7 @@ void Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints)
 
 void Emulator::RunUntilScanline(unsigned targetLine, bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_to_scanline");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
@@ -3087,7 +3118,7 @@ void Emulator::RunUntilScanline(unsigned targetLine, bool skipBreakpoints)
 
 void Emulator::RunNScanlines(unsigned count, bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_scanlines");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
@@ -3159,7 +3190,7 @@ void Emulator::ResetLineStepAnchor()
 
 void Emulator::RunUntilNextScreenPixel(bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_to_pixel");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
@@ -3196,7 +3227,7 @@ void Emulator::RunUntilNextScreenPixel(bool skipBreakpoints)
 
 void Emulator::RunUntilInterrupt(bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_to_interrupt");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
@@ -3240,7 +3271,7 @@ void Emulator::RunUntilInterrupt(bool skipBreakpoints)
 void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate, uint64_t maxTStates,
                                  bool notifyDebugger)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_until_condition");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 

@@ -337,6 +337,9 @@ public:
     bool WaitParked(Clock::time_point deadline);
     /// True when this thread holds the CPU (a command body, or the main loop's thread)
     bool HoldsCpu() const;
+    /// The command another thread is serving now (a hold, a direct run, a posted command), described for the user:
+    /// "'run_frames' (webapi)"; none: nullopt. A pause asked meanwhile waits for it (Emulator::Pause does not)
+    std::optional<std::string> ServingCommand() const;
     Snapshot GetSnapshot() const;
     /// endregion </Queries>
 

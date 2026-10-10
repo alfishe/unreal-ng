@@ -1010,10 +1010,12 @@ namespace PythonBindings
             .def("start", &Emulator::Start, "Start emulator execution")
             .def("start_async", &Emulator::StartAsync, "Start emulator asynchronously")
             .def("stop", &Emulator::Stop, "Stop emulator")
-            .def("pause", [](Emulator& self) {
+            .def("pause", [](Emulator& self) -> std::string {
                 execution::script::Check(self, execution::Origin::Python);
-                self.Pause(execution::script::RequesterOf(self, execution::Origin::Python), "python");
-            }, "Pause emulator")
+                const execution::Result r =
+                    self.Pause(execution::script::RequesterOf(self, execution::Origin::Python), "python");
+                return execution::script::PauseStatus(r);
+            }, "Pause emulator; returns 'paused', 'queued: <behind what>' (applies when that ends) or 'refused: <why>'")
             .def("resume", [](Emulator& self) {
                 execution::script::Check(self, execution::Origin::Python);
                 self.Resume(execution::script::RequesterOf(self, execution::Origin::Python));

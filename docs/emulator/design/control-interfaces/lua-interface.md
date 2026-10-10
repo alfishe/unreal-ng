@@ -515,7 +515,7 @@ success = emu:init()
 
 -- Control
 emu:reset()
-emu:pause()
+emu:pause()   -- "paused", "queued: behind <command>" (applies when it ends) or "refused: <why>"
 emu:resume()
 r = emu:step(false)      -- one instruction, breakpoints honored (default true skips them)
 r = emu:steps(count)     -- up to N instructions; a breakpoint ends the run early

@@ -531,3 +531,85 @@ TEST_F(ExecutionArbiterMachine_Test, ReadingTheVideoLogDuringADirectRunNeverRead
     reader.join();
     EXPECT_GT(reads.load(), 0);
 }
+
+namespace
+{
+/// Another thread holds the CPU (a direct run, a long command) until released
+struct ForeignHold
+{
+    Emulator* emulator;
+    std::atomic<bool> release{false};
+    std::atomic<bool> held{false};
+    std::thread thread;
+
+    explicit ForeignHold(Emulator* e) : emulator(e)
+    {
+        thread = std::thread([this]() {
+            Emulator::CpuHold hold(*emulator, "long command");
+            held = true;
+            while (!release.load())
+                std::this_thread::yield();
+        });
+        EXPECT_TRUE(TestWait::For([&]() { return held.load(); }));
+    }
+    void Release()
+    {
+        release = true;
+        if (thread.joinable())
+            thread.join();
+    }
+    ~ForeignHold() { Release(); }
+};
+}  // namespace
+
+/// The hybrid pause: behind a command another thread serves, a surface's pause returns at once, queued, naming the
+/// command; it applies when the command ends
+TEST_F(ExecutionArbiterMachine_Test, APauseBehindACommandReturnsAtOnceQueuedAndApplyLater)
+{
+    ForeignHold command(_emulator);
+    const auto t0 = std::chrono::steady_clock::now();
+    const execution::Result result = _emulator->Pause(execution::Requester{execution::Origin::WebApi, {}});
+    const auto waited = std::chrono::steady_clock::now() - t0;
+    EXPECT_EQ(result.outcome, execution::Outcome::Pending);
+    EXPECT_NE(result.detail.find("long command"), std::string::npos) << result.detail;
+    EXPECT_LT(waited, 200ms) << "it did not wait for the command";
+    command.Release();
+    EXPECT_TRUE(TestWait::For([&]() { return _emulator->IsPaused() && _emulator->IsEmulationParked(); }))
+        << "the queued pause applied when the command ended";
+}
+
+/// Nothing ahead: the pause waits for the park and is in force when it returns
+TEST_F(ExecutionArbiterMachine_Test, APauseWithNothingAheadIsInForceWhenItReturns)
+{
+    const execution::Result result = _emulator->Pause(execution::Requester{execution::Origin::WebApi, {}});
+    EXPECT_EQ(result.outcome, execution::Outcome::Applied) << result.detail;
+    EXPECT_TRUE(_emulator->IsPaused());
+    EXPECT_TRUE(_emulator->IsEmulationParked());
+}
+
+/// PauseAndWait (?wait=true): waits behind the command within its budget; past it: Busy, the pause still queued
+TEST_F(ExecutionArbiterMachine_Test, PauseAndWaitWaitsForTheCommandWithinItsBudget)
+{
+    {
+        ForeignHold command(_emulator);
+        std::thread releaser([&]() {
+            // The command ends once the pause is queued behind it (the pause then waits for it)
+            EXPECT_TRUE(TestWait::For([&]() { return !_emulator->GetArbiter().GetSnapshot().queue.empty(); }));
+            command.Release();
+        });
+        const execution::Result result =
+            _emulator->PauseAndWait(execution::Requester{execution::Origin::WebApi, {}}, 2000ms);
+        releaser.join();
+        EXPECT_EQ(result.outcome, execution::Outcome::Applied) << result.detail;
+        EXPECT_TRUE(_emulator->IsPaused());
+    }
+    _emulator->Resume(execution::Requester{execution::Origin::WebApi, {}});
+    ASSERT_TRUE(TestWait::For([&]() { return !_emulator->IsPaused(); }));
+
+    ForeignHold command(_emulator);
+    const execution::Result busy = _emulator->PauseAndWait(execution::Requester{execution::Origin::WebApi, {}}, 10ms);
+    EXPECT_EQ(busy.outcome, execution::Outcome::Busy);
+    EXPECT_NE(busy.detail.find("long command"), std::string::npos) << busy.detail;
+    command.Release();
+    EXPECT_TRUE(TestWait::For([&]() { return _emulator->IsPaused(); })) << "still queued: it applied afterwards";
+}

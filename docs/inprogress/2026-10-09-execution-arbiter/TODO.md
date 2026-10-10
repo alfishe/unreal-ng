@@ -430,8 +430,17 @@ showed the same address.
 - [ ] **A long direct run against a hold:** a hold waits for a direct run at most 5 s, then proceeds without the CPU
   (logged). run_frames 10000 lasts ~20 s: a TTD stop from the GUI meanwhile can still race it. Next: long direct runs
   let holds in between frames.
-- [ ] **`Pause()` on a starved machine** returns after 500 ms whether the pause applied or not. The places that need
-  the machine still use a hold, not the pause; whether `Pause()` should wait to the end is open.
+- [x] **`Pause()` - the hybrid (owner decision 2026-10-10).** Behind a command another thread serves (a direct run, a
+  hold) the pause is queued and the call returns at once: Pending, the command named (`ExecutionArbiter::
+  ServingCommand`); it applies when the command ends (a pause never aborts one). Nothing ahead: it waits for the park,
+  up to 5 s (was 500 ms; a starved host). `Emulator::PauseAndWait(requester, budget)` waits behind the command too;
+  past the budget: Busy, still queued. Surfaces say it honestly:
+  - WebAPI `POST /pause`: `200 success`, `202 queued` with `waiting_for`, `?wait=true|<ms>` (`202 busy` after it),
+    `409` refused (run control);
+  - MCP `control_execution pause`: the queued message, no registers (a running machine's);
+  - CLI: "Pause queued behind ..."; Lua / Python `pause()` returns "paused" / "queued: ..." / "refused: ...".
+  Tests: `APauseBehindACommandReturnsAtOnceQueuedAndApplyLater`, `APauseWithNothingAheadIsInForceWhenItReturns`,
+  `PauseAndWaitWaitsForTheCommandWithinItsBudget`.
 - [x] **GDB socket close** releases run control: `GdbSessionTakeBack_Test.AClosedSocketEndsTheSession`.
 - [x] **No retry, no rush back:** `revoked_by_user` with `retry: false`, the MCP stop error and server
   instructions, Python / Lua `ControlRevoked`, the CLI message, the recipe rule, the server's per-client re-take

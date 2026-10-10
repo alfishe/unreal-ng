@@ -232,7 +232,8 @@ private:
     class DirectStepScope
     {
     public:
-        explicit DirectStepScope(Emulator& emulator);
+        /// `tag`: the command as the user knows it ("run_frames"): a pause queued behind it names it
+        DirectStepScope(Emulator& emulator, const char* tag);
         ~DirectStepScope();
         DirectStepScope(const DirectStepScope&) = delete;
         DirectStepScope& operator=(const DirectStepScope&) = delete;
@@ -494,8 +495,15 @@ public:
     void Pause();   // a pause with the Internal origin; a surface uses Pause(Requester); a still CPU: CpuHold
     void Resume();  // a run with the Internal origin; a surface uses Resume(Requester)
     /// A pause asked by a surface (execution arbiter intent): GUI, WebAPI, CLI, scripts, GDB, DeZog, TTD. The origin
-    /// is kept with the pause (who set it) and broadcast with it
+    /// is kept with the pause (who set it) and broadcast with it. Behind a command another thread serves (a direct
+    /// run, a hold) it is queued and the call returns at once: Pending, the command named in `detail` - the pause
+    /// applies when that ends (a pause never aborts a command). Otherwise it waits for the main loop to park, up to
+    /// 5 s (a starved host)
     execution::Result Pause(const execution::Requester& requester, const std::string& reason = "pause");
+    /// The same, but waiting for the pause behind a command too, up to `budget`; still queued then: Busy (it stays
+    /// queued and applies when the command ends)
+    execution::Result PauseAndWait(const execution::Requester& requester, std::chrono::milliseconds budget,
+                                   const std::string& reason = "pause");
     /// A run asked by a surface. Refused while another surface holds the run-control claim; with `onlyIfOwner`,
     /// refused when the pause in force was set by somebody else (DeZog's session close, the TTD resume verb)
     execution::Result Resume(const execution::Requester& requester, bool onlyIfOwner = false);
