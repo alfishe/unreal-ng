@@ -370,7 +370,7 @@
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["in"] = "query";
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["required"] = false;
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["description"] =
-        "Number of instructions (default: 10, max: 100)";
+        "Number of instructions (default: 10, max: 256)";
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/disasm"]["get"]["responses"]["200"]["description"] = "Disassembled instructions";
 

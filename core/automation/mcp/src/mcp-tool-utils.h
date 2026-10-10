@@ -10,6 +10,7 @@
 #include "mcp-tools.h"
 #include "target-resolver.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -137,6 +138,54 @@ inline std::string FormatRegisters(const Json::Value& registers)
     if (registers["interrupt"]["halted"].asBool())
         out << " HALT";
     return out.str();
+}
+
+/// A GET /disasm body ({address, instructions[{address, bytes, mnemonic, label?, target?, targetLabel?,
+/// effectiveAddress?, effectiveAddressLabel?}]}) as a listing, one instruction per line:
+///   "label:" line, then "7396  CD 00 74     call #7400      ; -> label"
+inline std::string FormatDisasmListing(const Json::Value& body)
+{
+    std::ostringstream out;
+    if (!body.isMember("instructions") || !body["instructions"].isArray())
+        return out.str();
+    for (const Json::Value& line : body["instructions"])
+    {
+        if (line.isMember("label"))
+            out << line["label"].asString() << ":\n";
+        char head[8];
+        std::snprintf(head, sizeof(head), "%04X", line["address"].asUInt() & 0xFFFFu);
+        std::string bytes;
+        const std::string hex = line["bytes"].asString();
+        for (size_t i = 0; i + 1 < hex.size(); i += 2)
+        {
+            if (!bytes.empty())
+                bytes += ' ';
+            bytes += hex.substr(i, 2);
+        }
+        bytes.resize(std::max<size_t>(bytes.size(), 12), ' ');
+        std::string mnemonic = line["mnemonic"].asString();
+        std::string note;
+        if (line.isMember("targetLabel"))
+            note = "-> " + line["targetLabel"].asString();
+        if (line.isMember("effectiveAddress"))
+        {
+            char ea[8];
+            std::snprintf(ea, sizeof(ea), "%04X", line["effectiveAddress"].asUInt() & 0xFFFFu);
+            note += std::string(note.empty() ? "" : ", ") + "ea #" + ea;
+            if (line.isMember("effectiveAddressLabel"))
+                note += " " + line["effectiveAddressLabel"].asString();
+        }
+        if (!note.empty())
+            mnemonic.resize(std::max<size_t>(mnemonic.size(), 20), ' ');
+        out << head << "  " << bytes << "  " << mnemonic;
+        if (!note.empty())
+            out << "  ; " << note;
+        out << "\n";
+    }
+    std::string text = out.str();
+    if (!text.empty() && text.back() == '\n')
+        text.pop_back();
+    return text;
 }
 
 /// Formats an address argument (integer or "0x…" string) for a query string

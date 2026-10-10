@@ -94,7 +94,10 @@ WebAPI's thread calls `run()`), and `stopMCP()` runs **after** `stopWebAPI()`.
 
 Every tool accepts `target` (emulator id or `auto`; `auto` creates a 128K
 machine when none exists, refuses when several exist) and answers with dual
-content: `content[]` text summary + `structuredContent` machine data.
+content: `content[]` text summary + `structuredContent` machine data; the
+structuredContent is echoed in `content[]` as JSON text for clients that pass
+only the text to the model (cut at 64 KB), unless the text already holds the
+data (the `debug_code disassemble` listing).
 Tool-level failures are `isError: true` results with remediation hints —
 never JSON-RPC errors.
 
