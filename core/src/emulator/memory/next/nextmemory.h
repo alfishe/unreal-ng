@@ -108,6 +108,8 @@ public:
     };
     void SetDivMmcView(const DivMmcView& view);
     const DivMmcView& GetDivMmcView() const { return _divView; }
+    /// Layer 2 supplies the READS (opcode fetches) of this address: its read mapping covers the slot (zxnext.vhd sram_layer2_map_en)
+    bool Layer2ReadsAt(uint16_t address) const;
     /// The Multiface: its 8K ROM and 8K RAM (system area page 5, SRAM #014000) stand in for slots 0 and 1, above the DivMMC
     void SetMultifaceActive(bool active);
     bool MultifaceActive() const { return _mfActive; }

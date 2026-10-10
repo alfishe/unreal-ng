@@ -19,7 +19,7 @@ the user's NextZXOS state), so `browser` can open anywhere - start with `go:` th
 Example, run the base Copper real-board test:
     drive.py boot space browser go:tests go:base go:copper enter
 """
-import argparse, json, sys, time, urllib.request
+import argparse, json, os, re, sys, time, urllib.request
 
 
 class Machine:
@@ -51,6 +51,38 @@ class Machine:
         for _ in range(8):
             self.tap('edit')
             self.idle(0.6)
+
+    def reach(self, folder, name, runs=False):
+        """Put the cursor on `name` of the directory shown (host path `folder`) and press ENTER. The Browser's order is '.' '..' then the
+        names case-insensitively; the search (H) takes the shortest unique prefix of letters and digits, any other name is reached by
+        counting down from the top. runs=True: the entry is a program, do not wait for the key-wait loop afterwards"""
+        entries = ['.', '..'] + sorted(os.listdir(folder), key=lambda n: n.lower())
+        lower = [e.lower() for e in entries]
+        safe = re.match(r'^[A-Za-z0-9]+', name)
+        if safe:
+            text = safe.group(0).lower()
+            for length in range(1, len(text) + 1):
+                if sum(e.startswith(text[:length]) for e in lower) == 1:
+                    self.tap('h')
+                    time.sleep(0.3)
+                    self.call('/%s/keyboard/type' % self.id, {'text': name[:length], 'delay_frames': 5})
+                    time.sleep(0.4 + 0.12 * length)
+                    self.idle(0.3)
+                    self.tap('enter')  # accept the search
+                    time.sleep(0.3)
+                    break
+            else:
+                self._count_down(entries.index(name))
+        else:
+            self._count_down(entries.index(name))
+        self.tap('enter')  # open / run the entry
+        if not runs:
+            self.idle(1.2)
+
+    def _count_down(self, index):
+        for _ in range(index):
+            self.tap('down', 4)
+            time.sleep(0.12)
 
     def search(self, name, runs=False):
         self.tap('h')

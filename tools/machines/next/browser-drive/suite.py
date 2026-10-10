@@ -16,7 +16,7 @@ from drive import Machine  # noqa: E402
 
 
 # keys a program waits for after it starts ("2" sets 28 MHz, "5" runs every test of the Z80N programs)
-KEYS = {'!Z80N.snx': ['2', '5'], '!Z80Nc2.snx': ['2', '5']}
+KEYS = {'!Z80N.snx': ['2', '5'], '!Z80Nc2.snx': ['2', '5'], 'UlaScrol.snx': ['r']}  # R: skip UlaScroll's 10 s animation
 
 
 def capture(machine, path):
@@ -54,12 +54,11 @@ def main():
                 machine.tap('b')
                 machine.idle(2.5)
                 machine.root()
+                folder = args.card
                 for part in ('tests', area, test):
-                    machine.search(part)
-                if program.startswith('!'):
-                    machine.tap('enter')  # the file the Browser puts first
-                else:
-                    machine.search(os.path.splitext(program)[0], runs=True)
+                    machine.reach(folder, part)
+                    folder = os.path.join(folder, part)
+                machine.reach(folder, program, runs=True)
                 if program.lower().endswith('.sna'):  # NextZXOS's own snapshot loader page: ENTER starts the program
                     time.sleep(4)
                     machine.tap('enter')

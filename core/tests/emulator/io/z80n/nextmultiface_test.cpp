@@ -124,3 +124,26 @@ TEST_F(NextMultiface_Test, TheDivMmcDoesNotAutomapWhileTheMultifaceIsIn)
     _ports->DivMmc().OnMachineM1(0x0038);
     EXPECT_TRUE(_ports->DivMmc().Automapped()) << "after the session the entry works again";
 }
+
+// The entries that need the 48K ROM do not map the DivMMC when a Layer 2 read mapping stands over the ROM (zxnext.vhd
+// sram_divmmc_automap_rom3_en has "not sram_layer2_map_en"): the L2Port test runs its IM1 handler in Layer 2 and the DivMMC stayed
+// mapped for the rest of the program
+TEST_F(NextMultiface_Test, TheRomThreeEntriesIgnoreALayer2ReadMapping)
+{
+    _ports->Board().Write(0x0A, 0x10);
+    _ports->Board().Write(0xB8, 0x80);  // entry #0038, valid only with ROM 3
+    _ports->Board().Write(0xB9, 0x00);
+    _context->emulatorState.p7FFD = 0x10;  // the 48K ROM (ROM 3 with #1FFD bit 2)
+    _context->emulatorState.p1FFD = 0x04;
+    _memory->ApplyClassicPaging(0x10, 0x04);
+    ASSERT_TRUE(_memory->BasicRomVisible());
+    // Layer 2 reads over #0000-#3FFF, writes too: port #123B bit 2 (read) | bit 0 (write) | bit 1 (enabled)
+    _ports->DecodePortOut(0x123B, 0x07, 0);
+    ASSERT_TRUE(_memory->Layer2ReadsAt(0x0038));
+    _ports->DivMmc().OnMachineM1(0x0038);
+    EXPECT_FALSE(_ports->DivMmc().Automapped()) << "Layer 2 supplies the fetch: no automap";
+    _ports->DecodePortOut(0x123B, 0x00, 0);
+    ASSERT_FALSE(_memory->Layer2ReadsAt(0x0038));
+    _ports->DivMmc().OnMachineM1(0x0038);
+    EXPECT_TRUE(_ports->DivMmc().Automapped());
+}

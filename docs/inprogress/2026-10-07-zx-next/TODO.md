@@ -128,6 +128,7 @@ The 35 programs of `ZXSpectrumNextTests/release` (48K snapshots, results checked
 
 ## Running the board's programs the way a person does (2026-10-09)
 - [x] `tools/machines/next/browser-drive/suite.py`: every program of `tests/<area>/<test>/` on the card, one fresh boot each, through NextZXOS's Browser (the path the snapshot loader tests do not cover); `!Copper.snx` and `L2Colour.snx` show their pictures. Result of the whole set: see the report in the commit message / `scratch/browser-suite/report.md`
+- [x] The four differences of the first Browser run, closed 2026-10-09: **L2Port** (its IM1-in-Layer-2 test mapped the DivMMC at #0038 - on the board the ROM-3 automap entries need "not Layer 2 reads" (`sram_divmmc_automap_rom3_en`), so the DivMMC stayed mapped over slot 0 for the rest of the program; fixed, all green, green border); **TFalBUla** (all three phases by "n" match the readme); **UlaScrol** (R skips the animation, the green-border interactive state matches); **SprDelay** (identical to MAME 0.282's picture of core 3.02.1, the same family as ours; the board photos are core 3.0.5 with the older double-buffered sprite engine, so they differ by design)
 - [x] Execution breakpoints need the `debugmode` feature, and an address alone matches in every ROM page (`page: rom2`): both in the recipe
 
 ## What counts as a reference (owner, 2026-10-09)

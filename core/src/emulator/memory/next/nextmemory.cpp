@@ -181,6 +181,14 @@ void NextMemory::SetDivMmcView(const DivMmcView& view)
     Remap();
 }
 
+bool NextMemory::Layer2ReadsAt(uint16_t address) const
+{
+    if (!_l2View.read)
+        return false;
+    const unsigned slot = address >> 13;
+    return slot < 2 || (_l2View.segment == 3 && slot < 6);
+}
+
 void NextMemory::SetMultifaceActive(bool active)
 {
     if (active == _mfActive)
