@@ -176,6 +176,21 @@ python3 tools/verification/unreal-asm/emulator/assemble-in-emulator.py gens4 DEV
 #   1235 bytes from #80E8 written to scratch/iscop.bin; check scratch/iscop.assembled.png for errors
 ```
 
+## The text in memory
+
+The text follows the code: line records `[number lo] [number hi] text #0D` from a start word to an end word
+(exclusive; the end word is an operand GENS rewrites, `+#36` from the load address in the tape builds):
+
+| Build (address) | Text | Start word | End word |
+|---|---|---|---|
+| GENS4 tape (26000) | `#8AED` | `#67A8` | `#65C6` |
+| GENS3M21 tape (49000) | `#E20A` | `#DE54` | `#BF9E` |
+| GENS 4.3t TR-DOS (26000) | `#8F2E` | `#689C` | `#61FB` |
+
+While a line is inserted (`I`) the line it goes before has bit 7 set in its number's high byte; the line being typed
+stays out of the text until Enter. The asm-synchronizer reads the text live (descriptors `gens-4`, `gens-3m21`,
+`gens-4.3t`; asm-synchronizer.md §7.13). GENS is relocatable: started elsewhere, the addresses move with it.
+
 ## Sources to and from the host
 
 - **Read a GENS file** (hobeta from a TR-DOS disk, or the data of a tape `P` save): `zxasm decode FILE.$C -o

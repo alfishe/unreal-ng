@@ -131,6 +131,9 @@ struct LinearParams
     /// SAVE writes a first line starting with this (the editor's position, ZAsm's ";!") that the editor takes out on
     /// loading: the live file is without it ("" = none)
     std::string stateLine;
+    /// GENS: records [number lo] [number hi] text #0D; while a line is typed in, the editor marks the line it goes
+    /// before with bit 7 of the number's high byte (numbers stay below 32768): the live file has it clear
+    bool clearLineMark = false;
 };
 
 struct TypingParams

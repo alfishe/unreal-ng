@@ -334,6 +334,17 @@ SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
         return Inconsistent(text, "the text ends (#" + Hex(*end, 4) + ") before it starts (#" + Hex(*start, 4) + ")");
     if (!machine.Read(*start, static_cast<size_t>(*end - *start), text.file))
         return Inconsistent(text, "the text lies in a page that was not copied");
+    if (p.clearLineMark)
+    {
+        for (size_t k = 0; k + 1 < text.file.size();)
+        {
+            text.file[k + 1] &= 0x7F;
+            const auto cr = std::find(text.file.begin() + static_cast<std::ptrdiff_t>(k + 2), text.file.end(), uint8_t(0x0D));
+            if (cr == text.file.end())
+                return Inconsistent(text, "a line record without its #0D end");
+            k = static_cast<size_t>(cr - text.file.begin()) + 1;
+        }
+    }
     text.file.insert(text.file.end(), p.end.begin(), p.end.end());
     text.ok = true;
     text.state = "ok";
@@ -618,6 +629,28 @@ SyncDescriptor Zxasm310()
     return d;
 }
 
+/// GENS (asm-synchronizer.md §7.13): the text follows the program's code, records [number] text #0D from the start
+/// word to the end word (exclusive); the editor marks the insert position in a number's bit 15 (clearLineMark).
+/// Relocatable: one descriptor per build at its usual address
+SyncDescriptor Gens(const std::string& id, const std::string& title, Signature identify, uint16_t startAt, uint16_t endAt)
+{
+    SyncDescriptor d;
+    d.id = id;
+    d.title = title;
+    d.codec = "gens";
+    d.version = "2";
+    d.extension = "A";
+    d.identify = {std::move(identify)};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.startAt = startAt;
+    d.linear.endAt = endAt;
+    d.linear.upperPage = 0;
+    d.linear.clearLineMark = true;
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 /// ZX-ASM 2.4 / 2.5 / 2.6 (asm-synchronizer.md §7.9): plain text (blank runs only) in one buffer, the start word at
 /// the program's load address + 3, the end word after it; the part above #C000 in RAM page 0 (the 48K memory). 2.6
 /// keeps its ";*" line in the buffer and saves it as text
@@ -776,6 +809,9 @@ const std::vector<SyncDescriptor>& Descriptors()
                      "\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF\x72\x73\x74\x75\x66\x68\x63\x7E\x7B\x7D\x5C\x79", 0x68FB),
         Zxasm310(),
         Zxasm30(),
+        Gens("gens-4", "GENS4 (HiSoft Devpac 4, tape, at 26000)", {0x88F0, "Copyright (C) HiSoft 1987"}, 0x67A8, 0x65C6),
+        Gens("gens-3m21", "GENS3M21 (HiSoft Devpac 3, tape, at 49000)", {0xE001, "HISOFT GENS3M2 ASSEMBLER"}, 0xDE54, 0xBF9E),
+        Gens("gens-4.3t", "GENS 4.3t (Aysoft, TR-DOS)", {0x8A9F, "BETA DISK VERSION 4.3t"}, 0x689C, 0x61FB),
         ZxAsm2("zasm-2.4", "ZX-ASM 2.4", 0x806C,
                "\x70\x65\x00\x70\x00\x6D\x00\x7E\xFE\x20\x20\x08\x23\x7E\xFE\x20\x28\xFA\xB7\xC9\xFE\x06\x37\xC0", 0x6273),
         ZxAsm2("zasm-2.5", "ZX-ASM 2.5", 0x804C,
