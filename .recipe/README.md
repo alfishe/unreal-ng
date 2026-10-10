@@ -76,6 +76,8 @@ matches; it names the recipe(s) for that action.
 | Watching port I/O | [analysis/port-trace.md](analysis/port-trace.md) | ttd-*, memory-counters |
 | Capturing the VDAC2 card's FT812 bus (an .evr replay stream) | [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | port-trace |
 | Counting/mapping memory access | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
+| Finding where the emulator itself (the host process) spends its CPU time | [testing/host-profiling.md](testing/host-profiling.md) | analysis/* (they profile the guest) |
+| A Sprinter boot straight into a program (tests, benchmarks, a GUI session) | [media/sprinter-test-images.md](media/sprinter-test-images.md) | demo-runner, Flex Navigator walking |
 | Recording a video (with sound) of a run | [media/video-recording.md](media/video-recording.md) | everything else |
 | Debugging a visual/screen bug | [analysis/ttd-visual-inspection.md](analysis/ttd-visual-inspection.md) + [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | everything else until you have a reproducible frame |
 | Detecting a custom loader / triaging a hang | [analysis/nonstandard-loader.md](analysis/nonstandard-loader.md) | port-trace (it's composed in already) |
@@ -112,6 +114,7 @@ call.
 | [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | Viewing emulator screen as agent: native MCP/WebAPI server-side binary saving without base64 transcript corruption |
 | [media/disk-sector-and-catalog-inspection.md](media/disk-sector-and-catalog-inspection.md) | Inspect a loaded disk: catalog, info, sysinfo, decoded and raw sectors and tracks, image download, create / eject |
 | [media/sprinter-hdd.md](media/sprinter-hdd.md) | Sprinter hard disks: IDE slots ide0/ide1, mounting an HDD image, booting DSS from it (DSS 1.71 needs BIOS 3.06), state ide |
+| [media/sprinter-test-images.md](media/sprinter-test-images.md) | A Sprinter disk that boots straight into your program: a composite over the system disk (no copy), a copy with `make-test-image.sh`, or the in-session `SYSTEM.BAT` rewrite of the tests; the same boot every time |
 
 ### `run/` — making software actually run
 
@@ -198,6 +201,13 @@ call.
 | [peripherals/covox-sounddrive.md](peripherals/covox-sounddrive.md) | CovoxFB/CovoxDD/SoundDrive toggles, quad-DAC ports `#F1-#FB`, mono compat mode, capture+trace verification |
 | [peripherals/network.md](peripherals/network.md) | Network adapters: ZXNETUSB (W5300) card, the virtual network (DHCP, DNS, gateway, guest servers), NedoOS setup, state on every interface, what hangs without a card |
 | [peripherals/cmos-rtc.md](peripherals/cmos-rtc.md) | CMOS clock on ATM3 / Profi / Scorpion+SMUC: report, cell read / write on every interface, setting the time, battery files |
+
+### `testing/` — checking and measuring the emulator itself
+
+| Recipe | What it covers |
+|:--|:--|
+| [testing/webapi-verification.md](testing/webapi-verification.md) | Verifying a WebAPI change end to end |
+| [testing/host-profiling.md](testing/host-profiling.md) | Where the emulator spends its host CPU time (macOS xctrace): a repeatable load, record, reports per function / source line / callee / thread |
 
 ### `articles/` — full workflows that combine recipes
 

@@ -27,6 +27,10 @@ UNREAL_SPRINTER_HDD=/path/to/sp_hdd_sys.img \
 - **The build.** The benchmarks need one CMake configure with `-DBENCHMARKS=ON` in the build folder; after that
   `build.sh` keeps the setting. Build them in Release: a Debug build measures something else.
 
+Another disk, or another build of a demo on it: `UNREAL_SPRINTER_HDD` also takes a composite descriptor or a
+test copy ([test-disk-images.md](../../../../docs/inprogress/2026-09-28-sprinter/test-disk-images.md)). Profiling
+a case, to see where its time goes: [tools/profiling/xctrace/](../../../../tools/profiling/xctrace/README.md).
+
 ## What one case does
 
 1. It creates `SPRINTER` with 4 MB of RAM.

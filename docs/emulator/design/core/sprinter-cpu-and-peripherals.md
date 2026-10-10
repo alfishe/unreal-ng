@@ -573,7 +573,16 @@ With none of them the configured Sprinter has no step hook, and `kStepWorkMachin
 The DNTBLINK demo was profiled on 2026-10-09 (`dont_blink_test1` build on the MAME pack's system disk, 21 MHz, no
 sound cards: 5.6 ms of host CPU per 20.48 ms frame). Event counters per frame: 55 000 steps, of which **45 000
 (82 %) are idle cycles of a halted CPU** at `#0216` (`EI : HALT`, waiting for CTC 3); 55 000 daisy-chain walks
-of ~7.4 sources each; 59 000 screen catch-ups drawing 7 pixels each on average. The structural costs:
+of ~7.4 sources each; 59 000 screen catch-ups drawing 7 pixels each on average.
+
+How it was profiled:
+- The functions and source lines come from xctrace Time Profiler traces
+  ([tools/profiling/xctrace/](../../../../tools/profiling/xctrace/README.md)).
+- The load was a test disk that starts the demo at boot
+  ([test-disk-images.md](../../../inprogress/2026-09-28-sprinter/test-disk-images.md)).
+- The event counts came from a temporary counting build.
+
+The repeatable load since then is `BM_SprinterDemo_*` (§8.10). The structural costs:
 
 | Cost per step | Where |
 |---|---|
