@@ -492,7 +492,8 @@ Built and reviewed, not exercised by an automated GUI test (the Qt widgets have 
 **Found on the way:** a heap-use-after-free on every Sprinter teardown (the decoder detached itself from the
 already freed `SprinterMemory`; `InstancesCanBeRemovedAndCreatedAgain`, AddressSanitizer). The same class of bug
 exists in the ATM710 (`~PortDecoder_ATM710` touches the freed keyboard) and TSConf (`~PortDecoder_TSConf` touches
-the freed memory) decoders: not fixed here (TODO).
+the freed memory) decoders: not fixed here. Fixed 2026-10-10: both now check the context's pointer, which `Core::Release`
+clears before it deletes the part (`EmulatorManager_Test.EveryModelCanBeRemovedWhileRunning`, AddressSanitizer).
 
 **Deviations from the design:**
 
