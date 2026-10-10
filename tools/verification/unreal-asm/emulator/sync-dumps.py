@@ -15,6 +15,7 @@ save the text itself and keep the file. The synchronizer's reader must give that
     sync-dumps.py gens <disk with TEST.A> <out-dir> --boot GENS4tf --source TEST --type A --tag gens43t   # GENS 4.3t
     sync-dumps.py genstape <DEVPAC_4.TAP> <out-dir> --source t.gens --tag gens4 --model 48K    # GENS4 (GENS3: --at 25444 --code-length 8355)
     sync-dumps.py zeus <ZEUS.TAP | zeus.$c | ZEUS_GG.SCL | ZEUS72ZK.SCL> <out-dir> --build 1983 --model 48K --source z.bin --tag zeus1983
+    sync-dumps.py zeus <PRIMUS29 disk, the source as PRI.DOC> <out-dir> --build primus --source - --tag primus29
     sync-dumps.py masm <disk with t1.a> <out-dir> --boot m2 --source t1 --menu-save --tag masm20   # MASM 2.0 (3.0: TSM)
     sync-dumps.py masmdemo <SpFon_15.Trd> <out-dir> --source T1 --tag masm10   # MASM 1.0 demo: the text typed in
     sync-dumps.py xas <disk-with-PROBE.X> <out-dir> --boot NAME --list-keys right[,down...] --tag TAG
@@ -470,6 +471,27 @@ def genstape(emu, args):
 def zeus(emu, args):
     """ZEUS (--build 1983 | 1.1 | gg | 7e): started as assemble-in-emulator.py does, the source (a ZEUS file, --source)
     written at 32768 and made current with "o 32768"; the loaded case, then a line typed at the prompt (not entered)"""
+    if args.build == 'primus':                 # it loads PRI.DOC (put the source there, start 33364) and saves
+        emu.insert_disk(args.disk)
+        emu.run_trdos('P_AS_2.9', wait=12)
+        source = saved(emu, 'PRI.DOC', 'C')
+        pages = [0, 2, 5]
+        dump(emu, args.out, f'{args.tag}-loaded', pages, 'PRI.C', source, {'editor': True, 'typing': False})
+        emu.type('25 nop')                     # caps lock is on: lower case arrives as capitals
+        dump(emu, args.out, f'{args.tag}-typing', pages, 'PRI.C', source, {'editor': True, 'typing': True})
+        emu.tap('enter')
+        time.sleep(1)
+        dump(emu, args.out, f'{args.tag}-edited', pages, 'PRI.C', None, {'editor': True, 'typing': False})
+        emu.type('b')                          # the disk menu, s NAME saves, q back
+        emu.tap('enter')
+        time.sleep(2)
+        emu.type('s saved')
+        emu.tap('enter')
+        time.sleep(4)
+        emu.type('q')
+        emu.tap('enter')
+        finish(args.out, f'{args.tag}-edited', 'PRI.C', saved(emu, 'SAVED', 'C'))
+        return
     source = open(args.source, 'rb').read()
     if args.build in ('7e', 'gg'):
         emu.insert_disk(args.disk)
@@ -653,7 +675,7 @@ def main():
     parser.add_argument('--big', help='zasm: a long text (over #C000) for a loaded case')
     parser.add_argument('--big-disk', help='zasm: the disk for the long text (default: the same)')
     parser.add_argument('--big-type', help='zasm: the long text\'s TR-DOS type (default: --type)')
-    parser.add_argument('--build', default='1983', help='zeus: 1983 | 1.1 | gg | 7e')
+    parser.add_argument('--build', default='1983', help='zeus: 1983 | 1.1 | gg | 7e | primus')
     parser.add_argument('--at', type=int, default=26000, help='genstape: where the code goes')
     parser.add_argument('--code-length', type=int, default=10880, help='genstape: the code block\'s length')
     parser.add_argument('--save-as', default='SAVED', help='gens: the name P saves the edited text under')

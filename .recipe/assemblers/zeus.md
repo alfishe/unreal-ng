@@ -209,6 +209,8 @@ memory untouched (sjasmplus writes zeros there).
   33364; named `PRI.DOC` on a copy of the disk (rename the original) it is loaded at start.
 - The code goes right after the text (33364 + the text's length, `h` shows it), whatever the `ORG`; `DEFS` leaves the
   memory there as it was.
+- The text in memory: from `(#61B1)` (`#8254`) to the last `FF` at `(#61B3)`, ZEUS's layout; the disk menu needs ENTER
+  after each command (`b` ENTER, `s NAME` ENTER saves, `q` ENTER). Read live by the asm-synchronizer (`primus-2.9`).
 - `DISK NAME` includes the file NAME: a name that is a keyword (`INC`) is stored as the token and is not found.
 
 ## Pitfalls

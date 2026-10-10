@@ -176,6 +176,7 @@ phase; master only after the owner's review.
       - [x] GENS4 (tape), GENS3M21 (tape), GENS 4.3t (TR-DOS) (2026-10-10): `Linear`, the insert mark cleared (§7.13)
       - [x] ZEUS 1983, 1.1, GG, v7.E (2026-10-10): `Linear` from the start / end words at `#FD00` (v7.E `#FAAB`) (§7.14)
       - [ ] ZEUS 2.2, 3.0, 3.1, Zeus Pro 2.01, Zeus Plus 2.16
+      - [x] Primus 2.9 (2026-10-10): ZEUS's start / last-FF pair at `#61B1` (§7.15)
       - [ ] GENS4B (TR-DOS): no way to start it found yet (`basic/run` refuses `RANDOMIZE USR` at the TR-DOS prompt; a PC write crashed)
     - [ ] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):
