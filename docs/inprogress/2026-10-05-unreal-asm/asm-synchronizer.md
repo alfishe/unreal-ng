@@ -354,7 +354,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | editor state | SAVE also rewrites header bytes 29-34 from the editor's variables (the cursor line address, 7.447: the operand of `LD HL,nn` at `#8097`; the column and row). The reader leaves those six bytes as the memory holds them: a live file differs from the next save there and only there, and the codec keeps them as they are |
 | identification | the title a new text gets, in the code: 4.18 `XAS by Max Petrov (HPM) 3.091` at `#B51A`; 5.05 / 5.05SE `XAS by Max Petrov (HPM) 5.05` at `#B601`; 7.43c `by Max Petrov & Creator v7.43` at `#B961`; 7.447 `... v7.44` at `#9B00`; 9.07m `XAS 9.07 ReCompiled by Mythos` at `#B8EA`; 9.10 `XAS by Max Petrov,64sm by STS` at `#B912` |
 | **Built** | descriptors `xas-4.18`, `-5.05`, `-7.43c`, `-7.447`, `-9.07m`, `-9.10`; checked live on 7.447 (a watch built the labels, a typed label joined them) |
-| open | 9.07m and 9.10 run SAVE (the header in memory is updated) but write nothing to the disk in unreal-ng: their edited state has no saved file to compare with. The port trace shows the cause on the emulator's side: Write Sector `#A0` on side 1 never raises DRQ (39 frames, then INTRQ with status `#00`), while 7.447's write on side 0 gets DRQ at once (TODO, an FDC issue) |
+| done | 9.07m and 9.10 SAVE wrote nothing to the disk in unreal-ng. Cause on the emulator's side: a status read erased the WD1793's Type II error bits, so the catalog read that missed its sector (XAS's STEP `#20` after each operation leaves the head one cylinder past the track register) read as status `#00` and XAS skipped its READ ADDRESS recovery. Fixed 2026-10-09: both versions save the edited text (TODO) |
 
 ### 7.12 MASM 1.0 demo, 1.1, 1.3, 2.0, 3.0
 

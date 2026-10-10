@@ -110,7 +110,9 @@ name, `X`, `41 53`, `00 00`, `00`, sector count, checksum. LTEXT names another X
 EXT then `S` shows `Save text NAME`; Enter keeps the name. XAS writes whole sectors straight from `#C000` (the length
 field stays 0). The asm-synchronizer reads the same text from RAM page 3 without a save
 ([asm-sources.md](../analysis/asm-sources.md#the-source-an-assembler-holds-in-ram-asm-synchronizer)). In unreal-ng,
-9.07m and 9.10 update the header but write nothing to the disk (open question).
+9.07m and 9.10 save as well since the WD1793 status fix of 2026-10-09 (they wrote nothing before). After each disk
+operation 9.x issues STEP `#20`, which leaves the head one cylinder past the track register; its next operation misses
+the first sector (about a second, 4 revolutions), reads the ID under the head and seeks again: a pause, not an error.
 
 ## Pitfalls
 
