@@ -11,6 +11,7 @@ save the text itself and keep the file. The synchronizer's reader must give that
                                                                  # any other ALASM build: TAG-typing, TAG-edited
     sync-dumps.py zasm2 <disk> <out-dir> --boot ZXASM2.4 --source a2.4_p --big a2.4_1 --tag zasm24
                                                                  # ZX-ASM 2.4 / 2.5 (ZXASM2.5) / 2.6 (boot): plain text, type C
+    sync-dumps.py tasm <disk with PRINTHL.C> <out-dir> --boot TASM128 --source PRINTHL --type C --tag tasm20   # TASM 2.0
     sync-dumps.py masm <disk with t1.a> <out-dir> --boot m2 --source t1 --menu-save --tag masm20   # MASM 2.0 (3.0: TSM)
     sync-dumps.py masmdemo <SpFon_15.Trd> <out-dir> --source T1 --tag masm10   # MASM 1.0 demo: the text typed in
     sync-dumps.py xas <disk-with-PROBE.X> <out-dir> --boot NAME --list-keys right[,down...] --tag TAG
@@ -393,6 +394,7 @@ def tasm_other(emu, args):
     """TASM without a line count (4.0 ...): W names the work file (--as-typed: the keyboard is not inverted), E edits,
     Extend Q leaves the editor, S saves. A line being typed is not in the text; the edited case is taken after Enter
     and two steps down, the command case after leaving the editor"""
+    kind = 'A' if args.type == 'a' else args.type   # 2.0: plain text, type C (--type C)
     emu.insert_disk(args.disk)
     emu.run_trdos(args.boot, wait=10)
     emu.tap('enter')                           # past the title
@@ -403,22 +405,22 @@ def tasm_other(emu, args):
     time.sleep(3)
     emu.tap('e')
     time.sleep(2)
-    loaded = saved(emu, args.source, 'A')
+    loaded = saved(emu, args.source, kind)
     pages = [2, 5, windows(emu)[3]]
     emu.type('zz')
-    dump(emu, args.out, f'{args.tag}-typing', pages, f'{args.source}.A', loaded, {'editor': True, 'typing': True})
+    dump(emu, args.out, f'{args.tag}-typing', pages, f'{args.source}.{kind}', loaded, {'editor': True, 'typing': True})
     emu.tap('enter')
     emu.tap('down')
     emu.tap('down')
     time.sleep(1)
-    dump(emu, args.out, f'{args.tag}-edited', pages, f'{args.source}.A', None, {'editor': True, 'typing': False})
+    dump(emu, args.out, f'{args.tag}-edited', pages, f'{args.source}.{kind}', None, {'editor': True, 'typing': False})
     extend(emu, 'q')
-    dump(emu, args.out, f'{args.tag}-command', pages, f'{args.source}.A', None, {'editor': False, 'typing': False})
+    dump(emu, args.out, f'{args.tag}-command', pages, f'{args.source}.{kind}', None, {'editor': False, 'typing': False})
     emu.tap('s')
     time.sleep(4)
-    edited = saved(emu, args.source, 'A')
-    finish(args.out, f'{args.tag}-edited', f'{args.source}.A', edited)
-    finish(args.out, f'{args.tag}-command', f'{args.source}.A', edited)
+    edited = saved(emu, args.source, kind)
+    finish(args.out, f'{args.tag}-edited', f'{args.source}.{kind}', edited)
+    finish(args.out, f'{args.tag}-command', f'{args.source}.{kind}', edited)
 
 
 def saved(emu, name, type_):

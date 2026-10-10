@@ -189,6 +189,18 @@ SyncText ReadGapBufferFixed(const MachineView& machine, const SyncDescriptor& d)
         return Inconsistent(text, "the text pointers are out of order: #" + Hex(start, 4) + " #" + Hex(*gapStart, 4) + " #" +
                                       Hex(*gapEnd, 4) + " #" + Hex(top, 4));
     text.editor = std::any_of(flag.begin(), flag.end(), [](uint8_t b) { return b != 0; });
+    if (p.plainTextFile && !text.editor)
+    {
+        std::vector<uint8_t> lower, upper;
+        if (*gapStart + 1u < start + 1u || !machine.Read(static_cast<uint16_t>(start + 1), static_cast<size_t>(*gapStart - start), lower) ||
+            !machine.Read(static_cast<uint16_t>(*gapEnd), static_cast<size_t>(top - *gapEnd), upper))
+            return Inconsistent(text, "the text lies in a page that was not copied");
+        text.file = std::move(lower);
+        text.file.insert(text.file.end(), upper.begin(), upper.end());
+        text.ok = true;
+        text.state = "ok";
+        return text;
+    }
     uint32_t upperFrom = *gapEnd;
     std::vector<uint8_t> current;
     if (text.editor && p.nextLineAt)
@@ -233,7 +245,24 @@ SyncText ReadGapBufferFixed(const MachineView& machine, const SyncDescriptor& d)
     text.file = std::move(lower);
     text.file.insert(text.file.end(), current.begin(), current.end());
     text.file.insert(text.file.end(), upper.begin(), upper.end());
-    if (!p.endInText)
+    if (p.plainTextFile)
+    {
+        // The editor's records [n] body [n] as the lines SAVE writes
+        std::vector<uint8_t> lines;
+        for (size_t k = 0; k < text.file.size();)
+        {
+            const size_t n = text.file[k];
+            if (k + n + 1 >= text.file.size() || text.file[k + n + 1] != n)
+                return Inconsistent(text, "the text is not made of length-framed lines");
+            lines.insert(lines.end(), text.file.begin() + static_cast<std::ptrdiff_t>(k + 1),
+                         text.file.begin() + static_cast<std::ptrdiff_t>(k + 1 + n));
+            lines.push_back('\r');
+            lines.push_back('\n');
+            k += n + 2;
+        }
+        text.file = std::move(lines);
+    }
+    else if (!p.endInText)
         text.file.insert(text.file.end(), p.end.begin(), p.end.end());
     text.ok = true;
     text.state = "ok";
@@ -533,6 +562,18 @@ SyncDescriptor TasmGap(const std::string& version, const std::string& title, con
     return d;
 }
 
+/// TASM 2.0 (asm-synchronizer.md §7.7): 3.x's pointers at #8847 (the start one byte before the text, the gap start
+/// on the last byte before the gap), plain CR LF text outside the editor, 3.x's records in it (plainTextFile); the
+/// editor known by the tail of its line buffer at #8BA0. Identified by its prompt TASM128> at #92BF
+SyncDescriptor Tasm20()
+{
+    SyncDescriptor d = TasmGap("2.0", "TASM 2.0 (Rst7)", "2.0", {0x92BF, "TASM128>"}, 0x8847, 0x8BA0);
+    d.extension = "C";
+    d.gapBuffer.end.clear();
+    d.gapBuffer.plainTextFile = true;
+    return d;
+}
+
 /// ZAsm 3.2x and later, Rubts0FF's Pentagon 512 versions (asm-synchronizer.md §7.9): the buffer below #C000 from its
 /// start word, the part above #C000 in RAM page 30, the end word right after the start word (the words before them
 /// follow the cursor and the screen); SAVE writes a ";*" position line first. Each version has its table elsewhere;
@@ -749,6 +790,8 @@ const std::vector<SyncDescriptor>& Descriptors()
         TasmGap("4.4", "TASM 4.4 (KVA)", "4.0", {0x9859, "TASM4.4>"}, 0x8DD0, 0x91AC),
         TasmGap("3.0", "TASM 3.0 (Rst7)", "3", {0x9721, "TASM2.0 source file: "}, 0x8910, 0x8C82),
         TasmGap("3.2", "TASM 3.2 (Rst7)", "3", {0x9728, "TASM2.0 file: "}, 0x8910, 0x8C82),
+        Tasm20(),
+        TasmGap("3.5", "TASM 3.5 FLASHVERSION", "3", {0x9350, "TASM128 FLASHVERSION"}, 0x8910, 0x8C82),
         Tasm412(),
     };
     return descriptors;

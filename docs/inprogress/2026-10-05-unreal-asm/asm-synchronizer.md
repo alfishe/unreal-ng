@@ -298,7 +298,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Work** | **1.5 d** (both) |
 | **Verified: 3.0, 3.2** (2026-10-09, dumps `tasm30-*`, `tasm32-*`) | the same gap buffer with the pointers at `#8910`; the line buffer at `#8C22`, its tail `#8C82` (32 bytes) the editor flag. Identified by `TASM2.0 source file: ` at `#9721` (3.0) and `TASM2.0 file: ` at `#9728` (3.2) |
 | **Built** | descriptors `tasm-3.0`, `tasm-3.2` (codec version 3) |
-| open | 3.5 ("FLASHVERSION", pointers also at `#8910`) shows no editor flag in its line buffer; 2.0 (plain text) not looked at |
+| **Verified: 3.5, 2.0** (2026-10-10, dumps `tasm35-*`, `tasm20-*`) | 3.5 ("FLASHVERSION", loader `TASM+`) is 3.0 / 3.2's layout: pointers at `#8910`, its editor flag the line buffer's tail `#8C35`-`#8CA1` (blanks in the editor, zeros at the command line; the earlier "no flag" was wrong), identified by `TASM128 FLASHVERSION` at `#9350`; descriptor `tasm-3.5`. 2.0 keeps the four pointers at `#8847` (the start one byte before the text, the gap start on the last byte before the gap) and changes the buffer's form: at the command line the plain CR LF text SAVE writes, from `#975E`; in the editor 3.x's length-framed records with the cursor line's record before the gap end, which the reader turns into lines (`plainTextFile`). Editor flag: the line buffer's tail at `#8BA0`; identified by `TASM128>` at `#92BF`; descriptor `tasm-2.0` (codec version 2.0, type `C`). Found by diffing the three states' pages (the pointer words, the flag bytes) and checking each model against the saved file |
 
 ### 7.8 STORM 1.2 / 1.3 (1.0 beta)
 

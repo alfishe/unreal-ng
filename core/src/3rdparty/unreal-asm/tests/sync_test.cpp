@@ -99,6 +99,8 @@ const Case kCases[] = {
     {"tasm40-typing", "tasm-4.0"},     {"tasm40-edited", "tasm-4.0"},      {"tasm40-command", "tasm-4.0"},
     {"tasm44-typing", "tasm-4.4"},     {"tasm44-edited", "tasm-4.4"},      {"tasm44-command", "tasm-4.4"},
     {"tasm30-typing", "tasm-3.0"},     {"tasm30-edited", "tasm-3.0"},      {"tasm30-command", "tasm-3.0"},
+    {"tasm20-typing", "tasm-2.0"},     {"tasm20-edited", "tasm-2.0"},      {"tasm20-command", "tasm-2.0"},
+    {"tasm35-typing", "tasm-3.5"},  {"tasm35-edited", "tasm-3.5"},   {"tasm35-command", "tasm-3.5"},
     {"tasm32-typing", "tasm-3.2"},     {"tasm32-edited", "tasm-3.2"},      {"tasm32-command", "tasm-3.2"},
 };
 
