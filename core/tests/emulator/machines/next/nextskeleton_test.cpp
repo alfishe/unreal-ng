@@ -17,6 +17,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/z80nengine.h"
+#include "emulator/io/storage/memorydisk.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/io/z80n/nextregtable.h"
 #include "emulator/state/devicestate.h"
@@ -197,6 +198,22 @@ TEST_F(NextSkeleton_Test, DmaWritesToRomAreIgnoredAndLayer2WriteMappingTakesThem
     EXPECT_EQ(_memory->RAMPageAddress(9)[0], 0x55);
     EXPECT_EQ(_memory->RAMPageAddress(9)[15], 0x55);
     EXPECT_EQ(_memory->PeekSlot(0x0000), rom0);
+}
+
+// zxnext.vhd 1844: dma_wait_n = z80_wait_n and spi_wait_n - a DMA that reads the SD card's data port waits for each 16-clock byte (it was
+// compared in the wrong unit and never waited: every read after the first returned the byte before)
+TEST_F(NextSkeleton_Test, DmaReadsOfThePortEbWaitForTheSpiByte)
+{
+    ASSERT_TRUE(_ports->InsertSdCard(0, std::make_unique<MemoryDisk>(4096), SdCardSpi::WriteMode::Session));
+    Out(0xE7, 0xFE);
+    // port A: the I/O port #00EB (fixed), port B: memory from #C000 (counting up), A -> B, continuous
+    for (uint8_t b : {uint8_t(0x83), uint8_t(0x7D), uint8_t(0xEB), uint8_t(0x00), uint8_t(0x08), uint8_t(0x00), uint8_t(0x2C), uint8_t(0x10), uint8_t(0xAD), uint8_t(0x00), uint8_t(0xC0),
+                      uint8_t(0xCF), uint8_t(0x87)})
+        _ports->DecodePortOut(0x6B, b, 0);
+    const double before = _ports->Now28();
+    _z80->EngineStep();
+    EXPECT_EQ(_ports->SpiTooFastCount(), 0u);
+    EXPECT_GE(_ports->Now28() - before, 7 * 16 * 8.0) << "eight bytes, one SPI byte (16 clocks) between two reads";
 }
 
 TEST_F(NextSkeleton_Test, NextRegInstructionMapsASlot)

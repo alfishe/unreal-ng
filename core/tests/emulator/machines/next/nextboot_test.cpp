@@ -159,6 +159,31 @@ TEST_F(NextBoot_Test, SpiAccessBeforeTheByteIsDoneIsIgnored)
     EXPECT_EQ(_ports->SpiTooFastCount(), 1u);
 }
 
+// spi_master.vhd counts the CPU clock (zxnext.vhd 3284): a byte is 16 CPU clocks whatever the speed, so a speed change inside it changes the
+// time that is left. The new speed is taken over at a frame start; the byte began before it. NextZXOS switches to 14 MHz in the middle of
+// a sector: with the end of the byte kept in the old clocks the next IN of an INIR came too early and returned the byte twice (a
+// directory entry shifted by three bytes: Next3D Demo Cube answered "No such file or dir")
+TEST_F(NextBoot_Test, ASpiByteInFlightWhenTheSpeedChangesIsRescaled)
+{
+    ASSERT_TRUE(_ports->InsertSdCard(0, std::make_unique<MemoryDisk>(4096), SdCardSpi::WriteMode::Session));
+    Out(0xE7, 0xFE);
+    EmulatorState& state = _context->emulatorState;
+    const uint64_t base = 100000;
+    state.t_states = base;
+    _z80->t = 70900;
+    Out(0xEB, 0x40);  // 16 clocks at 3.5 MHz: until base + 70916
+    // the frame start that takes over 14 MHz: the next frame begins 8 T-states into the byte, the CPU carries 2 T of overshoot
+    state.t_states = base + 70908;
+    state.hw_turbo_ratio_applied = 4;
+    state.current_z80_frequency_multiplier = 4;
+    _z80->t = 4;  // base + 70909: one T-state in, inside what is left (8 clocks = 2 T-states at 4x: until base + 70910)
+    In(0xEB);
+    EXPECT_EQ(_ports->SpiTooFastCount(), 1u);
+    _z80->t = 12;  // base + 70911: the byte is done
+    In(0xEB);
+    EXPECT_EQ(_ports->SpiTooFastCount(), 1u) << "the 8 clocks that were left take 2 T-states at 14 MHz, not 8";
+}
+
 // N3: NR #07 sets the CPU clock (applied at the frame boundary, composed with the host speed), NR #03 the machine type
 // and the frame family (applied at the frame end), and the machine type decides which paging ports exist
 TEST_F(NextBoot_Test, CpuSpeedRegisterSetsTheClockMultiplier)
@@ -258,7 +283,8 @@ TEST(NextKempston_Test, PortOneFReadsZeroWithNothingPressed)
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
-// The DRIVE button (the host's NMI action): /NMI is pulsed and the DivMMC maps in at the #0066 fetch, NR #BB or not
+// The DRIVE button (the host's NMI action): /NMI is pulsed and the DivMMC maps in at the #0066 fetch when NR #BB bit 0 (delayed) or 1 (instant)
+// asks for it (zxnext.vhd 2907-2908; the entries of NextZXOS, #F2 / the reset value #CD, have one); with neither the ROM's own handler runs
 TEST(NextDriveButton_Test, NmiMapsTheDivMmcInAtTheEntry)
 {
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero);
@@ -267,7 +293,7 @@ TEST(NextDriveButton_Test, NmiMapsTheDivMmcInAtTheEntry)
     ASSERT_NE(ports, nullptr);
     NextDivMmc& divMmc = ports->DivMmc();
     ports->Board().Write(0x0A, 0x10);  // the automap is on
-    ports->Board().Write(0xBB, 0x00);  // no extra entries
+    ports->Board().Write(0xBB, 0x01);  // the NMI entry, delayed (the others are off)
 
     EXPECT_FALSE(ports->GenerateDriveNmi()) << "the button is off (NR #06 bit 4): the board swallows the NMI";
     ports->Board().Write(0x06, 0x10);

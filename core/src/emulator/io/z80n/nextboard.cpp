@@ -305,6 +305,18 @@ void NextBoard::Write(uint8_t reg, uint8_t value)
             if ((value & 0x08) && _machine)
                 _machine->ClearDivMmcMapram();
             return;
+        case kRegPeripheral3:
+            // zxnext.vhd 5192-5198: the Multiface type (bits 7:6) and the SD card swap (bit 5) are written in config mode only; the DivMMC
+            // automap enable (bit 4) is the automap_reset input (4112)
+            _regs[reg] = _memory->InConfigMode() ? value : static_cast<uint8_t>((value & 0x1F) | (_regs[reg] & 0xE0));
+            if (_machine)
+                _machine->DivMmcEnableChanged();
+            return;
+        case 0x83:  // the internal port enables: bit 0 is the DivMMC's port
+            _regs[reg] = value;
+            if (_machine)
+                _machine->DivMmcEnableChanged();
+            return;
         case kRegAltRom:
             _memory->SetAltRomRegister(value);
             return;

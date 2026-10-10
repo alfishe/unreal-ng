@@ -41,6 +41,8 @@ public:
     virtual uint8_t ReadMemoryMapping() const = 0;
     /// NR #09 bit 3 = 1: the DivMMC's sticky MAPRAM is cleared
     virtual void ClearDivMmcMapram() = 0;
+    /// NR #0A bit 4 (the DivMMC's automap) or NR #83 bit 0 (its port) was written: automap_reset follows them at once
+    virtual void DivMmcEnableChanged() {}
     /// Between two instructions: the DMA moves its bytes
     virtual void StepDma() {}
     /// Port #7FFD is locked (48K machine type, or the lock bit): NR #08 bit 7 reads its inverse

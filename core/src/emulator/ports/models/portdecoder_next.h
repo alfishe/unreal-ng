@@ -46,6 +46,7 @@ public:
     void SetContentionDisabled(bool disabled) override;
     void WriteMemoryMapping(uint8_t value) override;
     void ClearDivMmcMapram() override { _divMmc->ClearMapram(); }
+    void DivMmcEnableChanged() override { _divMmc->OnEnableChanged(); }
     void StepDma() override;
     void OnRetn() override;
     bool GenerateMultifaceNmi() override;
@@ -82,6 +83,8 @@ public:
         uint8_t last = 0;
     };
     void SetPortLog(std::map<uint16_t, PortUse>* in, std::map<uint16_t, PortUse>* out) { _inLog = in; _outLog = out; }
+    /// The end of the byte in flight, in base T-states (see the definition: a speed change inside the byte rescales what is left)
+    double SpiBusyUntil();
     /// Accesses that began before the previous byte was done and were ignored, as on the board
     uint32_t SpiTooFastCount() const { return _spiTooFast; }
 
@@ -114,6 +117,8 @@ private:
     void SpiSelect(uint8_t value);
     /// Time in 3.5 MHz T-states since the machine started (the frame's own t is in CPU clocks of the current speed)
     double Now() const;
+    /// NR #83 bit 3: ports #E7 / #EB are decoded (port_spi_io_en)
+    bool SpiPortEnabled() const { return (_board->Stored(0x83) & 0x08) != 0; }
     double SpeedRatio() const { return _state->hw_turbo_ratio_applied ? _state->hw_turbo_ratio_applied : 1.0; }
 
     std::map<uint16_t, PortUse>* _inLog = nullptr;
@@ -123,6 +128,7 @@ private:
     int _spiSelected = -1;
     uint8_t _spiRx = 0xFF;
     double _spiBusyUntil = 0;
+    double _spiBusyRatio = 1.0;  ///< the CPU speed ratio the byte in flight was timed at
     uint32_t _spiTooFast = 0;
     std::unique_ptr<NextBoard> _board;
     std::unique_ptr<NextInterruptSource> _interrupts;

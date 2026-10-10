@@ -8,7 +8,10 @@
 /// the RAM bank at #2000. Automap: NR #B8 enables the eight RST addresses (reset #83: #0000 #0008 #0038), NR #B9 says
 /// which hold always (1) or only while the 48K BASIC ROM is paged (0), NR #BA which map instantly (the opcode already
 /// comes from the DivMMC) rather than after the fetch, NR #BB the extras (#3Dxx, the off-area #1FF8-#1FFF, #056A
-/// #04D7 #0562 #04C6, the NMI entry #0066). NR #0A bit 4 enables the automap as a whole.
+/// #04D7 #0562 #04C6, the NMI entry #0066: bit 1 instant, bit 0 delayed). NR #0A bit 4 enables the automap as a whole: clearing it (or
+/// the DivMMC port, NR #83 bit 0) is automap_reset and drops the latch at once. The ROM-3-only entries need the MMU to map ROM at the
+/// fetch (RAM in slot 0 / 1 is the program's own code), not config mode, and the 48K BASIC ROM selected.
+/// Audit: docs/inprogress/2026-10-07-zx-next/audit-divmmc-gap-2026-10-10.md
 
 #include <cstdint>
 #include <functional>
@@ -32,22 +35,30 @@ public:
     /// Is the 48K BASIC ROM the one paged at #0000 (the ROM-3-only entries need it)
     std::function<bool()> isBasicRomPaged;
 
+    /// A reset (the power-on one and NR #02's): E3 = 0, the latches cleared (zxnext.vhd 4175, divmmc.vhd 108-139)
     void Reset();
+    /// NR #0A bit 4 or NR #83 bit 0 changed: automap_reset (zxnext.vhd 4112) clears the latches and the memory follows
+    void OnEnableChanged();
+    /// A program starts (the NEX loader): the DivMMC is out - NEXLOAD ends its last esxDOS call through #1FF8 with CONMEM clear
+    void ReleaseForProgramStart();
+    /// NR #83 bit 0: port #E3 is decoded and the DivMMC's memory is enabled (port_divmmc_io_en)
+    bool PortEnabled() const;
     void WritePort(uint8_t value);
     uint8_t ReadPort() const { return static_cast<uint8_t>(_control & 0xCF); }
     /// NR #09 bit 3 = 1 clears the sticky MAPRAM
     void ClearMapram();
 
-    /// The DRIVE button (divmmc.vhd button_nmi): the next M1 at #0066 maps the DivMMC in after the fetch, whatever NR #BB says.
+    /// The DRIVE button (divmmc.vhd button_nmi): the next M1 at #0066 maps the DivMMC in, instantly with NR #BB bit 1, after the fetch with
+    /// bit 0, not at all with neither. While the automap is disabled the latch is held clear (automap_reset beats the button).
     /// The board pulses /NMI at the same time (PortDecoder_Next::RequestBoardNmi)
-    void PressButton() { _buttonNmi = true; }
+    void PressButton();
     /// disable_nmi_o: the handler is in (or on its way in), a second button press waits
     bool NmiHold() const { return _automap || _buttonNmi; }
     bool ButtonPending() const { return _buttonNmi; }
-    /// A RETN went by (zxnext.vhd divmmc_retn_seen; the Multiface is not modelled): the automap and the button latch are cleared
+    /// A RETN went by (zxnext.vhd divmmc_retn_seen = ED 45 and no Multiface session): the automap and the button latch are cleared
     void OnRetn();
 
-    bool Mapped() const { return _automap || (_control & 0x80) != 0; }
+    bool Mapped() const { return PortEnabled() && (_automap || (_control & 0x80) != 0); }
     bool Automapped() const { return _automap; }
     bool Mapram() const { return (_control & 0x40) != 0; }
     uint8_t Bank() const { return _control & 0x0F; }
@@ -58,6 +69,8 @@ public:
 private:
     enum class Hit : uint8_t { None, Delayed, Instant, MapOut };
     Hit Classify(uint16_t address) const;
+    /// NR #0A bit 4 and the port enable: automap_reset is their inverse
+    bool AutomapEnabled() const;
     void Publish();
 
     NextMemory* _memory;

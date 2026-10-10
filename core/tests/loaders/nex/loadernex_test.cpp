@@ -182,6 +182,43 @@ TEST_F(LoaderNex_Test, V13BanksOffsetSkipsWhateverLiesBetween)
     EXPECT_EQ(dynamic_cast<NextMemory*>(_context->pMemory)->PeekSlot(0xC000), 0x3E);
 }
 
+// NEXLOAD ends its last esxDOS call through the DivMMC's #1FF8 off-area and starts the program with E3's CONMEM clear: the program
+// never starts with the OS ROM in slot 0, whatever the machine was doing when the file was opened (audit D9)
+TEST_F(LoaderNex_Test, LoadingDropsAHeldAutomapAndConmem)
+{
+    auto* decoder = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    NextDivMmc& div = decoder->DivMmc();
+    decoder->Board().Write(0x0A, 0x10);
+    div.BeforeMachineM1(0x0000);
+    div.OnMachineM1(0x0000);
+    decoder->DecodePortOut(0xE3, 0x81, 0);
+    ASSERT_TRUE(div.Automapped());
+    ASSERT_TRUE(div.Mapped());
+    auto image = MakeNex("V1.2", 0, 0, {{0, {0x18, 0xFE}}}, 0xC000, 0xBFF0, 0, 0);
+    LoaderNex loader(_context);
+    ASSERT_TRUE(loader.Load(image)) << loader.Error();
+    EXPECT_FALSE(div.Automapped());
+    EXPECT_FALSE(div.Mapped());
+    EXPECT_EQ(div.ReadPort() & 0x80, 0) << "CONMEM is clear";
+    EXPECT_EQ(div.Bank(), 1) << "the bank the OS selected stays";
+    EXPECT_EQ(decoder->Board().Stored(0x0A) & 0x10, 0x10) << "NEXLOAD does not touch the automap enable (NR #06 bit 4 is the DRIVE button)";
+}
+
+// nexload.asm 323-349: PERIPHERAL_2 (NR #06) res 4 / set 3, PERIPHERAL_3 (NR #08) set 7 6 3 2 1, res 5 0; bit 4 of NR #08 is a user setting
+TEST_F(LoaderNex_Test, ResetRegistersWriteNr06AndNr08LikeNexload)
+{
+    auto* decoder = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    decoder->Board().Write(0x06, 0xB4);  // the DRIVE button's NMI on, the M1 button's off
+    decoder->Board().Write(0x08, 0x31);
+    auto image = MakeNex("V1.2", 0, 0, {{0, {0x18, 0xFE}}}, 0xC000, 0xBFF0, 0, 0);
+    LoaderNex loader(_context);
+    ASSERT_TRUE(loader.Load(image)) << loader.Error();
+    EXPECT_EQ(decoder->Board().Stored(0x06), 0xAC);
+    EXPECT_EQ(decoder->Board().Stored(0x08), 0xDE);
+}
+
 TEST_F(LoaderNex_Test, RefusesWhatIsNotNex)
 {
     LoaderNex loader(_context);
@@ -470,7 +507,9 @@ TEST(LoaderNexRun_Test, RunsTheFileOfTheEnvironment)
             }
             std::cout << std::dec << std::endl;
         }
-        std::cout << "PC " << std::hex << context->pCore->GetZ80()->pc << " sp " << context->pCore->GetZ80()->sp << " iff1 " << int(context->pCore->GetZ80()->iff1) << std::dec << std::endl;
+        std::cout << "PC " << std::hex << context->pCore->GetZ80()->pc << " sp " << context->pCore->GetZ80()->sp << " iff1 " << int(context->pCore->GetZ80()->iff1) << " im " << int(context->pCore->GetZ80()->im) << " i " << int(context->pCore->GetZ80()->i)
+                  << " nrC0 " << int(decoder->Board().Stored(0xC0)) << " nrC4 " << int(decoder->Board().Stored(0xC4)) << " nrC5 " << int(decoder->Board().Stored(0xC5))
+                  << " nrC6 " << int(decoder->Board().Stored(0xC6)) << " nr22 " << int(decoder->Board().Stored(0x22)) << " nr23 " << int(decoder->Board().Stored(0x23)) << std::dec << std::endl;
         {
             Z80* z = context->pCore->GetZ80();
             const uint16_t target = static_cast<uint16_t>(context->pMemory->DirectReadFromZ80Memory(z->ix + 4) | (context->pMemory->DirectReadFromZ80Memory(z->ix + 5) << 8));
