@@ -558,12 +558,14 @@ double PortDecoder_Next::Now() const
 
 bool PortDecoder_Next::InsertSdCard(unsigned index, std::unique_ptr<IBlockDevice> media, SdCardSpi::WriteMode mode)
 {
-    return _sd[index & 1].insert(std::move(media), mode);
+    // a Next's card is an SDHC one (games such as Atic Atac refuse an SDSC answer: "SDHC OR BETTER REQUIRED"); a small folder-backed image
+    // would be taken for SDSC by its size alone
+    return _sd[index & 1].insert(std::move(media), mode, SdCardSpi::Type::SDHC);
 }
 
 bool PortDecoder_Next::InsertSdCard(unsigned index, const std::string& path, SdCardSpi::WriteMode mode)
 {
-    return _sd[index & 1].open(path, mode);
+    return _sd[index & 1].open(path, mode, SdCardSpi::Type::SDHC);
 }
 
 void PortDecoder_Next::SpiSelect(uint8_t value)

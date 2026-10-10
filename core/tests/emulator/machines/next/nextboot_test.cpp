@@ -138,6 +138,16 @@ TEST_F(NextBoot_Test, SpiCardAnswersCmd0ThroughThePortPair)
     Out(0xE7, 0xFF);
 }
 
+// A Next's card answers as SDHC whatever its size: a small folder-backed image would be SDSC by size alone, and games such as Atic Atac
+// Remake refuse that ("SDHC OR BETTER REQUIRED")
+TEST_F(NextBoot_Test, TheCardIsSdhcEvenWhenSmall)
+{
+    ASSERT_TRUE(_ports->InsertSdCard(0, std::make_unique<MemoryDisk>(4096), SdCardSpi::WriteMode::Session));
+    EXPECT_TRUE(_ports->SdCard(0).isSdhc());
+    ASSERT_TRUE(_ports->InsertSdCard(1, std::make_unique<MemoryDisk>(4096), SdCardSpi::WriteMode::Session));
+    EXPECT_TRUE(_ports->SdCard(1).isSdhc());
+}
+
 TEST_F(NextBoot_Test, SpiAccessBeforeTheByteIsDoneIsIgnored)
 {
     ASSERT_TRUE(_ports->InsertSdCard(0, std::make_unique<MemoryDisk>(4096), SdCardSpi::WriteMode::Session));
