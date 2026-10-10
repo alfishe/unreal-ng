@@ -259,6 +259,26 @@
     paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["responses"]["200"]["description"] = "TSU objects and CRAM";
     paths["/api/v1/emulator/{id}/state/tsconf/tsu"]["get"]["responses"]["404"]["description"] = "Not a TS-Conf machine";
 
+    // Active emulator forms of /state/ide and /state/tsconf (no ID: the only or the selected emulator)
+    paths["/api/v1/emulator/state/ide"]["get"]["summary"] = "Get IDE board state (active emulator)";
+    paths["/api/v1/emulator/state/ide"]["get"]["tags"].append("Disk State (Active)");
+    paths["/api/v1/emulator/state/ide"]["get"]["description"] =
+        "Same as /api/v1/emulator/{id}/state/ide for the only or selected emulator.";
+    paths["/api/v1/emulator/state/ide"]["get"]["responses"]["200"]["description"] = "IDE board state";
+    paths["/api/v1/emulator/state/ide"]["get"]["responses"]["400"]["description"] =
+        "Several emulators running: use the {id} form";
+    paths["/api/v1/emulator/state/ide"]["get"]["responses"]["404"]["description"] = "No emulator, or no IDE board";
+
+    paths["/api/v1/emulator/state/tsconf"]["get"]["summary"] = "Get TS-Conf machine state (active emulator)";
+    paths["/api/v1/emulator/state/tsconf"]["get"]["tags"].append("Machine State");
+    paths["/api/v1/emulator/state/tsconf"]["get"]["description"] =
+        "Same as /api/v1/emulator/{id}/state/tsconf for the only or selected emulator.";
+    paths["/api/v1/emulator/state/tsconf"]["get"]["responses"]["200"]["description"] = "TS-Conf machine state";
+    paths["/api/v1/emulator/state/tsconf"]["get"]["responses"]["400"]["description"] =
+        "Several emulators running: use the {id} form";
+    paths["/api/v1/emulator/state/tsconf"]["get"]["responses"]["404"]["description"] =
+        "No emulator, or not a TS-Conf machine";
+
     // Sprinter Sp2000 (core DeviceState::Sprinter / SprinterPortTable / SprinterPortLookup: the same reports
     // CLI `state sprinter`, Lua / Python sprinter_state() / sprinter_ports() / sprinter_port_lookup() and the
     // MCP inspect_state aspect `sprinter` render)
