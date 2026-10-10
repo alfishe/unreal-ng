@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+#include <chrono>
 #include "stdafx.h"
 
 #include <atomic>
@@ -354,7 +356,30 @@ public:
         bool claimed = false;
         std::string surfaceLabel;  // "gdb", "webapi", "qt-timeline", "lua", "cli", ... for error/UI
         std::string ownerUuid;     // String form for diagnostics / JSON responses
+        std::string client;        // the client's own name (an automation session), if it gave one
+        int64_t sinceMs = 0;       // when the claim was taken (system clock, ms since the epoch)
+        uint32_t leaseMs = 0;      // idle lease of an HTTP session (0: ends with its connection / explicitly)
+        /// Clients in their re-take cooldown after the user took control back: "label/client" -> seconds left
+        std::vector<std::pair<std::string, int64_t>> cooldowns;
     };
+
+    /// Automation sessions (execution arbiter design §6a, X7): the claim is also the session an automation client
+    /// opens explicitly. `client`: the client's name (also the key of its re-take cooldown); `lease`: an
+    /// HTTP session ends after that long without a request of it (TouchRunControl), 0 = no lease
+    bool TakeRunControl(const UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
+                        const std::string& client, std::chrono::milliseconds lease);
+    /// The user takes control back at the GUI: the session ends, its direct run (if one is under way) is aborted at the
+    /// next instruction, its owner is refused from now on (IsRunControlRevoked: revoked_by_user), and the same client
+    /// cannot take control again for the cooldown (revoked_cooldown) unless the user allows it (AllowRunControlRetake)
+    bool RevokeRunControl(const std::string& by = "gui");
+    /// The owner's session was taken back by the user: its requests answer revoked_by_user (never retried)
+    bool IsRunControlRevoked(const UUID& owner) const;
+    /// A request of this session arrived: its idle lease starts again
+    void TouchRunControl(const UUID& owner);
+    /// The user allows a client (or, with an empty key, every client) to take control again before its cooldown ends
+    void AllowRunControlRetake(const std::string& clientKey = {});
+    /// The re-take cooldown after a take-back (tests shorten it; default 300 s)
+    void SetRunControlRetakeCooldown(uint32_t seconds);
 
     /// Attempt to take the run-control claim.
     /// @param owner UUID of the claiming surface (use UUID::Generate() at surface startup).
@@ -382,8 +407,19 @@ private:
     {
         UUID owner;                   // Nil UUID = unclaimed
         std::string surfaceLabel;
+        std::string client;
+        int64_t sinceMs = 0;
+        std::chrono::milliseconds lease{0};
+        std::chrono::steady_clock::time_point lastActivity{};
+        std::vector<std::string> revokedOwners;                                         // owners taken back
+        std::vector<std::pair<std::string, std::chrono::steady_clock::time_point>> cooldowns;  // client key -> until
+        uint32_t retakeCooldownSeconds = 300;
         mutable std::mutex mutex;     // Guards take/release only; never held during emulator work
     };
+    /// An HTTP session whose lease ran out ends (called from the queries; posts "expired")
+    void ExpireIdleRunControl() const;
+    void PostRunControlChanged(const std::string& event, const std::string& label, const std::string& client,
+                               const std::string& owner) const;
     RunControlClaim _runControlClaim;
     /// endregion </Run-control claim>
 

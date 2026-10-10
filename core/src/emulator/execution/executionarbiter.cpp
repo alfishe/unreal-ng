@@ -495,6 +495,18 @@ bool ExecutionArbiter::AbortCurrent(const Requester& requester, const std::strin
     if (!_serving)
         return false;
     _serving->aborted.store(true, std::memory_order_release);
+    _servingAborted.store(true, std::memory_order_relaxed);
+    _cv.notify_all();
+    return true;
+}
+
+bool ExecutionArbiter::AbortDriving()
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!_serving || !_serving->commandOptions.drivesZ80)
+        return false;
+    _serving->aborted.store(true, std::memory_order_release);
+    _servingAborted.store(true, std::memory_order_relaxed);
     _cv.notify_all();
     return true;
 }
@@ -516,7 +528,10 @@ void ExecutionArbiter::BeginStop()
         }
         _queue.clear();
         if (_serving)
+        {
             _serving->aborted.store(true, std::memory_order_release);
+            _servingAborted.store(true, std::memory_order_relaxed);
+        }
         RecomputeLocked();
         _cv.notify_all();
     }
@@ -862,6 +877,7 @@ bool ExecutionArbiter::GrantedLocked() const
 
 void ExecutionArbiter::StartServingLocked(const std::shared_ptr<Request>& request)
 {
+    _servingAborted.store(request->aborted.load(std::memory_order_acquire), std::memory_order_relaxed);
     _serving = request;
     _servingThread = std::thread::id();
     RecomputeLocked();
@@ -904,6 +920,7 @@ void ExecutionArbiter::FinishServingLocked(const std::shared_ptr<Request>& reque
     {
         _serving.reset();
         _servingThread = std::thread::id();
+        _servingAborted.store(false, std::memory_order_relaxed);
     }
     CompleteLocked(request, outcome);
     LogLocked(Decision::Kind::CommandFinished, request.get(), outcome, _intent, false);

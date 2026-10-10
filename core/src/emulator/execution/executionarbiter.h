@@ -297,6 +297,11 @@ public:
     void PauseFromDriver(const Requester& requester, std::string reason);
     /// Abort the command being served (pause during a long run, GDB interrupt). False when nothing is served.
     bool AbortCurrent(const Requester& requester, const std::string& tag);
+    /// Abort the command being served only if it drives the Z80 (a direct run): the run ends at its next instruction
+    /// boundary. The user taking control back from an automation session. False when no direct run is served
+    bool AbortDriving();
+    /// The command being served was aborted (read per instruction by the Run* loops: one relaxed load)
+    bool ServingAborted() const { return _servingAborted.load(std::memory_order_relaxed); }
     /// Stop: queued requests are Refused("stopping"), the served command is aborted, the loop is told to exit
     void BeginStop();
     /// endregion </Priority lane>
@@ -385,6 +390,7 @@ private:
     std::chrono::milliseconds _throttle{0};
 
     std::atomic<bool> _yield{false};
+    std::atomic<bool> _servingAborted{false};
     std::atomic<Intent> _intentAtomic{Intent::Pause};
     std::atomic<std::thread::id> _loopThreadAtomic{};
     bool _mayRun = false;

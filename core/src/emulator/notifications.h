@@ -416,6 +416,27 @@ public:
     virtual ~CpuStepPayload() = default;
 };
 
+/// Payload of NC_RUN_CONTROL_CHANGED: an automation session (the run-control claim) changed. `event`: "taken",
+/// "released", "revoked" (the user took control back at the GUI), "expired" (an HTTP session's idle lease ran out),
+/// "retake_refused" (a client tried to take control back within its cooldown after a take-back)
+class RunControlChangedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string event;
+    std::string surfaceLabel;  ///< "gdb", "webapi", "mcp", "cli", "lua", "python"
+    std::string client;        ///< the client's own name, if it gave one
+    std::string ownerUuid;
+
+    RunControlChangedPayload(const unreal::UUID& id, std::string e, std::string label, std::string clientName,
+                             std::string owner)
+        : emulatorId(id), event(std::move(e)), surfaceLabel(std::move(label)), client(std::move(clientName)),
+          ownerUuid(std::move(owner))
+    {
+    }
+    virtual ~RunControlChangedPayload() = default;
+};
+
 /// Payload of NC_BREAKPOINTS_CHANGED: the breakpoint set of this emulator changed (added,
 /// removed, enabled, disabled, regrouped)
 class BreakpointsChangedPayload : public MessagePayload

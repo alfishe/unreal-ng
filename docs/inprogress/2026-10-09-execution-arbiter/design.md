@@ -245,6 +245,60 @@ The X1 compat changes behaviour only for unpaired silent calls:
 - **`mainwindow.cpp:2249`** does `Pause(false)` and then `Stop`. Stop aborts the open command, so the behaviour stays
   the same.
 
+## 6a. Automation sessions: visible remote control (X7)
+
+Owner decisions, 2026-10-09:
+- **No pause aborts a long direct run.** A human does not interfere with the operations of an automation session;
+  the human can **take back control**, and that ends the whole session.
+- **Explicit claim.** A client opens a session itself (take control), as GDB does today. One-off requests (read
+  state, a single pause) open none.
+- **The GUI while a session is open.** Every control action is disabled: toolbar, menus, shortcuts, debugger
+  buttons, speed control, TTD widget, media panel, file drops. Viewing works. The one active action is
+  **Take back control**.
+- **Visible.** An indicator on the unreal-qt toolbar ("under remote control: MCP, client …, since 14:02"). The HUD
+  shows a status / nudge while the session is open and removes it when the session ends. A message tells the user
+  when control was taken back.
+- **After a take-back.** The interrupted call and every later call of that session get an explicit error,
+  `revoked_by_user` (HTTP 409 on the WebAPI), never a timeout. The client may open a new session; the indicator
+  lights again.
+
+Mechanics:
+- **The session is the run-control claim, generalized.** `EmulatorContext::TakeRunControl` / `ReleaseRunControl`
+  with an owner UUID and a surface label, mirrored into the arbiter (X4). New surfaces take it explicitly:
+  - WebAPI `POST /control/session` returns a session id;
+  - MCP `control_execution {action: take_control | release_control}`;
+  - CLI `session take | release`;
+  - Lua / Python `take_control()` / `release_control()`.
+
+  A request of the session carries the id: the `X-Unreal-Session` header on HTTP, the connection on CLI, GDB and
+  DeZog.
+- **Take-back** (`EmulatorContext::RevokeRunControl(by GUI)`):
+  - the claim is released and its owner is marked *revoked*;
+  - the command it is serving, if it drives the Z80, is aborted at the next instruction (`HoldToken::Aborted()`,
+    read by the `Run*` loops): the run returns, the machine stays paused;
+  - every later request carrying a revoked owner is refused with `revoked_by_user` until that client takes control
+    again.
+- **An abandoned session** ends on its own:
+  - GDB and DeZog sessions end when the socket closes;
+  - HTTP sessions are leases renewed by every request of the session and released after
+    `[AUTOMATION] SessionIdleTimeoutSec` (default 60) without one;
+  - the CLI session ends with the connection.
+- **Clients do not retry and do not rush back** (owner 2026-10-09). A take-back is final for the session:
+  - **The refusal says so.** `revoked_by_user` carries `retry: false` and a text for a human or an agent ("the
+    user took back control at the GUI; stop, and ask the user before taking control again").
+  - **Our clients stop instead of retrying:**
+    - MCP: the tool result tells the agent to stop and ask the user; the MCP server's instructions to agents state
+      the rule.
+    - Python / Lua: control calls raise `ControlRevoked`; no automatic retry, no automatic re-take.
+    - CLI: prints the reason and ends the session.
+    - `.recipe/` automation recipes state the rule.
+  - **A server-side guard against clients that still push.** After a take-back, a new take by the same client
+    (surface + client name) is refused with `revoked_cooldown` until the user allows it at the GUI or
+    `[AUTOMATION] RetakeCooldownSec` (default 300) passes. Attempts do not extend the cooldown; they show in the
+    indicator ("MCP tried to take control back").
+- **Notifications.** `NC_RUN_CONTROL_CHANGED` (taken / released / revoked, with the holder) drives the toolbar
+  indicator, the lock of the GUI actions and the HUD status. The arbiter's report (X5) shows the session too.
+
 ## 7. Invariants (checked in every test, every mode)
 
 | # | Invariant |

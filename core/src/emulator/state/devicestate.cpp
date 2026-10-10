@@ -2432,6 +2432,29 @@ StateNode Execution(EmulatorContext* context)
     for (const execution::SnapshotEntry& e : snap.queue)
         queue.push(entry(e));
     ret["claim"] = snap.claim ? requester(*snap.claim) : StateNode();
+    // The automation session behind the claim (design §6a): who, since when, its idle lease, the clients the user took
+    // control back from and how long until they may take it again
+    const EmulatorContext::RunControlState rc = context->GetRunControlState();
+    if (rc.claimed)
+    {
+        StateNode session = StateNode::Object();
+        session["surface"] = rc.surfaceLabel;
+        session["client"] = rc.client;
+        session["owner"] = rc.ownerUuid;
+        session["since_ms"] = rc.sinceMs;
+        session["lease_ms"] = rc.leaseMs;
+        ret["session"] = session;
+    }
+    else
+        ret["session"] = StateNode();
+    StateNode& cooldowns = ret["retake_cooldowns"] = StateNode::Array();
+    for (const auto& [key, secondsLeft] : rc.cooldowns)
+    {
+        StateNode c = StateNode::Object();
+        c["client"] = key;
+        c["seconds_left"] = secondsLeft;
+        cooldowns.push(c);
+    }
     StateNode& counters = ret["counters"] = StateNode::Object();
     counters["applied"] = snap.applied;
     counters["coalesced"] = snap.coalesced;

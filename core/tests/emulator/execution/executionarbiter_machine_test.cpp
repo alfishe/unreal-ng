@@ -347,3 +347,113 @@ TEST_F(ExecutionArbiterMachine_Test, TheExecutionReportShowsTheIntentItsOwnerAnd
     }
     _emulator->Resume(execution::Requester{execution::Origin::Cli, {}});
 }
+
+/// X7 (owner decisions 2026-10-09): the user takes control back from an automation session. Its long direct run ends
+/// at once (aborted, the machine paused), its owner is refused from now on, the same client cannot take control again
+/// during its cooldown unless the user allows it, another client can
+TEST_F(ExecutionArbiterMachine_Test, TakingControlBackEndsTheSessionAndItsRun)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    const unreal::UUID session = unreal::UUID::Generate();
+    ASSERT_TRUE(context->TakeRunControl(session, "mcp", nullptr, "agent", std::chrono::milliseconds(0)));
+    EXPECT_EQ(context->GetRunControlState().client, "agent");
+
+    // A run far longer than the test: only the take-back ends it
+    std::atomic<bool> returned{false};
+    uint64_t framesBefore = Frame(_emulator);
+    std::thread automation([&]() {
+        _emulator->RunNFrames(1000000);
+        returned = true;
+    });
+    // Join on every path (a joinable thread destroyed is std::terminate)
+    struct Joiner
+    {
+        std::thread& t;
+        EmulatorContext* c;
+        ~Joiner()
+        {
+            if (t.joinable())
+            {
+                c->RevokeRunControl("test cleanup");
+                t.join();
+            }
+        }
+    } joiner{automation, context};
+    EXPECT_TRUE(TestWait::For([&]() {
+        const auto s = _emulator->GetArbiter().GetSnapshot();
+        return s.serving.has_value() && s.servingDrivesZ80;
+    }));
+
+    EXPECT_TRUE(context->RevokeRunControl("gui"));
+    EXPECT_TRUE(TestWait::For([&]() { return returned.load(); })) << "the run went on after the take-back";
+    automation.join();
+    EXPECT_TRUE(_emulator->LastDirectRunAborted());
+    EXPECT_LT(Frame(_emulator) - framesBefore, 1000000u);
+    EXPECT_TRUE(_emulator->IsPaused()) << "the aborted run leaves the machine paused";
+    EXPECT_FALSE(context->IsRunControlClaimed());
+    EXPECT_TRUE(context->IsRunControlRevoked(session)) << "its requests answer revoked_by_user";
+
+    // The same client does not take control back by itself; another client can
+    std::string reason;
+    EXPECT_FALSE(context->TakeRunControl(unreal::UUID::Generate(), "mcp", &reason, "agent", std::chrono::milliseconds(0)));
+    EXPECT_NE(reason.find("revoked_cooldown"), std::string::npos) << reason;
+    ASSERT_EQ(context->GetRunControlState().cooldowns.size(), 1u);
+    EXPECT_EQ(context->GetRunControlState().cooldowns[0].first, "mcp/agent");
+    const unreal::UUID other = unreal::UUID::Generate();
+    EXPECT_TRUE(context->TakeRunControl(other, "webapi", nullptr, "script", std::chrono::milliseconds(0)));
+    context->ReleaseRunControl(other);
+
+    // The user allows it again
+    context->AllowRunControlRetake("mcp/agent");
+    const unreal::UUID again = unreal::UUID::Generate();
+    EXPECT_TRUE(context->TakeRunControl(again, "mcp", nullptr, "agent", std::chrono::milliseconds(0)));
+    EXPECT_FALSE(context->IsRunControlRevoked(again));
+    context->ReleaseRunControl(again);
+
+    // A direct run with no take-back is not aborted
+    _emulator->RunNFrames(1);
+    EXPECT_FALSE(_emulator->LastDirectRunAborted());
+}
+
+/// X7: an HTTP session ends by itself after its idle lease; every change is announced (NC_RUN_CONTROL_CHANGED)
+TEST_F(ExecutionArbiterMachine_Test, AnIdleSessionExpiresAndEveryChangeIsAnnounced)
+{
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    std::mutex eventsMutex;
+    std::vector<std::string> events;
+    const std::string id = _emulator->GetId();
+    const uint64_t observer = messageCenter.AddObserver(NC_RUN_CONTROL_CHANGED, [&](int, Message* message) {
+        auto* payload = message ? dynamic_cast<RunControlChangedPayload*>(message->obj) : nullptr;
+        if (payload && payload->emulatorId.toString() == id)
+        {
+            std::lock_guard<std::mutex> lock(eventsMutex);
+            events.push_back(payload->event + ":" + payload->surfaceLabel + "/" + payload->client);
+        }
+    });
+    struct ObserverGuard
+    {
+        MessageCenter& center;
+        uint64_t id;
+        ~ObserverGuard() { center.RemoveObserverById(NC_RUN_CONTROL_CHANGED, id); }
+    } observerGuard{messageCenter, observer};
+    auto count = [&]() {
+        std::lock_guard<std::mutex> lock(eventsMutex);
+        return events.size();
+    };
+
+    EmulatorContext* context = _emulator->GetContext();
+    const unreal::UUID session = unreal::UUID::Generate();
+    ASSERT_TRUE(context->TakeRunControl(session, "webapi", nullptr, "bot", std::chrono::milliseconds(20)));
+    context->TouchRunControl(session);
+    EXPECT_TRUE(context->IsRunControlClaimed());
+    EXPECT_TRUE(TestWait::For([&]() { return !context->IsRunControlClaimed(); })) << "the idle lease did not end it";
+    EXPECT_FALSE(context->IsRunControlRevoked(session)) << "an expiry is not a take-back";
+
+    const unreal::UUID next = unreal::UUID::Generate();
+    ASSERT_TRUE(context->TakeRunControl(next, "cli", nullptr, "", std::chrono::milliseconds(0)));
+    context->ReleaseRunControl(next);
+    ASSERT_TRUE(TestWait::For([&]() { return count() >= 4; }));
+    std::lock_guard<std::mutex> lock(eventsMutex);
+    const std::vector<std::string> expected{"taken:webapi/bot", "expired:webapi/bot", "taken:cli/", "released:cli/"};
+    EXPECT_EQ(events, expected);
+}

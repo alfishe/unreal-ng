@@ -1,4 +1,8 @@
 #include "emulatorcontext.h"
+#include "emulator/platform.h"
+#include "emulator/notifications.h"
+#include "3rdparty/message-center/messagecenter.h"
+#include <algorithm>
 #include "emulator/emulator.h"
 
 #include "common/modulelogger.h"
@@ -95,70 +99,215 @@ EmulatorContext::~EmulatorContext()
 // reports exactly that (an earlier revision returned the inverted result; the
 // workarounds were migrated back to isNil() when it was fixed).
 //
+namespace
+{
+int64_t NowEpochMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+std::string ClientKey(const std::string& label, const std::string& client)
+{
+    return label + "/" + client;
+}
+}  // namespace
+
 bool EmulatorContext::TakeRunControl(const UUID& owner, const std::string& surfaceLabel,
                                      std::string* errorReason)
+{
+    return TakeRunControl(owner, surfaceLabel, errorReason, {}, std::chrono::milliseconds(0));
+}
+
+bool EmulatorContext::TakeRunControl(const UUID& owner, const std::string& surfaceLabel, std::string* errorReason,
+                                     const std::string& client, std::chrono::milliseconds lease)
 {
     // A nil owner UUID is a programming error — surfaces must call UUID::Generate()
     // once at startup and reuse the value.
     if (owner.isNil())
     {
         if (errorReason)
-        {
             *errorReason = "TakeRunControl: nil owner UUID is not allowed";
-        }
         return false;
     }
+    ExpireIdleRunControl();
 
-    std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
-
-    const UUID& current = _runControlClaim.owner;
-    if (current.isNil())
+    bool taken = false;
+    bool refusedCooldown = false;
     {
-        // Unclaimed — take it. The execution arbiter enforces it: a run (an intent or a direct run) from any other
-        // surface is refused while it is held; a pause never is
-        _runControlClaim.owner = owner;
-        _runControlClaim.surfaceLabel = surfaceLabel;
-        if (pEmulator)
-            pEmulator->GetArbiter().TakeClaim(
-                execution::Requester{execution::OriginFromName(surfaceLabel), owner.toString()});
-        return true;
-    }
+        std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
 
-    if (current == owner)
-    {
-        // Idempotent re-claim by the same owner. Refresh label in case the surface
-        // wants to re-tag itself, but do not fail.
-        _runControlClaim.surfaceLabel = surfaceLabel;
-        return true;
-    }
+        // The user took control back from this client a short while ago: it does not take it again by itself
+        // (owner decision 2026-10-09: clients do not rush back; the user allows it at the GUI or the cooldown ends)
+        const std::string key = ClientKey(surfaceLabel, client);
+        const auto now = std::chrono::steady_clock::now();
+        auto& cooldowns = _runControlClaim.cooldowns;
+        cooldowns.erase(std::remove_if(cooldowns.begin(), cooldowns.end(),
+                                       [&](const auto& c) { return c.second <= now; }),
+                        cooldowns.end());
+        for (const auto& c : cooldowns)
+            if (c.first == key)
+            {
+                if (errorReason)
+                    *errorReason = "revoked_cooldown: the user took control back from '" + key +
+                                   "' at the GUI; do not retry - ask the user to allow it again";
+                refusedCooldown = true;
+            }
 
-    // Held by someone else.
-    if (errorReason)
-    {
-        *errorReason = "Run-control claim held by another surface ('" +
-                       _runControlClaim.surfaceLabel + "')";
+        if (!refusedCooldown)
+        {
+            const UUID& current = _runControlClaim.owner;
+            if (current.isNil())
+            {
+                // Unclaimed — take it. The execution arbiter enforces it: a run (an intent or a direct run) from any
+                // other surface is refused while it is held; a pause never is
+                _runControlClaim.owner = owner;
+                _runControlClaim.surfaceLabel = surfaceLabel;
+                _runControlClaim.client = client;
+                _runControlClaim.sinceMs = NowEpochMs();
+                _runControlClaim.lease = lease;
+                _runControlClaim.lastActivity = now;
+                auto& revoked = _runControlClaim.revokedOwners;
+                revoked.erase(std::remove(revoked.begin(), revoked.end(), owner.toString()), revoked.end());
+                if (pEmulator)
+                    pEmulator->GetArbiter().TakeClaim(
+                        execution::Requester{execution::OriginFromName(surfaceLabel), owner.toString()});
+                taken = true;
+            }
+            else if (current == owner)
+            {
+                // Idempotent re-claim by the same owner. Refresh label in case the surface
+                // wants to re-tag itself, but do not fail.
+                _runControlClaim.surfaceLabel = surfaceLabel;
+                _runControlClaim.lastActivity = now;
+                return true;
+            }
+            else if (errorReason)
+            {
+                *errorReason = "Run-control claim held by another surface ('" + _runControlClaim.surfaceLabel + "')";
+            }
+        }
     }
-    return false;
+    if (taken)
+        PostRunControlChanged("taken", surfaceLabel, client, owner.toString());
+    else if (refusedCooldown)
+        PostRunControlChanged("retake_refused", surfaceLabel, client, owner.toString());
+    return taken;
 }
 
 void EmulatorContext::ReleaseRunControl(const UUID& owner)
 {
-    std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
-
-    // Defensive: only the current holder may release. Mismatched releases are
-    // silently ignored — surfaces can release unconditionally at shutdown.
-    if (_runControlClaim.owner == owner)
+    std::string label, client;
     {
+        std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+        // Defensive: only the current holder may release. Mismatched releases are
+        // silently ignored — surfaces can release unconditionally at shutdown.
+        if (_runControlClaim.owner != owner || owner.isNil())
+            return;
         if (pEmulator)
             pEmulator->GetArbiter().ReleaseClaim(
                 execution::Requester{execution::OriginFromName(_runControlClaim.surfaceLabel), owner.toString()});
+        label = _runControlClaim.surfaceLabel;
+        client = _runControlClaim.client;
         _runControlClaim.owner.clear();
         _runControlClaim.surfaceLabel.clear();
+        _runControlClaim.client.clear();
     }
+    PostRunControlChanged("released", label, client, owner.toString());
+}
+
+bool EmulatorContext::RevokeRunControl(const std::string& by)
+{
+    std::string label, client, ownerText;
+    {
+        std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+        if (_runControlClaim.owner.isNil())
+            return false;
+        ownerText = _runControlClaim.owner.toString();
+        label = _runControlClaim.surfaceLabel;
+        client = _runControlClaim.client;
+        if (pEmulator)
+            pEmulator->GetArbiter().ReleaseClaim(
+                execution::Requester{execution::OriginFromName(label), ownerText});
+        _runControlClaim.revokedOwners.push_back(ownerText);
+        _runControlClaim.cooldowns.emplace_back(
+            ClientKey(label, client),
+            std::chrono::steady_clock::now() + std::chrono::seconds(_runControlClaim.retakeCooldownSeconds));
+        _runControlClaim.owner.clear();
+        _runControlClaim.surfaceLabel.clear();
+        _runControlClaim.client.clear();
+    }
+    // Its direct run (if one is under way) ends at the next instruction; the call answers revoked_by_user
+    if (pEmulator)
+        pEmulator->GetArbiter().AbortDriving();
+    LOGINFO("Run control taken back from %s %s by %s", label.c_str(), client.c_str(), by.c_str());
+    PostRunControlChanged("revoked", label, client, ownerText);
+    return true;
+}
+
+bool EmulatorContext::IsRunControlRevoked(const UUID& owner) const
+{
+    std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+    const auto& revoked = _runControlClaim.revokedOwners;
+    return std::find(revoked.begin(), revoked.end(), owner.toString()) != revoked.end();
+}
+
+void EmulatorContext::TouchRunControl(const UUID& owner)
+{
+    std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+    if (_runControlClaim.owner == owner)
+        _runControlClaim.lastActivity = std::chrono::steady_clock::now();
+}
+
+void EmulatorContext::AllowRunControlRetake(const std::string& clientKey)
+{
+    std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+    auto& cooldowns = _runControlClaim.cooldowns;
+    if (clientKey.empty())
+        cooldowns.clear();
+    else
+        cooldowns.erase(std::remove_if(cooldowns.begin(), cooldowns.end(),
+                                       [&](const auto& c) { return c.first == clientKey; }),
+                        cooldowns.end());
+}
+
+void EmulatorContext::SetRunControlRetakeCooldown(uint32_t seconds)
+{
+    std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+    _runControlClaim.retakeCooldownSeconds = seconds;
+}
+
+void EmulatorContext::ExpireIdleRunControl() const
+{
+    std::string label, client, ownerText;
+    {
+        std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
+        const RunControlClaim& c = _runControlClaim;
+        if (c.owner.isNil() || c.lease.count() == 0 || std::chrono::steady_clock::now() - c.lastActivity < c.lease)
+            return;
+        ownerText = c.owner.toString();
+        label = c.surfaceLabel;
+        client = c.client;
+        if (pEmulator)
+            pEmulator->GetArbiter().ReleaseClaim(execution::Requester{execution::OriginFromName(label), ownerText});
+        auto& mutableClaim = const_cast<RunControlClaim&>(c);
+        mutableClaim.owner.clear();
+        mutableClaim.surfaceLabel.clear();
+        mutableClaim.client.clear();
+    }
+    LOGINFO("Run control session of %s %s expired (idle lease)", label.c_str(), client.c_str());
+    PostRunControlChanged("expired", label, client, ownerText);
+}
+
+void EmulatorContext::PostRunControlChanged(const std::string& event, const std::string& label,
+                                            const std::string& client, const std::string& owner) const
+{
+    MessageCenter::DefaultMessageCenter().Post(
+        NC_RUN_CONTROL_CHANGED, new RunControlChangedPayload(emulatorId, event, label, client, owner), true);
 }
 
 bool EmulatorContext::HasRunControl(const UUID& owner) const
 {
+    ExpireIdleRunControl();
     std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
     // Must be both currently claimed AND held by this specific owner.
     return !_runControlClaim.owner.isNil() && _runControlClaim.owner == owner;
@@ -166,12 +315,14 @@ bool EmulatorContext::HasRunControl(const UUID& owner) const
 
 bool EmulatorContext::IsRunControlClaimed() const
 {
+    ExpireIdleRunControl();
     std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
     return !_runControlClaim.owner.isNil();
 }
 
 EmulatorContext::RunControlState EmulatorContext::GetRunControlState() const
 {
+    ExpireIdleRunControl();
     std::lock_guard<std::mutex> lock(_runControlClaim.mutex);
 
     RunControlState state;
@@ -181,7 +332,15 @@ EmulatorContext::RunControlState EmulatorContext::GetRunControlState() const
     {
         state.surfaceLabel = _runControlClaim.surfaceLabel;
         state.ownerUuid = _runControlClaim.owner.toString();
+        state.client = _runControlClaim.client;
+        state.sinceMs = _runControlClaim.sinceMs;
+        state.leaseMs = static_cast<uint32_t>(_runControlClaim.lease.count());
     }
+    const auto now = std::chrono::steady_clock::now();
+    for (const auto& c : _runControlClaim.cooldowns)
+        if (c.second > now)
+            state.cooldowns.emplace_back(c.first,
+                                         std::chrono::duration_cast<std::chrono::seconds>(c.second - now).count());
     return state;
 }
 

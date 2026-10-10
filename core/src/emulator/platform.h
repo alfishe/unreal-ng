@@ -42,6 +42,7 @@ constexpr char const* NC_EMULATOR_SELECTION_CHANGED = "EMULATOR_SELECTION_CHANGE
 constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       // Emulator state change (Initialized/Run/Pause/Resume/Stop) — payload: EmulatorStateChangePayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SYSTEM_RESET = "RESET";                                // System reset event
 constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // CPU step(s) executed; the end of a direct run carries CpuStepPayload (did a breakpoint stop it)
+constexpr char const* NC_RUN_CONTROL_CHANGED = "RUN_CONTROL_CHANGED";             // An automation session took / released control, the user took it back, its lease expired, a re-take was refused - payload: RunControlChangedPayload
 constexpr char const* NC_BREAKPOINTS_CHANGED = "BREAKPOINTS_CHANGED";             // The breakpoint set changed — payload: BreakpointsChangedPayload (posted by BreakpointManager::RebuildFilters)
 constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered — payload: BreakpointTriggeredPayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               // Scanline boundary reached (debug stepping only)

@@ -196,7 +196,9 @@ private:
     bool _passExecBreakpointArmed = false;
     uint16_t _passExecBreakpointPc = 0;
     /// A direct run's loops end on a stop request or on a breakpoint stop
-    bool RunHalted() const { return _stopRequested || _directStop.hit; }
+    bool RunHalted() const { return _stopRequested || _directStop.hit || _arbiter.ServingAborted(); }
+    /// The last direct run ended because it was aborted (the user took control back from an automation session)
+    std::atomic<bool> _lastDirectRunAborted{false};
     /// Marks a direct-stepping call for its duration and holds the host audio output meanwhile (a direct run is
     /// never paced to real time: the machine computes the same samples, the speakers get nothing, as while
     /// paused); the last one out posts NC_EXECUTION_CPU_STEP so a GUI that
@@ -776,6 +778,9 @@ public:
     /// A thread starts / stops executing the Z80 (MainLoop around a frame, a direct run). Two at once is a violation
     void DriverEnter();
     void DriverLeave();
+    /// The last direct run (RunNFrames, RunTStates, ...) was cut short by an abort: the user took control back from the
+    /// automation session that asked for it. The surfaces answer that call with revoked_by_user
+    bool LastDirectRunAborted() const { return _lastDirectRunAborted.load(); }
     /// Moments two threads executed the Z80 at once (0 on a correct run)
     uint64_t DriverViolations() const { return _driverViolations.load(std::memory_order_relaxed); }
     /// The machine's state may be changed from this thread right now: not running, paused, or this thread holds the

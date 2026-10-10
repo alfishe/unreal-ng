@@ -318,5 +318,33 @@ showed the same address.
   - **Result:** all machine fuzz tests, 6 processes × 30 seeds in parallel: all clean.
 - [ ] **Still open:**
   - ZX-Poly groups and RZX playback in the fuzz matrix;
-  - abort of a long direct run from the priority lane. Deferred: a pause during `run_frames` waits for its end, as
-    before the arbiter. Aborting it would change the API's behaviour and needs its own decision.
+  - abort of a long direct run: replaced by the owner's decision on automation sessions (X7). A pause never aborts;
+    taking back control does.
+
+## X7: automation sessions - visible remote control, take back control (design §6a)
+
+- [x] **Core (X7a).** `EmulatorContext`:
+  - **Take.** `TakeRunControl(owner, label, reason, client, lease)` records the client, the time and the idle lease
+    (ms).
+  - **Take back.** `RevokeRunControl(by)` releases the claim, marks the owner revoked (`IsRunControlRevoked`: its
+    requests answer `revoked_by_user`) and starts the client's re-take cooldown (`revoked_cooldown`, 300 s by default,
+    `AllowRunControlRetake` lifts it). It also aborts the session's direct run.
+  - **Lease and announcements.** `TouchRunControl` renews a lease; an expired lease ends the session ("expired").
+    `NC_RUN_CONTROL_CHANGED` announces taken / released / revoked / expired / retake_refused.
+- [x] **The abort path.** The arbiter's `AbortDriving()` aborts only a direct run, and `ServingAborted()` is one
+  relaxed load read by `RunHalted()` in every `Run*` loop. `Emulator::LastDirectRunAborted()` tells the surfaces to
+  answer that call with `revoked_by_user`. The execution report shows `session` and `retake_cooldowns`.
+- [x] **Tests.** `TakingControlBackEndsTheSessionAndItsRun`: a `RunNFrames(1000000)` ends at once and leaves the
+  machine paused, the owner is revoked, the same client is in its cooldown, another client takes control, and the
+  "allow again" works. `AnIdleSessionExpiresAndEveryChangeIsAnnounced`.
+- [ ] **Surfaces.** WebAPI `POST/DELETE /control/session` with the `X-Unreal-Session` header; MCP take / release
+  control; CLI `session`; Lua and Python `take_control()` / `release_control()`; OpenAPI; the session in the
+  execution report.
+- [ ] **unreal-qt.** Toolbar indicator and the Take back control action; every control action disabled while a
+  session is open; HUD status / nudge; a message on take-back.
+- [ ] **No retry, no rush back.** `revoked_by_user` with `retry: false`; MCP result text and server instructions;
+  Python / Lua `ControlRevoked`; the CLI ends the session; recipes; the server's re-take cooldown per client with
+  the GUI's "allow again".
+- [ ] **Tests.** Revoke during a long `run_frames` (it returns aborted, the session's next call gets
+  `revoked_by_user`; a re-take within the cooldown is refused, after "allow again" it works); idle lease expiry; GDB socket close; Qt: actions disabled and enabled
+  again, the HUD status set and cleared.

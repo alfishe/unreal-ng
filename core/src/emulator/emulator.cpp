@@ -2629,7 +2629,10 @@ Emulator::DirectStepScope::DirectStepScope(Emulator& emulator) : _emulator(emula
     }
     _driver = !_hold.Valid() ? !_emulator._arbiter.IsLoopThread() : !_hold.inlined;
     if (_driver)
+    {
         _emulator.DriverEnter();
+        _emulator._lastDirectRunAborted = false;
+    }
 
     const bool firstIn = _emulator._directStepDepth.fetch_add(1, std::memory_order_acq_rel) == 0;
     if (_emulator._context && _emulator._context->pSoundManager)
@@ -2664,7 +2667,11 @@ Emulator::DirectStepScope::~DirectStepScope()
         ~EndHold()
         {
             if (scope._driver)
+            {
+                if (scope._emulator._arbiter.ServingAborted())
+                    scope._emulator._lastDirectRunAborted = true;
                 scope._emulator.DriverLeave();
+            }
             scope._emulator._arbiter.EndHold(scope._hold);
         }
     } endHold{*this};
