@@ -2774,6 +2774,9 @@ Z80::StepResult Emulator::ExecuteStep(bool skipBreakpoints, bool* frameCompleted
             _mainloop->CompleteFrame();
         else
             z80.BeginFrame();
+        // Between two frames a long direct run lets the holds waiting for it in (they do not drive the Z80)
+        if (_lendingHold && _lendingThread == std::this_thread::get_id())
+            _arbiter.LendCpu(*_lendingHold);
     }
 
     if (frameCompleted)
@@ -2825,6 +2828,13 @@ Emulator::DirectStepScope::DirectStepScope(Emulator& emulator, const char* tag) 
                        execution::OutcomeName(result.outcome), result.detail.c_str());
     }
     _driver = !_hold.Valid() ? !_emulator._arbiter.IsLoopThread() : !_hold.inlined;
+    // The outermost run with the CPU of its own lends it between frames (ExecuteStep)
+    if (_hold.Valid() && !_hold.inlined && !_emulator._lendingHold)
+    {
+        _emulator._lendingHold = &_hold;
+        _emulator._lendingThread = std::this_thread::get_id();
+        _lends = true;
+    }
     if (_driver)
     {
         _emulator.DriverEnter();
@@ -2863,6 +2873,11 @@ Emulator::DirectStepScope::~DirectStepScope()
         DirectStepScope& scope;
         ~EndHold()
         {
+            if (scope._lends)
+            {
+                scope._emulator._lendingHold = nullptr;
+                scope._emulator._lendingThread = std::thread::id();
+            }
             if (scope._driver)
             {
                 if (scope._emulator._arbiter.ServingAborted())

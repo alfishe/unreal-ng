@@ -426,6 +426,57 @@ HoldToken ExecutionArbiter::BeginHold(const Requester& requester, std::string ta
     return token;
 }
 
+size_t ExecutionArbiter::LendCpu(const HoldToken& token)
+{
+    if (!token.Valid() || token.inlined)
+        return 0;
+    size_t lent = 0;
+    {
+        Lock lock(_mutex);
+        const std::thread::id self = std::this_thread::get_id();
+        if (_serving != token.request || _servingThread != self || _phase != Phase::Running)
+            return 0;
+        // Lent only to those that have waited a while: a run with holds arriving all the time (a busy debugger, a
+        // fuzz) still makes progress in long stretches instead of a frame per thread wake-up; a hold waits at most
+        // this long plus a frame, not the whole run
+        constexpr std::chrono::milliseconds kLendAfter{20};
+        // Not one that changes the intent (thenIntent, pauseFirst): the run's pause stays as it is
+        const auto lendable = [this](const std::shared_ptr<Request>& r) {
+            return r->command && !r->posted && !r->commandOptions.drivesZ80 && !r->commandOptions.pauseFirst &&
+                   !r->commandOptions.thenIntent && r->outcome == Outcome::Pending && !RefusedByClaimLocked(*r);
+        };
+        const Clock::time_point now = Clock::now();
+        if (std::none_of(_queue.begin(), _queue.end(), [&](const std::shared_ptr<Request>& r) {
+                return lendable(r) && now - r->submitted >= kLendAfter;
+            }))
+            return 0;
+        for (;;)
+        {
+            const auto it = std::find_if(_queue.begin(), _queue.end(), lendable);
+            if (it == _queue.end())
+                break;
+            const std::shared_ptr<Request> borrower = *it;
+            _queue.erase(it);
+            _lender = _serving;
+            StartServingLocked(borrower);  // its submitter's thread wakes and runs it (BeginHold / Execute)
+            _cv.notify_all();
+            while (_serving == borrower)
+                _cv.wait(lock);
+            // Back to the lender, where it stood: nothing else was served meanwhile (PumpLocked waits for it)
+            _serving = _lender;
+            _servingThread = self;
+            _servingAborted.store(_lender->aborted.load(std::memory_order_acquire), std::memory_order_relaxed);
+            _lender.reset();
+            ++lent;
+            if (_phase != Phase::Running)
+                break;
+        }
+        RecomputeLocked();
+    }
+    Released();
+    return lent;
+}
+
 void ExecutionArbiter::EndHold(HoldToken& token)
 {
     if (!token.Valid())
@@ -503,6 +554,12 @@ bool ExecutionArbiter::AbortCurrent(const Requester& requester, const std::strin
 bool ExecutionArbiter::AbortDriving()
 {
     std::lock_guard<std::mutex> lock(_mutex);
+    // A direct run lending the CPU (LendCpu) is still the driving command: it stops when it has the CPU back
+    if (_lender && _lender->commandOptions.drivesZ80)
+    {
+        _lender->aborted.store(true, std::memory_order_release);
+        return true;
+    }
     if (!_serving || !_serving->commandOptions.drivesZ80)
         return false;
     _serving->aborted.store(true, std::memory_order_release);
@@ -532,6 +589,8 @@ void ExecutionArbiter::BeginStop()
             _serving->aborted.store(true, std::memory_order_release);
             _servingAborted.store(true, std::memory_order_relaxed);
         }
+        if (_lender)
+            _lender->aborted.store(true, std::memory_order_release);
         RecomputeLocked();
         _cv.notify_all();
     }
@@ -777,7 +836,7 @@ void ExecutionArbiter::PumpLocked(Lock& lock)
 {
     for (;;)
     {
-        if (_serving || _queue.empty())
+        if (_serving || _lender || _queue.empty())
             break;
         const std::shared_ptr<Request> head = _queue.front();
         if (!head->command)
@@ -883,7 +942,7 @@ bool ExecutionArbiter::ApplyIntentRunLocked(Clock::time_point now)
 
 bool ExecutionArbiter::GrantedLocked() const
 {
-    return !_serving && (!_loopAttached || _loopParked);
+    return !_serving && !_lender && (!_loopAttached || _loopParked);
 }
 
 void ExecutionArbiter::StartServingLocked(const std::shared_ptr<Request>& request)

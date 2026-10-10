@@ -289,6 +289,12 @@ public:
     HoldToken BeginHold(const Requester& requester, std::string tag, Clock::time_point deadline,
                         Result* result = nullptr, const CommandOptions& options = {});
     void EndHold(HoldToken& token);
+    /// A long driving command (a direct run) lends the CPU between two frames: the commands queued behind it that do
+    /// not drive the Z80 and whose submitter waits for them (holds, Execute: TTD operations, saves, media, readers)
+    /// are served now, one after another, while it waits; then it goes on where it stood. Intents stay queued (a
+    /// pause applies at the command's end) and so do driving commands (two direct runs never interleave). Called on
+    /// the command's own thread; returns how many it lent to
+    size_t LendCpu(const HoldToken& token);
     /// endregion </Requests>
 
     /// region <Priority lane>
@@ -382,6 +388,8 @@ private:
     uint64_t _nextSeq = 1;
     std::deque<std::shared_ptr<detail::Request>> _queue;
     std::shared_ptr<detail::Request> _serving;
+    /// The driving command that lent the CPU (LendCpu): nothing else is served until it has it back
+    std::shared_ptr<detail::Request> _lender;
     std::thread::id _servingThread;
     std::vector<std::thread::id> _inlineThreads;  ///< threads running inline bodies (nested commands)
 

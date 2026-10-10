@@ -623,3 +623,71 @@ TEST_F(ExecutionArbiterMachine_Test, PauseAndWaitWaitsForTheCommandWithinItsBudg
     command.Release();
     EXPECT_TRUE(TestWait::For([&]() { return _emulator->IsPaused(); })) << "still queued: it applied afterwards";
 }
+
+/// A long direct run lends the CPU between frames (ExecutionArbiter::LendCpu): a hold asked meanwhile (a TTD stop, a
+/// save, a reader) gets it while the run still runs, not at its end; the run then goes on and runs exactly its frames
+TEST_F(ExecutionArbiterMachine_Test, ALongDirectRunLetsAHoldInBetweenFrames)
+{
+    const unsigned frames = 200;  // long enough that a hold asked at its start would otherwise wait for most of it
+    ASSERT_TRUE(PausedForCounting(_emulator));  // the running fixture would add frames before the run starts
+    const uint64_t before = Frame(_emulator);
+    std::atomic<bool> runDone{false};
+    std::thread run([&]() {
+        _emulator->RunNFrames(frames, true);
+        runDone = true;
+    });
+    ASSERT_TRUE(TestWait::For([&]() { return _emulator->IsDirectStepping(); }));
+
+    bool heldDuringTheRun = false;
+    {
+        Emulator::CpuHold hold(*_emulator, "ttd stop");
+        EXPECT_TRUE(hold.Held());
+        heldDuringTheRun = !runDone.load() && _emulator->IsDirectStepping();
+        EXPECT_TRUE(_emulator->IsEmulationParked() || _emulator->IsDirectStepping());
+    }
+    run.join();
+    EXPECT_TRUE(heldDuringTheRun) << "the hold waited for the whole run instead of a frame boundary";
+    EXPECT_EQ(Frame(_emulator), before + frames) << "the run ran exactly its frames around the lent hold";
+}
+
+/// What the run does not lend to: a pause (it stays queued and applies at the run's end) and another direct run
+/// (two runs never interleave: the second one starts when the first has ended)
+TEST_F(ExecutionArbiterMachine_Test, ALongDirectRunLendsToNeitherAPauseNorAnotherRun)
+{
+    std::atomic<bool> firstDone{false};
+    std::thread first([&]() {
+        _emulator->RunNFrames(200, true);
+        firstDone = true;
+    });
+    ASSERT_TRUE(TestWait::For([&]() { return _emulator->IsDirectStepping(); }));
+
+    const execution::Result pause = _emulator->Pause(execution::Requester{execution::Origin::WebApi, {}});
+    EXPECT_EQ(pause.outcome, execution::Outcome::Pending) << "queued behind the run, not lent to";
+
+    bool secondAfterFirst = false;
+    std::thread second([&]() {
+        _emulator->RunNFrames(1, true);
+        secondAfterFirst = firstDone.load();
+    });
+    first.join();
+    second.join();
+    EXPECT_TRUE(secondAfterFirst) << "the second direct run interleaved with the first";
+    EXPECT_TRUE(_emulator->IsPaused());
+}
+
+/// The user takes control back while the run has lent the CPU: the run stops as soon as it has the CPU back
+TEST_F(ExecutionArbiterMachine_Test, TakingControlBackWhileTheRunLendsTheCpuStopsTheRun)
+{
+    const unreal::UUID owner = unreal::UUID::Generate();
+    EmulatorContext* context = _emulator->GetContext();
+    ASSERT_TRUE(context->TakeRunControl(owner, "webapi", nullptr, "bot", std::chrono::milliseconds(0)));
+    std::thread run([&]() { _emulator->RunNFrames(100000, true); });  // far longer than the test
+    ASSERT_TRUE(TestWait::For([&]() { return _emulator->IsDirectStepping(); }));
+    {
+        Emulator::CpuHold hold(*_emulator, "a reader");  // lent: the run waits at a frame boundary meanwhile
+        ASSERT_TRUE(hold.Held());
+        EXPECT_TRUE(context->RevokeRunControl("gui"));
+    }
+    run.join();  // ends at once: aborted
+    EXPECT_TRUE(_emulator->LastDirectRunAborted());
+}

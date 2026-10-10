@@ -427,9 +427,17 @@ showed the same address.
   stop / write journal / resume / session operations, the port-journal search (held, not refused only while
   running), the step-over cancel, the ZX-Poly seek. Two tests that counted frames right after a `Pause()` (it returns
   after 500 ms on a starved machine) wait for the pause to apply. Again: 432 runs under the same load, 0 failures.
-- [ ] **A long direct run against a hold:** a hold waits for a direct run at most 5 s, then proceeds without the CPU
-  (logged). run_frames 10000 lasts ~20 s: a TTD stop from the GUI meanwhile can still race it. Next: long direct runs
-  let holds in between frames.
+- [x] **A long direct run lends the CPU between frames** (`ExecutionArbiter::LendCpu`, called at every frame boundary
+  of the outermost direct run in `Emulator::ExecuteStep`). The commands queued behind it that do not drive the Z80
+  and whose submitter waits (holds, Execute: a TTD stop, a save, media, readers) are served while it waits; then it
+  goes on where it stood, exactly its frames. Not lent to: intents (a pause applies at the run's end), driving
+  commands (two direct runs never interleave), commands that change the intent (`thenIntent`, `pauseFirst`). The
+  pump waits for the lender (`_lender`); a take-back (`AbortDriving`) or a stop during the lend aborts the run when it
+  has the CPU back. Lent only once a borrower has waited 20 ms: with holds arriving all the time a run still moves in
+  long stretches (without it the machine fuzz under a loaded host went from 3 s to 156 s - a frame per thread
+  wake-up). A hold now waits at most ~20 ms plus a frame, not the 5 s timeout of a long run_frames.
+  Tests: `ALongDirectRunLetsAHoldInBetweenFrames` (fails 3 of 3 with the lend taken out),
+  `ALongDirectRunLendsToNeitherAPauseNorAnotherRun`, `TakingControlBackWhileTheRunLendsTheCpuStopsTheRun`.
 - [x] **`Pause()` - the hybrid (owner decision 2026-10-10).** Behind a command another thread serves (a direct run, a
   hold) the pause is queued and the call returns at once: Pending, the command named (`ExecutionArbiter::
   ServingCommand`); it applies when the command ends (a pause never aborts one). Nothing ahead: it waits for the park,

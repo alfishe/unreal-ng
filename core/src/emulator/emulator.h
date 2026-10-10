@@ -174,6 +174,10 @@ protected:
     /// the emulation thread is parked. A GUI that reads the machine (debugger, memory views) must not do so
     /// meanwhile: the memory map changes under it. Depth, not a flag: the calls may nest
     std::atomic<int> _directStepDepth{0};
+    /// The outermost direct run's CPU hold and its thread: at each frame boundary it lends the CPU to the holds
+    /// queued behind it (ExecutionArbiter::LendCpu) - a TTD stop, a save, a reader do not wait for a long run_frames
+    const execution::HoldToken* _lendingHold = nullptr;
+    std::thread::id _lendingThread;
     // The debugger snapshot's change counter and the registers at the previous stop (tdd 2026-10-04-debugger-snapshot
     // §4.5): updated at stops, run starts and tool edits, never per instruction
     std::atomic<uint64_t> _debugSeq{0};
@@ -247,6 +251,8 @@ private:
         execution::HoldToken _hold;
         /// This scope is a new driver of the Z80 (not nested in one that already drives)
         bool _driver = false;
+        /// This scope's hold is the one lent between frames (Emulator::_lendingHold)
+        bool _lends = false;
         /// The host audio hold this direct run takes (reason DirectRun): it is not paced to real time, so its
         /// frames must not reach the speakers sped up. Taken after the depth marks the run active, released before
         /// it unmarks it, so Resume's reconcile never sees this hold without its run
