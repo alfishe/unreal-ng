@@ -435,6 +435,28 @@ SyncDescriptor TasmGap(const std::string& version, const std::string& title, con
     return d;
 }
 
+/// ZAsm 3.2x (asm-synchronizer.md §7.9): a Pentagon 512 program; the buffer from #8551, the table at #8530 (the
+/// start at #8538, the end at #853A; the words before it follow the cursor and the screen); the part above #C000 in
+/// RAM page 30. SAVE writes a ";*" position line first
+SyncDescriptor Zasm32x()
+{
+    SyncDescriptor d;
+    d.id = "zasm-3.2x";
+    d.title = "ZAsm 3.2x";
+    d.codec = "zxasm";
+    d.version = "3.15";
+    d.extension = "a";
+    d.identify = {{0x8000, std::string("\x28\xFA\xFE\x09\x28\x25\xFE\x06\x28\x15\x30\x04\xFE\x02\x30\x2D\xFE\x0D\xC8\x12\x13\x10\xE5\x3E", 24)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.startAt = 0x8538;
+    d.linear.endAt = 0x853A;
+    d.linear.upperPage = 30;
+    d.linear.stateLine = ";*";
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 /// ZX-ASM 3.10 (asm-synchronizer.md §7.9): the layout of 3.15 with its table at #868F: the start, then the end at
 /// #869E; the part above #C000 in RAM page 6; no ";!" line on SAVE
 SyncDescriptor Zxasm310()
@@ -567,6 +589,7 @@ const std::vector<SyncDescriptor>& Descriptors()
         Storm("storm-1.3", "STORM 1.3", "1.3", 0x0B, '\x87'),
         Storm("storm-1.0b", "STORM 1.0beta", "1.0", 0x03, '\x85'),
         Zasm315(),
+        Zasm32x(),
         Zxasm310(),
         Zxasm30(),
         Masm11(),

@@ -163,7 +163,8 @@ phase; master only after the owner's review.
       - [x] TASM 4.0 / 4.4 / 3.0 / 3.2 (2026-10-09): 4.12's gap buffer (pointers `#8DD0` / `#8910`), the editor known by the tail of its line buffer (§7.6, §7.7)
       - [x] ZX-ASM 3.10 (2026-10-09): 3.15's layout with the table at `#868F` (§7.9)
       - [x] ZX ASM 3.0 (2026-10-09): the table in page 5 at `#61C6`, saved from the main menu (§7.9); 3.01: no program in the collection
-      - [ ] Lite 1.07, ZAsm 3.2x-4.20, ZX-ASM 2.x, MASM 1.0 demo / 2.0 / 3.0, TASM 3.5 / 2.0
+      - [x] ZAsm 3.2x (2026-10-09): Pentagon 512, the table at `#8530`, the upper part in page 30 (§7.9)
+      - [ ] Lite 1.07, ZAsm 3.3x-4.20, several texts at once (3.2x and later), ZX-ASM 2.x, MASM 1.0 demo / 2.0 / 3.0, TASM 3.5 / 2.0
     - [ ] Y4 48K assemblers: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):
