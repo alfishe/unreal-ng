@@ -1266,7 +1266,7 @@ void TimeTravelManager::OnFrameBoundary()
             // async main loop isn't running in test mode).
             _autoPauseRequested.store(true, std::memory_order_release);
             if (_context->pEmulator)
-                _context->pEmulator->Pause();
+                _context->pEmulator->Pause(execution::Requester{execution::Origin::Ttd, {}}, "ttd session end");
         }
         MaybePublishAtFrameBoundary();
     }

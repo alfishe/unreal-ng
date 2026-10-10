@@ -187,6 +187,8 @@ private:
     BreakpointStop _directStop;
     /// A breakpoint's pause: Pause() puts it into its NC_EMULATOR_STATE_CHANGE payload, then clears it
     BreakpointStop _pendingPauseCause;
+    /// The owner of that breakpoint ("dezog", "gdb", "interactive"): the origin its pause carries
+    std::string _pendingPauseOwner;
     /// The emulator is stopped at an execution breakpoint at this PC (nothing executed since)
     bool _stoppedAtExecBreakpoint = false;
     uint16_t _stoppedAtExecPc = 0;
@@ -465,6 +467,12 @@ public:
     void StartAsync();
     void Pause(bool broadcast = true);   // broadcast=false for internal operations (won't trigger UI updates)
     void Resume(bool broadcast = true);  // broadcast=false for internal operations (won't trigger UI updates)
+    /// A pause asked by a surface (execution arbiter intent): GUI, WebAPI, CLI, scripts, GDB, DeZog, TTD. The origin
+    /// is kept with the pause (who set it) and broadcast with it
+    execution::Result Pause(const execution::Requester& requester, const std::string& reason = "pause");
+    /// A run asked by a surface. Refused while another surface holds the run-control claim; with `onlyIfOwner`,
+    /// refused when the pause in force was set by somebody else (DeZog's session close, the TTD resume verb)
+    execution::Result Resume(const execution::Requester& requester, bool onlyIfOwner = false);
     void WaitWhilePaused();              // Block until resumed (used by breakpoint handlers)
     /// Block until the Z80 thread has actually parked in response to a prior Pause().
     /// Returns true on confirmation, false on timeout. Callers that mutate emulator

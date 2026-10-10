@@ -649,6 +649,19 @@ TEST_F(DezogDebugAdapter_test, SessionCloseDropsDezogBreakpointsKeepsOthersAndRe
     bpManager->RemoveBreakpointByID(foreign);
 }
 
+/// Owner decision 2026-10-09 (execution arbiter, owner-only run): the session close lifts only a pause DeZog set itself.
+/// The machine paused by the user (the GUI's pause) stays paused when DeZog disconnects
+TEST_F(DezogDebugAdapter_test, SessionCloseKeepsAPauseTheUserAskedFor)
+{
+    _emulator->Resume(execution::Requester{execution::Origin::DeZog, {}});
+    ASSERT_FALSE(_emulator->IsPaused());
+    _emulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "user");
+    ASSERT_TRUE(_emulator->IsPaused());
+
+    _adapter->onSessionClosed();
+    EXPECT_TRUE(_emulator->IsPaused()) << "DeZog's close lifted the user's pause";
+}
+
 TEST_F(DezogDebugAdapter_test, SessionCloseWhileRunningIsHarmless)
 {
     _adapter->resume();

@@ -1275,47 +1275,50 @@ void Emulator::StartAsync()
 ///   emulator->Resume(false);
 void Emulator::Pause(bool broadcast)
 {
-    if (!_isRunning || !_mainloop)
-    {
-        // Cannot pause if not running or mainloop not initialized
-        return;
-    }
-
     // Silent: hold the CPU until the matching Resume(false) on this thread. The intent is untouched, so a pause
     // somebody else asks for meanwhile survives the Resume(false) (the bug that led to the arbiter)
     if (!broadcast)
     {
-        BeginCompatHold();
+        if (_isRunning && _mainloop)
+            BeginCompatHold();
         return;
     }
+    Pause(execution::Requester{execution::Origin::Internal, {}});
+}
+
+execution::Result Emulator::Pause(const execution::Requester& requester, const std::string& reason)
+{
+    if (!_isRunning || !_mainloop)
+        return execution::Result{execution::Outcome::Refused, 0, execution::Intent::Pause, "not running"};
 
     // The emulation thread itself (a breakpoint, TTD's stop at the end of a detached session): the priority lane.
     // The loop parks at its next instruction boundary (WaitWhilePaused / the frame-end check)
     if (_arbiter.IsLoopThread())
     {
-        _arbiter.PauseFromDriver(
-            execution::Requester{_pendingPauseCause.hit ? execution::Origin::Debugger : execution::Origin::Internal, {}},
-            _pendingPauseCause.hit ? "breakpoint" : "pause");
-        return;
+        const bool breakpoint = _pendingPauseCause.hit;
+        execution::Requester who = requester;
+        if (breakpoint)
+        {
+            const execution::Origin owner = execution::OriginFromName(_pendingPauseOwner);
+            who = execution::Requester{owner == execution::Origin::Internal ? execution::Origin::Debugger : owner, {}};
+        }
+        _arbiter.PauseFromDriver(who, breakpoint ? "breakpoint" : reason);
+        return execution::Result{execution::Outcome::Applied, 0, execution::Intent::Pause, {}};
     }
 
     // A thread that holds the CPU (a direct run reaching TTD's session end, a command's body): the pause queues
     // behind its own hold and applies when that ends; waiting for it here would only wait for itself
+    execution::Ticket ticket =
+        _arbiter.SubmitIntent(execution::Intent::Pause, requester, execution::IntentOptions{reason, false});
     if (_arbiter.HoldsCpu())
-    {
-        _arbiter.SubmitIntent(execution::Intent::Pause, execution::Requester{execution::Origin::Internal, {}},
-                              execution::IntentOptions{"pause", false});
-        return;
-    }
+        return ticket.Peek();
 
-    // A pause request, in order with every other request; then the park. Pause() means "no more emulated writes"
-    // to its callers (tests, snapshot loading), so it waits for both, briefly: a request behind a long command
-    // stays queued and applies when that ends
-    execution::Ticket ticket = _arbiter.SubmitIntent(execution::Intent::Pause,
-                                                     execution::Requester{execution::Origin::Internal, {}},
-                                                     execution::IntentOptions{"pause", false});
-    ticket.Wait(std::chrono::milliseconds(500));
+    // In order with every other request; then the park. Pause() means "no more emulated writes" to its callers
+    // (tests, snapshot loading), so it waits for both, briefly: a request behind a long command stays queued and
+    // applies when that ends
+    const execution::Result result = ticket.Wait(std::chrono::milliseconds(500));
     _arbiter.WaitParked(execution::Clock::now() + std::chrono::milliseconds(500));
+    return result;
 }
 
 /// @brief Resumes emulator execution after pause
@@ -1337,28 +1340,29 @@ void Emulator::Pause(bool broadcast)
 /// @see Emulator::Pause
 void Emulator::Resume(bool broadcast)
 {
-    if (!_mainloop)
-    {
-        // Cannot resume if mainloop not initialized
-        return;
-    }
-
     // Silent: ends this thread's hold from Pause(false). Never lifts a pause: that is an intent somebody asked for
     if (!broadcast)
     {
-        EndCompatHold();
+        if (_mainloop)
+            EndCompatHold();
         return;
     }
+    Resume(execution::Requester{execution::Origin::Internal, {}});
+}
 
+execution::Result Emulator::Resume(const execution::Requester& requester, bool onlyIfOwner)
+{
     // Not running: nothing is paused (Stop() ends the intent's effect; StartAsync() starts with Run)
-    if (!_isRunning)
-        return;
+    if (!_mainloop || !_isRunning)
+        return execution::Result{execution::Outcome::Refused, 0, execution::Intent::Run, "not running"};
 
-    execution::Ticket ticket = _arbiter.SubmitIntent(execution::Intent::Run,
-                                                     execution::Requester{execution::Origin::Internal, {}},
-                                                     execution::IntentOptions{"resume", false});
-    if (!_arbiter.IsLoopThread() && !_arbiter.HoldsCpu())
-        ticket.Wait(std::chrono::milliseconds(500));
+    // Refused while another surface holds the run-control claim (GDB), or - owner-only - when the pause in force is
+    // somebody else's (DeZog's session close, the TTD resume verb)
+    execution::Ticket ticket = _arbiter.SubmitIntent(execution::Intent::Run, requester,
+                                                     execution::IntentOptions{"resume", onlyIfOwner});
+    if (_arbiter.IsLoopThread() || _arbiter.HoldsCpu())
+        return ticket.Peek();
+    return ticket.Wait(std::chrono::milliseconds(500));
 }
 
 /// @brief Blocks the calling thread until the emulator is resumed
@@ -2601,6 +2605,9 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
         const BreakpointDescriptor* bp = brk.GetBreakpointById(breakpointId);
         hidden = bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints");
+        // The pause belongs to whoever set the breakpoint: a DeZog breakpoint's stop is DeZog's (its session close
+        // lifts it), a GDB one GDB's, an interactive one the debugger's
+        _pendingPauseOwner = bp ? bp->owner : std::string();
     }
 
     // The step over's temporary breakpoint ends its run here, on the emulation thread that reads the breakpoints:
@@ -2642,6 +2649,7 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
     _pendingPauseCause = BreakpointStop{true, breakpointId, address, kind};
     Pause();
     _pendingPauseCause = BreakpointStop{};  // Pause() did not consume it when it returned early (not running)
+    _pendingPauseOwner.clear();
 
     MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_BREAKPOINT,
                                                new BreakpointTriggeredPayload(GetId(), breakpointId, address, hidden));

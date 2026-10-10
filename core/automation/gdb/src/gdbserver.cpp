@@ -1508,7 +1508,7 @@ std::string GDBSession::handleContinue()
 
     _waitingForStop = true;
     _externalStopPending = false;
-    _emulator->Resume();
+    _emulator->Resume(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()});
 
     // Wait for stop (breakpoint, external pause, or interrupt)
     while (_active && !_emulator->IsPaused() && !_externalStopPending)
@@ -1541,7 +1541,7 @@ std::string GDBSession::handleStep()
 
     if (!_emulator->IsPaused())
     {
-        _emulator->Pause();
+        _emulator->Pause(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()}, "gdb");
     }
 
     // Execute single instruction
@@ -1555,7 +1555,7 @@ std::string GDBSession::handleInterrupt()
 {
     if (_emulator && !_emulator->IsPaused())
     {
-        _emulator->Pause();
+        _emulator->Pause(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()}, "gdb");
     }
 
     _lastStopReason = StopReason::Interrupt;
@@ -1726,7 +1726,7 @@ std::string GDBSession::handleAttach(const std::string& pid)
     // Pause if running
     if (!_emulator->IsPaused())
     {
-        _emulator->Pause();
+        _emulator->Pause(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()}, "gdb");
     }
 
     // Take run-control claim (TDD §3.3)

@@ -225,12 +225,12 @@ public:
     /// @brief Pause an emulator
     /// @param emulatorId ID of the emulator to pause
     /// @return True if paused successfully, false if emulator not found or not running
-    bool PauseEmulator(const std::string& emulatorId);
+    bool PauseEmulator(const std::string& emulatorId, execution::Origin origin = execution::Origin::Internal);
 
     /// @brief Resume an emulator
     /// @param emulatorId ID of the emulator to resume
     /// @return True if resumed successfully, false if emulator not found or not paused
-    bool ResumeEmulator(const std::string& emulatorId);
+    bool ResumeEmulator(const std::string& emulatorId, execution::Origin origin = execution::Origin::Internal);
 
     /// @brief Reset an emulator
     /// @param emulatorId ID of the emulator to reset

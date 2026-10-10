@@ -944,7 +944,7 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
 
             // Pause the emulator
             _breakpointTriggered = true;
-            _emulator->Pause();
+            _emulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "debugger");
 
             // Update the UI
             updateState();
@@ -1009,7 +1009,7 @@ void DebuggerWindow::continueExecution()
 
     if (_emulator && _emulator->IsPaused())
     {
-        _emulator->Resume();
+        _emulator->Resume(execution::Requester{execution::Origin::Gui, {}});
 
         // When emulator is running:
         // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON)
@@ -1032,7 +1032,7 @@ void DebuggerWindow::pauseExecution()
 
     if (_emulator && _emulator->IsRunning() && !_emulator->IsPaused())
     {
-        _emulator->Pause();
+        _emulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "debugger");
         _emulator->DebugOn();
 
         // When emulator is paused:

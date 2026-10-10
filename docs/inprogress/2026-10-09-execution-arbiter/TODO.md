@@ -199,7 +199,6 @@ Part of [README.md](README.md). Phases from [design.md](design.md) §6.
     lease is refused once the removal has begun. Six runs of six afterwards: 36 out of 36 booted, no crash.
   - **For comparison**, the pre-arbiter build in the same flow: no crash in 6 runs, but about half of the second and
     later SPRINTERs ended anywhere in the BIOS (the original bug).
-- [ ] **Front ends:** their own origins, the claim inside the arbiter, DeZog close / TTD `resume` owner-only (X4).
 - [x] **A/B of the hot path again** (the per-instruction check changed in X3).
   - **Setup.** A = master `328f867a3`, B = the branch; Release builds; 20 rounds (ABAB... then BABA...).
   - **No wait for a quiet machine** (owner 2026-10-09: the load never drops on this host, so more rounds instead).
@@ -223,7 +222,50 @@ Part of [README.md](README.md). Phases from [design.md](design.md) §6.
   - Linux docker: 8712 tests, 8615 passed, the rest skipped by their conditions, 0 failed;
   - the GUI repro (unreal-qt offscreen): 6 SPRINTERs in one process all reach `#A441`.
 
-## X4 - X6
+## X4: origins, the claim, owner-only resumes
+
+- [x] **`Emulator::Pause(Requester, reason)` / `Resume(Requester, onlyIfOwner)`** return the arbiter's
+  `execution::Result`. `Pause(bool)` / `Resume(bool)` stay as the Internal-origin (and silent-hold) compat.
+- [x] **Every front end passes its origin:**
+
+  | Front end | Origin |
+  |:--|:--|
+  | Qt toolbar and menus (`EmulatorManager::PauseEmulator` / `ResumeEmulator`), debugger window, speed control, TTD widget, video wall | Gui |
+  | WebAPI lifecycle (also MCP, which goes through it) | WebApi |
+  | CLI | Cli |
+  | Python, Lua | Python, Lua |
+  | GDB | Gdb, with its session UUID |
+  | DeZog | DeZog |
+  | TTD control (`PauseAndConfirm`, the resume verb) and its session-end auto-pause | Ttd |
+
+  The origin of the pause in force shows in the arbiter's snapshot.
+- [x] **`EmulatorManager::PauseEmulator` no longer holds `_emulatorsMutex`** across the 500 ms park wait
+  (inventory §1): it takes the instance under the lock and pauses outside it.
+- [x] **The run-control claim is enforced by the arbiter.** `EmulatorContext::TakeRunControl` /
+  `ReleaseRunControl` mirror it there (`OriginFromName(label)` + owner UUID). Another surface's run (intent or
+  direct-run command) is refused while it is held; a pause never is; Internal requests are not affected.
+- [x] **Owner-only resumes** (owner decision 2026-10-09): DeZog's session close and the TTD resume verb lift only a
+  pause they set themselves. A pause the user asked for stays, and a second pause on top does not take the ownership
+  over.
+- [x] **A breakpoint's pause belongs to the breakpoint's owner.** A DeZog breakpoint's stop is DeZog's, so its
+  session close lifts it; a GDB breakpoint's stop is GDB's; an interactive one is the debugger's. Found by the DZRP
+  tests: a client dropping while stopped at its own breakpoint left the machine paused.
+- [x] **`ExecutionArbiterMachine_Test`, two more tests:** `OwnerOnlyResumesLiftOnlyTheirOwnPause` (DeZog and TTD)
+  and `TheRunControlClaimRefusesOtherSurfacesRuns`.
+- [x] **DeZog tests follow the decision.**
+  - The shared fixture pauses as an attached DeZog session does (origin DeZog), so the five session-close tests
+    (adapter, history, DZRP server, ZEsarUX quit) keep their meaning.
+  - New `DezogDebugAdapter_test.SessionCloseKeepsAPauseTheUserAskedFor`.
+- [x] **Found by the QA runs: a test of mine aborted a full shard under load.**
+  - **Cause.** `AResumeDuringADirectRunAppliesAfterIt` and `ADirectRunKeepsEveryOtherThreadOut` waited to see a
+    `RunNFrames(30)` in progress. In turbo it can end before the first poll; the `ASSERT` then returned with a live
+    `std::thread`, which is `std::terminate`.
+  - **Fix.** Both now use `GatedDirectRun`: a `RunUntilCondition` whose predicate blocks until the test releases it,
+    so the run is in progress by construction, and RAII joins the thread on every path. The other tests with live
+    threads use `EXPECT`, and the observer test removes its observer with RAII.
+  - **Result:** the machine tests ×30 in 6 parallel processes, all clean; `test.sh` twice, green.
+
+## X5 - X6
 
 As in [design.md](design.md) §6: the class b sites; the
 front-end origins and the claim; Snapshot on every surface; removal of `Pause(bool)` / `Resume(bool)`. The rest of the

@@ -68,6 +68,20 @@ const char* OriginName(Origin origin)
     return "?";
 }
 
+Origin OriginFromName(const std::string& name)
+{
+    static const std::pair<const char*, Origin> names[] = {
+        {"gui", Origin::Gui},       {"qt", Origin::Gui},         {"qt-timeline", Origin::Gui},
+        {"webapi", Origin::WebApi}, {"cli", Origin::Cli},        {"mcp", Origin::Mcp},
+        {"lua", Origin::Lua},       {"python", Origin::Python}, {"gdb", Origin::Gdb},
+        {"dezog", Origin::DeZog},   {"debugger", Origin::Debugger}, {"ttd", Origin::Ttd},
+        {"rzx", Origin::Rzx}};
+    for (const auto& [text, origin] : names)
+        if (name == text)
+            return origin;
+    return Origin::Internal;
+}
+
 const char* OutcomeName(Outcome outcome)
 {
     switch (outcome)

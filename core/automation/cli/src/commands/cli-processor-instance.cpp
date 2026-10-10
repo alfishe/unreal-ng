@@ -687,7 +687,7 @@ void CLIProcessor::HandlePause(const ClientSession& session, const std::vector<s
 
     // Pause the emulator - this will trigger MessageCenter notifications
     // that the GUI will respond to (enabling/disabling buttons)
-    emulator->Pause();
+    emulator->Pause(execution::Requester{execution::Origin::Cli, {}}, "cli");
 
     // Confirm to the user
     session.SendResponse("Emulation paused. Use 'resume' to continue execution.");
@@ -732,7 +732,7 @@ void CLIProcessor::HandleResume(const ClientSession& session, const std::vector<
 
     // Resume the emulator - this will trigger MessageCenter notifications
     // that the GUI will respond to (enabling/disabling buttons)
-    emulator->Resume();
+    emulator->Resume(execution::Requester{execution::Origin::Cli, {}});
 
     // Confirm to the user
     session.SendResponse("Emulation resumed. Use 'pause' to suspend execution.");

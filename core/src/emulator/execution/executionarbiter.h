@@ -89,6 +89,8 @@ enum class Phase : uint8_t
 
 const char* IntentName(Intent intent);
 const char* OriginName(Origin origin);
+/// A surface's label ("gdb", "webapi", "qt-timeline", ...) as an origin; unknown labels are Internal
+Origin OriginFromName(const std::string& name);
 const char* OutcomeName(Outcome outcome);
 const char* PhaseName(Phase phase);
 

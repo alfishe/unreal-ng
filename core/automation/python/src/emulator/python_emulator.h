@@ -1002,8 +1002,8 @@ namespace PythonBindings
             .def("start", &Emulator::Start, "Start emulator execution")
             .def("start_async", &Emulator::StartAsync, "Start emulator asynchronously")
             .def("stop", &Emulator::Stop, "Stop emulator")
-            .def("pause", [](Emulator& self) { self.Pause(true); }, "Pause emulator")
-            .def("resume", [](Emulator& self) { self.Resume(true); }, "Resume emulator")
+            .def("pause", [](Emulator& self) { self.Pause(execution::Requester{execution::Origin::Python, {}}, "python"); }, "Pause emulator")
+            .def("resume", [](Emulator& self) { self.Resume(execution::Requester{execution::Origin::Python, {}}); }, "Resume emulator")
             .def("reset", &Emulator::Reset, "Reset emulator")
             .def("request_nmi", &Emulator::RequestNMI, "Pulse the Z80 NMI line (vector #0066)")
             .def("request_mni", &Emulator::RequestMNI,

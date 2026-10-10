@@ -221,7 +221,7 @@ void DezogDebugAdapter::pause()
     if (!emulator->IsPaused())
     {
         // Pause() blocks until the Z80 thread has parked (WaitForPauseConfirmation)
-        emulator->Pause();
+        emulator->Pause(execution::Requester{execution::Origin::DeZog, {}}, "dezog");
     }
 
     leaveHistory(*emulator);
@@ -242,7 +242,7 @@ void DezogDebugAdapter::resume()
     leaveHistory(*emulator);
     ensureHistoryRecording(*emulator);
 
-    emulator->Resume();
+    emulator->Resume(execution::Requester{execution::Origin::DeZog, {}});
 }
 
 bool DezogDebugAdapter::isPaused() const
@@ -911,7 +911,7 @@ void DezogDebugAdapter::onSessionOpened()
     // so the host UI (e.g. unreal-qt) reflects the paused state and does not
     // immediately resume it.
     if (!emulator->IsPaused())
-        emulator->Pause(true);
+        emulator->Pause(execution::Requester{execution::Origin::DeZog, {}}, "dezog attach");
 
     ensureHistoryRecording(*emulator);
 }
@@ -951,8 +951,10 @@ void DezogDebugAdapter::onSessionClosed()
             std::cout << "[DZRP] Session closed: removed " << owned.size() << " dezog breakpoint(s)\n";
     }
 
+    // Only a pause DeZog set itself (attach, its pause command) is lifted: a pause the user or another surface asked
+    // for stays (execution arbiter, owner-only run)
     if (emulator->IsPaused())
-        emulator->Resume();
+        emulator->Resume(execution::Requester{execution::Origin::DeZog, {}}, true);
 }
 
 /// endregion </Session lifecycle>

@@ -937,52 +937,56 @@ bool EmulatorManager::StopEmulator(const std::string& emulatorId)
     return false;
 }
 
-bool EmulatorManager::PauseEmulator(const std::string& emulatorId)
+bool EmulatorManager::PauseEmulator(const std::string& emulatorId, execution::Origin origin)
 {
-    std::lock_guard<std::mutex> lock(_emulatorsMutex);
-
-    auto it = _emulators.find(emulatorId);
-    if (it != _emulators.end())
+    // The instance is taken under the lock; the pause (which waits for the park, up to 500 ms) runs outside it
+    std::shared_ptr<Emulator> emulator;
     {
-        if (it->second->IsRunning() && !it->second->IsPaused())
-        {
-            it->second->Pause();
-            LOGINFO("EmulatorManager::PauseEmulator - Paused emulator with ID '%s'", emulatorId.c_str());
-            return true;
-        }
-        else
-        {
-            LOGDEBUG("EmulatorManager::PauseEmulator - Emulator with ID '%s' not running or already paused", emulatorId.c_str());
-            return false;
-        }
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
+        auto it = _emulators.find(emulatorId);
+        if (it != _emulators.end())
+            emulator = it->second;
     }
-
-    LOGDEBUG("EmulatorManager::PauseEmulator - No emulator found with ID '%s'", emulatorId.c_str());
-    return false;
+    if (!emulator)
+    {
+        LOGDEBUG("EmulatorManager::PauseEmulator - No emulator found with ID '%s'", emulatorId.c_str());
+        return false;
+    }
+    if (!emulator->IsRunning() || emulator->IsPaused())
+    {
+        LOGDEBUG("EmulatorManager::PauseEmulator - Emulator with ID '%s' not running or already paused", emulatorId.c_str());
+        return false;
+    }
+    const execution::Result result = emulator->Pause(execution::Requester{origin, {}});
+    LOGINFO("EmulatorManager::PauseEmulator - Pause of emulator '%s': %s", emulatorId.c_str(),
+            execution::OutcomeName(result.outcome));
+    return result.outcome != execution::Outcome::Refused;
 }
 
-bool EmulatorManager::ResumeEmulator(const std::string& emulatorId)
+bool EmulatorManager::ResumeEmulator(const std::string& emulatorId, execution::Origin origin)
 {
-    std::lock_guard<std::mutex> lock(_emulatorsMutex);
-
-    auto it = _emulators.find(emulatorId);
-    if (it != _emulators.end())
+    std::shared_ptr<Emulator> emulator;
     {
-        if (it->second->IsPaused())
-        {
-            it->second->Resume();
-            LOGINFO("EmulatorManager::ResumeEmulator - Resumed emulator with ID '%s'", emulatorId.c_str());
-            return true;
-        }
-        else
-        {
-            LOGDEBUG("EmulatorManager::ResumeEmulator - Emulator with ID '%s' not paused", emulatorId.c_str());
-            return false;
-        }
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
+        auto it = _emulators.find(emulatorId);
+        if (it != _emulators.end())
+            emulator = it->second;
     }
-
-    LOGDEBUG("EmulatorManager::ResumeEmulator - No emulator found with ID '%s'", emulatorId.c_str());
-    return false;
+    if (!emulator)
+    {
+        LOGDEBUG("EmulatorManager::ResumeEmulator - No emulator found with ID '%s'", emulatorId.c_str());
+        return false;
+    }
+    if (!emulator->IsPaused())
+    {
+        LOGDEBUG("EmulatorManager::ResumeEmulator - Emulator with ID '%s' not paused", emulatorId.c_str());
+        return false;
+    }
+    // Refused while another surface holds the run-control claim (the arbiter checks it)
+    const execution::Result result = emulator->Resume(execution::Requester{origin, {}});
+    LOGINFO("EmulatorManager::ResumeEmulator - Resume of emulator '%s': %s %s", emulatorId.c_str(),
+            execution::OutcomeName(result.outcome), result.detail.c_str());
+    return result.outcome != execution::Outcome::Refused;
 }
 
 bool EmulatorManager::ResetEmulator(const std::string& emulatorId)

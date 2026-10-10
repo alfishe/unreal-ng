@@ -709,8 +709,8 @@ public:
             // Lifecycle control
             "start", &Emulator::Start,
             "stop", &Emulator::Stop,
-            "pause", sol::resolve<void(bool)>(&Emulator::Pause),
-            "resume", sol::resolve<void(bool)>(&Emulator::Resume),
+            "pause", [](Emulator& self) { self.Pause(execution::Requester{execution::Origin::Lua, {}}, "lua"); },
+            "resume", [](Emulator& self) { self.Resume(execution::Requester{execution::Origin::Lua, {}}); },
             "reset", &Emulator::Reset,
             "request_nmi", &Emulator::RequestNMI,
             "request_mni", &Emulator::RequestMNI,

@@ -3125,7 +3125,7 @@ void MainWindow::handlePauseEmulator()
     if (_emulator && _emulator->IsRunning() && !_emulator->IsPaused())
     {
         std::string emulatorId = _emulator->GetId();
-        _emulatorManager->PauseEmulator(emulatorId);  // Use EmulatorManager for lifecycle
+        _emulatorManager->PauseEmulator(emulatorId, execution::Origin::Gui);  // Use EmulatorManager for lifecycle
         updateMenuStates();
         qDebug() << "Emulator paused";
     }
@@ -3136,7 +3136,7 @@ void MainWindow::handleResumeEmulator()
     if (_emulator && _emulator->IsPaused())
     {
         std::string emulatorId = _emulator->GetId();
-        _emulatorManager->ResumeEmulator(emulatorId);  // Use EmulatorManager for lifecycle
+        _emulatorManager->ResumeEmulator(emulatorId, execution::Origin::Gui);  // Use EmulatorManager for lifecycle
         updateMenuStates();
         qDebug() << "Emulator resumed";
     }

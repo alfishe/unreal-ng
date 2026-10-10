@@ -11,6 +11,7 @@
 #include "_helpers/testwaithelper.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/emulator.h"
+#include "common/uuid.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/notifications.h"
 
@@ -68,7 +69,7 @@ TEST_F(ExecutionArbiterMachine_Test, SilentPairsOnAnotherThreadNeverResumeAStep)
             pairs.fetch_add(1);
         }
     });
-    ASSERT_TRUE(TestWait::ForAtLeast(pairs, 3));
+    EXPECT_TRUE(TestWait::ForAtLeast(pairs, 3));  // EXPECT: a live thread must reach its join
 
     for (int round = 0; round < 20; ++round)
     {
@@ -96,7 +97,7 @@ TEST_F(ExecutionArbiterMachine_Test, APauseDuringASilentPauseSurvivesItsResume)
         _emulator->Pause();
         paused = true;
     });
-    ASSERT_TRUE(TestWait::For([&]() { return _emulator->GetArbiter().GetSnapshot().queue.size() == 1; }));
+    EXPECT_TRUE(TestWait::For([&]() { return _emulator->GetArbiter().GetSnapshot().queue.size() == 1; }));
     _emulator->Resume(false);
     automation.join();
     EXPECT_TRUE(_emulator->IsPaused());
@@ -134,57 +135,80 @@ TEST_F(ExecutionArbiterMachine_Test, StopEndsAnOpenSilentPause)
     EXPECT_FALSE(_emulator->IsPaused());
 }
 
-/// X2: a direct run is a driving command. While RunNFrames steps on one thread, a command from another thread waits
-/// for it (before, a silent pause was granted at once and mutated the machine mid-run)
+namespace
+{
+/// A direct run that stays in progress until released: RunUntilCondition whose predicate (called on the stepping
+/// thread, inside the run's hold) blocks at its first call. The thread is joined on every path, an early test failure
+/// included (a joinable std::thread destroyed is std::terminate)
+class GatedDirectRun
+{
+public:
+    explicit GatedDirectRun(Emulator* emulator)
+    {
+        _thread = std::thread([this, emulator]() {
+            emulator->RunUntilCondition(
+                [this](const Z80State&) {
+                    _entered = true;
+                    TestWait::For([this]() { return _released.load(); }, std::chrono::seconds(5));
+                    return true;
+                },
+                1000000, true);
+        });
+    }
+    ~GatedDirectRun() { Release(); }
+    bool WaitEntered() { return TestWait::For([this]() { return _entered.load(); }); }
+    void Release()
+    {
+        _released = true;
+        if (_thread.joinable())
+            _thread.join();
+    }
+
+private:
+    std::atomic<bool> _entered{false};
+    std::atomic<bool> _released{false};
+    std::thread _thread;
+};
+}  // namespace
+
+/// X2: a direct run is a driving command. While it runs on one thread, a command from another thread waits for it
+/// (before, a silent pause was granted at once and mutated the machine mid-run)
 TEST_F(ExecutionArbiterMachine_Test, ADirectRunKeepsEveryOtherThreadOut)
 {
     _emulator->Pause();
-    std::atomic<bool> stepping{false};
-    std::atomic<uint64_t> startFrame{0};
-    uint64_t framesStepped = 0;
-    std::thread automation([&]() {
-        startFrame = Frame(_emulator);
-        stepping = true;
-        _emulator->RunNFrames(30);
-        framesStepped = Frame(_emulator) - startFrame.load();
-    });
-    ASSERT_TRUE(TestWait::For([&]() { return stepping.load(); }));
-    ASSERT_TRUE(TestWait::For([&]() {
-        const auto snapshot = _emulator->GetArbiter().GetSnapshot();
-        return snapshot.serving.has_value() && snapshot.servingDrivesZ80;
-    })) << "the run holds the CPU as a driving command";
+    GatedDirectRun run(_emulator);
+    ASSERT_TRUE(run.WaitEntered());
+    const auto snapshot = _emulator->GetArbiter().GetSnapshot();
+    EXPECT_TRUE(snapshot.serving.has_value() && snapshot.servingDrivesZ80) << "the run holds the CPU as a driving command";
 
-    // Another thread's command (a media insert, a TTD journal switch) while the run steps: served after it
-    bool ranAfterTheRun = false;
-    _emulator->GetArbiter().Execute(execution::Requester{execution::Origin::Ttd, {}}, "ttd.journal",
-                                    [&](execution::CommandContext&) {
-                                        ranAfterTheRun = Frame(_emulator) - startFrame.load() >= 30;
-                                    });
-    EXPECT_TRUE(ranAfterTheRun) << "the command was served during the run";
-    automation.join();
-    EXPECT_EQ(framesStepped, 30u) << "the main loop ran frames during the run";
+    // Another thread's command (a media insert, a TTD journal switch) while the run is in progress
+    std::atomic<bool> commandRan{false};
+    std::thread other([&]() {
+        _emulator->GetArbiter().Execute(execution::Requester{execution::Origin::Ttd, {}}, "ttd.journal",
+                                        [&](execution::CommandContext&) { commandRan = true; });
+    });
+    EXPECT_FALSE(TestWait::For([&]() { return commandRan.load(); }, std::chrono::milliseconds(20)))
+        << "the command was served during the run";
+    run.Release();
+    other.join();
+    EXPECT_TRUE(commandRan.load()) << "served after the run";
     EXPECT_TRUE(_emulator->IsPaused()) << "stepping leaves the machine paused";
 }
 
 TEST_F(ExecutionArbiterMachine_Test, AResumeDuringADirectRunAppliesAfterIt)
 {
     _emulator->Pause();
-    std::atomic<bool> running{false};
-    uint64_t framesStepped = 0;
-    std::thread automation([&]() {
-        const uint64_t before = Frame(_emulator);
-        running = true;
-        _emulator->RunNFrames(30);
-        framesStepped = Frame(_emulator) - before;
-    });
-    ASSERT_TRUE(TestWait::For([&]() { return running.load() && _emulator->GetArbiter().GetSnapshot().serving.has_value(); }));
+    GatedDirectRun run(_emulator);
+    ASSERT_TRUE(run.WaitEntered());
+    const uint64_t frame = Frame(_emulator);
     execution::Ticket resume = _emulator->GetArbiter().SubmitIntent(
         execution::Intent::Run, execution::Requester{execution::Origin::Gui, {}});
-    automation.join();
-    EXPECT_EQ(framesStepped, 30u);
+    EXPECT_FALSE(TestWait::For([&]() { return resume.Done(); }, std::chrono::milliseconds(20)))
+        << "the Resume applied during the run";
+    EXPECT_EQ(Frame(_emulator), frame) << "the main loop ran during the run";
+    run.Release();
     EXPECT_EQ(resume.Wait(std::chrono::seconds(1)).outcome, execution::Outcome::Applied);
     EXPECT_FALSE(_emulator->IsPaused()) << "the Resume submitted during the run applies after it";
-    const uint64_t frame = Frame(_emulator);
     EXPECT_TRUE(TestWait::For([&]() { return Frame(_emulator) > frame; })) << "running again";
 }
 
@@ -205,6 +229,13 @@ TEST_F(ExecutionArbiterMachine_Test, ResetAndMachineOperationsNeitherPauseNorBro
         else if (payload->_payloadNumber == StateResumed)
             resumed.fetch_add(1);
     });
+    // Removed on every path: an early ASSERT must not leave an observer that captures this test's locals
+    struct ObserverGuard
+    {
+        MessageCenter& center;
+        uint64_t id;
+        ~ObserverGuard() { center.RemoveObserverById(NC_EMULATOR_STATE_CHANGE, id); }
+    } observerGuard{messageCenter, observer};
 
     _emulator->Reset();
     _emulator->SetOverscanMode(true);
@@ -226,5 +257,56 @@ TEST_F(ExecutionArbiterMachine_Test, ResetAndMachineOperationsNeitherPauseNorBro
     const uint64_t pausedFrame = Frame(_emulator);
     EXPECT_TRUE(_emulator->WaitForPauseConfirmation(1000));
     EXPECT_EQ(Frame(_emulator), pausedFrame);
-    messageCenter.RemoveObserverById(NC_EMULATOR_STATE_CHANGE, observer);
+}
+
+namespace
+{
+const execution::Requester kGui{execution::Origin::Gui, {}};
+const execution::Requester kDezog{execution::Origin::DeZog, {}};
+const execution::Requester kTtd{execution::Origin::Ttd, {}};
+}  // namespace
+
+/// X4 (owner decision 2026-10-09): DeZog's session close and the TTD resume verb lift only a pause they set themselves.
+/// A pause the user asked for stays; theirs is lifted
+TEST_F(ExecutionArbiterMachine_Test, OwnerOnlyResumesLiftOnlyTheirOwnPause)
+{
+    for (const execution::Requester& owner : {kDezog, kTtd})
+    {
+        // The user's pause: the surface's close / resume leaves it
+        ASSERT_EQ(_emulator->Pause(kGui).outcome, execution::Outcome::Applied);
+        EXPECT_EQ(_emulator->Resume(owner, true).outcome, execution::Outcome::Refused)
+            << execution::OriginName(owner.origin);
+        EXPECT_TRUE(_emulator->IsPaused());
+        EXPECT_EQ(_emulator->GetArbiter().GetSnapshot().intentSetBy.origin, execution::Origin::Gui);
+        ASSERT_EQ(_emulator->Resume(kGui).outcome, execution::Outcome::Applied);
+
+        // Its own pause: lifted. A second pause by the user on top does not take it over
+        ASSERT_EQ(_emulator->Pause(owner).outcome, execution::Outcome::Applied);
+        EXPECT_EQ(_emulator->Pause(kGui).outcome, execution::Outcome::Applied);
+        EXPECT_EQ(_emulator->Resume(owner, true).outcome, execution::Outcome::Applied)
+            << execution::OriginName(owner.origin);
+        EXPECT_FALSE(_emulator->IsPaused());
+    }
+}
+
+/// X4: the run-control claim (GDB, TDD 3.3) is enforced by the arbiter for every surface: another surface's run is
+/// refused while it is held, its pause is not; the holder runs; after the release everybody does
+TEST_F(ExecutionArbiterMachine_Test, TheRunControlClaimRefusesOtherSurfacesRuns)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    const unreal::UUID gdbSession = unreal::UUID::Generate();
+    const execution::Requester gdb{execution::Origin::Gdb, gdbSession.toString()};
+    ASSERT_TRUE(context->TakeRunControl(gdbSession, "gdb"));
+
+    EXPECT_EQ(_emulator->Pause(kGui).outcome, execution::Outcome::Applied) << "a pause is always allowed";
+    const execution::Result refused = _emulator->Resume(kGui);
+    EXPECT_EQ(refused.outcome, execution::Outcome::Refused);
+    EXPECT_NE(refused.detail.find("claim"), std::string::npos) << refused.detail;
+    EXPECT_TRUE(_emulator->IsPaused());
+    EXPECT_EQ(_emulator->Resume(gdb).outcome, execution::Outcome::Applied) << "the holder runs";
+    EXPECT_FALSE(_emulator->IsPaused());
+
+    ASSERT_EQ(_emulator->Pause(gdb).outcome, execution::Outcome::Applied);
+    context->ReleaseRunControl(gdbSession);
+    EXPECT_EQ(_emulator->Resume(kGui).outcome, execution::Outcome::Applied) << "released: everybody runs";
 }

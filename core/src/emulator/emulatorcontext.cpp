@@ -1,4 +1,5 @@
 #include "emulatorcontext.h"
+#include "emulator/emulator.h"
 
 #include "common/modulelogger.h"
 #include "emulator/memory/devicememory.h"
@@ -113,9 +114,13 @@ bool EmulatorContext::TakeRunControl(const UUID& owner, const std::string& surfa
     const UUID& current = _runControlClaim.owner;
     if (current.isNil())
     {
-        // Unclaimed — take it.
+        // Unclaimed — take it. The execution arbiter enforces it: a run (an intent or a direct run) from any other
+        // surface is refused while it is held; a pause never is
         _runControlClaim.owner = owner;
         _runControlClaim.surfaceLabel = surfaceLabel;
+        if (pEmulator)
+            pEmulator->GetArbiter().TakeClaim(
+                execution::Requester{execution::OriginFromName(surfaceLabel), owner.toString()});
         return true;
     }
 
@@ -144,6 +149,9 @@ void EmulatorContext::ReleaseRunControl(const UUID& owner)
     // silently ignored — surfaces can release unconditionally at shutdown.
     if (_runControlClaim.owner == owner)
     {
+        if (pEmulator)
+            pEmulator->GetArbiter().ReleaseClaim(
+                execution::Requester{execution::OriginFromName(_runControlClaim.surfaceLabel), owner.toString()});
         _runControlClaim.owner.clear();
         _runControlClaim.surfaceLabel.clear();
     }

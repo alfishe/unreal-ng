@@ -971,7 +971,7 @@ void EmulatorAPI::pauseEmulator(const HttpRequestPtr& req, std::function<void(co
 
     try
     {
-        bool success = manager->PauseEmulator(id);
+        bool success = manager->PauseEmulator(id, execution::Origin::WebApi);
 
         Json::Value ret;
         ret["status"] = success ? "success" : "error";
@@ -1046,7 +1046,7 @@ void EmulatorAPI::resumeEmulator(const HttpRequestPtr& req, std::function<void(c
 
     try
     {
-        bool success = manager->ResumeEmulator(id);
+        bool success = manager->ResumeEmulator(id, execution::Origin::WebApi);
 
         Json::Value ret;
         ret["status"] = success ? "success" : "error";

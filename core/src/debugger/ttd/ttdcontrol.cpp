@@ -1016,8 +1016,9 @@ TTDReply TTDControlBackend<S>::Resume(const TTDRequest& request)
     const bool ok = _manager->ResumeRecordingFrom(from);
     // Recording again: the machine runs so the capture continues (a seek left it paused)
     Emulator* emulator = _context ? _context->pEmulator : nullptr;
+    // Only a pause TTD set itself (a seek, a step, its session end) is lifted: the user's pause stays
     if (ok && emulator && !OnMachineThread() && emulator->IsRunning() && emulator->IsPaused())
-        emulator->Resume();
+        emulator->Resume(execution::Requester{execution::Origin::Ttd, {}}, true);
 
     TTDReply reply;
     reply.body["resumed"] = ok;
@@ -1899,7 +1900,7 @@ void TTDControlBackend<S>::PauseAndConfirm()
     Emulator* emulator = _context ? _context->pEmulator : nullptr;
     if (!emulator || OnMachineThread() || !emulator->IsRunning() || emulator->IsPaused())
         return;
-    emulator->Pause();
+    emulator->Pause(execution::Requester{execution::Origin::Ttd, {}}, "ttd");
     emulator->WaitForPauseConfirmation(1000);
 }
 
