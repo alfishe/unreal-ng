@@ -45,7 +45,11 @@ void ReplyNotFound(const std::string& message, std::function<void(const HttpResp
                    HttpStatusCode code = HttpStatusCode::k404NotFound)
 {
     Json::Value error;
-    error["error"] = code == HttpStatusCode::k404NotFound ? "Not Found" : "Bad Request";
+    error["error"] = code == HttpStatusCode::k404NotFound            ? "Not Found"
+                     : code == HttpStatusCode::k409Conflict          ? "Conflict"
+                     : code == HttpStatusCode::k500InternalServerError ? "Internal Server Error"
+                     : code == HttpStatusCode::k503ServiceUnavailable ? "Service Unavailable"
+                                                                      : "Bad Request";
     error["message"] = message;
     auto resp = HttpResponse::newHttpJsonResponse(error);
     resp->setStatusCode(code);
@@ -411,6 +415,31 @@ void EmulatorAPI::postNextRegJournal(const HttpRequestPtr& req, std::function<vo
     if (body && body->isMember("capacity"))
         capacity = static_cast<size_t>((*body)["capacity"].asUInt64());
     ReplyState(DeviceState::NextRegJournalControl(emulator->GetContext(), enable, clear, capacity), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/next/layer-capture {"enabled": true|false} - switch the per-layer record of the Next screen
+/// (DeviceState::NextLayerCaptureControl; takes effect at the next frame start). An empty body or {} only reports. 409 on another machine
+void EmulatorAPI::postNextLayerCapture(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    int enable = -1;
+    if (auto body = req->getJsonObject())
+    {
+        if (body->isMember("enabled"))
+        {
+            if (!(*body)["enabled"].isBool())
+                return ReplyNotFound("'enabled' must be true or false", callback, HttpStatusCode::k400BadRequest);
+            enable = (*body)["enabled"].asBool() ? 1 : 0;
+        }
+    }
+    const StateNode result = DeviceState::NextLayerCaptureControl(emulator->GetContext(), enable);
+    const StateNode* available = result.find("available");
+    if (available && available->kind == StateNode::Kind::Bool && !available->b)
+        return ReplyNotFound("This machine is not a ZX Spectrum Next", callback, HttpStatusCode::k409Conflict);
+    ReplyState(result, callback);
 }
 
 /// @brief GET /api/v1/emulator/{id}/state/next/dma - the DMA programmed and running (DeviceState::NextDma; no side effect on the read sequence)

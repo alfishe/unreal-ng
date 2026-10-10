@@ -244,6 +244,10 @@ StateNode NextRegJournalControl(EmulatorContext* context, int enable, bool clear
 StateNode NextDma(EmulatorContext* context);
 /// `next_video`: layer order and enables, ULA / Timex / LoRes, Layer 2, tilemap, sprites switches, clip windows, transparency, raster
 StateNode NextVideo(EmulatorContext* context);
+/// `next_layer_capture`: switch the per-layer record of the screen (`enable` 1 / 0, -1 = keep) and report it: {available, enabled, frames,
+/// last_frame, bytes}. The switch takes effect at the next frame start. The same node is the `layer_capture` field of `next_video`
+/// (design-layer-capture.md)
+StateNode NextLayerCaptureControl(EmulatorContext* context, int enable);
 /// `next_palette`: the 9-bit palettes (the selected one, one by `palette`, or all eight) over a range of entries
 StateNode NextPalette(EmulatorContext* context, const NextPaletteQuery& query);
 /// `next_ports`: the internal-port enable word (NR #82-#85) and, when asked, which device answers a port read / write

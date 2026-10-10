@@ -15,6 +15,14 @@ ScreenNext::ScreenNext(EmulatorContext* context) : Screen(context)
 {
     _vid.mode = M_NEXT;
     SetVideoMode(M_NEXT);
+    _layerWanted.store(context && context->config.next_layer_capture != 0);  // [NEXT] LayerCapture, on unless the ini says off
+}
+
+void ScreenNext::SetLayerCapture(bool enabled)
+{
+    _layerWanted.store(enabled);
+    if (_context)
+        _context->config.next_layer_capture = enabled ? 1 : 0;  // a screen made later (a model switch) starts the same way
 }
 
 PortDecoder_Next* ScreenNext::Decoder() const

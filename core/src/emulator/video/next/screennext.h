@@ -45,7 +45,7 @@ public:
     /// region <Layer capture> (design-layer-capture.md)
     /// The per-layer record of the frame being drawn. Off: nothing is allocated and the renderer is called as before. Switching it
     /// on or off takes effect at the next frame start (InitFrame), on the emulator thread; callable from any thread.
-    void SetLayerCapture(bool enabled) { _layerWanted.store(enabled); }
+    void SetLayerCapture(bool enabled);
     bool LayerCaptureEnabled() const { return _layerWanted.load(); }
     /// The last completed frame (null before the first one). The set is never written again while the caller holds it.
     std::shared_ptr<const NextLayer::Frame> LastLayerFrame() const;

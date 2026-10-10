@@ -10,7 +10,10 @@
 #include <emulator/emulatormanager.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
 #include <emulator/emulatorcontext.h>
+#include <emulator/video/next/nextlayerimage.h>
 #include <emulator/video/screenshotter.h>
+
+#include <fstream>
 
 #include <sstream>
 
@@ -122,6 +125,87 @@ void CLIProcessor::HandleCaptureScreen(const ClientSession& session,
         return;
     }
 
+    // capture screen --layer=ula|layer2|tilemap|sprites|ids [--format=png|rgba] [--alpha=false] [file]: one layer of the last Next frame
+    // (design-layer-capture.md): a PNG with alpha 0 where the layer does not paint, or the raw RGBA bytes; ids = the winner of each pixel
+    for (size_t i = 1; i < args.size(); i++)
+    {
+        if (args[i].rfind("--layer=", 0) != 0)
+            continue;
+        NextLayer::Kind kind = NextLayer::Kind::Composed;
+        bool rgba = false, alpha = true;
+        std::string message, path;
+        if (!NextLayer::ParseKind(args[i].substr(8), kind))
+        {
+            session.SendResponse("Error: unknown layer '" + args[i].substr(8) + "': use " + NextLayer::KindWords() + NEWLINE);
+            return;
+        }
+        for (size_t j = 1; j < args.size(); j++)
+        {
+            const std::string& arg = args[j];
+            if (j == i)
+                continue;
+            if (arg.rfind("--format=", 0) == 0 && !NextLayer::ParseImageFormat(arg.substr(9), rgba, message))
+            {
+                session.SendResponse("Error: " + message + NEWLINE);
+                return;
+            }
+            else if (arg.rfind("--alpha=", 0) == 0 && !NextLayer::ParseAlpha(arg.substr(8), alpha, message))
+            {
+                session.SendResponse("Error: " + message + NEWLINE);
+                return;
+            }
+            else if (arg.rfind("--", 0) != 0)
+                path = arg;
+        }
+        if (kind == NextLayer::Kind::Composed)
+        {
+            session.SendResponse(std::string("Error: layer=composed is the ordinary screenshot: capture screen [file]") + NEWLINE);
+            return;
+        }
+        const NextLayer::Image image = NextLayer::Capture(context, kind, alpha);
+        if (image.status != NextLayer::Status::Ok)
+        {
+            session.SendResponse("Error: " + image.message + NEWLINE);
+            return;
+        }
+        const std::vector<uint8_t> bytes = rgba ? image.rgba : NextLayer::EncodePng(image.rgba, image.width, image.height);
+        std::stringstream ss;
+        ss << "Layer " << NextLayer::KindName(kind) << " of Next frame #" << image.sequence << " (emulator frame " << image.frameCounter << "):" << NEWLINE;
+        ss << "  Format: " << (rgba ? "rgba" : "png")
+           << (kind == NextLayer::Kind::Ids ? ", opaque (every pixel has a winner)" : (alpha ? ", alpha 0 where the layer does not paint" : ", flattened onto the fallback colour"))
+           << NEWLINE;
+        ss << "  Size: " << image.width << "x" << image.height << ", " << bytes.size() << " bytes" << NEWLINE;
+        if (kind == NextLayer::Kind::Ids)
+        {
+            ss << "  Legend:";
+            for (unsigned id = 0; id < NextLayer::kIdCount; id++)
+            {
+                const uint32_t c = NextLayer::IdColour(id);
+                char colour[8];
+                std::snprintf(colour, sizeof colour, "#%02X%02X%02X", c & 0xFF, (c >> 8) & 0xFF, (c >> 16) & 0xFF);
+                ss << " " << id << "=" << NextLayer::IdName(id) << "(" << colour << ")";
+            }
+            ss << NEWLINE;
+        }
+        if (!path.empty())
+        {
+            std::ofstream file(path, std::ios::binary);
+            file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+            if (!file)
+            {
+                session.SendResponse("Error: the file could not be written: " + path + NEWLINE);
+                return;
+            }
+            ss << "  Saved to: " << path << NEWLINE;
+        }
+        else if (rgba)
+            ss << "  (raw RGBA: give a file to save it)" << NEWLINE;
+        else
+            ss << NEWLINE << "data:image/png;base64," << NextLayer::Base64(bytes) << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
     // capture screen [--area=full|screen] [--format=png|gif] [file]
     // Legacy spellings kept: -png / -gif / png / gif, and the bare words full / screen
     ScreenshotOptions options;  // the whole frame, PNG
@@ -228,6 +312,9 @@ void CLIProcessor::ShowCaptureHelp(const ClientSession& session)
     ss << "                                  Screenshot: the whole frame (default) or the working picture;" << NEWLINE;
     ss << "                                  PNG (default) or GIF; the presented frame (default) or the live" << NEWLINE;
     ss << "                                  one as drawn now; to a file or printed as a data URI" << NEWLINE;
+    ss << "  capture screen --layer=ula|layer2|tilemap|sprites|ids [--format=png|rgba] [--alpha=false] [file]" << NEWLINE;
+    ss << "                                  ZX Spectrum Next: ONE LAYER of the last completed frame (PNG with alpha 0 where the layer" << NEWLINE;
+    ss << "                                  does not paint; ids = the winner of every pixel); `next layer-capture on|off` switches the record" << NEWLINE;
     ss << "  capture romtext                 Capture ROM print output (TODO)" << NEWLINE;
     ss << "  capture framebuffer <file> [rgba|index]  Raw pixels (RGBA, or u16 pens on the Sprinter)" << NEWLINE;
     ss << NEWLINE;

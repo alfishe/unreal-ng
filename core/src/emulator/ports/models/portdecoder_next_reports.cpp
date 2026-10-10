@@ -14,6 +14,8 @@
 #include "emulator/io/z80n/nextregtable.h"
 #include "emulator/io/z80n/nextreportquery.h"
 #include "emulator/ports/models/portdecoder_next.h"
+#include "emulator/video/next/nextlayerimage.h"
+#include "emulator/video/next/screennext.h"
 #include "emulator/video/screen.h"
 
 namespace
@@ -29,6 +31,20 @@ StateNode Unavailable()
 PortDecoder_Next* NextDecoder(EmulatorContext* context)
 {
     return context ? dynamic_cast<PortDecoder_Next*>(context->pPortDecoder) : nullptr;
+}
+
+/// The layer capture of the screen: {enabled, frames, last_frame, bytes} (design-layer-capture.md); frames = completed since it was
+/// switched on, last_frame = the emulator frame counter of the last of them (0 before the first), bytes = the two sets
+StateNode LayerCaptureNode(EmulatorContext* context)
+{
+    StateNode n = StateNode::Object();
+    ScreenNext* screen = NextLayer::NextScreen(context);
+    n["enabled"] = screen && screen->LayerCaptureEnabled();
+    n["frames"] = static_cast<uint64_t>(screen ? screen->LayerFramesCaptured() : 0);
+    const std::shared_ptr<const NextLayer::Frame> last = screen ? screen->LastLayerFrame() : nullptr;
+    n["last_frame"] = static_cast<uint64_t>(last ? last->frameCounter : 0);
+    n["bytes"] = static_cast<uint64_t>(screen ? screen->LayerCaptureBytes() : 0);
+    return n;
 }
 
 std::string Hex8(unsigned value) { return StringHelper::Format("0x%02X", value & 0xFFu); }
@@ -258,6 +274,19 @@ StateNode NextVideo(EmulatorContext* context)
     timing["family"] = TimingFamilyName(board.Timing());
     timing["hz"] = (board.Timing() != 4 && (nr(0x05) & 0x04)) ? 60 : 50;
     n["timing"] = std::move(timing);
+    n["layer_capture"] = LayerCaptureNode(context);
+    return n;
+}
+
+StateNode NextLayerCaptureControl(EmulatorContext* context, int enable)
+{
+    ScreenNext* screen = NextLayer::NextScreen(context);
+    if (!screen)
+        return Unavailable();
+    if (enable >= 0)
+        screen->SetLayerCapture(enable != 0);
+    StateNode n = LayerCaptureNode(context);
+    n["available"] = true;
     return n;
 }
 

@@ -3785,3 +3785,84 @@ TEST_F(McpTools_Test, TimeTravel_MemoryAtMemoryDiffAndCoverageSpace)
     EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "memory_diff takes no tinframe";
     EXPECT_EQ(_caller->calls.size(), calls);
 }
+
+// capture_media screenshot with layer (design-layer-capture.md): the words go to the route, the answer says which layer of which Next frame
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_ForwardsTheLayerAndAlphaAndNamesTheFrame)
+{
+    Json::Value body;
+    body["status"] = "success";
+    body["layer"] = "ids";
+    body["format"] = "png";
+    body["alpha"] = false;
+    body["width"] = 640;
+    body["height"] = 512;
+    body["size"] = 321;
+    body["frame"]["sequence"] = 42;
+    body["frame"]["frame_number"] = 1234;
+    body["legend"][0]["id"] = 0;
+    body["legend"][0]["name"] = "fallback";
+    body["legend"][0]["colour"] = "#404040";
+    body["legend"][1]["id"] = 5;
+    body["legend"][1]["name"] = "sprite";
+    body["legend"][1]["colour"] = "#FF3030";
+    body["data"] = "iVBORw0KGgo=";
+    const std::string route = "/api/v1/emulator/emu-1/capture/screen?layer=ids&alpha=false";
+    _caller->routes["GET " + route] = {200, body};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["layer"] = "ids";
+    args["alpha"] = false;
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", route));
+    EXPECT_NE(result.text.find("layer ids of Next frame #42"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("layer ids of Next frame #42, opaque"), std::string::npos) << "the ids image has no alpha: " << result.text;
+    EXPECT_NE(result.text.find("5=sprite(#FF3030)"), std::string::npos) << "the legend of the ids image is in the text: " << result.text;
+    EXPECT_FALSE(result.structured.isMember("data"));
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_ALayerRefusalIsAnErrorWithItsReason)
+{
+    Json::Value refusal;
+    refusal["error"] = "Conflict";
+    refusal["message"] = "Layer capture is off: switch it on";
+    refusal["kind"] = "layer-capture-off";
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen?layer=tilemap"] = {409, refusal};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["layer"] = "tilemap";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("Layer capture is off"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_ALayerWithoutAlphaSaysItIsFlattened)
+{
+    Json::Value body;
+    body["status"] = "success";
+    body["layer"] = "tilemap";
+    body["format"] = "rgba";
+    body["alpha"] = false;
+    body["width"] = 640;
+    body["height"] = 512;
+    body["size"] = 1310720;
+    body["frame"]["sequence"] = 7;
+    body["data"] = "AAAA";
+    const std::string route = "/api/v1/emulator/emu-1/capture/screen?format=rgba&layer=tilemap&alpha=false";
+    _caller->routes["GET " + route] = {200, body};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["layer"] = "tilemap";
+    args["alpha"] = false;
+    args["format"] = "rgba";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", route));
+    EXPECT_NE(result.text.find("layer tilemap of Next frame #7, flattened"), std::string::npos) << result.text;
+}

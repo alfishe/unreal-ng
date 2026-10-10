@@ -61,7 +61,7 @@ TEST(OpenApiNextRoutes_Test, TheRoutesAreFoundInTheHeader)
                                  "Get /api/v1/emulator/{id}/state/next/video", "Get /api/v1/emulator/{id}/state/next/palette",
                                  "Get /api/v1/emulator/{id}/state/next/ports", "Get /api/v1/emulator/{id}/state/next/nextreg",
                                  "Post /api/v1/emulator/{id}/next/nextreg", "Get /api/v1/emulator/{id}/state/next/copper",
-                                 "Get /api/v1/emulator/{id}/state/next/sprites"})
+                                 "Get /api/v1/emulator/{id}/state/next/sprites", "Post /api/v1/emulator/{id}/next/layer-capture"})
         EXPECT_TRUE(found.count(expected)) << expected << " is not registered in emulator_api.h";
 }
 
@@ -70,7 +70,7 @@ TEST(OpenApiNextRoutes_Test, EveryNextRouteHasAManifestPath)
     const std::string manifest = Manifest();
     ASSERT_FALSE(manifest.empty()) << "openapi/*.inc not found";
     const std::vector<Route> routes = NextRoutes();
-    ASSERT_GE(routes.size(), 11u);
+    ASSERT_GE(routes.size(), 12u);
     for (const Route& r : routes)
         EXPECT_NE(manifest.find("\"" + r.path + "\""), std::string::npos) << r.method << " " << r.path << " has no path in the OpenAPI manifest";
 }
@@ -104,4 +104,39 @@ TEST(OpenApiNextRoutes_Test, TheReportRoutesDeclareTheirQueryParametersAndAnExis
     }
     EXPECT_NE(manifest.find("fill(\"NextRegWriteResult\""), std::string::npos);
     EXPECT_NE(manifest.find("\"/api/v1/emulator/{id}/next/nextreg\""), std::string::npos);
+}
+
+// Per-layer capture (docs/inprogress/2026-10-07-zx-next/design-layer-capture.md): the routes outside state/next and next/, the parameters of
+// capture/screen and the schemas they answer with
+TEST(OpenApiNextRoutes_Test, TheLayerCaptureRoutesParametersAndSchemasAreDocumented)
+{
+    const std::filesystem::path root = TestPathHelper::FindProjectRoot() / "core" / "automation" / "webapi" / "src";
+    const std::string header = ReadFile(root / "emulator_api.h");
+    EXPECT_NE(header.find("\"/api/v1/emulator/{id}/capture/next-layers\", drogon::Get"), std::string::npos);
+    EXPECT_NE(header.find("\"/api/v1/emulator/{id}/capture/screen\", drogon::Get"), std::string::npos);
+    const std::string manifest = Manifest();
+    for (const char* path : {"/api/v1/emulator/{id}/capture/next-layers", "/api/v1/emulator/{id}/next/layer-capture"})
+        EXPECT_NE(manifest.find(std::string("\"") + path + "\""), std::string::npos) << path;
+    // capture/screen: the layer enum with every word, alpha, and the rgba format
+    const size_t screen = manifest.find("\"/api/v1/emulator/{id}/capture/screen\"");
+    ASSERT_NE(screen, std::string::npos);
+    const size_t screenEnd = manifest.find("// Per-layer capture", screen);
+    const std::string block = manifest.substr(screen, screenEnd == std::string::npos ? std::string::npos : screenEnd - screen);
+    EXPECT_NE(block.find("{\"layer\", \"query\""), std::string::npos);
+    EXPECT_NE(block.find("{\"alpha\", \"query\""), std::string::npos);
+    for (const char* word : {"composed", "ula", "layer2", "tilemap", "sprites", "ids", "rgba"})
+        EXPECT_NE(block.find(std::string("\"") + word + "\""), std::string::npos) << "capture/screen does not list " << word;
+    EXPECT_NE(block.find("props[\"legend\"]"), std::string::npos);
+    // capture/next-layers: format and alpha, a response schema that exists
+    const size_t layers = manifest.find("\"/api/v1/emulator/{id}/capture/next-layers\"][\"get\"]");
+    ASSERT_NE(layers, std::string::npos);
+    const std::string layersBlock = manifest.substr(layers, 3500);
+    EXPECT_NE(layersBlock.find("\"format\""), std::string::npos);
+    EXPECT_NE(layersBlock.find("\"alpha\""), std::string::npos);
+    EXPECT_NE(layersBlock.find("#/components/schemas/NextLayers"), std::string::npos);
+    // the POST: its body and the schemas
+    EXPECT_NE(manifest.find("#/components/schemas/NextLayerCaptureState"), std::string::npos);
+    for (const char* schema : {"NextLayers", "NextLayerCaptureState", "NextLayerLegendEntry"})
+        EXPECT_NE(manifest.find(std::string("fill(\"") + schema + "\""), std::string::npos) << schema << " is not defined";
+    EXPECT_NE(manifest.find("{\"layer_capture\", \"object\""), std::string::npos) << "the video report schema lists layer_capture";
 }

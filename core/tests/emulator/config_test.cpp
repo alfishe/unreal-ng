@@ -508,6 +508,52 @@ TEST_F(Config_Test, EvoFpgaKeyReachesConfig)
 
 /// endregion </[EVO] Fpga>
 
+/// region <[NEXT] LayerCapture>
+
+// design-layer-capture.md: the Next screen records the layers of every frame; on unless the ini says off
+TEST_F(Config_Test, NextLayerCaptureKeyReachesConfigAndDefaultsToOn)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("next_layer_capture_config_test.ini");
+    auto load = [&](const char* text) {
+        {
+            std::ofstream file(path, std::ios::binary | std::ios::trunc);
+            file << text;
+        }
+        Config config(_context);
+        return config.LoadConfigFile(path);
+    };
+    ASSERT_TRUE(load("[MISC]\nRamSize=128\n"));
+    EXPECT_EQ(_context->config.next_layer_capture, 1) << "no key: on";
+    for (const char* off : {"off", "OFF", "0", "false", "no"})
+    {
+        ASSERT_TRUE(load((std::string("[NEXT]\nLayerCapture=") + off + "\n").c_str()));
+        EXPECT_EQ(_context->config.next_layer_capture, 0) << off;
+    }
+    for (const char* on : {"on", "ON", "1", "true", "yes"})
+    {
+        ASSERT_TRUE(load((std::string("[NEXT]\nLayerCapture=") + on + "\n").c_str()));
+        EXPECT_EQ(_context->config.next_layer_capture, 1) << on;
+    }
+    ASSERT_TRUE(load("[NEXT]\nLayerCapture=off\n"));
+    ASSERT_TRUE(load("[MISC]\nRamSize=128\n"));
+    EXPECT_EQ(_context->config.next_layer_capture, 1) << "a config without the key must not keep off from the previous parse";
+    ASSERT_TRUE(load("[NEXT]\nLayerCapture=banana\n"));
+    EXPECT_EQ(_context->config.next_layer_capture, 1) << "an unknown word: on, with a warning";
+    std::remove(path.c_str());
+}
+
+TEST(ConfigNextLayerCapture_Test, TheShippedNextConfigSaysOn)
+{
+    std::ifstream in(TestPathHelper::FindProjectRoot() / "data" / "configs" / "next" / "unreal.ini");
+    ASSERT_TRUE(in.good());
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const size_t section = text.find("[NEXT]");
+    ASSERT_NE(section, std::string::npos);
+    EXPECT_NE(text.find("LayerCapture=on", section), std::string::npos) << "the shipped Next config documents the switch";
+}
+
+/// endregion </[NEXT] LayerCapture>
+
 /// region <[HDD] (IDE board)>
 
 /// [HDD] Scheme, CHSn, CDn; an ISO image makes its unit a CD drive even when

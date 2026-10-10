@@ -18,6 +18,8 @@
 ///   state next nextreg [reg=07] [changed=true]       one NextREG with decoded bits, or the table (no side effect)
 ///   state next copper [from=0] [count=64] [raw=true] the copper list as a disassembly, control mode, write address, pc
 ///   state next sprites [from=0] [count=128] [all=true]  the sprite attributes decoded (visible ones), switches, flags, pattern memory
+///   state next layer-capture [on|off]                the per-layer record of the screen: switch it, or show enabled / frames / last frame / bytes
+///   (the images: `capture screen --layer=ula|layer2|tilemap|sprites|ids [file]`)
 ///   next nextreg <reg> <value> [nextreg|port|internal]   write a NextREG through the board's write choke point
 ///   (positional shortcuts: `state next palette sprites_1 0-15`, `state next ports 6B w`, `state next nextreg 07`)
 ///
@@ -273,6 +275,26 @@ inline std::string StateText(EmulatorContext* context, const std::vector<std::st
         const std::string unavailableText = unavailable(report);
         return unavailableText.empty() ? DeviceState::ToText(report) : unavailableText;
     }
+    if (sub == "layer-capture" || sub == "layercapture" || sub == "layers")
+    {
+        int enable = -1;
+        if (args.size() >= 3)
+        {
+            if (args[2] == "on" || args[2] == "true" || args[2] == "1")
+                enable = 1;
+            else if (args[2] == "off" || args[2] == "false" || args[2] == "0")
+                enable = 0;
+            else if (args[2] != "status")
+                return "Error: expected on, off or status, got '" + args[2] + "'" + newline;
+        }
+        const StateNode r = DeviceState::NextLayerCaptureControl(context, enable);
+        const std::string unavailableText = unavailable(r);
+        if (!unavailableText.empty())
+            return unavailableText;
+        return "Next layer capture " + Field(r, "enabled") + ": " + Field(r, "frames") + " frame(s) recorded, last emulator frame " +
+               Field(r, "last_frame") + ", " + Field(r, "bytes") + " bytes held" +
+               (enable >= 0 ? " (the switch applies from the next frame start)" : "") + newline;
+    }
     if (sub == "journal" || sub == "regjournal" || sub == "reg-journal")
     {
         if (args.size() == 3 && (args[2] == "on" || args[2] == "off" || args[2] == "clear"))
@@ -335,7 +357,7 @@ inline std::string StateText(EmulatorContext* context, const std::vector<std::st
             }
         return out;
     }
-    return "Error: unknown subcommand '" + args[1] + "'. Available: (none), regs, mmu, dma, video, palette [palette= range=], ports [port= access=], nextreg [reg= changed=], copper [from= count= raw=], sprites [from= count= all=], journal [regs=.. sources=.. since=N from=F to=F limit=N | on | off | clear]" +
+    return "Error: unknown subcommand '" + args[1] + "'. Available: (none), regs, mmu, dma, video, palette [palette= range=], ports [port= access=], nextreg [reg= changed=], copper [from= count= raw=], sprites [from= count= all=], layer-capture [on|off], journal [regs=.. sources=.. since=N from=F to=F limit=N | on | off | clear]" +
            newline;
 }
 

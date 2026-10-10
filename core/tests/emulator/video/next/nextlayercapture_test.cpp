@@ -301,13 +301,28 @@ protected:
     const uint32_t* Framebuffer() const { return reinterpret_cast<const uint32_t*>(_context->pScreen->GetFramebufferDescriptor().memoryBuffer); }
 };
 
+TEST_F(NextLayerCaptureMachine_Test, OnByDefaultFromTheConfig)
+{
+    // [NEXT] LayerCapture defaults to on: the first frames of a machine already leave a complete one (the measured cost is under 5 %)
+    EXPECT_TRUE(_screen->LayerCaptureEnabled());
+    EXPECT_EQ(_context->config.next_layer_capture, 1);
+    Frames(3);
+    ASSERT_NE(_screen->LastLayerFrame(), nullptr);
+    EXPECT_EQ(_screen->LayerCaptureBytes(), 2 * Frame::Bytes());
+}
+
 TEST_F(NextLayerCaptureMachine_Test, OffAllocatesNothingAndKeepsNoFrame)
 {
-    EXPECT_FALSE(_screen->LayerCaptureEnabled());
+    // switched off the screen holds no set, keeps no frame and counts none: the renderer is called as before the record existed
+    _screen->SetLayerCapture(false);
+    EXPECT_EQ(_context->config.next_layer_capture, 0) << "a screen made later (a model switch) starts the same way";
     Frames(2);
+    const uint64_t counted = _screen->LayerFramesCaptured();
+    Frames(2);
+    EXPECT_FALSE(_screen->LayerCaptureEnabled());
     EXPECT_EQ(_screen->LastLayerFrame(), nullptr);
     EXPECT_EQ(_screen->LayerCaptureBytes(), 0u);
-    EXPECT_EQ(_screen->LayerFramesCaptured(), 0u);
+    EXPECT_EQ(_screen->LayerFramesCaptured(), counted);
 }
 
 TEST_F(NextLayerCaptureMachine_Test, PausedMachineAnswersFromTheLastFrame)
@@ -366,6 +381,7 @@ TEST_F(NextLayerCaptureMachine_Test, TwoSetsSwapAtTheFrameEnd)
 TEST_F(NextLayerCaptureMachine_Test, ReaderThreadNeverSeesAHalfDrawnFrame)
 {
     _screen->SetLayerCapture(true);
+    const uint64_t before = _screen->LayerFramesCaptured();
     _screen->InitFrame();  // the switch applies at a frame start
     _screen->RenderFrameBatch();
     std::atomic<bool> stop{false};
@@ -401,7 +417,7 @@ TEST_F(NextLayerCaptureMachine_Test, ReaderThreadNeverSeesAHalfDrawnFrame)
     reader.join();
     EXPECT_EQ(torn.load(), 0u) << "a frame mixed the borders of two frames";
     EXPECT_GT(reads.load(), 0u);
-    EXPECT_EQ(_screen->LayerFramesCaptured(), 21u);
+    EXPECT_EQ(_screen->LayerFramesCaptured(), before + 21u);
 }
 
 // The copper changes registers in the middle of a line: the record must change at the same pixel the composed frame does, and a

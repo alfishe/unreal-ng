@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,7 @@
 #include "../_helpers/goldentext.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/memory.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
 TEST(CliNextFormat_Test, TheJournalSwitchesAndPrintsWhoWroteWhat)
@@ -240,3 +242,16 @@ TEST(CliNextFormat_Test, TheNextCommandOnAnotherMachineIsRefused)
     EXPECT_NE(CliNext::StateText(emulator->GetContext(), {"next", "dma"}, "\n").find("Error: not a ZX Spectrum Next"), std::string::npos);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+// design-layer-capture.md: `next layer-capture [on|off|status]` and the state report; the images are `capture screen --layer=...`
+TEST_F(CliNextReports_Test, TheLayerCaptureSwitchPrintsItsState)
+{
+    EXPECT_NE(Next({"layer-capture"}).find("Next layer capture on: "), std::string::npos) << "on by default";
+    EXPECT_NE(Next({"layer-capture", "off"}).find("Next layer capture off: "), std::string::npos);
+    EXPECT_NE(State({"next", "layer-capture", "status"}).find("Next layer capture off: "), std::string::npos);
+    const std::string on = Next({"layer-capture", "on"});
+    EXPECT_NE(on.find("Next layer capture on: 0 frame(s) recorded"), std::string::npos) << on;
+    EXPECT_NE(Next({"layer-capture", "maybe"}).find("Error: expected on, off or status"), std::string::npos);
+    EXPECT_NE(State({"next", "bogus"}).find("layer-capture [on|off]"), std::string::npos) << "the list of subcommands names it";
+}
+

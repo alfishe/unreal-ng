@@ -134,4 +134,29 @@
         post["responses"]["404"]["description"] = "Emulator not found";
         post["responses"]["409"]["description"] = "Not a ZX Spectrum Next";
         post["responses"]["503"]["description"] = "No coherent moment within 500 ms (the emulator is being stepped)";
+
+        // The per-layer record of the Next screen (design-layer-capture.md)
+        Json::Value& layerPost = paths["/api/v1/emulator/{id}/next/layer-capture"]["post"];
+        layerPost["summary"] = "Switch the per-layer record of the Next screen";
+        layerPost["tags"].append("Machine State");
+        layerPost["description"] =
+            "The Next screen records the layers of every frame it draws (the four layers, the winner of each pixel, the register state of every "
+            "line segment) in two sets of buffers, so /capture/screen?layer=, /capture/next-layers and the pixel inspector answer from the last "
+            "completed frame. On by default (ini [NEXT] LayerCapture=on|off; the measured cost is about 4 % of a frame); this switches it at "
+            "runtime and takes effect at the next frame start. Body {\"enabled\": true|false}; an empty body or {} only reports. Answers "
+            "enabled, frames (completed since it was switched on), last_frame (the emulator frame counter of the last one) and bytes held. "
+            "CLI `next layer-capture [on|off]`, Lua next_layer_capture_control(), Python next_layer_capture_control(). 409 when the machine is not a Next.";
+        layerPost["parameters"][0]["name"] = "id";
+        layerPost["parameters"][0]["in"] = "path";
+        layerPost["parameters"][0]["required"] = true;
+        layerPost["parameters"][0]["schema"]["type"] = "string";
+        Json::Value& layerBody = layerPost["requestBody"]["content"]["application/json"]["schema"];
+        layerBody["type"] = "object";
+        layerBody["properties"]["enabled"]["type"] = "boolean";
+        layerBody["properties"]["enabled"]["description"] = "true: record every frame; false: stop and free the buffers";
+        layerPost["responses"]["200"]["description"] = "The state of the record";
+        layerPost["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/NextLayerCaptureState";
+        layerPost["responses"]["400"]["description"] = "'enabled' is not a boolean";
+        layerPost["responses"]["404"]["description"] = "Emulator not found";
+        layerPost["responses"]["409"]["description"] = "Not a ZX Spectrum Next";
     }

@@ -2717,7 +2717,8 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << (value["ula"]["enabled"].asBool() ? "" : " (off)") << ", Layer 2 "
                                         << (value["layer2"]["enabled"].asBool() ? value["layer2"]["resolution"].asString() : std::string("off")) << ", tilemap "
                                         << (value["tilemap"]["enabled"].asBool() ? "on" : "off") << ", sprites " << (value["sprites"]["enabled"].asBool() ? "on" : "off")
-                                        << ", raster vc " << value["raster"]["vc"].asInt() << " hc " << value["raster"]["hc"].asInt();
+                                        << ", raster vc " << value["raster"]["vc"].asInt() << " hc " << value["raster"]["hc"].asInt()
+                                        << ", layer capture " << (value["layer_capture"]["enabled"].asBool() ? "on" : "OFF (POST /next/layer-capture {enabled:true})");
                                 else if (aspect == "next_palette")
                                     out << "\n[next_palette] selected " << value["selected"]["name"].asString() << " index " << value["selected"]["index"].asInt() << ", "
                                         << value["palettes"].size() << " palette(s) listed";
