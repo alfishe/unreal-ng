@@ -10,3 +10,4 @@ Titles the owner (or a run of the collection) found worth showing. Index = row n
 | 24 | Mapscroll 3 (`demos/tech-demo/Mapscroll 3/mapscroll3.nex`) | tech demo | smooth tilemap scrolling; matches the author's screenshot pixel for pixel (see as-designed-findings.md); the ULA noise around the window is the demo's own look | run, 2026-10-09 |
 | 97 | Mario's Bombs Away (`games/action-arcade/Mario's Bombs Away/MariosBombsAway.nex`) | game | owner's pick | owner, 2026-10-10 |
 | 147 | Dreamworld Pogie (Demo v1.0) (`games/platform/...`) | game demo | TENTATIVE: guessed from the run position when the owner said "another nice demo" (the neighbours were #146 Dougie Do, #145 Donkey Kong Jr) - confirm the title | owner, 2026-10-10 |
+| 181 | Nexions (`games/shooter/Nexions/run.bas`) | game | owner's pick | owner, 2026-10-10 |
