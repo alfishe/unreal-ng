@@ -5,6 +5,7 @@
 // Convert chains them. Each reports what it could not convert.
 
 #include <functional>
+#include <optional>
 #include <map>
 #include <set>
 #include <memory>
@@ -54,6 +55,9 @@ struct BackendOptions
     std::map<std::string, int> definitions;
     /// The project's data files (ConvertProject hands it to the frontends; none: the sources alone)
     DataFileReader dataFiles;
+    /// The size of a file an INCBIN of the converted source names (none: dataFiles' size, which may hold a sector's
+    /// slack): the layout of a converted sjasmplus project (byte operands to mark with low)
+    std::function<std::optional<uint64_t>(const std::string& name)> fileSize;
     /// The sources are written for the ZX Spectrum Next (sjasmplus --zxnext): the Z80N mnemonics are instructions in every
     /// file, as when a file says DEVICE ZXSPECTRUMNEXT or OPT --zxnext
     bool z80n = false;

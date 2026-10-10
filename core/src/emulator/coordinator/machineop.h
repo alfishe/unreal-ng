@@ -24,6 +24,9 @@ enum class OpKind : uint8_t
     MediaEject,     ///< a medium leaves its slot
     MediaDiscard,   ///< a medium's unsaved writes are dropped
     DiskCreate,     ///< a new blank disk goes into a drive
+    NetworkChange,  ///< the network settings change: the network devices are fitted again (D43, M2)
+    IdeDriveKind,   ///< an empty IDE unit gets another drive: hard disk, CD-ROM, CompactFlash (D43, M2)
+    RzxRestore,     ///< an RZX playback replaces the machine: its snapshot block, a seek back (D43, M2)
 
     Count
 };

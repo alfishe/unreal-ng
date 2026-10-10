@@ -38,6 +38,9 @@ const char* OpKindName(OpKind kind)
         case OpKind::MediaEject: return "media-eject";
         case OpKind::MediaDiscard: return "media-discard";
         case OpKind::DiskCreate: return "disk-create";
+        case OpKind::NetworkChange: return "network-change";
+        case OpKind::IdeDriveKind: return "ide-drive-kind";
+        case OpKind::RzxRestore: return "rzx-restore";
         case OpKind::Count: break;
     }
     return "unknown";

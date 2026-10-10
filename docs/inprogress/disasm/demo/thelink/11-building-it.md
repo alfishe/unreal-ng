@@ -56,8 +56,9 @@ zxasm convert TheLink.trd --to sjasmplus --out-codepage utf-8 -o out/
 The converted sources assembled at once into all 19 effect objects, byte for byte the author's.
 What the conversion had to get right (439 conditional jumps that are relative in ALASM, 147
 multi-operand `LD` lines, 17 macros sjasmplus cannot express, 16-bit cyclic shifts, unsigned
-16-bit arithmetic...), what was done by hand afterwards (the object saver as `SAVEBIN`, 50 explicit
-`low`), and the converter bug it uncovered (`DS -$`) are in
+16-bit arithmetic...), what was first done by hand afterwards (the object saver as `SAVEBIN`, 50
+explicit `low`) and then taught to the converter - its output now assembles unchanged, with no
+warning - and the converter bug it uncovered (`DS -$`) are in
 [sjasm/README.md](../../../../disasm/demo/thelink/sjasm/README.md) section 3.
 
 Four tables were not code at all: the author computed them with BASIC programs. `tables.py`

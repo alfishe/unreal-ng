@@ -225,7 +225,13 @@ private:
     bool _passExecBreakpointArmed = false;
     uint16_t _passExecBreakpointPc = 0;
     /// A direct run's loops end on a stop request or on a breakpoint stop
-    bool RunHalted() const { return _stopRequested || _directStop.hit || _arbiter.ServingAborted(); }
+    bool RunHalted() const
+    {
+        return _stopRequested || _directStop.hit || _arbiter.ServingAborted() || t_directRunRefused;
+    }
+    /// This thread's direct run did not get the CPU (a deadlock, not a wait: 60 s): it does not run at all, rather
+    /// than drive the Z80 next to the holder
+    static inline thread_local bool t_directRunRefused = false;
     /// The last direct run ended because it was aborted (the user took control back from an automation session)
     std::atomic<bool> _lastDirectRunAborted{false};
     /// Marks a direct-stepping call for its duration and holds the host audio output meanwhile (a direct run is
@@ -253,6 +259,8 @@ private:
         bool _driver = false;
         /// This scope's hold is the one lent between frames (Emulator::_lendingHold)
         bool _lends = false;
+        /// It did not get the CPU: the run does not step (t_directRunRefused)
+        bool _refused = false;
         /// The host audio hold this direct run takes (reason DirectRun): it is not paced to real time, so its
         /// frames must not reach the speakers sped up. Taken after the depth marks the run active, released before
         /// it unmarks it, so Resume's reconcile never sees this hold without its run

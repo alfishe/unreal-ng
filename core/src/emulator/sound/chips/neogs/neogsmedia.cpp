@@ -29,11 +29,6 @@ bool neogsFitted(EmulatorContext* context)
     return context && context->pSoundManager && context->pSoundManager->fittedGeneralSoundKind() == GSTypeKind::NGS;
 }
 
-bool recording(EmulatorContext* context)
-{
-    return context->pTimeTravelHooks && context->pTimeTravelHooks->IsRecording();
-}
-
 /// Carry `action` out on the machine's thread, on the card fitted by then
 NeoGSMediaResult onMachineThread(EmulatorContext* context, std::function<bool(GeneralSoundCard*)> action)
 {
@@ -74,7 +69,7 @@ NeoGSMediaResult viaMediaManager(bool running, const MediaResult& result)
     if (!result.Ok())
     {
         LOGWARNING("NeoGS: SD card request refused: %s", result.message.c_str());
-        return NeoGSMediaResult::Failed;
+        return result.error == MediaError::Recording ? NeoGSMediaResult::TtdRecording : NeoGSMediaResult::Failed;
     }
     return running ? NeoGSMediaResult::Queued : NeoGSMediaResult::Done;
 }
@@ -82,10 +77,10 @@ NeoGSMediaResult viaMediaManager(bool running, const MediaResult& result)
 
 NeoGSMediaResult NeoGSRequestSdInsert(EmulatorContext* context, const std::string& path)
 {
+    // The SD card is a medium: the coordinator's media rules decide in the media manager (D43). A TTD re-execution
+    // owns the machine meanwhile (an input guard, not a rule)
     if (!neogsFitted(context))
         return NeoGSMediaResult::NoNeoGS;
-    if (recording(context))
-        return NeoGSMediaResult::TtdRecording;
     if (context->ttdReplayActive)
         return NeoGSMediaResult::ReplayOwnsInput;
     if (path.empty())
@@ -112,8 +107,6 @@ NeoGSMediaResult NeoGSRequestSdEject(EmulatorContext* context)
 {
     if (!neogsFitted(context))
         return NeoGSMediaResult::NoNeoGS;
-    if (recording(context))
-        return NeoGSMediaResult::TtdRecording;
     if (context->ttdReplayActive)
         return NeoGSMediaResult::ReplayOwnsInput;
     if (MediaManager* manager = context->pMediaManager; manager && manager->HasSlot(SoundChip_NeoGS::SD_SLOT_ID))

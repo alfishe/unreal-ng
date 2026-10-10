@@ -41,8 +41,8 @@ Part of [README.md](README.md). Phases from [design.md](design.md) §6.
   bursts, an owner model, a priority check and a completeness check.
 - [x] TSan, ASan + UBSan: the arbiter and both test files built standalone with clang `-fsanitize`, 300 fuzz seeds.
   No reports.
-- [ ] `-DSANITIZE=thread|address` configure option and `docker/linux/build.sh --tsan`: the standalone build above
-  stands in until X1.
+- [x] `-DSANITIZE=<list>` (`cmake/Sanitize.cmake`, the tree and a standalone `core/tests`): `tools/sanitize/
+  configure.sh asan|tsan` and `docker/linux/build.sh --sanitize LIST` / `--asan` / `--tsan` configure with it.
 - [x] gcc 16 -O3 with the CI flags: the arbiter and both test files compile with zero warnings.
 
 ## X1: wiring and the compat
@@ -137,12 +137,12 @@ Part of [README.md](README.md). Phases from [design.md](design.md) §6.
   - **Mutation check:** with the scope's hold switched off it fails at once, with up to 11958 moments of two
     drivers and inexact steps.
 - [x] **Arbiter fuzz:** holds also with `drivesZ80` / `pauseFirst`.
-- [ ] **Still open:**
-  - abort of a long direct run from the priority lane (`HoldToken::Aborted()` exists; the `Run*` loops do not read
-    it yet);
-  - `Reset`, media and snapshot brackets are still broadcast Pause / Resume pairs (X3);
-  - the machine fuzz's determinism check (§8.2: commands-only sequences equal to a single-thread run) and the full
-    mode matrix (§8.3).
+- [x] **Closed later:**
+  - abort of a long direct run: by taking control back (X7: `AbortDriving`, `RunHalted` reads it; a pause never
+    aborts);
+  - the `Reset`, media and snapshot brackets became CPU holds (X3);
+  - the determinism check (`CommandsFromOtherThreadsNeverReachIntoAStep`) and the mode matrix (X6: TTD; ZX-Poly
+    and RZX below).
 
 ## X3: the Pause / Resume brackets become CPU holds
 
@@ -316,10 +316,25 @@ showed the same address.
     two others pause, resume, hold the CPU, run counted `RunNFrames(k)` and `RunTStates`.
   - **Checks:** no second driver, every counted step exact, no hang.
   - **Result:** all machine fuzz tests, 6 processes × 30 seeds in parallel: all clean.
-- [ ] **Still open:**
-  - ZX-Poly groups and RZX playback in the fuzz matrix;
-  - abort of a long direct run: replaced by the owner's decision on automation sessions (X7). A pause never aborts;
-    taking back control does.
+- [x] **ZX-Poly groups and RZX playback in the fuzz matrix** (`ExecutionArbiterMachineFuzz_Test.
+  ZXPolyGroupUnderConcurrentControl`, `RzxPlaybackUnderConcurrentControl`): a running group / a playing 48K, one
+  thread through the group (recording, stop / seek / resume, keys, parallel slaves) or the playback (play, stop,
+  seek, status), two through the control. The ZX-Poly one found two drivers on a slave (2 of 216 runs): with
+  pipelined slaves (turbo, parallel) a boundary hands the slaves to workers and returns; the group's operations
+  waited for the slaves but did not hold the master, so its next boundary posted new slave work while, say, the
+  group TTD resume drove a slave too. Now every operation from outside the master's frame takes `GroupHold` (the
+  master's CPU, then the slaves' pipelined work finished): loads, replicate, port check / trace, RunFrames, the
+  group TTD start / stop / resume, parallel / pipelined switches (the seek already held it). Under ASan both
+  scenarios run clean.
+- [ ] **Open: one frame too many in the ZX-Poly scenario.** Under heavy stress (6 processes x 30 seeds, host load
+  40-70) about 1 run in 250 (1 scenario in ~7500) counts a held RunNFrames(k) on the master as k+1 frames
+  ("before 2 after 5 ran 2", "before 14 after 16 ran 1", "before 14 after 17 ran 2" - always early frames). No two
+  drivers (the module counters stay 0), ASan clean. Ruled out: a direct run starting without the CPU (it now waits,
+  never runs without it - no "still waits" in those runs), the TTD detached replay after a seek, keys, the parallel
+  slaves switch: `DISABLED_ZXPolyMasterRunNFramesIsExactSingleThreaded` (3000 runs with all of them, one thread) is
+  exact. Only with the group thread and two control threads at once. The check stays strict.
+- [x] **Abort of a long direct run:** replaced by the owner's decision on automation sessions (X7). A pause never
+  aborts; taking back control does.
 
 ## X7: automation sessions - visible remote control, take back control (design §6a)
 

@@ -19,7 +19,8 @@
 #   --image REF       image (default: ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04)
 #   --type TYPE       CMAKE_BUILD_TYPE (default: Release, like CI)
 #   --clean           remove the build directory first
-#   --sanitize LIST   build with -fsanitize=LIST (address,undefined | thread | ...);
+#   --asan / --tsan   shortcuts for --sanitize address,undefined / --sanitize thread
+#   --sanitize LIST   build with -DSANITIZE=LIST (cmake/Sanitize.cmake: address,undefined | thread | ...);
 #                     own build directory, ASAN_/LSAN_/UBSAN_/TSAN_OPTIONS passed in,
 #                     SYS_PTRACE granted (LeakSanitizer needs it). docs/testing/sanitizers.md
 #
@@ -55,6 +56,8 @@ while [ $# -gt 0 ]; do
     --type) TYPE="$2"; shift 2 ;;
     --clean) CLEAN=1; shift ;;
     --sanitize) SANITIZE="$2"; shift 2 ;;
+    --asan) SANITIZE="address,undefined"; shift ;;
+    --tsan) SANITIZE="thread"; shift ;;
     -h|--help) sed -n '2,31p' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *) TARGET="$1"; shift ;;
@@ -111,10 +114,8 @@ docker run --rm --platform "linux/$PLATFORM" --cpus "$CPUS" \
     git config --global --add safe.directory "*"
     SAN=()
     if [ -n "${SANITIZE:-}" ]; then
-      # gcc reports false maybe-uninitialized inside libstdc++ (<regex>) once the sanitizers instrument it
-      F="-fsanitize=$SANITIZE -fno-omit-frame-pointer -Wno-error=maybe-uninitialized"
-      SAN=("-DCMAKE_C_FLAGS=$F" "-DCMAKE_CXX_FLAGS=$F" "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=$SANITIZE"
-           "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=$SANITIZE")
+      # cmake/Sanitize.cmake: the flags, gcc'"'"'s libstdc++ maybe-uninitialized waiver included
+      SAN=("-DSANITIZE=$SANITIZE")
     fi
     cmake -S . -B "$BUILDDIR" -G Ninja -DCMAKE_BUILD_TYPE="$TYPE" -DTESTS=ON ${SAN[@]+"${SAN[@]}"}
     cmake --build "$BUILDDIR" --target "$TARGET" -j "$JOBS"

@@ -8,7 +8,7 @@
 
 #include "base/featuremanager.h"
 #include "common/network/hostnetbridge.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "emulator/coordinator/ports.h"
 #include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/ports/models/portdecoder_atm710.h"
 #include "emulator/ports/models/portdecoder_profi.h"
@@ -832,11 +832,6 @@ bool NetworkManager::Change::OnlyRemoteAccess() const
 
 bool NetworkManager::RequestChange(const Change& change, std::string& error)
 {
-    if (_context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->IsRecording())
-    {
-        error = "a TTD recording is running: the network settings are fixed until it stops";
-        return false;
-    }
     // The ZX-bus cards are slots (owner decision Q11): a card change is a slot change applied by a restart
     // (SlotControl verb network, which applies the other settings to the restarted machine); here only the cards that
     // are fitted already may be named again. ATM2IOESP (the INTERNAL connector, not a bus slot) still changes here
@@ -848,8 +843,29 @@ bool NetworkManager::RequestChange(const Change& change, std::string& error)
     }
     if (!ValidateChange(change, error))
         return false;
-    Submit(change);
-    return true;
+    // A host-side setting alone (RemoteAccess: the address the listeners take) changes nothing the machine sees: no
+    // machine operation, allowed in every mode (owner 2026-10-10)
+    if (change.OnlyRemoteAccess())
+    {
+        Submit(change);
+        return true;
+    }
+    // A machine operation (the coordinator's rules, D43): refused while a recording the user started runs and in the
+    // recorded past; the black box's session ends at the change
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::NetworkChange;
+    op.summary = "network settings";
+    op.sessionReason = "network-change";
+    auto apply = [&](coordinator::OpStage& stage) {
+        stage.CommitPoint();
+        Submit(change);
+        return true;
+    };
+    const coordinator::OpResult result =
+        coordinator::RunCommit(_context ? _context->pMachineOps : nullptr, std::move(op), apply);
+    if (!result.Ok())
+        error = result.reason;
+    return result.Ok();
 }
 
 bool NetworkManager::ValidateChange(const Change& change, std::string& error)

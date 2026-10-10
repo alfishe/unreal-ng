@@ -69,7 +69,8 @@ struct Emulator::AutostartRequest
 };
 
 /// The emulator's side of the coordinator: the machine thread (the execution arbiter's CPU hold), the clock, and
-/// the owner of the operations that replace the machine state (reset, autostart, snapshot load)
+/// the owner of the operations that replace the machine state (reset, autostart, snapshot load) and of those a
+/// subsystem carries out itself (network settings, an IDE unit's drive, an RZX restore: coordinator::RunCommit)
 class Emulator::CoordinatorPorts : public coordinator::IMachineThread,
                                    public coordinator::IMachineClock,
                                    public coordinator::IOpOwner
@@ -126,6 +127,15 @@ public:
                 return _emulator.AutostartNow(*std::any_cast<AutostartRequest*>(op.payload), stage);
             case coordinator::OpKind::SnapshotLoad:
                 return _emulator.LoadSnapshotNow(*std::any_cast<SnapshotRequest*>(op.payload), stage);
+            case coordinator::OpKind::NetworkChange:
+            case coordinator::OpKind::IdeDriveKind:
+            case coordinator::OpKind::RzxRestore:
+                // The subsystem's own change (coordinator::RunCommit): the network manager, the IDE controller, the
+                // RZX session; they have no owner of their own, the rules and the log are the coordinator's
+                if (const coordinator::OpCommit* commit = std::any_cast<coordinator::OpCommit>(&op.payload))
+                    return (*commit)(stage);
+                stage.error = std::string("no change given for '") + coordinator::OpKindName(op.kind) + "'";
+                return false;
             default:
                 stage.error = std::string("the emulator does not do '") + coordinator::OpKindName(op.kind) + "'";
                 return false;
@@ -1113,7 +1123,9 @@ void Emulator::WireCoordinator()
     using coordinator::OpKind;
     _coordinator->SetMachine(_coordinatorPorts.get(), _coordinatorPorts.get());
     _coordinator->SetSession(_ttdSessionPort.get());
-    for (OpKind kind : {OpKind::Reset, OpKind::Autostart, OpKind::SnapshotLoad})
+    _context->pMachineOps = _coordinator.get();
+    for (OpKind kind : {OpKind::Reset, OpKind::Autostart, OpKind::SnapshotLoad, OpKind::NetworkChange,
+                        OpKind::IdeDriveKind, OpKind::RzxRestore})
         _coordinator->Own(kind, _coordinatorPorts.get());
     if (MediaManager* media = _context ? _context->pMediaManager : nullptr)
     {
@@ -2782,6 +2794,13 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
 Z80::StepResult Emulator::ExecuteStep(bool skipBreakpoints, bool* frameCompleted)
 {
     Z80& z80 = *_core->GetZ80();
+    // A direct run that did not get the CPU does not step (DirectStepScope)
+    if (t_directRunRefused)
+    {
+        if (frameCompleted)
+            *frameCompleted = false;
+        return Z80::StepResult{};
+    }
 
     // Leaving the instruction the emulator is stopped at (an execution breakpoint that fires
     // again at this step sets it again); only the run's first instruction may pass that breakpoint
@@ -2847,13 +2866,25 @@ Emulator::DirectStepScope::DirectStepScope(Emulator& emulator, const char* tag) 
         execution::CommandOptions options;
         options.drivesZ80 = true;
         options.pauseFirst = true;
-        _hold = _emulator._arbiter.BeginHold(execution::Requester{execution::Origin::Internal, {}}, tag,
-                                             execution::Clock::now() + std::chrono::seconds(5), &result, options);
+        // It waits for the CPU (the holds ahead are short; a long run lends it between frames): running without it
+        // would drive the Z80 next to its holder. 60 s without it is a deadlock, not a wait - then it does not run
+        for (int attempt = 0;; ++attempt)
+        {
+            _hold = _emulator._arbiter.BeginHold(execution::Requester{execution::Origin::Internal, {}}, tag,
+                                                 execution::Clock::now() + std::chrono::seconds(5), &result, options);
+            if (_hold.Valid() || result.outcome != execution::Outcome::Busy || attempt >= 11)
+                break;
+            LOGWARNING("Emulator - a direct run '%s' still waits for the CPU (%s)", tag, result.detail.c_str());
+        }
         if (!_hold.Valid())
-            LOGWARNING("Emulator - a direct run did not get the CPU (%s, %s); running anyway",
-                       execution::OutcomeName(result.outcome), result.detail.c_str());
+        {
+            LOGERROR("Emulator - a direct run '%s' did not get the CPU (%s, %s): not run", tag,
+                     execution::OutcomeName(result.outcome), result.detail.c_str());
+            _refused = true;
+            t_directRunRefused = true;
+        }
     }
-    _driver = !_hold.Valid() ? !_emulator._arbiter.IsLoopThread() : !_hold.inlined;
+    _driver = _refused ? false : !_hold.Valid() ? !_emulator._arbiter.IsLoopThread() : !_hold.inlined;
     // The outermost run with the CPU of its own lends it between frames (ExecuteStep)
     if (_hold.Valid() && !_hold.inlined && !_emulator._lendingHold)
     {
@@ -2899,6 +2930,8 @@ Emulator::DirectStepScope::~DirectStepScope()
         DirectStepScope& scope;
         ~EndHold()
         {
+            if (scope._refused)
+                t_directRunRefused = false;
             if (scope._lends)
             {
                 scope._emulator._lendingHold = nullptr;

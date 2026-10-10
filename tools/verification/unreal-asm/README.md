@@ -32,8 +32,10 @@ unreal-asm/
   checks/                       the converted sources against cross assemblers and against what is on the disks
     roundtrip.py                every source of a set of TRD / SCL images to sjasmplus and back through the sjasmplus
                                 frontend and backend (the text must not change); optionally assembles every file
-    objcheck.py                 a converted ALASM project: every object of each main source's SAVEOBJ table built
-                                with sjasmplus against the file ALASM saved on the same disk
+    objcheck.py                 a converted ALASM project assembled as it is (the conversion writes the SAVEBIN lines of
+                                each main source's SAVEOBJ table): every object against the file ALASM saved on the same
+                                disk, and no sjasmplus warning (The Link: 18 of 19 equal, baba5's BABAGS is a later
+                                source than the disk's)
     crosscheck.py               the main sources of a set of images to sjasmplus and to pasmo / z88dk (--targets),
                                 each assembled, the bytes compared
     pasmocheck.py               pasmo's own sources through the pasmo frontend: pasmo against sjasmplus / pasmo / z80asm builds

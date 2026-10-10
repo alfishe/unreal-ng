@@ -220,3 +220,13 @@ internals; full media history (H1-H5).
 - 2026-10-10: **postponed: continuing live from the past of a session loaded from a file.** A loaded session is
   browsed and replayed; "Rec From Here" in it treats every medium as unproven (F11). TTD does not store guest media
   writes.
+- 2026-10-10: **the D43 cells** (one at a time):
+  - **network settings**: refused while a recording the user started runs and in the recorded past (replay,
+    detached); the black box ends its session as for a medium (history dropped, the next session at once); live:
+    nothing for TTD. A change of `RemoteAccess` alone (the host listeners' address) is no machine operation: allowed
+    in every mode.
+  - **an IDE unit's drive** (hard disk / CD-ROM / CompactFlash): the same rule as the network settings.
+  - **RZX snapshot block and seek back**: a snapshot load (D42): the session ends, its history stays, in every mode.
+    A forward seek plays on: no operation.
+  - **NeoGS SD card**: a medium; the media rules decide (refused while a recording the user started runs, the
+    black box ends its session).

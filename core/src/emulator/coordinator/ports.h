@@ -9,6 +9,7 @@
 
 #include <functional>
 #include <string>
+#include <utility>
 
 #include "machineop.h"
 
@@ -116,4 +117,30 @@ public:
     virtual OpResult Ask(MachineOp op) = 0;
     virtual MachineMode Mode() const = 0;
 };
+
+/// A change a subsystem makes itself, run as an operation (the network settings, an IDE unit's drive, an RZX
+/// restore): the emulator, the owner of these kinds, calls it as the Commit. It calls stage.CommitPoint() right
+/// before its first change (or stage.NoChange()); false: failed, stage.error says why
+using OpCommit = std::function<bool(OpStage&)>;
+
+/// Run @p op with @p commit as its change through @p ops: the rules, the park, the session effect, the log. Without
+/// a coordinator (a bare context in a unit test) the change runs alone: no rules, no log
+inline OpResult RunCommit(IMachineOps* ops, MachineOp op, OpCommit commit)
+{
+    if (ops)
+    {
+        op.payload = std::move(commit);
+        return ops->Run(std::move(op));
+    }
+    OpStage stage;
+    OpResult result;
+    if (!commit(stage))
+    {
+        result.status = OpStatus::Failed;
+        result.reason = stage.error;
+    }
+    result.output = std::move(stage.output);
+    return result;
+}
+
 }  // namespace coordinator

@@ -211,16 +211,22 @@ with `zxasm convert TheLink.trd --to sjasmplus`: all 19 objects the author's ALA
       No byte of The Link changed: the zeroed tail was never saved.
 - [x] `zxasm convert --out-codepage cp`: the converted sources in UTF-8 (readable comments); a line whose code, not
       its comment or a `DISPLAY`, has a non-ASCII character is warned about (its string would build other bytes)
-- [ ] 8-bit operand wider than a byte (`LD (HL),IMER` with `IMER=#BFBF`, `DB label`, `DB _` in a `DUP` of
+- [x] 8-bit operand wider than a byte (`LD (HL),IMER` with `IMER=#BFBF`, `DB label`, `DB _` in a `DUP` of
       addresses): ALASM keeps the low byte silently, sjasmplus warns "value is truncated" (no warning id, cannot be
-      silenced). 50 lines in The Link, fixed by hand with `low x`. The converter could write `low` where the layout
-      module's value of the operand does not fit 8 bits.
+      silenced). Now the layout of the converted project reports every byte operand outside -256..255
+      (`LayoutResult::wideBytes`: DB, `LD r,n`, the arithmetic group, `IN` / `OUT (n)`) and the conversion writes
+      `low` there (`sjasmplusproject.cpp`, `Dialects_Test.AByteOperandTheSourceTruncatesSaysLow`).
 - [ ] ALASM's cyclic shift `x*257<1+#303>1` is spelled out as `((((((x*257&#FFFF)<<1|(x*257&#FFFF)>>>(16-1))&#FFFF)+#303&#FFFF)>>>1|...)&#FFFF)`:
       correct, unreadable. Options: one `DEFINE`d helper per rotate, fewer masks when the operand is already masked,
       or the value folded with a comment holding the ALASM expression.
-- [ ] `ORG $,0` (a page with an address outside `#C000`): ALASM maps the page at `#C000` whatever the address, as
-      sjasmplus does, but sjasmplus warns `orgpage`; the converter could add `; orgpage-ok` for ALASM.
-- [ ] "ORG with a page" is warned on every such line (about 30 for The Link): once per file is enough.
-- [ ] Alone Coder's Object Saver (`SAVEOBJ4`: an `ObjTab` of name, address, length, page, RUN to save) has a
-      sjasmplus counterpart: `SLOT 3` / `PAGE p` / `SAVEBIN "name",addr,len` per entry. Added by a script for The
-      Link; the converter could recognize the table and write them.
+- [x] `ORG $,0` (a page with an address outside `#C000`): ALASM maps the page at `#C000` whatever the address, as
+      sjasmplus does, but sjasmplus warns `orgpage`; the conversion adds `; orgpage-ok` unless the address is a number
+      in `#C000`-`#FFFF` (`Dialects_Test.AnOrgPageOutsideItsSlotIsMeant`).
+- [x] "ORG with a page" is warned once per file.
+- [x] Alone Coder's Object Saver (`SAVEOBJ4`: an `ObjTab` of name, address, length, page, RUN to save): a unit that
+      INCLUDEs `SAVEOBJ*` and has an `ObjTab` ends with `SLOT 3` / `PAGE p` / `SAVEBIN "name",addr,len` per entry
+      (`Dialects_Test.TheObjectSaversTableBecomesSavebin`).
+- [x] Result: `zxasm convert TheLink.trd --to sjasmplus` assembles **unchanged**, every unit with 0 sjasmplus
+      warnings, 18 of the 19 objects on the disk equal (`tools/verification/unreal-asm/checks/objcheck.py`; the 19th,
+      `baba5`'s `BABAGS`, is from a later source than the disk's file). `zxasm convert` passes the exact INCBIN sizes
+      to the layout (`BackendOptions::fileSize`).

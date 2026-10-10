@@ -5,6 +5,11 @@ message(">> core/tests CMakeLists.txt")
 # Project named 'core-tests' on C++
 project(core-tests LANGUAGES CXX)
 
+# A standalone configure of the tests takes -DSANITIZE too (inside the tree the root applied it already)
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/Sanitize.cmake)
+endif ()
+
 # C++ standard - MUST match the rest of the project (C++20) to avoid ABI mismatch
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

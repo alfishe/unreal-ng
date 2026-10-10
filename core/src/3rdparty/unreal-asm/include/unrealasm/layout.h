@@ -44,9 +44,21 @@ struct Label
     uint32_t line = 0;         ///< 1-based line of that file
 };
 
+/// A byte operand whose value is outside -256..255, where sjasmplus warns "value is truncated to 8bit" (DB, LD r,n,
+/// ADD A,n ..., IN A,(n), OUT (n),A). A macro or DUP body is reported once, at its line
+struct WideByteOperand
+{
+    std::string file;        ///< the project file (as INCLUDE names it)
+    uint32_t line = 0;       ///< 1-based line of that file
+    size_t statement = 0;    ///< the statement of the line (ir::Line::statements)
+    size_t operand = 0;      ///< the operand of the statement
+    int64_t value = 0;       ///< the first value found out of range
+};
+
 struct LayoutResult
 {
     std::vector<Label> labels;   ///< each name once, in the order the source defines them
+    std::vector<WideByteOperand> wideBytes;
     Diagnostics diagnostics;
     int passes = 0;
     bool ok = false;             ///< every value resolved and no label moved in the last pass

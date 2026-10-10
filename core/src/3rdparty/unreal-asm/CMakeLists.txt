@@ -75,6 +75,7 @@ add_library(unreal-asm STATIC
     src/dialects/masm/masmfrontend.cpp
     src/dialects/alasm/alasmfrontend.cpp
     src/dialects/alasm/alasmbackend.cpp
+    src/dialects/sjasmplus/sjasmplusproject.cpp
     src/dialects/gens/gensfrontend.cpp
     src/dialects/asm80/asm80frontend.cpp
     src/dialects/common/textexpr.cpp

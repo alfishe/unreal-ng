@@ -972,10 +972,6 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
             // Start the emulator
             bool startSuccess = emulatorManager->StartEmulatorAsync(emulator->GetId());
 
-            // Auto-select only if this is the first emulator, otherwise keep current selection
-            emulatorIds = emulatorManager->GetEmulatorIds();
-            bool shouldAutoSelect = (emulatorIds.size() == 1);  // Only auto-select if this is the only emulator
-
             // Echo the RESOLVED machine, not the requested string (identity
             // comes from EmulatorManager::GetMachineIdentity - the same single
             // source the WebAPI responses are built from)
