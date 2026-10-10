@@ -221,7 +221,9 @@ protected:
             {
                 EXPECT_EQ(probe.result, expected(probe.unit)) << bios << " " << probe.unit << "\n" << ScreenText();
                 if (channelEmpty(probe.unit))
+                {
                     EXPECT_LE(probe.frames, kEmptyProbeFrames) << bios << " " << probe.unit;
+                }
                 std::string key = bios + "-" + probe.unit;
                 std::replace(key.begin(), key.end(), ' ', '-');
                 RecordProperty(key, std::to_string(probe.frames) + " frames, " + probe.result);
@@ -1654,7 +1656,9 @@ protected:
         ASSERT_TRUE(Mouse()->Glide(-1000, 1000).ok());
         ASSERT_TRUE(Mouse()->Glide(x, -y).ok());
         if (click)
+        {
             ASSERT_TRUE(Mouse()->Click(MouseButton::Left, 5).ok());
+        }
         for (int i = 0; i < 100 && (Mouse()->IsBusy() || Mouse()->IsClickPending()); i++)
             EmulatorTestHelper::RunFramesFast(_emulator.get(), 1);
         ASSERT_FALSE(Mouse()->IsBusy()) << "the glide did not end";
