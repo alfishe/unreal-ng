@@ -180,6 +180,21 @@ def main():
         # those titles are judged by what is on the screen (NextZXOS grey paper) after the start keys
         is_basic = parts[-1].lower().endswith('.bas')
         idle = (not is_basic) and regs['interrupt']['halted'] and regs['special']['pc'] == 0x0C8F
+        # The Browser only LOADS a BASIC program saved without an autostart line: the editor shows the listing and nothing runs. Type RUN
+        # (the letters r u n, then ENTER: the editor takes plain text) - loading is not enough
+        ran_by_hand = False
+        if is_basic:
+            probe = json.load(urllib.request.urlopen('%s/%s/capture/screen' % (machine.base, machine.id)))
+            shot = Image.open(io.BytesIO(base64.b64decode(probe['data']))).convert('RGB')
+            bar = shot.crop((64, 400, 576, 416))
+            listing = sum(1 for px in bar.getdata() if px == (0, 0, 0)) > 0.5 * bar.size[0] * bar.size[1] and \
+                sum(1 for px in shot.crop((64, 64, 576, 80)).getdata() if px == (0, 0, 0)) < 0.1 * 512 * 16
+            if listing:
+                machine.call('/%s/keyboard/type' % machine.id, {'text': 'run', 'delay_frames': 5})
+                time.sleep(1.0)
+                machine.tap('enter')
+                time.sleep(args.wait)
+                ran_by_hand = True
         png = os.path.join(args.out, '%03d-%s.png' % (n, re.sub(r'[^A-Za-z0-9]+', '_', t['title'])[:40]))
         data = json.load(urllib.request.urlopen('%s/%s/capture/screen' % (machine.base, machine.id)))
         with open(png, 'wb') as f:
@@ -219,10 +234,12 @@ def main():
                 for px in after.getdata():
                     counts[px] = counts.get(px, 0) + 1
                 top, n_top = max(counts.items(), key=lambda kv: kv[1])
-                back = top == (182, 182, 182) and n_top > 0.6 * (after.size[0] * after.size[1])  # NextZXOS's own screen
+                total = after.size[0] * after.size[1]
+                # NextZXOS's own screen: grey paper WITH text (menu, Browser, welcome page); a program that cleared the screen is all grey
+                back = top == (182, 182, 182) and 0.6 * total < n_top < 0.995 * total
             else:
                 back = regs2['interrupt']['halted'] and regs2['special']['pc'] == 0x0C8F
-            life = ('moves ' if moves else 'static ') + ('reacts ' if reacts else 'no-reaction ') + ('BACK-IN-OS' if back else 'running')
+            life = ('RUN-typed ' if ran_by_hand else '') + ('moves ' if moves else 'static ') + ('reacts ' if reacts else 'no-reaction ') + ('BACK-IN-OS' if back else 'running')
             after.save(png.replace('.png', '-keys.png'))
             if back:
                 verdict = 'IN NEXTZXOS'
