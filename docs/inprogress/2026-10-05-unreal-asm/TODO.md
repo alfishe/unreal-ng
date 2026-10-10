@@ -156,11 +156,13 @@ phase; master only after the owner's review.
     - [ ] Y3 128K assemblers: XAS, STORM, ZX-ASM / ZAsm, MASM, TASM 4.0 / 4.4 / 3.x / 2.0, ALASM 3.8c / 4.42 / 5.0 / 5.05 (research + descriptor + golden dumps each, §7)
       - [x] ALASM 3.8c / 4.42 / 5.0 / 5.05 (with the Y0 follow-up)
       - [x] XAS 4.18, 5.05 / 5.05SE, 7.43c, 7.447, 9.07m, 9.10 (2026-10-09): the text at `#C000` of page 3, whole sectors to the `#00` end, header bytes 29-34 the editor state SAVE rewrites (§7.11)
-      - [ ] XAS 9.07m / 9.10: SAVE writes nothing to the disk in unreal-ng (the header in memory is updated): their own disk code or an emulator bug?
-      - [x] STORM 1.3 / 1.3i (2026-10-09): page 6 from `#C00B` to the `#FF` before `(#C000)` (§7.8)
+      - [ ] XAS 9.07m / 9.10: SAVE writes nothing to the disk in unreal-ng. Port trace (2026-10-09, `.recipe/analysis/port-trace.md`): 9.10 reads the catalog (`#80`, ~39 frames a sector), then issues Write Sector `#A0` for the file's sector on side 1 (system register `#2C`, track 6, sector 4); the TR-DOS loop at `#3FCA` polls `#FF` 39 frames without DRQ, INTRQ comes with status `#00`, no byte goes to `#7F`, and XAS sends `#D0`. XAS 7.447 on side 0 (`#3C`) gets DRQ at once and writes its 256 bytes in the same frame. A WD1793 emulation issue (write on side 1, or the sector search timing): to be taken up in the FDC work, with this trace as the test case
+      - [x] STORM 1.3 / 1.3i and 1.0beta (2026-10-09): page 6 from `#C00B` (1.0beta `#C003`) to the `#FF` before `(#C000)` (§7.8)
       - [x] ZAsm 3.15 (2026-10-09): `(#8829)`-`(#8837)`, the part above `#C000` in page 6, SAVE's `;!` position line (§7.9)
       - [x] MASM 1.1 (2026-10-09): a gap buffer from `#970B` (`(#96CC)` / `(#96CE)`, up to `#FFFF`), the editor known by its line buffer at `#851A` (§7.12)
-      - [ ] ZX-ASM 3.0 / 3.01 / 3.10, Lite 1.07, ZAsm 3.2x-4.20, ZX-ASM 2.x, MASM 1.0 demo / 1.3 / 2.0 / 3.0, TASM 4.0 / 4.4 / 3.x / 2.0, STORM 1.0beta
+      - [x] TASM 4.0 / 4.4 / 3.0 / 3.2 (2026-10-09): 4.12's gap buffer (pointers `#8DD0` / `#8910`), the editor known by the tail of its line buffer (§7.6, §7.7)
+      - [x] ZX-ASM 3.10 (2026-10-09): 3.15's layout with the table at `#868F` (§7.9)
+      - [ ] ZX-ASM 3.0 / 3.01, Lite 1.07, ZAsm 3.2x-4.20, ZX-ASM 2.x, MASM 1.0 demo / 1.3 / 2.0 / 3.0, TASM 3.5 / 2.0
     - [ ] Y4 48K assemblers: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):

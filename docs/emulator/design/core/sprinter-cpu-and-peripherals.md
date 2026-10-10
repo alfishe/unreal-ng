@@ -738,18 +738,22 @@ The analyzer-subscriber check in `RunInstructionStartHooks` went through an out-
 while the controller sleeps or the tape is stopped. All three are inline tests now (`9715951d2`):
 `BM_HostFrame_48K_*` -1.4 % in every round, the other classic frames and the Sprinter logo frame -0.1 % to -1.1 %.
 
-### 8.7 The sound cards: looked at, not changed
+### 8.7 The sound cards
 
 Profile of DNTBLINK with the shipped sound cards (2026-10-09, 3.3 ms per frame under the profiler): the NeoGS
 12.6 %, the AY slot 8.3 %, the decimators ~3 %.
 
-- **NeoGS.** The card's CPU is not halted: the firmware polls for a host command in a six-instruction loop -
-  `#026E IN A,(#04) : RRCA : JR C,#0295 : LD A,(#4084) : OR A : JR Z,#026E` - nearly all of its 69.6 million
-  steps in the run. An exact fast-forward of such a loop (an iteration that returns to its head with the same
-  registers and no bus side effect repeats until something changes) has to stop at every card event, and the
-  events are dense: a DAC side every 1 600 ticks (75 kHz), the timer every 3 200, against an iteration of 250-500
-  ticks. One to three iterations saved per window, with the side-effect bookkeeping of the reads (the status read
-  latches `_ready` once, `#6000-#7FFF` reads are the DAC capture, flash reads are timed) - not worth it.
+- **NeoGS: idle sleep.** The card's CPU is not halted. The firmware polls for a host command in a
+  six-instruction loop with interrupts disabled: `#026E IN A,(#04) : RRCA : JR C,#0295 : LD A,(#4084) : OR A :
+  JR Z,#026E`. That loop is nearly all of the card's steps.
+  - A first look judged an exact fast-forward not worth it. The idea was to wake at every card event: a DAC
+    side every 1 600 ticks, the timer every 3 200, against an iteration of 250-500 ticks.
+  - The events need no wake-up. The timer strobe and the DAC sides change nothing the loop reads, so they run
+    inside the sleep at the instruction boundary the loop would have reached them on.
+  - `GSCardRunner` now sleeps through the loop until the host's access, the frame end or a DMA event, then
+    steps the last partial iteration for real. The design is in `neogs-tdd.md` §5.3.
+  - Result: 99.6 % of the card's steps slept, all exact (`SoundChip_NeoGS_IdleSleep`,
+    `SprinterFastPathsDemo_Test`). DNTBLINK with the shipped sound went from 2.22 to 1.73 ms per frame (-22 %).
 - **AY.** The cost is the HQ rendering of the samples (generator ticks and the FIR decimators), not the per-step
   call. The slot renders its second chip in single-AY mode too; it is not silent at zero registers (volume 0 is
   level 1, a period-0 tone and the noise toggle), so dropping it changes the sound slightly. Measured without it:

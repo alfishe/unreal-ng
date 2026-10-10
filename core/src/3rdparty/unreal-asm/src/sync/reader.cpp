@@ -160,18 +160,23 @@ bool EncodeLine(const SyncDescriptor& d, const std::string& line, std::vector<ui
     return true;
 }
 
-/// MASM's gap buffer: [fixed start, gap start) + [gap end, #10000), and in the editor the cursor line's record that
-/// ends at the gap end
+/// A gap buffer whose editor state shows in its line buffer (MASM, TASM 4.0): [start, gap start) + [gap end, top), and
+/// in the editor the cursor line's record that ends at the gap end
 SyncText ReadGapBufferFixed(const MachineView& machine, const SyncDescriptor& d)
 {
     SyncText text;
     const GapBufferParams& p = d.gapBuffer;
     const auto gapStart = machine.Word(p.gapStart), gapEnd = machine.Word(p.gapEnd);
+    const std::optional<uint16_t> startWord = p.fixedStart ? std::optional<uint16_t>(p.fixedStart) : machine.Word(p.start);
+    const std::optional<uint16_t> topWord = p.endInText ? std::optional<uint16_t>(0) : machine.Word(p.top);
     std::vector<uint8_t> flag;
-    if (!gapStart || !gapEnd || !machine.Read(p.editorFlagAt, p.editorFlagLength, flag))
+    if (!gapStart || !gapEnd || !startWord || !topWord || !machine.Read(p.editorFlagAt, p.editorFlagLength, flag))
         return Inconsistent(text, "the text pointers are not in the memory copied");
-    if (!(p.fixedStart <= *gapStart && *gapStart <= *gapEnd))
-        return Inconsistent(text, "the text pointers are out of order: #" + Hex(*gapStart, 4) + " #" + Hex(*gapEnd, 4));
+    const uint32_t start = *startWord;
+    const uint32_t top = p.endInText ? 0x10000u : *topWord;
+    if (!(start <= *gapStart && *gapStart <= *gapEnd && *gapEnd <= top))
+        return Inconsistent(text, "the text pointers are out of order: #" + Hex(start, 4) + " #" + Hex(*gapStart, 4) + " #" +
+                                      Hex(*gapEnd, 4) + " #" + Hex(top, 4));
     text.editor = std::any_of(flag.begin(), flag.end(), [](uint8_t b) { return b != 0; });
     uint32_t upperFrom = *gapEnd;
     if (text.editor)
@@ -184,13 +189,15 @@ SyncText ReadGapBufferFixed(const MachineView& machine, const SyncDescriptor& d)
         upperFrom = *gapEnd - *n - 2u;
     }
     std::vector<uint8_t> lower, upper;
-    if (!machine.Read(p.fixedStart, static_cast<size_t>(*gapStart - p.fixedStart), lower) ||
-        !machine.Read(static_cast<uint16_t>(upperFrom), static_cast<size_t>(0x10000 - upperFrom), upper))
+    if (!machine.Read(static_cast<uint16_t>(start), static_cast<size_t>(*gapStart - start), lower) ||
+        !machine.Read(static_cast<uint16_t>(upperFrom), static_cast<size_t>(top - upperFrom), upper))
         return Inconsistent(text, "the text lies in a page that was not copied");
-    if (upper.empty() || upper.back() != static_cast<uint8_t>(p.end.empty() ? 0xFF : p.end.back()))
+    if (p.endInText && (upper.empty() || upper.back() != static_cast<uint8_t>(p.end.empty() ? 0xFF : p.end.back())))
         return Inconsistent(text, "the text does not end with its end marker at #FFFF");
     text.file = std::move(lower);
     text.file.insert(text.file.end(), upper.begin(), upper.end());
+    if (!p.endInText)
+        text.file.insert(text.file.end(), p.end.begin(), p.end.end());
     text.ok = true;
     text.state = "ok";
     return text;
@@ -327,26 +334,28 @@ SyncDescriptor Xas(const std::string& id, const std::string& codecVersion, uint1
     return d;
 }
 
-/// STORM 1.2 / 1.3 (asm-synchronizer.md §7.8): the text in RAM page 6 at #C000: the end pointer, the name, an #FF
-/// sentinel, the file from #C00B up to the #FF the end pointer follows. The line under the cursor joins the text when
-/// the cursor leaves it. Identified by its entry code at #8000, the same in 1.3 and 1.3i (packed on its disk)
-SyncDescriptor Storm13()
+/// STORM (asm-synchronizer.md §7.8): the text in RAM page 6 at #C000: the end pointer, (1.2 / 1.3: the name, an #FF
+/// sentinel at #C00A, the file from #C00B; 1.0beta: the #FF at #C002, the file from #C003) up to the #FF the end pointer
+/// follows. The line under the cursor joins the text when the cursor leaves it. Identified by its entry code at #8000,
+/// the same in every version, and the address it loads at #8027 (#87xx in 1.3 / 1.3i, #85xx in 1.0beta)
+SyncDescriptor Storm(const std::string& id, const std::string& title, const std::string& codecVersion, uint16_t base, char loadHigh)
 {
     SyncDescriptor d;
-    d.id = "storm-1.3";
-    d.title = "STORM 1.3";
+    d.id = id;
+    d.title = title;
     d.codec = "storm";
-    d.version = "1.3";
+    d.version = codecVersion;
     d.extension = "C";
-    d.identify = {{0x8000, std::string("\xFD\x21\x3A\x5C\xED\x56\xFB\x2A\x3D\x5C\x01\xFC\x5F\xB7\xED\x42\x28\x02\xCF\x03\x09\xF9\x76\xF3", 24)}};
+    d.identify = {{0x8000, std::string("\xFD\x21\x3A\x5C\xED\x56\xFB\x2A\x3D\x5C\x01\xFC\x5F\xB7\xED\x42\x28\x02\xCF\x03\x09\xF9\x76\xF3", 24)},
+                  {0x8028, std::string(1, loadHigh)}};
     d.pages = PageIdRule::MappedAtC000;
     d.family = LayoutFamily::FileImage;
-    d.fileImage.base = 0x0B;
+    d.fileImage.base = base;
     d.fileImage.headerSize = 0;
-    d.fileImage.signatureAt = 0x0A;
+    d.fileImage.signatureAt = static_cast<uint16_t>(base - 1);
     d.fileImage.signature = std::string("\xFF", 1);
     d.fileImage.nameAt = 0x02;
-    d.fileImage.nameLength = 8;
+    d.fileImage.nameLength = base == 0x0B ? 8 : 0;
     d.fileImage.lengthFromPointer = true;
     d.fileImage.pointerAt = 0x00;
     d.fileImage.endSentinel = 0xFF;
@@ -390,11 +399,58 @@ SyncDescriptor Masm11()
     d.pages = PageIdRule::Fixed;
     d.family = LayoutFamily::GapBuffer;
     d.gapBuffer.fixedStart = 0x970B;
+    d.gapBuffer.endInText = true;
     d.gapBuffer.gapStart = 0x96CC;
     d.gapBuffer.gapEnd = 0x96CE;
     d.gapBuffer.editorFlagAt = 0x851A;
     d.gapBuffer.editorFlagLength = 31;
     d.gapBuffer.end = std::string("\xFF", 1);
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
+/// TASM 4.0 / 4.4 and 3.0 / 3.2 (asm-synchronizer.md §7.6, §7.7): the pointers of 4.12 (start, top, gap start, gap
+/// end) elsewhere; no line count, so the editor shows in the tail of its line buffer: blank padded in the editor, zeros
+/// at the command line (whose head keeps the last line edited)
+SyncDescriptor TasmGap(const std::string& version, const std::string& title, const std::string& codecVersion, Signature identify,
+                       uint16_t pointers, uint16_t lineBuffer)
+{
+    SyncDescriptor d;
+    d.id = "tasm-" + version;
+    d.title = title;
+    d.codec = "tasm";
+    d.version = codecVersion;
+    d.extension = "A";
+    d.identify = {std::move(identify)};
+    d.pages = PageIdRule::MappedAtC000;
+    d.family = LayoutFamily::GapBuffer;
+    d.gapBuffer.start = pointers;
+    d.gapBuffer.top = static_cast<uint16_t>(pointers + 2);
+    d.gapBuffer.gapStart = static_cast<uint16_t>(pointers + 4);
+    d.gapBuffer.gapEnd = static_cast<uint16_t>(pointers + 6);
+    d.gapBuffer.editorFlagAt = lineBuffer;
+    d.gapBuffer.editorFlagLength = 32;
+    d.gapBuffer.end = std::string("\xFF\xFF", 2);
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
+/// ZX-ASM 3.10 (asm-synchronizer.md §7.9): the layout of 3.15 with its table at #868F: the start, then the end at
+/// #869E; the part above #C000 in RAM page 6; no ";!" line on SAVE
+SyncDescriptor Zxasm310()
+{
+    SyncDescriptor d;
+    d.id = "zasm-3.10";
+    d.title = "ZX-ASM 3.10";
+    d.codec = "zxasm";
+    d.version = "3.0";
+    d.extension = "a";
+    d.identify = {{0x816C, std::string("\xC8\x00\xC8\x00\xDB\x6B\xC0\x00\x00\x0A\x0A\x8E\x00\x20\x80\x17\x00\x20\x01\x8F\x00\xF3\xFD\xE5", 24)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.startAt = 0x868F;
+    d.linear.endAt = 0x869E;
+    d.linear.upperPage = 6;
     d.typing = {TypingRule::NotInText, 0, 0};
     return d;
 }
@@ -488,9 +544,15 @@ const std::vector<SyncDescriptor>& Descriptors()
         Xas("7.447", "7.43", 0x9B00, "by Max Petrov & Creator v7.44"),
         Xas("9.07m", "9.07m", 0xB8EA, "XAS 9.07 ReCompiled by Mythos"),
         Xas("9.10", "9.10", 0xB912, "XAS by Max Petrov,64sm by STS"),
-        Storm13(),
+        Storm("storm-1.3", "STORM 1.3", "1.3", 0x0B, '\x87'),
+        Storm("storm-1.0b", "STORM 1.0beta", "1.0", 0x03, '\x85'),
         Zasm315(),
+        Zxasm310(),
         Masm11(),
+        TasmGap("4.0", "TASM 4.0 (XL Design)", "4.0", {0x9859, "TASM4.0>"}, 0x8DD0, 0x91AC),
+        TasmGap("4.4", "TASM 4.4 (KVA)", "4.0", {0x9859, "TASM4.4>"}, 0x8DD0, 0x91AC),
+        TasmGap("3.0", "TASM 3.0 (Rst7)", "3", {0x9721, "TASM2.0 source file: "}, 0x8910, 0x8C82),
+        TasmGap("3.2", "TASM 3.2 (Rst7)", "3", {0x9728, "TASM2.0 file: "}, 0x8910, 0x8C82),
         Tasm412(),
     };
     return descriptors;

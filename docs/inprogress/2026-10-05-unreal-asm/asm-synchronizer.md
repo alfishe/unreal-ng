@@ -286,6 +286,9 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Knowledge** | unknown; their files share 4.12's format family (`[n] body [n]` records, `FF FF`), so a gap buffer is likely |
 | research | the same edit-and-diff session as 4.12; find the pointers by the text start's value |
 | **Work** | **1 d** |
+| **Verified** (2026-10-09, dumps `tasm40-*`, `tasm44-*`) | the gap buffer of 4.12 with its four pointers at `#8DD0` (start, top, gap start, gap end; the upper part in the page at `#C000`, page 6). No line count: the editor shows in the tail of its 128-byte line buffer (`#91AC`, 32 bytes): blank padded in the editor, zeros at the command line. In the editor the cursor line is out of the text and its last version is the record that ends at the gap end (as in MASM); a line being typed is not in the text (`NotInText`) |
+| identification | the prompt `TASM4.0>` / `TASM4.4>` at `#9859` |
+| **Built** | descriptors `tasm-4.0`, `tasm-4.4` (codec version 4.0) |
 
 ### 7.7 TASM 3.x and 2.0
 
@@ -293,6 +296,9 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 |---|---|
 | **Knowledge** | unknown; 2.0 is plain text with editor tabs; 3.x tokenized |
 | **Work** | **1.5 d** (both) |
+| **Verified: 3.0, 3.2** (2026-10-09, dumps `tasm30-*`, `tasm32-*`) | the same gap buffer with the pointers at `#8910`; the line buffer at `#8C22`, its tail `#8C82` (32 bytes) the editor flag. Identified by `TASM2.0 source file: ` at `#9721` (3.0) and `TASM2.0 file: ` at `#9728` (3.2) |
+| **Built** | descriptors `tasm-3.0`, `tasm-3.2` (codec version 3) |
+| open | 3.5 ("FLASHVERSION", pointers also at `#8910`) shows no editor flag in its line buffer; 2.0 (plain text) not looked at |
 
 ### 7.8 STORM 1.2 / 1.3 (1.0 beta)
 
@@ -303,8 +309,9 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | family | `FileImage`-like: `[#C00B, (#C000))` |
 | **Work** | **1 d** |
 | **Verified** (2026-10-09, dumps `testdata/sync/storm13*`, `storm13i*`) | the text is in RAM page 6 at `#C000` while STORM edits. `(#C000)` points one past an `#FF` that ends the text; SAVE (BREAK, `S`, Enter keeps the name) writes `[#C00B, (#C000) - 1)`, so the live file is those bytes. The line under the cursor joins the text when the cursor leaves it, and a line made by Enter joins it then too (`NotInText`; no flag shows it). The name is at `#C002` |
-| identification | the packed program unpacks its entry code at `#8000` (24 bytes, the same in 1.3 and 1.3i) |
-| **Built** | descriptor `storm-1.3` (1.3 and 1.3i); checked live (a watch built 13 labels). 1.0beta (text from `#C003`) is not covered |
+| identification | the packed program unpacks its entry code at `#8000` (24 bytes, the same in 1.0beta, 1.3 and 1.3i); the address it loads at `#8027` tells them apart (`#87xx` in 1.3 / 1.3i, `#85xx` in 1.0beta) |
+| 1.0beta | the same layout without the name: the `#FF` at `#C002`, the file from `#C003` (dumps `storm10b-*`) |
+| **Built** | descriptors `storm-1.3` (1.3 and 1.3i) and `storm-1.0b`; 1.3 checked live (a watch built 13 labels) |
 
 ### 7.9 ZX-ASM 3.0 / 3.01 / 3.10, ZX ASM Lite 1.07, ZAsm 3.15-4.20
 
@@ -317,7 +324,8 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Verified: ZAsm 3.15** (2026-10-09, dumps `testdata/sync/zasm315-*`) | one buffer from `(#8829)` to `(#8837)` (a table at `#8829`: the start, the cursor line, marks, the end), starting at `#884C` in page 2. Its part from `#C000` is in RAM page 6, which ZAsm maps only while it needs it, so the reader takes page 6 for it whatever is mapped. A typed line joins the buffer on Enter (`NotInText`) |
 | SAVE | COMMAND (Extend) SS+`2` saves under the name. It writes the buffer after a first line `;!top,line,col,...` with the editor's position, which loading takes out again. The live file is the buffer without that line (the tests compare without it) |
 | identification | the resident code at `#8000` (24 bytes): ZAsm unpacks itself, and above the buffer there is no fixed code |
-| **Built** | descriptor `zasm-3.15`; checked live on `service.a` (18959 bytes over two pages: 160 labels; the hints name the INCLUDE not in the project, Y5). 3.0 / 3.01 / 3.10, Lite 1.07 and ZAsm 3.2x-4.20 (512K, several texts) are not covered yet |
+| **Built** | descriptor `zasm-3.15`; checked live on `service.a` (18959 bytes over two pages: 160 labels; the hints name the INCLUDE not in the project, Y5). 3.0 / 3.01, Lite 1.07 and ZAsm 3.2x-4.20 (512K, several texts) are not covered yet |
+| **Verified: ZX-ASM 3.10** (2026-10-09, dumps `zasm310-*`) | the same buffer with its table at `#868F` (the start; the end at `#869E`), from `#89C4` in page 2, the part above `#C000` in page 6. SAVE writes the buffer alone (no `;!` line). Its file-name input types capitals; the dumps load the first file of the list (CS+7, CS+ENTER). Identified by 24 bytes of its program image at `#816C`. Descriptor `zasm-3.10` (codec version 3.0) |
 
 ### 7.10 ZX-ASM 2.4-2.6
 
@@ -340,7 +348,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | editor state | SAVE also rewrites header bytes 29-34 from the editor's variables (the cursor line address, 7.447: the operand of `LD HL,nn` at `#8097`; the column and row). The reader leaves those six bytes as the memory holds them: a live file differs from the next save there and only there, and the codec keeps them as they are |
 | identification | the title a new text gets, in the code: 4.18 `XAS by Max Petrov (HPM) 3.091` at `#B51A`; 5.05 / 5.05SE `XAS by Max Petrov (HPM) 5.05` at `#B601`; 7.43c `by Max Petrov & Creator v7.43` at `#B961`; 7.447 `... v7.44` at `#9B00`; 9.07m `XAS 9.07 ReCompiled by Mythos` at `#B8EA`; 9.10 `XAS by Max Petrov,64sm by STS` at `#B912` |
 | **Built** | descriptors `xas-4.18`, `-5.05`, `-7.43c`, `-7.447`, `-9.07m`, `-9.10`; checked live on 7.447 (a watch built the labels, a typed label joined them) |
-| open | 9.07m and 9.10 run SAVE (the header in memory is updated) but write nothing to the disk in unreal-ng: their edited state has no saved file to compare with. Whether that is their own disk code or the emulator is not known yet (TODO) |
+| open | 9.07m and 9.10 run SAVE (the header in memory is updated) but write nothing to the disk in unreal-ng: their edited state has no saved file to compare with. The port trace shows the cause on the emulator's side: Write Sector `#A0` on side 1 never raises DRQ (39 frames, then INTRQ with status `#00`), while 7.447's write on side 0 gets DRQ at once (TODO, an FDC issue) |
 
 ### 7.12 MASM 1.0 demo, 1.1, 1.3, 2.0, 3.0
 
