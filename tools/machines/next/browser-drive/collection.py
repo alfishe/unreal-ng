@@ -36,6 +36,12 @@ def header_sig(machine):
     return hashlib.md5(im.crop((64, 64, 576, 72)).tobytes()).hexdigest()
 
 
+def grab_png(machine, path):
+    data = json.load(urllib.request.urlopen('%s/%s/capture/screen' % (machine.base, machine.id)))
+    with open(path, 'wb') as f:
+        f.write(base64.b64decode(data['data']))
+
+
 def in_browser(machine):
     """The Browser's black header bar is at the top of the screen (the NextBASIC editor and the menus have none there)"""
     from PIL import Image
@@ -96,6 +102,7 @@ def main():
     parser.add_argument('--start', type=int, default=0)
     parser.add_argument('--limit', type=int, default=10 ** 9)
     parser.add_argument('--match')
+    parser.add_argument('--tap-speed', type=int, default=0, help='in the TAP loader press S this many times first: 1 = 7, 2 = 14, 3 = 28 MHz play speed (the loader keeps the choice per game)')
     parser.add_argument('--ext', help='only titles whose main file has this extension (tap, bas, nex, sna, snx)')
     parser.add_argument('--keys', default='enter,space,1', help='keys tried one at a time after the first picture until the picture changes (a title screen waits for one); empty = none')
     args = parser.parse_args()
@@ -174,12 +181,23 @@ def main():
             machine.idle(1.2)
             folder = os.path.join(folder, target[i])
             header_sigs.setdefault(tuple(target[:i + 1]), header_sig(machine))
+        png = os.path.join(args.out, '%03d-%s.png' % (n, re.sub(r'[^A-Za-z0-9]+', '_', t['title'])[:40]))
         reach(machine, folder, parts[-1])
-        machine.tap('enter')  # run the main file
+        if parts[-1].lower().endswith('.tap') and args.tap_speed:
+            # SYMBOL SHIFT + ENTER in the Browser opens the TAP loader's options for this game (a game started once is remembered
+            # and starts straight away next time, so the menu is only there on the first run or through this chord)
+            machine.call('/%s/keyboard/combo' % machine.id, {'keys': ['sym_shift', 'enter'], 'frames': 6})
+        else:
+            machine.tap('enter')  # run the main file
         if parts[-1].lower().endswith('.tap'):
             # NextZXOS's TAP loader asks "To begin loading, select mode: 1 128K, 0 USR0, 4 48K, P Pentagon, N Next/+3": a tape is
             # run in the Next's own mode (N), then given time to load
             time.sleep(3.0)
+            for _ in range(args.tap_speed):
+                machine.tap('s')
+                time.sleep(0.6)
+            if args.tap_speed:
+                grab_png(machine, png.replace('.png', '-loader.png'))
             machine.tap('n')
             time.sleep(args.wait)
         time.sleep(args.wait)
