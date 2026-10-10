@@ -65,6 +65,34 @@ inline std::string UrlEncodeSegment(const std::string& text)
     return encoded;
 }
 
+/// The request path the loopback client sends: the tools build it with its query already
+/// percent-encoded (UrlEncodeSegment), so it must not be encoded again - drogon's default urlEncode
+/// turns every '%' into "%25", and a screenshot path "scratch/a.png" arrived as the file name
+/// "scratch%2Fa.png". Keeps drogon's literal characters plus '%' and escapes the rest as drogon
+/// does ('#' in "#5800", '+', blanks), for callers that splice raw text
+inline std::string PrepareRequestPath(const std::string& path)
+{
+    static const char* kHex = "0123456789ABCDEF";
+    static const std::string kLiteral = "-_.!~*'()&=/\\?%";
+    std::string prepared;
+    prepared.reserve(path.size());
+    for (const char c : path)
+    {
+        const auto uc = static_cast<unsigned char>(c);
+        if (std::isalnum(uc) || kLiteral.find(c) != std::string::npos)
+        {
+            prepared += c;
+        }
+        else
+        {
+            prepared += '%';
+            prepared += kHex[uc >> 4];
+            prepared += kHex[uc & 0x0F];
+        }
+    }
+    return prepared;
+}
+
 /// Extracts a human-readable message from a WebAPI error body ({"error": ..., "message": ...})
 inline std::string DescribeErrorBody(const Json::Value& body)
 {

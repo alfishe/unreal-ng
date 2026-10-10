@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "mcp-tool-utils.h"
 #include "mcp-tools.h"
 #include "target-resolver.h"
 
@@ -3784,4 +3785,19 @@ TEST_F(McpTools_Test, TimeTravel_MemoryAtMemoryDiffAndCoverageSpace)
     args["tinframe"] = 100;
     EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "memory_diff takes no tinframe";
     EXPECT_EQ(_caller->calls.size(), calls);
+}
+
+// The loopback client sends the path the tools built: their percent-encoding is kept, not
+// encoded a second time (a screenshot "scratch/a.png" was saved as "scratch%2Fa.png")
+TEST(McpRequestPath_Test, EncodedQueryIsSentAsBuilt)
+{
+    const std::string path = "/api/v1/emulator/id/capture/screen?path=" + mcp::UrlEncodeSegment("scratch/a b.png") + "&area=screen";
+
+    EXPECT_EQ(mcp::PrepareRequestPath(path), "/api/v1/emulator/id/capture/screen?path=scratch%2Fa%20b.png&area=screen");
+}
+
+TEST(McpRequestPath_Test, RawCharactersAreStillEscaped)
+{
+    EXPECT_EQ(mcp::PrepareRequestPath("/symbols/lookup?address=#5800"), "/symbols/lookup?address=%235800");
+    EXPECT_EQ(mcp::PrepareRequestPath("/x?name=a+b c"), "/x?name=a%2Bb%20c");
 }

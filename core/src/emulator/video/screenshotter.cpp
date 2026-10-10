@@ -164,7 +164,11 @@ ScreenshotResult Screenshotter::Render(const FrameSnapshot& snapshot, const Scre
             std::remove(options.saveTo.c_str());  // never leave a truncated image behind
             return Fail(ScreenshotError::IoFailed, "Failed to write the image to " + options.saveTo);
         }
-        r.savedFile = options.saveTo;
+        // The absolute path: a relative one resolves against the emulator's working directory,
+        // which the caller (an MCP client, a script elsewhere) does not know
+        std::error_code ec;
+        const std::filesystem::path absolute = std::filesystem::absolute(out, ec);
+        r.savedFile = ec ? options.saveTo : FileHelper::FromFsPath(absolute.lexically_normal());
     }
     else
     {
