@@ -6,7 +6,7 @@
 
 The collection folder (<card>/collection/{games,demos}/<genre>/<Title>/, built by the collection builder with an index.tsv whose
 `main_file` column is `games/<genre>/<Title>/<file>`) is walked the way a person walks it: reset, boot, Browser, directory by
-directory from the card root (after a reset the Browser opens there), ENTER on the main file. A directory or file name is found by the shortest unique prefix typed into the Browser's
+directory (the Browser's position is recognised from its header bar; only the part that differs from the previous title's folder is walked), ENTER on the main file. A directory or file name is found by the shortest unique prefix typed into the Browser's
 search (H); names that begin with a character the search cannot type are reached by counting down from the top of the listing.
 For each title the report keeps: the picture after `--wait` seconds, whether the machine is still in NextZXOS (idle at the key-wait
 loop = nothing started), the CPU clock and the DivMMC mapping. Writes <out>/<NNN>-<title>.png, <out>/sheet-<category>.png and
@@ -25,6 +25,15 @@ def sorted_entries(folder):
     """The Browser's order: '.' and '..' on top, then names case-insensitively"""
     names = sorted(os.listdir(folder), key=lambda n: n.lower())
     return ['.', '..'] + names
+
+
+def header_sig(machine):
+    """The Browser's header bar (the current path) as a hash of its pixels"""
+    import hashlib
+    from PIL import Image
+    data = json.load(urllib.request.urlopen('%s/%s/capture/screen' % (machine.base, machine.id)))
+    im = Image.open(io.BytesIO(base64.b64decode(data['data']))).convert('RGB')
+    return hashlib.md5(im.crop((64, 64, 576, 72)).tobytes()).hexdigest()
 
 
 def in_browser(machine):
@@ -98,6 +107,7 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     rows, sheets = [], {}
     done = 0
+    header_sigs = {}  # directory (names from the card root) -> header bar signature
     original_baks = {os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs if f.lower().endswith('.bak')}
     for n, t in enumerate(titles):
         if n < args.start or done >= args.limit:
@@ -131,15 +141,36 @@ def main():
             if in_browser(machine):
                 break
             print('   (the Browser did not open, attempt %d: resetting again)' % (attempt + 1), flush=True)
-        # After a reset the Browser opens at the card root (checked 2026-10-10: it does not keep the directory across a reset), so the walk
-        # goes straight down from there - no EDIT presses to the root first
+        # Where is the Browser? It reopens in the directory of the last program started from it, but at the card root after other ends,
+        # so the position is read from the picture: the header bar's pixels are remembered per directory the first time the walk is
+        # there, and compared on the next opening. A known directory: walk only the difference (EDIT up, then down). Unknown: EDIT up
+        # until the header equals the root's (only then is the card root the starting point)
         target = ['collection'] + parts[:-1]  # the directory of the main file, from the card root
-        folder = args.card
-        for name in target:
-            reach(machine, folder, name)
+        here = header_sig(machine)
+        position = next((list(path) for path, sig in header_sigs.items() if sig == here), None)
+        if position is None:
+            for _ in range(10):
+                if () in header_sigs and header_sig(machine) == header_sigs[()]:
+                    break
+                machine.tap('edit')
+                machine.idle(0.6)
+            else:
+                pass
+            position = []
+            header_sigs.setdefault((), header_sig(machine))
+        common = 0
+        while common < min(len(position), len(target)) and position[common] == target[common]:
+            common += 1
+        for _ in range(len(position) - common):
+            machine.tap('edit')
+            machine.idle(0.6)
+        folder = os.path.join(args.card, *target[:common])
+        for i in range(common, len(target)):
+            reach(machine, folder, target[i])
             machine.tap('enter')
             machine.idle(1.2)
-            folder = os.path.join(folder, name)
+            folder = os.path.join(folder, target[i])
+            header_sigs.setdefault(tuple(target[:i + 1]), header_sig(machine))
         reach(machine, folder, parts[-1])
         machine.tap('enter')  # run the main file
         time.sleep(args.wait)
