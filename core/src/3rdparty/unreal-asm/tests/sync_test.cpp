@@ -77,6 +77,10 @@ const Case kCases[] = {
     {"zasm310-typing", "zasm-3.10"},   {"zasm310-edited", "zasm-3.10"},    {"zasm310-big", "zasm-3.10"},
     {"zasm32x-typing", "zasm-3.2x"},   {"zasm32x-edited", "zasm-3.2x"},    {"zasm32x-big", "zasm-3.2x"},
     {"zlite107-typing", "zasm-lite-1.07"}, {"zlite107-edited", "zasm-lite-1.07"}, {"zlite107-big", "zasm-lite-1.07"},
+    {"zasm3351-typing", "zasm-3.3.51"}, {"zasm3351-edited", "zasm-3.3.51"}, {"zasm3351-big", "zasm-3.3.51"},
+    {"zasm33f-typing", "zasm-3.3.final"}, {"zasm33f-edited", "zasm-3.3.final"}, {"zasm33f-big", "zasm-3.3.final"},
+    {"zasm384-typing", "zasm-3.80.4"}, {"zasm384-edited", "zasm-3.80.4"}, {"zasm384-big", "zasm-3.80.4"},
+    {"zasm420-typing", "zasm-4.20"}, {"zasm420-edited", "zasm-4.20"}, {"zasm420-big", "zasm-4.20"},
     {"zasm30-typing", "zasm-3.0"},     {"zasm30-edited", "zasm-3.0"},      {"zasm30-big", "zasm-3.0"},
     {"masm11-typing", "masm-1.1"},     {"masm11-edited", "masm-1.1"},      {"masm11-menu", "masm-1.1"},
     {"masm13-typing", "masm-1.1"},     {"masm13-edited", "masm-1.1"},      {"masm13-menu", "masm-1.1"},
@@ -144,7 +148,10 @@ TEST(Sync_Test, TheProbeNamesTheAssemblerAndNoOther)
         SCOPED_TRACE(c.folder);
         const Dump dump = Load(c.folder);
         const std::vector<ProbeCandidate> candidates = Probe(dump.machine);
-        ASSERT_EQ(candidates.size(), 1u);
+        std::string ids;
+        for (const ProbeCandidate& candidate : candidates)
+            ids += " " + candidate.descriptor->id;
+        ASSERT_EQ(candidates.size(), 1u) << "identified:" << ids;
         EXPECT_EQ(candidates[0].descriptor->id, c.descriptor);
         EXPECT_EQ(candidates[0].score, 100);
     }

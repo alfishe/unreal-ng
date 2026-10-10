@@ -24,6 +24,9 @@ save the text itself and keep the file. The synchronizer's reader must give that
                                                                  # ZAsm 3.2x: 512K, a key past the title
     sync-dumps.py zasm <disk, ReadMe first> <out-dir> --ram 512 --list-load --upper 30 --type t --source ReadMe
                   --big-disk <disk, 3.2x ReadMe first as BigRead> --big BigRead --tag zlite107   # ZAsm Lite 1.07
+    sync-dumps.py zasm <disk, ovlib first> <out-dir> --ram 512 --start enter,a,~6,space,~4 --list-load --upper 30
+                  --source ovlib --big-disk <disk, BigRead first> --big BigRead --big-type t --tag zasm3351
+                                                                 # ZAsm 3.3.51 (3.3.Final, 3.80.4, 4.20: --start space,~4)
     sync-dumps.py masm <disk-with-NAME.a first> <out-dir> --source NAME --tag masm11
                                                                  # MASM 1.1: TAG-typing, TAG-edited, TAG-menu
     sync-dumps.py tasm <disk-with-NAME.A> <out-dir> --boot NAME --source NAME --tag TAG [--as-typed]
@@ -153,7 +156,14 @@ def zasm(emu, args):
     def start(disk):
         emu.insert_disk(disk)
         emu.run_trdos(args.boot or 'boot', wait=15)
-        if args.key_start:                     # 3.2x: the title waits for a key
+        if args.start:                         # keys past the title / the drive question; ~N waits N seconds
+            for key in filter(None, args.start.split(',')):
+                if key.startswith('~'):
+                    time.sleep(float(key[1:]))
+                else:
+                    emu.tap(key)
+                    time.sleep(0.5)
+        elif args.key_start:                   # 3.2x: the title waits for a key
             emu.tap('space')
             time.sleep(3)
         elif not args.list_load and not args.menu_save:
@@ -384,6 +394,7 @@ def main():
     parser.add_argument('--big-disk', help='zasm: the disk for the long text (default: the same)')
     parser.add_argument('--big-type', help='zasm: the long text\'s TR-DOS type (default: --type)')
     parser.add_argument('--ram', type=int, help='the machine\'s RAM in KB (default: 128)')
+    parser.add_argument('--start', help='zasm: the keys after the boot, comma-separated; ~N waits N seconds')
     parser.add_argument('--key-start', action='store_true', help='zasm: a key past the title, no drive question (3.2x)')
     parser.add_argument('--upper', type=int, default=6, help='zasm: the RAM page of the text above #C000')
     parser.add_argument('--type', default='a', help='zasm: the sources\' TR-DOS type')

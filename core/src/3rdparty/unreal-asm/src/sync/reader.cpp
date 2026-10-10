@@ -435,43 +435,24 @@ SyncDescriptor TasmGap(const std::string& version, const std::string& title, con
     return d;
 }
 
-/// ZAsm 3.2x (asm-synchronizer.md §7.9): a Pentagon 512 program; the buffer from #8551, the table at #8530 (the
-/// start at #8538, the end at #853A; the words before it follow the cursor and the screen); the part above #C000 in
-/// RAM page 30. SAVE writes a ";*" position line first
-SyncDescriptor Zasm32x()
+/// ZAsm 3.2x and later, Rubts0FF's Pentagon 512 versions (asm-synchronizer.md §7.9): the buffer below #C000 from its
+/// start word, the part above #C000 in RAM page 30, the end word right after the start word (the words before them
+/// follow the cursor and the screen); SAVE writes a ";*" position line first. Each version has its table elsewhere;
+/// 3.2x and 3.3.51 share the code at #8048 up to the address of a variable (its low byte tells them apart)
+SyncDescriptor ZasmRubtsoff(const std::string& id, const std::string& title, const std::string& codecVersion, uint16_t signatureAt,
+                            const char* signature, uint16_t startAt)
 {
     SyncDescriptor d;
-    d.id = "zasm-3.2x";
-    d.title = "ZAsm 3.2x";
+    d.id = id;
+    d.title = title;
     d.codec = "zxasm";
-    d.version = "3.15";
+    d.version = codecVersion;
     d.extension = "a";
-    d.identify = {{0x8000, std::string("\x28\xFA\xFE\x09\x28\x25\xFE\x06\x28\x15\x30\x04\xFE\x02\x30\x2D\xFE\x0D\xC8\x12\x13\x10\xE5\x3E", 24)}};
+    d.identify = {{signatureAt, std::string(signature, 24)}};
     d.pages = PageIdRule::Fixed;
     d.family = LayoutFamily::Linear;
-    d.linear.startAt = 0x8538;
-    d.linear.endAt = 0x853A;
-    d.linear.upperPage = 30;
-    d.linear.stateLine = ";*";
-    d.typing = {TypingRule::NotInText, 0, 0};
-    return d;
-}
-
-/// ZAsm Lite 1.07 (asm-synchronizer.md §7.9): 3.2x's layout elsewhere: the buffer from #85A7, the start at #859D,
-/// the end at #859F; the part above #C000 in RAM page 30 (Pentagon 512); a ";*" position line on SAVE
-SyncDescriptor ZasmLite107()
-{
-    SyncDescriptor d;
-    d.id = "zasm-lite-1.07";
-    d.title = "ZAsm Lite 1.07";
-    d.codec = "zxasm";
-    d.version = "lite";
-    d.extension = "a";
-    d.identify = {{0x8000, std::string("\xE5\x2A\x48\x62\xE5\xB7\xED\x42\x4D\x44\xE1\x09\x1B\x7A\xB3\x20\xFA\x22\x48\x62\xE1\xC9\xCD\xC8", 24)}};
-    d.pages = PageIdRule::Fixed;
-    d.family = LayoutFamily::Linear;
-    d.linear.startAt = 0x859D;
-    d.linear.endAt = 0x859F;
+    d.linear.startAt = startAt;
+    d.linear.endAt = static_cast<uint16_t>(startAt + 2);
     d.linear.upperPage = 30;
     d.linear.stateLine = ";*";
     d.typing = {TypingRule::NotInText, 0, 0};
@@ -610,8 +591,18 @@ const std::vector<SyncDescriptor>& Descriptors()
         Storm("storm-1.3", "STORM 1.3", "1.3", 0x0B, '\x87'),
         Storm("storm-1.0b", "STORM 1.0beta", "1.0", 0x03, '\x85'),
         Zasm315(),
-        Zasm32x(),
-        ZasmLite107(),
+        ZasmRubtsoff("zasm-3.2x", "ZAsm 3.2x", "3.15", 0x8048,
+                     "\xCA\xFC\x7F\x3E\x20\x18\xC4\xF1\x3E\x00\xB7\x37\xC8\xCD\x54\x1F\xD4\x93\x79\x37\xC9\xF5\x3A\x02", 0x8538),
+        ZasmRubtsoff("zasm-lite-1.07", "ZAsm Lite 1.07", "lite", 0x8000,
+                     "\xE5\x2A\x48\x62\xE5\xB7\xED\x42\x4D\x44\xE1\x09\x1B\x7A\xB3\x20\xFA\x22\x48\x62\xE1\xC9\xCD\xC8", 0x859D),
+        ZasmRubtsoff("zasm-3.3.51", "ZAsm 3.3.51", "3.15", 0x8048,
+                     "\xCA\xFC\x7F\x3E\x20\x18\xC4\xF1\x3E\x00\xB7\x37\xC8\xCD\x54\x1F\xD4\x93\x79\x37\xC9\xF5\x3A\xC6", 0x84FC),
+        ZasmRubtsoff("zasm-3.3.final", "ZAsm 3.3.Final", "3.15", 0x8000,
+                     "\xD0\xEB\x29\x44\x4D\x29\x29\x09\x06\x00\xD6\x30\x4F\x09\xEB\x23\x18\xEA\x7E\x23\xFE\x0A\x28\xFA", 0x8401),
+        ZasmRubtsoff("zasm-3.80.4", "ZAsm 3.80.4", "3.15", 0x8000,
+                     "\x41\x20\xE6\xE5\x3C\x2A\xB7\x66\xCD\xC1\x63\x3A\xB6\x66\xB7\x28\x05\xED\x4B\x83\x80\x09\x73\x23", 0x6D02),
+        ZasmRubtsoff("zasm-4.20", "ZAsm 4.20", "3.15", 0x8000,
+                     "\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF\x72\x73\x74\x75\x66\x68\x63\x7E\x7B\x7D\x5C\x79", 0x68FB),
         Zxasm310(),
         Zxasm30(),
         Masm11(),
