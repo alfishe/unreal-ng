@@ -1,28 +1,49 @@
 # Machine state coordinator: architecture
 
-Status: draft, revised 2026-10-10 against [requirements.md](requirements.md) (requirement ids F1-F13, N1-N5 and the
-owner decisions there). Facts about today's code: [current-state.md](current-state.md). No open questions; one item
-postponed (§11).
+Status: draft, revised 2026-10-10 against [requirements.md](requirements.md) (requirement ids F1-F13, N1-N8 and the
+owner decisions there): ports and one wiring function (§1, §3), testing (§10). Facts about today's code:
+[current-state.md](current-state.md). No open questions; one item postponed (§12).
 
-## 1. Shape
+## 1. Shape and wiring
+
+The coordinator is an autonomous agent (requirements §0.3, N6-N8): it holds its own mode, queue and log, and talks
+to the rest of the emulator only through small interfaces it defines itself (ports, §3). Arrows are compile-time
+dependencies.
 
 ```
- surfaces (Qt, WebAPI, CLI, Lua, Python, GDB, DeZog, MCP)          machine thread (Z80 traps, devices)
-        │  Run / Submit / WouldRefuse                                     │  direct calls (Q2)
-        ▼                                                                 ▼
- ┌──────────────────────── MachineCoordinator (one per Emulator) ─────────────────────────┐
- │ policy table · park primitive · boundary queue · mode · operation log · media identity │
- └───────┬──────────────┬───────────────┬──────────────┬──────────────┬──────────────────┘
-         ▼              ▼               ▼              ▼              ▼
-   TTD controller   MediaManager   SoundManager   NetworkManager   RZX session, FeatureManager, ...
-   (participants: Refusal / Prepare / Commit / Abort / OnModeChanged / OnTimelineCut / OnBoundary)
+ surfaces (Qt, WebAPI, CLI, Lua, Python, GDB, DeZog, MCP)
+        │ IMachineOps: Run / Submit / WouldRefuse / Mode / Log
+        ▼
+ ┌──────────────── MachineCoordinator (core/src/emulator/coordinator/, one per Emulator) ────────────────┐
+ │ policy table · lifecycle · park through IMachineThread · boundary queue · mode · operation log        │
+ │ includes: its own headers and base/ only                                                             │
+ └──────▲───────────────▲────────────────▲───────────────▲───────────────▲───────────────────────────────┘
+        │ implements    │ implements     │ implements    │ implements    │ implements
+   IOpOwner        ISessionSink     IModeListener   IBoundaryStep   ICutParticipant
+   (media, emulator, (TTD controller) (features,     (media, sound,  (TTD, media,
+    sound, network,                    media, sound,  network, TTD)   network, RZX)
+    RZX, transfer)                     main loop)
+
+ machine thread (Z80 traps, devices) ──► IMachineEvents (Classify / Note), implemented by the coordinator (Q2)
+ TTD controller ──► IModeReporter (its own transitions: black box restart, acceleration stop), implemented by the coordinator
 ```
 
-The coordinator decides and orders; owners still implement their operations. It serializes nothing: device state
-stays in `TTDSerializable`, the peripheral registry, `ITTDRegionSource` and the snapshot pipeline.
+Rules:
+- the coordinator includes no manager, device or emulator header; it is built as its own library
+  (`core-coordinator`) whose include paths are its directory and `base/`, so a forbidden include does not compile;
+- a participant includes only the port headers it implements or calls; it never includes `machinecoordinator.h`
+  and never calls another participant for a machine-level operation;
+- each `MachineOpKind` has exactly one owner (a second registration asserts); capabilities are opt-in, a participant
+  registers only the ports it has;
+- all links are made in one function, `Emulator::WireCoordinator()` (§3.3), run once after the participants exist;
+- the links that go away are listed in §3.4.
+
+The coordinator serializes nothing: device state stays in `TTDSerializable`, the peripheral registry,
+`ITTDRegionSource` and the snapshot pipeline.
 
 Lifetime: owned by `Emulator`, created before every participant and destroyed after all of them; participants
-register in creation order and unregister in reverse (F10).
+register in creation order and unregister in reverse (F10). A participant's port is unregistered before the
+participant is destroyed; the coordinator never holds a dangling port (a test, §10).
 
 ## 2. Operations
 
@@ -54,15 +75,16 @@ struct OpResult {
     uint64_t logSeq;                   // entry in the operation log (§7)
 };
 
-class MachineCoordinator {
+class MachineCoordinator : public IMachineOps, public IMachineEvents, public IModeReporter {
 public:
+    // IMachineOps - surfaces
     OpResult Run(const MachineOp&);                 // any thread; blocks until done, refused or failed
     OpTicket Submit(const MachineOp&);              // any thread; lands at the next frame boundary (F5)
     OpResult WouldRefuse(const MachineOp&) const;   // no side effects; same reason as Run (F3)
     MachineMode Mode() const;                       // published copy (§5)
     const OperationLog& Log() const;                // §7
 
-    // machine-thread direct path (Q2): no queue, no allocation
+    // IMachineEvents - machine-thread direct path (Q2): no queue, no allocation
     PolicyAction Classify(MachineOpKind, OpSource) const;   // what a trap / device event becomes
     void NoteMachineEvent(MachineOpKind, OpSource, std::string_view summary);   // log only
 };
@@ -71,49 +93,125 @@ public:
 ### 2.1 Lifecycle of `Run`
 
 1. **Policy** (§4): `(kind, mode)` → Allow, Refuse(reason), EndSession(keep | drop), RecordAsEvent. Then each
-   participant's `Refusal(op)` ("the drive is busy"). A refusal is logged and returned; nothing else happens.
+   the owner's `Refusal(op)` ("the drive is busy"). A refusal is logged and returned; nothing else happens.
 2. **Park**: `ParkLease` (RAII) brings the machine to a coherent point; on the machine thread it is a no-op. It is
    the only park primitive: the pause-and-sleep, 100 ms-then-proceed and per-manager variants go away (D3).
 3. **Prepare**: the owner stages (parses the snapshot, opens and identifies the image, validates the config). No
    side effect. Failure → `Failed`, logged, the session untouched (F4, U5).
 4. **Session effect**: the policy's EndSession / RecordAsEvent, once, through the TTD participant.
-5. **Commit**: the owner applies; the others get `OnMachineChanged(op)` in registration order.
+5. **Commit**: the owner applies. Nobody else is called: a participant that must react does so through its own
+   port (mode change, boundary phase, cut), never by watching other participants.
 6. **Settle**: `RestartFrame` if the operation restarted the machine; publish; release the lease.
 
 `Submit` runs steps 1 and 3 at once (so a refusal or a bad file is reported to the caller immediately) and 4-6 in
 phase 1 of the next frame boundary.
 
-## 3. Participants
+## 3. Ports
+
+### 3.1 What the coordinator needs from the outside (`coordinator/ports.h`)
 
 ```cpp
-class IMachineParticipant {
+class IMachineThread {                 // the main loop; a fake in tests
 public:
-    virtual std::string_view Name() const = 0;
-    virtual std::string Refusal(const MachineOp&) const { return {}; }
-    virtual bool Prepare(const MachineOp&, OpStage&) { return true; }
-    virtual void Commit(const MachineOp&, OpStage&) {}
-    virtual void Abort(const MachineOp&, OpStage&) {}
-    virtual void OnMachineChanged(const MachineOp&) {}
-    virtual void OnModeChanged(MachineMode from, MachineMode to) {}
-    virtual CutPlan PlanTimelineCut(const TimelinePoint&) { return {}; }   // §8: what the cut would need
-    virtual void OnTimelineCut(const TimelinePoint&, const CutDecisions&) {}
-    virtual void OnBoundary(BoundaryPhase) {}
+    virtual bool OnMachineThread() const = 0;
+    virtual void Park() = 0;           // returns with the machine at a coherent point
+    virtual void Unpark() = 0;
+    virtual void RestartFrame() = 0;   // after an operation that restarted the machine
+};
+
+class IMachineClock {                  // frame, T-state in frame, wall time; a fake in tests
+public:
+    virtual MachineTime Now() const = 0;
+};
+
+class IOpOwner {                       // exactly one per MachineOpKind
+public:
+    virtual std::string Refusal(const MachineOp&) const { return {}; }   // owner-specific: "the drive is busy"
+    virtual bool Prepare(const MachineOp&, OpStage&) = 0;                // no side effect (F4)
+    virtual void Commit(const MachineOp&, OpStage&) = 0;
+    virtual void Abort(const MachineOp&, OpStage&) {}                    // drop what Prepare staged
+};
+
+class ISessionSink {                   // the TTD controller
+public:
+    virtual void EndSession(SessionEnd keepOrDrop, std::string_view reason) = 0;
+    virtual bool BeginEvent(const MachineOp&) = 0;   // tool edit, media event (D9, Q4)
+    virtual void EndEvent(const MachineOp&) = 0;
+};
+
+class IModeListener   { public: virtual void OnModeChanged(MachineMode from, MachineMode to) = 0; };
+class IBoundaryStep   { public: virtual void OnBoundary(BoundaryPhase) = 0; };   // registered with a phase and an order
+class ICutParticipant {
+public:
+    virtual CutPlan Plan(const TimelinePoint&) = 0;                       // no side effect (§8.3)
+    virtual void Apply(const TimelinePoint&, const CutDecisions&) = 0;
 };
 ```
 
-| Participant | Owns | Reacts to |
+### 3.2 What the coordinator offers
+
+| Port | Used by | Calls |
 |---|---|---|
-| TTD controller | sessions, checkpoints, journals | session effects, `TimelineSeek` / `TimelineCut`, boundary phase 2 |
-| MediaManager | slots, media, change layers, undo log, identity | media ops, `OnModeChanged` (host-write hold), cut |
-| SoundManager | cards, host output | GS card config, `OnModeChanged` (output hold), restore re-sync |
-| NetworkManager | cards, host traffic | network config, boundary phases 1 and 3, cut (queued host answers) |
-| RZX session | playback, keyframes | `RzxSeek` / `RzxSnapshot`, cut (keyframes after the point) |
-| FeatureManager | features, acceleration lock, debug mode | `OnModeChanged`: the single writer of debug mode (U12) |
-| Screen / MainLoop | render skipping, resync | `OnModeChanged`, restore |
+| `IMachineOps` | every surface, Qt | `Run`, `Submit`, `WouldRefuse`, `Mode`, `Log` (§2) |
+| `IMachineEvents` | Z80 traps, devices on the machine thread (Q2) | `Classify`, `Note` (no queue, no allocation) |
+| `IModeReporter` | TTD controller | its own transitions (black box restart, acceleration stop, replay start / end) |
+
+### 3.3 The wiring function
+
+```cpp
+void Emulator::WireCoordinator()       // the whole graph in one place
+{
+    _coordinator->SetMachine(_mainLoopPort, _clockPort);
+    _coordinator->Own({Reset, Autostart, SnapshotLoad, StateTransferIn, ToolEdit}, _emulatorOps);
+    _coordinator->Own({MediaInsert, MediaEject, MediaDiscard}, *_mediaManager);
+    _coordinator->Own({ConfigChange}, _configOps);            // dispatches by key to sound / network / core
+    _coordinator->Own({RzxSeek, RzxSnapshot}, *_rzxSession);
+    _coordinator->Own({TtdStart, TtdStop, TimelineSeek, TimelineCut}, *_ttdController);
+    _coordinator->SetSession(*_ttdController);
+    _coordinator->ListenModes({_featureManager, _mediaManager, _soundManager, _mainLoopPort});
+    _coordinator->AtBoundary(BoundaryPhase::Apply, {_mediaManager, _soundManager, _networkManager});
+    _coordinator->AtBoundary(BoundaryPhase::Checkpoint, {_ttdController});
+    _coordinator->AtBoundary(BoundaryPhase::Inject, {_automationInput, _networkManager, _portDecoder});
+    _coordinator->CutWith({_ttdController, _mediaManager, _networkManager, _rzxSession});
+    _ttdController->SetModeReporter(*_coordinator);
+    _context->pMachineEvents = _coordinator.get();
+}
+```
+
+The names are illustrative; the shape is the rule: one function, ports only, the order of each list is the order of
+calls.
+
+### 3.4 Links that go away
+
+| Today (current-state §2) | After |
+|---|---|
+| `Emulator::LoadTape / LoadDisk / CreateDisk`, snapshot load, reset, autostart call `OnLoad` / `EndSession` | the policy's session effect, once, through `ISessionSink` |
+| `MediaManager::CheckRecording` / `EndSessionForMediaChange` → `RecordingGuard`, `OnLoad(Media)` | gone; the media manager is an `IOpOwner` and knows nothing of TTD for operations |
+| `SoundManager`, `SlotManager`, CD, `MachineStateTransfer` → `RecordingGuard`, `OnConfigurationChange`, `OnModelTransfer` | gone; policy cells |
+| `NetworkManager`, IDE drive kind, RZX, NeoGS SD → raw `IsRecording()` | gone; policy cells (D43 in M2) |
+| TTD → `FeatureManager` (debug mode, acceleration lock), `MediaManager::HoldHostWrites`, sound output hold | `IModeListener` reactions to the published mode |
+| `ttdReplayActive` read by MainLoop, media, features, Z80, Emulator | a read of the published mode |
+| ten park variants (`Pause` + sleep, 100 ms time-out, `ParkedEmulator`, `RunWhileParked`, ...) | `IMachineThread::Park` through `ParkLease` |
+| hard-coded boundary list in `MainLoop::CompleteFrame` | `IBoundaryStep` registrations by phase |
+
+Links that stay, on purpose (hot path, recording data rather than operations): the TTD read journal on media reads
+(`IMediaReadJournal`), port journals, `NoteWrite` markers, `RecordExternalEvent` / `SubmitLiveInput` from devices.
+They carry data into the recording; they decide nothing.
+
+| Participant | Ports |
+|---|---|
+| TTD controller | `IOpOwner` (TTD verbs, seek, cut), `ISessionSink`, `IBoundaryStep` (Checkpoint), `ICutParticipant`; calls `IModeReporter` |
+| MediaManager | `IOpOwner` (media ops), `IModeListener` (host-write hold), `IBoundaryStep` (Apply), `ICutParticipant` (undo log, identity) |
+| SoundManager | `IModeListener` (output hold), `IBoundaryStep` (Apply: GS switch); config keys through the config owner |
+| NetworkManager | `IBoundaryStep` (Apply: refit; Inject: host answers), `ICutParticipant` (queued answers) |
+| RZX session | `IOpOwner` (RZX seek / snapshot), `ICutParticipant` (keyframes after the point) |
+| FeatureManager | `IModeListener`: the single writer of debug mode and the acceleration lock |
+| Main loop | `IMachineThread`, `IMachineClock`, `IModeListener` (render skipping) |
 
 ## 4. Policy table
 
-One file (`machinepolicy.cpp`), one row per operation, one column per mode: Live, Recording (explicit),
+One file (`machinepolicy.cpp`), a `constexpr` table indexed by `MachineOpKind` (a `static_assert` ties its size to
+the enum, so a new kind without a row does not compile), one column per mode: Live, Recording (explicit),
 Recording (black box), Replaying, Detached. It replaces `RecordingGuard`, the raw `IsRecording()` refusals,
 `OnLoad`'s per-kind branches, `OnConfigurationChange` and `EndSessionForMachineChange`. M1 fills it with today's
 behaviour, read from the code, and pins it with a test walking every cell; later changes are one cell plus that test.
@@ -179,7 +277,7 @@ by checkpoint index:
   track buffer; the hook is the drive slot's `NoteSlotWrite`, which already runs before the write).
 
 Cost = what the guest writes, not the image size. Kept in memory with the media manager, dropped when the session
-ends; not in the TTD session file (§11).
+ends; not in the TTD session file (§12).
 
 ### 8.2 Identity (F12, owner decision: lazy)
 
@@ -218,12 +316,73 @@ A plain seek is not a cut: nothing outside the CPU machine changes while browsin
   inline without parking.
 - Mode and log are published copies for readers on other threads.
 
-## 10. Migration
+## 10. Testing (N8)
+
+The coordinator is tested as a unit first, the participants against their ports second, the wiring end to end last.
+Each level catches what the one below cannot.
+
+### 10.1 The coordinator alone
+
+Tests in `core/tests/coordinator/` use the library and fakes only, no emulator; each well under 1 ms, no sleeps, no
+waits on real time.
+
+| Fake | Records / controls |
+|---|---|
+| `FakeMachineThread` | `Park` / `Unpark` / `RestartFrame` calls, "on the machine thread" switch, a manual `Boundary()` |
+| `FakeClock` | the time each log entry gets |
+| `FakeOwner` | `Refusal`, `Prepare` (succeeds / fails / throws), `Commit`, `Abort` calls with the op, in one shared call log |
+| `FakeSession` | `EndSession` (keep / drop, reason), `BeginEvent` / `EndEvent` |
+| `FakeListener`, `FakeStep`, `FakeCut` | mode changes, boundary phases, plans and applies, in the shared call log |
+
+The shared call log makes each test one comparison: the expected sequence of calls across all fakes.
+
+| Area | Tests |
+|---|---|
+| Policy | a walk over every (kind, mode) cell and every machine-thread source against an expected table written in the test, not copied from the code; M1's table equals today's behaviour (read from current-state §2-3) |
+| Lifecycle | refused → no owner call, no park, logged; `Prepare` fails or throws → no `Commit`, no session effect, `Abort` called, park released, logged `Failed`; success → policy effect once, then `Commit`, `RestartFrame` when the kind restarts the machine; `NeedsDecision` → nothing applied, a second `Run` with the choice applies |
+| `WouldRefuse` | for every cell: the same status and reason as `Run`, and the call log is empty |
+| Parking | `Park` and `Unpark` balanced on every path, failures and exceptions included; no park on the machine thread; nested `Run` from the machine thread runs inline |
+| Ordering | submitted ops apply in submission order in phase 1; phase order Apply → Checkpoint → Inject; an op applied in phase 1 is an event of that boundary's checkpoint |
+| Modes | each transition broadcast once, in registration order; derived flags (replay active, acceleration lock) follow |
+| Log | every outcome logged with seq, time, source; the ring wraps at 1024 with seq still increasing; readers on other threads see whole entries |
+| Wiring | a second owner for a kind asserts; a port unregistered before its participant dies is never called again; an op kind without an owner is refused with a reason |
+| Threads | `Run` / `Submit` / `WouldRefuse` from several control threads against a fake machine thread running boundaries; same results as serial; run under TSan in the Linux docker job (the library is small enough) |
+
+### 10.2 Each real participant against its port
+
+Typed contract tests, one suite per port, instantiated for each real implementation on a small booted machine:
+- `IOpOwner`: `Refusal` and `Prepare` change nothing (machine state hash, media state and files before and after);
+  `Prepare` + `Abort` leaves no trace; `Prepare` + `Commit` gives the same machine as today's direct call;
+- `ICutParticipant`: `Plan` changes nothing; `Apply` at point P leaves its state equal to what it was at P;
+- `IModeListener`: every mode reached and left restores the participant's settings;
+- `IBoundaryStep`: work done in its phase only.
+
+A new participant gets these tests by adding one line to the instantiation list.
+
+### 10.3 End to end
+
+A few tests on real machines check what the levels below cannot:
+- every surface (WebAPI, CLI, Lua, Python, GDB, DeZog, MCP) gives the same status and reason text for each refused
+  cell (table-driven over the surfaces);
+- the boundary order on a running machine;
+- a disk swapped during a recording, seek back across it, replay equal to live (M3);
+- "Rec From Here" after the guest wrote the disk: the disk returns to the point; a deleted or edited medium gives
+  `NeedsDecision` (interactive) or an empty slot (non-interactive) (M5);
+- the operation log of a TTD session saved and loaded back.
+
+### 10.4 Each landing step
+
+- mutation checks: a flipped policy cell, a skipped `Unpark`, a swapped boundary phase, a missing log entry must each
+  fail a test;
+- the include check of §1 in the build;
+- A/B frame benchmark for M1, M3, M5 (N1).
+
+## 11. Migration
 
 | Step | Content | Behaviour |
 |---|---|---|
-| M0 | Defects of current-state §7: GDB edits as tool edits, `SetBlackBox` under the session lock, a load ends the session only after a successful insert, the controller unbinds the media read journal and vectors on destruction, debug mode writers listed for M4 | bug fixes |
-| M1 | `MachineCoordinator`, `ParkLease`, operation log, policy table with today's cells and its test; Reset, snapshot load, media ops through `Run` | none; the log appears |
+| M0 | Defects of current-state §7: GDB edits as tool edits, `SetBlackBox` under the session lock, a load ends the session only after a successful insert, the controller unbinds the media read journal and vectors on destruction, debug mode writers listed for M4 | bug fixes; **done 2026-10-10** (11e394ee1, af19cac62, 4c90c418d, ad38d73b2) |
+| M1 | The `core-coordinator` library with its ports, fakes and §10.1 tests; `ParkLease`, operation log, policy table with today's cells; `Emulator::WireCoordinator`; reset, snapshot load, media ops through `Run` with their §10.2 contract tests; the links of §3.4 for these operations removed | none; the log appears |
 | M2 | Every refusal from the table; raw `IsRecording()` checks deleted; D43 cells (network, IDE drive kind, RZX, NeoGS SD) one at a time with the owner | the black box stops blocking (U3) |
 | M3 | Boundary phases; media, GS switch, network into phase 1; media ops during a recording become events (Q4) | U2, gap 13 |
 | M4 | Modes broadcast; one writer per setting | none |
@@ -233,7 +392,7 @@ A plain seek is not a cut: nothing outside the CPU machine changes while browsin
 Each step lands alone: build, `test.sh`, docker Linux, gcc:16 -O3 of changed files; M1, M3 and M5 with an A/B
 frame benchmark (N1).
 
-## 11. Postponed
+## 12. Postponed
 
 **Continuing live from the past in a session loaded from a file** (owner decision 2026-10-10: not supported for now,
 postponed; TTD is not to grow without a clear need). A loaded session is replayed and browsed from its journals.
