@@ -17,7 +17,8 @@ there (fresh reset, a jump done by a seek) stops on the first step, without exec
 
 Memory breakpoints need debug mode and the `breakpoints` feature. The feature can be off while debug mode is on
 (seen 2026-10-10 on a `PENTAGON` created through the WebAPI): the breakpoint is added `active` but its `hit_count`
-stays 0. Switch it on with `PUT /feature/breakpoints {"enabled":true}` and check `GET /features` when a breakpoint
+stays 0. Switch it on with `PUT /feature/breakpoints {"enabled":true}` (it switches debug mode on too; `PUT /debugmode` alone
+does not switch the feature on) and check `GET /features` when a breakpoint
 never fires. A memory breakpoint stops during the access, so the PC is inside or just past the writing instruction
 ([articles/program-state-reverse.md](../articles/program-state-reverse.md)).
 

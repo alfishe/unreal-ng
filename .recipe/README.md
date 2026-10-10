@@ -62,6 +62,7 @@ matches; it names the recipe(s) for that action.
 | Moving the mouse, clicking, the wheel / checking what the guest reads at `#FADF` / `#FBDF` / `#FFDF` | [input/mouse.md](input/mouse.md) | keyboard, joystick |
 | Breakpoints, stepping, being told about pauses (WebSocket events) | [analysis/breakpoints-and-events.md](analysis/breakpoints-and-events.md) | ttd-* |
 | How a running program keeps its state: its buffers, pointers, flags and the code that changes them | [articles/program-state-reverse.md](articles/program-state-reverse.md) | trying keys and diffing screenshots |
+| Waiting until something happens (PC, a write, a port, a prompt on screen) instead of `sleep`; who writes an address | [analysis/waiting-and-watching.md](analysis/waiting-and-watching.md) | profilers |
 | Running to a scanline / pixel / interrupt, frame and T-state stepping, step over / out | [analysis/execution-control-and-stepping.md](analysis/execution-control-and-stepping.md) | ttd-*, profilers |
 | Who calls a routine, hot opcodes, per-frame cost | [analysis/calltrace-and-opcode-profiler.md](analysis/calltrace-and-opcode-profiler.md) | port-trace |
 | Labels, symbols, sjasmplus listings, stepping by source line, assembling | [analysis/symbols-listings-and-source-stepping.md](analysis/symbols-listings-and-source-stepping.md) | everything else |
@@ -140,6 +141,7 @@ call.
 | [analysis/ttd-recording.md](analysis/ttd-recording.md) | TTD on/off, write journal on demand, dump/save `.ttd`, load back, seek/step, bookmarks, coverage heatmap |
 | [analysis/ttd-write-journal.md](analysis/ttd-write-journal.md) | The write journal on demand: record it, switch it during a recording, build it later for any span by replay |
 | [analysis/ttd-reverse-debugging.md](analysis/ttd-reverse-debugging.md) | Reverse queries: `find-last`, `reverse-step`, `reverse-continue`, coverage probe/scan |
+| [analysis/waiting-and-watching.md](analysis/waiting-and-watching.md) | Waits that do not depend on host timing (`run_frames`, `skip_until`, breakpoint + `debug/wait` loop, OCR / digest polling), who writes an address (write breakpoint, TTD `find-last`, operand search over all RAM) |
 | [analysis/breakpoints-and-events.md](analysis/breakpoints-and-events.md) | Breakpoints and what they stop, `/step` / `/steps` with the stop reason, the `/api/v1/websocket` debugger events (subscribe, `paused` / `resumed` / `step_done` / `breakpoints_changed`), CLI / MCP / Lua / Python |
 | [analysis/port-trace.md](analysis/port-trace.md) | Port I/O tracing: feature gate, filters/presets, ring buffer, save `json/csv/bin/binz`, re-read server-side, internal port codes (ZX-Evo, Sprinter) |
 | [analysis/memory-counters.md](analysis/memory-counters.md) | Memory access counters: profiler start/stop, per-page summaries, per-address counters, YAML export |

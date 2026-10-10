@@ -160,6 +160,10 @@ Notes agents trip over:
 - `stop` freezes the instance; `destroy` deletes it. TTD history, traces and
   counters die with the instance — dump them to `scratch/` first.
 - Emulator ids are UUIDs; MCP `target` takes the full id (or `"auto"`); id prefixes are not matched.
+- **Instances have no owner and no expiry**: nothing removes them but `DELETE`. A script that creates one
+  deletes it on every exit path (bash `trap 'curl -s -X DELETE "$BASE/emulator/$EMU_ID"' EXIT`, Python
+  `try/finally`), and keeps the ids it created: other sessions may have instances on the same app, so never
+  clean up by deleting everything in `GET /api/v1/emulator`.
 
 ### 6. Run control (needed by later recipes)
 
