@@ -440,8 +440,10 @@ SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
 
 /// The title is looked for where the code keeps it (each build elsewhere); #BE00 also holds it, but the editor uses
 /// that place as a buffer. `typingFlag` false: the build keeps no "line modified" bit at IX+#0C (4.43)
+/// `idle`: the return chain of its command line (line input #91E3, then the command loop #9707 in 5.09; a command runs
+/// with #9733 there instead)
 SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion, uint16_t titleAt, std::string title = "",
-                     bool typingFlag = true)
+                     bool typingFlag = true, std::vector<uint16_t> idle = {})
 {
     SyncDescriptor d;
     d.id = "alasm-" + version;
@@ -463,6 +465,7 @@ SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion
     d.fileImage.changedField = 0x27;
     d.typing = {TypingRule::NotInText, 0x80CB, static_cast<uint8_t>(typingFlag ? 0x01 : 0x00)};   // IX+#0C bit 0: the line is modified
     d.labelScanner = "alasm-table";
+    d.idleChain = std::move(idle);
     return d;
 }
 
@@ -934,11 +937,99 @@ std::optional<uint16_t> MachineView::Word(uint16_t address) const
     return static_cast<uint16_t>(b[0] | (b[1] << 8));
 }
 
+bool Idle(const MachineView& machine, const SyncDescriptor& d, std::string& why)
+{
+    if (d.idleChain.empty())
+    {
+        why = "no idle rule is known for " + d.title;
+        return false;
+    }
+    if (machine.sp < 0)
+    {
+        why = "the CPU's SP was not copied";
+        return false;
+    }
+    std::vector<uint8_t> stack;
+    const uint16_t sp = static_cast<uint16_t>(machine.sp);
+    const size_t depth = std::min<size_t>(d.idleDepth, 0x10000 - sp);
+    if (!machine.Read(sp, depth, stack))
+    {
+        why = "the stack at #" + Hex(sp, 4) + " is not in the memory copied";
+        return false;
+    }
+    const size_t n = d.idleChain.size();
+    for (size_t at = 0; at + 2 * n <= stack.size(); ++at)
+    {
+        bool all = true;
+        for (size_t k = 0; k < n && all; ++k)
+            all = static_cast<uint16_t>(stack[at + 2 * k] | (stack[at + 2 * k + 1] << 8)) == d.idleChain[k];
+        if (all)
+            return true;
+    }
+    why = d.title + " is not waiting for a command (assembling, saving, loading, or in its editor)";
+    return false;
+}
+
+InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& file, const InjectOptions& options)
+{
+    InjectPlan plan;
+    if (d.family != LayoutFamily::FileImage)
+    {
+        plan.error = "writing a text into " + d.title + " is not supported yet";
+        return plan;
+    }
+    std::string why;
+    if (!Idle(machine, d, why) && !(options.force && d.idleChain.empty()))
+    {
+        plan.error = why + (d.idleChain.empty() ? " (force writes anyway)" : "");
+        return plan;
+    }
+    const FileImageParams& p = d.fileImage;
+    plan.previous = ReadText(machine, d);
+    if (plan.previous.ok && plan.previous.changed && !options.force)
+    {
+        plan.error = "the text " + plan.previous.name + " in " + d.title + " has changes not saved (force overwrites them)";
+        return plan;
+    }
+    int page = plan.previous.ok ? plan.previous.page : -1;
+    if (page < 0)
+    {
+        std::optional<uint8_t> id;
+        if (d.pages == PageIdRule::Port7FFD)
+            id = machine.Byte(p.pageIdAt);
+        for (const int candidate : PagesForId(machine, d.pages, id.value_or(0)))
+            if (const symbols::MemoryPage* found = machine.Page(candidate); found && found->bytes.size() >= kPage)
+            {
+                page = candidate;
+                break;
+            }
+    }
+    const symbols::MemoryPage* target = page >= 0 ? machine.Page(page) : nullptr;
+    if (!target || target->bytes.size() < kPage)
+    {
+        plan.error = "the page of " + d.title + "'s text is not in the memory copied";
+        return plan;
+    }
+    if (file.size() < p.headerSize || p.base + file.size() > kPage)
+    {
+        plan.error = "the text takes " + std::to_string(file.size()) + " bytes; the page holds " + std::to_string(kPage - p.base);
+        return plan;
+    }
+    plan.page = page;
+    plan.bytes.assign(target->bytes.begin(), target->bytes.begin() + kPage);
+    std::fill(plan.bytes.begin() + p.base, plan.bytes.end(), uint8_t{0});
+    std::copy(file.begin(), file.end(), plan.bytes.begin() + p.base);
+    if (options.markChanged && p.changedField)
+        plan.bytes[p.base + p.changedField] |= p.changedMask;
+    plan.ok = true;
+    return plan;
+}
+
 const std::vector<SyncDescriptor>& Descriptors()
 {
     static const std::vector<SyncDescriptor> descriptors = {
         // Each checked with dumps (testdata/sync): the text, the file it saves, the title where the editor leaves it
-        Alasm("5.09", "5.07", 0x97C5),
+        Alasm("5.09", "5.07", 0x97C5, "", true, {0x91E3, 0x9707}),
         Alasm("5.08", "5.07", 0x97CA),
         Alasm("5.07", "5.07", 0x97BC),
         Alasm("5.05", "5.05", 0x97BC),

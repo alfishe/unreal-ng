@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 
+#include "codecs/alasm/alasmcodec.h"
 #include "symbols/io/json.h"
 #include "testdata.h"
 #include "unrealasm/registry.h"
@@ -455,4 +456,63 @@ TEST(SyncSession_Test, AlasmsOtherTextsInMemoryJoinTheProject)
     EXPECT_FALSE(project[0].document.lines.empty());
     // A layout without texts per page has none
     EXPECT_TRUE(ReadOtherTexts(dump.machine, *FindDescriptor("tasm-4.12"), -1).empty());
+}
+
+// Part B (Z0): a file written over ALASM 5.09's text at its command line, then read back as the reader reads it
+TEST(SyncInject_Test, AlasmTakesAFileAtItsCommandLine)
+{
+    Dump dump = Load("alasm509-loaded");
+    const SyncDescriptor* d = FindDescriptor("alasm-5.09");
+    ASSERT_NE(d, nullptr);
+    SourceDocument document = SourceDocument::FromText("        ORG #6000\nSTART   LD A,1\n        RET\n", "alasm");
+    document.name = "NEW";
+    EncodeOptions encode;
+    encode.subversion = d->version;
+    const std::vector<uint8_t> file = codecs::AlasmCodec().Encode(document, encode).bytes;
+    ASSERT_FALSE(file.empty());
+
+    // No stack copied: whether ALASM waits for a command is not known
+    EXPECT_FALSE(PlanInject(dump.machine, *d, file).ok);
+
+    // ALASM's command line: the line input's return (#91E3) and the command loop's (#9707) above SP
+    auto withStack = [&](uint16_t loop) {
+        std::vector<uint8_t> page5(0x4000, 0);
+        const std::vector<uint16_t> words = {0x5C78, 0x0042, 0x9084, 0x9043, 0x8EF2, 0xBF15, 0x7FFD, 0x9199, 0x91E3, loop};
+        for (size_t k = 0; k < words.size(); ++k)
+        {
+            page5[0x1FBE + 2 * k] = static_cast<uint8_t>(words[k]);
+            page5[0x1FBE + 2 * k + 1] = static_cast<uint8_t>(words[k] >> 8);
+        }
+        return page5;
+    };
+    const std::vector<uint8_t> busyStack = withStack(0x9733);   // a command running (the editor, ASSEMBLE)
+    dump.machine.ram.push_back({5, busyStack});
+    dump.machine.sp = 0x5FBE;
+    const InjectPlan busy = PlanInject(dump.machine, *d, file);
+    EXPECT_FALSE(busy.ok);
+    EXPECT_NE(busy.error.find("not waiting for a command"), std::string::npos) << busy.error;
+
+    const std::vector<uint8_t> idleStack = withStack(0x9707);
+    dump.machine.ram.back() = {5, idleStack};
+    const InjectPlan plan = PlanInject(dump.machine, *d, file);
+    ASSERT_TRUE(plan.ok) << plan.error;
+    EXPECT_EQ(plan.page, 6);
+    EXPECT_TRUE(plan.previous.ok);
+    EXPECT_EQ(plan.previous.name, "SNAKE");
+
+    // Written: the reader gives the file back, marked changed since saved
+    for (symbols::MemoryPage& page : dump.machine.ram)
+        if (page.page == 6)
+            page.bytes = plan.bytes;
+    const SyncText back = ReadText(dump.machine, *d);
+    ASSERT_TRUE(back.ok);
+    EXPECT_EQ(back.file, file);
+    EXPECT_EQ(back.name, "NEW");
+    EXPECT_TRUE(back.changed);
+
+    // That text now has changes not saved: another write needs force
+    EXPECT_FALSE(PlanInject(dump.machine, *d, file).ok);
+    InjectOptions force;
+    force.force = true;
+    EXPECT_TRUE(PlanInject(dump.machine, *d, file, force).ok);
 }

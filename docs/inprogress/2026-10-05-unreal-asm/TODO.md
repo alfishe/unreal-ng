@@ -187,7 +187,12 @@ phase; master only after the owner's review.
       - [x] INCLUDE from the disk in a drive and from host folders, option `project` (2026-10-10, §5.4)
       - [x] other texts in memory (2026-10-10): ALASM's pages (`textsPerPage`); XAS and ZAsm hold one text
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):
-    - [ ] Z0 `retrobackend` core + ALASM backend + the file image writer + inject on WebAPI / CLI / MCP, checked by ALASM assembling the injected text
+    - [x] Z0 ALASM backend + the file image writer + inject on WebAPI / CLI / MCP / Lua / Python, checked by ALASM 5.09 assembling the injected text (2026-10-10, research-sjasmplus-to-alasm.md)
+      - [ ] a project: the INCLUDEd sources into more text pages (ALASM keeps one text per page)
+      - [ ] label values for sources of other dialects (their sjasmplus conversion's layout, symbols/fromsource.h)
+      - [ ] idle rules for the other ALASM builds (5.08 ... 3.8c): the command line's return chain in each
+      - [ ] the ALASM frontend reads `ADD B` as ADD A,B and `DW "AB"` as #4142; ALASM 5.09 puts nothing / `41 42` down: check more forms (LD HL,"AB", ADC, SBC) and fix
+      - [ ] the `retrobackend` core split out of the ALASM backend with the second target (Z3)
     - [ ] Z1 snapshots: inject into an existing one; the ALASM idle template (Z0 + Z1 about 10 days)
     - [ ] Z2 push watch (host file → inject on save), Inject in the Qt dock
     - [ ] Z3 backends + writers + templates: TASM, XAS, STORM, ZX-ASM, MASM

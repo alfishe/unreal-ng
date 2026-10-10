@@ -30,6 +30,15 @@ struct FrontendResult
     Diagnostics diagnostics;
 };
 
+/// A label of the source with the value its assembler computes (the layout of the source, layout.h)
+struct SourceLabel
+{
+    int64_t value = 0;
+    std::string file;            ///< the project file defining it ("" = the single source)
+    uint32_t line = 0;           ///< 1-based line of that file
+    bool redefinable = false;    ///< assigned with DEFL / "=": the value changes while assembling, none is known
+};
+
 struct BackendOptions
 {
     bool hexDollar = false;   ///< write hex numbers as $C000 instead of #C000 (where the target accepts both)
@@ -48,6 +57,13 @@ struct BackendOptions
     /// The sources are written for the ZX Spectrum Next (sjasmplus --zxnext): the Z80N mnemonics are instructions in every
     /// file, as when a file says DEVICE ZXSPECTRUMNEXT or OPT --zxnext
     bool z80n = false;
+    /// The version of the target assembler the text is written for, in its codec's version names (ALASM "4.44",
+    /// "5.07"); "" = the newest. Keywords follow it (ALASM IF / IF0, UNTIL / UNTIL0, DEFB in 3.8)
+    std::string targetVersion;
+    /// The source's labels by the names its layout gives them (sjasmplus: label, label.local, module.label), filled by
+    /// Convert / ConvertProject for a backend that asks (IBackend::WantsLabelValues): a one-pass target folds to its
+    /// value an expression it cannot compute (a later label in an operation other than + and -, an operator it lacks)
+    std::map<std::string, SourceLabel> labelValues;
 };
 
 /// A label of the source and the name the backend wrote it under (a reserved word renamed, a LOCAL block's label made
@@ -99,6 +115,8 @@ public:
     virtual ~IBackend() = default;
     virtual std::string_view Dialect() const = 0;
     virtual BackendResult Write(const ir::Program& program, const BackendOptions& options) const = 0;
+    /// The backend folds expressions with the source's label values (BackendOptions::labelValues)
+    virtual bool WantsLabelValues() const { return false; }
 };
 
 class DialectRegistry

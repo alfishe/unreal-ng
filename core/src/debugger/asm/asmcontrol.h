@@ -28,6 +28,13 @@
 
 #include "emulator/state/statenode.h"
 
+namespace unrealasm
+{
+struct Diagnostic;
+using Diagnostics = std::vector<Diagnostic>;
+struct SourceDocument;
+}  // namespace unrealasm
+
 class EmulatorContext;
 
 enum class AsmControlError : uint8_t
@@ -69,6 +76,11 @@ public:
 
     static const std::vector<std::string>& Verbs();
     static const std::vector<std::string>& OptionsFor(const std::string& verb);
+
+    /// The source a request names, decoded: `text` (with `from`, default sjasmplus), or path / disk:A/NAME.T / data +
+    /// name with codec, version, file; `from` sets the dialect. False with the failure reply
+    bool ReadDocument(const AsmRequest& request, unrealasm::SourceDocument& out, unrealasm::Diagnostics& diagnostics, std::string& source,
+                      AsmReply& failure);
 
 private:
     AsmReply Formats();

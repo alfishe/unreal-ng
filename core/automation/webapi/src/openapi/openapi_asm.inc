@@ -257,6 +257,35 @@ paths["/api/v1/emulator/{id}/asm/sync/watch"]["delete"]["parameters"][0]["requir
 paths["/api/v1/emulator/{id}/asm/sync/watch"]["delete"]["parameters"][0]["schema"]["type"] = "string";
 paths["/api/v1/emulator/{id}/asm/sync/watch"]["delete"]["responses"]["200"]["description"] = "The watch status";
 
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["summary"] = "Write a host source into the assembler";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["description"] = "Part B: the source (any dialect with a frontend; sjasmplus by default) is written as the assembler's own text over the one in RAM: converted by the assembler's backend (later labels and operators it lacks folded to values), encoded in its format, written at one coherent moment as a TTD tool edit while the assembler waits for a command (its idle rule: ALASM 5.09 at its A> prompt). Refused when it is busy or in its editor, or when the text there has changes not saved (force overwrites them).";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["tags"].append("Assembler Sources");
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["text"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["text"]["description"] = "The source text (UTF-8); or path / data";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["description"] = "A host file or disk:A/NAME.T";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["data"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["data"]["description"] = "The file as base64, with name";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["name"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["name"]["description"] = "With data: the file name";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["from"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["from"]["description"] = "The source dialect (default: the file's, sjasmplus for text)";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["assembler"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["assembler"]["description"] = "A descriptor id; default the one found";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["title"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["title"]["description"] = "The text's name in the assembler (default: the replaced text's)";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["force"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["force"]["description"] = "true: overwrite changes not saved";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["backup"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["backup"]["description"] = "A host file the replaced text goes to";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["responses"]["200"]["description"] = "{assembler, title, source, from, name, page, bytes, lines, previous {name, bytes, changed, backup}, diagnostics}";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["responses"]["409"]["description"] = "Refused: the assembler is busy, in its editor, or its text has changes not saved";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["responses"]["422"]["description"] = "The conversion failed or the format cannot hold the text {diagnostics}";
+
 paths["/api/v1/emulator/{id}/asm/sync/hints"]["get"]["summary"] = "The last build of the watched source";
 paths["/api/v1/emulator/{id}/asm/sync/hints"]["get"]["description"] = "The labels published and the hints (the codec's, the conversion's and the layout's messages on the source's lines).";
 paths["/api/v1/emulator/{id}/asm/sync/hints"]["get"]["tags"].append("Assembler Sources");

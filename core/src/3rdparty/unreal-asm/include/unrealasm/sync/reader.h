@@ -24,6 +24,7 @@ struct MachineView
     std::vector<symbols::MemoryPage> ram;
     std::array<int, 4> windows{-1, -1, -1, -1};   ///< RAM page at #0000 / #4000 / #8000 / #C000; -1 = ROM or not copied
     int ramPages = 8;                             ///< the machine's RAM size in 16 KB pages (page id rules)
+    int sp = -1;                                  ///< the CPU's SP when it was copied (the idle rule); -1 = not known
 
     const symbols::MemoryPage* Page(int page) const;
     /// Bytes of the CPU view; false when a byte lies in a window whose page was not copied
@@ -173,6 +174,10 @@ struct SyncDescriptor
     TypingParams typing;
     std::string labelScanner;       ///< the symbols/live.h scanner of its label table ("" = none)
     bool textsPerPage = false;      ///< the assembler keeps one text per page, each with its header (ALASM): a project's other texts
+    /// Return addresses the stack holds in this order (lowest address first, within `idleDepth` bytes above SP) only
+    /// while the assembler waits for a command: a text may be written then (part B, §16.2). Empty = no rule known
+    std::vector<uint16_t> idleChain;
+    uint16_t idleDepth = 64;
 };
 
 /// Every built-in descriptor (asm-synchronizer.md §7), each checked with golden dumps: ALASM 3.8c, 4.42-4.46, 4.5,
@@ -201,6 +206,30 @@ SyncText ReadText(const MachineView& machine, const SyncDescriptor& descriptor);
 /// The other texts a layout keeps one per page (descriptor.textsPerPage: ALASM), every page of the copy but
 /// `exceptPage` (the live text's): their files and names, for a project's INCLUDEs (asm-synchronizer.md §5.4)
 std::vector<SyncText> ReadOtherTexts(const MachineView& machine, const SyncDescriptor& descriptor, int exceptPage);
+
+/// Part B (asm-synchronizer.md §16): the assembler waits for a command (the descriptor's idle rule holds); false with
+/// the reason
+bool Idle(const MachineView& machine, const SyncDescriptor& descriptor, std::string& why);
+
+struct InjectOptions
+{
+    bool force = false;          ///< write even when the text in memory has changes not saved, or no idle rule is known
+    bool markChanged = true;     ///< the header says "changed since saved" (ALASM asks before it loads another text)
+};
+
+/// The writes that make `file` (the assembler's own file, as its codec encodes it) the live text
+struct InjectPlan
+{
+    bool ok = false;
+    std::string error;
+    int page = -1;                       ///< the RAM page written (FileImage)
+    std::vector<uint8_t> bytes;          ///< its new contents, the whole page
+    SyncText previous;                   ///< the text it replaces (previous.ok false: none read)
+};
+
+/// Plans writing `file` over the live text: the assembler idle, the old text without unsaved changes (or `force`),
+/// the file within the page. FileImage layouts (ALASM); the others are refused
+InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& descriptor, const std::vector<uint8_t>& file, const InjectOptions& options = {});
 
 struct ProbeCandidate
 {

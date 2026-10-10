@@ -1,9 +1,12 @@
 #include "unrealasm/dialect.h"
 
 #include <algorithm>
+#include <cctype>
 
+#include "unrealasm/layout.h"
 #include "unrealasm/registry.h"
 
+#include "dialects/alasm/alasmbackend.h"
 #include "dialects/alasm/alasmfrontend.h"
 #include "dialects/common/z80.h"
 #include "dialects/storm/stormfrontend.h"
@@ -61,6 +64,7 @@ const DialectRegistry& DialectRegistry::Builtin()
         r.Add(std::make_unique<dialects::SjasmplusBackend>());
         r.Add(std::make_unique<dialects::PasmoBackend>());
         r.Add(std::make_unique<dialects::Z88dkBackend>());
+        r.Add(std::make_unique<dialects::AlasmBackend>());
         return r;
     }();
     return registry;
@@ -108,6 +112,61 @@ void DialectRegistry::Add(std::unique_ptr<IBackend> backend)
     _backends.push_back(std::move(backend));
 }
 
+namespace
+{
+/// The labels of a sjasmplus project as its layout computes them, for a backend that folds with them
+std::map<std::string, SourceLabel> LabelValues(const std::vector<ProjectFile>& files, size_t main, const BackendOptions& options)
+{
+    std::map<std::string, SourceLabel> values;
+    for (const ProjectFile& f : files)
+        if (f.document.dialect != "sjasmplus")
+            return values;   // another dialect's layout goes through its conversion (symbols/fromsource.h): not here yet
+    layout::LayoutOptions layoutOptions;
+    if (options.dataFiles)
+        layoutOptions.fileSize = [&options](const std::string& name) -> std::optional<uint64_t> {
+            const std::vector<uint8_t> bytes = options.dataFiles(name);
+            return bytes.empty() ? std::nullopt : std::optional<uint64_t>(bytes.size());
+        };
+    // Every line without a label gets one (local, so sjasmplus' .labels keep their parent): its address is $ there
+    std::vector<ProjectFile> labelled = files;
+    const IFrontend* frontend = DialectRegistry::Builtin().Frontend("sjasmplus");
+    for (ProjectFile& f : labelled)
+    {
+        std::string file;
+        if (files.size() > 1)
+            for (const char c : f.name)
+                file.push_back(std::isalnum(static_cast<unsigned char>(c)) ? c : '_');
+        const ir::Program program = frontend->Parse(f.document).program;
+        int depth = 0;   // inside MACRO, DUP / REPT, WHILE: $ is not one address
+        bool parent = false;   // a label without a dot came: before it a .label would itself become the parent
+        for (const ir::Line& l : program.lines)
+        {
+            if (!l.label.empty() && l.label[0] != '.')
+                parent = true;
+            int opens = 0, closes = 0;
+            for (const ir::Statement& s : l.statements)
+                if (s.kind == ir::Statement::Kind::Directive)
+                {
+                    opens += s.directive == ir::DirectiveKind::Macro || s.directive == ir::DirectiveKind::Repeat || s.directive == ir::DirectiveKind::While;
+                    closes += s.directive == ir::DirectiveKind::EndMacro || s.directive == ir::DirectiveKind::EndRepeat || s.directive == ir::DirectiveKind::EndWhile;
+                }
+            const size_t index = l.sourceLine - 1;
+            if (parent && depth == 0 && opens == 0 && l.label.empty() && !l.statements.empty() && index < f.document.lines.size())
+            {
+                std::string& text = f.document.lines[index].text;
+                if (!text.empty() && (text[0] == ' ' || text[0] == '\t'))
+                    text = ".__UNREALASM_L" + file + "_" + std::to_string(l.sourceLine) + text;
+            }
+            depth += opens - closes;
+        }
+    }
+    const layout::LayoutResult laid = layout::Layout(labelled, main, layoutOptions);
+    for (const layout::Label& l : laid.labels)
+        values[l.name] = {l.value, files.size() == 1 ? std::string() : l.file, l.line, l.use == layout::LabelUse::Defl};
+    return values;
+}
+}  // namespace
+
 ConvertResult Convert(const SourceDocument& source, std::string_view targetDialect, const BackendOptions& options)
 {
     ConvertResult result;
@@ -127,7 +186,10 @@ ConvertResult Convert(const SourceDocument& source, std::string_view targetDiale
         next.z80n = true;
     }
     FrontendResult parsed = frontend->Parse(options.z80n && !source.z80n ? next : source);
-    BackendResult written = backend->Write(parsed.program, options);
+    BackendOptions withValues = options;
+    if (backend->WantsLabelValues() && options.labelValues.empty())
+        withValues.labelValues = LabelValues({{source.name, source}}, 0, options);
+    BackendResult written = backend->Write(parsed.program, withValues);
     result.document = std::move(written.document);
     result.document.name = source.name;
     result.diagnostics = std::move(parsed.diagnostics);
@@ -238,6 +300,13 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
                             includes[k].push_back(n);
                             included[n] = true;
                         }
+    if (backend->WantsLabelValues() && options.labelValues.empty())
+        for (size_t main = 0; main < programs.size(); ++main)
+            if (!included[main])
+            {
+                withMacros.labelValues = LabelValues(files, main, options);
+                break;
+            }
     std::vector<std::map<std::string, int>> unitDefinitions(programs.size());
     for (size_t main = 0; main < programs.size(); ++main)
     {

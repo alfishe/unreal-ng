@@ -144,6 +144,33 @@ highlighted, errors and warnings on their lines and in a list), the status, and 
 `state: none` (404) means that no known assembler is in RAM. `ambiguous` (400) means that two identify alike: give
 `assembler`. `inconsistent` means that the pointers did not add up at that moment (the guest was mid-update): ask again.
 
+### Writing a host source into the assembler (part B)
+
+`sync_inject` turns a host source into the assembler's own text in RAM, so the user can go on in the original tool.
+ALASM 5.09 only for now:
+
+```text
+asm_source {"action":"sync_inject","path":"/abs/project/main.asm"}                 # sjasmplus, by default
+asm_source {"action":"sync_inject","text":"        ORG #6000\nstart   ret\n","title":"DEMO"}
+asm_source {"action":"sync_inject","path":"disk:A/OLD.$C","from":"storm","force":true,"backup":"/abs/scratch/prev.H"}
+```
+
+The source is converted by the ALASM backend: left-to-right expressions, and a later label in anything but `+` / `-`
+written as its value. The result is encoded as ALASM 5.07 and written over the text in the page IX+#0D names, as a
+TTD tool edit. `title` names the text (default: the name of the text it replaces). The reply gives the page, the
+bytes, the lines, the replaced text (`previous`) and the conversion's diagnostics.
+
+The write is refused (409) unless ALASM waits at its `A>` prompt: in the editor, while it assembles, saves or shows
+a catalogue. Leave the editor first (Extend, `q`, ENTER). A text with changes not saved is kept unless `force` is
+given; `backup` writes it to a host file first. After the write, `a` + ENTER assembles the new text.
+
+WebAPI: `POST /emulator/{id}/asm/sync/inject {text | path | data + name, from?, assembler?, title?, force?, backup?}`.
+CLI: `asm sync inject --path f [--from d] [--title NAME] [--force]`. Lua / Python: `asm_sync_inject{...}`.
+`tools/verification/unreal-asm/emulator/inject-oracle.py alasm509 <ALASM509.trd> <source.asm> 0x6000` runs the
+whole check: it injects the source, lets ALASM assemble it and compares the bytes with sjasmplus' build. Sources for
+ALASM 5.09 must ORG below #8000. The conversion's rules and limits are in
+[research-sjasmplus-to-alasm.md](../../docs/inprogress/2026-10-05-unreal-asm/research-sjasmplus-to-alasm.md).
+
 ## Pitfalls
 
 - `convert` handles one file. A project whose sources INCLUDE each other converts as a whole with

@@ -12,24 +12,36 @@
 ///   sync-watch   [assembler interval quiet as to output]       start the watch (AsmSyncService): live labels, hints
 ///   sync-unwatch                                               stop it
 ///   sync-hints                                                 the last build: labels, hints
+///   sync-inject  [assembler text|path|data name codec version file from title force backup]
+///                part B: a source (any dialect with a frontend) written as the assembler's own text over the one in
+///                RAM, while it waits for a command (its idle rule); refused when the text there has unsaved changes
+///                unless `force`; `backup` keeps the replaced file on the host
 ///
 /// `assembler` picks a descriptor ("alasm-5.09", "tasm-4.12") when the probe finds two. The memory is copied at a
-/// coherent moment; the guest is never written.
+/// coherent moment; only sync-inject writes the guest, at one coherent moment, as a TTD tool edit.
 
 #include "debugger/asm/asmcontrol.h"
 
 class EmulatorContext;
+
+namespace unrealasm::sync
+{
+struct SyncDescriptor;
+struct SyncText;
+}  // namespace unrealasm::sync
 
 class SyncControl
 {
 public:
     explicit SyncControl(EmulatorContext* context);
 
-    /// verb: "status", "probe", "extract", "watch", "unwatch" or "hints" (AsmControl strips the "sync-")
+    /// verb: "status", "probe", "extract", "watch", "unwatch", "hints" or "inject" (AsmControl strips the "sync-")
     AsmReply Execute(const std::string& verb, const AsmRequest& request);
 
     static const std::vector<std::string>& OptionsFor(const std::string& verb);
 
 private:
+    AsmReply Inject(const unrealasm::sync::SyncDescriptor& descriptor, const unrealasm::sync::SyncText& current, const AsmRequest& request);
+
     EmulatorContext* _context = nullptr;
 };

@@ -1,13 +1,17 @@
 #include "synccontrol.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 
 #include "debugger/asm/sync/asmsyncservice.h"
 #include "debugger/asm/sync/syncshared.h"
 #include "debugger/debugmanager.h"
 #include "emulator/emulatorcontext.h"
+#include "unrealasm/dialect.h"
+#include "unrealasm/registry.h"
 #include "unrealasm/sync/reader.h"
 
 namespace
@@ -99,6 +103,89 @@ AsmSyncService* Service(EmulatorContext* context)
 
 SyncControl::SyncControl(EmulatorContext* context) : _context(context) {}
 
+AsmReply SyncControl::Inject(const sync::SyncDescriptor& descriptor, const sync::SyncText& current, const AsmRequest& request)
+{
+    // The source, in the assembler's dialect (written by its backend unless it is in it already)
+    SourceDocument document;
+    Diagnostics diagnostics;
+    std::string source;
+    AsmReply failure;
+    if (!AsmControl(_context).ReadDocument(request, document, diagnostics, source, failure))
+        return failure;
+    const std::string dialect = descriptor.codec;
+    StateNode body = StateNode::Object();
+    body["assembler"] = descriptor.id;
+    body["title"] = descriptor.title;
+    body["source"] = source;
+    body["from"] = document.dialect;
+    if (document.dialect != dialect)
+    {
+        if (!DialectRegistry::Builtin().Backend(dialect))
+            return Fail(AsmControlError::NotFound, "no backend writes " + descriptor.title + "'s dialect (" + dialect + ") yet", std::move(body));
+        BackendOptions options;
+        options.targetVersion = descriptor.version;
+        const ConvertResult converted = unrealasm::Convert(document, dialect, options);
+        diagnostics.insert(diagnostics.end(), converted.diagnostics.begin(), converted.diagnostics.end());
+        if (!converted.ok)
+        {
+            body["diagnostics"] = asmsync::DiagnosticsValue(diagnostics);
+            return Fail(AsmControlError::Failed, "the conversion from " + document.dialect + " to " + dialect + " failed", std::move(body));
+        }
+        const std::string name = document.name;
+        document = converted.document;
+        document.name = name;
+    }
+    // The name in the text's header: given, else the text's in memory, else the source's
+    std::string title = Option(request, "title");
+    if (title.empty())
+        title = current.ok && !current.name.empty() ? current.name : document.name;
+    if (title.empty())
+        title = "TEXT";
+    document.name = title.substr(0, 8);
+    const ISourceCodec* codec = CodecRegistry::Builtin().Find(descriptor.codec);
+    if (!codec)
+        return Fail(AsmControlError::NotFound, "no codec " + descriptor.codec, std::move(body));
+    document.format.clear();
+    EncodeOptions encode;
+    encode.subversion = descriptor.version;
+    const EncodeResult encoded = codec->Encode(document, encode);
+    diagnostics.insert(diagnostics.end(), encoded.diagnostics.begin(), encoded.diagnostics.end());
+    body["diagnostics"] = asmsync::DiagnosticsValue(diagnostics);
+    if (!encoded.ok)
+        return Fail(AsmControlError::Failed, descriptor.title + "'s format cannot hold this text", std::move(body));
+
+    sync::InjectOptions options;
+    std::string force = Option(request, "force");
+    std::transform(force.begin(), force.end(), force.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    options.force = request.options.count("force") && (force.empty() || force == "true" || force == "1" || force == "on");
+    sync::InjectPlan plan;
+    std::string error;
+    if (!asmsync::InjectFile(_context, descriptor, encoded.bytes, options, plan, error))
+        return Fail(AsmControlError::Refused, error, std::move(body));
+    body["name"] = document.name;
+    body["page"] = static_cast<int64_t>(plan.page);
+    body["bytes"] = static_cast<uint64_t>(encoded.bytes.size());
+    body["lines"] = static_cast<uint64_t>(document.lines.size());
+    if (plan.previous.ok)
+    {
+        StateNode previous = StateNode::Object();
+        previous["name"] = plan.previous.name;
+        previous["bytes"] = static_cast<uint64_t>(plan.previous.file.size());
+        previous["changed"] = plan.previous.changed;
+        const std::string backup = Option(request, "backup");
+        if (!backup.empty())
+        {
+            std::ofstream out(backup, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(plan.previous.file.data()), static_cast<std::streamsize>(plan.previous.file.size()));
+            previous["backup"] = out ? backup : std::string();
+        }
+        body["previous"] = std::move(previous);
+    }
+    AsmReply reply;
+    reply.body = std::move(body);
+    return reply;
+}
+
 const std::vector<std::string>& SyncControl::OptionsFor(const std::string& verb)
 {
     static const std::map<std::string, std::vector<std::string>> options = {
@@ -108,6 +195,7 @@ const std::vector<std::string>& SyncControl::OptionsFor(const std::string& verb)
         {"watch", {"assembler", "interval", "quiet", "as", "to", "output", "project"}},
         {"unwatch", {}},
         {"hints", {}},
+        {"inject", {"assembler", "path", "data", "name", "file", "codec", "version", "from", "text", "title", "force", "backup"}},
     };
     static const std::vector<std::string> none;
     const auto it = options.find(verb);
@@ -198,6 +286,8 @@ AsmReply SyncControl::Execute(const std::string& verb, const AsmRequest& request
     AsmReply failure;
     if (!Choose(machine.view, Option(request, "assembler"), descriptor, failure))
         return failure;
+    if (verb == "inject")
+        return Inject(*descriptor, sync::ReadText(machine.view, *descriptor), request);
     const sync::SyncText text = sync::ReadText(machine.view, *descriptor);
     StateNode body = StateNode::Object();
     asmsync::Describe(*descriptor, text, body);
