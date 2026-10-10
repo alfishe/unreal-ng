@@ -1461,7 +1461,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                "ttd", "contention", "tsconf", "tsconf_tsu", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
-                               "audio_multisound", "audio_midi"})
+                               "audio_multisound", "audio_midi", "execution"})
     {
         allowed.append(aspect);
     }
@@ -1506,6 +1506,9 @@ void RegisterInspectState(ToolRegistry& registry)
         "'audio_midi' = its MIDI line and SAM2695 synthesizer (16 parts: program, preset name, volume, pan, voices, "
         "notes sounding; polyphony, counters, bank; a panic is invoke_api POST /api/v1/emulator/{id}/control/audio/midi "
         "{action: panic}), "
+        "'execution' = the execution arbiter (phase; intent run / pause with who set it, why and when; main loop "
+        "parked or not; the command holding the CPU and whether it drives the Z80; the queue behind it; the run-control "
+        "claim; counters; driver_violations = moments two threads executed the Z80, 0 on a correct run), "
         "'slots' = the ZX-bus slot report (board, buses with kind / arbitration / retrofit note, every slot's card, "
         "options, adapter, fit real / adapter / unrealistic, state, functions, port claims, media, and the built-in "
         "devices: active, switched off, shadowed by a slot, replaced in their socket; change it with emulator_manage "
@@ -1653,11 +1656,11 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
-                    aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi")
+                    aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi" && aspect != "execution")
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution"));
                     return;
                 }
             }
@@ -2048,6 +2051,17 @@ void RegisterInspectState(ToolRegistry& registry)
                                                      "&length=" + std::to_string(size) + "&format=hex";
                             steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "execution")
+                        {
+                            // Core DeviceState::Execution via the WebAPI: the execution arbiter
+                            steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, "/state/execution"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -2569,6 +2583,27 @@ void RegisterInspectState(ToolRegistry& registry)
                                     for (const Json::Value& conflict : value["conflicts"])
                                         out << "\n[isa] conflict: " << (conflict.isString() ? conflict.asString() : conflict.toStyledString());
                                     out << "\n[isa] journal: " << value["journal_entries"].asUInt64() << " accesses (GET /state/isa/journal via invoke_api)";
+                                }
+                            }
+                            else if (aspect == "execution")
+                            {
+                                if (value.isMember("available") && !value["available"].asBool())
+                                    out << "\n[execution] " << value["description"].asString();
+                                else
+                                {
+                                    out << "\n[execution] " << value["phase"].asString() << ", intent "
+                                        << value["intent"].asString() << " (set by "
+                                        << value["intent_set_by"]["origin"].asString() << ": "
+                                        << value["intent_reason"].asString() << "), "
+                                        << (value["parked"].asBool() ? "parked" : "running");
+                                    if (value["serving"].isObject())
+                                        out << ", serving '" << value["serving"]["tag"].asString() << "' ("
+                                            << value["serving"]["by"]["origin"].asString() << ")";
+                                    out << ", queue " << value["queue"].size();
+                                    if (value["claim"].isObject())
+                                        out << ", claim held by " << value["claim"]["origin"].asString();
+                                    if (value["driver_violations"].asUInt64() != 0)
+                                        out << ", DRIVER VIOLATIONS " << value["driver_violations"].asUInt64();
                                 }
                             }
                             else if (aspect == "rtc")

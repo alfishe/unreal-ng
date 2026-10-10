@@ -265,8 +265,43 @@ Part of [README.md](README.md). Phases from [design.md](design.md) §6.
     threads use `EXPECT`, and the observer test removes its observer with RAII.
   - **Result:** the machine tests ×30 in 6 parallel processes, all clean; `test.sh` twice, green.
 
-## X5 - X6
+## X5: the arbiter's state on every surface
 
-As in [design.md](design.md) §6: the class b sites; the
-front-end origins and the claim; Snapshot on every surface; removal of `Pause(bool)` / `Resume(bool)`. The rest of the
-mode matrix (§8.3) comes with X3.
+- [x] **`DeviceState::Execution(context)`** builds one `StateNode` report: phase; intent with `intent_set_by`
+  (origin, client), `intent_reason`, `intent_seq` and `intent_age_ms`; `paused`; `main_loop` (attached, parked);
+  `may_run`; `parked`; `serving` (the command holding the CPU, with `drives_z80`); `queue`; `claim`; `counters`;
+  `driver_violations`.
+- [x] **The surfaces render it with their existing converters:**
+
+  | Surface | Entry |
+  |:--|:--|
+  | WebAPI | `GET /api/v1/emulator/{id}/state/execution` and the active-emulator form |
+  | OpenAPI | `openapi_execution.inc` |
+  | MCP | `inspect_state` aspect `execution`, with a one-line text summary |
+  | CLI | `state execution` / `state exec`, plus a help line |
+  | Lua, Python | `execution_state()` |
+  | Docs | the WebAPI, command, Lua and Python interface docs |
+- [x] **Checked live** in unreal-qt (offscreen). After a WebAPI pause the report shows `intent pause`,
+  `intent_set_by webapi`, parked. The CLI showed the adoption's TTD journal hold queued while the loop parked.
+- [x] **`ExecutionArbiterMachine_Test.TheExecutionReportShowsTheIntentItsOwnerAndTheHolder`.**
+
+## Open: one GUI boot miss
+
+During the X5 QA, one SPRINTER of six in the GUI repro ended at `#91CD` after 1500 frames instead of `#A441`.
+`#91CD` is the BIOS's text drawing loop, which a good boot passes near frame 375; the pre-arbiter build's failures
+showed the same address.
+
+- **Not reproduced since.** 126 boots after X4 missed once. A campaign of 60 boots (half of them under 6 parallel fuzz
+  processes) with the arbiter's report read after each: 60 out of 60 reached `#A441` with `driver_violations` 0.
+  Another 12 under load and 24 more were clean as well.
+- **Ruled out:** an RTC wait (the code at `#91CD` draws), and the media swap delay (it applies only when a disk
+  replaces a disk; the slot was empty).
+- **Next.** The campaign script (`driver_violations`, the arbiter counters, 1500 more frames on a miss, the IDE state)
+  stays the trap for the next occurrence: a nonzero violation count would point at the arbiter, a zero one elsewhere
+  (the CHD reader, the BIOS's own timing).
+
+## X6
+
+- [ ] Remove `Pause(bool)` / `Resume(bool)`: callers pass an origin, silent pairs are `CpuHold`s.
+- [ ] The rest of the mode matrix (design §8.3): ZX-Poly groups, TTD recording / replay and RZX in the machine fuzz.
+- [ ] Abort of a long direct run from the priority lane (`HoldToken::Aborted()` read by the `Run*` loops).

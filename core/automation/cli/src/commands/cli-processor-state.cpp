@@ -243,6 +243,15 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         session.SendResponse(CliSprinter::StateText(context, args, NEWLINE));
         return;
     }
+    else if (subsystem == "execution" || subsystem == "exec")
+    {
+        // The execution arbiter: who decides whether the Z80 runs (DeviceState::Execution)
+        std::stringstream report;
+        report << "Execution arbiter" << NEWLINE << "=================" << NEWLINE
+               << DeviceState::ToText(DeviceState::Execution(context));
+        session.SendResponse(report.str());
+        return;
+    }
     else if (subsystem == "rtc" || subsystem == "cmos")
     {
         session.SendResponse(RtcReportText(context));

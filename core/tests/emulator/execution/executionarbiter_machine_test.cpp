@@ -14,6 +14,7 @@
 #include "common/uuid.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/notifications.h"
+#include "emulator/state/devicestate.h"
 
 using namespace std::chrono_literals;
 
@@ -309,4 +310,33 @@ TEST_F(ExecutionArbiterMachine_Test, TheRunControlClaimRefusesOtherSurfacesRuns)
     ASSERT_EQ(_emulator->Pause(gdb).outcome, execution::Outcome::Applied);
     context->ReleaseRunControl(gdbSession);
     EXPECT_EQ(_emulator->Resume(kGui).outcome, execution::Outcome::Applied) << "released: everybody runs";
+}
+
+/// X5: the arbiter's report (DeviceState::Execution) - the one every surface renders (WebAPI /state/execution, MCP
+/// `execution`, CLI `state execution`, Lua / Python execution_state())
+TEST_F(ExecutionArbiterMachine_Test, TheExecutionReportShowsTheIntentItsOwnerAndTheHolder)
+{
+    ASSERT_EQ(_emulator->Pause(execution::Requester{execution::Origin::Cli, {}}, "user").outcome,
+              execution::Outcome::Applied);
+    StateNode report = DeviceState::Execution(_emulator->GetContext());
+    ASSERT_TRUE(report.find("available") && report.find("available")->b);
+    EXPECT_EQ(report.find("phase")->s, "running");
+    EXPECT_EQ(report.find("intent")->s, "pause");
+    EXPECT_TRUE(report.find("paused")->b);
+    EXPECT_EQ(report.find("intent_set_by")->find("origin")->s, "cli");
+    EXPECT_EQ(report.find("intent_reason")->s, "user");
+    EXPECT_TRUE(report.find("parked")->b);
+    EXPECT_EQ(report.find("serving")->kind, StateNode::Kind::Null);
+    EXPECT_EQ(report.find("driver_violations")->i, 0);
+
+    // A command holding the CPU shows as `serving`, with its tag and origin
+    {
+        Emulator::CpuHold hold(*_emulator, "report test");
+        report = DeviceState::Execution(_emulator->GetContext());
+        const StateNode* serving = report.find("serving");
+        ASSERT_TRUE(serving && serving->isObject());
+        EXPECT_EQ(serving->find("tag")->s, "report test");
+        EXPECT_FALSE(serving->find("drives_z80")->b);
+    }
+    _emulator->Resume(execution::Requester{execution::Origin::Cli, {}});
 }

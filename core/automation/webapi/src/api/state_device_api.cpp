@@ -622,6 +622,30 @@ Json::Value CellsJson(unsigned start, const std::vector<uint8_t>& bytes)
 }
 }  // namespace
 
+/// @brief GET /api/v1/emulator/{id}/state/execution - the execution arbiter (DeviceState::Execution)
+void EmulatorAPI::getStateExecution(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    ReplyState(DeviceState::Execution(emulator->GetContext()), callback);
+}
+
+void EmulatorAPI::getStateExecutionActive(const HttpRequestPtr& req,
+                                          std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    auto emulator = getEmulatorWithGlobalSelection();
+    if (!emulator)
+    {
+        const size_t count = EmulatorManager::GetInstance()->GetEmulatorIds().size();
+        return ReplyNotFound(MultipleEmulatorsMessage(count, "/api/v1/emulator/{id}/state/execution"), callback,
+                             count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
+    }
+    getStateExecution(req, std::move(callback), emulator->GetId());
+}
+
 /// @brief GET /api/v1/emulator/{id}/state/rtc - the CMOS clock (DeviceState::Rtc); 404 without one
 void EmulatorAPI::getStateRtc(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id) const

@@ -103,6 +103,13 @@ StateNode Ide(EmulatorContext* context);
 /// reason, when the machine has no clock the guest can reach
 StateNode Rtc(EmulatorContext* context);
 
+/// The execution arbiter (docs/inprogress/2026-10-09-execution-arbiter): who decides whether the Z80 runs, now.
+/// `Execution()` the phase, the intent in force (run / pause) with who set it, why and how long ago, the main loop
+/// (attached, parked) and whether it may run, the command holding the CPU (tag, origin, age, whether it drives the
+/// Z80), the queue behind it, the run-control claim, the outcome counters and the two-driver violations (0 on a
+/// correct run). Peeked: reading changes nothing
+StateNode Execution(EmulatorContext* context);
+
 /// The ZX Profi's board peripherals (v3 and v5; the PROFI-PLUS variant too): `ProfiPeripherals()` the board, which
 /// port map answers now (the `[PROFI] ExtPorts` rule, the DOS latch, CP/M, ROM14, hi-res), the 8255 (mode word, the
 /// direction and value of A, B and the two halves of C), the 8253 baud timer (per counter: mode, count, OUT, GATE;

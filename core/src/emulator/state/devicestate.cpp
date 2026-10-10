@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "emulator/emulator.h"
 
 #include "emulator/state/devicestate.h"
 
@@ -2376,6 +2377,69 @@ StateNode Network(EmulatorContext* context)
             e["bytes"] = a.bytes;
         activity.push(std::move(e));
     }
+    return ret;
+}
+
+StateNode Execution(EmulatorContext* context)
+{
+    Emulator* emulator = context ? context->pEmulator : nullptr;
+    if (!emulator)
+        return Unavailable("no emulator");
+    const execution::Snapshot snap = emulator->GetArbiter().GetSnapshot();
+    auto requester = [](const execution::Requester& r) {
+        StateNode n = StateNode::Object();
+        n["origin"] = execution::OriginName(r.origin);
+        if (!r.client.empty())
+            n["client"] = r.client;
+        return n;
+    };
+    auto entry = [&](const execution::SnapshotEntry& e) {
+        StateNode n = StateNode::Object();
+        n["seq"] = e.seq;
+        n["kind"] = e.command ? "command" : "intent";
+        if (e.command)
+            n["tag"] = e.tag;
+        else
+            n["intent"] = execution::IntentName(e.intent);
+        n["by"] = requester(e.requester);
+        n["age_ms"] = e.ageMs;
+        return n;
+    };
+
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["phase"] = execution::PhaseName(snap.phase);
+    ret["intent"] = execution::IntentName(snap.intent);
+    ret["paused"] = emulator->IsPaused();
+    ret["intent_set_by"] = requester(snap.intentSetBy);
+    ret["intent_reason"] = snap.intentReason;
+    ret["intent_seq"] = snap.intentSeq;
+    ret["intent_age_ms"] = snap.intentAgeMs;
+    StateNode& loop = ret["main_loop"] = StateNode::Object();
+    loop["attached"] = snap.loopAttached;
+    loop["parked"] = snap.loopParked;
+    ret["may_run"] = snap.mayRun;
+    ret["parked"] = emulator->IsEmulationParked();
+    if (snap.serving)
+    {
+        StateNode serving = entry(*snap.serving);
+        serving["drives_z80"] = snap.servingDrivesZ80;
+        ret["serving"] = serving;
+    }
+    else
+        ret["serving"] = StateNode();
+    StateNode& queue = ret["queue"] = StateNode::Array();
+    for (const execution::SnapshotEntry& e : snap.queue)
+        queue.push(entry(e));
+    ret["claim"] = snap.claim ? requester(*snap.claim) : StateNode();
+    StateNode& counters = ret["counters"] = StateNode::Object();
+    counters["applied"] = snap.applied;
+    counters["coalesced"] = snap.coalesced;
+    counters["refused"] = snap.refused;
+    counters["busy"] = snap.busy;
+    counters["aborted"] = snap.aborted;
+    counters["edges"] = snap.edges;
+    ret["driver_violations"] = emulator->DriverViolations();
     return ret;
 }
 

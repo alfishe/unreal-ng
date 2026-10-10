@@ -260,6 +260,11 @@ class Emulator:
         default 'none'; network_state()['zifi'] shows the API registers and both rings). Applied at the next frame
         boundary; the card is fitted again, so every connection closes. ValueError with the reason"""
 
+    def execution_state(self) -> dict:
+        """Execution arbiter: phase, intent (run / pause) with intent_set_by (origin, client), intent_reason,
+        main_loop (attached, parked), may_run, parked, serving (the command holding the CPU, drives_z80), queue,
+        claim (run-control holder), counters, driver_violations (0 on a correct run). Peeked"""
+
     def rtc_state(self) -> dict:
         """CMOS clock report: chip, ports, cells, nvram_file, address_latch, time_mode
         (host / emulated / fixed), time (as the guest reads it now), register_a..d decoded,
