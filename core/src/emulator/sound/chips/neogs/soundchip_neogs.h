@@ -226,6 +226,10 @@ public:
     const NeoGSConfig& config() const { return _config; }
     const std::string& flashTitle() const { return _flashTitle; }
     uint8_t peek(uint16_t addr) const { return _mem.peek(addr); }
+    /// The firmware's idle poll loop slept through (on by default; off steps it: comparison tests, diagnosis)
+    void setIdleSleep(bool on) { _runner.setSleepOn(on); }
+    /// Card CPU steps the sleeps stood for (tests, diagnosis)
+    uint64_t stepsSlept() const { return _runner.stepsSlept(); }
     void poke(uint16_t addr, uint8_t value) { _mem.poke(addr, value); }
     /// Flash persistence ([NGS] FlashWrite, neogs-tdd.md §5.8). In persist
     /// mode a modified flash is saved as neogs-flash-<sha256 of the shipped
@@ -296,6 +300,17 @@ private:
     void onIntAccepted();
     void runEvents(int64_t now);
     int64_t unitsPerCycle() const { return _ticksPerCycle; }
+    // Sleeping through the firmware's idle poll loop (GSCardRunner): the bus accesses that are not plain RAM / ROM
+    // reads or the mailbox status and command reads count as side effects; the quiet events are the timer and the
+    // DAC sides (nothing the loop reads changes with them)
+    uint32_t busEffects() const { return _busEffects; }
+    bool sleepAllowed() const
+    {
+        return !_nmiPending && _resetRequest == ResetKind::None && _nextTicksPerCycle == _ticksPerCycle &&
+               !_portTrace.isCapturing() && !Z80CpuIntPossible(_cpu);
+    }
+    int64_t sleepHardStop() const { return std::min(_dma.nextEvent(), _zx.nextEvent()); }
+    void onStepsSkipped(uint64_t steps) { _activityCounters.cpuSteps += steps; }
     void onStep()
     {
         _activityCounters.cpuSteps++;
@@ -325,6 +340,9 @@ private:
 
     uint8_t readMem(uint16_t addr)
     {
+        // Flash reads are timed, #6000-#7FFF reads feed the DAC: neither is a plain read the idle loop may repeat
+        if (!_mem.plainRead(addr) || (addr & 0xE000) == 0x6000)
+            _busEffects++;
         const uint8_t value = _mem.read(addr, _runner.now());
         if ((addr & 0xE000) == 0x6000)
             dacCapture(addr, value);
@@ -458,6 +476,7 @@ private:
     int64_t _extraStrobeAt = 0;       // TIM_FREQ switch edge (INT64_MAX: none)
     int64_t _nextDacCrystal = 0;      // next mixer side, crystal clocks
     bool _nmiPending = false;
+    uint32_t _busEffects = 0;         // GSCardRunner::busEffects
     ResetKind _resetRequest = ResetKind::None;
 
     // Ready detection (§7.1)

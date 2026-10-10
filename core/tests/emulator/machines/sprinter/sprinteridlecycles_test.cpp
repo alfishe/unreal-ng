@@ -35,6 +35,7 @@
 #include "_helpers/soundcardscope.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/z84c15/z84c15engine.h"
+#include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/sound/sprinter/covoxblaster.h"
 #include "emulator/video/sprinter/screensprinter.h"
 #include "sprinterzxsession.h"
@@ -141,6 +142,9 @@ protected:
         run.engine->SetIntAnswerKept(inOneGo);
         run.engine->SetFastBusOn(inOneGo);
         run.engine->SetFetchFilterOn(inOneGo);
+        // The NeoGS (the shipped sound cards): its firmware's idle poll loop slept through
+        if (auto* neogs = dynamic_cast<SoundChip_NeoGS*>(run.context->pSoundManager->getGeneralSound()))
+            neogs->setIdleSleep(inOneGo);
         auto* screen = dynamic_cast<ScreenSprinter*>(run.context->pScreen);
         ASSERT_NE(screen, nullptr);
         screen->SetCatchUpOnEvents(inOneGo);
@@ -244,6 +248,15 @@ protected:
         // The whole RAM (4 MB) at the end
         EXPECT_EQ(Fnv(inOneGo.context->pMemory->RAMBase(), 4096u * 1024u),
                   Fnv(perStep.context->pMemory->RAMBase(), 4096u * 1024u));
+        // The NeoGS card's whole state (CPU with R and T, RAM, timers, DAC, mailbox) and its step count
+        auto* a = dynamic_cast<SoundChip_NeoGS*>(inOneGo.context->pSoundManager->getGeneralSound());
+        auto* b = dynamic_cast<SoundChip_NeoGS*>(perStep.context->pSoundManager->getGeneralSound());
+        ASSERT_EQ(a != nullptr, b != nullptr);
+        if (a)
+        {
+            EXPECT_EQ(a->TTDHashState(), b->TTDHashState()) << "NeoGS state";
+            EXPECT_EQ(a->getActivityCounters().cpuSteps, b->getActivityCounters().cpuSteps) << "NeoGS steps";
+        }
     }
 
     static uint16_t Counter(const Run& run)
@@ -365,6 +378,9 @@ protected:
         for (size_t i = 0; i < fast.trace.size(); i += 3)
             pictures.insert(fast.trace[i]);
         EXPECT_GT(pictures.size(), 10u) << "the demo moves";
+        auto* neogs = dynamic_cast<SoundChip_NeoGS*>(fast.context->pSoundManager->getGeneralSound());
+        ASSERT_NE(neogs, nullptr) << "the shipped sound cards include the NeoGS";
+        EXPECT_GT(neogs->stepsSlept(), 0u) << "its poll loop was slept through";
         _fast = fast.engine;
         _ringWrites = dynamic_cast<PortDecoder_Sprinter*>(fast.context->pPortDecoder)->GetCovoxBlaster().State().ringWrites;
     }

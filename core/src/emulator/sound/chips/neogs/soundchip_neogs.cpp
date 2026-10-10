@@ -1031,6 +1031,10 @@ uint8_t SoundChip_NeoGS::cardIn(uint16_t port)
     const uint8_t p = low & 0x3F;
     const int64_t now = _runner.now();
     uint8_t value = 0xFF;
+    // The mailbox command and status (only the host changes them) and GSCFG0 are plain reads; the status read's
+    // one-time readiness latch is not, nor any other port
+    if (!(p == P_ZXCMD || p == P_GSCFG0 || (p == P_ZXSTAT && _ready)))
+        _busEffects++;
 
     switch (p)
     {
@@ -1222,6 +1226,7 @@ uint8_t SoundChip_NeoGS::memReadCb(Z80CPU* /*cpu*/, uint16_t addr, int /*m1State
 void SoundChip_NeoGS::memWriteCb(Z80CPU* /*cpu*/, uint16_t addr, uint8_t value, void* userData)
 {
     auto* self = static_cast<SoundChip_NeoGS*>(userData);
+    self->_busEffects++;
     self->_mem.write(addr, value, self->_runner.now());
 }
 
@@ -1232,6 +1237,7 @@ uint8_t SoundChip_NeoGS::portReadCb(Z80CPU* /*cpu*/, uint16_t port, void* userDa
 
 void SoundChip_NeoGS::portWriteCb(Z80CPU* /*cpu*/, uint16_t port, uint8_t value, void* userData)
 {
+    static_cast<SoundChip_NeoGS*>(userData)->_busEffects++;
     static_cast<SoundChip_NeoGS*>(userData)->cardOut(port, value);
 }
 
