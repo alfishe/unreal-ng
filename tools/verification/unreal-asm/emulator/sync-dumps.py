@@ -26,7 +26,8 @@ save the text itself and keep the file. The synchronizer's reader must give that
                   --big-disk <disk, 3.2x ReadMe first as BigRead> --big BigRead --tag zlite107   # ZAsm Lite 1.07
     sync-dumps.py zasm <disk, ovlib first> <out-dir> --ram 512 --start enter,a,~6,space,~4 --list-load --upper 30
                   --source ovlib --big-disk <disk, BigRead first> --big BigRead --big-type t --tag zasm3351
-                                                                 # ZAsm 3.3.51 (3.3.Final, 3.80.4, 4.20: --start space,~4)
+                                                                 # ZAsm 3.3.51 (3.3.Final, 3.80.4, 4.20: --start space,~4;
+                                                                 # 3.3.02: --start enter,a,~3,enter,a,~3,space,~3)
     sync-dumps.py masm <disk-with-NAME.a first> <out-dir> --source NAME --tag masm11
                                                                  # MASM 1.1: TAG-typing, TAG-edited, TAG-menu
     sync-dumps.py tasm <disk-with-NAME.A> <out-dir> --boot NAME --source NAME --tag TAG [--as-typed]
