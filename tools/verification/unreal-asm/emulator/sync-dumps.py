@@ -17,6 +17,8 @@ save the text itself and keep the file. The synchronizer's reader must give that
                                                                  # ZAsm 3.15: TAG-typing, TAG-edited, TAG-big
     sync-dumps.py zasm <disk, source first> <out-dir> --boot ZASM3.10 --list-load --source tx_macro --big-disk <disk,
                   big text first> --big ide --tag zasm310        # ZX-ASM 3.10: no drive D question, files from the list
+    sync-dumps.py zasm <disk> <out-dir> --boot ZX-TASM3 --menu-save --type C --source ACEpd55e --big ReadMe --tag zasm30
+                                                                 # ZX ASM 3.0: saved from the main menu, type C
     sync-dumps.py masm <disk-with-NAME.a first> <out-dir> --source NAME --tag masm11
                                                                  # MASM 1.1: TAG-typing, TAG-edited, TAG-menu
     sync-dumps.py tasm <disk-with-NAME.A> <out-dir> --boot NAME --source NAME --tag TAG [--as-typed]
@@ -146,7 +148,7 @@ def zasm(emu, args):
     def start(disk):
         emu.insert_disk(disk)
         emu.run_trdos(args.boot or 'boot', wait=15)
-        if not args.list_load:
+        if not args.list_load and not args.menu_save:
             emu.tap('enter')                   # "No Disk!" (it starts on drive D): Retry, drive A
             emu.tap('a')
             time.sleep(6)
@@ -168,24 +170,36 @@ def zasm(emu, args):
 
     start(args.big_disk or args.disk)
     load(args.big)
-    dump(emu, args.out, f'{args.tag}-big', [2, 5, 6], f'{args.big}.{args.big_type}', saved(emu, args.big, args.big_type),
+    big_type = args.big_type or args.type
+    dump(emu, args.out, f'{args.tag}-big', [2, 5, 6], f'{args.big}.{big_type}', saved(emu, args.big, big_type),
          {'editor': True, 'typing': False})
     start(args.disk)
     load(args.source)
-    loaded = saved(emu, args.source, 'a')
+    loaded = saved(emu, args.source, args.type)
     pages = [2, 5, 6]
     emu.type(' nop')
-    dump(emu, args.out, f'{args.tag}-typing', pages, f'{args.source}.a', loaded, {'editor': True, 'typing': True})
+    name = f'{args.source}.{args.type}'
+    dump(emu, args.out, f'{args.tag}-typing', pages, name, loaded, {'editor': True, 'typing': True})
     emu.tap('enter')
     emu.tap('down')
     time.sleep(1)
-    dump(emu, args.out, f'{args.tag}-edited', pages, f'{args.source}.a', None, {'editor': True, 'typing': False})
+    dump(emu, args.out, f'{args.tag}-edited', pages, name, None, {'editor': True, 'typing': False})
     emu.post('/keyboard/combo', {'keys': ['cs', 'ss'], 'frames': 6})   # COMMAND:
     emu.idle()
     time.sleep(0.8)
-    emu.post('/keyboard/combo', {'keys': ['ss', '2'], 'frames': 4})    # Save Changes
+    if args.menu_save:                         # 3.0: Q back to the menu, File / Save under the name shown
+        emu.tap('q')
+        time.sleep(1)
+        emu.tap('enter')
+        time.sleep(1)
+        emu.tap('up')
+        emu.tap('enter')
+        time.sleep(1)
+        emu.tap('enter')
+    else:
+        emu.post('/keyboard/combo', {'keys': ['ss', '2'], 'frames': 4})    # Save Changes
     time.sleep(4)
-    finish(args.out, f'{args.tag}-edited', f'{args.source}.a', saved(emu, args.source, 'a'))
+    finish(args.out, f'{args.tag}-edited', name, saved(emu, args.source, args.type))
 
 
 def masm(emu, args):
@@ -360,7 +374,9 @@ def main():
     parser.add_argument('--list-keys', default='right', help='xas: the cursor keys that reach PROBE in the file list')
     parser.add_argument('--big', help='zasm: a long text (over #C000) for a loaded case')
     parser.add_argument('--big-disk', help='zasm: the disk for the long text (default: the same)')
-    parser.add_argument('--big-type', default='a', help='zasm: the long text\'s TR-DOS type')
+    parser.add_argument('--big-type', help='zasm: the long text\'s TR-DOS type (default: --type)')
+    parser.add_argument('--type', default='a', help='zasm: the sources\' TR-DOS type')
+    parser.add_argument('--menu-save', action='store_true', help='zasm: save from the main menu, no drive question (3.0)')
     parser.add_argument('--list-load', action='store_true', help='zasm: load the first file of the list (3.10)')
     parser.add_argument('--as-typed', action='store_true', help='tasm: type the name as stored (a keyboard not inverted)')
     args = parser.parse_args()

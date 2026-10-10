@@ -75,6 +75,7 @@ const Case kCases[] = {
     {"storm13i-edited", "storm-1.3"},     {"storm10b-typing", "storm-1.0b"},  {"storm10b-edited", "storm-1.0b"},
     {"zasm315-typing", "zasm-3.15"},   {"zasm315-edited", "zasm-3.15"},    {"zasm315-big", "zasm-3.15"},
     {"zasm310-typing", "zasm-3.10"},   {"zasm310-edited", "zasm-3.10"},    {"zasm310-big", "zasm-3.10"},
+    {"zasm30-typing", "zasm-3.0"},     {"zasm30-edited", "zasm-3.0"},      {"zasm30-big", "zasm-3.0"},
     {"masm11-typing", "masm-1.1"},     {"masm11-edited", "masm-1.1"},      {"masm11-menu", "masm-1.1"},
     {"masm13-typing", "masm-1.1"},     {"masm13-edited", "masm-1.1"},      {"masm13-menu", "masm-1.1"},
     {"tasm40-typing", "tasm-4.0"},     {"tasm40-edited", "tasm-4.0"},      {"tasm40-command", "tasm-4.0"},
