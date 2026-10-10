@@ -6,8 +6,7 @@
 
 The collection folder (<card>/collection/{games,demos}/<genre>/<Title>/, built by the collection builder with an index.tsv whose
 `main_file` column is `games/<genre>/<Title>/<file>`) is walked the way a person walks it: reset, boot, Browser, directory by
-directory (only the part of the path that differs from the previous title's folder: EDIT up, then down; from the card root for the
-first title and after any title that did not show a picture), ENTER on the main file. A directory or file name is found by the shortest unique prefix typed into the Browser's
+directory from the card root (after a reset the Browser opens there), ENTER on the main file. A directory or file name is found by the shortest unique prefix typed into the Browser's
 search (H); names that begin with a character the search cannot type are reached by counting down from the top of the listing.
 For each title the report keeps: the picture after `--wait` seconds, whether the machine is still in NextZXOS (idle at the key-wait
 loop = nothing started), the CPU clock and the DivMMC mapping. Writes <out>/<NNN>-<title>.png, <out>/sheet-<category>.png and
@@ -19,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from drive import Machine  # noqa: E402
 
 SAFE = re.compile(r'^[A-Za-z0-9]+')
+FULL = re.compile(r'^[A-Za-z0-9.]+$')
 
 
 def sorted_entries(folder):
@@ -31,6 +31,17 @@ def reach(machine, folder, name):
     """Put the Browser's cursor on `name` of the directory shown (host path `folder`)"""
     entries = sorted_entries(folder)
     lower = [e.lower() for e in entries]
+    if FULL.match(name):
+        # the search takes dots as well: the whole name is unambiguous even when the card holds game.bas next to game.bak (the
+        # Browser lists what NextZXOS wrote, which the host folder does not show), and a shorter name sorts first
+        machine.tap('h')
+        time.sleep(0.3)
+        machine.call('/%s/keyboard/type' % machine.id, {'text': name, 'delay_frames': 5})
+        time.sleep(0.4 + 0.12 * len(name))
+        machine.idle(0.3)
+        machine.tap('enter')
+        time.sleep(0.3)
+        return True
     match = SAFE.match(name)
     if match:
         text = match.group(0).lower()
@@ -77,7 +88,6 @@ def main():
     rows, sheets = [], {}
     done = 0
     original_baks = {os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs if f.lower().endswith('.bak')}
-    position = None  # the Browser's directory, as names from the card root; None = unknown (resync from the root)
     for n, t in enumerate(titles):
         if n < args.start or done >= args.limit:
             continue
@@ -106,25 +116,15 @@ def main():
         machine.idle(2)
         machine.tap('b')
         machine.idle(2.5)
-        # The Browser reopens in the directory it was last in (the title's own folder), so walk only the difference: EDIT up to the
-        # common ancestor, then down. The card root is the starting point only for the first title and after anything went wrong
+        # After a reset the Browser opens at the card root (checked 2026-10-10: it does not keep the directory across a reset), so the walk
+        # goes straight down from there - no EDIT presses to the root first
         target = ['collection'] + parts[:-1]  # the directory of the main file, from the card root
-        if position is None:
-            machine.root()
-            position = []
-        common = 0
-        while common < min(len(position), len(target)) and position[common] == target[common]:
-            common += 1
-        for _ in range(len(position) - common):
-            machine.tap('edit')
-            machine.idle(0.6)
-        folder = os.path.join(args.card, *target[:common])
-        for name in target[common:]:
+        folder = args.card
+        for name in target:
             reach(machine, folder, name)
             machine.tap('enter')
             machine.idle(1.2)
             folder = os.path.join(folder, name)
-        position = target  # (until the verdict says otherwise)
         reach(machine, folder, parts[-1])
         machine.tap('enter')  # run the main file
         time.sleep(args.wait)
@@ -180,8 +180,6 @@ def main():
             after.save(png.replace('.png', '-keys.png'))
             if back:
                 verdict = 'IN NEXTZXOS'
-        if verdict != 'picture':
-            position = None  # something may have gone wrong: the next title starts from the root again
         rows.append((n, category, t['title'], verdict, '%g MHz' % (state['machine']['cpu_clock_hz'] / 1e6),
                      'DivMMC in' if state['divmmc']['mapped'] else 'DivMMC out'))
         print('%3d %-28s %-34s %-12s %s  %s' % (n, category, t['title'][:34], verdict, rows[-1][4], life), flush=True)
