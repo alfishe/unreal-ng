@@ -181,7 +181,8 @@ phase; master only after the owner's review.
       - [x] Power Assembler 3.0 (2026-10-10): text to `#1A`, the cursor line packed into TABs as SAVE does (§7.18)
       - [x] PROMETHEUS 48K (2026-10-10): the records, checksum, FF and table from its reconstructed source (§7.17)
       - [x] Primus 2.9 (2026-10-10): ZEUS's start / last-FF pair at `#61B1` (§7.15)
-      - [ ] GENS4B (TR-DOS): no way to start it found yet (`basic/run` refuses `RANDOMIZE USR` at the TR-DOS prompt; a PC write crashed)
+      - [x] GENS4B (2026-10-10): started from 48K BASIC via USR 15616 / LOAD CODE / RETURN / USR 30000; text `(#7928)`-`(#7566)` (docs/disasm/software/gens4b)
+      - [ ] `RANDOMIZE USR 15619: REM : LOAD ...` returned without reading the disk (Pentagon, 48 BASIC; TTD: TR-DOS one frame, FDC only `#D0`): explain
     - [ ] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):
     - [ ] Z0 `retrobackend` core + ALASM backend + the file image writer + inject on WebAPI / CLI / MCP, checked by ALASM assembling the injected text

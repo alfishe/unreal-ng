@@ -29,6 +29,7 @@
 #include <string>
 #include <vector>
 
+#include "emulator/coordinator/ports.h"
 #include "emulator/media/blockformats.h"
 #include "emulator/media/mediaconfig.h"
 #include "emulator/media/mediaformatregistry.h"
@@ -57,6 +58,11 @@ struct InsertOptions
     bool writeProtect = false;         ///< the slot's write-protect switch
     bool endRecording = false;         ///< end a TTD recording instead of refusing
     const char* ttdReason = "media-change";  ///< the TTD session the old media described ends with this reason
+    /// The operation the machine state coordinator logs and rules on: a medium in, or a new blank disk
+    coordinator::OpKind opKind = coordinator::OpKind::MediaInsert;
+    /// Which refusal text a recording gives (Emulator::LoadTape / LoadDisk word it for a tape, a disk)
+    coordinator::MediaClass refusalWording = coordinator::MediaClass::Any;
+    coordinator::OpSource origin = coordinator::OpSource::Unknown;   ///< who asked (the operation log)
     bool immediate = false;            ///< no swap delay (media the firmware boots from)
     JournalChoice journal = JournalChoice::Default;  ///< media written in `session` access
     /// A dirty medium already in the slot: what happens to its writes
@@ -84,6 +90,7 @@ struct EjectOptions
     std::string exportPath;     ///< Disposition::Export
     bool endRecording = false;  ///< end a TTD recording instead of refusing
     std::string strategy;       ///< Disposition::Save of a composite (D-8), as InsertOptions
+    coordinator::OpSource origin = coordinator::OpSource::Unknown;   ///< who asked (the operation log)
     bool keepBoth = false;
     bool strict = false;
 };
@@ -205,6 +212,10 @@ public:
     MediaResult Eject(const std::string& slotId, const EjectOptions& options = {});
     /// Drop the medium's session changes
     MediaResult Discard(const std::string& slotId);
+    /// The machine state coordinator wiring (Emulator): the operations above go through @p ops; OpOwner() is
+    /// their owner. Null: they run without rules (a manager without an emulator)
+    void SetMachineOps(coordinator::IMachineOps* ops);
+    coordinator::IOpOwner& OpOwner();
     /// Write the medium's current contents to a new image file. The medium
     /// keeps its source and its unsaved changes. Also for a detached medium.
     /// Block media: a `.chd` target is a CHD (`options`), anything else raw
@@ -349,11 +360,16 @@ private:
                           const std::string& note, SaveOutcome* outcome);
     /// The medium in a slot, or detached under that id
     Medium* FindMedium(const std::string& slotId, SlotState** state);
-    /// Refused while an explicit TTD recording runs, unless the caller ends it; changes nothing
-    MediaResult CheckRecording(bool endRecording) const;
-    /// The change goes ahead (every check passed): the recording the caller ends stops, and the TTD session the old
-    /// media described ends. Never before a check that can still fail: a refused change keeps the session
-    void EndSessionForMediaChange(bool endRecording, const char* reason);
+    /// Insert, eject and discard run through the machine state coordinator (its rules: refused while a recording
+    /// the user started runs; the TTD session ends at the commit point). The manager is their owner
+    struct MediaRequest;
+    class MediaOpOwner;
+    MediaResult RunMediaOp(coordinator::MachineOp op, MediaRequest& request);
+    static coordinator::MachineOp InsertOp(const std::string& slotId, const std::string& what, const InsertOptions& options);
+    /// Checks that come before the rules (their errors win over a recording's refusal, as before)
+    MediaResult ValidateInsert(const std::string& slotId, const Medium* medium) const;
+    MediaResult PrepareMediaOp(MediaRequest& request);
+    bool CommitMediaOp(MediaRequest& request, coordinator::OpStage& stage);
     MediaResult CheckInUse(const std::string& slotId, const Medium& medium) const;
     uint32_t DelayFrames(uint32_t swapDelayMs) const;
     /// One configured entry for a registered slot: its options, then its medium
@@ -377,6 +393,9 @@ private:
     bool _releasing = false;  ///< the destructor saves by policy: nothing executes any more
     static inline std::atomic<bool> _saveOnRelease{true};
     mutable std::recursive_mutex _mutex;
+    /// The coordinator (null: a manager without an emulator, operations run without rules)
+    coordinator::IMachineOps* _machineOps = nullptr;
+    std::unique_ptr<MediaOpOwner> _opOwner;
     std::map<std::string, SlotState> _slots;
     bool _holdHostWrites = false;
     IMediaReadJournal* _readJournal = nullptr;   ///< the taps read it through its address

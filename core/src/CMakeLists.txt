@@ -150,6 +150,7 @@ EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/unreal-asm/" FALSE OUTVA
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/gif/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/eve-emu/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt (ENABLE_VDAC2 below)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/recording/" FALSE OUTVAR CPP_FILES) # Moved to separate library
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/emulator/coordinator/" FALSE OUTVAR CPP_FILES) # Own library, own include path
 # OS-specific implementations (src/platform/<os>/): only the host's own.
 # posix/ serves macOS and Linux; macos/ and linux/ hold what differs between them
 if (WIN32)
@@ -285,6 +286,10 @@ target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC ${SOURCE_DIR}/3rdparty/
 # 'stdafx.h' is our precompiled header
 target_precompile_headers(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/stdafx.h)
 
+
+# The machine state coordinator: its own library, so its include path holds only its own directory
+add_subdirectory(emulator/coordinator)
+target_link_libraries(${PROJECT_NAME} PUBLIC core-coordinator)
 
 # Link lzma library
 target_link_libraries(${PROJECT_NAME} PRIVATE lzma)

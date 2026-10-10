@@ -97,6 +97,7 @@ const Case kCases[] = {
     {"primus29-loaded", "primus-2.9"}, {"primus29-typing", "primus-2.9"}, {"primus29-edited", "primus-2.9"},
     {"gens4-loaded", "gens-4"},        {"gens4-typing", "gens-4"},
     {"gens3m21-loaded", "gens-3m21"},  {"gens3m21-typing", "gens-3m21"},
+    {"gens4b-typing", "gens-4b"},     {"gens4b-edited", "gens-4b"},
     {"gens43t-typing", "gens-4.3t"},   {"gens43t-edited", "gens-4.3t"},
     {"zasm24-typing", "zasm-2.4"}, {"zasm24-edited", "zasm-2.4"}, {"zasm24-big", "zasm-2.4"},
     {"zasm25-typing", "zasm-2.5"}, {"zasm25-edited", "zasm-2.5"}, {"zasm25-big", "zasm-2.5"},

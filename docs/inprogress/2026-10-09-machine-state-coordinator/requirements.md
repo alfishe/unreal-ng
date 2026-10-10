@@ -41,7 +41,8 @@ internals of anyone else.
 - Each operation kind has exactly one owner; each capability (mode changes, boundary phase, timeline cut) is
   subscribed only by the participants that have it.
 - All links are made in one place (the emulator's wiring function); reading it shows the whole graph.
-- A check in the build fails when the coordinator's directory includes anything outside its own ports and `base/`.
+- A check in the build fails when the coordinator's directory includes anything outside its own headers and the
+  standard library.
 
 **Very well tested.**
 - The coordinator builds and runs in tests without an emulator: fake participants, a fake machine thread and a fake
@@ -178,7 +179,7 @@ is UNS's job (owner decision).
 | N4 | Every policy row, the boundary order, F4 and F6 are core tests. |
 | N5 | One coordinator per instance, no global state (owner decision Q1). |
 | N6 | Autonomy: no caller applies a rule, a park variant or a TTD hook for a machine-level operation; the coordinator holds its own mode, queue and log (§0.3). |
-| N7 | Wiring: the coordinator includes only its ports and `base/`; participants include only their port; no participant calls another for a machine-level operation; all links in one wiring function; enforced by a build check (§0.3). |
+| N7 | Wiring: the coordinator includes only its own headers and the standard library; participants include only their port; no participant calls another for a machine-level operation; all links in one wiring function; enforced by a build check (§0.3). |
 | N8 | Testability: the coordinator is tested without an emulator (fakes for participants, machine thread, clock); every policy cell, lifecycle branch, boundary phase and log path has a test; each real participant passes its port's contract test; tests deterministic, no sleeps (§0.3). |
 
 ## 5. Not in scope

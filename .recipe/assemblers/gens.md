@@ -121,18 +121,25 @@ reverse of GENS4).
 
 ### GENS4B (TR-DOS)
 
-Start it from the TR-DOS prompt: TR-DOS from the Pentagon menu ([run/manual-trdos-run.md](../run/manual-trdos-run.md)),
-the code to 30000, `RANDOMIZE USR 30000` at the `A>` prompt. Started from 48K or 128K BASIC without entering TR-DOS
-first, its disk commands hang or reset the machine (that was the earlier failure: TR-DOS's variables were not set up).
+GENS4B has no loader and calls TR-DOS through `#3D13`, whose services need TR-DOS's system variables: enter TR-DOS
+once from **48K BASIC**, load the code at the `A>` prompt, go back with `RETURN`, start it from BASIC
+([docs/disasm/software/gens4b](../../docs/disasm/software/gens4b/README.md): why, the calls, the text layout). The
+file must be named `gens4b` (type `C`, start 30000) on the disk:
 
 ```text
 media      {"action":"insert","slot":"A","path":"/abs/scratch/gens.trd","discard":true}
 emulator_manage {"action":"reset"}
-type_input {"action":"tap","key":"down"}                  # x4: TR-DOS
+type_input {"action":"tap","key":"down"}                  # x3: 48 BASIC
 type_input {"action":"tap","key":"enter"}
-invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/memory/write","body":{"address":30000,"data":[...12174 bytes...]}}
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"command":"RANDOMIZE USR 15616"}}
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"command":"LOAD \"gens4b\" CODE 30000"}}
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"command":"RETURN"}}
 invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"command":"RANDOMIZE USR 30000"}}
 ```
+
+`RANDOMIZE USR 30000` typed at the `A>` prompt is refused (a BASIC statement, not a TR-DOS command); `RETURN` after
+the menu's TR-DOS item goes to 128 BASIC; `RANDOMIZE USR 15619: REM : LOAD ...` returned without reading the disk
+here (open, see the dossier).
 
 The editor (V4.1, "1990 MOA B-Disk version") lists its commands. A disk file is named `n:NAME`, `n` = 1-4 for drives
 A-D, the type is always `C` (the code reads the digit, the name, pads it to 8 blanks and asks TR-DOS for type `C`):

@@ -1,0 +1,78 @@
+#include "machineop.h"
+
+namespace coordinator
+{
+const char* OpKindName(OpKind kind)
+{
+    switch (kind)
+    {
+        case OpKind::Reset: return "reset";
+        case OpKind::Autostart: return "autostart";
+        case OpKind::SnapshotLoad: return "snapshot-load";
+        case OpKind::MediaInsert: return "media-insert";
+        case OpKind::MediaEject: return "media-eject";
+        case OpKind::MediaDiscard: return "media-discard";
+        case OpKind::DiskCreate: return "disk-create";
+        case OpKind::Count: break;
+    }
+    return "unknown";
+}
+
+const char* OpSourceName(OpSource source)
+{
+    switch (source)
+    {
+        case OpSource::Unknown: return "unknown";
+        case OpSource::Qt: return "qt";
+        case OpSource::WebApi: return "webapi";
+        case OpSource::Cli: return "cli";
+        case OpSource::Lua: return "lua";
+        case OpSource::Python: return "python";
+        case OpSource::Gdb: return "gdb";
+        case OpSource::DeZog: return "dezog";
+        case OpSource::Mcp: return "mcp";
+        case OpSource::Machine: return "machine";
+        case OpSource::Core: return "core";
+        case OpSource::Test: return "test";
+        case OpSource::Count: break;
+    }
+    return "unknown";
+}
+
+const char* MachineModeName(MachineMode mode)
+{
+    switch (mode)
+    {
+        case MachineMode::Live: return "live";
+        case MachineMode::Recording: return "recording";
+        case MachineMode::BlackBox: return "black-box";
+        case MachineMode::Replaying: return "replaying";
+        case MachineMode::Detached: return "detached";
+        case MachineMode::Count: break;
+    }
+    return "unknown";
+}
+
+const char* SessionEffectName(SessionEffect effect)
+{
+    switch (effect)
+    {
+        case SessionEffect::None: return "none";
+        case SessionEffect::EndKeepHistory: return "end-keep-history";
+        case SessionEffect::MediaChanged: return "media-changed";
+        case SessionEffect::StopThenMediaChanged: return "stop-then-media-changed";
+    }
+    return "unknown";
+}
+
+const char* OpStatusName(OpStatus status)
+{
+    switch (status)
+    {
+        case OpStatus::Done: return "done";
+        case OpStatus::Refused: return "refused";
+        case OpStatus::Failed: return "failed";
+    }
+    return "unknown";
+}
+}  // namespace coordinator
