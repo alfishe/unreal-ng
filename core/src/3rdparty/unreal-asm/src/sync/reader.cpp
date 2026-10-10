@@ -457,6 +457,27 @@ SyncDescriptor Zasm32x()
     return d;
 }
 
+/// ZAsm Lite 1.07 (asm-synchronizer.md §7.9): 3.2x's layout elsewhere: the buffer from #85A7, the start at #859D,
+/// the end at #859F; the part above #C000 in RAM page 30 (Pentagon 512); a ";*" position line on SAVE
+SyncDescriptor ZasmLite107()
+{
+    SyncDescriptor d;
+    d.id = "zasm-lite-1.07";
+    d.title = "ZAsm Lite 1.07";
+    d.codec = "zxasm";
+    d.version = "lite";
+    d.extension = "a";
+    d.identify = {{0x8000, std::string("\xE5\x2A\x48\x62\xE5\xB7\xED\x42\x4D\x44\xE1\x09\x1B\x7A\xB3\x20\xFA\x22\x48\x62\xE1\xC9\xCD\xC8", 24)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.startAt = 0x859D;
+    d.linear.endAt = 0x859F;
+    d.linear.upperPage = 30;
+    d.linear.stateLine = ";*";
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 /// ZX-ASM 3.10 (asm-synchronizer.md §7.9): the layout of 3.15 with its table at #868F: the start, then the end at
 /// #869E; the part above #C000 in RAM page 6; no ";!" line on SAVE
 SyncDescriptor Zxasm310()
@@ -590,6 +611,7 @@ const std::vector<SyncDescriptor>& Descriptors()
         Storm("storm-1.0b", "STORM 1.0beta", "1.0", 0x03, '\x85'),
         Zasm315(),
         Zasm32x(),
+        ZasmLite107(),
         Zxasm310(),
         Zxasm30(),
         Masm11(),
