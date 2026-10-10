@@ -224,6 +224,6 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 
 ## Automation coverage - what is left (2026-10-10)
 
-- [ ] Per-layer capture and the pixel inspector: designed in [design-layer-capture.md](design-layer-capture.md) (phases L1-L4); a re-render from the registers cannot be used because the copper changes them inside a line.
+- [ ] Per-layer capture and the pixel inspector: designed in [design-layer-capture.md](design-layer-capture.md) rev. 2 (phases L0-L4: one-frame buffers, always on if the overhead is within 5 %, decided by the L0 measurement); a re-render from the registers cannot be used because the copper changes them inside a line.
 - [x] Lua / Python bindings of the new reports are verified in `tools/verification/webapi/src/test_api_next.py` (class `TestNextInterpreters`) against a live app, not in `core-tests` (the core library does not link the interpreters). Lua passes live; the Python test skips where the Python interpreter is off (the agent build).
 - [ ] Gate the remaining ports by NR #82-#85 (`next_ports.enforced` says which ports are gated: only the DAC ports and the Multiface now).
