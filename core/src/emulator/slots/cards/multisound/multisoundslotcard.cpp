@@ -71,8 +71,8 @@ MultiSoundCardConfig MultiSoundSlotCard::ConfigFrom(const CardContext& context)
     // T-states per second (turbo descaled by AudioTstate)
     config.hostTickRate = static_cast<uint32_t>(CPU_CLOCK_RATE);
     EmulatorContext* emulator = context.emulator;
-    // The YM2203 FM calibration: the TurboSound FM's [SOUND] TSFM_FmTrimDb, read and applied the same way (gain =
-    // 0.30 x 10^(trim / 20) on both boards, an absent key is 0 dB on both)
+    // The YM2203 FM calibration: the TurboSound FM's [SOUND] TSFM_FmLevelDb, read and applied the same way (gain =
+    // kFmBaseGain x 10^(trim / 20) on both boards, an absent key is 0 dB, the measured board, on both)
     if (emulator != nullptr)
         config.fmTrimDb = emulator->config.sound.tsfmFmTrimDb;
     if (emulator != nullptr && emulator->pSoundManager != nullptr)

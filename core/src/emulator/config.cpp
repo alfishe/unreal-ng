@@ -825,8 +825,24 @@ bool Config::ParseConfig(IniFile& inimanager)
 		}
 	}
 
-	// FM loudness trim in dB relative to the hardware-derived default (0 = default)
-	config.sound.tsfmFmTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmTrimDb", 0.0);
+	// YM2203 FM loudness trim in dB over the measured board level (0 = the real board). The old key TSFM_FmTrimDb
+	// counted from the MiSTer-derived baseline 7.4 dB below it (shipped as 7.4): a copied ini keeps its sound
+	constexpr double kOldFmTrimOfTheBoardDb = 7.4;  // the old key's value at the real board's level
+	if (inimanager.GetValue(sound, "TSFM_FmLevelDb", nullptr) != nullptr)
+	{
+		config.sound.tsfmFmTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmLevelDb", 0.0);
+	}
+	else if (inimanager.GetValue(sound, "TSFM_FmTrimDb", nullptr) != nullptr)
+	{
+		const double oldTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmTrimDb", 0.0);
+		config.sound.tsfmFmTrimDb = oldTrimDb - kOldFmTrimOfTheBoardDb;
+		MLOGWARNING("Config: [SOUND] TSFM_FmTrimDb=%.1f is obsolete, read as TSFM_FmLevelDb=%.1f (0 = the real board)",
+		            oldTrimDb, config.sound.tsfmFmTrimDb);
+	}
+	else
+	{
+		config.sound.tsfmFmTrimDb = 0.0;
+	}
 
 	// AY / SSG stereo layout ([AY] Stereo): abc (default), acb or mono. A
 	// missing key resets to the default; unknown values warn and keep it

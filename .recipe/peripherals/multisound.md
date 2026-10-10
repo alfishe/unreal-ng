@@ -65,7 +65,7 @@ capture_media     {"action":"audio_capture","seconds":2,"source":"ms_ssg1"}  # m
 
 The rows are per chip like the TurboSound FM's (`ay1` / `ay2` / `fm1` / `fm2` there): `ms_ssg1`, `ms_ssg2`, `ms_fm1`,
 `ms_fm2`, then `ms_saa`, `ms_pcm` (GS + SounDrive DACs), `ms_midi`; the HUD lights one indicator per row. The FM rows
-use the TurboSound FM's calibration, `[SOUND] TSFM_FmTrimDb` (7.4 dB shipped; the audio settings' "FM trim" drives
+use the TurboSound FM's calibration, `[SOUND] TSFM_FmLevelDb` (0 dB = the measured board, shipped; the audio settings' "FM trim" drives
 both boards; the report shows `ym.fm_trim_db`): the same tune comes out at the same FM level on the card and on a TSFM.
 The card's SSG rows sit 7.6 dB lower than a TSFM's - the board's own resistor weights (SSG 24 k against FM 10 k).
 Verified 2026-10-05 on a Pentagon (live instance, the numbers above).

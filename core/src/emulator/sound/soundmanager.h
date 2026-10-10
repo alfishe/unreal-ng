@@ -692,7 +692,7 @@ public:
     void setDeviceSolo(AudioSourceType type, bool solo);
     void setDeviceVolume(AudioSourceType type, float volume);
 
-    /// YM2203 FM loudness trim in dB ([SOUND] TSFM_FmTrimDb), applied live to every YM2203 FM in the machine: the
+    /// YM2203 FM loudness trim in dB over the measured hardware level ([SOUND] TSFM_FmLevelDb), applied live to every YM2203 FM in the machine: the
     /// TurboSound FM in the AY socket and every slot card with YM2203 FM (the ZX-MultiSound) - one calibration, shown
     /// as one control. Returns false when the machine has no YM2203 FM
     bool setFmTrimDb(double db);

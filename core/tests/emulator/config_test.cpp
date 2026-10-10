@@ -163,11 +163,27 @@ TEST_F(Config_Test, TurboSoundKindMissingResetsStaleFm)
     EXPECT_EQ(_context->config.sound.turboSoundKind, TurboSoundKind::AY);
 }
 
-TEST_F(Config_Test, FmTrimDbParsed)
+TEST_F(Config_Test, FmLevelDbParsed)
 {
-    ASSERT_TRUE(LoadSoundKeys("TurboSound=FM\nTSFM_FmTrimDb=-3.5\n"));
+    ASSERT_TRUE(LoadSoundKeys("TurboSound=FM\nTSFM_FmLevelDb=-3.5\n"));
     EXPECT_EQ(_context->config.sound.turboSoundKind, TurboSoundKind::FM);
     EXPECT_DOUBLE_EQ(_context->config.sound.tsfmFmTrimDb, -3.5);
+}
+
+TEST_F(Config_Test, OldFmTrimDbCountsFromTheOldBaseline)
+{
+    // TSFM_FmTrimDb counted 7.4 dB as the real board (the shipped inis before the baseline moved into the code): a
+    // copied ini keeps its level
+    ASSERT_TRUE(LoadSoundKeys("TurboSound=FM\nTSFM_FmTrimDb=7.4\n"));
+    EXPECT_NEAR(_context->config.sound.tsfmFmTrimDb, 0.0, 1e-9);
+    ASSERT_TRUE(LoadSoundKeys("TurboSound=FM\nTSFM_FmTrimDb=1.4\n"));
+    EXPECT_NEAR(_context->config.sound.tsfmFmTrimDb, -6.0, 1e-9);
+}
+
+TEST_F(Config_Test, FmLevelDbWinsOverTheOldKey)
+{
+    ASSERT_TRUE(LoadSoundKeys("TurboSound=FM\nTSFM_FmTrimDb=7.4\nTSFM_FmLevelDb=2\n"));
+    EXPECT_DOUBLE_EQ(_context->config.sound.tsfmFmTrimDb, 2.0);
 }
 
 TEST_F(Config_Test, FmTrimDbDefaultsToZero)

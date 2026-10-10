@@ -97,7 +97,7 @@ struct MultiSoundCardConfig
     std::string midiBankPath = "midi/generaluser-gs.sf2";
     /// A bank object instead of the file (tests, one bank shared by several cards); overrides midiBankPath
     std::shared_ptr<const sam2695::ISoundBank> midiBank;
-    /// FM loudness trim in dB: the TurboSound FM's [SOUND] TSFM_FmTrimDb, the same calibration on both boards
+    /// FM loudness trim in dB: the TurboSound FM's [SOUND] TSFM_FmLevelDb, the same calibration on both boards
     double fmTrimDb = kMultiSoundDefaultFmTrimDb;
 };
 
@@ -188,7 +188,7 @@ public:
     void SetOutputRate(uint32_t rate);
     /// HiFi / Authentic (SAA PDM stream + board filters) at a frame boundary
     void SetRenderMode(MultiSoundRenderMode mode);
-    /// FM loudness trim in dB (the TurboSound FM's TSFM_FmTrimDb; the audio settings' FM trim drives both boards)
+    /// FM loudness trim in dB (the TurboSound FM's TSFM_FmLevelDb; the audio settings' FM trim drives both boards)
     void SetFmTrimDb(double db);
     double FmTrimDb() const { return _mixer.FmTrimDb(); }
 

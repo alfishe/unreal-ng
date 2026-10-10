@@ -4,7 +4,7 @@ Everything found while verifying the TurboSound FM implementation against real h
 
 | # | Issue | Area | Status |
 |---|---|---|---|
-| 1 | FM 7.4 dB too quiet against SSG | mix levels | fixed (config), code baseline open |
+| 1 | FM 7.4 dB too quiet against SSG | mix levels | fixed, baseline in the code |
 | 2 | Clicks: device and mixer disagree on the frame's sample count | mixer | fixed, uncommitted |
 | 3 | CSM does not retrigger on Timer A overflow | ymfm | fixed, `279bbe2c` |
 | 4 | HQ character chains ran with HQ off | mixer / CPU | fixed, `7840d135` |
@@ -40,7 +40,11 @@ Everything found while verifying the TurboSound FM implementation against real h
 
 **Fix.** `TSFM_FmTrimDb=7.4` in all nine shipped inis (`e7e63ec1`); the trim is read at start and applied at device construction. Re-measured in the app: FM − SSG A = +0.8 dB, the hardware average. `TsfmGain_Test` pins the new one-carrier level (5744) and asserts the ini carries 7.4.
 
-**Open part.** Moving the code baseline `kFmBaseGain` to 0.70 waits for issue 6.
+**Baseline moved into the code (2026-10-10).** `kFmBaseGain` is 0.703 (exactly 0.30 × 10^(7.4/20), so the shipped sound
+is bit-identical) in `SoundChip_TurboSoundFM` and `MultiSoundMixer`; the inis carry `TSFM_FmLevelDb=0`, 0 meaning the
+board. The old key `TSFM_FmTrimDb` is still read, minus 7.4, with a warning: a copied ini keeps its level. The audio
+settings' FM trim reads 0 at the board's level. Tests `Config_Test.OldFmTrimDbCountsFromTheOldBaseline`,
+`FmLevelDbWinsOverTheOldKey`, `TsfmGain_Test.Reference`.
 
 **Docs.** `materials/volume/README.md`, `verification/volume-balance-report.md`.
 
@@ -104,9 +108,8 @@ never reaching full scale. The same material now peaks at 31 587-31 995 with no 
 levels pass linearly, so the measured FM-to-SSG balance is unchanged. A classic TurboSound (AY) keeps the integer path
 byte for byte. Tests `TsfmHeadroom_Test.*`.
 
-**Left.** The limiter tames, it does not make room: material this loud is compressed by 3 to 8 dB at its peaks. Moving the code
-baseline `kFmBaseGain` to 0.70 (issue 1) no longer waits for this one; the shipped inis would drop their 7.4 trim in
-the same change.
+**Left.** The limiter tames, it does not make room: material this loud is compressed by 3 to 8 dB at its peaks. The code baseline
+moved with issue 1.
 
 ## 7. LQ → HQ switch replays stale decimator history
 

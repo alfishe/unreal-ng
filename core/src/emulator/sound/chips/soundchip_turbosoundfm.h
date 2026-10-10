@@ -73,8 +73,10 @@ protected:
     int16_t* const _fm0Buffer = (int16_t*)_fm0AudioDescriptor.memoryBuffer;
     int16_t* const _fm1Buffer = (int16_t*)_fm1AudioDescriptor.memoryBuffer;
 
-    /// FM loudness baseline (§7.1): full-scale DAC word -> 0.30 in the mix
-    static constexpr double kFmBaseGain = 0.30;
+    /// FM loudness baseline (§7.1, ISSUES.md #1): full-scale DAC word -> 0.703 in the mix, the real board's measured
+    /// level (one carrier at TL 0 sits 0.8 dB above one SSG channel at volume 15). Exactly 0.30 x 10^(7.4 / 20): the
+    /// MiSTer-derived 0.30 plus the measured 7.4 dB, which the shipped inis carried as TSFM_FmTrimDb=7.4 before
+    static constexpr double kFmBaseGain = 0.7032686445959766;
     /// Constant lag of the render cursor behind the word and SSG-write
     /// timeline (§6.2, see kTurboSoundRenderLagT)
     static constexpr int64_t kFmRenderLagT = Ym2203Pair::kRenderLag;
@@ -102,7 +104,7 @@ protected:
     // before the gap; flushed at the next frame start (emulation thread)
     bool _outputFlushPending = false;
 
-    // FM gain = kFmBaseGain * 10^(trim/20) (§7.1); [SOUND] TSFM_FmTrimDb
+    // FM gain = kFmBaseGain * 10^(trim/20) (§7.1); [SOUND] TSFM_FmLevelDb
     double _fmGain = kFmBaseGain;
     double _fmTrimDb = 0.0;
 
@@ -259,8 +261,8 @@ public:
         return _coreRate;
     }
 
-    /// FM loudness trim in dB relative to the 0.30 hardware-derived default
-    /// (§7.1); live-adjustable from the Audio Settings dialog
+    /// FM loudness trim in dB relative to the measured hardware level (§7.1,
+    /// 0 = the board); live-adjustable from the Audio Settings dialog
     void setFmTrimDb(double db) override
     {
         _fmTrimDb = db;

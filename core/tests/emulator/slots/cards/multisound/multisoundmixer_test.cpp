@@ -233,14 +233,14 @@ TEST(MultiSoundMixer_Test, AuthenticSaaLadder)
     }
 }
 
-/// The FM trim: the TurboSound FM's gain law, 0.30 x 10^(trim / 20), live; 7.4 dB (the shipped calibration) is the
+/// The FM trim: the TurboSound FM's gain law, kFmBaseGain x 10^(trim / 20), live; 0 dB (the measured board) is the
 /// constructed default and kFmFullScale. The SSG and every other source do not move with it
 TEST(MultiSoundMixer_Test, FmTrimFollowsTheTsfmGainLaw)
 {
     MultiSoundMixer mixer = MakeMixer();
     EXPECT_DOUBLE_EQ(mixer.FmTrimDb(), kMultiSoundDefaultFmTrimDb);
     EXPECT_NEAR(MultiSoundMixer::FmFullScale(kMultiSoundDefaultFmTrimDb), MultiSoundMixer::kFmFullScale, 1e-5);
-    for (const double trim : {7.4, 0.0, -6.0, 3.5})
+    for (const double trim : {0.0, -7.4, -6.0, -3.5})
     {
         mixer.SetFmTrimDb(trim);
         const float one = 1.0f;
@@ -250,7 +250,7 @@ TEST(MultiSoundMixer_Test, FmTrimFollowsTheTsfmGainLaw)
         in.ssg[1][0] = &one;
         Rows rows(1);
         mixer.Mix(in, rows.Output());
-        EXPECT_NEAR(rows.fm[0] / 32767.0, 0.30 * std::pow(10.0, trim / 20.0), 1.0 / 32767.0) << trim;
+        EXPECT_NEAR(rows.fm[0] / 32767.0, 0.30 * std::pow(10.0, (trim + 7.4) / 20.0), 1.0 / 32767.0) << trim;
         EXPECT_NEAR(Gain(rows.ssg2[0], MultiSoundMixer::kSsgChannelFullScale), 0.417, 0.0015) << trim;
     }
 }

@@ -14,8 +14,10 @@ A change is a slot change that **restarts the machine** (a new instance,
 the media kept): `emulator_manage {"action":"slots_plug","slot":"ay-socket",
 "card":"ts","replace_if_incompatible":true}`, CLI `slots plug ay-socket ts
 --replace`. The legacy `[SOUND] TurboSound=` key still works in an INI
-without `[SLOTS]`. `TSFM_FmTrimDb=7.4` calibrates FM loudness to the
-real TSFM board (one FM carrier at TL 0 ≈ one SSG channel at volume 15).
+without `[SLOTS]`. FM plays at the real TSFM board's measured loudness (one
+FM carrier at TL 0 ≈ one SSG channel at volume 15); `TSFM_FmLevelDb` trims it
+(0 = the board). The old key `TSFM_FmTrimDb` counted 7.4 as the board and is
+still read that way.
 
 Ground truth: config `[SOUND]` block in any
 [data/configs/*/unreal.ini](../../data/configs/pentagon128k/unreal.ini),
@@ -108,6 +110,6 @@ curl -s "$BASE/emulator/$EMU_ID/state/audio/beeper" | jq .
 - **Assert on decoded fields, not raw bytes** — the register endpoints
   already compute `frequency_hz`, envelope shape flags and mixer
   direction; recomputing them client-side just duplicates the decode math.
-- **TSFM loudness is calibrated, not neutral** — `TSFM_FmTrimDb` shifts FM
+- **TSFM loudness is calibrated, not neutral** — `TSFM_FmLevelDb` shifts FM
   relative to SSG by design; a level mismatch between FM and AY channels
   is expected calibration, not a mixer bug.

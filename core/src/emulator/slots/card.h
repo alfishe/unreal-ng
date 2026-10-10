@@ -160,7 +160,7 @@ public:
     {
         return false;
     }
-    /// YM2203 FM loudness trim in dB ([SOUND] TSFM_FmTrimDb, the audio settings' FM trim) for a card with YM2203 FM;
+    /// YM2203 FM loudness trim in dB ([SOUND] TSFM_FmLevelDb, the audio settings' FM trim) for a card with YM2203 FM;
     /// false: the card has none
     virtual bool SetFmTrimDb(double db)
     {

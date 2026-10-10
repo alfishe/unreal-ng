@@ -19,7 +19,7 @@
 
 /// Master mix headroom for loud TSFM material (TSFM ISSUES.md #6).
 ///
-/// At the board's measured FM level (TSFM_FmTrimDb=7.4, materials/volume) one chip's full FM word is 0.70 of full
+/// At the board's measured FM level (kFmBaseGain, materials/volume) one chip's full FM word is 0.70 of full
 /// scale, so two chips at full FM sum to 1.4 and with both SSGs flat out to over 2. The int16 saturating mix
 /// hard-clipped such material; a TSFM machine mixes on the wide float bus with the master soft limiter instead.
 ///

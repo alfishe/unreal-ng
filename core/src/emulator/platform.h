@@ -667,8 +667,8 @@ struct CONFIG
 		/// 128-512 at parse; a change needs a new emulator instance.
 		unsigned gsRamKB = 128;
 
-		/// FM loudness trim in dB relative to the hardware-derived default
-		/// ([SOUND] TSFM_FmTrimDb; 0 = default)
+		/// YM2203 FM loudness trim in dB relative to the measured hardware level
+		/// ([SOUND] TSFM_FmLevelDb; 0 = the real board)
 		double tsfmFmTrimDb = 0.0;
 
 		/// Anti-alias decimator tier for the TurboSound-slot devices

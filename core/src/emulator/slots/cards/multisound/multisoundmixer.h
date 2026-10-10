@@ -44,10 +44,9 @@ struct MultiSoundMixerConfig
     bool acCoupling = true;
 };
 
-/// FM loudness trim in dB over the YM2203 FM baseline, the TurboSound FM's [SOUND] TSFM_FmTrimDb: the same value, shown
-/// and applied the same way on both boards. 7.4 dB is the real TSFM board's measurement (one FM carrier at TL 0 sits
-/// 0.4-1.2 dB above one SSG channel at volume 15; shipped in every config)
-inline constexpr double kMultiSoundDefaultFmTrimDb = 7.4;
+/// FM loudness trim in dB over the YM2203 FM baseline, the TurboSound FM's [SOUND] TSFM_FmLevelDb: the same value, shown
+/// and applied the same way on both boards. 0 dB is the real TSFM board's measured level (kFmBaseGain)
+inline constexpr double kMultiSoundDefaultFmTrimDb = 0.0;
 
 struct MultiSoundMixerTrim
 {
@@ -83,13 +82,13 @@ public:
     // Calibration: module units to a level (1.0 = INT16_MAX), before the board weight.
     //
     // FM: the TurboSound FM module's level, which the real TSFM board's measurement set (one carrier at TL 0 sits
-    // 0.8 dB above one SSG channel at volume 15): kFmBaseGain 0.30 x 10^(TSFM_FmTrimDb / 20), the trim 7.4 dB by
-    // default (docs/inprogress/2026-09-10-turbosound-fm/ISSUES.md #1, tsfm-tdd.md §7.1). The MultiSound's FM path has
+    // 0.8 dB above one SSG channel at volume 15): kFmBaseGain 0.703 x 10^(TSFM_FmLevelDb / 20), 0 dB by default
+    // (docs/inprogress/2026-09-10-turbosound-fm/ISSUES.md #1, tsfm-tdd.md §7.1). The MultiSound's FM path has
     // weight 1.0, so an MS FM row equals the TSFM's FM row of the same chip at the same trim. The trim is live
     // (SetFmTrimDb, the audio settings' FM trim); the volt-based sources below are placed against the DEFAULT level -
     // the board's own balance, which the user's FM trim does not move
-    static constexpr double kFmBaseGain = 0.30;          // SoundChip_TurboSoundFM::kFmBaseGain
-    static constexpr double kFmFullScale = 0.70327;      // at the default trim: 0.30 x 10^(7.4 / 20) = 0.703269
+    static constexpr double kFmBaseGain = 0.7032686445959766;  // SoundChip_TurboSoundFM::kFmBaseGain, 0.30 x 10^(7.4 / 20)
+    static constexpr double kFmFullScale = 0.70327;               // kFmBaseGain rounded: the default (0 dB) trim's level
     static double FmFullScale(double trimDb);
     // SSG: the emulator's SSG channel at full volume is 0..0.30 (soundchip_ay8910: table level x pan 0.9 / 3), the
     // level the TSFM measurement above was taken against. The TSFM board gives FM and SSG A equal weights, so 0.30 is
@@ -119,7 +118,7 @@ public:
     void SetOutputRate(uint32_t rate);
     void SetRenderMode(MultiSoundRenderMode mode);
 
-    /// FM trim in dB (the TSFM's TSFM_FmTrimDb), applied from the next block
+    /// FM trim in dB (the TSFM's TSFM_FmLevelDb), applied from the next block
     void SetFmTrimDb(double db);
     double FmTrimDb() const { return _trim.fmDb; }
 

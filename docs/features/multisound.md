@@ -174,8 +174,8 @@ The rows exist only while the card is fitted. The HUD shows one activity indicat
 
 ### Levels and stereo
 
-- **FM trim is shared with the TurboSound FM.** The FM rows use the TSFM's calibration, `[SOUND] TSFM_FmTrimDb`
-  (7.4 dB in the shipped configs), and the "FM trim" control of the audio settings drives both boards: one tune comes
+- **FM trim is shared with the TurboSound FM.** The FM rows use the TSFM's calibration, `[SOUND] TSFM_FmLevelDb`
+  (0 dB, the measured board, in the shipped configs), and the "FM trim" control of the audio settings drives both boards: one tune comes
   out at the same FM level on the card and on a TSFM in the socket.
 - **The SSG rows are 7.6 dB quieter than a TSFM's**, on purpose: on the card's mixer the SSG goes through larger
   resistors than the FM (24 k against 10 k), the TSFM board mixes them equally. Example: a tune whose SSG and FM are
