@@ -227,7 +227,7 @@ def main():
         with open(png, 'wb') as f:
             f.write(base64.b64decode(data['data']))
         im = Image.open(png).convert('RGB')
-        flat = len(set(im.getdata())) <= 2
+        flat = len(set(im.getdata())) <= 1  # one colour only: a text screen (two colours) is a picture
         verdict = 'IN NEXTZXOS' if idle else ('flat' if flat else 'picture')
         # Loading is not enough: a program that runs sits on its title screen until a key. Watch it move on its own, then press the
         # start keys and see whether the picture changes, whether it stays alive, and what the CPU does
