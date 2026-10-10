@@ -97,6 +97,10 @@
 #include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
+#include <common/stringhelper.h>
+#include <debugger/ports/nextregwrite.h>
+#include <emulator/io/z80n/nextregjournal.h>
+#include <emulator/io/z80n/nextreportquery.h>
 #include "../bindings/python_porttrace.h"
 #include "../bindings/python_vdac2.h"
 
@@ -2802,6 +2806,123 @@ namespace PythonBindings
                "Sprinter ZX (Spectrum) mode: active, the launcher configuration (each .ZX option from the hardware, the "
                "launcher's text in RAM), best-matching mode file with confidence, clock (CNF request, F12, MHz), frame / INT, "
                "ROMs by CRC, the decode of #7FFD / #1FFD / #01FD / #xxFD / #FE / #1F; deep=False skips the whole-RAM search")
+            .def("next_state", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::Next(self.GetContext())); },
+               "ZX Spectrum Next machine state (machine type, CPU clock, DivMMC, interrupts, CTC, SPI); available=False elsewhere")
+            .def("next_regs", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextRegs(self.GetContext())); },
+               "The NextREG table: number, name, access, value, reset")
+            .def("next_mmu", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextMmu(self.GetContext())); },
+               "The eight 8K MMU slots and the paging latches")
+            .def("next_reg_journal", [](Emulator& self, py::object regs, py::object sources, py::object since, py::object from_frame,
+                                        py::object to_frame, py::object limit) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextRegJournalQuery query;
+                std::string error;
+                if (!NextRegJournalQueryFromStrings(text(regs), text(sources), text(since), text(from_frame), text(to_frame),
+                                                    text(limit), query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextRegJournalReport(self.GetContext(), query));
+            }, py::arg("regs") = py::none(), py::arg("sources") = py::none(), py::arg("since") = py::none(),
+               py::arg("from_frame") = py::none(), py::arg("to_frame") = py::none(), py::arg("limit") = py::none(),
+               "NextREG write journal: who wrote which register (regs='07,02'), through the NEXTREG instruction, port #253B or "
+               "the copper (sources='nextreg,port,copper,internal'), with frame, T, PC, value and previous; off by default - "
+               "next_reg_journal_control(enabled=True) first")
+            .def("next_reg_journal_control", [](Emulator& self, py::object enabled, bool clear, size_t capacity) -> py::object {
+                const int enable = enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0);
+                return StateNodeToPy(DeviceState::NextRegJournalControl(self.GetContext(), enable, clear, capacity));
+            }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
+               "Switch (enabled=True/False), clear or resize (capacity=N) the NextREG write journal")
+            .def("next_dma", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextDma(self.GetContext())); },
+               "The Next DMA as programmed and running (mode, ports A / B, direction, burst, prescaler, counters, status byte); reading it "
+               "does not advance its read sequence; available=False elsewhere")
+            .def("next_video", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextVideo(self.GetContext())); },
+               "The Next video layers: layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster")
+            .def("next_palette", [](Emulator& self, py::object palette, py::object range) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextPaletteQuery query;
+                std::string error;
+                if (!NextPaletteQueryFromStrings(text(palette), text(range), query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextPalette(self.GetContext(), query));
+            }, py::arg("palette") = py::none(), py::arg("range") = py::none(),
+               "The Next's 9-bit palettes: palette=0..7 | 'sprites_1' | 'all' (default the selected one), range='0-15'; no side effect")
+            .def("next_ports", [](Emulator& self, py::object port, const std::string& access) -> py::object {
+                std::string portText;
+                if (py::isinstance<py::int_>(port))
+                    portText = StringHelper::Format("%llx", static_cast<unsigned long long>(port.cast<long long>()));
+                else if (!port.is_none())
+                    portText = py::str(port);
+                NextPortsQuery query;
+                std::string error;
+                if (!NextPortsQueryFromStrings(portText, access, query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextPorts(self.GetContext(), query));
+            }, py::arg("port") = py::none(), py::arg("access") = "r",
+               "The internal port enable word (NR #82-#85) and, with port (int, or hex text), which device answers a read ('r') or write ('w')")
+            .def("next_nextreg", [](Emulator& self, py::object reg, bool changed) -> py::object {
+                std::string regText;
+                if (py::isinstance<py::int_>(reg))
+                    regText = StringHelper::Format("%llx", static_cast<unsigned long long>(reg.cast<long long>()));
+                else if (!reg.is_none())
+                    regText = py::str(reg);
+                NextRegReadQuery query;
+                std::string error;
+                if (!NextRegReadQueryFromStrings(regText, changed ? "true" : "", query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextRegRead(self.GetContext(), query));
+            }, py::arg("reg") = py::none(), py::arg("changed") = false,
+               "One NextREG with decoded bits (reg=7 or '07'), or all of them (changed=True: only those that differ from their reset); "
+               "no side effect")
+            .def("next_copper", [](Emulator& self, py::object from_index, py::object count, bool raw) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextCopperQuery query;
+                std::string error;
+                if (!NextCopperQueryFromStrings(text(from_index), text(count), raw ? "true" : "", query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextCopper(self.GetContext(), query));
+            }, py::arg("from_index") = py::none(), py::arg("count") = py::none(), py::arg("raw") = false,
+               "The copper list as a disassembly (from_index, count: a window of 1024 words), the control mode, write address and pc; "
+               "raw=True adds the whole list as hex; no side effect")
+            .def("next_sprites", [](Emulator& self, py::object from_index, py::object count, bool all) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextSpritesQuery query;
+                std::string error;
+                if (!NextSpritesQueryFromStrings(text(from_index), text(count), all ? "true" : "", query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextSprites(self.GetContext(), query));
+            }, py::arg("from_index") = py::none(), py::arg("count") = py::none(), py::arg("all") = false,
+               "The 128 sprite attributes decoded (the visible ones of the page; all=True lists every one), switches, collision flags (not "
+               "cleared), pattern memory summary")
+            .def("next_nextreg_write", [](Emulator& self, int reg, int value, const std::string& door) -> py::object {
+                if (reg < 0 || reg > 255 || value < 0 || value > 255)
+                    throw py::value_error("reg and value must be 0..255");
+                NextRegWriteControl::Door which = NextRegWriteControl::Door::NextReg;
+                if (!NextRegWriteControl::ParseDoor(door, which))
+                    throw py::value_error("door must be nextreg, port or internal");
+                const NextRegWriteControl::Result result =
+                    NextRegWriteControl::Write(&self, static_cast<uint8_t>(reg), static_cast<uint8_t>(value), which, "python");
+                if (!result.ok)
+                    throw std::runtime_error(result.error);
+                return StateNodeToPy(NextRegWriteControl::ToState(result));
+            }, py::arg("reg"), py::arg("value"), py::arg("door") = "nextreg",
+               "Write a NextREG through the board's write choke point (the NextREG journal sees it); door='nextreg' (the NEXTREG "
+               "instruction), 'port' (OUT #243B / #253B) or 'internal'; paused, stopped or between frames. ValueError for a bad "
+               "argument, RuntimeError when it is not a Next or no coherent moment came")
             .def("sprinter_pld_journal", [](Emulator& self, py::object kinds, py::object since, py::object from_frame,
                                             py::object to_frame, py::object limit, const std::string& source) -> py::object {
                 auto text = [](const py::object& value) -> std::string {

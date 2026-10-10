@@ -540,6 +540,9 @@ bool Config::ParseConfig(IniFile& inimanager)
     CopyStringValue(inimanager.GetValue(rom, "LSY", nullptr), config.lsy_rom_path, sizeof config.lsy_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PHOENIX", nullptr), config.phoenix_rom_path, sizeof config.phoenix_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "SPRINTER", nullptr), config.sprinter_rom_path, sizeof config.sprinter_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "NEXT", nullptr), config.next_rom_path, sizeof config.next_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "NEXTBOOT", nullptr), config.next_boot_rom_path, sizeof config.next_boot_rom_path);
+    CopyStringValue(inimanager.GetValue("NEXT", "SdCard", nullptr), config.next_sd_path, sizeof config.next_sd_path);
 #ifdef MOD_GSZ80
     // General Sound firmware ROM ([ROM] GS). Defaults to the shipped 32 KB
     // gs105a.rom (data/rom) so a fitted card always has firmware even when a
@@ -1499,6 +1502,7 @@ std::string Config::GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB)
 		case MM_PLUS2:       return "spectrum2";
 		case MM_PLUS2A:      return "spectrum2a";
 		case MM_TSL:         return "ts-conf";
+		case MM_NEXT:        return "next";
 		default:
 			break;
 	}
@@ -1666,6 +1670,7 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
 
         case MM_SPECTRUM128:
         case MM_PLUS2:
+        case MM_NEXT:  // the bare personality runs the 128K frame
             config.intstart = 1845;
             config.intlen   = 36;   // ZX-128K ULA has 72-HC INT = 36 T-states
             break;
@@ -1762,6 +1767,7 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             case MM_PLUS2:
             case MM_PLUS2A:
             case MM_PLUS3:
+            case MM_NEXT:
                 config.frame = 70908;   // 228 * 311
                 config.t_line = 228;
                 config.intstart = 1845;

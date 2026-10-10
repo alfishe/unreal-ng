@@ -167,24 +167,26 @@ Z80NOPCODE ope_8A(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // push nn
     Z80N_RETURN_Q(0, tact_);
 }
 
-// nextreg: no port cycle; the host gets (register, value). The core spends 6 T after the operand read(s) with no
-// MREQ; the write happens in the first of the last two 3 T cycles (the host's callback sees that T).
+// nextreg: no port cycle; the host gets (register, value). t80n_mcode.vhd (X"91" / X"92"): after the operand cycles the T80 runs two
+// (n,nn) or one (n,A) more 3 T machine cycles whose NoRead is '0' (t80na.vhd: MREQ and RD at T1) at the address of the last operand
+// byte - PC is only incremented at the end - so they are real, ULA-contended memory reads whose data is dropped. The write is driven
+// from the start of the first of those cycles (the host's callback sees that T: +14 for n,nn, +11 for n,A from the ED prefix).
 Z80NOPCODE ope_91(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // nextreg n,nn (20 T)
     Z80N_T_BEGIN(cpu);
     const uint8_t reg = Z80nRd(cpu, rf->pc++, true);
     const uint8_t value = Z80nRd(cpu, rf->pc++, true);
-    cpuidle(rf->pc, 3);
-    Z80nNextRegWrite(cpu, reg, value, tact_);
-    cpuidle(rf->pc, 3);
+    Z80nNextRegWrite(cpu, reg, value, tact_);  // Z80N_dout_o rises with the first of the two cycles
+    (void)Z80nRd(cpu, static_cast<uint16_t>(rf->pc - 1), true);
+    (void)Z80nRd(cpu, static_cast<uint16_t>(rf->pc - 1), true);
     Z80N_RETURN_Q(0, tact_);
 }
 
 Z80NOPCODE ope_92(Z80nCPU *cpu, int tact0, Z80nRegs *rf) { // nextreg n,a (17 T)
     Z80N_T_BEGIN(cpu);
     const uint8_t reg = Z80nRd(cpu, rf->pc++, true);
-    cpuidle(rf->pc, 3);
-    Z80nNextRegWrite(cpu, reg, rf->a, tact_);
-    cpuidle(rf->pc, 3);
+    Z80nNextRegWrite(cpu, reg, rf->a, tact_);  // Z80N_dout_o rises with the first of the two cycles
+    (void)Z80nRd(cpu, static_cast<uint16_t>(rf->pc - 1), true);
+    (void)Z80nRd(cpu, static_cast<uint16_t>(rf->pc - 1), true);
     Z80N_RETURN_Q(0, tact_);
 }
 

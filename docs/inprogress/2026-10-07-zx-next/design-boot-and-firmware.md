@@ -58,9 +58,10 @@ first boot trace (port writes in order, with the TTD port trace feature) is comp
 | A 1 GB image (the CSpect image, the `sn-emulator` zip) | `RawImage`, session write layer |
 | A minimal card for CI | a folder with `TBBLUE.FW`, `machines/next/` with `config.ini` (timing 0), `menu.def`, the three ROMs, and what `/nextzxos` needs for the first screen; jnext's analysis notes that an image without `config.ini` fails at "Error opening 'menu.ini/.def'!" |
 
-**Nothing from the distribution is copied into the repository** (license: the firmware and NextZXOS are the
-SpecNext team's). Tests that need the card skip with a message when it is not provisioned (the
-`testdata/` provisioning pattern: [roms.md](roms.md) section 4).
+**Owner decision 2026-10-09: the test card is in the repository** (`testdata/machines/zxnext/card`, 3 MB: TBBLUE.FW,
+`machines/next`, `nextzxos`, `sys`, `dot`, assembled from the collection's `cards/sn-test-card`; the license question is
+not asked, see the owner rule of 2026-10-08). The firmware tests run on it by default; `UNREAL_NEXT_FIRMWARE` points them
+at another distribution's folder.
 
 ## 5. Flash, RTC RAM, persistent blobs
 

@@ -190,6 +190,53 @@ class Emulator:
         """The ZX (Spectrum) mode: active, config (options with evidence, best_match file and confidence), launcher
         (its .ZX text in RAM), clock, frame / INT, rom, ports (#7FFD / #1FFD / #01FD ... decodes, ttd_query)"""
 
+    def next_state(self) -> dict:
+        """The ZX Spectrum Next: machine (type, timing, cpu_clock_hz, speed_ratio), mmu, divmmc, interrupts, ctc, spi; available=False elsewhere"""
+
+    def next_regs(self) -> dict:
+        """The NextREG table: number, name, access, value, reset"""
+
+    def next_mmu(self) -> dict:
+        """The eight 8K MMU slots and the paging latches"""
+
+    def next_reg_journal(self, regs=None, sources=None, since=None, from_frame=None, to_frame=None, limit=None) -> dict:
+        """Who wrote which NextREG (regs='07,02'), through the NEXTREG instruction, port #253B or the copper
+        (sources='nextreg,port,copper,internal'): events (seq, frame, t, pc, source, reg, name, value, previous, decoded).
+        Off by default - next_reg_journal_control(enabled=True) first; raises ValueError on a bad option"""
+
+    def next_reg_journal_control(self, enabled=None, clear=False, capacity=0) -> dict:
+        """Switch, clear or resize (capacity=N) the NextREG write journal"""
+
+    def next_dma(self) -> dict:
+        """The Next DMA as programmed and running (mode zxn / z80, ports a / b, direction, burst, prescaler, counter, src / dst with
+        src_kind / dst_kind, holds_bus, status byte); reading it does not advance its read sequence; available=False elsewhere"""
+
+    def next_video(self) -> dict:
+        """Layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster (hc, vc, frame_t), timing"""
+
+    def next_palette(self, palette=None, range=None) -> dict:
+        """The 9-bit palettes: palette=0..7 | 'sprites_1' | 'all' (default the selected one), range='0-15'; entries (index, rgb9,
+        red, green, blue, priority); no palette index moves; ValueError on a bad option"""
+
+    def next_ports(self, port=None, access='r') -> dict:
+        """The internal port enable word (NR #82-#85) and, with port (int or hex text), which device answers a read ('r') or write ('w'):
+        device, enabled, enabled_by, enforced, side_effect"""
+
+    def next_nextreg(self, reg=None, changed=False) -> dict:
+        """One NextREG without side effects (reg=7 or '07'): value, stored, access, reset, decoded; all of them without reg"""
+
+    def next_nextreg_write(self, reg, value, door='nextreg') -> dict:
+        """Write a NextREG through the board's write choke point (door 'nextreg', 'port' or 'internal'); {ok, reg, value, previous,
+        after, door, moment}; ValueError for a bad argument, RuntimeError when it is not a Next or no coherent moment came"""
+
+    def next_copper(self, from_index=None, count=None, raw=False) -> dict:
+        """The copper list as a disassembly (a window of the 1024 words), control mode, write address (never stepped by the report), pc,
+        around_pc when the pc is outside the window; raw=True adds the whole list as hex; ValueError on a bad option"""
+
+    def next_sprites(self, from_index=None, count=None, all=False) -> dict:
+        """The 128 sprite attributes decoded (the visible ones of the page; all=True lists every one), switches, collision / too-many
+        flags (not cleared), visible_count, pattern memory summary"""
+
     def sprinter_pld_journal(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None, source="live") -> dict:
         """Who changed the PLD setup: events (frame, t, pc, kind, port, value, text); source='ttd' reads the recording"""
 

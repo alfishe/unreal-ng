@@ -940,6 +940,150 @@ TEST_F(McpTools_Test, InspectState_SlotsAspect_SummarizesTheReport)
     EXPECT_NE(result.text.find("built-in ay: shadowed by zxbus.1"), std::string::npos) << result.text;
 }
 
+// The ZX Next report aspects (design-automation-coverage.md): each reads its WebAPI route with the nr_ parameters as the query, and a
+// machine that is not a Next is a line, not an error
+TEST_F(McpTools_Test, InspectState_NextReportAspects_UseTheirRoutesAndQueries)
+{
+    struct Case
+    {
+        const char* aspect;
+        const char* path;
+    };
+    for (const Case& c : {Case{"next_dma", "/api/v1/emulator/emu-1/state/next/dma"}, Case{"next_video", "/api/v1/emulator/emu-1/state/next/video"},
+                          Case{"next_palette", "/api/v1/emulator/emu-1/state/next/palette?palette=sprites_1&range=0-15"},
+                          Case{"next_ports", "/api/v1/emulator/emu-1/state/next/ports?port=6B&access=w"},
+                          Case{"next_nextreg", "/api/v1/emulator/emu-1/state/next/nextreg?reg=07&changed=true"},
+                          Case{"next_copper", "/api/v1/emulator/emu-1/state/next/copper?from=16&count=8&raw=true"},
+                          Case{"next_sprites", "/api/v1/emulator/emu-1/state/next/sprites?from=16&count=8&all=true"}})
+    {
+        _caller->calls.clear();
+        Json::Value report;
+        report["available"] = true;
+        _caller->routes[std::string("GET ") + c.path] = {200, report};
+        Json::Value args;
+        args["aspects"].append(c.aspect);
+        args["nr_palette"] = "sprites_1";
+        args["nr_range"] = "0-15";
+        args["nr_port"] = "6B";
+        args["nr_access"] = "w";
+        args["nr_reg"] = "07";
+        args["nr_changed"] = true;
+        args["nr_from"] = "16";
+        args["nr_count"] = "8";
+        args["nr_raw"] = true;
+        args["nr_all"] = true;
+        mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+        ASSERT_FALSE(result.isError) << c.aspect << ": " << result.text;
+        EXPECT_TRUE(_caller->Saw("GET", c.path)) << c.aspect;
+        EXPECT_NE(result.text.find(std::string("[") + c.aspect + "]"), std::string::npos) << result.text;
+    }
+}
+
+TEST_F(McpTools_Test, InspectState_NextReportAspects_WithoutParametersAskForNoQuery)
+{
+    Json::Value report;
+    report["available"] = true;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/palette"] = {200, report};
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/ports"] = {200, report};
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/nextreg"] = {200, report};
+    Json::Value args;
+    args["aspects"].append("next_palette");
+    args["aspects"].append("next_ports");
+    args["aspects"].append("next_nextreg");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/next/palette"));
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/next/ports"));
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/next/nextreg"));
+}
+
+TEST_F(McpTools_Test, InspectState_NextReportAspects_SummarizeTheReports)
+{
+    Json::Value dma;
+    dma["available"] = true;
+    dma["mode"] = "zxn";
+    dma["enabled"] = true;
+    dma["direction"] = "a_to_b";
+    dma["a"]["address"] = "0x8000";
+    dma["a"]["type"] = "memory";
+    dma["b"]["address"] = "0x00FE";
+    dma["b"]["type"] = "io";
+    dma["burst"] = "burst";
+    dma["counter"] = 4;
+    dma["block_length"] = 256;
+    dma["status"] = "0x3B";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/dma"] = {200, dma};
+    Json::Value ports;
+    ports["available"] = true;
+    ports["enable_word"]["value"] = "0xFFFFFFDF";
+    ports["describe"]["port"] = "0x006B";
+    ports["describe"]["access"] = "write";
+    ports["describe"]["device"] = "DMA (zxnDMA)";
+    ports["describe"]["enabled"] = false;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/ports"] = {200, ports};
+    Json::Value reg;
+    reg["available"] = true;
+    reg["reg"] = "0x07";
+    reg["name"] = "CPU Speed";
+    reg["value"] = "0x33";
+    reg["decoded"] = "CPU speed 28 MHz";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/nextreg"] = {200, reg};
+    Json::Value copper;
+    copper["available"] = true;
+    copper["control"]["name"] = "restart_loop";
+    copper["pc"] = 2;
+    copper["address"] = 10;
+    copper["list_length"] = 5;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/copper"] = {200, copper};
+    Json::Value sprites;
+    sprites["available"] = true;
+    sprites["enabled"] = true;
+    sprites["visible_count"] = 3;
+    sprites["sprites"].append(Json::Value(Json::objectValue));
+    sprites["pattern_memory"]["non_zero_bytes"] = 266;
+    sprites["flags"]["collision"] = true;
+    sprites["flags"]["too_many"] = false;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/sprites"] = {200, sprites};
+    Json::Value args;
+    args["aspects"].append("next_dma");
+    args["aspects"].append("next_ports");
+    args["aspects"].append("next_nextreg");
+    args["aspects"].append("next_copper");
+    args["aspects"].append("next_sprites");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[next_copper] restart_loop, pc 2, address 10, 5 word(s) in the list"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[next_sprites] on, 3 visible, 1 listed, pattern memory 266 non-zero byte(s), COLLISION"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[next_dma] zxn mode, enabled, a_to_b, A 0x8000 (memory) B 0x00FE (io), burst, counter 4/256, status 0x3B"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("[next_ports] enable word 0xFFFFFFDF, 0x006B write -> DMA (zxnDMA) (DISABLED)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[next_nextreg] NR0x07 CPU Speed = 0x33 (CPU speed 28 MHz)"), std::string::npos) << result.text;
+
+    Json::Value missing;
+    missing["message"] = "not a ZX Spectrum Next";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/video"] = {404, missing};
+    Json::Value one;
+    one["aspects"].append("next_video");
+    result = RunTool(*_registry, "inspect_state", one, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[next_video] not a ZX Spectrum Next"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_SchemaListsTheNextReportAspectsAndParameters)
+{
+    const mcp::ToolDefinition* tool = _registry->Find("inspect_state");
+    ASSERT_NE(tool, nullptr);
+    const Json::Value& schema = tool->inputSchema;
+    std::string aspects;
+    for (const Json::Value& a : schema["properties"]["aspects"]["items"]["enum"])
+        aspects += a.asString() + " ";
+    for (const char* aspect : {"next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites"})
+        EXPECT_NE(aspects.find(aspect), std::string::npos) << aspect;
+    for (const char* parameter : {"nr_palette", "nr_range", "nr_port", "nr_access", "nr_reg", "nr_changed", "nr_from", "nr_count", "nr_raw", "nr_all"})
+        EXPECT_TRUE(schema["properties"].isMember(parameter)) << parameter;
+}
+
 // ===========================================================================
 // inspect_state
 // ===========================================================================

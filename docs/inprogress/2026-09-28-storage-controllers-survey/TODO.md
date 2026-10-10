@@ -23,3 +23,5 @@ tracked as [PLAN.md](../PLAN.md) row #63. The IDE part it measures against was o
       behavior, +3e interface details marked so, Pentagon 1024 IDE scheme).
 - [ ] Provision test firmware into `testdata/` with notices: esxDOS 0.8.5 / 0.8.9 ROMs, +3e ROMs.
 - [ ] SMUC: see the sibling survey `2026-09-28-scorpion-smuc/` (not covered here).
+
+- [x] 2026-10-08: DivMMC / DivIDE paging and automap built as `DivMmcPaging` (core/src/emulator/io/divmmc, bus overlay + M1 observer, no change to `Memory`); UnoDOS 3.141 boots and lists a folder through `RST 8` on the 48K machine. A read of `#EB` starting an exchange works with UnoDOS. Esxdos itself not run (no ROM here). Left: TTD blob, slot card, reset hook

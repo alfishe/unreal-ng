@@ -52,6 +52,8 @@ protected:
     blip_t* _blipL = nullptr;
     blip_t* _blipR = nullptr;
     bool _synthesisSuppressed = false;
+    bool _useCustomLevels = false;
+    int32_t _customLevels[4] = {};
 
     // Last amplitudes written to blip_buf (tracked independently for Port #FE OUT vs Tape IN)
     int32_t _lastPortFEAmplitude = DAC_LEVEL_00;
@@ -146,5 +148,18 @@ protected:
     /// Look up DAC amplitude from EAR and MIC bits.
     /// @param earMicBits  Bits 3-4 of port #FE value (masked)
     static int32_t dacAmplitude(uint8_t earMicBits);
+
+public:
+    /// A machine whose ULA output goes through its own mixer (the Next: EAR 2048, MIC 512 of 32768) replaces the four
+    /// levels (index = EAR << 1 | MIC); clearDacLevels returns the ULA circuit's levels
+    void setDacLevels(const int32_t levels[4])
+    {
+        for (int i = 0; i < 4; i++)
+            _customLevels[i] = levels[i];
+        _useCustomLevels = true;
+    }
+    void clearDacLevels() { _useCustomLevels = false; }
+    int32_t levelFor(uint8_t earMicBits) const;
+protected:
     /// endregion </Helper methods>
 };

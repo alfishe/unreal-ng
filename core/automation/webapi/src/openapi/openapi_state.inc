@@ -153,6 +153,54 @@
     paths["/api/v1/emulator/{id}/state/fdc"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/fdc"]["get"]["responses"]["200"]["description"] = "Get Beta Disk WD1793 state";
 
+    {
+        struct NextRoute
+        {
+            const char* path;
+            const char* summary;
+            const char* description;
+            bool withId;
+        };
+        const NextRoute routes[] = {
+            {"/api/v1/emulator/{id}/state/next", "Get ZX Spectrum Next machine state",
+             "The ZX Spectrum Next (model NEXT): machine (machine type and frame family, CPU clock and speed ratio, config mode "
+             "and boot ROM, contention), mmu (the eight 8K slots), divmmc (#E3, automap and its NextREGs), interrupts (pulse or "
+             "hardware IM2, enables, pending, in service), ctc (four channels), spi (the SD cards), rtc. "
+             "\"available\": false on other machines.", true},
+            {"/api/v1/emulator/state/next", "Get ZX Spectrum Next machine state (active emulator)",
+             "Same as /api/v1/emulator/{id}/state/next for the only or selected emulator.", false},
+            {"/api/v1/emulator/{id}/state/next/regs", "Get the NextREG table",
+             "Every NextREG of the distribution's register table (registers.txt v2.4): number, name, access, value and the "
+             "reset value where the document gives one for the whole byte.", true},
+            {"/api/v1/emulator/{id}/state/next/mmu", "Get the Next MMU slots",
+             "The eight 8K slots: MMU value, address range, what they show (ram, rom, boot rom, config bank, divmmc rom/ram), "
+             "the ROM select, the config mode / bank and the paging latches.", true},
+            {"/api/v1/emulator/{id}/state/next/reg-journal", "Get the NextREG write journal",
+             "Who wrote which NextREG, when and through which door (core DeviceState::NextRegJournalReport; CLI `next regjournal`, "
+             "Lua next_reg_journal(), Python next_reg_journal(), MCP inspect_state aspect next_reg_journal). The NEXTREG "
+             "instruction and the copper make no port cycle, so the port trace and the TTD I/O journal never see them. Each "
+             "event: seq, frame, t (T in the frame), pc, source (nextreg = the NEXTREG instruction, port = OUT #253B, copper, "
+             "internal = the board or a loader), reg, name, value, previous, decoded (registers #02, #03, #07). Query: regs "
+             "(comma hex, 07,02), sources (comma: nextreg, port, copper, internal), since (seq), from / to (frame), limit (newest N, "
+             "default 200, 0 = all). Off by default: switch it on with POST /next/reg-journal first. 400 on a bad parameter.", true},
+        };
+        for (const NextRoute& r : routes)
+        {
+            paths[r.path]["get"]["summary"] = r.summary;
+            paths[r.path]["get"]["tags"].append("Machine State");
+            paths[r.path]["get"]["description"] = r.description;
+            if (r.withId)
+            {
+                paths[r.path]["get"]["parameters"][0]["name"] = "id";
+                paths[r.path]["get"]["parameters"][0]["in"] = "path";
+                paths[r.path]["get"]["parameters"][0]["required"] = true;
+                paths[r.path]["get"]["parameters"][0]["schema"]["type"] = "string";
+            }
+            paths[r.path]["get"]["responses"]["200"]["description"] = "Next report";
+            paths[r.path]["get"]["responses"]["404"]["description"] = "Emulator not found";
+        }
+    }
+
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["summary"] = "Get IDE board state";
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["tags"].append("Disk State");
     paths["/api/v1/emulator/{id}/state/ide"]["get"]["description"] =
@@ -511,6 +559,40 @@
         paths[kJournalCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
         paths[kJournalCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
         paths[kJournalCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Sprinter";
+    }
+
+    {
+        const char* kNrQuery[][2] = {{"regs", "comma list of register numbers, hex (07,02); empty = all"},
+                                     {"sources", "comma list: nextreg, port, copper, internal; empty = all"},
+                                     {"since", "events after this seq"},
+                                     {"from", "first frame"},
+                                     {"to", "last frame"},
+                                     {"limit", "the newest N matches (default 200, 0 = all)"}};
+        const char* kNr = "/api/v1/emulator/{id}/state/next/reg-journal";
+        for (Json::ArrayIndex i = 0; i < 6; i++)
+        {
+            Json::Value& qp = paths[kNr]["get"]["parameters"][i + 1];
+            qp["name"] = kNrQuery[i][0];
+            qp["in"] = "query";
+            qp["description"] = kNrQuery[i][1];
+            qp["schema"]["type"] = "string";
+        }
+        paths[kNr]["get"]["responses"]["400"]["description"] = "Bad parameter";
+
+        const char* kNrCtl = "/api/v1/emulator/{id}/next/reg-journal";
+        paths[kNrCtl]["post"]["summary"] = "Switch, clear or resize the NextREG write journal";
+        paths[kNrCtl]["post"]["tags"].append("Machine State");
+        paths[kNrCtl]["post"]["description"] =
+            "Body {\"enabled\": true|false, \"clear\": true, \"capacity\": N}, all optional (capacity resizes the ring, 65536 by "
+            "default, and drops its content). Off by default; off costs one branch per register write. Answers enabled, size, "
+            "capacity, evicted, last_seq.";
+        paths[kNrCtl]["post"]["parameters"][0]["name"] = "id";
+        paths[kNrCtl]["post"]["parameters"][0]["in"] = "path";
+        paths[kNrCtl]["post"]["parameters"][0]["required"] = true;
+        paths[kNrCtl]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kNrCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kNrCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
+        paths[kNrCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
     }
 
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["summary"] = "Get memory contention state";

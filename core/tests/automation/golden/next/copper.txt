@@ -1,0 +1,57 @@
+available: true
+control:
+  mode: 2
+  name: continue_loop
+  raw_nr_62: 0x80
+running: true
+address: 10
+word_index: 5
+address_byte: msb
+pc: 0
+line_offset: 0
+list_length: 5
+instructions:
+  [0]
+    index: 0
+    word: 0x9864
+    op: wait
+    hpos: 12
+    vpos: 100
+    text: WAIT line 100 hpos 12
+    current: true
+  [1]
+    index: 1
+    word: 0x1505
+    op: move
+    reg: 0x15
+    value: 0x05
+    reg_name: Sprite and Layers System
+    text: MOVE NR #15 <- #05
+    current: false
+  [2]
+    index: 2
+    word: 0x0703
+    op: move
+    reg: 0x07
+    value: 0x03
+    reg_name: CPU Speed
+    text: MOVE NR #07 <- #03
+    current: false
+  [3]
+    index: 3
+    word: 0x0000
+    op: nop
+    text: NOP
+    current: false
+  [4]
+    index: 4
+    word: 0xFFFF
+    op: halt
+    text: HALT
+    current: false
+  [5]
+    index: 5
+    word: 0x0000
+    op: nop
+    text: NOP
+    current: false

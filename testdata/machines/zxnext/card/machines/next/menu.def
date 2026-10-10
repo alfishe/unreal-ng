@@ -1,0 +1,15 @@
+menu=ZX Spectrum Next (standard),2,8,enNextZX.rom,enNxtmmc.rom,enNextMF.rom
+menu=ZX Spectrum Next (LG 48K ROM),2,8,enNextLG.rom,enNxtmmc.rom,enNextMF.rom
+menu=ZX Spectrum 48K,0,8,48.rom
+menu=ZX Spectrum 128k,1,8,128.rom
+menu=ZX Spectrum +2,1,8,128-2.rom
+menu=ZX Spectrum +2A/+3,2,8,plus3.rom,<none>
+menu=ZX Spectrum +3e,2,8,128-3e.rom,<none>
+menu=ZX80 Emulator (c) Paul Farrow,1,8,zx80.rom,<none>,<none>
+menu=ZX81 Emulator (c) Paul Farrow,1,8,zx81.rom,<none>,<none>
+menu=48K Gosh Wonderful ROM v3.3,0,8,gw03v33.rom
+menu=48K Looking Glass ROM v1.07,0,8,lg18v07.rom
+menu=48K Looking Glass ROM v1.07-altfont-,0,8,lg18alt.rom
+menu=Timex Sinclair TC2048,0,8,tc2048.rom
+menu=Investronica Spectrum 128K,1,8,128es21.rom,<none>
+menu=Pentagon 128K,3,8,128.rom

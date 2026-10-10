@@ -99,7 +99,7 @@ void Beeper::handlePortOut(uint8_t value, uint32_t frameTState)
     _portFEState = earMicBits;
 
     // Look up the DAC amplitude for this EAR/MIC combination
-    int32_t newAmplitude = dacAmplitude(earMicBits);
+    int32_t newAmplitude = levelFor(earMicBits);
 
     // Compute the delta from the previous Port #FE amplitude
     int32_t delta = newAmplitude - _lastPortFEAmplitude;
@@ -183,6 +183,13 @@ void Beeper::handleFrameEnd(uint32_t frameDuration)
 /// endregion </Methods>
 
 /// region <Helper methods>
+
+int32_t Beeper::levelFor(uint8_t earMicBits) const
+{
+    if (!_useCustomLevels)
+        return dacAmplitude(earMicBits);
+    return _customLevels[(((earMicBits >> 4) & 1) << 1) | ((earMicBits >> 3) & 1)];
+}
 
 int32_t Beeper::dacAmplitude(uint8_t earMicBits)
 {

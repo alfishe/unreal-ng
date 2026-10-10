@@ -934,6 +934,9 @@ struct CONFIG
 	char lsy_rom_path[FILENAME_MAX];
 	char phoenix_rom_path[FILENAME_MAX];
 	char sprinter_rom_path[FILENAME_MAX];
+	char next_rom_path[FILENAME_MAX];
+	char next_sd_path[FILENAME_MAX];       // [NEXT] SdCard: a folder (presented as a FAT16 card) or a raw image for card 0; empty = no card
+	char next_boot_rom_path[FILENAME_MAX];  // the 8K boot ROM (cores/zxnext bootrom.vhd); empty = the bare personality
 
 #ifdef MOD_GSZ80
 	char gs_rom_path[FILENAME_MAX];
@@ -1178,6 +1181,12 @@ struct EmulatorState
                                                 // decoder together with hw_turbo_ratio
     uint8_t hw_clock_den_applied;               // hw_clock_den as composed into the running clock (see the _applied
                                                 // ratio above). Read through ClockDen()
+    uint8_t hw_contention_disabled;             // A board that switches the video memory contention off at run time (the Next
+                                                // above 3.5 MHz, NR #08 bit 6): 1 = off whatever the video mode says
+    uint8_t ula_timing_class;                   // A board that switches its frame timing at run time says which family
+                                                // the video logic follows: 0 = the model's own, 1 = 48K, 2 = 128K / +2,
+                                                // 3 = +2A / +3 (the frame of the 128K), 4 = Pentagon. Read by the
+                                                // per-frame video mode detection
 
     /// Denominator of the clock in effect; 1 for every machine at a whole multiple of the base clock
     uint32_t ClockDen() const { return hw_clock_den_applied > 1 ? hw_clock_den_applied : 1u; }
