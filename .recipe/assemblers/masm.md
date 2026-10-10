@@ -39,24 +39,57 @@ EOF
 Keywords are tokenized only in capitals (MASM's own rule): write the source in capitals, labels as you like.
 A file the source `INCLUDE`s or `INCBIN`s goes on the same disk (`INCLUDE M1+`, `INCBIN DAT`: bare names).
 
+## Waiting: where MASM waits for a key
+
+Drive MASM on a paused machine and wait in emulated time, never with host sleeps: a sleep that is long enough on an
+idle host is too short on a loaded one, and a key then lands in the wrong screen. MASM 1.1 waits for every key in one
+of three loops (found with `debug/pchist` and `disasm`, 2026-10-10):
+
+| Where | PC | The loop |
+|---|---|---|
+| the title screen | `#983B` | `IN A,(#FE)` / `CPL` / `AND #1F` - any key |
+| the menu, the editor, after `OK` | `#887D` | `HALT` / `OR (HL)` / `JR Z` on `LASTK` (`#5C08`), called from `#886E` |
+| the Work file list | `#8B9C` | `LD A,(LASTK)` / `OR A` / `JR Z` |
+
+Each key is then one pattern: run 2 frames (MASM finishes the step that reached the wait), tap the key (held 4 frames),
+run 6 frames, `skip_until` the next wait's PC. `skip_until` runs the CPU until PC is there (a T-state budget, the
+answer has `hit`), the same frames on every run. The whole assembly below takes about 2 s of host time instead of
+the ~25 s of sleeps it used to. `basic/run` is the exception: it needs a running machine (resume, run, pause).
+Screenshots right after a `skip_until` show the last presented frame: run one frame first.
+
 ## MCP (preferred)
 
 Instance: `emulator_manage {"action":"create","model":"PENTAGON"}` (or an existing one; with several instances
-pass its id as `target`, `"auto"` refuses).
+pass its id as `target`, `"auto"` refuses). `skip_until` has no MCP action: `invoke_api` calls it, and its answer is
+in `structuredContent.body` (`hit`, `pc`). Both blocks below were run line by line over MCP on 2026-10-10 (the key
+lines with the pattern above): the bytes, then the edited file on the disk.
 
 ```text
-load_software {"target":"EMU_ID","path":"scratch/masm.trd","drive":"A"}
-invoke_api    {"target":"EMU_ID","method":"POST","path":"/api/v1/emulator/{id}/reset"}
-type_input    {"target":"EMU_ID","action":"tap","key":"down","frames":4}      # x4: the Pentagon menu's TR-DOS line
-type_input    {"target":"EMU_ID","action":"tap","key":"enter","frames":4}
-invoke_api    {"target":"EMU_ID","method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"command":"RUN \"MASM 1.1\""}}
-# wait ~8 s: the title screen
-type_input    {"target":"EMU_ID","action":"tap","key":"enter","frames":4}     # past the title: the menu
-type_input    {"target":"EMU_ID","action":"tap","key":"w","frames":4}         # Work file: the list of type-a files
-type_input    {"target":"EMU_ID","action":"tap","key":"enter","frames":4}     # the first one (cursor keys move)
-type_input    {"target":"EMU_ID","action":"tap","key":"a","frames":4}         # Assemble: "Pass 1 … Pass 2 … OK"
-capture_media {"target":"EMU_ID","action":"screenshot","path":"masm-assembled.png"}
-inspect_state {"target":"EMU_ID","aspects":["memory"],"address":24576,"length":16}
+control_execution {"target":"EMU_ID","action":"pause"}
+load_software     {"target":"EMU_ID","path":"scratch/masm.trd","drive":"A"}
+invoke_api        {"target":"EMU_ID","method":"POST","path":"/api/v1/emulator/{id}/reset"}
+control_execution {"target":"EMU_ID","action":"run_frames","frames":100}            # the Pentagon boot menu
+type_input        {"target":"EMU_ID","action":"tap","key":"down","frames":4}       # four downs: the menu's TR-DOS line
+control_execution {"target":"EMU_ID","action":"run_frames","frames":12}            # 12 frames after each key
+type_input        {"target":"EMU_ID","action":"tap","key":"down","frames":4}
+control_execution {"target":"EMU_ID","action":"run_frames","frames":12}
+type_input        {"target":"EMU_ID","action":"tap","key":"down","frames":4}
+control_execution {"target":"EMU_ID","action":"run_frames","frames":12}
+type_input        {"target":"EMU_ID","action":"tap","key":"down","frames":4}
+control_execution {"target":"EMU_ID","action":"run_frames","frames":12}
+type_input        {"target":"EMU_ID","action":"tap","key":"enter","frames":4}
+control_execution {"target":"EMU_ID","action":"run_frames","frames":12}            # TR-DOS
+control_execution {"target":"EMU_ID","action":"resume"}                            # basic/run needs it running
+invoke_api        {"target":"EMU_ID","method":"POST","path":"/api/v1/emulator/{id}/basic/run","body":{"command":"RUN \"MASM 1.1\""}}
+control_execution {"target":"EMU_ID","action":"pause"}
+invoke_api        {"target":"EMU_ID","method":"POST","path":"/api/v1/emulator/{id}/skip_until","body":{"pc":"0x983B","max_tstates":70000000}}
+# then each key: run_frames 2, tap, run_frames 6, skip_until its wait (the table above)
+type_input        {"target":"EMU_ID","action":"tap","key":"enter","frames":4}     # past the title -> #887D: the menu
+type_input        {"target":"EMU_ID","action":"tap","key":"w","frames":4}         # Work file -> #8B9C: the type-a files
+type_input        {"target":"EMU_ID","action":"tap","key":"enter","frames":4}     # the first one -> #887D
+type_input        {"target":"EMU_ID","action":"tap","key":"a","frames":4}         # Assemble -> #887D: "Pass 1 … Pass 2 … OK"
+type_input        {"target":"EMU_ID","action":"tap","key":"space","frames":4}     # any key after OK -> #887D: the menu
+inspect_state     {"target":"EMU_ID","aspects":["memory"],"address":24576,"length":16}
 ```
 
 The last call returned `0x6000: 3E 14 21 34 ED …` for the test program (`ORG #6000` …), the bytes MASM 1.1 wrote.
@@ -66,10 +99,12 @@ A program with `ORG #C000` or above is compiled into **RAM page 0**; read it as 
 invoke_api {"target":"EMU_ID","method":"GET","path":"/api/v1/emulator/{id}/memory/page/ram/0?offset=0&length=16384"}
 ```
 
-Editing (the editor is the menu's `E`):
+Editing (the editor is the menu's `E`; from the menu, not from the `OK` after an assembly: that one takes the first
+key). Every step waits at `#887D` with the same pattern; `type` waits until `keyboard/status` says
+`sequence_running: false`:
 
 ```text
-type_input {"target":"EMU_ID","action":"tap","key":"e","frames":8}            # the editor, the text from line 0
+type_input {"target":"EMU_ID","action":"tap","key":"e","frames":4}            # the editor, the text from line 0
 type_input {"target":"EMU_ID","action":"combo","keys":["symbol","w"],"frames":4}   # SS+W: insert a line
 type_input {"target":"EMU_ID","action":"type","text":"x       nop"}          # CAPS LOCK is on: arrives as X NOP
 type_input {"target":"EMU_ID","action":"combo","keys":["symbol","enter"],"frames":4} # SS+Enter: save to disk
@@ -77,6 +112,8 @@ type_input {"target":"EMU_ID","action":"combo","keys":["caps","symbol"],"frames"
 type_input {"target":"EMU_ID","action":"tap","key":"q","frames":4}            # Q: back to the menu
 invoke_api {"target":"EMU_ID","method":"GET","path":"/api/v1/emulator/{id}/disk/A/catalog"}   # the file, rewritten
 ```
+
+Checked 2026-10-10: the file's sector then starts `04 58 0A 07 C9 04` (the new `X NOP` line) before the old text.
 
 ## The text in memory (MASM 1.1)
 
@@ -96,24 +133,38 @@ record ends at the gap end); after EXT `Q` it is back. The asm-synchronizer read
 
 ## WebAPI
 
-`BASE=http://localhost:${PORT:-8090}/api/v1`; `tools/verification/unreal-asm/lib/emulator.py` wraps these calls.
+The same sequence, run as it stands three times on 2026-10-10 (each `{"hit":true}`, the bytes `3E 14 21 34 12 C9`,
+~2 s):
 
 ```bash
-curl -s -X POST $BASE/emulator/$EMU_ID/media/A/swap -H 'Content-Type: application/json' \
-     -d '{"path":"'$PWD'/scratch/masm.trd","discard":true,"immediate":true}'
-curl -s -X POST $BASE/emulator/$EMU_ID/reset
-for k in down down down down enter; do
-  curl -s -X POST $BASE/emulator/$EMU_ID/keyboard/tap -d '{"key":"'$k'","frames":4}'; sleep 0.4; done
-curl -s -X POST $BASE/emulator/$EMU_ID/basic/run -d '{"command":"RUN \"MASM 1.1\""}'; sleep 8
-for k in enter w enter; do curl -s -X POST $BASE/emulator/$EMU_ID/keyboard/tap -d '{"key":"'$k'","frames":4}'; sleep 2; done
-curl -s -X POST $BASE/emulator/$EMU_ID/memory/write -d '{"address":24576,"data":[170,170,170,170]}'   # #AA: unwritten stays visible
-curl -s -X POST $BASE/emulator/$EMU_ID/keyboard/tap -d '{"key":"a","frames":4}'; sleep 6
+BASE=http://localhost:${PORT:-8090}/api/v1
+api() { local body=${2:-'{}'}; curl -s -X POST "$BASE/emulator/$EMU_ID/$1" -H 'Content-Type: application/json' -d "$body"; }
+frames() { api run_frames "{\"frames\":$1}" > /dev/null; }
+# A key, held 4 frames, then run until MASM waits for the next key at $2 - the same frames on every run, whatever
+# the host does. The 2 frames before the key let MASM finish the step that reached the wait.
+key() { frames 2; api keyboard/tap "{\"key\":\"$1\",\"frames\":4}" > /dev/null; frames 6
+        api skip_until "{\"pc\":\"$2\",\"max_tstates\":70000000}" | jq -c '{hit, pc}'; }
+
+api pause > /dev/null
+api media/A/swap '{"path":"'$PWD'/scratch/masm.trd","discard":true,"immediate":true}' > /dev/null
+api reset > /dev/null; frames 100                                     # the Pentagon boot menu
+for k in down down down down enter; do api keyboard/tap "{\"key\":\"$k\",\"frames\":4}" > /dev/null; frames 12; done
+curl -s "$BASE/emulator/$EMU_ID/capture/ocr" | jq -r .text | grep TR-DOS   # * TR-DOS Ver 5.04T*
+api resume > /dev/null; api basic/run '{"command":"RUN \"MASM 1.1\""}' | jq -c '{outcome}'; api pause > /dev/null
+api skip_until '{"pc":"0x983B","max_tstates":70000000}' | jq -c '{hit, pc}'   # the title waits for a key
+key enter 0x887D                       # the menu
+key w     0x8B9C                       # Work file: the list of type-a files
+key enter 0x887D                       # the first one (cursor keys move)
+api memory/write '{"address":24576,"data":[170,170,170,170]}' > /dev/null   # #AA: unwritten stays visible
+key a     0x887D                       # Assemble: "Pass 1 ... Pass 2 ... OK", then a key
+frames 1; curl -s "$BASE/emulator/$EMU_ID/capture/screen?area=full&format=png&path=$PWD/scratch/masm.png" > /dev/null
+key space 0x887D                       # back to the menu
 curl -s "$BASE/emulator/$EMU_ID/memory/read/24576?length=140" | jq -r .hexdump
 curl -s "$BASE/emulator/$EMU_ID/memory/page/ram/0?offset=0&length=16384" | jq '.data | length'
-curl -s "$BASE/emulator/$EMU_ID/capture/screen?area=full&format=png&path=$PWD/scratch/masm.png"
 ```
 
-The whole sequence as one tool (source first on the disk, included files after it):
+The whole sequence as one tool (source first on the disk, included files after it). The tool still waits with host
+sleeps (`--wait` seconds for the assembly): give it more on a loaded host, or drive the steps above instead:
 
 ```bash
 python3 tools/verification/unreal-asm/emulator/assemble-in-emulator.py masm11 MASM_11.SCL 'PROG.$a' 0x6000 140 scratch/prog.bin \
