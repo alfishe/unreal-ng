@@ -104,6 +104,17 @@ control_execution {"action":"step"}  ×2
 Browser, run) and photographs the result beside the board photograph; `tools/machines/next/realboard/run-all.py` runs them straight
 through the snapshot loader with automatic verdicts for the four programs that paint their own pass / fail.
 
+### 6. Sound: is the DAC alive? (the DMA sample demo)
+
+```text
+load_software {"path":".../DMA Sample Engine Demo/zxnext_dma_sample.nex"}      # then tap a key
+invoke_api POST /feature/porttrace {"enabled":true};  POST /profiler/porttrace/filter {"include":[{"direction":"out"}]}
+#   OUT #FFDF should come at ~8000 per second; OUT #183B (CTC 0) is the timer
+capture_media {"action":"audio_capture","seconds":2,"wav":true}              # left / right peak, rms, zero_crossing_rate
+```
+
+`audio_capture` leaves the emulator **paused** afterwards: resume it (`POST /resume`) before the next step.
+
 ## WebAPI
 
 The same steps; ids come from `GET /api/v1/emulator`.
