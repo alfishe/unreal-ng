@@ -122,6 +122,17 @@ uint8_t NextMemory::PeekSlot(uint16_t addr) const
     return _memory[_readOff[addr >> 13] + (addr & (kSlotSize - 1))];
 }
 
+void NextMemory::DmaWrite(uint16_t addr, uint8_t value)
+{
+    const unsigned slot = addr >> 13;
+    _memory[_writeOff[slot] + (addr & (kSlotSize - 1))] = value;
+    // the dirty page is the one the slot shows when reads and writes agree; a Layer 2 write mapping lands in other pages
+    if (_feature_ttd_enabled && _ttdDirtyTracker != nullptr && _physPage[slot] != ttd::kPhysPageNone && _writeOff[slot] == _readOff[slot])
+        _ttdDirtyTracker->MarkDirty(_physPage[slot]);
+    if (addr >= 0x4000 && addr <= 0x5B00)
+        _state->video_memory_changed = true;
+}
+
 void NextMemory::PokeSlot(uint16_t addr, uint8_t value)
 {
     const unsigned slot = addr >> 13;

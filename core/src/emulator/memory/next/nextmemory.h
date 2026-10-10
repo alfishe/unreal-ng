@@ -134,6 +134,11 @@ public:
     void SetLayer2View(const Layer2View& view);
     /// endregion
 
+    /// The DMA's write (zxnext.vhd: it drives the same address bus as the CPU): through the slot table's WRITE side - ROM and unmapped
+    /// slots take nothing, Layer 2's write mapping and the DivMMC / Multiface views apply, and the odd and even 8K slots of a 16K
+    /// window may show unrelated pages. Breakpoints do not see it; the TTD dirty pages and the video flag are kept
+    void DmaWrite(uint16_t addr, uint8_t value);
+
     /// Debugger / test pokes into the slot an address falls in (the base DirectWrite sees the 16K windows)
     void PokeSlot(uint16_t addr, uint8_t value);
     uint8_t PeekSlot(uint16_t addr) const;

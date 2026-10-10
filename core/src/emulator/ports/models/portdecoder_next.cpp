@@ -384,7 +384,7 @@ void PortDecoder_Next::BindDma()
 {
     NextDma::Bus bus;
     bus.readMemory = [this](uint16_t address) { return _context->pMemory->DirectReadFromZ80Memory(address); };
-    bus.writeMemory = [this](uint16_t address, uint8_t value) { _context->pMemory->DirectWriteToZ80Memory(address, value); };
+    bus.writeMemory = [this](uint16_t address, uint8_t value) { Mem().DmaWrite(address, value); };
     // the DMA's own cycles do not reach its ports ("allow dma to program itself? no", zxnext.vhd port_dma_rd / port_dma_wr)
     // dma_wait_n includes spi_wait_n (zxnext.vhd 1844): a byte to or from the SD card's data port waits until the card's 16 clocks passed
     auto waitSpi = [this](uint8_t low) {

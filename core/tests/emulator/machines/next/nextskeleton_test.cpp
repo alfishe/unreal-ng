@@ -158,6 +158,47 @@ TEST_F(NextSkeleton_Test, CpuWritesLandInTheSlotsAndRomIsReadOnly)
     EXPECT_EQ(_memory->SlotReadOffset(7), _memory->SlotReadOffset(6) + NextMemory::kSlotSize);
 }
 
+/// A continuous DMA fill of `length` bytes at `destination`: port A is the fixed byte at #8000, port B counts up (zxnext.vhd: the DMA drives
+/// the same address bus as the CPU, so it sees the same slot table, ROM protection and Layer 2 write mapping)
+static void DmaFill(PortDecoder_Next* ports, uint16_t destination, uint16_t length)
+{
+    for (uint8_t b : {uint8_t(0x83), uint8_t(0x7D), uint8_t(0x00), uint8_t(0x80), uint8_t(length & 0xFF), uint8_t(length >> 8), uint8_t(0x24), uint8_t(0x10), uint8_t(0xAD), uint8_t(destination & 0xFF),
+                      uint8_t(destination >> 8), uint8_t(0xCF), uint8_t(0x87)})
+        ports->DecodePortOut(0x6B, b, 0);
+}
+
+// The Next demos that draw by DMA into a mapped screen: the DMA's write goes where a CPU write would
+TEST_F(NextSkeleton_Test, DmaWritesFollowTheSlotTableNotThe16KWindows)
+{
+    // two 8K slots of one 16K window mapped to pages that are not neighbours
+    _memory->SetMmu(6, 0x30);  // bank 24, low half
+    _memory->SetMmu(7, 0x51);  // bank 40, high half
+    _memory->PokeSlot(0x8000, 0xAA);
+    DmaFill(_ports, 0xE000, 16);
+    _z80->EngineStep();
+    EXPECT_EQ(_memory->PeekSlot(0xE000), 0xAA) << "the byte is at the slot's own page";
+    EXPECT_EQ(_memory->RAMPageAddress(40)[0x2000], 0xAA);
+    EXPECT_EQ(_memory->RAMPageAddress(24)[0x2000], 0x00) << "not the second half of the page the even slot shows";
+}
+
+TEST_F(NextSkeleton_Test, DmaWritesToRomAreIgnoredAndLayer2WriteMappingTakesThem)
+{
+    _memory->PokeSlot(0x8000, 0x55);
+    const uint8_t rom0 = _memory->PeekSlot(0x0000);
+    ASSERT_NE(rom0, 0x55);
+    DmaFill(_ports, 0x0000, 16);
+    _z80->EngineStep();
+    EXPECT_EQ(_memory->PeekSlot(0x0000), rom0) << "ROM is read-only for the DMA too";
+    // port #123B bit 0: the write mapping of Layer 2 (bank NR #12 = 9) over #0000-#3FFF; reads still show the ROM
+    _ports->Board().Write(0x12, 9);
+    Out(0x123B, 0x01);
+    DmaFill(_ports, 0x0000, 16);
+    _z80->EngineStep();
+    EXPECT_EQ(_memory->RAMPageAddress(9)[0], 0x55);
+    EXPECT_EQ(_memory->RAMPageAddress(9)[15], 0x55);
+    EXPECT_EQ(_memory->PeekSlot(0x0000), rom0);
+}
+
 TEST_F(NextSkeleton_Test, NextRegInstructionMapsASlot)
 {
     Load(0x8000, {0xED, 0x91, 0x56, 0x44,   // NEXTREG #56,#44   slot 6 -> 8K page 68
