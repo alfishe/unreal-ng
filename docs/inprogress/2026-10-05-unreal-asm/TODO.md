@@ -171,8 +171,10 @@ phase; master only after the owner's review.
       - [x] ZX-ASM 2.4 / 2.5 / 2.6 (2026-10-10): plain text, the table at load address + 3, the upper part in page 0 (§7.9)
       - [x] MASM 2.0 / 3.0 (2026-10-10): the gap buffer read from the operands of their gap-closing routine; the typed line from the line buffer (§7.12)
       - [x] MASM 1.0 demo (2026-10-10): 1.1's gap buffer from `#913A`, the cursor record at the gap start (§7.12)
-      - [ ] TASM 3.5 / 2.0
+      - [x] TASM 3.5 / 2.0 (2026-10-10): 3.5 as 3.0 / 3.2; 2.0 plain text at the command line, 3.x's records in the editor (§7.7)
     - [ ] Y4 48K assemblers: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
+      - [x] GENS4 (tape), GENS3M21 (tape), GENS 4.3t (TR-DOS) (2026-10-10): `Linear`, the insert mark cleared (§7.13)
+      - [ ] GENS4B (TR-DOS): no way to start it found yet (`basic/run` refuses `RANDOMIZE USR` at the TR-DOS prompt; a PC write crashed)
     - [ ] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):
     - [ ] Z0 `retrobackend` core + ALASM backend + the file image writer + inject on WebAPI / CLI / MCP, checked by ALASM assembling the injected text

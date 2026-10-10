@@ -8,6 +8,127 @@
 
 ---
 
+2026-10-10
+## 🟢 [Fixed] #1: Removing a running TS-Conf or ATM Turbo 2+ instance writes into freed memory (heap damage, a later crash elsewhere)
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** fa8b68fbe
+* **Found by:** an automation agent's crash while creating and deleting instances through the WebAPI (macOS report
+  2026-10-10: `free_tiny` in `VideoWriteLog::BeginFrame` on another emulator thread); confirmed with AddressSanitizer.
+
+### Description
+Deleting instances corrupted the heap; the crash came later, in an unrelated `free` of another running instance.
+
+### Root cause
+`Core::Release` deletes the keyboard and the memory before the port decoder. `~PortDecoder_TSConf` detached from the
+`TsConfMemory` it cached and `~PortDecoder_ATM710` cleared the PS/2 sink on the keyboard it cached: both freed already.
+
+### Fix
+Both destructors take the context's pointer, which `Core` clears before it deletes the part (as the other decoders do).
+
+### Requirements / Acceptance Criteria
+- [x] `EmulatorManager_Test.EveryModelCanBeRemovedWhileRunning` (every creatable model created, run, removed while
+  running next to a running 48K) is clean under ASan; it reported both before.
+
+## 🟢 [Fixed] #2: Laser Genius detection reads past data that ends inside a token
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** 7d40cd730
+* **Found by:** a full `core-tests` run under AddressSanitizer (heap-buffer-overflow in `LaserGeniusCodec::Detect`).
+
+### Description
+`Detect` runs on every file of a disk (asm files, symbol import from a disk's sources): a file ending inside a token
+was read beyond its buffer.
+
+### Root cause
+`SkipRaw` steps over a token's operand bytes and returned a stop past the data's end; `RawText` read up to it.
+
+### Fix
+`SkipRaw` ends at the data's end.
+
+### Requirements / Acceptance Criteria
+- [x] `LaserGeniusCodec_Test.DataEndingInsideATokenIsNotReadPast` (every token byte, alone and before every second
+  byte, at the end of an exact-size buffer): failed under ASan before; all `unreal-asm-tests` clean under ASan.
+
+## 🟢 [Fixed] #3: GIF writer indexes past its r/g/b array on pictures with few colors; the same frame can encode differently
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** dc0b47c9f
+* **Found by:** a full `core-tests` run under AddressSanitizer (stack-buffer-overflow in `GifGetClosestPaletteColor`).
+
+### Description
+Every frame with fewer colors than the palette (every ZX screen in a 256-color GIF) read the k-d tree's garbage nodes.
+
+### Root cause
+`GifSplitPalette` returns from a subtree without pixels before it fills the node; `GifWriteFrame` builds its palettes
+on the stack, so those nodes kept whatever the stack held: a split component above 2 indexed `comps[3]`, garbage leaf
+colors could be picked.
+
+### Fix
+`GifMakePalette` zeroes the palette first (a local change to the vendored gif-h).
+
+### Requirements / Acceptance Criteria
+- [x] `Gif_Test.APaletteOfAFewColorsHasEveryNodeFilled` (palette prefilled with 0xFF) failed before, passes now; Gif
+  tests clean under ASan.
+
+## 🟢 [Fixed] #4: TTD with a shadow engine erases its whole timeline every frame and reads the empty front
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** 53325eb5b
+* **Found by:** a `core-tests` run under AddressSanitizer (container-overflow in `GlobalT` from `SyncTimelineFront`).
+
+### Description
+Tests and benchmarks that attach a shadow engine (`SetShadowEngine`) ran on undefined behavior; production is not
+affected (there the shadow engine is the controller's own).
+
+### Root cause
+`SyncTimelineFront` trims the timeline to what the controller's engine holds; that engine never opens a session while
+a shadow engine takes the captures, so "nothing held" erased every checkpoint, then `_timeline.front()` was read.
+
+### Fix
+A closed engine holds no history to follow: `SyncTimelineFront` returns.
+
+### Requirements / Acceptance Criteria
+- [x] `TimeTravelManager_Screenshot_Test` checks the timeline keeps its 51 checkpoints (0 before); TTD tests clean
+  under ASan.
+
+## 🟢 [Fixed] #5: Qt debugger crashes in the disassembler while the debug manager is not available
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** d2e4f3f84
+* **Found by:** two macOS crash reports of unreal-qt on 2026-10-09 (`disassembleSingleCommandWithRuntime`, fault at 0x18).
+
+### Description
+`DebuggerWindow::updateState` -> `DisassemblerWidget::refresh` crashed with `this == nullptr`.
+
+### Root cause
+`getNextCommandAddress` (and `getPreviousCommandAddress` through it) dereferenced `getDisassembler()`, an empty
+`unique_ptr` while the debug manager is not available; `setDisassemblerAddress` already checked it.
+
+### Fix
+The same check in `getNextCommandAddress`.
+
+### Requirements / Acceptance Criteria
+- [x] Build clean. No automated test: the Qt debugger widgets have no test harness.
+
+## 🟢 [Fixed] #6: The WebAPI instance list and status do not show `symbolic_id`
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** 206ff1b8f
+* **Found by:** checking the agent cleanup recipe against a live instance (`symbolic_id` was null in `GET /emulator`).
+
+### Description
+A script naming its instances at create could not find its leftovers by name: only the create / start answer had it.
+
+### Fix
+`GET /api/v1/emulator` and `GET /api/v1/emulator/{id}` carry `symbolic_id` (empty when none); OpenAPI `EmulatorInfo`
+documents it; MCP `emulator_manage list` passes it through.
+
+### Requirements / Acceptance Criteria
+- [x] Checked live: named and unnamed instances in the list, the status, OpenAPI and MCP.
+
+---
+
 2026-10-07
 ## 🟢 [Fixed] #1: TTD engine - the VDAC2 (FT812) picture at a frame boundary differs from the live one for some frames
 * **Date Opened:** 2026-10-07
@@ -179,70 +300,6 @@ agree while recording (53 / 53, 101 / 104, 155 / 155). Test `TTDControl_Test.The
 
 ### Requirements / Acceptance Criteria
 - The status of a running recording is at most about one refresh period behind, or the docs say it is a snapshot.
-
-2026-10-04
-## 🔴 [Open] #1: unreal-qt runs at 2x-4x speed while a TTD recording is active (recording must hold 1x)
-* **Date Opened:** 2026-10-04
-* **Date Fixed:** -
-* **Commit ID:** -
-* **Found by:** the ZiFi Z3b real-program runs (TS-Conf, Wild Commander 1.11i, WCUPDATE.WMF / ZIFIFTP.WMF, TTD recording
-  with a 3000-frame history limit, unreal-qt started from a worktree build with its own WebAPI port); reported in the
-  Z3b hand-back, 2026-10-04. Not yet reproduced by a second run.
-
-### Description
-While a TTD recording was running, the unreal-qt instance appeared to run at 2x-4x speed. A TTD recording is designed
-to hold the machine at 1x: `TimeTravelManager::EngageRecordingLock()`
-(`core/src/debugger/ttd/timetravelmanager.cpp`) sets the host speed multiplier to 1, applies it mid-frame
-(`Z80::ApplyHardwareTurboNow`), switches turbo mode off and makes the FeatureManager refuse turbo / fast tape / fast
-disk until `ReleaseRecordingLock()`; the Qt speed menu reports "refused (TTD recording)" (`unreal-qt/src/mainwindow.cpp`).
-If the machine really runs faster than 1x while recording, recorded timing (frames per wall second, audio pacing) and
-every speed-dependent host input are wrong, and the "recording holds 1x" guarantee in the TTD docs does not hold.
-
-### What "2x-4x" can mean (triage first)
-Two different things show up as "faster" on TS-Conf, and the report does not say which one was seen:
-1. **Host speed** (frames per wall second above 50 / 48.8): the real defect this entry is about. Candidates:
-   - the host speed multiplier set again after the lock engaged by a path that does not go through the FeatureManager
-     gate (instance start applying a persisted speed setting, the WebAPI / CLI speed setters, the Qt speed slider,
-     the instance created with a speed option while recording starts in the same request);
-   - the lock engaging only when recording starts from the Qt UI and not when it starts from the WebAPI / MCP
-     (`time_travel` start) or from an automation create-time option;
-   - audio-less pacing: with the audio device busy or muted the frame pacer may fall back to a timer that does not
-     honor 1x (see the A/V pacing notes: pacing follows the audio ring watermark).
-2. **Hardware turbo** of the TS-Conf CPU (SYS_CONFIG 3.5 / 7 / 14 MHz). Wild Commander switches 3.5 <-> 14 MHz around
-   SD I/O every frame, so the frequency display shows "1x-4x" while wall time is still 1x. This is correct behavior
-   (bug #5 of 2026-09-30, closed `d391d73f`, was the same confusion) and must not be "fixed".
-
-### Steps to reproduce
-1. Build unreal-qt; start it with a free WebAPI port; create TSL with the ZiFi SD folder from
-   `.recipe/peripherals/network.md` ("Demo: update Wild Commander from GitHub").
-2. Start a TTD recording with a history limit (WebAPI / MCP `time_travel` start, then repeat from the Qt toolbar).
-3. Run WC's WCUPDATE (F10 -> ZiFi WC Update -> A) and measure: frames per wall second (`GET .../status` frame counter
-   over a 10 s wall interval), the host speed multiplier (`GET .../settings` or the HUD), the effective CPU clock.
-4. Repeat with the instance started at a persisted non-1x speed, and with speed changes sent during the recording
-   from the WebAPI, the CLI and the Qt menu.
-
-### Root cause
-Unknown (open).
-
-### Triage 2026-10-06 (not reproduced)
-Measured on `0ecdcdca2` (the engine), frames per wall second over 10 s per phase, instances created through the
-WebAPI: TSL idle 48.75, explicit recording (history limit 3000) 48.99, black box 48.97; Pentagon idle 48.83,
-explicit 48.85, black box 48.85. Host speed stayed 1; `PUT /settings/speed` 4 and `PUT /settings/turbo_mode` true
-while recording were refused (400 / 409). The WebAPI's `speed_multiplier` 4.0 on TSL is the Z80 clock (TS-BIOS sets
-14 MHz), not the host speed. Not covered: a recording started from the Qt window on a machine the window created.
-The owner saw about 2x ("not quite turbo") in that setting; it stays open until seen again, then measured
-read-only (`GET .../frame_cost` frame counter over a wall interval) while it happens.
-
-### Requirements / Acceptance Criteria
-- [ ] Triage: decide from measurements which of the two cases was seen (host frames per second vs. hardware turbo);
-      if it is only hardware turbo, close as "not a defect" with the evidence and improve the HUD so host speed and
-      CPU clock cannot be confused.
-- [ ] If host speed: every path that changes the host speed multiplier is refused (or deferred to the release) while
-      the recording lock is engaged - Qt menu / slider, WebAPI, CLI, MCP, Lua, Python, persisted settings at instance
-      start, create-time options - with one test per path (`TimeTravelManager_RecordingLock_Test`).
-- [ ] The lock engages identically whichever surface starts the recording (Qt, WebAPI, MCP, CLI, Lua, Python).
-- [ ] A recording started while the instance runs at Nx shows 1x for the whole session and restores Nx after it.
-- [ ] The frame pacer holds 50 / 48.8 frames per wall second during a recording with and without an audio device.
 
 ---
 

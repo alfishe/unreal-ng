@@ -298,7 +298,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Work** | **1.5 d** (both) |
 | **Verified: 3.0, 3.2** (2026-10-09, dumps `tasm30-*`, `tasm32-*`) | the same gap buffer with the pointers at `#8910`; the line buffer at `#8C22`, its tail `#8C82` (32 bytes) the editor flag. Identified by `TASM2.0 source file: ` at `#9721` (3.0) and `TASM2.0 file: ` at `#9728` (3.2) |
 | **Built** | descriptors `tasm-3.0`, `tasm-3.2` (codec version 3) |
-| open | 3.5 ("FLASHVERSION", pointers also at `#8910`) shows no editor flag in its line buffer; 2.0 (plain text) not looked at |
+| **Verified: 3.5, 2.0** (2026-10-10, dumps `tasm35-*`, `tasm20-*`) | 3.5 ("FLASHVERSION", loader `TASM+`) is 3.0 / 3.2's layout: pointers at `#8910`, its editor flag the line buffer's tail `#8C35`-`#8CA1` (blanks in the editor, zeros at the command line; the earlier "no flag" was wrong), identified by `TASM128 FLASHVERSION` at `#9350`; descriptor `tasm-3.5`. 2.0 keeps the four pointers at `#8847` (the start one byte before the text, the gap start on the last byte before the gap) and changes the buffer's form: at the command line the plain CR LF text SAVE writes, from `#975E`; in the editor 3.x's length-framed records with the cursor line's record before the gap end, which the reader turns into lines (`plainTextFile`). Editor flag: the line buffer's tail at `#8BA0`; identified by `TASM128>` at `#92BF`; descriptor `tasm-2.0` (codec version 2.0, type `C`). Found by diffing the three states' pages (the pointer words, the flag bytes) and checking each model against the saved file |
 
 ### 7.8 STORM 1.2 / 1.3 (1.0 beta)
 
@@ -382,6 +382,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | research | the text start / end pointers in GENS3 and GENS4 (48K), GENS4B |
 | family | `Linear` + `00 00` |
 | **Work** | **1.5 d** |
+| **Verified: GENS4, GENS3M21, GENS 4.3t** (2026-10-10, dumps `gens4-*`, `gens3m21-*`, `gens43t-*`) | `Linear`: the text follows the code, records `[number lo] [number hi] text #0D`, from a start word to an end word (exclusive) that is an operand the code rewrites, `+#36` from the load address in the tape builds. GENS4 (tape, at 26000): text `#8AED`, start `(#67A8)`, end `(#65C6)`. GENS3M21 (Devpac 3 M21 tape, at 49000): text `#E20A` (above `#C000`, page 0), start `(#DE54)`, end `(#BF9E)`. GENS 4.3t (Aysoft, TR-DOS, `GENS4tf`): text `#8F2E`, start `(#689C)`, end `(#61FB)`. While a line is inserted (`I`) the editor sets bit 7 of the high byte of the number of the line it goes before (numbers stay below 32768): the reader clears it (`clearLineMark`). Identified by their copyright / version strings. The tape builds have no save here: their dumps are the loaded text and a line being typed; 4.3t saves with `P`, so it has an edited case. GENS4B is open: started by writing PC at the TR-DOS prompt it crashed, and `basic/run` refuses `RANDOMIZE USR` at that prompt (2026-10-10). Descriptors `gens-4`, `gens-3m21`, `gens-4.3t`; each a build at its usual address (GENS is relocatable) |
 
 ### 7.14 ZEUS 1983, GG, 1.1 (PHT), v7.E; Zeus Plus 2.16, Zeus Pro 2.01
 

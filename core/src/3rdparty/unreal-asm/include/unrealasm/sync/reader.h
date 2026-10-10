@@ -112,6 +112,10 @@ struct GapBufferParams
     uint16_t nextLineAt = 0;
     /// MASM 1.0 demo: in the editor the cursor line's record [n] body [n] starts at the gap start (1.1: ends at the gap end)
     bool recordAtGapStart = false;
+    /// TASM 2.0: its files are plain text (CR LF). Outside the editor the buffer is that text from (start)+1 to
+    /// (gapStart) inclusive, then (gapEnd) to (top); in the editor it holds 3.x's length-framed records, which the
+    /// live file turns into lines
+    bool plainTextFile = false;
     /// Bytes of the file SAVE fills with the editor's state (MASM 3.0: the cursor line in its header), not in RAM
     uint16_t editorStateAt = 0;
     uint16_t editorStateLength = 0;
@@ -127,6 +131,9 @@ struct LinearParams
     /// SAVE writes a first line starting with this (the editor's position, ZAsm's ";!") that the editor takes out on
     /// loading: the live file is without it ("" = none)
     std::string stateLine;
+    /// GENS: records [number lo] [number hi] text #0D; while a line is typed in, the editor marks the line it goes
+    /// before with bit 7 of the number's high byte (numbers stay below 32768): the live file has it clear
+    bool clearLineMark = false;
 };
 
 struct TypingParams

@@ -11,6 +11,9 @@ save the text itself and keep the file. The synchronizer's reader must give that
                                                                  # any other ALASM build: TAG-typing, TAG-edited
     sync-dumps.py zasm2 <disk> <out-dir> --boot ZXASM2.4 --source a2.4_p --big a2.4_1 --tag zasm24
                                                                  # ZX-ASM 2.4 / 2.5 (ZXASM2.5) / 2.6 (boot): plain text, type C
+    sync-dumps.py tasm <disk with PRINTHL.C> <out-dir> --boot TASM128 --source PRINTHL --type C --tag tasm20   # TASM 2.0
+    sync-dumps.py gens <disk with TEST.A> <out-dir> --boot GENS4tf --source TEST --type A --tag gens43t   # GENS 4.3t
+    sync-dumps.py genstape <DEVPAC_4.TAP> <out-dir> --source t.gens --tag gens4 --model 48K    # GENS4 (GENS3: --at 25444 --code-length 8355)
     sync-dumps.py masm <disk with t1.a> <out-dir> --boot m2 --source t1 --menu-save --tag masm20   # MASM 2.0 (3.0: TSM)
     sync-dumps.py masmdemo <SpFon_15.Trd> <out-dir> --source T1 --tag masm10   # MASM 1.0 demo: the text typed in
     sync-dumps.py xas <disk-with-PROBE.X> <out-dir> --boot NAME --list-keys right[,down...] --tag TAG
@@ -389,10 +392,85 @@ def masmdemo(emu, args):
     dump(emu, args.out, f'{args.tag}-typing', pages, name, written, {'editor': True, 'typing': True})
 
 
+def gens(emu, args):
+    """GENS on TR-DOS (4.3t: loader GENS4tf): G,,NAME loads, I<n>,1 inserts, Enter then EDIT (CS+1) ends the insert,
+    P1,9999,NAME saves (type --type, A for 4.3t). The typing case is the inserted line before Enter (out of the text)"""
+    emu.insert_disk(args.disk)
+    emu.run_trdos(args.boot, wait=8)
+    emu.type(f'G,,{args.source}')
+    emu.tap('enter')
+    time.sleep(4)
+    kind = args.type.upper()
+    loaded = saved(emu, args.source, kind)
+    pages = [0, 2, 5]
+    emu.type('I25,1')
+    emu.tap('enter')
+    time.sleep(1)
+    emu.type(' nop')
+    dump(emu, args.out, f'{args.tag}-typing', pages, f'{args.source}.{kind}', loaded, {'editor': True, 'typing': True})
+    emu.tap('enter')
+    time.sleep(0.5)
+    emu.post('/keyboard/combo', {'keys': ['caps', '1'], 'frames': 4})   # EDIT: the insert ends
+    time.sleep(1)
+    dump(emu, args.out, f'{args.tag}-edited', pages, f'{args.source}.{kind}', None, {'editor': True, 'typing': False})
+    emu.type(f'P1,9999,{args.save_as}')
+    emu.tap('enter')
+    time.sleep(4)
+    finish(args.out, f'{args.tag}-edited', f'{args.source}.{kind}', saved(emu, args.save_as, kind))
+
+
+def genstape(emu, args):
+    """GENS from tape on a 48K (GENS4 at 26000, GENS3 at 25444): the code block of --disk (a TAP) whose length is
+    --code-length is written at --at and started; --source (a GENS file) goes on a tape and G,, loads it. No save:
+    the loaded and typing cases both keep the loaded file"""
+    def blocks(data):
+        at = 0
+        while at + 2 <= len(data):
+            n = data[at] | data[at + 1] << 8
+            yield data[at + 2:at + 2 + n]
+            at += 2 + n
+
+    def block(flag, payload):
+        body = bytes([flag]) + payload
+        check = 0
+        for b in body:
+            check ^= b
+        return len(body + bytes([check])).to_bytes(2, 'little') + body + bytes([check])
+
+    code = [b for b in blocks(open(args.disk, 'rb').read()) if len(b) == args.code_length + 2][0][1:-1]
+    text = open(args.source, 'rb').read()
+    tape = os.path.join(args.out, 'source.tap')
+    os.makedirs(args.out, exist_ok=True)
+    open(tape, 'wb').write(block(0, bytes([3]) + b'SOURCE    ' + len(text).to_bytes(2, 'little') + bytes(4)) + block(0xFF, text))
+    emu.post('/reset')
+    time.sleep(3)
+    emu.write(args.at, list(code))
+    emu.post('/basic/run', {'command': f'RANDOMIZE USR {args.at}'})
+    time.sleep(2)
+    emu.post('/tape/load', {'path': os.path.abspath(tape)})
+    emu.type('G,,')
+    emu.tap('enter')
+    emu.post('/tape/play')
+    for _ in range(120):
+        time.sleep(0.5)
+        if emu.get('/tape/info').get('state') in ('ended', 'stopped'):
+            break
+    time.sleep(1)
+    os.remove(tape)
+    pages = [0, 2, 5]
+    dump(emu, args.out, f'{args.tag}-loaded', pages, 'SOURCE.A', text, {'editor': True, 'typing': False})
+    emu.type('I25,1')
+    emu.tap('enter')
+    time.sleep(1)
+    emu.type(' nop')
+    dump(emu, args.out, f'{args.tag}-typing', pages, 'SOURCE.A', text, {'editor': True, 'typing': True})
+
+
 def tasm_other(emu, args):
     """TASM without a line count (4.0 ...): W names the work file (--as-typed: the keyboard is not inverted), E edits,
     Extend Q leaves the editor, S saves. A line being typed is not in the text; the edited case is taken after Enter
     and two steps down, the command case after leaving the editor"""
+    kind = 'A' if args.type == 'a' else args.type   # 2.0: plain text, type C (--type C)
     emu.insert_disk(args.disk)
     emu.run_trdos(args.boot, wait=10)
     emu.tap('enter')                           # past the title
@@ -403,22 +481,22 @@ def tasm_other(emu, args):
     time.sleep(3)
     emu.tap('e')
     time.sleep(2)
-    loaded = saved(emu, args.source, 'A')
+    loaded = saved(emu, args.source, kind)
     pages = [2, 5, windows(emu)[3]]
     emu.type('zz')
-    dump(emu, args.out, f'{args.tag}-typing', pages, f'{args.source}.A', loaded, {'editor': True, 'typing': True})
+    dump(emu, args.out, f'{args.tag}-typing', pages, f'{args.source}.{kind}', loaded, {'editor': True, 'typing': True})
     emu.tap('enter')
     emu.tap('down')
     emu.tap('down')
     time.sleep(1)
-    dump(emu, args.out, f'{args.tag}-edited', pages, f'{args.source}.A', None, {'editor': True, 'typing': False})
+    dump(emu, args.out, f'{args.tag}-edited', pages, f'{args.source}.{kind}', None, {'editor': True, 'typing': False})
     extend(emu, 'q')
-    dump(emu, args.out, f'{args.tag}-command', pages, f'{args.source}.A', None, {'editor': False, 'typing': False})
+    dump(emu, args.out, f'{args.tag}-command', pages, f'{args.source}.{kind}', None, {'editor': False, 'typing': False})
     emu.tap('s')
     time.sleep(4)
-    edited = saved(emu, args.source, 'A')
-    finish(args.out, f'{args.tag}-edited', f'{args.source}.A', edited)
-    finish(args.out, f'{args.tag}-command', f'{args.source}.A', edited)
+    edited = saved(emu, args.source, kind)
+    finish(args.out, f'{args.tag}-edited', f'{args.source}.{kind}', edited)
+    finish(args.out, f'{args.tag}-command', f'{args.source}.{kind}', edited)
 
 
 def saved(emu, name, type_):
@@ -517,7 +595,7 @@ def tasm412(emu, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'masmdemo', 'tasm'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'masmdemo', 'tasm', 'gens', 'genstape'])
     parser.add_argument('disk')
     parser.add_argument('out')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
@@ -530,6 +608,10 @@ def main():
     parser.add_argument('--big', help='zasm: a long text (over #C000) for a loaded case')
     parser.add_argument('--big-disk', help='zasm: the disk for the long text (default: the same)')
     parser.add_argument('--big-type', help='zasm: the long text\'s TR-DOS type (default: --type)')
+    parser.add_argument('--at', type=int, default=26000, help='genstape: where the code goes')
+    parser.add_argument('--code-length', type=int, default=10880, help='genstape: the code block\'s length')
+    parser.add_argument('--save-as', default='SAVED', help='gens: the name P saves the edited text under')
+    parser.add_argument('--model', default='PENTAGON', help='the machine model (48K for the tape builds)')
     parser.add_argument('--ram', type=int, help='the machine\'s RAM in KB (default: 128)')
     parser.add_argument('--start', help='zasm: the keys after the boot, comma-separated; ~N waits N seconds')
     parser.add_argument('--load-keys', help='zasm: the keys from the menu to the Load panel (default: File, Load)')
@@ -541,7 +623,7 @@ def main():
     parser.add_argument('--as-typed', action='store_true', help='tasm: type the name as stored (a keyboard not inverted)')
     args = parser.parse_args()
     args.disk = os.path.abspath(args.disk)
-    emu = Emulator(port=args.port, model='PENTAGON', ram_size=args.ram)
+    emu = Emulator(port=args.port, model=args.model, ram_size=args.ram)
     try:
         if args.assembler == 'tasm412':
             tasm412(emu, args)
@@ -557,6 +639,10 @@ def main():
             zasm(emu, args)
         elif args.assembler == 'masm':
             masm(emu, args)
+        elif args.assembler == 'genstape':
+            genstape(emu, args)
+        elif args.assembler == 'gens':
+            gens(emu, args)
         elif args.assembler == 'masmdemo':
             masmdemo(emu, args)
         elif args.assembler == 'tasm':

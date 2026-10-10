@@ -53,6 +53,9 @@ TEST(TimeTravelManager_Screenshot_Test, EveryFrameIsTheFramebufferAtItsBoundary)
         ASSERT_EQ(std::memcmp(copy.data() + 5, fb.memoryBuffer, fb.memoryBufferSize), 0) << "frame " << frame;
     }
     EXPECT_EQ(engine.Streams().CaptureCalls(), 20u);
+    // The controller's own engine stays closed while a shadow engine takes the captures: its timeline is kept (the
+    // history limit used to read "nothing held", erase every checkpoint each frame and then read the empty front)
+    EXPECT_EQ(ttd->GetCheckpointCount(), 51u) << "30 + 20 frames and the start";
     ttd->StopRecording();
     ttd->SetShadowEngine(nullptr);
     EmulatorTestHelper::CleanupEmulator(emulator);

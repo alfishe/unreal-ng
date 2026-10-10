@@ -87,6 +87,9 @@ const Case kCases[] = {
     {"zasmx641-typing", "zasm-x64.1"}, {"zasmx641-edited", "zasm-x64.1"}, {"zasmx641-big", "zasm-x64.1"},
     {"zasm40x8-typing", "zasm-4.0x8"}, {"zasm40x8-edited", "zasm-4.0x8"}, {"zasm40x8-big", "zasm-4.0x8"},
     {"zasm4x64-typing", "zasm-4.x64"}, {"zasm4x64-edited", "zasm-4.x64"}, {"zasm4x64-big", "zasm-4.x64"},
+    {"gens4-loaded", "gens-4"},        {"gens4-typing", "gens-4"},
+    {"gens3m21-loaded", "gens-3m21"},  {"gens3m21-typing", "gens-3m21"},
+    {"gens43t-typing", "gens-4.3t"},   {"gens43t-edited", "gens-4.3t"},
     {"zasm24-typing", "zasm-2.4"}, {"zasm24-edited", "zasm-2.4"}, {"zasm24-big", "zasm-2.4"},
     {"zasm25-typing", "zasm-2.5"}, {"zasm25-edited", "zasm-2.5"}, {"zasm25-big", "zasm-2.5"},
     {"zasm26-typing", "zasm-2.6"}, {"zasm26-edited", "zasm-2.6"}, {"zasm26-big", "zasm-2.6"},
@@ -99,6 +102,8 @@ const Case kCases[] = {
     {"tasm40-typing", "tasm-4.0"},     {"tasm40-edited", "tasm-4.0"},      {"tasm40-command", "tasm-4.0"},
     {"tasm44-typing", "tasm-4.4"},     {"tasm44-edited", "tasm-4.4"},      {"tasm44-command", "tasm-4.4"},
     {"tasm30-typing", "tasm-3.0"},     {"tasm30-edited", "tasm-3.0"},      {"tasm30-command", "tasm-3.0"},
+    {"tasm20-typing", "tasm-2.0"},     {"tasm20-edited", "tasm-2.0"},      {"tasm20-command", "tasm-2.0"},
+    {"tasm35-typing", "tasm-3.5"},  {"tasm35-edited", "tasm-3.5"},   {"tasm35-command", "tasm-3.5"},
     {"tasm32-typing", "tasm-3.2"},     {"tasm32-edited", "tasm-3.2"},      {"tasm32-command", "tasm-3.2"},
 };
 

@@ -128,7 +128,13 @@ TimeTravelController::~TimeTravelController()
         _context->ttdPortReads = nullptr;
     if (_context && _context->ttdPortWrites == &_engine->BusWritesMutable())
         _context->ttdPortWrites = nullptr;
-
+    // SyncMediaReadJournal bound these: the media manager and the CPU outlive this controller (Emulator::Release)
+    if (_context && _context->pMediaManager && _context->pMediaManager->GetReadJournal() == &_mediaReads)
+        _context->pMediaManager->SetReadJournal(nullptr);
+    if (_context && _context->ttdVectors &&
+        (_context->ttdVectors == &_engine->BusVectors() ||
+         (_mediaReads.engine && _context->ttdVectors == &_mediaReads.engine->BusVectors())))
+        _context->ttdVectors = nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -3733,6 +3739,10 @@ void TimeTravelController::EnforceHistoryLimit()
 
 void TimeTravelController::SyncTimelineFront()
 {
+    // An engine without a session holds no history to follow: a test's shadow engine (SetShadowEngine) takes the
+    // captures, this one stays closed, and "nothing held" erased the whole timeline, then read its front
+    if (!_engine->IsSessionOpen())
+        return;
     const size_t held = _engine->CheckpointCount() - _engine->FirstCheckpoint();
     if (_timeline.size() <= held)
         return;
