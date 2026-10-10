@@ -954,7 +954,8 @@ TEST_F(McpTools_Test, InspectState_NextReportAspects_UseTheirRoutesAndQueries)
                           Case{"next_ports", "/api/v1/emulator/emu-1/state/next/ports?port=6B&access=w"},
                           Case{"next_nextreg", "/api/v1/emulator/emu-1/state/next/nextreg?reg=07&changed=true"},
                           Case{"next_copper", "/api/v1/emulator/emu-1/state/next/copper?from=16&count=8&raw=true"},
-                          Case{"next_sprites", "/api/v1/emulator/emu-1/state/next/sprites?from=16&count=8&all=true"}})
+                          Case{"next_sprites", "/api/v1/emulator/emu-1/state/next/sprites?from=16&count=8&all=true"},
+                          Case{"next_pixel", "/api/v1/emulator/emu-1/state/next/pixel?x=105&y=87&sx=1"}})
     {
         _caller->calls.clear();
         Json::Value report;
@@ -972,6 +973,9 @@ TEST_F(McpTools_Test, InspectState_NextReportAspects_UseTheirRoutesAndQueries)
         args["nr_count"] = "8";
         args["nr_raw"] = true;
         args["nr_all"] = true;
+        args["nr_x"] = "105";
+        args["nr_y"] = "87";
+        args["nr_sx"] = "1";
         mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
         ASSERT_FALSE(result.isError) << c.aspect << ": " << result.text;
         EXPECT_TRUE(_caller->Saw("GET", c.path)) << c.aspect;
@@ -1078,9 +1082,9 @@ TEST_F(McpTools_Test, InspectState_SchemaListsTheNextReportAspectsAndParameters)
     std::string aspects;
     for (const Json::Value& a : schema["properties"]["aspects"]["items"]["enum"])
         aspects += a.asString() + " ";
-    for (const char* aspect : {"next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites"})
+    for (const char* aspect : {"next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel"})
         EXPECT_NE(aspects.find(aspect), std::string::npos) << aspect;
-    for (const char* parameter : {"nr_palette", "nr_range", "nr_port", "nr_access", "nr_reg", "nr_changed", "nr_from", "nr_count", "nr_raw", "nr_all"})
+    for (const char* parameter : {"nr_palette", "nr_range", "nr_port", "nr_access", "nr_reg", "nr_changed", "nr_from", "nr_count", "nr_raw", "nr_all", "nr_x", "nr_y", "nr_sx"})
         EXPECT_TRUE(schema["properties"].isMember(parameter)) << parameter;
 }
 
@@ -3838,6 +3842,40 @@ TEST_F(McpTools_Test, CaptureMedia_Screenshot_ALayerRefusalIsAnErrorWithItsReaso
 
     EXPECT_TRUE(result.isError);
     EXPECT_NE(result.text.find("Layer capture is off"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_NextPixelAspect_SummarizesTheWinnerAndEachLayersReason)
+{
+    Json::Value report;
+    report["available"] = true;
+    report["ok"] = true;
+    report["pixel"]["x"] = 105;
+    report["pixel"]["y"] = 87;
+    report["pixel"]["subpixel"] = 0;
+    report["winner"]["layer"] = "sprite";
+    report["colour"]["rgb"] = "#FF0000";
+    report["layer_order"] = "SLU";
+    report["layers"]["ula"]["opaque"] = true;
+    report["layers"]["ula"]["rgb"] = "#000000";
+    report["layers"]["ula"]["why"] = "layer order SLU: sprite above ula";
+    report["layers"]["layer2"]["opaque"] = false;
+    report["layers"]["layer2"]["why"] = "Layer 2 disabled (port #123B bit 1 / NR #69 bit 7)";
+    report["layers"]["tilemap"]["opaque"] = false;
+    report["layers"]["tilemap"]["why"] = "tilemap disabled (NR #6B bit 7)";
+    report["layers"]["sprites"]["opaque"] = true;
+    report["layers"]["sprites"]["rgb"] = "#FF0000";
+    report["layers"]["sprites"]["why"] = "wins (layer order SLU)";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/pixel?x=105&y=87"] = {200, report};
+    Json::Value args;
+    args["aspects"].append("next_pixel");
+    args["nr_x"] = "105";
+    args["nr_y"] = "87";
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[next_pixel] (105,87) sub 0: sprite #FF0000, layer order SLU"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ula: painted #000000 - layer order SLU: sprite above ula"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("layer2: - - Layer 2 disabled"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("sprites: painted #FF0000 - wins (layer order SLU)"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, CaptureMedia_Screenshot_ALayerWithoutAlphaSaysItIsFlattened)

@@ -2944,6 +2944,24 @@ namespace PythonBindings
             }, py::arg("from_index") = py::none(), py::arg("count") = py::none(), py::arg("all") = false,
                "The 128 sprite attributes decoded (the visible ones of the page; all=True lists every one), switches, collision flags (not "
                "cleared), pattern memory summary")
+            .def("next_pixel", [](Emulator& self, int x, int y, py::object sx) -> py::object {
+                NextPixelQuery query;
+                std::string error;
+                if (!NextPixelQueryFromStrings(std::to_string(x), std::to_string(y), sx.is_none() ? std::string() : std::to_string(sx.cast<int>()), query, error))
+                    throw py::value_error(error);
+                const StateNode report = DeviceState::NextPixel(self.GetContext(), query);
+                const StateNode* available = report.find("available");
+                if (available && available->kind == StateNode::Kind::Bool && !available->b)
+                    throw py::value_error("This machine is not a ZX Spectrum Next");
+                const StateNode* ok = report.find("ok");
+                if (ok && ok->kind == StateNode::Kind::Bool && !ok->b)
+                    throw std::runtime_error(report.find("message") ? report.find("message")->s : std::string("no frame"));
+                return StateNodeToPy(report);
+            }, py::arg("x"), py::arg("y"), py::arg("sx") = py::none(),
+               "The pixel inspector of the last captured Next frame (design-layer-capture.md): x 0-319, y 0-255, sx the sub-pixel 0 or 1. "
+               "Returns winner {layer, id}, colour {rgb9, rgb}, layer_order and per layer (ula, layer2, tilemap, sprites) opaque, rgb9, wins, why "
+               "and source (where the pixel byte came from). ValueError for a bad coordinate or another machine, RuntimeError with the layer "
+               "capture off or before the first frame")
             .def("next_nextreg_write", [](Emulator& self, int reg, int value, const std::string& door) -> py::object {
                 if (reg < 0 || reg > 255 || value < 0 || value > 255)
                     throw py::value_error("reg and value must be 0..255");

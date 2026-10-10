@@ -45,6 +45,10 @@ public:
     /// Draw line `y` (0..255) into `out` (kWidth RGBA pixels, bytes R G B A)
     static void RenderLine(const NextVideoInputs& in, unsigned y, uint32_t* out);
 
+    /// Append to `frame`'s line table the register state `in` holds for the stretch [fromX, toX) (sub-pixels) of grid line y: what the pixel
+    /// inspector needs to recompute where a pixel came from. Called by ScreenNext before each segment it draws
+    static void RecordSegment(NextLayer::Frame& frame, unsigned y, unsigned fromX, unsigned toX, const NextVideoInputs& in);
+
     /// A 9-bit colour (RRRGGGBBb) as RGBA bytes
     static uint32_t Rgba(uint16_t colour9);
 

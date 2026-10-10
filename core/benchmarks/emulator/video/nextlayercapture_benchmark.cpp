@@ -111,9 +111,13 @@ std::shared_ptr<Emulator> BootNext(benchmark::State& state)
 /// it hit; the CPU time only grows while this thread runs (cache and SMT contention still show, which the interleaving averages out)
 double ThreadCpuMicroseconds()
 {
+#ifdef _MSC_VER  // no POSIX thread clock: wall time (an interleaved A/B still cancels most of a loaded machine)
+    return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now().time_since_epoch()).count();
+#else
     timespec t;
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
     return static_cast<double>(t.tv_sec) * 1e6 + static_cast<double>(t.tv_nsec) * 1e-3;
+#endif
 }
 
 double Median(std::vector<double> v)

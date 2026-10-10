@@ -3687,6 +3687,28 @@ public:
             out.push_back(StateNodeToLua(s, DeviceState::NextSprites(emulator->GetContext(), query)));
             return out;
         });
+        // next_pixel(x, y [, sx]): the pixel inspector of the last captured Next frame (DeviceState::NextPixel; design-layer-capture.md): x 0-319,
+        // y 0-255, sx the sub-pixel 0 | 1. Returns {frame, pixel, winner = {layer, id}, colour = {rgb9, rgb}, layer_order, layers = {ula, layer2,
+        // tilemap, sprites: {opaque, rgb9, wins, why, source}}}; nil + error on a bad coordinate, on another machine, with the capture off or
+        // before the first frame
+        lua.set_function("next_pixel", [this](sol::this_state s, int64_t x, int64_t y, sol::optional<int64_t> sx) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            NextPixelQuery query;
+            std::string error;
+            if (!NextPixelQueryFromStrings(std::to_string(x), std::to_string(y), sx ? std::to_string(*sx) : std::string(), query, error))
+                return mouseError(s, error);
+            const StateNode report = DeviceState::NextPixel(emulator->GetContext(), query);
+            const StateNode* available = report.find("available");
+            if (available && available->kind == StateNode::Kind::Bool && !available->b)
+                return mouseError(s, "This machine is not a ZX Spectrum Next");
+            const StateNode* ok = report.find("ok");
+            if (ok && ok->kind == StateNode::Kind::Bool && !ok->b)
+                return mouseError(s, report.find("message") ? report.find("message")->s : std::string("no frame"));
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, report));
+            return out;
+        });
         // next_nextreg_write(reg, value [, door]): write a NextREG through the board's write choke point (NextRegWriteControl); door = "nextreg"
         // (default, the NEXTREG instruction), "port" or "internal"; returns the reply table, or nil + error
         lua.set_function("next_nextreg_write", [this](sol::this_state s, int64_t reg, int64_t value, sol::optional<std::string> door) -> sol::variadic_results {

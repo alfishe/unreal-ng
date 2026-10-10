@@ -55,6 +55,14 @@
               {"frames", "integer", "frames completed since it was switched on"},
               {"last_frame", "integer", "the emulator frame counter of the last completed frame (0 before the first)"},
               {"bytes", "integer", "memory held by the two sets of buffers"}});
+        fill("NextPixelReport", "One pixel of the last captured Next frame (DeviceState::NextPixel)",
+             {{"ok", "boolean", "true"},
+              {"frame", "object", "sequence, frame_number of the frame the answer is from"},
+              {"pixel", "object", "x, y, subpixel, subpixel_x, segment_from_x / segment_to_x (the line segment the pixel was drawn in)"},
+              {"winner", "object", "layer (fallback ula border layer2 tilemap sprite blend stencil) and id"},
+              {"colour", "object", "the composed colour: rgb9, rgb"},
+              {"layer_order", "string", "SLU LSU SUL LUS USL ULS or blend (NR #15 bits 4:2 of the segment)"},
+              {"layers", "object", "ula, layer2, tilemap, sprites: each {opaque, rgb9, rgb, wins, why, source}"}});
         fill("NextLayerLegendEntry", "One winner id of the ids image",
              {{"id", "integer", "0 fallback, 1 ula, 2 border, 3 layer2, 4 tilemap, 5 sprite, 6 blend (layer order 110 / 111), 7 stencil"},
               {"name", "string", "the name of the id"},

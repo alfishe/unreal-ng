@@ -237,6 +237,20 @@ class Emulator:
         """The 128 sprite attributes decoded (the visible ones of the page; all=True lists every one), switches, collision / too-many
         flags (not cleared), visible_count, pattern memory summary"""
 
+    def next_pixel(self, x, y, sx=None) -> dict:
+        """The pixel inspector of the last captured Next frame (x 0-319, y 0-255, sx the sub-pixel 0 or 1): winner {layer, id}, colour {rgb9,
+        rgb}, layer_order and, for ula / layer2 / tilemap / sprites, opaque, rgb9, wins, why (why it lost or did not paint) and source (where
+        its byte came from); ValueError for a bad coordinate or another machine, RuntimeError with the layer capture off or before a frame"""
+
+    def next_layer_capture_control(self, enabled=None) -> dict:
+        """Switch (True / False) or report the per-layer record of the Next screen (on by default, takes effect at the next frame start):
+        available, enabled, frames, last_frame, bytes"""
+
+    def capture_screen_layer(self, layer, format="png", alpha=None, path="") -> dict:
+        """ONE LAYER of the last completed frame of a Next: 'ula' 'layer2' 'tilemap' 'sprites' (alpha 0 where the layer does not paint,
+        alpha=False flattens onto the fallback colour) or 'ids' (the winner of every pixel, with a legend); 640 x 512; format 'png' or 'rgba';
+        a dict like capture_screen (base64 'data' or 'file'), success=False with kind 'not-next' / 'layer-capture-off' / 'no-frame' / 'bad-parameter'"""
+
     def sprinter_pld_journal(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None, source="live") -> dict:
         """Who changed the PLD setup: events (frame, t, pc, kind, port, value, text); source='ttd' reads the recording"""
 

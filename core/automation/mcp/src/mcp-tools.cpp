@@ -1459,7 +1459,7 @@ void RegisterInspectState(ToolRegistry& registry)
     Json::Value allowed(Json::arrayValue);
     for (const char* aspect : {"machine", "registers", "memory", "memory_map", "disasm", "stack", "breakpoints", "memory_banks", "paging", "ports", "video",
                                "screen", "screen_flash", "screen_attributes", "screen_ocr", "screen_image", "screen_digest", "timing", "video_layout", "video_text", "rom", "audio_ay", "audio_fm", "audio_gs", "audio_covox", "audio_moonsound", "audio_opl4_fm", "audio_opl4_pcm", "fdc", "ide", "cdaudio", "rtc", "profi", "isa", "network", "mouse",
-                               "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "sprinter", "sprinter_ports", "sprinter_text",
+                               "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
                                "audio_multisound", "audio_midi"})
@@ -1549,6 +1549,10 @@ void RegisterInspectState(ToolRegistry& registry)
         "'next_nextreg' = one NextREG (nr_reg = '07') with its decoded bits or all (nr_changed = true: only the ones that differ from their "
         "reset), 'next_copper' = the copper list as a disassembly (nr_from, nr_count, nr_raw), its control mode, write address and pc, "
         "'next_sprites' = the 128 sprite attributes decoded (visible ones; nr_from, nr_count, nr_all), switches, flags, pattern memory, "
+        "'next_pixel' = the pixel inspector of the last captured frame (nr_x 0-319, nr_y 0-255, nr_sx 0|1): which layer won the pixel, its colour, and "
+        "per layer whether it painted, why it lost or did not (transparent index 15, clipped, layer order LSU: sprites above, below the ULA ...) and where "
+        "its pixel byte came from (ULA bitmap / attribute byte, tile and definition byte, Layer 2 byte, sprite and pattern byte); the layer images are "
+        "capture_media layer=ula|layer2|tilemap|sprites|ids; "
         "none of them with a side effect on the machine; write a NextREG with invoke_api POST /api/v1/emulator/{id}/next/nextreg "
         "{reg:'07', value:'03', door:'nextreg'|'port'|'internal'}; "
         "'sprinter' = the Sprinter Sp2000 (PLD configuration and module, CNF map / DOS / PN5, the four "
@@ -1613,6 +1617,12 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["nr_raw"]["description"] = "'next_copper': the whole 2048-byte list as hex";
     schema["properties"]["nr_all"]["type"] = "boolean";
     schema["properties"]["nr_all"]["description"] = "'next_sprites': list the invisible sprites too";
+    schema["properties"]["nr_x"]["type"] = "string";
+    schema["properties"]["nr_x"]["description"] = "'next_pixel': the grid pixel 0-319 (decimal or 0x / # hex); required";
+    schema["properties"]["nr_y"]["type"] = "string";
+    schema["properties"]["nr_y"]["description"] = "'next_pixel': the grid line 0-255; required";
+    schema["properties"]["nr_sx"]["type"] = "string";
+    schema["properties"]["nr_sx"]["description"] = "'next_pixel': sub-pixel 0 (left, default) or 1 of the grid pixel";
     schema["properties"]["nr_changed"]["type"] = "boolean";
     schema["properties"]["nr_changed"]["description"] = "'next_nextreg': only the registers that differ from their reset";
     schema["properties"]["pld_journal_source"]["type"] = "string";
@@ -1695,7 +1705,7 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "screen" && aspect != "screen_flash" && aspect != "screen_attributes" && aspect != "screen_ocr" && aspect != "screen_image" && aspect != "screen_digest" && aspect != "timing" && aspect != "video_layout" && aspect != "video_text" && aspect != "rom" && aspect != "audio_ay" &&
                     aspect != "audio_fm" && aspect != "audio_gs" && aspect != "audio_covox" && aspect != "audio_moonsound" && aspect != "audio_opl4_fm" &&
                     aspect != "audio_opl4_pcm" && aspect != "fdc" && aspect != "ide" && aspect != "cdaudio" && aspect != "rtc" && aspect != "profi" && aspect != "isa" && aspect != "network" && aspect != "mouse" && aspect != "ttd" && aspect != "contention" &&
-                    aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "next" && aspect != "next_regs" && aspect != "next_mmu" && aspect != "next_reg_journal" && aspect != "next_dma" && aspect != "next_video" && aspect != "next_palette" && aspect != "next_ports" && aspect != "next_nextreg" && aspect != "next_copper" && aspect != "next_sprites" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
+                    aspect != "tsconf" && aspect != "tsconf_tsu" && aspect != "next" && aspect != "next_regs" && aspect != "next_mmu" && aspect != "next_reg_journal" && aspect != "next_dma" && aspect != "next_video" && aspect != "next_palette" && aspect != "next_ports" && aspect != "next_nextreg" && aspect != "next_copper" && aspect != "next_sprites" && aspect != "next_pixel" && aspect != "sprinter" && aspect != "sprinter_ports" && aspect != "sprinter_text" &&
                     aspect != "sprinter_video" && aspect != "sprinter_palette" && aspect != "sprinter_sound_ring" && aspect != "sprinter_bios" &&
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
@@ -1776,6 +1786,11 @@ void RegisterInspectState(ToolRegistry& registry)
                 add("count", text("nr_count"));
                 add("all", text("nr_all"));
                 nrReports["next_sprites"] = q;
+                q.clear();
+                add("x", text("nr_x"));
+                add("y", text("nr_y"));
+                add("sx", text("nr_sx"));
+                nrReports["next_pixel"] = q;
             }
             const bool hasScreenArg = args.isMember("screen");
             const int screenArg = hasScreenArg ? args["screen"].asInt() : -1;
@@ -2111,7 +2126,7 @@ void RegisterInspectState(ToolRegistry& registry)
                         }
                         else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal" ||
                                  aspect == "next_dma" || aspect == "next_video" || aspect == "next_palette" || aspect == "next_ports" ||
-                                 aspect == "next_nextreg" || aspect == "next_copper" || aspect == "next_sprites")
+                                 aspect == "next_nextreg" || aspect == "next_copper" || aspect == "next_sprites" || aspect == "next_pixel")
                         {
                             // Core DeviceState::Next / NextRegs / NextMmu / NextRegJournalReport / NextDma / NextVideo / NextPalette / NextPorts /
                             // NextRegRead via the WebAPI ("available": false elsewhere)
@@ -2702,7 +2717,7 @@ void RegisterInspectState(ToolRegistry& registry)
                             }
                             else if (aspect == "next" || aspect == "next_regs" || aspect == "next_mmu" || aspect == "next_reg_journal" ||
                                      aspect == "next_dma" || aspect == "next_video" || aspect == "next_palette" || aspect == "next_ports" ||
-                                     aspect == "next_nextreg" || aspect == "next_copper" || aspect == "next_sprites")
+                                     aspect == "next_nextreg" || aspect == "next_copper" || aspect == "next_sprites" || aspect == "next_pixel")
                             {
                                 if (value.isMember("available") && !value["available"].asBool())
                                     out << "\n[" << aspect << "] " << value["description"].asString();
@@ -2738,6 +2753,15 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << value["pattern_memory"]["non_zero_bytes"].asInt() << " non-zero byte(s)"
                                         << (value["flags"]["collision"].asBool() ? ", COLLISION" : "")
                                         << (value["flags"]["too_many"].asBool() ? ", TOO MANY" : "");
+                                else if (aspect == "next_pixel")
+                                {
+                                    out << "\n[next_pixel] (" << value["pixel"]["x"].asInt() << "," << value["pixel"]["y"].asInt() << ") sub " << value["pixel"]["subpixel"].asInt()
+                                        << ": " << value["winner"]["layer"].asString() << " " << value["colour"]["rgb"].asString() << ", layer order "
+                                        << value["layer_order"].asString();
+                                    for (const char* layer : {"ula", "layer2", "tilemap", "sprites"})
+                                        out << "\n  " << layer << ": " << (value["layers"][layer]["opaque"].asBool() ? "painted " + value["layers"][layer]["rgb"].asString() : std::string("-"))
+                                            << " - " << value["layers"][layer]["why"].asString();
+                                }
                                 else if (aspect == "next_nextreg")
                                 {
                                     if (value.isMember("reg"))

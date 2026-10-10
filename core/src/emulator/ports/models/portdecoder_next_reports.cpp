@@ -12,9 +12,11 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/nextregtable.h"
+#include "emulator/memory/memory.h"
 #include "emulator/io/z80n/nextreportquery.h"
 #include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/video/next/nextlayerimage.h"
+#include "emulator/video/next/nextpixelinspector.h"
 #include "emulator/video/next/screennext.h"
 #include "emulator/video/screen.h"
 
@@ -276,6 +278,31 @@ StateNode NextVideo(EmulatorContext* context)
     n["timing"] = std::move(timing);
     n["layer_capture"] = LayerCaptureNode(context);
     return n;
+}
+
+StateNode NextPixel(EmulatorContext* context, const NextPixelQuery& query)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    std::shared_ptr<const NextLayer::Frame> frame;
+    std::string message;
+    const NextLayer::Status status = NextLayer::LastFrame(context, frame, message);
+    if (status != NextLayer::Status::Ok)
+    {
+        StateNode n = StateNode::Object();
+        n["available"] = true;
+        n["ok"] = false;
+        n["status"] = NextLayer::StatusName(status);
+        n["message"] = message;
+        return n;
+    }
+    NextLayer::InspectEnv env;
+    env.ram = context->pMemory ? context->pMemory->RAMPageAddress(0) : nullptr;
+    env.ramPages = MAX_RAM_PAGES;
+    env.regs = &decoder->Board().Video();
+    env.sprites = &decoder->Board().Sprites();
+    return NextLayer::InspectPixel(*frame, env, query.x, query.y, query.sub);
 }
 
 StateNode NextLayerCaptureControl(EmulatorContext* context, int enable)

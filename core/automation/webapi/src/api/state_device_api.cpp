@@ -417,6 +417,34 @@ void EmulatorAPI::postNextRegJournal(const HttpRequestPtr& req, std::function<vo
     ReplyState(DeviceState::NextRegJournalControl(emulator->GetContext(), enable, clear, capacity), callback);
 }
 
+/// @brief GET /api/v1/emulator/{id}/state/next/pixel?x=&y=&sx= - the pixel inspector (DeviceState::NextPixel; design-layer-capture.md): which layer
+/// won the pixel (x 0-319, y 0-255, sub-pixel sx 0 / 1) of the last captured frame, its colour, per layer whether it painted and why not / why
+/// it lost, and the source addresses. 400 bad query, 409 not a Next, the layer capture off or no frame yet
+void EmulatorAPI::getStateNextPixel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextPixelQuery query;
+    std::string error;
+    if (!NextPixelQueryFromStrings(req->getParameter("x"), req->getParameter("y"), req->getParameter("sx"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    const StateNode report = DeviceState::NextPixel(emulator->GetContext(), query);
+    const StateNode* available = report.find("available");
+    if (available && available->kind == StateNode::Kind::Bool && !available->b)
+        return ReplyNotFound("This machine is not a ZX Spectrum Next", callback, HttpStatusCode::k409Conflict);
+    const StateNode* ok = report.find("ok");
+    if (ok && ok->kind == StateNode::Kind::Bool && !ok->b)
+    {
+        const StateNode* message = report.find("message");
+        const StateNode* status = report.find("status");
+        return ReplyNotFound((status ? status->s + ": " : std::string()) + (message ? message->s : std::string("no frame")), callback,
+                             status && status->s == "bad-parameter" ? HttpStatusCode::k400BadRequest : HttpStatusCode::k409Conflict);
+    }
+    ReplyState(report, callback);
+}
+
 /// @brief POST /api/v1/emulator/{id}/next/layer-capture {"enabled": true|false} - switch the per-layer record of the Next screen
 /// (DeviceState::NextLayerCaptureControl; takes effect at the next frame start). An empty body or {} only reports. 409 on another machine
 void EmulatorAPI::postNextLayerCapture(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,

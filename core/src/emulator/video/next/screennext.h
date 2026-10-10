@@ -59,7 +59,6 @@ private:
     PortDecoder_Next* Decoder() const;
     void PrepareLayerFrame();
     void CompleteLayerFrame();
-    static void RecordSegment(NextLayer::Frame& frame, unsigned y, unsigned fromX, unsigned toX, const NextVideoInputs& in, const NextVideoRegs& video);
     void RenderLinesUpTo(unsigned lineExclusive);
     bool FramebufferReady() const;
 

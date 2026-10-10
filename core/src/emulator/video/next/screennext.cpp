@@ -73,30 +73,6 @@ void ScreenNext::PrepareLayerFrame()
     _layerRecording = true;
 }
 
-void ScreenNext::RecordSegment(NextLayer::Frame& frame, unsigned y, unsigned fromX, unsigned toX, const NextVideoInputs& in, const NextVideoRegs& video)
-{
-    if (frame.segments.size() >= 0xFFFF)
-        return;
-    NextLayer::Segment s;
-    s.fromX = static_cast<uint16_t>(fromX);
-    s.toX = static_cast<uint16_t>(toX);
-    s.border = in.border;
-    s.portFf = in.portFf;
-    s.flags = static_cast<uint8_t>((in.shadowScreen ? NextLayer::Segment::kShadowScreen : 0) | (in.layer2Enable ? NextLayer::Segment::kLayer2Enable : 0) |
-                                   (in.flash ? NextLayer::Segment::kFlash : 0));
-    s.paletteControl = video.PaletteControl();
-    s.ulaNextFormat = video.UlaNextFormat();
-    for (unsigned w = 0; w < NextVideoRegs::kClipWindows; w++)
-        for (unsigned c = 0; c < 4; c++)
-            s.clip[w][c] = video.Clip(w, c);
-    for (unsigned i = 0; i < NextLayer::kKeyRegCount; i++)
-        s.nr[i] = in.nr[NextLayer::kKeyRegs[i]];
-    if (frame.lineSegments[y] == 0)
-        frame.lineFirst[y] = static_cast<uint16_t>(frame.segments.size());
-    frame.lineSegments[y]++;
-    frame.segments.push_back(s);
-}
-
 void ScreenNext::CompleteLayerFrame()
 {
     _layerRecording = false;
@@ -225,7 +201,7 @@ void ScreenNext::RenderLinesUpTo(unsigned lineExclusive)
             const bool whole = fromX == 0 && toX >= 320;
             in.layerOut = record ? (whole ? &lineSink : &scratchSink) : nullptr;
             if (record)
-                RecordSegment(*record, _nextLine, fromX * 2, toX * 2, in, board.Video());
+                NextVideoRenderer::RecordSegment(*record, _nextLine, fromX * 2, toX * 2, in);
             NextVideoRenderer::RenderLine(in, _nextLine, segment);
             std::memcpy(row + fromX * 2, segment + fromX * 2, (toX - fromX) * 2 * sizeof(uint32_t));
             if (record && !whole)

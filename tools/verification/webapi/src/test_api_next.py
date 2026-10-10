@@ -184,6 +184,26 @@ class TestNextLayerCapture:
         assert report.status_code == 200 and report.json()["frames"] >= 1
         assert post(api_client, next_emulator, "/next/layer-capture", {"enabled": "yes"}).status_code == 400
 
+    def test_the_pixel_inspector(self, api_client, next_emulator):
+        assert wait_for_layer_frame(api_client, next_emulator).status_code == 200
+        response = get(api_client, next_emulator, "/state/next/pixel?x=100&y=100&sx=1")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["ok"] is True and body["pixel"]["x"] == 100 and body["pixel"]["y"] == 100 and body["pixel"]["subpixel"] == 1
+        assert body["winner"]["layer"] in ("ula", "border", "layer2", "tilemap", "sprite", "blend", "stencil", "fallback")
+        assert set(body["layers"]) == {"ula", "layer2", "tilemap", "sprites"}
+        for layer in body["layers"].values():
+            assert set(layer) >= {"opaque", "rgb9", "wins", "why", "source"}
+        assert body["layers"]["ula"]["source"]["kind"] in ("paper", "paper_hicolour", "paper_hires", "lores", "border", "disabled")
+        assert body["colour"]["rgb"].startswith("#") and body["layer_order"]
+        # the same pixel as the layer image says: the winner of the ids image is the winner here
+        for query in ("x=320&y=0", "x=0&y=256", "x=-1&y=0", "x=1", "y=1", "x=1&y=1&sx=2", "x=zz&y=1"):
+            assert get(api_client, next_emulator, f"/state/next/pixel?{query}").status_code == 400, query
+        assert post(api_client, next_emulator, "/next/layer-capture", {"enabled": False}).status_code == 200
+        refused = get(api_client, next_emulator, "/state/next/pixel?x=1&y=1")
+        assert refused.status_code == 409 and refused.json()["error"] == "Conflict", refused.text
+        assert post(api_client, next_emulator, "/next/layer-capture", {"enabled": True}).status_code == 200
+
     def test_another_machine_has_no_layers(self, api_client):
         response = api_client.create_and_start_emulator(model="48K")
         emulator_id = response["id"]
@@ -192,6 +212,7 @@ class TestNextLayerCapture:
             assert refused.status_code == 409 and refused.json()["kind"] == "not-next", refused.text
             assert get(api_client, emulator_id, "/capture/next-layers").status_code == 409
             assert post(api_client, emulator_id, "/next/layer-capture", {"enabled": True}).status_code == 409
+            assert get(api_client, emulator_id, "/state/next/pixel?x=1&y=1").status_code == 409
             assert get(api_client, emulator_id, "/capture/screen?layer=layer3").status_code == 400
         finally:
             api_client.stop_emulator(emulator_id)
@@ -249,8 +270,19 @@ assert bad['success'] is False and bad['kind'] == 'bad-parameter', bad
 off = emu.next_layer_capture_control(False)
 assert off['enabled'] is False, off
 assert emu.capture_screen_layer('ula')['kind'] == 'layer-capture-off'
+try:
+    emu.next_pixel(1, 1)
+except RuntimeError:
+    pass
+else:
+    raise AssertionError('next_pixel with the capture off must raise RuntimeError')
 assert emu.next_layer_capture_control(True)['enabled'] is True
-
+try:
+    emu.next_pixel(320, 0)
+except ValueError:
+    pass
+else:
+    raise AssertionError('x = 320 must raise ValueError')
 print('NEXT-PY-OK')
 """
         resp = api_client.exec_python(code)
@@ -295,6 +327,12 @@ assert(bad == nil and badWhy:find("Unknown layer") ~= nil, "bad layer")
 assert(next_layer_capture_control({enabled = false}).enabled == false, "switch off")
 local refused, refusedWhy = capture_screen_layer("ula")
 assert(refused == nil and refusedWhy:find("Layer capture is off") ~= nil, "off refusal")
+local pixel = next_pixel(100, 100)
+assert(pixel == nil or (pixel.layers.ula.source.kind ~= nil and pixel.winner.layer ~= nil), "pixel")
+local badPixel, badPixelWhy = next_pixel(320, 0)
+assert(badPixel == nil and badPixelWhy:find("x must be 0%-319") ~= nil, "bad pixel")
+local offPixel, offWhy = next_pixel(1, 1)
+assert(offPixel == nil and offWhy:find("Layer capture is off") ~= nil, "off pixel")
 assert(next_layer_capture_control({enabled = true}).enabled == true, "switch on")
 print("NEXT-LUA-OK")
 """

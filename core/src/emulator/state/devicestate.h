@@ -43,6 +43,7 @@ struct Options;
 struct NextRegJournalQuery;  // emulator/io/z80n/nextregjournal.h
 struct NextPaletteQuery;     // emulator/io/z80n/nextreportquery.h
 struct NextPortsQuery;
+struct NextPixelQuery;
 struct NextRegReadQuery;
 struct NextCopperQuery;
 struct NextSpritesQuery;
@@ -248,6 +249,10 @@ StateNode NextVideo(EmulatorContext* context);
 /// last_frame, bytes}. The switch takes effect at the next frame start. The same node is the `layer_capture` field of `next_video`
 /// (design-layer-capture.md)
 StateNode NextLayerCaptureControl(EmulatorContext* context, int enable);
+/// `next_pixel`: one pixel of the last captured frame (design-layer-capture.md): the winner, the composed colour and per layer whether it
+/// painted, its colour, why it lost or did not paint, and where its pixel came from (ULA bitmap / attribute byte, tile and definition byte,
+/// Layer 2 byte, sprite and pattern byte). `ok: false` with `status` layer-capture-off / no-frame when there is no frame to ask
+StateNode NextPixel(EmulatorContext* context, const NextPixelQuery& query);
 /// `next_palette`: the 9-bit palettes (the selected one, one by `palette`, or all eight) over a range of entries
 StateNode NextPalette(EmulatorContext* context, const NextPaletteQuery& query);
 /// `next_ports`: the internal-port enable word (NR #82-#85) and, when asked, which device answers a port read / write

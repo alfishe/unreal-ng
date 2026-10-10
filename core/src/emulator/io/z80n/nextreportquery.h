@@ -62,6 +62,17 @@ struct NextCopperQuery
 bool NextCopperQueryFromStrings(const std::string& from, const std::string& count, const std::string& raw, NextCopperQuery& query,
                                 std::string& error);
 
+/// `next_pixel`: the grid pixel to inspect (x 0-319, y 0-255) and its sub-pixel (0 or 1; the frame is 640 sub-pixels wide)
+struct NextPixelQuery
+{
+    unsigned x = 0;
+    unsigned y = 0;
+    unsigned sub = 0;
+};
+
+/// `x`, `y` (decimal, or hex with 0x / #; both required), `sx` (0 or 1, empty = 0)
+bool NextPixelQueryFromStrings(const std::string& x, const std::string& y, const std::string& sx, NextPixelQuery& query, std::string& error);
+
 /// `next_sprites`: a page of the 128 sprites; by default only the visible ones of the page are listed
 struct NextSpritesQuery
 {

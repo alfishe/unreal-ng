@@ -198,6 +198,120 @@ pattern memory: 256 non-zero byte(s) of 16384, 1 8-bit pattern(s) in use
 MCP: `inspect_state {"aspects":["next_copper","next_sprites"],"nr_from":"0","nr_count":"16"}`; WebAPI `GET .../state/next/copper?from=0&count=16&raw=true`,
 `GET .../state/next/sprites?all=true`; Lua `next_copper{...}`, `next_sprites{...}`; Python `emu.next_copper(...)`, `emu.next_sprites(...)`.
 
+### 3c. Which layer draws this pixel? (the layer capture and the pixel inspector)
+
+"Is this tile from the tilemap or from Layer 2?", "why is my sprite hidden - behind which layer?", "what does the ULA look like without the tilemap on
+top?" The Next screen records, while it draws each frame, the four layers (`ula` with the border and LoRes, `layer2`, `tilemap`, `sprites`), which
+layer won every pixel (`ids`) and the register state of every line segment - so copper bars, split screens and palette tricks are exact; a
+re-render from the registers of the moment of the request would not be (design: `docs/inprogress/2026-10-07-zx-next/design-layer-capture.md`).
+The record is **on by default** (ini `[NEXT] LayerCapture=on|off`; it costs about 4 % of a frame and 3.1 MB for two frames of buffers) and a paused
+machine answers from its last frame.
+
+```text
+capture_media {"action":"screenshot","layer":"tilemap"}                     # PNG, alpha 0 where the tilemap paints nothing; 640 x 512 like the screenshot
+capture_media {"action":"screenshot","layer":"ids","filename":"scratch/ids.png"}   # every pixel coloured by the layer that won it (the legend is in the answer)
+inspect_state {"aspects":["next_pixel"],"nr_x":"50","nr_y":"50"}             # which layer draws pixel (50, 50), and why
+invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/capture/next-layers"}         # ula, layer2, tilemap, sprites and ids of the SAME frame
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/layer-capture","body":{"enabled":false}}   # switch the record (the default is on)
+```
+
+WebAPI `GET .../capture/screen?layer=ula|layer2|tilemap|sprites|ids[&format=rgba][&alpha=false]`, `GET .../capture/next-layers`,
+`GET .../state/next/pixel?x=50&y=50[&sx=1]`, `POST .../next/layer-capture {"enabled":true}`; CLI `capture screen --layer=tilemap scratch/tiles.png`,
+`state next pixel 50 50`, `next layer-capture [on|off]`; Lua `capture_screen_layer("tilemap")`, `next_pixel(50, 50)`,
+`next_layer_capture_control{enabled=true}`; Python `emu.capture_screen_layer("tilemap")`, `emu.next_pixel(50, 50)`,
+`emu.next_layer_capture_control(True)`. A layer image answers 409 when the machine is not a Next (`not-next`), the record is off
+(`layer-capture-off`) or no frame has been completed yet (`no-frame`); 400 for a word that is not a layer, a format or an alpha. The `next_video`
+report carries the state as `layer_capture {enabled, frames, last_frame, bytes}`.
+
+The pixel report names the **winner**, the composed colour and, per layer, whether it painted, **why it lost or did not paint** and **where its
+pixel came from**: the ULA bitmap and attribute byte, the tile number and its definition byte, the Layer 2 byte, the sprite number and its pattern
+byte. The winner, the colours and the opacity are the recorded ones; the addresses are recomputed from the pixel position and the registers of the
+line *segment* the pixel was drawn in, and the bytes are read from the memory now (a paused machine: exact; a running one can be a frame newer).
+The outputs below are real: they come from the core test `CliNextReports_Test.RecipeWhichLayerDrawsThisPixel`
+(`UNREAL_PRINT_NEXT_RECIPE=1 core-tests --gtest_filter=CliNextReports_Test.RecipeWhichLayerDrawsThisPixel`).
+
+**A tile you drew does not show.** The ULA screen is white paper; tile 1 (a solid square) is at column 6, row 6 - pixel (50, 50) is inside it:
+
+```text
+$ next layer-capture
+Next layer capture on: 0 frame(s) recorded, last emulator frame 0, 1638400 bytes held
+
+$ state next pixel 50 50
+Pixel (50,50) sub-pixel 0 of Next frame #3 (emulator frame 3), line segment 0-640
+winner: ula  colour 0x16D #B6B6B6  layer order SLU
+  ula    : painted 0x16D #B6B6B6  - wins (layer order SLU)
+           kind paper, ram_page 5, bitmap_offset 0x0242, bitmap_byte 0x00, bit 5, ink_pixel no, attribute_offset 0x1842, attribute_byte 0x38, palette_index 23, palette 0
+  layer2 : not painted  - Layer 2 disabled (port #123B bit 1 / NR #69 bit 7)
+           kind disabled
+  tilemap: painted 0x00B #00246D  - below the ULA (tile attribute bit 0, or 512 mode)
+           kind tile, column 6, row 6, map_bank 5, map_offset 0x21EC, tile 1, attribute 0x01, tile_bank 5, definition_offset 0x3029, pixel_value 5, x_mirror no, y_mirror no, rotate no, below_ula yes, transparent_index 15, palette_index 5, palette 3
+  sprites: not painted  - sprites disabled (NR #15 bit 0)
+           kind disabled
+```
+
+The tilemap painted (`painted 0x00B`) but the ULA won: the tile's attribute byte `0x01` has bit 0 set, "ULA above". Clearing the bit:
+
+```text
+$ state next pixel 50 50   # after clearing attribute bit 0 of the tile
+Pixel (50,50) sub-pixel 0 of Next frame #6 (emulator frame 6), line segment 0-640
+winner: tilemap  colour 0x00B #00246D  layer order SLU
+  ula    : painted 0x16D #B6B6B6  - covered by the tilemap pixel (the tile is above the ULA)
+           kind paper, ram_page 5, bitmap_offset 0x0242, bitmap_byte 0x00, bit 5, ink_pixel no, attribute_offset 0x1842, attribute_byte 0x38, palette_index 23, palette 0
+  layer2 : not painted  - Layer 2 disabled (port #123B bit 1 / NR #69 bit 7)
+           kind disabled
+  tilemap: painted 0x00B #00246D  - wins (layer order SLU)
+           kind tile, column 6, row 6, map_bank 5, map_offset 0x21EC, tile 1, attribute 0x00, tile_bank 5, definition_offset 0x3029, pixel_value 5, x_mirror no, y_mirror no, rotate no, below_ula no, transparent_index 15, palette_index 5, palette 3
+  sprites: not painted  - sprites disabled (NR #15 bit 0)
+           kind disabled
+```
+
+**A sprite that does not show.** Layer 2 is on, the layer order is LSU, sprite 0 is at (100, 100):
+
+```text
+$ state next pixel 105 105
+Pixel (105,105) sub-pixel 0 of Next frame #9 (emulator frame 9), line segment 0-640
+winner: layer2  colour 0x055 #2449B6  layer order LSU
+  ula    : painted 0x16D #B6B6B6  - layer order LSU: layer2 above ula
+           kind paper, ram_page 5, bitmap_offset 0x0929, bitmap_byte 0x00, bit 6, ink_pixel no, attribute_offset 0x1929, attribute_byte 0x38, palette_index 23, palette 0
+  layer2 : painted 0x055 #2449B6  - wins (layer order LSU)
+           resolution 256x192x8, bank 8, kind bitmap, ram_page16 9, offset 0x0949, bitmap_offset 0x4949, byte 0x2A, palette_index 42, palette 1
+  tilemap: painted 0x000 #000000  - layer order LSU: layer2 above tilemap
+           kind tile, column 13, row 13, map_bank 5, map_offset 0x242A, tile 0, attribute 0x00, tile_bank 5, definition_offset 0x3004, pixel_value 0, x_mirror no, y_mirror no, rotate no, below_ula no, transparent_index 15, palette_index 0, palette 3
+  sprites: painted 0x023 #00926D  - layer order LSU: layer2 above sprites
+           kind sprite, sprite 0, x 100, y 100, pattern 0, four_bit no, pattern_offset 0x0055, pattern_byte 0x11, palette 2, palette_index 17
+```
+
+Layer 2 is above the sprites in LSU (`layer order LSU: layer2 above sprites`); the sprite's own pixel exists (`painted 0x023`, sprite 0, pattern byte `0x11`). With the order SLU (NR #15 bits 4:2 = 000):
+
+```text
+$ state next pixel 105 105   # after layer order SLU
+Pixel (105,105) sub-pixel 0 of Next frame #12 (emulator frame 12), line segment 0-640
+winner: sprite  colour 0x023 #00926D  layer order SLU
+  ula    : painted 0x16D #B6B6B6  - layer order SLU: sprite above ula
+           kind paper, ram_page 5, bitmap_offset 0x0929, bitmap_byte 0x00, bit 6, ink_pixel no, attribute_offset 0x1929, attribute_byte 0x38, palette_index 23, palette 0
+  layer2 : painted 0x055 #2449B6  - layer order SLU: sprite above layer2
+           resolution 256x192x8, bank 8, kind bitmap, ram_page16 9, offset 0x0949, bitmap_offset 0x4949, byte 0x2A, palette_index 42, palette 1
+  tilemap: painted 0x000 #000000  - layer order SLU: sprite above tilemap
+           kind tile, column 13, row 13, map_bank 5, map_offset 0x242A, tile 0, attribute 0x00, tile_bank 5, definition_offset 0x3004, pixel_value 0, x_mirror no, y_mirror no, rotate no, below_ula no, transparent_index 15, palette_index 0, palette 3
+  sprites: painted 0x023 #00926D  - wins (layer order SLU)
+           kind sprite, sprite 0, x 100, y 100, pattern 0, four_bit no, pattern_offset 0x0055, pattern_byte 0x11, palette 2, palette_index 17
+```
+
+The images are the same frame in picture form; the WebAPI answers (from a running instance, Layer 2 / tilemap / sprites off):
+
+```text
+$ curl -s "http://localhost:8090/api/v1/emulator/$EMU/capture/screen?layer=ula" | jq 'del(.data)'
+{"alpha": true, "format": "png", "frame": {"frame_number": 50, "sequence": 51}, "height": 512, "layer": "ula", "size": 220, "status": "success", "width": 640}
+$ curl -s "http://localhost:8090/api/v1/emulator/$EMU/capture/screen?layer=layer3"
+{"error":"Bad Request","kind":"bad-parameter","message":"Unknown layer 'layer3': use composed, ula, layer2, tilemap, sprites or ids"}
+$ curl -s -X POST -d '{"enabled":false}' -H 'content-type: application/json' "http://localhost:8090/api/v1/emulator/$EMU/next/layer-capture"
+{"available":true,"bytes":3276800,"enabled":false,"frames":56,"last_frame":55}
+$ curl -s "http://localhost:8090/api/v1/emulator/$EMU/capture/screen?layer=ula"
+{"error":"Conflict","kind":"layer-capture-off","message":"Layer capture is off: switch it on (POST /api/v1/emulator/{id}/next/layer-capture {\"enabled\":true}, ini [NEXT] LayerCapture=on) and let a frame run"}
+```
+
+(The PNG is RGBA, or a palette with a `tRNS` chunk when the image has few colours - the same alpha either way. `format=rgba` is the raw bytes, 640 x 512 x 4.)
+
 ### 4. Starting a snapshot (`.snx`, `.sna`, `.z80`) from the Browser
 
 NextZXOS starts a snapshot in a way worth knowing, because every piece must be exact or the screen stays black:
