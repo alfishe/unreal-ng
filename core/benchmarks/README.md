@@ -32,6 +32,14 @@ from the Sprinter's DSS system disk (DNTBLINK, ROTOZOOM, PLASMA2, BADAPPLE).
 They need `UNREAL_SPRINTER_HDD` (the raw `sp_hdd_sys.img` from the MAME pack); without it they are skipped with
 an error. Details, method and results: [emulator/machines/README.md](emulator/machines/README.md).
 
+## Next Layer Capture Benchmark
+
+`emulator/video/nextlayercapture_benchmark.cpp`: what recording the layers of a ZX Spectrum Next frame costs (design: `docs/inprogress/2026-10-07-zx-next/design-layer-capture.md`
+section 3.2 and 7). `BM_NextFrame_LayerCapture/{0 full emulated frame, 1 bare ScreenNext render}` runs interleaved A/B rounds (capture off, capture on, the order flipped every
+round, thread CPU time) over a scene with every layer, 64 sprites and a copper list, and reports the median overhead with its 95 % interval (`overhead_pct`, `ci95_pct`, `p10_pct`,
+`p90_pct`). `BM_NextFrame_Plain/{0|1}/{0 off|1 on}` is one configuration per run, for comparing two builds (`-DLAYER_CAPTURE_BASELINE` builds it against a tree without the record).
+Do not wait for a quiet machine: more rounds and interleaving, and report the spread.
+
 ## Message Center Benchmarks
 
 Located in `emulator/messagecenter/`. Tests the pub/sub notification system used for frame sync, debug events, and inter-component communication.

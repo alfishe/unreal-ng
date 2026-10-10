@@ -63,7 +63,7 @@ palette_offset, clip}`, `tilemap {enabled, columns, attrs, mode512, on_top, text
 
 **`next_nextreg`** - read one register (`reg=`) or all with names; write as in R6.
 
-**layer capture** (phase C) - `GET /capture/screen?layer=composed|ula|layer2|sprites|tilemap|border` returns the layer's own 320x256 image (transparent as alpha).
+**layer capture** - `GET /capture/screen?layer=composed|ula|layer2|sprites|tilemap|ids` returns the layer's own image (transparent as alpha); **done 2026-10-10**, designed and built in [design-layer-capture.md](design-layer-capture.md) (recorded while the frame is drawn, 640 x 512 like the screenshot, plus the pixel inspector `state/next/pixel`).
 
 ## 4. Surfaces
 
@@ -96,7 +96,7 @@ palette_offset, clip}`, `tilemap {enabled, columns, attrs, mode512, on_top, text
 | Phase | Content | Exit |
 |:--|:--|:--|
 | A | `dma`, `video`, `palette`, `ports`, `nextreg` read/write on all planes, docs, manifest | tests green on master merge; full `core-tests`; gcc-16 -O3 clean. **Done 2026-10-10** (branch `next-automation`) |
-| B | `copper`, `sprites` (the larger reports), layer capture | same. **`copper` and `sprites` done 2026-10-10; layer capture not done** (see TODO.md) |
+| B | `copper`, `sprites` (the larger reports), layer capture | same. **`copper` and `sprites` done 2026-10-10; layer capture and the pixel inspector done 2026-10-10** ([design-layer-capture.md](design-layer-capture.md)) |
 | C | Qt panels (NextREG table, MMU map, layers, sprites, copper, DMA/CTC/IM2, M1 button), breakpoints on NextREG writes, DeZog/GDB wiring, TTD of NEXTREG writes | later; see [phases.md](phases.md) N12 |
 
 ## 7. Documents to update (with the code)
@@ -109,6 +109,6 @@ palette_offset, clip}`, `tilemap {enabled, columns, attrs, mode512, on_top, text
 
 ## 8. Open questions
 
-1. Per-layer capture: render each layer in the compose pass with a flag (cost on the hot path when off must be one branch), or re-run the layer renderer on demand from the register state (no hot path cost, but a second code path). Proposal: on demand.
+1. Per-layer capture: render each layer in the compose pass with a flag (cost on the hot path when off must be one branch), or re-run the layer renderer on demand from the register state (no hot path cost, but a second code path). **Decided 2026-10-10: neither as proposed - the layers are recorded while the frame is drawn (an on-demand re-render is wrong for every copper effect), into two sets of one frame each, on by default at +4 %**; [design-layer-capture.md](design-layer-capture.md).
 2. The sprites report on a 128-sprite table can be 10 KB of JSON: default to visible sprites only, page with `from`/`count`.
 3. NextREG write over a running emulator: apply at the next instruction boundary through the same command queue the keyboard uses, never from the HTTP thread directly.

@@ -190,7 +190,7 @@ void NextMemory::SetLayer2View(const Layer2View& view)
 
 void NextMemory::SetDivMmcView(const DivMmcView& view)
 {
-    if (view.mapped == _divView.mapped && view.bank3AtZero == _divView.bank3AtZero && view.bank == _divView.bank)
+    if (view.mapped == _divView.mapped && view.mapram == _divView.mapram && view.bank == _divView.bank)
         return;
     _divView = view;
     Remap();
@@ -362,16 +362,16 @@ void NextMemory::MapSlot(unsigned slot)
         const uint8_t* mem;
         bool writable = false;
         if (slot == 0)
-            mem = _divView.bank3AtZero ? DivMmcRamBank(3) : ROMPageHostAddress(4);
+            mem = _divView.mapram ? DivMmcRamBank(3) : ROMPageHostAddress(4);
         else
         {
             mem = DivMmcRamBank(_divView.bank);
-            writable = !(_divView.bank3AtZero && _divView.bank == 3);
+            writable = !(_divView.mapram && _divView.bank == 3);
         }
         _readOff[slot] = static_cast<uint32_t>(mem - _memory);
         _writeOff[slot] = writable ? _readOff[slot] : trash;
         _physPage[slot] = ttd::kPhysPageNone;
-        _kind[slot] = (slot == 0 && !_divView.bank3AtZero) ? "divmmc rom" : "divmmc ram";
+        _kind[slot] = (slot == 0 && !_divView.mapram) ? "divmmc rom" : "divmmc ram";
     }
     else if (value == kMmuRom && bootRomHere)
     {

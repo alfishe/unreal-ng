@@ -5,6 +5,7 @@
 
 #include "unrealasm/layout.h"
 #include "unrealasm/registry.h"
+#include "dialects/sjasmplus/sjasmplusproject.h"
 
 #include "dialects/alasm/alasmbackend.h"
 #include "dialects/alasm/alasmfrontend.h"
@@ -194,6 +195,13 @@ ConvertResult Convert(const SourceDocument& source, std::string_view targetDiale
     result.document.name = source.name;
     result.diagnostics = std::move(parsed.diagnostics);
     result.diagnostics.insert(result.diagnostics.end(), written.diagnostics.begin(), written.diagnostics.end());
+    if (targetDialect == "sjasmplus" && source.dialect != "sjasmplus")
+    {
+        // As a project of one file (ConvertProject)
+        std::vector<ProjectFile> one = {{source.name, std::move(result.document)}};
+        dialects::FinishSjasmplusProject(one, {false}, options, result.diagnostics);
+        result.document = std::move(one[0].document);
+    }
     result.ok = !HasErrors(result.diagnostics);
     return result;
 }
@@ -343,6 +351,13 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
         for (Diagnostic d : written.diagnostics)
             result.diagnostics.push_back({d.severity, d.line, d.byteOffset, files[k].name + ": " + d.message});
     }
+    // A conversion to sjasmplus: what needs the whole written project (the byte operands the source's assembler
+    // truncates without a word, the object saver, ORG pages)
+    bool converted = false;
+    for (const ProjectFile& f : files)
+        converted = converted || f.document.dialect != "sjasmplus";
+    if (targetDialect == "sjasmplus" && converted)
+        dialects::FinishSjasmplusProject(result.files, included, options, result.diagnostics);
     result.ok = !HasErrors(result.diagnostics);
     return result;
 }

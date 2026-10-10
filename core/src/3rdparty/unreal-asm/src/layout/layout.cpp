@@ -200,6 +200,7 @@ public:
         stable = stable && _symbols == last;
         result.labels = std::move(_labels);
         result.diagnostics = std::move(_diagnostics);
+        result.wideBytes = std::move(_wideBytes);
         if (!stable)
             result.diagnostics.push_back({Severity::Error, 0, 0, "labels still move after " + std::to_string(_options.maxPasses) + " passes"});
         result.ok = stable && !_unresolved && !HasErrors(result.diagnostics);
@@ -239,10 +240,13 @@ private:
     // Final pass only
     Diagnostics _diagnostics;
     std::set<std::string> _reported;
+    std::vector<WideByteOperand> _wideBytes;
+    std::set<std::string> _wideSeen;
 
     // Where the statement being laid out is (for diagnostics and labels)
     const Chunk* _chunk = nullptr;
     size_t _lineIndex = 0;
+    size_t _statementIndex = 0;
 
     void BeginPass()
     {
@@ -777,12 +781,51 @@ private:
             else
                 Define(line.label, _pc, LabelUse::Unknown);
         }
-        for (const Statement& s : line.statements)
+        for (size_t k = 0; k < line.statements.size(); ++k)
         {
             if (_stopped)
                 return;
-            RunStatement(s, depth);
+            _statementIndex = k;
+            RunStatement(line.statements[k], depth);
         }
+    }
+
+    /// A byte operand: sjasmplus warns outside -256..255 (it keeps the low byte, as the classic assemblers do silently)
+    void CheckByte(size_t operand, int64_t value)
+    {
+        if (!_final || (value >= -256 && value <= 255) || !_chunk)
+            return;
+        const std::string key = _chunk->file + ":" + std::to_string(FileLine()) + ":" + std::to_string(_statementIndex) + ":" + std::to_string(operand);
+        if (_wideSeen.insert(key).second)
+            _wideBytes.push_back({_chunk->file, FileLine(), _statementIndex, operand, value});
+    }
+
+    /// The operand of an instruction that is one byte: n of LD r,n / LD (HL),n / LD (IX+d),n, of the arithmetic and
+    /// logic group with A, the port of IN A,(n) / OUT (n),A
+    static bool ByteOperand(const Statement& s, size_t k)
+    {
+        static const std::set<std::string> kByteRegisters = {"a", "b", "c", "d", "e", "h", "l", "ixh", "ixl", "iyh", "iyl"};
+        static const std::set<std::string> kArithmetic = {"add", "adc", "sub", "sbc", "and", "or", "xor", "cp"};
+        const std::string m = z80::Lower(s.mnemonic);
+        const ir::Operand& o = s.operands[k];
+        if (m == "out")
+            return k == 0 && o.kind == ir::Operand::Kind::Memory && s.operands.size() == 2;
+        if (m == "in")
+            return k == 1 && o.kind == ir::Operand::Kind::Memory;
+        if (o.kind != ir::Operand::Kind::Immediate)
+            return false;
+        if (m == "ld")
+        {
+            if (k != 1 || s.operands.size() != 2)
+                return false;
+            const ir::Operand& to = s.operands[0];
+            return (to.kind == ir::Operand::Kind::Register && kByteRegisters.count(to.text)) ||
+                   (to.kind == ir::Operand::Kind::Indirect && to.text == "hl") || to.kind == ir::Operand::Kind::Indexed;
+        }
+        if (kArithmetic.count(m))
+            return k + 1 == s.operands.size() &&
+                   (s.operands.size() == 1 || (s.operands[0].kind == ir::Operand::Kind::Register && s.operands[0].text == "a"));
+        return false;
     }
 
     void RunStatement(const Statement& s, int depth)
@@ -825,7 +868,7 @@ private:
             case DirectiveKind::Defl: return;   // with the label
             case DirectiveKind::Db:
             {
-                const std::vector<int16_t> bytes = DataBytes(s);
+                const std::vector<int16_t> bytes = DataBytes(s, true);
                 Store(bytes);
                 Emit(static_cast<int64_t>(bytes.size()), LabelUse::Data);
                 return;
@@ -882,10 +925,17 @@ private:
     /// reports the unknown ones
     void Operands(const Statement& s)
     {
-        for (const ir::Operand& o : s.operands)
+        for (size_t k = 0; k < s.operands.size(); ++k)
+        {
+            const ir::Operand& o = s.operands[k];
             if (o.kind != ir::Operand::Kind::Register && o.kind != ir::Operand::Kind::Condition && o.kind != ir::Operand::Kind::Indirect &&
                 o.kind != ir::Operand::Kind::String)
-                (void)Eval(o.expr);
+            {
+                const std::optional<int64_t> v = Eval(o.expr);
+                if (v && ByteOperand(s, k))
+                    CheckByte(k, *v);
+            }
+        }
     }
 
     /// A string's bytes in the file's code page (sjasmplus reads the file as bytes): a character the code page lacks is
@@ -913,11 +963,12 @@ private:
     }
 
     /// The bytes DB / DM write (their values; a string's characters)
-    std::vector<int16_t> DataBytes(const Statement& s)
+    std::vector<int16_t> DataBytes(const Statement& s, bool checkBytes = false)
     {
         std::vector<int16_t> bytes;
-        for (const ir::Operand& o : s.operands)
+        for (size_t k = 0; k < s.operands.size(); ++k)
         {
+            const ir::Operand& o = s.operands[k];
             if (o.kind == ir::Operand::Kind::String)
             {
                 for (const uint8_t b : TextBytes(o.text))
@@ -936,7 +987,12 @@ private:
                 bytes.push_back(static_cast<int16_t>(Value(o.expr) & 0xFF));
             }
             else
-                bytes.push_back(static_cast<int16_t>(Value(o.expr) & 0xFF));
+            {
+                const int64_t v = Value(o.expr);
+                if (checkBytes)
+                    CheckByte(k, v);
+                bytes.push_back(static_cast<int16_t>(v & 0xFF));
+            }
         }
         return bytes;
     }

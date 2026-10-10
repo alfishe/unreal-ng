@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,7 @@
 #include "../_helpers/goldentext.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/memory.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
 TEST(CliNextFormat_Test, TheJournalSwitchesAndPrintsWhoWroteWhat)
@@ -239,4 +241,95 @@ TEST(CliNextFormat_Test, TheNextCommandOnAnotherMachineIsRefused)
     EXPECT_NE(CliNext::NextCommand(emulator, {"nextreg", "07", "03"}, "\n").find("Error: not a ZX Spectrum Next"), std::string::npos);
     EXPECT_NE(CliNext::StateText(emulator->GetContext(), {"next", "dma"}, "\n").find("Error: not a ZX Spectrum Next"), std::string::npos);
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// design-layer-capture.md: `next layer-capture [on|off|status]` and the state report; the images are `capture screen --layer=...`
+TEST_F(CliNextReports_Test, TheLayerCaptureSwitchPrintsItsState)
+{
+    EXPECT_NE(Next({"layer-capture"}).find("Next layer capture on: "), std::string::npos) << "on by default";
+    EXPECT_NE(Next({"layer-capture", "off"}).find("Next layer capture off: "), std::string::npos);
+    EXPECT_NE(State({"next", "layer-capture", "status"}).find("Next layer capture off: "), std::string::npos);
+    const std::string on = Next({"layer-capture", "on"});
+    EXPECT_NE(on.find("Next layer capture on: 0 frame(s) recorded"), std::string::npos) << on;
+    EXPECT_NE(Next({"layer-capture", "maybe"}).find("Error: expected on, off or status"), std::string::npos);
+    EXPECT_NE(State({"next", "bogus"}).find("layer-capture [on|off]"), std::string::npos) << "the list of subcommands names it";
+}
+
+// `state next pixel <x> <y> [sx]`: the winner, the colour and a line per layer with its reason and its source; the refusals read as errors
+TEST_F(CliNextReports_Test, ThePixelInspectorPrintsTheWinnerAndEachLayersReason)
+{
+    EXPECT_NE(State({"next", "pixel", "10", "10"}).find("no frame has been completed yet"), std::string::npos) << "on, but no frame has run";
+    EXPECT_NE(Next({"layer-capture", "off"}).find("off"), std::string::npos);
+    EXPECT_NE(State({"next", "pixel", "10", "10"}).find("Error: Layer capture is off"), std::string::npos);
+    EXPECT_NE(Next({"layer-capture", "on"}).find("on"), std::string::npos);
+    EXPECT_NE(State({"next", "pixel", "320", "0"}).find("Error: x must be 0-319"), std::string::npos);
+    EXPECT_NE(State({"next", "pixel", "5"}).find("x and y are required"), std::string::npos);
+    EXPECT_NE(State({"next", "pixel", "1", "2", "3"}).find("sx must be 0 or 1"), std::string::npos);
+    EXPECT_NE(State({"next", "pixel", "1", "2", "3", "4"}).find("too many words"), std::string::npos);
+    _context->pMemory->DirectWriteToZ80Memory(0xC000, 0xF3);
+    _context->pMemory->DirectWriteToZ80Memory(0xC001, 0x18);
+    _context->pMemory->DirectWriteToZ80Memory(0xC002, 0xFE);
+    _context->pCore->GetZ80()->pc = 0xC000;
+    for (int i = 0; i < 3; i++)
+        _emulator->RunFrame(true);
+    const std::string text = State({"next", "pixel", "x=40", "y=40"});
+    EXPECT_NE(text.find("Pixel (40,40) sub-pixel 0 of Next frame #"), std::string::npos) << text;
+    EXPECT_NE(text.find("winner: ula"), std::string::npos) << text;
+    EXPECT_NE(text.find("  layer2 : not painted  - Layer 2 disabled"), std::string::npos) << text;
+    EXPECT_NE(text.find("kind paper"), std::string::npos) << "the source line of the ULA: " << text;
+}
+
+// The story of the recipe "which layer draws this pixel" (.recipe/machines/next.md; UNREAL_PRINT_NEXT_RECIPE=1 prints the output it quotes): a
+// tile you drew does not show, a sprite is hidden. The pixel inspector names the layer that wins and why the others do not
+TEST_F(CliNextReports_Test, RecipeWhichLayerDrawsThisPixel)
+{
+    const bool print = std::getenv("UNREAL_PRINT_NEXT_RECIPE") != nullptr;
+    auto show = [&](const char* command, const std::string& text) {
+        if (print)
+            std::printf("$ %s\n%s\n", command, text.c_str());
+    };
+    auto frames = [&](int n) {
+        for (int i = 0; i < n; i++)
+            _emulator->RunFrame(true);
+    };
+    _context->pMemory->DirectWriteToZ80Memory(0xC000, 0xF3);  // DI; JR $: the CPU stays out of the way
+    _context->pMemory->DirectWriteToZ80Memory(0xC001, 0x18);
+    _context->pMemory->DirectWriteToZ80Memory(0xC002, 0xFE);
+    _context->pCore->GetZ80()->pc = 0xC000;
+    uint8_t* bank5 = _context->pMemory->RAMPageAddress(5);
+    std::memset(bank5 + 0x1800, 0x38, 768);  // the ULA screen: black ink on white paper, no pixels set
+    // a tilemap: tile 1 (a solid colour 5 square) at column 6, row 6, drawn BELOW the ULA (attribute bit 0)
+    Nr(0x6B, 0x80);
+    Nr(0x6E, 0x20);
+    Nr(0x6F, 0x30);
+    bank5[0x2000 + (6 * 40 + 6) * 2] = 1;
+    bank5[0x2000 + (6 * 40 + 6) * 2 + 1] = 0x01;
+    std::memset(bank5 + 0x3000 + 32, 0x55, 32);
+    show("next layer-capture", Next({"layer-capture"}));
+    frames(3);
+    show("state next pixel 50 50", State({"next", "pixel", "50", "50"}));
+    EXPECT_NE(State({"next", "pixel", "50", "50"}).find("below the ULA"), std::string::npos);
+    // the fix: attribute bit 0 off, the tile is above the ULA
+    bank5[0x2000 + (6 * 40 + 6) * 2 + 1] = 0x00;
+    frames(3);
+    show("state next pixel 50 50   # after clearing attribute bit 0 of the tile", State({"next", "pixel", "50", "50"}));
+    EXPECT_NE(State({"next", "pixel", "50", "50"}).find("winner: tilemap"), std::string::npos);
+    // a sprite that does not show: layer order LSU puts Layer 2 above it
+    _ports->DecodePortOut(0x123B, 0x02, 0);  // Layer 2 on (256 x 192, bank 8)
+    for (unsigned page = 8; page <= 10; page++)  // the 256 x 192 bitmap is 48K from bank 8
+        std::memset(_context->pMemory->RAMPageAddress(page), 0x2A, 0x4000);
+    Nr(0x15, 0x01 | (1 << 2));  // sprites on, LSU
+    _ports->DecodePortOut(0x303B, 0, 0);
+    for (int i = 0; i < 256; i++)
+        _ports->DecodePortOut(0x5B, 0x11, 0);
+    _ports->DecodePortOut(0x303B, 0, 0);
+    for (uint8_t b : {uint8_t(100), uint8_t(100), uint8_t(0), uint8_t(0x80)})
+        _ports->DecodePortOut(0x57, b, 0);
+    frames(3);
+    show("state next pixel 105 105", State({"next", "pixel", "105", "105"}));
+    EXPECT_NE(State({"next", "pixel", "105", "105"}).find("layer order LSU: layer2 above sprites"), std::string::npos);
+    Nr(0x15, 0x01);  // SLU
+    frames(3);
+    show("state next pixel 105 105   # after layer order SLU", State({"next", "pixel", "105", "105"}));
+    EXPECT_NE(State({"next", "pixel", "105", "105"}).find("winner: sprite"), std::string::npos);
 }

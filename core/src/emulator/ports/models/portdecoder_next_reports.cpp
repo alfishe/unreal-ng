@@ -12,8 +12,12 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/nextregtable.h"
+#include "emulator/memory/memory.h"
 #include "emulator/io/z80n/nextreportquery.h"
 #include "emulator/ports/models/portdecoder_next.h"
+#include "emulator/video/next/nextlayerimage.h"
+#include "emulator/video/next/nextpixelinspector.h"
+#include "emulator/video/next/screennext.h"
 #include "emulator/video/screen.h"
 
 namespace
@@ -29,6 +33,20 @@ StateNode Unavailable()
 PortDecoder_Next* NextDecoder(EmulatorContext* context)
 {
     return context ? dynamic_cast<PortDecoder_Next*>(context->pPortDecoder) : nullptr;
+}
+
+/// The layer capture of the screen: {enabled, frames, last_frame, bytes} (design-layer-capture.md); frames = completed since it was
+/// switched on, last_frame = the emulator frame counter of the last of them (0 before the first), bytes = the two sets
+StateNode LayerCaptureNode(EmulatorContext* context)
+{
+    StateNode n = StateNode::Object();
+    ScreenNext* screen = NextLayer::NextScreen(context);
+    n["enabled"] = screen && screen->LayerCaptureEnabled();
+    n["frames"] = static_cast<uint64_t>(screen ? screen->LayerFramesCaptured() : 0);
+    const std::shared_ptr<const NextLayer::Frame> last = screen ? screen->LastLayerFrame() : nullptr;
+    n["last_frame"] = static_cast<uint64_t>(last ? last->frameCounter : 0);
+    n["bytes"] = static_cast<uint64_t>(screen ? screen->LayerCaptureBytes() : 0);
+    return n;
 }
 
 std::string Hex8(unsigned value) { return StringHelper::Format("0x%02X", value & 0xFFu); }
@@ -258,6 +276,44 @@ StateNode NextVideo(EmulatorContext* context)
     timing["family"] = TimingFamilyName(board.Timing());
     timing["hz"] = (board.Timing() != 4 && (nr(0x05) & 0x04)) ? 60 : 50;
     n["timing"] = std::move(timing);
+    n["layer_capture"] = LayerCaptureNode(context);
+    return n;
+}
+
+StateNode NextPixel(EmulatorContext* context, const NextPixelQuery& query)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    std::shared_ptr<const NextLayer::Frame> frame;
+    std::string message;
+    const NextLayer::Status status = NextLayer::LastFrame(context, frame, message);
+    if (status != NextLayer::Status::Ok)
+    {
+        StateNode n = StateNode::Object();
+        n["available"] = true;
+        n["ok"] = false;
+        n["status"] = NextLayer::StatusName(status);
+        n["message"] = message;
+        return n;
+    }
+    NextLayer::InspectEnv env;
+    env.ram = context->pMemory ? context->pMemory->RAMPageAddress(0) : nullptr;
+    env.ramPages = MAX_RAM_PAGES;
+    env.regs = &decoder->Board().Video();
+    env.sprites = &decoder->Board().Sprites();
+    return NextLayer::InspectPixel(*frame, env, query.x, query.y, query.sub);
+}
+
+StateNode NextLayerCaptureControl(EmulatorContext* context, int enable)
+{
+    ScreenNext* screen = NextLayer::NextScreen(context);
+    if (!screen)
+        return Unavailable();
+    if (enable >= 0)
+        screen->SetLayerCapture(enable != 0);
+    StateNode n = LayerCaptureNode(context);
+    n["available"] = true;
     return n;
 }
 
@@ -337,10 +393,10 @@ const EnableBit kEnableBits[] = {
     {5, "#6B zxnDMA", false},
     {6, "#1F Kempston / MD 1", false},
     {7, "#37 Kempston / MD 2", false},
-    {8, "#E3 DivMMC control", false},
+    {8, "#E3 DivMMC control", true},
     {9, "Multiface (two variable ports)", true},
     {10, "#103B, #113B I2C", false},
-    {11, "#E7, #EB SPI", false},
+    {11, "#E7, #EB SPI", true},
     {12, "#133B, #143B, #153B, #163B UART", false},
     {13, "#FADF, #FBDF, #FFDF mouse", false},
     {14, "#57, #5B, #303B sprites", false},

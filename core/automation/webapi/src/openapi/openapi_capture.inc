@@ -34,7 +34,11 @@
             "An unknown `area`, `mode`, `format` or `source` is 400 with the allowed words; a screen window that does not fit "
             "the frame is 500 with the sizes. The frame lags the machine by the present delay (2 frames by default, "
             "more with ZX DLSS); GIF has 256 colors and loses colors on true-colour pictures. "
-            "Raw pixels without encoding: /capture/framebuffer.";
+            "Raw pixels without encoding: /capture/framebuffer. On a ZX Spectrum Next `layer` returns ONE LAYER of the last completed frame "
+            "instead (ula, layer2, tilemap, sprites - a PNG with alpha 0 where the layer does not paint, same 640x512 geometry; or ids - every pixel "
+            "coloured by the layer that won it, legend in the answer), exactly as it was drawn, copper effects included; `format=rgba` gives the raw "
+            "bytes, `alpha=false` flattens what the layer does not paint onto the fallback colour. All layers of one frame: /capture/next-layers; "
+            "the record is switched with POST /next/layer-capture.";
 
         struct Param
         {
@@ -49,7 +53,14 @@
             {"area", "query", false,
              "full (default): the whole frame with its border. screen: the working picture of the frame's geometry",
              {"full", "screen"}},
-            {"format", "query", false, "png (default, lossless) or gif (256 colors)", {"png", "gif"}},
+            {"format", "query", false, "png (default, lossless) or gif (256 colors); with layer: png or rgba (raw R G B A bytes)", {"png", "gif", "rgba"}},
+            {"layer", "query", false,
+             "ZX Spectrum Next: one layer of the last completed frame instead of the presented picture. composed (default) = the ordinary screenshot; "
+             "ula (with the border and LoRes), layer2, tilemap, sprites = the layer's own pixels (alpha 0 where it does not paint); ids = the winning "
+             "layer of each pixel in the colours of `legend`. 409 when the machine is not a Next, the layer capture is off or no frame was completed yet",
+             {"composed", "ula", "layer2", "tilemap", "sprites", "ids"}},
+            {"alpha", "query", false, "with layer: false flattens the pixels the layer does not paint onto the fallback colour (default true: alpha 0)",
+             {"true", "false"}},
             {"source", "query", false,
              "presented (default): the finished, tear-free frame the window shows, a couple of frames behind. live: "
              "the frame as drawn right now, no delay and no ZX DLSS: a running machine's emulation thread copies it at "
@@ -124,6 +135,15 @@
             "Only for a live frame of a paused machine: where the beam stopped";
         props["frame"]["properties"]["beam"]["properties"]["line"]["type"] = "integer";
         props["frame"]["properties"]["beam"]["properties"]["tstate"]["type"] = "integer";
+        props["layer"]["type"] = "string";
+        props["layer"]["description"] = "Only with layer=: which layer the image shows (ula layer2 tilemap sprites ids)";
+        props["alpha"]["type"] = "boolean";
+        props["alpha"]["description"] = "Only with layer=: whether the pixels the layer does not paint are transparent";
+        props["legend"]["type"] = "array";
+        props["legend"]["description"] = "Only with layer=ids: the id of every winner, its name and the colour it has in the image";
+        props["legend"]["items"]["$ref"] = "#/components/schemas/NextLayerLegendEntry";
+        props["frame"]["properties"]["sequence"]["type"] = "integer";
+        props["frame"]["properties"]["sequence"]["description"] = "Only with layer=: the n-th frame recorded since the layer capture was switched on";
         props["data"]["type"] = "string";
         props["data"]["description"] = "Base64 image (absent when saved to a path)";
         props["saved"]["type"] = "boolean";
@@ -134,7 +154,9 @@
             "Unknown area, mode or format (the message lists the allowed words), or area and mode disagree; "
             "kind: bad-parameter";
         op["responses"]["404"]["description"] = "No such emulator; kind: not-found";
-        op["responses"]["409"]["description"] = "The emulator has not presented a frame yet (try again); kind: no-frame";
+        op["responses"]["409"]["description"] =
+            "The emulator has not presented a frame yet (try again); kind: no-frame. With layer=: kind not-next, layer-capture-off (POST "
+            "/next/layer-capture {\"enabled\":true}) or no-frame (no frame completed since it was switched on)";
         op["responses"]["500"]["description"] =
             "The screen window does not fit the frame (kind: bad-geometry), the encoder failed (encode-failed) or the "
             "file could not be written (io-failed); the message has the details";
@@ -386,3 +408,37 @@
     paths["/api/v1/emulator/{id}/video/record/status"]["get"]["responses"]["200"]["description"] =
         "Recording status (recording/paused/stats/output)";
 
+    // Per-layer capture of a ZX Spectrum Next frame, all layers at once (docs/inprogress/2026-10-07-zx-next/design-layer-capture.md)
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/capture/next-layers"]["get"];
+        op["summary"] = "All layers of the last Next frame";
+        op["tags"].append("Capture");
+        op["description"] =
+            "Every layer (ula, layer2, tilemap, sprites) and the winner map (ids) of the SAME last completed frame of a ZX Spectrum Next in one "
+            "answer, each a base64 PNG with alpha 0 where the layer does not paint (format=rgba: raw R G B A bytes; alpha=false flattens onto the "
+            "fallback colour), 640x512 like /capture/screen. Recorded while the frame was drawn, so copper bars, split screens and palette tricks "
+            "are exact; one frame of buffers, a paused machine answers from its last frame. 409 when the machine is not a Next, the record is off "
+            "(POST /next/layer-capture) or no frame was completed yet. CLI `capture screen --layer=...`, Lua capture_screen_layer(), Python "
+            "capture_screen_layer(), MCP capture_media layer=.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["parameters"][1]["name"] = "format";
+        op["parameters"][1]["in"] = "query";
+        op["parameters"][1]["description"] = "png (default) or rgba (raw bytes)";
+        op["parameters"][1]["schema"]["type"] = "string";
+        op["parameters"][1]["schema"]["enum"].append("png");
+        op["parameters"][1]["schema"]["enum"].append("rgba");
+        op["parameters"][2]["name"] = "alpha";
+        op["parameters"][2]["in"] = "query";
+        op["parameters"][2]["description"] = "false: flatten the pixels a layer does not paint onto the fallback colour (default true: alpha 0)";
+        op["parameters"][2]["schema"]["type"] = "string";
+        op["parameters"][2]["schema"]["enum"].append("true");
+        op["parameters"][2]["schema"]["enum"].append("false");
+        op["responses"]["200"]["description"] = "The layers of one frame";
+        op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/NextLayers";
+        op["responses"]["400"]["description"] = "Bad format or alpha";
+        op["responses"]["404"]["description"] = "No such emulator";
+        op["responses"]["409"]["description"] = "Not a ZX Spectrum Next (kind not-next), the record is off (layer-capture-off) or no frame yet (no-frame)";
+    }

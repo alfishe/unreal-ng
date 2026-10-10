@@ -380,6 +380,11 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
         }
         return bytes;
     };
+    // INCBIN takes the file up to its catalog length
+    options.fileSize = [&files](const std::string& name) -> std::optional<uint64_t> {
+        const containers::TrdosFile* file = FindBinary(files, name);
+        return file ? std::optional<uint64_t>(file->data.size()) : std::nullopt;
+    };
     const ProjectResult converted = ConvertProject(project, args.to, options);
     PrintDiagnostics(converted.diagnostics);
     // A dialect without its own codec (pasmo) is a text file in the document's code page (texts are program bytes)

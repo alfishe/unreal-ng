@@ -187,6 +187,19 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["every_nth"]["description"] =
         "\"auto\" or integer ≥1 (requires frames): measure the effect's visual update quantum Q via screen digests "
         "(auto) or use Q directly; the recorder is paused across static frames and fps defaults to 50/Q";
+    schema["properties"]["layer"]["type"] = "string";
+    schema["properties"]["layer"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* layer : {"composed", "ula", "layer2", "tilemap", "sprites", "ids"})
+        schema["properties"]["layer"]["enum"].append(layer);
+    schema["properties"]["layer"]["description"] =
+        "screenshot of a ZX Spectrum Next: ONE LAYER of the last completed frame instead of the composed picture - ula (with the border and "
+        "LoRes), layer2, tilemap, sprites (PNG with alpha 0 where the layer does not paint, same 640x512 geometry as the screenshot), or ids "
+        "(each pixel coloured by the layer that won it; the legend is in the answer). Exactly as drawn, copper effects included. format=rgba "
+        "gives the raw bytes; alpha=false flattens transparent pixels onto the fallback colour. 409 when the machine is not a Next, the "
+        "capture is off (invoke_api POST /api/v1/emulator/{id}/next/layer-capture {enabled:true}) or no frame was completed yet; all layers of one frame at once: "
+        "invoke_api GET /api/v1/emulator/{id}/capture/next-layers";
+    schema["properties"]["alpha"]["type"] = "boolean";
+    schema["properties"]["alpha"]["description"] = "screenshot with layer: false flattens the pixels the layer does not paint onto the fallback colour (default true: alpha 0)";
     schema["properties"]["frames"]["type"] = "integer";
     schema["properties"]["frames"]["description"] = "Bounded recording: captured frames before automatic stop (1-10000)";
     schema["properties"]["seconds"]["type"] = "number";
@@ -254,6 +267,14 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                         {
                             query += "source=" + UrlEncodeSegment(args["source"].asString()) + "&";
                         }
+                        if (args.isMember("layer") && args["layer"].isString() && !args["layer"].asString().empty())
+                        {
+                            query += "layer=" + UrlEncodeSegment(args["layer"].asString()) + "&";
+                        }
+                        if (args.isMember("alpha") && args["alpha"].isBool())
+                        {
+                            query += std::string("alpha=") + (args["alpha"].asBool() ? "true" : "false") + "&";
+                        }
                         if (!pathArg.empty())
                         {
                             query += "path=" + UrlEncodeSegment(pathArg) + "&";
@@ -276,6 +297,17 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                             // What the image is: the area, the frame it was cut from and where the working picture is
                             std::ostringstream what;
                             what << body.get("area", "").asString();
+                            if (body.isMember("layer"))  // one layer of a Next frame: which, and of which frame
+                            {
+                                what << "layer " << body["layer"].asString() << " of Next frame #" << body["frame"].get("sequence", 0).asUInt64()
+                                     << (body["layer"].asString() == "ids" ? ", opaque" : (body.get("alpha", true).asBool() ? ", alpha 0 where not painted" : ", flattened"));
+                                if (body["layer"].asString() == "ids" && body.isMember("legend"))
+                                {
+                                    what << "; legend:";
+                                    for (const Json::Value& entry : body["legend"])
+                                        what << " " << entry.get("id", 0).asUInt() << "=" << entry.get("name", "").asString() << "(" << entry.get("colour", "").asString() << ")";
+                                }
+                            }
                             if (body.get("source", "presented").asString() == "live")
                                 what << ", live frame";
                             if (body.isMember("frame") && body.isMember("screen_window"))

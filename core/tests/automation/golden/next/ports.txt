@@ -67,7 +67,7 @@ enable_word:
       nr: 0x83
       ports: #E3 DivMMC control
       enabled: true
-      enforced: false
+      enforced: true
     [9]
       bit: 9
       nr: 0x83
@@ -85,7 +85,7 @@ enable_word:
       nr: 0x83
       ports: #E7, #EB SPI
       enabled: true
-      enforced: false
+      enforced: true
     [12]
       bit: 12
       nr: 0x83

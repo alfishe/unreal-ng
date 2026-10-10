@@ -1,5 +1,10 @@
 #pragma once
 
+#include <atomic>
+#include <memory>
+#include <mutex>
+
+#include "emulator/video/next/nextlayerframe.h"
 #include "emulator/video/next/nextvideorenderer.h"
 #include "emulator/video/screen.h"
 
@@ -37,8 +42,23 @@ public:
     /// The T-state (base, from the frame start) at which visible line `y` (0-255) is complete
     uint32_t LineEndT(unsigned y) const;
 
+    /// region <Layer capture> (design-layer-capture.md)
+    /// The per-layer record of the frame being drawn. Off: nothing is allocated and the renderer is called as before. Switching it
+    /// on or off takes effect at the next frame start (InitFrame), on the emulator thread; callable from any thread.
+    void SetLayerCapture(bool enabled);
+    bool LayerCaptureEnabled() const { return _layerWanted.load(); }
+    /// The last completed frame (null before the first one). The set is never written again while the caller holds it.
+    std::shared_ptr<const NextLayer::Frame> LastLayerFrame() const;
+    /// Frames completed since the capture was switched on
+    uint64_t LayerFramesCaptured() const { return _layerFrames.load(); }
+    /// Memory held by the two sets
+    size_t LayerCaptureBytes() const { return _layerBytes.load(); }
+    /// endregion
+
 private:
     PortDecoder_Next* Decoder() const;
+    void PrepareLayerFrame();
+    void CompleteLayerFrame();
     void RenderLinesUpTo(unsigned lineExclusive);
     bool FramebufferReady() const;
 
@@ -46,4 +66,12 @@ private:
     unsigned _nextLine = 0;
     uint8_t _lastTimingClass = 2;
     bool _copperBound = false;
+
+    std::atomic<bool> _layerWanted{false};
+    bool _layerRecording = false;                 ///< this frame is being recorded (decided at the frame start)
+    std::shared_ptr<NextLayer::Frame> _layerDraw; ///< the set the renderer writes (only the emulator thread touches it)
+    std::shared_ptr<NextLayer::Frame> _layerLast; ///< the last completed set (readers copy the pointer under _layerMutex)
+    mutable std::mutex _layerMutex;
+    std::atomic<uint64_t> _layerFrames{0};
+    std::atomic<size_t> _layerBytes{0};
 };

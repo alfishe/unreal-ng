@@ -141,7 +141,7 @@ and skips the comparison.
 | `UNREAL_SLOTS_MATRIX_UPDATE` | set / unset | **Rewrites** the generated tables in the slot compatibility matrix document. | `core/tests/emulator/slots/slotmatrix_test.cpp:90` ([`compatibility-matrix.md`](../inprogress/2026-10-03-zx-bus-slots/compatibility-matrix.md)) |
 | `UNREAL_ASM_UPDATE_GOLDEN` | set / unset | **Rewrites** the assembler's expected `dialects/thelink/*.asm` test data. | `core/src/3rdparty/unreal-asm/tests/dialects_test.cpp:296` (`unreal-asm-tests`) |
 | `UNREAL_UPDATE_GOLDEN` | set / unset | **Rewrites** the golden text files of the label loader (`testdata/debugger/labels/*.golden.txt`) and of the Next report formats (`core/tests/automation/golden/next/*.txt`, helper `core/tests/_helpers/goldentext.h`); the comparing tests write instead of comparing. | `core/tests/debugger/labelmanager_test.cpp`, `core/tests/_helpers/goldentext.h` |
-| `UNREAL_PRINT_NEXT_RECIPE` | set / unset | **Prints** the output the Next recipe quotes (`state next dma`, `video`, `ports`, `nextreg`, `journal`, `palette`) from a scripted story; nothing is rewritten. | `core/tests/automation/cli-next-format_test.cpp` (`CliNextReports_Test.RecipeStory`) |
+| `UNREAL_PRINT_NEXT_RECIPE` | set / unset | **Prints** the output the Next recipe quotes (`state next dma`, `video`, `ports`, `nextreg`, `journal`, `palette`, `pixel`) from a scripted story; nothing is rewritten. | `core/tests/automation/cli-next-format_test.cpp` (`CliNextReports_Test.RecipeStory`, `CliNextReports_Test.RecipeWhichLayerDrawsThisPixel`) |
 | `UNREAL_CTPROBE_EXPORT` | set / unset | **Rewrites** `tools/verification/contention/ctprobe/ctprobe.tap/.trd/.sym` from the source. | `core/tests/emulator/video/ctprobe_test.cpp:800` |
 | `UNREAL_CTPROBE_EXPORT_DIR` | a folder (the files above) | With `UNREAL_CTPROBE_EXPORT`: writes there instead, to try a change. | `ctprobe_test.cpp:809` |
 | `UNREAL_FUSETEST_EXPORT` | set / unset | **Rewrites** `tools/verification/contention/fusetest/fusetest-coemu.*`. | `core/tests/emulator/video/fusetest_test.cpp:342` |
@@ -213,6 +213,22 @@ run with `--gtest_also_run_disabled_tests`). Runs a program on a Profi as a user
 | `UNREAL_NEX` | path to a `.nex` | `LoaderNexRun_Test`: runs the file on the NEXT machine (`UNREAL_NEX_FRAMES`, default 200; `UNREAL_NEX_OUT` = folder for `frame.rgba`). | `core/tests/loaders/nex/loadernex_test.cpp` |
 | `UNREAL_NEX_NR` | `6B=00,15=1C` | `LoaderNexRun_Test`: NextREG writes (hex) before the frame is taken, to look at one layer. | `core/tests/loaders/nex/loadernex_test.cpp` |
 | `UNREAL_NEX_SPRITES` | any | `LoaderNexRun_Test`: prints sprite 0-3 attributes, pattern RAM use, the DMA state, the PC and the stack at the end. | `core/tests/loaders/nex/loadernex_test.cpp` |
+| `UNREAL_NEXB` | path to a `.nex` | `NexBrowserRun_Test` (tests skip without it and `UNREAL_NEXB_CARD`): the real chain - boot ROM, TBBLUE.FW, NextZXOS, the Browser (keyboard), ENTER on the file - so NEXLOAD loads the file; the file is copied into the card as `zz.nex`. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_CARD` | folder path (a writable copy of `testdata/machines/zxnext/card`) | The SD card folder `NexBrowserRun_Test` boots from; the NEX is copied into it (not with `UNREAL_NEXB_INPLACE`). | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_NAME` | `cube`, `demos/cube` | Name (and folders) of the copy of the file in the card, without the extension (default `zz`). | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_SEARCH` | `CUB`, `D/N/CUBE` | What is typed into the Browser's search (`H`): one text per folder level, separated by `/` (a space is the SPACE key); default `Z`. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_INPLACE` | any | The card already holds the file (a card with the whole collection): nothing is copied into it. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_DIRECT` | any | Load the file with the direct loader after the OS has booted, instead of the Browser path. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_FRAMES` | frames (500) | Frames to run after the file was started. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_OUT` | folder path | Writes `frame.rgba` (width, height, RGBA), `pre.rgba` (the Browser as ENTER runs the file) and `ram.bin` (the 64K the Z80 sees) there. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_JITTER` | frames | Waits that many frames before the last ENTER (the file starts at another instant of the frame). | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_AFTER` | `300:R,20:ENTER` | After the start: wait that many frames, then tap the key (a letter, ENTER or SPACE); a list. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_NRLOG` | `1` or a hex list (`12,50`) | Logs the NextREG writes after the start: every one (the first 400, the last 200 with `UNREAL_NEXB_NRTAIL`) or only the registers listed; always prints the count per register. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_NRTAIL` | any | With `UNREAL_NEXB_NRLOG=1`: the last 200 writes. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_PORTS` | any | Prints the ports no part of the machine answered (count, last value). | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_BANKS` | any | Prints how many bytes of each of the 32 RAM banks are non-zero at the end. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_SAMPLE` | frames | Prints Layer 2 bank use, the lit pixels and the PC every that many frames. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_TRACE` | frames | Prints the PC, SP, speed and the MMU slots every that many frames. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
 | `UNREAL_NEXT_COSIM` | folder path (unset: test skips) | `NextCosim_Test`: writes the boot trace in the co-simulation format (`tools/machines/next/cosim/trace-format.md`) to that folder; with `UNREAL_NEXT_FIRMWARE` the card. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
 | `UNREAL_NEXT_COSIM_FRAMES` | frames (1500) | Length of the co-simulation run. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
 

@@ -103,3 +103,8 @@ raster:
 timing:
   family: 128K
   hz: 50
+layer_capture:
+  enabled: true
+  frames: 0
+  last_frame: 0
+  bytes: 1638400
