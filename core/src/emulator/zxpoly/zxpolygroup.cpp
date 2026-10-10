@@ -734,10 +734,10 @@ void ZXPolyGroup::UpdateIntGates()
     const EmulatorContext* master = GetContext(0);
     const uint8_t p7FFD = master->emulatorState.p7FFD;
     const bool latchIsPlain128 = master->config.ramsize <= 128;
-    GetContext(0)->pCore->GetZ80()->frameIntMasked =
-        !_locked && latchIsPlain128 && (p7FFD & 0x20u) == 0 && (p7FFD & 0x80u) != 0;
+    GetContext(0)->pCore->GetZ80()->frameIntMasked.store(
+        !_locked && latchIsPlain128 && (p7FFD & 0x20u) == 0 && (p7FFD & 0x80u) != 0, std::memory_order_relaxed);
     for (size_t m = 1; m < MODULES; m++)
-        GetContext(m)->pCore->GetZ80()->frameIntMasked = !_locked;
+        GetContext(m)->pCore->GetZ80()->frameIntMasked.store(!_locked, std::memory_order_relaxed);
 }
 
 void ZXPolyGroup::RaiseModuleInt(size_t module)

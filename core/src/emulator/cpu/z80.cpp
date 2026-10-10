@@ -768,7 +768,7 @@ void Z80::BeginFrame()
 
     // INT interrupt handling lasts for more than 1 frame (unless the pulse was
     // already acknowledged on a machine that clears INT at the acknowledge)
-    if (_intWraps && !int_acked_in_pulse && !frameIntMasked)
+    if (_intWraps && !int_acked_in_pulse && !frameIntMasked.load(std::memory_order_relaxed))
         int_pending = true;
 }
 
@@ -1717,7 +1717,7 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
             cpu.int_acked_in_pulse = 0;
     }
 
-    if (!int_occurred && cpu.t > int_start && !cpu.int_acked_in_pulse && !frameIntMasked)
+    if (!int_occurred && cpu.t > int_start && !cpu.int_acked_in_pulse && !frameIntMasked.load(std::memory_order_relaxed))
     {
         int_occurred = true;
         cpu.int_pending = true;

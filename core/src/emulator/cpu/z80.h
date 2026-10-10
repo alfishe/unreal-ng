@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <chrono>
 #include <functional>
 
@@ -879,8 +880,9 @@ public:
     }
 
     /// Mask the ULA frame INT for this CPU (a ZX-Poly slave before the lock
-    /// does not see the common frame INT). Local INT is not affected
-    bool frameIntMasked = false;
+    /// does not see the common frame INT). Local INT is not affected. Atomic: a ZX-Poly master's port write sets it
+    /// for slaves running on the group's worker threads (relaxed: a plain load on the instruction path)
+    std::atomic<bool> frameIntMasked{false};
 private:
     /// StepInstructionWithWork while an RZX recording plays: the frame end at
     /// the recorded fetch count; true when its interrupt was taken as this step
