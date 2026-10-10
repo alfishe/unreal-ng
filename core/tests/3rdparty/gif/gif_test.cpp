@@ -2,6 +2,7 @@
 #include "pch.h"
 
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -128,3 +129,25 @@ TEST(Gif_Test, ANameThatIsNotUtf8IsOpenedAsRawBytes)
     std::fclose(f);
 }
 #endif
+
+/// A picture with fewer colors than the palette leaves subtrees without pixels: GifSplitPalette returns there without
+/// filling the node. GifMakePalette used to fill a stack GifPalette as it found it, so the nearest-color search read a
+/// garbage split component as an index into its three-element r/g/b array (AddressSanitizer: stack-buffer-overflow in
+/// GifGetClosestPaletteColor on every frame) and garbage leaf colors. The palette here starts as 0xFF garbage
+TEST(Gif_Test, APaletteOfAFewColorsHasEveryNodeFilled)
+{
+    const std::vector<uint8_t> rgba = Picture();
+    for (const bool dither : {false, true})
+    {
+        GifPalette pal;
+        std::memset(&pal, 0xFF, sizeof(pal));
+        GifMakePalette(nullptr, rgba.data(), 4, 4, 8, dither, &pal);
+        for (int node = 1; node < (1 << pal.bitDepth); node++)
+            EXPECT_LE(pal.treeSplitElt[node], 2) << "node " << node << (dither ? " dither" : "");
+
+        int bestIndex = 0;
+        int bestDiff = 1000000;
+        GifGetClosestPaletteColor(&pal, rgba[0], rgba[1], rgba[2], bestIndex, bestDiff);
+        EXPECT_EQ(bestDiff, 0) << "the first pixel's own color is in the palette" << (dither ? " dither" : "");
+    }
+}
