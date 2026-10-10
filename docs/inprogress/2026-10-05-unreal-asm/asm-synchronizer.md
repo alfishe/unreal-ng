@@ -726,6 +726,21 @@ injection (A7 surfaces use it already).
 | Z4 | 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM |
 | Z5 | sjasmplus frontend coverage of real projects (§15.3, second row) |
 
+**Built (2026-10-10): Z0 for ALASM 5.09.** The ALASM backend (`dialects/alasm/alasmbackend.cpp`) writes the IR as ALASM
+5.07 text. Expressions go left to right. An expression ALASM cannot compute so (a later label outside `+` / `-`, an
+operator it lacks, a division of values outside 0..#FFFF) is written as its value, from the source's layout
+(`BackendOptions::labelValues`; a hidden label per line gives `$`). The backend also covers comparisons in IF and
+WHILE, local and temporary labels, macros with LOCAL blocks, and sjasmplus' fake and multi-operand instructions. The
+`retrobackend` core of §15.1 is not split out yet: its pieces (the value check, the renaming table, folding) live in
+the ALASM backend and move to a shared file with the second target (Z3). `PlanInject` writes the `FileImage` file
+and zeroes the rest of the page, as LOAD leaves it. `idleChain` is the precondition: the return addresses of ALASM's
+command line on the stack (#91E3, #9707). `sync-inject` does both at one coherent moment as a TTD tool edit, on
+WebAPI / OpenAPI, CLI, MCP, Lua and Python. Checked by ALASM 5.09 itself: `inject-oracle.py` injected
+`oracle1.asm` (143 bytes) and every instruction form (1173 bytes), and ALASM's bytes equaled sjasmplus'. Tests:
+`AlasmBackend_Test` (with a host round trip through the ALASM frontend over the STORM, ZAsm, TASM and ALASM corpora),
+`SyncInject_Test.AlasmTakesAFileAtItsCommandLine`, `SyncControl_Test.InjectWritesASourceIntoAlasmAtItsCommandLine`.
+Details: [research-sjasmplus-to-alasm.md](research-sjasmplus-to-alasm.md).
+
 ## 20. Effort (part B)
 
 | Block | Days |

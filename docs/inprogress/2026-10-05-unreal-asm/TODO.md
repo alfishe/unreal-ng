@@ -187,10 +187,40 @@ phase; master only after the owner's review.
       - [x] INCLUDE from the disk in a drive and from host folders, option `project` (2026-10-10, §5.4)
       - [x] other texts in memory (2026-10-10): ALASM's pages (`textsPerPage`); XAS and ZAsm hold one text
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):
-    - [ ] Z0 `retrobackend` core + ALASM backend + the file image writer + inject on WebAPI / CLI / MCP, checked by ALASM assembling the injected text
+    - [x] Z0 ALASM backend + the file image writer + inject on WebAPI / CLI / MCP / Lua / Python, checked by ALASM 5.09 assembling the injected text (2026-10-10, research-sjasmplus-to-alasm.md)
+      - [ ] a project: the INCLUDEd sources into more text pages (ALASM keeps one text per page)
+      - [ ] label values for sources of other dialects (their sjasmplus conversion's layout, symbols/fromsource.h)
+      - [ ] idle rules for the other ALASM builds (5.08 ... 3.8c): the command line's return chain in each
+      - [ ] the ALASM frontend reads `ADD B` as ADD A,B and `DW "AB"` as #4142; ALASM 5.09 puts nothing / `41 42` down: check more forms (LD HL,"AB", ADC, SBC) and fix
+      - [ ] the `retrobackend` core split out of the ALASM backend with the second target (Z3)
     - [ ] Z1 snapshots: inject into an existing one; the ALASM idle template (Z0 + Z1 about 10 days)
     - [ ] Z2 push watch (host file → inject on save), Inject in the Qt dock
     - [ ] Z3 backends + writers + templates: TASM, XAS, STORM, ZX-ASM, MASM
     - [ ] Z4 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE)
   - First cuts: ALASM both ways about 14 days; + TASM 4.12 about 20; + watch / push watch, hints, live labels, Qt dock about 27
+
+## Findings from The Link (2026-10-10)
+
+Every source of The Link's working disk (`testdata/machines/pentagon1024sl/TheLink.trd`, 20 ALASM sources) converted
+with `zxasm convert TheLink.trd --to sjasmplus`: all 19 objects the author's ALASM saved, and the main block of
+`THELINK.asm`, assemble byte for byte (the project: `docs/disasm/demo/thelink/sjasm/`). Found on the way:
+
+- [x] `DS -$` (fill to the end of memory: ALASM's count is a 16-bit word) became sjasmplus' negative `DS`, which
+      moves `$` back; now `DS (-$&#FFFF)` for 16-bit-word dialects (`Dialects_Test.DsOfANegativeCountFillsToTheEndOfMemory`).
+      No byte of The Link changed: the zeroed tail was never saved.
+- [x] `zxasm convert --out-codepage cp`: the converted sources in UTF-8 (readable comments); a line whose code, not
+      its comment or a `DISPLAY`, has a non-ASCII character is warned about (its string would build other bytes)
+- [ ] 8-bit operand wider than a byte (`LD (HL),IMER` with `IMER=#BFBF`, `DB label`, `DB _` in a `DUP` of
+      addresses): ALASM keeps the low byte silently, sjasmplus warns "value is truncated" (no warning id, cannot be
+      silenced). 50 lines in The Link, fixed by hand with `low x`. The converter could write `low` where the layout
+      module's value of the operand does not fit 8 bits.
+- [ ] ALASM's cyclic shift `x*257<1+#303>1` is spelled out as `((((((x*257&#FFFF)<<1|(x*257&#FFFF)>>>(16-1))&#FFFF)+#303&#FFFF)>>>1|...)&#FFFF)`:
+      correct, unreadable. Options: one `DEFINE`d helper per rotate, fewer masks when the operand is already masked,
+      or the value folded with a comment holding the ALASM expression.
+- [ ] `ORG $,0` (a page with an address outside `#C000`): ALASM maps the page at `#C000` whatever the address, as
+      sjasmplus does, but sjasmplus warns `orgpage`; the converter could add `; orgpage-ok` for ALASM.
+- [ ] "ORG with a page" is warned on every such line (about 30 for The Link): once per file is enough.
+- [ ] Alone Coder's Object Saver (`SAVEOBJ4`: an `ObjTab` of name, address, length, page, RUN to save) has a
+      sjasmplus counterpart: `SLOT 3` / `PAGE p` / `SAVEBIN "name",addr,len` per entry. Added by a script for The
+      Link; the converter could recognize the table and write them.

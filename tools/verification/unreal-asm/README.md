@@ -24,6 +24,8 @@ unreal-asm/
                                 a source with no binary on its disk)
     sync-dumps.py               profiles alasm509, alasm444, tasm412: golden RAM dumps for the asm-synchronizer, each
                                 editor state with the file the assembler saved at that moment (testdata/sync)
+    inject-oracle.py            profile alasm509: a host source written into the running assembler (sync-inject),
+                                assembled by it, its bytes compared with sjasmplus' build (part B's oracle)
   oracles/                      original assemblers built or run on the host
     build-asm80.py              ASM80 / Asm80Win 2.02 (PC cross assembler) from its own C++ source: the same bytes as
                                 asm80win.exe (which also runs under wine: .recipe/assemblers/asm80.md)

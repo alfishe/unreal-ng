@@ -23,8 +23,13 @@ struct MachineCopy
     unrealasm::sync::MachineView view;
 };
 
-/// Every RAM page (`only` = nullptr), or the pages the CPU sees plus `only`; false with the reason
+/// Every RAM page (`only` = nullptr), or the pages the CPU sees plus `only`, and the CPU's SP; false with the reason
 bool CopyMachine(EmulatorContext* context, MachineCopy& out, std::string& error, const std::vector<int>* only = nullptr);
+
+/// Part B: at one coherent moment, copies the machine, plans writing `file` as the live text (the idle rule, unsaved
+/// changes, the size) and writes it as a TTD tool edit. False with the reason (the plan's, or no coherent moment)
+bool InjectFile(EmulatorContext* context, const unrealasm::sync::SyncDescriptor& descriptor, const std::vector<uint8_t>& file,
+                const unrealasm::sync::InjectOptions& options, unrealasm::sync::InjectPlan& plan, std::string& error);
 
 StateNode DiagnosticsValue(const unrealasm::Diagnostics& diagnostics);
 

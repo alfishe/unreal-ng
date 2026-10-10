@@ -99,7 +99,13 @@ sessions to manage.
 
 All tools accept `target` (emulator id or `"auto"`) and answer with dual
 content: `content[]` (human/LLM text summary) + `structuredContent`
-(machine-readable data). Tools that perform real multi-step work report
+(machine-readable data). Some clients (claude.ai connectors) hand the model
+only `content[]`, so the server also echoes `structuredContent` there as a
+second text block of compact JSON (MCP 2025-06-18, Structured Content), cut at
+64 KB with a note. A tool whose text already carries the data skips the echo:
+`debug_code disassemble` writes the listing itself, one line per instruction
+(`7396  CD 00 74      call #7400            ; -> draw`); `inspect_state`
+`disasm` puts the same listing under `[disasm]`. Tools that perform real multi-step work report
 progress when the request carries a `_meta.progressToken` (see
 [Protocol details](#protocol-details)).
 

@@ -14,6 +14,8 @@
 #include "debugger/debugmanager.h"
 #include "debugger/labels/labelmanager.h"
 #include "unrealasm/symbols/symbol.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -214,4 +216,50 @@ TEST_F(SyncControl_Test, TheWatchTakesTheProjectFromAHostFolder)
     EXPECT_EQ(reply.body.find("project")->i, 1) << "lib.asm; font.bin is a size for INCBIN only";
     SyncRun(_context, "sync-unwatch");
     std::filesystem::remove_all(folder);
+}
+
+// Part B (Z0): a sjasmplus source written into ALASM 5.09 at its command line, as ALASM's own text
+TEST_F(SyncControl_Test, InjectWritesASourceIntoAlasmAtItsCommandLine)
+{
+    LoadSession(_context, "alasm509-loaded");
+    // ALASM's stack (page 5): the line input's return and the command loop's while it waits for a command
+    auto stack = [&](uint16_t loop) {
+        const std::vector<uint16_t> words = {0x5C78, 0x0042, 0x9084, 0x9043, 0x8EF2, 0xBF15, 0x7FFD, 0x9199, 0x91E3, loop};
+        uint8_t* page5 = _context->pMemory->RAMPageAddress(5);
+        for (size_t k = 0; k < words.size(); ++k)
+        {
+            page5[0x1FBE + 2 * k] = static_cast<uint8_t>(words[k]);
+            page5[0x1FBE + 2 * k + 1] = static_cast<uint8_t>(words[k] >> 8);
+        }
+        _context->pCore->GetZ80()->sp = 0x5FBE;
+    };
+    const std::map<std::string, std::string> source = {{"text", "        ORG #6000\nstart   ld a,1+2*3\n        jr start\n"}, {"from", "sjasmplus"}};
+
+    stack(0x9733);   // a command running: refused
+    AsmReply reply = SyncRun(_context, "sync-inject", source);
+    EXPECT_EQ(reply.error, AsmControlError::Refused);
+    EXPECT_NE(reply.message.find("not waiting for a command"), std::string::npos) << reply.message;
+
+    stack(0x9707);
+    reply = SyncRun(_context, "sync-inject", source);
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.find("assembler")->s, "alasm-5.09");
+    EXPECT_EQ(reply.body.find("page")->i, 6);
+    EXPECT_EQ(reply.body.find("name")->s, "SNAKE");   // the text's name in memory stays
+    EXPECT_EQ(reply.body.find("previous")->find("name")->s, "SNAKE");
+
+    // ALASM's text now: the source in ALASM's spelling, marked changed since saved
+    reply = SyncRun(_context, "sync-extract");
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    const std::string text = reply.body.find("text")->s;
+    EXPECT_NE(text.find("LD A,1+(2*3)"), std::string::npos) << text;
+    EXPECT_NE(text.find("JR start"), std::string::npos) << text;
+    EXPECT_TRUE(reply.body.find("changed")->b);
+
+    // Changes not saved: another write needs force
+    reply = SyncRun(_context, "sync-inject", source);
+    EXPECT_EQ(reply.error, AsmControlError::Refused);
+    std::map<std::string, std::string> forced = source;
+    forced["force"] = "true";
+    EXPECT_TRUE(SyncRun(_context, "sync-inject", forced).Ok());
 }

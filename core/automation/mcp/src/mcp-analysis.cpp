@@ -103,7 +103,28 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
                 {
                     suffix += "&address=" + AddressArg(args["address"]);
                 }
-                ResolveAndForward(args, "GET", suffix, nullptr, caller, "Disassembly", done);
+                // The listing goes in the text itself: clients that pass only content[] to the model get the code
+                TargetResolver::ResolveFromArgs(args, caller, [suffix, &caller, done](bool ok, const std::string& idOrError) {
+                    if (!ok)
+                    {
+                        done(ToolResult::Error(idOrError));
+                        return;
+                    }
+                    const std::string id = idOrError;
+                    ForwardCall("GET", Endpoint(id, suffix), nullptr, caller, "", [id, done](ToolResult result) {
+                        if (result.isError)
+                        {
+                            done(std::move(result));
+                            return;
+                        }
+                        const Json::Value& body = result.structured;
+                        result.text = "Disassembly [target " + id + "]: " + std::to_string(body["instructions"].size()) +
+                                      " instruction(s) at " + Hex16(body["address"].asUInt()) + "\n" +
+                                      FormatDisasmListing(body);
+                        result.textCarriesData = true;
+                        done(std::move(result));
+                    });
+                });
                 return;
             }
 

@@ -32,6 +32,32 @@ const char* const kServerInstructions =
     "release_control ends it. If a call answers revoked_by_user, the user took control back: stop, do not retry, and "
     "ask the user before taking control again.";
 
+/// Largest structuredContent echoed into content[] as text; a larger one is cut with a note (the full body stays in
+/// structuredContent)
+constexpr size_t kStructuredEchoLimit = 64 * 1024;
+
+/// The structuredContent as compact JSON text for content[]: MCP (2025-06-18, Structured Content) says a tool returning
+/// structured content SHOULD also return it serialized in a TextContent block. Clients that hand the model only
+/// content[] (claude.ai connectors) saw the one-line summary and never the listing / dump / body
+std::string EchoStructured(const Json::Value& structured)
+{
+    Json::StreamWriterBuilder builder;
+    builder["indentation"] = "";
+    builder["emitUTF8"] = true;
+    std::string json = Json::writeString(builder, structured);
+    if (json.size() > kStructuredEchoLimit)
+    {
+        const size_t total = json.size();
+        size_t cut = kStructuredEchoLimit;
+        while (cut > 0 && (static_cast<unsigned char>(json[cut]) & 0xC0) == 0x80)
+            --cut;   // never split a UTF-8 sequence
+        json.resize(cut);
+        json += "\n... [truncated: " + std::to_string(total) + " bytes of JSON, first " +
+                std::to_string(cut) + " shown; ask for a narrower range]";
+    }
+    return json;
+}
+
 bool IsSupportedProtocolVersion(const std::string& version)
 {
     for (const char* supported : kSupportedProtocolVersions)
@@ -198,6 +224,13 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
                 payload["content"].append(text);
                 if (!result.structured.isNull())
                 {
+                    if (!result.textCarriesData)
+                    {
+                        Json::Value echo;
+                        echo["type"] = "text";
+                        echo["text"] = EchoStructured(result.structured);
+                        payload["content"].append(echo);
+                    }
                     payload["structuredContent"] = result.structured;
                 }
                 if (result.isError)

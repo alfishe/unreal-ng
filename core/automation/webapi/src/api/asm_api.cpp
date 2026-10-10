@@ -13,6 +13,7 @@
 ///   POST /emulator/{id}/asm/sync/watch   {assembler?, interval?, quiet?, as?, to?, output?, project?}   the watch: live labels, hints
 ///   DELETE /emulator/{id}/asm/sync/watch                                                         stop it
 ///   GET  /emulator/{id}/asm/sync/hints                                                           the last build
+///   POST /emulator/{id}/asm/sync/inject  {text | path | data + name, from?, assembler?, title?, force?, backup?}  a host source as the assembler's text
 /// A path is a host file or disk:A/NAME.T. Every route turns its request into an AsmControl verb, shared with the CLI,
 /// MCP, Lua, Python and the Qt disk browser (core/src/debugger/asm/asmcontrol.h).
 

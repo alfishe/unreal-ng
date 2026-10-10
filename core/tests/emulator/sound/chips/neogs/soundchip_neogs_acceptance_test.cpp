@@ -759,4 +759,105 @@ TEST(NeoGSTheLink_Test, DemoAssemblesItselfAndRunsItsCardRenderedEffects)
     EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
 }
 
+namespace
+{
+/// The release disk built by docs/disasm/demo/thelink/sjasm/build.py (from source): boot -> THELINK -> the
+/// loader at #6000, whose machine check leaves its result at #6002 (memory) and #6003 (card)
+constexpr uint16_t kTheLinkMemoryKind = 0x6002;
+constexpr uint16_t kTheLinkSoundKind = 0x6003;
+
+std::string TheLinkReleaseDisk()
+{
+    return (TestPathHelper::FindProjectRoot() / "testdata/machines/pentagon1024sl/TheLink-sjasm.scl").string();
+}
+} // namespace
+
+/// The release disk boots into the demo without the assembler: the loader checks the machine,
+/// loads the title, the main block and the 28 page files, and jumps to GO. From there it is the
+/// demo of the test above.
+///
+/// Runtime justification: ~45 emulated seconds (27 s of loading, the 18-second intro), about 6 s
+/// of host time.
+TEST(NeoGSTheLink_Test, ReleaseDiskBootsIntoTheDemo)
+{
+    constexpr uint64_t kTStatesPerSecond = 3500000;
+    SoundCardScope sound;
+    auto emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModelAndRAM("thelink-scl", "PENTAGON", 1024, LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    EmulatorContext* ctx = emulator->GetContext();
+    ASSERT_TRUE(emulator->LoadDisk(TheLinkReleaseDisk(), 0));
+    ASSERT_TRUE(FitGeneralSoundCard(ctx->pSoundManager, GSTypeKind::NGS));
+    auto* card = dynamic_cast<SoundChip_NeoGS*>(ctx->pSoundManager->getGeneralSound());
+    ASSERT_NE(card, nullptr);
+    Z80* z80 = ctx->pCore->GetZ80();
+    auto demoFrame = [z80] { return z80->DirectRead(0xBF02) | (z80->DirectRead(0xBF03) << 8); };
+
+    {
+        TRDOSTestHelper trdos(emulator.get(), false);
+        trdos.startCommand("RUN"); // boot
+        ASSERT_TRUE(trdos.runUntil([&] { return card->gscfg0() == 0x09; }, 60ull * kTStatesPerSecond, 25))
+            << "the loader never reached GO (memory " << int(z80->DirectRead(kTheLinkMemoryKind)) << ", card "
+            << int(z80->DirectRead(kTheLinkSoundKind)) << ")";
+        EXPECT_EQ(z80->DirectRead(kTheLinkMemoryKind), 0);
+        EXPECT_EQ(z80->DirectRead(kTheLinkSoundKind), 0);
+
+        // GO clears #D800-#DAFF of whatever page is at #C000; the loader puts page 7 there, so the music
+        // (thelinkm in RAM page 12, #7FFD = #54) is whole, as after the author's ALASM start
+        const std::vector<uint8_t> music = readFile(TestPathHelper::FindProjectRoot() / "docs/disasm/demo/thelink/sjasm/data/thelinkm");
+        ASSERT_EQ(music.size(), 9810u);
+        EXPECT_EQ(std::memcmp(ctx->pMemory->RAMBase() + 12 * 0x4000, music.data(), music.size()), 0)
+            << "the music page differs from thelinkm";
+
+        ASSERT_TRUE(trdos.runUntil([&] { return demoFrame() >= 1000; }, 40ull * kTStatesPerSecond, 25)) << "no tunnel";
+        int changed = 0;
+        uint64_t previous = FramebufferHash(emulator.get());
+        for (int i = 0; i < 100; i++)
+        {
+            trdos.runFrames(1);
+            const uint64_t h = FramebufferHash(emulator.get());
+            changed += h != previous ? 1 : 0;
+            previous = h;
+        }
+        EXPECT_GE(changed, 90) << "the tunnel changes the picture every frame";
+    }
+    EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
+}
+
+/// On a machine the demo cannot run on, the loader stops before loading anything and shows its
+/// error box (red frame, blue box) with what it found: 512K paging, a classic GS
+TEST(NeoGSTheLink_Test, ReleaseDiskNamesWhatIsMissing)
+{
+    constexpr uint64_t kTStatesPerSecond = 3500000;
+    struct Machine
+    {
+        int ram;
+        GSTypeKind card;
+        int memoryKind;
+        int soundKind;
+    };
+    for (const Machine m : {Machine{512, GSTypeKind::NGS, 2, 0}, Machine{1024, GSTypeKind::Z80, 0, 1}})
+    {
+        SCOPED_TRACE(testing::Message() << m.ram << "K, card " << int(m.card));
+        SoundCardScope sound;
+        auto emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModelAndRAM("thelink-scl", "PENTAGON", m.ram, LoggerLevel::LogError);
+        ASSERT_TRUE(emulator);
+        EmulatorContext* ctx = emulator->GetContext();
+        ASSERT_TRUE(emulator->LoadDisk(TheLinkReleaseDisk(), 0));
+        ASSERT_TRUE(FitGeneralSoundCard(ctx->pSoundManager, m.card));
+        Z80* z80 = ctx->pCore->GetZ80();
+        auto errorBox = [z80] {
+            return z80->DirectRead(0x5800 + 3 * 32 + 2) == 0x50 && z80->DirectRead(0x5800 + 4 * 32 + 3) == 0x4F &&
+                   z80->DirectRead(0x5800 + 16 * 32 + 4) == 0x4F;
+        };
+        {
+            TRDOSTestHelper trdos(emulator.get(), false);
+            trdos.startCommand("RUN");
+            EXPECT_TRUE(trdos.runUntil(errorBox, 20ull * kTStatesPerSecond, 5)) << "no error screen";
+            EXPECT_EQ(z80->DirectRead(kTheLinkMemoryKind), m.memoryKind);
+            EXPECT_EQ(z80->DirectRead(kTheLinkSoundKind), m.soundKind);
+        }
+        EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
+    }
+}
+
 /// endregion </The Link (invdemo, 2009)>

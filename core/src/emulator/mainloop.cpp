@@ -63,7 +63,7 @@ MainLoop::~MainLoop()
 //
 // Main emulator loop. Processes all events and executes CPU and video cycles
 //
-void MainLoop::Run(volatile bool& stopRequested)
+void MainLoop::Run(const std::atomic<bool>& stopRequested)
 {
     if (_cpu == nullptr || _context == nullptr)
     {
@@ -237,7 +237,7 @@ void MainLoop::Run(volatile bool& stopRequested)
             // against WASAPI's 10 ms pulls and caused steady underruns
             // ("ring errors ... dequeue=N" growing) - see
             // TimeHelper::WaitUntilPrecise and SoundAdaptivity.AVLatencyBudget
-            TimeHelper::WaitUntilPrecise(_nextFrameTime, [&stopRequested] { return (bool)stopRequested; });
+            TimeHelper::WaitUntilPrecise(_nextFrameTime, [&stopRequested] { return stopRequested.load(); });
         }
         else
         {
@@ -270,7 +270,12 @@ bool MainLoop::Park(Emulator* emulator, execution::ExecutionArbiter* arbiter)
     if (_context->pTimeTravelHooks)
         _context->pTimeTravelHooks->OnMachineParking();
     if (emulator->IsPaused())
+    {
         emulator->NoteDebugChange();  // a stop the debugger snapshot's seq counts
+        // Nothing plays while paused: cleared here, on the thread that renders the sound (Emulator::OnIntentEdge)
+        if (_soundManager)
+            _soundManager->onEmulatorPaused();
+    }
     return arbiter->LoopWait();
 }
 

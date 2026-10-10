@@ -605,6 +605,13 @@ void Emulator::ReleaseNoGuard()
     if (!_context)
         return;
 
+    // Host input first: its handlers run on the message center's thread and reach the debug manager, the TTD
+    // controller, the main loop and the core's devices - all deleted below. Detaching waits for a handler in progress
+    if (_context->pKeyboard)
+        _context->pKeyboard->DetachHostInput();
+    if (_context->pMouseManager)
+        _context->pMouseManager->DetachHostInput();
+
     // The step-over audio hold must not outlive the sound manager it points to
     _stepOverHostHold.Release();
 
@@ -1606,8 +1613,11 @@ void Emulator::OnIntentEdge(const execution::IntentEdge& edge)
 
         // No more handleFrameEnd calls will arrive until the machine runs again - a device mid-playback at this
         // exact instant (GS in particular: see SoundManager::onEmulatorPaused) would otherwise keep reporting
-        // "active" for as long as the pause lasts, with nothing left to clear it
-        if (_context && _context->pSoundManager)
+        // "active" for as long as the pause lasts, with nothing left to clear it.
+        // This edge comes on the pausing thread while the loop may still finish its frame (handleFrameEnd): a
+        // running loop clears the sound itself when it parks (MainLoop::Park); here only with no loop to do it, or
+        // one already parked
+        if (_context && _context->pSoundManager && (!_isRunning || !_mainloop || _arbiter.IsParked()))
             _context->pSoundManager->onEmulatorPaused();
 
         SetState(StatePaused);

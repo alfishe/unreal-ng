@@ -79,12 +79,12 @@ VideoState VideoMapService::State() const
     {
         const VideoFrameLog published = _context->pScreen->GetVideoWriteLog().Published();
         if (published.valid)
-            return StateFrom(published.StateAt(UINT32_MAX));
+            return StateFrom(published.StateAt(UINT32_MAX), &published);
     }
     return StateFrom(_context->pScreen->CaptureVideoLatches());
 }
 
-VideoState VideoMapService::StateFrom(const VideoLatches& latches) const
+VideoState VideoMapService::StateFrom(const VideoLatches& latches, const VideoFrameLog* frame) const
 {
     VideoState s;
     if (!_context)
@@ -109,7 +109,9 @@ VideoState VideoMapService::StateFrom(const VideoLatches& latches) const
     if (screen)
     {
         s.familyView = screen->VideoFamilyView();
-        s.flashPhase = screen->_vid.flash != 0;
+        // A logged frame's own phase (Screen::InitFrame: frame_counter & 0x10), not the live one the emulation
+        // thread is switching
+        s.flashPhase = frame ? (frame->frame & 0x10) != 0 : screen->_vid.flash != 0;
         if (s.mode < M_MAX)
         {
             s.layoutDesc = screen->rasterDescriptors[s.mode];
@@ -240,7 +242,7 @@ PixelSources VideoMapService::SourcesAtBeam(uint32_t tInFrame) const
         frame = (tInFrame <= screen->GetCurrentTstate() || !log.Previous().valid) ? &log.Current() : &log.Previous();
     }
     const bool fromLog = frame->valid;
-    const VideoState s = fromLog ? StateFrom(frame->StateAt(tInFrame)) : State();
+    const VideoState s = fromLog ? StateFrom(frame->StateAt(tInFrame), frame) : State();
 
     // Where that moment's mode put the beam
     const BeamPosition beam = screen->DescribeBeam(tInFrame);

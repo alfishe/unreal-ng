@@ -9,7 +9,7 @@ Everything found while verifying the TurboSound FM implementation against real h
 | 3 | CSM does not retrigger on Timer A overflow | ymfm | fixed, `279bbe2c` |
 | 4 | HQ character chains ran with HQ off | mixer / CPU | fixed, `7840d135` |
 | 5 | Sub-audio FM content reaches the output (no coupling high-pass) | FM output stage | fixed, 1.33 Hz coupling |
-| 6 | int16 mix has no headroom for loud FM | mixer | open, tracked separately |
+| 6 | int16 mix has no headroom for loud FM | mixer | fixed, wide mix + master limiter |
 | 7 | LQ → HQ switch replays stale decimator history | devices | fixed |
 | 8 | SSG opposite-side leakage symmetric at −19 dB, hardware asymmetric | SSG pan | open, cosmetic |
 | 9 | Furnace's frequency-latch semantics differ from upstream ymfm | ymfm | reviewed, not adopted |
@@ -82,11 +82,31 @@ Everything found while verifying the TurboSound FM implementation against real h
 
 **Observed.** After issue 1, one carrier reaches 0.18 per channel. A YM2203 channel can exceed one carrier (up to four in algorithm 7), each chip has three channels, and there are two chips plus two SSGs: full-level material exceeds ±1.0 before the int16 clamp and clips.
 
-**Status.** Open. Already listed in the implementation plan as "wide mix + soft limiter (TSFM makes int16 saturation likely)"; issue 1 makes it a prerequisite for moving the code baseline. Until then the trim is the safe knob and can be backed off from the Audio Settings dialog.
+Correction (2026-10-10): there was no int16 clamp in the devices. The out-of-range float conversion was undefined
+and on arm64 wrapped around (a full-scale click), not clipped; since d5e197532 (BUGS.md #13) both TurboSound devices
+clamp. The low-quality golden digest that moved with it was issue 25, not this one.
 
-Correction (2026-10-10): there was no int16 clamp. The out-of-range float conversion was undefined and on arm64
-wrapped around (a full-scale click), not clipped; since d5e197532 (BUGS.md #13) both TurboSound devices clamp. The
-low-quality golden digest crossed full scale.
+**Measured (2026-10-10)** at the board's levels (`TSFM_FmTrimDb=7.4`), through the whole SoundManager path, sources
+summed without clipping:
+
+| Material | Sources sum | int16 saturating mix |
+|---|---|---|
+| one chip, full FM word (any number of channels: the DAC word clamps) | 0.70 FS | clean |
+| both chips, one algorithm-7 channel each | 1.40 FS | 49 % of samples at full scale |
+| both chips, three channels (algorithm 4 or 7) and all SSG tones at 15 | 2.2-2.4 FS | 54-70 % at full scale |
+| both SSGs only, all tones at 15 | 0.76 FS | clean |
+
+Each source buffer stays inside int16 (one chip's FM at most 0.70 FS); only the master sum overflowed.
+
+**Fix.** A TSFM machine mixes on the wide float bus with the master DC blocker and soft limiter that MoonSound and the
+MultiSound card already use (`SoundManager::wideMixNeeded`, `MasterLimiter`): linear up to 0.75 FS, compressive above,
+never reaching full scale. The same material now peaks at 31 587-31 995 with no sample at full scale; the volume test's
+levels pass linearly, so the measured FM-to-SSG balance is unchanged. A classic TurboSound (AY) keeps the integer path
+byte for byte. Tests `TsfmHeadroom_Test.*`.
+
+**Left.** The limiter tames, it does not make room: material this loud is compressed by 3 to 8 dB at its peaks. Moving the code
+baseline `kFmBaseGain` to 0.70 (issue 1) no longer waits for this one; the shipped inis would drop their 7.4 trim in
+the same change.
 
 ## 7. LQ → HQ switch replays stale decimator history
 

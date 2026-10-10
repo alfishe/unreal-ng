@@ -18,6 +18,7 @@
 #include <json/json.h>
 
 #include <map>
+#include <memory>
 #include <utility>
 #include <string>
 
@@ -277,6 +278,95 @@ TEST_F(McpDispatcher_Test, ToolsCall_RoutesThroughToolHandlerWithDualContent)
     EXPECT_FALSE(response["result"]["content"][0]["text"].asString().empty());
     EXPECT_TRUE(response["result"].isMember("structuredContent"));
     EXPECT_FALSE(response["result"].isMember("isError"));
+}
+
+// A client that hands the model only content[] (claude.ai connectors) must still see the data: the structuredContent
+// comes back as JSON text in a second content block (MCP 2025-06-18, Structured Content)
+TEST_F(McpDispatcher_Test, ToolsCall_EchoesStructuredContentAsText)
+{
+    Json::Value params;
+    params["name"] = "emulator_manage";
+    params["arguments"]["action"] = "list";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    const Json::Value& content = response["result"]["content"];
+    ASSERT_EQ(content.size(), 2u);
+    EXPECT_EQ(content[1]["type"].asString(), "text");
+    Json::Value echoed;
+    Json::CharReaderBuilder reader;
+    std::string errors;
+    const std::string text = content[1]["text"].asString();
+    std::unique_ptr<Json::CharReader> parser(reader.newCharReader());
+    ASSERT_TRUE(parser->parse(text.data(), text.data() + text.size(), &echoed, &errors)) << errors;
+    EXPECT_EQ(echoed, response["result"]["structuredContent"]);
+}
+
+// debug_code disassemble writes the listing into the text itself (one line per instruction, labels, targets) and
+// does not repeat the JSON
+TEST_F(McpDispatcher_Test, DebugCodeDisassemble_ListingInTheText)
+{
+    Json::Value body;
+    body["address"] = 0x7396;
+    body["count"] = 3;
+    Json::Value call;
+    call["address"] = 0x7396;
+    call["bytes"] = "CD0074";
+    call["mnemonic"] = "call #7400";
+    call["size"] = 3;
+    call["label"] = "engine";
+    call["target"] = 0x7400;
+    call["targetLabel"] = "draw";
+    body["instructions"].append(call);
+    Json::Value load;
+    load["address"] = 0x7399;
+    load["bytes"] = "DD7E05";
+    load["mnemonic"] = "ld a,(ix+5)";
+    load["size"] = 3;
+    load["effectiveAddress"] = 0x5C05;
+    body["instructions"].append(load);
+    Json::Value ret;
+    ret["address"] = 0x739C;
+    ret["bytes"] = "C9";
+    ret["mnemonic"] = "ret";
+    ret["size"] = 1;
+    body["instructions"].append(ret);
+    _caller->routes["GET /api/v1/emulator/emu-1/disasm?count=3&address=0x7396"] = {200, body};
+
+    Json::Value params;
+    params["name"] = "debug_code";
+    params["arguments"]["action"] = "disassemble";
+    params["arguments"]["address"] = "0x7396";
+    params["arguments"]["count"] = 3;
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    ASSERT_FALSE(response["result"].isMember("isError")) << response.toStyledString();
+    const Json::Value& content = response["result"]["content"];
+    ASSERT_EQ(content.size(), 1u);
+    EXPECT_EQ(content[0]["text"].asString(),
+              "Disassembly [target emu-1]: 3 instruction(s) at 0x7396\n"
+              "engine:\n"
+              "7396  CD 00 74      call #7400            ; -> draw\n"
+              "7399  DD 7E 05      ld a,(ix+5)           ; ea #5C05\n"
+              "739C  C9            ret");
+    EXPECT_EQ(response["result"]["structuredContent"], body);
+}
+
+// A WebAPI error stays an error with the WebAPI message (no listing, no echo)
+TEST_F(McpDispatcher_Test, DebugCodeDisassemble_BadAddressIsAnError)
+{
+    Json::Value error;
+    error["error"] = "Bad Request";
+    error["message"] = "address must be 0-65535";
+    _caller->routes["GET /api/v1/emulator/emu-1/disasm?count=16&address=zz"] = {400, error};
+
+    Json::Value params;
+    params["name"] = "debug_code";
+    params["arguments"]["action"] = "disassemble";
+    params["arguments"]["address"] = "zz";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    EXPECT_TRUE(response["result"]["isError"].asBool());
+    EXPECT_NE(response["result"]["content"][0]["text"].asString().find("address must be"), std::string::npos);
 }
 
 TEST_F(McpDispatcher_Test, ToolsCall_UnknownTool_IsInvalidParams)

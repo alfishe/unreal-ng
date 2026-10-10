@@ -37,6 +37,15 @@ MouseManager::MouseManager(EmulatorContext* context) : _context(context)
 
 MouseManager::~MouseManager()
 {
+    DetachHostInput();
+}
+
+void MouseManager::DetachHostInput()
+{
+    if (_hostInputDetached)
+        return;
+    _hostInputDetached = true;
+
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Observer* observer = static_cast<Observer*>(this);
     messageCenter.RemoveObserver(MC_MOUSE_MOVE, observer, static_cast<ObserverCallbackMethod>(&MouseManager::OnMouseMove));

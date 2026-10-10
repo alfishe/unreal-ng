@@ -114,6 +114,10 @@ SoundManager::SoundManager(EmulatorContext* context)
                 chip->setStereoMode(_context->config.sound.ayStereo);
         }
     }
+    // TSFM at the board's measured FM level: one chip's full FM word is 0.70 of full scale, two chips 1.4, with the
+    // SSGs up to 2.4 (TSFM ISSUES.md #6). The float bus and the master limiter own the master mix, as for MoonSound
+    if (_turboSound && _turboSound->hasFm())
+        enableWideMix(true);
 
     // Build the device registry based on what this machine has
     // Beeper is always present
@@ -607,6 +611,8 @@ const int16_t* SoundManager::slotCardBuffer(AudioSourceType type) const
 
 bool SoundManager::wideMixNeeded() const
 {
+    if (_turboSound && _turboSound->hasFm())
+        return true;
 #ifdef UNREALNG_HAVE_OPL4
     if (_moonsound)
         return true;
@@ -973,6 +979,10 @@ void SoundManager::applyCoreRate(size_t rate)
 
 void SoundManager::handleFrameStart()
 {
+    // The turbo low-quality override, set on whatever thread toggled turbo (setTurboLowQualityOverride)
+    if (_turboSound)
+        _turboSound->setHQEnabled(isHQActive());
+
     // Apply a pending live core-rate change at the frame boundary (the
     // emulation thread owns all DSP state here). Deferred while a recording
     // is in progress - a recording must keep one rate end to end.
@@ -1926,14 +1936,8 @@ void SoundManager::UpdateFeatureCache()
 
 void SoundManager::setTurboLowQualityOverride(bool enabled)
 {
-    if (_turboLowQualityOverride == enabled)
-        return;
-
-    _turboLowQualityOverride = enabled;
-    if (_turboSound)
-    {
-        _turboSound->setHQEnabled(isHQActive());
-    }
+    // The device's render state belongs to the emulation thread: handleFrameStart hands the switch over
+    _turboLowQualityOverride.store(enabled, std::memory_order_relaxed);
 }
 
 /// endregion </Emulation events>

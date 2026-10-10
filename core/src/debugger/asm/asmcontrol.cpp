@@ -321,7 +321,8 @@ AsmControl::AsmControl(EmulatorContext* context) : _context(context) {}
 const std::vector<std::string>& AsmControl::Verbs()
 {
     static const std::vector<std::string> verbs = {"formats", "dialects", "files", "detect", "decode", "encode", "convert",
-                                                   "sync-status", "sync-probe", "sync-extract", "sync-watch", "sync-unwatch", "sync-hints"};
+                                                   "sync-status", "sync-probe", "sync-extract", "sync-watch", "sync-unwatch", "sync-hints",
+                                                   "sync-inject"};
     return verbs;
 }
 
@@ -612,6 +613,51 @@ AsmReply AsmControl::Encode(const AsmRequest& request)
     AsmReply reply;
     reply.body = std::move(body);
     return reply;
+}
+
+bool AsmControl::ReadDocument(const AsmRequest& request, SourceDocument& out, Diagnostics& diagnostics, std::string& sourceName,
+                              AsmReply& failure)
+{
+    if (request.options.count("text"))
+    {
+        if (request.options.count("path") || request.options.count("data"))
+        {
+            failure = Fail(AsmControlError::BadRequest, "give one source: text, path or data");
+            return false;
+        }
+        const std::string from = Option(request, "from");
+        out = SourceDocument::FromText(Option(request, "text"), from.empty() ? "sjasmplus" : from);
+        out.name = Option(request, "name");
+        sourceName = "text";
+        return true;
+    }
+    Source source;
+    if (!LoadSource(_context, request, source, failure))
+        return false;
+    DetectResult detected;
+    const std::string name = Option(request, "codec");
+    const ISourceCodec* codec = CodecFor(source, name, detected);
+    if (!codec)
+    {
+        failure = name.empty() ? Fail(AsmControlError::Failed, "no format recognized: " + detected.reason + " (give 'codec')")
+                               : Fail(AsmControlError::NotFound, "unknown format '" + name + "'");
+        return false;
+    }
+    DecodeOptions options;
+    options.catalog = source.hints;
+    options.subversion = Option(request, "version");
+    DecodeResult decoded = codec->Decode(source.bytes, options);
+    if (!Option(request, "from").empty())
+        decoded.document.dialect = Option(request, "from");
+    if (decoded.document.name.empty())
+    {
+        std::string stem = source.name.substr(source.name.find_last_of("/\\:") == std::string::npos ? 0 : source.name.find_last_of("/\\:") + 1);
+        decoded.document.name = stem.substr(0, stem.find('.'));
+    }
+    diagnostics.insert(diagnostics.end(), decoded.diagnostics.begin(), decoded.diagnostics.end());
+    out = std::move(decoded.document);
+    sourceName = source.name;
+    return true;
 }
 
 AsmReply AsmControl::Convert(const AsmRequest& request)

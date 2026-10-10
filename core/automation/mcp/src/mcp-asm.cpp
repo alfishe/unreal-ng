@@ -14,6 +14,7 @@
 //   sync_watch   → POST /asm/sync/watch {assembler?, interval?, quiet?, as?, to?, output?}
 //   sync_unwatch → DELETE /asm/sync/watch
 //   sync_hints   → GET  /asm/sync/hints
+//   sync_inject  → POST /asm/sync/inject {text | path | data + name, from?, assembler?, title?, force?, backup?}
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
 
@@ -34,13 +35,13 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"formats", "dialects", "files", "detect", "decode", "encode", "convert", "sync_status", "sync_probe", "sync_extract",
-                               "sync_watch", "sync_unwatch", "sync_hints"})
+                               "sync_watch", "sync_unwatch", "sync_hints", "sync_inject"})
         schema["properties"]["action"]["enum"].append(action);
     schema["properties"]["action"]["description"] =
         "Assembler source operation: the tokenized formats of ZX Spectrum assemblers (ALASM, TASM, ZX-ASM, STORM, MASM, GENS, ZEUS, "
-        "XAS, Laser Genius, ...) and text dialects; decode to text, encode text, convert between dialects (to sjasmplus, pasmo, z88dk). sync_*: the source an "
+        "XAS, Laser Genius, ...) and text dialects; decode to text, encode text, convert between dialects (to sjasmplus, pasmo, z88dk, alasm). sync_*: the source an "
         "assembler running in the machine holds in RAM (ALASM 5.09 / 4.44, TASM 4.12), read as its own SAVE would write it; sync_watch keeps its labels (symbol set live:sync:<assembler>) and hints up to date "
-        "while the user types.";
+        "while the user types; sync_inject writes a host source (sjasmplus or another dialect) into it as its own text (ALASM 5.09, at its command line).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     const auto text = [&](const char* name, const char* description) {
@@ -66,6 +67,10 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
     schema["properties"]["interval"]["type"] = "integer";
     schema["properties"]["interval"]["description"] = "sync_watch: ms between looks at the text (default 250)";
     text("project", "sync_watch: where INCLUDEd sources come from: disk:A-D, none, a host folder, comma-separated (default disk:A)");
+    text("title", "sync_inject: the text's name in the assembler (default: the name of the text it replaces)");
+    schema["properties"]["force"]["type"] = "boolean";
+    schema["properties"]["force"]["description"] = "sync_inject: overwrite a text with changes not saved";
+    text("backup", "sync_inject: a host file the replaced text is written to (the assembler's own format)");
     schema["properties"]["quiet"]["type"] = "integer";
     schema["properties"]["quiet"]["description"] = "sync_watch: ms a change must stay before it is built (default 500)";
     schema["properties"]["start"]["type"] = "integer";
@@ -124,15 +129,24 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
             if (action == "sync_probe" || action == "sync_extract" || action == "sync_watch")
             {
                 Json::Value body(Json::objectValue);
-                for (const char* name : {"assembler", "as", "to", "codepage", "output", "interval", "quiet"})
+                for (const char* name : {"assembler", "as", "to", "codepage", "output", "interval", "quiet", "project"})
                     if (args.isMember(name) && !args[name].isNull())
                         body[name] = args[name].asString();
                 ResolveAndForward(args, "POST", "/asm/sync/" + action.substr(5), &body, caller, "Assembler in RAM: " + action.substr(5), done);
                 return;
             }
+            if (action == "sync_inject")
+            {
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"assembler", "text", "path", "data", "name", "file", "codec", "version", "from", "title", "force", "backup"})
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name].isBool() ? Json::Value(args[name].asBool() ? "true" : "false") : Json::Value(args[name].asString());
+                ResolveAndForward(args, "POST", "/asm/sync/inject", &body, caller, "Assembler in RAM: inject", done);
+                return;
+            }
             done(ToolResult::Error("Unknown action '" + action +
                                    "'. Valid: formats, dialects, files, detect, decode, encode, convert, sync_status, sync_probe, sync_extract, sync_watch, "
-                                   "sync_unwatch, sync_hints"));
+                                   "sync_unwatch, sync_hints, sync_inject"));
         });
 }
 
