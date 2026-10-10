@@ -1,7 +1,7 @@
 #!/bin/bash
 # usage: nexaudio.sh <file.nex> <frames> <out-dir>  -> ours.wav and jnext.wav (the final mix) in out-dir, then a spectrum summary
 nex="$1"; F="${2:-300}"; out="$3"; mkdir -p "$out"
-B=$(cd "$(dirname "$0")/../../.." && pwd)
+B=$(cd "$(dirname "$0")/../../../.." && pwd)
 J=/Volumes/TB4-4Tb/Projects/emulators/build/jnext/bld/jnext
 IMG=/Volumes/TB4-4Tb/Projects/emulators/cosim-cards/full.img
 rm -f "$out/ours.wav" "$out/jnext.wav"

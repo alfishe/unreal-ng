@@ -1,7 +1,7 @@
 #!/bin/bash
 # usage: nexcmp.sh <file.nex> [frames]   -> prints the number of pixels differing by more than 40 per channel
 N="$1"; F="${2:-300}"
-B=$(cd "$(dirname "$0")/../../.." && pwd)
+B=$(cd "$(dirname "$0")/../../../.." && pwd)
 W=/tmp/claude-501/cmp; mkdir -p $W
 J=/Volumes/TB4-4Tb/Projects/emulators/build/jnext/bld/jnext
 IMG=/Volumes/TB4-4Tb/Projects/emulators/cosim-cards/full.img

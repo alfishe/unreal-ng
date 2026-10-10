@@ -1,6 +1,6 @@
 #!/bin/bash
 # usage: side.sh file.nex [frames] -> /tmp/claude-501/cmp/side.png (ours | reference)
-cd "$(dirname "$0")/../../.."
+cd "$(dirname "$0")/../../../.."
 tools/machines/next/cosim/nexcmp.sh "$1" ${2:-250}
 python3 -c "
 from PIL import Image
