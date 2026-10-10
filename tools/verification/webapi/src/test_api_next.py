@@ -91,3 +91,70 @@ class TestNextReports:
         finally:
             api_client.stop_emulator(emulator_id)
             api_client.delete_emulator(emulator_id)
+
+
+class TestNextInterpreters:
+    """The report bindings of the Python and Lua planes on a live NEXT. They are verification tests, not core tests: the core library
+    does not link either interpreter, and the plane is only real inside unreal-qt / unreal-cli."""
+
+    def test_python_bindings(self, api_client, next_emulator):
+        if not api_client.get_python_status().get("available", False):
+            pytest.skip("Python interpreter not available")
+        code = f"""
+import unreal_emulator as ue
+emu = ue.emu_get('{next_emulator}')
+assert emu is not None, 'emulator not found'
+
+d = emu.next_dma()
+assert d['mode'] in ('zxn', 'z80') and 'a' in d and 'b' in d and 'status' in d, d
+v = emu.next_video()
+for key in ('layer_order', 'ula', 'layer2', 'tilemap', 'raster', 'timing'):
+    assert key in v, key
+p = emu.next_palette(palette='ula_1', range='0-3')
+assert len(p['palettes'][0]['entries']) == 4, p
+assert 'device' in emu.next_ports(0x6B, 'w')['describe']
+r = emu.next_nextreg(0x07)
+assert r['reg'] == '0x07', r
+assert 'instructions' in emu.next_copper(count=2)
+assert 'flags' in emu.next_sprites(count=2)
+
+w = emu.next_nextreg_write(0x4C, 5, 'nextreg')
+assert w['after'] == '0x05' and w['door'] == 'nextreg', w
+assert emu.next_nextreg(0x4C)['value'] == '0x05'
+try:
+    emu.next_nextreg_write(0x4C, 5, 'nonsense')
+except ValueError:
+    pass
+else:
+    raise AssertionError('a bad door must raise ValueError')
+print('NEXT-PY-OK')
+"""
+        resp = api_client.exec_python(code)
+        assert resp["success"] is True, resp
+        assert "NEXT-PY-OK" in resp["output"], resp
+
+    def test_lua_bindings(self, api_client, next_emulator):
+        if not api_client.get_lua_status().get("available", False):
+            pytest.skip("Lua interpreter not available")
+        # select the NEXT instance: the Lua globals act on the selected emulator
+        api_client.session.post(api_client._url(f"/api/v1/emulator/{next_emulator}/select"))
+        code = """
+local d = assert(next_dma())
+assert(d.mode == "zxn" or d.mode == "z80", "dma mode")
+local v = assert(next_video())
+assert(v.tilemap ~= nil and v.raster ~= nil and v.layer_order ~= nil, "video")
+local p = assert(next_palette({palette = "ula_1", range = "0-3"}))
+assert(#p.palettes[1].entries == 4, "palette entries")
+assert(next_ports(0x6B, "w").describe.device ~= nil, "ports")
+assert(next_nextreg(0x07).reg == "0x07", "nextreg")
+assert(next_copper({count = 2}).instructions ~= nil, "copper")
+assert(next_sprites({count = 2}).flags ~= nil, "sprites")
+local w = assert(next_nextreg_write(0x4C, 5, "nextreg"))
+assert(w.after == "0x05", "write")
+local ok, err = next_nextreg_write(0x4C, 5, "nonsense")
+assert(ok == nil and err ~= nil, "bad door must be nil + error")
+print("NEXT-LUA-OK")
+"""
+        resp = api_client.exec_lua(code)
+        assert resp["success"] is True, resp
+        assert "NEXT-LUA-OK" in resp["output"], resp
