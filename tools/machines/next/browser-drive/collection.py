@@ -27,6 +27,17 @@ def sorted_entries(folder):
     return ['.', '..'] + names
 
 
+def in_browser(machine):
+    """The Browser's black header bar is at the top of the screen (the NextBASIC editor and the menus have none there)"""
+    from PIL import Image
+    data = json.load(urllib.request.urlopen('%s/%s/capture/screen' % (machine.base, machine.id)))
+    im = Image.open(io.BytesIO(base64.b64decode(data['data']))).convert('RGB')
+    def black_share(box):
+        region = im.crop(box)
+        return sum(1 for px in region.getdata() if px == (0, 0, 0)) / float(region.size[0] * region.size[1])
+    return black_share((64, 64, 576, 80)) > 0.5 and black_share((64, 400, 576, 416)) > 0.5
+
+
 def reach(machine, folder, name):
     """Put the Browser's cursor on `name` of the directory shown (host path `folder`)"""
     entries = sorted_entries(folder)
@@ -110,12 +121,16 @@ def main():
                 full = os.path.join(dirpath, f)
                 if f.lower().endswith('.bak') and full not in original_baks:
                     os.remove(full)
-        machine.call('/%s/reset' % machine.id, {})
-        machine.idle(2.5)
-        machine.tap('space')
-        machine.idle(2)
-        machine.tap('b')
-        machine.idle(2.5)
+        for attempt in range(3):
+            machine.call('/%s/reset' % machine.id, {})
+            machine.idle(2.5)
+            machine.tap('space')
+            machine.idle(2)
+            machine.tap('b')
+            machine.idle(2.5)
+            if in_browser(machine):
+                break
+            print('   (the Browser did not open, attempt %d: resetting again)' % (attempt + 1), flush=True)
         # After a reset the Browser opens at the card root (checked 2026-10-10: it does not keep the directory across a reset), so the walk
         # goes straight down from there - no EDIT presses to the root first
         target = ['collection'] + parts[:-1]  # the directory of the main file, from the card root
