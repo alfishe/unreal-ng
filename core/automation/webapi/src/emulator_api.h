@@ -347,6 +347,10 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateNetworkActive, "/api/v1/emulator/state/network", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNetworkConfig, "/api/v1/emulator/{id}/network/config", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateRtcActive, "/api/v1/emulator/state/rtc", drogon::Get);
+    // Automation sessions (execution arbiter design §6a): take / read / end run control; X-Unreal-Session header
+    ADD_METHOD_TO(EmulatorAPI::postControlSession, "/api/v1/emulator/{id}/control/session", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getControlSession, "/api/v1/emulator/{id}/control/session", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::deleteControlSession, "/api/v1/emulator/{id}/control/session", drogon::Delete);
     // Execution arbiter: who decides whether the Z80 runs (DeviceState::Execution)
     ADD_METHOD_TO(EmulatorAPI::getStateExecution, "/api/v1/emulator/{id}/state/execution", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateExecutionActive, "/api/v1/emulator/state/execution", drogon::Get);
@@ -1221,6 +1225,13 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                                std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void postNetworkConfig(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void postControlSession(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getControlSession(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void deleteControlSession(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
     void getStateExecution(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                            const std::string& id) const;

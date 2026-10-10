@@ -1,6 +1,7 @@
 #pragma once
 
 #include "emulator/io/network/networkmanager.h"
+#include "emulator/execution/scriptsession.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memoryread.h"
 #include "debugger/media/sectorwrite.h"
@@ -996,14 +997,34 @@ namespace PythonBindings
             return Automation::GetInstance().SetVideowallSingleSyncMode(enable, emulatorId);
         }, "Enable or disable Single Emulator Sync Mode for the videowall", py::arg("enable"), py::arg("emulator_id") = "");
 
+        // The user took control back from this script's automation session (execution arbiter design §6a)
+        py::register_exception<execution::script::ControlRevoked>(m, "ControlRevoked");
+
         // Emulator class bindings
         auto emulatorClass = py::class_<Emulator>(m, "Emulator")
             // Lifecycle control
             .def("start", &Emulator::Start, "Start emulator execution")
             .def("start_async", &Emulator::StartAsync, "Start emulator asynchronously")
             .def("stop", &Emulator::Stop, "Stop emulator")
-            .def("pause", [](Emulator& self) { self.Pause(execution::Requester{execution::Origin::Python, {}}, "python"); }, "Pause emulator")
-            .def("resume", [](Emulator& self) { self.Resume(execution::Requester{execution::Origin::Python, {}}); }, "Resume emulator")
+            .def("pause", [](Emulator& self) {
+                execution::script::Check(self, execution::Origin::Python);
+                self.Pause(execution::script::RequesterOf(self, execution::Origin::Python), "python");
+            }, "Pause emulator")
+            .def("resume", [](Emulator& self) {
+                execution::script::Check(self, execution::Origin::Python);
+                self.Resume(execution::script::RequesterOf(self, execution::Origin::Python));
+            }, "Resume emulator")
+            // Automation session (execution arbiter design §6a): the GUI shows it and locks its controls; when the user
+            // takes control back, control calls raise ControlRevoked - stop, do not retry, do not take control again
+            // without asking the user
+            .def("take_control", [](Emulator& self, const std::string& client) {
+                std::string reason;
+                if (!execution::script::TakeControl(self, execution::Origin::Python, client, reason))
+                    throw std::runtime_error("take_control refused: " + reason + " (do not retry)");
+            }, "Open an automation session: hold run control (the user sees it and can take it back)",
+               py::arg("client") = "python")
+            .def("release_control", [](Emulator& self) { execution::script::ReleaseControl(self, execution::Origin::Python); },
+                 "End the automation session")
             .def("reset", &Emulator::Reset, "Reset emulator")
             .def("request_nmi", &Emulator::RequestNMI, "Pulse the Z80 NMI line (vector #0066)")
             .def("request_mni", &Emulator::RequestMNI,
@@ -1590,39 +1611,51 @@ namespace PythonBindings
             // step / steps return how the run ended: {executed, stopped, breakpoint_id, address, access}
             // (stopped: a breakpoint ended it - an execution one before its instruction)
             .def("step", [](Emulator& self, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunSingleCPUCycle(skipBreakpoints);
                 const Emulator::BreakpointStop& stop = self.LastDirectStop();
                 return StepOutcome(self, (stop.hit && stop.kind == BreakpointHitKind::Execute) ? 0u : 1u);
             }, "Execute single CPU instruction; returns {executed, stopped, breakpoint_id, address, access}",
                py::arg("skip_breakpoints") = true)
             .def("steps", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 return StepOutcome(self, self.RunNCPUCycles(count, skipBreakpoints));
             }, "Execute N CPU instructions; returns {executed, stopped, breakpoint_id, address, access}",
                py::arg("count"), py::arg("skip_breakpoints") = false)
-            .def("stepover", &Emulator::StepOver, "Step over call instructions")
+            .def("stepover", [](Emulator& self) {
+                execution::script::Check(self, execution::Origin::Python);
+                self.StepOver();
+            }, "Step over call instructions")
 
             // Frame stepping
             .def("run_frame", [](Emulator& self, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunFrame(skipBreakpoints);
             }, "Execute one frame", py::arg("skip_breakpoints") = true)
             .def("run_frames", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunNFrames(count, skipBreakpoints);
             }, "Execute N frames", py::arg("count"), py::arg("skip_breakpoints") = true)
 
             // T-state and scanline stepping
             .def("run_tstates", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunTStates(count, skipBreakpoints);
             }, "Execute N T-states", py::arg("count"), py::arg("skip_breakpoints") = true)
             .def("run_to_scanline", [](Emulator& self, unsigned scanline, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunUntilScanline(scanline, skipBreakpoints);
             }, "Run until specific scanline", py::arg("scanline"), py::arg("skip_breakpoints") = true)
             .def("run_scanlines", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunNScanlines(count, skipBreakpoints);
             }, "Run N scanlines", py::arg("count"), py::arg("skip_breakpoints") = true)
             .def("run_to_pixel", [](Emulator& self, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunUntilNextScreenPixel(skipBreakpoints);
             }, "Run until next screen pixel", py::arg("skip_breakpoints") = true)
             .def("run_to_interrupt", [](Emulator& self, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunUntilInterrupt(skipBreakpoints);
             }, "Run until next interrupt", py::arg("skip_breakpoints") = true)
 

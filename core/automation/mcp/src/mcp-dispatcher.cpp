@@ -27,7 +27,10 @@ const char* const kServerInstructions =
     "of a disk): asm_source. Router tools: search_api / invoke_api expose the "
     "full WebAPI (see openapi.json). Resolve the machine with target:\"auto\" unless several "
     "instances run. Resources: unreal://keyboard-layout, unreal://basic-reference, unreal://z80-isa, "
-    "unreal://trdos-commands, unreal://memory-map, unreal://emulator-state.";
+    "unreal://trdos-commands, unreal://memory-map, unreal://emulator-state. "
+    "Automation sessions: control_execution take_control opens one (the user sees it in the GUI, whose controls lock); "
+    "release_control ends it. If a call answers revoked_by_user, the user took control back: stop, do not retry, and "
+    "ask the user before taking control again.";
 
 bool IsSupportedProtocolVersion(const std::string& version)
 {
@@ -165,7 +168,14 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
         auto argumentsCopy = std::make_shared<Json::Value>(arguments);
         try
         {
-            tool->handler(*argumentsCopy, caller, [argumentsCopy, id, done](ToolResult result) {
+            tool->handler(*argumentsCopy, caller, [argumentsCopy, id, done, &caller](ToolResult result) {
+                // The user took control back at the GUI during this call (execution arbiter design §6a): whatever the
+                // tool made of the 409, the agent gets the one answer - stop, do not retry, ask the user
+                if (caller.TakeRevoked())
+                    result = ToolResult::Error(
+                        "revoked_by_user: the user took control of the emulator back at its GUI; your automation "
+                        "session has ended. Stop. Do not retry this call and do not take control again "
+                        "(control_execution take_control) without asking the user first.");
                 Json::Value payload;
                 Json::Value text;
                 text["type"] = "text";

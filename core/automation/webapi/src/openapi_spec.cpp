@@ -48,6 +48,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_multisound.inc"
 #include "openapi/openapi_rtc.inc"
 #include "openapi/openapi_execution.inc"
+#include "openapi/openapi_session.inc"
 #include "openapi/openapi_profi.inc"
 #include "openapi/openapi_isa.inc"
 #include "openapi/openapi_network.inc"

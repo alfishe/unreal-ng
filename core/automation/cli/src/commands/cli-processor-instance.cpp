@@ -687,7 +687,7 @@ void CLIProcessor::HandlePause(const ClientSession& session, const std::vector<s
 
     // Pause the emulator - this will trigger MessageCenter notifications
     // that the GUI will respond to (enabling/disabling buttons)
-    emulator->Pause(execution::Requester{execution::Origin::Cli, {}}, "cli");
+    emulator->Pause(CliRequester(emulator->GetContext()), "cli");
 
     // Confirm to the user
     session.SendResponse("Emulation paused. Use 'resume' to continue execution.");
@@ -721,7 +721,7 @@ void CLIProcessor::HandleResume(const ClientSession& session, const std::vector<
 
     // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
     auto* ctx = emulator->GetContext();
-    if (ctx && ctx->IsRunControlClaimed())
+    if (ctx && ctx->IsRunControlClaimed() && !HoldsControl(ctx))
     {
         auto state = ctx->GetRunControlState();
         std::stringstream ss;
@@ -732,7 +732,7 @@ void CLIProcessor::HandleResume(const ClientSession& session, const std::vector<
 
     // Resume the emulator - this will trigger MessageCenter notifications
     // that the GUI will respond to (enabling/disabling buttons)
-    emulator->Resume(execution::Requester{execution::Origin::Cli, {}});
+    emulator->Resume(CliRequester(emulator->GetContext()));
 
     // Confirm to the user
     session.SendResponse("Emulation resumed. Use 'pause' to suspend execution.");

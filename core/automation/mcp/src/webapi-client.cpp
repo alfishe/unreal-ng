@@ -94,9 +94,11 @@ void WebApiClient::Call(const std::string& method, const std::string& path, cons
         return;
     }
     req->setMethod(httpMethod);
+    if (const std::string session = Session(); !session.empty())
+        req->addHeader("X-Unreal-Session", session);
 
     // 120s timeout: long run_frames requests may take a while
-    (*holder)->sendRequest(req, [callback](drogon::ReqResult result, const drogon::HttpResponsePtr& resp) {
+    (*holder)->sendRequest(req, [this, callback](drogon::ReqResult result, const drogon::HttpResponsePtr& resp) {
         if (result != drogon::ReqResult::Ok || !resp)
         {
             callback(0, Json::Value());
@@ -109,6 +111,7 @@ void WebApiClient::Call(const std::string& method, const std::string& path, cons
         {
             parsed = *json;
         }
+        NoteResponse(static_cast<int>(resp->statusCode()), parsed);
         callback(static_cast<int>(resp->statusCode()), std::move(parsed));
     }, 120.0);
 }
@@ -143,8 +146,10 @@ void WebApiClient::CallRaw(const std::string& method, const std::string& path,
         httpMethod = drogon::Put;
 
     req->setMethod(httpMethod);
+    if (const std::string session = Session(); !session.empty())
+        req->addHeader("X-Unreal-Session", session);
 
-    (*holder)->sendRequest(req, [callback](drogon::ReqResult result, const drogon::HttpResponsePtr& resp) {
+    (*holder)->sendRequest(req, [this, callback](drogon::ReqResult result, const drogon::HttpResponsePtr& resp) {
         if (result != drogon::ReqResult::Ok || !resp)
         {
             callback(0, Json::Value());
@@ -157,10 +162,37 @@ void WebApiClient::CallRaw(const std::string& method, const std::string& path,
         {
             parsed = *json;
         }
+        NoteResponse(static_cast<int>(resp->statusCode()), parsed);
         callback(static_cast<int>(resp->statusCode()), std::move(parsed));
     }, 120.0);
 }
 
 /// endregion </WebApiClient>
 
+void WebApiClient::SetSession(const std::string& sessionId)
+{
+    std::lock_guard<std::mutex> lock(_sessionMutex);
+    _session = sessionId;
+}
+
+std::string WebApiClient::Session() const
+{
+    std::lock_guard<std::mutex> lock(_sessionMutex);
+    return _session;
+}
+
+bool WebApiClient::TakeRevoked()
+{
+    return _revoked.exchange(false);
+}
+
+void WebApiClient::NoteResponse(int status, const Json::Value& body)
+{
+    if (status != 409 || !body.isObject() || body.get("error", "").asString() != "revoked_by_user")
+        return;
+    SetSession({});
+    _revoked = true;
+}
+
 } // namespace mcp
+

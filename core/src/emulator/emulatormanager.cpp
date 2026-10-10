@@ -939,6 +939,11 @@ bool EmulatorManager::StopEmulator(const std::string& emulatorId)
 
 bool EmulatorManager::PauseEmulator(const std::string& emulatorId, execution::Origin origin)
 {
+    return PauseEmulator(emulatorId, execution::Requester{origin, {}});
+}
+
+bool EmulatorManager::PauseEmulator(const std::string& emulatorId, const execution::Requester& requester)
+{
     // The instance is taken under the lock; the pause (which waits for the park, up to 500 ms) runs outside it
     std::shared_ptr<Emulator> emulator;
     {
@@ -957,13 +962,18 @@ bool EmulatorManager::PauseEmulator(const std::string& emulatorId, execution::Or
         LOGDEBUG("EmulatorManager::PauseEmulator - Emulator with ID '%s' not running or already paused", emulatorId.c_str());
         return false;
     }
-    const execution::Result result = emulator->Pause(execution::Requester{origin, {}});
+    const execution::Result result = emulator->Pause(requester);
     LOGINFO("EmulatorManager::PauseEmulator - Pause of emulator '%s': %s", emulatorId.c_str(),
             execution::OutcomeName(result.outcome));
     return result.outcome != execution::Outcome::Refused;
 }
 
 bool EmulatorManager::ResumeEmulator(const std::string& emulatorId, execution::Origin origin)
+{
+    return ResumeEmulator(emulatorId, execution::Requester{origin, {}});
+}
+
+bool EmulatorManager::ResumeEmulator(const std::string& emulatorId, const execution::Requester& requester)
 {
     std::shared_ptr<Emulator> emulator;
     {
@@ -983,7 +993,7 @@ bool EmulatorManager::ResumeEmulator(const std::string& emulatorId, execution::O
         return false;
     }
     // Refused while another surface holds the run-control claim (the arbiter checks it)
-    const execution::Result result = emulator->Resume(execution::Requester{origin, {}});
+    const execution::Result result = emulator->Resume(requester);
     LOGINFO("EmulatorManager::ResumeEmulator - Resume of emulator '%s': %s %s", emulatorId.c_str(),
             execution::OutcomeName(result.outcome), result.detail.c_str());
     return result.outcome != execution::Outcome::Refused;

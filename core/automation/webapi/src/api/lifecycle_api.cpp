@@ -2,6 +2,7 @@
 // Extracted from emulator_api.cpp - 2026-01-08
 
 #include <emulator/ports/models/profiboard.h>
+#include "../common/session_helper.h"
 #include <emulator/ports/models/sprinter/sprinterbios.h>
 #include "../emulator_api.h"
 #include "../common/statenode_json.h"
@@ -971,7 +972,9 @@ void EmulatorAPI::pauseEmulator(const HttpRequestPtr& req, std::function<void(co
 
     try
     {
-        bool success = manager->PauseEmulator(id, execution::Origin::WebApi);
+        auto target = manager->GetEmulator(id);
+        bool success = manager->PauseEmulator(
+            id, webapi_session::RequesterOf(req, target ? target->GetContext() : nullptr));
 
         Json::Value ret;
         ret["status"] = success ? "success" : "error";
@@ -1028,7 +1031,7 @@ void EmulatorAPI::resumeEmulator(const HttpRequestPtr& req, std::function<void(c
     if (emulator)
     {
         auto* ctx = emulator->GetContext();
-        if (ctx && ctx->IsRunControlClaimed())
+        if (ctx && ctx->IsRunControlClaimed() && !webapi_session::HoldsControl(req, ctx))
         {
             auto state = ctx->GetRunControlState();
             Json::Value error;
@@ -1046,7 +1049,10 @@ void EmulatorAPI::resumeEmulator(const HttpRequestPtr& req, std::function<void(c
 
     try
     {
-        bool success = manager->ResumeEmulator(id, execution::Origin::WebApi);
+        // The session holding control resumes as itself; the arbiter refuses anybody else's run while it holds it
+        auto target = manager->GetEmulator(id);
+        bool success = manager->ResumeEmulator(
+            id, webapi_session::RequesterOf(req, target ? target->GetContext() : nullptr));
 
         Json::Value ret;
         ret["status"] = success ? "success" : "error";

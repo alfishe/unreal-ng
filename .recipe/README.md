@@ -31,6 +31,15 @@ drive restrictions, pause races).
   a file that exists on the *agent's* machine (embedded content).
 - Test artifacts (`.trd`, `.tap`, `.sna`, traces, `.ttd` dumps) belong in
   `scratch/` — never in the project root.
+- **Automation sessions.** For a long automated job, take run control first: MCP
+  `control_execution {"action":"take_control","client":"<your name>"}`, WebAPI
+  `POST $BASE/emulator/$EMU_ID/control/session` (then the returned id in the
+  `X-Unreal-Session` header), CLI `session take <name>`, Lua / Python
+  `take_control("<name>")`. The user sees it in the GUI and can **take control
+  back**. From then on the session's calls answer `revoked_by_user` (WebAPI 409,
+  `retry: false`; Python `ControlRevoked`). **Stop. Do not retry, do not take
+  control again by yourself - ask the user.** A re-take by the same client is
+  refused (`revoked_cooldown`) until the user allows it.
 
 ## Picking recipes for a task (read this before the index)
 

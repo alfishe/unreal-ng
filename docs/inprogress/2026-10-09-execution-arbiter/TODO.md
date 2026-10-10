@@ -337,14 +337,29 @@ showed the same address.
 - [x] **Tests.** `TakingControlBackEndsTheSessionAndItsRun`: a `RunNFrames(1000000)` ends at once and leaves the
   machine paused, the owner is revoked, the same client is in its cooldown, another client takes control, and the
   "allow again" works. `AnIdleSessionExpiresAndEveryChangeIsAnnounced`.
-- [ ] **Surfaces.** WebAPI `POST/DELETE /control/session` with the `X-Unreal-Session` header; MCP take / release
-  control; CLI `session`; Lua and Python `take_control()` / `release_control()`; OpenAPI; the session in the
-  execution report.
+- [x] **Surfaces (X7b):**
+
+  | Surface | What |
+  |:--|:--|
+  | WebAPI | `POST / GET / DELETE /api/v1/emulator/{id}/control/session` (`session_api.cpp`, OpenAPI `openapi_session.inc`). The `X-Unreal-Session` header: the global advice answers a taken-back session's request `409 revoked_by_user` (`retry: false`) and renews a live one's lease. The claim checks and the lifecycle pause / resume let the holding session through (`webapi_session::RequesterOf`). Every direct-run handler answers `revoked_by_user` when its run was aborted |
+  | MCP | `control_execution take_control / release_control`. The WebAPI client keeps the session header. Whatever a tool made of a `revoked_by_user` 409 (resume used to read every 409 as "already running"), the dispatcher turns the result into one stop error. The server instructions state the rule |
+  | CLI | `session take [name] / release / (status)`. The session ends with the connection. A taken-back session's command does not run; a command that ran while it was taken back answers `revoked_by_user` too |
+  | Python, Lua | `take_control(name) / release_control()` (`execution::script`). The control calls (pause, resume, step*, run_*) raise `ControlRevoked` (Python) / an error (Lua) after a take-back, once |
+  | Docs | the interface docs; `.recipe/README.md` conventions: stop, do not retry, ask the user |
+- [x] **Checked live** in unreal-qt (offscreen), WebAPI:
+  - take → pause and resume as the session: 200;
+  - resume without the header: 409 held;
+  - another client's take: 409 `held_by_other`, `retry: false`;
+  - release: 200.
+- [x] **Tests:**
+  - `McpDispatcher_Test.TakeControlKeepsTheSessionAndReleaseControlDropsIt` and
+    `ARevokedSessionTurnsTheResultIntoAStopError`;
+  - `ExecutionArbiterMachine_Test.AScriptSessionStopsWithControlRevoked`.
 - [ ] **unreal-qt.** Toolbar indicator and the Take back control action; every control action disabled while a
   session is open; HUD status / nudge; a message on take-back.
-- [ ] **No retry, no rush back.** `revoked_by_user` with `retry: false`; MCP result text and server instructions;
-  Python / Lua `ControlRevoked`; the CLI ends the session; recipes; the server's re-take cooldown per client with
-  the GUI's "allow again".
+- [x] **No retry, no rush back:** `revoked_by_user` with `retry: false`, the MCP stop error and server
+  instructions, Python / Lua `ControlRevoked`, the CLI message, the recipe rule, the server's per-client re-take
+  cooldown (X7a). The GUI's "allow again" comes in X7c.
 - [ ] **Tests.** Revoke during a long `run_frames` (it returns aborted, the session's next call gets
   `revoked_by_user`; a re-take within the cooldown is refused, after "allow again" it works); idle lease expiry; GDB socket close; Qt: actions disabled and enabled
   again, the HUD status set and cleared.

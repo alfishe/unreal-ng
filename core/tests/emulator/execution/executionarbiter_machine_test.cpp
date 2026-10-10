@@ -14,6 +14,7 @@
 #include "emulator/emulator.h"
 #include "common/uuid.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/execution/scriptsession.h"
 #include "emulator/notifications.h"
 #include "emulator/state/devicestate.h"
 
@@ -456,4 +457,30 @@ TEST_F(ExecutionArbiterMachine_Test, AnIdleSessionExpiresAndEveryChangeIsAnnounc
     std::lock_guard<std::mutex> lock(eventsMutex);
     const std::vector<std::string> expected{"taken:webapi/bot", "expired:webapi/bot", "taken:cli/", "released:cli/"};
     EXPECT_EQ(events, expected);
+}
+
+/// X7, the script surfaces (Python / Lua, execution::script): a script's session holds control; after the user takes
+/// it back, the script's next control call throws ControlRevoked (it stops, it does not retry) and a re-take by the
+/// same script is refused during the cooldown
+TEST_F(ExecutionArbiterMachine_Test, AScriptSessionStopsWithControlRevoked)
+{
+    std::string reason;
+    ASSERT_TRUE(execution::script::TakeControl(*_emulator, execution::Origin::Python, "my script", reason)) << reason;
+    const execution::Requester me = execution::script::RequesterOf(*_emulator, execution::Origin::Python);
+    EXPECT_FALSE(me.client.empty()) << "the session's requests carry it";
+    EXPECT_NO_THROW(execution::script::Check(*_emulator, execution::Origin::Python));
+    EXPECT_EQ(_emulator->Pause(me).outcome, execution::Outcome::Applied);
+    EXPECT_EQ(_emulator->Resume(execution::Requester{execution::Origin::Gui, {}}).outcome, execution::Outcome::Refused)
+        << "another surface's run is refused while the script holds control";
+    EXPECT_EQ(_emulator->Resume(me).outcome, execution::Outcome::Applied);
+
+    ASSERT_TRUE(_emulator->GetContext()->RevokeRunControl("gui"));
+    EXPECT_THROW(execution::script::Check(*_emulator, execution::Origin::Python), execution::script::ControlRevoked);
+    EXPECT_NO_THROW(execution::script::Check(*_emulator, execution::Origin::Python)) << "thrown once: forgotten";
+    EXPECT_FALSE(execution::script::TakeControl(*_emulator, execution::Origin::Python, "my script", reason));
+    EXPECT_NE(reason.find("revoked_cooldown"), std::string::npos) << reason;
+    _emulator->GetContext()->AllowRunControlRetake();
+    EXPECT_TRUE(execution::script::TakeControl(*_emulator, execution::Origin::Python, "my script", reason)) << reason;
+    execution::script::ReleaseControl(*_emulator, execution::Origin::Python);
+    EXPECT_FALSE(_emulator->GetContext()->IsRunControlClaimed());
 }

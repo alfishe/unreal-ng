@@ -962,7 +962,7 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
                                "run_tstates", "run_to_interrupt", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
-                               "bp_list", "bp_reset_hits", "port_out", "wait"})
+                               "bp_list", "bp_reset_hits", "port_out", "wait", "take_control", "release_control"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -972,6 +972,11 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["count"]["type"] = "integer";
     schema["properties"]["count"]["description"] = "Instruction count for step_n";
+    schema["properties"]["client"]["type"] = "string";
+    schema["properties"]["client"]["description"] = "For take_control: your name, shown to the user";
+    schema["properties"]["lease_seconds"]["type"] = "integer";
+    schema["properties"]["lease_seconds"]["description"] =
+        "For take_control: the session ends after this long without a call (default 60; 0 = none)";
     schema["properties"]["frames"]["type"] = "integer";
     schema["properties"]["frames"]["description"] = "Frame count for run_frames";
     schema["properties"]["tstates"]["type"] = "integer";
@@ -1024,7 +1029,10 @@ void RegisterControlExecution(ToolRegistry& registry)
         "port_out writes a port through the machine's decoder like a CPU OUT (paging, TS-Conf registers, AY, border), "
         "without breakpoints or device waits, as a TTD tool edit; it works paused or running. "
         "wait blocks until something a debugger shows changes (a stop, a run start, a tool edit) or timeout_ms passes. "
-        "Stepping actions automatically include the new register snapshot.",
+        "Stepping actions automatically include the new register snapshot. "
+        "take_control opens an automation session (optional client: your name; lease_seconds, default 60): the user sees "
+        "it in the GUI, its controls lock, and your calls run while other surfaces' runs are refused; release_control "
+        "ends it. If the user takes control back, calls answer revoked_by_user: stop, do not retry, ask the user.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
@@ -1036,6 +1044,40 @@ void RegisterControlExecution(ToolRegistry& registry)
                     return;
                 }
                 const std::string& id = idOrError;
+
+                // Automation session (execution arbiter design §6a)
+                if (action == "take_control")
+                {
+                    Json::Value body;
+                    body["surface"] = "mcp";
+                    body["client"] = args.isMember("client") ? args["client"].asString() : std::string("mcp agent");
+                    body["lease_seconds"] = args.isMember("lease_seconds") ? args["lease_seconds"].asUInt() : 60u;
+                    caller.Call("POST", Endpoint(id, "/control/session"), &body, [&caller, done](int status, Json::Value reply) {
+                        if (status == 200 && reply.isMember("session"))
+                        {
+                            caller.SetSession(reply["session"].asString());
+                            done(ToolResult::Ok("You hold run control of this emulator (the user sees it and can take it "
+                                                "back). release_control ends the session.",
+                                                std::move(reply)));
+                        }
+                        else
+                            done(ToolResult::Error("take_control refused (HTTP " + std::to_string(status) + "): " +
+                                                   DescribeErrorBody(reply) + " - do not retry; ask the user."));
+                    });
+                    return;
+                }
+                if (action == "release_control")
+                {
+                    caller.Call("DELETE", Endpoint(id, "/control/session"), nullptr, [&caller, done](int status, Json::Value reply) {
+                        caller.SetSession({});
+                        if (status == 200)
+                            done(ToolResult::Ok("Automation session ended: run control released.", std::move(reply)));
+                        else
+                            done(ToolResult::Error("release_control failed (HTTP " + std::to_string(status) + "): " +
+                                                   DescribeErrorBody(reply)));
+                    });
+                    return;
+                }
 
                 // Simple pass-through actions
                 if (action == "run" || action == "resume")

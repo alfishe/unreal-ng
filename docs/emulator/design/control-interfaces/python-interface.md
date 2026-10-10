@@ -260,6 +260,14 @@ class Emulator:
         default 'none'; network_state()['zifi'] shows the API registers and both rings). Applied at the next frame
         boundary; the card is fitted again, so every connection closes. ValueError with the reason"""
 
+    def take_control(self, client: str = "python") -> None:
+        """Open an automation session: hold run control. The user sees it at the GUI and can take it back; from then on
+        control calls (pause, resume, step*, run_*) raise ControlRevoked - stop, do not retry, do not take control
+        again without asking the user (a re-take is refused during its cooldown: RuntimeError revoked_cooldown)"""
+
+    def release_control(self) -> None:
+        """End the automation session"""
+
     def execution_state(self) -> dict:
         """Execution arbiter: phase, intent (run / pause) with intent_set_by (origin, client), intent_reason,
         main_loop (attached, parked), may_run, parked, serving (the command holding the CPU, drives_z80), queue,

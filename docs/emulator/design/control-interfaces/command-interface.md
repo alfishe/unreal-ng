@@ -790,6 +790,7 @@ to the core makes it available everywhere; interfaces never re-implement it.
 | Audio capture of one device (its own buffer) | `audiocapture start <seconds> [source]` | `POST /audio/capture {action: start, seconds, source}` | `audio_capture_start(s, source)` | `audio_capture_start(s, source)` | `capture_media` audio_capture `source` |
 | CMOS clock (report) | `state rtc` / `rtc` | `GET /state/rtc` | `rtc_state()` | `rtc_state()` | `rtc` |
 | Execution arbiter | `state execution` / `state exec` | `GET /state/execution` | `execution_state()` | `execution_state()` | `execution` |
+| Automation session (take / release run control) | `session take [name]` / `session release` / `session` | `POST` / `DELETE` / `GET /control/session` + `X-Unreal-Session` | `take_control(name)` / `release_control()` | `take_control(name)` / `release_control()` | `control_execution take_control` / `release_control` |
 | ZX Profi board chips (report) | `state profi` | `GET /state/profi` | `profi_state()` | `profi_state()` | `profi` |
 | Network adapters (report) | `network` / `net` | `GET /state/network` | `network_state()` | `network_state()` | `network` |
 | Network settings (change; a ZX-bus card change restarts the machine, [§14](#14-zx-bus-slots)) | `network set k=v .. [--replace] [--dry-run]` | `POST /network/config` | `network_configure{..}[, opts]` | `network_configure(**kw)` | `emulator_manage` `network_configure` |

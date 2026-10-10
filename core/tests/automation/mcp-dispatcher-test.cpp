@@ -18,6 +18,7 @@
 #include <json/json.h>
 
 #include <map>
+#include <utility>
 #include <string>
 
 #include "mcp-dispatcher.h"
@@ -39,6 +40,12 @@ public:
     };
 
     std::map<std::string, std::pair<int, Json::Value>> routes; // "METHOD path" → {status, body}
+    std::string session;          // the automation session the tools set (take_control / release_control)
+    bool revokeOnNextCheck = false;  // the user takes control back during the next call
+
+    void SetSession(const std::string& sessionId) override { session = sessionId; }
+    std::string Session() const override { return session; }
+    bool TakeRevoked() override { return std::exchange(revokeOnNextCheck, false); }
     std::pair<int, Json::Value> fallback{200, Json::Value()};
     std::vector<RecordedCall> calls;
 
@@ -496,4 +503,52 @@ TEST_F(McpDispatcher_Test, PromptsGet_IsError)
     params["name"] = "anything";
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("prompts/get", params));
     EXPECT_EQ(response["error"]["code"].asInt(), mcp::kInvalidParams);
+}
+
+/// Automation sessions (execution arbiter design §6a): take_control keeps the session for every later call
+TEST_F(McpDispatcher_Test, TakeControlKeepsTheSessionAndReleaseControlDropsIt)
+{
+    Json::Value list;
+    list["count"] = 1;
+    Json::Value e;
+    e["id"] = "e1";
+    list["emulators"].append(e);
+    _caller->routes["GET /api/v1/emulator"] = {200, list};
+    Json::Value opened;
+    opened["session"] = "11111111-2222-4333-8444-555555555555";
+    _caller->routes["POST /api/v1/emulator/e1/control/session"] = {200, opened};
+
+    Json::Value params;
+    params["name"] = "control_execution";
+    params["arguments"]["action"] = "take_control";
+    params["arguments"]["client"] = "test agent";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    ASSERT_TRUE(response["result"].isObject());
+    EXPECT_FALSE(response["result"].isMember("isError")) << response.toStyledString();
+    EXPECT_EQ(_caller->session, "11111111-2222-4333-8444-555555555555");
+    bool sawBody = false;
+    for (const auto& call : _caller->calls)
+        if (call.method == "POST" && call.path == "/api/v1/emulator/e1/control/session")
+            sawBody = call.body["surface"].asString() == "mcp" && call.body["client"].asString() == "test agent";
+    EXPECT_TRUE(sawBody);
+
+    params["arguments"]["action"] = "release_control";
+    DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    EXPECT_TRUE(_caller->session.empty());
+}
+
+/// The user takes control back while a tool runs: whatever the tool made of the 409, the agent gets one final error
+/// that tells it to stop and not retry
+TEST_F(McpDispatcher_Test, ARevokedSessionTurnsTheResultIntoAStopError)
+{
+    _caller->revokeOnNextCheck = true;
+    Json::Value params;
+    params["name"] = "emulator_manage";
+    params["arguments"]["action"] = "list";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    ASSERT_TRUE(response["result"].isObject());
+    EXPECT_TRUE(response["result"]["isError"].asBool());
+    const std::string text = response["result"]["content"][0]["text"].asString();
+    EXPECT_NE(text.find("revoked_by_user"), std::string::npos) << text;
+    EXPECT_NE(text.find("Do not retry"), std::string::npos) << text;
 }

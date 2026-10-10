@@ -1,6 +1,7 @@
 #pragma once
 
 #include "emulator/memory/devicememory.h"
+#include "emulator/execution/scriptsession.h"
 #include "emulator/sound/audiomixer.h"
 #include "emulator/video/framebufferexport.h"
 #include "emulator/io/keyboard/pckey.h"
@@ -709,8 +710,14 @@ public:
             // Lifecycle control
             "start", &Emulator::Start,
             "stop", &Emulator::Stop,
-            "pause", [](Emulator& self) { self.Pause(execution::Requester{execution::Origin::Lua, {}}, "lua"); },
-            "resume", [](Emulator& self) { self.Resume(execution::Requester{execution::Origin::Lua, {}}); },
+            "pause", [](Emulator& self) {
+                execution::script::Check(self, execution::Origin::Lua);
+                self.Pause(execution::script::RequesterOf(self, execution::Origin::Lua), "lua");
+            },
+            "resume", [](Emulator& self) {
+                execution::script::Check(self, execution::Origin::Lua);
+                self.Resume(execution::script::RequesterOf(self, execution::Origin::Lua));
+            },
             "reset", &Emulator::Reset,
             "request_nmi", &Emulator::RequestNMI,
             "request_mni", &Emulator::RequestMNI,
@@ -1784,8 +1791,23 @@ public:
             return result;
         };
 
+        // Automation session (execution arbiter design §6a): the GUI shows it and locks its controls; when the user
+        // takes control back, control calls raise an error (revoked_by_user) - stop, do not retry, ask the user
+        lua.set_function("take_control", [this](sol::optional<std::string> client) {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                throw std::runtime_error("take_control: no emulator");
+            std::string reason;
+            if (!execution::script::TakeControl(*emulator, execution::Origin::Lua, client.value_or("lua"), reason))
+                throw std::runtime_error("take_control refused: " + reason + " (do not retry)");
+        });
+        lua.set_function("release_control", [this]() {
+            if (Emulator* emulator = effectiveEmulator())
+                execution::script::ReleaseControl(*emulator, execution::Origin::Lua);
+        });
         lua.set_function("step", [this, stepOutcome](sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
             if (!effectiveEmulator()) return sol::lua_nil;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             Emulator& emulator = *effectiveEmulator();
             emulator.RunSingleCPUCycle(skipBP.value_or(true));
             const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
@@ -1795,6 +1817,7 @@ public:
 
         lua.set_function("steps", [this, stepOutcome](unsigned count, sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
             if (!effectiveEmulator()) return sol::lua_nil;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             Emulator& emulator = *effectiveEmulator();
             const unsigned executed = emulator.RunNCPUCycles(count, skipBP.value_or(false));
             return stepOutcome(sol::state_view(ts), emulator, executed);
@@ -1802,43 +1825,51 @@ public:
 
         lua.set_function("stepover", [this]() {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->StepOver();
         });
 
         // Frame stepping methods
         lua.set_function("run_frame", [this](sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunFrame(skipBP.value_or(true));
         });
 
         lua.set_function("run_frames", [this](unsigned count, sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunNFrames(count, skipBP.value_or(true));
         });
 
         // Atomic stepping methods
         lua.set_function("run_tstates", [this](unsigned count, sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunTStates(count, skipBP.value_or(true));
         });
 
         lua.set_function("run_to_scanline", [this](unsigned scanline, sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunUntilScanline(scanline, skipBP.value_or(true));
         });
 
         lua.set_function("run_scanlines", [this](unsigned count, sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunNScanlines(count, skipBP.value_or(true));
         });
 
         lua.set_function("run_to_pixel", [this](sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunUntilNextScreenPixel(skipBP.value_or(true));
         });
 
         lua.set_function("run_to_interrupt", [this](sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunUntilInterrupt(skipBP.value_or(true));
         });
 

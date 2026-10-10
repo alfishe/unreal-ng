@@ -103,6 +103,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"run_frames", &CLIProcessor::HandleRunFrames},             // Run N frames
                         {"run_ncycles", &CLIProcessor::HandleRunNCycles},           // Run N CPU cycles
                         {"memory", &CLIProcessor::HandleMemory},
+                        {"session", &CLIProcessor::HandleSession},  // automation session: take / release run control
                         {"rtc", &CLIProcessor::HandleRtc},   // CMOS clock: report, read / write cells
                         {"cmos", &CLIProcessor::HandleRtc},
                         {"romflash", &CLIProcessor::HandleRomFlash},  // ZX-Evo flash ROM: the saved flash
@@ -345,6 +346,20 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
         return;
     }
 
+    // The user took control back from this connection's session at the GUI (execution arbiter design §6a): the
+    // command does not run, the session is over - final, the client must not retry or take control again by itself
+    if (!_controlSession.isNil() && _controlEmulator && _controlEmulator->GetContext() &&
+        _controlEmulator->GetContext()->IsRunControlRevoked(_controlSession))
+    {
+        _controlSession = unreal::UUID();
+        _controlEmulator.reset();
+        session.SendResponse(std::string("Error: revoked_by_user - the user took control back at the emulator's GUI; "
+                                         "this session has ended. Do not retry, and do not take control again "
+                                         "without asking the user.") + NEWLINE);
+        if (cmd != "session")
+            return;
+    }
+
     // Find and execute the command handler
     auto it = _commandHandlers.find(cmd);
     if (it != _commandHandlers.end())
@@ -353,6 +368,16 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
         {
             // Call the member function using 'this' pointer to provide context to the handler
             (this->*(it->second))(session, args);
+            // Taken back while this command ran (a long run_frames ends at once): the same final answer
+            if (!_controlSession.isNil() && _controlEmulator && _controlEmulator->GetContext() &&
+                _controlEmulator->GetContext()->IsRunControlRevoked(_controlSession))
+            {
+                _controlSession = unreal::UUID();
+                _controlEmulator.reset();
+                session.SendResponse(std::string("Error: revoked_by_user - the user took control back at the "
+                                                 "emulator's GUI; this session has ended. Do not retry, and do not "
+                                                 "take control again without asking the user.") + NEWLINE);
+            }
         }
         catch (const std::exception& e)
         {
@@ -652,6 +677,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << NEWLINE;
     oss << "CMOS clock (ATM3 / ZX-Evo, Profi, Scorpion with SMUC):" << NEWLINE;
     oss << "  rtc | cmos | state rtc       - Time, registers A-D, alarms, every cell" << NEWLINE;
+    oss << "  session take [name] | release - Automation session: hold run control (the GUI shows it; the user can" << NEWLINE;
+    oss << "                                  take it back - then: revoked_by_user, do not retry)" << NEWLINE;
     oss << "  state execution | exec       - Execution arbiter: intent and who set it, the command holding the CPU, queue, claim" << NEWLINE;
     oss << "  rtc read <start> [count]     - Read cells as the guest reads them (no side effects)" << NEWLINE;
     oss << "  rtc write <start> <b> [b..]  - Write cells like the guest (time registers set the clock)" << NEWLINE;
@@ -825,4 +852,73 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "Type any command followed by -h or --help for more information.";
 
     session.SendResponse(oss.str());
+}
+
+CLIProcessor::~CLIProcessor()
+{
+    // The session ends with the connection
+    if (!_controlSession.isNil() && _controlEmulator && _controlEmulator->GetContext())
+        _controlEmulator->GetContext()->ReleaseRunControl(_controlSession);
+}
+
+bool CLIProcessor::HoldsControl(EmulatorContext* context) const
+{
+    return context && !_controlSession.isNil() && context->HasRunControl(_controlSession);
+}
+
+execution::Requester CLIProcessor::CliRequester(EmulatorContext* context) const
+{
+    if (HoldsControl(context))
+        return execution::Requester{execution::Origin::Cli, _controlSession.toString()};
+    return execution::Requester{execution::Origin::Cli, {}};
+}
+
+void CLIProcessor::HandleSession(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    if (!context)
+    {
+        session.SendResponse(std::string("Error: no emulator selected") + NEWLINE);
+        return;
+    }
+    const std::string sub = args.empty() ? std::string() : args[0];
+    if (sub == "take")
+    {
+        if (HoldsControl(context))
+        {
+            session.SendResponse(std::string("This connection already holds run control") + NEWLINE);
+            return;
+        }
+        const std::string client = args.size() > 1 ? args[1] : std::string("cli");
+        const unreal::UUID owner = unreal::UUID::Generate();
+        std::string reason;
+        if (!context->TakeRunControl(owner, "cli", &reason, client, std::chrono::milliseconds(0)))
+        {
+            session.SendResponse("Error: " + reason + " (do not retry)" + NEWLINE);
+            return;
+        }
+        _controlSession = owner;
+        _controlEmulator = emulator;
+        session.SendResponse(std::string("Run control taken: the user sees it at the GUI and can take it back. ") +
+                             "'session release' ends it; closing the connection does too." + NEWLINE);
+        return;
+    }
+    if (sub == "release")
+    {
+        if (!_controlSession.isNil() && _controlEmulator && _controlEmulator->GetContext())
+            _controlEmulator->GetContext()->ReleaseRunControl(_controlSession);
+        _controlSession = unreal::UUID();
+        _controlEmulator.reset();
+        session.SendResponse(std::string("Run control released") + NEWLINE);
+        return;
+    }
+    const EmulatorContext::RunControlState state = context->GetRunControlState();
+    std::string text = state.claimed ? "Run control held by " + state.surfaceLabel +
+                                           (state.client.empty() ? std::string() : " (" + state.client + ")") +
+                                           (HoldsControl(context) ? " - this connection" : std::string())
+                                     : std::string("Run control: free");
+    for (const auto& [key, secondsLeft] : state.cooldowns)
+        text += std::string(NEWLINE) + "  cooldown after a take-back: " + key + ", " + std::to_string(secondsLeft) + " s";
+    session.SendResponse(text + NEWLINE);
 }
