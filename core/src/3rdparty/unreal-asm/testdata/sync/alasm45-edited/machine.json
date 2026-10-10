@@ -1,0 +1,17 @@
+{
+  "windows": [
+    -1,
+    5,
+    2,
+    1
+  ],
+  "pages": [
+    1,
+    2
+  ],
+  "expected": "PENTDRV.H",
+  "state": {
+    "editor": false,
+    "typing": false
+  }
+}

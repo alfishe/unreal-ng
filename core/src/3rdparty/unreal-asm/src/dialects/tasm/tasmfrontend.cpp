@@ -904,6 +904,82 @@ std::pair<std::string, std::string> Command(const std::string& text)
         ++k;
     return {z80::Upper(text.substr(i, j - i)), text.substr(k)};
 }
+
+/// TASM 4.12's conditionals do not nest (checked in the emulator, research-tasm-to-sjasmplus.md): one state, which .IF
+/// sets from its value even inside a skipped part, .ELSE inverts and .ENDIF clears. As sjasmplus blocks: a .IF while
+/// one is open closes it first, a .ENDIF with none open is dropped, a .ELSE with none open starts skipping (IF 0), and
+/// an open block ends before ENDMAC and at the end of the file. A macro body keeps its own state.
+void FlattenConditionals(ir::Program& program, Diagnostics& diagnostics)
+{
+    const auto directive = [](ir::DirectiveKind kind) {
+        Statement s;
+        s.kind = Statement::Kind::Directive;
+        s.directive = kind;
+        return s;
+    };
+    bool open = false;
+    bool outerOpen = false;
+    for (ir::Line& line : program.lines)
+    {
+        std::vector<Statement> statements;
+        for (Statement& s : line.statements)
+        {
+            if (s.kind != Statement::Kind::Directive)
+            {
+                statements.push_back(std::move(s));
+                continue;
+            }
+            switch (s.directive)
+            {
+                case ir::DirectiveKind::If:
+                    if (open)
+                    {
+                        statements.push_back(directive(ir::DirectiveKind::EndIf));
+                        diagnostics.push_back({Severity::Info, line.sourceLine, 0, ".IF while a .IF is open: TASM's conditionals do not nest, the open one ends here"});
+                    }
+                    open = true;
+                    break;
+                case ir::DirectiveKind::Else:
+                    if (!open)
+                    {
+                        // No block open: TASM's .ELSE inverts "not skipping" into skipping
+                        s = directive(ir::DirectiveKind::If);
+                        s.args.push_back(Expr::Number(0));
+                        open = true;
+                        diagnostics.push_back({Severity::Info, line.sourceLine, 0, ".ELSE with no .IF open: skips to the next .ENDIF / .IF"});
+                    }
+                    break;
+                case ir::DirectiveKind::EndIf:
+                    if (!open)
+                    {
+                        diagnostics.push_back({Severity::Info, line.sourceLine, 0, ".ENDIF with no .IF open: nothing to end"});
+                        continue;
+                    }
+                    open = false;
+                    break;
+                case ir::DirectiveKind::Macro:
+                    outerOpen = open;
+                    open = false;
+                    break;
+                case ir::DirectiveKind::EndMacro:
+                    if (open)
+                        statements.push_back(directive(ir::DirectiveKind::EndIf));
+                    open = outerOpen;
+                    outerOpen = false;
+                    break;
+                default:
+                    break;
+            }
+            statements.push_back(std::move(s));
+        }
+        line.statements = std::move(statements);
+    }
+    if (open && !program.lines.empty())
+    {
+        program.lines.back().statements.push_back(directive(ir::DirectiveKind::EndIf));
+        diagnostics.push_back({Severity::Info, program.lines.back().sourceLine, 0, "a .IF still open at the end of the file ends there"});
+    }
+}
 }  // namespace
 
 FrontendResult TasmFrontend::Parse(const SourceDocument& source) const
@@ -1033,6 +1109,7 @@ FrontendResult TasmFrontend::Parse(const SourceDocument& source) const
         for (Statement& st : l.statements)
             if (st.kind == Statement::Kind::Directive && st.directive == ir::DirectiveKind::Equ && redefined.count(l.label))
                 st.directive = ir::DirectiveKind::Defl;
+    FlattenConditionals(result.program, result.diagnostics);
     return result;
 }
 }  // namespace unrealasm::dialects

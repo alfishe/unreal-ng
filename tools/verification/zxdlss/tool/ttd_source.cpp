@@ -1,6 +1,7 @@
 /// @file ttd_source.cpp
 /// @brief Frames of a TTD file, replayed through the emulator core
-/// (TimeTravelManager::VisitComposedFrames). Built only with the core.
+/// (VisitComposedFrames of the session that reads the file: the engine's
+/// controller, or v1 for a v1 file until v1 goes). Built only with the core.
 
 #include "frames.h"
 
@@ -17,7 +18,10 @@
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/debugmanager.h"
 #include "common/filehelper.h"
+#include "debugger/ttd/engine/ttdcontainer.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/ttdsession.h"
 #include "debugger/ttd/ttdfileinfo.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -51,8 +55,10 @@ std::string createSessionEmulator(const std::string& path, const std::string& mo
     if (!model.empty() && model != recorded)
         return path + " was recorded on " + recorded + ", not " + model;
 
-    // The clip comes from a v1 session file: v1 replays it
-    Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::V1);
+    // A session file in the engine's format is read by the engine's controller; a v1 file by v1 (until v1 goes)
+    Emulator::SetDefaultTimeTravelBackend(info.schemaVersion == ttd::kContainerSchema
+                                              ? Emulator::TimeTravelBackend::Engine
+                                              : Emulator::TimeTravelBackend::V1);
     EmulatorManager* manager = EmulatorManager::GetInstance();
     emulator = manager->CreateEmulatorWithModel(id, recorded, LoggerLevel::LogError, &err);
     if (!emulator)
@@ -72,16 +78,18 @@ std::string createSessionEmulator(const std::string& path, const std::string& mo
                    ttd::GeneralSoundName(info.machine.generalSound) + ")";
     }
 
-    ttd::TimeTravelManager* ttd = emulator->GetContext()->pTimeTravelManager;
-    if (!ttd)
-        return "the emulator has no time travel manager";
+    EmulatorContext* context = emulator->GetContext();
+    if (!ttd::HasTimeTravelSession(context))
+        return "the emulator has no time travel session";
     std::ifstream in(FileHelper::ToFsPath(path), std::ios::binary);
     if (!in)
         return "cannot open " + path;
-    if (!ttd->DeserializeSession(in, err))
-        return "cannot load " + path + ": " + err;
-    ttd->SetSessionSourcePath(path);
-    return {};
+    return ttd::WithTimeTravelSession(context, std::string(), [&](auto& session) -> std::string {
+        if (!session.DeserializeSession(in, err))
+            return "cannot load " + path + ": " + err;
+        session.SetSessionSourcePath(path);
+        return {};
+    });
 }
 
 }  // namespace
@@ -108,13 +116,12 @@ std::string readTtd(const std::string& path, const std::string& model, uint64_t 
     FeatureManager* fm = emulator->GetFeatureManager();
     fm->setFeature(Features::kScreenHQ, true);
     fm->setFeature(Features::kZXDLSS, true);
-    ttd::TimeTravelManager* ttd = emulator->GetContext()->pTimeTravelManager;
     if (overscan && !emulator->SetOverscanMode(true) && !emulator->IsOverscanMode())
         return "overscan needs a Pentagon session";
 
     SourceFrame f;
     bool stopped = false;
-    const std::string walk = ttd->VisitComposedFrames(from, to, [&](const ttd::TimeTravelManager::TTDComposedFrame& c) {
+    const auto visit = [&](const ttd::TTDComposedFrame& c) {
         if (!c.planeB)
         {
             err = "no plane B from the renderer";
@@ -148,7 +155,9 @@ std::string readTtd(const std::string& path, const std::string& model, uint64_t 
             f.planeB.assign(c.planeB, c.planeB + c.planeBCount);
         stopped = !cb(f);
         return !stopped;
-    });
+    };
+    const std::string walk = ttd::WithTimeTravelSession(emulator->GetContext(), std::string("no time travel session"),
+                                                        [&](auto& session) { return session.VisitComposedFrames(from, to, visit); });
     if (!err.empty())
         return err;
     return walk;
@@ -162,7 +171,16 @@ struct LoadedSession
 {
     EmulatorManager* manager = nullptr;
     std::shared_ptr<Emulator> emulator;
-    ttd::TimeTravelManager* ttd = nullptr;
+    /// SeekTo on the session, whichever implementation reads the file
+    bool seek(const ttd::TTDTimePoint& at)
+    {
+        return ttd::WithTimeTravelSession(emulator->GetContext(), false, [&](auto& s) { return s.SeekTo(at); });
+    }
+    ttd::TTDTimePoint position()
+    {
+        return ttd::WithTimeTravelSession(emulator->GetContext(), ttd::TTDTimePoint{},
+                                          [](auto& s) { return s.CurrentPosition(); });
+    }
     ~LoadedSession()
     {
         if (emulator)
@@ -174,7 +192,6 @@ struct LoadedSession
         const std::string err = createSessionEmulator(path, model, id, emulator);
         if (!err.empty())
             return err;
-        ttd = emulator->GetContext()->pTimeTravelManager;
         return {};
     }
 };
@@ -245,7 +262,7 @@ std::string readTtdAudio(const std::string& path, const std::string& model, uint
         ~Unsubscribe() { m->unsubscribe(id); }
     } unsubscribe{analyzers, tap};
 
-    if (!run.ttd->SeekTo(ttd::TTDTimePoint{from, 0}))
+    if (!run.seek(ttd::TTDTimePoint{from, 0}))
         return "cannot position at frame " + std::to_string(from);
     pending.clear();
     minPerFrame = SIZE_MAX;
@@ -262,10 +279,10 @@ std::string readTtdAudio(const std::string& path, const std::string& model, uint
         pending.clear();
         if ((f + 1 - from) % kCheckEvery == 0 && f < to)
         {
-            const ttd::TTDTimePoint here = run.ttd->CurrentPosition();
-            if (ref.ttd->SeekTo(here) && machineHash(*ref.emulator) != machineHash(*emulator))
+            const ttd::TTDTimePoint here = run.position();
+            if (ref.seek(here) && machineHash(*ref.emulator) != machineHash(*emulator))
             {
-                run.ttd->SeekTo(here);
+                run.seek(here);
                 pending.clear();                     // the seek's own replay is not this frame's sound
                 if (resyncs)
                     resyncs->push_back(here.frame);

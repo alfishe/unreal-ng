@@ -50,7 +50,7 @@
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/machinestatehash.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -67,7 +67,7 @@ class TTD_Thinning_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
     Memory* _memory = nullptr;
 
@@ -77,7 +77,7 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
@@ -320,7 +320,7 @@ TEST_F(TTD_Thinning_Test, EveryPointReachable_AfterSerializationRoundTrip)
     Emulator* emu2 = new Emulator(LoggerLevel::LogError);
     ASSERT_TRUE(emu2->Init());
     EmulatorContext* ctx2 = emu2->GetContext();
-    ttd::TimeTravelManager* ttd2 = ctx2->pTimeTravelManager;
+    ttd::TimeTravelController* ttd2 = ctx2->pTimeTravelController;
     ASSERT_NE(ttd2, nullptr);
 
     ctx2->pFeatureManager->setFeature(Features::kDebugMode, true);

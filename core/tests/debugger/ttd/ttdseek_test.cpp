@@ -29,7 +29,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/ttd/machinestatehash.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -45,7 +45,7 @@ class TTD_Seek_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
     Memory* _memory = nullptr;
 
@@ -55,7 +55,7 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
@@ -160,29 +160,22 @@ TEST_F(TTD_Seek_Test, SeekTo_EmptyTimeline_ReturnsFalse)
     EXPECT_FALSE(_ttd->SeekTo({0, 0}));
 }
 
-TEST_F(TTD_Seek_Test, SeekTo_RecordingState_ReturnsFalse)
+TEST_F(TTD_Seek_Test, SeekTo_RecordingState_PausesTheRecording)
 {
-    // New contract (2026-07-19): scrubbing during Recording is forbidden.
-    // SeekTo would RestoreCheckpoint over live emulator state and the next
-    // OnFrameBoundary would corrupt the timeline's sorted invariant.
-    // Callers MUST StopRecording first.
+    // The engine (D8, 2026-10-05): a seek while recording pauses the recording
+    // and browses; the history is kept, a stop keeps it too
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(3);
     ASSERT_EQ(_ttd->GetCheckpointCount(), 4u);
     ASSERT_EQ(_ttd->GetState(), ttd::TTDSessionState::Recording);
 
-    EXPECT_FALSE(_ttd->SeekTo({1, 0}))
-        << "SeekTo during Recording must be rejected";
-    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Recording)
-        << "State must remain Recording after rejected seek";
+    EXPECT_TRUE(_ttd->SeekTo({1, 0})) << "a seek while recording runs";
+    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
+    EXPECT_TRUE(_ttd->GetSessionInfo().recordingPaused) << "the recording is paused, not stopped";
+    EXPECT_EQ(_ttd->GetCheckpointCount(), 4u) << "the history is kept";
 
-    // StopRecording transitions to Idle WITH history retained.
     _ttd->StopRecording();
-    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle);
-    EXPECT_EQ(_ttd->GetCheckpointCount(), 4u)
-        << "StopRecording must retain timeline";
-
-    // Now seek is allowed (Idle-with-history → Detached).
+    EXPECT_EQ(_ttd->GetCheckpointCount(), 4u) << "StopRecording must retain timeline";
     EXPECT_TRUE(_ttd->SeekTo({1, 0}));
     EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
 }
@@ -506,7 +499,7 @@ TEST_F(TTD_Seek_Test, StepForwardFrame_Idle_Fails)
 // which the MainLoop checks at the top of its next iteration. Tests that
 // drive the emulator synchronously (RunNFrames) can't observe _isPaused
 // directly because Pause() short-circuits when the async loop isn't
-// running, so TimeTravelManager also exposes ConsumeAutoPauseRequest()
+// running, so TimeTravelController also exposes ConsumeAutoPauseRequest()
 // which returns true iff OnFrameBoundary fired the auto-pause branch.
 // ===========================================================================
 

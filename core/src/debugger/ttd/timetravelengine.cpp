@@ -382,25 +382,25 @@ bool TimeTravelEngine::PositionOf(TTDMachineTime t, TTDPosition& out) const
 void TimeTravelEngine::EndSession()
 {
     _readOnly = false;
-    _segments.clear();
-    _streamCopies.clear();
-    _configs.clear();
-    _mediaSlots.clear();
-    _pendingMedia.clear();
+    _segments = {};
+    _streamCopies = {};
+    _configs = {};
+    _mediaSlots = {};
+    _pendingMedia = {};
     _events.Clear();
-    _rzxFrames.clear();
+    _rzxFrames = {};
     _payloads.Clear();
     _busReads.Clear();
     _busWrites.Clear();
     _busVectors.Clear();
     _mediaReads.Clear();
     _writes.Clear();
-    _timeLines.clear();
-    _timeFields.clear();
+    _timeLines = {};
+    _timeFields = {};
     _deviceRegionOf.fill(-1);
-    _deviceScratch.clear();
-    _deviceExtent.clear();
-    _growsWithState.clear();
+    _deviceScratch = {};
+    _deviceExtent = {};
+    _growsWithState = {};
     _devices.Clear();
     // Change records and full tables each hold their references; releasing
     // them frees what no other session sharing the store needs
@@ -412,22 +412,26 @@ void TimeTravelEngine::EndSession()
                 _tables->Release(r.snapshot);
 
     _open = false;
-    _regions.clear();
+    _regions = {};
     _deltaBase.Reset(0);
     _changes.clear();
     _changes.shrink_to_fit();
-    _live.clear();
-    _inMemory.clear();
-    _sinceSnapshot.clear();
-    _sinceSnapshotFlag.clear();
-    _lastSnapshot.clear();
-    _regionPayload.clear();
-    _regionVersions.clear();
+    _live = {};
+    _inMemory = {};
+    _sinceSnapshot = {};
+    _sinceSnapshotFlag = {};
+    _lastSnapshot = {};
+    _regionPayload = {};
+    _regionVersions = {};
     _frames.Clear();
     _checkpoints.clear();
     _checkpoints.shrink_to_fit();   // a deque returns its blocks
     _cpBase = 0;
     _changeBase = 0;
+    // A store no other session shares, holding nothing now: its arena goes back too (without a session the
+    // session's memory is zero)
+    if (_store.use_count() == 1 && _store->LiveVersions() == 0)
+        _store->Clear();
 }
 
 /// endregion </Session>

@@ -4,7 +4,7 @@
 /// The existing TTDWriteJournal_Test suite exercises the container: append,
 /// query, DropAfter, Clear, serialize. Nothing covered the path that fills it -
 /// a running Z80 writing to RAM through Memory::MemoryWriteDebug, which calls
-/// TimeTravelManager::RecordMemoryWrite.
+/// TimeTravelController::RecordMemoryWrite.
 ///
 /// The fixture deliberately enables nothing but the timetravel feature: turning
 /// it on must bring its dependencies with it. FeatureManager::setFeature()
@@ -18,9 +18,10 @@
 #include <sstream>
 #include <string>
 
+#include "_helpers/ttdwriterecords.h"
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttddirtytracker.h"
 #include "debugger/ttd/ttdwritejournal.h"
 #include "emulator/cpu/z80.h"
@@ -38,7 +39,7 @@ class TTD_WriteJournal_E2E_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     Memory* _memory = nullptr;
     FeatureManager* _fm = nullptr;
     MainLoop_CUT* _mainloop = nullptr;
@@ -50,7 +51,7 @@ protected:
 
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
@@ -117,11 +118,11 @@ TEST_F(TTD_WriteJournal_E2E_Test, RunningCode_FillsJournal)
 
     const ttd::TTDWriteJournal* journal = _ttd->GetWriteJournal();
     ASSERT_NE(journal, nullptr) << "journal not allocated although it was enabled before StartRecording";
-    ASSERT_EQ(journal->Size(), 0u) << "journal should start empty";
+    ASSERT_EQ(ttdtest::WriteRecordCount(*_ttd), 0u) << "journal should start empty";
 
     RunFrames(4);
 
-    EXPECT_GT(journal->Size(), 0u)
+    EXPECT_GT(ttdtest::WriteRecordCount(*_ttd), 0u)
         << "executed frames produced no journal records - "
         << "RecordMemoryWrite is not reached from the write hot path";
 }
@@ -156,7 +157,7 @@ TEST_F(TTD_WriteJournal_E2E_Test, JournalDisabled_RecordsNothing)
     const ttd::TTDWriteJournal* journal = _ttd->GetWriteJournal();
     if (journal != nullptr)
     {
-        EXPECT_EQ(journal->Size(), 0u) << "records were journalled although the journal is disabled";
+        EXPECT_EQ(ttdtest::WriteRecordCount(*_ttd), 0u) << "records were journalled although the journal is disabled";
     }
 }
 
@@ -169,11 +170,9 @@ TEST_F(TTD_WriteJournal_E2E_Test, Records_CarryUsableFields)
 
     RunFrames(4);
 
-    const ttd::TTDWriteJournal* journal = _ttd->GetWriteJournal();
-    ASSERT_NE(journal, nullptr);
-    ASSERT_GT(journal->Size(), 0u);
+    ASSERT_GT(ttdtest::WriteRecordCount(*_ttd), 0u);
 
-    auto latest = journal->FindLast(UINT64_MAX, [](const ttd::TTDWriteRecord& r) { return r.isIo == 0; });
+    auto latest = ttdtest::LastWriteRecord(*_ttd, [](const ttd::TTDWriteRecord& r) { return r.isIo == 0; });
     ASSERT_TRUE(latest.has_value()) << "no memory-write record found";
 
     EXPECT_GT(latest->globalT, 0u) << "globalT not stamped";
@@ -187,16 +186,14 @@ TEST_F(TTD_WriteJournal_E2E_Test, GlobalT_AdvancesAcrossFrames)
     ASSERT_TRUE(_ttd->StartRecording());
 
     RunFrames(2);
-    const ttd::TTDWriteJournal* journal = _ttd->GetWriteJournal();
-    ASSERT_NE(journal, nullptr);
-    ASSERT_GT(journal->Size(), 0u);
+    ASSERT_GT(ttdtest::WriteRecordCount(*_ttd), 0u);
 
-    auto first = journal->FindLast(UINT64_MAX, [](const ttd::TTDWriteRecord&) { return true; });
+    auto first = ttdtest::LastWriteRecord(*_ttd, [](const ttd::TTDWriteRecord&) { return true; });
     ASSERT_TRUE(first.has_value());
     const uint64_t afterFirstFrames = first->globalT;
 
     RunFrames(2);
-    auto second = journal->FindLast(UINT64_MAX, [](const ttd::TTDWriteRecord&) { return true; });
+    auto second = ttdtest::LastWriteRecord(*_ttd, [](const ttd::TTDWriteRecord&) { return true; });
     ASSERT_TRUE(second.has_value());
 
     EXPECT_GT(second->globalT, afterFirstFrames)
@@ -265,8 +262,7 @@ TEST_F(TTD_WriteJournal_E2E_Test, LoadWithoutJournal_DoesNotAnswerFromThePreviou
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(3);
     _ttd->StopRecording();
-    ASSERT_NE(_ttd->GetWriteJournal(), nullptr);
-    ASSERT_FALSE(_ttd->GetWriteJournal()->IsEmpty());
+    ASSERT_GT(ttdtest::WriteRecordCount(*_ttd), 0u);
 
     // Load B and search it.
     fileB.seekg(0);
@@ -296,8 +292,7 @@ TEST_F(TTD_WriteJournal_E2E_Test, StopRestoringDebugModeOff_KeepsTheJournal)
     ASSERT_TRUE(_ttd->SerializeSession(file, err)) << err;
     file.seekg(0);
     ASSERT_TRUE(_ttd->DeserializeSession(file, err)) << err;
-    ASSERT_NE(_ttd->GetWriteJournal(), nullptr);
-    EXPECT_FALSE(_ttd->GetWriteJournal()->IsEmpty()) << "a complete journal was dropped from the file";
+    EXPECT_GT(ttdtest::WriteRecordCount(*_ttd), 0u) << "a complete journal was dropped from the file";
 }
 
 /// Nothing is recorded while detached (after a seek), so toggling debug mode
@@ -320,8 +315,7 @@ TEST_F(TTD_WriteJournal_E2E_Test, DebugModeToggleWhileDetached_KeepsTheJournal)
     ASSERT_TRUE(_ttd->SerializeSession(file, err)) << err;
     file.seekg(0);
     ASSERT_TRUE(_ttd->DeserializeSession(file, err)) << err;
-    ASSERT_NE(_ttd->GetWriteJournal(), nullptr);
-    EXPECT_FALSE(_ttd->GetWriteJournal()->IsEmpty()) << "a debug-mode toggle while detached dropped the journal";
+    EXPECT_GT(ttdtest::WriteRecordCount(*_ttd), 0u) << "a debug-mode toggle while detached dropped the journal";
 }
 
 /// Debug mode switched off during a recording stops the recording first (FR-17):

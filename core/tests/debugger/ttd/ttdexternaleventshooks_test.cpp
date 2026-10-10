@@ -3,7 +3,7 @@
 ///
 /// Verifies that the production code paths (Tape control, WD1793 write
 /// commands, debugger-driven memory writes) actually record markers via
-/// TimeTravelManager::RecordExternalEvent when a TTD session is Recording,
+/// TimeTravelController::RecordExternalEvent when a TTD session is Recording,
 /// and stay no-op when it isn't.
 ///
 /// These are NOT pure-API tests — they exercise the real emulator's Tape
@@ -24,7 +24,7 @@
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -41,7 +41,7 @@ class TTD_ExternalEvents_Hooks_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
     Tape* _tape = nullptr;
     Memory* _memory = nullptr;
@@ -52,7 +52,7 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         _tape = _context->pTape;
         ASSERT_NE(_tape, nullptr);
@@ -173,11 +173,12 @@ TEST_F(TTD_ExternalEvents_Hooks_Test, Tape_StartTape_CapturesCurrentTime)
 // Tape marker blocks subsequent seek
 // ===========================================================================
 
-TEST_F(TTD_ExternalEvents_Hooks_Test, Tape_MarkerBlocksIntraFrameSeek)
+TEST_F(TTD_ExternalEvents_Hooks_Test, Tape_MarkerIsKeptAndTheSeekCrossesIt)
 {
     // Realistic scenario: user is recording, starts the tape mid-frame, then
-    // tries to SeekTo a point past that marker. The seek must stop at the
-    // marker and surface it.
+    // seeks to a point past that marker. The marker is kept on the timeline;
+    // the engine replays the tape from its journals, so the seek reaches the
+    // target instead of stopping at the marker (v1 stopped there)
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(1);
 
@@ -187,19 +188,19 @@ TEST_F(TTD_ExternalEvents_Hooks_Test, Tape_MarkerBlocksIntraFrameSeek)
     _tape->startTape();
 
     ASSERT_EQ(_ttd->GetExternalEvents().Size(), 1u);
-    const uint32_t markerT = _ttd->GetExternalEvents().Events()[0].time.tInFrame;
-    ASSERT_GT(markerT, 0u);
+    const ttd::TTDExternalEvent marker = _ttd->GetExternalEvents().Events()[0];
+    ASSERT_GT(marker.time.tInFrame, 0u);
+    EXPECT_EQ(marker.kind, ttd::TTDExternalEventKind::TapeControl);
+    EXPECT_STREQ(marker.reason, "tape play");
 
     // Extend the timeline so an intra-frame seek past the marker is in range.
     RunFrames(2);
     _ttd->StopRecording();
 
-    ttd::TimeTravelManager::TTDSeekResult r;
-    EXPECT_FALSE(_ttd->SeekTo({1, markerT + 500}, &r));
-    EXPECT_EQ(r.haltReason, ttd::TimeTravelManager::TTDSeekHaltReason::ExternalEvent);
-    EXPECT_EQ(r.arrivedAt.tInFrame, markerT);
-    EXPECT_EQ(r.blockingMarker.kind, ttd::TTDExternalEventKind::TapeControl);
-    EXPECT_STREQ(r.blockingMarker.reason, "tape play");
+    ttd::TimeTravelController::TTDSeekResult r;
+    EXPECT_TRUE(_ttd->SeekTo({1, marker.time.tInFrame + 500}, &r));
+    EXPECT_EQ(r.haltReason, ttd::TimeTravelController::TTDSeekHaltReason::Target);
+    EXPECT_EQ(r.arrivedAt.tInFrame, marker.time.tInFrame + 500);
 }
 
 // ===========================================================================
@@ -216,8 +217,8 @@ TEST_F(TTD_ExternalEvents_Hooks_Test, DebuggerEdit_DirectMemoryWrite_RecordsMark
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(2);
 
-    ASSERT_TRUE(_context->pTimeTravelManager != nullptr);
-    _context->pTimeTravelManager->RecordExternalEvent(
+    ASSERT_TRUE(_context->pTimeTravelController != nullptr);
+    _context->pTimeTravelController->RecordExternalEvent(
         ttd::TTDExternalEventKind::DebuggerEdit, "test poke");
 
     ASSERT_EQ(_ttd->GetExternalEvents().Size(), 1u);
@@ -231,7 +232,7 @@ TEST_F(TTD_ExternalEvents_Hooks_Test, DebuggerEdit_NotRecordedWhenNotRecording)
 {
     EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle);
 
-    _context->pTimeTravelManager->RecordExternalEvent(
+    _context->pTimeTravelController->RecordExternalEvent(
         ttd::TTDExternalEventKind::DebuggerEdit, "should be dropped");
 
     EXPECT_EQ(_ttd->GetExternalEvents().Size(), 0u);
@@ -247,7 +248,7 @@ TEST_F(TTD_ExternalEvents_Hooks_Test, MixedSources_AllSurfaceInJournal)
     RunFrames(2);
 
     _tape->startTape();
-    _context->pTimeTravelManager->RecordExternalEvent(
+    _context->pTimeTravelController->RecordExternalEvent(
         ttd::TTDExternalEventKind::DebuggerEdit, "register patch");
 
     ASSERT_EQ(_ttd->GetExternalEvents().Size(), 2u);

@@ -35,7 +35,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/ttddivergenceharness.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (SeekTo in framebuffer determinism test)
+#include "debugger/ttd/timetravelcontroller.h"  // TimeTravelController (SeekTo in framebuffer determinism test)
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/video/screen.h"       // Screen::FillBorderWithColor / GetBorderColor
@@ -193,7 +193,7 @@ TEST(TTD_Divergence_Corpus_Test, DizzyY_128K_FramebufferDeterminism)
     auto expected = harness.ExtractHashesFromTimeline();
     ASSERT_GE(expected.Size(), kFrames);
 
-    ttd::TimeTravelManager* ttd = emu->GetContext()->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = emu->GetContext()->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
 
     Screen* screen = emu->GetContext()->pScreen;
@@ -305,7 +305,7 @@ TEST(TTD_Divergence_Corpus_Test, Pentagon128_SeekRepaintsBorderInFramebuffer)
     auto expected = harness.ExtractHashesFromTimeline();
     ASSERT_GE(expected.Size(), kFrames);
 
-    ttd::TimeTravelManager* ttd = emu->GetContext()->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = emu->GetContext()->pTimeTravelController;
     ASSERT_NE(ttd, nullptr);
     Screen* screen = emu->GetContext()->pScreen;
     ASSERT_NE(screen, nullptr);

@@ -1,0 +1,18 @@
+{
+  "windows": [
+    -1,
+    5,
+    2,
+    28
+  ],
+  "pages": [
+    2,
+    5,
+    30
+  ],
+  "expected": "BigRead.t",
+  "state": {
+    "editor": true,
+    "typing": false
+  }
+}

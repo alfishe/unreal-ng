@@ -50,6 +50,8 @@ public:
     StateNode StatusValue() const;
     /// {generation, decoded, complete, labels, set, hints: [{severity, line, message}], output}
     StateNode HintsValue() const;
+    /// The text of the last build that decoded (UTF-8, one line per source line) and its build number (0 = none yet)
+    std::string LastText(uint64_t& generation) const;
 
 private:
     void Run(WatchOptions options);
@@ -69,5 +71,7 @@ private:
     uint64_t _builds = 0;
     StateNode _text = StateNode::Object();
     StateNode _hints = StateNode::Object();
+    std::string _lastText;
+    uint64_t _lastTextGeneration = 0;
     std::string _error;
 };

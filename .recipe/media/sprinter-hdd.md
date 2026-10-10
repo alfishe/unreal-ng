@@ -138,3 +138,5 @@ media list
   "[Press F4 to skip]" line. In the Qt GUI F4 reaches the machine while the screen has focus (the
   menu's F-key shortcuts give way on PC-keyboard machines, [keyboard.md](../../docs/features/keyboard.md)).
 - **TTD does not record the Sprinter yet** (phase S7).
+- **A disk that starts your program at boot** (your files over the system disk, a changed `SYSTEM.BAT`):
+  [sprinter-test-images.md](sprinter-test-images.md).

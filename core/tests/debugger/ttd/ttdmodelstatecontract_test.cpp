@@ -15,7 +15,7 @@
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -127,8 +127,8 @@ TEST(TTDModelStateContract_Test, StandardModelDeclaresNothingAndStillRecords)
     fm->setFeature(Features::kDebugMode, true);
     fm->setFeature(Features::kTimeTravel, true);
 
-    EXPECT_TRUE(context->pTimeTravelManager->StartRecording());
-    context->pTimeTravelManager->StopRecording();
+    EXPECT_TRUE(context->pTimeTravelController->StartRecording());
+    context->pTimeTravelController->StopRecording();
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
@@ -156,13 +156,13 @@ TEST(TTDModelStateContract_Test, DeclaredButUnimplementedStateRefusesRecording)
 
         // Exercised through the public entry point: refusing to record is the
         // behaviour that matters, not the private helper that decides it.
-        started = context->pTimeTravelManager->StartRecording();
+        started = context->pTimeTravelController->StartRecording();
 
         context->pPortDecoder = original;  // restore before anything else touches it
     }
 
     EXPECT_FALSE(started) << "a model declaring uncovered state must not record";
-    EXPECT_NE(context->pTimeTravelManager->GetState(), ttd::TTDSessionState::Recording);
+    EXPECT_NE(context->pTimeTravelController->GetState(), ttd::TTDSessionState::Recording);
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
@@ -184,7 +184,7 @@ TEST(TTDModelStateContract_Test, RefusedRecordingRollsBackTheFlagsItSwitchedOn)
         PortDecoder* original = context->pPortDecoder;
         LyingDecoder lying(context);
         context->pPortDecoder = &lying;
-        started = context->pTimeTravelManager->StartRecording();
+        started = context->pTimeTravelController->StartRecording();
         context->pPortDecoder = original;
     }
 

@@ -512,6 +512,145 @@ TEST_F(WD1793_Ports_Test, SectorRegisterWrittenDuringSeekIsUsedByTheRetriedRead)
     }
 }
 
+/// The error bits of a Type II command reach the CPU: after INTRQ the status read on #1F shows
+/// RECORD NOT FOUND, CRC ERROR and WRITE PROTECT. The status read used to rebuild these bits from
+/// flags the commands never set, so TR-DOS and programs read #00 after a failed command
+TEST_F(WD1793_Ports_Test, TypeIIErrorBitsReachTheStatusPort)
+{
+    _fdc->portDeviceOutMethod(0xFF, 0x3C);             // drive A, side 0
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x08);  // RESTORE
+    RunUntilNotBusy();
+    ASSERT_FALSE(Busy());
+
+    auto statusAfter = [&](uint8_t command) {
+        _fdc->portDeviceOutMethod(WD1793::PORT_1F, command);
+        RunUntilNotBusy();
+        EXPECT_FALSE(Busy());
+        EXPECT_TRUE(Intrq());
+        return _fdc->portDeviceInMethod(WD1793::PORT_1F);
+    };
+
+    // No sector 17 on the track: READ SECTOR and WRITE SECTOR end with RNF
+    _fdc->portDeviceOutMethod(WD1793::PORT_5F, 17);
+    EXPECT_EQ(statusAfter(0x80) & 0x7F, WD1793::WDS_NOTFOUND) << "READ SECTOR";
+    EXPECT_EQ(statusAfter(0xA0) & 0x7F, WD1793::WDS_NOTFOUND) << "WRITE SECTOR";
+
+    // A data field with a bad CRC
+    DiskImage::Sector* sector = _disk->getTrackForCylinderAndSide(0, 0)->getSector(0);
+    ASSERT_NE(sector, nullptr);
+    sector->setDataCRC(static_cast<uint16_t>(sector->dataCRC() ^ 0xFFFF));
+    _fdc->portDeviceOutMethod(WD1793::PORT_5F, 1);
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x80);
+    for (uint64_t spent = 0; spent < Z80_FREQUENCY && Busy(); spent += 50)
+    {
+        Advance(50);
+        if (Drq())
+            _fdc->portDeviceInMethod(WD1793::PORT_7F);
+    }
+    ASSERT_FALSE(Busy());
+    EXPECT_EQ(_fdc->portDeviceInMethod(WD1793::PORT_1F) & 0x7F, WD1793::WDS_CRCERR) << "READ SECTOR, bad data CRC";
+
+    // A write-protected disk: WRITE SECTOR ends at once with WRITE PROTECT
+    _fdc->getDrive()->setWriteProtect(true);
+    EXPECT_EQ(statusAfter(0xA0) & 0x7F, WD1793::WDS_WRITEPROTECTED) << "WRITE SECTOR, write protected";
+    _fdc->getDrive()->setWriteProtect(false);
+
+    // The next command starts with clean error bits
+    _fdc->portDeviceOutMethod(WD1793::PORT_5F, 2);
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x80);
+    for (uint64_t spent = 0; spent < Z80_FREQUENCY && Busy(); spent += 50)
+    {
+        Advance(50);
+        if (Drq())
+            _fdc->portDeviceInMethod(WD1793::PORT_7F);
+    }
+    ASSERT_FALSE(Busy());
+    EXPECT_EQ(_fdc->portDeviceInMethod(WD1793::PORT_1F) & 0x7F, 0) << "a good read after the failed ones";
+}
+
+/// XAS 9.10 (port trace 2026-10-09): SAVE wrote nothing to the disk. After every disk operation XAS
+/// ends with OUT #1F,#D0, then STEP #20 (u = 0, h = 0) and OUT #3F with the cylinder it used. The STEP
+/// goes the way the last SEEK went, so the head ends one cylinder past the track register (as the chip
+/// and MAME / Unreal Speccy do). The next operation misses its sector, and XAS recovers: on an error
+/// status it reads the ID under the head (READ ADDRESS), loads the track register with its C and
+/// seeks again. With RNF lost in the status read, XAS took the failed catalog read for a good one and
+/// sent WRITE SECTOR to the wrong cylinder: no DRQ, nothing written
+TEST_F(WD1793_Ports_Test, Xas910SaveRecoversFromTheStepItIssuesAfterEveryOperation)
+{
+    for (uint8_t cyl = 0; cyl < 8; cyl++)
+        for (uint8_t side = 0; side < 2; side++)
+            _disk->getTrackForCylinderAndSide(cyl, side)->formatTrack(cyl, side);
+    FDD* drive = _fdc->getDrive();
+
+    auto command = [&](uint8_t value) {
+        _fdc->portDeviceOutMethod(WD1793::PORT_1F, value);
+        RunUntilNotBusy();
+        return _fdc->portDeviceInMethod(WD1793::PORT_1F);
+    };
+    auto seek = [&](uint8_t system, uint8_t cyl) {
+        _fdc->portDeviceOutMethod(0xFF, system);
+        _fdc->portDeviceOutMethod(WD1793::PORT_7F, cyl);
+        command(0x18);  // SEEK, h = 1, no verify
+    };
+    auto epilogue = [&](uint8_t system, uint8_t cyl) {
+        _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0xD0);
+        Advance(446);
+        _fdc->portDeviceOutMethod(0xFF, system);
+        command(0x20);                                  // STEP, no update, h = 0
+        _fdc->portDeviceOutMethod(WD1793::PORT_3F, cyl);
+    };
+
+    _fdc->portDeviceOutMethod(0xFF, 0x3C);
+    command(0x08);  // RESTORE
+
+    // LOAD: the source on cylinder 6, side 1
+    seek(0x2C, 6);
+    epilogue(0x2C, 6);
+    ASSERT_EQ(drive->getTrack(), 7) << "STEP after a SEEK in steps in";
+    ASSERT_EQ(_fdc->getTrackRegister(), 6);
+
+    // SAVE, catalog read: SEEK 0 lands on cylinder 1, the sector is not found and the CPU must see it
+    seek(0x3C, 0);
+    ASSERT_EQ(drive->getTrack(), 1);
+    _fdc->portDeviceOutMethod(WD1793::PORT_5F, 1);
+    EXPECT_EQ(command(0x80) & 0x7F, WD1793::WDS_NOTFOUND) << "the catalog read fails visibly";
+
+    // XAS's recovery: READ ADDRESS, track register = C, SEEK again
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0xC0);
+    std::vector<uint8_t> id;
+    for (uint64_t spent = 0; spent < Z80_FREQUENCY && Busy(); spent += 50)
+    {
+        Advance(50);
+        if (Drq())
+            id.push_back(_fdc->portDeviceInMethod(WD1793::PORT_7F));
+    }
+    ASSERT_EQ(_fdc->portDeviceInMethod(WD1793::PORT_1F) & 0x7F, 0);
+    ASSERT_EQ(id.size(), 6u);
+    EXPECT_EQ(id[0], 1) << "the ID under the head names cylinder 1";
+    _fdc->portDeviceOutMethod(WD1793::PORT_3F, id[0]);
+    seek(0x3C, 0);
+    EXPECT_EQ(drive->getTrack(), 0);
+
+    // The file's sector: cylinder 6, side 1, sector 4 - WRITE SECTOR raises DRQ and takes 256 bytes
+    seek(0x2C, 6);
+    _fdc->portDeviceOutMethod(WD1793::PORT_5F, 4);
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0xA0);
+    size_t written = 0;
+    for (uint64_t spent = 0; spent < Z80_FREQUENCY && Busy(); spent += 50)
+    {
+        Advance(50);
+        if (Drq())
+            _fdc->portDeviceOutMethod(WD1793::PORT_7F, static_cast<uint8_t>(0x5A ^ written++));
+    }
+    ASSERT_FALSE(Busy());
+    EXPECT_EQ(_fdc->portDeviceInMethod(WD1793::PORT_1F) & 0x7F, 0);
+    EXPECT_EQ(written, 256u);
+    DiskImage::Sector* sector = _disk->getTrackForCylinderAndSide(6, 1)->getSector(3);
+    ASSERT_NE(sector, nullptr);
+    EXPECT_EQ(sector->data[0], 0x5A);
+    EXPECT_EQ(sector->data[255], static_cast<uint8_t>(0x5A ^ 255));
+}
+
 /// endregion </Status bits behavior>
 
 /// region <FDD related>

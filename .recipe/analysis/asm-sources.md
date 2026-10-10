@@ -96,8 +96,8 @@ A refusal does not raise: the table / dict has `ok = false` and `error` = the me
 
 ## The source an assembler holds in RAM (asm-synchronizer)
 
-The source an assembler is editing in the machine can be read without saving it to a disk first. ALASM 5.09, ALASM
-4.44 and TASM 4.12 are recognized (phase Y0 of `docs/inprogress/2026-10-05-unreal-asm/asm-synchronizer.md`). The RAM is
+The source an assembler is editing in the machine can be read without saving it to a disk first. ALASM (3.8c, 4.42-4.46,
+4.5, 5.00-5.09), TASM (3.0, 3.2, 4.0, 4.4, 4.12), XAS (4.18, 5.05, 7.43c, 7.447, 9.07m, 9.10) STORM (1.0beta, 1.3), ZX-ASM 2.4 / 2.5 / 2.6 / ZX ASM 3.0 / 3.10 / ZAsm 3.15 / 3.2x / Lite 1.07 / 3.3.02 / 3.3.51 / 3.3.Final / 3.4 / 3.80.4 / x64.1 / 4.0x8 / 4.x64 / 4.20 and MASM 1.1 / 1.3 are recognized (phase Y0 of `docs/inprogress/2026-10-05-unreal-asm/asm-synchronizer.md`). The RAM is
 copied at a coherent moment, and the guest is never written. The text comes out as the file the assembler's own SAVE
 would write: a line being edited in TASM is in it. ALASM keeps a line out of the text until Enter; the status says
 `typing` then.
@@ -129,6 +129,9 @@ so the disassembly shows them at once. The set stays after `sync_unwatch`; `mana
 `POST` / `DELETE /emulator/{id}/asm/sync/watch`, `GET /asm/sync/hints`; WebSocket topic `asm_sync`
 (`asm_sync_found`, `asm_sync_changed`, `asm_sync_built`, `asm_sync_lost`). CLI: `asm sync watch`, `asm sync hints`,
 `asm sync unwatch`. Lua / Python: `asm_sync_watch{...}`, `asm_sync_hints()`, `asm_sync_unwatch()`.
+
+In Qt: the debugger's **Live source** button opens a window with the text of the last build (the guest's cursor line
+highlighted, errors and warnings on their lines and in a list), the status, and Watch / Extract... / Convert....
 
 `state: none` (404) means that no known assembler is in RAM. `ambiguous` (400) means that two identify alike: give
 `assembler`. `inconsistent` means that the pointers did not add up at that moment (the guest was mid-update): ask again.

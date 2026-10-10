@@ -25,6 +25,7 @@ add_custom_target(zxdlss-data
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
     COMMENT "zxdlss tools: copying machine configs and ROMs")
+add_dependencies(zxdlss-data runtime-data)   # never copy the same folders at the same time
 
 foreach (tool zxdlss-render zxdlss-bench)
     if (tool STREQUAL "zxdlss-render")

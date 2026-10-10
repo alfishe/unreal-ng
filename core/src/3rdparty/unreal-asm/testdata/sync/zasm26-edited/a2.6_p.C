@@ -1,0 +1,1 @@
+ nop;*0,0,0,0,0,0,0,;----- ZX Turbo Assembler‚ver. 2.6 -----;----------- PROJECT File --------------;-------- Last Changed 10.11.18 ---------ˆMAKE "a2.6exe",#6000ˆinclude "a2.6_1"ˆinclude "a2.6_2"ˆinclude "a2.6_3"ˆinclude "a2.6_4"ˆIF $\256:DS 0-$\256:ENDIFFont6ƒinsert "Big6scr"StackƒDS 250StkTop‚DW GenErrorEND…DB 13,13,0

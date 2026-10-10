@@ -1,0 +1,17 @@
+{
+  "windows": [
+    -1,
+    5,
+    2,
+    3
+  ],
+  "pages": [
+    2,
+    3
+  ],
+  "expected": "PROBE.X",
+  "state": {
+    "editor": true,
+    "typing": true
+  }
+}

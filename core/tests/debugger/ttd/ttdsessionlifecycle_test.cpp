@@ -15,7 +15,7 @@
 /// pure no-op for TTD. See Reset_StopsRecordingAndPreservesHistory below.
 ///
 /// These tests verify the wiring: each listed entry point (EXCEPT Reset)
-/// calls TimeTravelManager::InvalidateSession, which transitions Recording
+/// calls TimeTravelController::InvalidateSession, which transitions Recording
 /// → Idle and clears the timeline. When no session is active the calls are
 /// no-ops.
 
@@ -25,7 +25,7 @@
 
 #include "_helpers/testpathhelper.h"
 #include "debugger/ttd/ttdcheckpoint.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
@@ -40,7 +40,7 @@ const char* const kTestTapeRelPath = "loaders/tap/traffic_lights.tap";
 const char* const kTestDiskRelPath = "loaders/trd/EyeAche.trd";
 
 /// Assert that the manager is in the given state with the given checkpoint count.
-void ExpectSessionState(ttd::TimeTravelManager* mgr,
+void ExpectSessionState(ttd::TimeTravelController* mgr,
                         ttd::TTDSessionState expectedState,
                         size_t expectedMinCheckpoints,
                         const char* msg)
@@ -88,30 +88,30 @@ TEST(TTD_SessionLifecycle_Test, Reset_StopsRecordingAndPreservesHistory)
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ASSERT_NE(context->pTimeTravelManager, nullptr);
+    ASSERT_NE(context->pTimeTravelController, nullptr);
 
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
     const size_t checkpointsBefore =
-        context->pTimeTravelManager->GetSessionInfo().checkpointCount;
+        context->pTimeTravelController->GetSessionInfo().checkpointCount;
     EXPECT_GE(checkpointsBefore, 1u);
 
-    const size_t markersBefore = context->pTimeTravelManager->GetExternalEvents().Size();
+    const size_t markersBefore = context->pTimeTravelController->GetExternalEvents().Size();
 
     emulator.Reset();
 
     // State transitioned Recording → Idle (stopped, not invalidated).
-    EXPECT_EQ(context->pTimeTravelManager->GetState(),
+    EXPECT_EQ(context->pTimeTravelController->GetState(),
               ttd::TTDSessionState::Idle)
         << "Reset must stop recording (Recording → Idle)";
 
     // Timeline is UNTOUCHED — same checkpoint count as before Reset.
     const size_t checkpointsAfter =
-        context->pTimeTravelManager->GetSessionInfo().checkpointCount;
+        context->pTimeTravelController->GetSessionInfo().checkpointCount;
     EXPECT_EQ(checkpointsAfter, checkpointsBefore)
         << "Reset must not modify the timeline (checkpoints changed)";
 
     // No markers were added — Reset is not a recorded event.
-    const size_t markersAfter = context->pTimeTravelManager->GetExternalEvents().Size();
+    const size_t markersAfter = context->pTimeTravelController->GetExternalEvents().Size();
     EXPECT_EQ(markersAfter, markersBefore)
         << "Reset must not add markers to the timeline";
 
@@ -129,26 +129,26 @@ TEST(TTD_SessionLifecycle_Test, Reset_OnStoppedRecording_PreservesHistory)
 
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
-    ASSERT_NE(context->pTimeTravelManager, nullptr);
+    ASSERT_NE(context->pTimeTravelController, nullptr);
 
     // Start then stop — leaves state=Idle with history retained.
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
-    context->pTimeTravelManager->StopRecording();
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
+    context->pTimeTravelController->StopRecording();
 
     const size_t checkpointsBefore =
-        context->pTimeTravelManager->GetSessionInfo().checkpointCount;
-    const size_t markersBefore = context->pTimeTravelManager->GetExternalEvents().Size();
+        context->pTimeTravelController->GetSessionInfo().checkpointCount;
+    const size_t markersBefore = context->pTimeTravelController->GetExternalEvents().Size();
     ASSERT_GE(checkpointsBefore, 1u) << "Precondition: history must exist";
 
     emulator.Reset();
 
     // Everything is preserved — state stays Idle, timeline untouched.
-    EXPECT_EQ(context->pTimeTravelManager->GetState(),
+    EXPECT_EQ(context->pTimeTravelController->GetState(),
               ttd::TTDSessionState::Idle);
-    EXPECT_EQ(context->pTimeTravelManager->GetSessionInfo().checkpointCount,
+    EXPECT_EQ(context->pTimeTravelController->GetSessionInfo().checkpointCount,
               checkpointsBefore)
         << "Reset on stopped recording must not touch the timeline";
-    EXPECT_EQ(context->pTimeTravelManager->GetExternalEvents().Size(),
+    EXPECT_EQ(context->pTimeTravelController->GetExternalEvents().Size(),
               markersBefore)
         << "Reset on stopped recording must not add markers";
 
@@ -166,12 +166,12 @@ TEST(TTD_SessionLifecycle_Test, Reset_OnIdleSession_IsNoOp)
     ASSERT_NE(context, nullptr);
 
     // No StartRecording — session is already idle.
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Idle, 0,
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Idle, 0,
                        "before Reset on idle session");
 
     emulator.Reset();
 
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Idle, 0,
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Idle, 0,
                        "after Reset on idle session");
 
     emulator.Stop();
@@ -189,19 +189,19 @@ TEST(TTD_SessionLifecycle_Test, SetSpeedMultiplier_RefusedWhileRecordingInvalida
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
 
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Recording, 1,
                        "after StartRecording");
 
     EXPECT_FALSE(emulator.SetSpeedMultiplier(2));
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Recording, 1,
                        "after a refused SetSpeedMultiplier");
 
-    context->pTimeTravelManager->StopRecording();
-    ASSERT_GE(context->pTimeTravelManager->GetCheckpointCount(), 1u);
+    context->pTimeTravelController->StopRecording();
+    ASSERT_GE(context->pTimeTravelController->GetCheckpointCount(), 1u);
 
     EXPECT_TRUE(emulator.SetSpeedMultiplier(2));  // Queue 2x — invalidates per TDD §4.2
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Idle, 0,
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Idle, 0,
                        "after SetSpeedMultiplier on the retained session");
 
     emulator.Stop();
@@ -218,19 +218,19 @@ TEST(TTD_SessionLifecycle_Test, LoadTape_RefusedWhileRecordingInvalidatesRetaine
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
 
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Recording, 1,
                        "after StartRecording");
 
     EXPECT_FALSE(emulator.LoadTape(TestPathHelper::GetTestDataPath(kTestTapeRelPath)));
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Recording, 1,
                        "after a refused LoadTape");
 
-    context->pTimeTravelManager->StopRecording();
+    context->pTimeTravelController->StopRecording();
     bool ok = emulator.LoadTape(TestPathHelper::GetTestDataPath(kTestTapeRelPath));
     ASSERT_TRUE(ok) << "Test precondition: LoadTape('" << kTestTapeRelPath << "') must succeed";
 
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Idle, 0,
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Idle, 0,
                        "after LoadTape on the retained session");
 
     emulator.Stop();
@@ -247,15 +247,15 @@ TEST(TTD_SessionLifecycle_Test, LoadTape_MissingFile_DoesNotInvalidate)
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
 
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Recording, 1,
                        "after StartRecording");
 
     bool ok = emulator.LoadTape("nonexistent/path/to/file.tap");
     EXPECT_FALSE(ok) << "LoadTape on missing file should return false";
 
     // Session must still be active — the hook fires only after path validation.
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Recording, 1,
                        "after failed LoadTape");
 
     emulator.Stop();
@@ -272,19 +272,19 @@ TEST(TTD_SessionLifecycle_Test, LoadDisk_RefusedWhileRecordingInvalidatesRetaine
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
 
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Recording, 1,
                        "after StartRecording");
 
     EXPECT_FALSE(emulator.LoadDisk(TestPathHelper::GetTestDataPath(kTestDiskRelPath)));
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Recording, 1,
                        "after a refused LoadDisk");
 
-    context->pTimeTravelManager->StopRecording();
+    context->pTimeTravelController->StopRecording();
     bool ok = emulator.LoadDisk(TestPathHelper::GetTestDataPath(kTestDiskRelPath));
     ASSERT_TRUE(ok) << "Test precondition: LoadDisk('" << kTestDiskRelPath << "') must succeed";
 
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Idle, 0,
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Idle, 0,
                        "after LoadDisk on the retained session");
 
     emulator.Stop();
@@ -301,14 +301,14 @@ TEST(TTD_SessionLifecycle_Test, StopRecording_RetainsHistory)
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
 
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Recording, 1,
                        "after StartRecording");
 
-    context->pTimeTravelManager->StopRecording();
+    context->pTimeTravelController->StopRecording();
 
     // State is Idle but history (1 baseline checkpoint) is retained.
-    ttd::TTDSessionInfo info = context->pTimeTravelManager->GetSessionInfo();
+    ttd::TTDSessionInfo info = context->pTimeTravelController->GetSessionInfo();
     EXPECT_EQ(info.state, ttd::TTDSessionState::Idle);
     EXPECT_GE(info.checkpointCount, 1u)
         << "StopRecording must retain history for browse/seek (TDD §4.2)";
@@ -328,19 +328,19 @@ TEST(TTD_SessionLifecycle_Test, ReStartRecording_AfterInvalidation)
     EmulatorContext* context = emulator.GetContext();
     ASSERT_NE(context, nullptr);
 
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
-    EXPECT_EQ(context->pTimeTravelManager->GetSessionInfo().state,
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
+    EXPECT_EQ(context->pTimeTravelController->GetSessionInfo().state,
               ttd::TTDSessionState::Recording);
 
-    context->pTimeTravelManager->StopRecording();
+    context->pTimeTravelController->StopRecording();
     bool ok = emulator.LoadTape(TestPathHelper::GetTestDataPath(kTestTapeRelPath));
     ASSERT_TRUE(ok) << "Test precondition: LoadTape must succeed";
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Idle, 0,
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Idle, 0,
                        "after LoadTape on the stopped session");
 
     // Restart — should succeed and capture a fresh baseline.
-    ASSERT_TRUE(context->pTimeTravelManager->StartRecording());
-    ExpectSessionState(context->pTimeTravelManager, ttd::TTDSessionState::Recording, 1,
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
+    ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Recording, 1,
                        "after second StartRecording");
 
     emulator.Stop();

@@ -50,6 +50,7 @@ set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
+include(${ROOT_DIR}/cmake/RuntimeData.cmake)
 
 # liblzma
 add_subdirectory(3rdparty/liblzma)

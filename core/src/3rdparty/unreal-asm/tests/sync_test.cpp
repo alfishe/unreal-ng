@@ -60,7 +60,67 @@ const Case kCases[] = {
     {"alasm444-loaded", "alasm-4.44"}, {"alasm444-edited", "alasm-4.44"},
     {"tasm412-top", "tasm-4.12"},      {"tasm412-middle", "tasm-4.12"},   {"tasm412-typing", "tasm-4.12"},
     {"tasm412-command", "tasm-4.12"},
+    {"alasm508-typing", "alasm-5.08"}, {"alasm508-edited", "alasm-5.08"}, {"alasm507-typing", "alasm-5.07"},
+    {"alasm507-edited", "alasm-5.07"}, {"alasm505-typing", "alasm-5.05"}, {"alasm505-edited", "alasm-5.05"},
+    {"alasm50-typing", "alasm-5.00"},  {"alasm50-edited", "alasm-5.00"},   {"alasm45-typing", "alasm-4.5"},
+    {"alasm45-edited", "alasm-4.5"},   {"alasm446-typing", "alasm-4.46"},  {"alasm446-edited", "alasm-4.46"},
+    {"alasm445-typing", "alasm-4.45"}, {"alasm445-edited", "alasm-4.45"},  {"alasm443-typing", "alasm-4.43"},
+    {"alasm443-edited", "alasm-4.43"}, {"alasm442-typing", "alasm-4.42"},  {"alasm442-edited", "alasm-4.42"},
+    {"alasm38c-typing", "alasm-3.8c"}, {"alasm38c-edited", "alasm-3.8c"},
+    {"xas418-typing", "xas-4.18"},     {"xas418-edited", "xas-4.18"},      {"xas505-typing", "xas-5.05"},
+    {"xas505-edited", "xas-5.05"},     {"xas505se-typing", "xas-5.05"},    {"xas505se-edited", "xas-5.05"},
+    {"xas743c-typing", "xas-7.43c"},   {"xas743c-edited", "xas-7.43c"},    {"xas7447-typing", "xas-7.447"},
+    {"xas7447-edited", "xas-7.447"},   {"xas907m-typing", "xas-9.07m"},    {"xas910-typing", "xas-9.10"},
+    {"xas907m-edited", "xas-9.07m"},   {"xas910-edited", "xas-9.10"},
+    {"storm13-typing", "storm-1.3"},   {"storm13-edited", "storm-1.3"},    {"storm13i-typing", "storm-1.3"},
+    {"storm13i-edited", "storm-1.3"},     {"storm10b-typing", "storm-1.0b"},  {"storm10b-edited", "storm-1.0b"},
+    {"zasm315-typing", "zasm-3.15"},   {"zasm315-edited", "zasm-3.15"},    {"zasm315-big", "zasm-3.15"},
+    {"zasm310-typing", "zasm-3.10"},   {"zasm310-edited", "zasm-3.10"},    {"zasm310-big", "zasm-3.10"},
+    {"zasm32x-typing", "zasm-3.2x"},   {"zasm32x-edited", "zasm-3.2x"},    {"zasm32x-big", "zasm-3.2x"},
+    {"zlite107-typing", "zasm-lite-1.07"}, {"zlite107-edited", "zasm-lite-1.07"}, {"zlite107-big", "zasm-lite-1.07"},
+    {"zasm3302-typing", "zasm-3.3.02"}, {"zasm3302-edited", "zasm-3.3.02"}, {"zasm3302-big", "zasm-3.3.02"},
+    {"zasm3351-typing", "zasm-3.3.51"}, {"zasm3351-edited", "zasm-3.3.51"}, {"zasm3351-big", "zasm-3.3.51"},
+    {"zasm33f-typing", "zasm-3.3.final"}, {"zasm33f-edited", "zasm-3.3.final"}, {"zasm33f-big", "zasm-3.3.final"},
+    {"zasm384-typing", "zasm-3.80.4"}, {"zasm384-edited", "zasm-3.80.4"}, {"zasm384-big", "zasm-3.80.4"},
+    {"zasm420-typing", "zasm-4.20"}, {"zasm420-edited", "zasm-4.20"}, {"zasm420-big", "zasm-4.20"},
+    {"zasm34-typing", "zasm-3.4"}, {"zasm34-edited", "zasm-3.4"}, {"zasm34-big", "zasm-3.4"},
+    {"zasmx641-typing", "zasm-x64.1"}, {"zasmx641-edited", "zasm-x64.1"}, {"zasmx641-big", "zasm-x64.1"},
+    {"zasm40x8-typing", "zasm-4.0x8"}, {"zasm40x8-edited", "zasm-4.0x8"}, {"zasm40x8-big", "zasm-4.0x8"},
+    {"zasm4x64-typing", "zasm-4.x64"}, {"zasm4x64-edited", "zasm-4.x64"}, {"zasm4x64-big", "zasm-4.x64"},
+    {"zasm24-typing", "zasm-2.4"}, {"zasm24-edited", "zasm-2.4"}, {"zasm24-big", "zasm-2.4"},
+    {"zasm25-typing", "zasm-2.5"}, {"zasm25-edited", "zasm-2.5"}, {"zasm25-big", "zasm-2.5"},
+    {"zasm26-typing", "zasm-2.6"}, {"zasm26-edited", "zasm-2.6"}, {"zasm26-big", "zasm-2.6"},
+    {"zasm30-typing", "zasm-3.0"},     {"zasm30-edited", "zasm-3.0"},      {"zasm30-big", "zasm-3.0"},
+    {"masm11-typing", "masm-1.1"},     {"masm11-edited", "masm-1.1"},      {"masm11-menu", "masm-1.1"},
+    {"masm13-typing", "masm-1.1"},     {"masm13-edited", "masm-1.1"},      {"masm13-menu", "masm-1.1"},
+    {"tasm40-typing", "tasm-4.0"},     {"tasm40-edited", "tasm-4.0"},      {"tasm40-command", "tasm-4.0"},
+    {"tasm44-typing", "tasm-4.4"},     {"tasm44-edited", "tasm-4.4"},      {"tasm44-command", "tasm-4.4"},
+    {"tasm30-typing", "tasm-3.0"},     {"tasm30-edited", "tasm-3.0"},      {"tasm30-command", "tasm-3.0"},
+    {"tasm32-typing", "tasm-3.2"},     {"tasm32-edited", "tasm-3.2"},      {"tasm32-command", "tasm-3.2"},
 };
+
+/// The saved file without the editor-state first line SAVE adds (ZAsm's ";!...")
+std::vector<uint8_t> WithoutStateLine(std::vector<uint8_t> file, const SyncDescriptor& d)
+{
+    const std::string& prefix = d.linear.stateLine;
+    if (d.family == LayoutFamily::Linear && !prefix.empty() && file.size() >= prefix.size() &&
+        std::equal(prefix.begin(), prefix.end(), file.begin()))
+    {
+        const auto end = std::find(file.begin(), file.end(), uint8_t('\r'));
+        if (end != file.end())
+            file.erase(file.begin(), end + 1);
+    }
+    return file;
+}
+
+/// The file without the header bytes SAVE rewrites from the editor's state (XAS: the cursor line and column)
+std::vector<uint8_t> WithoutEditorState(std::vector<uint8_t> file, const SyncDescriptor& d)
+{
+    const FileImageParams& p = d.fileImage;
+    for (size_t k = p.editorStateAt; k < size_t(p.editorStateAt) + p.editorStateLength && k < file.size(); ++k)
+        file[k] = 0;
+    return file;
+}
 }  // namespace
 
 TEST(Sync_Test, EveryDumpGivesTheFileTheAssemblerSaved)
@@ -73,9 +133,11 @@ TEST(Sync_Test, EveryDumpGivesTheFileTheAssemblerSaved)
         ASSERT_NE(descriptor, nullptr);
         const SyncText text = ReadText(dump.machine, *descriptor);
         ASSERT_TRUE(text.ok) << (text.diagnostics.empty() ? text.state : text.diagnostics.back().message);
-        EXPECT_EQ(text.file.size(), dump.expected.size());
-        EXPECT_TRUE(text.file == dump.expected) << "the live file differs from the saved one";
-        EXPECT_EQ(text.typing, dump.typing && descriptor->typing.rule == TypingRule::NotInText);
+        const std::vector<uint8_t> expected = WithoutStateLine(dump.expected, *descriptor);
+        EXPECT_EQ(text.file.size(), expected.size());
+        EXPECT_TRUE(WithoutEditorState(text.file, *descriptor) == WithoutEditorState(expected, *descriptor))
+            << "the live file differs from the saved one";
+        EXPECT_EQ(text.typing, dump.typing && descriptor->typing.rule == TypingRule::NotInText && descriptor->typing.flagMask);
         if (descriptor->family == LayoutFamily::GapBuffer)
         {
             EXPECT_EQ(text.editor, dump.editor) << "the line buffer belongs in the file only in the editor";
@@ -95,7 +157,10 @@ TEST(Sync_Test, TheProbeNamesTheAssemblerAndNoOther)
         SCOPED_TRACE(c.folder);
         const Dump dump = Load(c.folder);
         const std::vector<ProbeCandidate> candidates = Probe(dump.machine);
-        ASSERT_EQ(candidates.size(), 1u);
+        std::string ids;
+        for (const ProbeCandidate& candidate : candidates)
+            ids += " " + candidate.descriptor->id;
+        ASSERT_EQ(candidates.size(), 1u) << "identified:" << ids;
         EXPECT_EQ(candidates[0].descriptor->id, c.descriptor);
         EXPECT_EQ(candidates[0].score, 100);
     }
@@ -250,6 +315,10 @@ TEST(SyncSession_Test, TheBuildGivesTheLabelsOfTheLiveText)
     for (const symbols::Symbol& s : built.labels.symbols)
         key = key || s.name == "KEY";
     EXPECT_TRUE(key) << "KEY = [#5C08] of SNAKE";
+    // SNAKE's .IF inside DEFMAC is flat, as TASM reads it; the game it plays while assembling (keys, the screen)
+    // keeps its "=" values moving, so the layout does not settle (labels still move)
+    for (const Diagnostic& d : built.hints)
+        EXPECT_EQ(d.message.find("IF without ENDIF"), std::string::npos) << d.message;
 }
 
 TEST(SyncSession_Test, AHintPointsAtTheSourceLine)

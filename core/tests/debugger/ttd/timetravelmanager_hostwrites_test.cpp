@@ -12,7 +12,7 @@
 #include <cstdint>
 
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -40,7 +40,7 @@ TEST(TimeTravelManager_HostWrites_Test, AReplayHoldsHostWritesForExactlyItsDurat
     Emulator emulator(LoggerLevel::LogError);
     ASSERT_TRUE(emulator.Init());
     EmulatorContext* context = emulator.GetContext();
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     ASSERT_NE(context->pMediaManager, nullptr);
     FeatureManager* fm = emulator.GetFeatureManager();
     fm->setFeature(Features::kDebugMode, true);

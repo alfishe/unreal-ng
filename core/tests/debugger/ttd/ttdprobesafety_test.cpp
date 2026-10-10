@@ -13,7 +13,7 @@
 
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdprobe.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -25,7 +25,7 @@ class TTD_Probe_Safety_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
     Memory* _memory = nullptr;
 
@@ -35,7 +35,7 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;

@@ -9,7 +9,7 @@
 #include <string>
 
 #include "debugger/ttd/timetravelhooks.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 
@@ -17,14 +17,14 @@ class TimeTravelHooks_Test : public ::testing::Test
 {
 protected:
     Emulator* _emulator = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     ttd::ITimeTravelHooks* _hooks = nullptr;
 
     void SetUp() override
     {
         _emulator = new Emulator(LoggerLevel::LogError);
         ASSERT_TRUE(_emulator->Init());
-        _ttd = _emulator->GetContext()->pTimeTravelManager;
+        _ttd = _emulator->GetContext()->pTimeTravelController;
         _hooks = _emulator->GetContext()->pTimeTravelHooks;
         ASSERT_NE(_ttd, nullptr);
         ASSERT_NE(_hooks, nullptr);

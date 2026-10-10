@@ -1022,6 +1022,7 @@ void PortDecoder_Sprinter::LoadAccelState(const uint8_t* src)
 {
     std::memcpy(&_accelerator.State(), src, sizeof(SprinterAccelState));
     _accelerator.watchData = _accelerator.State().dir != 0;  // the engine watches data accesses while a mode is on
+    _accelerator.RefreshFetchQuiet();
 }
 
 const SprinterVideoRenderer& PortDecoder_Sprinter::VideoRenderer() const

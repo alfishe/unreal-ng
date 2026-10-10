@@ -63,12 +63,30 @@ struct Signature
 struct FileImageParams
 {
     uint16_t pageIdAt = 0;          ///< CPU address of the page id of the current text
-    uint16_t base = 0;              ///< offset of the file in its page
+    uint16_t base = 0;              ///< offset of the file in its page (the other offsets count from the page's start)
     uint16_t headerSize = 0;        ///< the length field counts the bytes after the header
     uint16_t lengthField = 0;       ///< offset of the 16-bit length in the header
     uint16_t signatureAt = 0;       ///< offset of the header's signature
     std::string signature;
-    uint16_t changedField = 0;      ///< offset of the "changed since saved" byte (0 = none); SAVE writes it as 0
+    uint16_t changedField = 0;      ///< offset of the "changed since saved" byte (0 = none); SAVE clears changedMask in it
+    uint8_t changedMask = 0xFF;
+    uint8_t nameLength = 8;         ///< the text's name, blank padded (0 = none)
+    uint16_t nameAt = 0;
+    /// The length from an end pointer (STORM): the 16-bit CPU address at pointerAt is one past the text's last byte,
+    /// which is endSentinel and not part of the file
+    bool lengthFromPointer = false;
+    uint16_t pointerAt = 0;
+    uint8_t endSentinel = 0;
+    /// No length field (lengthField unused): the text ends at the first endByte from textOffset; SAVE writes whole
+    /// 256-byte sectors from memory when wholeSectors (XAS)
+    bool lengthFromEnd = false;
+    uint16_t textOffset = 0;
+    uint8_t endByte = 0;
+    bool wholeSectors = false;
+    /// Header bytes SAVE rewrites from the editor's own state (cursor line and column): the reader leaves them as the
+    /// memory holds them, so a live file differs from the next save there and only there
+    uint16_t editorStateAt = 0;
+    uint16_t editorStateLength = 0;
 };
 
 struct GapBufferParams
@@ -82,6 +100,13 @@ struct GapBufferParams
     uint16_t lineBufferLength = 0;
     encoding::CodePage lineCodePage = encoding::CodePage::Cp866;
     std::string end;                ///< the end record SAVE adds
+    /// Without a line count (MASM, TASM 4.0): the editor known by a non-zero byte in its line buffer; in the editor the
+    /// cursor line is out of the text, its last version the length-framed record that ends at the gap end. MASM has a
+    /// fixed start and its end marker inside the text up to #FFFF (fixedStart != 0, endInText)
+    uint16_t fixedStart = 0;
+    bool endInText = false;
+    uint16_t editorFlagAt = 0;
+    uint16_t editorFlagLength = 0;
 };
 
 struct LinearParams
@@ -90,6 +115,10 @@ struct LinearParams
     uint16_t fixedStart = 0;
     uint16_t endAt = 0;             ///< CPU address of the end pointer (exclusive)
     std::string end;                ///< the end marker the file has after the text
+    int upperPage = -1;             ///< the RAM page the text's part from #C000 is in (-1 = the one mapped there)
+    /// SAVE writes a first line starting with this (the editor's position, ZAsm's ";!") that the editor takes out on
+    /// loading: the live file is without it ("" = none)
+    std::string stateLine;
 };
 
 struct TypingParams
@@ -116,7 +145,8 @@ struct SyncDescriptor
     std::string labelScanner;       ///< the symbols/live.h scanner of its label table ("" = none)
 };
 
-/// Every built-in descriptor (asm-synchronizer.md §7), each checked with golden dumps: ALASM 5.09, 4.44, TASM 4.12
+/// Every built-in descriptor (asm-synchronizer.md §7), each checked with golden dumps: ALASM 3.8c, 4.42-4.46, 4.5,
+/// 5.00-5.09, TASM 4.12, XAS 4.18, 5.05, 7.43c, 7.447, 9.07m, 9.10, STORM 1.3, ZAsm 3.15
 const std::vector<SyncDescriptor>& Descriptors();
 const SyncDescriptor* FindDescriptor(const std::string& id);
 

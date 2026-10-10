@@ -51,6 +51,25 @@ start (phase A6).
 
 2.6 and 3.2x and later write an optional first line `;*a,b,c,…` (the editor state); it is an ordinary line.
 
+### 3.1 The settings file (type `s`)
+
+ZAsm 3.15 and later keep their setup in a type `s` file at start `#7465` (`ZAsm3.15 s`, `z33.02 s`, `z33.51 s`, ...),
+written by SaveSet in the setup overlay (source `samples/text/C33_05__setup.a.txt` of the collection, lines 514-528):
+
+| Offset | Meaning |
+|---|---|
+| 0 | the version (`"3"` in 3.3.02) |
+| 1-2 | the length of the block that follows (`FLAGS - SystDisk`, `#0078` in 3.3.02) |
+| 3 | **SystDisk**: the system drive, ASCII `A`-`E` |
+| 4 | **OverDisk**: the overlays drive |
+| 5... | the rest of the RAM block from SystDisk to FLAGS (the default extension `asm`, the monitor `sts6.2 exe`, the font name ...), then W_Size and the windows |
+
+In RAM (3.3.02 `ovldef.a`): SystDisk `#8457`, OverDisk `#8458`, CurDrive `#84EF`, DefDrive `#84F0`; 3.3.51
+`#844B` / `#844C` / `#84E2` / `#84E3`. 3.15 has the drives at offset `#24` (an older layout). Shipped values: 3.15,
+3.3.02, 3.3.51, x64 `DD`; ZXTA34X `AA`; 3.2x lite 1 `A`. The `D` default is the author's own set-up (Shalaev's DOS
+emulator, overlays once on another disk or a RAM disk: his ReadMe files and zx-pk.ru thread 29356); its effect in the
+emulator is in [zxasm.md](../../../.recipe/assemblers/zxasm.md#start-and-the-default-drive).
+
 ## 4. The editor's rules (canonical tokenizer)
 
 Derived on the corpus; each rule raised the exact-line rate:

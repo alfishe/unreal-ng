@@ -230,25 +230,8 @@ message(STATUS "</unreal-videowall diagnostics>")
 # Define data paths
 set(DATA_PATH "${ROOT_DIR}/data")
 
-# Copy all required resources using modern CMake syntax
-add_custom_command(
-    TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/fonts" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/fonts"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/symbols" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/symbols"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/midi" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/midi"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/boot" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/boot"
-    COMMENT "Copying runtime resource files (fonts, config, ROM) to output directory"
-)
+# Runtime resources are copied once by the shared runtime-data target (root CMakeLists.txt)
+add_dependencies(${PROJECT_NAME} runtime-data)
 
 message(STATUS "Post-build: Will copy resources from ${DATA_PATH} to ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 message(STATUS "  - Fonts: ${DATA_PATH}/fonts")

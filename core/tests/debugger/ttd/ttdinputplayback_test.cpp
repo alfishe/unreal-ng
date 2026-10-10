@@ -12,7 +12,7 @@
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/ttd/machinestatehash.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -78,7 +78,7 @@ class TTD_InputPlayback_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     DebugKeyboardManager* _keys = nullptr;
     DebugMouseManager* _mouse = nullptr;
 
@@ -87,7 +87,7 @@ protected:
         _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);

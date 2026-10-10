@@ -149,3 +149,7 @@ curl -s -X POST $BASE/emulator/$EMU_ID/media/A/export -H 'Content-Type: applicat
 - **`#8000-#BFFF` belongs to TASM 4.12's overlay**: TASM's own SINUS example assembles there; move ORG below
   (`#7000`) to read the bytes after assembling.
 - The Import/export menu takes the letter in lower case (Shift + key), the main command line in either.
+- **4.12 has no `DB`**: write `DEFB` (4.0 / 4.4 take `db`); and `A`, `B`, ... are registers, not labels (error 8).
+- **`.IF` blocks do not nest** in 4.12: a `.IF` inside a skipped part is evaluated and starts afresh, and the first
+  `.ENDIF` ends any skipping. `zxasm convert` writes them as flat sjasmplus blocks
+  (`docs/inprogress/2026-10-05-unreal-asm/research-tasm-to-sjasmplus.md`).

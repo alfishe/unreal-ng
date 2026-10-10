@@ -9,7 +9,7 @@
 ///      + TTDExternalEventKindToString stability for automation contract.
 ///
 ///   2. TTD_ExternalEvents_API_Test — capture integration through
-///      TimeTravelManager::RecordExternalEvent: state guard, time capture,
+///      TimeTravelController::RecordExternalEvent: state guard, time capture,
 ///      reason truncation, lifecycle (StartRecording / InvalidateSession /
 ///      ResumeRecordingFrom all clip the journal correctly).
 ///
@@ -29,7 +29,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/ttd/ttdexternalevents.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -37,11 +37,11 @@
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
 
-// TTDSeekHaltReason / TTDSeekResult are nested inside TimeTravelManager
+// TTDSeekHaltReason / TTDSeekResult are nested inside TimeTravelController
 // (defined in timetravelmanager.h). Pull them into convenient aliases so the
 // test bodies read like the parent TDD's pseudocode.
-using SeekHaltReason = ttd::TimeTravelManager::TTDSeekHaltReason;
-using SeekResult     = ttd::TimeTravelManager::TTDSeekResult;
+using SeekHaltReason = ttd::TimeTravelController::TTDSeekHaltReason;
+using SeekResult     = ttd::TimeTravelController::TTDSeekResult;
 
 // ===========================================================================
 // Suite 1 — pure journal unit tests (no emulator, no manager).
@@ -114,7 +114,7 @@ TEST_F(TTD_ExternalEvents_Test, Record_MultipleEvents_AppendedInOrder)
 
 TEST_F(TTD_ExternalEvents_Test, Record_NullReason_StoredAsEmptyString)
 {
-    // The journal layer itself just stores what it's given. TimeTravelManager
+    // The journal layer itself just stores what it's given. TimeTravelController
     // is the one that nulls out reasons, but the journal Record() must still
     // cope with an empty reason buffer.
     auto ev = MakeEv(1, 0, ttd::TTDExternalEventKind::Other, nullptr);
@@ -291,7 +291,7 @@ TEST_F(TTD_ExternalEvents_Test, KindToString_AllKindsStable)
 }
 
 // ===========================================================================
-// Suite 2 — capture integration via TimeTravelManager::RecordExternalEvent.
+// Suite 2 — capture integration via TimeTravelController::RecordExternalEvent.
 // ===========================================================================
 
 class TTD_ExternalEvents_API_Test : public ::testing::Test
@@ -299,7 +299,7 @@ class TTD_ExternalEvents_API_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
     Memory* _memory = nullptr;
 
@@ -309,7 +309,7 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
@@ -479,7 +479,7 @@ class TTD_ExternalEvents_Seek_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
     Memory* _memory = nullptr;
 
@@ -489,7 +489,7 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
@@ -578,6 +578,8 @@ TEST_F(TTD_ExternalEvents_Seek_Test, FrameAligned_MarkerAtSameFrame_NotABarrier)
 
 TEST_F(TTD_ExternalEvents_Seek_Test, IntraFrame_MarkerInInterval_StopsAtMarker)
 {
+    // The engine replays tape and disk from its journals: a marker that stops a seek is one without its data
+    // (a debugger edit that carries no bytes, a reset, an unclassified marker)
     // Build a timeline where:
     //   - Checkpoint exists at (1, 0)
     //   - Marker is at (1, M) where M > 0 — strictly inside (1, 0)..(1, target)
@@ -589,7 +591,7 @@ TEST_F(TTD_ExternalEvents_Seek_Test, IntraFrame_MarkerInInterval_StopsAtMarker)
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(1);                       // → frame 1 boundary; cp at (1, 0)
     _emulator->RunTStates(500, true);   // advance within frame 1
-    _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::DiskWrite, "wd1793 write");
+    _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::DebuggerEdit, "debugger poke");
     RunFrames(2);                       // extend timeline so intra-frame seek is in range
     _ttd->StopRecording();
 
@@ -605,8 +607,8 @@ TEST_F(TTD_ExternalEvents_Seek_Test, IntraFrame_MarkerInInterval_StopsAtMarker)
     EXPECT_EQ(r.haltReason, SeekHaltReason::ExternalEvent);
     EXPECT_EQ(r.arrivedAt.frame,    1u);
     EXPECT_EQ(r.arrivedAt.tInFrame, markerT);
-    EXPECT_EQ(r.blockingMarker.kind, ttd::TTDExternalEventKind::DiskWrite);
-    EXPECT_STREQ(r.blockingMarker.reason, "wd1793 write");
+    EXPECT_EQ(r.blockingMarker.kind, ttd::TTDExternalEventKind::DebuggerEdit);
+    EXPECT_STREQ(r.blockingMarker.reason, "debugger poke");
 }
 
 TEST_F(TTD_ExternalEvents_Seek_Test, IntraFrame_MarkerAtRestorePoint_NotABarrier)
@@ -677,12 +679,14 @@ TEST_F(TTD_ExternalEvents_Seek_Test, IntraFrame_MarkerPastTarget_NotABarrier)
 
 TEST_F(TTD_ExternalEvents_Seek_Test, MultipleMarkers_StopsAtEarliest)
 {
+    // The engine replays tape and disk from its journals: a marker that stops a seek is one without its data
+    // (a debugger edit that carries no bytes, a reset, an unclassified marker)
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(1);
     _emulator->RunTStates(200, true);
-    _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::TapeControl, "first");
+    _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::DebuggerEdit, "first");
     _emulator->RunTStates(300, true);
-    _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::DiskWrite,   "second");
+    _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::HardwareReset, "second");
     _emulator->RunTStates(500, true);
     _ttd->RecordExternalEvent(ttd::TTDExternalEventKind::Other,       "third");
     RunFrames(2);

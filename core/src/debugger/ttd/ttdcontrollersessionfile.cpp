@@ -314,11 +314,7 @@ void TimeTravelController::CommitLoadedSession(std::unique_ptr<TimeTravelEngine>
     _shadowFacts.clear();
     _inputHistoryComplete = facts.inputHistoryComplete;
 
-    // The bus journals are the engine's; v1's recorders start empty on a resume
-    _portReads.Clear();
-    _portWrites.Clear();
-    _shadowBusReads = 0;
-    _shadowBusWrites = 0;
+    // The bus journals are the engine's (a resume records on at their ends)
     _portJournalValid = facts.portJournalValid;
     _portJournalRecorded = facts.portJournalValid;
     _portJournalOffReason = facts.portJournalOffReason;

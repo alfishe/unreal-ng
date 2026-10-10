@@ -12,7 +12,8 @@
 #include <common/filehelper.h>
 #include <common/stringhelper.h>
 #include <debugger/ttd/ttdcheckpoint.h>
-#include <debugger/ttd/timetravelmanager.h>
+#include <debugger/ttd/timetravelcontroller.h>
+#include <debugger/ttd/timetravelengine.h>
 #include <emulator/cpu/z80.h>
 #include <emulator/cpu/core.h>
 #include <emulator/emulator.h>
@@ -135,10 +136,10 @@ DivergenceHistory TTDDivergenceHarness::RunLiveAndCapture(size_t frames)
 DivergenceHistory TTDDivergenceHarness::ExtractHashesFromTimeline()
 {
     DivergenceHistory history;
-    if (!_context || !_context->pTimeTravelManager)
+    if (!_context || !_context->pTimeTravelController)
         return history;
 
-    TimeTravelManager* ttd = _context->pTimeTravelManager;
+    TimeTravelController* ttd = _context->pTimeTravelController;
     const size_t count = ttd->GetCheckpointCount();
     history.Reserve(count);
 
@@ -152,50 +153,24 @@ DivergenceHistory TTDDivergenceHarness::ExtractHashesFromTimeline()
         f.frameCounter = cp->time.frame;
         f.tStates      = cp->globalT;
 
-        // Compute RAM digest from the page store — restore semantics in
-        // miniature. Pages marked NEVER_TOUCHED hash as zero (their live
-        // content at capture time was the baseline, and the baseline is
-        // whatever the snapshot set up).
-        //
-        // v2 codec: each emu page is split into 4 × 4 KB sub-pages with
-        // independent slot indices. We reconstruct the 16 KB page by
-        // walking each sub-slot through GetPage (which transparently
-        // walks the XOR-prev chain back to a Full slot).
+        // The RAM as the engine holds it at this checkpoint (the machine RAM
+        // region, restored into a buffer: what a seek restores), page by page
         uint64_t ram_digest = 0;
-        const uint16_t pages = std::min<uint16_t>(
-            ttd->GetModelRamPages(),
-            static_cast<uint16_t>(cp->ramPages.size()));
-        // Scratch buffer for one reconstructed 4 KB sub-page.
-        uint8_t subPageBuf[TTDCodecPageStore::kPageSize];
-        for (uint16_t p = 0; p < pages; ++p)
+        const TimeTravelEngine& engine = ttd->GetEngine();
+        const size_t engineIndex = engine.FirstCheckpoint() + i;
+        uint32_t ramRegion = 0;
+        while (ramRegion < engine.Regions().size() && engine.Regions()[ramRegion].name != "ram")
+            ++ramRegion;
+        if (ramRegion < engine.Regions().size() && engineIndex < engine.CheckpointCount())
         {
-            const TTDPageRef& ref = cp->ramPages[p];
-            if (ref.IsNeverTouched())
+            const TTDRegionDesc& desc = engine.Regions()[ramRegion];
+            std::vector<uint8_t> ram(size_t(desc.pieces) * kTTDPieceSize);
+            if (engine.RestoreRegion(engineIndex, ramRegion, ram.data()).Ok())
             {
-                // Hash the current live page content — matches what
-                // RestoreRamPages leaves in place for never-touched pages.
-                uint8_t* page = _memory ? _memory->RAMPageAddress(p) : nullptr;
-                if (page)
-                    ram_digest = HashCombine(ram_digest, page, PAGE_SIZE);
-                continue;
-            }
-            // v2: reconstruct each of the 4 sub-pages individually.
-            for (uint32_t s = 0; s < 4; ++s)
-            {
-                const uint32_t slot = ref.pageSlots[s];
-                if (slot == TTDPageRef::kNeverTouched)
-                {
-                    // Sub-page never touched — hash the live 4 KB slice.
-                    uint8_t* page = _memory ? _memory->RAMPageAddress(p) : nullptr;
-                    if (page)
-                        ram_digest = HashCombine(ram_digest,
-                                                 page + s * TTDCodecPageStore::kPageSize,
-                                                 TTDCodecPageStore::kPageSize);
-                    continue;
-                }
-                if (ttd->GetPageStore().GetPage(slot, subPageBuf))
-                    ram_digest = HashCombine(ram_digest, subPageBuf,
-                                             TTDCodecPageStore::kPageSize);
+                const uint16_t pages = std::min<uint16_t>(ttd->GetModelRamPages(),
+                                                          static_cast<uint16_t>(ram.size() / PAGE_SIZE));
+                for (uint16_t p = 0; p < pages; ++p)
+                    ram_digest = HashCombine(ram_digest, ram.data() + size_t(p) * PAGE_SIZE, PAGE_SIZE);
             }
         }
         f.ramDigest = ram_digest;
@@ -238,7 +213,7 @@ bool TTDDivergenceHarness::StartRecordingAndCaptureTimeline(size_t frames)
     if (!ReloadSnapshotForReplayPhase())
         return false;
 
-    TimeTravelManager* ttd = _context->pTimeTravelManager;
+    TimeTravelController* ttd = _context->pTimeTravelController;
     if (!ttd)
         return false;
 
@@ -272,10 +247,10 @@ bool TTDDivergenceHarness::VerifyReplayMatchesLive(size_t frameIndex,
         return false;
     }
 
-    if (!_context || !_context->pTimeTravelManager)
+    if (!_context || !_context->pTimeTravelController)
     {
         if (failureMsg)
-            *failureMsg = "TimeTravelManager unavailable";
+            *failureMsg = "TimeTravelController unavailable";
         return false;
     }
 
@@ -288,7 +263,7 @@ bool TTDDivergenceHarness::VerifyReplayMatchesLive(size_t frameIndex,
     target.frame    = exp.frameCounter;
     target.tInFrame = 0;
 
-    if (!_context->pTimeTravelManager->SeekTo(target))
+    if (!_context->pTimeTravelController->SeekTo(target))
     {
         if (failureMsg)
             *failureMsg = StringHelper::Format(
@@ -448,8 +423,8 @@ uint64_t TTDDivergenceHarness::HashRamInUse() const
     // Page count is read from the TTD manager when available so the digest
     // matches the per-checkpoint capture scope.
     uint16_t pages = 0;
-    if (_context->pTimeTravelManager)
-        pages = _context->pTimeTravelManager->GetModelRamPages();
+    if (_context->pTimeTravelController)
+        pages = _context->pTimeTravelController->GetModelRamPages();
 
     if (pages == 0)
     {

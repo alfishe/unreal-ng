@@ -416,6 +416,8 @@ Overview of everything open, owner-approved 2026-10-03: [open-items-2026-10-03.m
   - [x] The memory bus in one call instead of the overlay chain (`IZ84FastBus`, `SprinterMemory::FusedRead` /
     `FusedWrite`): exact, -5.5 % to -11 % per frame
     ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.8)
+  - [x] The accelerator's quiet opcode fetches skipped (`IZ84BusAgent::fetchQuiet`): exact, ROTOZOOM -4.5 %,
+    the others -1 % or noise ([sprinter-cpu-and-peripherals.md](../../emulator/design/core/sprinter-cpu-and-peripherals.md) §8.9)
   - [ ] A Sprinter frame benchmark without a disk image (the CTC `EI : HALT` program of `SprinterIdleCycles_Test`
     plus accelerator fills)
 - Renderer speed: by square segments since 2026-10-09 (the source address, attribute and font byte once per

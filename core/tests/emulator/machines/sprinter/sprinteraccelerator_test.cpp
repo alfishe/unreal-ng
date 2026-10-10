@@ -1,5 +1,7 @@
 #include "sprinterfixture.h"
 
+#include <cstring>
+
 #include "emulator/memory/sprinter/sprinteraccelerator.h"
 #include "emulator/video/sprinter/sprintervideoram.h"
 
@@ -84,6 +86,38 @@ TEST_F(SprinterAccelerator_Test, ModeSelect_SameRegisterLdOnly)
     }
     Acc()->OnOpcodeFetch(0x8000, 0x52);
     EXPECT_EQ(St().mode, 2) << "unprefixed again";
+}
+
+// The engine skips the opcode fetches the accelerator says change nothing (IZ84BusAgent::fetchQuiet with
+// fetchMatters): with no latch set, every opcode outside the table leaves every byte of the state as it is, the
+// accelerator on or off, ACC_BLK set or not
+TEST_F(SprinterAccelerator_Test, QuietFetch_OutsideTheTableChangesNothing)
+{
+    ASSERT_NE(Acc()->fetchMatters, nullptr);
+    for (uint8_t allMode : {uint8_t{0x05}, uint8_t{0x04}})
+    {
+        for (uint8_t blocked = 0; blocked < 2; blocked++)
+        {
+            for (int op = 0; op < 256; op++)
+            {
+                if (Acc()->fetchMatters[op])
+                    continue;
+                Pld().allMode = allMode;
+                Acc()->Reset();
+                Acc()->OnOpcodeFetch(0x8000, 0x00);  // NOP: FN_ACC back to plain
+                St().blocked = blocked;
+                St().buffer[3] = 0x5A;
+                St().aagr = 0x123;
+                Acc()->RefreshFetchQuiet();
+                ASSERT_TRUE(Acc()->fetchQuiet);
+                const SprinterAccelState before = St();
+                Acc()->RefreshFetchQuiet();  // St() above cleared it
+                Acc()->OnOpcodeFetch(0x8000, static_cast<uint8_t>(op));
+                EXPECT_EQ(std::memcmp(&before, &Acc()->State(), sizeof(before)), 0)
+                    << "opcode #" << std::hex << op << " all mode #" << int(allMode) << " blocked " << int(blocked);
+            }
+        }
+    }
 }
 
 // ALL_MODE bit 0 = 0: no mode can be set, and clearing it disarms (ACC_MODE.clrn = ACC_ENA)

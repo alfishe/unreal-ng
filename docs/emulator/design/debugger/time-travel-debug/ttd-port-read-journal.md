@@ -60,6 +60,12 @@ shows the replay diverge.
 
 ## 2. Scope of the first version
 
+**The engine (the default backend since Phase 5) records the journals on every machine** and plays them in every
+replay; the CPU writes straight into the engine's bus journals (2026-10-09,
+[port-journals-on-engine.md](../../../../inprogress/2026-09-25-ttd-v2-migration/port-journals-on-engine.md)), and
+`port_journal_active` is true unless the session has a gap. The scope below is v1's, kept until v1 is deleted
+(Phase 6).
+
 **On:** every classic machine - Pentagon, 48K, 128K, +2, +2A, +3, Scorpion,
 Profi, ATM, and the rest - as long as the General Sound slot does not hold a
 NeoGS card.

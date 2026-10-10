@@ -26,7 +26,7 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/cpu/core.h"
@@ -93,7 +93,7 @@ class TTD_StateCompleteness_Test : public ::testing::TestWithParam<const char*>
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     std::vector<PortMapEntry> _ports;
     ttd::TTDTimePoint _reference{};  ///< checkpoint F
     ttd::TTDTimePoint _later{};      ///< the checkpoint the ports are written at
@@ -126,7 +126,7 @@ protected:
     void Record()
     {
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         _ports = _context->pPortDecoder->getPortMapEntries();
         ASSERT_FALSE(_ports.empty()) << GetParam() << ": the decoder publishes no port map";

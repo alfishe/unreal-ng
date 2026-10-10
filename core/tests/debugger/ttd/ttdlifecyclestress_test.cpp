@@ -10,9 +10,10 @@
 
 #include <cstdint>
 
+#include "_helpers/ttdwriterecords.h"
 #include "base/featuremanager.h"
 #include "common/modulelogger.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -23,7 +24,7 @@ class TTD_Lifecycle_Stress_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     FeatureManager* _fm = nullptr;
     Memory* _memory = nullptr;
 
@@ -33,7 +34,7 @@ protected:
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _ttd->SetEnableWriteJournal(true);   // these tests use the write journal (off by default, D40)
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
@@ -140,7 +141,7 @@ TEST_F(TTD_Lifecycle_Stress_Test, InvalidateClearsAllState)
         _ttd->StopRecording();
 
         EXPECT_GT(_ttd->GetCheckpointCount(), 0u);
-        EXPECT_GT(_ttd->GetWriteJournal()->Size(), 0u);
+        EXPECT_GT(ttdtest::WriteRecordCount(*_ttd), 0u);
 
         ttd::TTDSessionInfo infoBefore = _ttd->GetSessionInfo();
         EXPECT_GT(infoBefore.sessionHeapBytes, 0u);
@@ -148,7 +149,7 @@ TEST_F(TTD_Lifecycle_Stress_Test, InvalidateClearsAllState)
         _ttd->InvalidateSession("stress test");
 
         EXPECT_EQ(_ttd->GetCheckpointCount(), 0u);
-        EXPECT_EQ(_ttd->GetWriteJournal()->Size(), 0u);
+        EXPECT_EQ(ttdtest::WriteRecordCount(*_ttd), 0u);
         EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle);
 
         ttd::TTDSessionInfo infoAfter = _ttd->GetSessionInfo();

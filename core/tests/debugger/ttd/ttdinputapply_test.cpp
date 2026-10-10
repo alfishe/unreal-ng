@@ -2,7 +2,7 @@
 /// @brief ApplyInputEvent / InputDevicesOf: every input kind reaches its device,
 /// and an absent device leaves the event unapplied.
 ///
-/// The live and replay paths through TimeTravelManager (SubmitLiveInput,
+/// The live and replay paths through TimeTravelController (SubmitLiveInput,
 /// ServiceInput playback) are covered where they are driven:
 /// ttdinputjournal_test.cpp, ttdinputplayback_test.cpp, debugmousemanager_test.cpp.
 

@@ -7,8 +7,30 @@
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/ports/models/sprinter/sprinterpldstate.h"
 
+namespace
+{
+/// The opcodes a fetch may change the accelerator with even when no latch is set: a same-register LD r,r and
+/// HALT (ACC_MODE), the ALU group (FN_ACC), the prefixes (the prefix and ED latches)
+struct FetchMattersTable
+{
+    bool entries[256] = {};
+    constexpr FetchMattersTable()
+    {
+        for (int op = 0; op < 256; op++)
+        {
+            const bool sameRegister = (op & 0xC0) == 0x40 && ((op >> 3) & 0x07) == (op & 0x07);
+            const bool alu = (op & 0xC0) == 0x80;
+            const bool prefix = op == 0xCB || op == 0xDD || op == 0xED || op == 0xFD;
+            entries[op] = sameRegister || alu || prefix;
+        }
+    }
+};
+constexpr FetchMattersTable kFetchMatters;
+}  // namespace
+
 SprinterAccelerator::SprinterAccelerator(EmulatorContext* context, SprinterPldState& pld) : _context(context), _pld(pld)
 {
+    fetchMatters = kFetchMatters.entries;
 }
 
 void SprinterAccelerator::Reset()
@@ -26,6 +48,7 @@ void SprinterAccelerator::Reset()
     _state.aagr = 0;
     _writePending = false;
     RefreshWatch();
+    RefreshFetchQuiet();
 }
 
 bool SprinterAccelerator::IsEnabled() const
@@ -40,6 +63,7 @@ bool SprinterAccelerator::CheckEnabled()
     _state.mode = 0;
     _state.dir = 0;
     RefreshWatch();
+    RefreshFetchQuiet();
     return false;
 }
 
@@ -80,6 +104,7 @@ void SprinterAccelerator::OnOpcodeFetch([[maybe_unused]] uint16_t addr, uint8_t 
     _state.reti = (_state.edSeen && opcode == 0x4D) ? 1 : 0;
     _state.edSeen = opcode == 0xED ? 1 : 0;
     _state.prefix = (opcode == 0xCB || opcode == 0xDD || opcode == 0xED || opcode == 0xFD) ? 1 : 0;
+    RefreshFetchQuiet();
 }
 
 bool SprinterAccelerator::RepeatFetchIsInert([[maybe_unused]] uint16_t addr, uint8_t opcode) const

@@ -78,6 +78,13 @@ type_input {"target":"EMU_ID","action":"tap","key":"q","frames":4}            # 
 invoke_api {"target":"EMU_ID","method":"GET","path":"/api/v1/emulator/{id}/disk/A/catalog"}   # the file, rewritten
 ```
 
+## The text in memory (MASM 1.1)
+
+The text starts at `#970B`. While it is edited MASM keeps a gap: `(#96CC)` is the gap start, `(#96CE)` the gap end,
+and the rest runs up to `#FFFF`, where the file's `#FF` end lies. In the editor the cursor line is out of the text (its
+record ends at the gap end); after EXT `Q` it is back. The asm-synchronizer reads both states
+([asm-sources.md](../analysis/asm-sources.md#the-source-an-assembler-holds-in-ram-asm-synchronizer)).
+
 ## WebAPI
 
 `BASE=http://localhost:${PORT:-8090}/api/v1`; `tools/verification/unreal-asm/lib/emulator.py` wraps these calls.

@@ -21,7 +21,7 @@
 #include "_helpers/testpathhelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelengine.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/config.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -90,7 +90,7 @@ struct Machine
 {
     Emulator* emulator = nullptr;
     EmulatorContext* context = nullptr;
-    ttd::TimeTravelManager* ttd = nullptr;
+    ttd::TimeTravelController* ttd = nullptr;
 
     Machine(const std::string& model, const std::string& rzxPath)
     {
@@ -98,7 +98,7 @@ struct Machine
         if (!emulator)
             return;
         context = emulator->GetContext();
-        ttd = context->pTimeTravelManager;
+        ttd = context->pTimeTravelController;
         FeatureManager* features = emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
         features->setFeature(Features::kTimeTravel, true);
@@ -111,7 +111,6 @@ struct Machine
         if (ttd)
         {
             ttd->SetReplaySource(nullptr);
-            ttd->SetShadowEngine(nullptr);
         }
         if (emulator)
             EmulatorTestHelper::CleanupEmulator(emulator);
@@ -165,8 +164,7 @@ TEST(TimeTravelManager_RzxPlayback_Test, SeekAcrossTheStopOfThePlayback)
 {
     Machine m("48K", Fixture("archive/garfield.rzx"));
     ASSERT_NE(m.emulator, nullptr);
-    ttd::TimeTravelEngine engine;
-    m.ttd->SetShadowEngine(&engine);
+    ttd::TimeTravelEngine& engine = m.ttd->GetEngine();   // the session's own engine
     ASSERT_TRUE(m.ttd->StartRecording());
     m.Frames(30);
     const ttd::TTDTimePoint inside = m.Now();
@@ -201,8 +199,7 @@ TEST(TimeTravelManager_RzxPlayback_Test, EveryRzxFrameEndIsAFact)
     Machine m("48K", Fixture("archive/ericfloaters.rzx"));
     ASSERT_NE(m.emulator, nullptr);
     m.Frames(5);
-    ttd::TimeTravelEngine engine;
-    m.ttd->SetShadowEngine(&engine);
+    ttd::TimeTravelEngine& engine = m.ttd->GetEngine();   // the session's own engine
     const rzx::PlayerStatus before = m.emulator->GetRzxStatus().player;
     ASSERT_TRUE(m.ttd->StartRecording());
     m.Frames(50);
@@ -242,8 +239,7 @@ void ExpectParity(const std::string& model, const std::string& rzx, unsigned fra
     SCOPED_TRACE(rzx);
     Machine m(model, rzx);
     ASSERT_NE(m.emulator, nullptr);
-    ttd::TimeTravelEngine engine;
-    m.ttd->SetShadowEngine(&engine);
+    ttd::TimeTravelEngine& engine = m.ttd->GetEngine();   // the session's own engine
     ASSERT_TRUE(m.ttd->StartRecording());
     m.Frames(frames);
     m.ttd->StopRecording();

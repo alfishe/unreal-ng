@@ -10,7 +10,8 @@
 #include "loaders/tape/loader_tape.h"
 #include "stdafx.h"
 #include <cstring>
-#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
+#include "debugger/ttd/timetravelhooks.h"  // ITimeTravelHooks (Item 6 markers)
+#include "debugger/ttd/ttdexternalevents.h"
 
 /// region <Constructors / destructors>
 

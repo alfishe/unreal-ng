@@ -126,6 +126,13 @@ StateNode AsmSyncService::HintsValue() const
     return _hints;
 }
 
+std::string AsmSyncService::LastText(uint64_t& generation) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    generation = _lastTextGeneration;
+    return _lastText;
+}
+
 void AsmSyncService::Run(WatchOptions options)
 {
     sync::SessionOptions sessionOptions;
@@ -212,6 +219,11 @@ void AsmSyncService::Run(WatchOptions options)
                     hints["output_error"] = outputError;
                     _hints = std::move(hints);
                     _error = outputError;
+                    if (built.decoded)
+                    {
+                        _lastText = built.document.Text();
+                        _lastTextGeneration = built.generation;
+                    }
                 }
                 Post(_context, "built", input->descriptor->id, built.generation, built.complete, published, warnings);
             }
