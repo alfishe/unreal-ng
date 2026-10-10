@@ -207,6 +207,14 @@ SyncText ReadGapBufferFixed(const MachineView& machine, const SyncDescriptor& d)
             return Inconsistent(text, error);
         upperFrom = *next;
     }
+    else if (text.editor && p.recordAtGapStart)
+    {
+        const std::optional<uint8_t> n = machine.Byte(static_cast<uint16_t>(*gapStart));
+        if (!n || uint32_t(*gapStart) + *n + 2 > *gapEnd ||
+            machine.Byte(static_cast<uint16_t>(*gapStart + *n + 1)) != n ||
+            !machine.Read(static_cast<uint16_t>(*gapStart), size_t(*n) + 2, current))
+            return Inconsistent(text, "no line record at the gap start #" + Hex(*gapStart, 4));
+    }
     else if (text.editor)
     {
         // The cursor line's record [n] body [n] ends at the gap end
@@ -416,6 +424,32 @@ SyncDescriptor Zasm315()
 
 /// MASM 1.1 and 1.3 (asm-synchronizer.md §7.12; the same layout and prompt): the text from #970B; while it is edited a gap at (#96CC)-(#96CE), the part
 /// after it up to #FFFF (the #FF end inside the text). Identified by its prompt in the code below the text
+/// MASM 1.0 demo (asm-synchronizer.md §7.12, Spectrofon #15): 1.1's gap buffer from #913A with (#8663) / (#8665);
+/// in the editor the cursor line's record is at the gap start, and the tail of the line buffer (#8600, blank padded in
+/// the editor, zeros in the menu) tells the editor. Identified by its prompt at #88B5
+SyncDescriptor Masm10Demo()
+{
+    SyncDescriptor d;
+    d.id = "masm-1.0-demo";
+    d.title = "MASM 1.0 demo";
+    d.codec = "masm";
+    d.version = "1.0";
+    d.extension = "a";
+    d.identify = {{0x88B5, std::string("MASM128>\0", 9)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::GapBuffer;
+    d.gapBuffer.fixedStart = 0x913A;
+    d.gapBuffer.endInText = true;
+    d.gapBuffer.gapStart = 0x8663;
+    d.gapBuffer.gapEnd = 0x8665;
+    d.gapBuffer.editorFlagAt = 0x8600;
+    d.gapBuffer.editorFlagLength = 32;
+    d.gapBuffer.recordAtGapStart = true;
+    d.gapBuffer.end = std::string("\xFF", 1);
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 SyncDescriptor Masm11()
 {
     SyncDescriptor d;
@@ -708,6 +742,7 @@ const std::vector<SyncDescriptor>& Descriptors()
         ZxAsm2("zasm-2.6", "ZX-ASM 2.6", 0x8000,
                "\xCD\x2E\x61\x38\x65\xFE\x5F\x28\x61\x23\xFE\x23\x28\x35\xFE\x25\x28\x1B\xFE\x22\x28\x08\xFE\x24", 0x6003),
         Masm11(),
+        Masm10Demo(),
         Masm2("masm-2.0", "MASM 2.0 TURBO", "2.0", {0x80E0, std::string("MASM2.0>\0", 9)}, 0x94DA, 0x92C6, 0x89D1, 0x929F),
         Masm2("masm-3.0", "MASM 3.0 MACRO", "3.0", {0x80D3, std::string("MASM128>\0", 9)}, 0x9123, 0x8C24, 0x864F, 0x8BFD),
         TasmGap("4.0", "TASM 4.0 (XL Design)", "4.0", {0x9859, "TASM4.0>"}, 0x8DD0, 0x91AC),

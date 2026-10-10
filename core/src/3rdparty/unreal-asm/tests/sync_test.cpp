@@ -92,6 +92,7 @@ const Case kCases[] = {
     {"zasm26-typing", "zasm-2.6"}, {"zasm26-edited", "zasm-2.6"}, {"zasm26-big", "zasm-2.6"},
     {"zasm30-typing", "zasm-3.0"},     {"zasm30-edited", "zasm-3.0"},      {"zasm30-big", "zasm-3.0"},
     {"masm11-typing", "masm-1.1"},     {"masm11-edited", "masm-1.1"},      {"masm11-menu", "masm-1.1"},
+    {"masm10-typing", "masm-1.0-demo"}, {"masm10-edited", "masm-1.0-demo"}, {"masm10-menu", "masm-1.0-demo"},
     {"masm20-typing", "masm-2.0"},     {"masm20-edited", "masm-2.0"},      {"masm20-menu", "masm-2.0"},
     {"masm30-typing", "masm-3.0"},     {"masm30-edited", "masm-3.0"},      {"masm30-menu", "masm-3.0"},
     {"masm13-typing", "masm-1.1"},     {"masm13-edited", "masm-1.1"},      {"masm13-menu", "masm-1.1"},

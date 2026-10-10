@@ -110,6 +110,8 @@ struct GapBufferParams
     /// MASM 2.0 / 3.0: while the flag is set the cursor line is out of the text altogether, as text in the line buffer;
     /// the text after it starts at the address this word holds (0 = MASM 1.x's record before the gap end)
     uint16_t nextLineAt = 0;
+    /// MASM 1.0 demo: in the editor the cursor line's record [n] body [n] starts at the gap start (1.1: ends at the gap end)
+    bool recordAtGapStart = false;
     /// Bytes of the file SAVE fills with the editor's state (MASM 3.0: the cursor line in its header), not in RAM
     uint16_t editorStateAt = 0;
     uint16_t editorStateLength = 0;

@@ -12,6 +12,7 @@ save the text itself and keep the file. The synchronizer's reader must give that
     sync-dumps.py zasm2 <disk> <out-dir> --boot ZXASM2.4 --source a2.4_p --big a2.4_1 --tag zasm24
                                                                  # ZX-ASM 2.4 / 2.5 (ZXASM2.5) / 2.6 (boot): plain text, type C
     sync-dumps.py masm <disk with t1.a> <out-dir> --boot m2 --source t1 --menu-save --tag masm20   # MASM 2.0 (3.0: TSM)
+    sync-dumps.py masmdemo <SpFon_15.Trd> <out-dir> --source T1 --tag masm10   # MASM 1.0 demo: the text typed in
     sync-dumps.py xas <disk-with-PROBE.X> <out-dir> --boot NAME --list-keys right[,down...] --tag TAG
                                                                  # XAS: TAG-typing, TAG-edited (the text at #C000)
     sync-dumps.py storm <disk-with-NAME.C> <out-dir> --boot NAME --source NAME --tag TAG
@@ -344,6 +345,50 @@ def masm(emu, args):
     dump(emu, args.out, f'{args.tag}-menu', pages, f'{args.source}.a', edited, {'editor': False, 'typing': False})
 
 
+def masmdemo(emu, args):
+    """MASM 1.0 demo (Spectrofon #15): it loads no file, so the text is typed in; EXT Q to the menu, S saves under a
+    name set with N first. The edited and menu cases share the file saved from the menu; the typing case (a line changed, not left)
+    keeps that file too"""
+    emu.insert_disk(args.disk)
+    emu.run_trdos(args.boot or 'MASMdemo', wait=8)
+    emu.tap('space')                           # past the title
+    time.sleep(1)
+    emu.tap('e', 8)
+    time.sleep(1.5)
+    for line in ('label ld a,b', ' nop', ' ret', 'zz defb 1,2,3', ' jp label'):
+        emu.type(line)
+        emu.tap('enter')
+    emu.tap('up')
+    emu.tap('up')
+    time.sleep(1)
+    pages = [0, 2, 5]
+    name = f'{args.source}.a'
+    dump(emu, args.out, f'{args.tag}-edited', pages, name, None, {'editor': True, 'typing': False})
+    emu.post('/keyboard/combo', {'keys': ['caps', 'symbol'], 'frames': 4})   # EXT
+    time.sleep(0.5)
+    emu.tap('q')
+    time.sleep(1)
+    dump(emu, args.out, f'{args.tag}-menu', pages, name, None, {'editor': False, 'typing': False})
+    emu.tap('n')                               # New name: Save has no name to use yet
+    time.sleep(1.5)
+    emu.type(args.source.lower())              # caps on: lower case arrives as capitals (--source T1)
+    emu.tap('enter')
+    time.sleep(1)
+    emu.tap('s')
+    time.sleep(4)
+    written = saved(emu, args.source, 'a')
+    tail = saved_sectors(emu, args.source, 'a')[len(written):len(written) + 1]
+    if tail != b'\xff':
+        raise SystemExit(f'{args.source}.a: no FF after its {len(written)} bytes')
+    written += tail                            # the demo's catalog length does not count the FF it writes
+    finish(args.out, f'{args.tag}-edited', name, written)
+    finish(args.out, f'{args.tag}-menu', name, written)
+    emu.tap('e', 8)
+    time.sleep(1.5)
+    emu.type(' xy')                            # changes the cursor line, not left
+    dump(emu, args.out, f'{args.tag}-typing', pages, name, written, {'editor': True, 'typing': True})
+
+
 def tasm_other(emu, args):
     """TASM without a line count (4.0 ...): W names the work file (--as-typed: the keyboard is not inverted), E edits,
     Extend Q leaves the editor, S saves. A line being typed is not in the text; the edited case is taken after Enter
@@ -472,7 +517,7 @@ def tasm412(emu, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'tasm'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'masmdemo', 'tasm'])
     parser.add_argument('disk')
     parser.add_argument('out')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
@@ -497,25 +542,30 @@ def main():
     args = parser.parse_args()
     args.disk = os.path.abspath(args.disk)
     emu = Emulator(port=args.port, model='PENTAGON', ram_size=args.ram)
-    if args.assembler == 'tasm412':
-        tasm412(emu, args)
-    elif args.assembler == 'alasm':
-        alasm(emu, args, 'other')
-    elif args.assembler == 'zasm2':
-        zasm2(emu, args)
-    elif args.assembler == 'xas':
-        xas(emu, args)
-    elif args.assembler == 'storm':
-        storm(emu, args)
-    elif args.assembler == 'zasm':
-        zasm(emu, args)
-    elif args.assembler == 'masm':
-        masm(emu, args)
-    elif args.assembler == 'tasm':
-        tasm_other(emu, args)
-    else:
-        alasm(emu, args, args.assembler[5:])
-    emu.stop_recording()
+    try:
+        if args.assembler == 'tasm412':
+            tasm412(emu, args)
+        elif args.assembler == 'alasm':
+            alasm(emu, args, 'other')
+        elif args.assembler == 'zasm2':
+            zasm2(emu, args)
+        elif args.assembler == 'xas':
+            xas(emu, args)
+        elif args.assembler == 'storm':
+            storm(emu, args)
+        elif args.assembler == 'zasm':
+            zasm(emu, args)
+        elif args.assembler == 'masm':
+            masm(emu, args)
+        elif args.assembler == 'masmdemo':
+            masmdemo(emu, args)
+        elif args.assembler == 'tasm':
+            tasm_other(emu, args)
+        else:
+            alasm(emu, args, args.assembler[5:])
+        emu.stop_recording()
+    finally:
+        emu._request('DELETE', emu.base)   # the instance this run created
     return 0
 
 

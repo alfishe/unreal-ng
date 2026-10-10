@@ -170,7 +170,8 @@ phase; master only after the owner's review.
       - [x] ZAsm "several texts at once": not so (2026-10-10): one text buffer, the rest of the memory is a RAM disk; the fixed page 30 holds on a Pentagon 1024 too (4.20 checked); 3.2x itself locks a Pentagon 1024 to 128K through `#EFF7` (§7.9)
       - [x] ZX-ASM 2.4 / 2.5 / 2.6 (2026-10-10): plain text, the table at load address + 3, the upper part in page 0 (§7.9)
       - [x] MASM 2.0 / 3.0 (2026-10-10): the gap buffer read from the operands of their gap-closing routine; the typed line from the line buffer (§7.12)
-      - [ ] MASM 1.0 demo, TASM 3.5 / 2.0
+      - [x] MASM 1.0 demo (2026-10-10): 1.1's gap buffer from `#913A`, the cursor record at the gap start (§7.12)
+      - [ ] TASM 3.5 / 2.0
     - [ ] Y4 48K assemblers: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):
