@@ -651,6 +651,28 @@ SyncDescriptor Gens(const std::string& id, const std::string& title, Signature i
     return d;
 }
 
+/// ZEUS (asm-synchronizer.md §7.14): the text where "o" put it, records [number] tokens 00, then FF FF; the start
+/// word and, after it, the end word (the address of the last FF). 1983, 1.1 and GG keep them at #FD00, v7.E at #FAAB
+SyncDescriptor Zeus(const std::string& id, const std::string& title, const std::string& codecVersion, uint16_t signatureAt,
+                    const char* signature, uint16_t startAt, const std::string& extension)
+{
+    SyncDescriptor d;
+    d.id = id;
+    d.title = title;
+    d.codec = "zeus";
+    d.version = codecVersion;
+    d.extension = extension;
+    d.identify = {{signatureAt, std::string(signature, 24)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.startAt = startAt;
+    d.linear.endAt = static_cast<uint16_t>(startAt + 2);
+    d.linear.end = std::string("\xFF", 1);
+    d.linear.upperPage = 0;
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 /// ZX-ASM 2.4 / 2.5 / 2.6 (asm-synchronizer.md §7.9): plain text (blank runs only) in one buffer, the start word at
 /// the program's load address + 3, the end word after it; the part above #C000 in RAM page 0 (the 48K memory). 2.6
 /// keeps its ";*" line in the buffer and saves it as text
@@ -809,6 +831,14 @@ const std::vector<SyncDescriptor>& Descriptors()
                      "\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF\x72\x73\x74\x75\x66\x68\x63\x7E\x7B\x7D\x5C\x79", 0x68FB),
         Zxasm310(),
         Zxasm30(),
+        Zeus("zeus-1983", "ZEUS 1983 (Crystal)", "1983", 0xE028,
+             "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x20\x20\x20\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C"),
+        Zeus("zeus-1.1", "ZEUS 1.1 beta (PHT)", "pht", 0xE020,
+             "\x5C\x3E\xF7\x21\x6A\x5C\xA6\x77\xCD\x27\xF2\x0F\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C"),
+        Zeus("zeus-gg", "ZEUS (GG, B-disk)", "gg", 0xE028,
+             "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x5A\x45\x55\x53\x20\x77\x69\x74\x68\x20\x42\x2D\x64\x69\x73", 0xFD00, "C"),
+        Zeus("zeus-7e", "ZEUS v7.E (ZKSoft)", "pht", 0xE020,
+             "\x5C\x3E\xF7\x21\x6A\x5C\xA6\x77\xCD\x27\xF2\x0F\x00\x18\x1B\xCD\xC0\xDA\xDA\x12\xE1\xC3\xC5\xE0", 0xFAAB, "Z"),
         Gens("gens-4", "GENS4 (HiSoft Devpac 4, tape, at 26000)", {0x88F0, "Copyright (C) HiSoft 1987"}, 0x67A8, 0x65C6),
         Gens("gens-3m21", "GENS3M21 (HiSoft Devpac 3, tape, at 49000)", {0xE001, "HISOFT GENS3M2 ASSEMBLER"}, 0xDE54, 0xBF9E),
         Gens("gens-4.3t", "GENS 4.3t (Aysoft, TR-DOS)", {0x8A9F, "BETA DISK VERSION 4.3t"}, 0x689C, 0x61FB),

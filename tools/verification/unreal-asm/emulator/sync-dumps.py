@@ -14,6 +14,7 @@ save the text itself and keep the file. The synchronizer's reader must give that
     sync-dumps.py tasm <disk with PRINTHL.C> <out-dir> --boot TASM128 --source PRINTHL --type C --tag tasm20   # TASM 2.0
     sync-dumps.py gens <disk with TEST.A> <out-dir> --boot GENS4tf --source TEST --type A --tag gens43t   # GENS 4.3t
     sync-dumps.py genstape <DEVPAC_4.TAP> <out-dir> --source t.gens --tag gens4 --model 48K    # GENS4 (GENS3: --at 25444 --code-length 8355)
+    sync-dumps.py zeus <ZEUS.TAP | zeus.$c | ZEUS_GG.SCL | ZEUS72ZK.SCL> <out-dir> --build 1983 --model 48K --source z.bin --tag zeus1983
     sync-dumps.py masm <disk with t1.a> <out-dir> --boot m2 --source t1 --menu-save --tag masm20   # MASM 2.0 (3.0: TSM)
     sync-dumps.py masmdemo <SpFon_15.Trd> <out-dir> --source T1 --tag masm10   # MASM 1.0 demo: the text typed in
     sync-dumps.py xas <disk-with-PROBE.X> <out-dir> --boot NAME --list-keys right[,down...] --tag TAG
@@ -466,6 +467,50 @@ def genstape(emu, args):
     dump(emu, args.out, f'{args.tag}-typing', pages, 'SOURCE.A', text, {'editor': True, 'typing': True})
 
 
+def zeus(emu, args):
+    """ZEUS (--build 1983 | 1.1 | gg | 7e): started as assemble-in-emulator.py does, the source (a ZEUS file, --source)
+    written at 32768 and made current with "o 32768"; the loaded case, then a line typed at the prompt (not entered)"""
+    source = open(args.source, 'rb').read()
+    if args.build in ('7e', 'gg'):
+        emu.insert_disk(args.disk)
+        emu.run_trdos('ZEUSv7.E' if args.build == '7e' else 'ZEUS', wait=10)
+    else:
+        emu.post('/reset')
+        time.sleep(3)
+        if args.build == '1.1':
+            for _ in range(3):                 # 48 BASIC
+                emu.tap('down')
+            emu.tap('enter')
+            time.sleep(2)
+            code = open(args.disk, 'rb').read()[17:]
+        else:
+            data = open(args.disk, 'rb').read()
+            at, header, code = 0, False, b''
+            while at + 2 <= len(data):
+                n = data[at] | data[at + 1] << 8
+                block = data[at + 2:at + 2 + n]
+                at += 2 + n
+                if block and block[0] == 0 and block[1] == 3:
+                    header = True
+                elif block and block[0] == 0xFF and header:
+                    code = block[1:-1]
+                    break
+        emu.write(57344, list(code))
+        emu.post('/basic/run', {'command': 'RANDOMIZE USR 57344'})
+        time.sleep(5)
+    emu.post('/keyboard/combo', {'keys': ['cs', '2'], 'frames': 6})   # CAPS LOCK: ZEUS takes capitals
+    emu.idle()
+    time.sleep(0.5)
+    emu.write(32768, list(source))
+    emu.type('o 32768')
+    emu.tap('enter')
+    time.sleep(1)
+    pages = [0, 2, 5]
+    dump(emu, args.out, f'{args.tag}-loaded', pages, 'SOURCE.Z', source, {'editor': True, 'typing': False})
+    emu.type('25 NOP')
+    dump(emu, args.out, f'{args.tag}-typing', pages, 'SOURCE.Z', source, {'editor': True, 'typing': True})
+
+
 def tasm_other(emu, args):
     """TASM without a line count (4.0 ...): W names the work file (--as-typed: the keyboard is not inverted), E edits,
     Extend Q leaves the editor, S saves. A line being typed is not in the text; the edited case is taken after Enter
@@ -595,7 +640,7 @@ def tasm412(emu, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'masmdemo', 'tasm', 'gens', 'genstape'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'masmdemo', 'tasm', 'gens', 'genstape', 'zeus'])
     parser.add_argument('disk')
     parser.add_argument('out')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
@@ -608,6 +653,7 @@ def main():
     parser.add_argument('--big', help='zasm: a long text (over #C000) for a loaded case')
     parser.add_argument('--big-disk', help='zasm: the disk for the long text (default: the same)')
     parser.add_argument('--big-type', help='zasm: the long text\'s TR-DOS type (default: --type)')
+    parser.add_argument('--build', default='1983', help='zeus: 1983 | 1.1 | gg | 7e')
     parser.add_argument('--at', type=int, default=26000, help='genstape: where the code goes')
     parser.add_argument('--code-length', type=int, default=10880, help='genstape: the code block\'s length')
     parser.add_argument('--save-as', default='SAVED', help='gens: the name P saves the edited text under')
@@ -639,6 +685,8 @@ def main():
             zasm(emu, args)
         elif args.assembler == 'masm':
             masm(emu, args)
+        elif args.assembler == 'zeus':
+            zeus(emu, args)
         elif args.assembler == 'genstape':
             genstape(emu, args)
         elif args.assembler == 'gens':

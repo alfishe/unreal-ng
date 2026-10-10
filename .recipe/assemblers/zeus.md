@@ -40,6 +40,10 @@ delimiter, `:` and `;` inside are text, no closing delimiter runs to the end of 
 `DISP d` is an offset (after `ORG 30000` / `DISP 10000` the code goes to 40000 and runs at 30000, labels and `$` are
 30000-based; a later `ORG` keeps the offset; `DISP 0` ends it); `ENT` marks the entry point for `X` and makes no code.
 
+The text in memory: where `o` put it (`o 32768` in the host tools), records `[number lo hi] tokens 00`, then
+`FF FF`. ZEUS 1983, 1.1 and GG keep the start at `#FD00` and the address of the last `FF` at `#FD02`; v7.E at
+`#FAAB` / `#FAAD`. A line typed at the prompt is not in the text until Enter. The asm-synchronizer reads it live
+(descriptors `zeus-1983`, `zeus-1.1`, `zeus-gg`, `zeus-7e`; asm-synchronizer.md §7.14).
 ## Memory
 
 ZEUS 1983 / 1.1 / GG run at 57344-65535 (v7.E's help: ZEUS at 56000, its label buffer below 55999). The source
