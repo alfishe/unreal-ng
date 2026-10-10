@@ -126,7 +126,13 @@ TimeTravelController::~TimeTravelController()
         _context->ttdPortReads = nullptr;
     if (_context && _context->ttdPortWrites == &_engine->BusWritesMutable())
         _context->ttdPortWrites = nullptr;
-
+    // SyncMediaReadJournal bound these: the media manager and the CPU outlive this controller (Emulator::Release)
+    if (_context && _context->pMediaManager && _context->pMediaManager->GetReadJournal() == &_mediaReads)
+        _context->pMediaManager->SetReadJournal(nullptr);
+    if (_context && _context->ttdVectors &&
+        (_context->ttdVectors == &_engine->BusVectors() ||
+         (_mediaReads.engine && _context->ttdVectors == &_mediaReads.engine->BusVectors())))
+        _context->ttdVectors = nullptr;
 }
 
 // ---------------------------------------------------------------------------
