@@ -147,6 +147,11 @@ a fixed RAM page. Words just before the start word follow the cursor and the scr
 | 4.x64 | `#6929` / `#692B` (page 5) | `#8201` | page 30 | the same |
 | 4.20 | `#68FB` / `#68FD` (page 5) | `#8201` | page 30 | the same |
 
+There is one text buffer: ZAsm takes the last 128K of the memory it addresses, leaves the first 128K to the user and
+makes a RAM disk of the rest (3.2x ReadMe; the RAM disk is shared with Honey Commander). The versions page memory the
+Pentagon 512 way (`#7FFD` bits 6-7), so on a `PENTAGON` with `ram_size: 1024` the upper part is still in page 30 (4.20
+checked).
+
 COMMAND `2` asks for a name, `3` loads, `S` searches. The asm-synchronizer reads the buffer without a save
 ([asm-sources.md](../analysis/asm-sources.md#the-source-an-assembler-holds-in-ram-asm-synchronizer); descriptors
 `zasm-3.0` ... `zasm-4.20`, design in asm-synchronizer.md §7.9). Only the text being edited is read: 3.2x and later
@@ -168,6 +173,9 @@ curl -s "$BASE/emulator/$EMU_ID/memory/page/ram/1?offset=0&length=16384" | jq '.
   drive](#start-and-the-default-drive)); every disk operation of a fresh ZAsm asks for D, answer A each time or save
   the setup with drive A. 3.3.02 asks once per overlay file even at its start.
 - **`#8000` is ZAsm's own code** while it runs: the user's bytes are in RAM page 1.
+- **Pentagon 1024**: `run_trdos`'s menu keys land in 48 BASIC (the 1024K menu lists other items): reset, then
+  `RANDOMIZE USR 15616` and `RUN "boot"`. 4.20 runs; **3.2x does not**: it writes `#EFF7` = `#04` after its memory
+  test, bit 2 = 1 locks the machine to 128K (as on the real board, Xpeccy and ZXMAK2) and it resets. Use 512K.
 - **More than 128K for 3.2x and later** (3.2x ReadMe: ZAsm takes the last 128K of the memory): on a 128K machine they
   hang on their picture (red border). Create a `PENTAGON` with 512K (`emulator_manage create` with `ram_size: 512`,
   `assemble-in-emulator.py zasm315 --ram 512`).

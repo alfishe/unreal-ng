@@ -167,7 +167,8 @@ phase; master only after the owner's review.
       - [x] ZAsm 3.3.51, 3.3.Final, 3.80.4, 4.20 (2026-10-09): 3.2x's layout, each with its own table (§7.9)
       - [x] ZAsm 3.3.02 (2026-10-09): traced: its default drive is D, the dialog's A covers one file; two answers A reach the menu (§7.9)
       - [x] ZAsm 3.4, x64.1, 4.0x8, 4.x64 (2026-10-10): the same layout, each with its own table (§7.9)
-      - [ ] ZAsm: several texts at once (3.2x and later), ZX-ASM 2.x, MASM 1.0 demo / 2.0 / 3.0, TASM 3.5 / 2.0
+      - [x] ZAsm "several texts at once": not so (2026-10-10): one text buffer, the rest of the memory is a RAM disk; the fixed page 30 holds on a Pentagon 1024 too (4.20 checked); 3.2x itself locks a Pentagon 1024 to 128K through `#EFF7` (§7.9)
+      - [ ] ZX-ASM 2.x, MASM 1.0 demo / 2.0 / 3.0, TASM 3.5 / 2.0
     - [ ] Y4 48K assemblers: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):
