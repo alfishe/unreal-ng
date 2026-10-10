@@ -229,6 +229,14 @@ TEST(Dialects_Test, DsWithAPatternRepeatsIt)
     EXPECT_EQ(ToSjasmplus("        DS 4,#AA,#55"), (std::vector<std::string>{"DUP 4", "DB #AA,#55", "EDUP"}));
 }
 
+TEST(Dialects_Test, DsOfANegativeCountFillsToTheEndOfMemory)
+{
+    // The Link's THELINK.asm: DS -$ after a picture zeroes the page to #FFFF; ALASM's count is a 16-bit word, sjasmplus'
+    // negative DS would move $ back
+    EXPECT_EQ(ToSjasmplus("        DS -$"), (std::vector<std::string>{"DS (-$&#FFFF)"}));
+    EXPECT_EQ(ToSjasmplus("        DS 10"), (std::vector<std::string>{"DS 10"}));
+}
+
 TEST(Dialects_Test, AssembleOnceMarksInColumnZeroAreAssembled)
 {
     // ALASM 5.09 assembled this to 3E 01 06 02 16 04 04 60 C9 (LBL = #6004): "+" / "-" in column 0 mark a line it

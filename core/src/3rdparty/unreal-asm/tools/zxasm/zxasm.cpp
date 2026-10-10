@@ -14,6 +14,9 @@
 //                                                   cross assembler's: ASM80): its files are named in lower case without
 //                                                   extension (INCLUDE names them so), the other files are copied for INCBIN;
 //                                                   --codec takes the files of the usual extensions detection is not sure of
+//   zxasm convert  ... --out-codepage cp             write the converted sources in that code page (utf-8: readable
+//                                                   comments); a line whose code, not its comment, has a non-ASCII byte
+//                                                   is warned about, since its string would build other bytes
 //   zxasm check    <file> [--codec id] [--version v] [--show]  decode, encode back: byte-exact? how many lines the
 //                                                   canonical tokenizer alone reproduces (--show lists the others)
 //
@@ -49,7 +52,7 @@ int Usage()
                  "       decode <file> [-o out] [--codec id] [--version v] [--codepage cp] |\n"
                  "       encode <file> --codec id [--version v] [-o out] [--codepage cp] [--line-end lf|crlf|cr] |\n"
                  "       check <file> [--codec id] [--version v] |\n"
-                 "       convert <file|dir|image> --to dialect [--from dialect] [--z80n] [-o out]   (--z80n: ZX Spectrum Next sources)\n"
+                 "       convert <file|dir|image> --to dialect [--from dialect] [--z80n] [--out-codepage cp] [-o out]   (--z80n: ZX Spectrum Next sources)\n"
                  "       files <image.trd|.tap|.tzx> (decode/detect/encoding/check take --file NAME[.T] for a file in an image)\n";
     return 2;
 }
@@ -86,7 +89,7 @@ void PrintDiagnostics(const Diagnostics& diagnostics)
 
 struct Args
 {
-    std::string command, file, output, codec, codePage, lineEnd, inner, version, to, from;
+    std::string command, file, output, codec, codePage, outCodePage, lineEnd, inner, version, to, from;
     bool show = false;
     bool z80n = false;   // convert: the sources are for the ZX Spectrum Next (sjasmplus --zxnext)
 };
@@ -117,13 +120,14 @@ bool Parse(int argc, char** argv, Args& args)
         }
         if (a == "-o" ? !value(args.output) : a == "--codec" ? !value(args.codec)
                                           : a == "--codepage" ? !value(args.codePage)
+                                          : a == "--out-codepage" ? !value(args.outCodePage)
                                           : a == "--line-end" ? !value(args.lineEnd)
                                           : a == "--file" ? !value(args.inner)
                                           : a == "--version" ? !value(args.version)
                                           : a == "--to" ? !value(args.to)
                                           : a == "--from" ? !value(args.from) : false)
             return false;
-        if (a != "-o" && a != "--codec" && a != "--codepage" && a != "--line-end" && a != "--file" && a != "--version" && a != "--to" && a != "--from")
+        if (a != "-o" && a != "--codec" && a != "--codepage" && a != "--out-codepage" && a != "--line-end" && a != "--file" && a != "--version" && a != "--to" && a != "--from")
         {
             if (!args.file.empty())
                 return false;
@@ -290,6 +294,55 @@ std::string HostName(std::string name)
     return name;
 }
 
+/// convert --out-codepage cp: the encode options of the converted sources (none given: each keeps its own code page)
+bool OutputEncodeOptions(const Args& args, EncodeOptions& options)
+{
+    if (args.outCodePage.empty())
+        return true;
+    encoding::CodePage parsed;
+    if (!encoding::ParseCodePage(args.outCodePage, parsed))
+    {
+        std::cerr << "zxasm: unknown code page " << args.outCodePage << "\n";
+        return false;
+    }
+    options.codePage = parsed;
+    return true;
+}
+
+/// A source written in another code page: a non-ASCII byte in a line's code (a string, a character) builds other
+/// bytes than the original; in a comment or in a DISPLAY message (the assembler's console) it does not matter
+void WarnCodeNotAscii(const ProjectFile& file, const EncodeOptions& options)
+{
+    if (!options.codePage || *options.codePage == file.document.codePage)
+        return;
+    for (size_t n = 0; n < file.document.lines.size(); ++n)
+    {
+        const std::string& text = file.document.lines[n].text;
+        const size_t first = text.find_first_not_of(" \t");
+        if (first != std::string::npos && Lower(text.substr(first, 8)) == "display ")
+            continue;
+        char quote = 0;
+        for (size_t k = 0; k < text.size(); ++k)
+        {
+            const char c = text[k];
+            const bool shadowAf = c == '\'' && k >= 2 && std::toupper(static_cast<unsigned char>(text[k - 1])) == 'F' &&
+                                  std::toupper(static_cast<unsigned char>(text[k - 2])) == 'A';   // EX AF,AF'
+            if (shadowAf && !quote)
+                continue;
+            if (quote ? c == quote : (c == '"' || c == '\''))
+                quote = quote ? 0 : c;
+            else if (!quote && c == ';')
+                break;
+            if (static_cast<unsigned char>(c) >= 0x80)
+            {
+                std::cerr << "warning line " << n + 1 << ": " << file.name << ": a non-ASCII character outside a comment changes its bytes in "
+                          << encoding::CodePageName(*options.codePage) << "\n";
+                break;
+            }
+        }
+    }
+}
+
 /// zxasm convert image.trd --to dialect -o dir
 int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const CodecRegistry& registry)
 {
@@ -300,6 +353,9 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
         std::cerr << "zxasm: " << (error.empty() ? "convert of an image needs --to and -o <directory>" : error) << "\n";
         return 2;
     }
+    EncodeOptions encodeOptions;
+    if (!OutputEncodeOptions(args, encodeOptions))
+        return 2;
     // The output directory is made when missing (a UTF-8 name: std::u8string keeps it intact on Windows)
     std::error_code made;
     std::filesystem::create_directories(std::filesystem::path(std::u8string(args.output.begin(), args.output.end())), made);
@@ -394,8 +450,9 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
                 line.text.pop_back();
         }
         std::vector<uint8_t> out;
+        WarnCodeNotAscii(f, encodeOptions);
         if (target)
-            out = target->Encode(f.document, {}).bytes;
+            out = target->Encode(f.document, encodeOptions).bytes;
         else
         {
             const std::string text = f.document.Text() + "\n";
@@ -439,6 +496,9 @@ int ConvertDirectory(const Args& args, const CodecRegistry& registry)
         std::cerr << "zxasm: convert of a directory needs --to and -o <directory>\n";
         return 2;
     }
+    EncodeOptions encodeOptions;
+    if (!OutputEncodeOptions(args, encodeOptions))
+        return 2;
     const ISourceCodec* forced = args.codec.empty() ? nullptr : registry.Find(args.codec);
     if (!args.codec.empty() && !forced)
     {
@@ -503,7 +563,8 @@ int ConvertDirectory(const Args& args, const CodecRegistry& registry)
     const ISourceCodec* target = registry.Find(args.to) ? registry.Find(args.to) : registry.Find("text");
     for (const ProjectFile& f : converted.files)
     {
-        if (!WriteFile(args.output + "/" + f.name + ".asm", target->Encode(f.document, {}).bytes))
+        WarnCodeNotAscii(f, encodeOptions);
+        if (!WriteFile(args.output + "/" + f.name + ".asm", target->Encode(f.document, encodeOptions).bytes))
         {
             std::cerr << "zxasm: cannot write " << args.output << "/" << f.name << ".asm\n";
             return 1;
@@ -631,10 +692,15 @@ int main(int argc, char** argv)
         convertOptions.z80n = args.z80n;
         const ConvertResult converted = Convert(decoded.document, args.to, convertOptions);
         PrintDiagnostics(converted.diagnostics);
-        // Written with the target's text codec when there is one (sjasmplus keeps the Spectrum code page for strings)
+        EncodeOptions encodeOptions;
+        if (!OutputEncodeOptions(args, encodeOptions))
+            return 2;
+        WarnCodeNotAscii({decoded.document.name, converted.document}, encodeOptions);
+        // Written with the target's text codec when there is one (sjasmplus keeps the Spectrum code page for strings,
+        // unless --out-codepage says otherwise)
         std::vector<uint8_t> out;
         if (const ISourceCodec* target = registry.Find(args.to) ? registry.Find(args.to) : registry.Find("text"))
-            out = target->Encode(converted.document, {}).bytes;
+            out = target->Encode(converted.document, encodeOptions).bytes;
         else
         {
             const std::string text = converted.document.Text() + "\n";

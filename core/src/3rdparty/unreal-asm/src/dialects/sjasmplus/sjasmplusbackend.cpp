@@ -528,7 +528,18 @@ struct Writer
                     return {"DUP " + Print(s.args[0]), "DB " + Operands(s.operands), "EDUP"};
                 }
                 if (s.args.size() <= 2)
+                {
+                    // A 16-bit word count: ALASM's DS -$ fills up to #10000 (the rest of memory), sjasmplus' would move
+                    // $ back
+                    if (wordBits == 16 && !s.args.empty() && s.args[0].kind == Expr::Kind::Unary && s.args[0].op == Op::Negate)
+                    {
+                        std::string out = "DS " + Print(Masked16(s.args[0]));
+                        for (size_t k = 1; k < s.args.size(); ++k)
+                            out += "," + Print(s.args[k]);
+                        return {out};
+                    }
                     return {"DS " + args()};
+                }
                 return {"DUP " + Print(s.args[0]), "DB " + args(1), "EDUP"};
             case ir::DirectiveKind::Include:
             {
