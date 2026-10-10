@@ -76,6 +76,7 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     rows, sheets = [], {}
     done = 0
+    original_baks = {os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs if f.lower().endswith('.bak')}
     position = None  # the Browser's directory, as names from the card root; None = unknown (resync from the root)
     for n, t in enumerate(titles):
         if n < args.start or done >= args.limit:
@@ -91,6 +92,14 @@ def main():
             rows.append((n, category, t['title'], 'MISSING', '', ''))
             continue
         done += 1
+        # NextBASIC saves a .bak beside a program it loads; one that was not on the card at the start would shift the Browser's
+        # listing against the host's (the cursor is reached by counting when a name has no unique letters-and-digits prefix), so the
+        # ones the run created are removed (the ones that came with a title are kept)
+        for dirpath, _, files in os.walk(os.path.dirname(host)):
+            for f in files:
+                full = os.path.join(dirpath, f)
+                if f.lower().endswith('.bak') and full not in original_baks:
+                    os.remove(full)
         machine.call('/%s/reset' % machine.id, {})
         machine.idle(2.5)
         machine.tap('space')
