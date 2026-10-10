@@ -4,9 +4,20 @@
 
 void NextDma::Reset()
 {
-    const Bus bus = _bus;  // the host's wiring stays
-    *this = NextDma{};
-    _bus = bus;
+    // dma.vhd 182-216: the programmed addresses, the block length, the direction and the port types are not reset
+    _seq = Seq::Idle;
+    _portATiming = _portBTiming = 1;
+    _prescaler = 0;
+    _mode = 1;
+    _ceWait = false;
+    _autoRestart = false;
+    _readMask = 0x7F;
+    _transferring = _waiting = _finishPending = false;
+    _atLeastOne = _endOfBlock = false;
+    _counter = 0;
+    _readSeq = 0;
+    _nextByteAt = 0;
+    _z80Compat = false;
 }
 
 void NextDma::Write(uint8_t value, bool z80Compatible)
@@ -163,6 +174,29 @@ void NextDma::Command(uint8_t value)
     }
 }
 
+/// The end of a block (dma.vhd FINISH_DMA): the end-of-block flag is set; an auto-restart reloads the addresses and the counter WITHOUT
+/// clearing the flag (only LOAD, CONTINUE, 0x8B and reset do), else the DMA stops
+void NextDma::FinishBlock()
+{
+    _endOfBlock = true;
+    if (_autoRestart)
+    {
+        if (_aToB)
+        {
+            _src = _portAAddress;
+            _dst = _portBAddress;
+        }
+        else
+        {
+            _src = _portBAddress;
+            _dst = _portAAddress;
+        }
+        _counter = _z80Compat ? 0xFFFF : 0;
+    }
+    else
+        _transferring = false;
+}
+
 void NextDma::Load()
 {
     _endOfBlock = false;
@@ -184,7 +218,7 @@ uint8_t NextDma::Read()
     uint8_t result = 0;
     switch (_readSeq)
     {
-        case 0: result = static_cast<uint8_t>((_endOfBlock ? 0x00 : 0x20) | 0x1A); break;  // bit 0 (a byte was moved) is never set by the core: 1A / 3A on the board
+        case 0: result = static_cast<uint8_t>((_endOfBlock ? 0x00 : 0x20) | 0x1A | ((_transferring && _atLeastOne) ? 1 : 0)); break;  // bit 0: a byte was moved while the DMA is not idle (a burst / prescaler wait; the board reads 1A / 3A after a block)
         case 1: result = _counter & 0xFF; break;
         case 2: result = _counter >> 8; break;
         case 3: result = (_aToB ? _src : _dst) & 0xFF; break;
@@ -220,6 +254,12 @@ unsigned NextDma::Run(unsigned maxBytes, uint64_t now28)
         if (now28 < _nextByteAt)
             return 0;
         _waiting = false;
+        if (_finishPending)  // the last byte's prescaler period is over: now the block ends (dma.vhd WRITE_4 checks the gate first)
+        {
+            _finishPending = false;
+            FinishBlock();
+            return 0;
+        }
     }
     const bool srcIo = _aToB ? _portAIsIo : _portBIsIo;
     const bool dstIo = _aToB ? _portBIsIo : _portAIsIo;
@@ -258,20 +298,18 @@ unsigned NextDma::Run(unsigned maxBytes, uint64_t now28)
             _dst++;
         else if (dstMode == 0)
             _dst--;
-        if (_counter >= _blockLength)
-        {
-            _endOfBlock = true;
-            if (_autoRestart)
-                Load();
-            else
-                _transferring = false;
-            break;
-        }
         if (_prescaler)
         {
-            // the wait between two bytes: prescaler * 32 clocks of 28 MHz (875 kHz steps)
+            // the wait after a byte: prescaler * 32 clocks of 28 MHz (875 kHz steps), also after the LAST byte of a block - the
+            // end-of-block flag, the stop and the auto-restart come after it
             _waiting = true;
             _nextByteAt = now28 + static_cast<uint64_t>(_prescaler) * 32;
+            _finishPending = _counter >= _blockLength;
+            break;
+        }
+        if (_counter >= _blockLength)
+        {
+            FinishBlock();
             break;
         }
         if (_mode == 2)

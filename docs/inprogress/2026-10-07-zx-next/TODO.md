@@ -197,3 +197,14 @@ Not relevant to us (CSpect UI / plugin API / esxDOS emulation / assembler / DeZo
 
 ## Open questions added in design
 Q12: which NMOS/CMOS behaviors the Next's T80-based CPU shows (design-cpu section 1). Q1-Q12: requirements.md section 6.
+
+## DMA / timing audit against the RTL (2026-10-09)
+
+Done: DMA last-byte prescaler wait, auto-restart keeps the end-of-block flag, continuous mode keeps the bus in the wait, reset
+(hard and soft) per the dma.vhd reset block, DMA cycles skip #6B/#0B, mode latch on reads, status bit 0, NR #CC/#CE read masks, DMA delay
+(NR #CC-#CE), SPI waits for DMA to #EB, CTC interrupts in the pulse mode, Pentagon INT pulse 36, line interrupt 128 T into the row.
+
+Open (arithmetic only, no board numbers): NEXTREG n,v has 6 MREQ cycles in the RTL (t80n_mcode.vhd 1668-1688; ours 4) - Changing8kBank
+ON would be ~61 lines, ours ~48; 28 MHz SRAM read wait (+1 clock per read, zxnext.vhd 3171-3181); INT pulse in CPU clocks (not base T) at
+turbo; CPU speed change applied at the next frame; NEXTREG write lands 3 T late; 60 Hz timing; NR03 timing decode (bit 3, lock, 101-111);
+NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.

@@ -32,7 +32,7 @@ inline bool NextTimingFor(uint8_t timing, NextTiming& out)
             out = {70908, 228, 1845, 32, 1, 126, 64, 136};
             return true;
         case 4:
-            out = {71680, 224, 71635, 32, 319, 439, 80, 128};
+            out = {71680, 224, 71635, 36, 319, 439, 80, 128};  // pulse_count_end: 36 for 128K and Pentagon, 32 for 48K and +3
             return true;
         default:
             return false;

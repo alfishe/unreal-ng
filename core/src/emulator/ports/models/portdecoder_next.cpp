@@ -24,6 +24,8 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
             _context->pScreen->UpdateScreen();
     });
     _interrupts = std::make_unique<NextInterruptSource>(_context);
+    _interrupts->ctcEnables = [this]() { return _ctc.InterruptEnables(); };
+    _interrupts->setCtcEnables = [this](uint8_t bits) { _ctc.SetInterruptEnables(bits); };
     _interrupts->onStacklessNmi = [this](bool on) {
         if (_engine)
             _engine->SetStacklessNmi(on, _interrupts.get());
@@ -216,7 +218,7 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
     }
     if (low == 0x6B || low == 0x0B)
     {
-        const uint8_t value = _dma.Read();
+        const uint8_t value = _dma.ReadAs(low == 0x0B);
         _lastPortDecoded = true;
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -383,8 +385,25 @@ void PortDecoder_Next::BindDma()
     NextDma::Bus bus;
     bus.readMemory = [this](uint16_t address) { return _context->pMemory->DirectReadFromZ80Memory(address); };
     bus.writeMemory = [this](uint16_t address, uint8_t value) { _context->pMemory->DirectWriteToZ80Memory(address, value); };
-    bus.readIo = [this](uint16_t port) { return DecodePortIn(port, 0); };
-    bus.writeIo = [this](uint16_t port, uint8_t value) { DecodePortOut(port, value, 0); };
+    // the DMA's own cycles do not reach its ports ("allow dma to program itself? no", zxnext.vhd port_dma_rd / port_dma_wr)
+    // dma_wait_n includes spi_wait_n (zxnext.vhd 1844): a byte to or from the SD card's data port waits until the card's 16 clocks passed
+    auto waitSpi = [this](uint8_t low) {
+        if (low != kPortSpiData)
+            return;
+        while (Now28() < _spiBusyUntil)
+            _context->pCore->GetZ80()->InsertWaitStates(1);
+    };
+    bus.readIo = [this, waitSpi](uint16_t port) {
+        const uint8_t low = static_cast<uint8_t>(port);
+        waitSpi(low);
+        return low == 0x6B || low == 0x0B ? uint8_t{0xFF} : DecodePortIn(port, 0);
+    };
+    bus.writeIo = [this, waitSpi](uint16_t port, uint8_t value) {
+        const uint8_t low = static_cast<uint8_t>(port);
+        waitSpi(low);
+        if (low != 0x6B && low != 0x0B)
+            DecodePortOut(port, value, 0);
+    };
     // the CPU is held: its clock runs on with every access of the transfer, so a port write lands at its own moment
     bus.advance = [this](unsigned clocks) { _context->pCore->GetZ80()->InsertWaitStates(static_cast<uint8_t>(clocks)); };
     _dma.SetBus(std::move(bus));
@@ -440,9 +459,26 @@ void PortDecoder_Next::StepDma()
 {
     if (!_dma.Active())
         return;
+    // im2_dma_delay: an interrupt the program chose in NR #CC-#CE (or an NMI with #CC bit 7) pending or in service holds the DMA off
+    if (_interrupts->DmaDelay(_divMmc->NmiHold() || _multiface->NmiHold()))
+        return;
     while (_dma.Active())
     {
-        if (_dma.Run(256, Now28()) == 0 || _dma.Waiting())
+        const unsigned moved = _dma.Run(256, Now28());
+        if (_dma.Waiting() && _dma.HoldsBus())
+        {
+            // continuous mode with a prescaler: the DMA keeps the bus through the wait - the CPU does not run
+            const uint64_t end = _dma.WaitEnd();
+            while (Now28() < end)
+            {
+                const double missing28 = static_cast<double>(end) - Now28();
+                const double perCpuClock = 8.0 / _ratio;  // 28 MHz clocks of one CPU clock
+                const unsigned clocks = static_cast<unsigned>(missing28 / perCpuClock) + 1;
+                _context->pCore->GetZ80()->InsertWaitStates(static_cast<uint8_t>(clocks > 255 ? 255 : clocks));
+            }
+            continue;
+        }
+        if (moved == 0 || _dma.Waiting())
             break;
     }
 }
@@ -498,6 +534,7 @@ void PortDecoder_Next::PerformReset(bool hard)
     state.p1FFD = 0x00;
     Mem().ResetMmu();
     _board->Reset(hard);  // config mode and the boot ROM first: the slot table follows them
+    _dma.Reset();         // zxnext.vhd: the DMA's reset_i is the hard or the soft reset
     Mem().ApplyClassicPaging(0, 0);
     _spiSelected = -1;
     if (_engine)

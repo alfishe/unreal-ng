@@ -36,6 +36,19 @@ public:
     /// An external pulse on a channel's CLK/TRG (the chain, or a test)
     void Trigger(unsigned channel, uint64_t now);
 
+    /// The channels' interrupt enables (control bit 7), one bit a channel: NR #C5 reads and writes them (zxnext.vhd ctc_int_en)
+    uint8_t InterruptEnables() const
+    {
+        uint8_t bits = 0;
+        for (unsigned i = 0; i < kChannels; i++)
+            bits |= static_cast<uint8_t>(((_ch[i].control & kInterrupt) ? 1 : 0) << i);
+        return bits;
+    }
+    void SetInterruptEnables(uint8_t bits)
+    {
+        for (unsigned i = 0; i < kChannels; i++)
+            _ch[i].control = static_cast<uint8_t>((_ch[i].control & ~kInterrupt) | (((bits >> i) & 1) ? kInterrupt : 0));
+    }
     uint8_t Control(unsigned channel) const { return _ch[channel].control; }
     uint16_t TimeConstant(unsigned channel) const { return _ch[channel].tc; }
     uint32_t Zeros(unsigned channel) const { return _ch[channel].zeros; }

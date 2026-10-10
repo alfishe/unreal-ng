@@ -24,6 +24,10 @@ class NextInterruptSource final : public IInterruptSource, public INmiReturnStor
 public:
     /// NR #C0 bit 3 changed (also at a reset: off): the engine switches the stackless NMI
     std::function<void(bool)> onStacklessNmi;
+    /// The CTC channels' own interrupt enables (control bit 7): they ARE the enables of the CTC sources, NR #C5 reads and writes them.
+    /// Not set (the controller alone, tests): NR #C5 keeps its own byte
+    std::function<uint8_t()> ctcEnables;
+    std::function<void(uint8_t)> setCtcEnables;
     void StoreNmiReturn(uint8_t low, uint8_t high) override
     {
         _nmiReturn[0] = low;
@@ -83,6 +87,11 @@ public:
     uint16_t InServiceMask() const { return _inService; }
     uint8_t VectorOf(Source source) const { return static_cast<uint8_t>((_control & 0xE0) | (static_cast<unsigned>(source) << 1)); }
 
+    /// zxnext.vhd im2_dma_delay: a source whose NR #CC / #CD / #CE bit is set is requested or in service (until its RETI), or an NMI is
+    /// on with NR #CC bit 7: the DMA gives the bus back at the next byte boundary and takes it again afterwards. Hardware IM2 mode only
+    /// (the device state machines are held in reset in the pulse mode)
+    bool DmaDelay(bool nmiActive) const;
+
     /// region <IInterruptSource>
     bool IsIntAsserted(uint32_t t) override;
     uint8_t AcknowledgeInterrupt(uint32_t t) override;
@@ -112,5 +121,8 @@ private:
     uint16_t _pending = 0;
     uint16_t _inService = 0;
     uint32_t _lastT = 0;
+    bool _pulseOn = false;       ///< pulse mode: a device request (CTC, UART) started an INT pulse
+    uint64_t _pulseFrame = 0;
+    uint32_t _pulseStart = 0;
     std::function<void()> _poller;
 };

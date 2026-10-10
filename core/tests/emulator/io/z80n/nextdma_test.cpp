@@ -146,3 +146,125 @@ TEST_F(NextDma_Test, DisableAndResetStopTheTransfer)
     Send({0xC3});
     EXPECT_FALSE(_dma.Active());
 }
+
+// ---- the audit of 2026-10-09 against dma.vhd (core 3.02.03), jnext, ZEsarUX and MAME ----
+
+// dma.vhd WRITE_4 checks the prescaler gate BEFORE the block counter: after the last byte the DMA still waits the whole period; the
+// end-of-block flag, the stop and the auto-restart come after it (so the byte spacing survives an auto-restart seam)
+TEST_F(NextDma_Test, TheLastBytesPrescalerPeriodIsWaitedBeforeTheBlockEnds)
+{
+    Send({0x7D, 0x00, 0x80, 0x02, 0x00});
+    Send({0x14});
+    Send({0x50, 0x20, 0x02});  // prescaler 2: 64 clocks of 28 MHz between bytes
+    Send({0xCD, 0x00, 0x90});
+    Send({0xCF, 0x87});
+    EXPECT_EQ(_dma.Run(256, 0), 1u);
+    EXPECT_EQ(_dma.Run(256, 64), 1u) << "the last byte";
+    EXPECT_TRUE(_dma.Active()) << "its period is still to be waited";
+    EXPECT_FALSE(_dma.EndOfBlock());
+    EXPECT_TRUE(_dma.Waiting());
+    EXPECT_EQ(_dma.Run(256, 127), 0u);
+    EXPECT_TRUE(_dma.Active());
+    EXPECT_EQ(_dma.Run(256, 128), 0u);
+    EXPECT_FALSE(_dma.Active()) << "the period is over: the block ends";
+    EXPECT_TRUE(_dma.EndOfBlock());
+}
+
+TEST_F(NextDma_Test, AutoRestartKeepsTheByteSpacingAcrossTheSeam)
+{
+    Send({0x7D, 0x00, 0x80, 0x01, 0x00});
+    Send({0x14});
+    Send({0x50, 0x20, 0x02});
+    Send({0xCD, 0x00, 0x90});
+    Send({0xA2});  // WR5: auto restart
+    Send({0xCF, 0x87});
+    EXPECT_EQ(_dma.Run(256, 0), 1u);
+    EXPECT_EQ(_dma.Run(256, 1), 0u);
+    EXPECT_EQ(_dma.Run(256, 63), 0u);
+    EXPECT_EQ(_dma.Run(256, 64), 0u) << "the seam is crossed";
+    EXPECT_EQ(_dma.Run(256, 64), 1u) << "the next pass's first byte";
+}
+
+// An auto-restart does not clear the end-of-block flag (only LOAD, CONTINUE, 0x8B and a reset do): the status reads 0x1A
+TEST_F(NextDma_Test, AutoRestartLeavesTheEndOfBlockFlagSet)
+{
+    Send({0x7D, 0x00, 0x80, 0x01, 0x00});
+    Send({0x14, 0x10});
+    Send({0xAD, 0x00, 0x90});
+    Send({0xA2});
+    Send({0xCF, 0x87});
+    EXPECT_EQ(_dma.Run(1, 0), 1u);
+    Send({0xBF});
+    EXPECT_EQ(_dma.Read(), 0x1B) << "the end-of-block bit (bit 5, active low) stays 0 = ended; bit 0: the running restart has moved a byte";
+}
+
+// Only the burst mode (WR4 bits 6:5 = 10) releases the bus while it waits; continuous mode keeps the CPU stopped through the wait
+TEST_F(NextDma_Test, OnlyBurstModeReleasesTheBusInThePrescalerWait)
+{
+    Send({0x7D, 0x00, 0x80, 0x04, 0x00});
+    Send({0x14});
+    Send({0x50, 0x20, 0x02});
+    Send({0xAD, 0x00, 0x90});  // continuous
+    Send({0xCF, 0x87});
+    EXPECT_EQ(_dma.Run(256, 0), 1u);
+    EXPECT_TRUE(_dma.Waiting());
+    EXPECT_TRUE(_dma.HoldsBus()) << "continuous: the CPU stays stopped";
+    EXPECT_EQ(_dma.WaitEnd(), 64u);
+    Send({0xCD});  // burst
+    EXPECT_FALSE(_dma.HoldsBus());
+}
+
+// A reset (hard or soft) puts back what the reset block of dma.vhd names and keeps the programmed addresses, length and direction
+TEST_F(NextDma_Test, ResetKeepsTheAddressesAndClearsTheRest)
+{
+    Send({0x7D, 0x34, 0x12, 0x20, 0x00});
+    Send({0x14});
+    Send({0x50, 0x20, 0x05});
+    Send({0xCD, 0x78, 0x56});
+    Send({0xA2});
+    Send({0xBB, 0x02});
+    Send({0xCF, 0x87});
+    ASSERT_TRUE(_dma.Active());
+    _dma.Reset();
+    EXPECT_FALSE(_dma.Active());
+    EXPECT_EQ(_dma.Prescaler(), 0);
+    EXPECT_EQ(_dma.Mode(), 1);
+    EXPECT_FALSE(_dma.AutoRestart());
+    EXPECT_EQ(_dma.BlockLength(), 0x20) << "the block length is not reset";
+    Send({0xCF});  // load: the addresses are still there
+    EXPECT_EQ(_dma.Source(), 0x1234);
+    EXPECT_EQ(_dma.Destination(), 0x5678);
+    EXPECT_EQ(_dma.Read(), 0x3A) << "the read sequence is back at the status (default mask #7F), the end-of-block flag clear";
+}
+
+// Status bit 0 ("at least one byte moved") reads 1 while the DMA is not idle after a byte, 0 once it has finished (the board reads 1A / 3A)
+TEST_F(NextDma_Test, StatusBitZeroIsSetBetweenTheBytesOfARunningBlock)
+{
+    Send({0x7D, 0x00, 0x80, 0x03, 0x00});
+    Send({0x14});
+    Send({0x50, 0x20, 0x02});
+    Send({0xCD, 0x00, 0x90});
+    Send({0xCF, 0x87});
+    EXPECT_EQ(_dma.Run(256, 0), 1u);
+    Send({0xBF});
+    EXPECT_EQ(_dma.Read(), 0x3B);
+    _dma.Run(256, 64);
+    _dma.Run(256, 128);
+    _dma.Run(256, 192);
+    _dma.Run(256, 256);
+    Send({0xBF});
+    EXPECT_FALSE(_dma.Active());
+    EXPECT_EQ(_dma.Read() & 1, 0);
+}
+
+// Any access of either port sets the zxn / Z80 mode latch: the auto-restart reload takes the mode of the LAST access
+TEST_F(NextDma_Test, AReadThroughEitherPortSetsTheModeLatch)
+{
+    Send({0x7D, 0x00, 0x80, 0x01, 0x00}, true);  // programmed through #0B
+    Send({0x14, 0x10}, true);
+    Send({0xAD, 0x00, 0x90}, true);
+    Send({0xA2, 0xCF, 0x87}, true);
+    _dma.ReadAs(false);  // a read through #6B: the latch is zxn again
+    _dma.Run(1, 0);      // the block ends, the auto-restart reloads
+    EXPECT_EQ(_dma.Counter(), 0) << "zxn mode counts from 0, not from #FFFF";
+}

@@ -54,6 +54,8 @@ bool NextInterruptSource::WriteNr(uint8_t reg, uint8_t value)
             return true;
         case kRegEnableCtc:
             _enableCtc = value;
+            if (setCtcEnables)
+                setCtcEnables(value);
             return true;
         case kRegEnableUart:
             _enableUart = value;
@@ -100,7 +102,7 @@ bool NextInterruptSource::ReadNr(uint8_t reg, uint8_t& value) const
             value = _enable0;
             return true;
         case kRegEnableCtc:
-            value = _enableCtc;
+            value = ctcEnables ? ctcEnables() : _enableCtc;
             return true;
         case kRegEnableUart:
             value = _enableUart;
@@ -116,9 +118,13 @@ bool NextInterruptSource::ReadNr(uint8_t reg, uint8_t& value) const
                                          (((_pending >> kUart0Tx) & 1) << 4) | (((_pending >> kUart1Tx) & 1) << 6));
             return true;
         case kRegDma0:
+            value = _dma[0] & 0x83;  // NMI, line, ULA
+            return true;
         case kRegDma0 + 1:
+            value = _dma[1];  // CTC 7-0
+            return true;
         case kRegDma2:
-            value = _dma[reg - kRegDma0];
+            value = _dma[2] & 0x77;  // UART1 TX, UART1 RX 5:4, UART0 TX, UART0 RX 1:0 (zxnext.vhd 6257-6263)
             return true;
         default:
             return false;
@@ -155,14 +161,55 @@ bool NextInterruptSource::Enabled(Source source) const
         case kUart1Tx:
             return (_enableUart & 0x40) != 0;
         default:
-            return source >= kCtc0 && source < kCtc0 + 8 && (_enableCtc & (1u << (source - kCtc0))) != 0;
+            if (source < kCtc0 || source >= kCtc0 + 8)
+                return false;
+            return ((ctcEnables ? ctcEnables() : _enableCtc) & (1u << (source - kCtc0))) != 0;
     }
 }
 
 void NextInterruptSource::Raise(Source source)
 {
-    if (HardwareMode() && Enabled(source))
+    if (!Enabled(source))
+        return;
+    if (HardwareMode())
+    {
         _pending |= static_cast<uint16_t>(1u << source);
+        return;
+    }
+    // im2_peripheral.vhd: with the hardware IM2 mode off every enabled request makes a pulse (the same 32 / 36 T the ULA's is);
+    // the vector is whatever the bus carries (#FF)
+    _pulseOn = true;
+    _pulseFrame = _context->emulatorState.frame_counter;
+    _pulseStart = BaseT(_context->pCore->GetZ80()->t) % _timing.frame;
+}
+
+bool NextInterruptSource::DmaDelay(bool nmiActive) const
+{
+    if (nmiActive && (_dma[0] & 0x80))
+        return true;
+    if (!HardwareMode())
+        return false;
+    uint16_t mask = 0;
+    if (_dma[0] & 0x01)
+        mask |= 1u << kUla;
+    if (_dma[0] & 0x02)
+        mask |= 1u << kLine;
+    for (unsigned i = 0; i < 8; i++)
+        if (_dma[1] & (1u << i))
+            mask |= 1u << (kCtc0 + i);
+    if (_dma[2] & 0x01)
+        mask |= 1u << kUart0Rx;
+    if (_dma[2] & 0x02)
+        mask |= 1u << kUart0Rx;
+    if (_dma[2] & 0x04)
+        mask |= 1u << kUart0Tx;
+    if (_dma[2] & 0x10)
+        mask |= 1u << kUart1Rx;
+    if (_dma[2] & 0x20)
+        mask |= 1u << kUart1Rx;
+    if (_dma[2] & 0x40)
+        mask |= 1u << kUart1Tx;
+    return ((_pending | _inService) & mask) != 0;
 }
 
 uint32_t NextInterruptSource::BaseT(uint32_t t) const
@@ -189,7 +236,8 @@ uint32_t NextInterruptSource::LineStartT() const
     const uint32_t lines = _timing.frame / _timing.line;
     const uint32_t target = (static_cast<uint32_t>(_lineControl & 1) << 8) | _lineValue;
     const uint32_t counterLine = target == 0 ? lines - 1 : (target - 1) % lines;
-    return (CounterOrigin() + counterLine * _timing.line) % _timing.frame;
+    // zxula_timing.vhd: int_line fires at hc_ula = 255 of the row BEFORE the target (the counter steps at hc 0): 128 T into it
+    return (CounterOrigin() + counterLine * _timing.line + 128) % _timing.frame;
 }
 
 uint16_t NextInterruptSource::CurrentLine() const
@@ -230,11 +278,27 @@ void NextInterruptSource::Latch(uint32_t baseT)
 
 bool NextInterruptSource::IsIntAsserted(uint32_t t)
 {
-    if (_poller && HardwareMode())
-        _poller();
+    if (_poller)
+        _poller();  // the CTC counts on the CPU's clock whatever the interrupt mode
     const uint32_t baseT = BaseT(t);
     if (!HardwareMode())
     {
+        if (_pulseOn)
+        {
+            const uint64_t frame = _context->emulatorState.frame_counter;
+            const bool sameFrame = frame == _pulseFrame;
+            const bool nextFrame = frame == _pulseFrame + 1;
+            const uint32_t end = _pulseStart + _timing.intLength;
+            if (sameFrame && baseT >= _pulseStart && (baseT < end))
+                return true;
+            if ((sameFrame || nextFrame) && end > _timing.frame && ((sameFrame && baseT < end - _timing.frame && baseT < _pulseStart) ||
+                                                                       (nextFrame && baseT < end - _timing.frame)))
+                return true;
+            if (!sameFrame && !nextFrame)
+                _pulseOn = false;
+            else if (sameFrame && baseT >= end && end <= _timing.frame)
+                _pulseOn = false;
+        }
         if (Enabled(kUla) && PulseAt(baseT, _timing.intStart))
             return true;
         return (_lineControl & 0x02) != 0 && PulseAt(baseT, LineStartT());

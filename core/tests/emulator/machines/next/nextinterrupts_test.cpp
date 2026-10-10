@@ -74,13 +74,14 @@ TEST_F(NextInterrupts_Test, LineInterruptPulsesAtItsLine)
     // the frame's (vc 0, hc 0) puts the ULA interrupt (line 1, pixel clock 128) at 1845: 1845 - 292 = 1553; the counter is 0 at the
     // paper's first line (vc 64) and at the ULA pixel counter zero (hc 136 - 11): 1553 + 64 * 228 + 62
     const uint32_t origin = (1553 + 64 * 228 + 62) % 70908;
-    const uint32_t t = (origin + 99 * 228) % 70908;
+    // zxula_timing.vhd: the pulse starts at hc_ula 255 of the row before the target = 128 T into counter row 99
+    const uint32_t t = (origin + 99 * 228 + 128) % 70908;
     EXPECT_FALSE(_int->IsIntAsserted(t - 1));
     EXPECT_TRUE(_int->IsIntAsserted(t));
     EXPECT_FALSE(_int->IsIntAsserted(t + 36));
     NextReg(0x23, 0);  // target 0: the last line of the frame
     NextReg(0x22, 0x02 | 0x04);
-    const uint32_t last = (origin + 310 * 228) % 70908;
+    const uint32_t last = (origin + 310 * 228 + 128) % 70908;
     EXPECT_TRUE(_int->IsIntAsserted(last));
 }
 
@@ -103,7 +104,7 @@ TEST_F(NextInterrupts_Test, HardwareModeLatchesUntilAcknowledged)
 TEST_F(NextInterrupts_Test, PrioritiesAndNesting)
 {
     NextReg(0xC0, 0x01);
-    NextReg(0xC5, 0xFF);  // CTC 0-7 enabled
+    NextReg(0xC5, 0xFF);  // CTC 0-3 enabled (the board has four channels: ctc_int_en(7:4) is "0000")
     NextReg(0xC4, 0x83);  // ULA and line enabled
     _int->IsIntAsserted(1846);  // ULA pending
     EXPECT_EQ(_int->AcknowledgeInterrupt(1846), (NextInterruptSource::kUla << 1)) << "the ULA is served first";
@@ -111,15 +112,15 @@ TEST_F(NextInterrupts_Test, PrioritiesAndNesting)
     _int->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + 2));
     EXPECT_TRUE(_int->IsIntAsserted(1848)) << "CTC 2 outranks the ULA in service: it may nest";
     EXPECT_EQ(_int->AcknowledgeInterrupt(1848), (NextInterruptSource::kCtc0 + 2) << 1);
-    _int->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + 5));
-    EXPECT_FALSE(_int->IsIntAsserted(1849)) << "CTC 5 is below the CTC 2 in service";
+    _int->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + 3));
+    EXPECT_FALSE(_int->IsIntAsserted(1849)) << "CTC 3 is below the CTC 2 in service";
     _int->Raise(NextInterruptSource::kLine);
     EXPECT_TRUE(_int->IsIntAsserted(1850)) << "the line interrupt outranks everything";
     EXPECT_EQ(_int->AcknowledgeInterrupt(1850), 0);
     _int->OnReti();  // line done
     _int->OnReti();  // CTC 2 done
-    EXPECT_TRUE(_int->IsIntAsserted(1851)) << "CTC 5 goes now: only the ULA is in service and CTC 5 outranks it";
-    EXPECT_EQ(_int->AcknowledgeInterrupt(1851), (NextInterruptSource::kCtc0 + 5) << 1);
+    EXPECT_TRUE(_int->IsIntAsserted(1851)) << "CTC 3 goes now: only the ULA is in service and CTC 3 outranks it";
+    EXPECT_EQ(_int->AcknowledgeInterrupt(1851), (NextInterruptSource::kCtc0 + 3) << 1);
 }
 
 TEST_F(NextInterrupts_Test, DisabledSourceDoesNotRequest)
@@ -316,4 +317,70 @@ TEST(NextI2c_Test, Ds1307ReadsBackTheTimeAndKeepsWrittenBytes)
     m.Start();
     EXPECT_FALSE(m.WriteByte(0xA0));
     m.Stop();
+}
+
+// im2_peripheral.vhd: with the hardware IM2 mode off, every enabled device request makes an INT pulse (the CTC's zero count is
+// one) - NextZXOS demos play 8 kHz samples from a CTC timer in the plain IM2 mode - and the enable is the CTC channel's own
+// control bit 7, not only NR #C5
+TEST_F(NextInterrupts_Test, CtcRequestPulsesTheIntLineInPulseMode)
+{
+    NextReg(0xC0, 0x00);  // pulse mode
+    _int->Raise(NextInterruptSource::kCtc0);
+    EXPECT_FALSE(_int->IsIntAsserted(5000)) << "channel 0's interrupt is not enabled";
+    NextReg(0xC5, 0x01);
+    _int->Raise(NextInterruptSource::kCtc0);
+    EXPECT_TRUE(_int->IsIntAsserted(_context->pCore->GetZ80()->t)) << "the pulse is on at once";
+    EXPECT_EQ(_int->AcknowledgeInterrupt(1), 0xFF) << "no hardware vector in pulse mode: the bus carries #FF";
+}
+
+// NR #CC / #CD / #CE (the DMA interrupt enables) read back only the bits that exist (zxnext.vhd 6257-6263)
+TEST_F(NextInterrupts_Test, DmaInterruptEnableRegistersReadBackTheirMaskedBits)
+{
+    NextReg(0xCC, 0xFF);
+    NextReg(0xCD, 0xFF);
+    NextReg(0xCE, 0xFF);
+    uint8_t value = 0;
+    ASSERT_TRUE(_int->ReadNr(0xCC, value));
+    EXPECT_EQ(value, 0x83);
+    ASSERT_TRUE(_int->ReadNr(0xCD, value));
+    EXPECT_EQ(value, 0xFF);
+    ASSERT_TRUE(_int->ReadNr(0xCE, value));
+    EXPECT_EQ(value, 0x77);
+}
+
+// im2_dma_delay: an interrupt chosen in NR #CC (ULA / line / NMI), #CD (CTC) or #CE (UART) that is requested or in service holds the
+// DMA off until its RETI; one that is not chosen does not; the pulse mode never delays
+TEST_F(NextInterrupts_Test, ChosenInterruptsDelayTheDmaUntilTheirReti)
+{
+    NextReg(0xC0, 0x01);
+    NextReg(0xC4, 0x81);
+    EXPECT_FALSE(_int->DmaDelay(false));
+    _int->IsIntAsserted(1846);  // the ULA request is pending
+    EXPECT_FALSE(_int->DmaDelay(false)) << "NR #CC does not name the ULA";
+    NextReg(0xCC, 0x01);
+    EXPECT_TRUE(_int->DmaDelay(false)) << "pending";
+    _int->AcknowledgeInterrupt(1846);
+    EXPECT_TRUE(_int->DmaDelay(false)) << "in service";
+    _int->OnReti();
+    EXPECT_FALSE(_int->DmaDelay(false));
+    EXPECT_FALSE(_int->DmaDelay(true)) << "the NMI bit (#CC bit 7) is off";
+    NextReg(0xCC, 0x81);
+    EXPECT_TRUE(_int->DmaDelay(true));
+    NextReg(0xC0, 0x00);
+    NextReg(0xCC, 0x01);
+    EXPECT_FALSE(_int->DmaDelay(false)) << "pulse mode: the device state machines are in reset";
+}
+
+// zxnext.vhd pulse_count_end: 36 CPU clocks for the 128K and the Pentagon timing, 32 for the 48K and the +3
+TEST(NextTiming_Test, IntPulseLengthPerTiming)
+{
+    NextTiming t{};
+    ASSERT_TRUE(NextTimingFor(1, t));
+    EXPECT_EQ(t.intLength, 32u);
+    ASSERT_TRUE(NextTimingFor(2, t));
+    EXPECT_EQ(t.intLength, 36u);
+    ASSERT_TRUE(NextTimingFor(3, t));
+    EXPECT_EQ(t.intLength, 32u);
+    ASSERT_TRUE(NextTimingFor(4, t));
+    EXPECT_EQ(t.intLength, 36u);
 }
