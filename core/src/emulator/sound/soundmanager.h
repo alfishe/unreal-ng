@@ -201,11 +201,12 @@ protected:
     int16_t _deviceBuffer[DEVICE_BUFFER_FRAMES * AUDIO_CHANNELS] = {};
 
     // Wide mix bus (MoonSound integration design 5.2/D7). Enabled only while
-    // a MoonSound device is attached: sources sum into a float bus without
-    // per-add clipping, then a DC blocker + soft limiter run on the master and
-    // the result quantises to int16 once. The legacy integer path is a
-    // separate branch that stays byte-identical in every configuration
-    // without the device (R6) - it is not modified by this feature.
+    // a MoonSound device, a TSFM (TurboSound FM) or a card that wants it is
+    // fitted: sources sum into a float bus without per-add clipping, then a DC
+    // blocker + soft limiter run on the master and the result quantises to
+    // int16 once. The legacy integer path is a separate branch that stays
+    // byte-identical in every configuration without them (R6) - it is not
+    // modified by this feature.
     bool _wideMix = false;
     MasterLimiter _limiter;
     float _mixBus[MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS] = {};
@@ -595,8 +596,9 @@ public:
 #endif
 
     /// Wide mix bus + master limiter (MoonSound integration 5.2). Called with
-    /// true when a MoonSound device is attached, false when it is not; the
-    /// legacy integer path is used whenever the wide path is off (R6).
+    /// true when a MoonSound device, a TSFM or a card that wants it is fitted,
+    /// false when none is; the legacy integer path is used whenever the wide
+    /// path is off (R6).
     void enableWideMix(bool enable);
     bool wideMixEnabled() const { return _wideMix; }
 

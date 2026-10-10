@@ -114,6 +114,10 @@ SoundManager::SoundManager(EmulatorContext* context)
                 chip->setStereoMode(_context->config.sound.ayStereo);
         }
     }
+    // TSFM at the board's measured FM level: one chip's full FM word is 0.70 of full scale, two chips 1.4, with the
+    // SSGs up to 2.4 (TSFM ISSUES.md #6). The float bus and the master limiter own the master mix, as for MoonSound
+    if (_turboSound && _turboSound->hasFm())
+        enableWideMix(true);
 
     // Build the device registry based on what this machine has
     // Beeper is always present
@@ -607,6 +611,8 @@ const int16_t* SoundManager::slotCardBuffer(AudioSourceType type) const
 
 bool SoundManager::wideMixNeeded() const
 {
+    if (_turboSound && _turboSound->hasFm())
+        return true;
 #ifdef UNREALNG_HAVE_OPL4
     if (_moonsound)
         return true;
