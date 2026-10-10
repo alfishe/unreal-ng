@@ -765,6 +765,7 @@ TTDSessionInfo TimeTravelManager::GetSessionInfo() const
 {
     TTDSessionInfo info;
     info.state = _state;
+    info.lastCheck = _lastEngineCheck;
     info.checkpointCount    = _timeline.size();
     info.pageStoreBytes     = _pageStore.GetCapacityBytes();
     info.pageStoreUsedBytes = _pageStore.GetUsedBytes();

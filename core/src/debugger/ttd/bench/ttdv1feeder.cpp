@@ -10,6 +10,7 @@
 #include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
+#include "debugger/ttd/ttdsessionfacts.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 
 namespace ttd::bench
@@ -273,6 +274,21 @@ bool ConvertV1Session(const TimeTravelManager& v1, ITTDByteSink& sink, std::stri
     TTDSessionSaveParams params;
     params.headerFlags = kSessionConvertedFromV1;
     params.checkpointsPerPart = checkpointsPerPart;
+    // The controller's facts as v1 states them (its header and status): the machine, and whether the input and
+    // port journals hold the whole history - the engine's controller loads the file as the session it was
+    const TTDSessionInfo info = v1.GetSessionInfo();
+    TTDSessionFacts facts;
+    facts.modelId = info.machine.modelId;
+    facts.modelRamPages = info.modelRamPages;
+    facts.romSignature = info.machine.romSignature;
+    facts.capturedAtUnixMs = info.capturedAtUnixMs;
+    facts.recordedBy = info.recordedBy;
+    facts.peripheralMask = info.machine.peripheralMask;
+    facts.notRecordedMask = info.machine.notRecordedMask;
+    facts.inputHistoryComplete = info.inputHistoryComplete;
+    facts.portJournalValid = info.portJournalActive;
+    facts.portJournalOffReason = info.portJournalOffReason;
+    params.holderStreams.push_back({holderstream::kFacts, "controller-facts", EncodeSessionFacts(facts)});
     return TTDSessionFile::Save(engine, sink, error, params);
 }
 

@@ -1316,8 +1316,21 @@ protected:
     /// region <Emulation events>
 public:
     void handleFrameStart();
-    void handleStep();
+    /// Called after every instruction (MainLoop::OnCPUStep): asleep it is one test here, no call
+    void handleStep()
+    {
+        if (!_sleeping)
+            handleStepAwake();
+    }
+    /// handleStep would not act at this step: asleep, or idle with the motor off (it only counts toward sleep).
+    /// A CPU engine may then run idle steps without it (Z80::IdleStepsInert)
+    bool IsStepInert() const
+    {
+        return _sleeping || (_state == S_IDLE && _motorTimeoutTStates <= 0);
+    }
     void handleFrameEnd();
+    /// handleStep's work while the controller is awake
+    void handleStepAwake();
     /// endregion </Emulation events>
 
     /// region <PortDevice interface methods>

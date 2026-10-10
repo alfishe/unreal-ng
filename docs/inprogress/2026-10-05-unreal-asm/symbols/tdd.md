@@ -364,3 +364,7 @@ Text import: one pass over the bytes, tokens as views, one record per line; 100 
 | S10 | Benchmarks and the results table; docs (`docs/features/symbols.md`) | numbers meet NFR-1…3 |
 
 The debugger additions' E7 ("label import") closes with S7 + S8 (the two formats the TUI's import menu names).
+
+Status (review round A0, 2026-10-09): S0-S5 done; S6-S9 done as the library's phases A2-A6 and the frontends; S10's
+numbers are in [test-and-benchmark-plan.md](test-and-benchmark-plan.md) §6 and the user guide is
+[docs/features/unreal-asm.md](../../../features/unreal-asm.md) (no separate `symbols.md`).

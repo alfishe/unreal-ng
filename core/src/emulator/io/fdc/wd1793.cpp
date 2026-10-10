@@ -15,7 +15,6 @@
 #include "diskfastload.h"
 #include "flakysectoremulator.h"
 #include "floppydriveslot.h"
-#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
 #include <cstdio>
 #include <cstring>
 
@@ -877,85 +876,26 @@ uint8_t WD1793::getStatusRegister()
         // - Bits 3 to 6 are specific for each command
         // - Bit 7 means NOT READY (FDC is not ready to accept commands)
 
-        // Reset bits according each command requirements from the datasheet
+        // Reset bits according each command requirements from the datasheet.
+        // The error bits of a Type II / III command are set in the register by the command itself (the FIFO
+        // actions, the CRC check, the write protect check) and cleared when the next command starts
+        // (startType2Command / startType3Command): a status read only adds the error flags, it never clears
+        // a bit. Clearing on a false flag erased RECORD NOT FOUND and CRC ERROR (the FSM sets the bits, not the
+        // flags), so TR-DOS and programs saw status #00 after a failed READ / WRITE SECTOR
         switch (_lastDecodedCmd)
         {
             case WD_CMD_READ_ADDRESS:
                 _statusRegister &= 0b1001'1111;  // Reset bit5 and bit6 as stated in the datasheet
-
-                if (_record_not_found)
-                {
-                    _statusRegister |= WDS_NOTFOUND;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_NOTFOUND;
-                };
-                if (_crc_error)
-                {
-                    _statusRegister |= WDS_CRCERR;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_CRCERR;
-                };
+                _statusRegister |= (_record_not_found ? WDS_NOTFOUND : 0) | (_crc_error ? WDS_CRCERR : 0);
                 break;
             case WD_CMD_READ_SECTOR:
                 _statusRegister &= 0b1011'1111;  // Reset bit 6 as stated in the datasheet
-
-                // TODO: set WDS_RECORDTYPE
-                if (_record_not_found)
-                {
-                    _statusRegister |= WDS_NOTFOUND;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_NOTFOUND;
-                };
-                if (_crc_error)
-                {
-                    _statusRegister |= WDS_CRCERR;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_CRCERR;
-                };
+                _statusRegister |= (_record_not_found ? WDS_NOTFOUND : 0) | (_crc_error ? WDS_CRCERR : 0);
                 break;
             case WD_CMD_WRITE_SECTOR:
                 // No bits reset => All bits are used for the Write Sector command
-
-                if (_write_protect)
-                {
-                    _statusRegister |= WDS_WRITEPROTECTED;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_WRITEPROTECTED;
-                };
-                if (_write_fault)
-                {
-                    _statusRegister |= WDS_WRITEFAULT;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_WRITEFAULT;
-                };
-                if (_record_not_found)
-                {
-                    _statusRegister |= WDS_NOTFOUND;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_NOTFOUND;
-                };
-                if (_crc_error)
-                {
-                    _statusRegister |= WDS_CRCERR;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_CRCERR;
-                };
+                _statusRegister |= (_write_protect ? WDS_WRITEPROTECTED : 0) | (_write_fault ? WDS_WRITEFAULT : 0) |
+                                   (_record_not_found ? WDS_NOTFOUND : 0) | (_crc_error ? WDS_CRCERR : 0);
                 break;
             case WD_CMD_READ_TRACK:
                 _statusRegister &= 0b1000'0111;  // Reset bits 3 to 6 as stated in the datasheet
@@ -964,23 +904,7 @@ uint8_t WD1793::getStatusRegister()
                 break;
             case WD_CMD_WRITE_TRACK:
                 _statusRegister &= 0b1110'0111;  // Reset bit3 and bit4 as stated in the datasheet
-
-                if (_write_protect)
-                {
-                    _statusRegister |= WDS_WRITEPROTECTED;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_WRITEPROTECTED;
-                };
-                if (_write_fault)
-                {
-                    _statusRegister |= WDS_WRITEFAULT;
-                }
-                else
-                {
-                    _statusRegister &= ~WDS_WRITEFAULT;
-                };
+                _statusRegister |= (_write_protect ? WDS_WRITEPROTECTED : 0) | (_write_fault ? WDS_WRITEFAULT : 0);
                 break;
             default:
                 throw std::logic_error("Unknown FDC command");
@@ -3547,13 +3471,9 @@ void WD1793::handleFrameStart()
     // Nothing to do here
 }
 
-void WD1793::handleStep()
+void WD1793::handleStepAwake()
 {
-    // Skip processing if sleeping - major CPU optimization when FDD is idle
-    if (_sleeping)
-    {
-        return;
-    }
+    // Asleep: handleStep returned already - major CPU optimization when FDD is idle
 
     // Idle with the motor off: nothing the FSM could advance on. Commands
     // arrive through the port handlers (which run process() themselves),

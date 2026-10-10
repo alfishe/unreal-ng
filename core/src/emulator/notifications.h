@@ -430,6 +430,22 @@ public:
     virtual ~BreakpointsChangedPayload() = default;
 };
 
+/// Payload of NC_ASM_SYNC (asm-synchronizer, core/src/debugger/asm/sync/asmsyncservice.h)
+class AsmSyncPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string event;            ///< "found", "changed", "built", "lost", "ambiguous"
+    std::string assembler;        ///< the descriptor id ("alasm-5.09")
+    uint64_t generation = 0;      ///< built: the build's number
+    bool complete = false;        ///< built: every label got its value
+    uint32_t labels = 0;          ///< built: the labels published
+    uint32_t hints = 0;           ///< built: warnings and errors
+
+    explicit AsmSyncPayload(const std::string& id) : emulatorId(id.empty() ? unreal::UUID() : unreal::UUID(id)) {}
+    virtual ~AsmSyncPayload() = default;
+};
+
 /// Payload for NC_FEATURE_CHANGED.
 /// Posted by FeatureManager::onFeatureChanged() AFTER all UpdateFeatureCache()
 /// calls are complete, so every consumer sees consistent cached state.

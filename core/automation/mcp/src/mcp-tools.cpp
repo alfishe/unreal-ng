@@ -3753,6 +3753,16 @@ std::string FormatMarker(const Json::Value& marker)
            FormatTimePoint(marker["frame"], marker["tinframe"]);
 }
 
+/// " Not exact (status): message." from a moving verb's check, or "" when the position came back exactly.
+std::string FormatCheck(const Json::Value& b)
+{
+    if (!b.isMember("check") || b["check"]["status"].asString() == "exact")
+    {
+        return {};
+    }
+    return " Not exact (" + b["check"]["status"].asString() + "): " + b["check"]["message"].asString() + ".";
+}
+
 /// TD-8: " Searched frame A .. frame B." from covered_from/covered_to, or "" when absent.
 std::string FormatSearchWindow(const Json::Value& b)
 {
@@ -4384,7 +4394,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         {
                             text += " - blocked by marker " + FormatMarker(b["blocking_marker"]);
                         }
-                        return text;
+                        return text + FormatCheck(b);
                     }, done);
                 }
                 else if (action == "step_back_frame" || action == "step_forward_frame")
@@ -4392,7 +4402,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     const std::string route = action == "step_back_frame" ? "/ttd/step-back" : "/ttd/step-forward";
                     CallAndSummarize("POST", Endpoint(id, route), nullptr, caller, [](const Json::Value& b) {
                         return std::string(b["stepped"].asBool() ? "Stepped to " : "Could not step; still at ") +
-                               FormatTimePoint(b["frame"], b["tinframe"]);
+                               FormatTimePoint(b["frame"], b["tinframe"]) + FormatCheck(b);
                     }, done);
                 }
                 else if (action == "step_back_instruction" || action == "step_forward_instruction")
@@ -4401,14 +4411,14 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     stepBody["dir"] = action == "step_back_instruction" ? "back" : "forward";
                     CallAndSummarize("POST", Endpoint(id, "/ttd/step-instruction"), &stepBody, caller, [](const Json::Value& b) {
                         return std::string(b["stepped"].asBool() ? "Stepped one instruction " : "Could not step ") +
-                               b["dir"].asString() + ", at " + FormatTimePoint(b["frame"], b["tinframe"]);
+                               b["dir"].asString() + ", at " + FormatTimePoint(b["frame"], b["tinframe"]) + FormatCheck(b);
                     }, done);
                 }
                 else if (action == "reverse_step")
                 {
                     CallAndSummarize("POST", Endpoint(id, "/ttd/reverse-step"), body.get(), caller, [](const Json::Value& b) {
                         return std::string(b["reached"].asBool() ? "Stepped back to " : "Could not step back fully; at ") +
-                               FormatTimePoint(b["frame"], b["tinframe"]);
+                               FormatTimePoint(b["frame"], b["tinframe"]) + FormatCheck(b);
                     }, done);
                 }
                 else if (action == "reverse_continue")
@@ -4421,7 +4431,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         {
                             text += " - blocked by marker " + FormatMarker(b["blocked_by_marker"]);
                         }
-                        return text + "." + FormatSearchWindow(b);
+                        return text + "." + FormatSearchWindow(b) + FormatCheck(b);
                     }, done);
                 }
                 else if (action == "memory_at")

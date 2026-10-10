@@ -1060,6 +1060,42 @@ map windows 0, 2 and 3 directly while in RAM mode and leave only window 1
 this for the classic card only. It is kept as a phase 1 option, used only if
 the cost budget (§5.9) is missed.
 
+**Idle sleep (NeoGS, landed 2026-10-09).** Between host commands the main ROM
+polls the mailbox in `#026E IN A,(#04) : RRCA : JR C,#0295 : LD A,(#4084) :
+OR A : JR Z,#026E` with interrupts disabled. That is nearly every card step
+while nothing plays. The runner sleeps through such a loop:
+
+- **Detection.** The CPU comes back to the head of a short backward jump
+  (at most 64 bytes, 32 instructions) with every register as before except
+  R. No bus side effect happened since. Side effects (`busEffects()`) are
+  every write, every port write, every port read except `ZXCMD`, `GSCFG0` and
+  `ZXSTAT` after its readiness latch, flash reads (timed), and
+  `#6000-#7FFF` reads (the DAC capture).
+- **Sleep.** It adds whole iterations to the time, R, the core's T and the
+  step counter. It wakes at the last iteration start before the `runTo`
+  target or the next hard event (DMA, ZX-DMA), then steps the rest for real.
+- **Events during sleep.** The timer strobe and the DAC sides are quiet.
+  They are run during the sleep at the instruction boundary the loop would
+  have reached them on, known from the iteration's instruction offsets.
+- **When it does not sleep.** IFF1 set, an NMI, a reset, a clock change, a
+  stall or a port trace running.
+- **Host changes.** The loop is recognized again in every `runTo`, because
+  the host changes the card between runs: a mailbox write, a reset, a TTD
+  restore, a debugger edit.
+
+The test is `SoundChip_NeoGS_IdleSleep`. Two cards run in lockstep, one
+sleeping and one stepping. They get the same random host traffic and module
+playback, and after every action the TTD state hash, the step count and the
+audio must be equal. `SprinterFastPathsDemo_Test` covers the card on the
+Sprinter. Measured costs:
+
+| Case | Without sleep | With sleep |
+|---|---|---|
+| Idle card | 0.514 ms/frame | 0.034 ms/frame |
+| Sprinter DNTBLINK, shipped sound | 2.22 ms/frame | 1.73 ms/frame |
+
+`setIdleSleep(false)` steps every instruction, for comparisons and diagnosis.
+
 ### 5.4 Components and files
 
 | Component | Location | Responsibility |

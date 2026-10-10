@@ -12,7 +12,6 @@
 
 #include <common/dumphelper.h>
 #include <common/filehelper.h>
-#include <debugger/ttd/timetravelmanager.h>  // TimeTravelManager (Item 6 markers)
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>

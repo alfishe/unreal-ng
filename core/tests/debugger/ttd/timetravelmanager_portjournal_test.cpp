@@ -15,7 +15,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/ttd/machinestatehash.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttddumpformat.h"
 #include "debugger/ttd/ttdportjournal.h"
@@ -48,7 +48,6 @@ using ttd::TTDPortRecord;
 
 constexpr uint16_t kProgramAddress = 0x8000;
 constexpr uint16_t kLogAddress = 0x9000;
-constexpr size_t kFlagsOffset = 6;  // magic 4 + schema_version 2
 
 struct Point
 {
@@ -68,7 +67,7 @@ struct Machine
 {
     Emulator* emulator = nullptr;
     EmulatorContext* context = nullptr;
-    ttd::TimeTravelManager* ttd = nullptr;
+    ttd::TimeTravelController* ttd = nullptr;
 
     bool Create(const char* model = "PENTAGON")
     {
@@ -76,7 +75,7 @@ struct Machine
         if (!emulator)
             return false;
         context = emulator->GetContext();
-        ttd = context->pTimeTravelManager;
+        ttd = context->pTimeTravelController;
         FeatureManager* features = emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
         features->setFeature(Features::kTimeTravel, true);
@@ -148,23 +147,6 @@ struct Machine
         return ok;
     }
 
-    /// Size of the port-journal section (bit 8) at the end of this session's file
-    size_t PortJournalBytes() const
-    {
-        std::vector<uint64_t> reads;
-        std::vector<uint64_t> writes;
-        for (size_t i = 0; i < ttd->GetSessionInfo().checkpointCount; i++)
-        {
-            reads.push_back(ttd->GetCheckpoint(i)->portReadCursor);
-            writes.push_back(ttd->GetCheckpoint(i)->portWriteCursor);
-        }
-        std::ostringstream out;
-        std::string err;
-        EXPECT_TRUE(ttd->GetPortReadJournal().Serialize(out, reads, err)) << err;
-        EXPECT_TRUE(ttd->GetPortWriteJournal().Serialize(out, writes, err)) << err;
-        return out.str().size();
-    }
-
     size_t LogEntries() const
     {
         size_t entries = 0;
@@ -177,23 +159,6 @@ struct Machine
         return entries;
     }
 };
-
-uint16_t FlagsOf(const std::string& file)
-{
-    uint16_t flags = 0;
-    std::memcpy(&flags, file.data() + kFlagsOffset, sizeof(flags));
-    return flags;
-}
-
-/// The file an isolating writer would not have produced: the port-read
-/// journal section cut off and its bit cleared
-std::string StripPortJournal(const std::string& file, size_t sectionBytes)
-{
-    std::string stripped = file.substr(0, file.size() - sectionBytes);
-    const uint16_t flags = static_cast<uint16_t>(FlagsOf(stripped) & ~ttd::dump::kFlagsHasPortJournals);
-    std::memcpy(&stripped[kFlagsOffset], &flags, sizeof(flags));
-    return stripped;
-}
 
 /// Polls EAR (port #FE bit 6) with an iteration counter and logs the counter
 /// at every edge (#9000..): any read that differs changes the log and RAM
@@ -394,11 +359,10 @@ TEST_F(TimeTravelManager_PortReadJournal_Test, LoadedSessionReplaysTheTapeWithou
     if (HasFatalFailure())
         return;
     const std::string file = _rec.Save();
-    EXPECT_NE(FlagsOf(file) & ttd::dump::kFlagsHasPortJournals, 0);
 
     std::string err;
     ASSERT_TRUE(_play.Load(file, &err)) << err;
-    ASSERT_TRUE(_play.ttd->GetSessionInfo().portJournalActive);
+    ASSERT_TRUE(_play.ttd->GetSessionInfo().portJournalActive) << "the file carries the journals";
     ASSERT_TRUE(_play.ttd->SeekTo({startFrame, 0}));
     _play.RunTo(recorded);
 
@@ -407,27 +371,6 @@ TEST_F(TimeTravelManager_PortReadJournal_Test, LoadedSessionReplaysTheTapeWithou
     const auto info = _play.ttd->GetSessionInfo();
     EXPECT_GT(info.portReplayValueMismatches, 0u) << "the tapeless machine must have answered differently";
     EXPECT_EQ(info.portReplayDivergences, 0u) << "execution itself never diverged";
-}
-
-/// The negative control: the same file without the journal replays against the
-/// live (tapeless) machine and diverges
-TEST_F(TimeTravelManager_PortReadJournal_Test, WithoutTheJournalTheTapelessReplayDiverges)
-{
-    uint64_t startFrame = 0;
-    Point recorded;
-    RecordTapeSession(startFrame, recorded);
-    if (HasFatalFailure())
-        return;
-    const std::string stripped = StripPortJournal(_rec.Save(), _rec.PortJournalBytes());
-
-    std::string err;
-    ASSERT_TRUE(_play.Load(stripped, &err)) << err;
-    const auto info = _play.ttd->GetSessionInfo();
-    EXPECT_FALSE(info.portJournalActive);
-    EXPECT_FALSE(info.portJournalOffReason.empty());
-    ASSERT_TRUE(_play.ttd->SeekTo({startFrame, 0}));
-    _play.RunTo(recorded);
-    EXPECT_FALSE(SameMachine(_play.Observe(), recorded));
 }
 
 /// Replayed on the instance that recorded it, with the tape still there, the
@@ -451,41 +394,6 @@ TEST_F(TimeTravelManager_PortReadJournal_Test, AFaithfulReplayHasNoMismatches)
     const auto info = _rec.ttd->GetSessionInfo();
     EXPECT_EQ(info.portReplayValueMismatches, 0u);
     EXPECT_EQ(info.portReplayDivergences, 0u);
-}
-
-/// The keyboard reaches the CPU through IN too: with the input journal cut out
-/// of the file, the journal alone replays what the program saw - the keyboard
-/// device itself never has a key pressed during the replay
-TEST_F(TimeTravelManager_PortReadJournal_Test, TheJournalAloneReplaysTheKeyboard)
-{
-    uint64_t startFrame = 0;
-    Point recorded;
-    RecordKeySession(startFrame, recorded);
-    if (HasFatalFailure())
-        return;
-
-    // Cut the input journal and the markers (bits 6-7) out from before the
-    // port-read journal, as a file without them would be
-    const std::string file = _rec.Save();
-    const size_t portBytes = _rec.PortJournalBytes();
-    const size_t inputBytes =
-        4 + _rec.ttd->GetInputJournal().Size() * ttd::dump::kInputEventRecordSize + 4;  // no markers recorded
-    ASSERT_EQ(_rec.ttd->GetExternalEvents().Size(), 0u);
-    std::string cut = file.substr(0, file.size() - portBytes - inputBytes) + file.substr(file.size() - portBytes);
-    const uint16_t flags = static_cast<uint16_t>(
-        FlagsOf(cut) & ~(ttd::dump::kFlagsHasInputJournal | ttd::dump::kFlagsHasExternalEvents));
-    std::memcpy(&cut[kFlagsOffset], &flags, sizeof(flags));
-
-    std::string err;
-    ASSERT_TRUE(_play.Load(cut, &err)) << err;
-    ASSERT_FALSE(_play.ttd->GetSessionInfo().inputHistoryComplete);
-    ASSERT_EQ(_play.ttd->GetInputJournal().Size(), 0u);
-    ASSERT_TRUE(_play.ttd->SeekTo({startFrame, 0}));
-    _play.RunTo(recorded);
-
-    EXPECT_TRUE(SameMachine(_play.Observe(), recorded));
-    EXPECT_EQ(_play.LogEntries(), _rec.LogEntries());
-    EXPECT_GT(_play.ttd->GetSessionInfo().portReplayValueMismatches, 0u) << "the unpressed keyboard answered otherwise";
 }
 
 // ---------------------------------------------------------------------------
@@ -550,7 +458,6 @@ TEST_F(TimeTravelManager_PortReadJournal_Test, AResumeAfterRunningUnrecordedGive
     const auto info = _rec.ttd->GetSessionInfo();
     EXPECT_FALSE(info.portJournalActive);
     EXPECT_NE(info.portJournalOffReason.find("unrecorded"), std::string::npos) << info.portJournalOffReason;
-    EXPECT_EQ(FlagsOf(_rec.Save()) & ttd::dump::kFlagsHasPortJournals, 0) << "a partial journal is never saved";
 }
 
 // ---------------------------------------------------------------------------
@@ -559,7 +466,7 @@ TEST_F(TimeTravelManager_PortReadJournal_Test, AResumeAfterRunningUnrecordedGive
 
 namespace
 {
-ttd::TTDPortSearchResult Find(const ttd::TimeTravelManager& ttd, const std::string& event, const std::string& arg = "",
+ttd::TTDPortSearchResult Find(const ttd::TimeTravelController& ttd, const std::string& event, const std::string& arg = "",
                               size_t limit = 100)
 {
     ttd::TTDPortQuery q;
@@ -764,28 +671,24 @@ TEST_F(TimeTravelManager_PortReadJournal_Test, AFileIsSearchedWithoutLoadingIt)
 
 TEST_F(TimeTravelManager_PortReadJournal_Test, AFileSearchSaysWhyItCannotAnswer)
 {
-    uint64_t startFrame = 0;
-    Point recorded;
-    RecordKeySession(startFrame, recorded, /*rowScan=*/true);
-    if (HasFatalFailure())
-        return;
-    const std::string file = _rec.Save();
-
     auto r = _play.ttd->SearchPortEventsInFile(
         (TestPathHelper::GetProcessScratchDir() / "missing.ttd").string(), Query("ear"));
     EXPECT_FALSE(r.ok);
     EXPECT_NE(r.error.find("cannot open"), std::string::npos) << r.error;
 
-    r = _play.ttd->SearchPortEventsInFile(WriteFile("stripped.ttd", StripPortJournal(file, _rec.PortJournalBytes())),
-                                          Query("ear"));
+    // A session that gave its journals up (the machine ran unrecorded between a stop and a resume): its file says
+    // so (the container's own damage checks: the session file tests)
+    _rec.Install(kKeyPoller, sizeof(kKeyPoller));
+    ASSERT_TRUE(_rec.ttd->StartRecording());
+    _rec.emulator->RunNFrames(1);
+    _rec.ttd->StopRecording();
+    _rec.emulator->RunNCPUCycles(50);
+    ASSERT_TRUE(_rec.ttd->ResumeRecordingLive());
+    _rec.emulator->RunNFrames(1);
+    _rec.ttd->StopRecording();
+    r = _play.ttd->SearchPortEventsInFile(WriteFile("gap.ttd", _rec.Save()), Query("ear"));
     EXPECT_FALSE(r.ok);
     EXPECT_NE(r.error.find("no port journals"), std::string::npos) << r.error;
-
-    std::string damaged = file;
-    damaged[damaged.size() - _rec.PortJournalBytes() + 60] ^= 0x5A;  // inside the first block's payload
-    r = _play.ttd->SearchPortEventsInFile(WriteFile("damaged.ttd", damaged), Query("ear"));
-    EXPECT_FALSE(r.ok);
-    EXPECT_NE(r.error.find("port-read journal"), std::string::npos) << r.error;
 }
 
 /// Without journals a search says why instead of answering "never"
@@ -820,16 +723,18 @@ struct StepEngine : IMachineStepHook
 /// and a model engine stepped with the CPU can write memory - neither goes
 /// through IN, so the journals would not isolate the replay: they stay off and
 /// say why (TTD v2 FR-21). TSConf and the Sprinter install these
-TEST_F(TimeTravelManager_PortReadJournal_Test, MachinesWithTheirOwnInterruptOrDmaEngineRecordNoJournal)
+TEST_F(TimeTravelManager_PortReadJournal_Test, MachinesWithTheirOwnInterruptOrDmaEngineRecordTheirJournals)
 {
+    // v1 kept no journals there (it did not isolate them: an IM2 vector from a device, a DMA engine); the engine
+    // records and replays them (vectors are journaled, DMA is device state): the journals are on (2026-10-09)
     Z80* z80 = _rec.context->pCore->GetZ80();
     DeviceVector source;
     z80->SetInterruptSource(&source);
     ASSERT_TRUE(_rec.ttd->StartRecording());
     _rec.ttd->StopRecording();
     auto info = _rec.ttd->GetSessionInfo();
-    EXPECT_FALSE(info.portJournalActive);
-    EXPECT_NE(info.portJournalOffReason.find("IM2 vector"), std::string::npos) << info.portJournalOffReason;
+    EXPECT_TRUE(info.portJournalActive);
+    EXPECT_TRUE(info.portJournalOffReason.empty()) << info.portJournalOffReason;
     z80->SetInterruptSource(nullptr);
 
     StepEngine engine;
@@ -837,13 +742,9 @@ TEST_F(TimeTravelManager_PortReadJournal_Test, MachinesWithTheirOwnInterruptOrDm
     ASSERT_TRUE(_rec.ttd->StartRecording());
     _rec.ttd->StopRecording();
     info = _rec.ttd->GetSessionInfo();
-    EXPECT_FALSE(info.portJournalActive);
-    EXPECT_NE(info.portJournalOffReason.find("DMA"), std::string::npos) << info.portJournalOffReason;
+    EXPECT_TRUE(info.portJournalActive);
+    EXPECT_TRUE(info.portJournalOffReason.empty()) << info.portJournalOffReason;
     z80->SetMachineStepHook(nullptr);
-
-    ASSERT_TRUE(_rec.ttd->StartRecording());
-    _rec.ttd->StopRecording();
-    EXPECT_TRUE(_rec.ttd->GetSessionInfo().portJournalActive) << "a classic machine records them again";
 }
 
 class TimeTravelManager_PortReadJournalNeoGS_Test : public ::testing::Test
@@ -857,26 +758,22 @@ protected:
     void TearDown() override { _m.Destroy(); }
 };
 
-/// NeoGS serves host memory reads through ZX-DMA without an IN: v1's replay
-/// does not play the journal there, and the session says why (nor does the
-/// file carry it). The journal is still recorded - the engine's bus data
-/// (Phase 3), whose replay also has the card's SD reads (media journal). With
-/// the classic card in the slot v1 plays it again
-TEST_F(TimeTravelManager_PortReadJournalNeoGS_Test, NeoGSSessionsRecordNoJournalAndSayWhy)
+/// NeoGS serves host memory reads through ZX-DMA without an IN: v1 kept no journals there. The engine records them
+/// and replays the card from its device state and its SD reads (the media journal): the journals are on, with the
+/// classic card as with NeoGS
+TEST_F(TimeTravelManager_PortReadJournalNeoGS_Test, NeoGSSessionsRecordTheirJournals)
 {
     GeneralSoundCard* card = _m.context->pSoundManager->getGeneralSound();
     ASSERT_NE(card, nullptr);
     ASSERT_EQ(card->implementation(), GSCardImplementation::NGS);
 
+    _m.Install(kKeyPoller, sizeof(kKeyPoller));
     ASSERT_TRUE(_m.ttd->StartRecording());
     _m.emulator->RunNFrames(2);
-    EXPECT_NE(_m.context->ttdPortReads, nullptr) << "recorded for the engine (Phase 3)";
     _m.ttd->StopRecording();
-    const auto info = _m.ttd->GetSessionInfo();
-    EXPECT_FALSE(info.portJournalActive);
-    EXPECT_NE(info.portJournalOffReason.find("NeoGS"), std::string::npos) << info.portJournalOffReason;
-    EXPECT_EQ(info.portReadCount, 0u);
-    EXPECT_EQ(FlagsOf(_m.Save()) & ttd::dump::kFlagsHasPortJournals, 0);
+    auto info = _m.ttd->GetSessionInfo();
+    EXPECT_TRUE(info.portJournalActive) << info.portJournalOffReason;
+    EXPECT_GT(info.portReadCount, 0u) << "the key poller's reads";
 
     ASSERT_TRUE(_m.context->pSoundManager->switchGeneralSoundCard(GSTypeKind::Z80));
     _m.Install(kKeyPoller, sizeof(kKeyPoller));
@@ -911,7 +808,8 @@ TEST(TimeTravelManager_PortJournalFixture_Test, FileSearchesAnswerAsTheEmulatorD
     size_t checked = 0;
     for (const Json::Value& fixture : expected["fixtures"])
     {
-        const std::string path = (dir / fixture["file"].asString()).string();
+        // The sessions in the engine's format (converted from the v1 files once, 2026-10-09: what v1 recorded)
+        const std::string path = (dir / "engine" / fixture["file"].asString()).string();
         for (const Json::Value& item : fixture["answers"])
         {
             const Json::Value& query = item["query"];

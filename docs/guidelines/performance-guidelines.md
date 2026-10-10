@@ -114,11 +114,11 @@ by 3x.
    ```
    For a merge commit, A is its first parent, so the difference is exactly
    the merged change.
-2. **Wait for a quiet machine.** `sysctl -n vm.loadavg`; run only when the
-   1-minute value is below ~12. A script can wait:
-   ```bash
-   while [ $(sysctl -n vm.loadavg | awk '{print int($2)}') -ge 12 ]; do sleep 60; done
-   ```
+2. **Do not wait for a quiet machine** (owner decision, 2026-10-09). The
+   development Mac is never quiet: the load stays at 20-45 for hours. Run at
+   once, and buy the precision with more rounds instead: 20 rounds rather than
+   10. Record the load (`sysctl -n vm.loadavg`) at the start and the end next
+   to the result.
 3. **Run from the build's `bin` directory** (the benchmarks find `unreal.ini`
    and ROMs there), with CSV output:
    ```bash
@@ -137,12 +137,17 @@ by 3x.
 6. **Record the result** in the design document or the commit message: the
    commits compared, the load, the table of rounds.
 
+Before a change, find where the time goes: a profile per function and source line of a benchmark run
+([tools/profiling/xctrace/](../../tools/profiling/xctrace/README.md), macOS). A profile shows where the time
+goes; whether a change helps is shown only by the A/B rounds above.
+
 Useful benchmarks:
 
 | Benchmark | File | Measures |
 |:--|:--|:--|
 | `BM_HostFrame_{48K,Pentagon,Scorpion}_{Fast,Debug}` | `core/benchmarks/emulator/memory/hostbusoverlay_benchmark.cpp` | one host frame of a classic machine: the per-instruction and per-access paths |
 | `BM_HostFrame_Pentagon_Overlay_*`, `BM_HostFrame_NeoGS_*` | same | the overlay path |
+| `BM_SprinterDemo_<demo>_{Bare,Shipped}` | `core/benchmarks/emulator/machines/sprinter_demo_benchmark.cpp` | the Sprinter under a real heavy load: demos from the system disk (needs `UNREAL_SPRINTER_HDD`; [its README](../../core/benchmarks/emulator/machines/README.md)) |
 | `z80_overhead_attribution.cpp` | `core/benchmarks/emulator/` | isolated costs: member-pointer calls, `std::function` tests, dereferences |
 | `turbo_frame_benchmark.cpp`, `contention_benchmark.cpp` | `core/benchmarks/emulator/` | turbo mode, ULA contention |
 | `TTDBench_Test` (TTD CI gate) | `core/tests/debugger/ttd/bench/ttdbench_test.cpp` | TTD bytes per stream and counted capture work against `testdata/ttd/bench/v1-ci-gate.txt`; no clock, so host load cannot fail it ([`tools/verification/ttd-bench/`](../../tools/verification/ttd-bench/README.md)) |
@@ -220,4 +225,5 @@ before and after, section 4):
 - Chandler Carruth, "Tuning C++: Benchmarks, and CPUs, and Compilers! Oh My!"
   (CppCon 2015).
 - In this repository: [core/benchmarks/README.md](../../core/benchmarks/README.md),
+  [tools/profiling/](../../tools/profiling/README.md) (host profiles),
   [core/tests/README.md](../../core/tests/README.md) (test time budget).

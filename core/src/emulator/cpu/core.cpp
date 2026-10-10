@@ -716,6 +716,7 @@ void Core::SelectMemoryInterface()
         return;
 
     std::lock_guard<std::mutex> lock(_memIfMutex);
+    _memIfGeneration++;
     const bool debug = _z80->isDebugMode;
     const bool contended = IsContentionEffective();
     if (_busOverlay)

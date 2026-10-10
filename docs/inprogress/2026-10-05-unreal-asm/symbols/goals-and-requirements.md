@@ -92,9 +92,20 @@ the way.
 | D-3 | **The symbol module is part of the cross-assembler library `unreal-asm`** in `core/src/3rdparty/unreal-asm` ([../README.md](../README.md)); symbols are one consumer of its source codecs. (Replaces proposal P-1.) |
 | D-2 | **Nothing is vendored.** Existing converters and tools (local and public, [prior-art.md](../prior-art.md)) are references for the formats only; every codec is a fresh implementation against these requirements, with its own tests. |
 
+Accepted as recommended (owner, 2026-10-09; every one was already built that way):
+
+| ID | Decision | Built in |
+|---|---|---|
+| P-2 | The native file is `*.usym.json`. | S1 |
+| P-3 | `LabelManager` stays as the facade over `SymbolStore`; `Label` is a view of `Symbol`. | S2, S2b |
+| P-4 | The default merge policy is `keep both` with a report of the names that move. | S1, S5 |
+| P-5 | A tokenized format gets a research document from runs in the emulator first, then its codec; TASM first. | A2-A4, the frontends |
+| P-6 | Live scans run only on request (`scan`, `import-live`), never in the background. | S5 |
+| P-7 | ROM bundles by page SHA-256 from `data/symbols/manifest.json`, at start and after a ROM change. | S5 |
+
 ### 3.2 Proposals (for the owner's decision)
 
-These are the design's proposals. The owner's answers go to §3.1, one question at a time.
+These were the design's proposals; all are decided (§3.1).
 
 | ID | Proposal | Recommended |
 |---|---|---|

@@ -115,6 +115,8 @@ tools/poc/**/scratch-*
 # ...and the port-journal fixtures with the emulator's recorded answers
 # (tools/verification/ttd-analyzer/scripts/record_port_journal_fixtures.py)
 !testdata/ttd/port-journals/*.ttd
+# ...in the engine's format too (converted from those once, 2026-10-09)
+!testdata/ttd/port-journals/engine/*.ttd
 # ...and the per-machine corpus fixtures (record_fixtures.py FIXTURE_OPTIONS)
 !testdata/machines/*/ttd/*.ttd
 # ...and the same corpus recorded by the engine (its session file format)

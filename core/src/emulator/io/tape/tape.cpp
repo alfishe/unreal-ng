@@ -10,7 +10,8 @@
 #include "loaders/tape/loader_tape.h"
 #include "stdafx.h"
 #include <cstring>
-#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (Item 6 markers)
+#include "debugger/ttd/timetravelhooks.h"  // ITimeTravelHooks (Item 6 markers)
+#include "debugger/ttd/ttdexternalevents.h"
 
 /// region <Constructors / destructors>
 
@@ -752,11 +753,8 @@ void Tape::handleFrameStart()
     }
 }
 
-void Tape::handleStep()
+void Tape::handleStepPlaying()
 {
-    if (!_tapeStarted)
-        return;
-
     Z80& cpu = *_context->pCore->GetZ80();
     const uint32_t tState = cpu.t;
     uint64_t clockCount = ClockCount();

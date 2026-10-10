@@ -28,6 +28,7 @@ add_custom_target(steamdeck-poc-data
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
 )
+add_dependencies(steamdeck-poc-data runtime-data)   # never copy the same folders at the same time
 add_dependencies(steamdeck-poc-all steamdeck-poc-data)
 
 # Compile GLSL to SPIR-V and embed it as a C array header (<name>.spv.h, symbol <name>_spv)

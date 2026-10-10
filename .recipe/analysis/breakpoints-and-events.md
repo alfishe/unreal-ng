@@ -15,7 +15,11 @@ A step from the execution breakpoint the machine is stopped at runs that instruc
 on from a breakpoint). A machine that sits at an address with a breakpoint without having stopped
 there (fresh reset, a jump done by a seek) stops on the first step, without executing.
 
-Memory breakpoints need debug mode (and the `breakpoints` feature, on with debug mode).
+Memory breakpoints need debug mode and the `breakpoints` feature. The feature can be off while debug mode is on
+(seen 2026-10-10 on a `PENTAGON` created through the WebAPI): the breakpoint is added `active` but its `hit_count`
+stays 0. Switch it on with `PUT /feature/breakpoints {"enabled":true}` and check `GET /features` when a breakpoint
+never fires. A memory breakpoint stops during the access, so the PC is inside or just past the writing instruction
+([articles/program-state-reverse.md](../articles/program-state-reverse.md)).
 
 **Ranges.** Any execution, read or write breakpoint can cover a range: `address` + `address_end`. A
 range is checked as fast as one address, and so are ten thousand of them (the emulator paints them

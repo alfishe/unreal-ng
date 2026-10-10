@@ -132,6 +132,11 @@ graph TD
 ### Phase 1: Normalized Debug-Info Engine (`libunreal-debuginfo`)
 > **Objective**: Eliminate the 64 KB flat address mapping limitation by establishing a page-aware, module-based debug-info subsystem.
 
+> **Reconciled 2026-10-09** ([debuginfo-reconciliation.md](debuginfo-reconciliation.md)): the unreal-asm symbol module
+> already reads `.sym`, `.map`, `.lst` labels, SLD labels and the disk / tape containers. Phase 1 extends unreal-asm
+> with a line table and the binding instead of starting a second library; the GDB stub has no `ListingParser` to
+> replace.
+
 #### Key Deliverables
 - **`libunreal-debuginfo` Library**: Standalone C++ parser library capable of reading sjasmplus SLD v1, `.lst`, `.sym`, `.map`, and SDCC `.cdb`/`.adb` files.
 - **R5: Core Normalized Debug-Info Model**:

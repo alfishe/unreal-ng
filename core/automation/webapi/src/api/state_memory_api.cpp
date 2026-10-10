@@ -10,7 +10,6 @@
 #include "../common/statenode_json.h"
 
 #include <drogon/HttpResponse.h>
-#include <debugger/ttd/timetravelmanager.h>  // TimeTravelManager (Item 6 markers)
 #include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>

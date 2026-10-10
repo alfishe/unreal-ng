@@ -22,12 +22,17 @@ D-4 codecs and format conversion first, dialect conversion plugins after. No cod
 
 Design on master; development in a fresh worktree from master (branch `unreal-asm`); a commit after each green
 phase; master only after the owner's review.
-- [ ] symbol module proposals P-2 … P-7 ([symbols/goals-and-requirements.md](symbols/goals-and-requirements.md) §3.2); S1 implements P-2 (`*.usym.json`) and P-4 (`both` + report) as recommended, the owner may still change them
+- [x] symbol module proposals P-2 … P-7 accepted as recommended (owner, 2026-10-09; [symbols/goals-and-requirements.md](symbols/goals-and-requirements.md) §3.1)
 
 ## Phases ([tdd.md](tdd.md) §8)
 
 - [x] Prior-art survey, local and public ([prior-art.md](prior-art.md))
-- [ ] A0 review round 1 of every document
+- [x] A0 review round 1 of every document (2026-10-09, owner: as proposed):
+  - P-2…P-7 recorded as decisions ([symbols/goals-and-requirements.md](symbols/goals-and-requirements.md) §3.1).
+  - "As built" tables in [architecture.md](architecture.md) §9 and [symbols/architecture.md](symbols/architecture.md) §9: no `core/src/debugger/symbols/` folder; the adapters went into `SymbolControl`, `LabelManager` and `core/src/debugger/asm/diskfiles.h`.
+  - Status brought up to date in both READMEs and both phase tables; the tool paths (`core/src/3rdparty/unreal-asm/tools/symconv`) and the user guide (`docs/features/unreal-asm.md`, no `symbols.md` / `asm-sources.md`) corrected.
+  - The debugger additions' E7 closed (the live scans).
+  - The research documents' open points match this TODO (MASM 2.0, TASM 5.5, XAS `USEL` / `MAKE`).
 - [x] A1 skeleton, document model, encoding detectors and code page tables (D-13), `text` codec, sjasmplus text codec (D-10), registry, detection (2026-10-05, branch `unreal-asm`): `core/src/3rdparty/unreal-asm` with the `zxasm` CLI, two examples and the text / sjasmplus corpus (D-14); 22 tests in `unreal-asm-tests` (run by `test-parallel`); byte-exact round trip of every corpus file (CP866 / KOI8-R / CP1251 / UTF-8 × LF / CRLF / CR, BOM, no final break, mixed ends, invalid bytes); detector: KOI8-R 75 vs 13, CP1251 72 vs 16, CP866 98
 - [x] A2 `tasm3`, `tasm4` (research first: [research-tasm.md](research-tasm.md)), sub-version conversion (2026-10-05, branch `unreal-asm`): hobeta / TR-DOS containers, `zxasm` reads `.$X` / `.trd --file`, writes `.$X`; example `read-hobeta`; testdata `tasm3/` (two real TASM 3.2 files + expected text); 34 tests; byte-exact round trip, the canonical tokenizer alone reproduces TASM 3.2's bytes, TASM 3 → 4 → 3 exact
   - [x] TASM every version (2026-10-05, branch `unreal-asm`): `3` (3.0-3.5), `4.0` (4.0 XLD / 4.4 KVA), `4.12` (direct blank counts); tables from each binary; 127 real sources (24 / 91 / 12) byte-exact, canonical 99.78 %; tokenizer: keywords everywhere, `"x"` constants literal ([research-tasm.md](research-tasm.md))
@@ -138,15 +143,34 @@ phase; master only after the owner's review.
     - Detection is 10.7x faster for ALASM (45.9 MB/s at load average ~30) and 6x for ZX-ASM (52.8 MB/s).
     - ZEUS is 1.35-1.4x faster; ALASM → sjasmplus runs at 328 k lines/s.
     - Every decode and conversion of the corpus is byte-identical to before.
-  - [ ] still below 50 MB/s: ZEUS decode (each line encoded again for the canonical check, 16-36 MB/s), XAS decode (the packer, 33 MB/s)
   - [x] `BM_Symbols_DisasmLine` A/B against the old LabelManager (2026-10-08): 13-28 % faster with 1k-60k labels, the address lookup 4-9 times faster ([symbols/test-and-benchmark-plan.md](symbols/test-and-benchmark-plan.md) §6)
 - [ ] P2: asm-synchronizer ([asm-synchronizer.md](asm-synchronizer.md), TDD 2026-10-09; was "memory bridge"). Both directions between the host and an assembler running in the emulator; about 95 days in all; the code waits for an owner go-ahead (P2)
   - [x] research: ALASM 4.44 / 5.09 and TASM 4.12 memory layouts verified live (2026-10-09)
   - Part A, guest → host (about 40 days; §11-§12):
-    - [ ] Y0 descriptors, probe, the three readers (file image, gap buffer, linear), `SyncControl` status / probe / extract; ALASM 5.x / 4.4x, TASM 4.12; WebAPI, CLI, MCP (first cut, about 6 days)
-    - [ ] Y1 hash poller + debounce, worker build (codec → IR → layout), hints, the live symbol set `live:sync:*`; Lua / Python (about 4 days more)
-    - [ ] Y2 the Qt "Live source" dock
+    - [x] Y0 descriptors, probe, the three readers (file image, gap buffer, linear), `SyncControl` status / probe / extract; ALASM 5.09 / 4.44, TASM 4.12; WebAPI, CLI, MCP (2026-10-09): `unrealasm/sync/reader.h`, golden dumps `testdata/sync` (9 sessions, each byte-identical to the assembler's own save), `sync-*` verbs of AsmControl; checked live on TASM 4.12 and ALASM 4.44
+    - [x] Y0 follow-up (2026-10-09): ALASM 3.8c, 4.42, 4.43, 4.45, 4.46, 4.5, 5.00, 5.05, 5.07, 5.08 descriptors, each with its dumps (the title address differs per build; 3.8c is recognized by `3.8c Written by`; 4.43 has no typing bit); 4.2 stays out (its loader crashes)
+    - [x] Y1 hash poller + debounce, worker build (codec → IR → layout), hints, the live symbol set `live:sync:*`; Lua / Python (2026-10-09): `unrealasm/sync/session.h` (SyncSession, std only), `AsmSyncService` in DebugManager, `sync-watch` / `unwatch` / `hints` on every surface, WebSocket topic `asm_sync`; hints on the source's lines through `SourceLine::origin` (asm-synchronizer.md §4.3); checked live on TASM 4.12
+    - [x] TASM `.IF` inside a `DEFMAC` body gave "IF without ENDIF" (SNAKE line 62) (2026-10-09): TASM 4.12's conditionals do not nest (checked in the emulator, `testdata/dialects/tasm412/IFNEST`); the frontend now writes them as flat sjasmplus blocks (research-tasm-to-sjasmplus.md). SNAKE still does not settle: the game it plays while assembling keeps its `=` values moving
+    - [x] Y2 the Qt "Live source" window (2026-10-09): the debugger's "Live source" button, `LiveSourceWindow` (text of the last build, cursor line, hints on their lines and in a list, status, Watch / Extract / Convert); unreal-qt-tests `LiveSourceWindow_Test`
     - [ ] Y3 128K assemblers: XAS, STORM, ZX-ASM / ZAsm, MASM, TASM 4.0 / 4.4 / 3.x / 2.0, ALASM 3.8c / 4.42 / 5.0 / 5.05 (research + descriptor + golden dumps each, §7)
+      - [x] ALASM 3.8c / 4.42 / 5.0 / 5.05 (with the Y0 follow-up)
+      - [x] XAS 4.18, 5.05 / 5.05SE, 7.43c, 7.447, 9.07m, 9.10 (2026-10-09): the text at `#C000` of page 3, whole sectors to the `#00` end, header bytes 29-34 the editor state SAVE rewrites (§7.11)
+      - [x] XAS 9.07m / 9.10: SAVE writes nothing to the disk in unreal-ng (2026-10-09, fixed in the WD1793): after every disk operation XAS ends with `#D0`, STEP `#20` (u = 0, h = 0) and `OUT #3F` with the cylinder it used; the STEP goes the way the last SEEK went, so the head ends one cylinder past the track register (as on the chip, MAME, Unreal Speccy). The next operation misses its sector and XAS recovers on the error status (READ ADDRESS `#C0`, track register = C, SEEK again). The emulator's status read rebuilt the Type II error bits from flags the commands never set, so RNF / CRC ERROR / WRITE PROTECT read as `#00`: XAS took the failed catalog read for a good one and wrote to the wrong cylinder. Now both versions save; tests `WD1793_Ports_Test.TypeIIErrorBitsReachTheStatusPort`, `Xas910SaveRecoversFromTheStepItIssuesAfterEveryOperation`
+      - [x] STORM 1.3 / 1.3i and 1.0beta (2026-10-09): page 6 from `#C00B` (1.0beta `#C003`) to the `#FF` before `(#C000)` (§7.8)
+      - [x] ZAsm 3.15 (2026-10-09): `(#8829)`-`(#8837)`, the part above `#C000` in page 6, SAVE's `;!` position line (§7.9)
+      - [x] MASM 1.1 and 1.3 (2026-10-09): a gap buffer from `#970B` (`(#96CC)` / `(#96CE)`, up to `#FFFF`), the editor known by its line buffer at `#851A` (§7.12)
+      - [x] TASM 4.0 / 4.4 / 3.0 / 3.2 (2026-10-09): 4.12's gap buffer (pointers `#8DD0` / `#8910`), the editor known by the tail of its line buffer (§7.6, §7.7)
+      - [x] ZX-ASM 3.10 (2026-10-09): 3.15's layout with the table at `#868F` (§7.9)
+      - [x] ZX ASM 3.0 (2026-10-09): the table in page 5 at `#61C6`, saved from the main menu (§7.9); 3.01: no program in the collection
+      - [x] ZAsm 3.2x (2026-10-09): Pentagon 512, the table at `#8530`, the upper part in page 30 (§7.9)
+      - [x] ZAsm Lite 1.07 (2026-10-09): 3.2x's layout with the table at `#859D` (§7.9)
+      - [x] ZAsm 3.3.51, 3.3.Final, 3.80.4, 4.20 (2026-10-09): 3.2x's layout, each with its own table (§7.9)
+      - [x] ZAsm 3.3.02 (2026-10-09): traced: its default drive is D, the dialog's A covers one file; two answers A reach the menu (§7.9)
+      - [x] ZAsm 3.4, x64.1, 4.0x8, 4.x64 (2026-10-10): the same layout, each with its own table (§7.9)
+      - [x] ZAsm "several texts at once": not so (2026-10-10): one text buffer, the rest of the memory is a RAM disk; the fixed page 30 holds on a Pentagon 1024 too (4.20 checked); 3.2x itself locks a Pentagon 1024 to 128K through `#EFF7` (§7.9)
+      - [x] ZX-ASM 2.4 / 2.5 / 2.6 (2026-10-10): plain text, the table at load address + 3, the upper part in page 0 (§7.9)
+      - [x] MASM 2.0 / 3.0 (2026-10-10): the gap buffer read from the operands of their gap-closing routine; the typed line from the line buffer (§7.12)
+      - [ ] MASM 1.0 demo, TASM 3.5 / 2.0
     - [ ] Y4 48K assemblers: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):

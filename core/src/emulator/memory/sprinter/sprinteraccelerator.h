@@ -93,7 +93,18 @@ public:
     /// A write to code #C7 / #CF: the alternate buffer addressing (AAGR = A9 A8 D7..D0, XCNT = A15..A10)
     void OnScaleWrite(uint16_t port, uint8_t value);
 
-    SprinterAccelState& State() { return _state; }
+    /// Mutable access (a state restore, tests): the engine calls every opcode fetch again until the next one settles
+    SprinterAccelState& State()
+    {
+        fetchQuiet = false;
+        return _state;
+    }
+    /// No latch an opcode fetch reads is set (no mode, no FN, no prefix / ED / RETI): a fetch of an opcode outside
+    /// kFetchMatters changes nothing (IZ84BusAgent::fetchQuiet)
+    void RefreshFetchQuiet()
+    {
+        fetchQuiet = (_state.mode | _state.dir | _state.fn | _state.prefix | _state.edSeen | _state.reti) == 0;
+    }
     const SprinterAccelState& State() const { return _state; }
 
     /// Whether ALL_MODE bit 0 enables the accelerator
@@ -109,6 +120,8 @@ public:
 
     /// region <IZ84BusAgent>
     void OnOpcodeFetch(uint16_t addr, uint8_t opcode) override;
+    /// OnOpcodeFetch(opcode) would leave every latch as it is
+    bool RepeatFetchIsInert(uint16_t addr, uint8_t opcode) const override;
     uint8_t OnRead(uint16_t addr, uint8_t value) override;
     uint8_t BeforeWrite(uint16_t addr, uint8_t value) override;
     void AfterWrite(uint16_t addr, uint8_t value) override;

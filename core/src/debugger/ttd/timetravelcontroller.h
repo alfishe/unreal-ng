@@ -262,10 +262,9 @@ public:
     TimeTravelEngine& GetEngine() { return *_engine; }
     const TimeTravelEngine& GetEngine() const { return *_engine; }
 
-    /// Phase 3 A/B: seeks restore from @p engine's checkpoints and replay its
-    /// event log and bus journals instead of v1's (null: v1's own data). The
-    /// engine must hold the same session (the shadow engine, or a v1 file fed
-    /// into one). The replay itself runs as v1's does
+    /// Seeks restore from @p engine's checkpoints and replay its event log and
+    /// bus journals (a session fed into another engine, tests). Null: the
+    /// session's own engine, the default
     void SetReplaySource(TimeTravelEngine* engine);
     TimeTravelEngine* GetReplaySource() const { return _replayEngine; }
     /// The settings and media check of the last restore from the replay
@@ -572,9 +571,10 @@ public:
     /// @brief Read-only access to the input journal (playback cursor, tests).
     inline const TTDInputJournal& GetInputJournal() const { return _inputJournal; }
 
-    /// @brief Read-only access to the port-read journal (tests, status).
-    inline const TTDPortJournal& GetPortReadJournal() const { return _portReads; }
-    inline const TTDPortJournal& GetPortWriteJournal() const { return _portWrites; }
+    /// @brief The session's IN / OUT journals: the engine's bus journals, recorded straight into
+    /// (port-journals-on-engine.md)
+    inline const TTDPortJournal& GetPortReadJournal() const { return _engine->BusReads(); }
+    inline const TTDPortJournal& GetPortWriteJournal() const { return _engine->BusWrites(); }
 
     /// @brief "When did the program ..." over the port journals
     /// (ttdportsearch.h): no replay, works on loaded files. Fails with a reason
@@ -1653,11 +1653,6 @@ private:
         std::unordered_map<uint8_t, std::vector<uint8_t>> peripheralBlobs;
         size_t inputCursor = 0;            ///< journal playback cursor (ServiceInput)
         bool   inputPlaybackArmed = false;
-        /// Port-read journal mode and position (a throwaway replay moves them)
-        TTDPortJournal::Mode portReadMode = TTDPortJournal::Mode::Off;
-        uint64_t portReadCursor = 0;
-        TTDPortJournal::Mode portWriteMode = TTDPortJournal::Mode::Off;
-        uint64_t portWriteCursor = 0;
         /// The replay engine's journals as the machine plays them (a machine on the recorded history after a seek
         /// runs from them; a throwaway replay starts them elsewhere) and the hooks the CPU and the media read through
         TTDPortJournal::Mode busReadMode = TTDPortJournal::Mode::Off;
@@ -1836,14 +1831,12 @@ private:
     void ApplyToolEdit(const std::vector<uint8_t>& payload);
     /// The live machine's memory regions as the engine sees them: machine RAM, then each region source's
     std::vector<TTDRegionDesc> LiveRegions() const;
-    uint64_t _shadowBusReads = 0;     ///< ... and v1's port journals
     uint64_t _shadowLastStart = 0;         ///< the last captured frame's start in machine time
     uint64_t _shadowLastBase = 0;          ///< emulatorState.t_states at that capture
     uint64_t _shadowLastLength = 0;        ///< the length of the frame before it (0: none yet)
     uint64_t _shadowRomSignature = 0;      ///< the ROM set's, hashed once per shadow session
     uint64_t _shadowMediaStamp = 0;        ///< IMediaHistory::VersionStamp at the last capture
     bool _shadowMediaKnown = false;        ///< _shadowMediaStamp is valid for this session
-    uint64_t _shadowBusWrites = 0;
     bool _shadowRescan = false;   ///< live memory may differ from the engine's delta base: hand it every piece
     /// Hand this capture to the shadow engine
     bool FeedShadow(const TTDCheckpoint& out, bool baseline);
@@ -1976,26 +1969,24 @@ private:
     /// reverse queries) - not the capture/restore self-test
     void RestoreCheckpointForReplay(const TTDCheckpoint& cp);
 
-    /// Port-read journal of the session (ttd-port-read-journal.md) and whether
-    /// it holds every IN of the history (_portJournalOffReason says why not)
-    TTDPortJournal _portReads{TTDPortJournal::Direction::Read};
-    TTDPortJournal _portWrites{TTDPortJournal::Direction::Write};
+    /// The engine's bus journals hold every IN / OUT of the session: recorded
+    /// on every machine from the baseline on (the CPU's hooks write into them,
+    /// port-journals-on-engine.md); false after a gap (DropPortJournal, the
+    /// reason in _portJournalOffReason) or for a loaded session without them.
+    /// _portJournalValid is the same flag as the session file and status name it
     bool _portJournalValid = false;
-    /// The journals hold every IN / OUT of the session (always while
-    /// recording, Phase 3): the engine's bus data. _portJournalValid adds
-    /// that v1's own replay may play them (its machine gate)
     bool _portJournalRecorded = false;
     std::string _portJournalOffReason;
-
-    /// Why the current configuration cannot record an isolating port-read
-    /// journal; nullptr when it can
-    const char* PortJournalUnsupportedReason() const;
     /// Give up the journal for this session (a gap in it): replay falls back
     /// to the live devices
     void DropPortJournal(const char* reason);
-    /// Point EmulatorContext::ttdPortReads / ttdPortWrites at the journals while they record
-    /// or plays, null otherwise
+    /// Point EmulatorContext::ttdPortReads / ttdPortWrites at the recording engine's bus journals
+    /// while recording, null otherwise (a replay points them at the replay engine's: RestoreCheckpointForReplay)
     void SyncPortJournalHook();
+    /// The recording engine's bus journals back to recording at their ends (after a pause, a replay, a resume)
+    void ResumeBusRecording();
+    /// The recording engine's bus journals stop recording (a stop, a gap)
+    void StopBusRecording();
 
     /// External-event journal — replay barriers for nondeterminism sources
     /// that aren't input-journaled in v1 (Item 6). Same lifecycle as the

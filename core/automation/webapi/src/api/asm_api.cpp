@@ -7,6 +7,12 @@
 ///   POST /emulator/{id}/asm/decode  {path | data + name, file?, codec?, version?, codepage?, output?}
 ///   POST /emulator/{id}/asm/encode  {text | input, codec, version?, codepage?, lineend?, output?, start?}
 ///   POST /emulator/{id}/asm/convert {path | data + name, file?, to, codec?, version?, from?, z80n?, output?}
+///   GET  /emulator/{id}/asm/sync               the assembler running in the machine and its text (?assembler=)
+///   POST /emulator/{id}/asm/sync/probe         every assembler that identifies in RAM
+///   POST /emulator/{id}/asm/sync/extract {assembler?, as: text | file | dialect, to?, codepage?, output?}
+///   POST /emulator/{id}/asm/sync/watch   {assembler?, interval?, quiet?, as?, to?, output?}   the watch: live labels, hints
+///   DELETE /emulator/{id}/asm/sync/watch                                                         stop it
+///   GET  /emulator/{id}/asm/sync/hints                                                           the last build
 /// A path is a host file or disk:A/NAME.T. Every route turns its request into an AsmControl verb, shared with the CLI,
 /// MCP, Lua, Python and the Qt disk browser (core/src/debugger/asm/asmcontrol.h).
 
@@ -122,6 +128,38 @@ void EmulatorAPI::asmVerb(const HttpRequestPtr& req, std::function<void(const Ht
     if (!OptionsFromJson(req, options, callback))
         return;
     RespondAsm(id, verb, std::move(options), callback);
+}
+
+void EmulatorAPI::asmSyncStatus(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    std::map<std::string, std::string> options;
+    if (!req->getParameter("assembler").empty())
+        options["assembler"] = req->getParameter("assembler");
+    RespondAsm(id, "sync-status", std::move(options), callback);
+}
+
+void EmulatorAPI::asmSync(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id,
+                          const std::string& action) const
+{
+    std::map<std::string, std::string> options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    RespondAsm(id, "sync-" + action, std::move(options), callback);
+}
+
+void EmulatorAPI::asmSyncHints(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    (void)req;
+    RespondAsm(id, "sync-hints", {}, callback);
+}
+
+void EmulatorAPI::asmSyncUnwatch(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    (void)req;
+    RespondAsm(id, "sync-unwatch", {}, callback);
 }
 
 }  // namespace v1

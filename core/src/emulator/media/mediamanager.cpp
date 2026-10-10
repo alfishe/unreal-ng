@@ -797,6 +797,10 @@ void MediaManager::ApplyPending()
 
 void MediaManager::NoteWrite(const std::string& slotId, const char* detail)
 {
+    // A TTD replay runs the recording's writes again: the medium already holds them, so its version (frames that
+    // wrote it, what a seek's media check compares) stays, and a replay records nothing
+    if (_context && _context->ttdReplayActive)
+        return;
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     auto it = _slots.find(slotId);
     if (it == _slots.end() || it->second.writeMarkedThisFrame)

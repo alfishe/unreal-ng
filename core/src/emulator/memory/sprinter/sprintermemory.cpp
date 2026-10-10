@@ -2,7 +2,10 @@
 
 #include "sprintermemory.h"
 
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/sprinter/sprinterwaits.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfiguration.h"
 #include "emulator/ports/models/sprinter/sprinterpldstate.h"
@@ -363,3 +366,64 @@ void SprinterMemory::OnWrite(uint16_t addr, uint8_t value)
 }
 
 /// endregion </Write intercept>
+
+/// region <The bus in one call>
+
+bool SprinterMemory::FusedBusMatches()
+{
+    Core* core = _context ? _context->pCore : nullptr;
+    Z80* cpu = core ? core->GetZ80() : nullptr;
+    if (!cpu)
+        return false;
+    const size_t count = core->GetBusOverlayCount();
+    size_t i = 0;
+    const bool intercept = i < count && core->GetBusOverlayAt(i) == &_intercept;
+    if (intercept)
+        i++;
+    MemoryWaitOverlay* waits = nullptr;
+    if (i < count && (core->GetBusOverlayAt(i) == _turboWaits || core->GetBusOverlayAt(i) == _originalWaits))
+        waits = static_cast<MemoryWaitOverlay*>(core->GetBusOverlayAt(i++));
+    if (i != count)
+        return false;  // an overlay this path does not know (a card's ZX-DMA, a debugger's)
+    if (cpu->MemIf != (count ? cpu->OverlayFastMemIf : cpu->FastMemIf))
+        return false;  // the debug interface (breakpoints, tracking) or contention
+    if (intercept && (_intercept.windowStart != 0 || _intercept.windowEnd != 0x10000))
+        return false;
+    if (waits && (!waits->observesReads || waits->windowStart != 0 || waits->windowEnd != 0x10000))
+        return false;
+    _fusedIntercept = intercept;
+    _fusedWaits = waits;
+    _fusedTurbo = waits == _turboWaits;
+    _fusedCpu = cpu;
+    return true;
+}
+
+void SprinterMemory::FusedWait(uint16_t addr)
+{
+    // MemoryWaitOverlay::Wait with the rule the overlay's ExtraClocks has (the access kind does not matter to either)
+    if (!_fusedWaits->SlotWaits(static_cast<uint8_t>(addr >> 14)))
+        return;
+    const uint32_t start = _fusedCpu->AccessStartClock();
+    const uint32_t clocks = _fusedTurbo ? SprinterWaits::Rule(start, SprinterWaits::kMemoryTaken) : SprinterOrigWaits::Rule(start);
+    if (clocks)
+        _fusedCpu->AddWaitStates(clocks);
+}
+
+uint8_t SprinterMemory::FusedRead(uint16_t addr, bool isExecution)
+{
+    const uint8_t value = SprinterMemory::MemoryReadFast(addr, isExecution);  // the plain read and the redirects
+    if (_fusedWaits)
+        FusedWait(addr);
+    return value;
+}
+
+void SprinterMemory::FusedWrite(uint16_t addr, uint8_t value)
+{
+    Memory::MemoryWriteFast(addr, value);  // the store (write-protected windows: the trash page)
+    if (_fusedIntercept)
+        OnWrite(addr, value);
+    if (_fusedWaits)
+        FusedWait(addr);
+}
+
+/// endregion </The bus in one call>

@@ -5,6 +5,8 @@
 
 class PortDecoder_Sprinter;
 class SprinterVideoRam;
+class MemoryWaitOverlay;
+class Z80;
 struct SprinterPldState;
 
 /// Sprinter Sp2000 memory (Sprinter tdd-ports-memory §5).
@@ -65,6 +67,8 @@ public:
     /// region <Model overrides>
 public:
     uint8_t MemoryReadFast(uint16_t addr, bool isExecution) override;
+    /// Not in the ISA view: a CPU read there is an ISA cycle
+    bool RepeatFetchIsPure(uint16_t addr) const override { return !_anyRedirect || _redirect[addr >> 14] != ReadRedirect::Isa; }
     uint8_t MemoryReadDebug(uint16_t addr, bool isExecution) override;
 
     /// The decoder that owns the PLD state (null before it exists: the windows
@@ -174,4 +178,34 @@ private:
 
 public:
     HostBusOverlay& GetWriteIntercept() { return _intercept; }
+
+    /// region <The bus in one call (the CPU engine's fast bus, Z84C15Engine::SetFastBus)>
+    /// The turbo and the original waits the decoder installs (SprinterWaits, SprinterOrigWaits)
+    void SetWaitOverlays(MemoryWaitOverlay* turbo, MemoryWaitOverlay* original)
+    {
+        _turboWaits = turbo;
+        _originalWaits = original;
+    }
+    /// The memory configuration is one FusedRead / FusedWrite reproduce exactly: the plain memory interface, the
+    /// installed overlays this memory's own in their install order - the write intercept, then the turbo or the
+    /// original waits (either may be missing) - over the whole address space. Anything else (a card's overlay, the
+    /// debug interface, contention): false, the CPU takes the memory interface. Called when Core's memory
+    /// interface generation moved
+    bool FusedBusMatches();
+    /// What the memory interface's read does (Memory::MemoryReadOverlay[M1] over MemoryReadFast, then the waits
+    /// overlay), in one call
+    uint8_t FusedRead(uint16_t addr, bool isExecution);
+    /// What its write does (MemoryWriteOverlay over MemoryWriteFast: the store, the intercept, the waits)
+    void FusedWrite(uint16_t addr, uint8_t value);
+    /// endregion </The bus in one call>
+
+private:
+    /// The waits of the configuration FusedBusMatches accepted: the overlay (null: none) and its rule
+    void FusedWait(uint16_t addr);
+    MemoryWaitOverlay* _turboWaits = nullptr;
+    MemoryWaitOverlay* _originalWaits = nullptr;
+    MemoryWaitOverlay* _fusedWaits = nullptr;
+    bool _fusedTurbo = false;
+    bool _fusedIntercept = false;
+    Z80* _fusedCpu = nullptr;
 };

@@ -197,6 +197,12 @@ int Z84CpuIntPossible(const Z84CPU* cpu);
 uint32_t Z84CpuTstates(const Z84CPU* cpu);
 void Z84CpuSetTstates(Z84CPU* cpu, uint32_t tstates);
 
+// 1 if a halted CPU's next idle M1, fetching `opcode` (the byte after the HALT), leaves the chip's wait
+// generator as it is: past the power-on window, no RETI rule pending, and `opcode` does not arm one. Every
+// later idle M1 of the same byte is then the same cycle - its length depends on the host's waits only, so a
+// host may run them in one go (the host adds 1 to R per cycle: Z84_R_INC)
+int Z84CpuIdleM1Repeats(const Z84CPU* cpu, uint8_t opcode);
+
 // The board's external /WAIT: `tstates` more T-states for the bus cycle in
 // progress. Called from inside a memory or port callback (the core takes the
 // clock back after every callback); the chip's programmed waits for the same

@@ -2,7 +2,7 @@
 /// @brief Unit tests for TTDWriteJournal (ring buffer, scan, lifecycle, serialization).
 ///
 /// Per parent TDD §9.3. Tests the write journal in isolation — no emulator,
-/// no TimeTravelManager. The journal is a pure data structure with a well-
+/// no TimeTravelController. The journal is a pure data structure with a well-
 /// defined thread model (single-producer append, control-thread read under
 /// pause), so we can exercise it without the full emulator harness.
 

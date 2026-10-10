@@ -1486,6 +1486,9 @@ void Emulator::WaitWhilePaused()
     // park). The caller executes the machine, so it may read the session
     if (_context && _context->pTimeTravelHooks)
         _context->pTimeTravelHooks->OnMachineParking();
+    // The picture up to the beam for whoever looks while parked (Screen::CatchesUpOnEvents)
+    if (Screen* screen = _context ? _context->pScreen : nullptr; screen && screen->CatchesUpOnEvents())
+        screen->UpdateScreen();
     NoteDebugChange();   // a stop (a breakpoint's park inside the frame) the debugger snapshot's seq counts
 
     std::unique_lock<std::mutex> lock(_pauseWaitMutex);
@@ -2746,6 +2749,9 @@ Emulator::DirectStepScope::~DirectStepScope()
             _emulator._lastStop.reason = _emulator._directStop.hit ? DebugStop::Reason::Breakpoint : DebugStop::Reason::Step;
             _emulator._lastStop.breakpoint = _emulator._directStop;
         }
+        // What the run left mid-frame on a screen that catches up on its own events (Screen::CatchesUpOnEvents)
+        if (Screen* screen = _emulator._context ? _emulator._context->pScreen : nullptr; screen && screen->CatchesUpOnEvents())
+            screen->UpdateScreen();
         _emulator.NoteDebugChange();   // the direct run stopped
         // The GUI's one refresh, now it may read; the payload says whether a breakpoint ended the run
         auto* payload = new CpuStepPayload(_emulator.GetId());
@@ -2876,11 +2882,15 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
     TStateRunBudget budget = TStateRunBudget::Frames(z80._frameLimit, frames);
 
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    // A halted CPU's idle cycles may run in one go, as one per step would: those that start inside the budget
+    Z80::IdleSkipScope idleSkip(z80, 0);
 
     while (!budget.Reached() && !RunHalted())
     {
         const uint32_t prevT = z80.t;
         const uint32_t limitBefore = z80._frameLimit;
+        const uint64_t budgetEnd = static_cast<uint64_t>(prevT) + budget.Remaining();
+        z80.idleSkipLimit = budgetEnd < UINT32_MAX ? static_cast<uint32_t>(budgetEnd) : UINT32_MAX;
 
         bool frameCompleted = false;
         ExecuteStep(skipBreakpoints, &frameCompleted);
@@ -2919,9 +2929,13 @@ void Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints)
     // 64-bit: the target is counted from the current frame start and a long run spans many frames
     uint64_t targetT = static_cast<uint64_t>(z80.t) + tStates;
 
+    // A halted CPU's idle cycles may run in one go, as one per step would: those that start before the target
+    Z80::IdleSkipScope idleSkip(z80, 0);
+
     while (z80.t < targetT && !RunHalted())
     {
         const uint32_t limitBefore = z80._frameLimit;
+        z80.idleSkipLimit = targetT < UINT32_MAX ? static_cast<uint32_t>(targetT) : UINT32_MAX;
 
         bool frameCompleted = false;
         ExecuteStep(skipBreakpoints, &frameCompleted);

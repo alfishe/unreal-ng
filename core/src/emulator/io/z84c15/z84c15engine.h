@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "3rdparty/z84c15/z84c15.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 
 class EmulatorContext;
@@ -32,9 +33,37 @@ public:
     virtual void AfterWrite(uint16_t addr, uint8_t value) = 0;
     /// The CPU accepted an INT: its acknowledge cycle (M1 with /IORQ), before the pushes
     virtual void OnInterruptAcknowledge() = 0;
+    /// Another opcode fetch of `opcode` at `addr` now would change nothing in the agent (a halted CPU's repeated
+    /// idle fetch may then run without it). Default: false - every fetch reaches the agent
+    virtual bool RepeatFetchIsInert(uint16_t addr, uint8_t opcode) const
+    {
+        (void)addr;
+        (void)opcode;
+        return false;
+    }
 
     /// false: the engine skips OnRead / BeforeWrite / AfterWrite (an idle agent costs one test per access)
     bool watchData = false;
+    /// true: OnOpcodeFetch of an opcode whose fetchMatters entry is false would change nothing, so the engine skips
+    /// the call (an idle agent costs one test per opcode fetch). The agent keeps it current; anything that changes
+    /// its state from outside clears it (always call) until the agent sets it again
+    bool fetchQuiet = false;
+    /// 256 entries: the opcodes that may change the agent even while fetchQuiet (null: every fetch is called)
+    const bool* fetchMatters = nullptr;
+};
+
+/// The board's memory bus in one call per access: what the CPU's memory interface (Z80::MemIf) does - the read with
+/// the board's redirects and the bus overlays after it, the write with its intercepts and waits - for the plain
+/// configurations it reproduces exactly (the Sprinter memory's fused read and write). The engine asks
+/// Matches whenever Core's memory interface generation moves and takes the memory interface while it says no (a
+/// card's overlay, the debug interface)
+class IZ84FastBus
+{
+public:
+    virtual ~IZ84FastBus() = default;
+    virtual bool Matches() = 0;
+    virtual uint8_t Read(uint16_t addr, bool isExecution) = 0;
+    virtual void Write(uint16_t addr, uint8_t value) = 0;
 };
 
 /// Board logic that watches the on-chip daisy chain's acknowledges and RETIs (observation: the Sprinter's ISA
@@ -105,8 +134,43 @@ public:
     /// The board's bus agent (null = none): opcode fetches, data accesses, INT acknowledges
     void SetBusAgent(IZ84BusAgent* agent) { _agent = agent; }
     IZ84BusAgent* GetBusAgent() const { return _agent; }
+    /// The board's fused bus (null = none: always the memory interface)
+    void SetFastBus(IZ84FastBus* bus)
+    {
+        _fastBus = bus;
+        _fastBusGeneration = ~0u;
+    }
+    /// The fused bus on (the default) or off (comparison tests, diagnosis)
+    void SetFastBusOn(bool on)
+    {
+        _fastBusOn = on;
+        _fastBusGeneration = ~0u;
+    }
+
+    /// Opcode fetches the bus agent says change nothing (IZ84BusAgent::fetchQuiet) skipped: on by default; off calls
+    /// it for every fetch (comparison tests, diagnosis)
+    void SetFetchFilterOn(bool on) { _fetchFilterOn = on; }
+
     /// The board's interrupt observer (null = none)
     void SetInterruptObserver(IZ84InterruptObserver* observer) { _observer = observer; }
+
+    /// A halted CPU's idle cycles in one go (RunIdleCycles): on by default; off runs one per step (comparison
+    /// tests, diagnosis)
+    void SetIdleCyclesInOneGo(bool on) { _idleInOneGo = on; }
+    bool IdleCyclesInOneGo() const { return _idleInOneGo; }
+    /// Idle cycles run as arithmetic since the engine was created (tests, diagnosis)
+    uint64_t IdleCyclesRunInOneGo() const { return _idleCyclesInOneGo; }
+
+    /// The INT question answered from a kept "no" (ChainSource::IsIntAsserted): on by default; off asks the sources
+    /// at every boundary (comparison tests, diagnosis)
+    void SetIntAnswerKept(bool on)
+    {
+        _intKeptOn = on;
+        _intKept.valid = false;
+    }
+    /// Boundaries answered from the kept "no", and the times it was refilled (tests, diagnosis)
+    uint64_t IntAnswersKept() const { return _intAnswersKept; }
+    uint64_t IntAnswersAsked() const { return _intAnswersAsked; }
 
     Z84Lib::Z84C15& Chip() { return _chip; }
     const Z84Lib::Z84C15& Chip() const { return _chip; }
@@ -131,6 +195,41 @@ private:
         Z84C15Engine& _engine;
     };
 
+    /// region <Idle cycles in one go>
+    /// A halted CPU's idle M1 cycles (the byte after the HALT, again and again) up to the next moment something
+    /// may happen: Z80::idleSkipLimit, the frame end, the next T at which an interrupt source may assert (asked
+    /// for real there, as every boundary would ask it). The cycles are the ones a step each would run - their
+    /// T-states (the host's waits by the start phase) and one R tick each - without the per-step work around
+    /// them, run only while every party says another such cycle changes nothing but time: the CPU's per-step
+    /// jobs (Z80::IdleStepsInert), the board's M1 hook, the bus agent, the chip's wait generator, the memory and
+    /// the bus overlays. Worked example (dontBlink at 21 MHz, EI : HALT at #0216 waiting for CTC 3): ~45 000
+    /// idle cycles a frame become a few real ones (learning the 6-clock wait phases) and ~200 checks
+    void RunIdleCycles();
+    /// The idle fetch of `opcode` at `fetch` repeats with no effect but time; `period`: its length depends on
+    /// the start clock modulo this
+    bool IdleFetchIsPure(uint16_t fetch, uint8_t opcode, uint32_t& period) const;
+    /// After the sources said "no INT" at `t`: the first boundary that must ask again (> t, <= stop)
+    uint32_t NextCheckT(uint32_t t, uint32_t stop);
+    /// The chip's clock (Z84C15::Clock) at host T `t`
+    uint64_t ChipClockAt(uint32_t t);
+    /// Phases (CPU clocks) an idle cycle's length may depend on, at most
+    static constexpr uint32_t kMaxIdlePeriod = 64;
+    /// endregion </Idle cycles in one go>
+
+    /// The fused bus may take this access: it matched the memory configuration of this generation
+    bool UseFastBus()
+    {
+        if (!_fastBus)
+            return false;
+        const uint32_t generation = _core->GetMemoryInterfaceGeneration();
+        if (generation != _fastBusGeneration) [[unlikely]]
+        {
+            _fastBusGeneration = generation;
+            _fastBusMatches = _fastBusOn && _fastBus->Matches();
+        }
+        return _fastBusMatches;
+    }
+
     /// Host -> library before a step or an acknowledge: T and, when the host changed it, the boundary
     void Enter();
     /// Library -> host after it: tt, the boundary, the decoded opcode, the HALT entry
@@ -148,6 +247,12 @@ private:
 
     Z80* _z80 = nullptr;
     Memory* _memory = nullptr;
+    Core* _core = nullptr;
+    IZ84FastBus* _fastBus = nullptr;
+    uint32_t _fastBusGeneration = ~0u;
+    bool _fastBusMatches = false;
+    bool _fastBusOn = true;
+    bool _fetchFilterOn = true;
     Z84Lib::Z84C15& _chip;
     ChainSource _source{*this};
     IInterruptSource* _external = nullptr;
@@ -155,4 +260,24 @@ private:
     IZ84InterruptObserver* _observer = nullptr;
     uint8_t _boundarySeen = Z80_BOUNDARY_NONE;  ///< the boundary the host last got from the library
     uint8_t _vector = 0xFF;                     ///< the data bus byte of the acknowledge in progress
+    uint8_t _lastM1Value = 0;                   ///< the byte the last opcode fetch read (a halted CPU's idle fetch)
+    bool _idleInOneGo = true;
+    uint64_t _idleCyclesInOneGo = 0;
+
+    /// A "no" from both the chip and the board, valid for boundaries before `until` while nothing it depends on
+    /// changed: the chip's and the board's change counts, the frame, the clock multiplier
+    struct KeptNo
+    {
+        bool valid = false;
+        uint32_t until = 0;
+        uint32_t chipVersion = 0;
+        uint32_t boardVersion = 0;
+        uint64_t frame = 0;
+        uint32_t multiplier = 0;
+    };
+    const EmulatorState* _state = nullptr;
+    bool _intKeptOn = true;
+    KeptNo _intKept;
+    uint64_t _intAnswersKept = 0;
+    uint64_t _intAnswersAsked = 0;
 };

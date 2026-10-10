@@ -618,6 +618,11 @@ void MainLoop::OnFrameStart()
         // resetting the tracker makes the rendered frame complete from t=0.
         if (_renderThisFrame && !_lastFrameRendered)
             _screen->ResetPrevTstate();
+
+        // A screen that catches up on its own events is not drawn after every step, only on the frame's last
+        const bool onEvents = _screen->CatchesUpOnEvents();
+        _stepScreen = _renderThisFrame && !onEvents;
+        _tailScreen = _renderThisFrame && onEvents;
     }
     /// endregion </Turbo render decimation>
 
@@ -643,10 +648,10 @@ void MainLoop::OnCPUStep()
 
     // Turbo render decimation: skipped frames bypass contingent rendering.
     // Everything below still runs on every CPU step in every mode.
-    if (_renderThisFrame)
-    {
+    if (_stepScreen) [[likely]]
         _context->pScreen->UpdateScreen();  // Trigger screen update after each CPU command cycle
-    }
+    else if (_tailScreen && _context->pCore->GetZ80()->IsFrameComplete())
+        _context->pScreen->UpdateScreen();  // the frame's tail (Screen::CatchesUpOnEvents)
 
     _context->pBetaDisk->handleStep();
     _context->pTape->handleStep();  // Process tape audio each step

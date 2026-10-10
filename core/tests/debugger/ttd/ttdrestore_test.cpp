@@ -27,7 +27,7 @@
 #include "common/modulelogger.h"
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/ttddirtytracker.h"  // TTDDirtyTracker (mark pages dirty for capture)
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/z80.h"             // Z80, Z80State
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -78,7 +78,7 @@ void ScribbleRamPage(Memory* mem, uint16_t page, uint8_t marker)
 } // anonymous namespace
 
 // ===========================================================================
-// Fixture: real Emulator + TimeTravelManager
+// Fixture: real Emulator + TimeTravelController
 // ===========================================================================
 
 class TTD_Restore_Test : public ::testing::Test
@@ -86,7 +86,7 @@ class TTD_Restore_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     Memory* _memory = nullptr;
     FeatureManager* _fm = nullptr;
 
@@ -98,8 +98,8 @@ protected:
 
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
-        ASSERT_NE(_ttd, nullptr) << "TimeTravelManager was not created during Emulator::Init";
+        _ttd = _context->pTimeTravelController;
+        ASSERT_NE(_ttd, nullptr) << "TimeTravelController was not created during Emulator::Init";
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
         _fm = _emulator->GetFeatureManager();
@@ -130,6 +130,14 @@ protected:
     /// Mutate CPU + RAM so the live state clearly differs from the baseline.
     /// Each call increments a "mutation counter" so successive mutations
     /// produce monotonically different state.
+    /// A frame boundary as the main loop makes it: the frame counter moves on,
+    /// then the session captures (the engine takes one checkpoint per frame)
+    void FrameBoundary()
+    {
+        ++_context->emulatorState.frame_counter;
+        _ttd->OnFrameBoundary();
+    }
+
     void MutateLiveState(uint8_t mutationMarker)
     {
         Z80* cpu = _context->pCore ? _context->pCore->GetZ80() : nullptr;
@@ -192,7 +200,7 @@ TEST_F(TTD_Restore_Test, RoundTrip_BaselineHashMatchesAfterRestore)
 
     // Mutate, then capture cp 1.
     ASSERT_NO_FATAL_FAILURE(MutateLiveState(0x11));
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     ASSERT_EQ(_ttd->GetCheckpointCount(), 2u);
 
     const uint64_t H_after_cp1 = HashLiveMachineState(_context, _memory);
@@ -223,15 +231,15 @@ TEST_F(TTD_Restore_Test, RoundTrip_RestoreToLaterCheckpointAlsoMatches)
     const uint64_t H0 = HashLiveMachineState(_context, _memory);
 
     ASSERT_NO_FATAL_FAILURE(MutateLiveState(0x10));
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const uint64_t H1 = HashLiveMachineState(_context, _memory);
 
     ASSERT_NO_FATAL_FAILURE(MutateLiveState(0x20));
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const uint64_t H2 = HashLiveMachineState(_context, _memory);
 
     ASSERT_NO_FATAL_FAILURE(MutateLiveState(0x30));
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const uint64_t H3 = HashLiveMachineState(_context, _memory);
 
     // All four hashes should differ — proves the mutations are visible.
@@ -276,7 +284,7 @@ TEST_F(TTD_Restore_Test, Restore_PreservesUndocumentedRegisters)
     cpu->eipos = 0x5678;
     cpu->haltpos = 0x9ABC;
 
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const size_t lastIdx = _ttd->GetCheckpointCount() - 1;
 
     // Mutate
@@ -311,7 +319,7 @@ TEST_F(TTD_Restore_Test, Restore_PreservesRamPagesContent)
     ASSERT_NE(tracker, nullptr);
     tracker->MarkDirty(0);
 
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const size_t lastIdx = _ttd->GetCheckpointCount() - 1;
 
     // Overwrite page 0 with garbage.
@@ -355,7 +363,7 @@ TEST_F(TTD_Restore_Test, Restore_PreservesPortLatchesAndPaging)
     _context->pPortDecoder->DecodePortOut(0x7FFD, newP7FFD, 0x0000);
     EXPECT_EQ(st.p7FFD, newP7FFD);
 
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const size_t lastIdx = _ttd->GetCheckpointCount() - 1;
 
     // Flip paging away.
@@ -389,12 +397,12 @@ TEST_F(TTD_Restore_Test, Restore_PreservesDebuggerForcedWindows1And2)
     const uint16_t forced1 = (derived1 == 7) ? 6 : 7;
     const uint16_t forced2 = (derived2 == 4) ? 3 : 4;
 
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const size_t cleanIdx = _ttd->GetCheckpointCount() - 1;
 
     _memory->SetDebuggerRAMPageToBank(1, forced1);
     _memory->SetDebuggerRAMPageToBank(2, forced2);
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const size_t forcedIdx = _ttd->GetCheckpointCount() - 1;
 
     // Back to the checkpoint taken before the edit: the edit must go away
@@ -437,9 +445,9 @@ TEST_F(TTD_Restore_Test, Restore_TwiceInARow_ProducesSameState)
     ASSERT_TRUE(_ttd->StartRecording());
 
     ASSERT_NO_FATAL_FAILURE(MutateLiveState(0x55));
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     ASSERT_NO_FATAL_FAILURE(MutateLiveState(0x66));
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
 
     ASSERT_TRUE(_ttd->RestoreCheckpointForTesting(1));
     const uint64_t H_first_restore = HashLiveMachineState(_context, _memory);

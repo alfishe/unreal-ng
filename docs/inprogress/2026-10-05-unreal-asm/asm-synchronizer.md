@@ -109,6 +109,36 @@ a watch is armed, so with the synchronizer off it costs nothing. The memory path
 - The worker owns the snapshot; a newer snapshot cancels the build by a generation counter.
 - Publishing the symbol set goes through `LabelManager` (its own locking); the WebSocket event through MessageCenter.
 
+### 4.3 As built (Y0-Y1, 2026-10-09)
+
+**Where it lives** (owner decision, 2026-10-09). The synchronizer is a subproject of unreal-asm, and the emulator
+only adapts it:
+
+| Part | Place | What |
+|---|---|---|
+| readers | `unrealasm/sync/reader.h`, `src/sync/reader.cpp` | descriptors, probe, the three layout families (Y0) |
+| session | `unrealasm/sync/session.h`, `src/sync/session.cpp` | `SyncSession`: Tick (who is there, the text, a change by the hash of the live file), TakeBuild (after the quiet period), Build (codec → sjasmplus conversion → layout → labels and hints). Standard library only, no threads, no clock: the caller gives the time |
+| adapter | `core/src/debugger/asm/sync/asmsyncservice.h` | `AsmSyncService`, one per instance, owned by `DebugManager`: the worker thread, the coherent copy, publishing |
+| surface | `core/src/debugger/asm/sync/synccontrol.h` | `SyncControl` behind AsmControl's `sync-*` verbs: WebAPI, CLI, MCP, Lua, Python |
+
+**What differs from the drawing above.**
+
+- **No frame-end subscription.** The worker wakes every `interval` ms (default 250), so the quiet period is the
+  same in turbo. The thread exists only while a watch is on.
+- **What is copied.** A look copies the pages the CPU sees plus the text's page (at most five 16 KB pages), every page
+  while no assembler is known yet. It does not copy the text region alone.
+- **What counts as a change.** The hash (FNV-1a) is of the live file, so the cursor and the screen do not count as a
+  change.
+- **No cancellation.** The build runs on the same worker, after the look that found the text quiet. A change made
+  during a build is seen at the next look, so nothing needs cancelling.
+- **Locking.** `LabelManager` has no lock of its own. The worker publishes the way the WebAPI threads import, by
+  replacing the set `live:sync:<assembler>` at priority 900000: above every loaded file, below `user`.
+- **Notifications.** The MessageCenter topic is `NC_ASM_SYNC` (payload `AsmSyncPayload`). The WebSocket topic
+  `asm_sync` carries `asm_sync_found`, `asm_sync_changed`, `asm_sync_built`, `asm_sync_lost` and `asm_sync_ambiguous`.
+- **Hints on the source's lines.** The sjasmplus backend now records, for every line it writes, the source line it
+  came from (`SourceLine::origin`). `SymbolsFromProject` uses that to report the layout's messages on the source's
+  lines, so `symconv source` and `import-source` gain it too.
+
 ## 5. Generic algorithms
 
 ### 5.1 Page ids
@@ -205,9 +235,9 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | | |
 |---|---|
 | **Knowledge** | **verified live** (2026-10-09) and in ALASM 5.09's own sources (`Al50.H`, `Vars.H`) |
-| identification | `ALASM v5.09` (5.07, 5.08 likewise) at `#BE06`, page 2 |
+| identification | `ALASM v5.09` at `#97C5` (page 2). The copy at `#BE00` is a screen line buffer the editor overwrites, so it does not identify (Y0, 2026-10-09; the research note said `#BE06`) |
 | pages | `Port7FFD` (its driver ids: `#C6` = the text in the 512K build; `SRCstart EQU #26` in the 1024K build) |
-| family | `FileImage`. The page id of the current text is at `IX+#0D` = `#80CC` (`IX = #80BF`). The page from `#C000` holds the file: `T_NAME` `#C000`, `T_SIZE` `#C021` (the length after the 64-byte header), `T_STR` `#C023` (current line address), `T_OPT` `#C027` (changed), `T_SURE` `#C028`. The live file is `#C000 .. #C040 + word(#C021)`; fibo was byte-identical to its file |
+| family | `FileImage`. The page id of the current text is at `IX+#0D` = `#80CC` (`IX = #80BF`). The page from `#C000` holds the file: `T_NAME` `#C000`, `T_SIZE` `#C021` (the length after the 64-byte header), `T_STR` `#C023` (current line address), `T_OPT` `#C027` (changed), `T_SURE` `#C028`. The live file is `#C000 .. #C040 + word(#C021)` with `T_OPT` written as 0, as SAVE writes it (Y0: SNAKE loaded, typing and edited were byte-identical to ALASM's own saves) |
 | typing | `NotInText`: `IX+#0C` bit 0 = the current line is modified; Enter writes it |
 | project | one text per page: a scan of the RAM pages for headers with the signature at `+#28` gives every text in memory with its name; `IX+#0A` = the page INCLUDE loads into |
 | labels | page 3 (`#43` / `#C3`), `alasm-table` scanner; `IX+#2E` bit 7 = compiled |
@@ -217,35 +247,35 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 
 | | |
 |---|---|
-| **Knowledge** | inferred, not checked: the same file format as 5.07-5.09; 5.05's own sources are in the collection (`alasm/wdc/alasm505.zip`) and can confirm the variables |
-| **Work** | confirm `#80CC`, the identification string's address (5.05's title differs) and the header: **0.5 d** |
+| **Knowledge** | **verified** (2026-10-09, dumps `testdata/sync/alasm50-*`, `alasm505-*`, `alasm507-*`, `alasm508-*`): the same `sysvars` (`#80CC`, `IX+#0C` bit 0) and file image as 5.09. Titles: `ALASM v5.00` at `#9E22`, `v5.05` and `v5.07` at `#97BC`, `v5.08` at `#97CA`, `v5.09` at `#97C5` |
+| **Built** | descriptors `alasm-5.00`, `-5.05`, `-5.07`, `-5.08` (codec tables 5.0, 5.05, 5.07) |
 
 ### 7.3 ALASM 4.4x and 4.5 (4.43-4.46, 4.5)
 
 | | |
 |---|---|
-| **Knowledge** | **verified live** for 4.44 (text page id `#06` at `#80CC`, AL444nfo byte-identical, `ALASM v4.44` at `#BE06`); 4.46's source (`AL446SRC`, `Al44.H`) has the same `sysvars` at `#80BF` and the same `T_*` fields |
+| **Knowledge** | **verified live** for 4.44 (text page id `#06` at `#80CC`, AL444nfo byte-identical loaded and edited, `ALASM v4.44` at `#9E7E`; `#BE00` is overwritten in the editor as in 5.09); 4.46's source (`AL446SRC`, `Al44.H`) has the same `sysvars` at `#80BF` and the same `T_*` fields. The title's address differs per build: every further version needs its dump |
 | differences | 4.4x label table ends at `#3F7F` (5.x `#3DFF`); 4.5 keeps its table in page 6 |
-| **Work** | descriptor rows for 4.43, 4.45, 4.46, 4.5, a 4.5 dump: **0.5 d** |
+| **Verified** (2026-10-09, dumps `alasm443-*`, `alasm445-*`, `alasm446-*`, `alasm45-*`) | the same `sysvars` and file image. Titles: `ALASM v4.43` `#9E1B`, `v4.45` `#9E53`, `v4.46` `#9E6E`, `v4.5` `#9E06`. 4.5 keeps the text in page 1 (id `#09`). 4.43 has no "line modified" bit at `IX+#0C`: its status cannot say `typing`, the text is right |
+| **Built** | descriptors `alasm-4.43` (codec table 4.5), `-4.45`, `-4.46` (4.44), `-4.5` |
 
 ### 7.4 ALASM 3.8c, 4.2, 4.42
 
 | | |
 |---|---|
-| **Knowledge** | unknown in memory; the file format is the same family (header with the signature at `+#28`) |
-| research | find `sysvars` (search the code page for the text page id after loading two texts in two pages); 4.2's ALM loader crashes on a Pentagon (TODO), so 4.2 may stay out |
-| **Work** | **1 d** (3.8c, 4.42; 4.2 only if it starts) |
+| **Verified** (2026-10-09, dumps `alasm38c-*`, `alasm442-*`) | 3.8c and 4.42 keep the same `sysvars` at `#80BF` and the same file image. 4.42's title `ALASM v4.42` is at `#9E2F`. 3.8c has no "ALASM v" title; it is recognized by `3.8c\r Written by` at `#9951` |
+| **Built** | descriptors `alasm-4.42`, `alasm-3.8c` (codec table 3.8). 4.2 stays out: its ALM loader crashes on a Pentagon |
 
 ### 7.5 TASM 4.12
 
 | | |
 |---|---|
 | **Knowledge** | **verified live** (2026-10-09, SNAKE) |
-| identification | to be fixed: the title string in the code (R7 step: search page 2 / `#C000` for `TASM 4.12`) |
+| identification | `TASM128>` at `#9CDD` and `Import TASM3.0 source file: ` at `#A394` (4.0 has no import) |
 | pages | lower part in page 2 (`#8000` window); upper part `MappedAtC000` (page 6 on a Pentagon 128) |
-| family | `GapBuffer`: `#8F59` text start (`#A6EE`), `#8F5B` top (`#FFFF`), `#8F5D` gap start, `#8F5F` gap end; the initialization makes an empty text start = gap start, gap end = top |
-| typing | `InLineBuffer`: the current line as expanded text in the line buffer near `#928A`; the reader encodes it with the `tasm` codec (version 4.12) and puts it into the gap |
-| end | the file's `FF FF` end record is added by SAVE: the reader appends it |
+| family | `GapBuffer`: `#8F59` text start (`#A6EE`), `#8F5B` top (`#FFFF`, exclusive), `#8F5D` gap start, `#8F5F` gap end. Lines are records `n`, `n` bytes, `n`. `#94D9` counts the lines (the cursor's line included), `#94CE` is the cursor's line |
+| typing | `InLineBuffer`: in the editor the cursor's line is only in the line buffer, 128 bytes of blank-padded text at `#928A` (`#930A` holds a packed copy that lags). Whether the editor holds it: the records before and after the gap add up to `#94D9` (the command line: Quit put it back and moved the gap to the end) or to one less (the editor). The reader encodes the buffer with the `tasm` codec (4.12, CP866) and puts it at the gap. No flag in memory tells the modes apart; this count does (checked on four dumps: top, middle, typing, command line) |
+| end | the file's `FF FF` end record is added by SAVE: the reader appends it (the bytes at the gap start are no guide: after Enter on the last line they can read `FF FF` in the editor too) |
 | caveat | Edit leaves a stale copy of the file at the text start; only the pointers count |
 | **Work** | identification, the line buffer's exact address and length, the gap reader, golden dumps (cursor at the top, in the middle, at the end, mid-typing): **1.5 d** |
 
@@ -256,6 +286,9 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Knowledge** | unknown; their files share 4.12's format family (`[n] body [n]` records, `FF FF`), so a gap buffer is likely |
 | research | the same edit-and-diff session as 4.12; find the pointers by the text start's value |
 | **Work** | **1 d** |
+| **Verified** (2026-10-09, dumps `tasm40-*`, `tasm44-*`) | the gap buffer of 4.12 with its four pointers at `#8DD0` (start, top, gap start, gap end; the upper part in the page at `#C000`, page 6). No line count: the editor shows in the tail of its 128-byte line buffer (`#91AC`, 32 bytes): blank padded in the editor, zeros at the command line. In the editor the cursor line is out of the text and its last version is the record that ends at the gap end (as in MASM); a line being typed is not in the text (`NotInText`) |
+| identification | the prompt `TASM4.0>` / `TASM4.4>` at `#9859` |
+| **Built** | descriptors `tasm-4.0`, `tasm-4.4` (codec version 4.0) |
 
 ### 7.7 TASM 3.x and 2.0
 
@@ -263,6 +296,9 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 |---|---|
 | **Knowledge** | unknown; 2.0 is plain text with editor tabs; 3.x tokenized |
 | **Work** | **1.5 d** (both) |
+| **Verified: 3.0, 3.2** (2026-10-09, dumps `tasm30-*`, `tasm32-*`) | the same gap buffer with the pointers at `#8910`; the line buffer at `#8C22`, its tail `#8C82` (32 bytes) the editor flag. Identified by `TASM2.0 source file: ` at `#9721` (3.0) and `TASM2.0 file: ` at `#9728` (3.2) |
+| **Built** | descriptors `tasm-3.0`, `tasm-3.2` (codec version 3) |
+| open | 3.5 ("FLASHVERSION", pointers also at `#8910`) shows no editor flag in its line buffer; 2.0 (plain text) not looked at |
 
 ### 7.8 STORM 1.2 / 1.3 (1.0 beta)
 
@@ -272,15 +308,32 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | research | which page holds `#C000` while STORM runs (it unpacks to `#6F19`-`#BFFF`); confirm live |
 | family | `FileImage`-like: `[#C00B, (#C000))` |
 | **Work** | **1 d** |
+| **Verified** (2026-10-09, dumps `testdata/sync/storm13*`, `storm13i*`) | the text is in RAM page 6 at `#C000` while STORM edits. `(#C000)` points one past an `#FF` that ends the text; SAVE (BREAK, `S`, Enter keeps the name) writes `[#C00B, (#C000) - 1)`, so the live file is those bytes. The line under the cursor joins the text when the cursor leaves it, and a line made by Enter joins it then too (`NotInText`; no flag shows it). The name is at `#C002` |
+| identification | the packed program unpacks its entry code at `#8000` (24 bytes, the same in 1.0beta, 1.3 and 1.3i); the address it loads at `#8027` tells them apart (`#87xx` in 1.3 / 1.3i, `#85xx` in 1.0beta) |
+| 1.0beta | the same layout without the name: the `#FF` at `#C002`, the file from `#C003` (dumps `storm10b-*`) |
+| **Built** | descriptors `storm-1.3` (1.3 and 1.3i) and `storm-1.0b`; 1.3 checked live (a watch built 13 labels) |
 
 ### 7.9 ZX-ASM 3.0 / 3.01 / 3.10, ZX ASM Lite 1.07, ZAsm 3.15-4.20
 
 | | |
 |---|---|
-| **Knowledge** | the file is "the editor's text buffer as is" (no header, no end marker); the buffer's address and pointers unknown; ZAsm 3.2x and later want 512K and keep several texts |
+| **Knowledge** | the file is "the editor's text buffer as is" (no header, no end marker); the buffer's address and pointers unknown; ZAsm 3.2x and later want 512K. (The TDD's "and keep several texts" was wrong: the author's ReadMe says ZAsm takes the last 128K of the memory it addresses, leaves the first 128K to the user's programs and makes a RAM disk of the rest; there is one text buffer.) |
 | research | two sessions (3.10, 4.20 on a Pentagon 512); start / end pointers by the edit-and-diff method; the text list of ZAsm |
 | family | `Linear` |
 | **Work** | **2 d** (three generations) |
+| **Verified: ZAsm 3.15** (2026-10-09, dumps `testdata/sync/zasm315-*`) | one buffer from `(#8829)` to `(#8837)` (a table at `#8829`: the start, the cursor line, marks, the end), starting at `#884C` in page 2. Its part from `#C000` is in RAM page 6, which ZAsm maps only while it needs it, so the reader takes page 6 for it whatever is mapped. A typed line joins the buffer on Enter (`NotInText`) |
+| SAVE | COMMAND (Extend) SS+`2` saves under the name. It writes the buffer after a first line `;!top,line,col,...` with the editor's position, which loading takes out again. The live file is the buffer without that line (the tests compare without it) |
+| identification | the resident code at `#8000` (24 bytes): ZAsm unpacks itself, and above the buffer there is no fixed code |
+| **Built** | descriptor `zasm-3.15`; checked live on `service.a` (18959 bytes over two pages: 160 labels; the hints name the INCLUDE not in the project, Y5). the text buffer is one, see the Knowledge row |
+| **Verified: ZX-ASM 3.10** (2026-10-09, dumps `zasm310-*`) | the same buffer with its table at `#868F` (the start; the end at `#869E`), from `#89C4` in page 2, the part above `#C000` in page 6. SAVE writes the buffer alone (no `;!` line). Its file-name input types capitals; the dumps load the first file of the list (CS+7, CS+ENTER). Identified by 24 bytes of its program image at `#816C`. Descriptor `zasm-3.10` (codec version 3.0) |
+| **Verified: ZX-ASM 2.4, 2.5, 2.6** (2026-10-10, dumps `zasm24-*`, `zasm25-*`, `zasm26-*`) | plain text in one buffer: the start word at the program's load address + 3, the end word after it (2.4 / 2.5 `#6273` / `#6275`, text from `#A1DF` / `#A1EA`; 2.6 `#6003` / `#6005`, from `#9FFD`); the part above `#C000` in RAM page 0. 2.6 keeps its `;*` line in the buffer and saves it as text, so no mask. The menu starts on Edit: LEFT ENTER (File), DOWN ENTER (Load), the name; SS+SPACE back to the menu, `f` `s` ENTER saves. Identified by 24 bytes of each program below the text. Descriptors `zasm-2.4` / `-2.5` / `-2.6` (codec version 2) |
+| **Verified: ZX ASM 3.0** (2026-10-09, dumps `zasm30-*`) | the same buffer from `#894F` (the start its saved files carry), the table in page 5: the start at `#61C6`, the end at `#61C8`; the part above `#C000` in page 6 (`ReadMe`, 28039 bytes, runs to `#F6D6`). The line being typed stays out of the buffer. Its command menu has no save: COMMAND Q to the main menu, File / Save under the name shown; saved as type `C`, the buffer alone. Identified by 24 bytes of its code at `#8000`. Descriptor `zasm-3.0` (codec version 3.0). The 3.01 program is not in the collection (only files it saved) |
+| **Verified: ZAsm 3.2x** (2026-10-09, dumps `zasm32x-*`) | a Pentagon 512 program (on 128K it stops on its title with a red border); a key passes the title, no drive question. The buffer from `#8551`, the table at `#8530`: the start at `#8538`, the end at `#853A` (the words before follow the cursor and the screen; the text stays whole, no gap); the part above `#C000` in RAM page 30. SAVE writes a `;*` position line first (`;*19553,19878,849,0,0,19878,19910,`). The name input keeps the last name, so the dumps load the first file of the list. Identified by 24 bytes at `#8000` (relocated from its program image). Descriptor `zasm-3.2x` (codec version 3.15); checked live (`ReadMe.t`, 19911 bytes over pages 2 and 30: 851 lines). Only the text being edited is read; switching between several texts is not checked yet |
+| **Verified: ZAsm Lite 1.07** (2026-10-09, dumps `zlite107-*`) | Pentagon 512 as well (a red border on 128K), straight into the menu. 3.2x's layout elsewhere: the buffer from `#85A7`, the start at `#859D`, the end at `#859F`; the part above `#C000` in page 30; a `;*` line on SAVE. Identified by 24 bytes at `#8000` (from its program image). Descriptor `zasm-lite-1.07` (codec version lite) |
+| **Verified: ZAsm 3.3.51, 3.3.Final, 3.80.4, 4.20** (2026-10-09, dumps `zasm3351-*`, `zasm33f-*`, `zasm384-*`, `zasm420-*`) | all Pentagon 512 with 3.2x's layout: the start word, the end word after it, the part above `#C000` in page 30, a `;*` line on SAVE. The start words: 3.3.51 `#84FC` (text from `#8514`), 3.3.Final `#8401` (`#841A`), 3.80.4 `#6D02` in page 5 (`#8198`), 4.20 `#68FB` in page 5 (`#8201`). Start: 3.3.51 asks for the drive and then waits for a key on its title; 3.3.Final, 3.80.4 and 4.20 wait for a key. Each is identified by 24 bytes of its own; 3.2x, 3.3.02 and 3.3.51 share the code at `#8048` up to a variable's address. One descriptor function, `ZasmRubtsoff`, makes all six (3.2x and Lite 1.07 too) |
+| **Verified: ZAsm 3.4, x64.1, 4.0x8, 4.x64** (2026-10-10, dumps `zasm34-*`, `zasmx641-*`, `zasm40x8-*`, `zasm4x64-*`) | the same layout: start words 3.4 `#8520` (text from `#8536`), x64.1 `#852D` (`#853A`), 4.0x8 `#692B` in page 5 (`#8201`), 4.x64 `#6929` in page 5 (`#8201`); page 30 above `#C000`. 3.4 and x64.1 start on a key. 4.0x8 has no settings file and its own drive D: an "ERROR" after its picture, and File / Drive / A before each load. 4.x64's "No disk!" dialog has no drive list: its dump disks carry its settings file with drive A (bytes +3 / +4); a date dialog follows its picture (CS+SPACE). Start keys of every version: `.recipe/assemblers/zxasm.md` |
+| **Memory size** (2026-10-10) | the versions page their memory the Pentagon 512 way (`#7FFD` bits 6-7, values `#D0`-`#D7` in their memory test; bit 5 unused), so on a Pentagon 1024 4.20 keeps its upper part in page 30 as on 512K: the fixed page holds for both. 3.2x does not run on a Pentagon 1024: after its memory test it writes `#EFF7` = `#80`, `#00`, `#02`, `#04`, and bit 2 = 1 is the 128K lock mode, which takes its pages away and the machine resets (port trace; Xpeccy `pent1024.c` and ZXMAK2 `MemoryPentagon1024.cs` read bit 2 the same way as unreal-ng). The author's "512-1024" is about other 1024K machines (he works in Shalaev's emulator, whose 1024K machine is the Profi) |
+| **Verified: ZAsm 3.3.02** (dumps `zasm3302-*`) | the same layout, the start word at `#850A` (text from `#8522`). Its default drive is D: the "No Disk" dialog's drive applies to the file being loaded only. The port trace (2026-10-09) shows it reading the catalog and `FONT4.f` from A (status `#00`), then selecting D (`#FF` = `#3F`) for the next file, where the controller rightly reports NOT READY; a second answer A gets it to its title and menu. The program's behaviour, not the emulator's; the red border is its own. The D comes from the settings file shipped on the disk (`z33.02.s`, type `s` at `#7465`: byte +3 "System drive", +4 "Overlays drive", both `D`; the setup overlay's SaveSet writes them), the same `DD` as in 3.15 / 3.3.51 / x64: the author works in Shalaev's DOS emulator (his ReadMe and zx-pk.ru thread 29356) and kept overlays on another disk, a RAM disk once. 3.3.51 reads its overlays from one `OVERLAYS.t` catalogue and so stays on A after one answer; 3.3.02 loads each overlay file from D. Options / Setup / Save Setting with A (or bytes +3/+4 = `A`) removes the question. The dumps start with `enter,a,enter,a,space` |
 
 ### 7.10 ZX-ASM 2.4-2.6
 
@@ -299,6 +352,11 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | family | `FileImage` from `#C000` to the `#00` end |
 | typing | `InPlace` (to be confirmed) |
 | **Work** | five versions share the reader; identification per version, golden dumps: **1.5 d** |
+| **Verified** (2026-10-09, dumps `testdata/sync/xas*`) | every version keeps the text at `#C000` of RAM page 3. SAVE (EXT, `S`, Enter keeps the name) writes whole sectors straight from `#C000` up to the sector holding the `#00` end, so the live file is those sectors. A line typed on the screen row is packed into the text only on Enter (`NotInText`; no flag shows the typing). Bit 7 of byte 34 is set by the first key, cleared by SAVE |
+| editor state | SAVE also rewrites header bytes 29-34 from the editor's variables (the cursor line address, 7.447: the operand of `LD HL,nn` at `#8097`; the column and row). The reader leaves those six bytes as the memory holds them: a live file differs from the next save there and only there, and the codec keeps them as they are |
+| identification | the title a new text gets, in the code: 4.18 `XAS by Max Petrov (HPM) 3.091` at `#B51A`; 5.05 / 5.05SE `XAS by Max Petrov (HPM) 5.05` at `#B601`; 7.43c `by Max Petrov & Creator v7.43` at `#B961`; 7.447 `... v7.44` at `#9B00`; 9.07m `XAS 9.07 ReCompiled by Mythos` at `#B8EA`; 9.10 `XAS by Max Petrov,64sm by STS` at `#B912` |
+| **Built** | descriptors `xas-4.18`, `-5.05`, `-7.43c`, `-7.447`, `-9.07m`, `-9.10`; checked live on 7.447 (a watch built the labels, a typed label joined them) |
+| done | 9.07m and 9.10 SAVE wrote nothing to the disk in unreal-ng. Cause on the emulator's side: a status read erased the WD1793's Type II error bits, so the catalog read that missed its sector (XAS's STEP `#20` after each operation leaves the head one cylinder past the track register) read as status `#00` and XAS skipped its READ ADDRESS recovery. Fixed 2026-10-09: both versions save the edited text (TODO) Since then 9.07m and 9.10 have edited dumps with their saved files too (`xas907m-edited`, `xas910-edited`, 2026-10-10) |
 
 ### 7.12 MASM 1.0 demo, 1.1, 1.3, 2.0, 3.0
 
@@ -308,6 +366,12 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | research | the end pointer (edit-and-diff); 2.0 / 3.0 are packed (read after they unpacked) |
 | family | `Linear` from the known start |
 | **Work** | **1.5 d** |
+| **Verified: 1.1** (2026-10-09, dumps `testdata/sync/masm11-*`) | not linear: a gap buffer. The text starts at `#970B`; `(#96CC)` is the gap start, `(#96CE)` the gap end, and the part after the gap runs up to `#FFFF`, where the file's `#FF` end lies. Lines are records `n`, body, `n`. In the editor (`E`) the cursor line is out of the text: its last version is the record that ends at the gap end. After EXT `Q` the menu has it back before the gap |
+| editor or menu | the editor's 31-byte line buffer at `#851A` is blank-padded text in the editor and zeros in the menu: a non-zero byte there means the editor |
+| SAVE | SS+Enter in the editor (or `S` in the menu) writes the text closed up; the live file equals it in both states |
+| identification | the prompt `MASM128> ` at `#85B1` (below the text; the title `MASTER ASSEMBLER* v1.1` at `#9B49` lies where a long text goes) |
+| **Built** | descriptor `masm-1.1`; checked live. 1.3 keeps the same layout, line buffer and prompt (dumps `masm13-*`): the same descriptor reads it. The 1.0 demo is not covered yet |
+| **Verified: 2.0, 3.0** (2026-10-10, dumps `masm20-*`, `masm30-*`) | found by disassembling the code, not by trying keys: the gap-closing routine (2.0 `#92C6`, 3.0 `#8C24`) is `LD DE,gs` / `LD HL,linebuf` / `LD A,flag` / `OR A` / `JP NZ,flush` / `LD HL,ge` / `LDI` up to `00`, and its operands are the variables (the code rewrites them): gap start `+1`, flag `+7`, gap end `+13`. The text runs from the address its files carry (2.0 `#94DA`, 3.0 `#9123`) to the gap start, then from the gap end to `#FFFF`; lines end in `00`. While a line is typed in (flag non-zero) it is out of the text altogether, as text in the 64-byte line buffer (2.0 `#89D1`, 3.0 `#864F`), and the text goes on at the word `#929F` / `#8BFD`: the reader encodes the line buffer between the two parts. Moving the cursor puts the line back. There is no save in their editor: EXT `Q` (puts the line back), `S`, ENTER. 3.0's header `FF lo hi FF` gets the cursor line on SAVE (masked). Identified by the prompts `MASM2.0>` at `#80E0` and `MASM128>` at `#80D3`. Descriptors `masm-2.0`, `masm-3.0`; their dumps start from a file MASM itself saved (on leaving the editor MASM encodes the cursor line again, its own way) |
 
 ### 7.13 GENS 3 / GENS 4 (and GENS4B on TR-DOS)
 
@@ -399,6 +463,42 @@ AsmControl.
 | surfaces | AsmControl-style unit tests of `SyncControl`; MCP routing; a Qt widget test of the dock |
 
 ## 11. Phases
+
+Status: **Y0 built (2026-10-09)**:
+
+- the library part is `unrealasm/sync/reader.h` (descriptors, probe, the three readers), tested on golden dumps
+  (`testdata/sync`, made by `tools/verification/unreal-asm/emulator/sync-dumps.py`);
+- the emulator part is `SyncControl` (`core/src/debugger/asm/sync/synccontrol.h`), reached through AsmControl's
+  `sync-*` verbs;
+- surfaces: WebAPI `GET /asm/sync`, `POST /asm/sync/probe` / `extract`; CLI `asm sync`; MCP `asm_source` `sync_*`;
+- descriptors: ALASM 5.09, ALASM 4.44, TASM 4.12; later the same day every other ALASM in the collection: 3.8c, 4.42,
+  4.43, 4.45, 4.46, 4.5, 5.00, 5.05, 5.07, 5.08 (§7.2-§7.4). Each has its dumps, because the title address differs per
+  build.
+
+Status: **Y1 built (2026-10-09)** (§4.3):
+
+- the watch: `sync-watch`, `sync-unwatch`, `sync-hints`;
+- WebAPI `POST` / `DELETE /asm/sync/watch`, `GET /asm/sync/hints`;
+- CLI `asm sync watch` / `unwatch` / `hints`;
+- MCP `sync_watch` / `sync_unwatch` / `sync_hints`;
+- Lua and Python `asm_sync_*`;
+- WebSocket topic `asm_sync`.
+
+Checked live on TASM 4.12: a line typed at the end, `MYLBL CALL nowhere`, appeared as the label `mylbl` after the next
+build. The hint `unknown symbol NOWHERE` pointed at its line (105).
+
+Status: **Y2 built (2026-10-09)**. The debugger's toolbar has a "Live source" button, which opens `LiveSourceWindow`
+(`unreal-qt/src/debugger/livesourcewindow.h`). The window has:
+
+- the text of the last build, read-only, with the guest's cursor line in blue and lines with errors in red and with
+  warnings in yellow;
+- the hints in a list (a double click shows the line);
+- a status line: the assembler, the build number, labels, errors and warnings, a line being typed, the cursor line;
+- the buttons Watch, Extract... (the assembler's file or text) and Convert... (another dialect).
+
+The window polls `AsmSyncService` every 300 ms; it copies no memory, since the service's worker does that. It starts a
+watch when none runs and stops that one again when it closes. A watch started elsewhere (the automation) stays on. The
+window finds its instance by id, so it never reaches a destroyed one. Test: unreal-qt-tests `LiveSourceWindow_Test`.
 
 | Phase | Work | Ends with |
 |---|---|---|

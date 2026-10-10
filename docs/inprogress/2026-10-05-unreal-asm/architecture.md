@@ -252,3 +252,13 @@ flowchart LR
 
 `core/src/3rdparty/unreal-asm/` (owner decision D-3); full tree in [tdd.md](tdd.md) §2. The emulator adapters live in
 `core/src/debugger/asm/` (and the symbol adapters in `core/src/debugger/symbols/`, [symbols/architecture.md](symbols/architecture.md) §9).
+
+**As built (review round A0, 2026-10-09).** The adapters are fewer than drawn in §8:
+
+| Designed | Built |
+|---|---|
+| `DiskFileSource` / `DiskFileSink`, `CatalogHints` | `core/src/debugger/asm/diskfiles.h`: `ParseDiskFileRef`, `ReadDiskFiles` / `ReadDiskFile` (the library's `ReadTrd` over the image's sectors, catalog hints included), `WriteDiskFile` (a catalog entry as TR-DOS writes it, at a coherent moment) |
+| the surfaces calling the library | `AsmControl` (`core/src/debugger/asm/asmcontrol.h`) for the source verbs and `SymbolControl` (`core/src/debugger/labels/symbolcontrol.h`) for the symbol verbs; WebAPI, CLI, MCP, Lua, Python and Qt only translate |
+| `MemoryView` over the emulator's pages | `SymbolControl` copies the RAM pages at a coherent moment and views them (`scan`, `import-live`) |
+| the symbol adapters in `core/src/debugger/symbols/` | none: that folder does not exist; see [symbols/architecture.md](symbols/architecture.md) §9 |
+| `zxasm`, `symconv` | `core/src/3rdparty/unreal-asm/tools/zxasm/`, `tools/symconv/` |

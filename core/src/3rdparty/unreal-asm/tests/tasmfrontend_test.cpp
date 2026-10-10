@@ -108,6 +108,45 @@ TEST(TasmFrontend_Test, IfCompilesItsFirstPartWhenTheValueIsZero)
               (std::vector<std::string>{"IF (DEBUG)==0", "NOP", "ELSE", "HALT", "ENDIF"}));
 }
 
+TEST(TasmFrontend_Test, ConditionalsDoNotNest)
+{
+    // TASM 4.12: one state that .IF sets (even inside a skipped part), .ELSE inverts and .ENDIF clears
+    // (dialects/tasm412/IFNEST, checked in the emulator)
+    EXPECT_EQ(ToSjasmplus("        .IF     DBG1\n        NOP\n        .IF     DBG2\n        HALT\n        .ENDIF\n        DI\n        .ENDIF"),
+              (std::vector<std::string>{"IF (DBG1)==0", "NOP", "ENDIF", "IF (DBG2)==0", "HALT", "ENDIF", "DI"}));
+    EXPECT_EQ(ToSjasmplus("        .ELSE\n        NOP\n        .ENDIF"), (std::vector<std::string>{"IF 0", "NOP", "ENDIF"}));
+    EXPECT_EQ(ToSjasmplus("        .IF     DBG1\n        NOP"), (std::vector<std::string>{"IF (DBG1)==0", "NOP", "ENDIF"}));
+}
+
+TEST(TasmFrontend_Test, FlatConditionalsAssembleToWhatTasm412Built)
+{
+    // IFNEST: .IF inside a skipped .IF, .ELSE inside a compiled one; IFNEST.bin is what TASM 4.12 built in unreal-ng
+    const char* sjasmplus = std::getenv("UNREAL_ASM_SJASMPLUS");
+    if (!sjasmplus)
+        GTEST_SKIP() << "set UNREAL_ASM_SJASMPLUS to the sjasmplus binary";
+    const containers::TrdosFile file = Hobeta("dialects/tasm412/IFNEST.$A");
+    const codecs::TasmCodec tasm;
+    DecodeOptions options;
+    options.catalog = file.Hints();
+    const ConvertResult r = Convert(tasm.Decode(file.data, options).document, "sjasmplus");
+    ASSERT_TRUE(r.ok);
+    std::random_device random;
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("unreal-asm-tests-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(random()));
+    std::filesystem::create_directories(dir);
+    WriteBytes(dir / "IFNEST.asm", codecs::SjasmplusCodec().Encode(r.document, {}).bytes);
+    const std::string harness = "        DEVICE ZXSPECTRUM128\n        INCLUDE \"IFNEST.asm\"\n        SAVEBIN \"out.bin\",#7000,12\n";
+    WriteBytes(dir / "harness.asm", std::vector<uint8_t>(harness.begin(), harness.end()));
+#ifdef _WIN32
+    const std::string command = "cd /d \"" + dir.string() + "\" && \"" + sjasmplus + "\" --nologo harness.asm > out.txt 2>&1";
+#else
+    const std::string command = "cd \"" + dir.string() + "\" && \"" + sjasmplus + "\" --nologo harness.asm > out.txt 2>&1";
+#endif
+    EXPECT_EQ(std::system(command.c_str()), 0);
+    EXPECT_EQ(ReadBytes(dir / "out.bin"), ReadTestData("dialects/tasm412/IFNEST.bin"));
+    std::filesystem::remove_all(dir);
+}
+
 TEST(TasmFrontend_Test, OrgAndPhaseEndAnActivePhase)
 {
     // A file does not know whether a PHASE is active where it starts (an INCLUDE inside PHASE): that end is conditional

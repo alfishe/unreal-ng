@@ -22,6 +22,8 @@ unreal-asm/
                                 3.2x ... 4.20 with --ram 512), masm11, xas7447, xas418, zeus1983, zeus11, zeusgg,
                                 zeus7e, gens4 (tape): assembles a source and saves the bytes it built (the oracle for
                                 a source with no binary on its disk)
+    sync-dumps.py               profiles alasm509, alasm444, tasm412: golden RAM dumps for the asm-synchronizer, each
+                                editor state with the file the assembler saved at that moment (testdata/sync)
   oracles/                      original assemblers built or run on the host
     build-asm80.py              ASM80 / Asm80Win 2.02 (PC cross assembler) from its own C++ source: the same bytes as
                                 asm80win.exe (which also runs under wine: .recipe/assemblers/asm80.md)

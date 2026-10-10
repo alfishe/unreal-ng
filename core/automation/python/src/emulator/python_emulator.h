@@ -2202,6 +2202,17 @@ namespace PythonBindings
                  "Text in a source format (codec=, version=, output=, start=)", py::arg("text"))
             .def("asm_convert", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) { return AsmPy(self, "convert", {{"path", path}}, kwargs); },
                  "A source in another dialect (to=, codec=, version=, from=, output=)", py::arg("path"))
+            .def("asm_sync_status", [](Emulator& self, const py::kwargs& kwargs) { return AsmPy(self, "sync-status", {}, kwargs); },
+                 "The assembler running in the machine and its text (assembler=)")
+            .def("asm_sync_probe", [](Emulator& self) { return AsmPy(self, "sync-probe", {}, py::kwargs()); },
+                 "Every assembler that identifies in RAM")
+            .def("asm_sync_extract", [](Emulator& self, const py::kwargs& kwargs) { return AsmPy(self, "sync-extract", {}, kwargs); },
+                 "The source in RAM (as='text' | 'file' | 'dialect', to=, output=)")
+            .def("asm_sync_watch", [](Emulator& self, const py::kwargs& kwargs) { return AsmPy(self, "sync-watch", {}, kwargs); },
+                 "Watch the source in RAM: live labels and hints (interval=, quiet=, as=, to=, output=)")
+            .def("asm_sync_unwatch", [](Emulator& self) { return AsmPy(self, "sync-unwatch", {}, py::kwargs()); }, "Stop the watch")
+            .def("asm_sync_hints", [](Emulator& self) { return AsmPy(self, "sync-hints", {}, py::kwargs()); },
+                 "The last build of the watched source: labels and hints")
             .def("symbols_import_source", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) {
                 return SymbolsPy(self, "import-source", {{"path", path}}, kwargs);
             }, "The labels a source defines, with values (main=, set=, policy=, generated=)", py::arg("path"))

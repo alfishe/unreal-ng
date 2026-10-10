@@ -781,6 +781,7 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
     size_t nextBlock = 0;
     for (const ir::Line& l : program.lines)
     {
+        const size_t firstWritten = result.document.lines.size();
         w.line = l.sourceLine;
         std::vector<std::string> texts;
         bool openBlock = false, closeBlock = false, openMacro = false, closeMacro = false;
@@ -963,6 +964,8 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
         result.document.lines.push_back({out, {}});
         if (!l.label.empty() && w.ifUsedNames.count(l.label))
             result.document.lines.push_back({"        DEFINE " + w.DefinedFlag(l.label), {}});
+        for (size_t k = firstWritten; k < result.document.lines.size(); ++k)
+            result.document.lines[k].origin = l.sourceLine;   // diagnostics of the converted text point back to the source
     }
     (void)blockOrder;
     return result;

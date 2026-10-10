@@ -2811,6 +2811,23 @@ is a 409 / `Error:` with the same sentence as a seek.
 | `external_event` | Stopped at an external-event marker between the restore checkpoint and the target. The marker is reported (`blocking_marker` in WebAPI/Lua/Python) rather than crossed silently. |
 | `out_of_range` | Target is outside the recorded session. Also returned when a seek is refused because the session is recording. |
 
+#### TTD Position Check
+
+How exactly the position came back (engine decision D7). Every verb that moves the machine through
+the history - `seek`, `step-back`, `step-forward`, `step-instruction`, `reverse-step`, `reverse-continue` - answers with
+`check`, and `status` carries it while the session is `detached`:
+
+| Field | Meaning |
+| :--- | :--- |
+| `status` | `exact`; `not_bit_exact`: the state is the recorded one, but the replay to the target ran on other settings (`configuration_differs`, the setting named in `detail`) or a medium was written since the checkpoint and cannot go back (`media_version_differs`); `degraded` / `damaged`: part of the state could not be restored / failed its integrity check |
+| `message` | every issue in one sentence; empty when exact |
+| `issues` | `{kind, severity, device, detail}` per issue (`device` empty for settings and media) |
+
+The CLI prints nothing extra when the position is exact, otherwise `Not exact (<status>):` and one line per issue
+under the seek or step line; `ttd status` shows `Position check:` while detached. MCP `time_travel` appends
+`Not exact (<status>): <message>.` to its summary. The Qt TTD panel shows the status in its line while browsing and
+the reasons first in its tooltip.
+
 #### TTD Session Rules
 
 These rules live in the core, so every surface (CLI, WebAPI/MCP, Lua, Python, GDB, Qt UI) sees the same behavior.
@@ -3053,7 +3070,7 @@ usually the first thing to check when a session is handed to you.
 | `bookmark_count` | Number of agent bookmarks |
 | `input_event_count`, `external_event_count` | Replay inputs of the session: input events (keyboard, Kempston Mouse, General Sound host stimuli) and external-event markers (replay barriers). Both are saved in the `.ttd` file |
 | `input_history_complete` | False only for a session loaded from a file written before inputs and markers were saved: replay inside a frame runs without the recorded input |
-| `port_journal_active` | The session holds every IN result and OUT of its history (port journals): replay feeds the CPU the recorded values and needs no media file or host device - a session replays exactly even with its tape or disk image missing or replaced - and `port-events` can search them. False on TSConf, ZX Next and with NeoGS in the GS slot (their DMA reaches memory without IN), and for a file without the journals |
+| `port_journal_active` | The session holds every IN result and OUT of its history (port journals): replay feeds the CPU the recorded values and needs no media file or host device - a session replays exactly even with its tape or disk image missing or replaced - and `port-events` can search them. On the engine (the default backend) true on every machine: false only after a gap (a recording resumed after the machine ran unrecorded) and for a file without the journals or saved with them off. v1 (`backend: v1`) keeps its gate: false on TSConf, ZX Next and with NeoGS in the GS slot (their DMA reaches memory without IN) |
 | `port_journal_off_reason` | Why the journal is off (the configuration, a recording resumed after the machine ran unrecorded, a file without it); empty / `null` while it is on |
 | `port_read_count`, `port_write_count`, `port_journal_bytes` | IN results and OUTs recorded, and both journals' compressed size in a `.ttd` file |
 | `port_replay_value_mismatches`, `port_replay_divergences` | Replayed reads whose live device answered differently (a changed or missing medium - the CPU got the recorded value), and replayed INs / OUTs at another time, from another instruction, to another port, or OUTs of another value (execution itself left the recording; expected 0). The CLI prints them as `Replay mismatches:` when non-zero |

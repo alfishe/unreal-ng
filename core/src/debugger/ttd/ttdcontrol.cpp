@@ -225,6 +225,27 @@ void AddPosition(StateNode& body, const TTDTimePoint& t)
     body["frame"] = t.frame;
     body["tinframe"] = static_cast<unsigned>(t.tInFrame);
 }
+
+/// How exactly the position the machine stands on came back (the engine's settings and media check, D7): status
+/// ("exact", "not_bit_exact", ...), the message, and each issue with its kind, severity, device and detail
+StateNode CheckNode(const TTDRestoreResult& check)
+{
+    StateNode node = StateNode::Object();
+    node["status"] = TTDRestoreStatusName(check.status);
+    node["message"] = check.message;
+    StateNode issues = StateNode::Array();
+    for (const TTDRestoreIssue& issue : check.issues)
+    {
+        StateNode i = StateNode::Object();
+        i["kind"] = TTDRestoreIssueKindName(issue.kind);
+        i["severity"] = TTDRestoreStatusName(issue.severity);
+        i["device"] = issue.device.instance;
+        i["detail"] = issue.detail;
+        issues.push(i);
+    }
+    node["issues"] = issues;
+    return node;
+}
 }  // namespace
 
 /// region <Backends>
@@ -315,6 +336,8 @@ private:
     bool OnMachineThread() const;
     void PauseAndConfirm();
     void NotifyFrameRefresh();
+    /// A verb that moved the machine through the history: its reply names how exactly that position came back
+    TTDReply WithCheck(TTDReply reply) const;
 
     EmulatorContext* _context = nullptr;
     S* _manager = nullptr;
@@ -484,15 +507,15 @@ TTDReply TTDControlBackend<S>::Run(const std::string& verb, const TTDRequest& re
     if (verb == "position")
         return Position();
     if (verb == "seek")
-        return Seek(request);
+        return WithCheck(Seek(request));
     if (verb == "step-back" || verb == "step-forward")
-        return StepFrame(verb == "step-forward");
+        return WithCheck(StepFrame(verb == "step-forward"));
     if (verb == "resume")
         return Resume(request);
     if (verb == "step-instruction")
-        return StepInstruction(request);
+        return WithCheck(StepInstruction(request));
     if (verb == "reverse-step")
-        return ReverseStep(request);
+        return WithCheck(ReverseStep(request));
     if (verb == "markers")
         return Markers();
     if (verb == "bookmarks")
@@ -506,7 +529,7 @@ TTDReply TTDControlBackend<S>::Run(const std::string& verb, const TTDRequest& re
     if (verb == "find-last")
         return FindLast(request);
     if (verb == "reverse-continue")
-        return ReverseContinue(request);
+        return WithCheck(ReverseContinue(request));
     if (verb == "dump")
         return Dump(request);
     if (verb == "load")
@@ -518,6 +541,14 @@ TTDReply TTDControlBackend<S>::Run(const std::string& verb, const TTDRequest& re
     if (verb == "memory-diff")
         return MemoryDiff(request);
     return Fail(TTDControlError::Internal, "verb '" + verb + "' has no implementation");
+}
+
+template <class S>
+TTDReply TTDControlBackend<S>::WithCheck(TTDReply reply) const
+{
+    if (reply.Ok())
+        reply.body["check"] = CheckNode(_manager->LastEngineCheck());
+    return reply;
 }
 
 template <class S>
@@ -551,6 +582,9 @@ StateNode StatusBodyOf(const S* manager)
 
     const TTDSessionInfo info = manager->ReadSessionInfo();
     ret["state"] = TTDSessionStateToString(info.state);
+    // Browsing the history: how exactly the position the machine stands on came back
+    if (info.state == TTDSessionState::Detached)
+        ret["check"] = CheckNode(info.lastCheck);
     ret["session_start_frame"] = info.sessionStartFrame;
     ret["current_end_frame"] = info.currentEndFrame;
     ret["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);

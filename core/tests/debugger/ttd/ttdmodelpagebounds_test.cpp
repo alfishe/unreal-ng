@@ -23,7 +23,8 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/timetravelengine.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdprobe.h"
 #include "emulator/emulator.h"
@@ -64,7 +65,7 @@ class TTD_ModelPageBounds_Test : public ::testing::TestWithParam<std::string>
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     Memory* _memory = nullptr;
 
     void SetUp() override
@@ -74,7 +75,7 @@ protected:
 
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _memory = _context->pMemory;
         ASSERT_NE(_ttd, nullptr);
         ASSERT_NE(_memory, nullptr);
@@ -136,17 +137,21 @@ TEST_P(TTD_ModelPageBounds_Test, BoundIsWithinTheEmulatorCeiling)
 
 /// The checkpoint has to agree with the bound — a mismatch would make restore
 /// and serialization disagree about how many refs a checkpoint carries.
-TEST_P(TTD_ModelPageBounds_Test, CheckpointCarriesOneRefPerPageInBound)
+TEST_P(TTD_ModelPageBounds_Test, TheRamRegionCoversThePagesInBound)
 {
+    // The engine keeps machine RAM as one region of 4 KB pieces: it has to agree with the bound, or restore and
+    // the session file would disagree about how much RAM a checkpoint holds
     ASSERT_TRUE(_ttd->StartRecording());
-    _ttd->OnFrameBoundary();
     ASSERT_GE(_ttd->GetCheckpointCount(), 1u);
 
-    const ttd::TTDCheckpoint* cp = _ttd->GetCheckpoint(_ttd->GetCheckpointCount() - 1);
-    ASSERT_NE(cp, nullptr);
-
-    EXPECT_EQ(cp->ramPages.size(), static_cast<size_t>(_ttd->GetModelRamPages()))
-        << "checkpoint ref count does not match the captured page range";
+    const ttd::TimeTravelEngine& engine = _ttd->GetEngine();
+    const ttd::TTDRegionDesc* ram = nullptr;
+    for (const ttd::TTDRegionDesc& r : engine.Regions())
+        if (r.name == "ram")
+            ram = &r;
+    ASSERT_NE(ram, nullptr);
+    EXPECT_EQ(ram->pieces, static_cast<uint32_t>(_ttd->GetModelRamPages()) * (PAGE_SIZE / ttd::kTTDPieceSize))
+        << "the RAM region does not match the captured page range";
 }
 
 /// Every TTD consumer (dirty tracking, write journal, probe, coverage) reads

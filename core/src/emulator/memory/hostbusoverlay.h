@@ -57,6 +57,17 @@ public:
     /// The Z80 accepted an interrupt (its acknowledge is an I/O cycle). Called while the overlay is installed,
     /// whatever its window; default: nothing
     virtual void onInterruptAcknowledge() {}
+
+    /// A halted CPU's idle opcode fetch at `addr` (in the window, the overlay observes reads), repeated with
+    /// nothing else in between: true when the overlay's only effect on it is wait states that depend on nothing
+    /// but the fetch's start clock modulo `period` (set it; 1: no or constant waits). An engine may then run such
+    /// fetches in one go (Z84C15Engine). Default: false - every fetch must run
+    virtual bool RepeatFetchIsPure(uint16_t addr, uint32_t& period) const
+    {
+        (void)addr;
+        (void)period;
+        return false;
+    }
 };
 
 /// Two or more installed overlays seen as one (owned by Core, never installed
@@ -79,6 +90,8 @@ public:
     uint8_t onReadM1(uint16_t addr, uint8_t normal, bool romPaged) override;
     void onWrite(uint16_t addr, uint8_t value, bool romPaged) override;
     void onInterruptAcknowledge() override;
+    /// Every member that sees the fetch is pure; the period is their least common multiple
+    bool RepeatFetchIsPure(uint16_t addr, uint32_t& period) const override;
 
 private:
     HostBusOverlay* _members[kMaxOverlays] = {};
