@@ -66,7 +66,8 @@ def reach(machine, folder, name):
         time.sleep(0.4 + 0.12 * len(name))
         machine.idle(0.3)
         machine.tap('enter')
-        time.sleep(0.3)
+        time.sleep(0.5)
+        machine.idle(0.5)  # the Browser has taken the search before the next ENTER opens the entry
         return True
     match = SAFE.match(name)
     if match:
@@ -81,7 +82,8 @@ def reach(machine, folder, name):
                 time.sleep(0.4 + 0.12 * length)
                 machine.idle(0.3)
                 machine.tap('enter')
-                time.sleep(0.3)
+                time.sleep(0.5)
+                machine.idle(0.5)
                 return True
         # ambiguous: fall through to counting
     index = entries.index(name)
@@ -103,6 +105,7 @@ def main():
     parser.add_argument('--limit', type=int, default=10 ** 9)
     parser.add_argument('--match')
     parser.add_argument('--tap-speed', type=int, default=0, help='in the TAP loader press S this many times first: 1 = 7, 2 = 14, 3 = 28 MHz play speed (the loader keeps the choice per game)')
+    parser.add_argument('--debug-shots', action='store_true', help='save the Browser screen with the cursor on the main file, before ENTER (<NNN>-<title>-cursor.png)')
     parser.add_argument('--ext', help='only titles whose main file has this extension (tap, bas, nex, sna, snx)')
     parser.add_argument('--keys', default='enter,space,1', help='keys tried one at a time after the first picture until the picture changes (a title screen waits for one); empty = none')
     args = parser.parse_args()
@@ -183,6 +186,8 @@ def main():
             header_sigs.setdefault(tuple(target[:i + 1]), header_sig(machine))
         png = os.path.join(args.out, '%03d-%s.png' % (n, re.sub(r'[^A-Za-z0-9]+', '_', t['title'])[:40]))
         reach(machine, folder, parts[-1])
+        if args.debug_shots:
+            grab_png(machine, png.replace('.png', '-cursor.png'))
         if parts[-1].lower().endswith('.tap'):
             # SYMBOL SHIFT + ENTER in the Browser opens the TAP loader's options for this game (a game started once is remembered
             # and starts straight away next time, so the menu is only there on the first run or through this chord)
