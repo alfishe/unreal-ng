@@ -479,6 +479,28 @@ SyncDescriptor Zxasm310()
     return d;
 }
 
+/// ZX-ASM 2.4 / 2.5 / 2.6 (asm-synchronizer.md §7.9): plain text (blank runs only) in one buffer, the start word at
+/// the program's load address + 3, the end word after it; the part above #C000 in RAM page 0 (the 48K memory). 2.6
+/// keeps its ";*" line in the buffer and saves it as text
+SyncDescriptor ZxAsm2(const std::string& id, const std::string& title, uint16_t signatureAt, const char* signature,
+                      uint16_t startAt)
+{
+    SyncDescriptor d;
+    d.id = id;
+    d.title = title;
+    d.codec = "zxasm";
+    d.version = "2";
+    d.extension = "C";
+    d.identify = {{signatureAt, std::string(signature, 24)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.startAt = startAt;
+    d.linear.endAt = static_cast<uint16_t>(startAt + 2);
+    d.linear.upperPage = 0;
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 /// ZX ASM 3.0 (asm-synchronizer.md §7.9): the same buffer from #894F (the start of its saved files), the table in
 /// page 5: the start at #61C6, the end at #61C8; the part above #C000 in RAM page 6. Saved as type C
 SyncDescriptor Zxasm30()
@@ -615,6 +637,12 @@ const std::vector<SyncDescriptor>& Descriptors()
                      "\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF\x72\x73\x74\x75\x66\x68\x63\x7E\x7B\x7D\x5C\x79", 0x68FB),
         Zxasm310(),
         Zxasm30(),
+        ZxAsm2("zasm-2.4", "ZX-ASM 2.4", 0x806C,
+               "\x70\x65\x00\x70\x00\x6D\x00\x7E\xFE\x20\x20\x08\x23\x7E\xFE\x20\x28\xFA\xB7\xC9\xFE\x06\x37\xC0", 0x6273),
+        ZxAsm2("zasm-2.5", "ZX-ASM 2.5", 0x804C,
+               "\x6F\x00\x70\x65\x00\x70\x00\x6D\x00\x7E\xFE\x20\x20\x08\x23\x7E\xFE\x20\x28\xFA\xB7\xC9\xFE\x06", 0x6273),
+        ZxAsm2("zasm-2.6", "ZX-ASM 2.6", 0x8000,
+               "\xCD\x2E\x61\x38\x65\xFE\x5F\x28\x61\x23\xFE\x23\x28\x35\xFE\x25\x28\x1B\xFE\x22\x28\x08\xFE\x24", 0x6003),
         Masm11(),
         TasmGap("4.0", "TASM 4.0 (XL Design)", "4.0", {0x9859, "TASM4.0>"}, 0x8DD0, 0x91AC),
         TasmGap("4.4", "TASM 4.4 (KVA)", "4.0", {0x9859, "TASM4.4>"}, 0x8DD0, 0x91AC),

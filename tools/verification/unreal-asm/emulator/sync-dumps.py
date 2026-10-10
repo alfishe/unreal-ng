@@ -9,6 +9,8 @@ save the text itself and keep the file. The synchronizer's reader must give that
                                                                  # a line being typed, at the command line
     sync-dumps.py alasm <disk> <out-dir> --boot NAME --source NAME --tag TAG [--help-key] [--no-loaded]
                                                                  # any other ALASM build: TAG-typing, TAG-edited
+    sync-dumps.py zasm2 <disk> <out-dir> --boot ZXASM2.4 --source a2.4_p --big a2.4_1 --tag zasm24
+                                                                 # ZX-ASM 2.4 / 2.5 (ZXASM2.5) / 2.6 (boot): plain text, type C
     sync-dumps.py xas <disk-with-PROBE.X> <out-dir> --boot NAME --list-keys right[,down...] --tag TAG
                                                                  # XAS: TAG-typing, TAG-edited (the text at #C000)
     sync-dumps.py storm <disk-with-NAME.C> <out-dir> --boot NAME --source NAME --tag TAG
@@ -234,6 +236,48 @@ def zasm(emu, args):
     finish(args.out, f'{args.tag}-edited', name, saved(emu, args.source, args.type))
 
 
+def zasm2(emu, args):
+    """ZX-ASM 2.4 / 2.5 / 2.6: the menu starts on Edit; LEFT ENTER opens File, DOWN ENTER Load, the name typed as stored.
+    SS+SPACE leaves the editor for the menu, F S saves under the name shown. The text from (exe+3) to (exe+5): #6273 /
+    #6275 (2.4, 2.5), #6003 / #6005 (2.6); its part above #C000 in RAM page 0"""
+    def start_and_load(disk, name):
+        emu.insert_disk(disk)
+        emu.run_trdos(args.boot, wait=12)
+        time.sleep(2)
+        emu.tap('left')                        # File
+        time.sleep(0.5)
+        emu.tap('enter')
+        time.sleep(1)
+        emu.tap('down')                        # Load
+        time.sleep(0.3)
+        emu.tap('enter')
+        time.sleep(1)
+        emu.type(name)
+        emu.tap('enter')
+        time.sleep(5)
+
+    start_and_load(args.big_disk or args.disk, args.big)
+    dump(emu, args.out, f'{args.tag}-big', [0, 2, 5], f'{args.big}.C', saved(emu, args.big, 'C'), {'editor': True, 'typing': False})
+    start_and_load(args.disk, args.source)
+    loaded = saved(emu, args.source, 'C')
+    pages = [0, 2, 5]
+    emu.type(' nop')
+    dump(emu, args.out, f'{args.tag}-typing', pages, f'{args.source}.C', loaded, {'editor': True, 'typing': True})
+    emu.tap('enter')
+    emu.tap('down')
+    time.sleep(1)
+    dump(emu, args.out, f'{args.tag}-edited', pages, f'{args.source}.C', None, {'editor': True, 'typing': False})
+    emu.post('/keyboard/combo', {'keys': ['ss', 'space'], 'frames': 4})   # to the menu
+    time.sleep(1)
+    emu.tap('f')
+    time.sleep(1)
+    emu.tap('s')
+    time.sleep(1)
+    emu.tap('enter')                           # the name shown
+    time.sleep(4)
+    finish(args.out, f'{args.tag}-edited', f'{args.source}.C', saved(emu, args.source, 'C'))
+
+
 def masm(emu, args):
     """MASM 1.1: W takes the first source, E edits; SS+Enter saves from the editor, EXT Q goes back to the menu. The
     edited case is taken in the editor (the cursor line out of the text), the menu case after leaving it"""
@@ -394,7 +438,7 @@ def tasm412(emu, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'masm', 'tasm'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'tasm'])
     parser.add_argument('disk')
     parser.add_argument('out')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
@@ -423,6 +467,8 @@ def main():
         tasm412(emu, args)
     elif args.assembler == 'alasm':
         alasm(emu, args, 'other')
+    elif args.assembler == 'zasm2':
+        zasm2(emu, args)
     elif args.assembler == 'xas':
         xas(emu, args)
     elif args.assembler == 'storm':

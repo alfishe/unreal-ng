@@ -15,8 +15,9 @@ manuals (`ide.txt`, `edit.txt`, `compile.txt`) are on its disks (UTF-8 copies in
 | 3.15 (Rubts0FF, 2017) | `zxart-249318/ZASM315.trd` ([zxart](https://zxart.ee/releasefile/id:249318/ZASM315.zip)) | `boot` | load, assemble, launch, code from RAM page 1: all run |
 | 3.10 (1998) | `zxart-249317/ZASM_310.TRD` ([zxart](https://zxart.ee/releasefile/id:249317/ZASM_310.ZIP)) | `ZASM3.10` | starts: the File / Util / Edit / Compile / Run / Options menu |
 | 3.0 (1996) | `zxpk-65803-ZAsm3.0/ZAsm3.0.trd` ([zx-pk.ru](https://zx-pk.ru/attachment.php?attachmentid=65803)) | `ZX-TASM3` | starts: File / Edit / Compile / Run / Print / Setup |
-| 2.6 (Rubts0FF, 2018) | `zxart-249316/ZASM2_6.SCL` ([zxart](https://zxart.ee/releasefile/id:249316/ZASM2_6.zip)) | `boot` | starts: File / Edit / Compile / Run / Setup, a "No Named.C" text |
-| 2.4 (Hohlov, 1994; 48K) | `zxart-421759/ZXASM2_4.SCL` ([zxart](https://zxart.ee/releasefile/id:421759/ZXASM2_4.zip)) | `ZXASM2.4` | starts: the same menu |
+| 2.6 (Rubts0FF, 2018) | `zxart-249316/ZASM2_6.SCL` ([zxart](https://zxart.ee/releasefile/id:249316/ZASM2_6.zip)) | `boot` | starts: File / Edit / Compile / Run / Setup, a "No Named.C" text; load, edit, save |
+| 2.5 (Hohlov, ~1995) | `zxpk-65802-ZASM2.5/ZASM2.5.TRD` | `ZXASM2.5` | load, edit, save |
+| 2.4 (Hohlov, 1994; 48K) | `zxart-421759/ZXASM2_4.SCL` ([zxart](https://zxart.ee/releasefile/id:421759/ZXASM2_4.zip)) | `ZXASM2.4` | starts: the same menu; load, edit, save |
 | 4.20 (2026) | `vtrd-ZASM4_20/Z4_20.trd` ([vtrd](https://vtrd.in/system/ZASM4_20.zip)) | `boot` | needs **`PENTAGON` 512K** (hangs on its picture on 128K): load, assemble (`ENDA` probe) |
 | 3.3 Final (2021) | `vtrd-Z33_F9/Z33_F9/Z33_F9.trd` ([vtrd](https://vtrd.in/system/Z33_F9.zip)) | `boot` | needs `PENTAGON` 512K: load, assemble (`ENDA` probe) |
 | 3.2x (2017) | `zxart-249319/Z32X.trd` ([zxart](https://zxart.ee/releasefile/id:249319/Z32X.zip)) | `boot` | needs `PENTAGON` 512K: load, assemble, `ENDA`, `LOADTAB` / `~text~` checked |
@@ -106,6 +107,7 @@ SaveSet rewrites the file); or patch bytes +3 / +4 of the `s` file to `A` (the i
 
 | Version | RAM | Keys from `RUN "boot"` to the main menu (`~N`: wait N s) |
 |---|---|---|
+| 2.4, 2.5, 2.6 | 128K (2.4: 48K) | none: the menu starts on Edit (SPACE or ENTER opens the editor); LEFT, ENTER opens File, DOWN, ENTER Load, the name typed as stored. SS+SPACE leaves the editor; `f`, `s`, ENTER saves under the name shown |
 | 3.0 | 128K | none (the menu at once; its drive is the boot drive) |
 | 3.10 | 128K | none |
 | 3.15 | 128K | `enter`, `a`, `~6` (one "No Disk") |
@@ -132,6 +134,9 @@ a fixed RAM page. Words just before the start word follow the cursor and the scr
 
 | Version | Start word / end word | Text from | Above `#C000` | Saving from the editor |
 |---|---|---|---|---|
+| 2.4 | `#6273` / `#6275` (page 5; the program loads at `#6270`) | `#A1DF` | page 0 | SS+SPACE, `f`, `s`, ENTER (type `C`, plain text) |
+| 2.5 | `#6273` / `#6275` (page 5) | `#A1EA` | page 0 | the same |
+| 2.6 | `#6003` / `#6005` (page 5; the program loads at `#6000`) | `#9FFD` | page 0 | the same; its `;*` line is in the buffer itself and saved as text |
 | 3.0 | `#61C6` / `#61C8` (page 5) | `#894F` (its files' start) | page 6 | COMMAND `q` to the menu, File / Save, ENTER (type `C`) |
 | 3.10 | `#868F` / `#869E` | `#89C4` | page 6 | COMMAND (Extend) then SS+`2` |
 | 3.15 | `#8829` / `#8837` | `#884C` | page 6 | COMMAND then SS+`2` (`;!` line) |
@@ -154,7 +159,7 @@ checked).
 
 COMMAND `2` asks for a name, `3` loads, `S` searches. The asm-synchronizer reads the buffer without a save
 ([asm-sources.md](../analysis/asm-sources.md#the-source-an-assembler-holds-in-ram-asm-synchronizer); descriptors
-`zasm-3.0` ... `zasm-4.20`, design in asm-synchronizer.md §7.9). Only the text being edited is read: 3.2x and later
+`zasm-2.4` ... `zasm-4.20`, design in asm-synchronizer.md §7.9). Only the text being edited is read: 3.2x and later
 can hold several texts, switching between them is not covered yet.
 
 ## WebAPI

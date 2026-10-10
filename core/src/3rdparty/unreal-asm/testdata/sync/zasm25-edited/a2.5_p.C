@@ -1,0 +1,1 @@
+ nop;----- ZX Turbo Assembler‚ver.2.5 -----;----------- Project File --------------;-------- Last Changed 8.03.95 ---------ˆORG 25200ˆinclude "a2.5_1"ˆinclude "a2.5_2"ˆinclude "a2.5_3"ˆinclude "a2.5_4"Font6ƒinsert "Bold.fnt"StackƒDS 256StkTop‚DW GenErrorEND…DB 13,13,0
