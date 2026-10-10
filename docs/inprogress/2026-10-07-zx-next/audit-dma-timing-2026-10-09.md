@@ -26,6 +26,7 @@ and where only arithmetic exists (no board numbers) the item stays marked "arith
 
 | 28 MHz SRAM read wait | `zxnext.vhd` 3171-3181: +1 clock per CPU read that reaches the SRAM or bank 5; not bank 7 BRAM (page #0E), unmapped slots, boot ROM; writes / I/O / refresh never | none | `NextMemory::SetSramWait28`, rides on the contended interface | `At28MHzSramReadsWaitOneClockAndBank7DoesNot` |
 | Video bank 7 = 8K BRAM | `zxnext.vhd` "ULA BANK 7 (8k only ...)": video address bits 12:0, page #0E | tilemap / LoRes read 16K of bank 7 | wraps at 8K | `NextTilemap_Test.Bank7MapOffsetWrapsInTheEightKilobyteBram` |
+| DMA memory writes | `zxnext.vhd`: the DMA drives the CPU address bus, so ROM protection, the slot table and the Layer 2 write mapping apply | `DirectWriteToZ80Memory`: 16K windows (the odd 8K slot took the even slot's neighbour page) and a write at #0000 went into the ROM image, never into Layer 2 | `NextMemory::DmaWrite` through the slot table's write side | `NextSkeleton_Test.DmaWritesFollowTheSlotTableNotThe16KWindows`, `DmaWritesToRomAreIgnoredAndLayer2WriteMappingTakesThem` |
 
 Mapscroll 3 (`demos/tech-demo`, seedy1812) is the case for the last row: it writes its map through MMU page 14 at offset 0 and points NR #6E at #A0
 (bank 7, offset #2000), so only the 8K wrap shows the map. After the fix one of our frames equals the author's README screenshot pixel for
