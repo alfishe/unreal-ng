@@ -980,11 +980,14 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
     
     if (bpm)
     {
+        // The user's breakpoints; ?all=true adds the ones analyzers, debugger adapters and steps own (with owner)
+        const bool all = req->getParameter("all") == "true";
         const auto& allBps = bpm->GetAllBreakpoints();
         for (const auto& pair : allBps)
         {
             const BreakpointDescriptor* bp = pair.second;
             if (!bp) continue;
+            if (!all && !BreakpointManager::IsUserBreakpoint(*bp)) continue;
             
             Json::Value bpObj;
             bpObj["id"] = bp->breakpointID;
@@ -1033,6 +1036,11 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
             bpObj["active"] = bp->active;
             bpObj["note"] = bp->note;
             bpObj["group"] = bp->group;
+            if (all)
+            {
+                bpObj["owner"] = bp->owner;
+                bpObj["hidden"] = bp->hidden;
+            }
             
             breakpointsArray.append(bpObj);
         }
@@ -1260,7 +1268,8 @@ void EmulatorAPI::clearBreakpoints(const HttpRequestPtr& req, std::function<void
     BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
     if (bpm)
     {
-        bpm->ClearBreakpoints();
+        // The user's breakpoints: the BASIC typer's control points and the debugger adapters' stay with their owners
+        bpm->ClearUserBreakpoints();
     }
     
     Json::Value ret;

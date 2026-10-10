@@ -1969,8 +1969,8 @@ public:
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
-            ctx->pDebugManager->GetKeyboardManager()->TypeText(text, delayFrames.value_or(2));
-            return true;
+            // false: a character no key types, nothing typed
+            return ctx->pDebugManager->GetKeyboardManager()->TypeText(text, delayFrames.value_or(2)).empty();
         });
 
         lua.set_function("key_release_all", [this]() {
@@ -2782,7 +2782,7 @@ public:
             auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            if (bpm) bpm->ClearBreakpoints();
+            if (bpm) bpm->ClearUserBreakpoints();
         });
 
         lua.set_function("bp_enable", [this](uint16_t id) -> bool {

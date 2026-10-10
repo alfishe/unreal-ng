@@ -2003,7 +2003,7 @@ namespace PythonBindings
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return;
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-                if (bpm) bpm->ClearBreakpoints();
+                if (bpm) bpm->ClearUserBreakpoints();
             }, "Clear all breakpoints")
             .def("bp_enable", [](Emulator& self, uint16_t id) -> bool {
                 auto* ctx = self.GetContext();
@@ -3964,9 +3964,9 @@ namespace PythonBindings
             .def("key_type", [](Emulator& self, const std::string& text, uint16_t charDelayFrames) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
-                ctx->pDebugManager->GetKeyboardManager()->TypeText(text, charDelayFrames);
-                return true;
-            }, "Type text with auto modifier handling", py::arg("text"), py::arg("delay_frames") = 2)
+                // false: a character no key types, nothing typed
+                return ctx->pDebugManager->GetKeyboardManager()->TypeText(text, charDelayFrames).empty();
+            }, "Type text with auto modifier handling (False: a character no key types, nothing typed)", py::arg("text"), py::arg("delay_frames") = 2)
             .def("key_trdos_command", [](Emulator& self, const std::string& keyword, const std::string& argument) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
