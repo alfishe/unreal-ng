@@ -131,6 +131,25 @@ The 35 programs of `ZXSpectrumNextTests/release` (48K snapshots, results checked
 - [x] The four differences of the first Browser run, closed 2026-10-09: **L2Port** (its IM1-in-Layer-2 test mapped the DivMMC at #0038 - on the board the ROM-3 automap entries need "not Layer 2 reads" (`sram_divmmc_automap_rom3_en`), so the DivMMC stayed mapped over slot 0 for the rest of the program; fixed, all green, green border); **TFalBUla** (all three phases by "n" match the readme); **UlaScrol** (R skips the animation, the green-border interactive state matches); **SprDelay** (identical to MAME 0.282's picture of core 3.02.1, the same family as ours; the board photos are core 3.0.5 with the older double-buffered sprite engine, so they differ by design)
 - [x] Execution breakpoints need the `debugmode` feature, and an address alone matches in every ROM page (`page: rom2`): both in the recipe
 
+## ZXSpectrumNextTests through NextZXOS's Browser (2026-10-09): 35 programs, 34 as expected
+Run by `tools/machines/next/browser-drive/suite.py`; "ok" = the picture / the program's own verdict equals the readme and the board photo (or MAME 0.282 of the same core family where the photos are of older cores).
+
+| Area | Program | Result |
+|:--|:--|:--|
+| base | `!Copper` `!dma` `!NextReg` `!Z80N` `!Z80Nc2` | ok (Z80N / Z80Nc2 with keys 2, 5: every row OK) |
+| Graphics | `L2Colour` `L2Scroll` `LmxHiCol` `LmxHiRes` `LmixLoRs` `Lmix_LxU` | ok |
+| Graphics | `L2Port` | ok after the DivMMC / Layer 2 automap fix (all green, green border) |
+| Graphics | `NReg0x69` | ok (10/10) |
+| Interrupts | `DIHalt` | ok (green border, white paper: the CPU stays in DI+HALT) |
+| Misc | `zilogDMA` `dmaDebug` | ok (the read-back lines equal the board's; dmaDebug is interactive) |
+| Sprites | `SpritBig` `SprBig4b` `SpritRel` `SpritTra` | ok |
+| Sprites | `SprDelay` | ok = MAME 0.282's picture of core 3.02.1; the board photos are core 3.0.5 (older sprite engine), differ by design |
+| Timing | `linesIRQ` `Chg8kB_2` (contention OFF) | ok |
+| Timing | **`Chg8kBan` (contention ON)** | differs from MAME: ours is ~31 lines longer. The test swaps an 8K bank 2048 times with NEXTREG from `#6000` (contended bank 5): 4 reads a NEXTREG, ~128 of 224 T of a line contended, so ~+5 T an instruction in the paper area - what ours gives; MAME adds ~0.5 T. No board photo: open |
+| ULA | `TFalBUla` (3 phases by `n`) `CPalTran` `CPalTrV2` `CPalTrV3` `Ula_Pal` `DefTrans` `UlaScrol` (R skips the animation) | ok |
+| ZX48_ZX128 | `z80bltst` | ok (all green) |
+| ZX48_ZX128 | `ccffrm` `int_skip` `ULAvsSJS` | run; ccffrm "no error", int_skip's report as the readme; ULAvsSJS is interactive (keys) |
+
 ## What counts as a reference (owner, 2026-10-09)
 No single emulator is the reference (MAME included): a difference is a defect only when the board (photo / the program's own verdict on the board) or at least two independent implementations that follow the VHDL agree against us. Everything else is *undecided* and listed as such:
 - Undecided, no board evidence: Chg8kBan / Chg8kB_2 (MAME alone ends the green border ~31 lines before us; ZEsarUX has no per-line border), SprDelay (sprite renderer delay: board photo shows a longer single-line sprite than ours and ZEsarUX), int_skip (ours follows the readme, ZEsarUX differs), the heights of the dma / zilogDMA border blocks
