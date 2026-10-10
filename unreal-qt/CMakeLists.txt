@@ -363,26 +363,8 @@ endif ()
 set(DATA_PATH "${ROOT_DIR}/data")
 set(CONFIGS_DIR "${DATA_PATH}/configs")
 
-# Copy resources using modern CMake syntax
-add_custom_command(
-    TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/fonts" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/fonts"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CONFIGS_DIR}" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
-    COMMAND ${CMAKE_COMMAND} -DDEST="${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs" -P "${ROOT_DIR}/cmake/ExtractConfigImages.cmake"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/symbols" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/symbols"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/midi" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/midi"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/boot" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/boot"
-    COMMENT "Copying runtime resource files to output directory"
-)
+# Runtime resources are copied once by the shared runtime-data target (root CMakeLists.txt)
+add_dependencies(${PROJECT_NAME} runtime-data)
 
 # These install rules are already covered by the common install rules above
 

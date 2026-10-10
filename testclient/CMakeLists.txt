@@ -107,11 +107,5 @@ else()
 endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
 
-# Copy ROM and INI files to build/bin directory
-add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/bin"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${DATA_PATH}/rom "${CMAKE_BINARY_DIR}/bin/rom"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${DATA_PATH}/testrom "${CMAKE_BINARY_DIR}/bin/rom"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${DATA_PATH}/configs "${CMAKE_BINARY_DIR}/bin/configs"
-)
+# ROMs and configs are copied once by the shared runtime-data target (root CMakeLists.txt)
+add_dependencies(${PROJECT_NAME} runtime-data)

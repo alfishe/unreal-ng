@@ -166,27 +166,8 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 
     message("Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
 
-    # Copy all ROM files to /rom sub-folder
-    add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E
-        copy_directory ${DATA_PATH}/rom ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom
-        copy_directory ${DATA_PATH}/symbols ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/symbols
-    )
-
-    # Copy all test ROM files to /rom sub-folder
-    add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E
-        copy_directory ${DATA_PATH}/testrom ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom
-    )
-
-    # The default General MIDI bank (ZX-MultiSound synthesizer) to /midi
-    add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E
-        copy_directory ${DATA_PATH}/midi ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/midi
-    )
+    # ROMs, symbols and the MIDI bank are copied once by the shared runtime-data target (root CMakeLists.txt)
+    add_dependencies(${PROJECT_NAME} runtime-data)
 else ()
     # Produce static library;  Create unrealng::automation alias for the target
     add_library(${PROJECT_NAME} STATIC ${SOURCES})
