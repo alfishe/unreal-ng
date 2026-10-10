@@ -13,4 +13,4 @@ Titles the owner (or a run of the collection) found worth showing. Index = row n
 | 181 | Nexions (`games/shooter/Nexions/run.bas`) | game | owner's pick | owner, 2026-10-10 |
 | 201 | Populous Remake (`games/strategy-board/Populous Remake/populous-demo.nex`) | game demo | owner's pick | owner, 2026-10-10 |
 | 203 | Corruption (`games/text-adventure/Corruption/corrupt_512.nex`) | game | owner's pick (text adventure with graphics) | owner, 2026-10-10 |
-| 99 | Next Bird (`games/action-arcade/Next Bird/nbird3.tap`) | game | owner's pick (a Flappy Bird; run from the TAP loader in Next mode, key N) | owner, 2026-10-10 |
+| 99 | Next Bird (`games/action-arcade/Next Bird/nbird3.tap`) | game | owner's pick (a Flappy Bird; TAP loader: Next mode (N), play speed 28 MHz - at the default 3.5 MHz it is slow; set with collection.py --tap-speed 3 or Sym Shift+Enter in the Browser) | owner, 2026-10-10 |
