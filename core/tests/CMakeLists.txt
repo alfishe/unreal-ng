@@ -316,6 +316,14 @@ if (NOT TARGET ${PROJECT_NAME})
         list(APPEND QT_FRONTEND_TEST_COMMAND COMMAND $<TARGET_FILE:unreal-asm-tests>)
         list(APPEND QT_FRONTEND_TEST_TARGET unreal-asm-tests)
     endif()
+    # The same for unreal-disk (core/src/3rdparty/unreal-disk): the disk model, format drivers, TR-DOS file system
+    if(COMMAND unrealdisk_add_tests)
+        unrealdisk_add_tests()
+    endif()
+    if(TARGET unreal-disk-tests)
+        list(APPEND QT_FRONTEND_TEST_COMMAND COMMAND $<TARGET_FILE:unreal-disk-tests>)
+        list(APPEND QT_FRONTEND_TEST_TARGET unreal-disk-tests)
+    endif()
     if(UNIX)
         add_custom_target(test-parallel
             ${QT_FRONTEND_TEST_COMMAND}

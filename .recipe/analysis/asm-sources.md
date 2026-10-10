@@ -183,7 +183,7 @@ asm_source {"action":"sync_extract","snapshot":"/abs/scratch/work.szx","as":"dia
 ```
 
 The standalone `zxasm` does the same on files, and also writes the source as a file of the assembler onto a TR-DOS
-image or an SCL archive: `zxasm inject main.asm work.szx`, `zxasm inject main.asm disk.trd --assembler alasm-5.09`,
+image of any format (TRD, SCL, FDI, UDI, TD0 ...): `zxasm inject main.asm work.szx`, `zxasm inject main.asm disk.trd --assembler alasm-5.09`,
 `zxasm probe work.szx`, `zxasm extract work.szx --to sjasmplus`, `zxasm extract disk.scl --file MAIN.H`.
 `inject-oracle.py alasm509 --template <template> <source.asm> 0x6000` is the check: zxasm injects, the snapshot is
 loaded and ALASM assembles it.

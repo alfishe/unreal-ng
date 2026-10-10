@@ -9,7 +9,7 @@ Part of [unreal-ng](https://github.com/alfishe/unreal-ng); design: `docs/inprogr
 - A1: the library skeleton, the encoding detectors and code page tables (CP866, KOI8-R, CP1251, ZX Spectrum, UTF-8),
   the document model, the codec registry with detection, the `text` and `sjasmplus` codecs, the `zxasm` tool.
 - A2-A4: codecs of every version of the tokenized formats: `tasm` (2.0, 3, 4.0, 4.12), `alasm` (3.8 … 5.09),
-  `zxasm` (2.4 … 4.20), `storm` (1.0beta, 1.2-1.3i); hobeta and TR-DOS containers.
+  `zxasm` (2.4 … 4.20), `storm` (1.0beta, 1.2-1.3i); hobeta containers.
 - A5: dialect conversion through a neutral IR (`ir.h`, `dialect.h`): the `alasm` frontend, the `sjasmplus` frontend
   and backend; ALASM → sjasmplus checked against ALASM's own binaries.
 - A5b: the `tasm` frontend (3 / 4.0 / 4.12); the GS 1.04 ROM sources convert and assemble to the ROM byte for byte.
@@ -30,9 +30,12 @@ Part of [unreal-ng](https://github.com/alfishe/unreal-ng); design: `docs/inprogr
   sjasmplus conversion equal to what sjasmplus assembles; symbol bundles (`symbols/bundles.h`: the manifest of label
   files for known ROM pages by SHA-256).
 - Part B, sjasmplus → retro assemblers: the ALASM backend (Z0); snapshots and disks both ways (Z1): `snapshot.h` reads
-  .sna / .z80 / .szx into RAM pages and writes them back with pages replaced (zlib inflate of its own), `containers.h`
-  writes TR-DOS images and SCL archives, `WriteAs` makes a source an assembler's own file, `sync::InjectIntoSnapshot`
-  puts it into the assembler waiting in a snapshot; `zxasm probe / extract / inject` do it from the command line.
+  .sna / .z80 / .szx into RAM pages and writes them back with pages replaced (zlib inflate of its own), `WriteAs` makes
+  a source an assembler's own file, `sync::InjectIntoSnapshot` puts it into the assembler waiting in a snapshot;
+  `zxasm probe / extract / inject` do it from the command line.
+- Disk images are not read by the library: it takes a disk's files as `containers::TrdosFile`. The tools read and write
+  every floppy format (TRD, SCL, FDI, UDI, TD0, DSK, MGT, ...) through unreal-disk (`tools/common/diskfiles`), the
+  emulator through its media manager.
 
 ## Layout
 
@@ -47,6 +50,7 @@ Part of [unreal-ng](https://github.com/alfishe/unreal-ng); design: `docs/inprogr
 | `src/layout/` | label values of a sjasmplus project without building bytes: instruction sizes, passes, conditionals, macros |
 | `src/symbols/` | the symbol module: model, store, codecs, `fromsource/` (labels from sources), `live/` (assemblers' label tables in RAM pages) |
 | `tools/zxasm/` | the `zxasm` CLI |
+| `tools/common/` | what the tools share: disk images through unreal-disk (`../unreal-disk`, the tools' only dependency) |
 | `tools/symconv/` | the `symconv` CLI: symbol files from any format to any format (`symconv formats`, `symconv detect f`, `symconv f --to id`), the labels of a source or a disk's project (`symconv source disk.trd --main NAME --to id`) |
 | `examples/` | small programs on the public API |
 | `tests/` | `unreal-asm-tests` (GoogleTest) |
@@ -80,7 +84,7 @@ symconv live 3:ram3.bin 6:ram6.bin --to unreal-map              # ALASM / XAS la
 zxasm inject main.asm testdata/templates/alasm-5.09.szx -o work.szx  # a sjasmplus source as ALASM's text, at its prompt
 zxasm probe work.szx                                            # alasm-5.09  100  MAIN, 1242 bytes  idle
 zxasm extract work.szx --to sjasmplus -o back.asm               # the text ALASM holds, back as sjasmplus
-zxasm inject main.asm disk.trd --assembler alasm-5.09            # MAIN.H onto a TR-DOS disk (.scl too; made when missing)
+zxasm inject main.asm disk.fdi --assembler alasm-5.09            # MAIN.H onto a disk image (TRD, SCL, FDI, UDI, TD0 ...; made when missing)
 zxasm extract disk.scl --file MAIN.H                            # a file of a disk as text
 ```
 

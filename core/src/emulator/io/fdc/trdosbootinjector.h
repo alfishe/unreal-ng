@@ -4,7 +4,8 @@
 #include <string>
 #include <vector>
 
-class DiskImage;
+namespace unrealdisk { class DiskImage; }
+using unrealdisk::DiskImage;
 
 /// Adds a virtual boot file to the in-memory TR-DOS disk image.
 ///

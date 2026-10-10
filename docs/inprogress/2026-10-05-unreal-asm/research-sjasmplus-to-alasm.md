@@ -117,7 +117,7 @@ fire in that instance (reported).
 ## 6. Limits and open items
 
 - Snapshots and disks (Z1): `zxasm inject` writes the same text into an idle template snapshot (.szx / .sna / .z80) or
-  onto a TR-DOS image / SCL archive; ALASM 5.09 assembled `oracle1.asm` from each to sjasmplus' bytes
+  onto a disk image of any format (unreal-disk); ALASM 5.09 assembled `oracle1.asm` from each to sjasmplus' bytes
   (asm-synchronizer.md §19).
 - One text. A project's INCLUDEd files would go into more pages (ALASM keeps one text per page). Not built yet.
 - Label values come only from sjasmplus sources. Another dialect's source is written without them: its later labels

@@ -203,7 +203,7 @@ bool LoadSource(EmulatorContext* context, const AsmRequest& request, Source& out
     const std::string extension = Lower(Extension(out.name));
     out.hints.extension = Extension(out.name);
     const std::string inner = Option(request, "file");
-    if (extension == "trd" || extension == "tap" || extension == "tzx")
+    if (IsImageExtension(extension))
     {
         if (inner.empty())
         {
@@ -211,8 +211,7 @@ bool LoadSource(EmulatorContext* context, const AsmRequest& request, Source& out
             return false;
         }
         std::vector<containers::TrdosFile> files;
-        const bool read = extension == "trd" ? containers::ReadTrd(out.bytes, files, error) : containers::ReadTape(out.bytes, files, error);
-        if (!read)
+        if (!ReadImageFiles(context, out.name, out.bytes, files, error))
         {
             failure = Fail(AsmControlError::Failed, error);
             return false;
@@ -235,7 +234,7 @@ bool LoadSource(EmulatorContext* context, const AsmRequest& request, Source& out
     }
     if (!inner.empty())
     {
-        failure = Fail(AsmControlError::BadRequest, "'file' applies to an image (.trd, .tap, .tzx)");
+        failure = Fail(AsmControlError::BadRequest, "'file' applies to an image (a disk image: .trd, .scl, .fdi, .udi, .td0 ...; a tape: .tap, .tzx)");
         return false;
     }
     if (out.bytes.size() >= 128 && std::equal(out.bytes.begin(), out.bytes.begin() + 8, "PLUS3DOS"))

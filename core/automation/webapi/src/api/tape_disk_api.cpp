@@ -20,6 +20,8 @@
 #include <emulator/io/tape/tape.h>
 #include <emulator/io/fdc/wd1793.h>
 #include <emulator/io/fdc/diskimage.h>
+#include <emulator/io/fdc/trdoscatalog.h>
+#include <unrealdisk/trdosfs.h>
 #include <emulator/io/fdc/fdd.h>
 #include <common/stringhelper.h>
 #include <json/json.h>
@@ -2550,70 +2552,32 @@ void EmulatorAPI::getDiskCatalog(const HttpRequestPtr& req,
     ret["dos_type"] = "TR-DOS";
     ret["files"] = Json::arrayValue;
     
-    // TR-DOS catalog is in Track 0, Side 0, Sectors 1-8 (16 entries per sector)
-    auto* track = diskImage->getTrackForCylinderAndSide(0, 0);
-    if (!track) {
-        ret["error"] = "Track 0 not found";
+    // The TR-DOS catalog through the disk library (track 0 sectors 1-8, 16 entries each; deleted ones left out)
+    std::vector<TrdosFile> entries;
+    std::string catalogError;
+    if (!unrealdisk::TrdosFileSystem(*diskImage).List(entries, catalogError)) {
+        ret["error"] = catalogError;
+        ret["file_count"] = 0;
         auto resp = HttpResponse::newHttpJsonResponse(ret);
         addCorsHeaders(resp);
         callback(resp);
         return;
     }
-    
-    for (int sec = 0; sec < 8; sec++) {
-        auto* sector = track->getSector(sec);
-        if (!sector) continue;
-        
-        uint8_t* data = sector->data;
-        
-        // 16 entries per sector, 16 bytes each
-        for (int entry = 0; entry < 16; entry++) {
-            int offset = entry * 16;
-            
-            // First byte = 0x00 means end of catalog
-            if (data[offset] == 0x00) {
-                goto done;
-            }
-            
-            // First byte = 0x01 means deleted file
-            if (data[offset] == 0x01) continue;
-            
-            Json::Value file;
-            
-            // Filename: bytes 0-7
-            std::string name;
-            for (int i = 0; i < 8; i++) {
-                uint8_t c = data[offset + i];
-                if (c >= 32 && c < 128) name += (char)c;
-            }
-            file["name"] = name;
-            
-            // Type: byte 8
-            char type = data[offset + 8];
-            file["type"] = std::string(1, type);
-            
-            // Start address: bytes 9-10 (LE)
-            uint16_t start = data[offset + 9] | (data[offset + 10] << 8);
-            file["start"] = start;
-            
-            // Length: bytes 11-12 (LE)
-            uint16_t length = data[offset + 11] | (data[offset + 12] << 8);
-            file["length"] = length;
-            
-            // Sectors: byte 13
-            file["sectors"] = data[offset + 13];
-            
-            // Start sector: byte 14
-            file["first_sector"] = data[offset + 14];
-            
-            // Start track: byte 15
-            file["first_track"] = data[offset + 15];
-            
-            ret["files"].append(file);
-        }
+    for (const TrdosFile& entry : entries) {
+        Json::Value file;
+        std::string name;
+        for (const char c : entry.name)
+            if (static_cast<uint8_t>(c) >= 32 && static_cast<uint8_t>(c) < 128) name += c;
+        file["name"] = name;
+        file["type"] = std::string(1, entry.type);
+        file["start"] = entry.start;
+        file["length"] = entry.length;
+        file["sectors"] = entry.sectors;
+        file["first_sector"] = entry.firstSector;
+        file["first_track"] = entry.firstTrack;
+        ret["files"].append(file);
     }
-    
-done:
+
     ret["file_count"] = ret["files"].size();
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);

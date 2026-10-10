@@ -5,7 +5,8 @@
 
 #include "emulator/emulatorcontext.h"
 
-class DiskImage;
+namespace unrealdisk { class DiskImage; }
+using unrealdisk::DiskImage;
 class Z80;
 
 /// TR-DOS disk autostart: decides what to run from a mounted disk and starts it without key injection.

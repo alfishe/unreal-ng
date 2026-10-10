@@ -30,8 +30,8 @@ Running the assemblers themselves inside the emulator: [.recipe/assemblers/](../
 
 Every codec decodes the assembler's own file to UTF-8 text and encodes text back to the same bytes (byte for byte
 for files the assembler wrote; the research documents give the corpus numbers). Containers: hobeta files
-(`NAME.$A`), TR-DOS images (`.trd`, `.scl` through `tools/verification/unreal-asm/lib/zxdisk.py scl2trd`) and tape images (`.tap`,
-`.tzx`).
+(`NAME.$A`), disk images of every format the emulator reads (`.trd`, `.scl`, `.fdi`, `.udi`, `.td0`, `.dsk` ...: their
+TR-DOS files, through the emulator's disk library unreal-disk) and tape images (`.tap`, `.tzx`).
 
 The conversion goes through a neutral intermediate form; the sjasmplus output of every dialect is checked against
 the original assembler running in the emulator: the converted source assembles to the same bytes (see the
@@ -166,7 +166,7 @@ assemblers are planned ([asm-synchronizer](../inprogress/2026-10-05-unreal-asm/a
 Snapshots and disks work both ways without the emulator. `zxasm inject main.asm alasm-5.09.szx -o work.szx` puts
 the source into a snapshot of ALASM waiting at its prompt (a ready template ships with the library's test data);
 load `work.szx` and assemble. `zxasm inject main.asm disk.trd --assembler alasm-5.09` writes it as ALASM's file onto
-a TR-DOS disk or an SCL archive. `zxasm probe work.szx` says which assembler a snapshot holds, and
+a disk image of any format the emulator reads (TRD, SCL, FDI, UDI, TD0 ...). `zxasm probe work.szx` says which assembler a snapshot holds, and
 `zxasm extract work.szx --to sjasmplus` takes its text out again. In the emulator, the `asm sync` verbs take
 `--snapshot` for the same on a file.
 

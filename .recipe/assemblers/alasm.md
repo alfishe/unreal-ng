@@ -126,7 +126,7 @@ Details and the oracle script:
 zxasm inject main.asm alasm-5.09.szx -o work.szx       # main.asm (sjasmplus) as ALASM's text; load work.szx, type a + ENTER
 zxasm probe work.szx                                   # alasm-5.09  100  MAIN, 1242 bytes  idle
 zxasm extract work.szx --to sjasmplus -o back.asm      # and back
-zxasm inject main.asm disk.trd --assembler alasm-5.09  # MAIN.H on a disk (.scl too): w + main + ENTER in ALASM loads it
+zxasm inject main.asm disk.trd --assembler alasm-5.09  # MAIN.H on a disk (.scl .fdi .udi .td0 too): w + main + ENTER in ALASM loads it
 ```
 
 The same on a surface: `asm_source {"action":"sync_inject","path":"/abs/main.asm","snapshot":"/abs/alasm-5.09.szx","output":"/abs/work.szx"}`

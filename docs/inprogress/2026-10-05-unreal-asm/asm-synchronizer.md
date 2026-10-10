@@ -694,7 +694,7 @@ injection (A7 surfaces use it already).
 | into an existing snapshot | as built (Z1): no emulator instance. The library reads the file's RAM pages, paging and SP (`snapshot.h`: .sna, .z80, .szx), probes it and checks the idle rule on that memory, plans the write as in a running machine, and writes the file again with the text's page replaced; every other block of the file stays as it was. The first plan (a hidden paused instance, saved through the snapshot pipeline) was dropped: the file holds everything the plan needs, and `zxasm` works without the emulator |
 | from a template | per descriptor, an **idle template snapshot**: the assembler started from its disk and saved **at its command prompt** with no text (not in its editor: the editor is busy by the idle rule, §16.1). `zxasm inject main.asm alasm-5.09.szx -o out.szx`, or sync-inject with `snapshot` + `output` |
 | templates themselves | made once per assembler by `tools/verification/unreal-asm/emulator/make-template.py` (the disk ejected before the save), stored in unreal-asm `testdata/templates/`; the assembler binaries come from the collection's disks |
-| disks | the same source as a file of the assembler on a TR-DOS image or an SCL archive (`zxasm inject main.asm disk.trd --assembler alasm-5.09`); the way back is `zxasm extract disk.trd --file NAME.H` |
+| disks | the same source as a file of the assembler on a disk image of any format unreal-disk writes (TRD, SCL, FDI, UDI, TD0, ...: `zxasm inject main.asm disk.fdi --assembler alasm-5.09`); the way back is `zxasm extract disk.fdi --file NAME.H` |
 
 ## 17. Surfaces (part B)
 
@@ -746,8 +746,9 @@ Details: [research-sjasmplus-to-alasm.md](research-sjasmplus-to-alasm.md).
 (its zlib pages inflated by the library's own inflater) into RAM pages, the windows and SP, and writes them back with
 pages replaced (SNA in place, Z80 the page's block packed again, SZX an uncompressed RAMP block). `sync::ViewOf` and
 `sync::InjectIntoSnapshot` run the Z0 reader and plan on that memory; `WriteAs` (dialect.h) is the conversion plus
-encoding both the emulator and `zxasm` use. `containers.h` gained SCL read / write and writing into TR-DOS images.
-`zxasm probe`, `extract` and `inject` cover snapshots, TRD, SCL and hobeta files in both directions; the sync verbs
+encoding both the emulator and `zxasm` use. Disk images go through unreal-disk (core/src/3rdparty/unreal-disk, its
+format drivers and TR-DOS file system; the first cut wrote TRD / SCL in unreal-asm and was replaced by it).
+`zxasm probe`, `extract` and `inject` cover snapshots, every disk format and hobeta files in both directions; the sync verbs
 take `snapshot` (and inject `output`) on every surface. The ALASM 5.09 idle templates (`testdata/templates/`, .szx /
 .sna / .z80) come from `make-template.py`. Checked by ALASM 5.09 itself: `inject-oracle.py --template` put
 `oracle1.asm` into each template with `zxasm inject`, loaded the snapshot and assembled it: 143 bytes = sjasmplus' in

@@ -57,6 +57,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     ${ROOT_DIR}/core/src/           # For emulator headers (EmulatorContext, etc.)
     ${ROOT_DIR}/core/src/common
     ${ROOT_DIR}/core/src/emulator
+    ${ROOT_DIR}/core/src/3rdparty/unreal-disk/include   # emulator headers include the disk model (unreal-disk)
 )
 
 # GIF writer (shared with core, declared by core/src). PUBLIC: gif_encoder.h

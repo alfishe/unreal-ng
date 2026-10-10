@@ -2,6 +2,7 @@
 
 #include "base/featuremanager.h"
 #include "common/filehelper.h"
+#include "common/stringhelper.h"
 #include "calltrace.h"
 #include "filesystem"
 #include "memory.h"

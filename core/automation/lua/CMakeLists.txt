@@ -148,6 +148,7 @@ install(TARGETS ${AUTOMATION_LUA_TARGETS}
 # Add core include directories to the target
 target_include_directories(${PROJECT_NAME} PUBLIC
     $<BUILD_INTERFACE:${ROOT_DIR}/core/src>
+    $<BUILD_INTERFACE:${ROOT_DIR}/core/src/3rdparty/unreal-disk/include>   # core headers include the disk model
     $<INSTALL_INTERFACE:include>
 )
 

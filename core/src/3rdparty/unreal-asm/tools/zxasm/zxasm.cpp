@@ -5,7 +5,8 @@
 //   zxasm encoding <file>                           code page ranking, line ends, text score
 //   zxasm decode   <file> [-o out] [--codec id] [--version v] [--codepage cp]
 //   zxasm encode   <file> --codec id [--version v] [-o out] [--codepage cp] [--line-end lf|crlf|cr]
-//   zxasm files    <image.trd|.scl|.tap|.tzx>        list the files of a TR-DOS disk, an SCL archive or a tape image
+//   zxasm files    <image>                           list the files of a disk image (TRD, SCL, FDI, UDI, TD0, DSK ...:
+//                                                   its TR-DOS files, through unreal-disk) or a tape image (TAP, TZX)
 //   zxasm convert  <file> --to dialect [-o out] [--from dialect]  convert a source to another dialect (alasm ->
 //                                                   sjasmplus, ...); --from names the dialect of a plain text file
 //   zxasm convert  <image> --to dialect -o dir        the whole project (TRD, TAP or TZX): every source of the image converted together
@@ -28,8 +29,9 @@
 //                                                   a source (any dialect with a frontend; a plain text is sjasmplus
 //                                                   unless --from) written as an assembler's own file into the target:
 //                                                   a snapshot (the text of the assembler waiting at its prompt there;
-//                                                   --assembler when the probe finds none or two), a TR-DOS image or
-//                                                   SCL archive (a file NAME.T, made when missing; --assembler or
+//                                                   --assembler when the probe finds none or two), a disk image of any
+//                                                   format unreal-disk writes (TRD, SCL, FDI, UDI, TD0 ...: a file NAME.T
+//                                                   on its TR-DOS file system, a blank disk when missing; --assembler or
 //                                                   --codec says the format), or a hobeta file *.$X. The target is
 //                                                   rewritten unless -o names another file. The source may be a file
 //                                                   in an image: <image> --file NAME[.T]
@@ -54,6 +56,7 @@
 #include <string>
 #include <vector>
 
+#include "../common/diskfiles.h"
 #include "unrealasm/sync/reader.h"
 #include "unrealasm/unrealasm.h"
 
@@ -68,9 +71,9 @@ int Usage()
                  "       encode <file> --codec id [--version v] [-o out] [--codepage cp] [--line-end lf|crlf|cr] |\n"
                  "       check <file> [--codec id] [--version v] |\n"
                  "       convert <file|dir|image> --to dialect [--from dialect] [--z80n] [--out-codepage cp] [-o out]   (--z80n: ZX Spectrum Next sources)\n"
-                 "       files <image.trd|.scl|.tap|.tzx> (decode/detect/encoding/check take --file NAME[.T] for a file in an image) |\n"
+                 "       files <image.trd|.scl|.fdi|.udi|.td0|.tap|.tzx ...> (decode/detect/encoding/check take --file NAME[.T] for a file in an image) |\n"
                  "       probe <snapshot.sna|.z80|.szx> | extract <snapshot> [--assembler id] [--as text|file] [--to dialect] [-o out] |\n"
-                 "       inject <source> <snapshot|image.trd|.scl|file.$X> [-o out] [--assembler id | --codec id [--version v]]\n"
+                 "       inject <source> <snapshot|disk image|file.$X> [-o out] [--assembler id | --codec id [--version v]]\n"
                  "              [--from dialect] [--title NAME] [--name NAME.T] [--force]\n";
     return 2;
 }
@@ -198,17 +201,15 @@ uint16_t CatalogStart(const std::string& codec, const std::string& version, char
     return 0;
 }
 
-/// An image of files: a TR-DOS disk (.trd) or a tape (.tap / .tzx)
+/// An image of files: a disk image of any format unreal-disk reads (its TR-DOS files), or a tape (.tap / .tzx)
 bool IsImage(const std::string& extension)
 {
-    return extension == "trd" || extension == "scl" || extension == "tap" || extension == "tzx";
+    return tools::IsImage(extension);
 }
 
-bool ReadImage(const std::string& extension, std::span<const uint8_t> bytes, std::vector<containers::TrdosFile>& files, std::string& error)
+bool ReadImage(const std::string& path, const std::vector<uint8_t>& bytes, std::vector<containers::TrdosFile>& files, std::string& error)
 {
-    return extension == "trd"   ? containers::ReadTrd(bytes, files, error)
-           : extension == "scl" ? containers::ReadScl(bytes, files, error)
-                                : containers::ReadTape(bytes, files, error);
+    return tools::ReadImageFiles(path, bytes, files, error);
 }
 
 /// Hobeta / TR-DOS image / tape image -> the file's bytes and catalog hints; false with a message when the container is broken or
@@ -221,7 +222,7 @@ bool Unwrap(const Args& args, std::vector<uint8_t>& bytes, CatalogHints& hints)
     if (IsImage(extension))
     {
         std::vector<containers::TrdosFile> files;
-        if (!ReadImage(extension, bytes, files, error))
+        if (!ReadImage(args.file, bytes, files, error))
         {
             std::cerr << "zxasm: " << error << "\n";
             return false;
@@ -384,7 +385,7 @@ int ConvertImage(const Args& args, const std::vector<uint8_t>& image, const Code
 {
     std::vector<containers::TrdosFile> files;
     std::string error;
-    if (!ReadImage(Lower(Extension(args.file)), image, files, error) || args.output.empty() || args.to.empty())
+    if (!ReadImage(args.file, image, files, error) || args.output.empty() || args.to.empty())
     {
         std::cerr << "zxasm: " << (error.empty() ? "convert of an image needs --to and -o <directory>" : error) << "\n";
         return 2;
@@ -892,43 +893,30 @@ int Inject(const Args& args, const std::vector<uint8_t>& bytes, const CatalogHin
         return 1;
     }
     const containers::TrdosFile file = CatalogFile(args.name, written.document.name, type, codec, version, written.bytes);
-    std::vector<uint8_t> out;
     std::string error;
-    if (targetExtension == "trd")
-    {
-        out = exists ? target : containers::NewTrd();
-        if (!containers::PutTrdFile(out, file, error))
-        {
-            std::cerr << "zxasm: " << args.target << ": " << error << "\n";
-            return 1;
-        }
-    }
-    else if (targetExtension == "scl")
-    {
-        std::vector<containers::TrdosFile> files;
-        if (exists && !containers::ReadScl(target, files, error))
-        {
-            std::cerr << "zxasm: " << args.target << ": " << error << "\n";
-            return 1;
-        }
-        containers::PutFile(files, file);
-        out = containers::WriteScl(files);
-    }
-    else if (targetExtension.size() == 2 && targetExtension[0] == '$')
+    if (targetExtension.size() == 2 && targetExtension[0] == '$')
     {
         containers::TrdosFile hobeta = file;
         hobeta.type = Extension(args.target)[1];
-        out = containers::WriteHobeta(hobeta);
+        if (!WriteFile(output, containers::WriteHobeta(hobeta)))
+        {
+            std::cerr << "zxasm: cannot write " << output << "\n";
+            return 1;
+        }
+    }
+    else if (IsImage(targetExtension) && targetExtension != "tap" && targetExtension != "tzx")
+    {
+        // A disk image of any format: the file goes onto its TR-DOS file system, the image is saved in the format of -o
+        if (!tools::PutImageFile(args.target, output, file, error))
+        {
+            std::cerr << "zxasm: " << args.target << ": " << error << "\n";
+            return 1;
+        }
     }
     else
     {
-        std::cerr << "zxasm: inject writes into a snapshot (.sna .z80 .szx), a disk (.trd .scl) or a hobeta file (.$X)\n";
+        std::cerr << "zxasm: inject writes into a snapshot (.sna .z80 .szx), a disk image (.trd .scl .fdi .udi .td0 ...) or a hobeta file (.$X)\n";
         return 2;
-    }
-    if (!WriteFile(output, out))
-    {
-        std::cerr << "zxasm: cannot write " << output << "\n";
-        return 1;
     }
     std::cerr << codec << (version.empty() ? "" : " " + version) << ": " << file.TrimmedName() << "." << file.type << ", "
               << written.document.lines.size() << " line(s), " << written.bytes.size() << " bytes -> " << output << "\n";
@@ -981,7 +969,7 @@ int main(int argc, char** argv)
     {
         std::vector<containers::TrdosFile> files;
         std::string error;
-        if (!ReadImage(Lower(Extension(args.file)), bytes, files, error))
+        if (!ReadImage(args.file, bytes, files, error))
         {
             std::cerr << "zxasm: " << error << "\n";
             return 1;

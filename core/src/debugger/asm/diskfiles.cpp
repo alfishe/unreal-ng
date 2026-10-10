@@ -1,20 +1,21 @@
 #include "diskfiles.h"
 
 #include <algorithm>
-#include <cstring>
+#include <cctype>
 #include <functional>
+#include <memory>
 
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/diskimage.h"
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/trdoscatalog.h"
+#include "loaders/disk/diskloaderoptions.h"
+#include "unrealdisk/floppyformats.h"
+#include "unrealdisk/trdosfs.h"
 
 namespace
 {
-constexpr size_t kSector = TrdosCatalog::SECTOR_SIZE;
-constexpr size_t kSectorsPerTrack = TrdosCatalog::SECTORS_PER_TRACK;
-constexpr size_t kInfoDeletedCount = 0xF4;   // the disk info sector's count of deleted files
 
 /// Runs `work` where nothing else touches the disk: paused, stopped or between frames
 bool Coherent(EmulatorContext* context, const std::function<void()>& work, std::string& error)
@@ -55,25 +56,16 @@ bool Drive(EmulatorContext* context, uint8_t drive, FDD*& fdd, DiskImage*& image
     return true;
 }
 
-/// The image as a .trd file: every logical track's sectors 1-16 in order (a missing sector reads as zeros)
-std::vector<uint8_t> TrdBytes(DiskImage& image)
+/// A catalog entry and its bytes as unreal-asm's TR-DOS file
+bool ToContainerFile(DiskImage& image, const TrdosFile& entry, unrealasm::containers::TrdosFile& out, std::string& error)
 {
-    std::vector<uint8_t> out;
-    const size_t tracks = static_cast<size_t>(image.getCylinders()) * image.getSides();
-    out.reserve(tracks * kSectorsPerTrack * kSector);
-    for (size_t t = 0; t < tracks && t <= 0xFF; ++t)
-    {
-        DiskImage::Track* track = image.getTrack(static_cast<uint8_t>(t));
-        for (size_t s = 0; s < kSectorsPerTrack; ++s)
-        {
-            const uint8_t* data = track ? track->getDataForSector(static_cast<uint8_t>(s)) : nullptr;
-            if (data)
-                out.insert(out.end(), data, data + kSector);
-            else
-                out.insert(out.end(), kSector, 0);
-        }
-    }
-    return out;
+    out = {};
+    out.name = entry.name;
+    out.type = entry.type;
+    out.start = entry.start;
+    out.length = entry.length;
+    out.sectors = entry.sectors;
+    return unrealdisk::TrdosFileSystem(image).Read(entry, out.data, &out.tail, error);
 }
 }  // namespace
 
@@ -110,18 +102,27 @@ bool IsDiskFileRef(const std::string& text)
 
 bool ReadDiskFiles(EmulatorContext* context, uint8_t drive, std::vector<unrealasm::containers::TrdosFile>& out, std::string& error)
 {
-    std::vector<uint8_t> trd;
+    out.clear();
     bool ok = false;
     if (!Coherent(context, [&]() {
             FDD* fdd = nullptr;
             DiskImage* image = nullptr;
-            ok = Drive(context, drive, fdd, image, error);
-            if (ok)
-                trd = TrdBytes(*image);
+            if (!Drive(context, drive, fdd, image, error))
+                return;
+            std::vector<TrdosFile> entries;
+            if (!unrealdisk::TrdosFileSystem(*image).List(entries, error))
+                return;
+            for (const TrdosFile& entry : entries)
+            {
+                unrealasm::containers::TrdosFile file;
+                if (!ToContainerFile(*image, entry, file, error))
+                    return;
+                out.push_back(std::move(file));
+            }
+            ok = true;
         }, error) || !ok)
         return false;
-    out.clear();
-    return unrealasm::containers::ReadTrd(trd, out, error);
+    return true;
 }
 
 bool ReadDiskFile(EmulatorContext* context, const DiskFileRef& ref, unrealasm::containers::TrdosFile& out, std::string& error)
@@ -163,77 +164,51 @@ bool WriteDiskFile(EmulatorContext* context, const DiskFileRef& ref, uint16_t st
             error = std::string("the disk in drive ") + static_cast<char>('A' + ref.drive) + " is write-protected";
             return;
         }
-        TrdosCatalog catalog;
-        if (!catalog.Parse(*image))
-        {
-            error = "the TR-DOS catalog cannot be read";
+        unrealdisk::TrdosFileSystem::WriteOptions options;
+        options.start = start;
+        if (!unrealdisk::TrdosFileSystem(*image).Write(ref.name, ref.type, bytes, options, error))
             return;
-        }
-        const size_t sectors = (bytes.size() + kSector - 1) / kSector;
-        if (catalog.FreeSectors() < sectors)
-        {
-            error = "the disk has " + std::to_string(catalog.FreeSectors()) + " free sectors, the file needs " + std::to_string(sectors);
-            return;
-        }
-        if (catalog.UsedSlots() >= TrdosCatalog::MAX_FILES)
-        {
-            error = "the catalog is full (128 entries)";
-            return;
-        }
-        DiskImage::Track* track0 = image->getTrack(0);
-        uint8_t info[kSector];
-        std::memcpy(info, track0->getDataForSector(8), kSector);
-        const size_t first = info[TrdosCatalog::INFO_FIRST_FREE_SECTOR] + kSectorsPerTrack * info[TrdosCatalog::INFO_FIRST_FREE_TRACK];
-        for (size_t i = 0; i < sectors; ++i)
-        {
-            DiskImage::Track* track = image->getTrack(static_cast<uint8_t>((first + i) / kSectorsPerTrack));
-            if (!track || !track->getDataForSector(static_cast<uint8_t>((first + i) % kSectorsPerTrack)))
-            {
-                error = "the disk's free space runs past its last track";
-                return;
-            }
-        }
-        // An older live file of this name and type: deleted as TR-DOS deletes (the first name byte #01)
-        std::string padded = ref.name;
-        padded.resize(8, ' ');
-        for (const TrdosFile& f : catalog.Files())
-            if (!f.deleted && f.name == padded && f.type == ref.type)
-            {
-                uint8_t dir[kSector];
-                std::memcpy(dir, track0->getDataForSector(static_cast<uint8_t>(f.slot / 16)), kSector);
-                dir[(f.slot % 16) * 16] = 0x01;
-                track0->writeSectorData(static_cast<uint8_t>(f.slot / 16), dir, kSector);
-                ++info[kInfoDeletedCount];
-            }
-        // The data, the catalog entry, the disk info
-        std::vector<uint8_t> padded256(bytes);
-        padded256.resize(sectors * kSector, 0);
-        for (size_t i = 0; i < sectors; ++i)
-            image->getTrack(static_cast<uint8_t>((first + i) / kSectorsPerTrack))
-                ->writeSectorData(static_cast<uint8_t>((first + i) % kSectorsPerTrack), padded256.data() + i * kSector, kSector);
-        const size_t slot = catalog.UsedSlots();
-        uint8_t dir[kSector];
-        std::memcpy(dir, track0->getDataForSector(static_cast<uint8_t>(slot / 16)), kSector);
-        uint8_t* entry = dir + (slot % 16) * 16;
-        std::memcpy(entry, padded.data(), 8);
-        entry[8] = static_cast<uint8_t>(ref.type);
-        entry[9] = static_cast<uint8_t>(start & 0xFF);
-        entry[10] = static_cast<uint8_t>(start >> 8);
-        entry[11] = static_cast<uint8_t>(bytes.size() & 0xFF);
-        entry[12] = static_cast<uint8_t>(bytes.size() >> 8);
-        entry[13] = static_cast<uint8_t>(sectors);
-        entry[14] = info[TrdosCatalog::INFO_FIRST_FREE_SECTOR];
-        entry[15] = info[TrdosCatalog::INFO_FIRST_FREE_TRACK];
-        track0->writeSectorData(static_cast<uint8_t>(slot / 16), dir, kSector);
-        const size_t next = first + sectors;
-        info[TrdosCatalog::INFO_FIRST_FREE_SECTOR] = static_cast<uint8_t>(next % kSectorsPerTrack);
-        info[TrdosCatalog::INFO_FIRST_FREE_TRACK] = static_cast<uint8_t>(next / kSectorsPerTrack);
-        info[TrdosCatalog::INFO_FILE_COUNT] = static_cast<uint8_t>(info[TrdosCatalog::INFO_FILE_COUNT] + 1);
-        const uint16_t free = static_cast<uint16_t>(catalog.FreeSectors() - sectors);
-        info[TrdosCatalog::INFO_FREE_SECTORS] = static_cast<uint8_t>(free & 0xFF);
-        info[TrdosCatalog::INFO_FREE_SECTORS + 1] = static_cast<uint8_t>(free >> 8);
-        track0->writeSectorData(8, info, kSector);
         ok = true;
     }, error);
     return reached && ok;
+}
+
+bool IsImageExtension(const std::string& extension)
+{
+    if (extension == "tap" || extension == "tzx")
+        return true;
+    if (extension.size() == 2 && extension[0] == '$')
+        return false;   // a hobeta file is one file
+    const std::vector<std::string> disks = unrealdisk::FloppyFormats::Extensions();
+    return std::find(disks.begin(), disks.end(), extension) != disks.end();
+}
+
+bool ReadImageFiles(EmulatorContext* context, const std::string& name, const std::vector<uint8_t>& bytes,
+                    std::vector<unrealasm::containers::TrdosFile>& out, std::string& error)
+{
+    out.clear();
+    const size_t dot = name.find_last_of('.');
+    std::string extension = dot == std::string::npos ? std::string() : name.substr(dot + 1);
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (extension == "tap" || extension == "tzx")
+        return unrealasm::containers::ReadTape(bytes, out, error);
+    std::unique_ptr<DiskImage> disk;
+    std::string format;
+    const unrealdisk::FormatResult loaded = unrealdisk::FloppyFormats::LoadData(DiskLoaderOptions(context), bytes.data(), bytes.size(), name, disk, format);
+    if (!loaded.Ok())
+    {
+        error = loaded.message;
+        return false;
+    }
+    std::vector<TrdosFile> entries;
+    if (!unrealdisk::TrdosFileSystem(*disk).List(entries, error))
+        return false;
+    for (const TrdosFile& entry : entries)
+    {
+        unrealasm::containers::TrdosFile file;
+        if (!ToContainerFile(*disk, entry, file, error))
+            return false;
+        out.push_back(std::move(file));
+    }
+    return true;
 }

@@ -132,12 +132,20 @@ if (ENABLE_VDAC2 AND NOT TARGET eve::emu)
     add_subdirectory(${EVE_EMU_DIR} ${CMAKE_BINARY_DIR}/eve-emu)
 endif()
 
+# unreal-disk - floppy disk images (track / sector model, format drivers, TR-DOS file system), in-house at
+# 3rdparty/unreal-disk, std-lib only, own CMakeLists.txt (with TESTS: unreal-disk-tests); before unreal-asm, whose tools use it.
+# Design: docs/inprogress/2026-10-10-unreal-disk/
+if (NOT TARGET unreal-disk)
+    add_subdirectory(3rdparty/unreal-disk)
+endif()
+
 # unreal-asm - cross-assembler source library (codecs, conversion, symbols), in-house at 3rdparty/unreal-asm, std-lib
 # only, own CMakeLists.txt: the library, the zxasm CLI, the examples and (with TESTS) unreal-asm-tests, which the
 # emulator's test-parallel runs. Design: docs/inprogress/2026-10-05-unreal-asm/
 if (NOT TARGET unreal-asm)
     add_subdirectory(3rdparty/unreal-asm)
 endif()
+
 
 # All C++ sources in /src and sub-folders will be compiled
 file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
@@ -147,6 +155,7 @@ EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "liblzma/" FALSE OUTVAR CPP_FILES)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/opl4/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/sam2695/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/unreal-asm/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/unreal-disk/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/gif/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/eve-emu/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt (ENABLE_VDAC2 below)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/recording/" FALSE OUTVAR CPP_FILES) # Moved to separate library
@@ -333,7 +342,7 @@ endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE gif)
 # The symbol module of unreal-asm reads and writes the label files (LabelManager is its facade); public, as the
 # facade hands out its symbol sets
-target_link_libraries(${PROJECT_NAME} PUBLIC unreal-asm)
+target_link_libraries(${PROJECT_NAME} PUBLIC unreal-asm unreal-disk)
 
 # Link libopl4 (MoonSound / YMF278B synthesis). PRIVATE: only core sources
 # include opl4 headers or call the library — public headers such as

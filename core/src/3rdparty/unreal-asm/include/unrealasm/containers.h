@@ -1,8 +1,8 @@
 #pragma once
 
-// File containers of the ZX world the codecs' sources come in: hobeta files (a TR-DOS file with a 17-byte header,
-// "NAME.$A"), TR-DOS disk images (.trd), SCL archives and tapes. Reading for every container, writing for hobeta, TRD
-// and SCL. The emulator has its own media manager; these are for the library's tools, tests and standalone users.
+// File containers of the ZX world the codecs' sources come in, as single files and tapes: hobeta files (a TR-DOS file
+// with a 17-byte header, "NAME.$A"), +3DOS headers and tapes (TAP, TZX). Disk images are not read here: the tools read
+// them through unreal-disk, the emulator through its media manager, and both hand the library the files as TrdosFile.
 // Snapshots: snapshot.h.
 
 #include <cstdint>
@@ -54,24 +54,6 @@ struct Plus3dosFile
 bool ReadPlus3dos(std::span<const uint8_t> bytes, Plus3dosFile& out, std::string& error);
 /// A +3DOS file of `file` (the header made from its fields)
 std::vector<uint8_t> WritePlus3dos(const Plus3dosFile& file);
-
-/// The files of a TR-DOS image (deleted entries skipped); false with the reason when it is not one
-bool ReadTrd(std::span<const uint8_t> image, std::vector<TrdosFile>& out, std::string& error);
-
-/// The files of an SCL archive ("SINCLAIR", the count, 14-byte entries, the sectors, a 4-byte sum of all before it);
-/// false with the reason when it is not one
-bool ReadScl(std::span<const uint8_t> image, std::vector<TrdosFile>& out, std::string& error);
-/// An SCL archive of `files` (each one's data + tail padded to whole sectors)
-std::vector<uint8_t> WriteScl(const std::vector<TrdosFile>& files);
-
-/// An empty TR-DOS image: 80 tracks, two sides (655360 bytes), the disk named `label`
-std::vector<uint8_t> NewTrd(const std::string& label = "");
-/// `file` written into a TR-DOS image: a file of the same name and type is replaced (in its place when it takes as
-/// many sectors, else it is marked deleted and the new one goes after the last file, as TR-DOS does). False with the
-/// reason: no TR-DOS image, the catalog full (128 entries), not enough free sectors
-bool PutTrdFile(std::vector<uint8_t>& image, const TrdosFile& file, std::string& error);
-/// `file` into an SCL archive's list: a file of the same name and type replaced, else appended
-void PutFile(std::vector<TrdosFile>& files, const TrdosFile& file);
 
 /// One data block of a tape image: the flag byte (0 header, #FF data) and the bytes between it and the checksum
 struct TapeBlock
