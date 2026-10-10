@@ -267,6 +267,7 @@ void SoundChip_TurboSoundFM::handleStep()
 
                 double leftSum = 0.0;
                 double rightSum = 0.0;
+                double chipSums[4] = {};  // chip 0 left / right, chip 1 left / right: the per-chip buffers
                 int sampleCount = 0;
 
                 // Run generator ticks for this output sample period
@@ -292,6 +293,10 @@ void SoundChip_TurboSoundFM::handleStep()
                         // Accumulate samples
                         leftSum += l;
                         rightSum += r;
+                        chipSums[0] += c0.ssg.mixedLeft();
+                        chipSums[1] += c0.ssg.mixedRight();
+                        chipSums[2] += c1.ssg.mixedLeft();
+                        chipSums[3] += c1.ssg.mixedRight();
                         sampleCount++;
                     });
                 }
@@ -305,23 +310,14 @@ void SoundChip_TurboSoundFM::handleStep()
                 float c0L, c0R, c1L, c1R;
                 if (sampleCount > 0)
                 {
-                    // Split the accumulated sums per chip for per-chip buffers
-                    // In LQ mode we don't have separate accumulators, so approximate
-                    // by using current chip output ratios. The ratio keys on the
-                    // legacy device's chip 0, which is TSFM's chip 1 (§11 chip
-                    // swap): mirroring the legacy expression (that chip over the
-                    // sum, same association order) keeps the per-chip LQ buffers
-                    // bit-identical under the swap - chip 1 takes the r0 share,
-                    // chip 0 the 1-r0 share
-                    double total = leftSum + rightSum;
-                    double r0 = (total > 0) ? (chip1.ssg.mixedLeft() + chip1.ssg.mixedRight()) /
-                                              (chip0.ssg.mixedLeft() + chip0.ssg.mixedRight() +
-                                               chip1.ssg.mixedLeft() + chip1.ssg.mixedRight() + 1e-9) : 0.5;
-
-                    c0L = static_cast<float>((leftSum * (1.0 - r0)) / sampleCount);
-                    c0R = static_cast<float>((rightSum * (1.0 - r0)) / sampleCount);
-                    c1L = static_cast<float>((leftSum * r0) / sampleCount);
-                    c1R = static_cast<float>((rightSum * r0) / sampleCount);
+                    // Per-chip buffers average each chip on its own (the mixer plays them), as the legacy device
+                    // does - its chip 0 is TSFM's chip 1 (§11 chip swap), each buffer still one chip's own sum.
+                    // Splitting the sum by the chips' current levels blew up: past the DC filter the levels are
+                    // signed, and two chips cancelling each other made the share hundreds of times full scale
+                    c0L = static_cast<float>(chipSums[0] / sampleCount);
+                    c0R = static_cast<float>(chipSums[1] / sampleCount);
+                    c1L = static_cast<float>(chipSums[2] / sampleCount);
+                    c1R = static_cast<float>(chipSums[3] / sampleCount);
 
                     leftSample = ToSample((leftSum / sampleCount) + f0 + f1);
                     rightSample = ToSample((rightSum / sampleCount) + f0 + f1);

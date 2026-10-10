@@ -28,6 +28,7 @@ Everything found while verifying the TurboSound FM implementation against real h
 | 22 | AY register writes reached the generators on the output-sample grid | devices | fixed |
 | 23 | TTD restored the CPU at T 0 instead of the frame's overshoot | TTD | fixed |
 | 24 | Quality::HighFidelity decimator never selectable | config | fixed, [SOUND] DecimatorQuality |
+| 25 | LQ per-chip buffers split by the chips' current levels, up to ~460× full scale | devices | fixed, see the entry |
 
 ---
 
@@ -215,3 +216,22 @@ low-quality golden digest crossed full scale.
 ## 24. HighFidelity decimator selectable
 
 **Fix.** [SOUND] DecimatorQuality = Reference (default) | HighFidelity, read at sound-stack construction; both devices apply it to every decimator at setCoreRate and keep it across live rate switches. Reference stays the default: HighFidelity roughly doubles the TurboSound rendering cost (TSFM: ~1.0 -> ~1.9 ms per frame, 5% -> 9% of a core). Tests `Config_Test.DecimatorQuality*`, `TsfmGain_Test.DecimatorQualityAppliesToEveryDecimator`.
+
+## 25. LQ per-chip buffers out of scale
+
+**Observed.** In low quality the per-chip buffers (`AY1_All` / `AY2_All`, the sources the mixer plays) took bursts of
+full-scale clipping whenever both chips played. Measured over the golden scripts (seeds 1-8, 16 frames each): the
+combined output peaks at 0.94 of full scale and never crosses it, in HQ and LQ alike; the LQ per-chip values reached
+2.4 to 457 times full scale on 82-639 samples per session. HQ per-chip buffers stayed in range.
+
+**Cause.** LQ kept one summed boxcar and split it per chip by the chips' current levels,
+`r0 = chipA / (chipA + chipB + 1e-9)`. Past the AY DC filter the levels are signed: two chips cancelling each other
+drive the denominator to zero and the share to any size. Until BUGS.md #13 the out-of-range conversion wrapped
+around; since then it clamped. Both devices (legacy TurboSound and TSFM) had it.
+
+**Fix.** LQ accumulates each chip's left / right on its own and averages that, as HQ decimates each chip on its own.
+The combined buffer keeps its sum (bit-identical); TSFM stays bit-identical to the legacy device with FM silent.
+Test `SoundChipTurboSound_Test.ChipBufferCarriesThatChipAlone` (chip 0's buffer does not move with chip 1, HQ and
+LQ; it failed in LQ before). The TSFM low-quality golden digest moved; the HQ digests did not.
+
+Not the headroom of #6: that is loud FM material crossing full scale in the combined mix, in both modes.

@@ -410,10 +410,10 @@ TEST_F(TsfmGolden_Test, HighQuality44100)
 
 TEST_F(TsfmGolden_Test, LowQuality44100)
 {
-    // The low-quality mix sums SSG and FM past full scale: since BUGS.md 2026-10-10 #13 those samples clamp (they
-    // wrapped around before, an undefined float conversion)
+    // Moved twice on 2026-10-10: the per-chip buffers clamp (BUGS.md #13), then average each chip on its own - the
+    // old split by the chips' current levels went up to hundreds of times full scale (TSFM ISSUES.md #25)
     const uint64_t digest = RunSession(2, false, 44100);
-    EXPECT_EQ(digest, 0xdcc198aecd89389full) << Hex(digest);
+    EXPECT_EQ(digest, 0xc002bdc72b956120ull) << Hex(digest);
 }
 
 TEST_F(TsfmGolden_Test, HighQuality48000)

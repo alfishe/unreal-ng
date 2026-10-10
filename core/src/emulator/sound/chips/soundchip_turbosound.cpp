@@ -351,6 +351,7 @@ void SoundChip_TurboSound::handleStep()
 
                 double leftSum = 0.0;
                 double rightSum = 0.0;
+                double chipSums[4] = {};  // chip 0 left / right, chip 1 left / right: the per-chip buffers
                 int sampleCount = 0;
 
                 // Run generator ticks for this output sample period
@@ -380,6 +381,10 @@ void SoundChip_TurboSound::handleStep()
                     // Accumulate samples
                     leftSum += l;
                     rightSum += r;
+                    chipSums[0] += _chip0->mixedLeft();
+                    chipSums[1] += _chip0->mixedRight();
+                    chipSums[2] += _chip1->mixedLeft();
+                    chipSums[3] += _chip1->mixedRight();
                     sampleCount++;
                 }
 
@@ -387,18 +392,13 @@ void SoundChip_TurboSound::handleStep()
                 float c0L, c0R, c1L, c1R;
                 if (sampleCount > 0)
                 {
-                    // Split the accumulated sums per chip for per-chip buffers
-                    // In LQ mode we don't have separate accumulators, so approximate
-                    // by using current chip output ratios
-                    double total = leftSum + rightSum;
-                    double r0 = (total > 0) ? (_chip0->mixedLeft() + _chip0->mixedRight()) /
-                                              (_chip0->mixedLeft() + _chip0->mixedRight() +
-                                               _chip1->mixedLeft() + _chip1->mixedRight() + 1e-9) : 0.5;
-
-                    c0L = static_cast<float>((leftSum * r0) / sampleCount);
-                    c0R = static_cast<float>((rightSum * r0) / sampleCount);
-                    c1L = static_cast<float>((leftSum * (1.0 - r0)) / sampleCount);
-                    c1R = static_cast<float>((rightSum * (1.0 - r0)) / sampleCount);
+                    // Per-chip buffers average each chip on its own (the mixer plays them). Splitting the sum by
+                    // the chips' current levels blew up: past the DC filter the levels are signed, and two chips
+                    // cancelling each other made the share hundreds of times full scale
+                    c0L = static_cast<float>(chipSums[0] / sampleCount);
+                    c0R = static_cast<float>(chipSums[1] / sampleCount);
+                    c1L = static_cast<float>(chipSums[2] / sampleCount);
+                    c1R = static_cast<float>(chipSums[3] / sampleCount);
 
                     leftSample = ToSample(leftSum / sampleCount);
                     rightSample = ToSample(rightSum / sampleCount);
