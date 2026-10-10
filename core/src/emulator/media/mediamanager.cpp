@@ -301,6 +301,7 @@ MediaResult MediaManager::Insert(const std::string& slotId, std::unique_ptr<Medi
         if (MediaResult kept = ApplyDisposition(slotId, *state.attached, options.disposition, options.exportPath); !kept.Ok())
             return kept;
     }
+    EndSessionForMediaChange(options.endRecording, options.ttdReason);
     MediaResult result = MediaResult::Success();
     result.report = medium->Report();
 
@@ -446,6 +447,7 @@ MediaResult MediaManager::Eject(const std::string& slotId, const EjectOptions& o
         if (MediaResult kept = ApplyDisposition(slotId, *state.attached, options.disposition, options.exportPath); !kept.Ok())
             return kept;
     }
+    EndSessionForMediaChange(options.endRecording, "media-change");
 
     if (state.incoming)
         Retire(std::move(state.incoming));
@@ -501,11 +503,12 @@ MediaResult MediaManager::Discard(const std::string& slotId)
         again.writeProtect = state.writeProtect;
         again.immediate = true;
         again.disposition = Disposition::Discard;
-        return Insert(slotId, source, again);
+        return Insert(slotId, source, again);   // ends the session once the disk opened again
     }
     if (!state.attached->Session())
         return MediaResult::Success();
 
+    EndSessionForMediaChange(false, "media-change");
     state.discardRequested = true;
     if (CanApplyNow())
     {
@@ -1370,24 +1373,27 @@ bool MediaManager::CanApplyNow() const
     return emulator == nullptr || !emulator->IsRunning() || emulator->IsPaused();
 }
 
-MediaResult MediaManager::CheckRecording(bool endRecording)
+MediaResult MediaManager::CheckRecording(bool endRecording) const
+{
+    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+    // A recording the guard protects, also one paused for browsing (a background
+    // recording is not protected: EndSessionForMediaChange ends its session)
+    if (ttd && !endRecording && !ttd->RecordingGuard(ttd::TTDGuardedAction::LoadDisk).empty())
+        return MediaResult::Fail(MediaError::Recording,
+                                 "the media set is fixed while a TTD recording runs; end the recording first");
+    return MediaResult::Success();
+}
+
+void MediaManager::EndSessionForMediaChange(bool endRecording, const char* reason)
 {
     ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
     if (!ttd)
-        return MediaResult::Success();
-    // A recording the guard protects, also one paused for browsing (a background
-    // recording is not protected: OnLoad below ends its session)
-    if (!ttd->RecordingGuard(ttd::TTDGuardedAction::LoadDisk).empty())
-    {
-        if (!endRecording)
-            return MediaResult::Fail(MediaError::Recording,
-                                     "the media set is fixed while a TTD recording runs; end the recording first");
+        return;
+    if (endRecording && !ttd->RecordingGuard(ttd::TTDGuardedAction::LoadDisk).empty())
         ttd->StopRecording();
-    }
     // A kept session was recorded with the old media: its checkpoints no
     // longer describe this machine (the rule LoadDisk follows)
-    ttd->OnLoad(ttd::TTDLoadKind::Media, "media-change");
-    return MediaResult::Success();
+    ttd->OnLoad(ttd::TTDLoadKind::Media, reason);
 }
 
 MediaResult MediaManager::CheckInUse(const std::string& slotId, const Medium& medium) const

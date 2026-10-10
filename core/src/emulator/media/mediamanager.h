@@ -56,6 +56,7 @@ struct InsertOptions
     std::optional<uint64_t> freeBytes; ///< folder volumes: room for guest writes (default 256 MiB)
     bool writeProtect = false;         ///< the slot's write-protect switch
     bool endRecording = false;         ///< end a TTD recording instead of refusing
+    const char* ttdReason = "media-change";  ///< the TTD session the old media described ends with this reason
     bool immediate = false;            ///< no swap delay (media the firmware boots from)
     JournalChoice journal = JournalChoice::Default;  ///< media written in `session` access
     /// A dirty medium already in the slot: what happens to its writes
@@ -303,7 +304,11 @@ private:
                           const std::string& note, SaveOutcome* outcome);
     /// The medium in a slot, or detached under that id
     Medium* FindMedium(const std::string& slotId, SlotState** state);
-    MediaResult CheckRecording(bool endRecording);
+    /// Refused while an explicit TTD recording runs, unless the caller ends it; changes nothing
+    MediaResult CheckRecording(bool endRecording) const;
+    /// The change goes ahead (every check passed): the recording the caller ends stops, and the TTD session the old
+    /// media described ends. Never before a check that can still fail: a refused change keeps the session
+    void EndSessionForMediaChange(bool endRecording, const char* reason);
     MediaResult CheckInUse(const std::string& slotId, const Medium& medium) const;
     uint32_t DelayFrames(uint32_t swapDelayMs) const;
     /// One configured entry for a registered slot: its options, then its medium
