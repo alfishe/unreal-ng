@@ -2481,6 +2481,8 @@ void Emulator::CancelPendingStepOver()
             Pause();
             WaitForPauseConfirmation();
         }
+        // Paused is not idle: a direct run on another thread reads the breakpoints too
+        CpuHold hold(*this, "cancel step-over");
         if (const uint16_t pending = _pendingStepOverBpId.exchange(0))
         {
             MLOGDEBUG("Emulator::CancelPendingStepOver - Removing orphaned step-over breakpoint ID %d", pending);

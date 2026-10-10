@@ -14,6 +14,7 @@
 #include "emulator/emulator.h"
 #include "common/uuid.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/execution/executionarbiter.h"
 #include "emulator/execution/scriptsession.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -29,6 +30,18 @@ namespace
 uint64_t Frame(Emulator* emulator)
 {
     return emulator->GetContext()->emulatorState.frame_counter;
+}
+
+/// Pause() waits briefly (500 ms) for the pause to apply; on a starved machine (a test run under heavy load) it can
+/// return before, and the loop then runs a frame more. A test that counts frames from here waits until the pause is
+/// in effect: the intent is Pause and the loop parked
+bool PausedForCounting(Emulator* emulator)
+{
+    emulator->Pause();
+    return TestWait::For([&]() {
+        const execution::Snapshot s = emulator->GetArbiter().GetSnapshot();
+        return s.intent == execution::Intent::Pause && s.loopParked;
+    });
 }
 
 class ExecutionArbiterMachine_Test : public ::testing::Test
@@ -81,7 +94,7 @@ TEST_F(ExecutionArbiterMachine_Test, CpuHoldsOnAnotherThreadNeverResumeAStep)
 
     for (int round = 0; round < 20; ++round)
     {
-        _emulator->Pause();
+        EXPECT_TRUE(PausedForCounting(_emulator)) << "round " << round;
         const uint64_t before = Frame(_emulator);
         _emulator->RunNFrames(4);
         EXPECT_EQ(Frame(_emulator), before + 4) << "round " << round << ": the main loop ran frames during the step";
@@ -511,7 +524,8 @@ TEST_F(ExecutionArbiterMachine_Test, ReadingTheVideoLogDuringADirectRunNeverRead
             reads++;
         }
     });
-    for (int i = 0; i < 4; i++)
+    // Until the reader has read a few times (a starved reader thread may start late), at most 40 frames
+    for (int i = 0; i < 40 && (i < 4 || reads.load() < 3); i++)
         _emulator->RunNFrames(1, true);
     done = true;
     reader.join();

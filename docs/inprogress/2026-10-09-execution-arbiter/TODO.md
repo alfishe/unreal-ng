@@ -418,6 +418,20 @@ showed the same address.
   run_frames in flight answered 409 `revoked_by_user` (`retry: false`), the session's next request the same, a
   re-take by the client `revoked_cooldown`, after Allow Automation Again the re-take succeeded. It also found the bar
   losing Allow Automation Again (the guard announced the take-back before its own refresh): fixed, the order tested.
+- [x] **The #91CD boot miss - closed.** 300 SPRINTER boots in 3 unreal-qt processes (the first half hour under the
+  arbiter fuzz in parallel): 300 reached `#A441`, `driver_violations` 0 everywhere.
+- [x] **"Paused is idle" - wrong since direct runs: fixed.** The campaign's fuzz load aborted 4 of 750 runs (heap
+  corruption: TTD's StopRecording drained the journals while a direct run on another thread recorded into them).
+  The X3 conversion had kept "if running: hold" - a paused machine driven by run_frames got no hold. Now off the
+  machine's thread the hold is taken always (it waits for a direct run; free when nested): TTD (both engines) start /
+  stop / write journal / resume / session operations, the port-journal search (held, not refused only while
+  running), the step-over cancel, the ZX-Poly seek. Two tests that counted frames right after a `Pause()` (it returns
+  after 500 ms on a starved machine) wait for the pause to apply. Again: 432 runs under the same load, 0 failures.
+- [ ] **A long direct run against a hold:** a hold waits for a direct run at most 5 s, then proceeds without the CPU
+  (logged). run_frames 10000 lasts ~20 s: a TTD stop from the GUI meanwhile can still race it. Next: long direct runs
+  let holds in between frames.
+- [ ] **`Pause()` on a starved machine** returns after 500 ms whether the pause applied or not. The places that need
+  the machine still use a hold, not the pause; whether `Pause()` should wait to the end is open.
 - [x] **GDB socket close** releases run control: `GdbSessionTakeBack_Test.AClosedSocketEndsTheSession`.
 - [x] **No retry, no rush back:** `revoked_by_user` with `retry: false`, the MCP stop error and server
   instructions, Python / Lua `ControlRevoked`, the CLI message, the recipe rule, the server's per-client re-take

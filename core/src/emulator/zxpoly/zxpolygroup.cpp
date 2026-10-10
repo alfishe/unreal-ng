@@ -1553,6 +1553,8 @@ bool ZXPolyGroup::SeekToFrame(uint64_t frame, std::string* error)
         master.Pause();
         master.GetMainLoop()->WaitForPauseConfirmation(500);
     }
+    // Paused is not idle: a direct run on the master (run_frames) runs the slaves too - the seek holds the CPU
+    Emulator::CpuHold hold(master, "zx-poly seek");
     WaitForSlaves();
 
     // TTD seeks only a stopped session (history kept; ResumeRecording picks it
