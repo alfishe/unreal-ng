@@ -53,6 +53,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::pauseEmulator, "/api/v1/emulator/{id}/pause", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::resumeEmulator, "/api/v1/emulator/{id}/resume", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::resetEmulator, "/api/v1/emulator/{id}/reset", drogon::Post);
+    // The operation log (machine state coordinator, api/operations_api.cpp): who did what to the machine, when, result
+    ADD_METHOD_TO(EmulatorAPI::getOperations, "/api/v1/emulator/{id}/operations", drogon::Get);
     // NMI pulse (Scorpion MNI "magic button" with {"magic": true})
     ADD_METHOD_TO(EmulatorAPI::requestNmi, "/api/v1/emulator/{id}/nmi", drogon::Post);
     // Front-panel switches (Profi TURBO): GET lists them, POST {"name": "turbo", "on": true} flips one
@@ -699,6 +701,9 @@ public:
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     void resetEmulator(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/operations[?since=&limit=] — the operation log (OperationsStatus::Report)
+    void getOperations(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     // Pulse the NMI line; body {"magic": true} selects the Scorpion MNI variant

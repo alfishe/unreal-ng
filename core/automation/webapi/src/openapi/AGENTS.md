@@ -29,6 +29,7 @@ openapi/
 ├── openapi_symbols.inc    # Symbol files in every format, symbol sets (SymbolControl)
 ├── openapi_asm.inc        # Assembler sources: decode, encode, convert, disk files (AsmControl)
 ├── openapi_lifecycle.inc  # Emulator create/start/stop
+├── openapi_operations.inc # Operation log (machine state coordinator) + openapi_operations_schemas.inc
 ├── openapi_porttrace.inc  # I/O port tracing
 ├── openapi_vdac2.inc      # TS-Conf VDAC2 card (FT812): bus capture
 ├── openapi_profiler.inc   # Opcode/memory profiling

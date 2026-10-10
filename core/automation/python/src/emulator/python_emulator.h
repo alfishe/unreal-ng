@@ -92,6 +92,7 @@
 #include <debugger/ttd/ttdexternalevents.h>
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
+#include "../../../operationsstatus.h"
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/sprinter/isa/isaaccess.h>
 #include <emulator/io/network/traffic/trafficaccess.h>
@@ -4985,6 +4986,12 @@ namespace PythonBindings
         .def("video_text", [](Emulator& self, unsigned layer) -> py::object {
             return StateNodeToPy(DeviceState::VideoText(self.GetContext(), layer));
         }, "Text grid of a text mode (ATM / ZX-Evo)", py::arg("layer") = 0)
+        // The operation log (machine state coordinator): reset, snapshot load, media changes, refusals included - the
+        // OperationsStatus report every interface returns. since: entries after that seq; limit: the newest N (0: all)
+        .def("operations", [](Emulator& self, uint64_t since, uint64_t limit) -> py::object {
+            return StateNodeToPy(OperationsStatus::Report(&self, since, static_cast<size_t>(limit)));
+        }, py::arg("since") = 0, py::arg("limit") = 0,
+           "Operation log: reset, snapshot load, media changes, refusals; {mode, last_seq, capacity, entries[]}")
         // Temporal effects (ZX DLSS de-flicker): status and switch, the TemporalStatus report every interface returns
         .def("video_temporal", [](Emulator& self) -> py::object {
             return StateNodeToPy(TemporalStatus::Report(self.GetContext()));

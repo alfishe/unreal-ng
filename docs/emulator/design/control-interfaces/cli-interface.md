@@ -224,6 +224,7 @@ The CLI implements the same command semantics as other interfaces (WebAPI, Pytho
 | `GET /emulator/models` | `models` | CLI shows the same list with `(not creatable on this build)` markers; the endpoint's `creatable` flags stay authoritative |
 | `POST /emulator/start` with `zxpoly` | `zxpoly start <model> [file]` | Same entry point (`EmulatorManager::CreateZXPolyMachine`) |
 | `GET /emulator/{id}/zxpoly` | `zxpoly status [id]` | Same source (`ZXPolyGroup::Status`) |
+| `GET /emulator/{id}/operations?since=&limit=` | `ops [n\|all]`, `ops since <seq> [n\|all]` | Same source (`OperationsStatus`, the machine state coordinator's log); the CLI answers one line per operation, the newest 20 by default ([command-interface.md, Operation log](./command-interface.md)) |
 | `DELETE /emulator/{id}` | `stop` | CLI uses `stop` which both stops and removes; separate remove is for advanced orchestration |
 | `POST /emulator/{id}/start` | `resume` | Starting an existing (initialized but not running) emulator uses `resume` in CLI |
 

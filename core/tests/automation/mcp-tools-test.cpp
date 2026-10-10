@@ -239,6 +239,57 @@ TEST_F(McpTools_Test, EmulatorManage_CreateAndSwitchModel_ForwardRamPowerOn)
     EXPECT_EQ(switched->body["ram_power_on"].asString(), "random");
 }
 
+TEST_F(McpTools_Test, EmulatorManage_Operations_GetsTheLogWithOneLinePerOperation)
+{
+    Json::Value body;
+    body["mode"] = "recording";
+    body["last_seq"] = 7;
+    body["capacity"] = 1024;
+    Json::Value refused;
+    refused["seq"] = 7;
+    refused["frame"] = 120;
+    refused["kind"] = "media-insert";
+    refused["summary"] = "tape game.tzx";
+    refused["status"] = "refused";
+    refused["mode"] = "recording";
+    refused["source"] = "webapi";
+    refused["effect"] = "none";
+    refused["detail"] = "Cannot insert a tape while TTD is recording";
+    body["entries"].append(refused);
+    _caller->routes["GET /api/v1/emulator/emu-1/operations?since=0&limit=20"] = {200, body};
+
+    Json::Value args;
+    args["action"] = "operations";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Operations of emu-1 (mode recording, last #7):"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("#7 frame 120 media-insert tape game.tzx refused [recording, webapi] - Cannot insert a "
+                               "tape while TTD is recording"),
+              std::string::npos)
+        << result.text;
+    EXPECT_EQ(result.structured["entries"][0]["kind"].asString(), "media-insert");
+}
+
+TEST_F(McpTools_Test, EmulatorManage_Operations_PassesSinceAndLimit)
+{
+    Json::Value body;
+    body["mode"] = "live";
+    body["last_seq"] = 42;
+    body["entries"] = Json::Value(Json::arrayValue);
+    _caller->routes["GET /api/v1/emulator/emu-1/operations?since=40&limit=0"] = {200, body};
+
+    Json::Value args;
+    args["action"] = "operations";
+    args["since"] = 40;
+    args["limit"] = 0;
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/operations?since=40&limit=0"));
+    EXPECT_NE(result.text.find("last #42): none"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, EmulatorManage_ZXPolyStatus_GetsGroupEndpoint)
 {
     _caller->routes["GET /api/v1/emulator/emu-1/zxpoly"] = {200, Json::Value(Json::objectValue)};

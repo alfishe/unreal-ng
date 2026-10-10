@@ -174,6 +174,7 @@ set(COMMON_SOURCES
     src/emulator_api.h
     src/openapi_spec.cpp
     src/api/lifecycle_api.cpp
+    src/api/operations_api.cpp
     src/api/session_api.cpp
     src/api/settings_api.cpp
     src/api/features_api.cpp

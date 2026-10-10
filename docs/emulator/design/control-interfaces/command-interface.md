@@ -376,6 +376,7 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 | `pause [id]` | | `[emulator-id\|index]` | Immediately pause emulation execution. The CPU stops at the next instruction boundary. Current register state and memory are preserved. Returns confirmation when paused. Useful before inspecting state or setting breakpoints. If no ID specified, auto-selects when exactly one emulator exists. |
 | `resume [id]` | | `[emulator-id\|index]` | Resume emulation execution from the paused state. The CPU continues from the current PC register value. If not paused, returns an error. If no ID specified, auto-selects when exactly one emulator exists. |
 | `reset [id]` | | `[emulator-id\|index]` | Perform a hardware reset of the emulator. Equivalent to pressing the physical reset button. Resets CPU registers to power-on state (PC=0x0000), reinitializes peripherals, and reloads ROM. RAM contents may be preserved depending on configuration. If no ID specified, auto-selects when exactly one emulator exists. |
+| `ops [n\|all]`, `ops since <seq> [n\|all]` | | `[count]` | The operation log of the selected emulator: reset, disk autostart, snapshot load, media insert / eject / discard, blank disk - the newest 20 by default; refusals are logged too. See **Operation log** below. |
 | `step` | `stepin` | | Execute exactly one CPU instruction and return. The emulator pauses automatically after execution. Returns the new PC value and disassembled instruction that was executed. Used for line-by-line debugging. |
 | `steps <N>` | | `<count>` | Execute exactly `<N>` CPU instructions, then pause. Equivalent to calling `step` N times but more efficient. Returns execution summary including final PC. Useful for stepping through loops. |
 | `stepover` | | | Execute one instruction, treating subroutine calls (`CALL`, `RST`) as atomic operations. If the instruction is a call, execution continues until the corresponding `RET`, then pauses. If not a call instruction, behaves like `step`. Essential for stepping over function calls without diving into them. |
@@ -455,6 +456,42 @@ whose reason is not in effect then, so a resumed machine is always heard. The mi
 `GET /audio/mixer`) reports it under `host_output`: `held`, `holders` (active holds by reason: `direct_run`,
 `ttd_replay`, `turbo`), `holds_taken` (by reason), `stale_holds_cleared` (leaked holds a resume dropped),
 `frames_delivered`, `frames_audible`, `frames_held`.
+
+**Operation log** (`ops`):
+
+Every operation on the machine as a whole goes through one place, the machine state coordinator
+([architecture](../../../inprogress/2026-10-09-machine-state-coordinator/architecture.md)); it decides whether the
+operation may run now, what it does to a TTD session, and logs the outcome. The log is always on and keeps the last
+1024 operations per emulator. Covered now: `reset` (soft / hard), disk autostart, snapshot load, media insert / eject
+/ discard (tape, disk, hard disk, SD, CD) and a new blank disk; more operations join it in later steps.
+
+| Form | What it shows |
+| :--- | :--- |
+| `ops` | The newest 20 operations, oldest first. |
+| `ops <n>` / `ops all` | The newest `n` (`0` or `all`: every operation kept). |
+| `ops since <seq> [n\|all]` | Only operations after `seq` (the `last #` of a previous answer): poll for what is new. |
+
+Each operation: `seq` (1, 2, ... never reused), the frame and T-state when it finished, the host wall time, `kind`
+(`reset`, `autostart`, `snapshot-load`, `media-insert`, `media-eject`, `media-discard`, `disk-create`), `source`
+(the surface that asked; `unknown` until the surfaces name themselves), the machine `mode` the rules saw (`live`,
+`recording`, `black-box`, `replaying`, `detached`), `status` (`done`; `refused` - nothing happened, `detail` is the
+reason every surface shows; `failed` - the owner could not do it, `detail` is the error), `effect` on the TTD
+session (`none`, `end-keep-history`, `media-changed`, `stop-then-media-changed`), `summary` (soft / hard, the
+snapshot path, the slot and the medium) and `detail` (`no change` when there was nothing to do). The report also
+carries the current `mode`, `last_seq` and `capacity`.
+
+Example (a tape refused while a recording runs, then the recording stopped and the tape loaded):
+
+```
+> ops
+Operations (mode live, last #3, 3 shown, ring of 1024):
+  #1  frame 812 t 0  reset soft  done  [recording, unknown]  ttd: end-keep-history
+  #2  frame 950 t 41210  media-insert tape /games/elite.tzx  refused  [recording, unknown]  - Cannot insert a tape while TTD is recording: ...
+  #3  frame 1130 t 7  media-insert tape /games/elite.tzx  done  [live, unknown]  ttd: media-changed
+```
+
+The same report is WebAPI `GET /api/v1/emulator/{id}/operations[?since=&limit=]`, Lua `operations(since, limit)`,
+Python `emu.operations(since=0, limit=0)` and the MCP `emulator_manage` action `operations` (`since`, `limit`).
 
 **Performance Notes**:
 - `step` commands disable real-time rendering for precision

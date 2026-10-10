@@ -1487,6 +1487,11 @@ emu.video_temporal_set('mod-tpgwafsd') # switch it on; 'off' or '' switches it o
                                      #   mod-tpgwafsd with the default A/V delay of 2) and the sound is delayed
                                      #   by the difference ('audio_extra_delay_frames', 5 here) to stay in sync.
 emu.frame_cost()                     # per-frame halt/run cost accounting
+emu.operations(since=0, limit=0)     # the operation log (reset, autostart, snapshot load, media insert / eject /
+                                     #   discard, blank disk; refusals too): {'mode', 'last_seq', 'capacity',
+                                     #   'entries': [{'seq', 'frame', 't_in_frame', 'wall_ms', 'kind', 'source',
+                                     #   'mode', 'status', 'effect', 'summary', 'detail'}]} oldest first; since: after
+                                     #   that seq; limit: the newest N (0 = all). Fields: command-interface.md, Operation log
 
 # Coverage analyzer
 emu.coverage_start()                 # start clean; keep=True retains old data

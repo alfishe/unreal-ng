@@ -31,6 +31,7 @@ void buildPaths(Json::Value& paths)
 {
 #include "openapi/openapi_interpreter.inc"
 #include "openapi/openapi_lifecycle.inc"
+#include "openapi/openapi_operations.inc"
 #include "openapi/openapi_tape_disk.inc"
 #include "openapi/openapi_media.inc"
 #include "openapi/openapi_slots.inc"
@@ -84,6 +85,7 @@ void buildSchemas(Json::Value& schemas)
 #include "openapi/openapi_next_schemas.inc"
 #include "openapi/openapi_ttdfile_schemas.inc"
 #include "openapi/openapi_temporal_schemas.inc"
+#include "openapi/openapi_operations_schemas.inc"
 }
 
 }  // namespace

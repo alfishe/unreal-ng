@@ -132,6 +132,20 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/status" | jq '{
 
 MCP: `time_travel` `{"action":"status"}`.
 
+### What ended the session, why a load was refused
+
+The operation log names every reset, disk autostart, snapshot load and media change, the mode the rules saw
+(`recording` = a recording you started, `black-box` = the background one) and what it did to the session
+(`end-keep-history`, `media-changed`, `stop-then-media-changed`) - refusals included, with the same sentence the
+refused call answered:
+
+```bash
+curl -s "$BASE/emulator/$ID/operations?limit=5" | jq '.entries[] | {seq, frame, kind, summary, status, mode, effect, detail}'
+# poll for what is new: ?since=<last_seq of the previous answer>
+```
+
+MCP: `emulator_manage` `{"action":"operations","limit":5}`; CLI `ops 5`; Lua / Python `operations()`.
+
 ### Stop / resume / invalidate
 
 ```bash
