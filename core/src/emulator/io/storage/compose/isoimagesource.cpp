@@ -53,6 +53,15 @@ namespace
                         report->push_back(path + entry.name + ": skipped, excluded");
                     continue;
                 }
+                if (!entry.isDirectory && (entry.associated || entry.interleaved))
+                {
+                    // An associated file shares its name with the real one; an interleaved one is not one run of
+                    // blocks per section, which the extents cannot describe
+                    if (report)
+                        report->push_back(path + entry.name + (entry.associated ? ": skipped, an associated file"
+                                                                                : ": skipped, recorded interleaved"));
+                    continue;
+                }
                 if (!entry.isDirectory && !options.include.empty() && !Matches(options.include, entry.name))
                 {
                     if (report)

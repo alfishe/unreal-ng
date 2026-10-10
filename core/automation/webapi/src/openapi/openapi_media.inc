@@ -128,8 +128,14 @@
         body["properties"]["discard"]["type"] = "boolean";
         body["properties"]["strategy"]["type"] = "string";
         body["properties"]["strategy"]["description"] =
-            "save of a composite: delta (the session's writes into <descriptor>.delta, restored at the next insert; "
-            "the default without a path) or flat (a new image at path; the default with one)";
+            "save of a composite: delta (the session's writes into <descriptor>.delta, restored at the next insert), "
+            "flat (a new image at path; the default with one), commit or write-back; left out: the descriptor's "
+            "writes.save. With save on insert / swap / eject / create / rescan also discard (drop the writes) or ask "
+            "(a delta here; the GUI asks)";
+        body["properties"]["strict"]["type"] = "boolean";
+        body["properties"]["strict"]["description"] =
+            "save of a composite leaving its slot: a commit / write-back that fails refuses (the medium stays) instead of "
+            "keeping the writes as a session delta";
         body["properties"]["plan"]["type"] = "boolean";
         body["properties"]["plan"]["description"] = "save / flatten with strategy commit or write-back: report what would be written, write nothing";
         body["properties"]["onConflict"]["type"] = "string";

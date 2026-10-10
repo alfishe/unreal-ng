@@ -7,6 +7,8 @@
 #include "emulator/media/mediacontrol.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "media/droptargetoverlay.h"
+#include "media/flattendialog.h"
+#include "media/core/closeprompt.h"
 #include "emulator/media/modelswitch.h"
 #include "emulator/machinevariants.h"
 
@@ -831,6 +833,13 @@ void MainWindow::fitWindowToScreen(int scale)
 void MainWindow::closeEvent(QCloseEvent* event)
 {
     qDebug() << "QCloseEvent : Closing application";
+
+    // Unsaved media the policy leaves to the user: asked before anything is torn down (Cancel keeps the window)
+    if (!confirmUnsavedMedia())
+    {
+        event->ignore();
+        return;
+    }
 
     if (_toolBarManager)
     {
@@ -2031,6 +2040,101 @@ void MainWindow::handleSystemReset(int id, Message* message)
         Qt::QueuedConnection);
 }
 
+void MainWindow::handleMediaChangesState(int id, Message* message)
+{
+    // NC_MEDIA_DIRTY / CLEAN / EJECTED / INSERTED arrive on the MessageCenter dispatch thread: the payload names its
+    // emulator, and only this window's one moves the mark. It is set on the GUI thread, which owns _emulator, from the
+    // manager's own state
+    (void)id;
+    auto* payload = message ? dynamic_cast<MediaSlotPayload*>(message->obj) : nullptr;
+    if (!payload)
+        return;
+    const unreal::UUID emulatorId = payload->emulatorId;
+    QMetaObject::invokeMethod(
+        this,
+        [this, emulatorId]() {
+            if (_emulator && _emulator->GetUUID() == emulatorId)
+                updateUnsavedMediaMark();
+        },
+        Qt::QueuedConnection);
+}
+
+void MainWindow::updateUnsavedMediaMark()
+{
+    EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
+    setWindowModified(context && context->pMediaManager && !context->pMediaManager->Unsaved().empty());
+}
+
+bool MainWindow::confirmUnsavedMedia()
+{
+    EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
+    if (!context || !context->pMediaManager)
+        return true;
+    const ClosePrompt prompt = ClosePromptFor(context->pMediaManager->Unsaved());
+    if (!prompt.ask)
+        return true;  // the policy saves (or drops) every one of them as the emulator goes
+
+    QStringList lines;
+    for (const UnsavedMediumLine& m : prompt.media)
+        lines << QString("%1: %2 (%3) - %4")
+                     .arg(QString::fromStdString(m.slot), QString::fromStdString(m.source),
+                          QString::fromStdString(m.changes), QString::fromStdString(m.fate));
+    QMessageBox box(QMessageBox::Warning, tr("Unsaved Media"),
+                    tr("These media have unsaved changes:\n\n%1").arg(lines.join("\n")), QMessageBox::NoButton, this);
+    QPushButton* save = box.addButton(tr("Save..."), QMessageBox::AcceptRole);
+    QPushButton* drop = box.addButton(tr("Close Without Saving"), QMessageBox::DestructiveRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(save);
+    box.exec();
+
+    MediaControl control(context);
+    auto run = [&control](const std::string& verb, const std::string& slot, const std::string& path,
+                          const std::map<std::string, std::string>& options) {
+        return control.Execute(MediaRequest{verb, slot, path, options}).ToValue();
+    };
+    if (box.clickedButton() == drop)
+    {
+        // The core would keep an ask composite's changes as a delta: the user said no
+        for (const UnsavedMediumLine& m : prompt.media)
+            if (m.onRelease == "ask")
+                run("discard", m.slot, {}, {});
+        return true;
+    }
+    if (box.clickedButton() != save)
+        return false;
+
+    QStringList failed;
+    for (const UnsavedMediumLine& m : prompt.media)
+    {
+        if (!m.asks)
+            continue;
+        if (m.onRelease == "ask")
+        {
+            // The strategy dialog of the media panel (S1-S4, writes.save preselected)
+            const std::string slot = m.slot;
+            FlattenDialog dialog(
+                slot,
+                [&run, slot](const std::string& verb, const std::string& path, const std::map<std::string, std::string>& options) {
+                    return run(verb, slot, path, options);
+                },
+                _lastDirectory, this);
+            if (dialog.exec() != QDialog::Accepted)
+                return false;
+            continue;
+        }
+        const MediaReply saved = control.Execute(MediaRequest{"save", m.slot, {}, {}});
+        if (!saved.result.Ok())
+            failed << QString("%1: %2").arg(QString::fromStdString(m.slot), QString::fromStdString(saved.result.message));
+    }
+    if (failed.isEmpty())
+        return true;
+    return QMessageBox::question(this, tr("Unsaved Media"),
+                                 tr("These media could not be saved (export them from the Media panel):\n\n%1\n\n"
+                                    "Close anyway? Their changes will be lost.")
+                                     .arg(failed.join("\n")),
+                                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+}
+
 void MainWindow::handleVideoModeChanged(int id, Message* message)
 {
     // NC_VIDEO_MODE_CHANGED: the emulator's framebuffer geometry (and, for
@@ -2307,7 +2411,7 @@ void MainWindow::handleZXPolyConfigurationRequested(const QString& configuration
         tr("Switch to %1?\n\nThis will stop and destroy the current emulator instance.\nAny unsaved state will be lost.")
             .arg(title),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-    if (reply != QMessageBox::Yes)
+    if (reply != QMessageBox::Yes || !confirmUnsavedMedia())
     {
         if (_menuManager)
             _menuManager->updateMachineModelSelection(_emulator);
@@ -4568,6 +4672,12 @@ void MainWindow::subscribeToPerEmulatorEvents()
 
     ObserverCallbackMethod resetCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleSystemReset);
     messageCenter.AddObserver(NC_SYSTEM_RESET, observerInstance, resetCallback);
+
+    // The title's unsaved mark follows the media (D-8)
+    ObserverCallbackMethod mediaCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMediaChangesState);
+    for (const char* topic : {NC_MEDIA_DIRTY, NC_MEDIA_CLEAN, NC_MEDIA_EJECTED, NC_MEDIA_INSERTED})
+        messageCenter.AddObserver(topic, observerInstance, mediaCallback);
+    updateUnsavedMediaMark();
 }
 
 void MainWindow::unsubscribeFromPerEmulatorEvents()
@@ -4590,6 +4700,11 @@ void MainWindow::unsubscribeFromPerEmulatorEvents()
 
     ObserverCallbackMethod resetCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleSystemReset);
     messageCenter.RemoveObserver(NC_SYSTEM_RESET, observerInstance, resetCallback);
+
+    ObserverCallbackMethod mediaCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMediaChangesState);
+    for (const char* topic : {NC_MEDIA_DIRTY, NC_MEDIA_CLEAN, NC_MEDIA_EJECTED, NC_MEDIA_INSERTED})
+        messageCenter.RemoveObserver(topic, observerInstance, mediaCallback);
+    setWindowModified(false);
 }
 
 void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)

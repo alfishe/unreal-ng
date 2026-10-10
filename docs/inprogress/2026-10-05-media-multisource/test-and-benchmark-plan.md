@@ -93,7 +93,7 @@ are the tests per source file (one `*_test.cpp` per source file, class `ClassNam
 | `CompositeMediumFactory_Test.SameImageReadOnlyInTwoSlots` / `.ExclusiveWhenCommitting` | FR-52 |
 | `MediaManager_Test.InsertComposite` / `.EjectDisposeComposite` / `.ModelSwitchKeepsComposite` | FR-50 |
 | `MediaManager_Test.CompositeSaveStrategyOrder` | request `strategy` beats `writes.save` beats S2; the result names the strategy (D-7) |
-| `MediaManager_Test.EjectNeverCommitsFromDescriptorAlone` | `writes.save: commit` + eject with `save` → S2 delta, sources unchanged, report says why; with `strategy: commit` → S3 runs (D-8) |
+| `ComposeDelta_Test.StrategyFollowsDt9` / `.EjectFollowsWritesSave` / `.StrictEjectRefusesAFailedCommit` / `.ReleaseSavesByPolicy` | D-8 as changed 2026-10-09: an eject with `save` runs `writes.save`; a failed commit falls back to S2 with the reason, or refuses with `strict`; `discard` drops, `ask` saves S2; the eject's `strategy` wins; the manager going away saves by policy |
 | `MediaPanel` Qt test: `SaveCompositeAsksStrategy` | the dialog lists S1-S4, preselects `writes.save`, shows the plan; cancel writes nothing |
 | `MediaControl_Test.ComposeVerbReportsWithoutInsert` | FR-53 |
 | WebAPI / CLI / MCP / Lua / Python parity tests | the same as the existing `media` verbs' tests, one per new verb |
@@ -206,7 +206,7 @@ and the expected outcome (result code, report line, written state).
 | DT-13 delta restore | `ComposeDelta_Test.RestoreLeaves` |
 | DT-14 S3 preconditions, recovery | `GraftCommit_Test.PreconditionLeaves`, `.CrashAtEveryStepRecovers` |
 | DT-15 eject / insert over | `MediaManager_Test.CompositeDispositionLeaves` |
-| DT-16 rescan | `MediaManager_Test.CompositeRescanLeaves` |
+| DT-16 rescan | `ComposeDelta_Test.RescanFollowsDt16`, `MediaControl_Test.CompositeInsertLayersAndRescan` |
 
 ## 4. Acceptance tests (real guests)
 
