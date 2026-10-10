@@ -3509,7 +3509,7 @@ void RegisterTypeInput(ToolRegistry& registry)
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Input operation. 'type' sends text (auto-shift); 'tap' presses a key for N frames; 'combo' presses several keys at once; "
+        "Input operation. 'type' sends text (auto-shift; a line end presses ENTER; a character no key types refuses the text); 'tap' presses a key for N frames; 'combo' presses several keys at once; "
         "'route' sets where keys go (route = auto | matrix | ps2 | both: the ZX matrix, the PS/2 keyboard controller of a ZX-Evo / "
         "ATM Turbo 2+, both); 'status' shows it.";
     schema["properties"]["route"]["type"] = "string";
