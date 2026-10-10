@@ -92,6 +92,7 @@ std::optional<BuildInput> SyncSession::TakeBuild(uint64_t nowMs)
     input.descriptor = _descriptor;
     input.file = _last.file;
     input.name = _last.name;
+    input.page = _last.page;
     input.generation = ++_generation;
     return input;
 }
@@ -108,6 +109,26 @@ bool SameName(const std::string& a, const std::string& b)
     return true;
 }
 }  // namespace
+
+std::vector<ProjectFile> SyncSession::MemoryProject(const MachineView& machine, const SyncDescriptor& descriptor, int exceptPage)
+{
+    std::vector<ProjectFile> files;
+    const ISourceCodec* codec = CodecRegistry::Builtin().Find(descriptor.codec);
+    if (!codec)
+        return files;
+    DecodeOptions options;
+    options.subversion = descriptor.version;
+    for (const SyncText& text : ReadOtherTexts(machine, descriptor, exceptPage))
+    {
+        DecodeResult decoded = codec->Decode(text.file, options);
+        if (decoded.ok && !text.name.empty())
+        {
+            decoded.document.name = text.name;
+            files.push_back({text.name, std::move(decoded.document)});
+        }
+    }
+    return files;
+}
 
 BuildResult SyncSession::Build(const BuildInput& input)
 {

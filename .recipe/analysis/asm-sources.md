@@ -126,9 +126,10 @@ asm_source {"action":"sync_unwatch"}
 ```
 
 A text that INCLUDEs others (`LTEXT`, `INCLUDE`, `*F` ...) is built as a project: the live text is the main file, the
-sources it names come from the disk in drive A (default; `project: "disk:B"`, `"none"`) and from host folders in
-`project` (text sources by file name; other files give their sizes to INCBIN); the disk's file wins over the
-folder's, the live text over both. `sync_hints` counts the project's sources (`project`); a name found nowhere is a
+sources it names come from the other texts ALASM holds in memory (one per page, by their names), the disk in drive A
+(default; `project: "disk:B"`, `"none"`) and from host folders in
+`project` (text sources by file name; other files give their sizes to INCBIN); a text in memory wins over the disk's
+file, the disk's over the folder's, the live text over all. `sync_hints` counts the project's sources (`project`); a name found nowhere is a
 hint and the build goes on.
 
 The labels of each build become the symbol set `live:sync:<assembler>` (priority 900000: above files, below `user`),

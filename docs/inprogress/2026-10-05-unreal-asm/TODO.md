@@ -183,9 +183,9 @@ phase; master only after the owner's review.
       - [x] Primus 2.9 (2026-10-10): ZEUS's start / last-FF pair at `#61B1` (§7.15)
       - [x] GENS4B (2026-10-10): started from 48K BASIC via USR 15616 / LOAD CODE / RETURN / USR 30000; text `(#7928)`-`(#7566)` (docs/disasm/software/gens4b)
       - [ ] `RANDOMIZE USR 15619: REM : LOAD ...` returned without reading the disk (Pentagon, 48 BASIC; TTD: TR-DOS one frame, FDC only `#D0`): explain
-    - [ ] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
+    - [x] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
       - [x] INCLUDE from the disk in a drive and from host folders, option `project` (2026-10-10, §5.4)
-      - [ ] other texts in memory (ALASM one per page, XAS, ZAsm)
+      - [x] other texts in memory (2026-10-10): ALASM's pages (`textsPerPage`); XAS and ZAsm hold one text
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):
     - [ ] Z0 `retrobackend` core + ALASM backend + the file image writer + inject on WebAPI / CLI / MCP, checked by ALASM assembling the injected text
     - [ ] Z1 snapshots: inject into an existing one; the ALASM idle template (Z0 + Z1 about 10 days)

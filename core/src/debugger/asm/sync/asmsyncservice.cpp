@@ -178,6 +178,17 @@ void AsmSyncService::GatherProject(const WatchOptions& options, sync::BuildInput
             input.sizes.insert(input.sizes.end(), disk.sizes.begin(), disk.sizes.end());
         }
     }
+    // Last, so they win: the other texts the assembler holds in memory (ALASM: one per page)
+    if (input.descriptor && input.descriptor->textsPerPage)
+    {
+        asmsync::MachineCopy all;
+        std::string error;
+        if (asmsync::CopyMachine(_context, all, error))
+        {
+            const std::vector<ProjectFile> memory = sync::SyncSession::MemoryProject(all.view, *input.descriptor, input.page);
+            input.project.insert(input.project.end(), memory.begin(), memory.end());
+        }
+    }
 }
 
 void AsmSyncService::Run(WatchOptions options)

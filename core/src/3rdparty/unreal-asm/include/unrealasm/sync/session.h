@@ -53,6 +53,7 @@ struct BuildInput
     /// main file; a project source of its name is left out (the live text is newer)
     std::vector<ProjectFile> project;
     std::vector<std::pair<std::string, uint64_t>> sizes;
+    int page = -1;                  ///< the RAM page of the live text (FileImage), -1 = the CPU view
 };
 
 struct BuildResult
@@ -69,6 +70,10 @@ class SyncSession
 {
 public:
     explicit SyncSession(SessionOptions options = {});
+
+    /// The other texts in memory (a layout that keeps one per page, ALASM) as project sources, each decoded with the
+    /// descriptor's codec and named by its header; `machine` a copy of every page, `exceptPage` the live text's
+    static std::vector<ProjectFile> MemoryProject(const MachineView& machine, const SyncDescriptor& descriptor, int exceptPage);
 
     /// One look at the memory (a copy the caller made at a coherent moment) at time `nowMs`
     TickResult Tick(const MachineView& machine, uint64_t nowMs);

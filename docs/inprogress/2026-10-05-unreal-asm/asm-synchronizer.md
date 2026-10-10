@@ -191,7 +191,11 @@ takes the live text as the main file of `SymbolsFromSourceProject`, leaving out 
 `ProjectFromText`, any other file as a size for INCBIN), then the disk in a drive (`ReadDiskFiles` + `ProjectFromFiles`),
 so the disk wins over the folder (the last source of a name). Option `project`: `disk:A`-`disk:D`, `none`, folders,
 comma-separated; default `disk:A`. Tests: `SyncSession_Test.AnIncludedSourceComesFromTheProject` (XAS `LTEXT`),
-`SyncControl_Test.TheWatchTakesTheProjectFromAHostFolder`. 1 (other texts in memory) is not built yet.
+`SyncControl_Test.TheWatchTakesTheProjectFromAHostFolder`. 1 too: a descriptor with `textsPerPage` (ALASM) has
+`ReadOtherTexts` read the text of every other page that holds its header; `SyncSession::MemoryProject` decodes them
+under their header names, and the service adds them last (a full copy of the pages per build), so a text in memory
+wins over the disk's file of its name. Test `SyncSession_Test.AlasmsOtherTextsInMemoryJoinTheProject`. XAS and ZAsm
+keep one text (their research), so they have none.
 
 ### 5.5 Labels
 

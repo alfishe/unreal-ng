@@ -430,3 +430,29 @@ TEST(SyncSession_Test, AnIncludedSourceComesFromTheProject)
     EXPECT_TRUE(HasLabel(built, "VALUE", 1234));
     EXPECT_TRUE(HasLabel(built, "START", 30000)) << "the live text, not the disk's copy";
 }
+
+// Y5: ALASM keeps one text per page; the other pages' texts are the project's sources, named by their headers
+TEST(SyncSession_Test, AlasmsOtherTextsInMemoryJoinTheProject)
+{
+    Dump dump = Load("alasm509-loaded");
+    const SyncDescriptor* d = FindDescriptor("alasm-5.09");
+    ASSERT_NE(d, nullptr);
+    const SyncText live = ReadText(dump.machine, *d);
+    ASSERT_TRUE(live.ok);
+    // A second text: the live page copied to page 1 under the name LIB
+    std::vector<uint8_t> second(dump.machine.Page(live.page)->bytes.begin(), dump.machine.Page(live.page)->bytes.end());
+    const std::string name = "LIB     ";
+    std::copy(name.begin(), name.end(), second.begin());
+    dump.machine.ram.push_back({1, second});
+    EXPECT_TRUE(ReadOtherTexts(dump.machine, *d, -1).size() == 2u) << "both pages hold a text";
+    const std::vector<SyncText> others = ReadOtherTexts(dump.machine, *d, live.page);
+    ASSERT_EQ(others.size(), 1u);
+    EXPECT_EQ(others[0].name, "LIB");
+    EXPECT_EQ(others[0].page, 1);
+    const std::vector<ProjectFile> project = SyncSession::MemoryProject(dump.machine, *d, live.page);
+    ASSERT_EQ(project.size(), 1u);
+    EXPECT_EQ(project[0].name, "LIB");
+    EXPECT_FALSE(project[0].document.lines.empty());
+    // A layout without texts per page has none
+    EXPECT_TRUE(ReadOtherTexts(dump.machine, *FindDescriptor("tasm-4.12"), -1).empty());
+}

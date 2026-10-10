@@ -148,15 +148,15 @@ source is built on the host:
 - its labels show in the debugger at once (the symbol set `live:sync:<assembler>`);
 - `asm sync hints` lists the errors with their line numbers, for example `line 105: unknown symbol NOWHERE`;
 - with `--output`, a host file (text, the assembler's format or sjasmplus) is written again after each build;
-- a source that includes others (`INCLUDE`, XAS `LTEXT`, GENS `*F` ...) is built with them: they come from the disk in
-  drive A, and from host folders named with `--project` (for example `--project disk:A,/home/me/lib`); a file found
+- a source that includes others (`INCLUDE`, XAS `LTEXT`, GENS `*F` ...) is built with them: they come from the other texts
+  ALASM holds in memory, from the disk in drive A, and from host folders named with `--project` (for example `--project disk:A,/home/me/lib`); a file found
   nowhere is reported in the hints.
 
 In the Qt debugger, the **Live source** button shows all of this in one window: the text with the guest's cursor line
 highlighted, the errors and warnings on their lines and in a list below it, a status line, and the Watch, Extract...
 and Convert... buttons.
 
-`asm sync unwatch` stops the watch. Other texts held in memory at the same time (ALASM keeps one per page) are planned
+`asm sync unwatch` stops the watch. More assemblers are planned
 ([asm-synchronizer](../inprogress/2026-10-05-unreal-asm/asm-synchronizer.md)).
 
 ## Speed
