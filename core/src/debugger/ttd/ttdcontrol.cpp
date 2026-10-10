@@ -1580,8 +1580,10 @@ TTDReply TTDControlBackend<S>::CoverageScan(const TTDRequest& request)
     uint16_t addrFrom = 0;
     uint16_t addrTo = 0xFFFF;
     std::optional<PhysPage> page;
-    uint64_t fromFrame = 0;
-    uint64_t toFrame = _manager ? _manager->ReadSessionInfo().currentEndFrame : 0;
+    // Default window: the session (frames before it hold nothing; a range from 0 was all empty buckets)
+    const TTDSessionInfo session = _manager ? _manager->ReadSessionInfo() : TTDSessionInfo{};
+    uint64_t fromFrame = session.sessionStartFrame;
+    uint64_t toFrame = session.currentEndFrame;
     size_t limit = 200;
     TTDMemorySpace space = TTDMemorySpace::Ram;
     std::string err = CoverageWindow(request, fromFrame, toFrame, limit);
@@ -1620,8 +1622,10 @@ TTDReply TTDControlBackend<S>::CoverageScan(const TTDRequest& request)
 template <class S>
 TTDReply TTDControlBackend<S>::CoverageSummary(const TTDRequest& request)
 {
-    uint64_t fromFrame = 0;
-    uint64_t toFrame = _manager ? _manager->ReadSessionInfo().currentEndFrame : 0;
+    // Default window: the session (frames before it hold nothing; a range from 0 was all empty buckets)
+    const TTDSessionInfo session = _manager ? _manager->ReadSessionInfo() : TTDSessionInfo{};
+    uint64_t fromFrame = session.sessionStartFrame;
+    uint64_t toFrame = session.currentEndFrame;
     size_t limit = 100;
     if (const std::string err = CoverageWindow(request, fromFrame, toFrame, limit); !err.empty())
         return Fail(TTDControlError::BadRequest, err);
