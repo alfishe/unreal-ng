@@ -3748,6 +3748,10 @@ void TimeTravelController::EnforceHistoryLimit()
 
 void TimeTravelController::SyncTimelineFront()
 {
+    // An engine without a session holds no history to follow: a test's shadow engine (SetShadowEngine) takes the
+    // captures, this one stays closed, and "nothing held" erased the whole timeline, then read its front
+    if (!_engine->IsSessionOpen())
+        return;
     const size_t held = _engine->CheckpointCount() - _engine->FirstCheckpoint();
     if (_timeline.size() <= held)
         return;
