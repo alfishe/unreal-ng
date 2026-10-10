@@ -152,7 +152,7 @@ GSLOA20
         LD BC,256
         LD L,C
         LD E,B
-        LD (HL),IMER
+        LD (HL),low IMER
         LDIR
         IM 2
 
@@ -607,7 +607,7 @@ GSPLASM1
         RLCA
         RLCA
         AND 7
-        ADD A,GSTCOLOR
+        ADD A,low GSTCOLOR
         LD (HL),A
         INC HL
         BIT 6,H
@@ -766,7 +766,7 @@ GENTCOLOR
         LD H,high GSTCOLOR
         LD C,8
 GENTCOL0
-        LD L,GSTCOLOR
+        LD L,low GSTCOLOR
         LD DE,TCOLORS
         LD B,8
 GENTCOL1
@@ -783,7 +783,7 @@ GENTCOL1
         LD H,high GSTCOLOR
         LD C,8
 GENTCOL2
-        LD L,GSTCOLOR
+        LD L,low GSTCOLOR
         LD B,8
 GENTCOL3
 ;bright+nobright=nobright+nobright
@@ -995,7 +995,7 @@ QUIT
         LD BC,256
         LD D,H
         LD E,B
-        LD (HL),IMER
+        LD (HL),low IMER
         LDIR
         LD A,#10
         setpga
@@ -1154,3 +1154,10 @@ ObjTab
         INCLUDE "SAVEOBJ4.asm"
 
 
+
+; unreal-asm: the objects of ObjTab, which the object saver writes to disk when the source runs in its assembler
+        SLOT 3
+        PAGE pgtunnelzx
+        SAVEBIN "TUNNELZX",#C000,LENTUNNELZX
+        PAGE pgtunnelgs
+        SAVEBIN "TUNNELGS",#C000,LENTUNNELGS

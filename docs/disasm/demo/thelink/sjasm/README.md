@@ -161,10 +161,14 @@ The `JNZ` row is the one that matters most: a hand port that reads it as `JP NZ`
 without a complaint and is 1 byte longer at every site - the first hand port of `THELINK.asm`
 was 6 bytes off for exactly this reason.
 
-### 3.3 What was done by hand after it
+### 3.3 What was done by hand after it - and what the converter now does itself
 
 The converted sources assembled at once, the objects byte for byte. Three kinds of edits
-followed, each one reviewable on its own:
+followed, each one reviewable on its own. All three were then taught to the converter: since
+then `zxasm convert TheLink.trd --to sjasmplus` assembles **unchanged**, every unit with no
+sjasmplus warning (`tools/verification/unreal-asm/checks/objcheck.py`). The sources here were
+made before that and keep the hand edits; the converter writes the same code (its comments are
+worded differently, and `baba5`'s objects keep their names):
 
 1. **`SAVEBIN` for the object saver.** In ALASM the author assembled a unit, then `RUN`
    it: `SAVEOBJ4` walks the unit's `ObjTab` (name, address, length, page) and saves each
@@ -194,7 +198,10 @@ code of every line, comments stripped, with the converter's output.
 |---|---|
 | `DS -$` became sjasmplus' negative `DS`, which moves `$` back: the zeroed rest of a page was silently lost (no file on the disk depended on it) | fixed: `DS (-$&#FFFF)` for 16-bit-word dialects, with a test |
 | no way to get readable comments from a whole-disk conversion | `zxasm convert --out-codepage` |
-| the low-byte warnings, the `orgpage` warning, the object saver, the unreadable cyclic shifts | open items in unreal-asm's TODO (`docs/inprogress/2026-10-05-unreal-asm/TODO.md`, "Findings from The Link") |
+| the low-byte warnings | the layout of the converted project finds every byte operand outside -256..255; the conversion writes `low` there |
+| the `orgpage` warning | `; orgpage-ok` on an `ORG` page whose address may be outside `#C000`-`#FFFF` |
+| the object saver | a unit with `ObjTab` that INCLUDEs `SAVEOBJ*` ends with its `SAVEBIN` lines |
+| the unreadable cyclic shifts | still open (unreal-asm's TODO, "Findings from The Link") |
 
 ## 4. Verification
 
