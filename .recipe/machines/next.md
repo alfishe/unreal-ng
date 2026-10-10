@@ -143,7 +143,7 @@ transparent: global 0xE3, sprites 0xE3, tilemap 15, fallback 0xE3
 ```
 
 **`next_ports`** - which device answers a port, and whether NR `#82`-`#85` switch it off. `enforced` tells whether the emulator gates the
-port by that bit (today the DAC ports and the Multiface; the other ports decode regardless of the enable word):
+port by that bit (today the DAC ports, the Multiface, `#E3` and `#E7` / `#EB`; the other ports decode regardless of the enable word):
 
 ```text
 $ state next ports 6B w          (after NR #82 <- #DF)
@@ -257,5 +257,10 @@ curl -s "$BASE/$ID/capture/screen" | jq -r .data | base64 -d > screen.png
   (`drive.py root`).
 - NextZXOS writes to the card folder (browser preferences, `autoexec.1st` renamed by the welcome page): keep a pristine copy.
 - `screenshot` files go where the *server* process runs; with `filename` prefixes the path may be URL-encoded into one file name.
+- NEXLOAD (and any esxDOS call) reads the card with the CPU switched to 14 MHz: a file or directory that "does not exist" on a big card while it exists on a small one is an SPI timing
+  problem, not a FAT one - look at `SpiTooFastCount` and the `#2540` directory buffer (audit-divmmc-gap D11). The core-tests harness `NexBrowserRun_Test` (`UNREAL_NEXB*`, see
+  `docs/emulator/environment-variables.md`) reproduces the Browser path headless with the whole collection on the card (`UNREAL_NEXB_INPLACE`, `UNREAL_NEXB_SEARCH=COL/DEM/TEC/NEXT3D DEMO CU/CUBE`).
+- NextZXOS runs a program with the automap on (`NR #0A = #11`) and its own entry points (`NR #B8-#BB = #82 #00 #00 #F2`: `#0008`, `#0038`, `#3Dxx`, `#056A`, `#04D7` only with ROM 3 paged **and ROM in the
+  MMU slot**). `NR #06` bit 4 is the DRIVE button's NMI, not the automap (the NEXLOAD source's comment is from older cores); NR #0A bits 7:5 stick unless in config mode.
 - A black screen after starting a snapshot is almost always the NMI chain of section 4: check the journal for the `NR #02`
   write, the DivMMC mapping (`state/next` `divmmc.mapped`) and where `NR #C2/#C3` point.

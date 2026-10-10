@@ -86,7 +86,7 @@ TEST(NexBrowserRun_Test, RunsTheFileOfTheEnvironmentThroughNextZxos)
         tap(ZXKEY_B);
         wait(250);
         // the search text is one text per folder level, separated by '/': each is typed into the Browser's search (H) and entered
-        // (a space is the SPACE key); the last one selects the file and its ENTER comes after the logs are armed
+        // (a space is the SPACE key, "." and "-" are Symbol Shift + M / J); the last one selects the file and its ENTER comes after the logs are armed
         for (size_t at = 0; at <= search.size();)
         {
             const size_t end = std::min(search.find('/', at), search.size());
@@ -94,7 +94,8 @@ TEST(NexBrowserRun_Test, RunsTheFileOfTheEnvironmentThroughNextZxos)
             wait(40);
             for (size_t i = at; i < end; i++)
             {
-                tap(search[i] == ' ' ? ZXKEY_SPACE : static_cast<ZXKeysEnum>(std::toupper(search[i])));
+                const char c = search[i];
+                tap(c == ' ' ? ZXKEY_SPACE : c == '.' ? ZXKEY_EXT_DOT : c == '-' ? ZXKEY_EXT_MINUS : static_cast<ZXKeysEnum>(std::toupper(c)));
                 wait(40);
             }
             tap(ZXKEY_ENTER);
