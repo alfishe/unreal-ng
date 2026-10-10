@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cctype>
 
 #include "symbols/io/json.h"
 #include "testdata.h"
@@ -368,4 +369,64 @@ TEST(SyncSession_Test, AHintPointsAtTheSourceLine)
             EXPECT_EQ(d.line, 3u) << d.message;
         }
     EXPECT_TRUE(found) << "the undefined name is reported";
+}
+
+namespace
+{
+std::vector<uint8_t> XasFile(const std::string& text, const SyncDescriptor& d)
+{
+    const ISourceCodec* xas = CodecRegistry::Builtin().Find("xas");
+    EncodeOptions options;
+    options.subversion = d.version;
+    const EncodeResult encoded = xas->Encode(SourceDocument::FromText(text, "xas"), options);
+    EXPECT_TRUE(encoded.ok);
+    return encoded.bytes;
+}
+
+bool CaseInsensitiveEqual(const std::string& a, const std::string& b)
+{
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+           });
+}
+
+/// XAS keeps its labels in lower case
+bool HasLabel(const BuildResult& built, const std::string& name, int64_t value)
+{
+    for (const symbols::Symbol& s : built.labels.symbols)
+        if (CaseInsensitiveEqual(s.name, name) && s.location.offset == static_cast<uint32_t>(value))
+            return true;
+    return false;
+}
+}  // namespace
+
+// Y5: the live text INCLUDEs another source; the build takes it from the project (asm-synchronizer.md §5.4)
+TEST(SyncSession_Test, AnIncludedSourceComesFromTheProject)
+{
+    const SyncDescriptor* d = FindDescriptor("xas-7.447");
+    ASSERT_NE(d, nullptr);
+    BuildInput input;
+    input.descriptor = d;
+    input.name = "main";
+    input.file = XasFile("        ORG   30000\n        LTEXT \"lib\"\nSTART   LD    HL,VALUE\n        RET", *d);
+
+    const BuildResult alone = SyncSession::Build(input);
+    ASSERT_TRUE(alone.decoded);
+    EXPECT_FALSE(alone.complete) << "lib is not there";
+
+    const ISourceCodec* xas = CodecRegistry::Builtin().Find("xas");
+    DecodeOptions decode;
+    decode.subversion = d->version;
+    const DecodeResult lib = xas->Decode(XasFile("VALUE   EQU   1234", *d), decode);
+    ASSERT_TRUE(lib.ok);
+    input.project.push_back({"lib", lib.document});
+    // A stale copy of the main text on the disk: the live text wins
+    const DecodeResult stale = xas->Decode(XasFile("        ORG   40000\nSTART   RET", *d), decode);
+    input.project.push_back({"MAIN", stale.document});
+
+    const BuildResult built = SyncSession::Build(input);
+    ASSERT_TRUE(built.decoded);
+    EXPECT_TRUE(built.complete);
+    EXPECT_TRUE(HasLabel(built, "VALUE", 1234));
+    EXPECT_TRUE(HasLabel(built, "START", 30000)) << "the live text, not the disk's copy";
 }

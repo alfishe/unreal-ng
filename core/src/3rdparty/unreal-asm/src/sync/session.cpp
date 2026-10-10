@@ -1,5 +1,7 @@
 #include "unrealasm/sync/session.h"
 
+#include <cctype>
+
 #include "unrealasm/registry.h"
 #include "unrealasm/symbols/fromsource.h"
 
@@ -94,6 +96,19 @@ std::optional<BuildInput> SyncSession::TakeBuild(uint64_t nowMs)
     return input;
 }
 
+namespace
+{
+bool SameName(const std::string& a, const std::string& b)
+{
+    if (a.size() != b.size())
+        return false;
+    for (size_t k = 0; k < a.size(); ++k)
+        if (std::tolower(static_cast<unsigned char>(a[k])) != std::tolower(static_cast<unsigned char>(b[k])))
+            return false;
+    return true;
+}
+}  // namespace
+
 BuildResult SyncSession::Build(const BuildInput& input)
 {
     BuildResult result;
@@ -113,7 +128,19 @@ BuildResult SyncSession::Build(const BuildInput& input)
     result.decoded = true;
     result.document = std::move(decoded.document);
     result.document.name = input.name.empty() ? std::string("live") : input.name;
-    symbols::SourceSymbolsResult symbols = symbols::SymbolsFromSource(result.document);
+    symbols::SourceSymbolsResult symbols;
+    if (input.project.empty() && input.sizes.empty())
+        symbols = symbols::SymbolsFromSource(result.document);
+    else
+    {
+        symbols::SourceProject project;
+        project.sources.push_back({result.document.name, result.document});
+        for (const ProjectFile& file : input.project)
+            if (!SameName(file.name, result.document.name))
+                project.sources.push_back(file);
+        project.sizes = input.sizes;
+        symbols = symbols::SymbolsFromSourceProject(project, 0);
+    }
     result.labels = std::move(symbols.set);
     result.hints.insert(result.hints.end(), symbols.diagnostics.begin(), symbols.diagnostics.end());
     result.complete = symbols.ok;

@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "unrealasm/dialect.h"
 #include "unrealasm/diagnostics.h"
 #include "unrealasm/document.h"
 #include "unrealasm/symbols/symbol.h"
@@ -47,6 +48,11 @@ struct BuildInput
     std::vector<uint8_t> file;
     std::string name;               ///< the text's name when the layout keeps one
     uint64_t generation = 0;        ///< counts the builds handed out; a result older than the last one is stale
+    /// The rest of the project (asm-synchronizer.md §5.4): sources the live text INCLUDEs, as INCLUDE names them (other
+    /// texts in memory, the files of the disk, a host folder), and every file's size for INCBIN. The live text is the
+    /// main file; a project source of its name is left out (the live text is newer)
+    std::vector<ProjectFile> project;
+    std::vector<std::pair<std::string, uint64_t>> sizes;
 };
 
 struct BuildResult

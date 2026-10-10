@@ -10,7 +10,7 @@
 ///   GET  /emulator/{id}/asm/sync               the assembler running in the machine and its text (?assembler=)
 ///   POST /emulator/{id}/asm/sync/probe         every assembler that identifies in RAM
 ///   POST /emulator/{id}/asm/sync/extract {assembler?, as: text | file | dialect, to?, codepage?, output?}
-///   POST /emulator/{id}/asm/sync/watch   {assembler?, interval?, quiet?, as?, to?, output?}   the watch: live labels, hints
+///   POST /emulator/{id}/asm/sync/watch   {assembler?, interval?, quiet?, as?, to?, output?, project?}   the watch: live labels, hints
 ///   DELETE /emulator/{id}/asm/sync/watch                                                         stop it
 ///   GET  /emulator/{id}/asm/sync/hints                                                           the last build
 /// A path is a host file or disk:A/NAME.T. Every route turns its request into an AsmControl verb, shared with the CLI,

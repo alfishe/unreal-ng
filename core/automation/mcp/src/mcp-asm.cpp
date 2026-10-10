@@ -65,6 +65,7 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
     text("as", "sync_extract / sync_watch: text (default), file (the assembler's own format) or dialect (with to)");
     schema["properties"]["interval"]["type"] = "integer";
     schema["properties"]["interval"]["description"] = "sync_watch: ms between looks at the text (default 250)";
+    text("project", "sync_watch: where INCLUDEd sources come from: disk:A-D, none, a host folder, comma-separated (default disk:A)");
     schema["properties"]["quiet"]["type"] = "integer";
     schema["properties"]["quiet"]["description"] = "sync_watch: ms a change must stay before it is built (default 500)";
     schema["properties"]["start"]["type"] = "integer";

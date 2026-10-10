@@ -185,6 +185,14 @@ disk:
 
 Binaries (`INCBIN`) come from the disk the same way. A missing part is a hint, and the build goes on as far as it can.
 
+**Built (2026-10-10):** 2 and 3. `BuildInput` carries the project's other sources and every file's size; `Build`
+takes the live text as the main file of `SymbolsFromSourceProject`, leaving out a project source of its name.
+`AsmSyncService` gathers the project for each build: a host folder (`.asm .a80 .z80 .inc .s .txt` as sources through
+`ProjectFromText`, any other file as a size for INCBIN), then the disk in a drive (`ReadDiskFiles` + `ProjectFromFiles`),
+so the disk wins over the folder (the last source of a name). Option `project`: `disk:A`-`disk:D`, `none`, folders,
+comma-separated; default `disk:A`. Tests: `SyncSession_Test.AnIncludedSourceComesFromTheProject` (XAS `LTEXT`),
+`SyncControl_Test.TheWatchTakesTheProjectFromAHostFolder`. 1 (other texts in memory) is not built yet.
+
 ### 5.5 Labels
 
 - The **live symbol set** `live:sync:<assembler>` is replaced after every successful build. Its priority is just above

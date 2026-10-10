@@ -120,9 +120,16 @@ asm_source {"action":"sync_extract","as":"file","output":"disk:A/COPY.H"}   # th
 ```text
 asm_source {"action":"sync_watch"}                                    # interval 250 ms, quiet 500 ms
 asm_source {"action":"sync_watch","as":"dialect","to":"sjasmplus","output":"scratch/live.asm"}   # the host file follows
+asm_source {"action":"sync_watch","project":"disk:A,/abs/project/lib"}   # INCLUDEd sources: the disk, then a host folder
 asm_source {"action":"sync_hints"}                                    # the last build: labels, hints with source lines
 asm_source {"action":"sync_unwatch"}
 ```
+
+A text that INCLUDEs others (`LTEXT`, `INCLUDE`, `*F` ...) is built as a project: the live text is the main file, the
+sources it names come from the disk in drive A (default; `project: "disk:B"`, `"none"`) and from host folders in
+`project` (text sources by file name; other files give their sizes to INCBIN); the disk's file wins over the
+folder's, the live text over both. `sync_hints` counts the project's sources (`project`); a name found nowhere is a
+hint and the build goes on.
 
 The labels of each build become the symbol set `live:sync:<assembler>` (priority 900000: above files, below `user`),
 so the disassembly shows them at once. The set stays after `sync_unwatch`; `manage_symbols drop` removes it. WebAPI:
