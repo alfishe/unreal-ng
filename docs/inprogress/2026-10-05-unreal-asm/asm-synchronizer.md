@@ -691,17 +691,18 @@ injection (A7 surfaces use it already).
 
 | Mode | How |
 |---|---|
-| into an existing snapshot | load it into a hidden paused instance (no execution), identify the assembler (part A probe), inject, save in the same format through the snapshot pipeline |
-| from a template | per descriptor, an **idle template snapshot**: the assembler started from its disk by the automation scripts and stopped in its editor with an empty text. `inject --template alasm-5.09 --snapshot out.szx` loads the template, injects and saves; or keeps the instance running (`--run`) |
-| templates themselves | made once by a script per assembler (`tools/verification/unreal-asm/emulator/make-template.py`), stored as test data with the descriptor; the assembler binaries come from the collection's disks |
+| into an existing snapshot | as built (Z1): no emulator instance. The library reads the file's RAM pages, paging and SP (`snapshot.h`: .sna, .z80, .szx), probes it and checks the idle rule on that memory, plans the write as in a running machine, and writes the file again with the text's page replaced; every other block of the file stays as it was. The first plan (a hidden paused instance, saved through the snapshot pipeline) was dropped: the file holds everything the plan needs, and `zxasm` works without the emulator |
+| from a template | per descriptor, an **idle template snapshot**: the assembler started from its disk and saved **at its command prompt** with no text (not in its editor: the editor is busy by the idle rule, §16.1). `zxasm inject main.asm alasm-5.09.szx -o out.szx`, or sync-inject with `snapshot` + `output` |
+| templates themselves | made once per assembler by `tools/verification/unreal-asm/emulator/make-template.py` (the disk ejected before the save), stored in unreal-asm `testdata/templates/`; the assembler binaries come from the collection's disks |
+| disks | the same source as a file of the assembler on a TR-DOS image or an SCL archive (`zxasm inject main.asm disk.trd --assembler alasm-5.09`); the way back is `zxasm extract disk.trd --file NAME.H` |
 
 ## 17. Surfaces (part B)
 
 | Surface | Calls |
 |---|---|
-| WebAPI | `POST /emulator/{id}/asm/sync/inject {path \| data + name \| text, from?, assembler?, version?, force?, refresh?}`; `POST /asm/sync/inject-snapshot {source, snapshot?, template?, output, format?}`; `POST /asm/sync/push-watch {path, ...}` / `DELETE`; `GET /asm/sync/templates` |
-| CLI | `asm sync inject <file> [--from d] [--assembler a] [--force]`, `asm sync inject-snapshot <file> --template a --output x.szx`, `asm sync push-watch <file>`, `asm sync templates` |
-| MCP | `asm_source` actions `sync_inject`, `sync_inject_snapshot`, `sync_push_watch`, `sync_templates` |
+| WebAPI | `POST /emulator/{id}/asm/sync/inject {path \| data + name \| text, from?, assembler?, title?, force?, backup?, snapshot?, output?}` (with `snapshot`: into that file, written to `output`; status, probe and extract take `snapshot` too); `POST /asm/sync/push-watch {path, ...}` / `DELETE` (Z2) |
+| CLI | `asm sync inject --path f [--from d] [--assembler a] [--force] [--snapshot s --output o]`, `asm sync push-watch <file>` (Z2); the standalone `zxasm probe / extract / inject` for snapshots and disks |
+| MCP | `asm_source` actions `sync_inject` (with `snapshot`, `output`), `sync_push_watch` (Z2) |
 | Lua / Python | `asm_sync_inject{...}` ... |
 | Qt | the "Live source" dock gets Inject... (a host file, the target assembler, the conversion report) and Push watch on / off |
 
@@ -740,6 +741,20 @@ WebAPI / OpenAPI, CLI, MCP, Lua and Python. Checked by ALASM 5.09 itself: `injec
 `AlasmBackend_Test` (with a host round trip through the ALASM frontend over the STORM, ZAsm, TASM and ALASM corpora),
 `SyncInject_Test.AlasmTakesAFileAtItsCommandLine`, `SyncControl_Test.InjectWritesASourceIntoAlasmAtItsCommandLine`.
 Details: [research-sjasmplus-to-alasm.md](research-sjasmplus-to-alasm.md).
+
+**Built (2026-10-10): Z1, snapshots and disks both ways.** `snapshot.h` reads .sna (48K, 128K), .z80 (v1-v3) and .szx
+(its zlib pages inflated by the library's own inflater) into RAM pages, the windows and SP, and writes them back with
+pages replaced (SNA in place, Z80 the page's block packed again, SZX an uncompressed RAMP block). `sync::ViewOf` and
+`sync::InjectIntoSnapshot` run the Z0 reader and plan on that memory; `WriteAs` (dialect.h) is the conversion plus
+encoding both the emulator and `zxasm` use. `containers.h` gained SCL read / write and writing into TR-DOS images.
+`zxasm probe`, `extract` and `inject` cover snapshots, TRD, SCL and hobeta files in both directions; the sync verbs
+take `snapshot` (and inject `output`) on every surface. The ALASM 5.09 idle templates (`testdata/templates/`, .szx /
+.sna / .z80) come from `make-template.py`. Checked by ALASM 5.09 itself: `inject-oracle.py --template` put
+`oracle1.asm` into each template with `zxasm inject`, loaded the snapshot and assembled it: 143 bytes = sjasmplus' in
+all three formats, and every instruction form (1173 bytes); `zxasm inject` onto a copy of ALASM's disk, `WORK` and
+`ASSEMBLE` in ALASM gave the same 143 bytes. Found on the way: unreal-ng's Z80 writer starts a run right after a single
+`ED` (reported). Tests: `Snapshot_Test` (6), `Trdos_Test.FilesGoIntoANewImageAndBack`, `SclArchiveWritesAndReads`,
+`SyncControl_Test.InjectWritesASourceIntoAnAlasmSnapshot`.
 
 ## 20. Effort (part B)
 

@@ -168,6 +168,11 @@ paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][1]["in"] = "query";
 paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][1]["required"] = false;
 paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][1]["schema"]["type"] = "string";
 paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][1]["description"] = "A descriptor id (alasm-5.09, alasm-4.44, tasm-4.12) when two identify";
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][2]["name"] = "snapshot";
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][2]["in"] = "query";
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][2]["required"] = false;
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][2]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync"]["get"]["parameters"][2]["description"] = "A snapshot file (.szx, .sna, .z80) whose memory is read instead of the machine's";
 paths["/api/v1/emulator/{id}/asm/sync"]["get"]["responses"]["200"]["description"] = "{assembler, title, format, version, family, state, name, page, bytes, lines, current_line, editor, typing, changed, diagnostics}";
 paths["/api/v1/emulator/{id}/asm/sync"]["get"]["responses"]["404"]["description"] = "No known assembler in RAM {state: none, candidates}";
 paths["/api/v1/emulator/{id}/asm/sync"]["get"]["responses"]["400"]["description"] = "Two identify alike {state: ambiguous, candidates}: give assembler";
@@ -204,6 +209,8 @@ paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["parameters"][0]["name"] =
 paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["parameters"][0]["in"] = "path";
 paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["parameters"][0]["required"] = true;
 paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["snapshot"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["snapshot"]["description"] = "A snapshot file (.szx, .sna, .z80) whose memory is read instead of the machine's";
 paths["/api/v1/emulator/{id}/asm/sync/probe"]["post"]["responses"]["200"]["description"] = "{candidates: [{assembler, title, score, reason}], descriptors}";
 
 paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["summary"] = "Extract the source from RAM";
@@ -223,6 +230,8 @@ paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"
 paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["codepage"]["description"] = "With as: text, the code page to read with";
 paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["output"]["type"] = "string";
 paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["output"]["description"] = "A host file or disk:A/NAME.T (as: file writes the assembler type)";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["snapshot"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["snapshot"]["description"] = "A snapshot file (.szx, .sna, .z80) whose memory is read instead of the machine's";
 paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["responses"]["200"]["description"] = "The status fields plus {text | data | output} (and the decode / convert fields)";
 paths["/api/v1/emulator/{id}/asm/sync/extract"]["post"]["responses"]["422"]["description"] = "The text does not read now (state: inconsistent) or the conversion failed";
 
@@ -282,7 +291,11 @@ paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]
 paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["force"]["description"] = "true: overwrite changes not saved";
 paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["backup"]["type"] = "string";
 paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["backup"]["description"] = "A host file the replaced text goes to";
-paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["responses"]["200"]["description"] = "{assembler, title, source, from, name, page, bytes, lines, previous {name, bytes, changed, backup}, diagnostics}";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["snapshot"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["snapshot"]["description"] = "A snapshot file (.szx, .sna, .z80) to write into instead of the machine (an idle template, Z1); needs output";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["output"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["output"]["description"] = "With snapshot: the snapshot file written, the same format with the text's page replaced";
+paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["responses"]["200"]["description"] = "{assembler, title, source, from, name, page, bytes, lines, previous {name, bytes, changed, backup}, diagnostics; with snapshot: output, format}";
 paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["responses"]["409"]["description"] = "Refused: the assembler is busy, in its editor, or its text has changes not saved";
 paths["/api/v1/emulator/{id}/asm/sync/inject"]["post"]["responses"]["422"]["description"] = "The conversion failed or the format cannot hold the text {diagnostics}";
 

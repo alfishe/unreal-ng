@@ -8,13 +8,14 @@
 //   decode   → POST /asm/decode  {path | data + name, file?, codec?, version?, codepage?, output?}
 //   encode   → POST /asm/encode  {text | input, codec, version?, codepage?, lineend?, output?, start?}
 //   convert  → POST /asm/convert {path | data + name, file?, to, codec?, version?, from?, z80n?, output?}
-//   sync_status  → GET  /asm/sync?assembler=        the assembler running in the machine and its text (asm-synchronizer)
-//   sync_probe   → POST /asm/sync/probe
-//   sync_extract → POST /asm/sync/extract {assembler?, as?, to?, codepage?, output?}
+//   sync_status  → GET  /asm/sync?assembler=&snapshot=   the assembler running in the machine and its text (asm-synchronizer)
+//   sync_probe   → POST /asm/sync/probe {snapshot?}
+//   sync_extract → POST /asm/sync/extract {assembler?, as?, to?, codepage?, output?, snapshot?}
 //   sync_watch   → POST /asm/sync/watch {assembler?, interval?, quiet?, as?, to?, output?}
 //   sync_unwatch → DELETE /asm/sync/watch
 //   sync_hints   → GET  /asm/sync/hints
-//   sync_inject  → POST /asm/sync/inject {text | path | data + name, from?, assembler?, title?, force?, backup?}
+//   sync_inject  → POST /asm/sync/inject {text | path | data + name, from?, assembler?, title?, force?, backup?, snapshot?, output?}
+//   (snapshot: a .szx / .sna / .z80 file read instead of the machine's memory; sync_inject then writes `output`)
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
 
@@ -41,7 +42,9 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
         "Assembler source operation: the tokenized formats of ZX Spectrum assemblers (ALASM, TASM, ZX-ASM, STORM, MASM, GENS, ZEUS, "
         "XAS, Laser Genius, ...) and text dialects; decode to text, encode text, convert between dialects (to sjasmplus, pasmo, z88dk, alasm). sync_*: the source an "
         "assembler running in the machine holds in RAM (ALASM 5.09 / 4.44, TASM 4.12), read as its own SAVE would write it; sync_watch keeps its labels (symbol set live:sync:<assembler>) and hints up to date "
-        "while the user types; sync_inject writes a host source (sjasmplus or another dialect) into it as its own text (ALASM 5.09, at its command line).";
+        "while the user types; sync_inject writes a host source (sjasmplus or another dialect) into it as its own text (ALASM 5.09, at its command line). "
+        "With snapshot (a .szx / .sna / .z80 file) sync_status / sync_probe / sync_extract / sync_inject work on that file's memory instead; "
+        "sync_inject writes the snapshot with the text in it to output.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     const auto text = [&](const char* name, const char* description) {
@@ -71,6 +74,8 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
     schema["properties"]["force"]["type"] = "boolean";
     schema["properties"]["force"]["description"] = "sync_inject: overwrite a text with changes not saved";
     text("backup", "sync_inject: a host file the replaced text is written to (the assembler's own format)");
+    text("snapshot", "sync_status / sync_probe / sync_extract / sync_inject: a snapshot file (.szx .sna .z80) whose memory is read instead "
+                     "of the machine's (an idle template made by make-template.py, or any snapshot of a session)");
     schema["properties"]["quiet"]["type"] = "integer";
     schema["properties"]["quiet"]["description"] = "sync_watch: ms a change must stay before it is built (default 500)";
     schema["properties"]["start"]["type"] = "integer";
@@ -83,7 +88,7 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
         "asm_source",
         "Sources of ZX Spectrum assemblers: list formats and dialects, the files of a disk in a drive (with their formats), detect a "
         "file's format, decode it to text, encode text in a format (to a host file or onto the disk), convert a source to another "
-        "dialect (sjasmplus, pasmo, z88dk ...).",
+        "dialect (sjasmplus, pasmo, z88dk ...); the text an assembler holds in RAM or in a snapshot file, both ways.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const std::string action = args["action"].asString();
@@ -111,9 +116,11 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
             }
             if (action == "sync_status")
             {
-                const std::string assembler = args.isMember("assembler") ? args["assembler"].asString() : std::string();
-                ResolveAndForward(args, "GET", "/asm/sync" + (assembler.empty() ? std::string() : "?assembler=" + UrlEncodeSegment(assembler)),
-                                  nullptr, caller, "Assembler in RAM", done);
+                std::string query;
+                for (const char* name : {"assembler", "snapshot"})
+                    if (args.isMember(name) && !args[name].asString().empty())
+                        query += (query.empty() ? "?" : "&") + std::string(name) + "=" + UrlEncodeSegment(args[name].asString());
+                ResolveAndForward(args, "GET", "/asm/sync" + query, nullptr, caller, "Assembler in RAM", done);
                 return;
             }
             if (action == "sync_unwatch")
@@ -129,7 +136,7 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
             if (action == "sync_probe" || action == "sync_extract" || action == "sync_watch")
             {
                 Json::Value body(Json::objectValue);
-                for (const char* name : {"assembler", "as", "to", "codepage", "output", "interval", "quiet", "project"})
+                for (const char* name : {"assembler", "as", "to", "codepage", "output", "interval", "quiet", "project", "snapshot"})
                     if (args.isMember(name) && !args[name].isNull())
                         body[name] = args[name].asString();
                 ResolveAndForward(args, "POST", "/asm/sync/" + action.substr(5), &body, caller, "Assembler in RAM: " + action.substr(5), done);
@@ -138,7 +145,8 @@ void RegisterAsmSourceImpl(ToolRegistry& registry)
             if (action == "sync_inject")
             {
                 Json::Value body(Json::objectValue);
-                for (const char* name : {"assembler", "text", "path", "data", "name", "file", "codec", "version", "from", "title", "force", "backup"})
+                for (const char* name : {"assembler", "text", "path", "data", "name", "file", "codec", "version", "from", "title", "force", "backup",
+                                         "snapshot", "output"})
                     if (args.isMember(name) && !args[name].isNull())
                         body[name] = args[name].isBool() ? Json::Value(args[name].asBool() ? "true" : "false") : Json::Value(args[name].asString());
                 ResolveAndForward(args, "POST", "/asm/sync/inject", &body, caller, "Assembler in RAM: inject", done);

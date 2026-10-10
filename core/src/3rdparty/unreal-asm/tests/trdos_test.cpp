@@ -60,3 +60,70 @@ TEST(Trdos_Test, ImageCatalogIsRead)
     image[8 * 256 + 0xE7] = 0;
     EXPECT_FALSE(ReadTrd(image, files, error));
 }
+
+TEST(Trdos_Test, FilesGoIntoANewImageAndBack)
+{
+    std::vector<uint8_t> image = NewTrd("SOURCES");
+    TrdosFile a;
+    a.name = "MAIN    ";
+    a.type = 'H';
+    a.length = 300;
+    a.data.assign(300, 0x41);
+    TrdosFile b = a;
+    b.name = "DATA    ";
+    b.type = 'C';
+    b.start = 0x6000;
+    b.length = 5;
+    b.data = {1, 2, 3, 4, 5};
+    std::string error;
+    ASSERT_TRUE(PutTrdFile(image, a, error)) << error;
+    ASSERT_TRUE(PutTrdFile(image, b, error)) << error;
+    std::vector<TrdosFile> files;
+    ASSERT_TRUE(ReadTrd(image, files, error)) << error;
+    ASSERT_EQ(files.size(), 2u);
+    EXPECT_EQ(files[0].TrimmedName(), "MAIN");
+    EXPECT_EQ(files[0].data, a.data);
+    EXPECT_EQ(files[1].start, 0x6000);
+    EXPECT_EQ(files[1].data, b.data);
+    EXPECT_EQ(image[8 * 256 + 0xE4], 2) << "the file count";
+    EXPECT_EQ(image[8 * 256 + 0xE5] | (image[8 * 256 + 0xE6] << 8), 159 * 16 - 3) << "2 + 1 sectors used";
+
+    // The same name and size: in its place. Another size: the old entry deleted, the new one after the last file
+    a.data.assign(300, 0x42);
+    ASSERT_TRUE(PutTrdFile(image, a, error)) << error;
+    ASSERT_TRUE(ReadTrd(image, files, error));
+    ASSERT_EQ(files.size(), 2u);
+    EXPECT_EQ(files[0].data, a.data);
+    a.length = 700;
+    a.data.assign(700, 0x43);
+    ASSERT_TRUE(PutTrdFile(image, a, error)) << error;
+    ASSERT_TRUE(ReadTrd(image, files, error));
+    ASSERT_EQ(files.size(), 2u) << "the deleted entry is not listed";
+    EXPECT_EQ(files[1].TrimmedName(), "MAIN");
+    EXPECT_EQ(files[1].data, a.data);
+    EXPECT_EQ(image[8 * 256 + 0xF4], 1) << "one deleted file";
+}
+
+TEST(Trdos_Test, SclArchiveWritesAndReads)
+{
+    TrdosFile a;
+    a.name = "ORACLE1 ";
+    a.type = 'H';
+    a.length = 3;
+    a.data = {7, 8, 9};
+    std::vector<TrdosFile> files;
+    PutFile(files, a);
+    a.data = {9, 8, 7};
+    PutFile(files, a);   // the same name and type: replaced
+    ASSERT_EQ(files.size(), 1u);
+    const std::vector<uint8_t> scl = WriteScl(files);
+    EXPECT_EQ(scl.size(), 9u + 14u + 256u + 4u);
+    std::vector<TrdosFile> back;
+    std::string error;
+    ASSERT_TRUE(ReadScl(scl, back, error)) << error;
+    ASSERT_EQ(back.size(), 1u);
+    EXPECT_EQ(back[0].TrimmedName(), "ORACLE1");
+    EXPECT_EQ(back[0].data, a.data);
+    EXPECT_EQ(back[0].tail.size(), 253u);
+    EXPECT_FALSE(ReadScl(std::vector<uint8_t>(scl.begin() + 1, scl.end()), back, error));
+}

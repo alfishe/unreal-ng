@@ -13,6 +13,7 @@
 
 #include "unrealasm/diagnostics.h"
 #include "unrealasm/encoding.h"
+#include "unrealasm/snapshot.h"
 #include "unrealasm/symbols/live.h"
 
 namespace unrealasm::sync
@@ -240,4 +241,13 @@ struct ProbeCandidate
 
 /// Every descriptor that identifies, best first
 std::vector<ProbeCandidate> Probe(const MachineView& machine);
+
+/// The machine a snapshot file holds (Z1): its RAM pages, windows and SP. The view points into `snapshot`'s pages
+MachineView ViewOf(const containers::Snapshot& snapshot);
+
+/// Part B into a snapshot (asm-synchronizer.md §16.3): `file` (the assembler's own file) written over the live text of
+/// the assembler in `snapshot`, under the same rules as in a running machine (PlanInject); `out` is the snapshot file
+/// with that page replaced. The plan says why not
+InjectPlan InjectIntoSnapshot(const containers::Snapshot& snapshot, const SyncDescriptor& descriptor, const std::vector<uint8_t>& file,
+                              const InjectOptions& options, std::vector<uint8_t>& out);
 }  // namespace unrealasm::sync

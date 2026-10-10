@@ -895,6 +895,32 @@ SyncDescriptor Tasm412()
 }
 }  // namespace
 
+MachineView ViewOf(const containers::Snapshot& snapshot)
+{
+    MachineView view;
+    for (const auto& [page, bytes] : snapshot.pages)
+        view.ram.push_back({static_cast<uint16_t>(page), std::span<const uint8_t>(bytes)});
+    view.windows = snapshot.windows;
+    view.ramPages = snapshot.ramPages;
+    view.sp = snapshot.sp;
+    return view;
+}
+
+InjectPlan InjectIntoSnapshot(const containers::Snapshot& snapshot, const SyncDescriptor& descriptor, const std::vector<uint8_t>& file,
+                              const InjectOptions& options, std::vector<uint8_t>& out)
+{
+    InjectPlan plan = PlanInject(ViewOf(snapshot), descriptor, file, options);
+    if (!plan.ok)
+        return plan;
+    std::string error;
+    if (!containers::WriteSnapshot(snapshot, {{plan.page, plan.bytes}}, out, error))
+    {
+        plan.ok = false;
+        plan.error = error;
+    }
+    return plan;
+}
+
 const symbols::MemoryPage* MachineView::Page(int page) const
 {
     for (const symbols::MemoryPage& p : ram)

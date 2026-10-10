@@ -1,0 +1,163 @@
+// Snapshot containers (Z1): the ALASM 5.09 idle templates read in all three formats, a host source written into each
+// and read back, files kept byte for byte where nothing changed; the Z80 run-length coding and SZX's zlib pages.
+
+#include <gtest/gtest.h>
+
+#include "testdata.h"
+#include "unrealasm/dialect.h"
+#include "unrealasm/snapshot.h"
+#include "unrealasm/sync/reader.h"
+
+using namespace unrealasm;
+using namespace unrealasm::containers;
+using unrealasm::testing::ReadTestData;
+using unrealasm::testing::ReadTestText;
+
+namespace
+{
+Snapshot Template(const std::string& format)
+{
+    Snapshot snapshot;
+    std::string error;
+    EXPECT_TRUE(ReadSnapshot(ReadTestData("templates/alasm-5.09." + format), format, snapshot, error)) << format << ": " << error;
+    return snapshot;
+}
+
+/// oracle1.asm as ALASM 5.09's own file
+std::vector<uint8_t> OracleFile()
+{
+    SourceDocument document = SourceDocument::FromText(ReadTestText("dialects/alasm-backend/oracle1.asm"), "sjasmplus");
+    document.name = "ORACLE1";
+    const WriteAsResult written = WriteAs(document, "alasm", "5.07");
+    EXPECT_TRUE(written.ok) << written.error;
+    return written.bytes;
+}
+}  // namespace
+
+TEST(Snapshot_Test, AlasmTemplatesReadAlikeInEveryFormat)
+{
+    const Snapshot szx = Template("szx");
+    const Snapshot sna = Template("sna");
+    const Snapshot z80 = Template("z80");
+    EXPECT_EQ(szx.machine, "Pentagon 128");
+    EXPECT_EQ(z80.machine, "Pentagon 128");
+    EXPECT_EQ(sna.machine, "128K") << "an SNA does not say which 128K";
+    for (const Snapshot* s : {&szx, &sna, &z80})
+    {
+        EXPECT_EQ(s->ramPages, 8);
+        EXPECT_EQ(s->pages.size(), 8u);
+        EXPECT_EQ(s->windows[1], 5);
+        EXPECT_EQ(s->windows[2], 2);
+        EXPECT_EQ(s->windows[3], s->port7FFD & 7);
+        EXPECT_EQ(s->sp, szx.sp);
+        EXPECT_EQ(s->port7FFD, szx.port7FFD);
+        EXPECT_EQ(s->pages, szx.pages) << SnapshotFormatName(s->format) << ": saved one after another at the prompt, the same RAM";
+    }
+    // SZX keeps its pages zlib-compressed: they inflated to whole pages
+    const sync::MachineView view = sync::ViewOf(szx);
+    const sync::SyncDescriptor* alasm = sync::FindDescriptor("alasm-5.09");
+    ASSERT_NE(alasm, nullptr);
+    std::string why;
+    EXPECT_TRUE(sync::Idle(view, *alasm, why)) << why;
+    const std::vector<sync::ProbeCandidate> candidates = sync::Probe(view);
+    ASSERT_FALSE(candidates.empty());
+    EXPECT_EQ(candidates[0].descriptor->id.rfind("alasm-5.0", 0), 0u) << candidates[0].descriptor->id;
+}
+
+TEST(Snapshot_Test, NothingChangedWritesTheSameFile)
+{
+    for (const std::string format : {"sna", "z80", "szx"})
+    {
+        const Snapshot s = Template(format);
+        std::vector<uint8_t> out;
+        std::string error;
+        ASSERT_TRUE(WriteSnapshot(s, {}, out, error)) << error;
+        EXPECT_EQ(out, s.bytes) << format;
+    }
+}
+
+TEST(Snapshot_Test, ASourceGoesIntoEachFormatAndReadsBack)
+{
+    const std::vector<uint8_t> file = OracleFile();
+    const sync::SyncDescriptor* alasm = sync::FindDescriptor("alasm-5.09");
+    ASSERT_NE(alasm, nullptr);
+    for (const std::string format : {"sna", "z80", "szx"})
+    {
+        const Snapshot s = Template(format);
+        std::vector<uint8_t> out;
+        const sync::InjectPlan plan = sync::InjectIntoSnapshot(s, *alasm, file, {}, out);
+        ASSERT_TRUE(plan.ok) << format << ": " << plan.error;
+        EXPECT_EQ(plan.page, 6) << "ALASM's text page in the 128K template";
+
+        Snapshot back;
+        std::string error;
+        ASSERT_TRUE(ReadSnapshot(out, format, back, error)) << format << ": " << error;
+        EXPECT_EQ(back.pages.at(plan.page), plan.bytes) << format;
+        for (const auto& [page, bytes] : s.pages)
+        {
+            if (page != plan.page)
+            {
+                EXPECT_EQ(back.pages.at(page), bytes) << format << ": page " << page << " untouched";
+            }
+        }
+        const sync::SyncText text = sync::ReadText(sync::ViewOf(back), *alasm);
+        ASSERT_TRUE(text.ok) << format << ": " << text.state;
+        EXPECT_EQ(text.name, "ORACLE1");
+        EXPECT_EQ(text.file, file) << format;
+        EXPECT_TRUE(text.changed) << "the header says changed since saved, as after an edit";
+    }
+}
+
+TEST(Snapshot_Test, BusyAssemblerIsRefused)
+{
+    Snapshot s = Template("szx");
+    s.sp = 0xFF00;   // nowhere near ALASM's command loop: not at its prompt
+    std::vector<uint8_t> out;
+    const sync::InjectPlan plan = sync::InjectIntoSnapshot(s, *sync::FindDescriptor("alasm-5.09"), OracleFile(), {}, out);
+    EXPECT_FALSE(plan.ok);
+    EXPECT_TRUE(out.empty());
+    EXPECT_NE(plan.error.find("not waiting for a command"), std::string::npos) << plan.error;
+    // force overrides unsaved changes and a missing idle rule, never a known rule that says busy
+    sync::InjectOptions force;
+    force.force = true;
+    EXPECT_FALSE(sync::InjectIntoSnapshot(s, *sync::FindDescriptor("alasm-5.09"), OracleFile(), force, out).ok);
+}
+
+TEST(Snapshot_Test, Z80PagesCompressAndExpand)
+{
+    // Runs of 5 and more, short EDs runs, a single ED followed by a run: what the coding treats apart
+    Snapshot s = Template("z80");
+    std::vector<uint8_t> page(16384, 0);
+    for (size_t i = 0; i < page.size(); ++i)
+        page[i] = static_cast<uint8_t>(i % 7 == 0 ? 0xED : i % 3 == 0 ? i / 3 : 0x55);
+    page[100] = 0xED;
+    page[101] = page[102] = page[103] = page[104] = page[105] = page[106] = 0x11;
+    page[200] = page[201] = 0xED;
+    std::vector<uint8_t> out;
+    std::string error;
+    ASSERT_TRUE(WriteSnapshot(s, {{3, page}}, out, error)) << error;
+    Snapshot back;
+    ASSERT_TRUE(ReadSnapshot(out, "z80", back, error)) << error;
+    EXPECT_EQ(back.pages.at(3), page);
+    EXPECT_EQ(back.pages.at(7), s.pages.at(7));
+}
+
+TEST(Snapshot_Test, BrokenFilesSayWhy)
+{
+    Snapshot s;
+    std::string error;
+    EXPECT_FALSE(ReadSnapshot(std::vector<uint8_t>(1000, 0), "sna", s, error));
+    EXPECT_NE(error.find("49179"), std::string::npos) << error;
+    // The last byte of a compressed RAMP block is its Adler-32's: the page inflates, the checksum disagrees
+    std::vector<uint8_t> szx = ReadTestData("templates/alasm-5.09.szx");
+    size_t at = 8;
+    while (at + 8 <= szx.size() && !(std::equal(szx.begin() + at, szx.begin() + at + 4, "RAMP") && (szx[at + 8] & 1)))
+        at += 8 + (szx[at + 4] | (szx[at + 5] << 8) | (szx[at + 6] << 16));
+    ASSERT_LT(at + 8, szx.size()) << "the template has compressed pages";
+    szx[at + 8 + (szx[at + 4] | (szx[at + 5] << 8) | (szx[at + 6] << 16)) - 1] ^= 0xFF;
+    EXPECT_FALSE(ReadSnapshot(szx, "szx", s, error));
+    EXPECT_NE(error.find("checksum"), std::string::npos) << error;
+    const Snapshot good = Template("z80");
+    EXPECT_FALSE(WriteSnapshot(good, {{9, std::vector<uint8_t>(16384)}}, szx, error));
+    EXPECT_NE(error.find("no RAM page 9"), std::string::npos) << error;
+}

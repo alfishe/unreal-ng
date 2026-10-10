@@ -150,6 +150,21 @@ struct ConvertResult
 /// The source (its dialect from source.dialect) in the target dialect; ok = false when either side is missing
 ConvertResult Convert(const SourceDocument& source, std::string_view targetDialect, const BackendOptions& options = {});
 
+/// A source as a file of another assembler (part B: what goes into its memory, a snapshot or a disk)
+struct WriteAsResult
+{
+    std::vector<uint8_t> bytes;   ///< the file as the assembler saves it (its codec, its version)
+    SourceDocument document;      ///< the text written, in the codec's dialect
+    Diagnostics diagnostics;      ///< the conversion's and the codec's
+    std::string error;            ///< why not, when !ok
+    bool ok = false;
+};
+
+/// `source` (its dialect from source.dialect) written by `codec` in its `version` ("" the newest): converted to the
+/// codec's dialect by its backend first when it is in another (the backend told `version`), named `name` (the
+/// format's header keeps up to 8 characters; empty: the source's name)
+WriteAsResult WriteAs(const SourceDocument& source, std::string_view codec, const std::string& version, const std::string& name = "");
+
 /// One source of a project (the files of a disk): its name as INCLUDE names it (no extension) and its document
 struct ProjectFile
 {

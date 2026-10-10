@@ -111,9 +111,14 @@ fire in that instance (reported).
 | Round trip on the host (`AlasmBackend_Test.ProgramsKeepTheirBytesThroughAlasm`): every instruction form (`instructions.asm`), ALASM 5.09's constructs, STORM 1.3 (STORMT1/2), ZAsm 3.15 (ZXT1-3), TASM 5.0 (T50PROG) → sjasmplus → ALASM → the alasm codec and back → the ALASM frontend → sjasmplus | the bytes of the original assemblers |
 | `inject-oracle.py alasm509 … oracle1.asm 0x6000`: injected into ALASM 5.09, assembled by it | 143 bytes = sjasmplus' |
 | the same with `instructions.asm` at ORG #6000 | 1173 bytes = sjasmplus' |
+| `inject-oracle.py alasm509 --template` (Z1): `zxasm inject` into the .szx, .sna and .z80 templates, the snapshot loaded and assembled | 143 bytes = sjasmplus' in each; `instructions.asm` 1173 |
+| `zxasm inject` onto a copy of ALASM's disk, `WORK ORACLE1` and `ASSEMBLE` in ALASM 5.09 | 143 bytes = sjasmplus' |
 
 ## 6. Limits and open items
 
+- Snapshots and disks (Z1): `zxasm inject` writes the same text into an idle template snapshot (.szx / .sna / .z80) or
+  onto a TR-DOS image / SCL archive; ALASM 5.09 assembled `oracle1.asm` from each to sjasmplus' bytes
+  (asm-synchronizer.md §19).
 - One text. A project's INCLUDEd files would go into more pages (ALASM keeps one text per page). Not built yet.
 - Label values come only from sjasmplus sources. Another dialect's source is written without them: its later labels
   stay as they are, with a warning.

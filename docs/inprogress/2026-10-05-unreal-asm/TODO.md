@@ -193,7 +193,11 @@ phase; master only after the owner's review.
       - [ ] idle rules for the other ALASM builds (5.08 ... 3.8c): the command line's return chain in each
       - [ ] the ALASM frontend reads `ADD B` as ADD A,B and `DW "AB"` as #4142; ALASM 5.09 puts nothing / `41 42` down: check more forms (LD HL,"AB", ADC, SBC) and fix
       - [ ] the `retrobackend` core split out of the ALASM backend with the second target (Z3)
-    - [ ] Z1 snapshots: inject into an existing one; the ALASM idle template (Z0 + Z1 about 10 days)
+    - [x] Z1 snapshots and disks both ways, no emulator needed (2026-10-10, asm-synchronizer.md §16.3, §19): `snapshot.h` (.sna / .z80 / .szx), SCL and TRD writing, `WriteAs`, `sync::InjectIntoSnapshot`; `zxasm probe / extract / inject`; `snapshot` + `output` on the sync verbs (WebAPI / CLI / MCP / Lua / Python); the ALASM 5.09 idle templates (`make-template.py`); checked by ALASM 5.09 assembling the injected snapshots and disk
+      - [ ] templates of the other assemblers (with their idle rules, Z3) and a named template list (`templates` verb) if the surfaces need it
+      - [ ] the sync verbs on a snapshot without an emulator instance in the WebAPI route (`/asm/sync/...` with no id)
+      - [ ] other disk images (FDI, UDI, TD0) and +3 DSK through the library, if the sources come in them
+      - [ ] unreal-ng's Z80 snapshot writer starts a run right after a single `ED` (`ED ED ED 05 00`): every reader takes it for 237 bytes of #05; reported, the fix is the writer's (`loader_z80.cpp` compress)
     - [ ] Z2 push watch (host file → inject on save), Inject in the Qt dock
     - [ ] Z3 backends + writers + templates: TASM, XAS, STORM, ZX-ASM, MASM
     - [ ] Z4 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM

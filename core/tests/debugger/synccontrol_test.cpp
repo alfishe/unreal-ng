@@ -263,3 +263,36 @@ TEST_F(SyncControl_Test, InjectWritesASourceIntoAlasmAtItsCommandLine)
     forced["force"] = "true";
     EXPECT_TRUE(SyncRun(_context, "sync-inject", forced).Ok());
 }
+
+// Part B (Z1): the same verbs on a snapshot file instead of the machine - ALASM 5.09's idle template; the machine stays untouched
+TEST_F(SyncControl_Test, InjectWritesASourceIntoAnAlasmSnapshot)
+{
+    const std::filesystem::path templates = TestPathHelper::FindProjectRoot() / "core" / "src" / "3rdparty" / "unreal-asm" / "testdata" / "templates";
+    const std::string output = TestPathHelper::GetUniqueTestScratchPath("injected.szx");
+    const std::vector<uint8_t> before(_context->pMemory->RAMPageAddress(6), _context->pMemory->RAMPageAddress(6) + 0x4000);
+
+    AsmReply reply = SyncRun(_context, "sync-probe", {{"snapshot", (templates / "alasm-5.09.szx").string()}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    ASSERT_FALSE(reply.body.find("candidates")->items.empty());
+
+    std::map<std::string, std::string> source = {{"text", "        ORG #6000\nstart   ld a,1+2*3\n        jr start\n"}, {"from", "sjasmplus"},
+                                                 {"snapshot", (templates / "alasm-5.09.szx").string()}, {"assembler", "alasm-5.09"}, {"title", "MAIN"}};
+    reply = SyncRun(_context, "sync-inject", source);
+    EXPECT_EQ(reply.error, AsmControlError::BadRequest) << "no output: " << reply.message;
+    source["output"] = output;
+    reply = SyncRun(_context, "sync-inject", source);
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.find("format")->s, "szx");
+    EXPECT_EQ(reply.body.find("page")->i, 6);
+    EXPECT_EQ(reply.body.find("name")->s, "MAIN");
+
+    reply = SyncRun(_context, "sync-extract", {{"snapshot", output}, {"assembler", "alasm-5.09"}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    const std::string text = reply.body.find("text")->s;
+    EXPECT_NE(text.find("LD A,1+(2*3)"), std::string::npos) << text;
+    EXPECT_EQ(reply.body.find("snapshot")->s, output);
+    EXPECT_TRUE(std::equal(before.begin(), before.end(), _context->pMemory->RAMPageAddress(6))) << "the machine's RAM is not written";
+
+    EXPECT_EQ(SyncRun(_context, "sync-status", {{"snapshot", output + ".missing"}}).error, AsmControlError::NotFound);
+    std::filesystem::remove(output);
+}

@@ -4,6 +4,10 @@
 from the same source. The assembler disk is the collection's; the tool creates its own instance and deletes it.
 
     inject-oracle.py alasm509 <ALASM509.trd> <source.asm> <address> [--sjasmplus PATH] [--port P] [--keep]
+    inject-oracle.py alasm509 --template <alasm509.szx|.sna|.z80> <source.asm> <address> [--zxasm PATH] ...
+
+With --template (Z1) the source goes into the template snapshot with `zxasm inject` instead, without an emulator; the
+snapshot written is then loaded into a fresh instance and assembled there (make-template.py makes templates).
 
 The source is sjasmplus (any dialect with a frontend works with --from). ALASM 5.09 assembles #8000-#BFFF into its
 system page: give sources that ORG below #8000. Exit 0 when the bytes agree; a screenshot of the assembler's report
@@ -36,17 +40,32 @@ def sjasmplus_bytes(sjasmplus, source, address):
 
 
 def alasm509(emu, args, expected):
-    emu.insert_disk(os.path.abspath(args.disk))
-    emu.run_trdos('alasm64')
-    time.sleep(2)                                  # the memory test, then the A> prompt
-    with open(args.source, encoding='utf-8') as f:
-        text = f.read()
-    body = {'text': text, 'from': args.from_, 'assembler': 'alasm-5.09', 'title': 'INJECTED'}
-    reply = emu.post('/asm/sync/inject', body)
-    print('inject:', {k: reply.get(k) for k in ('assembler', 'name', 'page', 'bytes', 'lines', 'previous')})
-    for d in reply.get('diagnostics', []):
-        if d.get('severity') != 'info':
-            print('  ', d)
+    if args.template:
+        # zxasm writes the source into the template; the snapshot it writes is loaded as it is
+        injected = os.path.abspath(args.source) + '.injected' + os.path.splitext(args.disk)[1]
+        run = subprocess.run([args.zxasm, 'inject', args.source, args.disk, '-o', injected, '--from', args.from_,
+                              '--title', 'INJECTED'], capture_output=True, text=True)
+        print('zxasm inject:', run.stderr.strip().splitlines()[-1] if run.stderr.strip() else run.returncode)
+        if run.returncode != 0:
+            raise SystemExit(run.stderr)
+        emu.stop_recording()
+        reply = emu.post('/snapshot/load', {'path': injected})
+        if not reply.get('ok', True) or reply.get('error'):
+            raise SystemExit(f'snapshot load: {reply}')
+        emu.ensure_running()
+        time.sleep(1)
+    else:
+        emu.insert_disk(os.path.abspath(args.disk))
+        emu.run_trdos('alasm64')
+        time.sleep(2)                                  # the memory test, then the A> prompt
+        with open(args.source, encoding='utf-8') as f:
+            text = f.read()
+        body = {'text': text, 'from': args.from_, 'assembler': 'alasm-5.09', 'title': 'INJECTED'}
+        reply = emu.post('/asm/sync/inject', body)
+        print('inject:', {k: reply.get(k) for k in ('assembler', 'name', 'page', 'bytes', 'lines', 'previous')})
+        for d in reply.get('diagnostics', []):
+            if d.get('severity') != 'info':
+                print('  ', d)
     emu.type('a')                                  # ASSEMBLE
     emu.tap('enter')
     time.sleep(args.wait)
@@ -57,7 +76,9 @@ def alasm509(emu, args, expected):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('assembler', choices=['alasm509'])
-    parser.add_argument('disk')
+    parser.add_argument('disk', help='the assembler disk, or with --template an idle template snapshot')
+    parser.add_argument('--template', action='store_true', help='inject with zxasm into the template snapshot instead (Z1)')
+    parser.add_argument('--zxasm', default=os.environ.get('ZXASM', 'zxasm'))
     parser.add_argument('source')
     parser.add_argument('address', type=lambda v: int(v, 0))
     parser.add_argument('--from', dest='from_', default='sjasmplus', help='the source\'s dialect (default sjasmplus)')

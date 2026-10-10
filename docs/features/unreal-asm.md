@@ -163,6 +163,13 @@ or any dialect the converter reads) into the running ALASM as its own text, whil
 ALASM then assembles it as if you had typed it. `zxasm convert --to alasm` gives the same text as a file. More
 assemblers are planned ([asm-synchronizer](../inprogress/2026-10-05-unreal-asm/asm-synchronizer.md)).
 
+Snapshots and disks work both ways without the emulator. `zxasm inject main.asm alasm-5.09.szx -o work.szx` puts
+the source into a snapshot of ALASM waiting at its prompt (a ready template ships with the library's test data);
+load `work.szx` and assemble. `zxasm inject main.asm disk.trd --assembler alasm-5.09` writes it as ALASM's file onto
+a TR-DOS disk or an SCL archive. `zxasm probe work.szx` says which assembler a snapshot holds, and
+`zxasm extract work.szx --to sjasmplus` takes its text out again. In the emulator, the `asm sync` verbs take
+`--snapshot` for the same on a file.
+
 ## Speed
 
 `unreal-asm-benchmarks` (configure with `-DBENCHMARKS=ON`, build the target) measures the codecs, the conversion and

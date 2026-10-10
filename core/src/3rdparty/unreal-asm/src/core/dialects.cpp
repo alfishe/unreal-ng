@@ -205,6 +205,52 @@ ConvertResult Convert(const SourceDocument& source, std::string_view targetDiale
     result.ok = !HasErrors(result.diagnostics);
     return result;
 }
+WriteAsResult WriteAs(const SourceDocument& source, std::string_view codecId, const std::string& version, const std::string& name)
+{
+    WriteAsResult result;
+    const ISourceCodec* codec = CodecRegistry::Builtin().Find(codecId);
+    if (!codec)
+    {
+        result.error = "no codec " + std::string(codecId);
+        return result;
+    }
+    const std::string dialect = codec->Info().dialect.empty() ? std::string(codecId) : codec->Info().dialect;
+    SourceDocument document = source;
+    if (document.dialect != dialect)
+    {
+        if (!DialectRegistry::Builtin().Backend(dialect))
+        {
+            result.error = "no backend writes " + codec->Info().title + "'s dialect (" + dialect + ") yet";
+            return result;
+        }
+        BackendOptions options;
+        options.targetVersion = version;
+        ConvertResult converted = Convert(source, dialect, options);
+        result.diagnostics = std::move(converted.diagnostics);
+        if (!converted.ok)
+        {
+            result.error = "the conversion from " + source.dialect + " to " + dialect + " failed";
+            return result;
+        }
+        document = std::move(converted.document);
+    }
+    document.name = (name.empty() ? source.name : name).substr(0, 8);
+    document.format.clear();
+    EncodeOptions encode;
+    encode.subversion = version;
+    EncodeResult encoded = codec->Encode(document, encode);
+    result.diagnostics.insert(result.diagnostics.end(), encoded.diagnostics.begin(), encoded.diagnostics.end());
+    if (!encoded.ok)
+    {
+        result.error = codec->Info().title + "'s format cannot hold this text";
+        return result;
+    }
+    result.bytes = std::move(encoded.bytes);
+    result.document = std::move(document);
+    result.ok = true;
+    return result;
+}
+
 namespace
 {
 /// ALASM wildcards: * any run of characters, ? one character

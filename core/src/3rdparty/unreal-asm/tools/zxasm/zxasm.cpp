@@ -5,7 +5,7 @@
 //   zxasm encoding <file>                           code page ranking, line ends, text score
 //   zxasm decode   <file> [-o out] [--codec id] [--version v] [--codepage cp]
 //   zxasm encode   <file> --codec id [--version v] [-o out] [--codepage cp] [--line-end lf|crlf|cr]
-//   zxasm files    <image.trd|.tap|.tzx>             list the files of a TR-DOS disk or tape image
+//   zxasm files    <image.trd|.scl|.tap|.tzx>        list the files of a TR-DOS disk, an SCL archive or a tape image
 //   zxasm convert  <file> --to dialect [-o out] [--from dialect]  convert a source to another dialect (alasm ->
 //                                                   sjasmplus, ...); --from names the dialect of a plain text file
 //   zxasm convert  <image> --to dialect -o dir        the whole project (TRD, TAP or TZX): every source of the image converted together
@@ -19,9 +19,23 @@
 //                                                   is warned about, since its string would build other bytes
 //   zxasm check    <file> [--codec id] [--version v] [--show]  decode, encode back: byte-exact? how many lines the
 //                                                   canonical tokenizer alone reproduces (--show lists the others)
+//   zxasm probe    <snapshot.sna|.z80|.szx>          the assemblers whose text is in the snapshot's memory
+//   zxasm extract  <snapshot> [--assembler id] [--as text|file] [--to dialect] [-o out]  the text an assembler holds
+//                                                   in a snapshot: UTF-8 text, its own file (-o *.$X: hobeta), or
+//                                                   converted to a dialect
+//   zxasm inject   <source> <target> [-o out] [--assembler id | --codec id [--version v]] [--from dialect]
+//                  [--title NAME] [--name NAME.T] [--force]
+//                                                   a source (any dialect with a frontend; a plain text is sjasmplus
+//                                                   unless --from) written as an assembler's own file into the target:
+//                                                   a snapshot (the text of the assembler waiting at its prompt there;
+//                                                   --assembler when the probe finds none or two), a TR-DOS image or
+//                                                   SCL archive (a file NAME.T, made when missing; --assembler or
+//                                                   --codec says the format), or a hobeta file *.$X. The target is
+//                                                   rewritten unless -o names another file. The source may be a file
+//                                                   in an image: <image> --file NAME[.T]
 //
 // Containers: a hobeta file (NAME.$A, ...) is unwrapped and its catalog fields used for detection; a file inside a
-// TR-DOS image is picked with --file NAME (or NAME.T for the type letter T). An encode output named *.$X is written
+// TR-DOS image, an SCL archive or a tape is picked with --file NAME (or NAME.T for the type letter T). An encode output named *.$X is written
 // as a hobeta file of type X.
 //
 // --version: decode reads the file as that version of its format (default: detected, printed on stderr); encode writes
@@ -40,6 +54,7 @@
 #include <string>
 #include <vector>
 
+#include "unrealasm/sync/reader.h"
 #include "unrealasm/unrealasm.h"
 
 using namespace unrealasm;
@@ -53,7 +68,10 @@ int Usage()
                  "       encode <file> --codec id [--version v] [-o out] [--codepage cp] [--line-end lf|crlf|cr] |\n"
                  "       check <file> [--codec id] [--version v] |\n"
                  "       convert <file|dir|image> --to dialect [--from dialect] [--z80n] [--out-codepage cp] [-o out]   (--z80n: ZX Spectrum Next sources)\n"
-                 "       files <image.trd|.tap|.tzx> (decode/detect/encoding/check take --file NAME[.T] for a file in an image)\n";
+                 "       files <image.trd|.scl|.tap|.tzx> (decode/detect/encoding/check take --file NAME[.T] for a file in an image) |\n"
+                 "       probe <snapshot.sna|.z80|.szx> | extract <snapshot> [--assembler id] [--as text|file] [--to dialect] [-o out] |\n"
+                 "       inject <source> <snapshot|image.trd|.scl|file.$X> [-o out] [--assembler id | --codec id [--version v]]\n"
+                 "              [--from dialect] [--title NAME] [--name NAME.T] [--force]\n";
     return 2;
 }
 
@@ -90,7 +108,9 @@ void PrintDiagnostics(const Diagnostics& diagnostics)
 struct Args
 {
     std::string command, file, output, codec, codePage, outCodePage, lineEnd, inner, version, to, from;
+    std::string target, assembler, title, name, as;   // inject / extract
     bool show = false;
+    bool force = false;
     bool z80n = false;   // convert: the sources are for the ZX Spectrum Next (sjasmplus --zxnext)
 };
 
@@ -118,6 +138,17 @@ bool Parse(int argc, char** argv, Args& args)
             args.show = true;
             continue;
         }
+        if (a == "--force")
+        {
+            args.force = true;
+            continue;
+        }
+        if (a == "--assembler" || a == "--title" || a == "--name" || a == "--as")
+        {
+            if (!value(a == "--assembler" ? args.assembler : a == "--title" ? args.title : a == "--name" ? args.name : args.as))
+                return false;
+            continue;
+        }
         if (a == "-o" ? !value(args.output) : a == "--codec" ? !value(args.codec)
                                           : a == "--codepage" ? !value(args.codePage)
                                           : a == "--out-codepage" ? !value(args.outCodePage)
@@ -129,9 +160,12 @@ bool Parse(int argc, char** argv, Args& args)
             return false;
         if (a != "-o" && a != "--codec" && a != "--codepage" && a != "--out-codepage" && a != "--line-end" && a != "--file" && a != "--version" && a != "--to" && a != "--from")
         {
-            if (!args.file.empty())
+            if (args.file.empty())
+                args.file = a;
+            else if (args.target.empty() && args.command == "inject")
+                args.target = a;
+            else
                 return false;
-            args.file = a;
         }
     }
     return true;
@@ -167,12 +201,14 @@ uint16_t CatalogStart(const std::string& codec, const std::string& version, char
 /// An image of files: a TR-DOS disk (.trd) or a tape (.tap / .tzx)
 bool IsImage(const std::string& extension)
 {
-    return extension == "trd" || extension == "tap" || extension == "tzx";
+    return extension == "trd" || extension == "scl" || extension == "tap" || extension == "tzx";
 }
 
 bool ReadImage(const std::string& extension, std::span<const uint8_t> bytes, std::vector<containers::TrdosFile>& files, std::string& error)
 {
-    return extension == "trd" ? containers::ReadTrd(bytes, files, error) : containers::ReadTape(bytes, files, error);
+    return extension == "trd"   ? containers::ReadTrd(bytes, files, error)
+           : extension == "scl" ? containers::ReadScl(bytes, files, error)
+                                : containers::ReadTape(bytes, files, error);
 }
 
 /// Hobeta / TR-DOS image / tape image -> the file's bytes and catalog hints; false with a message when the container is broken or
@@ -592,6 +628,312 @@ int ConvertDirectory(const Args& args, const CodecRegistry& registry)
     std::cerr << converted.files.size() << " source(s) converted to " << args.output << "\n";
     return converted.ok ? 0 : 1;
 }
+
+// Snapshots and part B ---------------------------------------------------------------------------------------------
+
+std::string Stem(const std::string& path)
+{
+    const size_t slash = path.find_last_of("/\\");
+    std::string name = path.substr(slash == std::string::npos ? 0 : slash + 1);
+    const size_t dot = name.find('.');
+    return dot == std::string::npos ? name : name.substr(0, dot);
+}
+
+/// The snapshot `bytes` of `path` holds; false after a message
+bool OpenSnapshot(const std::string& path, const std::vector<uint8_t>& bytes, containers::Snapshot& out)
+{
+    std::string error;
+    if (containers::ReadSnapshot(bytes, Extension(path), out, error))
+        return true;
+    std::cerr << "zxasm: " << path << ": " << error << "\n";
+    return false;
+}
+
+/// The assembler --assembler names, else the one the probe finds best; nullptr after a message
+const sync::SyncDescriptor* ChooseAssembler(const sync::MachineView& view, const std::string& wanted)
+{
+    if (!wanted.empty())
+    {
+        if (const sync::SyncDescriptor* d = sync::FindDescriptor(wanted))
+            return d;
+        std::cerr << "zxasm: no assembler " << wanted << " (known:";
+        for (const sync::SyncDescriptor& d : sync::Descriptors())
+            std::cerr << " " << d.id;
+        std::cerr << ")\n";
+        return nullptr;
+    }
+    const std::vector<sync::ProbeCandidate> candidates = sync::Probe(view);
+    if (candidates.empty())
+    {
+        std::cerr << "zxasm: no known assembler in the snapshot's memory (--assembler names one)\n";
+        return nullptr;
+    }
+    if (candidates.size() > 1 && candidates[1].score == candidates[0].score)
+    {
+        std::cerr << "zxasm: " << candidates[0].descriptor->id << " and " << candidates[1].descriptor->id
+                  << " identify alike: pick one with --assembler\n";
+        return nullptr;
+    }
+    return candidates[0].descriptor;
+}
+
+/// A TR-DOS file of the assembler's format: the name and type the user gave (NAME.T), else `name` and `type`
+containers::TrdosFile CatalogFile(const std::string& spec, const std::string& name, char type, const std::string& codec,
+                                  const std::string& version, const std::vector<uint8_t>& bytes)
+{
+    containers::TrdosFile file;
+    const size_t dot = spec.rfind('.');
+    file.name = (spec.empty() ? name : dot == std::string::npos ? spec : spec.substr(0, dot)).substr(0, 8);
+    file.name.resize(8, ' ');
+    file.type = !spec.empty() && dot != std::string::npos && dot + 2 == spec.size() ? spec[dot + 1] : type;
+    file.start = CatalogStart(codec, version, file.type);
+    // XAS keeps 0 in the length field (it reads whole sectors): its file list skips other files
+    file.length = codec == "xas" ? 0 : static_cast<uint16_t>(bytes.size());
+    file.data = bytes;
+    return file;
+}
+
+/// zxasm probe <snapshot>
+int ProbeSnapshot(const Args& args, const std::vector<uint8_t>& bytes)
+{
+    containers::Snapshot snapshot;
+    if (!OpenSnapshot(args.file, bytes, snapshot))
+        return 1;
+    const sync::MachineView view = sync::ViewOf(snapshot);
+    std::cout << containers::SnapshotFormatName(snapshot.format) << "\t" << snapshot.machine << "\t" << snapshot.pages.size()
+              << " RAM page(s)\n";
+    const std::vector<sync::ProbeCandidate> candidates = sync::Probe(view);
+    for (const sync::ProbeCandidate& c : candidates)
+    {
+        const sync::SyncText text = sync::ReadText(view, *c.descriptor);
+        std::string why;
+        const bool idle = sync::Idle(view, *c.descriptor, why);
+        std::cout << c.descriptor->id << "\t" << c.score << "\t" << (text.ok ? text.name + ", " + std::to_string(text.file.size()) + " bytes" : text.state)
+                  << "\t" << (idle ? "idle" : "busy: " + why) << "\n";
+    }
+    return candidates.empty() ? 1 : 0;
+}
+
+/// zxasm extract <snapshot> [--assembler id] [--as text|file] [--to dialect] [-o out]
+int ExtractSnapshot(const Args& args, const std::vector<uint8_t>& bytes, const CodecRegistry& registry)
+{
+    containers::Snapshot snapshot;
+    if (!OpenSnapshot(args.file, bytes, snapshot))
+        return 1;
+    const sync::MachineView view = sync::ViewOf(snapshot);
+    const sync::SyncDescriptor* d = ChooseAssembler(view, args.assembler);
+    if (!d)
+        return 1;
+    const sync::SyncText text = sync::ReadText(view, *d);
+    PrintDiagnostics(text.diagnostics);
+    if (!text.ok)
+    {
+        std::cerr << "zxasm: the text of " << d->title << " does not read (" << text.state << ")\n";
+        return 1;
+    }
+    std::vector<uint8_t> out;
+    if (args.as == "file")
+    {
+        out = text.file;
+        const std::string outExtension = Extension(args.output);
+        if (outExtension.size() == 2 && outExtension[0] == '$')
+        {
+            containers::TrdosFile file = CatalogFile("", text.name, outExtension[1], d->codec, d->version, text.file);
+            out = containers::WriteHobeta(file);
+        }
+    }
+    else if (args.as.empty() || args.as == "text")
+    {
+        const ISourceCodec* codec = registry.Find(d->codec);
+        DecodeOptions options;
+        options.subversion = d->version;
+        DecodeResult decoded = codec->Decode(text.file, options);
+        PrintDiagnostics(decoded.diagnostics);
+        SourceDocument document = std::move(decoded.document);
+        if (!args.to.empty())
+        {
+            const ConvertResult converted = Convert(document, args.to);
+            PrintDiagnostics(converted.diagnostics);
+            if (!converted.ok)
+                return 1;
+            document = converted.document;
+        }
+        if (!args.to.empty() && registry.Find(args.to))
+            out = registry.Find(args.to)->Encode(document, {}).bytes;
+        else
+        {
+            std::string plain = document.Text();
+            if (!document.lines.empty())
+                plain.push_back('\n');
+            out.assign(plain.begin(), plain.end());
+        }
+    }
+    else
+    {
+        std::cerr << "zxasm: --as is text or file\n";
+        return 2;
+    }
+    std::cerr << d->id << ": " << text.name << ", " << text.file.size() << " bytes in page " << text.page
+              << (text.changed ? " (changed since saved)" : "") << "\n";
+    if (args.output.empty())
+        std::cout.write(reinterpret_cast<const char*>(out.data()), static_cast<std::streamsize>(out.size()));
+    else if (!WriteFile(args.output, out))
+    {
+        std::cerr << "zxasm: cannot write " << args.output << "\n";
+        return 1;
+    }
+    return 0;
+}
+
+/// zxasm inject <source> <target>: the source (already unwrapped into `bytes` with its catalog `hints`) as an
+/// assembler's file in a snapshot, a disk image or a hobeta file
+int Inject(const Args& args, const std::vector<uint8_t>& bytes, const CatalogHints& hints, const CodecRegistry& registry)
+{
+    if (args.target.empty())
+        return Usage();
+    // The source: a tokenized format by detection, else a text in --from's dialect (sjasmplus by default)
+    SourceDocument document;
+    const DetectResult detected = registry.Detect(bytes, hints);
+    if (detected.chosen && detected.chosen->Info().id != "text")
+    {
+        DecodeOptions options;
+        options.catalog = hints;
+        DecodeResult decoded = detected.chosen->Decode(bytes, options);
+        PrintDiagnostics(decoded.diagnostics);
+        document = std::move(decoded.document);
+    }
+    else
+    {
+        document = SourceDocument::FromText(std::string(bytes.begin(), bytes.end()), args.from.empty() ? "sjasmplus" : args.from);
+        for (SourceLine& line : document.lines)
+            if (!line.text.empty() && line.text.back() == '\r')
+                line.text.pop_back();
+    }
+    if (!args.from.empty())
+        document.dialect = args.from;
+    document.name = !hints.name.empty() ? hints.name : Stem(args.file);
+    for (char& c : document.name)
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+    const std::string targetExtension = Lower(Extension(args.target));
+    const std::string output = args.output.empty() ? args.target : args.output;
+    std::vector<uint8_t> target;
+    const bool exists = ReadFile(args.target, target);
+
+    if (containers::IsSnapshotExtension(targetExtension))
+    {
+        containers::Snapshot snapshot;
+        if (!exists)
+        {
+            std::cerr << "zxasm: cannot read " << args.target << "\n";
+            return 1;
+        }
+        if (!OpenSnapshot(args.target, target, snapshot))
+            return 1;
+        const sync::MachineView view = sync::ViewOf(snapshot);
+        const sync::SyncDescriptor* d = ChooseAssembler(view, args.assembler);
+        if (!d)
+            return 1;
+        const sync::SyncText current = sync::ReadText(view, *d);
+        const std::string title = !args.title.empty() ? args.title : current.ok && !current.name.empty() ? current.name : document.name;
+        const WriteAsResult written = WriteAs(document, d->codec, d->version, title);
+        PrintDiagnostics(written.diagnostics);
+        if (!written.ok)
+        {
+            std::cerr << "zxasm: " << written.error << "\n";
+            return 1;
+        }
+        sync::InjectOptions options;
+        options.force = args.force;
+        std::vector<uint8_t> out;
+        const sync::InjectPlan plan = sync::InjectIntoSnapshot(snapshot, *d, written.bytes, options, out);
+        if (!plan.ok)
+        {
+            std::cerr << "zxasm: " << plan.error << "\n";
+            return 1;
+        }
+        if (!WriteFile(output, out))
+        {
+            std::cerr << "zxasm: cannot write " << output << "\n";
+            return 1;
+        }
+        std::cerr << d->id << ": " << written.document.name << ", " << written.document.lines.size() << " line(s), "
+                  << written.bytes.size() << " bytes into page " << plan.page
+                  << (plan.previous.ok ? " (replaced " + plan.previous.name + ")" : std::string()) << " -> " << output << "\n";
+        return 0;
+    }
+
+    // A file of the format: the assembler's (its codec, version and TR-DOS type) or a codec's
+    std::string codec = args.codec, version = args.version;
+    char type = 'C';
+    if (!args.assembler.empty())
+    {
+        const sync::SyncDescriptor* d = sync::FindDescriptor(args.assembler);
+        if (!d)
+        {
+            ChooseAssembler(sync::MachineView{}, args.assembler);   // says which ones are known
+            return 1;
+        }
+        codec = d->codec;
+        version = d->version;
+        type = d->extension.empty() ? 'C' : d->extension[0];
+    }
+    if (codec.empty())
+    {
+        std::cerr << "zxasm: an inject into a disk or a file needs --assembler or --codec\n";
+        return 2;
+    }
+    const std::string name = !args.title.empty() ? args.title : document.name;
+    const WriteAsResult written = WriteAs(document, codec, version, name);
+    PrintDiagnostics(written.diagnostics);
+    if (!written.ok)
+    {
+        std::cerr << "zxasm: " << written.error << "\n";
+        return 1;
+    }
+    const containers::TrdosFile file = CatalogFile(args.name, written.document.name, type, codec, version, written.bytes);
+    std::vector<uint8_t> out;
+    std::string error;
+    if (targetExtension == "trd")
+    {
+        out = exists ? target : containers::NewTrd();
+        if (!containers::PutTrdFile(out, file, error))
+        {
+            std::cerr << "zxasm: " << args.target << ": " << error << "\n";
+            return 1;
+        }
+    }
+    else if (targetExtension == "scl")
+    {
+        std::vector<containers::TrdosFile> files;
+        if (exists && !containers::ReadScl(target, files, error))
+        {
+            std::cerr << "zxasm: " << args.target << ": " << error << "\n";
+            return 1;
+        }
+        containers::PutFile(files, file);
+        out = containers::WriteScl(files);
+    }
+    else if (targetExtension.size() == 2 && targetExtension[0] == '$')
+    {
+        containers::TrdosFile hobeta = file;
+        hobeta.type = Extension(args.target)[1];
+        out = containers::WriteHobeta(hobeta);
+    }
+    else
+    {
+        std::cerr << "zxasm: inject writes into a snapshot (.sna .z80 .szx), a disk (.trd .scl) or a hobeta file (.$X)\n";
+        return 2;
+    }
+    if (!WriteFile(output, out))
+    {
+        std::cerr << "zxasm: cannot write " << output << "\n";
+        return 1;
+    }
+    std::cerr << codec << (version.empty() ? "" : " " + version) << ": " << file.TrimmedName() << "." << file.type << ", "
+              << written.document.lines.size() << " line(s), " << written.bytes.size() << " bytes -> " << output << "\n";
+    return 0;
+}
 }  // namespace
 
 int main(int argc, char** argv)
@@ -623,6 +965,18 @@ int main(int argc, char** argv)
     }
     CatalogHints hints;
     hints.extension = Extension(args.file);
+    if (args.command == "probe")
+        return ProbeSnapshot(args, bytes);
+    if (args.command == "extract" && containers::IsSnapshotExtension(Extension(args.file)))
+        return ExtractSnapshot(args, bytes, registry);
+    if (args.command == "inject")
+    {
+        if (!Unwrap(args, bytes, hints))
+            return 1;
+        return Inject(args, bytes, hints, registry);
+    }
+    if (args.command == "extract")
+        args.command = "decode";   // a file in an image or a container: what decode does
     if (args.command == "files")
     {
         std::vector<containers::TrdosFile> files;
