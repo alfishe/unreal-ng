@@ -213,6 +213,24 @@ TEST_F(NextSkeleton_Test, NextRegInstructionMapsASlot)
     EXPECT_EQ(_memory->RAMPageAddress(34)[0], 0x5A);
 }
 
+// Next3D Elite Wireframe draws into Layer 2 through MMU slot 0 (NEXTREG #50 = #12 + y/32, then writes at #0000-#1FFF): a RAM page in slot 0
+// takes writes like any other slot (the ROM there is write-protected only while the slot holds #FF)
+TEST_F(NextSkeleton_Test, RamPageInMmuSlotZeroTakesTheCpusWrites)
+{
+    Load(0x8000, {0xED, 0x91, 0x50, 0x14,   // NEXTREG #50,#14   slot 0 -> 8K page #14 (bank 10, low half)
+                  0x3E, 0x5A,               // LD A,#5A
+                  0x32, 0x00, 0x01,         // LD (#0100),A
+                  0xED, 0x91, 0x50, 0xFF,   // NEXTREG #50,#FF   the ROM back
+                  0x3A, 0x00, 0x01});       // LD A,(#0100)  the ROM's byte, not #5A
+    _z80->pc = 0x8000;
+    for (int i = 0; i < 4; i++)
+        _z80->EngineStep();
+    EXPECT_EQ(_memory->RAMPageAddress(10)[0x100], 0x5A) << "the byte landed in the page";
+    _z80->EngineStep();
+    _z80->EngineStep();
+    EXPECT_NE(_z80->a, 0x5A) << "with #FF in slot 0 the ROM is back";
+}
+
 TEST_F(NextSkeleton_Test, Z80NInstructionRunsOnTheMachine)
 {
     Load(0x8000, {0x11, 0x05, 0x03,   // LD DE,#0305
