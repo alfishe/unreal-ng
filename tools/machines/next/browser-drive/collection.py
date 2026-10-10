@@ -187,12 +187,12 @@ def main():
         regs = machine.call('/%s/registers' % machine.id)
         # A BASIC program waiting for a key sits in the same key-wait loop (#0C8F) as the Browser does, so for .bas the loop says nothing:
         # those titles are judged by what is on the screen (NextZXOS grey paper) after the start keys
-        is_basic = parts[-1].lower().endswith('.bas')
+        is_basic = parts[-1].lower().endswith(('.bas', '.tap'))  # both can sit in the ROM's key-wait loop while running
         idle = (not is_basic) and regs['interrupt']['halted'] and regs['special']['pc'] == 0x0C8F
         # The Browser only LOADS a BASIC program saved without an autostart line: the editor shows the listing and nothing runs. Type RUN
         # (the letters r u n, then ENTER: the editor takes plain text) - loading is not enough
         ran_by_hand = False
-        if is_basic:
+        if is_basic and parts[-1].lower().endswith('.bas'):
             probe = json.load(urllib.request.urlopen('%s/%s/capture/screen' % (machine.base, machine.id)))
             shot = Image.open(io.BytesIO(base64.b64decode(probe['data']))).convert('RGB')
             bar = shot.crop((64, 400, 576, 416))
