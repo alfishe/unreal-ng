@@ -1279,44 +1279,14 @@ std::string GDBSession::handleWriteMemory(const std::string& params)
         }
     }
 
-    std::string data = params.substr(colonPos + 1);
-    Memory* memory = _context->pMemory;
-
     // Decode hex data
-    auto bytes = GDBPacket::hexToBytes(data);
+    auto bytes = GDBPacket::hexToBytes(params.substr(colonPos + 1));
     if (bytes.size() != *len)
     {
         return "E01";
     }
 
-    // Check for physical memory access (0x01PPAAAA format)
-    if ((*addr & 0xFF000000) == 0x01000000)
-    {
-        uint8_t page = static_cast<uint8_t>((*addr >> 16) & 0xFF);
-        uint16_t offset = static_cast<uint16_t>(*addr & 0x3FFF);
-
-        uint8_t* pageAddr = memory->RAMPageAddress(page);
-        if (!pageAddr)
-        {
-            return "E01";  // Invalid page
-        }
-
-        for (size_t i = 0; i < bytes.size(); i++)
-        {
-            uint16_t pageOffset = static_cast<uint16_t>((offset + i) & 0x3FFF);
-            pageAddr[pageOffset] = bytes[i];
-        }
-    }
-    else
-    {
-        for (size_t i = 0; i < bytes.size(); i++)
-        {
-            uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
-            memory->DirectWriteToZ80Memory(address, bytes[i]);
-        }
-    }
-
-    return "OK";
+    return GDBTargetZ80::writeMemory(_context, *addr, bytes) ? "OK" : "E01";
 }
 
 std::string GDBSession::handleSetBreakpoint(const std::string& params)
