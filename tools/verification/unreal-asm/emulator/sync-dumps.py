@@ -17,6 +17,7 @@ save the text itself and keep the file. The synchronizer's reader must give that
     sync-dumps.py zeus <ZEUS.TAP | zeus.$c | ZEUS_GG.SCL | ZEUS72ZK.SCL> <out-dir> --build 1983 --model 48K --source z.bin --tag zeus1983
     sync-dumps.py zeus <PRIMUS29 disk, the source as PRI.DOC> <out-dir> --build primus --source - --tag primus29
     sync-dumps.py lasergenius <LG_1_04 disk with TEST.C> <out-dir> --source TEST --save-as SAVE --tag lg104
+    sync-dumps.py prometheus <prometheus-48.tap> <out-dir> --model 48K --tag prom48   # the expected file from SAVE's ROM call
     sync-dumps.py masm <disk with t1.a> <out-dir> --boot m2 --source t1 --menu-save --tag masm20   # MASM 2.0 (3.0: TSM)
     sync-dumps.py masmdemo <SpFon_15.Trd> <out-dir> --source T1 --tag masm10   # MASM 1.0 demo: the text typed in
     sync-dumps.py xas <disk-with-PROBE.X> <out-dir> --boot NAME --list-keys right[,down...] --tag TAG
@@ -565,6 +566,65 @@ def lasergenius(emu, args):
     finish(args.out, f'{args.tag}-edited', name, saved(emu, args.save_as, 'C'))
 
 
+def prometheus(emu, args):
+    """PROMETHEUS 48K from its tape (--disk, a TAP; installed at 24000): four lines typed in (the edited case), SAVE
+    (SS+S :saved), then a fifth line being typed (out of the text: the typing case keeps the saved file). The expected file is what SAVE hands the ROM: an execution
+    breakpoint at #04C6 (SA-BYTES) gives the records' IX / DE; the checksum byte, FF and the symbol table up to the
+    code-end operand follow (research-prometheus.md)"""
+    def wait_tape():
+        for _ in range(240):
+            time.sleep(0.5)
+            if emu.get('/tape/info').get('state') in ('ended', 'stopped'):
+                return
+
+    emu.post('/tape/load', {'path': args.disk})
+    emu.post('/basic/run', {'command': 'LOAD ""'})
+    emu.post('/tape/play')
+    wait_tape()
+    time.sleep(2)
+    emu.tap('enter')                           # the installer: run the assembler
+    time.sleep(3)
+    emu.post('/tape/eject')
+    for line in ('start ld a,1', ' ld b,2', 'loop djnz loop', ' ret'):
+        emu.type(line)
+        emu.tap('enter')
+        time.sleep(0.5)
+    pages = [0, 2, 5]
+    dump(emu, args.out, f'{args.tag}-edited', pages, 'SAVED.C', None, {'editor': True, 'typing': False})
+    emu._request('PUT', emu.base + '/debugmode', {'enabled': True})
+    emu._request('PUT', emu.base + '/feature/breakpoints', {'enabled': True})
+    emu.post('/breakpoints', {'type': 'exec', 'address': '0x04C6'})
+    emu.post('/keyboard/combo', {'keys': ['ss', 's'], 'frames': 4})
+    time.sleep(0.5)
+    emu.type(':saved')
+    emu.tap('enter')
+    time.sleep(1.5)
+    emu.tap('space')                           # "Start tape": any key
+    blocks = []
+    for _ in range(2):                         # the header (DE = 17), then the records
+        if emu.get('/debug/wait?timeout_ms=30000').get('state') != 'paused':
+            raise SystemExit('SAVE did not reach the ROM')
+        r = emu.get('/registers')
+        blocks.append((r['index']['ix'], r['main']['de']))
+        if len(blocks) < 2:
+            emu.post('/resume')
+            time.sleep(0.3)
+    ix, de = blocks[1]
+    records = emu.read(ix, de)
+    word = lambda a: emu.read(a, 2)[0] | emu.read(a, 2)[1] << 8
+    table, table_end = word(args.prometheus_table), word(args.prometheus_end)
+    check = 0xFF
+    for b in records:
+        check ^= b
+    expected = records + bytes([check, 0xFF]) + emu.read(table, table_end - table)
+    finish(args.out, f'{args.tag}-edited', 'SAVED.C', expected)
+    emu._request('DELETE', emu.base + '/breakpoints')
+    emu.post('/resume')
+    time.sleep(8)                              # the save plays out to no tape
+    emu.type(' nop')
+    dump(emu, args.out, f'{args.tag}-typing', pages, 'SAVED.C', expected, {'editor': True, 'typing': True})
+
+
 def tasm_other(emu, args):
     """TASM without a line count (4.0 ...): W names the work file (--as-typed: the keyboard is not inverted), E edits,
     Extend Q leaves the editor, S saves. A line being typed is not in the text; the edited case is taken after Enter
@@ -694,7 +754,7 @@ def tasm412(emu, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'masmdemo', 'tasm', 'gens', 'genstape', 'zeus', 'lasergenius'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'masmdemo', 'tasm', 'gens', 'genstape', 'zeus', 'lasergenius', 'prometheus'])
     parser.add_argument('disk')
     parser.add_argument('out')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
@@ -707,6 +767,8 @@ def main():
     parser.add_argument('--big', help='zasm: a long text (over #C000) for a loaded case')
     parser.add_argument('--big-disk', help='zasm: the disk for the long text (default: the same)')
     parser.add_argument('--big-type', help='zasm: the long text\'s TR-DOS type (default: --type)')
+    parser.add_argument('--prometheus-table', type=lambda v: int(v, 0), default=0x87D7, help='prometheus: the symbol-table operand')
+    parser.add_argument('--prometheus-end', type=lambda v: int(v, 0), default=0x881A, help='prometheus: the code-end operand')
     parser.add_argument('--build', default='1983', help='zeus: 1983 | 1.1 | gg | 7e | primus')
     parser.add_argument('--at', type=int, default=26000, help='genstape: where the code goes')
     parser.add_argument('--code-length', type=int, default=10880, help='genstape: the code block\'s length')
@@ -739,6 +801,8 @@ def main():
             zasm(emu, args)
         elif args.assembler == 'masm':
             masm(emu, args)
+        elif args.assembler == 'prometheus':
+            prometheus(emu, args)
         elif args.assembler == 'lasergenius':
             lasergenius(emu, args)
         elif args.assembler == 'zeus':

@@ -29,6 +29,18 @@ The installer shows `Monitor:Yes  Instalation address:24000_` and `Press ENTER t
 then occupies about 24000-42400; the editor's status line `I 39992 65535` gives INSERT / OVERWRITE, the end of the
 source and table, and U-TOP. Put assembled code above the end (the checks used 60000).
 
+## The text in memory
+
+From the reconstructed source (SAVE in `src/prometheus.asm`), for the 48K tape edition at 24000: the records from
+`sourceBufferAccessLine` (`#9C28`) to twelve bytes below the symbol table, whose address is the operand at `#87D7`;
+the table runs to the operand at `#881A`. SAVE writes the records, `FF` XOR the records, `FF`, then the table: the
+format `zxasm --codec prometheus` reads. `LOAD` stages a save just below U-TOP before it inserts the lines: that copy
+is not the source. The asm-synchronizer reads it live (descriptor `prometheus-48`).
+
+SAVE goes to tape only (the TR-DOS adaptation's too). To get the bytes a SAVE writes without a tape: debug mode, the
+`breakpoints` feature, an execution breakpoint at `#04C6` (ROM SA-BYTES); the second stop (after the 17-byte header)
+has the records' start in `IX` and length in `DE` (`tools/verification/unreal-asm/emulator/sync-dumps.py prometheus`).
+
 ## Commands
 
 A command is SYMBOL SHIFT + its letter at the start of an empty input line (the word appears), then its parameter

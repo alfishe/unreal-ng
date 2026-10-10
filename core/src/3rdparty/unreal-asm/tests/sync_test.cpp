@@ -87,6 +87,7 @@ const Case kCases[] = {
     {"zasmx641-typing", "zasm-x64.1"}, {"zasmx641-edited", "zasm-x64.1"}, {"zasmx641-big", "zasm-x64.1"},
     {"zasm40x8-typing", "zasm-4.0x8"}, {"zasm40x8-edited", "zasm-4.0x8"}, {"zasm40x8-big", "zasm-4.0x8"},
     {"zasm4x64-typing", "zasm-4.x64"}, {"zasm4x64-edited", "zasm-4.x64"}, {"zasm4x64-big", "zasm-4.x64"},
+    {"prom48-edited", "prometheus-48"}, {"prom48-typing", "prometheus-48"},
     {"lg104-loaded", "lasergenius-1.04"}, {"lg104-typing", "lasergenius-1.04"}, {"lg104-edited", "lasergenius-1.04"},
     {"zeus1983-loaded", "zeus-1983"}, {"zeus1983-typing", "zeus-1983"},
     {"zeus11-loaded", "zeus-1.1"}, {"zeus11-typing", "zeus-1.1"},

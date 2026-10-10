@@ -327,6 +327,26 @@ SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
     if (p.upperPage >= 0)
         machine.windows[3] = p.upperPage;   // the text's upper part, whatever the program maps at #C000 just now
     const std::optional<uint16_t> start = p.startAt ? machine.Word(p.startAt) : std::optional<uint16_t>(p.fixedStart);
+    if (p.prometheusTableAt)
+    {
+        const std::optional<uint16_t> table = machine.Word(p.prometheusTableAt), tableEnd = machine.Word(p.prometheusEndAt);
+        if (!start || !table || !tableEnd || *table < *start + 12u || *tableEnd < *table)
+            return Inconsistent(text, "the source / symbol table pointers are not in order");
+        std::vector<uint8_t> records, symbols;
+        if (!machine.Read(*start, static_cast<size_t>(*table - 12 - *start), records) ||
+            !machine.Read(*table, static_cast<size_t>(*tableEnd - *table), symbols))
+            return Inconsistent(text, "the text lies in a page that was not copied");
+        uint8_t check = 0xFF;
+        for (const uint8_t b : records)
+            check ^= b;
+        text.file = std::move(records);
+        text.file.push_back(check);
+        text.file.push_back(0xFF);
+        text.file.insert(text.file.end(), symbols.begin(), symbols.end());
+        text.ok = true;
+        text.state = "ok";
+        return text;
+    }
     const std::optional<uint16_t> end = machine.Word(p.endAt);
     if (!start || !end)
         return Inconsistent(text, "the text pointers are not in the memory copied");
@@ -661,6 +681,28 @@ SyncDescriptor Gens(const std::string& id, const std::string& title, Signature i
     return d;
 }
 
+/// PROMETHEUS 48K tape edition installed at 24000 (asm-synchronizer.md §7.17, from its reconstructed source): the
+/// records from sourceBufferAccessLine (#9C28) to twelve bytes below the symbol table (operand of varcSymbolTablePt at
+/// #87D7), the table up to the operand of varcCodeEndPt (#881A); the save adds FF XOR the records and FF between
+SyncDescriptor Prometheus48()
+{
+    SyncDescriptor d;
+    d.id = "prometheus-48";
+    d.title = "PROMETHEUS 48K (Proxima, at 24000)";
+    d.codec = "prometheus";
+    d.version = "";
+    d.extension = "C";
+    d.identify = {{0x8000, std::string("\xC9\xF5\xD6\x34\x5F\x16\x37\xCD\xE6\x82\xC5\x21\xE4\x8A\xAF\x4F\x23\x0C\xBE\x20\xFB\x11\xD1\x8A", 24)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.fixedStart = 0x9C28;
+    d.linear.prometheusTableAt = 0x87D7;
+    d.linear.prometheusEndAt = 0x881A;
+    d.linear.upperPage = 0;
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 /// Laser Genius 1.04 Beta (asm-synchronizer.md §7.16): paragraphs from #7F2E to (#A973) (without the hash
 /// extensions; (#ADA1) with them), then FF FF; the disk file adds its #AF header. Identified by its title
 SyncDescriptor LaserGenius()
@@ -865,6 +907,7 @@ const std::vector<SyncDescriptor>& Descriptors()
         Zxasm310(),
         Zxasm30(),
         LaserGenius(),
+        Prometheus48(),
         Zeus("zeus-1983", "ZEUS 1983 (Crystal)", "1983", 0xE028,
              "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x20\x20\x20\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C"),
         Zeus("zeus-1.1", "ZEUS 1.1 beta (PHT)", "pht", 0xE020,
