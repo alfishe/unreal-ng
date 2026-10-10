@@ -127,6 +127,88 @@ documents it; MCP `emulator_manage list` passes it through.
 ### Requirements / Acceptance Criteria
 - [x] Checked live: named and unnamed instances in the list, the status, OpenAPI and MCP.
 
+## 🟢 [Fixed] #7: Removing an instance deadlocks the WebAPI and the GUI while the GUI follows the selection
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** fc9d535e5
+* **Found by:** WebAPI create / delete stress on an ASan unreal-qt: the app stopped answering; `sample` showed the deadlock.
+
+### Description
+`DELETE /emulator/{id}` (and the shutdown of all instances) hung the WebAPI and the GUI for good.
+
+### Root cause
+`RemoveEmulatorInstance` drained the message queue before taking `_emulatorsMutex`, but a message posted after the
+drain was dispatched while `Stop()` / `Release()` ran under the lock: `~RecordingManager` removing an observer waits
+for the dispatch in flight, whose handler (`MainWindow::handleEmulatorSelectionChanged` -> `GetEmulator`) waited for
+the lock.
+
+### Fix
+The instance leaves the map under the lock and is stopped and released after it; `ShutdownAllEmulators` the same way.
+
+### Requirements / Acceptance Criteria
+- [x] `EmulatorManager_Test.RemovalDoesNotHoldTheLockAHandlerWaitsFor`: deadlocked 3 / 3 before, 14 ms now.
+
+## 🟢 [Fixed] #8: A DDCB / FDCB instruction writes into the last created CPU (freed memory once it is removed)
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** c68ea8a24
+* **Found by:** the same stress (heap-use-after-free in `op_FD` on a removed instance's Z80, traced with address logs).
+
+### Description
+With several instances, `SET/RES/RL... n,(IX+d)` on any machine wrote a byte into the last created CPU; the undocumented
+forms changed that machine's registers. After that instance was removed the byte went into freed memory: heap
+corruption that surfaces later in an unrelated `free` (a likely cause of the original automation-agent crash).
+
+### Root cause
+`direct_registers[]` was one global table each `Z80` constructor refilled with its own registers.
+
+### Fix
+The destination register is taken from the running CPU; the table and the trash register are gone.
+
+### Requirements / Acceptance Criteria
+- [x] `Z80_Test.DdcbResultRegisterBelongsToTheCpuRunningIt`: wrong CPU's B changed before; right one now; clean under ASan.
+
+## 🟢 [Fixed] #9: Instances created from several automation threads at once can get the same id
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** b9291e6a7
+
+### Root cause
+`UUID::Generate` drew from one static `mt19937` shared by every thread without a lock.
+
+### Fix
+A generator per thread, seeded from `random_device` through a `seed_seq`.
+
+### Requirements / Acceptance Criteria
+- [x] `UUID_Test.ThreadsGeneratingAtOnceGetDistinctIds`: ~30 duplicates of 12000 before, none now.
+
+## 🟢 [Fixed] #10: The GUI reads a removed instance's context (menu update, FDC status widget)
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** 39770502f (menu), ea5696507 (FDC widget)
+* **Found by:** the same stress (heap-use-after-free on the GUI thread: `MenuManager::updateMenuStates` -> `FDD::getDiskImage`;
+  `FdcStatusWidget::seedFromContext` -> WD1793).
+
+### Fix
+Both take a `ContextLease` for their read (a removal in progress gives none), as the status bar and tool bar do.
+
+### Requirements / Acceptance Criteria
+- [x] The stress no longer reports these two (checked under ASan); no automated GUI test.
+
+## 🔴 [Open] #11: GUI code reads instance contexts without a lease (about 144 call sites)
+* **Date Opened:** 2026-10-10
+* **Found by:** the WebAPI create / delete stress: #10's two sites were the first it hit; `grep GetContext() unreal-qt/src`
+  finds about 144 unleased reads (14 files lease).
+
+### Description
+A GUI handler queued before an instance is removed runs after its context is freed. Fixing sites one by one as the
+stress finds them does not converge; a structural answer is a developer decision (lease at the binding / refresh entry
+points, or the GUI unbinding before the core frees the context).
+
+### Repro
+ASan unreal-qt with the stress script (8 workers creating / reading / switching / deleting instances, 2 running
+neighbours) for 15 minutes.
+
 ---
 
 2026-10-07

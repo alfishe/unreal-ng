@@ -2,6 +2,11 @@
 
 #include "common/uuid.h"
 
+#include <set>
+#include <string>
+#include <thread>
+#include <vector>
+
 /// @brief Locks UUID::isNil() semantics. An earlier revision returned the inverted
 /// result (true for any non-zero byte), which EmulatorContext and the DeZog adapter
 /// had to work around with default-constructed-UUID comparisons, and which
@@ -63,4 +68,30 @@ TEST(UUID_Test, ToStringRoundTripPreservesIdentity)
 
     const unreal::UUID nilRoundTrip(unreal::UUID().toString());
     EXPECT_TRUE(nilRoundTrip.isNil());
+}
+
+/// Instances are created from several automation threads at once (one per WebAPI connection). Generate() drew from
+/// one static mt19937 shared by every thread with no lock - a data race on its state: two threads could read the same
+/// state and return the same id, and the manager's map would then hold one of the two instances under it
+TEST(UUID_Test, ThreadsGeneratingAtOnceGetDistinctIds)
+{
+    constexpr int kThreads = 8;
+    constexpr int kEach = 1500;
+    std::vector<std::vector<std::string>> ids(kThreads);
+    std::vector<std::thread> threads;
+    for (int t = 0; t < kThreads; ++t)
+    {
+        threads.emplace_back([&ids, t] {
+            ids[t].reserve(kEach);
+            for (int i = 0; i < kEach; ++i)
+                ids[t].push_back(unreal::UUID::Generate().toString());
+        });
+    }
+    for (std::thread& thread : threads)
+        thread.join();
+
+    std::set<std::string> all;
+    for (const auto& list : ids)
+        all.insert(list.begin(), list.end());
+    EXPECT_EQ(all.size(), static_cast<size_t>(kThreads * kEach)) << "duplicate ids generated concurrently";
 }

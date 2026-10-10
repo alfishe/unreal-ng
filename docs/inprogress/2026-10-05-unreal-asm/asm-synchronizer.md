@@ -392,6 +392,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | research | the text start / end per program (48K and the 128K PHT shell) |
 | family | `Linear` |
 | **Work** | **2 d** (six programs, two layouts expected) |
+| **Verified: 1983, 1.1, GG, v7.E** (2026-10-10, dumps `zeus1983-*`, `zeus11-*`, `zeusgg-*`, `zeus7e-*`) | `Linear`: the text where `o` put it (the dumps use `o 32768`), records `[number] tokens 00`, then `FF FF`; a start word and, right after it, the end word holding the address of the last `FF`. 1983, 1.1 and GG keep them at `#FD00` / `#FD02` (above the code at 57344), v7.E at `#FAAB` / `#FAAD`. A line typed at the prompt stays out of the text until Enter. Found with a memory search for the two values in the loaded state. Identified by 24 bytes of their code with the title (`#E028` / `#E020`). Descriptors `zeus-1983`, `zeus-1.1`, `zeus-gg`, `zeus-7e`; no save here (tape / the dumps take the loaded text and a typed line). ZEUS 2.2, 3.0, 3.1, Zeus Pro 2.01, Zeus Plus 2.16 are not covered yet |
 
 ### 7.15 Primus Assembler 2.9
 
@@ -400,6 +401,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Knowledge** | the text buffer starts at 33364 (`#8254`, its files' start); ZEUS 1983's records with DISK for DISP and Russian letters at `#EB`-`#FF` |
 | research | the end pointer |
 | **Work** | **0.5 d** |
+| **Verified** (2026-10-10, dumps `primus29-*`) | ZEUS's pair: the start word at `#61B1` (`#8254`), the address of the last `FF` at `#61B3`. It loads `PRI.DOC` at start (the dumps put the source there); a numbered line typed at the prompt stays out of the text until Enter; `b` ENTER, `s NAME` ENTER, `q` ENTER saves (commands need ENTER). Identified by `PRIMUS ASSEMBLER Version` at `#6D17`. Descriptor `primus-2.9` |
 
 ### 7.16 Laser Genius 1.04 (Beta)
 
@@ -408,6 +410,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Knowledge** | paragraphs from the address STATS calls `file` (`#7F2E` in 1.04 Beta), then `FF FF`; the end in `(#A973)` without the hash extensions and `(#ADA1)` with them loaded (the Phoenix typing helper of A6 uses both) |
 | family | `Linear`: `[#7F2E, (end))` + `FF FF`; the end pointer chosen by the hash extensions' presence (a signature) |
 | **Work** | **1 d** (the two configurations, Phoenix statements in the build) |
+| **Verified: without the hash extensions** (2026-10-10, dumps `lg104-*`) | the text in memory is the paragraphs and `FF FF` from `#7F2E` to `(#A973)`; the disk file drops the `FF FF` and adds the header `#AF`, the length, `#7F2E` and four characters of the name SAVE gives (an editor state: the reader fills blanks, the tests mask them) (`laserGeniusFile`). A paragraph typed is out of the text until ENTER. The loader's menu is a BASIC INPUT: `1` needs ENTER. Identified by 24 bytes of its code at `#AC00`. Descriptor `lasergenius-1.04`. With the hash extensions (end `(#ADA1)`, the code moved) not covered yet |
 
 ### 7.17 PROMETHEUS
 
@@ -416,6 +419,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Knowledge** | records and the label table of its saves are known (research-prometheus.md); the memory layout is not |
 | research | the text and table pointers (48K; tape loading works) |
 | **Work** | **1 d** |
+| **Verified: 48K tape edition at 24000** (2026-10-10, dumps `prom48-*`) | read from the reconstructed source (oldcompcz/prometheus `src/prometheus.asm`, SAVE): the records run from `sourceBufferAccessLine` (`#9C28`) to twelve bytes below the symbol table (the operand of `varcSymbolTablePt`, `#87D7`); the table runs to the operand of `varcCodeEndPt` (`#881A`); SAVE writes the records, `FF` XOR them, `FF`, then the table (`prometheusTableAt` / `prometheusEndAt`). A line typed is out of the text until ENTER. SAVE goes to tape only (the TR-DOS adaptation too), so the expected file is what SAVE hands the ROM: an execution breakpoint at SA-BYTES `#04C6` gives the records' `IX` / `DE` (`#9C28`, 21 bytes for four lines). `LOAD` stages the save below U-TOP before it inserts the lines (`#FF43` here: not the source). Identified by 24 bytes at `#8000`. Descriptor `prometheus-48` (installed elsewhere, the addresses move) |
 
 ### 7.18 Power Assembler (PASM 3.0)
 
@@ -424,6 +428,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Knowledge** | a text format; the object code goes to page 4 at `#E000` while PASM runs; the text's place is unknown |
 | research | the text pointers (ZAP / ITXT behavior known from A6) |
 | **Work** | **1 d** |
+| **Verified** (2026-10-10, dumps `pasm30-*`) | found in its code: the CR LF text runs from `#79AF` (an address its code holds) to a `#1A` end (no end pointer: the editor scans for it); the cursor line's address is at `#74E9`, its text in the 64-byte line buffer `#7342`. When the cursor leaves a line, and on SAVE, the routine at `#7881` writes the buffer back with blank runs packed into TABs: right to left over the tab stops, a run of 2-8 blanks that ends at a multiple of 8 becomes one TAB (a single blank stays). The reader replaces the cursor line with the packed buffer (`pasmLineAt`), so even the loaded state's file has its first line packed, as SAVE writes it. Each dump's expected file is a `P` (SAVE) made in that state. Identified by the packing routine's bytes at `#7881`. Descriptor `pasm-3.0` |
 
 ### 7.19 Not covered
 

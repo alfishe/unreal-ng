@@ -14,6 +14,11 @@ save the text itself and keep the file. The synchronizer's reader must give that
     sync-dumps.py tasm <disk with PRINTHL.C> <out-dir> --boot TASM128 --source PRINTHL --type C --tag tasm20   # TASM 2.0
     sync-dumps.py gens <disk with TEST.A> <out-dir> --boot GENS4tf --source TEST --type A --tag gens43t   # GENS 4.3t
     sync-dumps.py genstape <DEVPAC_4.TAP> <out-dir> --source t.gens --tag gens4 --model 48K    # GENS4 (GENS3: --at 25444 --code-length 8355)
+    sync-dumps.py zeus <ZEUS.TAP | zeus.$c | ZEUS_GG.SCL | ZEUS72ZK.SCL> <out-dir> --build 1983 --model 48K --source z.bin --tag zeus1983
+    sync-dumps.py zeus <PRIMUS29 disk, the source as PRI.DOC> <out-dir> --build primus --source - --tag primus29
+    sync-dumps.py lasergenius <LG_1_04 disk with TEST.C> <out-dir> --source TEST --save-as SAVE --tag lg104
+    sync-dumps.py prometheus <prometheus-48.tap> <out-dir> --model 48K --tag prom48   # the expected file from SAVE's ROM call
+    sync-dumps.py pasm <PASM3_0 disk with TEST.C> <out-dir> --source TEST --tag pasm30   # each case's file from P
     sync-dumps.py masm <disk with t1.a> <out-dir> --boot m2 --source t1 --menu-save --tag masm20   # MASM 2.0 (3.0: TSM)
     sync-dumps.py masmdemo <SpFon_15.Trd> <out-dir> --source T1 --tag masm10   # MASM 1.0 demo: the text typed in
     sync-dumps.py xas <disk-with-PROBE.X> <out-dir> --boot NAME --list-keys right[,down...] --tag TAG
@@ -466,6 +471,203 @@ def genstape(emu, args):
     dump(emu, args.out, f'{args.tag}-typing', pages, 'SOURCE.A', text, {'editor': True, 'typing': True})
 
 
+def zeus(emu, args):
+    """ZEUS (--build 1983 | 1.1 | gg | 7e): started as assemble-in-emulator.py does, the source (a ZEUS file, --source)
+    written at 32768 and made current with "o 32768"; the loaded case, then a line typed at the prompt (not entered)"""
+    if args.build == 'primus':                 # it loads PRI.DOC (put the source there, start 33364) and saves
+        emu.insert_disk(args.disk)
+        emu.run_trdos('P_AS_2.9', wait=12)
+        source = saved(emu, 'PRI.DOC', 'C')
+        pages = [0, 2, 5]
+        dump(emu, args.out, f'{args.tag}-loaded', pages, 'PRI.C', source, {'editor': True, 'typing': False})
+        emu.type('25 nop')                     # caps lock is on: lower case arrives as capitals
+        dump(emu, args.out, f'{args.tag}-typing', pages, 'PRI.C', source, {'editor': True, 'typing': True})
+        emu.tap('enter')
+        time.sleep(1)
+        dump(emu, args.out, f'{args.tag}-edited', pages, 'PRI.C', None, {'editor': True, 'typing': False})
+        emu.type('b')                          # the disk menu, s NAME saves, q back
+        emu.tap('enter')
+        time.sleep(2)
+        emu.type('s saved')
+        emu.tap('enter')
+        time.sleep(4)
+        emu.type('q')
+        emu.tap('enter')
+        finish(args.out, f'{args.tag}-edited', 'PRI.C', saved(emu, 'SAVED', 'C'))
+        return
+    source = open(args.source, 'rb').read()
+    if args.build in ('7e', 'gg'):
+        emu.insert_disk(args.disk)
+        emu.run_trdos('ZEUSv7.E' if args.build == '7e' else 'ZEUS', wait=10)
+    else:
+        emu.post('/reset')
+        time.sleep(3)
+        if args.build == '1.1':
+            for _ in range(3):                 # 48 BASIC
+                emu.tap('down')
+            emu.tap('enter')
+            time.sleep(2)
+            code = open(args.disk, 'rb').read()[17:]
+        else:
+            data = open(args.disk, 'rb').read()
+            at, header, code = 0, False, b''
+            while at + 2 <= len(data):
+                n = data[at] | data[at + 1] << 8
+                block = data[at + 2:at + 2 + n]
+                at += 2 + n
+                if block and block[0] == 0 and block[1] == 3:
+                    header = True
+                elif block and block[0] == 0xFF and header:
+                    code = block[1:-1]
+                    break
+        emu.write(57344, list(code))
+        emu.post('/basic/run', {'command': 'RANDOMIZE USR 57344'})
+        time.sleep(5)
+    emu.post('/keyboard/combo', {'keys': ['cs', '2'], 'frames': 6})   # CAPS LOCK: ZEUS takes capitals
+    emu.idle()
+    time.sleep(0.5)
+    emu.write(32768, list(source))
+    emu.type('o 32768')
+    emu.tap('enter')
+    time.sleep(1)
+    pages = [0, 2, 5]
+    dump(emu, args.out, f'{args.tag}-loaded', pages, 'SOURCE.Z', source, {'editor': True, 'typing': False})
+    emu.type('25 NOP')
+    dump(emu, args.out, f'{args.tag}-typing', pages, 'SOURCE.Z', source, {'editor': True, 'typing': True})
+
+
+def lasergenius(emu, args):
+    """Laser Genius 1.04 Beta: L_G_ASS. from TR-DOS, 1 ENTER, the loader's questions (tool-kit y, hash n, disk d) each
+    with ENTER; load "NAME", a numbered paragraph typed, ENTER, save "SAVE" (the file: #AF header + paragraphs)"""
+    emu.insert_disk(args.disk)
+    emu.run_trdos('L_G_ASS.', wait=6)
+    emu.tap('1')
+    emu.tap('enter')
+    time.sleep(4)
+    for key in ('y', 'n', 'd'):
+        emu.tap(key)
+        emu.tap('enter')
+        time.sleep(3)
+    time.sleep(6)
+    emu.type(f'load "{args.source}"')
+    emu.tap('enter')
+    time.sleep(5)
+    loaded = saved(emu, args.source, 'C')
+    pages = [0, 2, 5]
+    name = f'{args.source}.C'
+    dump(emu, args.out, f'{args.tag}-loaded', pages, name, loaded, {'editor': True, 'typing': False})
+    emu.type('50 nop')
+    dump(emu, args.out, f'{args.tag}-typing', pages, name, loaded, {'editor': True, 'typing': True})
+    emu.tap('enter')
+    time.sleep(1)
+    dump(emu, args.out, f'{args.tag}-edited', pages, name, None, {'editor': True, 'typing': False})
+    emu.type(f'save "{args.save_as}"')
+    emu.tap('enter')
+    time.sleep(5)
+    finish(args.out, f'{args.tag}-edited', name, saved(emu, args.save_as, 'C'))
+
+
+def prometheus(emu, args):
+    """PROMETHEUS 48K from its tape (--disk, a TAP; installed at 24000): four lines typed in (the edited case), SAVE
+    (SS+S :saved), then a fifth line being typed (out of the text: the typing case keeps the saved file). The expected file is what SAVE hands the ROM: an execution
+    breakpoint at #04C6 (SA-BYTES) gives the records' IX / DE; the checksum byte, FF and the symbol table up to the
+    code-end operand follow (research-prometheus.md)"""
+    def wait_tape():
+        for _ in range(240):
+            time.sleep(0.5)
+            if emu.get('/tape/info').get('state') in ('ended', 'stopped'):
+                return
+
+    emu.post('/tape/load', {'path': args.disk})
+    emu.post('/basic/run', {'command': 'LOAD ""'})
+    emu.post('/tape/play')
+    wait_tape()
+    time.sleep(2)
+    emu.tap('enter')                           # the installer: run the assembler
+    time.sleep(3)
+    emu.post('/tape/eject')
+    for line in ('start ld a,1', ' ld b,2', 'loop djnz loop', ' ret'):
+        emu.type(line)
+        emu.tap('enter')
+        time.sleep(0.5)
+    pages = [0, 2, 5]
+    dump(emu, args.out, f'{args.tag}-edited', pages, 'SAVED.C', None, {'editor': True, 'typing': False})
+    emu._request('PUT', emu.base + '/debugmode', {'enabled': True})
+    emu._request('PUT', emu.base + '/feature/breakpoints', {'enabled': True})
+    emu.post('/breakpoints', {'type': 'exec', 'address': '0x04C6'})
+    emu.post('/keyboard/combo', {'keys': ['ss', 's'], 'frames': 4})
+    time.sleep(0.5)
+    emu.type(':saved')
+    emu.tap('enter')
+    time.sleep(1.5)
+    emu.tap('space')                           # "Start tape": any key
+    blocks = []
+    for _ in range(2):                         # the header (DE = 17), then the records
+        if emu.get('/debug/wait?timeout_ms=30000').get('state') != 'paused':
+            raise SystemExit('SAVE did not reach the ROM')
+        r = emu.get('/registers')
+        blocks.append((r['index']['ix'], r['main']['de']))
+        if len(blocks) < 2:
+            emu.post('/resume')
+            time.sleep(0.3)
+    ix, de = blocks[1]
+    records = emu.read(ix, de)
+    word = lambda a: emu.read(a, 2)[0] | emu.read(a, 2)[1] << 8
+    table, table_end = word(args.prometheus_table), word(args.prometheus_end)
+    check = 0xFF
+    for b in records:
+        check ^= b
+    expected = records + bytes([check, 0xFF]) + emu.read(table, table_end - table)
+    finish(args.out, f'{args.tag}-edited', 'SAVED.C', expected)
+    emu._request('DELETE', emu.base + '/breakpoints')
+    emu.post('/resume')
+    time.sleep(8)                              # the save plays out to no tape
+    emu.type(' nop')
+    dump(emu, args.out, f'{args.tag}-typing', pages, 'SAVED.C', expected, {'editor': True, 'typing': True})
+
+
+def pasm(emu, args):
+    """Power Assembler 3.0: RUN "PASM3.0", menu (SS then CS) G loads --source (its name typed in lower case: caps
+    lock), P saves under the work file's name. Each case is followed by a P: SAVE packs the cursor line from the line
+    buffer into TABs, so what it writes is that state's file"""
+    def menu(letter):
+        emu.post('/keyboard/press', {'key': 'ss'})
+        time.sleep(0.1)
+        emu.post('/keyboard/press', {'key': 'cs'})
+        time.sleep(0.15)
+        emu.post('/keyboard/release', {'key': 'cs'})
+        emu.post('/keyboard/release', {'key': 'ss'})
+        time.sleep(0.6)
+        emu.tap(letter)
+        time.sleep(1)
+
+    def case(name, state):
+        dump(emu, args.out, f'{args.tag}-{name}', pages, f'{args.source}.C', None, state)
+        menu('p')
+        time.sleep(4)
+        finish(args.out, f'{args.tag}-{name}', f'{args.source}.C', saved(emu, args.source, 'C'))
+
+    emu.insert_disk(args.disk)
+    emu.run_trdos('PASM3.0', wait=8)
+    menu('g')
+    for _ in range(12):
+        emu.post('/keyboard/combo', {'keys': ['cs', '0'], 'frames': 3})
+        time.sleep(0.1)
+    emu.type(args.source.lower())
+    emu.tap('enter')
+    time.sleep(4)
+    pages = [2, 5, windows(emu)[3]]
+    case('loaded', {'editor': True, 'typing': False})
+    emu.tap('down')
+    emu.tap('down')
+    time.sleep(0.5)
+    emu.type('zz')
+    case('typing', {'editor': True, 'typing': True})
+    emu.tap('down')
+    time.sleep(0.5)
+    case('edited', {'editor': True, 'typing': False})
+
+
 def tasm_other(emu, args):
     """TASM without a line count (4.0 ...): W names the work file (--as-typed: the keyboard is not inverted), E edits,
     Extend Q leaves the editor, S saves. A line being typed is not in the text; the edited case is taken after Enter
@@ -595,7 +797,7 @@ def tasm412(emu, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'masmdemo', 'tasm', 'gens', 'genstape'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'masmdemo', 'tasm', 'gens', 'genstape', 'zeus', 'lasergenius', 'prometheus', 'pasm'])
     parser.add_argument('disk')
     parser.add_argument('out')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
@@ -608,6 +810,9 @@ def main():
     parser.add_argument('--big', help='zasm: a long text (over #C000) for a loaded case')
     parser.add_argument('--big-disk', help='zasm: the disk for the long text (default: the same)')
     parser.add_argument('--big-type', help='zasm: the long text\'s TR-DOS type (default: --type)')
+    parser.add_argument('--prometheus-table', type=lambda v: int(v, 0), default=0x87D7, help='prometheus: the symbol-table operand')
+    parser.add_argument('--prometheus-end', type=lambda v: int(v, 0), default=0x881A, help='prometheus: the code-end operand')
+    parser.add_argument('--build', default='1983', help='zeus: 1983 | 1.1 | gg | 7e | primus')
     parser.add_argument('--at', type=int, default=26000, help='genstape: where the code goes')
     parser.add_argument('--code-length', type=int, default=10880, help='genstape: the code block\'s length')
     parser.add_argument('--save-as', default='SAVED', help='gens: the name P saves the edited text under')
@@ -639,6 +844,14 @@ def main():
             zasm(emu, args)
         elif args.assembler == 'masm':
             masm(emu, args)
+        elif args.assembler == 'pasm':
+            pasm(emu, args)
+        elif args.assembler == 'prometheus':
+            prometheus(emu, args)
+        elif args.assembler == 'lasergenius':
+            lasergenius(emu, args)
+        elif args.assembler == 'zeus':
+            zeus(emu, args)
         elif args.assembler == 'genstape':
             genstape(emu, args)
         elif args.assembler == 'gens':

@@ -714,10 +714,43 @@ bool EmulatorManager::RemoveEmulatorInstance(const std::string& emulatorId)
     if (retiring)
         retiring->WaitForContextLeases();
 
-    std::lock_guard<std::mutex> lock(_emulatorsMutex);
+    // Out of the map under the lock; stopped and released after it. Release() removes message observers, and
+    // removing one waits for a dispatch in flight - a handler that looks an instance up (the GUI's selection change,
+    // posted by another thread after the drain above) waits for this lock: holding it there was a deadlock
+    // (2026-10-10, WebAPI deletes while the GUI followed the selection)
+    std::shared_ptr<Emulator> removed;
+    {
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
-    auto it = _emulators.find(emulatorId);
-    if (it != _emulators.end())
+        auto it = _emulators.find(emulatorId);
+        if (it != _emulators.end())
+        {
+            removed = std::move(it->second);
+            _emulators.erase(it);
+
+            // Clear selection if this was the selected emulator
+            {
+                std::lock_guard<std::mutex> selLock(_selectionMutex);
+                if (_selectedEmulatorId == emulatorId)
+                {
+                    std::string previousId = _selectedEmulatorId;
+                    _selectedEmulatorId = "";
+
+                    // Send notification about selection being cleared
+                    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                    EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, "");
+                    messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
+
+                    LOGINFO("EmulatorManager::RemoveEmulator - Cleared selection (was pointing to removed emulator)");
+                }
+            }
+
+            // The surviving sole instance (if any) may become the active one
+            UpdateRealtimeSchedulingLocked();
+        }
+    }
+
+    if (removed)
     {
         // Always go through Stop(), even when IsRunning() already reads false:
         // Stop() is a blocking barrier (it returns only once the emulation
@@ -727,34 +760,11 @@ bool EmulatorManager::RemoveEmulatorInstance(const std::string& emulatorId)
         // free Core's Screen / SoundManager / TimeTravelManager while that
         // thread was still mid-frame (2026-10-02 crash).
         LOGINFO("EmulatorManager::RemoveEmulator - Stopping emulator with ID '%s'", emulatorId.c_str());
-        it->second->Stop();
+        removed->Stop();
 
         // Release resources
-        it->second->Release();
-
-        // Remove from map
-        _emulators.erase(it);
+        removed->Release();
         LOGINFO("EmulatorManager::RemoveEmulator - Removed emulator with ID '%s'", emulatorId.c_str());
-
-        // Clear selection if this was the selected emulator
-        {
-            std::lock_guard<std::mutex> selLock(_selectionMutex);
-            if (_selectedEmulatorId == emulatorId)
-            {
-                std::string previousId = _selectedEmulatorId;
-                _selectedEmulatorId = "";
-
-                // Send notification about selection being cleared
-                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-                EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, "");
-                messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
-
-                LOGINFO("EmulatorManager::RemoveEmulator - Cleared selection (was pointing to removed emulator)");
-            }
-        }
-
-        // The surviving sole instance (if any) may become the active one
-        UpdateRealtimeSchedulingLocked();
 
         return true;
     }
@@ -1210,9 +1220,15 @@ void EmulatorManager::ShutdownAllEmulators()
         emulator->WaitForContextLeases();
     retiring.clear();
 
-    std::lock_guard<std::mutex> lock(_emulatorsMutex);
+    // Out of the map under the lock, stopped and released after it (see RemoveEmulatorInstance: Release() waits for a
+    // dispatch in flight whose handler may wait for this lock)
+    decltype(_emulators) all;
+    {
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
+        all.swap(_emulators);
+    }
 
-    for (auto& [uuid, emulator] : _emulators)
+    for (auto& [uuid, emulator] : all)
     {
         // Always go through Stop() - see RemoveEmulatorInstance() for why
         // gating this on IsRunning() is unsafe
@@ -1222,8 +1238,6 @@ void EmulatorManager::ShutdownAllEmulators()
         // Release resources
         emulator->Release();
     }
-
-    _emulators.clear();
     LOGINFO("EmulatorManager::ShutdownAllEmulators - All emulators have been shut down");
 }
 

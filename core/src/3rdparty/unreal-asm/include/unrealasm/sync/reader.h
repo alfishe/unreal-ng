@@ -134,6 +134,20 @@ struct LinearParams
     /// GENS: records [number lo] [number hi] text #0D; while a line is typed in, the editor marks the line it goes
     /// before with bit 7 of the number's high byte (numbers stay below 32768): the live file has it clear
     bool clearLineMark = false;
+    /// Laser Genius: the text ends with FF FF in memory; its disk file is #AF, the length, the start, four characters
+    /// of the name (filled with blanks: SAVE names it, an editor state), then the paragraphs without the FF FF
+    bool laserGeniusFile = false;
+    /// PROMETHEUS: SAVE writes the records from fixedStart (the access line) up to twelve bytes below the symbol table
+    /// (the word at prometheusTableAt), FF XOR those bytes, FF, then the table up to the word at prometheusEndAt
+    /// PASM: the text runs from fixedStart to its #1A end; the cursor line (the address at pasmLineAt) lives in a
+    /// 64-byte line buffer (pasmLineBuffer) and goes back with its blank runs packed into TABs (a run of 2-8 blanks
+    /// that ends at a multiple of 8), as SAVE does
+    uint16_t pasmLineAt = 0;
+    uint16_t pasmLineBuffer = 0;
+    uint16_t prometheusTableAt = 0;
+    uint16_t prometheusEndAt = 0;
+    uint16_t editorStateAt = 0;     ///< bytes of the file SAVE fills (masked by the tests)
+    uint16_t editorStateLength = 0;
 };
 
 struct TypingParams
