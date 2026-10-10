@@ -137,5 +137,4 @@ Structural:
 
 Related documents: [snapshot pipeline TODO P7 / P11](../2026-10-02-snapshot-pipeline/TODO.md),
 [engine decisions D42 / D43](../2026-09-25-ttd-v2-migration/engine-decisions.md),
-[storage manager](../2026-09-28-storage-manager/TODO.md), [BUGS.md](../BUGS.md) open #1 (2x-4x speed while
-recording).
+[storage manager](../2026-09-28-storage-manager/TODO.md).
