@@ -26,6 +26,7 @@ public:
     struct Pixel
     {
         uint8_t index = 0;  ///< the 8-bit palette index
+        uint8_t sprite = 0; ///< the sprite number (0-127) that painted it
         bool opaque = false;
     };
 
@@ -93,7 +94,7 @@ private:
     Effective Decode(unsigned s) const;
     void Resolve(unsigned s, const Anchor& anchor, Effective& out) const;
     void UpdateAnchor(unsigned s, Anchor& anchor) const;
-    void DrawSprite(const Effective& sprite, unsigned y, const int clip[4], bool overBorder, Pixel* out, bool* occupied,
+    void DrawSprite(unsigned number, const Effective& sprite, unsigned y, const int clip[4], bool overBorder, Pixel* out, bool* occupied,
                     uint8_t transparentIndex);
     void SetAttribute(unsigned sprite, unsigned byte, uint8_t value) { _attr[sprite & 127][byte] = value; }
 

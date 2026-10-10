@@ -38,6 +38,84 @@ void ScreenNext::InitFrame()
 {
     Screen::InitFrame();
     _nextLine = 0;
+    PrepareLayerFrame();
+}
+
+void ScreenNext::PrepareLayerFrame()
+{
+    if (!_layerWanted.load())
+    {
+        if (_layerDraw || _layerLast)
+        {
+            std::lock_guard<std::mutex> lock(_layerMutex);
+            _layerDraw.reset();
+            _layerLast.reset();
+            _layerBytes.store(0);
+        }
+        _layerRecording = false;
+        return;
+    }
+    if (!_layerDraw)
+    {
+        _layerDraw = std::make_shared<NextLayer::Frame>();
+        _layerDraw->Allocate();
+        _layerBytes.store(NextLayer::Frame::Bytes() * (_layerLast ? 2 : 1));
+    }
+    _layerDraw->BeginFrame();
+    _layerRecording = true;
+}
+
+void ScreenNext::RecordSegment(NextLayer::Frame& frame, unsigned y, unsigned fromX, unsigned toX, const NextVideoInputs& in, const NextVideoRegs& video)
+{
+    if (frame.segments.size() >= 0xFFFF)
+        return;
+    NextLayer::Segment s;
+    s.fromX = static_cast<uint16_t>(fromX);
+    s.toX = static_cast<uint16_t>(toX);
+    s.border = in.border;
+    s.portFf = in.portFf;
+    s.flags = static_cast<uint8_t>((in.shadowScreen ? NextLayer::Segment::kShadowScreen : 0) | (in.layer2Enable ? NextLayer::Segment::kLayer2Enable : 0) |
+                                   (in.flash ? NextLayer::Segment::kFlash : 0));
+    s.paletteControl = video.PaletteControl();
+    s.ulaNextFormat = video.UlaNextFormat();
+    for (unsigned w = 0; w < NextVideoRegs::kClipWindows; w++)
+        for (unsigned c = 0; c < 4; c++)
+            s.clip[w][c] = video.Clip(w, c);
+    for (unsigned i = 0; i < NextLayer::kKeyRegCount; i++)
+        s.nr[i] = in.nr[NextLayer::kKeyRegs[i]];
+    if (frame.lineSegments[y] == 0)
+        frame.lineFirst[y] = static_cast<uint16_t>(frame.segments.size());
+    frame.lineSegments[y]++;
+    frame.segments.push_back(s);
+}
+
+void ScreenNext::CompleteLayerFrame()
+{
+    _layerRecording = false;
+    _layerDraw->sequence = _layerFrames.fetch_add(1) + 1;
+    _layerDraw->frameCounter = _state ? _state->frame_counter : 0;
+    std::shared_ptr<NextLayer::Frame> spare;
+    {
+        std::lock_guard<std::mutex> lock(_layerMutex);
+        std::swap(_layerLast, _layerDraw);  // draw now holds the set before last (or null at the first frame)
+        // a reader still holding it keeps its set alive; the renderer takes a fresh one then
+        if (_layerDraw && _layerDraw.use_count() == 1)
+            spare = std::move(_layerDraw);
+        _layerDraw.reset();
+    }
+    if (!spare)
+    {
+        spare = std::make_shared<NextLayer::Frame>();
+        spare->Allocate();
+    }
+    _layerDraw = std::move(spare);
+    _layerBytes.store(2 * NextLayer::Frame::Bytes());
+}
+
+std::shared_ptr<const NextLayer::Frame> ScreenNext::LastLayerFrame() const
+{
+    std::lock_guard<std::mutex> lock(_layerMutex);
+    return _layerLast;
 }
 
 void ScreenNext::SetVideoMode([[maybe_unused]] VideoModeEnum mode)
@@ -107,8 +185,22 @@ void ScreenNext::RenderLinesUpTo(unsigned lineExclusive)
         in.border = _state ? static_cast<uint8_t>(_state->pFE & 7) : 0;
     };
     uint32_t segment[NextVideoRenderer::kWidth];
+    // The layer record: a segment that covers the whole line is rendered straight into the frame's rows; a copper segment goes
+    // through a line of scratch and only its x-range is copied, exactly as the composed row is
+    NextLayer::Frame* record = _layerRecording ? _layerDraw.get() : nullptr;
+    constexpr unsigned kW = NextVideoRenderer::kWidth;
+    NextLayer::Pixel scratchPlane[NextLayer::kPlanes][kW];
+    uint8_t scratchIds[kW], scratchInfo[kW];
+    NextLayer::LineSink scratchSink;
+    for (unsigned p = 0; p < NextLayer::kPlanes; p++)
+        scratchSink.plane[p] = scratchPlane[p];
+    scratchSink.ids = scratchIds;
+    scratchSink.info = scratchInfo;
+    NextLayer::LineSink lineSink;
     for (; _nextLine < lineExclusive; _nextLine++)
     {
+        if (record)
+            lineSink = record->Line(_nextLine);
         uint32_t* row = fb + static_cast<size_t>(_nextLine) * 2 * NextVideoRenderer::kWidth;
         // x = 0 of the grid line, in copper time: the paper's left edge minus the 32 pixels of border
         const uint32_t lineStart = LineEndT(_nextLine) - _rasterState.tstatesPerLine;
@@ -122,8 +214,19 @@ void ScreenNext::RenderLinesUpTo(unsigned lineExclusive)
             if (toX <= fromX)
                 return;
             refresh();
+            const bool whole = fromX == 0 && toX >= 320;
+            in.layerOut = record ? (whole ? &lineSink : &scratchSink) : nullptr;
+            if (record)
+                RecordSegment(*record, _nextLine, fromX * 2, toX * 2, in, board.Video());
             NextVideoRenderer::RenderLine(in, _nextLine, segment);
             std::memcpy(row + fromX * 2, segment + fromX * 2, (toX - fromX) * 2 * sizeof(uint32_t));
+            if (record && !whole)
+            {
+                for (unsigned p = 0; p < NextLayer::kPlanes; p++)
+                    std::memcpy(lineSink.plane[p] + fromX * 2, scratchPlane[p] + fromX * 2, (toX - fromX) * 2 * sizeof(NextLayer::Pixel));
+                std::memcpy(lineSink.ids + fromX * 2, scratchIds + fromX * 2, (toX - fromX) * 2);
+                std::memcpy(lineSink.info + fromX * 2, scratchInfo + fromX * 2, (toX - fromX) * 2);
+            }
             fromX = toX;
         };
         if (copper.Mode() != 0)
@@ -135,6 +238,8 @@ void ScreenNext::RenderLinesUpTo(unsigned lineExclusive)
         draw(320);
         std::memcpy(row + NextVideoRenderer::kWidth, row, NextVideoRenderer::kWidth * sizeof(uint32_t));  // every line twice
     }
+    if (record && _nextLine >= NextVideoRenderer::kHeight)
+        CompleteLayerFrame();
 }
 
 void ScreenNext::UpdateScreen()

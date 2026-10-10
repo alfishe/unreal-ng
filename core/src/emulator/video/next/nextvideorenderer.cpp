@@ -13,6 +13,26 @@ uint16_t Nine(uint8_t rrrgggbb)
     return static_cast<uint16_t>((rrrgggbb << 1) | ((rrrgggbb & 3) ? 1 : 0));
 }
 
+/// The id of the winning layer of a pixel: tracked only when the layers are recorded; in the other instance every assignment vanishes
+template <bool kRecord>
+struct WinnerId
+{
+    uint8_t value = 0;
+    WinnerId() = default;
+    WinnerId(uint8_t v) { *this = v; }
+    WinnerId& operator=(uint8_t v)
+    {
+        if constexpr (kRecord)
+            value = v;
+        return *this;
+    }
+};
+
+bool GlobalTransparent(unsigned colour, unsigned transparent)
+{
+    return ((colour >> 1) & 0xFF) == transparent;
+}
+
 uint8_t Expand3(unsigned v)
 {
     return static_cast<uint8_t>((v << 5) | (v << 2) | (v >> 1));
@@ -37,15 +57,15 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
     const bool ulaNext = (regs.PaletteControl() & 0x01) != 0;
     const uint8_t mask = regs.UlaNextFormat();
     const bool fullInk = ulaNext && mask == 0xFF;
+    const unsigned transparent = in.nr[0x14];  // a pixel in this colour is transparent: opaque stays clear
 
     auto border = [&](Pixel& p) {
         if (fullInk)
             return;  // paper and border come from the fallback colour: transparent here
         // Timex hi-res: the border takes the paper colour of port #FF (7 - ink), without the bright bit
         const unsigned colour = (in.portFf & 7) == 6 ? 7 - ((in.portFf >> 3) & 7) : in.border;
-        p.colour = regs.PaletteEntry(palette, (ulaNext ? 128 : 16) + colour) & 0x1FF;
-        p.opaque = true;
-        p.border = true;
+        const unsigned c = regs.PaletteEntry(palette, (ulaNext ? 128 : 16) + colour) & 0x1FF;
+        p = NextLayer::MakePixel(c, !GlobalTransparent(c, transparent), true);
     };
     const bool inPaperRows = y >= kPaperTop && y < kPaperTop + 192;
     if (!inPaperRows)
@@ -87,15 +107,21 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
         }
         return inkPixel ? static_cast<int>((attr & 7) + 8 * bright) : static_cast<int>(16 + ((attr >> 3) & 7) + 8 * bright);
     };
+    // The line arrives zeroed: an index of -1 (nothing to paint) leaves the pixel transparent
+    auto colourOf = [&](int idx) { return static_cast<unsigned>(regs.PaletteEntry(palette, static_cast<unsigned>(idx)) & 0x1FF); };
     auto put = [&](unsigned sub, int idx) {
-        Pixel& p = line[kPaperLeft + sub];
         if (idx < 0)
-        {
-            p.opaque = false;
             return;
-        }
-        p.colour = regs.PaletteEntry(palette, static_cast<unsigned>(idx)) & 0x1FF;
-        p.opaque = true;
+        const unsigned c = colourOf(idx);
+        line[kPaperLeft + sub] = NextLayer::MakePixel(c, !GlobalTransparent(c, transparent));
+    };
+    auto put2 = [&](unsigned sub, int idx) {  // a pixel is two sub-pixels
+        if (idx < 0)
+            return;
+        const unsigned c = colourOf(idx);
+        const Pixel p = NextLayer::MakePixel(c, !GlobalTransparent(c, transparent));
+        line[kPaperLeft + sub] = p;
+        line[kPaperLeft + sub + 1] = p;
     };
 
     if (timexMode == 6)
@@ -122,8 +148,7 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
         const uint8_t attr = timexMode == 2 ? screen[0x2000 + bitmapRow + col]  // hi-colour: an attribute per 8 x 1
                                             : screen[bitmapBase + attrRow + col];
         const int idx = index(((byte >> (7 - (sx & 7))) & 1) != 0, attr);
-        put(px * 2, idx);
-        put(px * 2 + 1, idx);
+        put2(px * 2, idx);
     }
 }
 
@@ -135,6 +160,7 @@ void NextVideoRenderer::LoResLine(const NextVideoInputs& in, unsigned y, Pixel* 
         return;
     const unsigned palette = (regs.PaletteControl() & 0x02) ? 4 : 0;
     const unsigned offset = (in.nr[0x6A] & 0x0F) << 4;
+    const unsigned transparent = in.nr[0x14];
     const unsigned py = y - kPaperTop;
     const unsigned sy = (py + in.nr[0x33]) % 192;  // NR #33: LoRes Y scroll
     const unsigned row = sy / 2;                       // 96 rows
@@ -147,8 +173,8 @@ void NextVideoRenderer::LoResLine(const NextVideoInputs& in, unsigned y, Pixel* 
         const unsigned address = (row < 48 ? 0x0000 : 0x2000) + (row % 48) * 128 + sx;
         const unsigned idx = (screen[in.shadowScreen ? (address & 0x1FFF) : address] + offset) & 0xFF;  // bank 7 is the 8K BRAM
         Pixel& a = line[kPaperLeft + px * 2];
-        a.colour = regs.PaletteEntry(palette, idx) & 0x1FF;
-        a.opaque = true;
+        const unsigned c = regs.PaletteEntry(palette, idx) & 0x1FF;
+        a = NextLayer::MakePixel(c, !GlobalTransparent(c, transparent));
         line[kPaperLeft + px * 2 + 1] = a;
     }
 }
@@ -165,6 +191,7 @@ void NextVideoRenderer::Layer2Line(const NextVideoInputs& in, unsigned y, Pixel*
     const unsigned bank = in.nr[0x12] & 0x7F;
     const unsigned scrollX = in.nr[0x16] | ((in.nr[0x71] & 1) << 8);
     const unsigned scrollY = in.nr[0x17];
+    const unsigned transparent = in.nr[0x14];
     const uint8_t* base = in.ram + static_cast<size_t>(bank) * 0x4000;
     const size_t limit = static_cast<size_t>(in.ramPages) * 0x4000;
     if (static_cast<size_t>(bank) * 0x4000 >= limit)
@@ -191,8 +218,7 @@ void NextVideoRenderer::Layer2Line(const NextVideoInputs& in, unsigned y, Pixel*
             for (unsigned s = 0; s < 2; s++)
             {
                 Pixel& p = line[kPaperLeft + px * 2 + s];
-                p.colour = colour;
-                p.opaque = true;
+                p = NextLayer::MakePixel(colour, !GlobalTransparent(colour, transparent));
             }
         }
         return;
@@ -214,8 +240,7 @@ void NextVideoRenderer::Layer2Line(const NextVideoInputs& in, unsigned y, Pixel*
             for (unsigned s = 0; s < 2; s++)
             {
                 Pixel& p = line[px * 2 + s];
-                p.colour = colour;
-                p.opaque = true;
+                p = NextLayer::MakePixel(colour, !GlobalTransparent(colour, transparent));
             }
         }
         return;
@@ -230,8 +255,8 @@ void NextVideoRenderer::Layer2Line(const NextVideoInputs& in, unsigned y, Pixel*
         const unsigned nibble = (sx & 1) ? (base[address] & 0x0F) : (base[address] >> 4);
         const unsigned idx = ((offset & 0xF0) | nibble) & 0xFF;
         Pixel& p = line[px];
-        p.colour = regs.PaletteEntry(palette, idx);
-        p.opaque = true;
+        const unsigned c = regs.PaletteEntry(palette, idx);
+        p = NextLayer::MakePixel(c, !GlobalTransparent(c, transparent));
     }
 }
 
@@ -252,6 +277,7 @@ void NextVideoRenderer::TilemapLine(const NextVideoInputs& in, unsigned y, Pixel
     const bool ulaOnTop = (control & 0x01) != 0;
     const unsigned palette = (control & 0x10) ? 7 : 3;
     const unsigned transparentIndex = in.nr[0x4C] & 0x0F;
+    const unsigned transparent = in.nr[0x14];
     const unsigned scrollX = in.nr[0x30] | ((in.nr[0x2F] & 3) << 8);
     const unsigned scrollY = in.nr[0x31];
     auto vram = [&](uint8_t base, unsigned offset) -> uint8_t {
@@ -335,15 +361,14 @@ void NextVideoRenderer::TilemapLine(const NextVideoInputs& in, unsigned y, Pixel
             continue;
         const unsigned index = text ? ((paletteOffset << 1) | (pixel & 1)) : ((paletteOffset << 4) | (pixel & 0x0F));
         Pixel& p = line[sx];
-        p.colour = regs.PaletteEntry(palette, index & 0xFF);
-        p.opaque = true;
-        p.below = below;
-        p.textMode = text;
+        const unsigned c = regs.PaletteEntry(palette, index & 0xFF);
+        // a text-mode pixel in the global colour is transparent
+        p = NextLayer::MakePixel(c, !(text && GlobalTransparent(c, transparent)), false, below, text);
     }
 }
 
 /// Sprites: one grid line from the engine, two sub-pixels per pixel, the sprite palette (NR #43 bit 3 picks the second)
-void NextVideoRenderer::SpriteLine(const NextVideoInputs& in, unsigned y, Pixel* line)
+void NextVideoRenderer::SpriteLine(const NextVideoInputs& in, unsigned y, Pixel* line, uint8_t* numbers)
 {
     if (!in.sprites)
         return;
@@ -357,8 +382,9 @@ void NextVideoRenderer::SpriteLine(const NextVideoInputs& in, unsigned y, Pixel*
         for (unsigned s = 0; s < 2; s++)
         {
             Pixel& p = line[x * 2 + s];
-            p.colour = in.regs->PaletteEntry(palette, grid[x].index);
-            p.opaque = true;
+            p = NextLayer::MakePixel(in.regs->PaletteEntry(palette, grid[x].index), true);
+            if (numbers)
+                numbers[x * 2 + s] = grid[x].sprite;
         }
     }
 }
@@ -399,12 +425,9 @@ void NextVideoRenderer::ApplyUlaClip(const NextVideoInputs& in, unsigned y, Pixe
         clear(kPaperLeft + 512, kW);
 }
 
-void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32_t* out)
+void NextVideoRenderer::DrawLayers(const NextVideoInputs& in, unsigned y, Pixel* ula, Pixel* layer2, Pixel* tiles, Pixel* sprites,
+                                   uint8_t* spriteNumbers)
 {
-    Pixel ula[kW];
-    Pixel layer2[kW];
-    Pixel tiles[kW];
-    Pixel sprites[kW];
     // LoRes replaces the paper of the ULA, whose border stays
     UlaLine(in, y, ula);
     if (in.nr[0x15] & 0x80)
@@ -412,11 +435,39 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
     ApplyUlaClip(in, y, ula);
     Layer2Line(in, y, layer2);
     TilemapLine(in, y, tiles);
-    SpriteLine(in, y, sprites);
+    SpriteLine(in, y, sprites, spriteNumbers);
+}
 
-    // A pixel the layer paints is transparent when its 8 MSBs equal the global transparency colour (NR #14)
-    const unsigned transparent = in.nr[0x14];
-    auto visible = [&](const Pixel& p) { return p.opaque && ((p.colour >> 1) & 0xFF) != transparent; };
+void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32_t* out)
+{
+    if (const NextLayer::LineSink* sink = in.layerOut)
+    {
+        // The layers are drawn straight into the sink's rows: recording them costs no extra pass
+        for (Pixel* row : sink->plane)
+            std::memset(static_cast<void*>(row), 0, kW * sizeof(Pixel));
+        uint8_t spriteNumbers[kW];
+        DrawLayers(in, y, sink->plane[NextLayer::kUla], sink->plane[NextLayer::kLayer2], sink->plane[NextLayer::kTilemap],
+                   sink->plane[NextLayer::kSprites], spriteNumbers);
+        ComposeLine<true>(in, sink->plane[NextLayer::kUla], sink->plane[NextLayer::kLayer2], sink->plane[NextLayer::kTilemap],
+                          sink->plane[NextLayer::kSprites], spriteNumbers, out);
+        return;
+    }
+    Pixel ula[kW];
+    Pixel layer2[kW];
+    Pixel tiles[kW];
+    Pixel sprites[kW];
+    DrawLayers(in, y, ula, layer2, tiles, sprites, nullptr);
+    ComposeLine<false>(in, ula, layer2, tiles, sprites, nullptr, out);
+}
+
+template <bool kRecord>
+void NextVideoRenderer::ComposeLine(const NextVideoInputs& in, const Pixel* ula, const Pixel* layer2, const Pixel* tiles, const Pixel* sprites,
+                                    const uint8_t* spriteNumbers, uint32_t* out)
+{
+    [[maybe_unused]] const NextLayer::LineSink* sink = in.layerOut;
+    // A pixel the layer paints is transparent when its 8 MSBs equal the global transparency colour (NR #14): the layer functions
+    // leave `opaque` clear for those, so a pixel is visible when it is opaque
+    auto visible = [](const Pixel& p) { return p.opaque != 0; };
 
     // NR #15 bits 4:2, top layer first: 000 SLU, 001 LSU, 010 SUL, 011 LUS, 100 USL, 101 ULS; modes 110 / 111 blend
     // Layer 2 with the ULA / tilemap. In LUS / USL / ULS the ULA border over a transparent tilemap does not hide a sprite
@@ -434,12 +485,14 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
         // the ULA and the tilemap merge into one layer first: a tile pixel wins unless it is marked below the ULA
         // (text mode tiles are transparent by the global colour) and the ULA pixel is opaque
         const Pixel& t = tiles[x];
-        const bool tv = t.opaque && !(t.textMode && ((t.colour >> 1) & 0xFF) == transparent);
+        const bool tv = t.opaque != 0;
         const bool ulaVisible = visible(ula[x]);
         Pixel merged = ula[x];
         bool uv = ulaVisible;
+        WinnerId<kRecord> uId = ula[x].border ? NextLayer::kIdBorder : NextLayer::kIdUla;  // what the merged ULA + tilemap layer is, for the record
         if (stencilMode)
         {
+            uId = NextLayer::kIdStencil;
             uv = ulaVisible && tv;
             merged.opaque = uv;
             if (uv)
@@ -449,15 +502,17 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
         {
             merged = t;
             uv = true;
+            uId = NextLayer::kIdTilemap;
         }
         const Pixel& u = merged;
         const Pixel& l = layer2[x];
         const bool lv = visible(l);
         const Pixel& sp = sprites[x];
-        const bool sv = sp.opaque;
+        const bool sv = sp.opaque != 0;
         const bool borderException = ula[x].border && !tv && sv;
         const bool ue = uv && !(order >= 3 && order <= 5 && borderException);
         uint16_t colour = fallback;
+        WinnerId<kRecord> id = NextLayer::kFallback;
         const bool l2Priority = lv && (l.colour & 0x200);
         if (order >= 6)
         {
@@ -465,6 +520,8 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
             // bits), with the tile or the ULA above or below it
             const bool below = t.below;
             Pixel mixRgb, mixTop, mixBot;  // opaque = not transparent
+            const WinnerId<kRecord> ulaId = ula[x].border ? NextLayer::kIdBorder : NextLayer::kIdUla;
+            WinnerId<kRecord> topId = ulaId.value, botId = ulaId.value;  // what mixTop / mixBot are, for the record
             switch (blend)
             {
                 case 0:
@@ -474,6 +531,7 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
                     mixTop.opaque = tv && !below;
                     mixBot = t;
                     mixBot.opaque = tv && below;
+                    topId = botId = NextLayer::kIdTilemap;
                     break;
                 case 2:
                     mixRgb = u;
@@ -494,6 +552,7 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
                         mixTop.opaque = ulaVisible;
                         mixBot = t;
                         mixBot.opaque = tv;
+                        botId = NextLayer::kIdTilemap;
                     }
                     else
                     {
@@ -501,6 +560,7 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
                         mixTop.opaque = tv;
                         mixBot = ula[x];
                         mixBot.opaque = ulaVisible;
+                        topId = NextLayer::kIdTilemap;
                     }
                     break;
             }
@@ -529,18 +589,36 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
                 mixer = pack(rs & 7, gs & 7, bs & 3);
             }
             if (l2Priority)
+            {
                 colour = mixer;
+                id = NextLayer::kIdBlend;
+            }
             else if (mixTop.opaque)
+            {
                 colour = mixTop.colour;
+                id = topId.value;
+            }
             else if (sv)
+            {
                 colour = sp.colour;
+                id = NextLayer::kIdSprite;
+            }
             else if (mixBot.opaque)
+            {
                 colour = mixBot.colour;
+                id = botId.value;
+            }
             else if (lv)
+            {
                 colour = mixer;
+                id = NextLayer::kIdBlend;
+            }
         }
         else if (l2Priority)
+        {
             colour = l.colour;  // a Layer 2 priority colour is above everything
+            id = NextLayer::kIdLayer2;
+        }
         else
         {
             // the three layers in the order of NR #15, top first: 'S' sprites, 'L' Layer 2, 'U' ULA + tilemap
@@ -548,16 +626,30 @@ void NextVideoRenderer::RenderLine(const NextVideoInputs& in, unsigned y, uint32
             for (const char* layer = kOrders[order]; *layer; layer++)
             {
                 if (*layer == 'S' && sv)
+                {
                     colour = sp.colour;
+                    id = NextLayer::kIdSprite;
+                }
                 else if (*layer == 'L' && lv)
+                {
                     colour = l.colour;
+                    id = NextLayer::kIdLayer2;
+                }
                 else if (*layer == 'U' && ue)
+                {
                     colour = u.colour;
+                    id = uId.value;
+                }
                 else
                     continue;
                 break;
             }
         }
         out[x] = Rgba(colour & 0x1FF);
+        if constexpr (kRecord)
+        {
+            sink->ids[x] = id.value;
+            sink->info[x] = sv ? spriteNumbers[x] : 0;
+        }
     }
 }

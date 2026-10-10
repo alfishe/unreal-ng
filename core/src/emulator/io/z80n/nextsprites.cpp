@@ -174,7 +174,7 @@ void NextSprites::Resolve(unsigned s, const Anchor& anchor, Effective& out) cons
     out.fourBit = anchor.h4bit;
 }
 
-void NextSprites::DrawSprite(const Effective& s, unsigned y, const int clip[4], bool overBorder, Pixel* out, bool* occupied,
+void NextSprites::DrawSprite(unsigned number, const Effective& s, unsigned y, const int clip[4], bool overBorder, Pixel* out, bool* occupied,
                              uint8_t transparentIndex)
 {
     if (!s.visible)
@@ -222,6 +222,7 @@ void NextSprites::DrawSprite(const Effective& s, unsigned y, const int clip[4], 
             _collision = true;
         occupied[x] = true;
         out[x].index = index;
+        out[x].sprite = static_cast<uint8_t>(number);
         out[x].opaque = true;
     }
 }
@@ -291,10 +292,10 @@ void NextSprites::DrawLine(unsigned y, uint8_t control, const NextVideoRegs& reg
     bool occupied[kGridWidth] = {};
     if (zeroOnTop)
         for (int i = kSprites - 1; i >= 0; i--)
-            DrawSprite(effective[i], y, clip, overBorder, out, occupied, transparentIndex);
+            DrawSprite(i, effective[i], y, clip, overBorder, out, occupied, transparentIndex);
     else
         for (unsigned i = 0; i < kSprites; i++)
-            DrawSprite(effective[i], y, clip, overBorder, out, occupied, transparentIndex);
+            DrawSprite(i, effective[i], y, clip, overBorder, out, occupied, transparentIndex);
 }
 
 void NextSprites::Describe(Info (&out)[kSprites]) const

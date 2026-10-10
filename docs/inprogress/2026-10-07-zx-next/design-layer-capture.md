@@ -1,6 +1,6 @@
 # ZX Spectrum Next: per-layer capture and the pixel inspector
 
-**Date:** 2026-10-10 (rev. 2: one-frame buffers, always-on if the overhead is within 5 %) · part of [README.md](README.md) · follows
+**Date:** 2026-10-10 (rev. 2: one-frame buffers, always-on if the overhead is within 5 %; **L0 / L1 done 2026-10-10, section 7**) · part of [README.md](README.md) · follows
 [design-automation-coverage.md](design-automation-coverage.md) (open question 1; the one item of phase B that was left out) · renderer:
 `core/src/emulator/video/next/nextvideorenderer.{h,cpp}`, `screennext.cpp`
 
@@ -138,3 +138,39 @@ recomputed by the inspector from the pixel position and the register state the l
 4. The 5 % budget: of the frame-render time, or of the emulated frame including the CPU? Proposal: both are measured and reported; the gate is the larger (stricter) of the two. Say so if the owner prefers one.
 5. Memory: 3 MB for two sets is fixed; with the shared-set rule for slow readers it can briefly be 4.5 MB. Acceptable? (An embedded / Steam Deck build may want the switch off.)
 6. Capture while the TTD replays: the replay renders through the same screen path; proposal: yes, nothing to add.
+
+## 7. Measurements (L0, 2026-10-10)
+
+**Decision: default `on`.** Recording costs 4.0 % (full emulated frame) and 4.4 % (bare `ScreenNext::RenderLinesUpTo`) of the frame time at the median, under the 5 % gate of section 3.2 - but with a thin margin, on the heaviest scene (below). Switch it off with the ini key / the runtime call of section 3.3 on a build that wants every percent.
+
+**The scene** (`core/benchmarks/emulator/video/nextlayercapture_benchmark.cpp`, `BootNext`): a Next machine with the CPU parked in RAM (`DI; JR $`, so the CPU share of a frame is as small as it gets - the stricter case for a ratio), random pages 5, 7-12, ULA + Layer 2 (320 x 256) + tilemap + 64 sprites with random patterns, layer order LSU, a copper list with 16 mid-line writes (16 lines drawn in two segments). Every layer is computed and every pixel composed.
+
+**Method.** `BM_NextFrame_LayerCapture/{0 full frame, 1 bare render}`: 200 rounds; a round is a phase with the capture off and a phase with it on (10 frames each, the order flipped every round, two untimed frames after each switch), timed in **thread CPU time** (a busy machine preempts the process; load average 40-65 during all runs - the owner asked not to wait for quiet, so the runs are interleaved and repeated instead). The reported overhead is the median of the per-round ratios; `ci95_pct` is the 95 % half-width of that median.
+
+| Run (200 rounds each) | variant | off us/frame | on us/frame | overhead median | 95 % CI of the median | per-round p10 .. p90 |
+|:--|:--|--:|--:|--:|--:|:--|
+| 1 | full frame | 2819 | 2946 | +4.0 % | +-2.0 | -7.9 .. +18.8 % |
+| 2 | full frame | 2828 | 2949 | +3.9 % | +-1.7 | -10.2 .. +14.4 % |
+| 3 | full frame | 2918 | 3022 | +3.8 % | +-0.7 | -1.1 .. +7.7 % |
+| 1 | bare render | 2282 | 2380 | +4.2 % | +-1.8 | -8.6 .. +14.5 % |
+| 2 | bare render | 2307 | 2417 | +4.5 % | +-1.2 | -1.0 .. +13.4 % |
+| 3 | bare render | 2303 | 2395 | +4.0 % | +-1.8 | -9.2 .. +15.3 % |
+
+A second, independent method - two *builds* run alternately (8 rounds of 200 x 10 frames each, `scratch/ab.sh`; A = the tree before this work at deb0ec112, B = this tree): 
+
+| | A (before) | B capture off | B capture on | on / off | on / A | off / A |
+|:--|--:|--:|--:|:--|:--|:--|
+| full frame, us | 2886 | 2837 | 2945 | **+4.0 %** (1.6 .. 5.7) | +1.8 % | -2.2 % |
+| bare render, us | 2343 | 2298 | 2398 | **+4.4 %** (3.7 .. 5.9) | +2.2 % | -1.9 % |
+
+(median of the 8 per-round ratios, min .. max in brackets.) Two things follow: the renderer with the sink *off* is 2 % **faster** than before this work (the layer functions now write 16-bit pixels, the global transparency is decided when a pixel is painted, `LoRes` / ULA pixels are made once for their two sub-pixels), so against the pre-work renderer a frame with the capture **on** costs +1.8 % / +2.2 %; and the single worst round of the 16 in the build comparison is +5.9 % - the median is under the gate, the extremes are not, which is why the margin is called thin.
+
+**Reduction steps used** (section 3.2 lists them in order; the first cut was far over budget, +19 % full frame / +22.6 % bare render):
+
+1. compact 16-bit planes - in from the start; the first cut packed the four `Pixel` rows (6 bytes each) into them in a separate pass: that pass was 85 % of the overhead;
+2. **not in the design's list, and what fixed it:** `Pixel` became the 16-bit packed form itself (colour 10 bits + opaque / border / below / text-mode), the layer functions draw straight into the sink's rows (no pack pass), the global-transparency test moved from the compositor into the layer functions (the plane's `opaque` bit is what the compositor saw, so a reader gets the alpha without knowing NR #14); the winner id is tracked only in the recording instantiation of the compositor (`ComposeLine<true>`; in `<false>` every id assignment vanishes). Result: +19 % -> +4 %;
+3. "unchanged-line copy" and "ids-only for copper-free lines": **not needed**, not built. What remains of the cost is memory traffic: 10 bytes per sub-pixel into a 1.6 MB set that is cold (~6.4 KB a line), which at the measured frame time is the ~4 %. If the margin has to grow: record the planes at pixel resolution (320) when no Layer 2 640 / Timex hi-res mode is on, or skip the `info` byte (one conditional store was tried: no gain).
+
+`OffCostsNothing` and `FramesAreByteIdenticalToTheRendererBeforeTheSink` (a digest of 25 layer configurations x 17 lines, 0x7D2AC2740EF11BB9, taken with the renderer of deb0ec112) pin the sink-off path: same pixels, no allocation (`ScreenNext` holds no set while the switch is off; `RenderLine` without a sink uses its stack rows as before).
+
+Memory: two sets of 1.6 MB (`Frame::Bytes()` = 1 638 400 each) = 3.1 MB while the capture is on; a slow reader holding a set makes the renderer take a fresh one (briefly 4.7 MB).
