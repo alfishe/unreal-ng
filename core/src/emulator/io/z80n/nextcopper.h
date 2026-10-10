@@ -47,6 +47,8 @@ public:
 
     uint8_t Mode() const { return _mode; }
     uint16_t Pc() const { return _pc; }
+    /// The write address NR #60 / #63 store at next (byte granular, 0..2047); reading it steps nothing
+    uint16_t WriteAddress() const { return _address; }
     uint16_t Instruction(unsigned index) const { return _code[index & 0x3FF]; }
     uint64_t FrameClocks() const { return _frameClocks; }
 

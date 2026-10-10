@@ -60,7 +60,8 @@ TEST(OpenApiNextRoutes_Test, TheRoutesAreFoundInTheHeader)
                                  "Post /api/v1/emulator/{id}/next/reg-journal", "Get /api/v1/emulator/{id}/state/next/dma",
                                  "Get /api/v1/emulator/{id}/state/next/video", "Get /api/v1/emulator/{id}/state/next/palette",
                                  "Get /api/v1/emulator/{id}/state/next/ports", "Get /api/v1/emulator/{id}/state/next/nextreg",
-                                 "Post /api/v1/emulator/{id}/next/nextreg"})
+                                 "Post /api/v1/emulator/{id}/next/nextreg", "Get /api/v1/emulator/{id}/state/next/copper",
+                                 "Get /api/v1/emulator/{id}/state/next/sprites"})
         EXPECT_TRUE(found.count(expected)) << expected << " is not registered in emulator_api.h";
 }
 
@@ -69,7 +70,7 @@ TEST(OpenApiNextRoutes_Test, EveryNextRouteHasAManifestPath)
     const std::string manifest = Manifest();
     ASSERT_FALSE(manifest.empty()) << "openapi/*.inc not found";
     const std::vector<Route> routes = NextRoutes();
-    ASSERT_GE(routes.size(), 9u);
+    ASSERT_GE(routes.size(), 11u);
     for (const Route& r : routes)
         EXPECT_NE(manifest.find("\"" + r.path + "\""), std::string::npos) << r.method << " " << r.path << " has no path in the OpenAPI manifest";
 }
@@ -88,7 +89,9 @@ TEST(OpenApiNextRoutes_Test, TheReportRoutesDeclareTheirQueryParametersAndAnExis
                             Report{"/api/v1/emulator/{id}/state/next/video", {}, "NextVideoReport"},
                             Report{"/api/v1/emulator/{id}/state/next/palette", {"palette", "range"}, "NextPaletteReport"},
                             Report{"/api/v1/emulator/{id}/state/next/ports", {"port", "access"}, "NextPortsReport"},
-                            Report{"/api/v1/emulator/{id}/state/next/nextreg", {"reg", "changed"}, "NextRegReadReport"}})
+                            Report{"/api/v1/emulator/{id}/state/next/nextreg", {"reg", "changed"}, "NextRegReadReport"},
+                            Report{"/api/v1/emulator/{id}/state/next/copper", {"from", "count", "raw"}, "NextCopperReport"},
+                            Report{"/api/v1/emulator/{id}/state/next/sprites", {"from", "count", "all"}, "NextSpritesReport"}})
     {
         const size_t at = manifest.find(std::string("{\"") + r.path + "\"");
         ASSERT_NE(at, std::string::npos) << r.path;

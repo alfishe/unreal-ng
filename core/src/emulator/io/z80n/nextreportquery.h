@@ -49,3 +49,26 @@ bool NextRegReadQueryFromStrings(const std::string& reg, const std::string& chan
 /// Shared by the parsers and the write control: a hex number with an optional `#`, `0x` or `h` marker; false when it is not a number or does not fit `maxValue`
 bool ParseNextHex(const std::string& text, uint32_t maxValue, uint32_t& value);
 bool ParseNextBool(const std::string& text, bool& value);
+
+/// `next_copper`: a window of the instruction list (the pc's neighbourhood comes along when the pc is outside it) and the raw bytes
+struct NextCopperQuery
+{
+    unsigned first = 0;   ///< first instruction (0-1023)
+    unsigned count = 64;  ///< 1-1024
+    bool raw = false;     ///< the whole 2048-byte list as hex
+};
+
+/// `from` (decimal, or hex with 0x / #), `count`, `raw` (true / false); empty = the default
+bool NextCopperQueryFromStrings(const std::string& from, const std::string& count, const std::string& raw, NextCopperQuery& query,
+                                std::string& error);
+
+/// `next_sprites`: a page of the 128 sprites; by default only the visible ones of the page are listed
+struct NextSpritesQuery
+{
+    unsigned first = 0;    ///< first sprite (0-127)
+    unsigned count = 128;  ///< 1-128
+    bool all = false;      ///< list the invisible ones too
+};
+
+bool NextSpritesQueryFromStrings(const std::string& from, const std::string& count, const std::string& all, NextSpritesQuery& query,
+                                 std::string& error);

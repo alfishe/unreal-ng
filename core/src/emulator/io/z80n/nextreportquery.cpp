@@ -164,3 +164,59 @@ bool NextRegReadQueryFromStrings(const std::string& reg, const std::string& chan
     }
     return true;
 }
+
+namespace
+{
+bool PageQuery(const std::string& from, const std::string& count, unsigned limit, const char* what, unsigned& first, unsigned& n,
+               std::string& error)
+{
+    uint32_t value = 0;
+    if (!from.empty())
+    {
+        if (!ParseCount(from, limit - 1, value))
+        {
+            error = "from: '" + from + "' is not a " + what + " number (0-" + std::to_string(limit - 1) + ")";
+            return false;
+        }
+        first = value;
+    }
+    if (!count.empty())
+    {
+        if (!ParseCount(count, limit, value) || value == 0)
+        {
+            error = "count: '" + count + "' is not 1-" + std::to_string(limit);
+            return false;
+        }
+        n = value;
+    }
+    return true;
+}
+}  // namespace
+
+bool NextCopperQueryFromStrings(const std::string& from, const std::string& count, const std::string& raw, NextCopperQuery& query,
+                                std::string& error)
+{
+    query = NextCopperQuery{};
+    if (!PageQuery(from, count, 1024, "copper instruction", query.first, query.count, error))
+        return false;
+    if (!ParseNextBool(raw, query.raw))
+    {
+        error = "raw: '" + raw + "' is not true / false";
+        return false;
+    }
+    return true;
+}
+
+bool NextSpritesQueryFromStrings(const std::string& from, const std::string& count, const std::string& all, NextSpritesQuery& query,
+                                 std::string& error)
+{
+    query = NextSpritesQuery{};
+    if (!PageQuery(from, count, 128, "sprite", query.first, query.count, error))
+        return false;
+    if (!ParseNextBool(all, query.all))
+    {
+        error = "all: '" + all + "' is not true / false";
+        return false;
+    }
+    return true;
+}

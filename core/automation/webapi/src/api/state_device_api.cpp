@@ -465,6 +465,36 @@ void EmulatorAPI::getStateNextPorts(const HttpRequestPtr& req, std::function<voi
     ReplyState(DeviceState::NextPorts(emulator->GetContext(), query), callback);
 }
 
+/// @brief GET /api/v1/emulator/{id}/state/next/copper?from=&count=&raw= - the copper list as a disassembly, the control mode, the pc
+/// (DeviceState::NextCopper)
+void EmulatorAPI::getStateNextCopper(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextCopperQuery query;
+    std::string error;
+    if (!NextCopperQueryFromStrings(req->getParameter("from"), req->getParameter("count"), req->getParameter("raw"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextCopper(emulator->GetContext(), query), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/state/next/sprites?from=&count=&all= - the sprite attributes decoded, the switches, the pattern memory
+/// summary (DeviceState::NextSprites)
+void EmulatorAPI::getStateNextSprites(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                      const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+        return ReplyNotFound("Emulator not found with ID: " + id, callback);
+    NextSpritesQuery query;
+    std::string error;
+    if (!NextSpritesQueryFromStrings(req->getParameter("from"), req->getParameter("count"), req->getParameter("all"), query, error))
+        return ReplyNotFound(error, callback, HttpStatusCode::k400BadRequest);
+    ReplyState(DeviceState::NextSprites(emulator->GetContext(), query), callback);
+}
+
 /// @brief GET /api/v1/emulator/{id}/state/next/nextreg?reg=&changed= - one NextREG with its decoded bits, or all (DeviceState::NextRegRead)
 void EmulatorAPI::getStateNextNextReg(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                       const std::string& id) const

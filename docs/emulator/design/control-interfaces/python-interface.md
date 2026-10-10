@@ -229,6 +229,14 @@ class Emulator:
         """Write a NextREG through the board's write choke point (door 'nextreg', 'port' or 'internal'); {ok, reg, value, previous,
         after, door, moment}; ValueError for a bad argument, RuntimeError when it is not a Next or no coherent moment came"""
 
+    def next_copper(self, from_index=None, count=None, raw=False) -> dict:
+        """The copper list as a disassembly (a window of the 1024 words), control mode, write address (never stepped by the report), pc,
+        around_pc when the pc is outside the window; raw=True adds the whole list as hex; ValueError on a bad option"""
+
+    def next_sprites(self, from_index=None, count=None, all=False) -> dict:
+        """The 128 sprite attributes decoded (the visible ones of the page; all=True lists every one), switches, collision / too-many
+        flags (not cleared), visible_count, pattern memory summary"""
+
     def sprinter_pld_journal(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None, source="live") -> dict:
         """Who changed the PLD setup: events (frame, t, pc, kind, port, value, text); source='ttd' reads the recording"""
 

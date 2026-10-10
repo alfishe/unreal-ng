@@ -44,6 +44,17 @@ class TestNextReports:
             assert response.status_code == 200, path
             assert member in response.json(), path
 
+    def test_copper_and_sprites_reports(self, api_client, next_emulator):
+        copper = get(api_client, next_emulator, "/state/next/copper?from=0&count=4&raw=true")
+        assert copper.status_code == 200
+        assert len(copper.json()["instructions"]) == 4
+        assert len(copper.json()["raw"]) == 4096
+        sprites = get(api_client, next_emulator, "/state/next/sprites?all=true&count=3")
+        assert sprites.status_code == 200
+        assert len(sprites.json()["sprites"]) == 3
+        assert get(api_client, next_emulator, "/state/next/copper?count=0").status_code == 400
+        assert get(api_client, next_emulator, "/state/next/sprites?from=128").status_code == 400
+
     def test_query_parameters_are_parsed(self, api_client, next_emulator):
         palette = get(api_client, next_emulator, "/state/next/palette?palette=sprites_1&range=0-3").json()
         assert palette["palettes"][0]["name"] == "sprites_1"

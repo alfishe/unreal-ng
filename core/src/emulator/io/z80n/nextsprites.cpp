@@ -296,3 +296,45 @@ void NextSprites::DrawLine(unsigned y, uint8_t control, const NextVideoRegs& reg
         for (unsigned i = 0; i < kSprites; i++)
             DrawSprite(effective[i], y, clip, overBorder, out, occupied, transparentIndex);
 }
+
+void NextSprites::Describe(Info (&out)[kSprites]) const
+{
+    Anchor anchor;
+    int anchorIndex = -1;
+    for (unsigned i = 0; i < kSprites; i++)
+    {
+        Effective e;
+        Info& info = out[i];
+        info = Info{};
+        info.extended = Extended(i);
+        info.relative = Relative(i);
+        if (info.relative)
+        {
+            Resolve(i, anchor, e);
+            info.anchor = anchorIndex;
+            info.unified = anchor.type1;
+            info.offsetX = static_cast<int8_t>(_attr[i][0]);
+            info.offsetY = static_cast<int8_t>(_attr[i][1]);
+            info.relativePattern = (_attr[i][4] & 1) != 0;
+            info.relativePalette = (_attr[i][2] & 1) != 0;
+        }
+        else
+        {
+            e = Decode(i);
+            UpdateAnchor(i, anchor);
+            anchorIndex = static_cast<int>(i);
+            info.unified = anchor.type1;
+        }
+        info.x = e.x;
+        info.y = e.y;
+        info.fourBit = e.fourBit;
+        info.pattern = e.fourBit ? e.pattern : static_cast<unsigned>(e.pattern >> 1);
+        info.palette = e.palette;
+        info.xMirror = e.xMirror;
+        info.yMirror = e.yMirror;
+        info.rotate = e.rotate;
+        info.visible = e.visible;
+        info.xScale = 1u << e.xScale;
+        info.yScale = 1u << e.yScale;
+    }
+}

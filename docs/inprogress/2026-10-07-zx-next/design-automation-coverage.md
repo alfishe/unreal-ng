@@ -96,7 +96,7 @@ palette_offset, clip}`, `tilemap {enabled, columns, attrs, mode512, on_top, text
 | Phase | Content | Exit |
 |:--|:--|:--|
 | A | `dma`, `video`, `palette`, `ports`, `nextreg` read/write on all planes, docs, manifest | tests green on master merge; full `core-tests`; gcc-16 -O3 clean. **Done 2026-10-10** (branch `next-automation`) |
-| B | `copper`, `sprites` (the larger reports), layer capture | same |
+| B | `copper`, `sprites` (the larger reports), layer capture | same. **`copper` and `sprites` done 2026-10-10; layer capture not done** (see TODO.md) |
 | C | Qt panels (NextREG table, MMU map, layers, sprites, copper, DMA/CTC/IM2, M1 button), breakpoints on NextREG writes, DeZog/GDB wiring, TTD of NEXTREG writes | later; see [phases.md](phases.md) N12 |
 
 ## 7. Documents to update (with the code)

@@ -336,6 +336,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateNextVideo, "/api/v1/emulator/{id}/state/next/video", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateNextPalette, "/api/v1/emulator/{id}/state/next/palette", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateNextPorts, "/api/v1/emulator/{id}/state/next/ports", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextCopper, "/api/v1/emulator/{id}/state/next/copper", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextSprites, "/api/v1/emulator/{id}/state/next/sprites", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateNextNextReg, "/api/v1/emulator/{id}/state/next/nextreg", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNextNextReg, "/api/v1/emulator/{id}/next/nextreg", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterPorts, "/api/v1/emulator/{id}/state/sprinter/ports", drogon::Get);
@@ -1215,6 +1217,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                              const std::string& id) const;
     void getStateNextPorts(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                            const std::string& id) const;
+    void getStateNextCopper(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    void getStateNextSprites(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id) const;
     void getStateNextNextReg(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                              const std::string& id) const;
     void postNextNextReg(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,

@@ -2859,6 +2859,34 @@ namespace PythonBindings
             }, py::arg("reg") = py::none(), py::arg("changed") = false,
                "One NextREG with decoded bits (reg=7 or '07'), or all of them (changed=True: only those that differ from their reset); "
                "no side effect")
+            .def("next_copper", [](Emulator& self, py::object from_index, py::object count, bool raw) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextCopperQuery query;
+                std::string error;
+                if (!NextCopperQueryFromStrings(text(from_index), text(count), raw ? "true" : "", query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextCopper(self.GetContext(), query));
+            }, py::arg("from_index") = py::none(), py::arg("count") = py::none(), py::arg("raw") = false,
+               "The copper list as a disassembly (from_index, count: a window of 1024 words), the control mode, write address and pc; "
+               "raw=True adds the whole list as hex; no side effect")
+            .def("next_sprites", [](Emulator& self, py::object from_index, py::object count, bool all) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextSpritesQuery query;
+                std::string error;
+                if (!NextSpritesQueryFromStrings(text(from_index), text(count), all ? "true" : "", query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextSprites(self.GetContext(), query));
+            }, py::arg("from_index") = py::none(), py::arg("count") = py::none(), py::arg("all") = false,
+               "The 128 sprite attributes decoded (the visible ones of the page; all=True lists every one), switches, collision flags (not "
+               "cleared), pattern memory summary")
             .def("next_nextreg_write", [](Emulator& self, int reg, int value, const std::string& door) -> py::object {
                 if (reg < 0 || reg > 255 || value < 0 || value > 255)
                     throw py::value_error("reg and value must be 0..255");

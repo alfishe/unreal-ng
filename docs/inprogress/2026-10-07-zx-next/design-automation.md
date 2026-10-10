@@ -14,7 +14,7 @@ in `DeviceState` (the way `sprinterdevicestate.cpp` does).
 | `next_mmu` | 8 slots: page value, resolved source (ROM/RAM/L2/DivMMC/MF/bootrom), r/w flags | N2 |
 | `next_ports` | port decoder: describe(port, read/write), enable word state | N2; **done 2026-10-10** ([design-automation-coverage.md](design-automation-coverage.md)) |
 | `next_video` | layer enables, order, resolution, scroll/clip, palette selections, raster hc/vc, copper state | N6; **done 2026-10-10** (copper state is in `next_copper`) |
-| `next_sprites`, `next_palette`, `next_copper` | attributes/patterns, palettes, copper list disassembly + position | N7; `next_palette` **done 2026-10-10** |
+| `next_sprites`, `next_palette`, `next_copper` | attributes/patterns, palettes, copper list disassembly + position | N7; `next_palette`, `next_copper`, `next_sprites` **done 2026-10-10** |
 | `next_reg_journal` | who wrote which NextREG, when (frame, T, PC), through the NEXTREG instruction / port #253B / the copper - [design-nextreg-journal.md](design-nextreg-journal.md); WebAPI, OpenAPI, MCP, CLI `state next journal`, Lua, Python | **done 2026-10-09** |
 | `next_dma`, `next_ctc`, `next_im2` | device state | N5, N8; `next_dma` **done 2026-10-10**, `next_ctc` / `next_im2` are in `state/next` |
 | `next_spi`, `next_divmmc`, `next_uart`, `next_i2c` | device state | N5, N9 |

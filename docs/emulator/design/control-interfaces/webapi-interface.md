@@ -435,6 +435,8 @@ GET  /api/v1/emulator/{id}/state/next/video  layer order, ULA/Layer 2/tilemap/sp
 GET  /api/v1/emulator/{id}/state/next/palette ?palette=selected|0-7|name|all&range=0-255 - the 9-bit palettes; no palette index moves
 GET  /api/v1/emulator/{id}/state/next/ports  ?port=6B&access=r|w - the internal port enable word (NR #82-#85) and which device answers the port
 GET  /api/v1/emulator/{id}/state/next/nextreg ?reg=07&changed=true - one NextREG with decoded bits, or all; no side effect
+GET  /api/v1/emulator/{id}/state/next/copper ?from=0&count=64&raw=true - the copper list as a disassembly, control mode, write address (not stepped), pc, around_pc
+GET  /api/v1/emulator/{id}/state/next/sprites ?from=0&count=128&all=true - the sprite attributes decoded (visible ones unless all), switches, collision flags (not cleared), pattern memory summary
 POST /api/v1/emulator/{id}/next/nextreg      {"reg": "07", "value": "03", "door": "nextreg|port|internal"} - write a NextREG through the board's write choke point where nothing else drives the machine (400 bad body, 409 not a Next, 503 no coherent moment in 500 ms)
 GET  /api/v1/emulator/{id}/state/sprinter      Sprinter Sp2000 (also /state/sprinter/ports[/lookup], /text): PLD, windows, registers, clock + waits, video, accelerator, sound, Z84C15, BIOS
 GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), picture_mode / picture_mixed / picture_brief, HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]

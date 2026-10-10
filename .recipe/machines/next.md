@@ -174,6 +174,30 @@ The write runs where nothing else drives the machine (paused, or between two fra
 not a Next. The JSON of every report is the same tree as the text (`GET .../state/next/dma` and so on; the OpenAPI manifest lists the
 query parameters).
 
+**`next_copper`** - the copper list as a disassembly. `pc` and the `>` marker show where the copper is; the write address is the NR `#60`-`#63`
+pointer and a report never steps it:
+
+```text
+$ state next copper count=3
+Copper stopped (mode 0), write address 6 (word 3, msb next), pc 0, line offset 0, 3 word(s) in the list
+> 0	0x9864  WAIT line 100 hpos 12
+  1	0x1505  MOVE NR #15 <- #05  (Sprite and Layers System)
+  2	0xFFFF  HALT
+```
+
+**`next_sprites`** - the sprite attributes decoded (a relative sprite is resolved against its anchor), the switches, the collision flags (the
+report does not clear them, a port `#303B` read does) and the pattern memory in use:
+
+```text
+$ state next sprites
+Sprites off, over border off, 1 visible; collision off, too many off
+#0 basic x 64 y 64 pattern 0 palette +0 scale 1x1  [40 40 00 80 00]
+pattern memory: 256 non-zero byte(s) of 16384, 1 8-bit pattern(s) in use
+```
+
+MCP: `inspect_state {"aspects":["next_copper","next_sprites"],"nr_from":"0","nr_count":"16"}`; WebAPI `GET .../state/next/copper?from=0&count=16&raw=true`,
+`GET .../state/next/sprites?all=true`; Lua `next_copper{...}`, `next_sprites{...}`; Python `emu.next_copper(...)`, `emu.next_sprites(...)`.
+
 ### 4. Starting a snapshot (`.snx`, `.sna`, `.z80`) from the Browser
 
 NextZXOS starts a snapshot in a way worth knowing, because every piece must be exact or the screen stays black:

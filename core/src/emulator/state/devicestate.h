@@ -44,6 +44,8 @@ struct NextRegJournalQuery;  // emulator/io/z80n/nextregjournal.h
 struct NextPaletteQuery;     // emulator/io/z80n/nextreportquery.h
 struct NextPortsQuery;
 struct NextRegReadQuery;
+struct NextCopperQuery;
+struct NextSpritesQuery;
 
 namespace DeviceState
 {
@@ -248,6 +250,10 @@ StateNode NextPalette(EmulatorContext* context, const NextPaletteQuery& query);
 StateNode NextPorts(EmulatorContext* context, const NextPortsQuery& query);
 /// `next_nextreg`: one register (value as a read returns it, the stored byte, reset, decoded bits) or all of them
 StateNode NextRegRead(EmulatorContext* context, const NextRegReadQuery& query);
+/// `next_copper`: control mode, write address, pc, the list as a disassembly (a window; the pc's neighbourhood when the pc is outside it)
+StateNode NextCopper(EmulatorContext* context, const NextCopperQuery& query);
+/// `next_sprites`: the switches, the clip window, the collision / overtime flags (not cleared), the 128 attributes decoded and the pattern memory summary
+StateNode NextSprites(EmulatorContext* context, const NextSpritesQuery& query);
 StateNode SprinterPaging(EmulatorContext* context);
 /// The text of the picture's text squares (80 x 32: BIOS SETUP, DSS) from the mode table - the
 /// Sprinter has no ZX screen to OCR; graphics squares read as spaces

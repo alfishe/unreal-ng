@@ -129,6 +129,31 @@ TEST_F(CliNextReports_Test, NextRegReadsAndTheNextCommandWrites)
     EXPECT_NE(Next({"nextreg", "07", "03", "copper"}).find("door must be"), std::string::npos);
 }
 
+TEST_F(CliNextReports_Test, CopperAndSpritesPrintTheirTables)
+{
+    // copper list: WAIT line 100 hpos 12, MOVE NR #15 <- 5, HALT
+    Nr(0x61, 0);
+    Nr(0x62, 0);
+    for (uint8_t b : {0x98, 0x64, 0x15, 0x05, 0xFF, 0xFF})
+        Nr(0x60, b);
+    const std::string copper = State({"next", "copper", "count=4"});
+    EXPECT_NE(copper.find("Copper stopped (mode 0), write address 6"), std::string::npos) << copper;
+    EXPECT_NE(copper.find("> 0\t0x9864  WAIT line 100 hpos 12"), std::string::npos) << "the pc marker";
+    EXPECT_NE(copper.find("  1\t0x1505  MOVE NR #15 <- #05  (Sprite and Layers System)"), std::string::npos) << copper;
+    EXPECT_EQ(copper.find("  4\t"), std::string::npos) << "count=4";
+    EXPECT_NE(State({"next", "copper", "2", "1", "raw=true"}).find("raw: 98641505FFFF"), std::string::npos);
+    EXPECT_NE(State({"next", "copper", "from=2000"}).find("Error: from:"), std::string::npos);
+
+    _ports->DecodePortOut(0x303B, 5, 0);
+    for (uint8_t b : {0x10, 0x20, 0x08, 0x83})
+        _ports->DecodePortOut(0x57, b, 0);
+    const std::string sprites = State({"next", "sprites"});
+    EXPECT_NE(sprites.find("1 visible"), std::string::npos) << sprites;
+    EXPECT_NE(sprites.find("#5 basic x 16 y 32 pattern 3 palette +0 xmirror scale 1x1  [10 20 08 83 00]"), std::string::npos) << sprites;
+    EXPECT_NE(State({"next", "sprites", "all=true", "count=2"}).find("(hidden)"), std::string::npos);
+    EXPECT_NE(State({"next", "sprites", "count=0"}).find("Error: count:"), std::string::npos);
+}
+
 TEST_F(CliNextReports_Test, GoldenTexts)
 {
     Nr(0x43, 0x30);
@@ -138,6 +163,21 @@ TEST_F(CliNextReports_Test, GoldenTexts)
     GoldenText::Expect("next", "cli-palette", State({"next", "palette", "range=0-3"}));
     Nr(0x82, 0xDF);
     GoldenText::Expect("next", "cli-ports", State({"next", "ports", "6B", "w"}));
+    Nr(0x61, 0);
+    Nr(0x62, 0);
+    for (uint8_t b : {0x98, 0x64, 0x15, 0x05, 0x07, 0x03, 0xFF, 0xFF})
+        Nr(0x60, b);
+    GoldenText::Expect("next", "cli-copper", State({"next", "copper", "count=5"}));
+    _ports->DecodePortOut(0x303B, 3, 0);
+    for (uint8_t b : {0x34, 0x56, 0x39, 0x85})
+        _ports->DecodePortOut(0x57, b, 0);
+    _ports->DecodePortOut(0x303B, 10, 0);
+    for (uint8_t b : {0x10, 0x20, 0x00, 0xC7, 0xF3})
+        _ports->DecodePortOut(0x57, b, 0);
+    _ports->DecodePortOut(0x303B, 11, 0);
+    for (uint8_t b : {0x05, 0xFB, 0x00, 0xC2, 0x40})
+        _ports->DecodePortOut(0x57, b, 0);
+    GoldenText::Expect("next", "cli-sprites", State({"next", "sprites"}));
 }
 
 // Prints the output the recipe .recipe/machines/next.md quotes (UNREAL_PRINT_NEXT_RECIPE=1; otherwise it checks only that the story runs):
@@ -171,6 +211,20 @@ TEST_F(CliNextReports_Test, RecipeStory)
     show("state next nextreg 07", State({"next", "nextreg", "07"}));
     show("state next journal regs=07", State({"next", "journal", "regs=07"}));
     show("state next palette sprites_1 0-3", State({"next", "palette", "sprites_1", "0-3"}));
+    // a copper list: wait for line 100, switch the layer order, halt
+    Nr(0x61, 0);
+    Nr(0x62, 0);
+    for (uint8_t b : {0x98, 0x64, 0x15, 0x05, 0xFF, 0xFF})
+        Nr(0x60, b);
+    show("state next copper count=3", State({"next", "copper", "count=3"}));
+    // a sprite, and the pattern it uses
+    _ports->DecodePortOut(0x303B, 0, 0);
+    for (int i = 0; i < 256; i++)
+        _ports->DecodePortOut(0x5B, 0x11, 0);
+    _ports->DecodePortOut(0x303B, 0, 0);
+    for (uint8_t b : {0x40, 0x40, 0x00, 0x80})
+        _ports->DecodePortOut(0x57, b, 0);
+    show("state next sprites", State({"next", "sprites"}));
 }
 
 TEST(CliNextFormat_Test, TheNextCommandWithoutAnEmulatorSaysSo)

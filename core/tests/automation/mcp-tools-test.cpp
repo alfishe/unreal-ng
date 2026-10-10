@@ -952,7 +952,9 @@ TEST_F(McpTools_Test, InspectState_NextReportAspects_UseTheirRoutesAndQueries)
     for (const Case& c : {Case{"next_dma", "/api/v1/emulator/emu-1/state/next/dma"}, Case{"next_video", "/api/v1/emulator/emu-1/state/next/video"},
                           Case{"next_palette", "/api/v1/emulator/emu-1/state/next/palette?palette=sprites_1&range=0-15"},
                           Case{"next_ports", "/api/v1/emulator/emu-1/state/next/ports?port=6B&access=w"},
-                          Case{"next_nextreg", "/api/v1/emulator/emu-1/state/next/nextreg?reg=07&changed=true"}})
+                          Case{"next_nextreg", "/api/v1/emulator/emu-1/state/next/nextreg?reg=07&changed=true"},
+                          Case{"next_copper", "/api/v1/emulator/emu-1/state/next/copper?from=16&count=8&raw=true"},
+                          Case{"next_sprites", "/api/v1/emulator/emu-1/state/next/sprites?from=16&count=8&all=true"}})
     {
         _caller->calls.clear();
         Json::Value report;
@@ -966,6 +968,10 @@ TEST_F(McpTools_Test, InspectState_NextReportAspects_UseTheirRoutesAndQueries)
         args["nr_access"] = "w";
         args["nr_reg"] = "07";
         args["nr_changed"] = true;
+        args["nr_from"] = "16";
+        args["nr_count"] = "8";
+        args["nr_raw"] = true;
+        args["nr_all"] = true;
         mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
         ASSERT_FALSE(result.isError) << c.aspect << ": " << result.text;
         EXPECT_TRUE(_caller->Saw("GET", c.path)) << c.aspect;
@@ -1022,12 +1028,32 @@ TEST_F(McpTools_Test, InspectState_NextReportAspects_SummarizeTheReports)
     reg["value"] = "0x33";
     reg["decoded"] = "CPU speed 28 MHz";
     _caller->routes["GET /api/v1/emulator/emu-1/state/next/nextreg"] = {200, reg};
+    Json::Value copper;
+    copper["available"] = true;
+    copper["control"]["name"] = "restart_loop";
+    copper["pc"] = 2;
+    copper["address"] = 10;
+    copper["list_length"] = 5;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/copper"] = {200, copper};
+    Json::Value sprites;
+    sprites["available"] = true;
+    sprites["enabled"] = true;
+    sprites["visible_count"] = 3;
+    sprites["sprites"].append(Json::Value(Json::objectValue));
+    sprites["pattern_memory"]["non_zero_bytes"] = 266;
+    sprites["flags"]["collision"] = true;
+    sprites["flags"]["too_many"] = false;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/sprites"] = {200, sprites};
     Json::Value args;
     args["aspects"].append("next_dma");
     args["aspects"].append("next_ports");
     args["aspects"].append("next_nextreg");
+    args["aspects"].append("next_copper");
+    args["aspects"].append("next_sprites");
     mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
     ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[next_copper] restart_loop, pc 2, address 10, 5 word(s) in the list"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[next_sprites] on, 3 visible, 1 listed, pattern memory 266 non-zero byte(s), COLLISION"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("[next_dma] zxn mode, enabled, a_to_b, A 0x8000 (memory) B 0x00FE (io), burst, counter 4/256, status 0x3B"),
               std::string::npos)
         << result.text;
@@ -1052,9 +1078,9 @@ TEST_F(McpTools_Test, InspectState_SchemaListsTheNextReportAspectsAndParameters)
     std::string aspects;
     for (const Json::Value& a : schema["properties"]["aspects"]["items"]["enum"])
         aspects += a.asString() + " ";
-    for (const char* aspect : {"next_dma", "next_video", "next_palette", "next_ports", "next_nextreg"})
+    for (const char* aspect : {"next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites"})
         EXPECT_NE(aspects.find(aspect), std::string::npos) << aspect;
-    for (const char* parameter : {"nr_palette", "nr_range", "nr_port", "nr_access", "nr_reg", "nr_changed"})
+    for (const char* parameter : {"nr_palette", "nr_range", "nr_port", "nr_access", "nr_reg", "nr_changed", "nr_from", "nr_count", "nr_raw", "nr_all"})
         EXPECT_TRUE(schema["properties"].isMember(parameter)) << parameter;
 }
 

@@ -3575,6 +3575,47 @@ public:
             out.push_back(StateNodeToLua(s, DeviceState::NextRegRead(emulator->GetContext(), query)));
             return out;
         });
+        // next_copper([{from=0, count=64, raw=true}]): the copper list as a disassembly with the control mode, write address and pc
+        // (DeviceState::NextCopper); next_sprites([{from=0, count=128, all=true}]): the 128 sprite attributes decoded, switches, flags,
+        // pattern memory summary (DeviceState::NextSprites); nil + error on a bad option
+        lua.set_function("next_copper", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options) return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number) return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string) return value.as<std::string>();
+                if (value.get_type() == sol::type::boolean) return value.as<bool>() ? "true" : "false";
+                return std::string();
+            };
+            NextCopperQuery query;
+            std::string error;
+            if (!NextCopperQueryFromStrings(text("from"), text("count"), text("raw"), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextCopper(emulator->GetContext(), query)));
+            return out;
+        });
+        lua.set_function("next_sprites", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options) return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number) return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string) return value.as<std::string>();
+                if (value.get_type() == sol::type::boolean) return value.as<bool>() ? "true" : "false";
+                return std::string();
+            };
+            NextSpritesQuery query;
+            std::string error;
+            if (!NextSpritesQueryFromStrings(text("from"), text("count"), text("all"), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextSprites(emulator->GetContext(), query)));
+            return out;
+        });
         // next_nextreg_write(reg, value [, door]): write a NextREG through the board's write choke point (NextRegWriteControl); door = "nextreg"
         // (default, the NEXTREG instruction), "port" or "internal"; returns the reply table, or nil + error
         lua.set_function("next_nextreg_write", [this](sol::this_state s, int64_t reg, int64_t value, sol::optional<std::string> door) -> sol::variadic_results {

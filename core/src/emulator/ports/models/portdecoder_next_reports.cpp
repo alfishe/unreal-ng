@@ -594,4 +594,198 @@ StateNode NextRegRead(EmulatorContext* context, const NextRegReadQuery& query)
     return n;
 }
 
+namespace
+{
+/// One copper word as the copper executes it (copper.vhd): bit 15 = WAIT (hpos 14:9 in units of 8 pixels, line 8:0; line #1FF /
+/// hpos 63 is the HALT idiom), else MOVE (register 14:8, value 7:0; register 0 is a NOP)
+StateNode CopperWordNode(unsigned index, uint16_t word, unsigned pc)
+{
+    StateNode n = StateNode::Object();
+    n["index"] = int(index);
+    n["word"] = Hex16(word);
+    if (word & 0x8000)
+    {
+        const unsigned hpos = (word >> 9) & 0x3F, vpos = word & 0x1FF;
+        if (hpos == 0x3F && vpos == 0x1FF)
+        {
+            n["op"] = "halt";
+            n["text"] = "HALT";
+        }
+        else
+        {
+            n["op"] = "wait";
+            n["hpos"] = int(hpos);
+            n["vpos"] = int(vpos);
+            n["text"] = StringHelper::Format("WAIT line %u hpos %u", vpos, hpos);
+        }
+    }
+    else
+    {
+        const uint8_t reg = (word >> 8) & 0x7F, value = word & 0xFF;
+        if (reg == 0)
+        {
+            n["op"] = "nop";
+            n["text"] = "NOP";
+        }
+        else
+        {
+            n["op"] = "move";
+            n["reg"] = Hex8(reg);
+            n["value"] = Hex8(value);
+            if (const NextRegInfo* info = FindNextReg(reg))
+                n["reg_name"] = info->name;
+            n["text"] = StringHelper::Format("MOVE NR #%02X <- #%02X", reg, value);
+        }
+    }
+    n["current"] = index == pc;
+    return n;
+}
+}  // namespace
+
+StateNode NextCopper(EmulatorContext* context, const NextCopperQuery& query)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    const ::NextCopper& copper = decoder->Board().Copper();
+    static const char* const kModes[4] = {"stopped", "restart_loop", "continue_loop", "restart_each_frame"};
+
+    StateNode n = StateNode::Object();
+    n["available"] = true;
+    StateNode control = StateNode::Object();
+    control["mode"] = int(copper.Mode());
+    control["name"] = kModes[copper.Mode() & 3];
+    control["raw_nr_62"] = Hex8(copper.ReadControl());
+    n["control"] = std::move(control);
+    n["running"] = copper.Mode() != 0;
+    n["address"] = int(copper.WriteAddress());
+    n["word_index"] = int(copper.WriteAddress() >> 1);
+    n["address_byte"] = (copper.WriteAddress() & 1) ? "lsb" : "msb";
+    n["pc"] = int(copper.Pc());
+    n["line_offset"] = int(copper.ReadOffset());
+    unsigned length = 0;
+    for (unsigned i = 0; i < 1024; i++)
+        if (copper.Instruction(i))
+            length = i + 1;
+    n["list_length"] = int(length);
+
+    const unsigned first = query.first > 1023 ? 1023 : query.first;
+    const unsigned end = first + query.count > 1024 ? 1024 : first + query.count;
+    StateNode list = StateNode::Array();
+    for (unsigned i = first; i < end; i++)
+        list.push(CopperWordNode(i, copper.Instruction(i), copper.Pc()));
+    n["instructions"] = std::move(list);
+    if (copper.Pc() < first || copper.Pc() >= end)
+    {
+        StateNode around = StateNode::Array();
+        const unsigned from = copper.Pc() >= 3 ? copper.Pc() - 3u : 0u;
+        for (unsigned i = from; i < from + 8 && i < 1024; i++)
+            around.push(CopperWordNode(i, copper.Instruction(i), copper.Pc()));
+        n["around_pc"] = std::move(around);
+    }
+    if (query.raw)
+    {
+        std::string hex;
+        hex.reserve(4096);
+        for (unsigned i = 0; i < 1024; i++)
+            hex += StringHelper::Format("%04X", copper.Instruction(i));
+        n["raw"] = std::move(hex);
+    }
+    return n;
+}
+
+StateNode NextSprites(EmulatorContext* context, const NextSpritesQuery& query)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    NextBoard& board = decoder->Board();
+    const ::NextSprites& sprites = board.Sprites();
+    const NextVideoRegs& video = board.Video();
+    const uint8_t control = board.Stored(0x15);
+
+    StateNode n = StateNode::Object();
+    n["available"] = true;
+    n["enabled"] = (control & 0x01) != 0;
+    n["over_border"] = (control & 0x02) != 0;
+    n["clip_over_border"] = (control & 0x20) != 0;
+    n["zero_on_top"] = (control & 0x40) != 0;
+    n["clip"] = ClipNode(video, 1);
+    StateNode flags = StateNode::Object();
+    flags["collision"] = sprites.CollisionFlag();  // read-and-cleared through port #303B; the report only looks
+    flags["too_many"] = sprites.TooManyFlag();
+    n["flags"] = std::move(flags);
+    n["upload_slot"] = int(sprites.UploadSlot());
+    n["mirror_index"] = int(sprites.ReadMirrorSprite());
+
+    ::NextSprites::Info info[::NextSprites::kSprites];
+    sprites.Describe(info);
+    unsigned visible = 0;
+    for (const auto& i : info)
+        visible += i.visible ? 1 : 0;
+    n["visible_count"] = int(visible);
+
+    const unsigned first = query.first > 127 ? 127 : query.first;
+    const unsigned end = first + query.count > 128 ? 128 : first + query.count;
+    StateNode list = StateNode::Array();
+    for (unsigned index = first; index < end; index++)
+    {
+        const ::NextSprites::Info& i = info[index];
+        if (!query.all && !i.visible)
+            continue;
+        StateNode e = StateNode::Object();
+        e["index"] = int(index);
+        e["kind"] = i.relative ? "relative" : (i.extended ? "anchor" : "basic");
+        if (i.relative)
+        {
+            e["anchor"] = i.anchor;
+            e["offset_x"] = i.offsetX;
+            e["offset_y"] = i.offsetY;
+            e["relative_pattern"] = i.relativePattern;
+            e["relative_palette"] = i.relativePalette;
+        }
+        else if (i.extended)
+            e["unified"] = i.unified;
+        e["x"] = i.x;
+        e["y"] = i.y;
+        e["pattern"] = int(i.pattern);
+        e["four_bit"] = i.fourBit;
+        e["palette_offset"] = int(i.palette);
+        e["x_mirror"] = i.xMirror;
+        e["y_mirror"] = i.yMirror;
+        e["rotate"] = i.rotate;
+        e["scale_x"] = int(i.xScale);
+        e["scale_y"] = int(i.yScale);
+        e["visible"] = i.visible;
+        std::string bytes;
+        for (unsigned b = 0; b < 5; b++)
+            bytes += StringHelper::Format(b ? " %02X" : "%02X", sprites.Attribute(index, b));
+        e["bytes"] = std::move(bytes);
+        list.push(std::move(e));
+    }
+    n["sprites"] = std::move(list);
+
+    // The 16K pattern RAM: how much is in use, and which 256-byte (8-bit) patterns hold anything
+    unsigned nonZero = 0;
+    StateNode used = StateNode::Array();
+    for (unsigned pattern = 0; pattern < 64; pattern++)
+    {
+        bool any = false;
+        for (unsigned b = 0; b < 256; b++)
+            if (sprites.PatternByte(pattern * 256 + b))
+            {
+                nonZero++;
+                any = true;
+            }
+        if (any)
+            used.push(int(pattern));
+    }
+    StateNode memory = StateNode::Object();
+    memory["size"] = int(::NextSprites::kPatternBytes);
+    memory["non_zero_bytes"] = int(nonZero);
+    memory["used_patterns_8bit"] = int(used.items.size());
+    memory["used"] = std::move(used);
+    n["pattern_memory"] = std::move(memory);
+    return n;
+}
 }  // namespace DeviceState

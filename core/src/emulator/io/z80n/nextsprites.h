@@ -47,6 +47,28 @@ public:
     /// Draw grid line `y` (0..255). `control` is NR #15; the clip window is the sprites' (NR #19)
     void DrawLine(unsigned y, uint8_t control, const NextVideoRegs& regs, Pixel* out, uint8_t transparentIndex);
 
+    /// region <Const view for the next_sprites report: nothing here clears a flag or steps an upload index (design-automation-coverage.md R3)>
+    bool CollisionFlag() const { return _collision; }
+    bool TooManyFlag() const { return _tooMany; }
+    uint8_t UploadSlot() const { return _slot; }
+    /// One sprite as the engine sees it: the five attribute bytes decoded, a relative sprite resolved against its anchor
+    struct Info
+    {
+        bool extended = false;  ///< the fifth attribute byte is in use
+        bool relative = false;  ///< a relative sprite (composite / unified group member)
+        int anchor = -1;        ///< relative: the index of the sprite it hangs on
+        bool unified = false;   ///< anchor: unified type (members inherit its mirror, rotate and scale)
+        int x = 0, y = 0;       ///< 9 bit, the anchor's offset applied for a relative sprite
+        int offsetX = 0, offsetY = 0;  ///< relative: the signed offsets as written
+        bool relativePattern = false, relativePalette = false;
+        unsigned pattern = 0;   ///< 8-bit sprite: 0-63; 4-bit sprite: 0-127
+        uint8_t palette = 0;
+        bool xMirror = false, yMirror = false, rotate = false, visible = false, fourBit = false;
+        unsigned xScale = 1, yScale = 1;  ///< 1, 2, 4 or 8
+    };
+    void Describe(Info (&out)[kSprites]) const;
+    /// endregion
+
     uint8_t Attribute(unsigned sprite, unsigned byte) const { return _attr[sprite & 127][byte % 5]; }
     uint8_t PatternByte(unsigned offset) const { return _pattern[offset & (kPatternBytes - 1)]; }
 

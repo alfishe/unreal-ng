@@ -73,6 +73,8 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  next palette [palette=selected|0-7|name|all] [range=0-255] - the 9-bit palettes" << NEWLINE;
         ss << "  next ports [port=6B] [access=r|w] - the internal port enable word; which device answers a port" << NEWLINE;
         ss << "  next nextreg [reg=07] [changed=true] - one NextREG with decoded bits, or all (no side effect)" << NEWLINE;
+        ss << "  next copper [from=0] [count=64] [raw=true] - the copper list as a disassembly, control mode, write address, pc" << NEWLINE;
+        ss << "  next sprites [from=0] [count=128] [all=true] - the sprite attributes decoded, switches, collision flags, pattern memory" << NEWLINE;
         ss << "  next journal [regs=07,02] [sources=nextreg,port,copper,internal] [since=N] [from=F] [to=F] [limit=N] | on | off | clear" << NEWLINE;
         ss << "                 - who wrote which NextREG, when (frame, T, PC), through the NEXTREG instruction, port #253B or the copper" << NEWLINE;
         ss << "  sprinter       - Sprinter Sp2000: PLD, windows, cells, clock + waits, video, accelerator, sound, Z84C15, floppy, BIOS" << NEWLINE;

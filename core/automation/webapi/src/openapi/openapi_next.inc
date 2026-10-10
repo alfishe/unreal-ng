@@ -46,6 +46,26 @@
              "NextPortsReport",
              {{"port", "hex port (6B, 0x253B, #E3, 253Bh); empty = only the enable word"},
               {"access", "r | read (default) or w | write"}}},
+            {"/api/v1/emulator/{id}/state/next/copper", "Get the Next copper list",
+             "The copper: control mode (NR #62 bits 7:6: stopped, restart_loop, continue_loop, restart_each_frame), the write address (NR "
+             "#60 / #61 / #62 / #63 pointer, reading it does not step it), the pc, the line offset (NR #64), list_length and `instructions`: "
+             "index, word, op (wait | move | halt | nop), reg / reg_name / value or hpos / vpos, text, current. A window `from` / `count`; the "
+             "words around the pc come as around_pc when it is outside the window; raw = the whole 2048 bytes as hex (core "
+             "DeviceState::NextCopper; CLI `state next copper`, Lua next_copper(), Python next_copper(), MCP aspect next_copper).",
+             "NextCopperReport",
+             {{"from", "first instruction, 0-1023 (decimal, 0x / # hex); default 0"},
+              {"count", "how many, 1-1024; default 64"},
+              {"raw", "true: the whole list as hex in `raw`"}}},
+            {"/api/v1/emulator/{id}/state/next/sprites", "Get the Next sprites",
+             "The sprite engine: switches (NR #15), clip window (NR #19), the collision / too-many flags (not cleared by the report, a port #303B "
+             "read clears them), visible_count over all 128 and the attributes decoded for the visible sprites of the page (all=true: every "
+             "one): kind basic | anchor | relative, x, y (9 bit; a relative sprite resolved against its anchor), pattern, four_bit, "
+             "palette_offset, mirrors, rotate, scale_x / scale_y, visible, the five raw bytes; a summary of the 16K pattern memory (core "
+             "DeviceState::NextSprites; CLI `state next sprites`, Lua next_sprites(), Python next_sprites(), MCP aspect next_sprites).",
+             "NextSpritesReport",
+             {{"from", "first sprite, 0-127; default 0"},
+              {"count", "how many sprites of the page, 1-128; default 128"},
+              {"all", "true: list the invisible ones too"}}},
             {"/api/v1/emulator/{id}/state/next/nextreg", "Read a NextREG without side effects",
              "One register (`reg`): value as a read returns it, the stored byte, access, reset value and decoded bits for NR #02 / #03 / #07; "
              "or the whole table (only the registers that differ from their reset with changed=true). The select latch, palette indexes and "
