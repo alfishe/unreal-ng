@@ -250,9 +250,12 @@ void RemoteControlGuard::takeBack()
     if (!context || !_active)
         return;
     const QString taker = who();
-    if (context->RevokeRunControl("gui"))
-        emit controlTakenBack(taker);
+    const bool revoked = context->RevokeRunControl("gui");
+    // The guard's own state first (unlocked, the session gone), then the news: the bar shows the take-back over a
+    // state that no longer has the session
     refresh();
+    if (revoked)
+        emit controlTakenBack(taker);
 }
 
 void RemoteControlGuard::allowAgain()

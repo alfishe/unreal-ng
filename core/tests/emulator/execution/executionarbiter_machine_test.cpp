@@ -15,6 +15,9 @@
 #include "common/uuid.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/execution/scriptsession.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/memory/memory.h"
 #include "emulator/notifications.h"
 #include "emulator/state/devicestate.h"
 
@@ -483,4 +486,34 @@ TEST_F(ExecutionArbiterMachine_Test, AScriptSessionStopsWithControlRevoked)
     EXPECT_TRUE(execution::script::TakeControl(*_emulator, execution::Origin::Python, "my script", reason)) << reason;
     execution::script::ReleaseControl(*_emulator, execution::Origin::Python);
     EXPECT_FALSE(_emulator->GetContext()->IsRunControlClaimed());
+}
+
+/// Reading a paused machine's video change log while automation runs frames on it (a direct run records into the
+/// log, reallocating as it goes): the readers take the CPU first, so they never read a frame being written. Found by
+/// an ASan soak (heap-use-after-free in DeviceState::VideoChanges against Emulator::RunNFrames)
+TEST_F(ExecutionArbiterMachine_Test, ReadingTheVideoLogDuringADirectRunNeverReadsAFrameBeingWritten)
+{
+    _emulator->Pause(execution::Requester{execution::Origin::WebApi, {}}, "test");
+    // LD A,0 / loop: OUT (#FE),A / INC A / JR loop - a border write every few T-states: the log grows all frame
+    const uint8_t program[] = {0x3E, 0x00, 0xD3, 0xFE, 0x3C, 0x18, 0xFB};
+    Memory* memory = _emulator->GetContext()->pMemory;
+    for (size_t i = 0; i < sizeof(program); i++)
+        memory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    _emulator->GetContext()->pCore->GetZ80()->pc = 0x8000;
+
+    std::atomic<bool> done{false};
+    std::atomic<int> reads{0};
+    std::thread reader([&]() {
+        while (!done.load())
+        {
+            const StateNode report = DeviceState::VideoChanges(_emulator->GetContext(), 2);
+            EXPECT_NE(report.find("available"), nullptr);
+            reads++;
+        }
+    });
+    for (int i = 0; i < 4; i++)
+        _emulator->RunNFrames(1, true);
+    done = true;
+    reader.join();
+    EXPECT_GT(reads.load(), 0);
 }

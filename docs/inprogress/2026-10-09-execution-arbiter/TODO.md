@@ -404,13 +404,25 @@ showed the same address.
 - [x] **Checked live** by the owner in unreal-qt, every kind (WebAPI, MCP, CLI, Lua, GDB, DeZog, ZRCP), with and
   without GPU acceleration; the take-back answered the client `revoked_by_user`, its re-take `revoked_cooldown`.
   Python was not in that build (`ENABLE_PYTHON_AUTOMATION=OFF`).
-- [ ] **Unexplained crash:** an unreal-qt with 5 machines (launched 2026-10-09 23:32, not the demo; maybe a GUI
-  campaign process left running) died at 00:14 on heap corruption in `videomap::VideoWriteLog::BeginFrame`
-  (`free_tiny`, two emulator threads in `BeginFrame` at once). The binary is gone; next: a long multi-SPRINTER run
-  under ASan.
+- [x] **The crash in `VideoWriteLog::BeginFrame` (heap corruption) - found and fixed.** An ASan soak (unreal-qt, 5
+  machines running free, 4 threads of automation: state reads, pause / run_frames / resume, run_tstates, sessions)
+  hit it in a minute: `heap-use-after-free` in `DeviceState::VideoChanges` against `Emulator::RunNFrames`. Paused, the
+  readers of the video write log (`DeviceState::VideoChanges`, `VideoMapService::SourcesAtBeam`) read the frame in
+  place while a direct run (run_frames on the paused machine) recorded into it, reallocating its vector. The race is
+  older than the branch (it is on master). Now, paused, they take a `CpuHold` first (250 ms; not handed the CPU: the
+  published copy of the last completed frame, as while running); the recording hot path is untouched.
+  - `ExecutionArbiterMachine_Test.ReadingTheVideoLogDuringADirectRunNeverReadsAFrameBeingWritten`: under ASan it
+    fails 5 of 5 with the fix taken out, passes 5 of 5 with it.
+  - The 20-minute ASan soak again with the fix (~415 000 requests): no report, the process up, 0 connection errors.
+- [x] **Checked end to end over HTTP** with the owner clicking (`scratch/reinst/inflight_takeback.py`): the
+  run_frames in flight answered 409 `revoked_by_user` (`retry: false`), the session's next request the same, a
+  re-take by the client `revoked_cooldown`, after Allow Automation Again the re-take succeeded. It also found the bar
+  losing Allow Automation Again (the guard announced the take-back before its own refresh): fixed, the order tested.
+- [x] **GDB socket close** releases run control: `GdbSessionTakeBack_Test.AClosedSocketEndsTheSession`.
 - [x] **No retry, no rush back:** `revoked_by_user` with `retry: false`, the MCP stop error and server
   instructions, Python / Lua `ControlRevoked`, the CLI message, the recipe rule, the server's per-client re-take
   cooldown (X7a), the GUI's Allow Automation Again (X7c).
-- [ ] **Tests.** Revoke during a long `run_frames` (it returns aborted, the session's next call gets
-  `revoked_by_user`; a re-take within the cooldown is refused, after "allow again" it works); idle lease expiry; GDB socket close; Qt: actions disabled and enabled
-  again, the HUD status set and cleared.
+- [x] **Tests:** the take-back during a long run_frames (core: the run aborted, the session refused; over HTTP: the
+  owner's end-to-end check above), the cooldown and allow-again (Qt and core), the idle lease
+  (`AnIdleSessionExpiresAndEveryChangeIsAnnounced`), the GDB socket close, Qt: the lock and its release, the HUD's
+  always-shown elements.

@@ -11,6 +11,8 @@
 #include "emulator/video/sprinter/sprintervideomapper.h"
 #include "emulator/video/tsconf/tsconfvideomapper.h"
 #include "emulator/video/zx/zxvideomapper.h"
+#include <optional>
+#include <chrono>
 
 namespace videomap
 {
@@ -223,7 +225,12 @@ PixelSources VideoMapService::SourcesAtBeam(uint32_t tInFrame) const
     VideoFrameLog published;
     const VideoFrameLog* frame = nullptr;
     const bool running = MachineRunning();
-    if (running)
+    // Paused, this frame is read in place: only while no command drives the CPU (a direct run records into it,
+    // reallocating as it goes). Not handed the CPU in time: the published copy, as while running
+    std::optional<Emulator::CpuHold> hold;
+    if (!running && _context->pEmulator)
+        hold.emplace(*_context->pEmulator, "video map", std::chrono::milliseconds(250));
+    if (running || (hold && !hold->Held()))
     {
         published = log.Published();
         frame = &published;

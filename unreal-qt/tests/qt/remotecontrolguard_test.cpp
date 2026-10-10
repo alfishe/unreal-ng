@@ -111,10 +111,14 @@ TEST_F(RemoteControlGuard_Test, TakingControlBackEndsTheSessionAndAllowAgainLift
     ASSERT_TRUE(_guard.active());
 
     QStringList takenBack;
-    QObject::connect(&_guard, &RemoteControlGuard::controlTakenBack,
-                     [&takenBack](const QString& who) { takenBack << who; });
+    bool activeAtTheNews = true;
+    QObject::connect(&_guard, &RemoteControlGuard::controlTakenBack, [&](const QString& who) {
+        takenBack << who;
+        activeAtTheNews = _guard.active();
+    });
     _guard.takeBack();
     EXPECT_EQ(takenBack, (QStringList{QStringLiteral("bot via WebAPI from 10.0.0.7:40001")}));
+    EXPECT_FALSE(activeAtTheNews) << "the news comes after the guard's state is current (the bar keeps the note)";
     EXPECT_FALSE(_guard.active());
     EXPECT_TRUE(_button->isEnabled());
     EXPECT_TRUE(Context()->IsRunControlRevoked(owner));

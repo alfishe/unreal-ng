@@ -96,4 +96,29 @@ TEST(GdbSessionTakeBack_Test, AfterTheUserTakesControlBackRunsAndWritesAreRefuse
     EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
 }
 
+/// The client goes away (its socket closes) without a detach: the session ends and run control is free again
+TEST(GdbSessionTakeBack_Test, AClosedSocketEndsTheSession)
+{
+    std::shared_ptr<Emulator> emulator =
+        EmulatorManager::GetInstance()->CreateEmulatorWithModel("gdb-close", "48K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    int fds[2];
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    auto session = std::make_unique<GDBSession>(fds[1], /*noAckMode=*/true);
+    std::thread serving([&session]() { session->run(); });
+    std::string buffer;
+
+    Send(fds[0], "vAttach;1");
+    EXPECT_FALSE(ReadPacket(fds[0], buffer).empty());
+    EmulatorContext* context = emulator->GetContext();
+    EXPECT_TRUE(context->IsRunControlClaimed());
+
+    shutdown(fds[0], SHUT_RDWR);
+    close(fds[0]);
+    serving.join();  // the session's loop ends on the closed socket
+    session.reset();
+    EXPECT_FALSE(context->IsRunControlClaimed()) << "the session released run control";
+    EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
+}
+
 #endif  // _WIN32
