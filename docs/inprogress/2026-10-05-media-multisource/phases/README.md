@@ -1,7 +1,7 @@
 # Phases C0-C10: one document per phase
 
 Each phase gets its design here **before** its code, and the document becomes the as-built record when
-the phase lands. The phase table is in [tdd.md](../tdd.md) §13; the tests per phase in
+the phase lands. The phase table is in [tdd.md](../tdd.md) §14; the tests per phase in
 [test-and-benchmark-plan.md](../test-and-benchmark-plan.md) §3.
 
 | Phase | Document | Status |
@@ -19,4 +19,5 @@ the phase lands. The phase table is in [tdd.md](../tdd.md) §13; the tests per p
 | C9 | [c9-bulk-read.md](c9-bulk-read.md) | dropped after measuring: 14x cheaper at the device, about 2 % of a guest's per-sector cost |
 | C10 | [c10-sparse-memory.md](c10-sparse-memory.md) | done: C10a zero runs + sparse memory, C10b dynamic VHD; C10c measured (images stay streamed); §8 full-disk and RAM findings |
 | C10d | [c10d-session-spill.md](c10d-session-spill.md) | done: session writes bounded in RAM (128 MiB), the rest spilled to disk; streamed deltas |
-| C10e | [c10e-session-journal.md](c10e-session-journal.md) | done (benchmark sweep pending): 1 MiB arenas, 16 MiB in memory, 30 s flush, a recoverable journal next to the medium (on by default) |
+| C10e | [c10e-session-journal.md](c10e-session-journal.md) | done: 1 MiB arenas, 16 MiB in memory, 30 s flush, a recoverable journal next to the medium (off by default since the master merge: §9); sweep measured in §8 |
+| C11 | [../benchmarks/README.md](../benchmarks/README.md) | done: benchmarks and charts C1-C8, the NFR table; host-file memory 47.6 -> 17.4 MiB at 100 K entries, a 64-layer build 1.8 -> 1.33 s, no allocation per read |

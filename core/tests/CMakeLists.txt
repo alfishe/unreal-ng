@@ -212,6 +212,7 @@ if (NOT TARGET ${PROJECT_NAME})
             ${ROOT_DIR}/core/automation/mcp/src/mcp-router.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-resources.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-symbols.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-asm.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-analysis.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-media.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-slots.cpp
@@ -333,22 +334,10 @@ if (NOT TARGET ${PROJECT_NAME})
     # Define data paths
     set(DATA_PATH "${ROOT_DIR}/data")
 
-    # Copy resources using modern CMake syntax
-    # Configs are deployed ONLY under configs/<model>/ - never as a flat unreal.ini
+    # Configs, ROMs etc. come from the shared runtime-data target (root CMakeLists.txt)
+    add_dependencies(${PROJECT_NAME} runtime-data)
     add_custom_command(
         TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${DATA_PATH}/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${DATA_PATH}/configs" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/configs"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${DATA_PATH}/midi" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/midi"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${DATA_PATH}/boot" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/boot"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${ROOT_DIR}/testdata" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/testdata"
         COMMENT "Copying runtime resource files to output directory"

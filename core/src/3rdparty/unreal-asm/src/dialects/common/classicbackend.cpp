@@ -435,7 +435,8 @@ struct Writer
                 }
                 const bool comparison = e.op == Op::Equal || e.op == Op::NotEqual || e.op == Op::Less || e.op == Op::Greater ||
                                         e.op == Op::LessEqual || e.op == Op::GreaterEqual;
-                if (comparison && trueValue != 0 && trueValue != TargetTrue())
+                const bool logical = e.op == Op::LogicalAnd || e.op == Op::LogicalOr;
+                if ((comparison || logical) && trueValue != 0 && trueValue != TargetTrue())
                     return TrueIsOne(e);
                 if (Z80asm() && wordBits == 16 && unsignedWords && (comparison || e.op == Op::Div || e.op == Op::Mod || e.op == Op::Shr))
                 {

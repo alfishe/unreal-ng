@@ -20,7 +20,7 @@ which stays as the facade. Closes the debugger additions' label import E7
 
 | File | Topic |
 |---|---|
-| [goals-and-requirements.md](goals-and-requirements.md) | **Start here.** Problem with a worked example, goals, non-goals, decisions D-1 / D-2, proposals for the owner (P-1…P-7), use cases, FR / NFR, acceptance, glossary |
+| [goals-and-requirements.md](goals-and-requirements.md) | **Start here.** Problem with a worked example, goals, non-goals, decisions D-1 … D-3 and P-2 … P-7, use cases, FR / NFR, acceptance, glossary |
 | [architecture.md](architecture.md) | Component view, data model, import workflow, sequences (import, live scan, export, ROM bundle), decision trees DT-1…DT-4, threading, relation to existing code, **code placement** (mermaid flowchart, class, sequence and decision diagrams) |
 | [formats.md](formats.md) | Format families (text, script, tokenized, live, native, bundle), lossiness matrix, catalog with detection and phases, examples side by side, name rules per target, the research plan for tokenized ZX assemblers, the native `*.usym.json` file |
 | [prior-art.md](../prior-art.md) | Existing converters and tools, local (the owner's 2012 TASM detokenizer, its 2025 port, a Python 3.x decoder, test data) and public, compared; what each reveals about the formats; nothing is vendored (D-2) |
@@ -54,10 +54,21 @@ flowchart LR
 ## Where the code goes
 
 `core/src/3rdparty/unreal-asm/src/symbols/` (namespace `unrealasm::symbols`, inside the [unreal-asm](../README.md) library): `model/ io/ codecs/ live/ bundles/` use only the standard
-library, `adapters/` holds every emulator dependency; `LabelManager` stays the facade; `tools/symbols/symconv` is a
-command-line converter built from the std-only part; bundles get `data/symbols/manifest.json`. Details:
+library; the emulator side is `SymbolControl`, `LabelManager` (the facade) and the disk adapter in
+`core/src/debugger/asm/`; `core/src/3rdparty/unreal-asm/tools/symconv` is a command-line converter built from the std-only part; bundles get `data/symbols/manifest.json`. Details:
 [architecture.md](architecture.md) §9.
 
 ## Status
 
-Design (2026-10-05). S1-S2 implemented (2026-10-06): the model, index, store, merge, the native file and the six label file codecs behind `LabelManager` (`core/src/3rdparty/unreal-asm/include/unrealasm/symbols/`, `src/symbols/`). See [TODO.md](../TODO.md).
+Built (S1-S5, labels from sources, live scans; review round A0 2026-10-09):
+
+- the model, index, store and merge, the native file and every codec of [formats.md](formats.md) both ways;
+- `LabelManager` as the facade over one `SymbolStore` per CPU, with sets, priorities and page-aware lookup;
+- labels from sources of every dialect with a frontend (`fromsource.h`, values from `layout.h`);
+- the ALASM / XAS label tables in RAM;
+- ROM bundles by SHA-256, the switched-off ones kept by the Qt GUI;
+- `SymbolControl` behind WebAPI, CLI, MCP, Lua, Python and Qt; `symconv`.
+
+User guide: [docs/features/unreal-asm.md](../../../features/unreal-asm.md); recipe:
+`.recipe/analysis/symbols-import-export.md`. Still open: [TODO.md](../TODO.md); the source an assembler edits in RAM
+is the [asm-synchronizer](../asm-synchronizer.md).

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-06 |
-| **Codec** | `zeus`, versions `1983` (Crystal ZEUS and the ports that keep its table: ZEUS 2.2, 2.2SI, ZEUS 128, ZEUS+ 3.1, the German and TS2068 releases), `gg` (ZEUS from GG), `pht` (ZEUS 1.1 beta of Professional Hackers Tools, ZEUS v7.E) (`core/src/3rdparty/unreal-asm/src/codecs/zeus/`) |
+| **Codec** | `zeus`, versions `1983` (Crystal ZEUS and the ports that keep its table: ZEUS 2.2, 2.2SI, ZEUS 128, ZEUS+ 3.1, the German and TS2068 releases), `gg` (ZEUS from GG), `pht` (ZEUS 1.1 beta of Professional Hackers Tools, ZEUS v7.E), `primus` (Primus Assembler 2.9, Trunov 1994) (`core/src/3rdparty/unreal-asm/src/codecs/zeus/`) |
 | **Checks** | `unreal-asm-tests` (`ZeusCodec_Test`), testdata `zeus/` |
 | **Result** | the ADS 2.0 sources, ZEUS v7.E's help, five ZXDB "Zeus Routines" and a probe typed into ZEUS 1983 in unreal-ng decode to ZEUS's listing and encode back byte for byte; the version's tokenizer reproduces all 4062 lines; none of 470 TR-DOS images of other software is taken for ZEUS |
 
@@ -72,6 +72,16 @@ Appendix 3 lists the same words. Examples: `#96` DEFB, `#9F` ENT, `#A0` EQU, `#B
 | ZEUS 1983 (ZXDB `Zeus.tap`, `Zeus(ZeusAssembler)(SinclairResearchLtd).tzx`), German and TS2068 releases, ZEUS 2.2 (`ZEUS2_2.SCL` `z.C`), ZEUS 2.2SI (`ZEUS1.C`), ZEUS 128 (`zeus.exe.C`), ZEUS+ 3.1 (`zeus +.C`), the GNS>ZEUS converter | `#EE57` (code at `#E000`; ZEUS.TAP block offset `#0E57`) | 101 | — |
 | "ZEUS" from GG (`ZEUS_GG.SCL` `ZEUS.C`) | `#EE57` | 102 | `#96`-`#99` = `DB DM DS DW`; `#E5` = `INCBIN` |
 | ZEUS 1.1 beta, YRIC 1993 (`PHT_ZEUS.LZH` of the KLUG BBS archive, `ZEUS.$C`), ZEUS v7.E ([ZEUS72ZK.zip](https://vtrd.in/system/ZEUS72ZK.zip) `ZEUSv7.E.B`, file offset `#1505`) | `#EEC5` | 103 | `#96`-`#99` = `DB DM DS DW`; `#E5` = `INCLUDE`, `#E6` = `PLACE` |
+| Zeus Plus 2.16 Max (D.J.Stepanenko 1991, vtrd `ZSPL216M.zip`, `zeus.c.C`), Zeus Pro 2.01 (RIP Group 1995, vtrd `ZPRO.zip`, `zp.C`) | `zeus.c` file offset `#1357`; `zp` `#0E57` | 101 | — (Zeus Plus' disk holds 13 sources `name;Z`, type C at 28500, 18-1369 lines: all byte-exact and canonical as 1983) |
+| Primus Assembler 2.9, Pavel Trunov 1994 ([PRIMUS29.ZIP](https://vtrd.in/system/PRIMUS29.ZIP) `PRI.ASS`, code at 25000) | `#6AB9` (file offset `#0911`) | 101 | `#9B` = `DISK` (include a text file) for `DISP`; Russian letters at `#EB`-`#FF` (below) |
+
+**Primus 2.9** ("written after ZEUS, 99% compatible", its manual `PRI.DOC`, itself a Primus text): the line records,
+the blank count `#0A n` and the 1983 table are ZEUS's. Its tokenizer also keeps `? . @ _ $` inside words (`L.X` is
+one word; the 1983 tokenizer would store the register `L`), and it stores the Russian letters that do not look like
+Latin ones at `#EB`-`#FF` in KOI-8 order: Ю Б Ц Д Ф Г И Й Л П Я У Ж Ь Ы З Ш Э Щ Ч Ъ (its keyboard table at 26774 (`#6896`)
+gives the A-Z keys' codes; the others are typed as the Latin twins: Н is `H`, Р is `P`). Its text files are type `C`
+with start 33364, its text buffer (`PRI.DOC.C`: 33364, 9392). The codec decodes the letters as Cyrillic capitals,
+picks `primus` for a CODE file at 33364 and for bytes only Primus' table covers.
 
 The converters `CONVASM.LZH` (ZEUS→TASM, ZEUS→ASCII) carry a copy of the 1983 table (`#00`-separated).
 
@@ -155,7 +165,8 @@ holds the final 28-line probe) and confirmed in the disassembly.
 | `#E5` in a file | INCLUDE (PHT, v7.E) or INCBIN (GG): undecidable from bytes |
 | Disk save commands of each TR-DOS port | not run; their files are the same block (start..`#FF #FF`) |
 | ZEUS 128 | runs as several overlays (`zeus.res`, `zeus.dis` …) with the 1983 table in `zeus.exe`; the 128K source paging was not examined |
-| Other ZEUS ports | vtrd.in lists no more; ZEUSD1_0 (a decompiler writing ZEUS sources, its `tab.C` holds tokenized templates) and ZEUSTOT2 (ZEUS→TASM) are tools, not sources |
+| Primus' `#E5`-`#EA` | listed as `z { | } ~ ©` (its font from `#EB` = glyph `#80` downwards: the glyphs `#7A`-`#7F`; checked by putting the bytes into its text buffer); not produced by its keyboard table; the codec keeps them as bytes |
+| Other ZEUS ports | vtrd.in lists no more besides Primus; ZEUSD1_0 (a decompiler writing ZEUS sources, its `tab.C` holds tokenized templates) and ZEUSTOT2 (ZEUS→TASM) are tools, not sources |
 
 Sources: [Zeus manual (ZXDB)](https://spectrumcomputing.co.uk/pub/sinclair/games-info/z/Zeus.txt),
 [ZXDB entry 9010](https://spectrumcomputing.co.uk/entry/9010), [ZXDB entry 19058](https://spectrumcomputing.co.uk/entry/19058),

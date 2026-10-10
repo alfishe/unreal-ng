@@ -2,9 +2,11 @@
 
 #include "z84c15engine.h"
 
+#include <algorithm>
 #include <cstddef>
 
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/hostbusoverlay.h"
 #include "emulator/memory/memory.h"
 
 /// region <Register file layout contract>
@@ -43,7 +45,7 @@ static_assert(int{Z80_BOUNDARY_PREFIX_DD} == int{Z84CpuBoundaryPrefixDd} && int{
 /// endregion </Register file layout contract>
 
 Z84C15Engine::Z84C15Engine(EmulatorContext* context, Z80* cpu, Z84Lib::Z84C15& chip)
-    : _z80(cpu), _memory(context->pMemory), _chip(chip)
+    : _z80(cpu), _memory(context->pMemory), _core(context->pCore), _chip(chip), _state(&context->emulatorState)
 {
     Z84CPU* core = _chip.Cpu();
     Z84CpuAttachRegisterFile(core, reinterpret_cast<Z84CpuRegisterFile*>(&_z80->pc));
@@ -127,6 +129,9 @@ void Z84C15Engine::ExecuteStep()
     const bool wasHalted = (_z80->halted & 1) != 0;
     Enter();
     Z84CpuStep(_chip.Cpu());
+    // An idle cycle of a halted CPU (no pending prefix) in a run that allows more in one go
+    if (wasHalted && _z80->halted == 1 && _z80->idleSkipLimit != 0 && _idleInOneGo) [[unlikely]]
+        RunIdleCycles();
     Leave(wasHalted);
 }
 
@@ -149,6 +154,163 @@ void Z84C15Engine::AcknowledgeNmi()
 
 /// endregion </ICpuEngine>
 
+/// region <Idle cycles in one go>
+
+void Z84C15Engine::RunIdleCycles()
+{
+    Z84CPU* core = _chip.Cpu();
+    Z80& z = *_z80;
+    const uint16_t fetch = static_cast<uint16_t>(z.pc + 1);  // the byte after the HALT (Z84HaltT)
+    uint32_t period = 1;
+    if (!z.IdleStepsInert() || !IdleFetchIsPure(fetch, _lastM1Value, period))
+        return;
+
+    // The cycle's length by its start phase (t mod period), learned from real cycles: only the phases the run
+    // reaches, each once
+    uint16_t length[kMaxIdlePeriod] = {};
+    uint64_t learned = 0;
+    uint32_t t = Z84CpuTstates(core);
+    uint32_t checkFrom = t;  // boundaries before it need no INT question (the sources' lower bound)
+    uint32_t fetches = 0;    // idle cycles run as arithmetic: one R tick each
+    for (;;)
+    {
+        // Where the step loop stops: the driver's limit, the frame end (both may move: a clock switch)
+        const uint32_t stop = std::min(z.idleSkipLimit, z._frameLimit);
+        if (t >= stop)
+            break;
+        if (t >= checkFrom)
+        {
+            // The question ProcessInterrupts asks at this boundary, whatever IFF1 says (the sources read the host's
+            // clock; the chip polls its watchdog there). Taken: the step loop goes on from here. Asserted while
+            // the CPU cannot take it (DI : HALT): asked again at every boundary, as the step loop would
+            Z84CpuSetTstates(core, t);
+            Publish(core);
+            const bool asserted = _source.IsIntAsserted(t);
+            if (asserted && Z84CpuIntPossible(core))
+                break;
+            checkFrom = asserted ? t + 1 : NextCheckT(t, stop);
+        }
+
+        const uint32_t phase = t % period;
+        if (!(learned & (uint64_t{1} << phase)))
+        {
+            // A real idle cycle: its length at this phase
+            Z84CpuSetTstates(core, t);
+            Z84CpuStep(core);
+            const uint32_t after = Z84CpuTstates(core);
+            length[phase] = static_cast<uint16_t>(after - t);
+            learned |= uint64_t{1} << phase;
+            t = after;
+            continue;
+        }
+
+        // Idle cycles as arithmetic up to the next question: those that start before `target`
+        const uint32_t target = std::min(checkFrom, stop);
+        if (period == 1)
+        {
+            const uint32_t n = (target - t + length[0] - 1) / length[0];
+            t += n * length[0];
+            fetches += n;
+            continue;
+        }
+        // Whole rounds of the phase cycle from here, when every phase on it is learned, then single cycles
+        uint32_t roundT = 0;
+        uint32_t roundN = 0;
+        for (uint32_t p = phase;;)
+        {
+            if (!(learned & (uint64_t{1} << p)))
+            {
+                roundT = 0;
+                break;
+            }
+            roundT += length[p];
+            roundN++;
+            p = (p + length[p]) % period;
+            if (p == phase || roundN > period)
+                break;
+        }
+        if (roundT && roundN <= period)
+        {
+            const uint32_t rounds = (target - t) / roundT;
+            t += rounds * roundT;
+            fetches += rounds * roundN;
+        }
+        while (t < target && (learned & (uint64_t{1} << (t % period))))
+        {
+            t += length[t % period];
+            fetches++;
+        }
+    }
+
+    Z84CpuSetTstates(core, t);
+    _idleCyclesInOneGo += fetches;
+    if (fetches)
+        z.r_low = static_cast<uint8_t>(((z.r_low + fetches) & 0x7F) | (z.r_low & 0x80));  // Z84_R_INC per cycle
+}
+
+bool Z84C15Engine::IdleFetchIsPure(uint16_t fetch, uint8_t opcode, uint32_t& period) const
+{
+    const Z80& z = *_z80;
+    // The plain memory interfaces (not contended: a contention table depends on the frame position)
+    if (z.MemIf != z.FastMemIf && z.MemIf != z.OverlayFastMemIf)
+        return false;
+    if (z.machineM1Hook && !z.machineM1Hook->RepeatM1IsInert(fetch))
+        return false;
+    if (_agent && !_agent->RepeatFetchIsInert(fetch, opcode))
+        return false;
+    if (!Z84CpuIdleM1Repeats(_chip.Cpu(), opcode) || !_memory->RepeatFetchIsPure(fetch))
+        return false;
+    period = 1;
+    if (z.MemIf == z.OverlayFastMemIf)
+    {
+        const HostBusOverlay* overlay = _memory->GetBusOverlay();
+        if (overlay && overlay->observesReads && fetch >= overlay->windowStart && fetch < overlay->windowEnd &&
+            (!overlay->RepeatFetchIsPure(fetch, period) || period == 0 || period > kMaxIdlePeriod))
+            return false;
+    }
+    return true;
+}
+
+uint32_t Z84C15Engine::NextCheckT(uint32_t t, uint32_t stop)
+{
+    uint32_t due = stop;
+    if (_external)
+        due = std::min(due, _external->NextAssertT(t));
+    const uint64_t chipDue = _chip.NextEventClock();
+    if (chipDue != UINT64_MAX && due > t)
+    {
+        if (ChipClockAt(t) >= chipDue)
+            due = t;
+        else if (ChipClockAt(due - 1) >= chipDue)
+        {
+            // The first T whose clock reaches it, in (t, due - 1]: the clock never decreases with T
+            uint32_t below = t;
+            uint32_t reached = due - 1;
+            while (reached - below > 1)
+            {
+                const uint32_t mid = below + (reached - below) / 2;
+                if (ChipClockAt(mid) >= chipDue)
+                    reached = mid;
+                else
+                    below = mid;
+            }
+            due = reached;
+        }
+    }
+    return std::max(due, t + 1);
+}
+
+uint64_t Z84C15Engine::ChipClockAt(uint32_t t)
+{
+    const uint32_t saved = _z80->tt;
+    _z80->tt = (t << 8) | (saved & 0xFF);
+    const uint64_t clock = _chip.Clock();
+    _z80->tt = saved;
+    return clock;
+}
+
+/// endregion </Idle cycles in one go>
+
 /// region <Bus callbacks>
 
 uint8_t Z84C15Engine::MemRead(Z84CPU* cpu, uint16_t addr, Z84CpuAccessKind kind, void* user)
@@ -164,15 +326,17 @@ uint8_t Z84C15Engine::MemRead(Z84CPU* cpu, uint16_t addr, Z84CpuAccessKind kind,
         // fetch through MemoryReadM1, board logic at the refresh edge
         if (z.machineM1Hook)
             z.NotifyMachineM1Before(addr);
-        value = (e._memory->*z.MemIf->MemoryReadM1)(addr, true);
+        value = e.UseFastBus() ? e._fastBus->Read(addr, true) : (e._memory->*z.MemIf->MemoryReadM1)(addr, true);
+        e._lastM1Value = value;
         if (z.machineM1Hook)
             z.NotifyMachineM1(addr);
-        if (e._agent)
-            e._agent->OnOpcodeFetch(addr, value);
+        if (IZ84BusAgent* agent = e._agent; agent && !(agent->fetchQuiet && e._fetchFilterOn && !agent->fetchMatters[value]))
+            agent->OnOpcodeFetch(addr, value);
     }
     else
     {
-        value = (e._memory->*z.MemIf->MemoryRead)(addr, kind == Z84CpuAccessOperand);
+        const bool isExecution = kind == Z84CpuAccessOperand;
+        value = e.UseFastBus() ? e._fastBus->Read(addr, isExecution) : (e._memory->*z.MemIf->MemoryRead)(addr, isExecution);
         if (e._agent && e._agent->watchData)
             value = e._agent->OnRead(addr, value);
     }
@@ -192,7 +356,10 @@ void Z84C15Engine::MemWrite(Z84CPU* cpu, uint16_t addr, uint8_t value, void* use
     IZ84BusAgent* agent = (e._agent && e._agent->watchData) ? e._agent : nullptr;
     if (agent)
         value = agent->BeforeWrite(addr, value);
-    (e._memory->*z.MemIf->MemoryWrite)(addr, value);
+    if (e.UseFastBus())
+        e._fastBus->Write(addr, value);
+    else
+        (e._memory->*z.MemIf->MemoryWrite)(addr, value);
     if (agent)
         agent->AfterWrite(addr, value);
     if (z.busTraceHook)
@@ -238,8 +405,34 @@ void Z84C15Engine::Reti(Z84CPU*, void* user)
 
 bool Z84C15Engine::ChainSource::IsIntAsserted(uint32_t t)
 {
-    const bool chip = _engine._chip.IntPending();
-    const bool board = _engine._external && _engine._external->IsIntAsserted(t);
+    Z84C15Engine& e = _engine;
+    KeptNo& kept = e._intKept;
+    // A kept "no": nothing the answer depends on changed and no source event came since it was asked. Asked at every
+    // instruction boundary, so the test is a few compares; the sources' own work (the daisy-chain walk, the pulse
+    // list, the chip clock) runs only when an answer may have changed
+    if (kept.valid && t < kept.until && e._chip.StateVersion() == kept.chipVersion &&
+        (!e._external || e._external->changeCount == kept.boardVersion) && e._state->frame_counter == kept.frame &&
+        e._state->current_z80_frequency_multiplier == kept.multiplier)
+    {
+        e._intAnswersKept++;
+        return false;
+    }
+
+    const bool chip = e._chip.IntPending();
+    const bool board = e._external && e._external->IsIntAsserted(t);
+    e._intAnswersAsked++;
+    kept.valid = false;
+    if (!chip && !board && e._intKeptOn && (!e._external || e._external->countsChanges))
+    {
+        // Versions after the question (it may poll: the CTC's zero counts, the watchdog), the bound before the frame
+        // end (the frame's T rebases there)
+        kept.until = e.NextCheckT(t, e._z80->_frameLimit);
+        kept.chipVersion = e._chip.StateVersion();
+        kept.boardVersion = e._external ? e._external->changeCount : 0;
+        kept.frame = e._state->frame_counter;
+        kept.multiplier = e._state->current_z80_frequency_multiplier;
+        kept.valid = kept.until > t + 1;  // a bound at the next boundary saves nothing
+    }
     return chip || board;
 }
 

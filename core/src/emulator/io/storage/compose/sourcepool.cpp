@@ -9,7 +9,24 @@
 
 uint32_t SourcePool::AddHostFile(const std::filesystem::path& hostPath, uint64_t size)
 {
-    _hostFiles.push_back(HostFile{hostPath, size, false});
+    const std::filesystem::path parent = hostPath.parent_path();
+    const NativeView native(parent.native());
+    uint32_t folder;
+    if (!_folders.empty() && NativeView(_folders.back()) == native)
+        folder = static_cast<uint32_t>(_folders.size() - 1);  // siblings come in a row
+    else if (const auto known = _folderIndex.find(native); known != _folderIndex.end())
+        folder = known->second;
+    else
+    {
+        folder = static_cast<uint32_t>(_folders.size());
+        _folders.push_back(parent.native());
+        _folderIndex.emplace(NativeView(_folders.back()), folder);
+    }
+    HostFile host;
+    host.name = hostPath.filename().native();
+    host.folder = folder;
+    host.size = size;
+    _hostFiles.push_back(std::move(host));
     return static_cast<uint32_t>(_hostFiles.size() - 1);
 }
 
@@ -40,7 +57,7 @@ size_t SourcePool::ReadHost(uint32_t file, uint64_t offset, uint8_t* dst, size_t
     auto it = std::find_if(_open.begin(), _open.end(), [file](const OpenFile& f) { return f.file == file; });
     if (it == _open.end())
     {
-        _open.push_front(OpenFile{file, std::ifstream(host.path, std::ios::binary)});
+        _open.push_front(OpenFile{file, std::ifstream(HostPath(file), std::ios::binary)});
         if (_open.size() > kMaxOpenFiles)
             _open.pop_back();
         it = _open.begin();
@@ -64,7 +81,7 @@ size_t SourcePool::ReadHost(uint32_t file, uint64_t offset, uint8_t* dst, size_t
     if (got < wanted && !host.warned)
     {
         host.warned = true;
-        const auto display = host.path.u8string();
+        const auto display = HostPath(file).u8string();
         _warnings.push_back(std::string(display.begin(), display.end()) +
                             ": shorter than when the folder was scanned, or gone; reads as zeros");
     }

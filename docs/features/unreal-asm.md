@@ -19,10 +19,12 @@ Running the assemblers themselves inside the emulator: [.recipe/assemblers/](../
 | STORM | `storm` | 1.0beta, 1.2-1.3i | yes |
 | MASM (AIG, KSA) | `masm` | 1.0 demo, 1.1, 2.0, 3.0 | yes (1.x, 3.0) |
 | GENS (HiSoft Devpac) | `gens` | GENS1, GENS2-4 | yes |
-| ZEUS | `zeus` | 1983, GG, 1.1 beta / v7.E | yes |
+| ZEUS | `zeus` | 1983, GG, 1.1 beta / v7.E, Primus Assembler 2.9 | yes |
 | XAS | `xas` | 4.18, 5.05, 7.43, 7.43c, 9.07m, 9.10 | yes |
 | ASM80 / Asm80Win (PC cross assembler) | `asm80` | 2.02 (text) | yes |
 | PROMETHEUS (Proxima) | `prometheus` | the editor's save (records + symbol table) | yes |
+| Power Assembler (Sergeyev) | `pasm` | 3.0 (text, CR LF) | yes |
+| Laser Genius (Oasis Software) | `lasergenius` | the editor's tokenized text (tape blocks joined, the Beta Disk file); Phoenix paragraphs kept as bytes | yes |
 | sjasmplus | `sjasmplus` | text | - |
 | any text | `text` | CP866, KOI8-R, CP1251, UTF-8; any line end | - |
 
@@ -73,7 +75,7 @@ symconv source disk.trd --main MAIN --to unreal-map -o main.map   # the labels o
 symconv live 3:ram3.bin 6:ram6.bin --to native       # the label table of ALASM / XAS from RAM pages
 ```
 
-- **Labels from sources** (`symconv source`): the labels a TASM, ALASM, STORM, ZX-ASM, MASM, GENS, ZEUS, XAS, ASM80, PROMETHEUS or
+- **Labels from sources** (`symconv source`): the labels a TASM, ALASM, STORM, ZX-ASM, MASM, GENS, ZEUS, XAS, ASM80, PROMETHEUS, Laser Genius, Power Assembler or
   sjasmplus project defines, with the value each gets, its kind and its source line. The values come from a layout
   of the project's sjasmplus conversion (no bytes are built), checked against sjasmplus on the collection's disks.
   `symconv source` reads TR-DOS and tape images; an ASM80 project (host files) goes through the library's
@@ -86,6 +88,73 @@ symconv live 3:ram3.bin 6:ram6.bin --to native       # the label table of ALASM 
 The debugger loads any of the text formats with `manage_symbols load_labels` / `POST /symbols/load`
 ([.recipe/analysis/symbols-listings-and-source-stepping.md](../../.recipe/analysis/symbols-listings-and-source-stepping.md));
 a `.map` written by z80asm is recognized by its content.
+
+### Labels from a source in the debugger
+
+The debugger can take the labels straight from a source, with no label file:
+
+- In the Disk files dialog, select the source and press **Import Labels**.
+- Or in the label editor, choose **File > Import Labels from Source...** and pick a source file or an image. When an
+  image holds several sources, a list asks which one is the main source.
+- From scripts: `manage_symbols import_source` (MCP), `POST /symbols/import/source`, `symbols import-source <path>`
+  (CLI), `symbols_import_source` (Lua), `emu.symbols_import_source` (Python).
+
+**Where the values come from.** No assembler runs. The source is read as the assembler reads it:
+
+- The address starts at `ORG`.
+- Every instruction moves it by its length; `DB`, `DW`, `DS`, `ALIGN` and `INCBIN` by their sizes; `DISP` / `PHASE`
+  change it the way they do in the assembler.
+- The passes repeat until no label moves.
+
+The values are the ones the assembler's label table would hold after assembling the project. On real disks they
+match sjasmplus for 511 of 530 sources; the rest draw random numbers while they assemble, or hit a sjasmplus quirk.
+Each label comes with its kind (code, data, constant), the file and line that define it, and the RAM page that
+`ORG address,page` named.
+
+**A source on a disk** is a project: the files it INCLUDEs and the files whose size INCBIN takes come from the same
+disk. The disk is read as the emulator holds it now, unsaved edits included.
+
+**Importing again** replaces the source's labels and does not add copies. The labels sit in their own set
+(`source:disk:A/NAME`), which the label editor's Sets tab can switch off or drop.
+
+**When the result is incomplete**, the report says which labels got no value and why. Typical causes are a missing
+INCLUDE file and a label inside a block an `IF` leaves out. A missing INCBIN file counts as empty, so the labels after
+it are short by its size.
+
+**If you have the assembler's own table, use it instead.** A label file it wrote (sjasmplus `--sym`, a `.map`, a label
+file on the disk) imports with Import..., and ALASM's or XAS's table in RAM after assembling imports with the live
+scan. Details:
+[.recipe/analysis/symbols-import-export.md](../../.recipe/analysis/symbols-import-export.md#labels-from-a-source).
+
+## The source in the running machine
+
+The debugger reads the source that ALASM (3.8c, 4.42-4.46, 4.5, 5.00-5.09), TASM (2.0, 3.0, 3.2, 3.5, 4.0, 4.4, 4.12), XAS (4.18-9.10) STORM (1.0beta, 1.3), ZX-ASM 2.4 / 2.5 / 2.6 / ZX ASM 3.0 / 3.10 / ZAsm 3.15 / 3.2x / Lite 1.07 / 3.3.02 / 3.3.51 / 3.3.Final / 3.4 / 3.80.4 / x64.1 / 4.0x8 / 4.x64 / 4.20 or MASM 1.0 demo / 1.1 / 1.3 / 2.0 / 3.0 is editing in the machine, with no need to save
+it to a disk first. You get it as text, as the file the assembler's own SAVE would write, or converted to sjasmplus,
+pasmo or z88dk:
+
+```text
+asm sync                                  # which assembler, its text, where the cursor is
+asm sync extract --as dialect --to sjasmplus --output live.asm
+```
+
+The same is `asm_source` `sync_status` / `sync_extract` in MCP and `GET /asm/sync` in the WebAPI
+([.recipe/analysis/asm-sources.md](../../.recipe/analysis/asm-sources.md#the-source-an-assembler-holds-in-ram-asm-synchronizer)).
+The machine's memory is copied between two frames and never written. A line you are typing in TASM is part of the
+text. ALASM keeps the line under the cursor apart until Enter, and the status says so.
+
+`asm sync watch` keeps following the source while you type in the guest. Half a second after you stop typing, the
+source is built on the host:
+
+- its labels show in the debugger at once (the symbol set `live:sync:<assembler>`);
+- `asm sync hints` lists the errors with their line numbers, for example `line 105: unknown symbol NOWHERE`;
+- with `--output`, a host file (text, the assembler's format or sjasmplus) is written again after each build.
+
+In the Qt debugger, the **Live source** button shows all of this in one window: the text with the guest's cursor line
+highlighted, the errors and warnings on their lines and in a list below it, a status line, and the Watch, Extract...
+and Convert... buttons.
+
+`asm sync unwatch` stops the watch. More assemblers are planned
+([asm-synchronizer](../inprogress/2026-10-05-unreal-asm/asm-synchronizer.md)).
 
 ## Speed
 

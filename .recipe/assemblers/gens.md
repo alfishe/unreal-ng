@@ -17,6 +17,7 @@ MONS, saving to tape from inside GENS.
 |---|---|---|---|
 | GENS4 V4.0 (tape) | `DEVPAC_4.TAP` in [HiSoftDevpacV4.tap.zip](https://spectrumcomputing.co.uk/pub/sinclair/utils/h/HiSoftDevpacV4.tap.zip) (ZXDB [8091](https://spectrumcomputing.co.uk/entry/8091); in the ZX collection under `software/programming/gens-mons/archives/zxdb/`) | tape block 5 (`gens4`, 10880 bytes, saved for 26000; block 7 is the 51-column `gens4-51`) | works: load, assemble, run, macros |
 | GENS3 (tape, 1983) | `DEVPAC_1.TAP` in [HiSoftDevpacV3.tap.zip](https://spectrumcomputing.co.uk/pub/sinclair/utils/h/HiSoftDevpacV3.tap.zip) (same folder) | tape block 3 (`GENS3`, 8355 bytes); its BASIC loader puts it at 25444 after `CLEAR 25443` | works; no `MAC` / `ENDM` (`*ERROR* 02`) and no `C` command in this build |
+| GENS v4.3t (Rus, TR-DOS) | `archives/GENS4TF.ZIP` → `GENS4TF.SCL` (`GENS4tf`, `GENS4++` CODE 26000) | the file's 12407 bytes | works: Russian menu; the name goes in the command (`P11,19,NAME` saves as type A, start 0; `A,,OBJ` assembles to the disk file OBJ); `I10,10` / EDIT as GENS4 |
 | GENS4B V4.1 (TR-DOS) | `gens4b.$c` in `MONSGENS.LZH` (collection: `software/programming/gens-mons/`), hobeta, start 30000 | the file's 12174 bytes | works when started from the TR-DOS prompt: `X` catalogue, `G,,1:NAME` load, `P10,30,1:NAME` save, `A` with `*F 1:NAME` |
 
 GENS runs from any address: put it where the program you assemble will not go. The editor's text follows GENS in

@@ -128,8 +128,14 @@
         body["properties"]["discard"]["type"] = "boolean";
         body["properties"]["strategy"]["type"] = "string";
         body["properties"]["strategy"]["description"] =
-            "save of a composite: delta (the session's writes into <descriptor>.delta, restored at the next insert; "
-            "the default without a path) or flat (a new image at path; the default with one)";
+            "save of a composite: delta (the session's writes into <descriptor>.delta, restored at the next insert), "
+            "flat (a new image at path; the default with one), commit or write-back; left out: the descriptor's "
+            "writes.save. With save on insert / swap / eject / create / rescan also discard (drop the writes) or ask "
+            "(a delta here; the GUI asks)";
+        body["properties"]["strict"]["type"] = "boolean";
+        body["properties"]["strict"]["description"] =
+            "save of a composite leaving its slot: a commit / write-back that fails refuses (the medium stays) instead of "
+            "keeping the writes as a session delta";
         body["properties"]["plan"]["type"] = "boolean";
         body["properties"]["plan"]["description"] = "save / flatten with strategy commit or write-back: report what would be written, write nothing";
         body["properties"]["onConflict"]["type"] = "string";
@@ -161,8 +167,9 @@
         body["properties"]["device"]["description"] = "insert / swap on an IDE unit: disk, cdrom or cf - a CompactFlash card on an IDE adapter, a disk that identifies as CFA (swap the unit's drive first; the unit must be empty)";
         body["properties"]["journal"]["type"] = "string";
         body["properties"]["journal"]["description"] =
-            "insert / swap of a medium written in session access: replay (default) a session journal left by a crash "
-            "(<source>.usession), discard it unread, or off (no journal next to the medium this time)";
+            "insert / swap of a medium written in session access: replay a session journal left by a crash "
+            "(<source>.usession) and keep one, discard it unread and start a new one, or off (no journal next to the "
+            "medium). Left out: [MEDIA] SessionJournal (off by default)";
         body["properties"]["immediate"]["type"] = "boolean";
         body["properties"]["immediate"]["description"] = "insert: no swap delay";
         Json::Value& upload = post["requestBody"]["content"]["multipart/form-data"]["schema"];

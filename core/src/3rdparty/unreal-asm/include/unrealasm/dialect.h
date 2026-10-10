@@ -107,6 +107,9 @@ public:
     static const DialectRegistry& Builtin();
     const IFrontend* Frontend(std::string_view dialect) const;
     const IBackend* Backend(std::string_view dialect) const;
+    /// The dialects that can be read (a frontend) / written (a backend), in registration order
+    std::vector<std::string> FrontendDialects() const;
+    std::vector<std::string> BackendDialects() const;
     void Add(std::unique_ptr<IFrontend> frontend);
     void Add(std::unique_ptr<IBackend> backend);
 

@@ -124,4 +124,11 @@ void TTDVdac2::TTDSaveState(uint8_t* dst) const { _card.TtdSaveState(dst); }
 void TTDVdac2::TTDLoadState(const uint8_t* src) { _card.TtdLoadState(src); }
 uint64_t TTDVdac2::TTDHashState() const { return _card.TtdStateHash(); }
 
+TTDDeviceDescriptor TTDVdac2::TTDDescribe() const
+{
+    TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
+    d.timeFields = Vdac2Card::TtdTimeFields();   // the raster clocks at the blob's start
+    return d;
+}
+
 }  // namespace ttd

@@ -1,6 +1,6 @@
 # C3 — FAT disk images as layers
 
-**Status:** done 2026-10-05 (design first, as-built notes in §9). Phase C3 of [tdd.md](../tdd.md) §13: `FatVolumeReader::ChainExtents` /
+**Status:** done 2026-10-05 (design first, as-built notes in §9). Phase C3 of [tdd.md](../tdd.md) §14: `FatVolumeReader::ChainExtents` /
 partitions, `FatImageSource`, `SubRangeDevice`; image layers in a rebuilt volume. Exit: FAT16 and FAT32
 images merged ([fs-compatibility.md](../fs-compatibility.md) S-1, S-2).
 

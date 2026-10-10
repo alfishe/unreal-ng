@@ -189,8 +189,8 @@ TEST_F(TTDGeneralSoundSwitch_Test, SwitchWithoutRecordingIsUnaffected)
 }
 
 /// NeoGS records on TTD v1: every checkpoint carries the card's registers and
-/// device state, never its RAM or flash - large memories are not snapshotted
-/// in v1, they wait for TTD v2 memory regions (neogs-tdd.md §7.4)
+/// device state, never its RAM or flash - v1 does not record them; the engine
+/// records them as regions 4 and 5 (neogs-tdd.md §7.4)
 TEST_F(TTDGeneralSoundSwitch_Test, NeoGSCheckpointsLeaveTheCardMemoryOut)
 {
     ASSERT_TRUE(sm->switchGeneralSoundCard(GSTypeKind::NGS));

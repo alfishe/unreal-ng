@@ -29,6 +29,10 @@ public:
     /// multiple of a byte, the last piece may be partial)
     void Bind(uint8_t* memory, size_t bytes)
     {
+        // The same memory again keeps its dirty pieces: listing a device's regions (automation's region list,
+        // DeviceMemory) during a recording must not drop the writes the next capture has to store
+        if (memory == _memory && bytes == _bytes)
+            return;
         _memory = memory;
         _bytes = bytes;
         _dirty.assign((bytes + kTTDPieceSize - 1) / kTTDPieceSize, 0);

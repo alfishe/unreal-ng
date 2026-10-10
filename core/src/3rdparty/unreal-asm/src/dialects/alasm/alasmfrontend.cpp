@@ -57,6 +57,17 @@ struct ExpressionParser
 {
     std::string_view t;
     size_t i = 0;
+    bool soft = false;      ///< a failure sets `failed` instead of throwing (trying whether a text is an expression)
+    bool failed = false;
+
+    Expr Fail(std::string message)
+    {
+        if (!soft)
+            throw Failure{std::move(message)};
+        failed = true;
+        i = t.size();   // nothing more is read
+        return Expr{};
+    }
 
     void Blanks()
     {
@@ -97,7 +108,7 @@ struct ExpressionParser
             Expr inner = Sequence();
             Blanks();
             if (Peek() != ')')
-                throw Failure{"( without )"};
+                return Fail("( without )");
             ++i;
             Expr e = Expr::Make(Expr::Kind::Group);
             e.args.push_back(std::move(inner));
@@ -109,7 +120,7 @@ struct ExpressionParser
             Expr inner = Sequence();
             Blanks();
             if (Peek() != '}')
-                throw Failure{"{ without }"};
+                return Fail("{ without }");
             ++i;
             Expr e = Expr::Make(Expr::Kind::Memory);
             e.args.push_back(std::move(inner));
@@ -121,7 +132,7 @@ struct ExpressionParser
             while (j < t.size() && std::isxdigit(static_cast<unsigned char>(t[j])))
                 ++j;
             if (j == i)
-                throw Failure{"# without hex digits"};
+                return Fail("# without hex digits");
             const Expr e = Expr::Number(std::stoll(std::string(t.substr(i, j - i)), nullptr, 16), ir::NumberSpelling::Hex, static_cast<int>(j - i));
             i = j;
             return e;
@@ -132,7 +143,7 @@ struct ExpressionParser
             while (j < t.size() && (t[j] == '0' || t[j] == '1'))
                 ++j;
             if (j == i)
-                throw Failure{"% without binary digits"};
+                return Fail("% without binary digits");
             const Expr e = Expr::Number(std::stoll(std::string(t.substr(i, j - i)), nullptr, 2), ir::NumberSpelling::Binary, static_cast<int>(j - i));
             i = j;
             return e;
@@ -179,7 +190,7 @@ struct ExpressionParser
                 i += 2;
                 return e;
             }
-            throw Failure{"macro parameter operator \\" + std::string(1, i + 1 < t.size() ? t[i + 1] : ' ') + " has no counterpart"};
+            return Fail("macro parameter operator \\" + std::string(1, i + 1 < t.size() ? t[i + 1] : ' ') + " has no counterpart");
         }
         if (IsLabelChar(c))
         {
@@ -190,7 +201,7 @@ struct ExpressionParser
             i = j;
             return e;
         }
-        throw Failure{std::string("unexpected '") + c + "' in an expression"};
+        return Fail(std::string("unexpected '") + c + "' in an expression");
     }
 
     static bool BinaryOp(char c, Op& op)
@@ -236,15 +247,19 @@ struct ExpressionParser
         Expr e = Sequence();
         Blanks();
         if (i != t.size())
-            throw Failure{"unexpected text after an expression: " + std::string(t.substr(i))};
+            return Fail("unexpected text after an expression: " + std::string(t.substr(i)));
         return e;
     }
 };
 
-Expr ParseExpression(std::string_view text)
+Expr ParseExpression(std::string_view text, bool* failed = nullptr)
 {
     ExpressionParser p{text};
-    return p.Whole();
+    p.soft = failed != nullptr;
+    Expr e = p.Whole();
+    if (failed)
+        *failed = p.failed;
+    return e;
 }
 
 /// Splits operands at commas outside quotes, parentheses and braces; a quote may run to the end of the line
@@ -289,7 +304,8 @@ std::vector<std::string> SplitOperands(std::string_view text)
     return out;
 }
 
-Operand ParseOperand(const std::string& text, bool conditionAllowed)
+/// `failed` given: a text that is no operand sets it instead of throwing
+Operand ParseOperand(const std::string& text, bool conditionAllowed, bool* failed = nullptr)
 {
     Operand o;
     const std::string lower = z80::Lower(text);
@@ -321,7 +337,7 @@ Operand ParseOperand(const std::string& text, bool conditionAllowed)
         {
             o.kind = Operand::Kind::Indexed;
             o.text = z80::Lower(inner.substr(0, 2));
-            o.expr = ParseExpression(inner.substr(2));   // the sign is part of the displacement expression
+            o.expr = ParseExpression(inner.substr(2), failed);   // the sign is part of the displacement expression
             return o;
         }
         // A whole operand in parentheses is a memory reference only when the parentheses enclose all of it
@@ -337,12 +353,12 @@ Operand ParseOperand(const std::string& text, bool conditionAllowed)
         if (whole)
         {
             o.kind = Operand::Kind::Memory;
-            o.expr = ParseExpression(inner);
+            o.expr = ParseExpression(inner, failed);
             return o;
         }
     }
     o.kind = Operand::Kind::Immediate;
-    o.expr = ParseExpression(text);
+    o.expr = ParseExpression(text, failed);
     return o;
 }
 
@@ -517,12 +533,18 @@ Statement ParseStatement(const std::string& word, const std::string& rest, Diagn
         for (const std::string& op : ops)
         {
             Operand o;
+            bool failed = false;
             try
             {
-                o = (!op.empty() && op.front() == '"' && op.size() > 3) ? StringOperand(op) : ParseOperand(op, false);
+                o = (!op.empty() && op.front() == '"' && op.size() > 3) ? StringOperand(op) : ParseOperand(op, false, &failed);
             }
             catch (...)
             {
+                failed = true;
+            }
+            if (failed)
+            {
+                o = Operand{};
                 o.kind = Operand::Kind::Immediate;
                 o.expr = Expr::Make(Expr::Kind::Raw);
                 o.expr.text = op;

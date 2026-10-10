@@ -294,16 +294,27 @@ bool JournalStrand::RunOne()
 
 /// region <JournalIoPool>
 
+namespace
+{
+    std::atomic<unsigned> g_poolThreads{1};
+}  // namespace
+
 JournalIoPool& JournalIoPool::Instance()
 {
     static JournalIoPool pool;
     return pool;
 }
 
+void JournalIoPool::Configure(unsigned threads)
+{
+    g_poolThreads = threads;
+}
+
 JournalIoPool::JournalIoPool()
 {
     const unsigned cores = std::max(1u, std::thread::hardware_concurrency());
-    const unsigned threads = std::clamp(cores / 4, 1u, 4u);
+    const unsigned wanted = g_poolThreads.load();
+    const unsigned threads = wanted ? std::clamp(wanted, 1u, 4u) : std::clamp(cores / 4, 1u, 4u);
     for (unsigned i = 0; i < threads; i++)
         _threads.emplace_back([this] { Worker(); });
 }

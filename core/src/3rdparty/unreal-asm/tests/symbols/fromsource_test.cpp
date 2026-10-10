@@ -302,3 +302,49 @@ TEST(FromSource_Test, StringsTakeTheirBytesInTheFilesCodePage)
     EXPECT_EQ(v["after"], 0x8006);
     EXPECT_EQ(v["end"], 0x8008);
 }
+
+TEST(FromSource_Test, AProjectFromAnImagesFilesGivesTheSameLabels)
+{
+    // The files of the disk as an image reader gives them: the project, its main source picked, the labels as the test
+    // project above (the INCBIN sizes from the same files)
+    std::vector<containers::TrdosFile> files;
+    std::vector<std::filesystem::path> paths;
+    for (const auto& entry : std::filesystem::directory_iterator(TestDataPath("dialects/thelink")))
+        if (entry.path().filename().string().find(".$") != std::string::npos)
+            paths.push_back(entry.path());
+    std::sort(paths.begin(), paths.end());
+    for (const auto& path : paths)
+    {
+        containers::TrdosFile file;
+        std::string error;
+        ASSERT_TRUE(containers::ReadHobeta(ReadTestData("dialects/thelink/" + path.filename().string()), file, error)) << error;
+        files.push_back(file);
+    }
+    const symbols::SourceProject project = symbols::ProjectFromFiles(files);
+    std::string error;
+    EXPECT_EQ(symbols::FindMainSource(project, "", error), project.sources.size());
+    EXPECT_NE(error.find("GSTUNNE4"), std::string::npos) << "the sources are listed";
+    EXPECT_EQ(symbols::FindMainSource(project, "NOSUCH", error), project.sources.size());
+    const size_t main = symbols::FindMainSource(project, "GSTUNNE4", error);
+    ASSERT_LT(main, project.sources.size());
+    const symbols::SourceSymbolsResult viaProject = symbols::SymbolsFromSourceProject(project, main);
+
+    const Disk disk("dialects/thelink");
+    symbols::SourceSymbolsOptions options;
+    options.layout = disk.Options();
+    const symbols::SourceSymbolsResult direct = symbols::SymbolsFromProject(disk.sources, disk.Main("GSTUNNE4"), options);
+    EXPECT_TRUE(viaProject.ok);
+    ASSERT_EQ(viaProject.set.symbols.size(), direct.set.symbols.size());
+    for (size_t i = 0; i < direct.set.symbols.size(); ++i)
+    {
+        EXPECT_EQ(viaProject.set.symbols[i].name, direct.set.symbols[i].name);
+        EXPECT_EQ(viaProject.set.symbols[i].location, direct.set.symbols[i].location) << direct.set.symbols[i].name;
+    }
+
+    // A text source is a project of one
+    const std::string text = "start: ld a,1\nloop: jr loop\n";
+    const symbols::SourceProject one = symbols::ProjectFromText("dir/game.asm", std::vector<uint8_t>(text.begin(), text.end()));
+    ASSERT_EQ(one.sources.size(), 1u);
+    EXPECT_EQ(one.sources[0].name, "game");
+    EXPECT_EQ(symbols::FindMainSource(one, "", error), 0u);
+}

@@ -199,6 +199,12 @@ BeamPosition ScreenSprinter::DescribeBeam(uint32_t tInFrame) const
 
 /// region <Drawing>
 
+bool ScreenSprinter::CatchesUpOnEvents() const
+{
+    const PortDecoder_Sprinter* decoder = Decoder();
+    return _catchUpOnEvents && !(decoder && decoder->BeamVideo());
+}
+
 void ScreenSprinter::UpdateScreen()
 {
     DrawTo(GetCurrentTstate());

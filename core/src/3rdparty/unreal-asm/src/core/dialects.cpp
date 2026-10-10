@@ -20,6 +20,8 @@
 #include "dialects/specasm/specasmfrontend.h"
 #include "dialects/odin/odinfrontend.h"
 #include "dialects/prometheus/prometheusfrontend.h"
+#include "dialects/lasergenius/lasergeniusfrontend.h"
+#include "dialects/pasm/pasmfrontend.h"
 #include "dialects/tasm/tasmfrontend.h"
 #include "dialects/masm/masmfrontend.h"
 #include "dialects/zeus/zeusfrontend.h"
@@ -53,6 +55,8 @@ const DialectRegistry& DialectRegistry::Builtin()
         r.Add(std::make_unique<dialects::SpecasmFrontend>());
         r.Add(std::make_unique<dialects::OdinFrontend>());
         r.Add(std::make_unique<dialects::PrometheusFrontend>());
+        r.Add(std::make_unique<dialects::LaserGeniusFrontend>());
+        r.Add(std::make_unique<dialects::PasmFrontend>());
         r.Add(std::make_unique<dialects::SjasmplusFrontend>());
         r.Add(std::make_unique<dialects::SjasmplusBackend>());
         r.Add(std::make_unique<dialects::PasmoBackend>());
@@ -76,6 +80,22 @@ const IBackend* DialectRegistry::Backend(std::string_view dialect) const
         if (b->Dialect() == dialect)
             return b.get();
     return nullptr;
+}
+
+std::vector<std::string> DialectRegistry::FrontendDialects() const
+{
+    std::vector<std::string> out;
+    for (const auto& f : _frontends)
+        out.emplace_back(f->Dialect());
+    return out;
+}
+
+std::vector<std::string> DialectRegistry::BackendDialects() const
+{
+    std::vector<std::string> out;
+    for (const auto& b : _backends)
+        out.emplace_back(b->Dialect());
+    return out;
 }
 
 void DialectRegistry::Add(std::unique_ptr<IFrontend> frontend)
@@ -281,8 +301,10 @@ std::vector<ProjectFile> ImageProject(const std::vector<containers::TrdosFile>& 
     };
     for (size_t k = 0; k < files.size(); ++k)
     {
+        // Tokenized sources; of the text ones only Power Assembler's, which it keeps as CODE files on the disk and the
+        // detection knows by what only PASM writes (other text files on a disk are documents)
         const DetectResult detected = registry.Detect(files[k].data, files[k].Hints());
-        if (detected.chosen && detected.chosen->Info().family == CodecFamily::Tokenized)
+        if (detected.chosen && (detected.chosen->Info().family == CodecFamily::Tokenized || detected.chosen->Info().id == "pasm"))
             add(k, *detected.chosen, std::string());
     }
     // The files the sources INCLUDE that detection left out, read like their includer (until none is left)

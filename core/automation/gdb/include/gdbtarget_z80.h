@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,11 @@ public:
     /// @return "OK" or error code
     static std::string writeRegister(EmulatorContext* ctx, int regnum, const std::string& hex);
 
+    /// @brief Write memory for 'M' / 'X' packets: a Z80 address, or 0x01PPAAAA for RAM page PP.
+    /// A tool edit (Emulator::EditMemoryFromTool): while a TTD session records, the bytes are part of the history.
+    /// @return false if there is no memory or the page does not exist
+    static bool writeMemory(EmulatorContext* ctx, uint64_t addr, const std::vector<uint8_t>& bytes);
+
     /// @brief Get total register count for the current configuration
     static int getRegisterCount(EmulatorContext* ctx);
 
@@ -72,6 +78,8 @@ public:
     static int getRegisterPacketLength(EmulatorContext* ctx);
 
 private:
+    /// Runs @p edit as one tool edit of the emulator (directly without one)
+    static void editCPU(EmulatorContext* ctx, const char* source, const std::function<void()>& edit);
     static uint16_t readCPURegister(EmulatorContext* ctx, int regnum);
     static void writeCPURegister(EmulatorContext* ctx, int regnum, uint16_t value);
 };

@@ -2,7 +2,10 @@
 
 #include "sprintermemory.h"
 
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/sprinter/sprinterwaits.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
 #include "emulator/ports/models/sprinter/sprinterpldconfiguration.h"
 #include "emulator/ports/models/sprinter/sprinterpldstate.h"
@@ -164,7 +167,7 @@ void SprinterMemory::MapFastRamToBank(uint8_t bank, uint8_t fastRamPage)
     bank &= 3;
     _bank_mode[bank] = BANK_CACHE;
     _bank_read[bank] = _bank_write[bank] = CacheBase() + static_cast<size_t>(fastRamPage & (MAX_CACHE_PAGES - 1)) * PAGE_SIZE;
-    // Not a RAM page: TTD journals RAM pages only (fast RAM joins the TTD state in phase S7)
+    // Not a RAM page: time travel names a fast RAM byte by its own space (TtdPageOfBank, ttdphyspage.h)
     _bank_ram_page_cache[bank] = ttd::kPhysPageNone;
     UpdateSlotContention(bank);
     if (bank == 0)
@@ -231,7 +234,22 @@ uint8_t SprinterMemory::MemoryReadDebug(uint16_t addr, bool isExecution)
     {
         if (_redirect[addr >> 14] == ReadRedirect::Isa)
             return IsaRead(addr);
-        return Redirect(addr, value);
+        const uint8_t redirected = Redirect(addr, value);
+        if (_redirect[addr >> 14] == ReadRedirect::Graphics && !isExecution)
+        {
+            const uint32_t videoAddr = _pld->portY * 1024u + (addr & 0x3FF);
+            CheckSpaceWatch(ttd::SpacePage(ttd::TTDMemorySpace::Vram, videoAddr), static_cast<uint16_t>(videoAddr & 0x3FFF), addr,
+                            false);
+        }
+        // A data read of the video RAM through a graphics window: named by the video RAM's own address
+        if (_redirect[addr >> 14] == ReadRedirect::Graphics && !isExecution && _feature_ttd_enabled &&
+            (_context->ttdProbe.IsArmed() || _context->ttdCoverageActive))
+        {
+            const uint32_t videoAddr = _pld->portY * 1024u + (addr & 0x3FF);
+            TtdNoteAccess(ttd::SpacePage(ttd::TTDMemorySpace::Vram, videoAddr), static_cast<uint16_t>(videoAddr & 0x3FFF),
+                          redirected, false);
+        }
+        return redirected;
     }
     return value;
 }
@@ -255,6 +273,11 @@ void SprinterMemory::AcceleratorWrite(uint16_t addr, uint8_t value)
     MemoryWriteFast(addr, value);  // write-protected windows (graphics) store into the trash page
     if (_bank_ram_page_cache[bank] != ttd::kPhysPageNone)
         MarkRamPageEdited(static_cast<uint16_t>(_bank_ram_page_cache[bank]));
+    // The accelerator's stores are writes of the instruction that started them (its PC): the write journal and the
+    // probe see them as they see the CPU's (it reaches RAM windows only, AcceleratorReaches). A graphics window is a
+    // store into the trash page: OnWrite notes the video RAM byte instead
+    if (_feature_ttd_enabled && _action[bank] != BankAction::Graphics)
+        TtdNoteAccess(_bank_ram_page_cache[bank], addr, value, true);
     OnWrite(addr, value);
 }
 
@@ -304,6 +327,13 @@ void SprinterMemory::OnWrite(uint16_t addr, uint8_t value)
             }
             if (_vram)
                 _vram->Write(videoAddr, value);
+            // Time travel names the byte by the video RAM's own address: "who wrote video RAM #12345"; so does a
+            // watchpoint on a video RAM page (vramN)
+            if (_feature_ttd_enabled)
+                TtdNoteAccess(ttd::SpacePage(ttd::TTDMemorySpace::Vram, videoAddr), static_cast<uint16_t>(videoAddr & 0x3FFF),
+                              value, true);
+            CheckSpaceWatch(ttd::SpacePage(ttd::TTDMemorySpace::Vram, videoAddr), static_cast<uint16_t>(videoAddr & 0x3FFF), addr,
+                            true);
             return;
         }
         case BankAction::Isa:
@@ -336,3 +366,64 @@ void SprinterMemory::OnWrite(uint16_t addr, uint8_t value)
 }
 
 /// endregion </Write intercept>
+
+/// region <The bus in one call>
+
+bool SprinterMemory::FusedBusMatches()
+{
+    Core* core = _context ? _context->pCore : nullptr;
+    Z80* cpu = core ? core->GetZ80() : nullptr;
+    if (!cpu)
+        return false;
+    const size_t count = core->GetBusOverlayCount();
+    size_t i = 0;
+    const bool intercept = i < count && core->GetBusOverlayAt(i) == &_intercept;
+    if (intercept)
+        i++;
+    MemoryWaitOverlay* waits = nullptr;
+    if (i < count && (core->GetBusOverlayAt(i) == _turboWaits || core->GetBusOverlayAt(i) == _originalWaits))
+        waits = static_cast<MemoryWaitOverlay*>(core->GetBusOverlayAt(i++));
+    if (i != count)
+        return false;  // an overlay this path does not know (a card's ZX-DMA, a debugger's)
+    if (cpu->MemIf != (count ? cpu->OverlayFastMemIf : cpu->FastMemIf))
+        return false;  // the debug interface (breakpoints, tracking) or contention
+    if (intercept && (_intercept.windowStart != 0 || _intercept.windowEnd != 0x10000))
+        return false;
+    if (waits && (!waits->observesReads || waits->windowStart != 0 || waits->windowEnd != 0x10000))
+        return false;
+    _fusedIntercept = intercept;
+    _fusedWaits = waits;
+    _fusedTurbo = waits == _turboWaits;
+    _fusedCpu = cpu;
+    return true;
+}
+
+void SprinterMemory::FusedWait(uint16_t addr)
+{
+    // MemoryWaitOverlay::Wait with the rule the overlay's ExtraClocks has (the access kind does not matter to either)
+    if (!_fusedWaits->SlotWaits(static_cast<uint8_t>(addr >> 14)))
+        return;
+    const uint32_t start = _fusedCpu->AccessStartClock();
+    const uint32_t clocks = _fusedTurbo ? SprinterWaits::Rule(start, SprinterWaits::kMemoryTaken) : SprinterOrigWaits::Rule(start);
+    if (clocks)
+        _fusedCpu->AddWaitStates(clocks);
+}
+
+uint8_t SprinterMemory::FusedRead(uint16_t addr, bool isExecution)
+{
+    const uint8_t value = SprinterMemory::MemoryReadFast(addr, isExecution);  // the plain read and the redirects
+    if (_fusedWaits)
+        FusedWait(addr);
+    return value;
+}
+
+void SprinterMemory::FusedWrite(uint16_t addr, uint8_t value)
+{
+    Memory::MemoryWriteFast(addr, value);  // the store (write-protected windows: the trash page)
+    if (_fusedIntercept)
+        OnWrite(addr, value);
+    if (_fusedWaits)
+        FusedWait(addr);
+}
+
+/// endregion </The bus in one call>

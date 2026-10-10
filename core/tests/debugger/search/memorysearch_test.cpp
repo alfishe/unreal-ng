@@ -146,7 +146,11 @@ TEST_F(MemorySearch_Test, RefusedRequestsSayWhy)
     std::string error;
     EXPECT_FALSE(MemorySearch::BuildRequest("CD 16", nullptr, "FF", "", 0, 0xFFFF, 64, 1, request, error));
     EXPECT_EQ(error, "the mask must be as long as the pattern");
-    EXPECT_FALSE(MemorySearch::BuildRequest("CD", nullptr, "", "flash9", 0, 0xFFFF, 64, 1, request, error));
+    // Any other name is a device memory region, looked up when the search runs (a bare memory has none)
+    ASSERT_TRUE(MemorySearch::BuildRequest("CD", nullptr, "", "flash9", 0, 0xFFFF, 64, 1, request, error));
+    EXPECT_NE(MemorySearch::Search(_context, request).error.find("no memory region 'flash9'"), std::string::npos);
+    EXPECT_FALSE(MemorySearch::BuildRequest("CD", nullptr, "", "ram300", 0, 0xFFFF, 64, 1, request, error))
+        << "a page kind with a bad number stays a page error";
     EXPECT_FALSE(MemorySearch::BuildRequest("CD", nullptr, "", "", 10, 5, 64, 1, request, error));
     ASSERT_TRUE(MemorySearch::BuildRequest("CD", nullptr, "", "ram9", 0, 0xFFFF, 64, 1, request, error));
     EXPECT_EQ(MemorySearch::Search(_context, request).error, "this machine has no page ram9") << "a 128K has RAM 0-7";

@@ -19,8 +19,9 @@ the byte-access core in
 [mcp-analysis.cpp](../../core/automation/mcp/src/mcp-analysis.cpp).
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred —
-> `inspect_state` and `debug_code` cover most reads and the search; writes
-> and page access go through `invoke_api`. Use [WebAPI](#webapi) only inside
+> `inspect_state` and `debug_code` cover most reads and the search;
+> `memory_access` reads and writes every memory by name (`space`: `cpu` or a
+> region); page access goes through `invoke_api`. Use [WebAPI](#webapi) only inside
 > host-side Python/bash pipelines or when MCP is unavailable (policy:
 > [_common/transports.md](../_common/transports.md)).
 
@@ -35,7 +36,8 @@ the byte-access core in
 | Bytes at a CPU address | `memory/{addr}?len=` or `memory/read/{address}?length=` |
 | Bytes of a physical page, regardless of paging | `memory/page/{ram\|rom}/{n}` or `memory/{type}/{page}/{offset}` |
 | Disassemble a physical page | `disasm/page?type=&page=&offset=&count=` |
-| Device-owned memory (video RAM, ...) | `memory/regions`, `memory/region/{name}` |
+| Device-owned memory (video RAM, sound card RAM, flash, EEPROMs ...) | `memory/regions`, `memory/region/{name}`; MCP `memory_access` |
+| What was in a memory at an earlier frame, what changed | TTD `memory-at`, `memory-diff` ([ttd-reverse-debugging.md](ttd-reverse-debugging.md)) |
 | Page something in (or set a machine register) as the program would | `ports/out` - a port write through the machine's decoder |
 
 ## MCP (preferred)
@@ -138,11 +140,24 @@ CLI `out #7FFD #13`, Lua `port_out(0x7FFD, 0x13)`, Python `emu.port_out(0x7FFD, 
 
 ### Device memory regions
 
-Memory a device owns outside RAM / ROM: the Sprinter's video RAM `vram`, the TS-Conf palette `cram` and sprite
-table `sfile` (512 bytes each, word n at offset 2n, low byte first), the CMOS clock's cells `cmos` on every machine
-with a clock (a write is a guest write: the time registers set the clock), the ZX-Evo AVR's 4 KiB `eeprom`. In the Qt
-debugger: toolbar "Device memory"
-(hex view; a typed byte goes through the same write path).
+Every memory of the machine outside the CPU's RAM / ROM pages, by a canonical name (the old short name stays an
+alias):
+
+- Declared regions, written through the device's own path:
+  - the Sprinter's video RAM `sprinter.vram` (`vram`);
+  - the TS-Conf palette `tsconf.cram` (`cram`) and sprite table `tsconf.sfile` (`sfile`), 512 bytes each, word n at
+    offset 2n, low byte first;
+  - the CMOS clock's cells `rtc.cmos` (`cmos`) on every machine with a clock (a write is a guest write: the time
+    registers set the clock);
+  - the ZX-Evo AVR's 4 KiB `evo-avr.eeprom` (`eeprom`).
+- Every memory time travel records, by its engine name, written straight to the bytes without device side effects:
+  `sprinter.fastram`, `gs.ram`, `multisound.gs.ram`, `neogs.ram`, `neogs.flash`, `moonsound.wave`, `smuc.eeprom`,
+  `evo.flash`. The `vdac2.*` regions are read-only.
+
+The list gives `aliases`, `ttd_region` and `writable`. A region name is also a space of the search
+(`memory/find`, `find --space`, `mem_find`, MCP `find_bytes`), of snapshot windows (`vram:0x2A345:16`) and of GDB's
+`monitor mem vram:4805 10`. In the Qt debugger: toolbar "Device memory" (hex view; a typed byte goes through the same
+write path; read-only regions are not editable).
 
 ```bash
 curl -s "$BASE/emulator/$EMU_ID/memory/regions" | jq '.regions[] | {name, size_hex, page_size, pages, writable, write_path}'
@@ -159,7 +174,7 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/memory/region/vram" -H 'Content-Type: ap
 ```
 
 A region is also reachable as a page type: `memory/page/vram/{n}` reads and
-writes its page `n` (type must be `ram`, `rom` or a region name). Region
+writes its page `n` (type must be `ram`, `rom`, `cache` or a region name). Region
 writes go through the *device's own write path* (`write_path` says which).
 
 ## Fields worth asserting

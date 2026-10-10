@@ -61,10 +61,14 @@ matches; it names the recipe(s) for that action.
 | Pressing joystick buttons / checking what the guest reads at `IN #1F` | [input/joystick.md](input/joystick.md) | everything else |
 | Moving the mouse, clicking, the wheel / checking what the guest reads at `#FADF` / `#FBDF` / `#FFDF` | [input/mouse.md](input/mouse.md) | keyboard, joystick |
 | Breakpoints, stepping, being told about pauses (WebSocket events) | [analysis/breakpoints-and-events.md](analysis/breakpoints-and-events.md) | ttd-* |
+| How a running program keeps its state: its buffers, pointers, flags and the code that changes them | [articles/program-state-reverse.md](articles/program-state-reverse.md) | trying keys and diffing screenshots |
+| Waiting until something happens (PC, a write, a port, a prompt on screen) instead of `sleep`; who writes an address | [analysis/waiting-and-watching.md](analysis/waiting-and-watching.md) | profilers |
 | Running to a scanline / pixel / interrupt, frame and T-state stepping, step over / out | [analysis/execution-control-and-stepping.md](analysis/execution-control-and-stepping.md) | ttd-*, profilers |
 | Who calls a routine, hot opcodes, per-frame cost | [analysis/calltrace-and-opcode-profiler.md](analysis/calltrace-and-opcode-profiler.md) | port-trace |
 | Labels, symbols, sjasmplus listings, stepping by source line, assembling | [analysis/symbols-listings-and-source-stepping.md](analysis/symbols-listings-and-source-stepping.md) | everything else |
-| Running a Spectrum assembler (TASM, ALASM, STORM, ZX-ASM, GENS, MASM, ZEUS, XAS, PROMETHEUS; the PC cross assembler ASM80) in the machine; its sources, code and labels to and from the host | [assemblers/README.md](assemblers/README.md), then the one assembler's recipe | the other assemblers' recipes |
+| Symbol files in every format (import / export / detect), symbol sets and priorities | [analysis/symbols-import-export.md](analysis/symbols-import-export.md) | everything else |
+| Assembler sources: the files of a disk with their formats, decode, encode (onto the disk too), convert to sjasmplus / pasmo / z88dk | [analysis/asm-sources.md](analysis/asm-sources.md) | everything else |
+| Running a Spectrum assembler (TASM, ALASM, STORM, ZX-ASM, GENS, MASM, ZEUS, XAS, PROMETHEUS, Laser Genius, Power Assembler, Primus; the PC cross assembler ASM80) in the machine; its sources, code and labels to and from the host | [assemblers/README.md](assemblers/README.md), then the one assembler's recipe | the other assemblers' recipes |
 | Which code ran / never ran, TR-DOS analyzer events | [analysis/code-coverage-and-analyzers.md](analysis/code-coverage-and-analyzers.md) | port-trace |
 | Searching, mapping or writing memory; named regions; ROM protect; writing a port (paging) | [analysis/memory-search-map-and-regions.md](analysis/memory-search-map-and-regions.md) | memory-counters unless you need access counts |
 | A debugger front end's redraw in one call; raw (binary) memory dumps | [analysis/debugger-snapshot.md](analysis/debugger-snapshot.md) | separate /registers + /disasm + /memory calls per redraw |
@@ -75,6 +79,8 @@ matches; it names the recipe(s) for that action.
 | Capturing the VDAC2 card's FT812 bus (an .evr replay stream) | [machines/next.md](machines/next.md) | ZX Spectrum Next: create on a card, drive NextZXOS's menu and Browser, the NextREG write journal (who wrote which register - the NEXTREG instruction and the copper make no port cycle), how NextZXOS starts a snapshot (Multiface NMI, stackless NMI, RETN to a ROM `RET`), the real-board test programs |
 | [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | port-trace |
 | Counting/mapping memory access | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
+| Finding where the emulator itself (the host process) spends its CPU time | [testing/host-profiling.md](testing/host-profiling.md) | analysis/* (they profile the guest) |
+| A Sprinter boot straight into a program (tests, benchmarks, a GUI session) | [media/sprinter-test-images.md](media/sprinter-test-images.md) | demo-runner, Flex Navigator walking |
 | Recording a video (with sound) of a run | [media/video-recording.md](media/video-recording.md) | everything else |
 | Debugging a visual/screen bug | [analysis/ttd-visual-inspection.md](analysis/ttd-visual-inspection.md) + [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | everything else until you have a reproducible frame |
 | Detecting a custom loader / triaging a hang | [analysis/nonstandard-loader.md](analysis/nonstandard-loader.md) | port-trace (it's composed in already) |
@@ -111,6 +117,7 @@ call.
 | [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | Viewing emulator screen as agent: native MCP/WebAPI server-side binary saving without base64 transcript corruption |
 | [media/disk-sector-and-catalog-inspection.md](media/disk-sector-and-catalog-inspection.md) | Inspect a loaded disk: catalog, info, sysinfo, decoded and raw sectors and tracks, image download, create / eject |
 | [media/sprinter-hdd.md](media/sprinter-hdd.md) | Sprinter hard disks: IDE slots ide0/ide1, mounting an HDD image, booting DSS from it (DSS 1.71 needs BIOS 3.06), state ide |
+| [media/sprinter-test-images.md](media/sprinter-test-images.md) | A Sprinter disk that boots straight into your program: a composite over the system disk (no copy), a copy with `make-test-image.sh`, or the in-session `SYSTEM.BAT` rewrite of the tests; the same boot every time |
 
 ### `run/` — making software actually run
 
@@ -135,6 +142,7 @@ call.
 | [analysis/ttd-recording.md](analysis/ttd-recording.md) | TTD on/off, write journal on demand, dump/save `.ttd`, load back, seek/step, bookmarks, coverage heatmap |
 | [analysis/ttd-write-journal.md](analysis/ttd-write-journal.md) | The write journal on demand: record it, switch it during a recording, build it later for any span by replay |
 | [analysis/ttd-reverse-debugging.md](analysis/ttd-reverse-debugging.md) | Reverse queries: `find-last`, `reverse-step`, `reverse-continue`, coverage probe/scan |
+| [analysis/waiting-and-watching.md](analysis/waiting-and-watching.md) | Waits that do not depend on host timing (`run_frames`, `skip_until`, breakpoint + `debug/wait` loop, OCR / digest polling), who writes an address (write breakpoint, TTD `find-last`, operand search over all RAM) |
 | [analysis/breakpoints-and-events.md](analysis/breakpoints-and-events.md) | Breakpoints and what they stop, `/step` / `/steps` with the stop reason, the `/api/v1/websocket` debugger events (subscribe, `paused` / `resumed` / `step_done` / `breakpoints_changed`), CLI / MCP / Lua / Python |
 | [analysis/port-trace.md](analysis/port-trace.md) | Port I/O tracing: feature gate, filters/presets, ring buffer, save `json/csv/bin/binz`, re-read server-side, internal port codes (ZX-Evo, Sprinter) |
 | [analysis/memory-counters.md](analysis/memory-counters.md) | Memory access counters: profiler start/stop, per-page summaries, per-address counters, YAML export |
@@ -155,6 +163,8 @@ call.
 | [assemblers/gens.md](assemblers/gens.md) | GENS4 / GENS3 (tape) and GENS4B (TR-DOS): put in memory, `G` from a tape image, `A`, `R` |
 | [assemblers/masm.md](assemblers/masm.md) | MASM 1.1 / 3.0: Work file, Assemble, code in RAM page 0 for `#C000` up |
 | [assemblers/prometheus.md](assemblers/prometheus.md) | PROMETHEUS 48K: installer, SS+letter commands, `LOAD :name` (the name is required), ASSEMBLY, saves to and from the host |
+| [assemblers/laser-genius.md](assemblers/laser-genius.md) | Laser Genius 1.04 (Beta Disk): loader questions, paragraph numbers, Y/N keys pressed once, `assem` after `PUT`, sources to and from the host |
+| [assemblers/power-assembler.md](assemblers/power-assembler.md) | Power Assembler 3.0 128K: the menu (SS then CS), CAPS LOCK on, the code in page 4, `$` ahead in instructions, texts to and from the host |
 | [assemblers/asm80.md](assemblers/asm80.md) | ASM80 / Asm80Win 2.02 (PC): asm80win.exe under wine or its host build, a directory project to sjasmplus, labels from the listing |
 | [assemblers/zeus.md](assemblers/zeus.md) | ZEUS 1983 (tape), 1.1, GG, v7.E: source in memory, `O`, `A`, INCLUDE / PLACE / INCBIN |
 | [assemblers/xas.md](assemblers/xas.md) | XAS 4.18 / 7.447: the file list, EXT commands, LTEXT / LCODE |
@@ -196,6 +206,13 @@ call.
 | [peripherals/network.md](peripherals/network.md) | Network adapters: ZXNETUSB (W5300) card, the virtual network (DHCP, DNS, gateway, guest servers), NedoOS setup, state on every interface, what hangs without a card |
 | [peripherals/cmos-rtc.md](peripherals/cmos-rtc.md) | CMOS clock on ATM3 / Profi / Scorpion+SMUC: report, cell read / write on every interface, setting the time, battery files |
 
+### `testing/` — checking and measuring the emulator itself
+
+| Recipe | What it covers |
+|:--|:--|
+| [testing/webapi-verification.md](testing/webapi-verification.md) | Verifying a WebAPI change end to end |
+| [testing/host-profiling.md](testing/host-profiling.md) | Where the emulator spends its host CPU time (macOS xctrace): a repeatable load, record, reports per function / source line / callee / thread |
+
 ### `articles/` — full workflows that combine recipes
 
 | Article | What it covers |
@@ -203,6 +220,7 @@ call.
 | [articles/bug-hunt-ttd.md](articles/bug-hunt-ttd.md) | "Who corrupted this memory?" — snapshot + TTD + `find-last` + `reverse-continue` |
 | [articles/demo-boot-verification.md](articles/demo-boot-verification.md) | Deterministic boot verification: autostart + `run_frames` + screen digest + OCR |
 | [articles/disk-protection-triage.md](articles/disk-protection-triage.md) | Disk protection triage: catalog vs raw sectors + FDC state + `fdc-only` port trace |
+| [articles/program-state-reverse.md](articles/program-state-reverse.md) | Where a running program keeps its state: `memory/find` over all RAM + a state diff + write journal `find-last` / a write watchpoint with `debug/wait` + `disasm` (operands the code rewrites) |
 | [articles/physical-protection-forensics.md](articles/physical-protection-forensics.md) | Physical copy-protection forensics: diskinfo structural scan, clock bitmap, flaky-sector differential test, RE the check |
 
 ## Ground truth links

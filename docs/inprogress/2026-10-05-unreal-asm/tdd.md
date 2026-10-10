@@ -176,6 +176,14 @@ through the media manager, honoring write protection and the image's modified fl
 shared function per operation for the surfaces (WebAPI + OpenAPI tag `asm`, CLI `asm ...`, MCP tool `asm_source`,
 Lua / Python `asm_*`, Qt disk browser actions). The symbol module's adapters: [symbols/tdd.md](symbols/tdd.md) §3, §7.
 
+Built (2026-10-09):
+- `core/src/debugger/asm/diskfiles.h`: reads `disk:A/NAME.T` through the library's `ReadTrd` over the image's sectors
+  (the catalog hints and sector slack as zxasm sees them). It writes a catalog entry as TR-DOS does.
+- `core/src/debugger/asm/asmcontrol.h`: the shared verbs.
+- WebAPI `/asm/*`, CLI `asm <verb>`, MCP `asm_source`, Lua / Python `asm_*`.
+- The Qt debugger's "Disk files" dialog.
+- `convert` takes one file; projects convert with the standalone `zxasm convert <image>`.
+
 ## 8. Phases
 
 | Phase | Work | Ends with |
@@ -189,4 +197,6 @@ Lua / Python `asm_*`, Qt disk browser actions). The symbol module's adapters: [s
 | A6 | `alasm`, `storm`, `zxasm` frontends; `pasmo`, `z88dk` backends; research codecs `xas`, `masm`, `gens3`, `zeus`, `ads` (queued at lower priority, D-8: none dropped) | per pair / codec |
 | A7 | Emulator adapters and surfaces; Qt disk browser actions; recipe `.recipe/analysis/asm-sources.md` | live checks |
 | A8 | Symbols on the library ([symbols/tdd.md](symbols/tdd.md) phases S1-S5 re-based; tokenized label tables come from the source codecs) | symbol acceptance |
-| A9 | Benchmarks, results; docs `docs/features/asm-sources.md` | numbers meet NFR-1, NFR-2 |
+| A9 | Benchmarks, results; docs `docs/features/unreal-asm.md` | numbers meet NFR-1, NFR-2 |
+
+Status (review round A0, 2026-10-09): A0-A9 done; what is left is in [TODO.md](TODO.md) (binaries not found). The next phases are the [asm-synchronizer](asm-synchronizer.md)'s Y0-Y5 and Z0-Z5.

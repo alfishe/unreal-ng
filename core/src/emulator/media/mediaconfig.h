@@ -18,7 +18,8 @@
 /// SessionArenaKiB     = 1024           ; the in-memory chunk, the unit of a flush to the journal
 /// SessionFlushSeconds = 30             ; the longest a write stays only in memory (0: only at the limit)
 /// SessionSyncSeconds  = 30             ; how often a written journal is synced to the disk (0: never)
-/// SessionJournal      = on             ; media keep a journal next to them, replayed after a crash
+/// SessionJournal      = off            ; on: media keep a journal next to them, replayed after a crash
+/// SessionIoThreads    = 1              ; threads writing journals (0: a quarter of the cores, 1 to 4)
 /// SpillFolder         = /var/tmp       ; journals of media without a place of their own (default: the temp folder)
 /// ```
 ///
@@ -69,6 +70,7 @@ struct MediaSettings
     std::optional<uint32_t> sessionFlushSeconds;
     std::optional<uint32_t> sessionSyncSeconds;
     std::optional<bool> sessionJournal;
+    std::optional<uint32_t> sessionIoThreads;
     std::optional<std::string> spillFolder;
 };
 

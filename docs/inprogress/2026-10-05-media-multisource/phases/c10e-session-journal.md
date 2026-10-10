@@ -207,3 +207,17 @@ every 5 s; 4 MiB limit, 1 MiB arenas, 5 s flush; two runs):
 **Defaults kept**: 16 MiB, 1 MiB arenas, 30 s flush, 30 s sync. Throughput hardly moves across the sweep (arena
 size and limit change the journal's group writes, not the guest's cost), and nothing on the emulation thread
 depends on them any more.
+
+## 9. Lean defaults (owner decision 2026-10-07)
+
+"Defaults must be economical in unreal-qt; the library's full power is for later, in heavier and faster emulators
+(quaesar-ng)". So, from the merge into master on:
+
+| Setting | Was | Now | Why |
+|---|---|---|---|
+| `SessionJournal` | on | **off** | no `.usession` file next to every medium, no 30 s flush and sync; writes past `SessionMemoryLimit` still go to a temp file in `SpillFolder` |
+| journal I/O pool | a quarter of the cores, 1 to 4 threads | **1 thread** (`[MEDIA] SessionIoThreads`, 0 for the old rule) | one emulator instance writes one journal at a time; the pool still starts only on first use |
+
+Unchanged: `SessionMemoryLimit` 16 MiB and `SessionArenaKiB` 1 MiB (both are caps, memory is taken as the guest
+writes), `SessionFlushSeconds` / `SessionSyncSeconds` 30 (they only act on a journal). The insert option
+`journal: replay` turns the journal on for one medium; `journal` left out follows `SessionJournal`.

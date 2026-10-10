@@ -1,5 +1,5 @@
 /// @file timetravelmanager_publishedinfo_test.cpp
-/// @brief TimeTravelManager::GetPublishedSessionInfo - the snapshot observers on
+/// @brief TimeTravelController::GetPublishedSessionInfo - the snapshot observers on
 /// other threads read instead of the live session (TDD section 7.2).
 ///
 /// 2026-10-03 crash: the Qt toolbar's tooltip timer called GetSessionInfo() on
@@ -18,7 +18,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testwaithelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -31,7 +31,7 @@ protected:
         _emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         FeatureManager* features = _emulator->GetFeatureManager();
         features->setFeature(Features::kDebugMode, true);
@@ -48,7 +48,7 @@ protected:
 
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
 };
 
 // Every session operation publishes before it returns; frame boundaries
@@ -106,10 +106,15 @@ TEST_F(TimeTravelManager_PublishedInfo_Test, HistoryLimitAppliesAtOnceWithoutLoo
     ASSERT_TRUE(_ttd->StartRecording());
     _emulator->RunNFrames(6);
     _ttd->SetHistoryLimit(3, 0);  // synchronous mode: the caller drives the machine
+    // Published at once, the same as the session: the engine trims whole segments, so the six frames recorded
+    // before the limit (one segment) stay until the segments recorded after it cover the window (decision 41)
     const ttd::TTDSessionInfo published = _ttd->GetPublishedSessionInfo();
-    EXPECT_EQ(published.checkpointCount, 3u);
     EXPECT_EQ(published.historyLimitFrames, 3u);
-    EXPECT_GT(published.evictedCheckpoints, 0u);
+    EXPECT_EQ(published.checkpointCount, _ttd->GetSessionInfo().checkpointCount);
+    _emulator->RunNFrames(12);
+    const ttd::TTDSessionInfo later = _ttd->GetSessionInfo();
+    EXPECT_GT(later.evictedCheckpoints, 0u) << "the segments recorded under the limit drop the older ones";
+    EXPECT_LE(later.checkpointCount, 3u + 1u);
     _ttd->StopRecording();
 }
 

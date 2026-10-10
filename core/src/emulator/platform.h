@@ -68,7 +68,8 @@ constexpr char const* NC_FILE_LOADED = "FILE_LOADED";                           
 constexpr char const* NC_RZX_PLAYBACK = "RZX_PLAYBACK";                         // RZX playback started / finished / desync / stopped / failed (payload: RzxPlaybackPayload). Posted from RzxSession; finished and desync on the emulation thread
 constexpr char const* NC_MEDIA_INSERTED = "MEDIA_INSERTED";                     // A medium was attached to a slot (payload: MediaSlotPayload). Posted from MediaManager on the thread that applied it
 constexpr char const* NC_MEDIA_EJECTED = "MEDIA_EJECTED";                       // A medium was detached from a slot (payload: MediaSlotPayload)
-constexpr char const* NC_MEDIA_DIRTY = "MEDIA_DIRTY";                           // A medium got its first unsaved change (payload: MediaSlotPayload); not repeated per write
+constexpr char const* NC_MEDIA_DIRTY = "MEDIA_DIRTY";                           // A medium got its first unsaved change (payload: MediaSlotPayload, onRelease = what closing the emulator does with it); not repeated per write
+constexpr char const* NC_MEDIA_CLEAN = "MEDIA_CLEAN";                           // A medium has no unsaved changes any more: saved, discarded, written back (payload: MediaSlotPayload). An eject posts NC_MEDIA_EJECTED instead
 constexpr char const* NC_MEDIA_EXPORTED = "MEDIA_EXPORTED";                     // A medium was exported to a file (payload: MediaSlotPayload, _path = target)
 constexpr char const* NC_MEDIA_SAVED = "MEDIA_SAVED";                           // A medium was saved; it now stands for that file (payload: MediaSlotPayload, path = the file)
 constexpr char const* NC_RECORDING_STATE = "RECORDING_STATE";                   // Recording started or stopped (payload: RecordingStatePayload). Posted from RecordingManager.
@@ -81,6 +82,7 @@ constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               
 
 constexpr char const* NC_BREAKPOINT_CHANGED = "BREAKPOINT_CHANGED";             // Breakpoints added, removed, or modified
 constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                       // Labels added, removed, or modified
+constexpr char const* NC_ASM_SYNC = "ASM_SYNC";                                 // asm-synchronizer: the watched source changed, was built, or its assembler came / went (payload: AsmSyncPayload). Posted from the worker of AsmSyncService
 
 constexpr char const* NC_CPU_FREQ_CHANGED = "CPU_FREQ_CHANGED";                 // CPU frequency changed (3.5/7.0/14.0 MHz) - payload: CPUFreqPayload
 

@@ -1,6 +1,7 @@
 #include "gdbserver.h"
 #include "gdbpacket.h"
 #include "gdbtarget_z80.h"
+#include "gdbmonitormemory.h"
 
 #include <common/uuid.h>
 #include <emulator/emulator.h>
@@ -19,6 +20,7 @@
 #include <3rdparty/message-center/messagecenter.h>
 
 #include <cctype>
+#include <map>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -671,12 +673,14 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
         response += "  monitor instances - list emulator instances\n";
         response += "  monitor frame     - show frame/tstate info\n";
         response += "  monitor bankinfo  - show memory bank info\n";
+        response += "  monitor regions   - list the device memories (video RAM, sound card RAM, ...)\n";
+        response += "  monitor mem <space:offset> [len] - dump any memory (cpu, ram5, rom2, cache0, a region)\n";
         response += "  monitor load <path> - load snap/tape/disk (paused only)\n";
         response += "  monitor ttd status  - show TTD session info\n";
         response += "  monitor ttd start   - start TTD recording\n";
         response += "  monitor ttd stop    - stop TTD recording\n";
         response += "  monitor ttd seek <frame> - seek to frame\n";
-        response += "  monitor ttd findlast <w|r|x> <addr> - find last access\n";
+        response += "  monitor ttd findlast <w|r|x> <addr|vram:offset|cache:offset> - find last access\n";
         response += "  monitor bport <in|out> <port> - set port breakpoint\n";
         response += "  monitor bport clear <id> - remove port breakpoint\n";
     }
@@ -778,6 +782,15 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
         {
             response = "No emulator attached\n";
         }
+    }
+    else if (cmd == "regions")
+    {
+        response = _context ? GdbMonitorMemory::Regions(_context) : "No emulator attached\n";
+    }
+    else if (cmd.starts_with("mem ") || cmd == "mem")
+    {
+        response = _context ? GdbMonitorMemory::Dump(_context, cmd.size() > 4 ? cmd.substr(4) : std::string())
+                            : "No emulator attached\n";
     }
     else if (cmd == "bankinfo")
     {
@@ -952,16 +965,19 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                         goto done_ttd;
                     }
 
-                    // The address is hex without a prefix here (GDB's convention)
-                    auto addrOpt = GDBPacket::parseHex(args.substr(spacePos + 1));
-                    if (!addrOpt)
+                    // The address is hex without a prefix here (GDB's convention); "vram:4805" / "cache:123" name a byte
+                    // of the Sprinter's video / fast RAM
+                    std::string space;
+                    uint32_t address = 0;
+                    if (!GdbMonitorMemory::ParseLocation(args.substr(spacePos + 1), space, address))
                     {
                         response = "Error: invalid address\n";
                         goto done_ttd;
                     }
-
-                    const ttd::TTDReply found = ttd::TTDControl(_context).Execute(
-                        {"find-last", {{"addr", std::to_string(*addrOpt)}, {"access", access}}});
+                    std::map<std::string, std::string> options{{"addr", std::to_string(address)}, {"access", access}};
+                    if (space != "cpu")
+                        options["space"] = space;
+                    const ttd::TTDReply found = ttd::TTDControl(_context).Execute({"find-last", options});
                     const StateNode& b = found.body;
                     if (!found.Ok())
                     {
@@ -973,7 +989,10 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                         ss << "Found at frame " << b.find("frame")->i << ", t=" << b.find("tinframe")->i;
                         if (accessType == 'w')
                             ss << ", value=0x" << std::hex << b.find("value")->i;
-                        ss << ", pc=0x" << std::hex << b.find("pc")->i << "\n";
+                        ss << ", pc=0x" << std::hex << b.find("pc")->i;
+                        if (const StateNode* offset = b.find("offset"))
+                            ss << ", " << b.find("space")->s << " offset 0x" << offset->i;
+                        ss << "\n";
                         response = ss.str();
                     }
                     else if (const StateNode* reason = b.find("marker_reason"))
@@ -1260,44 +1279,14 @@ std::string GDBSession::handleWriteMemory(const std::string& params)
         }
     }
 
-    std::string data = params.substr(colonPos + 1);
-    Memory* memory = _context->pMemory;
-
     // Decode hex data
-    auto bytes = GDBPacket::hexToBytes(data);
+    auto bytes = GDBPacket::hexToBytes(params.substr(colonPos + 1));
     if (bytes.size() != *len)
     {
         return "E01";
     }
 
-    // Check for physical memory access (0x01PPAAAA format)
-    if ((*addr & 0xFF000000) == 0x01000000)
-    {
-        uint8_t page = static_cast<uint8_t>((*addr >> 16) & 0xFF);
-        uint16_t offset = static_cast<uint16_t>(*addr & 0x3FFF);
-
-        uint8_t* pageAddr = memory->RAMPageAddress(page);
-        if (!pageAddr)
-        {
-            return "E01";  // Invalid page
-        }
-
-        for (size_t i = 0; i < bytes.size(); i++)
-        {
-            uint16_t pageOffset = static_cast<uint16_t>((offset + i) & 0x3FFF);
-            pageAddr[pageOffset] = bytes[i];
-        }
-    }
-    else
-    {
-        for (size_t i = 0; i < bytes.size(); i++)
-        {
-            uint16_t address = static_cast<uint16_t>((*addr + i) & 0xFFFF);
-            memory->DirectWriteToZ80Memory(address, bytes[i]);
-        }
-    }
-
-    return "OK";
+    return GDBTargetZ80::writeMemory(_context, *addr, bytes) ? "OK" : "E01";
 }
 
 std::string GDBSession::handleSetBreakpoint(const std::string& params)

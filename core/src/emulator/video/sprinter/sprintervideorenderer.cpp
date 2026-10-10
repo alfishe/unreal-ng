@@ -232,16 +232,83 @@ uint16_t SymbolPlaneB(const SprinterVideoInputs& in, const uint8_t* line1, uint3
     return static_cast<uint16_t>(Screen::kPlaneBRoleScreen | (ink ? Screen::kPlaneBInk : 0) | (color << 8) | attr);
 }
 
-/// DrawSpan's loop; PlaneB = true also writes plane B (two instantiations: the plain path is unchanged)
+/// One square segment of graphics: the source byte's address is (line x 1024 + column + (sub >> shift)) & mask,
+/// so it is worked out once and stepped (GraphicsAddress / GraphicsPen for one pixel, the same rules)
+inline void GraphicsSegment(const SprinterVideoInputs& in, const uint8_t* mode, uint32_t row, uint32_t sub, uint32_t count,
+                            uint32_t* out)
+{
+    const bool lowres = (mode[2] & 0x04) != 0;
+    uint32_t column = (static_cast<uint32_t>(mode[0] & 0x0F) << 6) | (static_cast<uint32_t>(mode[1] & 0x07) << 3);
+    uint32_t top = static_cast<uint32_t>(mode[1] >> 3) << 3;
+    if (lowres)
+    {
+        column += 4u * (mode[2] & 0x01);
+        top = (top + 4u * ((mode[2] >> 1) & 0x01)) & 0xFFu;
+    }
+    const uint32_t base = (top + (row >> (lowres ? 1 : 0))) * SprinterVideoRam::kRowBytes + column;
+    const uint32_t shift = lowres ? 2u : 1u;
+    const uint32_t palette = static_cast<uint32_t>(mode[0] >> 6) << 8;
+    const uint32_t* pens = in.palette;
+    constexpr uint32_t kPenMask = SprinterVideoRam::kPens - 1;
+    if (mode[0] & 0x20)
+    {
+        // 320: a byte per 2 pixels (low-res: per 4)
+        for (uint32_t i = 0; i < count; i++, sub++)
+            *out++ = pens[(palette + in.vram[(base + (sub >> shift)) & kVramMask]) & kPenMask];
+    }
+    else
+    {
+        // 640: a nibble per pixel, the high nibble first
+        for (uint32_t i = 0; i < count; i++, sub++)
+        {
+            const uint8_t color = in.vram[(base + (sub >> shift)) & kVramMask];
+            *out++ = pens[(palette + ((sub & 1) ? (color & 0x0F) : (color >> 4))) & kPenMask];
+        }
+    }
+}
+
+/// One unit of a symbol square (the square, or one 8-pixel half of a 640 one: SymbolMode): its mode bytes, the
+/// attribute and the font byte read once (SymbolPen for one pixel, the same rules). `latch`: the font latch covers
+/// part of the unit - its pixels in [x0, x1) take the latched byte
+inline void SymbolUnit(const SprinterVideoInputs& in, const uint8_t* line1, uint32_t row, uint32_t sub, uint32_t count,
+                       uint32_t x, bool latch, uint32_t* out)
+{
+    const uint8_t* mode = SprinterVideoRenderer::SymbolMode(line1, sub);
+    const uint8_t m0 = mode[0];
+    const uint32_t* pens = in.palette;
+    constexpr uint32_t kPenMask = SprinterVideoRam::kPens - 1;
+    if (SprinterSquare::IsBlank(m0) || SprinterSquare::IsBorder(m0))
+    {
+        const uint32_t pen = SprinterSquare::IsBlank(m0) ? SprinterVideoRenderer::kPenText
+                                                         : (SprinterVideoRenderer::kPenText | (static_cast<uint32_t>(in.border & 7) * 9u));
+        const uint32_t color = pens[pen & kPenMask];
+        for (uint32_t i = 0; i < count; i++)
+            *out++ = color;
+        return;
+    }
+    const uint32_t paper = SprinterVideoRenderer::kPenText + in.vram[SprinterVideoRenderer::AttrAddress(in, mode)] +
+                           (in.flash ? 0x200u : 0u);
+    const uint8_t font = in.vram[SprinterVideoRenderer::FontAddress(in, mode, row)];
+    const uint32_t shift = (m0 >> 5) & 1;
+    const SprinterVideoInputs::FontLatch& fl = in.fontLatch;
+    for (uint32_t i = 0; i < count; i++, sub++, x++)
+    {
+        const uint8_t symbol = (latch && x >= fl.x0 && x < fl.x1) ? fl.font : font;
+        const uint32_t bit = 1u << (7 - ((sub >> shift) & 7));
+        *out++ = pens[(paper + ((symbol & bit) ? 0x100u : 0u)) & kPenMask];
+    }
+}
+
+/// DrawSpan's loop; PlaneB = true also writes plane B (two instantiations: the plain path stays free of it)
 template <bool PlaneB>
 void DrawSpanImpl(const SprinterVideoInputs& in, uint32_t y, uint32_t x0, uint32_t x1, uint32_t* out,
                   [[maybe_unused]] uint16_t* planeB)
 {
-    // Naive v1 (performance guidelines rule 5): the mode bytes are read once per
-    // square segment, the pixel's bytes per pixel. The idea of caching decoded
-    // squares (MAME's tilemap) is in the Sprinter TODO with a benchmark
+    // By square segments: a graphics segment steps its source address, a symbol unit reads its attribute and font
+    // byte once (the per-pixel rules: GraphicsPen, SymbolPen; PenAt draws the same pixels)
     const uint32_t b8 = SprinterVideoRenderer::B8(in, y);
     const uint32_t row = b8 & 7;
+    const SprinterVideoInputs::FontLatch& latch = in.fontLatch;
     uint32_t x = x0;
     while (x < x1)
     {
@@ -250,16 +317,36 @@ void DrawSpanImpl(const SprinterVideoInputs& in, uint32_t y, uint32_t x0, uint32
         const uint32_t end = std::min(x1, x + (16 - sub0));
         const uint8_t* mode = ModeBytes(in, a16, b8);
         const bool symbol = SprinterSquare::IsSymbol(mode[0]);
-        const SprinterVideoInputs::FontLatch& latch = in.fontLatch;
-        const bool latched = symbol && latch.line == y && x < latch.x1 && end > latch.x0;
-        for (uint32_t sub = sub0; x < end; x++, sub++)
+        if (!symbol)
         {
-            const int font = (latched && x >= latch.x0 && x < latch.x1) ? latch.font : -1;
-            const uint32_t pen = symbol ? SprinterVideoRenderer::SymbolPen(in, mode, sub, row, font)
-                                        : SprinterVideoRenderer::GraphicsPen(in, mode, sub, row);
-            *out++ = in.palette[pen & (SprinterVideoRam::kPens - 1)];
+            GraphicsSegment(in, mode, row, sub0, end - x, out);
             if constexpr (PlaneB)
-                *planeB++ = symbol ? SymbolPlaneB(in, mode, sub, row, font) : uint16_t(0);
+            {
+                for (uint32_t i = x; i < end; i++)
+                    *planeB++ = 0;
+            }
+            out += end - x;
+            x = end;
+            continue;
+        }
+        const bool latched = latch.line == y && x < latch.x1 && end > latch.x0;
+        if constexpr (PlaneB)
+        {
+            for (uint32_t px = x, sub = sub0; px < end; px++, sub++)
+            {
+                const int font = (latched && px >= latch.x0 && px < latch.x1) ? latch.font : -1;
+                *planeB++ = SymbolPlaneB(in, mode, sub, row, font);
+            }
+        }
+        // A 640 square's halves are two units (the right one from Line2), a 320 square is one
+        uint32_t sub = sub0;
+        while (x < end)
+        {
+            const uint32_t unitEnd = (!(mode[0] & 0x20) && sub < 8) ? std::min(end, x + (8 - sub)) : end;
+            SymbolUnit(in, mode, row, sub, unitEnd - x, x, latched, out);
+            out += unitEnd - x;
+            sub += unitEnd - x;
+            x = unitEnd;
         }
     }
 }

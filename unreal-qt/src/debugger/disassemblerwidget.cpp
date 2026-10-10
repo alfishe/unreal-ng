@@ -547,11 +547,14 @@ void DisassemblerWidget::toggleScrollMode()
 
 uint16_t DisassemblerWidget::getNextCommandAddress(uint16_t currentAddress)
 {
-    if (!getEmulator() || !getMemory())
+    // getDisassembler() is an empty unique_ptr while the debug manager is not available (see
+    // setDisassemblerAddress): *it bound a null reference and crashed in disassembleSingleCommandWithRuntime
+    std::unique_ptr<Z80Disassembler>& disassemblerPtr = getDisassembler();
+    if (!getEmulator() || !getMemory() || !disassemblerPtr)
         return (currentAddress + 1) & 0xFFFF;
 
     Memory& memory = *getMemory();
-    Z80Disassembler& disassembler = *getDisassembler();
+    Z80Disassembler& disassembler = *disassemblerPtr;
 
     std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
     for (int i = 0; i < buffer.size(); i++)

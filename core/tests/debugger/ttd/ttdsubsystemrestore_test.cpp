@@ -38,7 +38,7 @@
 #include "common/modulelogger.h"
 #include "debugger/ttd/machinestatehash.h"
 #include "debugger/ttd/ttddirtytracker.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -63,7 +63,7 @@ protected:
     SoundCardScope _turboSound{TestSound::TurboSound};  // the slot is the subject
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
     Memory* _memory = nullptr;
     FeatureManager* _fm = nullptr;
 
@@ -79,7 +79,7 @@ protected:
 
         _context = _emulator->GetContext();
         ASSERT_NE(_context, nullptr);
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         ASSERT_NE(_ttd, nullptr);
         _memory = _context->pMemory;
         ASSERT_NE(_memory, nullptr);
@@ -115,6 +115,14 @@ protected:
     /// Write a recognizable byte pattern into a RAM page so we can detect
     /// whether restore put the right content back. Marks the page dirty so
     /// OnFrameBoundary Interns it into the page store.
+    /// A frame boundary as the main loop makes it: the frame counter moves on,
+    /// then the session captures (the engine takes one checkpoint per frame)
+    void FrameBoundary()
+    {
+        ++_context->emulatorState.frame_counter;
+        _ttd->OnFrameBoundary();
+    }
+
     void ScribbleRamPage(uint16_t page, uint8_t marker)
     {
         uint8_t* base = _memory->RAMPageAddress(page);
@@ -171,14 +179,13 @@ TEST_F(TTD_Subsystem_Restore_Test, MemoryBanking_SeekRestoresAllPageSwitches)
 
     // Capture baseline at initial paging.
     ScribbleRamPage(initialBank3, 0x10);
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     frames.push_back({initialP7FFD, initialBank3, 0x10, st.frame_counter});
 
     // Now switch through three more pages, scribbling + capturing each.
-    // NOTE: OnFrameBoundary() does NOT advance frame_counter -- only
-    // MainLoop::OnFrameEnd (reached via RunNFrames) does. To give each
-    // capture a unique timeline position, we bump frame_counter manually
-    // (same pattern used by ttd_manager_test.cpp lines 326/502/548).
+    // Each capture at its own frame: FrameBoundary() moves the frame counter
+    // on first, as MainLoop::OnFrameEnd does (the engine keeps one checkpoint
+    // per frame).
     uint8_t nextBank = initialBank3;
     for (uint8_t i = 0; i < 3; ++i)
     {
@@ -193,8 +200,7 @@ TEST_F(TTD_Subsystem_Restore_Test, MemoryBanking_SeekRestoresAllPageSwitches)
 
         pd->DecodePortOut(0x7FFD, newP7FFD, 0x0000);
         ScribbleRamPage(nextBank, marker);
-        st.frame_counter++;                 // advance to a new timeline slot
-        _ttd->OnFrameBoundary();
+        FrameBoundary();
 
         frames.push_back({newP7FFD, nextBank, marker, st.frame_counter});
         EXPECT_EQ(st.p7FFD, newP7FFD) << "switch #" << i << " didn't update latch";
@@ -279,15 +285,14 @@ TEST_F(TTD_Subsystem_Restore_Test, ScreenBankSwitch_SeekRestoresActiveBank)
     const uint8_t p7FFD_normal = st.p7FFD & 0b1111'0111;
     pd->DecodePortOut(0x7FFD, p7FFD_normal, 0x0000);
     EXPECT_EQ(st.p7FFD & 0b0000'1000, 0u);
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const uint64_t frameAtNormal = st.frame_counter;
 
     // Switch to SHADOW screen (bit 3 = 1) and capture at a distinct frame.
     const uint8_t p7FFD_shadow = (st.p7FFD & 0b1111'0111) | 0b0000'1000;
     pd->DecodePortOut(0x7FFD, p7FFD_shadow, 0x0000);
     EXPECT_EQ(st.p7FFD & 0b0000'1000, 0b0000'1000);
-    st.frame_counter++;
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const uint64_t frameAtShadow = st.frame_counter;
 
     _ttd->StopRecording();
@@ -362,23 +367,21 @@ TEST_F(TTD_Subsystem_Restore_Test, BorderColor_SeekRestoresBorderColor)
     pd->DecodePortOut(0xFE, 0x00, 0x0000);
     EXPECT_EQ(st.pFE & 0x07, 0u);
     EXPECT_EQ(st.border_attr, 0u);
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const uint64_t frameAtBlack = st.frame_counter;
 
     // Change to RED border (color 2) and capture at next frame.
     pd->DecodePortOut(0xFE, 0x02, 0x0000);
     EXPECT_EQ(st.pFE & 0x07, 2u);
     EXPECT_EQ(st.border_attr, 2u);
-    st.frame_counter++;
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const uint64_t frameAtRed = st.frame_counter;
 
     // Change to CYAN border (color 5) and capture at next frame.
     pd->DecodePortOut(0xFE, 0x05, 0x0000);
     EXPECT_EQ(st.pFE & 0x07, 5u);
     EXPECT_EQ(st.border_attr, 5u);
-    st.frame_counter++;
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const uint64_t frameAtCyan = st.frame_counter;
 
     _ttd->StopRecording();
@@ -470,8 +473,7 @@ TEST_F(TTD_Subsystem_Restore_Test, TapePosition_SeekRestoresPlaybackCursor)
 
     // Capture checkpoint with this cursor state.
     EmulatorState& st = _context->emulatorState;
-    st.frame_counter++;                 // advance to a new timeline slot
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const uint64_t capturedFrame = st.frame_counter;
 
     // Snapshot the expected blob via the public serializer (same path TTD
@@ -583,8 +585,7 @@ TEST_F(TTD_Subsystem_Restore_Test, FDCRegisters_SeekRestoresAllRegisters)
 
     // Capture checkpoint with mutated FDC state.
     EmulatorState& st = _context->emulatorState;
-    st.frame_counter++;                 // advance to a new timeline slot
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const uint64_t capturedFrame = st.frame_counter;
 
     // Snapshot the expected blob via the public serializer.
@@ -730,8 +731,7 @@ TEST_F(TTD_Subsystem_Restore_Test, AYTurboSound_SeekRestoresAllRegisters)
 
     // Capture checkpoint with the mutated register state.
     EmulatorState& st = _context->emulatorState;
-    st.frame_counter++;
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const uint64_t capturedFrame = st.frame_counter;
 
     // Snapshot the expected blob via the public serializer.
@@ -849,13 +849,12 @@ TEST_F(TTD_Subsystem_Restore_Test, FramebufferPixels_SeekShadowBank_RendersFromB
 
     // Capture at NORMAL.
     pd->DecodePortOut(0x7FFD, st.p7FFD & 0b1111'0111, 0x0000);
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const uint64_t frameAtNormal = st.frame_counter;
 
     // Capture at SHADOW (distinct frame).
     pd->DecodePortOut(0x7FFD, (st.p7FFD & 0b1111'0111) | 0b0000'1000, 0x0000);
-    st.frame_counter++;
-    _ttd->OnFrameBoundary();
+    FrameBoundary();
     const uint64_t frameAtShadow = st.frame_counter;
 
     _ttd->StopRecording();

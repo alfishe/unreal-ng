@@ -39,11 +39,23 @@ namespace
         std::vector<std::string>* report;
         std::string* error;
         std::vector<std::string> opaque;  // normalized, of the layer being merged
+        std::vector<std::string> keys;    // the key of each node of `out`, made once ("" for not yet)
 
         void Report(const std::string& line) const
         {
             if (report)
                 report->push_back(line);
+        }
+
+        /// The key of node `index` of `out` (names never change once a node is in `out`)
+        const std::string& KeyOf(uint32_t index)
+        {
+            if (index >= keys.size())
+                keys.resize(out.NodeCount());
+            std::string& k = keys[index];
+            if (k.empty())
+                k = key(out.Node(index).name);
+            return k;
         }
     };
 
@@ -69,8 +81,9 @@ namespace
         // The entries already there (lower layers); entries this pass adds are not
         // looked up, so one layer never merges with itself
         std::unordered_map<std::string, uint32_t> existing;
+        existing.reserve(out.Node(dst).children.size());
         for (uint32_t child : out.Node(dst).children)
-            existing.emplace(ctx.key(out.Node(child).name), child);
+            existing.emplace(ctx.KeyOf(child), child);
 
         for (uint32_t child : src.Node(from).children)
         {
@@ -129,7 +142,7 @@ namespace
             const std::string key = ctx.key(part);
             for (uint32_t child : out.Node(at).children)
             {
-                if (ctx.key(out.Node(child).name) == key)
+                if (ctx.KeyOf(child) == key)
                     next = child;
             }
             if (next != FileTree::kNone && !out.Node(next).isDirectory)
@@ -171,6 +184,20 @@ namespace
 
 std::string UnionBuilder::FatKey(const std::string& name)
 {
+    // ASCII names (nearly all): upper-cased in place, no decoding (a build calls this per entry and layer)
+    if (std::all_of(name.begin(), name.end(), [](char c) { return static_cast<unsigned char>(c) < 0x80; }))
+    {
+        size_t end = name.size();
+        while (end > 0 && (name[end - 1] == '.' || name[end - 1] == ' '))
+            end--;
+        std::string key(name, 0, end);
+        for (char& c : key)
+        {
+            if (c >= 'a' && c <= 'z')
+                c = static_cast<char>(c - 'a' + 'A');
+        }
+        return key;
+    }
     std::u32string points = UnicodeHelper::DecodeUtf8(name);
     while (!points.empty() && (points.back() == U'.' || points.back() == U' '))
         points.pop_back();
@@ -194,7 +221,11 @@ void UnionBuilder::SortChildren(FileTree& tree, uint32_t dir)
 bool UnionBuilder::Merge(const std::vector<UnionLayer>& layers, KeyFunction key, FileTree& out,
                          std::vector<std::string>* report, std::string* error)
 {
-    Context ctx{layers, key, out, report, error, {}};
+    Context ctx{layers, key, out, report, error, {}, {}};
+    size_t nodes = out.NodeCount();
+    for (const UnionLayer& layer : layers)
+        nodes += layer.tree->NodeCount();
+    ctx.keys.reserve(nodes);  // at most every layer's nodes end up in `out`: the key cache grows without moving
     for (size_t i = 0; i < layers.size(); i++)
     {
         const UnionLayer& L = layers[i];

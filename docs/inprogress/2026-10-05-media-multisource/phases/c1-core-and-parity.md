@@ -1,7 +1,7 @@
 # C0 / C1 — the core and the `HostFolderFat` parity refactor
 
 **Status:** done 2026-10-05 (commit 39d6aa78 and the C2 commit after it). Phases C0 and C1 of
-[tdd.md](../tdd.md) §13.
+[tdd.md](../tdd.md) §14.
 
 ## 1. Scope
 

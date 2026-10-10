@@ -104,9 +104,12 @@ class JournalIoPool
 {
 public:
     static JournalIoPool& Instance();
+    /// The threads the pool starts with (0: a quarter of the cores, 1 to 4); takes effect only before the pool's
+    /// first use (SessionWriteMap::SetDefaults passes the config's value)
+    static void Configure(unsigned threads);
     /// A strand with work, for the next free thread
     void Schedule(std::shared_ptr<JournalStrand> strand);
-    /// The pool's threads: a quarter of the cores, 1 to 4
+    /// The pool's threads
     size_t Threads() const { return _threads.size(); }
     ~JournalIoPool();
 

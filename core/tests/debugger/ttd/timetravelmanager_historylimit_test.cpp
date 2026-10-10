@@ -1,5 +1,5 @@
 /// @file timetravelmanager_historylimit_test.cpp
-/// @brief The TTD history limit (TimeTravelManager::SetHistoryLimit): while
+/// @brief The TTD history limit (TimeTravelController::SetHistoryLimit): while
 /// recording, the oldest checkpoints are released; what stays is a complete,
 /// shorter session.
 ///
@@ -19,6 +19,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include <cstring>
 #include <iterator>
 #include <map>
@@ -30,7 +32,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/ttd/machinestatehash.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -81,7 +83,7 @@ protected:
     {
         Emulator* emulator = nullptr;
         EmulatorContext* context = nullptr;
-        ttd::TimeTravelManager* ttd = nullptr;
+        ttd::TimeTravelController* ttd = nullptr;
 
         bool Create()
         {
@@ -89,7 +91,7 @@ protected:
             if (!emulator)
                 return false;
             context = emulator->GetContext();
-            ttd = context->pTimeTravelManager;
+            ttd = context->pTimeTravelController;
             FeatureManager* features = emulator->GetFeatureManager();
             features->setFeature(Features::kDebugMode, true);
             features->setFeature(Features::kTimeTravel, true);
@@ -196,9 +198,11 @@ TEST_F(TimeTravelManager_HistoryLimit_Test, FrameLimitKeepsTheNewestCheckpoints)
 {
     Record(kFrameLimit, 0);
 
+    // The engine drops whole segments of an eighth of the window (decision 41): the history holds up to that much more
+    const uint64_t segment = std::max<uint64_t>(1, kFrameLimit / 8);
     const ttd::TTDSessionInfo info = _rec.ttd->GetSessionInfo();
-    EXPECT_LE(info.checkpointCount, kFrameLimit);
-    EXPECT_GE(info.evictedCheckpoints, kRecordedFrames - kFrameLimit);
+    EXPECT_LE(info.checkpointCount, kFrameLimit + segment);
+    EXPECT_GE(info.evictedCheckpoints, kRecordedFrames - kFrameLimit - segment);
     EXPECT_GT(info.sessionStartFrame, _live.begin()->first) << "the start moved";
     const auto& journal = _rec.ttd->GetInputJournal();
     ASSERT_GT(journal.Size(), 0u);
@@ -270,25 +274,17 @@ TEST_F(TimeTravelManager_HistoryLimit_Test, SavedAfterEvictionReplaysTheLastFram
 }
 
 /// The byte limit: what the history holds stays under it, and what stays seeks right
-TEST_F(TimeTravelManager_HistoryLimit_Test, ByteLimitHolds)
+TEST_F(TimeTravelManager_HistoryLimit_Test, ByteLimitDropsWholeSegments)
 {
-    // About a quarter of what the whole recording takes
-    {
-        Machine probe;
-        ASSERT_TRUE(probe.Create());
-        probe.emulator->RunNFrames(kBootFrames);
-        InstallKeyPoller(probe.context);
-        ASSERT_TRUE(probe.ttd->StartRecording());
-        probe.emulator->RunNFrames(kRecordedFrames);
-        const uint64_t whole = probe.ttd->HistoryBytes();
-        probe.ttd->StopRecording();
-        probe.Destroy();
-        Record(0, whole / 4);
-        EXPECT_LE(_rec.ttd->HistoryBytes(), whole / 4);
-    }
+    // The engine keeps the history in segments (decision 41) and its store in 64 KB arena chunks: a byte limit drops
+    // the oldest segments while the history is over it, down to the newest one. Segments of 3 frames (a frame limit
+    // of kFrameLimit) and a limit nothing meets: the byte limit takes the history below what the frame limit keeps
+    Record(kFrameLimit, 1);
     const ttd::TTDSessionInfo info = _rec.ttd->GetSessionInfo();
-    EXPECT_GT(info.evictedCheckpoints, 0u);
+    const uint64_t segment = std::max<uint64_t>(1, kFrameLimit / 8);
+    EXPECT_LE(info.checkpointCount, 2 * segment) << "the newest segment and the frames recorded into the next";
     EXPECT_GE(info.checkpointCount, 2u);
+    EXPECT_GT(info.evictedCheckpoints, kRecordedFrames - kFrameLimit);
 
     for (auto s = _live.upper_bound(info.sessionStartFrame); s != _live.end(); ++s)
     {

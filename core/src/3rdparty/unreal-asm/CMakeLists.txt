@@ -60,6 +60,8 @@ add_library(unreal-asm STATIC
     src/codecs/odin/odincodec.cpp
     src/codecs/prometheus/prometheuscodec.cpp
     src/codecs/prometheus/prometheustable.cpp
+    src/codecs/lasergenius/lasergeniuscodec.cpp
+    src/codecs/pasm/pasmcodec.cpp
     src/codecs/zeus/zeuscodec.cpp
     src/codecs/xas/xascodec.cpp
     src/ir/expr.cpp
@@ -86,6 +88,8 @@ add_library(unreal-asm STATIC
     src/dialects/odin/odinfrontend.cpp
     src/dialects/zasm/zasmcompound.cpp
     src/dialects/prometheus/prometheusfrontend.cpp
+    src/dialects/lasergenius/lasergeniusfrontend.cpp
+    src/dialects/pasm/pasmfrontend.cpp
     src/dialects/sjasmplus/sjasmplusbackend.cpp
     src/dialects/common/classicbackend.cpp
     src/dialects/pasmo/pasmobackend.cpp
@@ -109,7 +113,11 @@ add_library(unreal-asm STATIC
     src/layout/z80size.cpp
     src/layout/layout.cpp
     src/symbols/fromsource/fromsource.cpp
+    src/symbols/fromsource/project.cpp
     src/symbols/live/live.cpp
+    src/symbols/bundles/bundles.cpp
+    src/sync/reader.cpp
+    src/sync/session.cpp
 )
 target_include_directories(unreal-asm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(unreal-asm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -180,10 +188,13 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/fantasmfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/zmacrasmfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/odinspecasm_test.cpp
+        ${UNREAL_ASM_DIR}/tests/lasergenius_test.cpp
+        ${UNREAL_ASM_DIR}/tests/pasm_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbol_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbolindex_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/symbolstore_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/json_test.cpp
+        ${UNREAL_ASM_DIR}/tests/symbols/bundles_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/nativecodec_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/labelfilecodecs_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/tokenizer_test.cpp
@@ -192,6 +203,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/symbols/scriptcodecs_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/fromsource_test.cpp
         ${UNREAL_ASM_DIR}/tests/symbols/live_test.cpp
+        ${UNREAL_ASM_DIR}/tests/sync_test.cpp
     )
     target_link_libraries(unreal-asm-tests PRIVATE unreal-asm gtest)
     target_include_directories(unreal-asm-tests PRIVATE ${UNREAL_ASM_DIR}/src ${UNREAL_ASM_DIR}/tests)

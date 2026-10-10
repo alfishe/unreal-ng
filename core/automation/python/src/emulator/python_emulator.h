@@ -43,6 +43,8 @@
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/labels/labelmanager.h>
+#include "debugger/labels/symbolcontrol.h"
+#include "debugger/asm/asmcontrol.h"
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
@@ -210,6 +212,51 @@ inline std::string TtdOptionTextPy(const pybind11::handle& o)
     if (py::isinstance<py::bool_>(o))
         return o.cast<bool>() ? "true" : "false";
     return py::str(o).cast<std::string>();
+}
+
+/// One symbol verb through SymbolControl: keyword arguments as options (a list as a comma list), the reply's body; a
+/// refusal adds ok = False and error = the message
+inline pybind11::object SymbolsPy(Emulator& emulator, const std::string& verb, std::map<std::string, std::string> options,
+                                  const pybind11::kwargs& kwargs)
+{
+    namespace py = pybind11;
+    for (const auto& [key, value] : kwargs)
+    {
+        std::string text;
+        if (py::isinstance<py::list>(value) || py::isinstance<py::tuple>(value))
+        {
+            for (const auto& item : value)
+                text += (text.empty() ? "" : ",") + py::str(item).cast<std::string>();
+        }
+        else
+            text = TtdOptionTextPy(value);
+        options[py::str(key).cast<std::string>()] = text;
+    }
+    const SymbolReply reply = SymbolControl(emulator.GetContext()).Execute({verb, std::move(options)});
+    StateNode value = reply.body;
+    if (!reply.Ok())
+    {
+        value["ok"] = false;
+        value["error"] = reply.message;
+    }
+    return StateNodeToPy(value);
+}
+
+/// One assembler-source verb through AsmControl: keyword arguments as options; a refusal adds ok = False and error
+inline pybind11::object AsmPy(Emulator& emulator, const std::string& verb, std::map<std::string, std::string> options,
+                              const pybind11::kwargs& kwargs)
+{
+    namespace py = pybind11;
+    for (const auto& [key, value] : kwargs)
+        options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+    const AsmReply reply = AsmControl(emulator.GetContext()).Execute({verb, std::move(options)});
+    StateNode value = reply.body;
+    if (!reply.Ok())
+    {
+        value["ok"] = false;
+        value["error"] = reply.message;
+    }
+    return StateNodeToPy(value);
 }
 
 /// A coverage query's answer; a bad argument raises ValueError
@@ -2124,6 +2171,56 @@ namespace PythonBindings
                 LabelManager* lm = ctx->pDebugManager->GetLabelManager();
                 return lm && lm->SaveLabels(path);
             }, "Save symbols to file", py::arg("path"))
+            // Symbol files and sets through SymbolControl (the same verbs, checks and fields as the WebAPI, CLI, MCP
+            // and Lua); options as keyword arguments, a list for sets; a refusal: ok = False, error = why
+            .def("symbols_formats", [](Emulator& self) { return SymbolsPy(self, "formats", {}, py::kwargs()); },
+                 "Symbol file formats")
+            .def("symbols_detect", [](Emulator& self, const std::string& path) { return SymbolsPy(self, "detect", {{"path", path}}, py::kwargs()); },
+                 "Which symbol format a file is", py::arg("path"))
+            .def("symbols_sets", [](Emulator& self) { return SymbolsPy(self, "sets", {}, py::kwargs()); },
+                 "Symbol sets: user, one per loaded file, named")
+            .def("symbols_import", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) {
+                return SymbolsPy(self, "import", {{"path", path}}, kwargs);
+            }, "Import a symbol file (format=, set=, space=, base=, policy=)", py::arg("path"))
+            .def("symbols_export", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) {
+                return SymbolsPy(self, "export", {{"path", path}}, kwargs);
+            }, "Export symbols (format=, sets=[...], pages=)", py::arg("path"))
+            .def("symbols_set", [](Emulator& self, const std::string& id, const py::kwargs& kwargs) {
+                return SymbolsPy(self, "set", {{"id", id}}, kwargs);
+            }, "Switch a symbol set on / off or change its priority (enabled=, priority=)", py::arg("id"))
+            .def("symbols_drop", [](Emulator& self, const std::string& id) { return SymbolsPy(self, "drop", {{"id", id}}, py::kwargs()); },
+                 "Remove a symbol set", py::arg("id"))
+            // Assembler sources through AsmControl: options as keyword arguments; a path is a host file or "disk:A/NAME.T"
+            .def("asm_formats", [](Emulator& self) { return AsmPy(self, "formats", {}, py::kwargs()); }, "Assembler source formats")
+            .def("asm_dialects", [](Emulator& self) { return AsmPy(self, "dialects", {}, py::kwargs()); }, "Dialects convert reads and writes")
+            .def("asm_files", [](Emulator& self, const std::string& drive) { return AsmPy(self, "files", {{"drive", drive}}, py::kwargs()); },
+                 "The files on a disk with their formats", py::arg("drive") = "A")
+            .def("asm_detect", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) { return AsmPy(self, "detect", {{"path", path}}, kwargs); },
+                 "Which format a source is", py::arg("path"))
+            .def("asm_decode", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) { return AsmPy(self, "decode", {{"path", path}}, kwargs); },
+                 "A source as text (codec=, version=, codepage=, output=)", py::arg("path"))
+            .def("asm_encode", [](Emulator& self, const std::string& text, const py::kwargs& kwargs) { return AsmPy(self, "encode", {{"text", text}}, kwargs); },
+                 "Text in a source format (codec=, version=, output=, start=)", py::arg("text"))
+            .def("asm_convert", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) { return AsmPy(self, "convert", {{"path", path}}, kwargs); },
+                 "A source in another dialect (to=, codec=, version=, from=, output=)", py::arg("path"))
+            .def("asm_sync_status", [](Emulator& self, const py::kwargs& kwargs) { return AsmPy(self, "sync-status", {}, kwargs); },
+                 "The assembler running in the machine and its text (assembler=)")
+            .def("asm_sync_probe", [](Emulator& self) { return AsmPy(self, "sync-probe", {}, py::kwargs()); },
+                 "Every assembler that identifies in RAM")
+            .def("asm_sync_extract", [](Emulator& self, const py::kwargs& kwargs) { return AsmPy(self, "sync-extract", {}, kwargs); },
+                 "The source in RAM (as='text' | 'file' | 'dialect', to=, output=)")
+            .def("asm_sync_watch", [](Emulator& self, const py::kwargs& kwargs) { return AsmPy(self, "sync-watch", {}, kwargs); },
+                 "Watch the source in RAM: live labels and hints (interval=, quiet=, as=, to=, output=)")
+            .def("asm_sync_unwatch", [](Emulator& self) { return AsmPy(self, "sync-unwatch", {}, py::kwargs()); }, "Stop the watch")
+            .def("asm_sync_hints", [](Emulator& self) { return AsmPy(self, "sync-hints", {}, py::kwargs()); },
+                 "The last build of the watched source: labels and hints")
+            .def("symbols_import_source", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) {
+                return SymbolsPy(self, "import-source", {{"path", path}}, kwargs);
+            }, "The labels a source defines, with values (main=, set=, policy=, generated=)", py::arg("path"))
+            .def("symbols_scan", [](Emulator& self) { return SymbolsPy(self, "scan", {}, py::kwargs()); },
+                 "Label tables of assemblers in RAM (ALASM, XAS): the candidates")
+            .def("symbols_import_live", [](Emulator& self, const py::kwargs& kwargs) { return SymbolsPy(self, "import-live", {}, kwargs); },
+                 "Read a label table from RAM into a set (scanner=, page=, offset=, set=, policy=)")
 
             // Disassembly
             .def("disasm", [](Emulator& self, int address, int count) -> py::list {
@@ -4169,8 +4266,12 @@ namespace PythonBindings
                                       uint32_t beforeTin,
                                       py::object physPageObj,
                                       py::object addrFromObj,
-                                      py::object addrToObj) -> py::object {
+                                      py::object addrToObj,
+                                      py::object spaceObj) -> py::object {
                 std::map<std::string, std::string> options{{"access", access}};
+                // space="vram" / "cache": addr / addr_from / addr_to are offsets in that memory
+                if (!spaceObj.is_none())
+                    options["space"] = py::str(spaceObj).cast<std::string>();
                 const std::pair<const char*, py::object*> fields[] = {
                     {"addr", &addrObj},     {"value", &valueObj},        {"pc_from", &pcFromObj},
                     {"pc_to", &pcToObj},    {"phys_page", &physPageObj}, {"addr_from", &addrFromObj},
@@ -4206,7 +4307,8 @@ namespace PythonBindings
                py::arg("before_tin") = 0,
                py::arg("phys_page") = py::none(),
                py::arg("addr_from") = py::none(),
-               py::arg("addr_to") = py::none())
+               py::arg("addr_to") = py::none(),
+               py::arg("space") = py::none())
 
             .def("ttd_step_instruction_back", [](Emulator& self) -> bool {
                 const ttd::TTDReply reply = TtdRunPy(self, "step-instruction", {{"dir", "back"}});
@@ -4251,19 +4353,22 @@ namespace PythonBindings
                py::arg("pcs"))
 
             .def("ttd_coverage_probe", [](Emulator& self, uint64_t frame, const std::string& kindStr,
-                                          uint16_t addrFrom, uint16_t addrTo, py::object pageObj) -> py::object {
+                                          uint32_t addrFrom, uint32_t addrTo, py::object pageObj, py::object spaceObj) -> py::object {
                 std::map<std::string, std::string> options{{"frame", std::to_string(frame)}, {"kind", kindStr},
                                                            {"addr_from", std::to_string(addrFrom)},
                                                            {"addr_to", std::to_string(addrTo)}};
                 if (!pageObj.is_none())
                     options["phys_page"] = TtdOptionTextPy(pageObj);
+                if (!spaceObj.is_none())
+                    options["space"] = py::str(spaceObj).cast<std::string>();   // vram / cache: offsets in that memory
                 return TtdCoveragePy(TtdRunPy(self, "coverage-probe", options));
             }, "Was the address range touched in this frame (coverage index)",
-                py::arg("frame") = 0, py::arg("kind") = "executed", py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none())
+                py::arg("frame") = 0, py::arg("kind") = "executed", py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none(),
+                py::arg("space") = py::none())
 
             .def("ttd_coverage_scan", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj,
-                                         const std::string& kindStr, uint16_t addrFrom, uint16_t addrTo,
-                                         py::object pageObj, size_t limit) -> py::object {
+                                         const std::string& kindStr, uint32_t addrFrom, uint32_t addrTo,
+                                         py::object pageObj, size_t limit, py::object spaceObj) -> py::object {
                 std::map<std::string, std::string> options{
                     {"from_frame", std::to_string(fromFrame)}, {"kind", kindStr},
                     {"addr_from", std::to_string(addrFrom)},   {"addr_to", std::to_string(addrTo)},
@@ -4272,10 +4377,47 @@ namespace PythonBindings
                     options["to_frame"] = TtdOptionTextPy(toFrameObj);
                 if (!pageObj.is_none())
                     options["phys_page"] = TtdOptionTextPy(pageObj);
+                if (!spaceObj.is_none())
+                    options["space"] = py::str(spaceObj).cast<std::string>();
                 return TtdCoveragePy(TtdRunPy(self, "coverage-scan", options));
             }, "Frames in from_frame..to_frame that touched the address range (coverage index)",
                 py::arg("from_frame") = 0, py::arg("to_frame") = py::none(), py::arg("kind") = "executed",
-                py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none(), py::arg("limit") = 200)
+                py::arg("addr_from") = 0, py::arg("addr_to") = 0xFFFF, py::arg("phys_page") = py::none(), py::arg("limit") = 200,
+                py::arg("space") = py::none())
+
+            // A memory at a past checkpoint and what changed between two, from the store (no seek). A bad
+            // argument raises ValueError; a refusal (no history, backend v1) is a dict with error
+            .def("ttd_memory_at", [](Emulator& self, const std::string& space, uint64_t frame, py::object offsetObj,
+                                     uint32_t length, uint32_t tinframe) -> py::object {
+                std::map<std::string, std::string> options{
+                    {"space", space}, {"frame", std::to_string(frame)}, {"length", std::to_string(length)},
+                    {"tinframe", std::to_string(tinframe)}};
+                if (!offsetObj.is_none())
+                    options["offset"] = TtdOptionTextPy(offsetObj);
+                const ttd::TTDReply reply = TtdRunPy(self, "memory-at", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "A memory as it was at the checkpoint at or before frame: {space, offset, length, at_frame, exact, hex}",
+                py::arg("space"), py::arg("frame"), py::arg("offset") = py::none(), py::arg("length") = 256,
+                py::arg("tinframe") = 0)
+
+            .def("ttd_memory_diff", [](Emulator& self, const std::string& space, uint64_t fromFrame, uint64_t toFrame,
+                                       uint64_t limit) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "memory-diff", {{"space", space}, {"from_frame", std::to_string(fromFrame)},
+                                                                           {"to_frame", std::to_string(toFrame)},
+                                                                           {"limit", std::to_string(limit)}});
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "The byte ranges of a memory that differ between two checkpoints: {changed_bytes, ranges: [{offset, length}]}",
+                py::arg("space"), py::arg("from_frame"), py::arg("to_frame"), py::arg("limit") = 100)
 
             .def("ttd_coverage_summary", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj,
                                             py::object kindObj, uint64_t bucketSize, size_t limit) -> py::object {

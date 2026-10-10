@@ -241,13 +241,27 @@ scans every page when the rule does not hold.
 code already computes for its signatures): it imports the matching bundles as sets with origin `bundle` and drops
 bundle sets whose ROM is gone. A user can switch a bundle set off; that choice is remembered.
 
+Built (2026-10-08):
+- The manifest takes `match.page_sha256` (a list), an optional `match.page`, `space` (`"rom"` = the page that matched),
+  `except` (names left out) and `note`.
+- `MatchBundles` gives a bundle with space `rom` once per matching page; any other bundle once.
+- `LabelManager::ApplyBundles` imports each match as `bundle:<id>` at priority 50 and drops the stale ones.
+- The emulator calls it when an instance starts and after a ROM reload (`Emulator::ApplySymbolBundles`), with the page
+  hashes from `ROM::CalculateSignature`.
+- The switched-off choice lasts while the instance runs. Between sessions it is the GUI's (owner decision,
+  2026-10-09: the core knows nothing of it). unreal-qt keeps the switched-off bundle set ids in its QSettings
+  (`Symbols/DisabledBundles`, `unreal-qt/src/debugger/symbolbundlepreferences.h`). The Sets tab saves a bundle's
+  switch there. MainWindow switches the saved ones off again on an instance the GUI created, when it adopts it and
+  after each `NC_SYSTEM_RESET` (a reset may read another ROM and make new bundle sets). An instance created through
+  automation keeps every bundle on, as with the GUI's saved sound character.
+
 ## 8. Surfaces
 
 The current calls stay as they are (FR-12). New ones:
 
 | Surface | Import | Export | Formats | Sets |
 |---|---|---|---|---|
-| WebAPI | `POST /symbols/import {path \| disk \| base64, format, set, space, base, policy}`; `POST /symbols/import/live {scanner, at}` | `POST /symbols/export {path \| (download), format, sets, filter, names}` | `GET /symbols/formats` | `GET /symbols/sets`, `PUT /symbols/sets/{id} {enabled, priority}`, `DELETE /symbols/sets/{id}` |
+| WebAPI | `POST /symbols/import {path \| disk \| base64, format, set, space, base, policy}`; `POST /symbols/import/live {scanner, at}` | `POST /symbols/export {path \| (download), format, sets, filter, names}` | `GET /symbols/formats` | `GET /symbols/sets`, `PUT /symbols/sets {id, enabled, priority}`, `DELETE /symbols/sets?id=` (a set id holds a path, so not in the URL path) |
 | CLI | `symbols import <file\|disk:A/F.A> [--format f] [--set s] [--page ram3] [--base n] [--policy p]`, `symbols import --live alasm [--at ram6:#0000]` | `symbols export <file> --format f [--sets a,b] [--page ...]` | `symbols formats` | `symbols sets`, `symbols set <id> on\|off`, `symbols drop <id>` |
 | MCP | `manage_symbols` actions `import`, `import_live` | `export` | `formats` | `sets`, `set_enable`, `drop` |
 | Lua | `symbols_import{...}` | `symbols_export{...}` | `symbols_formats()` | `symbols_sets()`, ... |
@@ -255,8 +269,67 @@ The current calls stay as they are (FR-12). New ones:
 | Qt | Label editor: Import... (format auto / list, page, policy; the report with conflicts) | Export... (format list, sets, the rename list) | — | a "Sets" tab: enable, priority, drop |
 
 All surfaces call one function each in the facade (`LabelManager::ImportSymbols / ExportSymbols / Formats / Sets`),
-which returns the same report structure (`StateNode`), so every surface answers with the same fields. The OpenAPI
+which returns the same report structure (`StateNode`), so every surface answers with the same fields.
+
+Built (2026-10-08): `SymbolControl` (`core/src/debugger/labels/symbolcontrol.h`) has the verbs `formats`, `detect`,
+`sets`, `import`, `export`, `set` and `drop`, with the TTDControl pattern (a verb, options by name, a reply with an
+error code and a StateNode body). The WebAPI, CLI, MCP, Lua and Python call it. The live scan has its own verbs:
+`scan` and `import-live` (`GET /symbols/scan`, `POST /symbols/import/live`). Import takes a `path`, or `data` (base64) with a
+`name`. The Qt label editor has the Import / Export dialogs, a live-scan command and a "Sets" tab. Import reads
+`disk:A/NAME.T` as well; `import-source` gives the labels of a source with their values (`symbols/fromsource.h`, the
+disk in a drive as the project); export filters by space, CPU address range, kind and name pattern (the renames are its
+diagnostics). The OpenAPI
 gets a `symbols` tag; the recipe is `.recipe/analysis/symbols-import-export.md`.
+
+### 8.1 import-source: labels from a source (built 2026-10-09)
+
+**What the values are.** No assembler runs, in the emulator or on the host, and no label table is read: the values
+are computed from the text. The project is converted to sjasmplus (for a dialect other than sjasmplus) and laid out
+the way sjasmplus lays it out. The location counter starts at `ORG` and moves with `DISP` / `PHASE`, `DS`, `ALIGN`,
+`INCBIN` (the size of the named file) and the length of every instruction form. Passes repeat until no label moves.
+The result equals the label table the original assembler would hold after assembling the same project. The rules,
+what was checked against sjasmplus 1.24's `--sym` and the known differences are in [formats.md](formats.md) §4.1.
+
+A label table an assembler wrote (sjasmplus `--sym`, a `.map`, a label file on the disk) is not this path: it is a
+symbol file and goes through `import`. ALASM's or XAS's table in RAM after assembling goes through `import-live`
+(§4.3). Those are the assembler's own numbers. `import-source` is for a project that has only its source.
+
+**Data flow** (`SymbolControl::ImportSource`, `core/src/debugger/labels/symbolcontrol.cpp`):
+
+1. `path` names the project:
+   - `disk:A/NAME.T`: `ReadDiskFiles` (`core/src/debugger/asm/diskfiles.h`) reads every live file of the disk
+     image in the drive, as the emulator holds it (unsaved writes included), then `ProjectFromFiles`. `main`
+     defaults to NAME.
+   - a host `.trd` / `.tap` / `.tzx`: `ReadTrd` / `ReadTape`, then `ProjectFromFiles`.
+   - a hobeta `$X`: `ReadHobeta`, then `ProjectFromFiles` over that one file.
+   - anything else: `ProjectFromText` (a tokenized format when detection says so, else sjasmplus' dialect).
+2. `FindMainSource` picks the source to assemble. An image with several sources and no `main` is refused with 400
+   and `body.sources`, the list a client picks from (the Qt label editor shows it in a list). An image with no
+   source gives 404.
+3. `SymbolsFromSourceProject` (`unrealasm/symbols/fromsource.h`) lays it out. The other files of the project are
+   what INCLUDE reaches and what INCBIN measures (`SourceProject::sizes`, ALASM's `*` / `?` wildcards).
+4. A label whose `ORG address,page` named a page and whose value is in `#C000-#FFFF` goes to that RAM page. A label
+   defined by `EQU` / `=` is a constant. Every other label goes to the CPU view.
+5. `LabelManager::ImportRecords` merges the records with origin kind `source` (`where` = `path`). The set id is
+   `source:disk:A/<main>` or `source:<path>:<main>`, and that set is dropped first. A second import of the same
+   source therefore replaces its labels and does not add copies. With `set` given, the records merge into that set
+   and nothing is dropped. `policy` is the merge policy of `import`.
+
+**Reply.** `path`, `main`, `dialect`, `sources` (the project's source count), `set`, `records`, `added`, `aliased`,
+`complete`, `diagnostics`, `labels`. `complete` is false when some label got no value: a missing INCLUDE file, a
+construct the layout does not know, a label in a block an `IF` leaves out, a pass that did not settle. The layout's
+diagnostics say which. A missing INCBIN file counts as empty and is a diagnostic, so the labels after it can be off
+by its size. `generated: true` also returns the labels the conversion adds and the per-expansion labels of macros,
+under their sjasmplus names.
+
+**Surfaces.** `POST /symbols/import/source`, CLI `symbols import-source <path> [--main M]`, MCP `manage_symbols`
+`import_source`, Lua `symbols_import_source`, Python `emu.symbols_import_source`. In Qt: the Disk files dialog's
+Import Labels, and the label editor's File > Import Labels from Source.... Tests:
+`SymbolControl_Test.TheLabelsOfASourceComeWithTheirValues`, `SymbolControl_Machine_Test.TheDiskInADriveIsTheSourcesProject`,
+`fromsource_test.cpp`.
+
+**Not yet.** Following a source that changes in the guest's RAM while it is edited, and reading the label table an
+assembler keeps in RAM next to that source: [asm-synchronizer](../asm-synchronizer.md).
 
 ## 9. Memory and speed budget
 
@@ -291,3 +364,7 @@ Text import: one pass over the bytes, tokens as views, one record per line; 100 
 | S10 | Benchmarks and the results table; docs (`docs/features/symbols.md`) | numbers meet NFR-1…3 |
 
 The debugger additions' E7 ("label import") closes with S7 + S8 (the two formats the TUI's import menu names).
+
+Status (review round A0, 2026-10-09): S0-S5 done; S6-S9 done as the library's phases A2-A6 and the frontends; S10's
+numbers are in [test-and-benchmark-plan.md](test-and-benchmark-plan.md) §6 and the user guide is
+[docs/features/unreal-asm.md](../../../features/unreal-asm.md) (no separate `symbols.md`).

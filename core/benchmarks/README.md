@@ -22,6 +22,16 @@ cmake --build . -j8
 
 Located in `debugger/ttd/`. `ttd_matrix_benchmark.cpp` registers one benchmark per TTD engine, configuration and workload: `TTDMatrix/<engine>/<configuration>/<workload>`, with the metrics BM-1 to BM-8 as counters. The environment variables `UNREAL_TTD_BENCH_*` pick the set (`ci`, `turbo` or `full`) and the engines. Running, comparing and baselines: [`tools/verification/ttd-bench/`](../../tools/verification/ttd-bench/README.md).
 
+## Sprinter Demo Benchmarks
+
+Located in `emulator/machines/`. `BM_SprinterDemo_<demo>_{Bare,Shipped}` measures the host CPU per frame of a demo
+from the Sprinter's DSS system disk (DNTBLINK, ROTOZOOM, PLASMA2, BADAPPLE).
+- **Bare**: without the sound cards.
+- **Shipped**: with the shipped config's NeoGS and AY.
+
+They need `UNREAL_SPRINTER_HDD` (the raw `sp_hdd_sys.img` from the MAME pack); without it they are skipped with
+an error. Details, method and results: [emulator/machines/README.md](emulator/machines/README.md).
+
 ## Message Center Benchmarks
 
 Located in `emulator/messagecenter/`. Tests the pub/sub notification system used for frame sync, debug events, and inter-component communication.

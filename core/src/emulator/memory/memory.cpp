@@ -324,6 +324,7 @@ void Memory::ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, t
     // reverse read-watchpoint skip frames rather than replay all of them.
     if (!isExecution && _context->ttdCoverageActive && _context->ttdCoverage != nullptr)
     {
+        // TtdPageOfBank: a window on the fast RAM is keyed by that space's page (ROM shares one bucket)
         _context->ttdCoverage->Record(ttd::TTDCoverageKind::Read,
                                       ttd::MakeCoverageKey(physPage, addr));
     }
@@ -337,14 +338,16 @@ void Memory::ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, t
         // Resolve the bank behind `addr` so a read watchpoint can be scoped to
         // one physical page. Reads used to report page 0 unconditionally, which
         // made every hit on a banked address indistinguishable.
+        // A window on the fast RAM: that space's page and the offset in it
         const ttd::PhysPage readPhysPage = physPage;
-        if (_context->ttdProbe.Matches(addr, ttd::TTDAccessType::Read, result, pc, readPhysPage))
+        const uint16_t readAddr = ttd::SpaceOfPage(readPhysPage) == ttd::TTDMemorySpace::Ram ? addr : (addr & 0x3FFF);
+        if (_context->ttdProbe.Matches(readAddr, ttd::TTDAccessType::Read, result, pc, readPhysPage))
         {
             const auto& st = _context->emulatorState;
             // TTD time units (B4); 32-bit - a frame is longer than 65535 T-states
             const uint32_t tin = _context->pCore ? st.TtdTInFrame(_context->pCore->GetZ80()->t) : 0;
             const ttd::TTDTimePoint tp{st.frame_counter, tin};
-            _context->ttdProbe.RecordHit(tp, addr, pc, result, readPhysPage,
+            _context->ttdProbe.RecordHit(tp, readAddr, pc, result, readPhysPage,
                                           ttd::TTDAccessType::Read);
         }
     }
@@ -382,7 +385,7 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
 
     /// endregion </MemoryReadFast functionality>
 
-    ReadDebugEffects(addr, result, isExecution, GetPhysPageForZ80Address(addr));
+    ReadDebugEffects(addr, result, isExecution, TtdPageOfBank(static_cast<uint8_t>(addr >> 14)));
 
     return result;
 }
@@ -405,6 +408,10 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
 /// video flag, write breakpoints. physPage is the 16K RAM page behind addr (kPhysPageNone for ROM)
 void Memory::WriteDebugEffects(uint16_t addr, uint8_t value, ttd::PhysPage physPage)
 {
+    // the 16K bank of the address and the offset in it (for the fast-RAM TTD branch below)
+    const uint8_t bank = (addr >> 14) & 0b0000'0011;
+    const uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
+
     // Cache pCore pointer once — used by multiple features below.
     // Safe: pCore is set during Init() and never null during emulation.
     Core* const core = _context->pCore;
@@ -447,6 +454,12 @@ void Memory::WriteDebugEffects(uint16_t addr, uint8_t value, ttd::PhysPage physP
                 _context->ttdProbe.RecordHit(t, addr, pc, value, physPage, ttd::TTDAccessType::Write);
             }
         }
+    }
+    else if (_feature_ttd_enabled && _bank_mode[bank] == BANK_CACHE) [[unlikely]]
+    {
+        // The fast RAM (the Sprinter's): its space's page and the offset (no RAM page to mark dirty: the engine
+        // compares the fast RAM region at each capture)
+        TtdNoteAccess(TtdPageOfBank(bank), addressInBank, value, true);
     }
 
     // Raise a flag that video memory was changed
@@ -2270,3 +2283,43 @@ void Memory::handleFrameEnd()
 }
 
 /// endregion </Frame lifecycle>
+
+ttd::PhysPage Memory::TtdSpacePageOfBank(uint8_t bank) const
+{
+    bank &= 3;
+    if (_bank_mode[bank] != BANK_CACHE || !_cacheBase)
+        return ttd::kPhysPageNone;
+    const ptrdiff_t offset = _bank_write[bank] - _cacheBase;
+    if (offset < 0 || offset >= static_cast<ptrdiff_t>(MAX_CACHE_PAGES) * static_cast<ptrdiff_t>(ttd::kSpacePageBytes))
+        return ttd::kPhysPageNone;
+    return ttd::SpacePage(ttd::TTDMemorySpace::Cache, static_cast<uint32_t>(offset));
+}
+
+void Memory::CheckSpaceWatch(ttd::PhysPage page, uint16_t offset, uint16_t addr, bool write)
+{
+    if (!_feature_breakpoints_enabled || !_context->pDebugManager || !_context->pEmulator)
+        return;
+    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+    const uint16_t id = brk.HandleSpaceAccess(page, offset, write);
+    if (id != BRK_INVALID)
+        _context->pEmulator->OnBreakpointHit(id, addr, write ? BreakpointHitKind::MemoryWrite : BreakpointHitKind::MemoryRead);
+}
+
+void Memory::TtdNoteAccess(ttd::PhysPage page, uint16_t addr, uint8_t value, bool write)
+{
+    if (page == ttd::kPhysPageNone)
+        return;
+    Core* const core = _context->pCore;
+    const uint16_t pc = core ? core->GetZ80()->m1_pc : 0;
+    const ttd::TTDAccessType kind = write ? ttd::TTDAccessType::Write : ttd::TTDAccessType::Read;
+    if (write && _context->ttdWriteSink)
+        _context->ttdWriteSink->RecordMemoryWrite(addr, /*oldVal=*/0, value, pc, page);   // the journal and the coverage
+    else if (!write && _context->ttdCoverageActive && _context->ttdCoverage)
+        _context->ttdCoverage->Record(ttd::TTDCoverageKind::Read, ttd::MakeCoverageKey(page, addr));
+    if (_context->ttdProbe.IsArmed() && _context->ttdProbe.Matches(addr, kind, value, pc, page))
+    {
+        const auto& st = _context->emulatorState;
+        const uint32_t tin = core ? st.TtdTInFrame(core->GetZ80()->t) : 0;
+        _context->ttdProbe.RecordHit(ttd::TTDTimePoint{st.frame_counter, tin}, addr, pc, value, page, kind);
+    }
+}

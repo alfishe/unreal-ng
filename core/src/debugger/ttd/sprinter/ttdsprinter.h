@@ -68,6 +68,10 @@ public:
     std::string TTDDeviceName() const override { return "SprinterPld"; }
     PeripheralId TTDPeripheralId() const override { return PeripheralId::SprinterPld; }
     uint64_t TTDHashState() const override;
+    /// The INT source's acknowledged pulse (an i64 machine time at 128: frame x frame length + start) advances every
+    /// frame: a time field (measured 2026-10-09)
+    TTDDeviceDescriptor TTDDescribe() const override;
+    static constexpr uint16_t kAckedPulseOffset = 128;
 
 private:
     /// The largest StateSize() of the registered modules: the blob has room for any of them

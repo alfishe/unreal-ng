@@ -1,5 +1,6 @@
 #include "debugkeyboardmanager.h"
-#include "debugger/ttd/timetravelmanager.h"  // TimeTravelManager (input journal capture, Phase 2 Item 3)
+#include "debugger/ttd/timetravelhooks.h"  // ITimeTravelHooks (input journal capture, Phase 2 Item 3)
+#include "debugger/ttd/ttdinputjournal.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"
 

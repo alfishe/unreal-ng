@@ -201,8 +201,17 @@ bool FromUtf8(std::string_view text, CodePage codePage, std::vector<uint8_t>& ou
     const auto* data = reinterpret_cast<const uint8_t*>(text.data());
     std::span<const uint8_t> bytes(data, text.size());
     size_t i = 0;
+    const bool spectrum = codePage == CodePage::ZxSpectrum;
     while (i < bytes.size())
     {
+        // ASCII is itself in every page (but for the three ZX Spectrum characters): no decoding, no table
+        const uint8_t first = bytes[i];
+        if (first < 0x80 && !(spectrum && (first == 0x5E || first == 0x60 || first == 0x7F)))
+        {
+            out.push_back(first);
+            ++i;
+            continue;
+        }
         char32_t cp = 0;
         size_t length = utf8::DecodeOne(bytes.subspan(i), cp);
         if (length == 0)

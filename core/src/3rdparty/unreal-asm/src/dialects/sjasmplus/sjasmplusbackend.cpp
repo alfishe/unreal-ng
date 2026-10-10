@@ -251,8 +251,9 @@ struct Writer
                 }
                 const bool comparison = e.op == Op::Equal || e.op == Op::NotEqual || e.op == Op::Less || e.op == Op::Greater ||
                                         e.op == Op::LessEqual || e.op == Op::GreaterEqual;
-                if (comparison && trueValue == 1)
-                    return "-" + TrueIsOne(e);   // sjasmplus' true is -1
+                const bool logical = e.op == Op::LogicalAnd || e.op == Op::LogicalOr;
+                if ((comparison || logical) && trueValue == 1)
+                    return "-" + TrueIsOne(e);   // sjasmplus' true is -1 (also for && and ||: 2&&1 = -1)
                 if ((comparison || e.op == Op::Mod || e.op == Op::Shr) && wordBits == 16 && unsignedWords)
                 {
                     // 16-bit unsigned words (STORM: 0-1 is #FFFF, so #FFFF>>1 = #7FFF and 0-1>0): the operands masked
@@ -780,6 +781,7 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
     size_t nextBlock = 0;
     for (const ir::Line& l : program.lines)
     {
+        const size_t firstWritten = result.document.lines.size();
         w.line = l.sourceLine;
         std::vector<std::string> texts;
         bool openBlock = false, closeBlock = false, openMacro = false, closeMacro = false;
@@ -962,6 +964,8 @@ BackendResult SjasmplusBackend::Write(const ir::Program& program, const BackendO
         result.document.lines.push_back({out, {}});
         if (!l.label.empty() && w.ifUsedNames.count(l.label))
             result.document.lines.push_back({"        DEFINE " + w.DefinedFlag(l.label), {}});
+        for (size_t k = firstWritten; k < result.document.lines.size(); ++k)
+            result.document.lines[k].origin = l.sourceLine;   // diagnostics of the converted text point back to the source
     }
     (void)blockOrder;
     return result;

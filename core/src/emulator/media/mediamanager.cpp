@@ -54,14 +54,28 @@ namespace
         }
         return names.empty() ? "no folder volume" : names;
     }
+
+    /// The save a disposition runs: the policy with the D-8 fallback (SaveOptions::disposition)
+    SaveOptions DispositionSave(const std::string& strategy, bool keepBoth, bool strict)
+    {
+        SaveOptions options;
+        options.allowRetarget = true;
+        options.disposition = true;
+        options.strategy = strategy;
+        options.keepBoth = keepBoth;
+        options.strict = strict;
+        return options;
+    }
 }  // namespace
 
 MediaManager::MediaManager(EmulatorContext* context) : _context(context) {}
 
 MediaManager::~MediaManager()
 {
-    // Peripherals unregister before the manager goes; anything left is plain
-    // data. Staged uploads die with their medium
+    // Composites keep their writes as their policy says (D-8); then peripherals unregister before the manager
+    // goes and anything left is plain data. Staged uploads die with their medium
+    if (_saveOnRelease)
+        SaveByPolicyOnRelease();
     for (auto& [id, state] : _slots)
     {
         const bool dirty = state.attached && state.attached->IsDirty();
@@ -73,6 +87,32 @@ MediaManager::~MediaManager()
         const bool dirty = medium && medium->IsDirty();
         Retire(std::move(medium), dirty);
     }
+}
+
+std::vector<std::string> MediaManager::SaveByPolicyOnRelease()
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    std::vector<std::string> lines;
+    const bool releasing = _releasing;
+    _releasing = true;  // nothing executes any more: the saves run here
+    auto save = [&](const std::string& id, Medium* medium, IMediaSlot* slot) {
+        if (!medium || medium->Source().type != MediaSourceType::Composite || !medium->Session() || !medium->Composite() ||
+            !medium->IsDirty())
+            return;
+        const std::string policy = medium->Composite()->writesSave;  // a write-back rebuilds the slot: medium goes
+        const MediaResult saved = SaveMedium(id, *medium, slot, DispositionSave({}, false, false), nullptr);
+        std::string line = id + ": " + (saved.Ok() ? "saved by writes.save " + policy : "not saved, " + saved.message);
+        for (const std::string& r : saved.report)
+            line += "; " + r;
+        LOGINFO("MediaManager: on release: %s", line.c_str());
+        lines.push_back(std::move(line));
+    };
+    for (auto& [id, state] : _slots)
+        save(id, state.attached.get(), state.slot);
+    for (auto& [id, medium] : _parked)
+        save(id, medium.get(), nullptr);
+    _releasing = releasing;
+    return lines;
 }
 
 /// region <Slots>
@@ -179,12 +219,27 @@ std::vector<SlotInfo> MediaManager::Detached() const
         info.changedUnits = medium->ChangedUnits();  // nobody writes to a detached medium
         info.changes = medium->DescribeChanges();
         info.dirty = info.changedUnits > 0;
+        if (info.dirty)
+            info.onRelease = OnReleaseOf(*medium);
+        info.volumeId = medium->VolumeId();
         result.push_back(std::move(info));
     }
     return result;
 }
 
 MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& source, const InsertOptions& options)
+{
+    std::unique_ptr<Medium> medium;
+    MediaResult opened = OpenForSlot(slotId, source, options, medium);
+    if (!opened.Ok())
+        return opened;
+    MediaResult inserted = Insert(slotId, std::move(medium), options);
+    inserted.report.insert(inserted.report.begin(), opened.report.begin(), opened.report.end());
+    return inserted;
+}
+
+MediaResult MediaManager::OpenForSlot(const std::string& slotId, const MediaSource& source, const InsertOptions& options,
+                                      std::unique_ptr<Medium>& medium)
 {
     SlotDescriptor descriptor;
     {
@@ -237,7 +292,6 @@ MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& s
             request.fs = descriptor.fsCompatibility.front();
     }
 
-    std::unique_ptr<Medium> medium;
     MediaResult opened = MediaFormatRegistry::Open(request, medium);
     if (!opened.Ok())
         return opened;
@@ -268,10 +322,7 @@ MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& s
     }
 
     AttachJournal(*medium, source, options.journal);
-
-    MediaResult inserted = Insert(slotId, std::move(medium), options);
-    inserted.report.insert(inserted.report.begin(), opened.report.begin(), opened.report.end());
-    return inserted;
+    return opened;
 }
 
 MediaResult MediaManager::Insert(const std::string& slotId, std::unique_ptr<Medium> medium, const InsertOptions& options)
@@ -296,13 +347,17 @@ MediaResult MediaManager::Insert(const std::string& slotId, std::unique_ptr<Medi
     if (MediaResult recording = CheckRecording(options.endRecording); !recording.Ok())
         return recording;
     // The medium in the slot leaves: its unsaved writes need a decision
+    MediaResult result = MediaResult::Success();
     if (state.attached && !state.ejectRequested)
     {
-        if (MediaResult kept = ApplyDisposition(slotId, *state.attached, options.disposition, options.exportPath); !kept.Ok())
+        MediaResult kept = ApplyDisposition(slotId, *state.attached, options.disposition, options.exportPath,
+                                            DispositionSave(options.strategy, options.keepBoth, options.strict));
+        if (!kept.Ok())
             return kept;
+        result.report = kept.report;
     }
-    MediaResult result = MediaResult::Success();
-    result.report = medium->Report();
+    EndSessionForMediaChange(options.endRecording, options.ttdReason);
+    result.report.insert(result.report.end(), medium->Report().begin(), medium->Report().end());
 
     // Replace any insert still waiting; the medium in the slot goes out first
     if (state.incoming)
@@ -441,11 +496,16 @@ MediaResult MediaManager::Eject(const std::string& slotId, const EjectOptions& o
 
     if (MediaResult recording = CheckRecording(options.endRecording); !recording.Ok())
         return recording;
+    MediaResult result = MediaResult::Success();
     if (state.attached && !state.ejectRequested)
     {
-        if (MediaResult kept = ApplyDisposition(slotId, *state.attached, options.disposition, options.exportPath); !kept.Ok())
+        MediaResult kept = ApplyDisposition(slotId, *state.attached, options.disposition, options.exportPath,
+                                            DispositionSave(options.strategy, options.keepBoth, options.strict));
+        if (!kept.Ok())
             return kept;
+        result.report = kept.report;
     }
+    EndSessionForMediaChange(options.endRecording, "media-change");
 
     if (state.incoming)
         Retire(std::move(state.incoming));
@@ -458,7 +518,7 @@ MediaResult MediaManager::Eject(const std::string& slotId, const EjectOptions& o
         for (auto& old : retired)
             Retire(std::move(old));
     }
-    return MediaResult::Success();
+    return result;
 }
 
 MediaResult MediaManager::Discard(const std::string& slotId)
@@ -501,11 +561,12 @@ MediaResult MediaManager::Discard(const std::string& slotId)
         again.writeProtect = state.writeProtect;
         again.immediate = true;
         again.disposition = Disposition::Discard;
-        return Insert(slotId, source, again);
+        return Insert(slotId, source, again);   // ends the session once the disk opened again
     }
     if (!state.attached->Session())
         return MediaResult::Success();
 
+    EndSessionForMediaChange(false, "media-change");
     state.discardRequested = true;
     if (CanApplyNow())
     {
@@ -534,12 +595,20 @@ MediaResult MediaManager::Save(const std::string& slotId, const SaveOptions& opt
     if (!medium)
         return MediaResult::Fail(_slots.count(slotId) ? MediaError::UnreadableSource : MediaError::UnknownSlot,
                                  "slot '" + slotId + "' is empty");
+    const bool wasDirty = medium->IsDirty();
     MediaResult result = SaveMedium(slotId, *medium, state ? state->slot : nullptr, options, outcome);
-    if (result.Ok() && state)
+    if (!result.Ok())
+        return result;
+    // A write-back rebuilds the slot: the medium saved may be gone, the slot holds its successor
+    medium = FindMedium(slotId, &state);
+    if (medium && state)
     {
-        state->changedUnits = 0;
-        state->changes.clear();
+        // A save runs with the guest parked: the medium is read as it is (a discard policy leaves it dirty)
+        state->changedUnits = medium->ChangedUnits();
+        state->changes = state->changedUnits ? medium->DescribeChanges() : std::string();
     }
+    if (medium && wasDirty && !medium->IsDirty())
+        Post(NC_MEDIA_CLEAN, slotId, medium);
     return result;
 }
 
@@ -556,7 +625,7 @@ MediaResult MediaManager::SetWriteProtect(const std::string& slotId, bool on)
     return MediaResult::Success();
 }
 
-MediaResult MediaManager::Rescan(const std::string& slotId)
+MediaResult MediaManager::Rescan(const std::string& slotId, const RescanOptions& options)
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     auto it = _slots.find(slotId);
@@ -566,20 +635,64 @@ MediaResult MediaManager::Rescan(const std::string& slotId)
     if (!state.attached || (state.attached->Source().type != MediaSourceType::Folder &&
                             state.attached->Source().type != MediaSourceType::Composite))
         return MediaResult::Fail(MediaError::NotSupported, "slot '" + slotId + "' does not hold a folder or a composite");
-    const uint64_t changed = CanApplyNow() ? state.attached->ChangedUnits() : state.changedUnits;
-    if (changed > 0)
-        return MediaResult::Fail(MediaError::Dirty, "slot '" + slotId + "' has " + std::to_string(changed) +
-                                                        " unsaved changes: export or discard them before a rescan");
 
-    const Medium& current = *state.attached;
-    MediaSource source = current.Source();
+    Medium& current = *state.attached;
+    const MediaSource source = current.Source();
     InsertOptions again;
     again.access = current.Access();
     again.fs = current.Options().fs;
     again.codePage = current.Options().codePage;
     again.freeBytes = current.Options().freeBytes;
     again.writeProtect = state.writeProtect;
-    return Insert(slotId, source, again);
+
+    // DT-16: the sources as they are now, compared with what the medium was built from (its writes aside)
+    std::unique_ptr<Medium> fresh;
+    MediaResult opened = OpenForSlot(slotId, source, again, fresh);
+    if (!opened.Ok())
+        return opened;
+    const SessionWriteMap* session = current.Session();
+    const uint64_t built = session ? session->Base().ContentId() : current.ContentId();
+    const SessionWriteMap* freshSession = fresh->Session();  // it may have restored a session delta
+    if (built != 0 && (freshSession ? freshSession->Base().ContentId() : fresh->ContentId()) == built)
+    {
+        Retire(std::move(fresh));
+        MediaResult unchanged = MediaResult::Success();
+        unchanged.report.push_back("unchanged: the sources give the same volume, the medium stays as it is");
+        return unchanged;
+    }
+
+    const uint64_t changed = CanApplyNow() ? current.ChangedUnits() : state.changedUnits;
+    if (changed > 0)
+    {
+        if (options.disposition == Disposition::None)
+        {
+            Retire(std::move(fresh));
+            return MediaResult::Fail(MediaError::Dirty, "slot '" + slotId + "' has " + std::to_string(changed) +
+                                                            " unsaved changes and its sources changed: rescan with save, "
+                                                            "export <path> or discard (the writes cannot follow a rebuild)");
+        }
+        MediaResult kept = ApplyDisposition(slotId, current, options.disposition, options.exportPath,
+                                            DispositionSave(options.strategy, options.keepBoth, options.strict));
+        if (!kept.Ok())
+        {
+            Retire(std::move(fresh));
+            return kept;
+        }
+        if (options.disposition == Disposition::Save)
+        {
+            // A commit or a write-back changed the sources (a delta is checked against them at the next build)
+            Retire(std::move(fresh));
+            opened = OpenForSlot(slotId, source, again, fresh);
+            if (!opened.Ok())
+                return opened;
+        }
+        opened.report.insert(opened.report.begin(), kept.report.begin(), kept.report.end());
+        again.disposition = Disposition::Discard;  // decided above
+    }
+
+    MediaResult inserted = Insert(slotId, std::move(fresh), again);
+    inserted.report.insert(inserted.report.begin(), opened.report.begin(), opened.report.end());
+    return inserted;
 }
 
 bool MediaManager::WaitApplied(const std::string& slotId, uint32_t timeoutMs)
@@ -687,6 +800,10 @@ void MediaManager::ApplyPending()
 
 void MediaManager::NoteWrite(const std::string& slotId, const char* detail)
 {
+    // A TTD replay runs the recording's writes again: the medium already holds them, so its version (frames that
+    // wrote it, what a seek's media check compares) stays, and a replay records nothing
+    if (_context && _context->ttdReplayActive)
+        return;
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     auto it = _slots.find(slotId);
     if (it == _slots.end() || it->second.writeMarkedThisFrame)
@@ -819,6 +936,8 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         const uint64_t changed = state.attached->ChangedUnits();
         if (state.changedUnits == 0 && changed > 0)
             Post(NC_MEDIA_DIRTY, slotId, state.attached.get());
+        else if (state.changedUnits > 0 && changed == 0)
+            Post(NC_MEDIA_CLEAN, slotId, state.attached.get());
         if (changed != state.changedUnits || (changed > 0 && state.attached->Floppy()))
             state.changes = changed ? state.attached->DescribeChanges() : std::string();
         state.changedUnits = changed;
@@ -867,8 +986,37 @@ SlotInfo MediaManager::Describe(const std::string& slotId, const SlotState& stat
         info.changedUnits = live ? state.attached->ChangedUnits() : state.changedUnits;
         info.changes = live ? state.attached->DescribeChanges() : state.changes;
         info.dirty = info.changedUnits > 0;
+        if (info.dirty)
+            info.onRelease = OnReleaseOf(*state.attached);
+        info.volumeId = state.attached->VolumeId();
     }
     return info;
+}
+
+std::string MediaManager::OnReleaseOf(const Medium& medium)
+{
+    const SessionWriteMap* session = medium.Session();
+    const CompositeInfo* composite = medium.Source().type == MediaSourceType::Composite ? medium.Composite() : nullptr;
+    if (composite && session && _saveOnRelease)
+    {
+        const std::string& policy = composite->writesSave;
+        if (policy == "flat")
+            return "delta";  // flat needs a path: the release keeps them as a delta (D-8)
+        return policy;
+    }
+    return session && session->JournalRecoverable() ? "journal" : "lost";
+}
+
+std::vector<SlotInfo> MediaManager::Unsaved() const
+{
+    std::vector<SlotInfo> unsaved;
+    for (SlotInfo& info : List())
+        if (info.dirty)
+            unsaved.push_back(std::move(info));
+    for (SlotInfo& info : Detached())
+        if (info.dirty)
+            unsaved.push_back(std::move(info));
+    return unsaved;
 }
 
 Medium* MediaManager::FindMedium(const std::string& slotId, SlotState** state)
@@ -885,7 +1033,7 @@ Medium* MediaManager::FindMedium(const std::string& slotId, SlotState** state)
 }
 
 MediaResult MediaManager::ApplyDisposition(const std::string& slotId, Medium& medium, Disposition disposition,
-                                           const std::string& exportPath)
+                                           const std::string& exportPath, const SaveOptions& save)
 {
     auto it = _slots.find(slotId);
     const uint64_t changed = (CanApplyNow() || it == _slots.end()) ? medium.ChangedUnits() : it->second.changedUnits;
@@ -901,12 +1049,7 @@ MediaResult MediaManager::ApplyDisposition(const std::string& slotId, Medium& me
         case Disposition::Discard:
             return MediaResult::Success();
         case Disposition::Save:
-        {
-            SaveOptions options;
-            options.allowRetarget = true;
-            options.disposition = true;
-            return SaveMedium(slotId, medium, it != _slots.end() ? it->second.slot : nullptr, options, nullptr);
-        }
+            return SaveMedium(slotId, medium, it != _slots.end() ? it->second.slot : nullptr, save, nullptr);
         case Disposition::Export:
             if (exportPath.empty())
                 return MediaResult::Fail(MediaError::BadRequest, "export needs a path");
@@ -1039,27 +1182,42 @@ MediaResult MediaManager::SaveBlockMedium(const std::string& slotId, Medium& med
     const CompositeInfo* composite = medium.Source().type == MediaSourceType::Composite ? medium.Composite() : nullptr;
     if (composite && medium.Session())
     {
+        // D-8: one policy for a save, an eject / swap / rescan disposition and the emulator going away
         std::string strategy = options.strategy;
-        std::string note;
         if (strategy.empty())
-        {
             strategy = options.path.empty() ? composite->writesSave : "flat";
-            if (options.disposition && (strategy == "commit" || strategy == "write-back"))
-            {
-                strategy = "delta";
-                note = composite->writesSave + " needs an explicit strategy on eject: saved as a session delta (D-8)";
-            }
+        if (strategy == "ask")
+            strategy = "delta";  // the GUI asks before it saves; a save that comes here keeps the writes
+        if (strategy == "discard")
+        {
+            if (!options.disposition)
+                return MediaResult::Fail(MediaError::BadRequest,
+                                         "discard (writes.save or strategy) keeps nothing on a save: name a strategy that saves, or discard the writes");
+            MediaResult dropped = MediaResult::Success();
+            dropped.report.push_back(std::to_string(medium.Session()->ChangedSectors()) +
+                                     " changed sector(s) dropped (writes.save: discard)");
+            return dropped;
         }
         if (strategy == "delta")
-            return SaveDelta(slotId, medium, *composite, options, note, outcome);
-        if (strategy == "commit")
-            return CommitComposite(slotId, medium, slot, *composite, options, outcome);
-        if (strategy == "write-back")
-            return WriteBackComposite(slotId, medium, *composite, options, outcome);
-        if (strategy != "flat")
+            return SaveDelta(slotId, medium, *composite, options, {}, outcome);
+        if (strategy != "flat" && strategy != "commit" && strategy != "write-back")
             return MediaResult::Fail(MediaError::BadRequest, "strategy '" + strategy + "': expected flat, delta, commit or write-back");
-        if (options.path.empty())
-            return MediaResult::Fail(MediaError::BadRequest, "a flat save writes a new image: name the path to save to");
+        if (strategy != "flat" || options.path.empty())
+        {
+            MediaResult done = strategy == "commit"       ? CommitComposite(slotId, medium, slot, *composite, options, outcome)
+                               : strategy == "write-back" ? WriteBackComposite(slotId, medium, *composite, options, outcome)
+                                                          : MediaResult::Fail(MediaError::BadRequest,
+                                                                              "a flat save writes a new image: name the path to save to");
+            if (done.Ok() || !options.disposition || options.strict || options.plan)
+                return done;
+            // A medium that leaves never loses its writes: they wait in the session delta for the next insert
+            MediaResult kept = SaveDelta(slotId, medium, *composite, options,
+                                         strategy + " failed (" + done.message + "): the writes are kept as a session delta",
+                                         outcome);
+            if (!kept.Ok())
+                return MediaResult::Fail(done.error, done.message + "; a session delta failed too: " + kept.message);
+            return kept;
+        }
     }
     else if (!options.strategy.empty() && options.strategy != "flat")
         return MediaResult::Fail(MediaError::BadRequest, "strategy '" + options.strategy + "' is for composite media with session writes");
@@ -1338,6 +1496,9 @@ MediaResult MediaManager::CommitComposite(const std::string& slotId, Medium& med
         return MediaResult::Fail(MediaError::IoError, "committed, but " + base + " cannot be opened again: " + error);
     session->SetBase(std::move(reopened));
     session->Discard();
+    // The session delta was written over the composite; the base holds those writes now (and SetComposite below
+    // drops `composite`)
+    const std::filesystem::path delta = composite.delta;
     MediaSource source;
     source.type = MediaSourceType::File;
     source.path = base;
@@ -1348,6 +1509,9 @@ MediaResult MediaManager::CommitComposite(const std::string& slotId, Medium& med
         slot->SourceChanged(medium);
     result.report.push_back("the slot now holds " + base + "; the descriptor still names its upper layers (inserting it again "
                             "grafts them again)");
+    std::error_code removeError;
+    if (!delta.empty() && std::filesystem::remove(delta, removeError))
+        result.report.push_back(FileHelper::FromFsPath(delta.filename()) + " removed: the base image holds its changes now");
     if (outcome)
     {
         outcome->savedPath = base;
@@ -1360,30 +1524,35 @@ MediaResult MediaManager::CommitComposite(const std::string& slotId, Medium& med
 
 bool MediaManager::CanApplyNow() const
 {
+    if (_releasing)
+        return true;
     if (_applyNowProbe)
         return _applyNowProbe();
     Emulator* emulator = _context ? _context->pEmulator : nullptr;
     return emulator == nullptr || !emulator->IsRunning() || emulator->IsPaused();
 }
 
-MediaResult MediaManager::CheckRecording(bool endRecording)
+MediaResult MediaManager::CheckRecording(bool endRecording) const
+{
+    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+    // A recording the guard protects, also one paused for browsing (a background
+    // recording is not protected: EndSessionForMediaChange ends its session)
+    if (ttd && !endRecording && !ttd->RecordingGuard(ttd::TTDGuardedAction::LoadDisk).empty())
+        return MediaResult::Fail(MediaError::Recording,
+                                 "the media set is fixed while a TTD recording runs; end the recording first");
+    return MediaResult::Success();
+}
+
+void MediaManager::EndSessionForMediaChange(bool endRecording, const char* reason)
 {
     ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
     if (!ttd)
-        return MediaResult::Success();
-    // A recording the guard protects, also one paused for browsing (a background
-    // recording is not protected: OnLoad below ends its session)
-    if (!ttd->RecordingGuard(ttd::TTDGuardedAction::LoadDisk).empty())
-    {
-        if (!endRecording)
-            return MediaResult::Fail(MediaError::Recording,
-                                     "the media set is fixed while a TTD recording runs; end the recording first");
+        return;
+    if (endRecording && !ttd->RecordingGuard(ttd::TTDGuardedAction::LoadDisk).empty())
         ttd->StopRecording();
-    }
     // A kept session was recorded with the old media: its checkpoints no
     // longer describe this machine (the rule LoadDisk follows)
-    ttd->OnLoad(ttd::TTDLoadKind::Media, "media-change");
-    return MediaResult::Success();
+    ttd->OnLoad(ttd::TTDLoadKind::Media, reason);
 }
 
 MediaResult MediaManager::CheckInUse(const std::string& slotId, const Medium& medium) const
@@ -1449,9 +1618,8 @@ void MediaManager::WriteThroughFloppy(const std::string& slotId, SlotState& stat
 
 void MediaManager::Post(const char* topic, const std::string& slotId, const Medium* medium, const std::string& path) const
 {
-    std::string emulatorId;
-    if (_context && _context->pEmulator)
-        emulatorId = _context->pEmulator->GetId();
+    if (_releasing)
+        return;  // the emulator is going away: nobody is left to tell
 
     std::string kind;
     std::string source;
@@ -1463,8 +1631,15 @@ void MediaManager::Post(const char* topic, const std::string& slotId, const Medi
         access = AccessModeName(medium->Access());
     }
     _revision++;  // every notification is a change a polling client must see
-    auto* payload = new MediaSlotPayload(emulatorId, slotId, kind, source, access);
+    auto* payload = new MediaSlotPayload(std::string(), slotId, kind, source, access);
+    // Every payload names its emulator: the context's id is there from the start (the emulator object may not be)
+    if (_context)
+        payload->emulatorId = _context->emulatorId;
     payload->path = path;
+    if (medium)
+        payload->volumeId = medium->VolumeId();
+    if (medium && medium->IsDirty())
+        payload->onRelease = OnReleaseOf(*medium);
     MessageCenter::DefaultMessageCenter().Post(topic, payload, true);
 }
 

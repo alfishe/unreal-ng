@@ -274,6 +274,11 @@ struct TTDSessionInfo
     /// Why time travel is not available for this instance at all (for example
     /// a member of a ZX-Poly machine); empty when it is available.
     std::string unavailableReason;
+
+    /// How exactly the last position the machine was moved to came back (the
+    /// engine's settings and media check, LastEngineCheck): published with the
+    /// rest so an observer on another thread reads a copy, not the live result
+    TTDRestoreResult lastCheck;
 };
 
 /// @brief String conversion for TTDCoverageKind.

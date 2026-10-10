@@ -340,7 +340,7 @@
         p[3]["name"] = "memory";
         p[3]["in"] = "query";
         p[3]["description"] =
-            "Memory windows <space>:<address>:<length> (space cpu | ram | ram5 | rom2 | cache0, length at most 65536); "
+            "Memory windows <space>:<address>:<length> (space cpu | ram | ram5 | rom2 | cache0 | a device memory region by name, length at most 65536); "
             "repeat the parameter or separate with commas; at most 8";
         p[3]["schema"]["type"] = "string";
         p[4]["name"] = "pchist";
@@ -413,7 +413,7 @@
         "Scans memory for a byte pattern (MemorySearch, the same as CLI find, Lua / Python mem_find, MCP find_bytes). "
         "Body: {pattern_hex: \"CD ?? 00\" (?? = any byte, A? = any low nibble) or pattern: [205, 22, 0], mask_hex: "
         "\"FF 00 FF\" (optional, 1 bits must match; replaces the wildcards), space: \"cpu\" (default: what the CPU "
-        "sees now) | \"ram\" (every RAM page) | a page \"ram5\" / \"rom2\" / \"cache0\", start, end (in the space; "
+        "sees now) | \"ram\" (every RAM page) | a page \"ram5\" / \"rom2\" / \"cache0\" | a device memory region by name or alias, start, end (in the space; "
         "default the whole space), max: 64, alignment: 1 | 2}. Each match: address (cpu) or page {kind, page} + offset, "
         "context_start and context (4 bytes before, the match, 4 after).";
     paths["/api/v1/emulator/{id}/memory/find"]["post"]["parameters"][0]["name"] = "id";

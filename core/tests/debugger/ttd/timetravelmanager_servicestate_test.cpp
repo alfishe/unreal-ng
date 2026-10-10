@@ -13,7 +13,7 @@
 
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -31,14 +31,14 @@ class TimeTravelManager_ServiceState_Test : public ::testing::Test
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    ttd::TimeTravelManager* _ttd = nullptr;
+    ttd::TimeTravelController* _ttd = nullptr;
 
     void Start(const char* model)
     {
         _emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
         ASSERT_NE(_emulator, nullptr) << model;
         _context = _emulator->GetContext();
-        _ttd = _context->pTimeTravelManager;
+        _ttd = _context->pTimeTravelController;
         _emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
         _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
         _context->pMemory->UpdateFeatureCache();

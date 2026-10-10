@@ -623,6 +623,24 @@ void PortDecoder_Sprinter::InstallHooks()
         _waits = std::make_unique<SprinterWaits>(z80);
     if (!_origWaits)
         _origWaits = std::make_unique<SprinterOrigWaits>(z80);
+    if (_sprinterMemory)
+        _sprinterMemory->SetWaitOverlays(_waits.get(), _origWaits.get());
+    _cpuEngine->SetFastBus(&_fastBus);
+}
+
+bool PortDecoder_Sprinter::FastBus::Matches()
+{
+    return _owner._sprinterMemory && _owner._sprinterMemory->FusedBusMatches();
+}
+
+uint8_t PortDecoder_Sprinter::FastBus::Read(uint16_t addr, bool isExecution)
+{
+    return _owner._sprinterMemory->FusedRead(addr, isExecution);
+}
+
+void PortDecoder_Sprinter::FastBus::Write(uint16_t addr, uint8_t value)
+{
+    _owner._sprinterMemory->FusedWrite(addr, value);
 }
 
 void PortDecoder_Sprinter::RefreshAccelerator()
@@ -853,6 +871,18 @@ void PortDecoder_Sprinter::BeforeMachineM1(uint16_t address)
     }
 }
 
+bool PortDecoder_Sprinter::RepeatM1IsInert(uint16_t address) const
+{
+    // BeforeMachineM1's two edges: on outside #0000-#3FFF, off at #3Dxx with #7FFD bit 4
+    if (_pld.configState != SprinterConfigState::Configured)
+        return true;
+    if (address >= 0x4000)
+        return _pld.dos != 0;
+    if ((address & 0xFF00) == 0x3D00)
+        return !(_pld.dos && (_pld.pn & 0x10));
+    return true;
+}
+
 void PortDecoder_Sprinter::OnMachineFrameRollover([[maybe_unused]] uint32_t frameLength)
 {
     if (_pld.configState == SprinterConfigState::Loading && !_pld.resetPending && SprinterPldConfig::OnFrame(_pld))
@@ -992,6 +1022,7 @@ void PortDecoder_Sprinter::LoadAccelState(const uint8_t* src)
 {
     std::memcpy(&_accelerator.State(), src, sizeof(SprinterAccelState));
     _accelerator.watchData = _accelerator.State().dir != 0;  // the engine watches data accesses while a mode is on
+    _accelerator.RefreshFetchQuiet();
 }
 
 const SprinterVideoRenderer& PortDecoder_Sprinter::VideoRenderer() const

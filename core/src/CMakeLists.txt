@@ -50,6 +50,7 @@ set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
+include(${ROOT_DIR}/cmake/RuntimeData.cmake)
 
 # liblzma
 add_subdirectory(3rdparty/liblzma)
@@ -107,6 +108,30 @@ if (NOT TARGET sam2695)
     add_subdirectory(3rdparty/sam2695 EXCLUDE_FROM_ALL)
 endif()
 
+# eve-emu - the FT812 of the TS-Conf VDAC2 card. A separate static library (docs/inprogress/2026-10-01-tsconf-vdac2/
+# eve-emu-architecture.md), developed in its own repository and vendored at 3rdparty/eve-emu (VENDORED.md there);
+# EVE_EMU_DIR points at another checkout (a developer working on both). Declared here, like opl4, so every entry point
+# that builds core (root, unreal-qt, unreal-videowall, the automation libraries) has the card: the option used to live
+# in the root file, and the builds configured from unreal-qt/ (docker/linux/build.sh, the CI test job) had no VDAC2.
+# With ENABLE_VDAC2=OFF a configuration asking for the card ([MISC] TS_VDAC2=1, the TSL-VDAC2 machine) fails to load.
+option(ENABLE_VDAC2 "TS-Conf VDAC2 card (FT812, eve-emu library)" ON)
+set(EVE_EMU_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/eve-emu" CACHE PATH "eve-emu checkout")
+if (ENABLE_VDAC2 AND NOT TARGET eve::emu)
+    if (NOT EXISTS "${EVE_EMU_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "VDAC2: eve-emu not found in ${EVE_EMU_DIR}. "
+                "Set EVE_EMU_DIR to an eve-emu checkout, or set ENABLE_VDAC2=OFF")
+    endif()
+    # Built-in decoders for CMD_INFLATE / CMD_LOADIMAGE (architecture decision A3)
+    set(EVE_DECODER_INFLATE BUILTIN CACHE STRING "" FORCE)
+    set(EVE_DECODER_PNG     BUILTIN CACHE STRING "" FORCE)
+    set(EVE_DECODER_JPEG    BUILTIN CACHE STRING "" FORCE)
+    set(EVE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(EVE_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+    set(EVE_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    message(STATUS ">>> VDAC2: eve-emu from ${EVE_EMU_DIR}")
+    add_subdirectory(${EVE_EMU_DIR} ${CMAKE_BINARY_DIR}/eve-emu)
+endif()
+
 # unreal-asm - cross-assembler source library (codecs, conversion, symbols), in-house at 3rdparty/unreal-asm, std-lib
 # only, own CMakeLists.txt: the library, the zxasm CLI, the examples and (with TESTS) unreal-asm-tests, which the
 # emulator's test-parallel runs. Design: docs/inprogress/2026-10-05-unreal-asm/
@@ -123,7 +148,7 @@ EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/opl4/" FALSE OUTVAR CPP_
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/sam2695/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/unreal-asm/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/gif/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt
-EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/eve-emu/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt (root ENABLE_VDAC2)
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "3rdparty/eve-emu/" FALSE OUTVAR CPP_FILES) # Has own CMakeLists.txt (ENABLE_VDAC2 below)
 EXCLUDE_FILES_FROM_DIR_IN_LIST("${CPP_FILES}" "/recording/" FALSE OUTVAR CPP_FILES) # Moved to separate library
 # OS-specific implementations (src/platform/<os>/): only the host's own.
 # posix/ serves macOS and Linux; macos/ and linux/ hold what differs between them
@@ -301,8 +326,9 @@ endif()
 
 # Link gif (ScreenCapture). PRIVATE: no public core header includes gif.h
 target_link_libraries(${PROJECT_NAME} PRIVATE gif)
-# The symbol module of unreal-asm reads and writes the label files (LabelManager is its facade)
-target_link_libraries(${PROJECT_NAME} PRIVATE unreal-asm)
+# The symbol module of unreal-asm reads and writes the label files (LabelManager is its facade); public, as the
+# facade hands out its symbol sets
+target_link_libraries(${PROJECT_NAME} PUBLIC unreal-asm)
 
 # Link libopl4 (MoonSound / YMF278B synthesis). PRIVATE: only core sources
 # include opl4 headers or call the library — public headers such as
@@ -323,7 +349,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE sam2695)
 target_compile_definitions(${PROJECT_NAME} PUBLIC UNREALNG_HAVE_SAM2695=1)
 
 
-# TS-Conf VDAC2 card: the FT812 library (root CMakeLists.txt, ENABLE_VDAC2). The
+# TS-Conf VDAC2 card: the FT812 library (eve-emu above, ENABLE_VDAC2). The
 # gate is PUBLIC for the same reason as UNREALNG_HAVE_OPL4: core-tests compiles core
 # sources itself and must see the same class layouts
 if (ENABLE_VDAC2)

@@ -1,0 +1,54 @@
+ORG #6A00
+PUT #6A00
+DW -10/3
+DW #8000/2
+DW -10%3
+DW 10%3
+DW -1>>1
+DW -1<1
+DW 1<-1
+DW 2&&1
+DW 0||5
+DW !5
+DW !0
+DW ^5
+DW 1+2*3
+DW 2*3+1
+DW 1|2&4
+DW 6&2|1
+DW 1<<2+1
+DW 5>3?=1
+DW #1234@<4
+DW #1234@>4
+DW 1?=1
+DW 2!=3
+DW 3<=3
+DW 4>=5
+DW 1^3
+DW -[2+3]
+DW [1|2]&4
+DW 100/7*7
+DW 7*100/7
+DW 65535+2
+DW 300*300
+DW 2<3<1
+DB 300
+DB -1
+DB "\13"
+DB "AB"
+lab: DW $
+DW .
+DS 3
+DB 1
+DW lab
+cnt: EQU 5
+DW cnt
+v: DL 1
+v: DL v+1
+DW v
+JR $+2
+LD A,-1
+LD A,#FFFF
+LD (IX-2),7
+DW #FFFF*#FFFF
+DW #8000>>15

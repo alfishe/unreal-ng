@@ -216,6 +216,14 @@ If either condition is false, `ReverseStep`/`ReverseContinue` are omitted from `
 | `monitor ttd bookmark add\|remove\|list ...` | `ttd bookmark ...` |
 | `monitor ttd resume-from-here` | `ttd resume-from-here` |
 
+**Every memory of the machine (memory spaces, 2026-10-08).** GDB's `m` / `M` packets reach the Z80 view, and `0x01PPAAAA` reaches RAM pages. These `monitor` commands reach every other memory:
+
+- `monitor regions` lists the device memories: the Sprinter video RAM, the TS-Conf CRAM / SFILE, the CMOS, the NeoGS / GS RAM, the MoonSound wave memory, the ZX-Evo flash, and the rest.
+- `monitor mem <space:offset> [len]` dumps any space in hex, at most #1000 bytes. The space is `cpu`, `ramN`, `romN`, `cacheN`, `ram`, or a region by name or alias. Example: `monitor mem vram:4800 20`.
+- `monitor ttd findlast <w|r|x> <space:offset>` searches the Sprinter's video RAM or fast RAM, e.g. `monitor ttd findlast w vram:4805`. The answer adds the offset.
+
+Numbers are hex without a prefix, as in the rest of the protocol (`gdbmonitormemory.h`).
+
 `monitor ttd find-last` additionally positions the client at the match (equivalent to `ttd seek --frame N --tstate T` after the search) so the user can immediately inspect registers / memory.
 
 **GDB-side usage example** (recording a demo run and stepping backwards):

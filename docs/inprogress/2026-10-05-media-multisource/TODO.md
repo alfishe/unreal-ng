@@ -1,6 +1,7 @@
 # Multi-source media — TODO
 
-**Status:** design written 2026-10-05; implementation on branch `media-multisource`: C0-C5 done ([phases/](phases/README.md)).
+**Status:** design written 2026-10-05; built C0-C11 and merged into master (2026-10-07); review round 1 done
+2026-10-09 ([phases/](phases/README.md), [benchmarks/](benchmarks/README.md)).
 PLAN.md row **#95**.
 
 ## Owner decisions (2026-10-05)
@@ -17,7 +18,22 @@ PLAN.md row **#95**.
 
 ## Remaining
 
-- [ ] Review round 1: requirements, architecture, FS compatibility, flatten strategies, TDD
+- [x] Review round 1 (2026-10-09): requirements, architecture, FS compatibility, flatten strategies, TDD checked
+  against the code; each document carries a "Review round 1" note. Bugs it found, fixed the same day: a passthrough
+  partition not checked against the slot's file systems; FAT12 and big FAT16 images not classified by the insert
+  check; interleaved and associated ISO files read as ordinary ones; `keep-both` not protecting a host-changed file
+  from a guest delete; a guest `rmdir` taking a host folder with host-only files under `trash` / `move`; a commit
+  leaving `<descriptor>.delta` behind. Open points it found (designed, not built):
+  - [ ] FR-6: a folder layer applies only `manifest.exclude`; the manifest's `order`, `files` names, `codepage` and `label` are ignored
+  - [ ] FR-14: the descriptor's per-directory `order` is parsed and ignored
+  - [ ] FR-21: `onBadName: replace` (only a report line today)
+  - [ ] NFR-M5: no extent budget (extents are only coalesced)
+  - [ ] FR-45: commit of a partitioned composite (refused: the base must be a graft)
+  - [x] D-8 (owner, 2026-10-09: a medium that leaves follows the policy): dispositions and the emulator closing run `writes.save` (`discard`, `ask` added), a failed commit / write-back falls back to S2 unless `strict`; eject / swap / insert / create / rescan take `strategy`, `onConflict`, `strict`
+  - [x] D-8 in Qt (2026-10-10): `SlotInfo::onRelease` (list / info `onRelease`), `MediaManager::Unsaved()`, `NC_MEDIA_DIRTY` carries `onRelease`, new `NC_MEDIA_CLEAN`; the main window's title mark and its close question (`ask` composites: the strategy dialog; changes that would be lost: save / close without saving / cancel). Owner's check on macOS / Windows pending
+  - [x] DT-16 (2026-10-09): `rescan` leaves a medium whose sources give the same content id; a dirty one over changed sources takes `save` / `export` / `discard`
+  - [ ] `fixedTime` takes Unix seconds only (the schema example is an ISO 8601 string)
+  - [ ] The insert check reads the first FAT partition of an MBR only; ISO `;n` versions are stripped, not filtered
 - [x] Owner questions answered 2026-10-05 (D-4…D-9 in [goals-and-requirements.md](goals-and-requirements.md) §3; guest FS support researched in [fs-compatibility.md](fs-compatibility.md) §6)
 - [x] C0 baseline: `HostFolderFat` corpus hashes and read benchmark numbers on master
 - [x] C1 core + `HostFolderFat` parity refactor
@@ -46,14 +62,22 @@ PLAN.md row **#95**.
   (store only written / non-zero sectors: a FAT32 volume is >= 32 MiB, 256 MiB with 4 KiB clusters, nearly all
   zeros), images held in memory instead of on disk where it pays, and packing back efficiently on save / flatten
   (S1-S4): skip zero and unchanged runs, sparse output files, compact VHD / CHD. Design first, in phases/
-- [ ] Benchmarks and charts C1-C8 with the results table filled in ([test-and-benchmark-plan.md](test-and-benchmark-plan.md) §5.5)
+- [x] Benchmarks and charts C1-C8 with the results table filled in ([test-and-benchmark-plan.md](test-and-benchmark-plan.md) §5.5,
+  [benchmarks/README.md](benchmarks/README.md)): every NFR met after the C11 fixes (host-file memory, the merge's keys,
+  an allocation per boot-sector read)
 - [x] User docs (`docs/features/media.md`) and recipe [`.recipe/media/compose-media.md`](../../../.recipe/media/compose-media.md)
 - [ ] Owner's check on macOS / Windows before master: the Qt flatten dialog (partitioned write-back too), `HostTrash`
   (Recycle Bin, `~/.Trash`), the C10e journal's positional I/O
 - [ ] Follow-up after C0-C9: library extraction and unification, phases X0-X13 ([library-extraction/](library-extraction/README.md)), PLAN.md row **#96**
-- [ ] **P2** ACC-C5, the NedoOS half (owner request 2026-10-05): NedoOS lists the contents of a composite CD on the
+- [ ] **P2, blocked upstream** ACC-C5, the NedoOS half (owner request 2026-10-05): NedoOS lists the contents of a composite CD on the
   ZX-Evo's ATAPI drive. Needs NedoOS's CD / ISO 9660 driver in the test fixtures (`testdata/machines/zxevo/nedoos/`);
   the ERS boot of `AUTORUN.ZX` already covers the drive path ([phases/c5-iso.md](phases/c5-iso.md) §9)
+  Checked 2026-10-09 against the NedoOS fork `alfishe/NedoOS` at `a750349`: NedoOS has no ISO 9660 and no ATAPI data
+  reads. The kernel's IDE driver (`src/kernel/fatfsdrv.asm`, `readidentIDE`) sees the ATAPI signature `0xEB14` and marks
+  the drive not ready; sector I/O is ATA READ `0x20` only; the drive letters are FAT and TR-DOS (`src/nedoos_en.md`). The
+  only CD program, `cdplay.com`, sends audio packets (TOC, PLAY MSF, PAUSE, STOP) to the slave drive. Nothing to test
+  until NedoOS gets an ATAPI READ(10) driver, an ISO 9660 layer and a drive letter for it. The work sized:
+  [2026-10-09-nedoos-atapi-cdfs/proposal.md](../2026-10-09-nedoos-atapi-cdfs/proposal.md) (PLAN.md #108).
 - [ ] **P2** DSS 1.71.66 MKDIR corrupts a `BuildDssHdd` disk (found 2026-10-06 while moving ACC-C3 to the newest DSS,
   whose shell has REN / DEL / ECHO but no COPY and no redirection). On BIOS 3.06 HF2, a plain session image (no
   composite): `mkdir c:\acc` writes LBA 160-220, the first clusters of SYSTEM.DOS, and `cd \acc` + `dir` answers

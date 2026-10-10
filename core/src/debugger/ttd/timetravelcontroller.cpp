@@ -122,11 +122,17 @@ TimeTravelController::~TimeTravelController()
         _context->ttdCoverage = nullptr;
     if (_context && _context->ttdWriteSink == this)
         _context->ttdWriteSink = nullptr;
-    if (_context && _context->ttdPortReads == &_portReads)
+    if (_context && _context->ttdPortReads == &_engine->BusReadsMutable())
         _context->ttdPortReads = nullptr;
-    if (_context && _context->ttdPortWrites == &_portWrites)
+    if (_context && _context->ttdPortWrites == &_engine->BusWritesMutable())
         _context->ttdPortWrites = nullptr;
-
+    // SyncMediaReadJournal bound these: the media manager and the CPU outlive this controller (Emulator::Release)
+    if (_context && _context->pMediaManager && _context->pMediaManager->GetReadJournal() == &_mediaReads)
+        _context->pMediaManager->SetReadJournal(nullptr);
+    if (_context && _context->ttdVectors &&
+        (_context->ttdVectors == &_engine->BusVectors() ||
+         (_mediaReads.engine && _context->ttdVectors == &_mediaReads.engine->BusVectors())))
+        _context->ttdVectors = nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -314,26 +320,12 @@ bool TimeTravelController::StartRecording()
     // first checkpoint already holds the 1x machine; SetState below is then a no-op
     EngageRecordingLock();
 
-    // Port-read journal: a fresh session records every IN from its baseline
-    // on - on configurations whose outside world reaches the CPU through IN
-    // alone (ttd-port-read-journal.md §2)
-    _portReads.Clear();
-    _portWrites.Clear();
-    // Recorded on every machine: the engine's bus data (Phase 3). v1 replays
-    // from them only where its gate allows
-    _portReads.StartRecording();
-    _portWrites.StartRecording();
+    // Every IN and OUT from the baseline on, on every machine: the engine's
+    // bus journals, recorded straight into once its session opens at the
+    // baseline capture (FeedShadow; port-journals-on-engine.md)
     _portJournalRecorded = true;
-    if (const char* reason = PortJournalUnsupportedReason())
-    {
-        _portJournalValid = false;
-        _portJournalOffReason = reason;
-    }
-    else
-    {
-        _portJournalValid = true;
-        _portJournalOffReason.clear();
-    }
+    _portJournalValid = true;
+    _portJournalOffReason.clear();
 
     // Capture the baseline checkpoint so the timeline always has at least
     // one entry. This is the only place we pay the full model-RAM copy cost
@@ -431,10 +423,9 @@ void TimeTravelController::StopRecording()
     }
     SetState(TTDSessionState::Idle);
     // The machine runs on unrecorded from here: I/O passes through
-    _portReads.Stop();
-    _portWrites.Stop();
+    StopBusRecording();
     SyncPortJournalHook();
-    // The engine gets the last frame's journals too (a replay from the last
+    // The engine gets the last frame's events too (a replay from the last
     // checkpoint reads them); it otherwise gets them at the next boundary
     FlushToEngine();
     SyncMediaReadJournal();   // no more recording into the engine
@@ -517,7 +508,7 @@ void TimeTravelController::InvalidateSession(const char* reason)
     _lastDropReason = reason ? reason : "";
     _recordingPaused = false;
 
-    _timeline.clear();
+    _timeline = {};   // its capacity too: without a session the session's memory is zero
     _blobBytes = 0;
     _dirtyScratch.clear();
     ReleaseModelPeripherals();  // serializers are session-scoped, like the timeline
@@ -543,8 +534,6 @@ void TimeTravelController::InvalidateSession(const char* reason)
     _coverageIndex.Clear();
     if (_context)
         _context->ttdCoverageActive = false;
-    _portReads.Clear();
-    _portWrites.Clear();
     _portJournalValid = false;
     _portJournalRecorded = false;
     _portJournalOffReason.clear();
@@ -601,7 +590,7 @@ void TimeTravelController::StopHistoryPlayback()
         _replayEngine->BusVectors().Stop();
     if (_context && (_context->ttdPortReads == _replayEngine->BusReadsForPlayback() ||
                      _context->ttdPortWrites == _replayEngine->BusWritesForPlayback()))
-        SyncPortJournalHook();   // the CPU's IN / OUT hooks back on the controller's own journals
+        SyncPortJournalHook();   // the CPU's IN / OUT hooks back to recording (or to none)
 }
 
 void TimeTravelController::SetState(TTDSessionState next)
@@ -794,6 +783,7 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
 {
     TTDSessionInfo info;
     info.state = _state;
+    info.lastCheck = _lastEngineCheck;
     info.checkpointCount    = _timeline.size();
     // The engine's piece store (Phase 5, C4a): its arena, the compressed
     // pieces in it, and the distinct 4 KB versions it holds - the most direct
@@ -855,12 +845,16 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
     info.portJournalOffReason = _portJournalOffReason;
     if (_portJournalValid)
     {
-        info.portReadCount = _portReads.Size();
-        info.portWriteCount = _portWrites.Size();
-        info.portJournalBytes = _portReads.SerializedBytes() + _portWrites.SerializedBytes();
+        info.portReadCount = _engine->BusReads().Size();
+        info.portWriteCount = _engine->BusWrites().Size();
+        info.portJournalBytes = _engine->BusReads().SerializedBytes() + _engine->BusWrites().SerializedBytes();
     }
-    info.portReplayValueMismatches = _portReads.ValueMismatches();
-    info.portReplayDivergences = _portReads.Divergences() + _portWrites.Divergences();
+    // The journals a replay plays (the controller's own copy, before 2026-10-09, never played: these read 0)
+    if (_replayEngine)
+    {
+        info.portReplayValueMismatches = _replayEngine->BusReads().ValueMismatches();
+        info.portReplayDivergences = _replayEngine->BusReads().Divergences() + _replayEngine->BusWrites().Divergences();
+    }
     info.lastDropReason = _lastDropReason;
     info.lastStopReason = _lastStopReason;
     info.recordingPaused = _recordingPaused;
@@ -951,7 +945,8 @@ TimeTravelController::SessionOperation::SessionOperation(const TimeTravelControl
     // running machine: park it for the operation. Already paused - by the
     // caller, an outer operation or a breakpoint - nothing to do
     Emulator* emu = _manager._context ? _manager._context->pEmulator : nullptr;
-    if (emu && _manager._state.load() != TTDSessionState::Idle && emu->IsRunning() && !emu->IsPaused())
+    const bool touched = _kind == Kind::Configure || _manager._state.load() != TTDSessionState::Idle;
+    if (emu && touched && emu->IsRunning() && !emu->IsPaused())
     {
         emu->Pause(false);
         emu->WaitForPauseConfirmation(1000);
@@ -961,7 +956,7 @@ TimeTravelController::SessionOperation::SessionOperation(const TimeTravelControl
 
 TimeTravelController::SessionOperation::~SessionOperation()
 {
-    if (_kind == Kind::Change)
+    if (_kind != Kind::Read)
     {
         // The outermost operation publishes, and only where reading the live
         // session is safe: on the machine's thread, or with no machine
@@ -1112,6 +1107,9 @@ size_t TimeTravelController::EstimateSessionHeapBytes() const
 TTDHeapBreakdown TimeTravelController::GetHeapBreakdown() const
 {
     TTDHeapBreakdown h;
+    // No session: nothing is held for one (the engine object's fixed tables are not session memory)
+    if (_timeline.empty() && !_engine->IsSessionOpen())
+        return h;
 
     // The engine (Phase 5, C4a): its piece store, reference tables and
     // capture state; checkpoints with the frame table; device state is in its
@@ -1147,9 +1145,9 @@ TTDHeapBreakdown TimeTravelController::GetHeapBreakdown() const
         h.writeJournal += e.writeJournal;
         h.coverage = _coverageIndex.HeapBytes();
         h.coverageSlack = _coverageIndex.CompressedSlackBytes();
-        h.portReads = _portReads.HeapBytes() + e.portReads + e.busVectors + e.mediaReads;
-        h.portWrites = _portWrites.HeapBytes() + e.portWrites;
-        h.portJournalSlack = _portReads.CompressedSlackBytes() + _portWrites.CompressedSlackBytes() + e.portJournalSlack;
+        h.portReads = e.portReads + e.busVectors + e.mediaReads;
+        h.portWrites = e.portWrites;
+        h.portJournalSlack = e.portJournalSlack;
         if (_frameCache)
             h.frameCache = _frameCache->Bytes();
     }
@@ -1375,6 +1373,8 @@ uint64_t TimeTravelController::BlackBoxFrames() const
 
 void TimeTravelController::SetBlackBoxMinutes(uint32_t minutes)
 {
+    // The UI's thread: the machine reads the window at its boundaries
+    const SessionOperation op{*this, SessionOperation::Kind::Configure};
     _blackBoxMinutes = minutes ? minutes : 5;
     if (_blackBox && _state == TTDSessionState::Recording)
         SetHistoryLimit(BlackBoxFrames(), 0);
@@ -1382,6 +1382,8 @@ void TimeTravelController::SetBlackBoxMinutes(uint32_t minutes)
 
 void TimeTravelController::SetBlackBox(bool on, uint32_t minutes)
 {
+    // The UI's thread: the machine reads these at every frame boundary (a restart due, an acceleration's end)
+    const SessionOperation op{*this, SessionOperation::Kind::Configure};
     _blackBox = on;
     _blackBoxMinutes = minutes ? minutes : 5;
     _blackBoxSuspended = false;
@@ -1552,9 +1554,7 @@ bool TimeTravelController::CaptureNow(TTDCheckpoint& out)
     for (const auto& [id, state] : _withoutRegions)
         _captureWork.deviceStateBytes += state.size();
 
-    // --- Port journal positions: a replay from here starts handing out records at them ---
-    out.portReadCursor = _portJournalRecorded ? _portReads.Size() : 0;
-    out.portWriteCursor = _portJournalRecorded ? _portWrites.Size() : 0;
+    // (The port journals' positions are the engine checkpoint's bus cursors)
 
     // --- Memory: the pieces written since the last capture go to the engine (all of them
     // on the first capture of a session, a rescan) ---
@@ -1787,14 +1787,6 @@ void TimeTravelController::FlushToEngine()
 {
     if (!_engine->IsSessionOpen())
         return;
-    if (_portJournalRecorded)
-    {
-        TTDPortRecord r;
-        for (; _shadowBusReads < _portReads.Size() && _portReads.Get(_shadowBusReads, r); ++_shadowBusReads)
-            _engine->AppendBusRead(r);
-        for (; _shadowBusWrites < _portWrites.Size() && _portWrites.Get(_shadowBusWrites, r); ++_shadowBusWrites)
-            _engine->AppendBusWrite(r);
-    }
     FeedV1Events(*_engine, _inputJournal, _externalEvents, _shadowEvents, UINT64_MAX, nullptr, &_toolEditPayloads,
                  &_shadowFacts);
     _shadowFacts.clear();
@@ -1862,7 +1854,10 @@ void TimeTravelController::EnterReplayMode()
     // ticks keep running, only the host boundary is held). Taken after the flag is set, so a resume reconcile
     // never sees the hold without its replay; the user's master mute is not touched
     if (_context->pSoundManager)
+    {
         _replayHostHold = SoundManager::HostOutputHold(_context->pSoundManager, SoundManager::HostHoldReason::TtdReplay);
+        _context->pSoundManager->beginReplayTelemetry();   // replayed spans do not count again
+    }
 
     // The replay observers - the access probe, the frame-cache capture, the
     // dirty marks a mid-frame resume needs - live on the debug memory path.
@@ -1894,6 +1889,8 @@ void TimeTravelController::ExitReplayMode()
 
     // The hold goes first, then the flag (see EnterReplayMode)
     _replayHostHold.Release();
+    if (_context->pSoundManager)
+        _context->pSoundManager->endReplayTelemetry();
     _context->ttdReplayActive = false;
     _inReplayMode = false;
     if (_context->pMediaManager)
@@ -2315,11 +2312,12 @@ void TimeTravelController::OnMachineReset()
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     DisarmInputPlayback();
-    if (_portReads.GetMode() == TTDPortJournal::Mode::Play || _portWrites.GetMode() == TTDPortJournal::Mode::Play)
+    if (_replayEngine && (_replayEngine->BusReads().GetMode() == TTDPortJournal::Mode::Play ||
+                          _replayEngine->BusWrites().GetMode() == TTDPortJournal::Mode::Play))
     {
         // Off the recorded history: I/O is live again
-        _portReads.Stop();
-        _portWrites.Stop();
+        _replayEngine->BusReadsMutable().Stop();
+        _replayEngine->BusWritesMutable().Stop();
         SyncPortJournalHook();
     }
     if (_state == TTDSessionState::Detached)
@@ -2339,8 +2337,6 @@ void TimeTravelController::RestoreCheckpointForReplay(const TTDCheckpoint& cp)
     // from its checkpoint's cursors; the live devices still answer, and a
     // differing answer is counted, not used
     const int64_t index = _replayEngine->CheckpointIndexOf({0, cp.time.frame, 0});
-    _portReads.Stop();
-    _portWrites.Stop();
     if (index >= 0 && _portJournalRecorded)
     {
         const TTDEngineCheckpoint* ecp = _replayEngine->Checkpoint(size_t(index));
@@ -2353,66 +2349,16 @@ void TimeTravelController::RestoreCheckpointForReplay(const TTDCheckpoint& cp)
         SyncPortJournalHook();
 }
 
-const char* TimeTravelController::PortJournalUnsupportedReason() const
-{
-    if (!_context)
-        return "no emulator context";
-
-    // The first version isolates machines whose outside world reaches the CPU
-    // through IN alone. DMA writes memory without the CPU reading anything,
-    // so these configurations still replay against the live devices
-    // (ttd-port-read-journal.md §2)
-    switch (_context->config.mem_model)
-    {
-        case MM_NEXT:
-            return "ZX Next: its DMA moves data into RAM without IN (not isolated by the first version)";
-        default:
-            break;
-    }
-    if (_context->pSoundManager)
-    {
-        const GeneralSoundCard* gs = _context->pSoundManager->getGeneralSound();
-        // Only where the card's ZX-bus carries the host's memory cycles: through the Sprinter's ISA ZX-bus adapter
-        // (I/O cycles only) the ZX-DMA never installs, and every host access to the card is an ISA cycle of the
-        // machine's own deterministic state, replayed from the card's blob
-        if (gs && gs->implementation() == GSCardImplementation::NGS &&
-            (!_context->pPortDecoder || _context->pPortDecoder->ZxBusMemoryCycles()))
-            return "NeoGS: its ZX-DMA serves host memory reads without IN (not isolated by the first version)";
-    }
-    // A machine that owns its INT logic (IInterruptSource) may put the IM2
-    // vector on the bus from a device - a read the journals do not record
-    // (TTD v2 FR-21). The classic machines leave it to the floating bus
-    // A machine whose vector and stepped engines follow recorded state only says so (PortDecoder::
-    // TtdEnginesSealed: the Sprinter); for it the two checks below do not apply
-    const bool enginesSealed = _context->pPortDecoder && _context->pPortDecoder->TtdEnginesSealed();
-    if (const Z80* z80 = (_context->pCore && !enginesSealed) ? _context->pCore->GetZ80() : nullptr)
-    {
-        if (z80->GetInterruptSource())
-            return "the machine's interrupt source supplies the IM2 vector, which the first version does not record";
-        // A model engine stepped with the CPU (IMachineStepHook: TSConf's DMA
-        // and TSU) changes what the program sees without an IN
-        if (z80->GetMachineStepHook())
-            return "a machine engine stepped with the CPU (DMA) changes memory without IN (not isolated by the "
-                   "first version)";
-    }
-    return nullptr;
-}
-
 void TimeTravelController::DropPortJournal(const char* reason)
 {
     if (!_portJournalValid && !_portJournalRecorded)
         return;
     _portJournalRecorded = false;
-    MLOGWARNING("TimeTravelController — port-read journal dropped: %s; replay reads the live devices again", reason);
-    _portReads.Clear();
-    _portWrites.Clear();
+    MLOGWARNING("TimeTravelController — port journals dropped: %s; replay reads the live devices again", reason);
+    // The records before the gap stay in the engine (a replay does not play them: _portJournalRecorded)
+    StopBusRecording();
     _portJournalValid = false;
     _portJournalOffReason = reason;
-    for (TTDCheckpoint& cp : _timeline)
-    {
-        cp.portReadCursor = 0;
-        cp.portWriteCursor = 0;
-    }
     SyncPortJournalHook();
 }
 
@@ -2420,8 +2366,33 @@ void TimeTravelController::SyncPortJournalHook()
 {
     if (!_context)
         return;
-    _context->ttdPortReads = _portReads.GetMode() == TTDPortJournal::Mode::Off ? nullptr : &_portReads;
-    _context->ttdPortWrites = _portWrites.GetMode() == TTDPortJournal::Mode::Off ? nullptr : &_portWrites;
+    // Recording: into the recording engine's bus journals (as sector reads and vectors: SyncMediaReadJournal)
+    TimeTravelEngine* engine = _state == TTDSessionState::Recording && _portJournalRecorded && _shadowEngine &&
+                                       _shadowEngine->IsSessionOpen()
+                                   ? _shadowEngine
+                                   : nullptr;
+    TTDPortJournal* reads = engine ? &engine->BusReadsMutable() : nullptr;
+    TTDPortJournal* writes = engine ? &engine->BusWritesMutable() : nullptr;
+    _context->ttdPortReads = reads && reads->GetMode() == TTDPortJournal::Mode::Record ? reads : nullptr;
+    _context->ttdPortWrites = writes && writes->GetMode() == TTDPortJournal::Mode::Record ? writes : nullptr;
+}
+
+void TimeTravelController::ResumeBusRecording()
+{
+    if (!_portJournalRecorded || !_shadowEngine || !_shadowEngine->IsSessionOpen())
+        return;
+    // Appended at the journals' ends: a replay may have left them playing or off
+    _shadowEngine->BusReadsMutable().StartRecording();
+    _shadowEngine->BusWritesMutable().StartRecording();
+}
+
+void TimeTravelController::StopBusRecording()
+{
+    if (!_shadowEngine)
+        return;
+    for (TTDPortJournal* j : {&_shadowEngine->BusReadsMutable(), &_shadowEngine->BusWritesMutable()})
+        if (j->GetMode() == TTDPortJournal::Mode::Record)
+            j->Stop();
 }
 
 TTDPortSearchResult TimeTravelController::SearchPortEvents(const TTDPortQuery& q) const
@@ -2443,10 +2414,8 @@ TTDPortSearchResult TimeTravelController::SearchPortEvents(const TTDPortQuery& q
         result.error = "the recording is running and still writing the journals: pause or stop it first";
         return result;
     }
-    // Recording (paused): the live journals hold the current frame too;
-    // otherwise the engine holds the session's bus journals (a loaded one too)
-    if (_state == TTDSessionState::Recording)
-        return ttd::SearchPortEvents(_portReads, _portWrites, q);
+    // The engine's bus journals: recorded straight into (the current frame
+    // too), or the loaded session's
     return ttd::SearchPortEvents(_engine->BusReads(), _engine->BusWrites(), q);
 }
 
@@ -3016,6 +2985,11 @@ void TimeTravelController::PublishSeekedFrame()
         MLOGERROR("TimeTravelController::PublishSeekedFrame — MessageCenter post failed: %s",
                   e.what());
     }
+
+    // 3. The audio activity indicators (telemetry): the machine stands paused at the target, so nothing plays -
+    // the LEDs and HUD nudges the replay or the run before the seek lit go dark, as on a pause
+    if (_context->pSoundManager)
+        _context->pSoundManager->onEmulatorPaused();
 }
 
 
@@ -3173,6 +3147,13 @@ bool TimeTravelController::SeekToInternal(const TTDTimePoint& target, TTDSeekRes
                 outResult->reached = false;
                 outResult->arrivedAt = TTDTimePoint{cp.time.frame, at};
                 outResult->haltReason = TTDSeekHaltReason::ExternalEvent;
+                // The marker the replay stops at, as recorded: its kind and reason (a loaded session's too)
+                for (const TTDExternalEvent& m : _externalEvents.SnapshotEvents())
+                    if (m.time == outResult->arrivedAt)
+                    {
+                        outResult->blockingMarker = m;
+                        break;
+                    }
             }
             return false;
         }
@@ -3569,15 +3550,8 @@ bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
                               _timeline.back().time.frame == cut.frame;
     _coverageIndex.DropFramesFrom(cut.frame, !atCheckpoint);
 
-    // Port records past the resume point are dead future. By time: the
-    // replay read the engine's bus journals, so these recorders' cursors did
-    // not move (records at the cut stay, as in the engine)
-    if (_portJournalRecorded)
-    {
-        const TTDTimePoint after{cut.frame, cut.tInFrame + 1};
-        _portReads.TruncateTo(_portReads.LowerBound(after));
-        _portWrites.TruncateTo(_portWrites.LowerBound(after));
-    }
+    // Port records past the resume point are dead future: the engine cuts
+    // its bus journals at the cut with the rest (TruncateTimelineAfter)
 
     // Phase 4 — write journal: convert the resume point to a globalT and
     // drop records strictly past it. Records exactly at it are kept.
@@ -3603,11 +3577,7 @@ bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
     DisarmInputPlayback();  // live input again (journaled while recording)
     // A loaded session had collection switched off; the new history is live
     _context->ttdCoverageActive = _enableCoverageIndex;
-    if (_portJournalRecorded)
-    {
-        _portReads.StartRecording();
-        _portWrites.StartRecording();
-    }
+    ResumeBusRecording();
     SyncPortJournalHook();
 
     MLOGINFO("TimeTravelController::ResumeRecordingFrom — resumed at "
@@ -3696,11 +3666,7 @@ bool TimeTravelController::ResumeRecordingLive()
     SetState(TTDSessionState::Recording);
     DisarmInputPlayback();  // live input again (journaled while recording)
     _context->ttdCoverageActive = _enableCoverageIndex;
-    if (_portJournalRecorded)
-    {
-        _portReads.StartRecording();
-        _portWrites.StartRecording();
-    }
+    ResumeBusRecording();
     SyncPortJournalHook();
 
     MLOGINFO("TimeTravelController::ResumeRecordingLive — resumed at (frame=%llu, tInFrame=%u); "
@@ -3782,6 +3748,10 @@ void TimeTravelController::EnforceHistoryLimit()
 
 void TimeTravelController::SyncTimelineFront()
 {
+    // An engine without a session holds no history to follow: a test's shadow engine (SetShadowEngine) takes the
+    // captures, this one stays closed, and "nothing held" erased the whole timeline, then read its front
+    if (!_engine->IsSessionOpen())
+        return;
     const size_t held = _engine->CheckpointCount() - _engine->FirstCheckpoint();
     if (_timeline.size() <= held)
         return;
@@ -3799,11 +3769,7 @@ void TimeTravelController::SyncTimelineFront()
     _inputJournal.DropBefore(front.time);
     _externalEvents.DropBefore(front.time);
     _bookmarks.DropBefore(front.time);
-    if (_portJournalRecorded)
-    {
-        _portReads.DropBefore(front.portReadCursor);
-        _portWrites.DropBefore(front.portWriteCursor);
-    }
+    // (the engine dropped the bus journals with its segments)
     if (_inputPlaybackArmed)
         _inputCursor = _inputJournal.FirstIndexAtOrAfter(InputEventTimeNow(_context));
     ClearFrameCache();
@@ -4036,11 +4002,14 @@ void TimeTravelController::CheckEngineCheckpoint(size_t index, bool forReplay)
 
 void TimeTravelController::SetReplaySource(TimeTravelEngine* engine)
 {
+    // Null: the session's own engine (a seek always has one to restore from)
+    if (!engine)
+        engine = _engine.get();
     _replayEngine = engine;
     _lastEngineCheck = {};
-    if (!engine)
-        return;
     _replayRomSignature = ComputeRomSignature();
+    if (engine == _engine.get())
+        return;   // the session's own engine is this machine's
     // A session fed from a file holds no live pointers: bind it to this machine
     std::string unbound;
     if (engine->BindLive(LiveRegions(), _peripherals.DeviceEntries(), &unbound) != 0)
@@ -4096,8 +4065,6 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
             source.ev.args[0] = static_cast<uint8_t>(TTDReplaySource::RzxPlayback);
             _shadowFacts.push_back(source);
         }
-        _shadowBusReads = _portReads.Size();
-        _shadowBusWrites = _portWrites.Size();
         _shadowLastLength = 0;
         _shadowRomSignature = ComputeRomSignature();   // the ROM set does not change within a session (D39)
         _shadowMediaKnown = false;
@@ -4198,16 +4165,6 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
         addDevicePieces(static_cast<uint32_t>(i + 1), _shadowDeviceRegions[i],
                         _shadowRescan || _shadowDeviceRegions[i].compareEachCapture);
     _shadowRescan = false;
-
-    // Bus data up to this boundary (the checkpoint keeps where it stands)
-    if (_portJournalRecorded)
-    {
-        TTDPortRecord r;
-        for (; _shadowBusReads < _portReads.Size() && _portReads.Get(_shadowBusReads, r); ++_shadowBusReads)
-            engine.AppendBusRead(r);
-        for (; _shadowBusWrites < _portWrites.Size() && _portWrites.Get(_shadowBusWrites, r); ++_shadowBusWrites)
-            engine.AppendBusWrite(r);
-    }
 
     if (!engine.CaptureFrame(in, error))
     {
@@ -4312,11 +4269,6 @@ void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const
                 ++it;
         }
         _shadowEvents.facts = 0;
-        if (_portJournalRecorded)
-        {
-            _shadowBusReads = std::min<uint64_t>(_shadowBusReads, _portReads.Size());
-            _shadowBusWrites = std::min<uint64_t>(_shadowBusWrites, _portWrites.Size());
-        }
         // The writes after the resume point go with the future they belonged to
         _engine->Writes().DropAfter(GlobalT(cut));
         _engine->Writes().SetSegments(JournalSegments());
@@ -4534,7 +4486,7 @@ void TimeTravelController::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint
     rec.value    = newVal;
     // Journaled writes always have a RAM page (Memory gates on kPhysPageNone),
     // and RAM pages are 0..255, so the record's byte holds it exactly.
-    rec.physPage = static_cast<uint8_t>(physPage);
+    SetRecordPage(rec, physPage);
     (void)oldVal;  // Not stored in the compact 12-byte record (TDD §9.3)
 
     if (_writeJournal)
@@ -4676,7 +4628,7 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournal(uint64_t fromT, ui
             rec.isIo = 0;
             rec.m1pc = h.pc;
             rec.value = h.value;
-            rec.physPage = static_cast<uint8_t>(h.physPage);   // as the live journal stores it
+            SetRecordPage(rec, h.physPage);   // as the live journal stores it
             f.records.push_back(rec);
         }
         r.records += f.records.size();
@@ -4905,7 +4857,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
         if (rec.addr < q.addrFrom || rec.addr > q.addrTo) return false;
         if (q.hasValueFilter && rec.value != q.value) return false;
         if (q.hasPcFilter && (rec.m1pc < q.pcFrom || rec.m1pc > q.pcTo)) return false;
-        if (q.hasPhysPageFilter && rec.physPage != q.physPage) return false;   // bank-aware (TDD §9.4)
+        if (q.hasPhysPageFilter && RecordPage(rec) != q.physPage) return false;   // bank-aware (TDD §9.4)
         return true;
     };
 
@@ -4929,7 +4881,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
                     answer.time = TimePointAt(rec->globalT);
                     answer.pc = rec->m1pc;
                     answer.value = rec->value;
-                    answer.physPage = PhysPage{rec->physPage};
+                    answer.physPage = RecordPage(*rec);
                     answer.access = TTDAccessType::Write;
                     answer.addr = rec->addr;
                     reportWindow(answer.time, std::min(TimePointAt(beforeGlobalT), SessionEndPosition()));
@@ -5884,10 +5836,6 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out)
     _peripherals.CaptureAll(out.peripheralBlobs);
     out.inputCursor = _inputCursor;
     out.inputPlaybackArmed = _inputPlaybackArmed;
-    out.portReadMode = _portReads.GetMode();
-    out.portReadCursor = _portReads.Cursor();
-    out.portWriteMode = _portWrites.GetMode();
-    out.portWriteCursor = _portWrites.Cursor();
     if (_replayEngine)
     {
         out.busReadMode = _replayEngine->BusReads().GetMode();
@@ -5992,8 +5940,6 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
     _inputCursor = snap.inputCursor;
     _inputPlaybackArmed = snap.inputPlaybackArmed;
     UpdateInputWorkFlag();
-    _portReads.RestorePosition(snap.portReadMode, snap.portReadCursor);
-    _portWrites.RestorePosition(snap.portWriteMode, snap.portWriteCursor);
     if (_replayEngine)
     {
         // The engine's journals where the caller had them (a machine on the recorded history keeps playing them)

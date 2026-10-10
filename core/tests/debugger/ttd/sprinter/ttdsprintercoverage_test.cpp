@@ -9,6 +9,7 @@
 // then a few hundred recorded frames compared twice - seconds per workload.
 
 #include <fstream>
+#include <map>
 #include <set>
 #include <iterator>
 
@@ -18,6 +19,8 @@
 #include "emulator/io/ide/ata/atapicdrom.h"
 #include "_helpers/cdtestdisc.h"
 #include "_helpers/scratchfolder.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/ttd/ttdcontrol.h"
 #include "ttdsprintermachine.h"
 
 namespace
@@ -489,3 +492,293 @@ TEST_F(TTDSprinterShipped_Test, CovoxBlaster_TheRingPlaysWhileTheHostRefillsIt)
     ExpectExactReplay(0, last, "the Covox-Blaster, from the start");
     ExpectExactReplay(last / 2, last - last / 2, "the Covox-Blaster, from the middle");
 }
+
+/// "Who wrote this byte" in the Sprinter's own memories (2026-10-08): find-last with space vram names a byte of the
+/// 256 KB video RAM by its offset, space cache one of the 64 KB fast RAM. A host program maps graphics page #50 into
+/// window 1 (#A2), sets PORT_Y #12 (#89), turns the fast RAM on in window 0 (IN #FB) and writes both in a loop: the
+/// video RAM through the graphics window (#4005 is offset #12 * 1024 + 5) and the fast RAM at #0123, then the
+/// accelerator fills 4 bytes through the graphics window at #4100 (video RAM #4900) and of RAM at #9100 (its stores are
+/// the LD (HL),A's; it does not reach the fast RAM). With the
+/// write journal (the answer from the journal) and without it (from replay), the search finds the writing instructions
+class TTDSprinterSpaces_Test : public TTDSprinterMachine_Test, public ::testing::WithParamInterface<bool>
+{
+protected:
+    /// The program above, recorded for 6 frames (the journal on with the parameter); `atBoundary` looks at every
+    /// recorded boundary
+    /// The program, loaded at #8000 on a booted machine, the CPU about to run it (nothing recorded)
+    void LoadTheProgram()
+    {
+        PowerOn(true);
+        Skip(150);
+        RunToBoundary();
+        const uint8_t code[] = {
+            0xF3,                    // DI
+            0x3E, 0x50, 0xD3, 0xA2,  // LD A,#50 : OUT (#A2),A    window 1: graphics page #50
+            0x3E, 0x12, 0xD3, 0x89,  // LD A,#12 : OUT (#89),A    PORT_Y
+            0xDB, 0xFB,              // IN A,(#FB)                 window 0: fast RAM
+            // loop (#800B):
+            0x14,                    // INC D
+            0x7A,                    // LD A,D
+            0x32, 0x05, 0x40,        // #800D LD (#4005),A         video RAM #4805
+            0x32, 0x23, 0x01,        // #8010 LD (#0123),A         fast RAM
+            0x3A, 0x06, 0x48,        // #8013 LD A,(#4806)         a read of video RAM #4806 (written by nobody)
+            0x21, 0x00, 0x41,        // LD HL,#4100
+            0x52, 0x1E, 0x04, 0x49,  // LD D,D : LD E,4 : LD C,C   the accelerator: length 4, fill
+            0x77, 0x40,              // #801D LD (HL),A : LD B,B   video RAM #4900-#4903
+            0x21, 0x00, 0x91,        // LD HL,#9100
+            0x52, 0x1E, 0x04, 0x49,  // LD D,D : LD E,4 : LD C,C
+            0x77, 0x40,              // #8026 LD (HL),A : LD B,B   RAM #9100-#9103
+            0x06, 0x00, 0x10, 0xFE,  // LD B,0 : DJNZ $
+            0x18, 0xDD};             // JR loop
+        for (size_t i = 0; i < sizeof code; i++)
+            _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), code[i]);
+        _z80->pc = 0x8000;
+        _z80->iff1 = _z80->iff2 = 0;
+        _z80->halted = 0;   // the BIOS may sit in HALT
+
+    }
+
+    void RecordTheProgram(const std::function<void()>& atBoundary = {})
+    {
+        ASSERT_NO_FATAL_FAILURE(LoadTheProgram());
+        ASSERT_TRUE(_ttd->SetEnableWriteJournal(GetParam()));
+        StartRecording();
+        Record(6, {}, atBoundary);
+        _ttd->StopRecording();
+    }
+};
+
+TEST_P(TTDSprinterSpaces_Test, FindLastNamesTheWriterOfAVideoAndAFastRamByte)
+{
+    ASSERT_NO_FATAL_FAILURE(RecordTheProgram());
+    const SprinterPldState& pld = _decoder->GetPldState();
+    ASSERT_EQ(pld.portY, 0x12);
+    ASSERT_EQ(pld.Cell(SprinterCode::Page1), 0x50);
+    ASSERT_TRUE(pld.cacheOn);
+    const uint32_t cacheOffset = (pld.romRg & 0x03) * 0x4000u + 0x123;
+    const uint8_t last = static_cast<uint8_t>(_z80->d);
+    const uint8_t video = _decoder->GetVideoRam().Read(0x4805);
+    EXPECT_TRUE(video == last || video == static_cast<uint8_t>(last - 1)) << "the program writes the video RAM";
+
+    auto findLast = [&](const char* space, uint32_t offset) {
+        return ttd::TTDControl(_context).Execute(
+            {"find-last", {{"addr", std::to_string(offset)}, {"space", space}, {"access", "write"}}});
+    };
+    const ttd::TTDReply v = findLast("vram", 0x4805);
+    ASSERT_TRUE(v.Ok()) << v.message;
+    ASSERT_TRUE(v.body.find("found")->b) << "the video RAM write";
+    EXPECT_EQ(v.body.find("pc")->i, 0x800D);
+    EXPECT_EQ(v.body.find("space")->s, "vram");
+    EXPECT_EQ(v.body.find("offset")->i, 0x4805);
+    EXPECT_EQ(v.body.find("phys_page")->kind, StateNode::Kind::Null) << "not a RAM page";
+
+    const ttd::TTDReply c = findLast("cache", cacheOffset);
+    ASSERT_TRUE(c.Ok()) << c.message;
+    ASSERT_TRUE(c.body.find("found")->b) << "the fast RAM write";
+    EXPECT_EQ(c.body.find("pc")->i, 0x8010);
+    EXPECT_EQ(c.body.find("space")->s, "cache");
+    EXPECT_EQ(c.body.find("offset")->i, cacheOffset);
+
+    // The accelerator's stores past the first: the video RAM by its space, RAM by the Z80 address
+    ASSERT_EQ(_decoder->GetVideoRam().Read(0x4903), _decoder->GetVideoRam().Read(0x4900)) << "the accelerator filled";
+    const ttd::TTDReply fv = findLast("vram", 0x4903);
+    ASSERT_TRUE(fv.Ok()) << fv.message;
+    ASSERT_TRUE(fv.body.find("found")->b) << "the accelerator's video RAM store";
+    EXPECT_EQ(fv.body.find("pc")->i, 0x801D);
+    const ttd::TTDReply fr = findLast("ram", 0x9103);
+    ASSERT_TRUE(fr.Ok()) << fr.message;
+    ASSERT_TRUE(fr.body.find("found")->b) << "the accelerator's RAM store";
+    EXPECT_EQ(fr.body.find("pc")->i, 0x8026);
+
+    // A read through the graphics window, by the video RAM's address (from replay: the journal holds writes)
+    const ttd::TTDReply rd = ttd::TTDControl(_context).Execute(
+        {"find-last", {{"addr", std::to_string(0x4806)}, {"space", "vram"}, {"access", "read"}}});
+    ASSERT_TRUE(rd.Ok()) << rd.message;
+    ASSERT_TRUE(rd.body.find("found")->b) << "the video RAM read";
+    EXPECT_EQ(rd.body.find("pc")->i, 0x8013);
+    EXPECT_EQ(rd.body.find("access")->s, "read");
+    EXPECT_EQ(fr.body.find("addr")->i, 0x9103);
+
+    // A neighbour nobody wrote, in each space; the fast RAM's in-page address #0123 in the video RAM (another space)
+    for (const auto& [space, offset] :
+         {std::pair{"vram", 0x4806u}, std::pair{"cache", cacheOffset + 1}, std::pair{"vram", 0x0123u}})
+    {
+        const ttd::TTDReply none = findLast(space, offset);
+        ASSERT_TRUE(none.Ok()) << none.message;
+        EXPECT_FALSE(none.body.find("found")->b) << space;
+    }
+}
+
+// The contents of the video and fast RAM at a past checkpoint (memory-at) and what changed between two (memory-diff),
+// from the engine's store without moving the machine; the coverage index answers for a video RAM byte (space)
+TEST_P(TTDSprinterSpaces_Test, MemoryAtMemoryDiffAndCoverageReadTheSpaces)
+{
+    std::map<uint64_t, uint8_t> seen;   // video RAM #4805 at every recorded boundary
+    ASSERT_NO_FATAL_FAILURE(RecordTheProgram([&] { seen[Frame()] = _decoder->GetVideoRam().Read(0x4805); }));
+    ASSERT_GE(seen.size(), 4u);
+    const uint64_t now = Frame();
+    auto run = [&](const char* verb, std::map<std::string, std::string> options) {
+        return ttd::TTDControl(_context).Execute({verb, std::move(options)});
+    };
+
+    // Each boundary's byte, from the store; the machine stays where it is
+    for (const auto& [frame, value] : seen)
+    {
+        const ttd::TTDReply at = run("memory-at", {{"space", "vram"}, {"offset", "0x4805"}, {"length", "2"},
+                                                   {"frame", std::to_string(frame)}});
+        ASSERT_TRUE(at.Ok()) << at.message;
+        EXPECT_EQ(at.body.find("space")->s, "sprinter.vram");
+        EXPECT_TRUE(at.body.find("exact")->b);
+        char expected[3];
+        std::snprintf(expected, sizeof expected, "%02X", value);
+        EXPECT_EQ(at.body.find("hex")->s.substr(0, 2), expected) << "frame " << frame;
+    }
+    EXPECT_EQ(Frame(), now) << "memory-at does not seek";
+
+    // Between the first and the last boundary: the CPU's byte and nothing else in the video RAM (the accelerator fills
+    // #4900-#4903 with the byte the program read from #4806, which nobody writes)
+    const uint64_t first = seen.begin()->first;
+    const uint64_t last = seen.rbegin()->first;
+    const ttd::TTDReply diff = run("memory-diff", {{"space", "sprinter.vram"}, {"from_frame", std::to_string(first)},
+                                                   {"to_frame", std::to_string(last)}});
+    ASSERT_TRUE(diff.Ok()) << diff.message;
+    std::vector<std::pair<int64_t, int64_t>> ranges;
+    for (const StateNode& r : diff.body.find("ranges")->items)
+        ranges.emplace_back(r.find("offset")->i, r.find("length")->i);
+    EXPECT_EQ(ranges, (std::vector<std::pair<int64_t, int64_t>>{{0x4805, 1}}));
+    EXPECT_EQ(diff.body.find("changed_bytes")->i, 1);
+    const ttd::TTDReply cache = run("memory-diff", {{"space", "cache"}, {"from_frame", std::to_string(first)},
+                                                    {"to_frame", std::to_string(last)}});
+    ASSERT_TRUE(cache.Ok()) << cache.message;
+    const uint32_t cacheOffset = (_decoder->GetPldState().romRg & 0x03) * 0x4000u + 0x123;
+    ASSERT_EQ(cache.body.find("ranges")->items.size(), 1u);
+    EXPECT_EQ(cache.body.find("ranges")->items[0].find("offset")->i, cacheOffset);
+    EXPECT_EQ(cache.body.find("space")->s, "sprinter.fastram");
+
+    // The coverage index by the video RAM's address: #4805 written in every frame, #4806 only read
+    const ttd::TTDReply written = run("coverage-scan", {{"kind", "written"}, {"space", "vram"}, {"addr_from", "0x4805"},
+                                                        {"addr_to", "0x4805"}});
+    ASSERT_TRUE(written.Ok()) << written.message;
+    EXPECT_GE(written.body.find("matching_frames")->i, 4);
+    EXPECT_EQ(written.body.find("space")->s, "vram");
+    EXPECT_EQ(written.body.find("offset_from")->s, "0x04805");
+    const ttd::TTDReply read = run("coverage-probe", {{"frame", std::to_string(last - 1)}, {"kind", "read"}, {"space", "vram"},
+                                                      {"addr_from", "0x4806"}, {"addr_to", "0x4806"}});
+    ASSERT_TRUE(read.Ok()) << read.message;
+    EXPECT_TRUE(read.body.find("touched")->b) << "read through the window";
+    const ttd::TTDReply notWritten = run("coverage-probe", {{"frame", std::to_string(last - 1)}, {"kind", "written"},
+                                                            {"space", "vram"}, {"addr_from", "0x4806"}, {"addr_to", "0x4806"}});
+    ASSERT_TRUE(notWritten.Ok()) << notWritten.message;
+    EXPECT_FALSE(notWritten.body.find("touched")->b);
+
+    // Refusals say why
+    EXPECT_EQ(run("memory-at", {{"space", "nope"}, {"frame", "0"}}).error, ttd::TTDControlError::BadRequest);
+    const uint64_t start = _ttd->GetCheckpoint(0)->time.frame;
+    EXPECT_EQ(run("memory-at", {{"space", "vram"}, {"frame", std::to_string(start - 1)}}).error, ttd::TTDControlError::BadRequest)
+        << "before the first checkpoint";
+    EXPECT_EQ(run("coverage-scan", {{"space", "neogs.ram"}, {"addr_from", "0"}}).error, ttd::TTDControlError::BadRequest)
+        << "no accesses recorded there";
+}
+
+// A watchpoint on a video RAM page (vram1: offsets #4000-#7FFF of the video RAM): the write through the graphics
+// window at #4005 (video RAM #4805) stops the run after that instruction; the read of #4806 stops a read watchpoint;
+// nothing else in the page is touched, so a watchpoint on #4807 never fires
+TEST_P(TTDSprinterSpaces_Test, AVideoRamWatchpointStopsTheWriterAndTheReader)
+{
+    ASSERT_NO_FATAL_FAILURE(LoadTheProgram());
+    _emulator->GetFeatureManager()->setFeature(Features::kBreakpoints, true);
+    _context->pMemory->UpdateFeatureCache();
+    BreakpointManager& brk = *_emulator->GetBreakpointManager();
+    auto watch = [&](uint8_t access, uint16_t offset) {
+        BreakpointSpec spec;
+        spec.type = BRK_MEMORY;
+        spec.access = access;
+        spec.address = offset;
+        std::string error;
+        EXPECT_TRUE(BreakpointManager::ParsePageInto("vram1", spec, error)) << error;
+        const uint16_t id = brk.AddBreakpoint(spec, error);
+        EXPECT_NE(id, BRK_INVALID) << error;
+        return id;
+    };
+    const uint16_t never = watch(BRK_MEM_WRITE | BRK_MEM_READ, 0x0807);
+    const uint16_t written = watch(BRK_MEM_WRITE, 0x0805);
+    _emulator->RunNCPUCycles(200, false);
+    Emulator::BreakpointStop stop = _emulator->LastDirectStop();
+    ASSERT_TRUE(stop.hit) << "the write through the window";
+    EXPECT_EQ(stop.breakpointId, written);
+    EXPECT_EQ(stop.kind, BreakpointHitKind::MemoryWrite);
+    EXPECT_EQ(stop.address, 0x4005) << "the CPU address of the access";
+    EXPECT_EQ(_z80->pc, 0x8010) << "after LD (#4005),A";
+    EXPECT_NE(brk.GetBreakpointListAsString().find("in vram1"), std::string::npos) << brk.GetBreakpointListAsString();
+
+    brk.RemoveBreakpointByID(written);
+    const uint16_t read = watch(BRK_MEM_READ, 0x0806);
+    _emulator->RunNCPUCycles(200, false);
+    stop = _emulator->LastDirectStop();
+    ASSERT_TRUE(stop.hit) << "the read through the window";
+    EXPECT_EQ(stop.breakpointId, read);
+    EXPECT_EQ(stop.kind, BreakpointHitKind::MemoryRead);
+    EXPECT_EQ(_z80->pc, 0x8016) << "after LD A,(#4806)";
+    EXPECT_EQ(brk.GetBreakpointById(never)->hitCount, 0u);
+
+    // A CPU address breakpoint of the same number is another breakpoint: #0807 in the Z80 view is not the video RAM
+    BreakpointSpec cpu;
+    cpu.type = BRK_MEMORY;
+    cpu.access = BRK_MEM_WRITE | BRK_MEM_READ;
+    cpu.address = 0x0807;
+    std::string error;
+    const uint16_t cpuId = brk.AddBreakpoint(cpu, error);
+    EXPECT_NE(cpuId, BRK_INVALID) << error;
+    EXPECT_NE(cpuId, never) << "not merged with the video RAM watchpoint";
+    // Refusals: execution, a range across pages, a page past the video RAM
+    BreakpointSpec bad;
+    bad.type = BRK_MEMORY;
+    bad.access = BRK_MEM_EXECUTE;
+    ASSERT_TRUE(BreakpointManager::ParsePageInto("vram2", bad, error));
+    EXPECT_EQ(brk.AddBreakpoint(bad, error), BRK_INVALID);
+    EXPECT_FALSE(BreakpointManager::ParsePageInto("vram16", bad, error));
+}
+
+// memory-at inside a frame (tinframe): the frame's checkpoint and its writes up to that point - the video RAM byte
+// the program rewrites every loop and the RAM the accelerator fills read as a seek to the same point shows them.
+// Without the journal the frame's writes are rebuilt by replay, and the machine stays where it was
+TEST_P(TTDSprinterSpaces_Test, MemoryAtInsideAFrameMatchesASeekThere)
+{
+    ASSERT_NO_FATAL_FAILURE(RecordTheProgram());
+    const uint64_t frame = _ttd->GetCheckpoint(3)->time.frame;
+    const uint64_t here = Frame();
+    std::vector<std::pair<uint32_t, std::string>> asked;
+    for (uint32_t tin : {1000u, 25000u, 60000u, 90000u})
+    {
+        const ttd::TTDReply at = ttd::TTDControl(_context).Execute(
+            {"memory-at", {{"space", "vram"}, {"offset", "0x4805"}, {"length", "1"}, {"frame", std::to_string(frame)},
+                           {"tinframe", std::to_string(tin)}}});
+        ASSERT_TRUE(at.Ok()) << at.message;
+        EXPECT_EQ(at.body.find("tinframe")->i, tin);
+        const ttd::TTDReply ram = ttd::TTDControl(_context).Execute(
+            {"memory-at", {{"space", "ram"}, {"offset", std::to_string(_context->pMemory->GetRAMPageForBank2() * 0x4000u + 0x1100)},
+                           {"length", "1"}, {"frame", std::to_string(frame)}, {"tinframe", std::to_string(tin)}}});
+        ASSERT_TRUE(ram.Ok()) << ram.message;
+        asked.emplace_back(tin, at.body.find("hex")->s + ram.body.find("hex")->s);
+    }
+    EXPECT_EQ(Frame(), here) << "memory-at moves nothing";
+    std::set<std::string> distinct;
+    for (const auto& [tin, hex] : asked)
+    {
+        distinct.insert(hex);
+        ASSERT_TRUE(_ttd->SeekTo({frame, tin}));
+        char seen[8];
+        std::snprintf(seen, sizeof seen, "%02X%02X", _decoder->GetVideoRam().Read(0x4805),
+                      _context->pMemory->DirectReadFromZ80Memory(0x9100));
+        EXPECT_EQ(hex, seen) << "frame " << frame << " t=" << tin;
+    }
+    EXPECT_GE(distinct.size(), 3u) << "the byte changes inside the frame";
+
+    // Other memories are read at frame starts only; tinframe there is refused, not ignored
+    EXPECT_EQ(ttd::TTDControl(_context).Execute({"memory-at", {{"space", "rtc.cmos"}, {"frame", std::to_string(frame)},
+                                                               {"tinframe", "100"}}}).error,
+              ttd::TTDControlError::BadRequest);
+}
+
+INSTANTIATE_TEST_SUITE_P(Journal, TTDSprinterSpaces_Test, ::testing::Bool(),
+                         [](const auto& info) { return info.param ? "FromTheJournal" : "FromReplay"; });

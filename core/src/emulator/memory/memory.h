@@ -243,6 +243,25 @@ public:
         return _bank_ram_page_cache[(addr >> 14) & 0b11];
     }
 
+    /// @brief The page time travel names a byte of window `bank` by: its RAM page, or - when the window shows the
+    /// fast RAM ("cache") - a virtual page of that space (ttdphyspage.h); kPhysPageNone for ROM
+    inline ttd::PhysPage TtdPageOfBank(uint8_t bank) const
+    {
+        const ttd::PhysPage ram = _bank_ram_page_cache[bank & 3];
+        return ram != ttd::kPhysPageNone ? ram : TtdSpacePageOfBank(bank);
+    }
+    /// The fast RAM's virtual page behind window `bank`, or kPhysPageNone (out of line: ROM and cache windows only)
+    ttd::PhysPage TtdSpacePageOfBank(uint8_t bank) const;
+
+    /// @brief A write or a data read of a byte the RAM-page hooks do not see - another memory space's virtual page
+    /// and the offset in it, or a RAM page an engine writes outside the CPU's bus (the Sprinter's accelerator) and
+    /// its Z80 address: the write journal, the access probe and the coverage index, as MemoryWriteDebug /
+    /// MemoryReadDebug do for the CPU's RAM accesses. `write` false: a read
+    void TtdNoteAccess(ttd::PhysPage page, uint16_t addr, uint8_t value, bool write);
+    /// A watchpoint on a page of another memory space (the Sprinter's video RAM, "vramN"): the access at `offset`
+    /// of that page, made through the CPU address `addr`, stops the run like a CPU-address watchpoint
+    void CheckSpaceWatch(ttd::PhysPage page, uint16_t offset, uint16_t addr, bool write);
+
     /// @brief Does the active model have a TR-DOS (Beta Disk) ROM?
     ///
     /// TR-DOS paging is gated structurally by the CF_SETDOSROM session flags
@@ -346,6 +365,14 @@ public:
     /// The fast read ignores isExecution (no per-access tracking there), so
     /// the parameter is marked maybe_unused
     virtual uint8_t MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution);
+    /// A halted CPU's idle opcode fetch at `addr` through the fast read, repeated: true when it reads a byte and
+    /// nothing else (an engine may then run such fetches in one go, Z84C15Engine). A model whose read has a side
+    /// effect in some window (a bus cycle on a card) answers false there
+    virtual bool RepeatFetchIsPure(uint16_t addr) const
+    {
+        (void)addr;
+        return true;
+    }
     virtual uint8_t MemoryReadDebug(uint16_t addr, bool isExecution);
     void MemoryWriteFast(uint16_t addr, uint8_t value);
     void MemoryWriteDebug(uint16_t addr, uint8_t value);

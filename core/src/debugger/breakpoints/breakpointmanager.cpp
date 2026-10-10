@@ -1,5 +1,7 @@
 #include "breakpointmanager.h"
 
+#include "debugger/ttd/ttdphyspage.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -103,7 +105,21 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         error = "the range ends before it starts";
         return BRK_INVALID;
     }
-    if (spec.type == BRK_MEMORY)
+    if (spec.spacePage != 0xFFFF)
+    {
+        // A watchpoint on another memory space: read / write, one 16 KB page
+        if (spec.type != BRK_MEMORY || (spec.access & BRK_MEM_EXECUTE) || !(spec.access & (BRK_MEM_READ | BRK_MEM_WRITE)))
+        {
+            error = "a page of another memory space (vramN) takes read and write watchpoints";
+            return BRK_INVALID;
+        }
+        if (spec.hasPage || spec.slotOnly || (spec.address >> 14) != (end >> 14))
+        {
+            error = "a vram watchpoint's range stays inside its 16 KB page (offsets 0..#3FFF)";
+            return BRK_INVALID;
+        }
+    }
+    else if (spec.type == BRK_MEMORY)
     {
         if (spec.portMask != 0xFFFF)
         {
@@ -174,6 +190,7 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         d->pageType = spec.pageType;
         d->slotOnly = spec.slotOnly;
     }
+    d->spacePage = spec.spacePage;
     d->portMask = spec.portMask;
     d->hitMode = spec.hitMode;
     d->hitTarget = spec.hitMode == BRK_HIT_ALWAYS ? 0 : spec.hitTarget;
@@ -270,12 +287,8 @@ bool BreakpointManager::ParseHitModeName(const std::string& text, BreakpointHitM
 bool BreakpointManager::ApplyScriptOptions(BreakpointSpec& spec, const std::string& page, int32_t to, bool slotOnly,
                                            int32_t mask, const std::string& hits, std::string& error)
 {
-    if (!page.empty())
-    {
-        if (!ParsePageSpec(page, spec.page, spec.pageType, error))
-            return false;
-        spec.hasPage = true;
-    }
+    if (!page.empty() && !ParsePageInto(page, spec, error))
+        return false;
     if (to >= 0)
     {
         if (to > 0xFFFF)
@@ -427,7 +440,12 @@ BreakpointManager::BreakpointStatusInfo BreakpointManager::GetLastTriggeredBreak
     info.group = bp->group;
     info.page = PageSpecName(*bp);
     info.hitCount = bp->hitCount;
-    if (bp->matchType == BRK_MATCH_BANK_ADDR)
+    if (bp->spacePage != 0xFFFF)
+    {
+        info.pageKind = "vram";
+        info.pageNumber = static_cast<uint8_t>(bp->spacePage - ttd::kVramPageBase);
+    }
+    else if (bp->matchType == BRK_MATCH_BANK_ADDR)
     {
         info.pageKind = PageKindName(bp->pageType);
         info.pageNumber = bp->page;
@@ -777,6 +795,32 @@ bool BreakpointManager::ParsePageSpec(const std::string& text, uint8_t& page, Me
     return true;
 }
 
+bool BreakpointManager::ParsePageInto(const std::string& text, BreakpointSpec& spec, std::string& error)
+{
+    std::string lower = text;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (lower.rfind("vram", 0) == 0)
+    {
+        const std::string number = lower.substr(4);
+        char* end = nullptr;
+        const unsigned long value = number.empty() ? 99 : std::strtoul(number.c_str(), &end, 10);
+        if (number.empty() || *end != '\0' || value >= ttd::kSpacePages)
+        {
+            error = "a video RAM page is vram0..vram15 (16 KB each), got '" + text + "'";
+            return false;
+        }
+        spec.spacePage = static_cast<uint16_t>(ttd::kVramPageBase + value);
+        return true;
+    }
+    if (!ParsePageSpec(text, spec.page, spec.pageType, error))
+    {
+        error += " (or vram0..vram15, the Sprinter's video RAM)";
+        return false;
+    }
+    spec.hasPage = true;
+    return true;
+}
+
 const char* BreakpointManager::PageKindName(MemoryBankModeEnum pageType)
 {
     return pageType == BANK_ROM ? "rom" : (pageType == BANK_CACHE ? "cache" : "ram");
@@ -784,6 +828,8 @@ const char* BreakpointManager::PageKindName(MemoryBankModeEnum pageType)
 
 std::string BreakpointManager::PageSpecName(const BreakpointDescriptor& breakpoint)
 {
+    if (breakpoint.spacePage != 0xFFFF)
+        return "vram" + std::to_string(breakpoint.spacePage - ttd::kVramPageBase);
     if (breakpoint.matchType != BRK_MATCH_BANK_ADDR)
         return {};
     return std::string(PageKindName(breakpoint.pageType)) + std::to_string(breakpoint.page);
@@ -883,8 +929,9 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
         // Format address - fixed width 8 characters
         if (bp->type == BRK_MEMORY || bp->type == BRK_IO)
         {
-            oss << "0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << bp->z80address
-                << std::setfill(' ');
+            // std::right: the type column left std::left set, which padded #38 as "3800"
+            oss << "0x" << std::hex << std::uppercase << std::right << std::setw(4) << std::setfill('0') << bp->z80address
+                << std::setfill(' ') << std::dec;
             // Ensure exact 8 characters width
             oss << std::string(8 - 6, ' ');  // 6 = "0x" + 4 hex digits
         }
@@ -921,7 +968,7 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
         if (bp->isRange)
             oss << " to 0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << bp->z80addressEnd
                 << std::setfill(' ') << std::dec;
-        if (bp->matchType == BRK_MATCH_BANK_ADDR)
+        if (bp->matchType == BRK_MATCH_BANK_ADDR || bp->spacePage != 0xFFFF)
             oss << " in " << PageSpecName(*bp) << (bp->slotOnly ? " (this slot only)" : "");
         if (bp->type == BRK_IO && bp->portMask != 0xFFFF)
             oss << " mask 0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << bp->portMask
@@ -1538,6 +1585,34 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address)
     return result;
 }
 
+uint16_t BreakpointManager::ResolveSpace(uint16_t spacePage, uint16_t offset, bool write)
+{
+    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+        return BRK_INVALID;
+    uint16_t result = BRK_INVALID;
+    for (const auto& [id, bp] : _breakpointMapByID)
+    {
+        if (!bp || !bp->active || bp->spacePage != spacePage || !(bp->memoryType & (write ? BRK_MEM_WRITE : BRK_MEM_READ)))
+            continue;
+        if (offset < (bp->z80address & 0x3FFF) || offset > (bp->EndAddress() & 0x3FFF))
+            continue;
+        const uint32_t n = ++bp->hitCount;
+        bool stop = true;
+        switch (bp->hitMode)
+        {
+            case BRK_HIT_ALWAYS: stop = true; break;
+            case BRK_HIT_EQUAL: stop = n == bp->hitTarget; break;
+            case BRK_HIT_AT_LEAST: stop = n >= bp->hitTarget; break;
+            case BRK_HIT_MULTIPLE: stop = bp->hitTarget != 0 && n % bp->hitTarget == 0; break;
+        }
+        if (stop && result == BRK_INVALID)
+            result = bp->breakpointID;
+    }
+    if (result != BRK_INVALID)
+        _lastTriggeredBreakpointID = result;
+    return result;
+}
+
 uint16_t BreakpointManager::ResolvePort(int direction, uint16_t port)
 {
     if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
@@ -1577,8 +1652,8 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slot, uint16_t firs
 
 bool BreakpointManager::CoversMemory(const BreakpointDescriptor& bp, uint16_t address, const MemoryPageDescriptor& page)
 {
-    if (bp.type != BRK_MEMORY)
-        return false;
+    if (bp.type != BRK_MEMORY || bp.spacePage != 0xFFFF)
+        return false;   // a space page's watchpoint never matches a CPU address
     if (bp.matchType == BRK_MATCH_ADDR)
         return address >= bp.z80address && address <= bp.EndAddress();
     // Physical: the page, the offsets, and for slot-only the slot
@@ -1646,7 +1721,10 @@ uint16_t BreakpointManager::AddMemoryBreakpoint(BreakpointDescriptor* descriptor
     switch (descriptor->matchType)
     {
         case BRK_MATCH_ADDR:
-            key = 0xFFFF'0000 | descriptor->z80address;
+            // A space page's watchpoint keys apart from the CPU address of the same number
+            key = descriptor->spacePage != 0xFFFF
+                      ? (0xFE00'0000u | (static_cast<uint32_t>(descriptor->spacePage & 0xFF) << 16) | descriptor->z80address)
+                      : (0xFFFF'0000 | descriptor->z80address);
             break;
         case BRK_MATCH_BANK_ADDR:
             // Key format: [pageType:8][page:8][z80address:16]
@@ -1844,6 +1922,11 @@ void BreakpointManager::RebuildFilters()
         }
         if (bp->type != BRK_MEMORY)
             continue;
+        if (bp->spacePage != 0xFFFF)
+        {
+            _hotState.hasSpace = 1;   // matched by its memory's hooks (ResolveSpace), not the CPU filters
+            continue;
+        }
         for (int k = 0; k < 3; k++)
         {
             const uint8_t bit = k == BRK_KIND_EXEC ? BRK_MEM_EXECUTE : (k == BRK_KIND_READ ? BRK_MEM_READ : BRK_MEM_WRITE);

@@ -10,6 +10,13 @@ class EmulatorContext;
 /// @brief Memory a device owns outside the CPU's RAM / ROM pages, reached by name on every
 /// automation interface (Sprinter automation audit G5: the Sprinter's 256 KB video RAM).
 ///
+/// The list has two sources. A machine declares regions through PortDecoder::CollectMemoryRegions (writes take
+/// the device's path, with its side effects). Every memory the time-travel engine records is listed too, by the
+/// engine's region name ("neogs.ram", "moonsound.wave", "vdac2.ram_g", "evo.flash", ...), unless a declared
+/// region already covers it (IDeviceMemoryRegion::TtdRegion): those are read straight from the device, and
+/// written straight to the bytes where that is safe (memory-spaces design, docs/inprogress/2026-10-08-memory-spaces).
+/// Names are canonical dotted ones; the older short names stay as aliases ("vram" = "sprinter.vram").
+///
 /// A machine lists its regions through PortDecoder::CollectMemoryRegions; the automation
 /// interfaces only call the functions below, so the WebAPI (/memory/regions,
 /// /memory/region/{name}, /memory/page/{name}/{n}), the CLI (`memory region ...`), Lua and
@@ -29,8 +36,12 @@ class IDeviceMemoryRegion
 public:
     virtual ~IDeviceMemoryRegion() = default;
 
-    /// Short lower-case name ("vram"), the key on every interface
+    /// Canonical lower-case name ("sprinter.vram"), the key on every interface
     virtual const char* Name() const = 0;
+    /// Other names it answers to, comma-separated ("vram"); empty when none
+    virtual const char* Aliases() const { return ""; }
+    /// The time-travel engine's region holding these bytes ("sprinter.vram"), or null
+    virtual const char* TtdRegion() const { return nullptr; }
     /// What it is and how it is laid out (one or two sentences)
     virtual const char* Description() const = 0;
     virtual uint32_t Size() const = 0;
@@ -50,7 +61,7 @@ namespace DeviceMemory
 {
 /// The machine's regions now (empty on a machine without any)
 std::vector<IDeviceMemoryRegion*> Regions(EmulatorContext* context);
-/// By name (case-insensitive); null with `error` when there is none
+/// By name or alias (case-insensitive); null with `error` when there is none
 IDeviceMemoryRegion* Find(EmulatorContext* context, const std::string& name, std::string* error = nullptr);
 
 /// [offset, offset + length) of the region; false with `error` when out of range
@@ -65,6 +76,9 @@ bool Save(EmulatorContext* context, const std::string& name, const std::string& 
 /// Load a file into the region at `offset` through Write (the whole file, clipped at the end); false with `error`
 bool Load(EmulatorContext* context, const std::string& name, const std::string& path, uint32_t offset, size_t& written,
           std::string& error);
+
+/// Drop what the registry keeps for this machine (its time-travel region views); the context is going away
+void Forget(EmulatorContext* context);
 
 /// Parse "1234", "0x4D2", "#4D2" (offsets and lengths on every interface); false on garbage
 bool ParseNumber(const std::string& text, uint32_t& value);

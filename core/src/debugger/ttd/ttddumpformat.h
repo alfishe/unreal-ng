@@ -233,7 +233,7 @@ constexpr uint16_t kMaxPeripheralBlobsPerCheckpoint = 64;
 /// are tens of bytes; the largest today are the classic General Sound card and
 /// the lightweight player, which still carry their memory (the classic card up
 /// to 512 KB of RAM, which does not compress when it holds module data). NeoGS keeps its RAM and flash
-/// out of v1 blobs - large memories wait for TTD v2 memory regions. The writer
+/// out of v1 blobs (the engine records them as regions 4 and 5). The writer
 /// refuses a larger blob and the reader treats one as corruption, so a file
 /// that saves also loads.
 constexpr uint32_t kMaxPeripheralBlobBytes = 16u << 20;

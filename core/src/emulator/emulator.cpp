@@ -20,6 +20,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "debugger/labels/labelmanager.h"
 #include <atomic>
 #include <cstdlib>
 
@@ -290,6 +291,10 @@ bool Emulator::Init()
             result = true;
         }
     }
+
+    // The labels of the known ROMs the machine runs (symbol bundles)
+    if (result)
+        ApplySymbolBundles();
 
     // Create TTD manager (per parent TDD §10.2). Always constructed; the
     // per-frame capture cost is gated by the cached _feature_ttd_enabled
@@ -1039,7 +1044,10 @@ void Emulator::Reset(bool hardReset)
     {
         ROM& rom = *_core->GetROM();
         if (rom.LoadROM())
+        {
             rom.CalculateSignatures();
+            ApplySymbolBundles();
+        }
         else
             MLOGERROR("Emulator::Reset - the selected ROM could not be loaded");
         if (_context && _context->pTimeTravelHooks)
@@ -1479,6 +1487,9 @@ void Emulator::WaitWhilePaused()
     // park). The caller executes the machine, so it may read the session
     if (_context && _context->pTimeTravelHooks)
         _context->pTimeTravelHooks->OnMachineParking();
+    // The picture up to the beam for whoever looks while parked (Screen::CatchesUpOnEvents)
+    if (Screen* screen = _context ? _context->pScreen : nullptr; screen && screen->CatchesUpOnEvents())
+        screen->UpdateScreen();
     NoteDebugChange();   // a stop (a breakpoint's park inside the frame) the debugger snapshot's seq counts
 
     std::unique_lock<std::mutex> lock(_pauseWaitMutex);
@@ -2206,10 +2217,9 @@ bool Emulator::LoadTape(const std::string& path, std::string* error)
     // TTD v1 (P1.6): tape insertion is a session-invalidating event in v1
     // (parent TDD §4.2 + §5 row 3 — tape *insertion/start/stop* commands
     // invalidate; only playback position is checkpointed). Refused while recording.
+    // The session ends only once the tape is in (MediaManager::Insert): a file that fails to load keeps it
     if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadTape, error))
         return false;
-    if (_context->pTimeTravelHooks)
-        _context->pTimeTravelHooks->OnLoad(ttd::TTDLoadKind::Tape, "tape-load");
 
     // The format registry probes and loads (every TapeLoaderRegistry format,
     // a folder built into a TZX); the swap happens with the emulator thread
@@ -2220,6 +2230,7 @@ bool Emulator::LoadTape(const std::string& path, std::string* error)
     InsertOptions options;
     options.immediate = true;
     options.disposition = Disposition::Discard;  // a tape is never written: nothing to lose
+    options.ttdReason = "tape-load";
 
     const bool wasRunning = !IsPaused();
     if (wasRunning)
@@ -2337,9 +2348,6 @@ bool Emulator::CreateBlankDisk(uint8_t drive, BlankDiskFormat format, uint8_t cy
     blank.type = MediaSourceType::Blank;
     auto medium = std::make_unique<Medium>(blank, AccessMode::Session, BlankDiskFormatName(format), std::move(image));
 
-    if (_context->pTimeTravelHooks)
-        _context->pTimeTravelHooks->OnLoad(ttd::TTDLoadKind::DiskCreate, "disk-create");
-
     // The swap happens with the emulator thread parked, at once (no swap delay)
     const bool wasRunning = !IsPaused();
     if (wasRunning)
@@ -2347,6 +2355,7 @@ bool Emulator::CreateBlankDisk(uint8_t drive, BlankDiskFormat format, uint8_t cy
     InsertOptions options;
     options.immediate = true;
     options.disposition = Disposition::Discard;  // a load always replaced the disk, writes and all
+    options.ttdReason = "disk-create";
     const MediaResult inserted = _context->pMediaManager->Insert(slotId, std::move(medium), options);
     if (wasRunning)
         Resume();
@@ -2399,12 +2408,10 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
     }
 
     // TTD v1 (P1.6): disk image swap teleports FDC + media state
-    // (parent TDD §4.2 + §12.2). Refused while recording; otherwise drop the
-    // session before the loader runs.
+    // (parent TDD §4.2 + §12.2). Refused while recording; otherwise the
+    // session ends once the disk is in (MediaManager::Insert): a disk that fails to load keeps it.
     if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadDisk, error))
         return false;
-    if (_context->pTimeTravelHooks)
-        _context->pTimeTravelHooks->OnLoad(ttd::TTDLoadKind::Disk, "disk-load");
 
     // The format registry probes and loads; the swap happens with the emulator
     // thread parked, at once (no swap delay: the caller expects the disk in)
@@ -2414,6 +2421,7 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
     InsertOptions options;
     options.immediate = true;
     options.disposition = Disposition::Discard;  // a load always replaced the disk, writes and all
+    options.ttdReason = "disk-load";
 
     const bool wasRunning = !IsPaused();
     if (wasRunning)
@@ -2749,6 +2757,9 @@ Emulator::DirectStepScope::~DirectStepScope()
             _emulator._lastStop.reason = _emulator._directStop.hit ? DebugStop::Reason::Breakpoint : DebugStop::Reason::Step;
             _emulator._lastStop.breakpoint = _emulator._directStop;
         }
+        // What the run left mid-frame on a screen that catches up on its own events (Screen::CatchesUpOnEvents)
+        if (Screen* screen = _emulator._context ? _emulator._context->pScreen : nullptr; screen && screen->CatchesUpOnEvents())
+            screen->UpdateScreen();
         _emulator.NoteDebugChange();   // the direct run stopped
         // The GUI's one refresh, now it may read; the payload says whether a breakpoint ended the run
         auto* payload = new CpuStepPayload(_emulator.GetId());
@@ -2879,11 +2890,15 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
     TStateRunBudget budget = TStateRunBudget::Frames(z80._frameLimit, frames);
 
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    // A halted CPU's idle cycles may run in one go, as one per step would: those that start inside the budget
+    Z80::IdleSkipScope idleSkip(z80, 0);
 
     while (!budget.Reached() && !RunHalted())
     {
         const uint32_t prevT = z80.t;
         const uint32_t limitBefore = z80._frameLimit;
+        const uint64_t budgetEnd = static_cast<uint64_t>(prevT) + budget.Remaining();
+        z80.idleSkipLimit = budgetEnd < UINT32_MAX ? static_cast<uint32_t>(budgetEnd) : UINT32_MAX;
 
         bool frameCompleted = false;
         ExecuteStep(skipBreakpoints, &frameCompleted);
@@ -2922,9 +2937,13 @@ void Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints)
     // 64-bit: the target is counted from the current frame start and a long run spans many frames
     uint64_t targetT = static_cast<uint64_t>(z80.t) + tStates;
 
+    // A halted CPU's idle cycles may run in one go, as one per step would: those that start before the target
+    Z80::IdleSkipScope idleSkip(z80, 0);
+
     while (z80.t < targetT && !RunHalted())
     {
         const uint32_t limitBefore = z80._frameLimit;
+        z80.idleSkipLimit = targetT < UINT32_MAX ? static_cast<uint32_t>(targetT) : UINT32_MAX;
 
         bool frameCompleted = false;
         ExecuteStep(skipBreakpoints, &frameCompleted);
@@ -3749,3 +3768,23 @@ std::string Emulator::GetStatistics()
 
 
 // endregion
+
+void Emulator::ApplySymbolBundles()
+{
+    const char* setting = std::getenv("UNREAL_SYMBOL_BUNDLES");
+    if (setting && std::string(setting) == "0")
+        return;
+    if (!_context || !_context->pDebugManager || !_context->pMemory || !_core || !_core->GetROM())
+        return;
+    LabelManager* labels = _context->pDebugManager->GetLabelManager();
+    if (!labels)
+        return;
+    ROM& rom = *_core->GetROM();
+    std::vector<std::string> pages;
+    for (uint8_t i = 0; i < rom.GetROMBanksLoaded(); i++)
+        pages.push_back(rom.CalculateSignature(_context->pMemory->ROMPageHostAddress(i), PAGE_SIZE));
+    std::string folder = FileHelper::PathCombine(FileHelper::GetResourcesPath(), "symbols");
+    if (!FileHelper::FileExists(FileHelper::PathCombine(folder, "manifest.json")))
+        folder = FileHelper::PathCombine(FileHelper::GetExecutablePath(), "symbols");
+    labels->ApplyBundles(folder, pages);
+}

@@ -95,7 +95,7 @@ PROMETHEUS 48K from `tap/prometheus-48.tap` (the repository's), 48K model, tape 
 | A save whose two middle bytes are not the checksum | the same wait (an early probe had fixed bytes `#37 #FF`) | the checksum rule of §2; the encoder computes it |
 | LOAD reads header and data with one ROM LD-BYTES call each, entered at `#0562` (not `#0556`) | the reconstructed source; works with the emulator's fast loading | only SAVE / VERIFY chain two parts (`#05C8` LD-MARKER) |
 | The installer puts PROMETHEUS at 24000 with the monitor: up to about 42400 | the probe at 40000 would collide; it uses 60000 / 62000 | pick addresses above the source and table (status line: `I <end> <U-TOP>`) |
-| Real-time tape loading fails in this emulator build | with `fast_tape` and `turbo_tape` off even a plain `LOAD "" CODE` of a two-block TAP stops with "R Tape loading error, 0:1", the tape `paused` at block 1 | an emulator issue (tape playback across the pause between blocks), not PROMETHEUS': noted for the tape code, keep fast loading on |
+| Real-time tape loading failed in this emulator build (fixed) | with `fast_tape` and `turbo_tape` off, WebAPI play after `LOAD` stopped with "R Tape loading error, 0:1" | WebAPI play and the ROM autostart at `#0564` both restarted the header block, and its edges were generated twice (appended): the header played twice and LD-BYTES got it where it expected the data block. `Tape::generateBitstream` now replaces the edges (test `TapeFastLoad_Test.RestartedBlockPlaysOnce`) |
 
 ## 7. Open items
 
@@ -103,4 +103,3 @@ PROMETHEUS 48K from `tap/prometheus-48.tap` (the repository's), 48K model, tape 
 |---|---|
 | TR-DOS adaptations | `trdos-prometheus48.trd` and the D40 / D80 builds may keep records and table in two files; the codec reads one save (the tape layout) |
 | GENS import (`GENS` command) | PROMETHEUS reads GENS / MASM tape text; not needed for the conversion |
-| Real-time tape loading | the emulator issue of §6 |

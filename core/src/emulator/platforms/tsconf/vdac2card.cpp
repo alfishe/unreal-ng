@@ -2,6 +2,8 @@
 
 #include "vdac2card.h"
 
+#include "debugger/ttd/ttdserializable.h"
+
 // The card exists only in builds with the FT812 library (CMake ENABLE_VDAC2);
 // without it a VDAC2 configuration is refused at load (config.cpp)
 #ifdef ENABLE_VDAC2
@@ -9,6 +11,7 @@
 #include <eve/eve.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <type_traits>
@@ -523,6 +526,7 @@ struct CardBlob
     uint64_t edges[Vdac2Card::kMaxPendingEdges];
 };
 static_assert(std::is_trivially_copyable_v<CardBlob>, "the card blob is a plain byte image");
+
 static_assert(sizeof(CardBlob) == 8 + 8 * 4 + 8 * Vdac2Card::kMaxPendingEdges, "card blob layout drift");
 constexpr uint8_t kCardBlobVersion = 1;
 
@@ -542,6 +546,14 @@ uint64_t HashBytes(uint64_t h, const uint8_t* data, size_t size)
     return h;
 }
 }  // namespace
+
+std::vector<ttd::TTDTimeField> Vdac2Card::TtdTimeFields()
+{
+    // Measured 2026-10-09: frameBase and position advance one frame's tacts every frame at an idle machine
+    return {{static_cast<uint16_t>(offsetof(CardBlob, frameBase)), 8},
+            {static_cast<uint16_t>(offsetof(CardBlob, position)), 8},
+            {static_cast<uint16_t>(offsetof(CardBlob, nextEvent)), 8}};
+}
 
 size_t Vdac2Card::TtdStateSize() const
 {
@@ -861,6 +873,7 @@ void Vdac2Card::ReadFrameMetrics(Vdac2Control::FrameMetrics& out, bool, bool) { 
 bool Vdac2Card::PresentedFrameMetrics(Vdac2Control::FrameMetrics&) const { return false; }
 void Vdac2Card::select(bool) {}
 uint8_t Vdac2Card::exchange(uint8_t) { return 0xFF; }
+std::vector<ttd::TTDTimeField> Vdac2Card::TtdTimeFields() { return {}; }
 size_t Vdac2Card::TtdStateSize() const { return 0; }
 void Vdac2Card::TtdSaveState(uint8_t*) const {}
 bool Vdac2Card::TtdLoadState(const uint8_t*) { return false; }

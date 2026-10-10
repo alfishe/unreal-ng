@@ -60,6 +60,8 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_breakpoints.inc"
 #include "openapi/openapi_debug.inc"
 #include "openapi/openapi_labels.inc"
+#include "openapi/openapi_symbols.inc"
+#include "openapi/openapi_asm.inc"
 #include "openapi/openapi_assembly.inc"
 #include "openapi/openapi_profiler.inc"
 #include "openapi/openapi_porttrace.inc"
@@ -188,6 +190,14 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tagDebug["name"] = "Debug Commands";
     tagDebug["description"] = "Breakpoints, registers, and debugging";
     tags.append(tagDebug);
+    Json::Value tagSymbols;
+    tagSymbols["name"] = "Symbols";
+    tagSymbols["description"] = "Symbol files in every format, symbol sets and their priorities (unreal-asm symbol module)";
+    tags.append(tagSymbols);
+    Json::Value tagAsm;
+    tagAsm["name"] = "Assembler Sources";
+    tagAsm["description"] = "Sources of ZX Spectrum assemblers: decode, encode, convert between dialects, the files of a disk (unreal-asm)";
+    tags.append(tagAsm);
     Json::Value tagMemProfiler;
     tagMemProfiler["name"] = "Memory Profiler";
     tagMemProfiler["description"] = "Track memory access patterns";

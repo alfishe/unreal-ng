@@ -18,8 +18,8 @@ Shared steps (own instance, entering TR-DOS, keys, host exchange, labels): [READ
 | 4.4 (KVA, 1996) | `TASM4_4/TASM4_4.SCL` ([zxart](https://zxart.ee/releasefile/id:249307/TASM4_4.zip)) | `TASM 4.4` | starts; the 4.0 command line; the disk carries `GensTasm` and `ZeusTasm` converters |
 | 3.0 (Rst7, 1994) | `TASM3_0/TASM3_0.SCL` ([zxart](https://zxart.ee/releasefile/id:249302/TASM3_0.zip)) | `TASM 3.0` | starts; a command line like 4.12's without Import/export |
 | 3.2 | `TASM3_2/TASM3_2.SCL` ([zxart](https://zxart.ee/releasefile/id:249303/TASM3_2.zip)) | `TASM 3.2` | starts; the 3.0 command line |
-| 3.5 ("FLASHVERSION") | `TASM_3_5/TASM_3_5.SCL` ([vtrd](https://vtrd.in/system/TASM_3_5.zip)) | `TASM+` | starts; a `>>>` prompt without the command list |
-| 2.0 (Rst7, 1993) | `TASM2_0/TASM2_0.SCL` ([zxart](https://zxart.ee/releasefile/id:249301/TASM2_0.zip)) | `TASM128` | starts; the command line has `Print text` instead of `Import`; sources are plain text (CR LF, TABs) |
+| 3.5 ("FLASHVERSION") | `TASM_3_5/TASM_3_5.SCL` ([vtrd](https://vtrd.in/system/TASM_3_5.zip)) | `TASM+` | starts; a `>>>` prompt without the command list; reads 3.0 / 3.2 sources (type `A`), `W` / `E` / Extend `Q` / `S` as 3.x |
+| 2.0 (Rst7, 1993) | `TASM2_0/TASM2_0.SCL` ([zxart](https://zxart.ee/releasefile/id:249301/TASM2_0.zip)) | `TASM128` | starts; the command line has `Print text` instead of `Import`; sources are plain text (CR LF, TABs, type `C`): `W` loads one, `E` edits, Extend `Q`, `S` saves |
 | 5.0 beta / 5.5 beta (XL Design) | not in the collection (the samples typed into them are in `software/programming/tasm5/`) | — | not run for this recipe |
 
 TASM keeps its overlay at `#8000` (4.12) and its own code in banks 3, 4 and 6: assemble small programs below `#8000`
@@ -121,6 +121,14 @@ keys in 4.0: `R` insert the buffer, `C` clear it, `S` search, `X` replace, `I` g
 Same command letters; 3.0 / 3.2 have `Import 2.0 file`, 2.0 `Print text`. 2.0 saves its sources as plain text
 (type `C`, start 38750): `zxasm decode` reads them as codec `tasm` version `2.0`.
 
+The text in memory: 3.0 / 3.2 / 3.5 keep 4.12's gap buffer, the pointers start, top, gap start, gap end as words
+from `#8910`; the editor shows in the tail of the line buffer (`#8C82`, blanks in the editor, zeros at the command
+line). 2.0 has them from `#8847`, with two differences: the start word is one byte before the text and the gap start
+points at the last byte before the gap; and the buffer changes form with the state: at the command line it is the
+plain text SAVE writes (`#975E` on), in the editor 3.x's length-framed records `[n] body [n]` (rewritten when the
+editor is left). Its editor flag is the line buffer's tail at `#8BA0`. The asm-synchronizer reads every state
+(asm-synchronizer.md §7.7).
+
 ## WebAPI
 
 `tools/verification/unreal-asm/lib/emulator.py` wraps the calls (`run_trdos`, `tap`, `type`, `read`, `read_disk_file`,
@@ -149,3 +157,7 @@ curl -s -X POST $BASE/emulator/$EMU_ID/media/A/export -H 'Content-Type: applicat
 - **`#8000-#BFFF` belongs to TASM 4.12's overlay**: TASM's own SINUS example assembles there; move ORG below
   (`#7000`) to read the bytes after assembling.
 - The Import/export menu takes the letter in lower case (Shift + key), the main command line in either.
+- **4.12 has no `DB`**: write `DEFB` (4.0 / 4.4 take `db`); and `A`, `B`, ... are registers, not labels (error 8).
+- **`.IF` blocks do not nest** in 4.12: a `.IF` inside a skipped part is evaluated and starts afresh, and the first
+  `.ENDIF` ends any skipping. `zxasm convert` writes them as flat sjasmplus blocks
+  (`docs/inprogress/2026-10-05-unreal-asm/research-tasm-to-sjasmplus.md`).

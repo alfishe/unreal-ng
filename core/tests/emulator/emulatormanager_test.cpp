@@ -699,6 +699,34 @@ TEST_F(EmulatorManager_Test, ShortNameMatchesTheWholeName)
     EXPECT_EQ(plus3->Model, MM_PLUS3);
 }
 
+// Every creatable model is created, run a few frames and removed while it runs, next to another running instance -
+// what an automation script does when it creates and deletes instances. Heap damage from a teardown (a destructor
+// touching a part already freed) shows up later in an unrelated free on another emulator thread; AddressSanitizer
+// reports it here. Boot-bound (turbo): about 30 models created and run, ~20 ms each
+TEST_F(EmulatorManager_Test, EveryModelCanBeRemovedWhileRunning)
+{
+    auto neighbour = _manager->CreateEmulatorWithModel("neighbour", "48K");
+    ASSERT_NE(neighbour, nullptr);
+    neighbour->StartAsync();
+
+    for (const TMemModel& model : Config::GetAvailableModels())
+    {
+        if (!Config::IsModelCreatable(model))
+            continue;
+        SCOPED_TRACE(model.ShortName);
+        auto emulator = _manager->CreateEmulatorWithModel("removed-running", model.ShortName, LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr);
+        const std::string id = emulator->GetId();
+        emulator->EnableTurboMode();
+        emulator->StartAsync();
+        EmulatorContext* context = emulator->GetContext();
+        EXPECT_TRUE(TestWait::For([&] { return context->emulatorState.frame_counter >= 3; }));
+        EXPECT_TRUE(_manager->RemoveEmulator(id));
+        EXPECT_FALSE(_manager->HasEmulator(id));
+    }
+    EXPECT_TRUE(neighbour->IsRunning());
+}
+
 TEST_F(EmulatorManager_Test, IsModelCreatableAgreesWithCreateAttempt)
 {
     // Consistency contract: IsModelCreatable says yes <=> create succeeds.

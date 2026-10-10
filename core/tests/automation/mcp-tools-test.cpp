@@ -1878,6 +1878,139 @@ TEST_F(McpTools_Test, ManageSymbols_List_GetsLabels)
     EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/labels"));
 }
 
+TEST_F(McpTools_Test, ManageSymbols_SetsImportExport_MapToTheSymbolRoutes)
+{
+    for (const char* route : {"GET /api/v1/emulator/emu-1/symbols/sets", "GET /api/v1/emulator/emu-1/symbols/formats",
+                              "PUT /api/v1/emulator/emu-1/symbols/sets", "POST /api/v1/emulator/emu-1/symbols/import",
+                              "POST /api/v1/emulator/emu-1/symbols/export", "DELETE /api/v1/emulator/emu-1/symbols/sets?id=file%3A%2Fx%2Fa.sym"})
+        _caller->routes[route] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "sets";
+    RunTool(*_registry, "manage_symbols", args, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/symbols/sets"));
+
+    Json::Value import;
+    import["action"] = "import";
+    import["path"] = "/x/a.sym";
+    import["set"] = "game";
+    import["policy"] = "replace";
+    RunTool(*_registry, "manage_symbols", import, *_caller);
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/symbols/import");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["set"].asString(), "game");
+    EXPECT_EQ(call->body["policy"].asString(), "replace");
+
+    Json::Value change;
+    change["action"] = "set_enable";
+    change["id"] = "file:/x/a.sym";
+    change["enabled"] = false;
+    RunTool(*_registry, "manage_symbols", change, *_caller);
+    call = _caller->Last("PUT", "/api/v1/emulator/emu-1/symbols/sets");
+    ASSERT_NE(call, nullptr);
+    EXPECT_FALSE(call->body["enabled"].asBool());
+
+    Json::Value drop;
+    drop["action"] = "drop";
+    drop["id"] = "file:/x/a.sym";
+    RunTool(*_registry, "manage_symbols", drop, *_caller);
+    EXPECT_TRUE(_caller->Saw("DELETE", "/api/v1/emulator/emu-1/symbols/sets?id=file%3A%2Fx%2Fa.sym"));
+
+    _caller->routes["POST /api/v1/emulator/emu-1/symbols/import/source"] = {200, Json::Value(Json::objectValue)};
+    Json::Value fromSource;
+    fromSource["action"] = "import_source";
+    fromSource["path"] = "disk:A/GAME.H";
+    fromSource["main"] = "GAME";
+    RunTool(*_registry, "manage_symbols", fromSource, *_caller);
+    call = _caller->Last("POST", "/api/v1/emulator/emu-1/symbols/import/source");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["main"].asString(), "GAME");
+
+    Json::Value missing;
+    missing["action"] = "export";
+    EXPECT_TRUE(RunTool(*_registry, "manage_symbols", missing, *_caller).isError);
+}
+
+TEST_F(McpTools_Test, AsmSource_ActionsMapToTheAsmRoutes)
+{
+    for (const char* route : {"GET /api/v1/asm/formats", "GET /api/v1/emulator/emu-1/asm/files?drive=B", "POST /api/v1/emulator/emu-1/asm/convert"})
+        _caller->routes[route] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value formats;
+    formats["action"] = "formats";
+    RunTool(*_registry, "asm_source", formats, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/asm/formats"));
+
+    Json::Value files;
+    files["action"] = "files";
+    files["drive"] = "B";
+    RunTool(*_registry, "asm_source", files, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/asm/files?drive=B"));
+
+    Json::Value convert;
+    convert["action"] = "convert";
+    convert["path"] = "disk:A/GAME.H";
+    convert["to"] = "sjasmplus";
+    convert["z80n"] = true;
+    RunTool(*_registry, "asm_source", convert, *_caller);
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/asm/convert");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["path"].asString(), "disk:A/GAME.H");
+    EXPECT_EQ(call->body["to"].asString(), "sjasmplus");
+    EXPECT_EQ(call->body["z80n"].asString(), "true");
+
+    Json::Value bad;
+    bad["action"] = "assemble";
+    EXPECT_TRUE(RunTool(*_registry, "asm_source", bad, *_caller).isError);
+}
+
+TEST_F(McpTools_Test, AsmSource_SyncActionsMapToTheSyncRoutes)
+{
+    for (const char* route : {"GET /api/v1/emulator/emu-1/asm/sync?assembler=tasm-4.12", "POST /api/v1/emulator/emu-1/asm/sync/probe",
+                              "POST /api/v1/emulator/emu-1/asm/sync/extract"})
+        _caller->routes[route] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value status;
+    status["action"] = "sync_status";
+    status["assembler"] = "tasm-4.12";
+    RunTool(*_registry, "asm_source", status, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/asm/sync?assembler=tasm-4.12"));
+
+    Json::Value probe;
+    probe["action"] = "sync_probe";
+    RunTool(*_registry, "asm_source", probe, *_caller);
+    EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/asm/sync/probe"));
+
+    Json::Value extract;
+    extract["action"] = "sync_extract";
+    extract["as"] = "dialect";
+    extract["to"] = "sjasmplus";
+    RunTool(*_registry, "asm_source", extract, *_caller);
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/asm/sync/extract");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["as"].asString(), "dialect");
+    EXPECT_EQ(call->body["to"].asString(), "sjasmplus");
+
+    for (const char* route : {"POST /api/v1/emulator/emu-1/asm/sync/watch", "DELETE /api/v1/emulator/emu-1/asm/sync/watch",
+                              "GET /api/v1/emulator/emu-1/asm/sync/hints"})
+        _caller->routes[route] = {200, Json::Value(Json::objectValue)};
+    Json::Value watch;
+    watch["action"] = "sync_watch";
+    watch["interval"] = 100;
+    RunTool(*_registry, "asm_source", watch, *_caller);
+    call = _caller->Last("POST", "/api/v1/emulator/emu-1/asm/sync/watch");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["interval"].asString(), "100");
+    Json::Value hints;
+    hints["action"] = "sync_hints";
+    RunTool(*_registry, "asm_source", hints, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/asm/sync/hints"));
+    Json::Value unwatch;
+    unwatch["action"] = "sync_unwatch";
+    RunTool(*_registry, "asm_source", unwatch, *_caller);
+    EXPECT_TRUE(_caller->Saw("DELETE", "/api/v1/emulator/emu-1/asm/sync/watch"));
+}
+
 TEST_F(McpTools_Test, CaptureMedia_ScreenDigest_GetsDigestEndpoint)
 {
     Json::Value response;
@@ -2682,6 +2815,36 @@ TEST_F(McpTools_Test, TimeTravel_FindLast_ForwardsQueryAndReportsHit)
     EXPECT_NE(result.text.find("RAM page 5"), std::string::npos) << result.text;
 }
 
+/// space: find_last in the Sprinter's video / fast RAM - the space and the offset reach the WebAPI, the summary names
+/// the offset found
+TEST_F(McpTools_Test, TimeTravel_FindLast_ForwardsTheSpaceAndReportsTheOffset)
+{
+    Json::Value reply;
+    reply["found"] = true;
+    reply["frame"] = 3;
+    reply["tinframe"] = 100;
+    reply["pc"] = 0x800D;
+    reply["value"] = 9;
+    reply["phys_page"] = Json::Value();
+    reply["access"] = "write";
+    reply["space"] = "vram";
+    reply["offset"] = 0x4805;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/find-last"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "find_last";
+    args["addr"] = "0x4805";
+    args["space"] = "vram";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/find-last");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["space"].asString(), "vram");
+    EXPECT_EQ(call->body["addr"].asString(), "0x4805");
+    EXPECT_NE(result.text.find("vram offset 18437"), std::string::npos) << result.text;
+}
+
 /// port_events: "when did the program ..." - the event, its argument and the
 /// options reach POST /ttd/port-events (from_frame/to_frame as from/to), and
 /// the summary lists each hit with its time, PC, port, value and AY register
@@ -3308,4 +3471,173 @@ TEST_F(McpTools_Test, RzxPlayback_Seek_PostsFrame)
     noFrame["action"] = "seek";
     EXPECT_TRUE(RunTool(*_registry, "rzx_playback", noFrame, *_caller).isError);
     EXPECT_TRUE(_caller->calls.empty());
+}
+
+/// memory_access: every memory by name. Regions go to /memory/region/{name} (list, read, write, save, load), the Z80
+/// view to /memory/read and /memory/write (hex turned into data bytes); bad requests never reach the WebAPI
+TEST_F(McpTools_Test, MemoryAccess_ReachesRegionsAndTheZ80View)
+{
+    Json::Value list;
+    Json::Value vram;
+    vram["name"] = "sprinter.vram";
+    vram["aliases"].append("vram");
+    vram["size_hex"] = "0x40000";
+    vram["writable"] = true;
+    Json::Value flash;
+    flash["name"] = "neogs.flash";
+    flash["aliases"] = Json::Value(Json::arrayValue);
+    flash["size_hex"] = "0x80000";
+    flash["writable"] = false;
+    list["regions"].append(vram);
+    list["regions"].append(flash);
+    _caller->routes["GET /api/v1/emulator/emu-1/memory/regions"] = {200, list};
+    Json::Value args;
+    args["action"] = "regions";
+    mcp::ToolResult result = RunTool(*_registry, "memory_access", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("sprinter.vram (vram) 0x40000"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("neogs.flash 0x80000 read-only"), std::string::npos) << result.text;
+
+    Json::Value read;
+    read["region"] = "neogs.ram";
+    read["offset"] = "0x01000";
+    _caller->routes["GET /api/v1/emulator/emu-1/memory/region/neogs.ram?offset=0x1000&length=16&format=hex"] = {200, read};
+    args = Json::Value();
+    args["action"] = "read";
+    args["space"] = "neogs.ram";
+    args["offset"] = "0x1000";
+    args["length"] = 16;
+    result = RunTool(*_registry, "memory_access", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("16 bytes of neogs.ram"), std::string::npos) << result.text;
+
+    Json::Value wrote;
+    wrote["region"] = "sprinter.vram";
+    wrote["bytes_written"] = 3;
+    _caller->routes["POST /api/v1/emulator/emu-1/memory/region/vram"] = {200, wrote};
+    args = Json::Value();
+    args["action"] = "write";
+    args["space"] = "vram";
+    args["offset"] = "#17F0";
+    args["hex"] = "00 00 A8";
+    result = RunTool(*_registry, "memory_access", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/memory/region/vram");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["hex"].asString(), "00 00 A8");
+    EXPECT_EQ(call->body["offset"].asString(), "#17F0");
+
+    Json::Value poke;
+    poke["bytes_written"] = 2;
+    _caller->routes["POST /api/v1/emulator/emu-1/memory/write"] = {200, poke};
+    args = Json::Value();
+    args["action"] = "write";
+    args["offset"] = "#5C00";
+    args["hex"] = "3E07";
+    result = RunTool(*_registry, "memory_access", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    call = _caller->Last("POST", "/api/v1/emulator/emu-1/memory/write");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["address"].asUInt(), 0x5C00u);
+    ASSERT_EQ(call->body["data"].size(), 2u);
+    EXPECT_EQ(call->body["data"][0].asUInt(), 0x3Eu);
+    EXPECT_EQ(call->body["data"][1].asUInt(), 0x07u);
+
+    const size_t calls = _caller->calls.size();
+    auto request = [](const char* action, const char* space, const char* offset, const char* hex, const char* path) {
+        Json::Value a;
+        a["action"] = action;
+        if (space)
+            a["space"] = space;
+        if (offset)
+            a["offset"] = offset;
+        if (hex)
+            a["hex"] = hex;
+        if (path)
+            a["path"] = path;
+        return a;
+    };
+    for (const Json::Value& bad : {request("write", "vram", nullptr, nullptr, nullptr), request("save", "cpu", nullptr, nullptr, "x"),
+                                   request("load", "vram", nullptr, nullptr, nullptr), request("peek", nullptr, nullptr, nullptr, nullptr),
+                                   request("write", nullptr, "zz", "00", nullptr), request("write", nullptr, "0", "0G", nullptr)})
+        EXPECT_TRUE(RunTool(*_registry, "memory_access", bad, *_caller).isError) << bad.toStyledString();
+    EXPECT_EQ(_caller->calls.size(), calls) << "refused before the WebAPI";
+}
+
+/// time_travel memory_at / memory_diff: a memory at a past checkpoint and what changed, through POST /ttd/memory-at
+/// and /ttd/memory-diff; coverage_scan passes space; missing options never reach the WebAPI
+TEST_F(McpTools_Test, TimeTravel_MemoryAtMemoryDiffAndCoverageSpace)
+{
+    Json::Value at;
+    at["space"] = "sprinter.vram";
+    at["offset"] = 0x4805;
+    at["length"] = 2;
+    at["at_frame"] = 7;
+    at["exact"] = true;
+    at["hex"] = "39AA";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/memory-at"] = {200, at};
+    Json::Value args;
+    args["action"] = "memory_at";
+    args["space"] = "vram";
+    args["frame"] = 7;
+    args["offset"] = "0x4805";
+    args["length"] = 2;
+    args["tinframe"] = 25000;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/memory-at");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["tinframe"].asUInt(), 25000u) << "a point inside the frame reaches the WebAPI (it was dropped)";
+    EXPECT_EQ(call->body["space"].asString(), "vram");
+    EXPECT_EQ(call->body["offset"].asString(), "0x4805");
+    EXPECT_EQ(call->body["frame"].asUInt(), 7u);
+    EXPECT_NE(result.text.find("2 bytes of sprinter.vram at offset 18437 as at frame 7: 39AA"), std::string::npos) << result.text;
+
+    Json::Value diff;
+    diff["space"] = "ram";
+    diff["changed_bytes"] = 3;
+    diff["at_from"] = 1;
+    diff["at_to"] = 9;
+    Json::Value range;
+    range["offset"] = 0x1C78;
+    range["length"] = 3;
+    diff["ranges"].append(range);
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/memory-diff"] = {200, diff};
+    args = Json::Value();
+    args["action"] = "memory_diff";
+    args["space"] = "ram5";
+    args["from_frame"] = 1;
+    args["to_frame"] = 9;
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("3 bytes differ between frame 1 and frame 9 (offset+length: 7288+3)"), std::string::npos)
+        << result.text;
+
+    Json::Value scan;
+    scan["index_available"] = true;
+    scan["frames"] = Json::Value(Json::arrayValue);
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/coverage/scan?space=vram&kind=written&addr_from=0x4805&addr_to=0x4805"] =
+        {200, scan};
+    args = Json::Value();
+    args["action"] = "coverage_scan";
+    args["space"] = "vram";
+    args["kind"] = "written";
+    args["addr_from"] = "0x4805";
+    args["addr_to"] = "0x4805";
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/ttd/coverage/scan?space=vram&kind=written&addr_from=0x4805&addr_to=0x4805"));
+
+    const size_t calls = _caller->calls.size();
+    args = Json::Value();
+    args["action"] = "memory_at";
+    args["space"] = "vram";
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "no frame";
+    args["action"] = "memory_diff";
+    args["from_frame"] = 1;
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "no to_frame";
+    args["to_frame"] = 2;
+    args["tinframe"] = 100;
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "memory_diff takes no tinframe";
+    EXPECT_EQ(_caller->calls.size(), calls);
 }

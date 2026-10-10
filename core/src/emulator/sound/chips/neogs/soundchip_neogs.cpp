@@ -1031,6 +1031,10 @@ uint8_t SoundChip_NeoGS::cardIn(uint16_t port)
     const uint8_t p = low & 0x3F;
     const int64_t now = _runner.now();
     uint8_t value = 0xFF;
+    // The mailbox command and status (only the host changes them) and GSCFG0 are plain reads; the status read's
+    // one-time readiness latch is not, nor any other port
+    if (!(p == P_ZXCMD || p == P_GSCFG0 || (p == P_ZXSTAT && _ready)))
+        _busEffects++;
 
     switch (p)
     {
@@ -1222,6 +1226,7 @@ uint8_t SoundChip_NeoGS::memReadCb(Z80CPU* /*cpu*/, uint16_t addr, int /*m1State
 void SoundChip_NeoGS::memWriteCb(Z80CPU* /*cpu*/, uint16_t addr, uint8_t value, void* userData)
 {
     auto* self = static_cast<SoundChip_NeoGS*>(userData);
+    self->_busEffects++;
     self->_mem.write(addr, value, self->_runner.now());
 }
 
@@ -1232,6 +1237,7 @@ uint8_t SoundChip_NeoGS::portReadCb(Z80CPU* /*cpu*/, uint16_t port, void* userDa
 
 void SoundChip_NeoGS::portWriteCb(Z80CPU* /*cpu*/, uint16_t port, uint8_t value, void* userData)
 {
+    static_cast<SoundChip_NeoGS*>(userData)->_busEffects++;
     static_cast<SoundChip_NeoGS*>(userData)->cardOut(port, value);
 }
 
@@ -1407,8 +1413,8 @@ void SoundChip_NeoGS::serializeDeviceState(uint8_t* dst, bool machineVisibleOnly
 size_t SoundChip_NeoGS::TTDStateSize() const
 {
     // Registers and device state only. The card RAM (2-4 MB) and the flash
-    // (512 KB) are not in TTD v1 checkpoints: large memories wait for TTD v2
-    // memory regions. A restore therefore keeps the live card memory
+    // (512 KB) are the engine's regions 4 and 5 (TTDRegions below); a v1
+    // session does not record them, so a v1 restore keeps the live card memory
     return TTD_DEVICE_STATE_END;
 }
 
@@ -1510,6 +1516,12 @@ void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
     _audio.setLevels(_outL, _outR);
     _audio.clear();
     _frameHadActivity = false;
+    // The activity latches (telemetry, not machine state): the byte counts as they are now are the ones "seen", so
+    // the next frame end reports what that frame moves, not the difference to the counts before the restore (a
+    // false Transfer / DMA pulse after every seek)
+    _dmaBytesSeen = _dma.bytesMoved();
+    _zxDmaBytesSeen = _zx.bytesRead() + _zx.bytesWritten();
+    _dmaWasActive = _zxDmaWasActive = _mp3WasActive = _wasActive = false;
     reschedule();
 }
 

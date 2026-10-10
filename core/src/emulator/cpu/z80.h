@@ -316,6 +316,14 @@ public:
     /// After the opcode read (the refresh edge)
     /// @param address the address the opcode byte was fetched from
     virtual void OnMachineM1(uint16_t address) = 0;
+    /// Another M1 at `address`, with nothing else in between, would change nothing in the board (BeforeMachineM1
+    /// and OnMachineM1 both no-ops now): a halted CPU's repeated idle fetch may then run without them. Default:
+    /// false (every fetch runs the hook)
+    virtual bool RepeatM1IsInert(uint16_t address) const
+    {
+        (void)address;
+        return false;
+    }
 };
 
 /// Model-side owner of the /INT pin (see Z80::SetInterruptSource). Shared
@@ -343,6 +351,16 @@ public:
     /// peripherals watch the bus for it to end their interrupt service (the
     /// Z84C15 daisy chain; the Sprinter re-arms its accelerator)
     virtual void OnReti() {}
+    /// Called right after IsIntAsserted(t) returned false: the earliest t' >= t at which it may return true while
+    /// nothing touches the machine (no port or memory access, acknowledge, RETI or host input) - a lower bound,
+    /// the source is asked again there. Returning `t` (the default) means "unknown: ask at every boundary".
+    /// Lets an engine run a halted CPU's idle cycles in one go (Z84C15Engine)
+    virtual uint32_t NextAssertT(uint32_t t) { return t; }
+    /// A change count of everything IsIntAsserted reads besides the time, kept by sources with countsChanges: while
+    /// it stays the same (and the frame, the clock multiplier), a "no" holds up to NextAssertT. A plain field, read
+    /// at every boundary without a call. A source without it (countsChanges false) is asked at every boundary
+    uint32_t changeCount = 0;
+    bool countsChanges = false;
     /// The source wants OnWait for every stretch of the CPU clock (Z80::AddWaitStates / AddWaitTicks): a pulse
     /// that counts only CPU clocks without /WAIT (TS-Conf's frame INT). Asked once, in SetInterruptSource;
     /// a source that does not need it costs the other machines nothing
@@ -723,6 +741,35 @@ public:
 
     /// The CPU is at or past the end of the current frame
     bool IsFrameComplete() const { return t >= _frameLimit; }
+
+    /// region <Idle steps in one go (a halted CPU)>
+    /// The frame T before which an instruction engine (ICpuEngine) may run a halted CPU's idle M1 cycles in one
+    /// go instead of one per step (never past the frame end, _frameLimit, either; UINT32_MAX: up to the frame
+    /// end); 0 (the default): one per step. Set only by the drivers that run a stretch of
+    /// time without looking at single steps - the frame loop, Emulator::RunNFrames and RunTStates (IdleSkipScope);
+    /// a single step, the debugger's stepping and the run-until loops keep 0, so they still see every idle cycle
+    uint32_t idleSkipLimit = 0;
+    /// Every per-step job would be a no-op for another idle step now: no work-gate job but the engine and the
+    /// interrupt source, no NMI request, no debug mode (breakpoints, the debug memory interface), no bus / M1
+    /// tracer, TTD probe or coverage, CPU-step analyzer, call trace, opcode profiler or state dump, no TTD session,
+    /// no TR-DOS session switch and no trap at this PC, the tape stopped and the floppy controller idle. The
+    /// screen and the sound catch up by time, so their per-step calls need not run (the engine's precondition
+    /// for the idle fast-forward: Z84C15Engine)
+    bool IdleStepsInert() const;
+    /// Sets idleSkipLimit for a scope and restores it
+    class IdleSkipScope
+    {
+    public:
+        IdleSkipScope(Z80& cpu, uint32_t limit) : _cpu(cpu), _saved(cpu.idleSkipLimit) { cpu.idleSkipLimit = limit; }
+        ~IdleSkipScope() { _cpu.idleSkipLimit = _saved; }
+        IdleSkipScope(const IdleSkipScope&) = delete;
+        IdleSkipScope& operator=(const IdleSkipScope&) = delete;
+
+    private:
+        Z80& _cpu;
+        uint32_t _saved;
+    };
+    /// endregion </Idle steps in one go>
 
     /// CPU half of the frame start (MainLoop::CompleteFrame / RestartFrame):
     /// apply the queued frequency multiplier, derive the frame geometry, and

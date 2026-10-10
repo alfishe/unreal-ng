@@ -1,0 +1,18 @@
+{
+  "windows": [
+    -1,
+    5,
+    2,
+    3
+  ],
+  "pages": [
+    2,
+    5,
+    6
+  ],
+  "expected": "tx_macro.a",
+  "state": {
+    "editor": true,
+    "typing": true
+  }
+}

@@ -27,7 +27,6 @@
 #include <vector>
 
 class Emulator;
-namespace ttd { class TimeTravelManager; }
 
 class DezogDebugAdapter : public dzrp::IDebugInterface, public Observer
 {
@@ -98,7 +97,7 @@ public:
 
     // --- Instruction history over TTD ---
     // Entries are served from the TTD per-frame decode cache
-    // (TimeTravelManager::GetFrameCache): a DeZog index is mapped to
+    // (TimeTravelController::GetFrameCache): a DeZog index is mapped to
     // (frame, entry-in-frame) via lazily-built frame segments, and the decoded
     // record (registers, slots, opcodes at PC, word at SP) is read straight
     // from the cache. Browsing is read-only under the TTD DebuggerLive mode
@@ -187,7 +186,7 @@ private:
     //
     // STRATEGY (see docs/inprogress/2026-08-27-dezog-integration/reverse-debugging.md
     // §5 "Best strategy for DeZog"): a DeZog history index is served from the TTD
-    // per-frame decode cache (TimeTravelManager::GetFrameCache), not by a live
+    // per-frame decode cache (TimeTravelController::GetFrameCache), not by a live
     // seek per read. Instructions are grouped by frame; we map a global DeZog
     // index → (frame, entry-in-frame) via `_historySegs` (built lazily from the
     // present backward) and read the decoded record straight from the cache.

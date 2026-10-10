@@ -90,6 +90,8 @@ private slots:
     void portOut();
     void showDeviceMemory();
     void showDiskSector();
+    void showDiskFiles();
+    void showLiveSource();
     void showPcHistory();
     void showBreakpointManager();
     void showLabelManager();
@@ -161,6 +163,8 @@ private:
     QAction* portOutAction;
     QAction* deviceMemoryAction;
     QAction* diskSectorAction;
+    QAction* diskFilesAction;
+    QAction* liveSourceAction;
     QAction* pcHistoryAction;
     QAction* breakpointsAction;
     QAction* labelsAction;
@@ -177,6 +181,7 @@ private:
     
     // Visualization window
     class DebugVisualizationWindow* _visualizationWindow = nullptr;
+    class LiveSourceWindow* _liveSourceWindow = nullptr;
 
     // Speed control widget
     SpeedControlWidget* m_speedControl = nullptr;

@@ -57,7 +57,12 @@ struct SessionSettings
     uint32_t arenaBytes = 1024 * 1024;           ///< a multiple of 512 (the config takes 64 KiB ... 16 MiB)
     uint32_t flushSeconds = 30;                  ///< the longest a write stays only in memory; 0: only at the limit
     uint32_t syncSeconds = 30;                   ///< how often a written journal is synced to the disk; 0: never
-    bool journal = true;                         ///< media get a journal next to them (the insert's default)
+    /// Media get a journal next to them (the insert's default). Off by default: unreal-qt keeps media lean (no
+    /// file next to the medium, no periodic writes); [MEDIA] SessionJournal = on or an insert's `journal: replay`
+    /// turns it on
+    bool journal = false;
+    /// Threads of the shared journal I/O pool, fixed when the pool first starts; 0: a quarter of the cores, 1 to 4
+    uint32_t ioThreads = 1;
     std::string spillFolder;                     ///< journals without a place of their own; empty: the system temp folder
 };
 

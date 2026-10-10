@@ -62,6 +62,7 @@ private:
     void OnStateChange(Message* message);
     void OnCpuStep(Message* message);
     void OnBreakpointsChanged(Message* message);
+    void OnAsmSync(Message* message);   // NC_ASM_SYNC: topic asm_sync
 
     /// Numbers the event (per emulator), then sends it to every matching subscription
     void Publish(const std::string& emulatorId, const std::string& topic, Json::Value event);

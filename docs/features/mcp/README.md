@@ -111,8 +111,9 @@ progress when the request carries a `_meta.progressToken` (see
 | `inspect_state` | aspect fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, paging (tagged latches + bank table), ports (static port map with semantic tags + live routing), video (video mode report), screen (screen state, verbose), screen_flash (FLASH timing) — screen reports per command-interface.md §6.6, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, audio_multisound (the ZX-MultiSound: options, CPLD, YM pair, SAA, GS, DACs, MIDI), audio_midi (its MIDI line and SAM2695: parts, programs, notes, counters; panic = invoke_api POST /api/v1/emulator/{id}/control/audio/midi {action: panic}), slots (the ZX-bus slot report: buses, slots, cards, built-ins; change it with emulator_manage slots_plug / slots_remove / slots_set), fdc, ide, cdaudio (the CD drives' audio: disc, tracks, status, head, volume, mixer row; control with invoke_api POST /api/v1/emulator/{id}/cdaudio/{verb}), rtc, mouse (device reports, see command-interface.md §3.3; CMOS cells are written with invoke_api POST /api/v1/emulator/{id}/rtc/cells), ttd (time-travel session: state, recorded range, checkpoints, current position) | one notification per aspect |
 | `type_input` | type (tokenized BASIC entry), tap/press/release, combo, macro, `release_all`, status, `list_keys` | — |
 | `joystick_input` | Kempston joystick: press / release / set (exact `state` byte or `buttons` list) / tap (hold N frames) / status; forwards to `/joystick/*` | — |
-| `time_travel` | time-travel debugging: record, then seek / step / search backward through the recording; `.ttd` files, bookmarks, coverage index — see [Time-travel debugging](#time-travel-debugging) | — |
+| `time_travel` | time-travel debugging: record, then seek / step / search backward through the recording; `.ttd` files, bookmarks, coverage index (`space` for the Sprinter's video / fast RAM); `memory_at` / `memory_diff` read any recorded memory at a past checkpoint without seeking — see [Time-travel debugging](#time-travel-debugging) | — |
 | `rzx_playback` | RZX input recordings: `play` (`path`, `desync_mode`, conventions, `switch_model`: a recording for another model switches the machine, the answer's `emulator_id` is the new target), `stop`, `status` (frame, progress, desyncs), `seek` (`frame`: back through keyframes, forward by playing on) - [recipe](../../../.recipe/media/play-rzx.md) | — |
+| `memory_access` | Every memory by name: `regions` (name, aliases, size, writable, ttd_region), `read` / `write` (`space`: `cpu` or a region name / alias - `sprinter.vram`, `neogs.ram`, `gs.ram`, `moonsound.wave`, `tsconf.cram`, `rtc.cmos`, `evo.flash` ...; `offset`, `length`, `hex`), `save` / `load` a region to / from a file (`path`) | — |
 | `manage_symbols` | `load_labels`, list, resolve, `load_listing`, `source_at`, `step_line`, `run_to_line` (sjasmplus `.lst`) | — |
 | `debug_code` | disassemble, assemble (two-pass, labels), `find_bytes`, `trace` (calltrace sessions), `porttrace` | `trace`: per phase (start/run/stop/read) |
 | `analyze_performance` | coverage_* (+gaps), `frame_cost`, profiler suites, `profile_report`, `porttrace`, `vdac2_line_budget` / `vdac2_line_budget_set` (FT812 line metrics) | `profile_report` + `porttrace`: per phase |
@@ -167,7 +168,7 @@ the internals).
 | `step_back_instruction` / `step_forward_instruction` | — | One instruction back / forward |
 | `reverse_step` | `count` (instructions) **or** `tstates` | Step back several instructions or T-states |
 | `reverse_continue` | `pcs`: list of addresses | Run backward until the CPU was about to execute one of them |
-| `find_last` | `addr` or `addr_from`/`addr_to`; `access` (`write` default, `read`, `execute`, `io`); optional `value`, `pc_from`/`pc_to`, `phys_page`, `before_frame`/`before_tin` | Latest matching access before the current point (or before `before_frame`) |
+| `find_last` | `addr` or `addr_from`/`addr_to`; `access` (`write` default, `read`, `execute`, `io`); optional `value`, `pc_from`/`pc_to`, `phys_page`, `space` (`ram` / `vram` / `cache`: the Sprinter's video or fast RAM by offset), `before_frame`/`before_tin` | Latest matching access before the current point (or before `before_frame`) |
 | `port_events` | `event` (`key`, `ear`, `ay-read`, `ay-write`, `ay-select`, `border`, `beeper`, `in`, `out`); optional `event_arg` (a key name or an AY register), `limit`, `newest`, `from_frame`/`to_frame`, `port`/`port_mask`, `value`/`value_mask`, `match`, `trigger`, `ay_register`, `file` (a saved `.ttd` searched without loading it) | "When did the program ...": every matching IN/OUT with frame, tinframe, PC, port, value - from the port journals, no replay (needs a stopped or paused recording) |
 | `resume` | `frame`/`tinframe` (optional, default: current point) | Continue recording live from that point; **everything recorded after it is discarded**. Needs the machine positioned in history (`seek` or a step first); right after `stop` it fails |
 | `dump` / `load` | `path` | Save / load a `.ttd` session file; `load` also takes a recording's folder (or one of its `segment-NNNN.ttd` files), e.g. one a black box left when it restarted |
@@ -233,7 +234,8 @@ that did it.
 
 Narrow a noisy search with `value` (only writes of that byte), `pc_from` /
 `pc_to` (only code in that range) or `phys_page` (only that RAM bank on a
-128K+ machine).
+128K+ machine). On the Sprinter, `space: "vram"` or `"cache"` searches its
+video RAM or fast RAM, `addr` then an offset in it.
 
 ### Worked example: when was this routine last entered?
 

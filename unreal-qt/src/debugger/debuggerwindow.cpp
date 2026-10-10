@@ -20,6 +20,8 @@
 #include "debugger/debugmanager.h"
 #include "debugger/devicememorydialog.h"
 #include "debugger/disksectordialog.h"
+#include "debugger/diskfilesdialog.h"
+#include "debugger/livesourcewindow.h"
 #include "debugger/pchistorydialog.h"
 #include "debugger/ports/portwrite.h"
 #include "debugger/labeleditor.h"
@@ -133,6 +135,12 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     diskSectorAction = new QAction("Disk sector", this);
     diskSectorAction->setToolTip("View and edit a floppy sector's data field (CRC recalculated, the image counts as modified)");
     toolBar->addAction(diskSectorAction);
+    diskFilesAction = new QAction("Disk files", this);
+    diskFilesAction->setToolTip("The files on a disk with their source formats: open an assembler source as text, export it, convert it");
+    toolBar->addAction(diskFilesAction);
+    liveSourceAction = new QAction("Live source", this);
+    liveSourceAction->setToolTip("The source an assembler (ALASM, TASM 4.12) holds in RAM, followed while you type: its labels in the debugger, its errors on their lines");
+    toolBar->addAction(liveSourceAction);
     pcHistoryAction = new QAction("PC history", this);
     pcHistoryAction->setToolTip("The newest instructions the CPU started, with their window's page (starts recording)");
     toolBar->addAction(pcHistoryAction);
@@ -162,6 +170,8 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     connect(portOutAction, &QAction::triggered, this, &DebuggerWindow::portOut);
     connect(deviceMemoryAction, &QAction::triggered, this, &DebuggerWindow::showDeviceMemory);
     connect(diskSectorAction, &QAction::triggered, this, &DebuggerWindow::showDiskSector);
+    connect(diskFilesAction, &QAction::triggered, this, &DebuggerWindow::showDiskFiles);
+    connect(liveSourceAction, &QAction::triggered, this, &DebuggerWindow::showLiveSource);
     connect(pcHistoryAction, &QAction::triggered, this, &DebuggerWindow::showPcHistory);
     connect(labelsAction, &QAction::triggered, this, &DebuggerWindow::showLabelManager);
     connect(breakpointsAction, &QAction::triggered, this, &DebuggerWindow::showBreakpointManager);
@@ -283,6 +293,8 @@ void DebuggerWindow::setEmulator(Emulator* emulator)
     // Propagate to speed control widget
     if (m_speedControl)
         m_speedControl->setEmulator(_emulator);
+    if (_liveSourceWindow)
+        _liveSourceWindow->setEmulator(_emulator);
 
     if (_emulator)
     {
@@ -1260,6 +1272,29 @@ void DebuggerWindow::showDiskSector()
     DiskSectorDialog dialog(_emulator, this);
     dialog.exec();
     updateState();
+}
+
+void DebuggerWindow::showDiskFiles()
+{
+    if (!_emulator) return;
+
+    DiskFilesDialog dialog(_emulator, this);
+    dialog.exec();
+    updateState();
+}
+
+void DebuggerWindow::showLiveSource()
+{
+    if (!_emulator)
+        return;
+    if (!_liveSourceWindow)
+    {
+        _liveSourceWindow = new LiveSourceWindow(_emulator, this);
+        connect(_liveSourceWindow, &QObject::destroyed, this, [this]() { _liveSourceWindow = nullptr; });
+    }
+    _liveSourceWindow->show();
+    _liveSourceWindow->raise();
+    _liveSourceWindow->activateWindow();
 }
 
 void DebuggerWindow::showPcHistory()

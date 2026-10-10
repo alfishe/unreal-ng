@@ -374,6 +374,56 @@ TEST_P(TTDControl_Test, SeekStepAndResumeReportWhereTheMachineIs)
     EXPECT_EQ(Str(r, "state"), "recording");
 }
 
+/// Every verb that moves the machine through the history says how exactly its position came back, and status says
+/// it while detached. On the engine a replay on other settings is not bit-exact and names them (v1 keeps no engine
+/// check: exact)
+TEST_P(TTDControl_Test, MovingVerbsAndStatusReportTheCheck)
+{
+    Record(6);
+    ASSERT_TRUE(Run("stop").Ok());
+    const uint64_t first = Info().sessionStartFrame;
+    auto statusOf = [](const TTDReply& r) {
+        const StateNode* check = r.body.find("check");
+        return check ? check->find("status")->s : std::string("<missing>");
+    };
+
+    TTDReply r = Run("seek", {{"frame", std::to_string(first + 2)}, {"tinframe", "1000"}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    ASSERT_NE(r.body.find("check"), nullptr) << "a seek says how exactly its position came back";
+    EXPECT_EQ(statusOf(r), "exact");
+    EXPECT_TRUE(r.body.find("check")->find("issues")->items.empty());
+    for (const auto& [verb, options] : std::vector<std::pair<std::string, std::map<std::string, std::string>>>{
+             {"step-forward", {}}, {"step-back", {}}, {"step-instruction", {{"dir", "back"}}},
+             {"reverse-step", {{"count", "1"}}}, {"reverse-continue", {{"pcs", "0"}}}})
+    {
+        r = Run(verb, options);
+        ASSERT_TRUE(r.Ok()) << verb << ": " << r.message;
+        EXPECT_EQ(statusOf(r), "exact") << verb;
+    }
+    EXPECT_EQ(statusOf(Run("status")), "exact") << "detached: status says it too";
+
+    if (GetParam())
+    {
+        // Another decimator: a replay inside a frame runs on other settings
+        CONFIG& config = _context->config;
+        config.sound.decimatorHighFidelity = !config.sound.decimatorHighFidelity;
+        r = Run("seek", {{"frame", std::to_string(first + 3)}, {"tinframe", "1000"}});
+        const TTDReply status = Run("status");
+        config.sound.decimatorHighFidelity = !config.sound.decimatorHighFidelity;
+        ASSERT_TRUE(r.Ok()) << r.message;
+        EXPECT_EQ(statusOf(r), "not_bit_exact");
+        ASSERT_NE(r.body.find("check"), nullptr);
+        const std::vector<StateNode>& issues = r.body.find("check")->find("issues")->items;
+        ASSERT_EQ(issues.size(), 1u);
+        EXPECT_EQ(issues[0].find("kind")->s, "configuration_differs");
+        EXPECT_EQ(issues[0].find("detail")->s.rfind("sound.decimator_high_fidelity", 0), 0u) << issues[0].find("detail")->s;
+        EXPECT_EQ(statusOf(status), "not_bit_exact");
+    }
+
+    ASSERT_TRUE(Run("resume").Ok());
+    EXPECT_EQ(Run("status").body.find("check"), nullptr) << "recording again: no position to judge";
+}
+
 TEST_P(TTDControl_Test, InstructionStepsCheckTheirArguments)
 {
     Record(4);
@@ -459,6 +509,18 @@ TEST_P(TTDControl_Test, ReverseQueriesCheckTheirCriteriaAndAddresses)
     EXPECT_EQ(Run("find-last", {{"addr", "#5C00"}, {"access", "poke"}}).error, TTDControlError::BadRequest);
     EXPECT_EQ(Run("find-last", {{"value", "256"}}).error, TTDControlError::BadRequest);
     EXPECT_EQ(Run("find-last", {{"addr", "$5C00"}, {"phys_page", "300"}}).error, TTDControlError::BadRequest);
+    // space: ram / vram / cache; offsets in another space reach its end (256 KB) and stay inside one 16 KB page
+    EXPECT_EQ(Run("find-last", {{"addr", "0"}, {"space", "rom"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("find-last", {{"addr", "0x40000"}, {"space", "vram"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("find-last", {{"addr_from", "0x3FFF"}, {"addr_to", "0x4000"}, {"space", "cache"}}).error,
+              TTDControlError::BadRequest);
+    EXPECT_EQ(Run("find-last", {{"value", "1"}, {"space", "vram"}}).error, TTDControlError::BadRequest) << "no offset";
+    EXPECT_EQ(Run("find-last", {{"addr", "5"}, {"space", "vram"}, {"phys_page", "5"}}).error, TTDControlError::BadRequest);
+    for (const auto& [space, addr] : {std::pair{"vram", "0x3FFFF"}, std::pair{"cache", "0x4000"}, std::pair{"ram", "0xFFFF"}})
+    {
+        const TTDReply r = Run("find-last", {{"addr", addr}, {"space", space}});
+        EXPECT_TRUE(r.Ok()) << space << " " << addr << ": " << r.message;
+    }
     EXPECT_EQ(Run("reverse-continue").error, TTDControlError::BadRequest);
     EXPECT_EQ(Run("reverse-continue", {{"pcs", "0x38,"}}).error, TTDControlError::BadRequest);
 
@@ -825,6 +887,44 @@ TEST_P(TTDControl_Test, ARestartedBlackBoxLeavesItsRecordingToLoad)
     ASSERT_TRUE(Run("start").Ok());
     _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
     EXPECT_FALSE(FileHelper::FileExists(marker)) << "an explicit session's folder goes with it";
+}
+
+// memory-at / memory-diff: a memory at a past checkpoint and what changed between two, from the engine's store. On
+// the 128K ROM's frame interrupt FRAMES (#5C78, RAM page 5 offset #1C78) counts up every frame.
+// Boot-bound: the ROM reaches BASIC (interrupts on) in about 100 frames, run before the recording in the turbo mode
+TEST_P(TTDControl_Test, MemoryAtAndMemoryDiffReadTheStore)
+{
+    _emulator->EnableTurboMode();
+    _emulator->RunNFrames(120, /*skipBreakpoints=*/true);
+    _emulator->DisableTurboMode();
+    Record(4);
+    ASSERT_TRUE(Run("stop").Ok());
+    const std::string first = std::to_string(Info().sessionStartFrame);
+    const std::string last = std::to_string(Info().currentEndFrame);
+    const TTDReply at = Run("memory-at", {{"space", "ram5"}, {"offset", "0x1C78"}, {"length", "1"}, {"frame", first}});
+    if (!GetParam())
+    {
+        EXPECT_EQ(at.error, TTDControlError::NotAvailable) << "v1 has no piece store";
+        return;
+    }
+    ASSERT_TRUE(at.Ok()) << at.message;
+    EXPECT_EQ(Str(at, "space"), "ram");
+    EXPECT_EQ(at.body.find("offset")->i, 5 * 0x4000 + 0x1C78) << "page 5 of the machine RAM";
+    const TTDReply end = Run("memory-at", {{"space", "ram5"}, {"offset", "0x1C78"}, {"length", "1"}, {"frame", last}});
+    ASSERT_TRUE(end.Ok()) << end.message;
+    EXPECT_NE(Str(at, "hex"), Str(end, "hex")) << "FRAMES counted on";
+
+    const TTDReply diff = Run("memory-diff", {{"space", "ram5"}, {"from_frame", first}, {"to_frame", last}});
+    ASSERT_TRUE(diff.Ok()) << diff.message;
+    bool frames = false;
+    for (const StateNode& r : diff.body.find("ranges")->items)
+        frames = frames || (r.find("offset")->i <= 0x1C78 && r.find("offset")->i + r.find("length")->i > 0x1C78);
+    EXPECT_TRUE(frames) << "FRAMES is among the changed bytes of page 5";
+    EXPECT_EQ(Run("memory-diff", {{"space", "ram5"}, {"from_frame", first}, {"to_frame", first}}).body.find("changed_bytes")->i, 0);
+
+    EXPECT_EQ(Run("memory-at", {{"frame", first}}).error, TTDControlError::BadRequest) << "no space";
+    EXPECT_EQ(Run("memory-at", {{"space", "ram5"}, {"frame", first}, {"length", "0"}}).error, TTDControlError::BadRequest);
+    EXPECT_EQ(Run("memory-at", {{"space", "ram5"}, {"frame", first}, {"offset", "0x4000000"}}).error, TTDControlError::BadRequest);
 }
 
 INSTANTIATE_TEST_SUITE_P(Backends, TTDControl_Test, ::testing::Values(false, true),

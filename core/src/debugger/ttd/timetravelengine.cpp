@@ -137,7 +137,7 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& memoryRegi
     }
     EndSession();
     _regions = regions;
-    _deltaBase.assign(_regions.size(), {});
+    _deltaBase.Reset(_regions.size());
     _live.resize(_regions.size());
     _inMemory.resize(_regions.size());
     _sinceSnapshot.assign(_regions.size(), {});
@@ -382,25 +382,25 @@ bool TimeTravelEngine::PositionOf(TTDMachineTime t, TTDPosition& out) const
 void TimeTravelEngine::EndSession()
 {
     _readOnly = false;
-    _segments.clear();
-    _streamCopies.clear();
-    _configs.clear();
-    _mediaSlots.clear();
-    _pendingMedia.clear();
+    _segments = {};
+    _streamCopies = {};
+    _configs = {};
+    _mediaSlots = {};
+    _pendingMedia = {};
     _events.Clear();
-    _rzxFrames.clear();
+    _rzxFrames = {};
     _payloads.Clear();
     _busReads.Clear();
     _busWrites.Clear();
     _busVectors.Clear();
     _mediaReads.Clear();
     _writes.Clear();
-    _timeLines.clear();
-    _timeFields.clear();
+    _timeLines = {};
+    _timeFields = {};
     _deviceRegionOf.fill(-1);
-    _deviceScratch.clear();
-    _deviceExtent.clear();
-    _growsWithState.clear();
+    _deviceScratch = {};
+    _deviceExtent = {};
+    _growsWithState = {};
     _devices.Clear();
     // Change records and full tables each hold their references; releasing
     // them frees what no other session sharing the store needs
@@ -412,22 +412,26 @@ void TimeTravelEngine::EndSession()
                 _tables->Release(r.snapshot);
 
     _open = false;
-    _regions.clear();
-    _deltaBase.clear();
+    _regions = {};
+    _deltaBase.Reset(0);
     _changes.clear();
     _changes.shrink_to_fit();
-    _live.clear();
-    _inMemory.clear();
-    _sinceSnapshot.clear();
-    _sinceSnapshotFlag.clear();
-    _lastSnapshot.clear();
-    _regionPayload.clear();
-    _regionVersions.clear();
+    _live = {};
+    _inMemory = {};
+    _sinceSnapshot = {};
+    _sinceSnapshotFlag = {};
+    _lastSnapshot = {};
+    _regionPayload = {};
+    _regionVersions = {};
     _frames.Clear();
     _checkpoints.clear();
     _checkpoints.shrink_to_fit();   // a deque returns its blocks
     _cpBase = 0;
     _changeBase = 0;
+    // A store no other session shares, holding nothing now: its arena goes back too (without a session the
+    // session's memory is zero)
+    if (_store.use_count() == 1 && _store->LiveVersions() == 0)
+        _store->Clear();
 }
 
 /// endregion </Session>
@@ -653,7 +657,7 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
             std::vector<const uint8_t*> bytesOf(_regions[r].pieces, nullptr);
             for (uint32_t p = 0; p < _regions[r].pieces; ++p)
                 if (_live[r][p] != TTDPieceStore::kNone)
-                    bytesOf[p] = _deltaBase[r].data() + size_t(p) * kTTDPieceSize;
+                    bytesOf[p] = _deltaBase.Get(r, p);
             for (const TTDChangedPiece& c : *pieces)
                 if (c.region == r)
                     bytesOf[c.piece] = c.bytes;
@@ -669,19 +673,15 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
                 continue;
             if (cp.baseline && index > 0)
             {
-                // Whole, never a difference from the previous segment's version
-                std::vector<uint8_t>& base = _deltaBase[r];
-                CoverPieces(r, base, c.piece + 1);
-                if (base.data() + size_t(c.piece) * kTTDPieceSize != c.bytes)
-                    std::memcpy(base.data() + size_t(c.piece) * kTTDPieceSize, c.bytes, kTTDPieceSize);
+                // Whole, never a difference from the previous segment's version (stored before the base takes
+                // it: c.bytes may be the base's own copy, which a uniform piece gives up)
                 const TTDPieceId next = _store->InternFirst(c.bytes);
+                _deltaBase.Set(r, c.piece, c.bytes);
                 _inMemory[r][c.piece] = next;
                 NoteChange(r, c.piece, next);
                 continue;
             }
-            std::vector<uint8_t>& base = _deltaBase[r];
-            CoverPieces(r, base, c.piece + 1);
-            uint8_t* previousBytes = base.data() + size_t(c.piece) * kTTDPieceSize;
+            const uint8_t* previousBytes = _deltaBase.Get(r, c.piece);
             const TTDPieceId previous = _live[r][c.piece];
             // Offered but unchanged (a dirty page rewritten with the same bytes,
             // a compare-mode region): nothing to store, nothing to copy
@@ -692,8 +692,7 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
             }
             const TTDPieceId next = previous == TTDPieceStore::kNone ? _store->InternFirst(c.bytes)
                                                                      : _store->Intern(previous, previousBytes, c.bytes);
-            std::memcpy(previousBytes, c.bytes, kTTDPieceSize);
-            _lastWork.deltaBaseBytes += kTTDPieceSize;
+            _lastWork.deltaBaseBytes += _deltaBase.Set(r, c.piece, c.bytes);
             _inMemory[r][c.piece] = next;   // live memory holds this version's content now
             if (next == previous)
             {
@@ -996,13 +995,16 @@ bool TimeTravelEngine::TruncateAfter(size_t index, const TTDPosition& cut, std::
     {
         BuildMap(index, r, map);
         std::copy(map.begin(), map.end(), _live[r].begin());
-        std::vector<uint8_t>& base = _deltaBase[r];
-        CoverPieces(r, base, PiecesHeld(map));
+        std::array<uint8_t, kTTDPieceSize> piece;
         for (uint32_t p = 0; p < map.size(); ++p)
-            if (map[p] != TTDPieceStore::kNone && !_store->Decode(map[p], base.data() + size_t(p) * kTTDPieceSize))
+            if (map[p] != TTDPieceStore::kNone)
             {
-                error = "region " + std::to_string(r) + " piece " + std::to_string(p) + " does not decode";
-                return false;
+                if (!_store->Decode(map[p], piece.data()))
+                {
+                    error = "region " + std::to_string(r) + " piece " + std::to_string(p) + " does not decode";
+                    return false;
+                }
+                _deltaBase.Set(r, p, piece.data());
             }
         size_t s = index;
         while (!HasFullTable(s, r))
@@ -1183,8 +1185,7 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
     h.pieceVersions = _store->VersionTableBytes();
     h.piecePayload = _store->PayloadBytes();
     h.arenaSlack = _store->ArenaBytes() - _store->PayloadBytes();
-    for (const auto& base : _deltaBase)
-        h.deltaBase += base.capacity();
+    h.deltaBase = _deltaBase.HeapBytes();
     h.referenceTables = _tables->HeapBytes() + _changes.capacity() * sizeof(PieceChange);
     for (size_t r = 0; r < _live.size(); ++r)
         h.referenceTables += _live[r].capacity() * sizeof(TTDPieceId) + _sinceSnapshot[r].capacity() * sizeof(uint32_t) +
@@ -1222,8 +1223,7 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
     for (const TTDRegionDesc& r : _regions)
         b += r.name.capacity() + r.ownerInstance.capacity();
     b += _inMemory.capacity() * sizeof(_inMemory[0]) + _live.capacity() * sizeof(_live[0]) +
-         _sinceSnapshot.capacity() * sizeof(_sinceSnapshot[0]) + _sinceSnapshotFlag.capacity() * sizeof(_sinceSnapshotFlag[0]) +
-         _deltaBase.capacity() * sizeof(_deltaBase[0]);
+         _sinceSnapshot.capacity() * sizeof(_sinceSnapshot[0]) + _sinceSnapshotFlag.capacity() * sizeof(_sinceSnapshotFlag[0]);
     for (const auto& v : _inMemory)
         b += v.capacity() * sizeof(TTDPieceId);
     for (const auto& v : _deviceScratch)

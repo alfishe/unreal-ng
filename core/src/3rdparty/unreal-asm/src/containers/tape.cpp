@@ -178,6 +178,28 @@ bool ReadTape(std::span<const uint8_t> image, std::vector<TrdosFile>& out, std::
             f.length = static_cast<uint16_t>(f.data.size());
             k = next - 1;
         }
+        else if (header && b.data[1] == 0xAF && (b.data[0] & 0x7F) == 0)
+        {
+            // A Laser Genius source (Oasis, 1986): its own header (block number, bit 7 on the last; #AF; the file's
+            // length; the block's length; a 10-character name) before every block of up to 2048 bytes: the blocks
+            // joined, type L
+            f.type = 'L';
+            f.name.assign(reinterpret_cast<const char*>(b.data.data() + 6), 10);
+            size_t at = k;
+            while (at + 1 < blocks.size())
+            {
+                const TapeBlock& h = blocks[at];
+                if (h.flag != 0 || h.data.size() != 17 || h.data[1] != 0xAF || std::memcmp(h.data.data() + 6, b.data.data() + 6, 10) != 0 ||
+                    (h.data[0] & 0x7F) != ((at - k) / 2))
+                    break;
+                f.data.insert(f.data.end(), blocks[at + 1].data.begin(), blocks[at + 1].data.end());
+                at += 2;
+                if (h.data[0] & 0x80)
+                    break;
+            }
+            f.length = static_cast<uint16_t>(f.data.size());
+            k = at - 1;
+        }
         else if (header)
         {
             const TapeBlock& d = blocks[k + 1];

@@ -8,6 +8,7 @@
 //   cpu                    the CPU's view, addresses 0..#FFFF, wrapping at #FFFF (what is paged in now)
 //   ram5 / rom2 / cache0   one physical page, offsets 0..#3FFF, mapped or not
 //   ram                    every RAM page back to back (page n at n * #4000)
+//   <region>               a device memory by name or alias (sprinter.vram, neogs.ram, ...), offsets 0..size-1
 // Reads are side-effect free: no contention, no memory-mapped device sees them.
 
 #include <cstdint>

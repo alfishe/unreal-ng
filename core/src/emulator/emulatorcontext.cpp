@@ -1,6 +1,7 @@
 #include "emulatorcontext.h"
 
 #include "common/modulelogger.h"
+#include "emulator/memory/devicememory.h"
 #include "stdafx.h"
 
 /// region <Constructors / destructors>
@@ -73,6 +74,7 @@ EmulatorContext::EmulatorContext(Emulator* emulator, LoggerLevel level) : Emulat
 
 EmulatorContext::~EmulatorContext()
 {
+    DeviceMemory::Forget(this);   // the registry's views of this machine's memories
     if (pModuleLogger != nullptr)
     {
         delete pModuleLogger;

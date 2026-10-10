@@ -6,6 +6,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -115,6 +116,7 @@ protected:
     // A machine's own DAC (the Sprinter's Covox / Covox-Blaster), owned by its port decoder and
     // mixed in the COVOX slot (attachModelAudioSource). Null for every other machine
     IModelAudioSource* _modelAudio = nullptr;
+    std::optional<GSActivityCounters> _gsCountersBeforeReplay;   ///< beginReplayTelemetry .. endReplayTelemetry
     GeneralSoundCard* _gs = nullptr;  // General Sound slot ([SOUND] GSType=Z80|LW - any personality, GS design §5.1)
 #ifdef UNREALNG_HAVE_OPL4
     SoundChip_Moonsound* _moonsound = nullptr;
@@ -362,6 +364,11 @@ public:
     /// devices() directly (audiosettingswidget) sees it immediately, and
     /// ends every HUD nudge (AudioActivityIndicators::stop).
     void onEmulatorPaused();
+    /// A time-travel replay re-runs recorded history: the GS activity counters (session totals the automation
+    /// reports, not machine state) are kept as they stand before it and put back after, so replayed spans do not
+    /// count again
+    void beginReplayTelemetry();
+    void endReplayTelemetry();
 
     /// Host output hold: while any hold is active, handleFrameEnd hands nothing to the host audio callback - the
     /// frontend's ring sees exactly what it sees while the emulator is paused. For runs that are not paced to real

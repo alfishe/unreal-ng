@@ -131,6 +131,7 @@ void SessionWriteMap::SetDefaults(const SessionSettings& settings)
 {
     std::lock_guard<std::mutex> lock(g_settingsLock);
     g_settings = settings;
+    JournalIoPool::Configure(settings.ioThreads);
 }
 
 SessionSettings SessionWriteMap::Defaults()

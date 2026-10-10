@@ -41,7 +41,7 @@ own tests and a command-line tool; the emulator uses it through thin adapters.
 | [prior-art.md](prior-art.md) | Existing converters and tools, local and public, compared; nothing is vendored |
 | [tdd.md](tdd.md) | Library layout, namespaces, interfaces (`ISourceCodec`, `IDialectFrontend`, `IDialectBackend`), registry, CLI, emulator adapters, phases |
 | [test-and-benchmark-plan.md](test-and-benchmark-plan.md) | Oracles (byte-exact round trips, the original assembler in the emulator, binary equality after conversion), corpus, tests, benchmarks |
-| [memory-bridge.md](memory-bridge.md) | **P2, design only**: sources straight from the emulated machine's memory (per-assembler memory descriptors), export and conversion, background builds with hints, real-time labels |
+| [asm-synchronizer.md](asm-synchronizer.md) | **P2, TDD**: both directions between the host and an assembler running in the emulator: extract its source from RAM (live labels, hints, convert), and inject a host source (sjasmplus → IR → retro backend) into its memory or a snapshot; per-assembler layouts, effort estimate |
 | [symbols/](symbols/README.md) | The symbol module: one symbol model, symbol file codecs (sjasmplus, z88dk, VICE, IDA, Ghidra, ...), live label tables, ROM bundles |
 
 ## In one picture
@@ -68,8 +68,15 @@ flowchart LR
 Design (2026-10-05). Decided (D-1…D-12, [goals-and-requirements.md](goals-and-requirements.md) §3): the library and
 its place; one codec per format, decode and encode; nothing vendored; TASM 3 / 4 first, every other codec queued;
 compiled-in plugins; a neutral IR; TASM → sjasmplus first, sjasmplus the first output target; UTF-8 on the host; the
-`zxasm` CLI. Still open: the symbol module's P-2…P-7 ([TODO.md](TODO.md)).
+`zxasm` CLI; the symbol module's P-2…P-7 as recommended (2026-10-09).
 
-Implementation on branch `unreal-asm` (master after the owner's review): A1-A4 the codecs of every version (text,
-sjasmplus, TASM, ALASM, ZX-ASM, STORM), A5 the IR with ALASM → sjasmplus conversion checked against ALASM's own
-binaries, A5b TASM → sjasmplus checked against the GS 1.04 ROM and TASM 4.12. Check scripts: `tools/verification/unreal-asm/`. Progress per phase: [TODO.md](TODO.md).
+Built and on master (A1-A9, review round A0 2026-10-09):
+
+- the codecs of every version of the catalog's formats;
+- the IR with frontends for every dialect and the sjasmplus, pasmo and z88dk backends, each conversion checked
+  against the bytes the original assembler built;
+- the emulator surfaces (`AsmControl`, the disk adapter, the Qt Disk files dialog);
+- the symbol module ([symbols/README.md](symbols/README.md#status));
+- benchmarks; the user guide [docs/features/unreal-asm.md](../../features/unreal-asm.md).
+
+Next: the [asm-synchronizer](asm-synchronizer.md). Check scripts: `tools/verification/unreal-asm/`. Progress per phase: [TODO.md](TODO.md).

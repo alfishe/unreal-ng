@@ -131,7 +131,7 @@ uint16_t AtaDevice::ReadData()
     if (_s.bufferPos >= _s.bufferLen)
     {
         _s.status &= static_cast<uint8_t>(~Status::DRQ);
-        if (_activity && CountsAsActivity())
+        if (_activity && CountsAsActivity() && !(_replaying && *_replaying))
             _activity->fetch_add(1, std::memory_order_relaxed);
         DataInDone();
     }
@@ -158,7 +158,7 @@ void AtaDevice::WriteData(uint16_t word)
     if (_s.bufferPos >= _s.bufferLen)
     {
         _s.status &= static_cast<uint8_t>(~Status::DRQ);
-        if (_activity && CountsAsActivity())
+        if (_activity && CountsAsActivity() && !(_replaying && *_replaying))
             _activity->fetch_add(1, std::memory_order_relaxed);
         DataOutDone();
     }

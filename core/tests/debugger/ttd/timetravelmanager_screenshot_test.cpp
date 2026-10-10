@@ -14,7 +14,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelengine.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -28,14 +28,14 @@ TEST(TimeTravelManager_Screenshot_Test, EveryFrameIsTheFramebufferAtItsBoundary)
     emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
     emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
     context->pMemory->UpdateFeatureCache();
-    ttd::TimeTravelManager* ttd = context->pTimeTravelManager;
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
     ttd::TimeTravelEngine engine;
     ttd->SetShadowEngine(&engine);
     ASSERT_TRUE(ttd->StartRecording());
     emulator->RunNFrames(30, true);   // off: nothing captured
     EXPECT_EQ(engine.Streams().CaptureCalls(), 0u);
-    ASSERT_TRUE(engine.Streams().IsRegistered(ttd::TimeTravelManager::kScreenshotStream));
-    engine.Streams().SetEnabled(ttd::TimeTravelManager::kScreenshotStream, true);
+    ASSERT_TRUE(engine.Streams().IsRegistered(ttd::TimeTravelController::kScreenshotStream));
+    engine.Streams().SetEnabled(ttd::TimeTravelController::kScreenshotStream, true);
 
     for (int i = 0; i < 20; ++i)
     {
@@ -43,7 +43,7 @@ TEST(TimeTravelManager_Screenshot_Test, EveryFrameIsTheFramebufferAtItsBoundary)
         const uint64_t frame = context->emulatorState.frame_counter;
         const FramebufferDescriptor& fb = context->pScreen->GetFramebufferDescriptor();
         std::vector<uint8_t> copy;
-        ASSERT_TRUE(engine.FrameStreamCopy(ttd::TimeTravelManager::kScreenshotStream, frame, copy)) << "frame " << frame;
+        ASSERT_TRUE(engine.FrameStreamCopy(ttd::TimeTravelController::kScreenshotStream, frame, copy)) << "frame " << frame;
         ASSERT_EQ(copy.size(), 5 + fb.memoryBufferSize);
         uint16_t width = 0, height = 0;
         std::memcpy(&width, copy.data(), 2);
@@ -53,6 +53,9 @@ TEST(TimeTravelManager_Screenshot_Test, EveryFrameIsTheFramebufferAtItsBoundary)
         ASSERT_EQ(std::memcmp(copy.data() + 5, fb.memoryBuffer, fb.memoryBufferSize), 0) << "frame " << frame;
     }
     EXPECT_EQ(engine.Streams().CaptureCalls(), 20u);
+    // The controller's own engine stays closed while a shadow engine takes the captures: its timeline is kept (the
+    // history limit used to read "nothing held", erase every checkpoint each frame and then read the empty front)
+    EXPECT_EQ(ttd->GetCheckpointCount(), 51u) << "30 + 20 frames and the start";
     ttd->StopRecording();
     ttd->SetShadowEngine(nullptr);
     EmulatorTestHelper::CleanupEmulator(emulator);

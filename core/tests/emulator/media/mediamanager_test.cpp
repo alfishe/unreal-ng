@@ -84,7 +84,9 @@ namespace
 
     /// A minimal FAT image: a VBR (raw, or behind an MBR when `mbr`) with a
     /// BPB of the requested flavour - enough for ProbeFatType, nothing more
-    std::string MakeFatImageFile(const char* name, FatType fs, bool mbr)
+    /// `total16`: the 16-bit sector count of a FAT16-family volume (0: a big one, the count in the 32-bit field;
+    /// under about 4 100: FAT12)
+    std::string MakeFatImageFile(const char* name, FatType fs, bool mbr, uint16_t total16Override = 16384)
     {
         std::vector<uint8_t> vbr(512, 0);
         vbr[0] = 0xEB;
@@ -99,8 +101,13 @@ namespace
         vbr[16] = 2;  // FAT copies
         const uint16_t rootEntries = fs == FatType::Fat32 ? 0 : 512;
         std::memcpy(&vbr[17], &rootEntries, 2);
-        const uint16_t total16 = fs == FatType::Fat32 ? 0 : 16384;  // 16 KiB of 1-sector clusters: over FAT12's 4085
+        const uint16_t total16 = fs == FatType::Fat32 ? 0 : total16Override;  // default: over FAT12's 4085 clusters
         std::memcpy(&vbr[19], &total16, 2);
+        if (fs != FatType::Fat32 && total16 == 0)
+        {
+            const uint32_t total32 = 200000;  // a FAT16 volume over 32 MiB keeps its size in the 32-bit field
+            std::memcpy(&vbr[32], &total32, 4);
+        }
         vbr[21] = 0xF8;
         const uint16_t fatSectors16 = fs == FatType::Fat32 ? 0 : 2;
         std::memcpy(&vbr[22], &fatSectors16, 2);
@@ -199,7 +206,7 @@ TEST(MediaManager_Test, InsertFromAnImageFileAndAccessModes)
     missing.path = path + ".missing";
     EXPECT_EQ(manager.Insert("sd.test", missing).error, MediaError::UnreadableSource);
 
-    ASSERT_TRUE(manager.Eject("sd.test", {Disposition::Discard}).Ok());
+    ASSERT_TRUE(manager.Eject("sd.test", {.disposition = Disposition::Discard}).Ok());
     manager.UnregisterSlot("sd.test");
     std::remove(path.c_str());
 }
@@ -444,6 +451,16 @@ TEST(MediaManager_Test, Fat32OnlySlotBuildsFoldersAsFat32AndChecksImages)
     EXPECT_EQ(refusedImage.error, MediaError::BadRequest);
     EXPECT_NE(refusedImage.message.find("fat16 volume"), std::string::npos) << refusedImage.message;
 
+    // FAT12 (a floppy-sized volume) and a FAT16 over 32 MiB are of the FAT16 family as well
+    MediaSource fat12Image;
+    fat12Image.path = MakeFatImageFile("matrix-fat12.img", FatType::Fat16, false, 2880);
+    const MediaResult refusedFat12 = manager.Insert("sd.test", fat12Image);
+    EXPECT_EQ(refusedFat12.error, MediaError::BadRequest) << "a FAT12 volume is not FAT32";
+    MediaSource bigFat16Image;
+    bigFat16Image.path = MakeFatImageFile("matrix-fat16-big.img", FatType::Fat16, false, 0);
+    const MediaResult refusedBig = manager.Insert("sd.test", bigFat16Image);
+    EXPECT_EQ(refusedBig.error, MediaError::BadRequest) << "the 32-bit sector count of a big FAT16 volume";
+
     MediaSource fat32Image;
     fat32Image.path = MakeFatImageFile("matrix-fat32-mbr.img", FatType::Fat32, true);
     ASSERT_TRUE(manager.Insert("sd.test", fat32Image).Ok()) << "FAT32 behind an MBR passes the probe";
@@ -509,7 +526,7 @@ TEST(MediaManager_Test, ExportWritesTheGuestView)
     manager.SetApplyNowProbe([&running] { return !running; });
     EXPECT_EQ(manager.Export("sd.test", path).error, MediaError::NotSupported) << "a running machine is paused first";
     manager.SetApplyNowProbe(nullptr);
-    ASSERT_TRUE(manager.Eject("sd.test", {Disposition::Discard}).Ok());
+    ASSERT_TRUE(manager.Eject("sd.test", {.disposition = Disposition::Discard}).Ok());
     manager.UnregisterSlot("sd.test");
     std::remove(path.c_str());
 }
@@ -609,7 +626,7 @@ TEST(MediaManager_Test, FolderBecomesAFatVolumeAndStaysUntouched)
 
     exported.reset();
     std::remove(image.c_str());
-    ASSERT_TRUE(manager.Eject("sd.test", {Disposition::Discard}).Ok());
+    ASSERT_TRUE(manager.Eject("sd.test", {.disposition = Disposition::Discard}).Ok());
     manager.UnregisterSlot("sd.test");
 }
 

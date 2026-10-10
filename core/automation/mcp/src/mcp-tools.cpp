@@ -21,6 +21,7 @@
 #include "mcp-slots.h"
 #include "mcp-router.h"
 #include "mcp-symbols.h"
+#include "mcp-asm.h"
 #include "mcp-tool-utils.h"
 
 #include <algorithm>
@@ -994,7 +995,8 @@ void RegisterControlExecution(ToolRegistry& registry)
         "counted (bp_list shows hit_count)";
     schema["properties"]["page"]["type"] = "string";
     schema["properties"]["page"]["description"] =
-        "Optional for bp_add of execution / read / write: 'ram32', 'rom3' or 'cache0' - a physical breakpoint on that "
+        "Optional for bp_add of execution / read / write: 'ram32', 'rom3', 'cache0' or (read / write) 'vram1' (the "
+        "Sprinter's video RAM page, the address its offset) - a physical breakpoint on that "
         "page at offset address & #3FFF, through whatever slot shows the page (slot_only: only through the slot of "
         "address)";
     schema["properties"]["note"]["type"] = "string";
@@ -1561,8 +1563,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "PLD load, F12, Ctrl+Alt+Del, resets (pld_journal_kinds = 'cnf,port_1ffd' filters; pld_journal_source = 'ttd' "
         "reads the TTD recording's OUTs to those codes instead); "
         "all unavailable on other machines. 'memory_region' = bytes of a device memory region outside the CPU's pages "
-        "(region, default 'vram' = the Sprinter's 256 KB video RAM; address = offset, size = byte count; list: invoke_api "
-        "GET /api/v1/emulator/{id}/memory/regions; write: POST /memory/region/{name} {offset, hex}). 'video_changes' = "
+        "(region, default 'vram' = the Sprinter's 256 KB video RAM; address = offset, size = byte count; list, write, "
+        "save, load: the memory_access tool). 'video_changes' = "
         "the video change log of every machine: latch changes (mode, #7FFD, border, #FF77, the Sprinter's RGMOD / HOLD / "
         "PORT_Y / ALL_MODE / frame height) with frame T, beam line, PC, and the palette / mode table writes per frame. "
         "'audio_mixer' = the per-device mixer (source key, muted, solo, volume, gain_db, peak, active; set: invoke_api "
@@ -1603,7 +1605,7 @@ void RegisterInspectState(ToolRegistry& registry)
     schema["properties"]["windows"]["type"] = "array";
     schema["properties"]["windows"]["items"]["type"] = "string";
     schema["properties"]["windows"]["description"] =
-        "'snapshot' memory windows '<space>:<address>:<length>' (space cpu | ram | ram5 | rom2 | cache0; at most 8, each "
+        "'snapshot' memory windows '<space>:<address>:<length>' (space cpu | ram | ram5 | rom2 | cache0 | a region name; at most 8, each "
         "at most 65536 bytes, returned as base64)";
     schema["properties"]["format"]["type"] = "string";
     schema["properties"]["format"]["default"] = "hexdump";
@@ -3818,6 +3820,16 @@ std::string FormatMarker(const Json::Value& marker)
            FormatTimePoint(marker["frame"], marker["tinframe"]);
 }
 
+/// " Not exact (status): message." from a moving verb's check, or "" when the position came back exactly.
+std::string FormatCheck(const Json::Value& b)
+{
+    if (!b.isMember("check") || b["check"]["status"].asString() == "exact")
+    {
+        return {};
+    }
+    return " Not exact (" + b["check"]["status"].asString() + "): " + b["check"]["message"].asString() + ".";
+}
+
 /// TD-8: " Searched frame A .. frame B." from covered_from/covered_to, or "" when absent.
 std::string FormatSearchWindow(const Json::Value& b)
 {
@@ -3897,7 +3909,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "reverse_continue", "find_last", "port_events", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_summary",
-                               "history_limit", "journal_on", "journal_off", "journal_build", "export_clip"})
+                               "history_limit", "journal_on", "journal_off", "journal_build", "export_clip",
+                               "memory_at", "memory_diff"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -3971,7 +3984,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["tinframe"]["type"] = "integer";
     schema["properties"]["tinframe"]["description"] =
         "T-states within 'frame' for seek / resume / bookmark_add (default 0). A seek without it lands at the frame's end "
-        "on the engine (the frame's final state and picture); give 0 for the frame's start";
+        "on the engine (the frame's final state and picture); give 0 for the frame's start. memory_at: a point inside "
+        "'frame' (default 0 = the frame's start; ram, vram and cache only: the frame's writes up to it are applied)";
     schema["properties"]["count"]["type"] = "integer";
     schema["properties"]["count"]["description"] = "reverse_step: number of instructions to step back (give count OR tstates)";
     schema["properties"]["tstates"]["type"] = "integer";
@@ -3987,7 +4001,22 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "one of its segment files: the segments are joined); export_clip: the clip's directory (created if missing). Resolved by "
         "the emulator process (its machine and working directory)";
     schema["properties"]["addr"]["type"] = "string";
-    schema["properties"]["addr"]["description"] = "find_last: single Z80 address (integer, '0x5800', '#5800' or '$5800')";
+    schema["properties"]["addr"]["description"] =
+        "find_last: single Z80 address (integer, '0x5800', '#5800' or '$5800'); with space vram / cache an offset in "
+        "that memory";
+    schema["properties"]["space"]["type"] = "string";
+    schema["properties"]["space"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* space : {"ram", "vram", "cache"})
+        schema["properties"]["space"]["enum"].append(space);
+    schema["properties"]["space"]["description"] =
+        "find_last / coverage_probe / coverage_scan: the memory searched - ram (Z80 addresses, default), vram (the "
+        "Sprinter's 256 KB video RAM) or cache (its 64 KB fast RAM); for vram / cache addr / addr_from / addr_to are "
+        "offsets inside one 16 KB page. memory_at / memory_diff (required): ram, ramN, or any memory the session "
+        "records by name or alias (sprinter.vram / vram, cache, neogs.ram, gs.ram, moonsound.wave, evo.flash ...)";
+    schema["properties"]["offset"]["type"] = "string";
+    schema["properties"]["offset"]["description"] = "memory_at: byte offset in the space (number, '0x..', '#..'), default 0";
+    schema["properties"]["length"]["type"] = "integer";
+    schema["properties"]["length"]["description"] = "memory_at: bytes, default 256, at most 65536";
     schema["properties"]["access"]["type"] = "string";
     schema["properties"]["access"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* access : {"write", "read", "execute", "io"})
@@ -4225,6 +4254,25 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 }
                 (*body)["pcs"] = pcs;
             }
+            else if (action == "memory_at" || action == "memory_diff")
+            {
+                const bool at = action == "memory_at";
+                if (!args["space"].isString() || (at ? !args.isMember("frame") : !(args.isMember("from_frame") && args.isMember("to_frame"))))
+                {
+                    done(ToolResult::Error(at ? "Action 'memory_at' requires 'space' and 'frame' (offset, length optional)"
+                                              : "Action 'memory_diff' requires 'space', 'from_frame' and 'to_frame'"));
+                    return;
+                }
+                (*body)["space"] = args["space"];
+                for (const char* field : {"frame", "tinframe", "offset", "length", "from_frame", "to_frame", "limit"})
+                    if (args.isMember(field))
+                        (*body)[field] = args[field];
+                if (!at && args.isMember("tinframe"))
+                {
+                    done(ToolResult::Error("Action 'memory_diff' compares frame starts: it takes no 'tinframe'"));
+                    return;
+                }
+            }
             else if (action == "find_last")
             {
                 if (!args.isMember("addr") && !args.isMember("addr_from") && !args.isMember("addr_to") && !args.isMember("pc_from") &&
@@ -4236,7 +4284,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 }
                 // Address / value / PC fields go through verbatim: the WebAPI
                 // parses numbers and "0x.."/"#.."/"$.." strings with range checks
-                for (const char* field : {"addr", "addr_from", "addr_to", "value", "pc_from", "pc_to", "access"})
+                for (const char* field : {"addr", "addr_from", "addr_to", "value", "pc_from", "pc_to", "access", "space"})
                 {
                     if (args.isMember(field))
                     {
@@ -4413,7 +4461,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         {
                             text += " - blocked by marker " + FormatMarker(b["blocking_marker"]);
                         }
-                        return text;
+                        return text + FormatCheck(b);
                     }, done);
                 }
                 else if (action == "step_back_frame" || action == "step_forward_frame")
@@ -4421,7 +4469,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     const std::string route = action == "step_back_frame" ? "/ttd/step-back" : "/ttd/step-forward";
                     CallAndSummarize("POST", Endpoint(id, route), nullptr, caller, [](const Json::Value& b) {
                         return std::string(b["stepped"].asBool() ? "Stepped to " : "Could not step; still at ") +
-                               FormatTimePoint(b["frame"], b["tinframe"]);
+                               FormatTimePoint(b["frame"], b["tinframe"]) + FormatCheck(b);
                     }, done);
                 }
                 else if (action == "step_back_instruction" || action == "step_forward_instruction")
@@ -4430,14 +4478,14 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     stepBody["dir"] = action == "step_back_instruction" ? "back" : "forward";
                     CallAndSummarize("POST", Endpoint(id, "/ttd/step-instruction"), &stepBody, caller, [](const Json::Value& b) {
                         return std::string(b["stepped"].asBool() ? "Stepped one instruction " : "Could not step ") +
-                               b["dir"].asString() + ", at " + FormatTimePoint(b["frame"], b["tinframe"]);
+                               b["dir"].asString() + ", at " + FormatTimePoint(b["frame"], b["tinframe"]) + FormatCheck(b);
                     }, done);
                 }
                 else if (action == "reverse_step")
                 {
                     CallAndSummarize("POST", Endpoint(id, "/ttd/reverse-step"), body.get(), caller, [](const Json::Value& b) {
                         return std::string(b["reached"].asBool() ? "Stepped back to " : "Could not step back fully; at ") +
-                               FormatTimePoint(b["frame"], b["tinframe"]);
+                               FormatTimePoint(b["frame"], b["tinframe"]) + FormatCheck(b);
                     }, done);
                 }
                 else if (action == "reverse_continue")
@@ -4450,7 +4498,33 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         {
                             text += " - blocked by marker " + FormatMarker(b["blocked_by_marker"]);
                         }
-                        return text + "." + FormatSearchWindow(b);
+                        return text + "." + FormatSearchWindow(b) + FormatCheck(b);
+                    }, done);
+                }
+                else if (action == "memory_at")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/memory-at"), body.get(), caller, [](const Json::Value& b) {
+                        const std::string hex = b["hex"].asString();
+                        std::string text = std::to_string(b["length"].asUInt64()) + " bytes of " + b["space"].asString() +
+                                           " at offset " + std::to_string(b["offset"].asUInt64()) + " as at frame " +
+                                           std::to_string(b["at_frame"].asUInt64()) +
+                                           (b["tinframe"].asUInt64() ? " t=" + std::to_string(b["tinframe"].asUInt64()) : std::string()) +
+                                           (b["exact"].asBool() ? "" : " (the checkpoint before the frame asked)") + ": ";
+                        return text + (hex.size() > 128 ? hex.substr(0, 128) + "... (full in the data)" : hex);
+                    }, done);
+                }
+                else if (action == "memory_diff")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/memory-diff"), body.get(), caller, [](const Json::Value& b) {
+                        std::string text = b["space"].asString() + ": " + std::to_string(b["changed_bytes"].asUInt64()) +
+                                           " bytes differ between frame " + std::to_string(b["at_from"].asUInt64()) +
+                                           " and frame " + std::to_string(b["at_to"].asUInt64());
+                        std::string ranges;
+                        for (const Json::Value& r : b["ranges"])
+                            if (ranges.size() < 200)
+                                ranges += (ranges.empty() ? "" : ", ") + std::to_string(r["offset"].asUInt64()) + "+" +
+                                          std::to_string(r["length"].asUInt64());
+                        return text + (ranges.empty() ? "." : " (offset+length: " + ranges + ").");
                     }, done);
                 }
                 else if (action == "find_last")
@@ -4463,6 +4537,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             if (!b["phys_page"].isNull())
                             {
                                 text += ", RAM page " + std::to_string(b["phys_page"].asUInt());
+                            }
+                            if (b.isMember("offset"))
+                            {
+                                text += ", " + b["space"].asString() + " offset " + std::to_string(b["offset"].asUInt());
                             }
                             return text + "." + FormatSearchWindow(b) + " Seek to that frame/tinframe to inspect the machine there.";
                         }
@@ -4582,6 +4660,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 else if (action == "coverage_probe")
                 {
                     std::string query = "/ttd/coverage/probe?";
+                    if (args.isMember("space")) query += "space=" + UrlEncodeSegment(args["space"].asString()) + "&";
                     if (args.isMember("frame")) query += "frame=" + std::to_string(args["frame"].asUInt64()) + "&";
                     if (args.isMember("kind")) query += "kind=" + UrlEncodeSegment(args["kind"].asString()) + "&";
                     if (args.isMember("addr_from")) query += "addr_from=" + UrlEncodeSegment(args["addr_from"].asString()) + "&";
@@ -4604,6 +4683,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 else if (action == "coverage_scan")
                 {
                     std::string query = "/ttd/coverage/scan?";
+                    if (args.isMember("space")) query += "space=" + UrlEncodeSegment(args["space"].asString()) + "&";
                     if (args.isMember("from_frame")) query += "from_frame=" + std::to_string(args["from_frame"].asUInt64()) + "&";
                     if (args.isMember("to_frame")) query += "to_frame=" + std::to_string(args["to_frame"].asUInt64()) + "&";
                     if (args.isMember("kind")) query += "kind=" + UrlEncodeSegment(args["kind"].asString()) + "&";
@@ -4696,6 +4776,207 @@ void RegisterTimeTravel(ToolRegistry& registry)
 
 namespace
 {
+
+namespace
+{
+/// "1234", "0x4D2", "#4D2", "$4D2"
+bool ParseAddressText(const std::string& text, uint32_t& value)
+{
+    std::string t = text;
+    int base = 10;
+    if (!t.empty() && (t[0] == '#' || t[0] == '$'))
+        t = t.substr(1), base = 16;
+    else if (t.size() > 2 && t[0] == '0' && (t[1] == 'x' || t[1] == 'X'))
+        t = t.substr(2), base = 16;
+    if (t.empty() || t.size() > 8)
+        return false;
+    char* end = nullptr;
+    const unsigned long v = std::strtoul(t.c_str(), &end, base);
+    if (!end || *end)
+        return false;
+    value = static_cast<uint32_t>(v);
+    return true;
+}
+
+/// "A8 00 FF" / "A800FF"
+bool ParseHexText(const std::string& text, std::vector<uint8_t>& out)
+{
+    std::string digits;
+    for (char c : text)
+        if (!std::isspace(static_cast<unsigned char>(c)) && c != ',')
+            digits += c;
+    if (digits.empty() || digits.size() % 2 || !std::all_of(digits.begin(), digits.end(), [](char c) {
+            return std::isxdigit(static_cast<unsigned char>(c)) != 0;
+        }))
+        return false;
+    for (size_t i = 0; i < digits.size(); i += 2)
+        out.push_back(static_cast<uint8_t>(std::strtoul(digits.substr(i, 2).c_str(), nullptr, 16)));
+    return true;
+}
+}  // namespace
+
+/// memory_access: every memory of the machine by name (memory-spaces design, step 1): the Z80 view ("cpu") and the
+/// device memory regions - the ones machines declare (Sprinter video RAM, TS-Conf CRAM / SFILE, the CMOS) and every
+/// memory time travel records (NeoGS RAM and flash, General Sound RAM, MoonSound wave memory, VDAC2, EEPROMs,
+/// ZX-Evo flash). Regions by canonical name or alias, as GET /memory/regions lists them
+void RegisterMemoryAccess(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["action"]["type"] = "string";
+    for (const char* action : {"regions", "read", "write", "save", "load"})
+        schema["properties"]["action"]["enum"].append(action);
+    schema["properties"]["action"]["description"] =
+        "regions: list the machine's memories (name, aliases, size, writable, ttd_region); read / write bytes; save "
+        "to / load from a file on the emulator's machine (regions only)";
+    schema["properties"]["space"]["type"] = "string";
+    schema["properties"]["space"]["default"] = "cpu";
+    schema["properties"]["space"]["description"] =
+        "cpu (the Z80 address space through the current banking) or a region name / alias from 'regions' "
+        "(sprinter.vram / vram, neogs.ram, gs.ram, moonsound.wave, tsconf.cram, rtc.cmos, evo.flash, ...)";
+    schema["properties"]["offset"]["type"] = "string";
+    schema["properties"]["offset"]["description"] = "Z80 address (cpu) or offset in the region: number, '0x..' or '#..'";
+    schema["properties"]["length"]["type"] = "integer";
+    schema["properties"]["length"]["default"] = 128;
+    schema["properties"]["length"]["description"] = "read: bytes (max 65536); save: bytes, 0 = to the end";
+    schema["properties"]["hex"]["type"] = "string";
+    schema["properties"]["hex"]["description"] = "write: the bytes as hex ('A8 00 FF' or 'A800FF')";
+    schema["properties"]["format"]["type"] = "string";
+    schema["properties"]["format"]["description"] = "read: hex (default) or sparse (runs of one byte folded)";
+    schema["properties"]["path"]["type"] = "string";
+    schema["properties"]["path"]["description"] = "save / load: the file on the emulator's machine";
+    schema["properties"]["target"]["type"] = "string";
+    schema["properties"]["target"]["default"] = "auto";
+    schema["required"].append("action");
+
+    registry.Register(
+        "memory_access",
+        "Read and write every memory of the machine by name: the Z80 view (space 'cpu') and device memories outside "
+        "the CPU's pages - the Sprinter's video RAM, TS-Conf CRAM / SFILE, the CMOS, and every memory time travel "
+        "records (NeoGS RAM and flash, General Sound RAM, MoonSound wave memory, VDAC2, EEPROMs, ZX-Evo flash). "
+        "'regions' lists them with their aliases and whether they are writable. Writes are debugger edits (recorded "
+        "by time travel).",
+        std::move(schema),
+        [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
+            const std::string action = args["action"].asString();
+            const std::string space = args.isMember("space") && args["space"].isString() ? args["space"].asString() : "cpu";
+            const bool cpu = space == "cpu";
+            std::string offset = "0";
+            if (args.isMember("offset"))
+                offset = args["offset"].isString() ? args["offset"].asString() : std::to_string(args["offset"].asUInt());
+            const unsigned length = args.isMember("length") && args["length"].isIntegral() ? args["length"].asUInt() : 128u;
+            if (action != "regions" && action != "read" && action != "write" && action != "save" && action != "load")
+            {
+                done(ToolResult::Error("memory_access: action must be regions, read, write, save or load"));
+                return;
+            }
+            if (cpu && (action == "save" || action == "load"))
+            {
+                done(ToolResult::Error("memory_access: save / load take a region (space); the Z80 view: invoke_api "
+                                       "GET /memory/read/{address}"));
+                return;
+            }
+            if (action == "write" && !(args.isMember("hex") && args["hex"].isString()))
+            {
+                done(ToolResult::Error("memory_access: write needs 'hex'"));
+                return;
+            }
+            if ((action == "save" || action == "load") && !(args.isMember("path") && args["path"].isString()))
+            {
+                done(ToolResult::Error("memory_access: " + action + " needs 'path'"));
+                return;
+            }
+            const std::string format = args.isMember("format") && args["format"].asString() == "sparse" ? "sparse" : "hex";
+            // The Z80 view's write: the WebAPI takes data bytes and a numeric address
+            std::vector<uint8_t> bytes;
+            uint32_t address = 0;
+            if (cpu && action == "write" &&
+                (!ParseHexText(args["hex"].asString(), bytes) || !ParseAddressText(offset, address) || address > 0xFFFF))
+            {
+                done(ToolResult::Error("memory_access: bad 'hex' or 'offset' (a Z80 address 0..0xFFFF)"));
+                return;
+            }
+            TargetResolver::ResolveFromArgs(args, caller, [=, &caller](bool ok, const std::string& id) {
+                if (!ok)
+                {
+                    done(ToolResult::Error(id));
+                    return;
+                }
+                if (action == "regions")
+                {
+                    CallAndSummarize("GET", Endpoint(id, "/memory/regions"), nullptr, caller, [](const Json::Value& b) {
+                        std::string text;
+                        for (const Json::Value& r : b["regions"])
+                        {
+                            text += (text.empty() ? "" : ", ") + r["name"].asString();
+                            if (r["aliases"].isArray() && !r["aliases"].empty())
+                                text += " (" + r["aliases"][0].asString() + ")";
+                            text += " " + r["size_hex"].asString() + (r["writable"].asBool() ? "" : " read-only");
+                        }
+                        return text.empty() ? std::string("No device memories on this machine (space 'cpu' still works).")
+                                            : "Memories: " + text + ".";
+                    }, done);
+                    return;
+                }
+                if (cpu)
+                {
+                    if (action == "read")
+                    {
+                        CallAndSummarize("GET",
+                                         Endpoint(id, "/memory/read/" + offset + "?length=" + std::to_string(length) +
+                                                          (format == "sparse" ? "&format=sparse" : "")),
+                                         nullptr, caller,
+                                         [length](const Json::Value&) { return "Read " + std::to_string(length) + " bytes of the Z80 view."; },
+                                         done);
+                        return;
+                    }
+                    auto body = std::make_shared<Json::Value>();
+                    (*body)["address"] = address;
+                    for (uint8_t b : bytes)
+                        (*body)["data"].append(b);
+                    CallAndSummarize("POST", Endpoint(id, "/memory/write"), body.get(), caller,
+                                     [n = bytes.size()](const Json::Value&) { return "Wrote " + std::to_string(n) + " bytes."; },
+                                     done);
+                    return;
+                }
+                const std::string path = Endpoint(id, "/memory/region/" + UrlEncodeSegment(space));
+                if (action == "read")
+                {
+                    CallAndSummarize("GET", path + "?offset=" + offset + "&length=" + std::to_string(length) + "&format=" + format,
+                                     nullptr, caller,
+                                     [space, length](const Json::Value& b) {
+                                         return "Read " + std::to_string(length) + " bytes of " + b["region"].asString() +
+                                                " at " + b["offset"].asString() + ".";
+                                     },
+                                     done);
+                    return;
+                }
+                auto body = std::make_shared<Json::Value>();
+                (*body)["offset"] = offset;
+                if (action == "write")
+                    (*body)["hex"] = args["hex"].asString();
+                else
+                {
+                    (*body)["action"] = action;
+                    (*body)["path"] = args["path"].asString();
+                    if (action == "save" && args.isMember("length"))
+                        (*body)["length"] = length;
+                }
+                CallAndSummarize("POST", path, body.get(), caller,
+                                 [action](const Json::Value& b) {
+                                     if (action == "write")
+                                         return "Wrote " + std::to_string(b["bytes_written"].asUInt64()) + " bytes to " +
+                                                b["region"].asString() + ".";
+                                     if (action == "save")
+                                         return "Saved " + std::to_string(b["length"].asUInt64()) + " bytes of " +
+                                                b["region"].asString() + " to " + b["path"].asString() + ".";
+                                     return "Loaded " + std::to_string(b["bytes_written"].asUInt64()) + " bytes into " +
+                                            b["region"].asString() + ".";
+                                 },
+                                 done);
+            });
+        });
+}
 
 void RegisterRzxPlayback(ToolRegistry& registry)
 {
@@ -4866,8 +5147,12 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     // rzx_playback: RZX input recordings (play / stop / status)
     RegisterRzxPlayback(*registry);
 
+    // memory_access: every memory by name - the Z80 view and the device memory regions
+    RegisterMemoryAccess(*registry);
+
     // Phase 2 — smart tools
     RegisterManageSymbols(*registry);
+    RegisterAsmSource(*registry);
     RegisterDebugCode(*registry);
     RegisterAnalyzePerformance(*registry);
     RegisterCaptureMedia(*registry);

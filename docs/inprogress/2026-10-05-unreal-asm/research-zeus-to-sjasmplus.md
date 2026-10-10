@@ -46,6 +46,19 @@ Each row was seen in the emulator (the probe files of `testdata/dialects/zeus/`)
 | GG: `INCBIN "name"` puts a file (checked: the 5 bytes of `dat` between the bytes around it; `INCBIN"name"` without a blank is error 0) | `INCBIN "name"` |
 | v7.E: `INCLUDE name` assembles a type `Z` source of the disk (its labels are known), `PLACE name` puts a type `C` file (checked). ZEUS 1.1 does the same only when started from the PHT 3.6 shell (its file manager: File Functions, Call Subroutine at `#E000`), and there the INCLUDEd source is a type `C` file too (its help: "the extension is always *.C"); standalone it answers error A to both. `OPEN "name"` (an editor command) sends the code to a disk file instead of memory | `INCLUDE "name.asm"`, `INCBIN "name"` |
 
+### 2.1 Primus Assembler 2.9
+
+Checked in Primus 2.9 in unreal-ng (its code goes right after the text; the bytes were read from there):
+
+| Fact | Conversion |
+|---|---|
+| Expressions left to right with `+ - * / ? & !` (`?` the remainder, `!` OR): `7*3+1/2` = 11, `100?7` = 2, `#80/#40!1` = 3 | grouped as built |
+| `/` truncates on unsigned 16-bit words: `11/4` = 2, `3000/7` = 428, `0-1/2` = `#7FFF` (unlike v7.E's rounding) | plain division, masked |
+| `|` (in its manual), `"A"` and a leading minus are syntax errors | read anyway |
+| labels hold `? . @ _ $`: `L.X`, `L?Z`, `L$V`; `L?Z-L_Y` = 1, but `100?7` is a remainder (`?` after a number) | names; sjasmplus renames `L@W` / `L$V` |
+| `DISK NAME` assembles the text file NAME of the disk there (not nested; `DISK INC` fails: INC is stored as the mnemonic's token) | `INCLUDE "NAME.asm"` |
+| `DEFS n` leaves memory as it was; `$` in `DEFW` is the statement's address | `DS n`; the oracle accepts zeros there |
+
 ## 3. Oracle results
 
 | Program | ZEUS | Bytes | Result |
@@ -58,6 +71,8 @@ Each row was seen in the emulator (the probe files of `testdata/dialects/zeus/`)
 | `INCL11` + `inc1` (type C) + `dat`, in the PHT 3.6 shell | 1.1 | 11 | equal |
 | ADS 2.0: `MAKE_ADS` + `CC0`-`CC2`, `PLACE $ads` / `FONT$`, `OPEN "adsobj"` in the PHT 3.6 shell | 1.1 | 20155 | equal |
 | Zeus Routines: Glitter, Multiplot, Print, Scrolling, Select | 1983 | 239, 238, 623, 270, 295 | equal |
+| `PROBEPRI` (expressions, labels with `? . @ _ $`, data) | Primus 2.9 | 53 | equal (3 `DEFS` bytes) |
+| `INCLPRI` + `LIB1` (`DISK LIB1`) | Primus 2.9 | 8 | equal |
 
 The ADS 2.0 sources (`MAKE_ADS` includes `CC0`-`CC2`, about 20K of code at `#6000`) do not fit beside the sources and
 ZEUS in 48K memory, but ZEUS 1.1 compiles to a disk file with `OPEN` and reads the INCLUDEd parts from the disk: run

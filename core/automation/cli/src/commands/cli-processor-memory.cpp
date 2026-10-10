@@ -12,7 +12,6 @@
 
 #include <common/dumphelper.h>
 #include <common/filehelper.h>
-#include <debugger/ttd/timetravelmanager.h>  // TimeTravelManager (Item 6 markers)
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>
@@ -1799,7 +1798,7 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
 void CLIProcessor::HandleFind(const ClientSession& session, const std::vector<std::string>& args)
 {
     static const char* const kUsage =
-        "Usage: find <hex pattern, ?? = any byte> [--space cpu|ram|ram5|rom2|cache0] [--mask <hex>] [--from N] [--to N] "
+        "Usage: find <hex pattern, ?? = any byte> [--space cpu|ram|ram5|rom2|cache0|<region>] [--mask <hex>] [--from N] [--to N] "
         "[--align 1|2] [--max N]";
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
@@ -1873,7 +1872,9 @@ void CLIProcessor::HandleFind(const ClientSession& session, const std::vector<st
     for (const MemorySearchMatch& m : result.matches)
     {
         // The address (a page match: page:offset), then the context from context_start: 4 before, the match, 4 after
-        if (m.page < 0)
+        if (!m.region.empty())
+            ss << "  " << m.region << ":$" << std::setw(5) << m.address << ":";
+        else if (m.page < 0)
             ss << "  $" << std::setw(4) << m.address << ":";
         else
             ss << "  " << BreakpointManager::PageKindName(static_cast<MemoryBankModeEnum>(m.pageType)) << std::dec << m.page

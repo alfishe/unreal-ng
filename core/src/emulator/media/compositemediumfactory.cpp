@@ -330,6 +330,12 @@ MediaResult CompositeMediumFactory::BuildPartitioned(const ComposeDescriptor& d,
             {
                 pi.fs = reader.Type() == FatReaderType::Fat32 ? "fat32" : reader.Type() == FatReaderType::Fat12 ? "fat12" : "fat16";
                 part.fatBits = reader.Type() == FatReaderType::Fat32 ? 32 : reader.Type() == FatReaderType::Fat12 ? 12 : 16;
+                // The slot's file systems hold for a partition passed through as well (FAT12 is of the FAT16 family)
+                const FatType family = reader.Type() == FatReaderType::Fat32 ? FatType::Fat32 : FatType::Fat16;
+                if (!options.allowedFs.empty() &&
+                    std::find(options.allowedFs.begin(), options.allowedFs.end(), family) == options.allowedFs.end())
+                    return MediaResult::Fail(MediaError::BadRequest, where + ": " + path + " is " + pi.fs +
+                                                                         " and the slot does not read it");
             }
             else if (!part.type && !p.type)
                 return MediaResult::Fail(MediaError::BadRequest, where + ": " + path + " holds no FAT volume: name its type");
@@ -502,6 +508,19 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
     };
     for (char c : info.normalized)
         mix(static_cast<uint8_t>(c));
+    // The write-back sidecars change the volume too (a rescan compares content ids, DT-16)
+    for (const std::string& path : d.deleted)
+    {
+        for (char c : path)
+            mix(static_cast<uint8_t>(c));
+        mix(0x2F2F);
+    }
+    for (const auto& [path, bits] : d.attributes)
+    {
+        for (char c : path)
+            mix(static_cast<uint8_t>(c));
+        mix(0x100u | bits);
+    }
 
     // C4b: a graft candidate's base is read lazily, only the directories the upper layers reach. Filters on
     // the base keep the full read: a graft removes what they leave out, in every directory

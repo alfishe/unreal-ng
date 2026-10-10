@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <memory>
+#include <vector>
 
 #include "emulator/io/keyboard/profixtkbc.h"
 
@@ -47,6 +48,27 @@ uint64_t TTDProfiXtKbc::TTDHashState() const
     for (int row = 0; row < 8; ++row)
         mix(_kbc.Row(row));
     return h;
+}
+
+TTDDeviceDescriptor TTDProfiXtKbc::TTDDescribe() const
+{
+    TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
+    // The controller's time bases and the MCU's clock and instruction count advance every frame at an idle prompt
+    // (measured 2026-10-09: 24 of 1,344 bytes; ATM2's controller declares the same). Offsets taken from the
+    // structure itself, so a layout change moves them along
+    static const std::vector<TTDTimeField> fields = [] {
+        auto s = std::make_unique<ProfiXtKbc::State>();
+        const auto* base = reinterpret_cast<const uint8_t*>(s.get());
+        auto at = [base](const void* field, uint8_t width) {
+            return TTDTimeField{static_cast<uint16_t>(static_cast<const uint8_t*>(field) - base), width};
+        };
+        return std::vector<TTDTimeField>{
+            at(&s->tBase, 8),       at(&s->mcuBase, 8),     at(&s->lastNow, 8),       at(&s->answerClock, 8),
+            at(&s->reads, 8),       at(&s->lastWaitMcu, 8), at(&s->cpu.clock, 8),     at(&s->cpu.instructions, 8),
+        };
+    }();
+    d.timeFields = fields;
+    return d;
 }
 
 }  // namespace ttd

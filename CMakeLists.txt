@@ -279,32 +279,6 @@ endif()
 #     level, so a known-pinned version is required.
 
 # ========================================
-# eve-emu (FT812 for the TS-Conf VDAC2 card)
-# ========================================
-# The chip is a separate static library (docs/inprogress/2026-10-01-tsconf-vdac2/
-# eve-emu-architecture.md), developed in its own repository and vendored at
-# core/src/3rdparty/eve-emu (VENDORED.md there). EVE_EMU_DIR points at another
-# checkout (a developer working on both). With ENABLE_VDAC2=OFF a configuration
-# asking for the card ([MISC] TS_VDAC2=1, the TSL-VDAC2 machine) fails to load.
-option(ENABLE_VDAC2 "TS-Conf VDAC2 card (FT812, eve-emu library)" ON)
-set(EVE_EMU_DIR "${CMAKE_CURRENT_SOURCE_DIR}/core/src/3rdparty/eve-emu" CACHE PATH "eve-emu checkout")
-if (ENABLE_VDAC2)
-    if (NOT EXISTS "${EVE_EMU_DIR}/CMakeLists.txt")
-        message(FATAL_ERROR "VDAC2: eve-emu not found in ${EVE_EMU_DIR}. "
-                "Set EVE_EMU_DIR to an eve-emu checkout, or set ENABLE_VDAC2=OFF")
-    endif()
-    # Built-in decoders for CMD_INFLATE / CMD_LOADIMAGE (architecture decision A3)
-    set(EVE_DECODER_INFLATE BUILTIN CACHE STRING "" FORCE)
-    set(EVE_DECODER_PNG     BUILTIN CACHE STRING "" FORCE)
-    set(EVE_DECODER_JPEG    BUILTIN CACHE STRING "" FORCE)
-    set(EVE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-    set(EVE_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
-    set(EVE_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-    message(STATUS ">>> VDAC2: eve-emu from ${EVE_EMU_DIR}")
-    add_subdirectory(${EVE_EMU_DIR} ${CMAKE_BINARY_DIR}/eve-emu)
-endif()
-
-# ========================================
 # Core Library
 # ========================================
 message(STATUS ">>> Building core library")
@@ -457,6 +431,7 @@ if (BUILD_QT_APPS)
             # (unreal-qt POST_BUILD already copies to bin/unreal-qt.app, but cp -a may miss if POST_BUILD ran before copy)
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/symbols" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/symbols"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/midi" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/midi"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/boot" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/boot"
@@ -465,6 +440,7 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/html"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/symbols" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/symbols"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/midi" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/midi"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/boot" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/boot"
@@ -472,6 +448,7 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -DDEST="${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/configs" -P "${CMAKE_SOURCE_DIR}/cmake/ExtractConfigImages.cmake"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/symbols" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/symbols"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/midi" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/midi"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/boot" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/boot"
@@ -575,6 +552,8 @@ if (BUILD_QT_APPS)
                 "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/symbols" "${SUITE_STAGING_DIR}/symbols"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/midi" "${SUITE_STAGING_DIR}/midi"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -693,6 +672,8 @@ if (BUILD_QT_APPS)
                 "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/symbols" "${SUITE_STAGING_DIR}/symbols"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/midi" "${SUITE_STAGING_DIR}/midi"
             COMMAND ${CMAKE_COMMAND} -E copy_directory

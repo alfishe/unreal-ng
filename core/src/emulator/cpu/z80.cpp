@@ -8,6 +8,7 @@
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/ttd/timetravelhooks.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdportjournal.h"
 #include "emulator/cpu/op_noprefix.h"
@@ -15,6 +16,8 @@
 #include "emulator/emulator.h"
 #include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/diskfastload.h"
+#include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/tape/tape.h"
 #include "emulator/io/tape/tapefastload.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/notifications.h"
@@ -391,6 +394,46 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     }
 
     return false;
+}
+
+bool Z80::IdleStepsInert() const
+{
+    // The work gate: only the engine and the machine's interrupt source (TTD input, a machine step hook, RZX, a
+    // device INT line, the PC history all act per step)
+    constexpr uint32_t kIdleWork = EmulatorContext::kStepWorkEngine | EmulatorContext::kStepWorkInterruptSource;
+    if (_context->stepWork.load(std::memory_order_relaxed) & ~kIdleWork)
+        return false;
+    if (_nmi_pending_count > 0 || _context->emulatorState.nmiAtIntStartPending)
+        return false;
+
+    // The instruction-start work (RunInstructionStartHooks, EngineStep) and the bus observers
+    if (isDebugMode || busTraceHook || InstructionStartObserved() || cycles_to_capture > 0)
+        return false;
+    if (_feature_opcodeprofiler_enabled && _opcodeProfiler)
+        return false;
+    if (_feature_calltrace_enabled && _memory && _memory->GetAccessTracker().IsCalltraceCapturing())
+        return false;
+    if (DebugManager* debug = _context->pDebugManager)
+    {
+        const AnalyzerManager* analyzers = debug->GetAnalyzerManager();
+        if (analyzers && analyzers->hasCPUStepSubscribers())
+            return false;
+    }
+    if (_context->emulatorState.flags & (CF_SETDOSROM | CF_LEAVEDOSADR | CF_LEAVEDOSRAM))
+        return false;
+    if ((pc == ROMAddresses::LD_BYTES && _context->pTapeFastLoad) || (pc == 0x3FEC && _context->pDiskFastLoad) ||
+        (pc == DiskAutostart::COMMAND_LOOP_ENTRY && _context->pDiskAutostart))
+        return false;
+    if (const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks; ttd && (ttd->IsRecording() || ttd->IsReplayActive()))
+        return false;
+
+    // The peripherals MainLoop::OnCPUStep steps: the screen and the sound catch up by time; the tape writes
+    // its edges into the sound per step, the floppy controller runs its state machine per step
+    if (_context->pTape && _context->pTape->IsPlaying())
+        return false;
+    if (_context->pBetaDisk && !_context->pBetaDisk->IsStepInert())
+        return false;
+    return true;
 }
 
 /// Single CPU command cycle (non-interruptable)
@@ -1009,6 +1052,9 @@ void Z80::Z80FrameCycle()
     // frame geometry yet
     if (_frameLimit == 0)
         RecomputeFrameTiming();
+
+    // A halted CPU's idle cycles may run in one go up to the frame end (an engine's fast-forward)
+    IdleSkipScope idleSkip(*this, UINT32_MAX);
 
     // Cover whole frame (control by effective t-states)
     while (t < _frameLimit)

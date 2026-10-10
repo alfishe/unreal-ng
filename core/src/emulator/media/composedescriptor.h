@@ -126,7 +126,7 @@ struct ComposeBoot
 struct ComposeWrites
 {
     AccessMode access = AccessMode::Session;
-    std::string save = "delta";             ///< flat | delta | commit | write-back (D-7)
+    std::string save = "delta";             ///< flat | delta | commit | write-back | discard | ask (D-7, D-8)
     std::string upper;                      ///< S4 copy-up layer
     std::filesystem::path delta;            ///< S2 file
 };

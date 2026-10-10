@@ -21,20 +21,22 @@ const std::vector<std::string>& TapeExtensions()
 const std::vector<std::pair<std::string, std::vector<std::string>>>& MediaToolActions()
 {
     static const std::vector<std::string> insertOptions = {"access", "format", "fs", "codepage", "free", "wp", "kind", "device",
-                                                           "save", "export", "discard", "end_recording", "async", "immediate", "journal"};
+                                                           "save", "export", "discard", "strategy", "onConflict", "strict",
+                                                           "end_recording", "async", "immediate", "journal"};
     static const std::vector<std::pair<std::string, std::vector<std::string>>> actions = {
         {"list", {}},
         {"info", {}},
         {"formats", {"kind"}},
         {"targets", {}},
         {"insert", insertOptions},
-        {"eject", {"save", "export", "discard", "end_recording", "async"}},
+        {"eject", {"save", "export", "discard", "strategy", "onConflict", "strict", "end_recording", "async"}},
         {"swap", insertOptions},
         {"save", {"retarget", "compression", "compact", "fs", "size", "vhd", "strategy", "force", "plan", "onConflict"}},
         {"export", {"compression", "parent", "compact", "fs", "size", "vhd"}},
         {"discard", {"async"}},
-        {"rescan", {"async"}},
-        {"create", {"format", "cylinders", "sides", "size", "save", "export", "discard", "end_recording", "async"}},
+        {"rescan", {"save", "export", "discard", "strategy", "onConflict", "strict", "async"}},
+        {"create", {"format", "cylinders", "sides", "size", "save", "export", "discard", "strategy", "onConflict", "strict",
+                    "end_recording", "async"}},
         {"protect", {"on"}},
         {"compose", {"fs", "codepage", "free"}},
         {"layers", {}},
@@ -191,7 +193,7 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "insert / swap / compose: a composition descriptor inline (version, target, layers) instead of a path";
 
     // Every option any verb takes, typed; MediaControl checks which verb takes which
-    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact", "force", "plan"};
+    const std::set<std::string> booleans = {"save", "discard", "wp", "on", "retarget", "end_recording", "async", "immediate", "compact", "force", "plan", "strict"};
     const std::set<std::string> integers = {"free", "cylinders", "sides", "size"};
     std::set<std::string> options;
     std::string perVerb;
@@ -218,7 +220,12 @@ void RegisterMediaSlots(ToolRegistry& registry)
     schema["properties"]["parent"]["description"] = "export to a .chd: write a child of this parent CHD";
     schema["properties"]["strategy"]["description"] =
         "save of a composite (*.ucompose.yaml): delta (the session's writes into <descriptor>.delta, restored at the "
-        "next insert; the default without a path), flat (a new image at path; the default with one)";
+        "next insert), flat (a new image at path; the default with one), commit, write-back; left out: the "
+        "descriptor's writes.save. With save:true on insert / swap / eject / create / rescan also discard (drop the "
+        "writes) or ask (a delta here; the GUI asks)";
+    schema["properties"]["strict"]["description"] =
+        "save:true of a composite leaving its slot: a commit / write-back that fails refuses (the medium stays) instead "
+        "of keeping the writes as a session delta";
     schema["properties"]["force"]["description"] =
         "save as delta over a delta that was written over other sources; commit although the guest's file system has "
         "lost clusters or cross-links";
@@ -228,8 +235,9 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "write-back: refuse (default) when a host file changed since the build, or keep-both (the guest's version as "
         "'name (guest).ext')";
     schema["properties"]["journal"]["description"] =
-        "insert / swap of a medium written in session access: replay (default) a session journal left by a crash "
-        "(<source>.usession), discard it unread, or off (no journal next to the medium this time)";
+        "insert / swap of a medium written in session access: replay a session journal left by a crash "
+        "(<source>.usession) and keep one, discard it unread and start a new one, or off (no journal next to the "
+        "medium). Left out: [MEDIA] SessionJournal (off by default)";
     schema["properties"]["vhd"]["description"] =
         "save / export / flatten of a block medium to a new .vhd: fixed (default) or dynamic (only the 2 MiB blocks "
         "holding data are stored)";
@@ -258,7 +266,9 @@ void RegisterMediaSlots(ToolRegistry& registry)
         "named strategy: flat <path>, delta, commit - the graft base image takes everything, journaled - or write-back - "
         "the guest's file changes into the writable folder layers). Operations are synchronous (the reply "
         "comes when the medium is in or out; async:true returns at once). A dirty medium leaves its slot only with "
-        "save:true, export:'<path>' or discard:true. The reply's 'revision' increases with every change. "
+        "save:true, export:'<path>' or discard:true; save:true follows the composite's writes.save (or strategy), and a "
+        "commit / write-back that fails keeps the writes as a session delta. rescan leaves a medium whose sources did "
+        "not change as it is. The reply's 'revision' increases with every change. "
         "Options per action:" + perVerb,
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {

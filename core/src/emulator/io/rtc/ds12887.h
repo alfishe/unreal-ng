@@ -249,7 +249,8 @@ private:
     {
     public:
         explicit CmosRegion(Ds12887& chip) : _chip(chip) {}
-        const char* Name() const override { return "cmos"; }
+        const char* Name() const override { return "rtc.cmos"; }
+        const char* Aliases() const override { return "cmos"; }
         const char* Description() const override
         {
             return "CMOS clock cells as the guest addresses them: #00-#09 time and alarm, #0A-#0D registers A-D, "

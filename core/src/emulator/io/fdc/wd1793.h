@@ -1316,8 +1316,21 @@ protected:
     /// region <Emulation events>
 public:
     void handleFrameStart();
-    void handleStep();
+    /// Called after every instruction (MainLoop::OnCPUStep): asleep it is one test here, no call
+    void handleStep()
+    {
+        if (!_sleeping)
+            handleStepAwake();
+    }
+    /// handleStep would not act at this step: asleep, or idle with the motor off (it only counts toward sleep).
+    /// A CPU engine may then run idle steps without it (Z80::IdleStepsInert)
+    bool IsStepInert() const
+    {
+        return _sleeping || (_state == S_IDLE && _motorTimeoutTStates <= 0);
+    }
     void handleFrameEnd();
+    /// handleStep's work while the controller is awake
+    void handleStepAwake();
     /// endregion </Emulation events>
 
     /// region <PortDevice interface methods>
@@ -1393,6 +1406,10 @@ public:
     {
         ttd::TTDDeviceDescriptor d = ttd::TTDSerializable::TTDDescribe();
         d.instance = "betadisk";
+        // The controller's clocks advance with emulated time (the layout table in wd1793.cpp): _time at 22, _lastTime
+        // at 30, and the motor's countdown _motorTimeoutTStates at 114 - time fields (measured 2026-10-09: all three
+        // move every frame while the controller is clocked)
+        d.timeFields = {{22, 8}, {30, 8}, {114, 8}};
         return d;
     }
     /// endregion </TTDSerializable interface>

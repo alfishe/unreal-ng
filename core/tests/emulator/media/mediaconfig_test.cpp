@@ -214,7 +214,8 @@ TEST(MediaConfig_Test, SessionSettingsAreNotSlots)
 TEST(MediaConfig_Test, SessionJournalSettings)
 {
     IniFile ini;
-    ini.LoadData("[MEDIA]\nSessionArenaKiB = 256\nSessionFlushSeconds = 5\nSessionSyncSeconds = 0\nSessionJournal = off\n");
+    ini.LoadData("[MEDIA]\nSessionArenaKiB = 256\nSessionFlushSeconds = 5\nSessionSyncSeconds = 0\nSessionJournal = off\n"
+                 "SessionIoThreads = 0\n");
     std::vector<std::string> report;
     const MediaSettings settings = MediaConfig::SettingsFromIni(ini, "", &report);
     EXPECT_TRUE(report.empty());
@@ -222,14 +223,16 @@ TEST(MediaConfig_Test, SessionJournalSettings)
     EXPECT_EQ(settings.sessionFlushSeconds, std::optional<uint32_t>(5));
     EXPECT_EQ(settings.sessionSyncSeconds, std::optional<uint32_t>(0));
     EXPECT_EQ(settings.sessionJournal, std::optional<bool>(false));
+    EXPECT_EQ(settings.sessionIoThreads, std::optional<uint32_t>(0)) << "0: a quarter of the cores";
     EXPECT_TRUE(MediaConfig::FromIni(ini, "", &report).empty()) << "none of them is a slot";
 
     IniFile bad;
-    bad.LoadData("[MEDIA]\nSessionArenaKiB = 100\nSessionFlushSeconds = soon\nSessionJournal = maybe\n");
+    bad.LoadData("[MEDIA]\nSessionArenaKiB = 100\nSessionFlushSeconds = soon\nSessionJournal = maybe\nSessionIoThreads = 9\n");
     std::vector<std::string> badReport;
     const MediaSettings kept = MediaConfig::SettingsFromIni(bad, "", &badReport);
     EXPECT_FALSE(kept.sessionArenaBytes.has_value()) << "not a power of two";
     EXPECT_FALSE(kept.sessionFlushSeconds.has_value());
     EXPECT_FALSE(kept.sessionJournal.has_value());
-    EXPECT_EQ(badReport.size(), 3u);
+    EXPECT_FALSE(kept.sessionIoThreads.has_value()) << "at most 4";
+    EXPECT_EQ(badReport.size(), 4u);
 }
