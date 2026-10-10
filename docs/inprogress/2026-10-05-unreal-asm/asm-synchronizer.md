@@ -362,7 +362,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | editor or menu | the editor's 31-byte line buffer at `#851A` is blank-padded text in the editor and zeros in the menu: a non-zero byte there means the editor |
 | SAVE | SS+Enter in the editor (or `S` in the menu) writes the text closed up; the live file equals it in both states |
 | identification | the prompt `MASM128> ` at `#85B1` (below the text; the title `MASTER ASSEMBLER* v1.1` at `#9B49` lies where a long text goes) |
-| **Built** | descriptor `masm-1.1`; checked live. The 1.0 demo, 1.3, 2.0 and 3.0 are not covered yet |
+| **Built** | descriptor `masm-1.1`; checked live. 1.3 keeps the same layout, line buffer and prompt (dumps `masm13-*`): the same descriptor reads it. The 1.0 demo, 2.0 and 3.0 are not covered yet |
 
 ### 7.13 GENS 3 / GENS 4 (and GENS4B on TR-DOS)
 

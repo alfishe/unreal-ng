@@ -385,13 +385,13 @@ SyncDescriptor Zasm315()
     return d;
 }
 
-/// MASM 1.1 (asm-synchronizer.md §7.12): the text from #970B; while it is edited a gap at (#96CC)-(#96CE), the part
+/// MASM 1.1 and 1.3 (asm-synchronizer.md §7.12; the same layout and prompt): the text from #970B; while it is edited a gap at (#96CC)-(#96CE), the part
 /// after it up to #FFFF (the #FF end inside the text). Identified by its prompt in the code below the text
 SyncDescriptor Masm11()
 {
     SyncDescriptor d;
     d.id = "masm-1.1";
-    d.title = "MASM 1.1";
+    d.title = "MASM 1.1 / 1.3";
     d.codec = "masm";
     d.version = "1.1";
     d.extension = "a";
