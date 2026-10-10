@@ -9,7 +9,7 @@ Titles the owner (or a run of the collection) found worth showing. Index = row n
 | 34 | NextBASIC Text Scroller (`demos/tech-demo/NextBASIC Text Scroller/scroller.bas`) | demo | big gradient scroller over a starfield with comets (NextBASIC, 28 MHz) | owner, 2026-10-09 |
 | 24 | Mapscroll 3 (`demos/tech-demo/Mapscroll 3/mapscroll3.nex`) | tech demo | smooth tilemap scrolling; matches the author's screenshot pixel for pixel (see as-designed-findings.md); the ULA noise around the window is the demo's own look | run, 2026-10-09 |
 | 97 | Mario's Bombs Away (`games/action-arcade/Mario's Bombs Away/MariosBombsAway.nex`) | game | owner's pick | owner, 2026-10-10 |
-| 147 | Dreamworld Pogie (Demo v1.0) (`games/platform/...`) | game demo | TENTATIVE: guessed from the run position when the owner said "another nice demo" (the neighbours were #146 Dougie Do, #145 Donkey Kong Jr) - confirm the title | owner, 2026-10-10 |
+| 147 | Dreamworld Pogie (Demo v1.0) (`games/platform/Dreamworld Pogie (Demo v1.0)/pogie.snx`) | game demo | owner's pick (confirmed) | owner, 2026-10-10 |
 | 181 | Nexions (`games/shooter/Nexions/run.bas`) | game | owner's pick | owner, 2026-10-10 |
 | 201 | Populous Remake (`games/strategy-board/Populous Remake/populous-demo.nex`) | game demo | owner's pick | owner, 2026-10-10 |
 | 203 | Corruption (`games/text-adventure/Corruption/corrupt_512.nex`) | game | owner's pick (text adventure with graphics) | owner, 2026-10-10 |
