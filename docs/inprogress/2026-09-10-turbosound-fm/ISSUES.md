@@ -83,6 +83,10 @@ Everything found while verifying the TurboSound FM implementation against real h
 
 **Status.** Open. Already listed in the implementation plan as "wide mix + soft limiter (TSFM makes int16 saturation likely)"; issue 1 makes it a prerequisite for moving the code baseline. Until then the trim is the safe knob and can be backed off from the Audio Settings dialog.
 
+Correction (2026-10-10): there was no int16 clamp. The out-of-range float conversion was undefined and on arm64
+wrapped around (a full-scale click), not clipped; since d5e197532 (BUGS.md #13) both TurboSound devices clamp. The
+low-quality golden digest crossed full scale.
+
 ## 7. LQ → HQ switch replays stale decimator history
 
 **Observed.** On a low-quality to high-quality switch both TurboSound devices output about 0.3 ms of pre-switch history: the FIR history ring is not fed in LQ mode.

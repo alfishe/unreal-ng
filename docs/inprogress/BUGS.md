@@ -210,8 +210,10 @@ ASan unreal-qt with the stress script (8 workers creating / reading / switching 
 neighbours) for 15 minutes.
 
 
-## 🔴 [Open] #12: A failed instance creation leaks the half-built instance
+## 🟢 [Fixed] #12: A failed instance creation leaks the half-built instance
 * **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** d5e197532
 * **Found by:** macOS `leaks --atExit` and LeakSanitizer (Linux, Docker) on `EmulatorManager_Test.CreateEmulatorWith*`
   (docs/testing/sanitizers.md §9).
 
@@ -221,12 +223,22 @@ leaves the `Emulator` it started building: its `Config`, `EmulatorContext` and m
 <Config>`, `ROOT CYCLE <EmulatorContext>`; LSan: ~700 KB indirect from `Emulator::Emulator` / `Emulator::Init`).
 Every failed WebAPI / CLI create leaks again.
 
-### Repro
-`MallocStackLogging=1 leaks --atExit -- ./core-tests --gtest_filter='EmulatorManager_Test.CreateEmulatorWith*'`
-(from the build's `bin/`).
+### Root cause
+`~Emulator` released only an initialized machine. An unknown model or RAM size never reaches `Init`; a core that
+refuses the configuration made `Init` return before `ReleaseNoGuard`; a device that throws out of `Init` skips it.
 
-## 🔴 [Open] #13: Undefined behavior in product code (UBSan baseline)
+### Fix
+The destructor releases while the context lives; `Init` sends every failure through `ReleaseNoGuard` and runs the
+completeness checks only for a machine that claims success.
+
+### Requirements / Acceptance Criteria
+- [x] `EmulatorManager_Test.FailedCreateFreesTheHalfBuiltInstance`: `EmulatorContext::LiveCount()` is unchanged after
+  an unknown model, an unsupported RAM size and GMX; it failed on all three before the fix.
+
+## 🟢 [Fixed] #13: Undefined behavior in product code (UBSan baseline)
 * **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** d5e197532
 * **Found by:** a full `core-tests` run on the `address,undefined` build (docs/testing/sanitizers.md §2).
 
 ### Description
@@ -237,8 +249,19 @@ Every failed WebAPI / CLI create leaks again.
 - `loader_scl.cpp`: misaligned `uint32_t` loads from the image buffer.
 - `z80.cpp:192`, `z80.cpp:429`: a reference bound to a null `Emulator` (reached from tests that build a bare `Core`).
 
-### Repro
-`tools/sanitize/configure.sh asan`, build `core-tests`, run it, `grep -h "runtime error"`.
+### Fix
+- `ModuleLogger`: `MODULE_RECORDING` has its settings row and its names (both tables `static_assert`ed against the
+  enum); the module check reads the module's own bit (as `TurnOffLoggingForModule` clears it); the submodule-name
+  bound is `>=`.
+- `BitHelper::IsBitSet`: a bit past the field is not set.
+- TurboSound / TurboSound FM: samples clamp to int16. On arm64 the out-of-range conversion wrapped around (a full-
+  scale click); in-range samples are unchanged. The TSFM low-quality golden digest moved: it held wrapped samples.
+  The missing headroom itself is TSFM ISSUES.md #6.
+- `LoaderSCL`: the CRC is read byte by byte. `Z80`: no reference to a null `Emulator`.
+
+### Requirements / Acceptance Criteria
+- [x] `BitHelper_Test.IsBitSetPastTheFieldIsNotSet`, `ModuleLogger_Test.RecordingModuleHasItsOwnSettingsRow`,
+  `LoaderSCL_Test.crcReadsAtAnyOffset`; full `core-tests` green on macOS.
 
 ---
 
