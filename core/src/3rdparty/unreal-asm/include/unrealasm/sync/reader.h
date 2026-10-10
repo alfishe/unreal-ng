@@ -139,6 +139,11 @@ struct LinearParams
     bool laserGeniusFile = false;
     /// PROMETHEUS: SAVE writes the records from fixedStart (the access line) up to twelve bytes below the symbol table
     /// (the word at prometheusTableAt), FF XOR those bytes, FF, then the table up to the word at prometheusEndAt
+    /// PASM: the text runs from fixedStart to its #1A end; the cursor line (the address at pasmLineAt) lives in a
+    /// 64-byte line buffer (pasmLineBuffer) and goes back with its blank runs packed into TABs (a run of 2-8 blanks
+    /// that ends at a multiple of 8), as SAVE does
+    uint16_t pasmLineAt = 0;
+    uint16_t pasmLineBuffer = 0;
     uint16_t prometheusTableAt = 0;
     uint16_t prometheusEndAt = 0;
     uint16_t editorStateAt = 0;     ///< bytes of the file SAVE fills (masked by the tests)

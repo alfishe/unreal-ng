@@ -428,6 +428,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Knowledge** | a text format; the object code goes to page 4 at `#E000` while PASM runs; the text's place is unknown |
 | research | the text pointers (ZAP / ITXT behavior known from A6) |
 | **Work** | **1 d** |
+| **Verified** (2026-10-10, dumps `pasm30-*`) | found in its code: the CR LF text runs from `#79AF` (an address its code holds) to a `#1A` end (no end pointer: the editor scans for it); the cursor line's address is at `#74E9`, its text in the 64-byte line buffer `#7342`. When the cursor leaves a line, and on SAVE, the routine at `#7881` writes the buffer back with blank runs packed into TABs: right to left over the tab stops, a run of 2-8 blanks that ends at a multiple of 8 becomes one TAB (a single blank stays). The reader replaces the cursor line with the packed buffer (`pasmLineAt`), so even the loaded state's file has its first line packed, as SAVE writes it. Each dump's expected file is a `P` (SAVE) made in that state. Identified by the packing routine's bytes at `#7881`. Descriptor `pasm-3.0` |
 
 ### 7.19 Not covered
 

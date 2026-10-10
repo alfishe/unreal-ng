@@ -327,6 +327,46 @@ SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
     if (p.upperPage >= 0)
         machine.windows[3] = p.upperPage;   // the text's upper part, whatever the program maps at #C000 just now
     const std::optional<uint16_t> start = p.startAt ? machine.Word(p.startAt) : std::optional<uint16_t>(p.fixedStart);
+    if (p.pasmLineAt)
+    {
+        std::vector<uint8_t> all, buffer;
+        const std::optional<uint16_t> line = machine.Word(p.pasmLineAt);
+        if (!line || !machine.Read(p.fixedStart, static_cast<size_t>(0xC000 - p.fixedStart), all) ||
+            !machine.Read(p.pasmLineBuffer, 64, buffer))
+            return Inconsistent(text, "the text lies in a page that was not copied");
+        const auto stop = std::find(all.begin(), all.end(), uint8_t(0x1A));
+        if (stop == all.end())
+            return Inconsistent(text, "no #1A end after the text");
+        all.erase(stop, all.end());
+        const size_t from = static_cast<size_t>(*line - p.fixedStart);
+        if (*line < p.fixedStart || from > all.size())
+            return Inconsistent(text, "the cursor line is outside the text");
+        size_t to = from;
+        while (to + 1 < all.size() && !(all[to] == '\r' && all[to + 1] == '\n'))
+            ++to;
+        size_t length = buffer.size();
+        while (length > 0 && buffer[length - 1] == ' ')
+            --length;
+        buffer.resize(length);
+        // PASM's packing, right to left: a run of 2..8 blanks that ends at a tab stop becomes a TAB
+        for (size_t stopAt = ((length + 1) / 8) * 8; stopAt >= 8; stopAt -= 8)
+        {
+            size_t run = 0;
+            while (run < 8 && buffer[stopAt - 1 - run] == ' ')
+                ++run;
+            if (run >= 2)
+            {
+                buffer.erase(buffer.begin() + static_cast<std::ptrdiff_t>(stopAt - run), buffer.begin() + static_cast<std::ptrdiff_t>(stopAt));
+                buffer.insert(buffer.begin() + static_cast<std::ptrdiff_t>(stopAt - run), uint8_t('\t'));
+            }
+        }
+        text.file.assign(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(from));
+        text.file.insert(text.file.end(), buffer.begin(), buffer.end());
+        text.file.insert(text.file.end(), all.begin() + static_cast<std::ptrdiff_t>(std::min(to, all.size())), all.end());
+        text.ok = true;
+        text.state = "ok";
+        return text;
+    }
     if (p.prometheusTableAt)
     {
         const std::optional<uint16_t> table = machine.Word(p.prometheusTableAt), tableEnd = machine.Word(p.prometheusEndAt);
@@ -703,6 +743,27 @@ SyncDescriptor Prometheus48()
     return d;
 }
 
+/// Power Assembler 3.0 (asm-synchronizer.md §7.18, from its code): CR LF text from #79AF to #1A; the cursor line's
+/// address at #74E9, its 64-byte line buffer at #7342, packed into TABs when it goes back (the routine at #7881)
+SyncDescriptor Pasm30()
+{
+    SyncDescriptor d;
+    d.id = "pasm-3.0";
+    d.title = "Power Assembler 3.0 (Sergeyev)";
+    d.codec = "pasm";
+    d.version = "";
+    d.extension = "C";
+    d.identify = {{0x7881, std::string("\x21\x82\x73\x06\x40\x3E\x20\x2B\xBE\x20\x04\x10\xFA\x18\x28\x23\x22\xFD\x77\x04\x78\xFE\x08\x38", 24)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.fixedStart = 0x79AF;
+    d.linear.pasmLineAt = 0x74E9;
+    d.linear.pasmLineBuffer = 0x7342;
+    d.linear.upperPage = -1;
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 /// Laser Genius 1.04 Beta (asm-synchronizer.md §7.16): paragraphs from #7F2E to (#A973) (without the hash
 /// extensions; (#ADA1) with them), then FF FF; the disk file adds its #AF header. Identified by its title
 SyncDescriptor LaserGenius()
@@ -908,6 +969,7 @@ const std::vector<SyncDescriptor>& Descriptors()
         Zxasm30(),
         LaserGenius(),
         Prometheus48(),
+        Pasm30(),
         Zeus("zeus-1983", "ZEUS 1983 (Crystal)", "1983", 0xE028,
              "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x20\x20\x20\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C"),
         Zeus("zeus-1.1", "ZEUS 1.1 beta (PHT)", "pht", 0xE020,

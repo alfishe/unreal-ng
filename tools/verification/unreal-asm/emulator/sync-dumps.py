@@ -18,6 +18,7 @@ save the text itself and keep the file. The synchronizer's reader must give that
     sync-dumps.py zeus <PRIMUS29 disk, the source as PRI.DOC> <out-dir> --build primus --source - --tag primus29
     sync-dumps.py lasergenius <LG_1_04 disk with TEST.C> <out-dir> --source TEST --save-as SAVE --tag lg104
     sync-dumps.py prometheus <prometheus-48.tap> <out-dir> --model 48K --tag prom48   # the expected file from SAVE's ROM call
+    sync-dumps.py pasm <PASM3_0 disk with TEST.C> <out-dir> --source TEST --tag pasm30   # each case's file from P
     sync-dumps.py masm <disk with t1.a> <out-dir> --boot m2 --source t1 --menu-save --tag masm20   # MASM 2.0 (3.0: TSM)
     sync-dumps.py masmdemo <SpFon_15.Trd> <out-dir> --source T1 --tag masm10   # MASM 1.0 demo: the text typed in
     sync-dumps.py xas <disk-with-PROBE.X> <out-dir> --boot NAME --list-keys right[,down...] --tag TAG
@@ -625,6 +626,48 @@ def prometheus(emu, args):
     dump(emu, args.out, f'{args.tag}-typing', pages, 'SAVED.C', expected, {'editor': True, 'typing': True})
 
 
+def pasm(emu, args):
+    """Power Assembler 3.0: RUN "PASM3.0", menu (SS then CS) G loads --source (its name typed in lower case: caps
+    lock), P saves under the work file's name. Each case is followed by a P: SAVE packs the cursor line from the line
+    buffer into TABs, so what it writes is that state's file"""
+    def menu(letter):
+        emu.post('/keyboard/press', {'key': 'ss'})
+        time.sleep(0.1)
+        emu.post('/keyboard/press', {'key': 'cs'})
+        time.sleep(0.15)
+        emu.post('/keyboard/release', {'key': 'cs'})
+        emu.post('/keyboard/release', {'key': 'ss'})
+        time.sleep(0.6)
+        emu.tap(letter)
+        time.sleep(1)
+
+    def case(name, state):
+        dump(emu, args.out, f'{args.tag}-{name}', pages, f'{args.source}.C', None, state)
+        menu('p')
+        time.sleep(4)
+        finish(args.out, f'{args.tag}-{name}', f'{args.source}.C', saved(emu, args.source, 'C'))
+
+    emu.insert_disk(args.disk)
+    emu.run_trdos('PASM3.0', wait=8)
+    menu('g')
+    for _ in range(12):
+        emu.post('/keyboard/combo', {'keys': ['cs', '0'], 'frames': 3})
+        time.sleep(0.1)
+    emu.type(args.source.lower())
+    emu.tap('enter')
+    time.sleep(4)
+    pages = [2, 5, windows(emu)[3]]
+    case('loaded', {'editor': True, 'typing': False})
+    emu.tap('down')
+    emu.tap('down')
+    time.sleep(0.5)
+    emu.type('zz')
+    case('typing', {'editor': True, 'typing': True})
+    emu.tap('down')
+    time.sleep(0.5)
+    case('edited', {'editor': True, 'typing': False})
+
+
 def tasm_other(emu, args):
     """TASM without a line count (4.0 ...): W names the work file (--as-typed: the keyboard is not inverted), E edits,
     Extend Q leaves the editor, S saves. A line being typed is not in the text; the edited case is taken after Enter
@@ -754,7 +797,7 @@ def tasm412(emu, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'masmdemo', 'tasm', 'gens', 'genstape', 'zeus', 'lasergenius', 'prometheus'])
+    parser.add_argument('assembler', choices=['alasm509', 'alasm444', 'tasm412', 'alasm', 'xas', 'storm', 'zasm', 'zasm2', 'masm', 'masmdemo', 'tasm', 'gens', 'genstape', 'zeus', 'lasergenius', 'prometheus', 'pasm'])
     parser.add_argument('disk')
     parser.add_argument('out')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
@@ -801,6 +844,8 @@ def main():
             zasm(emu, args)
         elif args.assembler == 'masm':
             masm(emu, args)
+        elif args.assembler == 'pasm':
+            pasm(emu, args)
         elif args.assembler == 'prometheus':
             prometheus(emu, args)
         elif args.assembler == 'lasergenius':
