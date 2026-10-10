@@ -50,6 +50,12 @@ void LoaderNex::FillUlaPalette(NextBoard& board)
 void LoaderNex::ResetRegisters(NextBoard& board)
 {
     auto nr = [&](uint8_t reg, uint8_t value) { board.Write(reg, value); };
+    // the peripheral registers (nexload.asm 323-349): NR #06 res 4 (the DRIVE button's NMI off - the OS menu must not open over the
+    // program; its comment "DivMMC automatic paging off" is from the cores before 3.01.10, NR #0A bit 4 is the automap and stays) and
+    // set 3 (the M1 button); NR #08 set 7 (paging lock off) 6 (contention off) 3 2 1 (SpecDrum, Timex, TurboSound), res 5 (ABC stereo) and
+    // 0; bit 4 (the internal speaker) is the user's
+    nr(0x06, static_cast<uint8_t>((board.Stored(0x06) & ~0x10) | 0x08));
+    nr(0x08, static_cast<uint8_t>((board.Stored(0x08) & ~0x21) | 0xCE));
     nr(0x62, 0);  // stop the copper
     nr(0x61, 0);
     nr(0x07, 0x03);  // 28 MHz
@@ -169,6 +175,9 @@ bool LoaderNex::Load(const std::vector<uint8_t>& image)
     auto* decoder = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder);
     if (!memory || !decoder)
         return Fail("NEX files run on the ZX Spectrum Next");
+
+    // NEXLOAD leaves its last esxDOS call through the DivMMC's #1FF8 off-area: the program starts with the DivMMC out and CONMEM clear
+    decoder->DivMmc().ReleaseForProgramStart();
 
     // The loader's register reset (nexload.asm "Reset All registers"), unless the file asks to keep them
     if (!_header.keepRegisters)

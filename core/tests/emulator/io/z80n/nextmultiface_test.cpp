@@ -100,7 +100,9 @@ TEST_F(NextMultiface_Test, PortsPageTheMemoryAndInvisibleHidesIt)
     EXPECT_FALSE(mf.NmiHold()) << "(+3 mode) and ends the NMI session";
 
     // 128 mode: the enable port is #BF, the disable port #3F
+    _memory->SetConfigMode(true);  // NR #0A bits 7:6 take effect in config mode only (zxnext.vhd 5192)
     _ports->Board().Write(0x0A, 0x40);
+    _memory->SetConfigMode(false);
     EXPECT_EQ(mf.EnablePort(), 0xBF);
     EXPECT_EQ(mf.DisablePort(), 0x3F);
 }

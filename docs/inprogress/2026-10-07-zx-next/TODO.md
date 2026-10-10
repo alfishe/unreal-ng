@@ -130,7 +130,7 @@ The 35 programs of `ZXSpectrumNextTests/release` (48K snapshots, results checked
 - [x] **Phase A** - `next_dma`, `next_video`, `next_palette`, `next_ports`, `next_nextreg` (read) and `POST next/nextreg` (write) on every plane (WebAPI + OpenAPI manifest `openapi_next.inc`, MCP `inspect_state` aspects with `nr_` parameters, CLI `state next dma|video|palette|ports|nextreg` and `next nextreg`, Lua, Python); no side effects (R3: const accessors on `NextDma`; palette / copper indexes untouched); tests `NextReports_Test` (+ golden texts `core/tests/automation/golden/next/`), `CliNextReports_Test`, MCP aspect tests, the OpenAPI route test; recipe `.recipe/machines/next.md` section 3b
 - [x] **Phase B** - `next_copper` (disassembly, control mode, pc, write address, `around_pc`, `raw`) and `next_sprites` (128 attributes decoded, relative sprites resolved against their anchor, flags that a report does not clear, pattern memory summary) on every plane; tests `NextReportsB_Test`, CLI / MCP / OpenAPI additions; goldens `copper.txt`, `sprites.txt`, `cli-copper.txt`, `cli-sprites.txt`
 - [x] **Per-layer capture** (`capture/screen?layer=`, `capture/next-layers`, `POST next/layer-capture`) and the pixel inspector (`state/next/pixel`) on every plane - done 2026-10-10, see [design-layer-capture.md](design-layer-capture.md) (the record is made while the frame is drawn, per line segment, so copper effects are exact; on by default, +4 % of a frame measured; L4, the Qt per-layer view and the pixel inspector under the mouse, is left)
-- [ ] `ports.enforced`: only the DAC ports (NR #84) and the Multiface (NR #83 bit 1) are gated by the internal port enable word NR #82-#85; the report says which. Gating the rest (and the expansion-bus word NR #86-#89, `#8A` propagate) is a decoder change with its own tests
+- [ ] `ports.enforced`: only the DAC ports (NR #84), the Multiface (NR #83 bit 1), #E3 (bit 0) and #E7 / #EB (bit 3) are gated by the internal port enable word NR #82-#85; the report says which. Gating the rest (and the expansion-bus word NR #86-#89, `#8A` propagate) is a decoder change with its own tests
 - [ ] The state reports are read from the HTTP thread without a coherent moment (like every `state/*` report); only the write control runs at one. A report that must be exact on a running machine could use `Emulator::RunAtCoherentMoment` the way the debugger snapshot does
 - [ ] Phase C of the design: Qt panels, breakpoints on NextREG writes, DeZog / GDB wiring, TTD of NEXTREG writes
 
@@ -228,4 +228,20 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 - [ ] Layer capture L4 (Qt): a per-layer view with layer toggles (jnext's per-layer screenshots are the model), a pixel inspector under the mouse, the machine-menu switch (N12).
 - [ ] Layer capture: the planes are recorded at 640 sub-pixels a line; at pixel resolution (320) when no Layer 2 640 / Timex hi-res is on the traffic of the record, and so its cost, would halve; a raw-resolution layer image option (design open question 2) is cheap to add.
 - [x] Lua / Python bindings of the new reports are verified in `tools/verification/webapi/src/test_api_next.py` (class `TestNextInterpreters`) against a live app, not in `core-tests` (the core library does not link the interpreters). Lua passes live; the Python test skips where the Python interpreter is off (the agent build).
-- [ ] Gate the remaining ports by NR #82-#85 (`next_ports.enforced` says which ports are gated: only the DAC ports and the Multiface now).
+- [ ] Gate the remaining ports by NR #82-#85 (`next_ports.enforced` says which ports are gated: the DAC ports, the Multiface, #E3 and #E7 / #EB now).
+
+## DivMMC audit and the NextZXOS file-read corruption (2026-10-10)
+
+[audit-divmmc-gap-2026-10-10.md](audit-divmmc-gap-2026-10-10.md): gap list D1-D14 against `divmmc.vhd` / `zxnext.vhd`; the answer to "which register disables the automap" (NR #0A bit 4; NEXLOAD's
+`res 4` on NR #06 is the DRIVE button NMI, the comment is from before core 3.01.10).
+
+Done (11 new tests): the SPI byte in flight across a CPU speed change is rescaled (NextZXOS reads a sector across the 14 MHz switch: three duplicated bytes made Next3D Cube "No such file or dir"
+and corrupt NEX data in general), the DMA waits for the SPI byte (the unit was wrong), the ROM-3-only automap entries need the MMU to map ROM at the fetch (RAM in slot 0 / 1 is the program's own
+code), NR #0A bit 4 / NR #83 bit 0 are `automap_reset` (the latch goes at once), CONMEM does not beat MAPRAM, NR #BB bits 1:0 decide the NMI entry, NR #02 resets clear the DivMMC and Multiface, #E3 / #E7 /
+#EB follow NR #83, NR #0A bits 7:5 are config mode only, the NEX loader releases the DivMMC and writes NEXLOAD's NR #06 / #08.
+
+- [ ] D8: only `ED 45` is `retn_seen` on the board; the library's aliases (`ED 55 ...`) call the same callback
+- [ ] D13: a read before the SPI byte is done returns the old byte on the board (ours the pending answer)
+- [ ] The CPU speed change is taken over at the next frame start (RTL: within the instruction): the SPI fix works around the consequence, not the cause
+- [ ] Next3D Elite Wireframe: a static scene in both loaders; no board photo or recording to compare with
+- [ ] Browser walker: `UNREAL_NEXB_*` (`core/tests/loaders/nex/nexbrowser_test.cpp`) is the in-tree version of the Browser path; the walker of `tools/machines/next/browser-drive` and the test could share their navigation

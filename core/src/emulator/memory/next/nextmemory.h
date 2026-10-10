@@ -108,13 +108,16 @@ public:
     struct DivMmcView
     {
         bool mapped = false;
-        bool bank3AtZero = false;  ///< MAPRAM: RAM bank 3 stands in for the ROM, read-only
+        bool mapram = false;  ///< MAPRAM: RAM bank 3 stands in for the ROM, read-only; CONMEM does not change that (divmmc.vhd 94-95)
         uint8_t bank = 0;
     };
     void SetDivMmcView(const DivMmcView& view);
     const DivMmcView& GetDivMmcView() const { return _divView; }
     /// Layer 2 supplies the READS (opcode fetches) of this address: its read mapping covers the slot (zxnext.vhd sram_layer2_map_en)
     bool Layer2ReadsAt(uint16_t address) const;
+    /// The ROM is what an opcode fetch at this address sees through the MMU (zxnext.vhd sram_pre_override(0)): the slot holds #FF and the
+    /// board is not in config mode. RAM in the slot, or the config bank, is not (the DivMMC's ROM-3-only entries need this)
+    bool MmuShowsRomAt(uint16_t address) const { return !_configMode && _mmu[(address >> 13) & 7] == kMmuRom; }
     /// The Multiface: its 8K ROM and 8K RAM (system area page 5, SRAM #014000) stand in for slots 0 and 1, above the DivMMC
     void SetMultifaceActive(bool active);
     bool MultifaceActive() const { return _mfActive; }

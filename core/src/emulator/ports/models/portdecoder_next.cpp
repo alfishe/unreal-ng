@@ -98,6 +98,7 @@ void PortDecoder_Next::reset()
     _spiSelected = -1;
     _spiRx = 0xFF;
     _spiBusyUntil = 0;
+    _spiBusyRatio = 1.0;
 
     _screen->SetBorderColor(COLOR_WHITE);
     _screen->SetActiveScreen(SCREEN_NORMAL);
@@ -252,7 +253,7 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, value, pc, disp);
         return value;
     }
-    if (low == NextDivMmc::kPort)
+    if (low == NextDivMmc::kPort && _divMmc->PortEnabled())
     {
         const uint8_t value = _divMmc->ReadPort();
         _lastPortDecoded = true;
@@ -276,7 +277,7 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         OnPortInComplete(port, value, pc, disp);
         return value;
     }
-    if (port == kPortRegSelect || port == kPortRegData || low == kPortSpiData)
+    if (port == kPortRegSelect || port == kPortRegData || (low == kPortSpiData && SpiPortEnabled()))
     {
         PortDecodeDisposition disp;
         disp.decodeRuleIndex = PortTraceRule::kNoTable;
@@ -319,7 +320,7 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     }
     else if (port == NextI2c::kPortScl || port == NextI2c::kPortSda)
         _i2c.Write(port, value);
-    else if (static_cast<uint8_t>(port) == NextDivMmc::kPort)
+    else if (static_cast<uint8_t>(port) == NextDivMmc::kPort && _divMmc->PortEnabled())
         _divMmc->WritePort(value);
     else if (static_cast<uint8_t>(port) == 0xFF)
     {
@@ -350,9 +351,9 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
         _board->Sprites().WriteAttribute(value);
     else if (static_cast<uint8_t>(port) == 0x5B)
         _board->Sprites().WritePattern(value);
-    else if (static_cast<uint8_t>(port) == kPortSpiSelect)
+    else if (static_cast<uint8_t>(port) == kPortSpiSelect && SpiPortEnabled())
         SpiSelect(value);
-    else if (static_cast<uint8_t>(port) == kPortSpiData)
+    else if (static_cast<uint8_t>(port) == kPortSpiData && SpiPortEnabled())
         SpiWrite(value);
     else if (port == kPortRegSelect)
         _board->SelectRegister(value);
@@ -390,7 +391,7 @@ void PortDecoder_Next::BindDma()
     auto waitSpi = [this](uint8_t low) {
         if (low != kPortSpiData)
             return;
-        while (Now28() < _spiBusyUntil)
+        while (Now() < SpiBusyUntil())
             _context->pCore->GetZ80()->InsertWaitStates(1);
     };
     bus.readIo = [this, waitSpi](uint16_t port) {
@@ -535,6 +536,8 @@ void PortDecoder_Next::PerformReset(bool hard)
     Mem().ResetMmu();
     _board->Reset(hard);  // config mode and the boot ROM first: the slot table follows them
     _dma.Reset();         // zxnext.vhd: the DMA's reset_i is the hard or the soft reset
+    _divMmc->Reset();     // E3 and the automap latches (zxnext.vhd 4175, divmmc.vhd 108-139) and the Multiface's session are `reset` too
+    _multiface->Reset();
     Mem().ApplyClassicPaging(0, 0);
     _spiSelected = -1;
     if (_engine)
@@ -589,27 +592,45 @@ void PortDecoder_Next::SpiSelect(uint8_t value)
 void PortDecoder_Next::SpiWrite(uint8_t value)
 {
     const double now = Now();
-    if (now < _spiBusyUntil)
+    if (now < SpiBusyUntil())
     {
         _spiTooFast++;
         return;
     }
     _spiRx = _spiSelected >= 0 ? _sd[_spiSelected].exchange(value) : 0xFF;
-    _spiBusyUntil = now + kSpiByteClocks / SpeedRatio();
+    _spiBusyRatio = SpeedRatio();
+    _spiBusyUntil = now + kSpiByteClocks / _spiBusyRatio;
+}
+
+double PortDecoder_Next::SpiBusyUntil()
+{
+    const double ratio = SpeedRatio();
+    if (ratio != _spiBusyRatio)
+    {
+        // spi_master.vhd counts the CPU clock: the byte is 16 clocks whatever the speed. The new speed was taken over at the start of this
+        // frame (Z80::BeginFrame), so what was left of the byte then is counted in the new clocks. A change older than the byte would have
+        // left nothing in flight
+        const double boundary = static_cast<double>(_state->t_states);
+        if (_spiBusyUntil > boundary)
+            _spiBusyUntil = boundary + (_spiBusyUntil - boundary) * _spiBusyRatio / ratio;
+        _spiBusyRatio = ratio;
+    }
+    return _spiBusyUntil;
 }
 
 uint8_t PortDecoder_Next::SpiRead()
 {
     const uint8_t result = _spiRx;
     const double now = Now();
-    if (now < _spiBusyUntil)
+    if (now < SpiBusyUntil())
     {
         _spiTooFast++;
         return result;
     }
     // a read starts a transfer of #FF; its answer is what the next read returns
     _spiRx = _spiSelected >= 0 ? _sd[_spiSelected].exchange(0xFF) : 0xFF;
-    _spiBusyUntil = now + kSpiByteClocks / SpeedRatio();
+    _spiBusyRatio = SpeedRatio();
+    _spiBusyUntil = now + kSpiByteClocks / _spiBusyRatio;
     return result;
 }
 

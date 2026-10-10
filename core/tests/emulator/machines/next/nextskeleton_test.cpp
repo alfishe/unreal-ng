@@ -17,6 +17,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/z80nengine.h"
+#include "emulator/io/storage/memorydisk.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/io/z80n/nextregtable.h"
 #include "emulator/state/devicestate.h"
@@ -199,6 +200,22 @@ TEST_F(NextSkeleton_Test, DmaWritesToRomAreIgnoredAndLayer2WriteMappingTakesThem
     EXPECT_EQ(_memory->PeekSlot(0x0000), rom0);
 }
 
+// zxnext.vhd 1844: dma_wait_n = z80_wait_n and spi_wait_n - a DMA that reads the SD card's data port waits for each 16-clock byte (it was
+// compared in the wrong unit and never waited: every read after the first returned the byte before)
+TEST_F(NextSkeleton_Test, DmaReadsOfThePortEbWaitForTheSpiByte)
+{
+    ASSERT_TRUE(_ports->InsertSdCard(0, std::make_unique<MemoryDisk>(4096), SdCardSpi::WriteMode::Session));
+    Out(0xE7, 0xFE);
+    // port A: the I/O port #00EB (fixed), port B: memory from #C000 (counting up), A -> B, continuous
+    for (uint8_t b : {uint8_t(0x83), uint8_t(0x7D), uint8_t(0xEB), uint8_t(0x00), uint8_t(0x08), uint8_t(0x00), uint8_t(0x2C), uint8_t(0x10), uint8_t(0xAD), uint8_t(0x00), uint8_t(0xC0),
+                      uint8_t(0xCF), uint8_t(0x87)})
+        _ports->DecodePortOut(0x6B, b, 0);
+    const double before = _ports->Now28();
+    _z80->EngineStep();
+    EXPECT_EQ(_ports->SpiTooFastCount(), 0u);
+    EXPECT_GE(_ports->Now28() - before, 7 * 16 * 8.0) << "eight bytes, one SPI byte (16 clocks) between two reads";
+}
+
 TEST_F(NextSkeleton_Test, NextRegInstructionMapsASlot)
 {
     Load(0x8000, {0xED, 0x91, 0x56, 0x44,   // NEXTREG #56,#44   slot 6 -> 8K page 68
@@ -211,6 +228,24 @@ TEST_F(NextSkeleton_Test, NextRegInstructionMapsASlot)
     // page 68 is bank 34, low half
     EXPECT_EQ(_memory->PeekSlot(0xC000), 0x5A);
     EXPECT_EQ(_memory->RAMPageAddress(34)[0], 0x5A);
+}
+
+// Next3D Elite Wireframe draws into Layer 2 through MMU slot 0 (NEXTREG #50 = #12 + y/32, then writes at #0000-#1FFF): a RAM page in slot 0
+// takes writes like any other slot (the ROM there is write-protected only while the slot holds #FF)
+TEST_F(NextSkeleton_Test, RamPageInMmuSlotZeroTakesTheCpusWrites)
+{
+    Load(0x8000, {0xED, 0x91, 0x50, 0x14,   // NEXTREG #50,#14   slot 0 -> 8K page #14 (bank 10, low half)
+                  0x3E, 0x5A,               // LD A,#5A
+                  0x32, 0x00, 0x01,         // LD (#0100),A
+                  0xED, 0x91, 0x50, 0xFF,   // NEXTREG #50,#FF   the ROM back
+                  0x3A, 0x00, 0x01});       // LD A,(#0100)  the ROM's byte, not #5A
+    _z80->pc = 0x8000;
+    for (int i = 0; i < 4; i++)
+        _z80->EngineStep();
+    EXPECT_EQ(_memory->RAMPageAddress(10)[0x100], 0x5A) << "the byte landed in the page";
+    _z80->EngineStep();
+    _z80->EngineStep();
+    EXPECT_NE(_z80->a, 0x5A) << "with #FF in slot 0 the ROM is back";
 }
 
 TEST_F(NextSkeleton_Test, Z80NInstructionRunsOnTheMachine)

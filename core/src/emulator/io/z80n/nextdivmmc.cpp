@@ -12,6 +12,40 @@ void NextDivMmc::Reset()
     Publish();
 }
 
+bool NextDivMmc::PortEnabled() const
+{
+    return (_board->Stored(0x83) & 0x01) != 0;  // internal_port_enable(8)
+}
+
+bool NextDivMmc::AutomapEnabled() const
+{
+    return PortEnabled() && (_board->Stored(NextBoard::kRegPeripheral3) & 0x10);  // NR #0A bit 4: divmmc_automap_reset is the inverse
+}
+
+void NextDivMmc::OnEnableChanged()
+{
+    if (!AutomapEnabled())
+    {
+        _automap = false;  // divmmc.vhd 108-148: hold, held, button_nmi cleared, the combinational automap forced low
+        _buttonNmi = false;
+    }
+    Publish();
+}
+
+void NextDivMmc::ReleaseForProgramStart()
+{
+    _automap = false;
+    _buttonNmi = false;
+    _control = static_cast<uint8_t>(_control & ~0x80);
+    Publish();
+}
+
+void NextDivMmc::PressButton()
+{
+    if (AutomapEnabled())
+        _buttonNmi = true;
+}
+
 void NextDivMmc::OnRetn()
 {
     _buttonNmi = false;
@@ -26,13 +60,15 @@ void NextDivMmc::Publish()
 {
     NextMemory::DivMmcView view;
     view.mapped = Mapped();
-    view.bank3AtZero = Mapram() && (_control & 0x80) == 0;  // CONMEM beats MAPRAM: the ROM
+    view.mapram = Mapram();  // divmmc.vhd 94-95: bank 3 replaces the ROM whatever CONMEM says
     view.bank = Bank();
     _memory->SetDivMmcView(view);
 }
 
 void NextDivMmc::WritePort(uint8_t value)
 {
+    if (!PortEnabled())
+        return;  // zxnext.vhd 2608: port_e3 = lsb and port_divmmc_io_en
     _control = static_cast<uint8_t>((value & 0x8F) | (value & 0x40) | (_control & 0x40));  // MAPRAM only sets
     Publish();
 }
@@ -47,17 +83,23 @@ NextDivMmc::Hit NextDivMmc::Classify(uint16_t address) const
 {
     if (_memory->MultifaceActive())
         return Hit::None;  // zxnext.vhd: while the Multiface memory is in, sram_pre_override is "000" - the DivMMC's automap is not active
-    if (!(_board->Stored(NextBoard::kRegPeripheral3) & 0x10))
-        return Hit::None;  // NR #0A bit 4: the automap is off
-    // sram_divmmc_automap_rom3_en: the 48K BASIC ROM is what the fetch sees - not a Layer 2 mapping standing over it
-    const bool rom3 = isBasicRomPaged && isBasicRomPaged() && !_memory->Layer2ReadsAt(address);
+    if (!AutomapEnabled())
+        return Hit::None;  // NR #0A bit 4 / the port enable: automap_reset
+    // sram_divmmc_automap_rom3_en (zxnext.vhd 3138): the fetch sees ROM through the MMU (RAM in slot 0 / 1 is the program's own code, config
+    // mode is "110"), no Layer 2 read mapping stands over it, and the 48K BASIC ROM is the one selected
+    const bool rom3 = _memory->MmuShowsRomAt(address) && isBasicRomPaged && isBasicRomPaged() && !_memory->Layer2ReadsAt(address);
     const uint8_t enable = _board->Stored(kRegAutomapEnable);
     const uint8_t valid = _board->Stored(kRegAutomapValid);
     const uint8_t timing = _board->Stored(kRegAutomapTiming);
     const uint8_t extra = _board->Stored(kRegAutomapExtra);
 
     if (address == 0x0066)
-        return _buttonNmi ? Hit::Delayed : Hit::None;  // the NMI entry maps in only for the button's NMI, and is never hidden
+    {
+        // the NMI entry maps in only for the button's NMI (zxnext.vhd 2907-2908): NR #BB bit 1 instant, bit 0 delayed
+        if (!_buttonNmi)
+            return Hit::None;
+        return (extra & 0x02) ? Hit::Instant : (extra & 0x01) ? Hit::Delayed : Hit::None;
+    }
     if (address < 0x40 && (address & 7) == 0)
     {
         const unsigned n = address >> 3;

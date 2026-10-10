@@ -12,10 +12,10 @@ Internal port enable word 0xFFFFFFDF (NR #82-#85; restored by soft reset)
   bit 5  NR0x82  off  #6B zxnDMA  (not gated)
   bit 6  NR0x82  on  #1F Kempston / MD 1  (not gated)
   bit 7  NR0x82  on  #37 Kempston / MD 2  (not gated)
-  bit 8  NR0x83  on  #E3 DivMMC control  (not gated)
+  bit 8  NR0x83  on  #E3 DivMMC control
   bit 9  NR0x83  on  Multiface (two variable ports)
   bit 10 NR0x83  on  #103B, #113B I2C  (not gated)
-  bit 11 NR0x83  on  #E7, #EB SPI  (not gated)
+  bit 11 NR0x83  on  #E7, #EB SPI
   bit 12 NR0x83  on  #133B, #143B, #153B, #163B UART  (not gated)
   bit 13 NR0x83  on  #FADF, #FBDF, #FFDF mouse  (not gated)
   bit 14 NR0x83  on  #57, #5B, #303B sprites  (not gated)
