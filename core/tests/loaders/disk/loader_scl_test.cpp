@@ -258,3 +258,19 @@ TEST_F(LoaderSCL_Test, addFile)
     loaderTrd.setImage(&diskImage);
     loaderTrd.writeImage();
 }
+
+// BUGS.md 2026-10-10 #13: the CRC was read as a uint32_t at any offset of the image buffer (misaligned load)
+TEST_F(LoaderSCL_Test, crcReadsAtAnyOffset)
+{
+    LoaderSCLCUT loader(_context, "");
+
+    // 1 + 4 bytes of data, the little-endian sum after them, the whole image at an odd address
+    uint8_t buffer[1 + 5 + 4] = {0x00, 0x10, 0x20, 0x30, 0x40, 0xFF, 0x00, 0x00, 0x00, 0x00};
+    const uint32_t sum = 0x10 + 0x20 + 0x30 + 0x40 + 0xFF;
+    buffer[6] = sum & 0xFF;
+    buffer[7] = (sum >> 8) & 0xFF;
+    EXPECT_TRUE(loader.checkSCLFileCRC(buffer + 1, 9));
+
+    buffer[9] = 0x01;  // the top byte counts
+    EXPECT_FALSE(loader.checkSCLFileCRC(buffer + 1, 9));
+}

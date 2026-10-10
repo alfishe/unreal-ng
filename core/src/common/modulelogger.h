@@ -144,8 +144,8 @@ struct LoggerSettings
     union
     {
         // Indexed access array
-        // Allow all modules logging by default
-        uint16_t submodules[12] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
+        // Allow all modules logging by default (one row per PlatformModulesEnum id, MODULE_NONE..MODULE_RECORDING)
+        uint16_t submodules[13] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
                                    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
 
         struct
@@ -162,6 +162,7 @@ struct LoggerSettings
             uint16_t loaderSubmodules;        // Loader submodules on/off flags
             uint16_t debuggerSubmodules;      // Memory submodules on/off flags
             uint16_t disassemblerSubmodules;  // Disassembler submodules on/off flags
+            uint16_t recordingSubmodules;     // Recording submodules on/off flags
         };
     };
 };
@@ -205,7 +206,7 @@ class ModuleLogger : public Observer
     static const char* ALL;
     static const char* NONE;
 
-    static const char* moduleNames[12];
+    static const char* moduleNames[13];
 
     const char* submoduleCoreNames[4] = {"Generic", "Config", "Files", "Mainloop"};
 
@@ -237,6 +238,8 @@ class ModuleLogger : public Observer
     const char* submoduleDisassemblerNames[1] = {
         "Generic",
     };
+
+    const char* submoduleRecordingNames[2] = {"Manager", "Encoder"};
 
     /// endregion </Constants>
 

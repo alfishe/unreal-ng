@@ -511,5 +511,8 @@ public:
     EmulatorContext(LoggerLevel level);     // Constructor allowing to specify default logging level
     EmulatorContext(Emulator* emulator, LoggerLevel level = LoggerLevel::LogTrace);    // Constructor registering reference to parent Emulator object
     virtual ~EmulatorContext();
+
+    /// The contexts alive in the process: a machine that is gone (a failed create included) has freed its context
+    static size_t LiveCount();
     /// endregion </Constructors / destructors>
 };

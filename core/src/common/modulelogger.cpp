@@ -12,8 +12,8 @@ const char* ModuleLogger::LoggerLevelNames[6] = {"None", "Trace", "Debug", "Info
 const char* ModuleLogger::ALL = "<All>";
 const char* ModuleLogger::NONE = "<None>";
 
-const char* ModuleLogger::moduleNames[12] = {"<Unknown>", "Core",  "Z80", "Memory", "I/O",      "Disk",
-                                             "Video",     "Sound", "DMA", "Loader", "Debugger", "Disassembler"};
+const char* ModuleLogger::moduleNames[13] = {"<Unknown>", "Core",  "Z80", "Memory", "I/O",      "Disk",        "Video",
+                                             "Sound",     "DMA",   "Loader", "Debugger", "Disassembler", "Recording"};
 
 /// endregion </Constants>
 
@@ -21,6 +21,10 @@ const char* ModuleLogger::moduleNames[12] = {"<Unknown>", "Core",  "Z80", "Memor
 
 ModuleLogger::ModuleLogger(EmulatorContext* context)
 {
+    // Every PlatformModulesEnum id up to the last has its name and its settings row (a module past them read out of both)
+    static_assert(sizeof(moduleNames) / sizeof(moduleNames[0]) == MODULE_RECORDING + 1);
+    static_assert(sizeof(LoggerSettings{}.submodules) / sizeof(LoggerSettings{}.submodules[0]) == MODULE_RECORDING + 1);
+
     _context = context;
 
     // Ensure all modules / submodules are enabled by default
@@ -117,10 +121,10 @@ void ModuleLogger::TurnOnLoggingForAll()
 void ModuleLogger::TurnOffLoggingForModule(PlatformModulesEnum module, uint16_t submodule)
 {
     /// region <Sanity checks>
-    if (module > PlatformModulesEnum::MODULE_DISASSEMBLER)
+    if (module > PlatformModulesEnum::MODULE_RECORDING)
     {
         std::string message = StringHelper::Format("Module cannot have id > %d. Found %d",
-                                                   PlatformModulesEnum::MODULE_DISASSEMBLER, module);
+                                                   PlatformModulesEnum::MODULE_RECORDING, module);
         throw std::logic_error(message);
     }
 
@@ -154,10 +158,10 @@ void ModuleLogger::TurnOffLoggingForModule(PlatformModulesEnum module, uint16_t 
 void ModuleLogger::TurnOnLoggingForModule(PlatformModulesEnum module, uint16_t submodule)
 {
     /// region <Sanity checks>
-    if (module > PlatformModulesEnum::MODULE_DISASSEMBLER)
+    if (module > PlatformModulesEnum::MODULE_RECORDING)
     {
         std::string message = StringHelper::Format("Module cannot have id > %d. Found %d",
-                                                   PlatformModulesEnum::MODULE_DISASSEMBLER, module);
+                                                   PlatformModulesEnum::MODULE_RECORDING, module);
         throw std::logic_error(message);
     }
 
@@ -253,7 +257,7 @@ void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uin
 
     /// region <Sanity checks>
 #ifdef _DEBUG
-    if (module > MODULE_DISASSEMBLER)
+    if (module > MODULE_RECORDING)
     {
         std::string error = StringHelper::Format("LogModuleMessage - invalid module %d", module);
         throw std::logic_error(error);
@@ -423,10 +427,12 @@ bool ModuleLogger::IsLoggingEnabled(PlatformModulesEnum module, uint16_t submodu
         if (_mute || _shutdown)
             return result;
 
-        uint8_t moduleBitNumber = BitHelper::GetFirstSetBitPosition(static_cast<uint8_t>(module));
+        // A module id without its settings row logs nothing
+        if (module >= sizeof(_settings.submodules) / sizeof(_settings.submodules[0]))
+            return result;
 
-        // Check if logging for the whole module allowed
-        if (BitHelper::IsBitSet(_settings.modules, moduleBitNumber))
+        // Check if logging for the whole module allowed (bit 'module', as TurnOffLoggingForModule clears it)
+        if (BitHelper::IsBitSet(_settings.modules, static_cast<uint8_t>(module)))
         {
             uint8_t submoduleBitNumber = BitHelper::GetFirstSetBitPosition(submodule);
 
@@ -614,7 +620,7 @@ bool ModuleLogger::GetSubmoduleNameCollection(uint16_t module, const char*** sub
 {
     bool result = true;
 
-    if (module > sizeof(moduleNames) / sizeof(moduleNames[0]))
+    if (module >= sizeof(moduleNames) / sizeof(moduleNames[0]))
     {
         result = false;
 
@@ -666,6 +672,10 @@ bool ModuleLogger::GetSubmoduleNameCollection(uint16_t module, const char*** sub
         case MODULE_DISASSEMBLER:
             *submoduleNames = submoduleDisassemblerNames;
             *submoduleNamesSize = sizeof(submoduleDisassemblerNames) / sizeof(submoduleDisassemblerNames[0]);
+            break;
+        case MODULE_RECORDING:
+            *submoduleNames = submoduleRecordingNames;
+            *submoduleNamesSize = sizeof(submoduleRecordingNames) / sizeof(submoduleRecordingNames[0]);
             break;
         default:
             result = false;

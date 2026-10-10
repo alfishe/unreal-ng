@@ -376,8 +376,9 @@ bool LoaderSCL::checkSCLFileCRC(uint8_t* data, size_t length)
 
     if (data && length > 4)
     {
-        uint8_t* crcData = &data[length - 4];
-        uint32_t crc = *((uint32_t*)crcData);
+        // Little-endian, at any offset: the image buffer gives no alignment
+        const uint8_t* crcData = &data[length - 4];
+        uint32_t crc = crcData[0] | (crcData[1] << 8) | (crcData[2] << 16) | (static_cast<uint32_t>(crcData[3]) << 24);
         uint32_t calculatedCRC = 0;
 
         // Checksum should cover all bytes EXCEPT the last 4 (which contain the CRC itself)

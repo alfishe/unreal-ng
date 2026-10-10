@@ -10,6 +10,18 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/soundmanager.h"
 
+namespace
+{
+// A mixed level [-1, 1] as a 16-bit sample. Two chips (and the FM parts) summed go past full scale: clamped,
+// since a float out of the int16_t range converts to an undefined value. Scaled in the level's own type: a sample
+// in range is what the plain conversion gave
+template <typename Level>
+int16_t ToSample(Level level)
+{
+    return static_cast<int16_t>(std::clamp(level * INT16_MAX, Level(INT16_MIN), Level(INT16_MAX)));
+}
+}  // namespace
+
 /// region <Core loop (§5.2)>
 
 uint64_t SoundChip_TurboSoundFM::nowT() const
@@ -233,19 +245,19 @@ void SoundChip_TurboSoundFM::handleStep()
 
                 // Store per-chip buffers (SSG for registry-driven capture,
                 // FM centre-panned, §6.4/§7.2)
-                _chip0Buffer[_ayBufferIndex]     = static_cast<int16_t>(c0L * INT16_MAX);
-                _chip0Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c0R * INT16_MAX);
-                _chip1Buffer[_ayBufferIndex]     = static_cast<int16_t>(c1L * INT16_MAX);
-                _chip1Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c1R * INT16_MAX);
-                _fm0Buffer[_ayBufferIndex]       = static_cast<int16_t>(f0 * INT16_MAX);
-                _fm0Buffer[_ayBufferIndex + 1]   = static_cast<int16_t>(f0 * INT16_MAX);
-                _fm1Buffer[_ayBufferIndex]       = static_cast<int16_t>(f1 * INT16_MAX);
-                _fm1Buffer[_ayBufferIndex + 1]   = static_cast<int16_t>(f1 * INT16_MAX);
+                _chip0Buffer[_ayBufferIndex]     = ToSample(c0L);
+                _chip0Buffer[_ayBufferIndex + 1] = ToSample(c0R);
+                _chip1Buffer[_ayBufferIndex]     = ToSample(c1L);
+                _chip1Buffer[_ayBufferIndex + 1] = ToSample(c1R);
+                _fm0Buffer[_ayBufferIndex]       = ToSample(f0);
+                _fm0Buffer[_ayBufferIndex + 1]   = ToSample(f0);
+                _fm1Buffer[_ayBufferIndex]       = ToSample(f1);
+                _fm1Buffer[_ayBufferIndex + 1]   = ToSample(f1);
 
                 // Combined output; with FM silent f0/f1 are exactly 0.0f and
                 // the float sums stay byte-identical to the legacy device
-                leftSample = static_cast<int16_t>((c0L + c1L + f0 + f1) * INT16_MAX);
-                rightSample = static_cast<int16_t>((c0R + c1R + f0 + f1) * INT16_MAX);
+                leftSample = ToSample(c0L + c1L + f0 + f1);
+                rightSample = ToSample(c0R + c1R + f0 + f1);
             }
             else
             {
@@ -311,8 +323,8 @@ void SoundChip_TurboSoundFM::handleStep()
                     c1L = static_cast<float>((leftSum * r0) / sampleCount);
                     c1R = static_cast<float>((rightSum * r0) / sampleCount);
 
-                    leftSample = static_cast<int16_t>(((leftSum / sampleCount) + f0 + f1) * INT16_MAX);
-                    rightSample = static_cast<int16_t>(((rightSum / sampleCount) + f0 + f1) * INT16_MAX);
+                    leftSample = ToSample((leftSum / sampleCount) + f0 + f1);
+                    rightSample = ToSample((rightSum / sampleCount) + f0 + f1);
                 }
                 else
                 {
@@ -321,19 +333,19 @@ void SoundChip_TurboSoundFM::handleStep()
                     c0R = static_cast<float>(chip0.ssg.mixedRight());
                     c1L = static_cast<float>(chip1.ssg.mixedLeft());
                     c1R = static_cast<float>(chip1.ssg.mixedRight());
-                    leftSample = static_cast<int16_t>((c0L + c1L + static_cast<float>(f0) + static_cast<float>(f1)) * INT16_MAX);
-                    rightSample = static_cast<int16_t>((c0R + c1R + static_cast<float>(f0) + static_cast<float>(f1)) * INT16_MAX);
+                    leftSample = ToSample(c0L + c1L + static_cast<float>(f0) + static_cast<float>(f1));
+                    rightSample = ToSample(c0R + c1R + static_cast<float>(f0) + static_cast<float>(f1));
                 }
 
                 // Store per-chip buffers (SSG + centre-panned FM, §6.4/§7.2)
-                _chip0Buffer[_ayBufferIndex]     = static_cast<int16_t>(c0L * INT16_MAX);
-                _chip0Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c0R * INT16_MAX);
-                _chip1Buffer[_ayBufferIndex]     = static_cast<int16_t>(c1L * INT16_MAX);
-                _chip1Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c1R * INT16_MAX);
-                _fm0Buffer[_ayBufferIndex]       = static_cast<int16_t>(f0 * INT16_MAX);
-                _fm0Buffer[_ayBufferIndex + 1]   = static_cast<int16_t>(f0 * INT16_MAX);
-                _fm1Buffer[_ayBufferIndex]       = static_cast<int16_t>(f1 * INT16_MAX);
-                _fm1Buffer[_ayBufferIndex + 1]   = static_cast<int16_t>(f1 * INT16_MAX);
+                _chip0Buffer[_ayBufferIndex]     = ToSample(c0L);
+                _chip0Buffer[_ayBufferIndex + 1] = ToSample(c0R);
+                _chip1Buffer[_ayBufferIndex]     = ToSample(c1L);
+                _chip1Buffer[_ayBufferIndex + 1] = ToSample(c1R);
+                _fm0Buffer[_ayBufferIndex]       = ToSample(f0);
+                _fm0Buffer[_ayBufferIndex + 1]   = ToSample(f0);
+                _fm1Buffer[_ayBufferIndex]       = ToSample(f1);
+                _fm1Buffer[_ayBufferIndex + 1]   = ToSample(f1);
             }
 
             // Store samples in combined output buffer

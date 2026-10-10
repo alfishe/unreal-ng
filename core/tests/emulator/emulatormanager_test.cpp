@@ -489,6 +489,23 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithModelLeavesNoOrphanOnError)
     EXPECT_EQ(_manager->GetEmulatorIds().size(), countBefore);
 }
 
+// BUGS.md 2026-10-10 #12: a failed create freed nothing it had built - the context, its config and loggers
+// (an unknown model, an unsupported RAM size: Init never ran; a non-creatable model: Init failed or threw)
+TEST_F(EmulatorManager_Test, FailedCreateFreesTheHalfBuiltInstance)
+{
+    const size_t contextsBefore = EmulatorContext::LiveCount();
+
+    std::string error;
+    EXPECT_EQ(_manager->CreateEmulatorWithModel("", "NO_SUCH_MACHINE", LoggerLevel::LogError, &error), nullptr);
+    EXPECT_EQ(EmulatorContext::LiveCount(), contextsBefore) << "unknown model";
+
+    EXPECT_EQ(_manager->CreateEmulatorWithModelAndRAM("", "PENTAGON", 256, LoggerLevel::LogError, &error), nullptr);
+    EXPECT_EQ(EmulatorContext::LiveCount(), contextsBefore) << "unsupported RAM size";
+
+    EXPECT_EQ(_manager->CreateEmulatorWithModel("", "GMX", LoggerLevel::LogError, &error), nullptr);
+    EXPECT_EQ(EmulatorContext::LiveCount(), contextsBefore) << "non-creatable model: " << error;
+}
+
 TEST_F(EmulatorManager_Test, CreateEmulatorWithModelResolvesRequestedMachine)
 {
     // Success path: the created instance must actually BE the requested
