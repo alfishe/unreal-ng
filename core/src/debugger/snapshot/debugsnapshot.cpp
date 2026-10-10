@@ -95,7 +95,7 @@ StateNode Disasm(EmulatorContext* context, uint16_t address, size_t count)
     }
     Z80Disassembler* disasm = dbg->GetDisassembler().get();
     LabelManager* labels = dbg->GetLabelManager();
-    count = std::clamp<size_t>(count, 1, 100);
+    count = std::clamp<size_t>(count, 1, kMaxDisasmLines);
 
     StateNode ret = StateNode::Object();
     ret["address"] = static_cast<int>(address);

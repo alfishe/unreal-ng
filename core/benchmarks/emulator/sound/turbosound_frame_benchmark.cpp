@@ -81,8 +81,9 @@ void PokeDriver(Z80* z80)
 
 /// effectsOff: AY punch and room off (the AY character chains bypassed; FM and beeper chains are off by default).
 /// lowQuality: the sound HQ feature off - native-clock boxcar instead of the FIR decimators
+/// integerMix: the saturating int16 master mix instead of the wide float bus and limiter a TSFM machine mixes on
 void RunFrameCostBenchmark(benchmark::State& state, bool playerLoad, bool turbo, bool effectsOff = false,
-                           bool lowQuality = false)
+                           bool lowQuality = false, bool integerMix = false)
 {
     EmulatorManager* manager = EmulatorManager::GetInstance();
     std::shared_ptr<Emulator> emulator = manager->CreateEmulatorWithModel("bench-turbosound", "PENTAGON", LoggerLevel::LogNone);
@@ -114,6 +115,9 @@ void RunFrameCostBenchmark(benchmark::State& state, bool playerLoad, bool turbo,
     if (lowQuality && context->pFeatureManager)
         context->pFeatureManager->setFeature(Features::kSoundHQ, false);
 
+    if (integerMix && context->pSoundManager)
+        context->pSoundManager->enableWideMix(false);
+
     if (playerLoad)
         PokeDriver(core->GetZ80());
     else
@@ -136,6 +140,8 @@ void RunFrameCostBenchmark(benchmark::State& state, bool playerLoad, bool turbo,
         label += ", effects off";
     if (lowQuality)
         label += ", LQ";
+    if (integerMix)
+        label += ", integer mix";
     state.SetLabel(label);
     state.SetItemsProcessed(state.iterations());
 
@@ -171,8 +177,14 @@ static void BM_TurboSoundFrame_PlayerLoad_LQ(benchmark::State& state)
     RunFrameCostBenchmark(state, true, false, false, true);
 }
 
+static void BM_TurboSoundFrame_PlayerLoad_IntegerMix(benchmark::State& state)
+{
+    RunFrameCostBenchmark(state, true, false, false, false, true);
+}
+
 BENCHMARK(BM_TurboSoundFrame_Idle)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_TurboSoundFrame_PlayerLoad)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_TurboSoundFrame_PlayerLoad_Turbo)->Iterations(2000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_TurboSoundFrame_PlayerLoad_EffectsOff)->Iterations(1000)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_TurboSoundFrame_PlayerLoad_LQ)->Iterations(1000)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_TurboSoundFrame_PlayerLoad_IntegerMix)->Iterations(1000)->Unit(benchmark::kMicrosecond);

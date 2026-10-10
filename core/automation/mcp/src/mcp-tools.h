@@ -27,6 +27,7 @@ struct ToolResult
     std::string text;             // Human/LLM-readable summary (content[0].text)
     Json::Value structured = Json::Value(); // Machine-readable payload (structuredContent), null if none
     bool isError = false;
+    bool textCarriesData = false; // The text already holds the data (a listing): the dispatcher does not echo structured
 
     static ToolResult Ok(const std::string& text, Json::Value structured = Json::Value())
     {

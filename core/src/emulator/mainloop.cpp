@@ -270,7 +270,12 @@ bool MainLoop::Park(Emulator* emulator, execution::ExecutionArbiter* arbiter)
     if (_context->pTimeTravelHooks)
         _context->pTimeTravelHooks->OnMachineParking();
     if (emulator->IsPaused())
+    {
         emulator->NoteDebugChange();  // a stop the debugger snapshot's seq counts
+        // Nothing plays while paused: cleared here, on the thread that renders the sound (Emulator::OnIntentEdge)
+        if (_soundManager)
+            _soundManager->onEmulatorPaused();
+    }
     return arbiter->LoopWait();
 }
 

@@ -2518,7 +2518,7 @@ void RegisterInspectState(ToolRegistry& registry)
                             else if (aspect == "disasm" && value["instructions"].isArray())
                             {
                                 out << "\n[disasm] " << value["instructions"].size() << " instruction(s) at "
-                                    << Hex16(value["address"].asUInt());
+                                    << Hex16(value["address"].asUInt()) << "\n" << FormatDisasmListing(value);
                             }
                             else if (aspect == "screen_ocr")
                             {

@@ -335,4 +335,4 @@ The §12.4 tests are: `TsfmBitIdentity.*`, `FilterDecimator.InputRateEquivalence
 | Unclamped int16 casts in legacy buffer stores | `soundchip_turbosound.cpp:108-115` |
 | `pFF77` labelled "TurboSound chip select" in hash/checkpoint structs (it is the ATM video port); pBFFD/pFFFD comments swapped | `machinestatehash.h:95`, `ttdcheckpoint.h:158` |
 | Pentagon and 48K decoders never update `pFFFD`/`pBFFD` | `pentagon128.cpp`, `spectrum48.cpp` |
-| Wide mix + soft limiter (TSFM makes int16 saturation likely) | separate design |
+| Wide mix + soft limiter (TSFM makes int16 saturation likely) | done: TSFM mixes on the wide bus (ISSUES.md #6) |
