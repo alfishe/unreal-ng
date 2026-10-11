@@ -80,6 +80,27 @@ class TestNextReports:
         assert events and events[-1]["source"] == "nextreg" and events[-1]["value"] == "0x12"
         assert get(api_client, next_emulator, "/state/next/nextreg?reg=14").json()["value"] == "0x12"
 
+    def test_sd_report_and_journal_switch(self, api_client, next_emulator):
+        report = get(api_client, next_emulator, "/state/next/sd").json()
+        assert len(report["cards"]) == 2 and "too_fast_accesses" in report["spi"]
+        assert post(api_client, next_emulator, "/next/sd-journal", {"enabled": True, "clear": True}).json()["enabled"] is True
+        assert get(api_client, next_emulator, "/state/next/sd?kinds=command&limit=5").json()["enabled"] is True
+        assert post(api_client, next_emulator, "/next/sd-journal", {"enabled": False}).json()["enabled"] is False
+
+    def test_sd_bad_parameters_are_400(self, api_client, next_emulator):
+        assert get(api_client, next_emulator, "/state/next/sd?kinds=jump").status_code == 400
+        assert get(api_client, next_emulator, "/state/next/sd?card=2").status_code == 400
+
+    def test_divmmc_report_and_journal_switch(self, api_client, next_emulator):
+        report = get(api_client, next_emulator, "/state/next/divmmc").json()
+        assert len(report["entries"]) == 15 and "automap_latch" in report["state"]
+        assert post(api_client, next_emulator, "/next/divmmc-journal", {"enabled": True, "clear": True}).json()["enabled"] is True
+        assert get(api_client, next_emulator, "/state/next/divmmc?kinds=esx_call&limit=5").json()["enabled"] is True
+        assert post(api_client, next_emulator, "/next/divmmc-journal", {"enabled": False}).json()["enabled"] is False
+
+    def test_divmmc_bad_parameters_are_400(self, api_client, next_emulator):
+        assert get(api_client, next_emulator, "/state/next/divmmc?kinds=jump").status_code == 400
+
     def test_nextreg_write_bad_body_is_400(self, api_client, next_emulator):
         assert post(api_client, next_emulator, "/next/nextreg", {"reg": "14"}).status_code == 400
         assert post(api_client, next_emulator, "/next/nextreg", {"reg": "14", "value": "1", "door": "copper"}).status_code == 400

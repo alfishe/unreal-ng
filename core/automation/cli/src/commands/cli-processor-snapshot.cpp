@@ -219,20 +219,21 @@ void CLIProcessor::HandleSnapshotInspect(const ClientSession& session, std::shar
 }
 
 void CLIProcessor::HandleSnapshotInfo(const ClientSession& session, std::shared_ptr<Emulator> emulator,
-                                      EmulatorContext* context)
+                                      [[maybe_unused]] EmulatorContext* context)
 {
     std::stringstream ss;
     ss << "Snapshot Status" << NEWLINE;
     ss << "===============" << NEWLINE;
     ss << NEWLINE;
 
-    if (context->coreState.snapshotFilePath.empty())
+    const std::string snapshotPath = emulator->SnapshotFilePath();
+    if (snapshotPath.empty())
     {
         ss << "No snapshot loaded" << NEWLINE;
     }
     else
     {
-        ss << "File: " << context->coreState.snapshotFilePath << NEWLINE;
+        ss << "File: " << snapshotPath << NEWLINE;
     }
     if (!emulator->LastSnapshotReport().format.empty())
         ss << NEWLINE << emulator->LastSnapshotReport().ToText();

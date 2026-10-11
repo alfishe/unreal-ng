@@ -105,6 +105,25 @@ An XAS source on disk is type `X` with start #5341 (`AS`) and length 0 (XAS igno
 name, `X`, `41 53`, `00 00`, `00`, sector count, checksum. LTEXT names another XAS source, LCODE a code file (`"name"`
 = type C, `"name.Z"` another type, `"B:name"` drive B).
 
+## A host source into XAS (every build, 4.18 to 9.10)
+
+Open XAS's command line (EXT; 9.x: hold it 12 frames) and write the source there; `A` then assembles it:
+
+```text
+type_input  {"action":"combo","keys":["caps","symbol"],"frames":4}          # the command line (>Edit)
+asm_source  {"action":"sync_inject","path":"/abs/main.asm"}                  # sjasmplus, converted by the XAS backend
+type_input  {"action":"tap","key":"a","frames":4}                            # ASSEMBLE
+```
+
+The source is written as XAS text (left-to-right chains, 7-character names, conditions decided while converting,
+macros expanded, WHILE unrolled: [research-sjasmplus-to-xas.md](../../docs/inprogress/2026-10-05-unreal-asm/research-sjasmplus-to-xas.md))
+over the text at `#C000` of page 3, and XAS's editor variables (cursor line, top line, text end) are set as its LOAD
+sets them. Refused in the editor (its cursor points into the text): open the command line first. The push watch
+(`sync_push_watch`) waits the same way: each save goes in the next time the command line is open. XAS holds one text,
+so a source with INCLUDEs goes onto the disk instead (`zxasm inject main.asm work.trd --assembler xas-7.447`).
+`tools/verification/unreal-asm/emulator/inject-oracle.py xas <XAS disk> <source.asm> 0x6000 --boot XAS7.447 --assembler xas-7.447`
+runs the whole check (`--right 1` past XMACROS on the 4.18 and 5.05SE disks, `--combo-frames 12` for 9.x).
+
 ## Saving and the text in memory
 
 EXT then `S` shows `Save text NAME`; Enter keeps the name. XAS writes whole sectors straight from `#C000` (the length

@@ -179,7 +179,9 @@ TEST_P(TTDControl_Test, StartStopAndStatusReportTheSession)
     // The verbs drove this instance's session: the controller's in the Controller run
     EXPECT_TRUE(_ttd->IsRecording());
     if (_controller)
+    {
         EXPECT_FALSE(_context->pTimeTravelManager->IsRecording()) << "v1 stays idle";
+    }
 
     r = Run("start");
     ASSERT_TRUE(r.Ok());
@@ -205,7 +207,9 @@ TEST_P(TTDControl_Test, StartStopAndStatusReportTheSession)
     const StateNode* earliest = status.body.find("earliest");
     ASSERT_NE(earliest, nullptr);
     if (Int(status, "checkpoint_count") > 0)
+    {
         EXPECT_EQ(earliest->find("frame")->i, Int(status, "session_start_frame"));
+    }
 }
 
 TEST_P(TTDControl_Test, StartWithoutTheJournalOptionKeepsTheChoice)
@@ -747,7 +751,9 @@ TEST_P(TTDControl_Test, AFrameWithoutATStateIsItsEnd)
     }
     _emulator->RunTStates(30000, /*skipBreakpoints=*/true);
     if (!GetParam())
+    {
         ASSERT_TRUE(Run("stop").Ok()) << "v1 browses a stopped session only";
+    }
     const uint64_t n = first + 4;
 
     // The frame's start, asked for explicitly: unchanged on both

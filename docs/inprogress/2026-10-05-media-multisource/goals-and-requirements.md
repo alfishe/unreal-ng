@@ -12,7 +12,7 @@
 
 **Status:** every goal is met. 7 requirements are met only in part:
 
-- FR-6, FR-14 and FR-21 each lack one option;
+- FR-6 and FR-14 each lack one option (FR-21's `onBadName: replace` was built 2026-10-11);
 - FR-45 cannot commit a partitioned disk;
 - FR-54 takes no disposition;
 - NFR-M5 has no extent budget;
@@ -42,7 +42,7 @@ What changed in this document:
   - D-4: a trash failure surfaces at apply, not in the plan.
   - D-8: a plain `save`, an eject with `save` and the emulator closing follow `writes.save` (2026-10-09).
 - Gaps found, not in [TODO.md](TODO.md) before:
-  - the descriptor's per-directory `order` (FR-14) and `onBadName: replace` (FR-21) are parsed but not applied;
+  - the descriptor's per-directory `order` (FR-14) is parsed but not applied;
   - a folder layer takes only `exclude` from its manifest (FR-6);
   - there is no extent budget (NFR-M5);
   - a partitioned composite cannot be committed (FR-45).
@@ -176,7 +176,7 @@ conflicts, delta, commit, eject, rescan) is drawn as a decision tree; the map of
 | ID | Requirement | Status |
 |---|---|---|
 | FR-20 | The build validates the whole union against the target: volume size, cluster-count range per FAT type, FAT16 root-directory entries, entries per directory, maximum file size, path depth, ISO name and depth rules. A violation fails with `DoesNotFit` and names the entry and the limit. | met: entries per directory and 4 GiB files (`Validate`); size and cluster range (`FatSynthVolume`, `target.size`); a graft's fixed FAT12 / FAT16 root (S-10); ISO depth 8 unless `iso.relaxDepth` (C5). A rebuilt FAT16 root grows to hold its entries. FAT has no path-depth check |
-| FR-21 | Names are converted to the target. FAT: long name plus unique 8.3 name in the chosen code page (CP866 / CP1251), with `FatNameMapper`'s rules. ISO: Level 1 (or 2) ISO name plus a Joliet name. Unconvertible names are reported, and the entry is skipped or renamed according to the descriptor. | **partly**: conversion met (C2, C5: `~N` tails on collisions, reported). `target.onBadName: replace` is not implemented. It is reported ("replace is not implemented yet"), and such names are skipped |
+| FR-21 | Names are converted to the target. FAT: long name plus unique 8.3 name in the chosen code page (CP866 / CP1251), with `FatNameMapper`'s rules. ISO: Level 1 (or 2) ISO name plus a Joliet name. Unconvertible names are reported, and the entry is skipped or renamed according to the descriptor. | met 2026-10-11: conversion (C2, C5: `~N` tails on collisions, reported); a long name with a character FAT cannot hold, or over 255 units, is skipped (`onBadName: skip`, default) or renamed (`replace`: `_`, cut before the extension, `~2` against a sibling), reported either way (FAT targets) |
 | FR-22 | Timestamps are clamped to the target's range: FAT 1980-2107 with 2-second resolution, ISO 1900-2155. Attributes are mapped (FAT read-only / hidden / system ↔ ISO hidden). | met, with one difference: ISO times are clamped to 1900-2099 (`isosynthvolume.cpp`) |
 | FR-24 | **Boot carry-over and boot layers** (D-6). ISO target: a bootable bottom ISO layer keeps its El Torito entries (platform ids, emulation types, load segments, sector counts; images read from the source by extent); a `boot.eltorito` list adds or replaces entries, each naming an image by target path (a file of the union) or host path, with emulation (`none` / `floppy` / `hdd`), load segment, sector count and platform. FAT target: the bottom FAT image's MBR boot code (bytes 0-445), volume boot code (outside the BPB fields the builder writes) and reserved boot sectors are carried; `boot.mbrCode`, `boot.volumeCode` and `boot.reserved` (`{lba, file}` ranges, for example the DSS loader at LBA 1-3) replace them from files. Boot data that cannot be carried (a bootable ISO in an upper layer, an El Torito catalog into a FAT target, boot code larger than its area) is reported. | met (C5b, [c5-iso.md](phases/c5-iso.md) §10). An implicit carry that does not fit is reported and left out; an explicit `boot:` that does not fit fails `DoesNotFit` |
 | FR-23 | Only supported combinations build. The matrix of source and target file systems is in [fs-compatibility.md](fs-compatibility.md). Any other combination fails with `NotSupported` and the reason. | met in effect. The error kinds changed: a kind or FS mismatch is `BadRequest` with the reason ("the slot reads FAT16, not FAT32", "a CD slot takes an ISO 9660 volume"). A floppy or tape slot answers `NotSupported`, and `writethrough` answers `KindMismatch` |

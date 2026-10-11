@@ -317,7 +317,9 @@ The server echoes the client's `protocolVersion` when supported (`2025-06-18`, `
 otherwise answers with `2025-06-18`. `notifications/initialized` completes the
 handshake (acknowledged with `202` + empty body, like every notification). Later requests may carry
 `MCP-Protocol-Version: <revision>` (2025-06-18 clients do): an unsupported revision is refused with HTTP 400 and a
-JSON-RPC `-32600` naming the supported ones; without the header the request is served as `2025-03-26`.
+JSON-RPC `-32600` naming the supported ones; without the header the request is served as `2025-03-26`. A request
+with an `Origin` header that is not this machine (`http(s)://localhost`, `127.0.0.1`, `[::1]`, any port) is refused
+with HTTP 403 (DNS rebinding from a web page); the stdio bridge, curl and scripts send no `Origin` and pass.
 
 ### Progress streaming
 

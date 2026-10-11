@@ -31,6 +31,7 @@ class SourcePool;
 struct GraftOptions
 {
     CodePage codePage = CodePage::Cp866;   ///< the base's short names (new names are made in it)
+    bool replaceBadNames = false;          ///< a name FAT cannot hold is renamed, not skipped (FR-21)
     std::optional<uint32_t> partition;      ///< the base layer's explicit MBR partition (1-4)
     std::optional<int64_t> fixedTimeUtc;    ///< tests: every new entry's time
     /// The descriptor's boot section (D-6): patched over the base's own boot structures

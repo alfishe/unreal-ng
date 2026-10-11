@@ -81,6 +81,43 @@ invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/state/next/reg-journal?
 `source` says the door: `nextreg` (the instruction), `port` (`OUT #253B`), `copper`, `internal`. The same report is `state next
 journal` on the CLI, `next_reg_journal{...}` in Lua, `emu.next_reg_journal(...)` in Python.
 
+### 3a. What did the program ask the card? (the SD journal)
+
+The port trace shows `#E7` / `#EB` bytes, not the SD protocol. The SD journal turns them into commands: CMD, argument, the R1 the
+card answered, and every block read or written, with frame, T and the PC that asked. Off by default.
+
+```text
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/sd-journal","body":{"enabled":true,"clear":true}}
+... run the program (a directory listing, an NEX load) ...
+inspect_state {"aspects":["next_sd"],"nr_sd_kinds":"command","nr_sd_limit":10}
+invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/state/next/sd?kinds=read,write&card=0&limit=20"}
+```
+
+`cards` says what the program saw: `type` (`SDHC` on a Next whatever the size; a game that prints "SDHC OR BETTER REQUIRED" got `SDSC` or
+no answer to CMD58), the protocol `state` (`ready` after ACMD41), the last command; `spi` the engine (`too_fast_accesses` counts the
+accesses inside the 16-clock byte time). A command line is `#<seq> frame <n> T <t> PC <pc> card <0|1> CMD17 0x00000800 -> R1 0x00`;
+`R1 none` = the card ignored it (before CMD0, or while streaming). CLI `state next sd [on|off|clear]`, Lua `next_sd{...}`, Python
+`emu.next_sd(...)`. The text above is the one `NextSdJournalMachine_Test.TheCliPrintsTheCardsAndTheJournal` checks.
+
+### 3a2. Why is the DivMMC in, and which esxDOS calls were made? (the DivMMC journal)
+
+`state/next` shows `divmmc.mapped` now; the DivMMC journal shows what put it there. Off by default.
+
+```text
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/next/divmmc-journal","body":{"enabled":true,"clear":true}}
+... run the program ...
+inspect_state {"aspects":["next_divmmc"],"nr_dm_kinds":"esx_call","nr_dm_limit":20}
+invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/state/next/divmmc?kinds=map_in,map_out,retn&limit=30"}
+```
+
+`entries` is NR `#B8`-`#BB` decoded: which addresses map the DivMMC in, whether only with the 48K ROM paged (`rom3_only`) and whether
+the opcode of that fetch already comes from the DivMMC (`instant`). `esx_call` is an entry at `#0008`: the byte after `RST 8`, its
+name from the firmware's `esxapi.def`, the return address and the registers the program set; `basic_rom: true` means the 48K ROM was
+paged, where `RST 8` is a BASIC error report and the byte an error code, not an esxDOS call. A latch that never goes out (no
+`map_out` / `retn` after a `map_in`) is the usual reason a program "hangs in the DivMMC". The same report is `state next divmmc` on the
+CLI, `next_divmmc{...}` in Lua, `emu.next_divmmc(...)` in Python. The text is the one
+`NextDivMmcJournalMachine_Test.TheCliPrintsTheEntriesAndTheCalls` checks.
+
 ### 3b. What did the program configure? (the debugger reports)
 
 Guessing from port traces and one register at a time found the DMA writing into ROM, the tilemap reading bank 7 as 16K and a card

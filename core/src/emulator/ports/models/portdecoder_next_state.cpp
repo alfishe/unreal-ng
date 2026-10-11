@@ -10,6 +10,8 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/nextregjournal.h"
+#include "emulator/io/z80n/nextdivmmcjournal.h"
+#include "emulator/io/z80n/nextsdjournal.h"
 #include "emulator/io/z80n/nextregtable.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
@@ -180,6 +182,223 @@ StateNode NextRegJournalControl(EmulatorContext* context, int enable, bool clear
     if (enable >= 0)
         journal.SetEnabled(enable != 0);
     return JournalState(journal);
+}
+
+namespace
+{
+StateNode SdJournalState(const NextSdJournal& journal)
+{
+    StateNode n = StateNode::Object();
+    n["available"] = true;
+    n["enabled"] = journal.Enabled();
+    n["size"] = static_cast<uint64_t>(journal.Size());
+    n["capacity"] = static_cast<uint64_t>(journal.Capacity());
+    n["evicted"] = journal.Evicted();
+    n["last_seq"] = journal.LastSeq();
+    return n;
+}
+}  // namespace
+
+StateNode NextSdReport(EmulatorContext* context, const NextSdJournalQuery& query)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    StateNode n = SdJournalState(decoder->SdJournal());
+    StateNode cards = StateNode::Array();
+    for (unsigned c = 0; c < 2; c++)
+    {
+        const SdCardSpi& card = decoder->SdCard(c);
+        StateNode node = StateNode::Object();
+        node["card"] = int(c);
+        node["present"] = card.present();
+        if (card.present())
+        {
+            node["type"] = card.isSdhc() ? "SDHC" : "SDSC";
+            node["state"] = card.stateName();
+            node["size_bytes"] = static_cast<uint64_t>(card.sizeBytes());
+            node["in_transfer"] = card.InTransfer();
+            if (card.lastCommand() != 0xFF)
+            {
+                node["last_command"] = NextSdCommandName(card.lastCommand(), false);
+                node["last_argument"] = StringHelper::Format("0x%08X", card.lastArgument());
+            }
+        }
+        node["blocks_read"] = static_cast<uint64_t>(card.blocksRead());
+        node["blocks_written"] = static_cast<uint64_t>(card.blocksWritten());
+        cards.push(std::move(node));
+    }
+    n["cards"] = std::move(cards);
+    StateNode spi = StateNode::Object();
+    const int line = decoder->SpiSelectedLine();
+    spi["selected"] = line >= 0 ? StateNode(int(line)) : StateNode("none");
+    spi["byte_in_flight"] = decoder->SpiByteInFlight();
+    spi["last_received"] = Hex8(decoder->SpiLastReceived());
+    spi["too_fast_accesses"] = int(decoder->SpiTooFastCount());
+    n["spi"] = std::move(spi);
+    StateNode events = StateNode::Array();
+    for (const NextSdEvent& e : decoder->SdJournal().Query(query))
+    {
+        StateNode ev = StateNode::Object();
+        ev["seq"] = e.seq;
+        ev["frame"] = int(e.frame);
+        ev["t"] = int(e.t);
+        ev["pc"] = Hex16(e.pc);
+        ev["card"] = int(e.card);
+        ev["kind"] = NextSdKindName(e.kind);
+        if (e.kind == NextSdKind::Command)
+        {
+            ev["command"] = NextSdCommandName(e.index, e.app);
+            ev["argument"] = StringHelper::Format("0x%08X", e.argument);
+            ev["r1"] = e.r1 == 0xFF ? StateNode("none") : StateNode(Hex8(e.r1));
+            ev["crc_valid"] = e.crcValid;
+        }
+        else
+        {
+            ev["block"] = e.block;
+            if (e.kind == NextSdKind::WriteBlock)
+                ev["ok"] = e.ok;
+        }
+        events.push(std::move(ev));
+    }
+    n["events"] = std::move(events);
+    return n;
+}
+
+StateNode NextSdJournalControl(EmulatorContext* context, int enable, bool clear, size_t capacity)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    NextSdJournal& journal = decoder->SdJournal();
+    if (capacity > 0)
+        journal.SetCapacity(capacity);
+    if (clear)
+        journal.Clear();
+    if (enable >= 0)
+        journal.SetEnabled(enable != 0);
+    return SdJournalState(journal);
+}
+
+namespace
+{
+StateNode DivMmcJournalState(const NextDivMmcJournal& journal)
+{
+    StateNode n = StateNode::Object();
+    n["available"] = true;
+    n["enabled"] = journal.Enabled();
+    n["size"] = static_cast<uint64_t>(journal.Size());
+    n["capacity"] = static_cast<uint64_t>(journal.Capacity());
+    n["evicted"] = journal.Evicted();
+    n["last_seq"] = journal.LastSeq();
+    return n;
+}
+}  // namespace
+
+StateNode NextDivMmcReport(EmulatorContext* context, const NextDivMmcJournalQuery& query)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    NextDivMmc& divmmc = decoder->DivMmc();
+    NextBoard& board = decoder->Board();
+    StateNode n = DivMmcJournalState(divmmc.Journal());
+
+    StateNode now = StateNode::Object();
+    now["port_enabled"] = divmmc.PortEnabled();
+    now["automap_armed"] = divmmc.AutomapArmed();
+    now["control"] = Hex8(divmmc.ReadPort());
+    now["conmem"] = (divmmc.ReadPort() & 0x80) != 0;
+    now["mapram"] = divmmc.Mapram();
+    now["bank"] = int(divmmc.Bank());
+    now["automap_latch"] = divmmc.Automapped();
+    now["mapped"] = divmmc.Mapped();
+    now["button_pending"] = divmmc.ButtonPending();
+    now["nmi_hold"] = divmmc.NmiHold();
+    n["state"] = std::move(now);
+
+    // NR #B8-#BB decoded: the eight RST entries, then the extras
+    const uint8_t enable = board.Stored(0xB8), valid = board.Stored(0xB9), timing = board.Stored(0xBA), extra = board.Stored(0xBB);
+    StateNode entries = StateNode::Array();
+    for (unsigned i = 0; i < 8; i++)
+    {
+        StateNode e = StateNode::Object();
+        e["address"] = Hex16(i * 8);
+        e["enabled"] = ((enable >> i) & 1) != 0;
+        e["when"] = ((valid >> i) & 1) ? "always" : "rom3_only";
+        e["map"] = ((timing >> i) & 1) ? "instant" : "delayed";
+        entries.push(std::move(e));
+    }
+    auto extraEntry = [&](const char* address, const char* what, bool on, const char* when, const char* map) {
+        StateNode e = StateNode::Object();
+        e["address"] = address;
+        e["what"] = what;
+        e["enabled"] = on;
+        e["when"] = when;
+        e["map"] = map;
+        entries.push(std::move(e));
+    };
+    extraEntry("0x3Dxx", "tr-dos entry area", (extra & 0x80) != 0, "rom3_only", "instant");
+    extraEntry("0x0066", "NMI (the DRIVE button)", (extra & 0x03) != 0, "button", (extra & 0x02) ? "instant" : "delayed");
+    extraEntry("0x1FF8-0x1FFF", "map out", (extra & 0x40) != 0, "always", "after the fetch");
+    extraEntry("0x056A", "ROM 3 routine", (extra & 0x20) != 0, "rom3_only", "delayed");
+    extraEntry("0x04D7", "ROM 3 routine", (extra & 0x10) != 0, "rom3_only", "delayed");
+    extraEntry("0x0562", "ROM 3 routine", (extra & 0x08) != 0, "rom3_only", "delayed");
+    extraEntry("0x04C6", "ROM 3 routine", (extra & 0x04) != 0, "rom3_only", "delayed");
+    n["entries"] = std::move(entries);
+
+    StateNode events = StateNode::Array();
+    for (const NextDivMmcEvent& e : divmmc.Journal().Query(query))
+    {
+        StateNode ev = StateNode::Object();
+        ev["seq"] = e.seq;
+        ev["frame"] = int(e.frame);
+        ev["t"] = int(e.t);
+        ev["pc"] = Hex16(e.pc);
+        ev["kind"] = NextDivMmcKindName(e.kind);
+        if (e.kind == NextDivMmcKind::MapIn || e.kind == NextDivMmcKind::MapOut)
+            ev["address"] = Hex16(e.address);
+        if (e.kind == NextDivMmcKind::MapIn)
+        {
+            ev["entry"] = NextDivMmcEntryName(e.address);
+            ev["map"] = e.instant ? "instant" : "delayed";
+        }
+        if (e.kind == NextDivMmcKind::EsxCall)
+        {
+            ev["call"] = Hex8(e.call);
+            if (const char* name = NextEsxCallName(e.call))
+                ev["name"] = name;
+            ev["return_address"] = Hex16(e.returnAddress);
+            ev["basic_rom"] = e.basicRom;
+            ev["af"] = Hex16(e.af);
+            ev["bc"] = Hex16(e.bc);
+            ev["de"] = Hex16(e.de);
+            ev["hl"] = Hex16(e.hl);
+        }
+        else
+        {
+            ev["mapped"] = e.mapped;
+            ev["control"] = Hex8(e.control);
+        }
+        events.push(std::move(ev));
+    }
+    n["events"] = std::move(events);
+    return n;
+}
+
+StateNode NextDivMmcJournalControl(EmulatorContext* context, int enable, bool clear, size_t capacity)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    NextDivMmcJournal& journal = decoder->DivMmc().Journal();
+    if (capacity > 0)
+        journal.SetCapacity(capacity);
+    if (clear)
+        journal.Clear();
+    if (enable >= 0)
+        journal.SetEnabled(enable != 0);
+    return DivMmcJournalState(journal);
 }
 
 StateNode Next(EmulatorContext* context)

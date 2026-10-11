@@ -363,6 +363,8 @@ MediaResult CompositeMediumFactory::BuildPartitioned(const ComposeDescriptor& d,
                 child.target.fixedTimeUtc = d.target.fixedTimeUtc;
             if (!child.target.codePage)
                 child.target.codePage = d.target.codePage;
+            if (d.target.onBadName == "replace")
+                child.target.onBadName = "replace";
             child.file = d.file;
             CompositeBuildOptions childOptions = options;
             childOptions.mbr = false;
@@ -483,8 +485,6 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
     const bool optical = wantsIso || options.slotKind == MediaKind::Optical;
     if (optical && d.target.build == ComposeTarget::Build::Graft)
         return MediaResult::Fail(MediaError::BadRequest, "build: graft is for FAT images; an ISO 9660 target is always rebuilt");
-    if (d.target.onBadName == "replace")
-        result.report.push_back("target.onBadName: replace is not implemented yet; names a FAT volume cannot hold are skipped");
 
     // --- Layers: scan, filter, enumerate ---
     auto pool = std::make_shared<SourcePool>();
@@ -940,6 +940,7 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
             {
                 GraftOptions graft;
                 graft.codePage = basePage;
+                graft.replaceBadNames = d.target.onBadName == "replace";
                 graft.partition = bottom.source.partition;
                 graft.fixedTimeUtc = d.target.fixedTimeUtc;
                 graft.boot = descriptorBoot;
@@ -1033,6 +1034,7 @@ MediaResult CompositeMediumFactory::Build(const ComposeDescriptor& d, const Comp
 
     FatVolumeOptions fat;
     fat.codePage = d.target.codePage.value_or(options.codePage.value_or(CodePage::Cp866));
+    fat.replaceBadNames = d.target.onBadName == "replace";
     fat.mbr = d.target.mbr.value_or(options.mbr);
     fat.fixedTimeUtc = d.target.fixedTimeUtc;
     if (d.target.label)

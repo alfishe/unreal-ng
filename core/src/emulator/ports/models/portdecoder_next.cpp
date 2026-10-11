@@ -45,6 +45,28 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     });
     _divMmc = std::make_unique<NextDivMmc>(&Mem(), _board.get());
     _divMmc->isBasicRomPaged = [this]() { return Mem().BasicRomVisible(); };
+    _divMmc->fillClock = [this](NextDivMmcEvent& e) {
+        e.frame = static_cast<uint32_t>(_context->emulatorState.frame_counter);
+        if (Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+        {
+            e.t = z80->t;
+            e.pc = z80->m1_pc;
+        }
+    };
+    // An entry at #0008: the RST has pushed its return address, the call number is the byte there (esxDOS: RST $08 / DEFB call)
+    _divMmc->fillCall = [this](NextDivMmcEvent& e) {
+        Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+        if (!z80)
+            return;
+        e.af = z80->af;
+        e.bc = z80->bc;
+        e.de = z80->de;
+        e.hl = z80->hl;
+        const uint16_t sp = z80->sp;
+        e.returnAddress = static_cast<uint16_t>(Mem().DirectReadFromZ80Memory(sp) | (Mem().DirectReadFromZ80Memory(static_cast<uint16_t>(sp + 1)) << 8));
+        e.call = Mem().DirectReadFromZ80Memory(e.returnAddress);
+        e.basicRom = Mem().BasicRomVisible();
+    };
     _multiface = std::make_unique<NextMultiface>(&Mem(), _board.get(), &_context->emulatorState);
     _m1Chain.multiface = _multiface.get();
     _m1Chain.divMmc = _divMmc.get();
@@ -62,6 +84,7 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
             if (_context->pMediaManager)
                 _context->pMediaManager->NoteWrite(id);
         });
+        _sd[i].setTraceListener([this, i](const SdTraceEvent& event) { RecordSdEvent(i, event); });
     }
     if (_context->pMediaManager)
     {
@@ -650,6 +673,31 @@ void PortDecoder_Next::SdSlot::Detach()
 bool PortDecoder_Next::SdSlot::IsBusy() const
 {
     return _owner._sd[_index].busy();
+}
+
+void PortDecoder_Next::RecordSdEvent(unsigned card, const SdTraceEvent& event)
+{
+    if (!_sdJournal.Enabled()) [[likely]]
+        return;
+    NextSdEvent e;
+    e.frame = static_cast<uint32_t>(_context->emulatorState.frame_counter);
+    if (Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+    {
+        e.t = z80->t;
+        e.pc = z80->m1_pc;
+    }
+    e.card = static_cast<uint8_t>(card);
+    e.kind = event.kind == SdTraceEvent::Kind::Command ? NextSdKind::Command
+             : event.kind == SdTraceEvent::Kind::ReadBlock ? NextSdKind::ReadBlock
+                                                           : NextSdKind::WriteBlock;
+    e.index = event.index;
+    e.app = event.app;
+    e.crcValid = event.crcValid;
+    e.argument = event.argument;
+    e.r1 = event.r1;
+    e.block = event.block;
+    e.ok = event.ok;
+    _sdJournal.Record(e);
 }
 
 void PortDecoder_Next::SpiSelect(uint8_t value)

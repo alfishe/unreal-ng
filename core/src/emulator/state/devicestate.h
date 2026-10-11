@@ -41,6 +41,8 @@ struct Options;
 ///   result bytes, ST0-ST2 decoded, SPECIFY times, the four units' cylinder
 ///   and seek state, and drives A and B.
 struct NextRegJournalQuery;  // emulator/io/z80n/nextregjournal.h
+struct NextSdJournalQuery;   // emulator/io/z80n/nextsdjournal.h
+struct NextDivMmcJournalQuery;  // emulator/io/z80n/nextdivmmcjournal.h
 struct NextPaletteQuery;     // emulator/io/z80n/nextreportquery.h
 struct NextPortsQuery;
 struct NextPixelQuery;
@@ -245,6 +247,21 @@ StateNode NextRegJournalReport(EmulatorContext* context, const NextRegJournalQue
 /// Switch the journal on / off (`enable` 1 / 0, -1 = keep), clear it, and / or resize the ring (`capacity` > 0; the content is
 /// dropped); replies with the journal's state
 StateNode NextRegJournalControl(EmulatorContext* context, int enable, bool clear, size_t capacity = 0);
+/// The Next's SD cards as the program sees them (`next_sd`, /state/next/sd; automation-gaps-2026-10-11.md P1): per card present /
+/// SDHC / protocol state (power_on, idle, ready) / blocks read and written / the last command and argument, the SPI engine (selected
+/// line, byte in flight, early accesses) and the SD journal: every command with its argument and R1, every block read / written, with
+/// frame, T and PC. Query: `kinds` (command, read, write), `card`, `since`, `from`, `to`, `limit`. Reading changes nothing
+StateNode NextSdReport(EmulatorContext* context, const NextSdJournalQuery& query);
+/// Switch the SD journal on / off (`enable` 1 / 0, -1 = keep), clear it and / or resize the ring; replies with its state
+StateNode NextSdJournalControl(EmulatorContext* context, int enable, bool clear, size_t capacity = 0);
+/// The Next's DivMMC and its automap (`next_divmmc`, /state/next/divmmc; automation-gaps-2026-10-11.md P2): the state now (port #E3: conmem,
+/// mapram, bank; the latch; the DRIVE button's pending NMI entry; the NMI hold), the automap entries NR #B8-#BB decoded one by one
+/// (address, enabled, always | rom3_only, instant | delayed) and the DivMMC journal: what paged it in (the fetch address, instant or
+/// delayed), out (#1FF8-#1FFF, RETN, NR #0A / #83, reset, the NEX loader), the #E3 writes, and for an entry at #0008 the esxDOS call
+/// (RST $08 + the byte after it: F_OPEN, F_READ ...) with the registers. Query: `kinds`, `since`, `from`, `to`, `limit`. Reading changes nothing
+StateNode NextDivMmcReport(EmulatorContext* context, const NextDivMmcJournalQuery& query);
+/// Switch the DivMMC journal on / off (`enable` 1 / 0, -1 = keep), clear it and / or resize the ring; replies with its state
+StateNode NextDivMmcJournalControl(EmulatorContext* context, int enable, bool clear, size_t capacity = 0);
 /// The Next's debugger reports (docs/inprogress/2026-10-07-zx-next/design-automation-coverage.md; built in
 /// ports/models/portdecoder_next_reports.cpp). None of them has a side effect on the machine (R3): they read the models' state,
 /// never a port - no DMA read-sequence step, no palette / copper auto-increment, no select-latch change.

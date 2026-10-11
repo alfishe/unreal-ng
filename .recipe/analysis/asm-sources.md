@@ -147,7 +147,7 @@ highlighted, errors and warnings on their lines and in a list), the status, and 
 ### Writing a host source into the assembler (part B)
 
 `sync_inject` turns a host source into the assembler's own text in RAM, so the user can go on in the original tool.
-ALASM (3.8c to 5.09) for now:
+ALASM (3.8c to 5.09; at its `A>` prompt) and XAS (4.18 to 9.10; at its command line, EXT) for now:
 
 ```text
 asm_source {"action":"sync_inject","path":"/abs/project/main.asm"}                 # sjasmplus, by default

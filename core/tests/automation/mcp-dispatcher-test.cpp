@@ -173,6 +173,16 @@ TEST_F(McpDispatcher_Test, Initialize_Speaks2025_06_18)
     EXPECT_FALSE(mcp::IsSupportedProtocolVersion("2099-01-01"));
 }
 
+// Origin check (DNS rebinding): only this machine's web origins may drive the server
+TEST(McpProtocol_Test, LocalOrigins)
+{
+    for (const char* local : {"http://localhost", "http://localhost:3000", "https://127.0.0.1:8295", "http://[::1]:5173"})
+        EXPECT_TRUE(mcp::IsLocalOrigin(local)) << local;
+    for (const char* foreign : {"http://evil.example", "http://localhost.evil.example", "http://127.0.0.1.nip.io",
+                                "null", "file://", "http://192.168.1.5:8080", "ftp://localhost"})
+        EXPECT_FALSE(mcp::IsLocalOrigin(foreign)) << foreign;
+}
+
 TEST_F(McpDispatcher_Test, Initialize_FallsBackForUnsupportedVersion)
 {
     Json::Value params;

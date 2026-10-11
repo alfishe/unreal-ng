@@ -46,6 +46,7 @@ something that can be shipped and checked from every automation surface.
 | [design-media-and-snapshots.md](design-media-and-snapshots.md) | media manager slots, `HostFolderFat`, NEX / SNX / SNA / SZX, `MachineStateTransfer`, the snapshot pipeline |
 | [design-ttd.md](design-ttd.md) | TTD recording before runs, blob ids, serializers, the DMA isolation rule, sealed replay |
 | [design-automation.md](design-automation.md) | surface-by-surface parity table, report names, recipes, Qt |
+| [automation-gaps-2026-10-11.md](automation-gaps-2026-10-11.md) | automation gaps against jnext, ZEsarUX, MAME, CSpect, DeZog and the hardware; ranked, phased plan P1-P6 |
 | [tdd-plan.md](tdd-plan.md) | tests per phase, fixtures, the use of ZXSpectrumNextTests, performance gates |
 | [roms.md](roms.md) | the firmware and ROM inventory, provenance, what may ship in `data/rom/` |
 | [research-nextreg-and-ports.md](research-nextreg-and-ports.md) | the register and port tables as read from the sources, with the gaps |

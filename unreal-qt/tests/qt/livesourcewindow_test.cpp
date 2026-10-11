@@ -137,7 +137,7 @@ TEST_F(LiveSourceWindow_Test, APushWatchShowsInTheStatusLineAndOutlivesTheWindow
     options.quietMs = 0;
     _sync->StartPush(options);
     {
-        LiveSourceWindow window(_emulator.get());
+        LiveSourceWindow window(_emulator);
         QPushButton* push = Button(window, "&Push");
         ASSERT_NE(push, nullptr);
         ASSERT_NE(Button(window, "&Inject..."), nullptr);
