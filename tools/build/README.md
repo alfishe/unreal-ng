@@ -36,6 +36,12 @@ configure output goes to `<build dir>/configure.log` and is shown only if it fai
 `AGENTS.md`, section "Why `build.sh` configures every time". Benchmarks (`-DBENCHMARKS=ON`) still need one manual
 configure, which later runs keep.
 
+`build.sh` also runs the **source checks of the CI `lint` job** first
+(`tools/verification/gui-instance-reads.sh`, a fraction of a second). A failure is printed as
+`== lint FAILED` above the build output and does not stop the build: the CI `lint` job fails on it alone, without
+holding up the Linux build and tests, but an agent sees it before the commit rather than an hour later. A count below
+its baseline prints a reminder to lower the baseline in the same change. `UNREAL_NO_LINT=1` skips the checks.
+
 ### How an agent should call them
 
 Run the command and **wait for it to finish** - the slot is held exactly as long as the

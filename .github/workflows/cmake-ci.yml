@@ -73,6 +73,18 @@ jobs:
             echo "No build in the last $MIN_INTERVAL min (last=$last, now=$now)"
           fi
 
+  # Source checks that need no build: a job of their own, at once (no throttle) and failing alone, so a red check never
+  # keeps the Linux build and tests from running. tools/build/build.sh runs the same checks locally
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      # The Qt frontend reads an instance only through EmulatorBinding (BUGS.md #11): no new raw reads
+      - name: GUI instance reads ratchet
+        run: tools/verification/gui-instance-reads.sh
+
   build-linux:
     needs: throttle
     runs-on: ubuntu-latest # <--- The VM that runs Docker
@@ -91,10 +103,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
-
-      # The Qt frontend reads an instance only through EmulatorBinding (BUGS.md #11): no new raw reads
-      - name: GUI instance reads ratchet
-        run: tools/verification/gui-instance-reads.sh
 
       - name: Build project
         run: |
