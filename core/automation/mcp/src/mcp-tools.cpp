@@ -2558,8 +2558,11 @@ void RegisterInspectState(ToolRegistry& registry)
                                     acc[aspect]["chip_details"] = Json::Value(Json::arrayValue);
                                     // Fetch chips sequentially (0..count-1)
                                     auto fetch = std::make_shared<std::function<void(unsigned)>>();
-                                    *fetch = [&caller, id, aspect, base, &acc, next, count, fetch](unsigned index) {
+                                    // Weak self-reference, the pending call holds it (BUGS.md 2026-10-11 #7)
+                                    *fetch = [&caller, id, aspect, base, &acc, next, count,
+                                              weakSelf = std::weak_ptr<std::function<void(unsigned)>>(fetch)](unsigned index) {
                                         if (index >= count) { next(true); return; }
+                                        const auto fetch = weakSelf.lock();
                                         caller.Call("GET", Endpoint(id, base + "/" + std::to_string(index)), nullptr,
                                                     [aspect, &acc, index, fetch](int st, Json::Value detail) mutable {
                                                         if (st == 200) acc[aspect]["chip_details"].append(std::move(detail));

@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <thread>
 
 /// @brief Deterministic replacement for fixed `sleep_for` waits in tests.
@@ -21,13 +22,32 @@ namespace TestWait
 inline constexpr std::chrono::milliseconds kDefaultTimeout{2000};
 inline constexpr std::chrono::microseconds kDefaultPollInterval{250};
 
-/// @brief Block until `predicate` returns true or `timeout` elapses.
+/// @brief Factor every wait's timeout is multiplied by: `UNREAL_TEST_TIME_SCALE` (default 1). Under valgrind the
+/// tests run 20-50 times slower and a timeout sized for a native run reports a hang that is not there; a passing wait
+/// returns as soon as its predicate holds, so a larger factor costs nothing on the normal path.
+inline double TimeScale()
+{
+    static const double scale = [] {
+        const char* v = std::getenv("UNREAL_TEST_TIME_SCALE");
+        const double parsed = v ? std::atof(v) : 1.0;
+        return parsed >= 1.0 ? parsed : 1.0;
+    }();
+    return scale;
+}
+
+/// @brief `timeout` times TimeScale()
+inline std::chrono::milliseconds Scaled(std::chrono::milliseconds timeout)
+{
+    return std::chrono::milliseconds(static_cast<std::chrono::milliseconds::rep>(timeout.count() * TimeScale()));
+}
+
+/// @brief Block until `predicate` returns true or `timeout` (times TimeScale()) elapses.
 /// @return true if the predicate became true, false on timeout
 template <typename Predicate>
 bool For(Predicate predicate, std::chrono::milliseconds timeout = kDefaultTimeout,
          std::chrono::microseconds pollInterval = kDefaultPollInterval)
 {
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto deadline = std::chrono::steady_clock::now() + Scaled(timeout);
 
     while (true)
     {

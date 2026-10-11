@@ -17,6 +17,7 @@
 #include <emulator/platform.h>
 #include <emulator/video/screen.h>
 #include <gtest/gtest.h>
+#include <memory>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
@@ -62,6 +63,7 @@ class ATM450Boot_Test : public ::testing::Test
 protected:
     std::shared_ptr<Emulator> _emulator;
     EmulatorContext* _context = nullptr;
+    std::unique_ptr<DiskImage> _disk;  // an inserted image: the drive only points at it
 
     void SetUp() override
     {
@@ -75,6 +77,8 @@ protected:
     {
         if (_emulator)
             EmulatorManager::GetInstance()->RemoveEmulator(_emulator->GetId());
+        _emulator.reset();
+        _disk.reset();  // after the emulator: its release ejects the image
     }
 
     /// Run until the system ROM shows its menu: hi-res mode selected (aFE = #BE) and the bar loop reached
@@ -287,7 +291,8 @@ TEST_F(ATM450Boot_Test, CpmBootsFromSystemDiskAndListsIt)
 {
     LoaderTRD trd(_context, TestPathHelper::GetTestDataPath("machines/atm450/cpm/sys.trd"));
     ASSERT_TRUE(trd.loadImage());
-    _context->coreState.diskDrives[0]->insertDisk(trd.getImage());
+    _disk.reset(trd.getImage());  // the loader hands its image over
+    _context->coreState.diskDrives[0]->insertDisk(_disk.get());
 
     Z80* z80 = _context->pCore->GetZ80();
     ASSERT_EQ(z80->GetMachineStepHook(), nullptr) << "ATM450 uses no step hook of its own";

@@ -1,0 +1,17 @@
+# valgrind memcheck suppressions for core-tests (tools/sanitize/valgrind.sh, docs/testing/sanitizers.md).
+# Only reports that are not about our memory: an entry here never covers a frame of core/src.
+
+# gtest prints a test parameter it has no PrintTo for as the raw bytes of the object, padding included: the
+# padding bytes are uninitialized and formatting them is reported. Our structs are fine.
+{
+   gtest-print-bytes-in-object-padding
+   Memcheck:Cond
+   ...
+   fun:*PrintByteSegmentInObjectTo*
+}
+{
+   gtest-print-bytes-in-object-padding-value8
+   Memcheck:Value8
+   ...
+   fun:*PrintByteSegmentInObjectTo*
+}

@@ -150,10 +150,11 @@ TEST_F(DiskAutostart_Test, Catalog_AcceptsWhatTrdosAccepts)
         ASSERT_FALSE(path.empty());
         LoaderTRD loader(_context, path);
         ASSERT_TRUE(loader.loadImage()) << int(diskType);
+        const std::unique_ptr<DiskImage> image(loader.getImage());  // the loader hands its image over
         TrdosCatalog catalog;
-        EXPECT_TRUE(catalog.Parse(*loader.getImage())) << "disk type #" << std::hex << int(diskType);
+        EXPECT_TRUE(catalog.Parse(*image)) << "disk type #" << std::hex << int(diskType);
         EXPECT_NE(catalog.FindBoot(), nullptr) << int(diskType);
-        EXPECT_EQ(_context->pDiskAutostart->MakePlan(*loader.getImage()).action, DiskAutostart::Action::Boot)
+        EXPECT_EQ(_context->pDiskAutostart->MakePlan(*image).action, DiskAutostart::Action::Boot)
             << int(diskType);
         std::remove(path.c_str());
     }

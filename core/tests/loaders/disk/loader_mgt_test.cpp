@@ -11,6 +11,7 @@
 #include <common/stringhelper.h>
 
 #include "_helpers/testpathhelper.h"
+#include "_helpers/wd1793testcut.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/diskimage.h"
@@ -518,7 +519,7 @@ TEST_F(LoaderMGT_Test, Wd1793_ReadSector_512)
 
     auto readSector = [&](uint8_t cyl, uint8_t side, uint8_t number) -> std::vector<uint8_t>
     {
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         fdc.getDrive()->insertDisk(image);
         fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;   // MFM (DENSITY bit clear)
         fdc._drive = 0;
@@ -559,7 +560,7 @@ TEST_F(LoaderMGT_Test, Wd1793_ReadSector_512)
 
     // Sector 11 does not exist on a +D track
     {
-        WD1793CUT fdc(_context);
+        WD1793TestCUT fdc(_context);
         fdc.getDrive()->insertDisk(image);
         fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
         fdc._drive = 0;

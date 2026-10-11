@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "_helpers/testthread.h"
+#include "_helpers/testwaithelper.h"
 #include "common/sound/audioringbuffer.h"
 
 /// AudioRingBuffer tests (audio-sync design, Fix 2 groundwork):
@@ -109,7 +110,7 @@ TEST(AudioRingBuffer_Test, SPSC_ConcurrentIntegrity)
     int16_t expected = 0;
     bool sequenceOk = true;
     int16_t chunk[128];
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    const auto deadline = std::chrono::steady_clock::now() + TestWait::Scaled(std::chrono::seconds(10));
     while (consumed < TOTAL && std::chrono::steady_clock::now() < deadline)
     {
         size_t got = ring->dequeue(chunk, 128);

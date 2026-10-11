@@ -541,8 +541,11 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                             const unsigned reportEvery = std::max(1u, frames / 20u);
                             auto remaining = std::make_shared<unsigned>(frames);
                             auto cycle = std::make_shared<std::function<void()>>();
-                            *cycle = [&caller, id, quantum, frames, reportEvery, remaining, cycle, finish, failWithStop,
+                            // Weak self-reference, the pending call holds it (BUGS.md 2026-10-11 #7)
+                            *cycle = [&caller, id, quantum, frames, reportEvery, remaining,
+                                      weakSelf = std::weak_ptr<std::function<void()>>(cycle), finish, failWithStop,
                                       progress]() {
+                                const auto cycle = weakSelf.lock();
                                 RunFrames(caller, id, 1, [&caller, id, quantum, frames, reportEvery, remaining, cycle,
                                                           finish, failWithStop, progress](bool ok, Json::Value) {
                                     if (!ok)
@@ -613,7 +616,10 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                     const unsigned maxQuantum = 8;
                     auto digests = std::make_shared<std::vector<std::string>>();
                     auto sample = std::make_shared<std::function<void()>>();
-                    *sample = [&caller, id, sampleFrames, digests, sample, startRecording]() {
+                    // Weak self-reference, the pending call holds it (BUGS.md 2026-10-11 #7)
+                    *sample = [&caller, id, sampleFrames, digests, weakSelf = std::weak_ptr<std::function<void()>>(sample),
+                               startRecording]() {
+                        const auto sample = weakSelf.lock();
                         caller.Call("GET", Endpoint(id, "/state/screen/digest"), nullptr,
                                     [&caller, id, sampleFrames, digests, sample, startRecording](int status, Json::Value body) mutable {
                                 if (status != 200)

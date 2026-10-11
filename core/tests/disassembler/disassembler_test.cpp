@@ -24,6 +24,9 @@ void Disassembler_Test::TearDown()
         delete _disasm;
         _disasm = nullptr;
     }
+
+    delete _context;
+    _context = nullptr;
 }
 
 /// endregion </Setup / TearDown>

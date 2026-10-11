@@ -34,6 +34,9 @@ void Disassembler_Opcode_Test::TearDown()
         delete _debugManager;
         _debugManager = nullptr;
     }
+
+    delete _context;
+    _context = nullptr;
 }
 
 /// endregion </Setup / TearDown>

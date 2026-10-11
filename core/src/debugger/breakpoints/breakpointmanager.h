@@ -313,7 +313,11 @@ public:
     /// Removes the user breakpoints only (IsUserBreakpoint); the owned ones stay
     void ClearUserBreakpoints();
 
+    /// Takes ownership of @p descriptor: it is stored, or freed when it is not (a plain breakpoint with the same
+    /// address or port exists - its id is returned -, an invalid type)
     uint16_t AddBreakpoint(BreakpointDescriptor* descriptor);
+    /// The same; @p adopted false when an existing breakpoint's id came back (the caller must not remove it as its own)
+    uint16_t AddBreakpoint(BreakpointDescriptor* descriptor, bool& adopted);
     /// The one entry every surface uses (debugger protocol fields): validates the spec against this machine
     /// (range order, a physical range inside one page, the page exists, masks only on ports, a hit target
     /// for the counting modes) and adds it. BRK_INVALID with the reason in `error`
@@ -575,6 +579,8 @@ protected:
     /// Removes and frees every breakpoint (the caller holds what a change holds)
     void DeleteAllBreakpoints();
 
+    /// AddBreakpoint without freeing: @p adopted tells whether @p descriptor was stored
+    uint16_t AddBreakpointAdopting(BreakpointDescriptor* descriptor, bool& adopted);
     uint16_t AddMemoryBreakpoint(BreakpointDescriptor* descriptor);
     uint16_t AddPortBreakpoint(BreakpointDescriptor* descriptor);
     uint16_t AddNextRegBreakpoint(BreakpointDescriptor* descriptor);

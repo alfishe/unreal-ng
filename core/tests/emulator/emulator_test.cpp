@@ -1105,6 +1105,39 @@ TEST(EmulatorStepOverObserver_Test, DestroyedEmulatorLeavesNoHandlerBehind)
     EXPECT_EQ(center.ObserverCount(NC_EXECUTION_BREAKPOINT), observersBefore) << "a step-over handler outlived its emulator";
 }
 
+/// A step over a CALL whose next instruction already has a breakpoint of the user's uses that breakpoint and leaves it:
+/// the end of the step removed it as its own temporary one (BUGS.md 2026-10-11 #12). (~10 ms: a short paced run)
+TEST(EmulatorStepOverObserver_Test, StepOverKeepsTheUsersBreakpointAfterTheCall)
+{
+    auto emulator = EmulatorManager::GetInstance()->CreateEmulatorWithModel("stepover-keeps-bp", "PENTAGON",
+                                                                            LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    const uint8_t program[] = {0xF3, 0xCD, 0x10, 0x80, 0x18, 0xFE};  // DI; CALL #8010; JR $
+    for (size_t i = 0; i < sizeof(program); i++)
+        emulator->GetContext()->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+    emulator->GetContext()->pMemory->DirectWriteToZ80Memory(0x8010, 0xC9);  // RET
+    BreakpointManager* breakpoints = emulator->GetBreakpointManager();
+    ASSERT_NE(breakpoints, nullptr);
+    const uint16_t users = breakpoints->AddExecutionBreakpoint(0x8004);  // the instruction after the CALL
+    ASSERT_NE(users, BRK_INVALID);
+    emulator->DebugOn();
+    emulator->StartAsync();
+    emulator->Pause();
+    const size_t breakpointsBefore = breakpoints->GetBreakpointsCount();
+
+    emulator->GetZ80State()->pc = 0x8001;  // the CALL
+    emulator->GetZ80State()->sp = 0xFF00;
+    emulator->StepOver();
+    EXPECT_TRUE(TestWait::For([&] { return emulator->IsPaused() && emulator->GetZ80State()->pc == 0x8004; },
+                              std::chrono::seconds(5)))
+        << "the step over did not stop after the CALL, pc " << emulator->GetZ80State()->pc;
+    EXPECT_EQ(breakpoints->GetBreakpointsCount(), breakpointsBefore) << "the user's breakpoint was removed";
+    EXPECT_TRUE(breakpoints->GetAllBreakpoints().count(users)) << "the user's breakpoint was removed";
+
+    emulator->Stop();
+    EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetUUID());
+}
+
 TEST(EmulatorHostAudioTTD_Test, SeekThenResumeIsHeardAgain)
 {
     // A TTD seek replays from a checkpoint at host speed under the replay hold; afterwards nothing holds the

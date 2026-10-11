@@ -10,6 +10,7 @@
 
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testtiminghelper.h"
+#include "_helpers/wd1793testcut.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/z80.h"
@@ -308,7 +309,7 @@ TEST_F(WD1793_WriteCommands_Test, Reindex_ErasedIdField)
 /// Test that F5 writes 0xA1 and presets CRC
 TEST_F(WD1793_WriteCommands_Test, WriteTrack_F5_WritesA1)
 {
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
     fdc.getDrive()->insertDisk(&diskImage);
 
@@ -363,7 +364,7 @@ TEST_F(WD1793_WriteCommands_Test, WriteTrack_Buffer_Overflow_Protected)
     static constexpr size_t const TEST_DURATION_TSTATES = 3.5 * 1'000'000 * 2;  // 2 seconds
     static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
     
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
     fdc.getDrive()->insertDisk(&diskImage);
 
@@ -411,7 +412,7 @@ TEST_F(WD1793_WriteCommands_Test, WriteSector_Stops_At_SectorSize)
     static constexpr size_t const TEST_DURATION_TSTATES = 3.5 * 1'000'000 * 2;  // 2 seconds
     static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
     
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
 
     // Format track first so sectors are readable
@@ -461,7 +462,7 @@ TEST_F(WD1793_WriteCommands_Test, WriteSector_Buffer_Alignment)
     static constexpr size_t const TEST_DURATION_TSTATES = 3.5 * 1'000'000 * 2;
     static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
     
-    WD1793CUT fdc(_context);
+    WD1793TestCUT fdc(_context);
     DiskImage diskImage(MAX_CYLINDERS, MAX_SIDES);
 
     // Format track first

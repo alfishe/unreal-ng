@@ -23,6 +23,7 @@
 #include <emulator/memory/memory.h>
 #include <emulator/platform.h>
 #include <gtest/gtest.h>
+#include <memory>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
@@ -228,6 +229,7 @@ TEST_F(ATM710TrdosBoot_Test, MenuTRDOSBootsClassicTRDOS)
         std::string trdPath = TestPathHelper::GetTestDataPath("loaders/trd/EyeAche.trd");
         LoaderTRD trdLoader(context, trdPath);
         ASSERT_TRUE(trdLoader.loadImage()) << "TRD not loaded: " << trdPath;
+        const std::unique_ptr<DiskImage> loaded(trdLoader.getImage());  // the loader hands its image over
     }
 
     // 4x down to "TR-DOS", then ENTER
