@@ -12,6 +12,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
 #include "debugger/assembler/z80textassembler.h"
+#include "debugger/ttd/next/ttdnextstate.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -61,6 +62,44 @@ TEST(TTDNextState_Test, TheImageRoundTripsOnItsOwn)
     EXPECT_EQ(NextStateCodec::Save(*decoder), before) << "the load put everything back";
     EXPECT_NE(decoder->Board().Stored(kRegScratch), 0x77);
     EXPECT_FALSE(NextStateCodec::Load(*decoder, before.data(), before.size() - 1)) << "another length is refused";
+}
+
+TEST(TTDNextState_Test, TheSoundAndTheDivMmcRamTravelToo)
+{
+    constexpr uint16_t kPortAyRegister = 0xFFFD, kPortAyData = 0xBFFD;
+    constexpr uint8_t kAyRegVolumeA = 8, kVolume = 0x0B;
+    constexpr uint16_t kPc = 0x8000;
+    constexpr uint8_t kByte = 0x5A;
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    struct Cleanup
+    {
+        Emulator* e;
+        ~Cleanup() { EmulatorTestHelper::CleanupEmulator(e); }
+    } cleanup{emulator};
+    EmulatorContext* context = emulator->GetContext();
+    auto* decoder = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+
+    // the AY: a register written through the sound ports is in the image and comes back
+    const std::vector<uint8_t> before = NextStateCodec::Save(*decoder);
+    decoder->DecodePortOut(kPortAyRegister, kAyRegVolumeA, kPc);
+    decoder->DecodePortOut(kPortAyData, kVolume, kPc);
+    const std::vector<uint8_t> changed = NextStateCodec::Save(*decoder);
+    EXPECT_NE(changed, before) << "the AY register is part of the image";
+    ASSERT_TRUE(NextStateCodec::Load(*decoder, before.data(), before.size()));
+    EXPECT_EQ(NextStateCodec::Save(*decoder), before);
+
+    // the DivMMC RAM has its own blob: plain bytes of the system-area pages 8-15
+    ttd::TTDNextDivMmcRam ram(*context->pMemory);
+    std::vector<uint8_t> image(ram.TTDStateSize());
+    ram.TTDSaveState(image.data());
+    uint8_t* bank0 = context->pMemory->ROMPageHostAddress(ttd::TTDNextDivMmcRam::kFirstPage);
+    const uint8_t original = bank0[0x10];
+    bank0[0x10] = static_cast<uint8_t>(original ^ kByte);
+    ram.TTDLoadState(image.data());
+    EXPECT_EQ(bank0[0x10], original) << "the load put the DivMMC RAM back";
+    EXPECT_EQ(ram.TTDStateSize(), ttd::TTDNextDivMmcRam::kBytes);
 }
 
 TEST(TTDNextState_Test, SeeksRestoreTheNextRegisterFileAndTheMemoryMap)

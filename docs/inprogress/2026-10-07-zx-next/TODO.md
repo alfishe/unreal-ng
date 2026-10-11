@@ -234,7 +234,9 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 - [x] P6 DZRP for the Next: machine type ZXNEXT, eight 8K slots (NR #50-#57), `GET_TBBLUE_REG`, `SET_NEXTREGS`, `READ_BANK_MEM`/`WRITE_BANK_MEM` (8K bank, offset wraps; 0xFF the selected ROM), `READ_MEM_BLOCKS`; sprite commands 16-19 (palette, clip window and NR #15, attributes, patterns) done
 - [x] P6 TTD: the NEXTREG instruction is in the TTD port-write journal as OUT #243B / OUT #253B (option a)
 - [x] P6 TTD `NextState` blob (id 62): the board, memory map, video, sprites, copper, DMA, CTC, interrupts, I2C, Multiface and DivMMC latches restore on a seek
-- [ ] TTD `NextState` is missing the audio chips and DACs, the SD cards' protocol state and the system-area RAM (DivMMC RAM, config banks)
+- [x] TTD `NextState` v2 carries the audio chips and DACs and the SD cards' protocol state; blob `NextDivMmcRam` (63) the DivMMC RAM (128 KB per checkpoint until the v2 engine takes it as a region)
+- [ ] TTD: PeripheralId 63 was the last id the 64-bit peripheral mask (`TTDFileInfo::peripheralMask`) can hold; the next device needs a wider mask first
+- [ ] TTD: the config-mode system-area writes (firmware ROM load) are not restored; the UARTs wait for the devices
 - [x] P6 magic output port (`state/next/magic-port`, `POST /next/magic-port`, every plane; the console is a bounded ring, off by default)
 - [ ] Device gaps D1 (UART/ESP/Pi) and D2 (Kempston mouse, ULA+, Radastan): the reports follow the devices
 

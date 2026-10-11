@@ -169,6 +169,7 @@ std::string PeripheralIdName(uint8_t id)
         case PeripheralId::MultiSoundGs: return "multisound-gs";
         case PeripheralId::EvoFlash: return "evo-flash";
         case PeripheralId::NextState: return "next-state";
+        case PeripheralId::NextDivMmcRam: return "next-divmmc-ram";
         case PeripheralId::Count: break;
     }
     return "id" + std::to_string(id);
