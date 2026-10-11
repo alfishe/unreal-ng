@@ -92,6 +92,29 @@ video and loader tests that build one per test) are left for the valgrind profil
 ### Requirements / Acceptance Criteria
 - [ ] No `definitely lost` record from these fixtures in the next valgrind run.
 
+## 🔵 [In Progress] #5: ZX-Poly status reads the members' Z80 registers while they run
+* **Date Opened:** 2026-10-11
+* **Found by:** ThreadSanitizer on Linux (gcc 14, `docker/linux/build.sh --tsan`, host `.238`, 2026-10-11):
+  `ExecutionArbiterMachineFuzz_Test.ZXPolyGroupUnderConcurrentControl`, data races in `Z80::IncrementCPUCyclesCounter`
+  and `Z80::HandleINT` (a member stepped by `Emulator::ExecuteStep`) against `ZXPolyGroup::ReadControlState`
+  (`zxpolygroup.cpp:1879-1881`) from `GetStatus` → `CheckLockstep` on another thread.
+
+### Description
+Before the first frame boundary after a load, a replication or a TTD restore (`_boundaryChecked` false),
+`CheckLockstep` compares the members' live control state (PC, SP, I, IM, IFF1, HALT, T). It only waited for the
+pipelined slave work; a member stepped or run on its own (automation `run_frames` / `step` on that instance, the
+master's loop) could be inside an instruction. `GetStatus` serves the WebAPI, CLI, Lua and Python status, so a status
+request could report a divergence that is not there (or miss one) and is a data race by the standard.
+
+### Fix
+In that branch `CheckLockstep` takes an `Emulator::CpuHold` of every member, the master first (as `GroupHold` does),
+then reads. At a boundary it still reads the copies taken there, without holding anything.
+
+### Requirements / Acceptance Criteria
+- [ ] `ExecutionArbiterMachineFuzz_Test.ZXPolyGroupUnderConcurrentControl` clean under TSan on Linux (it reported
+  both races before).
+- [ ] The ZX-Poly tests pass.
+
 2026-10-10
 ## 🟢 [Fixed] #1: Removing a running TS-Conf or ATM Turbo 2+ instance writes into freed memory (heap damage, a later crash elsewhere)
 * **Date Opened:** 2026-10-10
