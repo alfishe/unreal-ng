@@ -108,7 +108,11 @@ with a note. Any other value is a tool error. `capture_media screenshot` with
 model sees the picture (the JSON echo does not repeat the base64). The
 listings are in the text either way: `debug_code disassemble` writes the listing itself, one line per instruction
 (`7396  CD 00 74      call #7400            ; -> draw`); `inspect_state`
-`disasm` puts the same listing under `[disasm]`. Tools that perform real multi-step work report
+`disasm` puts the same listing under `[disasm]`. The default text carries the data, not just a headline:
+`memory_access read` the bytes (hexdump, up to 256 lines), `control_execution bp_list` one line per breakpoint
+(`#1 0x0038 X hits 3`), `debug_code trace` one line per control-flow event (`0x02D6 jr -> 0x02C6 x7 sp 0x5BDF`), and
+an `inspect_state` aspect without a text form of its own its fields as `key=value` (`[machine] model=PENTAGON
+ram_kb=128 ...`, the first 1500 characters). Tools that perform real multi-step work report
 progress when the request carries a `_meta.progressToken` (see
 [Protocol details](#protocol-details)).
 
@@ -122,7 +126,7 @@ progress when the request carries a `_meta.progressToken` (see
 | `joystick_input` | Kempston joystick: press / release / set (exact `state` byte or `buttons` list) / tap (hold N frames) / status; forwards to `/joystick/*` | — |
 | `time_travel` | time-travel debugging: record, then seek / step / search backward through the recording; `.ttd` files, bookmarks, coverage index (`space` for the Sprinter's video / fast RAM); `memory_at` / `memory_diff` read any recorded memory at a past checkpoint without seeking — see [Time-travel debugging](#time-travel-debugging) | — |
 | `rzx_playback` | RZX input recordings: `play` (`path`, `desync_mode`, conventions, `switch_model`: a recording for another model switches the machine, the answer's `emulator_id` is the new target), `stop`, `status` (frame, progress, desyncs), `seek` (`frame`: back through keyframes, forward by playing on) - [recipe](../../../.recipe/media/play-rzx.md) | — |
-| `memory_access` | Every memory by name: `regions` (name, aliases, size, writable, ttd_region), `read` / `write` (`space`: `cpu` or a region name / alias - `sprinter.vram`, `neogs.ram`, `gs.ram`, `moonsound.wave`, `tsconf.cram`, `rtc.cmos`, `evo.flash` ...; `offset`, `length`, `hex`), `save` / `load` a region to / from a file (`path`) | — |
+| `memory_access` | Every memory by name: `regions` (name, aliases, size, writable, ttd_region), `read` / `write` (`space`: `cpu` or a region name / alias - `sprinter.vram`, `neogs.ram`, `gs.ram`, `moonsound.wave`, `tsconf.cram`, `rtc.cmos`, `evo.flash` ...; `offset` (or its alias `address`), `length`, `hex`), `save` / `load` a region to / from a file (`path`) | — |
 | `manage_symbols` | `load_labels`, list, resolve, `load_listing`, `source_at`, `step_line`, `run_to_line` (sjasmplus `.lst`) | — |
 | `debug_code` | disassemble, assemble (two-pass, labels), `find_bytes`, `trace` (calltrace sessions), `porttrace` | `trace`: per phase (start/run/stop/read) |
 | `analyze_performance` | coverage_* (+gaps), `frame_cost`, profiler suites, `profile_report`, `porttrace`, `vdac2_line_budget` / `vdac2_line_budget_set` (FT812 line metrics) | `profile_report` + `porttrace`: per phase |
