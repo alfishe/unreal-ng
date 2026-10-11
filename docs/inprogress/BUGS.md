@@ -24,7 +24,7 @@ back through scalar `delete`. The default allocators hide it today; a sized or i
 ### Requirements / Acceptance Criteria
 - [ ] The `LoaderZ80` tests are clean under valgrind memcheck (no mismatched delete).
 
-## 🔴 [Open] #2: `RESET=` missing from the ini compares an uninitialized buffer; the reset ROM can be anything
+## 🔵 [In Progress] #2: `RESET=` missing from the ini compares an uninitialized buffer; the reset ROM can be anything
 * **Date Opened:** 2026-10-11
 * **Found by:** a full `core-tests` run under valgrind memcheck on Linux (gcc 14, RelWithDebInfo, 12 shards; host `.238`, 2026-10-10/11): `Conditional jump or move depends on uninitialised value(s)` in
   `StringHelper::CompareCaseInsensitive` from `Config::ParseConfig` (`config.cpp:257`), 74 times
@@ -32,16 +32,20 @@ back through scalar `delete`. The default allocators hide it today; a sized or i
 
 ### Description
 `Config::CopyStringValue` writes nothing when the key is absent (`GetValue` returns `nullptr`), so `line` keeps whatever
-it held: uninitialized stack memory on the first use, or an earlier key's value. That garbage is matched against the
-`RESET=` names (`SOS`, `128`, `DOS`, `SYS`, ...): a config without `RESET=` can start with a ROM other than the
-documented default `RM_SOS`.
+it held: uninitialized stack memory at the `RESET=` lookup. That garbage is matched against the `RESET=` names (`SOS`,
+`128`, `DOS`, `SYS`, ...): a config without `RESET=` can start with a ROM other than the documented default `RM_SOS`.
+The other `line` lookups in the parser clear the buffer first; this one did not.
 
-Second defect on the same path: `StringHelper::CompareCaseInsensitive(a, b, len)` compares `len + 1` characters
-(`do { ... } while (len-- && ...)` checks once more after `len` reaches 0).
+`StringHelper::CompareCaseInsensitive(a, b, len)` compares `len + 1` characters. Not a defect: with
+`len == strlen(b)` that makes it an exact match, and its callers rely on it (now said in its header).
 
-### Fix plan
-`CopyStringValue` leaves an empty string when the key is missing; `CompareCaseInsensitive` stops after `len`
-characters. A test pins both: an ini without `RESET=` resets to `RM_SOS`, and a prefix compare of `len` characters.
+### Fix
+`line` is cleared before the `RESET=` lookup, as at the other lookups.
+
+### Requirements / Acceptance Criteria
+- [x] `Config_Test.ResetRomMissingIsBasic48`: `RESET=128` gives `RM_128`, then a file without `RESET=` gives `RM_SOS`
+  (passes before the fix too unless the stack holds a ROM name: valgrind is the evidence).
+- [ ] No uninitialised-value report from `Config::ParseConfig` under valgrind.
 
 ## 🔴 [Open] #3: A test thread left joinable after a failed wait aborts the whole test process
 * **Date Opened:** 2026-10-11
