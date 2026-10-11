@@ -448,7 +448,7 @@ bool GraftBuilder::NameAndSize(std::string* error, GraftFailure* failure)
         std::vector<std::string> names;
         for (uint32_t child : job.added)
             names.push_back(_tree.Node(child).name);
-        job.addedNames = FatNameMapper::MapFolder(names, _options.codePage, taken);
+        job.addedNames = FatNameMapper::MapFolder(names, _options.codePage, taken, _options.replaceBadNames);
 
         std::vector<uint32_t> keptAdded;
         std::vector<FatMappedName> keptNames;
@@ -460,6 +460,8 @@ bool GraftBuilder::NameAndSize(std::string* error, GraftFailure* failure)
                 Note(_tree.PathOf(job.added[i]) + ": skipped, " + name.reason);
                 continue;
             }
+            if (!name.renamed.empty())
+                Note(_tree.PathOf(job.added[i]) + ": renamed to " + name.renamed + " (onBadName: replace)");
             keptAdded.push_back(job.added[i]);
             keptNames.push_back(name);
             slots += 1 + (name.hasLongName ? static_cast<uint32_t>((name.longName.size() + 12) / 13) : 0);
@@ -882,7 +884,8 @@ std::unique_ptr<GraftVolume> GraftVolume::Build(std::shared_ptr<const FileTree> 
 
     uint64_t id = sourceIdentity;
     for (uint64_t v : {volume->_base->ContentId(), static_cast<uint64_t>(options.partition.value_or(0)),
-                       static_cast<uint64_t>(options.codePage), static_cast<uint64_t>(options.fixedTimeUtc.value_or(0))})
+                       static_cast<uint64_t>(options.codePage), static_cast<uint64_t>(options.fixedTimeUtc.value_or(0)),
+                       static_cast<uint64_t>(options.replaceBadNames)})
     {
         for (int i = 0; i < 8; i++)
         {

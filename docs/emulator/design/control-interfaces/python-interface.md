@@ -207,6 +207,24 @@ class Emulator:
     def next_reg_journal_control(self, enabled=None, clear=False, capacity=0) -> dict:
         """Switch, clear or resize (capacity=N) the NextREG write journal"""
 
+    def next_sd(self, kinds=None, card=None, since=None, from_frame=None, to_frame=None, limit=None) -> dict:
+        """The Next SD cards (type SDSC/SDHC, protocol state, blocks), the SPI engine and the SD journal: every command with its
+        argument and R1 (command 'CMD17', argument, r1, crc_valid) and every block read / written (block, ok), with seq, frame, t, pc,
+        card (kinds='command,read,write', card=0|1). Off by default - next_sd_journal_control(enabled=True) first; raises ValueError
+        on a bad option"""
+
+    def next_sd_journal_control(self, enabled=None, clear=False, capacity=0) -> dict:
+        """Switch, clear or resize (capacity=N) the SD journal"""
+
+    def next_divmmc(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None) -> dict:
+        """The Next DivMMC: state (port #E3, the automap latch, the DRIVE button's NMI entry), entries (NR #B8-#BB decoded) and the
+        DivMMC journal: map_in / map_out (fetch address, entry, instant or delayed), retn, disabled, reset, port and, for an entry
+        at #0008, esx_call (name F_OPEN / F_READ ..., return_address, af, bc, de, hl), with seq, frame, t, pc (kinds='map_in,esx_call').
+        Off by default - next_divmmc_journal_control(enabled=True) first; raises ValueError on a bad option"""
+
+    def next_divmmc_journal_control(self, enabled=None, clear=False, capacity=0) -> dict:
+        """Switch, clear or resize (capacity=N) the DivMMC journal"""
+
     def next_dma(self) -> dict:
         """The Next DMA as programmed and running (mode zxn / z80, ports a / b, direction, burst, prescaler, counter, src / dst with
         src_kind / dst_kind, holds_bus, status byte); reading it does not advance its read sequence; available=False elsewhere"""

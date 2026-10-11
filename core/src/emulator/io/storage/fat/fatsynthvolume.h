@@ -72,6 +72,7 @@ struct FatVolumeOptions
 {
     FatType fs = FatType::Fat16;
     CodePage codePage = CodePage::Cp866;       ///< short names
+    bool replaceBadNames = false;              ///< a name FAT cannot hold is renamed, not skipped (FR-21)
     bool mbr = true;                           ///< false: the volume starts at LBA 0
     uint32_t partitionStart = 2048;            ///< 1 MiB alignment, as SD cards ship
     uint64_t freeBytes = 256ull * 1024 * 1024; ///< room for guest writes (costs nothing: never stored)

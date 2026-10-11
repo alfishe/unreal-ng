@@ -109,7 +109,7 @@ bool FatSynthVolume::Init(std::shared_ptr<const FileTree> tree, std::shared_ptr<
         std::vector<std::string> names;
         for (uint32_t child : dirNode.children)
             names.push_back(files.Node(child).name);
-        const std::vector<FatMappedName> mapped = FatNameMapper::MapFolder(names, options.codePage);
+        const std::vector<FatMappedName> mapped = FatNameMapper::MapFolder(names, options.codePage, {}, options.replaceBadNames);
 
         DirPlan& plan = dirs[d];
         plan.entryCount = d == 0 ? 1 : 2;  // the volume label, or "." and ".."
@@ -122,6 +122,8 @@ bool FatSynthVolume::Init(std::shared_ptr<const FileTree> tree, std::shared_ptr<
                     report->push_back(files.Node(child).name + ": " + mapped[i].reason);
                 continue;
             }
+            if (!mapped[i].renamed.empty() && report)
+                report->push_back(files.Node(child).name + ": renamed to " + mapped[i].renamed + " (onBadName: replace)");
             plan.names.push_back(mapped[i]);
             plan.children.push_back(child);
             plan.entryCount += 1 + (mapped[i].hasLongName ? CeilDiv(mapped[i].longName.size(), 13) : 0);
@@ -388,6 +390,8 @@ bool FatSynthVolume::Init(std::shared_ptr<const FileTree> tree, std::shared_ptr<
     };
     mix(static_cast<uint64_t>(options.fs));
     mix(static_cast<uint64_t>(options.codePage));
+    if (options.replaceBadNames)
+        mix(0x5245504C);  // "REPL": the renamed entries differ from the skipped ones
     mix(options.mbr ? options.partitionStart : 0xFFFFFFFFull);
     mix(options.freeBytes);
     mix(options.serial);

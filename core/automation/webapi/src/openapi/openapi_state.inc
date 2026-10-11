@@ -183,6 +183,24 @@
              "internal = the board or a loader), reg, name, value, previous, decoded (registers #02, #03, #07). Query: regs "
              "(comma hex, 07,02), sources (comma: nextreg, port, copper, internal), since (seq), from / to (frame), limit (newest N, "
              "default 200, 0 = all). Off by default: switch it on with POST /next/reg-journal first. 400 on a bad parameter.", true},
+            {"/api/v1/emulator/{id}/state/next/sd", "Get the Next SD cards, the SPI engine and the SD journal",
+             "What the program asked the cards (core DeviceState::NextSdReport; CLI `state next sd`, Lua next_sd(), Python next_sd(), "
+             "MCP inspect_state aspect next_sd). cards: per card present, type (SDSC | SDHC), protocol state (power_on | idle | ready), "
+             "size, in_transfer, last_command and last_argument, blocks_read / blocks_written. spi: the selected line, whether a byte is "
+             "in flight, the last received byte and too_fast_accesses. events (the journal, off by default: POST /next/sd-journal): seq, "
+             "frame, t, pc, card, kind (command | read | write); a command has command (CMD17, ACMD41), argument, r1 (the response byte, "
+             "none when the card ignored it) and crc_valid; read / write have block (write: ok). Query: kinds (comma: command, read, "
+             "write), card (0 | 1), since (seq), from / to (frame), limit (newest N, default 200, 0 = all). 400 on a bad parameter.", true},
+            {"/api/v1/emulator/{id}/state/next/divmmc", "Get the Next DivMMC, its automap entries and the DivMMC journal",
+             "Why the DivMMC is in (core DeviceState::NextDivMmcReport; CLI `state next divmmc`, Lua next_divmmc(), Python next_divmmc(), "
+             "MCP inspect_state aspect next_divmmc). state: port_enabled, automap_armed (NR #0A bit 4), control (#E3), conmem, mapram, bank, "
+             "automap_latch, mapped, button_pending, nmi_hold. entries: NR #B8-#BB decoded (address, enabled, when = always | rom3_only, "
+             "map = instant | delayed). events (the journal, off by default: POST /next/divmmc-journal): seq, frame, t, pc, kind "
+             "(map_in | map_out | retn | disabled | reset | program_start | port | mapram_clear | button | esx_call); map_in / map_out "
+             "have the fetch address (map_in: entry rst | nmi | 3dxx | rom3_routine, map instant | delayed); esx_call (an entry at #0008) has "
+             "call, name (F_OPEN, F_READ ...), return_address, basic_rom (true: RST 8 is a BASIC error report and call an error code) and "
+             "af / bc / de / hl. Query: kinds (comma), since (seq), from / to (frame), limit (newest N, default 200, 0 = all). 400 on a bad "
+             "parameter.", true},
         };
         for (const NextRoute& r : routes)
         {
@@ -613,6 +631,69 @@
         paths[kNrCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
         paths[kNrCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
         paths[kNrCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
+
+        const char* kSdQuery[][2] = {{"kinds", "comma list: command, read, write; empty = all"},
+                                     {"card", "0 or 1; empty = both"},
+                                     {"since", "events after this seq"},
+                                     {"from", "first frame"},
+                                     {"to", "last frame"},
+                                     {"limit", "the newest N matches (default 200, 0 = all)"}};
+        const char* kSd = "/api/v1/emulator/{id}/state/next/sd";
+        for (Json::ArrayIndex i = 0; i < 6; i++)
+        {
+            Json::Value& qp = paths[kSd]["get"]["parameters"][i + 1];
+            qp["name"] = kSdQuery[i][0];
+            qp["in"] = "query";
+            qp["description"] = kSdQuery[i][1];
+            qp["schema"]["type"] = "string";
+        }
+        paths[kSd]["get"]["responses"]["400"]["description"] = "Bad parameter";
+
+        const char* kSdCtl = "/api/v1/emulator/{id}/next/sd-journal";
+        paths[kSdCtl]["post"]["summary"] = "Switch, clear or resize the SD journal";
+        paths[kSdCtl]["post"]["tags"].append("Machine State");
+        paths[kSdCtl]["post"]["description"] =
+            "Body {\"enabled\": true|false, \"clear\": true, \"capacity\": N}, all optional (capacity resizes the ring, 16384 by "
+            "default, and drops its content). Off by default; off costs one branch per SD event. Answers enabled, size, capacity, "
+            "evicted, last_seq.";
+        paths[kSdCtl]["post"]["parameters"][0]["name"] = "id";
+        paths[kSdCtl]["post"]["parameters"][0]["in"] = "path";
+        paths[kSdCtl]["post"]["parameters"][0]["required"] = true;
+        paths[kSdCtl]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kSdCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kSdCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
+        paths[kSdCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
+
+        const char* kDmQuery[][2] = {{"kinds", "comma list: map_in, map_out, retn, disabled, reset, program_start, port, mapram_clear, button, esx_call; empty = all"},
+                                     {"since", "events after this seq"},
+                                     {"from", "first frame"},
+                                     {"to", "last frame"},
+                                     {"limit", "the newest N matches (default 200, 0 = all)"}};
+        const char* kDm = "/api/v1/emulator/{id}/state/next/divmmc";
+        for (Json::ArrayIndex i = 0; i < 5; i++)
+        {
+            Json::Value& qp = paths[kDm]["get"]["parameters"][i + 1];
+            qp["name"] = kDmQuery[i][0];
+            qp["in"] = "query";
+            qp["description"] = kDmQuery[i][1];
+            qp["schema"]["type"] = "string";
+        }
+        paths[kDm]["get"]["responses"]["400"]["description"] = "Bad parameter";
+
+        const char* kDmCtl = "/api/v1/emulator/{id}/next/divmmc-journal";
+        paths[kDmCtl]["post"]["summary"] = "Switch, clear or resize the DivMMC journal";
+        paths[kDmCtl]["post"]["tags"].append("Machine State");
+        paths[kDmCtl]["post"]["description"] =
+            "Body {\"enabled\": true|false, \"clear\": true, \"capacity\": N}, all optional (capacity resizes the ring, 16384 by "
+            "default, and drops its content). Off by default; off costs one branch per DivMMC event. Answers enabled, size, capacity, "
+            "evicted, last_seq.";
+        paths[kDmCtl]["post"]["parameters"][0]["name"] = "id";
+        paths[kDmCtl]["post"]["parameters"][0]["in"] = "path";
+        paths[kDmCtl]["post"]["parameters"][0]["required"] = true;
+        paths[kDmCtl]["post"]["parameters"][0]["schema"]["type"] = "string";
+        paths[kDmCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[kDmCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
+        paths[kDmCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
     }
 
     paths["/api/v1/emulator/{id}/state/contention"]["get"]["summary"] = "Get memory contention state";

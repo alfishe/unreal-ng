@@ -21,7 +21,7 @@ numbers are unchanged.
 What changed in this review:
 
 - **§1** `ComposeDescriptor` as built: the `boot` section, `partitions`, the S4 sidecars (`deleted`, `attributes`),
-  `error` / `Ok()`. `order` and `onBadName: replace` are parsed but not built. Paths are `lexically_normal`, and
+  `error` / `Ok()`. `order` is parsed but not built. Paths are `lexically_normal`, and
   `Normalized()` leaves out `writes`.
 - **§2** No `IFileTreeSource` interface: three source classes, each with a static `Enumerate` into a `FileTree`.
   `FatImageExpander` reads a graft base lazily (C4b). `SourcePool` keeps a host file as its folder's index plus its
@@ -84,7 +84,7 @@ target:
   free: 256MiB                  # room for guest writes (rebuild; costs nothing, never stored)
   label: GAMES
   codepage: cp866               # cp866 | cp1251 (FAT short names)
-  onBadName: skip               # skip | replace: a name the target cannot store (DT-3); replace: not built, skip used
+  onBadName: skip               # skip | replace: a name the target cannot store (DT-3); replace: '_' (FAT targets)
   partition: mbr                # mbr | none   (none = "superfloppy")
   iso: {level: 1, joliet: true, relaxDepth: false}  # optical only
   fixedTime: 2026-01-01T00:00:00Z  # tests / reproducible builds: every timestamp this value
@@ -422,7 +422,7 @@ the merged children; a graft passes the kept short names as `taken`), never duri
 unique within the directory, whatever layer each entry came from.
 
 **Decision tree DT-3: an entry's name on the target** (FR-21), per final directory after the merge. As built,
-`onBadName: replace` is reported as not built and the name is skipped
+`onBadName: replace` renames the name (`_`, cut, `~2`) and reports it; `skip` leaves it out and reports it
 (`CompositeMediumFactory`). ISO details as built: Joliet names are cut to 62 + `;1` for files and 64 for
 directories; level 2 allows 31 characters; a name without an extension is recorded as `NAME.;1`
 ([c5-iso.md](phases/c5-iso.md) §9).

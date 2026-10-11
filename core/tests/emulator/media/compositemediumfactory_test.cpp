@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -227,3 +229,43 @@ TEST(CompositeMediumFactory_Test, MountPointCarriesTheLayerFolderTime)
     ASSERT_TRUE(reader.Stat("/UTIL", util));
     EXPECT_EQ(FatVolumeReader::DosToUnix(util.date, util.time), 1767268800);
 }
+
+// FR-21: onBadName: skip leaves a host name FAT cannot hold out, replace renames it ('_'); both are reported.
+// A ':' in a file name is a POSIX host's (Windows cannot make one)
+#ifndef _WIN32
+TEST(CompositeMediumFactory_Test, OnBadNameSkipsOrReplaces)
+{
+    Fixture f;
+    f.root.File("files/a:b.txt", "colon");
+    f.root.File("files/plain.txt", "plain");
+    const auto build = [&f](const char* policy, std::vector<std::string>& report) {
+        std::unique_ptr<IBlockDevice> volume;
+        CompositeInfo info;
+        const MediaResult built = CompositeMediumFactory::Build(
+            f.Descriptor(std::string("version: 1\ntarget: {free: 1MiB, onBadName: ") + policy +
+                         "}\nlayers: [{source: {folder: files}}]\n"),
+            {}, volume, info);
+        EXPECT_TRUE(built.Ok()) << built.message;
+        report = built.report;
+        return volume;
+    };
+    const auto has = [](const std::vector<std::string>& lines, const std::string& text) {
+        return std::any_of(lines.begin(), lines.end(), [&text](const std::string& l) { return l.find(text) != std::string::npos; });
+    };
+
+    std::vector<std::string> report;
+    std::unique_ptr<IBlockDevice> skipped = build("skip", report);
+    ASSERT_NE(skipped, nullptr);
+    EXPECT_TRUE(has(report, "a character FAT cannot store"));
+    FatVolumeReader reader;
+    ASSERT_TRUE(reader.Open(*skipped));
+    EXPECT_EQ(Names(reader, "/").size(), 1u) << "only plain.txt";
+
+    std::unique_ptr<IBlockDevice> replaced = build("replace", report);
+    ASSERT_NE(replaced, nullptr);
+    EXPECT_TRUE(has(report, "a:b.txt: renamed to a_b.txt (onBadName: replace)"));
+    ASSERT_TRUE(reader.Open(*replaced));
+    EXPECT_EQ(Read(reader, "/a_b.txt"), "colon");
+    EXPECT_NE(skipped->ContentId(), replaced->ContentId());
+}
+#endif
