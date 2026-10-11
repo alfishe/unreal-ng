@@ -210,10 +210,12 @@ TSAN_OPTIONS="halt_on_error=0:suppressions=$PWD/../../tools/sanitize/tsan.supp" 
 ```
 
 `tools/sanitize/tsan.supp` holds the races that are there by design: a tool reading guest memory live
-(`DirectReadFromZ80Memory`) and a test reading the machine state live (the access sits in a `*_test.cpp` or
-`testwaithelper.h`). The worst case of such a read is a value one step older or newer. The file uses only
-`race_top:` (the frame that touches the memory); a `race:` entry matches any frame of either stack and would hide real
-races under `Core::CPUFrameCycle`. Containers, pointers to storage that can be freed and read-modify-write are never
+(`DirectReadFromZ80Memory`), a test reading the machine state live (the access sits in a `*_test.cpp` or
+`testwaithelper.h`), the machine time stamped on a coordinator log entry. The worst case of such a read is a value one
+step older or newer. These entries are `race_top:` (the frame that touches the memory); a `race:` entry matches any
+frame of either stack and would hide real races under `Core::CPUFrameCycle`. The only `race:` entries are anchored on
+the global `std::cout` / `std::cerr`: concurrent output to them is not a race by the standard, TSan sees libc++
+resetting the field width. Containers, pointers to storage that can be freed and read-modify-write are never
 suppressed: they are bugs.
 
 TSan and ASan cannot share a build. TSan works here, but the tree is not race-free yet: on 2026-10-10
