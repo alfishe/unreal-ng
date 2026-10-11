@@ -774,6 +774,18 @@ TEST_F(EmulatorManager_Test, RemovalDoesNotHoldTheLockAHandlerWaitsFor)
         _manager->GetEmulator(id);   // waited forever for the lock the removal held while releasing
         answered = true;
     });
+    // Unregistered on every exit path (an ASSERT below returns early): after the remover is joined (declared later,
+    // destroyed first) and the handler, which refers to this frame, is through
+    struct ObserverGuard
+    {
+        MessageCenter& mc;
+        uint64_t id;
+        ~ObserverGuard()
+        {
+            mc.WaitForOutstandingMessages();
+            mc.RemoveObserverById("test_removal_lookup", id);
+        }
+    } observerGuard{mc, observer};
 
     std::atomic<bool> removed{false};
     TestThread remover([&] {
@@ -794,7 +806,6 @@ TEST_F(EmulatorManager_Test, RemovalDoesNotHoldTheLockAHandlerWaitsFor)
         std::abort();
     }
     remover.Join();
-    mc.RemoveObserverById("test_removal_lookup", observer);
     EXPECT_FALSE(_manager->HasEmulator(id));
 }
 
