@@ -32,6 +32,29 @@
 #include <unistd.h>
 #endif
 
+/// region <Protocol version header>
+
+/// MCP-Protocol-Version (2025-06-18): a client names the negotiated revision on every request after initialize. An
+/// unsupported one is refused with 400 (the spec's answer); none means 2025-03-26 and passes. True when refused
+static bool RefuseUnsupportedProtocolVersion(const drogon::HttpRequestPtr& req,
+                                             const std::function<void(const drogon::HttpResponsePtr&)>& callback)
+{
+    const std::string version = req->getHeader(mcp::kProtocolVersionHeader);
+    if (version.empty() || mcp::IsSupportedProtocolVersion(version))
+        return false;
+    std::string supported;
+    for (const char* v : mcp::kSupportedProtocolVersions)
+        supported += (supported.empty() ? "" : ", ") + std::string(v);
+    auto resp = drogon::HttpResponse::newHttpJsonResponse(mcp::MakeRpcError(
+        Json::Value(), mcp::kInvalidRequest,
+        "Unsupported " + std::string(mcp::kProtocolVersionHeader) + ": " + version + " (supported: " + supported + ")"));
+    resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+    callback(resp);
+    return true;
+}
+
+/// endregion </Protocol version header>
+
 /// region <Port availability>
 
 // Helper function to check if a port is available (same pattern as
@@ -151,6 +174,8 @@ void AutomationMCP::start()
         "/mcp",
         [dispatcher, caller](const drogon::HttpRequestPtr& req,
                              std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            if (RefuseUnsupportedProtocolVersion(req, callback))
+                return;
             // Parse the JSON-RPC request body
             Json::Value request;
             std::string parseErrors;
@@ -247,6 +272,8 @@ void AutomationMCP::start()
         "/mcp",
         [](const drogon::HttpRequestPtr& req,
            std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+            if (RefuseUnsupportedProtocolVersion(req, callback))
+                return;
             if (req->isHead())
             {
                 auto resp = drogon::HttpResponse::newHttpResponse();

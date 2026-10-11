@@ -12,11 +12,25 @@ namespace mcp
 
 /// region <Constants>
 
-/// MCP protocol revision implemented by this server (Streamable HTTP transport)
-constexpr const char* kProtocolVersion = "2025-03-26";
+/// MCP protocol revision implemented by this server (Streamable HTTP transport): 2025-06-18 brings structured tool
+/// output (structuredContent, no outputSchema here), the MCP-Protocol-Version header on every HTTP request after
+/// initialize (an unsupported one is a 400) and no JSON-RPC batching (refused since 2025-03-26)
+constexpr const char* kProtocolVersion = "2025-06-18";
 
-/// Protocol revisions accepted from clients during initialize negotiation
-constexpr const char* kSupportedProtocolVersions[] = {"2024-11-05", "2025-03-26"};
+/// Protocol revisions accepted from clients during initialize negotiation and in the MCP-Protocol-Version header
+constexpr const char* kSupportedProtocolVersions[] = {"2024-11-05", "2025-03-26", "2025-06-18"};
+
+/// The HTTP header a client sends on every request after initialize (2025-06-18); without it the server assumes
+/// 2025-03-26
+constexpr const char* kProtocolVersionHeader = "MCP-Protocol-Version";
+
+inline bool IsSupportedProtocolVersion(const std::string& version)
+{
+    for (const char* supported : kSupportedProtocolVersions)
+        if (version == supported)
+            return true;
+    return false;
+}
 
 constexpr const char* kServerName = "unreal-ng";
 constexpr const char* kServerVersion = "1.0.0";

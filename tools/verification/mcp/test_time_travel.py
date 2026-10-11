@@ -24,9 +24,15 @@ def test_record_stop_seek(s):
     expect(at and int(at.group(1)) in (first + 5, first + 6), 'the position in the text', r.text)
 
 
-def test_seek_outside_says_so(s):
+def test_seek_past_the_end_is_an_error_and_moves_nothing(s):
+    before = s.call('time_travel', {'action': 'status'}).text
     r = s.call('time_travel', {'action': 'seek', 'frame': 10_000_000}, ok=False)
-    expect(r.is_error or 'out_of_range' in r.text, 'out of the history is reported', r.text)
+    expect(r.is_error and 'past the history' in r.text, 'an error naming the end', r.text)
+    expect('frame 0' not in r.text, 'no "stopped at frame 0"', r.text)
+    at_before = re.search(r'at frame (\d+)', before)
+    at_after = re.search(r'at frame (\d+)', s.call('time_travel', {'action': 'status'}).text)
+    expect((at_before and at_before.group(1)) == (at_after and at_after.group(1)), 'the position did not move',
+           (before[:200], at_after))
 
 
 if __name__ == '__main__':

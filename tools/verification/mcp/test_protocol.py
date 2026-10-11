@@ -4,6 +4,8 @@ resources"""
 
 import json
 import sys
+import urllib.error
+import urllib.request
 
 from mcplib import expect, main
 
@@ -20,6 +22,23 @@ def test_initialize_and_ping(s):
     expect(fallback in ('2024-11-05', '2025-03-26', '2025-06-18'), 'an unknown version gets one the server speaks',
            fallback)
     expect(s.rpc('ping')['result'] == {}, 'ping answers {}')
+
+
+def test_protocol_version_header(s):
+    expect(s.rpc('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},
+                                'clientInfo': {'name': 'mcp-verification', 'version': '1'}})['result']['protocolVersion']
+           == '2025-06-18', '2025-06-18 is spoken')
+    body = json.dumps({'jsonrpc': '2.0', 'id': 7, 'method': 'ping', 'params': {}}).encode()
+    for version, expected in (('2025-06-18', 200), ('2025-03-26', 200), ('1999-01-01', 400)):
+        request = urllib.request.Request(s.url, data=body, headers={'Content-Type': 'application/json',
+                                                                      'Accept': 'application/json, text/event-stream',
+                                                                      'MCP-Protocol-Version': version})
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                status = response.status
+        except urllib.error.HTTPError as error:
+            status = error.code
+        expect(status == expected, f'MCP-Protocol-Version {version}: HTTP {expected}', status)
 
 
 def test_every_tool_has_a_schema_and_response_format(s):

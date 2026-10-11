@@ -7,7 +7,7 @@
 //   tools/list, tools/call, resources/list, resources/read,
 //   prompts/list (empty), prompts/get (error)
 // Batch arrays are rejected with -32600 (batching was removed in the
-// 2025-03-26 spec revision). Notifications produce a null response —
+// 2025-03-26 spec revision, kept in 2025-06-18). Notifications produce a null response —
 // the HTTP adapter maps that to 202 + empty body.
 
 #include "mcp-tools.h"

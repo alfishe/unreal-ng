@@ -4843,7 +4843,17 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             text += " - blocked by marker " + FormatMarker(b["blocking_marker"]);
                         }
                         return text + FormatCheck(b);
-                    }, done);
+                    }, [done](ToolResult result) {
+                        // Outside the history nothing moved: an error the model cannot read as "now at frame N"
+                        if (!result.isError && result.structured.get("halt_reason", "").asString() == "out_of_range")
+                        {
+                            const std::string message = result.structured.get("message", "").asString();
+                            result = ToolResult::Error("Seek out of range: " +
+                                                       (message.empty() ? std::string("the frame is outside the history") : message) +
+                                                       " (time_travel status shows the recorded range)");
+                        }
+                        done(std::move(result));
+                    });
                 }
                 else if (action == "step_back_frame" || action == "step_forward_frame")
                 {

@@ -9,7 +9,7 @@ Reference design: `docs/inprogress/2026-08-17-mcp/`.
 ## Endpoint & transport
 
 - `POST http://localhost:8092/mcp` — Streamable HTTP, MCP protocol
-  `2025-03-26`, stateless (no `Mcp-Session-Id`).
+  `2025-06-18` (also `2025-03-26`, `2024-11-05`; an unsupported `MCP-Protocol-Version` header is a 400), stateless (no `Mcp-Session-Id`).
 - Request → `200` + `application/json`; notification → `202` empty;
   JSON-RPC batch → `-32600`; malformed JSON → `400` + `-32700`.
 - **SSE response mode**: when the request `Accept` header includes
