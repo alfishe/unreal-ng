@@ -143,7 +143,7 @@ paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["parameters"][1]["required"] =
 paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["parameters"][1]["description"] = "The verb (case-insensitive)";
 paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["parameters"][1]["schema"]["type"] = "string";
 for (const char* verb : {"detect", "decode", "encode", "convert", "formats", "dialects", "files", "sync-status", "sync-probe",
-                         "sync-extract", "sync-watch", "sync-unwatch", "sync-hints"})
+                         "sync-extract", "sync-watch", "sync-unwatch", "sync-hints", "sync-push-watch", "sync-push-unwatch"})
     paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["parameters"][1]["schema"]["enum"].append(verb);
 paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["requestBody"]["required"] = false;
 paths["/api/v1/emulator/{id}/asm/{verb}"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
@@ -191,7 +191,7 @@ paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["parameters"][1]["in"] 
 paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["parameters"][1]["required"] = true;
 paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["parameters"][1]["description"] = "The action (case-insensitive)";
 paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["parameters"][1]["schema"]["type"] = "string";
-for (const char* action : {"probe", "extract", "watch", "status", "unwatch", "hints"})
+for (const char* action : {"probe", "extract", "watch", "status", "unwatch", "hints", "push-watch", "push-unwatch"})
     paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["parameters"][1]["schema"]["enum"].append(action);
 paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["requestBody"]["required"] = false;
 paths["/api/v1/emulator/{id}/asm/sync/{action}"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
@@ -308,3 +308,37 @@ paths["/api/v1/emulator/{id}/asm/sync/hints"]["get"]["parameters"][0]["required"
 paths["/api/v1/emulator/{id}/asm/sync/hints"]["get"]["parameters"][0]["schema"]["type"] = "string";
 paths["/api/v1/emulator/{id}/asm/sync/hints"]["get"]["responses"]["200"]["description"] = "{generation, assembler, decoded, complete, lines, labels, set, hints: [{severity, line, message}], output, output_error}";
 paths["/api/v1/emulator/{id}/asm/sync/hints"]["get"]["responses"]["404"]["description"] = "No build yet";
+
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["summary"] = "Push a host source into the assembler on every save";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["description"] = "Part B (Z2): starts the push watch (replacing one). The host source and the files it INCLUDEs are looked at every interval ms; a change that stays quiet ms is written into the assembler as sync-inject does (the INCLUDEd files into texts of their own), as soon as the assembler waits for a command; while it is busy the write waits. A text the watch wrote itself is replaced; one the user changed in the guest since is a conflict and stays (force overwrites it). The first write comes at once. WebSocket topic asm_sync: pushed, pending, conflict, push-error.";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["tags"].append("Assembler Sources");
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["description"] = "The host source to watch (required); the files it INCLUDEs are watched too";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["from"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["from"]["description"] = "Its dialect (default sjasmplus)";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["assembler"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["assembler"]["description"] = "A descriptor id; default the one found";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["title"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["title"]["description"] = "The text's name in the assembler (default: the replaced text's)";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["force"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["force"]["description"] = "true: overwrite the user's own changes in the guest too (default: such a text is a conflict and stays)";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["interval"]["type"] = "integer";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["interval"]["description"] = "ms between looks at the files (default 500, 50-60000)";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["quiet"]["type"] = "integer";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["quiet"]["description"] = "ms a change must stay before it is written (default 300)";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("path");
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["responses"]["200"]["description"] = "{pushing, state: waiting | pending | pushed | conflict | error, options, files, pushes, last: the last inject reply with ok and message, error}";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["responses"]["400"]["description"] = "No path, an option the action does not take, or a bad interval / quiet";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["post"]["responses"]["404"]["description"] = "Emulator not found, no such file, or no such assembler";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["delete"]["summary"] = "Stop pushing";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["delete"]["description"] = "Stops the push watch; what it wrote stays in the guest.";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["delete"]["tags"].append("Assembler Sources");
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["delete"]["parameters"][0]["name"] = "id";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["delete"]["parameters"][0]["in"] = "path";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["delete"]["parameters"][0]["required"] = true;
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["delete"]["parameters"][0]["schema"]["type"] = "string";
+paths["/api/v1/emulator/{id}/asm/sync/push-watch"]["delete"]["responses"]["200"]["description"] = "The push watch status";

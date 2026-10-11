@@ -39,6 +39,9 @@ void CLIProcessor::HandleAsm(const ClientSession& session, const std::vector<std
             ss << "  asm sync unwatch | asm sync hints     - stop the watch; the last build's hints" << NEWLINE;
             ss << "  asm sync inject --path f|--text t [--from d] [--title NAME] [--force] [--backup f]" << NEWLINE;
             ss << "                                        - a host source written into the assembler as its own text" << NEWLINE;
+            ss << "  asm sync push-watch <file> [--from d] [--title NAME] [--force] [--interval ms] [--quiet ms]" << NEWLINE;
+            ss << "                                        - each save of the file (and the files it INCLUDEs) injected" << NEWLINE;
+            ss << "  asm sync push-unwatch                 - stop it" << NEWLINE;
             ss << "  asm sync <status|probe|extract|inject> ... --snapshot f.szx|.sna|.z80 [--output out]" << NEWLINE;
             ss << "                                        - the same on a snapshot file's memory (inject writes --output)" << NEWLINE;
             ss << "  (a path is a host file or disk:A/NAME.T; --file NAME.T picks a file in a .trd / .tap; --json)" << NEWLINE;
@@ -73,7 +76,7 @@ void CLIProcessor::HandleAsm(const ClientSession& session, const std::vector<std
             request.options["drive"] = positional[0];
         else if (verb == "encode")
             request.options["input"] = positional[0];
-        else if (verb == "detect" || verb == "decode" || verb == "convert")
+        else if (verb == "detect" || verb == "decode" || verb == "convert" || verb == "sync-push-watch")
             request.options["path"] = positional[0];
     }
 
@@ -179,6 +182,13 @@ void CLIProcessor::HandleAsm(const ClientSession& session, const std::vector<std
         if (!text("assembler").empty() && text("assembler") != "-")
             ss << " (" << text("assembler") << ")";
         ss << ", " << number("builds") << " builds" << NEWLINE;
+    }
+    else if (verb == "sync-push-watch" || verb == "sync-push-unwatch")
+    {
+        ss << (body.find("pushing")->b ? "Pushing " + body.find("options")->find("path")->s : std::string("Not pushing")) << ": " << text("state") << ", "
+           << number("files") << " file(s) watched, " << number("pushes") << " push(es)" << NEWLINE;
+        if (!text("error").empty() && text("error") != "-")
+            ss << "Last: " << text("error") << NEWLINE;
     }
     else if (verb == "sync-hints")
     {

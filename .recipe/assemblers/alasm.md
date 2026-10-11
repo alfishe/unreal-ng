@@ -120,6 +120,10 @@ A `path` source brings the files it INCLUDEs (relative to the file that INCLUDEs
 of its own, and its INCLUDE is written `INCLUDE "NAME",page`: ALASM then finds the text loaded and reads no disk. The
 reply lists them under `includes`. 5.05-5.09 have pages 4 and 0 free, 4.5 pages 0 and 3, 5.00 / 4.42-4.46 / 3.8c page 4: a
 project with more sources is refused (put it onto the disk with `zxasm inject main.asm disk.trd --assembler ...`).
+
+`asm_source {"action":"sync_push_watch","path":"/abs/main.asm"}` does the same on every save of the file (or of a file
+it INCLUDEs). In the editor the write waits until you leave it (Extend, `q`, ENTER); a text you changed in ALASM is a
+conflict and stays unless `force`.
 Details and the oracle script:
 [asm-sources.md](../analysis/asm-sources.md#writing-a-host-source-into-the-assembler-part-b).
 

@@ -220,6 +220,9 @@ struct InjectOptions
 {
     bool force = false;          ///< write even when the text in memory has changes not saved, or no idle rule is known
     bool markChanged = true;     ///< the header says "changed since saved" (ALASM asks before it loads another text)
+    /// Files this caller wrote before (the push watch, Z2): a text in memory whose lines are still those of one of them
+    /// is the caller's own and is replaced without force, though it is marked changed
+    std::vector<std::vector<uint8_t>> written;
 };
 
 /// The writes that make `file` (the assembler's own file, as its codec encodes it) the live text

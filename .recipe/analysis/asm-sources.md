@@ -177,6 +177,23 @@ whole check: it injects the source, lets ALASM assemble it and compares the byte
 ALASM 5.09 must ORG below #8000. The conversion's rules and limits are in
 [research-sjasmplus-to-alasm.md](../../docs/inprogress/2026-10-05-unreal-asm/research-sjasmplus-to-alasm.md).
 
+#### On every save (push watch)
+
+```text
+asm_source {"action":"sync_push_watch","path":"/abs/project/main.asm"}     # interval / quiet / title / force as options
+asm_source {"action":"sync_status"}                                         # push: {state, pushes, files, last, error}
+asm_source {"action":"sync_push_unwatch"}
+```
+
+The watch looks at the file and at every file it INCLUDEs (default every 500 ms). A change that stays 300 ms is
+written as `sync_inject` writes it. The first write comes at once. States: `waiting` (no change), `pending` (the
+assembler is busy: in its editor, assembling; retried until it waits for a command), `pushed`, `conflict` (the text in
+the guest changed since the watch wrote it: left alone until the next save; `force` overwrites), `error` (the
+conversion failed, too many INCLUDEd files, an assembler without a writer). WebSocket topic `asm_sync`: `pushed`,
+`pending`, `conflict`, `push-error`. WebAPI `POST` / `DELETE /emulator/{id}/asm/sync/push-watch`, CLI
+`asm sync push-watch <file>` / `asm sync push-unwatch`, Lua `asm_sync_push_watch{path=}`, Python
+`asm_sync_push_watch(path)`; the Qt Live source window's Push button.
+
 #### Into a snapshot or a disk (no running assembler)
 
 With `snapshot` the sync verbs read a snapshot file (.szx, .sna, .z80) instead of the machine, and `sync_inject`

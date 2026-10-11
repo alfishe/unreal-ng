@@ -13,6 +13,8 @@
 ///   POST /emulator/{id}/asm/sync/watch   {assembler?, interval?, quiet?, as?, to?, output?, project?}   the watch: live labels, hints
 ///   DELETE /emulator/{id}/asm/sync/watch                                                         stop it
 ///   GET  /emulator/{id}/asm/sync/hints                                                           the last build
+///   POST /emulator/{id}/asm/sync/push-watch {path, from?, assembler?, title?, force?, interval?, quiet?}   each save pushed
+///   DELETE /emulator/{id}/asm/sync/push-watch                                                    stop it
 ///   POST /emulator/{id}/asm/sync/inject  {text | path | data + name, from?, assembler?, title?, force?, backup?, snapshot?, output?}
 ///                                        a host source as the assembler's text
 /// snapshot: a .szx / .sna / .z80 file whose memory the sync verbs read instead of the machine's; inject then writes the
@@ -165,6 +167,13 @@ void EmulatorAPI::asmSyncUnwatch(const HttpRequestPtr& req, std::function<void(c
 {
     (void)req;
     RespondAsm(id, "sync-unwatch", {}, callback);
+}
+
+void EmulatorAPI::asmSyncPushUnwatch(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    (void)req;
+    RespondAsm(id, "sync-push-unwatch", {}, callback);
 }
 
 }  // namespace v1

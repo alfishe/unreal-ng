@@ -2247,6 +2247,10 @@ namespace PythonBindings
             .def("asm_sync_inject", [](Emulator& self, const py::kwargs& kwargs) { return AsmPy(self, "sync-inject", {}, kwargs); },
                  "Write a host source into the assembler as its own text (text= | path=, from=, title=, force=, backup=; "
                  "snapshot= + output=: into a snapshot file instead)")
+            .def("asm_sync_push_watch", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) {
+                return AsmPy(self, "sync-push-watch", {{"path", path}}, kwargs);
+            }, py::arg("path"), "Inject each save of a host source (and the files it INCLUDEs) into the assembler (from=, title=, force=, interval=, quiet=)")
+            .def("asm_sync_push_unwatch", [](Emulator& self) { return AsmPy(self, "sync-push-unwatch", {}, py::kwargs()); }, "Stop the push watch")
             .def("symbols_import_source", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) {
                 return SymbolsPy(self, "import-source", {{"path", path}}, kwargs);
             }, "The labels a source defines, with values (main=, set=, policy=, generated=)", py::arg("path"))

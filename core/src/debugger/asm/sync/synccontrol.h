@@ -12,6 +12,9 @@
 ///   sync-watch   [assembler interval quiet as to output]       start the watch (AsmSyncService): live labels, hints
 ///   sync-unwatch                                               stop it
 ///   sync-hints                                                 the last build: labels, hints
+///   sync-push-watch [path from assembler title force interval quiet]   part B (Z2): the host file and the files it
+///                INCLUDEs are watched; each save is injected once the assembler waits for a command (sync-inject)
+///   sync-push-unwatch                                          stop it
 ///   sync-inject  [assembler text|path|data name codec version file from title force backup]
 ///                part B: a source (any dialect with a frontend) written as the assembler's own text over the one in
 ///                RAM, while it waits for a command (its idle rule); refused when the text there has unsaved changes
@@ -42,15 +45,22 @@ class SyncControl
 public:
     explicit SyncControl(EmulatorContext* context);
 
-    /// verb: "status", "probe", "extract", "watch", "unwatch", "hints" or "inject" (AsmControl strips the "sync-")
+    /// verb: "status", "probe", "extract", "watch", "unwatch", "hints", "inject", "push-watch" or "push-unwatch"
+    /// (AsmControl strips the "sync-")
     AsmReply Execute(const std::string& verb, const AsmRequest& request);
 
     static const std::vector<std::string>& OptionsFor(const std::string& verb);
 
+    /// The push watch's write (AsmSyncService, Z2): sync-inject of `request` into the running machine, where a text in
+    /// memory still equal to one in `written` (what the watch wrote before) is the watch's own and is replaced without
+    /// force; on success `written` holds the files of this write
+    AsmReply PushInject(const AsmRequest& request, std::vector<std::vector<uint8_t>>& written);
+
 private:
-    /// `snapshot`: into that snapshot file's memory (written to the request's `output`), else into the running machine
+    /// `snapshot`: into that snapshot file's memory (written to the request's `output`), else into the running machine.
+    /// `written`: the push watch's own files (PushInject)
     AsmReply Inject(const unrealasm::sync::SyncDescriptor& descriptor, const unrealasm::sync::SyncText& current, const AsmRequest& request,
-                    const unrealasm::containers::Snapshot* snapshot);
+                    const unrealasm::containers::Snapshot* snapshot, std::vector<std::vector<uint8_t>>* written = nullptr);
 
     EmulatorContext* _context = nullptr;
 };

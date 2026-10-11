@@ -105,8 +105,21 @@ AsmSyncService* Service(EmulatorContext* context)
 
 SyncControl::SyncControl(EmulatorContext* context) : _context(context) {}
 
+AsmReply SyncControl::PushInject(const AsmRequest& request, std::vector<std::vector<uint8_t>>& written)
+{
+    asmsync::MachineCopy machine;
+    std::string error;
+    if (!asmsync::CopyMachine(_context, machine, error))
+        return Fail(AsmControlError::BadRequest, error);
+    const sync::SyncDescriptor* descriptor = nullptr;
+    AsmReply failure;
+    if (!Choose(machine.view, Option(request, "assembler"), descriptor, failure))
+        return failure;
+    return Inject(*descriptor, sync::ReadText(machine.view, *descriptor), request, nullptr, &written);
+}
+
 AsmReply SyncControl::Inject(const sync::SyncDescriptor& descriptor, const sync::SyncText& current, const AsmRequest& request,
-                             const containers::Snapshot* snapshot)
+                             const containers::Snapshot* snapshot, std::vector<std::vector<uint8_t>>* written)
 {
     // The source, written as the assembler's own file (converted by its backend unless it is in its dialect already)
     SourceDocument document;
@@ -141,6 +154,8 @@ AsmReply SyncControl::Inject(const sync::SyncDescriptor& descriptor, const sync:
     std::string force = Option(request, "force");
     std::transform(force.begin(), force.end(), force.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     options.force = request.options.count("force") && (force.empty() || force == "true" || force == "1" || force == "on");
+    if (written)
+        options.written = *written;
     sync::ProjectInjectPlan plan;
     std::string error;
     if (snapshot)
@@ -173,6 +188,12 @@ AsmReply SyncControl::Inject(const sync::SyncDescriptor& descriptor, const sync:
         if (plan.texts.empty())
             return Fail(plan.error.rfind("no ", 0) == 0 ? AsmControlError::NotFound : AsmControlError::Failed, plan.error, std::move(body));
         return Fail(AsmControlError::Refused, plan.error, std::move(body));
+    }
+    if (written)
+    {
+        written->clear();
+        for (const WriteAsResult& text : plan.texts)
+            written->push_back(text.bytes);
     }
     const auto previousValue = [&](const sync::SyncText& previous) {
         StateNode value = StateNode::Object();
@@ -229,6 +250,8 @@ const std::vector<std::string>& SyncControl::OptionsFor(const std::string& verb)
         {"unwatch", {}},
         {"hints", {}},
         {"inject", {"assembler", "path", "data", "name", "file", "codec", "version", "from", "text", "title", "force", "backup", "snapshot", "output"}},
+        {"push-watch", {"path", "from", "assembler", "title", "force", "interval", "quiet"}},
+        {"push-unwatch", {}},
     };
     static const std::vector<std::string> none;
     const auto it = options.find(verb);
@@ -237,6 +260,42 @@ const std::vector<std::string>& SyncControl::OptionsFor(const std::string& verb)
 
 AsmReply SyncControl::Execute(const std::string& verb, const AsmRequest& request)
 {
+    if (verb == "push-watch" || verb == "push-unwatch")
+    {
+        AsmSyncService* service = Service(_context);
+        if (!service)
+            return Fail(AsmControlError::BadRequest, "the push watch needs an emulator instance with a debugger");
+        AsmReply reply;
+        if (verb == "push-unwatch")
+        {
+            service->StopPush();
+            reply.body = service->PushStatusValue();
+            return reply;
+        }
+        AsmSyncService::PushOptions options;
+        options.path = Option(request, "path");
+        std::error_code ec;
+        if (options.path.empty())
+            return Fail(AsmControlError::BadRequest, "'push-watch' needs 'path' (the host source to watch)");
+        if (!std::filesystem::is_regular_file(std::filesystem::path(std::u8string(options.path.begin(), options.path.end())), ec))
+            return Fail(AsmControlError::NotFound, "no file " + options.path);
+        if (!Option(request, "from").empty())
+            options.from = Option(request, "from");
+        options.assembler = Option(request, "assembler");
+        if (!options.assembler.empty() && !sync::FindDescriptor(options.assembler))
+            return Fail(AsmControlError::NotFound, "no assembler '" + options.assembler + "'");
+        options.title = Option(request, "title");
+        std::string force = Option(request, "force");
+        std::transform(force.begin(), force.end(), force.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        options.force = request.options.count("force") && (force.empty() || force == "true" || force == "1" || force == "on");
+        AsmReply failure;
+        if (!ParseMs(request, "interval", 50, options.intervalMs, failure) || !ParseMs(request, "quiet", 0, options.quietMs, failure))
+            return failure;
+        service->StartPush(options);
+        reply.body = service->PushStatusValue();
+        return reply;
+    }
+
     if (verb == "watch" || verb == "unwatch" || verb == "hints")
     {
         AsmSyncService* service = Service(_context);
@@ -344,7 +403,10 @@ AsmReply SyncControl::Execute(const std::string& verb, const AsmRequest& request
     if (verb == "status")
     {
         if (AsmSyncService* service = fromSnapshot ? nullptr : Service(_context))
+        {
             body["watch"] = service->StatusValue();
+            body["push"] = service->PushStatusValue();
+        }
         AsmReply reply;
         reply.body = std::move(body);
         return reply;

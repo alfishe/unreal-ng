@@ -787,6 +787,24 @@ all three formats, and every instruction form (1173 bytes); `zxasm inject` onto 
 `ED` (reported). Tests: `Snapshot_Test` (6), `Trdos_Test.FilesGoIntoANewImageAndBack`, `SclArchiveWritesAndReads`,
 `SyncControl_Test.InjectWritesASourceIntoAnAlasmSnapshot`.
 
+**Built (2026-10-11): Z2, the push watch and the Qt dock's Inject.** `AsmSyncService::StartPush` runs a thread of its
+own (independent of the watch): every `interval` ms (500) it reads the times and sizes of the host source and of every
+file its INCLUDEs lead to (`HostProject`, missing ones too); a change that stays `quiet` ms (300) is written by
+`SyncControl::PushInject`, which is sync-inject with the files the watch wrote last as `InjectOptions::written`. A text
+in memory whose lines are still those of one of them is the watch's own (marked changed, yet not the user's) and is
+replaced; a text the user changed in the guest is a conflict and stays until the next save (`force` overwrites it).
+While the assembler is busy (in its editor, assembling: "not waiting for a command") the write waits and is retried
+every look. States `waiting`, `pending`, `pushed`, `conflict`, `error`; NC_ASM_SYNC events `pushed`, `pending`,
+`conflict`, `push-error`. Surfaces: verbs `sync-push-watch` / `sync-push-unwatch` (WebAPI `POST` / `DELETE
+/asm/sync/push-watch`, OpenAPI, CLI `asm sync push-watch <file>`, MCP `sync_push_watch` / `sync_push_unwatch`, Lua,
+Python); `sync-status` carries `push`. Qt: the Live source window's Inject... (a host file, the report with the
+INCLUDEd texts and their pages) and Push (on: a host file; the state in the status line; stopped on close when the
+window started it). Checked in ALASM 5.09 from its disk, driven over the WebAPI: the first write of a
+three-file project assembled to sjasmplus' bytes; a save of an INCLUDEd file written and assembled; a save while ALASM
+was in its editor waited and went in after Extend `q`; a line typed in ALASM made the next save a conflict and the
+text stayed. Tests: `SyncControl_Test.ThePushWatchWritesEachSaveAndKeepsTheUsersChanges`,
+`LiveSourceWindow_Test.APushWatchShowsInTheStatusLineAndOutlivesTheWindow`.
+
 ## 20. Effort (part B)
 
 | Block | Days |

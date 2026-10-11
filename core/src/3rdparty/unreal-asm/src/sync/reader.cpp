@@ -1000,6 +1000,19 @@ bool Idle(const MachineView& machine, const SyncDescriptor& d, std::string& why)
     return false;
 }
 
+namespace
+{
+/// The text is one the caller wrote itself: its lines (after the header, which the editor rewrites) are those of a
+/// file in `written`
+bool WrittenBefore(const SyncText& text, const std::vector<std::vector<uint8_t>>& written, size_t headerSize)
+{
+    return std::any_of(written.begin(), written.end(), [&](const std::vector<uint8_t>& file) {
+        return file.size() == text.file.size() && file.size() >= headerSize &&
+               std::equal(file.begin() + static_cast<std::ptrdiff_t>(headerSize), file.end(), text.file.begin() + static_cast<std::ptrdiff_t>(headerSize));
+    });
+}
+}  // namespace
+
 InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& file, const InjectOptions& options)
 {
     InjectPlan plan;
@@ -1016,7 +1029,7 @@ InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const
     }
     const FileImageParams& p = d.fileImage;
     plan.previous = ReadText(machine, d);
-    if (plan.previous.ok && plan.previous.changed && !options.force)
+    if (plan.previous.ok && plan.previous.changed && !options.force && !WrittenBefore(plan.previous, options.written, p.headerSize))
     {
         plan.error = "the text " + plan.previous.name + " in " + d.title + " has changes not saved (force overwrites them)";
         return plan;
@@ -1128,7 +1141,7 @@ ProjectInjectPlan PlanInjectProject(const MachineView& machine, const SyncDescri
         SyncText previous;
         if (ReadFileImageInPage(machine, d, page, previous) == 1)
         {
-            if (previous.changed && !options.force)
+            if (previous.changed && !options.force && !WrittenBefore(previous, options.written, p.headerSize))
             {
                 result.error = "RAM page " + std::to_string(page) + " holds the text " + previous.name + " with changes not saved (force overwrites them)";
                 return result;

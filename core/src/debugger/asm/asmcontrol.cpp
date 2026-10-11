@@ -321,7 +321,7 @@ const std::vector<std::string>& AsmControl::Verbs()
 {
     static const std::vector<std::string> verbs = {"formats", "dialects", "files", "detect", "decode", "encode", "convert",
                                                    "sync-status", "sync-probe", "sync-extract", "sync-watch", "sync-unwatch", "sync-hints",
-                                                   "sync-inject"};
+                                                   "sync-inject", "sync-push-watch", "sync-push-unwatch"};
     return verbs;
 }
 

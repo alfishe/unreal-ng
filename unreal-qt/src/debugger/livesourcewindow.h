@@ -17,7 +17,9 @@ class QTimer;
 /// the machine holds in RAM, as the last host build decoded it, with the guest's cursor line highlighted, the build's
 /// errors and warnings on their lines and in a list, and a status line (assembler, build, labels, hints). It shows the
 /// watch of AsmSyncService and starts one when none runs (stopping it again on close); Extract... and Convert... go
-/// through AsmControl's sync-extract, as on the other surfaces (.recipe/analysis/asm-sources.md)
+/// through AsmControl's sync-extract, as on the other surfaces (.recipe/analysis/asm-sources.md). The other way (part
+/// B, Z2): Inject... writes a host source into the assembler (sync-inject), Push follows a host file and writes each
+/// save (sync-push-watch; stopped on close when this window started it)
 class LiveSourceWindow : public QWidget
 {
     Q_OBJECT
@@ -35,6 +37,8 @@ public slots:
 
 private slots:
     void toggleWatch(bool on);
+    void inject();
+    void togglePush(bool on);
     void extract();
     void convert();
     void goToHint();
@@ -45,16 +49,20 @@ private:
     class AsmSyncService* service(const std::shared_ptr<Emulator>& emulator) const;
     void startWatch();
     void stopOwnWatch();
+    void stopOwnPush();
     void highlight(int cursorLine);
 
     std::string _emulatorId;
     bool _ownWatch = false;                 ///< this window started the watch (and stops it)
+    bool _ownPush = false;                  ///< this window started the push watch (and stops it)
     uint64_t _shownGeneration = 0;
     int _shownCursor = -2;
     QLabel* _status = nullptr;
     QPlainTextEdit* _text = nullptr;
     QListWidget* _hints = nullptr;
     QPushButton* _watch = nullptr;
+    QPushButton* _inject = nullptr;
+    QPushButton* _push = nullptr;
     QPushButton* _extract = nullptr;
     QPushButton* _convert = nullptr;
     QTimer* _timer = nullptr;

@@ -3119,7 +3119,8 @@ public:
         // The source an assembler holds in RAM (asm-synchronizer): asm_sync_status(), asm_sync_probe(), asm_sync_extract{as=, to=,
         // output=}, asm_sync_watch{interval=, quiet=, as=, to=, output=} (live labels in live:sync:<assembler>), asm_sync_unwatch(),
         // asm_sync_hints(), asm_sync_inject{text= | path=, from=, title=, force=, backup=} (a host source as the assembler's text);
-        // snapshot= (a .szx / .sna / .z80 file) makes status / probe / extract / inject work on that file (inject writes output=)
+        // snapshot= (a .szx / .sna / .z80 file) makes status / probe / extract / inject work on that file (inject writes output=);
+        // asm_sync_push_watch{path=, from=, title=, force=, interval=, quiet=} injects each save of the host file, asm_sync_push_unwatch()
         lua.set_function("asm_sync_status", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-status", SymbolOptions(arg, "assembler")); });
         lua.set_function("asm_sync_probe", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-probe", SymbolOptions(arg, "snapshot")); });
         lua.set_function("asm_sync_extract", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-extract", SymbolOptions(arg, "as")); });
@@ -3127,6 +3128,8 @@ public:
         lua.set_function("asm_sync_unwatch", [this](sol::this_state ts) -> sol::object { return asmRun(ts, "sync-unwatch", {}); });
         lua.set_function("asm_sync_hints", [this](sol::this_state ts) -> sol::object { return asmRun(ts, "sync-hints", {}); });
         lua.set_function("asm_sync_inject", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-inject", SymbolOptions(arg, "path")); });
+        lua.set_function("asm_sync_push_watch", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-push-watch", SymbolOptions(arg, "path")); });
+        lua.set_function("asm_sync_push_unwatch", [this](sol::this_state ts) -> sol::object { return asmRun(ts, "sync-push-unwatch", {}); });
         lua.set_function("symbols_scan", [this](sol::this_state ts) -> sol::object { return symbolsRun(ts, "scan", {}); });
         lua.set_function("symbols_import_source", [this](sol::this_state ts, sol::object arg) -> sol::object {
             return symbolsCall(ts, "import-source", arg, "path");

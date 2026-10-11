@@ -456,7 +456,7 @@ class AsmSyncPayload : public MessagePayload
 {
 public:
     unreal::UUID emulatorId;
-    std::string event;            ///< "found", "changed", "built", "lost", "ambiguous"
+    std::string event;            ///< "found", "changed", "built", "lost", "ambiguous"; the push watch: "pushed", "pending", "conflict", "push-error"
     std::string assembler;        ///< the descriptor id ("alasm-5.09")
     uint64_t generation = 0;      ///< built: the build's number
     bool complete = false;        ///< built: every label got its value

@@ -200,7 +200,7 @@ phase; master only after the owner's review.
       - [x] every disk format through unreal-disk, the emulator's disk layer made a library (2026-10-10, ../2026-10-10-unreal-disk/README.md): zxasm / symconv read and write TRD, SCL, FDI, UDI, TD0, DSK, MGT ...; unreal-asm keeps no disk code
       - [ ] +3DOS (DSK) file system in unreal-disk, if sources come on +3 disks
       - [ ] unreal-ng's Z80 snapshot writer starts a run right after a single `ED` (`ED ED ED 05 00`): every reader takes it for 237 bytes of #05; reported, the fix is the writer's (`loader_z80.cpp` compress)
-    - [ ] Z2 push watch (host file → inject on save), Inject in the Qt dock
+    - [x] Z2 push watch (host file → inject on save), Inject in the Qt dock (2026-10-11, asm-synchronizer.md §19): `sync-push-watch` on every surface, the watch's own text replaced, the user's a conflict, a busy assembler waited for; Live source window Inject... and Push; checked live in ALASM 5.09
     - [ ] Z3 backends + writers + templates: TASM, XAS, STORM, ZX-ASM, MASM
     - [ ] Z4 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE)
