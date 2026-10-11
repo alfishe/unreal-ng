@@ -6,6 +6,7 @@
 *Bench*
 HostTls_Test.*
 TimeTravelEngineHeap_Test.*
+*TTDControl_Test.LoadingAFileDoesNotHoldItInMemory/*
 
 # B. Boot-bound machine runs over 60 s each under valgrind (the 2026-10-10 full run on .238): they exercise emulation,
 #    which the native and ASan runs cover; the threaded and lifetime tests that take long stay in
