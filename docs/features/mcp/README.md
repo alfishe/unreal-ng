@@ -19,7 +19,7 @@ Design facts at a glance:
 
 | Property | Value |
 |:--|:--|
-| Protocol | MCP `2025-03-26` (JSON-RPC 2.0) |
+| Protocol | MCP `2025-06-18`, also `2025-03-26` / `2024-11-05` (JSON-RPC 2.0); the `MCP-Protocol-Version` header of later requests is checked (unsupported: HTTP 400; none: `2025-03-26`) |
 | Transport | Streamable HTTP — JSON or SSE answers, stateless |
 | Endpoint | `http://localhost:8092/mcp` (also reachable on :8090) |
 | stdio | via `unreal-mcp-bridge` (one process, no deps) |
@@ -305,17 +305,19 @@ before the marker is out of reach for that search.
 
 ```json
 → {"jsonrpc":"2.0","id":1,"method":"initialize",
-   "params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}
+   "params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}
 ← {"jsonrpc":"2.0","id":1,"result":{
-     "protocolVersion":"2025-03-26",
+     "protocolVersion":"2025-06-18",
      "capabilities":{"tools":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false}},
      "serverInfo":{"name":"unreal-ng","version":"1.0.0"},
      "instructions":"…agent-facing briefing…"}}
 ```
 
-The server echoes the client's `protocolVersion` when supported, otherwise
-answers with `2025-03-26`. `notifications/initialized` completes the
-handshake (acknowledged with `202` + empty body, like every notification).
+The server echoes the client's `protocolVersion` when supported (`2025-06-18`, `2025-03-26`, `2024-11-05`),
+otherwise answers with `2025-06-18`. `notifications/initialized` completes the
+handshake (acknowledged with `202` + empty body, like every notification). Later requests may carry
+`MCP-Protocol-Version: <revision>` (2025-06-18 clients do): an unsupported revision is refused with HTTP 400 and a
+JSON-RPC `-32600` naming the supported ones; without the header the request is served as `2025-03-26`.
 
 ### Progress streaming
 

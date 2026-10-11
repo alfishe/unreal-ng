@@ -339,6 +339,29 @@ TEST_P(TTDControl_Test, SeekTargetsAreCheckedBeforeAnythingMoves)
     EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle);  // nothing moved
 }
 
+// A seek past the history's end answers out_of_range naming the end and the position the machine
+// still stands on - not arrived_at {0, 0} - and moves nothing
+TEST_P(TTDControl_Test, SeekPastTheEndMovesNothing)
+{
+    Record(6);
+    ASSERT_TRUE(Run("stop").Ok());
+    const TTDReply before = Run("position");
+    ASSERT_TRUE(before.Ok());
+    const auto current = before.body.find("current")->find("frame")->i;
+    const auto end = before.body.find("session_end")->find("frame")->i;
+
+    const TTDReply r = Run("seek", {{"frame", std::to_string(end + 1000)}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_FALSE(Bool(r, "reached"));
+    EXPECT_EQ(Str(r, "halt_reason"), "out_of_range");
+    EXPECT_EQ(r.body.find("arrived_at")->find("frame")->i, current) << "where the machine is, not frame 0";
+    EXPECT_EQ(r.body.find("session_end")->find("frame")->i, end);
+    EXPECT_NE(Str(r, "message").find("past the history"), std::string::npos) << Str(r, "message");
+    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Idle) << "nothing moved";
+    const TTDReply after = Run("position");
+    EXPECT_EQ(after.body.find("current")->find("frame")->i, current);
+}
+
 TEST_P(TTDControl_Test, SeekStepAndResumeReportWhereTheMachineIs)
 {
     Record(6);

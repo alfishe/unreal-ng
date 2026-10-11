@@ -69,18 +69,6 @@ std::string EchoStructured(const Json::Value& structured, const std::string& ima
     return json;
 }
 
-bool IsSupportedProtocolVersion(const std::string& version)
-{
-    for (const char* supported : kSupportedProtocolVersions)
-    {
-        if (version == supported)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
 } // namespace
 
 McpDispatcher::McpDispatcher(std::unique_ptr<ToolRegistry> registry)

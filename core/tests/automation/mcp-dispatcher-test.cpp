@@ -160,6 +160,19 @@ TEST_F(McpDispatcher_Test, Initialize_EchoesSupportedClientVersion)
     EXPECT_EQ(response["result"]["protocolVersion"].asString(), "2024-11-05");
 }
 
+// 2025-06-18 (structured tool output, the MCP-Protocol-Version header) is the current revision and accepted
+TEST_F(McpDispatcher_Test, Initialize_Speaks2025_06_18)
+{
+    Json::Value params;
+    params["protocolVersion"] = "2025-06-18";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("initialize", params));
+
+    EXPECT_EQ(response["result"]["protocolVersion"].asString(), "2025-06-18");
+    EXPECT_STREQ(mcp::kProtocolVersion, "2025-06-18");
+    EXPECT_TRUE(mcp::IsSupportedProtocolVersion("2025-03-26")) << "older clients keep working";
+    EXPECT_FALSE(mcp::IsSupportedProtocolVersion("2099-01-01"));
+}
+
 TEST_F(McpDispatcher_Test, Initialize_FallsBackForUnsupportedVersion)
 {
     Json::Value params;
