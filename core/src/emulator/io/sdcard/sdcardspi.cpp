@@ -198,6 +198,13 @@ void SdCardSpi::queueBlock(uint64_t block)
     _out.push_back(static_cast<uint8_t>(crc >> 8));
     _out.push_back(static_cast<uint8_t>(crc));
     _blocksRead++;
+    if (_onTrace)
+    {
+        SdTraceEvent event;
+        event.kind = SdTraceEvent::Kind::ReadBlock;
+        event.block = block;
+        _onTrace(event);
+    }
 }
 
 uint8_t SdCardSpi::exchange(uint8_t mosi)
@@ -277,13 +284,49 @@ void SdCardSpi::finishWrite()
         if (_onWrite)
             _onWrite(_writeBlock);
     }
+    if (_onTrace)
+    {
+        SdTraceEvent event;
+        event.kind = SdTraceEvent::Kind::WriteBlock;
+        event.block = _writeBlock;
+        event.ok = ok;
+        _onTrace(event);
+    }
     _writeBlock++;
     _mode = _multiWrite && ok ? Mode::WaitToken : Mode::Command;
     if (!ok)
         _multiWrite = false;
 }
 
+const char* SdCardSpi::stateName() const
+{
+    return _state == State::PowerOn ? "power_on" : (_state == State::Idle ? "idle" : "ready");
+}
+
 void SdCardSpi::onCommand()
+{
+    if (!_onTrace)
+    {
+        onCommandBody();
+        return;
+    }
+    // The trace sees what the card queued: after the 0xFF of the NCR byte comes R1
+    const bool app = _appCommand;
+    const bool streaming = _mode == Mode::ReadMulti;
+    onCommandBody();
+    SdTraceEvent event;
+    event.kind = SdTraceEvent::Kind::Command;
+    event.index = _cmd[0] & 0x3F;
+    event.argument = _lastArgument;
+    event.app = app;
+    event.crcValid = _cmd[5] == static_cast<uint8_t>((crc7(_cmd, 5) << 1) | 1);
+    // a command ignored while streaming leaves the stream's data in the queue: no response
+    const bool ignored = streaming && event.index != 12 && event.index != 0;
+    event.r1 = !ignored && _out.size() >= 2 ? _out[1] : 0xFF;
+    _onTrace(event);
+}
+
+void SdCardSpi::onCommandBody()
 {
     const uint8_t index = _cmd[0] & 0x3F;
     const uint32_t arg = (static_cast<uint32_t>(_cmd[1]) << 24) | (static_cast<uint32_t>(_cmd[2]) << 16) |

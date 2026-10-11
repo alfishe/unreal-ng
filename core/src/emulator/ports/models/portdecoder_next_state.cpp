@@ -10,6 +10,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/nextregjournal.h"
+#include "emulator/io/z80n/nextsdjournal.h"
 #include "emulator/io/z80n/nextregtable.h"
 #include "emulator/ports/models/portdecoder_next.h"
 
@@ -180,6 +181,102 @@ StateNode NextRegJournalControl(EmulatorContext* context, int enable, bool clear
     if (enable >= 0)
         journal.SetEnabled(enable != 0);
     return JournalState(journal);
+}
+
+namespace
+{
+StateNode SdJournalState(const NextSdJournal& journal)
+{
+    StateNode n = StateNode::Object();
+    n["available"] = true;
+    n["enabled"] = journal.Enabled();
+    n["size"] = static_cast<uint64_t>(journal.Size());
+    n["capacity"] = static_cast<uint64_t>(journal.Capacity());
+    n["evicted"] = journal.Evicted();
+    n["last_seq"] = journal.LastSeq();
+    return n;
+}
+}  // namespace
+
+StateNode NextSdReport(EmulatorContext* context, const NextSdJournalQuery& query)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    StateNode n = SdJournalState(decoder->SdJournal());
+    StateNode cards = StateNode::Array();
+    for (unsigned c = 0; c < 2; c++)
+    {
+        const SdCardSpi& card = decoder->SdCard(c);
+        StateNode node = StateNode::Object();
+        node["card"] = int(c);
+        node["present"] = card.present();
+        if (card.present())
+        {
+            node["type"] = card.isSdhc() ? "SDHC" : "SDSC";
+            node["state"] = card.stateName();
+            node["size_bytes"] = static_cast<uint64_t>(card.sizeBytes());
+            node["in_transfer"] = card.InTransfer();
+            if (card.lastCommand() != 0xFF)
+            {
+                node["last_command"] = NextSdCommandName(card.lastCommand(), false);
+                node["last_argument"] = StringHelper::Format("0x%08X", card.lastArgument());
+            }
+        }
+        node["blocks_read"] = static_cast<uint64_t>(card.blocksRead());
+        node["blocks_written"] = static_cast<uint64_t>(card.blocksWritten());
+        cards.push(std::move(node));
+    }
+    n["cards"] = std::move(cards);
+    StateNode spi = StateNode::Object();
+    const int line = decoder->SpiSelectedLine();
+    spi["selected"] = line >= 0 ? StateNode(int(line)) : StateNode("none");
+    spi["byte_in_flight"] = decoder->SpiByteInFlight();
+    spi["last_received"] = Hex8(decoder->SpiLastReceived());
+    spi["too_fast_accesses"] = int(decoder->SpiTooFastCount());
+    n["spi"] = std::move(spi);
+    StateNode events = StateNode::Array();
+    for (const NextSdEvent& e : decoder->SdJournal().Query(query))
+    {
+        StateNode ev = StateNode::Object();
+        ev["seq"] = e.seq;
+        ev["frame"] = int(e.frame);
+        ev["t"] = int(e.t);
+        ev["pc"] = Hex16(e.pc);
+        ev["card"] = int(e.card);
+        ev["kind"] = NextSdKindName(e.kind);
+        if (e.kind == NextSdKind::Command)
+        {
+            ev["command"] = NextSdCommandName(e.index, e.app);
+            ev["argument"] = StringHelper::Format("0x%08X", e.argument);
+            ev["r1"] = e.r1 == 0xFF ? StateNode("none") : StateNode(Hex8(e.r1));
+            ev["crc_valid"] = e.crcValid;
+        }
+        else
+        {
+            ev["block"] = e.block;
+            if (e.kind == NextSdKind::WriteBlock)
+                ev["ok"] = e.ok;
+        }
+        events.push(std::move(ev));
+    }
+    n["events"] = std::move(events);
+    return n;
+}
+
+StateNode NextSdJournalControl(EmulatorContext* context, int enable, bool clear, size_t capacity)
+{
+    PortDecoder_Next* decoder = NextDecoder(context);
+    if (!decoder)
+        return Unavailable();
+    NextSdJournal& journal = decoder->SdJournal();
+    if (capacity > 0)
+        journal.SetCapacity(capacity);
+    if (clear)
+        journal.Clear();
+    if (enable >= 0)
+        journal.SetEnabled(enable != 0);
+    return SdJournalState(journal);
 }
 
 StateNode Next(EmulatorContext* context)

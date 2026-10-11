@@ -102,6 +102,7 @@
 #include <common/stringhelper.h>
 #include <debugger/ports/nextregwrite.h>
 #include <emulator/io/z80n/nextregjournal.h>
+#include <emulator/io/z80n/nextsdjournal.h>
 #include <emulator/io/z80n/nextreportquery.h>
 #include "../bindings/python_porttrace.h"
 #include "../bindings/python_vdac2.h"
@@ -2904,6 +2905,29 @@ namespace PythonBindings
                 return StateNodeToPy(DeviceState::NextRegJournalControl(self.GetContext(), enable, clear, capacity));
             }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
                "Switch (enabled=True/False), clear or resize (capacity=N) the NextREG write journal")
+            .def("next_sd", [](Emulator& self, py::object kinds, py::object card, py::object since, py::object from_frame,
+                               py::object to_frame, py::object limit) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextSdJournalQuery query;
+                std::string error;
+                if (!NextSdJournalQueryFromStrings(text(kinds), text(card), text(since), text(from_frame), text(to_frame), text(limit),
+                                                   query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextSdReport(self.GetContext(), query));
+            }, py::arg("kinds") = py::none(), py::arg("card") = py::none(), py::arg("since") = py::none(),
+               py::arg("from_frame") = py::none(), py::arg("to_frame") = py::none(), py::arg("limit") = py::none(),
+               "The Next SD cards (type SDSC/SDHC, protocol state, blocks), the SPI engine and the SD journal: every command with "
+               "its argument and R1, every block read / written, with frame, T and PC (kinds='command,read,write', card=0|1); the "
+               "journal is off by default - next_sd_journal_control(enabled=True) first")
+            .def("next_sd_journal_control", [](Emulator& self, py::object enabled, bool clear, size_t capacity) -> py::object {
+                const int enable = enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0);
+                return StateNodeToPy(DeviceState::NextSdJournalControl(self.GetContext(), enable, clear, capacity));
+            }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
+               "Switch (enabled=True/False), clear or resize (capacity=N) the SD journal")
             .def("next_dma", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextDma(self.GetContext())); },
                "The Next DMA as programmed and running (mode, ports A / B, direction, burst, prescaler, counters, status byte); reading it "
                "does not advance its read sequence; available=False elsewhere")

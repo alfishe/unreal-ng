@@ -38,6 +38,25 @@
 
 class SessionWriteMap;
 
+/// What a card did, for a trace (docs/inprogress/2026-10-07-zx-next/automation-gaps-2026-10-11.md, P1)
+struct SdTraceEvent
+{
+    enum class Kind : uint8_t
+    {
+        Command,     ///< a complete 6-byte command: index, argument, `app` (ACMD), `r1` = the response byte the card queued (0xFF: none)
+        ReadBlock,   ///< a data block queued for the host: `block`
+        WriteBlock,  ///< a data block received: `block`, `ok` = stored (false: refused)
+    };
+    Kind kind = Kind::Command;
+    uint8_t index = 0;
+    uint32_t argument = 0;
+    bool app = false;
+    bool crcValid = true;
+    uint8_t r1 = 0xFF;
+    uint64_t block = 0;
+    bool ok = true;
+};
+
 class SdCardSpi : public SpiDevice
 {
 public:
@@ -123,6 +142,12 @@ public:
     /// is entered, i.e. from the first valid CMD0 on), with the command index
     void setCommandListener(std::function<void(uint8_t index)> listener) { _onCommand = std::move(listener); }
 
+    /// Called for every complete command (also the ignored ones: before SPI mode, while streaming), every block queued for the host and
+    /// every block received. Costs one empty-function test when not set
+    void setTraceListener(std::function<void(const SdTraceEvent&)> listener) { _onTrace = std::move(listener); }
+    /// The state name for a report: power_on, idle, ready
+    const char* stateName() const;
+
     /// Direct sector access (tests, automation); returns false beyond the card
     bool readBlock(uint64_t block, uint8_t* out);
     bool writeBlock(uint64_t block, const uint8_t* data);
@@ -143,6 +168,7 @@ private:
     };
 
     void onCommand();
+    void onCommandBody();
     void ApplyType(Type type);
     void respondR1(uint8_t r1);
     void queueBlock(uint64_t block);
@@ -191,4 +217,5 @@ private:
 
     std::function<void(uint64_t)> _onWrite;
     std::function<void(uint8_t)> _onCommand;
+    std::function<void(const SdTraceEvent&)> _onTrace;
 };

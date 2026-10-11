@@ -222,6 +222,12 @@ Open (arithmetic only, no board numbers): 28 MHz SRAM read wait (+1 clock per re
 turbo; CPU speed change applied at the next frame; NEXTREG write lands 3 T late; 60 Hz timing; NR03 timing decode (bit 3, lock, 101-111);
 NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 
+## Automation gaps against other debuggers and the hardware (2026-10-11, [automation-gaps-2026-10-11.md](automation-gaps-2026-10-11.md))
+- [x] Survey: jnext, ZEsarUX, MAME, CSpect (plugins only), DeZog/DZRP and the VHDL against our five planes; ranked gaps G1-G10, device gaps D1-D2, phases P1-P6
+- [x] **P1 (G1)** SD/SPI journal and report on every plane: `state next sd`, `POST next/sd-journal`, MCP `next_sd`, Lua `next_sd()`, Python `next_sd()`; `SdCardSpi::setTraceListener`
+- [ ] P2 DivMMC automap latch + trigger journal + ESXDOS call trace; P3 NextREG breakpoints; P4 NMI / Multiface / interrupt log / reset reason; P5 audio, input, small decodes; P6 magic breakpoint/port, DZRP extras, TTD of NEXTREG writes (owner decision)
+- [ ] Device gaps D1 (UART/ESP/Pi) and D2 (Kempston mouse, ULA+, Radastan): the reports follow the devices
+
 ## Automation coverage - what is left (2026-10-10)
 
 - [x] Per-layer capture and the pixel inspector (L0-L3 of [design-layer-capture.md](design-layer-capture.md)): **done 2026-10-10**, default ON (measured +4.0 % of a full emulated frame, +4.4 % of the bare render, gate 5 %); WebAPI + OpenAPI, MCP, CLI, Lua, Python; tests `NextLayerCapture_Test`, `NextLayerImage_Test`, `NextPixel_Test` (+ the live `TestNextLayerCapture`, Lua and Python checks in `test_api_next.py`).

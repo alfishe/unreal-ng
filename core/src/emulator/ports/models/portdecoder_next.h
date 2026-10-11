@@ -10,6 +10,7 @@
 #include "emulator/io/z80n/nextctc.h"
 #include "emulator/io/z80n/nextdivmmc.h"
 #include "emulator/io/z80n/nextmultiface.h"
+#include "emulator/io/z80n/nextsdjournal.h"
 #include "emulator/io/z80n/nexti2c.h"
 #include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/io/z80n/z80nengine.h"
@@ -88,6 +89,12 @@ public:
     double SpiBusyUntil();
     /// Accesses that began before the previous byte was done and were ignored, as on the board
     uint32_t SpiTooFastCount() const { return _spiTooFast; }
+    /// The SD journal (automation-gaps-2026-10-11.md, P1) and the SPI engine's state for the report
+    NextSdJournal& SdJournal() { return _sdJournal; }
+    const NextSdJournal& SdJournal() const { return _sdJournal; }
+    int SpiSelectedLine() const { return _spiSelected; }
+    bool SpiByteInFlight() const { return _spiPendingValid; }
+    uint8_t SpiLastReceived() const { return _spiRx; }
 
     NextBoard& Board() { return *_board; }
     NextInterruptSource& Interrupts() { return *_interrupts; }
@@ -153,6 +160,8 @@ private:
     double _spiBusyUntil = 0;
     double _spiBusyRatio = 1.0;  ///< the CPU speed ratio the byte in flight was timed at
     uint32_t _spiTooFast = 0;
+    NextSdJournal _sdJournal;
+    void RecordSdEvent(unsigned card, const SdTraceEvent& event);
     std::unique_ptr<NextBoard> _board;
     std::unique_ptr<NextInterruptSource> _interrupts;
     std::unique_ptr<NextDivMmc> _divMmc;
