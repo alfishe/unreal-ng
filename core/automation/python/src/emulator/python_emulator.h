@@ -3037,7 +3037,7 @@ namespace PythonBindings
                "periods / volumes, and the four DAC channels with the left / right sums; available=False elsewhere")
             .def("next_input", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextInputReport(self.GetContext())); },
                "The Next's joystick modes (NR #05 left / right and the port each answers), the NR #0B I/O mode, the Kempston port #1F decoded and "
-               "what is not modelled (port #37, MD pad buttons, extended keys); available=False elsewhere")
+               "the answer of ports #1F and #37 by NR #05 / #82, and what is not modelled (MD pad buttons, extended keys); available=False elsewhere")
             .def("next_nmi", [](Emulator& self, py::object kinds, py::object since, py::object from_frame, py::object to_frame,
                                 py::object limit) -> py::object {
                 auto text = [](const py::object& value) -> std::string {

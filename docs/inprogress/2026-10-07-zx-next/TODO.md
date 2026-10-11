@@ -238,6 +238,7 @@ NR08 latch at hc(8); port-contention details (#BF3B, #FF3B); DMA bus contention.
 - [ ] TTD: PeripheralId 63 was the last id the 64-bit peripheral mask (`TTDFileInfo::peripheralMask`) can hold; the next device needs a wider mask first
 - [ ] TTD: the config-mode system-area writes (firmware ROM load) are not restored; the UARTs wait for the devices
 - [x] P6 magic output port (`state/next/magic-port`, `POST /next/magic-port`, every plane; the console is a bounded ring, off by default)
+- [x] Joystick ports from the RTL: #1F answers for Kempston 1 / MD 1 and #37 for Kempston 2 / MD 2 by NR #05 on either side and NR #82 bits 6 / 7, bits 7:6 only for an MD pad, an unanswered port idles at #FF; the host joystick is the left connector (NR #05 reset 0x40 = joy0 Kempston 1)
 - [ ] Device gaps D1 (UART/ESP/Pi) and D2 (Kempston mouse, ULA+, Radastan): the reports follow the devices
 
 ## Automation coverage - what is left (2026-10-10)

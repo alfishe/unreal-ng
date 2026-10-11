@@ -282,7 +282,7 @@ StateNode NextMagicPortControl(EmulatorContext* context, int enable, int port, c
 StateNode NextAudioReport(EmulatorContext* context);
 /// The Next's input as the program configured it (`next_input`, /state/next/input; automation-gaps-2026-10-11.md P5): the joystick modes of
 /// NR #05 (left and right: Sinclair, Kempston, cursor, MD pad, I/O mode) and which port each answers, the I/O mode of NR #0B, the Kempston
-/// port #1F now decoded, and what is not modelled (port #37, the MD pad buttons, the extended keys NR #B0-#B2). Reading changes nothing
+/// port #1F now decoded, and whether #1F and #37 are driven (NR #05 / #82) and what is not modelled (the MD pad buttons, the extended keys NR #B0-#B2). Reading changes nothing
 StateNode NextInputReport(EmulatorContext* context);
 /// The Next's debugger reports (docs/inprogress/2026-10-07-zx-next/design-automation-coverage.md; built in
 /// ports/models/portdecoder_next_reports.cpp). None of them has a side effect on the machine (R3): they read the models' state,

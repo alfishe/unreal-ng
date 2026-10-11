@@ -14,6 +14,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/joystick/joystick.h"
 #include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/sound/nextaudio.h"
 #include "emulator/state/devicestate.h"
@@ -133,7 +134,7 @@ TEST_F(NextAudioInput_Test, TheInputReportDecodesTheJoystickModesAndTheKempstonP
     Board().WriteNextReg(kRegJoystickModes, LeftMode(kSinclair2) | RightMode(kSinclair2));
     report = DeviceState::NextInputReport(_context);
     EXPECT_FALSE(report.find("kempston_1f")->find("selected_by_nr_05")->b);
-    EXPECT_TRUE(report.find("kempston_1f")->find("answers_here")->b) << "the board would not drive #1F; this emulator does";
+    EXPECT_FALSE(report.find("kempston_1f")->find("answers_here")->b) << "the board does not drive #1F with these modes";
     EXPECT_FALSE(report.find("kempston_1f")->find("note")->s.empty());
 
     Board().WriteNextReg(kRegJoystickModes, LeftMode(kIoMode));
@@ -144,7 +145,7 @@ TEST_F(NextAudioInput_Test, TheInputReportDecodesTheJoystickModesAndTheKempstonP
     EXPECT_TRUE(report.find("io_mode")->find("enabled")->b);
     EXPECT_EQ(report.find("io_mode")->find("mode")->s, "pin7 = UART TX");
     EXPECT_TRUE(report.find("io_mode")->find("uart_on_joystick_port")->b);
-    EXPECT_FALSE(report.find("not_modelled")->find("port_37")->b);
+    EXPECT_EQ(report.find("not_modelled")->find("port_37"), nullptr) << "#37 is modelled now";
 
     auto run = [&](const std::vector<std::string>& args) { return CliNext::StateText(_context, args, "\n"); };
     const std::string text = run({"next", "input"});
@@ -164,4 +165,53 @@ TEST_F(NextAudioInput_Test, TheBoardBlockShowsTheBusEnablesTheDebugLedAndTheUnmo
     EXPECT_EQ(board->find("bus_port_enable")->find("restored_by")->s, "soft reset");
     EXPECT_NE(board->find("debug_led"), nullptr);
     EXPECT_FALSE(board->find("io_trap")->find("modelled")->b);
+}
+
+// zxnext.vhd 2396, 2616-2617, 3436-3470: the board drives #1F for Kempston 1 / an MD pad on #1F and #37 for Kempston 2 / an MD pad on #37,
+// each with its bit of NR #82 (6 and 7); the host joystick is the left connector; bits 7:6 belong to an MD pad; a port nobody drives idles at #FF
+namespace
+{
+constexpr uint16_t kPortKempston1 = 0x001F, kPortKempston2 = 0x0037;
+constexpr uint8_t kStickRight = 0x01, kStickFire = 0x10, kPadMode = 0x40, kPadBits = 0xC0;  // a pad button on bit 6
+constexpr unsigned kMd2 = 6;
+constexpr uint8_t kRegPortEnable0 = 0x82, kEnable1F = 0x40, kEnable37 = 0x80, kIdleBus = 0xFF;
+}  // namespace
+
+TEST_F(NextAudioInput_Test, TheJoystickPortsAreDrivenByTheModesAndTheirEnableBits)
+{
+    Joystick* stick = _context->pJoystick;
+    ASSERT_NE(stick, nullptr);
+    stick->SetState(kStickRight | kStickFire);
+    auto in = [&](uint16_t port) { return _ports->DecodePortIn(port, 0); };
+
+    // power on: Kempston 1 on the left answers #1F, nothing answers #37
+    EXPECT_EQ(in(kPortKempston1), kStickRight | kStickFire);
+    EXPECT_EQ(in(kPortKempston2), kIdleBus);
+
+    // Kempston 2 on the left: #37 answers, #1F idles
+    Board().WriteNextReg(kRegJoystickModes, LeftMode(kKempston2));
+    EXPECT_EQ(in(kPortKempston2), kStickRight | kStickFire);
+    EXPECT_EQ(in(kPortKempston1), kIdleBus);
+
+    // an MD pad passes bits 7:6, a Kempston stick does not
+    stick->SetState(kStickRight | kPadMode);
+    Board().WriteNextReg(kRegJoystickModes, LeftMode(kMd1));
+    EXPECT_EQ(in(kPortKempston1), kStickRight | kPadMode);
+    Board().WriteNextReg(kRegJoystickModes, LeftMode(kKempston1));
+    EXPECT_EQ(in(kPortKempston1), kStickRight) << "no pad bits on a Kempston stick";
+    Board().WriteNextReg(kRegJoystickModes, LeftMode(kMd2));
+    EXPECT_EQ(in(kPortKempston2), kStickRight | kPadMode);
+
+    // the host joystick is the left connector: a right side that is Kempston 1 answers the port with nothing pressed on it
+    Board().WriteNextReg(kRegJoystickModes, LeftMode(kSinclair2) | RightMode(kKempston1));
+    EXPECT_EQ(in(kPortKempston1), 0x00);
+
+    // a port without its bit in NR #82 is not decoded
+    Board().WriteNextReg(kRegJoystickModes, LeftMode(kKempston1));
+    Board().WriteNextReg(kRegPortEnable0, static_cast<uint8_t>(0xFF & ~kEnable1F));
+    EXPECT_EQ(in(kPortKempston1), kIdleBus);
+    Board().WriteNextReg(kRegPortEnable0, static_cast<uint8_t>(0xFF & ~kEnable37));
+    Board().WriteNextReg(kRegJoystickModes, LeftMode(kKempston2));
+    EXPECT_EQ(in(kPortKempston2), kIdleBus);
+    (void)kPadBits;
 }

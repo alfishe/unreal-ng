@@ -619,7 +619,9 @@ inline std::string StateText(EmulatorContext* context, const std::vector<std::st
             out += "Kempston #1F: " + Field(*k, "value") + (Field(*k, "selected_by_nr_05") == "on" ? "" : "  (NR #05 does not select it; this emulator still answers)") +
                    newline;
         }
-        out += std::string("Not modelled: port #37, MD pad buttons, extended keys (NR #B0-#B2 only store their bytes)") + newline;
+        out += "Port #1F " + std::string(Field(*report.find("kempston_1f"), "answers_here") == "on" ? "answers" : "idle (#FF)") + ", port #37 " +
+               (Field(*report.find("kempston_37"), "answers_here") == "on" ? "answers" : "idle (#FF)") + newline;
+        out += std::string("Not modelled: MD pad buttons, extended keys (NR #B0-#B2 only store their bytes)") + newline;
         return out;
     }
     if (sub == "magicport" || sub == "magic-port")
