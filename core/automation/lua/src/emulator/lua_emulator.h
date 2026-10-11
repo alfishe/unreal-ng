@@ -425,6 +425,74 @@ protected:
         return id == BRK_INVALID ? -1 : static_cast<int>(id);
     }
 
+    /// bp_nextreg_write / bp_nextreg_read / bp_nextreg: `options` is nothing or a table {to=, doors=, value=, vmask=, hits=}
+    /// (to = register range end; doors "nextreg,port,copper"; value = stop only on it, vmask = the compared bits). The id, or -1
+    int AddScriptNextRegBreakpoint(uint8_t access, uint16_t reg, const sol::optional<sol::table>& options)
+    {
+        Emulator* emulator = effectiveEmulator();
+        BreakpointManager* bpm = emulator ? emulator->GetBreakpointManager() : nullptr;
+        if (!bpm)
+            return -1;
+        BreakpointSpec spec;
+        spec.type = BRK_NEXTREG;
+        spec.access = access;
+        spec.address = reg;
+        std::string doors, hits;
+        int32_t to = -1, value = -1, vmask = -1;
+        if (options)
+        {
+            const sol::table& t = *options;
+            to = t.get<sol::optional<int32_t>>("to").value_or(-1);
+            doors = t.get<sol::optional<std::string>>("doors").value_or("");
+            value = t.get<sol::optional<int32_t>>("value").value_or(-1);
+            vmask = t.get<sol::optional<int32_t>>("vmask").value_or(-1);
+            hits = t.get<sol::optional<std::string>>("hits").value_or("");
+            if (hits.empty())
+                if (auto n = t.get<sol::optional<int64_t>>("hits"))
+                    hits = std::to_string(*n);
+        }
+        std::string error;
+        if (!BreakpointManager::ApplyNextRegOptions(spec, to, doors, value, vmask, hits, error))
+            return -1;
+        const uint16_t id = bpm->AddBreakpoint(spec, error);
+        return id == BRK_INVALID ? -1 : static_cast<int>(id);
+    }
+
+    /// bp_beam / bp_copper (ZX Next): `options` is nothing or a table {hc=, to=, hits=} (hc: the pixel clock of a beam place; to: the
+    /// range end of copper list indexes). The id, or -1
+    int AddScriptPositionBreakpoint(BreakpointTypeEnum type, uint16_t position, const sol::optional<sol::table>& options)
+    {
+        Emulator* emulator = effectiveEmulator();
+        BreakpointManager* bpm = emulator ? emulator->GetBreakpointManager() : nullptr;
+        if (!bpm)
+            return -1;
+        BreakpointSpec spec;
+        spec.type = type;
+        spec.access = BRK_IO_OUT;
+        spec.address = position;
+        std::string hits;
+        if (options)
+        {
+            const sol::table& t = *options;
+            spec.beamHc = static_cast<uint16_t>(t.get<sol::optional<int32_t>>("hc").value_or(0));
+            const int32_t to = t.get<sol::optional<int32_t>>("to").value_or(-1);
+            if (to >= 0)
+            {
+                spec.hasEnd = true;
+                spec.addressEnd = static_cast<uint16_t>(to);
+            }
+            hits = t.get<sol::optional<std::string>>("hits").value_or("");
+            if (hits.empty())
+                if (auto n = t.get<sol::optional<int64_t>>("hits"))
+                    hits = std::to_string(*n);
+        }
+        std::string error;
+        if (!BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error))
+            return -1;
+        const uint16_t id = bpm->AddBreakpoint(spec, error);
+        return id == BRK_INVALID ? -1 : static_cast<int>(id);
+    }
+
     /// region <Kempston Mouse helpers (automation-interfaces §4.7)>
 protected:
     DebugMouseManager* mouseManager() const
@@ -2843,6 +2911,26 @@ public:
         // Options: a table {mask=, hits=} (mask: (port & mask) == (port & mask) matches)
         lua.set_function("bp_port_out", [this](uint16_t port, sol::optional<sol::object> options) -> int {
             return AddScriptBreakpoint(BRK_IO, BRK_IO_OUT, port, options);
+        });
+
+        // ZX Next register breakpoints. Options: a table {to=, doors=, value=, vmask=, hits=} (to = register range end; doors
+        // "nextreg,port,copper" a write may come through; value = stop only on it, vmask = the compared bits). -1 when refused
+        lua.set_function("bp_nextreg_write", [this](uint16_t reg, sol::optional<sol::table> options) -> int {
+            return AddScriptNextRegBreakpoint(BRK_IO_OUT, reg, options);
+        });
+        lua.set_function("bp_nextreg_read", [this](uint16_t reg, sol::optional<sol::table> options) -> int {
+            return AddScriptNextRegBreakpoint(BRK_IO_IN, reg, options);
+        });
+        // bp_beam(line, {hc=}) stops when the beam passes the place (the copper's counters); bp_copper(index, {to=}) when the copper
+        // completes that list instruction. -1 when refused
+        lua.set_function("bp_beam", [this](uint16_t line, sol::optional<sol::table> options) -> int {
+            return AddScriptPositionBreakpoint(BRK_BEAM, line, options);
+        });
+        lua.set_function("bp_copper", [this](uint16_t index, sol::optional<sol::table> options) -> int {
+            return AddScriptPositionBreakpoint(BRK_COPPER, index, options);
+        });
+        lua.set_function("bp_nextreg", [this](uint16_t reg, sol::optional<sol::table> options) -> int {
+            return AddScriptNextRegBreakpoint(BRK_IO_IN | BRK_IO_OUT, reg, options);
         });
 
         lua.set_function("bp_remove", [this](uint16_t id) -> bool {

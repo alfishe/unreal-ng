@@ -17,11 +17,16 @@
 #include "emulator/io/sdcard/sdcardspi.h"
 #include "emulator/media/mediaslot.h"
 #include "emulator/memory/next/nextmemory.h"
+#include <vector>
+
 #include "emulator/ports/models/portdecoder_spectrum128.h"
 
 /// ZX Spectrum Next, skeleton personality: the 128K board's ports (ULA #FE, AY, #7FFD) with the Next's wider
 /// decode of the paging ports - #7FFD, #1FFD, #DFFD rewrite the MMU slot table - and the NEXTREG pair #243B /
 /// #253B. Owns the board (register file) and installs the Z80N CPU engine.
+class BreakpointManager;
+enum class BreakpointHitKind : uint8_t;
+
 class PortDecoder_Next : public PortDecoder_Spectrum128, public INextMachine
 {
 public:
@@ -50,6 +55,9 @@ public:
     void ClearDivMmcMapram() override { _divMmc->ClearMapram(); }
     void DivMmcEnableChanged() override { _divMmc->OnEnableChanged(); }
     void StepDma() override;
+    /// INextMachine: with a beam, copper-instruction or copper-door NextREG breakpoint set, the copper is watched here, at the
+    /// instruction boundary (WatchCopper); otherwise one load and one test
+    void OnInstructionDone() override;
     void OnRetn() override;
     bool GenerateMultifaceNmi() override;
     /// The DRIVE button (F10 on the board; the host's NMI action): NR #06 bit 4 enables it, one NMI at a time
@@ -107,6 +115,21 @@ public:
     Z80NEngine* Engine() { return _engine.get(); }
 
 private:
+    /// NextREG breakpoints (BreakpointManager::HandleNextReg). A hit of the CPU's doors stops the machine where it happens (as a port
+    /// breakpoint does), before the register takes the write.
+    ///
+    /// The copper is another matter: the picture runs it lazily, a line at a time, in the middle of drawing, where the machine must not
+    /// park and the CPU is up to a line ahead of the copper's time. With a breakpoint on the copper (its door, its instructions, the beam)
+    /// WatchCopper looks at what the copper does up to the beam *now* on a copy (NextCopper::Probe) after every instruction, and stops
+    /// at the first instruction boundary after the beam has done it, before the real copper's catch-up executes the write. The real
+    /// catch-up then neither checks nor counts them again
+    void NextRegAccess(bool write, uint8_t reg, uint8_t value, NextRegSource source);
+    void FireBreakpoint(uint16_t id, uint16_t address, BreakpointHitKind kind);
+    void WatchCopper(BreakpointManager& manager);
+    bool _breakpointActive = false;  // a stop is being served: nothing nests in it
+    bool _watchValid = false;
+    uint64_t _watchClock = 0;  // the copper clock up to which the copper was watched
+    std::vector<NextCopper::Step> _watchSteps;
     NextMemory& Mem() const { return *static_cast<NextMemory*>(_context->pMemory); }
     void Port_7FFD_Next(uint16_t port, uint8_t value, uint16_t pc);
     void Port_1FFD_Next(uint8_t value);

@@ -12,14 +12,29 @@
 
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 class NextCopper
 {
 public:
+    /// The copper and the video count in 28 MHz clocks, the pixel clock (hc) is 7 MHz: four clocks to a pixel
+    static constexpr unsigned kClocksPerPixel = 4;
+
     /// The NextREG write a MOVE performs
     using WriteFn = std::function<void(uint8_t reg, uint8_t value)>;
     /// The beam as copper time (28 MHz clocks)
     using NowFn = std::function<uint64_t()>;
+
+    /// One instruction the copper completed: a WAIT that became true (it leaves) or a MOVE (reg 0 = the NOP), at its list index and clock
+    struct Step
+    {
+        uint16_t pc = 0;
+        uint64_t at = 0;  ///< copper clock the instruction completed on
+        bool isMove = false;
+        uint8_t reg = 0;
+        uint8_t value = 0;
+    };
+    using StepFn = std::function<void(const Step&)>;
 
     void SetWriter(WriteFn writer) { _write = std::move(writer); }
     void SetNow(NowFn now) { _now = std::move(now); }
@@ -44,6 +59,32 @@ public:
     void RunTo(uint64_t target);
     /// Run up to the beam
     void Sync();
+    /// What the copper would do up to copper time `target`, without doing it: a copy of its state runs and tells every instruction it
+    /// completes (the registers of the copper itself are followed). The copper and the machine are left untouched; debug use (breakpoints)
+    void Probe(uint64_t target, std::vector<Step>& steps) const;
+    /// The copper clock of the most recent MOVE, and the beam's place at a copper clock: the line counter with NR #64 applied (the cvc
+    /// of zxula_timing.vhd, what a WAIT and the line interrupt compare) and the pixel clock in the row (hc)
+    uint64_t LastMoveAt() const { return _lastMoveAt; }
+    unsigned BeamLine(uint64_t clock) const { return static_cast<unsigned>(((clock / LineClocks()) + _offset) % _lines); }
+    unsigned BeamHc(uint64_t clock) const { return static_cast<unsigned>((clock % LineClocks()) / kClocksPerPixel); }
+    /// The beam now as a copper clock (false before the screen has bound the clock)
+    bool BeamNow(uint64_t& clock) const
+    {
+        if (!_now)
+            return false;
+        clock = _now();
+        return true;
+    }
+    /// The copper clock the beam passes line counter `line` (offset applied) at pixel clock `hc`; UINT64_MAX if the row has no such clock
+    uint64_t ClockOf(unsigned line, unsigned hc) const
+    {
+        if (line >= _lines || hc >= _hcPerLine)
+            return UINT64_MAX;
+        const uint64_t rawLine = (line + _lines - (_offset % _lines)) % _lines;
+        return (rawLine * _hcPerLine + hc) * kClocksPerPixel;
+    }
+    unsigned HcPerLine() const { return _hcPerLine; }
+    unsigned Lines() const { return _lines; }
 
     uint8_t Mode() const { return _mode; }
     uint16_t Pc() const { return _pc; }
@@ -53,6 +94,7 @@ public:
     uint64_t FrameClocks() const { return _frameClocks; }
 
 private:
+    uint64_t LineClocks() const { return static_cast<uint64_t>(_hcPerLine) * kClocksPerPixel; }
     void RunSegment(uint64_t end);
 
     uint16_t _code[1024] = {};
@@ -68,7 +110,9 @@ private:
     unsigned _hcPerLine = 448;
     unsigned _lines = 312;
     uint64_t _frameClocks = 448ull * 312 * 4;
+    uint64_t _lastMoveAt = 0;
     WriteFn _write;
     NowFn _now;
+    StepFn _observer;
     std::function<void(uint64_t)> _beforeWrite;
 };

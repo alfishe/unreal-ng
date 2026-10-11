@@ -123,6 +123,11 @@ StateNode EventNode(const NextRegWriteEvent& e, const NextRegInfo* table, size_t
     n["frame"] = static_cast<uint64_t>(e.frame);
     n["t"] = static_cast<uint64_t>(e.t);
     n["pc"] = StringHelper::Format("0x%04X", e.pc);
+    if (e.beamLine >= 0)
+    {
+        n["beam_line"] = int(e.beamLine);
+        n["beam_hc"] = int(e.beamHc);
+    }
     n["source"] = NextRegSourceName(e.source);
     n["reg"] = Hex8(e.reg);
     for (size_t i = 0; i < count; i++)

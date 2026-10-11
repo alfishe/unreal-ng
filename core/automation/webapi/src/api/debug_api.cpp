@@ -152,6 +152,17 @@ Json::Value BreakpointJson(const BreakpointDescriptor& bp)
     }
     if (bp.type == BRK_IO && bp.portMask != 0xFFFF)
         j["port_mask"] = bp.portMask;
+    if (bp.type == BRK_BEAM)
+        j["hc"] = bp.beamHc;
+    if (bp.type == BRK_NEXTREG)
+    {
+        j["doors"] = BreakpointManager::NextRegDoorsName(bp.nrDoors);
+        if (bp.nrMask)
+        {
+            j["value"] = bp.nrValue & bp.nrMask;
+            j["value_mask"] = bp.nrMask;
+        }
+    }
     j["hit_mode"] = BreakpointManager::HitModeName(bp.hitMode);
     if (bp.hitMode != BRK_HIT_ALWAYS)
         j["hit_target"] = static_cast<Json::UInt>(bp.hitTarget);
@@ -1004,6 +1015,15 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
                 case BRK_KEYBOARD:
                     bpObj["type"] = "keyboard";
                     break;
+                case BRK_NEXTREG:
+                    bpObj["type"] = "nextreg";
+                    break;
+                case BRK_BEAM:
+                    bpObj["type"] = "beam";
+                    break;
+                case BRK_COPPER:
+                    bpObj["type"] = "copper";
+                    break;
                 default:
                     bpObj["type"] = "unknown";
             }
@@ -1024,6 +1044,10 @@ void EmulatorAPI::getBreakpoints(const HttpRequestPtr& req, std::function<void(c
                 case BRK_IO:
                     bpObj["in"] = (bp->ioType & BRK_IO_IN) != 0;
                     bpObj["out"] = (bp->ioType & BRK_IO_OUT) != 0;
+                    break;
+                case BRK_NEXTREG:
+                    bpObj["read"] = (bp->ioType & BRK_IO_IN) != 0;
+                    bpObj["write"] = (bp->ioType & BRK_IO_OUT) != 0;
                     break;
                 case BRK_KEYBOARD:
                     bpObj["press"] = (bp->keyType & BRK_KEY_PRESS) != 0;
@@ -1112,9 +1136,19 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         spec.type = BRK_IO, spec.access = BRK_IO_OUT;
     else if (type == "port" || type == "io")
         spec.type = BRK_IO, spec.access = BRK_IO_IN | BRK_IO_OUT;
+    else if (type == "nextreg_write")
+        spec.type = BRK_NEXTREG, spec.access = BRK_IO_OUT;
+    else if (type == "nextreg_read")
+        spec.type = BRK_NEXTREG, spec.access = BRK_IO_IN;
+    else if (type == "nextreg")
+        spec.type = BRK_NEXTREG, spec.access = BRK_IO_IN | BRK_IO_OUT;
+    else if (type == "beam")
+        spec.type = BRK_BEAM, spec.access = BRK_IO_OUT;
+    else if (type == "copper")
+        spec.type = BRK_COPPER, spec.access = BRK_IO_OUT;
     else
     {
-        badRequest("Invalid type. Use: execution, read, write, rw, port_in, port_out, port");
+        badRequest("Invalid type. Use: execution, read, write, rw, port_in, port_out, port, nextreg_write, nextreg_read, nextreg, beam, copper");
         return;
     }
 
@@ -1155,6 +1189,51 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
             return;
         }
         spec.portMask = static_cast<uint16_t>(value);
+    }
+    // Beam: 'address' is the line (the copper's counter, NR #64 applied), 'hc' the pixel clock in the row (default 0)
+    if (body.isMember("hc") && !body["hc"].isNull())
+    {
+        if (!ParseJsonUInt(body["hc"], BRK_BEAM_MAX_HC, value))
+        {
+            badRequest("'hc' must be 0..511");
+            return;
+        }
+        spec.beamHc = static_cast<uint16_t>(value);
+    }
+    // NextREG: the doors a write comes through, the value written (value alone: exactly; with value_mask: masked)
+    if (body.isMember("doors") && !body["doors"].isNull())
+    {
+        std::string doorsText;
+        if (body["doors"].isArray())
+            for (const auto& door : body["doors"])
+                doorsText += door.asString() + ",";
+        else
+            doorsText = body["doors"].asString();
+        std::string doorsError;
+        if (!BreakpointManager::ParseNextRegDoors(doorsText, spec.nrDoors, doorsError))
+        {
+            badRequest(doorsError);
+            return;
+        }
+    }
+    if (body.isMember("value") && !body["value"].isNull())
+    {
+        if (!ParseJsonUInt(body["value"], 0xFF, value))
+        {
+            badRequest("'value' must be 0..255");
+            return;
+        }
+        spec.nrValue = static_cast<uint8_t>(value);
+        spec.nrMask = 0xFF;
+    }
+    if (body.isMember("value_mask") && !body["value_mask"].isNull())
+    {
+        if (!ParseJsonUInt(body["value_mask"], 0xFF, value))
+        {
+            badRequest("'value_mask' must be 0..255");
+            return;
+        }
+        spec.nrMask = static_cast<uint8_t>(value);
     }
     // Hits: hit_mode + hit_target (protocol), or the text form "hits": "5" | ">=5" | "%5"
     if (body.isMember("hits"))

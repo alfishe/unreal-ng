@@ -33,7 +33,7 @@ void NextRegJournal::Clear()
 }
 
 void NextRegJournal::Record(uint32_t frame, uint32_t t, uint16_t pc, NextRegSource source, uint8_t reg, uint8_t value,
-                            uint8_t previous)
+                            uint8_t previous, int16_t beamLine, int16_t beamHc)
 {
     NextRegWriteEvent& e = _ring[_head];
     e.seq = ++_seq;
@@ -44,6 +44,8 @@ void NextRegJournal::Record(uint32_t frame, uint32_t t, uint16_t pc, NextRegSour
     e.reg = reg;
     e.value = value;
     e.previous = previous;
+    e.beamLine = beamLine;
+    e.beamHc = beamHc;
     _head = (_head + 1) % _ring.size();
     if (_count < _ring.size())
         _count++;

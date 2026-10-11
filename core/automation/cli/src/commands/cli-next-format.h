@@ -400,6 +400,7 @@ inline std::string StateText(EmulatorContext* context, const std::vector<std::st
             for (const StateNode& e : events->items)
             {
                 out += "#" + Field(e, "seq") + " frame " + Field(e, "frame") + " T " + Field(e, "t") + " PC " + Field(e, "pc") + " " +
+                       (Field(e, "beam_line").empty() ? std::string() : "beam " + Field(e, "beam_line") + ":" + Field(e, "beam_hc") + " ") +
                        Field(e, "source") + " NR" + Field(e, "reg") + " " + Field(e, "previous") + " -> " + Field(e, "value");
                 if (!Field(e, "name").empty())
                     out += "  " + Field(e, "name");
