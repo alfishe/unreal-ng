@@ -47,19 +47,29 @@ The other `line` lookups in the parser clear the buffer first; this one did not.
   (passes before the fix too unless the stack holds a ROM name: valgrind is the evidence).
 - [ ] No uninitialised-value report from `Config::ParseConfig` under valgrind.
 
-## 🔴 [Open] #3: A test thread left joinable after a failed wait aborts the whole test process
+## 🔵 [In Progress] #3: A test thread left joinable after a failed check aborts the whole test process
 * **Date Opened:** 2026-10-11
 * **Found by:** a full `core-tests` run under valgrind memcheck on Linux (gcc 14, RelWithDebInfo, 12 shards; host `.238`, 2026-10-10/11): shard 2 died with `terminate called without an active exception` in
   `TimeTravelManager_PublishedInfo_Test.AutomationReadsWhileTheLoopRecords`; the rest of the shard never ran.
 
 ### Description
-Under valgrind the test's wait for the machine timed out; the failed check returned from the test body while its
+Under valgrind the test's wait for the machine timed out; the `ASSERT` returned from the test body while its
 `std::thread` was still joinable, and the thread's destructor called `std::terminate`. A slow host (valgrind, a loaded
-CI runner) turns one failed expectation into a lost run.
+CI runner) turned one failed expectation into a lost run.
 
-### Fix plan
-The test's thread joins on every exit path (a joining guard), so a failed check fails one test. Check the other
-threaded tests for the same shape.
+### Fix
+`core/tests/_helpers/testthread.h`: `TestThread(body, stop)` stops (the loop's flag, the gate, the lease, ...) and joins
+on every exit path. Used where an `ASSERT` sits between a thread's start and its join: the TTD published-info test,
+`ExecutionArbiter_Test` (8 threads), `ExecutionArbiterMachine_Test` (3), `EmulatorManager_Test` (2),
+`MediaControl_Test.SyncWaitsForTheSlotAsyncDoesNot`, `GdbSessionTakeBack_Test`. The other threaded tests were checked:
+they join before any fatal check, or their thread lives in a class that joins in its destructor.
+
+Seen on the way, not changed here: `AudioRingBuffer_Test.SPSC_ConcurrentIntegrity` hangs at the producer's join when
+its sequence check fails (the consumer stops reading); `EmulatorManager_Test.RemovalDoesNotHoldTheLockAHandlerWaitsFor`
+leaves its MessageCenter observer (it captures locals by reference) registered when an early `ASSERT` fails.
+
+### Requirements / Acceptance Criteria
+- [ ] The changed tests pass; the next valgrind run loses no shard to `std::terminate`.
 
 ## 🔵 [In Progress] #4: Leaks reported in the test fixtures (`definitely lost`)
 * **Date Opened:** 2026-10-11

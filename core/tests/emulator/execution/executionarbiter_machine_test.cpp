@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testthread.h"
 #include "_helpers/testwaithelper.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/emulator.h"
@@ -632,7 +633,7 @@ TEST_F(ExecutionArbiterMachine_Test, ALongDirectRunLetsAHoldInBetweenFrames)
     ASSERT_TRUE(PausedForCounting(_emulator));  // the running fixture would add frames before the run starts
     const uint64_t before = Frame(_emulator);
     std::atomic<bool> runDone{false};
-    std::thread run([&]() {
+    TestThread run([&]() {
         _emulator->RunNFrames(frames, true);
         runDone = true;
     });
@@ -645,7 +646,7 @@ TEST_F(ExecutionArbiterMachine_Test, ALongDirectRunLetsAHoldInBetweenFrames)
         heldDuringTheRun = !runDone.load() && _emulator->IsDirectStepping();
         EXPECT_TRUE(_emulator->IsEmulationParked() || _emulator->IsDirectStepping());
     }
-    run.join();
+    run.Join();
     EXPECT_TRUE(heldDuringTheRun) << "the hold waited for the whole run instead of a frame boundary";
     EXPECT_EQ(Frame(_emulator), before + frames) << "the run ran exactly its frames around the lent hold";
 }
@@ -655,7 +656,7 @@ TEST_F(ExecutionArbiterMachine_Test, ALongDirectRunLetsAHoldInBetweenFrames)
 TEST_F(ExecutionArbiterMachine_Test, ALongDirectRunLendsToNeitherAPauseNorAnotherRun)
 {
     std::atomic<bool> firstDone{false};
-    std::thread first([&]() {
+    TestThread first([&]() {
         _emulator->RunNFrames(200, true);
         firstDone = true;
     });
@@ -669,7 +670,7 @@ TEST_F(ExecutionArbiterMachine_Test, ALongDirectRunLendsToNeitherAPauseNorAnothe
         _emulator->RunNFrames(1, true);
         secondAfterFirst = firstDone.load();
     });
-    first.join();
+    first.Join();
     second.join();
     EXPECT_TRUE(secondAfterFirst) << "the second direct run interleaved with the first";
     EXPECT_TRUE(_emulator->IsPaused());
@@ -681,13 +682,17 @@ TEST_F(ExecutionArbiterMachine_Test, TakingControlBackWhileTheRunLendsTheCpuStop
     const unreal::UUID owner = unreal::UUID::Generate();
     EmulatorContext* context = _emulator->GetContext();
     ASSERT_TRUE(context->TakeRunControl(owner, "webapi", nullptr, "bot", std::chrono::milliseconds(0)));
-    std::thread run([&]() { _emulator->RunNFrames(100000, true); });  // far longer than the test
+    TestThread run([&]() { _emulator->RunNFrames(100000, true); },  // far longer than the test
+                   [&] {
+                       if (context->IsRunControlClaimed())
+                           context->RevokeRunControl("test cleanup");
+                   });
     ASSERT_TRUE(TestWait::For([&]() { return _emulator->IsDirectStepping(); }));
     {
         Emulator::CpuHold hold(*_emulator, "a reader");  // lent: the run waits at a frame boundary meanwhile
         ASSERT_TRUE(hold.Held());
         EXPECT_TRUE(context->RevokeRunControl("gui"));
     }
-    run.join();  // ends at once: aborted
+    run.Join();  // ends at once: aborted
     EXPECT_TRUE(_emulator->LastDirectRunAborted());
 }
