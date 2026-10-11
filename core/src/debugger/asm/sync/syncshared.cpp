@@ -136,22 +136,25 @@ bool CopyMachine(EmulatorContext* context, MachineCopy& out, std::string& error,
     return true;
 }
 
-bool InjectFile(EmulatorContext* context, const sync::SyncDescriptor& descriptor, const std::vector<uint8_t>& file,
-                const sync::InjectOptions& options, sync::InjectPlan& plan, std::string& error)
+bool InjectProject(EmulatorContext* context, const sync::SyncDescriptor& descriptor, const std::vector<ProjectFile>& files,
+                   const std::string& title, const sync::InjectOptions& options, sync::ProjectInjectPlan& plan, std::string& error)
 {
     if (!CheckMachine(context, error))
         return false;
     const auto work = [&]() {
         MachineCopy copy;
         CopyNow(context, copy, nullptr);
-        plan = sync::PlanInject(copy.view, descriptor, file, options);
+        plan = sync::PlanInjectProject(copy.view, descriptor, files, title, options);
         if (!plan.ok)
             return;
         Memory* memory = context->pMemory;
         const auto write = [&]() {
-            uint8_t* bytes = memory->RAMPageAddress(static_cast<uint16_t>(plan.page));
-            std::copy(plan.bytes.begin(), plan.bytes.end(), bytes);
-            memory->MarkRamPageEdited(static_cast<uint16_t>(plan.page));
+            for (const sync::InjectPlan& page : plan.pages)
+            {
+                uint8_t* bytes = memory->RAMPageAddress(static_cast<uint16_t>(page.page));
+                std::copy(page.bytes.begin(), page.bytes.end(), bytes);
+                memory->MarkRamPageEdited(static_cast<uint16_t>(page.page));
+            }
         };
         if (context->pEmulator)
             context->pEmulator->EditMemoryFromTool("asm sync inject", write);

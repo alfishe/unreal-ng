@@ -280,6 +280,8 @@ void UPD765::writeData(uint8_t value)
             {
                 // The byte goes to the disk as it is written; the CRC follows at the end of the sector
                 const size_t offset = _byteIndex - 1u;
+                if (offset == 0)  // the sector's first byte: the track as it is now is kept
+                    FloppyDriveSlot::BeforeTrackWrite(_context, unit() & 0x01, currentTrack());
                 if (offset < sector->dataSize)
                 {
                     sector->data[offset] = value;
@@ -1110,6 +1112,7 @@ void UPD765::commitWrittenSector()
     if (track == nullptr || sector == nullptr || !sector->hasData)
         return;
 
+    FloppyDriveSlot::BeforeTrackWrite(_context, unit() & 0x01, track);  // a sector closed before its first byte too
     for (size_t offset = _byteIndex; offset < sector->dataSize; offset++)
     {
         sector->data[offset] = 0x00;
@@ -1276,6 +1279,7 @@ void UPD765::formatEnd()
             spec.sectorSizeCodes[i] = _formatIds[i * 4 + 3];
         }
 
+        FloppyDriveSlot::BeforeTrackWrite(_context, unit() & 0x01, track);
         track->formatTrack(track->cylinder(), track->side(), spec);
         track->markRawTrackDirty();
         FloppyDriveSlot::NoteSlotWrite(_context, unit() & 0x01, "uPD765 Format Track");

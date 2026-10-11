@@ -15,6 +15,7 @@
 | What changed | Required checks |
 |--------------|-----------------|
 | `core/` (engine, automation, tests) | `tools/build/build.sh` (zero warnings) + `tools/build/test.sh` |
+| `core/automation/mcp/` (or a WebAPI endpoint an MCP tool forwards to) | the above + `tools/verification/mcp/run_all.py --launch <unreal-qt>` ([MCP testing](docs/guidelines/mcp-testing-guidelines.md)) |
 | Only Qt apps (`unreal-qt/`, `unreal-*-viewer/`, `unreal-videowall/`) | `tools/build/build.sh` (zero warnings). No `core-tests` needed. |
 | Documentation only (`docs/`, `.recipe/`, `*.md`) | `python3 tools/fix-absolute-paths.py --path <files>` (no build) |
 | Only `tools/` scripts | Run the script itself (its tests or a dry run) |
@@ -86,6 +87,13 @@ Use-after-free, heap corruption, races, deadlocks, leaks: [`docs/testing/sanitiz
 (ASan + UBSan / TSan builds via `tools/sanitize/configure.sh`, the WebAPI stress `tools/sanitize/stress_round.sh`,
 `leaks`, hang sampling, crash reports via `tools/sanitize/ips_stacks.py`). A crash in `free`/`malloc` is heap damage
 done earlier: reproduce under ASan, do not patch the crashing frame.
+
+## MCP Testing
+
+How and when: [`docs/guidelines/mcp-testing-guidelines.md`](docs/guidelines/mcp-testing-guidelines.md). Unit tests
+`--gtest_filter='*Mcp*'`; live scripts per block of tools in [`tools/verification/mcp/`](tools/verification/mcp/README.md)
+(`run_all.py --launch cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt`, own ports, ~5 s). An
+agent may see only the text of an answer: check `content[]` text, not just `structuredContent`.
 
 ## WebAPI Testing
 

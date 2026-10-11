@@ -118,7 +118,11 @@ ram_kb=128 ...`, the first 1500 characters); `screen_attributes` the grid as att
 joystick and keyboard `status`) their fields as `key=value`. `manage_symbols list` takes `from` / `to` (CPU addresses)
 and `name` (a case-insensitive substring) and writes the first `limit` (default 100) labels one per line
 (`0x09F4 PRINT_OUT rom3 code ; comment`); the whole ROM set is ~2400 labels, so filter rather than page through the
-JSON. Tools that perform real multi-step work report
+JSON. `inspect_state registers` writes the full set (the alternate registers, I, R, MEMPTR, IM, IFF1/2),
+`manage_symbols resolve` the answer (`CLS = 0x0D6B rom3 code ; comment`), `type_input list_keys` the key names.
+`control_execution bp_add` switches the breakpoints feature on when it is off (a breakpoint never fires without it)
+and says so; `run_frame` / `run_frames` / `run_tstates` / `run_to_interrupt` skip breakpoints: `resume` and `wait`
+stop at one. Live checks of all of this: [tools/verification/mcp](../../../tools/verification/mcp/README.md). Tools that perform real multi-step work report
 progress when the request carries a `_meta.progressToken` (see
 [Protocol details](#protocol-details)).
 

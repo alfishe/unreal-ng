@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "unrealasm/dialect.h"
 #include "unrealasm/diagnostics.h"
 #include "unrealasm/encoding.h"
 #include "unrealasm/snapshot.h"
@@ -175,6 +176,9 @@ struct SyncDescriptor
     TypingParams typing;
     std::string labelScanner;       ///< the symbols/live.h scanner of its label table ("" = none)
     bool textsPerPage = false;      ///< the assembler keeps one text per page, each with its header (ALASM): a project's other texts
+    /// RAM pages (0-7, the same ids at 128K and 512K) the assembler leaves to texts of their own: a project's other
+    /// sources go there, and its INCLUDE "NAME",page finds them loaded (ALASM) instead of reading the disk
+    std::vector<int> projectPages;
     /// Return addresses the stack holds in this order (lowest address first, within `idleDepth` bytes above SP) only
     /// while the assembler waits for a command: a text may be written then (part B, §16.2). Empty = no rule known
     std::vector<uint16_t> idleChain;
@@ -232,6 +236,24 @@ struct InjectPlan
 /// the file within the page. FileImage layouts (ALASM); the others are refused
 InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& descriptor, const std::vector<uint8_t>& file, const InjectOptions& options = {});
 
+/// A project written into the assembler at once (asm-synchronizer.md §16.4): the main source over the live text, each
+/// source it INCLUDEs into a page of its own (descriptor.projectPages), the INCLUDEs naming those pages
+struct ProjectInjectPlan
+{
+    bool ok = false;
+    std::string error;
+    std::vector<InjectPlan> pages;       ///< main first, then the INCLUDEd sources in the project's order
+    std::vector<WriteAsResult> texts;    ///< the files written, in the same order (empty: not written)
+    Diagnostics diagnostics;
+};
+
+/// Plans a project (HostProject: files[0] the main source): written as the assembler's texts by WriteProjectAs, the
+/// main one titled `title` over the live text (PlanInject's rules), the others named by ProjectTextNames into the
+/// descriptor's project pages, each refused when it holds a text with changes not
+/// saved (unless `force`). One file is PlanInject of WriteAs
+ProjectInjectPlan PlanInjectProject(const MachineView& machine, const SyncDescriptor& descriptor, const std::vector<ProjectFile>& files,
+                                    const std::string& title, const InjectOptions& options = {});
+
 struct ProbeCandidate
 {
     const SyncDescriptor* descriptor = nullptr;
@@ -250,4 +272,9 @@ MachineView ViewOf(const containers::Snapshot& snapshot);
 /// with that page replaced. The plan says why not
 InjectPlan InjectIntoSnapshot(const containers::Snapshot& snapshot, const SyncDescriptor& descriptor, const std::vector<uint8_t>& file,
                               const InjectOptions& options, std::vector<uint8_t>& out);
+
+/// PlanInjectProject on the memory of `snapshot`; `out` is the snapshot file with every page of the plan replaced
+ProjectInjectPlan InjectProjectIntoSnapshot(const containers::Snapshot& snapshot, const SyncDescriptor& descriptor,
+                                            const std::vector<ProjectFile>& files, const std::string& title,
+                                            const InjectOptions& options, std::vector<uint8_t>& out);
 }  // namespace unrealasm::sync

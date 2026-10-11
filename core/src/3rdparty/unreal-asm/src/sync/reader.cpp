@@ -1,6 +1,7 @@
 #include "unrealasm/sync/reader.h"
 
 #include <algorithm>
+#include <map>
 
 #include "unrealasm/registry.h"
 
@@ -441,9 +442,10 @@ SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
 /// The title is looked for where the code keeps it (each build elsewhere); #BE00 also holds it, but the editor uses
 /// that place as a buffer. `typingFlag` false: the build keeps no "line modified" bit at IX+#0C (4.43)
 /// `idle`: the return chain of its command line (line input #91E3, then the command loop #9707 in 5.09; a command runs
-/// with #9733 there instead)
+/// with #9733 there instead). `projectPages`: the pages none of its own uses take (sysvars IX+#16 macros, #21
+/// debugger, #27-#2A post labels, #36 pocket; SYSTEM and the overlay from its source), for INCLUDE "NAME",page
 SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion, uint16_t titleAt, std::string title = "",
-                     bool typingFlag = true, std::vector<uint16_t> idle = {})
+                     bool typingFlag = true, std::vector<uint16_t> idle = {}, std::vector<int> projectPages = {})
 {
     SyncDescriptor d;
     d.id = "alasm-" + version;
@@ -466,6 +468,7 @@ SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion
     d.typing = {TypingRule::NotInText, 0x80CB, static_cast<uint8_t>(typingFlag ? 0x01 : 0x00)};   // IX+#0C bit 0: the line is modified
     d.labelScanner = "alasm-table";
     d.idleChain = std::move(idle);
+    d.projectPages = std::move(projectPages);
     return d;
 }
 
@@ -1051,24 +1054,141 @@ InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const
     return plan;
 }
 
+ProjectInjectPlan PlanInjectProject(const MachineView& machine, const SyncDescriptor& d, const std::vector<ProjectFile>& files,
+                                    const std::string& title, const InjectOptions& options)
+{
+    ProjectInjectPlan result;
+    if (files.empty())
+    {
+        result.error = "no source";
+        return result;
+    }
+    if (files.size() == 1)
+    {
+        WriteAsResult written = WriteAs(files[0].document, d.codec, d.version, title);
+        result.diagnostics = written.diagnostics;
+        if (!written.ok)
+        {
+            result.error = written.error;
+            return result;
+        }
+        result.texts.push_back(written);
+        result.pages.push_back(PlanInject(machine, d, written.bytes, options));
+        result.ok = result.pages[0].ok;
+        result.error = result.pages[0].error;
+        return result;
+    }
+    const size_t others = files.size() - 1;
+    if (others > d.projectPages.size())
+    {
+        std::string pages;
+        for (const int page : d.projectPages)
+            pages += (pages.empty() ? "" : ", ") + std::to_string(page);
+        result.error = d.title + (d.projectPages.empty() ? " keeps no other text in memory"
+                                                         : " keeps " + std::to_string(d.projectPages.size()) + " more text(s) in memory (pages " + pages + ")") +
+                       "; the source INCLUDEs " + std::to_string(others) + " (put the project onto its disk instead: zxasm inject <source> <disk>)";
+        return result;
+    }
+    const std::vector<std::string> names = ProjectTextNames(files, title);
+    std::map<std::string, std::string> includeAs;
+    for (size_t k = 1; k < files.size(); ++k)
+        includeAs[files[k].name] = "\"" + names[k] + "\"," + std::to_string(d.projectPages[k - 1]);
+    WriteProjectResult written = WriteProjectAs(files, d.codec, d.version, names, includeAs);
+    result.diagnostics = std::move(written.diagnostics);
+    if (!written.ok)
+    {
+        result.error = written.error;
+        return result;
+    }
+    result.texts = std::move(written.files);
+    result.pages.push_back(PlanInject(machine, d, result.texts[0].bytes, options));
+    if (!result.pages[0].ok)
+    {
+        result.error = result.pages[0].error;
+        return result;
+    }
+    const FileImageParams& p = d.fileImage;
+    for (size_t k = 1; k < files.size(); ++k)
+    {
+        InjectPlan plan;
+        const int page = d.projectPages[k - 1];
+        const std::vector<uint8_t>& file = result.texts[k].bytes;
+        const symbols::MemoryPage* target = machine.Page(page);
+        if (!target || target->bytes.size() < kPage)
+        {
+            result.error = "RAM page " + std::to_string(page) + " is not in the memory copied";
+            return result;
+        }
+        if (page == result.pages[0].page)
+        {
+            result.error = "RAM page " + std::to_string(page) + " holds the live text";
+            return result;
+        }
+        SyncText previous;
+        if (ReadFileImageInPage(machine, d, page, previous) == 1)
+        {
+            if (previous.changed && !options.force)
+            {
+                result.error = "RAM page " + std::to_string(page) + " holds the text " + previous.name + " with changes not saved (force overwrites them)";
+                return result;
+            }
+            plan.previous = std::move(previous);
+        }
+        if (file.size() < p.headerSize || p.base + file.size() > kPage)
+        {
+            result.error = files[k].name + " takes " + std::to_string(file.size()) + " bytes; a page holds " + std::to_string(kPage - p.base);
+            return result;
+        }
+        plan.page = page;
+        plan.bytes.assign(target->bytes.begin(), target->bytes.begin() + kPage);
+        std::fill(plan.bytes.begin() + p.base, plan.bytes.end(), uint8_t{0});
+        std::copy(file.begin(), file.end(), plan.bytes.begin() + p.base);
+        if (options.markChanged && p.changedField)
+            plan.bytes[p.base + p.changedField] |= p.changedMask;
+        plan.ok = true;
+        result.pages.push_back(std::move(plan));
+    }
+    result.ok = true;
+    return result;
+}
+
+ProjectInjectPlan InjectProjectIntoSnapshot(const containers::Snapshot& snapshot, const SyncDescriptor& descriptor,
+                                            const std::vector<ProjectFile>& files, const std::string& title,
+                                            const InjectOptions& options, std::vector<uint8_t>& out)
+{
+    ProjectInjectPlan plan = PlanInjectProject(ViewOf(snapshot), descriptor, files, title, options);
+    if (!plan.ok)
+        return plan;
+    std::map<int, std::vector<uint8_t>> changed;
+    for (const InjectPlan& page : plan.pages)
+        changed[page.page] = page.bytes;
+    std::string error;
+    if (!containers::WriteSnapshot(snapshot, changed, out, error))
+    {
+        plan.ok = false;
+        plan.error = error;
+    }
+    return plan;
+}
+
 const std::vector<SyncDescriptor>& Descriptors()
 {
     static const std::vector<SyncDescriptor> descriptors = {
         // Each checked with dumps (testdata/sync): the text, the file it saves, the title where the editor leaves it.
         // The idle chain: the line input's return and the command loop's above SP at the A> prompt, read in each build
         // at the prompt and in its editor (research-sjasmplus-to-alasm.md §4; the 64-column loaders, 4.5's and 3.8c's own)
-        Alasm("5.09", "5.07", 0x97C5, "", true, {0x91E3, 0x9707}),
-        Alasm("5.08", "5.07", 0x97CA, "", true, {0x91E8, 0x970C}),
-        Alasm("5.07", "5.07", 0x97BC, "", true, {0x91DA, 0x96FE}),
-        Alasm("5.05", "5.05", 0x97BC, "", true, {0x91DA, 0x96FE}),
-        Alasm("5.00", "5.0", 0x9E22, "", true, {0x99EA, 0x8B93}),
+        Alasm("5.09", "5.07", 0x97C5, "", true, {0x91E3, 0x9707}, {4, 0}),
+        Alasm("5.08", "5.07", 0x97CA, "", true, {0x91E8, 0x970C}, {4, 0}),
+        Alasm("5.07", "5.07", 0x97BC, "", true, {0x91DA, 0x96FE}, {4, 0}),
+        Alasm("5.05", "5.05", 0x97BC, "", true, {0x91DA, 0x96FE}, {4, 0}),
+        Alasm("5.00", "5.0", 0x9E22, "", true, {0x99EA, 0x8B93}, {4}),
         Alasm("4.5", "4.5", 0x9E06, "", true, {0x998F, 0x8B6B}),
-        Alasm("4.46", "4.44", 0x9E6E, "", true, {0x9A07, 0x8B92}),
-        Alasm("4.45", "4.44", 0x9E53, "", true, {0x99E1, 0x8B93}),
-        Alasm("4.44", "4.44", 0x9E7E, "", true, {0x9A08, 0x8BA8}),
-        Alasm("4.43", "4.5", 0x9E1B, "", false, {0x99A4, 0x8B99}),
-        Alasm("4.42", "4.42", 0x9E2F, "", true, {0x99B2, 0x8B8F}),
-        Alasm("3.8c", "3.8", 0x9951, "3.8c\r Written by", true, {0x943A, 0x8149}),
+        Alasm("4.46", "4.44", 0x9E6E, "", true, {0x9A07, 0x8B92}, {4}),
+        Alasm("4.45", "4.44", 0x9E53, "", true, {0x99E1, 0x8B93}, {4}),
+        Alasm("4.44", "4.44", 0x9E7E, "", true, {0x9A08, 0x8BA8}, {4}),
+        Alasm("4.43", "4.5", 0x9E1B, "", false, {0x99A4, 0x8B99}, {4}),
+        Alasm("4.42", "4.42", 0x9E2F, "", true, {0x99B2, 0x8B8F}, {4}),
+        Alasm("3.8c", "3.8", 0x9951, "3.8c\r Written by", true, {0x943A, 0x8149}, {4}),
         Xas("4.18", "4.18", 0xB51A, "XAS by Max Petrov (HPM) 3.091"),
         Xas("5.05", "5.05", 0xB601, "XAS by Max Petrov (HPM) 5.05 "),   // 5.05 and 5.05SE alike
         Xas("7.43c", "7.43c", 0xB961, "by Max Petrov & Creator v7.43"),

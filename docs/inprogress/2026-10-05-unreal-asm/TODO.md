@@ -188,7 +188,8 @@ phase; master only after the owner's review.
       - [x] other texts in memory (2026-10-10): ALASM's pages (`textsPerPage`); XAS and ZAsm hold one text
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):
     - [x] Z0 ALASM backend + the file image writer + inject on WebAPI / CLI / MCP / Lua / Python, checked by ALASM 5.09 assembling the injected text (2026-10-10, research-sjasmplus-to-alasm.md)
-      - [ ] a project: the INCLUDEd sources into more text pages (ALASM keeps one text per page)
+      - [x] a project: the INCLUDEd sources into more text pages (2026-10-10, asm-synchronizer.md §16.4): `HostProject`, `WriteProjectAs`, `PlanInjectProject`; `INCLUDE "NAME",page` finds the text loaded; pages 4 and 0 (5.05-5.09) or 4 (5.00, 4.42-4.46, 3.8c), each build checked live; `zxasm inject` into snapshots (pages) and disks (files)
+      - [ ] ALASM 4.5's free pages (its own memory driver: text in page 1)
       - [ ] label values for sources of other dialects (their sjasmplus conversion's layout, symbols/fromsource.h)
       - [x] idle rules for the other ALASM builds (5.08 ... 3.8c, 2026-10-10): the command line's return pair read in each at the prompt and in the editor; inject checked in each (assembled at the prompt, refused in the editor)
       - [x] the ALASM frontend took `ADD B` as ADD A,B and `"AB"` as #4142 (2026-10-10): ALASM 5.09 rejects ADD / ADC / SBC without A, (code #00) and takes "AB" as #4241, "ABC" as #4341; a 22-form probe assembled by ALASM 5.09 and converted to sjasmplus agree byte for byte

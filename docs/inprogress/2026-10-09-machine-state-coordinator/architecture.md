@@ -537,8 +537,14 @@ only** - no images in the history, no medium versions to go back to.
   refuses as before (goes with v1).
 - Boundary phases: the order in `CompleteFrame` already is phase 1 (media, GS switch in `OnFrameStart`, network
   devices), phase 2 (checkpoint), phase 3 (input, host answers, decoder); no `Boundary()` indirection was added.
-- Not in M3: written sectors and write-protect toggles as versions (gaps 11-12, the change layer H1 / H5): a seek
-  before a write on the same medium still reports `MediaVersionDiffers`.
+- After M3 (owner 2026-10-10: an undo log, not the change layer H1 / H5), gaps 11-12: while a TTD history exists
+  the media manager keeps every change of a medium in the slot's `MediaUndoLog` - a block sector (the read tap tells
+  it before the write), a floppy track (the controller, before it writes), the write-protect switch. A version is the
+  count of the medium's changes. The restore sets every medium to its checkpoint's version before the devices load
+  (`TimeTravelController::SetMediaToCheckpoint`); a replay's writes move the version along the history; a write after
+  a seek back drops the versions above. A write-protect toggle while recording lands at the next frame boundary as an
+  event and a version of its own, which a replay meets at its frame. `MediaVersionDiffers` is left for another medium
+  and for versions past the log's budget (64 MB per slot). TTD v1 reports as before and never sets a medium back.
 
 Tests: `MachinePolicy_Test` (cells, `atFrameBoundary`), `MachineCoordinator_Test`
 (`AMediaChangeWhileRecordingLandsAtTheNextFrameBoundary`), `MediaOwnerContract_Test`, `MediaManager_Test`,

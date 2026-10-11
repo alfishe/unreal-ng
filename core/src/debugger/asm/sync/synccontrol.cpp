@@ -126,58 +126,93 @@ AsmReply SyncControl::Inject(const sync::SyncDescriptor& descriptor, const sync:
         title = current.ok && !current.name.empty() ? current.name : document.name;
     if (title.empty())
         title = "TEXT";
-    WriteAsResult written = WriteAs(document, descriptor.codec, descriptor.version, title);
-    diagnostics.insert(diagnostics.end(), written.diagnostics.begin(), written.diagnostics.end());
-    body["diagnostics"] = asmsync::DiagnosticsValue(diagnostics);
-    if (!written.ok)
-        return Fail(written.error.rfind("no ", 0) == 0 ? AsmControlError::NotFound : AsmControlError::Failed, written.error, std::move(body));
-    document = std::move(written.document);
+    // A source file on the host brings the sources it INCLUDEs: each into a text of its own (PlanInjectProject)
+    std::vector<ProjectFile> project = {{document.name, document}};
+    const std::string path = Option(request, "path");
+    std::error_code ec;
+    const std::filesystem::path hostPath(std::u8string(path.begin(), path.end()));
+    if (!path.empty() && !request.options.count("file") && std::filesystem::is_regular_file(hostPath, ec))
+        project = HostProject(document, [folder = hostPath.parent_path()](const std::string& name) {
+            const std::u8string relative(name.begin(), name.end());
+            std::ifstream in(folder / std::filesystem::path(relative), std::ios::binary);
+            return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }, diagnostics);
     sync::InjectOptions options;
     std::string force = Option(request, "force");
     std::transform(force.begin(), force.end(), force.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     options.force = request.options.count("force") && (force.empty() || force == "true" || force == "1" || force == "on");
-    sync::InjectPlan plan;
+    sync::ProjectInjectPlan plan;
+    std::string error;
     if (snapshot)
     {
-        // Into a snapshot file: the same plan on its memory, the file written with that page replaced
+        // Into a snapshot file: the same plan on its memory, the file written with those pages replaced
         const std::string output = Option(request, "output");
         if (output.empty())
             return Fail(AsmControlError::BadRequest, "an inject into a snapshot needs 'output' (the snapshot file to write)", std::move(body));
         std::vector<uint8_t> file;
-        plan = sync::InjectIntoSnapshot(*snapshot, descriptor, written.bytes, options, file);
-        if (!plan.ok)
-            return Fail(AsmControlError::Refused, plan.error, std::move(body));
-        std::ofstream out(output, std::ios::binary);
-        out.write(reinterpret_cast<const char*>(file.data()), static_cast<std::streamsize>(file.size()));
-        if (!out)
-            return Fail(AsmControlError::Failed, "cannot write " + output, std::move(body));
-        body["output"] = output;
-        body["format"] = containers::SnapshotFormatName(snapshot->format);
+        plan = sync::InjectProjectIntoSnapshot(*snapshot, descriptor, project, title, options, file);
+        if (plan.ok)
+        {
+            std::ofstream out(output, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(file.data()), static_cast<std::streamsize>(file.size()));
+            if (!out)
+                return Fail(AsmControlError::Failed, "cannot write " + output, std::move(body));
+            body["output"] = output;
+            body["format"] = containers::SnapshotFormatName(snapshot->format);
+        }
     }
     else
+        asmsync::InjectProject(_context, descriptor, project, title, options, plan, error);
+    diagnostics.insert(diagnostics.end(), plan.diagnostics.begin(), plan.diagnostics.end());
+    body["diagnostics"] = asmsync::DiagnosticsValue(diagnostics);
+    if (!plan.ok)
     {
-        std::string error;
-        if (!asmsync::InjectFile(_context, descriptor, written.bytes, options, plan, error))
+        // Not written (no codec or backend, the conversion failed, too many sources), else refused by the machine
+        if (plan.error.empty())
             return Fail(AsmControlError::Refused, error, std::move(body));
+        if (plan.texts.empty())
+            return Fail(plan.error.rfind("no ", 0) == 0 ? AsmControlError::NotFound : AsmControlError::Failed, plan.error, std::move(body));
+        return Fail(AsmControlError::Refused, plan.error, std::move(body));
     }
-    body["name"] = document.name;
-    body["page"] = static_cast<int64_t>(plan.page);
-    body["bytes"] = static_cast<uint64_t>(written.bytes.size());
-    body["lines"] = static_cast<uint64_t>(document.lines.size());
-    if (plan.previous.ok)
+    const auto previousValue = [&](const sync::SyncText& previous) {
+        StateNode value = StateNode::Object();
+        value["name"] = previous.name;
+        value["bytes"] = static_cast<uint64_t>(previous.file.size());
+        value["changed"] = previous.changed;
+        return value;
+    };
+    body["name"] = plan.texts[0].document.name;
+    body["page"] = static_cast<int64_t>(plan.pages[0].page);
+    body["bytes"] = static_cast<uint64_t>(plan.texts[0].bytes.size());
+    body["lines"] = static_cast<uint64_t>(plan.texts[0].document.lines.size());
+    if (plan.pages[0].previous.ok)
     {
-        StateNode previous = StateNode::Object();
-        previous["name"] = plan.previous.name;
-        previous["bytes"] = static_cast<uint64_t>(plan.previous.file.size());
-        previous["changed"] = plan.previous.changed;
+        StateNode previous = previousValue(plan.pages[0].previous);
         const std::string backup = Option(request, "backup");
         if (!backup.empty())
         {
             std::ofstream out(backup, std::ios::binary);
-            out.write(reinterpret_cast<const char*>(plan.previous.file.data()), static_cast<std::streamsize>(plan.previous.file.size()));
+            const std::vector<uint8_t>& old = plan.pages[0].previous.file;
+            out.write(reinterpret_cast<const char*>(old.data()), static_cast<std::streamsize>(old.size()));
             previous["backup"] = out ? backup : std::string();
         }
         body["previous"] = std::move(previous);
+    }
+    if (plan.pages.size() > 1)
+    {
+        StateNode includes = StateNode::Array();
+        for (size_t k = 1; k < plan.pages.size(); ++k)
+        {
+            StateNode item = StateNode::Object();
+            item["source"] = project[k].name;
+            item["name"] = plan.texts[k].document.name;
+            item["page"] = static_cast<int64_t>(plan.pages[k].page);
+            item["bytes"] = static_cast<uint64_t>(plan.texts[k].bytes.size());
+            if (plan.pages[k].previous.ok)
+                item["previous"] = previousValue(plan.pages[k].previous);
+            includes.items.push_back(std::move(item));
+        }
+        body["includes"] = std::move(includes);
     }
     AsmReply reply;
     reply.body = std::move(body);

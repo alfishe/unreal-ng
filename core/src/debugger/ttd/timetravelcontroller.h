@@ -1935,6 +1935,11 @@ private:
     /// Settings and media of the replay engine's checkpoint @p index against
     /// this machine (into _lastEngineCheck)
     void CheckEngineCheckpoint(size_t index, bool forReplay);
+    /// Every medium to its version at the replay engine's checkpoint @p index
+    /// (the restore, before the devices load); what could not be set goes
+    /// into _mediaIssues
+    void SetMediaToCheckpoint(size_t index);
+    std::vector<TTDRestoreIssue> _mediaIssues;  ///< SetMediaToCheckpoint's, for the replay's check
     TimeTravelEngine* _replayEngine = nullptr;
     bool _inputPlaybackArmed = false;
 

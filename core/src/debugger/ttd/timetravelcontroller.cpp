@@ -1715,6 +1715,7 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
     const PerfClock::time_point memoryStart = PerfClock::now();
     _engine->ForgetMemory();
     CheckEngineCheckpoint(size_t(engineIndex), false);
+    SetMediaToCheckpoint(size_t(engineIndex));
     const TTDRestoreResult memory = _engine->RestoreToMemory(size_t(engineIndex));
     const PerfClock::time_point devicesStart = PerfClock::now();
     const TTDRestoreResult devices =
@@ -3988,9 +3989,17 @@ void TimeTravelController::CheckEngineCheckpoint(size_t index, bool forReplay)
         index, CaptureConfigFingerprint(*_context, _replayRomSignature), forReplay);
     if (!forReplay)
         return;
-    // A medium that changed since this checkpoint: set back to its recorded
-    // version, or, without versions, reported (the CPU still reads the
-    // recorded sectors; the controller's state where the replay stops may differ)
+    // The media the restore could not set to their recorded versions (SetMediaToCheckpoint)
+    for (const TTDRestoreIssue& issue : _mediaIssues)
+        _lastEngineCheck.Add(issue);
+}
+
+void TimeTravelController::SetMediaToCheckpoint(size_t index)
+{
+    // Every medium to its version at this checkpoint (its undo log: written sectors and tracks, the write-protect
+    // switch), before the devices load: a controller's transfer position points into its medium, and a replay from
+    // here reads what the recording read
+    _mediaIssues.clear();
     IMediaHistory* media = _context->pMediaManager;
     if (!media)
         return;
@@ -4005,18 +4014,16 @@ void TimeTravelController::CheckEngineCheckpoint(size_t index, bool forReplay)
         const auto it = std::find_if(live.begin(), live.end(),
                                      [&](const MediaVersionInfo& v) { return v.slot == slots[s].slot; });
         const TTDMediaVersion now = it == live.end() ? TTDMediaVersion{} : TTDMediaVersion{it->contentId, it->version};
-        if (now == recorded)
-            continue;
-        if (now.contentId == recorded.contentId && media->SetHead(slots[s].slot, recorded.version))
+        if (now.contentId == recorded.contentId && (recorded.contentId == 0 || media->SetHead(slots[s].slot, recorded.version)))
             continue;
         TTDRestoreIssue issue;
         issue.kind = TTDRestoreIssueKind::MediaVersionDiffers;
         issue.severity = TTDRestoreStatus::NotBitExact;
         issue.detail = slots[s].slot +
                        (now.contentId != recorded.contentId ? ": another medium than the recording's"
-                                                            : ": written since this point, no versions to go back to") +
+                                                            : ": written since this point beyond what its undo log keeps") +
                        " (the replay reads the recorded sectors; the controller's state where it stops may differ)";
-        _lastEngineCheck.Add(std::move(issue));
+        _mediaIssues.push_back(std::move(issue));
     }
 }
 

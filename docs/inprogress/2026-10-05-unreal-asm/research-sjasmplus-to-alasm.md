@@ -140,7 +140,15 @@ build assembled it to sjasmplus' bytes; in the editor the same write was refused
 - Snapshots and disks (Z1): `zxasm inject` writes the same text into an idle template snapshot (.szx / .sna / .z80) or
   onto a disk image of any format (unreal-disk); ALASM 5.09 assembled `oracle1.asm` from each to sjasmplus' bytes
   (asm-synchronizer.md §19).
-- One text. A project's INCLUDEd files would go into more pages (ALASM keeps one text per page). Not built yet.
+- Projects (2026-10-10): the files a host source INCLUDEs go into ALASM pages of their own, each INCLUDE written
+  `INCLUDE "NAME",page`, so ALASM finds the text loaded and reads no disk (asm-synchronizer.md §16.4). 5.05-5.09 keep
+  two more texts (pages 4 and 0), 5.00, 4.42-4.46 and 3.8c one (page 4), 4.5 none yet (its pages not read). Checked
+  in every build: a project of three files (5.05-5.09) or two (the others) injected live and assembled to sjasmplus'
+  bytes with ALASM's own disk in the drive; ALASM 5.09 assembled the three-file project from a template snapshot too.
+  Onto a disk (`zxasm inject main.asm disk.trd`) each file goes as a file of its own: ALASM 5.09 loaded the main text
+  with `W` and assembled the project to the same bytes. Its screen shows why the pages matter: without a page each
+  INCLUDE loads its file over the text being assembled, and the main text is loaded back from the disk after it
+  (`Loaded Ok to #C6 INC1`, `... pmain`, `... INC2`, `... pmain`).
 - Label values come only from sjasmplus sources. Another dialect's source is written without them: its later labels
   stay as they are, with a warning.
 - A comparison used as a value (not in IF / WHILE) has no ALASM form: folded where the values are known, else a

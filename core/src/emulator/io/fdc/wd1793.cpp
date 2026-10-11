@@ -1578,6 +1578,8 @@ void WD1793::cmdWriteSector(uint8_t value)
                       static_cast<unsigned>(_sectorRegister),
                       static_cast<unsigned>(_sideUp));
         FloppyDriveSlot::NoteSlotWrite(_context, _drive, reason);
+        // The track under the head is the one the command writes: kept as it is now
+        FloppyDriveSlot::BeforeTrackWrite(_context, _drive, _selectedDrive->trackUnderHead(_sideUp ? 1 : 0));
     }
 
     // Decode command bits:
@@ -1678,6 +1680,7 @@ void WD1793::cmdReadTrack(uint8_t value)
                       static_cast<unsigned>(_trackRegister),
                       static_cast<unsigned>(_sideUp));
         FloppyDriveSlot::NoteSlotWrite(_context, _drive, reason);
+        FloppyDriveSlot::BeforeTrackWrite(_context, _drive, track);
     }
 
     if (!track->rawData() || track->rawSize() == 0)

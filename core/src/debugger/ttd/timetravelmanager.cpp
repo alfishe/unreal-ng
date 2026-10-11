@@ -3938,9 +3938,10 @@ void TimeTravelManager::CheckEngineCheckpoint(size_t index, bool forReplay)
         index, CaptureConfigFingerprint(*_context, _replayRomSignature), forReplay);
     if (!forReplay)
         return;
-    // A medium that changed since this checkpoint: set back to its recorded
-    // version, or, without versions, reported (the CPU still reads the
-    // recorded sectors; the controller's state where the replay stops may differ)
+    // A medium that changed since this checkpoint is reported (the CPU still
+    // reads the recorded sectors; the controller's state where the replay
+    // stops may differ). v1 checks after its replay, whose writes the medium
+    // already holds: it never sets a medium back (TTD v2 does, at the restore)
     IMediaHistory* media = _context->pMediaManager;
     if (!media)
         return;
@@ -3956,8 +3957,6 @@ void TimeTravelManager::CheckEngineCheckpoint(size_t index, bool forReplay)
                                      [&](const MediaVersionInfo& v) { return v.slot == slots[s].slot; });
         const TTDMediaVersion now = it == live.end() ? TTDMediaVersion{} : TTDMediaVersion{it->contentId, it->version};
         if (now == recorded)
-            continue;
-        if (now.contentId == recorded.contentId && media->SetHead(slots[s].slot, recorded.version))
             continue;
         TTDRestoreIssue issue;
         issue.kind = TTDRestoreIssueKind::MediaVersionDiffers;

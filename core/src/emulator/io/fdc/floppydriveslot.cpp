@@ -53,6 +53,12 @@ void FloppyDriveSlot::NoteSlotWrite(EmulatorContext* context, uint8_t drive, con
         context->pTimeTravelHooks->RecordExternalEvent(ttd::TTDExternalEventKind::DiskWrite, detail);
 }
 
+void FloppyDriveSlot::BeforeTrackWrite(EmulatorContext* context, uint8_t drive, const unrealdisk::DiskImage::Track* track)
+{
+    if (context && context->pMediaManager && track)
+        context->pMediaManager->BeforeTrackWrite(IdFor(drive), *track);
+}
+
 void FloppyDriveSlot::Attach(Medium& medium)
 {
     FDD* fdd = _context->coreState.diskDrives[_drive];

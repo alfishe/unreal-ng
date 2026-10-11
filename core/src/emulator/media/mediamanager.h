@@ -30,12 +30,14 @@
 #include <vector>
 
 #include "emulator/coordinator/ports.h"
+#include "emulator/io/storage/mediareadtap.h"
 #include "emulator/media/blockformats.h"
 #include "emulator/media/mediaconfig.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediaslot.h"
 #include "emulator/media/medium.h"
 #include "emulator/media/mediatypes.h"
+#include "emulator/media/mediaundolog.h"
 
 class EmulatorContext;
 struct CompositeInfo;
@@ -188,7 +190,7 @@ struct SlotInfo
 };
 
 class IMediaReadJournal;
-class MediaManager : public IMediaHistory
+class MediaManager : public IMediaHistory, public IMediaWriteObserver
 {
 public:
     explicit MediaManager(EmulatorContext* context);
@@ -293,9 +295,15 @@ public:
     /// barrier: the medium changed, a seek must not cross it silently.
     /// `detail` (the controller's command) goes into the marker's text
     void NoteWrite(const std::string& slotId, const char* detail = nullptr);
+    /// Before the guest changes a sector of a block medium (its read tap, under the tap: @p below) or a floppy track
+    /// (the controller, before the write starts): while a TTD history exists the medium's undo log keeps what the
+    /// unit was, so a seek sets the medium to any recorded version (gap 11). Emulation thread
+    void BeforeSectorWrite(const std::string& slotId, uint64_t lba, IBlockDevice& below) override;
+    void BeforeTrackWrite(const std::string& slotId, const DiskImage::Track& track);
 
-    /// IMediaHistory (TTD Phase 3, Step 4). No change layer yet: a version is
-    /// the count of frames that wrote the medium, and no slot goes back
+    /// IMediaHistory (TTD Phase 3, Step 4). A version is the count of the medium's changes: the frames that wrote it
+    /// and the write-protect toggles. While a TTD history exists every change goes into the slot's undo log
+    /// (MediaUndoLog), and SetHead sets the medium to any version the log reaches
     uint64_t VersionStamp() const override { return _revision.load() + _writeStamp.load(); }
     void CurrentVersions(std::vector<MediaVersionInfo>& out) const override;
     bool SetHead(const std::string& slotId, uint64_t version) override;
@@ -342,13 +350,28 @@ private:
         uint64_t changedUnits = 0;         ///< per-frame snapshot of attached->ChangedUnits()
         std::string changes;               ///< per-frame snapshot of attached->DescribeChanges()
         std::optional<uint32_t> swapDelayMs;  ///< config override of the slot's default
-        bool writeMarkedThisFrame = false;    ///< a TTD barrier already recorded this frame
-        uint64_t writtenFrames = 0;           ///< frames that wrote the medium (its version, IMediaHistory)
+        bool writeMarkedThisFrame = false;    ///< the medium's version moved for this frame's writes
+        bool writeEventThisFrame = false;     ///< a TTD marker already recorded this frame
+        uint64_t writtenFrames = 0;           ///< the medium's changes (its version, IMediaHistory)
+        MediaUndoLog undo;                    ///< the units before each change while a TTD history exists
+        bool followsHistory = false;          ///< a seek set it to a recorded version: a replay's writes move it along
+        bool versionLost = false;             ///< a replay changed it from no recorded version: it is none any more
+        std::optional<bool> pendingProtect;   ///< a write-protect toggle waiting for the frame boundary (recording)
         uint64_t landedFrame = 0;             ///< the frame the attached medium came in (its boundary)
         bool heldForReplay = false;           ///< empty for its device: a replay runs before landedFrame
     };
 
     bool CanApplyNow() const;
+    /// While a TTD history exists, outside a replay: every change of a medium goes into its undo log
+    bool KeepsVersions() const;
+    /// The guest changes the medium in this frame: its version moves once per frame (a replay's writes move it only
+    /// along its history)
+    void MarkWrite(SlotState& state);
+    /// The medium changed outside the undo log (an insert, a discard): no version before this one is reachable
+    void ForgetVersions(SlotState& state);
+    /// The write-protect switch to @p on now: a version of its own, an event of a recording
+    void ApplyProtect(const std::string& slotId, SlotState& state, bool on);
+    class SlotUnits;
     /// A change landed in @p slotId (ApplySlot): tell the TTD session (NoteMediaChange)
     void NoteChangeLanded(const std::string& slotId, const std::string& what);
     SlotInfo Describe(const std::string& slotId, const SlotState& state) const;
@@ -415,6 +438,9 @@ private:
     std::unique_ptr<MediaOpOwner> _opOwner;
     std::map<std::string, SlotState> _slots;
     bool _holdHostWrites = false;
+    /// TTD has a history (read at every frame boundary on the machine thread: a write from a card's own thread must
+    /// not read the timeline)
+    std::atomic<bool> _historyExists{false};
     IMediaReadJournal* _readJournal = nullptr;   ///< the taps read it through its address
     std::map<std::string, std::unique_ptr<Medium>> _parked;
     std::optional<std::vector<MediaSetEntry>> _configured;  ///< set once ApplyConfiguredMedia ran
