@@ -1,9 +1,9 @@
 # PoC 024: the ZX Spectrum Next's memory model (decision D6 of docs/inprogress/2026-10-07-zx-next) and the engine's per-step cost.
 # Self-contained (no emulator build): the vendored CPU libraries and Google Benchmark from lib/.
-#   cmake -S tools/poc/025-next-memory-model -B scratch/poc-024/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-#   BUILD_DIR=$PWD/scratch/poc-024/build tools/build/build.sh
+#   cmake -S tools/poc/025-next-memory-model -B scratch/poc-025/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+#   BUILD_DIR=$PWD/scratch/poc-025/build tools/build/build.sh
 # Run from the repository root (the benchmark reads data/rom/48.rom):
-#   UNREAL_NICE=0 scratch/poc-024/build/p2-shift14 --benchmark_out=... and p2-shift13
+#   UNREAL_NICE=0 scratch/poc-025/build/p2-shift14 --benchmark_out=... and p2-shift13
 
 cmake_minimum_required(VERSION 3.16)
 project(poc025-next-memory-model LANGUAGES C CXX)

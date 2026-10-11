@@ -55,7 +55,7 @@ def main():
     parser = argparse.ArgumentParser(description="Capture TTD recording")
     parser.add_argument("--frames", type=int, default=3000, help="Frames to capture")
     parser.add_argument("--snapshot", default=str(REPO_ROOT / "testdata/loaders/sna/action.sna"))
-    parser.add_argument("--output", default=str(REPO_ROOT / "tools/poc/02-ttd-gui/testdata/capture.ttd"))
+    parser.add_argument("--output", default=str(REPO_ROOT / "tools/poc/027-ttd-gui/testdata/capture.ttd"))
     parser.add_argument("--model", default="128k", help="Emulator model")
     parser.add_argument("--mode", default="development", choices=["gaming", "development"],
                         help="gaming=smaller files (no journal), development=full debug (default)")

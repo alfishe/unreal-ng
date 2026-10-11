@@ -187,3 +187,13 @@ speed, and everything slower than zstd is also no smaller.
 
 Full results and entropy analysis: Section 6 of
 `docs/inprogress/2026-07-19-time-travel/phase-5-codec-poc-results.md`.
+
+## Status (added 2026-10-10)
+
+**concluded (pre-guideline)** — zstd level 1 is Pareto-optimal for TTD page buffers, re-confirmed on four
+real recordings on 2026-08-20 ("Findings" above; full results in
+`docs/inprogress/2026-07-19-time-travel/phase-5-codec-poc-results.md` §6). Production uses zstd level 1
+(`kDefaultZstdLevel` in `core/src/debugger/ttd/ttdcompression.h`). The TTD v2 migration lists this POC for
+retirement (`docs/inprogress/2026-09-25-ttd-v2-migration/phase-6-inventory.md`).
+
+Serves: `docs/inprogress/2026-07-19-time-travel/`.

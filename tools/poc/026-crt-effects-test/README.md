@@ -63,3 +63,10 @@ open scratch/gpu_vs_cpu_report.html
 - CPU scanlines using binary instead of sine wave
 - CPU mask not blending in transition zone (2.5x-3.5x)
 - CPU mask dim value formula mismatch
+
+## Status (added 2026-10-10)
+
+**concluded (pre-guideline)** — all 30 profile x resolution cases agree within 1 (rounding) ("Test
+Results" above; commit `d938cade8`, 2026-09-09). The comparison runs on Python models of the GPU shader and
+the CPU filter formulas, not on the production code (`unreal-qt/src/widgets/crtprofiles.*`,
+`devicescreen_gl.cpp`, `data/shaders/`). No `docs/inprogress/` folder references this POC.

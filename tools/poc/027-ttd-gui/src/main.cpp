@@ -41,8 +41,8 @@ int main(int argc, char* argv[]) {
         // if the real capture isn't present (e.g. fresh checkout).
         QStringList searchPaths = {
             exeDir.filePath("testdata/action_demo.ttd"),
-            exeDir.filePath("../tools/poc/02-ttd-gui/testdata/action_demo.ttd"),
-            exeDir.filePath("../../tools/poc/02-ttd-gui/testdata/action_demo.ttd"),
+            exeDir.filePath("../tools/poc/027-ttd-gui/testdata/action_demo.ttd"),
+            exeDir.filePath("../../tools/poc/027-ttd-gui/testdata/action_demo.ttd"),
             QStringLiteral("testdata/action_demo.ttd"),
             exeDir.filePath("testdata/active_demo.ttd"),
             exeDir.filePath("../testdata/ttd/active_demo.ttd"),
