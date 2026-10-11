@@ -979,6 +979,14 @@
     schemas["TTDResumeRequest"]["properties"]["frame"]["format"] = "uint64";
     schemas["TTDResumeRequest"]["properties"]["tinframe"]["type"] = "integer";
     schemas["TTDResumeRequest"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDResumeRequest"]["properties"]["media"]["type"] = "string";
+    schemas["TTDResumeRequest"]["properties"]["media"]["enum"].append("empty");
+    schemas["TTDResumeRequest"]["properties"]["media"]["enum"].append("keep");
+    schemas["TTDResumeRequest"]["properties"]["media"]["enum"].append("ask");
+    schemas["TTDResumeRequest"]["properties"]["media"]["description"] =
+        "A medium that cannot go back to the resume point (another medium in the slot, a write beyond its undo "
+        "log): empty (default) takes it out of its slot, keep leaves it as it is, ask resumes nothing and answers "
+        "needs_decision with the slots. A medium is never set back onto content it is not proven to be.";
 
     schemas["TTDResumeResponse"]["type"] = "object";
     schemas["TTDResumeResponse"]["description"] =
@@ -989,6 +997,16 @@
     schemas["TTDResumeResponse"]["properties"]["frame"]["format"] = "uint64";
     schemas["TTDResumeResponse"]["properties"]["tinframe"]["type"] = "integer";
     schemas["TTDResumeResponse"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDResumeResponse"]["properties"]["needs_decision"]["type"] = "boolean";
+    schemas["TTDResumeResponse"]["properties"]["needs_decision"]["description"] =
+        "media=ask and some media cannot go back: nothing resumed, media lists them";
+    schemas["TTDResumeResponse"]["properties"]["media"]["type"] = "array";
+    schemas["TTDResumeResponse"]["properties"]["media"]["description"] =
+        "The media that cannot go back to the resume point: slot, reason, and the decision taken (empty, keep, "
+        "or kept with error when an empty slot was refused, e.g. a medium with unsaved writes)";
+    schemas["TTDResumeResponse"]["properties"]["media"]["items"]["type"] = "object";
+    for (const char* field : {"slot", "reason", "decision", "error"})
+        schemas["TTDResumeResponse"]["properties"]["media"]["items"]["properties"][field]["type"] = "string";
     schemas["TTDResumeResponse"]["properties"]["state"]["type"] = "string";
     schemas["TTDResumeResponse"]["properties"]["state"]["enum"].append("idle");
     schemas["TTDResumeResponse"]["properties"]["state"]["enum"].append("recording");

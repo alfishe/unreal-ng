@@ -64,6 +64,7 @@ public:
     MachineMode Mode() const override;
     void SessionChanged() override;
     ModeState Published() const override;
+    void Note(MachineOp op, OpStatus status, std::string detail) override;
     const OperationLog& Log() const { return _log; }
 
 private:

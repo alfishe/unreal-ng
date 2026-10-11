@@ -29,6 +29,8 @@ enum class OpKind : uint8_t
     RzxRestore,     ///< an RZX playback replaces the machine: its snapshot block, a seek back (D43, M2)
     ModelSwitch,    ///< another model replaces the instance, or another machine's state moves in (D26): asked only
                     ///< (IMachineOps::Ask) - the switch replaces the instance and its coordinator (Q1)
+    TimelineCut,    ///< a recording continues from a point in its past (Rec From Here, M5): noted (IMachineOps::Note)
+                    ///< with what was decided about the media that could not go back there
 
     Count
 };

@@ -25,6 +25,7 @@
 #include "emulator/memory/devicememory.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/mainloop.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "platform/processinfo.h"
@@ -409,7 +410,7 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"journal", {"enabled"}},
         {"journal-build", {"from_frame", "to_frame"}},
         {"seek", {"frame", "tinframe", "bookmark"}},
-        {"resume", {"frame", "tinframe"}},
+        {"resume", {"frame", "tinframe", "media"}},
         {"step-instruction", {"dir"}},
         {"reverse-step", {"count", "tstates"}},
         {"bookmark-add", {"label", "frame", "tinframe"}},
@@ -1028,15 +1029,86 @@ TTDReply TTDControlBackend<S>::Resume(const TTDRequest& request)
     else if (Option(request, "tinframe"))
         return Fail(TTDControlError::BadRequest, "tinframe needs a frame");
 
+    // A medium that cannot go back to the cut point needs a decision (M5, F11): "ask" (Qt) answers with the slots
+    // and changes nothing; "empty" (the default where nobody can be asked) takes the medium out; "keep" leaves it
+    // as it is. A medium is never set back onto content it is not proven to be
+    std::string media = "empty";
+    if (const std::string* choice = Option(request, "media"))
+    {
+        if (*choice != "ask" && *choice != "empty" && *choice != "keep")
+            return Fail(TTDControlError::BadRequest, "media must be ask, empty or keep");
+        media = *choice;
+    }
+    const std::vector<TTDRestoreIssue> unproven = _manager->PlanCut(from);
+    auto slotOf = [](const TTDRestoreIssue& issue) { return issue.detail.substr(0, issue.detail.find(": ")); };
+    auto reasonOf = [](const TTDRestoreIssue& issue) {
+        const size_t colon = issue.detail.find(": ");
+        return colon == std::string::npos ? std::string() : issue.detail.substr(colon + 2);
+    };
+    auto mediaNode = [&](const std::string& decision) {
+        StateNode list = StateNode::Array();
+        for (const TTDRestoreIssue& issue : unproven)
+        {
+            StateNode item = StateNode::Object();
+            item["slot"] = slotOf(issue);
+            item["reason"] = reasonOf(issue);
+            if (!decision.empty())
+                item["decision"] = decision;
+            list.push(item);
+        }
+        return list;
+    };
+    if (!unproven.empty() && media == "ask")
+    {
+        TTDReply reply;
+        reply.body["resumed"] = false;
+        reply.body["needs_decision"] = true;
+        reply.body["media"] = mediaNode({});
+        AddPosition(reply.body, from);
+        reply.body["state"] = TTDSessionStateToString(_manager->GetState());
+        return reply;
+    }
+
     const bool ok = _manager->ResumeRecordingFrom(from);
-    // Recording again: the machine runs so the capture continues (a seek left it paused)
-    Emulator* emulator = _context ? _context->pEmulator : nullptr;
-    // Only a pause TTD set itself (a seek, a step, its session end) is lifted: the user's pause stays
-    if (ok && emulator && !OnMachineThread() && emulator->IsRunning() && emulator->IsPaused())
-        emulator->Resume(execution::Requester{execution::Origin::Ttd, {}}, true);
+    StateNode decided = StateNode::Array();
+    if (ok && !unproven.empty())
+    {
+        MediaManager* manager = _context ? _context->pMediaManager : nullptr;
+        for (const TTDRestoreIssue& issue : unproven)
+        {
+            const std::string slot = slotOf(issue);
+            StateNode item = StateNode::Object();
+            item["slot"] = slot;
+            item["reason"] = reasonOf(issue);
+            item["decision"] = media;
+            std::string detail = issue.detail + "; " + media;
+            if (media == "empty" && manager)
+            {
+                EjectOptions eject;
+                eject.origin = coordinator::CurrentSource();
+                const MediaResult out = manager->Eject(slot, eject);
+                if (!out.Ok())
+                {
+                    item["decision"] = std::string("kept");
+                    item["error"] = out.message;
+                    detail += " refused (" + out.message + "): kept";
+                }
+            }
+            decided.push(item);
+            if (coordinator::IMachineOps* ops = _context ? _context->pMachineOps : nullptr)
+            {
+                coordinator::MachineOp op;
+                op.kind = coordinator::OpKind::TimelineCut;
+                op.summary = "frame " + std::to_string(from.frame);
+                ops->Note(std::move(op), coordinator::OpStatus::Done, std::move(detail));
+            }
+        }
+    }
 
     TTDReply reply;
     reply.body["resumed"] = ok;
+    if (ok && !unproven.empty())
+        reply.body["media"] = decided;
     AddPosition(reply.body, from);
     reply.body["state"] = TTDSessionStateToString(_manager->GetState());
     return reply;

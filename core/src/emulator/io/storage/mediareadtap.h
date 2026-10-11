@@ -9,6 +9,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "emulator/io/storage/iblockdevice.h"
 #include "emulator/media/mediareadjournal.h"
@@ -60,6 +61,12 @@ public:
     uint64_t ContentId() const override { return _base->ContentId(); }
 
     IBlockDevice& Base() { return *_base; }
+    /// Put a layer between the tap and the stack under it (a write-through medium becoming a session one, F13)
+    template <typename Wrap>
+    void WrapBase(Wrap wrap)
+    {
+        _base = wrap(std::move(_base));
+    }
 
 private:
     std::unique_ptr<IBlockDevice> _base;

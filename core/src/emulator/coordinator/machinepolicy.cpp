@@ -64,6 +64,8 @@ constexpr std::array<Row, static_cast<size_t>(OpKind::Count)> kTable{{
     {OpKind::IdeDriveKind, true, false, {Allow(kNone), kRefuse, Allow(kMedia), kRefuse, kRefuse}},
     {OpKind::RzxRestore, true, false, {Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep)}},
     {OpKind::ModelSwitch, false, false, {Allow(kNone), Allow(kNone), Allow(kNone), Allow(kNone), Allow(kNone)}},
+    // TTD itself says where a recording can go on from; the rules add nothing (M5)
+    {OpKind::TimelineCut, false, false, {Allow(kNone), Allow(kNone), Allow(kNone), Allow(kNone), Allow(kNone)}},
 }};
 
 constexpr bool RowsInKindOrder()

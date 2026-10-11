@@ -63,6 +63,9 @@ Expected ExpectedCell(OpKind kind, MachineMode mode, bool endRecording)
         // A change of the machine itself ends the session (owner rule 2026-10-05): the rules never refuse it
         case OpKind::ModelSwitch:
             return {false, SessionEffect::None, false, false};
+        // M5: TTD says where a recording goes on from; the rules add nothing
+        case OpKind::TimelineCut:
+            return {false, SessionEffect::None, false, false};
         case OpKind::Count:
             break;
     }

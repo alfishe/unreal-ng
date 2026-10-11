@@ -64,6 +64,20 @@ void MediaUndoLog::Keep(uint64_t version, uint64_t frame, Unit unit, uint64_t in
     Trim();
 }
 
+bool MediaUndoLog::Reaches(uint64_t head, uint64_t target) const
+{
+    if (target == head)
+        return true;
+    if (target < head)
+        return target >= _floor;
+    if (target > _top)
+        return false;
+    for (const Entry& e : _entries)
+        if (e.version > head && e.version <= target && !e.after)
+            return false;
+    return true;
+}
+
 bool MediaUndoLog::Move(uint64_t head, uint64_t target, IUnits& units)
 {
     if (target == head)

@@ -360,6 +360,13 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   (`media_version_differs`) only for another medium in the slot or a version
   past the slot's undo log (64 MB per slot). A write after a seek back drops
   the old future of that medium, as the recording's own.
+- **Rec From Here / `POST /ttd/resume`** sets every medium back too. One
+  that cannot go back (another disk in the drive, past the undo log) is
+  decided by `media`: `empty` (default) ejects it (an event of the
+  recording), `keep` leaves it, `ask` resumes nothing and answers
+  `needs_decision` with the slots (Qt shows a dialog). The decision is in
+  the operation log as `timeline-cut`. A write-through disk set back turns
+  into a session disk: its file keeps its content until you save.
 - **A machine change** (ROM load, model switch, GS card switch, slot
   change) is the same rule with another machine behind it: the history is
   dropped, `last_stop_reason: "machine-change"`. v1 still refuses these while
