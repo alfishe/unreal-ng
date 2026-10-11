@@ -53,6 +53,9 @@
     schemas["BuildInfo"]["properties"]["git_branch"]["type"] = "string";
     schemas["BuildInfo"]["properties"]["git_commit"]["type"] = "string";
     schemas["BuildInfo"]["properties"]["build_type"]["type"] = "string";
+    schemas["BuildInfo"]["properties"]["pid"]["type"] = "integer";
+    schemas["BuildInfo"]["properties"]["pid"]["description"] =
+        "The emulator's process id (GET /emulator/status): the WebAPI and the MCP port answer for one process";
 
     schemas["CreateEmulatorRequest"]["type"] = "object";
     schemas["CreateEmulatorRequest"]["properties"]["model"]["type"] = "string";

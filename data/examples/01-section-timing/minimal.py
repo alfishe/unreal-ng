@@ -9,11 +9,11 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
-from unreal_webapi import Unreal  # noqa: E402
+from unreal_webapi import connect  # noqa: E402
 
 ENTRY, EXIT, LIMIT = (int(a, 0) for a in sys.argv[1:4]) if len(sys.argv) > 3 else (0x8071, 0x80C2, 20000)
 
-emu = Unreal().create("48K")                     # or "PENTAGON"; Unreal().attach() takes the running one
+emu = connect().create("48K")    # finds unreal-qt, waits for it; "PENTAGON" too; attach() takes a running one
 emu.mute()
 emu.pause()
 emu.load_snapshot(os.path.join(os.path.dirname(os.path.abspath(__file__)), "demo.sna"))

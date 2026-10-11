@@ -16,7 +16,8 @@ included to try them on.
 
 ## Run it
 
-Start unreal-qt: its WebAPI listens on `http://localhost:8090`. Then:
+Start unreal-qt, before or after the script: the script finds the emulator by itself and waits for it while there is
+none. Then:
 
 ```bash
 python3 minimal.py                                       # Sparkles .. Sparkles.End, pause above 20000 T
@@ -24,14 +25,28 @@ python3 profile_sections.py                              # every section, 100 fr
 python3 profile_sections.py --model PENTAGON --frames 200
 python3 profile_sections.py --break-if "Frame>69888"     # pause on the first frame that does not fit
 python3 profile_sections.py --stop-at Sparkles.inside    # pause at an ordinary breakpoint
+python3 profile_sections.py --attach                     # the program already running in the emulator window
 ```
 
-Python 3.8+ and nothing else: the client (`../lib/unreal_webapi.py`) uses only the standard library. Is the WebAPI on
-another port? Set `UNREAL_WEBAPI_PORT=8190`, or pass `--url http://host:port/api/v1`.
+Python 3.8+ and nothing else: the client (`../lib/unreal_webapi.py`, `../lib/unreal_tui.py`) uses only the standard
+library. It works in Windows Terminal, PowerShell, cmd, macOS Terminal, iTerm2 and Linux terminals.
 
-Each run creates its own emulator instance, measures, and removes the instance again. When a run pauses, it
-keeps the instance so you can look at it in the debugger. `profile_sections.py` writes `section-report.md` and
-`section-report.json` to the current directory (`--out PREFIX` for other names).
+- **Finding the emulator.** The script looks on localhost ports 8090..8099; `UNREAL_WEBAPI_PORT` is tried first.
+  `UNREAL_WEBAPI_PORTS=8190-8199` gives other ports to scan, and `--url http://host:port/api/v1` names one emulator
+  (another host, for example). One emulator answers on its WebAPI port and on its MCP port; it is listed once.
+- **Nothing running yet.** The script waits, with a spinner, until unreal-qt starts. Ctrl+C gives up.
+- **Several emulators or instances.** With `--attach`, the script asks which instance to use: arrows or 1..9, Enter,
+  r to refresh the list, q to quit. `--attach 61d8` takes the instance whose id starts with that. Without a
+  terminal (a pipe, CI), the script prints the list and asks for `--attach ID`.
+- **New or running.** Without `--attach`, the script creates its own instance, measures, and removes the instance
+  again. With `--attach`, it measures the instance as it is and lets it run on afterwards. When a run pauses on
+  purpose (`--break-if`, `--stop-at`), the instance stays paused so you can look at it in the debugger.
+- **When the emulator goes away.** The emulator can be closed or crash, or the instance can be removed, in the
+  middle of a run. The script then says so (`LOST: ...`), writes the report from the passes measured until then, and
+  exits with code 2. Ctrl+C during a run also writes the report so far.
+
+`profile_sections.py` writes `section-report.md` and `section-report.json` to the current directory (`--out PREFIX`
+for other names).
 
 ## What is measured
 

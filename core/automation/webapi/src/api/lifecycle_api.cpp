@@ -12,6 +12,7 @@
 
 #include <drogon/HttpResponse.h>
 #include <emulator/buildinfo.h>
+#include <platform/processinfo.h>
 #include <emulator/config.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -473,6 +474,9 @@ void EmulatorAPI::status(const HttpRequestPtr& req, std::function<void(const Htt
     server["git_branch"] = buildinfo::kGitBranch;
     server["git_commit"] = buildinfo::kGitCommit;
     server["build_type"] = buildinfo::kBuildType;
+    // The process: one emulator answers on the WebAPI port and on the MCP port; a client scanning ports tells the
+    // two answers of one process from two processes by it
+    server["pid"] = static_cast<Json::UInt>(platform::CurrentProcessId());
     ret["server"] = server;
 
     Json::Value creatableModels(Json::arrayValue);

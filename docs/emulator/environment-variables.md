@@ -51,6 +51,8 @@ automation servers live inside it).
 | Variable | Values (default) | What it does | Read by |
 |---|---|---|---|
 | `UNREAL_WEBAPI_PORT` | 1-65535 (8090) | Port of the WebAPI (HTTP/REST) server. Invalid values are ignored. The MCP server's internal client follows it too. | WebAPI server, `core/automation/webapi/src/automation-webapi.cpp:204`; MCP's client `core/automation/mcp/src/webapi-client.cpp:39` |
+| `UNREAL_WEBAPI_PORTS` | `8090-8099` or `8090,8190` (8090-8099) | Where the example scripts look for a running emulator (after `UNREAL_WEBAPI_PORT`). The emulator itself does not read it. | `data/examples/lib/unreal_webapi.py` |
+| `UNREAL_WEBAPI_URL` | a WebAPI base URL (none) | The example scripts talk to this one emulator only, e.g. on another host: `http://192.168.1.5:8090/api/v1`. The emulator itself does not read it. | `data/examples/lib/unreal_webapi.py` |
 | `UNREAL_MCP_PORT` | 1-65535 (8092) | Port of the MCP server (for AI agents). | `core/automation/mcp/src/automation-mcp.cpp:111` |
 | `UNREAL_CLI_PORT` | 1-65535 (8765, the CLI module's default) | Port of the text command-line (telnet-style) server. | `core/automation/cli/src/automation-cli.cpp:81` |
 | `UNREAL_GDB_PORT` | 1-65535 (2000) | Port of the GDB remote debugging server. | `core/automation/gdb/src/automation-gdb.cpp:26` |
