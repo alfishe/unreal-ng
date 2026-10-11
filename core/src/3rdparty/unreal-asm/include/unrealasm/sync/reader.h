@@ -126,6 +126,15 @@ struct GapBufferParams
     uint16_t gapStart = 0;          ///< the gap start (end of the text before the cursor),
     uint16_t gapEnd = 0;            ///< the gap end (start of the text after the cursor)
     uint16_t lineCount = 0;         ///< CPU address of the 16-bit line count (the current line counted)
+    uint16_t cursorLine = 0;        ///< CPU address of the cursor's line number (0 = none known)
+    /// TASM 4.12: LOAD leaves the file as saved (its end record included) at the text start with the other pointers and
+    /// the line count 0; the editor makes the gap buffer when it is entered. The reader takes that form, an inject
+    /// writes it
+    bool loadedForm = false;
+    uint16_t changedAt = 0;         ///< CPU address of the editor's "changed since LOAD / SAVE" byte (0 = none)
+    uint8_t changedMask = 0xFF;
+    uint16_t nameAt = 0;            ///< CPU address of the work name, blank padded (0 = none)
+    uint8_t nameLength = 8;
     uint16_t lineBuffer = 0;        ///< CPU address of the current line as text, blank padded
     uint16_t lineBufferLength = 0;
     encoding::CodePage lineCodePage = encoding::CodePage::Cp866;
@@ -254,6 +263,9 @@ struct InjectOptions
     /// Files this caller wrote before (the push watch, Z2): a text in memory whose lines are still those of one of them
     /// is the caller's own and is replaced without force, though it is marked changed
     std::vector<std::vector<uint8_t>> written;
+    /// The text's name where the assembler keeps it outside the file (TASM 4.12's work name); PlanInjectProject gives
+    /// its title. Empty: the name in memory stays
+    std::string name;
 };
 
 /// The writes that make `file` (the assembler's own file, as its codec encodes it) the live text

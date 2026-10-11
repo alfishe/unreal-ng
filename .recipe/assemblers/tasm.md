@@ -129,6 +129,23 @@ plain text SAVE writes (`#975E` on), in the editor 3.x's length-framed records `
 editor is left). Its editor flag is the line buffer's tail at `#8BA0`. The asm-synchronizer reads every state
 (asm-synchronizer.md §7.7).
 
+## A host source into TASM 4.12
+
+Write the source at its command line (`TASM128>`); `A` then assembles it under the work name the inject gives:
+
+```text
+asm_source  {"action":"sync_inject","path":"/abs/main.asm","assembler":"tasm-4.12"}   # sjasmplus, converted by the TASM backend
+type_input  {"action":"tap","key":"a","frames":4}                                      # Assemble
+```
+
+The source is written as TASM 4.12 text (left to right with parentheses, `/256` / `&255` for high / low bytes,
+`.IF` / `.PHASE`, macros expanded, DUP unrolled:
+[research-sjasmplus-to-tasm.md](../../docs/inprogress/2026-10-05-unreal-asm/research-sjasmplus-to-tasm.md)) the way
+LOAD leaves a file; Edit then shows it. Refused in the editor, and without force when TASM's text changed since its
+LOAD / SAVE. `zxasm convert main.asm --to tasm --to-version 4.12` gives the same text as a file.
+`tools/verification/unreal-asm/emulator/inject-oracle.py tasm412 <TASM_412.SCL> <source.asm> 0x6200 --wait 15`
+runs the whole check.
+
 ## WebAPI
 
 `tools/verification/unreal-asm/lib/emulator.py` wraps the calls (`run_trdos`, `tap`, `type`, `read`, `read_disk_file`,
@@ -148,6 +165,11 @@ curl -s -X POST $BASE/emulator/$EMU_ID/media/A/export -H 'Content-Type: applicat
 ```
 
 ## Pitfalls
+
+- **TASM 4.12's stack is at `#617C`**: code assembled from `#6000` overwrites it (the bytes change from run to run, a
+  large program resets the machine). Use `#6200` and up (its overlay is at `#8000`).
+- **TASM 4.12 has no `{ }`** (error 8, even on a number) and assembles `LD HX,LX` / `LD HX,HX` with two prefixes.
+- **A long assembly takes time**: `assemble-in-emulator.py tasm412 ... --wait 15` for some 600 lines.
 
 - **Extend for less than about 12 frames** types a letter into the text instead of opening the command line.
 - **The first characters after SS+Q** (delete line) were lost or landed past the line's end: the line kept

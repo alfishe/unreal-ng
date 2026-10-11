@@ -207,6 +207,8 @@ phase; master only after the owner's review.
       - [x] the `retrobackend` core shared by the XAS and STORM backends (2026-10-11, `RetroWriter`: names, values, conditions, the walk; ALASM keeps its own)
       - [x] STORM (2026-10-11, research-sjasmplus-to-storm.md): backend, inject while the editor waits for a key (STORM's PGUP redraws from the new text), the editor's changed flags; STORM 1.3 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes
       - [ ] STORM 1.0beta inject rule; STORM idle templates; 1.3i loses bytes of a large assembly (its own LOAD too)
+      - [x] TASM 4.12 (2026-10-11, research-sjasmplus-to-tasm.md): backend (4.12 / 4.0 / 3), inject at its command line as LOAD leaves a file, its changed flag and work name; TASM 4.12 assembled `oracle1.asm` and every instruction form to sjasmplus' bytes; `zxasm convert --to-version`
+      - [ ] TASM 4.0 / 4.4 / 3.x inject rules; TASM idle templates
     - [ ] Z4 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE)
   - First cuts: ALASM both ways about 14 days; + TASM 4.12 about 20; + watch / push watch, hints, live labels, Qt dock about 27

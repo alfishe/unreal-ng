@@ -1490,7 +1490,6 @@ void CLIProcessor::HandleMemCounters(const ClientSession& session, const std::ve
         bool isROM = (bank < 2) ? (bank == 0 ? memory->IsBank0ROM() : memory->GetMemoryBankMode(bank) == BANK_ROM)
                                 : false;  // Banks 2-3 are always RAM
 
-        uint16_t page = memory->GetPageForBank(bank);
         const char* type = isROM ? "ROM" : "RAM";
         std::string bankName = memory->GetCurrentBankName(bank);
 

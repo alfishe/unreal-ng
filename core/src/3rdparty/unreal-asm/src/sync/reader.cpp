@@ -295,6 +295,30 @@ SyncText ReadGapBuffer(const MachineView& machine, const SyncDescriptor& d)
     const auto gapStart = machine.Word(p.gapStart), gapEnd = machine.Word(p.gapEnd), total = machine.Word(p.lineCount);
     if (!start || !top || !gapStart || !gapEnd || !total)
         return Inconsistent(text, "the text pointers are not in the memory copied");
+    if (p.loadedForm && *top == 0 && *gapStart == 0 && *gapEnd == 0 && *total == 0)
+    {
+        // as LOAD left it: the file at the start, up to its end record
+        std::vector<uint8_t> all;
+        if (!machine.Read(*start, static_cast<size_t>(0x10000 - *start), all))
+            return Inconsistent(text, "the text lies in a page that was not copied");
+        size_t at = 0;
+        long lines = 0;
+        while (at < all.size() && all[at] != static_cast<uint8_t>(p.end[0]))
+        {
+            const size_t n = all[at];
+            if (at + n + 1 >= all.size() || all[at + n + 1] != n)
+                return Inconsistent(text, "the text is not made of length-framed lines");
+            at += n + 2;
+            ++lines;
+        }
+        if (at + p.end.size() > all.size())
+            return Inconsistent(text, "no end record after the text");
+        text.file.assign(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(at + p.end.size()));
+        text.lines = static_cast<int>(lines);
+        text.ok = true;
+        text.state = "ok";
+        return text;
+    }
     if (!(*start <= *gapStart && *gapStart <= *gapEnd && *gapEnd <= *top))
         return Inconsistent(text, "the text pointers are out of order: #" + Hex(*start, 4) + " #" + Hex(*gapStart, 4) + " #" +
                                       Hex(*gapEnd, 4) + " #" + Hex(*top, 4));
@@ -936,11 +960,18 @@ SyncDescriptor Tasm412()
     d.gapBuffer.gapStart = 0x8F5D;
     d.gapBuffer.gapEnd = 0x8F5F;
     d.gapBuffer.lineCount = 0x94D9;
+    d.gapBuffer.cursorLine = 0x94CE;
+    d.gapBuffer.loadedForm = true;
+    d.gapBuffer.changedAt = 0x9BA6;   // #FF after an edit, 0 after LOAD / SAVE (TASM asks to save before it drops the text)
+    d.gapBuffer.nameAt = 0x9C10;      // the work name, in the menu's "Work name:" text: Assemble takes the text in memory under it
     d.gapBuffer.lineBuffer = 0x928A;
     d.gapBuffer.lineBufferLength = 128;
     d.gapBuffer.lineCodePage = encoding::CodePage::Cp866;
     d.gapBuffer.end = std::string("\xFF\xFF", 2);
     d.typing = {TypingRule::InLineBuffer, 0, 0};
+    // A text is written at its command line (TASM128>): its key wait returns there through #9CE9, #80BC (the editor's
+    // #9EA8, #80BC)
+    d.idleChain = {0x9CE9, 0x80BC};
     return d;
 }
 }  // namespace
@@ -963,7 +994,9 @@ InjectPlan InjectIntoSnapshot(const containers::Snapshot& snapshot, const SyncDe
     if (!plan.ok)
         return plan;
     std::string error;
-    std::map<int, std::vector<uint8_t>> changed = {{plan.page, plan.bytes}};
+    std::map<int, std::vector<uint8_t>> changed;
+    if (plan.page >= 0)
+        changed[plan.page] = plan.bytes;
     for (const InjectPlan::Poke& poke : plan.pokes)
     {
         auto it = changed.find(poke.page);
@@ -1090,9 +1123,77 @@ std::optional<uint16_t> VariableAddress(const std::vector<uint8_t>& code, const 
 }
 }  // namespace
 
+namespace
+{
+/// TASM 4.12: the file as LOAD leaves it at the text start, the gap pointers, the line count and the cursor line 0,
+/// all as single bytes at their CPU addresses (the text runs from the #8000 window into the page at #C000)
+InjectPlan PlanInjectLoaded(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& file, const InjectOptions& options)
+{
+    InjectPlan plan;
+    std::string why;
+    if (!Idle(machine, d, why) && !(options.force && d.idleChain.empty()))
+    {
+        plan.error = why;
+        return plan;
+    }
+    const GapBufferParams& p = d.gapBuffer;
+    plan.previous = ReadText(machine, d);
+    const bool changed = p.changedAt && (machine.Byte(p.changedAt).value_or(0) & p.changedMask) != 0;
+    if (plan.previous.ok && changed && !options.force && !WrittenBefore(plan.previous, options.written, 0))
+    {
+        plan.error = "the text in " + d.title + " has changes not saved (force overwrites them)";
+        return plan;
+    }
+    const auto start = machine.Word(p.start);
+    if (!start)
+    {
+        plan.error = "the text pointers of " + d.title + " are not in memory";
+        return plan;
+    }
+    if (*start + file.size() > 0xFFFF)
+    {
+        plan.error = "the text takes " + std::to_string(file.size()) + " bytes; " + d.title + " holds " + std::to_string(0xFFFF - *start);
+        return plan;
+    }
+    const auto poke = [&](uint32_t at, uint8_t value) {
+        const int window = machine.windows[(at >> 14) & 3];
+        if (window < 0 || at < 0x4000)
+            return false;
+        plan.pokes.push_back({window, static_cast<uint16_t>(at & (kPage - 1)), value});
+        return true;
+    };
+    bool ok = true;
+    for (size_t k = 0; k < file.size(); ++k)
+        ok = poke(*start + static_cast<uint32_t>(k), file[k]) && ok;
+    for (const uint16_t at : {p.top, p.gapStart, p.gapEnd, p.lineCount, p.cursorLine})
+        if (at)
+            ok = poke(at, 0) && poke(at + 1u, 0) && ok;
+    if (p.changedAt)
+        ok = poke(p.changedAt, options.markChanged ? p.changedMask : 0) && ok;
+    if (p.nameAt && !options.name.empty())
+    {
+        // the work name: what Assemble takes the text in memory under (and Save writes)
+        std::string name = options.name.substr(0, p.nameLength);
+        name.resize(p.nameLength, ' ');
+        for (size_t k = 0; k < name.size(); ++k)
+            ok = poke(p.nameAt + static_cast<uint32_t>(k), static_cast<uint8_t>(name[k])) && ok;
+    }
+    if (!ok)
+    {
+        plan.error = "the memory of " + d.title + "'s text is not in RAM";
+        return plan;
+    }
+    plan.page = -1;
+    plan.ok = true;
+    return plan;
+}
+}  // namespace
+
 InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& file, const InjectOptions& options)
 {
     InjectPlan plan;
+    if (d.family == LayoutFamily::GapBuffer && d.gapBuffer.loadedForm)
+        return PlanInjectLoaded(machine, d, file, options);
     if (d.family != LayoutFamily::FileImage)
     {
         plan.error = "writing a text into " + d.title + " is not supported yet";
@@ -1247,7 +1348,10 @@ ProjectInjectPlan PlanInjectProject(const MachineView& machine, const SyncDescri
             return result;
         }
         result.texts.push_back(written);
-        result.pages.push_back(PlanInject(machine, d, written.bytes, options));
+        InjectOptions named = options;
+        if (named.name.empty())
+            named.name = title;
+        result.pages.push_back(PlanInject(machine, d, written.bytes, named));
         result.ok = result.pages[0].ok;
         result.error = result.pages[0].error;
         return result;

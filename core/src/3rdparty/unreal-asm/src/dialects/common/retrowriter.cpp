@@ -262,6 +262,12 @@ bool RetroWriter::InWord(const Expr& e) const
 {
     if (program.expressionBits == 16 && program.unsignedArithmetic)
         return true;
+    // by its form: x & mask (a mask in 0..#FFFF), a byte of a word, a number
+    const Expr& u = Unwrapped(e);
+    const auto mask = [](const Expr& m) { return Unwrapped(m).kind == Expr::Kind::Number && Unwrapped(m).value >= 0 && Unwrapped(m).value <= 0xFFFF; };
+    if ((u.kind == Expr::Kind::Binary && u.op == Op::And && (mask(u.args[0]) || mask(u.args[1]))) ||
+        (u.kind == Expr::Kind::Unary && (u.op == Op::High || u.op == Op::Low)))
+        return true;
     const auto v = Value(e);
     return v && *v >= 0 && *v <= 0xFFFF;
 }
