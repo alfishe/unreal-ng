@@ -264,6 +264,47 @@ TEST_F(SyncControl_Test, InjectWritesASourceIntoAlasmAtItsCommandLine)
     EXPECT_TRUE(SyncRun(_context, "sync-inject", forced).Ok());
 }
 
+// A host file with INCLUDEs: each INCLUDEd source into an ALASM page of its own (4, 0), the INCLUDEs naming the pages
+TEST_F(SyncControl_Test, InjectPutsTheSourcesAHostFileIncludesIntoPagesOfTheirOwn)
+{
+    LoadSession(_context, "alasm509-loaded");
+    const std::vector<uint16_t> words = {0x9199, 0x91E3, 0x9707, 0x2D2B};   // the A> prompt
+    uint8_t* page5 = _context->pMemory->RAMPageAddress(5);
+    for (size_t k = 0; k < words.size(); ++k)
+    {
+        page5[0x1FBE + 2 * k] = static_cast<uint8_t>(words[k]);
+        page5[0x1FBE + 2 * k + 1] = static_cast<uint8_t>(words[k] >> 8);
+    }
+    _context->pCore->GetZ80()->sp = 0x5FBE;
+    const std::filesystem::path folder = TestPathHelper::GetUniqueTestScratchPath("project");
+    std::filesystem::create_directories(folder / "lib");
+    const auto write = [&](const std::filesystem::path& path, const std::string& text) { std::ofstream(path, std::ios::binary) << text; };
+    write(folder / "main.asm", "        ORG #6000\n        INCLUDE \"lib/inc1.asm\"\n        INCLUDE \"inc2.asm\"\nend_    RET\n");
+    write(folder / "lib" / "inc1.asm", "        LD HL,end_\n");
+    write(folder / "inc2.asm", "        NOP\n");
+
+    AsmReply reply = SyncRun(_context, "sync-inject", {{"path", (folder / "main.asm").string()}, {"from", "sjasmplus"}, {"title", "MAIN"}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.find("page")->i, 6);
+    const StateNode* includes = reply.body.find("includes");
+    ASSERT_NE(includes, nullptr);
+    ASSERT_EQ(includes->items.size(), 2u);
+    EXPECT_EQ(includes->items[0].find("source")->s, "lib/inc1");
+    EXPECT_EQ(includes->items[0].find("name")->s, "INC1");
+    EXPECT_EQ(includes->items[0].find("page")->i, 4);
+    EXPECT_EQ(includes->items[1].find("name")->s, "INC2");
+    EXPECT_EQ(includes->items[1].find("page")->i, 0);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(_context->pMemory->RAMPageAddress(4)), 8), "INC1    ");
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(_context->pMemory->RAMPageAddress(0)), 8), "INC2    ");
+
+    reply = SyncRun(_context, "sync-extract");
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    const std::string text = reply.body.find("text")->s;
+    EXPECT_NE(text.find("INCLUDE \"INC1\",4"), std::string::npos) << text;
+    EXPECT_NE(text.find("INCLUDE \"INC2\",0"), std::string::npos) << text;
+    std::filesystem::remove_all(folder);
+}
+
 // Part B (Z1): the same verbs on a snapshot file instead of the machine - ALASM 5.09's idle template; the machine stays untouched
 TEST_F(SyncControl_Test, InjectWritesASourceIntoAnAlasmSnapshot)
 {

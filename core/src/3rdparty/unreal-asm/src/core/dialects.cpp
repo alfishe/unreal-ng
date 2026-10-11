@@ -467,4 +467,138 @@ std::vector<ProjectFile> ImageProject(const std::vector<containers::TrdosFile>& 
     }
     return project;
 }
+
+std::vector<ProjectFile> HostProject(const SourceDocument& main, const DataFileReader& read, Diagnostics& diagnostics)
+{
+    std::vector<ProjectFile> project = {{main.name, main}};
+    std::vector<std::string> folders = {""};   // each file's folder, relative to main's
+    const CodecRegistry& registry = CodecRegistry::Builtin();
+    const ISourceCodec* codec = registry.Find(main.dialect);
+    if (!codec || codec->Info().family != CodecFamily::Text)
+        codec = registry.Find("text");
+    const IFrontend* frontend = DialectRegistry::Builtin().Frontend(main.dialect);
+    if (!frontend || !codec)
+        return project;
+    for (size_t k = 0; k < project.size(); ++k)
+    {
+        const ir::Program program = frontend->Parse(project[k].document).program;
+        for (const ir::Line& line : program.lines)
+            for (const ir::Statement& s : line.statements)
+            {
+                if (s.kind != ir::Statement::Kind::Directive || s.directive != ir::DirectiveKind::Include || s.text.empty())
+                    continue;
+                if (std::any_of(project.begin(), project.end(), [&](const ProjectFile& f) { return &f != &project[0] && f.name == s.text; }))
+                    continue;
+                const bool verbatim = std::find(s.params.begin(), s.params.end(), "verbatim") != s.params.end();
+                const bool absolute = s.text[0] == '/' || s.text[0] == '\\' || (s.text.size() > 1 && s.text[1] == ':');
+                const std::string path = (absolute ? std::string() : folders[k]) + s.text + (verbatim ? "" : ".asm");
+                const std::vector<uint8_t> bytes = read(path);
+                if (bytes.empty())
+                {
+                    diagnostics.push_back({Severity::Warning, line.sourceLine, 0,
+                                           project[k].name + ": INCLUDE \"" + path + "\" is not on the host: the assembler reads it from its disk"});
+                    continue;
+                }
+                DecodeResult decoded = codec->Decode(bytes, {});
+                decoded.document.dialect = main.dialect;
+                decoded.document.name = s.text;
+                const size_t slash = path.find_last_of("/\\");
+                folders.push_back(slash == std::string::npos ? std::string() : path.substr(0, slash + 1));
+                project.push_back({s.text, std::move(decoded.document)});
+            }
+    }
+    return project;
+}
+
+std::vector<std::string> ProjectTextNames(const std::vector<ProjectFile>& files, const std::string& title)
+{
+    const auto upper = [](std::string text) {
+        for (char& c : text)
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        return text;
+    };
+    std::vector<std::string> names;
+    for (size_t k = 0; k < files.size(); ++k)
+    {
+        if (k == 0)
+        {
+            names.push_back(title.substr(0, 8));
+            continue;
+        }
+        const size_t slash = files[k].name.find_last_of("/\\");
+        std::string name = files[k].name.substr(slash == std::string::npos ? 0 : slash + 1);
+        name = upper(name.substr(0, name.find('.'))).substr(0, 8);
+        if (name.empty())
+            name = "TEXT";
+        const std::string base = name;
+        for (int n = 2; std::any_of(names.begin(), names.end(), [&](const std::string& taken) { return upper(taken) == name; }); ++n)
+            name = base.substr(0, 7 - std::to_string(n).size()) + "~" + std::to_string(n);
+        names.push_back(name);
+    }
+    return names;
+}
+
+WriteProjectResult WriteProjectAs(const std::vector<ProjectFile>& files, std::string_view codecId, const std::string& version,
+                                  const std::vector<std::string>& names, const std::map<std::string, std::string>& includeAs)
+{
+    WriteProjectResult result;
+    const ISourceCodec* codec = CodecRegistry::Builtin().Find(codecId);
+    if (!codec)
+    {
+        result.error = "no codec " + std::string(codecId);
+        return result;
+    }
+    if (names.size() != files.size())
+    {
+        result.error = "a name for each file of the project";
+        return result;
+    }
+    const std::string dialect = codec->Info().dialect.empty() ? std::string(codecId) : codec->Info().dialect;
+    std::vector<SourceDocument> documents;
+    if (std::all_of(files.begin(), files.end(), [&](const ProjectFile& f) { return f.document.dialect == dialect; }))
+        for (const ProjectFile& f : files)
+            documents.push_back(f.document);
+    else
+    {
+        if (!DialectRegistry::Builtin().Backend(dialect))
+        {
+            result.error = "no backend writes " + codec->Info().title + "'s dialect (" + dialect + ") yet";
+            return result;
+        }
+        BackendOptions options;
+        options.targetVersion = version;
+        options.includeAs = includeAs;
+        ProjectResult converted = ConvertProject(files, dialect, options);
+        result.diagnostics = std::move(converted.diagnostics);
+        if (!converted.ok)
+        {
+            result.error = "the conversion of the project to " + dialect + " failed";
+            return result;
+        }
+        for (ProjectFile& f : converted.files)
+            documents.push_back(std::move(f.document));
+    }
+    for (size_t k = 0; k < documents.size(); ++k)
+    {
+        WriteAsResult written;
+        written.document = std::move(documents[k]);
+        written.document.name = names[k].substr(0, 8);
+        written.document.format.clear();
+        EncodeOptions encode;
+        encode.subversion = version;
+        EncodeResult encoded = codec->Encode(written.document, encode);
+        for (Diagnostic d : encoded.diagnostics)
+            result.diagnostics.push_back({d.severity, d.line, d.byteOffset, files[k].name + ": " + d.message});
+        if (!encoded.ok)
+        {
+            result.error = files[k].name + ": " + codec->Info().title + "'s format cannot hold this text";
+            return result;
+        }
+        written.bytes = std::move(encoded.bytes);
+        written.ok = true;
+        result.files.push_back(std::move(written));
+    }
+    result.ok = true;
+    return result;
+}
 }  // namespace unrealasm

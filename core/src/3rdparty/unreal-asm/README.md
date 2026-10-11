@@ -81,7 +81,8 @@ zxasm convert testdata/dialects/alasm-sjasmplus/constructs.alasm.txt --codec tex
 zxasm convert TheLink.trd --to sjasmplus -o out/              # every source of a disk, INCBIN files extracted
 symconv source TheLink.trd --main GSTUNNE4 --to native         # its labels with values, names and lines (ALASM)
 symconv live 3:ram3.bin 6:ram6.bin --to unreal-map              # ALASM / XAS label tables in dumped RAM pages
-zxasm inject main.asm testdata/templates/alasm-5.09.szx -o work.szx  # a sjasmplus source as ALASM's text, at its prompt
+zxasm inject main.asm testdata/templates/alasm-5.09.szx -o work.szx  # a sjasmplus source as ALASM's text, at its prompt; the files
+                                                                # it INCLUDEs into ALASM pages of their own (4, 0)
 zxasm probe work.szx                                            # alasm-5.09  100  MAIN, 1242 bytes  idle
 zxasm extract work.szx --to sjasmplus -o back.asm               # the text ALASM holds, back as sjasmplus
 zxasm inject main.asm disk.fdi --assembler alasm-5.09            # MAIN.H onto a disk image (TRD, SCL, FDI, UDI, TD0 ...; made when missing)

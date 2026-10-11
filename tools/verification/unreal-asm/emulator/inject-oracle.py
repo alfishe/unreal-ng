@@ -6,6 +6,10 @@ from the same source. The assembler disk is the collection's; the tool creates i
     inject-oracle.py alasm509 <ALASM509.trd> <source.asm> <address> [--sjasmplus PATH] [--port P] [--keep]
     inject-oracle.py alasm <disk> <source.asm> <address> --boot NAME --assembler alasm-4.44 [--help-key]   # any build
     inject-oracle.py alasm509 --template <alasm509.szx|.sna|.z80> <source.asm> <address> [--zxasm PATH] ...
+    inject-oracle.py alasm <disk> <main.asm> <address> --boot NAME --assembler alasm-X --project   # with its INCLUDEs
+
+With --project the source goes as a path, and each file it INCLUDEs into an ALASM text page of its own (the INCLUDE
+names the page); --template always takes the INCLUDEs (zxasm inject reads them beside the source).
 
 With --template (Z1) the source goes into the template snapshot with `zxasm inject` instead, without an emulator; the
 snapshot written is then loaded into a fresh instance and assembled there (make-template.py makes templates).
@@ -67,11 +71,14 @@ def alasm509(emu, args, expected):
         if args.help_key:
             emu.tap('enter')                           # 3.8c shows its help screen first
             time.sleep(1)
-        with open(args.source, encoding='utf-8') as f:
-            text = f.read()
-        body = {'text': text, 'from': args.from_, 'assembler': args.descriptor, 'title': 'INJECTED'}
+        body = {'from': args.from_, 'assembler': args.descriptor, 'title': 'INJECTED'}
+        if args.project:
+            body['path'] = os.path.abspath(args.source)    # the emulator reads the sources it INCLUDEs beside it
+        else:
+            with open(args.source, encoding='utf-8') as f:
+                body['text'] = f.read()
         reply = emu.post('/asm/sync/inject', body)
-        print('inject:', {k: reply.get(k) for k in ('assembler', 'name', 'page', 'bytes', 'lines', 'previous')})
+        print('inject:', {k: reply.get(k) for k in ('assembler', 'name', 'page', 'bytes', 'lines', 'previous', 'includes', 'message')})
         for d in reply.get('diagnostics', []):
             if d.get('severity') != 'info':
                 print('  ', d)
@@ -90,6 +97,8 @@ def main():
     parser.add_argument('--zxasm', default=os.environ.get('ZXASM', 'zxasm'))
     parser.add_argument('--boot', help='alasm: the BASIC program that starts it (default alasm64)')
     parser.add_argument('--assembler', dest='descriptor', default='alasm-5.09', help='alasm: the descriptor (alasm-4.44 ...)')
+    parser.add_argument('--project', action='store_true',
+                        help='give the source as a path: the files it INCLUDEs go into texts of their own (ALASM pages)')
     parser.add_argument('--help-key', action='store_true', help='alasm: a key closes a help screen at the start (3.8c)')
     parser.add_argument('source')
     parser.add_argument('address', type=lambda v: int(v, 0))

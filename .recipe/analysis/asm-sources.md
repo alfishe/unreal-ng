@@ -147,7 +147,7 @@ highlighted, errors and warnings on their lines and in a list), the status, and 
 ### Writing a host source into the assembler (part B)
 
 `sync_inject` turns a host source into the assembler's own text in RAM, so the user can go on in the original tool.
-ALASM 5.09 only for now:
+ALASM (3.8c to 5.09) for now:
 
 ```text
 asm_source {"action":"sync_inject","path":"/abs/project/main.asm"}                 # sjasmplus, by default
@@ -159,6 +159,12 @@ The source is converted by the ALASM backend: left-to-right expressions, and a l
 written as its value. The result is encoded as ALASM 5.07 and written over the text in the page IX+#0D names, as a
 TTD tool edit. `title` names the text (default: the name of the text it replaces). The reply gives the page, the
 bytes, the lines, the replaced text (`previous`) and the conversion's diagnostics.
+
+A `path` source brings the files it INCLUDEs (each relative to the file that INCLUDEs it). They are converted
+together with it, and each goes into an ALASM text page of its own. Its INCLUDE is written `INCLUDE "NAME",page`, so
+ALASM finds the text loaded and reads no disk. The reply lists them under `includes` (source, name, page, bytes). The
+free pages: 4 and 0 in 5.05-5.09, 4 in 5.00, 4.42-4.46 and 3.8c, none in 4.5. A project with more files is refused:
+put it onto the disk with `zxasm inject main.asm disk.trd --assembler alasm-5.09` (every file of the project).
 
 The write is refused (409) unless ALASM waits at its `A>` prompt: in the editor, while it assembles, saves or shows
 a catalogue. Leave the editor first (Extend, `q`, ENTER). A text with changes not saved is kept unless `force` is

@@ -68,6 +68,9 @@ struct BackendOptions
     /// Convert / ConvertProject for a backend that asks (IBackend::WantsLabelValues): a one-pass target folds to its
     /// value an expression it cannot compute (a later label in an operation other than + and -, an operator it lacks)
     std::map<std::string, SourceLabel> labelValues;
+    /// An INCLUDE of a project file (the IR's name for it) written with these operands instead: the name and the place
+    /// the target finds the text in (ALASM `"NAME",4`: the text already in RAM page 4, WriteProjectAs)
+    std::map<std::string, std::string> includeAs;
 };
 
 /// A label of the source and the name the backend wrote it under (a reserved word renamed, a LOCAL block's label made
@@ -189,4 +192,28 @@ ProjectResult ConvertProject(const std::vector<ProjectFile>& files, std::string_
 /// INCLUDEs that detection could not tell (a source of two lines), read with the codec and version of the source that
 /// INCLUDEs it
 std::vector<ProjectFile> ImageProject(const std::vector<containers::TrdosFile>& files);
+
+/// A project on the host: `main` first, then every source it INCLUDEs and they in turn, each named as its INCLUDE
+/// gives it in the IR (sjasmplus: without .asm) and decoded as text in main's dialect. `read` gets the path to open:
+/// the name relative to the folder of the file that INCLUDEs it, with .asm back where the IR dropped it ("" = the
+/// file is not there: a warning, the INCLUDE stays for the assembler's own disk)
+std::vector<ProjectFile> HostProject(const SourceDocument& main, const DataFileReader& read, Diagnostics& diagnostics);
+
+/// The names a project's texts get in an assembler's headers and on a TR-DOS disk: files[0] `title`, each other its
+/// file name without folder and extension, in upper case, 8 characters, made unique with ~2, ~3 ...
+std::vector<std::string> ProjectTextNames(const std::vector<ProjectFile>& files, const std::string& title);
+
+struct WriteProjectResult
+{
+    std::vector<WriteAsResult> files;   ///< in the order of the project's files, each named as asked
+    Diagnostics diagnostics;            ///< the conversion's, each prefixed with its file's name
+    std::string error;
+    bool ok = false;
+};
+
+/// A project (HostProject) written by `codec` as WriteAs writes one source: converted together (ConvertProject: the
+/// labels of every file known in each), files[k] named names[k], each INCLUDE of a project file written as
+/// includeAs gives it (the IR's name to the target's operands)
+WriteProjectResult WriteProjectAs(const std::vector<ProjectFile>& files, std::string_view codec, const std::string& version,
+                                  const std::vector<std::string>& names, const std::map<std::string, std::string>& includeAs = {});
 }  // namespace unrealasm
