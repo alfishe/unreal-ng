@@ -8,6 +8,70 @@
 
 ---
 
+2026-10-11
+## 🔵 [In Progress] #1: The .z80 loader frees its staging pages with `delete` instead of `delete[]`
+* **Date Opened:** 2026-10-11
+* **Found by:** a full `core-tests` run under valgrind memcheck on Linux (gcc 14, RelWithDebInfo, 12 shards; host `.238`, 2026-10-10/11): `Mismatched free() / delete / delete []` and `Mismatched new/delete size value: 1` in
+  `LoaderZ80::freeStagingMemory()` (`loader_z80.cpp:1552`, `:1563`), 33 times.
+
+### Description
+Every `.z80` load ends in undefined behavior: the staging ROM / RAM pages come from `new uint8_t[PAGE_SIZE]` and go
+back through scalar `delete`. The default allocators hide it today; a sized or instrumented allocator does not.
+
+### Fix
+`delete[]` for both page tables.
+
+### Requirements / Acceptance Criteria
+- [ ] The `LoaderZ80` tests are clean under valgrind memcheck (no mismatched delete).
+
+## 🔴 [Open] #2: `RESET=` missing from the ini compares an uninitialized buffer; the reset ROM can be anything
+* **Date Opened:** 2026-10-11
+* **Found by:** a full `core-tests` run under valgrind memcheck on Linux (gcc 14, RelWithDebInfo, 12 shards; host `.238`, 2026-10-10/11): `Conditional jump or move depends on uninitialised value(s)` in
+  `StringHelper::CompareCaseInsensitive` from `Config::ParseConfig` (`config.cpp:257`), 74 times
+  (`Config_Test.OldFmTrimDbCountsFromTheOldBaseline` and every test loading an ini without `RESET=`).
+
+### Description
+`Config::CopyStringValue` writes nothing when the key is absent (`GetValue` returns `nullptr`), so `line` keeps whatever
+it held: uninitialized stack memory on the first use, or an earlier key's value. That garbage is matched against the
+`RESET=` names (`SOS`, `128`, `DOS`, `SYS`, ...): a config without `RESET=` can start with a ROM other than the
+documented default `RM_SOS`.
+
+Second defect on the same path: `StringHelper::CompareCaseInsensitive(a, b, len)` compares `len + 1` characters
+(`do { ... } while (len-- && ...)` checks once more after `len` reaches 0).
+
+### Fix plan
+`CopyStringValue` leaves an empty string when the key is missing; `CompareCaseInsensitive` stops after `len`
+characters. A test pins both: an ini without `RESET=` resets to `RM_SOS`, and a prefix compare of `len` characters.
+
+## 🔴 [Open] #3: A test thread left joinable after a failed wait aborts the whole test process
+* **Date Opened:** 2026-10-11
+* **Found by:** a full `core-tests` run under valgrind memcheck on Linux (gcc 14, RelWithDebInfo, 12 shards; host `.238`, 2026-10-10/11): shard 2 died with `terminate called without an active exception` in
+  `TimeTravelManager_PublishedInfo_Test.AutomationReadsWhileTheLoopRecords`; the rest of the shard never ran.
+
+### Description
+Under valgrind the test's wait for the machine timed out; the failed check returned from the test body while its
+`std::thread` was still joinable, and the thread's destructor called `std::terminate`. A slow host (valgrind, a loaded
+CI runner) turns one failed expectation into a lost run.
+
+### Fix plan
+The test's thread joins on every exit path (a joining guard), so a failed check fails one test. Check the other
+threaded tests for the same shape.
+
+## 🔴 [Open] #4: Leaks reported in the test fixtures (`definitely lost`)
+* **Date Opened:** 2026-10-11
+* **Found by:** a full `core-tests` run under valgrind memcheck on Linux (gcc 14, RelWithDebInfo, 12 shards; host `.238`, 2026-10-10/11).
+
+### Description
+Biggest records, all reached from test code:
+- `Keyboard_Test::SetUp` (`keyboard_test.cpp:10`): the `EmulatorContext` is never deleted (190 KB a test).
+- `DiskAutostart_Test::LoadImage` (`diskautostart_test.cpp:76`): the image `LoaderTRD::parse` returned (1.2 MB a test).
+- `ScorpionMachineFixture::BuildMachine` (`scorpionfixture.h`): the four `FDD`s `WD1793::WD1793` creates
+  (`wd1793.cpp:91`) when the fixture builds a core without an `Emulator`, which owns and frees them in production.
+
+### Fix plan
+Confirm each one is the test's (production owners free them: `Emulator` deletes the drives at `emulator.cpp:739`),
+then free them in the fixtures. A leak in production code found on the way gets its own entry.
+
 2026-10-10
 ## 🟢 [Fixed] #1: Removing a running TS-Conf or ATM Turbo 2+ instance writes into freed memory (heap damage, a later crash elsewhere)
 * **Date Opened:** 2026-10-10
