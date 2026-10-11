@@ -12,7 +12,6 @@
 
 #include "../../../automation/cli/src/commands/cli-next-format.h"
 #include "_helpers/emulatortesthelper.h"
-#include "debugger/ports/nextnmi.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -25,6 +24,9 @@ namespace
 {
 // NextREG numbers (the register map)
 constexpr uint8_t kRegNmiEnables = 0x06;      // bit 3 the M1 button, bit 4 the DRIVE button
+constexpr uint8_t kRegResetType = NextBoard::kRegResetType;  // NR #02: writing bit 3 presses the M1 button, bit 2 the DRIVE button; they read 1 once taken
+constexpr uint8_t kPressM1 = 0x08;
+constexpr uint8_t kPressDrive = 0x04;
 constexpr uint8_t kNmiM1ButtonBit = 0x08;
 constexpr uint8_t kNmiDriveButtonBit = 0x10;
 constexpr uint8_t kRegInterruptControl = NextInterruptSource::kRegControl;   // NR #C0: bit 0 hardware IM2, bits 7:5 the vector base
@@ -86,6 +88,13 @@ protected:
             EmulatorTestHelper::CleanupEmulator(_emulator);
     }
     NextBoard& Board() { return _ports->Board(); }
+    /// Presses a board button the way a program or the host key does (NR #02); true when the board took the NMI request
+    bool Press(uint8_t bit)
+    {
+        Board().WriteNextReg(kRegResetType, 0);
+        Board().WriteNextReg(kRegResetType, bit);
+        return (Board().Read(kRegResetType) & bit) != 0;
+    }
     StateNode Report() { return DeviceState::NextNmiReport(_context, NextIntJournalQuery{}); }
     const StateNode& Event(const StateNode& report, size_t index)
     {
@@ -131,9 +140,7 @@ TEST_F(NextIntJournalMachine_Test, TheMaskableInterruptsAreNamedWithTheirVectors
 TEST_F(NextIntJournalMachine_Test, AButtonThatTheBoardRefusesSaysWhyAndTheSessionEndsWithRetn)
 {
     DeviceState::NextNmiJournalControl(_context, 1, true);
-    std::string reason;
-    EXPECT_FALSE(_ports->TriggerNmi("m1", reason));
-    EXPECT_NE(reason.find("NR #06 bit 3"), std::string::npos) << reason;
+    EXPECT_FALSE(Press(kPressM1));
     StateNode report = Report();
     EXPECT_FALSE(report.find("sources")->items[0].find("would_fire")->b);
     EXPECT_NE(report.find("sources")->items[0].find("blocked_by")->s.find("NR #06 bit 3"), std::string::npos);
@@ -141,38 +148,35 @@ TEST_F(NextIntJournalMachine_Test, AButtonThatTheBoardRefusesSaysWhyAndTheSessio
     Board().WriteNextReg(kRegNmiEnables, kNmiM1ButtonBit | kNmiDriveButtonBit);
     report = Report();
     EXPECT_TRUE(report.find("sources")->items[0].find("would_fire")->b);
-    EXPECT_TRUE(_ports->TriggerNmi("m1", reason)) << reason;
+    EXPECT_TRUE(Press(kPressM1));
     EXPECT_TRUE(_ports->Multiface().NmiHold());
-    EXPECT_FALSE(_ports->TriggerNmi("m1", reason));
-    EXPECT_NE(reason.find("session"), std::string::npos) << reason;
-    EXPECT_FALSE(_ports->TriggerNmi("drive", reason)) << "the DRIVE button waits for the Multiface session";
+    EXPECT_FALSE(Press(kPressM1)) << "the Multiface session is open";
+    EXPECT_FALSE(Press(kPressDrive)) << "the DRIVE button waits for the Multiface session";
     report = Report();
     EXPECT_TRUE(report.find("in_service")->find("multiface_session")->b);
     EXPECT_TRUE(report.find("multiface")->find("nmi_active")->b);
 
     _ports->OnRetn();
     EXPECT_FALSE(_ports->Multiface().NmiHold());
-    EXPECT_TRUE(_ports->TriggerNmi("drive", reason)) << reason;
-    EXPECT_TRUE(_ports->TriggerNmi("pulse", reason)) << "the bare line has no gates";
+    EXPECT_TRUE(_ports->RequestBoardNmi()) << "the magic button (Emulator::RequestMNI, POST /nmi {magic}) is the DRIVE button";
 
     report = Report();
     const StateNode* events = report.find("events");
     ASSERT_NE(events, nullptr);
-    ASSERT_GE(events->items.size(), 7u);
+    ASSERT_GE(events->items.size(), 6u);
     EXPECT_EQ(Event(report, 0).find("source")->s, "m1_button");
     EXPECT_FALSE(Event(report, 0).find("accepted")->b);
     EXPECT_NE(Event(report, 0).find("reason")->s.find("NR #06 bit 3"), std::string::npos);
     EXPECT_TRUE(Event(report, 1).find("accepted")->b);
     EXPECT_EQ(Event(report, 2).find("source")->s, "m1_button") << "the second M1 request, refused: the session is open";
     EXPECT_FALSE(Event(report, 2).find("accepted")->b);
+    EXPECT_NE(Event(report, 2).find("reason")->s.find("session"), std::string::npos);
     EXPECT_EQ(Event(report, 3).find("source")->s, "drive_button") << "the refused DRIVE button";
     EXPECT_FALSE(Event(report, 3).find("accepted")->b);
     EXPECT_EQ(Event(report, 4).find("kind")->s, "retn");
     EXPECT_EQ(Event(report, 4).find("source")->s, "multiface");
     EXPECT_EQ(Event(report, 5).find("source")->s, "drive_button");
     EXPECT_TRUE(Event(report, 5).find("accepted")->b);
-    EXPECT_EQ(Event(report, 6).find("source")->s, "pulse");
-    EXPECT_FALSE(_ports->TriggerNmi("dma", reason));
 }
 
 TEST_F(NextIntJournalMachine_Test, AResetIsLoggedWithItsBitsAndTheReportShowsTheMultifaceAndTheIoTrap)
@@ -199,36 +203,21 @@ TEST_F(NextIntJournalMachine_Test, AResetIsLoggedWithItsBitsAndTheReportShowsThe
     EXPECT_FALSE(report.find("stackless_nmi")->find("enabled")->b);
 }
 
-TEST_F(NextIntJournalMachine_Test, TheToolTriggersTheButtonWithTheCpuHeldAndTheCliPrintsTheReport)
+TEST_F(NextIntJournalMachine_Test, TheCliPrintsTheReportAndTheJournal)
 {
     Board().WriteNextReg(kRegNmiEnables, kNmiM1ButtonBit);
-    NextNmiControl::Result result = NextNmiControl::Trigger(_emulator, "m1");
-    EXPECT_TRUE(result.ok);
-    EXPECT_TRUE(result.accepted) << result.reason;
-    result = NextNmiControl::Trigger(_emulator, "m1");
-    EXPECT_TRUE(result.ok);
-    EXPECT_FALSE(result.accepted);
-    EXPECT_FALSE(result.reason.empty());
-    EXPECT_TRUE(NextNmiControl::Trigger(_emulator, "dma").badSource);
-    const StateNode reply = NextNmiControl::ToState(result);
-    EXPECT_FALSE(reply.find("accepted")->b);
-    EXPECT_NE(reply.find("reason"), nullptr);
-
     auto run = [&](const std::vector<std::string>& args) { return CliNext::StateText(_context, args, "\n"); };
     EXPECT_NE(run({"next", "nmi", "on"}).find("NMI journal on"), std::string::npos);
+    EXPECT_TRUE(Press(kPressM1));
     _ports->OnRetn();
-    std::string reason;
-    (void)_ports->TriggerNmi("drive", reason);
-    (void)_ports->TriggerNmi("m1", reason);
+    EXPECT_FALSE(Press(kPressDrive)) << "the DRIVE button is off in NR #06";
     const std::string text = run({"next", "nmi"});
     EXPECT_NE(text.find("NMI source m1_button:"), std::string::npos) << text;
     EXPECT_NE(text.find("NMI source io_trap: not modelled"), std::string::npos) << text;
     EXPECT_NE(text.find("Last reset: "), std::string::npos) << text;
-    EXPECT_NE(text.find("nmi_request drive_button"), std::string::npos) << text;
-    EXPECT_NE(text.find("REFUSED: "), std::string::npos) << text;
+    EXPECT_NE(text.find("nmi_request m1_button accepted"), std::string::npos) << text;
+    EXPECT_NE(text.find("nmi_request drive_button REFUSED: "), std::string::npos) << text;
     EXPECT_NE(run({"next", "nmi", "kinds=jump"}).find("Error:"), std::string::npos);
     EXPECT_NE(run({"next", "nmi", "colour=1"}).find("unknown option"), std::string::npos);
     EXPECT_NE(run({"next", "nmi", "clear"}).find("0 event(s) held"), std::string::npos);
-    EXPECT_NE(CliNext::NextCommand(_emulator, {"nmi", "pulse"}, "\n").find("accepted"), std::string::npos);
-    EXPECT_NE(CliNext::NextCommand(_emulator, {"nmi", "dma"}, "\n").find("Error"), std::string::npos) << "an unknown word is a state subcommand: it is refused";
 }

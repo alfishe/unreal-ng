@@ -1084,40 +1084,6 @@ bool PortDecoder_Next::GenerateMultifaceNmi()
     return true;
 }
 
-bool PortDecoder_Next::TriggerNmi(const std::string& source, std::string& reason)
-{
-    if (source == "m1")
-    {
-        if (GenerateMultifaceNmi())
-            return true;
-        reason = MultifaceNmiRefusal();
-        return false;
-    }
-    if (source == "drive")
-    {
-        if (GenerateDriveNmi())
-            return true;
-        reason = DriveNmiRefusal();
-        return false;
-    }
-    if (source == "pulse")
-    {
-        // The bare /NMI line: no button state machine, no Multiface or DivMMC bookkeeping
-        if (_intJournal.Enabled())
-        {
-            NextIntEvent e;
-            e.kind = NextIntKind::NmiRequest;
-            e.source = "pulse";
-            e.accepted = true;
-            RecordInt(e);
-        }
-        _context->pCore->GetZ80()->RequestNonMaskedInterrupt();
-        return true;
-    }
-    reason = "source '" + source + "': m1, drive or pulse";
-    return false;
-}
-
 void PortDecoder_Next::OnRetn()
 {
     // divmmc_retn_seen = z80_retn_seen and not mf_is_active (the Multiface's session ends first)

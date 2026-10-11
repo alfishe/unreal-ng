@@ -61,6 +61,12 @@ public:
     uint8_t PanMask(unsigned chip) const { return _pan[chip % kChips]; }  ///< bit 1 left, bit 0 right
     bool TurboSound() const { return _turboSound; }
     bool DacEnabled() const { return _dacEnabled; }
+    /// The configuration as NR #06 / #08 / #09 left it (the report): YM or AY chips, ACB or ABC stereo, the chips mixed mono, the beeper
+    /// kept out of the line mix
+    bool YmMode() const { return _ym; }
+    bool Acb() const { return _acb; }
+    uint8_t MonoMask() const { return _monoMask; }
+    bool SpeakerExcluded() const { return _speakerExcluded; }
 
     /// region <IModelAudioSource>
     const char* AudioSourceName() const override { return "Next audio"; }

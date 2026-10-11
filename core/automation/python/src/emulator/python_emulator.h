@@ -104,7 +104,6 @@
 #include <emulator/io/z80n/nextregjournal.h>
 #include <emulator/io/z80n/nextdivmmcjournal.h>
 #include <emulator/io/z80n/nextintjournal.h>
-#include <debugger/ports/nextnmi.h>
 #include <emulator/io/z80n/nextsdjournal.h>
 #include <emulator/io/z80n/nextreportquery.h>
 #include "../bindings/python_porttrace.h"
@@ -3028,6 +3027,12 @@ namespace PythonBindings
                 return StateNodeToPy(DeviceState::NextDivMmcJournalControl(self.GetContext(), enable, clear, capacity));
             }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
                "Switch (enabled=True/False), clear or resize (capacity=N) the DivMMC journal")
+            .def("next_audio", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextAudioReport(self.GetContext())); },
+               "The Next's sound as configured: chip model, ABC / ACB, turbosound, the selected chip, per chip its pan, mono flag, registers and "
+               "periods / volumes, and the four DAC channels with the left / right sums; available=False elsewhere")
+            .def("next_input", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextInputReport(self.GetContext())); },
+               "The Next's joystick modes (NR #05 left / right and the port each answers), the NR #0B I/O mode, the Kempston port #1F decoded and "
+               "what is not modelled (port #37, MD pad buttons, extended keys); available=False elsewhere")
             .def("next_nmi", [](Emulator& self, py::object kinds, py::object since, py::object from_frame, py::object to_frame,
                                 py::object limit) -> py::object {
                 auto text = [](const py::object& value) -> std::string {
@@ -3050,11 +3055,6 @@ namespace PythonBindings
                 return StateNodeToPy(DeviceState::NextNmiJournalControl(self.GetContext(), enable, clear, capacity));
             }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
                "Switch (enabled=True/False), clear or resize (capacity=N) the interrupt / NMI / reset journal")
-            .def("next_nmi_trigger", [](Emulator& self, const std::string& source) -> py::object {
-                return StateNodeToPy(NextNmiControl::ToState(NextNmiControl::Trigger(&self, source)));
-            }, py::arg("source"),
-               "Raise an NMI as the Multiface button ('m1'), the DRIVE button ('drive') or the bare /NMI line ('pulse'); the reply says accepted "
-               "and, if the board refused, why")
             .def("next_dma", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextDma(self.GetContext())); },
                "The Next DMA as programmed and running (mode, ports A / B, direction, burst, prescaler, counters, status byte); reading it "
                "does not advance its read sequence; available=False elsewhere")

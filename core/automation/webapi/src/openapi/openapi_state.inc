@@ -191,6 +191,18 @@
              "frame, t, pc, card, kind (command | read | write); a command has command (CMD17, ACMD41), argument, r1 (the response byte, "
              "none when the card ignored it) and crc_valid; read / write have block (write: ok). Query: kinds (comma: command, read, "
              "write), card (0 | 1), since (seq), from / to (frame), limit (newest N, default 200, 0 = all). 400 on a bad parameter.", true},
+            {"/api/v1/emulator/{id}/state/next/audio", "Get the Next sound as configured",
+             "The Next's chips and DAC (core DeviceState::NextAudioReport; CLI `state next audio`, Lua next_audio(), Python next_audio(), MCP "
+             "inspect_state aspect next_audio). config: nr_06 / nr_08 / nr_09, chip_model (ym2149 | ay8910), stereo_mode (abc | acb), turbosound, "
+             "dac, beeper_excluded. selected_chip. chips (3): index, selected, pan (stereo | left | right | muted), mono (NR #09), registers "
+             "(16), tone_periods, noise_period, mixer (R7), volumes (bit 4: the envelope drives the channel), envelope_period, envelope_shape. "
+             "dac: enabled, a / b / c / d, left_sum (A + B), right_sum (C + D), silence (#80).", true},
+            {"/api/v1/emulator/{id}/state/next/input", "Get the Next joystick modes and the Kempston port",
+             "The Next's input as the program configured it (core DeviceState::NextInputReport; CLI `state next input`, Lua next_input(), Python "
+             "next_input(), MCP inspect_state aspect next_input). joystick_modes: nr_05, left and right {code, name (kempston1 | kempston2 | md1 | "
+             "md2 | sinclair1 | sinclair2 | cursor | io_mode), port (1F | 37 | keyboard | user port)}. io_mode: nr_0b, enabled, mode, bit_0, "
+             "uart_on_joystick_port. kempston_1f: value, bits, selected_by_nr_05 (zxnext.vhd drives #1F only for Kempston 1 / MD 1), answers_here "
+             "(this emulator always does), note. not_modelled: port_37, md_pad_buttons, extended_keys and the stored nr_b0 / nr_b1 / nr_b2.", true},
             {"/api/v1/emulator/{id}/state/next/nmi", "Get the Next NMI sources, Multiface, interrupts, reset and the interrupt journal",
              "NMI, interrupts and reset (core DeviceState::NextNmiReport; CLI `state next nmi`, Lua next_nmi(), Python next_nmi(), MCP "
              "inspect_state aspect next_nmi). sources: m1_button, drive_button (enabled, would_fire, blocked_by) and io_trap (not modelled). "
@@ -720,29 +732,6 @@
         paths[kNmiCtl]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
         paths[kNmiCtl]["post"]["responses"]["200"]["description"] = "The journal's state";
         paths[kNmiCtl]["post"]["responses"]["404"]["description"] = "Emulator not found, or not a Next";
-
-        const char* kNmiTrigger = "/api/v1/emulator/{id}/next/nmi";
-        paths[kNmiTrigger]["post"]["summary"] = "Raise an NMI as a Next board button or the bare /NMI line";
-        paths[kNmiTrigger]["post"]["tags"].append("Machine State");
-        paths[kNmiTrigger]["post"]["description"] =
-            "Body {\"source\": \"m1\"|\"drive\"|\"pulse\"}. m1 = the Multiface button (NR #02 bit 3: needs NR #06 bit 3, CONMEM off, no "
-            "handler running), drive = the DRIVE button (NR #02 bit 2: NR #06 bit 4), pulse = the bare /NMI line. Taken with the CPU held, "
-            "between two instructions. A button the board refuses is a 200 with accepted false and the reason. CLI `next nmi <source>`, "
-            "Lua next_nmi_trigger(), Python next_nmi_trigger(). 400 bad source, 409 not a Next.";
-        paths[kNmiTrigger]["post"]["parameters"][0]["name"] = "id";
-        paths[kNmiTrigger]["post"]["parameters"][0]["in"] = "path";
-        paths[kNmiTrigger]["post"]["parameters"][0]["required"] = true;
-        paths[kNmiTrigger]["post"]["parameters"][0]["schema"]["type"] = "string";
-        Json::Value& nmiBody = paths[kNmiTrigger]["post"]["requestBody"]["content"]["application/json"]["schema"];
-        nmiBody["type"] = "object";
-        nmiBody["required"].append("source");
-        nmiBody["properties"]["source"]["type"] = "string";
-        nmiBody["properties"]["source"]["enum"].append("m1");
-        nmiBody["properties"]["source"]["enum"].append("drive");
-        nmiBody["properties"]["source"]["enum"].append("pulse");
-        paths[kNmiTrigger]["post"]["responses"]["200"]["description"] = "ok, accepted, source and, if refused, reason";
-        paths[kNmiTrigger]["post"]["responses"]["400"]["description"] = "Bad source";
-        paths[kNmiTrigger]["post"]["responses"]["409"]["description"] = "Not a ZX Spectrum Next";
 
         const char* kDmCtl = "/api/v1/emulator/{id}/next/divmmc-journal";
         paths[kDmCtl]["post"]["summary"] = "Switch, clear or resize the DivMMC journal";

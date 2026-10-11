@@ -139,17 +139,15 @@ class TestNextReports:
         assert {"in_service", "multiface", "nr_02", "stackless_nmi", "reset", "interrupts", "events"} <= set(report)
         journal = post(api_client, next_emulator, "/next/nmi-journal", {"enabled": True, "clear": True}).json()
         assert journal["enabled"] is True and journal["size"] == 0
-        # the buttons are off at power on: the board refuses, with the reason, and the journal says so
-        refused = post(api_client, next_emulator, "/next/nmi", {"source": "m1"})
-        assert refused.status_code == 200, refused.text
-        assert refused.json()["accepted"] is False and "NR #06" in refused.json()["reason"]
-        taken = post(api_client, next_emulator, "/next/nmi", {"source": "pulse"}).json()
-        assert taken["accepted"] is True
+        # the M1 button is off at power on (NR #06 bit 3): a write of NR #02 bit 3 is refused, with the reason, and the journal says so
+        wrote = post(api_client, next_emulator, "/next/nextreg", {"reg": "02", "value": "08"})
+        assert wrote.status_code == 200, wrote.text
+        # the machine's "magic button" (POST /nmi {"magic": true}) is the DRIVE button on a Next; a plain POST /nmi is the bare /NMI line
+        nmi = post(api_client, next_emulator, "/nmi", {"magic": True})
+        assert nmi.status_code == 200, nmi.text
         events = get(api_client, next_emulator, "/state/next/nmi?kinds=nmi_request").json()["events"]
-        assert [e["source"] for e in events][:2] == ["m1_button", "pulse"]
-        assert events[0]["accepted"] is False and "reason" in events[0]
-        assert post(api_client, next_emulator, "/next/nmi", {"source": "dma"}).status_code == 400
-        assert post(api_client, next_emulator, "/next/nmi", {}).status_code == 400
+        assert [e["source"] for e in events][:2] == ["m1_button", "drive_button"], events
+        assert events[0]["accepted"] is False and "NR #06" in events[0]["reason"]
         assert get(api_client, next_emulator, "/state/next/nmi?kinds=jump").status_code == 400
         post(api_client, next_emulator, "/next/nmi-journal", {"enabled": False})
 
