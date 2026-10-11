@@ -341,6 +341,21 @@ control_execution {"action":"step"}  ×2
 Browser, run) and photographs the result beside the board photograph; `tools/machines/next/realboard/run-all.py` runs them straight
 through the snapshot loader with automatic verdicts for the four programs that paint their own pass / fail.
 
+### 5b. Playing a game: the keys are the game's own
+
+The Next has **no standard set of game keys**. A game reads what its author chose and says so in its own readme or menu: the keyboard ports `#FE`, the Kempston joystick `#1F` / `#37`, Mega Drive pads, often a redefine menu. Read the readme (it is in the game's folder) before pressing keys, and do not take one game's keys for the platform's.
+
+| Game | Keys (from its readme) | Notes |
+|:--|:--|:--|
+| Aliens Neoplasma II (`games/AliensNeoplasma2/Next/ANP2_DEMO.nex`) | `W A S D` move, `B N M` actions, `P`; a Mega Drive pad works | the title and the settings menu answer SPACE / ENTER and W / S / N; "any key" is `IN A,(#FE)` with a zero high byte, the pad is `IN A,(#1F)`. Hold the grenade key to throw further; jump + down drops through platforms |
+| Vradark's Revenge (`games/VradarkRevenge/VradarkRevenge.nex`, needs `bin/` next to it) | not read yet | the mouse cursor shows on its MAP screen |
+
+`type_input {"action":"tap","key":"w","frames":6}` presses a game key as a real one; hold with `"action":"press"` / `"release"` for a movement key.
+
+**If a game "does not react to the keyboard", check `is_paused` first** (`GET /api/v1/emulator`): a click on the unreal-qt window's toolbar pauses the machine
+from the GUI (`Origin::Gui`), and a paused machine takes no keys. `POST /api/v1/emulator/{id}/resume` fixes it. Only after that look at the game's own key scheme
+and at the ports it polls.
+
 ### 6. Sound: is the DAC alive? (the DMA sample demo)
 
 ```text
