@@ -150,6 +150,50 @@ inline int PythonScriptBreakpoint(Emulator& self, BreakpointTypeEnum type, uint8
     return id == BRK_INVALID ? -1 : static_cast<int>(id);
 }
 
+/// bp_nextreg_write / bp_nextreg_read / bp_nextreg: a ZX Next register breakpoint (BreakpointManager::ApplyNextRegOptions).
+/// The breakpoint id, or -1 when refused
+inline int PythonScriptNextRegBreakpoint(Emulator& self, uint8_t access, uint16_t reg, int32_t to, const std::string& doors,
+                                         int32_t value, int32_t vmask, const std::string& hits)
+{
+    BreakpointManager* bpm = self.GetBreakpointManager();
+    if (!bpm)
+        return -1;
+    BreakpointSpec spec;
+    spec.type = BRK_NEXTREG;
+    spec.access = access;
+    spec.address = reg;
+    std::string error;
+    if (!BreakpointManager::ApplyNextRegOptions(spec, to, doors, value, vmask, hits, error))
+        return -1;
+    const uint16_t id = bpm->AddBreakpoint(spec, error);
+    return id == BRK_INVALID ? -1 : static_cast<int>(id);
+}
+
+/// bp_beam / bp_copper (ZX Next): a place of the beam, or a copper list instruction. The breakpoint id, or -1 when refused
+inline int PythonScriptPositionBreakpoint(Emulator& self, BreakpointTypeEnum type, uint16_t position, int32_t hc, int32_t to,
+                                          const std::string& hits)
+{
+    BreakpointManager* bpm = self.GetBreakpointManager();
+    if (!bpm)
+        return -1;
+    BreakpointSpec spec;
+    spec.type = type;
+    spec.access = BRK_IO_OUT;
+    spec.address = position;
+    if (hc > 0)
+        spec.beamHc = static_cast<uint16_t>(hc);
+    if (to >= 0)
+    {
+        spec.hasEnd = true;
+        spec.addressEnd = static_cast<uint16_t>(to);
+    }
+    std::string error;
+    if (!BreakpointManager::ParseHitSpec(hits, spec.hitMode, spec.hitTarget, error))
+        return -1;
+    const uint16_t id = bpm->AddBreakpoint(spec, error);
+    return id == BRK_INVALID ? -1 : static_cast<int>(id);
+}
+
 inline void ValidatePageIndex(const char* api, const std::string& type, int page, int offset)
 {
     int maxPage;
@@ -2001,6 +2045,38 @@ namespace PythonBindings
             }, "Add a port breakpoint (bp_port_out); mask: matches every port with (port & mask) == (port & mask); "
                "hits '5' / '>=5' / '%5'. -1 when refused",
                py::arg("port"), py::arg("mask") = -1, py::arg("hits") = "")
+            .def("bp_nextreg_write", [](Emulator& self, uint16_t reg, int32_t to, const std::string& doors, int32_t value,
+                             int32_t vmask, const std::string& hits) -> int {
+                return PythonScriptNextRegBreakpoint(self, BRK_IO_OUT, reg, to, doors, value, vmask, hits);
+            }, "Add a ZX Next register breakpoint on writes; to: register range end; doors 'nextreg,port,copper' a write "
+               "comes through (default all); value: stop only on it, vmask: the compared bits; hits '5' / '>=5' / '%5'. "
+               "-1 when refused",
+               py::arg("reg"), py::arg("to") = -1, py::arg("doors") = "", py::arg("value") = -1, py::arg("vmask") = -1,
+               py::arg("hits") = "")
+            .def("bp_nextreg_read", [](Emulator& self, uint16_t reg, int32_t to, const std::string& doors, int32_t value,
+                             int32_t vmask, const std::string& hits) -> int {
+                return PythonScriptNextRegBreakpoint(self, BRK_IO_IN, reg, to, doors, value, vmask, hits);
+            }, "Add a ZX Next register breakpoint on reads (through #253B); to: register range end; doors 'nextreg,port,copper' a write "
+               "comes through (default all); value: stop only on it, vmask: the compared bits; hits '5' / '>=5' / '%5'. "
+               "-1 when refused",
+               py::arg("reg"), py::arg("to") = -1, py::arg("doors") = "", py::arg("value") = -1, py::arg("vmask") = -1,
+               py::arg("hits") = "")
+            .def("bp_nextreg", [](Emulator& self, uint16_t reg, int32_t to, const std::string& doors, int32_t value,
+                             int32_t vmask, const std::string& hits) -> int {
+                return PythonScriptNextRegBreakpoint(self, BRK_IO_IN | BRK_IO_OUT, reg, to, doors, value, vmask, hits);
+            }, "Add a ZX Next register breakpoint on reads and writes; to: register range end; doors 'nextreg,port,copper' a write "
+               "comes through (default all); value: stop only on it, vmask: the compared bits; hits '5' / '>=5' / '%5'. "
+               "-1 when refused",
+               py::arg("reg"), py::arg("to") = -1, py::arg("doors") = "", py::arg("value") = -1, py::arg("vmask") = -1,
+               py::arg("hits") = "")
+            .def("bp_beam", [](Emulator& self, uint16_t line, int32_t hc, const std::string& hits) -> int {
+                return PythonScriptPositionBreakpoint(self, BRK_BEAM, line, hc, -1, hits);
+            }, "Add a ZX Next beam breakpoint: stops when the beam passes line 'line' of the copper's counter at pixel clock 'hc'. -1 when refused",
+               py::arg("line"), py::arg("hc") = 0, py::arg("hits") = "")
+            .def("bp_copper", [](Emulator& self, uint16_t index, int32_t to, const std::string& hits) -> int {
+                return PythonScriptPositionBreakpoint(self, BRK_COPPER, index, 0, to, hits);
+            }, "Add a ZX Next copper breakpoint: stops when the copper completes the list instruction at 'index' (to: range end). -1 when refused",
+               py::arg("index"), py::arg("to") = -1, py::arg("hits") = "")
             .def("bp_remove", [](Emulator& self, uint16_t id) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return false;

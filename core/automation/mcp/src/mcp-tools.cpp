@@ -1041,7 +1041,12 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["address"]["description"] = "Breakpoint address for bp_add (Z80 address or port number)";
     schema["properties"]["type"]["type"] = "string";
     schema["properties"]["type"]["default"] = "execution";
-    schema["properties"]["type"]["description"] = "Breakpoint type for bp_add: execution, read, write, port_in, port_out";
+    schema["properties"]["type"]["description"] = "Breakpoint type for bp_add: execution, read, write, port_in, port_out, nextreg_write, nextreg_read, "
+        "nextreg (address = the ZX Next register number, address_end a range; see doors / value / value_mask), "
+        "beam (address = line of the copper's counter, hc = pixel clock), copper (address = copper list index, address_end a range: "
+        "stops when the copper completes that instruction)";
+    schema["properties"]["hc"]["type"] = "integer";
+    schema["properties"]["hc"]["description"] = "For bp_add of beam: the pixel clock in the row (0..511, default 0)";
     schema["properties"]["address_end"]["type"] = "integer";
     schema["properties"]["address_end"]["description"] = "Optional for bp_add: range end, inclusive (execution / read / write)";
     schema["properties"]["slot_only"]["type"] = "boolean";
@@ -1050,6 +1055,13 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["port_mask"]["description"] =
         "Optional for bp_add of port_in / port_out: match (port & port_mask) == (address & port_mask); 255 catches #FE "
         "on any high byte";
+    schema["properties"]["doors"]["type"] = "string";
+    schema["properties"]["doors"]["description"] =
+        "Optional for bp_add of nextreg*: the doors a write comes through - nextreg (NEXTREG instructions), port (OUT #253B), "
+        "copper (a copper MOVE); comma separated; default all. Reads always come through port #253B";
+    schema["properties"]["value_mask"]["type"] = "integer";
+    schema["properties"]["value_mask"]["description"] =
+        "Optional for bp_add of nextreg*: compare only these bits of 'value' (default #FF when a value is given)";
     schema["properties"]["hits"]["type"] = "string";
     schema["properties"]["hits"]["description"] =
         "Optional for bp_add: stop on the Nth hit only ('5'), from the Nth on ('>=5') or every Nth ('%5'); every hit is "
@@ -1069,7 +1081,7 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["port"]["type"] = "string";
     schema["properties"]["port"]["description"] = "Port for port_out: 0..#FFFF as 0x13AF, #13AF, 13AFh or decimal";
     schema["properties"]["value"]["type"] = "string";
-    schema["properties"]["value"]["description"] = "Byte for port_out: 0..#FF, the same forms";
+    schema["properties"]["value"]["description"] = "Byte for port_out: 0..#FF, the same forms; for bp_add of nextreg*: stop only on this value (0..255)";
     schema["properties"]["since"]["type"] = "integer";
     schema["properties"]["since"]["description"] =
         "For wait: the debugger seq last seen (inspect_state snapshot shows it); omitted = the current one";
@@ -1207,7 +1219,9 @@ void RegisterControlExecution(ToolRegistry& registry)
                         out << "Breakpoints of " << id << ": " << list.size();
                         for (const Json::Value& bp : list)
                         {
-                            out << "\n#" << bp["id"].asUInt() << " " << (bp["type"].asString() == "port" ? "port " : "")
+                            out << "\n#" << bp["id"].asUInt() << " "
+                                << (bp["type"].asString() == "port" ? "port " : bp["type"].asString() == "nextreg" ? "NR " : bp["type"].asString() == "beam" ? "beam line "
+                                    : bp["type"].asString() == "copper" ? "copper #" : "")
                                 << Hex16(bp["address"].asUInt()) << " "
                                 << (bp["execute"].asBool() ? "X" : "") << (bp["read"].asBool() ? "R" : "")
                                 << (bp["write"].asBool() ? "W" : "")
@@ -1251,7 +1265,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                     body["address"] = args["address"];
                     body["type"] = args.isMember("type") ? args["type"].asString() : "execution";
                     for (const char* key : {"address_end", "page", "slot_only", "port_mask", "hits", "hit_mode", "hit_target",
-                                            "note", "group"})
+                                            "note", "group", "doors", "value", "value_mask", "hc"})
                         if (args.isMember(key))
                             body[key] = args[key];
                     // A breakpoint never fires while the breakpoints feature is off, and the add itself says nothing:

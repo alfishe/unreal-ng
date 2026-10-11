@@ -3,7 +3,10 @@
 #include "portdecoder_next.h"
 
 #include "common/modulelogger.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulator.h"
 #include "emulator/io/z80n/nexttiming.h"
 #include <filesystem>
 
@@ -43,6 +46,8 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
             pc = z80->m1_pc;
         }
     });
+    // NextREG breakpoints: the board tells every access of the program with its door (the single choke points)
+    _board->SetAccessHook([this](bool write, uint8_t reg, uint8_t value, NextRegSource source) { NextRegAccess(write, reg, value, source); });
     _divMmc = std::make_unique<NextDivMmc>(&Mem(), _board.get());
     _divMmc->isBasicRomPaged = [this]() { return Mem().BasicRomVisible(); };
     _divMmc->fillClock = [this](NextDivMmcEvent& e) {
@@ -332,7 +337,7 @@ uint8_t PortDecoder_Next::DecodePortIn(uint16_t port, uint16_t pc)
         if (low == kPortSpiData)
             result = SpiRead();
         else
-            result = port == kPortRegSelect ? _board->SelectedRegister() : _board->ReadSelected();
+            result = port == kPortRegSelect ? _board->SelectedRegister() : _board->ReadSelectedByProgram();
         _lastPortDecoded = true;
         OnPortInComplete(port, result, pc, disp);
         return result;
@@ -500,6 +505,93 @@ bool PortDecoder_Next::WriteDacPort(uint16_t port, uint8_t value)
 
 /// Between two instructions: a DMA that holds the bus runs until it is done or waits for its prescaler (burst mode
 /// releases the bus then); the CPU is held for two of its clocks per byte
+void PortDecoder_Next::NextRegAccess(bool write, uint8_t reg, uint8_t value, NextRegSource source)
+{
+    uint8_t door;
+    switch (source)
+    {
+        case NextRegSource::NextReg: door = BRK_NR_DOOR_NEXTREG; break;
+        case NextRegSource::Port: door = BRK_NR_DOOR_PORT; break;
+        default: return;  // the copper is watched on its own (WatchCopper); the board itself (reset, a loader) has no one to stop
+    }
+    if (_breakpointActive || !_context->pDebugManager || !_context->pEmulator)
+        return;
+    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+    const uint16_t id = brk.HandleNextReg(write ? BRK_NR_WRITE : BRK_NR_READ, reg, value, door);
+    if (id != BRK_INVALID)
+        FireBreakpoint(id, reg, write ? BreakpointHitKind::NextRegWrite : BreakpointHitKind::NextRegRead);
+}
+
+void PortDecoder_Next::FireBreakpoint(uint16_t id, uint16_t address, BreakpointHitKind kind)
+{
+    _breakpointActive = true;
+    if (_context->pDebugManager)
+        _context->pDebugManager->GetBreakpointsManager()->NoteTriggered(id);
+    _context->pEmulator->OnBreakpointHit(id, address, kind);
+    _breakpointActive = false;
+}
+
+void PortDecoder_Next::OnInstructionDone()
+{
+    if (!_context->pDebugManager) [[unlikely]]
+        return;
+    BreakpointManager& manager = *_context->pDebugManager->GetBreakpointsManager();
+    if (!manager.GetHotState()->copperWatch) [[likely]]
+    {
+        _watchValid = false;  // the next look starts from the beam of that moment
+        return;
+    }
+    WatchCopper(manager);
+}
+
+void PortDecoder_Next::WatchCopper(BreakpointManager& manager)
+{
+    NextCopper& copper = _board->Copper();
+    uint64_t now;
+    if (_breakpointActive || !_context->pEmulator || !copper.BeamNow(now))
+        return;
+    if (!_watchValid)
+    {
+        _watchValid = true;
+        _watchClock = now;
+        return;
+    }
+    const uint64_t from = _watchClock;
+    const bool wrapped = now < from;  // the frame rolled over
+    _watchClock = now;
+    // The instructions the copper completes in (from, now]: a probe from the real copper's cursor, which lags by up to a line
+    _watchSteps.clear();
+    if (copper.Mode() != 0)
+        copper.Probe(now, _watchSteps);
+    auto inSpan = [&](uint64_t at) { return wrapped ? (at > from || at <= now) : (at > from && at <= now); };
+    uint16_t found = BRK_INVALID;
+    uint16_t address = 0;
+    BreakpointHitKind kind = BreakpointHitKind::CopperInstruction;
+    auto take = [&](uint16_t id, uint16_t at, BreakpointHitKind k) {
+        if (id != BRK_INVALID && found == BRK_INVALID)
+        {
+            found = id;
+            address = at;
+            kind = k;
+        }
+    };
+    for (const NextCopper::Step& step : _watchSteps)
+    {
+        if (!inSpan(step.at))
+            continue;
+        take(manager.HandleCopperPc(step.pc), step.pc, BreakpointHitKind::CopperInstruction);
+        if (step.isMove && step.reg != 0)
+            take(manager.HandleNextReg(BRK_NR_WRITE, step.reg, step.value, BRK_NR_DOOR_COPPER), step.reg, BreakpointHitKind::NextRegWrite);
+    }
+    take(manager.HandleBeam([&](uint16_t line, uint16_t hc) {
+             const uint64_t at = copper.ClockOf(line, hc);
+             return at != UINT64_MAX && inSpan(at);
+         }),
+         0, BreakpointHitKind::Beam);
+    if (found != BRK_INVALID)
+        FireBreakpoint(found, address, kind);
+}
+
 void PortDecoder_Next::StepDma()
 {
     if (!_dma.Active())

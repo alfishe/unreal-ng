@@ -85,6 +85,28 @@ void NextCopper::RunTo(uint64_t target)
     _running = false;
 }
 
+void NextCopper::Probe(uint64_t target, std::vector<Step>& steps) const
+{
+    NextCopper probe(*this);  // the program, the cursor, the mode: nothing of the machine
+    probe._running = false;
+    probe._now = nullptr;
+    probe._beforeWrite = nullptr;
+    probe._observer = [&steps](const Step& step) { steps.push_back(step); };
+    // A MOVE into the copper's own registers changes the copper that follows it (the list, the mode, the offset); the rest is not ours
+    probe._write = [&probe](uint8_t reg, uint8_t value) {
+        switch (reg)
+        {
+            case 0x60: probe.WriteData(value); break;
+            case 0x61: probe.WriteAddressLow(value); break;
+            case 0x62: probe.WriteControl(value); break;
+            case 0x63: probe.WriteWord(value); break;
+            case 0x64: probe.WriteOffset(value); break;
+            default: break;
+        }
+    };
+    probe.RunTo(target);
+}
+
 void NextCopper::RunSegment(uint64_t end)
 {
     const uint64_t lineClocks = static_cast<uint64_t>(_hcPerLine) * 4;
@@ -119,6 +141,8 @@ void NextCopper::RunSegment(uint64_t end)
             const unsigned hc = static_cast<unsigned>((_t % lineClocks) / 4);
             if (cvc == vpos && hc >= threshold)
             {
+                if (_observer)
+                    _observer(Step{_pc, _t, false, 0, 0});
                 _pc = (_pc + 1) & 0x3FF;
                 _t++;
                 continue;
@@ -136,6 +160,9 @@ void NextCopper::RunSegment(uint64_t end)
         const uint8_t reg = static_cast<uint8_t>((instruction >> 8) & 0x7F);
         const uint8_t value = static_cast<uint8_t>(instruction & 0xFF);
         const uint64_t at = _t;
+        _lastMoveAt = at;
+        if (_observer)
+            _observer(Step{_pc, at, true, reg, value});
         _pc = (_pc + 1) & 0x3FF;
         _t++;
         if (reg != 0)

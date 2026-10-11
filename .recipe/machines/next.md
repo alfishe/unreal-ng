@@ -118,6 +118,26 @@ paged, where `RST 8` is a BASIC error report and the byte an error code, not an 
 CLI, `next_divmmc{...}` in Lua, `emu.next_divmmc(...)` in Python. The text is the one
 `NextDivMmcJournalMachine_Test.TheCliPrintsTheEntriesAndTheCalls` checks.
 
+### 3a3. Stop at the write of NR x, at a beam place, at a copper instruction (breakpoints)
+
+The journal says who wrote; a breakpoint stops the machine there. NextREG, beam and copper-instruction breakpoints are ordinary
+breakpoints (`bp_add`, `POST /breakpoints`, CLI, Lua, Python), set in debug mode only; with none of them the machine pays nothing for them.
+
+```text
+control_execution {"action":"bp_add","type":"nextreg_write","address":"0x07"}                              # any door
+control_execution {"action":"bp_add","type":"nextreg_write","address":"0x40","address_end":"0x44","doors":"copper"}  # the copper touches the palette
+control_execution {"action":"bp_add","type":"nextreg_write","address":"0x15","value":1,"value_mask":1}     # a write that sets bit 0
+control_execution {"action":"bp_add","type":"beam","address":99,"hc":255}                                  # where the line interrupt of line 100 fires
+control_execution {"action":"bp_add","type":"copper","address":12}                                         # the copper completes list instruction 12
+control_execution {"action":"wait"}
+```
+
+The CPU's doors (`NEXTREG`, `OUT #253B`, `IN #253B` for reads) stop after the instruction that did it, before the register takes the write.
+The copper is watched on a copy of its state after every instruction (the picture runs the real copper lazily, a line at a time), so a
+copper write, a beam place or a copper instruction stops at the first instruction boundary after the beam has done it, and the
+real copper executes the write later without a second stop or count. The `beam` line and the `hc` are the copper's counters (NR #64
+applied); `next_reg_journal` carries `beam_line` / `beam_hc` for every write (a copper MOVE has its own beam, not the time of the picture's catch-up).
+
 ### 3b. What did the program configure? (the debugger reports)
 
 Guessing from port traces and one register at a time found the DMA writing into ROM, the tilemap reading bank 7 as 16K and a card

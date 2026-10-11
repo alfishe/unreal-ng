@@ -127,6 +127,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"bplist", &CLIProcessor::HandleBPList},          // List all breakpoints
                         {"wp", &CLIProcessor::HandleWatchpoint},          // Set memory read/write watchpoint
                         {"bport", &CLIProcessor::HandlePortBreakpoint},   // Set port breakpoint
+                        {"bnextreg", &CLIProcessor::HandleNextRegBreakpoint},  // Set ZX Next register breakpoint
+                        {"bbeam", &CLIProcessor::HandleBeamBreakpoint},        // Set ZX Next beam position breakpoint
+                        {"bcopper", &CLIProcessor::HandleCopperBreakpoint},    // Set ZX Next copper instruction breakpoint
                         {"bphits", &CLIProcessor::HandleBPHits},          // Breakpoint hit counters (reset)
                         {"bpclear", &CLIProcessor::HandleBPClear},        // Clear breakpoints
                         {"bpgroup", &CLIProcessor::HandleBPGroup},        // Manage breakpoint groups
@@ -657,6 +660,9 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  bp <addr>     - Set execution breakpoint at address" << NEWLINE;
     oss << "  wp <addr> <type> - Set memory watchpoint (r/w/rw)" << NEWLINE;
     oss << "  bport <port> <type> - Set port breakpoint (i/o/io)" << NEWLINE;
+    oss << "  bnextreg <reg> <type> - Set ZX Next register breakpoint (r/w/rw; --via, --value)" << NEWLINE;
+    oss << "  bbeam <line> [--hc N] - Break when the beam passes a place (ZX Next)" << NEWLINE;
+    oss << "  bcopper <index> - Break when the copper completes a list instruction (ZX Next)" << NEWLINE;
     oss << "  bplist        - List all breakpoints" << NEWLINE;
     oss << "  bpclear       - Clear breakpoints" << NEWLINE;
     oss << "  bpgroup <add|remove|list> <group> [bp_id] - Manage breakpoint groups" << NEWLINE;

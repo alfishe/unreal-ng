@@ -56,6 +56,8 @@ public:
     virtual void AudioConfigChanged() {}
     /// NR #2C / #2D / #2E: the DAC's NextREG mirrors
     virtual void DacMirrorWrite(uint8_t, uint8_t) {}
+    /// An instruction ended (a safe place to stop the machine: not inside the picture's catch-up of the copper)
+    virtual void OnInstructionDone() {}
     /// A RETN completed: the DivMMC drops its automap and the button latch
     virtual void OnRetn() {}
     /// NR #02 bit 2 written 1 (by the CPU or the copper): the DRIVE button's NMI. True when the board took it (NR #06 bit 4 on, no
@@ -101,6 +103,18 @@ public:
     /// Called before a NextREG write of the CPU (not of the copper): the screen draws the lines the beam has passed with the old state
     void SetBeforeCpuWrite(std::function<void()> hook) { _beforeCpuWrite = std::move(hook); }
     void SetInterrupts(NextInterruptSource* interrupts) { _interrupts = interrupts; }
+    /// Every NextREG access of the program (a read through #253B, a write by NEXTREG, #253B or the copper) is told to the hook with the
+    /// door it came through, before the register takes the write (the breakpoints; a tool's write and the board's own never are)
+    using AccessHook = std::function<void(bool write, uint8_t reg, uint8_t value, NextRegSource source)>;
+    void SetAccessHook(AccessHook hook) { _accessHook = std::move(hook); }
+    /// The program's read of a register through port #253B (the select latch's register), told to the access hook
+    uint8_t ReadSelectedByProgram() const
+    {
+        const uint8_t value = ReadSelected();
+        if (_accessHook) [[unlikely]]
+            _accessHook(false, _selected, value, NextRegSource::Port);
+        return value;
+    }
 
     /// Power-on (hard) or reset (soft) state of the registers, config mode and boot ROM
     void Reset(bool hard);
@@ -185,6 +199,7 @@ private:
     std::map<uint8_t, uint32_t>* _readCounts = nullptr;
     std::vector<NextRegWrite>* _log = nullptr;
     std::function<void()> _beforeCpuWrite;
+    AccessHook _accessHook;
     bool _copperWrite = false;
     const uint16_t* _pc = nullptr;
     uint8_t _timing = 2;
