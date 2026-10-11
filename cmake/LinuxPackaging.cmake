@@ -38,9 +38,10 @@ install(DIRECTORY "${CMAKE_SOURCE_DIR}/unreal-qt/install/linux/icons/"
     DESTINATION share/icons COMPONENT Suite)
 install(FILES "${CMAKE_SOURCE_DIR}/LICENSE" "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
     DESTINATION share/doc/unreal-ng COMPONENT Suite)
-install(DIRECTORY "${DATA_PATH}/examples/" DESTINATION share/doc/unreal-ng/examples COMPONENT Suite
+# Not under share/doc: minimal installs and Docker images exclude /usr/share/doc from every package
+install(DIRECTORY "${DATA_PATH}/examples/" DESTINATION share/unreal-ng/examples COMPONENT Suite
     USE_SOURCE_PERMISSIONS
-    PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE PATTERN "section-report*" EXCLUDE)
+    PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE PATTERN "section-report*" EXCLUDE PATTERN ".gitignore" EXCLUDE)
 
 set(CPACK_PACKAGE_NAME "unreal-ng")
 set(CPACK_PACKAGE_VENDOR "UnrealNG contributors")

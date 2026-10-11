@@ -31,11 +31,12 @@ import datetime
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
 import unreal_tui as tui  # noqa: E402
-from unreal_webapi import (ConnectionLost, InstanceGone, WebApiError, attach, connect, load_sym,  # noqa: E402
-                           register_value)
+from unreal_webapi import (ConnectionLost, ControlHeld, ControlRevoked, InstanceGone, WebApiError, attach,  # noqa: E402
+                           connect, load_sym, register_value)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -304,6 +305,40 @@ def write_markdown(path, run, sections, interrupt_events, frame_t, group_by, lab
         f.write("\n".join(lines))
 
 
+# --- the live panel ---
+
+def dashboard(title, done, frames, hits, started, sections, frame_t, events):
+    """The lines of the live panel: progress, one row per section, the latest events."""
+    elapsed = max(time.time() - started, 0.001)
+    lines = [tui.bold(title),
+             "frame {:>5} / {:<5} {} {:>3.0f}%   {:>6} marker hits  {:>4.0f}/s   {:>4.0f} s".format(
+                 done, frames, tui.meter(done / float(frames or 1)), 100.0 * done / (frames or 1), hits, hits / elapsed,
+                 elapsed),
+             "",
+             tui.dim("  {:<12} {:>6} {:>7} {:>7} {:>9} {:>7} {:>6}  {}".format(
+                 "section", "passes", "last", "min", "avg", "max", "%frame", ""))]
+    for s in sections:
+        n = len(s.passes)
+        if not n:
+            lines.append("  {:<12} {:>6}".format(s.name[:12], 0))
+            continue
+        elapsed_list = [p["elapsed"] for p in s.passes]
+        avg = sum(elapsed_list) / float(n)
+        note = ""
+        if s.expected is not None:
+            off = sum(1 for v in elapsed_list if v != s.expected)
+            note = tui.red("{} off {}".format(off, s.expected)) if off else tui.green("all {}".format(s.expected))
+        interrupted = sum(1 for p in s.passes if p["interrupts"])
+        if interrupted:
+            note += ("  " if note else "") + tui.yellow("{} interrupted".format(interrupted))
+        lines.append("  {:<12} {:>6} {:>7} {:>7} {:>9.1f} {:>7} {:>5.1f}%  {}".format(
+            s.name[:12], n, elapsed_list[-1], min(elapsed_list), avg, max(elapsed_list), 100.0 * avg / frame_t, note))
+    lines.append("")
+    for event in events[-3:]:
+        lines.append(tui.dim("  " + event))
+    return lines
+
+
 # --- the run ---
 
 def main():
@@ -361,9 +396,18 @@ def main():
     created = args.attach is None
     emu = connect(args.url).create(args.model) if created else attach(args.attach or None, args.url)
     print("{} {} on {}".format("created" if created else "attached to", emu.id[:8], emu.server.describe()))
+    # An automation session: the emulator window shows who drives it and locks its controls until we release it;
+    # the user can take control back from its toolbar (then we stop)
+    try:
+        emu.take_control("profile_sections")
+    except ControlHeld as e:
+        if created:
+            emu.remove()
+        raise SystemExit("cannot take control of the emulator: {}".format(e))
 
     paused_for_user = False
     lost = None
+    revoked = False
     interrupted = False
     exit_code = 0
     breakpoints = []
@@ -401,8 +445,17 @@ def main():
         hits = 0
         stop_reason = None
 
-        print("{} frames of {} t-states, sections: {}".format(args.frames, frame_t,
-                                                             ", ".join(s.name for s in sections)))
+        title = "{} on {}, instance {}: {}".format(emu.model or "?", emu.server.where, emu.id[:8],
+                                                   ", ".join(s.name for s in sections))
+        panel = tui.Panel()
+        recent = []          # the latest events, shown under the table
+        started = time.time()
+
+        def event(text):
+            recent.append(text)
+            if args.log:
+                panel.print("  " + text)
+
         try:
             while stop_reason is None:
                 reply = emu.steps(100000)
@@ -415,9 +468,8 @@ def main():
                 if stop.get("reason") != "breakpoint":
                     continue
                 hits += 1
-                if hits % 16 == 0:
-                    tui.progress("frame {} of {}, {} marker hits, {} passes".format(
-                        frame - start_frame, args.frames, hits, sum(len(s.passes) for s in sections)))
+                panel.draw(dashboard(title, frame - start_frame, args.frames, hits, started, sections, frame_t,
+                                     recent))
                 for kind, s in events.get(stop.get("address"), []):
                     if kind == "stop":
                         stop_reason = "stopped at {} (frame {}, t {})".format(args.stop_at, frame, t)
@@ -427,10 +479,8 @@ def main():
                                 o.interrupts += 1
                                 interrupt_events.append({"frame": frame, "t": t, "section": o.section.name,
                                                          "into": now - o.start})
-                                if args.log:
-                                    tui.end_progress()
-                                    print("  frame {:>5} t {:>5}: interrupt inside {} (+{} t-states into it)".format(
-                                        frame, t, o.section.name, now - o.start))
+                                event("frame {:>5} t {:>5}: interrupt inside {} (+{} t-states into it)".format(
+                                    frame, t, o.section.name, now - o.start))
                         key = register_value(snap["regs"], args.group_by) if args.group_by else None
                         noted = {r: register_value(snap["regs"], r) for r in show_regs}
                         stack.append(Open(s, now, frame, t, key, noted))
@@ -455,6 +505,9 @@ def main():
                         where = "frame {}{}{}".format(o.frame, ", {} = {}".format(
                             args.group_by.upper(), key_name(o.key, labels)) if args.group_by else "",
                             "".join(", {} = {}".format(reg_title(r), reg_text(v, r)) for r, v in o.regs.items()))
+                        if s.expected is not None and elapsed != s.expected:
+                            event("frame {:>5}: {} took {} ({:+d}; {})".format(
+                                o.frame, s.name, elapsed, elapsed - s.expected, where))
                         limit = thresholds.get(s.name)
                         if limit is not None and elapsed > limit:
                             stop_reason = "{} took {} t-states > {} ({}, {} interrupt(s) inside, {} net)".format(
@@ -465,10 +518,16 @@ def main():
         except (ConnectionLost, InstanceGone) as e:
             lost = str(e)
             stop_reason = "lost the emulator at frame {}: {}".format(frame - start_frame, e)
+        except ControlRevoked:
+            revoked = True
+            emu.session = None           # its calls are refused from now on; the clean-up goes without it
+            stop_reason = "the user took control back at frame {}".format(frame - start_frame)
         except KeyboardInterrupt:
             interrupted = True
             stop_reason = "interrupted (Ctrl+C) at frame {}".format(frame - start_frame)
-        tui.end_progress()
+        panel.draw(dashboard(title, frame - start_frame, args.frames, hits, started, sections, frame_t, recent),
+                   force=True)
+        panel.close()
 
         print()
         print("{:<10} {:>6} {:>7} {:>9} {:>7} {:>6}   {:>7} {:>7}   {}".format(
@@ -511,12 +570,18 @@ def main():
             print("LOST: " + lost)
             print("  the report holds the passes measured before that")
             exit_code = 2
+        elif revoked:
+            print()
+            print("TAKEN BACK: the user took control back in the emulator window; the report holds the passes so far")
+            print("  (not retrying and not taking control again: run the script again when the user is done)")
+            exit_code = 3
         elif interrupted:
             print()
             print("INTERRUPTED: the report holds the passes measured until Ctrl+C")
             exit_code = 130
         elif stop_reason:
             paused_for_user = True
+            emu.release_control()        # the user looks at the paused machine in the debugger: the window is theirs
             regs = emu.registers()
             print()
             print("PAUSED: " + stop_reason)
@@ -527,6 +592,10 @@ def main():
     except (ConnectionLost, InstanceGone) as e:
         lost = str(e)
         raise SystemExit("lost the emulator before measuring: {}".format(e))
+    except ControlRevoked:
+        revoked = True
+        emu.session = None
+        raise SystemExit("the user took control back in the emulator window before measuring: stopping")
     finally:
         if not lost:
             try:
@@ -534,10 +603,11 @@ def main():
                     emu.remove_breakpoint(b)
                 if created and not args.keep and not paused_for_user:
                     emu.remove()
-                elif not paused_for_user and not created:
-                    emu.resume()
+                elif not paused_for_user and not created and not revoked:
+                    emu.resume()       # an attached machine runs on; after a take-back it is the user's
             except WebApiError:
                 pass
+            emu.release_control()
     return exit_code
 
 

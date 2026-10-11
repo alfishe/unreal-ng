@@ -196,3 +196,116 @@ def wait_until(probe, message, interval=0.5):
         if found:
             end_progress()
             return found
+
+
+# --- a live panel ---
+
+class Panel:
+    """A block of lines redrawn in place while a job runs (cursor positioning, not a stream of prints).
+
+        panel = Panel()
+        panel.draw(["frame 12 / 200", "Plasma  53340"])   # as often as you like: at most `fps` redraws a second
+        panel.print("an event")                           # a line above the panel, which stays below it
+        panel.close()                                     # the last picture stays on screen
+
+    With ANSI: the block is redrawn in place. A terminal without ANSI: the first line as a status line. No terminal:
+    nothing (print() still prints)."""
+
+    def __init__(self, fps=8):
+        self.interval = 1.0 / fps
+        self.last_draw = 0.0
+        self.lines = []
+        self.drawn = 0
+        if ANSI:
+            sys.stdout.write("\x1b[?25l")
+
+    def draw(self, lines, force=False):
+        self.lines = list(lines)
+        now = time.time()
+        if not force and now - self.last_draw < self.interval:
+            return
+        self.last_draw = now
+        if not INTERACTIVE:
+            return
+        if not ANSI:
+            progress(self.lines[0] if self.lines else "")
+            return
+        width = _width()
+        out = []
+        if self.drawn:
+            out.append("\x1b[{}F".format(self.drawn))
+        for line in self.lines:
+            out.append("\x1b[2K" + _clip(line, width) + "\n")
+        for _ in range(self.drawn - len(self.lines)):          # the block got shorter: clear what is left
+            out.append("\x1b[2K\n")
+        if self.drawn > len(self.lines):
+            out.append("\x1b[{}F".format(self.drawn - len(self.lines)))
+        sys.stdout.write("".join(out))
+        sys.stdout.flush()
+        self.drawn = len(self.lines)
+
+    def print(self, text):
+        """A line above the panel: the panel moves down and is drawn again."""
+        if INTERACTIVE and ANSI and self.drawn:
+            sys.stdout.write("\x1b[{}F\x1b[J".format(self.drawn))
+            self.drawn = 0
+            print(text)
+            self.draw(self.lines, force=True)
+        else:
+            end_progress()
+            print(text)
+
+    def close(self):
+        if self.lines:
+            self.draw(self.lines, force=True)
+        end_progress()
+        if ANSI:
+            sys.stdout.write("\x1b[?25h")
+            sys.stdout.flush()
+
+
+def _width():
+    try:
+        import shutil
+        return max(40, shutil.get_terminal_size((100, 24)).columns - 1)
+    except Exception:
+        return 99
+
+
+def _clip(line, width):
+    """Cut a line to the terminal's width (escape sequences do not count)."""
+    visible = 0
+    out = []
+    i = 0
+    while i < len(line):
+        if line[i] == "\x1b":
+            j = line.find("m", i)
+            if j < 0:
+                break
+            out.append(line[i:j + 1])
+            i = j + 1
+            continue
+        if visible >= width:
+            break
+        out.append(line[i])
+        visible += 1
+        i += 1
+    return "".join(out) + ("\x1b[0m" if ANSI else "")
+
+
+def red(text):
+    return _style(text, "31")
+
+
+def green(text):
+    return _style(text, "32")
+
+
+def yellow(text):
+    return _style(text, "33")
+
+
+def meter(fraction, width=24):
+    """[##########..............]"""
+    filled = max(0, min(width, int(round(fraction * width))))
+    return "[" + "#" * filled + "." * (width - filled) + "]"

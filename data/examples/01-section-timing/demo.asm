@@ -11,6 +11,11 @@
 ;   Sparkles  .. Sparkles.End   erase + draw 2..33 pixels, the count follows a sine: varying work
 ;   Isr       .. Isr.End        the frame interrupt (IM2), with Music inside
 ;
+; Border profiling, the classic way: each routine paints the border its own colour while it runs, so the
+; height of each stripe on the border shows how much of the frame it takes (one scan line = 224 T-states):
+;   blue Plasma, red Sparkles, magenta the interrupt, green Music, black idle (HALT).
+; The OUTs cost time too (they are inside the measured sections).
+;
 ; Build: sjasmplus --sym=demo.sym demo.asm   (writes demo.sna, see build.sh)
 ;
 
@@ -23,6 +28,18 @@ MASKS       EQU #9300           ; 8 pixel masks, page aligned
 SPARKBUF    EQU #9400           ; (x, y) of the sparkles drawn last frame, 2 bytes each
 IM2TABLE    EQU #FE00           ; 257 x #FD
 IM2JUMP     EQU #FDFD           ; JP Isr
+
+BLACK       EQU 0               ; border colours: who runs now
+BLUE        EQU 1
+RED         EQU 2
+MAGENTA     EQU 3
+GREEN       EQU 4
+
+        MACRO BORDER colour     ; the main loop's colour; the interrupt puts it back when it returns
+        ld a,colour
+        ld (BorderNow),a
+        out (#FE),a
+        ENDM
 
         ORG #8000
 
@@ -37,6 +54,7 @@ Start:
         ei
 
 MainLoop:
+        BORDER BLACK            ; idle
         halt                    ; wait for the frame interrupt
 Frame:
         call Plasma
@@ -48,6 +66,7 @@ Frame.End:
 ; Attribute plasma: attr(x, y) = PALETTE[COLUMNS[x] + SIN(y)], 768 cells
 ; --------------------------------------------------------------------------------------------------
 Plasma:
+        BORDER BLUE
         ld a,(Phase1)           ; column values of this frame
         add a,3
         ld (Phase1),a
@@ -103,6 +122,7 @@ Plasma.End:
 ; Sparkles: XOR off last frame's pixels, XOR on a new set. The count follows a sine: 2..33 pixels
 ; --------------------------------------------------------------------------------------------------
 Sparkles:
+        BORDER RED
         ld a,(SparkCount)       ; erase the previous set
         or a
         jr z,.draw
@@ -209,12 +229,16 @@ Random:
 ; --------------------------------------------------------------------------------------------------
 Isr:
         push af
+        ld a,MAGENTA
+        out (#FE),a
         push bc
         push hl
         ld hl,(FrameCount)
         inc hl
         ld (FrameCount),hl
         call Music
+        ld a,(BorderNow)        ; the colour of whatever the interrupt came into
+        out (#FE),a
         pop hl
         pop bc
         pop af
@@ -224,6 +248,8 @@ Isr.End:
 
 ; Stands in for a music player: its cost changes from frame to frame (16..47 loops)
 Music:
+        ld a,GREEN
+        out (#FE),a
         ld a,(FrameCount)
         and 31
         add a,16
@@ -231,6 +257,8 @@ Music:
 .busy:
         nop
         djnz .busy
+        ld a,MAGENTA            ; back to the interrupt's colour
+        out (#FE),a
 Music.End:
         ret
 
@@ -281,6 +309,7 @@ RowsLeft:   db 0
 SparkCount: db 0
 Seed:       dw #ACE1
 FrameCount: dw 0
+BorderNow:  db 0
 
 ; --------------------------------------------------------------------------------------------------
 ; Tables, generated at assembly time

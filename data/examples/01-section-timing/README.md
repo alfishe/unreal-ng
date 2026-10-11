@@ -7,12 +7,13 @@ included to try them on.
 
 | File | What it is |
 |:--|:--|
-| `demo.asm` | The demo: an attribute plasma, 2..33 XOR sparkles (the count follows a sine) and an IM2 interrupt with a stand-in music player. Runs on a 48K and a Pentagon. |
+| `demo.asm` | The demo: an attribute plasma, 2..33 XOR sparkles (the count follows a sine) and an IM2 interrupt with a stand-in music player, profiling itself on the border (a colour per routine). Runs on a 48K and a Pentagon. |
 | `demo.sna`, `demo.sym` | `demo.asm` built by sjasmplus: the snapshot and its labels (`build.sh` rebuilds them). |
 | `minimal.py` | The smallest form: one pair of markers, 100 passes, pause above a limit. About 40 lines. |
-| `profile_sections.py` | The full tool: many sections, nesting, interrupts inside a section, `--break-if`, `--stop-at`, a Markdown report and JSON data. |
+| `profile_sections.py` | The full tool: many sections, nesting, interrupts inside a section, `--break-if`, `--stop-at`, `--expect`, a live panel in the terminal while it runs, a Markdown report and JSON data. |
 | `prompt.md` | The same through MCP: what to ask an AI agent connected to the emulator. |
 | `sample-report-48k.md` | What `profile_sections.py` writes, from a 200-frame run on a 48K. |
+| `border-48k.png` | The border profile of one frame on a 48K. |
 
 ## Run it
 
@@ -44,6 +45,12 @@ library. It works in Windows Terminal, PowerShell, cmd, macOS Terminal, iTerm2 a
 - **When the emulator goes away.** The emulator can be closed or crash, or the instance can be removed, in the
   middle of a run. The script then says so (`LOST: ...`), writes the report from the passes measured until then, and
   exits with code 2. Ctrl+C during a run also writes the report so far.
+- **While it runs.** In a terminal, a panel updates in place: the progress, marker hits per second, one row per
+  section (last, min, average and max pass, the passes off an `--expect`, the interrupted ones) and the latest events.
+- **Remote control.** For the run the script takes run control, which opens an automation session. The emulator
+  window then shows "Remote control: profile_sections" and locks its own controls. *Take back control* on the window's
+  toolbar stops the script: it writes the report so far, exits with code 3, and does not take control again. The
+  script releases control at the end, and also before it pauses the machine for you to look at in the debugger.
 
 `profile_sections.py` writes `section-report.md` and `section-report.json` to the current directory (`--out PREFIX`
 for other names).
@@ -74,19 +81,46 @@ for other names).
 
 | | 48K (69888 T / frame) | Pentagon (71680 T / frame) |
 |:--|--:|--:|
-| Plasma | 53326 .. 53364 | 52175, every pass |
-| Sparkles | 1498 .. 23735 | 1497 .. 23666 |
-| Frame (all of the main loop) | 54891 .. 77152 | 53726 .. 75895 |
-| Frames drawn in 200 | 140 | 150 |
+| Plasma | 53361 .. 53400 | 52206, every pass |
+| Sparkles | 1535 .. 23853 | 1528 .. 23792 |
+| Frame (all of the main loop) | 54959 .. 77288 | 53788 .. 76052 |
+| Frames drawn in 200 | 140 | 149 |
 
-- **Plasma.** Plasma does the same work every frame. On a 48K it varies by 38 T-states, depending on where its
+- **Plasma.** Plasma does the same work every frame. On a 48K it varies by 39 T-states, depending on where its
   attribute writes fall in the ULA's contention pattern. On a Pentagon, which has no contention, it is about 1170 T
   faster and the same on every pass.
 - **Sparkles.** The cost of Sparkles follows its pixel count. When the count peaks, the main loop no longer fits in a
   frame: the frame interrupt then arrives in the middle of Sparkles ("interrupted"), and the demo drops to 25 fps.
   The Pentagon's longer frame and lack of contention let it skip fewer frames.
-- **Finding it.** `--break-if "Frame>69888"` stops at the first frame that does not fit. `SparkCount` (`#8155`) at
+- **Finding it.** `--break-if "Frame>69888"` stops at the first frame that does not fit. `SparkCount` (see `demo.sym`) at
   that point shows how many pixels it was drawing.
+
+### On the border
+
+![The border of a 48K frame: blue while Plasma runs, red while Sparkles runs](border-48k.png)
+
+The demo also profiles itself the classic way. Each routine paints the border its own colour while it runs: blue
+for Plasma, red for Sparkles, magenta for the interrupt, green for Music, black while idle in HALT. Each stripe is as
+high as the share of the frame that routine takes (one line is 224 T-states). The short magenta and green stripes come
+at the start of the frame, above the visible border. The border shows the picture at a glance. The scripts give the
+exact number of T-states per pass, the worst case, and the frame where it happened. The `OUT`s cost time too: about
+30 T-states per routine, inside the measured sections.
+
+**Why the border is sometimes all black.** Eight frames in a row on a 48K, top to bottom of the 288 visible lines:
+
+| Frame | Sparkles | Border |
+|--:|--:|:--|
+| 0 | 20 | blue 226, red 58, black 4 |
+| 1 | 21 | blue 226, red 61, black 1 |
+| 2..6 | 22..24 | blue 226, red 62: red to the bottom and beyond |
+| 7 | 24 | black, all of it |
+
+In frame 6 Sparkles does not finish within the frame. It finishes early in frame 7, in the top lines of the border
+that the screen does not show (288 of the frame's 312 lines are visible). Then the main loop paints the border
+black and waits in `HALT` for the next interrupt, so the rest of frame 7 shows only idle time. Every frame that
+overruns costs one such idle frame: the demo drops to 25 fps. On a live window this shows as a flicker between
+blue/red and black, more often when the sparkle count peaks. In the 200 frames above, 140 frames were drawn and 60
+were black. The Pentagon has fewer black frames.
 
 ## How a script like this is built
 

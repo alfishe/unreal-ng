@@ -10,8 +10,13 @@ Finding the emulator: --url / UNREAL_WEBAPI_URL when given, else localhost ports
 Every Emulator method takes paths relative to /api/v1/emulator/{id}; the whole API: GET /api/v1/openapi.json, or the
 recipes in the repository's .recipe/ directory.
 
+Remote control: emu.take_control("my-script") opens an automation session. The emulator window then shows who controls
+it and locks its own controls; the user can take control back from the toolbar. emu.release_control() ends it.
+
 Errors: WebApiError for a refused request (bad arguments, ...); its subclasses ConnectionLost when the emulator
-process does not answer any more (closed, crashed) and InstanceGone when the instance was removed.
+process does not answer any more (closed, crashed), InstanceGone when the instance was removed, ControlRevoked when
+the user took control back (stop: do not retry, do not take control again by yourself) and ControlHeld when someone
+else holds the control.
 """
 
 import http.client
@@ -39,6 +44,17 @@ class ConnectionLost(WebApiError):
 
 class InstanceGone(WebApiError):
     """The emulator process answers, but the instance is not there any more."""
+
+
+class ControlRevoked(WebApiError):
+    """The user took control back in the emulator window: stop, do not retry, do not take control again."""
+
+
+class ControlHeld(WebApiError):
+    """Run control is held by another client, or the user refused this one a re-take for a while."""
+
+
+SESSION_HEADER = "X-Unreal-Session"
 
 
 def candidate_bases(url=None):
@@ -80,17 +96,27 @@ class Unreal:
         parts = urllib.parse.urlsplit(self.base)
         return parts.netloc
 
-    def request(self, method, path, body=None, raw=False, timeout=None):
+    def request(self, method, path, body=None, raw=False, timeout=None, session=None):
         data = None if body is None else json.dumps(body).encode()
         req = urllib.request.Request(self.base + path, data=data, method=method)
         if data is not None:
             req.add_header("Content-Type", "application/json")
+        if session:
+            req.add_header(SESSION_HEADER, session)
         try:
             with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
                 body_bytes = resp.read()
         except urllib.error.HTTPError as e:
-            raise WebApiError("{} {}: HTTP {} {}".format(method, path, e.code, e.read().decode(errors="replace")),
-                              e.code)
+            text = e.read().decode(errors="replace")
+            try:
+                error = json.loads(text).get("error", "")
+            except ValueError:
+                error = ""
+            if e.code == 409 and error == "revoked_by_user":
+                raise ControlRevoked("the user took control back in the emulator window", e.code)
+            if e.code == 409 and error in ("held_by_other", "revoked_cooldown"):
+                raise ControlHeld("{}: {}".format(error, text), e.code)
+            raise WebApiError("{} {}: HTTP {} {}".format(method, path, e.code, text), e.code)
         except (urllib.error.URLError, http.client.HTTPException, ConnectionError, socket.timeout) as e:
             reason = getattr(e, "reason", e)
             raise ConnectionLost("unreal-ng at {} does not answer ({}): was it closed?".format(self.where, reason))
@@ -226,11 +252,13 @@ class Emulator:
         self.server = server
         self.id = emulator_id
         self.model = model
+        self.session = None      # the automation session's id while this client holds run control
 
     def _call(self, method, path, body=None, raw=False):
         try:
-            return self.server.request(method, "/emulator/{}{}".format(self.id, path), body, raw=raw)
-        except ConnectionLost:
+            return self.server.request(method, "/emulator/{}{}".format(self.id, path), body, raw=raw,
+                                       session=self.session)
+        except (ConnectionLost, ControlRevoked, ControlHeld):
             raise
         except WebApiError as e:
             if e.status == 404 and not self.exists():
@@ -264,6 +292,23 @@ class Emulator:
     def remove(self):
         """Destroy the instance."""
         self.delete("")
+
+    def take_control(self, client, lease_seconds=60):
+        """Open an automation session: the emulator window shows `client` controls it and locks its controls until
+        release_control() (or `lease_seconds` without a request). ControlHeld when someone else holds it."""
+        reply = self.post("/control/session", {"client": client, "lease_seconds": lease_seconds})
+        self.session = reply["session"]
+        return reply
+
+    def release_control(self):
+        """End the automation session (nothing when there is none, or the user already took control back)."""
+        if not self.session:
+            return
+        try:
+            self.delete("/control/session")
+        except WebApiError:
+            pass
+        self.session = None
 
     def mute(self, muted=True):
         self.put("/audio/mixer/master", {"muted": muted})

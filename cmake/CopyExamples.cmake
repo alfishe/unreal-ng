@@ -9,4 +9,5 @@ file(MAKE_DIRECTORY "${DEST}")
 file(COPY "${_examples}/" DESTINATION "${DEST}"
      PATTERN "__pycache__" EXCLUDE
      PATTERN "*.pyc" EXCLUDE
-     PATTERN "section-report*" EXCLUDE)
+     PATTERN "section-report*" EXCLUDE
+     PATTERN ".gitignore" EXCLUDE)
