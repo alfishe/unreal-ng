@@ -719,7 +719,7 @@ bits 6 and 7 of the page id stay 0. The uses come from the system variables (`IX
 | 5.00, 4.45, 4.46 | 6 | 0 macros, 1, 3, 7 | 4 |
 | 4.42-4.44 | 6 | 0 overlay (from `#EA00`), 1, 3, 7 | 4 |
 | 3.8c | 6 | 0 macros, 3, 7 | 4 |
-| 4.5 | 1 | its own driver: 4 pocket, 6 post labels, 7, 5 | none yet (not read) |
+| 4.5 | 1 | its own driver (no source): 4 pocket, 6 post labels / labels, 5 macros, 7 debugger | 0, 3: texts there stayed intact through ASSEMBLE, a catalogue and a second ASSEMBLE |
 
 A project with more INCLUDEd sources than its build has pages is refused before anything is written, and the
 message points to the disk. Tests: `SyncInject_Test.AHostProjectReadsTheIncludedSourcesFromTheirFolders`,

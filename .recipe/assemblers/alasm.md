@@ -118,7 +118,7 @@ command, the editor included, has another address in that slot. Read with the 64
 
 A `path` source brings the files it INCLUDEs (relative to the file that INCLUDEs each). Each goes into an ALASM text page
 of its own, and its INCLUDE is written `INCLUDE "NAME",page`: ALASM then finds the text loaded and reads no disk. The
-reply lists them under `includes`. 5.05-5.09 have pages 4 and 0 free, 5.00 / 4.42-4.46 / 3.8c page 4, 4.5 none yet: a
+reply lists them under `includes`. 5.05-5.09 have pages 4 and 0 free, 4.5 pages 0 and 3, 5.00 / 4.42-4.46 / 3.8c page 4: a
 project with more sources is refused (put it onto the disk with `zxasm inject main.asm disk.trd --assembler ...`).
 Details and the oracle script:
 [asm-sources.md](../analysis/asm-sources.md#writing-a-host-source-into-the-assembler-part-b).

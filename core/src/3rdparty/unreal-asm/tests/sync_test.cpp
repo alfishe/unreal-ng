@@ -681,7 +681,9 @@ TEST(SyncInject_Test, AProjectPutsEachIncludedSourceInAPageOfItsOwn)
     const ProjectInjectPlan tooMany = PlanInjectProject(dump.machine, *d, three, "MAIN", force);
     EXPECT_FALSE(tooMany.ok);
     EXPECT_NE(tooMany.error.find("keeps 2 more text(s) in memory (pages 4, 0)"), std::string::npos) << tooMany.error;
-    const ProjectInjectPlan none = PlanInjectProject(dump.machine, *FindDescriptor("alasm-4.5"), project, "MAIN", force);
+    SyncDescriptor withoutPages = *d;
+    withoutPages.projectPages.clear();
+    const ProjectInjectPlan none = PlanInjectProject(dump.machine, withoutPages, project, "MAIN", force);
     EXPECT_FALSE(none.ok);
     EXPECT_NE(none.error.find("keeps no other text"), std::string::npos) << none.error;
 }

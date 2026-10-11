@@ -163,7 +163,7 @@ bytes, the lines, the replaced text (`previous`) and the conversion's diagnostic
 A `path` source brings the files it INCLUDEs (each relative to the file that INCLUDEs it). They are converted
 together with it, and each goes into an ALASM text page of its own. Its INCLUDE is written `INCLUDE "NAME",page`, so
 ALASM finds the text loaded and reads no disk. The reply lists them under `includes` (source, name, page, bytes). The
-free pages: 4 and 0 in 5.05-5.09, 4 in 5.00, 4.42-4.46 and 3.8c, none in 4.5. A project with more files is refused:
+free pages: 4 and 0 in 5.05-5.09, 0 and 3 in 4.5, 4 in 5.00, 4.42-4.46 and 3.8c. A project with more files is refused:
 put it onto the disk with `zxasm inject main.asm disk.trd --assembler alasm-5.09` (every file of the project).
 
 The write is refused (409) unless ALASM waits at its `A>` prompt: in the editor, while it assembles, saves or shows

@@ -443,7 +443,8 @@ SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
 /// that place as a buffer. `typingFlag` false: the build keeps no "line modified" bit at IX+#0C (4.43)
 /// `idle`: the return chain of its command line (line input #91E3, then the command loop #9707 in 5.09; a command runs
 /// with #9733 there instead). `projectPages`: the pages none of its own uses take (sysvars IX+#16 macros, #21
-/// debugger, #27-#2A post labels, #36 pocket; SYSTEM and the overlay from its source), for INCLUDE "NAME",page
+/// debugger, #27-#2A post labels, #36 pocket; SYSTEM and the overlay from its source; 4.5, without a source, by texts
+/// left there intact through ASSEMBLE and a catalogue), for INCLUDE "NAME",page
 SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion, uint16_t titleAt, std::string title = "",
                      bool typingFlag = true, std::vector<uint16_t> idle = {}, std::vector<int> projectPages = {})
 {
@@ -1182,7 +1183,7 @@ const std::vector<SyncDescriptor>& Descriptors()
         Alasm("5.07", "5.07", 0x97BC, "", true, {0x91DA, 0x96FE}, {4, 0}),
         Alasm("5.05", "5.05", 0x97BC, "", true, {0x91DA, 0x96FE}, {4, 0}),
         Alasm("5.00", "5.0", 0x9E22, "", true, {0x99EA, 0x8B93}, {4}),
-        Alasm("4.5", "4.5", 0x9E06, "", true, {0x998F, 0x8B6B}),
+        Alasm("4.5", "4.5", 0x9E06, "", true, {0x998F, 0x8B6B}, {0, 3}),
         Alasm("4.46", "4.44", 0x9E6E, "", true, {0x9A07, 0x8B92}, {4}),
         Alasm("4.45", "4.44", 0x9E53, "", true, {0x99E1, 0x8B93}, {4}),
         Alasm("4.44", "4.44", 0x9E7E, "", true, {0x9A08, 0x8BA8}, {4}),
