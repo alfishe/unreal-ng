@@ -4,6 +4,8 @@
 // (length-prefixed frames, 4-bit sequence numbers, NTF_PAUSE consumption).
 
 #include "dezogtestfixture.h"
+#include "emulator/io/z80n/nextboard.h"
+#include "emulator/ports/models/portdecoder_next.h"
 
 #include "_helpers/testwaithelper.h"
 
@@ -899,7 +901,8 @@ TEST_F(DZRPServerNext_test, TheMachineIsANextWithEightSlotsAndItsCommandsAreAdve
     auto supported = _client.command(dzrp::CommandId::CMD_GET_SUPPORTED_COMMANDS);
     ASSERT_EQ(supported.payload.size(), 32u);
     auto has = [&](dzrp::CommandId id) { return (supported.payload[static_cast<int>(id) / 8] >> (static_cast<int>(id) % 8)) & 1; };
-    for (auto id : {dzrp::CommandId::CMD_GET_TBBLUE_REG, dzrp::CommandId::CMD_READ_BANK_MEM, dzrp::CommandId::CMD_WRITE_BANK_MEM,
+    for (auto id : {dzrp::CommandId::CMD_GET_SPRITES_PALETTE, dzrp::CommandId::CMD_GET_SPRITES_CLIP_WINDOW_AND_CONTROL,
+                    dzrp::CommandId::CMD_GET_SPRITES, dzrp::CommandId::CMD_GET_SPRITE_PATTERNS, dzrp::CommandId::CMD_GET_TBBLUE_REG, dzrp::CommandId::CMD_READ_BANK_MEM, dzrp::CommandId::CMD_WRITE_BANK_MEM,
                     dzrp::CommandId::CMD_SET_NEXTREGS, dzrp::CommandId::CMD_READ_MEM_BLOCKS})
         EXPECT_TRUE(has(id)) << int(id);
 }
@@ -947,6 +950,49 @@ TEST_F(DZRPServerNext_test, BankMemoryIsAnEightKilobyteBankThatWrapsAndMemoryBlo
                                   cat({{0, 0, 0, 0}, u16(PROGRAM_START), u16(1), u16(PROGRAM_START + 1), u16(2)}));
     ASSERT_TRUE(blocks.valid);
     EXPECT_EQ(blocks.payload, (std::vector<uint8_t>{kFirstProgramByte, 0x3E, 0x01}));
+}
+
+TEST_F(DZRPServerNext_test, TheSpritesPaletteAttributesPatternsAndClipWindowAreReadWithoutSideEffects)
+{
+    constexpr uint8_t kRegPaletteControl = 0x43, kRegPaletteIndex = 0x40, kRegPaletteValue8 = 0x41;
+    constexpr uint8_t kSprites1Selected = 0x20;  // NR #43 bits 6:4 = 010: sprites, first palette
+    constexpr uint8_t kPaletteIndex = 7, kColour = 0xE3;  // B1:B0 = 11: the low blue bit is set
+    constexpr uint8_t kSprite = 3, kX = 0x11, kY = 0x22;
+    constexpr unsigned kAttributeBytes = 5, kPatternBytes = 256, kPaletteBytes = 512;
+    init();
+    _adapter->writeNextReg(kRegPaletteControl, kSprites1Selected);
+    _adapter->writeNextReg(kRegPaletteIndex, kPaletteIndex);
+    _adapter->writeNextReg(kRegPaletteValue8, kColour);
+    auto* ports = dynamic_cast<PortDecoder_Next*>(_emulator->GetContext()->pPortDecoder);
+    ASSERT_NE(ports, nullptr);
+    ports->Board().Sprites().WriteSlotSelect(kSprite);
+    ports->Board().Sprites().WriteAttribute(kX);
+    ports->Board().Sprites().WriteAttribute(kY);
+    ports->Board().Sprites().WriteSlotSelect(0);
+    ports->Board().Sprites().WritePattern(kByte);
+
+    auto palette = _client.command(dzrp::CommandId::CMD_GET_SPRITES_PALETTE, {0});
+    ASSERT_TRUE(palette.valid);
+    ASSERT_EQ(palette.payload.size(), kPaletteBytes);
+    EXPECT_EQ(palette.payload[kPaletteIndex * 2], kColour);
+    EXPECT_EQ(palette.payload[kPaletteIndex * 2 + 1] & 1, 1) << "the low blue bit";
+    EXPECT_EQ(_adapter->readNextReg(kRegPaletteIndex), kPaletteIndex + 1) << "writing NR #41 advanced the index once; reading the palette did not";
+
+    auto sprites = _client.command(dzrp::CommandId::CMD_GET_SPRITES, {kSprite, 2});
+    ASSERT_TRUE(sprites.valid);
+    ASSERT_EQ(sprites.payload.size(), 2 * kAttributeBytes);
+    EXPECT_EQ(sprites.payload[0], kX);
+    EXPECT_EQ(sprites.payload[1], kY);
+
+    auto patterns = _client.command(dzrp::CommandId::CMD_GET_SPRITE_PATTERNS, {0, 2});
+    ASSERT_TRUE(patterns.valid);
+    ASSERT_EQ(patterns.payload.size(), 2 * kPatternBytes);
+    EXPECT_EQ(patterns.payload[0], kByte);
+
+    auto clip = _client.command(dzrp::CommandId::CMD_GET_SPRITES_CLIP_WINDOW_AND_CONTROL);
+    ASSERT_TRUE(clip.valid);
+    ASSERT_EQ(clip.payload.size(), 5u);
+    EXPECT_EQ(clip.payload[4], _adapter->readNextReg(0x15)) << "the last byte is NR #15";
 }
 
 /// endregion </ZX Next>

@@ -618,6 +618,78 @@ void DezogDebugAdapter::writeBankMemory(uint8_t bank, uint16_t offset, const std
     });
 }
 
+namespace
+{
+PortDecoder_Next* NextPorts(const std::shared_ptr<Emulator>& emulator)
+{
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    return context ? dynamic_cast<PortDecoder_Next*>(context->pPortDecoder) : nullptr;
+}
+}  // namespace
+
+std::vector<uint8_t> DezogDebugAdapter::getSpritesPalette(uint8_t which) const
+{
+    // NR #43 bits 6:4 select the palette: 0 ULA, 1 Layer 2, 2 sprites, 3 tilemap; bit 6 the second one of each (sprites: 2 and 6)
+    constexpr unsigned kSpritePalette1 = 2, kSecondPaletteBit = 4;
+    constexpr unsigned kEntries = 256;
+    constexpr uint16_t kLowBlueBit = 0x001, kPriorityBit = 0x200;
+    constexpr uint8_t kPriorityFlag = 0x80;  // as NR #44 reads it back
+    PortDecoder_Next* ports = NextPorts(resolveEmulator());
+    if (!ports)
+        return {};
+    std::vector<uint8_t> out;
+    out.reserve(kEntries * 2);
+    for (unsigned i = 0; i < kEntries; i++)
+    {
+        const uint16_t entry = ports->Board().Video().PaletteEntry(kSpritePalette1 + ((which & 1) ? kSecondPaletteBit : 0), i);
+        out.push_back(static_cast<uint8_t>(entry >> 1));
+        out.push_back(static_cast<uint8_t>((entry & kLowBlueBit) | ((entry & kPriorityBit) ? kPriorityFlag : 0)));
+    }
+    return out;
+}
+
+std::vector<uint8_t> DezogDebugAdapter::getSprites(uint8_t index, uint8_t count) const
+{
+    constexpr unsigned kAttributeBytes = 5;
+    PortDecoder_Next* ports = NextPorts(resolveEmulator());
+    if (!ports)
+        return {};
+    std::vector<uint8_t> out;
+    out.reserve(static_cast<size_t>(count) * kAttributeBytes);
+    for (unsigned i = 0; i < count; i++)
+        for (unsigned b = 0; b < kAttributeBytes; b++)
+            out.push_back(ports->Board().Sprites().Attribute(index + i, b));  // the sprite number wraps at 128
+    return out;
+}
+
+std::vector<uint8_t> DezogDebugAdapter::getSpritePatterns(uint8_t index, uint8_t count) const
+{
+    constexpr unsigned kPatternBytes = 256;
+    PortDecoder_Next* ports = NextPorts(resolveEmulator());
+    if (!ports)
+        return {};
+    std::vector<uint8_t> out;
+    out.reserve(static_cast<size_t>(count) * kPatternBytes);
+    for (unsigned i = 0; i < static_cast<unsigned>(count) * kPatternBytes; i++)
+        out.push_back(ports->Board().Sprites().PatternByte(index * kPatternBytes + i));  // the 16K pattern RAM wraps
+    return out;
+}
+
+std::vector<uint8_t> DezogDebugAdapter::getSpritesClipWindowAndControl() const
+{
+    constexpr unsigned kSpriteWindow = 1;  // Layer 2, sprites, ULA/LoRes, tilemap
+    constexpr unsigned kCoordinates = 4;   // x left, x right, y top, y bottom
+    constexpr uint8_t kRegSpriteControl = 0x15;
+    PortDecoder_Next* ports = NextPorts(resolveEmulator());
+    if (!ports)
+        return {};
+    std::vector<uint8_t> out;
+    for (unsigned c = 0; c < kCoordinates; c++)
+        out.push_back(ports->Board().Video().Clip(kSpriteWindow, c));
+    out.push_back(ports->Board().Stored(kRegSpriteControl));
+    return out;
+}
+
 uint8_t DezogDebugAdapter::readNextReg(uint8_t reg) const
 {
     auto emulator = resolveEmulator();

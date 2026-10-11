@@ -65,6 +65,10 @@ public:
     void writeBank(uint8_t bank, const std::vector<uint8_t>& data) override;
     std::vector<uint8_t> readBankMemory(uint8_t bank, uint16_t offset, uint16_t size) const override;
     void writeBankMemory(uint8_t bank, uint16_t offset, const std::vector<uint8_t>& data) override;
+    std::vector<uint8_t> getSpritesPalette(uint8_t which) const override;
+    std::vector<uint8_t> getSprites(uint8_t index, uint8_t count) const override;
+    std::vector<uint8_t> getSpritePatterns(uint8_t index, uint8_t count) const override;
+    std::vector<uint8_t> getSpritesClipWindowAndControl() const override;
     uint8_t readNextReg(uint8_t reg) const override;
     void writeNextReg(uint8_t reg, uint8_t value) override;
 

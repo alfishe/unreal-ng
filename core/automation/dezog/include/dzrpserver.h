@@ -52,6 +52,15 @@ public:
         return std::vector<uint8_t>(size, 0);
     }
     virtual void writeBankMemory(uint8_t /*bank*/, uint16_t /*offset*/, const std::vector<uint8_t>& /*data*/) {}
+    // The sprites (CMD_GET_SPRITES_PALETTE .. CMD_GET_SPRITE_PATTERNS): empty on a machine without them
+    /// 256 pairs (colour 8 bit RRRGGGBB, then bit 0 the low blue bit and bit 7 the Layer 2 priority) of sprite palette `which` (0 / 1)
+    virtual std::vector<uint8_t> getSpritesPalette(uint8_t /*which*/) const { return {}; }
+    /// `count` sprites from `index`, five attribute bytes each (x, y, attr 2, attr 3, attr 4)
+    virtual std::vector<uint8_t> getSprites(uint8_t /*index*/, uint8_t /*count*/) const { return {}; }
+    /// `count` patterns of 256 bytes from `index`
+    virtual std::vector<uint8_t> getSpritePatterns(uint8_t /*index*/, uint8_t /*count*/) const { return {}; }
+    /// The sprites' clip window x left, x right, y top, y bottom, then NR #15 (sprite and layers control)
+    virtual std::vector<uint8_t> getSpritesClipWindowAndControl() const { return {}; }
     virtual uint8_t readNextReg(uint8_t /*reg*/) const { return 0; }
     virtual void writeNextReg(uint8_t /*reg*/, uint8_t /*value*/) {}
 
@@ -212,6 +221,10 @@ private:
     Response handleSetNextRegs(const Command& cmd);
     Response handleGetTbblueReg(const Command& cmd);
     Response handleReadMemBlocks(const Command& cmd);
+    Response handleGetSpritesPalette(const Command& cmd);
+    Response handleGetSprites(const Command& cmd);
+    Response handleGetSpritePatterns(const Command& cmd);
+    Response handleGetSpritesClip(const Command& cmd);
     Response handleSetBorder(const Command& cmd);
     Response handleReadPort(const Command& cmd);
     Response handleWritePort(const Command& cmd);

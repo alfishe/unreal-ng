@@ -11,7 +11,7 @@ class NextVideoRegs
 {
 public:
     static constexpr unsigned kClipWindows = 4;  ///< Layer 2, sprites, ULA/LoRes, tilemap (NR #18-#1B)
-    static constexpr unsigned kPalettes = 8;     ///< ULA 1/2, Layer 2 1/2, sprites 1/2, tilemap 1/2 in NR #43 bits 6:4 order
+    static constexpr unsigned kPalettes = 8;     ///< NR #43 bits 6:4 select: 0 ULA, 1 Layer 2, 2 sprites, 3 tilemap; bit 6 the second palette of each
 
     void Reset();
 

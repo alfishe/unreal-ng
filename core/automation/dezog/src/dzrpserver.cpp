@@ -253,6 +253,10 @@ const char* commandName(CommandId id)
         case CI::CMD_WRITE_BANK_MEM: return "WRITE_BANK_MEM";
         case CI::CMD_SET_NEXTREGS: return "SET_NEXTREGS";
         case CI::CMD_READ_MEM_BLOCKS: return "READ_MEM_BLOCKS";
+        case CI::CMD_GET_SPRITES_PALETTE: return "GET_SPRITES_PALETTE";
+        case CI::CMD_GET_SPRITES_CLIP_WINDOW_AND_CONTROL: return "GET_SPRITES_CLIP_WINDOW_AND_CONTROL";
+        case CI::CMD_GET_SPRITES: return "GET_SPRITES";
+        case CI::CMD_GET_SPRITE_PATTERNS: return "GET_SPRITE_PATTERNS";
         case CI::CMD_SET_BORDER: return "SET_BORDER";
         case CI::CMD_READ_PORT: return "READ_PORT";
         case CI::CMD_WRITE_PORT: return "WRITE_PORT";
@@ -327,6 +331,14 @@ Response Server::handleCommand(const Command& cmd)
             return handleGetTbblueReg(cmd);
         case CommandId::CMD_READ_MEM_BLOCKS:
             return handleReadMemBlocks(cmd);
+        case CommandId::CMD_GET_SPRITES_PALETTE:
+            return handleGetSpritesPalette(cmd);
+        case CommandId::CMD_GET_SPRITES_CLIP_WINDOW_AND_CONTROL:
+            return handleGetSpritesClip(cmd);
+        case CommandId::CMD_GET_SPRITES:
+            return handleGetSprites(cmd);
+        case CommandId::CMD_GET_SPRITE_PATTERNS:
+            return handleGetSpritePatterns(cmd);
         case CommandId::CMD_SET_BORDER:
             return handleSetBorder(cmd);
         case CommandId::CMD_READ_PORT:
@@ -794,6 +806,44 @@ Response Server::handleReadMemBlocks(const Command& cmd)
         const std::vector<uint8_t> block = m_debug->readMemory(addr, size);
         resp.payload.insert(resp.payload.end(), block.begin(), block.end());
     }
+    return resp;
+}
+
+/// CMD_GET_SPRITES_PALETTE: palette(1, 0 / 1) -> 256 x (colour, 9th-bit byte)
+Response Server::handleGetSpritesPalette(const Command& cmd)
+{
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+    resp.payload = m_debug->getSpritesPalette(cmd.payload.empty() ? 0 : (cmd.payload[0] & 1));
+    return resp;
+}
+
+/// CMD_GET_SPRITES_CLIP_WINDOW_AND_CONTROL: -> xl, xr, yt, yb, NR #15
+Response Server::handleGetSpritesClip(const Command& cmd)
+{
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+    resp.payload = m_debug->getSpritesClipWindowAndControl();
+    return resp;
+}
+
+/// CMD_GET_SPRITES: index(1) + count(1) -> count x 5 attribute bytes
+Response Server::handleGetSprites(const Command& cmd)
+{
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+    if (cmd.payload.size() >= 2)
+        resp.payload = m_debug->getSprites(cmd.payload[0], cmd.payload[1]);
+    return resp;
+}
+
+/// CMD_GET_SPRITE_PATTERNS: index(1) + count(1) -> count x 256 pattern bytes
+Response Server::handleGetSpritePatterns(const Command& cmd)
+{
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+    if (cmd.payload.size() >= 2)
+        resp.payload = m_debug->getSpritePatterns(cmd.payload[0], cmd.payload[1]);
     return resp;
 }
 

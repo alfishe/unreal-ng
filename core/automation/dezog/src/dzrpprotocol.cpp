@@ -177,6 +177,10 @@ std::vector<uint8_t> Protocol::buildSupportedCommandsBitfield(bool next)
         setBit(static_cast<uint8_t>(CommandId::CMD_READ_BANK_MEM));
         setBit(static_cast<uint8_t>(CommandId::CMD_WRITE_BANK_MEM));
         setBit(static_cast<uint8_t>(CommandId::CMD_SET_NEXTREGS));
+        setBit(static_cast<uint8_t>(CommandId::CMD_GET_SPRITES_PALETTE));
+        setBit(static_cast<uint8_t>(CommandId::CMD_GET_SPRITES_CLIP_WINDOW_AND_CONTROL));
+        setBit(static_cast<uint8_t>(CommandId::CMD_GET_SPRITES));
+        setBit(static_cast<uint8_t>(CommandId::CMD_GET_SPRITE_PATTERNS));
     }
 
     // Unreal-NG extensions: TTD-backed instruction history (reverse debugging)
