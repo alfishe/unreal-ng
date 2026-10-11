@@ -9,7 +9,7 @@
 ---
 
 2026-10-11
-## 🔴 [Open] #7: MCP async chains hold themselves: every request through them leaks its state
+## 🔵 [In Progress] #7: MCP async chains hold themselves: every request through them leaks its state
 * **Date Opened:** 2026-10-11
 * **Found by:** valgrind memcheck profile (`tools/sanitize/valgrind.sh`, `.238`, 2026-10-11): 29 `definitely lost`
   blocks from `make_shared<std::function<...>>` in `mcp::RunSeries`, plus `inspect_state` lambdas.
@@ -26,6 +26,11 @@ the SSE keepalive `ping` (`automation-mcp.cpp:300`, one per connection), the cap
 - [ ] The chain holds itself only while a step is pending (the continuation keeps it alive; the closure refers to
   itself weakly); it is freed when the chain ends.
 - [ ] No `definitely lost` from these sites in the valgrind profile; MCP unit tests pass.
+
+### Fix
+Each closure captures a `weak_ptr` to itself and locks it when it runs; the continuation it hands to the pending call
+holds the strong reference. `McpToolUtils_Test.RunSeriesFreesTheChainWhenItEnds` checks the chain is kept while a step
+is pending and freed after the series ends (it failed before the fix).
 
 ## 🔴 [Open] #8: DSD recording sets output bits from an uninitialized byte
 * **Date Opened:** 2026-10-11
