@@ -467,13 +467,13 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithUnsupportedRamReportsReason)
 
 TEST_F(EmulatorManager_Test, CreateEmulatorWithNonCreatableModelReportsReason)
 {
-    // A non-creatable model (e.g. NEXT): whichever guard fires first,
+    // A non-creatable model (e.g. GMX): whichever guard fires first,
     // the caller must learn WHICH model failed and why
     std::string error;
-    auto emulator = _manager->CreateEmulatorWithModel("", "NEXT", LoggerLevel::LogWarning, &error);
+    auto emulator = _manager->CreateEmulatorWithModel("", "GMX", LoggerLevel::LogWarning, &error);
 
     EXPECT_EQ(emulator, nullptr);
-    EXPECT_NE(error.find("NEXT"), std::string::npos) << "reason was: " << error;
+    EXPECT_NE(error.find("GMX"), std::string::npos) << "reason was: " << error;
     EXPECT_FALSE(error.empty());
 }
 
@@ -487,6 +487,23 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithModelLeavesNoOrphanOnError)
 
     EXPECT_EQ(emulator, nullptr);
     EXPECT_EQ(_manager->GetEmulatorIds().size(), countBefore);
+}
+
+// BUGS.md 2026-10-10 #12: a failed create freed nothing it had built - the context, its config and loggers
+// (an unknown model, an unsupported RAM size: Init never ran; a non-creatable model: Init failed or threw)
+TEST_F(EmulatorManager_Test, FailedCreateFreesTheHalfBuiltInstance)
+{
+    const size_t contextsBefore = EmulatorContext::LiveCount();
+
+    std::string error;
+    EXPECT_EQ(_manager->CreateEmulatorWithModel("", "NO_SUCH_MACHINE", LoggerLevel::LogError, &error), nullptr);
+    EXPECT_EQ(EmulatorContext::LiveCount(), contextsBefore) << "unknown model";
+
+    EXPECT_EQ(_manager->CreateEmulatorWithModelAndRAM("", "PENTAGON", 256, LoggerLevel::LogError, &error), nullptr);
+    EXPECT_EQ(EmulatorContext::LiveCount(), contextsBefore) << "unsupported RAM size";
+
+    EXPECT_EQ(_manager->CreateEmulatorWithModel("", "GMX", LoggerLevel::LogError, &error), nullptr);
+    EXPECT_EQ(EmulatorContext::LiveCount(), contextsBefore) << "non-creatable model: " << error;
 }
 
 TEST_F(EmulatorManager_Test, CreateEmulatorWithModelResolvesRequestedMachine)
@@ -725,6 +742,53 @@ TEST_F(EmulatorManager_Test, EveryModelCanBeRemovedWhileRunning)
         EXPECT_FALSE(_manager->HasEmulator(id));
     }
     EXPECT_TRUE(neighbour->IsRunning());
+}
+
+// A message handler that looks an instance up while another thread removes one (the GUI following the selection
+// while a WebAPI client deletes): the removal released the instance under the manager's lock, and Release() removing
+// an observer waits for the dispatch in flight - whose handler waited for that lock (2026-10-10 hang). The handler here
+// is posted once the removal's drain is over (the test holds a context lease, so the removal waits there), looks the
+// instance up once the removal has stopped it, and must get its answer. Before the fix: a deadlock in 3 runs of 3
+TEST_F(EmulatorManager_Test, RemovalDoesNotHoldTheLockAHandlerWaitsFor)
+{
+    auto emulator = _manager->CreateEmulatorWithModel("removed-under-a-handler", "48K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    const std::string id = emulator->GetId();
+    emulator->StartAsync();
+    std::optional<Emulator::ContextLease> lease(emulator->LeaseContext());
+    ASSERT_TRUE(*lease);
+
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    std::atomic<bool> entered{false};
+    std::atomic<bool> answered{false};
+    const uint64_t observer = mc.AddObserver("test_removal_lookup", [&](int, Message*) {
+        entered = true;
+        TestWait::For([&] { return !emulator->IsRunning(); });   // the removal is past Stop(), at Release()
+        _manager->GetEmulator(id);   // waited forever for the lock the removal held while releasing
+        answered = true;
+    });
+
+    std::atomic<bool> removed{false};
+    std::thread remover([&] {
+        _manager->RemoveEmulator(id);
+        removed = true;
+    });
+    ASSERT_TRUE(TestWait::For([&] { return emulator->IsRetiring(); }));
+    mc.WaitForOutstandingMessages();   // the removal's destroy notice is through: it waits for the lease now
+    mc.Post("test_removal_lookup");
+    ASSERT_TRUE(TestWait::For([&] { return entered.load(); }));
+    lease.reset();
+
+    const bool finished = TestWait::For([&] { return removed.load() && answered.load(); }, std::chrono::seconds(5));
+    if (!finished)
+    {
+        // The deadlock: neither thread can be joined, the process cannot end cleanly
+        std::fprintf(stderr, "RemovalDoesNotHoldTheLockAHandlerWaitsFor: the removal and the handler deadlocked\n");
+        std::abort();
+    }
+    remover.join();
+    mc.RemoveObserverById("test_removal_lookup", observer);
+    EXPECT_FALSE(_manager->HasEmulator(id));
 }
 
 TEST_F(EmulatorManager_Test, IsModelCreatableAgreesWithCreateAttempt)

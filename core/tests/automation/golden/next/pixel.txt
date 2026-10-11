@@ -1,0 +1,68 @@
+available: true
+ok: true
+frame:
+  sequence: 3
+  frame_number: 2
+pixel:
+  x: 32
+  y: 33
+  subpixel: 0
+  subpixel_x: 64
+  segment_from_x: 0
+  segment_to_x: 640
+winner:
+  layer: sprite
+  id: 5
+colour:
+  rgb9: 0x045
+  rgb: #2400B6
+layer_order: SLU
+layers:
+  ula:
+    opaque: true
+    rgb9: 0x007
+    rgb: #0000FF
+    wins: false
+    why: layer order SLU: sprite above ula
+    source:
+      kind: paper
+      ram_page: 5
+      bitmap_offset: 0x0100
+      bitmap_byte: 0x00
+      bit: 7
+      ink_pixel: false
+      attribute_offset: 0x1800
+      attribute_byte: 0x4A
+      palette_index: 25
+      palette: 0
+  layer2:
+    opaque: false
+    rgb9: 0x000
+    wins: false
+    why: Layer 2 disabled (port #123B bit 1 / NR #69 bit 7)
+    source:
+      kind: disabled
+  tilemap:
+    opaque: false
+    rgb9: 0x000
+    wins: false
+    why: tilemap disabled (NR #6B bit 7)
+    source:
+      kind: disabled
+  sprites:
+    opaque: true
+    rgb9: 0x045
+    rgb: #2400B6
+    wins: true
+    why: wins (layer order SLU)
+    source:
+      kind: sprite
+      sprite: 0
+      x: 32
+      y: 32
+      pattern: 0
+      four_bit: false
+      pattern_offset: 0x0010
+      pattern_byte: 0x22
+      palette: 2
+      palette_index: 34

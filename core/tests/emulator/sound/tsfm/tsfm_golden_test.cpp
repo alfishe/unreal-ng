@@ -410,8 +410,10 @@ TEST_F(TsfmGolden_Test, HighQuality44100)
 
 TEST_F(TsfmGolden_Test, LowQuality44100)
 {
+    // Moved twice on 2026-10-10: the per-chip buffers clamp (BUGS.md #13), then average each chip on its own - the
+    // old split by the chips' current levels went up to hundreds of times full scale (TSFM ISSUES.md #25)
     const uint64_t digest = RunSession(2, false, 44100);
-    EXPECT_EQ(digest, 0xd06f2dfbe97dcbd7ull) << Hex(digest);
+    EXPECT_EQ(digest, 0xc002bdc72b956120ull) << Hex(digest);
 }
 
 TEST_F(TsfmGolden_Test, HighQuality48000)

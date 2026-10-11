@@ -53,6 +53,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::pauseEmulator, "/api/v1/emulator/{id}/pause", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::resumeEmulator, "/api/v1/emulator/{id}/resume", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::resetEmulator, "/api/v1/emulator/{id}/reset", drogon::Post);
+    // The operation log (machine state coordinator, api/operations_api.cpp): who did what to the machine, when, result
+    ADD_METHOD_TO(EmulatorAPI::getOperations, "/api/v1/emulator/{id}/operations", drogon::Get);
     // NMI pulse (Scorpion MNI "magic button" with {"magic": true})
     ADD_METHOD_TO(EmulatorAPI::requestNmi, "/api/v1/emulator/{id}/nmi", drogon::Post);
     // Front-panel switches (Profi TURBO): GET lists them, POST {"name": "turbo", "on": true} flips one
@@ -143,6 +145,7 @@ public:
     // Screen OCR
     ADD_METHOD_TO(EmulatorAPI::captureOcr, "/api/v1/emulator/{id}/capture/ocr", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::captureScreen, "/api/v1/emulator/{id}/capture/screen", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::captureNextLayers, "/api/v1/emulator/{id}/capture/next-layers", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::capturePlaneB, "/api/v1/emulator/{id}/capture/planeb", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::captureFramebuffer, "/api/v1/emulator/{id}/capture/framebuffer", drogon::Get);
     // endregion Capture Commands
@@ -326,6 +329,22 @@ public:
     // SprinterPortLookup in ports/models/sprinter/sprinterdevicestate.cpp)
     ADD_METHOD_TO(EmulatorAPI::getStateSprinter, "/api/v1/emulator/{id}/state/sprinter", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterActive, "/api/v1/emulator/state/sprinter", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNext, "/api/v1/emulator/{id}/state/next", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextActive, "/api/v1/emulator/state/next", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextRegs, "/api/v1/emulator/{id}/state/next/regs", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextMmu, "/api/v1/emulator/{id}/state/next/mmu", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextRegJournal, "/api/v1/emulator/{id}/state/next/reg-journal", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postNextRegJournal, "/api/v1/emulator/{id}/next/reg-journal", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextPixel, "/api/v1/emulator/{id}/state/next/pixel", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postNextLayerCapture, "/api/v1/emulator/{id}/next/layer-capture", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextDma, "/api/v1/emulator/{id}/state/next/dma", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextVideo, "/api/v1/emulator/{id}/state/next/video", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextPalette, "/api/v1/emulator/{id}/state/next/palette", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextPorts, "/api/v1/emulator/{id}/state/next/ports", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextCopper, "/api/v1/emulator/{id}/state/next/copper", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextSprites, "/api/v1/emulator/{id}/state/next/sprites", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateNextNextReg, "/api/v1/emulator/{id}/state/next/nextreg", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postNextNextReg, "/api/v1/emulator/{id}/next/nextreg", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterPorts, "/api/v1/emulator/{id}/state/sprinter/ports", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterPortLookup, "/api/v1/emulator/{id}/state/sprinter/ports/lookup", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateSprinterText, "/api/v1/emulator/{id}/state/sprinter/text", drogon::Get);
@@ -347,6 +366,13 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateNetworkActive, "/api/v1/emulator/state/network", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postNetworkConfig, "/api/v1/emulator/{id}/network/config", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getStateRtcActive, "/api/v1/emulator/state/rtc", drogon::Get);
+    // Automation sessions (execution arbiter design §6a): take / read / end run control; X-Unreal-Session header
+    ADD_METHOD_TO(EmulatorAPI::postControlSession, "/api/v1/emulator/{id}/control/session", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getControlSession, "/api/v1/emulator/{id}/control/session", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::deleteControlSession, "/api/v1/emulator/{id}/control/session", drogon::Delete);
+    // Execution arbiter: who decides whether the Z80 runs (DeviceState::Execution)
+    ADD_METHOD_TO(EmulatorAPI::getStateExecution, "/api/v1/emulator/{id}/state/execution", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateExecutionActive, "/api/v1/emulator/state/execution", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getRtcCells, "/api/v1/emulator/{id}/rtc/cells", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postRtcCells, "/api/v1/emulator/{id}/rtc/cells", drogon::Post);
     // ISA slots (Sprinter; implementation: api/state_device_api.cpp, core DeviceState::Isa + IsaAccess)
@@ -679,6 +705,9 @@ public:
 
     void resetEmulator(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/operations[?since=&limit=] — the operation log (OperationsStatus::Report)
+    void getOperations(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     // Pulse the NMI line; body {"magic": true} selects the Scorpion MNI variant
     // (Shadow Monitor paged before the NMI so #0066 executes monitor code)
@@ -827,6 +856,9 @@ public:
     /// @brief GET /api/v1/emulator/{id}/capture/framebuffer?format=rgba|index&encoding=binary|base64 — raw pixels
     void captureFramebuffer(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/capture/next-layers?format=png|rgba&alpha= — every layer + the winner map of one Next frame
+    void captureNextLayers(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
     void capturePlaneB(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion Capture Commands Methods
@@ -1184,6 +1216,39 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void getStateTsConfTsu(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getStateNext(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void getStateNextActive(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+    void getStateNextRegs(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
+    void getStateNextMmu(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
+    void getStateNextRegJournal(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void postNextRegJournal(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/state/next/pixel?x=&y=&sx= — the pixel inspector: winner, colour, per-layer why and source address
+    void getStateNextPixel(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
+    /// @brief POST /api/v1/emulator/{id}/next/layer-capture {"enabled": true|false} — switch the per-layer record of the Next screen
+    void postNextLayerCapture(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void getStateNextDma(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
+    void getStateNextVideo(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
+    void getStateNextPalette(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id) const;
+    void getStateNextPorts(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
+    void getStateNextCopper(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& id) const;
+    void getStateNextSprites(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id) const;
+    void getStateNextNextReg(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id) const;
+    void postNextNextReg(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
     void getStateSprinter(const drogon::HttpRequestPtr& req,
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateSprinterActive(const drogon::HttpRequestPtr& req,
@@ -1218,6 +1283,18 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                                std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void postNetworkConfig(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void postControlSession(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getControlSession(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void deleteControlSession(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void getStateExecution(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
+    void getStateExecutionActive(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     void getStateRtc(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getStateProfi(const drogon::HttpRequestPtr& req,

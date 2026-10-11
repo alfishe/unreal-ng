@@ -4,6 +4,8 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/io/fdc/diskimage.h>
+#include <emulator/io/fdc/trdoscatalog.h>
+#include <unrealdisk/trdosfs.h>
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/wd1793.h>
 #include <emulator/platform.h>
@@ -665,10 +667,12 @@ void CLIProcessor::HandleDiskCatalog(const ClientSession& session, EmulatorConte
         return;
     }
 
-    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(0, 0);
-    if (!track)
+    // The TR-DOS catalog through the disk library (deleted entries left out, the list ends at the end mark)
+    std::vector<TrdosFile> entries;
+    std::string error;
+    if (!unrealdisk::TrdosFileSystem(*diskImage).List(entries, error))
     {
-        session.SendResponse(std::string("Error: Cannot read directory track") + NEWLINE);
+        session.SendResponse("Error: " + error + NEWLINE);
         return;
     }
 
@@ -678,43 +682,11 @@ void CLIProcessor::HandleDiskCatalog(const ClientSession& session, EmulatorConte
     ss << "  --------  ---  -----  -----" << NEWLINE;
 
     int fileCount = 0;
-    // Read sectors 1-8 (0-indexed: 0-7) for directory entries
-    for (int secNum = 0; secNum < 8; secNum++)
+    for (const TrdosFile& entry : entries)
     {
-        DiskImage::Sector* sector = track->getSector(static_cast<uint8_t>(secNum));  // Sector number secNum + 1
-        if (!sector || !sector->hasData || sector->dataSize != TRD_SECTORS_SIZE_BYTES)
-            continue;
-
-        const uint8_t* data = sector->data;
-        // 16 entries per sector, 16 bytes each
-        for (int entry = 0; entry < 16; entry++)
-        {
-            const uint8_t* e = data + (entry * 16);
-
-            // First byte: 0x00 = deleted, 0x01+ = valid
-            if (e[0] == 0x00)
-                continue;  // Deleted
-            if (e[0] > 0x7F)
-                continue;  // Invalid
-
-            // Filename: bytes 0-7, extension: byte 8
-            std::string name((const char*)e, 8);
-            char ext = (char)e[8];
-            uint16_t start = e[9] | (e[10] << 8);
-            uint16_t length = e[11] | (e[12] << 8);
-            uint8_t sectors = e[13];
-            uint8_t startSec = e[14];
-            uint8_t startTrack = e[15];
-
-            // Trim trailing spaces from name
-            while (!name.empty() && name.back() == ' ')
-                name.pop_back();
-
-            ss << "  " << std::left << std::setw(8) << name << "  " << ext << "   " << std::right << std::setw(5)
-               << length << "  T" << std::setw(2) << (int)startTrack << "/S" << (int)startSec << NEWLINE;
-
-            fileCount++;
-        }
+        ss << "  " << std::left << std::setw(8) << entry.TrimmedName() << "  " << entry.type << "   " << std::right << std::setw(5)
+           << entry.length << "  T" << std::setw(2) << static_cast<int>(entry.firstTrack) << "/S" << static_cast<int>(entry.firstSector) << NEWLINE;
+        fileCount++;
     }
 
     if (fileCount == 0)

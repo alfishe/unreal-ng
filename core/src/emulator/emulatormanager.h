@@ -225,12 +225,20 @@ public:
     /// @brief Pause an emulator
     /// @param emulatorId ID of the emulator to pause
     /// @return True if paused successfully, false if emulator not found or not running
-    bool PauseEmulator(const std::string& emulatorId);
+    bool PauseEmulator(const std::string& emulatorId, execution::Origin origin = execution::Origin::Internal);
+    bool PauseEmulator(const std::string& emulatorId, const execution::Requester& requester);
+    /// The pause with its result (Applied; Pending: queued behind a command, named in detail; Busy: `wait` ran out;
+    /// Refused): the surfaces answer with it. `wait` > 0: wait behind a command too, that long (Emulator::PauseAndWait)
+    execution::Result PauseEmulatorWithResult(const std::string& emulatorId, const execution::Requester& requester,
+                                              std::chrono::milliseconds wait = std::chrono::milliseconds(0));
 
     /// @brief Resume an emulator
     /// @param emulatorId ID of the emulator to resume
     /// @return True if resumed successfully, false if emulator not found or not paused
-    bool ResumeEmulator(const std::string& emulatorId);
+    bool ResumeEmulator(const std::string& emulatorId, execution::Origin origin = execution::Origin::Internal);
+    /// A run asked by `requester` (an automation session: its surface and id): refused while another surface holds
+    /// the run-control claim
+    bool ResumeEmulator(const std::string& emulatorId, const execution::Requester& requester);
 
     /// @brief Reset an emulator
     /// @param emulatorId ID of the emulator to reset

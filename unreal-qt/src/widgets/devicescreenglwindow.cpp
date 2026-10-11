@@ -1,4 +1,5 @@
 #include "devicescreenglwindow.h"
+#include "emulator/remotecontrolguard.h"
 #include "emulator/mousecapturecontroller.h"
 #include "hud/qt/hudoverlay.h"
 
@@ -612,6 +613,10 @@ void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)
     if (_mouseCapture && _mouseCapture->handleKeyPress(event))
         return;
 
+    // An automation session holds the machine: no keys from the GUI (releases still go: nothing stays held)
+    if (RemoteControlGuard::InputBlocked(_emulator.get()))
+        return;
+
     if (!event->isAutoRepeat())
     {
         // Two messages: the ZX key for the matrix, the physical key for a PS/2 machine
@@ -643,6 +648,12 @@ void DeviceScreenGLWindow::keyReleaseEvent(QKeyEvent* event)
 
 void DeviceScreenGLWindow::mousePressEvent(QMouseEvent* event)
 {
+    // An automation session holds the machine: no capture, no clicks from the GUI
+    if (RemoteControlGuard::InputBlocked(_emulator.get()))
+    {
+        event->accept();
+        return;
+    }
     if (_mouseCapture && _mouseCapture->handleMousePress(event))
         event->accept();
     else

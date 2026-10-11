@@ -5,6 +5,7 @@
 // Convert chains them. Each reports what it could not convert.
 
 #include <functional>
+#include <optional>
 #include <map>
 #include <set>
 #include <memory>
@@ -30,6 +31,15 @@ struct FrontendResult
     Diagnostics diagnostics;
 };
 
+/// A label of the source with the value its assembler computes (the layout of the source, layout.h)
+struct SourceLabel
+{
+    int64_t value = 0;
+    std::string file;            ///< the project file defining it ("" = the single source)
+    uint32_t line = 0;           ///< 1-based line of that file
+    bool redefinable = false;    ///< assigned with DEFL / "=": the value changes while assembling, none is known
+};
+
 struct BackendOptions
 {
     bool hexDollar = false;   ///< write hex numbers as $C000 instead of #C000 (where the target accepts both)
@@ -45,9 +55,19 @@ struct BackendOptions
     std::map<std::string, int> definitions;
     /// The project's data files (ConvertProject hands it to the frontends; none: the sources alone)
     DataFileReader dataFiles;
+    /// The size of a file an INCBIN of the converted source names (none: dataFiles' size, which may hold a sector's
+    /// slack): the layout of a converted sjasmplus project (byte operands to mark with low)
+    std::function<std::optional<uint64_t>(const std::string& name)> fileSize;
     /// The sources are written for the ZX Spectrum Next (sjasmplus --zxnext): the Z80N mnemonics are instructions in every
     /// file, as when a file says DEVICE ZXSPECTRUMNEXT or OPT --zxnext
     bool z80n = false;
+    /// The version of the target assembler the text is written for, in its codec's version names (ALASM "4.44",
+    /// "5.07"); "" = the newest. Keywords follow it (ALASM IF / IF0, UNTIL / UNTIL0, DEFB in 3.8)
+    std::string targetVersion;
+    /// The source's labels by the names its layout gives them (sjasmplus: label, label.local, module.label), filled by
+    /// Convert / ConvertProject for a backend that asks (IBackend::WantsLabelValues): a one-pass target folds to its
+    /// value an expression it cannot compute (a later label in an operation other than + and -, an operator it lacks)
+    std::map<std::string, SourceLabel> labelValues;
 };
 
 /// A label of the source and the name the backend wrote it under (a reserved word renamed, a LOCAL block's label made
@@ -99,6 +119,8 @@ public:
     virtual ~IBackend() = default;
     virtual std::string_view Dialect() const = 0;
     virtual BackendResult Write(const ir::Program& program, const BackendOptions& options) const = 0;
+    /// The backend folds expressions with the source's label values (BackendOptions::labelValues)
+    virtual bool WantsLabelValues() const { return false; }
 };
 
 class DialectRegistry
@@ -127,6 +149,21 @@ struct ConvertResult
 
 /// The source (its dialect from source.dialect) in the target dialect; ok = false when either side is missing
 ConvertResult Convert(const SourceDocument& source, std::string_view targetDialect, const BackendOptions& options = {});
+
+/// A source as a file of another assembler (part B: what goes into its memory, a snapshot or a disk)
+struct WriteAsResult
+{
+    std::vector<uint8_t> bytes;   ///< the file as the assembler saves it (its codec, its version)
+    SourceDocument document;      ///< the text written, in the codec's dialect
+    Diagnostics diagnostics;      ///< the conversion's and the codec's
+    std::string error;            ///< why not, when !ok
+    bool ok = false;
+};
+
+/// `source` (its dialect from source.dialect) written by `codec` in its `version` ("" the newest): converted to the
+/// codec's dialect by its backend first when it is in another (the backend told `version`), named `name` (the
+/// format's header keeps up to 8 characters; empty: the source's name)
+WriteAsResult WriteAs(const SourceDocument& source, std::string_view codec, const std::string& version, const std::string& name = "");
 
 /// One source of a project (the files of a disk): its name as INCLUDE names it (no extension) and its document
 struct ProjectFile

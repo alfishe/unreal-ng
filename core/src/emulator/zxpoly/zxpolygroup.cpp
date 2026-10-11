@@ -301,7 +301,7 @@ void ZXPolyGroup::ResetPlatformState()
 
 bool ZXPolyGroup::LoadZXP(const std::string& path, std::string* error)
 {
-    WaitForSlaves();
+    const GroupHold hold(*this, "zx-poly load");  // the master held, then the slaves' pipelined work done
     if (!IsCreated())
     {
         if (error)
@@ -361,7 +361,7 @@ bool ZXPolyGroup::HasPaging128(std::string* error) const
 
 bool ZXPolyGroup::LoadMedia(const std::string& path, std::string* error)
 {
-    WaitForSlaves();
+    const GroupHold hold(*this, "zx-poly media");  // the master held, then the slaves' pipelined work done
     if (path.empty())
         return true;
 
@@ -395,7 +395,7 @@ ZXPolyGroup::Status ZXPolyGroup::GetStatus() const
 
 bool ZXPolyGroup::LoadPROM(const std::string& path, std::string* error)
 {
-    WaitForSlaves();
+    const GroupHold hold(*this, "zx-poly prom");  // the master held, then the slaves' pipelined work done
     if (!IsCreated())
     {
         if (error)
@@ -442,7 +442,7 @@ bool ZXPolyGroup::LoadPROM(const std::string& path, std::string* error)
 
 bool ZXPolyGroup::BootDisk(const std::string& path, std::string* error)
 {
-    WaitForSlaves();
+    const GroupHold hold(*this, "zx-poly boot disk");  // the master held, then the slaves' pipelined work done
     if (!IsCreated())
     {
         if (error)
@@ -542,7 +542,7 @@ void ZXPolyGroup::CopyMasterState()
 
 void ZXPolyGroup::ReplicateFromMaster()
 {
-    WaitForSlaves();
+    const GroupHold hold(*this, "zx-poly replicate");  // the master held, then the slaves' pipelined work done
     // A stock program mirrored into the slaves: they get no IO writes of
     // their own (R0 D4), as a ZX-Poly edition's loader sets for its slaves
     CopyMasterState();
@@ -734,10 +734,10 @@ void ZXPolyGroup::UpdateIntGates()
     const EmulatorContext* master = GetContext(0);
     const uint8_t p7FFD = master->emulatorState.p7FFD;
     const bool latchIsPlain128 = master->config.ramsize <= 128;
-    GetContext(0)->pCore->GetZ80()->frameIntMasked =
-        !_locked && latchIsPlain128 && (p7FFD & 0x20u) == 0 && (p7FFD & 0x80u) != 0;
+    GetContext(0)->pCore->GetZ80()->frameIntMasked.store(
+        !_locked && latchIsPlain128 && (p7FFD & 0x20u) == 0 && (p7FFD & 0x80u) != 0, std::memory_order_relaxed);
     for (size_t m = 1; m < MODULES; m++)
-        GetContext(m)->pCore->GetZ80()->frameIntMasked = !_locked;
+        GetContext(m)->pCore->GetZ80()->frameIntMasked.store(!_locked, std::memory_order_relaxed);
 }
 
 void ZXPolyGroup::RaiseModuleInt(size_t module)
@@ -1087,7 +1087,7 @@ void ZXPolyGroup::ApplyInput(size_t module, const std::vector<InputOp>& input)
 
 void ZXPolyGroup::EnablePortReadCheck(bool enable)
 {
-    WaitForSlaves();
+    const GroupHold hold(*this, "zx-poly port check");  // the master held, then the slaves' pipelined work done
     _portReadCheck = enable;
     for (size_t m = 0; m < MODULES; m++)
     {
@@ -1109,7 +1109,7 @@ void ZXPolyGroup::EnablePortReadCheck(bool enable)
 
 void ZXPolyGroup::EnableInstructionTrace(bool enable)
 {
-    WaitForSlaves();
+    const GroupHold hold(*this, "zx-poly trace");  // the master held, then the slaves' pipelined work done
     // The per-instruction hooks are the group's own (InstallMasterM1Hook,
     // InstallSlaveM1Hooks); they log while this is on
     _instructionTrace = enable;
@@ -1381,6 +1381,16 @@ void ZXPolyGroup::AdvanceSlaves(const std::vector<InputOp>& input, bool mayOverl
     WaitForSlaves();
 }
 
+ZXPolyGroup::GroupHold::GroupHold(ZXPolyGroup& group, const char* tag)
+{
+    // The master's CPU first: no frame boundary of its (its loop or a direct run) hands the slaves new work while
+    // the operation touches them; then what a pipelined boundary left running is waited for. On the master's own
+    // thread (a hook, a direct run) the hold is free
+    if (Emulator* master = group._instances[0].get())
+        _hold = std::make_shared<Emulator::CpuHold>(*master, tag);
+    group.WaitForSlaves();
+}
+
 void ZXPolyGroup::WaitForSlaves() const
 {
     _workers->WaitAll();
@@ -1388,13 +1398,13 @@ void ZXPolyGroup::WaitForSlaves() const
 
 void ZXPolyGroup::SetParallelSlaves(bool parallel)
 {
-    WaitForSlaves();
+    const GroupHold hold(*this, "zx-poly parallel");  // the master held, then the slaves' pipelined work done
     _parallelSlaves = parallel;
 }
 
 void ZXPolyGroup::SetPipelinedSlaves(bool pipelined)
 {
-    WaitForSlaves();
+    const GroupHold hold(*this, "zx-poly pipelined");  // the master held, then the slaves' pipelined work done
     _pipelinedSlaves = pipelined;
 }
 
@@ -1450,7 +1460,7 @@ void ZXPolyGroup::RunFrame()
 void ZXPolyGroup::RunFrames(unsigned frames)
 {
     // Input queued before the call reaches all four where they are now
-    WaitForSlaves();
+    const GroupHold hold(*this, "zx-poly run frames");  // the master held, then the slaves' pipelined work done
     const std::vector<InputOp> input = TakePendingInput();
     for (size_t m = 0; m < MODULES; m++)
         ApplyInput(m, input);
@@ -1480,7 +1490,7 @@ void ZXPolyGroup::RunFrames(unsigned frames)
 
 bool ZXPolyGroup::StartRecording(std::string* error)
 {
-    WaitForSlaves();
+    const GroupHold hold(*this, "zx-poly ttd start");  // the master held, then the slaves' pipelined work done
     for (size_t m = 0; m < MODULES; m++)
     {
         // The members record only as one group: the lifted reason is set again on failure / stop
@@ -1508,7 +1518,7 @@ bool ZXPolyGroup::StartRecording(std::string* error)
 
 void ZXPolyGroup::StopRecording()
 {
-    WaitForSlaves();
+    const GroupHold hold(*this, "zx-poly ttd stop");  // the master held, then the slaves' pipelined work done
     for (size_t m = 0; m < MODULES; m++)
     {
         (void)ttd::TTDControl(GetContext(m)).Execute({"stop", {}});
@@ -1553,6 +1563,8 @@ bool ZXPolyGroup::SeekToFrame(uint64_t frame, std::string* error)
         master.Pause();
         master.GetMainLoop()->WaitForPauseConfirmation(500);
     }
+    // Paused is not idle: a direct run on the master (run_frames) runs the slaves too - the seek holds the CPU
+    Emulator::CpuHold hold(master, "zx-poly seek");
     WaitForSlaves();
 
     // TTD seeks only a stopped session (history kept; ResumeRecording picks it
@@ -1602,7 +1614,7 @@ bool ZXPolyGroup::SeekToFrame(uint64_t frame, std::string* error)
 
 bool ZXPolyGroup::ResumeRecording(std::string* error)
 {
-    WaitForSlaves();
+    const GroupHold hold(*this, "zx-poly ttd resume");  // the master held, then the slaves' pipelined work done
     if (!_recording)
     {
         if (error)

@@ -1051,3 +1051,20 @@ TEST_F(BasicEncoder_Integration_Test, TRDOSRunCommand_AutoResumes)
 
 /// endregion </TR-DOS Auto-Resume Tests>
 
+
+/// Blanks next to keywords and ':' are not typed on the 48K editor; stored, the one after "REM :" makes
+/// TR-DOS ignore the command (it reads the byte there as the command token)
+TEST_F(BasicEncoder_Test, TokenizeImmediate_NoBlanksAroundKeywordsAndColons)
+{
+    const std::vector<uint8_t> expected = {0xF9, 0xC0, '1', '5', '6', '1', '9', ':', 0xEA, ':', 0xEF, '"', 'a', ' ', 'b', '"', 0xAF};
+
+    EXPECT_EQ(BasicEncoder::tokenizeImmediate("  RANDOMIZE USR 15619 : REM : LOAD \"a b\" CODE"), expected);
+    EXPECT_EQ(BasicEncoder::tokenizeImmediate("RANDOMIZE USR 15619:REM:LOAD \"a b\"CODE"), expected);
+}
+
+TEST_F(BasicEncoder_Test, TokenizeImmediate_BlanksBetweenOtherCharactersStay)
+{
+    // "PRINT a + b": the blanks around '+' are the user's own and the ROM keeps them
+    const std::vector<uint8_t> expected = {0xF5, 'a', ' ', '+', ' ', 'b'};
+    EXPECT_EQ(BasicEncoder::tokenizeImmediate("PRINT a + b"), expected);
+}

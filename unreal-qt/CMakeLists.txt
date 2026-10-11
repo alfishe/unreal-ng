@@ -594,6 +594,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/journalspanslider.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/journalspanslider.h"
         # The TTD panel: the Advanced row's recording options, Build Journal only where it is missing
+        # Automation sessions in the GUI: the lock, take back, allow again (execution arbiter X7c)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/remotecontrolguard_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/remotecontrolguard.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/remotecontrolguard.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/ttdwidget_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.h"

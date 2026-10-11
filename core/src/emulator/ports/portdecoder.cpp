@@ -28,6 +28,7 @@
 #include "emulator/ports/models/portdecoder_spectrum3.h"
 #include "emulator/ports/models/portdecoder_spectrum48.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
+#include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/sound/beeper.h"
 #include "stdafx.h"
@@ -143,6 +144,7 @@ bool PortDecoder::IsModelSupported(MEM_MODEL model)
         case MM_ATM3:
         case MM_TSL:
         case MM_SPRINTER:
+        case MM_NEXT:
             return true;
         default:
             return false;
@@ -211,6 +213,9 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             break;
         case MM_SPRINTER:
             result = new PortDecoder_Sprinter(context);
+            break;
+        case MM_NEXT:
+            result = new PortDecoder_Next(context);
             break;
         default:
             // Static method - no _logger member, so MLOGERROR is not available here.
@@ -570,6 +575,7 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
                 break;
             case MM_SPECTRUM48:  info.modelName = "Spectrum48"; break;
             case MM_SPECTRUM128: info.modelName = "Spectrum128"; break;
+            case MM_NEXT:        info.modelName = "Next"; break;
             case MM_PLUS3:       info.modelName = "SpectrumPlus3"; break;
             case MM_PLUS2:       info.modelName = "SpectrumPlus2"; break;
             case MM_PLUS2A:      info.modelName = "SpectrumPlus2A"; break;
@@ -664,6 +670,17 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
                 entries.push_back({0x3FFD, 0xF002, 0x3000, "uPD765A data register", nullptr,
                                    Tags(PortTag::StorageFdc)});
             }
+            break;
+        case MM_NEXT:
+            // PortDecoder_Next: the 128K decode widened, each write rewrites the MMU slot table
+            entries.push_back({0x7FFD, 0xC002, 0x4000, "Memory paging (RAM bank, shadow screen, ROM)", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
+            entries.push_back({0x1FFD, 0xF002, 0x1000, "Special paging, ROM select bit 2", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Rom, PagingLatch::P1FFD});
+            entries.push_back({0xDFFD, 0xF002, 0xD000, "Extended RAM bank (bits 0-3 above #7FFD's three)", nullptr,
+                               Tags(PortTag::Memory)});
+            entries.push_back({0x243B, 0xFFFF, 0x243B, "NEXTREG select", nullptr, Tags(PortTag::System)});
+            entries.push_back({0x253B, 0xFFFF, 0x253B, "NEXTREG data", nullptr, Tags(PortTag::System)});
             break;
         case MM_PROFI:
         case MM_PROFI3:

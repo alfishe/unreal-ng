@@ -13,6 +13,7 @@
 
 #include "unrealasm/diagnostics.h"
 #include "unrealasm/encoding.h"
+#include "unrealasm/snapshot.h"
 #include "unrealasm/symbols/live.h"
 
 namespace unrealasm::sync
@@ -24,6 +25,7 @@ struct MachineView
     std::vector<symbols::MemoryPage> ram;
     std::array<int, 4> windows{-1, -1, -1, -1};   ///< RAM page at #0000 / #4000 / #8000 / #C000; -1 = ROM or not copied
     int ramPages = 8;                             ///< the machine's RAM size in 16 KB pages (page id rules)
+    int sp = -1;                                  ///< the CPU's SP when it was copied (the idle rule); -1 = not known
 
     const symbols::MemoryPage* Page(int page) const;
     /// Bytes of the CPU view; false when a byte lies in a window whose page was not copied
@@ -131,6 +133,23 @@ struct LinearParams
     /// SAVE writes a first line starting with this (the editor's position, ZAsm's ";!") that the editor takes out on
     /// loading: the live file is without it ("" = none)
     std::string stateLine;
+    /// GENS: records [number lo] [number hi] text #0D; while a line is typed in, the editor marks the line it goes
+    /// before with bit 7 of the number's high byte (numbers stay below 32768): the live file has it clear
+    bool clearLineMark = false;
+    /// Laser Genius: the text ends with FF FF in memory; its disk file is #AF, the length, the start, four characters
+    /// of the name (filled with blanks: SAVE names it, an editor state), then the paragraphs without the FF FF
+    bool laserGeniusFile = false;
+    /// PROMETHEUS: SAVE writes the records from fixedStart (the access line) up to twelve bytes below the symbol table
+    /// (the word at prometheusTableAt), FF XOR those bytes, FF, then the table up to the word at prometheusEndAt
+    /// PASM: the text runs from fixedStart to its #1A end; the cursor line (the address at pasmLineAt) lives in a
+    /// 64-byte line buffer (pasmLineBuffer) and goes back with its blank runs packed into TABs (a run of 2-8 blanks
+    /// that ends at a multiple of 8), as SAVE does
+    uint16_t pasmLineAt = 0;
+    uint16_t pasmLineBuffer = 0;
+    uint16_t prometheusTableAt = 0;
+    uint16_t prometheusEndAt = 0;
+    uint16_t editorStateAt = 0;     ///< bytes of the file SAVE fills (masked by the tests)
+    uint16_t editorStateLength = 0;
 };
 
 struct TypingParams
@@ -155,6 +174,11 @@ struct SyncDescriptor
     LinearParams linear;
     TypingParams typing;
     std::string labelScanner;       ///< the symbols/live.h scanner of its label table ("" = none)
+    bool textsPerPage = false;      ///< the assembler keeps one text per page, each with its header (ALASM): a project's other texts
+    /// Return addresses the stack holds in this order (lowest address first, within `idleDepth` bytes above SP) only
+    /// while the assembler waits for a command: a text may be written then (part B, §16.2). Empty = no rule known
+    std::vector<uint16_t> idleChain;
+    uint16_t idleDepth = 64;
 };
 
 /// Every built-in descriptor (asm-synchronizer.md §7), each checked with golden dumps: ALASM 3.8c, 4.42-4.46, 4.5,
@@ -180,6 +204,34 @@ struct SyncText
 
 SyncText ReadText(const MachineView& machine, const SyncDescriptor& descriptor);
 
+/// The other texts a layout keeps one per page (descriptor.textsPerPage: ALASM), every page of the copy but
+/// `exceptPage` (the live text's): their files and names, for a project's INCLUDEs (asm-synchronizer.md §5.4)
+std::vector<SyncText> ReadOtherTexts(const MachineView& machine, const SyncDescriptor& descriptor, int exceptPage);
+
+/// Part B (asm-synchronizer.md §16): the assembler waits for a command (the descriptor's idle rule holds); false with
+/// the reason
+bool Idle(const MachineView& machine, const SyncDescriptor& descriptor, std::string& why);
+
+struct InjectOptions
+{
+    bool force = false;          ///< write even when the text in memory has changes not saved, or no idle rule is known
+    bool markChanged = true;     ///< the header says "changed since saved" (ALASM asks before it loads another text)
+};
+
+/// The writes that make `file` (the assembler's own file, as its codec encodes it) the live text
+struct InjectPlan
+{
+    bool ok = false;
+    std::string error;
+    int page = -1;                       ///< the RAM page written (FileImage)
+    std::vector<uint8_t> bytes;          ///< its new contents, the whole page
+    SyncText previous;                   ///< the text it replaces (previous.ok false: none read)
+};
+
+/// Plans writing `file` over the live text: the assembler idle, the old text without unsaved changes (or `force`),
+/// the file within the page. FileImage layouts (ALASM); the others are refused
+InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& descriptor, const std::vector<uint8_t>& file, const InjectOptions& options = {});
+
 struct ProbeCandidate
 {
     const SyncDescriptor* descriptor = nullptr;
@@ -189,4 +241,13 @@ struct ProbeCandidate
 
 /// Every descriptor that identifies, best first
 std::vector<ProbeCandidate> Probe(const MachineView& machine);
+
+/// The machine a snapshot file holds (Z1): its RAM pages, windows and SP. The view points into `snapshot`'s pages
+MachineView ViewOf(const containers::Snapshot& snapshot);
+
+/// Part B into a snapshot (asm-synchronizer.md §16.3): `file` (the assembler's own file) written over the live text of
+/// the assembler in `snapshot`, under the same rules as in a running machine (PlanInject); `out` is the snapshot file
+/// with that page replaced. The plan says why not
+InjectPlan InjectIntoSnapshot(const containers::Snapshot& snapshot, const SyncDescriptor& descriptor, const std::vector<uint8_t>& file,
+                              const InjectOptions& options, std::vector<uint8_t>& out);
 }  // namespace unrealasm::sync

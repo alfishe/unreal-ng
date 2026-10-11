@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <chrono>
 #include <functional>
 
@@ -7,9 +8,6 @@
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portinterceptor.h"
 #include "stdafx.h"
-
-// Defined in /emulator/cpu/op_ddcb.cpp - pointers to registers in Z80 state
-extern uint8_t* direct_registers[8];
 
 // Forward declaration
 class OpcodeProfiler;
@@ -513,9 +511,6 @@ protected:
     EmulatorContext* _context;
     Memory* _memory;
 
-    uint8_t _trashRegister;  // Redirect DDCB operation writes with no destination registers here (related to
-                             // op_ddcb.cpp and direct_registers[6] unused pointer)
-
 protected:
     int _nmi_pending_count = 0;
 
@@ -885,8 +880,9 @@ public:
     }
 
     /// Mask the ULA frame INT for this CPU (a ZX-Poly slave before the lock
-    /// does not see the common frame INT). Local INT is not affected
-    bool frameIntMasked = false;
+    /// does not see the common frame INT). Local INT is not affected. Atomic: a ZX-Poly master's port write sets it
+    /// for slaves running on the group's worker threads (relaxed: a plain load on the instruction path)
+    std::atomic<bool> frameIntMasked{false};
 private:
     /// StepInstructionWithWork while an RZX recording plays: the frame end at
     /// the recorded fetch count; true when its interrupt was taken as this step

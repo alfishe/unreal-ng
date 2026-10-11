@@ -47,9 +47,14 @@ public:
     /// Generate a new random UUID (version 4)
     static UUID Generate()
     {
-        static std::random_device rd;
-        static std::mt19937 gen(rd());
-        static std::uniform_int_distribution<uint32_t> dis(0, 255);
+        // One generator per thread: a shared static one raced when instances were created from several automation
+        // threads at once, and two threads could draw the same state - the same id (UUID_Test)
+        thread_local std::mt19937 gen = [] {
+            std::random_device rd;
+            std::seed_seq seed{rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd()};
+            return std::mt19937(seed);
+        }();
+        std::uniform_int_distribution<uint32_t> dis(0, 255);
 
         UUID uuid;
         for (size_t i = 0; i < 16; ++i)

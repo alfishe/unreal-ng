@@ -143,7 +143,10 @@ bool HudOverlay::eventFilter(QObject* watched, QEvent* event)
 
 void HudOverlay::onModelChanged()
 {
-    if (!_model || !_model->isEnabled())
+    // Turned off, the HUD still shows the always-shown elements (an automation session's): the snapshot holds only
+    // what is to be drawn
+    const auto published = _model ? _model->snapshot() : nullptr;
+    if (!_model || !published || published->elements.empty())
     {
         if (_animTimer && _animTimer->isActive())
         {
@@ -401,7 +404,7 @@ void HudOverlay::paintEvent(QPaintEvent* event)
 
 void HudOverlay::renderHUD(QPainter& painter, int width, int height, float dpr)
 {
-    if (!_model || !_model->isEnabled())
+    if (!_model)
         return;
 
     auto snap = _model->snapshot();
@@ -1102,6 +1105,22 @@ void HudOverlay::drawIcon(QPainter& painter, const QString& iconName, const QRec
 
         painter.setBrush(color);
         painter.drawPath(bolt);
+    }
+    else if (iconName == "remote")
+    {
+        // An antenna: a dot with two arcs on each side (an automation session controls the machine)
+        const QRectF box = QRectF(r).adjusted(1, 1, -1, -1);
+        const QPointF c = box.center();
+        painter.setBrush(color);
+        painter.drawEllipse(c, box.width() / 10.0, box.width() / 10.0);
+        painter.setBrush(Qt::NoBrush);
+        for (const qreal k : {0.28, 0.46})
+        {
+            const qreal rad = box.width() * k;
+            const QRectF arc(c.x() - rad, c.y() - rad, 2 * rad, 2 * rad);
+            painter.drawArc(arc, -45 * 16, 90 * 16);
+            painter.drawArc(arc, 135 * 16, 90 * 16);
+        }
     }
     else if (iconName == "rec")
     {

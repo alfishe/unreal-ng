@@ -2,6 +2,7 @@
 // Implements /video/record endpoints (MCP automation, M7k)
 
 #include <drogon/HttpResponse.h>
+#include <optional>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/emulatorcontext.h>
@@ -217,12 +218,10 @@ void EmulatorAPI::videoRecord(const HttpRequestPtr& req, std::function<void(cons
                 return;
             }
 
-            // Configuration setters refuse changes mid-recording — apply while paused
-            const bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-            if (wasRunning)
-            {
-                emulator->Pause();
-            }
+            // Configuration setters refuse changes mid-recording: configure and start with the CPU held (no frame
+            // in between; the pause is left as it was)
+            std::optional<Emulator::CpuHold> hold;
+            hold.emplace(*emulator, "webapi recording");
 
             float fps = json && json->isMember("fps") ? (*json)["fps"].asFloat() : 50.0f;
             if (fps < 1.0f) fps = 1.0f;
@@ -257,11 +256,7 @@ void EmulatorAPI::videoRecord(const HttpRequestPtr& req, std::function<void(cons
             // No audio codec = video only (the default); GIF never carries audio (refused above)
             const bool started =
                 rm->StartRecording(filename, format, codecs.audio, codecs.videoBitrate, codecs.audioBitrate);
-
-            if (wasRunning)
-            {
-                emulator->Resume();
-            }
+            hold.reset();
 
             if (!started)
             {

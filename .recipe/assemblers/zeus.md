@@ -40,6 +40,10 @@ delimiter, `:` and `;` inside are text, no closing delimiter runs to the end of 
 `DISP d` is an offset (after `ORG 30000` / `DISP 10000` the code goes to 40000 and runs at 30000, labels and `$` are
 30000-based; a later `ORG` keeps the offset; `DISP 0` ends it); `ENT` marks the entry point for `X` and makes no code.
 
+The text in memory: where `o` put it (`o 32768` in the host tools), records `[number lo hi] tokens 00`, then
+`FF FF`. ZEUS 1983, 1.1 and GG keep the start at `#FD00` and the address of the last `FF` at `#FD02`; v7.E at
+`#FAAB` / `#FAAD`. A line typed at the prompt is not in the text until Enter. The asm-synchronizer reads it live
+(descriptors `zeus-1983`, `zeus-1.1`, `zeus-gg`, `zeus-7e`; asm-synchronizer.md §7.14).
 ## Memory
 
 ZEUS 1983 / 1.1 / GG run at 57344-65535 (v7.E's help: ZEUS at 56000, its label buffer below 55999). The source
@@ -205,6 +209,8 @@ memory untouched (sjasmplus writes zeros there).
   33364; named `PRI.DOC` on a copy of the disk (rename the original) it is loaded at start.
 - The code goes right after the text (33364 + the text's length, `h` shows it), whatever the `ORG`; `DEFS` leaves the
   memory there as it was.
+- The text in memory: from `(#61B1)` (`#8254`) to the last `FF` at `(#61B3)`, ZEUS's layout; the disk menu needs ENTER
+  after each command (`b` ENTER, `s NAME` ENTER saves, `q` ENTER). Read live by the asm-synchronizer (`primus-2.9`).
 - `DISK NAME` includes the file NAME: a name that is a keyword (`INC`) is stored as the token and is not found.
 
 ## Pitfalls

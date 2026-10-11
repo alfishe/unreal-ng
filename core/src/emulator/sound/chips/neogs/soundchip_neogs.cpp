@@ -120,11 +120,6 @@ SoundChip_NeoGS::SoundChip_NeoGS(EmulatorContext* context, const NeoGSConfig& co
         openSdImage(_config.sdCardPath);
 }
 
-bool SoundChip_NeoGS::ttdRecording() const
-{
-    return _context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->IsRecording();
-}
-
 bool SoundChip_NeoGS::insertSdCard(const std::string& path)
 {
     if (MediaManager* manager = _sdSlotRegistered ? _context->pMediaManager : nullptr)
@@ -141,12 +136,7 @@ bool SoundChip_NeoGS::insertSdCard(const std::string& path)
             MLOGWARNING("NeoGS: SD card '%s' not inserted: %s", FileHelper::PrintablePath(path).c_str(), result.message.c_str());
         return result.Ok();
     }
-    // The machine's configuration is fixed while a TTD recording runs
-    if (ttdRecording())
-    {
-        MLOGWARNING("NeoGS: SD card insert refused - a TTD recording is running");
-        return false;
-    }
+    // No media manager (a bare card): no machine, no rules - the coordinator decides in the manager's slot
     return openSdImage(path);
 }
 
@@ -197,12 +187,7 @@ bool SoundChip_NeoGS::ejectSdCard()
             MLOGWARNING("NeoGS: SD card not ejected: %s", result.message.c_str());
         return result.Ok();
     }
-    if (ttdRecording())
-    {
-        MLOGWARNING("NeoGS: SD card eject refused - a TTD recording is running");
-        return false;
-    }
-    _sd->close();
+    _sd->close();   // no media manager (a bare card): no machine, no rules
     return true;
 }
 

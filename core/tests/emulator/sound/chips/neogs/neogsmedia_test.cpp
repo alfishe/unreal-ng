@@ -1,8 +1,8 @@
 // NeoGS media requests from automation (neogsmedia.h): SD card insert /
 // eject go to the media manager's slot `sd.ngs` (applied at a frame
 // boundary), a flash save is carried out on the machine's thread; insert and
-// eject are refused while a TTD recording runs, because the machine's
-// configuration is fixed for the recording.
+// eject follow the machine state coordinator's media rules: refused while a
+// recording the user started runs, the black box's session ends at the change.
 //
 // Runtime justification: the hand-off tests run the emulator loop on its own
 // thread for a few frames; the stress test for about a second.
@@ -24,6 +24,8 @@
 #include "_helpers/testwaithelper.h"
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "emulator/coordinator/operationlog.h"
+#include "emulator/coordinator/ports.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/media/mediamanager.h"
@@ -102,19 +104,22 @@ TEST_F(NeoGSMedia_Test, CarriedOutAtOnceWhileTheLoopIsNotRunning)
 
 /// The machine's configuration is fixed while a TTD recording runs: the SD
 /// card's contents are fixed data for the recording's whole length
-TEST_F(NeoGSMedia_Test, InsertAndEjectRefusedWhileTtdRecords)
+/// M3 (Q4): while a TTD recording runs, an SD card change is an event of the recording: queued to the next frame
+/// boundary, the recording goes on
+TEST_F(NeoGSMedia_Test, InsertAndEjectWhileTtdRecordsLandAtTheNextFrameBoundary)
 {
     fitNeoGS();
     ASSERT_TRUE(_ctx->pTimeTravelController->StartRecording());
-    const std::string path = card()->sdCardImage();
 
-    EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::TtdRecording);
-    EXPECT_EQ(NeoGSRequestSdInsert(_ctx, _other->path()), NeoGSMediaResult::TtdRecording);
-    // The card enforces it too, whoever calls it
-    EXPECT_FALSE(card()->ejectSdCard());
-    EXPECT_FALSE(card()->insertSdCard(_other->path()));
+    EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::Queued);
+    EXPECT_TRUE(card()->sdCardPresent()) << "never inside a frame";
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+    EXPECT_FALSE(card()->sdCardPresent());
+    EXPECT_EQ(NeoGSRequestSdInsert(_ctx, _other->path()), NeoGSMediaResult::Queued);
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
     EXPECT_TRUE(card()->sdCardPresent());
-    EXPECT_EQ(card()->sdCardImage(), path);
+    EXPECT_EQ(card()->sdCardImage(), _other->path());
+    EXPECT_TRUE(_ctx->pTimeTravelController->IsRecording());
 
     // A flash save changes nothing in the machine: it reaches the card (which
     // saves only in persist mode - off here - so it reports Failed)
@@ -122,8 +127,29 @@ TEST_F(NeoGSMedia_Test, InsertAndEjectRefusedWhileTtdRecords)
     EXPECT_TRUE(save == NeoGSMediaResult::Done || save == NeoGSMediaResult::Failed) << NeoGSMediaResultText(save);
 
     _ctx->pTimeTravelController->StopRecording();
+    EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::Done) << "live and paused: at once";
+    EXPECT_FALSE(card()->sdCardPresent());
+}
+
+/// The SD card is a medium to the machine state coordinator (D43): the black box does not refuse it, its session
+/// ends at the change, as for any medium
+TEST_F(NeoGSMedia_Test, TheBlackBoxEndsAtAnSdCardChangeInsteadOfRefusingIt)
+{
+    fitNeoGS();
+    _ctx->pTimeTravelController->SetBlackBox(true, 1);
+    ASSERT_TRUE(_ctx->pTimeTravelController->StartRecording());
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    ASSERT_EQ(_emulator->MachineOps().Mode(), coordinator::MachineMode::BlackBox);
+    const uint64_t since = _emulator->GetOperationLog().LastSeq();
+
     EXPECT_EQ(NeoGSRequestSdEject(_ctx), NeoGSMediaResult::Done);
     EXPECT_FALSE(card()->sdCardPresent());
+    const auto log = _emulator->GetOperationLog().Entries(since);
+    ASSERT_EQ(log.size(), 1u);
+    EXPECT_EQ(log[0].kind, coordinator::OpKind::MediaEject);
+    EXPECT_EQ(log[0].status, coordinator::OpStatus::Done);
+    EXPECT_EQ(log[0].mode, coordinator::MachineMode::BlackBox);
+    EXPECT_EQ(log[0].effect, coordinator::SessionEffect::MediaChanged);
 }
 
 /// The SD slot is the media manager's `sd.ngs`, there only while NeoGS is

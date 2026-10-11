@@ -5,6 +5,11 @@ message(">> core/tests CMakeLists.txt")
 # Project named 'core-tests' on C++
 project(core-tests LANGUAGES CXX)
 
+# A standalone configure of the tests takes -DSANITIZE too (inside the tree the root applied it already)
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/Sanitize.cmake)
+endif ()
+
 # C++ standard - MUST match the rest of the project (C++20) to avoid ABI mismatch
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -310,6 +315,14 @@ if (NOT TARGET ${PROJECT_NAME})
     if(TARGET unreal-asm-tests)
         list(APPEND QT_FRONTEND_TEST_COMMAND COMMAND $<TARGET_FILE:unreal-asm-tests>)
         list(APPEND QT_FRONTEND_TEST_TARGET unreal-asm-tests)
+    endif()
+    # The same for unreal-disk (core/src/3rdparty/unreal-disk): the disk model, format drivers, TR-DOS file system
+    if(COMMAND unrealdisk_add_tests)
+        unrealdisk_add_tests()
+    endif()
+    if(TARGET unreal-disk-tests)
+        list(APPEND QT_FRONTEND_TEST_COMMAND COMMAND $<TARGET_FILE:unreal-disk-tests>)
+        list(APPEND QT_FRONTEND_TEST_TARGET unreal-disk-tests)
     endif()
     if(UNIX)
         add_custom_target(test-parallel

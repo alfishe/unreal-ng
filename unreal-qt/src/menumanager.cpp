@@ -130,7 +130,7 @@ void MenuManager::createFileMenu()
 
     // Open Snapshot
     _openSnapshotAction = _fileMenu->addAction(tr("Open &Snapshot..."));
-    _openSnapshotAction->setStatusTip(tr("Load a snapshot file (.z80, .sna, .szx) or a TS-Conf program (.spg)"));
+    _openSnapshotAction->setStatusTip(tr("Load a snapshot file (.z80, .sna, .szx) a TS-Conf program (.spg) or a ZX Spectrum Next program (.nex)"));
     connect(_openSnapshotAction, &QAction::triggered, this, &MenuManager::openSnapshotRequested);
 
     // Open Tape
@@ -681,7 +681,8 @@ void MenuManager::createMachineMenu()
         MM_PROFI,         // Profi v5 1024K (design: docs/inprogress/2026-09-21-profi)
         MM_PROFI3,        // Profi v3 512K (design: docs/inprogress/2026-10-01-profi-v3-v5)
         MM_TSL,           // ZX-Evo TS-Conf, 4096K (design: docs/inprogress/2026-09-27-tsconf)
-        MM_SPRINTER       // Peters Plus Sprinter Sp2000, 4096K (design: docs/inprogress/2026-09-28-sprinter)
+        MM_SPRINTER,      // Peters Plus Sprinter Sp2000, 4096K (design: docs/inprogress/2026-09-28-sprinter)
+        MM_NEXT           // ZX Spectrum Next, 2048K (design: docs/inprogress/2026-10-07-zx-next); the real boot chain with [NEXT] SdCard
     };
 
     for (const auto& model : models)
@@ -1331,6 +1332,13 @@ void MenuManager::applyPlatformSpecificSettings()
 
 void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
 {
+    // Leased for the whole update, the helpers below included: an automation thread may remove the instance or
+    // switch its model meanwhile (2026-10-10: a WebAPI model switch freed the WD1793 this read). A retiring
+    // instance shows as none
+    const Emulator::ContextLease lease = activeEmulator ? activeEmulator->LeaseContext() : Emulator::ContextLease{};
+    if (!lease)
+        activeEmulator = nullptr;
+
     // Store weak reference to active emulator (for future queries)
     _activeEmulator = activeEmulator;
 

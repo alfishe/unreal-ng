@@ -1,7 +1,66 @@
 # Machine state coordinator: who gets what, and requirements
 
-Status: draft for the owner's review, 2026-10-09. Comes before [architecture.md](architecture.md), which is revised
-against this document once it is accepted. Facts about today's code: [current-state.md](current-state.md).
+Status: draft for the owner's review, 2026-10-09; §0 added 2026-10-10. Comes before [architecture.md](architecture.md).
+Facts about today's code: [current-state.md](current-state.md).
+
+## 0. What the coordinator is
+
+**One object per emulator instance through which every operation that changes the machine as a whole passes.** It
+does not emulate, record history or store media. It decides and orders: a caller states an intent ("insert this
+disk", "reset", "write these bytes", "continue recording from here"), and the coordinator works out the rest by
+itself.
+
+### 0.1 Its four duties
+
+| # | Duty | What it means |
+|---|---|---|
+| 1 | **Rules** | One table: operation × mode (live, explicit recording, black box, replaying, detached) → allow, refuse with a reason, record as an event, end the session (keep / drop history). Every surface asks it and gets the same answer and the same reason text. |
+| 2 | **Parking** | One way to bring the machine thread to a coherent point for an operation, instead of the ten variants today. |
+| 3 | **Ordering** | An operation lands at a stated point: now (machine parked) or a fixed phase of the next frame boundary, before or after the TTD checkpoint. The same script gives the same session. |
+| 4 | **Operation log** | Who did what, at which frame, from which surface, with which result; always on; saved into a TTD session. |
+
+### 0.2 Not its job
+
+- emulating, capturing or restoring state (devices, `TTDSerializable`, the snapshot pipeline);
+- recording history (the TTD engine and controller);
+- storing or bundling media (media manager; bundles are UNS's job);
+- implementing an operation: the owner (media manager, sound manager, emulator, ...) still does the work.
+
+### 0.3 Design principles (owner, 2026-10-10)
+
+**Autonomous.** The coordinator is a self-contained agent: callers hand it an intent and it decides the policy, the
+park, the landing point, the session effect and the log entry on its own. No caller carries a rule, picks a park
+variant or calls a TTD hook for an operation. It holds its own state (mode, queue, log) and does not read the
+internals of anyone else.
+
+**Right wiring, no extra links.**
+- The coordinator depends only on small interfaces (ports) it defines itself; it includes no manager, device or
+  emulator header.
+- A participant depends only on the port it implements, never on the coordinator class and never on another
+  participant. Media, TTD, sound, network and RZX stop knowing each other for machine-level operations.
+- Each operation kind has exactly one owner; each capability (mode changes, boundary phase, timeline cut) is
+  subscribed only by the participants that have it.
+- All links are made in one place (the emulator's wiring function); reading it shows the whole graph.
+- A check in the build fails when the coordinator's directory includes anything outside its own headers and the
+  standard library.
+
+**Very well tested.**
+- The coordinator builds and runs in tests without an emulator: fake participants, a fake machine thread and a fake
+  clock; each unit test well under 1 ms, no sleeps, deterministic.
+- Every policy cell, every lifecycle branch (refuse, prepare fails, commit, abort), every boundary phase and the
+  log are pinned by tests; a missing table cell is a compile error.
+- Each real participant passes a shared contract test of its port (for example: a failed `Prepare` leaves no trace).
+- A small set of end-to-end tests on real machines checks the wiring: the same answer from every surface, the
+  boundary order, "Rec From Here" with media.
+- Mutation checks on each landing step, as for the M0 fixes.
+
+### 0.4 What changes for whom
+
+| Who | Today | With the coordinator |
+|---|---|---|
+| User | rules differ by surface and mode; a failed load can end a recording; a disk swap during a recording is refused; "Rec From Here" leaves the disk in the future | one behaviour everywhere; failed operations change nothing; swaps are events; the disk goes back with the timeline (or the user is asked) |
+| Developer | a new operation must remember the guard, the park, the TTD hook, the boundary | submit the operation, implement one port |
+| Tester | landing points depend on timing; what was done before a failure is lost | stated landing points; the operation log in status and in the TTD session |
 
 ## 1. The problem in one paragraph
 
@@ -119,6 +178,9 @@ is UNS's job (owner decision).
 | N3 | Surface commands keep their syntax and results; refusal texts may become uniform. |
 | N4 | Every policy row, the boundary order, F4 and F6 are core tests. |
 | N5 | One coordinator per instance, no global state (owner decision Q1). |
+| N6 | Autonomy: no caller applies a rule, a park variant or a TTD hook for a machine-level operation; the coordinator holds its own mode, queue and log (§0.3). |
+| N7 | Wiring: the coordinator includes only its own headers and the standard library; participants include only their port; no participant calls another for a machine-level operation; all links in one wiring function; enforced by a build check (§0.3). |
+| N8 | Testability: the coordinator is tested without an emulator (fakes for participants, machine thread, clock); every policy cell, lifecycle branch, boundary phase and log path has a test; each real participant passes its port's contract test; tests deterministic, no sleeps (§0.3). |
 
 ## 5. Not in scope
 
@@ -134,7 +196,8 @@ internals; full media history (H1-H5).
 - 2026-10-09 (Q3): **RZX is a participant**; moving RZX seeking onto the TTD engine stays a separate task after v1
   is deleted.
 - 2026-10-09 (Q4): **a media change during a recording is an event** at the boundary where it lands, each insert,
-  eject, discard on its own, no pairing; logged so a later failure can be correlated. Refused until M3.
+  eject, discard on its own, no pairing; logged so a later failure can be correlated. Refused until M3. **Built
+  2026-10-10 (M3)**: the history keeps the change and what came in, then ports and sectors only (owner, same day).
 - 2026-10-09: **build the coordinator, in stages.** M0 defects first, each on its own; then the coordinator with the
   policy table and no behaviour change; operations move onto it one by one. The media cut ("Rec From Here") and media
   swaps as events are built on it, not as point fixes.
@@ -153,6 +216,18 @@ internals; full media history (H1-H5).
   images are hashed at once (cheap). No delay in normal use (F12).
 - 2026-10-10: **the TTD session does not embed media.** A bundle of snapshot + disks + TTD session is UNS's job;
   the coordinator only needs identity (path + content hash) to decide whether a medium is the one recorded.
+- 2026-10-10: **the coordinator is an autonomous agent with the right wiring and no extra links, and it must be very
+  well tested** (§0.3, N6-N8).
 - 2026-10-10: **postponed: continuing live from the past of a session loaded from a file.** A loaded session is
   browsed and replayed; "Rec From Here" in it treats every medium as unproven (F11). TTD does not store guest media
   writes.
+- 2026-10-10: **the D43 cells** (one at a time):
+  - **network settings**: refused while a recording the user started runs and in the recorded past (replay,
+    detached); the black box ends its session as for a medium (history dropped, the next session at once); live:
+    nothing for TTD. A change of `RemoteAccess` alone (the host listeners' address) is no machine operation: allowed
+    in every mode.
+  - **an IDE unit's drive** (hard disk / CD-ROM / CompactFlash): the same rule as the network settings.
+  - **RZX snapshot block and seek back**: a snapshot load (D42): the session ends, its history stays, in every mode.
+    A forward seek plays on: no operation.
+  - **NeoGS SD card**: a medium; the media rules decide (refused while a recording the user started runs, the
+    black box ends its session).

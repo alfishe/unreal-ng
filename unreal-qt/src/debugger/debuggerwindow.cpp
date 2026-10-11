@@ -1,4 +1,5 @@
 #include "debuggerwindow.h"
+#include "emulator/remotecontrolguard.h"
 
 #include <QBoxLayout>
 #include <QColor>
@@ -575,6 +576,18 @@ void DebuggerWindow::updateState()
         return;
     }
 
+    // A refresh queued by a step's end (cpuStepComplete) or a frame can run while the machine is being removed (an
+    // automation 'destroy' right after a 'run_frames'): its memory is freed under the disassembler (seen as a SIGSEGV
+    // in Z80Disassembler with a null Memory). The lease keeps the removal from freeing anything until this refresh
+    // ends, and is refused once the removal has begun
+    Emulator::ContextLease lease;
+    if (_emulator)
+    {
+        lease = _emulator->LeaseContext();
+        if (!lease)
+            return;
+    }
+
     // Skip heavy UI updates while emulator is running to avoid race conditions
     // and excessive CPU usage (frameRefresh fires at 50fps during recording)
     if (_emulator && !_emulator->IsPaused())
@@ -939,7 +952,7 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
 
             // Pause the emulator
             _breakpointTriggered = true;
-            _emulator->Pause();
+            _emulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "debugger");
 
             // Update the UI
             updateState();
@@ -1004,7 +1017,7 @@ void DebuggerWindow::continueExecution()
 
     if (_emulator && _emulator->IsPaused())
     {
-        _emulator->Resume();
+        _emulator->Resume(execution::Requester{execution::Origin::Gui, {}});
 
         // When emulator is running:
         // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON)
@@ -1027,7 +1040,7 @@ void DebuggerWindow::pauseExecution()
 
     if (_emulator && _emulator->IsRunning() && !_emulator->IsPaused())
     {
-        _emulator->Pause();
+        _emulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "debugger");
         _emulator->DebugOn();
 
         // When emulator is paused:
@@ -1230,6 +1243,8 @@ void DebuggerWindow::waitInterrupt()
 
 void DebuggerWindow::portOut()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     if (!_emulator) return;
 
     bool ok;

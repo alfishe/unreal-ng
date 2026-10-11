@@ -31,6 +31,15 @@ drive restrictions, pause races).
   a file that exists on the *agent's* machine (embedded content).
 - Test artifacts (`.trd`, `.tap`, `.sna`, traces, `.ttd` dumps) belong in
   `scratch/` — never in the project root.
+- **Automation sessions.** For a long automated job, take run control first: MCP
+  `control_execution {"action":"take_control","client":"<your name>"}`, WebAPI
+  `POST $BASE/emulator/$EMU_ID/control/session` (then the returned id in the
+  `X-Unreal-Session` header), CLI `session take <name>`, Lua / Python
+  `take_control("<name>")`. The user sees it in the GUI and can **take control
+  back**. From then on the session's calls answer `revoked_by_user` (WebAPI 409,
+  `retry: false`; Python `ControlRevoked`). **Stop. Do not retry, do not take
+  control again by yourself - ask the user.** A re-take by the same client is
+  refused (`revoked_cooldown`) until the user allows it.
 
 ## Picking recipes for a task (read this before the index)
 
@@ -76,7 +85,8 @@ matches; it names the recipe(s) for that action.
 | Reading raw sectors, tracks, catalog of a loaded disk | [media/disk-sector-and-catalog-inspection.md](media/disk-sector-and-catalog-inspection.md) | tape, snapshot |
 | Per-device volume, mute, solo, recording a sound source | [peripherals/audio-mixer-and-capture.md](peripherals/audio-mixer-and-capture.md) | the card recipes unless the card matters |
 | Watching port I/O | [analysis/port-trace.md](analysis/port-trace.md) | ttd-*, memory-counters |
-| Capturing the VDAC2 card's FT812 bus (an .evr replay stream) | [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | port-trace |
+| Capturing the VDAC2 card's FT812 bus (an .evr replay stream) | [machines/next.md](machines/next.md) | ZX Spectrum Next: create on a card, drive NextZXOS's menu and Browser, the debugger reports (`next_dma`, `next_video`, `next_palette`, `next_ports`, `next_nextreg` and the NextREG write), the NextREG write journal (who wrote which register - the NEXTREG instruction and the copper make no port cycle), how NextZXOS starts a snapshot (Multiface NMI, stackless NMI, RETN to a ROM `RET`), the real-board test programs, which layer draws a pixel (the per-layer capture of a frame and the pixel inspector: why a tile or a sprite does not show) |
+| [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | port-trace |
 | Counting/mapping memory access | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
 | Finding where the emulator itself (the host process) spends its CPU time | [testing/host-profiling.md](testing/host-profiling.md) | analysis/* (they profile the guest) |
 | A Sprinter boot straight into a program (tests, benchmarks, a GUI session) | [media/sprinter-test-images.md](media/sprinter-test-images.md) | demo-runner, Flex Navigator walking |

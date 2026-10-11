@@ -68,7 +68,115 @@ namespace
     }
 }  // namespace
 
-MediaManager::MediaManager(EmulatorContext* context) : _context(context) {}
+/// One media operation as the coordinator carries it (MachineOp::payload points here)
+struct MediaManager::MediaRequest
+{
+    enum class Kind : uint8_t
+    {
+        Insert,
+        Eject,
+        Discard
+    };
+    Kind kind = Kind::Insert;
+    std::string slotId;
+    std::unique_ptr<Medium> medium;            ///< Insert
+    const InsertOptions* insert = nullptr;     ///< Insert
+    const EjectOptions* eject = nullptr;       ///< Eject
+    MediaResult result = MediaResult::Success();
+    bool nothingToDo = false;                  ///< Prepare found nothing to change (no session effect)
+    std::unique_lock<std::recursive_mutex> lock;   ///< the manager's lock, from Prepare to the end of Commit
+};
+
+/// The media operations' owner (coordinator::IOpOwner): Prepare checks and settles the outgoing medium's writes,
+/// Commit marks the commit point and swaps. _mutex is held from Prepare to Commit, as one lock held the whole
+/// operation before
+class MediaManager::MediaOpOwner : public coordinator::IOpOwner
+{
+public:
+    explicit MediaOpOwner(MediaManager& manager) : _manager(manager) {}
+
+    /// TTD v1 keeps no media change events (NoteMediaChange): while it records, a change is refused as before M3.
+    /// Goes with v1
+    std::string Refusal(const coordinator::MachineOp& op) const override
+    {
+        EmulatorContext* context = _manager._context;
+        ttd::ITimeTravelHooks* ttd = context ? context->pTimeTravelHooks : nullptr;
+        if (op.endRecording || !ttd || ttd->RecordsMediaChanges())
+            return {};
+        const ttd::TTDGuardedAction action = op.kind == coordinator::OpKind::DiskCreate ? ttd::TTDGuardedAction::CreateDisk
+                                             : op.media == coordinator::MediaClass::Tape ? ttd::TTDGuardedAction::LoadTape
+                                                                                         : ttd::TTDGuardedAction::LoadDisk;
+        std::string refusal = ttd->RecordingGuard(action);
+        if (!refusal.empty() && op.media == coordinator::MediaClass::Any && op.kind != coordinator::OpKind::DiskCreate)
+            refusal = "the media set is fixed while a TTD recording runs; end the recording first";
+        return refusal;
+    }
+
+    bool Prepare(const coordinator::MachineOp& op, coordinator::OpStage& stage) override
+    {
+        MediaRequest& request = *std::any_cast<MediaRequest*>(op.payload);
+        request.lock = std::unique_lock<std::recursive_mutex>(_manager._mutex);
+        request.result = _manager.PrepareMediaOp(request);
+        if (request.result.Ok())
+            return true;
+        stage.error = request.result.message;
+        return false;
+    }
+
+    bool Commit(const coordinator::MachineOp& op, coordinator::OpStage& stage) override
+    {
+        MediaRequest& request = *std::any_cast<MediaRequest*>(op.payload);
+        const bool ok = _manager.CommitMediaOp(request, stage);
+        if (!ok)
+            stage.error = request.result.message;
+        request.lock.unlock();
+        return ok;
+    }
+
+    void Abort(const coordinator::MachineOp& op, coordinator::OpStage&) override
+    {
+        // Prepare failed, or Commit threw before it let go
+        MediaRequest& request = *std::any_cast<MediaRequest*>(op.payload);
+        if (request.lock.owns_lock())
+            request.lock.unlock();
+    }
+
+private:
+    MediaManager& _manager;
+};
+
+MediaManager::MediaManager(EmulatorContext* context) : _context(context), _opOwner(std::make_unique<MediaOpOwner>(*this)) {}
+
+void MediaManager::SetMachineOps(coordinator::IMachineOps* ops)
+{
+    _machineOps = ops;
+}
+
+coordinator::IOpOwner& MediaManager::OpOwner()
+{
+    return *_opOwner;
+}
+
+MediaResult MediaManager::RunMediaOp(coordinator::MachineOp op, MediaRequest& request)
+{
+    op.payload = &request;
+    if (_machineOps == nullptr)
+    {
+        // No emulator around this manager: no TTD, no rules - the owner runs the operation itself
+        coordinator::OpStage stage;
+        if (_opOwner->Prepare(op, stage))
+            _opOwner->Commit(op, stage);
+        else
+            _opOwner->Abort(op, stage);
+        return request.result;
+    }
+    const coordinator::OpResult done = _machineOps->Run(std::move(op));
+    if (done.status == coordinator::OpStatus::Refused)
+        return MediaResult::Fail(MediaError::Recording, done.reason);
+    if (done.status == coordinator::OpStatus::Failed && request.result.Ok())
+        return MediaResult::Fail(MediaError::IoError, done.reason);   // the owner threw
+    return request.result;
+}
 
 MediaManager::~MediaManager()
 {
@@ -229,6 +337,22 @@ std::vector<SlotInfo> MediaManager::Detached() const
 
 MediaResult MediaManager::Insert(const std::string& slotId, const MediaSource& source, const InsertOptions& options)
 {
+    // A change the rules refuse now is refused (and logged) before the file is opened: the same operation, without
+    // a medium, runs into the refusal
+    if (_machineOps)
+    {
+        coordinator::MachineOp op = InsertOp(slotId, source.path, options);
+        if (_machineOps->WouldRefuse(op).status == coordinator::OpStatus::Refused)
+        {
+            MediaRequest request;
+            request.slotId = slotId;
+            request.insert = &options;
+            MediaResult refused = RunMediaOp(std::move(op), request);
+            if (refused.error == MediaError::Recording)
+                return refused;
+            // The mode changed in between: the operation reached the owner without its medium; open it after all
+        }
+    }
     std::unique_ptr<Medium> medium;
     MediaResult opened = OpenForSlot(slotId, source, options, medium);
     if (!opened.Ok())
@@ -342,58 +466,206 @@ MediaResult MediaManager::OpenForSlot(const std::string& slotId, const MediaSour
     return opened;
 }
 
-MediaResult MediaManager::Insert(const std::string& slotId, std::unique_ptr<Medium> medium, const InsertOptions& options)
+MediaResult MediaManager::ValidateInsert(const std::string& slotId, const Medium* medium) const
 {
     if (!medium)
         return MediaResult::Fail(MediaError::UnreadableSource, "no medium");
-
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     auto it = _slots.find(slotId);
     if (it == _slots.end())
         return MediaResult::Fail(MediaError::UnknownSlot, "no slot '" + slotId + "' on this machine");
-
-    SlotState& state = it->second;
-    const SlotDescriptor& descriptor = state.slot->Descriptor();
+    const SlotDescriptor& descriptor = it->second.slot->Descriptor();
     if (medium->Kind() != descriptor.kind)
         return MediaResult::Fail(MediaError::KindMismatch, std::string("slot '") + slotId + "' takes " +
                                                                MediaKindName(descriptor.kind) + " media, not " +
                                                                MediaKindName(medium->Kind()));
+    return CheckInUse(slotId, *medium);
+}
 
-    if (MediaResult inUse = CheckInUse(slotId, *medium); !inUse.Ok())
-        return inUse;
-    if (MediaResult recording = CheckRecording(options.endRecording); !recording.Ok())
-        return recording;
-    // The medium in the slot leaves: its unsaved writes need a decision
-    MediaResult result = MediaResult::Success();
-    if (state.attached && !state.ejectRequested)
+MediaResult MediaManager::Insert(const std::string& slotId, std::unique_ptr<Medium> medium, const InsertOptions& options)
+{
+    if (MediaResult valid = ValidateInsert(slotId, medium.get()); !valid.Ok())
+        return valid;
+
+    MediaRequest request;
+    request.kind = MediaRequest::Kind::Insert;
+    request.slotId = slotId;
+    request.insert = &options;
+    coordinator::MachineOp op =
+        InsertOp(slotId, medium->Source().path.empty() ? medium->Describe() : medium->Source().path, options);
+    request.medium = std::move(medium);
+    return RunMediaOp(std::move(op), request);
+}
+
+coordinator::MachineOp MediaManager::InsertOp(const std::string& slotId, const std::string& what,
+                                              const InsertOptions& options)
+{
+    coordinator::MachineOp op;
+    op.kind = options.opKind;
+    op.source = options.origin;
+    op.summary = slotId + " " + what;
+    op.sessionReason = options.ttdReason ? options.ttdReason : "media-change";
+    op.media = options.refusalWording;
+    op.endRecording = options.endRecording;
+    return op;
+}
+
+MediaResult MediaManager::PrepareMediaOp(MediaRequest& request)
+{
+    const std::string& slotId = request.slotId;
+    switch (request.kind)
     {
-        MediaResult kept = ApplyDisposition(slotId, *state.attached, options.disposition, options.exportPath,
-                                            DispositionSave(options.strategy, options.keepBoth, options.strict));
-        if (!kept.Ok())
-            return kept;
-        result.report = kept.report;
+        case MediaRequest::Kind::Insert:
+        {
+            // Checked again: the slot may have changed since the caller's check
+            if (MediaResult valid = ValidateInsert(slotId, request.medium.get()); !valid.Ok())
+                return valid;
+            const InsertOptions& options = *request.insert;
+            SlotState& state = _slots.find(slotId)->second;
+            // The medium in the slot leaves: its unsaved writes need a decision
+            MediaResult result = MediaResult::Success();
+            if (state.attached && !state.ejectRequested)
+            {
+                MediaResult kept = ApplyDisposition(slotId, *state.attached, options.disposition, options.exportPath,
+                                                    DispositionSave(options.strategy, options.keepBoth, options.strict));
+                if (!kept.Ok())
+                    return kept;
+                result.report = kept.report;
+            }
+            return result;
+        }
+        case MediaRequest::Kind::Eject:
+        {
+            auto it = _slots.find(slotId);
+            if (it == _slots.end())
+                return MediaResult::Fail(MediaError::UnknownSlot, "no slot '" + slotId + "' on this machine");
+            SlotState& state = it->second;
+            if (!state.attached && !state.incoming)
+            {
+                request.nothingToDo = true;
+                return MediaResult::Success();
+            }
+            const EjectOptions& options = *request.eject;
+            MediaResult result = MediaResult::Success();
+            if (state.attached && !state.ejectRequested)
+            {
+                MediaResult kept = ApplyDisposition(slotId, *state.attached, options.disposition, options.exportPath,
+                                                    DispositionSave(options.strategy, options.keepBoth, options.strict));
+                if (!kept.Ok())
+                    return kept;
+                result.report = kept.report;
+            }
+            return result;
+        }
+        case MediaRequest::Kind::Discard:
+        {
+            auto it = _slots.find(slotId);
+            if (it == _slots.end())
+                return MediaResult::Fail(MediaError::UnknownSlot, "no slot '" + slotId + "' on this machine");
+            SlotState& state = it->second;
+            request.nothingToDo = !state.attached || (!state.attached->Floppy() && !state.attached->Session());
+            if (state.attached && state.attached->Floppy())
+            {
+                const Medium& disk = *state.attached;
+                if (disk.Source().type != MediaSourceType::File && disk.Source().type != MediaSourceType::Folder)
+                    return MediaResult::Fail(MediaError::NotSupported, "slot '" + slotId +
+                                                                           "' holds a disk without a source to go back "
+                                                                           "to: eject it with discard");
+            }
+            return MediaResult::Success();
+        }
     }
-    EndSessionForMediaChange(options.endRecording, options.ttdReason);
-    result.report.insert(result.report.end(), medium->Report().begin(), medium->Report().end());
+    return MediaResult::Fail(MediaError::BadRequest, "unknown media operation");
+}
 
-    // Replace any insert still waiting; the medium in the slot goes out first
-    if (state.incoming)
-        Retire(std::move(state.incoming));
-    state.incoming = std::move(medium);
-    state.writeProtect = options.writeProtect;
-    if (state.attached)
-        state.ejectRequested = true;
-    state.emptyFramesLeft = (state.attached && !options.immediate) ? DelayFrames(state.swapDelayMs.value_or(descriptor.swapDelayMs)) : 0;
-
-    if (CanApplyNow())
+bool MediaManager::CommitMediaOp(MediaRequest& request, coordinator::OpStage& stage)
+{
+    const std::string& slotId = request.slotId;
+    if (request.nothingToDo)
     {
-        std::vector<std::unique_ptr<Medium>> retired;
-        state.emptyFramesLeft = 0;  // nobody runs to see the empty slot
-        ApplySlot(slotId, state, retired);
-        for (auto& old : retired)
-            Retire(std::move(old));
+        stage.NoChange();
+        return true;
     }
-    return result;
+    SlotState& state = _slots.find(slotId)->second;
+    switch (request.kind)
+    {
+        case MediaRequest::Kind::Insert:
+        {
+            const InsertOptions& options = *request.insert;
+            // The change goes ahead: the TTD session the old media described ends here
+            stage.CommitPoint();
+            std::unique_ptr<Medium> medium = std::move(request.medium);
+            request.result.report.insert(request.result.report.end(), medium->Report().begin(), medium->Report().end());
+
+            // Replace any insert still waiting; the medium in the slot goes out first
+            if (state.incoming)
+                Retire(std::move(state.incoming));
+            state.incoming = std::move(medium);
+            state.writeProtect = options.writeProtect;
+            if (state.attached)
+                state.ejectRequested = true;
+            const SlotDescriptor& descriptor = state.slot->Descriptor();
+            state.emptyFramesLeft = (state.attached && !options.immediate)
+                                        ? DelayFrames(state.swapDelayMs.value_or(descriptor.swapDelayMs))
+                                        : 0;
+
+            if (CanApplyNow() && !stage.AtFrameBoundary())
+            {
+                std::vector<std::unique_ptr<Medium>> retired;
+                state.emptyFramesLeft = 0;  // nobody runs to see the empty slot
+                ApplySlot(slotId, state, retired);
+                for (auto& old : retired)
+                    Retire(std::move(old));
+            }
+            return true;
+        }
+        case MediaRequest::Kind::Eject:
+        {
+            stage.CommitPoint();
+            if (state.incoming)
+                Retire(std::move(state.incoming));
+            state.ejectRequested = state.attached != nullptr;
+
+            if (CanApplyNow() && !stage.AtFrameBoundary())
+            {
+                std::vector<std::unique_ptr<Medium>> retired;
+                ApplySlot(slotId, state, retired);
+                for (auto& old : retired)
+                    Retire(std::move(old));
+            }
+            return true;
+        }
+        case MediaRequest::Kind::Discard:
+        {
+            if (state.attached->Floppy())
+            {
+                // The writes live in the disk image itself: open the source again. The insert is an operation of
+                // its own (its rules, its commit point, its log entry); this one changed nothing itself
+                const Medium& disk = *state.attached;
+                MediaSource source = disk.Source();
+                InsertOptions again;
+                again.access = disk.Access();
+                again.fs = disk.Options().fs;
+                again.codePage = disk.Options().codePage;
+                again.freeBytes = disk.Options().freeBytes;
+                again.writeProtect = state.writeProtect;
+                again.immediate = true;
+                again.disposition = Disposition::Discard;
+                request.result = Insert(slotId, source, again);
+                stage.NoChange();
+                return request.result.Ok();
+            }
+            stage.CommitPoint();
+            state.discardRequested = true;
+            if (CanApplyNow() && !stage.AtFrameBoundary())
+            {
+                std::vector<std::unique_ptr<Medium>> retired;
+                ApplySlot(slotId, state, retired);
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 MediaTransfer MediaManager::TakeMediaSet()
@@ -502,95 +774,55 @@ MediaTransferReport MediaManager::AdoptMediaSet(MediaTransfer transfer)
 
 MediaResult MediaManager::Eject(const std::string& slotId, const EjectOptions& options)
 {
-    std::lock_guard<std::recursive_mutex> lock(_mutex);
-    auto it = _slots.find(slotId);
-    if (it == _slots.end())
-        return MediaResult::Fail(MediaError::UnknownSlot, "no slot '" + slotId + "' on this machine");
-
-    SlotState& state = it->second;
-    if (!state.attached && !state.incoming)
-        return MediaResult::Success();
-
-    if (MediaResult recording = CheckRecording(options.endRecording); !recording.Ok())
-        return recording;
-    MediaResult result = MediaResult::Success();
-    if (state.attached && !state.ejectRequested)
     {
-        MediaResult kept = ApplyDisposition(slotId, *state.attached, options.disposition, options.exportPath,
-                                            DispositionSave(options.strategy, options.keepBoth, options.strict));
-        if (!kept.Ok())
-            return kept;
-        result.report = kept.report;
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        auto it = _slots.find(slotId);
+        if (it == _slots.end())
+            return MediaResult::Fail(MediaError::UnknownSlot, "no slot '" + slotId + "' on this machine");
+        // An empty slot: nothing leaves, nothing to rule on
+        if (!it->second.attached && !it->second.incoming)
+            return MediaResult::Success();
     }
-    EndSessionForMediaChange(options.endRecording, "media-change");
 
-    if (state.incoming)
-        Retire(std::move(state.incoming));
-    state.ejectRequested = state.attached != nullptr;
-
-    if (CanApplyNow())
-    {
-        std::vector<std::unique_ptr<Medium>> retired;
-        ApplySlot(slotId, state, retired);
-        for (auto& old : retired)
-            Retire(std::move(old));
-    }
-    return result;
+    MediaRequest request;
+    request.kind = MediaRequest::Kind::Eject;
+    request.slotId = slotId;
+    request.eject = &options;
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::MediaEject;
+    op.source = options.origin;
+    op.summary = slotId;
+    op.sessionReason = "media-change";
+    op.endRecording = options.endRecording;
+    return RunMediaOp(std::move(op), request);
 }
 
 MediaResult MediaManager::Discard(const std::string& slotId)
 {
-    std::lock_guard<std::recursive_mutex> lock(_mutex);
-    auto parked = _parked.find(slotId);
-    if (parked != _parked.end() && !_slots.count(slotId))
     {
-        // A detached medium is dropped with its writes
-        std::unique_ptr<Medium> gone = std::move(parked->second);
-        _parked.erase(parked);
-        Post(NC_MEDIA_EJECTED, slotId, gone.get());
-        Retire(std::move(gone));
-        return MediaResult::Success();
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        auto parked = _parked.find(slotId);
+        if (parked != _parked.end() && !_slots.count(slotId))
+        {
+            // A detached medium is dropped with its writes: it is in no slot, the machine does not see it
+            std::unique_ptr<Medium> gone = std::move(parked->second);
+            _parked.erase(parked);
+            Post(NC_MEDIA_EJECTED, slotId, gone.get());
+            Retire(std::move(gone));
+            return MediaResult::Success();
+        }
+        if (!_slots.count(slotId))
+            return MediaResult::Fail(MediaError::UnknownSlot, "no slot '" + slotId + "' on this machine");
     }
 
-    auto it = _slots.find(slotId);
-    if (it == _slots.end())
-        return MediaResult::Fail(MediaError::UnknownSlot, "no slot '" + slotId + "' on this machine");
-    if (MediaResult recording = CheckRecording(false); !recording.Ok())
-        return recording;
-
-    SlotState& state = it->second;
-    if (!state.attached)
-        return MediaResult::Success();
-
-    if (state.attached->Floppy())
-    {
-        // The writes live in the disk image itself: open the source again
-        const Medium& disk = *state.attached;
-        if (disk.Source().type != MediaSourceType::File && disk.Source().type != MediaSourceType::Folder)
-            return MediaResult::Fail(MediaError::NotSupported,
-                                     "slot '" + slotId + "' holds a disk without a source to go back to: eject it with discard");
-        MediaSource source = disk.Source();
-        InsertOptions again;
-        again.access = disk.Access();
-        again.fs = disk.Options().fs;
-        again.codePage = disk.Options().codePage;
-        again.freeBytes = disk.Options().freeBytes;
-        again.writeProtect = state.writeProtect;
-        again.immediate = true;
-        again.disposition = Disposition::Discard;
-        return Insert(slotId, source, again);   // ends the session once the disk opened again
-    }
-    if (!state.attached->Session())
-        return MediaResult::Success();
-
-    EndSessionForMediaChange(false, "media-change");
-    state.discardRequested = true;
-    if (CanApplyNow())
-    {
-        std::vector<std::unique_ptr<Medium>> retired;
-        ApplySlot(slotId, state, retired);
-    }
-    return MediaResult::Success();
+    MediaRequest request;
+    request.kind = MediaRequest::Kind::Discard;
+    request.slotId = slotId;
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::MediaDiscard;
+    op.summary = slotId;
+    op.sessionReason = "media-change";
+    return RunMediaOp(std::move(op), request);
 }
 
 MediaResult MediaManager::Export(const std::string& slotId, const std::string& path, const BlockWriteOptions& options)
@@ -796,11 +1028,21 @@ void MediaManager::ApplyConfiguredEntry(const MediaSetEntry& entry, std::vector<
 
 /// endregion </Operations>
 
+void MediaManager::NoteChangeLanded(const std::string& slotId, const std::string& what)
+{
+    // A change the guest's history must know: a recording keeps it as an event of this boundary (M3, Q4). A replay
+    // lands nothing of its own
+    if (!_context || _context->ttdReplayActive || !_context->pTimeTravelHooks)
+        return;
+    _context->pTimeTravelHooks->NoteMediaChange(slotId.c_str(), what.c_str());
+}
+
 void MediaManager::ApplyPending()
 {
     std::vector<std::unique_ptr<Medium>> retired;
     {
         std::lock_guard<std::recursive_mutex> lock(_mutex);
+        FollowReplay();   // a replay that reached the frame a medium came in: the medium is back for its device
         for (auto& [id, state] : _slots)
         {
             ApplySlot(id, state, retired);
@@ -904,10 +1146,14 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
     {
         if (state.slot->IsBusy())
             return;  // a transfer in flight: next frame
-        state.slot->Detach();
+        if (!state.heldForReplay)
+            state.slot->Detach();
+        state.heldForReplay = false;
         Post(NC_MEDIA_EJECTED, slotId, state.attached.get());
         retired.push_back(std::move(state.attached));
         state.ejectRequested = false;
+        if (!state.incoming)
+            NoteChangeLanded(slotId, "ejected");
         state.changedUnits = 0;
         state.changes.clear();
     }
@@ -931,7 +1177,10 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         state.slot->Attach(*state.attached);
         state.slot->SetWriteProtectSwitch(state.writeProtect);
         state.changedUnits = state.attached->ChangedUnits();
+        state.landedFrame = _context ? _context->emulatorState.frame_counter : 0;
         Post(NC_MEDIA_INSERTED, slotId, state.attached.get());
+        const Medium& in = *state.attached;
+        NoteChangeLanded(slotId, in.Source().path.empty() ? in.Describe() : in.Source().path);
     }
 
     if (state.discardRequested)
@@ -939,6 +1188,7 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         if (state.attached && state.attached->Session())
             state.attached->Session()->Discard();
         state.discardRequested = false;
+        NoteChangeLanded(slotId, "discarded");
     }
 
     // While a replay runs nothing reaches the host (FR-20): the disk stays
@@ -1546,30 +1796,8 @@ bool MediaManager::CanApplyNow() const
     if (_applyNowProbe)
         return _applyNowProbe();
     Emulator* emulator = _context ? _context->pEmulator : nullptr;
-    return emulator == nullptr || !emulator->IsRunning() || emulator->IsPaused();
-}
-
-MediaResult MediaManager::CheckRecording(bool endRecording) const
-{
-    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
-    // A recording the guard protects, also one paused for browsing (a background
-    // recording is not protected: EndSessionForMediaChange ends its session)
-    if (ttd && !endRecording && !ttd->RecordingGuard(ttd::TTDGuardedAction::LoadDisk).empty())
-        return MediaResult::Fail(MediaError::Recording,
-                                 "the media set is fixed while a TTD recording runs; end the recording first");
-    return MediaResult::Success();
-}
-
-void MediaManager::EndSessionForMediaChange(bool endRecording, const char* reason)
-{
-    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
-    if (!ttd)
-        return;
-    if (endRecording && !ttd->RecordingGuard(ttd::TTDGuardedAction::LoadDisk).empty())
-        ttd->StopRecording();
-    // A kept session was recorded with the old media: its checkpoints no
-    // longer describe this machine (the rule LoadDisk follows)
-    ttd->OnLoad(ttd::TTDLoadKind::Media, reason);
+    // Not running, paused and parked, or the caller holds the CPU (Emulator::CpuHold: LoadDisk, LoadTape, ...)
+    return emulator == nullptr || emulator->CanMutateNow();
 }
 
 MediaResult MediaManager::CheckInUse(const std::string& slotId, const Medium& medium) const
@@ -1605,6 +1833,7 @@ uint32_t MediaManager::DelayFrames(uint32_t swapDelayMs) const
 
 void MediaManager::HoldHostWrites(bool hold)
 {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     _holdHostWrites = hold;
     for (auto& [slotId, state] : _slots)
         if (state.attached)
@@ -1612,6 +1841,33 @@ void MediaManager::HoldHostWrites(bool hold)
                 if (!h->SetHolding(hold))
                     LOGWARNING("MediaManager: %s: a sector written during a replay could not be written to its file",
                                slotId.c_str());
+    FollowReplay();
+}
+
+void MediaManager::FollowReplay()
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    const uint64_t frame = _context ? _context->emulatorState.frame_counter : 0;
+    // On the recorded history: a replay, or the machine at (or running from) a point in the past
+    const ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+    const bool inHistory = _holdHostWrites || (ttd && ttd->GetState() == ttd::TTDSessionState::Detached);
+    for (auto& [slotId, state] : _slots)
+    {
+        const bool hold = inHistory && state.attached && frame < state.landedFrame;
+        if (hold == state.heldForReplay)
+            continue;
+        if (hold)
+            state.slot->Detach();
+        else if (state.attached)
+        {
+            state.slot->Attach(*state.attached);
+            state.slot->SetWriteProtectSwitch(state.writeProtect);
+            // Back live before the medium came in (a recording resumed from the past): it is in from here
+            if (!inHistory && frame < state.landedFrame)
+                state.landedFrame = frame;
+        }
+        state.heldForReplay = hold;
+    }
 }
 
 void MediaManager::WriteThroughFloppy(const std::string& slotId, SlotState& state)

@@ -190,6 +190,67 @@ class Emulator:
         """The ZX (Spectrum) mode: active, config (options with evidence, best_match file and confidence), launcher
         (its .ZX text in RAM), clock, frame / INT, rom, ports (#7FFD / #1FFD / #01FD ... decodes, ttd_query)"""
 
+    def next_state(self) -> dict:
+        """The ZX Spectrum Next: machine (type, timing, cpu_clock_hz, speed_ratio), mmu, divmmc, interrupts, ctc, spi; available=False elsewhere"""
+
+    def next_regs(self) -> dict:
+        """The NextREG table: number, name, access, value, reset"""
+
+    def next_mmu(self) -> dict:
+        """The eight 8K MMU slots and the paging latches"""
+
+    def next_reg_journal(self, regs=None, sources=None, since=None, from_frame=None, to_frame=None, limit=None) -> dict:
+        """Who wrote which NextREG (regs='07,02'), through the NEXTREG instruction, port #253B or the copper
+        (sources='nextreg,port,copper,internal'): events (seq, frame, t, pc, source, reg, name, value, previous, decoded).
+        Off by default - next_reg_journal_control(enabled=True) first; raises ValueError on a bad option"""
+
+    def next_reg_journal_control(self, enabled=None, clear=False, capacity=0) -> dict:
+        """Switch, clear or resize (capacity=N) the NextREG write journal"""
+
+    def next_dma(self) -> dict:
+        """The Next DMA as programmed and running (mode zxn / z80, ports a / b, direction, burst, prescaler, counter, src / dst with
+        src_kind / dst_kind, holds_bus, status byte); reading it does not advance its read sequence; available=False elsewhere"""
+
+    def next_video(self) -> dict:
+        """Layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster (hc, vc, frame_t), timing"""
+
+    def next_palette(self, palette=None, range=None) -> dict:
+        """The 9-bit palettes: palette=0..7 | 'sprites_1' | 'all' (default the selected one), range='0-15'; entries (index, rgb9,
+        red, green, blue, priority); no palette index moves; ValueError on a bad option"""
+
+    def next_ports(self, port=None, access='r') -> dict:
+        """The internal port enable word (NR #82-#85) and, with port (int or hex text), which device answers a read ('r') or write ('w'):
+        device, enabled, enabled_by, enforced, side_effect"""
+
+    def next_nextreg(self, reg=None, changed=False) -> dict:
+        """One NextREG without side effects (reg=7 or '07'): value, stored, access, reset, decoded; all of them without reg"""
+
+    def next_nextreg_write(self, reg, value, door='nextreg') -> dict:
+        """Write a NextREG through the board's write choke point (door 'nextreg', 'port' or 'internal'); {ok, reg, value, previous,
+        after, door, moment}; ValueError for a bad argument, RuntimeError when it is not a Next or no coherent moment came"""
+
+    def next_copper(self, from_index=None, count=None, raw=False) -> dict:
+        """The copper list as a disassembly (a window of the 1024 words), control mode, write address (never stepped by the report), pc,
+        around_pc when the pc is outside the window; raw=True adds the whole list as hex; ValueError on a bad option"""
+
+    def next_sprites(self, from_index=None, count=None, all=False) -> dict:
+        """The 128 sprite attributes decoded (the visible ones of the page; all=True lists every one), switches, collision / too-many
+        flags (not cleared), visible_count, pattern memory summary"""
+
+    def next_pixel(self, x, y, sx=None) -> dict:
+        """The pixel inspector of the last captured Next frame (x 0-319, y 0-255, sx the sub-pixel 0 or 1): winner {layer, id}, colour {rgb9,
+        rgb}, layer_order and, for ula / layer2 / tilemap / sprites, opaque, rgb9, wins, why (why it lost or did not paint) and source (where
+        its byte came from); ValueError for a bad coordinate or another machine, RuntimeError with the layer capture off or before a frame"""
+
+    def next_layer_capture_control(self, enabled=None) -> dict:
+        """Switch (True / False) or report the per-layer record of the Next screen (on by default, takes effect at the next frame start):
+        available, enabled, frames, last_frame, bytes"""
+
+    def capture_screen_layer(self, layer, format="png", alpha=None, path="") -> dict:
+        """ONE LAYER of the last completed frame of a Next: 'ula' 'layer2' 'tilemap' 'sprites' (alpha 0 where the layer does not paint,
+        alpha=False flattens onto the fallback colour) or 'ids' (the winner of every pixel, with a legend); 640 x 512; format 'png' or 'rgba';
+        a dict like capture_screen (base64 'data' or 'file'), success=False with kind 'not-next' / 'layer-capture-off' / 'no-frame' / 'bad-parameter'"""
+
     def sprinter_pld_journal(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None, source="live") -> dict:
         """Who changed the PLD setup: events (frame, t, pc, kind, port, value, text); source='ttd' reads the recording"""
 
@@ -259,6 +320,23 @@ class Emulator:
         atm2ioesp in network_state()), zifi=<com_port values> | 'zifi-native[,s3|esp01s]' (TS-Conf, ZX-Evo with a TS-Labs AVR firmware: the ZiFi board's ESP; 'at' = the original ESP-01 with NonOS AT 1.7.4 unless an ESP8266 build is named, 'at,esp8266-at222' = ESP-AT 2.2.2, 'zifi-native' = the 2026 firmware;
         default 'none'; network_state()['zifi'] shows the API registers and both rings). Applied at the next frame
         boundary; the card is fitted again, so every connection closes. ValueError with the reason"""
+
+    def pause(self) -> str:
+        """Pause: 'paused' (in force), 'queued: behind <command>' (another client's command runs; the pause applies
+        when it ends), or 'refused: <why>'"""
+
+    def take_control(self, client: str = "python") -> None:
+        """Open an automation session: hold run control. The user sees it at the GUI and can take it back; from then on
+        control calls (pause, resume, step*, run_*) raise ControlRevoked - stop, do not retry, do not take control
+        again without asking the user (a re-take is refused during its cooldown: RuntimeError revoked_cooldown)"""
+
+    def release_control(self) -> None:
+        """End the automation session"""
+
+    def execution_state(self) -> dict:
+        """Execution arbiter: phase, intent (run / pause) with intent_set_by (origin, client), intent_reason,
+        main_loop (attached, parked), may_run, parked, serving (the command holding the CPU, drives_z80), queue,
+        claim (run-control holder), counters, driver_violations (0 on a correct run). Peeked"""
 
     def rtc_state(self) -> dict:
         """CMOS clock report: chip, ports, cells, nvram_file, address_latch, time_mode
@@ -420,7 +498,7 @@ emu.init()
 
 # Load / eject
 emu.tape_load("/path/to/game.tap")   # .tap/.tzx/.spc/.sta/.ltp/.zxt, or a folder built into a tape
-emu.tape_eject()                      # the tape leaves the tape slot (False while TTD records)
+emu.tape_eject()                      # the tape leaves the tape slot (while TTD records: at the next frame boundary)
 
 # Transport (same semantics as `tape play|pause|stop|rewind|seek`)
 emu.tape_play()    # start at consumption cursor; resumes in place when paused
@@ -1059,13 +1137,13 @@ print(unreal.rzx_status(r["emulator_id"])["summary"])
 
 TTD methods live on the `Emulator` object (`emu.ttd_*`). Bindings: `core/automation/python/src/emulator/python_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
 
-**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording (`snapshot_load` only on v1: on the engine a snapshot load is part of the recording), `tape_load`, `disk_create`, `ttd_invalidate`, `ttd_set_journal_enabled` raise `RuntimeError` with the reason (on v1 also `gs_switch_personality`, and the `slots_*` functions answer `status: 'recording'`; on the engine those end the session; `disk_load` returns `success: False` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; `feature_set` switching `timetravel` / `debugmode` off stops the recording cleanly (history kept, `last_stop_reason` in `ttd_status()`); while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
+**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording (`snapshot_load` only on v1: on the engine a snapshot load is part of the recording), `ttd_invalidate`, `ttd_set_journal_enabled` raise `RuntimeError` with the reason (on v1 also `tape_load`, `disk_create`, `gs_switch_personality`, and the `slots_*` functions answer `status: 'recording'`; on the engine a tape / disk / media change is an event of the recording at the next frame boundary, the others end the session; `disk_load` on v1 returns `success: False` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; `feature_set` switching `timetravel` / `debugmode` off stops the recording cleanly (history kept, `last_stop_reason` in `ttd_status()`); while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
 
 ```python
 try:
     emu.tape_load('game.tap')
 except RuntimeError as refusal:
-    print(refusal)   # Cannot insert a tape while TTD is recording: ... stop the recording first.
+    print(refusal)   # v1 only: Cannot insert a tape while TTD is recording: ... stop the recording first.
 ```
 
 Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page`, which raises `ValueError`, and a refusal to protect a running recording, which raises `RuntimeError`.
@@ -1427,6 +1505,11 @@ emu.video_temporal_set('mod-tpgwafsd') # switch it on; 'off' or '' switches it o
                                      #   mod-tpgwafsd with the default A/V delay of 2) and the sound is delayed
                                      #   by the difference ('audio_extra_delay_frames', 5 here) to stay in sync.
 emu.frame_cost()                     # per-frame halt/run cost accounting
+emu.operations(since=0, limit=0)     # the operation log (reset, autostart, snapshot load, media insert / eject /
+                                     #   discard, blank disk; refusals too): {'mode', 'last_seq', 'capacity',
+                                     #   'entries': [{'seq', 'frame', 't_in_frame', 'wall_ms', 'kind', 'source',
+                                     #   'mode', 'status', 'effect', 'summary', 'detail'}]} oldest first; since: after
+                                     #   that seq; limit: the newest N (0 = all). Fields: command-interface.md, Operation log
 
 # Coverage analyzer
 emu.coverage_start()                 # start clean; keep=True retains old data

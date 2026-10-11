@@ -2,6 +2,10 @@
 // Extracted from emulator_api.cpp - 2026-01-08
 
 #include <emulator/ports/models/profiboard.h>
+#include <chrono>
+#include <cctype>
+#include <algorithm>
+#include "../common/session_helper.h"
 #include <emulator/ports/models/sprinter/sprinterbios.h>
 #include "../emulator_api.h"
 #include "../common/statenode_json.h"
@@ -973,11 +977,48 @@ void EmulatorAPI::pauseEmulator(const HttpRequestPtr& req, std::function<void(co
 
     try
     {
-        bool success = manager->PauseEmulator(id);
+        auto target = manager->GetEmulator(id);
+        // ?wait=true (30 s) or ?wait=<ms> (up to 60 s): wait for the pause behind a running command too. Without it a
+        // pause behind a command answers at once, queued (it applies when the command ends)
+        std::chrono::milliseconds wait{0};
+        const std::string waitParam = req->getParameter("wait");
+        if (waitParam == "true" || waitParam == "1")
+            wait = std::chrono::milliseconds(30000);
+        else if (!waitParam.empty() && waitParam.size() <= 9 &&
+                 std::all_of(waitParam.begin(), waitParam.end(), [](unsigned char c) { return std::isdigit(c) != 0; }))
+            wait = std::chrono::milliseconds(std::min<long long>(std::stoll(waitParam), 60000));
+        const execution::Result result = manager->PauseEmulatorWithResult(
+            id, webapi_session::RequesterOf(req, target ? target->GetContext() : nullptr), wait);
 
         Json::Value ret;
-        ret["status"] = success ? "success" : "error";
-        ret["message"] = success ? "Emulator paused" : "Failed to pause emulator (not running or error)";
+        HttpStatusCode code = HttpStatusCode::k200OK;
+        switch (result.outcome)
+        {
+            case execution::Outcome::Applied:
+            case execution::Outcome::Coalesced:
+                ret["status"] = "success";
+                ret["message"] = "Emulator paused";
+                break;
+            case execution::Outcome::Pending:
+                // Honest: the machine still runs the command ahead; registers read now are not the paused ones
+                ret["status"] = "queued";
+                ret["message"] = "The pause is " + result.detail + ". Add ?wait=true to wait for it";
+                ret["waiting_for"] = result.detail;
+                code = HttpStatusCode::k202Accepted;
+                break;
+            case execution::Outcome::Busy:
+                ret["status"] = "busy";
+                ret["message"] = "The pause is " + result.detail + " (it stays queued and applies when that ends)";
+                ret["waiting_for"] = result.detail;
+                code = HttpStatusCode::k202Accepted;
+                break;
+            default:
+                ret["status"] = "error";
+                ret["message"] = "Pause refused: " + result.detail;
+                code = result.detail.find("claim") != std::string::npos ? HttpStatusCode::k409Conflict
+                                                                         : HttpStatusCode::k400BadRequest;
+                break;
+        }
         ret["emulator_id"] = id;
 
         auto emulator = manager->GetEmulator(id);
@@ -987,7 +1028,7 @@ void EmulatorAPI::pauseEmulator(const HttpRequestPtr& req, std::function<void(co
         }
 
         auto resp = HttpResponse::newHttpJsonResponse(ret);
-        resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+        resp->setStatusCode(code);
         addCorsHeaders(resp);
         callback(resp);
     }
@@ -1030,7 +1071,7 @@ void EmulatorAPI::resumeEmulator(const HttpRequestPtr& req, std::function<void(c
     if (emulator)
     {
         auto* ctx = emulator->GetContext();
-        if (ctx && ctx->IsRunControlClaimed())
+        if (ctx && ctx->IsRunControlClaimed() && !webapi_session::HoldsControl(req, ctx))
         {
             auto state = ctx->GetRunControlState();
             Json::Value error;
@@ -1048,7 +1089,10 @@ void EmulatorAPI::resumeEmulator(const HttpRequestPtr& req, std::function<void(c
 
     try
     {
-        bool success = manager->ResumeEmulator(id);
+        // The session holding control resumes as itself; the arbiter refuses anybody else's run while it holds it
+        auto target = manager->GetEmulator(id);
+        bool success = manager->ResumeEmulator(
+            id, webapi_session::RequesterOf(req, target ? target->GetContext() : nullptr));
 
         Json::Value ret;
         ret["status"] = success ? "success" : "error";

@@ -6,6 +6,8 @@
 #include "common/base64.h"
 #include "common/filehelper.h"
 #include "debugger/asm/diskfiles.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -61,21 +63,19 @@ bool WriteBytes(EmulatorContext* context, const std::string& output, char type, 
 }
 }  // namespace
 
-bool CopyMachine(EmulatorContext* context, MachineCopy& out, std::string& error, const std::vector<int>* only)
+namespace
 {
-    if (!context || !context->pMemory)
-    {
-        error = "the synchronizer needs a machine (no memory)";
-        return false;
-    }
-    const uint32_t count = std::min<uint32_t>(context->config.ramsize / 16, MAX_RAM_PAGES);
-    if (count == 0)
-    {
-        error = "the machine reports no RAM pages";
-        return false;
-    }
+uint32_t RamPages(EmulatorContext* context)
+{
+    return std::min<uint32_t>(context->config.ramsize / 16, MAX_RAM_PAGES);
+}
+
+/// The copy itself, where nothing changes the machine meanwhile; the view is built after
+void CopyNow(EmulatorContext* context, MachineCopy& out, const std::vector<int>* only)
+{
+    const uint32_t count = RamPages(context);
     Memory* memory = context->pMemory;
-    const auto copy = [&]() {
+    {
         for (uint8_t w = 0; w < 4; w++)
             out.view.windows[w] = memory->GetMemoryBankMode(w) == BANK_RAM ? static_cast<int>(memory->GetRAMPageForBank(w)) : -1;
         std::vector<int> wanted;
@@ -93,7 +93,36 @@ bool CopyMachine(EmulatorContext* context, MachineCopy& out, std::string& error,
             if (page >= 0 && static_cast<uint32_t>(page) < count)
                 if (const uint8_t* bytes = memory->RAMPageAddress(static_cast<uint16_t>(page)))
                     out.pages.emplace_back(static_cast<uint16_t>(page), std::vector<uint8_t>(bytes, bytes + PAGE_SIZE));
-    };
+        if (Z80* z80 = context->pCore ? context->pCore->GetZ80() : nullptr)
+            out.view.sp = z80->sp;
+    }
+    out.view.ramPages = static_cast<int>(count);
+    out.view.ram.clear();
+    for (const auto& [page, bytes] : out.pages)
+        out.view.ram.push_back({page, std::span<const uint8_t>(bytes)});
+}
+
+bool CheckMachine(EmulatorContext* context, std::string& error)
+{
+    if (!context || !context->pMemory)
+    {
+        error = "the synchronizer needs a machine (no memory)";
+        return false;
+    }
+    if (RamPages(context) == 0)
+    {
+        error = "the machine reports no RAM pages";
+        return false;
+    }
+    return true;
+}
+}  // namespace
+
+bool CopyMachine(EmulatorContext* context, MachineCopy& out, std::string& error, const std::vector<int>* only)
+{
+    if (!CheckMachine(context, error))
+        return false;
+    const auto copy = [&]() { CopyNow(context, out, only); };
     if (context->pEmulator)
     {
         if (context->pEmulator->RunAtCoherentMoment(copy, 2000) == Emulator::CoherentMoment::Busy)
@@ -104,10 +133,44 @@ bool CopyMachine(EmulatorContext* context, MachineCopy& out, std::string& error,
     }
     else
         copy();
-    out.view.ramPages = static_cast<int>(count);
-    for (const auto& [page, bytes] : out.pages)
-        out.view.ram.push_back({page, std::span<const uint8_t>(bytes)});
     return true;
+}
+
+bool InjectFile(EmulatorContext* context, const sync::SyncDescriptor& descriptor, const std::vector<uint8_t>& file,
+                const sync::InjectOptions& options, sync::InjectPlan& plan, std::string& error)
+{
+    if (!CheckMachine(context, error))
+        return false;
+    const auto work = [&]() {
+        MachineCopy copy;
+        CopyNow(context, copy, nullptr);
+        plan = sync::PlanInject(copy.view, descriptor, file, options);
+        if (!plan.ok)
+            return;
+        Memory* memory = context->pMemory;
+        const auto write = [&]() {
+            uint8_t* bytes = memory->RAMPageAddress(static_cast<uint16_t>(plan.page));
+            std::copy(plan.bytes.begin(), plan.bytes.end(), bytes);
+            memory->MarkRamPageEdited(static_cast<uint16_t>(plan.page));
+        };
+        if (context->pEmulator)
+            context->pEmulator->EditMemoryFromTool("asm sync inject", write);
+        else
+            write();
+    };
+    if (context->pEmulator)
+    {
+        if (context->pEmulator->RunAtCoherentMoment(work, 2000) == Emulator::CoherentMoment::Busy)
+        {
+            error = "no coherent moment to write the RAM within 2 s (another client is stepping the machine)";
+            return false;
+        }
+    }
+    else
+        work();
+    if (!plan.ok)
+        error = plan.error;
+    return plan.ok;
 }
 
 StateNode DiagnosticsValue(const Diagnostics& diagnostics)

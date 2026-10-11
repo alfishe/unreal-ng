@@ -62,6 +62,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/lib
     ${ROOT_DIR}/core/src  # For core headers
+    ${ROOT_DIR}/core/src/3rdparty/unreal-disk/include  # core headers include the disk model
     ${CMAKE_BINARY_DIR}/generated  # emulator/buildinfo.h (CLI status build fingerprint)
     ${ROOT_DIR}/core/automation  # For automation/automation.h
     $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/src>

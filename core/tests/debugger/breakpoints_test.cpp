@@ -1558,3 +1558,32 @@ TEST_F(BreakpointManager_test, ListShowsALowAddressWithLeadingZeros)
     EXPECT_EQ(list.find("0x3800"), std::string::npos) << list;
     EXPECT_NE(list.find("0x5C78"), std::string::npos) << list;
 }
+
+/// A user's clear removes the user's breakpoints only: the BASIC typer's ROM control points (owned by the
+/// analyzer manager) and hidden step / trap breakpoints stay with their owners
+TEST_F(BreakpointManager_test, ClearUserBreakpointsKeepsOwnedAndHiddenOnes)
+{
+    const uint16_t user = _brkManager->AddExecutionBreakpoint(0x8000);
+    const uint16_t owned = _brkManager->AddExecutionBreakpoint(0x15DE, "analyzer_manager");
+
+    auto* hiddenDesc = new BreakpointDescriptor();
+    hiddenDesc->type = BRK_MEMORY;
+    hiddenDesc->memoryType = BRK_MEM_EXECUTE;
+    hiddenDesc->z80address = 0x9000;
+    hiddenDesc->hidden = true;
+    const uint16_t hidden = _brkManager->AddBreakpoint(hiddenDesc);
+    ASSERT_NE(user, BRK_INVALID);
+    ASSERT_NE(owned, BRK_INVALID);
+    ASSERT_NE(hidden, BRK_INVALID);
+
+    const auto& all = _brkManager->GetAllBreakpoints();
+    EXPECT_TRUE(BreakpointManager::IsUserBreakpoint(*all.at(user)));
+    EXPECT_FALSE(BreakpointManager::IsUserBreakpoint(*all.at(owned)));
+    EXPECT_FALSE(BreakpointManager::IsUserBreakpoint(*all.at(hidden)));
+
+    _brkManager->ClearUserBreakpoints();
+
+    EXPECT_EQ(_brkManager->GetAllBreakpoints().count(user), 0u);
+    EXPECT_EQ(_brkManager->GetAllBreakpoints().count(owned), 1u);
+    EXPECT_EQ(_brkManager->GetAllBreakpoints().count(hidden), 1u);
+}

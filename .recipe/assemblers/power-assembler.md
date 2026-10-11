@@ -53,6 +53,13 @@ GET /api/v1/emulator/{id}/memory/page/ram/4?offset=8192&length=64
 
 `J` (PUT OBJ) writes it to the disk with the ORG address as its start (its help; not run here).
 
+## The text in memory
+
+CR LF text from `#79AF` up to a `#1A` byte (no end pointer). The cursor line is in a 64-byte line buffer at `#7342`
+(its address in the text at `#74E9`); when the cursor leaves it, and on SAVE, PASM writes it back with blank runs of
+2-8 that end at a column multiple of 8 packed into one TAB (the routine at `#7881`). So a SAVE right after GET packs
+the first line already. The asm-synchronizer reads the text live (descriptor `pasm-3.0`; asm-synchronizer.md §7.18).
+
 ## Sources to and from the host
 
 ```bash

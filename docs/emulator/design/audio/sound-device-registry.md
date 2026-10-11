@@ -46,7 +46,7 @@ The source keys stay `ay1`, `ay2`, `fm1`, `fm2`. A board AY shadowed by a card k
 A ZX-MultiSound in a slot shows its YM2203 pair the same way, per chip: `MS SSG 1` / `MS SSG 2` and `MS FM 1` /
 `MS FM 2` (keys `ms_ssg1`, `ms_ssg2`, `ms_fm1`, `ms_fm2`), then `MS SAA`, `MS PCM` (its GS + SounDrive DACs) and
 `MS MIDI` (`ms_saa`, `ms_pcm`, `ms_midi`), one HUD indicator per row. One FM calibration for every YM2203 FM in the
-machine: `[SOUND] TSFM_FmTrimDb` (the audio settings' FM trim, `SoundManager::setFmTrimDb`) drives the TSFM and the
+machine: `[SOUND] TSFM_FmLevelDb` (the audio settings' FM trim, `SoundManager::setFmTrimDb`) drives the TSFM and the
 card alike.
 
 ```cpp

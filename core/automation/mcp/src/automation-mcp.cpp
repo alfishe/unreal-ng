@@ -169,6 +169,14 @@ void AutomationMCP::start()
                 }
             }
 
+            // control_execution take_control: the agent's own address goes with the session, so the GUI can show
+            // the user where the automation comes from (the WebAPI only sees this server's loopback)
+            if (request.isMember("params") && request["params"].isObject() &&
+                request["params"]["name"].asString() == "control_execution" &&
+                request["params"]["arguments"].isObject() &&
+                request["params"]["arguments"]["action"].asString() == "take_control")
+                request["params"]["arguments"]["_peer"] = req->getPeerAddr().toIpPort();
+
             const bool wantsEventStream =
                 req->getHeader("Accept").find("text/event-stream") != std::string::npos;
             const bool hasProgressToken = request.isMember("params") && request["params"].isObject() &&

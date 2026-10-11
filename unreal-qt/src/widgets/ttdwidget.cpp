@@ -753,7 +753,7 @@ void TtdWidget::onLoadSession()
 
     if (_activeEmulator->IsRunning() && !_activeEmulator->IsPaused())
     {
-        _activeEmulator->Pause();
+        _activeEmulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "ttd widget");
     }
 
     // The file's recorded machine first (headers only): a session loads only into
@@ -814,7 +814,7 @@ void TtdWidget::onExportSession()
 
     if (_activeEmulator->IsRunning() && !_activeEmulator->IsPaused())
     {
-        _activeEmulator->Pause();
+        _activeEmulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "ttd widget");
     }
 
     // UTF-8: the dump verb opens it through FileHelper (non-ASCII names on Windows)
@@ -854,7 +854,7 @@ void TtdWidget::onClearSession()
     if (ttd->GetState() == ttd::TTDSessionState::Detached && _activeEmulator->IsRunning() &&
         !_activeEmulator->IsPaused())
     {
-        _activeEmulator->Pause();
+        _activeEmulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "ttd widget");
         _activeEmulator->WaitForPauseConfirmation(1000);
     }
     (void)ttd::TTDControl(context).Execute({"invalidate", {{"reason", "User cleared session in Qt GUI"}}});

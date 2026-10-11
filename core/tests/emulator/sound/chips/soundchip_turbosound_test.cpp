@@ -198,6 +198,43 @@ TEST_F(SoundChipTurboSound_Test, TonePitchFollowsTheClock)
     }
 }
 
+/// A chip's own buffer (the mixer plays the per-chip buffers) carries that chip alone, in HQ and LQ alike: what the
+/// other chip plays does not reach it. LQ split the summed average by the chips' current levels - signed past the
+/// DC filter - and two chips cancelling each other drove the share to hundreds of times full scale
+TEST_F(SoundChipTurboSound_Test, ChipBufferCarriesThatChipAlone)
+{
+    for (const bool hq : {true, false})
+    {
+        SCOPED_TRACE(hq ? "HQ" : "LQ");
+        std::vector<int16_t> chip0[2];
+        for (int duet = 0; duet < 2; duet++)
+        {
+            SoundManager sound(_context);
+            SoundChip_TurboSound* device = Device(sound);
+            ASSERT_NE(device, nullptr);
+            device->setHQEnabled(hq);
+            _z80->t = 0;
+            device->portDeviceOutMethod(0xFFFD, 0xFE);  // chip 1
+            ProgramChannelA(device, duet ? 97 : 0);     // a tone against chip 0's, or nothing
+            Poke(device, 8, duet ? 15 : 0);
+            device->portDeviceOutMethod(0xFFFD, 0xFF);  // chip 0
+            ProgramChannelA(device, 60);
+            RenderFrames(device, 2);
+            chip0[duet] = RenderFrames(device, 2);
+            if (duet)
+            {
+                const int16_t* chip1 = device->getChipBuffer(1);
+                ASSERT_TRUE(std::any_of(chip1, chip1 + 200, [](int16_t v) { return std::abs(v) > 1000; }))
+                    << "chip 1 must play in the duet";
+            }
+        }
+        ASSERT_EQ(chip0[0].size(), chip0[1].size());
+        ASSERT_GT(chip0[0].size(), 1000u);
+        for (size_t i = 0; i < chip0[0].size(); i++)
+            ASSERT_EQ(chip0[0][i], chip0[1][i]) << "chip 0 sample " << i << " moved with chip 1";
+    }
+}
+
 /// A switch requested at T 30000 reaches the generators there - not before - and the output carries on: a constant
 /// level renders the same as on a device that never switched (the FIR history is kept and the DC blocker keeps its
 /// cutoff; a cleared history would dip to zero for a filter length)

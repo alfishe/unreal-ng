@@ -163,11 +163,27 @@ TEST_F(Config_Test, TurboSoundKindMissingResetsStaleFm)
     EXPECT_EQ(_context->config.sound.turboSoundKind, TurboSoundKind::AY);
 }
 
-TEST_F(Config_Test, FmTrimDbParsed)
+TEST_F(Config_Test, FmLevelDbParsed)
 {
-    ASSERT_TRUE(LoadSoundKeys("TurboSound=FM\nTSFM_FmTrimDb=-3.5\n"));
+    ASSERT_TRUE(LoadSoundKeys("TurboSound=FM\nTSFM_FmLevelDb=-3.5\n"));
     EXPECT_EQ(_context->config.sound.turboSoundKind, TurboSoundKind::FM);
     EXPECT_DOUBLE_EQ(_context->config.sound.tsfmFmTrimDb, -3.5);
+}
+
+TEST_F(Config_Test, OldFmTrimDbCountsFromTheOldBaseline)
+{
+    // TSFM_FmTrimDb counted 7.4 dB as the real board (the shipped inis before the baseline moved into the code): a
+    // copied ini keeps its level
+    ASSERT_TRUE(LoadSoundKeys("TurboSound=FM\nTSFM_FmTrimDb=7.4\n"));
+    EXPECT_NEAR(_context->config.sound.tsfmFmTrimDb, 0.0, 1e-9);
+    ASSERT_TRUE(LoadSoundKeys("TurboSound=FM\nTSFM_FmTrimDb=1.4\n"));
+    EXPECT_NEAR(_context->config.sound.tsfmFmTrimDb, -6.0, 1e-9);
+}
+
+TEST_F(Config_Test, FmLevelDbWinsOverTheOldKey)
+{
+    ASSERT_TRUE(LoadSoundKeys("TurboSound=FM\nTSFM_FmTrimDb=7.4\nTSFM_FmLevelDb=2\n"));
+    EXPECT_DOUBLE_EQ(_context->config.sound.tsfmFmTrimDb, 2.0);
 }
 
 TEST_F(Config_Test, FmTrimDbDefaultsToZero)
@@ -350,7 +366,9 @@ TEST_F(Config_Test, NeoGSMp3DecoderDefaultsToSoftware)
 
 namespace
 {
-/// The shipped configs without a General Sound card. Owner decision 2026-10-04: the standard Sinclair models (48K,
+/// The shipped configs without a General Sound card. The Next ships without (its sound is on the board; the bare
+/// personality is the 128K edge connector, which takes no card without an adapter). Owner decision 2026-10-04: the
+/// standard Sinclair models (48K,
 /// 128K, +2, +2A, +3) and the Profi (v5, v3) ship without the NeoGS / GS card - on real hardware none of them takes
 /// a ZX-bus card without an adapter (the Sinclair edge has no IORQGE, the Profi bus has no known adapter), so the
 /// card was fitted only as `fit = unrealistic`. A user still adds one in [SLOTS]. Every other shipped config keeps
@@ -358,7 +376,7 @@ namespace
 bool ShipsWithoutGeneralSound(const std::string& folder)
 {
     static const char* const kFolders[] = {"spectrum48", "spectrum128", "spectrum2", "spectrum2a",
-                                           "spectrum3",  "profi",       "profi3"};
+                                           "spectrum3",  "profi",       "profi3",       "next"};
     for (const char* name : kFolders)
     {
         if (folder == name)
@@ -370,7 +388,7 @@ bool ShipsWithoutGeneralSound(const std::string& folder)
 
 TEST_F(Config_Test, ShippedConfigsFitNeoGSExceptTheMachinesShippedWithout)
 {
-    // Every shipped model fits the NeoGS card, except the seven shipped without a GS (ShipsWithoutGeneralSound:
+    // Every shipped model fits the NeoGS card, except the eight shipped without a GS (ShipsWithoutGeneralSound:
     // owner decision 2026-10-04), which fit none. (The runner leaves GS out unless a scope keeps it)
     SoundCardScope gs(TestSound::GeneralSound);
     size_t checked = 0;
@@ -389,13 +407,13 @@ TEST_F(Config_Test, ShippedConfigsFitNeoGSExceptTheMachinesShippedWithout)
         without += none ? 1 : 0;
     }
     EXPECT_GE(checked, 14u);
-    EXPECT_EQ(without, 7u) << "every machine of the owner decision has a shipped config";
+    EXPECT_EQ(without, 8u) << "every machine of the owner decision has a shipped config";
 }
 
 TEST_F(Config_Test, ShippedConfigsFitTheirGeneralSoundCard)
 {
     // Each shipped config as shipped: the ones with a NeoGS name it in [SLOTS], the parsed config selects NeoGS, and
-    // a SoundManager built from it fits the card under the mixer name "NeoGS" with its MP3 source. The seven shipped
+    // a SoundManager built from it fits the card under the mixer name "NeoGS" with its MP3 source. The eight shipped
     // without a GS (ShipsWithoutGeneralSound, owner decision 2026-10-04) name no GS card in [SLOTS] and the
     // SoundManager fits no GS source at all. (ZX-bus slots SL-4 step 7: the card is a [SLOTS] entry, no longer
     // [SOUND] GSType=, so the copy is the shipped file)
@@ -505,6 +523,52 @@ TEST_F(Config_Test, EvoFpgaKeyReachesConfig)
 }
 
 /// endregion </[EVO] Fpga>
+
+/// region <[NEXT] LayerCapture>
+
+// design-layer-capture.md: the Next screen records the layers of every frame; on unless the ini says off
+TEST_F(Config_Test, NextLayerCaptureKeyReachesConfigAndDefaultsToOn)
+{
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("next_layer_capture_config_test.ini");
+    auto load = [&](const char* text) {
+        {
+            std::ofstream file(path, std::ios::binary | std::ios::trunc);
+            file << text;
+        }
+        Config config(_context);
+        return config.LoadConfigFile(path);
+    };
+    ASSERT_TRUE(load("[MISC]\nRamSize=128\n"));
+    EXPECT_EQ(_context->config.next_layer_capture, 1) << "no key: on";
+    for (const char* off : {"off", "OFF", "0", "false", "no"})
+    {
+        ASSERT_TRUE(load((std::string("[NEXT]\nLayerCapture=") + off + "\n").c_str()));
+        EXPECT_EQ(_context->config.next_layer_capture, 0) << off;
+    }
+    for (const char* on : {"on", "ON", "1", "true", "yes"})
+    {
+        ASSERT_TRUE(load((std::string("[NEXT]\nLayerCapture=") + on + "\n").c_str()));
+        EXPECT_EQ(_context->config.next_layer_capture, 1) << on;
+    }
+    ASSERT_TRUE(load("[NEXT]\nLayerCapture=off\n"));
+    ASSERT_TRUE(load("[MISC]\nRamSize=128\n"));
+    EXPECT_EQ(_context->config.next_layer_capture, 1) << "a config without the key must not keep off from the previous parse";
+    ASSERT_TRUE(load("[NEXT]\nLayerCapture=banana\n"));
+    EXPECT_EQ(_context->config.next_layer_capture, 1) << "an unknown word: on, with a warning";
+    std::remove(path.c_str());
+}
+
+TEST(ConfigNextLayerCapture_Test, TheShippedNextConfigSaysOn)
+{
+    std::ifstream in(TestPathHelper::FindProjectRoot() / "data" / "configs" / "next" / "unreal.ini");
+    ASSERT_TRUE(in.good());
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const size_t section = text.find("[NEXT]");
+    ASSERT_NE(section, std::string::npos);
+    EXPECT_NE(text.find("LayerCapture=on", section), std::string::npos) << "the shipped Next config documents the switch";
+}
+
+/// endregion </[NEXT] LayerCapture>
 
 /// region <[HDD] (IDE board)>
 

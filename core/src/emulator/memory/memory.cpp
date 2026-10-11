@@ -1,5 +1,7 @@
 #include "memory.h"
 
+#include <optional>
+
 #include <atomic>
 #include <cassert>
 #include <cstring>
@@ -298,23 +300,11 @@ uint8_t Memory::MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution)
     return result;
 }
 
-// Implementation memory read method
-/// Used from: Z80::DbgMemIf
-/// \param addr 16-bit address in Z80 memory space
-/// \return Byte read from Z80 memory
-uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
+/// The debug read's bookkeeping after the byte is fetched: access tracking, TTD coverage and probe, read
+/// breakpoints. physPage is the RAM page behind addr (kPhysPageNone for ROM). Shared with the derivatives that
+/// map memory their own way (NextMemory)
+void Memory::ReadDebugEffects(uint16_t addr, uint8_t result, bool isExecution, ttd::PhysPage physPage)
 {
-    /// region <MemoryReadFast functionality>
-
-    // Determine CPU bank (from address bits 14 and 15)
-    uint8_t bank = (addr >> 14) & 0b0000'0011;
-    uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
-
-    // Read byte from  the correspondent memory bank mapped to global memory buffer
-    uint8_t result = *(_bank_read[bank] + addressInBank);
-
-    /// endregion </MemoryReadFast functionality>
-
     /// region <Memory access tracking>
     if (_memoryAccessTracker != nullptr)
     {
@@ -338,7 +328,7 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
     {
         // TtdPageOfBank: a window on the fast RAM is keyed by that space's page (ROM shares one bucket)
         _context->ttdCoverage->Record(ttd::TTDCoverageKind::Read,
-                                      ttd::MakeCoverageKey(TtdPageOfBank(static_cast<uint8_t>(addr >> 14)), addr));
+                                      ttd::MakeCoverageKey(physPage, addr));
     }
 
     // Phase 4 — access probe hot-path check for Read access type (§9.2).
@@ -351,7 +341,7 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
         // one physical page. Reads used to report page 0 unconditionally, which
         // made every hit on a banked address indistinguishable.
         // A window on the fast RAM: that space's page and the offset in it
-        const ttd::PhysPage readPhysPage = TtdPageOfBank(static_cast<uint8_t>(addr >> 14));
+        const ttd::PhysPage readPhysPage = physPage;
         const uint16_t readAddr = ttd::SpaceOfPage(readPhysPage) == ttd::TTDMemorySpace::Ram ? addr : (addr & 0x3FFF);
         if (_context->ttdProbe.Matches(readAddr, ttd::TTDAccessType::Read, result, pc, readPhysPage))
         {
@@ -378,6 +368,26 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
         }
     }
     /// endregion </Read breakpoint logic>
+}
+
+// Implementation memory read method
+/// Used from: Z80::DbgMemIf
+/// \param addr 16-bit address in Z80 memory space
+/// \return Byte read from Z80 memory
+uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
+{
+    /// region <MemoryReadFast functionality>
+
+    // Determine CPU bank (from address bits 14 and 15)
+    uint8_t bank = (addr >> 14) & 0b0000'0011;
+    uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
+
+    // Read byte from  the correspondent memory bank mapped to global memory buffer
+    uint8_t result = *(_bank_read[bank] + addressInBank);
+
+    /// endregion </MemoryReadFast functionality>
+
+    ReadDebugEffects(addr, result, isExecution, TtdPageOfBank(static_cast<uint8_t>(addr >> 14)));
 
     return result;
 }
@@ -396,26 +406,13 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
     *(_bank_write[bank] + addressInBank) = value;
 }
 
-/// Implementation memory write method (debug path with TTD/breakpoint hooks).
-/// Used from Z80::DbgMemIf. Optimized for hot-path performance:
-///   - Cached RAM page lookup via _bank_ram_page_cache[] (avoids pointer arithmetic)
-///   - Single TTD feature check guards all TTD-related logic
-///   - pCore pointer cached once at entry
-///
-/// \param addr 16-bit address in Z80 memory space
-/// \param value 8-bit value to write into Z80 memory
-void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
+/// The debug write's bookkeeping after the byte is stored: memory tracking, TTD dirty page / journal / probe,
+/// video flag, write breakpoints. physPage is the 16K RAM page behind addr (kPhysPageNone for ROM)
+void Memory::WriteDebugEffects(uint16_t addr, uint8_t value, ttd::PhysPage physPage)
 {
-    /// region <MemoryWriteFast functionality>
-
-    // Determine CPU bank (from address bits 14 and 15)
+    // the 16K bank of the address and the offset in it (for the fast-RAM TTD branch below)
     const uint8_t bank = (addr >> 14) & 0b0000'0011;
     const uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
-
-    // Write byte to the correspondent memory bank cell
-    *(_bank_write[bank] + addressInBank) = value;
-
-    /// endregion </MemoryWriteFast functionality>
 
     // Cache pCore pointer once — used by multiple features below.
     // Safe: pCore is set during Init() and never null during emulation.
@@ -431,7 +428,6 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     // TTD hot path — single feature gate for all TTD logic.
     // Uses cached RAM page number to avoid expensive GetRAMPageForBank() call.
     // physPage is kPhysPageNone for ROM/Cache banks (no TTD tracking needed).
-    const ttd::PhysPage physPage = _bank_ram_page_cache[bank];
     if (_feature_ttd_enabled && physPage != ttd::kPhysPageNone)
     {
         // Dirty-page tracking (parent TDD §6.2): single OR into bitmap
@@ -487,6 +483,30 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
         }
     }
     /// endregion </Write breakpoint logic>
+}
+
+/// Implementation memory write method (debug path with TTD/breakpoint hooks).
+/// Used from Z80::DbgMemIf. Optimized for hot-path performance:
+///   - Cached RAM page lookup via _bank_ram_page_cache[] (avoids pointer arithmetic)
+///   - Single TTD feature check guards all TTD-related logic
+///   - pCore pointer cached once at entry
+///
+/// \param addr 16-bit address in Z80 memory space
+/// \param value 8-bit value to write into Z80 memory
+void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
+{
+    /// region <MemoryWriteFast functionality>
+
+    // Determine CPU bank (from address bits 14 and 15)
+    const uint8_t bank = (addr >> 14) & 0b0000'0011;
+    const uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
+
+    // Write byte to the correspondent memory bank cell
+    *(_bank_write[bank] + addressInBank) = value;
+
+    /// endregion </MemoryWriteFast functionality>
+
+    WriteDebugEffects(addr, value, _bank_ram_page_cache[bank]);
 }
 
 /// endregion /<Memory access implementation methods>
@@ -2077,26 +2097,17 @@ void Memory::UpdateFeatureCache()
                 return;
             }
             
-            // CRITICAL: Pause emulator before memory migration to prevent race conditions
-            // The Z80 thread would access stale bank pointers during reallocation
+            // CRITICAL: the CPU held for the migration (Emulator::CpuHold, execution arbiter): the Z80 thread would
+            // access stale bank pointers during the reallocation, and a UI refresh would read memory being
+            // reallocated. A hold never broadcasts and leaves the pause as it was
             Emulator* emulator = _context->pEmulator;
-            bool wasRunning = emulator && emulator->IsRunning() && !emulator->IsPaused();
-            
-            LOGDEBUG("Memory::UpdateFeatureCache - SharedMemory toggle: requested=%s, current=%s, emulator=%p, wasRunning=%s",
+            LOGDEBUG("Memory::UpdateFeatureCache - SharedMemory toggle: requested=%s, current=%s, emulator=%p",
                     sharedMemoryRequested ? "ON" : "OFF",
                     _feature_sharedmemory_enabled ? "ON" : "OFF",
-                    (void*)emulator,
-                    wasRunning ? "YES" : "NO");
-            
-            if (wasRunning)
-            {
-                LOGDEBUG("Memory::UpdateFeatureCache - Pausing emulator before migration (silent)");
-                // Use silent pause (broadcast=false) to avoid triggering UI updates during migration
-                // UI refresh during migration would access memory being reallocated
-                emulator->Pause(false);
-                // MainLoop::Pause() now waits for Z80 thread to confirm it's paused via CV
-                LOGDEBUG("Memory::UpdateFeatureCache - Emulator paused, proceeding with migration");
-            }
+                    (void*)emulator);
+            std::optional<Emulator::CpuHold> hold;
+            if (emulator)
+                hold.emplace(*emulator, "shared memory migration");
 
             if (sharedMemoryRequested && !_feature_sharedmemory_enabled)
             {
@@ -2181,16 +2192,10 @@ void Memory::UpdateFeatureCache()
                 _feature_sharedmemory_enabled = false;
             }
             
-            // Resume emulator after migration completes
-            if (wasRunning)
-            {
-                // Memory barrier ensures all pointer updates are visible to all CPU cores
-                // before Z80 thread resumes execution (critical for ARM's weak memory model)
-                std::atomic_thread_fence(std::memory_order_seq_cst);
-                
-                // Use silent resume (broadcast=false) to match silent pause
-                emulator->Resume(false);
-            }
+            // The CPU handed back after the migration. The barrier makes every pointer update visible to all CPU
+            // cores before the Z80 thread runs again (ARM's weak memory model); the hold's mutex orders it too
+            std::atomic_thread_fence(std::memory_order_seq_cst);
+            hold.reset();
         }
 
         // Update memory access tracker if it exists

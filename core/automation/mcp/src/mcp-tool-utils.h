@@ -10,6 +10,7 @@
 #include "mcp-tools.h"
 #include "target-resolver.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -65,6 +66,34 @@ inline std::string UrlEncodeSegment(const std::string& text)
     return encoded;
 }
 
+/// The request path the loopback client sends: the tools build it with its query already
+/// percent-encoded (UrlEncodeSegment), so it must not be encoded again - drogon's default urlEncode
+/// turns every '%' into "%25", and a screenshot path "scratch/a.png" arrived as the file name
+/// "scratch%2Fa.png". Keeps drogon's literal characters plus '%' and escapes the rest as drogon
+/// does ('#' in "#5800", '+', blanks), for callers that splice raw text
+inline std::string PrepareRequestPath(const std::string& path)
+{
+    static const char* kHex = "0123456789ABCDEF";
+    static const std::string kLiteral = "-_.!~*'()&=/\\?%";
+    std::string prepared;
+    prepared.reserve(path.size());
+    for (const char c : path)
+    {
+        const auto uc = static_cast<unsigned char>(c);
+        if (std::isalnum(uc) || kLiteral.find(c) != std::string::npos)
+        {
+            prepared += c;
+        }
+        else
+        {
+            prepared += '%';
+            prepared += kHex[uc >> 4];
+            prepared += kHex[uc & 0x0F];
+        }
+    }
+    return prepared;
+}
+
 /// Extracts a human-readable message from a WebAPI error body ({"error": ..., "message": ...})
 inline std::string DescribeErrorBody(const Json::Value& body)
 {
@@ -109,6 +138,55 @@ inline std::string FormatRegisters(const Json::Value& registers)
     if (registers["interrupt"]["halted"].asBool())
         out << " HALT";
     return out.str();
+}
+
+/// A GET /disasm body ({address, instructions[{address, bytes, mnemonic, label?, target?, targetLabel?,
+/// effectiveAddress?, effectiveAddressLabel?}]}) as a listing, one instruction per line:
+///   "label:" line, then "7396  CD 00 74     call #7400      ; -> label"
+inline std::string FormatDisasmListing(const Json::Value& body)
+{
+    std::ostringstream out;
+    if (!body.isMember("instructions") || !body["instructions"].isArray())
+        return out.str();
+    for (const Json::Value& line : body["instructions"])
+    {
+        if (line.isMember("label"))
+            out << line["label"].asString() << ":\n";
+        char head[8];
+        std::snprintf(head, sizeof(head), "%04X", line["address"].asUInt() & 0xFFFFu);
+        std::string bytes;
+        const std::string hex = line["bytes"].asString();
+        for (size_t i = 0; i + 1 < hex.size(); i += 2)
+        {
+            if (!bytes.empty())
+                bytes += ' ';
+            bytes += hex.substr(i, 2);
+        }
+        bytes.resize(std::max<size_t>(bytes.size(), 12), ' ');
+        std::string mnemonic = line["mnemonic"].asString();
+        std::string note;
+        // The mnemonic names a label itself ("jp START-NEW (#11CB)"); "rst #38" does not
+        if (line.isMember("targetLabel") && mnemonic.find(line["targetLabel"].asString()) == std::string::npos)
+            note = "-> " + line["targetLabel"].asString();
+        if (line.isMember("effectiveAddress"))
+        {
+            char ea[8];
+            std::snprintf(ea, sizeof(ea), "%04X", line["effectiveAddress"].asUInt() & 0xFFFFu);
+            note += std::string(note.empty() ? "" : ", ") + "ea #" + ea;
+            if (line.isMember("effectiveAddressLabel"))
+                note += " " + line["effectiveAddressLabel"].asString();
+        }
+        if (!note.empty())
+            mnemonic.resize(std::max<size_t>(mnemonic.size(), 20), ' ');
+        out << head << "  " << bytes << "  " << mnemonic;
+        if (!note.empty())
+            out << "  ; " << note;
+        out << "\n";
+    }
+    std::string text = out.str();
+    if (!text.empty() && text.back() == '\n')
+        text.pop_back();
+    return text;
 }
 
 /// Formats an address argument (integer or "0x…" string) for a query string

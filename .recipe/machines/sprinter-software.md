@@ -8,8 +8,8 @@ media insert, `type_input` type / tap, `inspect_state`). Machine details: [sprin
 disk: [../media/sprinter-hdd.md](../media/sprinter-hdd.md).
 
 **Record TTD before you start anything** (owner rule): a hang can then be rewound instead of reproduced
-([../analysis/ttd-recording.md](../analysis/ttd-recording.md)). The media set is fixed while a recording runs, so
-insert every disk first, then start the recording.
+([../analysis/ttd-recording.md](../analysis/ttd-recording.md)). A disk inserted while a recording runs is an event of
+the recording (a seek to before it shows the drive empty), so insert every disk first, then start the recording.
 
 ## 1. Boot to Flex Navigator (once)
 

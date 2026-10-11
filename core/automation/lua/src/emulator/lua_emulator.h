@@ -1,11 +1,13 @@
 #pragma once
 
 #include "emulator/memory/devicememory.h"
+#include "emulator/execution/scriptsession.h"
 #include "emulator/sound/audiomixer.h"
 #include "emulator/video/framebufferexport.h"
 #include "emulator/io/keyboard/pckey.h"
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/video/screenshotter.h"
+#include "emulator/video/next/nextlayerimage.h"
 #include "emulator/ports/models/sprinter/sprinterbios.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/zxpoly/zxpolygroup.h"
@@ -44,6 +46,7 @@
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
+#include "../../../operationsstatus.h"
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/debugmanager.h>
 #include <debugger/keyboard/debugkeyboardmanager.h>
@@ -74,6 +77,10 @@
 #include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
+#include <common/stringhelper.h>
+#include <debugger/ports/nextregwrite.h>
+#include <emulator/io/z80n/nextregjournal.h>
+#include <emulator/io/z80n/nextreportquery.h>
 #include <emulator/video/screendigest.h>
 #include <base/featuremanager.h>
 #ifdef ENABLE_RECORDING
@@ -361,34 +368,22 @@ protected:
         return reply;
     }
 
-    /// Pause() -> op -> Resume() bracket shared by the mutating tape
-    /// bindings (same contract as the CLI/WebAPI handlers, design §7.1):
-    /// pause only when actually running, resume exactly then. RAII so an
-    /// early return can never leave the emulator parked.
+    /// The CPU held around every mutating tape / media operation of this surface (Emulator::CpuHold). RAII, so
+    /// an early return cannot leave it held.
     class EmulatorPauseBracket
     {
     public:
+        // The CPU held for the operation (Emulator::CpuHold, execution arbiter): nothing executes meanwhile, the
+        // pause is left as it was, nothing is broadcast. Before: Pause() + a 10 ms sleep + Resume(), which lifted a
+        // pause somebody else asked for meanwhile
         explicit EmulatorPauseBracket(Emulator* emulator)
-            : _emulator(emulator), _wasRunning(emulator && emulator->IsRunning() && !emulator->IsPaused())
         {
-            if (_wasRunning)
-            {
-                _emulator->Pause();
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));  // Give emulator time to pause
-            }
-        }
-
-        ~EmulatorPauseBracket()
-        {
-            if (_wasRunning)
-            {
-                _emulator->Resume();
-            }
+            if (emulator)
+                _hold.emplace(*emulator, "lua");
         }
 
     private:
-        Emulator* _emulator;
-        bool _wasRunning;
+        std::optional<Emulator::CpuHold> _hold;
     };
     /// endregion </Fields>
 
@@ -721,8 +716,15 @@ public:
             // Lifecycle control
             "start", &Emulator::Start,
             "stop", &Emulator::Stop,
-            "pause", sol::resolve<void(bool)>(&Emulator::Pause),
-            "resume", sol::resolve<void(bool)>(&Emulator::Resume),
+            "pause", [](Emulator& self) -> std::string {
+                execution::script::Check(self, execution::Origin::Lua);
+                return execution::script::PauseStatus(
+                    self.Pause(execution::script::RequesterOf(self, execution::Origin::Lua), "lua"));
+            },
+            "resume", [](Emulator& self) {
+                execution::script::Check(self, execution::Origin::Lua);
+                self.Resume(execution::script::RequesterOf(self, execution::Origin::Lua));
+            },
             "reset", &Emulator::Reset,
             "request_nmi", &Emulator::RequestNMI,
             "request_mni", &Emulator::RequestMNI,
@@ -1369,6 +1371,76 @@ public:
             out.push_back(t);
             return out;
         });
+        // capture_screen_layer(layer [, {format = "png"|"rgba", alpha = true|false, path = "file"}]): ONE LAYER of the last completed frame of a ZX
+        // Spectrum Next (design-layer-capture.md): "ula" (with the border and LoRes), "layer2", "tilemap", "sprites" - alpha 0 where the layer
+        // does not paint - or "ids" (every pixel coloured by the layer that won it). 640 x 512, the geometry of screenshot(). Returns
+        // {layer, format, alpha, width, height, size, frame = {sequence, frame_number}, data = the PNG (or the raw RGBA bytes) as a string,
+        // or `file`, legend = {{id, name, colour}...} for ids}; nil, error when the machine is not a Next, the capture is off
+        // (next_layer_capture_control{enabled = true}) or no frame was completed yet
+        lua.set_function("capture_screen_layer", [this](sol::this_state s, const std::string& layer, sol::optional<sol::table> opts) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string format, alpha, path;
+            if (opts)
+            {
+                format = opts->get_or<std::string>("format", "");
+                path = opts->get_or<std::string>("path", "");
+                sol::object a = (*opts)["alpha"];
+                if (a.get_type() == sol::type::boolean)
+                    alpha = a.as<bool>() ? "true" : "false";
+            }
+            const NextLayer::Result shot = NextLayer::Request(emulator->GetContext(), layer, format, alpha, path);
+            if (shot.status != NextLayer::Status::Ok) return mouseError(s, shot.message);
+            sol::state_view view(s);
+            sol::table t = view.create_table();
+            t["layer"] = NextLayer::KindName(shot.kind);
+            t["format"] = shot.rgba ? "rgba" : "png";
+            t["alpha"] = shot.alpha;
+            t["width"] = shot.width;
+            t["height"] = shot.height;
+            t["size"] = shot.size;
+            sol::table frame = view.create_table();
+            frame["sequence"] = shot.sequence;
+            frame["frame_number"] = shot.frameCounter;
+            t["frame"] = frame;
+            if (shot.kind == NextLayer::Kind::Ids)
+            {
+                sol::table legend = view.create_table();
+                for (unsigned id = 0; id < NextLayer::kIdCount; id++)
+                {
+                    sol::table entry = view.create_table();
+                    const uint32_t c = NextLayer::IdColour(id);
+                    char colour[8];
+                    std::snprintf(colour, sizeof colour, "#%02X%02X%02X", c & 0xFF, (c >> 8) & 0xFF, (c >> 16) & 0xFF);
+                    entry["id"] = id;
+                    entry["name"] = NextLayer::IdName(id);
+                    entry["colour"] = std::string(colour);
+                    legend[id + 1] = entry;
+                }
+                t["legend"] = legend;
+            }
+            if (!shot.savedFile.empty())
+                t["file"] = shot.savedFile;
+            else
+                t["data"] = std::string(shot.bytes.begin(), shot.bytes.end());
+            sol::variadic_results out;
+            out.push_back(t);
+            return out;
+        });
+        // next_layer_capture_control([{enabled = true|false}]): switch the per-layer record of the Next screen (on by default; takes effect at
+        // the next frame start); returns {available, enabled, frames, last_frame, bytes}. No argument: only report
+        lua.set_function("next_layer_capture_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+            }
+            return StateNodeToLua(s, DeviceState::NextLayerCaptureControl(emulator->GetContext(), enable));
+        });
         lua.set_function("memory_regions", [this](sol::this_state s) -> sol::object {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return sol::make_object(s, sol::lua_nil);
@@ -1796,8 +1868,23 @@ public:
             return result;
         };
 
+        // Automation session (execution arbiter design §6a): the GUI shows it and locks its controls; when the user
+        // takes control back, control calls raise an error (revoked_by_user) - stop, do not retry, ask the user
+        lua.set_function("take_control", [this](sol::optional<std::string> client) {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator)
+                throw std::runtime_error("take_control: no emulator");
+            std::string reason;
+            if (!execution::script::TakeControl(*emulator, execution::Origin::Lua, client.value_or("lua"), reason))
+                throw std::runtime_error("take_control refused: " + reason + " (do not retry)");
+        });
+        lua.set_function("release_control", [this]() {
+            if (Emulator* emulator = effectiveEmulator())
+                execution::script::ReleaseControl(*emulator, execution::Origin::Lua);
+        });
         lua.set_function("step", [this, stepOutcome](sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
             if (!effectiveEmulator()) return sol::lua_nil;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             Emulator& emulator = *effectiveEmulator();
             emulator.RunSingleCPUCycle(skipBP.value_or(true));
             const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
@@ -1807,6 +1894,7 @@ public:
 
         lua.set_function("steps", [this, stepOutcome](unsigned count, sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
             if (!effectiveEmulator()) return sol::lua_nil;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             Emulator& emulator = *effectiveEmulator();
             const unsigned executed = emulator.RunNCPUCycles(count, skipBP.value_or(false));
             return stepOutcome(sol::state_view(ts), emulator, executed);
@@ -1814,43 +1902,51 @@ public:
 
         lua.set_function("stepover", [this]() {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->StepOver();
         });
 
         // Frame stepping methods
         lua.set_function("run_frame", [this](sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunFrame(skipBP.value_or(true));
         });
 
         lua.set_function("run_frames", [this](unsigned count, sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunNFrames(count, skipBP.value_or(true));
         });
 
         // Atomic stepping methods
         lua.set_function("run_tstates", [this](unsigned count, sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunTStates(count, skipBP.value_or(true));
         });
 
         lua.set_function("run_to_scanline", [this](unsigned scanline, sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunUntilScanline(scanline, skipBP.value_or(true));
         });
 
         lua.set_function("run_scanlines", [this](unsigned count, sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunNScanlines(count, skipBP.value_or(true));
         });
 
         lua.set_function("run_to_pixel", [this](sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunUntilNextScreenPixel(skipBP.value_or(true));
         });
 
         lua.set_function("run_to_interrupt", [this](sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
+            execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->RunUntilInterrupt(skipBP.value_or(true));
         });
 
@@ -1946,8 +2042,8 @@ public:
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
-            ctx->pDebugManager->GetKeyboardManager()->TypeText(text, delayFrames.value_or(2));
-            return true;
+            // false: a character no key types, nothing typed
+            return ctx->pDebugManager->GetKeyboardManager()->TypeText(text, delayFrames.value_or(2)).empty();
         });
 
         lua.set_function("key_release_all", [this]() {
@@ -1958,11 +2054,11 @@ public:
         });
 
         // Tape operations
-        // ok, reason: the reason is set when TTD refuses the insert (recording)
+        // ok, reason: the reason is set when the insert is refused (TTD v1 while recording)
         lua.set_function("tape_load", [this](const std::string& path) -> std::tuple<bool, std::string> {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return {false, "no emulator"};
-            if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
+            if (std::string refusal = emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, path); !refusal.empty())
                 return {false, refusal};
             std::string reason;
             const bool loaded = emulator->LoadTape(path, &reason);
@@ -2759,7 +2855,7 @@ public:
             auto* ctx = effectiveEmulator()->GetContext();
             if (!ctx || !ctx->pDebugManager) return;
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-            if (bpm) bpm->ClearBreakpoints();
+            if (bpm) bpm->ClearUserBreakpoints();
         });
 
         lua.set_function("bp_enable", [this](uint16_t id) -> bool {
@@ -3021,13 +3117,15 @@ public:
         lua.set_function("asm_convert", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "convert", SymbolOptions(arg, "path")); });
         // The source an assembler holds in RAM (asm-synchronizer): asm_sync_status(), asm_sync_probe(), asm_sync_extract{as=, to=,
         // output=}, asm_sync_watch{interval=, quiet=, as=, to=, output=} (live labels in live:sync:<assembler>), asm_sync_unwatch(),
-        // asm_sync_hints()
+        // asm_sync_hints(), asm_sync_inject{text= | path=, from=, title=, force=, backup=} (a host source as the assembler's text);
+        // snapshot= (a .szx / .sna / .z80 file) makes status / probe / extract / inject work on that file (inject writes output=)
         lua.set_function("asm_sync_status", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-status", SymbolOptions(arg, "assembler")); });
-        lua.set_function("asm_sync_probe", [this](sol::this_state ts) -> sol::object { return asmRun(ts, "sync-probe", {}); });
+        lua.set_function("asm_sync_probe", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-probe", SymbolOptions(arg, "snapshot")); });
         lua.set_function("asm_sync_extract", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-extract", SymbolOptions(arg, "as")); });
         lua.set_function("asm_sync_watch", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-watch", SymbolOptions(arg, "assembler")); });
         lua.set_function("asm_sync_unwatch", [this](sol::this_state ts) -> sol::object { return asmRun(ts, "sync-unwatch", {}); });
         lua.set_function("asm_sync_hints", [this](sol::this_state ts) -> sol::object { return asmRun(ts, "sync-hints", {}); });
+        lua.set_function("asm_sync_inject", [this](sol::this_state ts, sol::object arg) -> sol::object { return asmRun(ts, "sync-inject", SymbolOptions(arg, "path")); });
         lua.set_function("symbols_scan", [this](sol::this_state ts) -> sol::object { return symbolsRun(ts, "scan", {}); });
         lua.set_function("symbols_import_source", [this](sol::this_state ts, sol::object arg) -> sol::object {
             return symbolsCall(ts, "import-source", arg, "path");
@@ -3444,6 +3542,214 @@ public:
             if (!emulator) return sol::make_object(s, sol::lua_nil);
             return StateNodeToLua(s, DeviceState::SprinterZxMode(emulator->GetContext(), deep.value_or(true)));
         });
+        // next_state() / next_regs() / next_mmu(): the ZX Spectrum Next reports (DeviceState::Next / NextRegs / NextMmu;
+        // available=false on other machines)
+        lua.set_function("next_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::Next(emulator->GetContext()));
+        });
+        lua.set_function("next_regs", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextRegs(emulator->GetContext()));
+        });
+        lua.set_function("next_mmu", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextMmu(emulator->GetContext()));
+        });
+        // next_reg_journal([{regs="07,02", sources="nextreg,copper", since=N, from=F, to=F, limit=N}]): who wrote which NextREG,
+        // when (frame, T, PC) and through which door (DeviceState::NextRegJournalReport); nil + error on a bad option.
+        // Off by default: next_reg_journal_control({enabled=true}) first
+        lua.set_function("next_reg_journal", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options)
+                    return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number)
+                    return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string)
+                    return value.as<std::string>();
+                return std::string();
+            };
+            NextRegJournalQuery query;
+            std::string error;
+            if (!NextRegJournalQueryFromStrings(text("regs"), text("sources"), text("since"), text("from"), text("to"), text("limit"),
+                                                query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextRegJournalReport(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_reg_journal_control({enabled=true|false, clear=true, capacity=N}): switch / clear / resize the NextREG journal
+        lua.set_function("next_reg_journal_control", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            int enable = -1;
+            bool clear = false;
+            size_t capacity = 0;
+            if (options)
+            {
+                sol::object e = (*options)["enabled"];
+                if (e.get_type() == sol::type::boolean)
+                    enable = e.as<bool>() ? 1 : 0;
+                sol::object c = (*options)["clear"];
+                if (c.get_type() == sol::type::boolean)
+                    clear = c.as<bool>();
+                sol::object n = (*options)["capacity"];
+                if (n.get_type() == sol::type::number)
+                    capacity = static_cast<size_t>(n.as<long long>());
+            }
+            return StateNodeToLua(s, DeviceState::NextRegJournalControl(emulator->GetContext(), enable, clear, capacity));
+        });
+        // next_dma() / next_video(): the Next's DMA and video layers (DeviceState::NextDma / NextVideo; no side effect on the machine)
+        lua.set_function("next_dma", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextDma(emulator->GetContext()));
+        });
+        lua.set_function("next_video", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::NextVideo(emulator->GetContext()));
+        });
+        // next_palette([{palette="sprites_1"|0-7|"all", range="0-15"}]): the 9-bit palettes (DeviceState::NextPalette); nil + error on a bad option
+        lua.set_function("next_palette", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options) return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number) return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string) return value.as<std::string>();
+                return std::string();
+            };
+            NextPaletteQuery query;
+            std::string error;
+            if (!NextPaletteQueryFromStrings(text("palette"), text("range"), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextPalette(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_ports([port [, "r"|"w"]]): the internal port enable word and which device answers `port` (a number is the port, a string is hex text)
+        lua.set_function("next_ports", [this](sol::this_state s, sol::optional<sol::object> port, sol::optional<std::string> access) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string portText;
+            if (port && port->get_type() == sol::type::number)
+                portText = StringHelper::Format("%llx", static_cast<unsigned long long>(port->as<long long>()));
+            else if (port && port->get_type() == sol::type::string)
+                portText = port->as<std::string>();
+            NextPortsQuery query;
+            std::string error;
+            if (!NextPortsQueryFromStrings(portText, access.value_or(""), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextPorts(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_nextreg([reg [, changed]]): one NextREG with decoded bits, or all of them, without side effects (a number is the register)
+        lua.set_function("next_nextreg", [this](sol::this_state s, sol::optional<sol::object> reg, sol::optional<bool> changed) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            std::string regText;
+            if (reg && reg->get_type() == sol::type::number)
+                regText = StringHelper::Format("%llx", static_cast<unsigned long long>(reg->as<long long>()));
+            else if (reg && reg->get_type() == sol::type::string)
+                regText = reg->as<std::string>();
+            NextRegReadQuery query;
+            std::string error;
+            if (!NextRegReadQueryFromStrings(regText, changed.value_or(false) ? "true" : "", query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextRegRead(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_copper([{from=0, count=64, raw=true}]): the copper list as a disassembly with the control mode, write address and pc
+        // (DeviceState::NextCopper); next_sprites([{from=0, count=128, all=true}]): the 128 sprite attributes decoded, switches, flags,
+        // pattern memory summary (DeviceState::NextSprites); nil + error on a bad option
+        lua.set_function("next_copper", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options) return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number) return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string) return value.as<std::string>();
+                if (value.get_type() == sol::type::boolean) return value.as<bool>() ? "true" : "false";
+                return std::string();
+            };
+            NextCopperQuery query;
+            std::string error;
+            if (!NextCopperQueryFromStrings(text("from"), text("count"), text("raw"), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextCopper(emulator->GetContext(), query)));
+            return out;
+        });
+        lua.set_function("next_sprites", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            auto text = [&](const char* key) -> std::string {
+                if (!options) return std::string();
+                sol::object value = (*options)[key];
+                if (value.get_type() == sol::type::number) return std::to_string(value.as<long long>());
+                if (value.get_type() == sol::type::string) return value.as<std::string>();
+                if (value.get_type() == sol::type::boolean) return value.as<bool>() ? "true" : "false";
+                return std::string();
+            };
+            NextSpritesQuery query;
+            std::string error;
+            if (!NextSpritesQueryFromStrings(text("from"), text("count"), text("all"), query, error))
+                return mouseError(s, error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, DeviceState::NextSprites(emulator->GetContext(), query)));
+            return out;
+        });
+        // next_pixel(x, y [, sx]): the pixel inspector of the last captured Next frame (DeviceState::NextPixel; design-layer-capture.md): x 0-319,
+        // y 0-255, sx the sub-pixel 0 | 1. Returns {frame, pixel, winner = {layer, id}, colour = {rgb9, rgb}, layer_order, layers = {ula, layer2,
+        // tilemap, sprites: {opaque, rgb9, wins, why, source}}}; nil + error on a bad coordinate, on another machine, with the capture off or
+        // before the first frame
+        lua.set_function("next_pixel", [this](sol::this_state s, int64_t x, int64_t y, sol::optional<int64_t> sx) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            NextPixelQuery query;
+            std::string error;
+            if (!NextPixelQueryFromStrings(std::to_string(x), std::to_string(y), sx ? std::to_string(*sx) : std::string(), query, error))
+                return mouseError(s, error);
+            const StateNode report = DeviceState::NextPixel(emulator->GetContext(), query);
+            const StateNode* available = report.find("available");
+            if (available && available->kind == StateNode::Kind::Bool && !available->b)
+                return mouseError(s, "This machine is not a ZX Spectrum Next");
+            const StateNode* ok = report.find("ok");
+            if (ok && ok->kind == StateNode::Kind::Bool && !ok->b)
+                return mouseError(s, report.find("message") ? report.find("message")->s : std::string("no frame"));
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, report));
+            return out;
+        });
+        // next_nextreg_write(reg, value [, door]): write a NextREG through the board's write choke point (NextRegWriteControl); door = "nextreg"
+        // (default, the NEXTREG instruction), "port" or "internal"; returns the reply table, or nil + error
+        lua.set_function("next_nextreg_write", [this](sol::this_state s, int64_t reg, int64_t value, sol::optional<std::string> door) -> sol::variadic_results {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return mouseError(s, "No emulator selected");
+            if (reg < 0 || reg > 255 || value < 0 || value > 255)
+                return mouseError(s, "reg and value must be 0..255");
+            NextRegWriteControl::Door which = NextRegWriteControl::Door::NextReg;
+            if (!NextRegWriteControl::ParseDoor(door.value_or(""), which))
+                return mouseError(s, "door must be nextreg, port or internal");
+            const NextRegWriteControl::Result result =
+                NextRegWriteControl::Write(emulator, static_cast<uint8_t>(reg), static_cast<uint8_t>(value), which, "lua");
+            if (!result.ok)
+                return mouseError(s, result.error);
+            sol::variadic_results out;
+            out.push_back(StateNodeToLua(s, NextRegWriteControl::ToState(result)));
+            return out;
+        });
         // sprinter_pld_journal([{kinds="cnf,port_1ffd", since=N, from=F, to=F, limit=N, source="live"|"ttd"}]): who
         // changed the PLD setup, when (DeviceState::SprinterJournal); nil + error on a bad option
         lua.set_function("sprinter_pld_journal", [this](sol::this_state s, sol::optional<sol::table> options) -> sol::variadic_results {
@@ -3568,6 +3874,12 @@ public:
 
         // CMOS clock: the same report and cell access every interface uses
         // (DeviceState::Rtc, RtcAccess). Cells are numbered as the guest numbers them
+        // The execution arbiter: intent and who set it, the command holding the CPU, queue, claim (DeviceState::Execution)
+        lua.set_function("execution_state", [this](sol::this_state s) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::make_object(s, sol::lua_nil);
+            return StateNodeToLua(s, DeviceState::Execution(emulator->GetContext()));
+        });
         lua.set_function("rtc_state", [this](sol::this_state s) -> sol::object {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return sol::make_object(s, sol::lua_nil);
@@ -4983,6 +5295,13 @@ public:
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, DeviceState::VideoText(ctx, layer.value_or(0)));
         });
+        // The operation log (machine state coordinator): reset, snapshot load, media changes, refusals included - the
+        // OperationsStatus report every interface returns. since: entries after that seq; limit: the newest N (0: all)
+        lua.set_function("operations", [this](sol::this_state s, sol::optional<uint64_t> since,
+                                               sol::optional<uint64_t> limit) -> sol::object {
+            return StateNodeToLua(s, OperationsStatus::Report(effectiveEmulator(), since.value_or(0),
+                                                              static_cast<size_t>(limit.value_or(0))));
+        });
         // Temporal effects (ZX DLSS de-flicker): status and switch, the TemporalStatus report every interface returns
         lua.set_function("video_temporal", [this](sol::this_state s) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
@@ -5620,13 +5939,12 @@ public:
                 const bool featureWasOff = fm && !fm->isEnabled(Features::kRecording);
                 if (featureWasOff) fm->setFeature(Features::kRecording, true);
 
-                const bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
-                if (wasRunning) emulator->Pause();
-
-                const bool started = rm->StartRecording(filename, format, audio, static_cast<uint32_t>(videoBitrate),
-                                                        static_cast<uint32_t>(audioBitrate));
-
-                if (wasRunning) emulator->Resume();
+                bool started = false;
+                {
+                    Emulator::CpuHold hold(*emulator, "lua recording");  // no frame mid-start; the pause stays
+                    started = rm->StartRecording(filename, format, audio, static_cast<uint32_t>(videoBitrate),
+                                                 static_cast<uint32_t>(audioBitrate));
+                }
 
                 if (!started)
                 {

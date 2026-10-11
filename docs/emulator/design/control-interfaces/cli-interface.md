@@ -121,6 +121,11 @@ state screen            Screen state: video mode, active screen + RAM pages, con
 state screen verbose    + per-screen RAM page and Z80 mapping, decoded #7FFD
 state screen mode       Video mode: picture format, memory layout, #EFF7/#DFFD/#FF77
 state screen flash      FLASH phase and timing
+state next [regs|mmu|journal [regs=07,02] [sources=nextreg,port,copper,internal] [since=N] [from=F] [to=F] [limit=N] | journal on|off|clear]  ZX Spectrum Next: machine, the NextREG table, the 8K slots, the NextREG write journal (who wrote which register, when, through which door; off by default)
+state next dma | video | palette [palette=selected|0-7|name|all] [range=0-255] | ports [port=6B] [access=r|w] | nextreg [reg=07] [changed=true] | copper [from=0] [count=64] [raw=true] | sprites [from=0] [count=128] [all=true]  ZX Spectrum Next debugger reports; none has a side effect on the machine (`next dma` etc. are aliases)
+state next pixel <x> <y> [sx]  ZX Spectrum Next pixel inspector (last captured frame; x 0-319, y 0-255, sx the sub-pixel 0|1): which layer won the pixel, its colour, per layer why it painted or not and where its byte came from
+next layer-capture [on|off|status]  ZX Spectrum Next: switch / show the per-layer record of the screen (on by default; `state next layer-capture` is the same)
+next nextreg <reg> <value> [nextreg|port|internal]  ZX Spectrum Next: write a NextREG through the board's write choke point (the journal sees it; `nextreg` = the NEXTREG instruction, `port` = OUT #243B / #253B)
 state sprinter [ports|port <hex>|text|video|palette [k]|ring|bios [<name> ...]]  Sprinter Sp2000 reports; bios <3.04|3.06|3.07|file> selects
 memory regions          Device memory regions (the Sprinter's video RAM "vram", the TS-Conf palette "cram" and sprite table "sfile", the CMOS clock's "cmos", the ZX-Evo AVR's "eeprom"); memory region read|write|save|load <name> ...
 mixer [<source> [muted=0|1] [solo=0|1] [volume=0..1] [gain_db=..]]  Per-device audio mixer (beeper, ay1, covox, gs, ...)
@@ -221,6 +226,7 @@ The CLI implements the same command semantics as other interfaces (WebAPI, Pytho
 | `GET /emulator/models` | `models` | CLI shows the same list with `(not creatable on this build)` markers; the endpoint's `creatable` flags stay authoritative |
 | `POST /emulator/start` with `zxpoly` | `zxpoly start <model> [file]` | Same entry point (`EmulatorManager::CreateZXPolyMachine`) |
 | `GET /emulator/{id}/zxpoly` | `zxpoly status [id]` | Same source (`ZXPolyGroup::Status`) |
+| `GET /emulator/{id}/operations?since=&limit=` | `ops [n\|all]`, `ops since <seq> [n\|all]` | Same source (`OperationsStatus`, the machine state coordinator's log); the CLI answers one line per operation, the newest 20 by default ([command-interface.md, Operation log](./command-interface.md)) |
 | `DELETE /emulator/{id}` | `stop` | CLI uses `stop` which both stops and removes; separate remove is for advanced orchestration |
 | `POST /emulator/{id}/start` | `resume` | Starting an existing (initialized but not running) emulator uses `resume` in CLI |
 
@@ -412,6 +418,7 @@ reference: [command-interface.md](./command-interface.md).
 | `video text [layer]` | Exact text grid of an ATM / ZX-Evo / TS-Conf text mode, or the Sprinter's text squares. |
 | `video address vram <offset>` | Every pixel a byte of the machine's own video RAM feeds (the Sprinter). |
 | `video changes [1\|2]` | Video change log: latch changes (mode, #7FFD, border, the Sprinter's RGMOD / HOLD / PORT_Y / ALL_MODE / frame height) with T, line and PC; palette / mode table writes per frame. |
+| `capture screen --layer=ula\|layer2\|tilemap\|sprites\|ids [--format=png\|rgba] [--alpha=false] [file]` | ZX Spectrum Next: ONE LAYER of the last completed frame (alpha 0 where the layer does not paint; `ids` = the winner of every pixel, the legend is printed); 640 x 512 like the screenshot; prints the frame and size and a data URI, or saves to `file`. Needs the layer record (`next layer-capture on`, the default). |
 | `capture screen [--area=full\|screen] [--format=png\|gif] [--source=presented\|live] [file]` | Screenshot of the session's emulator: the whole frame with border (default) or the working picture; PNG (default) or GIF; the presented frame (default) or `--source=live`, the frame as drawn now (a paused machine reports where the beam stopped). Prints the size, the cut rectangle, the screen window and a data URI, or saves to `file`. An unknown word is an error. |
 | `capture framebuffer <file> [rgba\|index]` | The picture as raw pixels (R,G,B,A, or the Sprinter's u16 pens). |
 | `video temporal [status\|list\|off\|<algorithm>]` | ZX DLSS de-flicker: show its status (algorithm, video / audio delay it causes, timing), list the algorithms, switch it off or on (default `mod-tpgwafsd`, which shows the picture 7 frames later and delays the sound 5 more frames to match; see [command-interface.md §5.9](./command-interface.md)). |

@@ -224,6 +224,7 @@ else()
         PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
         ${ROOT_DIR}/core/src
+        ${ROOT_DIR}/core/src/3rdparty/unreal-disk/include   # core headers include the disk model
     )
 
     # Core layout consistency (prevents ODR violation):

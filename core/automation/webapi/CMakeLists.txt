@@ -174,6 +174,8 @@ set(COMMON_SOURCES
     src/emulator_api.h
     src/openapi_spec.cpp
     src/api/lifecycle_api.cpp
+    src/api/operations_api.cpp
+    src/api/session_api.cpp
     src/api/settings_api.cpp
     src/api/features_api.cpp
     src/api/state_memory_api.cpp
@@ -229,6 +231,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         ${JSONCPP_INCLUDE_DIRS}
         ${ZLIB_INCLUDE_DIR}
         ${ROOT_DIR}/core/src
+        ${ROOT_DIR}/core/src/3rdparty/unreal-disk/include   # core headers include the disk model
         ${CMAKE_BINARY_DIR}/generated  # emulator/buildinfo.h (status server fingerprint block)
     )
 
@@ -280,6 +283,7 @@ else () # Called from upper level CMake => build static library
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${JSONCPP_INCLUDE_DIRS}
         ${ROOT_DIR}/core/src
+        ${ROOT_DIR}/core/src/3rdparty/unreal-disk/include   # core headers include the disk model
         ${CMAKE_BINARY_DIR}/generated  # emulator/buildinfo.h (status server fingerprint block)
         ${ROOT_DIR}/core/automation  # For automation/automation.h
         $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/src>

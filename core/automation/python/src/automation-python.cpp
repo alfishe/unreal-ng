@@ -2,6 +2,7 @@
 
 #include <base/featuremanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <emulator/coordinator/machineop.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <pybind11/functional.h>
@@ -402,6 +403,7 @@ static void registerEmulatorBindings()
 void AutomationPython::threadFunc(AutomationPython* python)
 {
     ThreadHelper::setThreadName("automation-python");
+    coordinator::SetThreadSource(coordinator::OpSource::Python);   // every script runs here: the operation log names it
 
     using namespace std::chrono_literals;
 

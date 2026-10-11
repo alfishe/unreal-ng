@@ -27,7 +27,36 @@ const char* const kServerInstructions =
     "of a disk): asm_source. Router tools: search_api / invoke_api expose the "
     "full WebAPI (see openapi.json). Resolve the machine with target:\"auto\" unless several "
     "instances run. Resources: unreal://keyboard-layout, unreal://basic-reference, unreal://z80-isa, "
-    "unreal://trdos-commands, unreal://memory-map, unreal://emulator-state.";
+    "unreal://trdos-commands, unreal://memory-map, unreal://emulator-state. "
+    "Automation sessions: control_execution take_control opens one (the user sees it in the GUI, whose controls lock); "
+    "release_control ends it. If a call answers revoked_by_user, the user took control back: stop, do not retry, and "
+    "ask the user before taking control again.";
+
+/// Largest structuredContent echoed into content[] as text; a larger one is cut with a note (the full body stays in
+/// structuredContent)
+constexpr size_t kStructuredEchoLimit = 64 * 1024;
+
+/// The structuredContent as compact JSON text for content[]: MCP (2025-06-18, Structured Content) says a tool returning
+/// structured content SHOULD also return it serialized in a TextContent block. Clients that hand the model only
+/// content[] (claude.ai connectors) saw the one-line summary and never the listing / dump / body
+std::string EchoStructured(const Json::Value& structured)
+{
+    Json::StreamWriterBuilder builder;
+    builder["indentation"] = "";
+    builder["emitUTF8"] = true;
+    std::string json = Json::writeString(builder, structured);
+    if (json.size() > kStructuredEchoLimit)
+    {
+        const size_t total = json.size();
+        size_t cut = kStructuredEchoLimit;
+        while (cut > 0 && (static_cast<unsigned char>(json[cut]) & 0xC0) == 0x80)
+            --cut;   // never split a UTF-8 sequence
+        json.resize(cut);
+        json += "\n... [truncated: " + std::to_string(total) + " bytes of JSON, first " +
+                std::to_string(cut) + " shown; ask for a narrower range]";
+    }
+    return json;
+}
 
 bool IsSupportedProtocolVersion(const std::string& version)
 {
@@ -91,6 +120,15 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
     {
         Json::Value result;
         const std::string clientVersion = params.get("protocolVersion", "").asString();
+        if (params.isMember("clientInfo") && params["clientInfo"].isObject())
+        {
+            std::string name = params["clientInfo"].get("name", "").asString();
+            const std::string version = params["clientInfo"].get("version", "").asString();
+            if (!version.empty())
+                name += " " + version;
+            std::lock_guard<std::mutex> lock(_clientMutex);
+            _clientName = name;
+        }
         result["protocolVersion"] = IsSupportedProtocolVersion(clientVersion) ? clientVersion : std::string(kProtocolVersion);
 
         Json::Value tools;
@@ -163,9 +201,22 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
         // copy of the arguments alive until the result callback fires so that
         // handlers may safely capture `args` by reference in callback chains.
         auto argumentsCopy = std::make_shared<Json::Value>(arguments);
+        if (name == "control_execution" && argumentsCopy->isObject() && !argumentsCopy->isMember("_mcp_client"))
+        {
+            std::lock_guard<std::mutex> lock(_clientMutex);
+            if (!_clientName.empty())
+                (*argumentsCopy)["_mcp_client"] = _clientName;
+        }
         try
         {
-            tool->handler(*argumentsCopy, caller, [argumentsCopy, id, done](ToolResult result) {
+            tool->handler(*argumentsCopy, caller, [argumentsCopy, id, done, &caller](ToolResult result) {
+                // The user took control back at the GUI during this call (execution arbiter design §6a): whatever the
+                // tool made of the 409, the agent gets the one answer - stop, do not retry, ask the user
+                if (caller.TakeRevoked())
+                    result = ToolResult::Error(
+                        "revoked_by_user: the user took control of the emulator back at its GUI; your automation "
+                        "session has ended. Stop. Do not retry this call and do not take control again "
+                        "(control_execution take_control) without asking the user first.");
                 Json::Value payload;
                 Json::Value text;
                 text["type"] = "text";
@@ -173,6 +224,13 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
                 payload["content"].append(text);
                 if (!result.structured.isNull())
                 {
+                    if (!result.textCarriesData)
+                    {
+                        Json::Value echo;
+                        echo["type"] = "text";
+                        echo["text"] = EchoStructured(result.structured);
+                        payload["content"].append(echo);
+                    }
                     payload["structuredContent"] = result.structured;
                 }
                 if (result.isError)

@@ -1,5 +1,7 @@
 #include "machinestatetransfer.h"
 
+#include <optional>
+
 #include "loaders/snapshot/machinestatetransferlayouts.h"
 
 #include <algorithm>
@@ -1216,7 +1218,7 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
         return report;
     }
 
-    const std::string guard = target.RecordingGuard(ttd::TTDGuardedAction::SwitchModel);
+    const std::string guard = target.AskModelSwitch("state from " + source.GetId());
     if (!guard.empty())
     {
         report.reason = guard;
@@ -1231,19 +1233,13 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
         return report;
     }
 
-    // Both machines stand still while their state moves
-    const bool sourceWasRunning = source.IsRunning() && !source.IsPaused();
-    const bool targetWasRunning = target.IsRunning() && !target.IsPaused();
-    if (sourceWasRunning)
-    {
-        source.Pause(false);
-        source.WaitForPauseConfirmation(1000);
-    }
-    if (targetWasRunning)
-    {
-        target.Pause(false);
-        target.WaitForPauseConfirmation(1000);
-    }
+    // Both machines stand still while their state moves: both CPUs held (Emulator::CpuHold), taken in the order of
+    // the machines' ids so two transfers between the same pair can never wait for each other
+    std::optional<Emulator::CpuHold> first;
+    std::optional<Emulator::CpuHold> second;
+    const bool sourceFirst = source.GetId() < target.GetId();
+    first.emplace(sourceFirst ? source : target, "state transfer");
+    second.emplace(sourceFirst ? target : source, "state transfer");
 
     report = Check(*sourceContext, *targetContext);
     if (report.ok)
@@ -1257,10 +1253,8 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
             target.RestartFrame();
     }
 
-    if (targetWasRunning)
-        target.Resume(false);
-    if (sourceWasRunning)
-        source.Resume(false);
+    second.reset();
+    first.reset();
     return report;
 }
 

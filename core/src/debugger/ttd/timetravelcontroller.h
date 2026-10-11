@@ -59,6 +59,7 @@
 #include <string>
 #include <thread>
 
+#include "emulator/execution/executionarbiter.h"
 #include "emulator/platform.h"       // PlatformModulesEnum, MAX_RAM_PAGES
 #include "emulator/io/keyboard/keyboard.h"  // Keyboard::InputState (display sandbox)
 #include "common/modulelogger.h"    // ModuleLogger
@@ -785,6 +786,8 @@ public:
     /// @param kind   Source classification (UI / automation hint).
     /// @param reason Short human-readable description. May be nullptr.
     void RecordExternalEvent(TTDExternalEventKind kind, const char* reason) override;
+    void NoteMediaChange(const char* slot, const char* what) override;
+    bool RecordsMediaChanges() const override { return true; }
     /// The same, stamped at @p at (a tool edit's event sits where the edit began)
     void RecordExternalEventAt(TTDExternalEventKind kind, const char* reason, const TTDTimePoint& at);
 
@@ -1743,7 +1746,8 @@ private:
         const TimeTravelController& _manager;
         Kind _kind;
         bool _locked = false;
-        bool _parked = false;
+        /// The CPU held for the operation (a running machine executing an active session): execution arbiter
+        execution::HoldToken _hold;
     };
     bool OnMachineThread() const;
     mutable std::recursive_mutex _controlMutex;

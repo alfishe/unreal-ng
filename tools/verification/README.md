@@ -26,6 +26,15 @@ running in unreal-ng (`emulator/assemble-in-emulator.py`) and against cross asse
 
 ---
 
+### Disassembler quality (`disasm/`)
+
+[`disasm/disasmcheck.py`](disasm/README.md): the Z80 disassembler as the agents see it, over the WebAPI and MCP, against
+z88dk-dis and sjasmplus: every opcode (1780 encodings, undocumented ones included), a linear sweep of the 48K ROM with its
+symbols, branch targets, address / count parsing of `GET /disasm` and the listing in the MCP text (run against a live
+application).
+
+---
+
 ### TTD surface contract
 
 [`ttd-surface-contract/`](ttd-surface-contract/README.md): the time-travel calls give the same answers on WebAPI, CLI, Lua and Python (run against a live application).

@@ -1,11 +1,19 @@
 #include "synccontrol.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 
 #include "debugger/asm/sync/asmsyncservice.h"
 #include "debugger/asm/sync/syncshared.h"
 #include "debugger/debugmanager.h"
 #include "emulator/emulatorcontext.h"
+#include "unrealasm/dialect.h"
+#include "unrealasm/registry.h"
+#include "unrealasm/snapshot.h"
 #include "unrealasm/sync/reader.h"
 
 namespace
@@ -97,15 +105,95 @@ AsmSyncService* Service(EmulatorContext* context)
 
 SyncControl::SyncControl(EmulatorContext* context) : _context(context) {}
 
+AsmReply SyncControl::Inject(const sync::SyncDescriptor& descriptor, const sync::SyncText& current, const AsmRequest& request,
+                             const containers::Snapshot* snapshot)
+{
+    // The source, written as the assembler's own file (converted by its backend unless it is in its dialect already)
+    SourceDocument document;
+    Diagnostics diagnostics;
+    std::string source;
+    AsmReply failure;
+    if (!AsmControl(_context).ReadDocument(request, document, diagnostics, source, failure))
+        return failure;
+    StateNode body = StateNode::Object();
+    body["assembler"] = descriptor.id;
+    body["title"] = descriptor.title;
+    body["source"] = source;
+    body["from"] = document.dialect;
+    // The name in the text's header: given, else the text's in memory, else the source's
+    std::string title = Option(request, "title");
+    if (title.empty())
+        title = current.ok && !current.name.empty() ? current.name : document.name;
+    if (title.empty())
+        title = "TEXT";
+    WriteAsResult written = WriteAs(document, descriptor.codec, descriptor.version, title);
+    diagnostics.insert(diagnostics.end(), written.diagnostics.begin(), written.diagnostics.end());
+    body["diagnostics"] = asmsync::DiagnosticsValue(diagnostics);
+    if (!written.ok)
+        return Fail(written.error.rfind("no ", 0) == 0 ? AsmControlError::NotFound : AsmControlError::Failed, written.error, std::move(body));
+    document = std::move(written.document);
+    sync::InjectOptions options;
+    std::string force = Option(request, "force");
+    std::transform(force.begin(), force.end(), force.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    options.force = request.options.count("force") && (force.empty() || force == "true" || force == "1" || force == "on");
+    sync::InjectPlan plan;
+    if (snapshot)
+    {
+        // Into a snapshot file: the same plan on its memory, the file written with that page replaced
+        const std::string output = Option(request, "output");
+        if (output.empty())
+            return Fail(AsmControlError::BadRequest, "an inject into a snapshot needs 'output' (the snapshot file to write)", std::move(body));
+        std::vector<uint8_t> file;
+        plan = sync::InjectIntoSnapshot(*snapshot, descriptor, written.bytes, options, file);
+        if (!plan.ok)
+            return Fail(AsmControlError::Refused, plan.error, std::move(body));
+        std::ofstream out(output, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(file.data()), static_cast<std::streamsize>(file.size()));
+        if (!out)
+            return Fail(AsmControlError::Failed, "cannot write " + output, std::move(body));
+        body["output"] = output;
+        body["format"] = containers::SnapshotFormatName(snapshot->format);
+    }
+    else
+    {
+        std::string error;
+        if (!asmsync::InjectFile(_context, descriptor, written.bytes, options, plan, error))
+            return Fail(AsmControlError::Refused, error, std::move(body));
+    }
+    body["name"] = document.name;
+    body["page"] = static_cast<int64_t>(plan.page);
+    body["bytes"] = static_cast<uint64_t>(written.bytes.size());
+    body["lines"] = static_cast<uint64_t>(document.lines.size());
+    if (plan.previous.ok)
+    {
+        StateNode previous = StateNode::Object();
+        previous["name"] = plan.previous.name;
+        previous["bytes"] = static_cast<uint64_t>(plan.previous.file.size());
+        previous["changed"] = plan.previous.changed;
+        const std::string backup = Option(request, "backup");
+        if (!backup.empty())
+        {
+            std::ofstream out(backup, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(plan.previous.file.data()), static_cast<std::streamsize>(plan.previous.file.size()));
+            previous["backup"] = out ? backup : std::string();
+        }
+        body["previous"] = std::move(previous);
+    }
+    AsmReply reply;
+    reply.body = std::move(body);
+    return reply;
+}
+
 const std::vector<std::string>& SyncControl::OptionsFor(const std::string& verb)
 {
     static const std::map<std::string, std::vector<std::string>> options = {
-        {"status", {"assembler"}},
-        {"probe", {}},
-        {"extract", {"assembler", "as", "to", "codepage", "output"}},
-        {"watch", {"assembler", "interval", "quiet", "as", "to", "output"}},
+        {"status", {"assembler", "snapshot"}},
+        {"probe", {"snapshot"}},
+        {"extract", {"assembler", "as", "to", "codepage", "output", "snapshot"}},
+        {"watch", {"assembler", "interval", "quiet", "as", "to", "output", "project"}},
         {"unwatch", {}},
         {"hints", {}},
+        {"inject", {"assembler", "path", "data", "name", "file", "codec", "version", "from", "text", "title", "force", "backup", "snapshot", "output"}},
     };
     static const std::vector<std::string> none;
     const auto it = options.find(verb);
@@ -141,6 +229,30 @@ AsmReply SyncControl::Execute(const std::string& verb, const AsmRequest& request
         if (!ParseMs(request, "interval", 50, options.intervalMs, failure) || !ParseMs(request, "quiet", 0, options.quietMs, failure))
             return failure;
         options.output = Option(request, "output");
+        if (request.options.count("project"))
+        {
+            // project: disk:A..disk:D, none, or a host folder; comma-separated (the disk in drive A by default)
+            options.projectDrive = -1;
+            std::string list = Option(request, "project");
+            size_t from = 0;
+            while (from <= list.size())
+            {
+                size_t comma = list.find(',', from);
+                if (comma == std::string::npos)
+                    comma = list.size();
+                const std::string item = list.substr(from, comma - from);
+                if (item.size() == 6 && item.compare(0, 5, "disk:") == 0 && std::toupper(static_cast<unsigned char>(item[5])) >= 'A' &&
+                    std::toupper(static_cast<unsigned char>(item[5])) <= 'D')
+                    options.projectDrive = std::toupper(static_cast<unsigned char>(item[5])) - 'A';
+                else if (item == "none" || item.empty())
+                    ;
+                else if (std::filesystem::is_directory(item))
+                    options.projectDir = item;
+                else
+                    return Fail(AsmControlError::BadRequest, "'project' takes disk:A-D, none or a folder: '" + item + "'");
+                from = comma + 1;
+            }
+        }
         if (request.options.count("as"))
             options.as = Option(request, "as");
         options.to = Option(request, "to");
@@ -153,9 +265,24 @@ AsmReply SyncControl::Execute(const std::string& verb, const AsmRequest& request
         return reply;
     }
 
+    // The memory: a copy of the running machine's, or a snapshot file's (option `snapshot`, Z1)
     asmsync::MachineCopy machine;
+    containers::Snapshot snapshot;
+    const bool fromSnapshot = request.options.count("snapshot") > 0;
     std::string error;
-    if (!asmsync::CopyMachine(_context, machine, error))
+    if (fromSnapshot)
+    {
+        const std::string path = Option(request, "snapshot");
+        std::ifstream in(path, std::ios::binary);
+        const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const size_t dot = path.find_last_of('.');
+        if (!in && bytes.empty())
+            return Fail(AsmControlError::NotFound, "cannot read " + path);
+        if (!containers::ReadSnapshot(bytes, dot == std::string::npos ? std::string() : path.substr(dot + 1), snapshot, error))
+            return Fail(AsmControlError::BadRequest, path + ": " + error);
+        machine.view = sync::ViewOf(snapshot);
+    }
+    else if (!asmsync::CopyMachine(_context, machine, error))
         return Fail(AsmControlError::BadRequest, error);
 
     if (verb == "probe")
@@ -172,12 +299,16 @@ AsmReply SyncControl::Execute(const std::string& verb, const AsmRequest& request
     AsmReply failure;
     if (!Choose(machine.view, Option(request, "assembler"), descriptor, failure))
         return failure;
+    if (verb == "inject")
+        return Inject(*descriptor, sync::ReadText(machine.view, *descriptor), request, fromSnapshot ? &snapshot : nullptr);
     const sync::SyncText text = sync::ReadText(machine.view, *descriptor);
     StateNode body = StateNode::Object();
     asmsync::Describe(*descriptor, text, body);
+    if (fromSnapshot)
+        body["snapshot"] = Option(request, "snapshot");
     if (verb == "status")
     {
-        if (AsmSyncService* service = Service(_context))
+        if (AsmSyncService* service = fromSnapshot ? nullptr : Service(_context))
             body["watch"] = service->StatusValue();
         AsmReply reply;
         reply.body = std::move(body);

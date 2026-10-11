@@ -21,6 +21,8 @@
 #include "emulator/state/devicestate.h"
 #include "emulator/video/map/videomapservice.h"
 #include "emulator/video/screen.h"
+#include <optional>
+#include <chrono>
 
 using namespace videomap;
 
@@ -603,7 +605,13 @@ StateNode VideoChanges(EmulatorContext* context, unsigned frames)
                    "changed) and per-frame counts of palette / mode table writes; frames=1 the last completed frame, "
                    "frames=2 (default) the current one too while the machine is paused";
     StateNode list = StateNode::Array();
-    if (running)
+    // Paused, the frames being recorded are read in place: only while no command drives the CPU (a direct run -
+    // run_frames on a paused machine - records into them, reallocating as it goes). Not handed the CPU in time: the
+    // published copy of the last completed frame, as while running
+    std::optional<Emulator::CpuHold> hold;
+    if (!running && emulator)
+        hold.emplace(*emulator, "video changes", std::chrono::milliseconds(250));
+    if (running || (hold && !hold->Held()))
     {
         const VideoFrameLog published = log.Published();
         if (published.valid)

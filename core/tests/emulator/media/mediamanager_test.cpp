@@ -208,7 +208,7 @@ TEST(MediaManager_Test, InsertFromAnImageFileAndAccessModes)
     missing.path = path + ".missing";
     EXPECT_EQ(manager.Insert("sd.test", missing).error, MediaError::UnreadableSource);
 
-    ASSERT_TRUE(manager.Eject("sd.test", {.disposition = Disposition::Discard}).Ok());
+    ASSERT_TRUE(manager.Eject("sd.test", EjectOptions::Discarding()).Ok());
     manager.UnregisterSlot("sd.test");
     std::remove(path.c_str());
 }
@@ -574,13 +574,15 @@ TEST(MediaManager_Test, ExportWritesTheGuestView)
     manager.SetApplyNowProbe([&running] { return !running; });
     EXPECT_EQ(manager.Export("sd.test", path).error, MediaError::NotSupported) << "a running machine is paused first";
     manager.SetApplyNowProbe(nullptr);
-    ASSERT_TRUE(manager.Eject("sd.test", {.disposition = Disposition::Discard}).Ok());
+    ASSERT_TRUE(manager.Eject("sd.test", EjectOptions::Discarding()).Ok());
     manager.UnregisterSlot("sd.test");
     std::remove(path.c_str());
 }
 
 /// The media set is fixed while TTD records (integration-ttd-snapshots.md §2)
-TEST(MediaManager_Test, RecordingRefusesChangesUnlessAskedToEndIt)
+/// M3 (Q4): while TTD records, a change is an event of the recording at the next frame boundary (the recording goes
+/// on); a caller that asks to end the recording ends it and changes the medium at once
+TEST(MediaManager_Test, RecordingTakesAChangeAtTheFrameBoundaryOrEndsWhenAsked)
 {
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
@@ -593,8 +595,11 @@ TEST(MediaManager_Test, RecordingRefusesChangesUnlessAskedToEndIt)
     manager.RegisterSlot(slot);
     ASSERT_TRUE(context->pTimeTravelController->StartRecording());
 
-    EXPECT_EQ(manager.Insert("sd.test", MemoryMedium(8)).error, MediaError::Recording);
-    EXPECT_EQ(slot.attached, nullptr);
+    ASSERT_TRUE(manager.Insert("sd.test", MemoryMedium(8)).Ok());
+    EXPECT_EQ(slot.attached, nullptr) << "never inside a frame while recording";
+    manager.ApplyPending();
+    EXPECT_NE(slot.attached, nullptr);
+    EXPECT_TRUE(context->pTimeTravelController->IsRecording());
 
     InsertOptions end;
     end.endRecording = true;
@@ -674,7 +679,7 @@ TEST(MediaManager_Test, FolderBecomesAFatVolumeAndStaysUntouched)
 
     exported.reset();
     std::remove(image.c_str());
-    ASSERT_TRUE(manager.Eject("sd.test", {.disposition = Disposition::Discard}).Ok());
+    ASSERT_TRUE(manager.Eject("sd.test", EjectOptions::Discarding()).Ok());
     manager.UnregisterSlot("sd.test");
 }
 

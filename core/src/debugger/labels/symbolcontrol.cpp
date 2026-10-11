@@ -725,8 +725,7 @@ SymbolReply SymbolControl::ImportSource(const SymbolRequest& request)
             extension.erase(0, 1);
         std::vector<unrealasm::containers::TrdosFile> files;
         unrealasm::containers::TrdosFile one;
-        const bool image = (extension == "trd" && unrealasm::containers::ReadTrd(bytes, files, error)) ||
-                           ((extension == "tap" || extension == "tzx") && unrealasm::containers::ReadTape(bytes, files, error));
+        const bool image = IsImageExtension(extension) && ReadImageFiles(_context, path, bytes, files, error);
         if (!image && extension.size() == 2 && extension[0] == '$' && unrealasm::containers::ReadHobeta(bytes, one, error))
             files.push_back(one);
         project = files.empty() ? ProjectFromText(path, bytes) : ProjectFromFiles(files);

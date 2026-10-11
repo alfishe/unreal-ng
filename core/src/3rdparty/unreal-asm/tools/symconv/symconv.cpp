@@ -28,6 +28,7 @@
 #include <string_view>
 #include <vector>
 
+#include "../common/diskfiles.h"
 #include "unrealasm/containers.h"
 #include "unrealasm/registry.h"
 #include "unrealasm/symbols/codec.h"
@@ -86,8 +87,8 @@ bool ReadProject(const std::string& path, const std::vector<uint8_t>& bytes, Sou
     std::vector<containers::TrdosFile> files;
     std::string error;
     const std::string extension = Extension(path);
-    const bool image = (extension == "trd" && containers::ReadTrd(bytes, files, error)) ||
-                       ((extension == "tap" || extension == "tzx") && containers::ReadTape(bytes, files, error));
+    // A disk image of any format unreal-disk reads, or a tape
+    const bool image = tools::IsImage(extension) && tools::ReadImageFiles(path, bytes, files, error);
     containers::TrdosFile one;
     if (!image && extension.size() == 2 && extension[0] == '$' && containers::ReadHobeta(bytes, one, error))
         files.push_back(one);

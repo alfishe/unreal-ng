@@ -5,7 +5,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cctype>
 
+#include "codecs/alasm/alasmcodec.h"
 #include "symbols/io/json.h"
 #include "testdata.h"
 #include "unrealasm/registry.h"
@@ -87,6 +89,18 @@ const Case kCases[] = {
     {"zasmx641-typing", "zasm-x64.1"}, {"zasmx641-edited", "zasm-x64.1"}, {"zasmx641-big", "zasm-x64.1"},
     {"zasm40x8-typing", "zasm-4.0x8"}, {"zasm40x8-edited", "zasm-4.0x8"}, {"zasm40x8-big", "zasm-4.0x8"},
     {"zasm4x64-typing", "zasm-4.x64"}, {"zasm4x64-edited", "zasm-4.x64"}, {"zasm4x64-big", "zasm-4.x64"},
+    {"pasm30-loaded", "pasm-3.0"},    {"pasm30-typing", "pasm-3.0"},     {"pasm30-edited", "pasm-3.0"},
+    {"prom48-edited", "prometheus-48"}, {"prom48-typing", "prometheus-48"},
+    {"lg104-loaded", "lasergenius-1.04"}, {"lg104-typing", "lasergenius-1.04"}, {"lg104-edited", "lasergenius-1.04"},
+    {"zeus1983-loaded", "zeus-1983"}, {"zeus1983-typing", "zeus-1983"},
+    {"zeus11-loaded", "zeus-1.1"}, {"zeus11-typing", "zeus-1.1"},
+    {"zeusgg-loaded", "zeus-gg"}, {"zeusgg-typing", "zeus-gg"},
+    {"zeus7e-loaded", "zeus-7e"}, {"zeus7e-typing", "zeus-7e"},
+    {"primus29-loaded", "primus-2.9"}, {"primus29-typing", "primus-2.9"}, {"primus29-edited", "primus-2.9"},
+    {"gens4-loaded", "gens-4"},        {"gens4-typing", "gens-4"},
+    {"gens3m21-loaded", "gens-3m21"},  {"gens3m21-typing", "gens-3m21"},
+    {"gens4b-typing", "gens-4b"},     {"gens4b-edited", "gens-4b"},
+    {"gens43t-typing", "gens-4.3t"},   {"gens43t-edited", "gens-4.3t"},
     {"zasm24-typing", "zasm-2.4"}, {"zasm24-edited", "zasm-2.4"}, {"zasm24-big", "zasm-2.4"},
     {"zasm25-typing", "zasm-2.5"}, {"zasm25-edited", "zasm-2.5"}, {"zasm25-big", "zasm-2.5"},
     {"zasm26-typing", "zasm-2.6"}, {"zasm26-edited", "zasm-2.6"}, {"zasm26-big", "zasm-2.6"},
@@ -121,9 +135,9 @@ std::vector<uint8_t> WithoutStateLine(std::vector<uint8_t> file, const SyncDescr
 /// The file without the header bytes SAVE rewrites from the editor's state (XAS: the cursor line and column)
 std::vector<uint8_t> WithoutEditorState(std::vector<uint8_t> file, const SyncDescriptor& d)
 {
-    const bool gap = d.family == LayoutFamily::GapBuffer;
-    const size_t at = gap ? d.gapBuffer.editorStateAt : d.fileImage.editorStateAt;
-    const size_t length = gap ? d.gapBuffer.editorStateLength : d.fileImage.editorStateLength;
+    const bool gap = d.family == LayoutFamily::GapBuffer, linear = d.family == LayoutFamily::Linear;
+    const size_t at = gap ? d.gapBuffer.editorStateAt : linear ? d.linear.editorStateAt : d.fileImage.editorStateAt;
+    const size_t length = gap ? d.gapBuffer.editorStateLength : linear ? d.linear.editorStateLength : d.fileImage.editorStateLength;
     for (size_t k = at; k < at + length && k < file.size(); ++k)
         file[k] = 0;
     return file;
@@ -356,4 +370,149 @@ TEST(SyncSession_Test, AHintPointsAtTheSourceLine)
             EXPECT_EQ(d.line, 3u) << d.message;
         }
     EXPECT_TRUE(found) << "the undefined name is reported";
+}
+
+namespace
+{
+std::vector<uint8_t> XasFile(const std::string& text, const SyncDescriptor& d)
+{
+    const ISourceCodec* xas = CodecRegistry::Builtin().Find("xas");
+    EncodeOptions options;
+    options.subversion = d.version;
+    const EncodeResult encoded = xas->Encode(SourceDocument::FromText(text, "xas"), options);
+    EXPECT_TRUE(encoded.ok);
+    return encoded.bytes;
+}
+
+bool CaseInsensitiveEqual(const std::string& a, const std::string& b)
+{
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+           });
+}
+
+/// XAS keeps its labels in lower case
+bool HasLabel(const BuildResult& built, const std::string& name, int64_t value)
+{
+    for (const symbols::Symbol& s : built.labels.symbols)
+        if (CaseInsensitiveEqual(s.name, name) && s.location.offset == static_cast<uint32_t>(value))
+            return true;
+    return false;
+}
+}  // namespace
+
+// Y5: the live text INCLUDEs another source; the build takes it from the project (asm-synchronizer.md §5.4)
+TEST(SyncSession_Test, AnIncludedSourceComesFromTheProject)
+{
+    const SyncDescriptor* d = FindDescriptor("xas-7.447");
+    ASSERT_NE(d, nullptr);
+    BuildInput input;
+    input.descriptor = d;
+    input.name = "main";
+    input.file = XasFile("        ORG   30000\n        LTEXT \"lib\"\nSTART   LD    HL,VALUE\n        RET", *d);
+
+    const BuildResult alone = SyncSession::Build(input);
+    ASSERT_TRUE(alone.decoded);
+    EXPECT_FALSE(alone.complete) << "lib is not there";
+
+    const ISourceCodec* xas = CodecRegistry::Builtin().Find("xas");
+    DecodeOptions decode;
+    decode.subversion = d->version;
+    const DecodeResult lib = xas->Decode(XasFile("VALUE   EQU   1234", *d), decode);
+    ASSERT_TRUE(lib.ok);
+    input.project.push_back({"lib", lib.document});
+    // A stale copy of the main text on the disk: the live text wins
+    const DecodeResult stale = xas->Decode(XasFile("        ORG   40000\nSTART   RET", *d), decode);
+    input.project.push_back({"MAIN", stale.document});
+
+    const BuildResult built = SyncSession::Build(input);
+    ASSERT_TRUE(built.decoded);
+    EXPECT_TRUE(built.complete);
+    EXPECT_TRUE(HasLabel(built, "VALUE", 1234));
+    EXPECT_TRUE(HasLabel(built, "START", 30000)) << "the live text, not the disk's copy";
+}
+
+// Y5: ALASM keeps one text per page; the other pages' texts are the project's sources, named by their headers
+TEST(SyncSession_Test, AlasmsOtherTextsInMemoryJoinTheProject)
+{
+    Dump dump = Load("alasm509-loaded");
+    const SyncDescriptor* d = FindDescriptor("alasm-5.09");
+    ASSERT_NE(d, nullptr);
+    const SyncText live = ReadText(dump.machine, *d);
+    ASSERT_TRUE(live.ok);
+    // A second text: the live page copied to page 1 under the name LIB
+    std::vector<uint8_t> second(dump.machine.Page(live.page)->bytes.begin(), dump.machine.Page(live.page)->bytes.end());
+    const std::string name = "LIB     ";
+    std::copy(name.begin(), name.end(), second.begin());
+    dump.machine.ram.push_back({1, second});
+    EXPECT_TRUE(ReadOtherTexts(dump.machine, *d, -1).size() == 2u) << "both pages hold a text";
+    const std::vector<SyncText> others = ReadOtherTexts(dump.machine, *d, live.page);
+    ASSERT_EQ(others.size(), 1u);
+    EXPECT_EQ(others[0].name, "LIB");
+    EXPECT_EQ(others[0].page, 1);
+    const std::vector<ProjectFile> project = SyncSession::MemoryProject(dump.machine, *d, live.page);
+    ASSERT_EQ(project.size(), 1u);
+    EXPECT_EQ(project[0].name, "LIB");
+    EXPECT_FALSE(project[0].document.lines.empty());
+    // A layout without texts per page has none
+    EXPECT_TRUE(ReadOtherTexts(dump.machine, *FindDescriptor("tasm-4.12"), -1).empty());
+}
+
+// Part B (Z0): a file written over ALASM 5.09's text at its command line, then read back as the reader reads it
+TEST(SyncInject_Test, AlasmTakesAFileAtItsCommandLine)
+{
+    Dump dump = Load("alasm509-loaded");
+    const SyncDescriptor* d = FindDescriptor("alasm-5.09");
+    ASSERT_NE(d, nullptr);
+    SourceDocument document = SourceDocument::FromText("        ORG #6000\nSTART   LD A,1\n        RET\n", "alasm");
+    document.name = "NEW";
+    EncodeOptions encode;
+    encode.subversion = d->version;
+    const std::vector<uint8_t> file = codecs::AlasmCodec().Encode(document, encode).bytes;
+    ASSERT_FALSE(file.empty());
+
+    // No stack copied: whether ALASM waits for a command is not known
+    EXPECT_FALSE(PlanInject(dump.machine, *d, file).ok);
+
+    // ALASM's command line: the line input's return (#91E3) and the command loop's (#9707) above SP
+    auto withStack = [&](uint16_t loop) {
+        std::vector<uint8_t> page5(0x4000, 0);
+        const std::vector<uint16_t> words = {0x5C78, 0x0042, 0x9084, 0x9043, 0x8EF2, 0xBF15, 0x7FFD, 0x9199, 0x91E3, loop};
+        for (size_t k = 0; k < words.size(); ++k)
+        {
+            page5[0x1FBE + 2 * k] = static_cast<uint8_t>(words[k]);
+            page5[0x1FBE + 2 * k + 1] = static_cast<uint8_t>(words[k] >> 8);
+        }
+        return page5;
+    };
+    const std::vector<uint8_t> busyStack = withStack(0x9733);   // a command running (the editor, ASSEMBLE)
+    dump.machine.ram.push_back({5, busyStack});
+    dump.machine.sp = 0x5FBE;
+    const InjectPlan busy = PlanInject(dump.machine, *d, file);
+    EXPECT_FALSE(busy.ok);
+    EXPECT_NE(busy.error.find("not waiting for a command"), std::string::npos) << busy.error;
+
+    const std::vector<uint8_t> idleStack = withStack(0x9707);
+    dump.machine.ram.back() = {5, idleStack};
+    const InjectPlan plan = PlanInject(dump.machine, *d, file);
+    ASSERT_TRUE(plan.ok) << plan.error;
+    EXPECT_EQ(plan.page, 6);
+    EXPECT_TRUE(plan.previous.ok);
+    EXPECT_EQ(plan.previous.name, "SNAKE");
+
+    // Written: the reader gives the file back, marked changed since saved
+    for (symbols::MemoryPage& page : dump.machine.ram)
+        if (page.page == 6)
+            page.bytes = plan.bytes;
+    const SyncText back = ReadText(dump.machine, *d);
+    ASSERT_TRUE(back.ok);
+    EXPECT_EQ(back.file, file);
+    EXPECT_EQ(back.name, "NEW");
+    EXPECT_TRUE(back.changed);
+
+    // That text now has changes not saved: another write needs force
+    EXPECT_FALSE(PlanInject(dump.machine, *d, file).ok);
+    InjectOptions force;
+    force.force = true;
+    EXPECT_TRUE(PlanInject(dump.machine, *d, file, force).ok);
 }

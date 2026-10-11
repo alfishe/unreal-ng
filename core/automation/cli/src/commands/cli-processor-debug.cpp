@@ -43,7 +43,7 @@ std::string StepStopLine(const Emulator& emulator)
 bool CLIProcessor::RunControlHeld(const ClientSession& session, const std::shared_ptr<Emulator>& emulator)
 {
     EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
-    if (!ctx || !ctx->IsRunControlClaimed())
+    if (!ctx || !ctx->IsRunControlClaimed() || HoldsControl(ctx))
         return false;
     session.SendResponse("Error: Run-control held by " + ctx->GetRunControlState().surfaceLabel +
                          ". Use that surface to step.");
@@ -69,7 +69,7 @@ void CLIProcessor::HandleStepIn(const ClientSession& session, const std::vector<
 
     // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
     auto* ctx = emulator->GetContext();
-    if (ctx && ctx->IsRunControlClaimed())
+    if (ctx && ctx->IsRunControlClaimed() && !HoldsControl(ctx))
     {
         auto state = ctx->GetRunControlState();
         std::stringstream ss;
@@ -246,7 +246,7 @@ void CLIProcessor::HandleStepOver(const ClientSession& session, const std::vecto
 
     // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
     auto* ctx = emulator->GetContext();
-    if (ctx && ctx->IsRunControlClaimed())
+    if (ctx && ctx->IsRunControlClaimed() && !HoldsControl(ctx))
     {
         auto state = ctx->GetRunControlState();
         std::stringstream ss;
@@ -478,7 +478,7 @@ void CLIProcessor::HandleSteps(const ClientSession& session, const std::vector<s
 
     // Check run-control claim (GDB TDD §3.3 / 1A.7.2)
     auto* ctx = emulator->GetContext();
-    if (ctx && ctx->IsRunControlClaimed())
+    if (ctx && ctx->IsRunControlClaimed() && !HoldsControl(ctx))
     {
         auto state = ctx->GetRunControlState();
         std::stringstream ss;

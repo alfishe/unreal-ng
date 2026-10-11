@@ -1,4 +1,5 @@
 #include "breakpointeditor.h"
+#include "emulator/remotecontrolguard.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -360,6 +361,8 @@ bool BreakpointEditor::validateAddress(const QString& text, uint16_t& address)
 
 void BreakpointEditor::onAccept()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     // Validate input
     validateInput();
     if (!_okButton->isEnabled())

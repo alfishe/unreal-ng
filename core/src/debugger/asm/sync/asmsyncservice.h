@@ -17,6 +17,10 @@
 #include "emulator/state/statenode.h"
 
 class EmulatorContext;
+namespace unrealasm::sync
+{
+struct BuildInput;
+}
 
 class AsmSyncService
 {
@@ -29,6 +33,10 @@ public:
         std::string output;             ///< written after each build: a host file or disk:A/NAME.T ("" = none)
         std::string as = "text";        ///< the output: text, file (the assembler's format) or dialect
         std::string to;                 ///< as = dialect: the target dialect
+        /// Where the sources the text INCLUDEs come from (asm-synchronizer.md §5.4): the disk in a drive (0-3; -1 =
+        /// none) and a host folder; the disk wins over the folder when both have a name
+        int projectDrive = 0;
+        std::string projectDir;
     };
 
     /// The symbol set priority: above every loaded file, below the user's own labels
@@ -55,6 +63,8 @@ public:
 
 private:
     void Run(WatchOptions options);
+    /// The rest of the project for one build: the folder's sources and file sizes, then the disk's
+    void GatherProject(const WatchOptions& options, unrealasm::sync::BuildInput& input, std::string& note) const;
 
     EmulatorContext* _context = nullptr;
     std::thread _thread;

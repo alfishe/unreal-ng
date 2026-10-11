@@ -101,7 +101,7 @@ TEST_F(DebugSnapshot_Test, DisasmLinesWithTargets)
 
 TEST_F(DebugSnapshot_Test, DisasmLimitsAndTheWrap)
 {
-    EXPECT_EQ(DebugSnapshot::Disasm(_context, 0, 500).find("count")->i, 100);
+    EXPECT_EQ(DebugSnapshot::Disasm(_context, 0, 500).find("count")->i, static_cast<int>(DebugSnapshot::kMaxDisasmLines));
     EXPECT_EQ(DebugSnapshot::Disasm(_context, 0, 0).find("count")->i, 1);
     Poke(0xFFFE, {0x00, 0x00});
     const StateNode d = DebugSnapshot::Disasm(_context, 0xFFFE, 10);

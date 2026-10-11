@@ -1,5 +1,6 @@
 #include "soundchip_turbosound.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 
@@ -26,6 +27,15 @@ namespace
 // 100 Hz (reg bits 0-6 high, value low). Queue entries are TTD state, so a
 // switch still pending at a checkpoint is restored with its T-state
 constexpr uint8_t kSsgClockMarker = 0x80;
+
+// A mixed level [-1, 1] as a 16-bit sample. Two chips (and the FM parts) summed go past full scale: clamped,
+// since a float out of the int16_t range converts to an undefined value. Scaled in the level's own type: a sample
+// in range is what the plain conversion gave
+template <typename Level>
+int16_t ToSample(Level level)
+{
+    return static_cast<int16_t>(std::clamp(level * INT16_MAX, Level(INT16_MIN), Level(INT16_MAX)));
+}
 
 SsgWrite ClockMarker(int64_t t, uint32_t hz)
 {
@@ -324,14 +334,14 @@ void SoundChip_TurboSound::handleStep()
                 float c1R = static_cast<float>(values[3]);
 
                 // Store per-chip buffers for registry-driven capture
-                _chip0Buffer[_ayBufferIndex]     = static_cast<int16_t>(c0L * INT16_MAX);
-                _chip0Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c0R * INT16_MAX);
-                _chip1Buffer[_ayBufferIndex]     = static_cast<int16_t>(c1L * INT16_MAX);
-                _chip1Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c1R * INT16_MAX);
+                _chip0Buffer[_ayBufferIndex]     = ToSample(c0L);
+                _chip0Buffer[_ayBufferIndex + 1] = ToSample(c0R);
+                _chip1Buffer[_ayBufferIndex]     = ToSample(c1L);
+                _chip1Buffer[_ayBufferIndex + 1] = ToSample(c1R);
 
                 // Combined output
-                leftSample = static_cast<int16_t>((c0L + c1L) * INT16_MAX);
-                rightSample = static_cast<int16_t>((c0R + c1R) * INT16_MAX);
+                leftSample = ToSample(c0L + c1L);
+                rightSample = ToSample(c0R + c1R);
             }
             else
             {
@@ -341,6 +351,7 @@ void SoundChip_TurboSound::handleStep()
 
                 double leftSum = 0.0;
                 double rightSum = 0.0;
+                double chipSums[4] = {};  // chip 0 left / right, chip 1 left / right: the per-chip buffers
                 int sampleCount = 0;
 
                 // Run generator ticks for this output sample period
@@ -370,6 +381,10 @@ void SoundChip_TurboSound::handleStep()
                     // Accumulate samples
                     leftSum += l;
                     rightSum += r;
+                    chipSums[0] += _chip0->mixedLeft();
+                    chipSums[1] += _chip0->mixedRight();
+                    chipSums[2] += _chip1->mixedLeft();
+                    chipSums[3] += _chip1->mixedRight();
                     sampleCount++;
                 }
 
@@ -377,21 +392,16 @@ void SoundChip_TurboSound::handleStep()
                 float c0L, c0R, c1L, c1R;
                 if (sampleCount > 0)
                 {
-                    // Split the accumulated sums per chip for per-chip buffers
-                    // In LQ mode we don't have separate accumulators, so approximate
-                    // by using current chip output ratios
-                    double total = leftSum + rightSum;
-                    double r0 = (total > 0) ? (_chip0->mixedLeft() + _chip0->mixedRight()) /
-                                              (_chip0->mixedLeft() + _chip0->mixedRight() +
-                                               _chip1->mixedLeft() + _chip1->mixedRight() + 1e-9) : 0.5;
+                    // Per-chip buffers average each chip on its own (the mixer plays them). Splitting the sum by
+                    // the chips' current levels blew up: past the DC filter the levels are signed, and two chips
+                    // cancelling each other made the share hundreds of times full scale
+                    c0L = static_cast<float>(chipSums[0] / sampleCount);
+                    c0R = static_cast<float>(chipSums[1] / sampleCount);
+                    c1L = static_cast<float>(chipSums[2] / sampleCount);
+                    c1R = static_cast<float>(chipSums[3] / sampleCount);
 
-                    c0L = static_cast<float>((leftSum * r0) / sampleCount);
-                    c0R = static_cast<float>((rightSum * r0) / sampleCount);
-                    c1L = static_cast<float>((leftSum * (1.0 - r0)) / sampleCount);
-                    c1R = static_cast<float>((rightSum * (1.0 - r0)) / sampleCount);
-
-                    leftSample = static_cast<int16_t>((leftSum / sampleCount) * INT16_MAX);
-                    rightSample = static_cast<int16_t>((rightSum / sampleCount) * INT16_MAX);
+                    leftSample = ToSample(leftSum / sampleCount);
+                    rightSample = ToSample(rightSum / sampleCount);
                 }
                 else
                 {
@@ -400,15 +410,15 @@ void SoundChip_TurboSound::handleStep()
                     c0R = static_cast<float>(_chip0->mixedRight());
                     c1L = static_cast<float>(_chip1->mixedLeft());
                     c1R = static_cast<float>(_chip1->mixedRight());
-                    leftSample = static_cast<int16_t>((c0L + c1L) * INT16_MAX);
-                    rightSample = static_cast<int16_t>((c0R + c1R) * INT16_MAX);
+                    leftSample = ToSample(c0L + c1L);
+                    rightSample = ToSample(c0R + c1R);
                 }
 
                 // Store per-chip buffers
-                _chip0Buffer[_ayBufferIndex]     = static_cast<int16_t>(c0L * INT16_MAX);
-                _chip0Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c0R * INT16_MAX);
-                _chip1Buffer[_ayBufferIndex]     = static_cast<int16_t>(c1L * INT16_MAX);
-                _chip1Buffer[_ayBufferIndex + 1] = static_cast<int16_t>(c1R * INT16_MAX);
+                _chip0Buffer[_ayBufferIndex]     = ToSample(c0L);
+                _chip0Buffer[_ayBufferIndex + 1] = ToSample(c0R);
+                _chip1Buffer[_ayBufferIndex]     = ToSample(c1L);
+                _chip1Buffer[_ayBufferIndex + 1] = ToSample(c1R);
             }
 
             // Store samples in combined output buffer

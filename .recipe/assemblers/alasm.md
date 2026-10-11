@@ -107,6 +107,31 @@ The same commands. 4.42 - 4.5 report `Symbols:#0005-#FF6C-#C000`; 3.8c shows a h
 send ENTER before the first command), has no `DB` (the line errs with code `#0D`: write `DEFB`) and says `System
 data mismatch` when asked to assemble with no text.
 
+### A host source into ALASM (5.09)
+
+At the `A>` prompt, `asm_source {"action":"sync_inject","path":"/abs/main.asm"}` writes a sjasmplus source (or any
+dialect with `from`) as ALASM's current text; `a` + ENTER then assembles it. Refused in the editor and while a
+command runs. Whether ALASM waits for a command shows on its stack: the return addresses `#91E3` (the line input)
+and `#9707` (the command loop) follow each other above SP. A command, the editor included, has `#9733` in that slot.
+Details and the oracle script:
+[asm-sources.md](../analysis/asm-sources.md#writing-a-host-source-into-the-assembler-part-b).
+
+### A host source into an ALASM snapshot or disk, no emulator (5.09)
+
+`zxasm` does it on files. The idle template is ALASM 5.09 at `A>` with no text
+(`core/src/3rdparty/unreal-asm/testdata/templates/alasm-5.09.szx`, also `.sna` and `.z80`; made by
+`tools/verification/unreal-asm/emulator/make-template.py alasm509 <ALASM509.trd> out.szx --also sna,z80`):
+
+```bash
+zxasm inject main.asm alasm-5.09.szx -o work.szx       # main.asm (sjasmplus) as ALASM's text; load work.szx, type a + ENTER
+zxasm probe work.szx                                   # alasm-5.09  100  MAIN, 1242 bytes  idle
+zxasm extract work.szx --to sjasmplus -o back.asm      # and back
+zxasm inject main.asm disk.trd --assembler alasm-5.09  # MAIN.H on a disk (.scl .fdi .udi .td0 too): w + main + ENTER in ALASM loads it
+```
+
+The same on a surface: `asm_source {"action":"sync_inject","path":"/abs/main.asm","snapshot":"/abs/alasm-5.09.szx","output":"/abs/work.szx"}`
+(the machine is not touched; `sync_extract` / `sync_probe` / `sync_status` take `snapshot` too).
+
 ## WebAPI
 
 `tools/verification/unreal-asm/emulator/assemble-in-emulator.py alasm509 <ALASM509.trd> <source.$H> <address> <length> <out.bin>
@@ -127,3 +152,9 @@ those of [tasm.md](tasm.md#webapi) with `RUN "alasm64"` and the ALASM commands a
 - **`IF` before 5.03 is `IF0`**: the same code `#D3`, renamed in 5.03; it takes the block when the expression is 0
   (ALASM 4.2's help, checked in ALASM 5.0). `IFN` takes it when not 0.
 - **`UNTIL` (4.5 … 5.05) and `UNTIL0` (5.07 …)** are one keyword (`#D2`): `zxasm encode --version` picks the spelling.
+- **`ADD B` puts nothing down in 5.09**: write `ADD A,B` (also ADC, SBC). Seen when the instruction oracle came out one
+  byte short per `ADD x` / `ADD A,x` pair.
+- **`DW "AB"` puts down `41 42`** (the characters), not the word `#4142` other assemblers make of `'AB'`.
+- **A template saved in the editor is refused**: the idle rule wants the `A>` prompt (`zxasm probe` says `busy`).
+- **unreal-ng's `.z80` writer** can start a run right after a single `ED`, and the page then reads wrong in every
+  reader (reported). Prefer `.szx` for templates; `zxasm probe` on each format shows whether they agree.

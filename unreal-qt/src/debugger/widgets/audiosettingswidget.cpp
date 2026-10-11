@@ -206,7 +206,7 @@ void AudioSettingsWidget::createUI()
     ayLayout->addWidget(_punchVoicingHint);
 
     // TSFM FM trim row (hidden until the device has FM channels): ±12 dB in
-    // 0.5 dB steps around the hardware-derived 0.30 gain default (§7.1)
+    // 0.5 dB steps around the measured hardware level (§7.1, ISSUES.md #1)
     _tsfmControls = new QWidget(_ayGroup);
     auto* fmTrimRow = new QHBoxLayout(_tsfmControls);
     fmTrimRow->setContentsMargins(0, 0, 0, 0);
@@ -589,7 +589,7 @@ void AudioSettingsWidget::refreshFromContext()
         _chip1SectionLabel->setText(isFm ? "SSG 1" : "AY1");
         _chip2SectionLabel->setText(isFm ? "SSG 2" : "AY2");
         // FM trim: one calibration for every YM2203 FM in the machine - the TurboSound FM in the socket and a
-        // ZX-MultiSound in a slot ([SOUND] TSFM_FmTrimDb on both)
+        // ZX-MultiSound in a slot ([SOUND] TSFM_FmLevelDb on both)
         double fmTrim = 0.0;
         const bool hasFmTrim = sm->fmTrimDb(fmTrim);
         _tsfmControls->setVisible(hasFmTrim);
@@ -862,7 +862,7 @@ void AudioSettingsWidget::onFmTrimChanged(int value)
         return;
 
     // Half-dB slider units -> dB, applied live to every YM2203 FM: the TurboSound FM's two chips and a ZX-MultiSound's
-    // (§7.1; the same [SOUND] TSFM_FmTrimDb calibration)
+    // (§7.1; the same [SOUND] TSFM_FmLevelDb calibration)
     const double db = value / 2.0;
     _context->pSoundManager->setFmTrimDb(db);
     _fmTrimLabel->setText(QString("%1%2 dB").arg(db >= 0 ? "+" : "").arg(db, 0, 'f', 1));

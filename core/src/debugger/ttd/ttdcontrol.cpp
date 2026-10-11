@@ -1016,8 +1016,9 @@ TTDReply TTDControlBackend<S>::Resume(const TTDRequest& request)
     const bool ok = _manager->ResumeRecordingFrom(from);
     // Recording again: the machine runs so the capture continues (a seek left it paused)
     Emulator* emulator = _context ? _context->pEmulator : nullptr;
+    // Only a pause TTD set itself (a seek, a step, its session end) is lifted: the user's pause stays
     if (ok && emulator && !OnMachineThread() && emulator->IsRunning() && emulator->IsPaused())
-        emulator->Resume();
+        emulator->Resume(execution::Requester{execution::Origin::Ttd, {}}, true);
 
     TTDReply reply;
     reply.body["resumed"] = ok;
@@ -1579,8 +1580,10 @@ TTDReply TTDControlBackend<S>::CoverageScan(const TTDRequest& request)
     uint16_t addrFrom = 0;
     uint16_t addrTo = 0xFFFF;
     std::optional<PhysPage> page;
-    uint64_t fromFrame = 0;
-    uint64_t toFrame = _manager ? _manager->ReadSessionInfo().currentEndFrame : 0;
+    // Default window: the session (frames before it hold nothing; a range from 0 was all empty buckets)
+    const TTDSessionInfo session = _manager ? _manager->ReadSessionInfo() : TTDSessionInfo{};
+    uint64_t fromFrame = session.sessionStartFrame;
+    uint64_t toFrame = session.currentEndFrame;
     size_t limit = 200;
     TTDMemorySpace space = TTDMemorySpace::Ram;
     std::string err = CoverageWindow(request, fromFrame, toFrame, limit);
@@ -1619,8 +1622,10 @@ TTDReply TTDControlBackend<S>::CoverageScan(const TTDRequest& request)
 template <class S>
 TTDReply TTDControlBackend<S>::CoverageSummary(const TTDRequest& request)
 {
-    uint64_t fromFrame = 0;
-    uint64_t toFrame = _manager ? _manager->ReadSessionInfo().currentEndFrame : 0;
+    // Default window: the session (frames before it hold nothing; a range from 0 was all empty buckets)
+    const TTDSessionInfo session = _manager ? _manager->ReadSessionInfo() : TTDSessionInfo{};
+    uint64_t fromFrame = session.sessionStartFrame;
+    uint64_t toFrame = session.currentEndFrame;
     size_t limit = 100;
     if (const std::string err = CoverageWindow(request, fromFrame, toFrame, limit); !err.empty())
         return Fail(TTDControlError::BadRequest, err);
@@ -1899,7 +1904,7 @@ void TTDControlBackend<S>::PauseAndConfirm()
     Emulator* emulator = _context ? _context->pEmulator : nullptr;
     if (!emulator || OnMachineThread() || !emulator->IsRunning() || emulator->IsPaused())
         return;
-    emulator->Pause();
+    emulator->Pause(execution::Requester{execution::Origin::Ttd, {}}, "ttd");
     emulator->WaitForPauseConfirmation(1000);
 }
 

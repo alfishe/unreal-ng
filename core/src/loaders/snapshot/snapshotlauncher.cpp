@@ -5,12 +5,12 @@
 #include <algorithm>
 #include <cctype>
 
-#include "debugger/ttd/timetravelhooks.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/media/modelswitch.h"
 #include "emulator/platform.h"
+#include "loaders/nex/loadernex.h"
 #include "loaders/snapshot/loaderspg.h"
 #include "loaders/snapshot/snapshotpipeline.h"
 #include "loaders/snapshot/szx/loaderszx.h"
@@ -27,6 +27,11 @@ bool SnapshotLauncher::RequiredModel(const std::string& path, std::string& model
             return false;
         model = LoaderSPG::kModel;
         ramKb = LoaderSPG::kRamKb;
+    }
+    else if (ext == "nex")
+    {
+        model = LoaderNex::kModel;
+        ramKb = LoaderNex::kRamKb;
     }
     return true;
 }
@@ -47,6 +52,15 @@ bool SnapshotLauncher::NeedOf(const std::string& path, MEM_MODEL runningModel, u
         need.description = "TS-Conf";
         const TMemModel* tsconf = Config::FindModelByShortName(need.model);
         need.differs = tsconf && runningModel != tsconf->Model;
+    }
+    else if (ext == "nex")
+    {
+        need.model = LoaderNex::kModel;
+        need.ramKb = LoaderNex::kRamKb;
+        need.programOnly = true;
+        need.description = "ZX Spectrum Next";
+        const TMemModel* next = Config::FindModelByShortName(need.model);
+        need.differs = next && runningModel != next->Model;
     }
     else if (ext == "szx")
     {
@@ -110,8 +124,8 @@ SnapshotLoadResult SnapshotLauncher::Load(const SnapshotLoadRequest& request)
             return out;
         }
 
-        // The recorded history belongs to this machine (D26): not while TTD records
-        if (std::string refusal = emulator->RecordingGuard(ttd::TTDGuardedAction::SwitchModel); !refusal.empty())
+        // The recorded history belongs to this machine (D26): the coordinator decides (logged)
+        if (std::string refusal = emulator->AskModelSwitch("to " + out.requiredModel); !refusal.empty())
         {
             out.message = refusal;
             return out;

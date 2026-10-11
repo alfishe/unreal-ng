@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+#include <optional>
+
 #include "mediacontrol.h"
 
 #include "emulator/media/mediachanges.h"
@@ -208,29 +210,20 @@ namespace
 
     /// The parked emulator: a save or export reads the medium while the guest
     /// cannot write to it (the same thing SaveDisk does)
+    /// The CPU held for a media operation (Emulator::CpuHold); the pause is left as it was
     class ParkedEmulator
     {
     public:
-        explicit ParkedEmulator(EmulatorContext* context) : _emulator(context ? context->pEmulator : nullptr)
+        explicit ParkedEmulator(EmulatorContext* context)
         {
-            if (_emulator && _emulator->IsRunning() && !_emulator->IsPaused())
-            {
-                _emulator->Pause(false);
-                _emulator->WaitForPauseConfirmation(1000);
-                _parked = true;
-            }
-        }
-        ~ParkedEmulator()
-        {
-            if (_parked)
-                _emulator->Resume(false);
+            if (Emulator* emulator = context ? context->pEmulator : nullptr)
+                _hold.emplace(*emulator, "media");
         }
         ParkedEmulator(const ParkedEmulator&) = delete;
         ParkedEmulator& operator=(const ParkedEmulator&) = delete;
 
     private:
-        Emulator* _emulator = nullptr;
-        bool _parked = false;
+        std::optional<Emulator::CpuHold> _hold;
     };
 
     std::string SlotList(const MediaManager& manager)

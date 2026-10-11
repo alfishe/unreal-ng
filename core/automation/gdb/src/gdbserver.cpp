@@ -13,6 +13,7 @@
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/ttd/timetravelmanager.h>
+#include <emulator/coordinator/machineop.h>
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/ttd/ttdsession.h>
 #include <debugger/ttd/ttdexternalevents.h>
@@ -36,6 +37,32 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
+
+namespace
+{
+/// Where the GDB client is ("192.168.1.5:51234"): the GUI shows it while the session holds run control
+std::string PeerAddressOf(int socket)
+{
+    sockaddr_storage address{};
+    socklen_t length = sizeof(address);
+    if (getpeername(socket, reinterpret_cast<sockaddr*>(&address), &length) != 0)
+        return {};
+    char host[INET6_ADDRSTRLEN] = {};
+    if (address.ss_family == AF_INET)
+    {
+        const auto* v4 = reinterpret_cast<const sockaddr_in*>(&address);
+        inet_ntop(AF_INET, &v4->sin_addr, host, sizeof(host));
+        return std::string(host) + ":" + std::to_string(ntohs(v4->sin_port));
+    }
+    if (address.ss_family == AF_INET6)
+    {
+        const auto* v6 = reinterpret_cast<const sockaddr_in6*>(&address);
+        inet_ntop(AF_INET6, &v6->sin6_addr, host, sizeof(host));
+        return "[" + std::string(host) + "]:" + std::to_string(ntohs(v6->sin6_port));
+    }
+    return "local socket";
+}
+}  // namespace
 
 GDBServer::GDBServer() = default;
 
@@ -208,6 +235,7 @@ void GDBServer::acceptLoop()
 
 void GDBServer::handleClient(int clientSocket)
 {
+    coordinator::SetThreadSource(coordinator::OpSource::Gdb);   // the operation log names this session's operations
     auto session = std::make_unique<GDBSession>(clientSocket);
     session->setAutoAttach(_autoAttach);
 
@@ -318,6 +346,22 @@ void GDBSession::stop()
     _context = nullptr;
 }
 
+bool GDBSession::RefuseAfterTakeBack(const std::string& packet)
+{
+    if (!_context || !_context->IsRunControlRevoked(_sessionUuid))
+        return false;
+    // Reads, queries, breakpoints and detach stay; whatever runs, steps or writes the machine is refused
+    const char c = packet[0];
+    const bool controls = c == 'c' || c == 'C' || c == 's' || c == 'S' || c == 'b' || c == 'G' || c == 'P' ||
+                          c == 'M' || c == 'X' || packet.starts_with("vCont;");
+    if (!controls)
+        return false;
+    sendPacket("O" + GDBPacket::hexEncode("revoked_by_user: the user took control back at the emulator's GUI; this "
+                                          "session no longer controls the machine. Do not retry - detach, and ask "
+                                          "the user before attaching again.\n"));
+    return true;
+}
+
 bool GDBSession::sendPacket(const std::string& data)
 {
     std::string packet = GDBPacket::encode(data);
@@ -394,6 +438,9 @@ std::string GDBSession::handlePacket(const std::string& packet)
     {
         return handleInterrupt();
     }
+
+    if (RefuseAfterTakeBack(packet))
+        return "E5E";
 
     char cmd = packet[0];
     std::string args = packet.substr(1);
@@ -838,12 +885,12 @@ std::string GDBSession::handleMonitor(const std::string& cmd)
                 }
                 else if (Emulator::IsTapeExtension(ext))
                 {
-                    refusal = _emulator->RecordingGuard(ttd::TTDGuardedAction::LoadTape);
+                    refusal = _emulator->AskMediaChange(Emulator::MediaChange::LoadTape, 0, path);
                     ok = refusal.empty() && _emulator->LoadTape(path);
                 }
                 else if (ext == "trd" || ext == "scl" || ext == "fdi")
                 {
-                    refusal = _emulator->RecordingGuard(ttd::TTDGuardedAction::LoadDisk);
+                    refusal = _emulator->AskMediaChange(Emulator::MediaChange::LoadDisk, 0, path);
                     ok = refusal.empty() && _emulator->LoadDisk(path);
                 }
                 else
@@ -1478,10 +1525,11 @@ std::string GDBSession::handleContinue()
 
     _waitingForStop = true;
     _externalStopPending = false;
-    _emulator->Resume();
+    _emulator->Resume(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()});
 
-    // Wait for stop (breakpoint, external pause, or interrupt)
-    while (_active && !_emulator->IsPaused() && !_externalStopPending)
+    // Wait for stop (breakpoint, external pause, interrupt, or the user taking control back at the GUI)
+    while (_active && !_emulator->IsPaused() && !_externalStopPending &&
+           !(_context && _context->IsRunControlRevoked(_sessionUuid)))
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
@@ -1511,7 +1559,7 @@ std::string GDBSession::handleStep()
 
     if (!_emulator->IsPaused())
     {
-        _emulator->Pause();
+        _emulator->Pause(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()}, "gdb");
     }
 
     // Execute single instruction
@@ -1525,7 +1573,7 @@ std::string GDBSession::handleInterrupt()
 {
     if (_emulator && !_emulator->IsPaused())
     {
-        _emulator->Pause();
+        _emulator->Pause(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()}, "gdb");
     }
 
     _lastStopReason = StopReason::Interrupt;
@@ -1696,14 +1744,15 @@ std::string GDBSession::handleAttach(const std::string& pid)
     // Pause if running
     if (!_emulator->IsPaused())
     {
-        _emulator->Pause();
+        _emulator->Pause(execution::Requester{execution::Origin::Gdb, _sessionUuid.toString()}, "gdb");
     }
 
     // Take run-control claim (TDD §3.3)
     if (_context)
     {
         std::string errorReason;
-        if (!_context->TakeRunControl(_sessionUuid, "gdb", &errorReason))
+        if (!_context->TakeRunControl(_sessionUuid, "gdb", &errorReason, "GDB", std::chrono::milliseconds(0),
+                                      PeerAddressOf(_socket)))
         {
             // Another surface holds the claim - report but don't fail attach
             // (read-only operations still allowed)

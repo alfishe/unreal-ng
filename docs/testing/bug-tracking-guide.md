@@ -358,6 +358,8 @@ Close:     developer commits → agent fills Date Fixed + Commit ID → 🟢 →
 - [`docs/inprogress/PLAN.md`](../inprogress/PLAN.md) — cumulative plan, T1–T4 priorities
 - [`AGENTS.md`](../../AGENTS.md) — project rules: commits, build caps, checks matrix, WebAPI test sequence
 - [`core/tests/README.md`](../../core/tests/README.md) — test patterns and non-negotiables
+- [`sanitizers.md`](sanitizers.md) — the instruments for memory / thread / lifetime bugs: ASan, UBSan, TSan, the WebAPI
+  stress, hang sampling, leaks, crash reports
 - [`docs/guidelines/performance-guidelines.md`](../guidelines/performance-guidelines.md) — hot paths and the A/B measurement procedure (§4)
 - [`docs/guidelines/cross-platform-compatibility.md`](../guidelines/cross-platform-compatibility.md) — zero-warning cross-platform constraints
 - [`.recipe/README.md`](../../.recipe/README.md) — MCP/WebAPI automation recipes (media, TTD, tracing, TR-DOS)

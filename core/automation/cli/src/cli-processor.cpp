@@ -83,6 +83,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"list", &CLIProcessor::HandleList},
                         {"select", &CLIProcessor::HandleSelect},
                         {"reset", &CLIProcessor::HandleReset},
+                        {"ops", &CLIProcessor::HandleOps},        // Operation log (machine state coordinator)
                         {"nmi", &CLIProcessor::HandleNmi},    // Pulse the NMI line
                         {"mni", &CLIProcessor::HandleMni},    // Scorpion magic button (NMI + service monitor)
                         {"switch", &CLIProcessor::HandleSwitch},  // Front-panel switches (Profi TURBO)
@@ -103,6 +104,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"run_frames", &CLIProcessor::HandleRunFrames},             // Run N frames
                         {"run_ncycles", &CLIProcessor::HandleRunNCycles},           // Run N CPU cycles
                         {"memory", &CLIProcessor::HandleMemory},
+                        {"session", &CLIProcessor::HandleSession},  // automation session: take / release run control
                         {"rtc", &CLIProcessor::HandleRtc},   // CMOS clock: report, read / write cells
                         {"cmos", &CLIProcessor::HandleRtc},
                         {"romflash", &CLIProcessor::HandleRomFlash},  // ZX-Evo flash ROM: the saved flash
@@ -111,6 +113,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"net", &CLIProcessor::HandleNetwork},
                         {"find", &CLIProcessor::HandleFind},  // Search Z80 memory for a byte pattern
                         {"debug-snapshot", &CLIProcessor::HandleDebugSnapshot},  // One coherent debugger snapshot (DebugSnapshot)
+                        {"next", &CLIProcessor::HandleNext},  // ZX Spectrum Next: write a NextREG (NextRegWriteControl), `next dma` ...
                         {"out", &CLIProcessor::HandlePortOut},  // A debugger's port write through the decoder (PortWrite)
                         {"debug-wait", &CLIProcessor::HandleDebugWait},  // Long-poll on the debugger snapshot's seq
                         {"pchist", &CLIProcessor::HandlePcHistory},      // PC history with pages (PcHistory)
@@ -345,6 +348,20 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
         return;
     }
 
+    // The user took control back from this connection's session at the GUI (execution arbiter design §6a): the
+    // command does not run, the session is over - final, the client must not retry or take control again by itself
+    if (!_controlSession.isNil() && _controlEmulator && _controlEmulator->GetContext() &&
+        _controlEmulator->GetContext()->IsRunControlRevoked(_controlSession))
+    {
+        _controlSession = unreal::UUID();
+        _controlEmulator.reset();
+        session.SendResponse(std::string("Error: revoked_by_user - the user took control back at the emulator's GUI; "
+                                         "this session has ended. Do not retry, and do not take control again "
+                                         "without asking the user.") + NEWLINE);
+        if (cmd != "session")
+            return;
+    }
+
     // Find and execute the command handler
     auto it = _commandHandlers.find(cmd);
     if (it != _commandHandlers.end())
@@ -353,6 +370,16 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
         {
             // Call the member function using 'this' pointer to provide context to the handler
             (this->*(it->second))(session, args);
+            // Taken back while this command ran (a long run_frames ends at once): the same final answer
+            if (!_controlSession.isNil() && _controlEmulator && _controlEmulator->GetContext() &&
+                _controlEmulator->GetContext()->IsRunControlRevoked(_controlSession))
+            {
+                _controlSession = unreal::UUID();
+                _controlEmulator.reset();
+                session.SendResponse(std::string("Error: revoked_by_user - the user took control back at the "
+                                                 "emulator's GUI; this session has ended. Do not retry, and do not "
+                                                 "take control again without asking the user.") + NEWLINE);
+            }
         }
         catch (const std::exception& e)
         {
@@ -607,6 +634,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  zxpoly start <model> [file] [--ram-power-on random|zero] - Start a ZX-Poly machine (4 synchronized <model>s; file: .zxp/.prom/disk)" << NEWLINE;
     oss << "  zxpoly status [id|index]    - ZX-Poly group status (modules, registers, lock, video mode, lockstep)" << NEWLINE;
     oss << "  reset [id|index]    - Reset the emulator (auto-select if only one, or by ID/index)" << NEWLINE;
+    oss << "  ops [n|all] | ops since <seq> [n] - Operation log: reset, snapshot, media changes, refusals (newest 20)" << NEWLINE;
     oss << "  pause [id|index]    - Pause emulation (auto-select if only one, or by ID/index)" << NEWLINE;
     oss << "  switch [turbo|cpm [on|off]] - Front-panel switches (Profi TURBO, v5 CP/M; recorded by TTD like a key)" << NEWLINE;
     oss << "  resume [id|index]   - Resume emulation (auto-select if only one, or by ID/index)" << NEWLINE;
@@ -619,6 +647,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  memory <addr> - View memory at address" << NEWLINE;
     oss << "  find <hex-pattern, ?? = any> [--space S] [--mask HEX] [--from N] [--to N] [--align 1|2] [--max N] - Search memory" << NEWLINE;
     oss << "  debug-snapshot [--disasm N] [--stack N] [--memory space:addr:len]... [--pchist N] - Registers, pages, time, code, stack, memory, PC history at one moment" << NEWLINE;
+    oss << "  next nextreg <reg> <value> [nextreg|port|internal] - ZX Spectrum Next: write a NextREG through the board's write choke point (the journal sees it); `next dma|video|palette|ports|nextreg|copper|sprites` read the reports; `next pixel <x> <y> [sx]` says which layer draws a pixel of the last frame and why; `next layer-capture [on|off]` switches the per-layer record (images: `capture screen --layer=ula|layer2|tilemap|sprites|ids`)" << NEWLINE;
     oss << "  out <port> <value> - Write a port like a CPU OUT (paging, TS-Conf registers); no breakpoints, a TTD tool edit" << NEWLINE;
     oss << "  pchist [depth] | pchist on|off - PC history: the newest instructions with their window's page" << NEWLINE;
     oss << "  debug-wait [since] [--timeout ms] - Wait until something a debugger shows changes (a stop, a run start, an edit)" << NEWLINE;
@@ -652,6 +681,9 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << NEWLINE;
     oss << "CMOS clock (ATM3 / ZX-Evo, Profi, Scorpion with SMUC):" << NEWLINE;
     oss << "  rtc | cmos | state rtc       - Time, registers A-D, alarms, every cell" << NEWLINE;
+    oss << "  session take [name] | release - Automation session: hold run control (the GUI shows it; the user can" << NEWLINE;
+    oss << "                                  take it back - then: revoked_by_user, do not retry)" << NEWLINE;
+    oss << "  state execution | exec       - Execution arbiter: intent and who set it, the command holding the CPU, queue, claim" << NEWLINE;
     oss << "  rtc read <start> [count]     - Read cells as the guest reads them (no side effects)" << NEWLINE;
     oss << "  rtc write <start> <b> [b..]  - Write cells like the guest (time registers set the clock)" << NEWLINE;
     oss << "  romflash [status]            - ZX-Evo (TS-Conf, ATM3) flash ROM: the saved flash file, unsaved changes" << NEWLINE;
@@ -824,4 +856,74 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "Type any command followed by -h or --help for more information.";
 
     session.SendResponse(oss.str());
+}
+
+CLIProcessor::~CLIProcessor()
+{
+    // The session ends with the connection
+    if (!_controlSession.isNil() && _controlEmulator && _controlEmulator->GetContext())
+        _controlEmulator->GetContext()->ReleaseRunControl(_controlSession);
+}
+
+bool CLIProcessor::HoldsControl(EmulatorContext* context) const
+{
+    return context && !_controlSession.isNil() && context->HasRunControl(_controlSession);
+}
+
+execution::Requester CLIProcessor::CliRequester(EmulatorContext* context) const
+{
+    if (HoldsControl(context))
+        return execution::Requester{execution::Origin::Cli, _controlSession.toString()};
+    return execution::Requester{execution::Origin::Cli, {}};
+}
+
+void CLIProcessor::HandleSession(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    if (!context)
+    {
+        session.SendResponse(std::string("Error: no emulator selected") + NEWLINE);
+        return;
+    }
+    const std::string sub = args.empty() ? std::string() : args[0];
+    if (sub == "take")
+    {
+        if (HoldsControl(context))
+        {
+            session.SendResponse(std::string("This connection already holds run control") + NEWLINE);
+            return;
+        }
+        const std::string client = args.size() > 1 ? args[1] : std::string("cli");
+        const unreal::UUID owner = unreal::UUID::Generate();
+        std::string reason;
+        if (!context->TakeRunControl(owner, "cli", &reason, client, std::chrono::milliseconds(0),
+                                     PeerAddressOf(session.GetSocket())))
+        {
+            session.SendResponse("Error: " + reason + " (do not retry)" + NEWLINE);
+            return;
+        }
+        _controlSession = owner;
+        _controlEmulator = emulator;
+        session.SendResponse(std::string("Run control taken: the user sees it at the GUI and can take it back. ") +
+                             "'session release' ends it; closing the connection does too." + NEWLINE);
+        return;
+    }
+    if (sub == "release")
+    {
+        if (!_controlSession.isNil() && _controlEmulator && _controlEmulator->GetContext())
+            _controlEmulator->GetContext()->ReleaseRunControl(_controlSession);
+        _controlSession = unreal::UUID();
+        _controlEmulator.reset();
+        session.SendResponse(std::string("Run control released") + NEWLINE);
+        return;
+    }
+    const EmulatorContext::RunControlState state = context->GetRunControlState();
+    std::string text = state.claimed ? "Run control held by " + state.surfaceLabel +
+                                           (state.client.empty() ? std::string() : " (" + state.client + ")") +
+                                           (HoldsControl(context) ? " - this connection" : std::string())
+                                     : std::string("Run control: free");
+    for (const auto& [key, secondsLeft] : state.cooldowns)
+        text += std::string(NEWLINE) + "  cooldown after a take-back: " + key + ", " + std::to_string(secondsLeft) + " s";
+    session.SendResponse(text + NEWLINE);
 }

@@ -74,6 +74,8 @@ add_library(unreal-asm STATIC
     src/dialects/tasm/tasmfrontend.cpp
     src/dialects/masm/masmfrontend.cpp
     src/dialects/alasm/alasmfrontend.cpp
+    src/dialects/alasm/alasmbackend.cpp
+    src/dialects/sjasmplus/sjasmplusproject.cpp
     src/dialects/gens/gensfrontend.cpp
     src/dialects/asm80/asm80frontend.cpp
     src/dialects/common/textexpr.cpp
@@ -98,6 +100,8 @@ add_library(unreal-asm STATIC
     src/dialects/zeus/zeusfrontend.cpp
     src/containers/trdos.cpp
     src/containers/tape.cpp
+    src/containers/snapshot.cpp
+    src/containers/inflate.cpp
     src/symbols/model/symbol.cpp
     src/symbols/model/symbolindex.cpp
     src/symbols/model/symbolstore.cpp
@@ -123,14 +127,23 @@ target_include_directories(unreal-asm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
 target_include_directories(unreal-asm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(unreal-asm PRIVATE ${UNREAL_ASM_WARNINGS})
 
+# The tools read and write disk images through unreal-disk (the library itself does not depend on it): embedded it is
+# the emulator's; standalone it is the sibling checkout
+if (NOT TARGET unreal-disk)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../unreal-disk ${CMAKE_CURRENT_BINARY_DIR}/unreal-disk)
+endif()
+add_library(unreal-asm-tools-common STATIC tools/common/diskfiles.cpp)
+target_link_libraries(unreal-asm-tools-common PUBLIC unreal-asm unreal-disk)
+target_compile_options(unreal-asm-tools-common PRIVATE ${UNREAL_ASM_WARNINGS})
+
 # Command-line tool: zxasm (decision D-12)
 add_executable(zxasm tools/zxasm/zxasm.cpp)
-target_link_libraries(zxasm PRIVATE unreal-asm)
+target_link_libraries(zxasm PRIVATE unreal-asm unreal-asm-tools-common)
 target_compile_options(zxasm PRIVATE ${UNREAL_ASM_WARNINGS})
 
 # Command-line tool: symconv, symbol files from any format to any format (symbols/tdd.md §10, S4)
 add_executable(symconv tools/symconv/symconv.cpp)
-target_link_libraries(symconv PRIVATE unreal-asm)
+target_link_libraries(symconv PRIVATE unreal-asm unreal-asm-tools-common)
 target_compile_options(symconv PRIVATE ${UNREAL_ASM_WARNINGS})
 
 # Examples (decision D-14): small programs on the public API, built with the library
@@ -170,9 +183,11 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/stormfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/zxasmfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/xasfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/alasmbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/pasmobackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/z88dkbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/trdos_test.cpp
+        ${UNREAL_ASM_DIR}/tests/snapshot_test.cpp
         ${UNREAL_ASM_DIR}/tests/tape_test.cpp
         ${UNREAL_ASM_DIR}/tests/dialects_test.cpp
         ${UNREAL_ASM_DIR}/tests/tasmfrontend_test.cpp

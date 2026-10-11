@@ -87,42 +87,6 @@ std::vector<uint8_t> WriteHobeta(const TrdosFile& file)
     return out;
 }
 
-bool ReadTrd(std::span<const uint8_t> image, std::vector<TrdosFile>& out, std::string& error)
-{
-    out.clear();
-    if (image.size() < 9 * kSector || image[8 * kSector + 0xE7] != 0x10)
-    {
-        error = "not a TR-DOS image (no #10 marker in the disk info sector)";
-        return false;
-    }
-    for (size_t i = 0; i < 128; ++i)
-    {
-        const std::span<const uint8_t> entry = image.subspan(i * 16, 16);
-        if (entry[0] == 0)
-            break;   // end of the catalog
-        if (entry[0] == 1)
-            continue;   // deleted
-        TrdosFile file;
-        file.name.assign(reinterpret_cast<const char*>(entry.data()), 8);
-        file.type = static_cast<char>(entry[8]);
-        file.start = static_cast<uint16_t>(entry[9] | (entry[10] << 8));
-        file.length = static_cast<uint16_t>(entry[11] | (entry[12] << 8));
-        file.sectors = entry[13];
-        const size_t offset = (static_cast<size_t>(entry[15]) * 16 + entry[14]) * kSector;
-        const size_t size = static_cast<size_t>(file.sectors) * kSector;
-        if (offset + size > image.size())
-        {
-            error = "catalog entry " + file.TrimmedName() + " points outside the image";
-            return false;
-        }
-        const size_t length = std::min<size_t>(file.length, size);   // a length beyond the sectors: as in ReadHobeta
-        file.data.assign(image.begin() + static_cast<std::ptrdiff_t>(offset), image.begin() + static_cast<std::ptrdiff_t>(offset + length));
-        file.tail.assign(image.begin() + static_cast<std::ptrdiff_t>(offset + length), image.begin() + static_cast<std::ptrdiff_t>(offset + size));
-        out.push_back(std::move(file));
-    }
-    return true;
-}
-
 namespace
 {
 constexpr size_t kPlus3dosHeader = 128;

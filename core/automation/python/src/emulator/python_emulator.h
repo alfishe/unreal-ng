@@ -1,6 +1,7 @@
 #pragma once
 
 #include "emulator/io/network/networkmanager.h"
+#include "emulator/execution/scriptsession.h"
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "debugger/memory/memoryread.h"
 #include "debugger/media/sectorwrite.h"
@@ -31,6 +32,7 @@
 #include <tapeaudio/tapeaudioimporter.h>
 #include <tapeaudio/tapeaudiorenderer.h>
 #include <emulator/video/screen.h>
+#include <emulator/video/next/nextlayerimage.h>
 #include <emulator/sound/soundcharactersettings.h>
 #include <emulator/sound/chips/neogs/neogsmedia.h>
 #include <emulator/memory/atm/evoflashrequest.h>
@@ -91,11 +93,16 @@
 #include <debugger/ttd/ttdexternalevents.h>
 #include "../../../automation.h"
 #include "../../../temporalstatus.h"
+#include "../../../operationsstatus.h"
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/sprinter/isa/isaaccess.h>
 #include <emulator/io/network/traffic/trafficaccess.h>
 #include <emulator/io/network/vnet/ethernetaccess.h>
 #include <emulator/state/devicestate.h>
+#include <common/stringhelper.h>
+#include <debugger/ports/nextregwrite.h>
+#include <emulator/io/z80n/nextregjournal.h>
+#include <emulator/io/z80n/nextreportquery.h>
 #include "../bindings/python_porttrace.h"
 #include "../bindings/python_vdac2.h"
 
@@ -412,34 +419,22 @@ namespace python_slots
 
 namespace PythonBindings
 {
-    /// Pause() -> op -> Resume() bracket shared by the mutating tape
-    /// bindings (same contract as the CLI/WebAPI handlers, design §7.1):
-    /// pause only when actually running, resume exactly then. RAII so an
-    /// early return can never leave the emulator parked.
+    /// The CPU held around every mutating tape / media operation of this surface (Emulator::CpuHold). RAII, so
+    /// an early return cannot leave it held.
     class EmulatorPauseBracket
     {
     public:
+        // The CPU held for the operation (Emulator::CpuHold, execution arbiter): nothing executes meanwhile, the
+        // pause is left as it was, nothing is broadcast. Before: Pause() + a 10 ms sleep + Resume(), which lifted a
+        // pause somebody else asked for meanwhile
         explicit EmulatorPauseBracket(Emulator* emulator)
-            : _emulator(emulator), _wasRunning(emulator && emulator->IsRunning() && !emulator->IsPaused())
         {
-            if (_wasRunning)
-            {
-                _emulator->Pause();
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));  // Give emulator time to pause
-            }
-        }
-
-        ~EmulatorPauseBracket()
-        {
-            if (_wasRunning)
-            {
-                _emulator->Resume();
-            }
+            if (emulator)
+                _hold.emplace(*emulator, "python");
         }
 
     private:
-        Emulator* _emulator;
-        bool _wasRunning;
+        std::optional<Emulator::CpuHold> _hold;
     };
 
     /// General Sound host-port stimulus. These step the card's Z80, so they go
@@ -1008,14 +1003,36 @@ namespace PythonBindings
             return Automation::GetInstance().SetVideowallSingleSyncMode(enable, emulatorId);
         }, "Enable or disable Single Emulator Sync Mode for the videowall", py::arg("enable"), py::arg("emulator_id") = "");
 
+        // The user took control back from this script's automation session (execution arbiter design §6a)
+        py::register_exception<execution::script::ControlRevoked>(m, "ControlRevoked");
+
         // Emulator class bindings
         auto emulatorClass = py::class_<Emulator>(m, "Emulator")
             // Lifecycle control
             .def("start", &Emulator::Start, "Start emulator execution")
             .def("start_async", &Emulator::StartAsync, "Start emulator asynchronously")
             .def("stop", &Emulator::Stop, "Stop emulator")
-            .def("pause", [](Emulator& self) { self.Pause(true); }, "Pause emulator")
-            .def("resume", [](Emulator& self) { self.Resume(true); }, "Resume emulator")
+            .def("pause", [](Emulator& self) -> std::string {
+                execution::script::Check(self, execution::Origin::Python);
+                const execution::Result r =
+                    self.Pause(execution::script::RequesterOf(self, execution::Origin::Python), "python");
+                return execution::script::PauseStatus(r);
+            }, "Pause emulator; returns 'paused', 'queued: <behind what>' (applies when that ends) or 'refused: <why>'")
+            .def("resume", [](Emulator& self) {
+                execution::script::Check(self, execution::Origin::Python);
+                self.Resume(execution::script::RequesterOf(self, execution::Origin::Python));
+            }, "Resume emulator")
+            // Automation session (execution arbiter design §6a): the GUI shows it and locks its controls; when the user
+            // takes control back, control calls raise ControlRevoked - stop, do not retry, do not take control again
+            // without asking the user
+            .def("take_control", [](Emulator& self, const std::string& client) {
+                std::string reason;
+                if (!execution::script::TakeControl(self, execution::Origin::Python, client, reason))
+                    throw std::runtime_error("take_control refused: " + reason + " (do not retry)");
+            }, "Open an automation session: hold run control (the user sees it and can take it back)",
+               py::arg("client") = "python")
+            .def("release_control", [](Emulator& self) { execution::script::ReleaseControl(self, execution::Origin::Python); },
+                 "End the automation session")
             .def("reset", &Emulator::Reset, "Reset emulator")
             .def("request_nmi", &Emulator::RequestNMI, "Pulse the Z80 NMI line (vector #0066)")
             .def("request_mni", &Emulator::RequestMNI,
@@ -1544,7 +1561,7 @@ namespace PythonBindings
                 Emulator::BlankDiskFormat parsed = Emulator::BlankDiskFormat::Auto;
                 if (drive < 0 || drive > 3 || !Emulator::ParseBlankDiskFormat(format, parsed)) return false;
                 if (cylinders < 0 || cylinders > 255 || sides < 0 || sides > 255) return false;
-                if (std::string refusal = self.RecordingGuard(ttd::TTDGuardedAction::CreateDisk); !refusal.empty())
+                if (std::string refusal = self.AskMediaChange(Emulator::MediaChange::CreateDisk, static_cast<uint8_t>(drive)); !refusal.empty())
                     throw std::runtime_error(refusal);  // TTD is recording: RuntimeError with the reason
                 return self.CreateBlankDisk(static_cast<uint8_t>(drive), parsed, static_cast<uint8_t>(cylinders),
                                             static_cast<uint8_t>(sides));
@@ -1602,48 +1619,61 @@ namespace PythonBindings
             // step / steps return how the run ended: {executed, stopped, breakpoint_id, address, access}
             // (stopped: a breakpoint ended it - an execution one before its instruction)
             .def("step", [](Emulator& self, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunSingleCPUCycle(skipBreakpoints);
                 const Emulator::BreakpointStop& stop = self.LastDirectStop();
                 return StepOutcome(self, (stop.hit && stop.kind == BreakpointHitKind::Execute) ? 0u : 1u);
             }, "Execute single CPU instruction; returns {executed, stopped, breakpoint_id, address, access}",
                py::arg("skip_breakpoints") = true)
             .def("steps", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 return StepOutcome(self, self.RunNCPUCycles(count, skipBreakpoints));
             }, "Execute N CPU instructions; returns {executed, stopped, breakpoint_id, address, access}",
                py::arg("count"), py::arg("skip_breakpoints") = false)
-            .def("stepover", &Emulator::StepOver, "Step over call instructions")
+            .def("stepover", [](Emulator& self) {
+                execution::script::Check(self, execution::Origin::Python);
+                self.StepOver();
+            }, "Step over call instructions")
 
             // Frame stepping
             .def("run_frame", [](Emulator& self, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunFrame(skipBreakpoints);
             }, "Execute one frame", py::arg("skip_breakpoints") = true)
             .def("run_frames", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunNFrames(count, skipBreakpoints);
             }, "Execute N frames", py::arg("count"), py::arg("skip_breakpoints") = true)
 
             // T-state and scanline stepping
             .def("run_tstates", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunTStates(count, skipBreakpoints);
             }, "Execute N T-states", py::arg("count"), py::arg("skip_breakpoints") = true)
             .def("run_to_scanline", [](Emulator& self, unsigned scanline, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunUntilScanline(scanline, skipBreakpoints);
             }, "Run until specific scanline", py::arg("scanline"), py::arg("skip_breakpoints") = true)
             .def("run_scanlines", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunNScanlines(count, skipBreakpoints);
             }, "Run N scanlines", py::arg("count"), py::arg("skip_breakpoints") = true)
             .def("run_to_pixel", [](Emulator& self, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunUntilNextScreenPixel(skipBreakpoints);
             }, "Run until next screen pixel", py::arg("skip_breakpoints") = true)
             .def("run_to_interrupt", [](Emulator& self, bool skipBreakpoints) {
+                execution::script::Check(self, execution::Origin::Python);
                 self.RunUntilInterrupt(skipBreakpoints);
             }, "Run until next interrupt", py::arg("skip_breakpoints") = true)
 
             // Tape operations
             .def("tape_load", [](Emulator& self, const std::string& path) -> bool {
-                if (std::string refusal = self.RecordingGuard(ttd::TTDGuardedAction::LoadTape); !refusal.empty())
-                    throw std::runtime_error(refusal);  // TTD is recording: RuntimeError with the reason
+                if (std::string refusal = self.AskMediaChange(Emulator::MediaChange::LoadTape, 0, path); !refusal.empty())
+                    throw std::runtime_error(refusal);  // refused (TTD v1 while recording): RuntimeError with the reason
                 return self.LoadTape(path);
-            }, "Load tape file (RuntimeError while TTD records)", py::arg("path"))
+            }, "Load tape file (while TTD records: an event of the recording at the next frame boundary; "
+               "RuntimeError on TTD v1)", py::arg("path"))
             .def("tape_is_inserted", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
                 return ctx && ctx->pTape && !ctx->coreState.tapeFilePath.empty();
@@ -1978,7 +2008,7 @@ namespace PythonBindings
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager) return;
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
-                if (bpm) bpm->ClearBreakpoints();
+                if (bpm) bpm->ClearUserBreakpoints();
             }, "Clear all breakpoints")
             .def("bp_enable", [](Emulator& self, uint16_t id) -> bool {
                 auto* ctx = self.GetContext();
@@ -2203,16 +2233,19 @@ namespace PythonBindings
             .def("asm_convert", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) { return AsmPy(self, "convert", {{"path", path}}, kwargs); },
                  "A source in another dialect (to=, codec=, version=, from=, output=)", py::arg("path"))
             .def("asm_sync_status", [](Emulator& self, const py::kwargs& kwargs) { return AsmPy(self, "sync-status", {}, kwargs); },
-                 "The assembler running in the machine and its text (assembler=)")
-            .def("asm_sync_probe", [](Emulator& self) { return AsmPy(self, "sync-probe", {}, py::kwargs()); },
-                 "Every assembler that identifies in RAM")
+                 "The assembler running in the machine and its text (assembler=, snapshot= a .szx / .sna / .z80 file instead)")
+            .def("asm_sync_probe", [](Emulator& self, const py::kwargs& kwargs) { return AsmPy(self, "sync-probe", {}, kwargs); },
+                 "Every assembler that identifies in RAM (snapshot= a snapshot file instead)")
             .def("asm_sync_extract", [](Emulator& self, const py::kwargs& kwargs) { return AsmPy(self, "sync-extract", {}, kwargs); },
-                 "The source in RAM (as='text' | 'file' | 'dialect', to=, output=)")
+                 "The source in RAM (as='text' | 'file' | 'dialect', to=, output=, snapshot=)")
             .def("asm_sync_watch", [](Emulator& self, const py::kwargs& kwargs) { return AsmPy(self, "sync-watch", {}, kwargs); },
                  "Watch the source in RAM: live labels and hints (interval=, quiet=, as=, to=, output=)")
             .def("asm_sync_unwatch", [](Emulator& self) { return AsmPy(self, "sync-unwatch", {}, py::kwargs()); }, "Stop the watch")
             .def("asm_sync_hints", [](Emulator& self) { return AsmPy(self, "sync-hints", {}, py::kwargs()); },
                  "The last build of the watched source: labels and hints")
+            .def("asm_sync_inject", [](Emulator& self, const py::kwargs& kwargs) { return AsmPy(self, "sync-inject", {}, kwargs); },
+                 "Write a host source into the assembler as its own text (text= | path=, from=, title=, force=, backup=; "
+                 "snapshot= + output=: into a snapshot file instead)")
             .def("symbols_import_source", [](Emulator& self, const std::string& path, const py::kwargs& kwargs) {
                 return SymbolsPy(self, "import-source", {{"path", path}}, kwargs);
             }, "The labels a source defines, with values (main=, set=, policy=, generated=)", py::arg("path"))
@@ -2608,6 +2641,62 @@ namespace PythonBindings
                py::arg("format") = "png", py::arg("full") = py::none(), py::arg("area") = "", py::arg("path") = "",
                py::arg("source") = "")
             
+            .def("capture_screen_layer", [](Emulator& self, const std::string& layer, const std::string& format, py::object alpha,
+                                             const std::string& path) -> py::dict {
+                py::dict result;
+                const NextLayer::Result shot = NextLayer::Request(self.GetContext(), layer, format,
+                                                                  alpha.is_none() ? std::string() : (alpha.cast<bool>() ? "true" : "false"), path);
+                if (shot.status != NextLayer::Status::Ok)
+                {
+                    result["success"] = false;
+                    result["error"] = shot.message;
+                    result["kind"] = NextLayer::StatusName(shot.status);
+                    return result;
+                }
+                result["success"] = true;
+                result["layer"] = NextLayer::KindName(shot.kind);
+                result["format"] = shot.rgba ? "rgba" : "png";
+                result["alpha"] = shot.alpha;
+                result["width"] = shot.width;
+                result["height"] = shot.height;
+                result["size"] = shot.size;
+                py::dict frame;
+                frame["sequence"] = shot.sequence;
+                frame["frame_number"] = shot.frameCounter;
+                result["frame"] = frame;
+                if (shot.kind == NextLayer::Kind::Ids)
+                {
+                    py::list legend;
+                    for (unsigned id = 0; id < NextLayer::kIdCount; id++)
+                    {
+                        py::dict entry;
+                        const uint32_t c = NextLayer::IdColour(id);
+                        char colour[8];
+                        std::snprintf(colour, sizeof colour, "#%02X%02X%02X", c & 0xFF, (c >> 8) & 0xFF, (c >> 16) & 0xFF);
+                        entry["id"] = id;
+                        entry["name"] = NextLayer::IdName(id);
+                        entry["colour"] = std::string(colour);
+                        legend.append(entry);
+                    }
+                    result["legend"] = legend;
+                }
+                if (!shot.savedFile.empty())
+                    result["file"] = shot.savedFile;
+                else
+                    result["data"] = NextLayer::Base64(shot.bytes);
+                return result;
+            }, py::arg("layer"), py::arg("format") = "png", py::arg("alpha") = py::none(), py::arg("path") = "",
+               "ONE LAYER of the last completed frame of a ZX Spectrum Next (design-layer-capture.md): 'ula' (with the border and LoRes), "
+               "'layer2', 'tilemap', 'sprites' - a PNG with alpha 0 where the layer does not paint (format='rgba': the raw bytes; "
+               "alpha=False: flattened onto the fallback colour) - or 'ids' (each pixel coloured by the layer that won it, legend in "
+               "the answer). 640 x 512, the geometry of capture_screen(). Returns a dict like capture_screen (base64 'data' or 'file'); "
+               "success=False with kind 'not-next' / 'layer-capture-off' / 'no-frame' / 'bad-parameter' otherwise")
+            .def("next_layer_capture_control", [](Emulator& self, py::object enabled) -> py::object {
+                return StateNodeToPy(DeviceState::NextLayerCaptureControl(self.GetContext(), enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0)));
+            }, py::arg("enabled") = py::none(),
+               "Switch (enabled=True/False) or report the per-layer record of the Next screen (on by default; takes effect at the next frame "
+               "start): available, enabled, frames, last_frame, bytes")
+
             // Audio state
             .def("audio_is_muted", [](Emulator& self) -> bool {
                 auto* ctx = self.GetContext();
@@ -2781,6 +2870,141 @@ namespace PythonBindings
                "Sprinter ZX (Spectrum) mode: active, the launcher configuration (each .ZX option from the hardware, the "
                "launcher's text in RAM), best-matching mode file with confidence, clock (CNF request, F12, MHz), frame / INT, "
                "ROMs by CRC, the decode of #7FFD / #1FFD / #01FD / #xxFD / #FE / #1F; deep=False skips the whole-RAM search")
+            .def("next_state", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::Next(self.GetContext())); },
+               "ZX Spectrum Next machine state (machine type, CPU clock, DivMMC, interrupts, CTC, SPI); available=False elsewhere")
+            .def("next_regs", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextRegs(self.GetContext())); },
+               "The NextREG table: number, name, access, value, reset")
+            .def("next_mmu", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextMmu(self.GetContext())); },
+               "The eight 8K MMU slots and the paging latches")
+            .def("next_reg_journal", [](Emulator& self, py::object regs, py::object sources, py::object since, py::object from_frame,
+                                        py::object to_frame, py::object limit) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextRegJournalQuery query;
+                std::string error;
+                if (!NextRegJournalQueryFromStrings(text(regs), text(sources), text(since), text(from_frame), text(to_frame),
+                                                    text(limit), query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextRegJournalReport(self.GetContext(), query));
+            }, py::arg("regs") = py::none(), py::arg("sources") = py::none(), py::arg("since") = py::none(),
+               py::arg("from_frame") = py::none(), py::arg("to_frame") = py::none(), py::arg("limit") = py::none(),
+               "NextREG write journal: who wrote which register (regs='07,02'), through the NEXTREG instruction, port #253B or "
+               "the copper (sources='nextreg,port,copper,internal'), with frame, T, PC, value and previous; off by default - "
+               "next_reg_journal_control(enabled=True) first")
+            .def("next_reg_journal_control", [](Emulator& self, py::object enabled, bool clear, size_t capacity) -> py::object {
+                const int enable = enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0);
+                return StateNodeToPy(DeviceState::NextRegJournalControl(self.GetContext(), enable, clear, capacity));
+            }, py::arg("enabled") = py::none(), py::arg("clear") = false, py::arg("capacity") = 0,
+               "Switch (enabled=True/False), clear or resize (capacity=N) the NextREG write journal")
+            .def("next_dma", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextDma(self.GetContext())); },
+               "The Next DMA as programmed and running (mode, ports A / B, direction, burst, prescaler, counters, status byte); reading it "
+               "does not advance its read sequence; available=False elsewhere")
+            .def("next_video", [](Emulator& self) -> py::object { return StateNodeToPy(DeviceState::NextVideo(self.GetContext())); },
+               "The Next video layers: layer order, ULA / Layer 2 / tilemap / sprites switches, clip windows, transparency, raster")
+            .def("next_palette", [](Emulator& self, py::object palette, py::object range) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextPaletteQuery query;
+                std::string error;
+                if (!NextPaletteQueryFromStrings(text(palette), text(range), query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextPalette(self.GetContext(), query));
+            }, py::arg("palette") = py::none(), py::arg("range") = py::none(),
+               "The Next's 9-bit palettes: palette=0..7 | 'sprites_1' | 'all' (default the selected one), range='0-15'; no side effect")
+            .def("next_ports", [](Emulator& self, py::object port, const std::string& access) -> py::object {
+                std::string portText;
+                if (py::isinstance<py::int_>(port))
+                    portText = StringHelper::Format("%llx", static_cast<unsigned long long>(port.cast<long long>()));
+                else if (!port.is_none())
+                    portText = py::str(port);
+                NextPortsQuery query;
+                std::string error;
+                if (!NextPortsQueryFromStrings(portText, access, query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextPorts(self.GetContext(), query));
+            }, py::arg("port") = py::none(), py::arg("access") = "r",
+               "The internal port enable word (NR #82-#85) and, with port (int, or hex text), which device answers a read ('r') or write ('w')")
+            .def("next_nextreg", [](Emulator& self, py::object reg, bool changed) -> py::object {
+                std::string regText;
+                if (py::isinstance<py::int_>(reg))
+                    regText = StringHelper::Format("%llx", static_cast<unsigned long long>(reg.cast<long long>()));
+                else if (!reg.is_none())
+                    regText = py::str(reg);
+                NextRegReadQuery query;
+                std::string error;
+                if (!NextRegReadQueryFromStrings(regText, changed ? "true" : "", query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextRegRead(self.GetContext(), query));
+            }, py::arg("reg") = py::none(), py::arg("changed") = false,
+               "One NextREG with decoded bits (reg=7 or '07'), or all of them (changed=True: only those that differ from their reset); "
+               "no side effect")
+            .def("next_copper", [](Emulator& self, py::object from_index, py::object count, bool raw) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextCopperQuery query;
+                std::string error;
+                if (!NextCopperQueryFromStrings(text(from_index), text(count), raw ? "true" : "", query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextCopper(self.GetContext(), query));
+            }, py::arg("from_index") = py::none(), py::arg("count") = py::none(), py::arg("raw") = false,
+               "The copper list as a disassembly (from_index, count: a window of 1024 words), the control mode, write address and pc; "
+               "raw=True adds the whole list as hex; no side effect")
+            .def("next_sprites", [](Emulator& self, py::object from_index, py::object count, bool all) -> py::object {
+                auto text = [](const py::object& value) -> std::string {
+                    if (value.is_none())
+                        return std::string();
+                    return py::str(value);
+                };
+                NextSpritesQuery query;
+                std::string error;
+                if (!NextSpritesQueryFromStrings(text(from_index), text(count), all ? "true" : "", query, error))
+                    throw py::value_error(error);
+                return StateNodeToPy(DeviceState::NextSprites(self.GetContext(), query));
+            }, py::arg("from_index") = py::none(), py::arg("count") = py::none(), py::arg("all") = false,
+               "The 128 sprite attributes decoded (the visible ones of the page; all=True lists every one), switches, collision flags (not "
+               "cleared), pattern memory summary")
+            .def("next_pixel", [](Emulator& self, int x, int y, py::object sx) -> py::object {
+                NextPixelQuery query;
+                std::string error;
+                if (!NextPixelQueryFromStrings(std::to_string(x), std::to_string(y), sx.is_none() ? std::string() : std::to_string(sx.cast<int>()), query, error))
+                    throw py::value_error(error);
+                const StateNode report = DeviceState::NextPixel(self.GetContext(), query);
+                const StateNode* available = report.find("available");
+                if (available && available->kind == StateNode::Kind::Bool && !available->b)
+                    throw py::value_error("This machine is not a ZX Spectrum Next");
+                const StateNode* ok = report.find("ok");
+                if (ok && ok->kind == StateNode::Kind::Bool && !ok->b)
+                    throw std::runtime_error(report.find("message") ? report.find("message")->s : std::string("no frame"));
+                return StateNodeToPy(report);
+            }, py::arg("x"), py::arg("y"), py::arg("sx") = py::none(),
+               "The pixel inspector of the last captured Next frame (design-layer-capture.md): x 0-319, y 0-255, sx the sub-pixel 0 or 1. "
+               "Returns winner {layer, id}, colour {rgb9, rgb}, layer_order and per layer (ula, layer2, tilemap, sprites) opaque, rgb9, wins, why "
+               "and source (where the pixel byte came from). ValueError for a bad coordinate or another machine, RuntimeError with the layer "
+               "capture off or before the first frame")
+            .def("next_nextreg_write", [](Emulator& self, int reg, int value, const std::string& door) -> py::object {
+                if (reg < 0 || reg > 255 || value < 0 || value > 255)
+                    throw py::value_error("reg and value must be 0..255");
+                NextRegWriteControl::Door which = NextRegWriteControl::Door::NextReg;
+                if (!NextRegWriteControl::ParseDoor(door, which))
+                    throw py::value_error("door must be nextreg, port or internal");
+                const NextRegWriteControl::Result result =
+                    NextRegWriteControl::Write(&self, static_cast<uint8_t>(reg), static_cast<uint8_t>(value), which, "python");
+                if (!result.ok)
+                    throw std::runtime_error(result.error);
+                return StateNodeToPy(NextRegWriteControl::ToState(result));
+            }, py::arg("reg"), py::arg("value"), py::arg("door") = "nextreg",
+               "Write a NextREG through the board's write choke point (the NextREG journal sees it); door='nextreg' (the NEXTREG "
+               "instruction), 'port' (OUT #243B / #253B) or 'internal'; paused, stopped or between frames. ValueError for a bad "
+               "argument, RuntimeError when it is not a Next or no coherent moment came")
             .def("sprinter_pld_journal", [](Emulator& self, py::object kinds, py::object since, py::object from_frame,
                                             py::object to_frame, py::object limit, const std::string& source) -> py::object {
                 auto text = [](const py::object& value) -> std::string {
@@ -2890,6 +3114,9 @@ namespace PythonBindings
                     throw py::value_error(reply.message);
                 return StateNodeToPy(reply.ToValue());
             }, "Change network settings: card='none'|'zxnetusb'|'zxwifi'|'atm2ioesp' (a list with ','), host_access=True|False, dns_mode='host'|'pass', hosts='name=ip,...', forwards='tcp:host:guest,...', remote_access=True|False (the host listeners of guest servers: 0.0.0.0, every interface, or 127.0.0.1 only; alone it keeps every connection), connect_timeout_ms=n, com_port='none'|'loopback'|'tcp:host:port'|'serial:device[,baud]'|'espnet[,baud]'|'at[,firmware][,baud]' (firmware: 'esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222', for this module alone) (the machine's serial port: the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's or the ZX Profi v5's 8251; an ESP module's baud defaults to the port's, 38400 on ATM2, else 115200), zx_wifi='at'|'espnet'|... (the ZX-WiFi card's ESP), com_modem_lines=True|False, esp_chip='esp32'|'esp8266'|'esp8266-at221'|'esp8266-at222' (the Sprinter's SprinterESP takes an ESP8266 build, else esp8266-at222), isa1_peer / isa2_peer='at'|'modem[,guest port]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (Sprinter: a UART card's line - SprinterESP default 'at', ISA modem default 'modem', SprinterSerial COM1 default 'none'), isa1_peer_b / isa2_peer_b (SprinterSerial COM2), modem_phonebook='5551234=host:port,...' (the numbers a Hayes modem peer dials; com_port='modem' puts one on any machine's serial port), avr_firmware='baseconf'|'base2010'..'base2023'|'ts'|'ts2013'|'ts2016-02'|'ts2016-04' (ZX-Evo), kbc_firmware='none'|'v22-7'..'v41' (ATM Turbo 2+ keyboard controller; com_port is its RS-232 from v31 on), atm2ioesp='at'|'espnet'|... and atm2ioesp_address=0xF0|0xF8 (the ATM2IOESP card on the ATM Turbo 2+ INTERNAL I/O connector), zifi='none'|'at[,firmware]'|'zifi-native[,s3|esp01s]'|'loopback'|'tcp:host:port'|'serial:device[,baud]' (TS-Conf, ZX-Evo with a TS firmware: the ZiFi board's ESP; 'at' = the original ESP-01, NonOS AT 1.7.4 unless an ESP8266 build is named; 'zifi-native' = the 2026 firmware, s3 = ESP32-S3-Zero, esp01s = ESP-01S), ethernet_mode='nat'|'bridge' and bridge_adapter='en0' (the frame cards: the gateway's NAT or their frames on a host adapter, see network_adapters()). A card value that changes the ZX-bus cards (zxnetusb, zxwifi) is a slot change applied by a machine restart (replace=True allows removals / an unrealistic fit, dry_run=True returns the plan, media='save'|'discard'; the other keys are applied to the restarted machine, emu_get_selected()); other settings apply at the next frame boundary, every connection closes (status 'accepted'). Returns the reply dict (ok, status, message, plan, restart, network); ValueError with the reason when refused")
+            .def("execution_state", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DeviceState::Execution(self.GetContext()));
+            }, "Execution arbiter: phase, intent (run / pause) and who set it, main loop, the command holding the CPU, queue, run-control claim, counters, driver_violations")
             .def("rtc_state", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DeviceState::Rtc(self.GetContext()));
             }, "CMOS clock: part, ports, NVRAM file, time base, time, registers A-D, alarms, cell dump; available=False without one")
@@ -3036,14 +3263,14 @@ namespace PythonBindings
             }, "MoonSound (OPL4) state: overview (part=''), the FM half (part='fm') or the wavetable half (part='pcm')",
                py::arg("part") = "")
             // NeoGS media: checked here, carried out on the machine's thread
-            // (neogsmedia.h); true when accepted. Insert / eject are refused
-            // while a TTD recording runs
+            // (neogsmedia.h); true when accepted. Insert / eject follow the media
+            // rules (while TTD records: an event at the next frame boundary)
             .def("gs_sd_insert", [](Emulator& self, const std::string& path) -> bool {
                 return NeoGSMediaAccepted(NeoGSRequestSdInsert(self.GetContext(), path));
-            }, "NeoGS: insert an SD card image (refused while a TTD recording runs)", py::arg("path"))
+            }, "NeoGS: insert an SD card image (while TTD records: an event at the next frame boundary)", py::arg("path"))
             .def("gs_sd_eject", [](Emulator& self) -> bool {
                 return NeoGSMediaAccepted(NeoGSRequestSdEject(self.GetContext()));
-            }, "NeoGS: remove the SD card (refused while a TTD recording runs)")
+            }, "NeoGS: remove the SD card (while TTD records: an event at the next frame boundary)")
             .def("gs_flash_save", [](Emulator& self) -> bool {
                 return NeoGSMediaAccepted(NeoGSRequestFlashSave(self.GetContext()));
             }, "NeoGS: save the reprogrammed flash (loaded in place of the shipped image with [NGS] FlashWrite=persist)")
@@ -3819,9 +4046,9 @@ namespace PythonBindings
             .def("key_type", [](Emulator& self, const std::string& text, uint16_t charDelayFrames) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
-                ctx->pDebugManager->GetKeyboardManager()->TypeText(text, charDelayFrames);
-                return true;
-            }, "Type text with auto modifier handling", py::arg("text"), py::arg("delay_frames") = 2)
+                // false: a character no key types, nothing typed
+                return ctx->pDebugManager->GetKeyboardManager()->TypeText(text, charDelayFrames).empty();
+            }, "Type text with auto modifier handling (False: a character no key types, nothing typed)", py::arg("text"), py::arg("delay_frames") = 2)
             .def("key_trdos_command", [](Emulator& self, const std::string& keyword, const std::string& argument) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
@@ -4840,6 +5067,12 @@ namespace PythonBindings
         .def("video_text", [](Emulator& self, unsigned layer) -> py::object {
             return StateNodeToPy(DeviceState::VideoText(self.GetContext(), layer));
         }, "Text grid of a text mode (ATM / ZX-Evo)", py::arg("layer") = 0)
+        // The operation log (machine state coordinator): reset, snapshot load, media changes, refusals included - the
+        // OperationsStatus report every interface returns. since: entries after that seq; limit: the newest N (0: all)
+        .def("operations", [](Emulator& self, uint64_t since, uint64_t limit) -> py::object {
+            return StateNodeToPy(OperationsStatus::Report(&self, since, static_cast<size_t>(limit)));
+        }, py::arg("since") = 0, py::arg("limit") = 0,
+           "Operation log: reset, snapshot load, media changes, refusals; {mode, last_seq, capacity, entries[]}")
         // Temporal effects (ZX DLSS de-flicker): status and switch, the TemporalStatus report every interface returns
         .def("video_temporal", [](Emulator& self) -> py::object {
             return StateNodeToPy(TemporalStatus::Report(self.GetContext()));
@@ -5362,13 +5595,12 @@ namespace PythonBindings
                 const bool featureWasOff = fm && !fm->isEnabled(Features::kRecording);
                 if (featureWasOff) fm->setFeature(Features::kRecording, true);
 
-                const bool wasRunning = self.IsRunning() && !self.IsPaused();
-                if (wasRunning) self.Pause();
-
-                const bool started = rm->StartRecording(filename, format, audio, static_cast<uint32_t>(videoBitrate),
-                                                        static_cast<uint32_t>(audioBitrate));
-
-                if (wasRunning) self.Resume();
+                bool started = false;
+                {
+                    Emulator::CpuHold hold(self, "python recording");  // no frame mid-start; the pause stays
+                    started = rm->StartRecording(filename, format, audio, static_cast<uint32_t>(videoBitrate),
+                                                 static_cast<uint32_t>(audioBitrate));
+                }
 
                 if (!started)
                 {

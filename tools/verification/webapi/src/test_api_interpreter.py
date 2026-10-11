@@ -101,8 +101,11 @@ print('MOUSE_PY_OK')
             pytest.skip("Lua interpreter not available")
 
         # Nothing is bound: the fixture started (and selected) active_emulator,
-        # so mouse_* must act on it via effectiveEmulator().
+        # so mouse_* must act on it via effectiveEmulator(). Paused, like the Python
+        # test: on a running machine input waits for the next instruction boundary
         code = """
+local emu = assert(emu_get('__EMU_ID__'))
+emu:pause()
 local st = assert(mouse_set_counters(31, 85))
 st = assert(mouse_move(10, -5))
 assert(st.x == 41 and st.y == 80, "move: " .. tostring(st.x) .. "," .. tostring(st.y))
@@ -124,8 +127,9 @@ assert(mouse_buttons({"left", "middle"}).buttons.middle == true, "buttons")
 assert(mouse_release_all().buttons.left == false, "release_all")
 assert(#mouse_button_names() == 3, "names")
 assert(mouse_status().x == 41, "status")
+emu:resume()
 print("MOUSE_LUA_OK")
-"""
+""".replace("__EMU_ID__", active_emulator)
         resp = api_client.exec_lua(code)
         assert resp["success"] is True, resp
         assert "MOUSE_LUA_OK" in resp.get("output", ""), resp

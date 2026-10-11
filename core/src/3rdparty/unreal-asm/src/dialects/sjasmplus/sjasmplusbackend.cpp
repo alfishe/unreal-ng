@@ -119,7 +119,8 @@ struct Writer
     int repeatCounter = 0;
     std::vector<int> repeatStack;
     bool sameDialect = false;   // the program was parsed from sjasmplus: directives kept as text are written back
-    bool displacementFlag = false;   // DISP / ENT also keep a DEFINE that says whether a displacement is active
+    bool displacementFlag = false;
+    bool orgPageWarned = false;   // "ORG with a page" is said once a file   // DISP / ENT also keep a DEFINE that says whether a displacement is active
     const std::set<std::string>* redefinable = nullptr;   // names some line assigns with "="
     int trueValue = 0;   // what the source's comparisons give when true (ir::Program::trueValue); sjasmplus gives -1
     std::set<std::string> ifUsedNames{};   // labels some file tests with IFUSED: their definitions set a DEFINE
@@ -505,8 +506,12 @@ struct Writer
         switch (s.directive)
         {
             case ir::DirectiveKind::Org:
-                if (s.args.size() > 1)
+                if (s.args.size() > 1 && !orgPageWarned)
+                {
+                    // Once a file: the first such line
+                    orgPageWarned = true;
                     diagnostics.push_back({Severity::Warning, line, 0, "ORG with a page: the source's page numbers follow its own memory layout; check the page for sjasmplus' DEVICE"});
+                }
                 return {"ORG " + args()};
             case ir::DirectiveKind::Equ:
                 if (redefinable && redefinable->count(label))
@@ -528,7 +533,18 @@ struct Writer
                     return {"DUP " + Print(s.args[0]), "DB " + Operands(s.operands), "EDUP"};
                 }
                 if (s.args.size() <= 2)
+                {
+                    // A 16-bit word count: ALASM's DS -$ fills up to #10000 (the rest of memory), sjasmplus' would move
+                    // $ back
+                    if (wordBits == 16 && !s.args.empty() && s.args[0].kind == Expr::Kind::Unary && s.args[0].op == Op::Negate)
+                    {
+                        std::string out = "DS " + Print(Masked16(s.args[0]));
+                        for (size_t k = 1; k < s.args.size(); ++k)
+                            out += "," + Print(s.args[k]);
+                        return {out};
+                    }
                     return {"DS " + args()};
+                }
                 return {"DUP " + Print(s.args[0]), "DB " + args(1), "EDUP"};
             case ir::DirectiveKind::Include:
             {

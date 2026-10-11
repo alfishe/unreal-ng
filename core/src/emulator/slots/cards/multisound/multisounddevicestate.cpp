@@ -321,7 +321,7 @@ StateNode MultiSound(EmulatorContext* context)
     ym["master_clock_hz"] = uint64_t(pair.config().masterClockHz);
     ym["selected_chip"] = int(report.latches.ymChip);
     ym["ratio_phase"] = report.ymRatioPhase;
-    ym["fm_trim_db"] = card.FmTrimDb();   // the TSFM board's fm_trim_db: [SOUND] TSFM_FmTrimDb, the same calibration
+    ym["fm_trim_db"] = card.FmTrimDb();   // the TSFM board's fm_trim_db: [SOUND] TSFM_FmLevelDb, the same calibration
     StateNode chips = StateNode::Array();
     for (int c = 0; c < 2; c++)
     {

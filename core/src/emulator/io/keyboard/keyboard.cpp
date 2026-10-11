@@ -98,6 +98,15 @@ Keyboard::Keyboard(EmulatorContext* context)
 
 Keyboard::~Keyboard()
 {
+    DetachHostInput();
+}
+
+void Keyboard::DetachHostInput()
+{
+    if (_hostInputDetached)
+        return;
+    _hostInputDetached = true;
+
     // Unsubscribe from MessageCenter events
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Observer* observerInstance = static_cast<Observer*>(this);

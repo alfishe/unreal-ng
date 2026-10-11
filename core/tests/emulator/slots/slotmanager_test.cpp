@@ -151,7 +151,7 @@ std::string DescribeConfigCards(const CONFIG& config)
 const std::vector<std::string>& ShippedConfigFolders()
 {
     static const std::vector<std::string> folders = {
-        "atm3", "atm450", "atm710", "pentagon128k", "pentagon512k", "profi", "profi3", "profscorp", "scorpion",
+        "atm3", "atm450", "atm710", "next", "pentagon128k", "pentagon512k", "profi", "profi3", "profscorp", "scorpion",
         "spectrum128", "spectrum2", "spectrum2a", "spectrum3", "spectrum48", "sprinter", "ts-conf", "zx-diagnostics",
     };
     return folders;

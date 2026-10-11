@@ -14,6 +14,8 @@
 // notification in response to its own CMD_PAUSE / CMD_CONTINUE.
 
 #include "dzrpserver.h"
+#include "emulator/execution/executionarbiter.h"
+#include "common/uuid.h"
 #include "3rdparty/message-center/eventqueue.h"
 
 #include <cstdint>
@@ -95,6 +97,13 @@ public:
     // (CLI / GUI / analyzers) are preserved.
     void onSessionClosed() override;
 
+    // Automation session (execution arbiter design §6a): the connected DeZog holds the emulator's run control - the
+    // GUI shows "dezog (DeZog) from <peer>" and locks; the user can take it back (controlTakenBack)
+    void onClientConnected(const std::string& peer) override;
+    bool controlTakenBack() const override;
+    /// The protocol the session came over, shown to the user with it ("DeZog (DZRP)", "DeZog (ZRCP)")
+    void setSessionClientName(std::string name) { _sessionClientName = std::move(name); }
+
     // --- Instruction history over TTD ---
     // Entries are served from the TTD per-frame decode cache
     // (TimeTravelController::GetFrameCache): a DeZog index is mapped to
@@ -173,6 +182,11 @@ private:
     void onBreakpointMessage(int id, Message* message);
 
     mutable std::mutex _mutex;
+    std::string _peer;              // where the connected DeZog is ("host:port")
+    std::string _sessionClientName = "DeZog";
+    unreal::UUID _sessionOwner;     // the run-control claim of the session (nil: none, another surface held it)
+    /// Who asks, for the execution arbiter: this session when it holds run control, else DeZog alone
+    execution::Requester sessionRequester() const;
     std::shared_ptr<Emulator> _emulator;              // Explicit binding (nullptr = dynamic)
     PauseNotifier _notifier;
 

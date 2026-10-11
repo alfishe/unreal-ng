@@ -18,6 +18,8 @@
 #include <json/json.h>
 
 #include <map>
+#include <memory>
+#include <utility>
 #include <string>
 
 #include "mcp-dispatcher.h"
@@ -39,6 +41,12 @@ public:
     };
 
     std::map<std::string, std::pair<int, Json::Value>> routes; // "METHOD path" → {status, body}
+    std::string session;          // the automation session the tools set (take_control / release_control)
+    bool revokeOnNextCheck = false;  // the user takes control back during the next call
+
+    void SetSession(const std::string& sessionId) override { session = sessionId; }
+    std::string Session() const override { return session; }
+    bool TakeRevoked() override { return std::exchange(revokeOnNextCheck, false); }
     std::pair<int, Json::Value> fallback{200, Json::Value()};
     std::vector<RecordedCall> calls;
 
@@ -272,6 +280,129 @@ TEST_F(McpDispatcher_Test, ToolsCall_RoutesThroughToolHandlerWithDualContent)
     EXPECT_FALSE(response["result"].isMember("isError"));
 }
 
+// A client that hands the model only content[] (claude.ai connectors) must still see the data: the structuredContent
+// comes back as JSON text in a second content block (MCP 2025-06-18, Structured Content)
+TEST_F(McpDispatcher_Test, ToolsCall_EchoesStructuredContentAsText)
+{
+    Json::Value params;
+    params["name"] = "emulator_manage";
+    params["arguments"]["action"] = "list";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    const Json::Value& content = response["result"]["content"];
+    ASSERT_EQ(content.size(), 2u);
+    EXPECT_EQ(content[1]["type"].asString(), "text");
+    Json::Value echoed;
+    Json::CharReaderBuilder reader;
+    std::string errors;
+    const std::string text = content[1]["text"].asString();
+    std::unique_ptr<Json::CharReader> parser(reader.newCharReader());
+    ASSERT_TRUE(parser->parse(text.data(), text.data() + text.size(), &echoed, &errors)) << errors;
+    EXPECT_EQ(echoed, response["result"]["structuredContent"]);
+}
+
+// debug_code disassemble writes the listing into the text itself (one line per instruction, labels, targets) and
+// does not repeat the JSON
+TEST_F(McpDispatcher_Test, DebugCodeDisassemble_ListingInTheText)
+{
+    Json::Value body;
+    body["address"] = 0x7396;
+    body["count"] = 3;
+    Json::Value call;
+    call["address"] = 0x7396;
+    call["bytes"] = "CD0074";
+    call["mnemonic"] = "call #7400";
+    call["size"] = 3;
+    call["label"] = "engine";
+    call["target"] = 0x7400;
+    call["targetLabel"] = "draw";
+    body["instructions"].append(call);
+    Json::Value load;
+    load["address"] = 0x7399;
+    load["bytes"] = "DD7E05";
+    load["mnemonic"] = "ld a,(ix+5)";
+    load["size"] = 3;
+    load["effectiveAddress"] = 0x5C05;
+    body["instructions"].append(load);
+    Json::Value ret;
+    ret["address"] = 0x739C;
+    ret["bytes"] = "C9";
+    ret["mnemonic"] = "ret";
+    ret["size"] = 1;
+    body["instructions"].append(ret);
+    _caller->routes["GET /api/v1/emulator/emu-1/disasm?count=3&address=0x7396"] = {200, body};
+
+    Json::Value params;
+    params["name"] = "debug_code";
+    params["arguments"]["action"] = "disassemble";
+    params["arguments"]["address"] = "0x7396";
+    params["arguments"]["count"] = 3;
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    ASSERT_FALSE(response["result"].isMember("isError")) << response.toStyledString();
+    const Json::Value& content = response["result"]["content"];
+    ASSERT_EQ(content.size(), 1u);
+    EXPECT_EQ(content[0]["text"].asString(),
+              "Disassembly [target emu-1]: 3 instruction(s) at 0x7396\n"
+              "engine:\n"
+              "7396  CD 00 74      call #7400            ; -> draw\n"
+              "7399  DD 7E 05      ld a,(ix+5)           ; ea #5C05\n"
+              "739C  C9            ret");
+    EXPECT_EQ(response["result"]["structuredContent"], body);
+}
+
+// A WebAPI error stays an error with the WebAPI message (no listing, no echo)
+TEST_F(McpDispatcher_Test, DebugCodeDisassemble_BadAddressIsAnError)
+{
+    Json::Value error;
+    error["error"] = "Bad Request";
+    error["message"] = "address must be 0-65535";
+    _caller->routes["GET /api/v1/emulator/emu-1/disasm?count=16&address=zz"] = {400, error};
+
+    Json::Value params;
+    params["name"] = "debug_code";
+    params["arguments"]["action"] = "disassemble";
+    params["arguments"]["address"] = "zz";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    EXPECT_TRUE(response["result"]["isError"].asBool());
+    EXPECT_NE(response["result"]["content"][0]["text"].asString().find("address must be"), std::string::npos);
+}
+
+// inspect_state takes the address as debug_code does: "0x11CB" threw "Value is not convertible to UInt". A mnemonic that
+// names its target label itself gets no "-> label" note
+TEST_F(McpDispatcher_Test, InspectStateDisasm_HexStringAddress)
+{
+    Json::Value body;
+    body["address"] = 0x0005;
+    Json::Value jump;
+    jump["address"] = 0x0005;
+    jump["bytes"] = "C3CB11";
+    jump["mnemonic"] = "jp START-NEW (#11CB)";
+    jump["size"] = 3;
+    jump["target"] = 0x11CB;
+    jump["targetLabel"] = "START-NEW";
+    body["instructions"].append(jump);
+    _caller->routes["GET /api/v1/emulator/emu-1/disasm?count=1&address=5"] = {200, body};
+
+    Json::Value params;
+    params["name"] = "inspect_state";
+    params["arguments"]["aspects"].append("disasm");
+    params["arguments"]["address"] = "0x0005";
+    params["arguments"]["count"] = "1";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+
+    ASSERT_FALSE(response["result"].isMember("isError")) << response.toStyledString();
+    const std::string text = response["result"]["content"][0]["text"].asString();
+    EXPECT_NE(text.find("0005  C3 CB 11      jp START-NEW (#11CB)"), std::string::npos) << text;
+    EXPECT_EQ(text.find("; -> START-NEW"), std::string::npos) << text;
+
+    params["arguments"]["address"] = "zz";
+    response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    EXPECT_TRUE(response["result"]["isError"].asBool());
+    EXPECT_NE(response["result"]["content"][0]["text"].asString().find("address (0-65535)"), std::string::npos);
+}
+
 TEST_F(McpDispatcher_Test, ToolsCall_UnknownTool_IsInvalidParams)
 {
     Json::Value params;
@@ -496,4 +627,52 @@ TEST_F(McpDispatcher_Test, PromptsGet_IsError)
     params["name"] = "anything";
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("prompts/get", params));
     EXPECT_EQ(response["error"]["code"].asInt(), mcp::kInvalidParams);
+}
+
+/// Automation sessions (execution arbiter design §6a): take_control keeps the session for every later call
+TEST_F(McpDispatcher_Test, TakeControlKeepsTheSessionAndReleaseControlDropsIt)
+{
+    Json::Value list;
+    list["count"] = 1;
+    Json::Value e;
+    e["id"] = "e1";
+    list["emulators"].append(e);
+    _caller->routes["GET /api/v1/emulator"] = {200, list};
+    Json::Value opened;
+    opened["session"] = "11111111-2222-4333-8444-555555555555";
+    _caller->routes["POST /api/v1/emulator/e1/control/session"] = {200, opened};
+
+    Json::Value params;
+    params["name"] = "control_execution";
+    params["arguments"]["action"] = "take_control";
+    params["arguments"]["client"] = "test agent";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    ASSERT_TRUE(response["result"].isObject());
+    EXPECT_FALSE(response["result"].isMember("isError")) << response.toStyledString();
+    EXPECT_EQ(_caller->session, "11111111-2222-4333-8444-555555555555");
+    bool sawBody = false;
+    for (const auto& call : _caller->calls)
+        if (call.method == "POST" && call.path == "/api/v1/emulator/e1/control/session")
+            sawBody = call.body["surface"].asString() == "mcp" && call.body["client"].asString() == "test agent";
+    EXPECT_TRUE(sawBody);
+
+    params["arguments"]["action"] = "release_control";
+    DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    EXPECT_TRUE(_caller->session.empty());
+}
+
+/// The user takes control back while a tool runs: whatever the tool made of the 409, the agent gets one final error
+/// that tells it to stop and not retry
+TEST_F(McpDispatcher_Test, ARevokedSessionTurnsTheResultIntoAStopError)
+{
+    _caller->revokeOnNextCheck = true;
+    Json::Value params;
+    params["name"] = "emulator_manage";
+    params["arguments"]["action"] = "list";
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    ASSERT_TRUE(response["result"].isObject());
+    EXPECT_TRUE(response["result"]["isError"].asBool());
+    const std::string text = response["result"]["content"][0]["text"].asString();
+    EXPECT_NE(text.find("revoked_by_user"), std::string::npos) << text;
+    EXPECT_NE(text.find("Do not retry"), std::string::npos) << text;
 }

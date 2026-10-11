@@ -11,7 +11,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/io/network/networkspec.h"
-#include "debugger/ttd/timetravelhooks.h"
+#include "emulator/coordinator/ports.h"
 #include "emulator/slots/card.h"
 #include "emulator/slots/slotconfig.h"
 #include "emulator/slots/slotmatrix.h"
@@ -357,7 +357,10 @@ void Network(const SlotControlRequest& request, std::shared_ptr<Emulator>& emula
         }
         if (!network->RequestChange(change, error))
         {
-            const bool recording = context->pTimeTravelHooks != nullptr && context->pTimeTravelHooks->IsRecording();
+            // The coordinator refused it (a recording the user started, the recorded past) or a setting is wrong
+            const coordinator::MachineMode mode =
+                context->pMachineOps ? context->pMachineOps->Mode() : coordinator::MachineMode::Live;
+            const bool recording = mode != coordinator::MachineMode::Live && mode != coordinator::MachineMode::BlackBox;
             reply.status = recording ? "recording" : "refused";
             reply.httpStatus = 409;
             reply.message = error;

@@ -169,6 +169,18 @@ Content-Type: application/json
 }
 ```
 
+Behind a command another client runs (`run_frames`, a step), the pause is **queued**: it applies when that
+command ends (a pause never aborts one). The answer says so at once, `202`:
+```json
+{
+  "status": "queued",
+  "message": "The pause is queued behind 'run_frames' (webapi): the pause applies when it ends. Add ?wait=true to wait for it",
+  "waiting_for": "queued behind 'run_frames' (webapi): the pause applies when it ends"
+}
+```
+The machine still runs then: registers read now are not the paused ones. `?wait=true` (30 s) or `?wait=<ms>`
+(up to 60 s) waits for the pause: `200 success` when it applied, `202 busy` when the wait ran out (still queued).
+
 #### Resume Emulator
 **Endpoint**: `POST /api/v1/emulators/{id}/resume`  
 
@@ -177,6 +189,34 @@ Content-Type: application/json
 
 #### Stop Emulator
 **Endpoint**: `POST /api/v1/emulators/{id}/stop`  
+
+#### Operation Log
+**Endpoint**: `GET /api/v1/emulator/{id}/operations[?since=<seq>&limit=<n>]`  
+**Description**: The machine's operation log (the machine state coordinator's, always on, the last 1024): reset,
+disk autostart, snapshot load, media insert / eject / discard, blank disk - with refusals. `since`: only entries
+after that seq (pass the previous answer's `last_seq` to poll); `limit`: only the newest N (absent or 0: all kept).
+400 when either is not a non-negative integer, 404 for an unknown emulator. Fields: [command-interface.md, Operation
+log](./command-interface.md). The same report is CLI `ops`, Lua / Python `operations()`, MCP `emulator_manage`
+`operations`. An operation asked for over the WebAPI is logged with source `webapi`; a request with the header
+`X-Unreal-Source: mcp` (the MCP server sends it) with `mcp`. A tape / disk load or blank disk while TTD records is
+logged `done`, mode `recording`, effect `none` (an event of the recording at the next frame boundary).
+
+**Response**:
+```json
+{
+  "mode": "live",
+  "last_seq": 3,
+  "capacity": 1024,
+  "entries": [
+    {"seq": 2, "frame": 950, "t_in_frame": 41210, "wall_ms": 1791612034211, "kind": "media-insert",
+     "source": "webapi", "mode": "recording", "status": "done", "effect": "none",
+     "summary": "tape /games/elite.tzx", "detail": ""},
+    {"seq": 3, "frame": 1130, "t_in_frame": 7, "wall_ms": 1791612040873, "kind": "media-insert",
+     "source": "qt", "mode": "live", "status": "done", "effect": "media-changed",
+     "summary": "tape /games/elite.tzx", "detail": ""}
+  ]
+}
+```
 
 ### 5. Create Emulator
 **Endpoint**: `POST /api/v1/emulator/create` (also `POST /api/v1/emulator/start` = create + start)  
@@ -427,6 +467,19 @@ GET  /api/v1/emulator/{id}/memory/region/{name} ?offset=&length=&format=hex|data
 POST /api/v1/emulator/{id}/memory/region/{name} {"offset", "hex"|"data"} write through the device's path; {"action": "save"|"load", "path", ...}
 GET  /api/v1/emulator/{id}/audio/mixer         Per-device mixer: master + host_output (held, holders / holds_taken by reason, stale_holds_cleared, frames_delivered / _audible / _held) + devices[] (source key, muted, solo, audible, volume, gain_db, peak, active, capturable)
 PUT  /api/v1/emulator/{id}/audio/mixer/{source} {"muted", "solo", "volume" | "gain_db"} - one device (master: muted); POST too
+GET  /api/v1/emulator/{id}/state/next         ZX Spectrum Next (also /state/next/regs, /state/next/mmu): machine type and timing, CPU clock, DivMMC, interrupts, CTC, SPI, the NextREG table, the 8K MMU slots
+GET  /api/v1/emulator/{id}/state/next/reg-journal ?regs=07,02&sources=nextreg,port,copper,internal&since=&from=&to=&limit= - who wrote which NextREG, when (frame, T, PC), through the NEXTREG instruction, port #253B or the copper; value, previous, name, decoded (NR #02 / #03 / #07)
+POST /api/v1/emulator/{id}/next/reg-journal   {"enabled": true|false, "clear": true, "capacity": N} - switch (off by default), clear or resize the NextREG write journal
+GET  /api/v1/emulator/{id}/state/next/dma    the Next DMA as programmed and running (mode zxn|z80, ports a/b, direction, burst, prescaler, counters, src/dst + src_kind/dst_kind, holds_bus, status); no side effect on its read sequence
+GET  /api/v1/emulator/{id}/state/next/video  layer order, ULA/Layer 2/tilemap/sprites switches, clip windows, transparency, raster, timing
+GET  /api/v1/emulator/{id}/state/next/palette ?palette=selected|0-7|name|all&range=0-255 - the 9-bit palettes; no palette index moves
+GET  /api/v1/emulator/{id}/state/next/ports  ?port=6B&access=r|w - the internal port enable word (NR #82-#85) and which device answers the port
+GET  /api/v1/emulator/{id}/state/next/nextreg ?reg=07&changed=true - one NextREG with decoded bits, or all; no side effect
+GET  /api/v1/emulator/{id}/state/next/copper ?from=0&count=64&raw=true - the copper list as a disassembly, control mode, write address (not stepped), pc, around_pc
+GET  /api/v1/emulator/{id}/state/next/sprites ?from=0&count=128&all=true - the sprite attributes decoded (visible ones unless all), switches, collision flags (not cleared), pattern memory summary
+GET  /api/v1/emulator/{id}/state/next/pixel ?x=105&y=87&sx=0 - the pixel inspector of the last captured frame: winner, colour, per layer why it painted or not and where its byte came from (400 bad query, 409 not a Next / layer capture off / no frame yet)
+POST /api/v1/emulator/{id}/next/layer-capture {"enabled": true|false} - switch the per-layer record of the Next screen (on by default); empty body = report: enabled, frames, last_frame, bytes (409 not a Next)
+POST /api/v1/emulator/{id}/next/nextreg      {"reg": "07", "value": "03", "door": "nextreg|port|internal"} - write a NextREG through the board's write choke point where nothing else drives the machine (400 bad body, 409 not a Next, 503 no coherent moment in 500 ms)
 GET  /api/v1/emulator/{id}/state/sprinter      Sprinter Sp2000 (also /state/sprinter/ports[/lookup], /text): PLD, windows, registers, clock + waits, video, accelerator, sound, Z84C15, BIOS
 GET  /api/v1/emulator/{id}/state/sprinter/video   ?page=&all=&squares= - the mode table per square: map (one letter a square), picture_mode / picture_mixed / picture_brief, HOLD, frame, RGMOD, PORT_Y, palettes_used, squares[b][a]
 GET  /api/v1/emulator/{id}/state/sprinter/palette ?k=0-7|all|used - pens (n, rgb "#RRGGBB" = R, G, B as video RAM holds them, vram address)
@@ -459,9 +512,14 @@ GET  /api/v1/emulator/{id}/state/tsconf        TS-Conf machine: build (vdac, vda
 GET  /api/v1/emulator/{id}/state/tsconf/tsu    TS-Conf TSU objects and palette for debug views: t_config, tilemap_page, sprite_page, tile_layers[] (t0 / t1: enabled, draw_tile_zero, graphics_page, x_offset, y_offset, palette bits), sprites[] (all 85 descriptors: active, leap, layer s0 / s1 / s2, x, y, width, height, flips, tile, bitmap_x, bitmap_y, palette, words[]), active_sprites, cram[] (256 cells: value, rgb) (404 on other machines)
 GET  /api/v1/emulator/{id}/state/profi         ZX Profi board chips: port_map, ppi8255, pit8253, usart8251 (404 with the reason on other machines)
 GET  /api/v1/emulator/{id}/state/rtc           CMOS clock: chip, ports, time base, time, registers A-D, alarms, cell dump (404 with the reason without one)
+GET  /api/v1/emulator/{id}/state/execution     Execution arbiter: phase, intent and who set it, main loop, the command holding the CPU, queue, claim, counters, driver_violations
+POST /api/v1/emulator/{id}/control/session     Open an automation session {client, surface webapi|mcp, lease_seconds 60}: returns session (send it as X-Unreal-Session); 409 held_by_other / revoked_cooldown (retry: false)
+GET  /api/v1/emulator/{id}/control/session     Who holds run control (surface, client, peer: where it connects from), since when, clients in a re-take cooldown
+DELETE /api/v1/emulator/{id}/control/session   End the session in X-Unreal-Session
+     (any request with X-Unreal-Session of a session the user took back at the GUI: 409 revoked_by_user, retry: false - stop, do not retry)
 GET  /api/v1/emulator/{id}/state/network       Network adapters: card ports, W5300 registers and sockets, virtual network (leases, sockets, guest servers, counters, recent activity), expansion slots (slots[]: a UART card's uart / peer / esp or modem - a Hayes modem's mode, call, DCD / RI / DSR / CTS, settings, counters, journal; SprinterSerial's second UART in channel_b), a serial port's modem peer in com.modem; 404 without an adapter
 POST /api/v1/emulator/{id}/keyboard/route      {"route": "auto|matrix|ps2|both"} - where host and injected keys go (ZX matrix, PS/2 controller of a ZX-Evo / ATM Turbo 2+, both); 409 while TTD records. GET /keyboard/status shows host_route
-POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|atm2ioesp (a list with ',')", "atm2ioesp": "at|espnet|...", "atm2ioesp_address": "0xF0|0xF8", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "remote_access": true, "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,firmware][,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266|esp8266-at221|esp8266-at222", "isa1_peer": "at|modem[,guest port]|loopback|tcp:host:port|serial:dev[,baud]", "isa2_peer": "...", "isa1_peer_b": "... (SprinterSerial COM2)", "isa2_peer_b": "...", "modem_phonebook": "5551234=host:port,...", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41", "zifi": "none|at[,firmware]|zifi-native[,s3|esp01s]|loopback|tcp:host:port|serial:dev[,baud]"} (remote_access: the host listeners of guest servers bind 0.0.0.0 (true, default: the LAN can connect) or 127.0.0.1 (false); alone it keeps every connection; state: settings.remote_access, virtual_network.listen_address; zifi: TS-Conf / ZX-Evo TS firmware, the ZiFi board's ESP, state block zifi; com_port: the machine's own serial port, the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's RS-232 or the ZX Profi v5's 8251 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550; replaceIfIncompatible / dryRun / mediaDisposition as for /slots) - change [NETWORK] settings: a card value that changes the ZX-bus cards (zxnetusb, zxwifi) is a slot change applied by a restart (owner decision Q11; the reply is the slot change envelope with plan, restart.emulatorId and network {cardChange, settingsApplied, note}; 409 refused with the plan without replaceIfIncompatible), the other keys go to the restarted machine; without a card change they apply in place (status accepted); 409 while TTD records
+POST /api/v1/emulator/{id}/network/config      {"card": "none|zxnetusb|zxwifi|atm2ioesp (a list with ',')", "atm2ioesp": "at|espnet|...", "atm2ioesp_address": "0xF0|0xF8", "host_access": true, "dns_mode": "host", "hosts": "name=ip,..", "forwards": "tcp:host:guest,..", "remote_access": true, "connect_timeout_ms": n, "com_port": "loopback|tcp:host:port|serial:dev[,baud]|espnet[,baud]|at[,firmware][,baud]|none", "zx_wifi": "at|espnet|...", "com_modem_lines": false, "esp_chip": "esp32|esp8266|esp8266-at221|esp8266-at222", "isa1_peer": "at|modem[,guest port]|loopback|tcp:host:port|serial:dev[,baud]", "isa2_peer": "...", "isa1_peer_b": "... (SprinterSerial COM2)", "isa2_peer_b": "...", "modem_phonebook": "5551234=host:port,...", "avr_firmware": "baseconf|base2010..base2023|ts|ts2013|ts2016-02|ts2016-04", "kbc_firmware": "none|v22-7..v41", "zifi": "none|at[,firmware]|zifi-native[,s3|esp01s]|loopback|tcp:host:port|serial:dev[,baud]"} (remote_access: the host listeners of guest servers bind 0.0.0.0 (true, default: the LAN can connect) or 127.0.0.1 (false); alone it keeps every connection; state: settings.remote_access, virtual_network.listen_address; zifi: TS-Conf / ZX-Evo TS firmware, the ZiFi board's ESP, state block zifi; com_port: the machine's own serial port, the ZX-Evo AVR's, the ATM Turbo 2+ keyboard controller's RS-232 or the ZX Profi v5's 8251 (state: machine_serial); zx_wifi: the ZX-WiFi card's 16550; replaceIfIncompatible / dryRun / mediaDisposition as for /slots) - change [NETWORK] settings: a card value that changes the ZX-bus cards (zxnetusb, zxwifi) is a slot change applied by a restart (owner decision Q11; the reply is the slot change envelope with plan, restart.emulatorId and network {cardChange, settingsApplied, note}; 409 refused with the plan without replaceIfIncompatible), the other keys go to the restarted machine; without a card change they apply in place (status accepted); 409 while a TTD recording you started runs or the machine is in recorded history (status recording); a background (black box) session ends instead; remote_access alone is always accepted
 GET  /api/v1/emulator/{id}/rtc/cells?start=&count=   CMOS cells as the guest reads them (peeked): {start, count, bytes[], hex}
 POST /api/v1/emulator/{id}/rtc/cells           {"start": n, "bytes": [..]} - write like the guest; answers the cells read back
 GET  /api/v1/emulator/{id}/state/isa           ISA slots (Sprinter): summary (one line per slot), #9FBD latch (value, a19_a14, aen, reset), window 3 (mapped, slot, space, page), slots[] (slot, page_io, page_mem, configured, card, enabled + why, resources (I/O ranges, memory windows, IRQ, irq_route, DMA), z80_access (the page / latch / #1FFD path), not_fitted, summary_line, the card's own fields (the ZX-bus adapter's zx_bus: the General Sound / NeoGS behind it - personality, ports #B3 / #BB / #33, cpu_addresses, status flags, machine_reset, reset_held / reset_pulses; or why its ZX-bus is empty), irq_line (the slot's IRQ line: driver, level, PIO port B bit and setup, pending / under service, reaches_cpu), counters incl. irq_rises / irq_falls / irq_pio_requests / irq_acknowledged / irq_service_ends), pio_port_b, irq_summary, conflicts; 404 on other machines
@@ -535,6 +593,8 @@ curl -s "http://localhost:8090/api/v1/emulator/$EMU/capture/screen?area=screen&p
 ```
 
 The answer always says what it is: `frame` (size, video mode, `source` `native` or `external` for a video card's picture, the emulated `frame_number`), `screen_window` (the working picture inside the frame) and `crop` (the returned image's rectangle inside the frame). Errors are JSON `{error, message, kind}`: 400 `bad-parameter` (an unknown `area`, `mode` or `format`: the message lists the allowed words; or `area` and `mode` disagree), 404 `not-found`, 409 `no-frame` (no frame presented yet), 500 `bad-geometry` / `encode-failed` / `io-failed`, 503 while the emulator shuts down. The same screenshot is on every surface: CLI `capture screen`, Lua `screenshot{}`, Python `capture_screen()`, MCP `capture_media` screenshot, Qt Tools > Save Screenshot As. See [command-interface.md](./command-interface.md).
+
+**One layer of a Next frame** - `GET /capture/screen?layer=ula|layer2|tilemap|sprites|ids` (`composed` is the ordinary screenshot above) answers with the layer of the LAST COMPLETED frame of a ZX Spectrum Next, exactly as it was drawn: the screen records the layers while it draws, per line segment, so copper bars, split screens and palette tricks are right (a re-render from the registers of the request would not be). `ula` includes the border and LoRes; the PNG has alpha 0 where the layer does not paint (`alpha=false` flattens those pixels onto the fallback colour NR #4A and makes the image opaque); `format=rgba` returns the raw R G B A bytes (640 x 512 x 4) instead of a PNG; `ids` colours every pixel by the layer that won it and the answer carries the `legend` (`id`, `name`, `colour`). The geometry is the screenshot's (640 x 512), so a layer image overlays the composed screenshot pixel for pixel. The answer adds `layer`, `alpha`, `frame {sequence, frame_number}` (the n-th frame recorded; the emulator frame it was) and no `crop` / `screen_window`. 400 `bad-parameter` (unknown layer, format or alpha; `area` other than full), 409 `not-next`, `layer-capture-off` (POST `next/layer-capture {"enabled":true}`) or `no-frame` (on, but no frame completed yet; a paused machine answers from its last frame). `GET /capture/next-layers` returns `ula layer2 tilemap sprites ids` of the same frame in one JSON (`layers.<name> {size, data}`, `legend`). The record is on by default (ini `[NEXT] LayerCapture=on|off`, cost about 4 % of a frame, 3.1 MB); `POST /next/layer-capture` switches it. CLI `capture screen --layer=`, Lua `capture_screen_layer()`, Python `capture_screen_layer()`, MCP `capture_media` screenshot with `layer`.
 
 ### Analysis & Capture
 ```
@@ -1364,7 +1424,7 @@ Full tape transport, inspection and the offline audio bridge — one-to-one with
 | Method | Endpoint | Body | Description |
 |:-------|:---------|:-----|:------------|
 | `POST` | `/tape/load` | `{"path": "..."}` | Load a tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder into the tape slot; 400 names the reason |
-| `POST` | `/tape/eject` | — | The tape leaves the tape slot; 409 while a TTD recording runs |
+| `POST` | `/tape/eject` | — | The tape leaves the tape slot; while a TTD recording runs it is an event of the recording: it lands at the next frame boundary |
 | `POST` | `/tape/play` | — | Start at consumption cursor; resumes in place when paused |
 | `POST` | `/tape/pause` | — | Freeze mid-block; next play resumes exactly there (idempotent when already paused; 400 when not playing) |
 | `POST` | `/tape/stop` | — | Terminal stop: invalidates the loaded image |
@@ -1608,7 +1668,7 @@ All TTD endpoints are scoped under `/api/v1/emulator/{id}/ttd/...` (`{id}` is th
 - States are `idle`, `recording`, `detached` (positioned in history, emulator paused).
 - `seek`, `step-back`, `step-forward`, `step-instruction`, `find-last`, `reverse-step` and `reverse-continue` while recording pause the recording (`backend: engine`, D8): state `detached`, `recording_paused: true`; `POST /ttd/resume` at the paused point continues it, running into it continues it too, `POST /ttd/stop` ends it. On `backend: v1` they return **409 Conflict** — call `POST /ttd/stop` first.
 - `start` switches the `timetravel` feature on by itself.
-- While recording (also while it is paused for browsing), tape/disk load (and disk autostart), disk create and `invalidate` return **409 Conflict** whose `message` says why and to stop the recording first. A reset, a snapshot load and a change of the machine itself (ROM load, model switch, GS `switch_personality`, a slot change) are not refused: they END the session (one rule, see [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules); a new session starts only with the `ttdrestart` feature or a black box). On a stopped session the tape / disk loads, ROM reload, a host speed change and `invalidate` drop the history; a reset and a snapshot load stop the recording and keep it. `GET /ttd/status` → `last_drop_reason` names what dropped the last history. Switching `timetravel`/`debugmode` off stops the recording cleanly instead (history kept; `last_stop_reason`: `feature-off:<feature>`); a frame the history's store does not take stops it the same way (`last_stop_reason`: `capture-failed`).
+- While recording (also while it is paused for browsing), `invalidate` returns **409 Conflict** whose `message` says why and to stop the recording first. Tape / disk load and eject (and disk autostart's insert), disk create and `/media` insert / eject / discard are accepted (on v1: 409): the change is an event of the recording and lands at the next frame boundary (on a paused machine: the next frame it runs; the slot shows `pending` meanwhile); the recording goes on. A seek to before the frame a medium came in shows that slot empty; from that frame on (and back live) the medium is there. `end_recording` still ends the recording and changes the medium at once. A reset, a snapshot load and a change of the machine itself (ROM load, model switch, GS `switch_personality`, a slot change) are not refused: they END the session (one rule, see [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules); a new session starts only with the `ttdrestart` feature or a black box). On a stopped session the tape / disk loads, ROM reload, a host speed change and `invalidate` drop the history; a reset and a snapshot load stop the recording and keep it. `GET /ttd/status` → `last_drop_reason` names what dropped the last history. Switching `timetravel`/`debugmode` off stops the recording cleanly instead (history kept; `last_stop_reason`: `feature-off:<feature>`); a frame the history's store does not take stops it the same way (`last_stop_reason`: `capture-failed`).
 - While recording (and through `detached`) the host speed is locked to 1x, turbo mode is off, and fast tape / turbo tape / fast disk read as off.
 
 Positions are always a pair `frame` (absolute frame number) + `tinframe` (offset inside the frame in T-states at the machine's top CPU clock: plain T-states on machines without a hardware turbo; ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see [command-interface.md → Time](./command-interface.md#ttd-session-rules)).

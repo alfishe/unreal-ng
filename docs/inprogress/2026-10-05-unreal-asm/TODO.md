@@ -173,12 +173,65 @@ phase; master only after the owner's review.
       - [x] MASM 1.0 demo (2026-10-10): 1.1's gap buffer from `#913A`, the cursor record at the gap start (§7.12)
       - [x] TASM 3.5 / 2.0 (2026-10-10): 3.5 as 3.0 / 3.2; 2.0 plain text at the command line, 3.x's records in the editor (§7.7)
     - [ ] Y4 48K assemblers: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
-    - [ ] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
+      - [x] GENS4 (tape), GENS3M21 (tape), GENS 4.3t (TR-DOS) (2026-10-10): `Linear`, the insert mark cleared (§7.13)
+      - [x] ZEUS 1983, 1.1, GG, v7.E (2026-10-10): `Linear` from the start / end words at `#FD00` (v7.E `#FAAB`) (§7.14)
+      - [ ] ZEUS 2.2, 3.0, 3.1, Zeus Pro 2.01, Zeus Plus 2.16
+      - [x] Laser Genius 1.04 Beta without the hash extensions (2026-10-10): `[#7F2E, (#A973))`, the `#AF` header built (§7.16)
+      - [ ] Laser Genius with the hash extensions (end `(#ADA1)`)
+      - [x] Power Assembler 3.0 (2026-10-10): text to `#1A`, the cursor line packed into TABs as SAVE does (§7.18)
+      - [x] PROMETHEUS 48K (2026-10-10): the records, checksum, FF and table from its reconstructed source (§7.17)
+      - [x] Primus 2.9 (2026-10-10): ZEUS's start / last-FF pair at `#61B1` (§7.15)
+      - [x] GENS4B (2026-10-10): started from 48K BASIC via USR 15616 / LOAD CODE / RETURN / USR 30000; text `(#7928)`-`(#7566)` (docs/disasm/software/gens4b)
+      - [ ] `RANDOMIZE USR 15619: REM : LOAD ...` returned without reading the disk (Pentagon, 48 BASIC; TTD: TR-DOS one frame, FDC only `#D0`): explain
+    - [x] Y5 projects: other texts in memory, INCLUDE from the disk or a host folder
+      - [x] INCLUDE from the disk in a drive and from host folders, option `project` (2026-10-10, §5.4)
+      - [x] other texts in memory (2026-10-10): ALASM's pages (`textsPerPage`); XAS and ZAsm hold one text
   - Part B, host → guest: sjasmplus → IR → retro backend → codec → inject into memory or a snapshot (about 60 days; §19-§20):
-    - [ ] Z0 `retrobackend` core + ALASM backend + the file image writer + inject on WebAPI / CLI / MCP, checked by ALASM assembling the injected text
-    - [ ] Z1 snapshots: inject into an existing one; the ALASM idle template (Z0 + Z1 about 10 days)
+    - [x] Z0 ALASM backend + the file image writer + inject on WebAPI / CLI / MCP / Lua / Python, checked by ALASM 5.09 assembling the injected text (2026-10-10, research-sjasmplus-to-alasm.md)
+      - [ ] a project: the INCLUDEd sources into more text pages (ALASM keeps one text per page)
+      - [ ] label values for sources of other dialects (their sjasmplus conversion's layout, symbols/fromsource.h)
+      - [ ] idle rules for the other ALASM builds (5.08 ... 3.8c): the command line's return chain in each
+      - [ ] the ALASM frontend reads `ADD B` as ADD A,B and `DW "AB"` as #4142; ALASM 5.09 puts nothing / `41 42` down: check more forms (LD HL,"AB", ADC, SBC) and fix
+      - [ ] the `retrobackend` core split out of the ALASM backend with the second target (Z3)
+    - [x] Z1 snapshots and disks both ways, no emulator needed (2026-10-10, asm-synchronizer.md §16.3, §19): `snapshot.h` (.sna / .z80 / .szx), disks through unreal-disk, `WriteAs`, `sync::InjectIntoSnapshot`; `zxasm probe / extract / inject`; `snapshot` + `output` on the sync verbs (WebAPI / CLI / MCP / Lua / Python); the ALASM 5.09 idle templates (`make-template.py`); checked by ALASM 5.09 assembling the injected snapshots and disk
+      - [ ] templates of the other assemblers (with their idle rules, Z3) and a named template list (`templates` verb) if the surfaces need it
+      - [ ] the sync verbs on a snapshot without an emulator instance in the WebAPI route (`/asm/sync/...` with no id)
+      - [x] every disk format through unreal-disk, the emulator's disk layer made a library (2026-10-10, ../2026-10-10-unreal-disk/README.md): zxasm / symconv read and write TRD, SCL, FDI, UDI, TD0, DSK, MGT ...; unreal-asm keeps no disk code
+      - [ ] +3DOS (DSK) file system in unreal-disk, if sources come on +3 disks
+      - [ ] unreal-ng's Z80 snapshot writer starts a run right after a single `ED` (`ED ED ED 05 00`): every reader takes it for 237 bytes of #05; reported, the fix is the writer's (`loader_z80.cpp` compress)
     - [ ] Z2 push watch (host file → inject on save), Inject in the Qt dock
     - [ ] Z3 backends + writers + templates: TASM, XAS, STORM, ZX-ASM, MASM
     - [ ] Z4 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM
     - [ ] Z5 sjasmplus frontend coverage of real projects (STRUCT, MODULE, DEVICE / SLOT / PAGE, SAVEBIN, DEFINE)
   - First cuts: ALASM both ways about 14 days; + TASM 4.12 about 20; + watch / push watch, hints, live labels, Qt dock about 27
+
+## Findings from The Link (2026-10-10)
+
+Every source of The Link's working disk (`testdata/machines/pentagon1024sl/TheLink.trd`, 20 ALASM sources) converted
+with `zxasm convert TheLink.trd --to sjasmplus`: all 19 objects the author's ALASM saved, and the main block of
+`THELINK.asm`, assemble byte for byte (the project: `docs/disasm/demo/thelink/sjasm/`). Found on the way:
+
+- [x] `DS -$` (fill to the end of memory: ALASM's count is a 16-bit word) became sjasmplus' negative `DS`, which
+      moves `$` back; now `DS (-$&#FFFF)` for 16-bit-word dialects (`Dialects_Test.DsOfANegativeCountFillsToTheEndOfMemory`).
+      No byte of The Link changed: the zeroed tail was never saved.
+- [x] `zxasm convert --out-codepage cp`: the converted sources in UTF-8 (readable comments); a line whose code, not
+      its comment or a `DISPLAY`, has a non-ASCII character is warned about (its string would build other bytes)
+- [x] 8-bit operand wider than a byte (`LD (HL),IMER` with `IMER=#BFBF`, `DB label`, `DB _` in a `DUP` of
+      addresses): ALASM keeps the low byte silently, sjasmplus warns "value is truncated" (no warning id, cannot be
+      silenced). Now the layout of the converted project reports every byte operand outside -256..255
+      (`LayoutResult::wideBytes`: DB, `LD r,n`, the arithmetic group, `IN` / `OUT (n)`) and the conversion writes
+      `low` there (`sjasmplusproject.cpp`, `Dialects_Test.AByteOperandTheSourceTruncatesSaysLow`).
+- [ ] ALASM's cyclic shift `x*257<1+#303>1` is spelled out as `((((((x*257&#FFFF)<<1|(x*257&#FFFF)>>>(16-1))&#FFFF)+#303&#FFFF)>>>1|...)&#FFFF)`:
+      correct, unreadable. Options: one `DEFINE`d helper per rotate, fewer masks when the operand is already masked,
+      or the value folded with a comment holding the ALASM expression.
+- [x] `ORG $,0` (a page with an address outside `#C000`): ALASM maps the page at `#C000` whatever the address, as
+      sjasmplus does, but sjasmplus warns `orgpage`; the conversion adds `; orgpage-ok` unless the address is a number
+      in `#C000`-`#FFFF` (`Dialects_Test.AnOrgPageOutsideItsSlotIsMeant`).
+- [x] "ORG with a page" is warned once per file.
+- [x] Alone Coder's Object Saver (`SAVEOBJ4`: an `ObjTab` of name, address, length, page, RUN to save): a unit that
+      INCLUDEs `SAVEOBJ*` and has an `ObjTab` ends with `SLOT 3` / `PAGE p` / `SAVEBIN "name",addr,len` per entry
+      (`Dialects_Test.TheObjectSaversTableBecomesSavebin`).
+- [x] Result: `zxasm convert TheLink.trd --to sjasmplus` assembles **unchanged**, every unit with 0 sjasmplus
+      warnings, 18 of the 19 objects on the disk equal (`tools/verification/unreal-asm/checks/objcheck.py`; the 19th,
+      `baba5`'s `BABAGS`, is from a later source than the disk's file). `zxasm convert` passes the exact INCBIN sizes
+      to the layout (`BackendOptions::fileSize`).

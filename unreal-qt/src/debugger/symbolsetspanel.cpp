@@ -1,4 +1,5 @@
 #include "symbolsetspanel.h"
+#include "emulator/remotecontrolguard.h"
 
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -111,6 +112,11 @@ void SymbolSetsPanel::onItemChanged(int row, int column)
 {
     if (_filling || (column != ColumnOn && column != ColumnPriority))
         return;
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine: the row shows what is
+    {
+        refresh();
+        return;
+    }
     const QString id = _table->item(row, ColumnId)->text();
     SymbolRequest request{"set", {{"id", id.toStdString()}}};
     if (column == ColumnOn)
@@ -128,6 +134,8 @@ void SymbolSetsPanel::onItemChanged(int row, int column)
 
 void SymbolSetsPanel::dropSelected()
 {
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return;
     const QList<QTableWidgetItem*> selected = _table->selectedItems();
     if (selected.isEmpty())
         return;

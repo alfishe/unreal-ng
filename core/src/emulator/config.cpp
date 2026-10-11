@@ -540,6 +540,17 @@ bool Config::ParseConfig(IniFile& inimanager)
     CopyStringValue(inimanager.GetValue(rom, "LSY", nullptr), config.lsy_rom_path, sizeof config.lsy_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PHOENIX", nullptr), config.phoenix_rom_path, sizeof config.phoenix_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "SPRINTER", nullptr), config.sprinter_rom_path, sizeof config.sprinter_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "NEXT", nullptr), config.next_rom_path, sizeof config.next_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "NEXTBOOT", nullptr), config.next_boot_rom_path, sizeof config.next_boot_rom_path);
+    CopyStringValue(inimanager.GetValue("NEXT", "SdCard", nullptr), config.next_sd_path, sizeof config.next_sd_path);
+    {
+        // [NEXT] LayerCapture = on|off (also 1 / 0, true / false, yes / no): default on, the measured cost is under 5 % of a frame
+        const char* word = inimanager.GetValue("NEXT", "LayerCapture", "on");
+        const std::string text = word ? StringHelper::ToLower(word) : std::string("on");
+        config.next_layer_capture = (text == "off" || text == "0" || text == "false" || text == "no") ? 0 : 1;
+        if (text != "on" && text != "off" && text != "0" && text != "1" && text != "true" && text != "false" && text != "yes" && text != "no")
+            MLOGWARNING("Config: [NEXT] LayerCapture=%s is not on or off - on used", word);
+    }
 #ifdef MOD_GSZ80
     // General Sound firmware ROM ([ROM] GS). Defaults to the shipped 32 KB
     // gs105a.rom (data/rom) so a fitted card always has firmware even when a
@@ -814,8 +825,24 @@ bool Config::ParseConfig(IniFile& inimanager)
 		}
 	}
 
-	// FM loudness trim in dB relative to the hardware-derived default (0 = default)
-	config.sound.tsfmFmTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmTrimDb", 0.0);
+	// YM2203 FM loudness trim in dB over the measured board level (0 = the real board). The old key TSFM_FmTrimDb
+	// counted from the MiSTer-derived baseline 7.4 dB below it (shipped as 7.4): a copied ini keeps its sound
+	constexpr double kOldFmTrimOfTheBoardDb = 7.4;  // the old key's value at the real board's level
+	if (inimanager.GetValue(sound, "TSFM_FmLevelDb", nullptr) != nullptr)
+	{
+		config.sound.tsfmFmTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmLevelDb", 0.0);
+	}
+	else if (inimanager.GetValue(sound, "TSFM_FmTrimDb", nullptr) != nullptr)
+	{
+		const double oldTrimDb = inimanager.GetDoubleValue(sound, "TSFM_FmTrimDb", 0.0);
+		config.sound.tsfmFmTrimDb = oldTrimDb - kOldFmTrimOfTheBoardDb;
+		MLOGWARNING("Config: [SOUND] TSFM_FmTrimDb=%.1f is obsolete, read as TSFM_FmLevelDb=%.1f (0 = the real board)",
+		            oldTrimDb, config.sound.tsfmFmTrimDb);
+	}
+	else
+	{
+		config.sound.tsfmFmTrimDb = 0.0;
+	}
 
 	// AY / SSG stereo layout ([AY] Stereo): abc (default), acb or mono. A
 	// missing key resets to the default; unknown values warn and keep it
@@ -1499,6 +1526,7 @@ std::string Config::GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB)
 		case MM_PLUS2:       return "spectrum2";
 		case MM_PLUS2A:      return "spectrum2a";
 		case MM_TSL:         return "ts-conf";
+		case MM_NEXT:        return "next";
 		default:
 			break;
 	}
@@ -1666,6 +1694,7 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
 
         case MM_SPECTRUM128:
         case MM_PLUS2:
+        case MM_NEXT:  // the bare personality runs the 128K frame
             config.intstart = 1845;
             config.intlen   = 36;   // ZX-128K ULA has 72-HC INT = 36 T-states
             break;
@@ -1762,6 +1791,7 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             case MM_PLUS2:
             case MM_PLUS2A:
             case MM_PLUS3:
+            case MM_NEXT:
                 config.frame = 70908;   // 228 * 311
                 config.t_line = 228;
                 config.intstart = 1845;

@@ -42,6 +42,7 @@ constexpr char const* NC_EMULATOR_SELECTION_CHANGED = "EMULATOR_SELECTION_CHANGE
 constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       // Emulator state change (Initialized/Run/Pause/Resume/Stop) — payload: EmulatorStateChangePayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SYSTEM_RESET = "RESET";                                // System reset event
 constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // CPU step(s) executed; the end of a direct run carries CpuStepPayload (did a breakpoint stop it)
+constexpr char const* NC_RUN_CONTROL_CHANGED = "RUN_CONTROL_CHANGED";             // An automation session took / released control, the user took it back, its lease expired, a re-take was refused - payload: RunControlChangedPayload
 constexpr char const* NC_BREAKPOINTS_CHANGED = "BREAKPOINTS_CHANGED";             // The breakpoint set changed — payload: BreakpointsChangedPayload (posted by BreakpointManager::RebuildFilters)
 constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered — payload: BreakpointTriggeredPayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               // Scanline boundary reached (debug stepping only)
@@ -666,8 +667,8 @@ struct CONFIG
 		/// 128-512 at parse; a change needs a new emulator instance.
 		unsigned gsRamKB = 128;
 
-		/// FM loudness trim in dB relative to the hardware-derived default
-		/// ([SOUND] TSFM_FmTrimDb; 0 = default)
+		/// YM2203 FM loudness trim in dB relative to the measured hardware level
+		/// ([SOUND] TSFM_FmLevelDb; 0 = the real board)
 		double tsfmFmTrimDb = 0.0;
 
 		/// Anti-alias decimator tier for the TurboSound-slot devices
@@ -933,6 +934,10 @@ struct CONFIG
 	char lsy_rom_path[FILENAME_MAX];
 	char phoenix_rom_path[FILENAME_MAX];
 	char sprinter_rom_path[FILENAME_MAX];
+	char next_rom_path[FILENAME_MAX];
+	char next_sd_path[FILENAME_MAX];       // [NEXT] SdCard: a folder (presented as a FAT16 card) or a raw image for card 0; empty = no card
+	char next_boot_rom_path[FILENAME_MAX];  // the 8K boot ROM (cores/zxnext bootrom.vhd); empty = the bare personality
+	uint8_t next_layer_capture;             // [NEXT] LayerCapture = on|off: the screen records the layers of every frame (design-layer-capture.md); default on
 
 #ifdef MOD_GSZ80
 	char gs_rom_path[FILENAME_MAX];
@@ -1177,6 +1182,12 @@ struct EmulatorState
                                                 // decoder together with hw_turbo_ratio
     uint8_t hw_clock_den_applied;               // hw_clock_den as composed into the running clock (see the _applied
                                                 // ratio above). Read through ClockDen()
+    uint8_t hw_contention_disabled;             // A board that switches the video memory contention off at run time (the Next
+                                                // above 3.5 MHz, NR #08 bit 6): 1 = off whatever the video mode says
+    uint8_t ula_timing_class;                   // A board that switches its frame timing at run time says which family
+                                                // the video logic follows: 0 = the model's own, 1 = 48K, 2 = 128K / +2,
+                                                // 3 = +2A / +3 (the frame of the 128K), 4 = Pentagon. Read by the
+                                                // per-frame video mode detection
 
     /// Denominator of the clock in effect; 1 for every machine at a whole multiple of the base clock
     uint32_t ClockDen() const { return hw_clock_den_applied > 1 ? hw_clock_den_applied : 1u; }

@@ -24,14 +24,23 @@ unreal-asm/
                                 a source with no binary on its disk)
     sync-dumps.py               profiles alasm509, alasm444, tasm412: golden RAM dumps for the asm-synchronizer, each
                                 editor state with the file the assembler saved at that moment (testdata/sync)
+    inject-oracle.py            profile alasm509: a host source written into the running assembler (sync-inject),
+                                assembled by it, its bytes compared with sjasmplus' build (part B's oracle); with
+                                --template the source goes into an idle template snapshot by `zxasm inject` and the
+                                snapshot is loaded and assembled (Z1)
+    make-template.py            profile alasm509: the assembler started from its disk and saved at its prompt with no
+                                text as .szx (--also sna,z80), checked idle by `zxasm probe`: the templates of
+                                unreal-asm testdata/templates
   oracles/                      original assemblers built or run on the host
     build-asm80.py              ASM80 / Asm80Win 2.02 (PC cross assembler) from its own C++ source: the same bytes as
                                 asm80win.exe (which also runs under wine: .recipe/assemblers/asm80.md)
   checks/                       the converted sources against cross assemblers and against what is on the disks
     roundtrip.py                every source of a set of TRD / SCL images to sjasmplus and back through the sjasmplus
                                 frontend and backend (the text must not change); optionally assembles every file
-    objcheck.py                 a converted ALASM project: every object of each main source's SAVEOBJ table built
-                                with sjasmplus against the file ALASM saved on the same disk
+    objcheck.py                 a converted ALASM project assembled as it is (the conversion writes the SAVEBIN lines of
+                                each main source's SAVEOBJ table): every object against the file ALASM saved on the same
+                                disk, and no sjasmplus warning (The Link: 18 of 19 equal, baba5's BABAGS is a later
+                                source than the disk's)
     crosscheck.py               the main sources of a set of images to sjasmplus and to pasmo / z88dk (--targets),
                                 each assembled, the bytes compared
     pasmocheck.py               pasmo's own sources through the pasmo frontend: pasmo against sjasmplus / pasmo / z80asm builds

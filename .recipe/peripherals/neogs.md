@@ -161,9 +161,9 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/control/audio/gs" -H 'Content-Type: appl
   `sd_eject`, `flash_save` reply `status: "queued"` and happen at the next
   instruction boundary (while paused: when execution continues); `done`
   means it already ran. Poll `ngs.sd.present` to confirm.
-- **`409` while TTD records or replays.** SD insert and eject (and the
-  personality switch) are refused during a TTD recording: the machine
-  configuration is fixed then. `422` means the path is empty or no file or
+- **TTD.** While a TTD recording runs, SD insert and eject are events of the
+  recording: they land at the next frame boundary (TTD v1: `409`). The
+  personality switch ends the recording. `422` means the path is empty or no file or
   folder is there (`no SD image or folder at that path`).
 - **`path` is read by the emulator process**, like every media path. For
   `dump_module` it is the opposite: a relative path with no `..`, written

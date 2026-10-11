@@ -114,7 +114,10 @@ CMake reads a few standard variables while configuring: `VCPKG_ROOT` (Windows de
 | `UNREAL_SPRINTER_ZX_FULLSTART` | set / unset (fast start) | Runs the Sprinter's full firmware start in the ZX-mode tests. | `sprinterzxsession.h:173` |
 | `UNREAL_SPRINTER_NGS_FLASH` | path to a NeoGS flash image (built-in) | Uses another NeoGS firmware in the ProPlay sound tests (comparison with MAME). | `core/tests/emulator/machines/sprinter/sprintergeneralsound_test.cpp:314` |
 | `UNREAL_NEXT_TESTS` | a ZXSpectrumNextTests folder with `release/!Z80N.snx` and `release/!Z80Nc2.snx` (tests skipped) | Real-board acceptance of the Z80N CPU library: runs the two programs (checked on real boards) on a bare host and expects no `ERR` result. Sub-second. | `core/tests/3rdparty/unreal-next-z80/z80nrealboard_test.cpp` |
+| `UNREAL_NEXT_TESTS` (also) | the same folder | `NextRealBoard_Test`: the real-board programs (`release/*.snx`) on the whole NEXT machine - NextReg defaults without error cells, NextReg #69 with its ports (border green), Z80N rows without ERR. Skipped without it. | `core/tests/emulator/machines/next/nextrealboard_test.cpp` |
 | `UNREAL_CHDMAN` | path to MAME's `chdman` (skipped) | Checks that `chdman` accepts the CHD files we write. | `core/tests/emulator/io/storage/chd/chdwriter_test.cpp:228` ([`chd.md`](../file-formats/disk-images/chd.md)) |
+| `UNREAL_EXEC_FUZZ_SEED` | a seed number (the fixed sets) | Replays one seed of the execution arbiter fuzz and of its machine fuzz (also the TTD variant); a failure prints the value to use. | `core/tests/emulator/execution/executionarbiter_fuzz_test.cpp`, `executionarbiter_machinefuzz_test.cpp` ([design §8](../inprogress/2026-10-09-execution-arbiter/design.md)) |
+| `UNREAL_EXEC_FUZZ_ITERATIONS` | a number (12 for the arbiter fuzz, 3 for the machine fuzz) | How many seeds the two fuzz tests run, from seed 1. 3000 arbiter seeds take about 3 minutes; a machine seed boots a Pentagon (about 80 ms, capped at 200). | same files |
 | `COEMU_OUT`, `COEMU_PROGRAM`, `COEMU_MACHINES`, `COEMU_MAX_FRAMES` | out folder, program base path, machine list (`48k`), frames (60000) | The co-emulation runner test; skipped without the first two. Set by `tools/verification/coemu/unreal-ng/run.sh`. | `core/tests/emulator/coemurunner_test.cpp:85` |
 
 Set by the test programs themselves (not switches): `core-tests` pins `TZ=EST5EDT` for the whole process
@@ -137,6 +140,8 @@ and skips the comparison.
 | `UNREAL_SLOTS_FITTED_UPDATE` | set / unset | **Rewrites** each folder's block in `testdata/slots/fitted-devices.txt` (the test then skips). | `core/tests/emulator/slots/slotmanager_test.cpp:217` |
 | `UNREAL_SLOTS_MATRIX_UPDATE` | set / unset | **Rewrites** the generated tables in the slot compatibility matrix document. | `core/tests/emulator/slots/slotmatrix_test.cpp:90` ([`compatibility-matrix.md`](../inprogress/2026-10-03-zx-bus-slots/compatibility-matrix.md)) |
 | `UNREAL_ASM_UPDATE_GOLDEN` | set / unset | **Rewrites** the assembler's expected `dialects/thelink/*.asm` test data. | `core/src/3rdparty/unreal-asm/tests/dialects_test.cpp:296` (`unreal-asm-tests`) |
+| `UNREAL_UPDATE_GOLDEN` | set / unset | **Rewrites** the golden text files of the label loader (`testdata/debugger/labels/*.golden.txt`) and of the Next report formats (`core/tests/automation/golden/next/*.txt`, helper `core/tests/_helpers/goldentext.h`); the comparing tests write instead of comparing. | `core/tests/debugger/labelmanager_test.cpp`, `core/tests/_helpers/goldentext.h` |
+| `UNREAL_PRINT_NEXT_RECIPE` | set / unset | **Prints** the output the Next recipe quotes (`state next dma`, `video`, `ports`, `nextreg`, `journal`, `palette`, `pixel`) from a scripted story; nothing is rewritten. | `core/tests/automation/cli-next-format_test.cpp` (`CliNextReports_Test.RecipeStory`, `CliNextReports_Test.RecipeWhichLayerDrawsThisPixel`) |
 | `UNREAL_CTPROBE_EXPORT` | set / unset | **Rewrites** `tools/verification/contention/ctprobe/ctprobe.tap/.trd/.sym` from the source. | `core/tests/emulator/video/ctprobe_test.cpp:800` |
 | `UNREAL_CTPROBE_EXPORT_DIR` | a folder (the files above) | With `UNREAL_CTPROBE_EXPORT`: writes there instead, to try a change. | `ctprobe_test.cpp:809` |
 | `UNREAL_FUSETEST_EXPORT` | set / unset | **Rewrites** `tools/verification/contention/fusetest/fusetest-coemu.*`. | `core/tests/emulator/video/fusetest_test.cpp:342` |
@@ -201,6 +206,31 @@ run with `--gtest_also_run_disabled_tests`). Runs a program on a Profi as a user
 | `PROFI_TRACE` | number of steps | Instruction trace after the frames. |
 | `PROFI_WATCH`, `PROFI_WATCH_RECT`, `PROFI_WATCH_PAGES` | set, `col,row,w,h`, hex pages (`6,3A`) | Steps until a hi-res screen area changes, printing PC and registers. |
 | `PROFI_DUMP`, `PROFI_DUMP_PAGES`, `PROFI_DUMP_RAM`, `PROFI_DUMP_MEM` | set, file prefix, file, file | Dumps registers / screen pages / all RAM / the 64K view at the end. |
+| `UNREAL_NEXT_FIRMWARE` | folder path (`testdata/machines/zxnext/card`) | The SD card folder of the ZX Spectrum Next firmware tests (TBBLUE.FW, `machines/next`, `nextzxos`, ...): another distribution's tree instead of the one in the repository. | `core/tests/emulator/machines/next/nextfirmware_test.cpp` |
+| `UNREAL_NEXT_HUNT` | frames (unset: tests skip) | Runs the personality-ROM bring-up hunts (`NextFirmware_Test.PersonalityRomStallHunt` / `PersonalityRomRestartHunt`): frames to run after the firmware's soft reset; they print the registers and ports the ROM uses to stderr. | `core/tests/emulator/machines/next/nextfirmware_test.cpp` |
+| `UNREAL_NEXT_DUMP` | folder path | With the stall hunt: writes the ULA screen, the Layer 2 banks and RAM page 7 as raw files there (scratch conversion to PNG). | `core/tests/emulator/machines/next/nextfirmware_test.cpp` |
+| `UNREAL_NEXT_SPACE` | frames after the soft reset | With the stall hunt: holds SPACE for 8 frames from there (the NextZXOS welcome screen's "start"). | `core/tests/emulator/machines/next/nextfirmware_test.cpp` |
+| `UNREAL_NEX` | path to a `.nex` | `LoaderNexRun_Test`: runs the file on the NEXT machine (`UNREAL_NEX_FRAMES`, default 200; `UNREAL_NEX_OUT` = folder for `frame.rgba`). | `core/tests/loaders/nex/loadernex_test.cpp` |
+| `UNREAL_NEX_NR` | `6B=00,15=1C` | `LoaderNexRun_Test`: NextREG writes (hex) before the frame is taken, to look at one layer. | `core/tests/loaders/nex/loadernex_test.cpp` |
+| `UNREAL_NEX_SPRITES` | any | `LoaderNexRun_Test`: prints sprite 0-3 attributes, pattern RAM use, the DMA state, the PC and the stack at the end. | `core/tests/loaders/nex/loadernex_test.cpp` |
+| `UNREAL_NEXB` | path to a `.nex` | `NexBrowserRun_Test` (tests skip without it and `UNREAL_NEXB_CARD`): the real chain - boot ROM, TBBLUE.FW, NextZXOS, the Browser (keyboard), ENTER on the file - so NEXLOAD loads the file; the file is copied into the card as `zz.nex`. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_CARD` | folder path (a writable copy of `testdata/machines/zxnext/card`) | The SD card folder `NexBrowserRun_Test` boots from; the NEX is copied into it (not with `UNREAL_NEXB_INPLACE`). | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_NAME` | `cube`, `demos/cube` | Name (and folders) of the copy of the file in the card, without the extension (default `zz`). | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_SEARCH` | `CUB`, `D/N/CUBE` | What is typed into the Browser's search (`H`): one text per folder level, separated by `/` (a space is the SPACE key); default `Z`. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_INPLACE` | any | The card already holds the file (a card with the whole collection): nothing is copied into it. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_DIRECT` | any | Load the file with the direct loader after the OS has booted, instead of the Browser path. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_FRAMES` | frames (500) | Frames to run after the file was started. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_OUT` | folder path | Writes `frame.rgba` (width, height, RGBA), `pre.rgba` (the Browser as ENTER runs the file) and `ram.bin` (the 64K the Z80 sees) there. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_JITTER` | frames | Waits that many frames before the last ENTER (the file starts at another instant of the frame). | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_AFTER` | `300:R,20:ENTER` | After the start: wait that many frames, then tap the key (a letter, ENTER or SPACE); a list. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_NRLOG` | `1` or a hex list (`12,50`) | Logs the NextREG writes after the start: every one (the first 400, the last 200 with `UNREAL_NEXB_NRTAIL`) or only the registers listed; always prints the count per register. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_NRTAIL` | any | With `UNREAL_NEXB_NRLOG=1`: the last 200 writes. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_PORTS` | any | Prints the ports no part of the machine answered (count, last value). | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_BANKS` | any | Prints how many bytes of each of the 32 RAM banks are non-zero at the end. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_SAMPLE` | frames | Prints Layer 2 bank use, the lit pixels and the PC every that many frames. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXB_TRACE` | frames | Prints the PC, SP, speed and the MMU slots every that many frames. | `core/tests/loaders/nex/nexbrowser_test.cpp` |
+| `UNREAL_NEXT_COSIM` | folder path (unset: test skips) | `NextCosim_Test`: writes the boot trace in the co-simulation format (`tools/machines/next/cosim/trace-format.md`) to that folder; with `UNREAL_NEXT_FIRMWARE` the card. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
+| `UNREAL_NEXT_COSIM_FRAMES` | frames (1500) | Length of the co-simulation run. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
 
 ## 6. Benchmarks and verification tools
 

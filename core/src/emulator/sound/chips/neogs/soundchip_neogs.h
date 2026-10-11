@@ -243,7 +243,7 @@ public:
 
     /// SD card slot `sd.ngs`: insert an image or a folder, eject, inspect.
     /// With a media manager these go through it (the slot's settings from
-    /// [MEDIA] / [NGS], refused while TTD records); without one (bare
+    /// [MEDIA] / [NGS], the media rules while TTD records); without one (bare
     /// contexts) the card opens the image itself
     static constexpr const char* SD_SLOT_ID = "sd.ngs";
     /// [NGS] SDWrite as the slot's access mode (session / persist / off)
@@ -408,7 +408,6 @@ private:
     void traceEvent(GSTraceSide side, uint16_t port, uint8_t value, bool isOut, uint8_t channel = 0, uint8_t extraFlags = 0);
     uint32_t currentFrameNumber() const;
     void markReplayBarrier(ttd::TTDExternalEventKind kind, const char* reason);
-    bool ttdRecording() const;
     bool openSdImage(const std::string& path); // no media manager: the card opens the image itself
     SdCardSpi::Type sdType() const;
     void reselectSd();

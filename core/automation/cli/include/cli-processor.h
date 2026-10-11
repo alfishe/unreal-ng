@@ -1,6 +1,8 @@
 #pragma once
 
 #include <emulator/emulator.h>
+#include "emulator/execution/executionarbiter.h"
+#include "common/uuid.h"
 #include <emulator/emulatormanager.h>
 
 #include <memory>
@@ -64,7 +66,7 @@ public:
     using CommandHandler = void (CLIProcessor::*)(const ClientSession&, const std::vector<std::string>&);
 
     CLIProcessor();
-    virtual ~CLIProcessor() = default;
+    virtual ~CLIProcessor();
 
     // Process a command from a client
     void ProcessCommand(ClientSession& session, const std::string& command);
@@ -86,6 +88,7 @@ private:
     void HandleSelect(const ClientSession& session, const std::vector<std::string>& args);
     void HandleReset(const ClientSession& session, const std::vector<std::string>& args);
     void HandleNmi(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleOps(const ClientSession& session, const std::vector<std::string>& args);  // operation log
     void HandleMni(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSwitch(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePause(const ClientSession& session, const std::vector<std::string>& args);
@@ -106,6 +109,8 @@ private:
     void HandleRunNCycles(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRtc(const ClientSession& session, const std::vector<std::string>& args);
+    /// Automation session (execution arbiter design §6a): `session take [name]`, `session release`, `session`
+    void HandleSession(const ClientSession& session, const std::vector<std::string>& args);
     /// ZX-Evo flash ROM: the saved flash (status, save, discard) - cli-processor-romflash.cpp
     void HandleRomFlash(const ClientSession& session, const std::vector<std::string>& args);
     void HandleIsa(const ClientSession& session, const std::vector<std::string>& args);
@@ -127,6 +132,7 @@ private:
     void HandleFind(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDebugSnapshot(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePortOut(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleNext(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDebugWait(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePcHistory(const ClientSession& session, const std::vector<std::string>& args);
     /// Another surface holds run control: answers the claim message and returns true (tdd §5, F5)
@@ -449,6 +455,14 @@ private:
 
     // Reference to the current emulator (if any)
     std::shared_ptr<Emulator> _emulator;
+    /// The automation session this connection holds (nil: none) and its machine: ends with the connection; when the
+    /// user takes control back, the next command answers revoked_by_user and the session is forgotten
+    unreal::UUID _controlSession;
+    std::shared_ptr<Emulator> _controlEmulator;
+    /// The session holds this machine's run control
+    bool HoldsControl(EmulatorContext* context) const;
+    /// Who asks, for the execution arbiter: this connection's session when it holds control, else the CLI
+    execution::Requester CliRequester(EmulatorContext* context) const;
 
     // Flag to track if this is the first command
     bool _isFirstCommand;

@@ -125,7 +125,18 @@ ProjectResult TheLinkUnit()
         options.catalog = file.Hints();
         project.push_back({file.TrimmedName(), alasm.Decode(file.data, options).document});
     }
-    return ConvertProject(project, "sjasmplus");
+    // INCBIN sizes for the layout of the converted project (byte operands marked with low)
+    BackendOptions options;
+    options.fileSize = [](const std::string& name) -> std::optional<uint64_t> {
+        for (const char* binary : {"torusr.$p", "dplan2r.$p", "thelinkm.$C"})
+        {
+            const containers::TrdosFile file = Hobeta(std::string("dialects/thelink/") + binary);
+            if (file.TrimmedName() + (file.type == 'C' ? std::string() : std::string(".") + file.type) == name)
+                return file.data.size();
+        }
+        return std::nullopt;
+    };
+    return ConvertProject(project, "sjasmplus", options);
 }
 }  // namespace
 
@@ -227,6 +238,69 @@ TEST(Dialects_Test, RepeatUntilBecomesWhile)
 TEST(Dialects_Test, DsWithAPatternRepeatsIt)
 {
     EXPECT_EQ(ToSjasmplus("        DS 4,#AA,#55"), (std::vector<std::string>{"DUP 4", "DB #AA,#55", "EDUP"}));
+}
+
+TEST(Dialects_Test, DsOfANegativeCountFillsToTheEndOfMemory)
+{
+    // The Link's THELINK.asm: DS -$ after a picture zeroes the page to #FFFF; ALASM's count is a 16-bit word, sjasmplus'
+    // negative DS would move $ back
+    EXPECT_EQ(ToSjasmplus("        DS -$"), (std::vector<std::string>{"DS (-$&#FFFF)"}));
+    EXPECT_EQ(ToSjasmplus("        DS 10"), (std::vector<std::string>{"DS 10"}));
+}
+
+TEST(Dialects_Test, AByteOperandTheSourceTruncatesSaysLow)
+{
+    // ALASM keeps the low byte of a byte operand without a word (The Link: LD (HL),IMER with IMER = #BFBF, the IM 2
+    // vector byte); sjasmplus builds the same byte but warns, and that warning cannot be silenced. The conversion
+    // writes low where the converted project's layout finds a value outside -256..255
+    const std::vector<std::string> out = ToSjasmplus("IMER=#BFBF\n"
+                                                     "        LD (HL),IMER\n"
+                                                     "        LD HL,IMER\n"
+                                                     "        DB IMER,1\n"
+                                                     "        ADD A,#123\n"
+                                                     "        IN A,(#1FE)\n"
+                                                     "        LD A,-200\n"
+                                                     "        LD (IX+1),IMER+1");
+    auto has = [&out](const std::string& line) { return std::find(out.begin(), out.end(), line) != out.end(); };
+    EXPECT_TRUE(has("LD (HL),low IMER"));
+    EXPECT_TRUE(has("LD HL,IMER"));            // a word
+    EXPECT_TRUE(has("DB low IMER,1"));
+    EXPECT_TRUE(has("ADD A,low #123"));
+    EXPECT_TRUE(has("IN A,(low #1FE)"));
+    EXPECT_TRUE(has("LD A,-200"));             // sjasmplus takes -256..255 as a byte
+    EXPECT_TRUE(has("LD (IX+1),low (IMER+1)"));
+}
+
+TEST(Dialects_Test, AnOrgPageOutsideItsSlotIsMeant)
+{
+    // ALASM maps an ORG page at #C000 whatever the address, sjasmplus too (into the current slot) but warns
+    const std::vector<std::string> out = ToSjasmplus("        ORG #C000,1\n        ORG $,0");
+    ASSERT_GE(out.size(), 2u);
+    EXPECT_EQ(std::count_if(out.begin(), out.end(), [](const std::string& l) { return l.find("orgpage-ok") != std::string::npos; }), 1);
+    EXPECT_NE(std::find_if(out.begin(), out.end(), [](const std::string& l) { return l.rfind("ORG $,0", 0) == 0 && l.find("orgpage-ok") != std::string::npos; }), out.end());
+}
+
+TEST(Dialects_Test, TheObjectSaversTableBecomesSavebin)
+{
+    // Alone Coder's object saver: RUN in ALASM saves each ObjTab entry (name and type, address, length, page, start);
+    // the conversion writes the same objects as SAVEBIN at the end of the unit
+    const std::vector<ProjectFile> project = {
+        {"MAIN", SourceDocument::FromText("pgzx=#B0\n        ORG #C000,pgzx\nBEG     NOP\nLENZX=$-BEG\n        ORG #8000\nObjTab\n"
+                                          "        DB \"EFFECTZXC\"\n        DW #C000\n        DW LENZX\n        DB pgzx\n        DW #C000\n"
+                                          "        DB \"table   0\"\n        DW #8000,16\n        DB #10\n        DW 0\n        INCLUDE \"SAVEOBJ4\"",
+                                          "alasm")},
+        {"SAVEOBJ4", SourceDocument::FromText("        NOP\n        RET", "alasm")}};
+    const ProjectResult r = ConvertProject(project, "sjasmplus");
+    ASSERT_EQ(r.files.size(), 2u);
+    std::vector<std::string> lines;
+    for (const SourceLine& l : r.files[0].document.lines)
+        lines.push_back(l.text);
+    auto has = [&lines](const std::string& line) { return std::find(lines.begin(), lines.end(), "        " + line) != lines.end(); };
+    EXPECT_TRUE(has("SLOT 3"));
+    EXPECT_TRUE(has("PAGE pgzx"));
+    EXPECT_TRUE(has("SAVEBIN \"EFFECTZX\",#C000,LENZX"));   // type C: the name alone, as ALASM's INCBIN names it
+    EXPECT_TRUE(has("PAGE #10"));
+    EXPECT_TRUE(has("SAVEBIN \"table.0\",#8000,16"));      // another type: after a dot
 }
 
 TEST(Dialects_Test, AssembleOnceMarksInColumnZeroAreAssembled)
@@ -385,14 +459,13 @@ TEST(Dialects_Test, TheLinkUnitAssemblesToWhatAlasmBuilt)
         // INCBIN names the file as ALASM does: the type letter after a dot unless it is C
         WriteBytes(dir / (file.TrimmedName() + (file.type == 'C' ? std::string() : std::string(".") + file.type)), file.data);
     }
-    // The objects GSTUNNE4's SAVEOBJ table lists, from the pages the source names
-    const std::string harness = "        INCLUDE \"GSTUNNE4.asm\"\n        SLOT 3\n"
-                                "        PAGE pgtunnelzx\n        SAVEBIN \"zx.bin\",#C000,LENTUNNELZX\n"
-                                "        PAGE pgtunnelgs\n        SAVEBIN \"gs.bin\",#C000,LENTUNNELGS\n";
-    WriteBytes(dir / "harness.asm", std::vector<uint8_t>(harness.begin(), harness.end()));
-    EXPECT_TRUE(RunSjasmplus(sjasmplus, dir, "harness.asm"));
-    EXPECT_EQ(ReadBytes(dir / "zx.bin"), Hobeta("dialects/thelink/TUNNELZX.$C").data);
-    EXPECT_EQ(ReadBytes(dir / "gs.bin"), Hobeta("dialects/thelink/TUNNELGS.$C").data);
+    // The converted source as it is: its SAVEBIN lines (from the object saver's table) write the objects, and
+    // sjasmplus has nothing to warn about
+    EXPECT_TRUE(RunSjasmplus(sjasmplus, dir, "GSTUNNE4.asm"));
+    const std::vector<uint8_t> log = ReadBytes(dir / "out.txt");
+    EXPECT_NE(std::string(log.begin(), log.end()).find("warnings: 0"), std::string::npos) << std::string(log.begin(), log.end());
+    EXPECT_EQ(ReadBytes(dir / "TUNNELZX"), Hobeta("dialects/thelink/TUNNELZX.$C").data);
+    EXPECT_EQ(ReadBytes(dir / "TUNNELGS"), Hobeta("dialects/thelink/TUNNELGS.$C").data);
     std::filesystem::remove_all(dir);
 }
 

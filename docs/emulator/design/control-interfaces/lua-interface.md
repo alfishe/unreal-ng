@@ -122,7 +122,7 @@ Global functions mirroring the CLI `tape` commands and the WebAPI `/tape/*` endp
 ```lua
 -- Load / eject
 local ok, why = tape_load("/path/to/game.tap")  -- A tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder
-local ok = tape_eject()                     -- The tape leaves the tape slot (false while TTD records)
+local ok = tape_eject()                     -- The tape leaves the tape slot (while TTD records: at the next frame boundary)
 
 -- Transport (same semantics as `tape play|pause|stop|rewind|seek`)
 tape_play()      -- start at consumption cursor; resumes in place when paused
@@ -435,6 +435,20 @@ vid, err = sprinter_video{page=1, all=false, squares=false}  -- the mode table: 
 pal, err = sprinter_palette(4)    -- palettes (0-7, "all", default "used"): pens n / rgb "#RRGGBB" (R,G,B as stored) / vram
 ring = sprinter_sound_ring()      -- the Covox-Blaster ring: rows (16 words, [ ] playing, < > next write), words[256]
 zx = sprinter_zx_mode()           -- the ZX mode: active, config.best_match.file ("SP.ZX"), options, clock, frame.int, rom, ports; sprinter_zx_mode(false) skips the RAM search
+n = next_state()                  -- the ZX Spectrum Next: machine (type, timing, cpu_clock_hz, speed_ratio), mmu, divmmc, interrupts, ctc, spi; next_regs() the NextREG table, next_mmu() the 8K slots; available=false on other machines
+next_reg_journal_control{enabled=true, clear=true, capacity=65536}  -- switch (off by default) / clear / resize the NextREG write journal
+j, err = next_reg_journal{regs="07,02", sources="nextreg,copper", since=0, from=0, to=999, limit=50}  -- who wrote which NextREG: events {seq, frame, t, pc, source, reg, name, value, previous, decoded}; the NEXTREG instruction and the copper make no port cycle, so the port trace never sees them
+d = next_dma()                    -- the Next's DMA as programmed and running: mode (zxn|z80), enabled, waiting, burst, prescaler, a/b {address, type, step, timing}, direction, block_length, counter, src/dst (+ src_kind/dst_kind: the 8K slot they hit, 'rom' = a write into ROM), holds_bus, status; reading never advances its read sequence
+v = next_video()                  -- layer_order {value, name}, ula {mode, port_ff, scroll, clip}, layer2 {resolution, bank, scroll, clip}, tilemap {columns, map_bank, map_offset, ...}, sprites, transparency, raster {hc, vc, frame_t}, timing
+p, err = next_palette{palette="sprites_1", range="0-15"}  -- the 9-bit palettes (default: the selected one, all 256 entries; palette=0..7|name|"all"): selected, transparent, palettes[{name, entries[{index, rgb9, red, green, blue, priority}]}]; no index moves
+w, err = next_ports(0x6B, "w")    -- the internal port enable word (NR #82-#85) and which device answers the port: device, decoded_by, enabled, enabled_by {nr, bit}, enforced, side_effect (a number is the port, a string hex text)
+r, err = next_nextreg(0x07)       -- one NextREG without side effects: value, stored, access, reset, decoded; next_nextreg() all of them, next_nextreg(nil, true) only those that differ from their reset
+w, err = next_nextreg_write(0x07, 3, "nextreg")  -- write a NextREG through the board's write choke point (door "nextreg" (default) | "port" | "internal"); returns {ok, reg, value, previous, after, door, moment}
+c, err = next_copper{from=0, count=64, raw=true}  -- the copper list as a disassembly: control {mode, name}, running, address (write pointer, never stepped by the report), pc, list_length, instructions[{index, word, op=wait|move|halt|nop, reg, reg_name, value | hpos, vpos, text, current}], around_pc when the pc is outside the window, raw (hex)
+sp, err = next_sprites{from=0, count=128, all=true}  -- enabled, over_border, clip, flags {collision, too_many} (not cleared), visible_count, sprites[{index, kind=basic|anchor|relative, x, y, pattern, four_bit, palette_offset, x_mirror, y_mirror, rotate, scale_x, scale_y, visible, bytes, anchor/offset_x/offset_y}], pattern_memory {non_zero_bytes, used_patterns_8bit, used[]}
+px, err = next_pixel(105, 87)     -- the pixel inspector of the last captured frame (x 0-319, y 0-255, optional sub-pixel 0|1): winner {layer, id}, colour {rgb9, rgb}, layer_order, layers.{ula,layer2,tilemap,sprites} = {opaque, rgb9, rgb, wins, why, source}; nil + error when the capture is off / no frame yet / not a Next
+c, err = next_layer_capture_control{enabled=true}  -- switch (on by default) or, with no argument, report the per-layer record of the Next screen: {available, enabled, frames, last_frame, bytes}
+shot, err = capture_screen_layer("tilemap", {format="png", alpha=true, path="scratch/tiles.png"})  -- ONE LAYER of the last completed Next frame ("ula" "layer2" "tilemap" "sprites" "ids"): {layer, format, alpha, width=640, height=512, size, frame={sequence, frame_number}, data = PNG (or raw RGBA, format="rgba") as a string | file, legend for "ids"}; alpha 0 where the layer does not paint, alpha=false flattens
 j, err = sprinter_pld_journal{kinds="cnf,port_1ffd", source="live"}  -- who changed the PLD setup: events {frame, t, pc, kind, port, value, text}; source="ttd": the recording
 sprinter_pld_journal_control{enabled=true, clear=true}            -- switch / clear the PLD journal
 bios = sprinter_bios()            -- BIOS images (file, alias, crc32, present, loaded, selected, known_issues), loaded, known_issues, reload_pending, options
@@ -455,6 +469,9 @@ mx = audio_mixer()                -- per-device mixer: master, devices[] (source
 mx, err = audio_mixer_set("covox", {muted=true})  -- solo=, volume=0..1, gain_db=; "master" takes muted
 r = audio_capture_start(1.0, "covox")             -- capture one device's own buffer (default: the master mix)
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
+exe = execution_state()     -- execution arbiter: phase, intent + intent_set_by, serving, queue, claim, driver_violations
+take_control("my script")   -- automation session: the GUI shows it; after the user takes control back, control calls raise revoked_by_user - stop, do not retry
+release_control()
 profi = profi_state()       -- ZX Profi board chips: port_map (ext_ports, dos_latch, cpm, rom14, extended_map), ppi8255, pit8253.counters[], usart8251; available=false on other machines
 net = network_state()       -- network adapters: card (ZXNETUSB, W5300 sockets), com_port (UART, peer), virtual network (leases, sockets, activity); available=false without one
 r, err = network_configure{card="zxnetusb", host_access=true, hosts="name=10.0.2.50"}  -- change [NETWORK] settings: the reply table (nil, err, reply when refused); a ZX-bus card change (zxnetusb / zxwifi) is a slot change applied by a restart (owner decision Q11: r.status "applied", r.restart.emulatorId; the other keys go to the restarted machine), else "accepted" (in place)
@@ -501,7 +518,7 @@ success = emu:init()
 
 -- Control
 emu:reset()
-emu:pause()
+emu:pause()   -- "paused", "queued: behind <command>" (applies when it ends) or "refused: <why>"
 emu:resume()
 r = emu:step(false)      -- one instruction, breakpoints honored (default true skips them)
 r = emu:steps(count)     -- up to N instructions; a breakpoint ends the run early
@@ -862,11 +879,11 @@ print(rzx_status().summary)   -- playing frame 500 / 32315 (1.5%), block 1 / 1, 
 
 The TTD functions are **global functions** (like the mouse functions), not methods on the emulator object. They act on the bound emulator, or on the selected one when the script is not bound to an instance. Bindings: `core/automation/lua/src/emulator/lua_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
 
-**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse functions are refused while recording (`ttd_seek` returns `reached = false` and `error` = the reason, the boolean functions return `false`), so call `ttd_stop()` first; a seek or a step leaves the machine paused at the target, and `ttd_resume()` runs it again (the same on every surface); `ttd_start()` switches the `timetravel` feature on by itself; while recording (`snapshot_load` only on v1: on the engine a snapshot load is part of the recording), `tape_load`, `disk_create`, `ttd_invalidate`, `ttd_set_journal_enabled` are refused (on v1 also `gs_switch_personality` and every slot change, `slots_*`: `status = "recording"`; on the engine they end the session) and return `false, reason` (`disk_load`: `success = false` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; `feature_set` switching `timetravel` / `debugmode` off stops the recording cleanly (history kept, `last_stop_reason` in `ttd_status()`); while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
+**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse functions are refused while recording (`ttd_seek` returns `reached = false` and `error` = the reason, the boolean functions return `false`), so call `ttd_stop()` first; a seek or a step leaves the machine paused at the target, and `ttd_resume()` runs it again (the same on every surface); `ttd_start()` switches the `timetravel` feature on by itself; while recording (`snapshot_load` only on v1: on the engine a snapshot load is part of the recording), `ttd_invalidate`, `ttd_set_journal_enabled` are refused (on v1 also `tape_load`, `disk_create`, `gs_switch_personality` and every slot change, `slots_*`: `status = "recording"`; on the engine a tape / disk / media change is an event of the recording at the next frame boundary, the others end the session) and return `false, reason` (`disk_load` on v1: `success = false` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; `feature_set` switching `timetravel` / `debugmode` off stops the recording cleanly (history kept, `last_stop_reason` in `ttd_status()`); while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
 
 ```lua
 local ok, reason = tape_load("game.tap")
-if not ok then print(reason) end   -- "Cannot insert a tape while TTD is recording: ... stop the recording first."
+if not ok then print(reason) end   -- v1 only: "Cannot insert a tape while TTD is recording: ... stop the recording first."
 ```
 
 Unlike the WebAPI, the Lua functions do not pause the emulator for you: pause it before browsing history. Errors never raise; they come back as `false` (plus a reason for a TTD refusal), an empty table, or a table with an `error` string. When the build has no TTD engine every function returns `false` / an empty or `error` table.
@@ -1204,6 +1221,11 @@ emu.video_temporal_set("mod-tpgwafsd") -- switch it on; "off" or "" switches it 
                                      --   mod-tpgwafsd with the default A/V delay of 2) and the sound is delayed
                                      --   by the difference (audio_extra_delay_frames, 5 here) to stay in sync.
 emu.frame_cost()                     -- per-frame halt/run cost accounting
+emu.operations([since [, limit]])    -- the operation log (reset, autostart, snapshot load, media insert / eject /
+                                     --   discard, blank disk; refusals too): { mode, last_seq, capacity,
+                                     --   entries = {{seq, frame, t_in_frame, wall_ms, kind, source, mode, status,
+                                     --   effect, summary, detail}} } oldest first; since: after that seq; limit:
+                                     --   the newest N (0 = all). Fields: command-interface.md, Operation log
 
 -- Coverage analyzer
 emu.coverage_start()                 -- start clean; emu.coverage_start(true) keeps old data

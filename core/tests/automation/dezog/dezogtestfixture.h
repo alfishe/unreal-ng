@@ -68,7 +68,9 @@ protected:
                                   std::chrono::milliseconds(500)))
             << "emulator thread did not reach StateRun";
 
-        _emulator->Pause();
+        // Paused as an attached DeZog session leaves it (DezogDebugAdapter::attach pauses with origin DeZog): its
+        // session close lifts only a pause DeZog set itself (execution arbiter, owner-only run)
+        _emulator->Pause(execution::Requester{execution::Origin::DeZog, {}}, "dezog attach");
         ASSERT_TRUE(_emulator->IsPaused());
 
         // Park on a frame boundary.

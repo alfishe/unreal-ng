@@ -201,11 +201,12 @@ protected:
     int16_t _deviceBuffer[DEVICE_BUFFER_FRAMES * AUDIO_CHANNELS] = {};
 
     // Wide mix bus (MoonSound integration design 5.2/D7). Enabled only while
-    // a MoonSound device is attached: sources sum into a float bus without
-    // per-add clipping, then a DC blocker + soft limiter run on the master and
-    // the result quantises to int16 once. The legacy integer path is a
-    // separate branch that stays byte-identical in every configuration
-    // without the device (R6) - it is not modified by this feature.
+    // a MoonSound device, a TSFM (TurboSound FM) or a card that wants it is
+    // fitted: sources sum into a float bus without per-add clipping, then a DC
+    // blocker + soft limiter run on the master and the result quantises to
+    // int16 once. The legacy integer path is a separate branch that stays
+    // byte-identical in every configuration without them (R6) - it is not
+    // modified by this feature.
     bool _wideMix = false;
     MasterLimiter _limiter;
     float _mixBus[MAX_SAMPLES_PER_FRAME * AUDIO_CHANNELS] = {};
@@ -302,8 +303,9 @@ protected:
     bool _feature_soundhq_enabled = true;
 
     /// Turbo mode forces the low-quality DSP path without touching the user's
-    /// `soundhq` feature state; clearing the override restores the previous quality
-    bool _turboLowQualityOverride = false;
+    /// `soundhq` feature state; clearing the override restores the previous quality. Set on any thread (turbo
+    /// toggles come from automation), reaches the TurboSound device at the next frame start (handleFrameStart)
+    std::atomic<bool> _turboLowQualityOverride{false};
 
     /// Host output holds, one depth per reason (HostOutputHold guards only). Separate from _mute (the user's
     /// master mute): nothing but the user sets that one, so no hold can leave it changed
@@ -439,10 +441,13 @@ public:
     /// HQ FIR / oversampling chain is pure CPU cost at 50x speed). The `soundhq`
     /// feature itself is left untouched, so leaving turbo re-enables the previous state.
     void setTurboLowQualityOverride(bool enabled);
-    bool isTurboLowQualityOverride() const { return _turboLowQualityOverride; }
+    bool isTurboLowQualityOverride() const { return _turboLowQualityOverride.load(std::memory_order_relaxed); }
 
     /// Effective DSP quality: the user's `soundhq` feature unless turbo overrides it
-    bool isHQActive() const { return _feature_soundhq_enabled && !_turboLowQualityOverride; }
+    bool isHQActive() const
+    {
+        return _feature_soundhq_enabled && !_turboLowQualityOverride.load(std::memory_order_relaxed);
+    }
 
     /// True while no audio is synthesised at all (turbo mode without audio request and
     /// not recording): AY / beeper / Covox / tape edge rendering is skipped, register and
@@ -595,8 +600,9 @@ public:
 #endif
 
     /// Wide mix bus + master limiter (MoonSound integration 5.2). Called with
-    /// true when a MoonSound device is attached, false when it is not; the
-    /// legacy integer path is used whenever the wide path is off (R6).
+    /// true when a MoonSound device, a TSFM or a card that wants it is fitted,
+    /// false when none is; the legacy integer path is used whenever the wide
+    /// path is off (R6).
     void enableWideMix(bool enable);
     bool wideMixEnabled() const { return _wideMix; }
 
@@ -686,7 +692,7 @@ public:
     void setDeviceSolo(AudioSourceType type, bool solo);
     void setDeviceVolume(AudioSourceType type, float volume);
 
-    /// YM2203 FM loudness trim in dB ([SOUND] TSFM_FmTrimDb), applied live to every YM2203 FM in the machine: the
+    /// YM2203 FM loudness trim in dB over the measured hardware level ([SOUND] TSFM_FmLevelDb), applied live to every YM2203 FM in the machine: the
     /// TurboSound FM in the AY socket and every slot card with YM2203 FM (the ZX-MultiSound) - one calibration, shown
     /// as one control. Returns false when the machine has no YM2203 FM
     bool setFmTrimDb(double db);
@@ -707,6 +713,8 @@ public:
 
     /// Stereo sample pairs the last finished frame mixed (0 after a frame without host audio)
     size_t lastFrameSamples() const { return _lastFrameSamples; }
+    /// The master mix of the last finished frame (interleaved stereo, lastFrameSamples() pairs): diagnostics, tests, captures
+    const int16_t* masterMix() const { return _outBuffer; }
     /// What the TurboSound-slot device rendered in the last finished frame and its sample phase at that frame end, read
     /// before the mix (diagnostics and tests): at 1x the count is lastFrameSamples() and the phase samplePhase()
     size_t lastTurboSoundSamples() const { return _lastTurboSoundSamples; }

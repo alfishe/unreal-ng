@@ -59,6 +59,7 @@ bool AutomationZesarux::start(uint16_t port)
     // Second, independent adapter instance: the DZRP module keeps its own
     // session/breakpoint state when both servers listen concurrently
     _adapter = std::make_unique<DezogDebugAdapter>();
+    _adapter->setSessionClientName("DeZog (ZRCP)");
 
     zrcp::ServerConfig config;
     config.port = resolvedPort;

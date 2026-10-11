@@ -185,6 +185,18 @@ disk:
 
 Binaries (`INCBIN`) come from the disk the same way. A missing part is a hint, and the build goes on as far as it can.
 
+**Built (2026-10-10):** 2 and 3. `BuildInput` carries the project's other sources and every file's size; `Build`
+takes the live text as the main file of `SymbolsFromSourceProject`, leaving out a project source of its name.
+`AsmSyncService` gathers the project for each build: a host folder (`.asm .a80 .z80 .inc .s .txt` as sources through
+`ProjectFromText`, any other file as a size for INCBIN), then the disk in a drive (`ReadDiskFiles` + `ProjectFromFiles`),
+so the disk wins over the folder (the last source of a name). Option `project`: `disk:A`-`disk:D`, `none`, folders,
+comma-separated; default `disk:A`. Tests: `SyncSession_Test.AnIncludedSourceComesFromTheProject` (XAS `LTEXT`),
+`SyncControl_Test.TheWatchTakesTheProjectFromAHostFolder`. 1 too: a descriptor with `textsPerPage` (ALASM) has
+`ReadOtherTexts` read the text of every other page that holds its header; `SyncSession::MemoryProject` decodes them
+under their header names, and the service adds them last (a full copy of the pages per build), so a text in memory
+wins over the disk's file of its name. Test `SyncSession_Test.AlasmsOtherTextsInMemoryJoinTheProject`. XAS and ZAsm
+keep one text (their research), so they have none.
+
 ### 5.5 Labels
 
 - The **live symbol set** `live:sync:<assembler>` is replaced after every successful build. Its priority is just above
@@ -382,6 +394,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | research | the text start / end pointers in GENS3 and GENS4 (48K), GENS4B |
 | family | `Linear` + `00 00` |
 | **Work** | **1.5 d** |
+| **Verified: GENS4, GENS3M21, GENS 4.3t** (2026-10-10, dumps `gens4-*`, `gens3m21-*`, `gens43t-*`) | `Linear`: the text follows the code, records `[number lo] [number hi] text #0D`, from a start word to an end word (exclusive) that is an operand the code rewrites, `+#36` from the load address in the tape builds. GENS4 (tape, at 26000): text `#8AED`, start `(#67A8)`, end `(#65C6)`. GENS3M21 (Devpac 3 M21 tape, at 49000): text `#E20A` (above `#C000`, page 0), start `(#DE54)`, end `(#BF9E)`. GENS 4.3t (Aysoft, TR-DOS, `GENS4tf`): text `#8F2E`, start `(#689C)`, end `(#61FB)`. While a line is inserted (`I`) the editor sets bit 7 of the high byte of the number of the line it goes before (numbers stay below 32768): the reader clears it (`clearLineMark`). Identified by their copyright / version strings. The tape builds have no save here: their dumps are the loaded text and a line being typed; 4.3t saves with `P`, so it has an edited case. GENS4B (MOA B-Disk, at 30000): text `#A06A`, start `(#7928)`, end `(#7566)` (`+#36` again); it needs TR-DOS's variables, so it is started from 48K BASIC through `RANDOMIZE USR 15616`, `LOAD "gens4b" CODE 30000`, `RETURN`, `RANDOMIZE USR 30000` (docs/disasm/software/gens4b, dumps `gens4b-*`). Descriptors `gens-4`, `gens-3m21`, `gens-4.3t`, `gens-4b`; each a build at its usual address (GENS is relocatable) |
 
 ### 7.14 ZEUS 1983, GG, 1.1 (PHT), v7.E; Zeus Plus 2.16, Zeus Pro 2.01
 
@@ -391,6 +404,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | research | the text start / end per program (48K and the 128K PHT shell) |
 | family | `Linear` |
 | **Work** | **2 d** (six programs, two layouts expected) |
+| **Verified: 1983, 1.1, GG, v7.E** (2026-10-10, dumps `zeus1983-*`, `zeus11-*`, `zeusgg-*`, `zeus7e-*`) | `Linear`: the text where `o` put it (the dumps use `o 32768`), records `[number] tokens 00`, then `FF FF`; a start word and, right after it, the end word holding the address of the last `FF`. 1983, 1.1 and GG keep them at `#FD00` / `#FD02` (above the code at 57344), v7.E at `#FAAB` / `#FAAD`. A line typed at the prompt stays out of the text until Enter. Found with a memory search for the two values in the loaded state. Identified by 24 bytes of their code with the title (`#E028` / `#E020`). Descriptors `zeus-1983`, `zeus-1.1`, `zeus-gg`, `zeus-7e`; no save here (tape / the dumps take the loaded text and a typed line). ZEUS 2.2, 3.0, 3.1, Zeus Pro 2.01, Zeus Plus 2.16 are not covered yet |
 
 ### 7.15 Primus Assembler 2.9
 
@@ -399,6 +413,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Knowledge** | the text buffer starts at 33364 (`#8254`, its files' start); ZEUS 1983's records with DISK for DISP and Russian letters at `#EB`-`#FF` |
 | research | the end pointer |
 | **Work** | **0.5 d** |
+| **Verified** (2026-10-10, dumps `primus29-*`) | ZEUS's pair: the start word at `#61B1` (`#8254`), the address of the last `FF` at `#61B3`. It loads `PRI.DOC` at start (the dumps put the source there); a numbered line typed at the prompt stays out of the text until Enter; `b` ENTER, `s NAME` ENTER, `q` ENTER saves (commands need ENTER). Identified by `PRIMUS ASSEMBLER Version` at `#6D17`. Descriptor `primus-2.9` |
 
 ### 7.16 Laser Genius 1.04 (Beta)
 
@@ -407,6 +422,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Knowledge** | paragraphs from the address STATS calls `file` (`#7F2E` in 1.04 Beta), then `FF FF`; the end in `(#A973)` without the hash extensions and `(#ADA1)` with them loaded (the Phoenix typing helper of A6 uses both) |
 | family | `Linear`: `[#7F2E, (end))` + `FF FF`; the end pointer chosen by the hash extensions' presence (a signature) |
 | **Work** | **1 d** (the two configurations, Phoenix statements in the build) |
+| **Verified: without the hash extensions** (2026-10-10, dumps `lg104-*`) | the text in memory is the paragraphs and `FF FF` from `#7F2E` to `(#A973)`; the disk file drops the `FF FF` and adds the header `#AF`, the length, `#7F2E` and four characters of the name SAVE gives (an editor state: the reader fills blanks, the tests mask them) (`laserGeniusFile`). A paragraph typed is out of the text until ENTER. The loader's menu is a BASIC INPUT: `1` needs ENTER. Identified by 24 bytes of its code at `#AC00`. Descriptor `lasergenius-1.04`. With the hash extensions (end `(#ADA1)`, the code moved) not covered yet |
 
 ### 7.17 PROMETHEUS
 
@@ -415,6 +431,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Knowledge** | records and the label table of its saves are known (research-prometheus.md); the memory layout is not |
 | research | the text and table pointers (48K; tape loading works) |
 | **Work** | **1 d** |
+| **Verified: 48K tape edition at 24000** (2026-10-10, dumps `prom48-*`) | read from the reconstructed source (oldcompcz/prometheus `src/prometheus.asm`, SAVE): the records run from `sourceBufferAccessLine` (`#9C28`) to twelve bytes below the symbol table (the operand of `varcSymbolTablePt`, `#87D7`); the table runs to the operand of `varcCodeEndPt` (`#881A`); SAVE writes the records, `FF` XOR them, `FF`, then the table (`prometheusTableAt` / `prometheusEndAt`). A line typed is out of the text until ENTER. SAVE goes to tape only (the TR-DOS adaptation too), so the expected file is what SAVE hands the ROM: an execution breakpoint at SA-BYTES `#04C6` gives the records' `IX` / `DE` (`#9C28`, 21 bytes for four lines). `LOAD` stages the save below U-TOP before it inserts the lines (`#FF43` here: not the source). Identified by 24 bytes at `#8000`. Descriptor `prometheus-48` (installed elsewhere, the addresses move) |
 
 ### 7.18 Power Assembler (PASM 3.0)
 
@@ -423,6 +440,7 @@ format) and what an implementation needs: research (R7), reader, tests. The day 
 | **Knowledge** | a text format; the object code goes to page 4 at `#E000` while PASM runs; the text's place is unknown |
 | research | the text pointers (ZAP / ITXT behavior known from A6) |
 | **Work** | **1 d** |
+| **Verified** (2026-10-10, dumps `pasm30-*`) | found in its code: the CR LF text runs from `#79AF` (an address its code holds) to a `#1A` end (no end pointer: the editor scans for it); the cursor line's address is at `#74E9`, its text in the 64-byte line buffer `#7342`. When the cursor leaves a line, and on SAVE, the routine at `#7881` writes the buffer back with blank runs packed into TABs: right to left over the tab stops, a run of 2-8 blanks that ends at a multiple of 8 becomes one TAB (a single blank stays). The reader replaces the cursor line with the packed buffer (`pasmLineAt`), so even the loaded state's file has its first line packed, as SAVE writes it. Each dump's expected file is a `P` (SAVE) made in that state. Identified by the packing routine's bytes at `#7881`. Descriptor `pasm-3.0` |
 
 ### 7.19 Not covered
 
@@ -673,17 +691,18 @@ injection (A7 surfaces use it already).
 
 | Mode | How |
 |---|---|
-| into an existing snapshot | load it into a hidden paused instance (no execution), identify the assembler (part A probe), inject, save in the same format through the snapshot pipeline |
-| from a template | per descriptor, an **idle template snapshot**: the assembler started from its disk by the automation scripts and stopped in its editor with an empty text. `inject --template alasm-5.09 --snapshot out.szx` loads the template, injects and saves; or keeps the instance running (`--run`) |
-| templates themselves | made once by a script per assembler (`tools/verification/unreal-asm/emulator/make-template.py`), stored as test data with the descriptor; the assembler binaries come from the collection's disks |
+| into an existing snapshot | as built (Z1): no emulator instance. The library reads the file's RAM pages, paging and SP (`snapshot.h`: .sna, .z80, .szx), probes it and checks the idle rule on that memory, plans the write as in a running machine, and writes the file again with the text's page replaced; every other block of the file stays as it was. The first plan (a hidden paused instance, saved through the snapshot pipeline) was dropped: the file holds everything the plan needs, and `zxasm` works without the emulator |
+| from a template | per descriptor, an **idle template snapshot**: the assembler started from its disk and saved **at its command prompt** with no text (not in its editor: the editor is busy by the idle rule, §16.1). `zxasm inject main.asm alasm-5.09.szx -o out.szx`, or sync-inject with `snapshot` + `output` |
+| templates themselves | made once per assembler by `tools/verification/unreal-asm/emulator/make-template.py` (the disk ejected before the save), stored in unreal-asm `testdata/templates/`; the assembler binaries come from the collection's disks |
+| disks | the same source as a file of the assembler on a disk image of any format unreal-disk writes (TRD, SCL, FDI, UDI, TD0, ...: `zxasm inject main.asm disk.fdi --assembler alasm-5.09`); the way back is `zxasm extract disk.fdi --file NAME.H` |
 
 ## 17. Surfaces (part B)
 
 | Surface | Calls |
 |---|---|
-| WebAPI | `POST /emulator/{id}/asm/sync/inject {path \| data + name \| text, from?, assembler?, version?, force?, refresh?}`; `POST /asm/sync/inject-snapshot {source, snapshot?, template?, output, format?}`; `POST /asm/sync/push-watch {path, ...}` / `DELETE`; `GET /asm/sync/templates` |
-| CLI | `asm sync inject <file> [--from d] [--assembler a] [--force]`, `asm sync inject-snapshot <file> --template a --output x.szx`, `asm sync push-watch <file>`, `asm sync templates` |
-| MCP | `asm_source` actions `sync_inject`, `sync_inject_snapshot`, `sync_push_watch`, `sync_templates` |
+| WebAPI | `POST /emulator/{id}/asm/sync/inject {path \| data + name \| text, from?, assembler?, title?, force?, backup?, snapshot?, output?}` (with `snapshot`: into that file, written to `output`; status, probe and extract take `snapshot` too); `POST /asm/sync/push-watch {path, ...}` / `DELETE` (Z2) |
+| CLI | `asm sync inject --path f [--from d] [--assembler a] [--force] [--snapshot s --output o]`, `asm sync push-watch <file>` (Z2); the standalone `zxasm probe / extract / inject` for snapshots and disks |
+| MCP | `asm_source` actions `sync_inject` (with `snapshot`, `output`), `sync_push_watch` (Z2) |
 | Lua / Python | `asm_sync_inject{...}` ... |
 | Qt | the "Live source" dock gets Inject... (a host file, the target assembler, the conversion report) and Push watch on / off |
 
@@ -707,6 +726,36 @@ injection (A7 surfaces use it already).
 | Z3 | Backends + writers + templates: TASM, XAS, STORM, ZX-ASM, MASM |
 | Z4 | 48K targets: GENS, ZEUS family, Primus, Laser Genius, PROMETHEUS, PASM |
 | Z5 | sjasmplus frontend coverage of real projects (§15.3, second row) |
+
+**Built (2026-10-10): Z0 for ALASM 5.09.** The ALASM backend (`dialects/alasm/alasmbackend.cpp`) writes the IR as ALASM
+5.07 text. Expressions go left to right. An expression ALASM cannot compute so (a later label outside `+` / `-`, an
+operator it lacks, a division of values outside 0..#FFFF) is written as its value, from the source's layout
+(`BackendOptions::labelValues`; a hidden label per line gives `$`). The backend also covers comparisons in IF and
+WHILE, local and temporary labels, macros with LOCAL blocks, and sjasmplus' fake and multi-operand instructions. The
+`retrobackend` core of §15.1 is not split out yet: its pieces (the value check, the renaming table, folding) live in
+the ALASM backend and move to a shared file with the second target (Z3). `PlanInject` writes the `FileImage` file
+and zeroes the rest of the page, as LOAD leaves it. `idleChain` is the precondition: the return addresses of ALASM's
+command line on the stack (#91E3, #9707). `sync-inject` does both at one coherent moment as a TTD tool edit, on
+WebAPI / OpenAPI, CLI, MCP, Lua and Python. Checked by ALASM 5.09 itself: `inject-oracle.py` injected
+`oracle1.asm` (143 bytes) and every instruction form (1173 bytes), and ALASM's bytes equaled sjasmplus'. Tests:
+`AlasmBackend_Test` (with a host round trip through the ALASM frontend over the STORM, ZAsm, TASM and ALASM corpora),
+`SyncInject_Test.AlasmTakesAFileAtItsCommandLine`, `SyncControl_Test.InjectWritesASourceIntoAlasmAtItsCommandLine`.
+Details: [research-sjasmplus-to-alasm.md](research-sjasmplus-to-alasm.md).
+
+**Built (2026-10-10): Z1, snapshots and disks both ways.** `snapshot.h` reads .sna (48K, 128K), .z80 (v1-v3) and .szx
+(its zlib pages inflated by the library's own inflater) into RAM pages, the windows and SP, and writes them back with
+pages replaced (SNA in place, Z80 the page's block packed again, SZX an uncompressed RAMP block). `sync::ViewOf` and
+`sync::InjectIntoSnapshot` run the Z0 reader and plan on that memory; `WriteAs` (dialect.h) is the conversion plus
+encoding both the emulator and `zxasm` use. Disk images go through unreal-disk (core/src/3rdparty/unreal-disk, its
+format drivers and TR-DOS file system; the first cut wrote TRD / SCL in unreal-asm and was replaced by it).
+`zxasm probe`, `extract` and `inject` cover snapshots, every disk format and hobeta files in both directions; the sync verbs
+take `snapshot` (and inject `output`) on every surface. The ALASM 5.09 idle templates (`testdata/templates/`, .szx /
+.sna / .z80) come from `make-template.py`. Checked by ALASM 5.09 itself: `inject-oracle.py --template` put
+`oracle1.asm` into each template with `zxasm inject`, loaded the snapshot and assembled it: 143 bytes = sjasmplus' in
+all three formats, and every instruction form (1173 bytes); `zxasm inject` onto a copy of ALASM's disk, `WORK` and
+`ASSEMBLE` in ALASM gave the same 143 bytes. Found on the way: unreal-ng's Z80 writer starts a run right after a single
+`ED` (reported). Tests: `Snapshot_Test` (6), `Trdos_Test.FilesGoIntoANewImageAndBack`, `SclArchiveWritesAndReads`,
+`SyncControl_Test.InjectWritesASourceIntoAnAlasmSnapshot`.
 
 ## 20. Effort (part B)
 

@@ -51,6 +51,65 @@ std::vector<int> PagesForId(const MachineView& machine, PageIdRule rule, uint8_t
     return pages;
 }
 
+/// The text a FileImage layout keeps in one page: 1 read, 0 no text header there, -1 a header but the text does not read
+int ReadFileImageInPage(const MachineView& machine, const SyncDescriptor& d, int candidate, SyncText& text)
+{
+    const FileImageParams& p = d.fileImage;
+    const symbols::MemoryPage* page = machine.Page(candidate);
+    if (!page || page->bytes.size() < kPage)
+        return 0;
+    const auto bytes = page->bytes;
+    if (bytes.size() < size_t(p.base) + p.headerSize || bytes.size() < size_t(p.signatureAt) + p.signature.size() ||
+        !std::equal(p.signature.begin(), p.signature.end(), bytes.begin() + p.signatureAt,
+                    [](char a, uint8_t b) { return static_cast<uint8_t>(a) == b; }))
+        return 0;
+    size_t length = 0;
+    if (p.lengthFromEnd)
+    {
+        const auto end = std::find(bytes.begin() + p.base + p.textOffset, bytes.end(), p.endByte);
+        if (end == bytes.end())
+        {
+            Inconsistent(text, "no end of text in page " + std::to_string(candidate));
+            return -1;
+        }
+        length = static_cast<size_t>(end - bytes.begin()) - p.base + 1;
+        if (p.wholeSectors)
+            length = std::min<size_t>((length + 255) / 256 * 256, bytes.size() - p.base);
+    }
+    else if (p.lengthFromPointer)
+    {
+        const uint32_t end = bytes[p.pointerAt] | (bytes[p.pointerAt + 1u] << 8);
+        const uint32_t first = kPage * 3 + p.base;   // the text's CPU address at #C000
+        if (end <= first || end > kPage * 4 || bytes[end - kPage * 3 - 1] != p.endSentinel)
+        {
+            Inconsistent(text, "the end pointer #" + Hex(end, 4) + " does not end the text in page " + std::to_string(candidate));
+            return -1;
+        }
+        length = end - first - 1;
+    }
+    else
+        length = p.headerSize + (bytes[p.base + p.lengthField] | (bytes[p.base + p.lengthField + 1u] << 8));
+    if (size_t(p.base) + length > bytes.size())
+    {
+        Inconsistent(text, "the text in page " + std::to_string(candidate) + " is longer than the page");
+        return -1;
+    }
+    text.page = candidate;
+    text.file.assign(bytes.begin() + p.base, bytes.begin() + p.base + static_cast<std::ptrdiff_t>(length));
+    if (p.changedField)
+    {
+        text.changed = (text.file[p.changedField] & p.changedMask) != 0;
+        text.file[p.changedField] &= static_cast<uint8_t>(~p.changedMask);   // SAVE writes the file as saved
+    }
+    size_t nameLength = p.nameLength;
+    while (nameLength > 0 && bytes[p.nameAt + nameLength - 1] == ' ')
+        --nameLength;
+    text.name.assign(bytes.begin() + p.nameAt, bytes.begin() + p.nameAt + static_cast<std::ptrdiff_t>(nameLength));
+    text.ok = true;
+    text.state = "ok";
+    return 1;
+}
+
 SyncText ReadFileImage(const MachineView& machine, const SyncDescriptor& d)
 {
     SyncText text;
@@ -63,52 +122,8 @@ SyncText ReadFileImage(const MachineView& machine, const SyncDescriptor& d)
             return Inconsistent(text, "the page id at #" + Hex(p.pageIdAt, 4) + " is not in the memory copied");
     }
     for (const int candidate : PagesForId(machine, d.pages, id.value_or(0)))
-    {
-        const symbols::MemoryPage* page = machine.Page(candidate);
-        if (!page || page->bytes.size() < kPage)
-            continue;
-        const auto bytes = page->bytes;
-        if (bytes.size() < size_t(p.base) + p.headerSize || bytes.size() < size_t(p.signatureAt) + p.signature.size() ||
-            !std::equal(p.signature.begin(), p.signature.end(), bytes.begin() + p.signatureAt,
-                        [](char a, uint8_t b) { return static_cast<uint8_t>(a) == b; }))
-            continue;
-        size_t length = 0;
-        if (p.lengthFromEnd)
-        {
-            const auto end = std::find(bytes.begin() + p.base + p.textOffset, bytes.end(), p.endByte);
-            if (end == bytes.end())
-                return Inconsistent(text, "no end of text in page " + std::to_string(candidate));
-            length = static_cast<size_t>(end - bytes.begin()) - p.base + 1;
-            if (p.wholeSectors)
-                length = std::min<size_t>((length + 255) / 256 * 256, bytes.size() - p.base);
-        }
-        else if (p.lengthFromPointer)
-        {
-            const uint32_t end = bytes[p.pointerAt] | (bytes[p.pointerAt + 1u] << 8);
-            const uint32_t first = kPage * 3 + p.base;   // the text's CPU address at #C000
-            if (end <= first || end > kPage * 4 || bytes[end - kPage * 3 - 1] != p.endSentinel)
-                return Inconsistent(text, "the end pointer #" + Hex(end, 4) + " does not end the text in page " + std::to_string(candidate));
-            length = end - first - 1;
-        }
-        else
-            length = p.headerSize + (bytes[p.base + p.lengthField] | (bytes[p.base + p.lengthField + 1u] << 8));
-        if (size_t(p.base) + length > bytes.size())
-            return Inconsistent(text, "the text in page " + std::to_string(candidate) + " is longer than the page");
-        text.page = candidate;
-        text.file.assign(bytes.begin() + p.base, bytes.begin() + p.base + static_cast<std::ptrdiff_t>(length));
-        if (p.changedField)
-        {
-            text.changed = (text.file[p.changedField] & p.changedMask) != 0;
-            text.file[p.changedField] &= static_cast<uint8_t>(~p.changedMask);   // SAVE writes the file as saved
-        }
-        size_t nameLength = p.nameLength;
-        while (nameLength > 0 && bytes[p.nameAt + nameLength - 1] == ' ')
-            --nameLength;
-        text.name.assign(bytes.begin() + p.nameAt, bytes.begin() + p.nameAt + static_cast<std::ptrdiff_t>(nameLength));
-        text.ok = true;
-        text.state = "ok";
-        return text;
-    }
+        if (ReadFileImageInPage(machine, d, candidate, text) != 0)
+            return text;
     return Inconsistent(text, id ? "no text header in the page the id #" + Hex(*id, 2) + " names" : std::string("no text header at #C000"));
 }
 
@@ -327,6 +342,66 @@ SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
     if (p.upperPage >= 0)
         machine.windows[3] = p.upperPage;   // the text's upper part, whatever the program maps at #C000 just now
     const std::optional<uint16_t> start = p.startAt ? machine.Word(p.startAt) : std::optional<uint16_t>(p.fixedStart);
+    if (p.pasmLineAt)
+    {
+        std::vector<uint8_t> all, buffer;
+        const std::optional<uint16_t> line = machine.Word(p.pasmLineAt);
+        if (!line || !machine.Read(p.fixedStart, static_cast<size_t>(0xC000 - p.fixedStart), all) ||
+            !machine.Read(p.pasmLineBuffer, 64, buffer))
+            return Inconsistent(text, "the text lies in a page that was not copied");
+        const auto stop = std::find(all.begin(), all.end(), uint8_t(0x1A));
+        if (stop == all.end())
+            return Inconsistent(text, "no #1A end after the text");
+        all.erase(stop, all.end());
+        const size_t from = static_cast<size_t>(*line - p.fixedStart);
+        if (*line < p.fixedStart || from > all.size())
+            return Inconsistent(text, "the cursor line is outside the text");
+        size_t to = from;
+        while (to + 1 < all.size() && !(all[to] == '\r' && all[to + 1] == '\n'))
+            ++to;
+        size_t length = buffer.size();
+        while (length > 0 && buffer[length - 1] == ' ')
+            --length;
+        buffer.resize(length);
+        // PASM's packing, right to left: a run of 2..8 blanks that ends at a tab stop becomes a TAB
+        for (size_t stopAt = ((length + 1) / 8) * 8; stopAt >= 8; stopAt -= 8)
+        {
+            size_t run = 0;
+            while (run < 8 && buffer[stopAt - 1 - run] == ' ')
+                ++run;
+            if (run >= 2)
+            {
+                buffer.erase(buffer.begin() + static_cast<std::ptrdiff_t>(stopAt - run), buffer.begin() + static_cast<std::ptrdiff_t>(stopAt));
+                buffer.insert(buffer.begin() + static_cast<std::ptrdiff_t>(stopAt - run), uint8_t('\t'));
+            }
+        }
+        text.file.assign(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(from));
+        text.file.insert(text.file.end(), buffer.begin(), buffer.end());
+        text.file.insert(text.file.end(), all.begin() + static_cast<std::ptrdiff_t>(std::min(to, all.size())), all.end());
+        text.ok = true;
+        text.state = "ok";
+        return text;
+    }
+    if (p.prometheusTableAt)
+    {
+        const std::optional<uint16_t> table = machine.Word(p.prometheusTableAt), tableEnd = machine.Word(p.prometheusEndAt);
+        if (!start || !table || !tableEnd || *table < *start + 12u || *tableEnd < *table)
+            return Inconsistent(text, "the source / symbol table pointers are not in order");
+        std::vector<uint8_t> records, symbols;
+        if (!machine.Read(*start, static_cast<size_t>(*table - 12 - *start), records) ||
+            !machine.Read(*table, static_cast<size_t>(*tableEnd - *table), symbols))
+            return Inconsistent(text, "the text lies in a page that was not copied");
+        uint8_t check = 0xFF;
+        for (const uint8_t b : records)
+            check ^= b;
+        text.file = std::move(records);
+        text.file.push_back(check);
+        text.file.push_back(0xFF);
+        text.file.insert(text.file.end(), symbols.begin(), symbols.end());
+        text.ok = true;
+        text.state = "ok";
+        return text;
+    }
     const std::optional<uint16_t> end = machine.Word(p.endAt);
     if (!start || !end)
         return Inconsistent(text, "the text pointers are not in the memory copied");
@@ -334,6 +409,27 @@ SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
         return Inconsistent(text, "the text ends (#" + Hex(*end, 4) + ") before it starts (#" + Hex(*start, 4) + ")");
     if (!machine.Read(*start, static_cast<size_t>(*end - *start), text.file))
         return Inconsistent(text, "the text lies in a page that was not copied");
+    if (p.clearLineMark)
+    {
+        for (size_t k = 0; k + 1 < text.file.size();)
+        {
+            text.file[k + 1] &= 0x7F;
+            const auto cr = std::find(text.file.begin() + static_cast<std::ptrdiff_t>(k + 2), text.file.end(), uint8_t(0x0D));
+            if (cr == text.file.end())
+                return Inconsistent(text, "a line record without its #0D end");
+            k = static_cast<size_t>(cr - text.file.begin()) + 1;
+        }
+    }
+    if (p.laserGeniusFile)
+    {
+        if (text.file.size() < 2 || text.file[text.file.size() - 1] != 0xFF || text.file[text.file.size() - 2] != 0xFF)
+            return Inconsistent(text, "the text does not end with FF FF");
+        text.file.resize(text.file.size() - 2);
+        const auto length = static_cast<uint16_t>(text.file.size());
+        const std::vector<uint8_t> header = {0xAF, static_cast<uint8_t>(length & 0xFF), static_cast<uint8_t>(length >> 8),
+                                             static_cast<uint8_t>(*start & 0xFF), static_cast<uint8_t>(*start >> 8), ' ', ' ', ' ', ' '};
+        text.file.insert(text.file.begin(), header.begin(), header.end());
+    }
     text.file.insert(text.file.end(), p.end.begin(), p.end.end());
     text.ok = true;
     text.state = "ok";
@@ -344,8 +440,10 @@ SyncText ReadLinear(const MachineView& mapped, const SyncDescriptor& d)
 
 /// The title is looked for where the code keeps it (each build elsewhere); #BE00 also holds it, but the editor uses
 /// that place as a buffer. `typingFlag` false: the build keeps no "line modified" bit at IX+#0C (4.43)
+/// `idle`: the return chain of its command line (line input #91E3, then the command loop #9707 in 5.09; a command runs
+/// with #9733 there instead)
 SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion, uint16_t titleAt, std::string title = "",
-                     bool typingFlag = true)
+                     bool typingFlag = true, std::vector<uint16_t> idle = {})
 {
     SyncDescriptor d;
     d.id = "alasm-" + version;
@@ -355,6 +453,7 @@ SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion
     d.extension = "H";
     d.identify = {{titleAt, title.empty() ? "ALASM v" + version : title}};
     d.pages = PageIdRule::Port7FFD;
+    d.textsPerPage = true;
     d.family = LayoutFamily::FileImage;
     // IX = #80BF: IX+#0D the page of the current text; the text from #C000 of it is the file (asm-synchronizer.md §7.1)
     d.fileImage.pageIdAt = 0x80CC;
@@ -366,6 +465,7 @@ SyncDescriptor Alasm(const std::string& version, const std::string& codecVersion
     d.fileImage.changedField = 0x27;
     d.typing = {TypingRule::NotInText, 0x80CB, static_cast<uint8_t>(typingFlag ? 0x01 : 0x00)};   // IX+#0C bit 0: the line is modified
     d.labelScanner = "alasm-table";
+    d.idleChain = std::move(idle);
     return d;
 }
 
@@ -618,6 +718,116 @@ SyncDescriptor Zxasm310()
     return d;
 }
 
+/// GENS (asm-synchronizer.md §7.13): the text follows the program's code, records [number] text #0D from the start
+/// word to the end word (exclusive); the editor marks the insert position in a number's bit 15 (clearLineMark).
+/// Relocatable: one descriptor per build at its usual address
+SyncDescriptor Gens(const std::string& id, const std::string& title, Signature identify, uint16_t startAt, uint16_t endAt)
+{
+    SyncDescriptor d;
+    d.id = id;
+    d.title = title;
+    d.codec = "gens";
+    d.version = "2";
+    d.extension = "A";
+    d.identify = {std::move(identify)};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.startAt = startAt;
+    d.linear.endAt = endAt;
+    d.linear.upperPage = 0;
+    d.linear.clearLineMark = true;
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
+/// PROMETHEUS 48K tape edition installed at 24000 (asm-synchronizer.md §7.17, from its reconstructed source): the
+/// records from sourceBufferAccessLine (#9C28) to twelve bytes below the symbol table (operand of varcSymbolTablePt at
+/// #87D7), the table up to the operand of varcCodeEndPt (#881A); the save adds FF XOR the records and FF between
+SyncDescriptor Prometheus48()
+{
+    SyncDescriptor d;
+    d.id = "prometheus-48";
+    d.title = "PROMETHEUS 48K (Proxima, at 24000)";
+    d.codec = "prometheus";
+    d.version = "";
+    d.extension = "C";
+    d.identify = {{0x8000, std::string("\xC9\xF5\xD6\x34\x5F\x16\x37\xCD\xE6\x82\xC5\x21\xE4\x8A\xAF\x4F\x23\x0C\xBE\x20\xFB\x11\xD1\x8A", 24)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.fixedStart = 0x9C28;
+    d.linear.prometheusTableAt = 0x87D7;
+    d.linear.prometheusEndAt = 0x881A;
+    d.linear.upperPage = 0;
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
+/// Power Assembler 3.0 (asm-synchronizer.md §7.18, from its code): CR LF text from #79AF to #1A; the cursor line's
+/// address at #74E9, its 64-byte line buffer at #7342, packed into TABs when it goes back (the routine at #7881)
+SyncDescriptor Pasm30()
+{
+    SyncDescriptor d;
+    d.id = "pasm-3.0";
+    d.title = "Power Assembler 3.0 (Sergeyev)";
+    d.codec = "pasm";
+    d.version = "";
+    d.extension = "C";
+    d.identify = {{0x7881, std::string("\x21\x82\x73\x06\x40\x3E\x20\x2B\xBE\x20\x04\x10\xFA\x18\x28\x23\x22\xFD\x77\x04\x78\xFE\x08\x38", 24)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.fixedStart = 0x79AF;
+    d.linear.pasmLineAt = 0x74E9;
+    d.linear.pasmLineBuffer = 0x7342;
+    d.linear.upperPage = -1;
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
+/// Laser Genius 1.04 Beta (asm-synchronizer.md §7.16): paragraphs from #7F2E to (#A973) (without the hash
+/// extensions; (#ADA1) with them), then FF FF; the disk file adds its #AF header. Identified by its title
+SyncDescriptor LaserGenius()
+{
+    SyncDescriptor d;
+    d.id = "lasergenius-1.04";
+    d.title = "Laser Genius 1.04 (Beta Disk)";
+    d.codec = "lasergenius";
+    d.version = "";
+    d.extension = "C";
+    d.identify = {{0xAC00, std::string("\xA9\xCD\x79\xAF\xE5\x2A\xDA\xA9\x06\x2A\xCB\x7E\x23\x20\x02\x10\xF9\x22\xDA\xA9\xE1\xE5\x2A\x32", 24)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.fixedStart = 0x7F2E;
+    d.linear.endAt = 0xA973;
+    d.linear.upperPage = 0;
+    d.linear.laserGeniusFile = true;
+    d.linear.editorStateAt = 5;
+    d.linear.editorStateLength = 4;
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
+/// ZEUS (asm-synchronizer.md §7.14): the text where "o" put it, records [number] tokens 00, then FF FF; the start
+/// word and, after it, the end word (the address of the last FF). 1983, 1.1 and GG keep them at #FD00, v7.E at #FAAB
+SyncDescriptor Zeus(const std::string& id, const std::string& title, const std::string& codecVersion, uint16_t signatureAt,
+                    const char* signature, uint16_t startAt, const std::string& extension)
+{
+    SyncDescriptor d;
+    d.id = id;
+    d.title = title;
+    d.codec = "zeus";
+    d.version = codecVersion;
+    d.extension = extension;
+    d.identify = {{signatureAt, std::string(signature, 24)}};
+    d.pages = PageIdRule::Fixed;
+    d.family = LayoutFamily::Linear;
+    d.linear.startAt = startAt;
+    d.linear.endAt = static_cast<uint16_t>(startAt + 2);
+    d.linear.end = std::string("\xFF", 1);
+    d.linear.upperPage = 0;
+    d.typing = {TypingRule::NotInText, 0, 0};
+    return d;
+}
+
 /// ZX-ASM 2.4 / 2.5 / 2.6 (asm-synchronizer.md §7.9): plain text (blank runs only) in one buffer, the start word at
 /// the program's load address + 3, the end word after it; the part above #C000 in RAM page 0 (the 48K memory). 2.6
 /// keeps its ";*" line in the buffer and saves it as text
@@ -685,6 +895,32 @@ SyncDescriptor Tasm412()
 }
 }  // namespace
 
+MachineView ViewOf(const containers::Snapshot& snapshot)
+{
+    MachineView view;
+    for (const auto& [page, bytes] : snapshot.pages)
+        view.ram.push_back({static_cast<uint16_t>(page), std::span<const uint8_t>(bytes)});
+    view.windows = snapshot.windows;
+    view.ramPages = snapshot.ramPages;
+    view.sp = snapshot.sp;
+    return view;
+}
+
+InjectPlan InjectIntoSnapshot(const containers::Snapshot& snapshot, const SyncDescriptor& descriptor, const std::vector<uint8_t>& file,
+                              const InjectOptions& options, std::vector<uint8_t>& out)
+{
+    InjectPlan plan = PlanInject(ViewOf(snapshot), descriptor, file, options);
+    if (!plan.ok)
+        return plan;
+    std::string error;
+    if (!containers::WriteSnapshot(snapshot, {{plan.page, plan.bytes}}, out, error))
+    {
+        plan.ok = false;
+        plan.error = error;
+    }
+    return plan;
+}
+
 const symbols::MemoryPage* MachineView::Page(int page) const
 {
     for (const symbols::MemoryPage& p : ram)
@@ -727,11 +963,99 @@ std::optional<uint16_t> MachineView::Word(uint16_t address) const
     return static_cast<uint16_t>(b[0] | (b[1] << 8));
 }
 
+bool Idle(const MachineView& machine, const SyncDescriptor& d, std::string& why)
+{
+    if (d.idleChain.empty())
+    {
+        why = "no idle rule is known for " + d.title;
+        return false;
+    }
+    if (machine.sp < 0)
+    {
+        why = "the CPU's SP was not copied";
+        return false;
+    }
+    std::vector<uint8_t> stack;
+    const uint16_t sp = static_cast<uint16_t>(machine.sp);
+    const size_t depth = std::min<size_t>(d.idleDepth, 0x10000 - sp);
+    if (!machine.Read(sp, depth, stack))
+    {
+        why = "the stack at #" + Hex(sp, 4) + " is not in the memory copied";
+        return false;
+    }
+    const size_t n = d.idleChain.size();
+    for (size_t at = 0; at + 2 * n <= stack.size(); ++at)
+    {
+        bool all = true;
+        for (size_t k = 0; k < n && all; ++k)
+            all = static_cast<uint16_t>(stack[at + 2 * k] | (stack[at + 2 * k + 1] << 8)) == d.idleChain[k];
+        if (all)
+            return true;
+    }
+    why = d.title + " is not waiting for a command (assembling, saving, loading, or in its editor)";
+    return false;
+}
+
+InjectPlan PlanInject(const MachineView& machine, const SyncDescriptor& d, const std::vector<uint8_t>& file, const InjectOptions& options)
+{
+    InjectPlan plan;
+    if (d.family != LayoutFamily::FileImage)
+    {
+        plan.error = "writing a text into " + d.title + " is not supported yet";
+        return plan;
+    }
+    std::string why;
+    if (!Idle(machine, d, why) && !(options.force && d.idleChain.empty()))
+    {
+        plan.error = why + (d.idleChain.empty() ? " (force writes anyway)" : "");
+        return plan;
+    }
+    const FileImageParams& p = d.fileImage;
+    plan.previous = ReadText(machine, d);
+    if (plan.previous.ok && plan.previous.changed && !options.force)
+    {
+        plan.error = "the text " + plan.previous.name + " in " + d.title + " has changes not saved (force overwrites them)";
+        return plan;
+    }
+    int page = plan.previous.ok ? plan.previous.page : -1;
+    if (page < 0)
+    {
+        std::optional<uint8_t> id;
+        if (d.pages == PageIdRule::Port7FFD)
+            id = machine.Byte(p.pageIdAt);
+        for (const int candidate : PagesForId(machine, d.pages, id.value_or(0)))
+            if (const symbols::MemoryPage* found = machine.Page(candidate); found && found->bytes.size() >= kPage)
+            {
+                page = candidate;
+                break;
+            }
+    }
+    const symbols::MemoryPage* target = page >= 0 ? machine.Page(page) : nullptr;
+    if (!target || target->bytes.size() < kPage)
+    {
+        plan.error = "the page of " + d.title + "'s text is not in the memory copied";
+        return plan;
+    }
+    if (file.size() < p.headerSize || p.base + file.size() > kPage)
+    {
+        plan.error = "the text takes " + std::to_string(file.size()) + " bytes; the page holds " + std::to_string(kPage - p.base);
+        return plan;
+    }
+    plan.page = page;
+    plan.bytes.assign(target->bytes.begin(), target->bytes.begin() + kPage);
+    std::fill(plan.bytes.begin() + p.base, plan.bytes.end(), uint8_t{0});
+    std::copy(file.begin(), file.end(), plan.bytes.begin() + p.base);
+    if (options.markChanged && p.changedField)
+        plan.bytes[p.base + p.changedField] |= p.changedMask;
+    plan.ok = true;
+    return plan;
+}
+
 const std::vector<SyncDescriptor>& Descriptors()
 {
     static const std::vector<SyncDescriptor> descriptors = {
         // Each checked with dumps (testdata/sync): the text, the file it saves, the title where the editor leaves it
-        Alasm("5.09", "5.07", 0x97C5),
+        Alasm("5.09", "5.07", 0x97C5, "", true, {0x91E3, 0x9707}),
         Alasm("5.08", "5.07", 0x97CA),
         Alasm("5.07", "5.07", 0x97BC),
         Alasm("5.05", "5.05", 0x97BC),
@@ -776,6 +1100,22 @@ const std::vector<SyncDescriptor>& Descriptors()
                      "\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF\x72\x73\x74\x75\x66\x68\x63\x7E\x7B\x7D\x5C\x79", 0x68FB),
         Zxasm310(),
         Zxasm30(),
+        LaserGenius(),
+        Prometheus48(),
+        Pasm30(),
+        Zeus("zeus-1983", "ZEUS 1983 (Crystal)", "1983", 0xE028,
+             "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x20\x20\x20\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C"),
+        Zeus("zeus-1.1", "ZEUS 1.1 beta (PHT)", "pht", 0xE020,
+             "\x5C\x3E\xF7\x21\x6A\x5C\xA6\x77\xCD\x27\xF2\x0F\x5A\x45\x55\x53\x20\x5A\x38\x30\x20\x41\x53\x53", 0xFD00, "C"),
+        Zeus("zeus-gg", "ZEUS (GG, B-disk)", "gg", 0xE028,
+             "\x21\x6A\x5C\xA6\x77\xCD\xE3\xE4\x0F\x5A\x45\x55\x53\x20\x77\x69\x74\x68\x20\x42\x2D\x64\x69\x73", 0xFD00, "C"),
+        Zeus("zeus-7e", "ZEUS v7.E (ZKSoft)", "pht", 0xE020,
+             "\x5C\x3E\xF7\x21\x6A\x5C\xA6\x77\xCD\x27\xF2\x0F\x00\x18\x1B\xCD\xC0\xDA\xDA\x12\xE1\xC3\xC5\xE0", 0xFAAB, "Z"),
+        Zeus("primus-2.9", "Primus Assembler 2.9 (Trunov)", "primus", 0x6D17, "PRIMUS ASSEMBLER Version", 0x61B1, "C"),
+        Gens("gens-4", "GENS4 (HiSoft Devpac 4, tape, at 26000)", {0x88F0, "Copyright (C) HiSoft 1987"}, 0x67A8, 0x65C6),
+        Gens("gens-3m21", "GENS3M21 (HiSoft Devpac 3, tape, at 49000)", {0xE001, "HISOFT GENS3M2 ASSEMBLER"}, 0xDE54, 0xBF9E),
+        Gens("gens-4b", "GENS4B 4.1 (MOA B-Disk, at 30000)", {0x9A70, "MOA B-Disk version."}, 0x7928, 0x7566),
+        Gens("gens-4.3t", "GENS 4.3t (Aysoft, TR-DOS)", {0x8A9F, "BETA DISK VERSION 4.3t"}, 0x689C, 0x61FB),
         ZxAsm2("zasm-2.4", "ZX-ASM 2.4", 0x806C,
                "\x70\x65\x00\x70\x00\x6D\x00\x7E\xFE\x20\x20\x08\x23\x7E\xFE\x20\x28\xFA\xB7\xC9\xFE\x06\x37\xC0", 0x6273),
         ZxAsm2("zasm-2.5", "ZX-ASM 2.5", 0x804C,
@@ -803,6 +1143,22 @@ const SyncDescriptor* FindDescriptor(const std::string& id)
         if (d.id == id)
             return &d;
     return nullptr;
+}
+
+std::vector<SyncText> ReadOtherTexts(const MachineView& machine, const SyncDescriptor& descriptor, int exceptPage)
+{
+    std::vector<SyncText> texts;
+    if (!descriptor.textsPerPage || descriptor.family != LayoutFamily::FileImage)
+        return texts;
+    for (const symbols::MemoryPage& page : machine.ram)
+    {
+        if (static_cast<int>(page.page) == exceptPage)
+            continue;
+        SyncText text;
+        if (ReadFileImageInPage(machine, descriptor, page.page, text) == 1)
+            texts.push_back(std::move(text));
+    }
+    return texts;
 }
 
 SyncText ReadText(const MachineView& machine, const SyncDescriptor& descriptor)

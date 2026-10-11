@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+#include <optional>
+
 #include "modelswitch.h"
 
 #include <algorithm>
@@ -134,11 +136,10 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
         return out;
     }
 
-    // The old machine stops executing; stranded writes are dealt with while it
+    // The old machine stops executing (its CPU held: Emulator::CpuHold); stranded writes are dealt with while it
     // can still go on (a failed save leaves it as it was)
-    const bool wasRunning = old->IsRunning() && !old->IsPaused();
-    if (wasRunning)
-        old->Pause(false);
+    std::optional<Emulator::CpuHold> hold;
+    hold.emplace(*old, "model switch");
     for (const SlotInfo& info : out.stranded)
     {
         MediaResult kept = MediaResult::Success();
@@ -149,8 +150,7 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
         if (!kept.Ok())
         {
             emulators.RemoveEmulator(created->GetId());
-            if (wasRunning)
-                old->Resume(false);
+            hold.reset();
             out.result = MediaResult::Fail(kept.error, info.descriptor.id + ": " + kept.message);
             return out;
         }
@@ -158,6 +158,7 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
 
     if (old->IsRunning())
         old->Stop();
+    hold.reset();  // the old machine is stopped: nothing left to hold
     MediaTransfer transfer = from.TakeMediaSet();
     if (request.beforeRelease)
         request.beforeRelease(*old);

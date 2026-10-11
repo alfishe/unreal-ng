@@ -53,6 +53,24 @@ void BreakpointManager::ClearBreakpoints()
     RebuildFilters();
 }
 
+bool BreakpointManager::IsUserBreakpoint(const BreakpointDescriptor& descriptor)
+{
+    return !descriptor.hidden && descriptor.owner == OWNER_INTERACTIVE;
+}
+
+void BreakpointManager::ClearUserBreakpoints()
+{
+    // Collect first: removing while iterating the map is unsafe
+    std::vector<uint16_t> user;
+    for (const auto& [id, descriptor] : _breakpointMapByID)
+    {
+        if (descriptor != nullptr && IsUserBreakpoint(*descriptor))
+            user.push_back(id);
+    }
+    for (const uint16_t id : user)
+        RemoveBreakpointByID(id);
+}
+
 /// @brief Adds a new breakpoint with the given descriptor
 ///
 /// @param descriptor Pointer to a BreakpointDescriptor containing breakpoint configuration

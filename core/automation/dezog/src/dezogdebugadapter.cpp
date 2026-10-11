@@ -7,6 +7,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/ttd/timetravelmanager.h"
+#include "emulator/coordinator/machineop.h"
 #include "debugger/ttd/ttdsession.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "emulator/cpu/z80.h"
@@ -221,7 +222,7 @@ void DezogDebugAdapter::pause()
     if (!emulator->IsPaused())
     {
         // Pause() blocks until the Z80 thread has parked (WaitForPauseConfirmation)
-        emulator->Pause();
+        emulator->Pause(sessionRequester(), "dezog");
     }
 
     leaveHistory(*emulator);
@@ -242,7 +243,7 @@ void DezogDebugAdapter::resume()
     leaveHistory(*emulator);
     ensureHistoryRecording(*emulator);
 
-    emulator->Resume();
+    emulator->Resume(sessionRequester());
 }
 
 bool DezogDebugAdapter::isPaused() const
@@ -775,6 +776,7 @@ bool DezogDebugAdapter::restoreSnapshotBytes(Emulator& emulator, const std::vect
         std::ofstream out(path, std::ios::binary);
         out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     }
+    coordinator::SourceScope source(coordinator::OpSource::DeZog);   // the operation log names who loaded it
     bool ok = emulator.LoadSnapshot(path.string());
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -910,8 +912,27 @@ void DezogDebugAdapter::onSessionOpened()
     // panels only populate if we hand it a stopped CPU. Pause with broadcast=true
     // so the host UI (e.g. unreal-qt) reflects the paused state and does not
     // immediately resume it.
+    // The session holds the emulator's run control while DeZog is connected: the user sees it at the GUI
+    if (EmulatorContext* context = emulator->GetContext())
+    {
+        const unreal::UUID owner = unreal::UUID::Generate();
+        std::string reason;
+        std::string peer;
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            peer = _peer;
+        }
+        if (context->TakeRunControl(owner, "dezog", &reason, _sessionClientName, std::chrono::milliseconds(0), peer))
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            _sessionOwner = owner;
+        }
+        else
+            std::cout << "[DZRP] Run control not taken: " << reason << "\n";
+    }
+
     if (!emulator->IsPaused())
-        emulator->Pause(true);
+        emulator->Pause(sessionRequester(), "dezog attach");
 
     ensureHistoryRecording(*emulator);
 }
@@ -951,8 +972,56 @@ void DezogDebugAdapter::onSessionClosed()
             std::cout << "[DZRP] Session closed: removed " << owned.size() << " dezog breakpoint(s)\n";
     }
 
+    // Only a pause DeZog set itself (attach, its pause command) is lifted: a pause the user or another surface asked
+    // for stays (execution arbiter, owner-only run)
+    // The session's own pause (attach, its pause command) goes with its requester, a breakpoint's with DeZog alone
+    // (after the claim is released: a run asked without it would be refused)
+    unreal::UUID owner;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        owner = std::exchange(_sessionOwner, unreal::UUID());
+    }
+    EmulatorContext* context = emulator->GetContext();
+    if (emulator->IsPaused() && !owner.isNil() && context && context->HasRunControl(owner))
+        emulator->Resume(execution::Requester{execution::Origin::DeZog, owner.toString()}, true);
+    if (context && !owner.isNil())
+        context->ReleaseRunControl(owner);
     if (emulator->IsPaused())
-        emulator->Resume();
+        emulator->Resume(execution::Requester{execution::Origin::DeZog, {}}, true);
+}
+
+void DezogDebugAdapter::onClientConnected(const std::string& peer)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _peer = peer;
+}
+
+bool DezogDebugAdapter::controlTakenBack() const
+{
+    unreal::UUID owner;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        owner = _sessionOwner;
+    }
+    if (owner.isNil())
+        return false;
+    auto emulator = resolveEmulator();
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    return context && context->IsRunControlRevoked(owner);
+}
+
+execution::Requester DezogDebugAdapter::sessionRequester() const
+{
+    unreal::UUID owner;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        owner = _sessionOwner;
+    }
+    auto emulator = resolveEmulator();
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    if (!owner.isNil() && context && context->HasRunControl(owner))
+        return execution::Requester{execution::Origin::DeZog, owner.toString()};
+    return execution::Requester{execution::Origin::DeZog, {}};
 }
 
 /// endregion </Session lifecycle>

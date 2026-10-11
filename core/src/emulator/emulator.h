@@ -14,7 +14,10 @@
 #include <random>
 #include <shared_mutex>
 #include <string>
+#include <thread>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "base/featuremanager.h"
 #include "common/autoresetevent.h"
@@ -25,6 +28,7 @@
 #include "emulator/config.h"
 #include "emulator/video/screen.h"  // For DisplayViewport
 #include "emulator/cpu/core.h"
+#include "emulator/execution/executionarbiter.h"
 #include "emulator/mainloop.h"
 #include "emulatorcontext.h"
 #include "emulator/notifications.h"
@@ -39,6 +43,15 @@ class BreakpointManager;
 namespace ttd
 {
 enum class TTDGuardedAction : uint8_t;  // debugger/ttd/timetravelmanager.h
+class TTDSessionPort;                   // debugger/ttd/ttdsessionport.h
+}
+
+namespace coordinator  // emulator/coordinator/
+{
+class MachineCoordinator;
+class IMachineOps;
+class OperationLog;
+class OpStage;
 }
 
 /// region <Types>
@@ -136,15 +149,35 @@ protected:
                             const std::string& openedPath, const snapshot::Options& options);
     /// What the snapshot pipeline did with the last load (empty before the first one)
     snapshot::Report _lastSnapshotReport;
+
+    // The machine state coordinator (docs/inprogress/2026-10-09-machine-state-coordinator/): every operation on the
+    // whole machine goes through it. Created with the emulator, before every participant; WireCoordinator links it
+    class CoordinatorPorts;   ///< the emulator's ports: the machine thread, the clock, the owner of its own operations
+    struct SnapshotRequest;
+    struct AutostartRequest;
+    std::unique_ptr<coordinator::MachineCoordinator> _coordinator;
+    std::unique_ptr<CoordinatorPorts> _coordinatorPorts;
+    std::unique_ptr<ttd::TTDSessionPort> _ttdSessionPort;
+    /// Every link between the coordinator and the participants, in one place (architecture §3.3). Called again when
+    /// a participant arrives (the media manager in Init); owners already linked are left as they are
+    void WireCoordinator();
+    /// The emulator's own operations, run by the coordinator (stage: where the TTD session effect lands)
+    void ResetNow(bool hardReset, coordinator::OpStage& stage);
+    bool AutostartNow(AutostartRequest& request, coordinator::OpStage& stage);
+    bool LoadSnapshotNow(SnapshotRequest& request, coordinator::OpStage& stage);
     snapshot::SaveResult _lastSaveResult;
 
     // Control flow
-    volatile bool _stopRequested = false;
+    std::atomic<bool> _stopRequested{false};  // Stop() on any thread, the loop polls it
 
     /// Direct stepping (RunNFrames, RunTStates, RunUntil*, ...) drives the Z80 on the caller's thread while
     /// the emulation thread is parked. A GUI that reads the machine (debugger, memory views) must not do so
     /// meanwhile: the memory map changes under it. Depth, not a flag: the calls may nest
     std::atomic<int> _directStepDepth{0};
+    /// The outermost direct run's CPU hold and its thread: at each frame boundary it lends the CPU to the holds
+    /// queued behind it (ExecutionArbiter::LendCpu) - a TTD stop, a save, a reader do not wait for a long run_frames
+    const execution::HoldToken* _lendingHold = nullptr;
+    std::thread::id _lendingThread;
     // The debugger snapshot's change counter and the registers at the previous stop (tdd 2026-10-04-debugger-snapshot
     // §4.5): updated at stops, run starts and tool edits, never per instruction
     std::atomic<uint64_t> _debugSeq{0};
@@ -183,6 +216,8 @@ private:
     BreakpointStop _directStop;
     /// A breakpoint's pause: Pause() puts it into its NC_EMULATOR_STATE_CHANGE payload, then clears it
     BreakpointStop _pendingPauseCause;
+    /// The owner of that breakpoint ("dezog", "gdb", "interactive"): the origin its pause carries
+    std::string _pendingPauseOwner;
     /// The emulator is stopped at an execution breakpoint at this PC (nothing executed since)
     bool _stoppedAtExecBreakpoint = false;
     uint16_t _stoppedAtExecPc = 0;
@@ -190,7 +225,15 @@ private:
     bool _passExecBreakpointArmed = false;
     uint16_t _passExecBreakpointPc = 0;
     /// A direct run's loops end on a stop request or on a breakpoint stop
-    bool RunHalted() const { return _stopRequested || _directStop.hit; }
+    bool RunHalted() const
+    {
+        return _stopRequested || _directStop.hit || _arbiter.ServingAborted() || t_directRunRefused;
+    }
+    /// This thread's direct run did not get the CPU (a deadlock, not a wait: 60 s): it does not run at all, rather
+    /// than drive the Z80 next to the holder
+    static inline thread_local bool t_directRunRefused = false;
+    /// The last direct run ended because it was aborted (the user took control back from an automation session)
+    std::atomic<bool> _lastDirectRunAborted{false};
     /// Marks a direct-stepping call for its duration and holds the host audio output meanwhile (a direct run is
     /// never paced to real time: the machine computes the same samples, the speakers get nothing, as while
     /// paused); the last one out posts NC_EXECUTION_CPU_STEP so a GUI that
@@ -199,13 +242,25 @@ private:
     class DirectStepScope
     {
     public:
-        explicit DirectStepScope(Emulator& emulator);
+        /// `tag`: the command as the user knows it ("run_frames"): a pause queued behind it names it
+        DirectStepScope(Emulator& emulator, const char* tag);
         ~DirectStepScope();
         DirectStepScope(const DirectStepScope&) = delete;
         DirectStepScope& operator=(const DirectStepScope&) = delete;
 
     private:
         Emulator& _emulator;
+        /// The CPU for this run (execution arbiter, design §6 X2): a driving command. Outermost, it parks the main
+        /// loop and applies the pause ("stepping leaves the machine paused"); nothing else is served meanwhile - a
+        /// Resume() or a silent pause from another thread waits for its end. Nested (a step inside a silent pause,
+        /// on the loop's own thread) it is inline and leaves the intent alone
+        execution::HoldToken _hold;
+        /// This scope is a new driver of the Z80 (not nested in one that already drives)
+        bool _driver = false;
+        /// This scope's hold is the one lent between frames (Emulator::_lendingHold)
+        bool _lends = false;
+        /// It did not get the CPU: the run does not step (t_directRunRefused)
+        bool _refused = false;
         /// The host audio hold this direct run takes (reason DirectRun): it is not paced to real time, so its
         /// frames must not reach the speakers sped up. Taken after the depth marks the run active, released before
         /// it unmarks it, so Resume's reconcile never sees this hold without its run
@@ -213,12 +268,22 @@ private:
     };
 
     // Emulator state
-    // _pauseWaitMutex guards _isPaused transitions so the parked CPU thread's
-    // CV predicate (WaitWhilePaused) can never miss a Pause/Resume/Stop flip;
-    // _resumeCV wakes it in microseconds instead of the legacy 20 ms poll.
-    mutable std::mutex _pauseWaitMutex;
-    std::condition_variable _resumeCV;
-    volatile bool _isPaused = false;
+    /// Decides whether the Z80 executes: intents (pause / run), commands that hold the CPU, the main loop's parking
+    /// (docs/inprogress/2026-10-09-execution-arbiter/design.md). Pause() / Resume() are its compat front
+    execution::ExecutionArbiter _arbiter;
+    /// StartAsync submitted the start's Run intent for the Start() its thread runs
+    bool _startIntentSubmitted = false;
+    /// The breakpoint cause of each Pause edge, by edge seq: taken at the edge (gate), posted with its broadcast
+    std::mutex _edgeCausesMutex;
+    std::vector<std::pair<uint64_t, BreakpointStop>> _edgeCauses;
+    /// At the moment an intent edge applies, before the machine can run (under the arbiter's lock)
+    void OnIntentEdgeGate(const execution::IntentEdge& edge, bool parked);
+    /// After it applied, outside the lock: state and broadcasts
+    void OnIntentEdge(const execution::IntentEdge& edge);
+    /// Threads executing this machine's Z80 right now: the main loop between its parks, or a direct run. More than
+    /// one is a bug (the one the arbiter removed); counted, logged, asserted by the tests
+    std::atomic<int> _activeDrivers{0};
+    std::atomic<uint64_t> _driverViolations{0};
     std::atomic<bool> _isRunning{false};  // Atomic to support idempotent Stop()
     // Serializes Stop(): a caller that loses the _isRunning CAS below must still
     // block until the thread that won it has actually joined, not just signaled.
@@ -412,6 +477,28 @@ public:
     /// Realtime device/ring monitoring state (nullptr = no device attached)
     const AudioDeviceDescriptor* GetAudioDeviceDescriptor() const;
 
+    /// The machine state coordinator: run an operation on the whole machine, ask whether it would be refused (the
+    /// reason every surface shows), the machine's mode
+    coordinator::IMachineOps& MachineOps();
+    /// The last operations on this machine: who did what, at which frame, with which result (always on)
+    const coordinator::OperationLog& GetOperationLog() const;
+    /// A media change a surface asks about before it prepares the change itself (AskMediaChange)
+    enum class MediaChange : uint8_t
+    {
+        LoadTape,
+        LoadDisk,
+        CreateDisk
+    };
+    /// Why @p change would be refused right now (empty: it would go ahead), asked of the machine state coordinator:
+    /// a refusal is logged with the caller's source and the sentence the operation itself gives. For a surface about
+    /// to prepare the change (an upload, a staged file, a dialog). While a TTD recording runs the engine says empty
+    /// (the change will be an event of the recording); TTD v1 refuses. @p drive: the floppy drive; @p what: the file
+    std::string AskMediaChange(MediaChange change, uint8_t drive = 0, const std::string& what = {});
+    /// Why replacing this machine by another model, or moving another machine's state into it, would be refused right
+    /// now (empty: it would go ahead), asked of the machine state coordinator (a refusal is logged). @p what: for the
+    /// log ("to TSL", "state from <id>")
+    std::string AskModelSwitch(const std::string& what);
+
     // Emulator control cycle
     void Reset(bool hardReset = false);
 
@@ -435,8 +522,21 @@ public:
 
     void Start();
     void StartAsync();
-    void Pause(bool broadcast = true);   // broadcast=false for internal operations (won't trigger UI updates)
-    void Resume(bool broadcast = true);  // broadcast=false for internal operations (won't trigger UI updates)
+    void Pause();   // a pause with the Internal origin; a surface uses Pause(Requester); a still CPU: CpuHold
+    void Resume();  // a run with the Internal origin; a surface uses Resume(Requester)
+    /// A pause asked by a surface (execution arbiter intent): GUI, WebAPI, CLI, scripts, GDB, DeZog, TTD. The origin
+    /// is kept with the pause (who set it) and broadcast with it. Behind a command another thread serves (a direct
+    /// run, a hold) it is queued and the call returns at once: Pending, the command named in `detail` - the pause
+    /// applies when that ends (a pause never aborts a command). Otherwise it waits for the main loop to park, up to
+    /// 5 s (a starved host)
+    execution::Result Pause(const execution::Requester& requester, const std::string& reason = "pause");
+    /// The same, but waiting for the pause behind a command too, up to `budget`; still queued then: Busy (it stays
+    /// queued and applies when the command ends)
+    execution::Result PauseAndWait(const execution::Requester& requester, std::chrono::milliseconds budget,
+                                   const std::string& reason = "pause");
+    /// A run asked by a surface. Refused while another surface holds the run-control claim; with `onlyIfOwner`,
+    /// refused when the pause in force was set by somebody else (DeZog's session close, the TTD resume verb)
+    execution::Result Resume(const execution::Requester& requester, bool onlyIfOwner = false);
     void WaitWhilePaused();              // Block until resumed (used by breakpoint handlers)
     /// Block until the Z80 thread has actually parked in response to a prior Pause().
     /// Returns true on confirmation, false on timeout. Callers that mutate emulator
@@ -518,9 +618,12 @@ public:
     /// Which snapshot formats the machine can be saved in right now and why not (reasons, what would work instead)
     snapshot::SaveFormats SnapshotSaveFormats();
     /// A tape file (any TapeLoaderRegistry format) or a folder into the tape
-    /// slot, at once; the deck stops and plays the new tape from its start
+    /// slot, at once; the deck stops and plays the new tape from its start.
+    /// While a TTD recording runs it is an event of the recording: it lands at the next frame boundary
+    /// (TTD v1: refused)
     bool LoadTape(const std::string& path, std::string* error = nullptr);
-    /// The tape out of the deck. Refused while a TTD recording runs
+    /// The tape out of the deck. While a TTD recording runs it is an event of the recording: it lands at the next frame
+    /// boundary (TTD v1: refused)
     bool EjectTape(std::string* error = nullptr);
     /// `ext` (no dot, any case) is a format a tape loader reads
     static bool IsTapeExtension(const std::string& ext);
@@ -532,13 +635,16 @@ public:
     ///               drive 0 today (unreal-qt/src/mainwindow.cpp) - that is a UI default, not a
     ///               limitation of this method; every other caller (WebAPI, CLI, MCP, Lua, Python)
     ///               must pass the drive the caller actually asked for.
+    /// While a TTD recording runs the insert is an event of the recording: it lands at the next frame boundary (TTD v1:
+    /// refused)
     bool LoadDisk(const std::string& path, uint8_t drive = 0, std::string* error = nullptr);
 
     /// Take the disk out of `drive` (0-3, A-D) and free it; the other drives are untouched.
     /// @param force Eject even when the disk has unsaved writes (they are lost); without it a
     ///              dirty disk stays in and `error` says so
     /// @param error When non-null and the call fails, receives a human-readable reason
-    /// An empty drive is not an error. Like LoadDisk, it is refused while a TTD recording runs
+    /// An empty drive is not an error. Like LoadDisk, while a TTD recording runs it is an event of the recording: it
+    /// lands at the next frame boundary (TTD v1: refused)
     bool EjectDisk(uint8_t drive, bool force = false, std::string* error = nullptr);
 
     /// Layout of a blank disk from CreateBlankDisk()
@@ -559,6 +665,8 @@ public:
     /// @param sides 1 or 2; 0 = the format's default (Unformatted 2, Plus3 1)
     /// @param error When non-null and the call fails, receives a human-readable reason
     /// @param resolved When non-null, receives the format and geometry actually used
+    /// While a TTD recording runs the insert is an event of the recording: it lands at the next frame boundary (TTD v1:
+    /// refused)
     struct BlankDiskResult
     {
         BlankDiskFormat format = BlankDiskFormat::Unformatted;
@@ -740,6 +848,42 @@ public:
     // Status methods
     bool IsRunning();
     bool IsPaused();
+    /// The execution arbiter (intents, commands, parking): the one place that decides whether the Z80 executes
+    execution::ExecutionArbiter& GetArbiter() { return _arbiter; }
+    /// One relaxed load: the main loop must park at this instruction boundary (Z80FrameCycle, MainLoop::Run)
+    bool ShouldPark() const { return _arbiter.ShouldYield(); }
+    /// A thread starts / stops executing the Z80 (MainLoop around a frame, a direct run). Two at once is a violation
+    void DriverEnter();
+    void DriverLeave();
+    /// The last direct run (RunNFrames, RunTStates, ...) was cut short by an abort: the user took control back from the
+    /// automation session that asked for it. The surfaces answer that call with revoked_by_user
+    bool LastDirectRunAborted() const { return _lastDirectRunAborted.load(); }
+    /// Moments two threads executed the Z80 at once (0 on a correct run)
+    uint64_t DriverViolations() const { return _driverViolations.load(std::memory_order_relaxed); }
+    /// The machine's state may be changed from this thread right now: not running, paused, or this thread holds the
+    /// CPU (a CpuHold, a direct run, the emulation thread itself)
+    bool CanMutateNow();
+
+    /// The CPU held for a piece of work that changes the machine (execution arbiter command, design §6 X3): the main
+    /// loop parked, no direct run on another thread, nothing else served meanwhile. It never changes the pause and
+    /// never broadcasts - a Pause() or Resume() asked meanwhile queues and applies after it. Nested holds (this thread
+    /// already holds the CPU) are free. Replaces the "if running: Pause(); sleep; ...; Resume()" brackets
+    class CpuHold
+    {
+    public:
+        CpuHold(Emulator& emulator, const char* tag,
+                std::chrono::milliseconds timeout = std::chrono::seconds(5));
+        ~CpuHold();
+        CpuHold(const CpuHold&) = delete;
+        CpuHold& operator=(const CpuHold&) = delete;
+        /// False when the CPU was not handed over in time (logged): the work then runs as the old bracket did
+        bool Held() const { return _held; }
+
+    private:
+        Emulator& _emulator;
+        execution::HoldToken _token;
+        bool _held = false;
+    };
 
     /// True when no emulation thread is drawing: not running, or paused and confirmed parked (the pause loop
     /// was reached, not merely requested). Then the frame buffers and registers are safe to read from another

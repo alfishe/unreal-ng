@@ -99,13 +99,19 @@ sessions to manage.
 
 All tools accept `target` (emulator id or `"auto"`) and answer with dual
 content: `content[]` (human/LLM text summary) + `structuredContent`
-(machine-readable data). Tools that perform real multi-step work report
+(machine-readable data). Some clients (claude.ai connectors) hand the model
+only `content[]`, so the server also echoes `structuredContent` there as a
+second text block of compact JSON (MCP 2025-06-18, Structured Content), cut at
+64 KB with a note. A tool whose text already carries the data skips the echo:
+`debug_code disassemble` writes the listing itself, one line per instruction
+(`7396  CD 00 74      call #7400            ; -> draw`); `inspect_state`
+`disasm` puts the same listing under `[disasm]`. Tools that perform real multi-step work report
 progress when the request carries a `_meta.progressToken` (see
 [Protocol details](#protocol-details)).
 
 | Tool | Purpose | Progress |
 |:--|:--|:--|
-| `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, `switch_model` (`model`, optional `ram_size` and `stranded`: the media follow, [media.md](../media.md#model-switch); the cards too, the dropped ones listed, [slots.md](../slots.md#model-switch)), ZX-bus slots `slots_catalog` / `slots_matrix` / `slots_plug` / `slots_remove` / `slots_set` (planned, refused with the plan without `replace_if_incompatible`, applied by a restart, [slots.md](../slots.md)), `network_configure` (`settings`: the network settings; a ZX-bus network card change is a slot change applied by a restart, [slots.md](../slots.md#the-network-cards)), `transfer_state` (copy the target's running state in memory into `to`, an existing instance, or into a new instance of `model` with the source's sound cards; `check: true` only decides; floppies and the tape follow as clean in-memory copies with a postfixed path, SD / HDD / CD are not moved; per-item report, [automation.md](../automation.md#machine-state-transfer)), `list_models` (per-model `creatable` flags), `server` (build fingerprint + `models_creatable`); responses carry machine identity. `create` with `zxpoly: true` (+ `zxpoly_file`), or with a configuration as `model` (`ZXPOLY-48K`/`ZXPOLY-128K`/`ZXPOLY-PENTAGON`), starts a ZX-Poly machine, `zxpoly_status` reports its group ([recipe](../../../.recipe/machines/zxpoly.md)) | — |
+| `emulator_manage` | create/list/status/start/stop/pause/resume/reset/destroy, `operations` (the operation log: reset, autostart, snapshot load, media insert / eject / discard and refusals, one line each with frame, machine mode, result and TTD effect; `since` = after that seq, `limit` = newest N, default 20; [command-interface.md](../../emulator/design/control-interfaces/command-interface.md)), `switch_model` (`model`, optional `ram_size` and `stranded`: the media follow, [media.md](../media.md#model-switch); the cards too, the dropped ones listed, [slots.md](../slots.md#model-switch)), ZX-bus slots `slots_catalog` / `slots_matrix` / `slots_plug` / `slots_remove` / `slots_set` (planned, refused with the plan without `replace_if_incompatible`, applied by a restart, [slots.md](../slots.md)), `network_configure` (`settings`: the network settings; a ZX-bus network card change is a slot change applied by a restart, [slots.md](../slots.md#the-network-cards)), `transfer_state` (copy the target's running state in memory into `to`, an existing instance, or into a new instance of `model` with the source's sound cards; `check: true` only decides; floppies and the tape follow as clean in-memory copies with a postfixed path, SD / HDD / CD are not moved; per-item report, [automation.md](../automation.md#machine-state-transfer)), `list_models` (per-model `creatable` flags), `server` (build fingerprint + `models_creatable`); responses carry machine identity. `create` with `zxpoly: true` (+ `zxpoly_file`), or with a configuration as `model` (`ZXPOLY-48K`/`ZXPOLY-128K`/`ZXPOLY-PENTAGON`), starts a ZX-Poly machine, `zxpoly_status` reports its group ([recipe](../../../.recipe/machines/zxpoly.md)) | — |
 | `load_software` | `.sna/.z80/.szx` snapshots, `.rzx` input recordings (played on the model they need), `.tap/.tzx` tapes (auto-play), `.trd/.scl/.fdi` disks | — |
 | `control_execution` | run/pause/resume/step/step_n/step_over/step_out, `run_frames`/`run_tstates`/`run_to_interrupt`, breakpoints | — |
 | `inspect_state` | aspect fan-out: machine, registers, memory, disasm, stack, breakpoints, memory_banks, paging (tagged latches + bank table), ports (static port map with semantic tags + live routing), video (video mode report), screen (screen state, verbose), screen_flash (FLASH timing) — screen reports per command-interface.md §6.6, screen_ocr, screen_image, screen_digest, timing, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, audio_multisound (the ZX-MultiSound: options, CPLD, YM pair, SAA, GS, DACs, MIDI), audio_midi (its MIDI line and SAM2695: parts, programs, notes, counters; panic = invoke_api POST /api/v1/emulator/{id}/control/audio/midi {action: panic}), slots (the ZX-bus slot report: buses, slots, cards, built-ins; change it with emulator_manage slots_plug / slots_remove / slots_set), fdc, ide, cdaudio (the CD drives' audio: disc, tracks, status, head, volume, mixer row; control with invoke_api POST /api/v1/emulator/{id}/cdaudio/{verb}), rtc, mouse (device reports, see command-interface.md §3.3; CMOS cells are written with invoke_api POST /api/v1/emulator/{id}/rtc/cells), ttd (time-travel session: state, recorded range, checkpoints, current position) | one notification per aspect |
@@ -201,10 +207,14 @@ searches outside replay)`, `covers the whole session` or `covers nothing`.
 - **These wipe the history:** loading a snapshot, tape or disk (or creating a
   disk), reloading the ROM, changing the speed on a stopped session that still
   holds history, and `invalidate`. Load your software *before* `start`.
+- **A media change while recording is an event of the recording.** A tape,
+  disk or other medium inserted, ejected or created while a recording runs
+  lands at the next frame boundary and the recording goes on; seeking back to
+  before that frame shows the slot empty.
 - **Reset keeps the history.** A reset (including a disk autostart) stops the
   recording; the recorded history stays browsable.
-- **Devices TTD cannot follow end the recording.** Using the ZX-Evo SD card
-  while recording ends (and drops) the session at the next frame boundary.
+- **The ZX-Evo SD card is recorded.** Using it while recording no longer
+  ends the session.
 - **`load`** only restores into a machine of the model the session was
   recorded on (the error names both models). After a load the session is
   `idle`: `seek` to position the machine inside it. The path is resolved by

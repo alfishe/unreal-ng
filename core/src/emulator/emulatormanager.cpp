@@ -714,10 +714,43 @@ bool EmulatorManager::RemoveEmulatorInstance(const std::string& emulatorId)
     if (retiring)
         retiring->WaitForContextLeases();
 
-    std::lock_guard<std::mutex> lock(_emulatorsMutex);
+    // Out of the map under the lock; stopped and released after it. Release() removes message observers, and
+    // removing one waits for a dispatch in flight - a handler that looks an instance up (the GUI's selection change,
+    // posted by another thread after the drain above) waits for this lock: holding it there was a deadlock
+    // (2026-10-10, WebAPI deletes while the GUI followed the selection)
+    std::shared_ptr<Emulator> removed;
+    {
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
-    auto it = _emulators.find(emulatorId);
-    if (it != _emulators.end())
+        auto it = _emulators.find(emulatorId);
+        if (it != _emulators.end())
+        {
+            removed = std::move(it->second);
+            _emulators.erase(it);
+
+            // Clear selection if this was the selected emulator
+            {
+                std::lock_guard<std::mutex> selLock(_selectionMutex);
+                if (_selectedEmulatorId == emulatorId)
+                {
+                    std::string previousId = _selectedEmulatorId;
+                    _selectedEmulatorId = "";
+
+                    // Send notification about selection being cleared
+                    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                    EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, "");
+                    messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
+
+                    LOGINFO("EmulatorManager::RemoveEmulator - Cleared selection (was pointing to removed emulator)");
+                }
+            }
+
+            // The surviving sole instance (if any) may become the active one
+            UpdateRealtimeSchedulingLocked();
+        }
+    }
+
+    if (removed)
     {
         // Always go through Stop(), even when IsRunning() already reads false:
         // Stop() is a blocking barrier (it returns only once the emulation
@@ -727,34 +760,11 @@ bool EmulatorManager::RemoveEmulatorInstance(const std::string& emulatorId)
         // free Core's Screen / SoundManager / TimeTravelManager while that
         // thread was still mid-frame (2026-10-02 crash).
         LOGINFO("EmulatorManager::RemoveEmulator - Stopping emulator with ID '%s'", emulatorId.c_str());
-        it->second->Stop();
+        removed->Stop();
 
         // Release resources
-        it->second->Release();
-
-        // Remove from map
-        _emulators.erase(it);
+        removed->Release();
         LOGINFO("EmulatorManager::RemoveEmulator - Removed emulator with ID '%s'", emulatorId.c_str());
-
-        // Clear selection if this was the selected emulator
-        {
-            std::lock_guard<std::mutex> selLock(_selectionMutex);
-            if (_selectedEmulatorId == emulatorId)
-            {
-                std::string previousId = _selectedEmulatorId;
-                _selectedEmulatorId = "";
-
-                // Send notification about selection being cleared
-                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-                EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, "");
-                messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
-
-                LOGINFO("EmulatorManager::RemoveEmulator - Cleared selection (was pointing to removed emulator)");
-            }
-        }
-
-        // The surviving sole instance (if any) may become the active one
-        UpdateRealtimeSchedulingLocked();
 
         return true;
     }
@@ -937,52 +947,86 @@ bool EmulatorManager::StopEmulator(const std::string& emulatorId)
     return false;
 }
 
-bool EmulatorManager::PauseEmulator(const std::string& emulatorId)
+bool EmulatorManager::PauseEmulator(const std::string& emulatorId, execution::Origin origin)
 {
-    std::lock_guard<std::mutex> lock(_emulatorsMutex);
-
-    auto it = _emulators.find(emulatorId);
-    if (it != _emulators.end())
-    {
-        if (it->second->IsRunning() && !it->second->IsPaused())
-        {
-            it->second->Pause();
-            LOGINFO("EmulatorManager::PauseEmulator - Paused emulator with ID '%s'", emulatorId.c_str());
-            return true;
-        }
-        else
-        {
-            LOGDEBUG("EmulatorManager::PauseEmulator - Emulator with ID '%s' not running or already paused", emulatorId.c_str());
-            return false;
-        }
-    }
-
-    LOGDEBUG("EmulatorManager::PauseEmulator - No emulator found with ID '%s'", emulatorId.c_str());
-    return false;
+    return PauseEmulator(emulatorId, execution::Requester{origin, {}});
 }
 
-bool EmulatorManager::ResumeEmulator(const std::string& emulatorId)
+execution::Result EmulatorManager::PauseEmulatorWithResult(const std::string& emulatorId,
+                                                           const execution::Requester& requester,
+                                                           std::chrono::milliseconds wait)
 {
-    std::lock_guard<std::mutex> lock(_emulatorsMutex);
-
-    auto it = _emulators.find(emulatorId);
-    if (it != _emulators.end())
+    std::shared_ptr<Emulator> emulator;
     {
-        if (it->second->IsPaused())
-        {
-            it->second->Resume();
-            LOGINFO("EmulatorManager::ResumeEmulator - Resumed emulator with ID '%s'", emulatorId.c_str());
-            return true;
-        }
-        else
-        {
-            LOGDEBUG("EmulatorManager::ResumeEmulator - Emulator with ID '%s' not paused", emulatorId.c_str());
-            return false;
-        }
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
+        auto it = _emulators.find(emulatorId);
+        if (it != _emulators.end())
+            emulator = it->second;
     }
+    if (!emulator)
+        return execution::Result{execution::Outcome::Refused, 0, execution::Intent::Pause, "no such emulator"};
+    if (!emulator->IsRunning())
+        return execution::Result{execution::Outcome::Refused, 0, execution::Intent::Pause, "not running"};
+    // Not "already paused" from the flag: a direct run (run_frames) drives a paused machine - Pause() says queued
+    // behind it then
+    return wait.count() > 0 ? emulator->PauseAndWait(requester, wait) : emulator->Pause(requester);
+}
 
-    LOGDEBUG("EmulatorManager::ResumeEmulator - No emulator found with ID '%s'", emulatorId.c_str());
-    return false;
+bool EmulatorManager::PauseEmulator(const std::string& emulatorId, const execution::Requester& requester)
+{
+    // The instance is taken under the lock; the pause (which waits for the park, up to 500 ms) runs outside it
+    std::shared_ptr<Emulator> emulator;
+    {
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
+        auto it = _emulators.find(emulatorId);
+        if (it != _emulators.end())
+            emulator = it->second;
+    }
+    if (!emulator)
+    {
+        LOGDEBUG("EmulatorManager::PauseEmulator - No emulator found with ID '%s'", emulatorId.c_str());
+        return false;
+    }
+    if (!emulator->IsRunning() || emulator->IsPaused())
+    {
+        LOGDEBUG("EmulatorManager::PauseEmulator - Emulator with ID '%s' not running or already paused", emulatorId.c_str());
+        return false;
+    }
+    const execution::Result result = emulator->Pause(requester);
+    LOGINFO("EmulatorManager::PauseEmulator - Pause of emulator '%s': %s", emulatorId.c_str(),
+            execution::OutcomeName(result.outcome));
+    return result.outcome != execution::Outcome::Refused;
+}
+
+bool EmulatorManager::ResumeEmulator(const std::string& emulatorId, execution::Origin origin)
+{
+    return ResumeEmulator(emulatorId, execution::Requester{origin, {}});
+}
+
+bool EmulatorManager::ResumeEmulator(const std::string& emulatorId, const execution::Requester& requester)
+{
+    std::shared_ptr<Emulator> emulator;
+    {
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
+        auto it = _emulators.find(emulatorId);
+        if (it != _emulators.end())
+            emulator = it->second;
+    }
+    if (!emulator)
+    {
+        LOGDEBUG("EmulatorManager::ResumeEmulator - No emulator found with ID '%s'", emulatorId.c_str());
+        return false;
+    }
+    if (!emulator->IsPaused())
+    {
+        LOGDEBUG("EmulatorManager::ResumeEmulator - Emulator with ID '%s' not paused", emulatorId.c_str());
+        return false;
+    }
+    // Refused while another surface holds the run-control claim (the arbiter checks it)
+    const execution::Result result = emulator->Resume(requester);
+    LOGINFO("EmulatorManager::ResumeEmulator - Resume of emulator '%s': %s %s", emulatorId.c_str(),
+            execution::OutcomeName(result.outcome), result.detail.c_str());
+    return result.outcome != execution::Outcome::Refused;
 }
 
 bool EmulatorManager::ResetEmulator(const std::string& emulatorId)
@@ -1196,9 +1240,15 @@ void EmulatorManager::ShutdownAllEmulators()
         emulator->WaitForContextLeases();
     retiring.clear();
 
-    std::lock_guard<std::mutex> lock(_emulatorsMutex);
+    // Out of the map under the lock, stopped and released after it (see RemoveEmulatorInstance: Release() waits for a
+    // dispatch in flight whose handler may wait for this lock)
+    decltype(_emulators) all;
+    {
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
+        all.swap(_emulators);
+    }
 
-    for (auto& [uuid, emulator] : _emulators)
+    for (auto& [uuid, emulator] : all)
     {
         // Always go through Stop() - see RemoveEmulatorInstance() for why
         // gating this on IsRunning() is unsafe
@@ -1208,8 +1258,6 @@ void EmulatorManager::ShutdownAllEmulators()
         // Release resources
         emulator->Release();
     }
-
-    _emulators.clear();
     LOGINFO("EmulatorManager::ShutdownAllEmulators - All emulators have been shut down");
 }
 

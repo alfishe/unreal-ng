@@ -9,12 +9,13 @@
 #include "_helpers/emulatortesthelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/video/next/screennext.h"
 #include "emulator/video/sprinter/screensprinter.h"
 #include "emulator/video/tsconf/screentsconf.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
 
-TEST(VideoController_Test, TsConfAndSprinterGetTheirOwnScreenEveryOtherModelTheZxScreen)
+TEST(VideoController_Test, TsConfSprinterAndNextGetTheirOwnScreenEveryOtherModelTheZxScreen)
 {
     // The factory is exercised with one machine's context, which is all a
     // screen's constructor needs
@@ -27,8 +28,9 @@ TEST(VideoController_Test, TsConfAndSprinterGetTheirOwnScreenEveryOtherModelTheZ
         SCOPED_TRACE(m);
         std::unique_ptr<Screen> screen(VideoController::CreateScreen(model, emulator->GetContext()));
         ASSERT_NE(screen, nullptr);
-        EXPECT_EQ(dynamic_cast<ScreenZX*>(screen.get()) != nullptr, model != MM_SPRINTER)
-            << "every screen but the Sprinter's is a ZX screen with extra modes";
+        EXPECT_EQ(dynamic_cast<ScreenZX*>(screen.get()) != nullptr, model != MM_SPRINTER && model != MM_NEXT)
+            << "every screen but the Sprinter's and the Next's is a ZX screen with extra modes";
+        EXPECT_EQ(dynamic_cast<ScreenNext*>(screen.get()) != nullptr, model == MM_NEXT);
         EXPECT_EQ(dynamic_cast<ScreenTSConf*>(screen.get()) != nullptr, model == MM_TSL);
         EXPECT_EQ(dynamic_cast<ScreenSprinter*>(screen.get()) != nullptr, model == MM_SPRINTER);
     }

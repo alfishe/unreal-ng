@@ -1,0 +1,5 @@
+Sprites off, over border off, 3 visible; collision off, too many off
+#3 basic x 308 y 86 pattern 5 palette +3 xmirror scale 1x1  [34 56 39 85 00]
+#10 anchor x 16 y 288 pattern 15 (4-bit) palette +0 scale 4x2  [10 20 00 C7 F3]
+#11 relative x 36 y 278 pattern 4 (4-bit) palette +0 scale 4x2 anchor #10 offset 5,-5  [05 FB 00 C2 40]
+pattern memory: 0 non-zero byte(s) of 16384, 0 8-bit pattern(s) in use

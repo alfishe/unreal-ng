@@ -260,7 +260,7 @@ TEST_F(LoaderUDI_Test, Load_Beta128Empty_IsValidTrdos)
 
 TEST_F(LoaderUDI_Test, Load_ZvezdnoeNasledie_RealDriveDump)
 {
-    LoaderUDI loader(_context, fixture("loaders/udi/Zvezdnoe Nasledie.udi"));
+    LoaderUDICUT loader(_context, fixture("loaders/udi/Zvezdnoe Nasledie.udi"));
     ASSERT_TRUE(loader.loadImage()) << (loader.lastWarnings().empty() ? "" : loader.lastWarnings()[0]);
     DiskImage* image = loader.getImage();
     ASSERT_NE(image, nullptr);
@@ -288,7 +288,7 @@ TEST_F(LoaderUDI_Test, Load_ZvezdnoeNasledie_RealDriveDump)
     EXPECT_EQ(volume->data[0xE7], TRD_SIGNATURE);
 
     // The TRX2X comment between the last track and the CRC is preserved
-    LoaderUDICUT& cut = static_cast<LoaderUDICUT&>(loader);
+    LoaderUDICUT& cut = loader;
     EXPECT_FALSE(cut._trailer.empty());
     EXPECT_NE(std::string(cut._trailer.begin(), cut._trailer.end()).find("TRX2X"), std::string::npos);
 

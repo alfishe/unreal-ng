@@ -343,6 +343,7 @@ protected:
 
     /// The host keyboard's route (config [INPUT] HostKeyboard=, runtime SetHostRoute)
     HostKeyboardRoute _hostRoute = HostKeyboardRoute::Auto;
+    bool _hostInputDetached = false;   // DetachHostInput: the owner's thread only
 
     /// endregion </Fields>
 
@@ -458,6 +459,10 @@ public:
     /// Ignore host key events (see _hostInputGated). PressKey/ReleaseKey still work
     void SetHostInputGated(bool gated) { _hostInputGated = gated; }
     bool IsHostInputGated() const { return _hostInputGated; }
+
+    /// Stop taking the front end's key events for good: the handlers reach the debug manager and the TTD controller,
+    /// so the emulator detaches them before those go. Waits for a handler in progress (RemoveObserver)
+    void DetachHostInput();
 
 protected:
     bool IsHostInputSuppressed() const;               // TTD journal owns input

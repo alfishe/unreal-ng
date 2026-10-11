@@ -1601,7 +1601,7 @@ void VideoWallWindow::setSingleEmulatorSyncMode(bool enable, const std::string& 
         primaryTile->setSynchronousMode(true);
 
         // Ensure primary emulator is running
-        primaryEmulator->Resume();
+        primaryEmulator->Resume(execution::Requester{execution::Origin::Gui, {}});
 
         // Configure recording & bind HQ audio to tile (0, 0)
         VideowallRecorder::instance().setSynchronousMode(true);

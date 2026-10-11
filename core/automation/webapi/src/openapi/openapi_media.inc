@@ -24,7 +24,9 @@
             operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/MediaReply";
             operation["responses"]["400"]["description"] = "bad-request, kind-mismatch, unreadable-source, unknown-format, does-not-fit, ambiguous-slot";
             operation["responses"]["404"]["description"] = "unknown-slot, unknown-emulator";
-            operation["responses"]["409"]["description"] = "dirty (say save, export or discard), recording (TTD records; end_recording), in-use";
+            operation["responses"]["409"]["description"] =
+                "dirty (say save, export or discard), recording (TTD v1 records; end_recording; on the engine a change "
+                "while recording lands at the next frame boundary), in-use";
             operation["responses"]["501"]["description"] = "not-supported";
         };
 

@@ -97,7 +97,7 @@ A refusal does not raise: the table / dict has `ok = false` and `error` = the me
 ## The source an assembler holds in RAM (asm-synchronizer)
 
 The source an assembler is editing in the machine can be read without saving it to a disk first. ALASM (3.8c, 4.42-4.46,
-4.5, 5.00-5.09), TASM (2.0, 3.0, 3.2, 3.5, 4.0, 4.4, 4.12), XAS (4.18, 5.05, 7.43c, 7.447, 9.07m, 9.10) STORM (1.0beta, 1.3), ZX-ASM 2.4 / 2.5 / 2.6 / ZX ASM 3.0 / 3.10 / ZAsm 3.15 / 3.2x / Lite 1.07 / 3.3.02 / 3.3.51 / 3.3.Final / 3.4 / 3.80.4 / x64.1 / 4.0x8 / 4.x64 / 4.20 and MASM 1.0 demo / 1.1 / 1.3 / 2.0 / 3.0 are recognized (phase Y0 of `docs/inprogress/2026-10-05-unreal-asm/asm-synchronizer.md`). The RAM is
+4.5, 5.00-5.09), TASM (2.0, 3.0, 3.2, 3.5, 4.0, 4.4, 4.12), XAS (4.18, 5.05, 7.43c, 7.447, 9.07m, 9.10) STORM (1.0beta, 1.3), ZX-ASM 2.4 / 2.5 / 2.6 / ZX ASM 3.0 / 3.10 / ZAsm 3.15 / 3.2x / Lite 1.07 / 3.3.02 / 3.3.51 / 3.3.Final / 3.4 / 3.80.4 / x64.1 / 4.0x8 / 4.x64 / 4.20 and MASM 1.0 demo / 1.1 / 1.3 / 2.0 / 3.0, GENS4 / GENS3M21 / GENS4B / GENS 4.3t, ZEUS 1983 / 1.1 / GG / v7.E, Primus 2.9, Laser Genius 1.04, PROMETHEUS 48K, Power Assembler 3.0 are recognized (phase Y0 of `docs/inprogress/2026-10-05-unreal-asm/asm-synchronizer.md`). The RAM is
 copied at a coherent moment, and the guest is never written. The text comes out as the file the assembler's own SAVE
 would write: a line being edited in TASM is in it. ALASM keeps a line out of the text until Enter; the status says
 `typing` then.
@@ -120,9 +120,17 @@ asm_source {"action":"sync_extract","as":"file","output":"disk:A/COPY.H"}   # th
 ```text
 asm_source {"action":"sync_watch"}                                    # interval 250 ms, quiet 500 ms
 asm_source {"action":"sync_watch","as":"dialect","to":"sjasmplus","output":"scratch/live.asm"}   # the host file follows
+asm_source {"action":"sync_watch","project":"disk:A,/abs/project/lib"}   # INCLUDEd sources: the disk, then a host folder
 asm_source {"action":"sync_hints"}                                    # the last build: labels, hints with source lines
 asm_source {"action":"sync_unwatch"}
 ```
+
+A text that INCLUDEs others (`LTEXT`, `INCLUDE`, `*F` ...) is built as a project: the live text is the main file, the
+sources it names come from the other texts ALASM holds in memory (one per page, by their names), the disk in drive A
+(default; `project: "disk:B"`, `"none"`) and from host folders in
+`project` (text sources by file name; other files give their sizes to INCBIN); a text in memory wins over the disk's
+file, the disk's over the folder's, the live text over all. `sync_hints` counts the project's sources (`project`); a name found nowhere is a
+hint and the build goes on.
 
 The labels of each build become the symbol set `live:sync:<assembler>` (priority 900000: above files, below `user`),
 so the disassembly shows them at once. The set stays after `sync_unwatch`; `manage_symbols drop` removes it. WebAPI:
@@ -135,6 +143,50 @@ highlighted, errors and warnings on their lines and in a list), the status, and 
 
 `state: none` (404) means that no known assembler is in RAM. `ambiguous` (400) means that two identify alike: give
 `assembler`. `inconsistent` means that the pointers did not add up at that moment (the guest was mid-update): ask again.
+
+### Writing a host source into the assembler (part B)
+
+`sync_inject` turns a host source into the assembler's own text in RAM, so the user can go on in the original tool.
+ALASM 5.09 only for now:
+
+```text
+asm_source {"action":"sync_inject","path":"/abs/project/main.asm"}                 # sjasmplus, by default
+asm_source {"action":"sync_inject","text":"        ORG #6000\nstart   ret\n","title":"DEMO"}
+asm_source {"action":"sync_inject","path":"disk:A/OLD.$C","from":"storm","force":true,"backup":"/abs/scratch/prev.H"}
+```
+
+The source is converted by the ALASM backend: left-to-right expressions, and a later label in anything but `+` / `-`
+written as its value. The result is encoded as ALASM 5.07 and written over the text in the page IX+#0D names, as a
+TTD tool edit. `title` names the text (default: the name of the text it replaces). The reply gives the page, the
+bytes, the lines, the replaced text (`previous`) and the conversion's diagnostics.
+
+The write is refused (409) unless ALASM waits at its `A>` prompt: in the editor, while it assembles, saves or shows
+a catalogue. Leave the editor first (Extend, `q`, ENTER). A text with changes not saved is kept unless `force` is
+given; `backup` writes it to a host file first. After the write, `a` + ENTER assembles the new text.
+
+WebAPI: `POST /emulator/{id}/asm/sync/inject {text | path | data + name, from?, assembler?, title?, force?, backup?}`.
+CLI: `asm sync inject --path f [--from d] [--title NAME] [--force]`. Lua / Python: `asm_sync_inject{...}`.
+`tools/verification/unreal-asm/emulator/inject-oracle.py alasm509 <ALASM509.trd> <source.asm> 0x6000` runs the
+whole check: it injects the source, lets ALASM assemble it and compares the bytes with sjasmplus' build. Sources for
+ALASM 5.09 must ORG below #8000. The conversion's rules and limits are in
+[research-sjasmplus-to-alasm.md](../../docs/inprogress/2026-10-05-unreal-asm/research-sjasmplus-to-alasm.md).
+
+#### Into a snapshot or a disk (no running assembler)
+
+With `snapshot` the sync verbs read a snapshot file (.szx, .sna, .z80) instead of the machine, and `sync_inject`
+writes the snapshot with the text in it to `output`; the machine is not touched. An idle template is ALASM at its
+prompt with no text (`core/src/3rdparty/unreal-asm/testdata/templates/alasm-5.09.szx`):
+
+```text
+asm_source {"action":"sync_inject","path":"/abs/main.asm","snapshot":"/abs/alasm-5.09.szx","output":"/abs/scratch/work.szx"}
+asm_source {"action":"sync_extract","snapshot":"/abs/scratch/work.szx","as":"dialect","to":"sjasmplus"}
+```
+
+The standalone `zxasm` does the same on files, and also writes the source as a file of the assembler onto a TR-DOS
+image of any format (TRD, SCL, FDI, UDI, TD0 ...): `zxasm inject main.asm work.szx`, `zxasm inject main.asm disk.trd --assembler alasm-5.09`,
+`zxasm probe work.szx`, `zxasm extract work.szx --to sjasmplus`, `zxasm extract disk.scl --file MAIN.H`.
+`inject-oracle.py alasm509 --template <template> <source.asm> 0x6000` is the check: zxasm injects, the snapshot is
+loaded and ALASM assembles it.
 
 ## Pitfalls
 

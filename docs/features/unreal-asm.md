@@ -30,8 +30,8 @@ Running the assemblers themselves inside the emulator: [.recipe/assemblers/](../
 
 Every codec decodes the assembler's own file to UTF-8 text and encodes text back to the same bytes (byte for byte
 for files the assembler wrote; the research documents give the corpus numbers). Containers: hobeta files
-(`NAME.$A`), TR-DOS images (`.trd`, `.scl` through `tools/verification/unreal-asm/lib/zxdisk.py scl2trd`) and tape images (`.tap`,
-`.tzx`).
+(`NAME.$A`), disk images of every format the emulator reads (`.trd`, `.scl`, `.fdi`, `.udi`, `.td0`, `.dsk` ...: their
+TR-DOS files, through the emulator's disk library unreal-disk) and tape images (`.tap`, `.tzx`).
 
 The conversion goes through a neutral intermediate form; the sjasmplus output of every dialect is checked against
 the original assembler running in the emulator: the converted source assembles to the same bytes (see the
@@ -128,9 +128,9 @@ scan. Details:
 
 ## The source in the running machine
 
-The debugger reads the source that ALASM (3.8c, 4.42-4.46, 4.5, 5.00-5.09), TASM (2.0, 3.0, 3.2, 3.5, 4.0, 4.4, 4.12), XAS (4.18-9.10) STORM (1.0beta, 1.3), ZX-ASM 2.4 / 2.5 / 2.6 / ZX ASM 3.0 / 3.10 / ZAsm 3.15 / 3.2x / Lite 1.07 / 3.3.02 / 3.3.51 / 3.3.Final / 3.4 / 3.80.4 / x64.1 / 4.0x8 / 4.x64 / 4.20 or MASM 1.0 demo / 1.1 / 1.3 / 2.0 / 3.0 is editing in the machine, with no need to save
+The debugger reads the source that ALASM (3.8c, 4.42-4.46, 4.5, 5.00-5.09), TASM (2.0, 3.0, 3.2, 3.5, 4.0, 4.4, 4.12), XAS (4.18-9.10) STORM (1.0beta, 1.3), ZX-ASM 2.4 / 2.5 / 2.6 / ZX ASM 3.0 / 3.10 / ZAsm 3.15 / 3.2x / Lite 1.07 / 3.3.02 / 3.3.51 / 3.3.Final / 3.4 / 3.80.4 / x64.1 / 4.0x8 / 4.x64 / 4.20 or MASM 1.0 demo / 1.1 / 1.3 / 2.0 / 3.0, GENS4 / GENS3M21 / GENS4B / GENS 4.3t, ZEUS 1983 / 1.1 / GG / v7.E, Primus 2.9, Laser Genius 1.04, PROMETHEUS 48K, Power Assembler 3.0 is editing in the machine, with no need to save
 it to a disk first. You get it as text, as the file the assembler's own SAVE would write, or converted to sjasmplus,
-pasmo or z88dk:
+pasmo, z88dk or ALASM:
 
 ```text
 asm sync                                  # which assembler, its text, where the cursor is
@@ -147,14 +147,28 @@ source is built on the host:
 
 - its labels show in the debugger at once (the symbol set `live:sync:<assembler>`);
 - `asm sync hints` lists the errors with their line numbers, for example `line 105: unknown symbol NOWHERE`;
-- with `--output`, a host file (text, the assembler's format or sjasmplus) is written again after each build.
+- with `--output`, a host file (text, the assembler's format or sjasmplus) is written again after each build;
+- a source that includes others (`INCLUDE`, XAS `LTEXT`, GENS `*F` ...) is built with them: they come from the other texts
+  ALASM holds in memory, from the disk in drive A, and from host folders named with `--project` (for example `--project disk:A,/home/me/lib`); a file found
+  nowhere is reported in the hints.
 
 In the Qt debugger, the **Live source** button shows all of this in one window: the text with the guest's cursor line
 highlighted, the errors and warnings on their lines and in a list below it, a status line, and the Watch, Extract...
 and Convert... buttons.
 
-`asm sync unwatch` stops the watch. More assemblers are planned
-([asm-synchronizer](../inprogress/2026-10-05-unreal-asm/asm-synchronizer.md)).
+`asm sync unwatch` stops the watch.
+
+The other way works too, for ALASM 5.09 so far: `asm sync inject --path main.asm` writes a host source (sjasmplus,
+or any dialect the converter reads) into the running ALASM as its own text, while ALASM waits at its `A>` prompt.
+ALASM then assembles it as if you had typed it. `zxasm convert --to alasm` gives the same text as a file. More
+assemblers are planned ([asm-synchronizer](../inprogress/2026-10-05-unreal-asm/asm-synchronizer.md)).
+
+Snapshots and disks work both ways without the emulator. `zxasm inject main.asm alasm-5.09.szx -o work.szx` puts
+the source into a snapshot of ALASM waiting at its prompt (a ready template ships with the library's test data);
+load `work.szx` and assemble. `zxasm inject main.asm disk.trd --assembler alasm-5.09` writes it as ALASM's file onto
+a disk image of any format the emulator reads (TRD, SCL, FDI, UDI, TD0 ...). `zxasm probe work.szx` says which assembler a snapshot holds, and
+`zxasm extract work.szx --to sjasmplus` takes its text out again. In the emulator, the `asm sync` verbs take
+`--snapshot` for the same on a file.
 
 ## Speed
 

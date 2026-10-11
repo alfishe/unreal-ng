@@ -998,7 +998,7 @@ TEST(Ym2203PairBoardsTtd_Test, SeekAndReplayKeepTheCursorAndTheAudio)
 }
 
 /// The same register writes on both boards come out at the same level: the YM2203 FM calibration is one ([SOUND]
-/// TSFM_FmTrimDb, the audio settings' FM trim drives both). Per chip, the FM row's RMS of the TSFM in the socket and of
+/// TSFM_FmLevelDb, the audio settings' FM trim drives both). Per chip, the FM row's RMS of the TSFM in the socket and of
 /// the MultiSound agree within 0.1 dB at the shipped trim and at another one, and so do the master mixes of an
 /// FM-only program; the SSG rows differ by the MultiSound board's own SSG weight, at every AY / SSG tone voicing preset
 /// (both boards' SSG is voiced alike, FM on neither). (~0.5 s: two machines per trim and
@@ -1019,9 +1019,9 @@ TEST(Ym2203PairBoardsLevel_Test, FmRowsAndMasterAtTheSameLevelOnBothBoards)
     bool haveReference = false;
     for (const FilterVoicing::Preset voicing :
          {FilterVoicing::Preset::Flat, FilterVoicing::Preset::Classic, FilterVoicing::Preset::Headphones})
-    for (const double trim : {7.4, 0.0})
+    for (const double trim : {0.0, -7.4})
     {
-        if (trim == 0.0 && voicing != FilterVoicing::Preset::Flat)
+        if (trim != 0.0 && voicing != FilterVoicing::Preset::Flat)
             continue;   // the trim is independent of the voicing: one preset covers it
         for (const int fmChip : {0, 1})
         {
@@ -1064,7 +1064,7 @@ TEST(Ym2203PairBoardsLevel_Test, FmRowsAndMasterAtTheSameLevelOnBothBoards)
             }
             const std::string where = "voicing " + std::to_string(int(voicing)) + ", trim " + std::to_string(trim) +
                                       " dB, FM chip " + std::to_string(fmChip);
-            if (trim == 7.4)
+            if (trim == 0.0)
             {
                 if (!haveReference || voicing == FilterVoicing::Preset::Flat)
                 {

@@ -210,7 +210,9 @@ TEST(TTD_SessionLifecycle_Test, SetSpeedMultiplier_RefusedWhileRecordingInvalida
 
 /// @test LoadTape() is refused while recording (B9: the recording survives);
 ///       on a retained, stopped session it still invalidates (TDD §4.2 + §5 row 3).
-TEST(TTD_SessionLifecycle_Test, LoadTape_RefusedWhileRecordingInvalidatesRetainedSession)
+/// M3 (Q4): a tape while recording is an event of the recording (it lands at the next frame boundary): the
+///       recording goes on; on a retained (stopped) session it drops the history as before
+TEST(TTD_SessionLifecycle_Test, LoadTape_WhileRecordingIsAnEventAndInvalidatesARetainedSession)
 {
     Emulator emulator(LoggerLevel::LogError);
     ASSERT_TRUE(emulator.Init());
@@ -222,9 +224,9 @@ TEST(TTD_SessionLifecycle_Test, LoadTape_RefusedWhileRecordingInvalidatesRetaine
     ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Recording, 1,
                        "after StartRecording");
 
-    EXPECT_FALSE(emulator.LoadTape(TestPathHelper::GetTestDataPath(kTestTapeRelPath)));
+    EXPECT_TRUE(emulator.LoadTape(TestPathHelper::GetTestDataPath(kTestTapeRelPath)));
     ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Recording, 1,
-                       "after a refused LoadTape");
+                       "after a LoadTape while recording");
 
     context->pTimeTravelController->StopRecording();
     bool ok = emulator.LoadTape(TestPathHelper::GetTestDataPath(kTestTapeRelPath));
@@ -264,7 +266,9 @@ TEST(TTD_SessionLifecycle_Test, LoadTape_MissingFile_DoesNotInvalidate)
 
 /// @test LoadDisk() is refused while recording (B9: the recording survives);
 ///       on a retained, stopped session it still invalidates (TDD §4.2 + §12.2).
-TEST(TTD_SessionLifecycle_Test, LoadDisk_RefusedWhileRecordingInvalidatesRetainedSession)
+/// M3 (Q4): a disk while recording is an event of the recording (it lands at the next frame boundary): the
+///       recording goes on; on a retained (stopped) session it drops the history as before
+TEST(TTD_SessionLifecycle_Test, LoadDisk_WhileRecordingIsAnEventAndInvalidatesARetainedSession)
 {
     Emulator emulator(LoggerLevel::LogError);
     ASSERT_TRUE(emulator.Init());
@@ -276,9 +280,9 @@ TEST(TTD_SessionLifecycle_Test, LoadDisk_RefusedWhileRecordingInvalidatesRetaine
     ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Recording, 1,
                        "after StartRecording");
 
-    EXPECT_FALSE(emulator.LoadDisk(TestPathHelper::GetTestDataPath(kTestDiskRelPath)));
+    EXPECT_TRUE(emulator.LoadDisk(TestPathHelper::GetTestDataPath(kTestDiskRelPath)));
     ExpectSessionState(context->pTimeTravelController, ttd::TTDSessionState::Recording, 1,
-                       "after a refused LoadDisk");
+                       "after a LoadDisk while recording");
 
     context->pTimeTravelController->StopRecording();
     bool ok = emulator.LoadDisk(TestPathHelper::GetTestDataPath(kTestDiskRelPath));

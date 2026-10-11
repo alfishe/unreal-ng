@@ -1,8 +1,13 @@
 #include "asmsyncservice.h"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/asm/diskfiles.h"
 #include "debugger/asm/sync/syncshared.h"
 #include "debugger/debugmanager.h"
 #include "debugger/labels/labelmanager.h"
@@ -10,6 +15,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/notifications.h"
+#include "unrealasm/symbols/fromsource.h"
 #include "unrealasm/sync/session.h"
 
 namespace
@@ -133,6 +139,58 @@ std::string AsmSyncService::LastText(uint64_t& generation) const
     return _lastText;
 }
 
+void AsmSyncService::GatherProject(const WatchOptions& options, sync::BuildInput& input, std::string& note) const
+{
+    namespace fs = std::filesystem;
+    // The folder first: SymbolsFromProject takes the last source of a name, so the disk's file wins
+    if (!options.projectDir.empty())
+    {
+        std::error_code failed;
+        for (const fs::directory_entry& entry : fs::directory_iterator(options.projectDir, failed))
+        {
+            if (!entry.is_regular_file())
+                continue;
+            std::ifstream in(entry.path(), std::ios::binary);
+            const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            const std::string ext = entry.path().extension().string();
+            std::string lower(ext);
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (lower == ".asm" || lower == ".a80" || lower == ".z80" || lower == ".inc" || lower == ".s" || lower == ".txt")
+            {
+                const unrealasm::symbols::SourceProject text = unrealasm::symbols::ProjectFromText(entry.path().string(), bytes);
+                input.project.insert(input.project.end(), text.sources.begin(), text.sources.end());
+                input.sizes.insert(input.sizes.end(), text.sizes.begin(), text.sizes.end());
+            }
+            else
+                input.sizes.emplace_back(entry.path().filename().string(), bytes.size());
+        }
+        if (failed)
+            note = "project folder " + options.projectDir + ": " + failed.message();
+    }
+    if (options.projectDrive >= 0 && options.projectDrive <= 3)
+    {
+        std::vector<unrealasm::containers::TrdosFile> files;
+        std::string error;
+        if (ReadDiskFiles(_context, static_cast<uint8_t>(options.projectDrive), files, error))
+        {
+            const unrealasm::symbols::SourceProject disk = unrealasm::symbols::ProjectFromFiles(files);
+            input.project.insert(input.project.end(), disk.sources.begin(), disk.sources.end());
+            input.sizes.insert(input.sizes.end(), disk.sizes.begin(), disk.sizes.end());
+        }
+    }
+    // Last, so they win: the other texts the assembler holds in memory (ALASM: one per page)
+    if (input.descriptor && input.descriptor->textsPerPage)
+    {
+        asmsync::MachineCopy all;
+        std::string error;
+        if (asmsync::CopyMachine(_context, all, error))
+        {
+            const std::vector<ProjectFile> memory = sync::SyncSession::MemoryProject(all.view, *input.descriptor, input.page);
+            input.project.insert(input.project.end(), memory.begin(), memory.end());
+        }
+    }
+}
+
 void AsmSyncService::Run(WatchOptions options)
 {
     sync::SessionOptions sessionOptions;
@@ -176,6 +234,8 @@ void AsmSyncService::Run(WatchOptions options)
 
             if (std::optional<sync::BuildInput> input = session.TakeBuild(NowMs()))
             {
+                std::string projectNote;
+                GatherProject(options, *input, projectNote);
                 sync::BuildResult built = sync::SyncSession::Build(*input);
                 const std::string setId = "live:sync:" + input->descriptor->id;
                 size_t published = 0;
@@ -213,6 +273,9 @@ void AsmSyncService::Run(WatchOptions options)
                     hints["complete"] = built.complete;
                     hints["lines"] = static_cast<uint64_t>(built.document.lines.size());
                     hints["labels"] = static_cast<uint64_t>(published);
+                    hints["project"] = static_cast<uint64_t>(input->project.size());
+                    if (!projectNote.empty())
+                        hints["project_note"] = projectNote;
                     hints["set"] = built.decoded ? setId : std::string();
                     hints["hints"] = asmsync::DiagnosticsValue(built.hints);
                     hints["output"] = options.output;

@@ -35,8 +35,12 @@ void CLIProcessor::HandleAsm(const ClientSession& session, const std::vector<std
             ss << "  asm sync [status] [--assembler a]       - the assembler running in the machine and its text" << NEWLINE;
             ss << "  asm sync probe                        - every assembler that identifies in RAM" << NEWLINE;
             ss << "  asm sync extract [--as text|file|dialect] [--to d] [--output file|disk:A/NAME.T]" << NEWLINE;
-            ss << "  asm sync watch [--interval ms] [--quiet ms] [--as ..] [--to d] [--output f] - live labels and hints" << NEWLINE;
+            ss << "  asm sync watch [--interval ms] [--quiet ms] [--as ..] [--to d] [--output f] [--project disk:A|none|folder] - live labels and hints" << NEWLINE;
             ss << "  asm sync unwatch | asm sync hints     - stop the watch; the last build's hints" << NEWLINE;
+            ss << "  asm sync inject --path f|--text t [--from d] [--title NAME] [--force] [--backup f]" << NEWLINE;
+            ss << "                                        - a host source written into the assembler as its own text" << NEWLINE;
+            ss << "  asm sync <status|probe|extract|inject> ... --snapshot f.szx|.sna|.z80 [--output out]" << NEWLINE;
+            ss << "                                        - the same on a snapshot file's memory (inject writes --output)" << NEWLINE;
             ss << "  (a path is a host file or disk:A/NAME.T; --file NAME.T picks a file in a .trd / .tap; --json)" << NEWLINE;
             session.SendResponse(ss.str());
             return;
@@ -156,6 +160,19 @@ void CLIProcessor::HandleAsm(const ClientSession& session, const std::vector<std
     }
     else if (verb == "sync-extract")
         ss << text("text");
+    else if (verb == "sync-inject")
+    {
+        ss << "Written into " << text("title") << " as '" << text("name") << "': " << number("lines") << " lines, " << number("bytes") << " bytes in page "
+           << number("page");
+        if (body.find("output"))
+            ss << " of the snapshot " << text("output") << " (" << text("format") << ")";
+        ss << NEWLINE;
+        if (const StateNode* previous = body.find("previous"))
+            ss << "Replaced '" << previous->find("name")->s << "'" << (previous->find("changed")->b ? " (it had changes not saved)" : "") << NEWLINE;
+        for (const StateNode& d : body.find("diagnostics")->items)
+            if (d.find("severity")->s != "info")
+                ss << "  line " << d.find("line")->i << " " << d.find("severity")->s << ": " << d.find("message")->s << NEWLINE;
+    }
     else if (verb == "sync-watch" || verb == "sync-unwatch")
     {
         ss << (body.find("watching")->b ? "Watching" : "Not watching") << ": " << text("state");

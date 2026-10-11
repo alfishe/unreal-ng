@@ -285,7 +285,7 @@ void SpeedControlWidget::executeStep()
         case StepType::FullSpeed:
             // Just resume normal execution
             if (_emulator->IsPaused())
-                _emulator->Resume();
+                _emulator->Resume(execution::Requester{execution::Origin::Gui, {}});
             break;
 
         case StepType::Frame:
@@ -397,7 +397,7 @@ void SpeedControlWidget::onSliderChanged(int position)
             // Switching TO FullSpeed while auto-running → stop timer, resume emulator
             stop();
             if (_emulator && _emulator->IsPaused())
-                _emulator->Resume();
+                _emulator->Resume(execution::Requester{execution::Origin::Gui, {}});
         }
         else
         {
@@ -411,7 +411,7 @@ void SpeedControlWidget::onSliderChanged(int position)
     {
         // Emulator is running at full speed (no timer) and user selected a timer-driven preset.
         // Pause emulator and start timer-driven stepping.
-        _emulator->Pause();
+        _emulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "speed control");
 
         int interval = getTimerIntervalMs(pos);
         if (interval > 0)
@@ -463,7 +463,7 @@ void SpeedControlWidget::onPlayPauseClicked()
             // Full speed — just resume
             if (_emulator && _emulator->IsPaused())
             {
-                _emulator->Resume();
+                _emulator->Resume(execution::Requester{execution::Origin::Gui, {}});
                 emit runningChanged(true);
             }
             return;

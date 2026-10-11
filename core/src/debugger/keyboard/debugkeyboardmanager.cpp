@@ -573,7 +573,7 @@ void DebugKeyboardManager::TypeTRDOSCommand(const std::string& keyword, const st
     ExecuteSequence(seq);
 }
 
-void DebugKeyboardManager::TypeText(const std::string& text, uint16_t charDelayFrames)
+std::string DebugKeyboardManager::TypeText(const std::string& text, uint16_t charDelayFrames)
 {
     KeyboardSequence seq;
     seq.name = "type_text";
@@ -584,12 +584,23 @@ void DebugKeyboardManager::TypeText(const std::string& text, uint16_t charDelayF
     // positions (Profi PROFI-XT) gets the ZX combination in PC keys instead: the
     // controller decides (IPs2KeySink::PcKeysForCharacter)
     const bool ps2 = _keyboard && _keyboard->RoutesToPs2();
+    std::string untypeable;
     
-    for (char c : text)
+    for (size_t i = 0; i < text.size(); i++)
     {
+        const char c = text[i];
+
+        // "\r\n" is one line end: one ENTER
+        if (c == '\n' && i > 0 && text[i - 1] == '\r')
+            continue;
+
         std::vector<ZXKeysEnum> keys = CharToKeys(c);
         std::vector<PcKey> pcKeys = ps2 ? _keyboard->GetPs2Sink()->PcKeysForCharacter(c, keys) : std::vector<PcKey>{};
-        if (!keys.empty() || !pcKeys.empty())
+        if (keys.empty() && pcKeys.empty())
+        {
+            untypeable.push_back(c);
+        }
+        else
         {
             const auto action = keys.size() > 1 || pcKeys.size() > 1 ? KeyboardSequenceEvent::Action::COMBO_TAP
                                                                       : KeyboardSequenceEvent::Action::TAP;
@@ -603,8 +614,13 @@ void DebugKeyboardManager::TypeText(const std::string& text, uint16_t charDelayF
             }
         }
     }
-    
-    ExecuteSequence(seq);
+
+    // A text with a character no key types is refused as a whole: the rest typed
+    // without it is a different command (a lost ENTER joined two lines)
+    if (untypeable.empty())
+        ExecuteSequence(seq);
+
+    return untypeable;
 }
 
 /// endregion </High-Level Helpers>
@@ -1199,6 +1215,12 @@ std::vector<ZXKeysEnum> DebugKeyboardManager::CharToKeys(char c)
     if (c == ' ')
     {
         return {ZXKEY_SPACE};
+    }
+
+    // Line end
+    if (c == '\n' || c == '\r')
+    {
+        return {ZXKEY_ENTER};
     }
     
     // Common symbols (SYMBOL + key)

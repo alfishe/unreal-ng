@@ -476,7 +476,7 @@ TEST_F(SoundManagerCd_Test, OneRowPerCdDrive)
     EXPECT_EQ(IdeController::CdAudioName(3), "CD ide1.slave");
 
     // The unit becomes a hard disk: its row goes; back to a CD drive: it comes back
-    ASSERT_TRUE(_context->pMediaManager->Eject("ide0.slave", {.disposition = Disposition::Discard}).Ok());
+    ASSERT_TRUE(_context->pMediaManager->Eject("ide0.slave", EjectOptions::Discarding()).Ok());
     ASSERT_TRUE(_context->pIdeController->SetUnitKind(1, false));
     _emulator->RunNFrames(1);
     EXPECT_EQ(Row(), nullptr);
@@ -530,7 +530,9 @@ TEST_F(SoundManagerCd_Test, MixedSampleExactAndNothingWhileIdle)
     {
         const uint64_t k = i - start;
         if (k % cdtest::kSamples == 0 || i == start)
+        {
             ASSERT_EQ(disc->ReadAudio(static_cast<uint32_t>(kTrack2 + k / cdtest::kSamples), frame), CdImage::ReadResult::Ok);
+        }
         const size_t at = (k % cdtest::kSamples) * 2;
         ASSERT_EQ(mixed[2 * i], frame[at]) << "sample " << i;
         ASSERT_EQ(mixed[2 * i + 1], frame[at + 1]) << "sample " << i;
@@ -847,10 +849,12 @@ public:
     {
         Machine().RunFrame(true);
         if (check)
+        {
             EXPECT_EQ(size_t(Context()->pSoundManager->getBeeper().getLastSamplesRead()),
                       Context()->pSoundManager->lastFrameSamples())
                 << where << ", frame " << Context()->emulatorState.frame_counter
                 << ": the beeper delivered a different count than the mixer read";
+        }
     }
     void Frames(int n, bool check, const std::string& where)
     {

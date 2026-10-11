@@ -82,26 +82,6 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     int_gate = true;
     nmi_in_progress = false;
 
-    // Supply direct references to registers for DDCB prefix operation results
-    // Indexes:
-    // [0] - b
-    // [1] - c
-    // [2] - d
-    // [3] - e
-    // [4] - h
-    // [5] - l
-    // [6] - <unused>
-    // [7] - a
-    direct_registers[0] = &b;
-    direct_registers[1] = &c;
-    direct_registers[2] = &d;
-    direct_registers[3] = &e;
-    direct_registers[4] = &h;
-    direct_registers[5] = &l;
-    direct_registers[6] =
-        &_trashRegister;  // Redirect DDCB operation writes with no destination registers to unused register variable
-    direct_registers[7] = &a;
-
     // Create opcode profiler
     _opcodeProfiler = new OpcodeProfiler(context);
 }
@@ -209,7 +189,6 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     [[maybe_unused]] EmulatorState& state = _context->emulatorState;
     [[maybe_unused]] TEMP& temporary = _context->temporary;
     [[maybe_unused]] Memory& memory = *_context->pMemory;
-    [[maybe_unused]] Emulator& emulator = *_context->pEmulator;
 
     /// region  <Ports logic>
 
@@ -308,7 +287,9 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
             if (!isAnalyzerBreakpoint)
             {
                 // Pause and park, or during a direct run stop before this instruction
-                if (emulator.OnBreakpointHit(breakpointID, pc, BreakpointHitKind::Execute))
+                // A bare Core (tests) has no emulator to stop
+                Emulator* emulator = _context->pEmulator;
+                if (emulator && emulator->OnBreakpointHit(breakpointID, pc, BreakpointHitKind::Execute))
                     return true;
             }
         }
@@ -446,7 +427,6 @@ void Z80::Z80Step(bool skipBreakpoints)
     [[maybe_unused]] EmulatorState& state = _context->emulatorState;
     [[maybe_unused]] TEMP& temporary = _context->temporary;
     [[maybe_unused]] Memory& memory = *_context->pMemory;
-    [[maybe_unused]] Emulator& emulator = *_context->pEmulator;
 
     // Boundary state describes the boundary BEFORE this step (it already
     // decided INT/NMI acceptance in ProcessInterrupts); this step's own
@@ -788,7 +768,7 @@ void Z80::BeginFrame()
 
     // INT interrupt handling lasts for more than 1 frame (unless the pulse was
     // already acknowledged on a machine that clears INT at the acknowledge)
-    if (_intWraps && !int_acked_in_pulse && !frameIntMasked)
+    if (_intWraps && !int_acked_in_pulse && !frameIntMasked.load(std::memory_order_relaxed))
         int_pending = true;
 }
 
@@ -1059,15 +1039,13 @@ void Z80::Z80FrameCycle()
     // Cover whole frame (control by effective t-states)
     while (t < _frameLimit)
     {
-        // Mid-frame pause park. Pause() is otherwise observed only at frame
-        // boundaries (MainLoop::Run), so an in-flight frame - which under
-        // turbo/debug-mode or TTD recording can take hundreds of milliseconds -
-        // would delay the park and its confirmation until the frame completes.
-        // One volatile read per instruction keeps the unpaused hot path cheap;
-        // WaitWhilePaused parks + confirms and wakes on Resume()/Stop() via CV.
-        // Everything the loop reads lives in members, so work done while parked
-        // (a TTD restore, stepping from another thread) is picked up here
-        if (Emulator* emulator = _context->pEmulator; emulator && emulator->IsPaused())
+        // Mid-frame park. The execution arbiter asks for it (a pause, or a command that needs the CPU still), and
+        // the frame-end check alone would delay it until the frame completes - which under turbo/debug-mode or TTD
+        // recording can take hundreds of milliseconds. One relaxed atomic load per instruction (ShouldPark, inline)
+        // keeps the running hot path cheap; WaitWhilePaused parks and wakes when the machine may run again.
+        // Everything the loop reads lives in members, so work done while parked (a TTD restore, stepping from
+        // another thread) is picked up here
+        if (Emulator* emulator = _context->pEmulator; emulator && emulator->ShouldPark())
             emulator->WaitWhilePaused();
 
         StepInstruction();
@@ -1739,7 +1717,7 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
             cpu.int_acked_in_pulse = 0;
     }
 
-    if (!int_occurred && cpu.t > int_start && !cpu.int_acked_in_pulse && !frameIntMasked)
+    if (!int_occurred && cpu.t > int_start && !cpu.int_acked_in_pulse && !frameIntMasked.load(std::memory_order_relaxed))
     {
         int_occurred = true;
         cpu.int_pending = true;

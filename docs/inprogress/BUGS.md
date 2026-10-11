@@ -8,6 +8,266 @@
 
 ---
 
+2026-10-10
+## 🟢 [Fixed] #1: Removing a running TS-Conf or ATM Turbo 2+ instance writes into freed memory (heap damage, a later crash elsewhere)
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** fa8b68fbe
+* **Found by:** an automation agent's crash while creating and deleting instances through the WebAPI (macOS report
+  2026-10-10: `free_tiny` in `VideoWriteLog::BeginFrame` on another emulator thread); confirmed with AddressSanitizer.
+
+### Description
+Deleting instances corrupted the heap; the crash came later, in an unrelated `free` of another running instance.
+
+### Root cause
+`Core::Release` deletes the keyboard and the memory before the port decoder. `~PortDecoder_TSConf` detached from the
+`TsConfMemory` it cached and `~PortDecoder_ATM710` cleared the PS/2 sink on the keyboard it cached: both freed already.
+
+### Fix
+Both destructors take the context's pointer, which `Core` clears before it deletes the part (as the other decoders do).
+
+### Requirements / Acceptance Criteria
+- [x] `EmulatorManager_Test.EveryModelCanBeRemovedWhileRunning` (every creatable model created, run, removed while
+  running next to a running 48K) is clean under ASan; it reported both before.
+
+## 🟢 [Fixed] #2: Laser Genius detection reads past data that ends inside a token
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** 7d40cd730
+* **Found by:** a full `core-tests` run under AddressSanitizer (heap-buffer-overflow in `LaserGeniusCodec::Detect`).
+
+### Description
+`Detect` runs on every file of a disk (asm files, symbol import from a disk's sources): a file ending inside a token
+was read beyond its buffer.
+
+### Root cause
+`SkipRaw` steps over a token's operand bytes and returned a stop past the data's end; `RawText` read up to it.
+
+### Fix
+`SkipRaw` ends at the data's end.
+
+### Requirements / Acceptance Criteria
+- [x] `LaserGeniusCodec_Test.DataEndingInsideATokenIsNotReadPast` (every token byte, alone and before every second
+  byte, at the end of an exact-size buffer): failed under ASan before; all `unreal-asm-tests` clean under ASan.
+
+## 🟢 [Fixed] #3: GIF writer indexes past its r/g/b array on pictures with few colors; the same frame can encode differently
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** dc0b47c9f
+* **Found by:** a full `core-tests` run under AddressSanitizer (stack-buffer-overflow in `GifGetClosestPaletteColor`).
+
+### Description
+Every frame with fewer colors than the palette (every ZX screen in a 256-color GIF) read the k-d tree's garbage nodes.
+
+### Root cause
+`GifSplitPalette` returns from a subtree without pixels before it fills the node; `GifWriteFrame` builds its palettes
+on the stack, so those nodes kept whatever the stack held: a split component above 2 indexed `comps[3]`, garbage leaf
+colors could be picked.
+
+### Fix
+`GifMakePalette` zeroes the palette first (a local change to the vendored gif-h).
+
+### Requirements / Acceptance Criteria
+- [x] `Gif_Test.APaletteOfAFewColorsHasEveryNodeFilled` (palette prefilled with 0xFF) failed before, passes now; Gif
+  tests clean under ASan.
+
+## 🟢 [Fixed] #4: TTD with a shadow engine erases its whole timeline every frame and reads the empty front
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** 53325eb5b
+* **Found by:** a `core-tests` run under AddressSanitizer (container-overflow in `GlobalT` from `SyncTimelineFront`).
+
+### Description
+Tests and benchmarks that attach a shadow engine (`SetShadowEngine`) ran on undefined behavior; production is not
+affected (there the shadow engine is the controller's own).
+
+### Root cause
+`SyncTimelineFront` trims the timeline to what the controller's engine holds; that engine never opens a session while
+a shadow engine takes the captures, so "nothing held" erased every checkpoint, then `_timeline.front()` was read.
+
+### Fix
+A closed engine holds no history to follow: `SyncTimelineFront` returns.
+
+### Requirements / Acceptance Criteria
+- [x] `TimeTravelManager_Screenshot_Test` checks the timeline keeps its 51 checkpoints (0 before); TTD tests clean
+  under ASan.
+
+## 🟢 [Fixed] #5: Qt debugger crashes in the disassembler while the debug manager is not available
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** d2e4f3f84
+* **Found by:** two macOS crash reports of unreal-qt on 2026-10-09 (`disassembleSingleCommandWithRuntime`, fault at 0x18).
+
+### Description
+`DebuggerWindow::updateState` -> `DisassemblerWidget::refresh` crashed with `this == nullptr`.
+
+### Root cause
+`getNextCommandAddress` (and `getPreviousCommandAddress` through it) dereferenced `getDisassembler()`, an empty
+`unique_ptr` while the debug manager is not available; `setDisassemblerAddress` already checked it.
+
+### Fix
+The same check in `getNextCommandAddress`.
+
+### Requirements / Acceptance Criteria
+- [x] Build clean. No automated test: the Qt debugger widgets have no test harness.
+
+## 🟢 [Fixed] #6: The WebAPI instance list and status do not show `symbolic_id`
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** 206ff1b8f
+* **Found by:** checking the agent cleanup recipe against a live instance (`symbolic_id` was null in `GET /emulator`).
+
+### Description
+A script naming its instances at create could not find its leftovers by name: only the create / start answer had it.
+
+### Fix
+`GET /api/v1/emulator` and `GET /api/v1/emulator/{id}` carry `symbolic_id` (empty when none); OpenAPI `EmulatorInfo`
+documents it; MCP `emulator_manage list` passes it through.
+
+### Requirements / Acceptance Criteria
+- [x] Checked live: named and unnamed instances in the list, the status, OpenAPI and MCP.
+
+## 🟢 [Fixed] #7: Removing an instance deadlocks the WebAPI and the GUI while the GUI follows the selection
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** fc9d535e5
+* **Found by:** WebAPI create / delete stress on an ASan unreal-qt: the app stopped answering; `sample` showed the deadlock.
+
+### Description
+`DELETE /emulator/{id}` (and the shutdown of all instances) hung the WebAPI and the GUI for good.
+
+### Root cause
+`RemoveEmulatorInstance` drained the message queue before taking `_emulatorsMutex`, but a message posted after the
+drain was dispatched while `Stop()` / `Release()` ran under the lock: `~RecordingManager` removing an observer waits
+for the dispatch in flight, whose handler (`MainWindow::handleEmulatorSelectionChanged` -> `GetEmulator`) waited for
+the lock.
+
+### Fix
+The instance leaves the map under the lock and is stopped and released after it; `ShutdownAllEmulators` the same way.
+
+### Requirements / Acceptance Criteria
+- [x] `EmulatorManager_Test.RemovalDoesNotHoldTheLockAHandlerWaitsFor`: deadlocked 3 / 3 before, 14 ms now.
+
+## 🟢 [Fixed] #8: A DDCB / FDCB instruction writes into the last created CPU (freed memory once it is removed)
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** c68ea8a24
+* **Found by:** the same stress (heap-use-after-free in `op_FD` on a removed instance's Z80, traced with address logs).
+
+### Description
+With several instances, `SET/RES/RL... n,(IX+d)` on any machine wrote a byte into the last created CPU; the undocumented
+forms changed that machine's registers. After that instance was removed the byte went into freed memory: heap
+corruption that surfaces later in an unrelated `free` (a likely cause of the original automation-agent crash).
+
+### Root cause
+`direct_registers[]` was one global table each `Z80` constructor refilled with its own registers.
+
+### Fix
+The destination register is taken from the running CPU; the table and the trash register are gone.
+
+### Requirements / Acceptance Criteria
+- [x] `Z80_Test.DdcbResultRegisterBelongsToTheCpuRunningIt`: wrong CPU's B changed before; right one now; clean under ASan.
+
+## 🟢 [Fixed] #9: Instances created from several automation threads at once can get the same id
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** b9291e6a7
+
+### Root cause
+`UUID::Generate` drew from one static `mt19937` shared by every thread without a lock.
+
+### Fix
+A generator per thread, seeded from `random_device` through a `seed_seq`.
+
+### Requirements / Acceptance Criteria
+- [x] `UUID_Test.ThreadsGeneratingAtOnceGetDistinctIds`: ~30 duplicates of 12000 before, none now.
+
+## 🟢 [Fixed] #10: The GUI reads a removed instance's context (menu update, FDC status widget)
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** 39770502f (menu), ea5696507 (FDC widget)
+* **Found by:** the same stress (heap-use-after-free on the GUI thread: `MenuManager::updateMenuStates` -> `FDD::getDiskImage`;
+  `FdcStatusWidget::seedFromContext` -> WD1793).
+
+### Fix
+Both take a `ContextLease` for their read (a removal in progress gives none), as the status bar and tool bar do.
+
+### Requirements / Acceptance Criteria
+- [x] The stress no longer reports these two (checked under ASan); no automated GUI test.
+
+## 🔴 [Open] #11: GUI code reads instance contexts without a lease (about 144 call sites)
+* **Date Opened:** 2026-10-10
+* **Found by:** the WebAPI create / delete stress: #10's two sites were the first it hit; `grep GetContext() unreal-qt/src`
+  finds about 144 unleased reads (14 files lease).
+
+### Description
+A GUI handler queued before an instance is removed runs after its context is freed. Fixing sites one by one as the
+stress finds them does not converge; a structural answer is a developer decision (lease at the binding / refresh entry
+points, or the GUI unbinding before the core frees the context).
+
+Design: [2026-10-10-gui-instance-lifetime](2026-10-10-gui-instance-lifetime/README.md) (gap analysis, proposal,
+test plan, roadmap). Decided 2026-10-10: retire at removal, free at the last owner, every wait bounded.
+
+### Repro
+ASan unreal-qt with the stress script (8 workers creating / reading / switching / deleting instances, 2 running
+neighbours) for 15 minutes.
+
+
+## 🟢 [Fixed] #12: A failed instance creation leaks the half-built instance
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** d5e197532
+* **Found by:** macOS `leaks --atExit` and LeakSanitizer (Linux, Docker) on `EmulatorManager_Test.CreateEmulatorWith*`
+  (docs/testing/sanitizers.md §9).
+
+### Description
+`CreateEmulatorWithModel` for an unknown model, an unsupported RAM size or a non-creatable model returns null and
+leaves the `Emulator` it started building: its `Config`, `EmulatorContext` and module loggers (`leaks`: `ROOT LEAK
+<Config>`, `ROOT CYCLE <EmulatorContext>`; LSan: ~700 KB indirect from `Emulator::Emulator` / `Emulator::Init`).
+Every failed WebAPI / CLI create leaks again.
+
+### Root cause
+`~Emulator` released only an initialized machine. An unknown model or RAM size never reaches `Init`; a core that
+refuses the configuration made `Init` return before `ReleaseNoGuard`; a device that throws out of `Init` skips it.
+
+### Fix
+The destructor releases while the context lives; `Init` sends every failure through `ReleaseNoGuard` and runs the
+completeness checks only for a machine that claims success.
+
+### Requirements / Acceptance Criteria
+- [x] `EmulatorManager_Test.FailedCreateFreesTheHalfBuiltInstance`: `EmulatorContext::LiveCount()` is unchanged after
+  an unknown model, an unsupported RAM size and GMX; it failed on all three before the fix.
+
+## 🟢 [Fixed] #13: Undefined behavior in product code (UBSan baseline)
+* **Date Opened:** 2026-10-10
+* **Date Fixed:** 2026-10-10
+* **Commit ID:** d5e197532
+* **Found by:** a full `core-tests` run on the `address,undefined` build (docs/testing/sanitizers.md §2).
+
+### Description
+- `modulelogger.cpp:434`: `_settings.submodules[module]` read with `module == 12` on a 12-element array (a module id
+  without its row).
+- `bithelper.h:18`: `IsBitSet(value, 255)` shifts by 255 - `GetFirstSetBitPosition(0)` returns 255.
+- `soundchip_turbosound.cpp`, `soundchip_turbosoundfm.cpp`: float samples converted to `short` out of range (no clamp).
+- `loader_scl.cpp`: misaligned `uint32_t` loads from the image buffer.
+- `z80.cpp:192`, `z80.cpp:429`: a reference bound to a null `Emulator` (reached from tests that build a bare `Core`).
+
+### Fix
+- `ModuleLogger`: `MODULE_RECORDING` has its settings row and its names (both tables `static_assert`ed against the
+  enum); the module check reads the module's own bit (as `TurnOffLoggingForModule` clears it); the submodule-name
+  bound is `>=`.
+- `BitHelper::IsBitSet`: a bit past the field is not set.
+- TurboSound / TurboSound FM: samples clamp to int16. On arm64 the out-of-range conversion wrapped around (a full-
+  scale click); in-range samples are unchanged. The TSFM low-quality golden digest moved: it held wrapped samples.
+  The missing headroom itself is TSFM ISSUES.md #6.
+- `LoaderSCL`: the CRC is read byte by byte. `Z80`: no reference to a null `Emulator`.
+
+### Requirements / Acceptance Criteria
+- [x] `BitHelper_Test.IsBitSetPastTheFieldIsNotSet`, `ModuleLogger_Test.RecordingModuleHasItsOwnSettingsRow`,
+  `LoaderSCL_Test.crcReadsAtAnyOffset`; full `core-tests` green on macOS.
+
+---
+
 2026-10-07
 ## 🟢 [Fixed] #1: TTD engine - the VDAC2 (FT812) picture at a frame boundary differs from the live one for some frames
 * **Date Opened:** 2026-10-07

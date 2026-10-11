@@ -1,5 +1,7 @@
 #include "emulator.h"
 
+#include <optional>
+
 #include "emulator/io/fdc/floppydriveslot.h"
 #include "emulator/io/tape/tapeslot.h"
 #include "emulator/media/floppyformats.h"
@@ -27,6 +29,8 @@
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdinputapply.h"
+#include "debugger/ttd/ttdsessionport.h"
+#include "emulator/coordinator/machinecoordinator.h"
 #include "emulator/notifications.h"
 #include "emulator/tstaterunbudget.h"
 #include "emulator/media/mediamanager.h"
@@ -34,6 +38,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
 #include "loaders/snapshot/loader_sna.h"
+#include "loaders/nex/loadernex.h"
 #include "loaders/snapshot/loaderspg.h"
 #include "loaders/snapshot/szx/szxreader.h"
 #include "loaders/snapshot/szx/loaderszx.h"
@@ -44,6 +49,118 @@ static std::mutex g_ttdRecordingRootMutex;
 static std::string g_ttdRecordingRoot;
 
 /// region <Constructors / Destructors>
+
+/// A snapshot load as the coordinator carries it
+struct Emulator::SnapshotRequest
+{
+    const std::function<bool(std::string& error, const snapshot::Options& planned)>* load = nullptr;
+    const snapshot::Options* options = nullptr;
+    std::string error;
+    bool loaded = false;
+};
+
+/// A disk autostart as the coordinator carries it
+struct Emulator::AutostartRequest
+{
+    DiskImage* image = nullptr;
+    DiskAutostart* autostart = nullptr;
+    DiskAutostart::Plan plan;
+    bool started = false;
+};
+
+/// The emulator's side of the coordinator: the machine thread (the execution arbiter's CPU hold), the clock, and
+/// the owner of the operations that replace the machine state (reset, autostart, snapshot load) and of those a
+/// subsystem carries out itself (network settings, an IDE unit's drive, an RZX restore: coordinator::RunCommit)
+class Emulator::CoordinatorPorts : public coordinator::IMachineThread,
+                                   public coordinator::IMachineClock,
+                                   public coordinator::IOpOwner
+{
+public:
+    explicit CoordinatorPorts(Emulator& emulator) : _emulator(emulator) {}
+
+    bool OnMachineThread() const override { return _emulator._arbiter.IsLoopThread(); }
+
+    bool Park(const char* tag) override
+    {
+        auto hold = std::make_unique<CpuHold>(_emulator, tag);
+        if (!hold->Held())
+            return false;   // timed out (logged): the operation goes on as the old brackets did
+        Holds().emplace_back(this, std::move(hold));
+        return true;
+    }
+
+    void Unpark() override
+    {
+        // The newest hold of this emulator on this thread: parks nest, each Unpark ends the last
+        auto& holds = Holds();
+        for (auto it = holds.rbegin(); it != holds.rend(); ++it)
+            if (it->first == this)
+            {
+                holds.erase(std::next(it).base());
+                return;
+            }
+    }
+
+    coordinator::MachineTime Now() const override
+    {
+        coordinator::MachineTime time;
+        if (EmulatorContext* context = _emulator._context)
+        {
+            time.frame = context->emulatorState.frame_counter;
+            if (Z80* cpu = context->pCore ? context->pCore->GetZ80() : nullptr)
+                time.tInFrame = static_cast<uint32_t>(cpu->t);
+        }
+        time.wallMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                std::chrono::system_clock::now().time_since_epoch())
+                                                .count());
+        return time;
+    }
+
+    /// A model switch or a state transfer: the TTD v1 backend refuses it while recording (D26); the engine never
+    /// does (a change of the machine itself ends the session). Goes with v1
+    std::string Refusal(const coordinator::MachineOp& op) const override
+    {
+        if (op.kind == coordinator::OpKind::ModelSwitch)
+            return _emulator.RecordingGuard(ttd::TTDGuardedAction::SwitchModel);
+        return {};
+    }
+
+    bool Commit(const coordinator::MachineOp& op, coordinator::OpStage& stage) override
+    {
+        switch (op.kind)
+        {
+            case coordinator::OpKind::Reset:
+                _emulator.ResetNow(std::any_cast<bool>(op.payload), stage);
+                return true;
+            case coordinator::OpKind::Autostart:
+                return _emulator.AutostartNow(*std::any_cast<AutostartRequest*>(op.payload), stage);
+            case coordinator::OpKind::SnapshotLoad:
+                return _emulator.LoadSnapshotNow(*std::any_cast<SnapshotRequest*>(op.payload), stage);
+            case coordinator::OpKind::NetworkChange:
+            case coordinator::OpKind::IdeDriveKind:
+            case coordinator::OpKind::RzxRestore:
+                // The subsystem's own change (coordinator::RunCommit): the network manager, the IDE controller, the
+                // RZX session; they have no owner of their own, the rules and the log are the coordinator's
+                if (const coordinator::OpCommit* commit = std::any_cast<coordinator::OpCommit>(&op.payload))
+                    return (*commit)(stage);
+                stage.error = std::string("no change given for '") + coordinator::OpKindName(op.kind) + "'";
+                return false;
+            default:
+                stage.error = std::string("the emulator does not do '") + coordinator::OpKindName(op.kind) + "'";
+                return false;
+        }
+    }
+
+private:
+    /// The CPU holds this thread took through Park, newest last
+    static std::vector<std::pair<const CoordinatorPorts*, std::unique_ptr<CpuHold>>>& Holds()
+    {
+        thread_local std::vector<std::pair<const CoordinatorPorts*, std::unique_ptr<CpuHold>>> holds;
+        return holds;
+    }
+
+    Emulator& _emulator;
+};
 
 Emulator::Emulator(LoggerLevel level) : Emulator("", level) {}
 
@@ -65,9 +182,20 @@ Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
         _context->pEmulator = this;
         _context->emulatorId = _uuid;
 
+        // The execution arbiter's intent edges: what must change before the machine runs again (gate, under its
+        // lock), then state and broadcasts (listener)
+        _arbiter.SetEdgeGate([this](const execution::IntentEdge& edge, bool parked) { OnIntentEdgeGate(edge, parked); });
+        _arbiter.SetEdgeListener([this](const execution::IntentEdge& edge) { OnIntentEdge(edge); });
+
         // Create FeatureManager and assign to context
         _featureManager = new FeatureManager(_context);
         _context->pFeatureManager = _featureManager;
+
+        // The machine state coordinator comes before every participant and goes after them
+        _coordinator = std::make_unique<coordinator::MachineCoordinator>();
+        _coordinatorPorts = std::make_unique<CoordinatorPorts>(*this);
+        _ttdSessionPort = std::make_unique<ttd::TTDSessionPort>(_context);
+        WireCoordinator();
 
         MLOGDEBUG("Emulator::Emulator(symbolicId='%s', level=%d) - Instance created with UUID: %s", symbolicId.c_str(),
                   level, _emulatorId.c_str());
@@ -94,8 +222,9 @@ Emulator::~Emulator()
         _featureManager = nullptr;
     }
 
-    // Ensure resources are released if Release() wasn't called explicitly
-    if (_initialized.load(std::memory_order_acquire))
+    // Ensure resources are released if Release() wasn't called explicitly. A machine that never finished
+    // Init (a failed create, an exception out of a device) still owns its context and what Init built
+    if (_initialized.load(std::memory_order_acquire) || _context != nullptr)
     {
         Release();
     }
@@ -190,6 +319,7 @@ bool Emulator::Init()
         // Peripherals register their media slots while Core initializes
         if (_context->pMediaManager == nullptr)
             _context->pMediaManager = new MediaManager(_context);
+        WireCoordinator();
 
         _core = new Core(_context);
         if (_core && _core->Init())
@@ -214,8 +344,6 @@ bool Emulator::Init()
                 _initError = _core->GetInitError();
             MLOGERROR("Emulator::Init - CPU system core (or main peripheral devices) creation failed%s%s",
                       _initError.empty() ? "" : ": ", _initError.c_str());
-            if (!_initError.empty())
-                return false;
         }
     }
 
@@ -328,76 +456,80 @@ bool Emulator::Init()
 
     /// region <Sanity checks>
 
-    if (!_context)
+    // A failed step is released below; the checks are for a machine that claims to be complete
+    if (result)
     {
-        std::string error = "Context was not created";
-        throw std::logic_error(error);
-    }
+        if (!_context)
+        {
+            std::string error = "Context was not created";
+            throw std::logic_error(error);
+        }
 
-    if (!_config)
-    {
-        std::string error = "Config was not created";
-        throw std::logic_error(error);
-    }
+        if (!_config)
+        {
+            std::string error = "Config was not created";
+            throw std::logic_error(error);
+        }
 
-    if (!_core)
-    {
-        std::string error = "CPU was not created";
-        throw std::logic_error(error);
-    }
+        if (!_core)
+        {
+            std::string error = "CPU was not created";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pCore)
-    {
-        std::string error = "_context->pCore not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pCore)
+        {
+            std::string error = "_context->pCore not available";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pMemory)
-    {
-        std::string error = "_context->pMemory not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pMemory)
+        {
+            std::string error = "_context->pMemory not available";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pScreen)
-    {
-        std::string error = "_context->pScreen not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pScreen)
+        {
+            std::string error = "_context->pScreen not available";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pKeyboard)
-    {
-        std::string error = "_context->pKeyboard not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pKeyboard)
+        {
+            std::string error = "_context->pKeyboard not available";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pTape)
-    {
-        std::string error = "_context->pTape not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pTape)
+        {
+            std::string error = "_context->pTape not available";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pBetaDisk)
-    {
-        std::string error = "_context->pBetaDisk not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pBetaDisk)
+        {
+            std::string error = "_context->pBetaDisk not available";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pPortDecoder)
-    {
-        std::string error = "_context->pPortDecoder not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pPortDecoder)
+        {
+            std::string error = "_context->pPortDecoder not available";
+            throw std::logic_error(error);
+        }
 
-    if (!_context->pSoundManager)
-    {
-        std::string error = "_context->pSoundManager not available";
-        throw std::logic_error(error);
-    }
+        if (!_context->pSoundManager)
+        {
+            std::string error = "_context->pSoundManager not available";
+            throw std::logic_error(error);
+        }
 
-    if (_isDebug && !_context->pDebugManager)
-    {
-        std::string error = "_context->pDebugManager not available";
-        throw std::logic_error(error);
+        if (_isDebug && !_context->pDebugManager)
+        {
+            std::string error = "_context->pDebugManager not available";
+            throw std::logic_error(error);
+        }
     }
 
     /// endregion </Sanity checks>
@@ -492,6 +624,13 @@ void Emulator::ReleaseNoGuard()
     if (!_context)
         return;
 
+    // Host input first: its handlers run on the message center's thread and reach the debug manager, the TTD
+    // controller, the main loop and the core's devices - all deleted below. Detaching waits for a handler in progress
+    if (_context->pKeyboard)
+        _context->pKeyboard->DetachHostInput();
+    if (_context->pMouseManager)
+        _context->pMouseManager->DetachHostInput();
+
     // The step-over audio hold must not outlive the sound manager it points to
     _stepOverHostHold.Release();
 
@@ -511,6 +650,8 @@ void Emulator::ReleaseNoGuard()
 
     // Release TTD manager. The manager's destructor releases all page-store
     // refs held by the timeline before the page store itself goes away.
+    // The coordinator's session port reads the hooks and the context: unlinked before both go
+    _coordinator->SetSession(nullptr);
     _context->pTimeTravelHooks = nullptr;
     if (_context->pTimeTravelController)
     {
@@ -579,6 +720,8 @@ void Emulator::ReleaseNoGuard()
     // After Core: its peripherals have unregistered their slots
     if (_context->pMediaManager != nullptr)
     {
+        _coordinator->Disown(&_context->pMediaManager->OpOwner());
+        _context->pMediaManager->SetMachineOps(nullptr);
         delete _context->pMediaManager;
         _context->pMediaManager = nullptr;
     }
@@ -731,12 +874,10 @@ void Emulator::EditMemoryFromTool(const char* source, const std::function<void()
     // paused at this point and records the edit (D9)
     const bool session = ttd && ttd->GetState() != ttd::TTDSessionState::Idle;
     const bool onEmulationThread = _mainloop && _mainloop->IsRunThread();
-    const bool park = session && !onEmulationThread && IsRunning() && !IsPaused();
-    if (park)
-    {
-        Pause(false);
-        WaitForPauseConfirmation(1000);
-    }
+    // The CPU held for the edit (nothing executes meanwhile; nested in a hold the caller has it is free)
+    std::optional<CpuHold> hold;
+    if (session && !onEmulationThread)
+        hold.emplace(*this, "memory edit");
 
     // v1 keeps a marker; the edit's bytes go with it, so the engine's replay applies it
     if (session)
@@ -744,9 +885,6 @@ void Emulator::EditMemoryFromTool(const char* source, const std::function<void()
     edit();
     if (session)
         ttd->EndToolEdit(source);
-
-    if (park)
-        Resume(false);
 }
 
 uint8_t Emulator::GetSpeedMultiplier() const
@@ -940,47 +1078,102 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
         return result;
     }
 
-    // Prepare + reset run with the emulator thread parked (image and machine state are edited)
-    bool wasRunning = _isRunning && !_isPaused;
-    if (wasRunning)
+    // Prepare + reset run with the CPU held (image and machine state are edited); the pause is left as it was. The
+    // coordinator ends the recording session when the machine really boots (D42, as Reset()); a disk with nothing
+    // to boot changes nothing
+    AutostartRequest request;
+    request.image = image;
+    request.autostart = autostart;
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::Autostart;
+    op.summary = path;
+    op.sessionReason = "autostart";
+    op.payload = &request;
+    const coordinator::OpResult done = _coordinator->Run(std::move(op));
+    if (done.status == coordinator::OpStatus::Refused)
     {
-        Pause();
-        sleep_ms(20);
+        report(done.reason, false, true);
+        return result;
     }
 
-    DiskAutostart::Plan plan = autostart->Prepare(*image);
-    const bool start = plan.action == DiskAutostart::Action::Boot || plan.action == DiskAutostart::Action::BootNamed ||
-                       plan.action == DiskAutostart::Action::BootCommander ||
-                       plan.action == DiskAutostart::Action::BootGenerated;
-
-    if (start)
-    {
-        // Same rule as Reset(): the recording session ends (TTD D42)
-        if (_context->pTimeTravelHooks)
-            _context->pTimeTravelHooks->EndSession("autostart");
-
-        autostart->Disarm();
-        _core->Reset(RM_DOS);  // Quick reset straight into TR-DOS: PC = 0 with the DOS ROM active
-        RestartFrame();        // Frame 0 starts at the reset state (see Reset())
-        if (_context->pTimeTravelHooks)
-            _context->pTimeTravelHooks->OnMachineReset();
-        if (plan.action == DiskAutostart::Action::BootNamed)
-            autostart->Arm(plan.bootName);
-    }
-
-    if (wasRunning)
-    {
-        Resume();
-    }
-
-    result.started = start;
-    report(plan.message, start, plan.action == DiskAutostart::Action::Unsupported);
+    result.started = request.started;
+    report(request.plan.message, request.started, request.plan.action == DiskAutostart::Action::Unsupported);
     return result;
+}
+
+bool Emulator::AutostartNow(AutostartRequest& request, coordinator::OpStage& stage)
+{
+    CpuHold hold(*this, "disk autostart");   // nested in the coordinator's hold (free)
+    request.plan = request.autostart->Prepare(*request.image);
+    const DiskAutostart::Action action = request.plan.action;
+    request.started = action == DiskAutostart::Action::Boot || action == DiskAutostart::Action::BootNamed ||
+                      action == DiskAutostart::Action::BootCommander || action == DiskAutostart::Action::BootGenerated;
+    if (!request.started)
+    {
+        stage.NoChange();
+        return true;
+    }
+
+    stage.CommitPoint();
+    request.autostart->Disarm();
+    _core->Reset(RM_DOS);  // Quick reset straight into TR-DOS: PC = 0 with the DOS ROM active
+    RestartFrame();        // Frame 0 starts at the reset state (see Reset())
+    if (action == DiskAutostart::Action::BootNamed)
+        request.autostart->Arm(request.plan.bootName);
+    return true;
 }
 
 // endregion Disk autostart
 
 // region Regular workflow
+
+void Emulator::WireCoordinator()
+{
+    using coordinator::OpKind;
+    _coordinator->SetMachine(_coordinatorPorts.get(), _coordinatorPorts.get());
+    _coordinator->SetSession(_ttdSessionPort.get());
+    _context->pMachineOps = _coordinator.get();
+    for (OpKind kind : {OpKind::Reset, OpKind::Autostart, OpKind::SnapshotLoad, OpKind::NetworkChange,
+                        OpKind::IdeDriveKind, OpKind::RzxRestore, OpKind::ModelSwitch})
+        _coordinator->Own(kind, _coordinatorPorts.get());
+    if (MediaManager* media = _context ? _context->pMediaManager : nullptr)
+    {
+        for (OpKind kind : {OpKind::MediaInsert, OpKind::MediaEject, OpKind::MediaDiscard, OpKind::DiskCreate})
+            _coordinator->Own(kind, &media->OpOwner());
+        media->SetMachineOps(_coordinator.get());
+    }
+}
+
+coordinator::IMachineOps& Emulator::MachineOps()
+{
+    return *_coordinator;
+}
+
+const coordinator::OperationLog& Emulator::GetOperationLog() const
+{
+    return _coordinator->Log();
+}
+
+std::string Emulator::AskModelSwitch(const std::string& what)
+{
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::ModelSwitch;
+    op.summary = what;
+    return _coordinator->Ask(std::move(op)).reason;
+}
+
+std::string Emulator::AskMediaChange(MediaChange change, uint8_t drive, const std::string& what)
+{
+    // The op the change itself runs (MediaManager::InsertOp: slot, file, refusal wording), so the answer and the log
+    // entry are the ones the change would give
+    coordinator::MachineOp op;
+    const bool tape = change == MediaChange::LoadTape;
+    op.kind = change == MediaChange::CreateDisk ? coordinator::OpKind::DiskCreate : coordinator::OpKind::MediaInsert;
+    op.media = tape ? coordinator::MediaClass::Tape : coordinator::MediaClass::Disk;
+    op.summary = (tape ? std::string(TapeSlot::kId) : FloppyDriveSlot::IdFor(drive)) + " " +
+                 (change == MediaChange::CreateDisk ? std::string("<blank>") : what);
+    return _coordinator->Ask(std::move(op)).reason;
+}
 
 void Emulator::Reset(bool hardReset)
 {
@@ -988,44 +1181,27 @@ void Emulator::Reset(bool hardReset)
     if (IsRzxPlaying())
         StopRzx();
 
-    // To avoid race conditions, we must pause the emulator during reset
-    // (Z80 thread executing ROM code during reset can cause inconsistent state)
-    bool wasRunning = _isRunning && !_isPaused;
+    // The coordinator holds the CPU (a Z80 thread executing ROM code during the reset would leave an inconsistent
+    // state), ends the TTD session at the commit point (D42) and tells it the machine left the recorded timeline
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::Reset;
+    op.summary = hardReset ? "hard" : "soft";
+    op.sessionReason = "reset";
+    op.payload = hardReset;
+    _coordinator->Run(std::move(op));
+}
 
-    if (wasRunning)
-    {
-        // Pause the emulator
-        Pause();
+void Emulator::ResetNow(bool hardReset, coordinator::OpStage& stage)
+{
+    // Nested in the coordinator's hold (free). The pause is left as it was: a running machine runs on from the
+    // reset, a paused one stays paused
+    CpuHold hold(*this, "reset");
 
-        // Give the emulator thread time to fully pause
-        // (it needs to finish the current frame and enter pause loop)
-        sleep_ms(20);
-    }
+    // TTD: the reset ENDS the recording session (D42; a new one only by the `ttdrestart` feature) before the live
+    // state is teleported: _core->Reset() would move frame_counter back to 0, and the next OnFrameBoundary would
+    // append a checkpoint at frame 0 to a timeline that already has later ones. The history is kept, browsable
+    stage.CommitPoint();
 
-    // TTD: Reset must NEVER touch the recorded timeline. The recorded
-    // history is the user's property — they should be able to replay it
-    // at any time, regardless of live emulator state.
-    //
-    // If recording is active, we must STOP it first. Otherwise _core->Reset()
-    // would teleport frame_counter back to 0, and the next OnFrameBoundary
-    // would append a checkpoint at frame 0 to a timeline that already has
-    // checkpoints at higher frame numbers — breaking the sorted invariant
-    // and corrupting every future seek.
-    //
-    // StopRecording() transitions Recording → Idle while retaining the
-    // timeline. The user can seek, replay, or resume from any captured
-    // point. After _core->Reset() runs, the live emulator is at frame 0
-    // with fresh state, but the timeline is untouched.
-    //
-    // See parent TDD §4.2 (StopRecording retains history) and §5.1
-    // (markers are for nondeterministic INPUT events, not for state
-    // teleports that happen AFTER recording stops).
-    // D42: the reset ENDS the recording session (a new one only by the `ttdrestart` feature)
-    if (_context && _context->pTimeTravelHooks)
-        _context->pTimeTravelHooks->EndSession("reset");
-
-    // Now perform reset while paused (safe, no race condition).
-    // The live emulator state is teleported; the TTD timeline is not.
     if (_context && _context->pDiskAutostart)
         _context->pDiskAutostart->Disarm();  // A user reset cancels a pending autostart hook
 
@@ -1067,33 +1243,13 @@ void Emulator::Reset(bool hardReset)
 
     // The interrupted frame is abandoned: frame 0 starts at the reset state
     RestartFrame();
-
-    // A machine seeked into recorded history leaves it (the timeline is kept)
-    if (_context && _context->pTimeTravelHooks)
-        _context->pTimeTravelHooks->OnMachineReset();
-
-    // Resume if it was running before
-    if (wasRunning)
-    {
-        Resume();
-    }
 }
 
 void Emulator::RequestNMI()
 {
-    // Mutating CPU state from a host thread (WebAPI / GUI) while the frame loop
-    // runs would race the Z80 thread - use the same pause guard as Reset()
-    bool wasRunning = _isRunning && !_isPaused;
-    if (wasRunning)
-    {
-        Pause(false);
-        WaitForPauseConfirmation();
-    }
-
+    // Mutating CPU state from a host thread (WebAPI / GUI) while the frame loop runs would race the Z80 thread
+    CpuHold hold(*this, "nmi");
     _core->GetZ80()->RequestNonMaskedInterrupt();
-
-    if (wasRunning)
-        Resume(false);
 }
 
 bool Emulator::SetFrontPanelSwitch(FrontPanelSwitch sw, bool on)
@@ -1121,12 +1277,7 @@ int Emulator::GetFrontPanelSwitch(FrontPanelSwitch sw) const
 
 void Emulator::RequestMNI()
 {
-    bool wasRunning = _isRunning && !_isPaused;
-    if (wasRunning)
-    {
-        Pause(false);
-        WaitForPauseConfirmation();
-    }
+    CpuHold hold(*this, "mni");
 
     CONFIG& config = _context->config;
     EmulatorState& state = _context->emulatorState;
@@ -1190,9 +1341,6 @@ void Emulator::RequestMNI()
     // the plain /NMI pulse
     if (_context->pPortDecoder == nullptr || !_context->pPortDecoder->RequestBoardNmi())
         _core->GetZ80()->RequestNonMaskedInterrupt();
-
-    if (wasRunning)
-        Resume(false);
 }
 
 void Emulator::Start()
@@ -1222,17 +1370,15 @@ void Emulator::Start()
         return;
     }
 
-    // Set running state (running flag is already true - see exchange above)
-    // NOTE: deliberately NOT clearing _isPaused here. A Pause() issued
-    // between StartAsync() returning and the thread reaching this point has
-    // already stored the flag under _pauseWaitMutex; clobbering it here would
-    // silently ignore that pause (the loop would run at full speed while the
-    // caller believes it parked - observed as RunNFrames stepping the Z80
-    // concurrently with the still-running emulation thread). StartAsync()
-    // clears the flag itself BEFORE spawning this thread, so a fresh start is
-    // never affected; honoring a late-landing pause is the correct semantic
-    // (the per-instruction and frame-end park checks hold the loop until
-    // Resume()).
+    // The start's Run intent: StartAsync() submitted it before spawning this thread, so a Pause() that landed in
+    // between is newer and wins (the loop's first park holds it). The synchronous path submits it here
+    if (!_startIntentSubmitted)
+    {
+        _arbiter.ExpectMainLoop();
+        _arbiter.SubmitIntent(execution::Intent::Run, execution::Requester{execution::Origin::Lifecycle, {}},
+                              execution::IntentOptions{"start", false});
+    }
+    _startIntentSubmitted = false;
     _stopRequested = false;
 
     // A Stop() may have landed anywhere between the exchange above and the
@@ -1265,9 +1411,15 @@ void Emulator::StartAsync()
 
     // Set running state immediately to prevent race conditions with UI state updates
     // This ensures that IsRunning() returns true immediately after StartAsync() returns
-    _isPaused = false;
     _isRunning = true;
     _stopRequested = false;
+
+    // The loop counts as parked until its first park check lets it run; the start's Run intent is in the queue
+    // before any Pause() a caller issues after this returns
+    _arbiter.ExpectMainLoop();
+    _arbiter.SubmitIntent(execution::Intent::Run, execution::Requester{execution::Origin::Lifecycle, {}},
+                          execution::IntentOptions{"start", false});
+    _startIntentSubmitted = true;
 
     // Start new thread with name 'emulator-xxxxxxxxxxxx' (last 12 chars of UUID) and execute Start() method from it
     // The short ID matches the shared memory naming convention for consistency
@@ -1286,189 +1438,100 @@ void Emulator::StartAsync()
     });
 }
 
-/// @brief Pauses emulator execution
-/// 
-/// Pauses the Z80 emulation thread. When paused, the emulator stops executing
-/// instructions but remains in memory and can be resumed.
-///
-/// @param broadcast If true (default), broadcasts StatePaused to UI and listeners.
-///                  If false, performs a "silent" pause without triggering UI updates.
-///
-/// @note Use broadcast=false for internal operations where:
-///       - Memory is being reallocated (shared memory migration)
-///       - State is temporarily inconsistent and UI refresh would crash
-///       - You want an atomic pause/operation/resume without visible state flicker
-///
-/// @warning Silent pause (broadcast=false) should always be paired with silent resume.
-///          The UI will not know the emulator was paused, so don't leave it paused.
-///
-/// @example
-///   // User-initiated pause (shows in debugger):
-///   emulator->Pause();  // or Pause(true)
-///   
-///   // Internal pause for memory migration (invisible to UI):
-///   emulator->Pause(false);
-///   // ... perform migration ...
-///   emulator->Resume(false);
-void Emulator::Pause(bool broadcast)
+/// @brief A pause with the Internal origin (execution arbiter intent, broadcast as StatePaused). A surface passes
+/// its own origin: Pause(Requester, reason). To keep the machine still for a piece of work without pausing it, hold
+/// the CPU instead (Emulator::CpuHold): invisible, and it never lifts a pause somebody else asked for
+void Emulator::Pause()
 {
-    if (_isPaused)
-        return;
-
-    if (!_isRunning || !_mainloop)
-    {
-        // Cannot pause if not running or mainloop not initialized
-        return;
-    }
-
-    // Set under _pauseWaitMutex: WaitWhilePaused()'s CV predicate reads this
-    // flag while holding the same mutex, so the transition can't be missed.
-    {
-        std::lock_guard<std::mutex> lock(_pauseWaitMutex);
-        _isPaused = true;
-    }
-    {
-        std::lock_guard<std::mutex> lock(_prevStopMutex);
-        _lastStop.reason = _pendingPauseCause.hit ? DebugStop::Reason::Breakpoint : DebugStop::Reason::Pause;
-        _lastStop.breakpoint = _pendingPauseCause;
-    }
-    _stepOverHostHold.Release();  // a stepped run that pauses is over (breakpoint, user pause, shutdown)
-    // NOTE: Do NOT set _isRunning = false here!
-    // The emulator thread is still active, just paused.
-    // Setting _isRunning = false would cause Stop() to skip _asyncThread->join(),
-    // leading to a crash when RemoveEmulator() destroys memory while thread is still running.
-    // MainLoop::Run() will detect this via Emulator::IsPaused() check.
-
-    // Wait until the emulation thread actually parks in MainLoop's pause loop.
-    // Setting the flag alone is not enough: MainLoop only checks the pause flag
-    // between frames, so the in-flight frame keeps executing Z80 instructions
-    // (and writing to memory) after this method would otherwise have returned.
-    // Callers (tests, shared-memory migration, snapshot loading) rely on Pause()
-    // meaning "no more emulated writes". WaitForPauseConfirmation returns
-    // immediately when called from the emulation thread itself (breakpoint
-    // handlers pause mid-frame) and may time out legitimately when execution
-    // is already blocked inside a frame - proceed anyway in those cases.
-    if (_mainloop && _isRunning)
-    {
-        _mainloop->WaitForPauseConfirmation(500);
-    }
-
-    // No more handleFrameEnd calls will arrive until Resume() - a device
-    // mid-playback at this exact instant (GS in particular: see
-    // SoundManager::onEmulatorPaused) would otherwise keep reporting
-    // "active" for as long as the pause lasts, with nothing left to clear
-    // it. Unconditional (not gated on broadcast): audio must actually stop
-    // regardless of whether this pause is UI-visible.
-    if (_context->pSoundManager)
-    {
-        _context->pSoundManager->onEmulatorPaused();
-    }
-
-    // Update state and broadcast only if requested
-    // broadcast=false is used for internal operations like shared memory migration
-    // where we don't want to trigger UI updates during the brief pause
-    if (broadcast)
-    {
-        SetState(StatePaused);
-
-        // Broadcast notification - Emulator execution paused (instance-tagged per GDB TDD §6.3),
-        // with its cause: a breakpoint (OnBreakpointHit set it just before) or a request
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StatePaused);
-        if (_pendingPauseCause.hit)
-        {
-            payload->pauseCause = PauseCause::Breakpoint;
-            payload->breakpointId = _pendingPauseCause.breakpointId;
-            payload->address = _pendingPauseCause.address;
-            payload->hitKind = _pendingPauseCause.kind;
-        }
-        messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
-    }
-    _pendingPauseCause = BreakpointStop{};
+    Pause(execution::Requester{execution::Origin::Internal, {}});
 }
 
-/// @brief Resumes emulator execution after pause
-/// 
-/// Resumes the Z80 emulation thread from a paused state. The emulator continues
-/// executing from where it was paused.
-///
-/// @param broadcast If true (default), broadcasts StateResumed to UI and listeners.
-///                  If false, performs a "silent" resume without triggering UI updates.
-///
-/// @note Use broadcast=false for internal operations where:
-///       - Memory was just reallocated and you used silent pause
-///       - You want seamless resume without UI state flicker
-///       - The pause was for an internal atomic operation (not user-initiated)
-///
-/// @warning Must match the pause mode: if Pause(false) was called, use Resume(false).
-///          Mismatched broadcast flags can leave UI in inconsistent state.
-///
-/// @see Emulator::Pause
-void Emulator::Resume(bool broadcast)
+execution::Result Emulator::Pause(const execution::Requester& requester, const std::string& reason)
 {
-    if (!_isPaused)
+    if (!_isRunning || !_mainloop)
+        return execution::Result{execution::Outcome::Refused, 0, execution::Intent::Pause, "not running"};
+
+    // The emulation thread itself (a breakpoint, TTD's stop at the end of a detached session): the priority lane.
+    // The loop parks at its next instruction boundary (WaitWhilePaused / the frame-end check)
+    if (_arbiter.IsLoopThread())
     {
-        return;
+        const bool breakpoint = _pendingPauseCause.hit;
+        execution::Requester who = requester;
+        if (breakpoint)
+        {
+            const execution::Origin owner = execution::OriginFromName(_pendingPauseOwner);
+            who = execution::Requester{owner == execution::Origin::Internal ? execution::Origin::Debugger : owner, {}};
+        }
+        _arbiter.PauseFromDriver(who, breakpoint ? "breakpoint" : reason);
+        return execution::Result{execution::Outcome::Applied, 0, execution::Intent::Pause, {}};
     }
 
-    if (!_mainloop)
+    // A thread that holds the CPU (a direct run reaching TTD's session end, a command's body): the pause queues
+    // behind its own hold and applies when that ends; waiting for it here would only wait for itself
+    execution::Ticket ticket =
+        _arbiter.SubmitIntent(execution::Intent::Pause, requester, execution::IntentOptions{reason, false});
+    if (_arbiter.HoldsCpu())
+        return ticket.Peek();
+
+    // Behind a command another thread serves (a direct run, a hold): queued, it applies when that ends. Waiting would
+    // only wait for the command (a pause never aborts one): say so at once, naming it
+    if (const std::optional<std::string> command = _arbiter.ServingCommand())
     {
-        // Cannot resume if mainloop not initialized
-        return;
+        execution::Result queued = ticket.Peek();
+        if (queued.outcome == execution::Outcome::Pending)
+        {
+            queued.detail = "queued behind " + *command + ": the pause applies when it ends";
+            return queued;
+        }
     }
+    // Nothing ahead: in order with every other request, then the park - milliseconds, 5 s for a starved host
+    const auto deadline = execution::Clock::now() + std::chrono::seconds(5);
+    const execution::Result result = ticket.Wait(deadline);
+    _arbiter.WaitParked(deadline);
+    return result;
+}
 
-    _stopRequested = false;
-    NoteRunStart();
-
-    // Eagerly invalidate the pause confirmation from the park we are exiting.
-    // The run loop clears it only after its parked wait wakes (up to its 20 ms
-    // poll); until then a Pause() issued by the same thread (or another
-    // control thread) would see a stale "parked" confirmation and return
-    // while the loop is already executing the next frame - two Z80 drivers
-    // at once (observed as heap corruption in shared collectors, e.g.
-    // WD1793Collector::recordCommandStart, and as torn FSMEvent copies).
-    //
-    // BEFORE the flag flip and the wake-up, never after: invalidating last
-    // raced a Pause() from another thread - the woken CPU thread saw the new
-    // pause, re-parked and confirmed it, and this late invalidation then
-    // erased that fresh confirmation while the thread slept on. Every
-    // WaitForPauseConfirmation() caller burned its full timeout against a
-    // thread that was in fact parked (500 ms stalls in DeZog history browsing)
-    if (_mainloop)
-        _mainloop->InvalidatePauseConfirmation();
-
-    // A resumed machine runs paced to real time and is heard: a host output hold whose reason is not in effect
-    // now (no direct run on any thread, no TTD replay, no turbo) is a holder that leaked it - drop it, so no
-    // pause / step / seek sequence on any surface can leave the speakers silent (SoundManager::HostOutputHold)
-    if (_context && _context->pSoundManager)
-        _context->pSoundManager->reconcileHostOutputHolds(IsDirectStepping() || _stepOverHostHold.IsHeld(),
-                                                          _context->ttdReplayActive, _context->config.turbo_mode);
-
+execution::Result Emulator::PauseAndWait(const execution::Requester& requester, std::chrono::milliseconds budget,
+                                         const std::string& reason)
+{
+    if (!_isRunning || !_mainloop)
+        return execution::Result{execution::Outcome::Refused, 0, execution::Intent::Pause, "not running"};
+    if (_arbiter.IsLoopThread() || _arbiter.HoldsCpu())
+        return Pause(requester, reason);  // waiting here would only wait for this thread's own work
+    execution::Ticket ticket =
+        _arbiter.SubmitIntent(execution::Intent::Pause, requester, execution::IntentOptions{reason, false});
+    execution::Result result = ticket.Wait(execution::Clock::now() + budget);
+    if (result.outcome == execution::Outcome::Pending)
     {
-        // Mirror Pause(): the flag flip must be mutex-protected so the parked
-        // CPU thread's CV predicate (WaitWhilePaused) can't miss the transition.
-        std::lock_guard<std::mutex> lock(_pauseWaitMutex);
-        _isPaused = false;
+        // Still behind a command: it stays queued and applies when that ends
+        result.outcome = execution::Outcome::Busy;
+        result.detail = "still queued after " + std::to_string(budget.count()) + " ms behind " + result.detail;
+        return result;
     }
-    _stoppedAtExecBreakpoint = false;  // the run goes on from there
-    _resumeCV.notify_all();  // Wake the CPU thread parked mid-frame at a breakpoint
-    ResetLineStepAnchor();  // Full-speed run invalidates line-step anchor
-    // MainLoop::Run() will detect this via Emulator::IsPaused() check and resume.
+    _arbiter.WaitParked(execution::Clock::now() + std::chrono::seconds(5));
+    return result;
+}
 
-    // Note: Don't unconditionally set _isRunning = true here.
-    // In synchronous test mode, _isRunning may be false and should stay false.
-    // The main RunAsync() path handles _isRunning appropriately.
+/// @brief A run with the Internal origin (execution arbiter intent, broadcast as StateResumed). A surface passes its
+/// own origin: Resume(Requester, onlyIfOwner)
+void Emulator::Resume()
+{
+    Resume(execution::Requester{execution::Origin::Internal, {}});
+}
 
-    // Update state and broadcast only if requested
-    if (broadcast)
-    {
-        SetState(StateResumed);
+execution::Result Emulator::Resume(const execution::Requester& requester, bool onlyIfOwner)
+{
+    // Not running: nothing is paused (Stop() ends the intent's effect; StartAsync() starts with Run)
+    if (!_mainloop || !_isRunning)
+        return execution::Result{execution::Outcome::Refused, 0, execution::Intent::Run, "not running"};
 
-        // Broadcast notification - Emulator execution resumed (instance-tagged per GDB TDD §6.3)
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StateResumed);
-        messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
-    }
+    // Refused while another surface holds the run-control claim (GDB), or - owner-only - when the pause in force is
+    // somebody else's (DeZog's session close, the TTD resume verb)
+    execution::Ticket ticket = _arbiter.SubmitIntent(execution::Intent::Run, requester,
+                                                     execution::IntentOptions{"resume", onlyIfOwner});
+    if (_arbiter.IsLoopThread() || _arbiter.HoldsCpu())
+        return ticket.Peek();
+    return ticket.Wait(std::chrono::milliseconds(500));
 }
 
 /// @brief Blocks the calling thread until the emulator is resumed
@@ -1476,10 +1539,142 @@ void Emulator::Resume(bool broadcast)
 /// Used by breakpoint handlers to pause execution while waiting for
 /// the debugger or user to resume. This is the single source of truth
 /// for pause/resume synchronization.
+Emulator::CpuHold::CpuHold(Emulator& emulator, const char* tag, std::chrono::milliseconds timeout)
+    : _emulator(emulator)
+{
+    // Not running: nothing executes it, nothing to hold
+    if (!_emulator._isRunning || !_emulator._mainloop)
+    {
+        _held = true;
+        return;
+    }
+    execution::Result result;
+    _token = _emulator._arbiter.BeginHold(execution::Requester{execution::Origin::Internal, {}}, tag,
+                                          execution::Clock::now() + timeout, &result);
+    _held = _token.Valid();
+    if (!_held)
+        LOGWARNING("Emulator - '%s' did not get the CPU (%s, %s); proceeding without it", tag,
+                   execution::OutcomeName(result.outcome), result.detail.c_str());
+}
+
+Emulator::CpuHold::~CpuHold()
+{
+    _emulator._arbiter.EndHold(_token);
+}
+
+bool Emulator::CanMutateNow()
+{
+    // Paused: as before the arbiter (a pause is parked within a frame; the media manager applied at once then too)
+    return !_isRunning || !_mainloop || _arbiter.HoldsCpu() || IsPaused();
+}
+
+void Emulator::DriverEnter()
+{
+    if (_activeDrivers.fetch_add(1, std::memory_order_acq_rel) != 0)
+    {
+        if (_driverViolations.fetch_add(1, std::memory_order_relaxed) == 0)
+            MLOGERROR("Emulator - two threads execute the Z80 at once (execution arbiter invariant I1)");
+    }
+}
+
+void Emulator::DriverLeave()
+{
+    _activeDrivers.fetch_sub(1, std::memory_order_acq_rel);
+}
+
+void Emulator::OnIntentEdgeGate(const execution::IntentEdge& edge, bool parked)
+{
+    if (edge.reason == "start")
+        return;
+    if (edge.intent == execution::Intent::Pause)
+    {
+        // The stop's cause, for LastStop() and the broadcast: a breakpoint (OnBreakpointHit set it just before, on
+        // this same thread) or a request
+        std::lock_guard<std::mutex> lock(_prevStopMutex);
+        _lastStop.reason = _pendingPauseCause.hit ? DebugStop::Reason::Breakpoint : DebugStop::Reason::Pause;
+        _lastStop.breakpoint = _pendingPauseCause;
+        {
+            std::lock_guard<std::mutex> causes(_edgeCausesMutex);
+            _edgeCauses.emplace_back(edge.seq, _pendingPauseCause);
+        }
+        _pendingPauseCause = BreakpointStop{};
+        return;
+    }
+
+    // Run: before the loop can execute again. The registers at the stop (the debugger's "previous stop"), only from
+    // a parked machine
+    if (_z80 && parked)
+    {
+        std::lock_guard<std::mutex> lock(_prevStopMutex);
+        _prevStopState = *static_cast<Z80State*>(_z80);
+        _hasPrevStop = true;
+    }
+    NoteDebugChange();
+    // A resumed machine runs paced to real time and is heard: a host output hold whose reason is not in effect
+    // now (no direct run on any thread, no TTD replay, no turbo) is a holder that leaked it - drop it, so no
+    // pause / step / seek sequence on any surface can leave the speakers silent (SoundManager::HostOutputHold)
+    if (_context && _context->pSoundManager)
+        _context->pSoundManager->reconcileHostOutputHolds(IsDirectStepping() || _stepOverHostHold.IsHeld(),
+                                                          _context->ttdReplayActive, _context->config.turbo_mode);
+    _stoppedAtExecBreakpoint = false;  // the run goes on from there
+    ResetLineStepAnchor();             // Full-speed run invalidates line-step anchor
+}
+
+void Emulator::OnIntentEdge(const execution::IntentEdge& edge)
+{
+    if (edge.reason == "start")
+        return;
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    if (edge.intent == execution::Intent::Pause)
+    {
+        BreakpointStop cause;
+        {
+            std::lock_guard<std::mutex> lock(_edgeCausesMutex);
+            for (auto it = _edgeCauses.begin(); it != _edgeCauses.end(); ++it)
+                if (it->first == edge.seq)
+                {
+                    cause = it->second;
+                    _edgeCauses.erase(it);
+                    break;
+                }
+        }
+        _stepOverHostHold.Release();  // a stepped run that pauses is over (breakpoint, user pause, shutdown)
+
+        // No more handleFrameEnd calls will arrive until the machine runs again - a device mid-playback at this
+        // exact instant (GS in particular: see SoundManager::onEmulatorPaused) would otherwise keep reporting
+        // "active" for as long as the pause lasts, with nothing left to clear it.
+        // This edge comes on the pausing thread while the loop may still finish its frame (handleFrameEnd): a
+        // running loop clears the sound itself when it parks (MainLoop::Park); here only with no loop to do it, or
+        // one already parked
+        if (_context && _context->pSoundManager && (!_isRunning || !_mainloop || _arbiter.IsParked()))
+            _context->pSoundManager->onEmulatorPaused();
+
+        SetState(StatePaused);
+
+        // Broadcast notification - Emulator execution paused (instance-tagged per GDB TDD §6.3), with its cause:
+        // a breakpoint or a request
+        EmulatorStateChangePayload* payload = new EmulatorStateChangePayload(GetId(), StatePaused);
+        if (cause.hit)
+        {
+            payload->pauseCause = PauseCause::Breakpoint;
+            payload->breakpointId = cause.breakpointId;
+            payload->address = cause.address;
+            payload->hitKind = cause.kind;
+        }
+        messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
+        return;
+    }
+
+    SetState(StateResumed);
+    // Broadcast notification - Emulator execution resumed (instance-tagged per GDB TDD §6.3)
+    messageCenter.Post(NC_EMULATOR_STATE_CHANGE, new EmulatorStateChangePayload(GetId(), StateResumed));
+}
+
 void Emulator::WaitWhilePaused()
 {
-    // Fast path: not paused - no locking on the hot per-instruction check path.
-    if (!_isPaused)
+    // Fast path: nothing asks the loop to park - one relaxed load on the per-instruction check path. Only the loop's
+    // own thread parks here: a direct stepper or a ZX-Poly worker drives the Z80 on its own terms
+    if (!_arbiter.ShouldYield() || !_arbiter.IsLoopThread())
         return;
 
     // Parking mid-frame: publish the TTD summary first (see MainLoop::Run's
@@ -1489,59 +1684,31 @@ void Emulator::WaitWhilePaused()
     // The picture up to the beam for whoever looks while parked (Screen::CatchesUpOnEvents)
     if (Screen* screen = _context ? _context->pScreen : nullptr; screen && screen->CatchesUpOnEvents())
         screen->UpdateScreen();
-    NoteDebugChange();   // a stop (a breakpoint's park inside the frame) the debugger snapshot's seq counts
+    if (IsPaused())
+        NoteDebugChange();   // a stop (a breakpoint's park inside the frame) the debugger snapshot's seq counts
 
-    std::unique_lock<std::mutex> lock(_pauseWaitMutex);
-    // Re-confirm on EVERY park iteration, not just the first. A rapid
-    // Resume()->Pause() flip-flop (e.g. adapter resume immediately followed
-    // by a control-thread Pause) wakes this thread, the predicate sees the
-    // pause flag set again, and the thread re-parks - without re-confirming,
-    // the new Pause()'s WaitForPauseConfirmation would burn its full timeout
-    // (the frame-end park in MainLoop::Run re-confirms the same way).
-    while (_isPaused && !_stopRequested)
-    {
-        // The CPU thread parks HERE mid-frame (breakpoint/watchpoint handler
-        // or the per-instruction pause check in Z80FrameCycle). MainLoop is
-        // blocked inside RunFrame() above this call and can never reach its
-        // own park/confirm path, so confirm on its behalf - otherwise any
-        // WaitForPauseConfirmation() caller burns the full timeout while the
-        // CPU is in fact safely parked. Cleared by Resume()/Stop() via
-        // InvalidatePauseConfirmation().
-        if (_mainloop)
-            _mainloop->ConfirmPauseFromCpu();
-
-        // Wake on Resume()/Stop() in microseconds instead of the legacy
-        // 20 ms sleep poll (which dominated rapid-debugger-stepping latency:
-        // every step cycle paid one poll quantum). Bare wait + loop-head
-        // re-check is deliberate: the flag transitions happen under this
-        // same mutex, so a wakeup can never be missed.
-        _resumeCV.wait(lock);
-    }
+    // Parks until the machine may run again, serving posted commands meanwhile; false on stop (the frame then
+    // finishes and MainLoop::Run sees the stop request). Parked, this thread does not drive the Z80
+    DriverLeave();
+    _arbiter.LoopWait();
+    DriverEnter();
 }
 
-/// @brief Block until the Z80 thread observes the pause flag and parks.
+/// @brief Block until nothing executes the machine: the main loop parked (a pause, or a command / silent pause
+/// holding the CPU), or no loop runs.
 ///
-/// Emulator::Pause() is asynchronous — it sets _isPaused and returns. The
-/// Z80 thread notices at the top of the next frame iteration and signals
-/// _isPausedConfirmed via MainLoop's _pauseCV. This method wraps that CV
-/// wait so callers that mutate emulator state right after Pause() (e.g.
-/// TTD seek/step-back/step-forward via WebAPI) don't race with the
-/// in-flight frame loop overwriting their freshly written state.
-///
-/// Returns true on confirmation, false on timeout. On timeout the caller
-/// should proceed anyway — the mutation is still correct, just slightly
-/// racy, and the alternative (blocking forever) is worse.
-///
-/// When the emulator is not running async (tests, synchronous mode), the
-/// Z80 thread doesn't exist, _isPausedConfirmed never flips, and this
-/// method correctly times out. Callers should not interpret timeout as
-/// failure in those configurations.
+/// Callers that mutate emulator state right after Pause() (e.g. TTD seek/step-back/step-forward via WebAPI) use it so
+/// the in-flight frame cannot overwrite their freshly written state. True on confirmation, false on timeout; on
+/// timeout the caller proceeds as before. From the emulation thread itself: true at once.
 bool Emulator::WaitForPauseConfirmation(uint32_t timeout_ms)
 {
     if (!_mainloop)
         return false;
-
-    return _mainloop->WaitForPauseConfirmation(timeout_ms);
+    // The emulation thread itself, or a thread holding the CPU (a direct run, a silent pause): no frame runs
+    // concurrently with the caller
+    if (_arbiter.IsLoopThread() || _arbiter.HoldsCpu())
+        return true;
+    return _arbiter.WaitParked(execution::Clock::now() + std::chrono::milliseconds(timeout_ms));
 }
 
 void Emulator::Stop()
@@ -1579,16 +1746,9 @@ void Emulator::Stop()
     // Request emulator to stop
     _stopRequested = true;
 
-    // If emulator was paused - un-pause under the wait mutex and wake the
-    // parked CPU thread, allowing mainloop to react and the async thread to
-    // be joined below. MainLoop::Run() will detect this via Emulator::IsPaused()
-    {
-        std::lock_guard<std::mutex> lock(_pauseWaitMutex);
-        _isPaused = false;
-    }
-    _resumeCV.notify_all();
-    if (_mainloop)
-        _mainloop->InvalidatePauseConfirmation();
+    // Wake the parked loop (its park returns false: stop), refuse what is queued, abort the command being served.
+    // The stop request is set first, so the loop sees it when its park returns
+    _arbiter.BeginStop();
 
     // TODO: handle IO shutting down
     // FDC: flush changes to disk image(s)
@@ -1603,9 +1763,11 @@ void Emulator::Stop()
         _asyncThread = nullptr;
     }
 
+    // The loop has left (or never started): phase stopped, commands run at once from now on
+    _arbiter.DetachMainLoop();
+
     // Clear remaining state
     _stopRequested = false;
-    _isPaused = false;
 
     // Broadcast notification - Emulator stopped (instance-tagged per GDB TDD §6.3)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -1665,9 +1827,9 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
         return played.Ok();
     }
 
-    if (ext != "z80" && ext != "sna" && ext != "szx" && ext != "spg")
+    if (ext != "z80" && ext != "sna" && ext != "szx" && ext != "spg" && ext != "nex")
     {
-        MLOGERROR("Invalid snapshot format: {}. Expected .z80, .sna, .szx or .spg", ext.c_str());
+        MLOGERROR("Invalid snapshot format: {}. Expected .z80, .sna, .szx, .spg or .nex", ext.c_str());
         if (_context)
         {
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -1729,6 +1891,16 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
                 _lastSnapshotReport = loaderSpg.GetSnapshotReport();
                 if (!result)
                     error = loaderSpg.GetError();
+            }
+            else if (ext == "nex")
+            {
+                // ZX Spectrum Next program (loadernex.h): the Next machine only
+                LoaderNex loaderNex(_context);
+                result = loaderNex.LoadFile(absolutePath);
+                if (!result)
+                    error = loaderNex.Error();
+                else
+                    _lastSnapshotReport = snapshot::Report();
             }
             else if (ext == "szx")
             {
@@ -1851,63 +2023,24 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error, c
     if (IsRzxPlaying())
         StopRzx();
 
-    // Pause execution
-    bool wasRunning = false;
-    if (!IsPaused())
-    {
-        Pause();
-        wasRunning = true;
-    }
-
-    // Pause() only sets a flag - the emulation thread finishes its current frame before
-    // parking in MainLoop's pause loop. Wait for confirmation so the loader never resets
-    // CPU/memory/screen state while a frame is still executing (this race can corrupt the
-    // framebuffer when a WebAPI 'pause' is immediately followed by 'snapshot/load').
-    // The wait may time out legitimately when paused inside a frame (breakpoint) or in
-    // synchronous test mode - proceed anyway in those cases.
-    // On iOS/embed hosts the mainloop can block on video present; use a short timeout
-    // and proceed anyway - the loader's own locking is sufficient for safety.
-    if (_mainloop && IsRunning())
-    {
-        bool confirmed = _mainloop->WaitForPauseConfirmation(100);
-        if (!confirmed)
-        {
-            MLOGWARNING("LoadSnapshot: pause confirmation timed out, proceeding anyway");
-        }
-    }
-
-    std::string error;
-    bool result = false;
-    ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
-    // TTD (D42): a snapshot load ENDS the recording session, like a reset (the history of this machine stays browsable; a new
-    // session starts only by the `ttdrestart` feature). Nothing is refused - but the session ends only when the load really goes
-    // ahead: the plan calls beforeCommit once it has decided to commit, so a refused load leaves the recording running
-    snapshot::Options planned = options;
-    planned.beforeCommit = [&]() {
-        if (options.beforeCommit)
-            options.beforeCommit();
-        if (ttd)
-            ttd->OnLoad(ttd::TTDLoadKind::Snapshot, "snapshot-load");
-    };
-    auto runLoad = [&]() { result = load(error, planned); };
-    runLoad();
-    // The loader reset the machine and replaced its state (ports, memory,
-    // registers): start the frame again from the loaded state, so devices
-    // and the video raster take their frame bases from it
-    if (result)
-        RestartFrame();
+    // The coordinator holds the CPU for the load and ends the TTD session at the commit point (LoadSnapshotNow)
+    SnapshotRequest request;
+    request.load = &load;
+    request.options = &options;
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::SnapshotLoad;
+    op.summary = openedPath;
+    op.sessionReason = "snapshot-load";
+    op.payload = &request;
+    const coordinator::OpResult done = _coordinator->Run(std::move(op));
+    const std::string error = done.Ok() || !request.error.empty() ? request.error : done.reason;
+    const bool result = done.Ok() && request.loaded;
     if (!result && !error.empty())
         MLOGERROR("Snapshot load failed: %s", error.c_str());
 
     // Store snapshot path on success
     if (result)
         _context->coreState.snapshotFilePath = openedPath;
-
-    // Resume execution
-    if (wasRunning)
-    {
-        Resume();
-    }
 
     if (_context)
     {
@@ -1917,6 +2050,35 @@ bool Emulator::LoadSnapshotStaged(const std::function<bool(std::string& error, c
     }
 
     return result;
+}
+
+bool Emulator::LoadSnapshotNow(SnapshotRequest& request, coordinator::OpStage& stage)
+{
+    // The CPU held for the load (nested in the coordinator's hold): the loader never resets CPU/memory/screen state
+    // while a frame is still executing (that race corrupted the framebuffer when a WebAPI 'pause' was immediately
+    // followed by 'snapshot/load'). The pause is left as it was: a running machine runs the loaded state
+    CpuHold hold(*this, "snapshot load");
+
+    // TTD (D42): a snapshot load ENDS the recording session, like a reset (the history of this machine stays browsable; a new
+    // session starts only by the `ttdrestart` feature). Nothing is refused - but the session ends only when the load really goes
+    // ahead: the plan calls beforeCommit once it has decided to commit - the operation's commit point - so a refused load
+    // leaves the recording running
+    const snapshot::Options& options = *request.options;
+    snapshot::Options planned = options;
+    planned.beforeCommit = [&]() {
+        if (options.beforeCommit)
+            options.beforeCommit();
+        stage.CommitPoint();
+    };
+    request.loaded = (*request.load)(request.error, planned);
+    // The loader reset the machine and replaced its state (ports, memory,
+    // registers): start the frame again from the loaded state, so devices
+    // and the video raster take their frame bases from it
+    if (request.loaded)
+        RestartFrame();
+    else
+        stage.error = request.error.empty() ? "the snapshot was not loaded" : request.error;
+    return request.loaded;
 }
 
 rzx::RzxSession& Emulator::RzxSessionLocked()
@@ -2095,6 +2257,11 @@ bool Emulator::InspectSnapshot(const std::string& path, const snapshot::Options&
 
 bool Emulator::SaveSnapshot(const std::string& path)
 {
+    // The CPU held for the whole save, first: it reads RAM, the CPU and the latches, which a frame in flight would
+    // still be changing - and two saves from two threads take turns, so neither tears _lastSaveResult (found by the
+    // execution arbiter's machine fuzz: heap corruption under parallel saves)
+    CpuHold hold(*this, "snapshot save", std::chrono::milliseconds(1000));
+
     _lastSaveResult = snapshot::SaveResult{};
     _lastSaveResult.path = path;
     auto refuse = [&](const std::string& reason, const std::string& needs = {}) {
@@ -2123,20 +2290,8 @@ bool Emulator::SaveSnapshot(const std::string& path)
         return refuse("'." + ext + "' is not a snapshot format this emulator saves: use .sna, .z80 or .szx", "format");
     _lastSaveResult.format = snapshot::ToText(*format);
 
-    // Stop the machine and wait until it has parked: a save reads RAM, the CPU and the latches, which a frame in flight
-    // would still be changing
-    bool wasRunning = false;
-    if (!IsPaused())
-    {
-        Pause();
-        wasRunning = true;
-    }
-    if (!IsEmulationParked() && !WaitForPauseConfirmation(1000))
-    {
-        if (wasRunning)
-            Resume();
+    if (!hold.Held())
         return refuse("the emulator did not stop within one second, so its state is not stable: nothing was saved", "pause");
-    }
 
     const snapshot::SaveResult saved = snapshot::SaveSnapshotFile(*_context, *format, absolutePath);
     _lastSaveResult = saved;
@@ -2151,9 +2306,6 @@ bool Emulator::SaveSnapshot(const std::string& path)
     else
         MLOGERROR("%s", saved.text.c_str());
     MLOGEMPTY();
-
-    if (wasRunning)
-        Resume();
 
     return saved.ok;
 }
@@ -2203,12 +2355,9 @@ bool Emulator::LoadTape(const std::string& path, std::string* error)
         return fail("file not found: '" + path + "'");
     }
 
-    // TTD v1 (P1.6): tape insertion is a session-invalidating event in v1
-    // (parent TDD §4.2 + §5 row 3 — tape *insertion/start/stop* commands
-    // invalidate; only playback position is checkpointed). Refused while recording.
-    // The session ends only once the tape is in (MediaManager::Insert): a file that fails to load keeps it
-    if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadTape, error))
-        return false;
+    // A new tape is a media change (the coordinator's rules, in MediaManager::Insert): refused while a recording the
+    // user started runs, before the file is opened; otherwise the session ends once the tape is in: a file that
+    // fails to load keeps it
 
     // The format registry probes and loads (every TapeLoaderRegistry format,
     // a folder built into a TZX); the swap happens with the emulator thread
@@ -2220,17 +2369,20 @@ bool Emulator::LoadTape(const std::string& path, std::string* error)
     options.immediate = true;
     options.disposition = Disposition::Discard;  // a tape is never written: nothing to lose
     options.ttdReason = "tape-load";
+    options.refusalWording = coordinator::MediaClass::Tape;
 
-    const bool wasRunning = !IsPaused();
-    if (wasRunning)
-        Pause();
-    const MediaResult inserted = _context->pMediaManager->Insert(TapeSlot::kId, source, options);
-    if (wasRunning)
-        Resume();
+    MediaResult inserted;
+    {
+        CpuHold hold(*this, "tape load");
+        inserted = _context->pMediaManager->Insert(TapeSlot::kId, source, options);
+    }
 
     for (const std::string& line : inserted.report)
         MLOGWARNING("LoadTape: %s", line.c_str());
 
+    // Refused by the rules: nothing was opened or loaded (no load to report), as before
+    if (inserted.error == MediaError::Recording)
+        return fail(inserted.message);
     MessageCenter::DefaultMessageCenter().Post(NC_FILE_LOADED,
                                                new FileLoadedPayload(_context->emulatorId, "tape", resolvedPath, inserted.Ok()));
     if (!inserted.Ok())
@@ -2253,17 +2405,16 @@ bool Emulator::EjectTape(std::string* error)
     if (!_context || !_context->pMediaManager || !_context->pMediaManager->HasSlot(TapeSlot::kId))
         return fail("this machine has no tape deck");
 
-    const bool wasRunning = !IsPaused();
-    if (wasRunning)
-        Pause();
-    EjectOptions options;
-    options.disposition = Disposition::Discard;
-    const MediaResult ejected = _context->pMediaManager->Eject(TapeSlot::kId, options);
-    // A tape named by path alone (set before the tape slot existed) goes too
-    if (ejected.Ok() && _context->pTape && !_context->coreState.tapeFilePath.empty())
-        _context->pTape->DetachImage();
-    if (wasRunning)
-        Resume();
+    MediaResult ejected;
+    {
+        CpuHold hold(*this, "tape eject");
+        EjectOptions options;
+        options.disposition = Disposition::Discard;
+        ejected = _context->pMediaManager->Eject(TapeSlot::kId, options);
+        // A tape named by path alone (set before the tape slot existed) goes too
+        if (ejected.Ok() && _context->pTape && !_context->coreState.tapeFilePath.empty())
+            _context->pTape->DetachImage();
+    }
 
     if (!ejected.Ok())
         return fail(ejected.message);
@@ -2329,25 +2480,25 @@ bool Emulator::CreateBlankDisk(uint8_t drive, BlankDiskFormat format, uint8_t cy
     cylinders = spec.cylinders;
     sides = spec.sides;
 
-    // TTD: a new medium changes what the FDC reads, like a disk swap. Refused while recording.
-    if (!RecordingAllows(*this, ttd::TTDGuardedAction::CreateDisk, error))
-        return false;
+    // A new medium changes what the FDC reads, like a disk swap: refused while a recording the user started runs
+    // (the coordinator's rules, in MediaManager::Insert)
 
     MediaSource blank;
     blank.type = MediaSourceType::Blank;
     auto medium = std::make_unique<Medium>(blank, AccessMode::Session, BlankDiskFormatName(format), std::move(image));
 
-    // The swap happens with the emulator thread parked, at once (no swap delay)
-    const bool wasRunning = !IsPaused();
-    if (wasRunning)
-        Pause();
-    InsertOptions options;
-    options.immediate = true;
-    options.disposition = Disposition::Discard;  // a load always replaced the disk, writes and all
-    options.ttdReason = "disk-create";
-    const MediaResult inserted = _context->pMediaManager->Insert(slotId, std::move(medium), options);
-    if (wasRunning)
-        Resume();
+    // The swap happens with the CPU held, at once (no swap delay); the media manager tells TTD (ttdReason)
+    MediaResult inserted;
+    {
+        CpuHold hold(*this, "disk create");
+        InsertOptions options;
+        options.immediate = true;
+        options.disposition = Disposition::Discard;  // a load always replaced the disk, writes and all
+        options.ttdReason = "disk-create";
+        options.opKind = coordinator::OpKind::DiskCreate;
+        options.refusalWording = coordinator::MediaClass::Disk;
+        inserted = _context->pMediaManager->Insert(slotId, std::move(medium), options);
+    }
     if (!inserted.Ok())
         return fail(inserted.message);
 
@@ -2396,11 +2547,9 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
         return fail("file not found: '" + path + "'");
     }
 
-    // TTD v1 (P1.6): disk image swap teleports FDC + media state
-    // (parent TDD §4.2 + §12.2). Refused while recording; otherwise the
-    // session ends once the disk is in (MediaManager::Insert): a disk that fails to load keeps it.
-    if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadDisk, error))
-        return false;
+    // A disk swap teleports FDC + media state: refused while a recording the user started runs, before the file is
+    // opened (the coordinator's rules, in MediaManager::Insert); otherwise the session ends once the disk is in: a
+    // disk that fails to load keeps it
 
     // The format registry probes and loads; the swap happens with the emulator
     // thread parked, at once (no swap delay: the caller expects the disk in)
@@ -2411,17 +2560,20 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
     options.immediate = true;
     options.disposition = Disposition::Discard;  // a load always replaced the disk, writes and all
     options.ttdReason = "disk-load";
+    options.refusalWording = coordinator::MediaClass::Disk;
 
-    const bool wasRunning = !IsPaused();
-    if (wasRunning)
-        Pause();
-    const MediaResult inserted = _context->pMediaManager->Insert(slotId, source, options);
-    if (wasRunning)
-        Resume();
+    MediaResult inserted;
+    {
+        CpuHold hold(*this, "disk load");
+        inserted = _context->pMediaManager->Insert(slotId, source, options);
+    }
 
     for (const std::string& line : inserted.report)
         MLOGWARNING("LoadDisk: %s", line.c_str());
 
+    // Refused by the rules: nothing was opened or loaded (no load to report), as before
+    if (inserted.error == MediaError::Recording)
+        return fail(inserted.message);
     MessageCenter::DefaultMessageCenter().Post(NC_FILE_LOADED,
                                                new FileLoadedPayload(_context->emulatorId, "disk", resolvedPath, inserted.Ok()));
     if (!inserted.Ok())
@@ -2448,17 +2600,16 @@ bool Emulator::EjectDisk(uint8_t drive, bool force, std::string* error)
     if (!_context || !_context->pMediaManager || !_context->pMediaManager->HasSlot(slotId))
         return fail(std::string("drive ") + static_cast<char>('A' + drive) + " is not present on this machine");
 
-    // A medium leaving is a media set change: refused while a TTD recording
-    // runs (the manager answers "recording"), like a load
+    // A medium leaving is a media set change, like a load: while a TTD recording
+    // runs an event of the recording at the next frame boundary (TTD v1 refuses it)
     EjectOptions options;
     options.disposition = force ? Disposition::Discard : Disposition::None;
 
-    const bool wasRunning = !IsPaused();
-    if (wasRunning)
-        Pause();
-    const MediaResult ejected = _context->pMediaManager->Eject(slotId, options);
-    if (wasRunning)
-        Resume();
+    MediaResult ejected;
+    {
+        CpuHold hold(*this, "disk eject");
+        ejected = _context->pMediaManager->Eject(slotId, options);
+    }
 
     if (!ejected.Ok())
         return fail(ejected.message);
@@ -2468,8 +2619,8 @@ bool Emulator::EjectDisk(uint8_t drive, bool force, std::string* error)
 std::vector<std::string> Emulator::SupportedSnapshotExtensions()
 {
     // rzx: an input recording, opened as its start snapshot plus the playback;
-    // spg: a TS-Conf program (the TS-Conf machine only)
-    return {"sna", "z80", "szx", "spg", "rzx"};
+    // spg: a TS-Conf program (the TS-Conf machine only); nex: a ZX Spectrum Next program (the Next only)
+    return {"sna", "z80", "szx", "spg", "nex", "rzx"};
 }
 
 std::vector<std::string> Emulator::SupportedTapeExtensions()
@@ -2512,17 +2663,16 @@ Emulator::DiskSaveResult Emulator::SaveDisk(uint8_t drive, const std::string& pa
         return result;
     }
 
-    // The format writers walk the image with the emulator thread parked
-    const bool wasRunning = !IsPaused();
-    if (wasRunning)
-        Pause();
+    // The format writers walk the image with the CPU held
     SaveOptions options;
     options.path = path;
     options.allowRetarget = allowRetarget;
     SaveOutcome outcome;
-    const MediaResult saved = manager.Save(slotId, options, &outcome);
-    if (wasRunning)
-        Resume();
+    MediaResult saved;
+    {
+        CpuHold hold(*this, "disk save");
+        saved = manager.Save(slotId, options, &outcome);
+    }
 
     if (!saved.Ok())
     {
@@ -2584,6 +2734,8 @@ void Emulator::CancelPendingStepOver()
             Pause();
             WaitForPauseConfirmation();
         }
+        // Paused is not idle: a direct run on another thread reads the breakpoints too
+        CpuHold hold(*this, "cancel step-over");
         if (const uint16_t pending = _pendingStepOverBpId.exchange(0))
         {
             MLOGDEBUG("Emulator::CancelPendingStepOver - Removing orphaned step-over breakpoint ID %d", pending);
@@ -2602,6 +2754,9 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
         const BreakpointDescriptor* bp = brk.GetBreakpointById(breakpointId);
         hidden = bp && (bp->hidden || bp->note == "StepOver" || bp->note == "StepOut" || bp->group == "TemporaryBreakpoints");
+        // The pause belongs to whoever set the breakpoint: a DeZog breakpoint's stop is DeZog's (its session close
+        // lifts it), a GDB one GDB's, an interactive one the debugger's
+        _pendingPauseOwner = bp ? bp->owner : std::string();
     }
 
     // The step over's temporary breakpoint ends its run here, on the emulation thread that reads the breakpoints:
@@ -2643,6 +2798,7 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
     _pendingPauseCause = BreakpointStop{true, breakpointId, address, kind};
     Pause();
     _pendingPauseCause = BreakpointStop{};  // Pause() did not consume it when it returned early (not running)
+    _pendingPauseOwner.clear();
 
     MessageCenter::DefaultMessageCenter().Post(NC_EXECUTION_BREAKPOINT,
                                                new BreakpointTriggeredPayload(GetId(), breakpointId, address, hidden));
@@ -2655,6 +2811,13 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
 Z80::StepResult Emulator::ExecuteStep(bool skipBreakpoints, bool* frameCompleted)
 {
     Z80& z80 = *_core->GetZ80();
+    // A direct run that did not get the CPU does not step (DirectStepScope)
+    if (t_directRunRefused)
+    {
+        if (frameCompleted)
+            *frameCompleted = false;
+        return Z80::StepResult{};
+    }
 
     // Leaving the instruction the emulator is stopped at (an execution breakpoint that fires
     // again at this step sets it again); only the run's first instruction may pass that breakpoint
@@ -2673,6 +2836,9 @@ Z80::StepResult Emulator::ExecuteStep(bool skipBreakpoints, bool* frameCompleted
             _mainloop->CompleteFrame();
         else
             z80.BeginFrame();
+        // Between two frames a long direct run lets the holds waiting for it in (they do not drive the Z80)
+        if (_lendingHold && _lendingThread == std::this_thread::get_id())
+            _arbiter.LendCpu(*_lendingHold);
     }
 
     if (frameCompleted)
@@ -2691,16 +2857,14 @@ void Emulator::RestartFrame()
 
 void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "step");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
     ResetLineStepAnchor();
 
     // Pause emulator if running — step commands always leave emulator paused
-    if (IsRunning() && !IsPaused())
-    {
-        Pause();  // Broadcast pause so debugger UI updates
-    }
+    // The pause ("stepping leaves the machine paused", broadcast so the debugger UI updates) came with the
+    // DirectStepScope's hold of the CPU
 
     ExecuteStep(skipBreakpoints);
 
@@ -2709,8 +2873,48 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
 }
 
-Emulator::DirectStepScope::DirectStepScope(Emulator& emulator) : _emulator(emulator)
+Emulator::DirectStepScope::DirectStepScope(Emulator& emulator, const char* tag) : _emulator(emulator)
 {
+    // A running machine: take the CPU first - park the loop, pause (outermost), and keep everybody else out until
+    // the run ends. Not running (a fixture, a ZX-Poly slave its master steps): nothing else drives it
+    if (_emulator._isRunning && _emulator._mainloop)
+    {
+        execution::Result result;
+        execution::CommandOptions options;
+        options.drivesZ80 = true;
+        options.pauseFirst = true;
+        // It waits for the CPU (the holds ahead are short; a long run lends it between frames): running without it
+        // would drive the Z80 next to its holder. 60 s without it is a deadlock, not a wait - then it does not run
+        for (int attempt = 0;; ++attempt)
+        {
+            _hold = _emulator._arbiter.BeginHold(execution::Requester{execution::Origin::Internal, {}}, tag,
+                                                 execution::Clock::now() + std::chrono::seconds(5), &result, options);
+            if (_hold.Valid() || result.outcome != execution::Outcome::Busy || attempt >= 11)
+                break;
+            LOGWARNING("Emulator - a direct run '%s' still waits for the CPU (%s)", tag, result.detail.c_str());
+        }
+        if (!_hold.Valid())
+        {
+            LOGERROR("Emulator - a direct run '%s' did not get the CPU (%s, %s): not run", tag,
+                     execution::OutcomeName(result.outcome), result.detail.c_str());
+            _refused = true;
+            t_directRunRefused = true;
+        }
+    }
+    _driver = _refused ? false : !_hold.Valid() ? !_emulator._arbiter.IsLoopThread() : !_hold.inlined;
+    // The outermost run with the CPU of its own lends it between frames (ExecuteStep)
+    if (_hold.Valid() && !_hold.inlined && !_emulator._lendingHold)
+    {
+        _emulator._lendingHold = &_hold;
+        _emulator._lendingThread = std::this_thread::get_id();
+        _lends = true;
+    }
+    if (_driver)
+    {
+        _emulator.DriverEnter();
+        _emulator._lastDirectRunAborted = false;
+    }
+
     const bool firstIn = _emulator._directStepDepth.fetch_add(1, std::memory_order_acq_rel) == 0;
     if (_emulator._context && _emulator._context->pSoundManager)
         _hostHold = SoundManager::HostOutputHold(_emulator._context->pSoundManager,
@@ -2738,6 +2942,27 @@ Emulator::DirectStepScope::DirectStepScope(Emulator& emulator) : _emulator(emula
 
 Emulator::DirectStepScope::~DirectStepScope()
 {
+    struct EndHold
+    {
+        DirectStepScope& scope;
+        ~EndHold()
+        {
+            if (scope._refused)
+                t_directRunRefused = false;
+            if (scope._lends)
+            {
+                scope._emulator._lendingHold = nullptr;
+                scope._emulator._lendingThread = std::thread::id();
+            }
+            if (scope._driver)
+            {
+                if (scope._emulator._arbiter.ServingAborted())
+                    scope._emulator._lastDirectRunAborted = true;
+                scope._emulator.DriverLeave();
+            }
+            scope._emulator._arbiter.EndHold(scope._hold);
+        }
+    } endHold{*this};
     _hostHold.Release();
     if (_emulator._directStepDepth.fetch_sub(1, std::memory_order_acq_rel) == 1)
     {
@@ -2762,16 +2987,14 @@ Emulator::DirectStepScope::~DirectStepScope()
 
 unsigned Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "steps");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
     ResetLineStepAnchor();
 
     // Pause emulator if running — step commands always leave emulator paused
-    if (IsRunning() && !IsPaused())
-    {
-        Pause();  // Broadcast pause so debugger UI updates
-    }
+    // The pause ("stepping leaves the machine paused", broadcast so the debugger UI updates) came with the
+    // DirectStepScope's hold of the CPU
 
     unsigned executed = 0;
     for (unsigned i = 0; i < cycles && !RunHalted(); i++)
@@ -2790,20 +3013,12 @@ unsigned Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
 
 void Emulator::RunFrame(bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_frame");
     CancelPendingStepOver();
     ResetLineStepAnchor();
 
-    // Pause emulator if running — step commands always leave emulator paused
-    if (IsRunning() && !IsPaused())
-    {
-        Pause();  // Broadcast pause so debugger UI updates
-
-        // Wait for the emulation thread to park - otherwise we would step the Z80
-        // concurrently with the frame MainLoop is still finishing
-        if (_mainloop)
-            _mainloop->WaitForPauseConfirmation(250);
-    }
+    // Step commands always leave the emulator paused: the DirectStepScope's hold of the CPU paused it and parked the
+    // emulation thread (nothing steps the Z80 concurrently with a frame MainLoop is still finishing)
 
     const CONFIG& config = _context->config;
     Z80& z80 = *_core->GetZ80();
@@ -2849,15 +3064,13 @@ void Emulator::RunFrame(bool skipBreakpoints)
 
 void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_frames");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
     // Pause emulator if running — step commands always leave emulator paused
-    if (IsRunning() && !IsPaused())
-    {
-        Pause();  // Broadcast pause so debugger UI updates
-    }
+    // The pause ("stepping leaves the machine paused", broadcast so the debugger UI updates) came with the
+    // DirectStepScope's hold of the CPU
 
     // Direct stepping must never race the emulation thread. Even when the
     // caller already paused, the park can still be in flight: Pause()
@@ -2869,7 +3082,7 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
     // when called from the emulation thread itself.
     if (IsRunning() && _mainloop)
     {
-        _mainloop->WaitForPauseConfirmation(500);
+        WaitForPauseConfirmation(500);
     }
 
     Z80& z80 = *_core->GetZ80();
@@ -2902,23 +3115,21 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 
 void Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_tstates");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
     ResetLineStepAnchor();
 
     // Pause emulator if running — step commands always leave emulator paused
-    if (IsRunning() && !IsPaused())
-    {
-        Pause();  // Broadcast pause so debugger UI updates
-    }
+    // The pause ("stepping leaves the machine paused", broadcast so the debugger UI updates) came with the
+    // DirectStepScope's hold of the CPU
 
     // See RunNFrames: direct stepping must never race a mid-flight emulation
     // thread, even when the caller paused earlier and the park is still in
     // flight.
     if (IsRunning() && _mainloop)
     {
-        _mainloop->WaitForPauseConfirmation(500);
+        WaitForPauseConfirmation(500);
     }
 
     Z80& z80 = *_core->GetZ80();
@@ -2961,15 +3172,13 @@ void Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints)
 
 void Emulator::RunUntilScanline(unsigned targetLine, bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_to_scanline");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
     // Pause emulator if running — step commands always leave emulator paused
-    if (IsRunning() && !IsPaused())
-    {
-        Pause();  // Broadcast pause so debugger UI updates
-    }
+    // The pause ("stepping leaves the machine paused", broadcast so the debugger UI updates) came with the
+    // DirectStepScope's hold of the CPU
 
     const CONFIG& config = _context->config;
     Z80& z80 = *_core->GetZ80();
@@ -3000,15 +3209,13 @@ void Emulator::RunUntilScanline(unsigned targetLine, bool skipBreakpoints)
 
 void Emulator::RunNScanlines(unsigned count, bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_scanlines");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
     // Pause emulator if running — step commands always leave emulator paused
-    if (IsRunning() && !IsPaused())
-    {
-        Pause();  // Broadcast pause so debugger UI updates
-    }
+    // The pause ("stepping leaves the machine paused", broadcast so the debugger UI updates) came with the
+    // DirectStepScope's hold of the CPU
 
     const CONFIG& config = _context->config;
     Z80& z80 = *_core->GetZ80();
@@ -3074,15 +3281,13 @@ void Emulator::ResetLineStepAnchor()
 
 void Emulator::RunUntilNextScreenPixel(bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_to_pixel");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
     // Pause emulator if running — step commands always leave emulator paused
-    if (IsRunning() && !IsPaused())
-    {
-        Pause();  // Broadcast pause so debugger UI updates
-    }
+    // The pause ("stepping leaves the machine paused", broadcast so the debugger UI updates) came with the
+    // DirectStepScope's hold of the CPU
 
     Z80& z80 = *_core->GetZ80();
 
@@ -3113,15 +3318,13 @@ void Emulator::RunUntilNextScreenPixel(bool skipBreakpoints)
 
 void Emulator::RunUntilInterrupt(bool skipBreakpoints)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_to_interrupt");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
     // Pause emulator if running — step commands always leave emulator paused
-    if (IsRunning() && !IsPaused())
-    {
-        Pause();  // Broadcast pause so debugger UI updates
-    }
+    // The pause ("stepping leaves the machine paused", broadcast so the debugger UI updates) came with the
+    // DirectStepScope's hold of the CPU
 
     Z80& z80 = *_core->GetZ80();
 
@@ -3159,15 +3362,13 @@ void Emulator::RunUntilInterrupt(bool skipBreakpoints)
 void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate, uint64_t maxTStates,
                                  bool notifyDebugger)
 {
-    DirectStepScope directStep(*this);
+    DirectStepScope directStep(*this, "run_until_condition");
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
 
     // Pause emulator if running — step commands always leave emulator paused
-    if (IsRunning() && !IsPaused())
-    {
-        Pause();  // Broadcast pause so debugger UI updates
-    }
+    // The pause ("stepping leaves the machine paused", broadcast so the debugger UI updates) came with the
+    // DirectStepScope's hold of the CPU
 
     Z80& z80 = *_core->GetZ80();
 
@@ -3415,7 +3616,9 @@ bool Emulator::LoadROM(std::string path)
     if (!RecordingAllows(*this, ttd::TTDGuardedAction::LoadRom))
         return false;
 
+    // A ROM load leaves the machine paused (its caller resets it); the ROM pages are written with the CPU held
     Pause();
+    CpuHold hold(*this, "rom load");
 
     // TTD v1 (P1.6): ROM reload changes immutable code/data backing every
     // checkpoint relies on (parent TDD §4.2 — "ROM reload" is listed
@@ -3466,23 +3669,14 @@ bool Emulator::SetOverscanMode(bool enable)
 
     if (newMode != currentMode)
     {
-        // Pause emulation while changing video mode to avoid framebuffer access during reallocation
-        bool wasRunning = IsRunning() && !IsPaused();
-        if (wasRunning)
-        {
-            Pause(false);
-        }
+        // The CPU held while the video mode changes: no framebuffer access during the reallocation
+        CpuHold hold(*this, "overscan");
 
         // Record the user's intent FIRST: InitRaster re-detects the video mode
         // from config/ports every frame and would revert a bare SetVideoMode
         // back to the model's base mode on the next frame
         screen->SetOverscanForced(enable);
         screen->SetVideoMode(newMode);
-
-        if (wasRunning)
-        {
-            Resume(false);
-        }
 
         return true;
     }
@@ -3621,12 +3815,14 @@ bool Emulator::IsRunning()
 
 bool Emulator::IsPaused()
 {
-    return _isPaused;
+    // The intent in force (a pause somebody asked for), not a hold: a silent pause is invisible
+    return _isRunning && _arbiter.IntentRelaxed() == execution::Intent::Pause;
 }
 
 bool Emulator::IsEmulationParked()
 {
-    return !_isRunning || !_mainloop || (_isPaused && _mainloop->IsPauseConfirmed());
+    // From the thread that holds the CPU (a direct run executes on it): nothing else executes
+    return !_isRunning || !_mainloop || _arbiter.IsParked() || _arbiter.HoldsCpu();
 }
 
 void Emulator::NoteRunStart()
@@ -3720,11 +3916,16 @@ bool Emulator::PreviousStopRegisters(Z80State& out) const
 
 bool Emulator::RunWhileParked(const std::function<void()>& work)
 {
-    std::lock_guard<std::mutex> lock(_pauseWaitMutex);
-    if (!_isRunning || !_mainloop || !_isPaused || !_mainloop->IsPauseConfirmed() || IsDirectStepping())
+    // A paused machine (a pause somebody asked for), parked: not a running one that happens to be parked for a
+    // moment (its loop not started yet, another thread's command) - that one is read between two frames
+    if (!_isRunning || !_mainloop || IsDirectStepping() || !IsPaused() || !_arbiter.IsParked())
         return false;
-    work();
-    return true;
+    // A command that is served at once or not at all: parked and nothing else holds the CPU. While it runs, nothing
+    // can resume the loop (a Run intent queues behind it)
+    const execution::Result result = _arbiter.Execute(
+        execution::Requester{execution::Origin::Internal, {}}, "run while parked",
+        [&work](execution::CommandContext&) { work(); }, {}, execution::Clock::now());
+    return result.outcome == execution::Outcome::Applied;
 }
 
 bool Emulator::IsDestroying()

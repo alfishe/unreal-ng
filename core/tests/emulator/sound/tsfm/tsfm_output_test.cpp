@@ -33,8 +33,8 @@
 ///
 /// HoldNoJitter / MuteAtHoldInput drive the §6.2 sample-and-hold directly;
 /// TsfmGain pins the loudness references: one carrier at TL=0 -> +-0.176 in
-/// the FM buffer (the 0.30 code baseline times the shipped 7.4 dB trim, see
-/// docs/.../materials/volume/README.md), SSG A vol 15 -> +-0.15.
+/// the FM buffer (the measured board level kFmBaseGain at the shipped 0 dB
+/// trim, see docs/.../materials/volume/README.md), SSG A vol 15 -> +-0.15.
 
 namespace
 {
@@ -63,7 +63,7 @@ struct FmNoteProgram
     uint8_t carrierTl = 0x00;
 };
 
-/// FM buffer peak for one carrier at TL 0 with the shipped 7.4 dB trim
+/// FM buffer peak for one carrier at TL 0 at the board level (trim 0 dB)
 /// (derivation in TsfmGain_Test.Reference)
 constexpr int kFmOneCarrierPeak = 5744;
 
@@ -1032,23 +1032,22 @@ class TsfmGain_Test : public TsfmOutput_Test
 TEST_F(TsfmGain_Test, Reference)
 {
     // Gain references, pre-chain at 44.1 k:
-    //   one carrier, TL = 0 -> ymfm word +-8168 -> 0.2493 x kFmBaseGain 0.30
-    //   x 10^(7.4/20) = 0.1753 -> FM buffer peak 0.1753 x 32767 = 5744
-    //   (+-5% for the FIR passband ripple). The 7.4 dB comes from the shipped
-    //   ini (TSFM_FmTrimDb) and is the real-board measurement of 2026-09-13:
-    //   one FM carrier sits 0.4-1.2 dB ABOVE one SSG channel at volume 15 on
-    //   the same output (materials/volume/README.md)
+    //   one carrier, TL = 0 -> ymfm word +-8168 -> 0.2493 x kFmBaseGain 0.703
+    //   = 0.1753 -> FM buffer peak 0.1753 x 32767 = 5744 (+-5% for the FIR
+    //   passband ripple). kFmBaseGain is the real-board measurement of
+    //   2026-09-13: one FM carrier sits 0.4-1.2 dB ABOVE one SSG channel at
+    //   volume 15 on the same output (materials/volume/README.md)
     //   SSG channel A, vol 15 -> DAC 1.0 x pan 0.9 / 3 -> +-0.15 after the
     //   DC blocker -> chip buffer left peak 4915. The band-limited square
     //   overshoots the nominal half-amplitude (Gibbs ~9% + passband ripple,
     //   measured ~0.177), so the upper bound carries the overshoot margin
     //   while still catching a 2x gain error at ~0.30
-    ASSERT_DOUBLE_EQ(_context->config.sound.tsfmFmTrimDb, 7.4)
-        << "the shipped Pentagon ini must carry the hardware-derived FM trim";
+    ASSERT_DOUBLE_EQ(_context->config.sound.tsfmFmTrimDb, 0.0)
+        << "the shipped Pentagon ini plays FM at the board's level (TSFM_FmLevelDb=0)";
     {
         auto device = std::make_unique<SoundChip_TurboSoundFM>(_context);
         device->setCoreRate(44100);
-        EXPECT_DOUBLE_EQ(device->fmTrimDb(), 7.4) << "the trim must be applied at construction";
+        EXPECT_DOUBLE_EQ(device->fmTrimDb(), 0.0) << "the trim must be applied at construction";
         ProgramFmNote(*device, FmNoteProgram{});
         const int16_t fmPeak = RunFmNotePeak(*device, 40, 10);
         EXPECT_GE(fmPeak, int16_t(kFmOneCarrierPeak * 0.95)) << "FM too quiet: " << fmPeak;

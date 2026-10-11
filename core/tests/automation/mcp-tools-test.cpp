@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "mcp-tool-utils.h"
 #include "mcp-tools.h"
 #include "target-resolver.h"
 
@@ -236,6 +237,57 @@ TEST_F(McpTools_Test, EmulatorManage_CreateAndSwitchModel_ForwardRamPowerOn)
     const auto* switched = _caller->Last("POST", "/api/v1/emulator/emu-1/model");
     ASSERT_NE(switched, nullptr);
     EXPECT_EQ(switched->body["ram_power_on"].asString(), "random");
+}
+
+TEST_F(McpTools_Test, EmulatorManage_Operations_GetsTheLogWithOneLinePerOperation)
+{
+    Json::Value body;
+    body["mode"] = "recording";
+    body["last_seq"] = 7;
+    body["capacity"] = 1024;
+    Json::Value refused;
+    refused["seq"] = 7;
+    refused["frame"] = 120;
+    refused["kind"] = "media-insert";
+    refused["summary"] = "tape game.tzx";
+    refused["status"] = "refused";
+    refused["mode"] = "recording";
+    refused["source"] = "webapi";
+    refused["effect"] = "none";
+    refused["detail"] = "Cannot insert a tape while TTD is recording";
+    body["entries"].append(refused);
+    _caller->routes["GET /api/v1/emulator/emu-1/operations?since=0&limit=20"] = {200, body};
+
+    Json::Value args;
+    args["action"] = "operations";
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Operations of emu-1 (mode recording, last #7):"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("#7 frame 120 media-insert tape game.tzx refused [recording, webapi] - Cannot insert a "
+                               "tape while TTD is recording"),
+              std::string::npos)
+        << result.text;
+    EXPECT_EQ(result.structured["entries"][0]["kind"].asString(), "media-insert");
+}
+
+TEST_F(McpTools_Test, EmulatorManage_Operations_PassesSinceAndLimit)
+{
+    Json::Value body;
+    body["mode"] = "live";
+    body["last_seq"] = 42;
+    body["entries"] = Json::Value(Json::arrayValue);
+    _caller->routes["GET /api/v1/emulator/emu-1/operations?since=40&limit=0"] = {200, body};
+
+    Json::Value args;
+    args["action"] = "operations";
+    args["since"] = 40;
+    args["limit"] = 0;
+    mcp::ToolResult result = RunTool(*_registry, "emulator_manage", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/operations?since=40&limit=0"));
+    EXPECT_NE(result.text.find("last #42): none"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, EmulatorManage_ZXPolyStatus_GetsGroupEndpoint)
@@ -938,6 +990,154 @@ TEST_F(McpTools_Test, InspectState_SlotsAspect_SummarizesTheReport)
               std::string::npos)
         << result.text;
     EXPECT_NE(result.text.find("built-in ay: shadowed by zxbus.1"), std::string::npos) << result.text;
+}
+
+// The ZX Next report aspects (design-automation-coverage.md): each reads its WebAPI route with the nr_ parameters as the query, and a
+// machine that is not a Next is a line, not an error
+TEST_F(McpTools_Test, InspectState_NextReportAspects_UseTheirRoutesAndQueries)
+{
+    struct Case
+    {
+        const char* aspect;
+        const char* path;
+    };
+    for (const Case& c : {Case{"next_dma", "/api/v1/emulator/emu-1/state/next/dma"}, Case{"next_video", "/api/v1/emulator/emu-1/state/next/video"},
+                          Case{"next_palette", "/api/v1/emulator/emu-1/state/next/palette?palette=sprites_1&range=0-15"},
+                          Case{"next_ports", "/api/v1/emulator/emu-1/state/next/ports?port=6B&access=w"},
+                          Case{"next_nextreg", "/api/v1/emulator/emu-1/state/next/nextreg?reg=07&changed=true"},
+                          Case{"next_copper", "/api/v1/emulator/emu-1/state/next/copper?from=16&count=8&raw=true"},
+                          Case{"next_sprites", "/api/v1/emulator/emu-1/state/next/sprites?from=16&count=8&all=true"},
+                          Case{"next_pixel", "/api/v1/emulator/emu-1/state/next/pixel?x=105&y=87&sx=1"}})
+    {
+        _caller->calls.clear();
+        Json::Value report;
+        report["available"] = true;
+        _caller->routes[std::string("GET ") + c.path] = {200, report};
+        Json::Value args;
+        args["aspects"].append(c.aspect);
+        args["nr_palette"] = "sprites_1";
+        args["nr_range"] = "0-15";
+        args["nr_port"] = "6B";
+        args["nr_access"] = "w";
+        args["nr_reg"] = "07";
+        args["nr_changed"] = true;
+        args["nr_from"] = "16";
+        args["nr_count"] = "8";
+        args["nr_raw"] = true;
+        args["nr_all"] = true;
+        args["nr_x"] = "105";
+        args["nr_y"] = "87";
+        args["nr_sx"] = "1";
+        mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+        ASSERT_FALSE(result.isError) << c.aspect << ": " << result.text;
+        EXPECT_TRUE(_caller->Saw("GET", c.path)) << c.aspect;
+        EXPECT_NE(result.text.find(std::string("[") + c.aspect + "]"), std::string::npos) << result.text;
+    }
+}
+
+TEST_F(McpTools_Test, InspectState_NextReportAspects_WithoutParametersAskForNoQuery)
+{
+    Json::Value report;
+    report["available"] = true;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/palette"] = {200, report};
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/ports"] = {200, report};
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/nextreg"] = {200, report};
+    Json::Value args;
+    args["aspects"].append("next_palette");
+    args["aspects"].append("next_ports");
+    args["aspects"].append("next_nextreg");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/next/palette"));
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/next/ports"));
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/next/nextreg"));
+}
+
+TEST_F(McpTools_Test, InspectState_NextReportAspects_SummarizeTheReports)
+{
+    Json::Value dma;
+    dma["available"] = true;
+    dma["mode"] = "zxn";
+    dma["enabled"] = true;
+    dma["direction"] = "a_to_b";
+    dma["a"]["address"] = "0x8000";
+    dma["a"]["type"] = "memory";
+    dma["b"]["address"] = "0x00FE";
+    dma["b"]["type"] = "io";
+    dma["burst"] = "burst";
+    dma["counter"] = 4;
+    dma["block_length"] = 256;
+    dma["status"] = "0x3B";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/dma"] = {200, dma};
+    Json::Value ports;
+    ports["available"] = true;
+    ports["enable_word"]["value"] = "0xFFFFFFDF";
+    ports["describe"]["port"] = "0x006B";
+    ports["describe"]["access"] = "write";
+    ports["describe"]["device"] = "DMA (zxnDMA)";
+    ports["describe"]["enabled"] = false;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/ports"] = {200, ports};
+    Json::Value reg;
+    reg["available"] = true;
+    reg["reg"] = "0x07";
+    reg["name"] = "CPU Speed";
+    reg["value"] = "0x33";
+    reg["decoded"] = "CPU speed 28 MHz";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/nextreg"] = {200, reg};
+    Json::Value copper;
+    copper["available"] = true;
+    copper["control"]["name"] = "restart_loop";
+    copper["pc"] = 2;
+    copper["address"] = 10;
+    copper["list_length"] = 5;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/copper"] = {200, copper};
+    Json::Value sprites;
+    sprites["available"] = true;
+    sprites["enabled"] = true;
+    sprites["visible_count"] = 3;
+    sprites["sprites"].append(Json::Value(Json::objectValue));
+    sprites["pattern_memory"]["non_zero_bytes"] = 266;
+    sprites["flags"]["collision"] = true;
+    sprites["flags"]["too_many"] = false;
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/sprites"] = {200, sprites};
+    Json::Value args;
+    args["aspects"].append("next_dma");
+    args["aspects"].append("next_ports");
+    args["aspects"].append("next_nextreg");
+    args["aspects"].append("next_copper");
+    args["aspects"].append("next_sprites");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[next_copper] restart_loop, pc 2, address 10, 5 word(s) in the list"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[next_sprites] on, 3 visible, 1 listed, pattern memory 266 non-zero byte(s), COLLISION"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[next_dma] zxn mode, enabled, a_to_b, A 0x8000 (memory) B 0x00FE (io), burst, counter 4/256, status 0x3B"),
+              std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("[next_ports] enable word 0xFFFFFFDF, 0x006B write -> DMA (zxnDMA) (DISABLED)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[next_nextreg] NR0x07 CPU Speed = 0x33 (CPU speed 28 MHz)"), std::string::npos) << result.text;
+
+    Json::Value missing;
+    missing["message"] = "not a ZX Spectrum Next";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/video"] = {404, missing};
+    Json::Value one;
+    one["aspects"].append("next_video");
+    result = RunTool(*_registry, "inspect_state", one, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[next_video] not a ZX Spectrum Next"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_SchemaListsTheNextReportAspectsAndParameters)
+{
+    const mcp::ToolDefinition* tool = _registry->Find("inspect_state");
+    ASSERT_NE(tool, nullptr);
+    const Json::Value& schema = tool->inputSchema;
+    std::string aspects;
+    for (const Json::Value& a : schema["properties"]["aspects"]["items"]["enum"])
+        aspects += a.asString() + " ";
+    for (const char* aspect : {"next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel"})
+        EXPECT_NE(aspects.find(aspect), std::string::npos) << aspect;
+    for (const char* parameter : {"nr_palette", "nr_range", "nr_port", "nr_access", "nr_reg", "nr_changed", "nr_from", "nr_count", "nr_raw", "nr_all", "nr_x", "nr_y", "nr_sx"})
+        EXPECT_TRUE(schema["properties"].isMember(parameter)) << parameter;
 }
 
 // ===========================================================================
@@ -3640,4 +3840,134 @@ TEST_F(McpTools_Test, TimeTravel_MemoryAtMemoryDiffAndCoverageSpace)
     args["tinframe"] = 100;
     EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "memory_diff takes no tinframe";
     EXPECT_EQ(_caller->calls.size(), calls);
+}
+
+// The loopback client sends the path the tools built: their percent-encoding is kept, not
+// encoded a second time (a screenshot "scratch/a.png" was saved as "scratch%2Fa.png")
+TEST(McpRequestPath_Test, EncodedQueryIsSentAsBuilt)
+{
+    const std::string path = "/api/v1/emulator/id/capture/screen?path=" + mcp::UrlEncodeSegment("scratch/a b.png") + "&area=screen";
+
+    EXPECT_EQ(mcp::PrepareRequestPath(path), "/api/v1/emulator/id/capture/screen?path=scratch%2Fa%20b.png&area=screen");
+}
+
+TEST(McpRequestPath_Test, RawCharactersAreStillEscaped)
+{
+    EXPECT_EQ(mcp::PrepareRequestPath("/symbols/lookup?address=#5800"), "/symbols/lookup?address=%235800");
+    EXPECT_EQ(mcp::PrepareRequestPath("/x?name=a+b c"), "/x?name=a%2Bb%20c");
+}
+
+// capture_media screenshot with layer (design-layer-capture.md): the words go to the route, the answer says which layer of which Next frame
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_ForwardsTheLayerAndAlphaAndNamesTheFrame)
+{
+    Json::Value body;
+    body["status"] = "success";
+    body["layer"] = "ids";
+    body["format"] = "png";
+    body["alpha"] = false;
+    body["width"] = 640;
+    body["height"] = 512;
+    body["size"] = 321;
+    body["frame"]["sequence"] = 42;
+    body["frame"]["frame_number"] = 1234;
+    body["legend"][0]["id"] = 0;
+    body["legend"][0]["name"] = "fallback";
+    body["legend"][0]["colour"] = "#404040";
+    body["legend"][1]["id"] = 5;
+    body["legend"][1]["name"] = "sprite";
+    body["legend"][1]["colour"] = "#FF3030";
+    body["data"] = "iVBORw0KGgo=";
+    const std::string route = "/api/v1/emulator/emu-1/capture/screen?layer=ids&alpha=false";
+    _caller->routes["GET " + route] = {200, body};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["layer"] = "ids";
+    args["alpha"] = false;
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", route));
+    EXPECT_NE(result.text.find("layer ids of Next frame #42"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("layer ids of Next frame #42, opaque"), std::string::npos) << "the ids image has no alpha: " << result.text;
+    EXPECT_NE(result.text.find("5=sprite(#FF3030)"), std::string::npos) << "the legend of the ids image is in the text: " << result.text;
+    EXPECT_FALSE(result.structured.isMember("data"));
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_ALayerRefusalIsAnErrorWithItsReason)
+{
+    Json::Value refusal;
+    refusal["error"] = "Conflict";
+    refusal["message"] = "Layer capture is off: switch it on";
+    refusal["kind"] = "layer-capture-off";
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/screen?layer=tilemap"] = {409, refusal};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["layer"] = "tilemap";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("Layer capture is off"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_NextPixelAspect_SummarizesTheWinnerAndEachLayersReason)
+{
+    Json::Value report;
+    report["available"] = true;
+    report["ok"] = true;
+    report["pixel"]["x"] = 105;
+    report["pixel"]["y"] = 87;
+    report["pixel"]["subpixel"] = 0;
+    report["winner"]["layer"] = "sprite";
+    report["colour"]["rgb"] = "#FF0000";
+    report["layer_order"] = "SLU";
+    report["layers"]["ula"]["opaque"] = true;
+    report["layers"]["ula"]["rgb"] = "#000000";
+    report["layers"]["ula"]["why"] = "layer order SLU: sprite above ula";
+    report["layers"]["layer2"]["opaque"] = false;
+    report["layers"]["layer2"]["why"] = "Layer 2 disabled (port #123B bit 1 / NR #69 bit 7)";
+    report["layers"]["tilemap"]["opaque"] = false;
+    report["layers"]["tilemap"]["why"] = "tilemap disabled (NR #6B bit 7)";
+    report["layers"]["sprites"]["opaque"] = true;
+    report["layers"]["sprites"]["rgb"] = "#FF0000";
+    report["layers"]["sprites"]["why"] = "wins (layer order SLU)";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/next/pixel?x=105&y=87"] = {200, report};
+    Json::Value args;
+    args["aspects"].append("next_pixel");
+    args["nr_x"] = "105";
+    args["nr_y"] = "87";
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[next_pixel] (105,87) sub 0: sprite #FF0000, layer order SLU"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ula: painted #000000 - layer order SLU: sprite above ula"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("layer2: - - Layer 2 disabled"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("sprites: painted #FF0000 - wins (layer order SLU)"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, CaptureMedia_Screenshot_ALayerWithoutAlphaSaysItIsFlattened)
+{
+    Json::Value body;
+    body["status"] = "success";
+    body["layer"] = "tilemap";
+    body["format"] = "rgba";
+    body["alpha"] = false;
+    body["width"] = 640;
+    body["height"] = 512;
+    body["size"] = 1310720;
+    body["frame"]["sequence"] = 7;
+    body["data"] = "AAAA";
+    const std::string route = "/api/v1/emulator/emu-1/capture/screen?format=rgba&layer=tilemap&alpha=false";
+    _caller->routes["GET " + route] = {200, body};
+
+    Json::Value args;
+    args["action"] = "screenshot";
+    args["layer"] = "tilemap";
+    args["alpha"] = false;
+    args["format"] = "rgba";
+    mcp::ToolResult result = RunTool(*_registry, "capture_media", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", route));
+    EXPECT_NE(result.text.find("layer tilemap of Next frame #7, flattened"), std::string::npos) << result.text;
 }

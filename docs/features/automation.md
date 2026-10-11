@@ -73,6 +73,7 @@ Supported models (see [Profi 1024](../hardware/profi-1024.md) for that machine):
 pause                   # Pause emulation
 resume                  # Resume emulation
 reset                   # Hardware reset
+ops [n|all]             # Operation log: reset, snapshot, media changes, refusals (ops since <seq> polls)
 switch [turbo|cpm [on|off]] # Front-panel switches (Profi TURBO, v5 CP/M); recorded by TTD
 step / stepin           # Execute one instruction
 stepover                # Step over CALL/RST
@@ -153,7 +154,7 @@ rzx seek <frame>        # Back (keyframes) or forward to a frame
 rzx stop                # Stop playing; the machine runs live
 # Tape transport (see command-interface.md §10 for the full tables)
 tape load <file>        # Load a tape (.tap/.tzx/.spc/.sta/.ltp/.zxt) or a folder built into a tape
-tape eject              # Eject: the tape leaves the tape slot (refused while TTD records)
+tape eject              # Eject: the tape leaves the tape slot (while TTD records: at the next frame boundary)
 tape play               # Start at cursor; resume in place when paused
 tape pause              # Freeze mid-block; next play resumes there
 tape stop               # Terminal stop (invalidates the image)
@@ -276,6 +277,7 @@ Interactive documentation available at `/api/swagger`
 | POST | `/api/v1/emulator/{id}/pause` | Pause |
 | POST | `/api/v1/emulator/{id}/resume` | Resume |
 | POST | `/api/v1/emulator/{id}/reset` | Reset |
+| GET | `/api/v1/emulator/{id}/operations` | Operation log (`?since=<seq>&limit=<n>`): reset, autostart, snapshot load, media changes, refusals - frame, mode, result, TTD effect |
 | GET | `/api/v1/emulator/{id}/switches` | Front-panel switches (Profi TURBO, v5 CP/M) |
 | POST | `/api/v1/emulator/{id}/switches` | Flip one: `{"name": "turbo", "on": true}` |
 | POST | `/api/v1/emulator/{id}/step` | Step one instruction |
@@ -376,7 +378,7 @@ Full parity with the CLI `tape` commands, the Lua `tape_*` functions and the Pyt
 | Method | Endpoint | Description |
 |:-------|:---------|:------------|
 | POST | `/api/v1/emulator/{id}/tape/load` | Load tape image (body `path`) |
-| POST | `/api/v1/emulator/{id}/tape/eject` | Eject: the tape leaves the tape slot (409 while TTD records) |
+| POST | `/api/v1/emulator/{id}/tape/eject` | Eject: the tape leaves the tape slot (while TTD records: an event of the recording at the next frame boundary) |
 | POST | `/api/v1/emulator/{id}/tape/play` | Start / resume in place |
 | POST | `/api/v1/emulator/{id}/tape/pause` | Freeze mid-block |
 | POST | `/api/v1/emulator/{id}/tape/stop` | Terminal stop |
@@ -552,6 +554,7 @@ end
 - `step_out`, `skip_until`, `mem_find`, `screen_digest`, `beam_position`, `frame_cost` - Advanced stepping and screen/frame analysis
 - `video_layout`, `video_pixel`, `video_pixel_at`, `video_address`, `video_address_in`, `video_address_z80`, `video_text` - Video debug translation (what makes a pixel, which pixels a byte, a sprite attribute word or a palette cell feeds)
 - `video_temporal`, `video_temporal_set` - ZX DLSS de-flicker status and switch (the picture and sound are delayed by the algorithm's look-ahead while it is on)
+- `operations(since, limit)` - the operation log: reset, autostart, snapshot load, media changes and refusals, with frame, machine mode, result and TTD effect
 - `coverage_*`, `ay_log_*`, `audio_capture_*`, `video_record*` globals - Analyzers and capture (same surface as the CLI commands)
 - `assemble`, `listing_*` globals - In-place assembly and source-level stepping
 - `ttd_*` globals - Time-Travel Debugging (record, seek, reverse search, dump/load, file info before loading)
@@ -707,6 +710,7 @@ videowall.set_single_sync(False)
 | Coverage / AY Log | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Audio/Video Capture | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Temporal effects (ZX DLSS) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Operation log | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Assembler / Source Listings | ✅ | ✅ | ✅ | ✅ | ❌ |
 
 > [!NOTE]

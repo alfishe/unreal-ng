@@ -9,3 +9,4 @@
 #include "unrealasm/document.h"
 #include "unrealasm/encoding.h"
 #include "unrealasm/registry.h"
+#include "unrealasm/snapshot.h"

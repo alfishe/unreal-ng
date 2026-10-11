@@ -37,6 +37,8 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "loaders/snapshot/machinestatetransfer.h"
+#include "emulator/coordinator/ports.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/ports/models/portdecoder_sprinter.h"
 
 namespace
@@ -203,8 +205,12 @@ TEST_F(TimeTravelController_Test, SeeksLandOnV1sMachine)
     // Around the key events
     for (const ttd::TTDInputEvent& e : _v1->GetInputJournal().Events())
         for (int32_t d : {-500, 1, 900})
+        {
             if (int64_t(e.time.tInFrame) + d > 0 && int64_t(e.time.tInFrame) + d < span)
+            {
                 ASSERT_NO_FATAL_FAILURE(ExpectSameSeek({e.time.frame, static_cast<uint32_t>(int64_t(e.time.tInFrame) + d)}));
+            }
+        }
 }
 
 /// The queries answer from the same history the same way: the write journal and the
@@ -1197,7 +1203,9 @@ TEST_F(TimeTravelController_Test, ADebuggerForcedWindowComesBackWithASeek)
 
 /// D8 with the guards: a recording paused for browsing is still protected - a
 /// tape load is refused and the history stays (it goes on from where it paused)
-TEST_F(TimeTravelController_Test, APausedRecordingIsStillGuarded)
+/// M3 (Q4): a recording paused for browsing is still the user's recording: a media change waits for the next frame
+/// boundary the machine runs and becomes an event of the recording there; the paused history stays as it is
+TEST_F(TimeTravelController_Test, APausedRecordingTakesAMediaChangeAtItsNextFrameBoundary)
 {
     ASSERT_TRUE(_controller->StartRecording());
     _b->RunNFrames(4, /*skipBreakpoints=*/true);
@@ -1205,10 +1213,10 @@ TEST_F(TimeTravelController_Test, APausedRecordingIsStillGuarded)
     ASSERT_TRUE(_controller->GetSessionInfo().recordingPaused);
     const size_t kept = _controller->GetCheckpointCount();
 
-    EXPECT_FALSE(_b->RecordingGuard(ttd::TTDGuardedAction::LoadTape).empty());
+    EXPECT_EQ(_b->MachineOps().Mode(), coordinator::MachineMode::Recording);
     std::string error;
-    EXPECT_FALSE(_b->LoadTape(TestPathHelper::GetTestDataPath("contention/halt2int-v3/halt2int.tap"), &error));
-    EXPECT_NE(error.find("stop the recording first"), std::string::npos) << error;
+    EXPECT_TRUE(_b->LoadTape(TestPathHelper::GetTestDataPath("contention/halt2int-v3/halt2int.tap"), &error)) << error;
+    EXPECT_TRUE(_b->GetContext()->pMediaManager->Info("tape")->pending) << "waits for the next frame boundary";
     EXPECT_EQ(_controller->GetCheckpointCount(), kept) << "the paused recording's history stays";
     EXPECT_TRUE(_controller->GetSessionInfo().recordingPaused);
 }

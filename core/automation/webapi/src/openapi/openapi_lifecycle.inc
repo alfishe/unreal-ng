@@ -206,7 +206,23 @@
     paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/pause"]["post"]["responses"]["200"]["description"] = "Emulator paused";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["description"] =
+        "Behind a command another client runs (run_frames, a step) the pause is queued: 202 status 'queued', "
+        "waiting_for names the command, the pause applies when it ends (a pause never aborts a command). wait=true "
+        "(30 s) or wait=<ms> (up to 60 s) waits for it: 200 when it applied, 202 status 'busy' when the wait ran out "
+        "(still queued)";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][1]["name"] = "wait";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][1]["description"] =
+        "true (30 s) or milliseconds (up to 60000): wait for a pause queued behind a running command";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["responses"]["200"]["description"] =
+        "Emulator paused (status 'success'): in force, the machine parked";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["responses"]["202"]["description"] =
+        "status 'queued' or 'busy': behind a running command (waiting_for), applies when it ends";
+    paths["/api/v1/emulator/{id}/pause"]["post"]["responses"]["409"]["description"] =
+        "Refused: another surface holds run control";
 
     paths["/api/v1/emulator/{id}/resume"]["post"]["summary"] = "Resume emulator";
     paths["/api/v1/emulator/{id}/resume"]["post"]["tags"].append("Emulator Control");

@@ -314,14 +314,14 @@ TEST(Z80nOpcodes_Test, NextregCallsTheHostWithoutAPortCycle)
     f.SetA(0x21);
     const uint32_t t0 = Z80nCpuTstates(f.cpu);
     EXPECT_EQ(f.Step(), 20);
-    EXPECT_EQ(f.Shape(), "MMPPNNNNNN");
+    EXPECT_EQ(f.Shape(), "MMPPPP") << "t80n_mcode.vhd: the two trailing cycles are MREQ/RD reads (NoRead = 0), not idle time";
     EXPECT_EQ(f.Step(), 17);
     ASSERT_EQ(log.writes.size(), 2u);
     EXPECT_EQ(log.writes[0], (std::pair<uint8_t, uint8_t>{0x07, 0x03}));
     EXPECT_EQ(log.writes[1], (std::pair<uint8_t, uint8_t>{0x56, 0x21}));
     for (const Z80nTest::Event& e : f.bus.events)
         EXPECT_TRUE(e.type != 'I' && e.type != 'O') << "no port cycle";
-    EXPECT_EQ(log.t[0] - t0, 14u + 3u) << "after the operands (14 T) and 3 idle T";
+    EXPECT_EQ(log.t[0] - t0, 14u) << "Z80N_dout_o rises at the start of the first trailing cycle";
 }
 
 TEST(Z80nOpcodes_Test, NextregWithoutAHostIsHarmless)

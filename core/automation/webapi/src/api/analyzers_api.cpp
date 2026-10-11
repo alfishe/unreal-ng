@@ -1,6 +1,7 @@
 // WebAPI Analyzer Management Implementation
 // Implements /analyzers endpoints - 2026-01-21
 
+#include <optional>
 #include <emulator/sound/audiomixer.h>
 #include <drogon/HttpResponse.h>
 #include <emulator/emulator.h>
@@ -932,26 +933,17 @@ bool parseAddressParam(const std::string& value, uint16_t& out)
     }
 }
 
-/// Pause the emulator around subscription mutations (race-free activation)
+/// Hold the CPU around subscription mutations (race-free activation)
 struct ScopedPause
 {
     Emulator* emulator;
-    bool wasRunning;
+    std::optional<Emulator::CpuHold> hold;
 
-    explicit ScopedPause(Emulator* emu)
-        : emulator(emu), wasRunning(emu && emu->IsRunning() && !emu->IsPaused())
+    // The CPU held for the analyzer change (Emulator::CpuHold); the pause is left as it was
+    explicit ScopedPause(Emulator* emu) : emulator(emu)
     {
-        if (wasRunning)
-        {
-            emulator->Pause(false);
-            emulator->WaitForPauseConfirmation(1000);
-        }
-    }
-
-    ~ScopedPause()
-    {
-        if (wasRunning)
-            emulator->Resume(false);
+        if (emulator)
+            hold.emplace(*emulator, "analyzer");
     }
 };
 }  // namespace

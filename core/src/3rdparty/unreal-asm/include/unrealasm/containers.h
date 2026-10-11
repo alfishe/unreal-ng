@@ -1,8 +1,9 @@
 #pragma once
 
-// File containers of the ZX world the codecs' sources come in: hobeta files (a TR-DOS file with a 17-byte header,
-// "NAME.$A") and TR-DOS disk images (.trd). Reading for every container, writing for hobeta. The emulator has its
-// own media manager; these are for the library's tools, tests and standalone users.
+// File containers of the ZX world the codecs' sources come in, as single files and tapes: hobeta files (a TR-DOS file
+// with a 17-byte header, "NAME.$A"), +3DOS headers and tapes (TAP, TZX). Disk images are not read here: the tools read
+// them through unreal-disk, the emulator through its media manager, and both hand the library the files as TrdosFile.
+// Snapshots: snapshot.h.
 
 #include <cstdint>
 #include <span>
@@ -53,9 +54,6 @@ struct Plus3dosFile
 bool ReadPlus3dos(std::span<const uint8_t> bytes, Plus3dosFile& out, std::string& error);
 /// A +3DOS file of `file` (the header made from its fields)
 std::vector<uint8_t> WritePlus3dos(const Plus3dosFile& file);
-
-/// The files of a TR-DOS image (deleted entries skipped); false with the reason when it is not one
-bool ReadTrd(std::span<const uint8_t> image, std::vector<TrdosFile>& out, std::string& error);
 
 /// One data block of a tape image: the flag byte (0 header, #FF data) and the bytes between it and the checksum
 struct TapeBlock

@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "common/threadhelper.h"
+#include "emulator/coordinator/machineop.h"
 
 /// region <Methods>
 void AutomationLua::start()
@@ -188,6 +189,7 @@ std::string AutomationLua::getStatusString() const
 void AutomationLua::threadFunc(AutomationLua* lua)
 {
     ThreadHelper::setThreadName("automation-lua");
+    coordinator::SetThreadSource(coordinator::OpSource::Lua);   // every script runs here: the operation log names it
 
     // Initialize Lua state on this dedicated thread (single-threaded ownership)
     lua->_lua = new sol::state();
