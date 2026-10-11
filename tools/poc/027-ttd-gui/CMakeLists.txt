@@ -1,4 +1,4 @@
-# tools/poc/02-ttd-gui — Qt TTD Scrubber & Screen Renderer PoC.
+# tools/poc/027-ttd-gui — Qt TTD Scrubber & Screen Renderer PoC.
 #
 # A standalone Qt6 app for offline .ttd file scrubbing with video-editor-style
 # timeline and instant ZX Spectrum screen rendering. No emulation — pure data.
@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(poc_ttd_gui LANGUAGES CXX)
 
-message(">> tools/poc/02-ttd-gui CMakeLists.txt")
+message(">> tools/poc/027-ttd-gui CMakeLists.txt")
 
 # C++20
 set(CMAKE_CXX_STANDARD 20)
@@ -21,7 +21,7 @@ endif()
 # Output goes to the same bin/ as the rest of the project.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-# Locate the project root (we live at <root>/tools/poc/02-ttd-gui/).
+# Locate the project root (we live at <root>/tools/poc/027-ttd-gui/).
 get_filename_component(ROOT_DIR "../../../.." ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 message(STATUS "poc_ttd_gui: ROOT_DIR=${ROOT_DIR}")
 
@@ -39,7 +39,7 @@ endif()
 
 find_package(Qt6 COMPONENTS Widgets Gui REQUIRED)
 
-# zstd — link against the embedded copy (same as 01-ttd-compression).
+# zstd — link against the embedded copy (same as 010-ttd-compression).
 if(NOT TARGET zstd::libzstd)
     add_subdirectory(
         ${ROOT_DIR}/core/src/3rdparty/zstd

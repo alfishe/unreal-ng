@@ -2,8 +2,8 @@
 #
 # Each PoC lives under tools/poc/<name>/ and is enabled by -DBUILD_POC=ON
 # at the top-level CMakeLists.txt.
-add_subdirectory(01-ttd-compression/cpp)
-#add_subdirectory(02-ttd-gui)
+add_subdirectory(010-ttd-compression/cpp)
+#add_subdirectory(027-ttd-gui)
 add_subdirectory(011-ttd-v2-capture-analysis)
 # 015-opl4-synthesis is now also a dependency of the emulator core (see
 # core/src/CMakeLists.txt): when building from the root, the opl4 target

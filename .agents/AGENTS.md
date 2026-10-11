@@ -36,7 +36,7 @@ Report results. Wait for explicit "commit" instruction.
 | `scratch/` | Git-ignored. ALL test artifacts go here. |
 | `docs/` | Documentation. `docs/inprogress/` for active design work. |
 | `.recipe/` | AI agent recipes (MCP/WebAPI automation). |
-| `tools/` | Build scripts, verification tools. `tools/poc/` for experiments. |
+| `tools/` | Build scripts, verification tools. `tools/poc/` for numbered POCs (index in `tools/poc/README.md`). |
 | `testdata/` | Test fixtures, disk images, ROMs. |
 | `lib/` | Third-party dependencies (GTest, Google Benchmark). |
 
@@ -107,4 +107,5 @@ Models list: `GET /api/v1/emulator/models`. Per-machine recipes: [`.recipe/machi
 - **Performance**: Hot-path changes need A/B benchmarks. See `docs/guidelines/performance-guidelines.md`
 - **Cross-platform**: Zero warnings on gcc/clang/mingw/msvc. See `docs/guidelines/cross-platform-compatibility.md`
 - **Coding**: See `docs/guidelines/coding-guidelines.md`
+- **POCs**: every POC in `tools/poc/NNN-name/`, registered in the index of `tools/poc/README.md` (next free number), charter (goals, requirements, constraints, acceptance criteria) before measuring. See `docs/guidelines/poc-guidelines.md`
 - **Environment variables**: all of them in [`docs/emulator/environment-variables.md`](docs/emulator/environment-variables.md); a new variable gets a row there

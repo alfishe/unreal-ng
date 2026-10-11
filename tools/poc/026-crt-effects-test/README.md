@@ -1,4 +1,4 @@
-# POC 001: CRT Effects GPU/CPU Parity Test
+# POC 026: CRT Effects GPU/CPU Parity Test
 
 ## Purpose
 Verify GPU shader and CPU filter produce identical CRT effects across all profiles and resolutions.
@@ -31,7 +31,7 @@ Max pixel difference: 1 (rounding only)
 ## Directory Structure
 
 ```
-001-crt-effects-test/
+026-crt-effects-test/
 ├── python/
 │   ├── test_gpu_vs_cpu.py    # Main parity test (generates HTML report)
 │   ├── test_fast.py          # Unified implementation test

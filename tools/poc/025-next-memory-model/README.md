@@ -1,4 +1,4 @@
-# PoC 024: the Next's memory model and the CPU library's per-step cost (P2)
+# PoC 025: the Next's memory model and the CPU library's per-step cost (P2)
 
 Phase P2 of [the Next phases](../../../docs/inprogress/2026-10-07-zx-next/phases.md): does decision D6 (a flat 2 MB array and an
 eight-entry slot table of read / write pointers, reached through the CPU library's callbacks) cost anything against today's four
