@@ -125,6 +125,25 @@ then reads. At a boundary it still reads the copies taken there, without holding
   both races before: 8 reports in one run of master; none with the fix).
 - [x] The ZX-Poly tests pass.
 
+## 🔵 [In Progress] #6: Two overscan switches at once both see the old video mode
+* **Date Opened:** 2026-10-11
+* **Found by:** ThreadSanitizer on Linux (nightly `.238`, 2026-10-11): `ExecutionArbiterMachineFuzz_Test`
+  (`ConcurrentControlKeepsOneDriverAndExactSteps`), a data race on `Screen::_mode` between `Screen::SetVideoMode`
+  (`screen.cpp:470`) under one thread's `Emulator::SetOverscanMode` and `Screen::GetVideoMode` (`screen.cpp:738`) from
+  another thread's `SetOverscanMode`.
+
+### Description
+`Emulator::SetOverscanMode` read the current mode, decided, and only then took the `CpuHold` for the switch. A second
+caller read the mode while the first one was writing it, and both could decide to switch from the same old mode (the
+second reallocates the framebuffer again for nothing, or its decision is based on a torn state).
+
+### Fix
+The hold is taken first; the read, the decision and the switch all happen under it.
+
+### Requirements / Acceptance Criteria
+- [ ] No `SetVideoMode` / `GetVideoMode` race in `ExecutionArbiterMachineFuzz_Test` under TSan on Linux.
+- [ ] core-tests pass.
+
 2026-10-10
 ## 🟢 [Fixed] #1: Removing a running TS-Conf or ATM Turbo 2+ instance writes into freed memory (heap damage, a later crash elsewhere)
 * **Date Opened:** 2026-10-10
