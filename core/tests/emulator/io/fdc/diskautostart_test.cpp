@@ -75,8 +75,8 @@ protected:
         LoaderTRD loader(_context, TrdPath(name));
         if (!loader.loadImage())
             return nullptr;
-        // The loader owns the image: take a private copy of its content into a fresh image
-        DiskImage* src = loader.getImage();
+        // The loader hands its image over (it does not free it): take a private copy of its content into a fresh image
+        const std::unique_ptr<DiskImage> src(loader.getImage());
         auto copy = std::make_unique<DiskImage>(src->getCylinders(), src->getSides());
         for (uint8_t t = 0; t < src->getCylinders() * src->getSides(); t++)
             for (uint8_t s = 0; s < 16; s++)

@@ -83,6 +83,16 @@ TEST_F(Config_Test, RamPowerOnParsesZeroAnyCase)
     EXPECT_EQ(_context->config.ramPowerOn, RamPowerOn::Zero);
 }
 
+TEST_F(Config_Test, ResetRomMissingIsBasic48)
+{
+    // Without RESET= the reset ROM is the documented default; before, the name was matched against a buffer the
+    // parser never wrote (valgrind: uninitialised value in CompareCaseInsensitive, BUGS.md 2026-10-11 #2)
+    ASSERT_TRUE(LoadMiscKeys("RESET=128\n"));
+    EXPECT_EQ(_context->config.reset_rom, RM_128);
+    ASSERT_TRUE(LoadMiscKeys("RAMPowerOn=zero\n"));
+    EXPECT_EQ(_context->config.reset_rom, RM_SOS);
+}
+
 TEST_F(Config_Test, RamPowerOnUnknownFallsBackToRandom)
 {
     ASSERT_TRUE(LoadMiscKeys("RAMPowerOn=banana\n"));

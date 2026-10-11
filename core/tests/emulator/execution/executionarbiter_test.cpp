@@ -7,6 +7,7 @@
 #include <thread>
 #include <vector>
 
+#include "_helpers/testthread.h"
 #include "_helpers/testwaithelper.h"
 #include "emulator/execution/executionarbiter.h"
 
@@ -117,7 +118,8 @@ TEST(ExecutionArbiter_Test, ForeignPauseSurvivesCommandEnd)
     ASSERT_EQ(arbiter.SubmitIntent(Intent::Run, kGui).Wait(1s).outcome, Outcome::Applied);
 
     Gate journal;
-    std::thread adopt([&]() { arbiter.Execute(kTtd, "ttd.journal", journal.Body(monitor)); });
+    TestThread adopt([&]() { arbiter.Execute(kTtd, "ttd.journal", journal.Body(monitor)); },
+                     [&] { journal.open = true; });
     ASSERT_TRUE(TestWait::For([&]() { return journal.entered.load(); }));
 
     Ticket pause = arbiter.SubmitIntent(Intent::Pause, kApi);
@@ -136,7 +138,7 @@ TEST(ExecutionArbiter_Test, ForeignPauseSurvivesCommandEnd)
     });
 
     journal.open = true;
-    adopt.join();
+    adopt.Join();
     automation.join();
     EXPECT_EQ(pause.Wait(1s).outcome, Outcome::Applied);
     EXPECT_EQ(frames.load(), 50);
@@ -152,7 +154,7 @@ TEST(ExecutionArbiter_Test, IntentsCoalesceBehindACommandAndTheLastWins)
     std::vector<IntentEdge> edges;
     arbiter.SetEdgeListener([&](const IntentEdge& e) { edges.push_back(e); });
     Gate gate;
-    std::thread holder([&]() { arbiter.Execute(kTtd, "hold", gate.Body(monitor)); });
+    TestThread holder([&]() { arbiter.Execute(kTtd, "hold", gate.Body(monitor)); }, [&] { gate.open = true; });
     ASSERT_TRUE(TestWait::For([&]() { return gate.entered.load(); }));
 
     Ticket a = arbiter.SubmitIntent(Intent::Run, kGui);
@@ -160,7 +162,7 @@ TEST(ExecutionArbiter_Test, IntentsCoalesceBehindACommandAndTheLastWins)
     Ticket c = arbiter.SubmitIntent(Intent::Run, kGui);
     EXPECT_FALSE(a.Done());
     gate.open = true;
-    holder.join();
+    holder.Join();
 
     EXPECT_EQ(a.Wait(1s).outcome, Outcome::Coalesced);
     EXPECT_EQ(b.Wait(1s).outcome, Outcome::Coalesced);
@@ -178,14 +180,14 @@ TEST(ExecutionArbiter_Test, ACommandIsABarrier)
     DriveMonitor monitor;
     arbiter.SetDecisionLog(true);
     Gate gate;
-    std::thread holder([&]() { arbiter.Execute(kTtd, "hold", gate.Body(monitor)); });
+    TestThread holder([&]() { arbiter.Execute(kTtd, "hold", gate.Body(monitor)); }, [&] { gate.open = true; });
     ASSERT_TRUE(TestWait::For([&]() { return gate.entered.load(); }));
 
     Ticket run = arbiter.SubmitIntent(Intent::Run, kGui);
     Ticket reset = arbiter.Post(kApi, "reset", [](CommandContext&) {});
     Ticket pause = arbiter.SubmitIntent(Intent::Pause, kGui);
     gate.open = true;
-    holder.join();
+    holder.Join();
     ASSERT_EQ(reset.Wait(1s).outcome, Outcome::Applied);
     EXPECT_EQ(run.Wait(1s).outcome, Outcome::Applied) << "not coalesced across the reset";
     EXPECT_EQ(pause.Wait(1s).outcome, Outcome::Applied);
@@ -208,7 +210,8 @@ TEST(ExecutionArbiter_Test, RunDuringADrivingCommandStartsTheLoopAfterIt)
     CommandOptions options;
     options.drivesZ80 = true;
     options.pauseFirst = true;
-    std::thread stepper([&]() { arbiter.Execute(kApi, "run_frames", step.Body(monitor), options); });
+    TestThread stepper([&]() { arbiter.Execute(kApi, "run_frames", step.Body(monitor), options); },
+                       [&] { step.open = true; });
     ASSERT_TRUE(TestWait::For([&]() { return step.entered.load(); }));
 
     Ticket run = arbiter.SubmitIntent(Intent::Run, kGui);
@@ -216,7 +219,7 @@ TEST(ExecutionArbiter_Test, RunDuringADrivingCommandStartsTheLoopAfterIt)
     EXPECT_FALSE(run.Done());
     EXPECT_EQ(loop.Instructions(), before) << "the loop ran during the step";
     step.open = true;
-    stepper.join();
+    stepper.Join();
     EXPECT_EQ(run.Wait(1s).outcome, Outcome::Applied);
     EXPECT_TRUE(TestWait::For([&]() { return loop.Instructions() > before; }));
     EXPECT_EQ(monitor.violations.load(), 0);
@@ -271,7 +274,7 @@ TEST(ExecutionArbiter_Test, AbortEndsALongDrivingCommand)
     options.drivesZ80 = true;
     std::atomic<bool> running{false};
     Result result;
-    std::thread stepper([&]() {
+    TestThread stepper([&]() {  // without the abort, the body's wait times out
         result = arbiter.Execute(kApi, "run_frames 1500", [&](CommandContext& ctx) {
             running = true;
             TestWait::For([&]() { return ctx.IsAborted(); });
@@ -279,7 +282,7 @@ TEST(ExecutionArbiter_Test, AbortEndsALongDrivingCommand)
     });
     ASSERT_TRUE(TestWait::For([&]() { return running.load(); }));
     EXPECT_TRUE(arbiter.AbortCurrent(kGdb, "interrupt"));
-    stepper.join();
+    stepper.Join();
     EXPECT_EQ(result.outcome, Outcome::Aborted);
     EXPECT_FALSE(arbiter.AbortCurrent(kGdb, "interrupt")) << "nothing served now";
 }
@@ -291,13 +294,13 @@ TEST(ExecutionArbiter_Test, StopRefusesTheQueueAndAbortsTheServedCommand)
     FakeLoop loop(arbiter, monitor);
     Gate gate;
     Result held;
-    std::thread holder([&]() { held = arbiter.Execute(kTtd, "hold", gate.Body(monitor)); });
+    TestThread holder([&]() { held = arbiter.Execute(kTtd, "hold", gate.Body(monitor)); }, [&] { loop.Stop(); });
     ASSERT_TRUE(TestWait::For([&]() { return gate.entered.load(); }));
     Ticket queuedIntent = arbiter.SubmitIntent(Intent::Run, kGui);
     Ticket queuedCommand = arbiter.Post(kApi, "media", [](CommandContext&) {});
 
     loop.Stop();
-    holder.join();
+    holder.Join();
     EXPECT_EQ(held.outcome, Outcome::Aborted);
     EXPECT_EQ(queuedIntent.Wait(1s).outcome, Outcome::Refused);
     EXPECT_EQ(queuedCommand.Wait(1s).outcome, Outcome::Refused);
@@ -397,14 +400,14 @@ TEST(ExecutionArbiter_Test, DeadlinePassedIsBusyAndNamesTheHolder)
     ExecutionArbiter arbiter;
     DriveMonitor monitor;
     Gate gate;
-    std::thread holder([&]() { arbiter.Execute(kTtd, "ttd.journal", gate.Body(monitor)); });
+    TestThread holder([&]() { arbiter.Execute(kTtd, "ttd.journal", gate.Body(monitor)); }, [&] { gate.open = true; });
     ASSERT_TRUE(TestWait::For([&]() { return gate.entered.load(); }));
     const Result r = arbiter.Execute(kApi, "poke", [](CommandContext&) {}, {}, Clock::now() + 5ms);
     EXPECT_EQ(r.outcome, Outcome::Busy);
     EXPECT_NE(r.detail.find("ttd.journal"), std::string::npos) << r.detail;
     EXPECT_TRUE(arbiter.GetSnapshot().queue.empty()) << "withdrawn";
     gate.open = true;
-    holder.join();
+    holder.Join();
 }
 
 TEST(ExecutionArbiter_Test, PostedCommandRunsOnTheParkedLoop)
@@ -443,14 +446,14 @@ TEST(ExecutionArbiter_Test, PairedIntentFollowsTheCommandWithNothingBetween)
     DriveMonitor monitor;
     arbiter.SetDecisionLog(true);
     Gate gate;
-    std::thread holder([&]() { arbiter.Execute(kTtd, "hold", gate.Body(monitor)); });
+    TestThread holder([&]() { arbiter.Execute(kTtd, "hold", gate.Body(monitor)); }, [&] { gate.open = true; });
     ASSERT_TRUE(TestWait::For([&]() { return gate.entered.load(); }));
     CommandOptions loadAndRun;
     loadAndRun.thenIntent = Intent::Run;
     Ticket load = arbiter.Post(kGui, "autostart", [](CommandContext&) {}, loadAndRun);
     Ticket pause = arbiter.SubmitIntent(Intent::Pause, kApi);
     gate.open = true;
-    holder.join();
+    holder.Join();
     EXPECT_EQ(load.Wait(1s).outcome, Outcome::Applied);
     EXPECT_EQ(pause.Wait(1s).outcome, Outcome::Applied);
     EXPECT_EQ(arbiter.CurrentIntent(), Intent::Pause) << "the pause submitted after the pair wins";
@@ -466,7 +469,7 @@ TEST(ExecutionArbiter_Test, SnapshotShowsServedAndQueued)
     ExecutionArbiter arbiter;
     DriveMonitor monitor;
     Gate gate;
-    std::thread holder([&]() { arbiter.Execute(kTtd, "ttd.journal", gate.Body(monitor)); });
+    TestThread holder([&]() { arbiter.Execute(kTtd, "ttd.journal", gate.Body(monitor)); }, [&] { gate.open = true; });
     ASSERT_TRUE(TestWait::For([&]() { return gate.entered.load(); }));
     arbiter.SubmitIntent(Intent::Run, kGui);
     const Snapshot s = arbiter.GetSnapshot();
@@ -477,7 +480,7 @@ TEST(ExecutionArbiter_Test, SnapshotShowsServedAndQueued)
     EXPECT_FALSE(s.queue[0].command);
     EXPECT_FALSE(s.mayRun);
     gate.open = true;
-    holder.join();
+    holder.Join();
 }
 
 TEST(ExecutionArbiter_Test, HoldIsTheSilentPairAndKeepsAForeignPause)

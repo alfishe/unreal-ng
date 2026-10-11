@@ -13,6 +13,7 @@
 #include <string>
 #include <thread>
 
+#include "_helpers/testthread.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -63,7 +64,11 @@ TEST(GdbSessionTakeBack_Test, AfterTheUserTakesControlBackRunsAndWritesAreRefuse
     int fds[2];
     ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
     auto session = std::make_unique<GDBSession>(fds[1], /*noAckMode=*/true);
-    std::thread serving([&session]() { session->run(); });
+    TestThread serving([&session]() { session->run(); }, [&] {
+        session->stop();
+        shutdown(fds[0], SHUT_RDWR);
+        close(fds[0]);
+    });
     std::string buffer;
 
     Send(fds[0], "vAttach;1");
@@ -88,10 +93,7 @@ TEST(GdbSessionTakeBack_Test, AfterTheUserTakesControlBackRunsAndWritesAreRefuse
     EXPECT_FALSE(registers.empty());
     EXPECT_NE(registers, "E5E") << "reads still answer";
 
-    session->stop();
-    shutdown(fds[0], SHUT_RDWR);
-    close(fds[0]);
-    serving.join();
+    serving.Join();  // stops the session and closes the client's end
     session.reset();
     EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
 }
