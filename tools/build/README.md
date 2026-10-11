@@ -36,6 +36,12 @@ configure output goes to `<build dir>/configure.log` and is shown only if it fai
 `AGENTS.md`, section "Why `build.sh` configures every time". Benchmarks (`-DBENCHMARKS=ON`) still need one manual
 configure, which later runs keep.
 
+`build.sh` also runs the **source checks of the CI `lint` job** first
+(`tools/verification/gui-instance-reads.sh`, a fraction of a second). A failure is printed as
+`== lint FAILED` above the build output and does not stop the build: the CI `lint` job fails on it alone, without
+holding up the Linux build and tests, but an agent sees it before the commit rather than an hour later. A count below
+its baseline prints a reminder to lower the baseline in the same change. `UNREAL_NO_LINT=1` skips the checks.
+
 ### How an agent should call them
 
 Run the command and **wait for it to finish** - the slot is held exactly as long as the
@@ -77,10 +83,14 @@ BUILD_DIR=$PWD/cmake-build-agent-release tools/build/build.sh \
 - **Only a fast-forward, and only if master is still where you saw it.** The argument is the full SHA master is
   expected at; `git update-ref` swaps it compare-and-swap, so a landing that raced another session fails with
   `master moved: <sha>` and changes nothing. Merge master again and retry.
-- **The main checkout follows.** Other sessions may have it open. When it is on master with an index equal to the old
-  master, its files are fast-forwarded (`read-tree -m -u`); local edits on a path the landing changes stop the landing
-  before anything moves. On another branch, or with a different index, master still moves and the checkout is left
-  alone (the script says so).
+- **The main checkout follows, through a private index.** Other sessions work in it, often with uncommitted edits on
+  the very files a landing brings. The new master's index is built in a file of its own and swapped in under
+  `index.lock` (git's own lock), and files are written only on landed paths with no edits there. A file someone is
+  editing stays byte for byte as it is; its edits show as uncommitted changes on top of the new master, and the script
+  lists those files. Nothing is merged into someone's working file, so no conflict markers appear in it.
+- **When it refuses** (nothing moves): the main checkout is on master and its `index.lock` is held (a git command is
+  running there) or its index has staged changes (moving master under them would show the landing reverted). On
+  another branch the main checkout is not touched and master still moves (the script says so).
 - **Chain the gate with `&&`.** With `;` a failed build still lands and pushes.
 - Pushing is the caller's step; `origin` is pushed by the owner.
 
