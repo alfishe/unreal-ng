@@ -1652,8 +1652,20 @@ void EmulatorAPI::setRegister(const HttpRequestPtr& req, std::function<void(cons
         return;
     }
 
-    if (!Z80::SetRegisterValue(z80, name, value))
+    std::string refused;
+    if (!emulator->SetRegisterFromTool("webapi register", name, static_cast<uint16_t>(value), &refused))   // a tool edit
     {
+        if (!refused.empty())   // the recorded past
+        {
+            Json::Value error;
+            error["error"] = "Conflict";
+            error["message"] = refused;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k409Conflict);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
         Json::Value error;
         error["error"] = "Bad Request";
         error["message"] = std::string(regInfo->name) + " cannot hold " + std::to_string(value) + " (at most " +
@@ -1664,7 +1676,6 @@ void EmulatorAPI::setRegister(const HttpRequestPtr& req, std::function<void(cons
         callback(resp);
         return;
     }
-    emulator->NoteDebugChange();   // the debugger snapshot's seq
 
     // Read back to confirm
     uint16_t readBack;

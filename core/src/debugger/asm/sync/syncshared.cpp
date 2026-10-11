@@ -141,6 +141,7 @@ bool InjectProject(EmulatorContext* context, const sync::SyncDescriptor& descrip
 {
     if (!CheckMachine(context, error))
         return false;
+    std::string refused;
     const auto work = [&]() {
         MachineCopy copy;
         CopyNow(context, copy, nullptr);
@@ -163,7 +164,7 @@ bool InjectProject(EmulatorContext* context, const sync::SyncDescriptor& descrip
             }
         };
         if (context->pEmulator)
-            context->pEmulator->EditMemoryFromTool("asm sync inject", write);
+            refused = context->pEmulator->EditMemoryFromTool("asm sync inject", write);   // the recorded past
         else
             write();
     };
@@ -177,6 +178,11 @@ bool InjectProject(EmulatorContext* context, const sync::SyncDescriptor& descrip
     }
     else
         work();
+    if (!refused.empty())
+    {
+        error = refused;
+        return false;
+    }
     if (!plan.ok)
         error = plan.error;
     return plan.ok;

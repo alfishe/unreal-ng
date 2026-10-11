@@ -470,3 +470,66 @@ TEST_F(MachineCoordinator_Test, AModeTransitionIsBroadcastOnceInRegistrationOrde
     EXPECT_EQ(calls.Take(), Calls{"second:recording->live"});
     EXPECT_FALSE(coordinator.Published().replaying);
 }
+
+// M6: a reset ends an input playback (RZX) first - before the park, never inside it; a nested reset does not again,
+// and an operation that keeps the playback never calls it
+TEST_F(MachineCoordinator_Test, APlaybackEndsBeforeTheParkOfTheOutermostOperationOnly)
+{
+    FakePlayback playback(&calls);
+    coordinator.SetPlayback(&playback);
+    EXPECT_TRUE(coordinator.Run(Op(OpKind::Reset, "reset")).Ok());
+    Calls got = calls.Take();
+    ASSERT_GE(got.size(), 2u);
+    EXPECT_EQ(got[0], "playback:end:reset");
+    EXPECT_EQ(got[1], "park:reset");
+
+    // A snapshot load whose owner runs a reset inside: the playback ends once, for the outer one
+    MachineOp outer = Op(OpKind::SnapshotLoad, "snapshot-load");
+    FakeOwner nesting(&calls, "nesting");
+    nesting.onCommit = [&](const MachineOp&) { coordinator.Run(Op(OpKind::Reset, "reset")); };
+    coordinator.Disown(&owner);
+    ASSERT_TRUE(coordinator.Own(OpKind::SnapshotLoad, &nesting));
+    ASSERT_TRUE(coordinator.Own(OpKind::Reset, &owner));
+    ASSERT_TRUE(coordinator.Own(OpKind::MediaInsert, &owner));
+    EXPECT_TRUE(coordinator.Run(std::move(outer)).Ok());
+    got = calls.Take();
+    EXPECT_EQ(std::count(got.begin(), got.end(), "playback:end:snapshot-load"), 1);
+    EXPECT_EQ(std::count(got.begin(), got.end(), "playback:end:reset"), 0);
+
+    EXPECT_TRUE(coordinator.Run(Op(OpKind::MediaInsert, "media")).Ok());
+    got = calls.Take();
+    EXPECT_EQ(std::count_if(got.begin(), got.end(), [](const std::string& c) { return c.rfind("playback:", 0) == 0; }),
+              0);
+    coordinator.SetPlayback(nullptr);
+}
+
+// M6: TTD's verbs keep their own lock and park: the rules and the log, the commit on the caller's thread, no park,
+// no session effect; a failure is logged with its reason, a kind with a park or a session effect is a contract error
+TEST_F(MachineCoordinator_Test, AnOperationOnItsOwnLockIsLoggedWithoutAParkOrTheSession)
+{
+    const OpResult done = coordinator.RunOwnLocked(Op(OpKind::TimelineSeek), [&](OpStage& stage) {
+        calls.Add("ttd:seek");
+        stage.detail = "frame 5";
+        return true;
+    });
+    EXPECT_TRUE(done.Ok());
+    EXPECT_EQ(calls.Take(), (Calls{"ttd:seek"}));
+    const auto entries = coordinator.Log().Entries(done.logSeq - 1);
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries[0].kind, OpKind::TimelineSeek);
+    EXPECT_EQ(entries[0].status, OpStatus::Done);
+    EXPECT_EQ(entries[0].detail, "frame 5");
+
+    const OpResult failed = coordinator.RunOwnLocked(Op(OpKind::TtdLoad), [](OpStage& stage) {
+        stage.error = "no such file";
+        return false;
+    });
+    EXPECT_EQ(failed.status, OpStatus::Failed);
+    EXPECT_EQ(failed.reason, "no such file");
+
+    bool ran = false;
+    const OpResult wrong = coordinator.RunOwnLocked(Op(OpKind::Reset), [&](OpStage&) { return ran = true; });
+    EXPECT_EQ(wrong.status, OpStatus::Refused);
+    EXPECT_FALSE(ran);
+    EXPECT_TRUE(calls.Take().empty());
+}

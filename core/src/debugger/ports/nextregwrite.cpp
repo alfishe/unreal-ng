@@ -71,9 +71,10 @@ Result Write(Emulator* emulator, uint8_t reg, uint8_t value, Door door, const ch
         return result;
     }
 
+    std::string refused;
     const Emulator::CoherentMoment where = emulator->RunAtCoherentMoment(
         [&]() {
-            emulator->EditMemoryFromTool(source, [&]() {
+            refused = emulator->EditMemoryFromTool(source, [&]() {
                 Z80::OutOfTimeScope outOfTime(*context->pCore->GetZ80());
                 NextBoard& board = decoder->Board();
                 result.previous = board.Stored(reg);
@@ -103,6 +104,11 @@ Result Write(Emulator* emulator, uint8_t reg, uint8_t value, Door door, const ch
     {
         result.busy = true;
         result.error = "no coherent moment within 500 ms (the emulator is stepping or changing state); try again";
+        return result;
+    }
+    if (!refused.empty())
+    {
+        result.error = refused;   // the recorded past
         return result;
     }
     result.ok = true;

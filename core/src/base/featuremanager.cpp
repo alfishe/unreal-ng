@@ -342,9 +342,13 @@ std::string FeatureManager::refusalReason(const std::string& idOrAlias, bool ena
     // Either direction swaps the fitted General Sound card (FR-4)
     if (id == Features::kGSLightweight)
     {
-        ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
+        coordinator::IMachineOps* ops = _context ? _context->pMachineOps : nullptr;
         const bool gsFitted = _context && _context->pSoundManager && _context->pSoundManager->getGeneralSound();
-        return (ttd && gsFitted) ? ttd->RecordingGuard(ttd::TTDGuardedAction::SwitchGsCard) : std::string();
+        if (!ops || !gsFitted)
+            return {};
+        coordinator::MachineOp op;
+        op.kind = coordinator::OpKind::GsCardSwitch;
+        return ops->WouldRefuse(op).reason;
     }
 
     // Switching timetravel or debugmode off is never refused: setFeature stops a

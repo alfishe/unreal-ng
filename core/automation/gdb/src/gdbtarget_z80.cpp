@@ -185,11 +185,10 @@ bool GDBTargetZ80::deserializeRegisters(EmulatorContext* ctx, const std::string&
     }
 
     // One tool edit (Emulator::EditMemoryFromTool): while a session records, the new registers are part of the history
-    editCPU(ctx, "GDB register write", [&] {
+    return editCPU(ctx, "GDB register write", [&] {
         for (size_t i = 0; i < values.size(); ++i)
             writeCPURegister(ctx, g_cpuRegisters[i].regnum, values[i]);
     });
-    return true;
 }
 
 std::string GDBTargetZ80::readRegister(EmulatorContext* ctx, int regnum)
@@ -264,18 +263,21 @@ std::string GDBTargetZ80::writeRegister(EmulatorContext* ctx, int regnum, const 
 
     // A CPU register is a tool edit; a paging pseudo-register is a port write, already one (PortWrite)
     if (regnum < static_cast<int>(g_cpuRegisters.size()))
-        editCPU(ctx, "GDB register write", [&] { writeCPURegister(ctx, regnum, value); });
+    {
+        if (!editCPU(ctx, "GDB register write", [&] { writeCPURegister(ctx, regnum, value); }))
+            return "E0D";   // the recorded past
+    }
     else
         writeCPURegister(ctx, regnum, value);
     return "OK";
 }
 
-void GDBTargetZ80::editCPU(EmulatorContext* ctx, const char* source, const std::function<void()>& edit)
+bool GDBTargetZ80::editCPU(EmulatorContext* ctx, const char* source, const std::function<void()>& edit)
 {
     if (ctx->pEmulator)
-        ctx->pEmulator->EditMemoryFromTool(source, edit);
-    else
-        edit();
+        return ctx->pEmulator->EditMemoryFromTool(source, edit).empty();
+    edit();
+    return true;
 }
 
 bool GDBTargetZ80::writeMemory(EmulatorContext* ctx, uint64_t addr, const std::vector<uint8_t>& bytes)
@@ -292,19 +294,17 @@ bool GDBTargetZ80::writeMemory(EmulatorContext* ctx, uint64_t addr, const std::v
         uint8_t* pageAddr = memory->RAMPageAddress(page);
         if (!pageAddr)
             return false;
-        editCPU(ctx, "GDB page write", [&] {
+        return editCPU(ctx, "GDB page write", [&] {
             for (size_t i = 0; i < bytes.size(); i++)
                 pageAddr[static_cast<uint16_t>((offset + i) & 0x3FFF)] = bytes[i];
             memory->MarkRamPageEdited(page);
         });
-        return true;
     }
 
-    editCPU(ctx, "GDB memory write", [&] {
+    return editCPU(ctx, "GDB memory write", [&] {
         for (size_t i = 0; i < bytes.size(); i++)
             memory->DirectWriteToZ80Memory(static_cast<uint16_t>((addr + i) & 0xFFFF), bytes[i]);
     });
-    return true;
 }
 
 int GDBTargetZ80::getRegisterCount(EmulatorContext* /*ctx*/)

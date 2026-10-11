@@ -1094,7 +1094,9 @@ void DezogDebugAdapter::editMachine(Emulator& emulator, const char* what, const 
     // Emulator::EditMemoryFromTool's
     if (emulator.GetContext() && emulator.GetContext()->pTimeTravelController)
     {
-        emulator.EditMemoryFromTool(what, edit);
+        // The callers leave the history first (leaveHistory): a refusal (the recorded past) is not expected here
+        if (const std::string refused = emulator.EditMemoryFromTool(what, edit); !refused.empty())
+            std::cerr << "[DZRP] " << what << " refused: " << refused << "\n";
         return;
     }
 

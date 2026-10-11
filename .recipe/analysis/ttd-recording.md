@@ -134,10 +134,11 @@ MCP: `time_travel` `{"action":"status"}`.
 
 ### What ended the session, why a load was refused
 
-The operation log names every reset, disk autostart, snapshot load and media change, the mode the rules saw
-(`recording` = a recording you started, `black-box` = the background one) and what it did to the session
-(`end-keep-history`, `media-changed`, `stop-then-media-changed`) - refusals included, with the same sentence the
-refused call answered:
+The operation log names every reset, disk autostart, snapshot load, media change, ROM load, GS card switch, speed
+change, state transfer, tool edit (memory, registers, ports, sectors) and TTD verb (start, stop, discard, seek, load,
+resume), the mode the rules saw (`recording` = a recording you started, `black-box` = the background one) and what it
+did to the session (`end-keep-history`, `media-changed`, `stop-then-media-changed`, `machine-changed`,
+`timing-changed`) - refusals included, with the same sentence the refused call answered:
 
 ```bash
 curl -s "$BASE/emulator/$ID/operations?limit=5" | jq '.entries[] | {seq, frame, kind, summary, source, status, mode, effect, detail}'
@@ -367,6 +368,11 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   `needs_decision` with the slots (Qt shows a dialog). The decision is in
   the operation log as `timeline-cut`. A write-through disk set back turns
   into a session disk: its file keeps its content until you save.
+- **Editing the past is refused.** While the machine replays or stands at a
+  point of a stopped history, a memory, register, port or sector write from
+  any surface is refused (WebAPI 409, a Lua / Python error, CLI `Error:`,
+  GDB `E0D`): the next seek would set the point back and the edit would be
+  lost. Resume the recording there first (`ttd resume`), then edit.
 - **A machine change** (ROM load, model switch, GS card switch, slot
   change) is the same rule with another machine behind it: the history is
   dropped, `last_stop_reason: "machine-change"`. v1 still refuses these while

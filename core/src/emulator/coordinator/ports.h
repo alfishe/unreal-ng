@@ -47,6 +47,8 @@ public:
     std::string error;
     /// Handed back to the caller in OpResult::output
     std::any output;
+    /// Done: what the log says about it beyond its summary (what was decided)
+    std::string detail;
 
     /// The owner calls this once, during Commit, right before it changes the machine. The coordinator applies
     /// the session effect here (D42: the session ends only when the operation really goes ahead)
@@ -131,6 +133,18 @@ public:
     virtual void MachineReset() = 0;
 };
 
+/// An input playback that drives the machine from a recorded file (an RZX playback). An operation that takes the
+/// machine off that path (a reset, a snapshot load) ends it first, before the park: the playback's stop holds the
+/// machine itself (M6)
+class IPlaybackSink
+{
+public:
+    virtual ~IPlaybackSink() = default;
+    /// End the playback, if one runs, because of @p op. Called once per outermost operation, without the
+    /// coordinator's lock and before the park
+    virtual void EndPlayback(const MachineOp& op) = 0;
+};
+
 /// The coordinator as callers see it: the surfaces, and an owner whose operation runs another one (a disk's
 /// discard re-inserts it). Implemented by MachineCoordinator; a caller never needs its class
 class IMachineOps
@@ -151,9 +165,13 @@ public:
     virtual void SessionChanged() = 0;
     /// The mode as last published (SessionChanged)
     virtual ModeState Published() const = 0;
-    /// An operation another part ran on its own path (TTD's timeline cut), into the log with @p status and
-    /// @p detail; no rules, no park
+    /// An operation another part ran on its own path, into the log with @p status and @p detail; no rules, no park
     virtual void Note(MachineOp op, OpStatus status, std::string detail) = 0;
+    /// An operation whose owner serializes and parks itself (TTD's verbs: its session lock, then the CPU): the rules
+    /// and the log as Run's, @p commit on the caller's thread without the coordinator's lock or park - a park before
+    /// TTD's lock would invert TTD's own order. Its kind's cells carry no session effect and no hold (refused
+    /// otherwise: a contract error)
+    virtual OpResult RunOwnLocked(MachineOp op, const std::function<bool(OpStage&)>& commit) = 0;
 };
 
 /// A change a subsystem makes itself, run as an operation (the network settings, an IDE unit's drive, an RZX

@@ -86,6 +86,8 @@ protected:
     /// Personality factory shared by Init and switchGeneralSoundCard (GS
     /// design §5.1); nullptr for kinds that map to no device (NONE/NGS)
     GeneralSoundCard* createGeneralSoundCard(GSTypeKind kind) const;
+    /// switchGeneralSoundCard's change, as the coordinator's commit (the session ended already)
+    bool switchGeneralSoundCardNow(GSTypeKind target, GSCardImplementation targetImplementation);
 
     // Live core-rate change request (device reroute, pin set/release).
     // Written from any thread via requestCoreRate(); APPLIED only at the next
@@ -561,6 +563,7 @@ public:
     /// Must run on the emulation thread (same ownership as the frame
     /// lifecycle); no-op (true) when the requested personality is already
     /// fitted. GSTypeKind::NONE/BASS select no card - rejected.
+    /// An operation of the machine coordinator (OpKind::GsCardSwitch): the rules, the session's end, the log
     bool switchGeneralSoundCard(GSTypeKind target);
 
     /// Thread-safe variant for cross-thread callers (WebAPI actions, the
@@ -568,7 +571,8 @@ public:
     /// the switch itself runs at the next frame boundary on the emulation
     /// thread (handleFrameStart), the only point where the card may be
     /// deleted/recreated safely
-    /// Refused (false, reason in `error`) while a TTD user recording runs.
+    /// Refused (false, reason in `error`) where the coordinator's rules refuse it (TTD v1: while a user recording
+    /// runs) or the slot plan does
     bool requestGeneralSoundCardSwitch(GSTypeKind target, std::string* error = nullptr);
 
     /// What the GS slot holds now, safe to read from any thread (the GUI,

@@ -138,12 +138,9 @@ public:
     /// The reason is logged and kept as TTDSessionInfo::lastDropReason.
     void InvalidateSession(const char* reason);
 
-    /// ITimeTravelHooks: a load, a configuration change and a model transfer all end
-    /// the session in v1, with the reason kept for status (Phase 5, Step 2 makes them events)
-    void OnLoad(TTDLoadKind kind, const char* reason) override;
+    /// ITimeTravelHooks: the session effects of the coordinator's operations (ttdsessionport.cpp)
     void EndSession(const char* reason) override;
-    void OnConfigurationChange(TTDConfigChangeKind kind, const char* reason) override;
-    void OnModelTransfer(const char* reason) override { EndSessionForMachineChange(reason); }
+    void EndSessionFor(TTDChange change, const char* reason) override;
     bool HasHistory() const override { return !_timeline.empty(); }
     const TTDInputJournal& InputJournal() const override { return _inputJournal; }
 

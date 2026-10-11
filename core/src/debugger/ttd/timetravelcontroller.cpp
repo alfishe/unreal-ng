@@ -1192,7 +1192,7 @@ std::string TimeTravelController::RecordingGuard(TTDGuardedAction action) const
     // Only a recording the user started is protected - also while it is paused
     // for browsing (D8): it goes on from where it paused. A background one (the
     // black box, a debugger's history) refuses nothing: the change ends its
-    // session and the next one starts at once (OnLoad, owner 2026-10-07)
+    // session and the next one starts at once (EndSessionFor, owner 2026-10-07)
     if (!(IsRecording() || _recordingPaused) || _backgroundSession)
         return {};
 
@@ -1451,20 +1451,6 @@ void TimeTravelController::OnAccelerationChanging(bool accelerating)
     }
 }
 
-void TimeTravelController::OnConfigurationChange(TTDConfigChangeKind kind, const char* reason)
-{
-    // The black box's history was recorded at 1x and stays valid when the host
-    // speed changes afterwards (the speed is pacing; OnAccelerationChanging
-    // handles the recording)
-    if (kind == TTDConfigChangeKind::SpeedMultiplier)
-    {
-        if (!_backgroundSession)
-            InvalidateSession(reason);
-        return;
-    }
-    EndSessionForMachineChange(reason);   // the ROM set, the General Sound card
-}
-
 void TimeTravelController::EndSessionForMachineChange(const char* reason)
 {
     EndSessionImpl(reason, /*keepHistory=*/false);   // another machine: the history belongs to the old one
@@ -1510,25 +1496,36 @@ bool TimeTravelController::CutAtFrameStart(uint64_t frame) const
     return _engine && _engine->IsSessionOpen() && _engine->Events().HasCutAt(GlobalT(TTDTimePoint{frame, 0}));
 }
 
-void TimeTravelController::OnLoad(TTDLoadKind kind, const char* reason)
+void TimeTravelController::EndSessionFor(TTDChange change, const char* reason)
 {
-    // A snapshot load ends the session like a reset (D42); a medium (tape, disk) drops it
-    if (kind == TTDLoadKind::Snapshot)
+    const bool background = _backgroundSession;
+    const bool live = _state == TTDSessionState::Recording || _recordingPaused || _blackBoxSuspended;
+    if (_timeline.empty() && !live)
+        return;   // nothing to end
+    switch (change)
     {
-        EndSession(reason);
-        return;
+        case TTDChange::Media:
+            // A background recording (the black box, a debugger's history) is not protected (owner 2026-10-07): the
+            // medium ends its session - the recording up to here stays in its folder - and the next one starts at
+            // the next frame
+            if (background && live)
+            {
+                EndSessionForMachineChange(reason);
+                _lastStopReason = reason;
+                return;
+            }
+            InvalidateSession(reason);
+            return;
+        case TTDChange::Machine:
+            EndSessionForMachineChange(reason);   // the ROM set, the General Sound card, a state transfer
+            return;
+        case TTDChange::Timing:
+            // The black box's history was recorded at 1x and stays valid when the host speed changes afterwards (the
+            // speed is pacing; OnAccelerationChanging handles the recording)
+            if (!background)
+                InvalidateSession(reason);
+            return;
     }
-    // A background recording (the black box, a debugger's history) is not
-    // protected (owner 2026-10-07): the medium ends its session - the recording
-    // up to here stays in its folder - and the next one starts at the next frame
-    if (_backgroundSession &&
-        (_state == TTDSessionState::Recording || _recordingPaused || _blackBoxSuspended))
-    {
-        EndSessionForMachineChange(reason);
-        _lastStopReason = reason;
-        return;
-    }
-    InvalidateSession(reason);
 }
 
 bool TimeTravelController::ConsumeAutoPauseRequest()

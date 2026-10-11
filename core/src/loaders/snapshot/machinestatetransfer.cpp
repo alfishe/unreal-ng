@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "common/stringhelper.h"
+#include "emulator/coordinator/ports.h"
 #include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdmachineperipherals.h"
@@ -1218,10 +1219,15 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
         return report;
     }
 
-    const std::string guard = target.AskModelSwitch("state from " + source.GetId());
-    if (!guard.empty())
+    // The target's coordinator: its rules (TTD v1 refuses while recording, D26), its session's end, its log
+    coordinator::MachineOp op;
+    op.kind = coordinator::OpKind::StateTransfer;
+    op.summary = "state from " + source.GetId();
+    op.sessionReason = "state-transfer";
+    const coordinator::OpResult asked = target.MachineOps().Ask(op);
+    if (!asked.Ok())
     {
-        report.reason = guard;
+        report.reason = asked.reason;
         return report;
     }
 
@@ -1244,13 +1250,25 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
     report = Check(*sourceContext, *targetContext);
     if (report.ok)
     {
-        // The target leaves its own history: a transfer teleports its state, like a snapshot load
-        if (targetContext->pTimeTravelHooks)
-            targetContext->pTimeTravelHooks->OnModelTransfer("state-transfer");
-
-        report = Apply(*sourceContext, *targetContext, options);
-        if (report.ok)
-            target.RestartFrame();
+        // The target leaves its own history at the commit point: a transfer teleports its state (the coordinator's
+        // park is nested in the hold above, free)
+        const coordinator::OpResult done =
+            coordinator::RunCommit(&target.MachineOps(), std::move(op), [&](coordinator::OpStage& stage) {
+                stage.CommitPoint();
+                report = Apply(*sourceContext, *targetContext, options);
+                if (!report.ok)
+                {
+                    stage.error = report.reason;
+                    return false;
+                }
+                target.RestartFrame();
+                return true;
+            });
+        if (!done.Ok() && report.ok)
+        {
+            report.ok = false;
+            report.reason = done.reason;
+        }
     }
 
     second.reset();
