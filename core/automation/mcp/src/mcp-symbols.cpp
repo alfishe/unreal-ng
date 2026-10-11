@@ -211,7 +211,25 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                     return;
                 }
                 std::string query = hasName ? "?name=" + args["name"].asString() : "?address=" + AddressArg(args["address"]);
-                ResolveAndForward(args, "GET", "/labels/resolve" + query, nullptr, caller, "Label resolved", done);
+                // The answer in the text: "CLS = 0x0D6B rom3 code ; CLS command: Clear screen"
+                ResolveAndForward(args, "GET", "/labels/resolve" + query, nullptr, caller, "Label resolved", [done](ToolResult result) {
+                    const Json::Value& label = result.structured["label"];
+                    if (!result.isError && label.isObject())
+                    {
+                        std::ostringstream out;
+                        out << result.text << ": " << label["name"].asString() << " = " << Hex16(label["address"].asUInt());
+                        if (label.isMember("bank"))
+                            out << " " << label["bankType"].asString() << label["bank"].asUInt();
+                        if (label["type"].isString())
+                            out << " " << label["type"].asString();
+                        if (label["comment"].isString())
+                            out << " ; " << label["comment"].asString();
+                        result.text = out.str();
+                    }
+                    else if (!result.isError)
+                        result.text += "\n" + FlatFields(result.structured);
+                    done(std::move(result));
+                });
                 return;
             }
 

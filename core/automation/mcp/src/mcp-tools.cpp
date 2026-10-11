@@ -1017,7 +1017,9 @@ void RegisterControlExecution(ToolRegistry& registry)
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Execution primitive. Stepping/running actions return the new register state. bp_* actions manage breakpoints.";
+        "Execution primitive. Stepping/running actions return the new register state. bp_* actions manage breakpoints "
+        "(bp_add switches the breakpoints feature on). run_frame / run_frames / run_tstates / run_to_interrupt skip "
+        "breakpoints: to stop at one, resume and then wait.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["count"]["type"] = "integer";
@@ -1248,7 +1250,38 @@ void RegisterControlExecution(ToolRegistry& registry)
                                             "note", "group"})
                         if (args.isMember(key))
                             body[key] = args[key];
-                    ForwardCall("POST", Endpoint(id, "/breakpoints"), &body, caller, "Breakpoint added on " + id, done);
+                    // A breakpoint never fires while the breakpoints feature is off, and the add itself says nothing:
+                    // switch the feature on (it switches debug mode on too) and say so
+                    ForwardCall("POST", Endpoint(id, "/breakpoints"), &body, caller, "Breakpoint added on " + id,
+                                [id, &caller, done](ToolResult added) {
+                        if (added.isError)
+                        {
+                            done(std::move(added));
+                            return;
+                        }
+                        auto result = std::make_shared<ToolResult>(std::move(added));
+                        caller.Call("GET", Endpoint(id, "/feature/breakpoints"), nullptr,
+                                    [id, &caller, done, result](int status, Json::Value feature) {
+                            if (status == 200 && feature.get("enabled", false).asBool())
+                            {
+                                done(std::move(*result));
+                                return;
+                            }
+                            static const Json::Value kOn = [] {
+                                Json::Value on;
+                                on["enabled"] = true;
+                                return on;
+                            }();
+                            caller.Call("PUT", Endpoint(id, "/feature/breakpoints"), &kOn,
+                                        [done, result](int putStatus, Json::Value) {
+                                result->text += putStatus >= 200 && putStatus < 300
+                                                    ? " (the breakpoints feature was off: switched on, debug mode with it)"
+                                                    : " (warning: the breakpoints feature is off and switching it on failed: "
+                                                      "the breakpoint will not fire)";
+                                done(std::move(*result));
+                            });
+                        });
+                    });
                     return;
                 }
                 if (action == "wait")
@@ -2559,7 +2592,7 @@ void RegisterInspectState(ToolRegistry& registry)
                             const Json::Value& value = acc[aspect];
                             if (aspect == "registers")
                             {
-                                out << "\n[registers] " << FormatRegisters(value);
+                                out << "\n[registers] " << FormatRegisters(value, true);
                             }
                             else if (aspect == "disasm" && value["instructions"].isArray())
                             {
@@ -3723,7 +3756,7 @@ void RegisterTypeInput(ToolRegistry& registry)
             }
             if (action == "list_keys")
             {
-                ResolveAndForward(args, "GET", "/keyboard/keys", nullptr, caller, "Known key names", done);
+                ResolveAndForward(args, "GET", "/keyboard/keys", nullptr, caller, "Known key names", AppendFields(done));
                 return;
             }
             if (action == "release_all")
@@ -5210,9 +5243,13 @@ std::string MemoryReadText(const Json::Value& body)
                 bytes.push_back(b.asUInt() & 0xFFu);
         else
         {
-            std::istringstream hex(body["hex"].asString());
-            for (std::string byte; hex >> byte;)
-                bytes.push_back(static_cast<unsigned>(std::strtoul(byte.c_str(), nullptr, 16)) & 0xFFu);
+            // "A8 00 FF" (Z80 view) or "A800FF" (regions): every two hex digits, spaces ignored
+            std::string digits;
+            for (char c : body["hex"].asString())
+                if (std::isxdigit(static_cast<unsigned char>(c)))
+                    digits += c;
+            for (size_t i = 0; i + 1 < digits.size(); i += 2)
+                bytes.push_back(static_cast<unsigned>(std::strtoul(digits.substr(i, 2).c_str(), nullptr, 16)));
         }
         uint32_t base = 0;
         const std::string start = body.isMember("offset") ? body["offset"].asString() : body["address"].asString();

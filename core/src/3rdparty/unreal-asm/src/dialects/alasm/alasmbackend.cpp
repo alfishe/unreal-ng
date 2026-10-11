@@ -831,6 +831,8 @@ struct Writer
             }
             case ir::DirectiveKind::Include:
             {
+                if (const auto as = options.includeAs.find(s.text); as != options.includeAs.end())
+                    return {"INCLUDE " + as->second};
                 std::string name = s.text;
                 const size_t colon = name.find(':');
                 const std::string drive = colon == std::string::npos ? std::string() : name.substr(0, colon + 1);

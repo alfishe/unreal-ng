@@ -34,7 +34,9 @@
 //                                                   on its TR-DOS file system, a blank disk when missing; --assembler or
 //                                                   --codec says the format), or a hobeta file *.$X. The target is
 //                                                   rewritten unless -o names another file. The source may be a file
-//                                                   in an image: <image> --file NAME[.T]
+//                                                   in an image: <image> --file NAME[.T]. A text file brings the files
+//                                                   it INCLUDEs (beside it): into a snapshot each goes into an ALASM
+//                                                   page of its own (INCLUDE "NAME",page), onto a disk each as a file
 //
 // Containers: a hobeta file (NAME.$A, ...) is unwrapped and its catalog fields used for detection; a file inside a
 // TR-DOS image, an SCL archive or a tape is picked with --file NAME (or NAME.T for the type letter T). An encode output named *.$X is written
@@ -795,7 +797,8 @@ int Inject(const Args& args, const std::vector<uint8_t>& bytes, const CatalogHin
     // The source: a tokenized format by detection, else a text in --from's dialect (sjasmplus by default)
     SourceDocument document;
     const DetectResult detected = registry.Detect(bytes, hints);
-    if (detected.chosen && detected.chosen->Info().id != "text")
+    const bool tokenized = detected.chosen && detected.chosen->Info().id != "text";
+    if (tokenized)
     {
         DecodeOptions options;
         options.catalog = hints;
@@ -815,6 +818,21 @@ int Inject(const Args& args, const std::vector<uint8_t>& bytes, const CatalogHin
     document.name = !hints.name.empty() ? hints.name : Stem(args.file);
     for (char& c : document.name)
         c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    // A text file on the host brings the sources it INCLUDEs (relative to its folder): the project
+    std::vector<ProjectFile> project = {{document.name, document}};
+    if (!tokenized && !IsImage(Lower(Extension(args.file))))
+    {
+        Diagnostics found;
+        const std::filesystem::path folder = std::filesystem::path(std::u8string(args.file.begin(), args.file.end())).parent_path();
+        project = HostProject(document, [&folder](const std::string& name) {
+            std::vector<uint8_t> data;
+            const std::filesystem::path path = folder / std::filesystem::path(std::u8string(name.begin(), name.end()));
+            const std::u8string text = path.u8string();
+            ReadFile(std::string(text.begin(), text.end()), data);
+            return data;
+        }, found);
+        PrintDiagnostics(found);
+    }
 
     const std::string targetExtension = Lower(Extension(args.target));
     const std::string output = args.output.empty() ? args.target : args.output;
@@ -837,17 +855,11 @@ int Inject(const Args& args, const std::vector<uint8_t>& bytes, const CatalogHin
             return 1;
         const sync::SyncText current = sync::ReadText(view, *d);
         const std::string title = !args.title.empty() ? args.title : current.ok && !current.name.empty() ? current.name : document.name;
-        const WriteAsResult written = WriteAs(document, d->codec, d->version, title);
-        PrintDiagnostics(written.diagnostics);
-        if (!written.ok)
-        {
-            std::cerr << "zxasm: " << written.error << "\n";
-            return 1;
-        }
         sync::InjectOptions options;
         options.force = args.force;
         std::vector<uint8_t> out;
-        const sync::InjectPlan plan = sync::InjectIntoSnapshot(snapshot, *d, written.bytes, options, out);
+        const sync::ProjectInjectPlan plan = sync::InjectProjectIntoSnapshot(snapshot, *d, project, title, options, out);
+        PrintDiagnostics(plan.diagnostics);
         if (!plan.ok)
         {
             std::cerr << "zxasm: " << plan.error << "\n";
@@ -858,9 +870,11 @@ int Inject(const Args& args, const std::vector<uint8_t>& bytes, const CatalogHin
             std::cerr << "zxasm: cannot write " << output << "\n";
             return 1;
         }
-        std::cerr << d->id << ": " << written.document.name << ", " << written.document.lines.size() << " line(s), "
-                  << written.bytes.size() << " bytes into page " << plan.page
-                  << (plan.previous.ok ? " (replaced " + plan.previous.name + ")" : std::string()) << " -> " << output << "\n";
+        for (size_t k = 0; k < plan.pages.size(); ++k)
+            std::cerr << d->id << ": " << plan.texts[k].document.name << ", " << plan.texts[k].document.lines.size() << " line(s), "
+                      << plan.texts[k].bytes.size() << " bytes into page " << plan.pages[k].page
+                      << (plan.pages[k].previous.ok ? " (replaced " + plan.pages[k].previous.name + ")" : std::string())
+                      << (k == 0 ? " -> " + output : " (INCLUDE " + project[k].name + ")") << "\n";
         return 0;
     }
 
@@ -885,6 +899,38 @@ int Inject(const Args& args, const std::vector<uint8_t>& bytes, const CatalogHin
         return 2;
     }
     const std::string name = !args.title.empty() ? args.title : document.name;
+    const bool image = IsImage(targetExtension) && targetExtension != "tap" && targetExtension != "tzx";
+    if (project.size() > 1 && image)
+    {
+        // Every text of the project onto the disk, each INCLUDE naming its file there
+        const std::vector<std::string> names = ProjectTextNames(project, name);
+        std::map<std::string, std::string> includeAs;
+        for (size_t k = 1; k < project.size(); ++k)
+            includeAs[project[k].name] = "\"" + names[k] + "\"";
+        const WriteProjectResult written = WriteProjectAs(project, codec, version, names, includeAs);
+        PrintDiagnostics(written.diagnostics);
+        if (!written.ok)
+        {
+            std::cerr << "zxasm: " << written.error << "\n";
+            return 1;
+        }
+        std::string error;
+        for (size_t k = 0; k < written.files.size(); ++k)
+        {
+            const WriteAsResult& text = written.files[k];
+            const containers::TrdosFile file = CatalogFile(k == 0 ? args.name : std::string(), text.document.name, type, codec, version, text.bytes);
+            if (!tools::PutImageFile(k == 0 ? args.target : output, output, file, error))
+            {
+                std::cerr << "zxasm: " << output << ": " << error << "\n";
+                return 1;
+            }
+            std::cerr << codec << (version.empty() ? "" : " " + version) << ": " << file.TrimmedName() << "." << file.type << ", "
+                      << text.document.lines.size() << " line(s), " << text.bytes.size() << " bytes -> " << output << "\n";
+        }
+        return 0;
+    }
+    if (project.size() > 1)
+        std::cerr << "zxasm: a single file holds the main source only: its INCLUDEs stay for the assembler's disk\n";
     const WriteAsResult written = WriteAs(document, codec, version, name);
     PrintDiagnostics(written.diagnostics);
     if (!written.ok)
@@ -904,7 +950,7 @@ int Inject(const Args& args, const std::vector<uint8_t>& bytes, const CatalogHin
             return 1;
         }
     }
-    else if (IsImage(targetExtension) && targetExtension != "tap" && targetExtension != "tzx")
+    else if (image)
     {
         // A disk image of any format: the file goes onto its TR-DOS file system, the image is saved in the format of -o
         if (!tools::PutImageFile(args.target, output, file, error))

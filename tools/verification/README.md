@@ -35,6 +35,15 @@ application).
 
 ---
 
+### MCP (`mcp/`)
+
+[`mcp/run_all.py`](mcp/README.md): the MCP server as an agent sees it, one script per block of tools (protocol,
+emulator_manage, inspect_state, memory_access, control_execution, debug_code, symbols, capture_media, input,
+time_travel, media, router, analysis, asm_source) and the text-coverage floors; `--launch` starts an instance on ports
+of its own. Rules: [docs/guidelines/mcp-testing-guidelines.md](../../docs/guidelines/mcp-testing-guidelines.md).
+
+---
+
 ### TTD surface contract
 
 [`ttd-surface-contract/`](ttd-surface-contract/README.md): the time-travel calls give the same answers on WebAPI, CLI, Lua and Python (run against a live application).

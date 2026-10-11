@@ -110,6 +110,11 @@ int main(int argc, char *argv[])
     MacOSPlatform::disableAutomaticFullScreenMenuItem();  // Before any menu bar exists
 #endif
     QApplication app(argc, argv);
+#ifdef Q_OS_MACOS
+    // No windows to show (agents' automation instances): not a Dock app that looks hung
+    if (QGuiApplication::platformName() == QLatin1String("offscreen") || QGuiApplication::platformName() == QLatin1String("minimal"))
+        MacOSPlatform::runAsBackgroundProcess();
+#endif
 
     // Housekeeping (crashed TTD recordings, ...) in the background: start-up never waits for it
     StartStartupCleanup();

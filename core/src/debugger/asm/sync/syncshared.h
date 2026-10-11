@@ -26,10 +26,12 @@ struct MachineCopy
 /// Every RAM page (`only` = nullptr), or the pages the CPU sees plus `only`, and the CPU's SP; false with the reason
 bool CopyMachine(EmulatorContext* context, MachineCopy& out, std::string& error, const std::vector<int>* only = nullptr);
 
-/// Part B: at one coherent moment, copies the machine, plans writing `file` as the live text (the idle rule, unsaved
-/// changes, the size) and writes it as a TTD tool edit. False with the reason (the plan's, or no coherent moment)
-bool InjectFile(EmulatorContext* context, const unrealasm::sync::SyncDescriptor& descriptor, const std::vector<uint8_t>& file,
-                const unrealasm::sync::InjectOptions& options, unrealasm::sync::InjectPlan& plan, std::string& error);
+/// Part B: at one coherent moment, copies the machine, plans writing the project `files` (files[0] the main source)
+/// as the live text and the project's other texts (PlanInjectProject: the idle rule, unsaved changes, the sizes) and
+/// writes every page as one TTD tool edit. False with the reason (the plan's, or no coherent moment)
+bool InjectProject(EmulatorContext* context, const unrealasm::sync::SyncDescriptor& descriptor, const std::vector<unrealasm::ProjectFile>& files,
+                   const std::string& title, const unrealasm::sync::InjectOptions& options, unrealasm::sync::ProjectInjectPlan& plan,
+                   std::string& error);
 
 StateNode DiagnosticsValue(const unrealasm::Diagnostics& diagnostics);
 
